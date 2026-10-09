@@ -294,3 +294,56 @@ def test_real_dbridge_move_lands_in_local_frame(tmp_path):
     for orig, local in edits[0]["moves"]:
         model = frames.apply(s["world"], local)
         assert model[2] == pytest.approx(s["vertices"][orig][2] + 0.5, abs=1e-4)  # OBJ +y is BC +z
+
+
+from tools.gen_mesh_fixes import fnv1a64_hex
+
+
+def _patched_cli(monkeypatch, tmp_path):
+    """Isolate main()'s --write path from real BC content and real mesh fixes:
+    a fake NIF (known bytes -> known fnv1a64_hex target name), a scratch fix
+    dir, and build_fix() stubbed to return a fixed single-edit fix."""
+    from tools import bridge_shape_diff as cli
+    nif_bytes = b"fake nif bytes for main() --write tests"
+    nif_file = tmp_path / "fake.nif"
+    nif_file.write_bytes(nif_bytes)
+    fix_dir = tmp_path / "fixes"
+    fix_dir.mkdir()
+    monkeypatch.setattr(cli, "_fix_dir", lambda: fix_dir)
+    monkeypatch.setattr(cli, "_nif_path", lambda rel: nif_file)
+    monkeypatch.setattr(cli, "build_fix", lambda rel, base, edit:
+                         (cli.make_fix_dict(rel, [GOLDEN_EDIT]), [GOLDEN_EDIT]))
+    target = fix_dir / (fnv1a64_hex(nif_bytes) + ".json")
+    return cli, target
+
+
+def test_main_write_refuses_fix_owned_by_another_generator(monkeypatch, tmp_path):
+    cli, target = _patched_cli(monkeypatch, tmp_path)
+    target.write_text('{"generator": "tools/gen_mesh_fixes.py"}')
+    before = target.read_text()
+    rc = cli.main(["diff", "b.obj", "e.obj", "--write"])
+    assert rc == 2
+    assert target.read_text() == before
+
+
+def test_main_write_creates_new_fix_when_none_exists(monkeypatch, tmp_path):
+    cli, target = _patched_cli(monkeypatch, tmp_path)
+    assert not target.exists()
+    rc = cli.main(["diff", "b.obj", "e.obj", "--write"])
+    assert rc == 0
+    assert target.read_text() == cli.fix_text(cli.make_fix_dict(cli.DEFAULT_NIF, [GOLDEN_EDIT]))
+
+
+def test_main_write_overwrites_fix_owned_by_this_generator(monkeypatch, tmp_path):
+    cli, target = _patched_cli(monkeypatch, tmp_path)
+    target.write_text('{"generator": "tools/bridge_shape_diff.py"}')
+    rc = cli.main(["diff", "b.obj", "e.obj", "--write"])
+    assert rc == 0
+    assert target.read_text() == cli.fix_text(cli.make_fix_dict(cli.DEFAULT_NIF, [GOLDEN_EDIT]))
+
+
+def test_main_without_write_flag_writes_nothing(monkeypatch, tmp_path):
+    cli, target = _patched_cli(monkeypatch, tmp_path)
+    rc = cli.main(["diff", "b.obj", "e.obj"])
+    assert rc == 0
+    assert not target.exists()
