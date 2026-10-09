@@ -102,10 +102,12 @@ class BridgeEmittersPanel(Panel):
             return
         self._h_for_release = h
         if not self._in_bridge():
+            self._unlock_cursor(h)
             self._camera = None
             return
         iid = self._iid()
         if iid is None:
+            self._unlock_cursor(h)
             return
         if self._camera is None:
             eye, target, _up, _fov = self._pose()
@@ -167,6 +169,16 @@ class BridgeEmittersPanel(Panel):
             self._press_xy = None
         self._left = left
         self._push_highlight(iid)
+
+    def _unlock_cursor(self, h):
+        """Release RMB-fly cursor lock when the view/instance disappears out
+        from under it. Without this, leaving the bridge (or the instance
+        vanishing) while RMB is held strands the cursor locked forever --
+        handle_input returns before the normal rmb-edge-release code below
+        ever runs again, since there is no live camera/iid to fly."""
+        if self._rmb:
+            h.set_cursor_locked(False)
+            self._rmb = False
 
     @staticmethod
     def _dsf(h, fb):
@@ -272,7 +284,8 @@ class BridgeEmittersPanel(Panel):
             del self._doc["shapes"][self._selected.key]
 
     def _can_save(self):
-        return bool(self._load and self._load.error is None and self._info["content_hash"])
+        return bool(self._info and self._load and self._load.error is None
+                    and self._info["content_hash"])
 
     def _save(self):
         if not self._can_save():
@@ -290,10 +303,15 @@ class BridgeEmittersPanel(Panel):
 
     def _attach_reload(self):
         iid = self._iid()
+        if iid is None:
+            # No instance to re-attach to (e.g. the bridge view/instance has
+            # gone away under an open panel) -- leave _info/_doc untouched
+            # rather than nulling _info and stranding render_payload's
+            # _can_save() indexing into None.
+            return
         sel = self._selected
         self._info = None
-        if iid is not None:
-            self._attach(iid)
+        self._attach(iid)
         self._selected = sel
 
     # ── payload ──────────────────────────────────────────────────────────

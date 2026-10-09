@@ -79,6 +79,14 @@ class FakeH:
         self.locked.append(bool(on))
 
 
+class FakeHDsf1(FakeH):
+    """Same as FakeH but window_size == framebuffer_size (dsf 1), so the
+    dock's CSS-pixel width maps 1:1 onto framebuffer pixels."""
+
+    def window_size(self):
+        return self.framebuffer_size()
+
+
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     monkeypatch.setattr(ld.paths, "game_asset_dirs", lambda rel: [tmp_path / "stock" / rel])
@@ -154,9 +162,20 @@ def test_pick_uses_the_fly_camera_pose(env):
 def test_click_over_the_dock_does_not_pick(env):
     p, io, h, *_ = env
     p.open()
-    # dsf 2: the dock covers the right DOCK_CSS_PX*2 framebuffer pixels.
-    click(p, h, (1600.0 - 10.0, 300.0))
+    # dsf 2: the dock covers the right DOCK_CSS_PX*2 = 720 framebuffer pixels
+    # (x >= 880). x=1000 is inside that *scaled* dock but OUTSIDE the
+    # unscaled DOCK_CSS_PX=360 band (which would start at x >= 1240) -- this
+    # pins the `* self._dsf(h, fb)` factor: a regression dropping it would
+    # treat x=1000 as outside the dock and let the click through to a pick.
+    click(p, h, (1000.0, 300.0))
     assert payload(p)["selected"] is None
+
+    # Same x, but dsf 1 (window_size == framebuffer_size): the dock is now
+    # only 360 px wide, so x=1000 is OUTSIDE it and the click DOES reach the
+    # 3D view and select.
+    h1 = FakeHDsf1()
+    click(p, h1, (1000.0, 300.0))
+    assert payload(p)["selected"]["key"] == "7:redalertpanel"
 
 
 def test_drag_is_not_a_click(env):
@@ -293,3 +312,44 @@ def test_esc_closes(env):
     p.open()
     p.handle_key_esc()
     assert p.is_open() is False
+
+
+def test_leaving_the_bridge_while_flying_unlocks_the_cursor(env):
+    p, io, h, *_ = env
+    p.open()
+    p.handle_input(h)
+    h.buttons.add(FakeKeys.MOUSE_BUTTON_RIGHT)
+    p.handle_input(h)                      # RMB edge: lock
+    assert h.locked[-1] is True
+    p._in_bridge = lambda: False
+    p.handle_input(h)                      # the view leaves the bridge mid-fly
+    assert h.locked[-1] is False
+
+
+def test_the_instance_vanishing_while_flying_unlocks_the_cursor(env):
+    p, io, h, *_ = env
+    iid = ["iid"]
+    p._iid = lambda: iid[0]
+    p.open()
+    p.handle_input(h)
+    h.buttons.add(FakeKeys.MOUSE_BUTTON_RIGHT)
+    p.handle_input(h)                      # RMB edge: lock
+    assert h.locked[-1] is True
+    iid[0] = None
+    p.handle_input(h)                      # the instance disappears mid-fly
+    assert h.locked[-1] is False
+
+
+def test_revert_without_an_instance_does_not_raise(env):
+    p, io, h, *_ = env
+    p.open()
+    click(p, h, (400.0, 300.0))
+    assert payload(p)["selected"] is not None
+    p._iid = lambda: None
+    assert p.dispatch_event("revert") is True
+    # Must not raise: _attach_reload has no instance to re-attach to, so it
+    # must leave _info (and therefore the document/selection) intact rather
+    # than nulling it out and leaving render_payload's _can_save() to index
+    # into None.
+    st = payload(p)
+    assert st["selected"] is not None
