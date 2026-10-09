@@ -7,9 +7,10 @@ Spec: docs/superpowers/specs/2026-10-09-bridge-shape-diff-design.md
     uv run python -m tools.bridge_shape_diff diff <base.obj> <edit.obj> [--write]
 
 OBJ files contain BC geometry: keep them OUT of the repo. Blender: import the
-exported OBJ with default settings; export base.obj before editing and
-edit.obj after, both with default settings. Don't join, split or rename
-objects. Iteration 1 accepts vertex MOVES only."""
+OBJ into an EMPTY scene (delete Blender's default Cube/Camera/Light) with
+default settings; export base.obj before editing and edit.obj after, both
+with default settings. Don't join, split or rename objects. Iteration 1
+accepts vertex MOVES only."""
 import argparse
 import json
 import sys

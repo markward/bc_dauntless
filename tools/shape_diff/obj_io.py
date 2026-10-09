@@ -20,13 +20,18 @@ def object_name(shape: dict) -> str:
 def block_of(name: str) -> int:
     m = _NAME_RE.match(name + "_")
     if not m:
-        raise ShapeDiffError(f"object {name!r} is not a shape export (expected b<block>_...)")
+        raise ShapeDiffError(
+            f"object {name!r} is not a shape export (expected b<block>_...) -- "
+            "import the OBJ into an EMPTY scene (delete Blender's default Cube/Camera/Light)")
     return int(m.group(1))
 
 
 def _mat_name(shape: dict) -> str:
     tex = shape.get("textures") or []
-    return re.sub(r"\s+", "_", tex[0]) if tex else "none"
+    if not tex:
+        return "none"
+    base = re.split(r"[/\\]", tex[0])[-1]
+    return re.sub(r"\s+", "_", base)
 
 
 def write_obj(shapes, obj_path: Path, mtl_path: Path, texture_path_for) -> None:
@@ -86,7 +91,7 @@ def read_objects(path: Path) -> dict:
     owner = []          # global v index -> (mesh, local index)
     uvs = []
     current = None
-    for line in Path(path).read_text().splitlines():
+    for line_no, line in enumerate(Path(path).read_text().splitlines(), start=1):
         parts = line.split()
         if not parts:
             continue
@@ -109,13 +114,18 @@ def read_objects(path: Path) -> dict:
                 fields = tok.split("/")
                 vi = int(fields[0])
                 vi = vi - 1 if vi > 0 else len(owner) + vi
+                if not 0 <= vi < len(owner):
+                    raise ShapeDiffError(f"line {line_no}: vertex index out of range")
                 mesh, local = owner[vi]
                 if mesh is not current:
                     raise ShapeDiffError("face references another object's vertex")
                 uv = None
                 if len(fields) > 1 and fields[1]:
                     ti = int(fields[1])
-                    uv = uvs[ti - 1 if ti > 0 else len(uvs) + ti]
+                    ti = ti - 1 if ti > 0 else len(uvs) + ti
+                    if not 0 <= ti < len(uvs):
+                        raise ShapeDiffError(f"line {line_no}: uv index out of range")
+                    uv = uvs[ti]
                 face.append((local, uv))
             current.faces.append(face)
     return objs
