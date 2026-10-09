@@ -1,7 +1,7 @@
 # Bridge Shape Diff — design (living spike spec)
 
 **Date:** 2026-10-09
-**Status:** iteration 1 implemented (moves and UV0 edits; topology refused); awaiting Mark's first live edit
+**Status:** iterations 1–2b accepted live; iteration 3 (new vertices, BSD2 references, robust correspondence, n-gons, `--exclude`) built 2026-10-09, awaiting regenerate from Mark's export
 **Branch:** `spike/bridge-shape-diff` (worktree `.claude/worktrees/bridge-shape-diff`)
 **Living document:** updated after every accepted iteration (§9).
 
@@ -91,7 +91,10 @@ or empty). The source NIF resolves through `paths.game_root()` (stock only, as
 
 **Rules for Mark in Blender:** don't join, split or rename objects; new geometry
 goes inside an existing object; export both OBJs with the same settings
-(triangulation optional — n-gons are ear-clipped).
+(triangulation optional — n-gons are ear-clipped, iteration 3). Don't reorder
+vertices (Sort Elements, or separating part of an object and joining it back):
+the diff relies on Blender keeping survivors in order (§5.2) and refuses an
+object whose order it can't explain.
 
 ---
 
@@ -110,7 +113,7 @@ the set of original vertices it welds (its seam duplicates).
 ~~Original plan (superseded by 2a below): by Blender vertex index, refusing
 any deletion.~~
 
-**Current rule (as built 2a, 2026-10-09):** deletions are accepted. Equal vertex counts
+**As built 2a (superseded by iteration 3 below):** deletions are accepted. Equal vertex counts
 still correspond by index. With **fewer** edit vertices, Blender has deleted
 some and renumbered the survivors **preserving their relative order**, so the
 tool walks the edit vertices in order and, for each, advances through the base
@@ -121,13 +124,56 @@ vertices after deletion"). **More** edit vertices are refused ("new vertices
 are iteration 3"). Every face comparison below runs in base indices, through
 this correspondence.
 
+**Current rule (as built iteration 3, 2026-10-09) -- `match.correspond`.**
+Blender keeps surviving vertices in relative order (also across deletion)
+and appends new ones, so the edit↔base correspondence is the
+**order-preserving** (monotone) partial matching that maximises agreement.
+Every (edit, base) pair gets an integer score, independent of the rest of
+the matching: **4** if the positions are equal (L∞ ≤ `POS_TOL`), **+2 per
+edit neighbour** that sits where one of the base vertex's neighbours sits
+(neighbours = shared face edges), and **+1** when the pair already scores
+and a corner UV of one equals a corner UV of the other (a moved survivor
+keeps its UVs; this only breaks ties, it never creates a candidate). The
+heaviest monotone chain over the positive pairs is found exactly (a Fenwick
+tree over base index, O(P log n)), together with the number of distinct
+optimal matchings. Then:
+
+1. **Fast path:** equal counts and every vertex at its own index unmoved →
+   identity (the iteration-1 behaviour, and the common case).
+2. **Not unique → refused** ("ambiguous correspondence"). Never guessed.
+3. **Face propagation:** an unmatched edit vertex in a face whose other
+   corners are matched takes the one unmatched base vertex that completes a
+   base face on those corners, if exactly one does (inside its order window).
+4. **Equal gaps:** a run of unmatched edit vertices facing as many unmatched
+   base vertices in its order window is matched in order **only if** every
+   edit face touching the run then maps onto a base face -- a pure move
+   (e.g. a whole island translated, where no neighbour stays put).
+5. Unmatched edit vertices are **new**; unmatched base vertices are
+   **deleted**. If an unmatched edit vertex sits on an unmatched base
+   vertex it could equally be that survivor or a new vertex → **refused**
+   ("ambiguous correspondence ... vertex order changed (separate/join?)").
+   This is what a separate-then-join reorder produces.
+
+Equal vertex counts no longer imply identity unless the fast path holds:
+3 deletions + 3 additions keep the count but shift every survivor, which
+the old rule read as mass moves. A mis-pairing the score can't see (a new
+vertex paired with a deleted one at the end of the list) still yields the
+edited geometry exactly -- every face is re-derived through the matching --
+at worst with that vertex's colour/UV1 taken from the deleted original.
+A scratch randomized check over DBridge objects (delete 0–3 vertices, move
+0–3, add 0–3 with triangles/quads; 900 trials through `diff_shape` + encode)
+gave no crash and ~2 % ambiguity refusals; against ground truth (400
+trials of `correspond`), 7 paired a new vertex with a deleted vertex at the
+end of the list -- the case above, argued harmless but **not** checked by
+re-applying the fix -- and none mis-paired two survivors.
+
 ### 5.3 Classification, per shape
 
 | Change | Recorded as |
 |---|---|
 | base vertex whose position changed | `move`: every original vertex it welds → new position (shape-local, inverted in float64, stored f32) |
 | corner UV changed on a kept vertex | `uv`: original vertex → new UV0 |
-| vertex appended in Blender | `add vertex`: position, UV0, colour from the OBJ (if the shape has colours; else none). UV1 copied from the nearest kept vertex. A new vertex with several distinct corner UVs becomes one added vertex per UV |
+| vertex appended in Blender | `add vertex`: position (reference or literal), UV0 (reference or literal), `attr_src` -- the target shape's original nearest in model space (ties → lowest index) whose colour and UV1.. it copies. A new vertex with several distinct corner UVs becomes one added vertex per UV (iteration 3; the OBJ colour is ignored -- it was BC data) |
 | original triangle with no matching edit face | `remove triangle` (original index) |
 | edit face not matching an original triangle | `add triangle` (indices into the final vertex array) |
 
@@ -199,6 +245,43 @@ every textured object look retextured. An OBJ with no `mtllib` line carries
 no texture info and records no texture ops. A **base** object whose faces
 span two albedos is refused (base.obj must be the unaltered export).
 
+**Iteration 3, as built (2026-10-09).**
+
+- **References (§6.2).** A position within `POS_TOL` of an ORIGINAL vertex
+  of ANY shape (model space) is stored as a reference to it -- the target
+  shape's own originals first, then the lowest block, then the lowest index.
+  This applies to moves (a vertex snapped onto another to close a gap
+  becomes `move → ref`), added vertices and split vertices. A UV0 equal
+  (1e-5) to the UV0 of the position's reference vertex is a reference to
+  that same vertex; else to the lowest target-shape original **at that
+  position** with that UV0; else (**an extension of the brief**, same value,
+  keeps BC's number out of the payload) to the lowest target-shape original
+  anywhere with that UV0; else a literal.
+- **New vertices** (§5.2's unmatched edit vertices) used by added faces
+  become added vertices, one per distinct corner UV. A loose new vertex on
+  no face records nothing. A corner with no UV is refused.
+- **Split vertices (new in iteration 3).** An added face corner on a
+  *survivor* whose UV matches no original's final UV -- which 2a refused as
+  "needs a new vertex/UV", and the "old UV of a re-mapped original" case 2a
+  refused as a vertex split -- becomes an added vertex at the survivor's
+  final position (a reference when unmoved) with the corner's UV and
+  `attr_src` from the nearest original. A UV conflict on a **kept** face is
+  still refused as before (re-pointing NIF triangles is out of scope).
+- **N-gons.** Added faces with more than 3 corners are ear-clipped
+  (`tools/shape_diff/triangulate.py`, ported from the parked spike) on the
+  corners' edit positions in the polygon's dominant plane, keeping its
+  winding. Unlike the spike it never falls back to a fan: a polygon with no
+  ear, no area, or ears that don't tile its area (self-intersecting) is
+  refused. The zero-area check then runs per triangle as before.
+- **`--exclude BLOCK`** (repeatable; `exclude=` on `build_fix` / `match.diff`)
+  leaves the block out before any diffing -- even an object that would be
+  refused -- and prints `excluded: blocks N, M`. Excluding a block with no
+  object in the export is a file-level refusal (a typo would otherwise be
+  silent).
+- Summary line: `block N: M vertices moved[ (R by reference)], K UVs
+  changed, R triangles removed, A added, V vertices added[ (R by
+  reference)]`.
+
 **`--partial`:** by default a single unsupported object (one that needs
 topology, or a vertex-split UV conflict) aborts the whole diff -- nothing is
 written. `diff BASE EDIT --partial [--write]` instead diffs every object
@@ -218,7 +301,9 @@ the export itself is broken, not that one object's edit is unsupported.
 
 ## 6. The fix file
 
-Same file as today: `native/assets/mesh_fixes/<fnv1a64>.json`. `merges` becomes
+Same file as today: `native/assets/mesh_fixes/<fnv1a64>.json`.
+The tool writes payload **BSD2** since iteration 3; the loader still reads
+BSD1 (the fix committed in rounds 1c–4b is BSD1 until it is regenerated). `merges` becomes
 optional; a file needs at least one of `merges` / `shape_edits` / `textures`.
 Still `format` 1.
 
@@ -247,6 +332,35 @@ blob, base64-encoded. No compression — no new dependency on either side.
 
 ### 6.1 Payload layout (little-endian)
 
+**BSD2 (written since iteration 3).** Same header and per-shape counts as
+BSD1 below; the move, uv and add-vertex records change so positions/UVs can
+be references:
+
+```
+position := u8 kind; kind 0: f32 x, y, z         (literal, shape-local)
+                     kind 1: u32 src_block, u16 src_vertex   (reference)
+uv0      := u8 kind; kind 0: f32 u, v             (literal)
+                     kind 1: u32 src_block, u16 src_vertex   (reference)
+n_move        × { u16 vertex; position }
+n_uv          × { u16 vertex; uv0 }
+n_add_vertex  × { position; uv0; u16 attr_src }
+n_remove_tri  × { u16 triangle }                 (unchanged)
+n_add_tri     × { u16 a, b, c }                  (unchanged)
+```
+
+A position reference is that ORIGINAL vertex's position carried
+src-shape-local → model → target-shape-local through `nif_block_world`
+(double precision; an exact copy when src is the target shape). A uv
+reference is that original's UV0. `attr_src` is an ORIGINAL vertex index of
+the TARGET shape whose colour and UV sets 1.. the new vertex copies
+(replacing BSD1's literal uv1/colour -- those were BC data). Any other kind
+byte is refused at decode. Golden: one blob with every record kind, pinned
+byte-identical in `tests/tools/test_shape_diff.py` (`GOLDEN_B64`, built by
+hand with `struct`, not by the encoder) and
+`native/tests/assets/cpu/mesh_fix_parse_test.cc` (`kGoldenBsd2B64`).
+
+**BSD1 (read only):**
+
 ```
 char[4]  magic "BSD1"
 u16      shape_count
@@ -274,6 +388,15 @@ into them, plus geometry Mark authored. It is useless without the original. The
 OBJs (which do contain BC geometry) live only in the session scratchpad.
 *(Not legal advice.)*
 
+**Iteration 3 closes two gaps.** (1) A vertex Mark **snaps** onto an original
+vertex (gap closing), or a new vertex placed on one, used to be stored as a
+literal -- i.e. BC's coordinate. BSD2 stores it as a **reference** (§5.3's
+iteration-3 rule), so the payload stays index-only even for snapped and
+coincident vertices; likewise a UV equal to an original's. (2) Added
+vertices no longer carry colour/UV1 values: they copy them from an original
+named by `attr_src`. What remains literal is only what Mark authored: a
+position or UV that coincides with no original.
+
 ---
 
 ## 7. Loader
@@ -290,7 +413,18 @@ original) when:
 - the final vertex or triangle count exceeds 65 535;
 - an added triangle is degenerate (repeated index or zero area);
 - the shape has authored normals (none on DBridge — out of scope);
-- a data block is also used by a merge.
+- a data block is also used by a merge;
+- (BSD2) a reference's block is out of range, not a `NiTriShape`, or its
+  data is unresolved/inconsistent; its vertex is not below that shape's
+  ORIGINAL vertex count (a vertex that only exists after this same fix
+  adds it is refused); a uv reference's shape has no UV set 0; `attr_src`
+  is not below the target's original vertex count; a literal is non-finite.
+
+**References read the unmodified file.** Every edit is validated and its
+references resolved to concrete values *before* any merge, edit or texture
+op mutates anything, so a reference into a shape the same fix edits still
+reads that shape's ORIGINAL data (pinned by
+`MeshFixShapeEditRef.RefIntoAShapeTheSameFixEditsReadsTheOriginalPosition`).
 
 After applying: recompute the shape's bound centre/radius; clear match groups.
 
@@ -323,7 +457,8 @@ ancestor `NiMultiTextureProperty`).
 | Apply on a synthetic `nif::File` | gtest | moves, uv edits, added verts (with/without colours, 1 or 2 UV sets), removed + added tris, order |
 | Each refusal in §7 | gtest | file unchanged in memory, error returned |
 | Real `Dbridge.NIF` + committed fix | gtest, asset-backed (`content_root.h`) | applies with `""`; hash matches file stem |
-| Export → simulated Blender round-trip → diff | pytest, synthetic meshes | identity map is exact; moves/adds/removes recovered; reorder/deletion is refused |
+| Export → simulated Blender round-trip → diff | pytest, synthetic meshes | identity map is exact; moves/adds/removes recovered; references, new vertices, splits, ear clipping, correspondence (deletion + move + add, translated island, reorder and tie refused), `--exclude` |
+| BSD2 references on real `Dbridge.NIF` | gtest + pytest, asset-backed | a cross-frame reference (block 11 → rotated block 24) lands on the referenced vertex's model position; a new vertex snapped onto block 24 is diffed as a reference |
 | Payload encode | pytest + gtest | Python encoder and C++ decoder agree on a golden blob |
 | Drift guard | existing pytest | skips files whose `generator` isn't `tools/gen_mesh_fixes.py` (shape-edit inputs are never committed, so they can't be regenerated) |
 
@@ -344,6 +479,7 @@ the scratchpad; in game, Developer Options → Lighting → Bridge Debug View
 | 2b | Per-shape albedo texture op (console top panels b0029/b0059 → g_imp_connops, wall inset slots b0045/b0479 → g_imp_redbars) | accepted by Mark in game 2026-10-09 (round 4b): textures + UVs on b0029/b0059 (g_imp_connops), b0045/b0479 (g_imp_redbars), b0063 (Map 22b), b0189/b0236/b0415 (Map 22c); back wall b0017 UV re-map on replaced Map 7 | `textures` field in the fix file (§6, §7); diff records it by `map_Kd` basename, one per object, file must exist in the overlay or stock dir (§5.3). Emissive/glow deliberately out of scope |
 | 2 | Turbolift header reshape: triangle remove/add | — | |
 | 3 | Extruded side panels: new verts/tris/UVs | — | Open: side-face texturing. Lean: collapse the new faces' UVs onto the panel border (stretch edge texels, no new texture); alternative: a project-owned trim texture |
+| 3 — new vertices + refs (cove b0392/b0395, LCARS b0688/b0697, b0471) | New vertices, BSD2 references (snapped moves become refs), robust correspondence, n-gon ear clipping, `--exclude`; b0392's removals land with b0395's rework | tool support built 2026-10-09; awaiting regenerate | §5.2/§5.3 iteration-3 rules, §6.1 BSD2. Expect previously committed blocks unchanged except snapped moves turning into references. **Next, NOT built:** the `running_0..11` flipbook on b0688 (an animated texture sequence -- needs its own op) |
 
 ---
 
