@@ -117,6 +117,20 @@ struct Instance {
     };
     Atmosphere atmosphere;
 
+    /// Planet surface detail (spec 2026-10-08). type 0 = none (default), so an
+    /// un-configured instance renders byte-identically.
+    struct Surface {
+        int           type = 0;            // planet_detail::SurfaceType
+        glm::vec3     ocean{0.0f};         // linear
+        bool          has_ocean = false;
+        float         ocean_tol = 0.15f;
+        float         strength = 1.0f;
+        float         albedo = 1.0f;
+        float         scale = 1.0f;
+        std::uint32_t seed = 0;
+    };
+    Surface surface;
+
     /// Per-instance skinning palette (world_pose * inverse_bind per bone).
     /// Empty = the renderer falls back to the model's bind pose. Set by the
     /// placement system; SP2 rewrites it per frame. Runtime state, not saved.

@@ -356,6 +356,9 @@ ships at lower frequency; (c) move hot paths to C++.
   (`host_bindings.cc`) add `rock.near.stream`, `rock.near.draw`,
   `rock.fade.draw` (the translucent impostor fades), `rock.puffs.draw` and
   `rock.specks.draw`, alongside the earlier far-tier `space.far.*` scopes.
+  `planet_detail` (clipmap bake for the planet surface detail pass) is a
+  top-level, GPU-timed scope — a sibling of `space`/`bloom`/`post`, not
+  nested under any of them.
 
 ## Tests
 

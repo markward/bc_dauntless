@@ -35,6 +35,7 @@
 #include <renderer/backdrop_pass.h>
 #include <renderer/sun_pass.h>
 #include <renderer/atmosphere_pass.h>
+#include <renderer/planet_detail_pass.h>
 #include <renderer/dust_pass.h>
 #include <renderer/minor_field.h>
 #include <renderer/minor_pass.h>
@@ -279,6 +280,9 @@ float g_dust_profile = 0.0f;   // radial-profile `dust` column at the camera, 0-
 std::unique_ptr<renderer::SunPass> g_sun_pass;
 // Planet atmosphere shells (docs/superpowers/specs/2026-10-07-planet-atmosphere-design.md §5).
 std::unique_ptr<renderer::AtmospherePass> g_atmosphere_pass;
+// Planet surface detail (spec 2026-10-08 §5.5): one target planet's clipmap,
+// baked once per frame from g_camera; sampled by every space render.
+std::unique_ptr<renderer::planet_detail::PlanetDetailPass> g_planet_detail;
 std::unique_ptr<renderer::DustPass> g_dust_pass;
 // Minor rocks (docs/superpowers/specs/2026-10-01-minor-rocks-design.md). The
 // field is pure CPU state stepped in frame()'s xform_sync block; the pass owns
@@ -990,6 +994,7 @@ void init(int width, int height, const std::string& title) {
     g_backdrop_pass = std::make_unique<renderer::BackdropPass>();
     g_sun_pass = std::make_unique<renderer::SunPass>();
     g_atmosphere_pass = std::make_unique<renderer::AtmospherePass>();
+    g_planet_detail = std::make_unique<renderer::planet_detail::PlanetDetailPass>();
     g_dust_pass = std::make_unique<renderer::DustPass>();
     g_minor_pass = std::make_unique<renderer::MinorPass>();
     g_far_pass = std::make_unique<renderer::FarPass>();
@@ -1074,6 +1079,7 @@ void shutdown() {
                               // GL context is still alive.
     g_sun_pass.reset();
     g_atmosphere_pass.reset();   // releases the shell mesh (GL alive)
+    g_planet_detail.reset();     // releases the clipmap atlas (GL alive)
     g_dust_pass.reset();
     g_minor_pass.reset();     // releases VAOs + instance buffer (GL alive)
     g_far_pass.reset();       // releases atlases + VAOs + buffers (GL alive)
@@ -1450,7 +1456,8 @@ void frame() {
             g_submitter->submit_opaque_in_pass(
                 g_world, cam, *g_pipeline, lookup, g_lighting,
                 scenegraph::Pass::Space, g_decal_game_time, g_carve_cache.get(),
-                ambient_scale, dyn_lights, g_instance_field_cache.get(), &g_suns);
+                ambient_scale, dyn_lights, g_instance_field_cache.get(), &g_suns,
+                g_planet_detail.get());
         }
         // Minor rocks. The step culled against g_camera; this target may be
         // the bridge viewscreen RTT (its own camera, kViewscreenRttH tall) --
@@ -1814,6 +1821,16 @@ void frame() {
         }
     } else {
         renderer::set_active_shadow({}, 0, false);
+    }
+
+    // ── Planet surface detail (spec 2026-10-08 §5.5) ───────────────────────
+    // Top-level (GPU-timed), main camera only: pick the target planet and bake
+    // this frame's budgeted strips BEFORE any space render samples them. Every
+    // space render (main view, viewscreen RTT) samples the same clipmap; none
+    // of them bakes. Skipped when no space scene is drawn at all.
+    if (g_planet_detail && !viewer_mode && (!bridge_active || viewscreen_on)) {
+        DAUNTLESS_FRAME_SCOPE("planet_detail");
+        g_planet_detail->update(g_world, g_camera, fh, lookup);
     }
 
     // ── Viewscreen render-to-texture (bridge view, screen on) ──────────────
@@ -2813,6 +2830,59 @@ py::dict stats_dict(const mr::Stats& s) {
     return d;
 }
 
+// ── Planet surface-detail type table: Python <-> TypeParams (spec 2026-10-08
+// §7 dev tuning). get/set each hand-list the same 16 field names side by
+// side, in the same order -- NOT one genuinely shared table, so nothing
+// here stops them drifting apart on their own; what actually guards that is
+// tests/unit/test_planet_surface_type_params_binding.py's
+// test_get_set_round_trip_for_every_type (fix round 1, M1).
+// `ridged` is included (the binding is a generic struct accessor) even
+// though the "surface" dial group never dials it.
+py::dict type_params_to_dict(const renderer::planet_detail::TypeParams& p) {
+    py::dict d;
+    d["base_wavelength_gu"] = p.base_wavelength_gu;
+    d["max_octaves"] = p.max_octaves;
+    d["gain"] = p.gain;
+    d["ridged"] = p.ridged;
+    d["amplitude"] = p.amplitude;
+    d["bump"] = p.bump;
+    d["albedo"] = p.albedo;
+    d["roughness"] = p.roughness;
+    d["roughness_var"] = p.roughness_var;
+    d["crack_width"] = p.crack_width;
+    d["stretch"] = p.stretch;
+    d["warp"] = p.warp;
+    d["gas_rate_gups"] = p.gas_rate_gups;
+    d["gas_period_s"] = p.gas_period_s;
+    d["coast_k"] = p.coast_k;
+    d["coast_a"] = p.coast_a;
+    return d;
+}
+
+void apply_type_params_from_dict(renderer::planet_detail::TypeParams& p, const py::dict& params) {
+    for (auto item : params) {
+        const std::string key = item.first.cast<std::string>();
+        const float v = item.second.cast<float>();
+        if (key == "base_wavelength_gu") p.base_wavelength_gu = v;
+        else if (key == "max_octaves") p.max_octaves = static_cast<int>(v);
+        else if (key == "gain") p.gain = v;
+        else if (key == "ridged") p.ridged = v;
+        else if (key == "amplitude") p.amplitude = v;
+        else if (key == "bump") p.bump = v;
+        else if (key == "albedo") p.albedo = v;
+        else if (key == "roughness") p.roughness = v;
+        else if (key == "roughness_var") p.roughness_var = v;
+        else if (key == "crack_width") p.crack_width = v;
+        else if (key == "stretch") p.stretch = v;
+        else if (key == "warp") p.warp = v;
+        else if (key == "gas_rate_gups") p.gas_rate_gups = v;
+        else if (key == "gas_period_s") p.gas_period_s = v;
+        else if (key == "coast_k") p.coast_k = v;
+        else if (key == "coast_a") p.coast_a = v;
+        else throw py::value_error("set_surface_type_params: unknown field '" + key + "'");
+    }
+}
+
 }  // namespace
 
 PYBIND11_MODULE(_dauntless_host, m) {
@@ -3716,6 +3786,72 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "(color, sunset_color, thickness, density, limb[, intensity[, mie]]), "
           "colours linear RGB; intensity defaults to 20.0 and mie to 0.2 "
           "when omitted.");
+    m.def("set_instance_surface",
+          [](scenegraph::InstanceId id, py::object params) {
+              scenegraph::Instance::Surface s;
+              if (!params.is_none()) {
+                  auto t = params.cast<py::tuple>();
+                  if (t.size() != 8) throw py::value_error("set_instance_surface: expected an 8-tuple");
+                  s.type = t[0].cast<int>();
+                  // type indexes the 6-entry live-params table (0 none .. 5 ocean).
+                  if (s.type < 0 || s.type > 5)
+                      throw py::value_error("set_instance_surface: type must be in [0, 5]");
+                  auto o = t[1].cast<std::array<float, 3>>();
+                  s.ocean = {o[0], o[1], o[2]};
+                  s.has_ocean = t[2].cast<bool>();
+                  s.ocean_tol = t[3].cast<float>();
+                  s.strength = t[4].cast<float>();
+                  s.albedo = t[5].cast<float>();
+                  s.scale = t[6].cast<float>();
+                  s.seed = t[7].cast<std::uint32_t>();
+              }
+              g_world.set_surface(id, s);
+          },
+          py::arg("id"), py::arg("params"),
+          "Planet surface detail (spec 2026-10-08): None disables; else "
+          "(type, ocean_rgb, has_ocean, ocean_tolerance, strength, albedo, scale, seed).");
+
+    // ── Planet surface-detail developer tuning (spec 2026-10-08 §7) ────────
+    m.def("planet_detail_target_type",
+          []() -> int {
+              if (!g_planet_detail) return 0;
+              auto target = g_planet_detail->target();
+              if (!target) return 0;
+              const scenegraph::Instance* inst = g_world.get(*target);
+              return inst ? inst->surface.type : 0;
+          },
+          "The planet surface-detail clipmap's current target's Surface.type, "
+          "or 0 (none) with no target.");
+    m.def("get_surface_type_params",
+          [](int type) {
+              if (type < 0 || type > 5)
+                  throw py::value_error("get_surface_type_params: type out of range");
+              return type_params_to_dict(renderer::planet_detail::live_params(
+                  static_cast<renderer::planet_detail::SurfaceType>(type)));
+          },
+          py::arg("type"),
+          "The live (dev-tunable) TypeParams for one surface type, as a dict.");
+    m.def("set_surface_type_params",
+          [](int type, py::dict params) {
+              if (type < 0 || type > 5)
+                  throw py::value_error("set_surface_type_params: type out of range");
+              apply_type_params_from_dict(renderer::planet_detail::live_params(
+                  static_cast<renderer::planet_detail::SurfaceType>(type)), params);
+          },
+          py::arg("type"), py::arg("params"),
+          "Write named fields into live_params(type); unknown keys raise. Shape "
+          "fields (base_wavelength_gu, max_octaves, gain, ridged, amplitude, "
+          "crack_width, stretch, warp) change the baked field's shape_hash, "
+          "which PlanetDetailPass detects and cold-refills; the other fields "
+          "apply at the next bake with no extra wiring.");
+    m.def("set_planet_detail_budget",
+          [](long long cost) { if (g_planet_detail) g_planet_detail->set_budget(cost); },
+          py::arg("cost"),
+          "Per-frame bake cost budget for the planet surface-detail clipmap "
+          "(spec default 65536*8).");
+    m.def("set_planet_detail_debug",
+          [](bool on) { if (g_planet_detail) g_planet_detail->set_debug(on); },
+          py::arg("on"), "Tint the sampled clipmap level (debug visualisation).");
 
     m.def("create_bridge_instance",
           [](scenegraph::ModelHandle h) {

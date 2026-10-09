@@ -25,7 +25,9 @@ from engine.appc import sensor_occlusion
 from engine.rocks import catalogue as rock_catalogue
 from engine import planet_geosphere
 from engine import planet_atmosphere
+from engine import planet_surface
 from engine.planets import atmosphere as planet_atmosphere_catalogue
+from engine.planets import surface as planet_surface_catalogue
 
 
 def _minors_enabled() -> bool:
@@ -76,7 +78,7 @@ class DeveloperOptionsPanel(Panel):
     # Controls that fire once instead of flipping a flag. They have no entry in
     # `settings` and dispatch under "action:" rather than "toggle:".
     _ACTION_CONTROLS = frozenset({"quick_repair", "normal_strength",
-                                 "dial_group", "reload_atmospheres",
+                                 "dial_group", "reload_atmospheres", "reload_surfaces",
                                  "bridge_debug_view"})
 
     # Presets cycled through by the "normal_strength" action row: 0 = flat
@@ -114,6 +116,10 @@ class DeveloperOptionsPanel(Panel):
         self._rock_catalogue = rock_catalogue.enabled()
         self._planet_geosphere = planet_geosphere.enabled()
         self._planet_atmosphere = planet_atmosphere.enabled()
+        self._planet_surface = planet_surface.enabled()
+        # No native getter for the debug tint (set_planet_detail_debug is
+        # write-only) -- defaults off like every other dev A/B toggle.
+        self._surface_debug = False
         self._minor_rocks = _minors_enabled()
         self._far_tier = _far_enabled()
         self._rock_specks = _rock_specks_enabled()
@@ -151,6 +157,7 @@ class DeveloperOptionsPanel(Panel):
         self._rock_puffs = _rock_puffs_enabled()
         self._planet_geosphere = planet_geosphere.enabled()
         self._planet_atmosphere = planet_atmosphere.enabled()
+        self._planet_surface = planet_surface.enabled()
         # The profiler can be enabled behind the panel's back by
         # DAUNTLESS_PROFILE_FRAMES at startup, so re-read rather than trust
         # the mirror -- otherwise the row shows OFF while it is reporting.
@@ -180,6 +187,7 @@ class DeveloperOptionsPanel(Panel):
             self._minor_rocks, self._far_tier,
             self._rock_specks, self._rock_puffs,
             self._planet_geosphere, self._planet_atmosphere,
+            self._planet_surface, self._surface_debug,
         )
         if snapshot == self._last_pushed:
             return None
@@ -212,6 +220,8 @@ class DeveloperOptionsPanel(Panel):
                 "rock_puffs": self._rock_puffs,
                 "planet_geosphere": self._planet_geosphere,
                 "planet_atmosphere": self._planet_atmosphere,
+                "planet_surface": self._planet_surface,
+                "surface_debug": self._surface_debug,
             },
         }
         return "setDeveloperOptions(" + json.dumps(payload) + ");"
@@ -303,6 +313,15 @@ class DeveloperOptionsPanel(Panel):
             planet_atmosphere.set_enabled(not self._planet_atmosphere)
             self._planet_atmosphere = not self._planet_atmosphere
             return True
+        if action == "toggle:planet_surface":
+            planet_surface.set_enabled(not self._planet_surface)
+            self._planet_surface = not self._planet_surface
+            return True
+        if action == "toggle:surface_debug":
+            new_val = not self._surface_debug
+            renderer.set_planet_detail_debug(new_val)
+            self._surface_debug = new_val
+            return True
         if action == "toggle:minor_rocks":
             renderer.minors_set_enabled(not self._minor_rocks)
             self._minor_rocks = not self._minor_rocks
@@ -334,6 +353,22 @@ class DeveloperOptionsPanel(Panel):
             planet_atmosphere_catalogue.reload()
             atmosphere_dials.repush_live()
             print("[atmosphere] catalogue reloaded", file=sys.stderr)
+            return True
+        if action == "action:reload_surfaces":
+            # One-shot ACTION (mirrors action:reload_atmospheres). The two
+            # catalogue blocks ("atmosphere" and "surface") live in the SAME
+            # atmospheres.json, read through ONE shared file memo -- but
+            # `surface.reload()` refreshes that memo via
+            # `atmosphere.reload_file()` (memo-only), NOT the full
+            # `atmosphere.reload()`, so this action picks up edited surface
+            # fields (and drops this group's own overrides) WITHOUT also
+            # dropping the "atmosphere" dial group's live tuning (fix round
+            # 1, I1). Then re-push every live planet.
+            import sys
+            from engine.planets import surface_dials
+            planet_surface_catalogue.reload()
+            surface_dials.repush_live()
+            print("[surface] catalogue reloaded", file=sys.stderr)
             return True
         if action == "action:quick_repair":
             # One-shot ACTION, not a toggle: nothing to mirror in state, so
@@ -375,7 +410,9 @@ class DeveloperOptionsPanel(Panel):
                     ("ctrl", "far_tier"), ("ctrl", "rock_specks"),
                     ("ctrl", "rock_puffs"), ("ctrl", "planet_geosphere"),
                     ("ctrl", "planet_atmosphere"),
-                    ("ctrl", "reload_atmospheres")]
+                    ("ctrl", "reload_atmospheres"),
+                    ("ctrl", "planet_surface"), ("ctrl", "surface_debug"),
+                    ("ctrl", "reload_surfaces")]
         if self._selected_tab == "diagnostics":
             out += [("ctrl", "profiler"), ("ctrl", "dial_group")]
         return out
