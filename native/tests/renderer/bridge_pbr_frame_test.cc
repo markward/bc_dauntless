@@ -959,3 +959,51 @@ TEST_F(BridgePbrFrame, GrazingDefaultMaterialMatchesLegacy) {
     for (int i = 0; i < 3; ++i)
         EXPECT_NEAR(pbr[i], legacy[i], 0.03f * legacy[i] + 1e-3f) << i;
 }
+
+// Finding 4: the probes hold the room lit by the bridge lighting, so a
+// CHANGED bridge lighting (ambient: the only Lighting field the pass reads)
+// recaptures them by itself, once a first capture exists. The wall is
+// repainted blue in place after the first capture, so a recapture shows as
+// a blue reflection and a kept capture as a red one.
+TEST_F(BridgePbrFrame, ABridgeLightingChangeRecapturesTheProbes) {
+    use_red_wall_corner();
+    set_floor_override(0.05f, 1.0f);             // metal floor: reflection only
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->request_probe_capture();
+    renderer::Lighting a = default_lighting();
+    EXPECT_GT(render_floor_with(a).r, 0.05f);    // captured red
+    model->textures[1] = solid_1x1({0.0f, 0.0f, 1.0f, 1.0f});
+    const glm::vec3 same = render_floor_with(a);  // same lighting: kept
+    EXPECT_GT(same.r, same.b);
+    renderer::Lighting b = a;
+    b.ambient = glm::vec3(0.5f, 0.6f, 0.7f);
+    const glm::vec3 changed = render_floor_with(b);
+    EXPECT_GT(changed.b, changed.r);             // recaptured: now blue
+    EXPECT_FALSE(pass->probe_capture_pending());
+}
+
+// The alert scale lives in the pass and never reaches a capture: changing
+// it recaptures nothing.
+TEST_F(BridgePbrFrame, AnAlertScaleChangeDoesNotRecaptureTheProbes) {
+    use_red_wall_corner();
+    set_floor_override(0.05f, 1.0f);
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->request_probe_capture();
+    EXPECT_GT(render_floor().r, 0.05f);
+    model->textures[1] = solid_1x1({0.0f, 0.0f, 1.0f, 1.0f});
+    pass->set_alert_ambient_scale(1.5f);
+    const glm::vec3 c = render_floor();
+    EXPECT_GT(c.r, c.b);                         // still the red capture
+}
+
+// Before any capture a lighting change is not a request: the first capture
+// waits for the bridge load's own request.
+TEST_F(BridgePbrFrame, ALightingChangeBeforeAnyCaptureRequestsNothing) {
+    use_red_wall_corner();
+    render_floor_with(default_lighting());
+    renderer::Lighting b = default_lighting();
+    b.ambient = glm::vec3(0.2f);
+    render_floor_with(b);
+    EXPECT_FALSE(pass->probe_capture_pending());
+    EXPECT_FALSE(pass->probes_valid());
+}

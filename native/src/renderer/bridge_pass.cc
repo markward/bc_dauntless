@@ -232,6 +232,12 @@ void BridgePass::render(const scenegraph::World& world,
     // and never with no bridge drawn: the request then waits for one.
     if (main_bridge && !normal_pass_ && !capture_pass_) {
         const bool have_bridge = update_box(world, lookup);
+        // A changed bridge lighting re-lights the room the probes hold. The
+        // pass reads only `ambient` from Lighting (no directional), and the
+        // UNSCALED one: the alert scale never reaches a capture. Only once a
+        // first capture exists -- the bridge load requests that one.
+        if (probes_captured_ && lighting.ambient != capture_ambient_)
+            probe_dirty_ = true;
         if (probe_dirty_ && have_bridge)
             capture_probes(world, pipeline, lookup, lighting);
     }
@@ -598,6 +604,7 @@ void BridgePass::capture_probes(const scenegraph::World& world,
     capture_one(probe_green_, scale_green_);
     capture_one(probe_yr_, scale_yr_);
     probes_captured_ = probe_green_.valid() && probe_yr_.valid();
+    capture_ambient_ = lighting.ambient;
 }
 
 const BridgePass::Aabb& BridgePass::model_box(unsigned long long handle,

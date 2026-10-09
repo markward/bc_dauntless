@@ -222,8 +222,10 @@ public:
     float probe_mix() const { return probe_mix_; }
     /// Mark the probes dirty: both are recaptured inside the next main-bridge
     /// render(), before its AO pre-pass. Never per frame otherwise -- except
-    /// that a different bridge model (the largest static bridge instance's
-    /// handle) re-dirties them by itself once they have been captured.
+    /// that, once they have been captured, two changes re-dirty them by
+    /// themselves: a different bridge model (the static bridge instance with
+    /// the most meshes), and a different bridge lighting (the unscaled
+    /// ambient render() is handed; the alert scale never counts).
     void request_probe_capture() { probe_dirty_ = true; }
     bool probe_capture_pending() const { return probe_dirty_; }
     /// True once both probes hold a capture the shader may sample.
@@ -312,6 +314,10 @@ private:
     float       alert_ambient_scale_ = 1.0f;
     bool        probe_dirty_ = false;
     bool        probes_captured_ = false;   // cleared by reset_probes()
+    /// The (unscaled) bridge ambient the current captures were taken with --
+    /// the only Lighting field the pass reads. A main-bridge render handed a
+    /// different one re-dirties captured probes.
+    glm::vec3   capture_ambient_{0.0f};
     bool        capture_pass_ = false;
     /// Static spot lights, at most kBridgeMaxSpots (set_spots truncates).
     std::vector<BridgeSpot> spots_;
