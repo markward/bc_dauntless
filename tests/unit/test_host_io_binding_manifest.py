@@ -123,6 +123,7 @@ def test_optional_holds_exactly_the_soft_guarded_bindings():
         "set_swap_interval", "swap_interval",
         "set_cursor_shape",
         "ray_trace_mesh_pick", "model_identity", "set_bridge_highlight",
+        "set_bridge_material_overrides", "set_bridge_pbr_enabled",
     })
 
 

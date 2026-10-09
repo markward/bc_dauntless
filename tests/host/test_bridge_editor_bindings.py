@@ -145,3 +145,31 @@ def test_model_identity_meshes_report_maps(monkeypatch):
     monkeypatch.setattr(host_io, "_h", FakeHost)
     mesh = host_io.model_identity(0)["meshes"][0]
     assert mesh["maps"] == {"roughness": True, "metalness": False, "normal": False}
+
+
+# Bridge PBR (plan 2026-10-09-bridge-pbr Task 4): per-shape material
+# overrides are production data (NOT developer-gated); the A/B switch is.
+
+@pytest.mark.parametrize("name", ["set_bridge_material_overrides", "set_bridge_pbr_enabled"])
+def test_pbr_binding_exists(host_module, name):
+    assert hasattr(host_module, name)
+
+
+def test_material_overrides_with_a_stale_id_never_raise(host_module):
+    host_module.set_bridge_material_overrides(host_module.InstanceId(), [(0, 0.5, -1.0)])
+    host_module.set_bridge_material_overrides(None, [])
+
+
+def test_material_overrides_on_a_live_bridge_never_raise(dbridge):
+    h, iid = dbridge
+    h.set_bridge_material_overrides(iid, [(0, 0.5, -1.0), (3, -1.0, 1.0)])
+    h.set_bridge_material_overrides(iid, [])
+    h.set_bridge_material_overrides(None, [])
+    h.set_bridge_pbr_enabled(False)   # no-op without --developer; never raises
+
+
+def test_host_io_pbr_wrappers_degrade_headless(monkeypatch):
+    from engine import host_io
+    monkeypatch.setattr(host_io, "_h", None)
+    host_io.set_bridge_material_overrides(0, [(0, 0.5, -1.0)])
+    host_io.set_bridge_pbr_enabled(False)

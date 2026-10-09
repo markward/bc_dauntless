@@ -899,6 +899,8 @@ void reset_frame_state() {
 
     // Bridge editor tint: its model handle dies with this session's models.
     g_bridge_highlight = dauntless::BridgeHighlight{};
+    // Bridge PBR material overrides are keyed by model handle too.
+    if (g_bridge_pass) g_bridge_pass->clear_material_overrides();
 
     // Motion blur reprojects against the previous exterior frame's viewproj.
     // Left set, frame 1 of a new session smears against the OLD camera.
@@ -4164,7 +4166,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("set_bridge_debug_view",
           [](int v) {
               if (!dauntless::is_developer_mode()) return;
-              v = std::clamp(v, 0, 5);
+              v = std::clamp(v, 0, 10);
               g_bridge_debug_view = v;
               if (g_bridge_pass)
                   g_bridge_pass->set_debug_view(
@@ -4173,7 +4175,38 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("view"),
           "DEV ONLY (--developer; no-op otherwise): Developer Options -> "
           "Lighting tab's Bridge Debug View row. 0 Off, 1 Normals, "
-          "2 Light Only, 3 AO Only, 4 Triangle ID, 5 Mesh ID.");
+          "2 Light Only, 3 AO Only, 4 Triangle ID, 5 Mesh ID, 6 Roughness, "
+          "7 Metalness, 8 Specular Only, 9 Probe Mirror, 10 Map Normals "
+          "(6-10 show only where bridge PBR runs).");
+
+    // Bridge PBR per-shape material overrides (spec 2026-10-08-bridge-emitters
+    // §9.2 source B). Production data: NOT developer-gated. None / stale clears.
+    m.def("set_bridge_material_overrides",
+          [](py::object instance_id, std::vector<std::tuple<int, float, float>> overrides) {
+              if (!g_bridge_pass) return;
+              if (instance_id.is_none()) { g_bridge_pass->clear_material_overrides(); return; }
+              scenegraph::Instance* inst = nullptr;
+              try {
+                  inst = g_world.get(instance_id.cast<scenegraph::InstanceId>());
+              } catch (const py::cast_error&) {
+                  inst = nullptr;   // not an InstanceId: treated as stale
+              }
+              if (inst == nullptr) { g_bridge_pass->clear_material_overrides(); return; }
+              std::vector<renderer::BridgeMaterialOverride> v;
+              v.reserve(overrides.size());
+              for (const auto& [mesh, r, mt] : overrides) v.push_back({mesh, r, mt});
+              g_bridge_pass->set_material_overrides(inst->model_handle, std::move(v));
+          },
+          py::arg("instance_id"), py::arg("overrides"),
+          "Per-mesh roughness/metalness overrides for the bridge (mesh, rough, metal; "
+          "< 0 = none). None or a stale id clears. Never raises.");
+
+    m.def("set_bridge_pbr_enabled",
+          [](bool on) {
+              if (!dauntless::is_developer_mode() || !g_bridge_pass) return;
+              g_bridge_pass->set_pbr_enabled(on);
+          },
+          py::arg("on"), "Developer-only A/B: bridge PBR on/off (default on).");
 
     m.def("bridge_debug_view",
           [] { return g_bridge_debug_view; },

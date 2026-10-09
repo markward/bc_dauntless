@@ -64,6 +64,7 @@ add_executable(renderer_tests
     bridge_pbr_test.cc
     bridge_ao_test.cc
     bridge_highlight_test.cc
+    bridge_pbr_frame_test.cc
     skinned_bridge_test.cc
     head_weld_seam_test.cc
     officer_jaw_test.cc

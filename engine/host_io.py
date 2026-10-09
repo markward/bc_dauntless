@@ -81,6 +81,7 @@ _OPTIONAL_BINDINGS = frozenset({
     "set_swap_interval", "swap_interval",
     "set_cursor_shape",
     "ray_trace_mesh_pick", "model_identity", "set_bridge_highlight",
+    "set_bridge_material_overrides", "set_bridge_pbr_enabled",
 })
 
 
@@ -581,6 +582,24 @@ def set_bridge_highlight(instance_id, selected, hover) -> None:
     fn = getattr(_h, "set_bridge_highlight", None) if _h is not None else None
     if fn is not None:
         fn(instance_id, int(selected), int(hover))
+
+
+def set_bridge_material_overrides(instance_id, overrides) -> None:
+    """Bridge PBR per-shape material overrides (production data, applied
+    without --developer): `overrides` is [(mesh, roughness, metalness)], a
+    channel < 0 meaning "no override". None or a stale id clears. No-op
+    headless."""
+    fn = getattr(_h, "set_bridge_material_overrides", None) if _h is not None else None
+    if fn is not None:
+        fn(instance_id, [(int(m), float(r), float(mt)) for m, r, mt in overrides])
+
+
+def set_bridge_pbr_enabled(on) -> None:
+    """Developer-only A/B switch for bridge PBR (default on). No-op headless
+    and without --developer."""
+    fn = getattr(_h, "set_bridge_pbr_enabled", None) if _h is not None else None
+    if fn is not None:
+        fn(bool(on))
 
 
 # ── Star map (Helm → Set Course) ─────────────────────────────────────────────

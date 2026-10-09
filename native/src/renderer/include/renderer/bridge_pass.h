@@ -11,6 +11,9 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace scenegraph { class World; struct Camera; }
 
@@ -21,14 +24,32 @@ class Pipeline;
 /// Developer-only bridge debug views (Developer Options -> Lighting tab).
 /// Off is production: byte-identical to no debug support existing at all.
 /// Selected via BridgePass::set_debug_view; see bridge.frag for how each is
-/// drawn. The viewscreen feed (u_unlit) ignores every value here.
+/// drawn. The viewscreen feed (u_unlit) ignores every value here. 6..10 are
+/// the PBR views: they show only where the PBR path runs (u_pbr != 0); on a
+/// comm set or with PBR off they fall through to the lit colour. 9 (probe
+/// mirror) draws the lit colour until the probes exist (plan Task 6).
 enum class BridgeDebugView : int {
-    Off        = 0,
-    Normals    = 1,
-    LightOnly  = 2,
-    AoOnly     = 3,
-    TriangleId = 4,
-    MeshId     = 5,
+    Off          = 0,
+    Normals      = 1,
+    LightOnly    = 2,
+    AoOnly       = 3,
+    TriangleId   = 4,
+    MeshId       = 5,
+    Roughness    = 6,
+    Metalness    = 7,
+    SpecularOnly = 8,
+    ProbeMirror  = 9,
+    MapNormals   = 10,
+};
+
+/// One per-shape PBR material override (spec 2026-10-08-bridge-emitters
+/// §9.2 source B). `mesh` indexes Model::meshes; a channel `< 0` means "no
+/// override" for that channel. Per channel the first hit wins: map ->
+/// override -> default (roughness 1, metalness 0).
+struct BridgeMaterialOverride {
+    int   mesh = -1;
+    float roughness = -1.0f;
+    float metalness = -1.0f;
 };
 
 /// Renders the bridge interior in two sub-passes, both through bridge.frag:
@@ -137,6 +158,20 @@ public:
     /// restores the real clock.
     void set_highlight_time(double t) { highlight_time_override_ = t; }
 
+    /// Per-shape roughness/metalness overrides for ONE model (the bridge).
+    /// Replaces any previous set (including another model's). Production
+    /// data: applied to the main bridge view only (never comm sets, never
+    /// officers). A later entry for the same mesh wins.
+    void set_material_overrides(unsigned long long model_handle,
+                                std::vector<BridgeMaterialOverride> overrides);
+    void clear_material_overrides();
+
+    /// A/B switch for the bridge PBR path (default on = production). Off draws
+    /// the legacy downlight shading, byte-identical to before PBR existed.
+    /// Comm sets always draw legacy, whatever this says.
+    void set_pbr_enabled(bool on) { pbr_enabled_ = on; }
+    bool pbr_enabled() const { return pbr_enabled_; }
+
 private:
     /// Lazily-allocated 1x1 white texture, used as a fallback for any
     /// bridge mesh whose Base-stage texture failed to load. Same role
@@ -174,6 +209,12 @@ private:
     double             highlight_time_override_ = -1.0;
     /// Pulse phase in [0, 1): the override when set, else the real clock.
     float highlight_phase() const;
+
+    /// Bridge PBR: the A/B switch and the per-shape overrides of the model
+    /// `overrides_model_` (0 = none), keyed by mesh index -> (rough, metal).
+    bool pbr_enabled_ = true;
+    unsigned long long overrides_model_ = 0;
+    std::unordered_map<int, std::pair<float, float>> overrides_;
 };
 
 }  // namespace renderer

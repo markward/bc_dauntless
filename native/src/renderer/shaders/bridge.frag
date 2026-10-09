@@ -69,6 +69,22 @@ uniform int u_mesh_id;
 uniform int   u_highlight;
 uniform float u_highlight_time;
 
+// ── Bridge PBR (spec 2026-10-08-bridge-emitters §9) ────────────────────
+// u_pbr = 1 on the main bridge view (static bridge + officers) unless the
+// developer A/B switch turned it off; 0 for comm sets, which keep the legacy
+// shading below. Per channel the first hit wins: map -> per-shape override
+// (< 0 = none) -> default (roughness 1, metalness 0). Debug views 6..10 are
+// read only inside the PBR branch. CPU twins: renderer/bridge_pbr.h.
+uniform int       u_pbr;
+uniform sampler2D u_normal_map;   // unit 1: tangent-space normal (Bump stage)
+uniform sampler2D u_rough_map;    // unit 5: roughness in .r
+uniform sampler2D u_metal_map;    // unit 6: metalness in .r
+uniform int       u_has_normal_map;
+uniform int       u_has_rough_map;
+uniform int       u_has_metal_map;
+uniform float     u_rough_override;
+uniform float     u_metal_override;
+
 out vec4 FragColor;
 
 // Integer hash (Squirrel3-style, as used by the bridge-lighting debug-view
@@ -142,14 +158,71 @@ vec3 apply_highlight(vec3 c) {
 // approaches u_diffuse_max (set under bloom's 0.9 threshold) and never
 // reaches it. Scales all channels by the max channel's roll, so hue holds.
 // Must match the C++ twin renderer::diffuse_ceiling (bridge_lighting_tuning.h).
-vec3 diffuse_ceiling(vec3 c) {
-    if (u_diffuse_max <= 0.0) return c;
+vec3 diffuse_ceiling(vec3 c, float diffuse_max) {
+    if (diffuse_max <= 0.0) return c;
     float b = max(max(c.r, c.g), c.b);
-    float knee = 0.7 * u_diffuse_max;
+    float knee = 0.7 * diffuse_max;
     if (b <= knee) return c;
-    float range = u_diffuse_max - knee;
+    float range = diffuse_max - knee;
     float r = knee + range * (1.0 - exp(-(b - knee) / range));
     return c * (r / b);
+}
+vec3 diffuse_ceiling(vec3 c) { return diffuse_ceiling(c, u_diffuse_max); }
+
+// ── PBR maths: GLSL twins of renderer::pbr (bridge_pbr.h), same names and
+// formulas. The pipeline is gamma-space, so the bridge decodes to light in
+// linear and re-encodes before the HDR target.
+const float kGamma = 2.2;
+const float kPi = 3.14159265358979;
+
+vec3 decode(vec3 c) { return pow(max(c, vec3(0.0)), vec3(kGamma)); }
+vec3 encode(vec3 c) { return pow(max(c, vec3(0.0)), vec3(1.0 / kGamma)); }
+
+float D_ggx(float n_dot_h, float rough) {
+    float a = rough * rough, a2 = a * a;
+    float d = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
+    return a2 / max(kPi * d * d, 1e-7);
+}
+float G_schlick_ggx(float n_dot_x, float k) { return n_dot_x / (n_dot_x * (1.0 - k) + k); }
+float G_smith(float n_dot_v, float n_dot_l, float rough) {
+    float k = (rough + 1.0) * (rough + 1.0) / 8.0;
+    return G_schlick_ggx(n_dot_v, k) * G_schlick_ggx(n_dot_l, k);
+}
+vec3 F_schlick(float cos_t, vec3 f0) {
+    float m = pow(clamp(1.0 - cos_t, 0.0, 1.0), 5.0);
+    return f0 + (vec3(1.0) - f0) * m;
+}
+vec3 f0_for(vec3 albedo_lin, float metal) { return mix(vec3(0.04), albedo_lin, metal); }
+
+// Lit diffuse is capped (encoded) under bloom; specular adds on top uncapped.
+vec3 combine(vec3 diffuse_lin, vec3 spec_lin, float diffuse_max) {
+    vec3 d = encode(diffuse_lin);
+    vec3 ds = encode(diffuse_lin + spec_lin);
+    return diffuse_ceiling(d, diffuse_max) + max(ds - d, vec3(0.0));
+}
+
+// The pow base is clamped at 0, as in the C++ twin (NaN guard).
+float specular_occlusion(float n_dot_v, float ao, float rough) {
+    return clamp(pow(max(n_dot_v + ao, 0.0), exp2(-16.0 * rough - 1.0)) - 1.0 + ao, 0.0, 1.0);
+}
+
+// Tangent frame from screen-space derivatives (no mesh tangents) — the July
+// spike's pbr_perturb_normal.
+vec3 perturb_normal(vec3 N, vec2 uv, vec3 map_n) {
+    vec3 dp1 = dFdx(v_world), dp2 = dFdy(v_world);
+    vec2 duv1 = dFdx(uv), duv2 = dFdy(uv);
+    vec3 dp2perp = cross(dp2, N), dp1perp = cross(N, dp1);
+    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+    float m = max(dot(T, T), dot(B, B));
+    if (m < 1e-12) return N;          // no UV gradient (UV-less mesh): no tangent frame
+    float invmax = inversesqrt(m);
+    return normalize(mat3(T * invmax, B * invmax, N) * map_n);
+}
+
+float channel(int has_map, sampler2D map, float override_v, float dflt) {
+    if (has_map != 0) return texture(map, v_uv).r;
+    return override_v >= 0.0 ? override_v : dflt;
 }
 
 void main() {
@@ -173,6 +246,32 @@ void main() {
     if (u_debug_view == 4 || u_debug_view == 5) {
         uint id = uint(u_debug_view == 4 ? gl_PrimitiveID : u_mesh_id);
         FragColor = vec4(hash_color(id), 1.0);
+        return;
+    }
+    if (u_pbr != 0) {
+        vec3 N = n;
+        if (u_has_normal_map != 0)
+            N = perturb_normal(n, base_uv, texture(u_normal_map, base_uv).xyz * 2.0 - 1.0);
+        float rough = clamp(channel(u_has_rough_map, u_rough_map, u_rough_override, 1.0), 0.04, 1.0);
+        float metal = clamp(channel(u_has_metal_map, u_metal_map, u_metal_override, 0.0), 0.0, 1.0);
+        if (u_debug_view == 6) { FragColor = vec4(vec3(rough), 1.0); return; }
+        if (u_debug_view == 7) { FragColor = vec4(vec3(metal), 1.0); return; }
+        if (u_debug_view == 10) { FragColor = vec4(N * 0.5 + 0.5, 1.0); return; }
+        vec3 albedo = (u_debug_view == 2) ? vec3(1.0) : decode(base.rgb);
+        vec3 V = normalize(u_eye - v_world);
+        float NdotV = max(dot(N, V), 1e-4);
+        vec3 F0 = f0_for(albedo, metal);
+        vec3 Fv = F_schlick(NdotV, F0);
+        float h = clamp(dot(N, u_up) * 0.5 + 0.5, 0.0, 1.0);
+        // The downlight (AO included) is authored in display space: decode
+        // the WHOLE legacy received term, so AO reads exactly as it does today.
+        vec3 received = decode(u_ambient * mix(u_down_bottom, u_down_top, h) * ao);
+        vec3 diffuse = albedo * (1.0 - metal) * (vec3(1.0) - Fv) * received;
+        vec3 spec = vec3(0.0);               // Task 6 adds the probe; Task 7 the spots
+        if (u_debug_view == 8) { FragColor = vec4(encode(spec), 1.0); return; }
+        vec3 col = combine(diffuse, spec, u_diffuse_max) * u_viewscreen_brightness;
+        col = mix(col, vec3(1.0), clamp(u_viewscreen_flash, 0.0, 1.0));
+        FragColor = vec4(apply_highlight(col), 1.0);
         return;
     }
     vec3 albedo = (u_debug_view == 2) ? vec3(1.0) : base.rgb;

@@ -123,7 +123,10 @@ void draw_mesh(const assets::Model& model,
                GLuint face_b = 0,
                float face_mix = 0.0f,
                int mesh_id = 0,
-               int highlight = 0) {
+               int highlight = 0,
+               int pbr = 0,
+               float rough_override = -1.0f,
+               float metal_override = -1.0f) {
     shader.set_mat4("u_model", world);
     // Debug view 5 (Mesh ID): a stable per-draw counter, reset each render().
     shader.set_int("u_mesh_id", mesh_id);
@@ -184,6 +187,29 @@ void draw_mesh(const assets::Model& model,
     } else {
         glBindTexture(GL_TEXTURE_2D, white_fallback);
     }
+    // Bridge PBR (spec 2026-10-08-bridge-emitters §9.2): per channel the first
+    // hit wins -- map, then the per-shape override (< 0 = none), then the
+    // default. Units 1 (normal / Bump), 5 (roughness), 6 (metalness) are bound
+    // on EVERY draw, the white fallback when the material has no map, so no
+    // declared sampler is ever left on a stale or unbound unit. Set every draw
+    // so a flag never sticks to the next mesh.
+    shader.set_int("u_pbr", pbr);
+    shader.set_float("u_rough_override", rough_override);
+    shader.set_float("u_metal_override", metal_override);
+    auto bind_map = [&](GLenum unit, assets::Material::StageSlot slot,
+                        const char* has_name) {
+        const int ti = mat.stages[static_cast<std::size_t>(slot)].texture_index;
+        GLuint id = 0;
+        if (ti >= 0 && ti < static_cast<int>(model.textures.size()))
+            id = model.textures[static_cast<std::size_t>(ti)].id();
+        shader.set_int(has_name, id != 0 ? 1 : 0);
+        glActiveTexture(unit);
+        glBindTexture(GL_TEXTURE_2D, id != 0 ? id : white_fallback);
+    };
+    bind_map(GL_TEXTURE1, assets::Material::StageSlot::Bump, "u_has_normal_map");
+    bind_map(GL_TEXTURE5, assets::Material::StageSlot::Roughness, "u_has_rough_map");
+    bind_map(GL_TEXTURE6, assets::Material::StageSlot::Metalness, "u_has_metal_map");
+    glActiveTexture(GL_TEXTURE0);
     glBindVertexArray(mesh.vao());
     glDrawElements(GL_TRIANGLES, mesh.index_count(), GL_UNSIGNED_INT, nullptr);
 }
@@ -250,7 +276,15 @@ void BridgePass::render(const scenegraph::World& world,
         s.set_int("u_debug_view", static_cast<int>(debug_view_));
         // Selection pulse phase: a real clock, once per sub-pass.
         s.set_float("u_highlight_time", pulse_phase);
+        // Bridge PBR material maps: own units (draw_mesh binds them per draw).
+        s.set_int("u_normal_map", 1);
+        s.set_int("u_rough_map", 5);
+        s.set_int("u_metal_map", 6);
     };
+    // PBR on the main bridge view only: a comm set (another ship's room on
+    // the viewscreen) keeps the legacy shading -- the probes would hold the
+    // PLAYER's bridge, the wrong room to reflect.
+    const int pbr = (pbr_enabled_ && main_bridge) ? 1 : 0;
 
     // Developer Options debug view 5 (Mesh ID): a per-draw counter, reset
     // every render() call so numbering is stable within a frame.
@@ -301,10 +335,20 @@ void BridgePass::render(const scenegraph::World& world,
                 if (mi == highlight_selected_) hl = 2;
                 else if (mi == highlight_hover_) hl = 1;
             }
+            // Per-shape material override, only for the overrides' model.
+            float rough_ov = -1.0f, metal_ov = -1.0f;
+            if (overrides_model_ != 0 && mh == overrides_model_) {
+                const int mi = static_cast<int>(&mesh - m.meshes.data());
+                if (auto it = overrides_.find(mi); it != overrides_.end()) {
+                    rough_ov = it->second.first;
+                    metal_ov = it->second.second;
+                }
+            }
             draw_mesh(m, mesh, mat, base_shader, w, white, t, ov, flip,
                       viewscreen_brightness_, viewscreen_flash_,
                       /*face_blend=*/false, /*face_a=*/0u, /*face_b=*/0u,
-                      /*face_mix=*/0.0f, mesh_id_counter++, hl);
+                      /*face_mix=*/0.0f, mesh_id_counter++, hl,
+                      pbr, rough_ov, metal_ov);
         });
 
     // ── Sub-pass B: skinned bridge characters ──────────────────────────────
@@ -353,12 +397,19 @@ void BridgePass::render(const scenegraph::World& world,
                     draw_mesh(*m, mesh, mat, skin_shader, inst.world, white, t, 0u,
                               /*override_flip_v=*/true, 1.0f, 0.0f,
                               face, inst.face_tex_a, inst.face_tex_b,
-                              inst.face_mix, mesh_id_counter++);
+                              inst.face_mix, mesh_id_counter++,
+                              /*highlight=*/0, pbr);  // officers: no overrides
                 }
             }
         });
 
     glBindVertexArray(0);
+    // The PBR map units (bound per draw) never leak to the next pass.
+    for (GLenum unit : {GL_TEXTURE1, GL_TEXTURE5, GL_TEXTURE6}) {
+        glActiveTexture(unit);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+    glActiveTexture(GL_TEXTURE0);
     if (ao_on) {
         // Don't leak the raw sampler or the AO textures to other passes: next
         // frame's nested normal pre-pass renders INTO the depth texture's FBO
@@ -371,6 +422,20 @@ void BridgePass::render(const scenegraph::World& world,
         glBindTexture(GL_TEXTURE_2D, 0);
         glActiveTexture(GL_TEXTURE0);
     }
+}
+
+void BridgePass::set_material_overrides(
+        unsigned long long model_handle,
+        std::vector<BridgeMaterialOverride> overrides) {
+    overrides_.clear();
+    overrides_model_ = model_handle;
+    for (const auto& o : overrides)
+        overrides_[o.mesh] = {o.roughness, o.metalness};
+}
+
+void BridgePass::clear_material_overrides() {
+    overrides_.clear();
+    overrides_model_ = 0;
 }
 
 float BridgePass::highlight_phase() const {
