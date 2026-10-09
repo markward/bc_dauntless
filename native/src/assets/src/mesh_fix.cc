@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -141,8 +142,9 @@ std::optional<MeshFix> parse_mesh_fix(std::string_view text, std::string* error)
 
         const bool has_merges = j.contains("merges");
         const bool has_edits = j.contains("shape_edits");
-        if (!has_merges && !has_edits)
-            return fail("mesh fix has neither \"merges\" nor \"shape_edits\"");
+        const bool has_textures = j.contains("textures");
+        if (!has_merges && !has_edits && !has_textures)
+            return fail("mesh fix has none of \"merges\", \"shape_edits\", \"textures\"");
 
         if (has_merges) {
             for (const auto& jm : j.at("merges")) {
@@ -177,6 +179,13 @@ std::optional<MeshFix> parse_mesh_fix(std::string_view text, std::string* error)
             auto edits = decode_shape_edits(*bytes, &err);
             if (!edits) return fail(err);
             fix.shape_edits = std::move(*edits);
+        }
+
+        if (has_textures) {
+            for (const auto& jt : j.at("textures")) {
+                fix.textures.push_back({jt.at("block").get<std::uint32_t>(),
+                                        jt.at("albedo").get<std::string>()});
+            }
         }
 
         return fix;
@@ -558,6 +567,56 @@ void apply_edit(nif::File& file, const ShapeEdit& e, const EditPlan& plan) {
     d.bound_radius = r;
 }
 
+/// Validate texture op `t` (index `tex_idx`) against the UNMODIFIED file.
+/// Returns "" or the refusal reason ("texture N: ...").
+std::string validate_texture(const nif::File& file, const MeshFixTexture& t,
+                             std::size_t tex_idx) {
+    const std::string prefix = "texture " + std::to_string(tex_idx) + ": ";
+    if (t.block >= file.blocks.size()) return prefix + "block out of range";
+    if (!std::holds_alternative<nif::NiTriShape>(file.blocks[t.block]))
+        return prefix + "block is not a NiTriShape";
+    if (t.albedo.empty()) return prefix + "albedo is empty";
+    if (t.albedo.find_first_of("/\\") != std::string::npos)
+        return prefix + "albedo must be a bare filename (no directory)";
+    // The NIF texture loader decodes TGA only (model_build.cc: decode_tga).
+    const auto dot = t.albedo.find_last_of('.');
+    std::string ext = dot == std::string::npos ? "" : t.albedo.substr(dot);
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (ext != ".tga") return prefix + "albedo must be a .tga file";
+    return "";
+}
+
+/// Give shape `t.block` its OWN NiTextureProperty -> external NiImage
+/// (`t.albedo`), appended with fresh link ids. gather_material_inputs visits
+/// the shape's own property_links before any ancestor's, so it wins over the
+/// inherited (shared) texture while siblings keep theirs. Field values mirror
+/// the stock DBridge pair (NiTextureProperty flags 0; NiImage defaults).
+void apply_texture(nif::File& file, const MeshFixTexture& t) {
+    // Identity link ids (empty block_ids) for synthetic files: link == index.
+    const bool identity = file.block_ids.empty();
+    std::uint32_t next_id = 0;
+    for (std::uint32_t id : file.block_ids) next_id = std::max(next_id, id);
+    auto fresh_id = [&]() -> std::uint32_t {
+        if (identity) return static_cast<std::uint32_t>(file.blocks.size());
+        return ++next_id;
+    };
+    const std::uint32_t image_id = fresh_id();
+    nif::NiImage img;
+    img.use_external = 1;
+    img.file_name = t.albedo;
+    file.blocks.push_back(img);
+    if (!identity) file.block_ids.push_back(image_id);
+
+    const std::uint32_t prop_id = fresh_id();
+    nif::NiTextureProperty prop;
+    prop.image_link = image_id;
+    file.blocks.push_back(prop);
+    if (!identity) file.block_ids.push_back(prop_id);
+
+    std::get<nif::NiTriShape>(file.blocks[t.block]).av.property_links.push_back(prop_id);
+}
+
 }  // namespace
 
 glm::mat4 nif_block_world(const nif::File& file, std::size_t block_index) {
@@ -611,11 +670,31 @@ std::string apply_mesh_fix(nif::File& file, const MeshFix& fix) {
         }
     }
 
+    // Texture ops are independent of geometry: a block may take one texture
+    // op whether or not it is also merged or edited.
+    std::unordered_map<std::uint32_t, std::size_t> texture_owner;  // block -> first op
+    for (std::size_t i = 0; i < fix.textures.size(); ++i) {
+        std::string err = validate_texture(file, fix.textures[i], i);
+        if (!err.empty()) return err;
+        auto [it, inserted] = texture_owner.try_emplace(fix.textures[i].block, i);
+        if (!inserted) {
+            return "texture " + std::to_string(i) + ": block " +
+                   std::to_string(fix.textures[i].block) +
+                   " already has texture op " + std::to_string(it->second);
+        }
+    }
+
     for (std::size_t i = 0; i < fix.merges.size(); ++i) {
         apply_merge(file, fix.merges[i], plans[i]);
     }
     for (std::size_t i = 0; i < fix.shape_edits.size(); ++i)
         apply_edit(file, fix.shape_edits[i], edit_plans[i]);
+    if (!fix.textures.empty()) {
+        // Appending may reallocate `blocks`; File::root points at block 0.
+        const bool had_root = file.root.ptr != nullptr;
+        for (const auto& t : fix.textures) apply_texture(file, t);
+        if (had_root) file.root = nif::BlockHandle{&file.blocks.front()};
+    }
     return "";
 }
 

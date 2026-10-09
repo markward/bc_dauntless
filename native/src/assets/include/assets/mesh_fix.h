@@ -3,7 +3,8 @@
 // the bridge-shape-diff shape-edit op (spec:
 // docs/superpowers/specs/2026-10-09-bridge-shape-diff-design.md).
 //
-// A "mesh fix" file carries "merges", "shape_edits", or both. A merge
+// A "mesh fix" file carries any non-empty combination of "merges",
+// "shape_edits" and "textures" (per-shape albedo swaps). A merge
 // describes how to merge a small patch of geometry (an ID cut left over from
 // BC's Federation saucer sections) back into its parent target shape at NIF
 // load time. A shape edit is an opaque "BSD1" binary payload (base64 in the
@@ -70,11 +71,21 @@ struct ShapeEdit {
     std::vector<std::array<std::uint16_t, 3>> add_triangles;
 };
 
+// One per-shape albedo swap (spec 2026-10-09-bridge-shape-diff §6): the
+// NiTriShape at `block` (block-array index) samples `albedo` (a bare .tga
+// filename, resolved through the model's texture search dirs like any stock
+// NiImage) instead of the texture it inherits. Albedo only -- no glow.
+struct MeshFixTexture {
+    std::uint32_t block = 0;
+    std::string albedo;
+};
+
 // Top-level fix-file contents.
 struct MeshFix {
     int format = 1;
     std::vector<MeshFixMerge> merges;
     std::vector<ShapeEdit> shape_edits;
+    std::vector<MeshFixTexture> textures;
 };
 
 // FNV-1a 64-bit hash of `bytes`, rendered as 16 lowercase hex digits.
@@ -99,7 +110,9 @@ std::optional<std::vector<ShapeEdit>> decode_shape_edits(std::string_view bytes,
 // Identity for a block with no NiNode ancestors.
 glm::mat4 nif_block_world(const nif::File& file, std::size_t block_index);
 
-// Apply every merge and shape edit in `fix` to `file`, or none of them.
+// Apply every merge, shape edit and texture op in `fix` to `file`, or none
+// of them. A texture op appends an NiImage + NiTextureProperty block pair
+// (fresh link ids) and links the property onto the shape itself.
 // Returns "" on success, otherwise the reason and leaves `file` unchanged.
 std::string apply_mesh_fix(nif::File& file, const MeshFix& fix);
 
