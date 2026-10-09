@@ -1,7 +1,7 @@
 # Bridge Shape Diff — design (living spike spec)
 
 **Date:** 2026-10-09
-**Status:** iteration 1 implemented (move-only); awaiting Mark's first live edit
+**Status:** iteration 1 implemented (moves and UV0 edits; topology refused); awaiting Mark's first live edit
 **Branch:** `spike/bridge-shape-diff` (worktree `.claude/worktrees/bridge-shape-diff`)
 **Living document:** updated after every accepted iteration (§9).
 
@@ -49,6 +49,7 @@ Probe linked against our own `libnif` (scratch only).
 | Shape transforms | shape blocks themselves are identity, but the **composed world matrix** (shape × every ancestor `NiNode`) is non-identity for 92 of 145 shapes: 61 are a pure 180° rotation (mostly about X, a few about Y), 12 a pure 90° about Z, 6 a pure ≈30.5° about Z, and the rest compose rotations about more than one axis; scale is always 1 | Model↔local must invert the **full** `nif_block_world`, not just translation |
 | Match groups | none | Nothing to keep consistent |
 | Load path | `host_loop.realize_set` → `load_model(..., interior=True)` → `AssetCache::load` → `apply_mesh_fix` → `build_model` | Fixes already apply to sets; normal gen + T-junction repair run after the edit |
+| Duplicate triangles | **7,628 of 8,580** DBridge triangles are exact duplicates (same vertex indices, same winding) | Blender keeps only one copy on import, so a move or UV edit affects both copies automatically (the diff records the original-vertex index, not the triangle); but any future triangle **removal** must remove every duplicate of that triangle, or the dropped copy keeps rendering |
 
 ---
 
@@ -126,9 +127,12 @@ iteration actually needs deletions.
 An original triangle "matches" an edit face when its three original vertices
 map to the face's three corners with the same winding.
 
-`diff --expect move-only` (iteration 1) fails if anything other than `move`
-appears. The tool prints a per-shape summary (moved / uv / added verts /
-removed tris / added tris).
+**Iteration 1, as built:** `diff` records `move` and `uv` together (a single
+edit can move vertices and re-map UVs at once); it refuses anything that
+needs topology (`add vertex`, `remove triangle`, `add triangle`) and a UV
+edit that would need a vertex split -- one original vertex whose corners
+disagree on the new UV (both iteration 2+). The tool prints a per-shape
+summary (`block N: M vertices moved, K UVs changed`).
 
 ---
 
@@ -222,6 +226,7 @@ the scratchpad; in game, Developer Options → Lighting → Bridge Debug View
 | # | Goal | Status | Notes |
 |---|---|---|---|
 | 1 | Move-only gap closing: export, diff, loader end to end | implemented, not yet live-verified | |
+| 1b | UV re-map of console seats (b0224/b0255) | tool support built; awaiting Mark's edit | `diff` now records `uv` alongside `move`; the loader (`apply_shape_edits`) already applied `uv` records before this task -- only the Python side refused them |
 | 2 | Turbolift header reshape: triangle remove/add | — | |
 | 3 | Extruded side panels: new verts/tris/UVs | — | Open: side-face texturing. Lean: collapse the new faces' UVs onto the panel border (stretch edge texels, no new texture); alternative: a project-owned trim texture |
 
@@ -232,11 +237,17 @@ the scratchpad; in game, Developer Options → Lighting → Bridge Debug View
 - **No separate preview step.** §8's `preview` subcommand was dropped: Blender's
   own `edit.obj` export already *is* the preview (reopen it, or diff and inspect
   the fix). `bridge_shape_diff.py` ships only `export` and `diff`.
-- `diff` records **moves only** and refuses anything else: topology changes
-  (added/removed vertices or faces) and corner-UV changes on an otherwise
-  move-only edit are both refused with an iteration-2 message — the latter
-  specifically because Blender's Vertex/Edge Slide defaults to "Correct UVs",
-  which silently drags UVs along with a gap-closing move.
+- `diff` records **moves and UV0 edits** and refuses anything else: topology
+  changes (added/removed vertices or faces) are always refused with an
+  iteration-2 message. A corner UV change is paired with its original
+  vertex by matching the NIF's own UV0 for that vertex (seam duplicates at
+  the same position can disagree on UV; the corner's UV, not just its
+  position, says which original it is) and recorded as a `uv` edit --
+  except when one original vertex's corners disagree on the new value,
+  which needs a vertex split and is refused as iteration 2. This matters
+  because Blender's Vertex/Edge Slide defaults to "Correct UVs", which
+  silently drags UVs along with a gap-closing move: that case is now
+  recorded correctly rather than refused.
 - Textures resolve through **ancestor `NiNode`s**, not just the shape's own
   property links — DBridge's `NiTextureProperty` sits on the parent, not the
   shape (§2's "Shape names" row). The walk mirrors the renderer's own
