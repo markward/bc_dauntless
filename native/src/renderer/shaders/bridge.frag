@@ -85,6 +85,16 @@ uniform int       u_has_metal_map;
 uniform float     u_rough_override;
 uniform float     u_metal_override;
 
+// ── Emissive sibling maps (task 17) ────────────────────────────────────
+// `<stem>_emissive{,_y,_r}` beside the albedo; BridgePass binds the variant
+// for the player's alert level (main bridge view; comm sets the default).
+// RGB = emitted colour, alpha ignored, sampled with the base UV. Added AFTER
+// the diffuse ceiling, so it can exceed bloom. Both shading paths; never in a
+// debug view, the AO pre-pass or a probe capture.
+uniform sampler2D u_emissive_map;    // unit 10 (renderer::kBridgeEmissiveUnit)
+uniform int       u_has_emissive_map;
+uniform float     u_emissive_scale;  // renderer::kEmissiveScale
+
 // ── Reflection probes (plan 2026-10-09-bridge-pbr Task 6) ──────────────
 // Two prefiltered captures of the room -- green (unit 7) and yellow/red
 // (unit 8) -- cross-faded by u_probe_mix, box-projected against the bridge
@@ -310,6 +320,11 @@ void accumulate_spots(vec3 N, vec3 V, float NdotV, vec3 albedo, float metal,
     }
 }
 
+vec3 emissive_term(vec2 uv) {
+    if (u_has_emissive_map == 0 || u_debug_view != 0) return vec3(0.0);
+    return texture(u_emissive_map, uv).rgb * u_emissive_scale;
+}
+
 float channel(int has_map, sampler2D map, float override_v, float dflt) {
     if (has_map != 0) return texture(map, v_uv).r;
     return override_v >= 0.0 ? override_v : dflt;
@@ -406,7 +421,8 @@ void main() {
         // goes through the ceiling in combine(); only specular may exceed it.
         accumulate_spots(N, V, NdotV, albedo, metal, rough, F0, diffuse, spec);
         if (u_debug_view == 8) { FragColor = vec4(encode(spec), 1.0); return; }
-        vec3 col = combine(diffuse, spec, u_diffuse_max) * u_viewscreen_brightness;
+        vec3 col = (combine(diffuse, spec, u_diffuse_max) + emissive_term(base_uv))
+                 * u_viewscreen_brightness;
         col = mix(col, vec3(1.0), clamp(u_viewscreen_flash, 0.0, 1.0));
         FragColor = vec4(apply_highlight(col), 1.0);
         return;
@@ -414,7 +430,8 @@ void main() {
     vec3 albedo = (u_debug_view == 2) ? vec3(1.0) : base.rgb;
     float h = clamp(dot(n, u_up) * 0.5 + 0.5, 0.0, 1.0);
     vec3 received = u_ambient * mix(u_down_bottom, u_down_top, h) * ao;
-    vec3 col = diffuse_ceiling(albedo * received) * u_viewscreen_brightness;
+    vec3 col = (diffuse_ceiling(albedo * received) + emissive_term(base_uv))
+             * u_viewscreen_brightness;
     col = mix(col, vec3(1.0), clamp(u_viewscreen_flash, 0.0, 1.0));
     FragColor = vec4(apply_highlight(col), 1.0);
 }

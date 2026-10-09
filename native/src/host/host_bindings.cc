@@ -262,6 +262,11 @@ renderer::Lighting g_bridge_lighting;
 // viewscreen shows another ship's room, whose lighting must not follow our
 // alert level.
 float g_bridge_ambient_scale = 1.0f;
+// Player alert level (0 green, 1 yellow, 2 red) choosing the bridge's
+// emissive sibling-map variant (BridgePass::set_alert_level). Per-frame
+// state like g_bridge_ambient_scale: pushed every frame by host_loop, reset
+// to green by reset_frame_state() (init and shutdown).
+int g_bridge_alert_level = 0;
 // Bridge AO quality preset (Low/Medium/High), set via set_bridge_quality().
 // Applied to g_bridge_pass's AO settings both where it is constructed and on
 // every set_bridge_quality() call, so a quality change takes effect even
@@ -876,6 +881,7 @@ void reset_frame_state() {
     g_lighting = renderer::Lighting{};
     g_bridge_lighting = renderer::Lighting{};
     g_bridge_ambient_scale = 1.0f;
+    g_bridge_alert_level = 0;
     g_bridge_quality = renderer::kDefaultBridgeQuality;
     g_bridge_pass_enabled = false;
     g_viewscreen_enabled = false;
@@ -1073,6 +1079,7 @@ void init(int width, int height, const std::string& title) {
                                  g_bridge_highlight.selected,
                                  g_bridge_highlight.hover);
     g_bridge_pass->set_alert_ambient_scale(g_bridge_ambient_scale);
+    g_bridge_pass->set_alert_level(g_bridge_alert_level);
     g_bridge_pass->set_probe_origin(g_bridge_probe.origin);
     g_bridge_pass->set_probe_scales(g_bridge_probe.green, g_bridge_probe.yellow_red);
     g_bridge_pass->set_probe_mix(g_bridge_probe.mix);
@@ -4412,6 +4419,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "unscaled bridge lighting, so viewscreen brightness stays constant "
           "across alert levels. Default 1.0.");
 
+    m.def("set_bridge_alert_level",
+          [](int level) {
+              g_bridge_alert_level = level;
+              if (g_bridge_pass) g_bridge_pass->set_alert_level(level);
+          },
+          py::arg("level"),
+          "Player alert level (0 green, 1 yellow, 2 red; anything else reads as "
+          "green) choosing each bridge material's emissive sibling map "
+          "(<stem>_emissive / _emissive_y / _emissive_r, falling back to the "
+          "default). Main bridge view only; comm sets show the default. Hard "
+          "switch. Default 0; init() and shutdown() reset it.");
+
     m.def("set_bridge_quality",
           [](int q) {
               g_bridge_quality = renderer::clamp_bridge_quality(q);
@@ -4595,10 +4614,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
               d["capture_pending"] = g_bridge_pass->probe_capture_pending();
               d["probes_valid"] = g_bridge_pass->probes_valid();
               d["alert_ambient_scale"] = g_bridge_pass->alert_ambient_scale();
+              d["alert_level"] = g_bridge_pass->alert_level();
               return d;
           },
           "Test/diagnostic snapshot of the bridge pass's probe state (origin, "
-          "scales, mix, capture_pending, probes_valid, alert_ambient_scale); "
+          "scales, mix, capture_pending, probes_valid, alert_ambient_scale, "
+          "alert_level); "
           "None before init().");
 
     m.def("request_bridge_probe_capture",

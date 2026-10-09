@@ -437,3 +437,56 @@ def test_runtime_alert_changes_with_no_file_never_request_a_capture(
     rt.on_alert(2)
     rt.on_alert(0)
     assert h.bridge_probe_state()["capture_pending"] is False
+
+
+# Task 17: emissive sibling maps pick their variant by the player's alert
+# level, pushed every frame (host_loop) through set_bridge_alert_level. Like
+# the ambient scale it is per-frame state that init()/shutdown() reset.
+
+def test_alert_level_binding_exists(host_module):
+    assert hasattr(host_module, "set_bridge_alert_level")
+
+
+def test_alert_level_reaches_the_pass(dbridge):
+    h, _iid = dbridge
+    assert h.bridge_probe_state()["alert_level"] == 0
+    h.set_bridge_alert_level(2)
+    assert h.bridge_probe_state()["alert_level"] == 2
+    h.set_bridge_alert_level(1)
+    assert h.bridge_probe_state()["alert_level"] == 1
+    h.set_bridge_alert_level(0)
+
+
+def test_alert_level_is_per_frame_state_reset_by_init(host_module):
+    """Like the ambient scale, the level is per-frame state: init() (and
+    shutdown()) reset it to green via reset_frame_state(); host_loop re-pushes
+    it on the first frame."""
+    h = host_module
+    os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
+    h.set_bridge_alert_level(2)
+    try:
+        try:
+            h.init(64, 64, "bridge-alert-level-test")
+        except RuntimeError as e:
+            pytest.skip(f"no GL context: {e}")
+        assert h.bridge_probe_state()["alert_level"] == 0
+        h.set_bridge_alert_level(2)
+        assert h.bridge_probe_state()["alert_level"] == 2
+    finally:
+        h.shutdown()
+        os.environ.pop("OPEN_STBC_HOST_HEADLESS", None)
+
+
+def test_host_io_alert_level_degrades_headless_and_forwards(monkeypatch):
+    calls = []
+    monkeypatch.setattr(host_io, "_h", None)
+    host_io.set_bridge_alert_level(2)          # no raise
+
+    class FakeHost:
+        @staticmethod
+        def set_bridge_alert_level(level): calls.append(level)
+
+    monkeypatch.setattr(host_io, "_h", FakeHost)
+    host_io.set_bridge_alert_level(2.0)
+    host_io.set_bridge_alert_level(None)       # unknown -> green
+    assert calls == [2, 0]

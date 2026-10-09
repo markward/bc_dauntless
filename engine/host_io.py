@@ -84,7 +84,7 @@ _OPTIONAL_BINDINGS = frozenset({
     "set_bridge_material_overrides", "set_bridge_pbr_enabled",
     "set_bridge_probe_origin", "set_bridge_probe_scales",
     "set_bridge_probe_mix", "request_bridge_probe_capture",
-    "set_bridge_spots",
+    "set_bridge_spots", "set_bridge_alert_level",
 })
 
 
@@ -629,6 +629,15 @@ def set_bridge_probe_mix(t) -> None:
     fn = getattr(_h, "set_bridge_probe_mix", None) if _h is not None else None
     if fn is not None:
         fn(float(t))
+
+
+def set_bridge_alert_level(level) -> None:
+    """Player alert level (0 green, 1 yellow, 2 red) choosing the bridge's
+    emissive sibling-map variants; None -> green. Pushed every frame. No-op
+    headless."""
+    fn = getattr(_h, "set_bridge_alert_level", None) if _h is not None else None
+    if fn is not None:
+        fn(int(level) if level is not None else 0)
 
 
 def request_bridge_probe_capture() -> None:

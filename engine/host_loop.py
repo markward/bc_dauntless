@@ -12400,6 +12400,9 @@ def run(mission_name: Optional[str] = None,
             # recaptured on load/edit/alert change (BridgeRuntime), never
             # per frame — this just blends between the two existing captures.
             _bridge_alert_level = _bridge_alert_level_of(player)
+            # Emissive sibling maps: the alert-level variant (task 17), every
+            # frame, beside the ambient scale (a hard switch, no fade).
+            host_io.set_bridge_alert_level(_bridge_alert_level)
             host_io.set_bridge_probe_mix(
                 _bridge_probe_blend.update(_bridge_alert_level, _player_dt))
             if _bridge_alert_level != _bridge_probe_alert_last[0]:
