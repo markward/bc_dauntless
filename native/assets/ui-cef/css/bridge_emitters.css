@@ -16,6 +16,12 @@
     top: 0;
     right: 0;
     bottom: 0;
+    /* .cp-modal (reused for the cp-header/footer chrome) sets a fixed
+       height:420px for its default centred-modal shape; without overriding
+       it here that fixed height overconstrains top+bottom+height and the
+       dock stops filling the viewport column it is meant to (CSS2.1 abspos
+       rules: bottom is ignored when height is non-auto). */
+    height: auto;
     width: 360px;
     box-sizing: border-box;
     display: flex;
