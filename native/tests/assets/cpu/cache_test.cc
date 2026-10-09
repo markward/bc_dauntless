@@ -309,13 +309,13 @@ TEST(AssetCacheMeshFix, EveryCommittedFixApplies) {
     for (const auto& entry : fs::directory_iterator(fixes))
         if (entry.path().extension() == ".json") fix_files.push_back(entry.path());
     std::sort(fix_files.begin(), fix_files.end());
-    ASSERT_EQ(fix_files.size(), 5u) << "expected exactly 5 committed mesh fixes (High LOD only)";
 
     auto cfg = stub_config();
     assets::AssetCache plain(cfg);
     cfg.mesh_fix_dir = [fixes] { return fixes; };
     assets::AssetCache fixed(cfg);
 
+    std::size_t merge_fixes = 0;
     for (const auto& fix_path : fix_files) {
         SCOPED_TRACE(fix_path.string());
         const auto text = file_bytes(fix_path);
@@ -337,11 +337,14 @@ TEST(AssetCacheMeshFix, EveryCommittedFixApplies) {
         ASSERT_TRUE(fix.has_value()) << "parse failed: " << parse_error;
         EXPECT_EQ(assets::apply_mesh_fix(file, *fix), "")
             << "committed fix was refused";
+        if (!fix->merges.empty()) ++merge_fixes;
 
         std::vector<fs::path> search{nif_path.parent_path() / "High", fed_high_path()};
         auto a = plain.load(nif_path, search);
         auto b = fixed.load(nif_path, search);
-        EXPECT_EQ(b->meshes.size() + 1, a->meshes.size())
-            << "fixed model should have exactly one fewer mesh (the hidden patch)";
+        const std::size_t hidden = fix->merges.size();   // one hidden patch per merge
+        EXPECT_EQ(b->meshes.size() + hidden, a->meshes.size())
+            << "fixed model should lose exactly one mesh per merge (the hidden patch)";
     }
+    EXPECT_EQ(merge_fixes, 5u) << "expected exactly 5 committed hull merge fixes (High LOD only)";
 }

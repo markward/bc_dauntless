@@ -99,8 +99,8 @@ std::optional<std::vector<ShapeEdit>> decode_shape_edits(std::string_view bytes,
 // Identity for a block with no NiNode ancestors.
 glm::mat4 nif_block_world(const nif::File& file, std::size_t block_index);
 
-// Apply every merge in `fix` to `file`, or none of them. Returns "" on
-// success, otherwise the reason and leaves `file` unchanged.
+// Apply every merge and shape edit in `fix` to `file`, or none of them.
+// Returns "" on success, otherwise the reason and leaves `file` unchanged.
 std::string apply_mesh_fix(nif::File& file, const MeshFix& fix);
 
 }  // namespace assets

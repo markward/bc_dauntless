@@ -3,6 +3,7 @@
 // docs/superpowers/specs/2026-09-28-hull-name-cut-fix-design.md).
 #include <assets/mesh_fix.h>
 
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstdio>
@@ -433,6 +434,108 @@ void apply_merge(nif::File& file, const MeshFixMerge& m, const MergePlan& plan) 
     patch_shape.av.flags |= 0x0001u;
 }
 
+/// One shape edit, validated: the data block it mutates.
+struct EditPlan {
+    std::size_t data_idx = 0;
+};
+
+/// Validate edit `e` (index `edit_idx`) against the UNMODIFIED file. Returns
+/// "" and fills `*plan`, else the refusal reason ("shape edit N: ...").
+std::string validate_edit(const nif::File& file, const ShapeEdit& e,
+                          std::size_t edit_idx, EditPlan* plan) {
+    const std::string prefix = "shape edit " + std::to_string(edit_idx) + ": ";
+    if (e.block >= file.blocks.size()) return prefix + "block out of range";
+    const auto* shape = std::get_if<nif::NiTriShape>(&file.blocks[e.block]);
+    if (!shape) return prefix + "block is not a NiTriShape";
+    const std::size_t data_idx = index_of(file, shape->data_link);
+    if (data_idx == kNoIndex || data_idx >= file.blocks.size())
+        return prefix + "data_link unresolved";
+    const auto* d = std::get_if<nif::NiTriShapeData>(&file.blocks[data_idx]);
+    if (!d) return prefix + "data_link does not point at NiTriShapeData";
+    if (d->has_normals) return prefix + "shape has authored normals (unsupported)";
+    if (!d->has_vertices || d->vertices.size() != d->num_vertices)
+        return prefix + "shape vertex array inconsistent";
+    if (d->uv_sets.empty()) return prefix + "shape has no UV set";
+    if (d->num_vertices != e.orig_vertex_count)
+        return prefix + "original vertex count mismatch";
+    if (d->num_triangles != e.orig_triangle_count ||
+        d->triangles.size() != d->num_triangles)
+        return prefix + "original triangle count mismatch";
+
+    const std::size_t final_v = std::size_t{e.orig_vertex_count} + e.add_vertices.size();
+    if (final_v > 65535) return prefix + "final vertex count exceeds 65535";
+    for (const auto& [i, p] : e.moves)
+        if (i >= e.orig_vertex_count) return prefix + "move index out of range";
+    for (const auto& [i, uv] : e.uvs)
+        if (i >= e.orig_vertex_count) return prefix + "uv index out of range";
+
+    std::vector<bool> removed(e.orig_triangle_count, false);
+    for (std::uint16_t t : e.remove_triangles) {
+        if (t >= e.orig_triangle_count) return prefix + "removed triangle out of range";
+        if (removed[t]) return prefix + "triangle removed twice";
+        removed[t] = true;
+    }
+    const std::size_t final_t =
+        std::size_t{e.orig_triangle_count} - e.remove_triangles.size() + e.add_triangles.size();
+    if (final_t > 65535) return prefix + "final triangle count exceeds 65535";
+
+    // Final positions, for the degenerate-triangle check.
+    std::vector<glm::vec3> pos;
+    pos.reserve(final_v);
+    for (const auto& v : d->vertices) pos.emplace_back(v.x, v.y, v.z);
+    for (const auto& [i, p] : e.moves) pos[i] = glm::vec3(p[0], p[1], p[2]);
+    for (const auto& av : e.add_vertices) pos.emplace_back(av.pos[0], av.pos[1], av.pos[2]);
+    for (const auto& t : e.add_triangles) {
+        if (t[0] >= final_v || t[1] >= final_v || t[2] >= final_v)
+            return prefix + "added triangle index out of range";
+        if (t[0] == t[1] || t[1] == t[2] || t[0] == t[2])
+            return prefix + "added triangle repeats an index";
+        const glm::vec3 n = glm::cross(pos[t[1]] - pos[t[0]], pos[t[2]] - pos[t[0]]);
+        if (glm::length(n) <= 1e-10f) return prefix + "added triangle has zero area";
+    }
+    plan->data_idx = data_idx;
+    return "";
+}
+
+void apply_edit(nif::File& file, const ShapeEdit& e, const EditPlan& plan) {
+    auto& d = std::get<nif::NiTriShapeData>(file.blocks[plan.data_idx]);
+    for (const auto& [i, p] : e.moves) d.vertices[i] = {p[0], p[1], p[2]};
+    for (const auto& [i, uv] : e.uvs) d.uv_sets[0][i] = {uv[0], uv[1]};
+    for (const auto& av : e.add_vertices) {
+        d.vertices.push_back({av.pos[0], av.pos[1], av.pos[2]});
+        d.uv_sets[0].push_back({av.uv0[0], av.uv0[1]});
+        for (std::size_t s = 1; s < d.uv_sets.size(); ++s)
+            d.uv_sets[s].push_back({av.uv1[0], av.uv1[1]});
+        if (d.has_vertex_colors)
+            d.vertex_colors.push_back({av.color[0], av.color[1], av.color[2], av.color[3]});
+    }
+    std::vector<bool> removed(d.triangles.size(), false);
+    for (std::uint16_t t : e.remove_triangles) removed[t] = true;
+    std::vector<std::array<std::uint16_t, 3>> tris;
+    tris.reserve(d.triangles.size() - e.remove_triangles.size() + e.add_triangles.size());
+    for (std::size_t t = 0; t < d.triangles.size(); ++t)
+        if (!removed[t]) tris.push_back(d.triangles[t]);
+    for (const auto& t : e.add_triangles) tris.push_back(t);
+    d.triangles = std::move(tris);
+
+    d.num_vertices = static_cast<std::uint16_t>(d.vertices.size());
+    d.num_triangles = static_cast<std::uint16_t>(d.triangles.size());
+    d.num_triangle_points = static_cast<std::uint32_t>(d.triangles.size()) * 3;
+    d.num_match_groups = 0;
+    d.match_groups.clear();
+
+    glm::vec3 lo(std::numeric_limits<float>::max()), hi(-std::numeric_limits<float>::max());
+    for (const auto& v : d.vertices) {
+        lo = glm::min(lo, glm::vec3(v.x, v.y, v.z));
+        hi = glm::max(hi, glm::vec3(v.x, v.y, v.z));
+    }
+    const glm::vec3 c = (lo + hi) * 0.5f;
+    float r = 0.0f;
+    for (const auto& v : d.vertices) r = std::max(r, glm::length(glm::vec3(v.x, v.y, v.z) - c));
+    d.bound_center = {c.x, c.y, c.z};
+    d.bound_radius = r;
+}
+
 }  // namespace
 
 glm::mat4 nif_block_world(const nif::File& file, std::size_t block_index) {
@@ -472,9 +575,25 @@ std::string apply_mesh_fix(nif::File& file, const MeshFix& fix) {
         }
     }
 
+    std::vector<EditPlan> edit_plans(fix.shape_edits.size());
+    for (std::size_t i = 0; i < fix.shape_edits.size(); ++i) {
+        std::string err = validate_edit(file, fix.shape_edits[i], i, &edit_plans[i]);
+        if (!err.empty()) return err;
+        // A data block may be edited once, and never by a merge too.
+        auto [it, inserted] = data_block_owner.try_emplace(edit_plans[i].data_idx,
+                                                           plans.size() + i);
+        if (!inserted) {
+            return "shape edit " + std::to_string(i) + ": data block " +
+                   std::to_string(edit_plans[i].data_idx) +
+                   " is already used by another merge or shape edit";
+        }
+    }
+
     for (std::size_t i = 0; i < fix.merges.size(); ++i) {
         apply_merge(file, fix.merges[i], plans[i]);
     }
+    for (std::size_t i = 0; i < fix.shape_edits.size(); ++i)
+        apply_edit(file, fix.shape_edits[i], edit_plans[i]);
     return "";
 }
 
