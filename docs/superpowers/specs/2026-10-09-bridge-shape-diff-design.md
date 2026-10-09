@@ -305,6 +305,21 @@ span two albedos is refused (base.obj must be the unaltered export).
   nothing changes; without `--partial` a dependency on an excluded block is
   refused ("exclude it too").
 
+**`--partial`:** by default a single unsupported object (one that needs
+topology, or a vertex-split UV conflict) aborts the whole diff -- nothing is
+written. `diff BASE EDIT --partial [--write]` instead diffs every object
+all-or-nothing *per object*: objects whose change is a plain move/UV edit are
+recorded as normal, and every object whose `diff_shape` call refused is
+**skipped and reported** (`skipped (not yet supported):` followed by
+`  <object>: <reason>` lines) rather than aborting the run. `--write` with
+`--partial` writes the fix built from the recorded (supported) edits only; a
+skipped object leaves no trace in the fix file, and is unaffected by any
+earlier fix for the same object committed in a prior round. File-level
+problems (renamed/missing objects, two objects mapping to one block, an
+import that isn't a clean shape export, a block that isn't in the NIF) still
+abort the whole run in `--partial` mode exactly as without it -- those mean
+the export itself is broken, not that one object's edit is unsupported.
+
 ### 5.4 Verify (fix round 1)
 
 `build_fix` (dry run and `--write` alike) applies the fix it built through
@@ -329,21 +344,6 @@ objects`. A warning lists survivors paired without position agreement (the
 moved survivors) per block. Verification needs the host module; the CLI
 refuses without it (never skipped silently), and only unit tests opt out
 with `verify=False`.
-
-**`--partial`:** by default a single unsupported object (one that needs
-topology, or a vertex-split UV conflict) aborts the whole diff -- nothing is
-written. `diff BASE EDIT --partial [--write]` instead diffs every object
-all-or-nothing *per object*: objects whose change is a plain move/UV edit are
-recorded as normal, and every object whose `diff_shape` call refused is
-**skipped and reported** (`skipped (not yet supported):` followed by
-`  <object>: <reason>` lines) rather than aborting the run. `--write` with
-`--partial` writes the fix built from the recorded (supported) edits only; a
-skipped object leaves no trace in the fix file, and is unaffected by any
-earlier fix for the same object committed in a prior round. File-level
-problems (renamed/missing objects, two objects mapping to one block, an
-import that isn't a clean shape export, a block that isn't in the NIF) still
-abort the whole run in `--partial` mode exactly as without it -- those mean
-the export itself is broken, not that one object's edit is unsupported.
 
 ---
 
