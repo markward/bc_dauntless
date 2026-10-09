@@ -46,14 +46,20 @@ public:
     void capture(glm::vec3 origin, DrawFace draw_face) {
         if (!ensure()) return;
         begin_capture();
+        // Restores the caller's GL state on EVERY exit, including a throw
+        // from draw_face (the probe then stays as it was: no new capture).
+        struct Restore {
+            BridgeProbe* p;
+            ~Restore() { p->restore_capture_state(); }
+        } restore{this};
         for (int i = 0; i < 6; ++i) draw_face(begin_face(i, origin));
-        end_capture();
+        finish_capture();
     }
 
     /// Fill the prefiltered cube's mips from the raw capture (GGX importance
     /// sampling, Karis split-sum's first term). Called by capture(); public so
-    /// a caller that drew the raw cube another way can re-run it. Restores the
-    /// same state capture() does.
+    /// the prefilter can be re-run. A no-op (valid() stays false) until a
+    /// capture has filled the raw cube. Restores the same state capture() does.
     void prefilter();
 
     /// The prefiltered cube (kBridgeProbeFace, kBridgeProbeMips levels).
@@ -61,22 +67,12 @@ public:
     /// True once a capture has been prefiltered into texture().
     bool valid() const { return captured_ && out_.valid(); }
 
-    /// The split-sum BRDF LUT: kBridgeBrdfLutSize² GL_RG16F, x = NdotV,
-    /// y = roughness, rg = (A, B) so that specular IBL = prefiltered *
-    /// (F0 * A + B). Generated once, lazily, and cached in a function-local
-    /// static. ASSUMPTION: one live GL context per process at a time (the
-    /// game, and each test, which creates its context in SetUp). The cache is
-    /// keyed on the current GLFW context and re-validated with glIsTexture, so
-    /// a test that destroys its window and makes a new one gets a fresh LUT;
-    /// two simultaneously live contexts would each regenerate (and orphan)
-    /// it. 0 without a context. Never deleted -- it dies with its context.
-    static std::uint32_t brdf_lut();
-
 private:
     struct SavedState;
     void begin_capture();
     scenegraph::Camera begin_face(int i, glm::vec3 origin);
-    void end_capture();
+    void finish_capture();
+    void restore_capture_state();
     void run_prefilter();
 
     CubemapTarget raw_;                       // capture, full mip chain
@@ -84,8 +80,32 @@ private:
     std::unique_ptr<Shader> prefilter_;
     std::uint32_t vao_ = 0;
     std::uint32_t vbo_ = 0;
-    bool captured_ = false;
-    std::unique_ptr<SavedState> saved_;       // live between begin/end_capture
+    bool raw_captured_ = false;               // raw_ holds a complete capture
+    bool captured_ = false;                   // out_ is prefiltered from it
+    std::unique_ptr<SavedState> saved_;       // live during a capture()
+};
+
+/// The split-sum BRDF LUT: kBridgeBrdfLutSize² GL_RG16F, x = NdotV,
+/// y = roughness, rg = (A, B) so that specular IBL = prefiltered *
+/// (F0 * A + B). Generated lazily by ensure() in the context current at that
+/// time, and released by the destructor -- which therefore must run with that
+/// same context current (its owner, e.g. the bridge pass, lives inside it).
+/// No process-wide cache: a context's object names restart at 1 when a
+/// window is recreated, so any handle held past its context is meaningless.
+class BrdfLut {
+public:
+    BrdfLut() = default;
+    ~BrdfLut();
+    BrdfLut(const BrdfLut&) = delete;
+    BrdfLut& operator=(const BrdfLut&) = delete;
+
+    /// Generate the LUT if not yet generated. False without a current GL
+    /// context or if the render target is incomplete. Restores GL state.
+    bool ensure();
+    std::uint32_t texture() const { return tex_; }
+
+private:
+    std::uint32_t tex_ = 0;
 };
 
 }  // namespace renderer

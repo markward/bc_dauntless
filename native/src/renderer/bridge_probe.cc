@@ -126,6 +126,9 @@ bool BridgeProbe::ensure() {
     if (!have_context()) return false;
     GlState s;
     s.save();
+    // allocate() binds a cube on the ACTIVE unit: do it on unit 0, which the
+    // saved state restores, so the caller's unit N keeps its binding.
+    glActiveTexture(GL_TEXTURE0);
     // Raw capture: one allocated level (the backdrop's allocate), its chain
     // built by generate_mips() after each capture so the prefilter can pick a
     // raw level per sample from the sample's pdf.
@@ -146,6 +149,10 @@ bool BridgeProbe::ensure() {
 }
 
 void BridgeProbe::begin_capture() {
+    // The raw cube is about to be overwritten; until all six faces land it is
+    // not a capture (a throwing draw leaves it partial). out_ keeps the last
+    // good prefilter, so valid() is unchanged.
+    raw_captured_ = false;
     saved_ = std::make_unique<SavedState>();
     saved_->gl.save();
     glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);   // as the backdrop bake; left on
@@ -168,15 +175,19 @@ scenegraph::Camera BridgeProbe::begin_face(int i, glm::vec3 origin) {
     return cam;
 }
 
-void BridgeProbe::end_capture() {
+void BridgeProbe::finish_capture() {
+    raw_captured_ = true;
     run_prefilter();
     captured_ = true;
+}
+
+void BridgeProbe::restore_capture_state() {
     if (saved_) saved_->gl.restore();
     saved_.reset();
 }
 
 void BridgeProbe::prefilter() {
-    if (!ensure()) return;
+    if (!raw_captured_ || !ensure()) return;
     GlState s;
     s.save();
     glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
@@ -217,14 +228,13 @@ void BridgeProbe::run_prefilter() {
     }
 }
 
-std::uint32_t BridgeProbe::brdf_lut() {
-    // See the header: one live context at a time. Keyed on the context and
-    // re-validated so a destroyed-and-recreated context regenerates it.
-    static GLFWwindow* s_ctx = nullptr;
-    static GLuint s_lut = 0;
-    GLFWwindow* ctx = glfwGetCurrentContext();
-    if (!ctx) return 0;
-    if (ctx == s_ctx && s_lut != 0 && glIsTexture(s_lut)) return s_lut;
+BrdfLut::~BrdfLut() {
+    if (tex_) { GLuint t = tex_; glDeleteTextures(1, &t); }
+}
+
+bool BrdfLut::ensure() {
+    if (tex_) return true;
+    if (!have_context()) return false;
 
     GlState s;
     s.save();
@@ -265,9 +275,8 @@ std::uint32_t BridgeProbe::brdf_lut() {
     if (!ok) { glDeleteTextures(1, &tex); tex = 0; }
     s.restore();
 
-    s_ctx = ctx;
-    s_lut = tex;
-    return s_lut;
+    tex_ = tex;
+    return tex_ != 0;
 }
 
 }  // namespace renderer

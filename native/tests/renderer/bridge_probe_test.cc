@@ -185,8 +185,22 @@ TEST_F(BridgeProbeGl, RougherMipsBlendNeighbouringFaces) {
     EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
 }
 
+/// The LUT agrees with the CPU twin at a spread of points.
+void expect_lut_matches_cpu_twin(GLuint lut) {
+    const float pts[][2] = {{0.05f, 0.05f}, {0.05f, 0.95f}, {0.5f, 0.5f},
+                            {0.2f, 0.3f},   {0.9f, 0.8f},   {0.99f, 0.05f}};
+    for (const auto& p : pts) {
+        const glm::vec2 gpu = read_lut(lut, p[0], p[1]);
+        const glm::vec2 cpu = cpu_split_sum(p[0], p[1], renderer::kBridgeBrdfLutSize);
+        EXPECT_NEAR(gpu.x, cpu.x, 0.002f) << p[0] << "," << p[1];
+        EXPECT_NEAR(gpu.y, cpu.y, 0.002f) << p[0] << "," << p[1];
+    }
+}
+
 TEST_F(BridgeProbeGl, BrdfLutMatchesTheKnownSplitSumCorners) {
-    const GLuint lut = renderer::BridgeProbe::brdf_lut();
+    renderer::BrdfLut owner;
+    ASSERT_TRUE(owner.ensure());
+    const GLuint lut = owner.texture();
     ASSERT_NE(lut, 0u);
     // Head-on, smooth: A ≈ 1, B ≈ 0. Grazing, rough: A + B small.
     const glm::vec2 smooth_head_on = read_lut(lut, /*n_dot_v=*/0.99f, /*rough=*/0.05f);
@@ -201,16 +215,86 @@ TEST_F(BridgeProbeGl, BrdfLutMatchesTheKnownSplitSumCorners) {
     EXPECT_LT(rough_grazing.x + rough_grazing.y, smooth_grazing.x + smooth_grazing.y);
     EXPECT_GT(smooth_grazing.y, smooth_grazing.x);   // Fresnel bias dominates
     // The whole integration agrees with an independent CPU twin.
-    const float pts[][2] = {{0.05f, 0.05f}, {0.05f, 0.95f}, {0.5f, 0.5f},
-                            {0.2f, 0.3f},   {0.9f, 0.8f},   {0.99f, 0.05f}};
-    for (const auto& p : pts) {
-        const glm::vec2 gpu = read_lut(lut, p[0], p[1]);
-        const glm::vec2 cpu = cpu_split_sum(p[0], p[1], renderer::kBridgeBrdfLutSize);
-        EXPECT_NEAR(gpu.x, cpu.x, 0.002f) << p[0] << "," << p[1];
-        EXPECT_NEAR(gpu.y, cpu.y, 0.002f) << p[0] << "," << p[1];
+    expect_lut_matches_cpu_twin(lut);
+    // Generated once per owner: ensure() again keeps the same texture.
+    ASSERT_TRUE(owner.ensure());
+    EXPECT_EQ(owner.texture(), lut);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+TEST_F(BridgeProbeGl, BrdfLutIsRegeneratedInARecreatedContext) {
+    // A recreated window can hand back the same GLFWwindow*, and its fresh
+    // context restarts texture names at 1 -- so a handle cached across
+    // contexts would name one of the NEW context's unrelated textures.
+    {
+        renderer::BrdfLut first;
+        ASSERT_TRUE(first.ensure());
+        expect_lut_matches_cpu_twin(first.texture());
     }
-    // Once per context: a second call returns the same texture.
-    EXPECT_EQ(renderer::BridgeProbe::brdf_lut(), lut);
+    w.reset();
+    w = std::make_unique<renderer::Window>(64, 64, "bridge-probe-test-2", false);
+    GLuint unrelated[4] = {};
+    glGenTextures(4, unrelated);
+    for (GLuint t : unrelated) {
+        glBindTexture(GL_TEXTURE_2D, t);
+        const float zero[2 * 4 * 4] = {};
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RG16F, 4, 4, 0, GL_RG, GL_FLOAT, zero);
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
+    renderer::BrdfLut second;
+    ASSERT_TRUE(second.ensure());
+    for (GLuint t : unrelated) EXPECT_NE(second.texture(), t);
+    expect_lut_matches_cpu_twin(second.texture());
+    glDeleteTextures(4, unrelated);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+TEST_F(BridgeProbeGl, BrdfLutDestructorReleasesItsTexture) {
+    GLuint name = 0;
+    {
+        renderer::BrdfLut lut;
+        ASSERT_TRUE(lut.ensure());
+        name = lut.texture();
+        EXPECT_TRUE(glIsTexture(name));
+    }
+    EXPECT_FALSE(glIsTexture(name));
+}
+
+TEST_F(BridgeProbeGl, PrefilterBeforeAnyCaptureIsANoOp) {
+    renderer::BridgeProbe probe;
+    ASSERT_TRUE(probe.ensure());
+    probe.prefilter();
+    EXPECT_FALSE(probe.valid());
+    probe.capture(glm::vec3(0.0f), [](const scenegraph::Camera&) {});
+    EXPECT_TRUE(probe.valid());
+    probe.prefilter();   // re-run after a capture is fine
+    EXPECT_TRUE(probe.valid());
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+TEST_F(BridgeProbeGl, ACaptureThatThrowsStillRestoresTheCallersState) {
+    renderer::HdrTarget t;
+    t.resize(64, 48);
+    t.bind();
+    glViewport(0, 0, 64, 48);
+    renderer::BridgeProbe probe;
+    ASSERT_TRUE(probe.ensure());
+    int faces = 0;
+    EXPECT_THROW(
+        probe.capture(glm::vec3(0.0f), [&](const scenegraph::Camera&) {
+            if (++faces == 3) throw std::runtime_error("draw failed");
+        }),
+        std::runtime_error);
+    GLint fbo = 0, vp[4] = {};
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
+    glGetIntegerv(GL_VIEWPORT, vp);
+    EXPECT_EQ(static_cast<GLuint>(fbo), t.fbo());
+    EXPECT_EQ(vp[2], 64);
+    EXPECT_EQ(vp[3], 48);
+    EXPECT_FALSE(probe.valid());   // a partial capture is not a capture
+    probe.prefilter();
+    EXPECT_FALSE(probe.valid());
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
     EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
 }
 
@@ -233,8 +317,10 @@ TEST_F(BridgeProbeGl, CaptureRestoresTheCallersFramebufferAndViewport) {
 }
 
 TEST_F(BridgeProbeGl, CaptureRestoresProgramTextureAndClearState) {
+    // A FRESH probe and LUT: their first ensure() (GL object creation) runs
+    // inside capture() / ensure() below, with the caller on unit 3.
     renderer::BridgeProbe probe;
-    ASSERT_TRUE(probe.ensure());
+    renderer::BrdfLut lut;
     GLuint tex = 0;
     glGenTextures(1, &tex);
     glActiveTexture(GL_TEXTURE3);
@@ -247,7 +333,8 @@ TEST_F(BridgeProbeGl, CaptureRestoresProgramTextureAndClearState) {
     glUseProgram(0);
 
     probe.capture(glm::vec3(0.0f), [](const scenegraph::Camera&) {});
-    (void)renderer::BridgeProbe::brdf_lut();
+    ASSERT_TRUE(probe.valid());
+    ASSERT_TRUE(lut.ensure());
 
     GLint active = 0, cube0 = 0, cube3 = 0, prog = -1;
     glGetIntegerv(GL_ACTIVE_TEXTURE, &active);
