@@ -240,3 +240,57 @@ def test_diff_refuses_renamed_or_missing_objects(tmp_path):
     objs = _export_read(tmp_path, [s])
     with pytest.raises(ShapeDiffError, match="objects differ"):
         match.diff([s], objs, {"b0011_renamed": objs["b0011_wall_side_pnls_01"]})
+
+
+from engine import paths
+
+DBRIDGE = "data/Models/Sets/DBridge/Dbridge.NIF"
+
+
+def test_fix_text_is_opaque_and_well_formed():
+    from tools import bridge_shape_diff as cli
+    fix = cli.make_fix_dict(DBRIDGE, [GOLDEN_EDIT])
+    text = cli.fix_text(fix)
+    assert '"generator": "tools/bridge_shape_diff.py"' in text
+    assert '"shape_edits": "' + GOLDEN_B64 + '"' in text
+    assert "merges" not in text
+
+
+def test_real_dbridge_export_round_trips_with_no_edits(tmp_path):
+    host = pytest.importorskip("_dauntless_host")
+    nif = paths.game_root() / DBRIDGE
+    if not nif.exists():
+        pytest.skip("BC content not configured")
+    from tools import bridge_shape_diff as cli
+    cli.export(DBRIDGE, tmp_path)
+    obj = tmp_path / "Dbridge.obj"
+    objs = obj_io.read_objects(obj)
+    assert len(objs) == 145
+    shapes = host.nif_shapes(str(nif))
+    for s in shapes:
+        match.identify(s, objs[obj_io.object_name(s)])      # every vertex identified
+    fix, edits = cli.build_fix(DBRIDGE, obj, obj)
+    assert edits == []
+
+
+def test_real_dbridge_move_lands_in_local_frame(tmp_path):
+    host = pytest.importorskip("_dauntless_host")
+    nif = paths.game_root() / DBRIDGE
+    if not nif.exists():
+        pytest.skip("BC content not configured")
+    from tools import bridge_shape_diff as cli
+    cli.export(DBRIDGE, tmp_path)
+    base = tmp_path / "Dbridge.obj"
+    edit = tmp_path / "edit.obj"
+    lines = base.read_text().splitlines()
+    i = lines.index("o b0468_Material_D_walls_1") + 1
+    x, y, z = map(float, lines[i].split()[1:4])
+    lines[i] = f"v {x:.6f} {y + 0.5:.6f} {z:.6f}" + "".join(
+        " " + c for c in lines[i].split()[4:])
+    edit.write_text("\n".join(lines) + "\n")
+    _, edits = cli.build_fix(DBRIDGE, base, edit)
+    assert [e["block"] for e in edits] == [468]
+    s = {d["block"]: d for d in host.nif_shapes(str(nif))}[468]
+    for orig, local in edits[0]["moves"]:
+        model = frames.apply(s["world"], local)
+        assert model[2] == pytest.approx(s["vertices"][orig][2] + 0.5, abs=1e-4)  # OBJ +y is BC +z
