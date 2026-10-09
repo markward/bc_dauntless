@@ -85,3 +85,42 @@ TEST(BridgePbr, PrefilterMipSpansTheChain) {
     EXPECT_FLOAT_EQ(pbr::prefilter_mip(0.0f), 0.0f);
     EXPECT_FLOAT_EQ(pbr::prefilter_mip(1.0f), float(kBridgeProbeMips - 1));
 }
+
+TEST(BridgePbr, CombineMatchesHandComputedValues) {
+    // Hand-computed values from the formula to detect swapped encode/decode.
+    // encode(x) = pow(x, 1/2.2), decode(x) = pow(x, 2.2)
+
+    // decode(0.5) = 0.5^2.2 ≈ 0.217638
+    const glm::vec3 decoded_half = pbr::decode(glm::vec3(0.5f));
+    EXPECT_NEAR(decoded_half.x, 0.217638f, 1e-4f);
+
+    // encode(0.5) = 0.5^(1/2.2) ≈ 0.729740
+    const glm::vec3 encoded_half = pbr::encode(glm::vec3(0.5f));
+    EXPECT_NEAR(encoded_half.x, 0.729740f, 1e-4f);
+
+    // Case (a): combine(vec3(0.25), vec3(0), 0.88)
+    // encode(0.25) ≈ 0.532495, below knee 0.616 → result is identity ≈ 0.5325
+    const glm::vec3 result_a = pbr::combine(glm::vec3(0.25f), glm::vec3(0.0f), 0.88f);
+    EXPECT_NEAR(result_a.x, 0.532495f, 1e-4f);
+    EXPECT_NEAR(result_a.y, 0.532495f, 1e-4f);
+    EXPECT_NEAR(result_a.z, 0.532495f, 1e-4f);
+
+    // Case (b): combine(vec3(0.25), vec3(0.5), 0.88)
+    // d = encode(0.25) ≈ 0.532495
+    // ds = encode(0.75) ≈ 0.877424
+    // diffuse ceiling applies to d (below knee 0.616), then spec delta added:
+    // 0.532495 + (0.877424 - 0.532495) ≈ 0.877424
+    const glm::vec3 result_b = pbr::combine(glm::vec3(0.25f), glm::vec3(0.5f), 0.88f);
+    EXPECT_NEAR(result_b.x, 0.877424f, 1e-4f);
+    EXPECT_NEAR(result_b.y, 0.877424f, 1e-4f);
+    EXPECT_NEAR(result_b.z, 0.877424f, 1e-4f);
+}
+
+TEST(BridgePbr, SpecularOcclusionClampsPowBase) {
+    // n_dot_v = -0.5, ao = 0.1 → base = -0.4 before clamp
+    // After clamp to max(0, -0.4) = 0: pow(0, ...) = 0
+    const float result = pbr::specular_occlusion(-0.5f, 0.1f, 0.5f);
+    EXPECT_TRUE(std::isfinite(result));
+    EXPECT_GE(result, 0.0f);
+    EXPECT_LE(result, 1.0f);
+}

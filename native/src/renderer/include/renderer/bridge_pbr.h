@@ -53,8 +53,10 @@ inline glm::vec3 combine(glm::vec3 diffuse_lin, glm::vec3 spec_lin, float diffus
     const glm::vec3 ds = encode(diffuse_lin + spec_lin);
     return diffuse_ceiling(d, diffuse_max) + glm::max(ds - d, glm::vec3(0.0f));
 }
+// Clamps the pow base to avoid NaN when n_dot_v + ao is negative. The GLSL twin
+// (shaders/bridge.frag) must clamp the same way.
 inline float specular_occlusion(float n_dot_v, float ao, float rough) {
-    return std::clamp(std::pow(n_dot_v + ao, std::exp2(-16.0f * rough - 1.0f)) - 1.0f + ao, 0.0f, 1.0f);
+    return std::clamp(std::pow(std::max(n_dot_v + ao, 0.0f), std::exp2(-16.0f * rough - 1.0f)) - 1.0f + ao, 0.0f, 1.0f);
 }
 inline glm::vec3 box_project(glm::vec3 pos, glm::vec3 dir, glm::vec3 bmin, glm::vec3 bmax, glm::vec3 probe) {
     const glm::vec3 inv = 1.0f / dir;
