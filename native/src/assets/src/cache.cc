@@ -303,6 +303,7 @@ ModelHandle AssetCache::load(
     ctx.generate_missing_normals = interior;
 
     Model built = detail::build_model(file, ctx);
+    if (interior) built.content_hash = fnv1a64_hex(read_file_bytes(nif_path));
     if (geosphere) {
         // Mutate the non-const Model BEFORE it is published as
         // shared_ptr<const Model> below -- Model::trace_accel's doc block

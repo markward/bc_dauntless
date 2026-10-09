@@ -146,6 +146,12 @@ struct Model {
     std::vector<glm::vec3>        surface_points;
     std::filesystem::path         source;
 
+    /// FNV-1a 64 of the raw NIF file bytes as 16 lowercase hex chars -- the
+    /// same hash mesh fixes are keyed by. Set ONLY for interior (set) loads,
+    /// where the bridge editor keys its per-bridge data on it; empty for every
+    /// other model. Spec 2026-10-08-bridge-emitters §4/§7.
+    std::string                   content_hash;
+
     /// Index of the first grafted HEAD mesh in `meshes` (-1 if none). Head
     /// meshes are appended last by compose_officer_model, so the head set is
     /// [head_mesh_begin, meshes.size()). Used by the lip-sync face sink to

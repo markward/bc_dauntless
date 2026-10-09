@@ -933,6 +933,7 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
     struct PendingMesh {
         MeshCpu cpu;
         std::string shape_name;
+        int block = -1;
         glm::mat4 to_model{1.0f};
         bool has_authored_normals = true;
         std::vector<glm::vec4> source_colours;  // NIF float colours; only for normal-less shapes
@@ -1091,6 +1092,7 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         PendingMesh pm;
         pm.cpu = std::move(cpu);
         pm.shape_name = shape->av.obj.name;
+        pm.block = static_cast<int>(i);
         pm.to_model = shape_verts_for_sampling.back().to_model;
         pm.has_authored_normals = data->has_normals;
         if (!data->has_normals && data->has_vertex_colors) {
@@ -1123,10 +1125,12 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
             Mesh mesh = mesh_upload(MeshCpu(pm.cpu));
             mesh.set_cpu_data(std::move(pm.cpu));
             mesh.set_shape_name(pm.shape_name);
+            mesh.set_source_block(pm.block);
             model.meshes.push_back(std::move(mesh));
         } else {
             Mesh mesh = mesh_upload(std::move(pm.cpu));
             mesh.set_shape_name(pm.shape_name);
+            mesh.set_source_block(pm.block);
             model.meshes.push_back(std::move(mesh));
         }
     }

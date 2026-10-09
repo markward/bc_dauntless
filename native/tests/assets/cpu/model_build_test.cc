@@ -440,6 +440,21 @@ TEST_F(ModelBuildTest, NodeAttachmentRecordsMeshIndex) {
     EXPECT_EQ(model.nodes[root_node].meshes[0], 0);
 }
 
+TEST_F(ModelBuildTest, MeshRecordsItsSourceNifBlock) {
+    // trivial_file_with_one_trishape(): block 0 NiNode "Root",
+    // block 1 NiTriShape "Saucer", block 2 NiTriShapeData.
+    auto f = trivial_file_with_one_trishape();
+    auto model = assets::detail::build_model(f, make_ctx());
+    ASSERT_EQ(model.meshes.size(), 1u);
+    EXPECT_EQ(model.meshes[0].source_block(), 1);
+    EXPECT_EQ(model.meshes[0].shape_name(), "Saucer");
+}
+
+TEST(MeshDefaults, SourceBlockIsMinusOneWhenNotBuiltFromANif) {
+    assets::Mesh mesh;
+    EXPECT_EQ(mesh.source_block(), -1);
+}
+
 TEST_F(ModelBuildTest, ChildShapeInheritsParentNodeProperty) {
     auto f = file_with_property_on_parent_node();
     auto model = assets::detail::build_model(f, make_ctx());
