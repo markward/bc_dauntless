@@ -15,6 +15,7 @@ overlay or stock texture dir) is recorded as the edit's "albedo" key."""
 from pathlib import Path
 
 from tools.shape_diff import ShapeDiffError, frames, obj_io
+from tools.shape_diff.payload import Ref
 
 POS_TOL = 1e-4
 _CELL = 1e-3   # spatial hash cell; > POS_TOL so a 3x3x3 probe suffices
@@ -38,6 +39,52 @@ def _near(grid, points, p):
                     if max(abs(q[0] - p[0]), abs(q[1] - p[1]), abs(q[2] - p[2])) <= POS_TOL:
                         out.append(i)
     return sorted(out)
+
+
+class NifIndex:
+    """Every ORIGINAL vertex of every shape in the NIF, in model space, for
+    reference detection (spec §6.2): a value Mark's edit shares with an
+    original is stored as an index to it, never as BC's number."""
+
+    def __init__(self, shapes):
+        self.shapes = {s["block"]: s for s in shapes}
+        self._keys, self._points = [], []
+        for s in shapes:
+            for v, p in enumerate(s["vertices"]):
+                self._keys.append((s["block"], v))
+                self._points.append(p)
+        self._grid = _grid(self._points)
+
+    def _at(self, p):
+        return [self._keys[i] for i in _near(self._grid, self._points, p)]
+
+    def position_ref(self, p, target):
+        """Ref to an original within POS_TOL of model-space `p`: the target
+        shape's own first, then the lowest block, then the lowest index."""
+        found = self._at(p)
+        if not found:
+            return None
+        block, v = min(found, key=lambda k: (k[0] != target, k[0], k[1]))
+        return Ref(block, v)
+
+    def uv_ref(self, uv, pos_ref, target, p):
+        """Ref for UV0 `uv` of a vertex at model-space `p` whose position
+        resolved to `pos_ref` (or None): that same original if its UV0
+        matches; else the lowest target-shape original AT `p` with that UV0;
+        else the lowest target-shape original anywhere with it (the value is
+        identical, and it keeps BC's number out of the payload); else None."""
+        if uv is None:
+            return None
+        if pos_ref is not None:
+            src = self.shapes[pos_ref.block]["uvs"]
+            if pos_ref.vertex < len(src) and _uv_equal(src[pos_ref.vertex], uv):
+                return pos_ref
+        tuvs = self.shapes[target]["uvs"]
+        here = [v for b, v in self._at(p) if b == target and _uv_equal(tuvs[v], uv)]
+        if here:
+            return Ref(target, min(here))
+        anywhere = next((v for v, t in enumerate(tuvs) if _uv_equal(t, uv)), None)
+        return None if anywhere is None else Ref(target, anywhere)
 
 
 def identify(shape: dict, mesh) -> list:
@@ -314,7 +361,7 @@ def _albedo_op(block, base, edit, texture_dirs):
     return new
 
 
-def diff_shape(shape: dict, base, edit, texture_dirs=None):
+def diff_shape(shape: dict, base, edit, texture_dirs=None, index=None):
     """Diff one shape's base/edit OBJ pair (spec §5.3): vertex moves, UV0
     edits, removed faces and added triangles on existing originals. Refuses
     (all-or-nothing for the object) new vertices, a survivor that moved
@@ -322,6 +369,7 @@ def diff_shape(shape: dict, base, edit, texture_dirs=None):
     added n-gon or degenerate triangle, a flipped existing face, and a UV
     edit that would need a vertex split."""
     block = shape["block"]
+    index = index or NifIndex([shape])
     corr = _correspondence(block, base, edit)
     ids = identify(shape, base)
     edit_faces = [[(corr[v], uv) for v, uv in f] for f in edit.faces]
@@ -338,31 +386,36 @@ def diff_shape(shape: dict, base, edit, texture_dirs=None):
         common_edit += efs
     uvs = _resolve_uv_edits(block, shape, ids, common_base, common_edit)
     inv = frames.affine_inverse(shape["world"])
-    moves = {}
+    moved = {}          # original -> new MODEL-space position
     for k, ep in enumerate(edit.positions):
         bp = base.positions[corr[k]]
         if max(abs(a - b) for a, b in zip(bp, ep)) <= POS_TOL:
             continue
-        local = frames.apply(inv, ep)
         for orig in ids[corr[k]]:
-            moves[orig] = local
+            moved[orig] = ep
     removed_sets = base_sets.keys() - edit_sets.keys()
     added = [f for f in edit_faces if frozenset(v for v, _ in f) not in base_sets]
     _refuse_overlapping_groups(block, ids, removed_sets, added)
     remove = _removed_triangles(block, shape, ids, removed_sets)
     final_local = [frames.apply(inv, p) for p in shape["vertices"]]
-    for orig, p in moves.items():
-        final_local[orig] = p
+    for orig, p in moved.items():
+        final_local[orig] = frames.apply(inv, p)
     add = _added_triangles(block, shape, ids, base, added, final_local, uvs)
     albedo = _albedo_op(block, base, edit, texture_dirs)
-    if not moves and not uvs and not remove and not add and albedo is None:
+    if not moved and not uvs and not remove and not add and albedo is None:
         return None
+    moves, uv_out = {}, {}
+    for orig, p in moved.items():
+        moves[orig] = index.position_ref(p, block) or final_local[orig]
+    for orig, uv in uvs.items():
+        p = moved.get(orig, shape["vertices"][orig])
+        uv_out[orig] = index.uv_ref(uv, index.position_ref(p, block), block, p) or uv
     out = {
         "block": block,
         "orig_vertex_count": len(shape["vertices"]),
         "orig_triangle_count": len(shape["triangles"]),
         "moves": sorted(moves.items()),
-        "uvs": sorted(uvs.items()),
+        "uvs": sorted(uv_out.items()),
         "remove_triangles": remove,
         "add_triangles": add,
     }
@@ -398,6 +451,7 @@ def diff(shapes: list, base_objs: dict, edit_objs: dict, partial: bool = False,
                 "importing the same OBJ twice duplicates its objects as "
                 "'<name>.001' -- delete the duplicate before diffing")
     by_block = {s["block"]: s for s in shapes}
+    index = NifIndex(shapes)
     edits = []
     skipped = []
     for name in sorted(base_objs, key=obj_io.block_of):
@@ -406,7 +460,7 @@ def diff(shapes: list, base_objs: dict, edit_objs: dict, partial: bool = False,
             raise ShapeDiffError(f"object {name}: block {block} is not a shape in this NIF")
         try:
             e = diff_shape(by_block[block], base_objs[name], edit_objs[name],
-                           texture_dirs)
+                           texture_dirs, index)
         except ShapeDiffError as exc:
             if not partial:
                 raise

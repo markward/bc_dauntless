@@ -1144,3 +1144,93 @@ def test_base_object_spanning_two_albedos_is_refused(tmp_path):
     base, edit = obj_io.read_objects(base_obj), obj_io.read_objects(edit_obj)
     with pytest.raises(ShapeDiffError, match="base"):
         match.diff([s], base, edit, texture_dirs=_tex_dirs(tmp_path, overlay_files=["a.tga"]))
+
+
+# --- Task 15: references (spec §6.2) ---
+
+Ref = payload.Ref
+
+
+def _two_shapes(tmp_path):
+    """A = _shape() at block 11 (identity frame); B = _shape() at block 12,
+    offset (3, 0, 0) -- so B's vertex k sits at A's vertex k + (3, 0, 0)."""
+    a = _shape(block=11, parent="wall side pnls 01")
+    b = _shape(block=12, parent="console top", offset=(3.0, 0.0, 0.0))
+    objs = _export_read(tmp_path, [a, b])
+    return a, b, objs
+
+
+def test_move_snapped_onto_another_shapes_vertex_is_a_position_reference(tmp_path):
+    a, b, objs = _two_shapes(tmp_path)
+    base = objs[obj_io.object_name(a)]
+    k = _local(base, (0, 1, 0))                          # original 3
+    edit = _moved(base, k, (3.0, 1.0, 0.0))              # onto B's original 3
+    [e] = match.diff([a, b], objs, dict(objs, **{obj_io.object_name(a): edit}))
+    assert e["block"] == 11
+    assert e["moves"] == [(3, Ref(12, 3))]
+
+
+def test_snapped_move_prefers_the_target_shape_then_lowest_block_and_index(tmp_path):
+    a = _shape(block=11)
+    b = _shape(block=12, parent="console top", offset=(1.0, 0.0, 0.0))
+    c = _shape(block=13, parent="console side", offset=(1.0, 0.0, 0.0))
+    objs = _export_read(tmp_path, [a, b, c])
+    base = objs[obj_io.object_name(a)]
+    # (2, 0, 0) is B's and C's original 1 AND 4 (seam twins): lowest block, lowest index
+    edit = _moved(base, _local(base, (0, 0, 0)), (2.0, 0.0, 0.0))
+    [e] = match.diff([a, b, c], objs, dict(objs, **{obj_io.object_name(a): edit}))
+    assert e["moves"] == [(0, Ref(12, 1))]
+    # (1, 0, 0) is A's own 1/4 AND B/C's 0: the target shape wins
+    edit = _moved(base, _local(base, (0, 1, 0)), (1.0, 0.0, 0.0))
+    [e] = match.diff([a, b, c], objs, dict(objs, **{obj_io.object_name(a): edit}))
+    assert e["moves"] == [(3, Ref(11, 1))]
+
+
+def test_move_to_a_fresh_position_stays_literal(tmp_path):
+    a, b, objs = _two_shapes(tmp_path)
+    base = objs[obj_io.object_name(a)]
+    edit = _moved(base, _local(base, (0, 1, 0)), (0.5, 1.5, 0.25))
+    [e] = match.diff([a, b], objs, dict(objs, **{obj_io.object_name(a): edit}))
+    assert e["moves"] == [(3, pytest.approx((0.5, 1.5, 0.25)))]
+
+
+def test_uv_equal_to_the_position_references_uv_is_a_uv_reference(tmp_path):
+    a, b, objs = _two_shapes(tmp_path)
+    b["uvs"] = [(0.7, 0.7), (0.8, 0.1), (0.9, 0.9), (0.6, 0.4), (0.3, 0.3)]
+    objs = _export_read(tmp_path, [a, b])
+    base = objs[obj_io.object_name(a)]
+    k = _local(base, (0, 1, 0))                          # original 3, UV (0, 1)
+    edit = _moved(base, k, (3.0, 1.0, 0.0))              # onto B's 3...
+    edit = _retex(edit, {(1, k): (0.6, 0.4)})            # ...taking B's 3's UV
+    [e] = match.diff([a, b], objs, dict(objs, **{obj_io.object_name(a): edit}))
+    assert e["moves"] == [(3, Ref(12, 3))]
+    assert e["uvs"] == [(3, Ref(12, 3))]
+
+
+def test_uv_equal_to_a_seam_copy_at_that_position_references_the_copy(tmp_path):
+    s = _seam_shape()
+    base = _export_read(tmp_path, [s])[obj_io.object_name(s)]
+    k = _local(base, (1, 0, 0))     # quad A's original 1 (UV 0.5,0) + quad B's 4 (UV 0,0)
+    # quad A's corner at k takes quad B's seam UV (0, 0); original 0 has it
+    # too, elsewhere -- the copy AT THIS POSITION wins.
+    edit = _retex(base, {(0, k): (0.0, 0.0)})
+    e = match.diff_shape(s, base, edit)
+    assert e["uvs"] == [(1, Ref(11, 4))]
+
+
+def test_uv_equal_to_some_target_original_elsewhere_is_still_a_reference(tmp_path):
+    s = _seam_shape()
+    base = _export_read(tmp_path, [s])[obj_io.object_name(s)]
+    k = _local(base, (0, 1, 0))                          # original 3, UV (0, 1)
+    edit = _retex(base, {(1, k): (1.0, 1.0)})            # original 6's UV (quad B)
+    e = match.diff_shape(s, base, edit)
+    assert e["uvs"] == [(3, Ref(11, 6))]
+
+
+def test_authored_uv_stays_literal(tmp_path):
+    s = _seam_shape()
+    base = _export_read(tmp_path, [s])[obj_io.object_name(s)]
+    k = _local(base, (0, 1, 0))
+    edit = _retex(base, {(1, k): (0.123, 0.456)})
+    e = match.diff_shape(s, base, edit)
+    assert e["uvs"] == [(3, pytest.approx((0.123, 0.456)))]
