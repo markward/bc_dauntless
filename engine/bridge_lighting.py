@@ -24,3 +24,30 @@ def player_bridge_ambient_scale(player) -> float:
     except Exception as e:  # noqa: BLE001 - never let a probe kill the frame
         dev_mode.log_swallowed("alert bridge-ambient probe", e)
         return 1.0
+
+
+class ProbeBlend:
+    """Green <-> yellow/red reflection-probe mix (spec 2026-10-08-bridge-emitters
+    §9.4): 0 = green, 1 = yellow/red, moving at 1/fade_s per second. The first
+    update lands on its target. Feed it the paused-aware player dt."""
+
+    def __init__(self, fade_s=0.5):
+        self._fade_s = max(float(fade_s), 1e-6)
+        self._mix = None
+
+    def update(self, alert_level, dt) -> float:
+        target = 0.0 if int(alert_level) == 0 else 1.0
+        if self._mix is None:
+            self._mix = target
+            return self._mix
+        step = max(float(dt), 0.0) / self._fade_s
+        if self._mix < target:
+            self._mix = min(target, self._mix + step)
+        else:
+            self._mix = max(target, self._mix - step)
+        return self._mix
+
+
+def probe_scales():
+    """Ambient scales the green and the yellow/red probes are captured with."""
+    return ambient_scale_for_alert(0), ambient_scale_for_alert(1)

@@ -43,6 +43,17 @@ def test_registered_under_developer_mode(dev_env):
     assert "Bridge Emitters…" in labels
 
 
+def test_registration_passes_the_runtime_through_to_the_panel(dev_env):
+    h, dev_mode = dev_env
+    h.developer_mode = True
+    from engine import host_loop
+    reg = PanelRegistry()
+    sentinel = object()
+    panel = host_loop._register_bridge_emitters(
+        reg, _Cam(), _Ctl(), _View(), sentinel)
+    assert panel._runtime is sentinel
+
+
 def test_not_registered_without_developer_mode(dev_env):
     h, dev_mode = dev_env
     h.developer_mode = False

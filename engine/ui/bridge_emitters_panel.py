@@ -32,13 +32,14 @@ _UNDO_LIMIT = 100
 
 class BridgeEmittersPanel(Panel):
     def __init__(self, pose_provider, instance_provider, in_bridge_provider,
-                 clock=time.monotonic, io=host_io):
+                 clock=time.monotonic, io=host_io, runtime=None):
         super().__init__()
         self._pose = pose_provider
         self._iid = instance_provider
         self._in_bridge = in_bridge_provider
         self._clock = clock
         self._io = io
+        self._runtime = runtime
         self._visible = False
         self._last_pushed = None
         self._reset_session()

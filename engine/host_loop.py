@@ -3531,16 +3531,22 @@ def _register_ai_inspector(registry):
     return panel
 
 
-def _register_bridge_emitters(registry, bridge_camera, controller, view_mode):
+def _register_bridge_emitters(registry, bridge_camera, controller, view_mode,
+                              runtime=None):
     """Developer-only Bridge Emitters editor (docs/superpowers/specs/2026-10-08-bridge-emitters-spike-design.md §4): a pause-menu row and a panel that joins
-    the modal blockers. Returns _NULL_PICKER without --developer."""
+    the modal blockers. Returns _NULL_PICKER without --developer.
+
+    `runtime` is the production BridgeRuntime (engine.bridge_editor.runtime) --
+    the panel stores it so a future save/edit can re-push through it (Task 9);
+    it does nothing with it yet."""
     if not dev_mode.is_enabled():
         return _NULL_PICKER
     from engine.ui.bridge_emitters_panel import BridgeEmittersPanel
     panel = BridgeEmittersPanel(
         pose_provider=bridge_camera.compute_camera,
         instance_provider=lambda: controller.bridge_instance,
-        in_bridge_provider=lambda: bool(view_mode.is_bridge))
+        in_bridge_provider=lambda: bool(view_mode.is_bridge),
+        runtime=runtime)
     registry.register(panel)
     dev_mode.register_dev_pause_menu_entry("Bridge Emitters…", panel.open)
     return panel
@@ -7030,6 +7036,12 @@ class HostController:
         self.session: Optional[MissionSession] = None
         self.pending_swap: Optional[str] = None
         self.bridge_instance: Optional[Any] = None  # InstanceId; set by realize_set
+        # Pushes the per-bridge lighting document (materials, spots, probe
+        # origin/scales) to the renderer on every bridge load. Set by run()
+        # before the first mission load; realize_set calls attach/detach on
+        # it as bridge_instance is set/cleared. None in bare-controller tests
+        # that construct realize_set's fakes directly (guarded with getattr).
+        self.bridge_runtime: Any = None
         self.viewscreen_instance: Optional[Any] = None  # InstanceId; set by realize_set
         self.viewscreen_obj: Optional[Any] = None  # set by realize_set
         # NIF path currently bound to bridge_instance. Set by
@@ -8000,6 +8012,9 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool,
             except Exception as _e:
                 dev_mode.log_swallowed("destroy bridge instance", _e)
             controller.bridge_instance = None
+            _bridge_runtime = getattr(controller, "bridge_runtime", None)
+            if _bridge_runtime is not None:
+                _bridge_runtime.detach()
         elif not is_bridge:
             # Mission swap re-realizes this comm set against a fresh SetClass
             # carrier (reset_sdk_globals cleared g_kSetManager._sets), so this
@@ -8054,6 +8069,9 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool,
             if is_bridge:
                 controller.bridge_instance = iid
                 controller.current_bridge_nif_abs = nif_abs
+                _bridge_runtime = getattr(controller, "bridge_runtime", None)
+                if _bridge_runtime is not None:
+                    _bridge_runtime.attach(iid)
             else:
                 controller.comm_instances_by_set.setdefault(set_name, []).append(iid)
                 _tag_comm_instance(r, iid, comm_set_id)
@@ -10157,6 +10175,33 @@ def run(mission_name: Optional[str] = None,
         bridge_camera  = _BridgeCamera()
         _last_engaged_char = [None]   # last officer we zoomed to (for disengage)
 
+        # Bridge PBR runtime (engine.bridge_editor.runtime, spec
+        # 2026-10-09-bridge-pbr §7, §9): pushes the per-bridge lighting
+        # document's material overrides and spot lights to the renderer on
+        # every bridge load (realize_set calls attach/detach on it as
+        # controller.bridge_instance is set/cleared), and re-pushes spots on
+        # an alert change below. Must exist before _after_mission_loaded()
+        # runs, since that can realize a bridge on the very first call.
+        from engine.bridge_editor.runtime import BridgeRuntime
+
+        def _bridge_runtime_alert_level():
+            sess = controller.session
+            _player = sess.player if sess is not None else None
+            if _player is None:
+                return 0
+            try:
+                return int(_player.GetAlertLevel())
+            except Exception as _e:
+                dev_mode.log_swallowed("bridge runtime alert probe", _e)
+                return 0
+
+        controller.bridge_runtime = BridgeRuntime(
+            eye=lambda: _BRIDGE_CAMERA_EYE, alert=_bridge_runtime_alert_level)
+        # Green <-> yellow/red reflection-probe cross-fade (bridge_lighting.
+        # ProbeBlend); fed the paused-aware player dt each frame below.
+        _bridge_probe_blend = _bridge_lighting.ProbeBlend()
+        _bridge_probe_alert_last = [None]   # mutable box: last frame's level
+
         _after_mission_loaded()
         try:
             import _dauntless_host as _h
@@ -10275,7 +10320,8 @@ def run(mission_name: Optional[str] = None,
         registry = PanelRegistry()
         ai_inspector = _register_ai_inspector(registry)
         bridge_emitters = _register_bridge_emitters(registry, bridge_camera,
-                                                    controller, view_mode)
+                                                    controller, view_mode,
+                                                    controller.bridge_runtime)
 
         # Keyboard capture for CEF text fields: while one has focus the native
         # KeyGate makes every key read up. Registered as panel "kbd" so the
@@ -12277,6 +12323,18 @@ def run(mission_name: Optional[str] = None,
             # viewscreen feed — another ship's room — keeps constant brightness.
             r.set_bridge_ambient_scale(_bridge_lighting.player_bridge_ambient_scale(player))
             r.set_bridge_lighting(bridge_ambient, bridge_directionals)
+            # Bridge PBR reflection-probe cross-fade (spec
+            # 2026-10-09-bridge-pbr §6.3, §9.4): green <-> yellow/red over
+            # ProbeBlend's fade_s, frozen under pause (_player_dt is the
+            # paused-aware dt). The probes themselves are only ever
+            # recaptured on load/edit/alert change (BridgeRuntime), never
+            # per frame — this just blends between the two existing captures.
+            _bridge_alert_level = _bridge_runtime_alert_level()
+            host_io.set_bridge_probe_mix(
+                _bridge_probe_blend.update(_bridge_alert_level, _player_dt))
+            if _bridge_alert_level != _bridge_probe_alert_last[0]:
+                _bridge_probe_alert_last[0] = _bridge_alert_level
+                controller.bridge_runtime.on_alert(_bridge_alert_level)
             # BC's NiFlipController observes *game time*, not wall time
             # — controllers advance with g_kTimerManager (which the
             # original engine scaled, instrumentation Q3). Feeding wall
