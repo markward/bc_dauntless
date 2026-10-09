@@ -112,8 +112,9 @@ without a rewrite. Mark's addition: **a WASDQE fly camera**.
 
 ## 4. Camera & selection *(accepted 2026-10-09)*
 
-- **Entry.** Developer-only pause-menu row "Bridge Emitters…". Opening it
-  closes the pause menu and leaves the sim **paused**; the bridge is still
+- **Entry.** Developer-only pause-menu row "Bridge Emitters…". Like every
+  dev panel, it joins the host's modal blockers: the pause menu stays open
+  but hidden, which is what keeps the sim **paused**; the bridge is still
   drawn and lit normally. The editor previews alert states with its own
   green/yellow/red switch; it never changes the ship's real alert level.
 - **Fly camera.** Hold **RMB** to look; while held, **W/S** forward/back,
@@ -261,9 +262,9 @@ throws into the room.
   asset beside `mesh_fixes/` (§6a of the baseline spike), resolved via the
   project asset root. It holds only references and parameters, never BC
   geometry.
-- **Lookup order:** the replacements overlay and mod directories first (a
-  mod can ship a file for its own bridge NIF, keyed by that NIF's hash), then
-  the project. A modded NIF with no file gets the baseline: default
+- **Lookup order:** the replacements overlay and mod directories first, at
+  `<dir>/dauntless/bridge_lighting/<hash>.json` (a mod can ship a file for
+  its own bridge NIF, keyed by that NIF's hash), then the project. A modded NIF with no file gets the baseline: default
   materials, no emitters. **No name-match fallback**: a near-miss bridge
   silently receiving another bridge's emitters is the wrong-object failure
   §2.3 warns about.
@@ -312,9 +313,11 @@ throws into the room.
   warning naming it. A profile reference that resolves to nothing is an
   error naming the shape.
 - **Writer:** the editor regenerates the file wholesale, deterministically
-  (sorted keys, fixed float format) and atomically (`.tmp` then replace),
-  keeping unknown top-level keys (the `decals_writer` pattern). A
-  round-trip test pins it: load → save is byte-identical.
+  (sorted keys, fixed float format) and atomically (`.tmp` then replace).
+  Unknown keys never survive to the writer — the loader rejects them. Save
+  writes where the file was found, else the project directory (the
+  `decals_writer` target rule). A round-trip test pins it: load → save is
+  byte-identical.
 
 ## 8. Editor *(accepted 2026-10-09)*
 
@@ -483,3 +486,4 @@ nothing BC had. Every added map is pure gain.
 | — | 2026-10-09 | Measured: stock bridges have no spec/gloss/normal maps; spike spec-mask not ported | recorded | 2.2 |
 | — | 2026-10-09 | PBR shading assembly accepted; §9 complete | accepted | 9.6 |
 | — | 2026-10-09 | Self-review: stale cross-refs fixed; `material` schema defined; foundation + PBR planned as two plans | — | 1, 4, 5, 6, 7, 8, 9 |
+| — | 2026-10-09 | Plan-time corrections: dev panels keep the pause menu open-but-hidden; loader rejects unknown keys (writer no longer "keeps" them); mod lookup path named | — | 4, 7 |
