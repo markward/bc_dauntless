@@ -187,3 +187,56 @@ def test_identify_tolerates_missing_duplicate_faces(tmp_path):
     m = _export_read(tmp_path, [s])["b0011_wall_side_pnls_01"]
     m.faces = m.faces[:1]                               # Blender dropped faces
     assert len(match.identify(s, m)) == 4
+
+
+def _moved(mesh, k, p):
+    out = obj_io.ObjMesh()
+    out.positions = list(mesh.positions)
+    out.positions[k] = p
+    out.faces = [list(f) for f in mesh.faces]
+    return out
+
+
+def test_unchanged_edit_produces_no_edits(tmp_path):
+    s = _shape()
+    objs = _export_read(tmp_path, [s])
+    assert match.diff([s], objs, objs) == []
+
+
+def test_move_moves_every_welded_duplicate(tmp_path):
+    s = _shape()
+    base = _export_read(tmp_path, [s])["b0011_wall_side_pnls_01"]
+    edit = _moved(base, 1, (1.25, 0.0, 0.5))           # the seam vertex
+    e = match.diff_shape(s, base, edit)
+    assert e["block"] == 11 and e["orig_vertex_count"] == 5 and e["orig_triangle_count"] == 3
+    assert [i for i, _ in e["moves"]] == [1, 4]
+    assert e["moves"][0][1] == pytest.approx((1.25, 0.0, 0.5))
+    assert not e.get("add_vertices") and not e.get("add_triangles")
+
+
+def test_move_is_stored_in_shape_local_frame(tmp_path):
+    s = _shape(offset=(100.0, 50.0, 10.0))
+    base = _export_read(tmp_path, [s])["b0011_wall_side_pnls_01"]
+    edit = _moved(base, 2, (101.0, 51.0, 10.75))        # model space
+    e = match.diff_shape(s, base, edit)
+    assert e["moves"] == [(2, pytest.approx((1.0, 1.0, 0.75)))]
+
+
+def test_topology_change_is_refused_for_iteration_1(tmp_path):
+    s = _shape()
+    base = _export_read(tmp_path, [s])["b0011_wall_side_pnls_01"]
+    edit = _moved(base, 0, base.positions[0])
+    edit.faces = edit.faces[:1]
+    with pytest.raises(ShapeDiffError, match="iteration 2"):
+        match.diff_shape(s, base, edit)
+    edit2 = _moved(base, 0, base.positions[0])
+    edit2.positions.append((9.0, 9.0, 9.0))
+    with pytest.raises(ShapeDiffError, match="vertex count"):
+        match.diff_shape(s, base, edit2)
+
+
+def test_diff_refuses_renamed_or_missing_objects(tmp_path):
+    s = _shape()
+    objs = _export_read(tmp_path, [s])
+    with pytest.raises(ShapeDiffError, match="objects differ"):
+        match.diff([s], objs, {"b0011_renamed": objs["b0011_wall_side_pnls_01"]})
