@@ -91,6 +91,8 @@ void apply_texture_property(
     const std::unordered_map<std::uint32_t, int>* sibling_specular_for_image,
     const std::unordered_set<std::uint32_t>* normal_image_links,
     const std::unordered_map<std::uint32_t, int>* sibling_normal_for_image,
+    const std::unordered_map<std::uint32_t, int>* sibling_rough_for_image,
+    const std::unordered_map<std::uint32_t, int>* sibling_metal_for_image,
     const std::unordered_map<std::uint32_t, std::string>* image_filename_for_link)
 {
     // Single-texture v3.x property — usually populates the Base stage.
@@ -174,6 +176,25 @@ void apply_texture_property(
             auto& bump = m.stages[static_cast<std::size_t>(Material::StageSlot::Bump)];
             bump.texture_index = it->second;
             bump.apply_mode    = 2;
+        }
+    }
+    // Bridge PBR sibling shims, mirroring the _normal block above: a probed
+    // `_rough` / `_metal` sibling binds to Roughness / Metalness. The hull
+    // texture stays in Base / Glow.
+    if (sibling_rough_for_image) {
+        auto it = sibling_rough_for_image->find(effective_image_link);
+        if (it != sibling_rough_for_image->end()) {
+            auto& rough = m.stages[static_cast<std::size_t>(Material::StageSlot::Roughness)];
+            rough.texture_index = it->second;
+            rough.apply_mode    = 2;
+        }
+    }
+    if (sibling_metal_for_image) {
+        auto it = sibling_metal_for_image->find(effective_image_link);
+        if (it != sibling_metal_for_image->end()) {
+            auto& metal = m.stages[static_cast<std::size_t>(Material::StageSlot::Metalness)];
+            metal.texture_index = it->second;
+            metal.apply_mode    = 2;
         }
     }
 }
@@ -272,6 +293,8 @@ Material build_material(const MaterialInputs& in) {
         in.sibling_specular_for_image,
         in.normal_image_links,
         in.sibling_normal_for_image,
+        in.sibling_rough_for_image,
+        in.sibling_metal_for_image,
         in.image_filename_for_link);
     if (in.multi_texture) apply_multi_texture_property(m, *in.multi_texture,
         in.image_to_texture, in.image_filename_for_link);

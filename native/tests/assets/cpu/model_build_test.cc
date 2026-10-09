@@ -374,8 +374,11 @@ protected:
                 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00};
     }
     void write_tga(const std::string& name) {
+        write_tga_at(tmp_dir / name);
+    }
+    void write_tga_at(const fs::path& full_path) {
         auto bytes = valid_tga();
-        std::ofstream out(tmp_dir / name, std::ios::binary);
+        std::ofstream out(full_path, std::ios::binary);
         out.write(reinterpret_cast<const char*>(bytes.data()),
                   static_cast<std::streamsize>(bytes.size()));
     }
@@ -731,6 +734,80 @@ TEST_F(ModelBuildTest, SyntheticHullWithNormalSiblingGetsBumpFromDisk) {
         << "sibling hull_ID_normal.tga on disk must bind to Bump";
     EXPECT_GE(base_texture_index(model), 0)
         << "hull must still render from its Base texture";
+}
+
+TEST(ModelBuildFilenames, SiblingMapAppendsSuffixAndStripsGlow) {
+    using assets::detail::sibling_map_filename;
+    EXPECT_EQ(sibling_map_filename("Map 3.tga", "_rough"), "Map 3_rough.tga");
+    EXPECT_EQ(sibling_map_filename("wall_glow.TGA", "_metal"), "wall_metal.TGA");
+    EXPECT_EQ(sibling_map_filename("noext", "_rough"), "noext_rough");
+}
+
+TEST_F(ModelBuildTest, RoughAndMetalSiblingsBindTheirStages) {
+    write_tga("hull_ID.tga");
+    write_tga("hull_ID_rough.tga");
+    write_tga("hull_ID_metal.tga");
+    auto f = file_with_textured_shape();
+    auto model = assets::detail::build_model(f, make_ctx());
+    using S = assets::Material::StageSlot;
+    const auto& m = model.materials[0];
+    EXPECT_GE(m.stages[static_cast<size_t>(S::Roughness)].texture_index, 0);
+    EXPECT_GE(m.stages[static_cast<size_t>(S::Metalness)].texture_index, 0);
+}
+
+TEST_F(ModelBuildTest, NoSiblingsLeavesRoughAndMetalEmpty) {
+    write_tga("hull_ID.tga");
+    auto f = file_with_textured_shape();
+    auto model = assets::detail::build_model(f, make_ctx());
+    using S = assets::Material::StageSlot;
+    EXPECT_EQ(model.materials[0].stages[static_cast<size_t>(S::Roughness)].texture_index, -1);
+    EXPECT_EQ(model.materials[0].stages[static_cast<size_t>(S::Metalness)].texture_index, -1);
+}
+
+// Interior policy (spec §9.2): a STOCK albedo takes siblings only from the
+// overlay; a mod albedo only from beside itself.
+TEST_F(ModelBuildTest, InteriorStockAlbedoTakesSiblingsOnlyFromTheOverlay) {
+    const fs::path stock = tmp_dir / "stock", mod = tmp_dir / "mod", overlay = tmp_dir / "overlay";
+    for (const auto& d : {stock, mod, overlay}) fs::create_directories(d);
+    write_tga_at(stock / "hull_ID.tga");
+    write_tga_at(mod / "hull_ID_rough.tga");      // a mod's map for a STOCK albedo: must be ignored
+    write_tga_at(overlay / "hull_ID_metal.tga");  // our overlay map: must be used
+    auto ctx = make_ctx();
+    ctx.texture_search_paths = {mod, stock};      // stock dir is LAST, as game_asset_dirs orders it
+    ctx.sibling_overlay_dirs = {overlay};
+    ctx.interior_sibling_policy = true;
+    auto model = assets::detail::build_model(file_with_textured_shape(), ctx);
+    using S = assets::Material::StageSlot;
+    EXPECT_EQ(model.materials[0].stages[static_cast<size_t>(S::Roughness)].texture_index, -1);
+    EXPECT_GE(model.materials[0].stages[static_cast<size_t>(S::Metalness)].texture_index, 0);
+}
+
+TEST_F(ModelBuildTest, InteriorModAlbedoTakesSiblingsOnlyBesideItself) {
+    const fs::path stock = tmp_dir / "stock", mod = tmp_dir / "mod", overlay = tmp_dir / "overlay";
+    for (const auto& d : {stock, mod, overlay}) fs::create_directories(d);
+    write_tga_at(mod / "hull_ID.tga");            // the mod overrides the albedo
+    write_tga_at(overlay / "hull_ID_rough.tga");  // our stock-only map: must be ignored
+    write_tga_at(mod / "hull_ID_metal.tga");      // the mod's own map: used
+    auto ctx = make_ctx();
+    ctx.texture_search_paths = {mod, stock};
+    ctx.sibling_overlay_dirs = {overlay};
+    ctx.interior_sibling_policy = true;
+    auto model = assets::detail::build_model(file_with_textured_shape(), ctx);
+    using S = assets::Material::StageSlot;
+    EXPECT_EQ(model.materials[0].stages[static_cast<size_t>(S::Roughness)].texture_index, -1);
+    EXPECT_GE(model.materials[0].stages[static_cast<size_t>(S::Metalness)].texture_index, 0);
+}
+
+TEST_F(ModelBuildTest, ShipLoadsKeepProbingEverySearchPath) {
+    const fs::path stock = tmp_dir / "stock", mod = tmp_dir / "mod";
+    for (const auto& d : {stock, mod}) fs::create_directories(d);
+    write_tga_at(stock / "hull_ID.tga");
+    write_tga_at(mod / "hull_ID_normal.tga");
+    auto ctx = make_ctx();
+    ctx.texture_search_paths = {mod, stock};      // policy off (default): today's behaviour
+    auto model = assets::detail::build_model(file_with_textured_shape(), ctx);
+    using S = assets::Material::StageSlot;
+    EXPECT_GE(model.materials[0].stages[static_cast<size_t>(S::Bump)].texture_index, 0);
 }
 
 TEST(ModelBuildFilenames, NormalPredicateMatchesLongAndShortForms) {

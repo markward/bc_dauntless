@@ -31,8 +31,12 @@ struct Material {
     ///
     /// Decal0..2 mirror the NIF NiTexturingProperty decal slots only; they
     /// are NOT project hull-name decals, which live on Model::decals.
+    ///
+    /// Roughness/Metalness: `<stem>_rough` / `<stem>_metal` siblings, read
+    /// only by the bridge PBR path (spec 2026-10-08-bridge-emitters §9.2).
     enum class StageSlot {
         Base = 0, Dark, Detail, Gloss, Glow, Bump, Decal0, Decal1, Decal2,
+        Roughness, Metalness,
         Count
     };
 

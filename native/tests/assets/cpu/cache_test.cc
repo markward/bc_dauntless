@@ -135,6 +135,21 @@ TEST(AssetCacheTest, InteriorLoadCarriesTheNifContentHash) {
     EXPECT_TRUE(plain->content_hash.empty());
 }
 
+// The sibling-overlay directory list (spec 2026-10-09-bridge-pbr §9.2/§9.3)
+// is folded into the cache key like scale/geosphere/interior: two interior
+// loads of the same NIF that differ only in sibling_overlay_dirs must be
+// distinct cached entries.
+TEST(AssetCacheTest, OverlayDirsAreAPartOfTheInteriorCacheKey) {
+    if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
+    if (!fs::exists(dbridge_path())) GTEST_SKIP() << "DBridge not installed";
+
+    assets::AssetCache cache(stub_config());
+    auto a = cache.load(dbridge_path(), {dbridge_tex_path()}, {}, {}, 1.0f, false, true, {});
+    auto b = cache.load(dbridge_path(), {dbridge_tex_path()}, {}, {}, 1.0f, false, true,
+                        {fs::temp_directory_path()});
+    EXPECT_NE(a.get(), b.get());
+}
+
 // Regression: BC's ReplaceTexture path OMITS the LOD subdir
 // ("FedShips/Dauntless.tga" when the real file is FedShips/High/Dauntless.tga).
 // The replacement must still resolve by basename against the search dirs — a

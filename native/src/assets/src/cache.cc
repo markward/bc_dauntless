@@ -106,6 +106,21 @@ std::string decals_key(const std::vector<DecalRequest>& decals) {
     return key;
 }
 
+// Sibling-overlay directory list (spec 2026-10-09-bridge-pbr §9.2/§9.3),
+// folded into the cache key like scale/geosphere/interior: two interior
+// loads of the same NIF differing only in this list must land in distinct
+// entries. Empty list -> empty suffix -> byte-identical to the 7-argument
+// overload's key.
+std::string overlay_dirs_key(const std::vector<fs::path>& dirs) {
+    if (dirs.empty()) return {};
+    std::string key = "|overlay:";
+    for (const auto& d : dirs) {
+        key += d.string();
+        key += ';';
+    }
+    return key;
+}
+
 std::string read_file_bytes(const fs::path& path) {
     std::ifstream in(path, std::ios::binary);
     std::ostringstream ss;
@@ -184,6 +199,19 @@ ModelHandle AssetCache::load(
     float scale,
     bool geosphere,
     bool interior) {
+    return load(nif_path, search_paths, texture_replacements, decals, scale,
+                geosphere, interior, /*sibling_overlay_dirs=*/{});
+}
+
+ModelHandle AssetCache::load(
+    const fs::path& nif_path,
+    const std::vector<fs::path>& search_paths,
+    const std::vector<TextureReplacement>& texture_replacements,
+    const std::vector<DecalRequest>& decals,
+    float scale,
+    bool geosphere,
+    bool interior,
+    const std::vector<fs::path>& sibling_overlay_dirs) {
     // glTF/GLB path: an entirely separate build (build_model_from_gltf), with
     // no mesh fixes, no texture replacements and no decals -- those are all
     // BC-NIF-specific features that don't apply to rock-catalogue meshes.
@@ -264,7 +292,8 @@ ModelHandle AssetCache::load(
     auto canon = fs::weakly_canonical(nif_path).string()
                  + replacements_key(texture_replacements) + decals_key(decals)
                  + fix_key + std::string(geosphere ? "|geosphere" : "")
-                 + std::string(interior ? "|interior" : "");
+                 + std::string(interior ? "|interior" : "")
+                 + overlay_dirs_key(sibling_overlay_dirs);
     auto it = impl_->entries.find(canon);
     if (it != impl_->entries.end()) {
         if (auto live = it->second.live.lock()) {
@@ -301,6 +330,8 @@ ModelHandle AssetCache::load(
     ctx.texture_replacements  = texture_replacements;
     ctx.decals                = decals;
     ctx.generate_missing_normals = interior;
+    ctx.interior_sibling_policy  = interior;
+    ctx.sibling_overlay_dirs     = sibling_overlay_dirs;
 
     Model built = detail::build_model(file, ctx);
     if (interior) built.content_hash = fnv1a64_hex(read_file_bytes(nif_path));
