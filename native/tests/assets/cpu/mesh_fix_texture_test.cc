@@ -312,3 +312,81 @@ TEST(MeshFixTexture, RefusesATextureOpOnAMergesHiddenPatch) {
     EXPECT_EQ(assets::apply_mesh_fix(f, fix), "");
 }
 
+// Task 17: the real DBridge through the COMMITTED mesh fix and the project
+// replacements overlay, loaded with the interior sibling policy exactly as
+// host_loop.realize_set does (overlay dir first in the search list, and as the
+// sibling overlay). The fix's spliced albedos pick up their `_emissive*`
+// siblings from the overlay: Map 22a has all three; g_imp_redbars and
+// g_imp_connops the default only.
+namespace {
+// Emissive-slot texture index of every mesh built from shape `shape`; all
+// must agree. -2 if no such mesh, -3 if they disagree.
+int emissive_slot_of(const assets::Model& m, const std::string& shape,
+                     assets::Material::StageSlot slot) {
+    int out = -2;
+    for (const auto& mesh : m.meshes) {
+        if (mesh.shape_name() != shape) continue;
+        const auto& mat = m.materials.at(static_cast<std::size_t>(mesh.material_index()));
+        const int ti = mat.stages[static_cast<std::size_t>(slot)].texture_index;
+        if (out != -2 && out != ti) return -3;
+        out = ti;
+    }
+    return out;
+}
+}  // namespace
+
+TEST(MeshFixTexture, RealDbridgeCommittedFixShapesGetTheirEmissiveSiblings) {
+    const fs::path nif = test_support::game_root() / "data/Models/Sets/DBridge/Dbridge.NIF";
+    const fs::path stock = test_support::game_root() / "data/Models/Sets/DBridge/High";
+    const fs::path overlay = test_support::project_root() /
+        "native/assets/replacements/data/Models/Sets/DBridge/High";
+    if (!fs::exists(nif)) GTEST_SKIP() << "DBridge not installed";
+
+    std::ifstream in(nif, std::ios::binary);
+    const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const fs::path fix_path = test_support::project_root() / "native/assets/mesh_fixes" /
+                              (assets::fnv1a64_hex(bytes) + ".json");
+    ASSERT_TRUE(fs::exists(fix_path)) << "no committed fix for this Dbridge.NIF: " << fix_path;
+    std::ifstream fin(fix_path, std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(fin)), std::istreambuf_iterator<char>());
+    std::string err;
+    auto fix = assets::parse_mesh_fix(text, &err);
+    ASSERT_TRUE(fix.has_value()) << err;
+
+    auto f = nif::load(nif);
+    ASSERT_EQ(assets::apply_mesh_fix(f, *fix), "");
+    const std::vector<std::uint32_t> map22a = {121, 124, 395, 471};
+    const std::vector<std::uint32_t> redbars = {45, 479, 697};
+    const std::vector<std::uint32_t> connops = {29, 59};
+    for (const auto* group : {&map22a, &redbars, &connops})
+        for (std::uint32_t b : *group)
+            std::get<nif::NiTriShape>(f.blocks.at(b)).av.obj.name = "T" + std::to_string(b);
+
+    assets::PathResolver resolver;
+    assets::detail::ModelBuildContext ctx;
+    ctx.resolver = &resolver;
+    ctx.texture_search_paths = {overlay, stock};
+    ctx.sibling_overlay_dirs = {overlay};
+    ctx.interior_sibling_policy = true;
+    ctx.texture_uploader = stub_texture;
+    ctx.mesh_uploader = stub_mesh;
+    auto model = assets::detail::build_model(f, ctx);
+
+    using S = assets::Material::StageSlot;
+    for (std::uint32_t b : map22a) {
+        const std::string n = "T" + std::to_string(b);
+        EXPECT_GE(emissive_slot_of(model, n, S::Emissive), 0) << n;
+        EXPECT_GE(emissive_slot_of(model, n, S::EmissiveYellow), 0) << n;
+        EXPECT_GE(emissive_slot_of(model, n, S::EmissiveRed), 0) << n;
+    }
+    for (std::uint32_t b : redbars) {
+        const std::string n = "T" + std::to_string(b);
+        EXPECT_GE(emissive_slot_of(model, n, S::Emissive), 0) << n;
+        EXPECT_EQ(emissive_slot_of(model, n, S::EmissiveYellow), -1) << n;
+        EXPECT_EQ(emissive_slot_of(model, n, S::EmissiveRed), -1) << n;
+    }
+    for (std::uint32_t b : connops) {
+        const std::string n = "T" + std::to_string(b);
+        EXPECT_GE(emissive_slot_of(model, n, S::Emissive), 0) << n;
+    }
+}
