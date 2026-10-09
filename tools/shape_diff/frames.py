@@ -1,5 +1,6 @@
 """Axis conventions and 4x4 helpers. Matrices are column-major lists of 16
 floats, as `_dauntless_host.nif_shapes` returns `world`."""
+from tools.shape_diff import ShapeDiffError
 
 
 def bc_to_obj(p):
@@ -26,7 +27,7 @@ def affine_inverse(m):
     g, h, i = m[2], m[6], m[10]
     det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
     if abs(det) < 1e-12:
-        raise ValueError("singular transform")
+        raise ShapeDiffError("singular transform")
     inv = [(e * i - f * h) / det, (c * h - b * i) / det, (b * f - c * e) / det,
            (f * g - d * i) / det, (a * i - c * g) / det, (c * d - a * f) / det,
            (d * h - e * g) / det, (b * g - a * h) / det, (a * e - b * d) / det]
