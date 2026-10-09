@@ -189,6 +189,8 @@ throws into the room.
   emission: DBridge texture 7 is shared by 22 shapes, from cove roofs to
   lift roofs, and a glow map on it would light all 22. A `map` mask is
   therefore named by the emitter, not discovered beside the texture.
+  *(Narrowed 2026-10-09, task 17: texture-level `_emissive` sibling maps
+  now exist as a DEFAULT under the emitter — see §9.7.)*
 - **A glowing texel takes less room light:** received light (diffuse and
   specular) × `(1 − mask × level_norm)`, where `level_norm` is the
   current level clamped to [0,1]. This is the shelved spike's fix that
@@ -475,6 +477,49 @@ nothing BC had. Every added map is pure gain.
   ≤ 0.88 while a specular highlight can exceed it; schema round-trip; the
   gate (`scripts/check_tests.sh`) green with no new ledger entries.
 
+### 9.7 As built: emissive sibling maps *(Mark approved 2026-10-09, task 17)*
+
+A texture-level emission default, loaded by filename like the §9.2 maps.
+It is NOT the §6 emitter and does not replace it.
+
+- **Convention:** beside the albedo, `<stem>_emissive.<ext>` (default,
+  green), `<stem>_emissive_y.<ext>` (yellow alert), `<stem>_emissive_r.<ext>`
+  (red alert); `<stem>` built by `sibling_map_filename` (trailing `_glow`
+  stripped, extension kept). RGB = emitted colour, alpha ignored, sampled
+  with the base UV. Stage slots `Emissive` / `EmissiveYellow` /
+  `EmissiveRed`. Same look-up policy as §9.2 (stock albedo → overlay only;
+  mod albedo → beside itself), and **interior loads only** — ship loads never
+  probe them. An `_emissive*` file is a derived map: never probed for
+  siblings itself, and refused as a mesh-fix / shape-diff albedo
+  (`check_albedo_name`, `_RESERVED_SUFFIXES`).
+- **Alert selection** (`renderer::bridge_emissive_texture`): yellow →
+  `_emissive_y` else `_emissive`; red → `_emissive_r` else `_emissive`;
+  green and any unknown level → `_emissive`. A hard switch, no fade.
+  `host_loop` pushes `set_bridge_alert_level(GetAlertLevel())` every frame
+  beside the ambient scale (no player → green). Main bridge view only: a
+  comm set always shows the default.
+- **Shading:** `emissive = texture(u_emissive_map, uv).rgb × kEmissiveScale`
+  (1.0, `bridge_lighting_tuning.h`, rebuild to tune), added AFTER the
+  diffuse ceiling on both the PBR and the legacy path, so it can exceed
+  bloom's 0.9 and glow. Purely additive: unlike §6.1 it does NOT reduce the
+  texel's received light. Texture unit 10.
+- **Probes exclude it.** The capture branch returns before the emissive
+  term. Simplest correct choice: emission is per alert while the
+  yellow/red probe is shared by two alerts, and a green-emission probe would
+  reflect green panels at red alert; excluding it also means an alert change
+  never needs a recapture. Cost: reflections show no glowing panels.
+- **Debug views show none** (all of 1–10, including "light only", which is
+  received light). No new view.
+- **Flipbooks:** a flipbook base's emissive comes from its frame-0 stem and
+  is static — no per-frame emissive.
+- **Coexistence with the §6 emitter `map` mask:** the sibling is the
+  texture-level default (every shape drawing that texture glows — so put
+  emission on a texture only one surface uses, e.g. a mesh-fix-spliced
+  albedo like `Map 22a.tga`); the emitter `map` is per-shape and comes
+  later, with profiles, level and the received-light dip.
+- **DBridge as shipped:** `Map 22a` has all three; `g_imp_redbars` and
+  `g_imp_connops` the default only (files renamed to the convention).
+
 ## 10. Iteration log
 
 | # | Date | Change | Verdict | Sections |
@@ -494,3 +539,4 @@ nothing BC had. Every added map is pure gain.
 | P1 | 2026-10-09 | Bridge PBR built (plan 2026-10-09-bridge-pbr): linear GGX, layered material channels, normal/rough/metal maps, two box-projected probes, spot lights, live editor push | live-verified (Mark, 2026-10-09: "looks pretty good! I can't see any issues"); DBridge + EBridge material overrides authored live | 9 |
 | — | 2026-10-09 | Plan-time corrections: dev panels keep the pause menu open-but-hidden; loader rejects unknown keys (writer no longer "keeps" them); mod lookup path named | — | 4, 7 |
 | F1 | 2026-10-09 | Foundation built: fly camera, pick + identity, selection tint, lighting doc + writer, panel (plan 2026-10-09-bridge-editor-foundation) | live-verified (Mark, 2026-10-09: "works!") | 4, 7, 8 |
+| E1 | 2026-10-09 | Emissive sibling maps `_emissive{,_y,_r}` (task 17): interior loads, per-alert variant, after the diffuse ceiling, probes exclude | built; not live-verified | 6.1, 9.7 |
