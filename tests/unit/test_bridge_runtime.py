@@ -236,7 +236,7 @@ def test_more_than_32_spots_warning_is_logged(proj, monkeypatch):
 # count (non-finite values slipping past schema validation), not just the
 # cap-count warnings it already names.
 
-def test_push_reports_a_warning_when_the_renderer_drops_more_than_the_cap_warned(proj):
+def test_push_reports_a_warning_when_the_renderer_drops_invalid_spots(proj):
     d = ld.empty_doc("x")
     ld.shape_entry(d, 5, "bar")["emitter"] = {
         "light": {"position": [0, 0, 0], "direction": [0, 0, -1]}}
@@ -245,12 +245,46 @@ def test_push_reports_a_warning_when_the_renderer_drops_more_than_the_cap_warned
     class DroppingIO(FakeIO):
         def set_bridge_spots(self, spots):
             self.calls.append(("set_bridge_spots", spots))
-            return 3   # native reports 3 dropped; lights.spots named none (under cap)
+            return 3   # native reports 3 of the sent spots as non-finite
 
     io = DroppingIO()
     rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
     rt.attach("iid")
     matched = {"5:bar": 0}
     warnings = rt.push(d, matched)
-    assert len(warnings) == 1
-    assert "3" in warnings[0] and "dropped" in warnings[0]
+    assert warnings == ["3 bridge light(s) dropped as invalid (non-finite values)"]
+
+
+def test_push_reports_cap_and_invalid_drops_together_not_subtracted(proj):
+    # Round-2 fix: push() previously did `if dropped > len(cap_warnings)`,
+    # treating the native dropped-count and the cap-warning count as the
+    # SAME population. They are not -- lights.spots() already truncates the
+    # list to 32 before it ever reaches native, so whatever native reports
+    # dropped can only be non-finite values among the <=32 it was SENT, and
+    # must always be reported in addition to the cap warnings, never only
+    # when it exceeds them. 34 matched lights -> 2 cap warnings; 1 of the 32
+    # SENT spots reported non-finite -> 1 > 2 is False under the old logic,
+    # silently losing the real drop.
+    d = ld.empty_doc("x")
+    matched = {}
+    for i in range(34):
+        ld.shape_entry(d, i, f"s{i}")["emitter"] = {
+            "light": {"position": [0, 0, 0], "direction": [0, 0, -1]}}
+        matched[f"{i}:s{i}"] = i
+
+    class DroppingIO(FakeIO):
+        def set_bridge_spots(self, spots):
+            self.calls.append(("set_bridge_spots", spots))
+            return 1   # 1 of the 32 SENT spots was non-finite
+
+    io = DroppingIO()
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt.attach("iid")
+
+    warnings = rt.push(d, matched)
+
+    cap_warnings = [w for w in warnings if "more than 32" in w]
+    invalid_warnings = [w for w in warnings if "dropped as invalid" in w]
+    assert len(cap_warnings) == 2
+    assert invalid_warnings == ["1 bridge light(s) dropped as invalid (non-finite values)"]
+    assert len(warnings) == 3

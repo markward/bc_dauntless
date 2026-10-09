@@ -60,7 +60,18 @@ def test_probe_scales_are_the_green_and_yellow_ambient():
 # loop (host_loop.run() itself), so this inspects run()'s AST instead of
 # grepping strings, which a pure source-inspection check could satisfy by
 # accident (e.g. the call present but never reached, or reached every
-# frame regardless of level). ──
+# frame regardless of level).
+#
+# Round 2: round 1's test only checked update()'s arg COUNT, not its
+# identity -- a reviewer swapped the dt argument for TICK_DT (the
+# non-paused clock, which silently breaks "frozen under pause") and the
+# test stayed green. Now the second argument is pinned to the Name
+# `_player_dt`. The on_alert guard check is also less brittle: instead of
+# string-matching the literal name `_bridge_probe_alert_last` in the `If`'s
+# dumped AST, it checks structurally that the `If`'s test is a `Compare`
+# with a `NotEq` op that mentions the SAME level variable passed to
+# `ProbeBlend.update` -- tied to the real data dependency, not a name that
+# happens to appear in the source. ──
 
 def test_host_loop_feeds_probe_blend_and_gates_on_alert_on_change():
     import ast
@@ -77,10 +88,20 @@ def test_host_loop_feeds_probe_blend_and_gates_on_alert_on_change():
     mix_call = None
     on_alert_calls_with_guard = []
 
+    def _is_guard(test, level_name):
+        if level_name is None or not isinstance(test, ast.Compare):
+            return False
+        if not any(isinstance(op, ast.NotEq) for op in test.ops):
+            return False
+        return any(isinstance(n, ast.Name) and n.id == level_name
+                   for n in ast.walk(test))
+
     class Visitor(ast.NodeVisitor):
         def visit_If(self, node):
-            test_dump = ast.dump(node.test)
-            guarded = "NotEq" in test_dump and "_bridge_probe_alert_last" in test_dump
+            level_name = (update_call.args[0].id
+                          if update_call is not None and isinstance(update_call.args[0], ast.Name)
+                          else None)
+            guarded = _is_guard(node.test, level_name)
             for stmt in ast.walk(node):
                 if (isinstance(stmt, ast.Call)
                         and isinstance(stmt.func, ast.Attribute)
@@ -102,6 +123,12 @@ def test_host_loop_feeds_probe_blend_and_gates_on_alert_on_change():
 
     assert update_call is not None, "no _bridge_probe_blend.update(level, dt) call found"
     assert len(update_call.args) == 2
+    dt_arg = update_call.args[1]
+    assert isinstance(dt_arg, ast.Name) and dt_arg.id == "_player_dt", (
+        "ProbeBlend.update's second argument must be the Name _player_dt "
+        "(the paused-aware dt) -- TICK_DT or any other clock breaks "
+        f"'frozen under pause'; got {ast.dump(dt_arg)!r}")
+
     assert mix_call is not None, "no host_io.set_bridge_probe_mix(...) call found"
     # The mix call's sole argument must BE the update call (fed straight
     # through), not a separately-computed value.
@@ -109,5 +136,6 @@ def test_host_loop_feeds_probe_blend_and_gates_on_alert_on_change():
 
     assert on_alert_calls_with_guard, "on_alert(...) is never called from run()"
     assert all(on_alert_calls_with_guard), (
-        "every on_alert(...) call must be inside an `if ... != "
-        "_bridge_probe_alert_last[...]:`-shaped guard, never unconditional")
+        "every on_alert(...) call must be inside an `if <level> != "
+        "<something>:` guard comparing the SAME level variable fed to "
+        "ProbeBlend.update, never unconditional")

@@ -51,13 +51,16 @@ class BridgeRuntime:
 
     def push(self, doc, matched=None):
         """Re-push overrides + spots from an edited doc (the live editor, or
-        attach()). Returns spot-count warnings (cap drops by name, plus a
-        summary warning if the renderer itself dropped more spots than that
-        -- non-finite values slipping past schema validation). Builds tuples
-        from a doc that is already schema-validated, but the push to the
-        native side still goes through a guard -- a value that slips past
-        validation (or a stale/garbage instance id) must not raise into the
-        host loop."""
+        attach()). Returns spot-count warnings: cap drops by name (from
+        lights.spots, BEFORE the list ever reaches native), plus a separate
+        warning if the renderer itself reports spots dropped as invalid.
+        These are two unrelated populations -- lights.spots already caps the
+        list at MAX_SPOTS, so whatever set_bridge_spots reports dropped can
+        only be non-finite values among the <=32 actually sent, never a
+        restatement of the cap count. Builds tuples from a doc that is
+        already schema-validated, but the push to the native side still goes
+        through a guard -- a value that slips past validation (or a
+        stale/garbage instance id) must not raise into the host loop."""
         if self._iid is None:
             return []
         self._doc = doc
@@ -72,9 +75,8 @@ class BridgeRuntime:
                 dev_mode.log_swallowed(
                     "bridge lighting too many spots", ld.BridgeLightingError(w))
             dropped = self._io.set_bridge_spots(spot_list)
-            if dropped > len(warnings):
-                extra = dropped - len(warnings)
-                msg = f"{extra} spot(s) dropped by the renderer (non-finite values)"
+            if dropped:
+                msg = f"{dropped} bridge light(s) dropped as invalid (non-finite values)"
                 warnings.append(msg)
                 dev_mode.log_swallowed(
                     "bridge lighting spots dropped", ld.BridgeLightingError(msg))
