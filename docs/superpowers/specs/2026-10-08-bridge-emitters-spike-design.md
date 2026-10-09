@@ -92,12 +92,47 @@ emitters do** (`diffuse_ceiling`, max 0.88 < bloom threshold 0.9).
   `native/assets/mesh_fixes/<hash>.json`, shapes as `{block, name}`.
 - No per-mesh tint/emissive binding; `bridge.frag` has no emissive term.
 
-## 3. Approaches
+## 3. Approach — chosen: A, look-and-pick vertical slice (Mark, 2026-10-09)
 
-*(pending decision — see chat 2026-10-08)*
+Considered: **A** look-and-pick slice; **B** SPV-chassis bridge editor
+(orbit camera, gizmos — large up-front host path); **C** group-first,
+BC-structured (per-group profiles only; no per-object direction/cone, DBridge
+starts empty). Chosen **A**, borrowing from C a shared named-profile layer
+and from B an `EditTarget`-shaped adapter so gizmos can be added later
+without a rewrite. Mark's addition: **a WASDQE fly camera**.
+
+## 4. Camera & selection *(accepted 2026-10-09)*
+
+- **Entry.** Developer-only pause-menu row "Bridge Emitters…". Opening it
+  closes the pause menu and leaves the sim **paused**; the bridge is still
+  drawn and lit normally. The editor previews alert states with its own
+  green/yellow/red switch; it never changes the ship's real alert level.
+- **Fly camera.** Hold **RMB** to look; while held, **W/S** forward/back,
+  **A/D** strafe, **Q/E** down/up; **Shift** fast, **Alt** slow. Starts at
+  the current captain's-chair eye, bridge-local units, base ~60 units/s (a
+  DBridge is ~400 across). No collision. Closing restores the bridge camera
+  exactly as it was. Bridge view doesn't drive the ship (Mark), so
+  WASDQE are free there — verify our engine agrees when building.
+- **Picking.** RMB released ⇒ free cursor. **LMB in the 3D view** picks
+  under the cursor: `manual_aim.cursor_ray` → the C++ ray trace on the
+  bridge instance, **extended to return the hit mesh + triangle**. Python
+  then resolves: NIF block index, shape name, parent-node chain (shows
+  `Red On GlowAlpha` and the other groups), material and texture names.
+  **Alt+LMB** picks the next surface behind the first (EBridge wall tops
+  hold two coincident emitters).
+- **Unit of selection** = one NIF shape. Stable identity across launches =
+  **(NIF content hash, block index, shape name)**; the name is a sanity
+  check, so a mismatch is reported, never silently applied to the wrong
+  shape.
+- **Display.** Dev-only `bridge.frag` overlay keyed by that stable identity
+  (not the per-frame mesh counter): the selected shape gets a pulsing cyan
+  tint, the shape under the cursor a faint tint. The panel shows the
+  identity readout.
+- Not here: sub-shape regions (masks → §5), gizmos (later, via the adapter).
 
 ## 8. Iteration log
 
 | # | Date | Change | Verdict | Sections |
 |---|------|--------|---------|----------|
 | — | 2026-10-08 | Spec created; evidence recorded | — | 1, 2 |
+| — | 2026-10-09 | Approach A + WASDQE fly camera chosen; camera & selection design | accepted | 3, 4 |
