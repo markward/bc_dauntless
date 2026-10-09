@@ -91,8 +91,9 @@ uniform float     u_metal_override;
 // model's AABB, with the split-sum BRDF LUT on unit 9. u_has_probe = 0 until
 // BOTH are captured: the cube units are then EMPTY and must not be sampled.
 // u_capture = 1 while BridgePass draws a probe face: linear diffuse-only
-// radiance, no encode, no ceiling, no AO, no highlight, no specular, the
-// viewscreen black.
+// radiance under the same diffuse ceiling as the view (spec §9.5: the probe
+// holds a lit room capped at 0.88, so only emitters in it may bloom through
+// a reflection), no AO, no highlight, no specular, the viewscreen black.
 uniform samplerCube u_probe_a;    // unit 7: green
 uniform samplerCube u_probe_b;    // unit 8: yellow/red
 uniform sampler2D   u_brdf_lut;   // unit 9: (A, B), x = NdotV, y = roughness
@@ -323,7 +324,7 @@ void main() {
     if (base.a < u_alpha_test_threshold) discard;
     if (u_output_normal != 0) { FragColor = vec4(shading_normal(), 1.0); return; }
     if (u_capture != 0) {
-        // Probe capture: the probe stores LINEAR radiance. The viewscreen
+        // Probe capture: the probe stores LINEAR (capped) radiance. The viewscreen
         // feed is black (it changes every frame; a probe is captured once).
         if (u_unlit != 0) { FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
         vec3 nc = shading_normal();
@@ -343,7 +344,9 @@ void main() {
             accumulate_spots(nc, Vc, max(dot(nc, Vc), 1e-4), albedo_c, metal_c, rough_c,
                              f0_for(albedo_c, metal_c), lit, spec_unused);
         }
-        FragColor = vec4(lit, 1.0);
+        // The view caps lit diffuse in display space; the probe stores the
+        // same capped radiance, back in linear.
+        FragColor = vec4(decode(diffuse_ceiling(encode(lit), u_diffuse_max)), 1.0);
         return;
     }
     if (u_unlit != 0) {

@@ -485,12 +485,38 @@ TEST_F(BridgePbrFrame, ProbeMixCrossFadesBetweenTheTwoProbes) {
     EXPECT_LT(mid, green); EXPECT_GT(mid, yr);
 }
 
-TEST_F(BridgePbrFrame, ReflectionOfABrightSourceMayExceedTheThreshold) {
-    use_red_wall_corner();
-    set_floor_override(0.05f, 1.0f);
-    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
-    pass->set_probe_scales(40.0f, 40.0f);        // the captured room is very bright
-    pass->request_probe_capture();
+// Spec §9.5: the probe holds a lit room CAPPED like the view (the diffuse
+// ceiling, 0.88), so a reflection of lit surfaces never reaches bloom -- not
+// even a white mirror (metal 1, F0 = 1) of a white room captured 40x too
+// bright. Only emitters (none yet) may bloom through a reflection.
+TEST_F(BridgePbrFrame, ReflectionOfALitRoomNeverReachesTheThreshold) {
+    for (float scale : {1.0f, 40.0f}) {
+        model = make_two_mesh_corner({1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f});
+        floor_mesh = 0;
+        sample_ = {25.0f, 0.0f, 0.0f};
+        set_floor_override(0.05f, 1.0f);
+        pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+        pass->set_probe_scales(scale, scale);
+        pass->request_probe_capture();
+        const glm::vec3 c = render_floor();
+        EXPECT_GT(c.r, 0.1f) << scale;           // it really reflects the room
+        EXPECT_LT(std::max(c.r, std::max(c.g, c.b)), renderer::kBloomThreshold) << scale;
+    }
+}
+
+// ...while specular itself stays UNCAPPED (spec §9.5): a spot's direct
+// highlight on a smooth white metal floor goes past the bloom threshold.
+// The spot sits on the camera's mirror ray about the sample point, (25,0,0):
+// the eye is at +(35, 0, 90) from it, the spot at half that, mirrored in x.
+TEST_F(BridgePbrFrame, ASpotHighlightOnSmoothMetalMayExceedTheThreshold) {
+    model = make_two_mesh_corner({1.0f, 1.0f, 1.0f}, {1.0f, 0.0f, 0.0f});
+    floor_mesh = 0;
+    sample_ = {25.0f, 0.0f, 0.0f};
+    set_floor_override(0.25f, 1.0f);             // no probe: only the spot lights it
+    const glm::vec3 spot_pos{25.0f - 17.5f, 0.0f, 45.0f};
+    pass->set_spots({{spot_pos, glm::normalize(sample_ - spot_pos),
+                      std::cos(glm::radians(20.0f)), std::cos(glm::radians(30.0f)),
+                      200.0f, glm::vec3(2000.0f)}});
     const glm::vec3 c = render_floor();
     EXPECT_GT(std::max(c.r, std::max(c.g, c.b)), renderer::kBloomThreshold);
 }
