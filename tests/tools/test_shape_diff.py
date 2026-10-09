@@ -387,13 +387,12 @@ def test_move_without_uv_change_still_accepted(tmp_path):
     assert [i for i, _ in e["moves"]] == [1, 4]
 
 
-def test_added_vertex_is_refused_as_iteration_3(tmp_path):
+def test_a_loose_new_vertex_on_no_face_records_nothing(tmp_path):
     s = _shape()
     base = _export_read(tmp_path, [s])["b0011_wall_side_pnls_01"]
     edit = _moved(base, 0, base.positions[0])
     edit.positions.append((9.0, 9.0, 9.0))
-    with pytest.raises(ShapeDiffError, match="new vertices are iteration 3"):
-        match.diff_shape(s, base, edit)
+    assert match.diff_shape(s, base, edit) is None
 
 
 def test_diff_refuses_renamed_or_missing_objects(tmp_path):
@@ -426,12 +425,11 @@ def test_diff_partial_skips_unsupported_objects_but_keeps_supported(tmp_path):
 
     edit = dict(base)
     edit[move_name] = _moved(base[move_name], 1, (1.25, 0.0, 0.5))
-    broken = obj_io.ObjMesh()
-    broken.positions = list(base[face_name].positions) + [(9.0, 9.0, 9.0)]  # new vertex
-    broken.faces = [list(f) for f in base[face_name].faces]
+    broken = _copy(base[face_name])
+    broken.faces[0] = list(reversed(broken.faces[0]))        # flipped: unsupported
     edit[face_name] = broken
 
-    with pytest.raises(ShapeDiffError, match="iteration 3"):
+    with pytest.raises(ShapeDiffError, match="winding"):
         match.diff(shapes, base, edit)
 
     edits, skipped = match.diff(shapes, base, edit, partial=True)
@@ -439,7 +437,7 @@ def test_diff_partial_skips_unsupported_objects_but_keeps_supported(tmp_path):
     assert len(skipped) == 1
     name, reason = skipped[0]
     assert name == face_name
-    assert "new vertices" in reason
+    assert "winding" in reason
 
 
 def test_diff_partial_still_raises_on_file_level_errors(tmp_path):
@@ -762,14 +760,18 @@ def test_added_face_corner_uv_picks_the_matching_seam_original(tmp_path):
     assert e["add_triangles"] == [(8, 7, 9)]
 
 
-def test_added_face_needing_a_new_uv_is_refused_as_iteration_3(tmp_path):
+def test_added_face_corner_with_a_new_uv_splits_the_vertex_by_reference(tmp_path):
     s, base = _sliver_base(tmp_path)
     edit = _copy(base)
     edit.faces.append([_corner(base, (2, 0, 0), (0.2, 0.0)),
                        _corner(base, (5, 0, 0), (0.33, 0.33)),     # no original has it
                        _corner(base, (2, 1, 0), (0.2, 1.0))])
-    with pytest.raises(ShapeDiffError, match="needs a new vertex/UV.*iteration 3"):
-        match.diff_shape(s, base, edit)
+    e = match.diff_shape(s, base, edit)
+    # originals 2 and 9 sit at (5,0,0): position by reference to the lowest,
+    # colour/UV1 from the nearest (a tie at distance 0 -> lowest index)
+    assert e["add_vertices"] == [{"pos": Ref(175, 2), "uv0": pytest.approx((0.33, 0.33)),
+                                  "attr_src": 2}]
+    assert e["add_triangles"] == [(7, 10, 8)]
 
 
 def test_added_n_gon_is_refused_triangulate_before_export(tmp_path):
@@ -843,16 +845,18 @@ def test_added_face_corner_resolves_against_this_diffs_uv_edits(tmp_path):
     assert e["add_triangles"] == [(7, 2, 8)]
 
 
-def test_added_face_corner_with_the_pre_edit_uv_of_a_remapped_original_is_refused(tmp_path):
-    # The added triangle would render original 7's NEW uv (0.3,0.3), not the
-    # (0.2,0.0) Mark sees on it: one original, two UVs.
+def test_added_face_corner_with_the_pre_edit_uv_of_a_remapped_original_splits_it(tmp_path):
+    # Original 7 now renders the NEW uv (0.3,0.3); the added face shows its
+    # OLD one, so that corner becomes a split vertex -- both by reference.
     s, base = _sliver_base(tmp_path)
     edit = _retex_vertex(base, _local(base, (2, 0, 0)), (0.3, 0.3))
     edit.faces.append([_corner(base, (2, 0, 0), (0.2, 0.0)),            # the OLD uv
                        _corner(base, (5, 0, 0), (0.5, 0.0)),
                        _corner(base, (2, 1, 0), (0.2, 1.0))])
-    with pytest.raises(ShapeDiffError, match="two different UVs"):
-        match.diff_shape(s, base, edit)
+    e = match.diff_shape(s, base, edit)
+    assert e["uvs"] == [(7, pytest.approx((0.3, 0.3)))]
+    assert e["add_vertices"] == [{"pos": Ref(175, 7), "uv0": Ref(175, 7), "attr_src": 7}]
+    assert e["add_triangles"] == [(10, 2, 8)]
 
 
 def _straddle_shape():
@@ -1309,3 +1313,101 @@ def test_correspondence_refuses_a_tie_between_two_candidate_survivors():
                  [[(0, None), (1, None), (2, None)]])
     with pytest.raises(ShapeDiffError, match="ambiguous correspondence"):
         match.correspond(5, base, edit)
+
+
+# --- Task 15: new vertices (spec §5.3) ---
+
+def _add_vertex(mesh, pos):
+    mesh.positions.append(pos)
+    return len(mesh.positions) - 1
+
+
+def test_new_literal_vertex_with_attr_src_from_the_nearest_original(tmp_path):
+    s = _shape()                                   # originals 1 and 4 at (1,0,0)
+    base = _export_read(tmp_path, [s])[obj_io.object_name(s)]
+    edit = _copy(base)
+    n = _add_vertex(edit, (0.9, 0.1, 0.25))
+    edit.faces.append([_corner(base, (0, 0, 0), (0.0, 0.0)),
+                       _corner(base, (1, 0, 0), (0.5, 0.0)),
+                       (n, (0.45, 0.05))])
+    e = match.diff_shape(s, base, edit)
+    assert e["add_vertices"] == [{"pos": pytest.approx((0.9, 0.1, 0.25)),
+                                  "uv0": pytest.approx((0.45, 0.05)), "attr_src": 1}]
+    assert e["add_triangles"] == [(0, 1, 5)]
+    assert e["moves"] == [] and e["remove_triangles"] == []
+
+
+def test_new_vertex_position_is_stored_shape_local(tmp_path):
+    s = _shape(offset=(100.0, 50.0, 10.0))
+    base = _export_read(tmp_path, [s])[obj_io.object_name(s)]
+    edit = _copy(base)
+    n = _add_vertex(edit, (100.5, 50.5, 11.0))
+    edit.faces.append([_corner(base, (100, 50, 10), (0.0, 0.0)),
+                       _corner(base, (101, 50, 10), (0.5, 0.0)), (n, (0.2, 0.2))])
+    e = match.diff_shape(s, base, edit)
+    assert e["add_vertices"][0]["pos"] == pytest.approx((0.5, 0.5, 1.0))
+
+
+def test_new_vertex_on_another_shapes_vertex_references_that_shape(tmp_path):
+    a, b, objs = _two_shapes(tmp_path)
+    b["uvs"] = [(0.7, 0.7), (0.8, 0.1), (0.9, 0.9), (0.6, 0.4), (0.3, 0.3)]
+    objs = _export_read(tmp_path, [a, b])
+    base = objs[obj_io.object_name(a)]
+    edit = _copy(base)
+    n = _add_vertex(edit, (4.0, 1.0, 0.0))                 # B's original 2
+    edit.faces.append([_corner(base, (1, 0, 0), (0.5, 0.0)), (n, (0.9, 0.9)),
+                       _corner(base, (1, 1, 0), (0.5, 1.0))])
+    [e] = match.diff([a, b], objs, dict(objs, **{obj_io.object_name(a): edit}))
+    assert e["add_vertices"] == [{"pos": Ref(12, 2), "uv0": Ref(12, 2), "attr_src": 2}]
+    assert e["add_triangles"] == [(1, 5, 2)]
+
+
+def test_new_vertex_used_with_two_uvs_becomes_two_added_vertices(tmp_path):
+    s = _shape()
+    base = _export_read(tmp_path, [s])[obj_io.object_name(s)]
+    edit = _copy(base)
+    n = _add_vertex(edit, (0.5, -1.0, 0.0))
+    edit.faces.append([_corner(base, (0, 0, 0), (0.0, 0.0)), (n, (0.1, 0.9)),
+                       _corner(base, (1, 0, 0), (0.5, 0.0))])
+    edit.faces.append([_corner(base, (1, 0, 0), (0.5, 0.0)), (n, (0.2, 0.8)),
+                       _corner(base, (0, 0, 0), (0.0, 0.0))])
+    # second face would be the first's reverse: give it a distinct third corner
+    edit.faces[-1][2] = _corner(base, (1, 1, 0), (0.5, 1.0))
+    e = match.diff_shape(s, base, edit)
+    assert [v["uv0"] for v in e["add_vertices"]] == [pytest.approx((0.1, 0.9)),
+                                                    pytest.approx((0.2, 0.8))]
+    assert [v["pos"] for v in e["add_vertices"]] == [pytest.approx((0.5, -1.0, 0.0))] * 2
+    assert e["add_triangles"] == [(0, 5, 1), (1, 6, 2)]
+
+
+def test_new_vertex_corner_without_a_uv_is_refused(tmp_path):
+    s = _shape()
+    base = _export_read(tmp_path, [s])[obj_io.object_name(s)]
+    edit = _copy(base)
+    n = _add_vertex(edit, (0.5, -1.0, 0.0))
+    edit.faces.append([_corner(base, (0, 0, 0), (0.0, 0.0)), (n, None),
+                       _corner(base, (1, 0, 0), (0.5, 0.0))])
+    with pytest.raises(ShapeDiffError, match="no UV"):
+        match.diff_shape(s, base, edit)
+
+
+def test_deletion_move_and_new_vertices_round_trip_through_the_payload(tmp_path):
+    s, base = _sliver_base(tmp_path)
+    sliver = {_local(base, (5, 0, 0)), _local(base, (6, 0, 0)), _local(base, (5, 1, 0))}
+    edit = _blender_delete(base, _face_on(base, sliver))
+    l7, l8 = _local(edit, (2, 0, 0)), _local(edit, (2, 1, 0))
+    edit.positions[l8] = (2.0, 1.5, 0.0)
+    n1 = _add_vertex(edit, (3.0, 0.0, 0.0))
+    n2 = _add_vertex(edit, (3.0, 1.0, 0.0))
+    edit.faces.append([(l7, (0.2, 0.0)), (n1, (0.3, 0.0)), (n2, (0.3, 1.0))])
+    e = match.diff_shape(s, base, edit)
+    assert e["remove_triangles"] == [2, 5, 6]
+    assert e["moves"] == [(8, pytest.approx((2.0, 1.5, 0.0)))]
+    assert [v["pos"] for v in e["add_vertices"]] == [pytest.approx((3, 0, 0)),
+                                                    pytest.approx((3, 1, 0))]
+    # nearest ORIGINAL position: (2,0,0) is 7; (2,1,0) is 8 (it moved, but
+    # attr_src is chosen against the unedited originals)
+    assert [v["attr_src"] for v in e["add_vertices"]] == [7, 8]
+    assert e["add_triangles"] == [(7, 10, 11)]
+    raw = payload.encode([e])
+    assert raw[:4] == b"BSD2"

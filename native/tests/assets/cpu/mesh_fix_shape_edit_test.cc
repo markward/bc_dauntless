@@ -3,6 +3,10 @@
 #include <gtest/gtest.h>
 #include <assets/mesh_fix.h>
 #include <nif/file.h>
+
+#include "support/content_root.h"
+
+#include <filesystem>
 #include <limits>
 
 namespace {
@@ -503,4 +507,46 @@ TEST(MeshFixShapeEditRef, EveryReferenceRefusalLeavesTheFileUntouched) {
         e.uvs = {{1, u}};
         expect_refused_two(fix_of(e), "non-finite literal uv");
     }
+}
+
+// Real DBridge: block 11 sits in a translated frame, block 24 in a frame
+// rotated 90 degrees about Z (and translated elsewhere). A reference from 11
+// to a vertex of 24 must land on that vertex's MODEL-space position.
+TEST(MeshFixShapeEditRef, RealDbridgeCrossFrameReferenceLandsOnTheReferencedVertex) {
+    namespace fs = std::filesystem;
+    const fs::path nif = test_support::game_root() / "data/Models/Sets/DBridge/Dbridge.NIF";
+    if (!fs::exists(nif)) GTEST_SKIP() << "DBridge not installed";
+    auto f = nif::load(nif);
+    auto shape_data = [&](std::size_t block) -> nif::NiTriShapeData& {
+        const auto link = std::get<nif::NiTriShape>(f.blocks.at(block)).data_link;
+        for (std::size_t i = 0; i < f.block_ids.size(); ++i)
+            if (f.block_ids[i] == link) return std::get<nif::NiTriShapeData>(f.blocks[i]);
+        throw std::runtime_error("no data");
+    };
+    const auto& src = shape_data(24);
+    const nif::Vec3 s3 = src.vertices.at(3), s5 = src.vertices.at(5);
+    const nif::TexCoord uv5 = src.uv_sets.at(0).at(5);
+    const glm::mat4 w11 = assets::nif_block_world(f, 11), w24 = assets::nif_block_world(f, 24);
+    ASSERT_NE(w11, w24);
+    auto& tgt = shape_data(11);
+    const nif::Color4 c0 = tgt.vertex_colors.at(0);
+
+    assets::ShapeEdit e;
+    e.block = 11;
+    e.orig_vertex_count = tgt.num_vertices;
+    e.orig_triangle_count = tgt.num_triangles;
+    e.moves = {{0, pos_ref(24, 3)}};
+    e.add_vertices = {added(pos_ref(24, 5), uv_ref(24, 5), 0)};
+    e.add_triangles = {{0, 1, tgt.num_vertices}};
+    const std::uint16_t n = tgt.num_vertices;
+    ASSERT_EQ(assets::apply_mesh_fix(f, fix_of(e)), "");
+
+    auto model = [](const glm::mat4& w, const nif::Vec3& v) {
+        return glm::vec3(w * glm::vec4(v.x, v.y, v.z, 1.0f));
+    };
+    const auto& d = shape_data(11);
+    EXPECT_LT(glm::length(model(w11, d.vertices[0]) - model(w24, s3)), 1e-3f);
+    EXPECT_LT(glm::length(model(w11, d.vertices[n]) - model(w24, s5)), 1e-3f);
+    EXPECT_FLOAT_EQ(d.uv_sets[0][n].u, uv5.u);
+    EXPECT_FLOAT_EQ(d.vertex_colors[n].r, c0.r);
 }

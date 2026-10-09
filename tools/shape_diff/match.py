@@ -421,7 +421,7 @@ def _refuse_overlapping_groups(block, ids, removed_sets, added_faces):
     1/1024 weld boundary) share originals in `identify`, so a removal or an
     added corner on either could hit the other's triangles. Harmless for
     moves/UVs, so refuse only when a topology edit touches one of them."""
-    touched = set().union(*removed_sets, *({v for v, _ in f} for f in added_faces))
+    touched = set().union(*removed_sets, *({v for v, _ in f if v >= 0} for f in added_faces))
     owners = {}
     for bv, group in enumerate(ids):
         for orig in group:
@@ -440,12 +440,51 @@ def _distinct_corners(options):
     return any(x != y and y != z and x != z for x in a for y in b for z in c)
 
 
-def _added_triangles(block, shape, ids, base, added_faces, final_local, uv_edits):
-    """Added faces (already in base indices) -> original-index triangles in
-    the edit face's winding. Each corner must be an existing original at
-    that position whose FINAL UV (NIF UV0 with this diff's `uv_edits`
-    applied) equals the corner's UV (lowest such index)."""
+class _AddedVertices:
+    """Vertices appended to the shape (spec §5.3), one per distinct UV of a
+    new edit vertex or of a survivor an added face shows with a UV no
+    original carries (a split). Values equal to an original's become
+    references; colour/UV1 come from `attr_src`, the target shape's original
+    nearest in model space (ties -> lowest index)."""
+
+    def __init__(self, shape, index, inv):
+        self.shape, self.index, self.inv = shape, index, inv
+        self.items = []        # (model position, uv)
+        self._by_source = {}   # source key -> [(uv, item index)]
+
+    def index_of(self, source, model, uv):
+        for u, i in self._by_source.get(source, ()):
+            if _uv_equal(u, uv):
+                return i
+        self.items.append((model, uv))
+        self._by_source.setdefault(source, []).append((uv, len(self.items) - 1))
+        return len(self.items) - 1
+
+    def local(self, i):
+        return frames.apply(self.inv, self.items[i][0])
+
+    def records(self):
+        block, pts = self.shape["block"], self.shape["vertices"]
+        out = []
+        for model, uv in self.items:
+            pos_ref = self.index.position_ref(model, block)
+            attr = min(range(len(pts)), key=lambda o: (
+                sum((a - b) ** 2 for a, b in zip(pts[o], model)), o))
+            out.append({"pos": pos_ref or frames.apply(self.inv, model),
+                        "uv0": self.index.uv_ref(uv, pos_ref, block, model) or uv,
+                        "attr_src": attr})
+        return out
+
+
+def _added_triangles(block, shape, ids, edit, added_faces, final_local, uv_edits,
+                     moved, added):
+    """Added faces (corners in base indices, or -1-e for new edit vertex e)
+    -> triangles in the edit face's winding over final vertex indices. A
+    survivor corner is the original at that position whose FINAL UV (NIF UV0
+    with this diff's `uv_edits`) equals the corner's (lowest such index);
+    failing that, and for every new vertex, an added vertex (`added`)."""
     nif_uvs = shape["uvs"]
+    n_orig = len(shape["vertices"])
     out = []
     for f in added_faces:
         if len(f) != 3:
@@ -453,24 +492,26 @@ def _added_triangles(block, shape, ids, base, added_faces, final_local, uv_edits
                 f"block {block}: added face has {len(f)} corners; "
                 "triangulate before export (Ctrl+T in Blender)")
         tri = []
-        for bv, uv in f:
-            cands = [o for o in ids[bv]
-                     if uv is not None and _uv_equal(uv_edits.get(o, nif_uvs[o]), uv)]
-            stale = [o for o in ids[bv] if o in uv_edits and _uv_equal(nif_uvs[o], uv)]
-            if not cands and stale:
+        for k, uv in f:
+            where = edit.positions[-1 - k] if k < 0 else None
+            if uv is None:
+                at = where if k < 0 else shape["vertices"][min(ids[k])]
                 raise ShapeDiffError(
-                    f"block {block}: added face uses original vertex {min(stale)}'s old "
-                    f"UV {uv}, but this edit re-maps it to {uv_edits[min(stale)]}; it "
-                    "would need two different UVs -- that needs a vertex split (iteration 3)")
-            if not cands:
-                raise ShapeDiffError(
-                    f"block {block}: added face needs a new vertex/UV at "
-                    f"{tuple(base.positions[bv])} (UV {uv}) -- iteration 3")
-            tri.append(min(cands))
+                    f"block {block}: added face corner at {tuple(at)} has no UV")
+            if k >= 0:
+                cands = [o for o in ids[k] if _uv_equal(uv_edits.get(o, nif_uvs[o]), uv)]
+                if cands:
+                    tri.append(min(cands))
+                    continue
+                rep = min(ids[k])        # split: the survivor, with this corner's UV
+                tri.append(n_orig + added.index_of(
+                    ("split", k), moved.get(rep, shape["vertices"][rep]), uv))
+            else:
+                tri.append(n_orig + added.index_of(("new", k), where, uv))
         if len(set(tri)) < 3:
             raise ShapeDiffError(
                 f"block {block}: added triangle {tuple(tri)} repeats a vertex")
-        p0, p1, p2 = (final_local[i] for i in tri)
+        p0, p1, p2 = (final_local[i] if i < n_orig else added.local(i - n_orig) for i in tri)
         u = [p1[k] - p0[k] for k in range(3)]
         w = [p2[k] - p0[k] for k in range(3)]
         n = (u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0])
@@ -541,19 +582,19 @@ def _albedo_op(block, base, edit, texture_dirs):
 
 def diff_shape(shape: dict, base, edit, texture_dirs=None, index=None):
     """Diff one shape's base/edit OBJ pair (spec §5.3): vertex moves, UV0
-    edits, removed faces and added triangles on existing originals. Refuses
-    (all-or-nothing for the object) new vertices, a survivor that moved
-    while vertices were deleted, an added face needing a new vertex/UV, an
-    added n-gon or degenerate triangle, a flipped existing face, and a UV
-    edit that would need a vertex split."""
+    edits, removed faces, added triangles and new vertices, with values
+    shared with an original stored as references (`index`, all shapes of the
+    NIF; this shape alone when omitted). Refuses (all-or-nothing for the
+    object) an ambiguous vertex correspondence, an added n-gon or degenerate
+    triangle, a flipped existing face, a corner without a UV, and a UV edit
+    on a kept face that would need a vertex split."""
     block = shape["block"]
     index = index or NifIndex([shape])
     corr = correspond(block, base, edit)
-    if None in corr:
-        raise ShapeDiffError(
-            f"block {block}: vertex count grew; new vertices are iteration 3")
     ids = identify(shape, base)
-    edit_faces = [[(corr[v], uv) for v, uv in f] for f in edit.faces]
+    # base vertex index for a survivor, -1 - e for new edit vertex e
+    keys = [b if b is not None else -1 - e for e, b in enumerate(corr)]
+    edit_faces = [[(keys[v], uv) for v, uv in f] for f in edit.faces]
     base_sets = _by_vertex_set(base.faces)
     edit_sets = _by_vertex_set(edit_faces)
     common_base, common_edit = [], []
@@ -569,19 +610,22 @@ def diff_shape(shape: dict, base, edit, texture_dirs=None, index=None):
     inv = frames.affine_inverse(shape["world"])
     moved = {}          # original -> new MODEL-space position
     for k, ep in enumerate(edit.positions):
-        bp = base.positions[corr[k]]
-        if max(abs(a - b) for a, b in zip(bp, ep)) <= POS_TOL:
+        if corr[k] is None:
+            continue
+        if _same_pos(base.positions[corr[k]], ep):
             continue
         for orig in ids[corr[k]]:
             moved[orig] = ep
     removed_sets = base_sets.keys() - edit_sets.keys()
-    added = [f for f in edit_faces if frozenset(v for v, _ in f) not in base_sets]
-    _refuse_overlapping_groups(block, ids, removed_sets, added)
+    added_faces = [f for f in edit_faces if frozenset(v for v, _ in f) not in base_sets]
+    _refuse_overlapping_groups(block, ids, removed_sets, added_faces)
     remove = _removed_triangles(block, shape, ids, removed_sets)
     final_local = [frames.apply(inv, p) for p in shape["vertices"]]
     for orig, p in moved.items():
         final_local[orig] = frames.apply(inv, p)
-    add = _added_triangles(block, shape, ids, base, added, final_local, uvs)
+    added = _AddedVertices(shape, index, inv)
+    add = _added_triangles(block, shape, ids, edit, added_faces, final_local, uvs,
+                           moved, added)
     albedo = _albedo_op(block, base, edit, texture_dirs)
     if not moved and not uvs and not remove and not add and albedo is None:
         return None
@@ -600,6 +644,8 @@ def diff_shape(shape: dict, base, edit, texture_dirs=None, index=None):
         "remove_triangles": remove,
         "add_triangles": add,
     }
+    if added.items:
+        out["add_vertices"] = added.records()
     if albedo is not None:
         out["albedo"] = albedo
     return out
