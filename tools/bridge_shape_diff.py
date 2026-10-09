@@ -10,10 +10,11 @@ OBJ files contain BC geometry: keep them OUT of the repo. Blender: import the
 OBJ into an EMPTY scene (delete Blender's default Cube/Camera/Light) with
 default settings; export base.obj before editing and edit.obj after, both
 with default settings. Don't join, split or rename objects. Accepted:
-vertex MOVES, UV0 EDITS, deleted faces/vertices, added TRIANGLES whose
-corners sit on existing vertices with existing UVs, and a new ALBEDO texture
-per object (map_Kd; the .tga must be in the replacements overlay or stock
-texture dir); new vertices are refused."""
+vertex MOVES, UV0 EDITS, deleted faces/vertices, NEW vertices, added faces
+(n-gons are ear-clipped), and a new ALBEDO texture per object (map_Kd; the
+.tga must be in the replacements overlay or stock texture dir). A value equal
+to an original's (a snapped vertex, a shared UV) is stored as a reference.
+`--exclude BLOCK` (repeatable) leaves a block out of the fix."""
 import argparse
 import json
 import posixpath
@@ -108,15 +109,18 @@ def fix_text(fix: dict) -> str:
     return json.dumps(fix, indent=2) + "\n"
 
 
-def build_fix(rel: str, base_path: Path, edit_path: Path, partial: bool = False):
+def build_fix(rel: str, base_path: Path, edit_path: Path, partial: bool = False,
+              exclude=()):
+    """`exclude`: block numbers left out of the fix entirely (as if unedited)."""
     base_objs = obj_io.read_objects(base_path)
     edit_objs = obj_io.read_objects(edit_path)
     dirs = _texture_dirs(rel)
     if partial:
         edits, skipped = match.diff(_shapes(rel), base_objs, edit_objs, partial=True,
-                                    texture_dirs=dirs)
+                                    texture_dirs=dirs, exclude=exclude)
         return make_fix_dict(rel, edits), edits, skipped
-    edits = match.diff(_shapes(rel), base_objs, edit_objs, texture_dirs=dirs)
+    edits = match.diff(_shapes(rel), base_objs, edit_objs, texture_dirs=dirs,
+                       exclude=exclude)
     return make_fix_dict(rel, edits), edits
 
 
@@ -132,18 +136,23 @@ def main(argv=None) -> int:
     df.add_argument("--nif", default=DEFAULT_NIF)
     df.add_argument("--write", action="store_true")
     df.add_argument("--partial", action="store_true")
+    df.add_argument("--exclude", type=int, action="append", default=[], metavar="BLOCK",
+                    help="leave this block out of the fix (repeatable)")
     a = ap.parse_args(argv)
     try:
         if a.cmd == "export":
             print(export(a.nif, a.out))
             return 0
+        kw = {"exclude": a.exclude} if a.exclude else {}
         if a.partial:
-            fix, edits, skipped = build_fix(a.nif, a.base, a.edit, partial=True)
+            fix, edits, skipped = build_fix(a.nif, a.base, a.edit, partial=True, **kw)
         else:
-            fix, edits = build_fix(a.nif, a.base, a.edit)
+            fix, edits = build_fix(a.nif, a.base, a.edit, **kw)
             skipped = []
         for e in edits:
             print(_summary(e))
+        if a.exclude:
+            print("excluded: blocks " + ", ".join(str(b) for b in a.exclude))
         if skipped:
             print("skipped (not yet supported):")
             for name, reason in skipped:

@@ -774,14 +774,29 @@ def test_added_face_corner_with_a_new_uv_splits_the_vertex_by_reference(tmp_path
     assert e["add_triangles"] == [(7, 10, 8)]
 
 
-def test_added_n_gon_is_refused_triangulate_before_export(tmp_path):
+def test_added_quad_is_ear_clipped_into_two_triangles_keeping_its_winding(tmp_path):
     s, base = _sliver_base(tmp_path)
     edit = _copy(base)
-    edit.faces.append([_corner(base, (2, 0, 0), (0.2, 0.0)),
-                       _corner(base, (5, 0, 0), (0.5, 0.0)),
+    edit.faces.append([_corner(base, (2, 0, 0), (0.2, 0.0)),        # 7
+                       _corner(base, (5, 0, 0), (0.5, 0.0)),        # 2
+                       _corner(base, (5, 1, 0), (0.5, 1.0)),        # 6
+                       _corner(base, (2, 1, 0), (0.2, 1.0))])       # 8
+    e = match.diff_shape(s, base, edit)
+    assert e["add_triangles"] == [(8, 7, 2), (2, 6, 8)]
+    pts = s["vertices"]
+    for a, b, c in e["add_triangles"]:          # counter-clockwise seen from +z, like the quad
+        (x0, y0, _), (x1, y1, _), (x2, y2, _) = pts[a], pts[b], pts[c]
+        assert (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0) > 0
+
+
+def test_added_self_intersecting_n_gon_is_refused(tmp_path):
+    s, base = _sliver_base(tmp_path)
+    edit = _copy(base)
+    edit.faces.append([_corner(base, (2, 0, 0), (0.2, 0.0)),        # a bow-tie
                        _corner(base, (5, 1, 0), (0.5, 1.0)),
+                       _corner(base, (5, 0, 0), (0.5, 0.0)),
                        _corner(base, (2, 1, 0), (0.2, 1.0))])
-    with pytest.raises(ShapeDiffError, match="triangulate before export"):
+    with pytest.raises(ShapeDiffError, match="can't be triangulated"):
         match.diff_shape(s, base, edit)
 
 
@@ -1411,3 +1426,94 @@ def test_deletion_move_and_new_vertices_round_trip_through_the_payload(tmp_path)
     assert e["add_triangles"] == [(7, 10, 11)]
     raw = payload.encode([e])
     assert raw[:4] == b"BSD2"
+
+
+# --- Task 15: ear clipping (ported from spike/bridge-lighting-vfx) ---
+
+from tools.shape_diff import triangulate
+
+
+def _area2(pts, tris, ax=(0, 1)):
+    i, j = ax
+    return sum(abs((pts[b][i] - pts[a][i]) * (pts[c][j] - pts[a][j])
+                   - (pts[c][i] - pts[a][i]) * (pts[b][j] - pts[a][j])) / 2
+               for a, b, c in tris)
+
+
+def test_ear_clip_handles_a_concave_ngon():
+    # An L-shaped hexagon in the XY plane: a fan from vertex 0 would put a
+    # triangle outside the shape.
+    pts = [(0, 0, 0), (4, 0, 0), (4, 1, 0), (1, 1, 0), (1, 4, 0), (0, 4, 0)]
+    tris = triangulate.ear_clip(pts)
+    assert len(tris) == 4
+    assert _area2(pts, tris) == pytest.approx(7.0)   # 4x1 + 1x3, no triangle outside
+
+
+@pytest.mark.parametrize("plane", ["xy", "xz", "yz"])
+@pytest.mark.parametrize("flip", [False, True])
+def test_ear_clip_keeps_the_polygon_winding_in_every_plane(plane, flip):
+    square = [(0, 0), (2, 0), (2, 1), (1, 3), (0, 1)]
+    if flip:
+        square = square[::-1]
+    lift = {"xy": lambda a, b: (a, b, 5.0), "xz": lambda a, b: (a, 5.0, b),
+            "yz": lambda a, b: (5.0, a, b)}[plane]
+    pts = [lift(a, b) for a, b in square]
+
+    def normal(poly):
+        n = [0.0, 0.0, 0.0]
+        for k in range(len(poly)):
+            p, q = poly[k], poly[(k + 1) % len(poly)]
+            n[0] += (p[1] - q[1]) * (p[2] + q[2])
+            n[1] += (p[2] - q[2]) * (p[0] + q[0])
+            n[2] += (p[0] - q[0]) * (p[1] + q[1])
+        return n
+
+    want = normal(pts)
+    tris = triangulate.ear_clip(pts)
+    assert len(tris) == 3
+    for t in tris:
+        got = normal([pts[i] for i in t])
+        assert sum(a * b for a, b in zip(got, want)) > 0
+
+
+def test_ear_clip_refuses_a_self_intersecting_polygon():
+    with pytest.raises(ShapeDiffError, match="can't be triangulated"):
+        triangulate.ear_clip([(0, 0, 0), (1, 1, 0), (1, 0, 0), (0, 1, 0)])
+
+
+# --- Task 15: --exclude ---
+
+def test_diff_excludes_listed_blocks_even_when_they_would_be_refused(tmp_path):
+    a = _shape(block=11)
+    b = _shape(block=12, parent="console top", offset=(5.0, 0.0, 0.0))
+    base = _export_read(tmp_path, [a, b])
+    edit = dict(base)
+    edit[obj_io.object_name(a)] = _moved(base[obj_io.object_name(a)], 1, (1.25, 0.0, 0.5))
+    flipped = _copy(base[obj_io.object_name(b)])
+    flipped.faces[0] = list(reversed(flipped.faces[0]))
+    edit[obj_io.object_name(b)] = flipped
+    with pytest.raises(ShapeDiffError, match="winding"):
+        match.diff([a, b], base, edit)
+    assert [e["block"] for e in match.diff([a, b], base, edit, exclude=[12])] == [11]
+    edits, skipped = match.diff([a, b], base, edit, partial=True, exclude=[12])
+    assert [e["block"] for e in edits] == [11] and skipped == []
+
+
+def test_excluding_a_block_with_no_object_is_refused(tmp_path):
+    a = _shape(block=11)
+    base = _export_read(tmp_path, [a])
+    with pytest.raises(ShapeDiffError, match="--exclude 99"):
+        match.diff([a], base, base, exclude=[99])
+
+
+def test_main_passes_exclude_and_reports_it(monkeypatch, tmp_path, capsys):
+    cli, _ = _patched_cli(monkeypatch, tmp_path)
+    seen = {}
+
+    def fake(rel, base, edit, exclude=()):
+        seen["exclude"] = list(exclude)
+        return cli.make_fix_dict(rel, [GOLDEN_EDIT]), [GOLDEN_EDIT]
+    monkeypatch.setattr(cli, "build_fix", fake)
+    assert cli.main(["diff", "b.obj", "e.obj", "--exclude", "392", "--exclude", "395"]) == 0
+    assert seen["exclude"] == [392, 395]
+    assert "excluded: blocks 392, 395" in capsys.readouterr().out

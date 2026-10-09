@@ -15,7 +15,7 @@ changed albedo (by map_Kd basename, one per object, file present in the
 overlay or stock texture dir) is recorded as the edit's "albedo" key."""
 from pathlib import Path
 
-from tools.shape_diff import ShapeDiffError, frames, obj_io
+from tools.shape_diff import ShapeDiffError, frames, obj_io, triangulate
 from tools.shape_diff.payload import Ref
 
 POS_TOL = 1e-4
@@ -476,21 +476,30 @@ class _AddedVertices:
         return out
 
 
+def _ear_clipped(block, faces, pos_of):
+    """Each face as triangles of its corners: an n-gon is ear-clipped on the
+    edit positions of its corners, keeping its winding."""
+    for f in faces:
+        try:
+            tris = triangulate.ear_clip([pos_of[k] for k, _ in f])
+        except ShapeDiffError as exc:
+            raise ShapeDiffError(f"block {block}: added {exc}") from None
+        for a, b, c in tris:
+            yield [f[a], f[b], f[c]]
+
+
 def _added_triangles(block, shape, ids, edit, added_faces, final_local, uv_edits,
-                     moved, added):
-    """Added faces (corners in base indices, or -1-e for new edit vertex e)
-    -> triangles in the edit face's winding over final vertex indices. A
-    survivor corner is the original at that position whose FINAL UV (NIF UV0
-    with this diff's `uv_edits`) equals the corner's (lowest such index);
-    failing that, and for every new vertex, an added vertex (`added`)."""
+                     moved, added, pos_of):
+    """Added faces (corners in base indices, or -1-e for new edit vertex e;
+    n-gons ear-clipped) -> triangles in the edit face's winding over final
+    vertex indices. A survivor corner is the original at that position whose
+    FINAL UV (NIF UV0 with this diff's `uv_edits`) equals the corner's
+    (lowest such index); failing that, and for every new vertex, an added
+    vertex (`added`)."""
     nif_uvs = shape["uvs"]
     n_orig = len(shape["vertices"])
     out = []
-    for f in added_faces:
-        if len(f) != 3:
-            raise ShapeDiffError(
-                f"block {block}: added face has {len(f)} corners; "
-                "triangulate before export (Ctrl+T in Blender)")
+    for f in _ear_clipped(block, added_faces, pos_of):
         tri = []
         for k, uv in f:
             where = edit.positions[-1 - k] if k < 0 else None
@@ -624,8 +633,9 @@ def diff_shape(shape: dict, base, edit, texture_dirs=None, index=None):
     for orig, p in moved.items():
         final_local[orig] = frames.apply(inv, p)
     added = _AddedVertices(shape, index, inv)
+    pos_of = {keys[e]: p for e, p in enumerate(edit.positions)}
     add = _added_triangles(block, shape, ids, edit, added_faces, final_local, uvs,
-                           moved, added)
+                           moved, added, pos_of)
     albedo = _albedo_op(block, base, edit, texture_dirs)
     if not moved and not uvs and not remove and not add and albedo is None:
         return None
@@ -652,18 +662,21 @@ def diff_shape(shape: dict, base, edit, texture_dirs=None, index=None):
 
 
 def diff(shapes: list, base_objs: dict, edit_objs: dict, partial: bool = False,
-         texture_dirs=None):
-    """Diff every object. With partial=False (default, unchanged), the first
-    object whose diff_shape raises ShapeDiffError aborts the whole call, and
-    the return is just the edit list. With partial=True, an object-level
-    ShapeDiffError (new vertices, unalignable deletion, an added face needing
-    a new vertex/UV, flipped face, UV vertex-split conflict, identity failure) is caught and recorded instead of raising, so
-    the supported objects still get written; the return becomes
-    (edits, skipped), skipped being a list of (object_name, reason_str) in
-    block order. File-level problems (object-set mismatch, two objects
-    mapping to one block, an object name that isn't a shape export, a block
-    not in the NIF) always raise, in both modes -- they mean the export
-    itself is broken, not that one object's edit is unsupported."""
+         texture_dirs=None, exclude=()):
+    """Diff every object. With partial=False (default), the first object
+    whose diff_shape raises ShapeDiffError aborts the whole call, and the
+    return is just the edit list. With partial=True, an object-level
+    ShapeDiffError (ambiguous correspondence, flipped face, UV vertex-split
+    conflict, untriangulable face, identity failure, refused texture) is
+    caught and recorded instead of raising, so the supported objects still
+    get written; the return becomes (edits, skipped), skipped being a list of
+    (object_name, reason_str) in block order. Blocks in `exclude` are left
+    out entirely, before any diffing (so even a refused object can be
+    excluded); excluding a block with no object is refused. File-level
+    problems (object-set mismatch, two objects mapping to one block, an
+    object name that isn't a shape export, a block not in the NIF) always
+    raise, in both modes -- they mean the export itself is broken, not that
+    one object's edit is unsupported."""
     if set(base_objs) != set(edit_objs):
         missing = sorted(set(base_objs) ^ set(edit_objs))
         raise ShapeDiffError(f"objects differ between base and edit: {missing[:5]} "
@@ -677,12 +690,17 @@ def diff(shapes: list, base_objs: dict, edit_objs: dict, partial: bool = False,
                 f"block {block}: two objects map to it ({sorted(names)}); "
                 "importing the same OBJ twice duplicates its objects as "
                 "'<name>.001' -- delete the duplicate before diffing")
+    for block in exclude:
+        if block not in block_to_names:
+            raise ShapeDiffError(f"--exclude {block}: no object for block {block} in the export")
     by_block = {s["block"]: s for s in shapes}
     index = NifIndex(shapes)
     edits = []
     skipped = []
     for name in sorted(base_objs, key=obj_io.block_of):
         block = obj_io.block_of(name)
+        if block in exclude:
+            continue
         if block not in by_block:
             raise ShapeDiffError(f"object {name}: block {block} is not a shape in this NIF")
         try:
