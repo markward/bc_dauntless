@@ -2430,7 +2430,8 @@ void nif_shapes_collect_image(const nif::File& file, std::uint32_t img_link,
 // one dict per NiTriShape, in block order, with world-space vertices/normals,
 // UV set 0, triangles, texture basenames and the hidden flag. Parse-only, no
 // GL context, and applies no mesh fix -- callers see the raw stock geometry.
-py::object nif_shapes_impl(const std::string& nif_abs_path) {
+py::object nif_shapes_impl(const std::string& nif_abs_path,
+                           const std::optional<std::string>& fix_json) {
     std::filesystem::path path = nif_abs_path;
     if (!std::filesystem::exists(path)) return py::none();
     nif::File f;
@@ -2438,6 +2439,15 @@ py::object nif_shapes_impl(const std::string& nif_abs_path) {
         f = nif::load(path);
     } catch (const std::exception&) {
         return py::none();
+    }
+    if (fix_json) {
+        // The loader's own path (AssetCache::load), in memory: lets the
+        // shape-diff tool verify a fix before it is written.
+        std::string err;
+        auto fix = assets::parse_mesh_fix(*fix_json, &err);
+        if (!fix) throw std::runtime_error("mesh fix parse failed: " + err);
+        err = assets::apply_mesh_fix(f, *fix);
+        if (!err.empty()) throw std::runtime_error("mesh fix refused: " + err);
     }
 
     py::list out;
@@ -3013,14 +3023,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Extract the embedded camera (frustum + world transform) from a set "
           "NIF, or None. Parse-only; no GL context required.");
     m.def("nif_shapes", &nif_shapes_impl,
-          py::arg("abs_path"),
+          py::arg("abs_path"), py::arg("fix_json") = py::none(),
           "Every NiTriShape in a NIF, in block order: block index, name, "
           "texture basenames, world-space vertices/normals, UV set 0, "
           "triangles, hidden flag. None if the file is missing or fails to "
           "parse. Parse-only, no GL context; applies no mesh fix. Feeds "
           "tools/gen_mesh_fixes.py. Also: world (16 floats, column-major, "
           "data frame -> model), parent node name, data_block, per-vertex "
-          "colors (or []), UV set 1 (or []).");
+          "colors (or []), UV set 1 (or []). With fix_json (a mesh-fix file's "
+          "text), the fix is parsed and applied in memory first, exactly as the "
+          "loader does; a parse failure or refusal raises RuntimeError.");
 
     py::class_<scenegraph::InstanceId>(m, "InstanceId")
         .def(py::init<>())
