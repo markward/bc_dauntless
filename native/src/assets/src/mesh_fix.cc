@@ -757,6 +757,15 @@ std::string check_albedo_name(const std::string& name, const std::string& what) 
             return what + " '" + name + "' has the reserved suffix '" +
                    std::string(sv) + "' and would not bind as a plain diffuse";
     }
+    // Mirrors model_build.cc's filename_is_emissive: an emissive sibling map
+    // (task 17) is a derived map that is never probed for siblings itself.
+    for (const char* suffix : {"_emissive_y", "_emissive_r", "_emissive"}) {
+        const std::string_view sv(suffix);
+        if (stem.size() >= sv.size() && stem.compare(stem.size() - sv.size(), sv.size(), sv) == 0)
+            return what + " '" + name + "' has the reserved suffix '" + std::string(sv) +
+                   "': it names an emissive sibling map, not an albedo (use the "
+                   "base name; the loader finds its emissive maps beside it)";
+    }
     return "";
 }
 

@@ -167,6 +167,12 @@ struct TextureLoadResult {
     /// Same as sibling_rough_for_image for "<basename>_metal.tga" (bridge PBR
     /// metalness map).
     std::unordered_map<std::uint32_t, int> sibling_metal_for_image;
+    /// Same for the emissive siblings "<basename>_emissive.tga" (default /
+    /// green), "_emissive_y" (yellow alert), "_emissive_r" (red alert).
+    /// Probed on INTERIOR loads only (ctx.interior_sibling_policy).
+    std::unordered_map<std::uint32_t, int> sibling_emissive_for_image;
+    std::unordered_map<std::uint32_t, int> sibling_emissive_y_for_image;
+    std::unordered_map<std::uint32_t, int> sibling_emissive_r_for_image;
     /// NIF link ID -> source filename (NiImage::file_name) for external
     /// images. Used by material_build's lightmap-pass predicate.
     std::unordered_map<std::uint32_t, std::string> image_filename_for_link;
@@ -265,7 +271,8 @@ TextureLoadResult load_all_textures(
         // filename_is_normal half, every _normal image would send the loader
         // hunting for "<name>_normal_specular.tga" on each load.
         const bool is_derived_map = filename_is_specular(img->file_name)
-                                 || filename_is_normal(img->file_name);
+                                 || filename_is_normal(img->file_name)
+                                 || filename_is_emissive(img->file_name);
         if (img->use_external != 0 && !is_derived_map) {
             const std::string sibling_name =
                 sibling_specular_filename(img->file_name);
@@ -297,15 +304,22 @@ TextureLoadResult load_all_textures(
                 std::unordered_map<std::uint32_t, int>*  sink;
                 bool                                      reconstruct_z;
             };
-            const SiblingMapProbe probes[] = {
+            // The emissive siblings (task 17) are interior-only: a ship load
+            // probes exactly the three maps it always has.
+            const SiblingMapProbe all_probes[] = {
                 {"_normal", &out.sibling_normal_for_image, /*reconstruct_z=*/true},
                 {"_rough",  &out.sibling_rough_for_image,  false},
                 {"_metal",  &out.sibling_metal_for_image,  false},
+                {"_emissive",   &out.sibling_emissive_for_image,   false},
+                {"_emissive_y", &out.sibling_emissive_y_for_image, false},
+                {"_emissive_r", &out.sibling_emissive_r_for_image, false},
             };
+            const std::size_t probe_count = ctx.interior_sibling_policy ? 6 : 3;
             const auto sibling_dirs = resolved_albedo.empty()
                 ? ctx.texture_search_paths
                 : sibling_dirs_for(ctx, resolved_albedo);
-            for (const auto& probe : probes) {
+            for (std::size_t pi = 0; pi < probe_count; ++pi) {
+                const auto& probe = all_probes[pi];
                 const std::string map_name =
                     sibling_map_filename(img->file_name, probe.suffix);
                 std::filesystem::path map_path;
@@ -823,6 +837,22 @@ bool filename_is_normal(std::string_view fname) {
     return lower_ends_with(stem, "_normal") || lower_ends_with(stem, "_norm");
 }
 
+bool filename_is_emissive(std::string_view fname) {
+    auto dot = fname.find_last_of('.');
+    auto stem = (dot == std::string_view::npos) ? fname : fname.substr(0, dot);
+    auto lower_ends_with = [](std::string_view s, std::string_view suffix) {
+        if (s.size() < suffix.size()) return false;
+        for (std::size_t i = 0; i < suffix.size(); ++i) {
+            char c = s[s.size() - suffix.size() + i];
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (c != suffix[i]) return false;
+        }
+        return true;
+    };
+    return lower_ends_with(stem, "_emissive") || lower_ends_with(stem, "_emissive_y") ||
+           lower_ends_with(stem, "_emissive_r");
+}
+
 std::string sibling_map_filename(std::string_view fname, std::string_view suffix) {
     auto dot = fname.find_last_of('.');
     std::string stem(dot == std::string_view::npos ? fname : fname.substr(0, dot));
@@ -1036,6 +1066,9 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
             tex_result.sibling_rough_for_image,
             tex_result.sibling_metal_for_image, resolver);
         mat_inputs.image_filename_for_link = &tex_result.image_filename_for_link;
+        mat_inputs.sibling_emissive_for_image = &tex_result.sibling_emissive_for_image;
+        mat_inputs.sibling_emissive_y_for_image = &tex_result.sibling_emissive_y_for_image;
+        mat_inputs.sibling_emissive_r_for_image = &tex_result.sibling_emissive_r_for_image;
         mat_inputs.flip_image_override_for_prop = &flip_image_override_for_prop;
         mat_inputs.geometry_uv_set_count = data->uv_sets.size();
         Material mat = build_material(mat_inputs);

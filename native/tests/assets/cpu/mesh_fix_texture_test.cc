@@ -8,6 +8,7 @@
 #include "support/content_root.h"
 
 #include <filesystem>
+#include <iterator>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -197,6 +198,10 @@ TEST(MeshFixTexture, RefusalsLeaveFileUntouched) {
     expect_refused(fix_of(1, "panel_spec.tga"), "spec suffix");
     expect_refused(fix_of(1, "panel_normal.tga"), "normal suffix");
     expect_refused(fix_of(1, "panel_Norm.tga"), "norm suffix");
+    // Emissive sibling names (task 17) are derived maps, never albedos.
+    expect_refused(fix_of(1, "panel_emissive.tga"), "emissive suffix");
+    expect_refused(fix_of(1, "panel_emissive_y.tga"), "yellow emissive suffix");
+    expect_refused(fix_of(1, "panel_Emissive_R.TGA"), "red emissive suffix, mixed case");
     {
         auto fix = fix_of(1, "b.tga");
         fix.textures.push_back({1, "c.tga"});
@@ -209,6 +214,13 @@ TEST(MeshFixTexture, RefusalsLeaveFileUntouched) {
         fix.shape_edits = {e};
         expect_refused(fix, "valid texture + refused shape edit");
     }
+}
+
+TEST(MeshFixTexture, EmissiveRefusalNamesTheSuffix) {
+    auto f = make();
+    const std::string why = assets::apply_mesh_fix(f, fix_of(1, "Map 22a_emissive_y.tga"));
+    EXPECT_NE(why.find("_emissive_y"), std::string::npos) << why;
+    EXPECT_NE(why.find("emissive"), std::string::npos) << why;
 }
 
 TEST(MeshFixTexture, AcceptsUppercaseTgaExtension) {
@@ -299,3 +311,4 @@ TEST(MeshFixTexture, RefusesATextureOpOnAMergesHiddenPatch) {
     fix.textures = {{1, "b.tga"}};                          // the TARGET is fine
     EXPECT_EQ(assets::apply_mesh_fix(f, fix), "");
 }
+

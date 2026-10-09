@@ -67,6 +67,11 @@ public:
 /// _glow / _specular predicates) so the filename rules are unit-testable.
 bool filename_is_normal(std::string_view fname);
 
+/// True if `fname`'s extension-less basename ends in "_emissive",
+/// "_emissive_y" or "_emissive_r" (case-insensitive): an emissive sibling map
+/// (task 17), a derived map that is never itself probed for siblings.
+bool filename_is_emissive(std::string_view fname);
+
 /// Given "Hull.tga" or "Hull_glow.tga", produce the sibling normal-map
 /// filename "Hull_normal.tga". Strips a trailing "_glow" (case-insensitive)
 /// from the stem before appending, so a hull's diffuse and its glow map

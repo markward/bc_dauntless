@@ -700,10 +700,15 @@ def _added_triangles(block, shape, ids, edit, added_faces, final_local, uv_edits
     return out
 
 
-# model_build.cc's filename_is_glow / _specular / _normal, on the
-# extension-less stem, case-insensitive (mesh_fix.cc mirrors the same list).
+# model_build.cc's filename_is_glow / _specular / _normal / _emissive, on the
+# extension-less stem, case-insensitive (mesh_fix.cc check_albedo_name mirrors
+# the same list). The emissive siblings (default / yellow / red alert) are
+# derived maps the loader finds beside an albedo, never an albedo themselves.
+_EMISSIVE = "an emissive sibling map (never an albedo)"
 _RESERVED_SUFFIXES = (("_glow", "glow"), ("_specular", "specular"), ("_spec", "specular"),
-                      ("_normal", "a normal map"), ("_norm", "a normal map"))
+                      ("_normal", "a normal map"), ("_norm", "a normal map"),
+                      ("_emissive", _EMISSIVE), ("_emissive_y", _EMISSIVE),
+                      ("_emissive_r", _EMISSIVE))
 
 
 def _object_albedo(mesh):

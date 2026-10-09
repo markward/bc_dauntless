@@ -66,6 +66,13 @@ struct MaterialInputs {
     /// StageSlot::Metalness.
     const std::unordered_map<std::uint32_t, int>* sibling_metal_for_image = nullptr;
 
+    /// Same for the emissive siblings (task 17): `*_emissive.tga` ->
+    /// StageSlot::Emissive, `*_emissive_y.tga` -> EmissiveYellow,
+    /// `*_emissive_r.tga` -> EmissiveRed. Filled on interior loads only.
+    const std::unordered_map<std::uint32_t, int>* sibling_emissive_for_image = nullptr;
+    const std::unordered_map<std::uint32_t, int>* sibling_emissive_y_for_image = nullptr;
+    const std::unordered_map<std::uint32_t, int>* sibling_emissive_r_for_image = nullptr;
+
     /// Maps NIF link ID of a NiImage → its source filename
     /// (NiImage::file_name). Used by build_material to apply BC's
     /// `_lm.tga` lightmap-pass filename predicate without having to
