@@ -13,10 +13,11 @@ set(HOST_BINDINGS_SOURCES
 add_library(dauntless_host_core STATIC
     developer_mode.cc
     bridge_highlight.cc
+    model_identity_maps.cc
 )
 target_compile_features(dauntless_host_core PUBLIC cxx_std_20)
 target_include_directories(dauntless_host_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(dauntless_host_core PUBLIC renderer)
+target_link_libraries(dauntless_host_core PUBLIC renderer assets)
 set_target_properties(dauntless_host_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Python extension module (.so / .pyd / .dylib) for pytest.

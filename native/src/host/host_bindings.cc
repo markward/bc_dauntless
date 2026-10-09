@@ -117,6 +117,7 @@
 #include <unordered_set>
 #include "bridge_highlight.h"
 #include "developer_mode.h"
+#include "model_identity_maps.h"
 
 #ifdef DAUNTLESS_ENABLE_CEF
 #include "ui_cef/cef_lifecycle.h"
@@ -6368,9 +6369,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   // resolved), not nif_shapes' per-shape property walk.
                   py::list textures;
                   const int mi = mesh.material_index();
-                  if (mi >= 0 && mi < static_cast<int>(model->materials.size()) &&
-                      !model->materials[mi].base_texture_name.empty())
-                      textures.append(py::bytes(model->materials[mi].base_texture_name));
+                  // safe_material_index is the SAME bounds check
+                  // mesh_identity_maps uses below -- material_or_default
+                  // requires a non-negative index to already be in range (it
+                  // indexes with operator[], no bounds check of its own), so
+                  // both lookups here must agree on what counts as safe.
+                  const int safe_mi = dauntless::safe_material_index(*model, mi);
+                  if (safe_mi >= 0 &&
+                      !model->materials[safe_mi].base_texture_name.empty())
+                      textures.append(py::bytes(model->materials[safe_mi].base_texture_name));
                   py::dict d;
                   d["mesh"] = static_cast<int>(i);
                   d["block"] = mesh.source_block();
@@ -6378,12 +6385,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   d["node_chain"] = std::move(chain_b);
                   d["textures"] = std::move(textures);
                   d["material"] = mi;
+                  const dauntless::MeshMaps mm = dauntless::mesh_identity_maps(*model, mi);
                   py::dict maps;
-                  const auto& mat = assets::material_or_default(*model, mi);
-                  using S = assets::Material::StageSlot;
-                  maps["roughness"] = mat.stages[static_cast<size_t>(S::Roughness)].texture_index >= 0;
-                  maps["metalness"] = mat.stages[static_cast<size_t>(S::Metalness)].texture_index >= 0;
-                  maps["normal"]    = mat.stages[static_cast<size_t>(S::Bump)].texture_index >= 0;
+                  maps["roughness"] = mm.roughness;
+                  maps["metalness"] = mm.metalness;
+                  maps["normal"]    = mm.normal;
                   d["maps"] = std::move(maps);
                   meshes.append(std::move(d));
               }

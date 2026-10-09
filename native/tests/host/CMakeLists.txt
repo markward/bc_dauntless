@@ -3,6 +3,7 @@
 # without exposing any setter to Python.
 add_executable(host_tests
     bridge_highlight_test.cc
+    model_identity_maps_test.cc
 )
 target_link_libraries(host_tests
     PRIVATE
