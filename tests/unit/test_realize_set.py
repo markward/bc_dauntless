@@ -41,6 +41,9 @@ class _FakeRenderer:
     def set_instance_atmosphere(self, iid, params):
         self.atmospheres.append((iid, params))
 
+    def set_instance_surface(self, iid, params):
+        pass
+
 
 def test_realize_then_teardown(monkeypatch):
     from engine import host_loop as hl

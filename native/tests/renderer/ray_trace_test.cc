@@ -662,3 +662,77 @@ TEST(RayTraceBvh, AxisAlignedRaysAreNotDroppedByTheSlabTest) {
     }
     EXPECT_EQ(checked, 600);
 }
+
+// ── Bridge editor picking: which mesh, which triangle; exclusion ───────────
+
+namespace {
+
+// Two meshes on one node, stacked along +Z: mesh 0 at z = 0, mesh 1 at z = 5.
+// A ray going down -Z from z = 10 hits mesh 1 first.
+assets::Model two_stacked_meshes() {
+    assets::Model m;
+    m.nodes.push_back(assets::Node{
+        .name = "root", .parent_index = -1,
+        .local_transform = glm::mat4(1.0f),
+        .meshes = {0, 1},
+    });
+    for (float z : {0.0f, 5.0f}) {
+        assets::MeshCpu cpu;
+        // Two triangles per mesh; the ray at (0.5, 0.5) hits triangle 1.
+        cpu.vertices.push_back({.position = glm::vec3(-1, -1, z)});
+        cpu.vertices.push_back({.position = glm::vec3( 1, -1, z)});
+        cpu.vertices.push_back({.position = glm::vec3(-1,  1, z)});
+        cpu.vertices.push_back({.position = glm::vec3( 1,  1, z)});
+        cpu.indices = {0u, 1u, 2u,   1u, 3u, 2u};
+        assets::Mesh mesh;
+        mesh.set_cpu_data(std::move(cpu));
+        m.meshes.push_back(std::move(mesh));
+    }
+    return m;
+}
+
+}  // namespace
+
+TEST(RayTracePick, ReportsTheHitMeshAndTriangle) {
+    const auto m = two_stacked_meshes();
+    auto hit = renderer::ray_trace_instance(m, glm::mat4(1.0f),
+        glm::vec3(0.5f, 0.5f, 10.0f), glm::vec3(0, 0, -1), 100.0f);
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_EQ(hit->mesh_index, 1);
+    EXPECT_EQ(hit->triangle, 1);
+    EXPECT_FLOAT_EQ(hit->t, 5.0f);
+}
+
+TEST(RayTracePick, ExcludedMeshIsSeenThrough) {
+    const auto m = two_stacked_meshes();
+    const std::vector<int> exclude{1};
+    auto hit = renderer::ray_trace_instance(m, glm::mat4(1.0f),
+        glm::vec3(0.5f, 0.5f, 10.0f), glm::vec3(0, 0, -1), 100.0f,
+        nullptr, &exclude);
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_EQ(hit->mesh_index, 0);
+    EXPECT_FLOAT_EQ(hit->t, 10.0f);
+}
+
+TEST(RayTracePick, ExcludingEveryMeshIsAMiss) {
+    const auto m = two_stacked_meshes();
+    const std::vector<int> exclude{0, 1};
+    auto hit = renderer::ray_trace_instance(m, glm::mat4(1.0f),
+        glm::vec3(0.5f, 0.5f, 10.0f), glm::vec3(0, 0, -1), 100.0f,
+        nullptr, &exclude);
+    EXPECT_FALSE(hit.has_value());
+}
+
+TEST(RayTracePick, MovedPartHitStillReportsItsMesh) {
+    // root_plus_movable_child(): mesh 0 hangs off the MultiMtl node (index 2).
+    // Same set-up as RayTraceOverrides.AMovedPartIsHitWhereItIsDRAWN.
+    auto m = root_plus_movable_child();
+    std::unordered_map<int, glm::mat4> ov;
+    ov[1] = glm::translate(glm::mat4(1.0f), glm::vec3(-10.0f, 0.0f, 0.0f));
+    auto hit = renderer::ray_trace_instance(
+        m, glm::mat4(1.0f), glm::vec3(-10, 0, -5), glm::vec3(0, 0, 1), 100.0f,
+        &ov);
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_EQ(hit->mesh_index, 0);
+    EXPECT_EQ(hit->triangle, 0);
+}

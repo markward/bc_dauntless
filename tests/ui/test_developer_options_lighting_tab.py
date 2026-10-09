@@ -151,3 +151,27 @@ def test_js_has_a_reload_atmospheres_action_row_and_focusable():
     assert ("_doActionRow('Reload Planet Atmospheres', 'reload_atmospheres',\n"
             "                         'Reload', isFoc('reload_atmospheres'));") in text
     assert "out.push({kind: 'ctrl', target: 'reload_atmospheres'});" in text
+
+
+def test_js_has_a_planet_surface_row_and_focusable():
+    text = open(JS).read()
+    assert ("_doToggleRow('Planet Surface Detail (off = BC texture only; applies to "
+            "planets realized after toggling)',\n"
+            "                         'planet_surface', s.planet_surface, "
+            "isFoc('planet_surface'));") in text
+    assert "out.push({kind: 'ctrl', target: 'planet_surface'});" in text
+
+
+def test_js_has_a_surface_debug_row_and_focusable():
+    text = open(JS).read()
+    assert ("_doToggleRow('Surface Detail Debug (tint by clipmap level)',\n"
+            "                         'surface_debug', s.surface_debug, "
+            "isFoc('surface_debug'));") in text
+    assert "out.push({kind: 'ctrl', target: 'surface_debug'});" in text
+
+
+def test_js_has_a_reload_surfaces_action_row_and_focusable():
+    text = open(JS).read()
+    assert ("_doActionRow('Reload Planet Surfaces', 'reload_surfaces',\n"
+            "                         'Reload', isFoc('reload_surfaces'));") in text
+    assert "out.push({kind: 'ctrl', target: 'reload_surfaces'});" in text

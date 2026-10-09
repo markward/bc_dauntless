@@ -64,6 +64,7 @@ embed_shader(SHADER_SUN_FLARE_VS shaders/sun_flare.vert sun_flare_vs)
 embed_shader(SHADER_SUN_FLARE_FS shaders/sun_flare.frag sun_flare_fs)
 embed_shader(SHADER_ATMOSPHERE_VS shaders/atmosphere.vert atmosphere_vs)
 embed_shader(SHADER_ATMOSPHERE_FS shaders/atmosphere.frag atmosphere_fs)
+embed_shader(SHADER_PLANET_BAKE_FS shaders/planet_bake.frag planet_bake_fs)
 embed_shader(SHADER_DUST_VS shaders/dust.vert dust_vs)
 embed_shader(SHADER_DUST_FS shaders/dust.frag dust_fs)
 embed_shader(SHADER_NEBULA_VS shaders/nebula.vert nebula_vs)
@@ -107,6 +108,10 @@ embed_shader(SHADER_STARMAP_FS shaders/starmap.frag starmap_fs)
 embed_shader(SHADER_BRIDGE_VS shaders/bridge.vert bridge_vs)
 embed_shader(SHADER_BRIDGE_FS shaders/bridge.frag bridge_fs)
 embed_shader(SHADER_BRIDGE_AO_FS shaders/bridge_ao.frag bridge_ao_fs)
+embed_shader(SHADER_PROBE_PREFILTER_VS shaders/probe_prefilter.vert probe_prefilter_vs)
+embed_shader(SHADER_PROBE_PREFILTER_FS shaders/probe_prefilter.frag probe_prefilter_fs)
+embed_shader(SHADER_BRDF_LUT_VS shaders/brdf_lut.vert brdf_lut_vs)
+embed_shader(SHADER_BRDF_LUT_FS shaders/brdf_lut.frag brdf_lut_fs)
 embed_shader(SHADER_VS_STATIC_VS shaders/viewscreen_static.vert viewscreen_static_vs)
 embed_shader(SHADER_VS_STATIC_FS shaders/viewscreen_static.frag viewscreen_static_fs)
 embed_shader(SHADER_SKINNED_BRIDGE_VS shaders/skinned_bridge.vert skinned_bridge_vs)
@@ -179,6 +184,11 @@ add_library(renderer STATIC
     nebula_volumetric_pass.cc
     nebula_atmosphere.cc
     atmosphere_math.cc
+    planet_detail_noise.cc
+    planet_clipmap_schedule.cc
+    planet_clipmap_atlas.cc
+    planet_detail_uniforms.cc
+    planet_detail_pass.cc
     atmosphere_pass.cc
     system_nebula_pass.cc
     nebula_godray_pass.cc
@@ -216,6 +226,7 @@ add_library(renderer STATIC
     letterbox_pass.cc
     bridge_pass.cc
     bridge_ao_pass.cc
+    bridge_probe.cc
     viewscreen_static_pass.cc
     light_matrix.cc
     shadow_map_target.cc

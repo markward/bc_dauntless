@@ -20,12 +20,15 @@ from engine.ui.panel import Panel
 from engine import dev_combat_cheats as cheats
 from engine import dev_dial_groups
 from engine import dev_light_preview as light_preview
+from engine import host_io
 from engine import renderer
 from engine.appc import sensor_occlusion
 from engine.rocks import catalogue as rock_catalogue
 from engine import planet_geosphere
 from engine import planet_atmosphere
+from engine import planet_surface
 from engine.planets import atmosphere as planet_atmosphere_catalogue
+from engine.planets import surface as planet_surface_catalogue
 
 
 def _minors_enabled() -> bool:
@@ -76,7 +79,7 @@ class DeveloperOptionsPanel(Panel):
     # Controls that fire once instead of flipping a flag. They have no entry in
     # `settings` and dispatch under "action:" rather than "toggle:".
     _ACTION_CONTROLS = frozenset({"quick_repair", "normal_strength",
-                                 "dial_group", "reload_atmospheres",
+                                 "dial_group", "reload_atmospheres", "reload_surfaces",
                                  "bridge_debug_view"})
 
     # Presets cycled through by the "normal_strength" action row: 0 = flat
@@ -84,9 +87,11 @@ class DeveloperOptionsPanel(Panel):
     _NORMAL_STRENGTHS = (0.0, 0.5, 1.0, 2.0, 4.0)
 
     # Names cycled through by the "bridge_debug_view" action row, index ==
-    # renderer.BridgeDebugView's int value (0 Off .. 5 Mesh ID).
+    # renderer.BridgeDebugView's int value (0 Off .. 10 Map normals). 6-10
+    # are the bridge-PBR debug views added alongside the PBR A/B switch.
     _BRIDGE_DEBUG_VIEWS = ("Off", "Normals", "Light Only", "AO Only",
-                          "Triangle ID", "Mesh ID")
+                          "Triangle ID", "Mesh ID", "Roughness", "Metalness",
+                          "Specular only", "Probe (mirror)", "Map normals")
 
     def __init__(self) -> None:
         super().__init__()
@@ -111,9 +116,17 @@ class DeveloperOptionsPanel(Panel):
         self._normal_flip_g = True
         self._normal_strength = 1.0
         self._bridge_debug_view = 0
+        # Developer-only A/B switch for bridge PBR (default ON, not
+        # persisted -- no getter exists, so there is nothing to resync from
+        # on open(), the same shape as _normal_maps above).
+        self._bridge_pbr = True
         self._rock_catalogue = rock_catalogue.enabled()
         self._planet_geosphere = planet_geosphere.enabled()
         self._planet_atmosphere = planet_atmosphere.enabled()
+        self._planet_surface = planet_surface.enabled()
+        # No native getter for the debug tint (set_planet_detail_debug is
+        # write-only) -- defaults off like every other dev A/B toggle.
+        self._surface_debug = False
         self._minor_rocks = _minors_enabled()
         self._far_tier = _far_enabled()
         self._rock_specks = _rock_specks_enabled()
@@ -134,6 +147,10 @@ class DeveloperOptionsPanel(Panel):
     def is_open(self) -> bool:
         return self._visible
 
+    def bridge_debug_view_names(self) -> List[str]:
+        """The "Bridge Debug View" row's cycle list, in index order."""
+        return list(self._BRIDGE_DEBUG_VIEWS)
+
     def open(self) -> None:
         # Re-sync the local mirror from the cheats module so a reopened
         # panel reflects whatever the flags currently are.
@@ -151,6 +168,7 @@ class DeveloperOptionsPanel(Panel):
         self._rock_puffs = _rock_puffs_enabled()
         self._planet_geosphere = planet_geosphere.enabled()
         self._planet_atmosphere = planet_atmosphere.enabled()
+        self._planet_surface = planet_surface.enabled()
         # The profiler can be enabled behind the panel's back by
         # DAUNTLESS_PROFILE_FRAMES at startup, so re-read rather than trust
         # the mirror -- otherwise the row shows OFF while it is reporting.
@@ -175,11 +193,12 @@ class DeveloperOptionsPanel(Panel):
             self._sensor_occlusion,
             self._systems_damaged, self._systems_disabled,
             self._normal_maps, self._normal_flip_g, self._normal_strength,
-            self._bridge_debug_view,
+            self._bridge_pbr, self._bridge_debug_view,
             self._profiler, self._rock_catalogue, self._dial_group,
             self._minor_rocks, self._far_tier,
             self._rock_specks, self._rock_puffs,
             self._planet_geosphere, self._planet_atmosphere,
+            self._planet_surface, self._surface_debug,
         )
         if snapshot == self._last_pushed:
             return None
@@ -202,6 +221,7 @@ class DeveloperOptionsPanel(Panel):
                 "normal_maps": self._normal_maps,
                 "normal_flip_g": self._normal_flip_g,
                 "normal_strength": self._normal_strength,
+                "bridge_pbr": self._bridge_pbr,
                 "bridge_debug_view": self._BRIDGE_DEBUG_VIEWS[self._bridge_debug_view],
                 "profiler": self._profiler,
                 "rock_catalogue": self._rock_catalogue,
@@ -212,6 +232,8 @@ class DeveloperOptionsPanel(Panel):
                 "rock_puffs": self._rock_puffs,
                 "planet_geosphere": self._planet_geosphere,
                 "planet_atmosphere": self._planet_atmosphere,
+                "planet_surface": self._planet_surface,
+                "surface_debug": self._surface_debug,
             },
         }
         return "setDeveloperOptions(" + json.dumps(payload) + ");"
@@ -286,6 +308,11 @@ class DeveloperOptionsPanel(Panel):
             renderer.set_normal_map_strength(nxt)
             self._normal_strength = nxt
             return True
+        if action == "toggle:bridge_pbr":
+            new_val = not self._bridge_pbr
+            host_io.set_bridge_pbr_enabled(new_val)
+            self._bridge_pbr = new_val
+            return True
         if action == "action:bridge_debug_view":
             nxt = (self._bridge_debug_view + 1) % len(self._BRIDGE_DEBUG_VIEWS)
             renderer.set_bridge_debug_view(nxt)
@@ -302,6 +329,15 @@ class DeveloperOptionsPanel(Panel):
         if action == "toggle:planet_atmosphere":
             planet_atmosphere.set_enabled(not self._planet_atmosphere)
             self._planet_atmosphere = not self._planet_atmosphere
+            return True
+        if action == "toggle:planet_surface":
+            planet_surface.set_enabled(not self._planet_surface)
+            self._planet_surface = not self._planet_surface
+            return True
+        if action == "toggle:surface_debug":
+            new_val = not self._surface_debug
+            renderer.set_planet_detail_debug(new_val)
+            self._surface_debug = new_val
             return True
         if action == "toggle:minor_rocks":
             renderer.minors_set_enabled(not self._minor_rocks)
@@ -334,6 +370,22 @@ class DeveloperOptionsPanel(Panel):
             planet_atmosphere_catalogue.reload()
             atmosphere_dials.repush_live()
             print("[atmosphere] catalogue reloaded", file=sys.stderr)
+            return True
+        if action == "action:reload_surfaces":
+            # One-shot ACTION (mirrors action:reload_atmospheres). The two
+            # catalogue blocks ("atmosphere" and "surface") live in the SAME
+            # atmospheres.json, read through ONE shared file memo -- but
+            # `surface.reload()` refreshes that memo via
+            # `atmosphere.reload_file()` (memo-only), NOT the full
+            # `atmosphere.reload()`, so this action picks up edited surface
+            # fields (and drops this group's own overrides) WITHOUT also
+            # dropping the "atmosphere" dial group's live tuning (fix round
+            # 1, I1). Then re-push every live planet.
+            import sys
+            from engine.planets import surface_dials
+            planet_surface_catalogue.reload()
+            surface_dials.repush_live()
+            print("[surface] catalogue reloaded", file=sys.stderr)
             return True
         if action == "action:quick_repair":
             # One-shot ACTION, not a toggle: nothing to mirror in state, so
@@ -369,13 +421,16 @@ class DeveloperOptionsPanel(Panel):
         if self._selected_tab == "lighting":
             out += [("ctrl", "systems_damaged"), ("ctrl", "systems_disabled"),
                     ("ctrl", "normal_maps"), ("ctrl", "normal_flip_g"),
-                    ("ctrl", "normal_strength"), ("ctrl", "bridge_debug_view")]
+                    ("ctrl", "normal_strength"), ("ctrl", "bridge_pbr"),
+                    ("ctrl", "bridge_debug_view")]
         if self._selected_tab == "environments":
             out += [("ctrl", "rock_catalogue"), ("ctrl", "minor_rocks"),
                     ("ctrl", "far_tier"), ("ctrl", "rock_specks"),
                     ("ctrl", "rock_puffs"), ("ctrl", "planet_geosphere"),
                     ("ctrl", "planet_atmosphere"),
-                    ("ctrl", "reload_atmospheres")]
+                    ("ctrl", "reload_atmospheres"),
+                    ("ctrl", "planet_surface"), ("ctrl", "surface_debug"),
+                    ("ctrl", "reload_surfaces")]
         if self._selected_tab == "diagnostics":
             out += [("ctrl", "profiler"), ("ctrl", "dial_group")]
         return out

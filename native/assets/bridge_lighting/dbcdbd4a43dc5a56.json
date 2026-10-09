@@ -1,0 +1,161 @@
+{
+  "format": 1,
+  "profiles": {},
+  "shapes": {
+    "133:": {
+      "block": 133,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "139:": {
+      "block": 139,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "17:": {
+      "block": 17,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "185:": {
+      "block": 185,
+      "material": {
+        "metalness": 0.63
+      },
+      "name": ""
+    },
+    "189:": {
+      "block": 189,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "236:": {
+      "block": 236,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "288:": {
+      "block": 288,
+      "material": {
+        "roughness": 0.11
+      },
+      "name": ""
+    },
+    "29:": {
+      "block": 29,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "337:": {
+      "block": 337,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "358:": {
+      "block": 358,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "415:": {
+      "block": 415,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "59:": {
+      "block": 59,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "63:": {
+      "block": 63,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "655:": {
+      "block": 655,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "666:": {
+      "block": 666,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "685:": {
+      "block": 685,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "688:": {
+      "block": 688,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "691:": {
+      "block": 691,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "76:": {
+      "block": 76,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "84:": {
+      "block": 84,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "87:": {
+      "block": 87,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "90:": {
+      "block": 90,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    }
+  },
+  "source": "/Users/mward/Documents/Star Trek Bridge Commander/game/data/Models/Sets/DBridge/DBridge.nif"
+}

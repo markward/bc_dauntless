@@ -1,6 +1,7 @@
 #include "material_build.h"
 
 #include <cctype>
+#include <string>
 #include <string_view>
 
 namespace assets::detail {
@@ -24,6 +25,20 @@ bool filename_is_lightmap(std::string_view fname) {
     };
     return lower_ends_with(fname, " lm.tga") ||
            lower_ends_with(fname, "_lm.tga");
+}
+
+/// Basename (after the last '/' or '\\') of the source file of NiImage link
+/// `image_link`, "" for an embedded or unknown image.
+std::string image_basename(
+    std::uint32_t image_link,
+    const std::unordered_map<std::uint32_t, std::string>* image_filename_for_link)
+{
+    if (!image_filename_for_link) return {};
+    auto it = image_filename_for_link->find(image_link);
+    if (it == image_filename_for_link->end()) return {};
+    const std::string& fn = it->second;
+    const auto cut = fn.find_last_of("/\\");
+    return cut == std::string::npos ? fn : fn.substr(cut + 1);
 }
 
 void apply_material_property(Material& m, const nif::NiMaterialProperty& src) {
@@ -75,7 +90,10 @@ void apply_texture_property(
     const std::unordered_set<std::uint32_t>* specular_image_links,
     const std::unordered_map<std::uint32_t, int>* sibling_specular_for_image,
     const std::unordered_set<std::uint32_t>* normal_image_links,
-    const std::unordered_map<std::uint32_t, int>* sibling_normal_for_image)
+    const std::unordered_map<std::uint32_t, int>* sibling_normal_for_image,
+    const std::unordered_map<std::uint32_t, int>* sibling_rough_for_image,
+    const std::unordered_map<std::uint32_t, int>* sibling_metal_for_image,
+    const std::unordered_map<std::uint32_t, std::string>* image_filename_for_link)
 {
     // Single-texture v3.x property — usually populates the Base stage.
     //
@@ -129,6 +147,7 @@ void apply_texture_property(
     auto& base = m.stages[static_cast<std::size_t>(Material::StageSlot::Base)];
     base.texture_index = tex_idx;
     base.apply_mode    = 2;
+    m.base_texture_name = image_basename(effective_image_link, image_filename_for_link);
     const bool is_glow = glow_image_links &&
         glow_image_links->find(effective_image_link) != glow_image_links->end();
     if (is_glow) {
@@ -157,6 +176,25 @@ void apply_texture_property(
             auto& bump = m.stages[static_cast<std::size_t>(Material::StageSlot::Bump)];
             bump.texture_index = it->second;
             bump.apply_mode    = 2;
+        }
+    }
+    // Bridge PBR sibling shims, mirroring the _normal block above: a probed
+    // `_rough` / `_metal` sibling binds to Roughness / Metalness. The hull
+    // texture stays in Base / Glow.
+    if (sibling_rough_for_image) {
+        auto it = sibling_rough_for_image->find(effective_image_link);
+        if (it != sibling_rough_for_image->end()) {
+            auto& rough = m.stages[static_cast<std::size_t>(Material::StageSlot::Roughness)];
+            rough.texture_index = it->second;
+            rough.apply_mode    = 2;
+        }
+    }
+    if (sibling_metal_for_image) {
+        auto it = sibling_metal_for_image->find(effective_image_link);
+        if (it != sibling_metal_for_image->end()) {
+            auto& metal = m.stages[static_cast<std::size_t>(Material::StageSlot::Metalness)];
+            metal.texture_index = it->second;
+            metal.apply_mode    = 2;
         }
     }
 }
@@ -236,6 +274,8 @@ void apply_multi_texture_property(
         stage.filter_mode   = el.filter_mode;
         stage.uv_set        = el.uv_set;
         stage.apply_mode    = 2;  // APPLY_MODULATE — niflib default
+        if (target == S::Base)
+            m.base_texture_name = image_basename(el.image_link, image_filename_for_link);
     }
 }
 
@@ -252,7 +292,10 @@ Material build_material(const MaterialInputs& in) {
         in.image_to_texture, in.glow_image_links, in.specular_image_links,
         in.sibling_specular_for_image,
         in.normal_image_links,
-        in.sibling_normal_for_image);
+        in.sibling_normal_for_image,
+        in.sibling_rough_for_image,
+        in.sibling_metal_for_image,
+        in.image_filename_for_link);
     if (in.multi_texture) apply_multi_texture_property(m, *in.multi_texture,
         in.image_to_texture, in.image_filename_for_link);
 

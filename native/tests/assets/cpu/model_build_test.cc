@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <type_traits>
+#include <utility>
 #include <vector>
 #ifdef _WIN32
 #include <process.h>
@@ -372,8 +374,11 @@ protected:
                 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00};
     }
     void write_tga(const std::string& name) {
+        write_tga_at(tmp_dir / name);
+    }
+    void write_tga_at(const fs::path& full_path) {
         auto bytes = valid_tga();
-        std::ofstream out(tmp_dir / name, std::ios::binary);
+        std::ofstream out(full_path, std::ios::binary);
         out.write(reinterpret_cast<const char*>(bytes.data()),
                   static_cast<std::streamsize>(bytes.size()));
     }
@@ -438,6 +443,104 @@ TEST_F(ModelBuildTest, NodeAttachmentRecordsMeshIndex) {
     ASSERT_NE(root_node, -1);
     ASSERT_EQ(model.nodes[root_node].meshes.size(), 1u);
     EXPECT_EQ(model.nodes[root_node].meshes[0], 0);
+}
+
+TEST_F(ModelBuildTest, MeshRecordsItsSourceNifBlock) {
+    // trivial_file_with_one_trishape(): block 0 NiNode "Root",
+    // block 1 NiTriShape "Saucer", block 2 NiTriShapeData.
+    auto f = trivial_file_with_one_trishape();
+    auto model = assets::detail::build_model(f, make_ctx());
+    ASSERT_EQ(model.meshes.size(), 1u);
+    EXPECT_EQ(model.meshes[0].source_block(), 1);
+    EXPECT_EQ(model.meshes[0].shape_name(), "Saucer");
+}
+
+// The bridge editor's texture readout comes from the BUILT material: the
+// Base-stage texture's source basename, one per shape.
+TEST_F(ModelBuildTest, MaterialRecordsItsBaseTextureName) {
+    auto f = file_with_id_and_bridge_shapes();
+    auto model = assets::detail::build_model(f, make_ctx());
+    ASSERT_EQ(model.meshes.size(), 2u);
+    const auto name_of = [&](std::size_t mesh) {
+        return model.materials[model.meshes[mesh].material_index()].base_texture_name;
+    };
+    EXPECT_EQ(name_of(0), "hull_ID.tga");
+    EXPECT_EQ(name_of(1), "hull_bridge.tga");
+}
+
+// Stock DBridge hangs its NiTextureProperty on parent NiNodes, not on the
+// shapes; the name must follow that inheritance, and keep only the basename.
+TEST_F(ModelBuildTest, MaterialBaseTextureNameFollowsAnInheritedProperty) {
+    nif::File f;
+    nif::NiNode root;                           // 0: carries the texture
+    root.av.obj.name = "Root";
+    root.child_links = {1};
+    root.av.property_links = {3};
+    f.blocks.push_back(root);
+    nif::NiTriShape tri;                        // 1: no properties of its own
+    tri.data_link = 2;
+    f.blocks.push_back(tri);
+    nif::NiTriShapeData d;                      // 2
+    d.num_vertices = 3;
+    d.has_vertices = true;
+    d.vertices = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}};
+    d.has_uv = true;
+    d.uv_sets.push_back({{0, 0}, {1, 0}, {0, 1}});
+    d.num_triangles = 1;
+    d.triangles.push_back({0, 1, 2});
+    f.blocks.push_back(d);
+    nif::NiTextureProperty tex;                 // 3
+    tex.image_link = 4;
+    f.blocks.push_back(tex);
+    nif::NiImage img;                           // 4
+    img.use_external = 1;
+    img.file_name = "data\\Models\\Sets\\DBridge\\High\\Map 3.tga";
+    f.blocks.push_back(img);
+    f.block_ids = {0, 1, 2, 3, 4};   // the parent walk keys on link ids
+    auto model = assets::detail::build_model(f, make_ctx());
+    ASSERT_EQ(model.meshes.size(), 1u);
+    EXPECT_EQ(model.materials[model.meshes[0].material_index()].base_texture_name,
+              "Map 3.tga");
+}
+
+TEST_F(ModelBuildTest, UntexturedMaterialHasNoBaseTextureName) {
+    auto f = trivial_file_with_one_trishape();
+    auto model = assets::detail::build_model(f, make_ctx());
+    ASSERT_EQ(model.materials.size(), 1u);
+    EXPECT_EQ(model.materials[0].base_texture_name, "");
+}
+
+// Per-draw material lookup must never copy: Material holds a std::string
+// (base_texture_name), so `idx >= 0 ? materials[idx] : Material{}` would copy
+// the whole Material -- a possible heap allocation -- into a temporary on
+// every mesh draw. material_or_default returns a reference into
+// model.materials or to one shared default, so both arms are lvalues.
+static_assert(std::is_same_v<
+    decltype(assets::material_or_default(std::declval<const assets::Model&>(), 0)),
+    const assets::Material&>);
+
+TEST(MaterialOrDefault, ReturnsAReferenceIntoTheModelsMaterials) {
+    assets::Model model;
+    model.materials.resize(2);
+    model.materials[1].base_texture_name = "Map 3.tga";
+    EXPECT_EQ(&assets::material_or_default(model, 1), &model.materials[1]);
+    EXPECT_EQ(&assets::material_or_default(model, 0), &model.materials[0]);
+}
+
+TEST(MaterialOrDefault, NegativeIndexIsOneSharedDefaultMaterial) {
+    assets::Model a, b;
+    const assets::Material& d = assets::material_or_default(a, -1);
+    EXPECT_EQ(&d, &assets::material_or_default(b, -1));   // shared, not a temporary
+    const assets::Material fresh{};
+    EXPECT_EQ(d.diffuse, fresh.diffuse);
+    EXPECT_EQ(d.alpha, fresh.alpha);
+    EXPECT_EQ(d.base_texture_name, "");
+    EXPECT_EQ(d.stages[0].texture_index, -1);
+}
+
+TEST(MeshDefaults, SourceBlockIsMinusOneWhenNotBuiltFromANif) {
+    assets::Mesh mesh;
+    EXPECT_EQ(mesh.source_block(), -1);
 }
 
 TEST_F(ModelBuildTest, ChildShapeInheritsParentNodeProperty) {
@@ -631,6 +734,80 @@ TEST_F(ModelBuildTest, SyntheticHullWithNormalSiblingGetsBumpFromDisk) {
         << "sibling hull_ID_normal.tga on disk must bind to Bump";
     EXPECT_GE(base_texture_index(model), 0)
         << "hull must still render from its Base texture";
+}
+
+TEST(ModelBuildFilenames, SiblingMapAppendsSuffixAndStripsGlow) {
+    using assets::detail::sibling_map_filename;
+    EXPECT_EQ(sibling_map_filename("Map 3.tga", "_rough"), "Map 3_rough.tga");
+    EXPECT_EQ(sibling_map_filename("wall_glow.TGA", "_metal"), "wall_metal.TGA");
+    EXPECT_EQ(sibling_map_filename("noext", "_rough"), "noext_rough");
+}
+
+TEST_F(ModelBuildTest, RoughAndMetalSiblingsBindTheirStages) {
+    write_tga("hull_ID.tga");
+    write_tga("hull_ID_rough.tga");
+    write_tga("hull_ID_metal.tga");
+    auto f = file_with_textured_shape();
+    auto model = assets::detail::build_model(f, make_ctx());
+    using S = assets::Material::StageSlot;
+    const auto& m = model.materials[0];
+    EXPECT_GE(m.stages[static_cast<size_t>(S::Roughness)].texture_index, 0);
+    EXPECT_GE(m.stages[static_cast<size_t>(S::Metalness)].texture_index, 0);
+}
+
+TEST_F(ModelBuildTest, NoSiblingsLeavesRoughAndMetalEmpty) {
+    write_tga("hull_ID.tga");
+    auto f = file_with_textured_shape();
+    auto model = assets::detail::build_model(f, make_ctx());
+    using S = assets::Material::StageSlot;
+    EXPECT_EQ(model.materials[0].stages[static_cast<size_t>(S::Roughness)].texture_index, -1);
+    EXPECT_EQ(model.materials[0].stages[static_cast<size_t>(S::Metalness)].texture_index, -1);
+}
+
+// Interior policy (spec §9.2): a STOCK albedo takes siblings only from the
+// overlay; a mod albedo only from beside itself.
+TEST_F(ModelBuildTest, InteriorStockAlbedoTakesSiblingsOnlyFromTheOverlay) {
+    const fs::path stock = tmp_dir / "stock", mod = tmp_dir / "mod", overlay = tmp_dir / "overlay";
+    for (const auto& d : {stock, mod, overlay}) fs::create_directories(d);
+    write_tga_at(stock / "hull_ID.tga");
+    write_tga_at(mod / "hull_ID_rough.tga");      // a mod's map for a STOCK albedo: must be ignored
+    write_tga_at(overlay / "hull_ID_metal.tga");  // our overlay map: must be used
+    auto ctx = make_ctx();
+    ctx.texture_search_paths = {mod, stock};      // stock dir is LAST, as game_asset_dirs orders it
+    ctx.sibling_overlay_dirs = {overlay};
+    ctx.interior_sibling_policy = true;
+    auto model = assets::detail::build_model(file_with_textured_shape(), ctx);
+    using S = assets::Material::StageSlot;
+    EXPECT_EQ(model.materials[0].stages[static_cast<size_t>(S::Roughness)].texture_index, -1);
+    EXPECT_GE(model.materials[0].stages[static_cast<size_t>(S::Metalness)].texture_index, 0);
+}
+
+TEST_F(ModelBuildTest, InteriorModAlbedoTakesSiblingsOnlyBesideItself) {
+    const fs::path stock = tmp_dir / "stock", mod = tmp_dir / "mod", overlay = tmp_dir / "overlay";
+    for (const auto& d : {stock, mod, overlay}) fs::create_directories(d);
+    write_tga_at(mod / "hull_ID.tga");            // the mod overrides the albedo
+    write_tga_at(overlay / "hull_ID_rough.tga");  // our stock-only map: must be ignored
+    write_tga_at(mod / "hull_ID_metal.tga");      // the mod's own map: used
+    auto ctx = make_ctx();
+    ctx.texture_search_paths = {mod, stock};
+    ctx.sibling_overlay_dirs = {overlay};
+    ctx.interior_sibling_policy = true;
+    auto model = assets::detail::build_model(file_with_textured_shape(), ctx);
+    using S = assets::Material::StageSlot;
+    EXPECT_EQ(model.materials[0].stages[static_cast<size_t>(S::Roughness)].texture_index, -1);
+    EXPECT_GE(model.materials[0].stages[static_cast<size_t>(S::Metalness)].texture_index, 0);
+}
+
+TEST_F(ModelBuildTest, ShipLoadsKeepProbingEverySearchPath) {
+    const fs::path stock = tmp_dir / "stock", mod = tmp_dir / "mod";
+    for (const auto& d : {stock, mod}) fs::create_directories(d);
+    write_tga_at(stock / "hull_ID.tga");
+    write_tga_at(mod / "hull_ID_normal.tga");
+    auto ctx = make_ctx();
+    ctx.texture_search_paths = {mod, stock};      // policy off (default): today's behaviour
+    auto model = assets::detail::build_model(file_with_textured_shape(), ctx);
+    using S = assets::Material::StageSlot;
+    EXPECT_GE(model.materials[0].stages[static_cast<size_t>(S::Bump)].texture_index, 0);
 }
 
 TEST(ModelBuildFilenames, NormalPredicateMatchesLongAndShortForms) {

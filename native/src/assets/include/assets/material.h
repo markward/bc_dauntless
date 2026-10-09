@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstdint>
+#include <string>
 
 #include <glm/glm.hpp>
 
@@ -30,8 +31,12 @@ struct Material {
     ///
     /// Decal0..2 mirror the NIF NiTexturingProperty decal slots only; they
     /// are NOT project hull-name decals, which live on Model::decals.
+    ///
+    /// Roughness/Metalness: `<stem>_rough` / `<stem>_metal` siblings, read
+    /// only by the bridge PBR path (spec 2026-10-08-bridge-emitters §9.2).
     enum class StageSlot {
         Base = 0, Dark, Detail, Gloss, Glow, Bump, Decal0, Decal1, Decal2,
+        Roughness, Metalness,
         Count
     };
 
@@ -68,6 +73,14 @@ struct Material {
     /// renderer reads animation_index at draw time and substitutes the
     /// current frame's texture for stages[Base].texture_index.
     int animation_index = -1;
+
+    /// Basename of the source file (NiImage::file_name) of the texture this
+    /// material's Base stage was built from, "" when Base has none or the
+    /// image is embedded. Recorded where the Base stage is resolved, so it
+    /// reflects property inheritance from parent nodes exactly as drawn
+    /// (nif_shapes' per-shape walk does not). Identity only -- the bridge
+    /// editor's readout (spec 2026-10-08-bridge-emitters §4); never drawn.
+    std::string base_texture_name;
 };
 
 }  // namespace assets

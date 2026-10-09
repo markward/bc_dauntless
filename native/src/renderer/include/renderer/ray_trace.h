@@ -3,6 +3,7 @@
 
 #include <optional>
 #include <unordered_map>
+#include <vector>
 #include <glm/glm.hpp>
 
 namespace assets { struct Model; }
@@ -13,6 +14,8 @@ struct RayHit {
     glm::vec3 point{0.0f};   // World-space surface point.
     glm::vec3 normal{0.0f};  // Unit, outward-facing relative to incoming ray.
     float     t = 0.0f;      // World-space distance from origin along direction.
+    int       mesh_index = -1;  // Index into Model::meshes of the hit triangle; -1 unknown.
+    int       triangle = -1;    // Triangle index WITHIN that mesh (index/3); -1 unknown.
 };
 
 /// Möller–Trumbore ray-vs-triangle, double-sided (no backface culling).
@@ -46,13 +49,17 @@ std::optional<float> intersect_triangle(
 /// Costs nothing when absent, which is the normal case: a Bird of Prey's rest
 /// pose IS its combat pose (wings down = armed), so combat traces with an empty
 /// map.
+/// `exclude_meshes` (nullptr or empty = none): triangles of these mesh
+/// indices are never hit — the bridge editor's "pick the surface behind"
+/// (spec 2026-10-08-bridge-emitters §4).
 std::optional<RayHit> ray_trace_instance(
     const assets::Model& model,
     const glm::mat4& instance_world,
     glm::vec3 origin,
     glm::vec3 direction,
     float max_dist,
-    const std::unordered_map<int, glm::mat4>* node_overrides = nullptr);
+    const std::unordered_map<int, glm::mat4>* node_overrides = nullptr,
+    const std::vector<int>* exclude_meshes = nullptr);
 
 /// The floating-render-origin form every mesh-query binding uses: the ray is
 /// RELATIVE TO THE INSTANCE'S TRANSLATION (world origin minus the instance's
@@ -62,12 +69,16 @@ std::optional<RayHit> ray_trace_instance(
 /// hit point is instance-relative too — add the translation back in double.
 /// Otherwise identical to ray_trace_instance (which remains the general form;
 /// this is it with a zero translation).
+/// `exclude_meshes` (nullptr or empty = none): triangles of these mesh
+/// indices are never hit — the bridge editor's "pick the surface behind"
+/// (spec 2026-10-08-bridge-emitters §4).
 std::optional<RayHit> ray_trace_instance_linear(
     const assets::Model& model,
     const glm::mat3& linear,
     glm::vec3 origin_rel,
     glm::vec3 direction,
     float max_dist,
-    const std::unordered_map<int, glm::mat4>* node_overrides = nullptr);
+    const std::unordered_map<int, glm::mat4>* node_overrides = nullptr,
+    const std::vector<int>* exclude_meshes = nullptr);
 
 }  // namespace renderer

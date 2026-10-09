@@ -31,6 +31,7 @@ function _doFocusableList(state) {
         out.push({kind: 'ctrl', target: 'normal_maps'});
         out.push({kind: 'ctrl', target: 'normal_flip_g'});
         out.push({kind: 'ctrl', target: 'normal_strength'});
+        out.push({kind: 'ctrl', target: 'bridge_pbr'});
         out.push({kind: 'ctrl', target: 'bridge_debug_view'});
     }
     if (state.selected_tab === 'environments') {
@@ -42,6 +43,9 @@ function _doFocusableList(state) {
         out.push({kind: 'ctrl', target: 'planet_geosphere'});
         out.push({kind: 'ctrl', target: 'planet_atmosphere'});
         out.push({kind: 'ctrl', target: 'reload_atmospheres'});
+        out.push({kind: 'ctrl', target: 'planet_surface'});
+        out.push({kind: 'ctrl', target: 'surface_debug'});
+        out.push({kind: 'ctrl', target: 'reload_surfaces'});
     }
     if (state.selected_tab === 'diagnostics') {
         out.push({kind: 'ctrl', target: 'profiler'});
@@ -161,6 +165,7 @@ function _doRenderLightingBody(state, focusables) {
     html += _doValueRow('Normal Map Strength', 'normal_strength',
                         Number(s.normal_strength).toFixed(1) + '×',
                         isFoc('normal_strength'));
+    html += _doToggleRow('Bridge PBR', 'bridge_pbr', s.bridge_pbr, isFoc('bridge_pbr'));
     html += _doValueRow('Bridge Debug View', 'bridge_debug_view',
                         s.bridge_debug_view, isFoc('bridge_debug_view'));
     return html;
@@ -183,6 +188,12 @@ function _doRenderEnvironmentsBody(state, focusables) {
                          'planet_atmosphere', s.planet_atmosphere, isFoc('planet_atmosphere'));
     html += _doActionRow('Reload Planet Atmospheres', 'reload_atmospheres',
                          'Reload', isFoc('reload_atmospheres'));
+    html += _doToggleRow('Planet Surface Detail (off = BC texture only; applies to planets realized after toggling)',
+                         'planet_surface', s.planet_surface, isFoc('planet_surface'));
+    html += _doToggleRow('Surface Detail Debug (tint by clipmap level)',
+                         'surface_debug', s.surface_debug, isFoc('surface_debug'));
+    html += _doActionRow('Reload Planet Surfaces', 'reload_surfaces',
+                         'Reload', isFoc('reload_surfaces'));
     return html;
 }
 

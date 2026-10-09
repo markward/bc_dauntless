@@ -116,6 +116,40 @@ TEST(AssetCacheTest, InteriorLoadIsADistinctCachedVariant) {
     EXPECT_EQ(interior.get(), again.get());
 }
 
+// Bridge-editor shape identity (spec 2026-10-08-bridge-emitters §4): an
+// interior load carries the NIF's content hash -- the SAME fnv1a64 of the raw
+// file bytes the mesh-fix lookup uses -- and every other load leaves it empty.
+TEST(AssetCacheTest, InteriorLoadCarriesTheNifContentHash) {
+    if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
+    if (!fs::exists(dbridge_path())) GTEST_SKIP() << "DBridge not installed";
+
+    assets::AssetCache cache(stub_config());
+    auto plain    = cache.load(dbridge_path(), {dbridge_tex_path()}, {}, {}, 1.0f, false);
+    auto interior = cache.load(dbridge_path(), {dbridge_tex_path()}, {}, {}, 1.0f, false, true);
+
+    std::ifstream in(dbridge_path(), std::ios::binary);
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    EXPECT_EQ(interior->content_hash, assets::fnv1a64_hex(ss.str()));
+    EXPECT_EQ(interior->content_hash.size(), 16u);
+    EXPECT_TRUE(plain->content_hash.empty());
+}
+
+// The sibling-overlay directory list (spec 2026-10-09-bridge-pbr §9.2/§9.3)
+// is folded into the cache key like scale/geosphere/interior: two interior
+// loads of the same NIF that differ only in sibling_overlay_dirs must be
+// distinct cached entries.
+TEST(AssetCacheTest, OverlayDirsAreAPartOfTheInteriorCacheKey) {
+    if (!game_data_present()) GTEST_SKIP() << "game/ not installed";
+    if (!fs::exists(dbridge_path())) GTEST_SKIP() << "DBridge not installed";
+
+    assets::AssetCache cache(stub_config());
+    auto a = cache.load(dbridge_path(), {dbridge_tex_path()}, {}, {}, 1.0f, false, true, {});
+    auto b = cache.load(dbridge_path(), {dbridge_tex_path()}, {}, {}, 1.0f, false, true,
+                        {fs::temp_directory_path()});
+    EXPECT_NE(a.get(), b.get());
+}
+
 // Regression: BC's ReplaceTexture path OMITS the LOD subdir
 // ("FedShips/Dauntless.tga" when the real file is FedShips/High/Dauntless.tga).
 // The replacement must still resolve by basename against the search dirs — a

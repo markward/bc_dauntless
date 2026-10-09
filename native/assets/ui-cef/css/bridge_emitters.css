@@ -1,0 +1,38 @@
+/* Bridge Emitters (developer-only) -- a DOCKED editor over the live bridge,
+   like #spv-root: the root covers the viewport but takes no pointer events,
+   so clicks reach the 3D view; only the dock column is interactive. Width
+   must match DOCK_CSS_PX in engine/ui/bridge_emitters_panel.py.
+   Not a centred modal: deliberately not in tests/ui/test_pause_modal_overlays.py. */
+#bridge-emitters-root {
+    display: none;
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 60;
+    font-family: "Antonio", sans-serif;
+}
+#bridge-emitters-root .be-dock {
+    pointer-events: auto;
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    /* .cp-modal (reused for the cp-header/footer chrome) sets a fixed
+       height:420px for its default centred-modal shape; without overriding
+       it here that fixed height overconstrains top+bottom+height and the
+       dock stops filling the viewport column it is meant to (CSS2.1 abspos
+       rules: bottom is ignored when height is non-auto). */
+    height: auto;
+    width: 360px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+}
+#bridge-emitters-root .be-dock .cp-content { flex: 1; overflow-y: auto; }
+#bridge-emitters-root .be-help { opacity: 0.75; font-size: 12px; margin-bottom: 8px; }
+#bridge-emitters-root .be-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+#bridge-emitters-root .be-row label { width: 90px; }
+#bridge-emitters-root .be-row input[type=range] { flex: 1; }
+#bridge-emitters-root .be-source { width: 60px; font-size: 11px; opacity: 0.8; }
+#bridge-emitters-root .be-chain { font-size: 11px; opacity: 0.8; word-break: break-word; }
+#bridge-emitters-root .be-status { font-size: 12px; min-height: 16px; color: #f0b060; }

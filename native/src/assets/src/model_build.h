@@ -35,6 +35,18 @@ struct ModelBuildContext {
     /// (spec 2026-10-08-bridge-lighting-baseline-design.md §3). Set only for
     /// interior-set models; false keeps build_model byte-identical.
     bool                                generate_missing_normals = false;
+    /// Interior sibling-map lookup policy (spec 2026-10-08-bridge-emitters
+    /// §9.2/§9.3): when true, a sibling `_rough`/`_metal`/`_normal` probe is
+    /// restricted to EITHER `sibling_overlay_dirs` (when the resolved albedo
+    /// lives in the stock dir -- the last entry of texture_search_paths) OR
+    /// just the albedo's own directory (otherwise); an empty resulting list
+    /// means no probe at all. False (every ship load) keeps today's
+    /// behaviour byte-identical: probe every texture_search_paths entry.
+    bool                                interior_sibling_policy = false;
+    /// Directories probed for a STOCK albedo's sibling maps when
+    /// interior_sibling_policy is true (the replacements overlay). Ignored
+    /// otherwise.
+    std::vector<std::filesystem::path> sibling_overlay_dirs;
     /// Optional sink for each Model::textures entry's AUTHORED source basename
     /// ("body.tga", "head.tga", …), sized to model.textures.size(). Entries the
     /// loader synthesized rather than read from a NiImage (sibling _specular /
@@ -60,6 +72,13 @@ bool filename_is_normal(std::string_view fname);
 /// from the stem before appending, so a hull's diffuse and its glow map
 /// resolve to the SAME normal map — matching sibling_specular_filename.
 std::string sibling_normal_filename(std::string_view fname);
+
+/// Given a texture filename and a sibling suffix (e.g. "_rough", "_metal",
+/// "_normal"), produce the sibling map's filename: strips a trailing "_glow"
+/// (case-insensitive) from the stem, then appends `suffix` before the
+/// extension. `sibling_normal_filename` is sibling_map_filename(fname,
+/// "_normal"); shared by the bridge PBR roughness/metalness siblings.
+std::string sibling_map_filename(std::string_view fname, std::string_view suffix);
 
 Model build_model(const nif::File& f, const ModelBuildContext& ctx);
 

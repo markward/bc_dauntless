@@ -1,6 +1,7 @@
 """Window shims for App.py — TacticalControlWindow, SubtitleWindow, STStylizedWindow.
 
-TacticalControlWindow: event-handler stub until the full menu system lands.
+TacticalControlWindow: a TGPane, as in BC (App.py:7428); visibility follows
+  the SDK's Refresh rule (see refresh_visibility).
 SubtitleWindow: singleton state machine for mission-objective / cinematic
   banner text; snapshotted by SDKMirrorPanel once per tick.
 STStylizedWindow: per-instance centred panel (LCARS-framed in BC; dauntless
@@ -19,15 +20,18 @@ INTERFACE_PANE = 0   # TacticalControlWindow.GetNthChild(INTERFACE_PANE)
 TACTICAL_MENU = 0    # interfacePane.GetNthChild(TACTICAL_MENU) -> officer-menu window
 
 
-class TacticalControlWindow(TGEventHandlerObject):
+class TacticalControlWindow(TGPane):
+    """BC: `class TacticalControlWindow(TGPane)` (App.py:7428). As a
+    TGEventHandlerObject every pane call we had not re-implemented fell
+    through to a TRUTHY _Stub (GetNextChild, GetNumChildren, SetVisible...)."""
     _instance: "TacticalControlWindow | None" = None
 
     def __init__(self):
-        super().__init__()
+        super().__init__()             # TGPane: _children (child, x, y), _visible
         self._radar_display = None
-        self._children: list = []      # (child, x, y) — recorded, not rendered
         self._menus: list = []         # STTopLevelMenu roots, in add order
         self._tactical_menu = None
+        self._ignore_next_mouse_key_event = 0
 
     @classmethod
     def GetInstance(cls) -> "TacticalControlWindow":
@@ -45,11 +49,6 @@ class TacticalControlWindow(TGEventHandlerObject):
         # ends `pBox.GetParent().DeleteChild(pBox)` on a box added here.
         if isinstance(child, TGPane):
             child._visibility_parent = self
-
-    def DeleteChild(self, child) -> None:
-        if isinstance(child, TGPane) and child._visibility_parent is self:
-            child._visibility_parent = None
-        self._children = [(c, x, y) for (c, x, y) in self._children if c is not child]
 
     def AddMenuToList(self, menu) -> None:
         if menu not in self._menus:
@@ -168,26 +167,32 @@ class TacticalControlWindow(TGEventHandlerObject):
     def GetMousePickFire(self) -> int:
         return 1 if getattr(self, "_mouse_pick_fire", False) else 0
 
-    def GetNthChild(self, n):
-        n = int(n)
-        if 0 <= n < len(self._children):
-            return self._children[n][0]
-        return None
+    # BridgeHandlers.HandleMouse:375 sets this when a click was consumed by a
+    # bridge object; HandleKeyboard:519 then swallows the matching WC_LBUTTON/
+    # WC_RBUTTON key event once. As a truthy _Stub it read as always-set.
+    def IgnoreNextMouseKeyEvent(self) -> int:
+        return self._ignore_next_mouse_key_event
 
-    def GetParent(self):
-        return None
+    def SetIgnoreNextMouseKeyEvent(self, value) -> None:
+        self._ignore_next_mouse_key_event = 1 if value else 0
 
-    def IsVisible(self) -> int:
-        return 1
+    def GetOpenMenu(self):
+        """The open top-level menu, or None. Read by Refresh (:321) and
+        HandleMinimized (:215) to decide whether the bridge needs the TCW, and
+        by CharacterMenuInterfaceHandlers:279 to hide it. Assumption: this is
+        the same menu STTopLevelMenu_GetOpenMenu reports -- one open-menu
+        source, the wired CrewMenuPanel."""
+        from engine.appc.characters import STTopLevelMenu_GetOpenMenu
+        return STTopLevelMenu_GetOpenMenu()
 
     def Layout(self, *_args) -> None:
         """Run the layout resolver over the interface pane's direct children.
 
         The SDK's Tactical/Interface/TacticalControlWindow.RepositionUI() ends
         with ``pTacCtrlWindow.Layout()`` to cascade the recorded SetPosition/
-        AlignTo placements into absolute rects. In real BC the TCW is a TGPane
-        and Layout() lays out its whole subtree; here the TCW is a plain
-        event-handler object, so we drive the resolver explicitly.
+        AlignTo placements into absolute rects. In real BC Layout() lays out
+        the TCW's whole subtree; here we drive the resolver explicitly over the
+        part the downstream tasks need.
 
         We lay out only the interface pane's *direct* children (that is all the
         officer-menu window — TACTICAL_MENU=0 — and the downstream tasks need),
@@ -217,6 +222,43 @@ class TacticalControlWindow(TGEventHandlerObject):
             child._ensure_layout_state()
             child._abs_rect = ipane._resolve_child_rect(child, origin_l, origin_t)
 
+
+
+def refresh_visibility(*, gained_focus: bool = False) -> None:
+    """Show or hide the TCW by the SDK's own rule.
+
+    Tactical.Interface.TacticalControlWindow.Refresh (:321-341): on the bridge
+    the TCW is visible only while a top-level menu is open; on tactical it is
+    visible. With `gained_focus`, the tactical branch first applies
+    TacticalInterfaceHandlers.GotFocus (:139-142): hidden while a cutscene or
+    the cinematic window owns the screen.
+
+    We do not run Refresh itself -- its Setup*/Resize* layout half re-parents
+    and re-sizes SDK windows our CEF UI does not draw. Callers are the moments
+    BC runs it: bridge/tactical focus changes (ForceBridgeVisible,
+    ForceTacticalVisible, ToggleBridgeAndTactical) and a menu opening or
+    closing (MenuUp/MenuDown). The menu trigger is inferred, not read from the
+    binary: E1M1 shows every bridge tutorial box as StartCutscene (TCW hidden)
+    -> ChangeToBridge -> AT_MENU_UP -> ShowInfoBox, and those boxes are on
+    screen in BC. BridgeHandlers.GotFocus's no-player early-out is not
+    modelled. Neither bridge nor tactical visible: left as is, like Refresh.
+    """
+    tcw = TacticalControlWindow._instance
+    if tcw is None:
+        return
+    from engine.appc.top_window import TopWindow_GetTopWindow
+    top = TopWindow_GetTopWindow()
+    if top.IsBridgeVisible():
+        visible = tcw.GetOpenMenu() is not None
+    elif top.IsTacticalVisible():
+        visible = not (gained_focus
+                       and (top.IsCutsceneMode() or top.is_cinematic_active()))
+    else:
+        return
+    if visible:
+        tcw.SetVisible(0)
+    else:
+        tcw.SetNotVisible(0)
 
 
 # ── SubtitleWindow ──────────────────────────────────────────────────────────

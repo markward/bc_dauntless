@@ -59,6 +59,13 @@ public:
     const std::string& shape_name() const noexcept { return shape_name_; }
     void set_shape_name(std::string name) { shape_name_ = std::move(name); }
 
+    /// NIF block index of the source NiTriShape, set by build_model; -1 for
+    /// meshes built any other way. With shape_name() and the NIF's content
+    /// hash (Model::content_hash) it is a shape's identity across launches --
+    /// spec 2026-10-08-bridge-emitters §4.
+    int source_block() const noexcept { return source_block_; }
+    void set_source_block(int block) noexcept { source_block_ = block; }
+
     /// Per-mesh hull-decal enable mask: bit i => Model::decals[i] may paint
     /// this mesh. Defaults to all sixteen bits (kMaxDecals); build_model
     /// clears bit i on every mesh whose shape_name() differs from decal i's
@@ -81,6 +88,7 @@ private:
     int material_index_ = -1;
     int node_index_ = -1;
     std::string shape_name_;
+    int source_block_ = -1;
     std::uint16_t decal_mask_ = 0xFFFF;
     std::optional<MeshCpu> cpu_data_;
     std::vector<Mesh> lod_chain_;

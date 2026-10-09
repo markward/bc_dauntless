@@ -102,6 +102,11 @@ Pipeline::Pipeline() {
     // unchanged source.
     impostor_ = std::make_unique<Shader>(shader_src::impostor_vs,
                                          with_define(shader_src::opaque_fs, "IMPOSTOR_VIEWS"));
+    // Planet surface detail (spec 2026-10-08 §5.4, §6): the target planet's
+    // geosphere draw, the SAME opaque.frag with PLANET_SURFACE (clipmap
+    // sampling + land shading); every other program keeps the plain source.
+    planet_ = std::make_unique<Shader>(shader_src::opaque_vs,
+                                       with_define(shader_src::opaque_fs, "PLANET_SURFACE"));
     // opaque.frag's collision-scuff normal map (renderer/scuff_texture.h)
     // lives on unit 7 for the program's whole life. Assigned HERE, once, not
     // per draw: every path that draws with this program (draw_model, the
@@ -111,7 +116,8 @@ Pipeline::Pipeline() {
     // TYPES on one unit is GL_INVALID_OPERATION at draw -- keep the habit.
     // Same for the hull-decal masks: u_decal_mask0..3 live on units 8..11
     // (draw_model binds the textures there once per model, frame.cc).
-    for (Shader* sh : {opaque_.get(), skinned_.get(), minor_.get(), impostor_.get()}) {
+    for (Shader* sh : {opaque_.get(), skinned_.get(), minor_.get(), impostor_.get(),
+                       planet_.get()}) {
         sh->use();
         sh->set_int("u_scuff_map", 7);
         sh->set_int("u_decal_mask0", 8);
@@ -119,6 +125,9 @@ Pipeline::Pipeline() {
         sh->set_int("u_decal_mask2", 10);
         sh->set_int("u_decal_mask3", 11);
     }
+    // The clipmap atlas (planet_detail::apply binds it) lives on unit 12.
+    planet_->use();
+    planet_->set_int("u_pd_atlas", 12);
     // Far-tier specks: a lit, area-weighted screen quad per sub-1.5-px rock.
     speck_ = std::make_unique<Shader>(shader_src::speck_vs, shader_src::speck_fs);
     rock_speck_ = std::make_unique<Shader>(shader_src::rock_speck_vs, shader_src::rock_speck_fs);

@@ -10,7 +10,7 @@ class _FakeRenderer:
         self.interior_flags = []
         self._next = 1
 
-    def load_model(self, nif_abs, tex_abs, *, interior=False):
+    def load_model(self, nif_abs, tex_abs, *, interior=False, sibling_overlay_dirs=None):
         self.loaded.append((nif_abs, tex_abs))
         self.interior_flags.append(interior)
         return 100 + len(self.loaded)
@@ -194,6 +194,91 @@ def test_realize_set_tears_down_prior_officers_on_bridge_re_realize():
     # ...and the tracking list was reset (not the stale, growing list).
     assert ("officer", 1) not in c.officer_instances
     assert ("officer", 2) not in c.officer_instances
+
+
+# ── BridgeRuntime wiring (engine.bridge_editor.runtime, spec
+# 2026-10-09-bridge-pbr §7, §9) -- realize_set must attach/detach it as
+# controller.bridge_instance is set/cleared, or the per-bridge lighting
+# document (material overrides, spot lights, probe origin) never reaches the
+# renderer for a bridge realized outside the host loop's own test coverage. ──
+
+class _RecordingBridgeRuntime:
+    def __init__(self):
+        self.calls = []
+
+    def attach(self, iid):
+        self.calls.append(("attach", iid))
+
+    def detach(self):
+        self.calls.append(("detach",))
+
+
+def test_realize_set_attaches_the_bridge_runtime_on_first_realize():
+    s, _obj = _bridge_set_with_geometry()
+
+    class _C:
+        bridge_instance = None
+        nif_to_handle = {}
+        comm_instances_by_set = {}
+        officer_instances = []
+    c = _C(); c.bridge_runtime = _RecordingBridgeRuntime(); r = _FakeRenderer()
+
+    hl.realize_set(c, r, s, is_bridge=True)
+
+    assert c.bridge_runtime.calls == [("attach", c.bridge_instance)]
+
+
+def test_realize_set_detaches_then_reattaches_the_bridge_runtime_on_rerealize():
+    # Mission swap re-realizes the bridge set against a FRESH carrier (see
+    # test_realize_set_tears_down_prior_officers_on_bridge_re_realize above):
+    # the prior render instance is destroyed and a new one created. The
+    # runtime must detach() at the moment bridge_instance is cleared to None
+    # and attach(new_iid) once the replacement exists -- never leaving the
+    # old bridge's material overrides/spots live on the new bridge.
+    from engine.appc.bridge_set import BridgeObjectClass
+    s, _first_obj = _bridge_set_with_geometry()
+
+    class _C:
+        bridge_instance = None
+        nif_to_handle = {}
+        comm_instances_by_set = {}
+        officer_instances = []
+    c = _C(); c.bridge_runtime = _RecordingBridgeRuntime(); r = _FakeRenderer()
+
+    hl.realize_set(c, r, s, is_bridge=True)
+    first_iid = c.bridge_instance
+    c.bridge_runtime.calls.clear()
+
+    # A brand-new carrier under the same "bridge" identifier (the old one is
+    # replaced, not mutated) -- __dict__ has no render_instance, so the
+    # geometry guard re-realizes exactly like a mission swap.
+    new_obj = BridgeObjectClass("data/Models/Sets/DBridge/DBridge.nif")
+    s.AddObjectToSet(new_obj, "bridge")
+
+    hl.realize_set(c, r, s, is_bridge=True)
+    second_iid = c.bridge_instance
+
+    assert second_iid != first_iid
+    assert c.bridge_runtime.calls[0] == ("detach",)
+    assert c.bridge_runtime.calls[1] == ("attach", second_iid)
+
+
+def test_realize_set_bridge_runtime_is_optional():
+    """A bare controller fake with no bridge_runtime attribute at all (every
+    other test in this file) must realize exactly as before -- the wiring is
+    read with getattr(..., None), never assumed present."""
+    s, _obj = _bridge_set_with_geometry()
+
+    class _C:
+        bridge_instance = None
+        nif_to_handle = {}
+        comm_instances_by_set = {}
+        officer_instances = []
+    c = _C(); r = _FakeRenderer()   # no bridge_runtime attribute
+
+    hl.realize_set(c, r, s, is_bridge=True)   # must not raise
+
+    assert c.bridge_instance is not None
 
 
 def test_realize_all_sets_realizes_bridge_and_comm_sets(monkeypatch):
