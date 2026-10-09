@@ -133,6 +133,8 @@ def test_render_payload_shape(panel):
         "rock_specks": True, "rock_puffs": True,
         "planet_geosphere": True,
         "planet_atmosphere": True,
+        "planet_surface": True,
+        "surface_debug": False,
     }
 
 
@@ -704,6 +706,145 @@ def test_reload_atmospheres_action_prints_to_stderr(panel, capsys):
     p.dispatch_event("tab:environments")
     p.dispatch_event("action:reload_atmospheres")
     assert "[atmosphere] catalogue reloaded" in capsys.readouterr().err
+
+
+# ---- Planet surface detail toggle + debug toggle + reload action
+# (Environments tab; planet-surface-detail §7) ------------------------------
+
+def test_environments_tab_exposes_planet_surface_and_surface_debug_rows(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:environments")
+    payload = _body(p.render_payload())["settings"]
+    assert "planet_surface" in payload
+    assert "surface_debug" in payload
+
+
+def test_planet_surface_toggle_flips_the_real_flag(panel):
+    """The panel must move the real engine.planet_surface flag, not just a
+    local mirror -- mirrors test_planet_atmosphere_toggle_flips_the_real_flag."""
+    from engine import planet_surface
+
+    p, _ = panel
+    saved = planet_surface.enabled()
+    try:
+        p.open()
+        p.dispatch_event("tab:environments")
+        p.dispatch_event("toggle:planet_surface")
+        assert planet_surface.enabled() is (not saved)
+        p.dispatch_event("toggle:planet_surface")
+        assert planet_surface.enabled() is saved
+    finally:
+        planet_surface.set_enabled(saved)
+
+
+def test_surface_debug_toggle_calls_the_native_debug_binding(panel, monkeypatch):
+    from engine import renderer
+
+    calls = []
+    monkeypatch.setattr(renderer, "set_planet_detail_debug", lambda on: calls.append(on))
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:environments")
+    p.dispatch_event("toggle:surface_debug")
+    assert calls == [True]
+    p.dispatch_event("toggle:surface_debug")
+    assert calls == [True, False]
+
+
+def test_planet_surface_ctrl_is_an_environments_tab_focusable(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:environments")
+    assert ("ctrl", "planet_surface") in p._focusables()
+
+
+def test_surface_debug_ctrl_is_an_environments_tab_focusable(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:environments")
+    assert ("ctrl", "surface_debug") in p._focusables()
+
+
+def test_reload_surfaces_ctrl_is_an_environments_tab_focusable(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:environments")
+    assert ("ctrl", "reload_surfaces") in p._focusables()
+
+
+def test_reload_surfaces_action_leaves_an_atmosphere_override_intact(panel):
+    """Fix round 1, I1: 'Reload Planet Surfaces' must not undo the
+    'atmosphere' dial group's live tuning -- the two catalogue blocks share
+    one JSON file / one memo, but their dial overrides are two independent
+    dicts, and the two Reload actions must be independent too."""
+    from engine.planets import atmosphere as atmo
+
+    override = atmo.Atmosphere(color=(1.0, 0.0, 0.0), sunset_color=(1.0, 0.0, 0.0),
+                               thickness=0.5, density=2.0, limb=2.0)
+    atmo.set_override("iceplanet", override)
+    try:
+        p, _ = panel
+        p.open()
+        p.dispatch_event("tab:environments")
+        assert p.dispatch_event("action:reload_surfaces") is True
+        got = atmo.resolve("S", "N", "data/models/environment/iceplanet.nif")
+        assert got is override
+    finally:
+        atmo.reload()
+
+
+def test_reload_atmospheres_action_leaves_a_surface_override_intact(panel):
+    """The reverse direction: 'Reload Planet Atmospheres' must not undo the
+    'surface' dial group's live tuning either."""
+    from engine.planets import surface as surf
+
+    override = surf.Surface(type="ice", ocean=None, strength=2.5)
+    surf.set_override("iceplanet", override)
+    try:
+        p, _ = panel
+        p.open()
+        p.dispatch_event("tab:environments")
+        assert p.dispatch_event("action:reload_atmospheres") is True
+        got = surf.resolve_surface("S", "N", "data/models/environment/iceplanet.nif")
+        assert got is override
+    finally:
+        surf.reload()
+
+
+def test_reload_surfaces_action_calls_surface_reload(panel, monkeypatch):
+    from engine.planets import surface as surf
+
+    calls = []
+    monkeypatch.setattr(surf, "reload", lambda: calls.append("surf"))
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:environments")
+    assert p.dispatch_event("action:reload_surfaces") is True
+    assert calls == ["surf"]
+
+
+def test_reload_surfaces_action_repushes_live_planets_after_reload(panel, monkeypatch):
+    from engine.planets import surface as surf
+    from engine.planets import surface_dials as dials
+
+    order = []
+    monkeypatch.setattr(surf, "reload", lambda: order.append("surf_reload"))
+    monkeypatch.setattr(dials, "repush_live", lambda: order.append("repush"),
+                        raising=False)
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:environments")
+    assert p.dispatch_event("action:reload_surfaces") is True
+    assert order == ["surf_reload", "repush"]
+
+
+def test_reload_surfaces_action_prints_to_stderr(panel, capsys):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:environments")
+    p.dispatch_event("action:reload_surfaces")
+    assert "[surface] catalogue reloaded" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("name", _ROCK_TOGGLES)

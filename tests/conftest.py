@@ -1644,6 +1644,15 @@ def _reset_leakable_engine_globals():
         _planet_atmosphere._overrides.clear()
     except Exception:
         pass
+    # Planet surface detail (planet-surface-detail spec §7): same reset as
+    # the atmosphere live registry above, for the sibling `surface` catalogue
+    # entries and their own live-instance registry.
+    try:
+        from engine.planets import surface as _planet_surface
+        _planet_surface.clear_live()
+        _planet_surface._overrides.clear()
+    except Exception:
+        pass
     # Atmosphere dial group (planet-atmosphere spec §7): a test that sets the
     # module-level target/push functions would otherwise leave later tests'
     # dials.step() calls pointed at a stale fake.
@@ -1653,6 +1662,19 @@ def _reset_leakable_engine_globals():
         _atmo_dials.set_push_fn(lambda iid, a: None)
     except Exception:
         pass
+    # "surface" dial group (planet-surface-detail spec §7): same reset as the
+    # atmosphere dial group above, for its two extra native-binding hooks and
+    # its locally-tracked budget.
+    try:
+        from engine.planets import surface_dials as _surface_dials
+        _surface_dials.set_target_fn(lambda: None)
+        _surface_dials.set_push_fn(lambda iid, s: None)
+        _surface_dials.set_target_type_fn(lambda: 0)
+        _surface_dials.set_type_params_fns(lambda t: {}, lambda t, p: None)
+        _surface_dials.set_budget_fn(lambda cost: None)
+        _surface_dials._budget = 65536 * 8
+    except Exception:
+        pass
     # Planet atmosphere dev toggle (planet-atmosphere spec §4): the Developer
     # Options "Planet Atmospheres" toggle is a process-lifetime module global
     # a test can flip -- reset it so every later test's planet realize sees
@@ -1660,6 +1682,13 @@ def _reset_leakable_engine_globals():
     try:
         from engine import planet_atmosphere as _planet_atmosphere_toggle
         _planet_atmosphere_toggle._enabled = True
+    except Exception:
+        pass
+    # Planet surface detail dev toggle (planet-surface-detail spec §7): same
+    # reset as the atmosphere toggle above, for its own module global.
+    try:
+        from engine import planet_surface as _planet_surface_toggle
+        _planet_surface_toggle._enabled = True
     except Exception:
         pass
     # Dev dial groups (minor-rocks spec §5): a test that registers a group

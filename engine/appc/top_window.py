@@ -164,11 +164,13 @@ class _TopWindow:
         self._leave_cinematic_for_view()
         from engine import manual_aim
         manual_aim.drop_mode()
+        _refresh_tcw_on_focus()
 
     def ForceTacticalVisible(self) -> None:
         self._bridge_visible = False
         self._tactical_visible = True
         self._leave_cinematic_for_view()
+        _refresh_tcw_on_focus()
 
     def _leave_cinematic_for_view(self) -> None:
         """Forcing bridge or tactical LEAVES cinematic mode.
@@ -214,6 +216,7 @@ class _TopWindow:
             # Bridge window GotFocus (BridgeHandlers.py:336) drops Manual Aim.
             from engine import manual_aim
             manual_aim.drop_mode()
+        _refresh_tcw_on_focus()
 
     # ── Main windows ───────────────────────────────────────────
     def FindMainWindow(self, mwt):
@@ -433,6 +436,14 @@ class _TopWindow:
 
     def GetLastRenderedSet(self):
         return self._last_rendered_set
+
+
+def _refresh_tcw_on_focus() -> None:
+    """The bridge/tactical window just gained focus: BC's GotFocus handlers
+    (BridgeHandlers:292, TacticalInterfaceHandlers:135) re-derive the TCW's
+    visibility. See engine.appc.windows.refresh_visibility."""
+    from engine.appc.windows import refresh_visibility
+    refresh_visibility(gained_focus=True)
 
 
 def _drop_open_crew_menu() -> None:

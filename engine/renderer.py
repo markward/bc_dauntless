@@ -70,6 +70,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_dash_intensity", "set_render_origin", "reset_render_origin",
     "set_dust_planets", "set_dust_profile", "set_emissive_scale", "set_game_root", "set_glow_region_dim",
     "set_instance_atmosphere",
+    "set_instance_surface",
     "set_project_asset_root",
     "set_glow_region_gain",
     "set_hologram_only_mode", "set_hologram_ship", "set_hull_discharges",
@@ -124,6 +125,8 @@ _OPTIONAL_BINDINGS = frozenset({
     "set_officer_jaw", "set_spv_overlay_beams",
     "set_target_reticle", "set_transform_gizmo",
     "spawn_test_character", "stop_instance_node_anim",
+    "planet_detail_target_type", "get_surface_type_params", "set_surface_type_params",
+    "set_planet_detail_budget", "set_planet_detail_debug",
 })
 
 
@@ -1054,6 +1057,53 @@ def set_instance_atmosphere(instance_id: InstanceId, params) -> None:
     _h.set_instance_atmosphere(instance_id, (tuple(params.color), tuple(params.sunset_color),
                                              params.thickness, params.density, params.limb,
                                              params.intensity, params.mie))
+
+
+def set_instance_surface(instance_id: InstanceId, params) -> None:
+    """Planet surface detail (spec 2026-10-08). `params` is None (no detail)
+    or the 8-tuple engine.planets.surface.to_binding produces -- already
+    shaped for the native binding, unlike set_instance_atmosphere above."""
+    _h.set_instance_surface(instance_id, params)
+
+
+def planet_detail_target_type() -> int:
+    """The planet surface-detail clipmap's current target's Surface.type, or
+    0 (none) with no target or no native binding (spec 2026-10-08 §7 dev
+    tuning; the "surface" dial group's type-table target)."""
+    fn = getattr(_h, "planet_detail_target_type", None)
+    return int(fn()) if fn is not None else 0
+
+
+def get_surface_type_params(surface_type: int) -> dict:
+    """The live (dev-tunable) TypeParams for one surface type, as a dict, or
+    {} with no native binding."""
+    fn = getattr(_h, "get_surface_type_params", None)
+    return dict(fn(int(surface_type))) if fn is not None else {}
+
+
+def set_surface_type_params(surface_type: int, params: dict) -> None:
+    """Write named TypeParams fields for one surface type into
+    `live_params(type)`; unknown keys raise ValueError. No-op with no native
+    binding."""
+    fn = getattr(_h, "set_surface_type_params", None)
+    if fn is not None:
+        fn(int(surface_type), dict(params))
+
+
+def set_planet_detail_budget(cost: int) -> None:
+    """Per-frame bake cost budget for the planet surface-detail clipmap
+    (spec default 65536*8). No-op with no native binding."""
+    fn = getattr(_h, "set_planet_detail_budget", None)
+    if fn is not None:
+        fn(int(cost))
+
+
+def set_planet_detail_debug(on: bool) -> None:
+    """Tint the sampled clipmap level (debug visualisation). No-op with no
+    native binding."""
+    fn = getattr(_h, "set_planet_detail_debug", None)
+    if fn is not None:
+        fn(bool(on))
 
 
 def add_sphere_region(instance_id: InstanceId, center, radius: float) -> int:

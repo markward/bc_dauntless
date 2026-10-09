@@ -71,6 +71,9 @@ class _FakeRenderer:
     def set_instance_atmosphere(self, iid, params):
         pass
 
+    def set_instance_surface(self, iid, params):
+        pass
+
 
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch):

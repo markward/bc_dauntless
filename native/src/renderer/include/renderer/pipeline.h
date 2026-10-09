@@ -15,6 +15,8 @@ public:
     Shader& skinned_shader() noexcept    { return *skinned_; }
     Shader& minor_shader() noexcept      { return *minor_; }
     Shader& impostor_shader() noexcept   { return *impostor_; }
+    /// opaque.frag compiled with PLANET_SURFACE: the surface-detail target planet.
+    Shader& planet_shader() noexcept     { return *planet_; }
     Shader& speck_shader() noexcept      { return *speck_; }
     Shader& rock_speck_shader() noexcept { return *rock_speck_; }
     Shader& rock_puff_shader() noexcept  { return *rock_puff_; }
@@ -55,6 +57,7 @@ private:
     std::unique_ptr<Shader> skinned_;
     std::unique_ptr<Shader> minor_;
     std::unique_ptr<Shader> impostor_;
+    std::unique_ptr<Shader> planet_;
     std::unique_ptr<Shader> speck_;
     std::unique_ptr<Shader> rock_speck_;
     std::unique_ptr<Shader> rock_puff_;

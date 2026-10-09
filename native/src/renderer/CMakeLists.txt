@@ -64,6 +64,7 @@ embed_shader(SHADER_SUN_FLARE_VS shaders/sun_flare.vert sun_flare_vs)
 embed_shader(SHADER_SUN_FLARE_FS shaders/sun_flare.frag sun_flare_fs)
 embed_shader(SHADER_ATMOSPHERE_VS shaders/atmosphere.vert atmosphere_vs)
 embed_shader(SHADER_ATMOSPHERE_FS shaders/atmosphere.frag atmosphere_fs)
+embed_shader(SHADER_PLANET_BAKE_FS shaders/planet_bake.frag planet_bake_fs)
 embed_shader(SHADER_DUST_VS shaders/dust.vert dust_vs)
 embed_shader(SHADER_DUST_FS shaders/dust.frag dust_fs)
 embed_shader(SHADER_NEBULA_VS shaders/nebula.vert nebula_vs)
@@ -183,6 +184,11 @@ add_library(renderer STATIC
     nebula_volumetric_pass.cc
     nebula_atmosphere.cc
     atmosphere_math.cc
+    planet_detail_noise.cc
+    planet_clipmap_schedule.cc
+    planet_clipmap_atlas.cc
+    planet_detail_uniforms.cc
+    planet_detail_pass.cc
     atmosphere_pass.cc
     system_nebula_pass.cc
     nebula_godray_pass.cc

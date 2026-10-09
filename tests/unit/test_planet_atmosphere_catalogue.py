@@ -60,6 +60,15 @@ def test_missing_is_none(tmp_path, monkeypatch):
     assert atmo.resolve_key("S", "N", "x/Unknown.nif") is None
 
 
+def test_surface_field_is_known_and_its_shape_is_never_validated_here(tmp_path, monkeypatch):
+    # planet-surface-detail spec Sec7: `surface` is a sibling field the
+    # atmosphere parser recognizes but never inspects -- a malformed
+    # `surface` (wrong shape, bad sub-fields, etc.) must never drop the air.
+    # engine.planets.surface is the module that validates its contents.
+    _write(tmp_path, monkeypatch, {"pinkgasplanet": {**GAS, "surface": "gas"}})
+    assert atmo.resolve("S", "N", "x/PinkGasPlanet.nif") is not None
+
+
 @pytest.mark.parametrize("bad", [
     {"color": "#FF9A96", "thickness": 0.06, "density": 1.4},                # missing limb
     {**GAS, "thickness": 0.0},                                               # out of range
@@ -67,7 +76,6 @@ def test_missing_is_none(tmp_path, monkeypatch):
     {**GAS, "density": 5.0},
     {**GAS, "limb": -1.0},
     {**GAS, "color": "pink"},
-    {**GAS, "surface": "gas"},                                               # unknown field
     {**GAS, "intensity": -1.0},                                              # out of range
     {**GAS, "intensity": 51.0},
     {**GAS, "mie": -0.1},
@@ -184,3 +192,40 @@ def test_clear_live_for_set_with_no_matching_entries_is_a_noop():
     atmo.record_live(1, "k1", "SetB", "N1", "x.nif")
     atmo.clear_live_for_set("SetA")
     assert len(atmo.live()) == 1
+
+
+# ---- reload_file: memo-only reload, overrides survive (fix round 1, I1) ---
+
+def test_reload_file_refreshes_the_memo_but_keeps_overrides(tmp_path, monkeypatch):
+    _write(tmp_path, monkeypatch, {"pinkgasplanet": GAS})
+    override = atmo.Atmosphere(color=(1.0, 0.0, 0.0), sunset_color=(1.0, 0.0, 0.0),
+                               thickness=0.1, density=2.0, limb=2.0)
+    atmo.set_override("pinkgasplanet", override)
+    assert atmo.resolve("Geble3", "Geble 3", "data/models/environment/PinkGasPlanet.nif") is override
+
+    # Edit the file on disk, then reload_file(): a key that newly appears
+    # must be picked up (proving the memo was dropped), and the override
+    # set above must still win for the key it targets (proving reload_file
+    # -- unlike the full reload() -- never touches `_overrides`).
+    path = atmo.catalogue_path()
+    data = json.loads(path.read_text())
+    data["moon"] = {"atmosphere": False}
+    path.write_text(json.dumps(data))
+    atmo.reload_file()
+
+    assert atmo.resolve("Geble3", "Geble 3",
+                        "data/models/environment/PinkGasPlanet.nif") is override
+    assert atmo.resolve_key("S", "Moon 1", "data/models/environment/moon.nif") == "moon"
+
+
+def test_reload_file_clears_warned_like_the_full_reload(tmp_path, monkeypatch):
+    """reload_file() drops `_memo` AND `_warned` (only `_overrides` survives
+    it) -- a developer who fixes a malformed entry and reloads must see the
+    warning stop, not just the value change."""
+    _write(tmp_path, monkeypatch, {"p": {"atmosphere": False, "surface": {"type": "lava"}}})
+    from engine.planets import surface as surf
+    surf.resolve_surface("S", "N", "p.nif")
+    key = str(atmo.catalogue_path())
+    assert (key, "p#surface") in atmo._warned
+    atmo.reload_file()
+    assert (key, "p#surface") not in atmo._warned
