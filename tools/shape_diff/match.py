@@ -187,16 +187,35 @@ def _removed_triangles(block, shape, ids, removed_sets):
     return sorted(out)
 
 
+def _refuse_overlapping_groups(block, ids, removed_sets, added_faces):
+    """Two distinct OBJ vertices within POS_TOL of each other (straddling a
+    1/1024 weld boundary) share originals in `identify`, so a removal or an
+    added corner on either could hit the other's triangles. Harmless for
+    moves/UVs, so refuse only when a topology edit touches one of them."""
+    touched = set().union(*removed_sets, *({v for v, _ in f} for f in added_faces))
+    owners = {}
+    for bv, group in enumerate(ids):
+        for orig in group:
+            owners.setdefault(orig, []).append(bv)
+    for orig, bvs in owners.items():
+        if len(bvs) > 1 and touched.intersection(bvs):
+            raise ShapeDiffError(
+                f"block {block}: OBJ vertices {bvs} lie within POS_TOL of each other "
+                f"(both match original {orig}); a face removed or added on them "
+                "can't be resolved to NIF triangles unambiguously")
+
+
 def _distinct_corners(options):
     """True if each triangle vertex can be assigned a different face corner."""
     a, b, c = options
     return any(x != y and y != z and x != z for x in a for y in b for z in c)
 
 
-def _added_triangles(block, shape, ids, base, added_faces, final_local):
+def _added_triangles(block, shape, ids, base, added_faces, final_local, uv_edits):
     """Added faces (already in base indices) -> original-index triangles in
     the edit face's winding. Each corner must be an existing original at
-    that position whose NIF UV equals the corner's UV (lowest such index)."""
+    that position whose FINAL UV (NIF UV0 with this diff's `uv_edits`
+    applied) equals the corner's UV (lowest such index)."""
     nif_uvs = shape["uvs"]
     out = []
     for f in added_faces:
@@ -206,7 +225,14 @@ def _added_triangles(block, shape, ids, base, added_faces, final_local):
                 "triangulate before export (Ctrl+T in Blender)")
         tri = []
         for bv, uv in f:
-            cands = [o for o in ids[bv] if uv is not None and _uv_equal(nif_uvs[o], uv)]
+            cands = [o for o in ids[bv]
+                     if uv is not None and _uv_equal(uv_edits.get(o, nif_uvs[o]), uv)]
+            stale = [o for o in ids[bv] if o in uv_edits and _uv_equal(nif_uvs[o], uv)]
+            if not cands and stale:
+                raise ShapeDiffError(
+                    f"block {block}: added face uses original vertex {min(stale)}'s old "
+                    f"UV {uv}, but this edit re-maps it to {uv_edits[min(stale)]}; it "
+                    "would need two different UVs -- that needs a vertex split (iteration 3)")
             if not cands:
                 raise ShapeDiffError(
                     f"block {block}: added face needs a new vertex/UV at "
@@ -258,12 +284,14 @@ def diff_shape(shape: dict, base, edit):
         local = frames.apply(inv, ep)
         for orig in ids[corr[k]]:
             moves[orig] = local
-    remove = _removed_triangles(block, shape, ids, base_sets.keys() - edit_sets.keys())
+    removed_sets = base_sets.keys() - edit_sets.keys()
+    added = [f for f in edit_faces if frozenset(v for v, _ in f) not in base_sets]
+    _refuse_overlapping_groups(block, ids, removed_sets, added)
+    remove = _removed_triangles(block, shape, ids, removed_sets)
     final_local = [frames.apply(inv, p) for p in shape["vertices"]]
     for orig, p in moves.items():
         final_local[orig] = p
-    added = [f for f in edit_faces if frozenset(v for v, _ in f) not in base_sets]
-    add = _added_triangles(block, shape, ids, base, added, final_local)
+    add = _added_triangles(block, shape, ids, base, added, final_local, uvs)
     if not moves and not uvs and not remove and not add:
         return None
     return {

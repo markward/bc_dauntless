@@ -107,14 +107,10 @@ the set of original vertices it welds (its seam duplicates).
 
 ### 5.2 edit.obj → base.obj (correspondence)
 
-Per object, by **Blender vertex index**: Blender keeps the index of every vertex
-that is not deleted, and appends new ones. The tool checks the invariant
-(vertex count ≥ base count; every base face whose vertices all survive is either
-present or explicitly gone) and **stops with a clear message** if vertices were
-deleted (which compacts indices). Topology matching is added only if an
-iteration actually needs deletions.
+~~Original plan (superseded by 2a below): by Blender vertex index, refusing
+any deletion.~~
 
-**As built (2a, 2026-10-09):** deletions are now accepted. Equal vertex counts
+**Current rule (as built 2a, 2026-10-09):** deletions are accepted. Equal vertex counts
 still correspond by index. With **fewer** edit vertices, Blender has deleted
 some and renumbered the survivors **preserving their relative order**, so the
 tool walks the edit vertices in order and, for each, advances through the base
@@ -158,9 +154,15 @@ deleted face rendering. A removed face that resolves to no NIF triangle is
 refused. Removals are de-duplicated and sorted. An edit set that isn't a base
 set is an **added face**: it must be a triangle (n-gons are refused,
 "triangulate before export" -- the codebase has no ear-clipper) and each
-corner must be an **existing original** at that position whose NIF UV equals
-the corner's UV (1e-5; several → the lowest index), else it is refused as
-iteration 3 ("needs a new vertex/UV"). It is emitted in the edit face's
+corner must be an **existing original** at that position whose **final** UV
+(NIF UV0 with this same diff's `uv` edits applied) equals the corner's UV
+(1e-5; several → the lowest index), else it is refused as iteration 3 ("needs
+a new vertex/UV"); a corner showing the *old* UV of an original this diff
+re-maps is refused as needing two different UVs (a vertex split). A
+removed/added face touching an OBJ vertex whose identity group overlaps
+another OBJ vertex's (two vertices within `POS_TOL` straddling a weld
+boundary; none on stock DBridge) is refused -- the NIF triangles can't be
+picked out unambiguously. It is emitted in the edit face's
 winding; a repeated index or zero area (`|cross| ≤ 1e-10` on final shape-local
 positions -- `mesh_fix.cc`'s own rule) is refused at diff time. A deleted
 base vertex contributes nothing; orphaned original vertices are left in

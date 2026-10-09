@@ -792,3 +792,58 @@ def test_main_summary_line_counts_triangles(monkeypatch, tmp_path, capsys):
     assert cli.main(["diff", "b.obj", "e.obj"]) == 0
     out = capsys.readouterr().out
     assert "block 7: 1 vertices moved, 1 UVs changed, 1 triangles removed, 1 added" in out
+
+
+def _retex_vertex(mesh, v, uv):
+    out = _copy(mesh)
+    out.faces = [[(w, uv if w == v else wuv) for w, wuv in f] for f in out.faces]
+    return out
+
+
+def test_added_face_corner_resolves_against_this_diffs_uv_edits(tmp_path):
+    s, base = _sliver_base(tmp_path)
+    edit = _retex_vertex(base, _local(base, (2, 0, 0)), (0.3, 0.3))   # original 7 re-mapped
+    edit.faces.append([_corner(base, (2, 0, 0), (0.3, 0.3)),            # the NEW uv
+                       _corner(base, (5, 0, 0), (0.5, 0.0)),
+                       _corner(base, (2, 1, 0), (0.2, 1.0))])
+    e = match.diff_shape(s, base, edit)
+    assert e["uvs"] == [(7, pytest.approx((0.3, 0.3)))]
+    assert e["add_triangles"] == [(7, 2, 8)]
+
+
+def test_added_face_corner_with_the_pre_edit_uv_of_a_remapped_original_is_refused(tmp_path):
+    # The added triangle would render original 7's NEW uv (0.3,0.3), not the
+    # (0.2,0.0) Mark sees on it: one original, two UVs.
+    s, base = _sliver_base(tmp_path)
+    edit = _retex_vertex(base, _local(base, (2, 0, 0)), (0.3, 0.3))
+    edit.faces.append([_corner(base, (2, 0, 0), (0.2, 0.0)),            # the OLD uv
+                       _corner(base, (5, 0, 0), (0.5, 0.0)),
+                       _corner(base, (2, 1, 0), (0.2, 1.0))])
+    with pytest.raises(ShapeDiffError, match="two different UVs"):
+        match.diff_shape(s, base, edit)
+
+
+def _straddle_shape():
+    """Originals 2 and 3 are 6e-5 apart (inside POS_TOL) but straddle a
+    1/1024 weld boundary, so they export as two OBJ vertices whose identify
+    groups overlap."""
+    y0 = 1.5 / 1024
+    return {"block": 175, "parent": "console", "hidden": False,
+            "vertices": [(0, 0, 0), (1, 0, 0), (0.5, y0 - 3e-5, 1.0), (0.5, y0 + 3e-5, 1.0)],
+            "uvs": [(0, 0), (1, 0), (0.5, 1), (0.6, 1)], "colors": [(1, 1, 1, 1)] * 4,
+            "uvs1": [], "triangles": [(0, 1, 2), (0, 1, 3)], "textures": ["Map 1.tga"],
+            "world": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]}
+
+
+def test_topology_edit_on_overlapping_identity_groups_is_refused(tmp_path):
+    s, base = _sliver_base(tmp_path, _straddle_shape())
+    assert len(base.positions) == 4
+    edit = _copy(base)
+    del edit.faces[0]
+    with pytest.raises(ShapeDiffError, match="within POS_TOL"):
+        match.diff_shape(s, base, edit)
+
+
+def test_overlapping_identity_groups_do_not_block_an_untouched_object(tmp_path):
+    s, base = _sliver_base(tmp_path, _straddle_shape())
+    assert match.diff_shape(s, base, _copy(base)) is None
