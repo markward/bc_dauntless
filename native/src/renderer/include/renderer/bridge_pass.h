@@ -126,6 +126,9 @@ public:
         highlight_hover_ = hover_mesh;
     }
     void clear_highlight() { set_highlight(0, -1, -1); }
+    unsigned long long highlight_model() const { return highlight_model_; }
+    int highlight_selected() const { return highlight_selected_; }
+    int highlight_hover() const { return highlight_hover_; }
 
     /// Test seam for the selection pulse's phase, in seconds. By default the
     /// pulse runs on BridgePass's own std::chrono::steady_clock, NOT the game

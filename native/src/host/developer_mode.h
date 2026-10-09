@@ -10,8 +10,10 @@ namespace dauntless {
 // Returns true if the binary was launched with --developer.
 bool is_developer_mode();
 
-// Set by host_main.cc after parsing argv. Tests should not call this directly;
-// they monkey-patch _dauntless_host.developer_mode in Python instead.
+// Set by host_main.cc after parsing argv. NEVER expose this to Python: any
+// script the engine runs (mods included) could then enable C++ dev paths.
+// Python tests monkey-patch _dauntless_host.developer_mode instead; C++ gtests
+// (native/tests/host) may call it and must restore it.
 void set_developer_mode(bool enabled);
 
 }  // namespace dauntless

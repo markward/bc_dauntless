@@ -115,6 +115,7 @@
 #include <array>
 #include <cstdio>
 #include <unordered_set>
+#include "bridge_highlight.h"
 #include "developer_mode.h"
 
 #ifdef DAUNTLESS_ENABLE_CEF
@@ -271,10 +272,8 @@ renderer::BridgeQuality g_bridge_quality = renderer::kDefaultBridgeQuality;
 int g_bridge_debug_view = 0;
 // Developer-only bridge editor selection tint (set_bridge_highlight). Held
 // here, not only on the pass, so it survives the pass being (re)created and
-// is readable headless (bridge_highlight()). 0 model handle = none.
-unsigned long long g_bridge_highlight_model = 0;
-int g_bridge_highlight_selected = -1;
-int g_bridge_highlight_hover = -1;
+// is readable headless (bridge_highlight()). model 0 = none.
+dauntless::BridgeHighlight g_bridge_highlight;
 std::vector<renderer::Backdrop> g_backdrops;
 bool g_sky_dirty = true;            // cubemap needs (re)baking
 bool g_sky_last_procedural = false; // procedural-toggle state at the last frame
@@ -886,8 +885,7 @@ void reset_frame_state() {
     g_starmap_scene = renderer::StarMapScene{};
 
     // Bridge editor tint: its model handle dies with this session's models.
-    g_bridge_highlight_model = 0;
-    g_bridge_highlight_selected = g_bridge_highlight_hover = -1;
+    g_bridge_highlight = dauntless::BridgeHighlight{};
 
     // Motion blur reprojects against the previous exterior frame's viewproj.
     // Left set, frame 1 of a new session smears against the OLD camera.
@@ -1031,9 +1029,9 @@ void init(int width, int height, const std::string& title) {
     g_starmap_pass        = std::make_unique<renderer::StarMapPass>();
     g_bridge_pass         = std::make_unique<renderer::BridgePass>();
     g_bridge_pass->set_ao_settings(renderer::ao_settings_for(g_bridge_quality));
-    g_bridge_pass->set_highlight(g_bridge_highlight_model,
-                                 g_bridge_highlight_selected,
-                                 g_bridge_highlight_hover);
+    g_bridge_pass->set_highlight(g_bridge_highlight.model,
+                                 g_bridge_highlight.selected,
+                                 g_bridge_highlight.hover);
     g_viewscreen_static_pass = std::make_unique<renderer::ViewscreenStaticPass>();
     g_hdr_target      = std::make_unique<renderer::HdrTarget>();
     g_msaa_target     = std::make_unique<renderer::HdrMsaaTarget>();
@@ -6388,42 +6386,26 @@ PYBIND11_MODULE(_dauntless_host, m) {
               scenegraph::Instance* inst = nullptr;
               if (!instance_id.is_none())
                   inst = g_world.get(instance_id.cast<scenegraph::InstanceId>());
-              if (inst == nullptr) {         // None or a stale id: clear
-                  g_bridge_highlight_model = 0;
-                  g_bridge_highlight_selected = g_bridge_highlight_hover = -1;
-              } else {
-                  g_bridge_highlight_model = inst->model_handle;
-                  g_bridge_highlight_selected = selected;
-                  g_bridge_highlight_hover = hover;
-              }
-              if (g_bridge_pass)
-                  g_bridge_pass->set_highlight(g_bridge_highlight_model,
-                                               g_bridge_highlight_selected,
-                                               g_bridge_highlight_hover);
+              // None or a stale id -> handle 0, which clears.
+              dauntless::apply_bridge_highlight(
+                  g_bridge_highlight, g_bridge_pass.get(),
+                  inst ? inst->model_handle : 0ull, selected, hover);
           },
           py::arg("instance_id"), py::arg("selected"), py::arg("hover"),
           "Developer-only bridge editor selection tint: mesh indices into the "
           "instance's model, -1 = none; None or a stale id clears. No-op "
           "without --developer.");
 
+    // Read-only: lets the pytest host tests observe that set_bridge_highlight
+    // is a no-op without --developer. Exposes no way to change anything.
     m.def("bridge_highlight",
           [] {
-              return py::make_tuple(g_bridge_highlight_model != 0,
-                                    g_bridge_highlight_selected,
-                                    g_bridge_highlight_hover);
+              return py::make_tuple(g_bridge_highlight.model != 0,
+                                    g_bridge_highlight.selected,
+                                    g_bridge_highlight.hover);
           },
           "(active, selected_mesh, hover_mesh) of the bridge editor tint "
           "(see set_bridge_highlight); (False, -1, -1) when none.");
-
-    // TEST-ONLY: pytest loads the .so without host_main.cc's argv parsing, so
-    // dauntless::is_developer_mode() is permanently false there and every
-    // developer-gated binding would be untestable on its enabled path. Does
-    // NOT touch the module's `developer_mode` attribute (Python's view).
-    m.def("_test_only_set_developer_mode",
-          [](bool on) { dauntless::set_developer_mode(on); },
-          py::arg("enabled"),
-          "Test hook: set the C++ developer-mode flag. Never call from the "
-          "engine.");
 
     m.def("damage_decal_add",
           [](scenegraph::InstanceId id,

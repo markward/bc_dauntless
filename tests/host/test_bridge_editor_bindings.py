@@ -99,49 +99,29 @@ def test_model_identity_on_dbridge_has_str_names_and_built_textures(dbridge, mon
     assert sum(1 for m in meshes if m["textures"]) > len(meshes) // 2
 
 
-@pytest.fixture
-def developer_mode(host_module):
-    """Turn the C++ developer flag on for one test (pytest never parses
-    --developer), restoring it after."""
-    host_module._test_only_set_developer_mode(True)
-    try:
-        yield host_module
-    finally:
-        host_module._test_only_set_developer_mode(False)
-
+# The enabled path (developer gate on: set, None/stale clear) is tested in C++
+# (native/tests/host/bridge_highlight_test.cc): the gate must never have a
+# Python-reachable setter, or any script could enable C++ dev paths.
 
 def test_set_bridge_highlight_is_a_noop_without_developer_mode(dbridge):
     h, iid = dbridge
+    assert h.developer_mode is False
     assert h.bridge_highlight() == (False, -1, -1)
     h.set_bridge_highlight(iid, 3, 4)
     assert h.bridge_highlight() == (False, -1, -1)
 
 
-def test_set_bridge_highlight_sets_and_none_clears(dbridge):
-    h, iid = dbridge
-    h._test_only_set_developer_mode(True)
-    try:
-        h.set_bridge_highlight(iid, 3, 4)
-        assert h.bridge_highlight() == (True, 3, 4)
-        h.set_bridge_highlight(None, 3, 4)            # does not raise
-        assert h.bridge_highlight() == (False, -1, -1)
-    finally:
-        h._test_only_set_developer_mode(False)
-
-
-def test_set_bridge_highlight_with_a_stale_id_clears_without_raising(dbridge):
-    h, iid = dbridge
-    h._test_only_set_developer_mode(True)
-    try:
-        h.set_bridge_highlight(iid, 3, 4)
-        h.set_bridge_highlight(h.InstanceId(), 1, 1)   # stale: does not raise
-        assert h.bridge_highlight() == (False, -1, -1)
-    finally:
-        h._test_only_set_developer_mode(False)
-
-
-def test_set_bridge_highlight_none_and_stale_never_raise_headless(developer_mode):
-    # Before init(): no bridge pass exists at all.
-    h = developer_mode
+def test_set_bridge_highlight_none_and_stale_never_raise(dbridge):
+    h, _iid = dbridge
     h.set_bridge_highlight(None, -1, -1)
     h.set_bridge_highlight(h.InstanceId(), 0, 0)
+
+
+def test_set_bridge_highlight_none_and_stale_never_raise_headless(host_module):
+    # Before init(): no bridge pass exists at all.
+    host_module.set_bridge_highlight(None, -1, -1)
+    host_module.set_bridge_highlight(host_module.InstanceId(), 0, 0)
+
+
+def test_no_python_setter_for_the_developer_gate(host_module):
+    assert not any("set_developer_mode" in n for n in dir(host_module))
