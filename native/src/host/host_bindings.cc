@@ -916,6 +916,10 @@ void reset_frame_state() {
     g_bridge_highlight = dauntless::BridgeHighlight{};
     // Bridge PBR material overrides are keyed by model handle too.
     if (g_bridge_pass) g_bridge_pass->clear_material_overrides();
+    // Static spots are the old bridge's lights: dropped too (without dirtying
+    // the probes -- reset_probes() below clears the request anyway). Bridge
+    // load pushes the next bridge's spots.
+    if (g_bridge_pass) g_bridge_pass->clear_spots();
     // Reflection probes hold the old session's room: drop the captures and
     // the per-handle box cache (its keys die with the models). The
     // g_bridge_probe stash is deliberately kept -- see its declaration.
@@ -4231,12 +4235,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
 
     // Bridge static spot lights (spec 2026-10-08-bridge-emitters §9.6, plan
     // 2026-10-09-bridge-pbr Task 7). Production: NOT developer-gated. Each
-    // spot is (pos3, dir3, inner_deg, outer_deg, range, (r, g, b), intensity):
-    // degrees -> cosines, direction normalised, colour x intensity ->
-    // radiance. Keeps the first kBridgeMaxSpots and returns how many were
-    // dropped (also before init(), when nothing is stored: the spots are
-    // pushed at bridge load, after the pass exists). BridgePass::set_spots
-    // marks the probes dirty itself. Never raises for a stale/empty state.
+    // spot is (pos3, dir3, inner_deg, outer_deg, range, (r, g, b), intensity);
+    // inner_deg / outer_deg are HALF-angles from the axis. Degrees ->
+    // cosines, direction normalised, colour x intensity -> radiance. A spot
+    // with ANY non-finite input (position, direction before normalising,
+    // angles, range, colour, intensity) is dropped -- a NaN reaching the
+    // shader becomes a NaN bloom square. Returns the dropped count: invalid
+    // spots PLUS valid ones beyond kBridgeMaxSpots (also before init(), when
+    // nothing is stored: the spots are pushed at bridge load, after the pass
+    // exists). BridgePass::set_spots marks the probes dirty itself. Never
+    // raises for a stale/empty state.
     m.def("set_bridge_spots",
           [](const std::vector<std::tuple<std::tuple<float, float, float>,
                                           std::tuple<float, float, float>,
@@ -4246,9 +4254,20 @@ PYBIND11_MODULE(_dauntless_host, m) {
               auto v3 = [](const std::tuple<float, float, float>& t) {
                   return glm::vec3(std::get<0>(t), std::get<1>(t), std::get<2>(t));
               };
+              auto finite3 = [](const glm::vec3& a) {
+                  return std::isfinite(a.x) && std::isfinite(a.y) && std::isfinite(a.z);
+              };
               std::vector<renderer::BridgeSpot> v;
               v.reserve(spots.size());
+              std::size_t invalid = 0;
               for (const auto& [pos, dir, inner_deg, outer_deg, range, rgb, intensity] : spots) {
+                  if (!finite3(v3(pos)) || !finite3(v3(dir)) || !finite3(v3(rgb)) ||
+                      !std::isfinite(inner_deg) || !std::isfinite(outer_deg) ||
+                      !std::isfinite(range) || !std::isfinite(intensity) ||
+                      !finite3(v3(rgb) * intensity)) {
+                      ++invalid;
+                      continue;
+                  }
                   renderer::BridgeSpot sp;
                   sp.position = v3(pos);
                   const glm::vec3 d = v3(dir);
@@ -4267,13 +4286,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   v.push_back(sp);
               }
               const std::size_t cap = static_cast<std::size_t>(renderer::kBridgeMaxSpots);
-              if (!g_bridge_pass) return v.size() > cap ? v.size() - cap : 0;
-              return g_bridge_pass->set_spots(std::move(v));
+              if (!g_bridge_pass) return invalid + (v.size() > cap ? v.size() - cap : 0);
+              return invalid + g_bridge_pass->set_spots(std::move(v));
           },
           py::arg("spots"),
           "Static bridge spot lights: [(pos3, dir3, inner_deg, outer_deg, range, "
-          "(r, g, b), intensity)]. Keeps the first 32; returns the dropped count. "
-          "Marks the reflection probes dirty. Never raises for a stale state.");
+          "(r, g, b), intensity)]; inner_deg/outer_deg are HALF-angles from the "
+          "axis. Spots with any non-finite value are dropped; the rest keep the "
+          "first 32. Returns the dropped count (invalid + over the cap). Marks "
+          "the reflection probes dirty. Never raises for a stale state.");
 
     m.def("set_bridge_pbr_enabled",
           [](bool on) {

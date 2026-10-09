@@ -642,9 +642,11 @@ def request_bridge_probe_capture() -> None:
 
 def set_bridge_spots(spots) -> int:
     """Static bridge spot lights (production, not developer-gated): `spots` is
-    [(pos3, dir3, inner_deg, outer_deg, range, (r, g, b), intensity)]. Keeps
-    the first 32 and returns how many were DROPPED, for the caller to report
-    by name; marks the reflection probes dirty. 0 headless."""
+    [(pos3, dir3, inner_deg, outer_deg, range, (r, g, b), intensity)], the
+    angles HALF-angles from the axis. Spots with any non-finite value are
+    dropped; the rest keep the first 32. Returns how many were DROPPED
+    (invalid + over the cap), for the caller to report by name; marks the
+    reflection probes dirty. 0 headless."""
     fn = getattr(_h, "set_bridge_spots", None) if _h is not None else None
     if fn is None:
         return 0

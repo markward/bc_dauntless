@@ -324,7 +324,10 @@ void main() {
         vec3 albedo_c = decode(base.rgb);
         vec3 lit = albedo_c * (1.0 - metal_c)
                  * decode(u_ambient * mix(u_down_bottom, u_down_top, hc));
-        // The spots' diffuse half only: a probe holds no specular.
+        // The spots' diffuse half only: a probe holds no specular. It shares
+        // accumulate_spots, so it carries the (1 - F) factor that the
+        // capture's downlight term above does not -- ~4% at F0 0.04.
+        // Accepted: the probe only feeds the (small) dielectric reflection.
         if (u_spot_count > 0) {
             float rough_c = clamp(channel(u_has_rough_map, u_rough_map, u_rough_override, 1.0), 0.04, 1.0);
             vec3 Vc = normalize(u_eye - v_world);

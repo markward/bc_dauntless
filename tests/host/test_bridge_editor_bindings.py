@@ -388,3 +388,22 @@ def test_host_io_set_bridge_spots_forwards(monkeypatch):
     assert host_io.set_bridge_spots([((1, 2, 3), (0, 0, -1), 20, 30, 100, (1, 0.5, 0), 2000)]) == 7
     assert calls == [[((1.0, 2.0, 3.0), (0.0, 0.0, -1.0), 20.0, 30.0, 100.0,
                        (1.0, 0.5, 0.0), 2000.0)]]
+
+
+def test_set_bridge_spots_drops_and_counts_non_finite_lights(host_module):
+    nan, inf = float("nan"), float("inf")
+    bad_pos = ((nan, 0.0, 50.0), (0.0, 0.0, -1.0), 30.0, 60.0, 120.0, (1.0, 1.0, 1.0), 2000.0)
+    bad_k = ((0.0, 0.0, 50.0), (0.0, 0.0, -1.0), 30.0, 60.0, 120.0, (1.0, 1.0, 1.0), inf)
+    assert host_module.set_bridge_spots([bad_pos, _SPOT, bad_k]) == 2
+    # Invalid lights count before the cap: 32 good + 1 bad drops only the bad one.
+    assert host_module.set_bridge_spots([_SPOT] * 32 + [bad_pos]) == 1
+
+
+def test_set_bridge_spots_drops_non_finite_on_a_live_bridge(probe_stash_guard, dbridge):
+    h, _iid = dbridge
+    nan = float("nan")
+    bad_range = ((0.0, 0.0, 50.0), (0.0, 0.0, -1.0), 30.0, 60.0, nan, (1.0, 1.0, 1.0), 2000.0)
+    bad_dir = ((0.0, 0.0, 50.0), (nan, 0.0, -1.0), 30.0, 60.0, 120.0, (1.0, 1.0, 1.0), 2000.0)
+    bad_angle = ((0.0, 0.0, 50.0), (0.0, 0.0, -1.0), nan, 60.0, 120.0, (1.0, 1.0, 1.0), 2000.0)
+    bad_rgb = ((0.0, 0.0, 50.0), (0.0, 0.0, -1.0), 30.0, 60.0, 120.0, (1.0, nan, 1.0), 2000.0)
+    assert h.set_bridge_spots([bad_range, bad_dir, bad_angle, bad_rgb, _SPOT]) == 4

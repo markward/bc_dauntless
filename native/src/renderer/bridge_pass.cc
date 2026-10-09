@@ -517,6 +517,12 @@ std::size_t BridgePass::set_spots(std::vector<BridgeSpot> spots) {
     const std::size_t cap = static_cast<std::size_t>(kBridgeMaxSpots);
     const std::size_t dropped = spots.size() > cap ? spots.size() - cap : 0;
     if (dropped > 0) spots.resize(cap);
+    for (auto& sp : spots) {
+        const float len = glm::length(sp.direction);
+        sp.direction = (std::isfinite(len) && len > 1e-6f)
+            ? sp.direction / len : glm::vec3(0.0f, 0.0f, -1.0f);
+        sp.cos_outer = std::min(sp.cos_outer, sp.cos_inner);
+    }
     spots_ = std::move(spots);
     // The probes hold the room lit by the spots' diffuse: recapture.
     request_probe_capture();

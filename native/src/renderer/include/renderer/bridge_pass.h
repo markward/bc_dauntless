@@ -231,7 +231,16 @@ public:
     /// caller reports them -- never silently). The probe captures include the
     /// spots' diffuse, so this ALWAYS marks the probes dirty -- here in the
     /// pass, not in the binding, so every caller gets it (clearing too).
+    ///
+    /// Expects a unit `direction` and cos_inner >= cos_outer, and finite
+    /// values (the set_bridge_spots binding drops non-finite lights and
+    /// normalises). Defensively, this normalises the axis again (a zero axis
+    /// becomes straight down, -Z) and lowers cos_outer to cos_inner if the
+    /// two arrive swapped.
     std::size_t set_spots(std::vector<BridgeSpot> spots);
+    /// Session reset: drop every spot WITHOUT marking the probes dirty
+    /// (reset_probes() beside it drops the captures and the request).
+    void clear_spots() { spots_.clear(); }
     std::size_t spot_count() const { return spots_.size(); }
 
     /// Mission swap: drop the captures (no specular until the next request),

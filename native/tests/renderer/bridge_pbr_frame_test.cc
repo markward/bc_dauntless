@@ -801,3 +801,38 @@ TEST_F(BridgePbrFrame, AoNeverDarkensASpot) {
     EXPECT_GT(no_ao.r, 0.05f);
     for (int i = 0; i < 3; ++i) EXPECT_NEAR(with_ao[i], no_ao[i], 2e-3f) << i;
 }
+
+// clear_spots() (the host's session reset) empties the spots WITHOUT marking
+// the probes dirty: reset_probes() beside it has just dropped the request.
+TEST_F(BridgePbrFrame, ClearSpotsEmptiesWithoutDirtyingTheProbes) {
+    pass->set_spots({{{0, 0, 50}, {0, 0, -1}, 0.9f, 0.8f, 100.0f, glm::vec3(1.0f)}});
+    pass->reset_probes();                        // drops the pending request
+    pass->clear_spots();
+    EXPECT_EQ(pass->spot_count(), 0u);
+    EXPECT_FALSE(pass->probe_capture_pending());
+}
+
+// set_spots normalises the axis and keeps the outer edge outside the inner
+// one: a non-unit axis and swapped cosines light the floor like the clean spot.
+TEST_F(BridgePbrFrame, SetSpotsNormalisesTheAxisAndOrdersTheCone) {
+    set_base({0.6f, 0.6f, 0.6f, 1.0f});
+    const float ci = std::cos(glm::radians(20.0f)), co = std::cos(glm::radians(30.0f));
+    pass->set_spots({{{70.0f, 0.0f, 60.0f}, {0.0f, 0.0f, -1.0f}, ci, co, 200.0f,
+                      glm::vec3(2000.0f)}});
+    const glm::vec3 clean = render_floor();
+    pass->set_spots({{{70.0f, 0.0f, 60.0f}, {0.0f, 0.0f, -5.0f}, ci, co, 200.0f,
+                      glm::vec3(2000.0f)}});
+    const glm::vec3 long_axis = render_floor();
+    for (int i = 0; i < 3; ++i) EXPECT_NEAR(long_axis[i], clean[i], 1e-4f) << i;
+    // Swapped (cos_inner < cos_outer): the cone is NOT dark everywhere.
+    pass->set_spots({{{70.0f, 0.0f, 60.0f}, {0.0f, 0.0f, -1.0f}, co, ci, 200.0f,
+                      glm::vec3(2000.0f)}});
+    EXPECT_GT(render_floor().r, 0.0f);
+    const glm::vec3 swapped = render_floor();
+    for (int i = 0; i < 3; ++i) EXPECT_TRUE(std::isfinite(swapped[i])) << i;
+    // A zero axis falls back to straight down, never NaN.
+    pass->set_spots({{{70.0f, 0.0f, 60.0f}, {0.0f, 0.0f, 0.0f}, ci, co, 200.0f,
+                      glm::vec3(2000.0f)}});
+    const glm::vec3 zero_axis = render_floor();
+    for (int i = 0; i < 3; ++i) EXPECT_NEAR(zero_axis[i], clean[i], 1e-4f) << i;
+}
