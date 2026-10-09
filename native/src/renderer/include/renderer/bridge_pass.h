@@ -127,6 +127,13 @@ public:
     }
     void clear_highlight() { set_highlight(0, -1, -1); }
 
+    /// Test seam for the selection pulse's phase, in seconds. By default the
+    /// pulse runs on BridgePass's own std::chrono::steady_clock, NOT the game
+    /// time fed to set_wall_time: the editor always runs with the sim frozen,
+    /// so a game-time pulse would never move. A negative value (the default)
+    /// restores the real clock.
+    void set_highlight_time(double t) { highlight_time_override_ = t; }
+
 private:
     /// Lazily-allocated 1x1 white texture, used as a fallback for any
     /// bridge mesh whose Base-stage texture failed to load. Same role
@@ -161,6 +168,9 @@ private:
     unsigned long long highlight_model_ = 0;
     int                highlight_selected_ = -1;
     int                highlight_hover_ = -1;
+    double             highlight_time_override_ = -1.0;
+    /// Pulse phase in [0, 1): the override when set, else the real clock.
+    float highlight_phase() const;
 };
 
 }  // namespace renderer

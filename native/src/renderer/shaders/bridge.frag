@@ -125,12 +125,14 @@ vec3 shading_normal() {
 
 // Developer-only bridge editor selection tint (spec
 // 2026-10-08-bridge-emitters §4): mixes the selected mesh toward cyan with a
-// slow pulse, a hovered mesh with a faint constant tint. u_highlight == 0
-// (production) returns `c` unchanged.
+// 1 Hz pulse, a hovered mesh with a faint constant tint. u_highlight_time is
+// the pulse phase from a REAL clock (BridgePass::highlight_phase), never game
+// time: the editor runs with the sim frozen. Selection 0.30..0.60 is always
+// >= hover 0.15 + 0.15. u_highlight == 0 (production) returns `c` unchanged.
 vec3 apply_highlight(vec3 c) {
     if (u_highlight == 0) return c;
     float a = (u_highlight == 2)
-        ? 0.35 + 0.15 * sin(u_highlight_time * 6.2831853)
+        ? 0.45 + 0.15 * sin(u_highlight_time * 6.2831853)
         : 0.15;
     return mix(c, vec3(0.2, 0.9, 1.0), a);
 }

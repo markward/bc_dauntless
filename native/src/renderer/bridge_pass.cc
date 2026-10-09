@@ -20,6 +20,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <iterator>
@@ -129,7 +131,6 @@ void draw_mesh(const assets::Model& model,
     // Developer-only bridge editor selection tint (spec
     // 2026-10-08-bridge-emitters §4): 0 none, 1 hover, 2 selected.
     shader.set_int("u_highlight", highlight);
-    shader.set_float("u_highlight_time", static_cast<float>(wall_time));
     // Alpha test only fires when the material carries an NiAlphaProperty;
     // otherwise the shape is fully opaque regardless of the base
     // texture's alpha channel. EBridge's floorlight.tga (and similar
@@ -224,6 +225,7 @@ void BridgePass::render(const scenegraph::World& world,
 
     // Uniforms common to both sub-passes: camera, the bridge ambient and the
     // ceiling downlight (kBridgeLighting, bridge_lighting_tuning.h).
+    const float pulse_phase = highlight_phase();
     auto set_frame_uniforms = [&](Shader& s) {
         s.set_mat4("u_view", camera.view_matrix());
         s.set_mat4("u_proj", camera.proj_matrix());
@@ -247,6 +249,8 @@ void BridgePass::render(const scenegraph::World& world,
         s.set_int("u_ao_on", ao_on ? 1 : 0);
         s.set_int("u_output_normal", normal_pass_ ? 1 : 0);
         s.set_int("u_debug_view", static_cast<int>(debug_view_));
+        // Selection pulse phase: a real clock, once per sub-pass.
+        s.set_float("u_highlight_time", pulse_phase);
     };
 
     // Developer Options debug view 5 (Mesh ID): a per-draw counter, reset
@@ -368,6 +372,18 @@ void BridgePass::render(const scenegraph::World& world,
         glBindTexture(GL_TEXTURE_2D, 0);
         glActiveTexture(GL_TEXTURE0);
     }
+}
+
+float BridgePass::highlight_phase() const {
+    // Phase in [0, 1) of the 1 Hz selection pulse. Wrapped in double before
+    // the narrowing so a long-running steady_clock never loses float
+    // precision in the shader's sin().
+    double t = highlight_time_override_;
+    if (t < 0.0) {
+        t = std::chrono::duration<double>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+    return static_cast<float>(t - std::floor(t));
 }
 
 }  // namespace renderer

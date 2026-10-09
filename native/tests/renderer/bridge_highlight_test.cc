@@ -179,3 +179,37 @@ TEST_F(BridgeHighlightFrame, AnotherModelsMeshIndexDoesNotTint) {
     pass->clear_highlight();
     EXPECT_EQ(render_floor(), plain);
 }
+
+// The selection pulse must run on a REAL clock: the editor always runs with
+// the sim frozen, so a pulse fed from game time (set_wall_time) never moves.
+// Phase 0.75 is the worst case: sin(0.75 * 2pi) = -1.
+TEST_F(BridgeHighlightFrame, SelectionClearlyExceedsHoverAtTheWorstPhase) {
+    pass->set_wall_time(0.75);          // the old game-time driver, worst phase
+    pass->set_highlight_time(0.75);
+    pass->set_highlight(handle(), -1, 0);
+    const glm::vec3 hov = render_floor();
+    pass->set_highlight(handle(), 0, -1);
+    const glm::vec3 sel = render_floor();
+    // Selection alpha >= hover alpha + 0.15 at every phase; the cyan pull on
+    // (b - r) is 0.8 * alpha, so the gap is >= 0.12. 0.08 leaves headroom.
+    EXPECT_GT((sel.b - sel.r) - (hov.b - hov.r), 0.08f);
+}
+
+TEST_F(BridgeHighlightFrame, SelectionPulseFollowsTheHighlightClock) {
+    pass->set_highlight(handle(), 0, -1);
+    pass->set_highlight_time(0.25);     // sin = +1
+    const glm::vec3 peak = render_floor();
+    pass->set_highlight_time(0.75);     // sin = -1
+    const glm::vec3 trough = render_floor();
+    EXPECT_GT((peak.b - peak.r) - (trough.b - trough.r), 0.1f);
+}
+
+TEST_F(BridgeHighlightFrame, SelectionPulseIgnoresGameTime) {
+    pass->set_highlight(handle(), 0, -1);
+    pass->set_highlight_time(0.25);
+    pass->set_wall_time(0.25);
+    const glm::vec3 a = render_floor();
+    pass->set_wall_time(0.75);
+    const glm::vec3 b = render_floor();
+    EXPECT_EQ(a, b);
+}
