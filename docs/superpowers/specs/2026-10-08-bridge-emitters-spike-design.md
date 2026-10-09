@@ -373,6 +373,38 @@ texture (DBridge texture 7, 22 shapes) gets a `_rough` map, no single shape
 using it can opt out. Accepted; flipping A and B for one shape is a one-line
 change if it ever bites.
 
+### 9.3 Normal maps *(Mark, 2026-10-09: "yes absolutely")*
+
+`<albedo stem>_normal.tga`, the same name lookup and stock/mod rule as
+§9.2. Only source A applies — no per-shape override, no default: no map
+means a flat surface (the generated normal). Tangent frame from
+screen-space derivatives (the July spike's `pbr_perturb_normal`), so meshes
+need no tangent data.
+
+### 9.4 Reflections — per-alert base probes + animation layers *(Mark, 2026-10-09)*
+
+Reflected light is the sum of each source's contribution, so the
+environment is split into layers and summed in the shader:
+
+- **Base probes, one per alert state.** A cubemap of the bridge at green,
+  yellow and red, captured from the captain's chair, **excluding animated
+  emitters** (an emitter is animated in a state if its wave there is not
+  `steady`). Steady emitters are baked in. Pre-filtered mips by roughness
+  (split-sum IBL + a BRDF lookup table); **box-projected** against the
+  bridge AABB so reflections sit where the reflected thing really is. An
+  alert change cross-fades between two base probes over the profile
+  `fade_s`.
+- **Animation layers (emitter step, later).** One probe per animation group,
+  capturing the room lit by ONLY that group's glow + cast light (everything
+  else black), added in the shader × the group's live wave value — so a red
+  alert bar's floor reflection blinks with the bar. Group = emitters that
+  vary in lockstep: **same profile and same phase** (§6.3).
+- **Cost:** a 256² RGBA16F cube with mips ≈ 4 MB; captures happen at load or
+  on a data change only, never per frame.
+- **In the PBR step** (no emitters yet): build the per-alert capture
+  machinery and the three base probes (they differ only in ambient at
+  first); the emitter step adds exclusions and layers.
+
 ## 10. Iteration log
 
 | # | Date | Change | Verdict | Sections |
@@ -383,3 +415,4 @@ change if it ever bites.
 | — | 2026-10-09 | Persistence + editor accepted | accepted | 7, 8 |
 | — | 2026-10-09 | PBR: linear-lighting tone shift noted; material sources layered (maps by albedo name → per-shape 0-1 override → metal 0 / rough 1) | accepted | 9 |
 | — | 2026-10-09 | PBR: overlay maps only for stock albedo; mod maps beside the mod albedo (future) | accepted | 9.2 |
+| — | 2026-10-09 | PBR: normal maps by albedo name; per-alert base probes excluding animated emitters + later per-animation-group probe layers | accepted | 9.3, 9.4 |
