@@ -191,7 +191,11 @@ TEST_F(BridgeAoFrame, CommSetRenderNeverBindsAo) {
     render_corner(true);                                  // main view: AO computed
     // Same model, tagged as a comm set, rendered with comm_set_id != 0:
     const auto comm = render_corner_as_comm_set();
+    // A comm set draws the legacy shading (no PBR), so compare it with the
+    // main view drawn legacy too, AO off: any difference would be AO.
+    pass->set_pbr_enabled(false);
     const auto plain = render_corner(false);
+    pass->set_pbr_enabled(true);
     EXPECT_EQ(comm.near_corner, plain.near_corner);       // no AO darkening at all
 }
 

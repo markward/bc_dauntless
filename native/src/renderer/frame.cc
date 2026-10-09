@@ -922,9 +922,7 @@ void draw_model(const assets::Model& model,
             prog.set_mat4("u_node_rest_fix",
                           (!skinned && articulated) ? rest_fix[i] : glm::mat4(1.0f));
 
-            const auto& mat = (mesh.material_index() >= 0
-                ? model.materials[mesh.material_index()]
-                : assets::Material{});
+            const auto& mat = assets::material_or_default(model, mesh.material_index());
             prog.set_vec3("u_diffuse_color", mat.diffuse);
             prog.set_vec3("u_emissive_color", mat.emissive);
             // Self-illumination scale (1 = normal, 0 = destroyed/dark hull).

@@ -24,6 +24,13 @@ inline constexpr glm::vec3 kBridgeUp{0.0f, 0.0f, 1.0f};  // set instances draw w
 // Crease angle for generated normals lives with the generator:
 // assets::detail::kSetNormalCreaseDeg (native/src/assets/src/normal_gen.h).
 
+// Bridge PBR constants (spec 2026-10-08-bridge-emitters §9, Global Constraints)
+inline constexpr int kBridgeProbeFace = 256;
+inline constexpr int kBridgeProbeMips = 6;
+inline constexpr int kBridgeBrdfLutSize = 128;
+inline constexpr int kBridgeMaxSpots = 32;
+inline constexpr float kBridgeDefaultSpotIntensity = 2000.0f;
+
 /// CPU twin of bridge.frag's diffuse_ceiling (tests pin the GLSL to it).
 /// Lit (reflecting) bridge surfaces must never feed bloom -- only emitters
 /// glow. Identity below 70% of the ceiling, then a soft exponential roll that

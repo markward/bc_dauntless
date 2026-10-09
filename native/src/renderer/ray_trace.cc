@@ -57,6 +57,9 @@ struct TraceTri {
     /// baked at the rest pose) and must be re-tested through that node's
     /// override instead. -1 means unknown, which is treated as never overridden.
     int node = -1;
+    /// Source mesh and its triangle index, for picking.
+    int mesh = -1;
+    int tri = -1;
 };
 
 /// Binary BVH node over TraceAccel::tris, in a flat array.
@@ -218,6 +221,8 @@ const TraceAccel& ensure_trace_accel(const assets::Model& model) {
                     idx[k + 2] >= verts.size()) continue;
                 TraceTri t;
                 t.node = static_cast<int>(ni);
+                t.mesh = mesh_idx;
+                t.tri = static_cast<int>(k / 3);
                 t.v0 = glm::vec3(nw * glm::vec4(verts[idx[k + 0]].position, 1.0f));
                 t.v1 = glm::vec3(nw * glm::vec4(verts[idx[k + 1]].position, 1.0f));
                 t.v2 = glm::vec3(nw * glm::vec4(verts[idx[k + 2]].position, 1.0f));
@@ -319,9 +324,17 @@ std::optional<RayHit> ray_trace_instance(
     glm::vec3 origin,
     glm::vec3 direction,
     float max_dist,
-    const std::unordered_map<int, glm::mat4>* node_overrides)
+    const std::unordered_map<int, glm::mat4>* node_overrides,
+    const std::vector<int>* exclude_meshes)
 {
     if (model.nodes.empty() || model.meshes.empty()) return std::nullopt;
+
+    const bool has_ex = (exclude_meshes != nullptr && !exclude_meshes->empty());
+    const auto excluded = [&](int mesh) -> bool {
+        if (!has_ex) return false;
+        for (int e : *exclude_meshes) if (e == mesh) return true;
+        return false;
+    };
 
     // Overridden nodes (articulation / severance). The accel's triangles were
     // baked at the REST pose, so any triangle belonging to one of these is in
@@ -411,6 +424,7 @@ std::optional<RayHit> ray_trace_instance(
             for (int i = n.first; i < n.first + n.count; ++i) {
                 const TraceTri& t = accel.tris[i];
                 if (is_moved(t.node)) continue;   // moved: re-tested below
+                if (excluded(t.mesh)) continue;
                 const auto t_local = intersect_triangle(
                     o_local, d_unit, max_dist_local, t.v0, t.v1, t.v2);
                 if (!t_local || *t_local >= best_t) continue;
@@ -449,6 +463,7 @@ std::optional<RayHit> ray_trace_instance(
     // per-part acceleration structure would be machinery for nothing.
     glm::vec3 moved_normal_local(0.0f);
     bool moved_hit = false;
+    int moved_mesh = -1, moved_tri = -1;
     if (has_ov) {
         const std::vector<glm::mat4> rest = build_node_world(model);
         const std::vector<glm::mat4> posed =
@@ -467,6 +482,7 @@ std::optional<RayHit> ray_trace_instance(
         }
         for (const TraceTri& mt : accel.tris) {
             if (mt.node < 0) continue;
+            if (excluded(mt.mesh)) continue;
             auto it = to_rest.find(mt.node);
             if (it == to_rest.end()) continue;
             const glm::mat4& inv_m = it->second;
@@ -486,6 +502,8 @@ std::optional<RayHit> ray_trace_instance(
             best_t = t_model;
             best_tri = -1;                 // the winner is a MOVED triangle
             moved_hit = true;
+            moved_mesh = mt.mesh;
+            moved_tri = mt.tri;
             // Normal in the node's own frame, carried back out through M.
             const glm::mat3 nm = glm::transpose(glm::mat3(inv_m));
             moved_normal_local = glm::normalize(
@@ -500,9 +518,11 @@ std::optional<RayHit> ray_trace_instance(
         const glm::mat3 normal_matrix_m = glm::transpose(glm::mat3(world_inv));
         glm::vec3 n_world = glm::normalize(normal_matrix_m * moved_normal_local);
         if (glm::dot(n_world, direction) > 0.0f) n_world = -n_world;
-        return RayHit{glm::vec3(instance_world * glm::vec4(hit_local, 1.0f)),
-                      n_world,
-                      best_t / d_local_len};
+        RayHit out{glm::vec3(instance_world * glm::vec4(hit_local, 1.0f)),
+                   n_world, best_t / d_local_len};
+        out.mesh_index = moved_mesh;
+        out.triangle = moved_tri;
+        return out;
     }
 
     const TraceTri& t = accel.tris[best_tri];
@@ -510,9 +530,11 @@ std::optional<RayHit> ray_trace_instance(
     glm::vec3 best_normal = glm::normalize(
         normal_matrix * glm::normalize(glm::cross(t.v1 - t.v0, t.v2 - t.v0)));
     if (glm::dot(best_normal, direction) > 0.0f) best_normal = -best_normal;
-    return RayHit{glm::vec3(instance_world * glm::vec4(hit_local, 1.0f)),
-                  best_normal,
-                  best_t / d_local_len};
+    RayHit out{glm::vec3(instance_world * glm::vec4(hit_local, 1.0f)),
+               best_normal, best_t / d_local_len};
+    out.mesh_index = t.mesh;
+    out.triangle = t.tri;
+    return out;
 }
 
 std::optional<RayHit> ray_trace_instance_linear(
@@ -521,10 +543,11 @@ std::optional<RayHit> ray_trace_instance_linear(
     glm::vec3 origin_rel,
     glm::vec3 direction,
     float max_dist,
-    const std::unordered_map<int, glm::mat4>* node_overrides)
+    const std::unordered_map<int, glm::mat4>* node_overrides,
+    const std::vector<int>* exclude_meshes)
 {
     return ray_trace_instance(model, glm::mat4(linear), origin_rel, direction,
-                              max_dist, node_overrides);
+                              max_dist, node_overrides, exclude_meshes);
 }
 
 }  // namespace renderer

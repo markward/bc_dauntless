@@ -55,6 +55,17 @@ struct MaterialInputs {
     /// can be attached through the same field.
     const std::unordered_map<std::uint32_t, int>* sibling_normal_for_image = nullptr;
 
+    /// NIF link_id of a non-derived NiImage -> Model::textures index of a
+    /// sibling `*_rough.tga` the asset loader probed for and found on disk.
+    /// Bound to StageSlot::Roughness in addition to the hull texture's
+    /// normal Base/Glow binding (bridge PBR; spec 2026-10-08-bridge-emitters
+    /// §9.2).
+    const std::unordered_map<std::uint32_t, int>* sibling_rough_for_image = nullptr;
+
+    /// Same as sibling_rough_for_image for `*_metal.tga`, bound to
+    /// StageSlot::Metalness.
+    const std::unordered_map<std::uint32_t, int>* sibling_metal_for_image = nullptr;
+
     /// Maps NIF link ID of a NiImage → its source filename
     /// (NiImage::file_name). Used by build_material to apply BC's
     /// `_lm.tga` lightmap-pass filename predicate without having to

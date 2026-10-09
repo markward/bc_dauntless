@@ -80,6 +80,11 @@ _OPTIONAL_BINDINGS = frozenset({
     "profiler_scopes", "profiler_frame",
     "set_swap_interval", "swap_interval",
     "set_cursor_shape",
+    "ray_trace_mesh_pick", "model_identity", "set_bridge_highlight",
+    "set_bridge_material_overrides", "set_bridge_pbr_enabled",
+    "set_bridge_probe_origin", "set_bridge_probe_scales",
+    "set_bridge_probe_mix", "request_bridge_probe_capture",
+    "set_bridge_spots",
 })
 
 
@@ -518,6 +523,140 @@ def ray_trace_mesh(
         return None
     (px, py, pz), normal, dist = hit
     return (px + t[0], py + t[1], pz + t[2]), normal, dist
+
+
+def ray_trace_mesh_pick(instance_id, origin, direction, max_dist,
+                        exclude_meshes=()):
+    """Bridge editor pick: ray_trace_mesh plus (mesh_index, triangle).
+
+    World ray in, world hit out, like ray_trace_mesh. Triangles of
+    `exclude_meshes` are never hit. Unlike ray_trace_mesh this never raises:
+    the editor calls it every frame for the hover tint, so a stale id or a
+    stale binary is just "no hit"."""
+    fn = getattr(_h, "ray_trace_mesh_pick", None) if _h is not None else None
+    if fn is None:
+        return None
+    t = _h.instance_translation(instance_id)
+    rel = origin if t is None else _relative_to(t, origin)
+    hit = fn(instance_id, rel, direction, max_dist, list(exclude_meshes))
+    if hit is None:
+        return None
+    (px, py, pz), normal, dist, mesh, tri = hit
+    if t is not None:
+        px, py, pz = px + t[0], py + t[1], pz + t[2]
+    return (px, py, pz), normal, dist, mesh, tri
+
+
+def _lossy_str(v) -> str:
+    """A NIF name as str: the binding hands names over as bytes (a NIF holds
+    whatever bytes its exporter wrote), decoded here with errors="replace" so
+    a non-UTF-8 name can never raise into the host loop."""
+    if isinstance(v, (bytes, bytearray)):
+        return bytes(v).decode("utf-8", errors="replace")
+    return str(v)
+
+
+_NO_MAPS = {"roughness": False, "metalness": False, "normal": False}
+
+
+def model_identity(instance_id):
+    """{source, content_hash, meshes:[{mesh, block, name, node_chain,
+    textures, material, maps}]} for an instance's model; None headless or for
+    a stale id. `textures` is the Base-stage texture basename as BUILT (parent
+    inheritance resolved), or []. Names are str (lossily decoded). `maps` is
+    {roughness, metalness, normal} bool (spec 2026-10-09-bridge-pbr); all-False
+    when absent (a binary built before this field existed)."""
+    fn = getattr(_h, "model_identity", None) if _h is not None else None
+    info = None if fn is None else fn(instance_id)
+    if info is None:
+        return None
+    for m in info["meshes"]:
+        m["name"] = _lossy_str(m["name"])
+        m["node_chain"] = [_lossy_str(n) for n in m["node_chain"]]
+        m["textures"] = [_lossy_str(t) for t in m.get("textures", ())]
+        if "maps" not in m:
+            m["maps"] = dict(_NO_MAPS)
+    return info
+
+
+def set_bridge_highlight(instance_id, selected, hover) -> None:
+    """Developer-only selection tint on the bridge: `selected` / `hover` are
+    mesh indices into the instance's model (-1 = none). No-op headless."""
+    fn = getattr(_h, "set_bridge_highlight", None) if _h is not None else None
+    if fn is not None:
+        fn(instance_id, int(selected), int(hover))
+
+
+def set_bridge_material_overrides(instance_id, overrides) -> None:
+    """Bridge PBR per-shape material overrides (production data, applied
+    without --developer): `overrides` is [(mesh, roughness, metalness)], a
+    channel < 0 meaning "no override". None or a stale id clears. No-op
+    headless."""
+    fn = getattr(_h, "set_bridge_material_overrides", None) if _h is not None else None
+    if fn is not None:
+        fn(instance_id, [(int(m), float(r), float(mt)) for m, r, mt in overrides])
+
+
+def set_bridge_pbr_enabled(on) -> None:
+    """Developer-only A/B switch for bridge PBR (default on). No-op headless
+    and without --developer."""
+    fn = getattr(_h, "set_bridge_pbr_enabled", None) if _h is not None else None
+    if fn is not None:
+        fn(bool(on))
+
+
+def set_bridge_probe_origin(origin) -> None:
+    """Bridge reflection probe capture point (x, y, z), bridge world space --
+    the captain's-chair eye. Production (not developer-gated); takes effect at
+    the next capture. No-op headless."""
+    fn = getattr(_h, "set_bridge_probe_origin", None) if _h is not None else None
+    if fn is not None:
+        x, y, z = origin
+        fn((float(x), float(y), float(z)))
+
+
+def set_bridge_probe_scales(green, yellow_red) -> None:
+    """Ambient multipliers the green and yellow/red reflection probes are
+    captured with. Takes effect at the next capture. No-op headless."""
+    fn = getattr(_h, "set_bridge_probe_scales", None) if _h is not None else None
+    if fn is not None:
+        fn(float(green), float(yellow_red))
+
+
+def set_bridge_probe_mix(t) -> None:
+    """Reflection cross-fade, 0 = green probe .. 1 = yellow/red probe
+    (clamped natively). No-op headless."""
+    fn = getattr(_h, "set_bridge_probe_mix", None) if _h is not None else None
+    if fn is not None:
+        fn(float(t))
+
+
+def request_bridge_probe_capture() -> None:
+    """Recapture both bridge reflection probes in the next bridge frame (bridge
+    load, lighting / override / spot edits) -- never per frame. No-op
+    headless."""
+    fn = getattr(_h, "request_bridge_probe_capture", None) if _h is not None else None
+    if fn is not None:
+        fn()
+
+
+def set_bridge_spots(spots) -> int:
+    """Static bridge spot lights (production, not developer-gated): `spots` is
+    [(pos3, dir3, inner_deg, outer_deg, range, (r, g, b), intensity)], the
+    angles HALF-angles from the axis. Spots with any non-finite value are
+    dropped; the rest keep the first 32. Returns how many were DROPPED
+    (invalid + over the cap), for the caller to report by name; marks the
+    reflection probes dirty. 0 headless."""
+    fn = getattr(_h, "set_bridge_spots", None) if _h is not None else None
+    if fn is None:
+        return 0
+
+    def _v3(v):
+        x, y, z = v
+        return (float(x), float(y), float(z))
+
+    return int(fn([(_v3(p), _v3(d), float(i), float(o), float(r), _v3(c), float(k))
+                   for p, d, i, o, r, c, k in spots]))
 
 
 # ── Star map (Helm → Set Course) ─────────────────────────────────────────────

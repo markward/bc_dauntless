@@ -126,6 +126,7 @@ def test_render_payload_shape(panel):
         "disable_collisions": False, "sensor_occlusion": True,
         "systems_damaged": False, "systems_disabled": False,
         "normal_maps": True, "normal_flip_g": True, "normal_strength": 1.0,
+        "bridge_pbr": True,
         "bridge_debug_view": "Off",
         "profiler": False, "rock_catalogue": True, "dial_group": "nebula",
         "minor_rocks": True, "far_tier": True,
@@ -369,9 +370,48 @@ def test_bridge_debug_view_cycles(monkeypatch):
     calls = []
     monkeypatch.setattr(renderer, "set_bridge_debug_view", calls.append)
     p = DeveloperOptionsPanel()
-    for expected in (1, 2, 3, 4, 5, 0):
+    for expected in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0):
         assert p.dispatch_event("action:bridge_debug_view")
         assert calls[-1] == expected
+
+
+def test_bridge_debug_view_cycles_through_the_pbr_views(panel):
+    """The cycle list gains the bridge-PBR debug views as 6-10, in order,
+    after the six existing (non-PBR) views."""
+    p, _ = panel
+    names = p.bridge_debug_view_names()
+    assert names[6:11] == ["Roughness", "Metalness", "Specular only",
+                           "Probe (mirror)", "Map normals"]
+
+
+def test_bridge_pbr_toggle_defaults_on_and_calls_the_binding(panel, monkeypatch):
+    """Developer-only A/B switch for bridge PBR: defaults ON, not persisted
+    (no getter to resync from -- same shape as normal_maps), and the
+    dispatch writes through to host_io.set_bridge_pbr_enabled."""
+    p, _ = panel
+    calls = []
+    monkeypatch.setattr("engine.host_io.set_bridge_pbr_enabled", calls.append)
+    p.open()
+    assert _body(p.render_payload())["settings"]["bridge_pbr"] is True
+    assert p.dispatch_event("toggle:bridge_pbr") is True
+    assert calls == [False]
+    assert p.dispatch_event("toggle:bridge_pbr") is True
+    assert calls == [False, True]
+
+
+def test_bridge_pbr_ctrl_is_a_lighting_tab_focusable(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:lighting")
+    assert ("ctrl", "bridge_pbr") in p._focusables()
+
+
+def test_bridge_pbr_row_appears_in_lighting_settings(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:lighting")
+    payload = _body(p.render_payload())["settings"]
+    assert payload["bridge_pbr"] is True
 
 
 def test_bridge_debug_view_ctrl_is_a_lighting_tab_focusable(panel):

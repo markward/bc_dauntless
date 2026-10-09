@@ -64,6 +64,59 @@ uniform int       u_output_normal;
 uniform int u_debug_view;
 uniform int u_mesh_id;
 
+// Developer-only bridge editor selection tint (spec
+// 2026-10-08-bridge-emitters §4): 0 none (production), 1 hover, 2 selected.
+uniform int   u_highlight;
+uniform float u_highlight_time;
+
+// ── Bridge PBR (spec 2026-10-08-bridge-emitters §9) ────────────────────
+// u_pbr = 1 on the main bridge view (static bridge + officers) unless the
+// developer A/B switch turned it off; 0 for comm sets, which keep the legacy
+// shading below. Per channel the first hit wins: map -> per-shape override
+// (< 0 = none) -> default (roughness 1, metalness 0). Debug views 6..10 are
+// read only inside the PBR branch. CPU twins: renderer/bridge_pbr.h.
+uniform int       u_pbr;
+uniform sampler2D u_normal_map;   // unit 1: tangent-space normal (Bump stage)
+uniform sampler2D u_rough_map;    // unit 5: roughness in .r
+uniform sampler2D u_metal_map;    // unit 6: metalness in .r
+uniform int       u_has_normal_map;
+uniform int       u_has_rough_map;
+uniform int       u_has_metal_map;
+uniform float     u_rough_override;
+uniform float     u_metal_override;
+
+// ── Reflection probes (plan 2026-10-09-bridge-pbr Task 6) ──────────────
+// Two prefiltered captures of the room -- green (unit 7) and yellow/red
+// (unit 8) -- cross-faded by u_probe_mix, box-projected against the bridge
+// model's AABB, with the split-sum BRDF LUT on unit 9. u_has_probe = 0 until
+// BOTH are captured: the cube units are then EMPTY and must not be sampled.
+// u_capture = 1 while BridgePass draws a probe face: linear diffuse-only
+// radiance under the same diffuse ceiling as the view (spec §9.5: the probe
+// holds a lit room capped at 0.88, so only emitters in it may bloom through
+// a reflection), no AO, no highlight, no specular, the viewscreen black.
+uniform samplerCube u_probe_a;    // unit 7: green
+uniform samplerCube u_probe_b;    // unit 8: yellow/red
+uniform sampler2D   u_brdf_lut;   // unit 9: (A, B), x = NdotV, y = roughness
+uniform int         u_has_probe;
+uniform float       u_probe_mix;  // 0 green .. 1 yellow/red
+uniform vec3        u_probe_pos;  // capture point, world
+uniform float       u_probe_max_mip;  // kBridgeProbeMips - 1, set by BridgePass
+uniform vec3        u_box_min;    // bridge AABB, world
+uniform vec3        u_box_max;
+uniform int         u_capture;
+
+// ── Static spot lights (plan 2026-10-09-bridge-pbr Task 7) ─────────────
+// Main bridge view only (comm sets: count 0), PBR path only. BridgePass
+// uploads just the u_spot_count entries in use. Radiance is linear colour x
+// intensity; never multiplied by AO; no shadows. The probe capture adds the
+// spots' DIFFUSE half (static lights are steady, so the probes see them).
+const int MAX_SPOTS = 32;           // renderer::kBridgeMaxSpots
+uniform int  u_spot_count;
+uniform vec3 u_spot_pos[MAX_SPOTS];
+uniform vec3 u_spot_dir[MAX_SPOTS];       // unit cone axis
+uniform vec3 u_spot_radiance[MAX_SPOTS];
+uniform vec4 u_spot_params[MAX_SPOTS];    // x cos_inner, y cos_outer, z range
+
 out vec4 FragColor;
 
 // Integer hash (Squirrel3-style, as used by the bridge-lighting debug-view
@@ -118,19 +171,148 @@ vec3 shading_normal() {
     return n;
 }
 
+// Developer-only bridge editor selection tint (spec
+// 2026-10-08-bridge-emitters §4): mixes the selected mesh toward cyan with a
+// 1 Hz pulse, a hovered mesh with a faint constant tint. u_highlight_time is
+// the pulse phase from a REAL clock (BridgePass::highlight_phase), never game
+// time: the editor runs with the sim frozen. Selection 0.30..0.60 is always
+// >= hover 0.15 + 0.15. u_highlight == 0 (production) returns `c` unchanged.
+vec3 apply_highlight(vec3 c) {
+    if (u_highlight == 0) return c;
+    float a = (u_highlight == 2)
+        ? 0.45 + 0.15 * sin(u_highlight_time * 6.2831853)
+        : 0.15;
+    return mix(c, vec3(0.2, 0.9, 1.0), a);
+}
+
 // Lit (reflecting) bridge surfaces must never feed bloom -- only emitters
 // glow. Identity below 70% of the ceiling, then a soft exponential roll that
 // approaches u_diffuse_max (set under bloom's 0.9 threshold) and never
 // reaches it. Scales all channels by the max channel's roll, so hue holds.
 // Must match the C++ twin renderer::diffuse_ceiling (bridge_lighting_tuning.h).
-vec3 diffuse_ceiling(vec3 c) {
-    if (u_diffuse_max <= 0.0) return c;
+vec3 diffuse_ceiling(vec3 c, float diffuse_max) {
+    if (diffuse_max <= 0.0) return c;
     float b = max(max(c.r, c.g), c.b);
-    float knee = 0.7 * u_diffuse_max;
+    float knee = 0.7 * diffuse_max;
     if (b <= knee) return c;
-    float range = u_diffuse_max - knee;
+    float range = diffuse_max - knee;
     float r = knee + range * (1.0 - exp(-(b - knee) / range));
     return c * (r / b);
+}
+vec3 diffuse_ceiling(vec3 c) { return diffuse_ceiling(c, u_diffuse_max); }
+
+// ── PBR maths: GLSL twins of renderer::pbr (bridge_pbr.h), same names and
+// formulas. The pipeline is gamma-space, so the bridge decodes to light in
+// linear and re-encodes before the HDR target.
+const float kGamma = 2.2;
+const float kPi = 3.14159265358979;
+
+vec3 decode(vec3 c) { return pow(max(c, vec3(0.0)), vec3(kGamma)); }
+vec3 encode(vec3 c) { return pow(max(c, vec3(0.0)), vec3(1.0 / kGamma)); }
+
+float D_ggx(float n_dot_h, float rough) {
+    float a = rough * rough, a2 = a * a;
+    float d = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
+    return a2 / max(kPi * d * d, 1e-7);
+}
+float G_schlick_ggx(float n_dot_x, float k) { return n_dot_x / (n_dot_x * (1.0 - k) + k); }
+float G_smith(float n_dot_v, float n_dot_l, float rough) {
+    float k = (rough + 1.0) * (rough + 1.0) / 8.0;
+    return G_schlick_ggx(n_dot_v, k) * G_schlick_ggx(n_dot_l, k);
+}
+vec3 F_schlick(float cos_t, vec3 f0) {
+    float m = pow(clamp(1.0 - cos_t, 0.0, 1.0), 5.0);
+    return f0 + (vec3(1.0) - f0) * m;
+}
+// Roughness-aware Schlick (Lagarde): twin of pbr::F_schlick_rough. At rough 1
+// a dielectric stays at F0 at every angle; at rough 0 this IS F_schlick.
+// Weights the AMBIENT diffuse only -- spots keep F_schlick(VdotH), and the
+// probe term's Fresnel is already integrated, per roughness, into the LUT.
+vec3 F_schlick_rough(float cos_t, vec3 f0, float rough) {
+    float m = pow(clamp(1.0 - cos_t, 0.0, 1.0), 5.0);
+    return f0 + (max(vec3(1.0 - rough), f0) - f0) * m;
+}
+vec3 f0_for(vec3 albedo_lin, float metal) { return mix(vec3(0.04), albedo_lin, metal); }
+
+// Lit diffuse is capped (encoded) under bloom; specular adds on top uncapped.
+vec3 combine(vec3 diffuse_lin, vec3 spec_lin, float diffuse_max) {
+    vec3 d = encode(diffuse_lin);
+    vec3 ds = encode(diffuse_lin + spec_lin);
+    return diffuse_ceiling(d, diffuse_max) + max(ds - d, vec3(0.0));
+}
+
+// The pow base is clamped at 0, as in the C++ twin (NaN guard).
+float specular_occlusion(float n_dot_v, float ao, float rough) {
+    return clamp(pow(max(n_dot_v + ao, 0.0), exp2(-16.0 * rough - 1.0)) - 1.0 + ao, 0.0, 1.0);
+}
+
+// Tangent frame from screen-space derivatives (no mesh tangents) — the July
+// spike's pbr_perturb_normal.
+vec3 perturb_normal(vec3 N, vec2 uv, vec3 map_n) {
+    vec3 dp1 = dFdx(v_world), dp2 = dFdy(v_world);
+    vec2 duv1 = dFdx(uv), duv2 = dFdy(uv);
+    vec3 dp2perp = cross(dp2, N), dp1perp = cross(N, dp1);
+    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+    float m = max(dot(T, T), dot(B, B));
+    if (m < 1e-12) return N;          // no UV gradient (UV-less mesh): no tangent frame
+    float invmax = inversesqrt(m);
+    return normalize(mat3(T * invmax, B * invmax, N) * map_n);
+}
+
+// Parallax-corrected lookup: where the ray pos + t*dir leaves the box, seen
+// from the probe. Twin of pbr::box_project.
+vec3 box_project(vec3 pos, vec3 dir, vec3 bmin, vec3 bmax, vec3 probe) {
+    vec3 inv = 1.0 / dir;
+    vec3 t1 = (bmax - pos) * inv, t2 = (bmin - pos) * inv;
+    vec3 tf = max(t1, t2);
+    float t = min(tf.x, min(tf.y, tf.z));
+    return normalize(pos + dir * t - probe);
+}
+
+// Prefiltered mip for a roughness. Twin of pbr::prefilter_mip; the top mip
+// arrives as u_probe_max_mip (renderer::kBridgeProbeMips - 1).
+float prefilter_mip(float rough) { return clamp(rough, 0.0, 1.0) * u_probe_max_mip; }
+
+// Windowed inverse-square falloff and smoothstep-squared cone: twins of
+// pbr::spot_falloff / pbr::spot_cone (bridge_pbr.h), same formulas.
+float spot_falloff(float d, float range) {
+    float r = d / max(range, 1e-4);
+    float w = clamp(1.0 - r * r * r * r, 0.0, 1.0);
+    return w * w / (d * d + 1.0);
+}
+float spot_cone(float cos_angle, float cos_outer, float cos_inner) {
+    float t = clamp((cos_angle - cos_outer) / max(cos_inner - cos_outer, 1e-5), 0.0, 1.0);
+    float s = t * t * (3.0 - 2.0 * t);
+    return s * s;
+}
+
+// Adds every spot's linear diffuse and GGX specular at this fragment. The
+// probe capture passes its own normal/view and ignores `spec`.
+void accumulate_spots(vec3 N, vec3 V, float NdotV, vec3 albedo, float metal,
+                      float rough, vec3 F0, inout vec3 diffuse, inout vec3 spec) {
+    for (int i = 0; i < u_spot_count; ++i) {
+        vec3 Lv = u_spot_pos[i] - v_world;
+        float d = length(Lv);
+        vec3 L = Lv / max(d, 1e-4);
+        float NdotL = max(dot(N, L), 0.0);
+        if (NdotL <= 0.0) continue;
+        float att = spot_falloff(d, u_spot_params[i].z)
+                  * spot_cone(dot(-L, u_spot_dir[i]), u_spot_params[i].y, u_spot_params[i].x);
+        if (att <= 0.0) continue;
+        vec3 H = normalize(L + V);
+        float NdotH = max(dot(N, H), 0.0);
+        vec3 F = F_schlick(max(dot(V, H), 0.0), F0);
+        vec3 radiance = u_spot_radiance[i] * att * NdotL;
+        diffuse += (vec3(1.0) - F) * (1.0 - metal) * albedo / kPi * radiance;
+        spec += D_ggx(NdotH, rough) * G_smith(NdotV, NdotL, rough) * F
+              / max(4.0 * NdotV * NdotL, 1e-4) * radiance;
+    }
+}
+
+float channel(int has_map, sampler2D map, float override_v, float dflt) {
+    if (has_map != 0) return texture(map, v_uv).r;
+    return override_v >= 0.0 ? override_v : dflt;
 }
 
 void main() {
@@ -141,10 +323,36 @@ void main() {
         base = mix(base, texture(u_face_b, base_uv), clamp(u_face_mix, 0.0, 1.0));
     if (base.a < u_alpha_test_threshold) discard;
     if (u_output_normal != 0) { FragColor = vec4(shading_normal(), 1.0); return; }
+    if (u_capture != 0) {
+        // Probe capture: the probe stores LINEAR (capped) radiance. The viewscreen
+        // feed is black (it changes every frame; a probe is captured once).
+        if (u_unlit != 0) { FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
+        vec3 nc = shading_normal();
+        float metal_c = clamp(channel(u_has_metal_map, u_metal_map, u_metal_override, 0.0), 0.0, 1.0);
+        float hc = clamp(dot(nc, u_up) * 0.5 + 0.5, 0.0, 1.0);
+        vec3 albedo_c = decode(base.rgb);
+        vec3 lit = albedo_c * (1.0 - metal_c)
+                 * decode(u_ambient * mix(u_down_bottom, u_down_top, hc));
+        // The spots' diffuse half only: a probe holds no specular. It shares
+        // accumulate_spots, so it carries the (1 - F) factor that the
+        // capture's downlight term above does not -- ~4% at F0 0.04.
+        // Accepted: the probe only feeds the (small) dielectric reflection.
+        if (u_spot_count > 0) {
+            float rough_c = clamp(channel(u_has_rough_map, u_rough_map, u_rough_override, 1.0), 0.04, 1.0);
+            vec3 Vc = normalize(u_eye - v_world);
+            vec3 spec_unused = vec3(0.0);
+            accumulate_spots(nc, Vc, max(dot(nc, Vc), 1e-4), albedo_c, metal_c, rough_c,
+                             f0_for(albedo_c, metal_c), lit, spec_unused);
+        }
+        // The view caps lit diffuse in display space; the probe stores the
+        // same capped radiance, back in linear.
+        FragColor = vec4(decode(diffuse_ceiling(encode(lit), u_diffuse_max)), 1.0);
+        return;
+    }
     if (u_unlit != 0) {
         vec3 col = base.rgb * u_viewscreen_brightness;
         col = mix(col, vec3(1.0), clamp(u_viewscreen_flash, 0.0, 1.0));
-        FragColor = vec4(col, 1.0);
+        FragColor = vec4(apply_highlight(col), 1.0);
         return;
     }
     vec3 n = shading_normal();
@@ -156,10 +364,57 @@ void main() {
         FragColor = vec4(hash_color(id), 1.0);
         return;
     }
+    if (u_pbr != 0) {
+        vec3 N = n;
+        if (u_has_normal_map != 0)
+            N = perturb_normal(n, base_uv, texture(u_normal_map, base_uv).xyz * 2.0 - 1.0);
+        float rough = clamp(channel(u_has_rough_map, u_rough_map, u_rough_override, 1.0), 0.04, 1.0);
+        float metal = clamp(channel(u_has_metal_map, u_metal_map, u_metal_override, 0.0), 0.0, 1.0);
+        if (u_debug_view == 6) { FragColor = vec4(vec3(rough), 1.0); return; }
+        if (u_debug_view == 7) { FragColor = vec4(vec3(metal), 1.0); return; }
+        if (u_debug_view == 10) { FragColor = vec4(N * 0.5 + 0.5, 1.0); return; }
+        vec3 albedo = (u_debug_view == 2) ? vec3(1.0) : decode(base.rgb);
+        vec3 V = normalize(u_eye - v_world);
+        float NdotV = max(dot(N, V), 1e-4);
+        vec3 F0 = f0_for(albedo, metal);
+        // Roughness-aware: plain Schlick here darkened a rough dielectric by
+        // up to ~1/3 at grazing views, re-lighting the room when PBR is on.
+        vec3 Fv = F_schlick_rough(NdotV, F0, rough);
+        float h = clamp(dot(N, u_up) * 0.5 + 0.5, 0.0, 1.0);
+        // The downlight (AO included) is authored in display space: decode
+        // the WHOLE legacy received term, so AO reads exactly as it does today.
+        vec3 received = decode(u_ambient * mix(u_down_bottom, u_down_top, h) * ao);
+        vec3 diffuse = albedo * (1.0 - metal) * (vec3(1.0) - Fv) * received;
+        vec3 spec = vec3(0.0);
+        if (u_has_probe != 0) {
+            vec3 R = reflect(-V, N);
+            if (u_debug_view == 9) {
+                FragColor = vec4(encode(textureLod(u_probe_a, R, 0.0).rgb), 1.0);
+                return;
+            }
+            vec3 Rb = box_project(v_world, R, u_box_min, u_box_max, u_probe_pos);
+            // A ray exactly along a face it starts on is 0 * inf: fall back
+            // to the unprojected direction rather than feed NaN to bloom.
+            if (any(isnan(Rb)) || any(isinf(Rb))) Rb = R;
+            float mip = prefilter_mip(rough);
+            vec3 pre = mix(textureLod(u_probe_a, Rb, mip).rgb,
+                           textureLod(u_probe_b, Rb, mip).rgb, u_probe_mix);
+            vec2 ab = texture(u_brdf_lut, vec2(NdotV, rough)).rg;
+            spec = pre * (F0 * ab.x + ab.y) * specular_occlusion(NdotV, ao, rough);
+        }
+        // Static spots: direct light, never multiplied by AO. Their diffuse
+        // goes through the ceiling in combine(); only specular may exceed it.
+        accumulate_spots(N, V, NdotV, albedo, metal, rough, F0, diffuse, spec);
+        if (u_debug_view == 8) { FragColor = vec4(encode(spec), 1.0); return; }
+        vec3 col = combine(diffuse, spec, u_diffuse_max) * u_viewscreen_brightness;
+        col = mix(col, vec3(1.0), clamp(u_viewscreen_flash, 0.0, 1.0));
+        FragColor = vec4(apply_highlight(col), 1.0);
+        return;
+    }
     vec3 albedo = (u_debug_view == 2) ? vec3(1.0) : base.rgb;
     float h = clamp(dot(n, u_up) * 0.5 + 0.5, 0.0, 1.0);
     vec3 received = u_ambient * mix(u_down_bottom, u_down_top, h) * ao;
     vec3 col = diffuse_ceiling(albedo * received) * u_viewscreen_brightness;
     col = mix(col, vec3(1.0), clamp(u_viewscreen_flash, 0.0, 1.0));
-    FragColor = vec4(col, 1.0);
+    FragColor = vec4(apply_highlight(col), 1.0);
 }

@@ -122,6 +122,11 @@ def test_optional_holds_exactly_the_soft_guarded_bindings():
         "profiler_scopes", "profiler_frame",
         "set_swap_interval", "swap_interval",
         "set_cursor_shape",
+        "ray_trace_mesh_pick", "model_identity", "set_bridge_highlight",
+        "set_bridge_material_overrides", "set_bridge_pbr_enabled",
+        "set_bridge_probe_origin", "set_bridge_probe_scales",
+        "set_bridge_probe_mix", "request_bridge_probe_capture",
+        "set_bridge_spots",
     })
 
 

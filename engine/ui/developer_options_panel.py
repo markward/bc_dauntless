@@ -20,6 +20,7 @@ from engine.ui.panel import Panel
 from engine import dev_combat_cheats as cheats
 from engine import dev_dial_groups
 from engine import dev_light_preview as light_preview
+from engine import host_io
 from engine import renderer
 from engine.appc import sensor_occlusion
 from engine.rocks import catalogue as rock_catalogue
@@ -86,9 +87,11 @@ class DeveloperOptionsPanel(Panel):
     _NORMAL_STRENGTHS = (0.0, 0.5, 1.0, 2.0, 4.0)
 
     # Names cycled through by the "bridge_debug_view" action row, index ==
-    # renderer.BridgeDebugView's int value (0 Off .. 5 Mesh ID).
+    # renderer.BridgeDebugView's int value (0 Off .. 10 Map normals). 6-10
+    # are the bridge-PBR debug views added alongside the PBR A/B switch.
     _BRIDGE_DEBUG_VIEWS = ("Off", "Normals", "Light Only", "AO Only",
-                          "Triangle ID", "Mesh ID")
+                          "Triangle ID", "Mesh ID", "Roughness", "Metalness",
+                          "Specular only", "Probe (mirror)", "Map normals")
 
     def __init__(self) -> None:
         super().__init__()
@@ -113,6 +116,10 @@ class DeveloperOptionsPanel(Panel):
         self._normal_flip_g = True
         self._normal_strength = 1.0
         self._bridge_debug_view = 0
+        # Developer-only A/B switch for bridge PBR (default ON, not
+        # persisted -- no getter exists, so there is nothing to resync from
+        # on open(), the same shape as _normal_maps above).
+        self._bridge_pbr = True
         self._rock_catalogue = rock_catalogue.enabled()
         self._planet_geosphere = planet_geosphere.enabled()
         self._planet_atmosphere = planet_atmosphere.enabled()
@@ -139,6 +146,10 @@ class DeveloperOptionsPanel(Panel):
 
     def is_open(self) -> bool:
         return self._visible
+
+    def bridge_debug_view_names(self) -> List[str]:
+        """The "Bridge Debug View" row's cycle list, in index order."""
+        return list(self._BRIDGE_DEBUG_VIEWS)
 
     def open(self) -> None:
         # Re-sync the local mirror from the cheats module so a reopened
@@ -182,7 +193,7 @@ class DeveloperOptionsPanel(Panel):
             self._sensor_occlusion,
             self._systems_damaged, self._systems_disabled,
             self._normal_maps, self._normal_flip_g, self._normal_strength,
-            self._bridge_debug_view,
+            self._bridge_pbr, self._bridge_debug_view,
             self._profiler, self._rock_catalogue, self._dial_group,
             self._minor_rocks, self._far_tier,
             self._rock_specks, self._rock_puffs,
@@ -210,6 +221,7 @@ class DeveloperOptionsPanel(Panel):
                 "normal_maps": self._normal_maps,
                 "normal_flip_g": self._normal_flip_g,
                 "normal_strength": self._normal_strength,
+                "bridge_pbr": self._bridge_pbr,
                 "bridge_debug_view": self._BRIDGE_DEBUG_VIEWS[self._bridge_debug_view],
                 "profiler": self._profiler,
                 "rock_catalogue": self._rock_catalogue,
@@ -295,6 +307,11 @@ class DeveloperOptionsPanel(Panel):
             nxt = presets[(idx + 1) % len(presets)]
             renderer.set_normal_map_strength(nxt)
             self._normal_strength = nxt
+            return True
+        if action == "toggle:bridge_pbr":
+            new_val = not self._bridge_pbr
+            host_io.set_bridge_pbr_enabled(new_val)
+            self._bridge_pbr = new_val
             return True
         if action == "action:bridge_debug_view":
             nxt = (self._bridge_debug_view + 1) % len(self._BRIDGE_DEBUG_VIEWS)
@@ -404,7 +421,8 @@ class DeveloperOptionsPanel(Panel):
         if self._selected_tab == "lighting":
             out += [("ctrl", "systems_damaged"), ("ctrl", "systems_disabled"),
                     ("ctrl", "normal_maps"), ("ctrl", "normal_flip_g"),
-                    ("ctrl", "normal_strength"), ("ctrl", "bridge_debug_view")]
+                    ("ctrl", "normal_strength"), ("ctrl", "bridge_pbr"),
+                    ("ctrl", "bridge_debug_view")]
         if self._selected_tab == "environments":
             out += [("ctrl", "rock_catalogue"), ("ctrl", "minor_rocks"),
                     ("ctrl", "far_tier"), ("ctrl", "rock_specks"),

@@ -1,0 +1,151 @@
+{
+  "format": 1,
+  "profiles": {},
+  "shapes": {
+    "12:Material: roof grill": {
+      "block": 12,
+      "material": {
+        "roughness": 0.02
+      },
+      "name": "Material: roof grill"
+    },
+    "176:Material: e chairs": {
+      "block": 176,
+      "material": {
+        "metalness": 1,
+        "roughness": 0.06
+      },
+      "name": "Material: e chairs"
+    },
+    "20:Dim Material": {
+      "block": 20,
+      "material": {
+        "roughness": 0
+      },
+      "name": "Dim Material"
+    },
+    "29:walllight 01 Material: Wall Light": {
+      "block": 29,
+      "material": {
+        "metalness": 1,
+        "roughness": 0.08
+      },
+      "name": "walllight 01 Material: Wall Light"
+    },
+    "341:Material: e chairs": {
+      "block": 341,
+      "material": {
+        "metalness": 1,
+        "roughness": 0.02
+      },
+      "name": "Material: e chairs"
+    },
+    "34:walllight 02 Material: Wall Light": {
+      "block": 34,
+      "material": {
+        "metalness": 1,
+        "roughness": 0.14
+      },
+      "name": "walllight 02 Material: Wall Light"
+    },
+    "359:Material: door center1": {
+      "block": 359,
+      "material": {
+        "metalness": 0.89,
+        "roughness": 0
+      },
+      "name": "Material: door center1"
+    },
+    "389:Material: door center1": {
+      "block": 389,
+      "material": {
+        "metalness": 1,
+        "roughness": 0
+      },
+      "name": "Material: door center1"
+    },
+    "403:Material: door center1": {
+      "block": 403,
+      "material": {
+        "metalness": 1,
+        "roughness": 0.04
+      },
+      "name": "Material: door center1"
+    },
+    "476:Material: door center1": {
+      "block": 476,
+      "material": {
+        "metalness": 1,
+        "roughness": 0.17
+      },
+      "name": "Material: door center1"
+    },
+    "487:Material: door center": {
+      "block": 487,
+      "material": {
+        "metalness": 1,
+        "roughness": 0.08
+      },
+      "name": "Material: door center"
+    },
+    "499:Material: door center1": {
+      "block": 499,
+      "material": {
+        "metalness": 0.98,
+        "roughness": 0
+      },
+      "name": "Material: door center1"
+    },
+    "513:Material: door center1": {
+      "block": 513,
+      "material": {
+        "metalness": 0.93,
+        "roughness": 0
+      },
+      "name": "Material: door center1"
+    },
+    "530:Material: consoleLCARS": {
+      "block": 530,
+      "material": {
+        "roughness": 0
+      },
+      "name": "Material: consoleLCARS"
+    },
+    "536:Material: consoleLCARS": {
+      "block": 536,
+      "material": {
+        "roughness": 0
+      },
+      "name": "Material: consoleLCARS"
+    },
+    "546:Material: Lcars Schematic left": {
+      "block": 546,
+      "material": {
+        "roughness": 0
+      },
+      "name": "Material: Lcars Schematic left"
+    },
+    "563:Material: Lcars Schematic right": {
+      "block": 563,
+      "material": {
+        "roughness": 0
+      },
+      "name": "Material: Lcars Schematic right"
+    },
+    "63:Material: Material #38": {
+      "block": 63,
+      "material": {
+        "roughness": 0.14
+      },
+      "name": "Material: Material #38"
+    },
+    "68:Material: Material #38": {
+      "block": 68,
+      "material": {
+        "roughness": 0
+      },
+      "name": "Material: Material #38"
+    }
+  },
+  "source": "/Users/mward/Documents/Star Trek Bridge Commander/game/data/Models/Sets/EBridge/EBridge.nif"
+}

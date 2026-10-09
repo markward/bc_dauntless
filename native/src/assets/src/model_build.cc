@@ -119,6 +119,29 @@ std::string sibling_specular_filename(std::string_view fname) {
     return stem + "_specular" + ext;
 }
 
+/// Interior sibling policy (spec 2026-10-08-bridge-emitters §9.2/§9.3): the
+/// directories probed for a `_rough`/`_metal`/`_normal` sibling of
+/// `resolved_albedo`. Policy OFF (every ship load) keeps today's behaviour:
+/// probe every entry of ctx.texture_search_paths. Policy ON: a STOCK albedo
+/// (its directory IS the last entry of texture_search_paths -- game_asset_dirs
+/// always ends with it) is probed ONLY in ctx.sibling_overlay_dirs; any other
+/// albedo (a mod / replacements override) is probed ONLY beside itself. An
+/// empty resulting list means no sibling probe at all.
+/// std::filesystem::equivalent() throws when a path doesn't exist, so this
+/// uses the std::error_code overload -- a nonexistent search-path entry
+/// (test fixtures routinely pass one) simply isn't treated as "stock".
+std::vector<std::filesystem::path> sibling_dirs_for(
+    const ModelBuildContext& ctx, const std::filesystem::path& resolved_albedo) {
+    if (!ctx.interior_sibling_policy) return ctx.texture_search_paths;
+    const auto parent = resolved_albedo.parent_path();
+    std::error_code ec;
+    const bool stock = !ctx.texture_search_paths.empty() &&
+        std::filesystem::equivalent(parent, ctx.texture_search_paths.back(), ec) &&
+        !ec;
+    if (stock) return ctx.sibling_overlay_dirs;
+    return {parent};
+}
+
 struct TextureLoadResult {
     std::unordered_map<std::uint32_t, int> image_to_texture;
     std::unordered_set<std::uint32_t>      glow_image_links;
@@ -137,6 +160,13 @@ struct TextureLoadResult {
     /// NIF link_id of a non-derived NiImage -> Model::textures index of a
     /// sibling "<basename>_normal.tga" found on disk beside it.
     std::unordered_map<std::uint32_t, int> sibling_normal_for_image;
+    /// NIF link_id of a non-derived NiImage -> Model::textures index of a
+    /// sibling "<basename>_rough.tga" found on disk beside it (bridge PBR
+    /// roughness map; spec 2026-10-08-bridge-emitters §9.2).
+    std::unordered_map<std::uint32_t, int> sibling_rough_for_image;
+    /// Same as sibling_rough_for_image for "<basename>_metal.tga" (bridge PBR
+    /// metalness map).
+    std::unordered_map<std::uint32_t, int> sibling_metal_for_image;
     /// NIF link ID -> source filename (NiImage::file_name) for external
     /// images. Used by material_build's lightmap-pass predicate.
     std::unordered_map<std::uint32_t, std::string> image_filename_for_link;
@@ -159,10 +189,16 @@ TextureLoadResult load_all_textures(
         const auto* img = std::get_if<nif::NiImage>(&f.blocks[i]);
         if (!img) continue;
         Image decoded;
+        // Valid only when img->use_external != 0 AND the resolve below
+        // succeeded; empty otherwise (missing/unreadable albedo -- the
+        // derived-map block below falls back to probing every
+        // texture_search_paths entry rather than applying the interior
+        // sibling policy to an unresolved path).
+        fs::path resolved_albedo;
         try {
             if (img->use_external != 0) {
-                auto path = ctx.resolver->resolve(img->file_name, ctx.texture_search_paths);
-                auto bytes = read_file(path);
+                resolved_albedo = ctx.resolver->resolve(img->file_name, ctx.texture_search_paths);
+                auto bytes = read_file(resolved_albedo);
                 decoded = decode_tga(bytes);
             } else {
                 auto raw_idx = resolver.resolve(img->image_data_link);
@@ -249,40 +285,59 @@ TextureLoadResult load_all_textures(
                 // through to black_fallback in the renderer.
             }
 
-            // Sibling normal map. Split resolve from decode so a missing file
-            // (the common case) stays silent while a corrupt one is reported.
-            const std::string normal_name =
-                sibling_normal_filename(img->file_name);
-            std::filesystem::path normal_path;
-            bool normal_found = false;
-            try {
-                normal_path =
-                    ctx.resolver->resolve(normal_name, ctx.texture_search_paths);
-                normal_found = true;
-            } catch (const std::exception&) {
-                // No sibling on disk. Most ships have none.
-            }
-            if (normal_found) {
+            // Sibling normal / roughness / metalness maps. Split resolve
+            // from decode so a missing file (the common case) stays silent
+            // while a corrupt one is reported. The probe directory set
+            // depends on the interior sibling policy (sibling_dirs_for) --
+            // ctx.texture_search_paths, byte-identical to today, when the
+            // policy is off (every ship load); computed once per image
+            // since all three suffixes share the same albedo.
+            struct SiblingMapProbe {
+                const char*                              suffix;
+                std::unordered_map<std::uint32_t, int>*  sink;
+                bool                                      reconstruct_z;
+            };
+            const SiblingMapProbe probes[] = {
+                {"_normal", &out.sibling_normal_for_image, /*reconstruct_z=*/true},
+                {"_rough",  &out.sibling_rough_for_image,  false},
+                {"_metal",  &out.sibling_metal_for_image,  false},
+            };
+            const auto sibling_dirs = resolved_albedo.empty()
+                ? ctx.texture_search_paths
+                : sibling_dirs_for(ctx, resolved_albedo);
+            for (const auto& probe : probes) {
+                const std::string map_name =
+                    sibling_map_filename(img->file_name, probe.suffix);
+                std::filesystem::path map_path;
+                bool found = false;
                 try {
-                    auto normal_bytes = read_file(normal_path);
-                    Image normal_decoded = decode_tga(normal_bytes);
-                    // Blue re-derived from red/green: see texture.h. Done
-                    // BEFORE upload so the mip chain averages unit vectors.
-                    reconstruct_normal_map_z(normal_decoded);
-                    Texture normal_tex = upload(normal_decoded, true);
-                    const int normal_idx =
-                        static_cast<int>(model.textures.size());
-                    out.sibling_normal_for_image[link_id] = normal_idx;
-                    model.textures.push_back(std::move(normal_tex));
+                    map_path = ctx.resolver->resolve(map_name, sibling_dirs);
+                    found = true;
+                } catch (const std::exception&) {
+                    // No sibling on disk. Most models have none.
+                }
+                if (!found) continue;
+                try {
+                    auto map_bytes = read_file(map_path);
+                    Image map_decoded = decode_tga(map_bytes);
+                    if (probe.reconstruct_z) {
+                        // Blue re-derived from red/green: see texture.h. Done
+                        // BEFORE upload so the mip chain averages unit vectors.
+                        reconstruct_normal_map_z(map_decoded);
+                    }
+                    Texture map_tex = upload(map_decoded, true);
+                    const int map_idx = static_cast<int>(model.textures.size());
+                    (*probe.sink)[link_id] = map_idx;
+                    model.textures.push_back(std::move(map_tex));
                 } catch (const std::exception& e) {
                     // SKIP, do not substitute the checkerboard the base-texture
-                    // path uses: a checkerboard bound as a normal map is violent
-                    // garbage lighting, not a legible error. Bump stays empty and
-                    // the hull renders exactly as it does today.
+                    // path uses: a checkerboard bound as a normal/rough/metal
+                    // map is violent garbage lighting input, not a legible
+                    // error. The stage stays empty and the hull renders
+                    // exactly as it does today.
                     std::fprintf(stderr,
-                        "[model_build] normal map '%s': %s; skipping (hull "
-                        "renders unmapped)\n",
-                        normal_name.c_str(), e.what());
+                        "[model_build] sibling map '%s': %s; skipping\n",
+                        map_name.c_str(), e.what());
                 }
             }
         }
@@ -392,6 +447,8 @@ MaterialInputs gather_material_inputs(
     const std::unordered_map<std::uint32_t, int>& sibling_specular_for_image,
     const std::unordered_set<std::uint32_t>& normal_image_links,
     const std::unordered_map<std::uint32_t, int>& sibling_normal_for_image,
+    const std::unordered_map<std::uint32_t, int>& sibling_rough_for_image,
+    const std::unordered_map<std::uint32_t, int>& sibling_metal_for_image,
     const LinkResolver& resolver)
 {
     MaterialInputs in;
@@ -401,6 +458,8 @@ MaterialInputs gather_material_inputs(
     in.sibling_specular_for_image = &sibling_specular_for_image;
     in.normal_image_links = &normal_image_links;
     in.sibling_normal_for_image = &sibling_normal_for_image;
+    in.sibling_rough_for_image = &sibling_rough_for_image;
+    in.sibling_metal_for_image = &sibling_metal_for_image;
 
     auto consider = [&](std::uint32_t link) {
         auto idx = resolver.resolve(link);
@@ -764,7 +823,7 @@ bool filename_is_normal(std::string_view fname) {
     return lower_ends_with(stem, "_normal") || lower_ends_with(stem, "_norm");
 }
 
-std::string sibling_normal_filename(std::string_view fname) {
+std::string sibling_map_filename(std::string_view fname, std::string_view suffix) {
     auto dot = fname.find_last_of('.');
     std::string stem(dot == std::string_view::npos ? fname : fname.substr(0, dot));
     std::string ext (dot == std::string_view::npos ? std::string{}
@@ -776,7 +835,11 @@ std::string sibling_normal_filename(std::string_view fname) {
             [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         if (tail == "_glow") stem.resize(stem.size() - 5);
     }
-    return stem + "_normal" + ext;
+    return stem + std::string(suffix) + ext;
+}
+
+std::string sibling_normal_filename(std::string_view fname) {
+    return sibling_map_filename(fname, "_normal");
 }
 
 glm::mat4 decal_body_to_mask(const glm::vec3& origin, const glm::vec3& u_axis,
@@ -933,6 +996,7 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
     struct PendingMesh {
         MeshCpu cpu;
         std::string shape_name;
+        int block = -1;
         glm::mat4 to_model{1.0f};
         bool has_authored_normals = true;
         std::vector<glm::vec4> source_colours;  // NIF float colours; only for normal-less shapes
@@ -968,7 +1032,9 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
             tex_result.specular_image_links,
             tex_result.sibling_specular_for_image,
             tex_result.normal_image_links,
-            tex_result.sibling_normal_for_image, resolver);
+            tex_result.sibling_normal_for_image,
+            tex_result.sibling_rough_for_image,
+            tex_result.sibling_metal_for_image, resolver);
         mat_inputs.image_filename_for_link = &tex_result.image_filename_for_link;
         mat_inputs.flip_image_override_for_prop = &flip_image_override_for_prop;
         mat_inputs.geometry_uv_set_count = data->uv_sets.size();
@@ -1091,6 +1157,7 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         PendingMesh pm;
         pm.cpu = std::move(cpu);
         pm.shape_name = shape->av.obj.name;
+        pm.block = static_cast<int>(i);
         pm.to_model = shape_verts_for_sampling.back().to_model;
         pm.has_authored_normals = data->has_normals;
         if (!data->has_normals && data->has_vertex_colors) {
@@ -1123,10 +1190,12 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
             Mesh mesh = mesh_upload(MeshCpu(pm.cpu));
             mesh.set_cpu_data(std::move(pm.cpu));
             mesh.set_shape_name(pm.shape_name);
+            mesh.set_source_block(pm.block);
             model.meshes.push_back(std::move(mesh));
         } else {
             Mesh mesh = mesh_upload(std::move(pm.cpu));
             mesh.set_shape_name(pm.shape_name);
+            mesh.set_source_block(pm.block);
             model.meshes.push_back(std::move(mesh));
         }
     }

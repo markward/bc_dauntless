@@ -3,7 +3,7 @@ import engine.renderer as renderer
 
 def test_load_model_forwards_interior_flag(monkeypatch):
     seen = {}
-    def fake(nif, tex, reps, decals, scale, geosphere, interior):
+    def fake(nif, tex, reps, decals, scale, geosphere, interior, sibling_overlay_dirs):
         seen.update(geosphere=geosphere, interior=interior)
         return 7
     monkeypatch.setattr(renderer._h, "load_model", fake)
