@@ -84,6 +84,45 @@ def write_obj(shapes, obj_path: Path, mtl_path: Path, texture_path_for) -> None:
 class ObjMesh:
     positions: list = field(default_factory=list)
     faces: list = field(default_factory=list)
+    # Parallel to `faces`: the map_Kd BASENAME of the material in effect for
+    # each face (None: no material, no map_Kd, or no readable .mtl). Empty
+    # for a mesh built by hand -- callers treat that as "no texture info".
+    face_albedos: list = field(default_factory=list)
+
+
+def _map_kd_basename(rest: str):
+    """Basename of a map_Kd argument string, skipping any leading options
+    ("-bm 1.0", "-s 1 1 1") Blender or another exporter may write."""
+    toks = rest.split()
+    while toks and toks[0].startswith("-"):
+        toks = toks[1:]
+        while toks:
+            try:
+                float(toks[0])
+            except ValueError:
+                break
+            toks = toks[1:]
+    path = " ".join(toks)
+    base = re.split(r"[/\\]", path)[-1]
+    return base or None
+
+
+def read_mtl(path: Path) -> dict:
+    """material name -> map_Kd file basename (None when it has no map_Kd).
+    Compare by basename, never by material name: Blender renames materials
+    ('.001') and the directory differs between source trees."""
+    out = {}
+    current = None
+    for line in Path(path).read_text().splitlines():
+        parts = line.strip().split(None, 1)
+        if not parts:
+            continue
+        if parts[0] == "newmtl":
+            current = parts[1].strip() if len(parts) > 1 else ""
+            out[current] = None
+        elif parts[0] == "map_Kd" and current is not None and len(parts) > 1:
+            out[current] = _map_kd_basename(parts[1])
+    return out
 
 
 def read_objects(path: Path) -> dict:
@@ -91,12 +130,19 @@ def read_objects(path: Path) -> dict:
     owner = []          # global v index -> (mesh, local index)
     uvs = []
     current = None
+    mtl = {}            # material name -> map_Kd basename, from mtllib
+    material = None     # usemtl in effect
     for line_no, line in enumerate(Path(path).read_text().splitlines(), start=1):
         parts = line.split()
         if not parts:
             continue
         tag = parts[0]
-        if tag == "o":
+        if tag == "mtllib":
+            mtl_path = Path(path).parent / " ".join(parts[1:])
+            mtl = read_mtl(mtl_path) if mtl_path.is_file() else {}
+        elif tag == "usemtl":
+            material = " ".join(parts[1:])
+        elif tag == "o":
             name = " ".join(parts[1:])
             current = objs.setdefault(name, ObjMesh())
         elif tag == "v":
@@ -128,4 +174,5 @@ def read_objects(path: Path) -> dict:
                     uv = uvs[ti]
                 face.append((local, uv))
             current.faces.append(face)
+            current.face_albedos.append(mtl.get(material))
     return objs

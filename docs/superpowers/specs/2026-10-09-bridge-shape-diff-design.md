@@ -169,6 +169,29 @@ base vertex contributes nothing; orphaned original vertices are left in
 place, never emitted. Summary line:
 `block N: M vertices moved, K UVs changed, R triangles removed, A added`.
 
+**Iteration 2b, as built (2026-10-09) -- per-shape albedo.** `read_objects`
+also records, per face, the material in effect (`usemtl`) resolved through
+the `.mtl` named by `mtllib` (read beside the OBJ; missing file -> no texture
+info) to its `map_Kd` file **basename** -- compared case-insensitively, never
+by material name (Blender renames to `.001`; the directory differs between
+source trees). Per object: if every edit face uses one and the same albedo
+basename and it differs from the base object's, a texture op
+`{block, albedo}` is recorded, alongside any moves/UVs/topology on the same
+object. Faces split across two or more albedos (or an albedo and none) are
+refused ("per-face material split isn't supported -- one texture per
+object"); an object with no `map_Kd` records nothing. The file must be a
+`.tga` (the NIF loader decodes TGA only) and must exist -- case-insensitive
+name match -- in the **replacements overlay dir mirroring the NIF's texture
+dir** (`mods.replacements_root()/<nif dir>/High`) or the **stock** one
+(`paths.game_root()/<nif dir>/High`); else the object is refused, naming the
+file and both dirs. Mod dirs are deliberately not searched: the fix applies
+with or without a mod. Summary line gains `, texture -> <name>`; a block
+with only a texture op prints `block N: texture -> <name>`. **Albedo only:**
+emissive / glow maps are deliberately out of scope (the PBR plan decides
+`_glow` vs `_emissive`). Note the loader still applies BC's filename
+conventions to the albedo it is given -- a `*_glow.tga` albedo binds to Base
+**and** Glow (alpha = emissive mask), exactly as a stock `_glow` image does.
+
 **`--partial`:** by default a single unsupported object (one that needs
 topology, or a vertex-split UV conflict) aborts the whole diff -- nothing is
 written. `diff BASE EDIT --partial [--write]` instead diffs every object
@@ -189,16 +212,28 @@ the export itself is broken, not that one object's edit is unsupported.
 ## 6. The fix file
 
 Same file as today: `native/assets/mesh_fixes/<fnv1a64>.json`. `merges` becomes
-optional; a file needs at least one of `merges` / `shape_edits`.
+optional; a file needs at least one of `merges` / `shape_edits` / `textures`.
+Still `format` 1.
 
 ```json
 {
   "format": 1,
   "source": "data/Models/Sets/DBridge/Dbridge.NIF",
   "generator": "tools/bridge_shape_diff.py",
-  "shape_edits": "<base64 of the binary payload>"
+  "shape_edits": "<base64 of the binary payload>",
+  "textures": [{"block": 29, "albedo": "g_imp_connops.tga"}]
 }
 ```
+
+`textures` (2b, optional, sorted by block, written only when non-empty) gives
+one NiTriShape its own albedo: a **bare** `.tga` filename resolved through the
+model's texture search dirs exactly like a stock NiImage. The host's bridge
+search list is `paths.game_asset_dirs(env)`, which already puts the
+replacements overlay dir first (pinned by
+`tests/host/test_realize_set.py::test_realize_set_bridge_texture_dirs_include_the_replacements_overlay`),
+so a file that exists only in the overlay is found. `shape_edits` is omitted
+when the diff holds texture ops but no geometry. A texture filename is a
+name, not BC data, so it doesn't change §6.2.
 
 **Not human-readable by design** (Mark's ask): the edits are one packed binary
 blob, base64-encoded. No compression — no new dependency on either side.
@@ -252,6 +287,24 @@ original) when:
 
 After applying: recompute the shape's bound centre/radius; clear match groups.
 
+**Texture ops (2b).** Validated with the same contract, before any mutation:
+block in range and a `NiTriShape`; `albedo` non-empty, a bare filename (no
+`/` or `\`), extension `.tga` (case-insensitive); each block at most once in
+`textures` (a texture op may share its block with a shape edit -- texture
+and geometry are independent). Applied last: append an external `NiImage`
+(`file_name` = albedo, other fields at the parser's defaults) and an
+`NiTextureProperty` (flags 0, as every stock DBridge one) pointing at it, with
+fresh link ids (`max(block_ids) + 1, + 2`), and push the property's link onto
+the shape's **own** `property_links`. `gather_material_inputs` visits a
+shape's own links before any ancestor's, so it wins over the inherited
+texture while its siblings keep theirs -- no renderer change was needed.
+`File::root` is re-pointed at block 0 after the append (it is a raw pointer
+into `blocks`). Tests: `native/tests/assets/cpu/mesh_fix_texture_test.cc`
+(synthetic sibling isolation; every refusal leaves the file unchanged; real
+`Dbridge.NIF`: block 29 samples the swap while 59 keeps `Map 22.tga`, and all
+four round-2b targets 29/45/59/479 take a swap -- none is overridden by an
+ancestor `NiMultiTextureProperty`).
+
 ---
 
 ## 8. Testing
@@ -279,6 +332,7 @@ the scratchpad; in game, Developer Options → Lighting → Bridge Debug View
 | 1b | UV re-map of console seats (b0224/b0255) | tool support built; Mark's first edit turned out to hold no UV changes — unused so far | `diff` now records `uv` alongside `move`; the loader (`apply_shape_edits`) already applied `uv` records before this task -- only the Python side refused them |
 | 1c | First live step: moves on b0468 (13 NIF verts) / b0652 (28) / b0663 (28) | accepted by Mark in game 2026-10-09; fix `dbcdbd4a43dc5a56.json` committed | Console sliver b0170/b0175 needs triangle add/remove (next) |
 | 2a | Triangle add/remove on existing vertices (console sliver b0170/b0175) | accepted by Mark in game 2026-10-09: b0175 loses NIF tris 4+5 (the squashed sliver, stored twice), b0170 gains (22, 9, 32) on existing originals/UVs; committed in fix `dbcdbd4a43dc5a56.json` with 1c's moves | Removal takes every NIF copy of the face (duplicates, reversed and seam twins); added triangles must sit on existing originals with existing UVs; vertex deletion aligned by order (§5.2) |
+| 2b | Per-shape albedo texture op (console top panels b0029/b0059 → g_imp_connops, wall inset slots b0045/b0479 → g_imp_redbars) | tool support built; awaiting Mark's round | `textures` field in the fix file (§6, §7); diff records it by `map_Kd` basename, one per object, file must exist in the overlay or stock dir (§5.3). Emissive/glow deliberately out of scope |
 | 2 | Turbolift header reshape: triangle remove/add | — | |
 | 3 | Extruded side panels: new verts/tris/UVs | — | Open: side-face texturing. Lean: collapse the new faces' UVs onto the panel border (stretch edge texels, no new texture); alternative: a project-owned trim texture |
 

@@ -10,14 +10,17 @@ OBJ files contain BC geometry: keep them OUT of the repo. Blender: import the
 OBJ into an EMPTY scene (delete Blender's default Cube/Camera/Light) with
 default settings; export base.obj before editing and edit.obj after, both
 with default settings. Don't join, split or rename objects. Accepted:
-vertex MOVES, UV0 EDITS, deleted faces/vertices, and added TRIANGLES whose
-corners sit on existing vertices with existing UVs; new vertices are refused."""
+vertex MOVES, UV0 EDITS, deleted faces/vertices, added TRIANGLES whose
+corners sit on existing vertices with existing UVs, and a new ALBEDO texture
+per object (map_Kd; the .tga must be in the replacements overlay or stock
+texture dir); new vertices are refused."""
 import argparse
 import json
+import posixpath
 import sys
 from pathlib import Path
 
-from engine import paths
+from engine import mods, paths
 from tools.gen_mesh_fixes import fnv1a64_hex
 from tools.shape_diff import ShapeDiffError, match, obj_io, payload
 
@@ -56,9 +59,41 @@ def export(rel: str, out_dir: Path) -> Path:
     return obj
 
 
+def _texture_dirs(rel: str) -> list:
+    """Where a texture op's file must exist: the replacements overlay dir
+    mirroring the NIF's texture dir, then the stock one (spec §5.3). Mod dirs
+    are deliberately absent -- the fix applies with or without a mod."""
+    tex_rel = posixpath.dirname(rel) + "/High"
+    return [mods.replacements_root() / tex_rel, paths.game_root() / tex_rel]
+
+
+def _has_geometry(e: dict) -> bool:
+    return any(e.get(k) for k in ("moves", "uvs", "add_vertices",
+                                  "remove_triangles", "add_triangles"))
+
+
 def make_fix_dict(rel: str, edits: list) -> dict:
-    return {"format": 1, "source": rel, "generator": GENERATOR,
-            "shape_edits": payload.encode_b64(edits)}
+    geometry = [e for e in edits if _has_geometry(e)]
+    textures = sorted(({"block": e["block"], "albedo": e["albedo"]}
+                       for e in edits if e.get("albedo")), key=lambda t: t["block"])
+    fix = {"format": 1, "source": rel, "generator": GENERATOR}
+    if geometry or not textures:
+        fix["shape_edits"] = payload.encode_b64(geometry)
+    if textures:
+        fix["textures"] = textures
+    return fix
+
+
+def _summary(e: dict) -> str:
+    parts = []
+    if _has_geometry(e):
+        parts.append(f"{len(e['moves'])} vertices moved, "
+                     f"{len(e['uvs'])} UVs changed, "
+                     f"{len(e.get('remove_triangles', []))} triangles removed, "
+                     f"{len(e.get('add_triangles', []))} added")
+    if e.get("albedo"):
+        parts.append(f"texture -> {e['albedo']}")
+    return f"block {e['block']}: " + ", ".join(parts)
 
 
 def fix_text(fix: dict) -> str:
@@ -68,10 +103,12 @@ def fix_text(fix: dict) -> str:
 def build_fix(rel: str, base_path: Path, edit_path: Path, partial: bool = False):
     base_objs = obj_io.read_objects(base_path)
     edit_objs = obj_io.read_objects(edit_path)
+    dirs = _texture_dirs(rel)
     if partial:
-        edits, skipped = match.diff(_shapes(rel), base_objs, edit_objs, partial=True)
+        edits, skipped = match.diff(_shapes(rel), base_objs, edit_objs, partial=True,
+                                    texture_dirs=dirs)
         return make_fix_dict(rel, edits), edits, skipped
-    edits = match.diff(_shapes(rel), base_objs, edit_objs)
+    edits = match.diff(_shapes(rel), base_objs, edit_objs, texture_dirs=dirs)
     return make_fix_dict(rel, edits), edits
 
 
@@ -98,10 +135,7 @@ def main(argv=None) -> int:
             fix, edits = build_fix(a.nif, a.base, a.edit)
             skipped = []
         for e in edits:
-            print(f"block {e['block']}: {len(e['moves'])} vertices moved, "
-                  f"{len(e['uvs'])} UVs changed, "
-                  f"{len(e.get('remove_triangles', []))} triangles removed, "
-                  f"{len(e.get('add_triangles', []))} added")
+            print(_summary(e))
         if skipped:
             print("skipped (not yet supported):")
             for name, reason in skipped:

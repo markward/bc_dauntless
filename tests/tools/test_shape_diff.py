@@ -847,3 +847,217 @@ def test_topology_edit_on_overlapping_identity_groups_is_refused(tmp_path):
 def test_overlapping_identity_groups_do_not_block_an_untouched_object(tmp_path):
     s, base = _sliver_base(tmp_path, _straddle_shape())
     assert match.diff_shape(s, base, _copy(base)) is None
+
+
+# --- Task 14: per-shape albedo texture op ---
+
+def test_read_mtl_maps_material_to_map_kd_basename(tmp_path):
+    p = tmp_path / "m.mtl"
+    p.write_text(
+        "# Blender MTL\nnewmtl Map_1.tga\nKd 1 1 1\nmap_Kd /stock/High/Map 1.tga\n\n"
+        "newmtl Map_1.tga.001\nmap_Kd -bm 1.0 C:\\overlay\\High\\g_imp_connops.tga\n"
+        "newmtl plain\nKd 0.5 0.5 0.5\n")
+    assert obj_io.read_mtl(p) == {"Map_1.tga": "Map 1.tga",
+                                  "Map_1.tga.001": "g_imp_connops.tga",
+                                  "plain": None}
+
+
+def test_read_objects_records_each_faces_albedo_from_the_mtllib(tmp_path):
+    (tmp_path / "e.mtl").write_text(
+        "newmtl a\nmap_Kd /x/Map 1.tga\nnewmtl b\nmap_Kd /y/new.tga\nnewmtl c\n")
+    p = tmp_path / "e.obj"
+    p.write_text("mtllib e.mtl\no b0003_x\nv 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\n"
+                 "f 1 2 3\nusemtl a\nf 1 3 4\nusemtl b\nf 1 2 4\nusemtl c\nf 2 3 4\n")
+    m = obj_io.read_objects(p)["b0003_x"]
+    assert m.face_albedos == [None, "Map 1.tga", "new.tga", None]
+
+
+def test_read_objects_without_the_mtl_file_has_no_albedos(tmp_path):
+    p = tmp_path / "e.obj"
+    p.write_text("mtllib missing.mtl\no b0003_x\nv 0 0 0\nv 1 0 0\nv 1 1 0\n"
+                 "usemtl a\nf 1 2 3\n")
+    assert obj_io.read_objects(p)["b0003_x"].face_albedos == [None]
+
+
+def _tex_dirs(tmp_path, overlay_files=(), stock_files=()):
+    overlay, stock = tmp_path / "overlay" / "High", tmp_path / "stock" / "High"
+    for d, names in ((overlay, overlay_files), (stock, stock_files)):
+        d.mkdir(parents=True, exist_ok=True)
+        for n in names:
+            (d / n).write_bytes(b"tga")
+    return [overlay, stock]
+
+
+def _tex_pair(tmp_path, shapes, edit_mtl_text, edit_obj_text=None):
+    """base.obj/base.mtl as the exporter writes them (map_Kd -> stock file),
+    and an edit.obj (same geometry unless given) whose mtllib is edit.mtl and
+    whose exported material is renamed to edit.mtl's FIRST material, the way
+    Blender re-exports a material it renamed ('.001')."""
+    base_obj, base_mtl = tmp_path / "base.obj", tmp_path / "base.mtl"
+    obj_io.write_obj(shapes, base_obj, base_mtl, lambda n: Path("/stock/High") / n)
+    text = edit_obj_text if edit_obj_text is not None else base_obj.read_text()
+    first = edit_mtl_text.split("newmtl ", 1)[1].splitlines()[0]
+    text = text.replace("usemtl Map_1.tga\n", f"usemtl {first}\n")
+    edit_obj = tmp_path / "edit.obj"
+    edit_obj.write_text(text.replace("mtllib base.mtl", "mtllib edit.mtl"))
+    (tmp_path / "edit.mtl").write_text(edit_mtl_text)
+    return obj_io.read_objects(base_obj), obj_io.read_objects(edit_obj)
+
+
+def test_retextured_object_records_a_texture_op(tmp_path):
+    s = _shape()
+    base, edit = _tex_pair(tmp_path, [s],
+                           "newmtl Map_1.tga.001\nmap_Kd /blender/new panel.tga\n")
+    dirs = _tex_dirs(tmp_path, overlay_files=["new panel.tga"])
+    edits = match.diff([s], base, edit, texture_dirs=dirs)
+    assert edits == [{"block": 11, "orig_vertex_count": 5, "orig_triangle_count": 3,
+                      "moves": [], "uvs": [], "remove_triangles": [],
+                      "add_triangles": [], "albedo": "new panel.tga"}]
+
+
+def test_same_texture_under_a_renamed_material_is_no_op(tmp_path):
+    s = _shape()
+    base, edit = _tex_pair(tmp_path, [s],
+                           "newmtl Map_1.tga.001\nmap_Kd D:\\other\\tree\\Map 1.tga\n")
+    assert match.diff([s], base, edit, texture_dirs=_tex_dirs(tmp_path)) == []
+
+
+def test_object_without_map_kd_records_no_texture_op(tmp_path):
+    s = _shape()
+    base, edit = _tex_pair(tmp_path, [s], "newmtl Map_1.tga\nKd 1 1 1\n")
+    assert match.diff([s], base, edit, texture_dirs=_tex_dirs(tmp_path)) == []
+
+
+def test_two_albedos_on_one_object_is_refused(tmp_path):
+    s = _seam_shape()
+    base_obj = tmp_path / "base.obj"
+    obj_io.write_obj([s], base_obj, tmp_path / "base.mtl", lambda n: Path("/s") / n)
+    lines = base_obj.read_text().splitlines()
+    f_at = [i for i, line in enumerate(lines) if line.startswith("f ")]
+    lines.insert(f_at[2], "usemtl second")      # quad B's faces take another texture
+    mtl = "newmtl Map_1.tga\nmap_Kd /s/a.tga\nnewmtl second\nmap_Kd /s/b.tga\n"
+    base, edit = _tex_pair(tmp_path, [s], mtl, "\n".join(lines) + "\n")
+    dirs = _tex_dirs(tmp_path, overlay_files=["a.tga", "b.tga"])
+    with pytest.raises(ShapeDiffError, match="one texture per object"):
+        match.diff([s], base, edit, texture_dirs=dirs)
+
+
+def test_missing_texture_file_is_refused_naming_file_and_dirs(tmp_path):
+    s = _shape()
+    base, edit = _tex_pair(tmp_path, [s], "newmtl m\nmap_Kd /blender/gone.tga\n")
+    dirs = _tex_dirs(tmp_path)
+    with pytest.raises(ShapeDiffError, match="gone.tga") as exc:
+        match.diff([s], base, edit, texture_dirs=dirs)
+    assert str(dirs[0]) in str(exc.value) and str(dirs[1]) in str(exc.value)
+
+
+def test_texture_found_in_the_stock_dir_case_insensitively(tmp_path):
+    s = _shape()
+    base, edit = _tex_pair(tmp_path, [s], "newmtl m\nmap_Kd /blender/MAP 7.TGA\n")
+    dirs = _tex_dirs(tmp_path, stock_files=["Map 7.tga"])
+    [e] = match.diff([s], base, edit, texture_dirs=dirs)
+    assert e["albedo"] == "MAP 7.TGA"
+
+
+def test_non_tga_texture_is_refused(tmp_path):
+    s = _shape()
+    base, edit = _tex_pair(tmp_path, [s], "newmtl m\nmap_Kd /blender/new.png\n")
+    dirs = _tex_dirs(tmp_path, overlay_files=["new.png"])
+    with pytest.raises(ShapeDiffError, match=r"\.tga"):
+        match.diff([s], base, edit, texture_dirs=dirs)
+
+
+def test_texture_op_coexists_with_a_move_on_the_same_object(tmp_path):
+    s = _shape()
+    base_obj = tmp_path / "base.obj"
+    obj_io.write_obj([s], base_obj, tmp_path / "base.mtl", lambda n: Path("/s") / n)
+    lines = base_obj.read_text().splitlines()
+    i = next(k for k, line in enumerate(lines) if line.startswith("v "))
+    lines[i] = "v 0.000000 0.500000 0.000000 1.000000 1.000000 1.000000"
+    base, edit = _tex_pair(tmp_path, [s], "newmtl m\nmap_Kd /b/new.tga\n",
+                           "\n".join(lines) + "\n")
+    [e] = match.diff([s], base, edit,
+                     texture_dirs=_tex_dirs(tmp_path, overlay_files=["new.tga"]))
+    assert e["albedo"] == "new.tga" and [i for i, _ in e["moves"]] == [0]
+
+
+def test_partial_skips_an_object_with_a_refused_texture_entirely(tmp_path):
+    a, b = _shape(block=11), _shape(block=12, parent="console top", offset=(5, 0, 0))
+    base_obj = tmp_path / "base.obj"
+    obj_io.write_obj([a, b], base_obj, tmp_path / "base.mtl", lambda n: Path("/s") / n)
+    lines = base_obj.read_text().splitlines()
+    o12 = lines.index("o b0012_console_top")
+    i = next(k for k in range(o12, len(lines)) if lines[k].startswith("v "))
+    lines[i] = "v 5.000000 0.500000 0.000000 1.000000 1.000000 1.000000"   # a move...
+    u = next(k for k in range(o12, len(lines)) if lines[k].startswith("usemtl"))
+    lines[u] = "usemtl gone"                                               # ...plus a bad texture
+    mtl = "newmtl Map_1.tga\nmap_Kd /s/Map 1.tga\nnewmtl gone\nmap_Kd /b/gone.tga\n"
+    base, edit = _tex_pair(tmp_path, [a, b], mtl, "\n".join(lines) + "\n")
+    edits, skipped = match.diff([a, b], base, edit, partial=True,
+                                texture_dirs=_tex_dirs(tmp_path))
+    assert edits == []
+    assert [n for n, _ in skipped] == ["b0012_console_top"]
+
+
+def test_make_fix_dict_emits_sorted_textures_only_when_present():
+    from tools import bridge_shape_diff as cli
+    tex_only = [{"block": 59, "orig_vertex_count": 4, "orig_triangle_count": 2,
+                 "albedo": "g.tga"},
+                {"block": 29, "orig_vertex_count": 4, "orig_triangle_count": 2,
+                 "moves": [], "albedo": "g.tga"}]
+    fix = cli.make_fix_dict(DBRIDGE, tex_only)
+    assert fix["textures"] == [{"block": 29, "albedo": "g.tga"},
+                               {"block": 59, "albedo": "g.tga"}]
+    assert "shape_edits" not in fix
+    both = cli.make_fix_dict(DBRIDGE, [dict(GOLDEN_EDIT, albedo="g.tga")])
+    assert both["shape_edits"] == GOLDEN_B64      # the albedo key never reaches the payload
+    assert both["textures"] == [{"block": 7, "albedo": "g.tga"}]
+    assert "textures" not in cli.make_fix_dict(DBRIDGE, [GOLDEN_EDIT])
+
+
+def test_texture_dirs_are_overlay_then_stock_beside_the_nif(monkeypatch, tmp_path):
+    from engine import mods
+    from tools import bridge_shape_diff as cli
+    monkeypatch.setattr(paths, "project_asset_root", lambda: tmp_path / "assets")
+    monkeypatch.setattr(paths, "game_root", lambda: tmp_path / "install")
+    assert cli._texture_dirs(DBRIDGE) == [
+        mods.replacements_root() / "data/Models/Sets/DBridge/High",
+        tmp_path / "install" / "data/Models/Sets/DBridge/High"]
+
+
+def test_main_summary_names_the_texture_and_lists_texture_only_blocks(
+        monkeypatch, tmp_path, capsys):
+    cli, _ = _patched_cli(monkeypatch, tmp_path)
+    tex_only = {"block": 59, "orig_vertex_count": 4, "orig_triangle_count": 2,
+                "moves": [], "uvs": [], "remove_triangles": [], "add_triangles": [],
+                "albedo": "g_imp_connops.tga"}
+    edits = [dict(GOLDEN_EDIT, albedo="g_imp_connops.tga"), tex_only]
+    monkeypatch.setattr(cli, "build_fix", lambda rel, base, edit:
+                        (cli.make_fix_dict(rel, edits), edits))
+    assert cli.main(["diff", "b.obj", "e.obj"]) == 0
+    out = capsys.readouterr().out
+    assert ("block 7: 1 vertices moved, 1 UVs changed, 1 triangles removed, 1 added, "
+            "texture -> g_imp_connops.tga") in out
+    assert "block 59: texture -> g_imp_connops.tga" in out
+
+
+def test_real_dbridge_texture_op_resolves_against_the_stock_dir(tmp_path):
+    host = pytest.importorskip("_dauntless_host")
+    nif = paths.game_root() / DBRIDGE
+    if not nif.exists():
+        pytest.skip("BC content not configured")
+    from tools import bridge_shape_diff as cli
+    cli.export(DBRIDGE, tmp_path)
+    base = tmp_path / "Dbridge.obj"
+    lines = base.read_text().splitlines()
+    o = lines.index(next(line for line in lines if line.startswith("o b0029")))
+    u = next(k for k in range(o, len(lines)) if lines[k].startswith("usemtl"))
+    lines[u] = "usemtl swapped"
+    edit = tmp_path / "edit.obj"
+    edit.write_text("\n".join(lines).replace("mtllib Dbridge.mtl", "mtllib edit.mtl") + "\n")
+    (tmp_path / "edit.mtl").write_text(
+        (tmp_path / "Dbridge.mtl").read_text() + "newmtl swapped\nmap_Kd /elsewhere/Map 7.tga\n")
+    fix, edits = cli.build_fix(DBRIDGE, base, edit)
+    assert fix["textures"] == [{"block": 29, "albedo": "Map 7.tga"}]
+    assert "shape_edits" not in fix
+    assert host is not None

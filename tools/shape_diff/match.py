@@ -9,7 +9,11 @@ order-preserving alignment on unmoved positions (`_correspondence`).
 diff_shape records moves, UV edits, removed faces (every NIF triangle on the
 face's welded vertex set, duplicates and reversed twins included) and added
 triangles on existing original vertices/UVs. New vertices, new UVs on an
-added face, a vertex split and a flipped existing face are refused."""
+added face, a vertex split and a flipped existing face are refused. A
+changed albedo (by map_Kd basename, one per object, file present in the
+overlay or stock texture dir) is recorded as the edit's "albedo" key."""
+from pathlib import Path
+
 from tools.shape_diff import ShapeDiffError, frames, obj_io
 
 POS_TOL = 1e-4
@@ -252,7 +256,48 @@ def _added_triangles(block, shape, ids, base, added_faces, final_local, uv_edits
     return out
 
 
-def diff_shape(shape: dict, base, edit):
+def _object_albedo(mesh):
+    """The one map_Kd basename every face of `mesh` uses, or None (no
+    texture info, or no map_Kd). A face set split across two albedos -- or a
+    texture and none -- is a sentinel tuple of the sorted names."""
+    names = set(mesh.face_albedos)
+    if len(names) > 1:
+        return tuple(sorted(n or "<none>" for n in names))
+    return next(iter(names), None)
+
+
+def _find_texture(name, texture_dirs):
+    want = name.casefold()
+    for d in texture_dirs:
+        d = Path(d)
+        if d.is_dir() and any(p.name.casefold() == want for p in d.iterdir() if p.is_file()):
+            return True
+    return False
+
+
+def _albedo_op(block, base, edit, texture_dirs):
+    """Spec §5.3: the edit's single albedo, when it differs from the base's
+    and the file exists in one of `texture_dirs` (overlay, then stock). None
+    when there is nothing to record."""
+    new = _object_albedo(edit)
+    if isinstance(new, tuple):
+        raise ShapeDiffError(
+            f"block {block}: faces use {len(new)} different textures {list(new)}; "
+            "per-face material split isn't supported -- one texture per object")
+    old = _object_albedo(base)
+    if new is None or (isinstance(old, str) and old.casefold() == new.casefold()):
+        return None
+    if not new.lower().endswith(".tga"):
+        raise ShapeDiffError(
+            f"block {block}: texture {new!r} is not a .tga (the NIF loader reads TGA only)")
+    if not _find_texture(new, texture_dirs or ()):
+        searched = ", ".join(str(d) for d in texture_dirs or ()) or "(none)"
+        raise ShapeDiffError(
+            f"block {block}: texture {new!r} not found; searched {searched}")
+    return new
+
+
+def diff_shape(shape: dict, base, edit, texture_dirs=None):
     """Diff one shape's base/edit OBJ pair (spec §5.3): vertex moves, UV0
     edits, removed faces and added triangles on existing originals. Refuses
     (all-or-nothing for the object) new vertices, a survivor that moved
@@ -292,9 +337,10 @@ def diff_shape(shape: dict, base, edit):
     for orig, p in moves.items():
         final_local[orig] = p
     add = _added_triangles(block, shape, ids, base, added, final_local, uvs)
-    if not moves and not uvs and not remove and not add:
+    albedo = _albedo_op(block, base, edit, texture_dirs)
+    if not moves and not uvs and not remove and not add and albedo is None:
         return None
-    return {
+    out = {
         "block": block,
         "orig_vertex_count": len(shape["vertices"]),
         "orig_triangle_count": len(shape["triangles"]),
@@ -303,9 +349,13 @@ def diff_shape(shape: dict, base, edit):
         "remove_triangles": remove,
         "add_triangles": add,
     }
+    if albedo is not None:
+        out["albedo"] = albedo
+    return out
 
 
-def diff(shapes: list, base_objs: dict, edit_objs: dict, partial: bool = False):
+def diff(shapes: list, base_objs: dict, edit_objs: dict, partial: bool = False,
+         texture_dirs=None):
     """Diff every object. With partial=False (default, unchanged), the first
     object whose diff_shape raises ShapeDiffError aborts the whole call, and
     the return is just the edit list. With partial=True, an object-level
@@ -338,7 +388,8 @@ def diff(shapes: list, base_objs: dict, edit_objs: dict, partial: bool = False):
         if block not in by_block:
             raise ShapeDiffError(f"object {name}: block {block} is not a shape in this NIF")
         try:
-            e = diff_shape(by_block[block], base_objs[name], edit_objs[name])
+            e = diff_shape(by_block[block], base_objs[name], edit_objs[name],
+                           texture_dirs)
         except ShapeDiffError as exc:
             if not partial:
                 raise
