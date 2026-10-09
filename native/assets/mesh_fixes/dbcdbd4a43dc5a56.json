@@ -54,7 +54,24 @@
     },
     {
       "block": 688,
-      "albedo": "running_0.tga"
+      "albedo": "running_0.tga",
+      "flipbook": {
+        "frames": [
+          "running_0.tga",
+          "running_1.tga",
+          "running_2.tga",
+          "running_3.tga",
+          "running_4.tga",
+          "running_5.tga",
+          "running_6.tga",
+          "running_7.tga",
+          "running_8.tga",
+          "running_9.tga",
+          "running_10.tga",
+          "running_11.tga"
+        ],
+        "fps": 5.0
+      }
     },
     {
       "block": 697,

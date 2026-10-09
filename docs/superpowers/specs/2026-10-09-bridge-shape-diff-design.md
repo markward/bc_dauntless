@@ -607,7 +607,7 @@ the scratchpad; in game, Developer Options → Lighting → Bridge Debug View
 | 2 | Turbolift header reshape: triangle remove/add | — | |
 | 3 | Extruded side panels: new verts/tris/UVs | — | Open: side-face texturing. Lean: collapse the new faces' UVs onto the panel border (stretch edge texels, no new texture); alternative: a project-owned trim texture |
 | 3 — new vertices + refs (cove b0392/b0395, LCARS b0688/b0697, b0471) | New vertices, BSD2 references (snapped moves become refs), robust correspondence, n-gon ear clipping, `--exclude`; b0392's removals land with b0395's rework | accepted by Mark in game 2026-10-09 (round 5): verified 21 objects; cove b0392+b0395, black panel b0471 (Map 22a), LCARS b0688 (running_0, static until flipbook) + b0697 (g_imp_redbars), seat panels b0121/b0124 (Map 22a); payload has no absolute coordinates | §5.2/§5.3 iteration-3 rules, §6.1 BSD2. Expect previously committed blocks unchanged except snapped moves turning into references. The `running_0..11` flipbook on b0688 is row 4 |
-| 4 — flipbook (LCARS b0688 running_0..11 @ 5 fps) | Animated albedo: a numbered frame run becomes a looping `NiFlipController` | tool support built; awaiting regenerate (dry run on Mark's round-5 export: verified 21, b0688 `texture -> running_0.tga (flipbook 12 frames @ 5 fps)`) | `textures[].flipbook` (§6, §7); detection §5.3; fps 5, continuous loop (Mark 2026-10-09) |
+| 4 — flipbook (LCARS b0688 running_0..11 @ 5 fps) | Animated albedo: a numbered frame run becomes a looping `NiFlipController` | accepted by Mark in game 2026-10-09: b0688 cycles running_0..11 at 5 fps on game time (stock EBridge flip-controller shape) | `textures[].flipbook` (§6, §7); detection §5.3; fps 5, continuous loop (Mark 2026-10-09) |
 
 ---
 
