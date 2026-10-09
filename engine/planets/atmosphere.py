@@ -5,6 +5,9 @@ every planet using that NIF -- or "<set>/<name>", BC's own identity for one
 planet (AddSet name + AddObjectToSet name), which wins. A bare object name is
 not a key: "Moon 1" exists in three sets. The JSON lives under the project
 asset root and is resolved at USE, never at import.
+
+`atmosphere: false` disables only the air; a sibling `surface` still applies
+(planet-surface-detail spec §7).
 """
 from __future__ import annotations
 
@@ -87,7 +90,7 @@ def clear_live_for_set(set_name: str) -> None:
                 if not (lp.source == "set" and lp.set_name == set_name)]
 
 _FIELDS = {"color", "sunset_color", "thickness", "density", "limb", "atmosphere",
-           "intensity", "mie"}
+           "intensity", "mie", "surface"}
 
 STOCK_STEMS: tuple = (
     "pinkgasplanet", "bluewhitegasplanet", "tangasplanet", "gasgiant",
@@ -168,9 +171,19 @@ def load() -> dict:
     return raw
 
 
-def reload() -> None:
+def reload_file() -> None:
+    """Drop the file-level cache only (`_memo` / `_warned`) -- `_overrides`
+    (this module's own dial tuning) survives it. Fix round 1 / I1: the
+    "surface" dial group's "Reload Planet Surfaces" action needs to re-read
+    `atmospheres.json` (the `atmosphere` and `surface` blocks share one
+    file, one memo) WITHOUT dropping this module's "atmosphere" dial
+    group's live tuning -- that is reload()'s job, for its OWN button."""
     _memo.clear()
     _warned.clear()
+
+
+def reload() -> None:
+    reload_file()
     _overrides.clear()
 
 
@@ -221,7 +234,10 @@ def parse_entry(key: str, entry: dict):
 def resolve_key(set_name: str, obj_name: str, nif_path: str):
     raw = load()
     override = f"{set_name}/{obj_name}"
-    if set_name and override in raw:
+    # A surface-only override carries no air of its own: it inherits the
+    # stem's atmosphere (spec §7), the mirror of surface.resolve_surface_key.
+    entry = raw.get(override) if set_name else None
+    if entry is not None and (not isinstance(entry, dict) or set(entry) - {"surface"}):
         return override
     stem = nif_stem(nif_path)
     return stem if stem in raw else None

@@ -5343,6 +5343,22 @@ def _load_planet_model(r_, nif_path: str, *, cache=None,
     return handle, extent, sphere_radius
 
 
+def _apply_planet_surface(r_, iid, set_name: str, obj_name: str,
+                          nif_path: str, source: str = "set") -> None:
+    """Push this planet instance's surface-detail decision (planet-surface-detail
+    spec §7). Called from _apply_planet_atmosphere so all three realize paths
+    get it; resolved at USE so a toggle flip or catalogue reload applies to
+    planets realized after."""
+    from engine import planet_surface as _planet_surface
+    from engine.planets import surface as _surface
+    if not _planet_surface.enabled():
+        r_.set_instance_surface(iid, None)
+        return
+    r_.set_instance_surface(iid, _surface.to_binding(
+        _surface.resolve_surface(set_name, obj_name, nif_path)))
+    _surface.record_live(iid, set_name, obj_name, nif_path, source=source)
+
+
 def _apply_planet_atmosphere(r_, iid, set_name: str, obj_name: str,
                              nif_path: str, source: str = "set") -> None:
     """Push this planet instance's atmosphere decision -- always called,
@@ -5354,6 +5370,7 @@ def _apply_planet_atmosphere(r_, iid, set_name: str, obj_name: str,
     Read at USE: engine.planet_atmosphere's toggle and the catalogue
     (engine.planets.atmosphere) both resolve now, not at import, so a dev
     toggle flip or a catalogue reload applies to planets realized after."""
+    _apply_planet_surface(r_, iid, set_name, obj_name, nif_path, source=source)
     from engine import planet_atmosphere as _planet_atmosphere
     from engine.planets import atmosphere as _atmosphere
     if not _planet_atmosphere.enabled():
@@ -5375,14 +5392,18 @@ def _iid_eq(a, b) -> bool:
     return _atmosphere.iid_eq(a, b)
 
 
-def _nearest_live_planet(session):
-    """The `atmosphere.live()` entry whose planet is nearest the player, by
-    SURFACE distance (|p_player - centre| - radius), not centre distance --
-    the atmosphere dial group's target (planet-atmosphere spec §7). None if
-    there is no player, no viewed frame, or nothing resolves. Airless
-    entries (resolve() is None) are skipped."""
+def _nearest_live_entry(session, entries, is_valid):
+    """The entry in `entries` (an atmosphere.LivePlanet / surface.LiveSurface
+    sequence) nearest the player, by SURFACE distance (|p_player - centre| -
+    radius), not centre distance -- shared by `_nearest_live_planet` and
+    `_nearest_live_surface_planet` (the atmosphere and "surface" dial
+    groups' targets, planet-atmosphere spec §7 / planet-surface-detail spec
+    §7). None if there is no player, no viewed frame, or nothing resolves.
+    `is_valid(entry)` filters out entries with nothing to tune (airless /
+    no-detail) -- kept in the registry (reload re-pushes them) but never a
+    dial target, so e.g. an airless moon nearer than its atmospheric parent
+    can't capture the dials."""
     from engine.appc import sensor_contacts as _sensor_contacts
-    from engine.planets import atmosphere as _atmosphere
 
     player = _sensor_contacts.current_player()
     if player is None:
@@ -5395,11 +5416,8 @@ def _nearest_live_planet(session):
 
     best = None
     best_dist = None
-    for entry in _atmosphere.live():
-        # Airless entries stay in the registry (reload re-pushes them) but
-        # are never a dial target: an airless moon nearer than its
-        # atmospheric parent would otherwise capture the dials.
-        if _atmosphere.resolve(entry.set_name, entry.obj_name, entry.nif_path) is None:
+    for entry in entries:
+        if not is_valid(entry):
             continue
         centre = None
         radius = None
@@ -5426,6 +5444,31 @@ def _nearest_live_planet(session):
             best_dist = dist
             best = entry
     return best
+
+
+def _nearest_live_planet(session):
+    """The `atmosphere.live()` entry whose planet is nearest the player, by
+    surface distance -- the atmosphere dial group's target (planet-atmosphere
+    spec §7). Airless entries (resolve() is None) are skipped."""
+    from engine.planets import atmosphere as _atmosphere
+
+    def _has_atmosphere(entry):
+        return _atmosphere.resolve(entry.set_name, entry.obj_name, entry.nif_path) is not None
+
+    return _nearest_live_entry(session, _atmosphere.live(), _has_atmosphere)
+
+
+def _nearest_live_surface_planet(session):
+    """The `surface.live()` entry whose planet is nearest the player, by
+    surface distance -- the "surface" dial group's catalogue-field target
+    (planet-surface-detail spec §7). No-detail entries (resolve_surface() is
+    None) are skipped."""
+    from engine.planets import surface as _surface
+
+    def _has_surface(entry):
+        return _surface.resolve_surface(entry.set_name, entry.obj_name, entry.nif_path) is not None
+
+    return _nearest_live_entry(session, _surface.live(), _has_surface)
 
 
 def _ship_stats(ship, *, verbose: bool = False) -> Optional[dict]:
@@ -6137,6 +6180,7 @@ class MissionSession:
 
     def teardown(self, renderer) -> None:
         from engine.planets import atmosphere as _atmosphere
+        from engine.planets import surface as _surface
         for iid in list(self.ship_instances.values()):
             renderer.destroy_instance(iid)
         for iid in list(self.planet_instances.values()):
@@ -6144,6 +6188,7 @@ class MissionSession:
         for iid in list(self.celestial_instances.values()):
             renderer.destroy_instance(iid)
         _atmosphere.clear_live()
+        _surface.clear_live()
         self.celestial_instances.clear()
         self.celestial_placed.clear()
         self.celestial_scale.clear()
@@ -6437,11 +6482,13 @@ def teardown_set_objects(session, pSet, renderer) -> None:
             # re-bind guard so a re-realized object binds afresh.
             session.slot_bindings.pop(ship, None)
     from engine.planets import atmosphere as _atmosphere
+    from engine.planets import surface as _surface
     for planet in list(_iter_planets_in_set(pSet)):
         iid = session.planet_instances.pop(planet, None)
         if iid is not None:
             renderer.destroy_instance(iid)
             _atmosphere.forget_live(iid)
+            _surface.forget_live(iid)
             session.planet_natural_scale.pop(planet, None)
             session.slot_bindings.pop(planet, None)
     # clear_live_for_set, NOT clear_live: the warp spine realizes the
@@ -6451,6 +6498,7 @@ def teardown_set_objects(session, pSet, renderer) -> None:
     # Set-realized entries only: this region's celestial map bodies are
     # still drawn and forget themselves in _reconcile_celestial_instances.
     _atmosphere.clear_live_for_set(pSet.GetName())
+    _surface.clear_live_for_set(pSet.GetName())
 
 
 def _ensure_system_loaded(session) -> None:
@@ -6772,12 +6820,14 @@ def _reconcile_celestial_instances(session, renderer, *, nif_cache=None,
     instances = session.celestial_instances
     want = {b.key for b in drawn}
     from engine.planets import atmosphere as _atmosphere
+    from engine.planets import surface as _surface
     for key in [k for k in placed if k not in want]:
         session.celestial_scale.pop(key, None)
         iid = instances.pop(key, None)
         if iid is not None:
             renderer.destroy_instance(iid)
             _atmosphere.forget_live(iid)
+            _surface.forget_live(iid)
     new_placed = {}
     for body in drawn:
         new_placed[body.key] = body
@@ -10164,6 +10214,19 @@ def run(mission_name: Optional[str] = None,
                 _atmo_dials.set_push_fn(
                     lambda iid, a: r.set_instance_atmosphere(iid, a))
                 _atmo_dials.register()
+                from engine.planets import surface as _surface_catalogue
+                from engine.planets import surface_dials as _surface_dials
+                _surface_dials.set_target_fn(
+                    lambda: _nearest_live_surface_planet(controller.session)
+                    if controller.session is not None else None)
+                _surface_dials.set_push_fn(
+                    lambda iid, s: r.set_instance_surface(
+                        iid, _surface_catalogue.to_binding(s)))
+                _surface_dials.set_target_type_fn(r.planet_detail_target_type)
+                _surface_dials.set_type_params_fns(
+                    r.get_surface_type_params, r.set_surface_type_params)
+                _surface_dials.set_budget_fn(r.set_planet_detail_budget)
+                _surface_dials.register()
             _picker_registry_cache: list = [None]
             def _get_mission_registry():
                 if _picker_registry_cache[0] is None:

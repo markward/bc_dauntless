@@ -28,6 +28,7 @@ namespace scenegraph { class World; struct Camera; enum class Pass : std::uint8_
                        class DamageDecalRing; }
 namespace renderer { class Pipeline; class Shader; class CarveFieldCache;
                      class InstanceFieldCache; }
+namespace renderer::planet_detail { class PlanetDetailPass; }
 
 namespace renderer {
 
@@ -436,7 +437,12 @@ public:
                                // an enabled atmosphere takes its surface terminator
                                // and limb sun direction from these, falling back to
                                // directional 0 when nullptr / empty.
-                               const std::vector<SunDescriptor>* suns = nullptr);
+                               const std::vector<SunDescriptor>* suns = nullptr,
+                               // Planet surface detail (spec 2026-10-08 §5.5):
+                               // its target's sphere-LOD draw goes through the
+                               // planet_ program with the pass's uniforms; every
+                               // other draw (and nullptr) is exactly today's.
+                               const planet_detail::PlanetDetailPass* detail = nullptr);
 
     /// Stamp the stencil buffer with "hull was cut away here", for every
     /// visible instance in `pass` that has active carves.
