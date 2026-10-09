@@ -1,5 +1,6 @@
 import pytest
 
+from engine import bridge_lighting
 from engine.bridge_editor import lighting_doc as ld, lighting_writer as lw, runtime
 
 HASH = "0123456789abcdef"
@@ -120,7 +121,22 @@ def test_detach_clears_and_resets_so_a_later_push_is_inert(proj):
 
 
 def test_push_never_raises_even_with_a_hostile_io():
+    # Every method BridgeRuntime can call, all raising: attach() must reach
+    # push()'s own guard (not just survive on attach()'s outer try/except),
+    # so every native call push() makes is represented here.
     class HostileIO:
+        def model_identity(self, iid):
+            return INFO
+
+        def set_bridge_probe_origin(self, *a):
+            raise RuntimeError("native boom")
+
+        def set_bridge_probe_scales(self, *a):
+            raise RuntimeError("native boom")
+
+        def set_bridge_probe_mix(self, *a):
+            raise RuntimeError("native boom")
+
         def set_bridge_material_overrides(self, *a):
             raise RuntimeError("native boom")
 
@@ -130,12 +146,111 @@ def test_push_never_raises_even_with_a_hostile_io():
         def request_bridge_probe_capture(self):
             raise RuntimeError("native boom")
 
-        def model_identity(self, iid):
-            return INFO
-
     rt = runtime.BridgeRuntime(io=HostileIO(), eye=lambda: (0, 0, 0), alert=lambda: 0)
     rt.attach("iid")   # must not raise
     d = ld.empty_doc("x")
     rt.push(d, {})      # must not raise
     rt.on_alert(1)       # must not raise
     rt.detach()          # must not raise
+
+
+# ── Review fix round 1, item 2: the no-hash attach path must still push a
+# FRESH probe origin/scales and request a capture -- a bridge with no
+# content hash must not keep reflecting from whatever bridge attached last.
+
+def test_attach_without_a_hash_still_pushes_fresh_probe_state(proj):
+    io = FakeIO(info={"source": "", "content_hash": "", "meshes": []})
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (3.0, 4.0, 5.0), alert=lambda: 0)
+    rt.attach("iid")
+    assert ("set_bridge_probe_origin", (3.0, 4.0, 5.0)) in io.calls
+    green, yellow_red = bridge_lighting.probe_scales()
+    assert ("set_bridge_probe_scales", green, yellow_red) in io.calls
+    assert names(io)[-1] == "request_bridge_probe_capture"
+
+
+def test_attach_without_a_hash_does_not_keep_the_previous_bridges_eye(proj):
+    d = ld.empty_doc("x")
+    lw.save(d, proj / "bridge_lighting" / f"{HASH}.json")
+    io = FakeIO()
+    eyes = [(0.0, 87.0, 50.0)]
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: eyes[-1], alert=lambda: 0)
+    rt.attach("A")   # has a hash -> pushes eye (0, 87, 50)
+
+    io.info = {"source": "", "content_hash": "", "meshes": []}  # bridge B: no hash
+    eyes.append((9.0, 9.0, 9.0))
+    io.calls.clear()
+    rt.attach("B")
+
+    assert ("set_bridge_probe_origin", (9.0, 9.0, 9.0)) in io.calls
+    assert names(io)[-1] == "request_bridge_probe_capture"
+
+
+# ── Review fix round 1, item 3: bad bridge data is logged to the dev log
+# (never raised, never silent under --developer).
+
+def test_broken_file_error_is_logged(proj, monkeypatch):
+    (proj / "bridge_lighting").mkdir()
+    (proj / "bridge_lighting" / f"{HASH}.json").write_text("{broken")
+    logged = []
+    monkeypatch.setattr(runtime.dev_mode, "log_swallowed",
+                        lambda ctx, exc: logged.append((ctx, str(exc))))
+    io = FakeIO()
+    runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0).attach("iid")
+    assert any(ctx == "bridge lighting doc load" for ctx, _ in logged)
+
+
+def test_match_shapes_mismatch_warnings_are_logged(proj, monkeypatch):
+    d = ld.empty_doc("x")
+    ld.shape_entry(d, 5, "bar")["material"] = {"roughness": 0.1}  # block 5
+    lw.save(d, proj / "bridge_lighting" / f"{HASH}.json")
+    logged = []
+    monkeypatch.setattr(runtime.dev_mode, "log_swallowed",
+                        lambda ctx, exc: logged.append((ctx, str(exc))))
+    io = FakeIO()  # INFO's only mesh is block 3 "floor" -- "5:bar" never matches
+    runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0).attach("iid")
+    matches = [(ctx, msg) for ctx, msg in logged if ctx == "bridge lighting doc match_shapes"]
+    assert len(matches) == 1 and "5:bar" in matches[0][1]
+
+
+def test_more_than_32_spots_warning_is_logged(proj, monkeypatch):
+    d = ld.empty_doc("x")
+    matched_meshes = []
+    for i in range(34):
+        ld.shape_entry(d, i, f"s{i}")["emitter"] = {
+            "light": {"position": [0, 0, 0], "direction": [0, 0, -1]}}
+        matched_meshes.append({"mesh": i, "block": i, "name": f"s{i}", "node_chain": [],
+                               "material": 0, "textures": [],
+                               "maps": {"roughness": False, "metalness": False, "normal": False}})
+    lw.save(d, proj / "bridge_lighting" / f"{HASH}.json")
+    logged = []
+    monkeypatch.setattr(runtime.dev_mode, "log_swallowed",
+                        lambda ctx, exc: logged.append((ctx, str(exc))))
+    io = FakeIO(info={"source": "/x.nif", "content_hash": HASH, "meshes": matched_meshes})
+    runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0).attach("iid")
+    too_many = [(ctx, msg) for ctx, msg in logged if ctx == "bridge lighting too many spots"]
+    assert len(too_many) == 2
+    assert all("dropped" in msg for _, msg in too_many)
+
+
+# ── Review fix round 1, item 4: push() surfaces the renderer's own dropped
+# count (non-finite values slipping past schema validation), not just the
+# cap-count warnings it already names.
+
+def test_push_reports_a_warning_when_the_renderer_drops_more_than_the_cap_warned(proj):
+    d = ld.empty_doc("x")
+    ld.shape_entry(d, 5, "bar")["emitter"] = {
+        "light": {"position": [0, 0, 0], "direction": [0, 0, -1]}}
+    lw.save(d, proj / "bridge_lighting" / f"{HASH}.json")
+
+    class DroppingIO(FakeIO):
+        def set_bridge_spots(self, spots):
+            self.calls.append(("set_bridge_spots", spots))
+            return 3   # native reports 3 dropped; lights.spots named none (under cap)
+
+    io = DroppingIO()
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt.attach("iid")
+    matched = {"5:bar": 0}
+    warnings = rt.push(d, matched)
+    assert len(warnings) == 1
+    assert "3" in warnings[0] and "dropped" in warnings[0]

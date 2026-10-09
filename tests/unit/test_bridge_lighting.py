@@ -50,3 +50,64 @@ def test_probe_blend_holds_with_zero_dt():
 
 def test_probe_scales_are_the_green_and_yellow_ambient():
     assert bl.probe_scales() == (bl.ambient_scale_for_alert(0), bl.ambient_scale_for_alert(1))
+
+
+# ── Review fix round 1, item 1 (second bullet): a structural check that the
+# per-frame block in host_loop.run() feeds ProbeBlend.update(level, dt) into
+# set_bridge_probe_mix, and calls bridge_runtime.on_alert(...) only inside an
+# `if` gated on a level-changed comparison -- never unconditionally every
+# frame. A full behavioural test would need a live renderer/CEF/mission
+# loop (host_loop.run() itself), so this inspects run()'s AST instead of
+# grepping strings, which a pure source-inspection check could satisfy by
+# accident (e.g. the call present but never reached, or reached every
+# frame regardless of level). ──
+
+def test_host_loop_feeds_probe_blend_and_gates_on_alert_on_change():
+    import ast
+    import inspect
+
+    import engine.host_loop as hl
+
+    tree = ast.parse(inspect.getsource(hl))
+    run_fn = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == "run")
+
+    update_call = None
+    mix_call = None
+    on_alert_calls_with_guard = []
+
+    class Visitor(ast.NodeVisitor):
+        def visit_If(self, node):
+            test_dump = ast.dump(node.test)
+            guarded = "NotEq" in test_dump and "_bridge_probe_alert_last" in test_dump
+            for stmt in ast.walk(node):
+                if (isinstance(stmt, ast.Call)
+                        and isinstance(stmt.func, ast.Attribute)
+                        and stmt.func.attr == "on_alert"):
+                    on_alert_calls_with_guard.append(guarded)
+            self.generic_visit(node)
+
+        def visit_Call(self, node):
+            nonlocal update_call, mix_call
+            if (isinstance(node.func, ast.Attribute) and node.func.attr == "update"
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "_bridge_probe_blend"):
+                update_call = node
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "set_bridge_probe_mix":
+                mix_call = node
+            self.generic_visit(node)
+
+    Visitor().visit(run_fn)
+
+    assert update_call is not None, "no _bridge_probe_blend.update(level, dt) call found"
+    assert len(update_call.args) == 2
+    assert mix_call is not None, "no host_io.set_bridge_probe_mix(...) call found"
+    # The mix call's sole argument must BE the update call (fed straight
+    # through), not a separately-computed value.
+    assert len(mix_call.args) == 1 and mix_call.args[0] is update_call
+
+    assert on_alert_calls_with_guard, "on_alert(...) is never called from run()"
+    assert all(on_alert_calls_with_guard), (
+        "every on_alert(...) call must be inside an `if ... != "
+        "_bridge_probe_alert_last[...]:`-shaped guard, never unconditional")

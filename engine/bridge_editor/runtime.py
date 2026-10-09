@@ -19,29 +19,45 @@ class BridgeRuntime:
         """Neither overrides nor spots are cleared by C++ on a mission swap,
         and probe state persists too — so every bridge load pushes fresh
         state for THIS bridge, an empty push when it has no file or no
-        matched emitters, never leaving the previous bridge's state live."""
+        matched emitters, never leaving the previous bridge's state live.
+
+        The probe origin/scales (and a capture request) are pushed BEFORE
+        the content-hash check and unconditionally: a bridge with no hash
+        (not an interior load) still has an eye and must get a fresh
+        capture from it, never keep reflecting from whatever bridge was
+        attached last."""
         self._iid, self._doc, self._matched = iid, None, {}
         try:
             info = self._io.model_identity(iid) or {}
+            self._io.set_bridge_probe_origin(tuple(self._eye()))
+            self._io.set_bridge_probe_scales(*bridge_lighting.probe_scales())
             h = info.get("content_hash", "")
             if not h:
                 self.detach()
+                self._io.request_bridge_probe_capture()
                 return
             loaded = ld.load(h, info.get("source", ""))
+            if loaded.error:
+                dev_mode.log_swallowed(
+                    "bridge lighting doc load", ld.BridgeLightingError(loaded.error))
             doc = loaded.doc
-            matched, _ = ld.match_shapes(doc, info.get("meshes", []))
-            self._io.set_bridge_probe_origin(tuple(self._eye()))
-            self._io.set_bridge_probe_scales(*bridge_lighting.probe_scales())
+            matched, warnings = ld.match_shapes(doc, info.get("meshes", []))
+            for w in warnings:
+                dev_mode.log_swallowed(
+                    "bridge lighting doc match_shapes", ld.BridgeLightingError(w))
             self.push(doc, matched)
         except Exception as e:  # noqa: BLE001 - never let bridge data kill the frame
             dev_mode.log_swallowed("bridge runtime attach", e)
 
     def push(self, doc, matched=None):
         """Re-push overrides + spots from an edited doc (the live editor, or
-        attach()). Returns spot-count warnings. Builds tuples from a doc that
-        is already schema-validated, but the push to the native side still
-        goes through a guard -- a value that slips past validation (or a
-        stale/garbage instance id) must not raise into the host loop."""
+        attach()). Returns spot-count warnings (cap drops by name, plus a
+        summary warning if the renderer itself dropped more spots than that
+        -- non-finite values slipping past schema validation). Builds tuples
+        from a doc that is already schema-validated, but the push to the
+        native side still goes through a guard -- a value that slips past
+        validation (or a stale/garbage instance id) must not raise into the
+        host loop."""
         if self._iid is None:
             return []
         self._doc = doc
@@ -52,7 +68,16 @@ class BridgeRuntime:
             self._io.set_bridge_material_overrides(
                 self._iid, materials.overrides(doc, self._matched))
             spot_list, warnings = lights.spots(doc, self._matched, self._alert())
-            self._io.set_bridge_spots(spot_list)
+            for w in warnings:
+                dev_mode.log_swallowed(
+                    "bridge lighting too many spots", ld.BridgeLightingError(w))
+            dropped = self._io.set_bridge_spots(spot_list)
+            if dropped > len(warnings):
+                extra = dropped - len(warnings)
+                msg = f"{extra} spot(s) dropped by the renderer (non-finite values)"
+                warnings.append(msg)
+                dev_mode.log_swallowed(
+                    "bridge lighting spots dropped", ld.BridgeLightingError(msg))
             self._io.request_bridge_probe_capture()
         except Exception as e:  # noqa: BLE001 - see docstring
             dev_mode.log_swallowed("bridge runtime push", e)
