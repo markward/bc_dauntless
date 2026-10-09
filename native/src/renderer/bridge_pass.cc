@@ -121,10 +121,15 @@ void draw_mesh(const assets::Model& model,
                GLuint face_a = 0,
                GLuint face_b = 0,
                float face_mix = 0.0f,
-               int mesh_id = 0) {
+               int mesh_id = 0,
+               int highlight = 0) {
     shader.set_mat4("u_model", world);
     // Debug view 5 (Mesh ID): a stable per-draw counter, reset each render().
     shader.set_int("u_mesh_id", mesh_id);
+    // Developer-only bridge editor selection tint (spec
+    // 2026-10-08-bridge-emitters §4): 0 none, 1 hover, 2 selected.
+    shader.set_int("u_highlight", highlight);
+    shader.set_float("u_highlight_time", static_cast<float>(wall_time));
     // Alpha test only fires when the material carries an NiAlphaProperty;
     // otherwise the shape is fully opaque regardless of the base
     // texture's alpha channel. EBridge's floorlight.tga (and similar
@@ -287,10 +292,16 @@ void BridgePass::render(const scenegraph::World& world,
             const assets::Material& mat, const glm::mat4& w,
             unsigned long long mh) {
             const auto [ov, flip] = viewscreen_override(mh);
+            int hl = 0;
+            if (highlight_model_ != 0 && mh == highlight_model_) {
+                const int mi = static_cast<int>(&mesh - m.meshes.data());
+                if (mi == highlight_selected_) hl = 2;
+                else if (mi == highlight_hover_) hl = 1;
+            }
             draw_mesh(m, mesh, mat, base_shader, w, white, t, ov, flip,
                       viewscreen_brightness_, viewscreen_flash_,
                       /*face_blend=*/false, /*face_a=*/0u, /*face_b=*/0u,
-                      /*face_mix=*/0.0f, mesh_id_counter++);
+                      /*face_mix=*/0.0f, mesh_id_counter++, hl);
         });
 
     // ── Sub-pass B: skinned bridge characters ──────────────────────────────

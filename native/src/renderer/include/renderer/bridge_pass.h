@@ -115,6 +115,18 @@ public:
     void set_debug_view(BridgeDebugView v) { debug_view_ = v; }
     BridgeDebugView debug_view() const { return debug_view_; }
 
+    /// Developer-only bridge editor selection tint (spec
+    /// 2026-10-08-bridge-emitters §4): mesh `selected_mesh` of the model
+    /// `model_handle` pulses cyan, `hover_mesh` gets a faint tint. -1 = none.
+    /// Mesh indices are into Model::meshes. Default (none) is byte-identical.
+    void set_highlight(unsigned long long model_handle, int selected_mesh,
+                       int hover_mesh) {
+        highlight_model_ = model_handle;
+        highlight_selected_ = selected_mesh;
+        highlight_hover_ = hover_mesh;
+    }
+    void clear_highlight() { set_highlight(0, -1, -1); }
+
 private:
     /// Lazily-allocated 1x1 white texture, used as a fallback for any
     /// bridge mesh whose Base-stage texture failed to load. Same role
@@ -144,6 +156,11 @@ private:
 
     /// Developer Options -> Lighting tab "Bridge Debug View" row.
     BridgeDebugView  debug_view_ = BridgeDebugView::Off;
+
+    /// Developer-only bridge editor selection tint. 0 model handle = none.
+    unsigned long long highlight_model_ = 0;
+    int                highlight_selected_ = -1;
+    int                highlight_hover_ = -1;
 };
 
 }  // namespace renderer

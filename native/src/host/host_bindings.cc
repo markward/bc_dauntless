@@ -6352,11 +6352,19 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "{source, content_hash, meshes:[{mesh, block, name, node_chain, "
           "material}]} for an instance's model, or None for a stale id.");
 
-    // Developer-only selection tint on the bridge (Task 4 gives it a body).
+    // Developer-only selection tint on the bridge (spec
+    // 2026-10-08-bridge-emitters §4).
     m.def("set_bridge_highlight",
-          [](py::object /*instance_id*/, int /*selected*/, int /*hover*/) {},
+          [](py::object instance_id, int selected, int hover) {
+              if (!dauntless::is_developer_mode() || !g_bridge_pass) return;
+              if (instance_id.is_none()) { g_bridge_pass->clear_highlight(); return; }
+              auto* inst = g_world.get(instance_id.cast<scenegraph::InstanceId>());
+              if (inst == nullptr) { g_bridge_pass->clear_highlight(); return; }
+              g_bridge_pass->set_highlight(inst->model_handle, selected, hover);
+          },
           py::arg("instance_id"), py::arg("selected"), py::arg("hover"),
-          "Developer-only selection tint on the bridge (Task 4).");
+          "Developer-only bridge editor selection tint: mesh indices into the "
+          "instance's model, -1 = none; None clears. No-op without --developer.");
 
     m.def("damage_decal_add",
           [](scenegraph::InstanceId id,

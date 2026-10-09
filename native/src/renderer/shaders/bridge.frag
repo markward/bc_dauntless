@@ -64,6 +64,11 @@ uniform int       u_output_normal;
 uniform int u_debug_view;
 uniform int u_mesh_id;
 
+// Developer-only bridge editor selection tint (spec
+// 2026-10-08-bridge-emitters §4): 0 none (production), 1 hover, 2 selected.
+uniform int   u_highlight;
+uniform float u_highlight_time;
+
 out vec4 FragColor;
 
 // Integer hash (Squirrel3-style, as used by the bridge-lighting debug-view
@@ -118,6 +123,18 @@ vec3 shading_normal() {
     return n;
 }
 
+// Developer-only bridge editor selection tint (spec
+// 2026-10-08-bridge-emitters §4): mixes the selected mesh toward cyan with a
+// slow pulse, a hovered mesh with a faint constant tint. u_highlight == 0
+// (production) returns `c` unchanged.
+vec3 apply_highlight(vec3 c) {
+    if (u_highlight == 0) return c;
+    float a = (u_highlight == 2)
+        ? 0.35 + 0.15 * sin(u_highlight_time * 6.2831853)
+        : 0.15;
+    return mix(c, vec3(0.2, 0.9, 1.0), a);
+}
+
 // Lit (reflecting) bridge surfaces must never feed bloom -- only emitters
 // glow. Identity below 70% of the ceiling, then a soft exponential roll that
 // approaches u_diffuse_max (set under bloom's 0.9 threshold) and never
@@ -144,7 +161,7 @@ void main() {
     if (u_unlit != 0) {
         vec3 col = base.rgb * u_viewscreen_brightness;
         col = mix(col, vec3(1.0), clamp(u_viewscreen_flash, 0.0, 1.0));
-        FragColor = vec4(col, 1.0);
+        FragColor = vec4(apply_highlight(col), 1.0);
         return;
     }
     vec3 n = shading_normal();
@@ -161,5 +178,5 @@ void main() {
     vec3 received = u_ambient * mix(u_down_bottom, u_down_top, h) * ao;
     vec3 col = diffuse_ceiling(albedo * received) * u_viewscreen_brightness;
     col = mix(col, vec3(1.0), clamp(u_viewscreen_flash, 0.0, 1.0));
-    FragColor = vec4(col, 1.0);
+    FragColor = vec4(apply_highlight(col), 1.0);
 }
