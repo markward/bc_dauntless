@@ -124,3 +124,35 @@ TEST(BridgePbr, SpecularOcclusionClampsPowBase) {
     EXPECT_GE(result, 0.0f);
     EXPECT_LE(result, 1.0f);
 }
+
+// Final-review fix wave, finding 2: the AMBIENT diffuse weight uses the
+// roughness-aware Schlick (Lagarde), so a rough dielectric is not darkened
+// at grazing angles -- the default material (rough 1, metal 0) must not
+// re-light the room when PBR is switched on.
+TEST(BridgePbr, RoughFresnelIsF0AtEveryAngleForAFullyRoughDielectric) {
+    const glm::vec3 f0{0.04f};
+    for (float c = 0.0f; c <= 1.0f; c += 0.05f) {
+        const glm::vec3 f = pbr::F_schlick_rough(c, f0, 1.0f);
+        EXPECT_NEAR(f.x, 0.04f, 1e-6f) << c;
+        EXPECT_NEAR(f.z, 0.04f, 1e-6f) << c;
+    }
+}
+
+TEST(BridgePbr, RoughFresnelAtRoughnessZeroIsPlainSchlick) {
+    const glm::vec3 f0s[] = {glm::vec3(0.04f), glm::vec3(0.9f, 0.5f, 0.1f)};
+    for (const glm::vec3& f0 : f0s)
+        for (float c = 0.0f; c <= 1.0f; c += 0.05f) {
+            const glm::vec3 a = pbr::F_schlick_rough(c, f0, 0.0f);
+            const glm::vec3 b = pbr::F_schlick(c, f0);
+            for (int i = 0; i < 3; ++i) EXPECT_NEAR(a[i], b[i], 1e-6f) << c << " " << i;
+        }
+}
+
+TEST(BridgePbr, RoughFresnelNeverBelowF0AndRisesLessWhenRough) {
+    const glm::vec3 f0{0.04f};
+    EXPECT_NEAR(pbr::F_schlick_rough(1.0f, f0, 0.5f).x, 0.04f, 1e-6f);   // head-on: F0
+    const float smooth = pbr::F_schlick_rough(0.1f, f0, 0.1f).x;
+    const float mid = pbr::F_schlick_rough(0.1f, f0, 0.5f).x;
+    EXPECT_GT(smooth, mid);
+    EXPECT_GE(mid, 0.04f);
+}

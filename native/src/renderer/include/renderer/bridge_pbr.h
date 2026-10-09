@@ -35,6 +35,14 @@ inline glm::vec3 F_schlick(float cos_t, glm::vec3 f0) {
     const float m = std::pow(std::clamp(1.0f - cos_t, 0.0f, 1.0f), 5.0f);
     return f0 + (glm::vec3(1.0f) - f0) * m;
 }
+// Roughness-aware Schlick (Lagarde): a rough surface's Fresnel rises less
+// toward grazing -- at rough 1 a dielectric stays at F0 at every angle, at
+// rough 0 this IS F_schlick. Weights the AMBIENT diffuse only (spot lights
+// keep F_schlick(VdotH); the probe term's Fresnel is in the BRDF LUT).
+inline glm::vec3 F_schlick_rough(float cos_t, glm::vec3 f0, float rough) {
+    const float m = std::pow(std::clamp(1.0f - cos_t, 0.0f, 1.0f), 5.0f);
+    return f0 + (glm::max(glm::vec3(1.0f - rough), f0) - f0) * m;
+}
 inline glm::vec3 f0_for(glm::vec3 albedo_lin, float metal) {
     return glm::mix(glm::vec3(0.04f), albedo_lin, metal);
 }

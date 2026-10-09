@@ -158,10 +158,12 @@ std::unique_ptr<assets::Model> make_green_officer() {
     return m;
 }
 
-scenegraph::Camera corner_camera(int w, int h) {
+scenegraph::Camera corner_camera(int w, int h,
+                                 glm::vec3 eye = {60.0f, 0.0f, 90.0f},
+                                 glm::vec3 target = {25.0f, 0.0f, 0.0f}) {
     scenegraph::Camera cam;
-    cam.eye = {60.0f, 0.0f, 90.0f};
-    cam.target = {25.0f, 0.0f, 0.0f};
+    cam.eye = eye;
+    cam.target = target;
     cam.up = {0.0f, 0.0f, 1.0f};
     cam.aspect = static_cast<float>(w) / static_cast<float>(h);
     cam.near = 0.5f;
@@ -196,6 +198,9 @@ protected:
     // where the mirror direction (-35, 0, 90) runs back into the x = 0 wall
     // (from (70, 0, 0) it would run up into the empty, black, sky).
     glm::vec3 sample_ = {70.0f, 0.0f, 0.0f};
+    // The view render_impl draws from (corner_camera's defaults).
+    glm::vec3 eye_ = {60.0f, 0.0f, 90.0f};
+    glm::vec3 target_ = {25.0f, 0.0f, 0.0f};
     int floor_mesh = 0;
     std::unique_ptr<renderer::Window> w;
     std::unique_ptr<renderer::Pipeline> p;
@@ -241,7 +246,7 @@ protected:
             world.set_pass(oid, draw_pass);
             if (set_id != 0) world.set_comm_set_id(oid, set_id);
         }
-        const scenegraph::Camera cam = corner_camera(kWin, kWin);
+        const scenegraph::Camera cam = corner_camera(kWin, kWin, eye_, target_);
         target.resize(kWin, kWin);
         target.bind();
         glViewport(0, 0, kWin, kWin);
@@ -308,9 +313,11 @@ TEST_F(BridgePbrFrame, DefaultMaterialMatchesLegacyWithinFresnel) {
     const glm::vec3 legacy = render_floor();
     pass->set_pbr_enabled(true);
     const glm::vec3 pbr = render_floor();
-    // (1 - F) at F0 = 0.04 and the camera's ~55° view: within 6% per channel.
+    // (1 - F_schlick_rough) at F0 = 0.04, rough 1: 4% of the linear diffuse
+    // at ANY angle, ~1.8% once encoded. Within 2.5% per channel (was 6%
+    // while the weight was plain Schlick, which grew toward grazing).
     for (int i = 0; i < 3; ++i) {
-        EXPECT_NEAR(pbr[i], legacy[i], 0.06f * legacy[i] + 1e-3f) << i;
+        EXPECT_NEAR(pbr[i], legacy[i], 0.025f * legacy[i] + 1e-3f) << i;
     }
     // ...but PBR really is a different path (the Fresnel loss is visible).
     EXPECT_LT(pbr.r, legacy.r);
@@ -907,4 +914,22 @@ TEST_F(BridgePbrFrame, MaterialOverridesDirtyTheProbesOnlyWhenTheyChange) {
     EXPECT_FALSE(pass->probe_capture_pending());
     pass->set_material_overrides(0, {});        // none over none
     EXPECT_FALSE(pass->probe_capture_pending());
+}
+
+// Finding 2: the ambient diffuse weight is (1 - F_schlick_rough), so the
+// default material (rough 1, metal 0) loses only F0 = 4% of its diffuse at
+// ANY angle -- ~1.8% once encoded. With plain Schlick a grazing view
+// (NdotV ~ 0.1) lost ~1/3 of the floor's brightness when PBR was turned on.
+TEST_F(BridgePbrFrame, GrazingDefaultMaterialMatchesLegacy) {
+    set_base({0.6f, 0.5f, 0.4f, 1.0f});
+    sample_ = {70.0f, 0.0f, 0.0f};
+    eye_ = {250.0f, 0.0f, 18.0f};                // NdotV = 18 / 180.9 ~ 0.0995
+    target_ = sample_;
+    pass->set_pbr_enabled(false);
+    const glm::vec3 legacy = render_floor();
+    pass->set_pbr_enabled(true);
+    const glm::vec3 pbr = render_floor();
+    ASSERT_GT(legacy.r, 0.05f);
+    for (int i = 0; i < 3; ++i)
+        EXPECT_NEAR(pbr[i], legacy[i], 0.03f * legacy[i] + 1e-3f) << i;
 }

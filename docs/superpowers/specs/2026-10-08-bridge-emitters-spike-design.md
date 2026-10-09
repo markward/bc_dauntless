@@ -438,7 +438,10 @@ normal maps (§2.2) and their lightmaps are already gone, so PBR loses
 nothing BC had. Every added map is pure gain.
 
 - **Diffuse** = `albedo × (1 − metal) × (1 − F) × downlight irradiance × AO`,
-  then the 0.88 diffuse ceiling. The hemisphere downlight becomes the
+  then the 0.88 diffuse ceiling. `F` here is the **roughness-aware** Schlick
+  (`F_schlick_rough`, Lagarde): plain Schlick at NdotV darkened the default
+  rough dielectric by up to ~1/3 at grazing views (final review, 2026-10-09);
+  at rough 1 a dielectric now loses F0 at every angle. The hemisphere downlight becomes the
   diffuse ambient term; its shape stays, its constants are re-calibrated for
   linear lighting (§9.1).
 - **Specular** = `probe(R, roughness) × (F0·A + B) × specular occlusion`,

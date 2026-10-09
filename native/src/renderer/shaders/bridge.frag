@@ -223,6 +223,14 @@ vec3 F_schlick(float cos_t, vec3 f0) {
     float m = pow(clamp(1.0 - cos_t, 0.0, 1.0), 5.0);
     return f0 + (vec3(1.0) - f0) * m;
 }
+// Roughness-aware Schlick (Lagarde): twin of pbr::F_schlick_rough. At rough 1
+// a dielectric stays at F0 at every angle; at rough 0 this IS F_schlick.
+// Weights the AMBIENT diffuse only -- spots keep F_schlick(VdotH), and the
+// probe term's Fresnel is already integrated, per roughness, into the LUT.
+vec3 F_schlick_rough(float cos_t, vec3 f0, float rough) {
+    float m = pow(clamp(1.0 - cos_t, 0.0, 1.0), 5.0);
+    return f0 + (max(vec3(1.0 - rough), f0) - f0) * m;
+}
 vec3 f0_for(vec3 albedo_lin, float metal) { return mix(vec3(0.04), albedo_lin, metal); }
 
 // Lit diffuse is capped (encoded) under bloom; specular adds on top uncapped.
@@ -366,7 +374,9 @@ void main() {
         vec3 V = normalize(u_eye - v_world);
         float NdotV = max(dot(N, V), 1e-4);
         vec3 F0 = f0_for(albedo, metal);
-        vec3 Fv = F_schlick(NdotV, F0);
+        // Roughness-aware: plain Schlick here darkened a rough dielectric by
+        // up to ~1/3 at grazing views, re-lighting the room when PBR is on.
+        vec3 Fv = F_schlick_rough(NdotV, F0, rough);
         float h = clamp(dot(N, u_up) * 0.5 + 0.5, 0.0, 1.0);
         // The downlight (AO included) is authored in display space: decode
         // the WHOLE legacy received term, so AO reads exactly as it does today.
