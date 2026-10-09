@@ -288,3 +288,219 @@ TEST(MeshFixShapeEdit, ValidMergePlusFailingShapeEditAppliesNeither) {
     EXPECT_FLOAT_EQ(after.vertices[0].x, 0.0f);   // merge did NOT apply
     EXPECT_FALSE(std::get<nif::NiTriShape>(s.f.blocks[3]).av.flags & 0x0001u);  // patch not hidden
 }
+
+// --- BSD2 references and attr_src (spec §6.1, §6.2) ---
+
+namespace {
+assets::ShapeEditPos pos_ref(std::uint32_t block, std::uint16_t v) {
+    assets::ShapeEditPos p; p.ref = assets::ShapeEditRef{block, v}; return p;
+}
+assets::ShapeEditUv uv_ref(std::uint32_t block, std::uint16_t v) {
+    assets::ShapeEditUv u; u.ref = assets::ShapeEditRef{block, v}; return u;
+}
+assets::ShapeEditAddVertex added(assets::ShapeEditPos p, assets::ShapeEditUv uv,
+                                 std::uint16_t attr_src) {
+    assets::ShapeEditAddVertex a;
+    a.pos = p; a.uv0 = uv; a.attr_src = attr_src;
+    return a;
+}
+
+// Two shapes: A (block 1, data block 2 -- make()'s layout, so data() works)
+// under the root, and B (block 4, data block 5) under node N (block 3),
+// which is translated (10, 0, 0) and rotated +90 degrees about Z. B's colours
+// and UV sets carry per-vertex values so a copy is traceable.
+Synthetic make_two() {
+    Synthetic s;
+    nif::NiNode root; root.av.obj.name = "root"; root.child_links = {2, 4};
+    nif::NiTriShape a; a.data_link = 3;
+    nif::NiNode n; n.child_links = {5};
+    n.av.translation = {10, 0, 0};
+    n.av.rotation = nif::Mat3x3{ .m = {0, -1, 0, 1, 0, 0, 0, 0, 1} };
+    nif::NiTriShape b; b.data_link = 6;
+    auto qb = quad();
+    for (int i = 0; i < 4; ++i) {
+        const float k = 0.1f * static_cast<float>(i + 1);
+        qb.vertex_colors[i] = {k, k + 0.01f, k + 0.02f, 1.0f};
+        qb.uv_sets[0][i] = {k, 0.5f};
+        qb.uv_sets[1][i] = {0.5f, k};
+    }
+    s.f.blocks = {root, a, quad(), n, b, qb};
+    s.f.block_ids = {1, 2, 3, 4, 5, 6};
+    s.f.root = nif::BlockHandle{&s.f.blocks.front()};
+    return s;
+}
+
+const nif::NiTriShapeData& data_b(const Synthetic& s) {
+    return std::get<nif::NiTriShapeData>(s.f.blocks[5]);
+}
+
+assets::ShapeEdit edit_b() {
+    assets::ShapeEdit e;
+    e.block = 4; e.orig_vertex_count = 4; e.orig_triangle_count = 2;
+    return e;
+}
+}  // namespace
+
+TEST(MeshFixShapeEditRef, PositionRefTransformsTheSourceVertexIntoTheTargetFrame) {
+    auto s = make_two();
+    auto e = base_edit();                       // target A: identity frame
+    e.moves = {{2, pos_ref(4, 1)}};             // B's (1,0,0) -> model (10,1,0)
+    ASSERT_EQ(assets::apply_mesh_fix(s.f, fix_of(e)), "");
+    EXPECT_NEAR(data(s).vertices[2].x, 10.0f, 1e-5);
+    EXPECT_NEAR(data(s).vertices[2].y, 1.0f, 1e-5);
+    EXPECT_NEAR(data(s).vertices[2].z, 0.0f, 1e-5);
+
+    auto t = make_two();
+    auto eb = edit_b();                         // target B: model (1,1,0) -> B-local (1,9,0)
+    eb.moves = {{0, pos_ref(1, 2)}};
+    ASSERT_EQ(assets::apply_mesh_fix(t.f, fix_of(eb)), "");
+    EXPECT_NEAR(data_b(t).vertices[0].x, 1.0f, 1e-5);
+    EXPECT_NEAR(data_b(t).vertices[0].y, 9.0f, 1e-5);
+}
+
+TEST(MeshFixShapeEditRef, RefIntoAShapeTheSameFixEditsReadsTheOriginalPosition) {
+    auto s = make_two();
+    auto eb = edit_b();
+    eb.moves = {{1, {5.0f, 5.0f, 5.0f}}};       // applied first...
+    auto ea = base_edit();
+    ea.moves = {{2, pos_ref(4, 1)}};            // ...but A must see B's ORIGINAL vertex 1
+    assets::MeshFix fix; fix.shape_edits = {eb, ea};
+    ASSERT_EQ(assets::apply_mesh_fix(s.f, fix), "");
+    EXPECT_NEAR(data(s).vertices[2].x, 10.0f, 1e-5);
+    EXPECT_NEAR(data(s).vertices[2].y, 1.0f, 1e-5);
+    EXPECT_FLOAT_EQ(data_b(s).vertices[1].x, 5.0f);
+}
+
+TEST(MeshFixShapeEditRef, SameShapeRefCopiesTheOriginalExactlyEvenIfItMoves) {
+    auto s = make();
+    auto e = base_edit();
+    e.moves = {{0, {7.0f, 7.0f, 7.0f}}, {3, pos_ref(1, 0)}};
+    ASSERT_EQ(assets::apply_mesh_fix(s.f, fix_of(e)), "");
+    EXPECT_EQ(data(s).vertices[3].x, 0.0f);
+    EXPECT_EQ(data(s).vertices[3].y, 0.0f);
+    EXPECT_EQ(data(s).vertices[3].z, 0.0f);
+    EXPECT_FLOAT_EQ(data(s).vertices[0].x, 7.0f);
+}
+
+TEST(MeshFixShapeEditRef, UvRefCopiesTheOriginalUv0EvenIfThatUvIsEdited) {
+    auto s = make_two();
+    auto e = base_edit();
+    e.uvs = {{0, {0.9f, 0.9f}}, {1, uv_ref(1, 0)}, {2, uv_ref(4, 3)}};
+    ASSERT_EQ(assets::apply_mesh_fix(s.f, fix_of(e)), "");
+    EXPECT_FLOAT_EQ(data(s).uv_sets[0][0].u, 0.9f);
+    EXPECT_FLOAT_EQ(data(s).uv_sets[0][1].u, 0.0f);    // A's ORIGINAL uv 0
+    EXPECT_FLOAT_EQ(data(s).uv_sets[0][1].v, 0.0f);
+    EXPECT_FLOAT_EQ(data(s).uv_sets[0][2].u, 0.4f);    // B's uv 3
+    EXPECT_FLOAT_EQ(data(s).uv_sets[0][2].v, 0.5f);
+}
+
+TEST(MeshFixShapeEditRef, AddedVertexCopiesColourAndEveryExtraUvSetFromAttrSrc) {
+    auto s = make_two();
+    auto e = edit_b();
+    e.add_vertices = {added(pos_ref(1, 2), uv_ref(4, 3), 2)};
+    e.add_triangles = {{0, 1, 4}};
+    ASSERT_EQ(assets::apply_mesh_fix(s.f, fix_of(e)), "");
+    const auto& d = data_b(s);
+    ASSERT_EQ(d.vertices.size(), 5u);
+    EXPECT_NEAR(d.vertices[4].x, 1.0f, 1e-5);          // A's (1,1,0) in B's frame
+    EXPECT_NEAR(d.vertices[4].y, 9.0f, 1e-5);
+    EXPECT_FLOAT_EQ(d.uv_sets[0][4].u, 0.4f);          // uv0 by reference (B's 3)
+    EXPECT_FLOAT_EQ(d.uv_sets[1][4].v, 0.3f);          // UV1 from attr_src 2
+    EXPECT_FLOAT_EQ(d.vertex_colors[4].r, 0.3f);       // colour from attr_src 2
+    EXPECT_FLOAT_EQ(d.vertex_colors[4].g, 0.31f);
+    EXPECT_EQ(d.triangles.back(), (std::array<std::uint16_t, 3>{0, 1, 4}));
+}
+
+TEST(MeshFixShapeEditRef, LiteralAddedVertexWithAttrSrcOnAShapeWithoutColours) {
+    auto s = make();
+    auto& d0 = std::get<nif::NiTriShapeData>(s.f.blocks[2]);
+    d0.has_vertex_colors = false; d0.vertex_colors.clear();
+    d0.uv_sets.resize(1);
+    auto e = base_edit();
+    assets::ShapeEditAddVertex a;
+    a.pos.literal = {0.5f, 0.5f, 1.0f};
+    a.uv0.literal = {0.25f, 0.5f};
+    a.attr_src = 1;
+    e.add_vertices = {a};
+    e.add_triangles = {{0, 1, 4}};
+    ASSERT_EQ(assets::apply_mesh_fix(s.f, fix_of(e)), "");
+    EXPECT_TRUE(data(s).vertex_colors.empty());
+    EXPECT_FLOAT_EQ(data(s).uv_sets[0][4].u, 0.25f);
+    EXPECT_FLOAT_EQ(data(s).vertices[4].z, 1.0f);
+}
+
+namespace {
+/// Like expect_refused, over make_two(): both shapes must be untouched.
+void expect_refused_two(assets::MeshFix fix, const char* why,
+                        void (*mutate)(Synthetic&) = nullptr) {
+    auto s = make_two();
+    if (mutate) mutate(s);
+    const auto a_before = data(s).vertices;
+    const auto b_before = data_b(s).vertices;
+    const auto a_tris = data(s).triangles;
+    const auto a_uv = data(s).uv_sets;
+    EXPECT_NE(assets::apply_mesh_fix(s.f, fix), "") << why;
+    ASSERT_EQ(data(s).vertices.size(), a_before.size()) << why;
+    ASSERT_EQ(data_b(s).vertices.size(), b_before.size()) << why;
+    for (std::size_t i = 0; i < a_before.size(); ++i) {
+        EXPECT_EQ(data(s).vertices[i].x, a_before[i].x) << why;
+        EXPECT_EQ(data(s).vertices[i].y, a_before[i].y) << why;
+    }
+    for (std::size_t i = 0; i < b_before.size(); ++i)
+        EXPECT_EQ(data_b(s).vertices[i].x, b_before[i].x) << why;
+    EXPECT_EQ(data(s).triangles, a_tris) << why;
+    EXPECT_EQ(data(s).uv_sets[0][1].u, a_uv[0][1].u) << why;
+    EXPECT_EQ(data(s).match_groups.size(), 1u) << why;
+}
+}  // namespace
+
+TEST(MeshFixShapeEditRef, EveryReferenceRefusalLeavesTheFileUntouched) {
+    auto mv = [](assets::ShapeEditPos p) {
+        auto e = base_edit(); e.moves = {{0, {3, 3, 3}}, {2, p}}; return fix_of(e);
+    };
+    expect_refused_two(mv(pos_ref(99, 0)), "ref block out of range");
+    expect_refused_two(mv(pos_ref(3, 0)), "ref block is a NiNode, not a NiTriShape");
+    expect_refused_two(mv(pos_ref(2, 0)), "ref block is NiTriShapeData, not a NiTriShape");
+    expect_refused_two(mv(pos_ref(4, 4)), "ref vertex == original count");
+    expect_refused_two(mv(pos_ref(4, 0)), "ref shape's data unresolved", [](Synthetic& s) {
+        std::get<nif::NiTriShape>(s.f.blocks[4]).data_link = 42;
+    });
+    {   // vertex 4 exists only AFTER the same fix grows B: still out of range
+        auto eb = edit_b();
+        eb.add_vertices = {added(pos_ref(4, 0), uv_ref(4, 0), 0)};
+        auto ea = base_edit();
+        ea.moves = {{2, pos_ref(4, 4)}};
+        assets::MeshFix f; f.shape_edits = {eb, ea};
+        expect_refused_two(f, "ref vertex valid only after the edit");
+    }
+    {
+        auto e = base_edit(); e.moves = {{0, {3, 3, 3}}};
+        e.uvs = {{1, uv_ref(4, 9)}};
+        expect_refused_two(fix_of(e), "uv ref vertex out of range");
+    }
+    {
+        auto e = base_edit(); e.moves = {{0, {3, 3, 3}}};
+        e.uvs = {{1, uv_ref(0, 0)}};
+        expect_refused_two(fix_of(e), "uv ref block is not a NiTriShape");
+    }
+    {
+        auto e = base_edit(); e.moves = {{0, {3, 3, 3}}};
+        e.add_vertices = {added(pos_ref(1, 0), uv_ref(1, 0), 4)};
+        e.add_triangles = {{1, 2, 4}};
+        expect_refused_two(fix_of(e), "attr_src == original count");
+    }
+    {
+        auto e = base_edit(); e.moves = {{0, {3, 3, 3}}};
+        assets::ShapeEditAddVertex a;
+        a.pos.literal = {0.5f, 0.5f, std::numeric_limits<float>::infinity()};
+        a.attr_src = 0;
+        e.add_vertices = {a};
+        expect_refused_two(fix_of(e), "non-finite literal added position");
+    }
+    {
+        auto e = base_edit(); e.moves = {{0, {3, 3, 3}}};
+        assets::ShapeEditUv u; u.literal = {std::numeric_limits<float>::quiet_NaN(), 0};
+        e.uvs = {{1, u}};
+        expect_refused_two(fix_of(e), "non-finite literal uv");
+    }
+}

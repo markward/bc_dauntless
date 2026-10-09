@@ -7,10 +7,10 @@
 // "shape_edits" and "textures" (per-shape albedo swaps). A merge
 // describes how to merge a small patch of geometry (an ID cut left over from
 // BC's Federation saucer sections) back into its parent target shape at NIF
-// load time. A shape edit is an opaque "BSD1" binary payload (base64 in the
-// file) describing per-shape vertex moves/UV edits/additions/triangle
-// add-remove, applied against a NIF in apply_mesh_fix (decode-only here;
-// validation against a loaded NIF is a later phase). Fix files live at
+// load time. A shape edit is an opaque "BSD1"/"BSD2" binary payload (base64
+// in the file) describing per-shape vertex moves/UV edits/additions/triangle
+// add-remove, applied against a NIF in apply_mesh_fix. BSD2 positions/UVs
+// may be references to original vertices instead of literals. Fix files live at
 // native/assets/mesh_fixes/<fnv1a64-of-nif-bytes>.json and are matched to a
 // loaded NIF by content hash, not by filename.
 #pragma once
@@ -49,23 +49,50 @@ struct MeshFixMerge {
     std::optional<std::vector<std::array<float, 3>>> normals;
 };
 
-// One added vertex in a ShapeEdit's add_vertices list (shape-local space).
-struct ShapeEditAddVertex {
-    std::array<float, 3> pos;     // shape-local
-    std::array<float, 2> uv0;
-    std::array<float, 2> uv1;     // ignored if the shape has 1 UV set
-    std::array<float, 4> color;   // ignored if the shape has no colours
+// BSD2 reference (spec 2026-10-09-bridge-shape-diff §6.1): ORIGINAL vertex
+// `vertex` of the NiTriShape at block-array index `block`. Always resolved
+// against the unmodified file, before any merge or edit is applied.
+struct ShapeEditRef {
+    std::uint32_t block = 0;
+    std::uint16_t vertex = 0;
 };
 
-// One shape's worth of edits decoded from a "BSD1" shape-edit payload.
+// A position: `literal` (shape-local) unless `ref` is set, in which case it
+// is the referenced original's position transformed src-local -> model ->
+// target-local through nif_block_world (an exact copy within one shape).
+struct ShapeEditPos {
+    std::array<float, 3> literal{};
+    std::optional<ShapeEditRef> ref;
+};
+
+// A UV0: `literal` unless `ref` is set (the referenced original's UV0).
+struct ShapeEditUv {
+    std::array<float, 2> literal{};
+    std::optional<ShapeEditRef> ref;
+};
+
+// One added vertex in a ShapeEdit's add_vertices list.
+struct ShapeEditAddVertex {
+    ShapeEditPos pos;
+    ShapeEditUv uv0;
+    // BSD1 only: literal attributes (ignored if the shape has 1 UV set / no
+    // colours). BSD2 never carries them -- they were BC data (spec §6.2).
+    std::array<float, 2> uv1{};
+    std::array<float, 4> color{1.0f, 1.0f, 1.0f, 1.0f};
+    // BSD2: an ORIGINAL vertex of the TARGET shape whose colour and UV sets
+    // 1.. the new vertex copies. Unset for BSD1 (uses uv1/color above).
+    std::optional<std::uint16_t> attr_src;
+};
+
+// One shape's worth of edits decoded from a "BSD1"/"BSD2" shape-edit payload.
 // Structural only: ranges (e.g. vertex/triangle indices against the actual
-// shape) are not checked until apply_mesh_fix.
+// shape, reference targets) are not checked until apply_mesh_fix.
 struct ShapeEdit {
     std::uint32_t block = 0;
     std::uint16_t orig_vertex_count = 0;
     std::uint16_t orig_triangle_count = 0;
-    std::vector<std::pair<std::uint16_t, std::array<float, 3>>> moves;
-    std::vector<std::pair<std::uint16_t, std::array<float, 2>>> uvs;
+    std::vector<std::pair<std::uint16_t, ShapeEditPos>> moves;
+    std::vector<std::pair<std::uint16_t, ShapeEditUv>> uvs;
     std::vector<ShapeEditAddVertex> add_vertices;
     std::vector<std::uint16_t> remove_triangles;
     std::vector<std::array<std::uint16_t, 3>> add_triangles;
@@ -99,9 +126,10 @@ std::optional<MeshFix> parse_mesh_fix(std::string_view json_text, std::string* e
 // illegal character or a length that is not a multiple of 4.
 std::optional<std::string> base64_decode(std::string_view text);
 
-// Decode a "BSD1" shape-edit payload (spec 2026-10-09-bridge-shape-diff
-// §6.1). Structural checks only -- range checks against a NIF happen in
-// apply_mesh_fix. Refuses bad magic, truncation and trailing bytes.
+// Decode a "BSD1" or "BSD2" shape-edit payload (spec
+// 2026-10-09-bridge-shape-diff §6.1). Structural checks only -- range and
+// reference checks against a NIF happen in apply_mesh_fix. Refuses bad
+// magic, an unknown position/UV kind byte, truncation and trailing bytes.
 std::optional<std::vector<ShapeEdit>> decode_shape_edits(std::string_view bytes,
                                                          std::string* error);
 

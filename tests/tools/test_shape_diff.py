@@ -4,35 +4,63 @@ import pytest
 
 from tools.shape_diff import ShapeDiffError, frames, payload
 
+# BSD2 (spec §6.1): every record kind -- literal and reference positions,
+# literal and reference UVs, added vertices of both kinds with attr_src,
+# a removed and an added triangle. Hand-assembled with struct, NOT produced
+# by the encoder; pinned byte-identical in native/tests/assets/cpu/
+# mesh_fix_parse_test.cc (kGoldenBsd2B64).
 GOLDEN_B64 = (
-    "QlNEMQEABwAAAAQAAgABAAEAAQABAAEAAgAAAIA/AAAAQAAAQEAAAAAAgD4AAEA/AAAAPwAAAD8"
-    "AAAAAzczMPc3MTD6amZk+zczMPgAAgD8AAAA/AACAPgAAgD8BAAAAAgAEAA=="
+    "QlNEMgEABwAAAAQAAgACAAIAAgABAAEAAQAAAACAPwAAAEAAAEBAAgABCQAAAAMAAAAAAACAPgAAQD8D"
+    "AAEHAAAAAQAAAAAAPwAAAD8AAAAAAAAAAD4AAAA/AgABCQAAAAAAAQkAAAAAAAMAAQAAAAQABQA="
 )
 
 GOLDEN_EDIT = {
     "block": 7, "orig_vertex_count": 4, "orig_triangle_count": 2,
-    "moves": [(2, (1.0, 2.0, 3.0))],
-    "uvs": [(0, (0.25, 0.75))],
-    "add_vertices": [{"pos": (0.5, 0.5, 0.0), "uv0": (0.1, 0.2),
-                      "uv1": (0.3, 0.4), "color": (1.0, 0.5, 0.25, 1.0)}],
+    "moves": [(1, (1.0, 2.0, 3.0)), (2, payload.Ref(9, 3))],
+    "uvs": [(0, (0.25, 0.75)), (3, payload.Ref(7, 1))],
+    "add_vertices": [{"pos": (0.5, 0.5, 0.0), "uv0": (0.125, 0.5), "attr_src": 2},
+                     {"pos": payload.Ref(9, 0), "uv0": payload.Ref(9, 0), "attr_src": 3}],
     "remove_triangles": [1],
-    "add_triangles": [(0, 2, 4)],
+    "add_triangles": [(0, 4, 5)],
 }
 
 
 def test_payload_matches_cpp_golden():
     assert payload.encode_b64([GOLDEN_EDIT]) == GOLDEN_B64
-    assert len(base64.b64decode(GOLDEN_B64)) == 100
+    assert len(base64.b64decode(GOLDEN_B64)) == 116
 
 
 def test_payload_missing_lists_are_empty():
     raw = payload.encode([{"block": 1, "orig_vertex_count": 3, "orig_triangle_count": 1}])
-    assert raw == b"BSD1" + bytes([1, 0, 1, 0, 0, 0, 3, 0, 1, 0]) + bytes(10)
+    assert raw == b"BSD2" + bytes([1, 0, 1, 0, 0, 0, 3, 0, 1, 0]) + bytes(10)
 
 
 def test_payload_refuses_index_overflow():
     with pytest.raises(ShapeDiffError):
         payload.encode([{"block": 1, "orig_vertex_count": 70000, "orig_triangle_count": 1}])
+
+
+def test_payload_refuses_reference_vertex_overflow():
+    e = {"block": 1, "orig_vertex_count": 3, "orig_triangle_count": 1,
+         "moves": [(0, payload.Ref(2, 70000))]}
+    with pytest.raises(ShapeDiffError, match="16 bits"):
+        payload.encode([e])
+
+
+def test_payload_refuses_an_added_vertex_without_attr_src():
+    # BSD1's literal uv1/colour fields were BC data (spec §6.2): never written.
+    e = {"block": 1, "orig_vertex_count": 3, "orig_triangle_count": 1,
+         "add_vertices": [{"pos": (0, 0, 0), "uv0": (0, 0),
+                           "uv1": (0, 0), "color": (1, 1, 1, 1)}]}
+    with pytest.raises(ShapeDiffError, match="attr_src"):
+        payload.encode([e])
+
+
+def test_payload_refuses_a_malformed_position():
+    e = {"block": 1, "orig_vertex_count": 3, "orig_triangle_count": 1,
+         "moves": [(0, (1.0, 2.0))]}
+    with pytest.raises(ShapeDiffError, match="position"):
+        payload.encode([e])
 
 
 def test_axis_swap_round_trips():
@@ -792,7 +820,8 @@ def test_main_summary_line_counts_triangles(monkeypatch, tmp_path, capsys):
     cli, _ = _patched_cli(monkeypatch, tmp_path)
     assert cli.main(["diff", "b.obj", "e.obj"]) == 0
     out = capsys.readouterr().out
-    assert "block 7: 1 vertices moved, 1 UVs changed, 1 triangles removed, 1 added" in out
+    assert ("block 7: 2 vertices moved (1 by reference), 2 UVs changed, "
+            "1 triangles removed, 1 added, 2 vertices added (1 by reference)") in out
 
 
 def _retex_vertex(mesh, v, uv):
@@ -1060,7 +1089,8 @@ def test_main_summary_names_the_texture_and_lists_texture_only_blocks(
                         (cli.make_fix_dict(rel, edits), edits))
     assert cli.main(["diff", "b.obj", "e.obj"]) == 0
     out = capsys.readouterr().out
-    assert ("block 7: 1 vertices moved, 1 UVs changed, 1 triangles removed, 1 added, "
+    assert ("block 7: 2 vertices moved (1 by reference), 2 UVs changed, "
+            "1 triangles removed, 1 added, 2 vertices added (1 by reference), "
             "texture -> g_imp_connops.tga") in out
     assert "block 59: texture -> g_imp_connops.tga" in out
 

@@ -1,6 +1,8 @@
 // native/src/assets/src/mesh_fix.cc
 // Parsing + application halves of the hull name-cut fix (spec:
-// docs/superpowers/specs/2026-09-28-hull-name-cut-fix-design.md).
+// docs/superpowers/specs/2026-09-28-hull-name-cut-fix-design.md) and of the
+// bridge-shape-diff shape edits / texture ops (spec:
+// docs/superpowers/specs/2026-10-09-bridge-shape-diff-design.md).
 #include <assets/mesh_fix.h>
 
 #include <algorithm>
@@ -84,9 +86,35 @@ std::optional<std::vector<ShapeEdit>> decode_shape_edits(std::string_view bytes,
         if (error) *error = std::move(msg);
         return std::nullopt;
     };
-    if (bytes.size() < 4 || bytes.substr(0, 4) != "BSD1")
-        return fail("shape_edits: bad magic");
+    if (bytes.size() < 4) return fail("shape_edits: bad magic");
+    const std::string_view magic = bytes.substr(0, 4);
+    if (magic != "BSD1" && magic != "BSD2") return fail("shape_edits: bad magic");
+    const bool v2 = magic == "BSD2";
     PayloadReader r{bytes, 4};
+    bool bad_kind = false;
+    // BSD2 kind byte: 0 = literal, 1 = reference (u32 block, u16 vertex).
+    auto read_ref = [&](std::optional<ShapeEditRef>& out) -> bool {
+        const auto kind = r.get<std::uint8_t>();
+        if (!r.ok) return false;
+        if (kind == 0) return false;
+        if (kind != 1) { bad_kind = true; r.ok = false; return false; }
+        const auto block = r.get<std::uint32_t>();
+        const auto vertex = r.get<std::uint16_t>();
+        out = ShapeEditRef{block, vertex};
+        return true;
+    };
+    auto read_pos = [&]() {
+        ShapeEditPos p;
+        if (v2 && read_ref(p.ref)) return p;
+        for (auto& c : p.literal) c = r.get<float>();
+        return p;
+    };
+    auto read_uv = [&]() {
+        ShapeEditUv u;
+        if (v2 && read_ref(u.ref)) return u;
+        for (auto& c : u.literal) c = r.get<float>();
+        return u;
+    };
     const auto shape_count = r.get<std::uint16_t>();
     std::vector<ShapeEdit> out;
     for (std::uint16_t s = 0; s < shape_count && r.ok; ++s) {
@@ -101,20 +129,22 @@ std::optional<std::vector<ShapeEdit>> decode_shape_edits(std::string_view bytes,
         const auto n_addt = r.get<std::uint16_t>();
         for (int i = 0; i < n_move && r.ok; ++i) {
             const auto idx = r.get<std::uint16_t>();
-            std::array<float, 3> p{r.get<float>(), r.get<float>(), r.get<float>()};
-            e.moves.emplace_back(idx, p);
+            e.moves.emplace_back(idx, read_pos());
         }
         for (int i = 0; i < n_uv && r.ok; ++i) {
             const auto idx = r.get<std::uint16_t>();
-            std::array<float, 2> uv{r.get<float>(), r.get<float>()};
-            e.uvs.emplace_back(idx, uv);
+            e.uvs.emplace_back(idx, read_uv());
         }
         for (int i = 0; i < n_addv && r.ok; ++i) {
             ShapeEditAddVertex v;
-            for (auto& c : v.pos) c = r.get<float>();
-            for (auto& c : v.uv0) c = r.get<float>();
-            for (auto& c : v.uv1) c = r.get<float>();
-            for (auto& c : v.color) c = r.get<float>();
+            v.pos = read_pos();
+            v.uv0 = read_uv();
+            if (v2) {
+                v.attr_src = r.get<std::uint16_t>();
+            } else {
+                for (auto& c : v.uv1) c = r.get<float>();
+                for (auto& c : v.color) c = r.get<float>();
+            }
             e.add_vertices.push_back(v);
         }
         for (int i = 0; i < n_remt && r.ok; ++i) e.remove_triangles.push_back(r.get<std::uint16_t>());
@@ -123,6 +153,7 @@ std::optional<std::vector<ShapeEdit>> decode_shape_edits(std::string_view bytes,
                                        r.get<std::uint16_t>()});
         out.push_back(std::move(e));
     }
+    if (bad_kind) return fail("shape_edits: unknown position/uv kind byte");
     if (!r.ok) return fail("shape_edits: payload truncated");
     if (r.pos != bytes.size()) return fail("shape_edits: trailing bytes after payload");
     return out;
@@ -443,15 +474,101 @@ void apply_merge(nif::File& file, const MeshFixMerge& m, const MergePlan& plan) 
     patch_shape.av.flags |= 0x0001u;
 }
 
-/// One shape edit, validated: the data block it mutates.
-struct EditPlan {
-    std::size_t data_idx = 0;
+/// One added vertex with every reference and attribute already resolved.
+struct ResolvedAdd {
+    glm::vec3 pos{0.0f};
+    nif::TexCoord uv0{};
+    std::vector<nif::TexCoord> extra_uvs;   // UV sets 1.. of the target
+    nif::Color4 color{1.0f, 1.0f, 1.0f, 1.0f};
 };
 
-/// Validate edit `e` (index `edit_idx`) against the UNMODIFIED file. Returns
-/// "" and fills `*plan`, else the refusal reason ("shape edit N: ...").
+/// One shape edit, validated against the UNMODIFIED file, with every BSD2
+/// reference resolved to a concrete value -- so applying it never reads data
+/// that another merge or edit of the same fix may already have changed.
+struct EditPlan {
+    std::size_t data_idx = 0;
+    std::vector<std::pair<std::uint16_t, glm::vec3>> moves;
+    std::vector<std::pair<std::uint16_t, nif::TexCoord>> uvs;
+    std::vector<ResolvedAdd> adds;
+};
+
+/// Resolves BSD2 references against the unmodified file (spec §6.1): a ref
+/// names an ORIGINAL vertex of a NiTriShape; its position is carried
+/// src-local -> model -> target-local through nif_block_world (in double).
+class RefResolver {
+public:
+    explicit RefResolver(const nif::File& file) : file_(file) {}
+
+    /// The referenced shape's data, or nullptr with *why set.
+    const nif::NiTriShapeData* source(std::uint32_t block, std::string* why) const {
+        if (block >= file_.blocks.size()) { *why = "reference block out of range"; return nullptr; }
+        const auto* shape = std::get_if<nif::NiTriShape>(&file_.blocks[block]);
+        if (!shape) { *why = "reference block is not a NiTriShape"; return nullptr; }
+        const std::size_t di = index_of(file_, shape->data_link);
+        const nif::NiTriShapeData* d =
+            di == kNoIndex || di >= file_.blocks.size()
+                ? nullptr : std::get_if<nif::NiTriShapeData>(&file_.blocks[di]);
+        if (!d) { *why = "reference shape's data is unresolved"; return nullptr; }
+        if (!d->has_vertices || d->vertices.size() != d->num_vertices) {
+            *why = "reference shape's vertex array is inconsistent"; return nullptr;
+        }
+        return d;
+    }
+
+    std::string position(const ShapeEditPos& p, std::uint32_t target_block, glm::vec3* out) {
+        if (!p.ref) {
+            *out = glm::vec3(p.literal[0], p.literal[1], p.literal[2]);
+            return finite(*out) ? "" : "non-finite literal position";
+        }
+        std::string why;
+        const auto* d = source(p.ref->block, &why);
+        if (!d) return why;
+        if (p.ref->vertex >= d->num_vertices) return "reference vertex out of range";
+        const nif::Vec3& v = d->vertices[p.ref->vertex];
+        if (p.ref->block == target_block) {
+            *out = glm::vec3(v.x, v.y, v.z);       // same frame: an exact copy
+        } else {
+            const glm::dmat4 to = glm::inverse(world(target_block)) * world(p.ref->block);
+            *out = glm::vec3(to * glm::dvec4(v.x, v.y, v.z, 1.0));
+        }
+        return finite(*out) ? "" : "reference resolves to a non-finite position";
+    }
+
+    std::string uv(const ShapeEditUv& u, nif::TexCoord* out) const {
+        if (!u.ref) {
+            *out = {u.literal[0], u.literal[1]};
+            return std::isfinite(out->u) && std::isfinite(out->v) ? "" : "non-finite literal uv";
+        }
+        std::string why;
+        const auto* d = source(u.ref->block, &why);
+        if (!d) return why;
+        if (d->uv_sets.empty() || d->uv_sets[0].size() != d->num_vertices)
+            return "reference shape has no consistent UV set 0";
+        if (u.ref->vertex >= d->num_vertices) return "reference uv vertex out of range";
+        *out = d->uv_sets[0][u.ref->vertex];
+        return std::isfinite(out->u) && std::isfinite(out->v)
+                   ? "" : "reference resolves to a non-finite uv";
+    }
+
+private:
+    static bool finite(const glm::vec3& v) {
+        return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+    }
+    const glm::dmat4& world(std::size_t block) {
+        auto it = world_.find(block);
+        if (it == world_.end())
+            it = world_.emplace(block, glm::dmat4(nif_block_world(file_, block))).first;
+        return it->second;
+    }
+    const nif::File& file_;
+    std::unordered_map<std::size_t, glm::dmat4> world_;
+};
+
+/// Validate edit `e` (index `edit_idx`) against the UNMODIFIED file and
+/// resolve it into `*plan`. Returns "", else the refusal reason
+/// ("shape edit N: ...").
 std::string validate_edit(const nif::File& file, const ShapeEdit& e,
-                          std::size_t edit_idx, EditPlan* plan) {
+                          std::size_t edit_idx, RefResolver& refs, EditPlan* plan) {
     const std::string prefix = "shape edit " + std::to_string(edit_idx) + ": ";
     if (e.block >= file.blocks.size()) return prefix + "block out of range";
     const auto* shape = std::get_if<nif::NiTriShape>(&file.blocks[e.block]);
@@ -478,26 +595,46 @@ std::string validate_edit(const nif::File& file, const ShapeEdit& e,
 
     const std::size_t final_v = std::size_t{e.orig_vertex_count} + e.add_vertices.size();
     if (final_v > 65535) return prefix + "final vertex count exceeds 65535";
-    auto finite2 = [](const std::array<float, 2>& a) {
-        return std::isfinite(a[0]) && std::isfinite(a[1]);
-    };
-    auto finite3 = [](const std::array<float, 3>& a) {
-        return std::isfinite(a[0]) && std::isfinite(a[1]) && std::isfinite(a[2]);
-    };
-    auto finite4 = [](const std::array<float, 4>& a) {
-        return std::isfinite(a[0]) && std::isfinite(a[1]) && std::isfinite(a[2]) && std::isfinite(a[3]);
-    };
+
+    EditPlan out;
+    out.data_idx = data_idx;
     for (const auto& [i, p] : e.moves) {
         if (i >= e.orig_vertex_count) return prefix + "move index out of range";
-        if (!finite3(p)) return prefix + "non-finite move position";
+        glm::vec3 v;
+        if (std::string why = refs.position(p, e.block, &v); !why.empty())
+            return prefix + "move: " + why;
+        out.moves.emplace_back(i, v);
     }
-    for (const auto& [i, uv] : e.uvs) {
+    for (const auto& [i, u] : e.uvs) {
         if (i >= e.orig_vertex_count) return prefix + "uv index out of range";
-        if (!finite2(uv)) return prefix + "non-finite uv value";
+        nif::TexCoord t;
+        if (std::string why = refs.uv(u, &t); !why.empty()) return prefix + "uv: " + why;
+        out.uvs.emplace_back(i, t);
     }
     for (const auto& av : e.add_vertices) {
-        if (!finite3(av.pos) || !finite2(av.uv0) || !finite2(av.uv1) || !finite4(av.color))
-            return prefix + "non-finite added vertex field";
+        ResolvedAdd ra;
+        if (std::string why = refs.position(av.pos, e.block, &ra.pos); !why.empty())
+            return prefix + "added vertex: " + why;
+        if (std::string why = refs.uv(av.uv0, &ra.uv0); !why.empty())
+            return prefix + "added vertex: " + why;
+        if (av.attr_src) {
+            // BSD2: colour and UV sets 1.. copied from an original of this shape.
+            if (*av.attr_src >= e.orig_vertex_count)
+                return prefix + "added vertex attr_src out of range";
+            for (std::size_t k = 1; k < d->uv_sets.size(); ++k)
+                ra.extra_uvs.push_back(d->uv_sets[k][*av.attr_src]);
+            if (d->has_vertex_colors) ra.color = d->vertex_colors[*av.attr_src];
+        } else {
+            // BSD1: literal attributes.
+            const bool finite = std::isfinite(av.uv1[0]) && std::isfinite(av.uv1[1]) &&
+                                std::all_of(av.color.begin(), av.color.end(),
+                                            [](float c) { return std::isfinite(c); });
+            if (!finite) return prefix + "non-finite added vertex field";
+            for (std::size_t k = 1; k < d->uv_sets.size(); ++k)
+                ra.extra_uvs.push_back({av.uv1[0], av.uv1[1]});
+            ra.color = {av.color[0], av.color[1], av.color[2], av.color[3]};
+        }
+        out.adds.push_back(std::move(ra));
     }
 
     std::vector<bool> removed(e.orig_triangle_count, false);
@@ -514,8 +651,8 @@ std::string validate_edit(const nif::File& file, const ShapeEdit& e,
     std::vector<glm::vec3> pos;
     pos.reserve(final_v);
     for (const auto& v : d->vertices) pos.emplace_back(v.x, v.y, v.z);
-    for (const auto& [i, p] : e.moves) pos[i] = glm::vec3(p[0], p[1], p[2]);
-    for (const auto& av : e.add_vertices) pos.emplace_back(av.pos[0], av.pos[1], av.pos[2]);
+    for (const auto& [i, p] : out.moves) pos[i] = p;
+    for (const auto& ra : out.adds) pos.push_back(ra.pos);
     for (const auto& t : e.add_triangles) {
         if (t[0] >= final_v || t[1] >= final_v || t[2] >= final_v)
             return prefix + "added triangle index out of range";
@@ -524,21 +661,20 @@ std::string validate_edit(const nif::File& file, const ShapeEdit& e,
         const glm::vec3 n = glm::cross(pos[t[1]] - pos[t[0]], pos[t[2]] - pos[t[0]]);
         if (glm::length(n) <= 1e-10f) return prefix + "added triangle has zero area";
     }
-    plan->data_idx = data_idx;
+    *plan = std::move(out);
     return "";
 }
 
 void apply_edit(nif::File& file, const ShapeEdit& e, const EditPlan& plan) {
     auto& d = std::get<nif::NiTriShapeData>(file.blocks[plan.data_idx]);
-    for (const auto& [i, p] : e.moves) d.vertices[i] = {p[0], p[1], p[2]};
-    for (const auto& [i, uv] : e.uvs) d.uv_sets[0][i] = {uv[0], uv[1]};
-    for (const auto& av : e.add_vertices) {
-        d.vertices.push_back({av.pos[0], av.pos[1], av.pos[2]});
-        d.uv_sets[0].push_back({av.uv0[0], av.uv0[1]});
+    for (const auto& [i, p] : plan.moves) d.vertices[i] = {p.x, p.y, p.z};
+    for (const auto& [i, uv] : plan.uvs) d.uv_sets[0][i] = uv;
+    for (const auto& ra : plan.adds) {
+        d.vertices.push_back({ra.pos.x, ra.pos.y, ra.pos.z});
+        d.uv_sets[0].push_back(ra.uv0);
         for (std::size_t s = 1; s < d.uv_sets.size(); ++s)
-            d.uv_sets[s].push_back({av.uv1[0], av.uv1[1]});
-        if (d.has_vertex_colors)
-            d.vertex_colors.push_back({av.color[0], av.color[1], av.color[2], av.color[3]});
+            d.uv_sets[s].push_back(ra.extra_uvs[s - 1]);
+        if (d.has_vertex_colors) d.vertex_colors.push_back(ra.color);
     }
     std::vector<bool> removed(d.triangles.size(), false);
     for (std::uint16_t t : e.remove_triangles) removed[t] = true;
@@ -668,9 +804,13 @@ std::string apply_mesh_fix(nif::File& file, const MeshFix& fix) {
         }
     }
 
+    // Every shape edit is validated and its references resolved here, on the
+    // UNMODIFIED file, before any merge or edit mutates it: a reference
+    // always reads original data, even into a shape this same fix edits.
     std::vector<EditPlan> edit_plans(fix.shape_edits.size());
+    RefResolver refs(file);
     for (std::size_t i = 0; i < fix.shape_edits.size(); ++i) {
-        std::string err = validate_edit(file, fix.shape_edits[i], i, &edit_plans[i]);
+        std::string err = validate_edit(file, fix.shape_edits[i], i, refs, &edit_plans[i]);
         if (!err.empty()) return err;
         // A data block may be edited once, and never by a merge too.
         auto [it, inserted] = data_block_owner.try_emplace(edit_plans[i].data_idx,

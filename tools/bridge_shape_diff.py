@@ -84,13 +84,21 @@ def make_fix_dict(rel: str, edits: list) -> dict:
     return fix
 
 
+def _by_ref(positions) -> str:
+    n = sum(1 for p in positions if isinstance(p, payload.Ref))
+    return f" ({n} by reference)" if n else ""
+
+
 def _summary(e: dict) -> str:
     parts = []
     if _has_geometry(e):
-        parts.append(f"{len(e['moves'])} vertices moved, "
-                     f"{len(e['uvs'])} UVs changed, "
+        moves = e.get("moves", [])
+        addv = e.get("add_vertices", [])
+        parts.append(f"{len(moves)} vertices moved{_by_ref(p for _, p in moves)}, "
+                     f"{len(e.get('uvs', []))} UVs changed, "
                      f"{len(e.get('remove_triangles', []))} triangles removed, "
-                     f"{len(e.get('add_triangles', []))} added")
+                     f"{len(e.get('add_triangles', []))} added, "
+                     f"{len(addv)} vertices added{_by_ref(v['pos'] for v in addv)}")
     if e.get("albedo"):
         parts.append(f"texture -> {e['albedo']}")
     return f"block {e['block']}: " + ", ".join(parts)
