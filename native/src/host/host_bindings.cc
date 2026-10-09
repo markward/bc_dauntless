@@ -72,6 +72,7 @@
 #include <renderer/starmap_pass.h>
 #include <renderer/letterbox_pass.h>
 #include <renderer/bridge_pass.h>
+#include <renderer/bridge_quality.h>
 #include <renderer/viewscreen_static_pass.h>
 #include <renderer/hdr_target.h>
 #include <renderer/hdr_msaa_target.h>
@@ -253,11 +254,22 @@ renderer::Lighting g_lighting;
 // ambient is authored on its own SetClass and is typically much
 // brighter than the space scene's.
 renderer::Lighting g_bridge_lighting;
-// Ambient multiplier for the bridge INTERIOR only (red-alert dim). Applied
+// Ambient multiplier for the bridge INTERIOR only: the alert-level scale
+// (engine/bridge_lighting.py -- green x1.5, yellow/red x1.0). Applied
 // where the main bridge pass renders, never to the comm-set RTT feed — the
 // viewscreen shows another ship's room, whose lighting must not follow our
 // alert level.
 float g_bridge_ambient_scale = 1.0f;
+// Bridge AO quality preset (Low/Medium/High), set via set_bridge_quality().
+// Applied to g_bridge_pass's AO settings both where it is constructed and on
+// every set_bridge_quality() call, so a quality change takes effect even
+// mid-mission without waiting for the next init().
+renderer::BridgeQuality g_bridge_quality = renderer::kDefaultBridgeQuality;
+// Developer Options -> Lighting tab "Bridge Debug View" (see
+// renderer::BridgeDebugView). set_bridge_debug_view is a no-op without
+// --developer, so this stays 0 (Off) in production regardless of what
+// Python sends.
+int g_bridge_debug_view = 0;
 std::vector<renderer::Backdrop> g_backdrops;
 bool g_sky_dirty = true;            // cubemap needs (re)baking
 bool g_sky_last_procedural = false; // procedural-toggle state at the last frame
@@ -661,7 +673,8 @@ scenegraph::ModelHandle load_model_impl(
     const py::object& texture_replacements,
     const py::object& decals,
     float scale,
-    bool geosphere) {
+    bool geosphere,
+    bool interior) {
     if (!g_window) {
         throw std::runtime_error("load_model: init must be called first (asset upload needs a GL context)");
     }
@@ -744,6 +757,13 @@ scenegraph::ModelHandle load_model_impl(
         rep_key += "|geosphere";
     }
 
+    // Interior load flag (spec 2026-10-08-bridge-lighting-baseline-design.md
+    // §3): folded into rep_key like geosphere, so a plain and an interior
+    // load of the same NIF are distinct cached handles.
+    if (interior) {
+        rep_key += "|interior";
+    }
+
     // Dedupe by (nif_path, replacements, decals): callers that load the same
     // NIF + registry + decal set for multiple ships get the same handle and
     // the underlying assets::AssetCache::load isn't even called a second
@@ -771,7 +791,7 @@ scenegraph::ModelHandle load_model_impl(
         };
         g_cache = std::make_unique<assets::AssetCache>(std::move(cfg));
     }
-    auto handle = g_cache->load(nif_path, search_paths, replacements, decal_requests, scale, geosphere);
+    auto handle = g_cache->load(nif_path, search_paths, replacements, decal_requests, scale, geosphere, interior);
     LoadedModel lm;
     lm.nif_path         = std::move(canonical);
     lm.handle           = std::move(handle);
@@ -823,6 +843,7 @@ void reset_frame_state() {
     g_lighting = renderer::Lighting{};
     g_bridge_lighting = renderer::Lighting{};
     g_bridge_ambient_scale = 1.0f;
+    g_bridge_quality = renderer::kDefaultBridgeQuality;
     g_bridge_pass_enabled = false;
     g_viewscreen_enabled = false;
     g_backdrops.clear();
@@ -1004,6 +1025,7 @@ void init(int width, int height, const std::string& title) {
     g_target_reticle_pass = std::make_unique<renderer::TargetReticlePass>();
     g_starmap_pass        = std::make_unique<renderer::StarMapPass>();
     g_bridge_pass         = std::make_unique<renderer::BridgePass>();
+    g_bridge_pass->set_ao_settings(renderer::ao_settings_for(g_bridge_quality));
     g_viewscreen_static_pass = std::make_unique<renderer::ViewscreenStaticPass>();
     g_hdr_target      = std::make_unique<renderer::HdrTarget>();
     g_msaa_target     = std::make_unique<renderer::HdrMsaaTarget>();
@@ -1983,8 +2005,8 @@ void frame() {
         // surrounding interior must not flash); the main resolve-pass flash is
         // suppressed below when bridge_active. 0 when not warping.
         g_bridge_pass->set_viewscreen_flash(dauntless_warp_vfx::flash_intensity());
-        // Red-alert dim applies to the interior render only; the comm-set
-        // RTT above uses the unscaled g_bridge_lighting so the viewscreen
+        // The alert-level ambient scale applies to the interior render only;
+        // the comm-set RTT above uses the unscaled g_bridge_lighting so the viewscreen
         // feed's brightness stays constant across alert levels.
         renderer::Lighting interior = g_bridge_lighting;
         interior.ambient *= g_bridge_ambient_scale;
@@ -2984,7 +3006,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("texture_replacements") = py::none(),
           py::arg("decals") = py::none(),
           py::arg("scale") = 1.0f,
-          py::arg("geosphere") = false);
+          py::arg("geosphere") = false,
+          py::arg("interior") = false);
     m.def("parse_set_camera", &parse_set_camera_impl,
           "Extract the embedded camera (frustum + world transform) from a set "
           "NIF, or None. Parse-only; no GL context required.");
@@ -3866,7 +3889,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               std::filesystem::path tex_dir =
                   std::filesystem::path(nif_path).parent_path();
               auto handle = load_model_impl(nif_path, py::cast(tex_dir.string()),
-                                            py::none(), py::none(), 1.0f, false);
+                                            py::none(), py::none(), 1.0f, false, false);
               auto id = g_world.create_instance(handle);
 
               // The host owns the cameras + pass state, so it places the
@@ -4227,10 +4250,45 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("set_bridge_ambient_scale",
           [](float s) { g_bridge_ambient_scale = s; },
           py::arg("scale"),
-          "Ambient multiplier for the bridge INTERIOR render only (red-alert "
-          "dim). The comm-set viewscreen feed always renders with the "
+          "Ambient multiplier for the bridge INTERIOR render only: the "
+          "alert-level scale (engine/bridge_lighting.py: green x1.5, "
+          "yellow/red x1.0). The comm-set viewscreen feed always renders with the "
           "unscaled bridge lighting, so viewscreen brightness stays constant "
           "across alert levels. Default 1.0.");
+
+    m.def("set_bridge_quality",
+          [](int q) {
+              g_bridge_quality = renderer::clamp_bridge_quality(q);
+              if (g_bridge_pass)
+                  g_bridge_pass->set_ao_settings(renderer::ao_settings_for(g_bridge_quality));
+          },
+          py::arg("level"),
+          "Bridge rendering quality: 0 Low, 1 Medium (default), 2 High. "
+          "Out-of-range clamps. Drives the bridge AO's sample count and "
+          "target resolution scale.");
+
+    m.def("bridge_quality",
+          [] { return static_cast<int>(g_bridge_quality); },
+          "Current bridge rendering quality level (see set_bridge_quality).");
+
+    m.def("set_bridge_debug_view",
+          [](int v) {
+              if (!dauntless::is_developer_mode()) return;
+              v = std::clamp(v, 0, 5);
+              g_bridge_debug_view = v;
+              if (g_bridge_pass)
+                  g_bridge_pass->set_debug_view(
+                      static_cast<renderer::BridgeDebugView>(v));
+          },
+          py::arg("view"),
+          "DEV ONLY (--developer; no-op otherwise): Developer Options -> "
+          "Lighting tab's Bridge Debug View row. 0 Off, 1 Normals, "
+          "2 Light Only, 3 AO Only, 4 Triangle ID, 5 Mesh ID.");
+
+    m.def("bridge_debug_view",
+          [] { return g_bridge_debug_view; },
+          "Active bridge debug view (see set_bridge_debug_view); 0 when "
+          "not under --developer.");
 
     m.def("set_bridge_wall_time",
           [](double t) { if (g_bridge_pass) g_bridge_pass->set_wall_time(t); },

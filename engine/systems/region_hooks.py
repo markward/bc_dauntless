@@ -59,7 +59,7 @@ def on_region_module_exec(module, qualname: str) -> None:
 
     No-op for anything that is not a mapped region module: packages, the
     <Region>_S static modules, helpers like Systems.Utils, and regions no map
-    covers (Starbase12, DeepSpace, the multiplayer sets).
+    covers (DeepSpace, the multiplayer sets).
     """
     parts = qualname.split(".")
     if len(parts) != 3 or parts[0] != "Systems" or parts[2].endswith("_S"):

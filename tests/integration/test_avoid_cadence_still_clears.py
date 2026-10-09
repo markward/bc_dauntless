@@ -102,18 +102,18 @@ def _scene():
     charger.SetWorldLocation(TGPoint3(0, 260, 0))
     charger.SetRadius(20.0)
     pSet.AddObjectToSet(charger, "Charger")
+    # Set ONCE; the engine drifts a no-AI ship on its scripted velocity
+    # (engine.appc.drift). Moving it by hand as well double-moves it -- see
+    # test_the_charger_closes_at_its_scripted_speed.
+    charger.SetVelocity(TGPoint3(0, -CHARGER_SPEED_GUPS, 0))
     return pSet, attacker, charger
 
 
 def _run(attacker, charger, ticks=2400):
-    charger_speed = 5.0
     dt = 1.0 / 60.0
     closest = 1e18
     t = 0.0
     for _ in range(ticks):
-        p = charger.GetWorldLocation()
-        charger.SetWorldLocation(TGPoint3(p.x, p.y - charger_speed * dt, p.z))
-        charger.SetVelocity(TGPoint3(0, -charger_speed, 0))
         ca.invalidate_obstacle_snapshot()
         t += dt
         tick_all_ai(game_time=t)
@@ -124,22 +124,102 @@ def _run(attacker, charger, ticks=2400):
     return closest
 
 
-def test_a_cadenced_ship_still_clears_a_head_on_charge():
-    """The dodge itself, through the preprocessor path with the cadence live."""
-    pSet, attacker, charger = _scene()
-    closest = _run(attacker, charger)
-    sum_r = attacker.GetRadius() + charger.GetRadius()
-    assert closest > sum_r, (
-        f"cadenced avoidance failed to dodge: closest={closest:.1f} GU, "
-        f"sum_radii={sum_r:.1f} GU")
+CHARGER_SPEED_GUPS = 5.0
+
+
+def test_the_charger_closes_at_its_scripted_speed():
+    """The scenario's premise: the charger moves at CHARGER_SPEED_GUPS, once.
+
+    The charger has no AI and no helm setpoint, so since 4109f3f2 the engine
+    drifts it on its scripted velocity (engine.appc.drift). This file kept
+    nudging it by hand as well, so it closed at 10 GU/s, the attacker had
+    half the time to dodge, and every head-on figure measured a different,
+    harder scene than the one described.
+    """
+    _pSet, attacker, charger = _scene()
+    y0 = charger.GetWorldLocation().y
+    _run(attacker, charger, ticks=60)
+    moved = y0 - charger.GetWorldLocation().y
+    assert moved == pytest.approx(CHARGER_SPEED_GUPS, rel=1e-6), (
+        "charger moved %.3f GU in 1 s, scripted %.1f GU/s"
+        % (moved, CHARGER_SPEED_GUPS))
+
+
+# Object-id bases for the head-on sweep: 32 consecutive strides of 97, which
+# cover all 16 _phase_factor buckets several times over (~10 s for both runs).
+HEAD_ON_SWEEP_BASES = [10_000_000 + 97 * i for i in range(32)]
+
+
+def _head_on_closest(delay, base, monkeypatch, pin):
+    """Closest approach of one head-on run on the SHIPPED binding.
+
+    Pins the two things the outcome depends on besides the cadence, so a pair
+    of runs differs ONLY in the cadence: the object-id base (each ship's first
+    reschedule phase, ai_optimized._phase_factor) and the
+    TGPoint3_GetRandomUnitVector stream the SDK scan draws its 8 flee
+    directions from. Unrewound, the stream alone swings a run by +-20 GU.
+    """
+    from engine.appc import ai_optimized
+    from engine.appc.math import reset_random_unit_vector_rng
+    monkeypatch.setattr(ai_optimized, "AVOID_EVADING_UPDATE_DELAY_S", delay)
+    App.g_kSetManager._sets.clear()
+    ca.reset_avoidance_state()
+    reset_random_unit_vector_rng()
+    pin(base)
+    _pSet, attacker, charger = _scene()
+    return _run(attacker, charger)
+
+
+def test_the_cadence_costs_a_head_on_dodge_no_worst_case_separation(
+        monkeypatch, pinned_id_counter):
+    """Differential on the SHIPPED path (SDK scan + phase offset + cadence),
+    against SDK-exact 0.0, over a phase sweep.
+
+    This replaced an absolute single-run check ("closest > sum of radii") that
+    ran the opt-in ENGINE scan on whatever phase the suite's object-id counter
+    happened to give it. Measured 2026-10-08 over 32 pinned bases, with the
+    charger at its scripted 5 GU/s (an earlier sweep moved it at 10 GU/s --
+    see test_the_charger_closes_at_its_scripted_speed -- and reported grazes
+    that do not exist):
+
+    * engine scan (opt-in, off by default): 0/32 overlap at either setting;
+      min 62.72 GU with the cadence, 45.42 at 0.0.
+    * shipped SDK scan: 0/32 overlap with the cadence (min 57.36 stream
+      rewound, 42.03 stream running); 4/32 at 0.0 (min 37.66 / 36.95). The
+      cadence does not cost the dodge -- here it widens it. See
+      docs/engine/perf-cadences-and-latency.md.
+
+    The claim here is the file's: the cadence must not cost the dodge. Per
+    phase the pair is chaotic (the sweep's per-base differences span -9..+13
+    GU), so the guard is on the WORST case across the sweep.
+    """
+    from engine.appc import ai_optimized
+    # The shipped binding, not the module's opt-in engine scan.
+    monkeypatch.setitem(ai_optimized.OPTIMIZED_PREPROCESSORS, "AvoidObstacles",
+                        ai_optimized._wrap_avoid_obstacles)
+    cadenced = [_head_on_closest(0.25, b, monkeypatch, pinned_id_counter)
+                for b in HEAD_ON_SWEEP_BASES]
+    exact = [_head_on_closest(0.0, b, monkeypatch, pinned_id_counter)
+             for b in HEAD_ON_SWEEP_BASES]
+    start_gap = 260.0
+    assert max(cadenced) < start_gap and max(exact) < start_gap, (
+        "the ships never closed; the scene is not a head-on charge")
+    assert len(set(round(x, 3) for x in cadenced)) > 1, (
+        "every phase gave the same answer; the sweep is not reaching the "
+        "phase offset")
+    assert min(cadenced) >= min(exact), (
+        "the cadence cost the head-on dodge separation: worst cadenced "
+        "closest=%.2f GU vs worst SDK-exact closest=%.2f GU"
+        % (min(cadenced), min(exact)))
 
 
 def _crowd(n=8, ring_r=90.0):
     """N ships on a ring, every one commanded straight at the centre.
 
-    The single-charger scenario dodges from 188 GU after ONE override tick --
-    it clears by such a margin that the cadence never matters, so it cannot
-    test the cadence. A crowd converging on a point is what the 100-ship scene
+    The single-charger scenario evades only briefly, so it says little about
+    SUSTAINED evasion: on the shipped binding with the cadence it clears at
+    every phase, worst 57.4 GU with the flee-direction stream rewound and 42.0
+    with it running (2026-10-08). A crowd converging on a point is what the 100-ship scene
     actually looks like: ships evade continuously, re-entering each other's
     check radius as they scatter, which is exactly the state where
     fMinimumUpdateDelay is the knob doing the work.

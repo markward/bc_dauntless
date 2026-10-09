@@ -1472,18 +1472,27 @@ class SensorSubsystem(PoweredSubsystem):
         ``Actions.ShipScriptActions.ScanObject``). BC (RE'd) schedules a
         DEFERRED identification on its player-only contact manager, so this
         arms one identification-time later rather than identifying at once.
-        Player-only, like BC's; a no-op on any other ship's sensors."""
+        Player-only, like BC's; a no-op on any other ship's sensors, and
+        when there is no player."""
         from engine.appc import sensor_contacts
-        if self._owner_ship() is not sensor_contacts.current_player():
+        owner = self._owner_ship()
+        if owner is None or owner is not sensor_contacts.current_player():
             return
         sensor_contacts.schedule_scan(pTarget, self.GetIdentificationTime())
 
     def ForceObjectIdentified(self, pTarget) -> None:
-        """SDK ``HelmMenuHandlers.SetupOrbitMenuFromSet`` marks orbitable
-        planets identified so the player can target them (all planets are
-        automatically targetable). Reuses the sensor-identification store;
-        None-safe and de-duped (a no-op if *pTarget* is None or already known)."""
-        from engine.appc import sensor_identification
+        """Immediate identification (BC @0x005678B0), bypassing the dwell.
+        SDK ``HelmMenuHandlers.SetupOrbitMenuFromSet`` uses it so orbitable
+        planets are targetable; MissionLib.IdentifyObjects, E3M4 and E4M4 use
+        it on mission ships. Player-only, like BC's contact manager (every
+        entry point gated on GetParentShip() == GetPlayerShip()): a no-op on
+        any other ship's sensors, and when there is no player. All four SDK
+        callers pass the player's sensors. None-safe and de-duped (a no-op if
+        *pTarget* is None or already known)."""
+        from engine.appc import sensor_contacts, sensor_identification
+        owner = self._owner_ship()
+        if owner is None or owner is not sensor_contacts.current_player():
+            return
         sensor_identification._identify_one(self, pTarget)
 
     # ── Range bands + visibility (BC RE'd: sensor-subsystem.md) ───────────

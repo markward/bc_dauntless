@@ -40,3 +40,22 @@ def test_consume_mouse_delta_binding_exists(host_module):
 
 def test_set_cursor_locked_binding_exists(host_module):
     assert hasattr(host_module, "set_cursor_locked")
+
+
+def test_bridge_quality_defaults_to_medium_and_round_trips(host_module):
+    assert host_module.bridge_quality() == 1
+    host_module.set_bridge_quality(2)
+    assert host_module.bridge_quality() == 2
+    host_module.set_bridge_quality(99)
+    assert host_module.bridge_quality() == 2
+    host_module.set_bridge_quality(1)
+
+
+def test_set_bridge_debug_view_is_a_noop_without_developer_mode(host_module):
+    # pytest loads the .so standalone: dauntless::is_developer_mode() is
+    # false (no --developer argv was ever parsed), so the setter must not
+    # raise and must leave the active view at 0.
+    assert host_module.developer_mode is False
+    assert host_module.bridge_debug_view() == 0
+    host_module.set_bridge_debug_view(1)
+    assert host_module.bridge_debug_view() == 0

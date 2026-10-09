@@ -32,7 +32,7 @@ InstanceId = _h.InstanceId
 _REQUIRED_BINDINGS = frozenset({
     "add_box_region", "add_cylinder_region", "add_sphere_region",
     "ambient_gradient_get", "ambient_gradient_set", "ambient_gradient_set_enabled",
-    "assemble_officer", "bridge_pass_set_enabled",
+    "assemble_officer", "bridge_pass_set_enabled", "bridge_quality",
     "cef_composite", "cef_devtools_open", "cef_initialize", "cef_pump",
     "cef_reload", "cef_shutdown",
     "cef_toggle_devtools", "clear_glow_regions", "clear_hologram_ship",
@@ -64,7 +64,8 @@ _REQUIRED_BINDINGS = frozenset({
     "procedural_sky_enabled", "procedural_sky_set_enabled", "restore_rest_pose",
     "rim_set_enabled", "set_asset_overrides", "set_backdrops",
     "set_bridge_ambient_scale",
-    "set_bridge_camera", "set_bridge_lighting",
+    "set_bridge_camera", "set_bridge_debug_view", "set_bridge_lighting",
+    "set_bridge_quality",
     "set_bridge_wall_time", "set_camera", "set_comm_set_id", "set_cursor_locked",
     "set_dash_intensity", "set_render_origin", "reset_render_origin",
     "set_dust_planets", "set_dust_profile", "set_emissive_scale", "set_game_root", "set_glow_region_dim",
@@ -189,7 +190,8 @@ def frame() -> None:
 
 def load_model(nif_path: str, texture_search_path,
                texture_replacements=None, decals=None,
-               scale: float = 1.0, geosphere: bool = False) -> int:
+               scale: float = 1.0, geosphere: bool = False,
+               interior: bool = False) -> int:
     """Load (and cache) a NIF model. `texture_replacements`, when given, is a
     list of (old_substring, new_abs_path) pairs baking BC ReplaceTexture swaps
     into a distinct per-registry model variant (Federation hull names). None /
@@ -205,8 +207,11 @@ def load_model(nif_path: str, texture_search_path,
 
     `geosphere` loads the planet variant (spec
     docs/superpowers/specs/2026-10-06-planet-geosphere-design.md); a
-    non-sphere NIF loads unchanged."""
-    return _h.load_model(nif_path, texture_search_path, texture_replacements, decals, scale, geosphere)
+    non-sphere NIF loads unchanged.
+
+    `interior` loads as an interior set: shapes authored without normals get
+    generated ones (spec 2026-10-08-bridge-lighting-baseline-design.md)."""
+    return _h.load_model(nif_path, texture_search_path, texture_replacements, decals, scale, geosphere, interior)
 
 
 def create_instance(model: int) -> InstanceId:
@@ -315,8 +320,9 @@ def set_bridge_lighting(ambient: Tuple[float, float, float],
 
 
 def set_bridge_ambient_scale(scale: float) -> None:
-    """Ambient multiplier for the bridge interior render only (red-alert
-    dim). The comm-set viewscreen feed always renders with the unscaled
+    """Ambient multiplier for the bridge interior render only: the
+    alert-level scale from engine/bridge_lighting.py (green x1.5,
+    yellow/red x1.0). The comm-set viewscreen feed always renders with the unscaled
     bridge lighting, so viewscreen brightness stays constant across alert
     levels."""
     _h.set_bridge_ambient_scale(float(scale))
@@ -329,6 +335,25 @@ def set_bridge_wall_time(t: float) -> None:
     this to compute the current animation frame per material.
     """
     _h.set_bridge_wall_time(t)
+
+
+def set_bridge_quality(level: int) -> None:
+    """Bridge rendering quality: 0 Low, 1 Medium (default), 2 High. Drives
+    the bridge AO's sample count and target resolution scale. Out-of-range
+    values clamp."""
+    _h.set_bridge_quality(int(level))
+
+
+def bridge_quality() -> int:
+    """Current bridge rendering quality level (see set_bridge_quality)."""
+    return _h.bridge_quality()
+
+
+def set_bridge_debug_view(view: int) -> None:
+    """Developer Options -> Lighting tab's Bridge Debug View row: 0 Off,
+    1 Normals, 2 Light Only, 3 AO Only, 4 Triangle ID, 5 Mesh ID. A no-op
+    unless the binary was launched with --developer."""
+    _h.set_bridge_debug_view(int(view))
 
 
 def damage_decals_tick(game_time: float) -> None:

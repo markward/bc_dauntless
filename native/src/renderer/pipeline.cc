@@ -65,8 +65,6 @@
 #include "embedded_bridge_vs.h"
 #include "embedded_bridge_fs.h"
 #include "embedded_skinned_bridge_vs.h"
-#include "embedded_lightmap_vs.h"
-#include "embedded_lightmap_fs.h"
 #include "embedded_viewscreen_static_vs.h"
 #include "embedded_viewscreen_static_fs.h"
 #include "embedded_shadow_vs.h"
@@ -162,7 +160,6 @@ Pipeline::Pipeline() {
     starmap_       = std::make_unique<Shader>(shader_src::starmap_vs,        shader_src::starmap_fs);
     bridge_        = std::make_unique<Shader>(shader_src::bridge_vs,        shader_src::bridge_fs);
     skinned_bridge_ = std::make_unique<Shader>(shader_src::skinned_bridge_vs, shader_src::bridge_fs);
-    lightmap_   = std::make_unique<Shader>(shader_src::lightmap_vs,   shader_src::lightmap_fs);
     viewscreen_static_ = std::make_unique<Shader>(
         shader_src::viewscreen_static_vs, shader_src::viewscreen_static_fs);
     shadow_depth_ = std::make_unique<Shader>(

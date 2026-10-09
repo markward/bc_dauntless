@@ -140,6 +140,7 @@ def _ctx():
                           light_emitters=Mock(), camera_shake=Mock(), App=Mock())
     ctx.director.fov_y_rad = math.radians(45)
     ctx.camera_shake.enabled.return_value = True
+    ctx.r.bridge_quality.return_value = 1
     return ctx
 
 
@@ -233,6 +234,37 @@ def test_uncoercible_value_is_treated_as_absent(tmp_path):
     apply_all(s, ctx)
 
     ctx.App.Game_SetDifficulty.assert_not_called()
+
+
+# ── bridge_quality (graphics, Task 5's set_bridge_quality/bridge_quality) ───
+
+def test_bridge_quality_row():
+    s = setting_for("bridge_quality")
+    assert (s.section, s.field, s.lo, s.hi, s.reset_default) == (
+        "graphics", "bridge_quality", 0, 2, 1)
+
+
+def test_bridge_quality_applier_reaches_renderer():
+    ctx = _ctx()
+    from engine.settings_store import apply_setting
+    apply_setting(ctx, "bridge_quality", 2)
+    ctx.r.set_bridge_quality.assert_called_once_with(2)
+
+
+@pytest.mark.parametrize("bad", [7, -1, "high", None])          # Review Focus #4
+def test_bad_stored_bridge_quality_never_crashes_boot(tmp_path, bad):
+    store = SettingsStore(tmp_path / "settings.json")
+    store.load()
+    store.set("graphics", "bridge_quality", bad)
+    ctx = _ctx()
+    ctx.r.bridge_quality.return_value = 1
+
+    apply_all(store, ctx)              # must not raise
+
+    applied = [c.args[0] for c in ctx.r.set_bridge_quality.call_args_list]
+    assert all(0 <= v <= 2 for v in applied)
+    snap = snapshot_for_panel(store, ctx)
+    assert 0 <= snap.bridge_quality <= 2
 
 
 def test_every_snapshot_field_has_exactly_one_setting_row():

@@ -126,6 +126,7 @@ def test_render_payload_shape(panel):
         "disable_collisions": False, "sensor_occlusion": True,
         "systems_damaged": False, "systems_disabled": False,
         "normal_maps": True, "normal_flip_g": True, "normal_strength": 1.0,
+        "bridge_debug_view": "Off",
         "profiler": False, "rock_catalogue": True, "dial_group": "nebula",
         "minor_rocks": True, "far_tier": True,
         "rock_specks": True, "rock_puffs": True,
@@ -359,6 +360,33 @@ def test_normal_strength_cycles_through_presets(panel, monkeypatch):
     for _ in range(5):
         p.dispatch_event("action:normal_strength")
     assert seen == [2.0, 4.0, 0.0, 0.5, 1.0], seen
+
+
+def test_bridge_debug_view_cycles(monkeypatch):
+    from engine import renderer
+    from engine.ui.developer_options_panel import DeveloperOptionsPanel
+
+    calls = []
+    monkeypatch.setattr(renderer, "set_bridge_debug_view", calls.append)
+    p = DeveloperOptionsPanel()
+    for expected in (1, 2, 3, 4, 5, 0):
+        assert p.dispatch_event("action:bridge_debug_view")
+        assert calls[-1] == expected
+
+
+def test_bridge_debug_view_ctrl_is_a_lighting_tab_focusable(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:lighting")
+    assert ("ctrl", "bridge_debug_view") in p._focusables()
+
+
+def test_bridge_debug_view_row_appears_in_lighting_settings(panel):
+    p, _ = panel
+    p.open()
+    p.dispatch_event("tab:lighting")
+    payload = _body(p.render_payload())["settings"]
+    assert payload["bridge_debug_view"] == "Off"
 
 
 def test_normal_map_toggle_round_trips(panel, monkeypatch):

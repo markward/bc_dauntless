@@ -2,14 +2,15 @@
 
 **Why this exists.** The cloak detection bubble is
 
-    CLOAK_DETECTION_BASE_GU + effective_sensor_range * CLOAK_RANGE_FACTOR
+    min(cloak_bubble_cap_gu, CLOAK_DETECTION_BASE_GU
+                             + effective_sensor_range * CLOAK_RANGE_FACTOR)
 
-and both dials are play-tested settings that have moved four times. Every retune
-used to mean hand-editing dozens of hardcoded "the bubble is 25 GU" claims and
-probe distances across nine test files — reliably missing some, which left tests
-whose docstrings disagreed with their assertions. Retuning must be a ONE-LINE
-change to `sensor_detection`, with no test edits at all. That is what this
-module buys.
+where the cap is a `sensor_dials` dial and the two constants are play-tested
+settings that have moved four times. Every retune used to mean hand-editing
+dozens of hardcoded "the bubble is N GU" claims and probe distances across nine
+test files — reliably missing some, which left tests whose docstrings disagreed
+with their assertions. Retuning must be a ONE-LINE change to `sensor_detection`
+or `sensor_dials`, with no test edits at all. That is what this module buys.
 
 **Two patterns, pick by constraint count.**
 
@@ -21,25 +22,29 @@ module buys.
 2. The distance must ALSO satisfy something else (weapon range, radar range, a
    fixture's fixed layout) → keep the literal and assert the assumption:
 
-       assert_inside(50.0, FALLBACK_SENSOR_GU)   # one line, fails loudly
+       WITHIN_PHASER_REACH_GU = 8.0         # the second constraint, named
+       assert_inside(WITHIN_PHASER_REACH_GU, sensorless_gu())  # fails loudly
 
    Pattern 2 matters because a derived distance can silently violate the other
-   constraint: `inside_gu(FALLBACK_SENSOR_GU)` is far beyond a phaser's 60 GU
-   reach, so a phaser test that "just derives" would stop testing cloak and
-   start testing weapon range instead.
+   constraint: a test that "just derives" `inside_gu(sensorless_gu())` would
+   track every retune of the dials, and the day it crosses a weapon's reach it
+   stops testing cloak and starts testing weapon range instead.
 
 Everything is computed at CALL time, never at import, so `monkeypatch.setattr`
-on the constants is honoured.
+on the constants (and `monkeypatch.setitem` on the dials) is honoured.
 """
 from engine.appc import sensor_detection as sd
 
 #: A Galaxy's authored BaseSensorRange — the common "real sensors" fixture.
 GALAXY_SENSOR_GU = 2000.0
 
-#: What `effective_sensor_range` returns for a ship with NO sensor subsystem.
-#: 18 of 52 hardpoint files author no BaseSensorRange, so this is the bubble
-#: most bare-ShipClass fixtures actually get, and it is much larger.
-FALLBACK_SENSOR_GU = sd.FALLBACK_RANGE_GU
+
+def sensorless_gu():
+    """What `effective_sensor_range` returns for an observer with NO sensor
+    subsystem: the live `sensorless_range_gu` dial, read at call time."""
+    from engine.appc import sensor_dials
+    return sensor_dials.get("sensorless_range_gu")
+
 
 #: Fractions of the bubble radius used for probes. `INSIDE` leaves headroom for
 #: float error; `OUTSIDE` is far enough out that no rounding accident passes it.
@@ -50,12 +55,14 @@ OUTSIDE_MULTIPLE = 3.0
 def bubble_gu(effective_range_gu=GALAXY_SENSOR_GU):
     """Cloak bubble radius in GU for an observer with *effective_range_gu*.
 
-    Mirrors `can_detect`'s cloak term exactly. Note the argument is EFFECTIVE
-    range (post sensor condition and power), not the authored base range — at
-    full condition they coincide, which is why the default is a raw 2000.0.
-    """
-    return (sd.CLOAK_DETECTION_BASE_GU
-            + effective_range_gu * sd.CLOAK_RANGE_FACTOR)
+    Mirrors `can_detect`'s cloak term exactly, including the
+    `cloak_bubble_cap_gu` dial. The argument is EFFECTIVE range (post sensor
+    condition and power), not the authored base range -- at full condition
+    they coincide."""
+    from engine.appc import sensor_dials
+    return min(sensor_dials.get("cloak_bubble_cap_gu"),
+               sd.CLOAK_DETECTION_BASE_GU
+               + effective_range_gu * sd.CLOAK_RANGE_FACTOR)
 
 
 def inside_gu(effective_range_gu=GALAXY_SENSOR_GU):

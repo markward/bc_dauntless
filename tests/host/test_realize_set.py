@@ -7,10 +7,12 @@ class _FakeRenderer:
         self.created = []
         self.destroyed = []
         self.transforms = {}
+        self.interior_flags = []
         self._next = 1
 
-    def load_model(self, nif_abs, tex_abs):
+    def load_model(self, nif_abs, tex_abs, *, interior=False):
         self.loaded.append((nif_abs, tex_abs))
+        self.interior_flags.append(interior)
         return 100 + len(self.loaded)
 
     def create_bridge_instance(self, handle):
@@ -50,6 +52,21 @@ def test_realize_set_loads_bridge_geometry_and_tags_instance():
     assert kind == "bridge"
     assert obj.render_instance == iid
     assert c.bridge_instance == iid
+
+
+def test_realize_set_loads_set_geometry_as_interior():
+    s, obj = _bridge_set_with_geometry()
+
+    class _C:
+        bridge_instance = None
+        nif_to_handle = {}
+        comm_instances_by_set = {}
+        officer_instances = []
+    c = _C(); r = _FakeRenderer()
+
+    hl.realize_set(c, r, s, is_bridge=True)
+
+    assert r.interior_flags and all(r.interior_flags)
 
 
 def test_realize_set_bridge_geometry_is_idempotent():
@@ -535,7 +552,7 @@ def test_realize_set_comm_load_failure_is_nonfatal():
     c = _CommCtl(); c.comm_instances_by_set = {}; c.nif_to_handle = {}
 
     class _BoomRenderer(_FakeRenderer):
-        def load_model(self, *a):
+        def load_model(self, *a, **kw):
             raise RuntimeError("texture not found: chair.tga")
     r = _BoomRenderer()
     r.set_comm_set_id = lambda *a, **k: None

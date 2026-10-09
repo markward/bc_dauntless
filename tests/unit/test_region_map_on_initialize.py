@@ -85,9 +85,9 @@ def test_initialize_applies_the_map_after_bc_places_the_body():
 
 
 def test_an_unmapped_region_is_left_alone():
-    mod = _fake_region_module("Systems.Starbase12.Starbase12", "Starbase12", "Planet")
+    mod = _fake_region_module("Systems.DeepSpace.DeepSpace", "DeepSpace", "Planet")
     original = mod.Initialize
-    region_hooks.on_region_module_exec(mod, "Systems.Starbase12.Starbase12")
+    region_hooks.on_region_module_exec(mod, "Systems.DeepSpace.DeepSpace")
     assert mod.Initialize is original
 
 
@@ -337,3 +337,19 @@ def test_mark_mapped_is_what_is_mapped_reads():
     assert not region_hooks.is_mapped(pSet)
     region_hooks.mark_mapped(pSet)
     assert region_hooks.is_mapped(pSet)
+
+
+@pytest.mark.parametrize("qualname,set_name", [
+    ("Systems.Starbase12.Starbase12", "Starbase12"),
+    ("Systems.DryDock.DryDock", "DryDock"),
+])
+def test_tau_cetis_two_folders_are_mapped_regions(qualname, set_name):
+    """Starbase 12 and Dry Dock live in their own SDK folders but are regions
+    of one system, Tau Ceti (engine/systems/folds.py)."""
+    mod = _fake_region_module(qualname, set_name, "Planet")
+    region_hooks.on_region_module_exec(mod, qualname)
+    mod.Initialize()
+    pSet = App.g_kSetManager.GetSet(set_name)
+    assert region_hooks.is_mapped(pSet)
+    from engine.systems import resolve
+    assert resolve.system_of(set_name) == "TauCeti"

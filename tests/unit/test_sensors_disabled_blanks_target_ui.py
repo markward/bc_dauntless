@@ -105,10 +105,10 @@ def test_affiliation_restored_after_repair():
 def _pump(menu, player):
     """One frame of the host loop's contact push (host_loop._pump_contacts).
 
-    Replaces update_target_list_visibility(..., range_units=30000.0): the
+    Replaces update_target_list_visibility(..., range_units=...): the
     fixture's SensorSubsystem carries no BaseSensorRange, so
-    effective_sensor_range returns FALLBACK_RANGE_GU — which IS 30000.0. Same
-    reach, one source.
+    effective_sensor_range returns the `sensorless_range_gu` dial. One source
+    for the reach.
     """
     from engine.appc.perception import perceived_by
     menu.set_contacts(perceived_by(player))
@@ -131,7 +131,7 @@ def test_update_visibility_hides_all_rows_when_sensors_offline():
 
     _, player, enemy, sensors, _ = _setup()
     target_menu = App.STTargetMenu_CreateW("Targets")
-    enemy.SetTranslateXYZ(1000.0, 0.0, 0.0)  # well within 30000 range
+    enemy.SetTranslateXYZ(1000.0, 0.0, 0.0)  # well within the sensorless_range_gu dial
     pSet = SetClass()
     pSet.AddObjectToSet(player, "Player")
     pSet.AddObjectToSet(enemy, "Enemy")

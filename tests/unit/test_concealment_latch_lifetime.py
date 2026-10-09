@@ -48,12 +48,20 @@ def _latched_pairs() -> int:
 
 def _scene():
     """Observer in clear space, one target at the nebula core. Neither models a
-    sensor subsystem, so FALLBACK_RANGE_GU applies and range is never the
-    reason a detection fails here."""
+    sensor subsystem, so the `sensorless_range_gu` dial applies, and the
+    observer sits close enough that range is never the reason a detection
+    fails here -- both asserted below, not assumed."""
     sd.reset_concealment_state()
     pSet, _neb = _tnc._set_with_dense_nebula()
-    observer = _tnc._Ship("E", 0.0, 0.0, 3000.0, pSet)
+    observer = _tnc._Ship("E", 0.0, 0.0, 1000.0, pSet)
     target = _tnc._Ship("P", 0.0, 0.0, 0.0, pSet)
+    assert sd.concealment_at(observer) == 0.0           # clear space
+    # Worst-case range in the band: concealment just under LOCK_BREAK_T shrinks
+    # the observer's range by (1 - CONCEAL_K * conceal). The band point must
+    # still be inside it, or range -- not the latch -- decides the band tests.
+    worst = sd.effective_sensor_range(observer) * (
+        1.0 - sd.CONCEAL_K * sd.LOCK_BREAK_T)
+    assert (_BAND_X ** 2 + 1000.0 ** 2) ** 0.5 < worst
     return pSet, observer, target
 
 

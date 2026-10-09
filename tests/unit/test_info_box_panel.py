@@ -225,3 +225,31 @@ def test_malformed_bounds_are_dropped():
     panel = InfoBoxPanel()
     assert panel.dispatch_event("bounds:garbage") is True
     assert panel.cursor_in_bounds(0, 0) is False
+
+
+# MissionLib.DestroyInfoBox ends `pBox.GetParent().DeleteChild(pBox)`. Every
+# mission that tears its boxes down in Terminate (E1M1's GetBoxIDList loop)
+# reaches it on a mission swap. GetParent() used to return a placeholder
+# _NullBatchPane whatever the box was added to, so DeleteChild raised
+# AttributeError and aborted the rest of E1M1.Terminate (friendly-fire
+# shutdown and everything after it), leaving the box parented to the TCW.
+
+def test_destroy_info_box_removes_the_box_from_the_tcw():
+    import MissionLib
+    tcw = TacticalControlWindow.GetInstance()
+    box = _build_sdk_box(close_button=0)
+    assert box.GetParent() is tcw
+
+    MissionLib.DestroyInfoBox(box.GetObjID())
+
+    assert all(c is not box for (c, _x, _y) in tcw._children)
+    assert box.GetParent() is not tcw
+
+
+def test_destroy_info_box_on_an_unparented_box_does_not_raise():
+    # BC's own guard: `if not (pParent): del pBox; return`.
+    import MissionLib
+    player = App.TGEventHandlerObject()
+    box = MissionLib.SetupInfoBox("StylizedWindow", "body", 300, 200,
+                                  None, None, App.ET_CHARACTER_MENU, player, 0)
+    MissionLib.DestroyInfoBox(box.GetObjID())

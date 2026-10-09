@@ -18,9 +18,9 @@ Mirrors the wiring in test_select_target_dispatch.py.
 DERIVED. Since the acquisition half of the stage-4 contest landed
 (tests/unit/test_ai_acquires_close_cloaked.py), a cloaked ship INSIDE the
 observer's bubble is deliberately retained rather than dropped. These fixtures
-author no BaseSensorRange, so they get FALLBACK_RANGE_GU and the game's largest
-bubble; the old hardcoded 50 GU sat well inside it, which made both tests here
-assert the opposite of the intended behaviour. They pass now because the distance
+author no BaseSensorRange, so they get the `sensorless_range_gu` dial and its
+bubble; the old hardcoded 50 GU sat inside the bubble of the time, which made both
+tests here assert the opposite of the intended behaviour. They pass now because the distance
 is outside the bubble, not because cloak is absolute — the subject of this file is
 the DROP PLUMBING (re-selection and event routing), which is range-independent.
 """
@@ -33,7 +33,7 @@ from engine.appc.subsystems import (
     HullSubsystem, ShieldSubsystem, CloakingSubsystem,
 )
 from tests.helpers.cloak_geometry import (
-    FALLBACK_SENSOR_GU, inside_gu, outside_gu)
+    inside_gu, outside_gu, sensorless_gu)
 
 
 def _reset_app_state():
@@ -86,7 +86,7 @@ def test_target_dropped_after_it_cloaks():
     App.g_kSetManager._sets["S"] = pSet
     ours = _kitted_ship(0, 0, 0)
     pSet.AddObjectToSet(ours, "Ours")
-    enemy = _kitted_ship(0, outside_gu(FALLBACK_SENSOR_GU), 0, cloak=True)
+    enemy = _kitted_ship(0, outside_gu(sensorless_gu()), 0, cloak=True)
     pSet.AddObjectToSet(enemy, "Enemy")
 
     inst, _pp = _wire_select_target(ours, "Enemy")
@@ -112,7 +112,7 @@ def test_cloak_event_reaches_target_gone_handler():
     App.g_kSetManager._sets["S"] = pSet
     ours = _kitted_ship(0, 0, 0)
     pSet.AddObjectToSet(ours, "Ours")
-    enemy = _kitted_ship(0, outside_gu(FALLBACK_SENSOR_GU), 0, cloak=True)
+    enemy = _kitted_ship(0, outside_gu(sensorless_gu()), 0, cloak=True)
     pSet.AddObjectToSet(enemy, "Enemy")
 
     inst, _pp = _wire_select_target(ours, "Enemy")
@@ -141,7 +141,7 @@ def test_cloaked_target_INSIDE_the_bubble_is_retained():
     App.g_kSetManager._sets["S"] = pSet
     ours = _kitted_ship(0, 0, 0)
     pSet.AddObjectToSet(ours, "Ours")
-    enemy = _kitted_ship(0, inside_gu(FALLBACK_SENSOR_GU), 0, cloak=True)
+    enemy = _kitted_ship(0, inside_gu(sensorless_gu()), 0, cloak=True)
     pSet.AddObjectToSet(enemy, "Enemy")
 
     inst, _pp = _wire_select_target(ours, "Enemy")

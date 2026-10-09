@@ -78,11 +78,17 @@ class DeveloperOptionsPanel(Panel):
     # Controls that fire once instead of flipping a flag. They have no entry in
     # `settings` and dispatch under "action:" rather than "toggle:".
     _ACTION_CONTROLS = frozenset({"quick_repair", "normal_strength",
-                                 "dial_group", "reload_atmospheres", "reload_surfaces"})
+                                 "dial_group", "reload_atmospheres", "reload_surfaces",
+                                 "bridge_debug_view"})
 
     # Presets cycled through by the "normal_strength" action row: 0 = flat
     # (identical to disabled), 1 = as authored, 2/4 exaggerate for tuning.
     _NORMAL_STRENGTHS = (0.0, 0.5, 1.0, 2.0, 4.0)
+
+    # Names cycled through by the "bridge_debug_view" action row, index ==
+    # renderer.BridgeDebugView's int value (0 Off .. 5 Mesh ID).
+    _BRIDGE_DEBUG_VIEWS = ("Off", "Normals", "Light Only", "AO Only",
+                          "Triangle ID", "Mesh ID")
 
     def __init__(self) -> None:
         super().__init__()
@@ -106,6 +112,7 @@ class DeveloperOptionsPanel(Panel):
         # (+Y up) authored map render correctly out of the box.
         self._normal_flip_g = True
         self._normal_strength = 1.0
+        self._bridge_debug_view = 0
         self._rock_catalogue = rock_catalogue.enabled()
         self._planet_geosphere = planet_geosphere.enabled()
         self._planet_atmosphere = planet_atmosphere.enabled()
@@ -175,6 +182,7 @@ class DeveloperOptionsPanel(Panel):
             self._sensor_occlusion,
             self._systems_damaged, self._systems_disabled,
             self._normal_maps, self._normal_flip_g, self._normal_strength,
+            self._bridge_debug_view,
             self._profiler, self._rock_catalogue, self._dial_group,
             self._minor_rocks, self._far_tier,
             self._rock_specks, self._rock_puffs,
@@ -202,6 +210,7 @@ class DeveloperOptionsPanel(Panel):
                 "normal_maps": self._normal_maps,
                 "normal_flip_g": self._normal_flip_g,
                 "normal_strength": self._normal_strength,
+                "bridge_debug_view": self._BRIDGE_DEBUG_VIEWS[self._bridge_debug_view],
                 "profiler": self._profiler,
                 "rock_catalogue": self._rock_catalogue,
                 "dial_group": self._dial_group,
@@ -286,6 +295,11 @@ class DeveloperOptionsPanel(Panel):
             nxt = presets[(idx + 1) % len(presets)]
             renderer.set_normal_map_strength(nxt)
             self._normal_strength = nxt
+            return True
+        if action == "action:bridge_debug_view":
+            nxt = (self._bridge_debug_view + 1) % len(self._BRIDGE_DEBUG_VIEWS)
+            renderer.set_bridge_debug_view(nxt)
+            self._bridge_debug_view = nxt
             return True
         if action == "toggle:rock_catalogue":
             rock_catalogue.set_enabled(not self._rock_catalogue)
@@ -390,7 +404,7 @@ class DeveloperOptionsPanel(Panel):
         if self._selected_tab == "lighting":
             out += [("ctrl", "systems_damaged"), ("ctrl", "systems_disabled"),
                     ("ctrl", "normal_maps"), ("ctrl", "normal_flip_g"),
-                    ("ctrl", "normal_strength")]
+                    ("ctrl", "normal_strength"), ("ctrl", "bridge_debug_view")]
         if self._selected_tab == "environments":
             out += [("ctrl", "rock_catalogue"), ("ctrl", "minor_rocks"),
                     ("ctrl", "far_tier"), ("ctrl", "rock_specks"),

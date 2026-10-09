@@ -41,6 +41,15 @@ class TacticalControlWindow(TGEventHandlerObject):
 
     def AddChild(self, child, x: float = 0.0, y: float = 0.0, *_extra) -> None:
         self._children.append((child, float(x), float(y)))
+        # Back-ref read by _STStylizedWindow.GetParent: MissionLib.DestroyInfoBox
+        # ends `pBox.GetParent().DeleteChild(pBox)` on a box added here.
+        if isinstance(child, TGPane):
+            child._visibility_parent = self
+
+    def DeleteChild(self, child) -> None:
+        if isinstance(child, TGPane) and child._visibility_parent is self:
+            child._visibility_parent = None
+        self._children = [(c, x, y) for (c, x, y) in self._children if c is not child]
 
     def AddMenuToList(self, menu) -> None:
         if menu not in self._menus:
@@ -792,8 +801,10 @@ class _STStylizedWindow(TGPane):
     def GetContainingWindow(self): return self
     def GetConceptualParent(self):  return self
     def GetParent(self):
-        # EngineerMenuHandlers line 55: GetInteriorPane().GetParent().SetNotBatchChildPolys()
-        return _NullBatchPane()
+        # The pane/TCW that AddChild-ed us (MissionLib.DestroyInfoBox calls
+        # DeleteChild on it). Unparented: a no-op placeholder, as before.
+        parent = self._visibility_parent
+        return parent if parent is not None else _NullBatchPane()
 
     def SetNotBatchChildPolys(self, *_args) -> None:   pass
 
@@ -836,6 +847,7 @@ class _STStylizedWindowInterior:
 class _NullBatchPane:
     """Minimal pane returned by GetParent() so SetNotBatchChildPolys no-ops."""
     def SetNotBatchChildPolys(self, *_args) -> None: pass
+    def DeleteChild(self, *_args) -> None:           pass
     def SetVisible(self, *_args) -> None:            pass
     def SetNotVisible(self, *_args) -> None:         pass
     def IsVisible(self) -> int:                      return 0

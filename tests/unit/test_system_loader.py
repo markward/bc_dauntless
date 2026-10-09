@@ -124,3 +124,14 @@ def test_a_mission_reinitializing_a_loaded_region_wins():
     theirs = load_region("Ona", "Ona2")                  # the mission's own call
     assert App.g_kSetManager.GetSet("Ona2") is theirs is not ours
     assert region_hooks.is_mapped(theirs)
+
+
+def test_a_folded_system_loads_its_sibling_from_the_other_folder(monkeypatch):
+    """Tau Ceti: Starbase12 and DryDock are two SDK folders, one system.
+    Starbase12_S reads the current Game's episode, as it always can in play."""
+    from engine.core import game
+    monkeypatch.setattr(game, "_current_game", game.Game())
+    player = _player_in(load_region("TauCeti", "Starbase12"))
+    assert system_loader.ensure_loaded(player) == ["DryDock"]
+    assert region_hooks.is_mapped(App.g_kSetManager.GetSet("DryDock"))
+    assert system_loader.loaded_system() == "TauCeti"

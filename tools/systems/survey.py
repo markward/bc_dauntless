@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from engine import paths
+from engine.systems import folds
 
 _CREATE_PLACEMENT = re.compile(r'App\.(\w+)_Create\("([^"]+)",\s*("([^"]+)"|\w+)')
 _TRANSLATE = re.compile(r'SetTranslateXYZ\(([^)]*)\)')
@@ -262,7 +263,8 @@ def _key_light(text: str):
     return tuple(c / length for c in best[1])
 
 
-def _menu_sets(system: str) -> set:
+def _menu_sets(system: str, folder: str | None = None,
+               menu: str | None = None) -> set:
     """The set names this system's CreateSystemMenu actually offers.
 
     The call is CreateSystemMenu(display_name, default, *places). A system with
@@ -273,7 +275,7 @@ def _menu_sets(system: str) -> set:
     Empty when the head script cannot be read, which the caller must treat as
     "no opinion" rather than "nothing is listed".
     """
-    head = _systems_dir() / system / f"{system}.py"
+    head = _systems_dir() / (folder or system) / f"{menu or system}.py"
     if not head.is_file():
         return set()
     m = _MENU_CALL.search(_read(head))
@@ -388,20 +390,36 @@ def system_names() -> list:
     root = _systems_dir()
     if not root.is_dir():
         return out
+    folded = folds.folded_folders()
     for d in sorted(p for p in root.iterdir() if p.is_dir()):
+        if d.name in folded:
+            continue
         head = d / f"{d.name}.py"
         if head.is_file() and "CreateSystemMenu" in _read(head):
             out.append(d.name)
+    # A folded system (engine/systems/folds.py) has no folder of its own.
+    for system, parts in folds.FOLDED.items():
+        if all((root / folder).is_dir() for folder, _ in parts):
+            out.append(system)
     return sorted(out)
 
 
 def survey_system(system: str) -> SurveyedSystem:
-    d = _systems_dir() / system
     result = SurveyedSystem(name=system)
-    listed = _menu_sets(system)
+    # (folder, menu script stem) per SDK folder that holds this system's
+    # regions: just its own, unless the system is folded.
+    for folder, menu in folds.members(system) or ((system, system),):
+        _survey_folder(result, folder, menu)
+    result.regions.sort(key=lambda r: (r.ordinal is None, r.ordinal or 0, r.set_name))
+    return result
+
+
+def _survey_folder(result: SurveyedSystem, folder: str, menu: str) -> None:
+    d = _systems_dir() / folder
+    listed = _menu_sets(result.name, folder, menu)
     for path in sorted(d.glob("*.py")):
         stem = path.stem
-        if stem in ("__init__", system) or stem.endswith("_S"):
+        if stem in ("__init__", menu) or stem.endswith("_S"):
             continue
         text = _read(path)
         placements = _placements(text)
@@ -418,7 +436,7 @@ def survey_system(system: str) -> SurveyedSystem:
             if name in skip:
                 continue
             extent = max(extent, math.sqrt(sum(c * c for c in xyz)))
-        own_label = f"Systems/{system}/{stem}"
+        own_label = f"Systems/{folder}/{stem}"
         lights = set(_LIGHT_CREATE.findall("\n".join(_uncommented(text))))
         # The arrival point is staged explicitly: where the player enters the
         # set -- its "Player Start", or the set origin when it defines none.
@@ -447,8 +465,6 @@ def survey_system(system: str) -> SurveyedSystem:
             menu_listed=(stem in listed) if listed else True,
             staged_points=staged,
         ))
-    result.regions.sort(key=lambda r: (r.ordinal is None, r.ordinal or 0, r.set_name))
-    return result
 
 
 def survey_all() -> list:

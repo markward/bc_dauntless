@@ -10,6 +10,7 @@ add_library(assets STATIC
     src/hull_source.cc
     src/material_build.cc
     src/mesh_build.cc
+    src/normal_gen.cc
     src/mesh_fix.cc
     src/mesh_lifetime.cc
     src/mesh_upload.cc
