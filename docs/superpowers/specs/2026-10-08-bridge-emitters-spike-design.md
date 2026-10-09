@@ -353,11 +353,20 @@ Roughness and metalness are each resolved independently, first hit wins:
 
 | Order | Source | Detail |
 |---|---|---|
-| A | Maps found by the albedo's filename | `<albedo stem>_rough.tga` / `<albedo stem>_metal.tga`, resolved through the replacements overlay then the game install (`paths.game_asset`) — added without touching BC files. |
+| A | Maps found by the albedo's filename | `<albedo stem>_rough.tga` / `<albedo stem>_metal.tga`. Where they are looked up depends on where the ALBEDO resolved (below). |
 | B | Per-shape override, a 0–1 float each | Picker-set; the shape's `material` section of the bridge file (§7). |
 | C | Default | metalness 0, roughness 1 |
 
 The NIF's own gloss/specular values are NOT a source.
+
+**Where maps are looked up (Mark, 2026-10-09):**
+- **Stock albedo** (resolved under `paths.game_root()`): maps come from
+  our replacements overlay — project-authored additions for stock content.
+- **Mod albedo** (resolved from a mod) — *future*: maps only beside that
+  albedo in the mod, never from our overlay, even when the mod's texture
+  shares a stock filename (`Map 3.tga`). Our maps never land on a mod's
+  different texture. Same guard as the rock catalogue's redirect.
+
 
 **Known trade-off:** a map always beats an override, so once a shared
 texture (DBridge texture 7, 22 shapes) gets a `_rough` map, no single shape
@@ -373,3 +382,4 @@ change if it ever bites.
 | — | 2026-10-09 | Programme order (PBR first); emitter model documented assuming PBR; persistence + editor drafted | §5–6 documented; §7–8 draft | 5, 6, 7, 8, 9 |
 | — | 2026-10-09 | Persistence + editor accepted | accepted | 7, 8 |
 | — | 2026-10-09 | PBR: linear-lighting tone shift noted; material sources layered (maps by albedo name → per-shape 0-1 override → metal 0 / rough 1) | accepted | 9 |
+| — | 2026-10-09 | PBR: overlay maps only for stock albedo; mod maps beside the mod albedo (future) | accepted | 9.2 |
