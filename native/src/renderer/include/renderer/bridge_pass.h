@@ -246,14 +246,16 @@ public:
     /// becomes straight down, -Z) and lowers cos_outer to cos_inner if the
     /// two arrive swapped.
     std::size_t set_spots(std::vector<BridgeSpot> spots);
-    /// Session reset: drop every spot WITHOUT marking the probes dirty
-    /// (reset_probes() beside it drops the captures and the request).
+    /// Drop every spot WITHOUT marking the probes dirty (paired with
+    /// reset_probes(), which drops the captures and the request). The host
+    /// does not call it: a new session builds a fresh BridgePass.
     void clear_spots() { spots_.clear(); }
     std::size_t spot_count() const { return spots_.size(); }
 
-    /// Mission swap: drop the captures (no specular until the next request),
-    /// the pending request, the mix and the cached boxes (model handles die
-    /// with the session). Origin and scales are configuration and are kept.
+    /// Drop the captures (no specular until the next request), the pending
+    /// request, the mix and the cached boxes (model handles die with the
+    /// session). Origin and scales are configuration and are kept. The host
+    /// does not call it: a new session builds a fresh BridgePass.
     void reset_probes();
 
 private:
@@ -325,7 +327,7 @@ private:
                         const ModelLookup& lookup, const Lighting& lighting);
 
     /// The box the reflections are projected against: the bridge model (the
-    /// static main-bridge instance with the largest AABB) through its
+    /// static main-bridge instance with the most meshes) through its
     /// instance world. Model-space AABBs are cached per model handle (CPU
     /// mesh data through the node rest worlds); `box_handle_` is the handle
     /// the current box came from, and a change re-dirties captured probes.

@@ -914,16 +914,13 @@ void reset_frame_state() {
 
     // Bridge editor tint: its model handle dies with this session's models.
     g_bridge_highlight = dauntless::BridgeHighlight{};
-    // Bridge PBR material overrides are keyed by model handle too.
-    if (g_bridge_pass) g_bridge_pass->clear_material_overrides();
-    // Static spots are the old bridge's lights: dropped too (without dirtying
-    // the probes -- reset_probes() below clears the request anyway). Bridge
-    // load pushes the next bridge's spots.
-    if (g_bridge_pass) g_bridge_pass->clear_spots();
-    // Reflection probes hold the old session's room: drop the captures and
-    // the per-handle box cache (its keys die with the models). The
-    // g_bridge_probe stash is deliberately kept -- see its declaration.
-    if (g_bridge_pass) g_bridge_pass->reset_probes();
+    // Bridge PBR state (material overrides, spots, probe captures) lives in
+    // g_bridge_pass, which is null at BOTH call sites: shutdown() destroys it
+    // before calling this, and init() calls this before building a fresh one.
+    // So nothing here resets it -- a new session gets a new BridgePass, and
+    // a mid-session bridge swap is BridgeRuntime.attach()'s job (it clears
+    // and re-pushes). The g_bridge_probe stash is deliberately kept -- see
+    // its declaration.
 
     // Motion blur reprojects against the previous exterior frame's viewproj.
     // Left set, frame 1 of a new session smears against the OLD camera.
