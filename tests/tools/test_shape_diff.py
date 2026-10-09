@@ -145,3 +145,45 @@ def test_read_objects_preserves_n_gon_face_order(tmp_path):
     assert face[1] == (1, (1.0, 1.0))
     assert face[2] == (2, (1.0, 0.0))
     assert face[3] == (3, (0.0, 0.0))
+
+
+from tools.shape_diff import match
+
+
+def _permute(mesh, perm):
+    """Simulate Blender reordering: new index k holds old vertex perm[k]."""
+    inv = {old: new for new, old in enumerate(perm)}
+    out = obj_io.ObjMesh()
+    out.positions = [mesh.positions[o] for o in perm]
+    out.faces = [[(inv[v], uv) for v, uv in f] for f in mesh.faces]
+    return out
+
+
+def _export_read(tmp_path, shapes):
+    obj, mtl = tmp_path / "x.obj", tmp_path / "x.mtl"
+    obj_io.write_obj(shapes, obj, mtl, lambda n: None)
+    return obj_io.read_objects(obj)
+
+
+def test_identify_maps_every_vertex_including_seam_duplicates(tmp_path):
+    s = _shape(offset=(10.0, -4.0, 2.0))
+    m = _export_read(tmp_path, [s])["b0011_wall_side_pnls_01"]
+    m = _permute(m, [3, 1, 0, 2])
+    ids = match.identify(s, m)
+    assert ids == [[3], [1, 4], [0], [2]]
+
+
+def test_identify_refuses_unknown_vertex(tmp_path):
+    s = _shape()
+    m = _export_read(tmp_path, [s])["b0011_wall_side_pnls_01"]
+    m.positions[2] = (7.0, 7.0, 7.0)
+    with pytest.raises(ShapeDiffError, match="vertex 2"):
+        match.identify(s, m)
+
+
+def test_identify_tolerates_missing_duplicate_faces(tmp_path):
+    s = _shape()
+    s["triangles"] = s["triangles"] + [(0, 1, 2)]      # exact duplicate triangle
+    m = _export_read(tmp_path, [s])["b0011_wall_side_pnls_01"]
+    m.faces = m.faces[:1]                               # Blender dropped faces
+    assert len(match.identify(s, m)) == 4
