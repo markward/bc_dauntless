@@ -308,12 +308,29 @@ def _flips(face_keys, mapped):
     return tuple(mapped[k:] + mapped[:k]) != key
 
 
+def _newell(points):
+    n = [0.0, 0.0, 0.0]
+    for i, a in enumerate(points):
+        b = points[(i + 1) % len(points)]
+        n[0] += (a[1] - b[1]) * (a[2] + b[2])
+        n[1] += (a[2] - b[2]) * (a[0] + b[0])
+        n[2] += (a[0] - b[0]) * (a[1] + b[1])
+    return n
+
+
 def _drop_flipping_pairs(base, edit, corr, used, anchors):
-    """A pairing under which an edit face lands on a base face wound the
-    other way is not a survivor (b0395: a new vertex below a deleted one
-    shares its neighbours). Unpair the non-anchored corners of such faces
-    -- their faces are then re-derived as added -- until none remain. A
-    flip among anchored corners alone is left for diff_shape to refuse."""
+    """An edit face that lands, under the pairing, on a base face wound the
+    other way is either a genuine flip or not that face at all. Which, the
+    geometry says: if the edit face still FACES THE SAME WAY as the base
+    face (Newell normals agree), a corner sits on the other side of its
+    opposite edge -- the original was deleted and a new vertex took its
+    neighbours (b0395: new vertices below a deleted middle row). Those
+    pairings are undone (non-anchored corners only), and their faces are
+    re-derived as added. If the edit face faces the OTHER way, it is a real
+    flip of a surviving face (a normal flipped in Blender): the pairing
+    stays and diff_shape refuses it -- never shipped as a back-face."""
+    base_faces = {frozenset(v for v, _ in f): [base.positions[v] for v, _ in f]
+                  for f in base.faces}
     face_keys = _base_face_keys(base)
     changed = True
     while changed:
@@ -323,6 +340,10 @@ def _drop_flipping_pairs(base, edit, corr, used, anchors):
             mapped = [corr[v] for v in vs]
             if None in mapped or not _flips(face_keys, mapped):
                 continue
+            ne = _newell([edit.positions[v] for v in vs])
+            nb = _newell(base_faces[frozenset(mapped)])
+            if sum(a * b for a, b in zip(ne, nb)) <= 0:
+                continue                        # a real flip: refused later
             for v in vs:
                 if v not in anchors and corr[v] is not None:
                     used.discard(corr[v])
@@ -432,11 +453,14 @@ def _proximity(base, edit, weights):
                     table[key] = (d, other, False)
                 elif d == cur[0] and other != cur[1]:
                     table[key] = (d, cur[1], True)          # tied: no nearest
+    bonus = set()
     for e, w in weights.items():
         for b in w:
             nb_, ne_ = best_b[e], best_e[b]
             if nb_[1] == b and ne_[1] == e and not nb_[2] and not ne_[2]:
                 w[b] += 4
+                bonus.add((e, b))
+    return bonus
 
 
 def correspond(block, base, edit):
