@@ -25,8 +25,17 @@ class BridgeRuntime:
         the content-hash check and unconditionally: a bridge with no hash
         (not an interior load) still has an eye and must get a fresh
         capture from it, never keep reflecting from whatever bridge was
-        attached last."""
+        attached last.
+
+        The previous bridge's overrides and spots are cleared FIRST, in their
+        own guard: if anything after it raises (model_identity, the doc
+        load), the old bridge's lights must not stay live on the new one."""
         self._iid, self._doc, self._matched = iid, None, {}
+        try:
+            self._io.set_bridge_material_overrides(None, [])
+            self._io.set_bridge_spots([])
+        except Exception as e:  # noqa: BLE001 - never let bridge data kill the frame
+            dev_mode.log_swallowed("bridge runtime attach clear", e)
         try:
             info = self._io.model_identity(iid) or {}
             self._io.set_bridge_probe_origin(tuple(self._eye()))

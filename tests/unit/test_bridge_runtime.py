@@ -319,3 +319,66 @@ def test_push_leaves_the_capture_decision_to_the_pass(proj):
     rt.push(d, {"3:floor": 0})
     assert ("set_bridge_material_overrides", "iid", [(0, -1.0, 1.0)]) in io.calls
     assert "request_bridge_probe_capture" not in names(io)
+
+
+# ── Final-review fix wave, finding 5: attach() clears the previous bridge's
+# overrides and spots FIRST, in their own guard, so a failure later in
+# attach() (model_identity or the doc load raising) never leaves the old
+# bridge's lights live on the new one.
+
+def _attach_a_bridge_with_lights(proj, io):
+    d = ld.empty_doc("x")
+    ld.shape_entry(d, 3, "floor")["emitter"] = {
+        "light": {"position": [0, 0, 0], "direction": [0, 0, -1]}}
+    lw.save(d, proj / "bridge_lighting" / f"{HASH}.json")
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt.attach("A")
+    assert any(c[0] == "set_bridge_spots" and c[1] for c in io.calls)   # A has a spot
+    io.calls.clear()
+    return rt
+
+
+def test_attach_clears_the_old_bridge_even_when_model_identity_raises(proj):
+    class RaisingIdentityIO(FakeIO):
+        fail = False
+
+        def model_identity(self, iid):
+            if self.fail:
+                raise RuntimeError("native boom")
+            return self.info
+
+    io = RaisingIdentityIO()
+    rt = _attach_a_bridge_with_lights(proj, io)
+    io.fail = True
+    rt.attach("B")   # must not raise
+    assert ("set_bridge_spots", []) in io.calls
+    assert ("set_bridge_material_overrides", None, []) in io.calls
+    assert io.calls.index(("set_bridge_spots", [])) == 1   # first, before anything else
+
+
+def test_attach_clears_the_old_bridge_even_when_the_doc_load_raises(proj, monkeypatch):
+    io = FakeIO()
+    rt = _attach_a_bridge_with_lights(proj, io)
+
+    def boom(*a, **k):
+        raise RuntimeError("load boom")
+
+    monkeypatch.setattr(runtime.ld, "load", boom)
+    rt.attach("B")   # must not raise
+    assert ("set_bridge_spots", []) in io.calls
+    assert ("set_bridge_material_overrides", None, []) in io.calls
+
+
+def test_attach_clear_failing_does_not_stop_the_load(proj):
+    class ClearRaisesIO(FakeIO):
+        def set_bridge_spots(self, spots):
+            if not spots:
+                raise RuntimeError("clear boom")
+            self.calls.append(("set_bridge_spots", spots))
+            return 0
+
+    io = ClearRaisesIO()
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (1.0, 2.0, 3.0), alert=lambda: 0)
+    rt.attach("iid")
+    assert ("set_bridge_probe_origin", (1.0, 2.0, 3.0)) in io.calls
+    assert names(io)[-1] == "request_bridge_probe_capture"
