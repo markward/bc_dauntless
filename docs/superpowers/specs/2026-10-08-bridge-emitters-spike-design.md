@@ -245,7 +245,7 @@ throws into the room.
 - Emitters apply only to the player's bridge instance. Comm-set rooms have
   other NIFs, so their hashes never match.
 
-## 7. Persistence *(draft — pending Mark's review)*
+## 7. Persistence *(accepted 2026-10-09)*
 
 - **Location:** `native/assets/bridge_lighting/<fnv1a64>.json`, a PROJECT
   asset beside `mesh_fixes/` (§6a of the baseline spike), resolved via the
@@ -304,7 +304,7 @@ throws into the room.
   keeping unknown top-level keys (the `decals_writer` pattern). A
   round-trip test pins it: load → save is byte-identical.
 
-## 8. Editor *(draft — pending Mark's review)*
+## 8. Editor *(accepted 2026-10-09)*
 
 - **A CEF panel in the `cp-*` modal family**, developer-only, tagged
   `data-panel` so text fields capture the keyboard automatically. It is
@@ -346,3 +346,4 @@ downlight becomes diffuse irradiance; and how AO applies.
 | — | 2026-10-08 | Spec created; evidence recorded | — | 1, 2 |
 | — | 2026-10-09 | Approach A + WASDQE fly camera chosen; camera & selection design | accepted | 3, 4 |
 | — | 2026-10-09 | Programme order (PBR first); emitter model documented assuming PBR; persistence + editor drafted | §5–6 documented; §7–8 draft | 5, 6, 7, 8, 9 |
+| — | 2026-10-09 | Persistence + editor accepted | accepted | 7, 8 |
