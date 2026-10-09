@@ -53,8 +53,11 @@ function _beLightSection(light) {
           + '<button onclick="dauntlessEvent(\'bridge-emitters/light-aim\')">Aim where I\'m looking</button>'
           + '<button onclick="dauntlessEvent(\'bridge-emitters/light-remove\')">Remove</button>'
           + '</div>';
-    html += _beLightNumberRow('inner°', 'inner_deg', light.inner_deg);
-    html += _beLightNumberRow('outer°', 'outer_deg', light.outer_deg);
+    // "half-angle": inner_deg/outer_deg are HALF-angles (cone axis to edge,
+    // 0-90), not full cone-apex angles -- CEF OSR shows no native tooltips
+    // (title= is a no-op), so the label spells it out instead.
+    html += _beLightNumberRow('inner half-angle°', 'inner_deg', light.inner_deg);
+    html += _beLightNumberRow('outer half-angle°', 'outer_deg', light.outer_deg);
     html += _beLightNumberRow('range', 'range', light.range);
     html += _beLightNumberRow('intensity', 'intensity', light.intensity);
     return html;

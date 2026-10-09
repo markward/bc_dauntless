@@ -3537,8 +3537,10 @@ def _register_bridge_emitters(registry, bridge_camera, controller, view_mode,
     the modal blockers. Returns _NULL_PICKER without --developer.
 
     `runtime` is the production BridgeRuntime (engine.bridge_editor.runtime) --
-    the panel stores it so a future save/edit can re-push through it (Task 9);
-    it does nothing with it yet."""
+    the panel re-pushes the live document through it after every edit
+    (material edit/clear, light add/remove/place/aim/field, undo, revert),
+    so the result is visible the same frame the bridge still draws while the
+    editor is paused."""
     if not dev_mode.is_enabled():
         return _NULL_PICKER
     from engine.ui.bridge_emitters_panel import BridgeEmittersPanel

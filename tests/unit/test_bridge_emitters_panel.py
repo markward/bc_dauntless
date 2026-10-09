@@ -224,6 +224,60 @@ def test_saved_lights_validate(env_rt):
     assert saved["shapes"]["7:redalertpanel"]["emitter"]["light"]["range"] == 200
 
 
+class FakeConstantWarningRuntime:
+    """A runtime whose push() always reports the SAME warning -- pins that a
+    persistent condition (too many spot lights, a non-finite value) is shown
+    once, not re-announced and concatenated on every later edit."""
+    def __init__(self, warning):
+        self._warning = warning
+
+    def push(self, doc, matched=None):
+        return [self._warning]
+
+
+class FakeToggleWarningRuntime:
+    def __init__(self):
+        self.on = True
+
+    def push(self, doc, matched=None):
+        return ["too many bridge lights"] if self.on else []
+
+
+def test_push_warnings_replace_not_accumulate(env):
+    p, io, h, *_ = env
+    p._runtime = FakeConstantWarningRuntime("too many bridge lights")
+    p.open()
+    click(p, h, (400.0, 300.0))
+    p.dispatch_event("material:metalness:0.1")
+    p.dispatch_event("material:metalness:0.2")
+    p.dispatch_event("material:metalness:0.3")
+    status = payload(p)["status"]
+    assert status.count("too many bridge lights") == 1
+
+
+def test_push_warnings_disappear_once_a_later_push_stops_reporting_them(env):
+    p, io, h, *_ = env
+    rt = FakeToggleWarningRuntime()
+    p._runtime = rt
+    p.open()
+    click(p, h, (400.0, 300.0))
+    assert "too many bridge lights" in payload(p)["status"]
+    rt.on = False
+    p.dispatch_event("material:metalness:0.1")
+    assert "too many bridge lights" not in payload(p)["status"]
+
+
+def test_light_field_noop_pushes_no_undo_entry(env):
+    p, io, h, *_ = env
+    p.open()
+    click(p, h, (400.0, 300.0))
+    p.dispatch_event("light-add")
+    n = len(p._undo)
+    p.dispatch_event("light:inner_deg:30")        # already 30 (the default) -> no-op
+    assert len(p._undo) == n
+    assert payload(p)["selected"]["light"]["inner_deg"] == 30
+
+
 def test_closed_panel_has_no_camera_and_hides(env):
     p, *_ = env
     assert p.camera_pose() is None

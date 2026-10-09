@@ -166,4 +166,7 @@ def test_a_map_sourced_channel_renders_its_slider_disabled():
     rough_row = body[body.index("roughness"):body.index("metalness")]
     metal_row = body[body.index("metalness"):]
     assert 'type="range"' in rough_row and "disabled" in rough_row
+    assert 'type="number"' in rough_row
+    # Both inputs in the map-sourced row carry `disabled`, not just the slider.
+    assert rough_row.count("disabled") == 2
     assert 'type="range"' in metal_row and "disabled" not in metal_row

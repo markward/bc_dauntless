@@ -72,6 +72,7 @@ class BridgeEmittersPanel(Panel):
         self._hover_mesh = -1
         self._cycle = PickCycle()
         self._status = ""
+        self._push_warnings = []       # REPLACED by each push, never accumulated
         self._pushed_highlight = None
         self._h_for_release = None
 
@@ -295,13 +296,23 @@ class BridgeEmittersPanel(Panel):
         every edit, so the editor's result is visible the same frame (the
         bridge still draws while the editor is paused). Never raises --
         BridgeRuntime.push() already guards itself; this only has to guard
-        the lack of a runtime/attached model."""
+        the lack of a runtime/attached model.
+
+        `_push_warnings` is REPLACED by this call's result, never appended:
+        a persistent condition (too many spot lights, a non-finite value)
+        would otherwise re-announce itself on every subsequent edit and grow
+        the status line without bound. The current push's warnings, not a
+        history of every past one, is what `_status_text()` shows."""
+        self._push_warnings = []
         if self._runtime and self._info:
             matched = ld.match_shapes(self._doc, self._info["meshes"])[0]
-            warnings = self._runtime.push(self._doc, matched)
-            if warnings:
-                joined = "; ".join(warnings)
-                self._status = f"{self._status}; {joined}" if self._status else joined
+            self._push_warnings = self._runtime.push(self._doc, matched)
+
+    def _status_text(self):
+        extra = "; ".join(self._push_warnings)
+        if self._status and extra:
+            return f"{self._status}; {extra}"
+        return self._status or extra
 
     def _snapshot(self):
         self._undo.append(copy.deepcopy(self._doc))
@@ -369,6 +380,8 @@ class BridgeEmittersPanel(Panel):
             v = max(_LIGHT_MIN_RANGE, v)
         elif field == "intensity":
             v = max(0.0, v)
+        if light.get(field) == v:
+            return
         self._snapshot()
         light[field] = v
         if field == "inner_deg" and light.get("outer_deg", 90.0) < v:
@@ -491,7 +504,7 @@ class BridgeEmittersPanel(Panel):
                 "dirty": (self._doc is not None and lw.dumps(self._doc) != self._saved_text),
                 "can_save": self._can_save(),
                 "can_undo": bool(self._undo),
-                "status": self._status,
+                "status": self._status_text(),
             }
         js = "setBridgeEmitters(" + json.dumps(state) + ");"
         if js == self._last_pushed:
