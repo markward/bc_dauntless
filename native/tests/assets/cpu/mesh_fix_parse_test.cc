@@ -75,3 +75,70 @@ TEST(MeshFixParse, RejectsMissingFieldAndWrongShape) {
     bad_uv.replace(bad_uv.find("[0.5, 0.25]"), 11, "[0.5]");
     EXPECT_FALSE(assets::parse_mesh_fix(bad_uv, &err).has_value());
 }
+
+namespace {
+constexpr const char* kGoldenB64 =
+    "QlNEMQEABwAAAAQAAgABAAEAAQABAAEAAgAAAIA/AAAAQAAAQEAAAAAAgD4AAEA/AAAAPwAAAD8"
+    "AAAAAzczMPc3MTD6amZk+zczMPgAAgD8AAAA/AACAPgAAgD8BAAAAAgAEAA==";
+}
+
+TEST(MeshFixShapeEditDecode, Base64RoundTripsKnownString) {
+    auto d = assets::base64_decode("QlNEMQ==");
+    ASSERT_TRUE(d.has_value());
+    EXPECT_EQ(*d, "BSD1");
+    EXPECT_FALSE(assets::base64_decode("Ql*EMQ==").has_value());
+    EXPECT_FALSE(assets::base64_decode("QlNEM").has_value());   // bad length
+}
+
+TEST(MeshFixShapeEditDecode, DecodesGoldenPayload) {
+    auto bytes = assets::base64_decode(kGoldenB64);
+    ASSERT_TRUE(bytes.has_value());
+    ASSERT_EQ(bytes->size(), 100u);
+    std::string err;
+    auto edits = assets::decode_shape_edits(*bytes, &err);
+    ASSERT_TRUE(edits.has_value()) << err;
+    ASSERT_EQ(edits->size(), 1u);
+    const auto& e = (*edits)[0];
+    EXPECT_EQ(e.block, 7u);
+    EXPECT_EQ(e.orig_vertex_count, 4);
+    EXPECT_EQ(e.orig_triangle_count, 2);
+    ASSERT_EQ(e.moves.size(), 1u);
+    EXPECT_EQ(e.moves[0].first, 2);
+    EXPECT_FLOAT_EQ(e.moves[0].second[2], 3.0f);
+    ASSERT_EQ(e.uvs.size(), 1u);
+    EXPECT_FLOAT_EQ(e.uvs[0].second[1], 0.75f);
+    ASSERT_EQ(e.add_vertices.size(), 1u);
+    EXPECT_FLOAT_EQ(e.add_vertices[0].uv1[1], 0.4f);
+    EXPECT_FLOAT_EQ(e.add_vertices[0].color[2], 0.25f);
+    ASSERT_EQ(e.remove_triangles.size(), 1u);
+    EXPECT_EQ(e.remove_triangles[0], 1);
+    ASSERT_EQ(e.add_triangles.size(), 1u);
+    EXPECT_EQ(e.add_triangles[0][2], 4);
+}
+
+TEST(MeshFixShapeEditDecode, RefusesBadMagicTruncationAndTrailingBytes) {
+    auto good = *assets::base64_decode(kGoldenB64);
+    std::string err;
+    { auto b = good; b[0] = 'X';
+      EXPECT_FALSE(assets::decode_shape_edits(b, &err).has_value()); }
+    { auto b = good.substr(0, good.size() - 1);
+      EXPECT_FALSE(assets::decode_shape_edits(b, &err).has_value()); }
+    { auto b = good + "x";
+      EXPECT_FALSE(assets::decode_shape_edits(b, &err).has_value()); }
+}
+
+TEST(MeshFixShapeEditParse, ShapeEditsOnlyFileParses) {
+    std::string text = std::string(R"({"format":1,"shape_edits":")") + kGoldenB64 + "\"}";
+    std::string err;
+    auto fix = assets::parse_mesh_fix(text, &err);
+    ASSERT_TRUE(fix.has_value()) << err;
+    EXPECT_TRUE(fix->merges.empty());
+    EXPECT_EQ(fix->shape_edits.size(), 1u);
+}
+
+TEST(MeshFixShapeEditParse, RefusesFileWithNeitherOp) {
+    std::string err;
+    EXPECT_FALSE(assets::parse_mesh_fix(R"({"format":1})", &err).has_value());
+    EXPECT_FALSE(assets::parse_mesh_fix(
+        R"({"format":1,"shape_edits":"!!!!"})", &err).has_value());
+}

@@ -3,8 +3,10 @@
 // docs/superpowers/specs/2026-09-28-hull-name-cut-fix-design.md).
 #include <assets/mesh_fix.h>
 
+#include <bit>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <unordered_map>
 #include <nlohmann/json.hpp>
@@ -25,6 +27,105 @@ MeshFixShapeRef read_ref(const nlohmann::json& j) {
 }
 }  // namespace
 
+std::optional<std::string> base64_decode(std::string_view text) {
+    if (text.size() % 4 != 0) return std::nullopt;
+    auto val = [](char c) -> int {
+        if (c >= 'A' && c <= 'Z') return c - 'A';
+        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+        if (c >= '0' && c <= '9') return c - '0' + 52;
+        if (c == '+') return 62;
+        if (c == '/') return 63;
+        return -1;
+    };
+    std::string out;
+    out.reserve(text.size() / 4 * 3);
+    for (std::size_t i = 0; i < text.size(); i += 4) {
+        int v[4];
+        int pad = 0;
+        for (int k = 0; k < 4; ++k) {
+            const char c = text[i + k];
+            if (c == '=' && i + 4 == text.size() && k >= 2) { v[k] = 0; ++pad; continue; }
+            if (pad) return std::nullopt;            // data after padding
+            v[k] = val(c);
+            if (v[k] < 0) return std::nullopt;
+        }
+        const std::uint32_t n = (v[0] << 18) | (v[1] << 12) | (v[2] << 6) | v[3];
+        out.push_back(static_cast<char>((n >> 16) & 0xFF));
+        if (pad < 2) out.push_back(static_cast<char>((n >> 8) & 0xFF));
+        if (pad < 1) out.push_back(static_cast<char>(n & 0xFF));
+    }
+    return out;
+}
+
+namespace {
+static_assert(std::endian::native == std::endian::little,
+              "shape-edit payload decoder assumes a little-endian host");
+
+/// Bounds-checked little-endian reader over the payload bytes.
+struct PayloadReader {
+    std::string_view s;
+    std::size_t pos = 0;
+    bool ok = true;
+    template <class T> T get() {
+        T v{};
+        if (!ok || pos + sizeof(T) > s.size()) { ok = false; return v; }
+        std::memcpy(&v, s.data() + pos, sizeof(T));
+        pos += sizeof(T);
+        return v;
+    }
+};
+}  // namespace
+
+std::optional<std::vector<ShapeEdit>> decode_shape_edits(std::string_view bytes,
+                                                         std::string* error) {
+    auto fail = [&](std::string msg) -> std::optional<std::vector<ShapeEdit>> {
+        if (error) *error = std::move(msg);
+        return std::nullopt;
+    };
+    if (bytes.size() < 4 || bytes.substr(0, 4) != "BSD1")
+        return fail("shape_edits: bad magic");
+    PayloadReader r{bytes, 4};
+    const auto shape_count = r.get<std::uint16_t>();
+    std::vector<ShapeEdit> out;
+    for (std::uint16_t s = 0; s < shape_count && r.ok; ++s) {
+        ShapeEdit e;
+        e.block = r.get<std::uint32_t>();
+        e.orig_vertex_count = r.get<std::uint16_t>();
+        e.orig_triangle_count = r.get<std::uint16_t>();
+        const auto n_move = r.get<std::uint16_t>();
+        const auto n_uv = r.get<std::uint16_t>();
+        const auto n_addv = r.get<std::uint16_t>();
+        const auto n_remt = r.get<std::uint16_t>();
+        const auto n_addt = r.get<std::uint16_t>();
+        for (int i = 0; i < n_move && r.ok; ++i) {
+            const auto idx = r.get<std::uint16_t>();
+            std::array<float, 3> p{r.get<float>(), r.get<float>(), r.get<float>()};
+            e.moves.emplace_back(idx, p);
+        }
+        for (int i = 0; i < n_uv && r.ok; ++i) {
+            const auto idx = r.get<std::uint16_t>();
+            std::array<float, 2> uv{r.get<float>(), r.get<float>()};
+            e.uvs.emplace_back(idx, uv);
+        }
+        for (int i = 0; i < n_addv && r.ok; ++i) {
+            ShapeEditAddVertex v;
+            for (auto& c : v.pos) c = r.get<float>();
+            for (auto& c : v.uv0) c = r.get<float>();
+            for (auto& c : v.uv1) c = r.get<float>();
+            for (auto& c : v.color) c = r.get<float>();
+            e.add_vertices.push_back(v);
+        }
+        for (int i = 0; i < n_remt && r.ok; ++i) e.remove_triangles.push_back(r.get<std::uint16_t>());
+        for (int i = 0; i < n_addt && r.ok; ++i)
+            e.add_triangles.push_back({r.get<std::uint16_t>(), r.get<std::uint16_t>(),
+                                       r.get<std::uint16_t>()});
+        out.push_back(std::move(e));
+    }
+    if (!r.ok) return fail("shape_edits: payload truncated");
+    if (r.pos != bytes.size()) return fail("shape_edits: trailing bytes after payload");
+    return out;
+}
+
 std::optional<MeshFix> parse_mesh_fix(std::string_view text, std::string* error) {
     auto fail = [&](std::string msg) -> std::optional<MeshFix> {
         if (error) *error = std::move(msg);
@@ -36,29 +137,47 @@ std::optional<MeshFix> parse_mesh_fix(std::string_view text, std::string* error)
         fix.format = j.at("format").get<int>();
         if (fix.format != 1)
             return fail("unsupported mesh-fix format " + std::to_string(fix.format));
-        for (const auto& jm : j.at("merges")) {
-            MeshFixMerge m;
-            m.patch  = read_ref(jm.at("patch"));
-            m.target = read_ref(jm.at("target"));
-            for (const auto& uv : jm.at("uvs")) {
-                if (!uv.is_array() || uv.size() != 2) return fail("uv entry is not [u, v]");
-                m.uvs.push_back({uv[0].get<float>(), uv[1].get<float>()});
-            }
-            for (const auto& w : jm.at("weld")) {
-                if (!w.is_array() || w.size() != 2) return fail("weld entry is not a pair");
-                m.weld.emplace_back(w[0].get<std::uint32_t>(), w[1].get<std::uint32_t>());
-            }
-            const auto& jn = jm.at("normals");
-            if (!jn.is_null()) {
-                std::vector<std::array<float, 3>> ns;
-                for (const auto& n : jn) {
-                    if (!n.is_array() || n.size() != 3) return fail("normal entry is not [x, y, z]");
-                    ns.push_back({n[0].get<float>(), n[1].get<float>(), n[2].get<float>()});
+
+        const bool has_merges = j.contains("merges");
+        const bool has_edits = j.contains("shape_edits");
+        if (!has_merges && !has_edits)
+            return fail("mesh fix has neither \"merges\" nor \"shape_edits\"");
+
+        if (has_merges) {
+            for (const auto& jm : j.at("merges")) {
+                MeshFixMerge m;
+                m.patch  = read_ref(jm.at("patch"));
+                m.target = read_ref(jm.at("target"));
+                for (const auto& uv : jm.at("uvs")) {
+                    if (!uv.is_array() || uv.size() != 2) return fail("uv entry is not [u, v]");
+                    m.uvs.push_back({uv[0].get<float>(), uv[1].get<float>()});
                 }
-                m.normals = std::move(ns);
+                for (const auto& w : jm.at("weld")) {
+                    if (!w.is_array() || w.size() != 2) return fail("weld entry is not a pair");
+                    m.weld.emplace_back(w[0].get<std::uint32_t>(), w[1].get<std::uint32_t>());
+                }
+                const auto& jn = jm.at("normals");
+                if (!jn.is_null()) {
+                    std::vector<std::array<float, 3>> ns;
+                    for (const auto& n : jn) {
+                        if (!n.is_array() || n.size() != 3) return fail("normal entry is not [x, y, z]");
+                        ns.push_back({n[0].get<float>(), n[1].get<float>(), n[2].get<float>()});
+                    }
+                    m.normals = std::move(ns);
+                }
+                fix.merges.push_back(std::move(m));
             }
-            fix.merges.push_back(std::move(m));
         }
+
+        if (has_edits) {
+            auto bytes = base64_decode(j.at("shape_edits").get<std::string>());
+            if (!bytes) return fail("shape_edits: invalid base64");
+            std::string err;
+            auto edits = decode_shape_edits(*bytes, &err);
+            if (!edits) return fail(err);
+            fix.shape_edits = std::move(*edits);
+        }
+
         return fix;
     } catch (const std::exception& e) {
         return fail(std::string("mesh-fix parse error: ") + e.what());
