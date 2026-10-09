@@ -3531,8 +3531,7 @@ def _register_ai_inspector(registry):
 
 
 def _register_bridge_emitters(registry, bridge_camera, controller, view_mode):
-    """Developer-only Bridge Emitters editor (spec
-    2026-10-08-bridge-emitters §4): a pause-menu row and a panel that joins
+    """Developer-only Bridge Emitters editor (docs/superpowers/specs/2026-10-08-bridge-emitters-spike-design.md §4): a pause-menu row and a panel that joins
     the modal blockers. Returns _NULL_PICKER without --developer."""
     if not dev_mode.is_enabled():
         return _NULL_PICKER

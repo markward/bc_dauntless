@@ -487,3 +487,4 @@ nothing BC had. Every added map is pure gain.
 | — | 2026-10-09 | PBR shading assembly accepted; §9 complete | accepted | 9.6 |
 | — | 2026-10-09 | Self-review: stale cross-refs fixed; `material` schema defined; foundation + PBR planned as two plans | — | 1, 4, 5, 6, 7, 8, 9 |
 | — | 2026-10-09 | Plan-time corrections: dev panels keep the pause menu open-but-hidden; loader rejects unknown keys (writer no longer "keeps" them); mod lookup path named | — | 4, 7 |
+| F1 | 2026-10-09 | Foundation built: fly camera, pick + identity, selection tint, lighting doc + writer, panel (plan 2026-10-09-bridge-editor-foundation) | pending Mark's live check | 4, 7, 8 |
