@@ -155,7 +155,18 @@ def diff_shape(shape: dict, base, edit):
     }
 
 
-def diff(shapes: list, base_objs: dict, edit_objs: dict) -> list:
+def diff(shapes: list, base_objs: dict, edit_objs: dict, partial: bool = False):
+    """Diff every object. With partial=False (default, unchanged), the first
+    object whose diff_shape raises ShapeDiffError aborts the whole call, and
+    the return is just the edit list. With partial=True, an object-level
+    ShapeDiffError (vertex-count change, face change, UV vertex-split
+    conflict, identity failure) is caught and recorded instead of raising, so
+    the supported objects still get written; the return becomes
+    (edits, skipped), skipped being a list of (object_name, reason_str) in
+    block order. File-level problems (object-set mismatch, two objects
+    mapping to one block, an object name that isn't a shape export, a block
+    not in the NIF) always raise, in both modes -- they mean the export
+    itself is broken, not that one object's edit is unsupported."""
     if set(base_objs) != set(edit_objs):
         missing = sorted(set(base_objs) ^ set(edit_objs))
         raise ShapeDiffError(f"objects differ between base and edit: {missing[:5]} "
@@ -171,11 +182,20 @@ def diff(shapes: list, base_objs: dict, edit_objs: dict) -> list:
                 "'<name>.001' -- delete the duplicate before diffing")
     by_block = {s["block"]: s for s in shapes}
     edits = []
+    skipped = []
     for name in sorted(base_objs, key=obj_io.block_of):
         block = obj_io.block_of(name)
         if block not in by_block:
             raise ShapeDiffError(f"object {name}: block {block} is not a shape in this NIF")
-        e = diff_shape(by_block[block], base_objs[name], edit_objs[name])
+        try:
+            e = diff_shape(by_block[block], base_objs[name], edit_objs[name])
+        except ShapeDiffError as exc:
+            if not partial:
+                raise
+            skipped.append((name, str(exc)))
+            continue
         if e is not None:
             edits.append(e)
+    if partial:
+        return edits, skipped
     return edits

@@ -134,6 +134,21 @@ edit that would need a vertex split -- one original vertex whose corners
 disagree on the new UV (both iteration 2+). The tool prints a per-shape
 summary (`block N: M vertices moved, K UVs changed`).
 
+**`--partial`:** by default a single unsupported object (one that needs
+topology, or a vertex-split UV conflict) aborts the whole diff -- nothing is
+written. `diff BASE EDIT --partial [--write]` instead diffs every object
+all-or-nothing *per object*: objects whose change is a plain move/UV edit are
+recorded as normal, and every object whose `diff_shape` call refused is
+**skipped and reported** (`skipped (not yet supported):` followed by
+`  <object>: <reason>` lines) rather than aborting the run. `--write` with
+`--partial` writes the fix built from the recorded (supported) edits only; a
+skipped object leaves no trace in the fix file, and is unaffected by any
+earlier fix for the same object committed in a prior round. File-level
+problems (renamed/missing objects, two objects mapping to one block, an
+import that isn't a clean shape export, a block that isn't in the NIF) still
+abort the whole run in `--partial` mode exactly as without it -- those mean
+the export itself is broken, not that one object's edit is unsupported.
+
 ---
 
 ## 6. The fix file
@@ -227,6 +242,7 @@ the scratchpad; in game, Developer Options → Lighting → Bridge Debug View
 |---|---|---|---|
 | 1 | Move-only gap closing: export, diff, loader end to end | implemented, not yet live-verified | |
 | 1b | UV re-map of console seats (b0224/b0255) | tool support built; awaiting Mark's edit | `diff` now records `uv` alongside `move`; the loader (`apply_shape_edits`) already applied `uv` records before this task -- only the Python side refused them |
+| 1c | First live step: moves on b0468 / b0652 / b0663 | fix `dbcdbd4a43dc5a56.json` written, awaiting Mark's in-game check | Console sliver b0170/b0175 needs triangle add/remove (next) |
 | 2 | Turbolift header reshape: triangle remove/add | — | |
 | 3 | Extruded side panels: new verts/tris/UVs | — | Open: side-face texturing. Lean: collapse the new faces' UVs onto the panel border (stretch edge texels, no new texture); alternative: a project-owned trim texture |
 
@@ -265,3 +281,14 @@ the scratchpad; in game, Developer Options → Lighting → Bridge Debug View
     reopen the **same `.blend`** that holds every earlier move — diffing a
     fresh export against a fresh edit would silently drop prior edits from
     the committed fix.
+- **Incremental workflow (Mark approved 2026-10-09):** one `.blend`, edited a
+  little at a time. `base.obj` is exported once, right after import, and kept
+  fixed for the whole series; each round Mark edits a few more objects in the
+  same `.blend` and re-exports `edit.obj` over the previous one. Because
+  `base.obj` never changes, each `diff base.obj edit.obj --write` regenerates
+  the **whole** fix file from scratch against the NIF — cumulatively, not as
+  a delta — so every earlier move/UV edit still present in the `.blend` is
+  recorded again alongside the new ones. `--partial` is what makes this safe
+  to run mid-series: objects the tool can't diff yet (anything needing
+  topology, today) are skipped and listed instead of blocking the whole
+  round's `--write`.

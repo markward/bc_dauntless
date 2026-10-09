@@ -64,9 +64,13 @@ def fix_text(fix: dict) -> str:
     return json.dumps(fix, indent=2) + "\n"
 
 
-def build_fix(rel: str, base_path: Path, edit_path: Path):
-    edits = match.diff(_shapes(rel), obj_io.read_objects(base_path),
-                       obj_io.read_objects(edit_path))
+def build_fix(rel: str, base_path: Path, edit_path: Path, partial: bool = False):
+    base_objs = obj_io.read_objects(base_path)
+    edit_objs = obj_io.read_objects(edit_path)
+    if partial:
+        edits, skipped = match.diff(_shapes(rel), base_objs, edit_objs, partial=True)
+        return make_fix_dict(rel, edits), edits, skipped
+    edits = match.diff(_shapes(rel), base_objs, edit_objs)
     return make_fix_dict(rel, edits), edits
 
 
@@ -81,15 +85,24 @@ def main(argv=None) -> int:
     df.add_argument("edit", type=Path)
     df.add_argument("--nif", default=DEFAULT_NIF)
     df.add_argument("--write", action="store_true")
+    df.add_argument("--partial", action="store_true")
     a = ap.parse_args(argv)
     try:
         if a.cmd == "export":
             print(export(a.nif, a.out))
             return 0
-        fix, edits = build_fix(a.nif, a.base, a.edit)
+        if a.partial:
+            fix, edits, skipped = build_fix(a.nif, a.base, a.edit, partial=True)
+        else:
+            fix, edits = build_fix(a.nif, a.base, a.edit)
+            skipped = []
         for e in edits:
             print(f"block {e['block']}: {len(e['moves'])} vertices moved, "
                   f"{len(e['uvs'])} UVs changed")
+        if skipped:
+            print("skipped (not yet supported):")
+            for name, reason in skipped:
+                print(f"  {name}: {reason}")
         if not edits:
             print("no changes")
             return 0

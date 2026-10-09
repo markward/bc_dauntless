@@ -391,6 +391,39 @@ def test_diff_refuses_two_objects_mapping_to_the_same_block(tmp_path):
     assert base_name in str(exc.value) and dup_name in str(exc.value)
 
 
+def test_diff_partial_skips_unsupported_objects_but_keeps_supported(tmp_path):
+    move_shape = _shape(block=11, parent="wall side pnls 01")
+    face_shape = _shape(block=12, parent="console top")
+    shapes = [move_shape, face_shape]
+    base = _export_read(tmp_path, shapes)
+    move_name = obj_io.object_name(move_shape)
+    face_name = obj_io.object_name(face_shape)
+
+    edit = dict(base)
+    edit[move_name] = _moved(base[move_name], 1, (1.25, 0.0, 0.5))
+    broken = obj_io.ObjMesh()
+    broken.positions = list(base[face_name].positions)
+    broken.faces = [list(f) for f in base[face_name].faces[:1]]  # drop a face
+    edit[face_name] = broken
+
+    with pytest.raises(ShapeDiffError, match="iteration 2"):
+        match.diff(shapes, base, edit)
+
+    edits, skipped = match.diff(shapes, base, edit, partial=True)
+    assert [e["block"] for e in edits] == [11]
+    assert len(skipped) == 1
+    name, reason = skipped[0]
+    assert name == face_name
+    assert "faces changed" in reason
+
+
+def test_diff_partial_still_raises_on_file_level_errors(tmp_path):
+    s = _shape()
+    objs = _export_read(tmp_path, [s])
+    with pytest.raises(ShapeDiffError, match="objects differ"):
+        match.diff([s], objs, {"b0011_renamed": objs["b0011_wall_side_pnls_01"]}, partial=True)
+
+
 from engine import paths
 
 DBRIDGE = "data/Models/Sets/DBridge/Dbridge.NIF"
@@ -511,5 +544,51 @@ def test_main_write_overwrites_fix_owned_by_this_generator(monkeypatch, tmp_path
 def test_main_without_write_flag_writes_nothing(monkeypatch, tmp_path):
     cli, target = _patched_cli(monkeypatch, tmp_path)
     rc = cli.main(["diff", "b.obj", "e.obj"])
+    assert rc == 0
+    assert not target.exists()
+
+
+def _patched_cli_partial(monkeypatch, tmp_path, skipped):
+    """Like _patched_cli, but build_fix is stubbed for the --partial 3-tuple
+    return shape (fix, edits, skipped)."""
+    from tools import bridge_shape_diff as cli
+    nif_bytes = b"fake nif bytes for main() --partial tests"
+    nif_file = tmp_path / "fake.nif"
+    nif_file.write_bytes(nif_bytes)
+    fix_dir = tmp_path / "fixes"
+    fix_dir.mkdir()
+    monkeypatch.setattr(cli, "_fix_dir", lambda: fix_dir)
+    monkeypatch.setattr(cli, "_nif_path", lambda rel: nif_file)
+    monkeypatch.setattr(cli, "build_fix", lambda rel, base, edit, partial=False:
+                         (cli.make_fix_dict(rel, [GOLDEN_EDIT]), [GOLDEN_EDIT], skipped))
+    target = fix_dir / (fnv1a64_hex(nif_bytes) + ".json")
+    return cli, target
+
+
+def test_main_partial_write_writes_only_supported_edit_and_lists_skipped(monkeypatch, tmp_path, capsys):
+    skipped = [("b0099_broken_part", "block 99: faces changed; topology edits are "
+                                      "iteration 2 (this iteration is moves and UV edits only)")]
+    cli, target = _patched_cli_partial(monkeypatch, tmp_path, skipped)
+    rc = cli.main(["diff", "b.obj", "e.obj", "--partial", "--write"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert target.read_text() == cli.fix_text(cli.make_fix_dict(cli.DEFAULT_NIF, [GOLDEN_EDIT]))
+    assert "skipped (not yet supported):" in out
+    assert "b0099_broken_part" in out
+    assert "faces changed" in out
+
+
+def test_main_partial_without_skips_omits_skipped_section(monkeypatch, tmp_path, capsys):
+    cli, target = _patched_cli_partial(monkeypatch, tmp_path, [])
+    rc = cli.main(["diff", "b.obj", "e.obj", "--partial", "--write"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "skipped" not in out
+
+
+def test_main_partial_without_write_flag_writes_nothing(monkeypatch, tmp_path):
+    skipped = [("b0099_broken_part", "block 99: faces changed")]
+    cli, target = _patched_cli_partial(monkeypatch, tmp_path, skipped)
+    rc = cli.main(["diff", "b.obj", "e.obj", "--partial"])
     assert rc == 0
     assert not target.exists()
