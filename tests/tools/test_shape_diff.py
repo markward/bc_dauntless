@@ -1528,3 +1528,37 @@ def test_correspondence_breaks_a_connectivity_tie_on_kept_corner_uvs():
     edit = _with([(0, 0, 0), (1, 0, 0), (0.5, 2, 0)],
                  [[(0, (0, 0)), (1, (1, 0)), (2, (0.1, 0.9))]])
     assert match.correspond(5, base, edit) == [0, 1, 2]
+
+
+def test_real_dbridge_new_vertex_snapped_onto_another_shape_is_a_reference(tmp_path):
+    host = pytest.importorskip("_dauntless_host")
+    nif = paths.game_root() / DBRIDGE
+    if not nif.exists():
+        pytest.skip("BC content not configured")
+    from tools import bridge_shape_diff as cli
+    cli.export(DBRIDGE, tmp_path)
+    base = tmp_path / "Dbridge.obj"
+    shapes = {s["block"]: s for s in host.nif_shapes(str(nif))}
+    target = shapes[24]["vertices"][0]                      # block 24: a rotated frame
+    assert match.NifIndex([shapes[468]]).position_ref(target, 468) is None
+    text = base.read_text()
+    lines = text.splitlines()
+    o = lines.index("o b0468_Material_D_walls_1")
+    first_face = next(line for line in lines[o:] if line.startswith("f "))
+    (a, ta), (b, tb) = [tuple(map(int, c.split("/")[:2])) for c in first_face.split()[1:3]]
+    n_v = sum(1 for line in lines if line.startswith("v "))
+    n_vt = sum(1 for line in lines if line.startswith("vt "))
+    usemtl = next(line for line in lines[o:] if line.startswith("usemtl "))
+    x, y, z = frames.bc_to_obj(target)
+    edit = tmp_path / "edit.obj"
+    edit.write_text(text + f"o b0468_Material_D_walls_1\nv {x:.6f} {y:.6f} {z:.6f}\n"
+                    f"vt 0.25 0.75\n{usemtl}\nf {a}/{ta} {b}/{tb} {n_v + 1}/{n_vt + 1}\n")
+    _, edits = cli.build_fix(DBRIDGE, base, edit)
+    [e] = edits
+    assert e["block"] == 468
+    [v] = e["add_vertices"]
+    assert v["pos"] == payload.Ref(24, 0)
+    assert v["uv0"] == pytest.approx((0.25, 0.25))          # OBJ v is flipped
+    assert 0 <= v["attr_src"] < len(shapes[468]["vertices"])
+    assert e["add_triangles"][0][2] == len(shapes[468]["vertices"])
+    assert payload.encode([e])[:4] == b"BSD2"
