@@ -190,6 +190,13 @@ TEST(MeshFixTexture, RefusalsLeaveFileUntouched) {
     expect_refused(fix_of(1, "High\\b.tga"), "backslash");
     expect_refused(fix_of(1, "b"), "no extension");
     expect_refused(fix_of(1, "b.txt"), "not an image");
+    // Reserved suffixes bind to a non-Base slot (model_build.cc filename_is_*).
+    expect_refused(fix_of(1, "panel_glow.tga"), "glow suffix");
+    expect_refused(fix_of(1, "panel_GLOW.TGA"), "glow suffix, uppercase");
+    expect_refused(fix_of(1, "panel_specular.tga"), "specular suffix");
+    expect_refused(fix_of(1, "panel_spec.tga"), "spec suffix");
+    expect_refused(fix_of(1, "panel_normal.tga"), "normal suffix");
+    expect_refused(fix_of(1, "panel_Norm.tga"), "norm suffix");
     {
         auto fix = fix_of(1, "b.tga");
         fix.textures.push_back({1, "c.tga"});
@@ -253,4 +260,42 @@ TEST(MeshFixTexture, RealDbridgeRoundTwoTargetsAllTakeTheSwap) {
     auto model = build(f, resolver, {tex}, &sources);
     for (std::uint32_t b : {29u, 45u, 59u, 479u})
         EXPECT_EQ(base_source_of(model, sources, "T" + std::to_string(b)), "Map 7.tga") << b;
+}
+
+namespace {
+// A valid merge (target "saucer" idx1/data idx2, patch "id" idx3/data idx4),
+// the same layout as mesh_fix_shape_edit_test.cc's merge fixture.
+nif::NiTriShapeData merge_quad(float x0, float x1, float u0, float u1) {
+    nif::NiTriShapeData d;
+    d.num_vertices = 4;
+    d.has_vertices = d.has_normals = d.has_uv = true;
+    d.vertices = {{x0,0,0},{x1,0,0},{x1,1,0},{x0,1,0}};
+    d.normals  = {{0,0,1},{0,0,1},{0,0,1},{0,0,1}};
+    d.uv_sets  = {{{u0,0},{u1,0},{u1,1},{u0,1}}};
+    d.num_triangles = 2; d.num_triangle_points = 6;
+    d.triangles = {{0,1,2},{0,2,3}};
+    return d;
+}
+}  // namespace
+
+TEST(MeshFixTexture, RefusesATextureOpOnAMergesHiddenPatch) {
+    nif::File f;
+    nif::NiNode root; root.av.obj.name = "root"; root.child_links = {2, 4};
+    nif::NiTriShape target; target.av.obj.name = "saucer"; target.data_link = 3;
+    nif::NiTriShape patch;  patch.av.obj.name  = "id";     patch.data_link  = 5;
+    f.blocks = {root, target, merge_quad(0, 1, 0, 0.5f), patch, merge_quad(1, 2, 0, 1)};
+    f.block_ids = {1, 2, 3, 4, 5};
+    f.root = nif::BlockHandle{&f.blocks.front()};
+    assets::MeshFixMerge m;
+    m.patch = {3, "id"}; m.target = {1, "saucer"};
+    m.uvs = {{0.5f,0},{1.0f,0},{1.0f,1},{0.5f,1}};
+    m.weld = {{0,1},{3,2}};
+    assets::MeshFix fix;
+    fix.merges = {m};
+    fix.textures = {{3, "b.tga"}};
+    EXPECT_NE(assets::apply_mesh_fix(f, fix), "");
+    EXPECT_EQ(f.blocks.size(), 5u);
+    EXPECT_FALSE(std::get<nif::NiTriShape>(f.blocks[3]).av.flags & 0x0001u);  // merge not applied
+    fix.textures = {{1, "b.tga"}};                          // the TARGET is fine
+    EXPECT_EQ(assets::apply_mesh_fix(f, fix), "");
 }

@@ -584,6 +584,18 @@ std::string validate_texture(const nif::File& file, const MeshFixTexture& t,
     std::transform(ext.begin(), ext.end(), ext.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     if (ext != ".tga") return prefix + "albedo must be a .tga file";
+    // Mirrors model_build.cc's filename_is_glow / _specular / _normal (case-
+    // insensitive, on the extension-less stem): such a file binds to Glow,
+    // Gloss or Bump rather than as a plain Base diffuse.
+    std::string stem = t.albedo.substr(0, dot);
+    std::transform(stem.begin(), stem.end(), stem.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    for (const char* suffix : {"_glow", "_specular", "_spec", "_normal", "_norm"}) {
+        const std::string_view sv(suffix);
+        if (stem.size() >= sv.size() && stem.compare(stem.size() - sv.size(), sv.size(), sv) == 0)
+            return prefix + "albedo '" + t.albedo + "' has the reserved suffix '" +
+                   std::string(sv) + "' and would not bind as a plain diffuse";
+    }
     return "";
 }
 
@@ -676,6 +688,12 @@ std::string apply_mesh_fix(nif::File& file, const MeshFix& fix) {
     for (std::size_t i = 0; i < fix.textures.size(); ++i) {
         std::string err = validate_texture(file, fix.textures[i], i);
         if (!err.empty()) return err;
+        for (const auto& plan : plans) {
+            if (plan.patch_shape_idx == fix.textures[i].block)
+                return "texture " + std::to_string(i) + ": block " +
+                       std::to_string(fix.textures[i].block) +
+                       " is a merge's patch (hidden and folded into its target)";
+        }
         auto [it, inserted] = texture_owner.try_emplace(fix.textures[i].block, i);
         if (!inserted) {
             return "texture " + std::to_string(i) + ": block " +
