@@ -56,6 +56,14 @@ emitters do** (`diffuse_ceiling`, max 0.88 < bloom threshold 0.9).
   with "Material: black" ⇒ grouping must be per shape, never per texture.
 - DBridge tex 7 is shared by 22 shapes ⇒ per-texture masks leak.
 - DBridge `Map 3.tga` alcove cove glow is painted into a DIFFUSE.
+- **Stock bridges carry NO specular, gloss, bump or normal maps** (measured
+  2026-10-09 by filename: DBridge 129 textures, EBridge 174, zero
+  `*spec*`/`*gloss*`/`*bump*`/`*norm*`). Caveat: a filename search can't
+  see a NIF gloss slot pointing at a differently-named texture; irrelevant
+  here, because the loader fills the gloss slot from `_specular`/`_spec` names
+  only and §9 doesn't read it. **The July spike's `_specular`-map multiplier
+  is NOT ported**: bridge specular comes only from roughness/metalness
+  (§9.2), Fresnel and what is reflected.
 
 ### 2.3 Prior art
 
@@ -429,3 +437,4 @@ reflections/highlights may.**
 | — | 2026-10-09 | PBR: normal maps by albedo name; per-alert base probes excluding animated emitters + later per-animation-group probe layers | accepted | 9.3, 9.4 |
 | — | 2026-10-09 | PBR: base probes reduced to green + yellow/red; yellow-vs-red differences become layers | accepted | 9.4 |
 | — | 2026-10-09 | PBR: specular uncapped, diffuse keeps ceiling | accepted | 9.5 |
+| — | 2026-10-09 | Measured: stock bridges have no spec/gloss/normal maps; spike spec-mask not ported | recorded | 2.2 |
