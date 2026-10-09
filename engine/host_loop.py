@@ -3530,6 +3530,33 @@ def _register_ai_inspector(registry):
     return panel
 
 
+def _register_bridge_emitters(registry, bridge_camera, controller, view_mode):
+    """Developer-only Bridge Emitters editor (spec
+    2026-10-08-bridge-emitters §4): a pause-menu row and a panel that joins
+    the modal blockers. Returns _NULL_PICKER without --developer."""
+    if not dev_mode.is_enabled():
+        return _NULL_PICKER
+    from engine.ui.bridge_emitters_panel import BridgeEmittersPanel
+    panel = BridgeEmittersPanel(
+        pose_provider=bridge_camera.compute_camera,
+        instance_provider=lambda: controller.bridge_instance,
+        in_bridge_provider=lambda: bool(view_mode.is_bridge))
+    registry.register(panel)
+    dev_mode.register_dev_pause_menu_entry("Bridge Emitters…", panel.open)
+    return panel
+
+
+def _bridge_camera_pose(editor, bridge_camera, shake):
+    """The bridge camera to draw: the editor's fly camera while it has one
+    (unshaken -- you are aiming at shapes), else the captain camera shaken."""
+    pose = getattr(editor, "camera_pose", lambda: None)()
+    if pose is not None:
+        return pose
+    eye, target, up, fov = bridge_camera.compute_camera()
+    eye, target, up = shake(eye, target, up)
+    return eye, target, up, fov
+
+
 def _any_blocker_open(blockers) -> bool:
     """True if any of the supplied panel-like objects (each exposing
     is_open()) is currently visible. Used to gate the pause-menu
@@ -10239,6 +10266,8 @@ def run(mission_name: Optional[str] = None,
         from engine.ui.panel_registry import PanelRegistry
         registry = PanelRegistry()
         ai_inspector = _register_ai_inspector(registry)
+        bridge_emitters = _register_bridge_emitters(registry, bridge_camera,
+                                                    controller, view_mode)
 
         # Keyboard capture for CEF text fields: while one has focus the native
         # KeyGate makes every key read up. Registered as panel "kbd" so the
@@ -10593,6 +10622,7 @@ def run(mission_name: Optional[str] = None,
         # (the Picard tutorial box), which stays inert to ESC as before.
         _modal_blockers = [mission_picker, developer_options_panel,
                            ship_property_viewer, ai_inspector,
+                           bridge_emitters,
                            configuration_panel, star_map_panel,
                            quick_battle_setup_panel, info_box_panel]
 
@@ -11849,13 +11879,16 @@ def run(mission_name: Optional[str] = None,
                                 _owner, now=_App.g_kUtopiaModule.GetGameTime(),
                                 state=_tooltip_dispatch_state)
                         bridge_camera.apply(mouse_dx, mouse_dy)
-                    b_eye, b_target, b_up, b_fov = bridge_camera.compute_camera()
                     # Bridge first-person camera uses separate (eye, target,
                     # up) vectors from the exterior view, so it needs its own
                     # perturb call. The camera_shake module is global state,
                     # so the shake energy / phase is shared with the
-                    # exterior perturb above.
-                    b_eye, b_target, b_up = camera_shake.perturb(b_eye, b_target, b_up)
+                    # exterior perturb above. While the Bridge Emitters
+                    # editor has a fly pose, it takes over the bridge camera
+                    # unshaken -- you are aiming at shapes, not flying the
+                    # ship.
+                    b_eye, b_target, b_up, b_fov = _bridge_camera_pose(
+                        bridge_emitters, bridge_camera, camera_shake.perturb)
                     r.set_bridge_camera(
                         eye=b_eye, target=b_target, up=b_up,
                         fov_y_rad=b_fov,
