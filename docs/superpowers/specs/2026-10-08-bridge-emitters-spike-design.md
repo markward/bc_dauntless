@@ -12,8 +12,9 @@
 (green / yellow / red), and transition cycles between and within states
 (e.g. a red-alert pulse/blink). Per-bridge data, developer-only editing.
 
-Invariant inherited from the baseline: **lit surfaces never bloom; only
-emitters do** (`diffuse_ceiling`, max 0.88 < bloom threshold 0.9).
+Invariant, narrowed from the baseline's "lit surfaces never bloom" (§9.5):
+**lit diffuse never blooms** (`diffuse_ceiling`, max 0.88 < bloom threshold
+0.9); **emitters and their reflections/highlights may.**
 
 ## 2. Evidence (read before re-deriving)
 
@@ -136,19 +137,21 @@ without a rewrite. Mark's addition: **a WASDQE fly camera**.
   (not the per-frame mesh counter): the selected shape gets a pulsing cyan
   tint, the shape under the cursor a faint tint. The panel shows the
   identity readout.
-- Not here: sub-shape regions (masks → §5), gizmos (later, via the adapter).
+- Not here: sub-shape regions (masks → §6.1), gizmos (later, via the adapter).
 
 ## 5. Programme order *(Mark, 2026-10-09)*
 
 1. **Foundation** — §4 (fly camera, picker, highlight, stable identity) and
    the per-shape data file (§7) with its `material` and `emitter` sections.
-2. **Bridge PBR** — implemented FIRST, in this session, with its own
-   section (§9, to be designed). Starting point: the GGX BRDF preserved on
+2. **Bridge PBR** — implemented FIRST, in this session (§9). Starting point: the GGX BRDF preserved on
    `origin/feat/pbr-ship-spike` (56575bb4). The July ship spike lost mainly
    because nothing gave metals anything to reflect, so the bridge step
    brings its own reflection probe and a few static picker-placed spot
    lights (an early slice of §6's cast light).
 3. **Emitters** — §6, built on PBR shading.
+
+Steps 1 and 2 are planned as **two plans** (foundation, then PBR), each
+ending with a live check before the next starts.
 
 §6 is written **assuming PBR has landed**. Where it depends on a PBR-step
 decision it says so; nothing in §6 depends on how those decisions go.
@@ -188,10 +191,9 @@ throws into the room.
   current level clamped to [0,1]. This is the shelved spike's fix that
   stopped screens clipping to white; at level 0 the shape is an ordinary
   receiver again.
-- **Bloom:** glow is the only term guaranteed to be eligible. The baseline
-  rule "lit surfaces never bloom" is narrowed to **"lit DIFFUSE never
-  blooms"**; whether a specular highlight may bloom is decided in the PBR
-  step (§9).
+- **Bloom:** glow is always eligible. The baseline rule "lit surfaces never
+  bloom" is narrowed to **"lit DIFFUSE never blooms"**; specular is uncapped
+  (§9.5).
 
 ### 6.2 Cast light — a punctual spot
 
@@ -209,7 +211,7 @@ throws into the room.
   pulses and fades exactly with its glow. Optional `light_scale` decouples
   the cast brightness from the glow brightness.
 - Adds to received light: diffuse goes through the diffuse ceiling and
-  never blooms; specular is subject to the §9 decision.
+  never blooms; specular is uncapped (§9.5).
 - **Not occluded:** no shadows, and AO multiplies only ambient / indirect
   light, never direct spots. A spot can light through a thin wall; `range`
   keeps it local. Shadows are a later decision.
@@ -300,7 +302,9 @@ throws into the room.
   ```
 
   Shapes are keyed `"<block>:<name>"`, keeping one entry per shape with both
-  sections. `material` is reserved here and defined by the PBR step (§9).
+  sections. `material` = `{"roughness": 0..1, "metalness": 0..1}`, each
+  optional — source B of §9.2; a channel absent here falls through to the
+  default.
   Positions are bridge-local (sets draw with an identity transform). The
   numbers above are illustrative, not tuned.
 - **Validation at load:** unknown fields are REJECTED (the atmosphere
@@ -320,7 +324,8 @@ throws into the room.
 - **Panes:**
   - *Selection*: the identity readout (§4), plus the shape's parent group
     (`Red On GlowAlpha` and so on), shown as information only.
-  - *Material*: defined by the PBR step (§9).
+  - *Material*: roughness and metalness sliders (0–1, source B of §9.2),
+    each showing which source currently wins (map / override / default).
   - *Emitter*: an enable checkbox; a profile dropdown with New/Rename;
     glow src, mask and its parameters; a light toggle plus its fields;
     **"Place light at hit"**; **"Aim where I'm looking"**.
@@ -341,11 +346,9 @@ throws into the room.
 
 ## 9. Bridge PBR *(accepted 2026-10-09)*
 
-Open: the BRDF port (start from `origin/feat/pbr-ship-spike` 56575bb4,
-Cook-Torrance GGX); the reflection probe (one capture at the captain's
-chair, possibly one per steady alert state so emitters appear in
-reflections); whether specular may bloom (§6.1); how the downlight becomes
-diffuse irradiance; how AO applies.
+Cook-Torrance GGX on the bridge pass, ported from `origin/feat/pbr-ship-spike`
+(56575bb4) minus its spike shortcuts and its `_specular`-map multiplier
+(§2.2). §9.1–9.6 record each decision.
 
 ### 9.1 Linear lighting — a deliberate tone shift
 
@@ -374,7 +377,6 @@ The NIF's own gloss/specular values are NOT a source.
   albedo in the mod, never from our overlay, even when the mod's texture
   shares a stock filename (`Map 3.tga`). Our maps never land on a mod's
   different texture. Same guard as the rock catalogue's redirect.
-
 
 **Known trade-off:** a map always beats an override, so once a shared
 texture (DBridge texture 7, 22 shapes) gets a `_rough` map, no single shape
@@ -480,3 +482,4 @@ nothing BC had. Every added map is pure gain.
 | — | 2026-10-09 | PBR: specular uncapped, diffuse keeps ceiling | accepted | 9.5 |
 | — | 2026-10-09 | Measured: stock bridges have no spec/gloss/normal maps; spike spec-mask not ported | recorded | 2.2 |
 | — | 2026-10-09 | PBR shading assembly accepted; §9 complete | accepted | 9.6 |
+| — | 2026-10-09 | Self-review: stale cross-refs fixed; `material` schema defined; foundation + PBR planned as two plans | — | 1, 4, 5, 6, 7, 8, 9 |
