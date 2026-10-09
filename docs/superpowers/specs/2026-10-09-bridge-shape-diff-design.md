@@ -124,48 +124,58 @@ vertices after deletion"). **More** edit vertices are refused ("new vertices
 are iteration 3"). Every face comparison below runs in base indices, through
 this correspondence.
 
-**Current rule (as built iteration 3, 2026-10-09) -- `match.correspond`.**
-Blender keeps surviving vertices in relative order (also across deletion)
-and appends new ones, so the edit↔base correspondence is the
-**order-preserving** (monotone) partial matching that maximises agreement.
-Every (edit, base) pair gets an integer score, independent of the rest of
-the matching: **4** if the positions are equal (L∞ ≤ `POS_TOL`), **+2 per
-edit neighbour** that sits where one of the base vertex's neighbours sits
-(neighbours = shared face edges), and **+1** when the pair already scores
-and a corner UV of one equals a corner UV of the other (a moved survivor
-keeps its UVs; this only breaks ties, it never creates a candidate). The
-heaviest monotone chain over the positive pairs is found exactly (a Fenwick
-tree over base index, O(P log n)), together with the number of distinct
-optimal matchings. Then:
+**Current rule (as built iteration 3, revised in fix round 1, 2026-10-09) --
+`match.correspond`.**
 
 1. **Fast path:** equal counts and every vertex at its own index unmoved →
    identity (the iteration-1 behaviour, and the common case).
-2. **Not unique → refused** ("ambiguous correspondence"). Never guessed.
-3. **Face propagation:** an unmatched edit vertex in a face whose other
-   corners are matched takes the one unmatched base vertex that completes a
-   base face on those corners, if exactly one does (inside its order window).
-4. **Equal gaps:** a run of unmatched edit vertices facing as many unmatched
-   base vertices in its order window is matched in order **only if** every
-   edit face touching the run then maps onto a base face -- a pure move
-   (e.g. a whole island translated, where no neighbour stays put).
-5. Unmatched edit vertices are **new**; unmatched base vertices are
-   **deleted**. If an unmatched edit vertex sits on an unmatched base
-   vertex it could equally be that survivor or a new vertex → **refused**
-   ("ambiguous correspondence ... vertex order changed (separate/join?)").
-   This is what a separate-then-join reorder produces.
+2. **Anchors, in any order.** An edit vertex and a base vertex whose
+   positions coincide (L∞ ≤ `POS_TOL`) **one-to-one in both directions** are
+   paired regardless of order. Separate/join can hand survivors back in a
+   different order (b0395 cove_graphic came back with its two columns
+   swapped), and a unique position settles them. A new vertex placed exactly
+   on a deleted original is anchored to it too -- the output is identical
+   either way.
+3. **Leftovers** (moved survivors, new and deleted vertices, non-unique
+   position claims) go through the **order-preserving** (monotone) matching
+   that maximises agreement. Every (edit, base) pair gets an integer score,
+   independent of the rest of the matching: **4** same position, **+2 per
+   edit neighbour** sitting where one of the base vertex's neighbours sits,
+   **+1** when the pair already scores and a corner UV of one equals a corner
+   UV of the other (only a tie-breaker), and **+4 proximity** when the two
+   are each other's strictly nearest candidate (no bonus on a tie). The
+   proximity term is what lets a survivor that moved a little beat a new
+   vertex that merely shares more neighbours with the original (b0688: the
+   new bottom midpoint shares two neighbours with the moved top-left corner,
+   which shares one with its own moved self -- 4 vs 2+4). The heaviest
+   monotone chain is found exactly (Fenwick tree over base index), with the
+   number of distinct optima.
+4. **Non-unique optimum:** keep only the pairs every optimum shares (a pair
+   whose removal lowers the optimum); the rest stay unpaired. A contested
+   pair that is a **position claim** (the edit vertex sits on the base
+   vertex) is refused ("ambiguous correspondence"): nothing else can say
+   which of two coincident originals survived.
+5. **Winding check:** a non-anchored pairing under which an edit face lands
+   on a base face wound the other way is undone (b0395: a new vertex below a
+   deleted one shares its neighbours, and would read as a flipped face).
+6. **Face propagation** (an unmatched vertex completing a base face, same
+   winding, unique candidate) and **equal gaps** (a run facing as many
+   unmatched base vertices, accepted only if every touching face maps onto a
+   base face with the same winding) as before; order windows count only the
+   non-anchored matches.
+7. An original left unpaired at the position of a non-anchored pair's edit
+   vertex is refused (two coincident originals, one survived: unsettled).
+   The old "unmatched edit vertex on an unmatched base vertex" refusal is
+   **gone** -- survivor vs new-on-that-original give identical output.
 
-Equal vertex counts no longer imply identity unless the fast path holds:
-3 deletions + 3 additions keep the count but shift every survivor, which
-the old rule read as mass moves. A mis-pairing the score can't see (a new
-vertex paired with a deleted one at the end of the list) still yields the
-edited geometry exactly -- every face is re-derived through the matching --
-at worst with that vertex's colour/UV1 taken from the deleted original.
-A scratch randomized check over DBridge objects (delete 0–3 vertices, move
-0–3, add 0–3 with triangles/quads; 900 trials through `diff_shape` + encode)
-gave no crash and ~2 % ambiguity refusals; against ground truth (400
-trials of `correspond`), 7 paired a new vertex with a deleted vertex at the
-end of the list -- the case above, argued harmless but **not** checked by
-re-applying the fix -- and none mis-paired two survivors.
+Every unpaired edit vertex is new, every unpaired base vertex deleted. A
+pairing the score gets wrong still yields the edited geometry -- every face
+is re-derived through the matching -- and the **verify step (§5.4) now
+proves that** for each fix, instead of the argument this section used to
+rest on. Scratch fuzz (400 random delete/move/add trials on DBridge objects,
+against ground truth): no survivor paired with the wrong original, no
+refusal; 61 new↔deleted pairings and 4 survivors left unpaired, all of
+which re-derive the same faces.
 
 ### 5.3 Classification, per shape
 
@@ -280,7 +290,45 @@ span two albedos is refused (base.obj must be the unaltered export).
   silent).
 - Summary line: `block N: M vertices moved[ (R by reference)], K UVs
   changed, R triangles removed, A added, V vertices added[ (R by
-  reference)]`.
+  reference)]` -- "by reference" counts positions that ARE an original
+  (snapped, kind 1); the rest are an original plus a delta (kind 2, §6.1).
+- **Dead records dropped (fix round 1).** A move or UV edit on an original
+  that no surviving or added triangle uses renders nothing and is not
+  written (e.g. a moved survivor whose every face was re-added with new UVs
+  as split vertices -- b0688's top corners).
+- **A removal never lands without its replacement (fix round 1).** An
+  object left out of the fix (skipped by `--partial`, or `--exclude`d) whose
+  edit puts a new or moved vertex where a triangle REMOVED by an included
+  block had a corner was that removal's replacement (b0395 re-making b0392's
+  faces). Such blocks are left out too -- under `--partial` listed as
+  `skipped` with "depends on skipped/excluded <object>", repeatedly until
+  nothing changes; without `--partial` a dependency on an excluded block is
+  refused ("exclude it too").
+
+### 5.4 Verify (fix round 1)
+
+`build_fix` (dry run and `--write` alike) applies the fix it built through
+the loader's own code -- `_dauntless_host.nif_shapes(path, fix_json)` runs
+`parse_mesh_fix` + `apply_mesh_fix` in memory (a refusal raises with the
+loader's reason) -- and checks (`tools/shape_diff/verify.py`):
+
+- every block **not** in the fix is identical to stock;
+- per edited object, the applied triangles equal edit.obj's faces (n-gons
+  through the same `ear_clip`): corners compared as model-space position
+  snapped to the 1/1024 weld grid and UV0 to 1e-5, rotation-canonical,
+  degenerate triangles dropped, grouped by position set because Blender
+  shows one face per set (NIF duplicates, reversed and seam twins collapse):
+  every edit triangle must be one of its set's applied triangles, and the
+  sets must agree both ways; a corner one grid/UV step off still matches
+  (rounding across a cell boundary);
+- each texture op binds its albedo.
+
+Any difference refuses the run before anything is written, naming the
+object and the first differing triangle; success prints `verified N
+objects`. A warning lists survivors paired without position agreement (the
+moved survivors) per block. Verification needs the host module; the CLI
+refuses without it (never skipped silently), and only unit tests opt out
+with `verify=False`.
 
 **`--partial`:** by default a single unsupported object (one that needs
 topology, or a vertex-split UV conflict) aborts the whole diff -- nothing is
@@ -337,8 +385,10 @@ BSD1 below; the move, uv and add-vertex records change so positions/UVs can
 be references:
 
 ```
-position := u8 kind; kind 0: f32 x, y, z         (literal, shape-local)
+position := u8 kind; kind 0: f32 x, y, z         (literal, shape-local; read only)
                      kind 1: u32 src_block, u16 src_vertex   (reference)
+                     kind 2: u32 src_block, u16 src_vertex, f32 dx, dy, dz
+                             (reference + TARGET-shape-local delta)
 uv0      := u8 kind; kind 0: f32 u, v             (literal)
                      kind 1: u32 src_block, u16 src_vertex   (reference)
 n_move        × { u16 vertex; position }
@@ -350,14 +400,21 @@ n_add_tri     × { u16 a, b, c }                  (unchanged)
 
 A position reference is that ORIGINAL vertex's position carried
 src-shape-local → model → target-shape-local through `nif_block_world`
-(double precision; an exact copy when src is the target shape). A uv
+(double precision; an exact copy when src is the target shape), plus the
+kind-2 delta. **Since fix round 1 the encoder never writes kind 0**: a
+position that coincides with an original is kind 1; every other move is
+kind 2 off the moved vertex's own original, and every other added vertex is
+kind 2 off the target shape's nearest original (its `attr_src`). The
+decoder still reads kind 0. A uv
 reference is that original's UV0. `attr_src` is an ORIGINAL vertex index of
 the TARGET shape whose colour and UV sets 1.. the new vertex copies
 (replacing BSD1's literal uv1/colour -- those were BC data). Any other kind
-byte is refused at decode. Golden: one blob with every record kind, pinned
+byte is refused at decode, and a uv kind 2 likewise. Golden: one blob with
+every kind the encoder writes (positions 1 and 2, uvs 0 and 1), pinned
 byte-identical in `tests/tools/test_shape_diff.py` (`GOLDEN_B64`, built by
 hand with `struct`, not by the encoder) and
-`native/tests/assets/cpu/mesh_fix_parse_test.cc` (`kGoldenBsd2B64`).
+`native/tests/assets/cpu/mesh_fix_parse_test.cc` (`kGoldenBsd2B64`); a
+second C++-only blob (`kBsd2Kind0B64`) keeps kind-0 positions decoding.
 
 **BSD1 (read only):**
 
@@ -395,7 +452,14 @@ iteration-3 rule), so the payload stays index-only even for snapped and
 coincident vertices; likewise a UV equal to an original's. (2) Added
 vertices no longer carry colour/UV1 values: they copy them from an original
 named by `attr_src`. What remains literal is only what Mark authored: a
-position or UV that coincides with no original.
+UV that coincides with no original's.
+
+**Fix round 1 (controller's posture decision):** positions are never
+literal. A position that is no original's is written as an original plus
+the offset Mark authored (kind 2) -- the moved vertex's own original for a
+move, the nearest original for a new vertex -- so no absolute coordinate,
+BC's or otherwise, is in the payload; a delta is meaningless without the
+original it is added to.
 
 ---
 
@@ -414,7 +478,7 @@ original) when:
 - an added triangle is degenerate (repeated index or zero area);
 - the shape has authored normals (none on DBridge — out of scope);
 - a data block is also used by a merge;
-- (BSD2) a reference's block is out of range, not a `NiTriShape`, or its
+- (BSD2) a kind-2 delta is non-finite; a reference's block is out of range, not a `NiTriShape`, or its
   data is unresolved/inconsistent; its vertex is not below that shape's
   ORIGINAL vertex count (a vertex that only exists after this same fix
   adds it is refused); a uv reference's shape has no UV set 0; `attr_src`
