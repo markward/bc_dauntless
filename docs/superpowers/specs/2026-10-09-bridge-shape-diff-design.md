@@ -155,9 +155,16 @@ this correspondence.
    pair that is a **position claim** (the edit vertex sits on the base
    vertex) is refused ("ambiguous correspondence"): nothing else can say
    which of two coincident originals survived.
-5. **Winding check:** a non-anchored pairing under which an edit face lands
-   on a base face wound the other way is undone (b0395: a new vertex below a
-   deleted one shares its neighbours, and would read as a flipped face).
+5. **Winding check:** an edit face that lands, under the pairing, on a base
+   face wound the other way is told apart by geometry (fix round 2). If it
+   still **faces the same way** (Newell normals agree), a corner sits on the
+   other side of its opposite edge: the original was deleted and a new
+   vertex took its neighbours (b0395, new vertices below a deleted middle
+   row) -- its non-anchored pairings are undone and its faces re-derived as
+   added. If it **faces the other way**, it is a real flip of a surviving
+   face (a normal flipped in Blender, e.g. on a moved corner): the pairing
+   stays and the flipped kept face is refused as before -- never shipped as
+   a back-face.
 6. **Face propagation** (an unmatched vertex completing a base face, same
    winding, unique candidate) and **equal gaps** (a run facing as many
    unmatched base vertices, accepted only if every touching face maps onto a
@@ -336,12 +343,18 @@ loader's reason) -- and checks (`tools/shape_diff/verify.py`):
   every edit triangle must be one of its set's applied triangles, and the
   sets must agree both ways; a corner one grid/UV step off still matches
   (rounding across a cell boundary);
-- each texture op binds its albedo.
+- each texture op binds its albedo;
+- (fix round 2) wherever the fix ADDS a triangle (the loader appends them
+  last), that position set holds exactly the added triangles: an original
+  left on the same three positions -- a reversed or seam twin of the face
+  Mark replaced -- is refused. Sets the fix doesn't add to keep the
+  stock-collapse tolerance above.
 
 Any difference refuses the run before anything is written, naming the
 object and the first differing triangle; success prints `verified N
-objects`. A warning lists survivors paired without position agreement (the
-moved survivors) per block. Verification needs the host module; the CLI
+objects`. A warning lists survivors paired without position agreement per
+block -- only pairs that produce a move record, and never an index-identity
+pair in a block with no deletions (a plain move). Verification needs the host module; the CLI
 refuses without it (never skipped silently), and only unit tests opt out
 with `verify=False`.
 
