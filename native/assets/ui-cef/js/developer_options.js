@@ -31,6 +31,7 @@ function _doFocusableList(state) {
         out.push({kind: 'ctrl', target: 'normal_maps'});
         out.push({kind: 'ctrl', target: 'normal_flip_g'});
         out.push({kind: 'ctrl', target: 'normal_strength'});
+        out.push({kind: 'ctrl', target: 'bridge_pbr'});
         out.push({kind: 'ctrl', target: 'bridge_debug_view'});
     }
     if (state.selected_tab === 'environments') {
@@ -161,6 +162,7 @@ function _doRenderLightingBody(state, focusables) {
     html += _doValueRow('Normal Map Strength', 'normal_strength',
                         Number(s.normal_strength).toFixed(1) + '×',
                         isFoc('normal_strength'));
+    html += _doToggleRow('Bridge PBR', 'bridge_pbr', s.bridge_pbr, isFoc('bridge_pbr'));
     html += _doValueRow('Bridge Debug View', 'bridge_debug_view',
                         s.bridge_debug_view, isFoc('bridge_debug_view'));
     return html;
