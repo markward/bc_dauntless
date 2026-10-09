@@ -41,9 +41,12 @@ class ShapeIdentity:
         return "(unnamed)"
 
 
-def pick_mesh(trace, cursor_xy, viewport, pose, exclude=()) -> Optional[int]:
-    """Mesh index under `cursor_xy` (framebuffer pixels, top-left origin) for
-    the camera `pose` = (eye, target, up, fov_y_rad), or None."""
+def pick_hit(trace, cursor_xy, viewport, pose, exclude=()) -> Optional[tuple]:
+    """Full trace result (point, normal, distance, mesh, material) under
+    `cursor_xy` (framebuffer pixels, top-left origin) for the camera `pose` =
+    (eye, target, up, fov_y_rad), or None. Same ray as pick_mesh -- use this
+    when the hit point/normal are also needed (placing a light), not just
+    the mesh index."""
     if viewport[0] <= 0 or viewport[1] <= 0:
         return None
     eye, target, up, fov = pose
@@ -51,7 +54,13 @@ def pick_mesh(trace, cursor_xy, viewport, pose, exclude=()) -> Optional[int]:
     if ray is None:
         return None
     origin, direction = ray
-    hit = trace(origin, direction, MAX_PICK_DIST, tuple(exclude))
+    return trace(origin, direction, MAX_PICK_DIST, tuple(exclude))
+
+
+def pick_mesh(trace, cursor_xy, viewport, pose, exclude=()) -> Optional[int]:
+    """Mesh index under `cursor_xy` (framebuffer pixels, top-left origin) for
+    the camera `pose` = (eye, target, up, fov_y_rad), or None."""
+    hit = pick_hit(trace, cursor_xy, viewport, pose, exclude)
     if hit is None:
         return None
     return int(hit[3])

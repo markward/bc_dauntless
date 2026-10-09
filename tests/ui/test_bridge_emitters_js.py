@@ -75,7 +75,8 @@ def _state(**over):
                        "node_chain": ["Scene Root", "Red On GlowAlpha"],
                        "textures": ["redalertpanel.tga"],
                        "material": {"roughness": {"value": 1.0, "source": "default"},
-                                    "metalness": {"value": 0.0, "source": "default"}}}}
+                                    "metalness": {"value": 0.0, "source": "default"}},
+                       "light": None}}
     st.update(over)
     return st
 
@@ -128,3 +129,41 @@ def test_outside_the_bridge_the_message_says_how_to_get_there():
 def test_hidden_state_hides_the_root():
     [out] = _run([{"state": {"visible": False}}])
     assert out["display"] == "none"
+
+
+def test_light_section_shows_an_add_button_when_light_is_null():
+    [out] = _run([{"state": _state()}])
+    assert "Light" in out["body"]
+    assert "Add light" in out["body"]
+    assert "bridge-emitters/light-add" in out["body"]
+    # None of the "a light exists" controls should render.
+    assert "bridge-emitters/light-place" not in out["body"]
+    assert "bridge-emitters/light-remove" not in out["body"]
+
+
+def test_light_section_shows_buttons_and_fields_when_light_is_set():
+    sel = dict(_state()["selected"], light={
+        "position": [0, 10, 50], "direction": [0, -1, 0],
+        "inner_deg": 30, "outer_deg": 60, "range": 200, "intensity": 2000})
+    [out] = _run([{"state": _state(selected=sel)}])
+    body = out["body"]
+    assert "bridge-emitters/light-place" in body
+    assert "bridge-emitters/light-aim" in body
+    assert "bridge-emitters/light-remove" in body
+    assert "bridge-emitters/light:inner_deg:" in body
+    assert "bridge-emitters/light:outer_deg:" in body
+    assert "bridge-emitters/light:range:" in body
+    assert "bridge-emitters/light:intensity:" in body
+    assert "Add light" not in body
+
+
+def test_a_map_sourced_channel_renders_its_slider_disabled():
+    sel = dict(_state()["selected"], material={
+        "roughness": {"value": 1.0, "source": "map"},
+        "metalness": {"value": 0.0, "source": "default"}})
+    [out] = _run([{"state": _state(selected=sel)}])
+    body = out["body"]
+    rough_row = body[body.index("roughness"):body.index("metalness")]
+    metal_row = body[body.index("metalness"):]
+    assert 'type="range"' in rough_row and "disabled" in rough_row
+    assert 'type="range"' in metal_row and "disabled" not in metal_row

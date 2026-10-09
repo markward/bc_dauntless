@@ -44,6 +44,30 @@ def test_pick_with_a_degenerate_viewport_is_none():
     assert picking.pick_mesh(lambda *a: 1 / 0, (1, 1), (0, 0), POSE) is None
 
 
+def test_pick_hit_returns_the_full_trace_result():
+    hit = ((0, 10, 50), (0, -1, 0), 10.0, 1, 0)
+    assert picking.pick_hit(lambda *a: hit, (400, 300), (800, 600), POSE) == hit
+
+
+def test_pick_hit_miss_is_none():
+    assert picking.pick_hit(lambda *a: None, (1, 1), (800, 600), POSE) is None
+
+
+def test_pick_hit_with_a_degenerate_viewport_is_none():
+    assert picking.pick_hit(lambda *a: 1 / 0, (1, 1), (0, 0), POSE) is None
+
+
+def test_pick_mesh_derives_from_pick_hit():
+    seen = {}
+
+    def trace(origin, direction, max_dist, exclude):
+        seen.update(exclude=tuple(exclude))
+        return ((0, 10, 50), (0, -1, 0), 10.0, 3, 0)
+
+    assert picking.pick_mesh(trace, (400, 300), (800, 600), POSE, exclude=(9,)) == 3
+    assert seen["exclude"] == (9,)
+
+
 def test_pick_forwards_the_exclusion():
     got = []
     picking.pick_mesh(lambda o, d, m, ex: got.append(tuple(ex)) or None,

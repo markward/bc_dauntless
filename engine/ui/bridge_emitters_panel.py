@@ -18,8 +18,9 @@ from typing import Optional
 from engine import host_io
 from engine.bridge_editor import lighting_doc as ld
 from engine.bridge_editor import lighting_writer as lw
+from engine.bridge_editor import lights as bridge_lights
 from engine.bridge_editor.fly_camera import FlyCamera
-from engine.bridge_editor.picking import PickCycle, identity_for, pick_mesh
+from engine.bridge_editor.picking import PickCycle, identity_for, pick_hit, pick_mesh
 from engine.ui.panel import Panel
 
 DOCK_CSS_PX = 360          # width of the docked panel, CSS px (bridge_emitters.css)
@@ -28,6 +29,14 @@ DEFAULT_ROUGHNESS = 1.0    # spec §9.2 source C
 DEFAULT_METALNESS = 0.0
 _CHANNELS = {"roughness": DEFAULT_ROUGHNESS, "metalness": DEFAULT_METALNESS}
 _UNDO_LIMIT = 100
+
+# emitter.light defaults (spec §9.6); angles are HALF-angles 0-90, inner<=outer.
+_LIGHT_INNER_DEG = 30.0
+_LIGHT_OUTER_DEG = 60.0
+_LIGHT_RANGE = 200.0
+_LIGHT_INTENSITY = bridge_lights.DEFAULT_INTENSITY
+_LIGHT_MIN_RANGE = 0.01
+_LIGHT_FIELDS = ("inner_deg", "outer_deg", "range", "intensity")
 
 
 class BridgeEmittersPanel(Panel):
@@ -59,6 +68,7 @@ class BridgeEmittersPanel(Panel):
         self._saved_text = None
         self._undo = []
         self._selected = None          # ShapeIdentity
+        self._last_hit = None          # (point, normal) from the last CLICK trace
         self._hover_mesh = -1
         self._cycle = PickCycle()
         self._status = ""
@@ -205,15 +215,31 @@ class BridgeEmittersPanel(Panel):
         self._doc = self._load.doc
         self._saved_text = lw.dumps(self._doc)
         self._undo = []
+        self._after_change()
 
     def _click(self, trace, xy, fb, pose):
+        # Capture the full hit (point, normal) of whichever trace call ends
+        # up producing the final accepted mesh -- the last call a PickCycle
+        # makes always corresponds to its returned mesh, in both the plain
+        # and Alt+click (step-deeper) cases, so overwriting on every call
+        # leaves the right one behind.
+        captured = {}
+
+        def _pick(exclude):
+            hit = pick_hit(trace, xy, fb, pose, exclude)
+            if hit is not None:
+                captured["hit"] = hit
+            return None if hit is None else int(hit[3])
+
         if self._press_alt:
-            mesh = self._cycle.alt_pick(
-                lambda ex: pick_mesh(trace, xy, fb, pose, ex), xy)
+            mesh = self._cycle.alt_pick(_pick, xy)
         else:
             self._cycle.reset()
-            mesh = pick_mesh(trace, xy, fb, pose)
+            mesh = _pick(())
         self._selected = None if mesh is None else identity_for(self._info, mesh)
+        if mesh is not None and "hit" in captured:
+            point, normal = captured["hit"][0], captured["hit"][1]
+            self._last_hit = (tuple(point), tuple(normal))
 
     def _push_highlight(self, iid):
         sel = self._selected.mesh if self._selected else -1
@@ -228,7 +254,8 @@ class BridgeEmittersPanel(Panel):
             self.close()
             return True
         if self._doc is None:
-            return action in ("save", "revert", "undo") or action.startswith("material")
+            return (action in ("save", "revert", "undo")
+                    or action.startswith(("material", "light")))
         if action == "save":
             self._save()
         elif action == "revert":
@@ -236,18 +263,118 @@ class BridgeEmittersPanel(Panel):
         elif action == "undo":
             if self._undo:
                 self._doc = self._undo.pop()
+            self._after_change()
         elif action.startswith("material:"):
             self._edit_material(action[len("material:"):])
+            self._after_change()
         elif action.startswith("material-clear:"):
             self._clear_material(action[len("material-clear:"):])
+            self._after_change()
+        elif action == "light-add":
+            self._light_add()
+            self._after_change()
+        elif action == "light-remove":
+            self._light_remove()
+            self._after_change()
+        elif action == "light-aim":
+            self._light_aim()
+            self._after_change()
+        elif action == "light-place":
+            self._light_place()
+            self._after_change()
+        elif action.startswith("light:"):
+            self._light_field(action[len("light:"):])
+            self._after_change()
         else:
             return False
         self._last_pushed = None
         return True
 
+    def _after_change(self):
+        """Re-push the live doc through the production BridgeRuntime after
+        every edit, so the editor's result is visible the same frame (the
+        bridge still draws while the editor is paused). Never raises --
+        BridgeRuntime.push() already guards itself; this only has to guard
+        the lack of a runtime/attached model."""
+        if self._runtime and self._info:
+            matched = ld.match_shapes(self._doc, self._info["meshes"])[0]
+            warnings = self._runtime.push(self._doc, matched)
+            if warnings:
+                joined = "; ".join(warnings)
+                self._status = f"{self._status}; {joined}" if self._status else joined
+
     def _snapshot(self):
         self._undo.append(copy.deepcopy(self._doc))
         del self._undo[:-_UNDO_LIMIT]
+
+    # ── light (emitter.light) actions ───────────────────────────────────
+    def _light_entry(self):
+        if self._selected is None or self._doc is None:
+            return None
+        return (self._doc["shapes"].get(self._selected.key, {})
+                .get("emitter", {}).get("light"))
+
+    def _light_add(self):
+        if self._selected is None or self._last_hit is None:
+            return
+        self._snapshot()
+        point, normal = self._last_hit
+        entry = ld.shape_entry(self._doc, self._selected.block, self._selected.name)
+        entry.setdefault("emitter", {})["light"] = {
+            "position": list(point), "direction": list(normal),
+            "inner_deg": _LIGHT_INNER_DEG, "outer_deg": _LIGHT_OUTER_DEG,
+            "range": _LIGHT_RANGE, "intensity": _LIGHT_INTENSITY,
+        }
+
+    def _light_remove(self):
+        if self._selected is None or self._doc is None:
+            return
+        entry = self._doc["shapes"].get(self._selected.key)
+        if not entry or "light" not in entry.get("emitter", {}):
+            return
+        self._snapshot()
+        entry = self._doc["shapes"][self._selected.key]
+        del entry["emitter"]["light"]
+        if not entry["emitter"]:
+            del entry["emitter"]
+        if set(entry) == {"block", "name"}:
+            del self._doc["shapes"][self._selected.key]
+
+    def _light_aim(self):
+        light = self._light_entry()
+        if light is None or self._camera is None:
+            return
+        self._snapshot()
+        light["direction"] = list(self._camera.forward())
+
+    def _light_place(self):
+        light = self._light_entry()
+        if light is None or self._last_hit is None:
+            return
+        self._snapshot()
+        light["position"] = list(self._last_hit[0])
+
+    def _light_field(self, arg):
+        field, _, raw = arg.partition(":")
+        light = self._light_entry()
+        if field not in _LIGHT_FIELDS or light is None:
+            return
+        try:
+            v = float(raw)
+        except ValueError:
+            return
+        if field in ("inner_deg", "outer_deg"):
+            v = min(90.0, max(0.0, v))
+        elif field == "range":
+            v = max(_LIGHT_MIN_RANGE, v)
+        elif field == "intensity":
+            v = max(0.0, v)
+        self._snapshot()
+        light[field] = v
+        if field == "inner_deg" and light.get("outer_deg", 90.0) < v:
+            light["outer_deg"] = v
+        elif field == "outer_deg" and v < light.get("inner_deg", 0.0):
+            light["inner_deg"] = v
 
     def _edit_material(self, arg):
         ch, _, raw = arg.partition(":")
@@ -312,12 +439,32 @@ class BridgeEmittersPanel(Panel):
         self._selected = sel
 
     # ── payload ──────────────────────────────────────────────────────────
+    def _selected_mesh_info(self):
+        if self._selected is None or not self._info:
+            return None
+        for m in self._info.get("meshes", ()):
+            if m["mesh"] == self._selected.mesh:
+                return m
+        return None
+
     def _material_state(self):
         entry = self._doc["shapes"].get(self._selected.key, {}) if self._doc else {}
         mat = entry.get("material", {})
-        return {ch: ({"value": mat[ch], "source": "override"} if ch in mat
-                     else {"value": default, "source": "default"})
-                for ch, default in _CHANNELS.items()}
+        mesh_info = self._selected_mesh_info()
+        maps = (mesh_info or {}).get("maps", {})
+        out = {}
+        for ch, default in _CHANNELS.items():
+            if maps.get(ch):
+                out[ch] = {"value": default, "source": "map"}
+            elif ch in mat:
+                out[ch] = {"value": mat[ch], "source": "override"}
+            else:
+                out[ch] = {"value": default, "source": "default"}
+        return out
+
+    def _light_payload(self):
+        light = self._light_entry()
+        return None if light is None else dict(light)
 
     def render_payload(self) -> Optional[str]:
         if not self._visible:
@@ -330,7 +477,8 @@ class BridgeEmittersPanel(Panel):
                        "display_name": self._selected.display_name,
                        "node_chain": list(self._selected.node_chain),
                        "textures": list(self._selected.textures),
-                       "material": self._material_state()}
+                       "material": self._material_state(),
+                       "light": self._light_payload()}
             hover = None
             if self._info and self._hover_mesh >= 0:
                 ident = identity_for(self._info, self._hover_mesh)

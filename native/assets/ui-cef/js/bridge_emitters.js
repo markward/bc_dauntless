@@ -10,17 +10,54 @@ function _beEsc(s) {
 
 function _beMaterialRow(ch, m) {
     const v = Number(m.value).toFixed(2);
+    // A map (baked texture) always wins over any stored per-shape override
+    // (spec 2026-10-09-bridge-pbr global constraints: map -> override ->
+    // default), so the slider/number field are shown but disabled -- the
+    // value they display is the DEFAULT, never a stale override.
+    const dis = m.source === 'map' ? ' disabled' : '';
     return '<div class="be-row">'
         + '<label>' + ch + '</label>'
-        + '<input type="range" min="0" max="1" step="0.01" value="' + v + '"'
+        + '<input type="range" min="0" max="1" step="0.01" value="' + v + '"' + dis
         + ' onchange="dauntlessEvent(\'bridge-emitters/material:' + ch + ':\' + this.value)">'
-        + '<input type="number" min="0" max="1" step="0.01" value="' + v + '" style="width:56px"'
+        + '<input type="number" min="0" max="1" step="0.01" value="' + v + '" style="width:56px"' + dis
         + ' onchange="dauntlessEvent(\'bridge-emitters/material:' + ch + ':\' + this.value)">'
         + '<span class="be-source">' + _beEsc(m.source) + '</span>'
         + (m.source === 'override'
             ? '<button onclick="dauntlessEvent(\'bridge-emitters/material-clear:' + ch + '\')">×</button>'
             : '')
         + '</div>';
+}
+
+function _beLightNumberRow(label, field, value) {
+    return '<div class="be-row">'
+        + '<label>' + _beEsc(label) + '</label>'
+        + '<input type="number" step="0.1" value="' + _beEsc(Number(value)) + '"'
+        + ' onchange="dauntlessEvent(\'bridge-emitters/light:' + field + ':\' + this.value)">'
+        + '</div>';
+}
+
+// The Light section: no emitter.light yet -> a single "Add light" button
+// (placed at the last pick's hit point, aimed along its normal); once one
+// exists -> Place/Aim/Remove plus the four number fields. Sliders aren't
+// used here (no natural 0-1 range), unlike the material rows.
+function _beLightSection(light) {
+    let html = '<div class="cp-section-title">Light</div>';
+    if (!light) {
+        html += '<div class="be-row">'
+              + '<button onclick="dauntlessEvent(\'bridge-emitters/light-add\')">Add light</button>'
+              + '</div>';
+        return html;
+    }
+    html += '<div class="be-row">'
+          + '<button onclick="dauntlessEvent(\'bridge-emitters/light-place\')">Place here</button>'
+          + '<button onclick="dauntlessEvent(\'bridge-emitters/light-aim\')">Aim where I\'m looking</button>'
+          + '<button onclick="dauntlessEvent(\'bridge-emitters/light-remove\')">Remove</button>'
+          + '</div>';
+    html += _beLightNumberRow('inner°', 'inner_deg', light.inner_deg);
+    html += _beLightNumberRow('outer°', 'outer_deg', light.outer_deg);
+    html += _beLightNumberRow('range', 'range', light.range);
+    html += _beLightNumberRow('intensity', 'intensity', light.intensity);
+    return html;
 }
 
 // The body is rebuilt from the payload -- but never while the user is typing
@@ -59,6 +96,7 @@ function _beBodyHtml(state) {
             html += '<div class="cp-section-title">Material</div>';
             html += _beMaterialRow('roughness', s.material.roughness);
             html += _beMaterialRow('metalness', s.material.metalness);
+            html += _beLightSection(s.light);
         }
     }
     html += '<div class="be-status" id="be-status"></div>';

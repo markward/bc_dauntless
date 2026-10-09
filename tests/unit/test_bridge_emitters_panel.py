@@ -14,7 +14,8 @@ INFO = {
          "textures": [], "material": 0},
         {"mesh": 1, "block": 7, "name": "redalertpanel",
          "node_chain": ["Scene Root", "Red On GlowAlpha"],
-         "textures": ["redalertpanel.tga"], "material": 1},
+         "textures": ["redalertpanel.tga"], "material": 1,
+         "maps": {"roughness": True, "metalness": False, "normal": False}},
         # Stock DBridge: every shape is unnamed; the owning node names it.
         {"mesh": 2, "block": 11, "name": "",
          "node_chain": ["", "Gamma", "wall side pnls 11"],
@@ -129,6 +130,98 @@ def payload(p):
     js = p.render_payload()
     assert js.startswith("setBridgeEmitters(") and js.endswith(");")
     return json.loads(js[len("setBridgeEmitters("):-2])
+
+
+class FakeRuntime:
+    def __init__(self):
+        self.pushes = []
+
+    def push(self, doc, matched=None):
+        self.pushes.append((json.dumps(doc, sort_keys=True), dict(matched or {})))
+        return []
+
+
+@pytest.fixture
+def env_rt(env):
+    p, io, h, t, tmp = env
+    rt = FakeRuntime()
+    p._runtime = rt
+    return p, io, h, t, tmp, rt
+
+
+def test_material_edit_pushes_overrides_and_requests_capture(env_rt):
+    p, io, h, t, tmp, rt = env_rt
+    p.open()
+    click(p, h, (400.0, 300.0))
+    p.dispatch_event("material:metalness:0.8")
+    doc, matched = rt.pushes[-1]
+    assert '"metalness": 0.8' in doc
+    assert matched.get("7:redalertpanel") == 1
+
+
+def test_map_wins_and_is_reported(env_rt):
+    p, io, h, *_ = env_rt
+    p.open()
+    click(p, h, (400.0, 300.0))
+    mat = payload(p)["selected"]["material"]
+    assert mat["roughness"]["source"] == "map"
+    assert mat["metalness"]["source"] == "default"
+
+
+def test_light_add_places_at_the_hit_facing_the_normal(env_rt):
+    p, io, h, *_ = env_rt
+    p.open()
+    click(p, h, (400.0, 300.0))
+    p.dispatch_event("light-add")
+    light = payload(p)["selected"]["light"]
+    assert light["position"] == [0, 10, 50]       # FakeIO's hit point
+    assert light["direction"] == [0, -1, 0]       # FakeIO's hit normal
+    assert (light["inner_deg"], light["outer_deg"], light["range"], light["intensity"]) == (30, 60, 200, 2000)
+
+
+def test_light_aim_uses_the_fly_camera_forward(env_rt):
+    p, io, h, *_ = env_rt
+    p.open()
+    click(p, h, (400.0, 300.0))
+    p.dispatch_event("light-add")
+    p.dispatch_event("light-aim")
+    d = payload(p)["selected"]["light"]["direction"]
+    assert abs(d[1] - 1.0) < 1e-6                 # POSE looks along +Y
+
+
+def test_light_fields_clamp_and_keep_inner_le_outer(env_rt):
+    p, io, h, *_ = env_rt
+    p.open()
+    click(p, h, (400.0, 300.0))
+    p.dispatch_event("light-add")
+    p.dispatch_event("light:inner_deg:80")        # above outer 60 -> outer follows
+    light = payload(p)["selected"]["light"]
+    assert light["inner_deg"] == 80 and light["outer_deg"] == 80
+    p.dispatch_event("light:range:-5")
+    assert payload(p)["selected"]["light"]["range"] > 0
+
+
+def test_light_remove_and_undo_both_push(env_rt):
+    p, io, h, t, tmp, rt = env_rt
+    p.open()
+    click(p, h, (400.0, 300.0))
+    p.dispatch_event("light-add")
+    n = len(rt.pushes)
+    p.dispatch_event("light-remove")
+    assert payload(p)["selected"]["light"] is None
+    p.dispatch_event("undo")
+    assert payload(p)["selected"]["light"] is not None
+    assert len(rt.pushes) == n + 2
+
+
+def test_saved_lights_validate(env_rt):
+    p, io, h, t, tmp, rt = env_rt
+    p.open()
+    click(p, h, (400.0, 300.0))
+    p.dispatch_event("light-add")
+    p.dispatch_event("save")
+    saved = json.loads((tmp / "bridge_lighting" / f"{HASH}.json").read_text())
+    assert saved["shapes"]["7:redalertpanel"]["emitter"]["light"]["range"] == 200
 
 
 def test_closed_panel_has_no_camera_and_hides(env):
@@ -275,18 +368,21 @@ def test_an_unnamed_shape_round_trips_through_save_and_revert(env):
 
 
 def test_material_override_edit_and_sources(env):
+    # mesh 1 (redalertpanel) has a roughness MAP (see test_map_wins_and_is_reported
+    # for that case) -- metalness has no map, so it still exercises the plain
+    # default -> override -> clear flow.
     p, io, h, *_ = env
     p.open()
     click(p, h, (400.0, 300.0))
     st = payload(p)["selected"]["material"]
-    assert st == {"roughness": {"value": 1.0, "source": "default"},
+    assert st == {"roughness": {"value": 1.0, "source": "map"},
                   "metalness": {"value": 0.0, "source": "default"}}
-    assert p.dispatch_event("material:roughness:0.35")
+    assert p.dispatch_event("material:metalness:0.35")
     st = payload(p)
-    assert st["selected"]["material"]["roughness"] == {"value": 0.35, "source": "override"}
+    assert st["selected"]["material"]["metalness"] == {"value": 0.35, "source": "override"}
     assert st["dirty"] is True
-    assert p.dispatch_event("material-clear:roughness")
-    assert payload(p)["selected"]["material"]["roughness"]["source"] == "default"
+    assert p.dispatch_event("material-clear:metalness")
+    assert payload(p)["selected"]["material"]["metalness"]["source"] == "default"
 
 
 def test_material_value_is_clamped_and_garbage_ignored(env):
@@ -302,30 +398,36 @@ def test_material_value_is_clamped_and_garbage_ignored(env):
 
 
 def test_undo_restores_the_previous_document(env):
+    # metalness, not roughness: mesh 1 has a roughness MAP (see
+    # test_map_wins_and_is_reported), which always reports "map" regardless
+    # of any stored override.
     p, io, h, *_ = env
     p.open()
     click(p, h, (400.0, 300.0))
-    p.dispatch_event("material:roughness:0.2")
-    p.dispatch_event("material:roughness:0.4")
+    p.dispatch_event("material:metalness:0.2")
+    p.dispatch_event("material:metalness:0.4")
     p.dispatch_event("undo")
-    assert payload(p)["selected"]["material"]["roughness"]["value"] == 0.2
+    assert payload(p)["selected"]["material"]["metalness"]["value"] == 0.2
     p.dispatch_event("undo")
-    assert payload(p)["selected"]["material"]["roughness"]["source"] == "default"
+    assert payload(p)["selected"]["material"]["metalness"]["source"] == "default"
 
 
 def test_save_writes_the_project_file_and_revert_reloads(env):
+    # metalness: mesh 1's roughness MAP always reports "map" (its stored
+    # value never surfaces in the live state -- see test_map_wins_and_is_reported),
+    # so the round-trip-through-value check needs the unmapped channel.
     p, io, h, t, tmp = env
     p.open()
     click(p, h, (400.0, 300.0))
-    p.dispatch_event("material:roughness:0.25")
+    p.dispatch_event("material:metalness:0.25")
     p.dispatch_event("save")
     path = tmp / "bridge_lighting" / f"{HASH}.json"
     saved = json.loads(path.read_text())
-    assert saved["shapes"]["7:redalertpanel"]["material"] == {"roughness": 0.25}
+    assert saved["shapes"]["7:redalertpanel"]["material"] == {"metalness": 0.25}
     assert payload(p)["dirty"] is False
-    p.dispatch_event("material:roughness:0.9")
+    p.dispatch_event("material:metalness:0.9")
     p.dispatch_event("revert")
-    assert payload(p)["selected"]["material"]["roughness"]["value"] == 0.25
+    assert payload(p)["selected"]["material"]["metalness"]["value"] == 0.25
 
 
 def test_save_is_refused_when_the_file_failed_to_load(env):
