@@ -1690,3 +1690,54 @@ def test_every_unsnapped_move_is_its_own_original_plus_a_delta(tmp_path):
     e = match.diff_shape(s, base, _moved(base, 1, (101.25, 50.0, 10.5)))
     assert [(i, p.block, p.vertex) for i, p in e["moves"]] == [(1, 11, 1), (4, 11, 4)]
     assert e["moves"][0][1].delta == pytest.approx((0.25, 0.0, 0.5))
+
+
+# --- Task 15 fix round: a removal must not land without its replacement ---
+
+def _removal_and_dependent(tmp_path, offset):
+    """A (block 175) loses its sliver face (corners (5,0,0) (6,0,0) (5,1,0));
+    B (block 180, a quad at `offset`) moves its vertex at offset + (0,1,0) to
+    offset + (-1, 0, 0) and has an unsupported edit (a flipped face) -- so
+    --partial skips B. With offset (7,0,0) B's moved vertex lands on A's
+    removed corner (6,0,0): B was A's replacement."""
+    a = _sliver_shape(175)
+    b = _shape(block=180, parent="cove graphic", offset=offset)
+    base = _export_read(tmp_path, [a, b])
+    na, nb = obj_io.object_name(a), obj_io.object_name(b)
+    base[na] = _blenderize(base[na])
+    edit = dict(base)
+    ea = _copy(base[na])
+    sliver = {_local(ea, (5, 0, 0)), _local(ea, (6, 0, 0)), _local(ea, (5, 1, 0))}
+    del ea.faces[_face_on(ea, sliver)]
+    edit[na] = ea
+    eb = _copy(base[nb])
+    ox, oy, oz = offset
+    eb.positions[_local(eb, (ox, oy + 1, oz))] = (ox - 1, oy, oz)
+    eb.faces[0] = list(reversed(eb.faces[0]))
+    edit[nb] = eb
+    return [a, b], base, edit, na, nb
+
+
+def test_partial_skips_a_removal_whose_replacement_was_skipped(tmp_path):
+    shapes, base, edit, na, nb = _removal_and_dependent(tmp_path, (7.0, 0.0, 0.0))
+    edits, skipped = match.diff(shapes, base, edit, partial=True)
+    assert edits == []
+    reasons = dict(skipped)
+    assert set(reasons) == {na, nb}
+    assert f"depends on skipped {nb}" in reasons[na]
+
+
+def test_partial_keeps_a_removal_no_skipped_edit_touches(tmp_path):
+    shapes, base, edit, na, nb = _removal_and_dependent(tmp_path, (50.0, 0.0, 0.0))
+    edits, skipped = match.diff(shapes, base, edit, partial=True)
+    assert [e["block"] for e in edits] == [175]
+    assert [n for n, _ in skipped] == [nb]
+
+
+def test_excluding_a_removals_replacement_refuses_unless_both_are_excluded(tmp_path):
+    shapes, base, edit, na, nb = _removal_and_dependent(tmp_path, (7.0, 0.0, 0.0))
+    with pytest.raises(ShapeDiffError, match=f"depends on excluded {nb}"):
+        match.diff(shapes, base, edit, exclude=[180])
+    assert match.diff(shapes, base, edit, exclude=[175, 180]) == []
+    edits, skipped = match.diff(shapes, base, edit, partial=True, exclude=[180])
+    assert edits == [] and [n for n, _ in skipped] == [na]

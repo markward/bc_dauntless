@@ -864,6 +864,46 @@ def diff(shapes: list, base_objs: dict, edit_objs: dict, partial: bool = False,
             continue
         if e is not None:
             edits.append(e)
+    edits, dependents = _without_orphaned_removals(
+        by_block, base_objs, edit_objs, edits,
+        [(n, "skipped") for n, _ in skipped]
+        + [(n, "excluded") for n in base_objs if obj_io.block_of(n) in exclude])
+    if dependents and not partial:
+        name, reason = dependents[0]
+        raise ShapeDiffError(f"object {name}: {reason}; exclude it too")
+    skipped += dependents
     if partial:
         return edits, skipped
     return edits
+
+
+def _without_orphaned_removals(by_block, base_objs, edit_objs, edits, left_out):
+    """An object left out of the fix (skipped or excluded) whose edit puts a
+    vertex where a triangle REMOVED by an included block had a corner was
+    that removal's replacement (b0392's faces, re-made by b0395): landing
+    the removal alone would open a hole. Such blocks are left out too, with
+    the reason, until nothing changes. Returns (kept edits, [(name, why)])."""
+    name_of = {obj_io.block_of(n): n for n in base_objs}
+    pending = list(left_out)
+    out = []
+    while pending:
+        other, how = pending.pop()
+        base_pts = base_objs[other].positions
+        grid = _grid(base_pts)
+        touch = [p for p in edit_objs[other].positions if not _near(grid, base_pts, p)]
+        if not touch:
+            continue
+        tgrid = _grid(touch)
+        keep = []
+        for e in edits:
+            shape = by_block[e["block"]]
+            corners = {v for t in e.get("remove_triangles", ()) for v in shape["triangles"][t]}
+            if any(_near(tgrid, touch, shape["vertices"][v]) for v in corners):
+                name = name_of[e["block"]]
+                out.append((name, f"block {e['block']}: depends on {how} {other} -- its "
+                                  "edit meets triangles this block removes"))
+                pending.append((name, "skipped"))
+            else:
+                keep.append(e)
+        edits = keep
+    return edits, out
