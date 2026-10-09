@@ -129,7 +129,8 @@ def build_fix(rel: str, base_path: Path, edit_path: Path, partial: bool = False,
         names = {obj_io.block_of(n): n for n in edit_objs}
         edited = {e["block"]: (names[e["block"]], edit_objs[names[e["block"]]]) for e in edits}
         albedos = {e["block"]: e["albedo"] for e in edits if e.get("albedo")}
-        n = _verify.run(_nif_path(rel), fix_text(fix), shapes, edited, albedos)
+        added = {e["block"]: len(e.get("add_triangles", ())) for e in edits}
+        n = _verify.run(_nif_path(rel), fix_text(fix), shapes, edited, albedos, added)
         print(f"verified {n} objects")
     for e in edits:
         pairs = e.get("moved_survivors")

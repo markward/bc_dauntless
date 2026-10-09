@@ -1857,3 +1857,51 @@ def test_mark_round_regenerates_and_verifies():
     blocks = {e["block"] for e in edits}
     assert {392, 395, 471, 688, 697} <= blocks
     assert skipped == []
+
+
+# --- Task 15 fix round 2 ---
+
+def test_a_moved_corner_whose_face_was_flipped_is_still_refused(tmp_path):
+    # Reviewer's probe: vertex 1 is only in face 0; move it and reverse face 0.
+    # It is a survivor (nearest to where it was) -- the flip must be refused,
+    # never re-derived as a new back-face.
+    s = _shape()
+    base = _export_read(tmp_path, [s])[obj_io.object_name(s)]
+    edit = _moved(base, 1, (1.25, 0.0, 0.5))
+    edit.faces[0] = list(reversed(edit.faces[0]))
+    with pytest.raises(ShapeDiffError, match="winding"):
+        match.diff_shape(s, base, edit)
+
+
+def test_verify_catches_a_leftover_twin_under_an_added_face(tmp_path):
+    # The fix adds (8,7,2) but an original triangle on the same three
+    # positions (reversed) survives: a back-face twin edit.obj doesn't show.
+    s, base = _sliver_base(tmp_path)
+    edit = _copy(base)
+    edit.faces.append([_corner(base, (2, 0, 0), (0.2, 0.0)), _corner(base, (5, 0, 0), (0.5, 0.0)),
+                       _corner(base, (2, 1, 0), (0.2, 1.0))])
+    stock = dict(s)
+    stock["triangles"] = list(s["triangles"]) + [(8, 2, 7)]        # a reversed original
+    applied = dict(stock)
+    applied["triangles"] = list(stock["triangles"]) + [(7, 2, 8)]  # the fix's addition
+    with pytest.raises(ShapeDiffError, match="keeps triangle"):
+        verify.check([stock], [applied], {175: (obj_io.object_name(s), edit)},
+                     added={175: 1})
+    applied["triangles"] = list(s["triangles"]) + [(7, 2, 8)]      # twin removed: fine
+    stock["triangles"] = list(s["triangles"])
+    assert verify.check([stock], [applied], {175: (obj_io.object_name(s), edit)},
+                        added={175: 1}) == 1
+
+
+def test_survivor_warning_lists_only_pairs_that_produce_a_move(tmp_path):
+    s = _shape()
+    base = _export_read(tmp_path, [s])[obj_io.object_name(s)]
+    e = match.diff_shape(s, base, _moved(base, 1, (1.25, 0.0, 0.5)))
+    assert "moved_survivors" not in e                  # identity pair, no deletions
+    s2, base2 = _sliver_base(tmp_path)
+    sliver = {_local(base2, (5, 0, 0)), _local(base2, (6, 0, 0)), _local(base2, (5, 1, 0))}
+    edit2 = _blender_delete(base2, _face_on(base2, sliver))
+    k = _local(edit2, (2, 1, 0))
+    edit2.positions[k] = (2.0, 1.5, 0.0)
+    e2 = match.diff_shape(s2, base2, edit2)
+    assert e2["moved_survivors"] == [(k, _local(base2, (2, 1, 0)))]

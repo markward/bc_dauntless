@@ -77,6 +77,24 @@ def _show(t):
         f"{None if c[1] is None else tuple(x / _UVQ for x in c[1])}" for c in t) + ")"
 
 
+def _no_twin_under_added(name, applied, n_added):
+    """The loader appends added triangles last. Wherever the fix ADDS a
+    triangle, its position set must hold exactly the added triangles: an
+    original left on the same three positions (a reversed or seam twin of
+    the face Mark replaced) would render although edit.obj doesn't show it.
+    Position sets the fix doesn't add to keep the stock-collapse tolerance."""
+    if not n_added:
+        return
+    tris = list(_shape_triangles(dict(applied, triangles=applied["triangles"][:-n_added])))
+    new = _groups(_shape_triangles(dict(applied, triangles=applied["triangles"][-n_added:])))
+    for t in tris:
+        key = frozenset(c[0] for c in t)
+        if key in new and t not in new[key]:
+            raise ShapeDiffError(
+                f"verify: {name}: the applied fix keeps triangle {_show(t)} under a "
+                "face it adds, which edit.obj doesn't have")
+
+
 def _compare(name, applied, edit_mesh):
     a, e = _groups(_shape_triangles(applied)), _groups(_mesh_triangles(edit_mesh))
     missing = [t for k, ts in e.items() for t in sorted(ts) if k not in a or t not in a[k]]
@@ -98,9 +116,10 @@ def _compare(name, applied, edit_mesh):
                 "which edit.obj doesn't have")
 
 
-def check(stock_shapes, applied_shapes, edited, albedos=None):
+def check(stock_shapes, applied_shapes, edited, albedos=None, added=None):
     """`edited`: block -> (object name, edit ObjMesh) for every block the
-    fix touches; `albedos`: block -> texture name its texture op sets.
+    fix touches; `albedos`: block -> texture name its texture op sets;
+    `added`: block -> number of triangles the fix appends.
     Raises ShapeDiffError on the first difference; returns len(edited)."""
     stock = {s["block"]: s for s in stock_shapes}
     applied = {s["block"]: s for s in applied_shapes}
@@ -111,13 +130,14 @@ def check(stock_shapes, applied_shapes, edited, albedos=None):
             raise ShapeDiffError(f"verify: block {block} changed but is not in the fix")
     for block, (name, mesh) in sorted(edited.items()):
         _compare(name, applied[block], mesh)
+        _no_twin_under_added(name, applied[block], (added or {}).get(block, 0))
         want = (albedos or {}).get(block)
         if want is not None and want not in applied[block]["textures"]:
             raise ShapeDiffError(f"verify: {name}: texture {want} did not bind")
     return len(edited)
 
 
-def run(nif_path, fix_json, stock_shapes, edited, albedos=None):
+def run(nif_path, fix_json, stock_shapes, edited, albedos=None, added=None):
     """Apply `fix_json` to `nif_path` with the loader and `check` it."""
     host = _host()
     if host is None:
@@ -130,4 +150,4 @@ def run(nif_path, fix_json, stock_shapes, edited, albedos=None):
         raise ShapeDiffError(f"verify: the loader refuses this fix: {exc}") from None
     if applied is None:
         raise ShapeDiffError(f"verify: cannot read {nif_path}")
-    return check(stock_shapes, applied, edited, albedos)
+    return check(stock_shapes, applied, edited, albedos, added)

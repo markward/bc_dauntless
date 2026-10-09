@@ -831,8 +831,13 @@ def diff_shape(shape: dict, base, edit, texture_dirs=None, index=None):
     }
     if added.items:
         out["add_vertices"] = added.records()
+    # Survivors whose pairing rests on connectivity, not position, and that
+    # produce a move record. An index-identity pair in a block with no
+    # deletions is just a move by index -- nothing to warn about.
+    deletions = len(set(corr) - {None}) < len(base.positions)
     survivors = [(k, b) for k, b in enumerate(corr)
-                 if b is not None and not _same_pos(base.positions[b], edit.positions[k])]
+                 if b is not None and not _same_pos(base.positions[b], edit.positions[k])
+                 and any(o in moved for o in ids[b]) and (deletions or k != b)]
     if survivors:
         out["moved_survivors"] = survivors      # for the CLI's warning, never encoded
     if albedo is not None:
