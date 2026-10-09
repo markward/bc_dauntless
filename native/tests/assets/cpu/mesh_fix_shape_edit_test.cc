@@ -550,3 +550,36 @@ TEST(MeshFixShapeEditRef, RealDbridgeCrossFrameReferenceLandsOnTheReferencedVert
     EXPECT_FLOAT_EQ(d.uv_sets[0][n].u, uv5.u);
     EXPECT_FLOAT_EQ(d.vertex_colors[n].r, c0.r);
 }
+
+TEST(MeshFixShapeEditRef, DeltaPositionIsTheReferencedOriginalPlusATargetLocalDelta) {
+    auto s = make_two();
+    auto e = base_edit();                       // target A (identity frame)
+    assets::ShapeEditPos own = pos_ref(1, 2);   // A's own (1,1,0)...
+    own.delta = {0.25f, -0.5f, 2.0f};           // ...plus a delta
+    assets::ShapeEditPos far = pos_ref(4, 1);   // B's (1,0,0) -> A-local (10,1,0)
+    far.delta = {0.0f, 0.0f, 1.0f};
+    e.moves = {{2, own}, {3, far}};
+    ASSERT_EQ(assets::apply_mesh_fix(s.f, fix_of(e)), "");
+    EXPECT_FLOAT_EQ(data(s).vertices[2].x, 1.25f);
+    EXPECT_FLOAT_EQ(data(s).vertices[2].y, 0.5f);
+    EXPECT_FLOAT_EQ(data(s).vertices[2].z, 2.0f);
+    EXPECT_NEAR(data(s).vertices[3].x, 10.0f, 1e-5);
+    EXPECT_NEAR(data(s).vertices[3].z, 1.0f, 1e-5);
+
+    auto t = make_two();
+    auto eb = edit_b();                         // delta is in the TARGET's frame
+    assets::ShapeEditPos d = pos_ref(4, 0);
+    d.delta = {1.0f, 0.0f, 0.0f};
+    eb.moves = {{0, d}};
+    ASSERT_EQ(assets::apply_mesh_fix(t.f, fix_of(eb)), "");
+    EXPECT_FLOAT_EQ(data_b(t).vertices[0].x, 1.0f);
+    EXPECT_FLOAT_EQ(data_b(t).vertices[0].y, 0.0f);
+}
+
+TEST(MeshFixShapeEditRef, NonFiniteDeltaIsRefusedAndLeavesTheFileUntouched) {
+    auto e = base_edit();
+    assets::ShapeEditPos p = pos_ref(1, 0);
+    p.delta = {0.0f, std::numeric_limits<float>::quiet_NaN(), 0.0f};
+    e.moves = {{0, {3, 3, 3}}, {2, p}};
+    expect_refused_two(fix_of(e), "non-finite delta");
+}

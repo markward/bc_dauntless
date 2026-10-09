@@ -4,21 +4,23 @@ import pytest
 
 from tools.shape_diff import ShapeDiffError, frames, payload
 
-# BSD2 (spec §6.1): every record kind -- literal and reference positions,
-# literal and reference UVs, added vertices of both kinds with attr_src,
-# a removed and an added triangle. Hand-assembled with struct, NOT produced
-# by the encoder; pinned byte-identical in native/tests/assets/cpu/
+# BSD2 (spec §6.1) as the encoder writes it: positions by reference (kind 1)
+# and by reference + delta (kind 2) -- never literal --, literal and
+# reference UVs, added vertices of both position kinds with attr_src, a
+# removed and an added triangle. Hand-assembled with struct, NOT produced by
+# the encoder; pinned byte-identical in native/tests/assets/cpu/
 # mesh_fix_parse_test.cc (kGoldenBsd2B64).
 GOLDEN_B64 = (
-    "QlNEMgEABwAAAAQAAgACAAIAAgABAAEAAQAAAACAPwAAAEAAAEBAAgABCQAAAAMAAAAAAACAPgAAQD8D"
-    "AAEHAAAAAQAAAAAAPwAAAD8AAAAAAAAAAD4AAAA/AgABCQAAAAAAAQkAAAAAAAMAAQAAAAQABQA="
+    "QlNEMgEABwAAAAQAAgACAAIAAgABAAEAAQABCQAAAAMAAgACBwAAAAIAAAAAPwAAgL4AAIA/AAAAAACA"
+    "PgAAQD8DAAEHAAAAAQACBwAAAAAAAAAAPgAAAAAAAABAAAAAAD4AAAA/AgABCQAAAAAAAQkAAAAAAAMAAQAAAAQABQA="
 )
 
 GOLDEN_EDIT = {
     "block": 7, "orig_vertex_count": 4, "orig_triangle_count": 2,
-    "moves": [(1, (1.0, 2.0, 3.0)), (2, payload.Ref(9, 3))],
+    "moves": [(1, payload.Ref(9, 3)), (2, payload.Ref(7, 2, (0.5, -0.25, 1.0)))],
     "uvs": [(0, (0.25, 0.75)), (3, payload.Ref(7, 1))],
-    "add_vertices": [{"pos": (0.5, 0.5, 0.0), "uv0": (0.125, 0.5), "attr_src": 2},
+    "add_vertices": [{"pos": payload.Ref(7, 0, (0.125, 0.0, 2.0)), "uv0": (0.125, 0.5),
+                      "attr_src": 2},
                      {"pos": payload.Ref(9, 0), "uv0": payload.Ref(9, 0), "attr_src": 3}],
     "remove_triangles": [1],
     "add_triangles": [(0, 4, 5)],
@@ -27,7 +29,7 @@ GOLDEN_EDIT = {
 
 def test_payload_matches_cpp_golden():
     assert payload.encode_b64([GOLDEN_EDIT]) == GOLDEN_B64
-    assert len(base64.b64decode(GOLDEN_B64)) == 116
+    assert len(base64.b64decode(GOLDEN_B64)) == 128
 
 
 def test_payload_missing_lists_are_empty():
@@ -56,10 +58,18 @@ def test_payload_refuses_an_added_vertex_without_attr_src():
         payload.encode([e])
 
 
-def test_payload_refuses_a_malformed_position():
+def test_payload_never_writes_a_literal_position():
+    # spec §6.2: every position is relative to an original (kind 1 or 2).
     e = {"block": 1, "orig_vertex_count": 3, "orig_triangle_count": 1,
-         "moves": [(0, (1.0, 2.0))]}
-    with pytest.raises(ShapeDiffError, match="position"):
+         "moves": [(0, (1.0, 2.0, 3.0))]}
+    with pytest.raises(ShapeDiffError, match="literal position"):
+        payload.encode([e])
+
+
+def test_payload_refuses_a_non_finite_delta():
+    e = {"block": 1, "orig_vertex_count": 3, "orig_triangle_count": 1,
+         "moves": [(0, payload.Ref(1, 0, (float("nan"), 0.0, 0.0)))]}
+    with pytest.raises(ShapeDiffError, match="finite"):
         payload.encode([e])
 
 
@@ -253,6 +263,22 @@ def _moved(mesh, k, p):
     return out
 
 
+def _resolve(shape, p):
+    """A same-shape position record as the loader resolves it: the
+    referenced original's shape-local position plus the delta."""
+    assert isinstance(p, payload.Ref) and p.block == shape["block"], p
+    o = frames.apply(frames.affine_inverse(shape["world"]), shape["vertices"][p.vertex])
+    return tuple(a + b for a, b in zip(o, p.delta or (0.0, 0.0, 0.0)))
+
+
+def _moves(shape, e):
+    return [(i, _resolve(shape, p)) for i, p in e["moves"]]
+
+
+def _added_pos(shape, e):
+    return [_resolve(shape, v["pos"]) for v in e["add_vertices"]]
+
+
 def _retex(mesh, changes):
     """changes: {(face_index, local_vertex): new_uv} -- mutate only those
     corners, leaving every other corner's UV untouched."""
@@ -297,7 +323,7 @@ def test_move_moves_every_welded_duplicate(tmp_path):
     e = match.diff_shape(s, base, edit)
     assert e["block"] == 11 and e["orig_vertex_count"] == 5 and e["orig_triangle_count"] == 3
     assert [i for i, _ in e["moves"]] == [1, 4]
-    assert e["moves"][0][1] == pytest.approx((1.25, 0.0, 0.5))
+    assert _moves(s, e)[0][1] == pytest.approx((1.25, 0.0, 0.5))
     assert not e.get("add_vertices") and not e.get("add_triangles")
 
 
@@ -306,7 +332,7 @@ def test_move_is_stored_in_shape_local_frame(tmp_path):
     base = _export_read(tmp_path, [s])["b0011_wall_side_pnls_01"]
     edit = _moved(base, 2, (101.0, 51.0, 10.75))        # model space
     e = match.diff_shape(s, base, edit)
-    assert e["moves"] == [(2, pytest.approx((1.0, 1.0, 0.75)))]
+    assert _moves(s, e) == [(2, pytest.approx((1.0, 1.0, 0.75)))]
 
 
 def test_move_and_uv_edit_together_are_both_recorded(tmp_path):
@@ -318,7 +344,7 @@ def test_move_and_uv_edit_together_are_both_recorded(tmp_path):
     edit = _retex(edit, {(0, 1): (0.6, 0.0)})
     e = match.diff_shape(s, base, edit)
     assert [i for i, _ in e["moves"]] == [1, 4]
-    assert e["moves"][0][1] == pytest.approx((1.25, 0.0, 0.5))
+    assert _moves(s, e)[0][1] == pytest.approx((1.25, 0.0, 0.5))
     assert e["uvs"] == [(1, pytest.approx((0.6, 0.0)))]
 
 
@@ -513,7 +539,7 @@ def test_real_dbridge_move_lands_in_local_frame(tmp_path):
     _, edits = cli.build_fix(DBRIDGE, base, edit)
     assert [e["block"] for e in edits] == [468]
     s = {d["block"]: d for d in host.nif_shapes(str(nif))}[468]
-    for orig, local in edits[0]["moves"]:
+    for orig, local in _moves(s, edits[0]):
         model = frames.apply(s["world"], local)
         assert model[2] == pytest.approx(s["vertices"][orig][2] + 0.5, abs=1e-4)  # OBJ +y is BC +z
 
@@ -730,7 +756,7 @@ def test_deletion_where_a_survivor_also_moved_is_aligned_by_connectivity(tmp_pat
     edit.positions[k] = (2.0, 1.5, 0.0)
     e = match.diff_shape(s, base, edit)
     assert e["remove_triangles"] == [2, 5, 6]
-    assert e["moves"] == [(8, pytest.approx((2.0, 1.5, 0.0)))]
+    assert _moves(s, e) == [(8, pytest.approx((2.0, 1.5, 0.0)))]
     assert e["add_triangles"] == [] and e["uvs"] == []
 
 
@@ -829,7 +855,7 @@ def test_move_remove_and_add_in_one_object_are_all_recorded(tmp_path):
                        _corner(base, (6, 0, 0), (0.6, 0.0)),
                        _corner(base, (2, 1, 0), (0.2, 1.0))])
     e = match.diff_shape(s, base, edit)
-    assert e["moves"] == [(0, pytest.approx((0.0, -0.25, 0.0)))]
+    assert _moves(s, e) == [(0, pytest.approx((0.0, -0.25, 0.0)))]
     assert e["remove_triangles"] == [2, 5, 6]
     assert e["add_triangles"] == [(7, 3, 8)]
     payload.encode([e])  # must not raise
@@ -1212,7 +1238,7 @@ def test_move_to_a_fresh_position_stays_literal(tmp_path):
     base = objs[obj_io.object_name(a)]
     edit = _moved(base, _local(base, (0, 1, 0)), (0.5, 1.5, 0.25))
     [e] = match.diff([a, b], objs, dict(objs, **{obj_io.object_name(a): edit}))
-    assert e["moves"] == [(3, pytest.approx((0.5, 1.5, 0.25)))]
+    assert _moves(a, e) == [(3, pytest.approx((0.5, 1.5, 0.25)))]
 
 
 def test_uv_equal_to_the_position_references_uv_is_a_uv_reference(tmp_path):
@@ -1346,8 +1372,10 @@ def test_new_literal_vertex_with_attr_src_from_the_nearest_original(tmp_path):
                        _corner(base, (1, 0, 0), (0.5, 0.0)),
                        (n, (0.45, 0.05))])
     e = match.diff_shape(s, base, edit)
-    assert e["add_vertices"] == [{"pos": pytest.approx((0.9, 0.1, 0.25)),
-                                  "uv0": pytest.approx((0.45, 0.05)), "attr_src": 1}]
+    [v] = e["add_vertices"]
+    assert v["pos"].vertex == 1 and v["pos"].delta is not None   # nearest original + delta
+    assert _added_pos(s, e) == [pytest.approx((0.9, 0.1, 0.25))]
+    assert v["uv0"] == pytest.approx((0.45, 0.05)) and v["attr_src"] == 1
     assert e["add_triangles"] == [(0, 1, 5)]
     assert e["moves"] == [] and e["remove_triangles"] == []
 
@@ -1360,7 +1388,7 @@ def test_new_vertex_position_is_stored_shape_local(tmp_path):
     edit.faces.append([_corner(base, (100, 50, 10), (0.0, 0.0)),
                        _corner(base, (101, 50, 10), (0.5, 0.0)), (n, (0.2, 0.2))])
     e = match.diff_shape(s, base, edit)
-    assert e["add_vertices"][0]["pos"] == pytest.approx((0.5, 0.5, 1.0))
+    assert _added_pos(s, e)[0] == pytest.approx((0.5, 0.5, 1.0))
 
 
 def test_new_vertex_on_another_shapes_vertex_references_that_shape(tmp_path):
@@ -1391,7 +1419,7 @@ def test_new_vertex_used_with_two_uvs_becomes_two_added_vertices(tmp_path):
     e = match.diff_shape(s, base, edit)
     assert [v["uv0"] for v in e["add_vertices"]] == [pytest.approx((0.1, 0.9)),
                                                     pytest.approx((0.2, 0.8))]
-    assert [v["pos"] for v in e["add_vertices"]] == [pytest.approx((0.5, -1.0, 0.0))] * 2
+    assert _added_pos(s, e) == [pytest.approx((0.5, -1.0, 0.0))] * 2
     assert e["add_triangles"] == [(0, 5, 1), (1, 6, 2)]
 
 
@@ -1417,8 +1445,8 @@ def test_deletion_move_and_new_vertices_round_trip_through_the_payload(tmp_path)
     edit.faces.append([(l7, (0.2, 0.0)), (n1, (0.3, 0.0)), (n2, (0.3, 1.0))])
     e = match.diff_shape(s, base, edit)
     assert e["remove_triangles"] == [2, 5, 6]
-    assert e["moves"] == [(8, pytest.approx((2.0, 1.5, 0.0)))]
-    assert [v["pos"] for v in e["add_vertices"]] == [pytest.approx((3, 0, 0)),
+    assert _moves(s, e) == [(8, pytest.approx((2.0, 1.5, 0.0)))]
+    assert _added_pos(s, e) == [pytest.approx((3, 0, 0)),
                                                     pytest.approx((3, 1, 0))]
     # nearest ORIGINAL position: (2,0,0) is 7; (2,1,0) is 8 (it moved, but
     # attr_src is chosen against the unedited originals)
@@ -1562,3 +1590,12 @@ def test_real_dbridge_new_vertex_snapped_onto_another_shape_is_a_reference(tmp_p
     assert 0 <= v["attr_src"] < len(shapes[468]["vertices"])
     assert e["add_triangles"][0][2] == len(shapes[468]["vertices"])
     assert payload.encode([e])[:4] == b"BSD2"
+
+
+
+def test_every_unsnapped_move_is_its_own_original_plus_a_delta(tmp_path):
+    s = _shape(offset=(100.0, 50.0, 10.0))
+    base = _export_read(tmp_path, [s])[obj_io.object_name(s)]
+    e = match.diff_shape(s, base, _moved(base, 1, (101.25, 50.0, 10.5)))
+    assert [(i, p.block, p.vertex) for i, p in e["moves"]] == [(1, 11, 1), (4, 11, 4)]
+    assert e["moves"][0][1].delta == pytest.approx((0.25, 0.0, 0.5))

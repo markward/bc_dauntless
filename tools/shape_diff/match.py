@@ -486,10 +486,18 @@ class _AddedVertices:
             pos_ref = self.index.position_ref(model, block)
             attr = min(range(len(pts)), key=lambda o: (
                 sum((a - b) ** 2 for a, b in zip(pts[o], model)), o))
-            out.append({"pos": pos_ref or frames.apply(self.inv, model),
+            pos = pos_ref or _delta_ref(block, attr, self.inv, pts[attr], model)
+            out.append({"pos": pos,
                         "uv0": self.index.uv_ref(uv, pos_ref, block, model) or uv,
                         "attr_src": attr})
         return out
+
+
+def _delta_ref(block, orig, inv, orig_model, model):
+    """Kind-2 position (spec §6.1): original `orig` of this shape plus the
+    shape-local offset that takes it to model-space `model`."""
+    a, b = frames.apply(inv, orig_model), frames.apply(inv, model)
+    return Ref(block, orig, tuple(y - x for x, y in zip(a, b)))
 
 
 def _ear_clipped(block, faces, pos_of):
@@ -657,7 +665,8 @@ def diff_shape(shape: dict, base, edit, texture_dirs=None, index=None):
         return None
     moves, uv_out = {}, {}
     for orig, p in moved.items():
-        moves[orig] = index.position_ref(p, block) or final_local[orig]
+        moves[orig] = (index.position_ref(p, block)
+                       or _delta_ref(block, orig, inv, shape["vertices"][orig], p))
     for orig, uv in uvs.items():
         p = moved.get(orig, shape["vertices"][orig])
         uv_out[orig] = index.uv_ref(uv, index.position_ref(p, block), block, p) or uv

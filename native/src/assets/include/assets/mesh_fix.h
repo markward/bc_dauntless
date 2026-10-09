@@ -57,12 +57,14 @@ struct ShapeEditRef {
     std::uint16_t vertex = 0;
 };
 
-// A position: `literal` (shape-local) unless `ref` is set, in which case it
-// is the referenced original's position transformed src-local -> model ->
-// target-local through nif_block_world (an exact copy within one shape).
+// A position: `literal` (shape-local, BSD2 kind 0) unless `ref` is set, in
+// which case it is the referenced original's position transformed src-local
+// -> model -> target-local through nif_block_world (an exact copy within one
+// shape), plus `delta` (TARGET-shape-local; zero for kind 1, set by kind 2).
 struct ShapeEditPos {
     std::array<float, 3> literal{};
     std::optional<ShapeEditRef> ref;
+    std::array<float, 3> delta{};
 };
 
 // A UV0: `literal` unless `ref` is set (the referenced original's UV0).

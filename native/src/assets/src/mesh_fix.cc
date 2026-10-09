@@ -92,27 +92,40 @@ std::optional<std::vector<ShapeEdit>> decode_shape_edits(std::string_view bytes,
     const bool v2 = magic == "BSD2";
     PayloadReader r{bytes, 4};
     bool bad_kind = false;
-    // BSD2 kind byte: 0 = literal, 1 = reference (u32 block, u16 vertex).
-    auto read_ref = [&](std::optional<ShapeEditRef>& out) -> bool {
+    // BSD2 kind byte: 0 = literal, 1 = reference (u32 block, u16 vertex),
+    // 2 = reference + 3 x f32 target-local delta (positions only).
+    auto read_kind = [&](std::uint8_t max_kind) -> std::uint8_t {
+        if (!v2) return 0;
         const auto kind = r.get<std::uint8_t>();
-        if (!r.ok) return false;
-        if (kind == 0) return false;
-        if (kind != 1) { bad_kind = true; r.ok = false; return false; }
+        if (r.ok && kind > max_kind) { bad_kind = true; r.ok = false; }
+        return kind;
+    };
+    auto read_ref = [&]() {
         const auto block = r.get<std::uint32_t>();
         const auto vertex = r.get<std::uint16_t>();
-        out = ShapeEditRef{block, vertex};
-        return true;
+        return ShapeEditRef{block, vertex};
     };
     auto read_pos = [&]() {
         ShapeEditPos p;
-        if (v2 && read_ref(p.ref)) return p;
-        for (auto& c : p.literal) c = r.get<float>();
+        const auto kind = read_kind(2);
+        if (!r.ok) return p;
+        if (kind == 0) {
+            for (auto& c : p.literal) c = r.get<float>();
+        } else {
+            p.ref = read_ref();
+            if (kind == 2) for (auto& c : p.delta) c = r.get<float>();
+        }
         return p;
     };
     auto read_uv = [&]() {
         ShapeEditUv u;
-        if (v2 && read_ref(u.ref)) return u;
-        for (auto& c : u.literal) c = r.get<float>();
+        const auto kind = read_kind(1);
+        if (!r.ok) return u;
+        if (kind == 0) {
+            for (auto& c : u.literal) c = r.get<float>();
+        } else {
+            u.ref = read_ref();
+        }
         return u;
     };
     const auto shape_count = r.get<std::uint16_t>();
@@ -520,6 +533,8 @@ public:
             *out = glm::vec3(p.literal[0], p.literal[1], p.literal[2]);
             return finite(*out) ? "" : "non-finite literal position";
         }
+        if (!std::isfinite(p.delta[0]) || !std::isfinite(p.delta[1]) || !std::isfinite(p.delta[2]))
+            return "non-finite position delta";
         std::string why;
         const auto* d = source(p.ref->block, &why);
         if (!d) return why;
@@ -531,6 +546,7 @@ public:
             const glm::dmat4 to = glm::inverse(world(target_block)) * world(p.ref->block);
             *out = glm::vec3(to * glm::dvec4(v.x, v.y, v.z, 1.0));
         }
+        *out += glm::vec3(p.delta[0], p.delta[1], p.delta[2]);
         return finite(*out) ? "" : "reference resolves to a non-finite position";
     }
 

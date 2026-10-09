@@ -86,7 +86,8 @@ def make_fix_dict(rel: str, edits: list) -> dict:
 
 
 def _by_ref(positions) -> str:
-    n = sum(1 for p in positions if isinstance(p, payload.Ref))
+    """Positions that ARE an original (snapped), not an original plus a delta."""
+    n = sum(1 for p in positions if isinstance(p, payload.Ref) and p.delta is None)
     return f" ({n} by reference)" if n else ""
 
 

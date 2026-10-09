@@ -3,9 +3,11 @@
 decode_shape_edits) still reads BSD1 too. Both sides are pinned by the same
 golden blob in their tests.
 
-BSD2 positions and UVs are either a literal (geometry Mark authored) or a
-`Ref` to an ORIGINAL vertex of some NiTriShape -- so a vertex snapped onto a
-BC vertex is stored as an index, never as BC's coordinate (spec §6.2)."""
+BSD2 positions are always a `Ref` to an ORIGINAL vertex of some NiTriShape,
+optionally plus a target-local delta (kind 2) -- so a vertex snapped onto a
+BC vertex is stored as an index, never as BC's coordinate, and an authored
+position is an offset from an original (spec §6.2). UVs are a literal or a
+`Ref`. The decoder still reads literal (kind 0) positions."""
 import base64
 import math
 import struct
@@ -14,16 +16,18 @@ from dataclasses import dataclass
 from tools.shape_diff import ShapeDiffError
 
 _MAGIC = b"BSD2"
-_LITERAL, _REF = 0, 1
+_LITERAL, _REF, _REF_DELTA = 0, 1, 2
 
 
 @dataclass(frozen=True)
 class Ref:
     """A reference to ORIGINAL vertex `vertex` of the NiTriShape at block
     `block`: its position (transformed into the target shape's frame by the
-    loader) or its UV0 -- never a copied value (spec §6.2)."""
+    loader) or its UV0 -- never a copied value (spec §6.2). A position may
+    add `delta`, a TARGET-shape-local offset (kind 2)."""
     block: int
     vertex: int
+    delta: tuple = None
 
 
 def _u16(n: int, what: str) -> bytes:
@@ -47,10 +51,21 @@ def _literal(v, n: int, what: str) -> bytes:
 
 
 def _position(p) -> bytes:
-    return _ref(p, "position") if isinstance(p, Ref) else _literal(p, 3, "position")
+    """Kind 1 (reference) or 2 (reference + delta). Never kind 0: a literal
+    position would put a number in the payload that may be BC's (§6.2)."""
+    if not isinstance(p, Ref):
+        raise ShapeDiffError(
+            f"literal position {p!r}: positions are always written relative to an original")
+    if p.delta is None:
+        return _ref(p, "position")
+    out = bytearray(_ref(p, "position"))
+    out[0] = _REF_DELTA
+    return bytes(out) + _literal(p.delta, 3, "position delta")[1:]
 
 
 def _uv(uv) -> bytes:
+    if isinstance(uv, Ref) and uv.delta is not None:
+        raise ShapeDiffError("a uv reference takes no delta")
     return _ref(uv, "uv") if isinstance(uv, Ref) else _literal(uv, 2, "uv")
 
 
