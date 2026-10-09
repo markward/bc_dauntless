@@ -692,3 +692,112 @@ TEST_F(BridgePbrFrame, AlertScaleBrightensTheMainViewOnly) {
     EXPECT_GT(main_15.r, main_10.r + 0.02f);
     for (int i = 0; i < 3; ++i) EXPECT_NEAR(comm_15[i], comm_10[i], 1e-6f) << i;
 }
+
+// ── Static spot lights (plan Task 7) ───────────────────────────────────────
+
+TEST_F(BridgePbrFrame, SpotLightsTheFloorInsideItsCone) {
+    set_base({0.6f, 0.6f, 0.6f, 1.0f});
+    const glm::vec3 dark = render_floor();
+    pass->set_spots({{{70.0f, 0.0f, 60.0f}, {0.0f, 0.0f, -1.0f},
+                      std::cos(glm::radians(20.0f)), std::cos(glm::radians(30.0f)),
+                      200.0f, glm::vec3(1.0f) * 2000.0f}});
+    EXPECT_GT(render_floor().r, dark.r + 0.05f);
+}
+
+TEST_F(BridgePbrFrame, SpotDoesNotLightOutsideItsCone) {
+    set_base({0.6f, 0.6f, 0.6f, 1.0f});
+    const glm::vec3 dark = render_floor();
+    // Pointing away along +y: the floor point at x=70 is outside the cone.
+    pass->set_spots({{{70.0f, 0.0f, 60.0f}, {0.0f, 1.0f, 0.0f},
+                      std::cos(glm::radians(10.0f)), std::cos(glm::radians(15.0f)),
+                      200.0f, glm::vec3(1.0f) * 2000.0f}});
+    EXPECT_NEAR(render_floor().r, dark.r, 1e-3f);
+}
+
+TEST_F(BridgePbrFrame, SpotsBeyondTheCapAreDroppedAndCounted) {
+    std::vector<renderer::BridgeSpot> many(renderer::kBridgeMaxSpots + 3,
+        renderer::BridgeSpot{{0, 0, 50}, {0, 0, -1}, 0.9f, 0.8f, 100.0f, glm::vec3(1.0f)});
+    EXPECT_EQ(pass->set_spots(many), 3u);
+    EXPECT_EQ(pass->spot_count(), static_cast<std::size_t>(renderer::kBridgeMaxSpots));
+    render_floor();
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+TEST_F(BridgePbrFrame, ASpotNeverMakesLitDiffuseBloom) {
+    set_base({1, 1, 1, 1});
+    set_floor_override(1.0f, 0.0f);   // fully rough dielectric: almost all diffuse
+    pass->set_spots({{{70.0f, 0.0f, 20.0f}, {0.0f, 0.0f, -1.0f}, 0.95f, 0.9f, 200.0f,
+                      glm::vec3(1.0f) * 1.0e6f}});
+    const glm::vec3 c = render_floor();
+    // Diffuse is capped; only the (small, rough) specular may add above it.
+    EXPECT_LT(c.r, renderer::kBridgeLighting.diffuse_max + 0.25f);
+}
+
+// Setting spots -- including clearing them -- changes the room the probes
+// hold, so the PASS marks them dirty (the binding needs no extra call).
+TEST_F(BridgePbrFrame, SettingSpotsMarksTheProbesDirty) {
+    EXPECT_FALSE(pass->probe_capture_pending());
+    pass->set_spots({{{0, 0, 50}, {0, 0, -1}, 0.9f, 0.8f, 100.0f, glm::vec3(1.0f)}});
+    EXPECT_TRUE(pass->probe_capture_pending());
+    use_red_wall_corner();
+    render_floor();                              // captures
+    EXPECT_FALSE(pass->probe_capture_pending());
+    pass->set_spots({});
+    EXPECT_TRUE(pass->probe_capture_pending());
+}
+
+// Clearing the spots uploads a count of 0: the floor is exactly as unlit.
+TEST_F(BridgePbrFrame, ClearingTheSpotsRestoresTheFloor) {
+    set_base({0.6f, 0.6f, 0.6f, 1.0f});
+    const glm::vec3 dark = render_floor();
+    pass->set_spots({{{70.0f, 0.0f, 60.0f}, {0.0f, 0.0f, -1.0f}, 0.94f, 0.87f,
+                      200.0f, glm::vec3(2000.0f)}});
+    EXPECT_GT(render_floor().r, dark.r + 0.05f);
+    pass->set_spots({});
+    EXPECT_NEAR(render_floor().r, dark.r, 1e-5f);
+}
+
+// Comm sets get u_spot_count = 0: their legacy shading ignores the spots.
+TEST_F(BridgePbrFrame, CommSetIgnoresTheSpots) {
+    set_base({0.6f, 0.6f, 0.6f, 1.0f});
+    const glm::vec3 before = render_as_comm_set();
+    pass->set_spots({{{70.0f, 0.0f, 60.0f}, {0.0f, 0.0f, -1.0f}, 0.94f, 0.87f,
+                      200.0f, glm::vec3(2000.0f)}});
+    const glm::vec3 after = render_as_comm_set();
+    for (int i = 0; i < 3; ++i) EXPECT_NEAR(after[i], before[i], 1e-6f) << i;
+}
+
+// The probe capture INCLUDES the spots' diffuse (static lights are steady):
+// a spot on the red wall where the floor's mirror ray lands, (0, 0, ~64),
+// brightens the reflection. The spot is far outside its cone for the floor
+// itself, so the change can only come through the probe.
+TEST_F(BridgePbrFrame, ProbeCaptureIncludesTheSpotsDiffuse) {
+    use_red_wall_corner();
+    set_floor_override(0.05f, 1.0f);             // metal floor: reflection only
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->request_probe_capture();
+    const glm::vec3 unlit = render_floor();
+    pass->set_spots({{{30.0f, 0.0f, 64.0f}, {-1.0f, 0.0f, 0.0f},
+                      std::cos(glm::radians(30.0f)), std::cos(glm::radians(45.0f)),
+                      200.0f, glm::vec3(2000.0f)}});
+    const glm::vec3 lit = render_floor();        // set_spots re-dirtied the probes
+    EXPECT_GT(lit.r, unlit.r + 0.05f);
+    EXPECT_GT(lit.r, lit.g * 1.5f);              // still the red wall
+}
+
+// AO never multiplies a spot: with no ambient (the downlight is zero, so
+// only the spot lights the floor), the floor in the wall's corner -- where
+// the AO is dark -- reads the same with AO on and off.
+TEST_F(BridgePbrFrame, AoNeverDarkensASpot) {
+    set_base({0.6f, 0.6f, 0.6f, 1.0f});
+    sample_ = {4.0f, 0.0f, 0.0f};
+    renderer::Lighting none;
+    none.ambient = glm::vec3(0.0f);
+    pass->set_spots({{{4.0f, 0.0f, 40.0f}, {0.0f, 0.0f, -1.0f}, 0.9f, 0.8f, 200.0f,
+                      glm::vec3(2000.0f)}});
+    const glm::vec3 no_ao = render_floor_with(none);
+    pass->set_ao_enabled(true);
+    const glm::vec3 with_ao = render_floor_with(none);
+    EXPECT_GT(no_ao.r, 0.05f);
+    for (int i = 0; i < 3; ++i) EXPECT_NEAR(with_ao[i], no_ao[i], 2e-3f) << i;
+}

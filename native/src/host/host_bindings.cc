@@ -4229,6 +4229,52 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Per-mesh roughness/metalness overrides for the bridge (mesh, rough, metal; "
           "< 0 = none). None or a stale id clears. Never raises.");
 
+    // Bridge static spot lights (spec 2026-10-08-bridge-emitters §9.6, plan
+    // 2026-10-09-bridge-pbr Task 7). Production: NOT developer-gated. Each
+    // spot is (pos3, dir3, inner_deg, outer_deg, range, (r, g, b), intensity):
+    // degrees -> cosines, direction normalised, colour x intensity ->
+    // radiance. Keeps the first kBridgeMaxSpots and returns how many were
+    // dropped (also before init(), when nothing is stored: the spots are
+    // pushed at bridge load, after the pass exists). BridgePass::set_spots
+    // marks the probes dirty itself. Never raises for a stale/empty state.
+    m.def("set_bridge_spots",
+          [](const std::vector<std::tuple<std::tuple<float, float, float>,
+                                          std::tuple<float, float, float>,
+                                          float, float, float,
+                                          std::tuple<float, float, float>,
+                                          float>>& spots) -> std::size_t {
+              auto v3 = [](const std::tuple<float, float, float>& t) {
+                  return glm::vec3(std::get<0>(t), std::get<1>(t), std::get<2>(t));
+              };
+              std::vector<renderer::BridgeSpot> v;
+              v.reserve(spots.size());
+              for (const auto& [pos, dir, inner_deg, outer_deg, range, rgb, intensity] : spots) {
+                  renderer::BridgeSpot sp;
+                  sp.position = v3(pos);
+                  const glm::vec3 d = v3(dir);
+                  const float len = glm::length(d);
+                  // A zero / non-finite axis points straight down (-Z, the
+                  // bridge's floor) rather than feeding NaN to the shader.
+                  sp.direction = (std::isfinite(len) && len > 1e-6f)
+                      ? d / len : glm::vec3(0.0f, 0.0f, -1.0f);
+                  // The outer edge is never inside the inner one.
+                  const float inner = std::clamp(inner_deg, 0.0f, 180.0f);
+                  const float outer = std::clamp(std::max(outer_deg, inner), 0.0f, 180.0f);
+                  sp.cos_inner = std::cos(glm::radians(inner));
+                  sp.cos_outer = std::cos(glm::radians(outer));
+                  sp.range = std::max(range, 0.0f);
+                  sp.radiance = v3(rgb) * intensity;
+                  v.push_back(sp);
+              }
+              const std::size_t cap = static_cast<std::size_t>(renderer::kBridgeMaxSpots);
+              if (!g_bridge_pass) return v.size() > cap ? v.size() - cap : 0;
+              return g_bridge_pass->set_spots(std::move(v));
+          },
+          py::arg("spots"),
+          "Static bridge spot lights: [(pos3, dir3, inner_deg, outer_deg, range, "
+          "(r, g, b), intensity)]. Keeps the first 32; returns the dropped count. "
+          "Marks the reflection probes dirty. Never raises for a stale state.");
+
     m.def("set_bridge_pbr_enabled",
           [](bool on) {
               if (!dauntless::is_developer_mode() || !g_bridge_pass) return;

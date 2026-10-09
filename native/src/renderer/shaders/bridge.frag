@@ -104,6 +104,18 @@ uniform vec3        u_box_min;    // bridge AABB, world
 uniform vec3        u_box_max;
 uniform int         u_capture;
 
+// ── Static spot lights (plan 2026-10-09-bridge-pbr Task 7) ─────────────
+// Main bridge view only (comm sets: count 0), PBR path only. BridgePass
+// uploads just the u_spot_count entries in use. Radiance is linear colour x
+// intensity; never multiplied by AO; no shadows. The probe capture adds the
+// spots' DIFFUSE half (static lights are steady, so the probes see them).
+const int MAX_SPOTS = 32;           // renderer::kBridgeMaxSpots
+uniform int  u_spot_count;
+uniform vec3 u_spot_pos[MAX_SPOTS];
+uniform vec3 u_spot_dir[MAX_SPOTS];       // unit cone axis
+uniform vec3 u_spot_radiance[MAX_SPOTS];
+uniform vec4 u_spot_params[MAX_SPOTS];    // x cos_inner, y cos_outer, z range
+
 out vec4 FragColor;
 
 // Integer hash (Squirrel3-style, as used by the bridge-lighting debug-view
@@ -253,6 +265,42 @@ vec3 box_project(vec3 pos, vec3 dir, vec3 bmin, vec3 bmax, vec3 probe) {
 // arrives as u_probe_max_mip (renderer::kBridgeProbeMips - 1).
 float prefilter_mip(float rough) { return clamp(rough, 0.0, 1.0) * u_probe_max_mip; }
 
+// Windowed inverse-square falloff and smoothstep-squared cone: twins of
+// pbr::spot_falloff / pbr::spot_cone (bridge_pbr.h), same formulas.
+float spot_falloff(float d, float range) {
+    float r = d / max(range, 1e-4);
+    float w = clamp(1.0 - r * r * r * r, 0.0, 1.0);
+    return w * w / (d * d + 1.0);
+}
+float spot_cone(float cos_angle, float cos_outer, float cos_inner) {
+    float t = clamp((cos_angle - cos_outer) / max(cos_inner - cos_outer, 1e-5), 0.0, 1.0);
+    float s = t * t * (3.0 - 2.0 * t);
+    return s * s;
+}
+
+// Adds every spot's linear diffuse and GGX specular at this fragment. The
+// probe capture passes its own normal/view and ignores `spec`.
+void accumulate_spots(vec3 N, vec3 V, float NdotV, vec3 albedo, float metal,
+                      float rough, vec3 F0, inout vec3 diffuse, inout vec3 spec) {
+    for (int i = 0; i < u_spot_count; ++i) {
+        vec3 Lv = u_spot_pos[i] - v_world;
+        float d = length(Lv);
+        vec3 L = Lv / max(d, 1e-4);
+        float NdotL = max(dot(N, L), 0.0);
+        if (NdotL <= 0.0) continue;
+        float att = spot_falloff(d, u_spot_params[i].z)
+                  * spot_cone(dot(-L, u_spot_dir[i]), u_spot_params[i].y, u_spot_params[i].x);
+        if (att <= 0.0) continue;
+        vec3 H = normalize(L + V);
+        float NdotH = max(dot(N, H), 0.0);
+        vec3 F = F_schlick(max(dot(V, H), 0.0), F0);
+        vec3 radiance = u_spot_radiance[i] * att * NdotL;
+        diffuse += (vec3(1.0) - F) * (1.0 - metal) * albedo / kPi * radiance;
+        spec += D_ggx(NdotH, rough) * G_smith(NdotV, NdotL, rough) * F
+              / max(4.0 * NdotV * NdotL, 1e-4) * radiance;
+    }
+}
+
 float channel(int has_map, sampler2D map, float override_v, float dflt) {
     if (has_map != 0) return texture(map, v_uv).r;
     return override_v >= 0.0 ? override_v : dflt;
@@ -273,8 +321,17 @@ void main() {
         vec3 nc = shading_normal();
         float metal_c = clamp(channel(u_has_metal_map, u_metal_map, u_metal_override, 0.0), 0.0, 1.0);
         float hc = clamp(dot(nc, u_up) * 0.5 + 0.5, 0.0, 1.0);
-        vec3 lit = decode(base.rgb) * (1.0 - metal_c)
+        vec3 albedo_c = decode(base.rgb);
+        vec3 lit = albedo_c * (1.0 - metal_c)
                  * decode(u_ambient * mix(u_down_bottom, u_down_top, hc));
+        // The spots' diffuse half only: a probe holds no specular.
+        if (u_spot_count > 0) {
+            float rough_c = clamp(channel(u_has_rough_map, u_rough_map, u_rough_override, 1.0), 0.04, 1.0);
+            vec3 Vc = normalize(u_eye - v_world);
+            vec3 spec_unused = vec3(0.0);
+            accumulate_spots(nc, Vc, max(dot(nc, Vc), 1e-4), albedo_c, metal_c, rough_c,
+                             f0_for(albedo_c, metal_c), lit, spec_unused);
+        }
         FragColor = vec4(lit, 1.0);
         return;
     }
@@ -312,7 +369,7 @@ void main() {
         // the WHOLE legacy received term, so AO reads exactly as it does today.
         vec3 received = decode(u_ambient * mix(u_down_bottom, u_down_top, h) * ao);
         vec3 diffuse = albedo * (1.0 - metal) * (vec3(1.0) - Fv) * received;
-        vec3 spec = vec3(0.0);               // Task 7 adds the spots
+        vec3 spec = vec3(0.0);
         if (u_has_probe != 0) {
             vec3 R = reflect(-V, N);
             if (u_debug_view == 9) {
@@ -329,6 +386,9 @@ void main() {
             vec2 ab = texture(u_brdf_lut, vec2(NdotV, rough)).rg;
             spec = pre * (F0 * ab.x + ab.y) * specular_occlusion(NdotV, ao, rough);
         }
+        // Static spots: direct light, never multiplied by AO. Their diffuse
+        // goes through the ceiling in combine(); only specular may exceed it.
+        accumulate_spots(N, V, NdotV, albedo, metal, rough, F0, diffuse, spec);
         if (u_debug_view == 8) { FragColor = vec4(encode(spec), 1.0); return; }
         vec3 col = combine(diffuse, spec, u_diffuse_max) * u_viewscreen_brightness;
         col = mix(col, vec3(1.0), clamp(u_viewscreen_flash, 0.0, 1.0));

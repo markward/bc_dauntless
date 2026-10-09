@@ -336,3 +336,55 @@ def test_probe_stash_is_at_defaults(host_module):
     assert st["scales"] == pytest.approx(_PROBE_STASH_DEFAULTS["scales"])
     assert st["mix"] == pytest.approx(_PROBE_STASH_DEFAULTS["mix"])
     assert st["capture_pending"] is False
+
+
+# Bridge static spot lights (plan 2026-10-09-bridge-pbr Task 7): production,
+# NOT developer-gated; returns the dropped count, never raises. Setting spots
+# marks the probes dirty -- BridgePass::set_spots does it, so the binding
+# needs no separate request (and touches no probe stash).
+
+_SPOT = ((0.0, 0.0, 50.0), (0.0, 0.0, -1.0), 30.0, 60.0, 120.0, (1.0, 1.0, 1.0), 2000.0)
+
+
+def test_set_bridge_spots_returns_dropped_count(host_module):
+    spot = ((0.0, 0.0, 50.0), (0.0, 0.0, -1.0), 30.0, 60.0, 120.0, (1.0, 1.0, 1.0), 2000.0)
+    assert host_module.set_bridge_spots([spot]) == 0
+
+
+def test_set_bridge_spots_counts_drops_and_takes_empty_before_init(host_module):
+    assert host_module.set_bridge_spots([_SPOT] * 35) == 3
+    assert host_module.set_bridge_spots([]) == 0
+
+
+def test_set_bridge_spots_degenerate_values_never_raise(host_module):
+    zero_dir = ((0.0, 0.0, 50.0), (0.0, 0.0, 0.0), 60.0, 30.0, 0.0, (1.0, 1.0, 1.0), 0.0)
+    assert host_module.set_bridge_spots([zero_dir]) == 0
+
+
+def test_set_bridge_spots_on_a_live_bridge_dirties_the_probes(probe_stash_guard, dbridge):
+    h, _iid = dbridge
+    assert h.bridge_probe_state()["capture_pending"] is False
+    assert h.set_bridge_spots([_SPOT] * 33) == 1
+    assert h.bridge_probe_state()["capture_pending"] is True
+
+
+def test_host_io_set_bridge_spots_is_zero_headless(monkeypatch):
+    from engine import host_io
+    monkeypatch.setattr(host_io, "_h", None)
+    assert host_io.set_bridge_spots([_SPOT]) == 0
+
+
+def test_host_io_set_bridge_spots_forwards(monkeypatch):
+    from engine import host_io
+    calls = []
+
+    class FakeHost:
+        @staticmethod
+        def set_bridge_spots(spots):
+            calls.append(spots)
+            return 7
+
+    monkeypatch.setattr(host_io, "_h", FakeHost)
+    assert host_io.set_bridge_spots([((1, 2, 3), (0, 0, -1), 20, 30, 100, (1, 0.5, 0), 2000)]) == 7
+    assert calls == [[((1.0, 2.0, 3.0), (0.0, 0.0, -1.0), 20.0, 30.0, 100.0,
+                       (1.0, 0.5, 0.0), 2000.0)]]

@@ -84,6 +84,7 @@ _OPTIONAL_BINDINGS = frozenset({
     "set_bridge_material_overrides", "set_bridge_pbr_enabled",
     "set_bridge_probe_origin", "set_bridge_probe_scales",
     "set_bridge_probe_mix", "request_bridge_probe_capture",
+    "set_bridge_spots",
 })
 
 
@@ -637,6 +638,23 @@ def request_bridge_probe_capture() -> None:
     fn = getattr(_h, "request_bridge_probe_capture", None) if _h is not None else None
     if fn is not None:
         fn()
+
+
+def set_bridge_spots(spots) -> int:
+    """Static bridge spot lights (production, not developer-gated): `spots` is
+    [(pos3, dir3, inner_deg, outer_deg, range, (r, g, b), intensity)]. Keeps
+    the first 32 and returns how many were DROPPED, for the caller to report
+    by name; marks the reflection probes dirty. 0 headless."""
+    fn = getattr(_h, "set_bridge_spots", None) if _h is not None else None
+    if fn is None:
+        return 0
+
+    def _v3(v):
+        x, y, z = v
+        return (float(x), float(y), float(z))
+
+    return int(fn([(_v3(p), _v3(d), float(i), float(o), float(r), _v3(c), float(k))
+                   for p, d, i, o, r, c, k in spots]))
 
 
 # ── Star map (Helm → Set Course) ─────────────────────────────────────────────

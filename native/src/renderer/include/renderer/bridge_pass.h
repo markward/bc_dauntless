@@ -2,6 +2,7 @@
 #pragma once
 
 #include <renderer/bridge_ao_pass.h>
+#include <renderer/bridge_lighting_tuning.h>   // kBridgeMaxSpots
 #include <renderer/bridge_probe.h>
 #include <renderer/frame.h>
 
@@ -9,6 +10,7 @@
 
 #include <assets/texture.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -51,6 +53,21 @@ struct BridgeMaterialOverride {
     int   mesh = -1;
     float roughness = -1.0f;
     float metalness = -1.0f;
+};
+
+/// One static bridge spot light (spec 2026-10-08-bridge-emitters §9.6, plan
+/// 2026-10-09-bridge-pbr Task 7), bridge world space. `direction` is the unit
+/// cone axis (where the light points); the cone runs full inside `cos_inner`
+/// and fades to nothing at `cos_outer` (pbr::spot_cone); `range` is where the
+/// windowed inverse-square falloff (pbr::spot_falloff) reaches 0; `radiance`
+/// is the LINEAR colour x intensity. No shadows; never multiplied by AO.
+struct BridgeSpot {
+    glm::vec3 position{0.0f};
+    glm::vec3 direction{0.0f, 0.0f, -1.0f};
+    float     cos_inner = 1.0f;
+    float     cos_outer = 1.0f;
+    float     range = 1.0f;
+    glm::vec3 radiance{0.0f};
 };
 
 /// Renders the bridge interior in two sub-passes, both through bridge.frag:
@@ -208,6 +225,15 @@ public:
     bool probe_capture_pending() const { return probe_dirty_; }
     /// True once both probes hold a capture the shader may sample.
     bool probes_valid() const;
+    /// Static spot lights for the main bridge view (PBR path only; comm sets
+    /// and the legacy A/B path never see them). Replaces the previous set,
+    /// keeping the first kBridgeMaxSpots; returns how many were dropped (the
+    /// caller reports them -- never silently). The probe captures include the
+    /// spots' diffuse, so this ALWAYS marks the probes dirty -- here in the
+    /// pass, not in the binding, so every caller gets it (clearing too).
+    std::size_t set_spots(std::vector<BridgeSpot> spots);
+    std::size_t spot_count() const { return spots_.size(); }
+
     /// Mission swap: drop the captures (no specular until the next request),
     /// the pending request, the mix and the cached boxes (model handles die
     /// with the session). Origin and scales are configuration and are kept.
@@ -272,6 +298,8 @@ private:
     bool        probe_dirty_ = false;
     bool        probes_captured_ = false;   // cleared by reset_probes()
     bool        capture_pass_ = false;
+    /// Static spot lights, at most kBridgeMaxSpots (set_spots truncates).
+    std::vector<BridgeSpot> spots_;
     void capture_probes(const scenegraph::World& world, Pipeline& pipeline,
                         const ModelLookup& lookup, const Lighting& lighting);
 

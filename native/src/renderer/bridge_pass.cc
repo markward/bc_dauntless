@@ -282,6 +282,20 @@ void BridgePass::render(const scenegraph::World& world,
         glActiveTexture(GL_TEXTURE0);
     }
 
+    // Static spot lights, packed once per render() (both sub-passes share them).
+    const int spot_count = main_bridge ? static_cast<int>(spots_.size()) : 0;
+    glm::vec3 spot_pos[kBridgeMaxSpots];
+    glm::vec3 spot_dir[kBridgeMaxSpots];
+    glm::vec3 spot_rad[kBridgeMaxSpots];
+    glm::vec4 spot_params[kBridgeMaxSpots];   // x cos_inner, y cos_outer, z range
+    for (int i = 0; i < spot_count; ++i) {
+        const BridgeSpot& sp = spots_[static_cast<std::size_t>(i)];
+        spot_pos[i] = sp.position;
+        spot_dir[i] = sp.direction;
+        spot_rad[i] = sp.radiance;
+        spot_params[i] = glm::vec4(sp.cos_inner, sp.cos_outer, sp.range, 0.0f);
+    }
+
     // Uniforms common to both sub-passes: camera, the bridge ambient and the
     // ceiling downlight (kBridgeLighting, bridge_lighting_tuning.h).
     const float pulse_phase = highlight_phase();
@@ -327,6 +341,16 @@ void BridgePass::render(const scenegraph::World& world,
         s.set_vec3("u_box_min", box_min_);
         s.set_vec3("u_box_max", box_max_);
         s.set_int("u_capture", capture_pass_ ? 1 : 0);
+        // Static spots: main bridge view only (its probe captures included;
+        // they light the capture's diffuse). Comm sets get 0. Only the count
+        // in use is uploaded; the shader never reads past u_spot_count.
+        s.set_int("u_spot_count", spot_count);
+        if (spot_count > 0) {
+            s.set_vec3_array("u_spot_pos", spot_pos, spot_count);
+            s.set_vec3_array("u_spot_dir", spot_dir, spot_count);
+            s.set_vec3_array("u_spot_radiance", spot_rad, spot_count);
+            s.set_vec4_array("u_spot_params", spot_params, spot_count);
+        }
     };
 
     // Developer Options debug view 5 (Mesh ID): a per-draw counter, reset
@@ -487,6 +511,16 @@ void BridgePass::set_material_overrides(
 void BridgePass::clear_material_overrides() {
     overrides_.clear();
     overrides_model_ = 0;
+}
+
+std::size_t BridgePass::set_spots(std::vector<BridgeSpot> spots) {
+    const std::size_t cap = static_cast<std::size_t>(kBridgeMaxSpots);
+    const std::size_t dropped = spots.size() > cap ? spots.size() - cap : 0;
+    if (dropped > 0) spots.resize(cap);
+    spots_ = std::move(spots);
+    // The probes hold the room lit by the spots' diffuse: recapture.
+    request_probe_capture();
+    return dropped;
 }
 
 void BridgePass::set_probe_mix(float t) {
