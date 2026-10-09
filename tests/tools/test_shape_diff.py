@@ -41,6 +41,12 @@ def test_axis_swap_round_trips():
     assert frames.obj_to_bc(frames.bc_to_obj(p)) == p
 
 
+def test_affine_inverse_raises_shape_diff_error_on_singular_matrix():
+    singular = [0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 1]
+    with pytest.raises(ShapeDiffError, match="singular"):
+        frames.affine_inverse(singular)
+
+
 def test_affine_inverse_undoes_translation_rotation_scale():
     # column-major: rotate 90 deg about z, scale 2, translate (10, 20, 30)
     m = [0, 2, 0, 0,  -2, 0, 0, 0,  0, 0, 2, 0,  10, 20, 30, 1]
@@ -74,8 +80,15 @@ def _shape(block=11, parent="wall side pnls 01", offset=(0.0, 0.0, 0.0)):
 def test_object_name_and_block_round_trip():
     assert obj_io.object_name(_shape(468, "Material: D walls 1")) == "b0468_Material_D_walls_1"
     assert obj_io.block_of("b0468_Material_D_walls_1") == 468
-    with pytest.raises(ShapeDiffError):
+    with pytest.raises(ShapeDiffError, match="EMPTY scene"):
         obj_io.block_of("Cube")
+
+
+def test_mat_name_strips_directory_part():
+    assert obj_io._mat_name({"textures": ["data/Models/Sets/DBridge/High/Map 1.tga"]}) == "Map_1.tga"
+    assert obj_io._mat_name({"textures": [r"High\Map 1.tga"]}) == "Map_1.tga"
+    assert obj_io._mat_name({"textures": ["Map 1.tga"]}) == "Map_1.tga"
+    assert obj_io._mat_name({"textures": []}) == "none"
 
 
 def test_write_then_read_welds_by_position_and_keeps_uvs(tmp_path):
@@ -127,6 +140,20 @@ def test_hidden_shapes_are_written_and_read_correctly(tmp_path):
     assert len(hid.faces) > 0
 
     assert obj_io.block_of("b0020_hidden_panel_hidden") == 20
+
+
+def test_read_objects_refuses_out_of_range_vertex_index(tmp_path):
+    p = tmp_path / "bad.obj"
+    p.write_text("o b0001_x\nv 0 0 0\nv 1 0 0\nv 1 1 0\nf 1 2 9\n")
+    with pytest.raises(ShapeDiffError, match="line 5"):
+        obj_io.read_objects(p)
+
+
+def test_read_objects_refuses_out_of_range_uv_index(tmp_path):
+    p = tmp_path / "bad.obj"
+    p.write_text("o b0001_x\nv 0 0 0\nv 1 0 0\nv 1 1 0\nvt 0 0\nf 1/1 2/2 3/9\n")
+    with pytest.raises(ShapeDiffError, match="line 6"):
+        obj_io.read_objects(p)
 
 
 def test_read_objects_preserves_n_gon_face_order(tmp_path):
@@ -222,6 +249,27 @@ def test_move_is_stored_in_shape_local_frame(tmp_path):
     assert e["moves"] == [(2, pytest.approx((1.0, 1.0, 0.75)))]
 
 
+def test_uv_change_alongside_a_move_is_refused(tmp_path):
+    s = _shape()
+    base = _export_read(tmp_path, [s])["b0011_wall_side_pnls_01"]
+    edit = _moved(base, 1, (1.25, 0.0, 0.5))           # move the seam vertex
+    edit.faces = [list(f) for f in edit.faces]
+    for face in edit.faces:
+        for i, (v, uv) in enumerate(face):
+            if v == 1 and uv is not None:
+                face[i] = (v, (uv[0] + 0.1, uv[1]))    # also touch its corner UV
+    with pytest.raises(ShapeDiffError, match="UV"):
+        match.diff_shape(s, base, edit)
+
+
+def test_move_without_uv_change_still_accepted(tmp_path):
+    s = _shape()
+    base = _export_read(tmp_path, [s])["b0011_wall_side_pnls_01"]
+    edit = _moved(base, 1, (1.25, 0.0, 0.5))
+    e = match.diff_shape(s, base, edit)
+    assert [i for i, _ in e["moves"]] == [1, 4]
+
+
 def test_topology_change_is_refused_for_iteration_1(tmp_path):
     s = _shape()
     base = _export_read(tmp_path, [s])["b0011_wall_side_pnls_01"]
@@ -240,6 +288,19 @@ def test_diff_refuses_renamed_or_missing_objects(tmp_path):
     objs = _export_read(tmp_path, [s])
     with pytest.raises(ShapeDiffError, match="objects differ"):
         match.diff([s], objs, {"b0011_renamed": objs["b0011_wall_side_pnls_01"]})
+
+
+def test_diff_refuses_two_objects_mapping_to_the_same_block(tmp_path):
+    s = _shape()
+    objs = _export_read(tmp_path, [s])
+    base_name = "b0011_wall_side_pnls_01"
+    dup_name = base_name + ".001"
+    both_base = dict(objs)
+    both_base[dup_name] = objs[base_name]
+    both_edit = dict(both_base)
+    with pytest.raises(ShapeDiffError, match="block 11") as exc:
+        match.diff([s], both_base, both_edit)
+    assert base_name in str(exc.value) and dup_name in str(exc.value)
 
 
 from engine import paths
@@ -271,6 +332,23 @@ def test_real_dbridge_export_round_trips_with_no_edits(tmp_path):
         match.identify(s, objs[obj_io.object_name(s)])      # every vertex identified
     fix, edits = cli.build_fix(DBRIDGE, obj, obj)
     assert edits == []
+
+
+def test_real_dbridge_export_mtl_has_textures_on_disk(tmp_path):
+    # F1: every DBridge shape resolves a texture through its ancestor NiNode;
+    # the exported .mtl must carry map_Kd lines pointing at real files.
+    pytest.importorskip("_dauntless_host")
+    nif = paths.game_root() / DBRIDGE
+    if not nif.exists():
+        pytest.skip("BC content not configured")
+    from tools import bridge_shape_diff as cli
+    cli.export(DBRIDGE, tmp_path)
+    mtl_text = (tmp_path / "Dbridge.mtl").read_text()
+    map_kd_lines = [line for line in mtl_text.splitlines() if line.startswith("map_Kd ")]
+    assert len(map_kd_lines) >= 1
+    for line in map_kd_lines:
+        path = Path(line.split(" ", 1)[1])
+        assert path.exists(), path
 
 
 def test_real_dbridge_move_lands_in_local_frame(tmp_path):
