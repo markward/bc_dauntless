@@ -114,6 +114,17 @@ present or explicitly gone) and **stops with a clear message** if vertices were
 deleted (which compacts indices). Topology matching is added only if an
 iteration actually needs deletions.
 
+**As built (2a, 2026-10-09):** deletions are now accepted. Equal vertex counts
+still correspond by index. With **fewer** edit vertices, Blender has deleted
+some and renumbered the survivors **preserving their relative order**, so the
+tool walks the edit vertices in order and, for each, advances through the base
+vertices until one sits at the same position (L∞ ≤ `POS_TOL`); the skipped
+base vertices are the deleted ones. An edit vertex that finds no match (a
+survivor also moved, or vertices were added as well) is refused ("can't align
+vertices after deletion"). **More** edit vertices are refused ("new vertices
+are iteration 3"). Every face comparison below runs in base indices, through
+this correspondence.
+
 ### 5.3 Classification, per shape
 
 | Change | Recorded as |
@@ -133,6 +144,28 @@ needs topology (`add vertex`, `remove triangle`, `add triangle`) and a UV
 edit that would need a vertex split -- one original vertex whose corners
 disagree on the new UV (both iteration 2+). The tool prints a per-shape
 summary (`block N: M vertices moved, K UVs changed`).
+
+**Iteration 2a, as built (2026-10-09):** faces are compared by **vertex set**
+(base indices). Present in both → today's move/UV handling (a set whose
+winding differs is refused: "changed winding"). A base set with no edit face
+is a **removed face**: every NIF triangle whose three vertices lie in three
+distinct corners' weld groups is removed -- duplicates, reversed twins and
+twins on a UV-seam copy alike -- because `write_obj` exports exactly those
+triangles onto that face and Blender collapses them into one (§2's duplicate
+row). This deliberately does **not** filter by corner UV (the brief's rule):
+a collapsed twin with different UVs would otherwise survive and keep the
+deleted face rendering. A removed face that resolves to no NIF triangle is
+refused. Removals are de-duplicated and sorted. An edit set that isn't a base
+set is an **added face**: it must be a triangle (n-gons are refused,
+"triangulate before export" -- the codebase has no ear-clipper) and each
+corner must be an **existing original** at that position whose NIF UV equals
+the corner's UV (1e-5; several → the lowest index), else it is refused as
+iteration 3 ("needs a new vertex/UV"). It is emitted in the edit face's
+winding; a repeated index or zero area (`|cross| ≤ 1e-10` on final shape-local
+positions -- `mesh_fix.cc`'s own rule) is refused at diff time. A deleted
+base vertex contributes nothing; orphaned original vertices are left in
+place, never emitted. Summary line:
+`block N: M vertices moved, K UVs changed, R triangles removed, A added`.
 
 **`--partial`:** by default a single unsupported object (one that needs
 topology, or a vertex-split UV conflict) aborts the whole diff -- nothing is
@@ -243,6 +276,7 @@ the scratchpad; in game, Developer Options → Lighting → Bridge Debug View
 | 1 | Move-only gap closing: export, diff, loader end to end | accepted 2026-10-09 (live, via 1c) | |
 | 1b | UV re-map of console seats (b0224/b0255) | tool support built; Mark's first edit turned out to hold no UV changes — unused so far | `diff` now records `uv` alongside `move`; the loader (`apply_shape_edits`) already applied `uv` records before this task -- only the Python side refused them |
 | 1c | First live step: moves on b0468 (13 NIF verts) / b0652 (28) / b0663 (28) | accepted by Mark in game 2026-10-09; fix `dbcdbd4a43dc5a56.json` committed | Console sliver b0170/b0175 needs triangle add/remove (next) |
+| 2a | Triangle add/remove on existing vertices (console sliver b0170/b0175) | tool support built; awaiting diff of Mark's export | Removal takes every NIF copy of the face (duplicates, reversed and seam twins); added triangles must sit on existing originals with existing UVs; vertex deletion aligned by order (§5.2) |
 | 2 | Turbolift header reshape: triangle remove/add | — | |
 | 3 | Extruded side panels: new verts/tris/UVs | — | Open: side-face texturing. Lean: collapse the new faces' UVs onto the panel border (stretch edge texels, no new texture); alternative: a project-owned trim texture |
 
@@ -253,9 +287,9 @@ the scratchpad; in game, Developer Options → Lighting → Bridge Debug View
 - **No separate preview step.** §8's `preview` subcommand was dropped: Blender's
   own `edit.obj` export already *is* the preview (reopen it, or diff and inspect
   the fix). `bridge_shape_diff.py` ships only `export` and `diff`.
-- `diff` records **moves and UV0 edits** and refuses anything else: topology
-  changes (added/removed vertices or faces) are always refused with an
-  iteration-2 message. A corner UV change is paired with its original
+- `diff` records **moves and UV0 edits** (and, since 2a, removed faces and
+  added triangles on existing vertices -- §5.3); new vertices are refused
+  as iteration 3. A corner UV change is paired with its original
   vertex by matching the NIF's own UV0 for that vertex (seam duplicates at
   the same position can disagree on UV; the corner's UV, not just its
   position, says which original it is) and recorded as a `uv` edit --

@@ -9,8 +9,9 @@ Spec: docs/superpowers/specs/2026-10-09-bridge-shape-diff-design.md
 OBJ files contain BC geometry: keep them OUT of the repo. Blender: import the
 OBJ into an EMPTY scene (delete Blender's default Cube/Camera/Light) with
 default settings; export base.obj before editing and edit.obj after, both
-with default settings. Don't join, split or rename objects. Iteration 1
-accepts vertex MOVES and UV0 EDITS; topology changes are refused."""
+with default settings. Don't join, split or rename objects. Accepted:
+vertex MOVES, UV0 EDITS, deleted faces/vertices, and added TRIANGLES whose
+corners sit on existing vertices with existing UVs; new vertices are refused."""
 import argparse
 import json
 import sys
@@ -98,7 +99,9 @@ def main(argv=None) -> int:
             skipped = []
         for e in edits:
             print(f"block {e['block']}: {len(e['moves'])} vertices moved, "
-                  f"{len(e['uvs'])} UVs changed")
+                  f"{len(e['uvs'])} UVs changed, "
+                  f"{len(e.get('remove_triangles', []))} triangles removed, "
+                  f"{len(e.get('add_triangles', []))} added")
         if skipped:
             print("skipped (not yet supported):")
             for name, reason in skipped:

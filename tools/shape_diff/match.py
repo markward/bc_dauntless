@@ -2,11 +2,14 @@
 
 Blender does not preserve vertex order across import, so identity goes by
 position (POS_TOL), never by index. Between base.obj and edit.obj (both
-written by Blender from the same mesh) the vertex index IS stable for
-surviving vertices; diff_shape relies on that and checks it.
+written by Blender from the same mesh) surviving vertices keep their
+relative order: by index when no vertex was deleted, else by an
+order-preserving alignment on unmoved positions (`_correspondence`).
 
-diff_shape records moves and UV edits; topology changes (added/removed
-vertices or faces) are refused as iteration 2+."""
+diff_shape records moves, UV edits, removed faces (every NIF triangle on the
+face's welded vertex set, duplicates and reversed twins included) and added
+triangles on existing original vertices/UVs. New vertices, new UVs on an
+added face, a vertex split and a flipped existing face are refused."""
 from tools.shape_diff import ShapeDiffError, frames, obj_io
 
 POS_TOL = 1e-4
@@ -121,30 +124,147 @@ def _resolve_uv_edits(block, shape, ids, base_faces, edit_faces):
     return uvs
 
 
+def _correspondence(block, base, edit):
+    """edit vertex index -> base vertex index. Equal counts: by index.
+    Fewer edit vertices: Blender deleted some and kept the survivors'
+    relative order, so walk both in order, skipping base vertices until one
+    sits at the edit vertex's position."""
+    nb, ne = len(base.positions), len(edit.positions)
+    if ne > nb:
+        raise ShapeDiffError(
+            f"block {block}: vertex count grew ({nb} -> {ne}); "
+            "new vertices are iteration 3")
+    if ne == nb:
+        return list(range(nb))
+    corr = []
+    b = 0
+    for ep in edit.positions:
+        while b < nb and max(abs(x - y) for x, y in zip(base.positions[b], ep)) > POS_TOL:
+            b += 1
+        if b == nb:
+            raise ShapeDiffError(
+                f"block {block}: can't align vertices after deletion (a surviving "
+                "vertex moved, or vertices were added) -- not supported yet")
+        corr.append(b)
+        b += 1
+    return corr
+
+
+def _by_vertex_set(faces):
+    out = {}
+    for f in faces:
+        out.setdefault(frozenset(v for v, _ in f), []).append(f)
+    return out
+
+
+def _removed_triangles(block, shape, ids, removed_sets):
+    """Every NIF triangle whose three vertices lie in three distinct corners'
+    weld groups of a removed face. write_obj exports exactly those triangles
+    onto that face (Blender then collapses duplicates and reversed twins into
+    it), so all of them go -- whatever their winding or UVs."""
+    tris_of = {}
+    for t, tri in enumerate(shape["triangles"]):
+        for v in tri:
+            tris_of.setdefault(v, set()).add(t)
+    out = set()
+    for vset in removed_sets:
+        corner_of = {}
+        for c, bv in enumerate(sorted(vset)):
+            for orig in ids[bv]:
+                corner_of.setdefault(orig, set()).add(c)
+        found = set()
+        for orig in corner_of:
+            for t in tris_of.get(orig, ()):
+                tri = shape["triangles"][t]
+                if all(v in corner_of for v in tri) and _distinct_corners(
+                        [corner_of[v] for v in tri]):
+                    found.add(t)
+        if not found:
+            raise ShapeDiffError(
+                f"block {block}: removed face on OBJ vertices {sorted(vset)} "
+                "matches no NIF triangle (base face doesn't match the NIF)")
+        out |= found
+    return sorted(out)
+
+
+def _distinct_corners(options):
+    """True if each triangle vertex can be assigned a different face corner."""
+    a, b, c = options
+    return any(x != y and y != z and x != z for x in a for y in b for z in c)
+
+
+def _added_triangles(block, shape, ids, base, added_faces, final_local):
+    """Added faces (already in base indices) -> original-index triangles in
+    the edit face's winding. Each corner must be an existing original at
+    that position whose NIF UV equals the corner's UV (lowest such index)."""
+    nif_uvs = shape["uvs"]
+    out = []
+    for f in added_faces:
+        if len(f) != 3:
+            raise ShapeDiffError(
+                f"block {block}: added face has {len(f)} corners; "
+                "triangulate before export (Ctrl+T in Blender)")
+        tri = []
+        for bv, uv in f:
+            cands = [o for o in ids[bv] if uv is not None and _uv_equal(nif_uvs[o], uv)]
+            if not cands:
+                raise ShapeDiffError(
+                    f"block {block}: added face needs a new vertex/UV at "
+                    f"{tuple(base.positions[bv])} (UV {uv}) -- iteration 3")
+            tri.append(min(cands))
+        if len(set(tri)) < 3:
+            raise ShapeDiffError(
+                f"block {block}: added triangle {tuple(tri)} repeats a vertex")
+        p0, p1, p2 = (final_local[i] for i in tri)
+        u = [p1[k] - p0[k] for k in range(3)]
+        w = [p2[k] - p0[k] for k in range(3)]
+        n = (u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0])
+        if sum(c * c for c in n) ** 0.5 <= 1e-10:      # mesh_fix.cc's rule
+            raise ShapeDiffError(
+                f"block {block}: added triangle {tuple(tri)} has zero area")
+        out.append(tuple(tri))
+    return out
+
+
 def diff_shape(shape: dict, base, edit):
-    """Diff one shape's base/edit OBJ pair: records vertex moves and UV0
-    edits; refuses topology changes (added/removed vertices or faces) and a
-    UV edit that would need a vertex split (both iteration 2+)."""
+    """Diff one shape's base/edit OBJ pair (spec §5.3): vertex moves, UV0
+    edits, removed faces and added triangles on existing originals. Refuses
+    (all-or-nothing for the object) new vertices, a survivor that moved
+    while vertices were deleted, an added face needing a new vertex/UV, an
+    added n-gon or degenerate triangle, a flipped existing face, and a UV
+    edit that would need a vertex split."""
     block = shape["block"]
-    if len(edit.positions) != len(base.positions):
-        raise ShapeDiffError(
-            f"block {block}: vertex count changed ({len(base.positions)} -> "
-            f"{len(edit.positions)}); adding/deleting vertices is iteration 2+")
-    if sorted(map(_face_key, edit.faces)) != sorted(map(_face_key, base.faces)):
-        raise ShapeDiffError(
-            f"block {block}: faces changed; topology edits are iteration 2 "
-            f"(this iteration is moves and UV edits only)")
+    corr = _correspondence(block, base, edit)
     ids = identify(shape, base)
-    uvs = _resolve_uv_edits(block, shape, ids, base.faces, edit.faces)
+    edit_faces = [[(corr[v], uv) for v, uv in f] for f in edit.faces]
+    base_sets = _by_vertex_set(base.faces)
+    edit_sets = _by_vertex_set(edit_faces)
+    common_base, common_edit = [], []
+    for vset in base_sets.keys() & edit_sets.keys():
+        bfs, efs = base_sets[vset], edit_sets[vset]
+        if sorted(map(_face_key, bfs)) != sorted(map(_face_key, efs)):
+            raise ShapeDiffError(
+                f"block {block}: face on OBJ vertices {sorted(vset)} changed "
+                "winding (flipped normal?) -- not supported yet")
+        common_base += bfs
+        common_edit += efs
+    uvs = _resolve_uv_edits(block, shape, ids, common_base, common_edit)
     inv = frames.affine_inverse(shape["world"])
     moves = {}
-    for k, (bp, ep) in enumerate(zip(base.positions, edit.positions)):
+    for k, ep in enumerate(edit.positions):
+        bp = base.positions[corr[k]]
         if max(abs(a - b) for a, b in zip(bp, ep)) <= POS_TOL:
             continue
         local = frames.apply(inv, ep)
-        for orig in ids[k]:
+        for orig in ids[corr[k]]:
             moves[orig] = local
-    if not moves and not uvs:
+    remove = _removed_triangles(block, shape, ids, base_sets.keys() - edit_sets.keys())
+    final_local = [frames.apply(inv, p) for p in shape["vertices"]]
+    for orig, p in moves.items():
+        final_local[orig] = p
+    added = [f for f in edit_faces if frozenset(v for v, _ in f) not in base_sets]
+    add = _added_triangles(block, shape, ids, base, added, final_local)
+    if not moves and not uvs and not remove and not add:
         return None
     return {
         "block": block,
@@ -152,6 +272,8 @@ def diff_shape(shape: dict, base, edit):
         "orig_triangle_count": len(shape["triangles"]),
         "moves": sorted(moves.items()),
         "uvs": sorted(uvs.items()),
+        "remove_triangles": remove,
+        "add_triangles": add,
     }
 
 
@@ -159,8 +281,8 @@ def diff(shapes: list, base_objs: dict, edit_objs: dict, partial: bool = False):
     """Diff every object. With partial=False (default, unchanged), the first
     object whose diff_shape raises ShapeDiffError aborts the whole call, and
     the return is just the edit list. With partial=True, an object-level
-    ShapeDiffError (vertex-count change, face change, UV vertex-split
-    conflict, identity failure) is caught and recorded instead of raising, so
+    ShapeDiffError (new vertices, unalignable deletion, an added face needing
+    a new vertex/UV, flipped face, UV vertex-split conflict, identity failure) is caught and recorded instead of raising, so
     the supported objects still get written; the return becomes
     (edits, skipped), skipped being a list of (object_name, reason_str) in
     block order. File-level problems (object-set mismatch, two objects

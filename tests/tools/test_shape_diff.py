@@ -358,17 +358,13 @@ def test_move_without_uv_change_still_accepted(tmp_path):
     assert [i for i, _ in e["moves"]] == [1, 4]
 
 
-def test_topology_change_is_refused_for_iteration_1(tmp_path):
+def test_added_vertex_is_refused_as_iteration_3(tmp_path):
     s = _shape()
     base = _export_read(tmp_path, [s])["b0011_wall_side_pnls_01"]
     edit = _moved(base, 0, base.positions[0])
-    edit.faces = edit.faces[:1]
-    with pytest.raises(ShapeDiffError, match="iteration 2"):
+    edit.positions.append((9.0, 9.0, 9.0))
+    with pytest.raises(ShapeDiffError, match="new vertices are iteration 3"):
         match.diff_shape(s, base, edit)
-    edit2 = _moved(base, 0, base.positions[0])
-    edit2.positions.append((9.0, 9.0, 9.0))
-    with pytest.raises(ShapeDiffError, match="vertex count"):
-        match.diff_shape(s, base, edit2)
 
 
 def test_diff_refuses_renamed_or_missing_objects(tmp_path):
@@ -402,11 +398,11 @@ def test_diff_partial_skips_unsupported_objects_but_keeps_supported(tmp_path):
     edit = dict(base)
     edit[move_name] = _moved(base[move_name], 1, (1.25, 0.0, 0.5))
     broken = obj_io.ObjMesh()
-    broken.positions = list(base[face_name].positions)
-    broken.faces = [list(f) for f in base[face_name].faces[:1]]  # drop a face
+    broken.positions = list(base[face_name].positions) + [(9.0, 9.0, 9.0)]  # new vertex
+    broken.faces = [list(f) for f in base[face_name].faces]
     edit[face_name] = broken
 
-    with pytest.raises(ShapeDiffError, match="iteration 2"):
+    with pytest.raises(ShapeDiffError, match="iteration 3"):
         match.diff(shapes, base, edit)
 
     edits, skipped = match.diff(shapes, base, edit, partial=True)
@@ -414,7 +410,7 @@ def test_diff_partial_skips_unsupported_objects_but_keeps_supported(tmp_path):
     assert len(skipped) == 1
     name, reason = skipped[0]
     assert name == face_name
-    assert "faces changed" in reason
+    assert "new vertices" in reason
 
 
 def test_diff_partial_still_raises_on_file_level_errors(tmp_path):
@@ -592,3 +588,207 @@ def test_main_partial_without_write_flag_writes_nothing(monkeypatch, tmp_path):
     rc = cli.main(["diff", "b.obj", "e.obj", "--partial"])
     assert rc == 0
     assert not target.exists()
+
+
+# --- Task 13: triangle add/remove on existing vertices, vertex deletion ---
+
+def _sliver_shape(block=175, parent="console"):
+    """A quad (originals 0,1,4,5), a second quad (1,7,8,4) and a lone sliver
+    triangle (2,3,6) whose vertices sit in the MIDDLE of the vertex list, so
+    deleting them renumbers the survivors. The sliver is stored three times
+    in the NIF: twice exactly (tris 2, 5) and once reversed (tri 6) -- the
+    duplicate-triangle shape DBridge has 7,628 of. Vertex 9 is a UV-seam copy
+    of vertex 2 (same position, different UV) used by no triangle."""
+    verts = [(0, 0, 0), (1, 0, 0), (5, 0, 0), (6, 0, 0), (1, 1, 0),
+             (0, 1, 0), (5, 1, 0), (2, 0, 0), (2, 1, 0), (5, 0, 0)]
+    uvs = [(0.0, 0.0), (0.1, 0.0), (0.5, 0.0), (0.6, 0.0), (0.1, 1.0),
+           (0.0, 1.0), (0.5, 1.0), (0.2, 0.0), (0.2, 1.0), (0.9, 0.9)]
+    return {
+        "block": block, "parent": parent, "hidden": False,
+        "vertices": verts, "uvs": uvs,
+        "colors": [(1, 1, 1, 1)] * len(verts), "uvs1": [],
+        "triangles": [(0, 1, 4), (0, 4, 5), (2, 3, 6), (1, 7, 8),
+                      (1, 8, 4), (2, 3, 6), (6, 3, 2)],
+        "textures": ["Map 1.tga"],
+        "world": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    }
+
+
+def _blenderize(mesh):
+    """Blender keeps ONE face per vertex set (it also collapses a reversed
+    twin); our writer emits every NIF triangle. Keep the first per set."""
+    out = obj_io.ObjMesh()
+    out.positions = list(mesh.positions)
+    seen = set()
+    for f in mesh.faces:
+        key = frozenset(v for v, _ in f)
+        if key not in seen:
+            seen.add(key)
+            out.faces.append(list(f))
+    return out
+
+
+def _copy(mesh):
+    out = obj_io.ObjMesh()
+    out.positions = list(mesh.positions)
+    out.faces = [list(f) for f in mesh.faces]
+    return out
+
+
+def _face_on(mesh, vertex_set):
+    return next(i for i, f in enumerate(mesh.faces)
+                if frozenset(v for v, _ in f) == frozenset(vertex_set))
+
+
+def _blender_delete(mesh, face_index):
+    """Delete a face and the vertices it leaves unused; Blender renumbers the
+    survivors preserving their relative order."""
+    faces = [f for i, f in enumerate(mesh.faces) if i != face_index]
+    used = sorted({v for f in faces for v, _ in f})
+    new_of = {old: new for new, old in enumerate(used)}
+    out = obj_io.ObjMesh()
+    out.positions = [mesh.positions[o] for o in used]
+    out.faces = [[(new_of[v], uv) for v, uv in f] for f in faces]
+    return out
+
+
+def _sliver_base(tmp_path, s=None):
+    s = s or _sliver_shape()
+    return s, _blenderize(_export_read(tmp_path, [s])[obj_io.object_name(s)])
+
+
+def _local(base, pos):
+    return next(i for i, p in enumerate(base.positions) if p == pytest.approx(pos))
+
+
+def test_removing_a_face_removes_every_duplicate_and_reversed_nif_copy(tmp_path):
+    s, base = _sliver_base(tmp_path)
+    sliver = {_local(base, (5, 0, 0)), _local(base, (6, 0, 0)), _local(base, (5, 1, 0))}
+    edit = _copy(base)
+    del edit.faces[_face_on(base, sliver)]
+    e = match.diff_shape(s, base, edit)
+    assert e["remove_triangles"] == [2, 5, 6]
+    assert e["add_triangles"] == [] and e["moves"] == [] and e["uvs"] == []
+
+
+def test_removing_a_face_also_removes_a_reversed_twin_with_different_uvs(tmp_path):
+    # Blender collapses a reversed twin onto the same face even when the twin
+    # uses a seam copy with different UVs -- deleting the face must not leave
+    # the twin rendering.
+    s = _sliver_shape()
+    s["triangles"] = s["triangles"] + [(9, 6, 3)]          # tri 7: seam copy 9 for 2
+    s, base = _sliver_base(tmp_path, s)
+    sliver = {_local(base, (5, 0, 0)), _local(base, (6, 0, 0)), _local(base, (5, 1, 0))}
+    edit = _copy(base)
+    del edit.faces[_face_on(base, sliver)]
+    e = match.diff_shape(s, base, edit)
+    assert e["remove_triangles"] == [2, 5, 6, 7]
+
+
+def test_deleting_a_face_and_its_vertices_removes_its_triangles_without_moves(tmp_path):
+    s, base = _sliver_base(tmp_path)
+    sliver = {_local(base, (5, 0, 0)), _local(base, (6, 0, 0)), _local(base, (5, 1, 0))}
+    edit = _blender_delete(base, _face_on(base, sliver))
+    assert len(edit.positions) == len(base.positions) - 3
+    e = match.diff_shape(s, base, edit)
+    assert e["remove_triangles"] == [2, 5, 6]
+    assert e["moves"] == [] and e["uvs"] == [] and e["add_triangles"] == []
+
+
+def test_deletion_where_a_survivor_also_moved_is_refused(tmp_path):
+    s, base = _sliver_base(tmp_path)
+    sliver = {_local(base, (5, 0, 0)), _local(base, (6, 0, 0)), _local(base, (5, 1, 0))}
+    edit = _blender_delete(base, _face_on(base, sliver))
+    k = next(i for i, p in enumerate(edit.positions) if p == pytest.approx((2, 1, 0)))
+    edit.positions[k] = (2.0, 1.5, 0.0)
+    with pytest.raises(ShapeDiffError, match="can't align vertices after deletion"):
+        match.diff_shape(s, base, edit)
+
+
+def _corner(base, pos, uv):
+    return (_local(base, pos), uv)
+
+
+def test_adding_a_face_on_existing_vertices_emits_original_indices_in_edit_winding(tmp_path):
+    s, base = _sliver_base(tmp_path)
+    edit = _copy(base)
+    # (2,0,0)=orig 7, (5,0,0) with orig 2's UV, (2,1,0)=orig 8 -- in this winding
+    edit.faces.append([_corner(base, (2, 0, 0), (0.2, 0.0)),
+                       _corner(base, (5, 0, 0), (0.5, 0.0)),
+                       _corner(base, (2, 1, 0), (0.2, 1.0))])
+    e = match.diff_shape(s, base, edit)
+    assert e["add_triangles"] == [(7, 2, 8)]
+    assert e["remove_triangles"] == [] and e["moves"] == [] and e["uvs"] == []
+
+
+def test_added_face_corner_uv_picks_the_matching_seam_original(tmp_path):
+    s, base = _sliver_base(tmp_path)
+    edit = _copy(base)
+    edit.faces.append([_corner(base, (2, 1, 0), (0.2, 1.0)),
+                       _corner(base, (2, 0, 0), (0.2, 0.0)),
+                       _corner(base, (5, 0, 0), (0.9, 0.9))])     # seam copy 9's UV
+    e = match.diff_shape(s, base, edit)
+    assert e["add_triangles"] == [(8, 7, 9)]
+
+
+def test_added_face_needing_a_new_uv_is_refused_as_iteration_3(tmp_path):
+    s, base = _sliver_base(tmp_path)
+    edit = _copy(base)
+    edit.faces.append([_corner(base, (2, 0, 0), (0.2, 0.0)),
+                       _corner(base, (5, 0, 0), (0.33, 0.33)),     # no original has it
+                       _corner(base, (2, 1, 0), (0.2, 1.0))])
+    with pytest.raises(ShapeDiffError, match="needs a new vertex/UV.*iteration 3"):
+        match.diff_shape(s, base, edit)
+
+
+def test_added_n_gon_is_refused_triangulate_before_export(tmp_path):
+    s, base = _sliver_base(tmp_path)
+    edit = _copy(base)
+    edit.faces.append([_corner(base, (2, 0, 0), (0.2, 0.0)),
+                       _corner(base, (5, 0, 0), (0.5, 0.0)),
+                       _corner(base, (5, 1, 0), (0.5, 1.0)),
+                       _corner(base, (2, 1, 0), (0.2, 1.0))])
+    with pytest.raises(ShapeDiffError, match="triangulate before export"):
+        match.diff_shape(s, base, edit)
+
+
+def test_added_zero_area_triangle_is_refused(tmp_path):
+    s, base = _sliver_base(tmp_path)
+    edit = _copy(base)
+    edit.faces.append([_corner(base, (0, 0, 0), (0.0, 0.0)),        # collinear
+                       _corner(base, (1, 0, 0), (0.1, 0.0)),
+                       _corner(base, (2, 0, 0), (0.2, 0.0))])
+    with pytest.raises(ShapeDiffError, match="zero area"):
+        match.diff_shape(s, base, edit)
+
+
+def test_flipped_winding_on_an_existing_face_is_refused(tmp_path):
+    s, base = _sliver_base(tmp_path)
+    edit = _copy(base)
+    edit.faces[0] = list(reversed(edit.faces[0]))
+    with pytest.raises(ShapeDiffError, match="winding"):
+        match.diff_shape(s, base, edit)
+
+
+def test_move_remove_and_add_in_one_object_are_all_recorded(tmp_path):
+    from tools.shape_diff import payload
+    s, base = _sliver_base(tmp_path)
+    sliver = {_local(base, (5, 0, 0)), _local(base, (6, 0, 0)), _local(base, (5, 1, 0))}
+    edit = _copy(base)
+    del edit.faces[_face_on(base, sliver)]
+    edit.positions[_local(base, (0, 0, 0))] = (0.0, -0.25, 0.0)
+    edit.faces.append([_corner(base, (2, 0, 0), (0.2, 0.0)),
+                       _corner(base, (6, 0, 0), (0.6, 0.0)),
+                       _corner(base, (2, 1, 0), (0.2, 1.0))])
+    e = match.diff_shape(s, base, edit)
+    assert e["moves"] == [(0, pytest.approx((0.0, -0.25, 0.0)))]
+    assert e["remove_triangles"] == [2, 5, 6]
+    assert e["add_triangles"] == [(7, 3, 8)]
+    payload.encode([e])  # must not raise
+
+
+def test_main_summary_line_counts_triangles(monkeypatch, tmp_path, capsys):
+    cli, _ = _patched_cli(monkeypatch, tmp_path)
+    assert cli.main(["diff", "b.obj", "e.obj"]) == 0
+    out = capsys.readouterr().out
+    assert "block 7: 1 vertices moved, 1 UVs changed, 1 triangles removed, 1 added" in out
