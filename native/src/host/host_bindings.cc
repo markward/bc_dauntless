@@ -885,6 +885,10 @@ void reset_frame_state() {
     g_target_reticle = renderer::TargetReticle{};
     g_starmap_scene = renderer::StarMapScene{};
 
+    // Bridge editor tint: its model handle dies with this session's models.
+    g_bridge_highlight_model = 0;
+    g_bridge_highlight_selected = g_bridge_highlight_hover = -1;
+
     // Motion blur reprojects against the previous exterior frame's viewproj.
     // Left set, frame 1 of a new session smears against the OLD camera.
     g_have_prev_viewproj = false;
@@ -1110,9 +1114,6 @@ void shutdown() {
     g_target_reticle_pass.reset();
     g_starmap_pass.reset();
     g_bridge_pass.reset();
-    // The highlighted model handle dies with this session's model cache.
-    g_bridge_highlight_model = 0;
-    g_bridge_highlight_selected = g_bridge_highlight_hover = -1;
     g_viewscreen_static_pass.reset();
     g_bloom_pass.reset();
     g_nonfinite_probe.reset();
