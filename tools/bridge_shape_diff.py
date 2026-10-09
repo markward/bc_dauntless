@@ -24,6 +24,7 @@ from pathlib import Path
 from engine import mods, paths
 from tools.gen_mesh_fixes import fnv1a64_hex
 from tools.shape_diff import ShapeDiffError, match, obj_io, payload
+from tools.shape_diff import verify as _verify
 
 GENERATOR = "tools/bridge_shape_diff.py"
 DEFAULT_NIF = "data/Models/Sets/DBridge/Dbridge.NIF"
@@ -111,18 +112,34 @@ def fix_text(fix: dict) -> str:
 
 
 def build_fix(rel: str, base_path: Path, edit_path: Path, partial: bool = False,
-              exclude=()):
-    """`exclude`: block numbers left out of the fix entirely (as if unedited)."""
+              exclude=(), verify: bool = True):
+    """Diff, then (unless verify=False -- unit tests only) apply the fix with
+    the loader and check it reproduces edit.obj and leaves every other block
+    stock (spec §5.4); a mismatch raises, so nothing unverified is written.
+    `exclude`: block numbers left out of the fix entirely (as if unedited)."""
     base_objs = obj_io.read_objects(base_path)
     edit_objs = obj_io.read_objects(edit_path)
     dirs = _texture_dirs(rel)
+    shapes = _shapes(rel)
+    result = match.diff(shapes, base_objs, edit_objs, partial=partial,
+                        texture_dirs=dirs, exclude=exclude)
+    edits, skipped = result if partial else (result, [])
+    fix = make_fix_dict(rel, edits)
+    if verify:
+        names = {obj_io.block_of(n): n for n in edit_objs}
+        edited = {e["block"]: (names[e["block"]], edit_objs[names[e["block"]]]) for e in edits}
+        albedos = {e["block"]: e["albedo"] for e in edits if e.get("albedo")}
+        n = _verify.run(_nif_path(rel), fix_text(fix), shapes, edited, albedos)
+        print(f"verified {n} objects")
+    for e in edits:
+        pairs = e.get("moved_survivors")
+        if pairs:
+            print(f"warning: block {e['block']}: {len(pairs)} survivor(s) paired with no "
+                  "position agreement (edit -> base OBJ vertex): "
+                  + ", ".join(f"{a}->{b}" for a, b in pairs))
     if partial:
-        edits, skipped = match.diff(_shapes(rel), base_objs, edit_objs, partial=True,
-                                    texture_dirs=dirs, exclude=exclude)
-        return make_fix_dict(rel, edits), edits, skipped
-    edits = match.diff(_shapes(rel), base_objs, edit_objs, texture_dirs=dirs,
-                       exclude=exclude)
-    return make_fix_dict(rel, edits), edits
+        return fix, edits, skipped
+    return fix, edits
 
 
 def main(argv=None) -> int:

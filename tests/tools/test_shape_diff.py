@@ -1741,3 +1741,119 @@ def test_excluding_a_removals_replacement_refuses_unless_both_are_excluded(tmp_p
     assert match.diff(shapes, base, edit, exclude=[175, 180]) == []
     edits, skipped = match.diff(shapes, base, edit, partial=True, exclude=[180])
     assert edits == [] and [n for n, _ in skipped] == [na]
+
+
+# --- Task 15 fix round: verify the fix by applying it (spec §5.4) ---
+
+from tools.shape_diff import verify
+
+
+def _applied(shape, moves=None):
+    """`shape` as nif_shapes(path, fix) would report it after moving
+    original i to model-space p for each i, p in `moves`."""
+    out = dict(shape)
+    out["vertices"] = list(shape["vertices"])
+    for i, p in (moves or {}).items():
+        out["vertices"][i] = p
+    return out
+
+
+def test_verify_accepts_an_applied_fix_that_reproduces_the_edit(tmp_path):
+    s = _shape()
+    base = _export_read(tmp_path, [s])[obj_io.object_name(s)]
+    edit = _moved(base, 1, (1.25, 0.0, 0.5))               # originals 1 and 4
+    applied = _applied(s, {1: (1.25, 0.0, 0.5), 4: (1.25, 0.0, 0.5)})
+    n = verify.check([s], [applied], {11: (obj_io.object_name(s), edit)})
+    assert n == 1
+
+
+def test_verify_refuses_a_fix_that_does_not_reproduce_the_edit(tmp_path):
+    s = _shape()
+    base = _export_read(tmp_path, [s])[obj_io.object_name(s)]
+    edit = _moved(base, 1, (1.25, 0.0, 0.5))
+    applied = _applied(s, {1: (1.25, 0.0, 0.5)})            # seam copy 4 left behind
+    with pytest.raises(ShapeDiffError, match=r"b0011_wall_side_pnls_01.*triangle"):
+        verify.check([s], [applied], {11: (obj_io.object_name(s), edit)})
+
+
+def test_verify_refuses_a_change_to_a_block_outside_the_fix(tmp_path):
+    a, b = _shape(block=11), _shape(block=12, parent="console top", offset=(5, 0, 0))
+    objs = _export_read(tmp_path, [a, b])
+    with pytest.raises(ShapeDiffError, match="block 12.*not in the fix"):
+        verify.check([a, b], [a, _applied(b, {0: (9.0, 9.0, 9.0)})],
+                     {11: (obj_io.object_name(a), objs[obj_io.object_name(a)])})
+
+
+def test_verify_tolerates_collapsed_reversed_twins_and_seam_uvs(tmp_path):
+    # the sliver is stored three times in the NIF (twice, once reversed);
+    # Blender shows one face. An unchanged object must verify.
+    s, base = _sliver_base(tmp_path)
+    assert verify.check([s], [s], {175: (obj_io.object_name(s), base)}) == 1
+
+
+def test_verify_compares_ear_clipped_n_gons(tmp_path):
+    s, base = _sliver_base(tmp_path)
+    edit = _copy(base)
+    edit.faces.append([_corner(base, (2, 0, 0), (0.2, 0.0)), _corner(base, (5, 0, 0), (0.5, 0.0)),
+                       _corner(base, (5, 1, 0), (0.5, 1.0)), _corner(base, (2, 1, 0), (0.2, 1.0))])
+    applied = dict(s)
+    applied["triangles"] = list(s["triangles"]) + [(8, 7, 2), (2, 6, 8)]
+    assert verify.check([s], [applied], {175: (obj_io.object_name(s), edit)}) == 1
+    applied["triangles"] = list(s["triangles"]) + [(8, 7, 2)]
+    with pytest.raises(ShapeDiffError, match="triangle"):
+        verify.check([s], [applied], {175: (obj_io.object_name(s), edit)})
+
+
+def test_build_fix_refuses_to_proceed_without_the_host_module(monkeypatch, tmp_path):
+    from tools import bridge_shape_diff as cli
+    s = _shape()
+    obj = tmp_path / "x.obj"
+    obj_io.write_obj([s], obj, tmp_path / "x.mtl", lambda n: None)
+    monkeypatch.setattr(cli, "_shapes", lambda rel: [s])
+    monkeypatch.setattr(verify, "_host", lambda: None)
+    with pytest.raises(ShapeDiffError, match="can't verify"):
+        cli.build_fix(DBRIDGE, obj, obj)
+    fix, edits = cli.build_fix(DBRIDGE, obj, obj, verify=False)    # explicit opt-out
+    assert edits == []
+
+
+def test_real_dbridge_build_fix_verifies_and_catches_a_corrupted_edit(tmp_path, monkeypatch, capsys):
+    pytest.importorskip("_dauntless_host")
+    nif = paths.game_root() / DBRIDGE
+    if not nif.exists():
+        pytest.skip("BC content not configured")
+    from tools import bridge_shape_diff as cli
+    cli.export(DBRIDGE, tmp_path)
+    base = tmp_path / "Dbridge.obj"
+    lines = base.read_text().splitlines()
+    i = lines.index("o b0468_Material_D_walls_1") + 1
+    x, y, z = map(float, lines[i].split()[1:4])
+    lines[i] = f"v {x:.6f} {y + 0.5:.6f} {z:.6f}" + "".join(" " + c for c in lines[i].split()[4:])
+    edit = tmp_path / "edit.obj"
+    edit.write_text("\n".join(lines) + "\n")
+    cli.build_fix(DBRIDGE, base, edit)
+    assert "verified 1 objects" in capsys.readouterr().out
+    real = match.diff
+
+    def corrupt(*a, **k):
+        edits = real(*a, **k)
+        i, p = edits[0]["moves"][0]
+        edits[0]["moves"][0] = (i, payload.Ref(p.block, p.vertex, (0.0, 0.0, 0.0)))
+        return edits
+    monkeypatch.setattr(match, "diff", corrupt)
+    with pytest.raises(ShapeDiffError, match="b0468_Material_D_walls_1"):
+        cli.build_fix(DBRIDGE, base, edit)
+
+
+def test_mark_round_regenerates_and_verifies():
+    # Mark's own Blender round (read only; skipped where absent).
+    pytest.importorskip("_dauntless_host")
+    folder = Path("/Users/mward/Documents/dauntless-blender")   # paths-guard: Mark's local Blender folder, read only
+    base, edit = (folder / f"Dbridge_{k}_rexport.obj" for k in ("unmodified", "modified"))
+    if not (base.exists() and edit.exists() and (paths.game_root() / DBRIDGE).exists()):
+        pytest.skip("Mark's Blender export not present")
+    from tools import bridge_shape_diff as cli
+    fix, edits, skipped = cli.build_fix(DBRIDGE, base, edit, partial=True)
+    blocks = {e["block"] for e in edits}
+    assert {392, 395, 471, 688, 697} <= blocks
+    assert skipped == []

@@ -807,6 +807,10 @@ def diff_shape(shape: dict, base, edit, texture_dirs=None, index=None):
     }
     if added.items:
         out["add_vertices"] = added.records()
+    survivors = [(k, b) for k, b in enumerate(corr)
+                 if b is not None and not _same_pos(base.positions[b], edit.positions[k])]
+    if survivors:
+        out["moved_survivors"] = survivors      # for the CLI's warning, never encoded
     if albedo is not None:
         out["albedo"] = albedo
     return out
