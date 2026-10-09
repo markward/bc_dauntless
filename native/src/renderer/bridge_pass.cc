@@ -502,10 +502,17 @@ void BridgePass::render(const scenegraph::World& world,
 void BridgePass::set_material_overrides(
         unsigned long long model_handle,
         std::vector<BridgeMaterialOverride> overrides) {
-    overrides_.clear();
-    overrides_model_ = model_handle;
+    std::unordered_map<int, std::pair<float, float>> next;
     for (const auto& o : overrides)
-        overrides_[o.mesh] = {o.roughness, o.metalness};
+        next[o.mesh] = {o.roughness, o.metalness};
+    // The probe capture reads the per-shape metalness, so a CHANGED set
+    // recaptures. An identical re-push (the editor re-pushes after every
+    // action, no-ops included) does not; with no entries the model is moot.
+    const bool same = next == overrides_ &&
+        (next.empty() || model_handle == overrides_model_);
+    overrides_ = std::move(next);
+    overrides_model_ = model_handle;
+    if (!same) request_probe_capture();
 }
 
 void BridgePass::clear_material_overrides() {
@@ -523,9 +530,19 @@ std::size_t BridgePass::set_spots(std::vector<BridgeSpot> spots) {
             ? sp.direction / len : glm::vec3(0.0f, 0.0f, -1.0f);
         sp.cos_outer = std::min(sp.cos_outer, sp.cos_inner);
     }
+    // The probes hold the room lit by the spots' diffuse: recapture -- but
+    // only when the SANITISED list changed. An alert change re-pushes the
+    // same list (an empty one over an empty one with no lighting file), and
+    // a capture of both probes costs ~14 ms for no visible change.
+    auto same_spot = [](const BridgeSpot& a, const BridgeSpot& b) {
+        return a.position == b.position && a.direction == b.direction &&
+               a.cos_inner == b.cos_inner && a.cos_outer == b.cos_outer &&
+               a.range == b.range && a.radiance == b.radiance;
+    };
+    const bool same = spots.size() == spots_.size() &&
+        std::equal(spots.begin(), spots.end(), spots_.begin(), same_spot);
     spots_ = std::move(spots);
-    // The probes hold the room lit by the spots' diffuse: recapture.
-    request_probe_capture();
+    if (!same) request_probe_capture();
     return dropped;
 }
 

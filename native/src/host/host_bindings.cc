@@ -4243,8 +4243,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
     // shader becomes a NaN bloom square. Returns the dropped count: invalid
     // spots PLUS valid ones beyond kBridgeMaxSpots (also before init(), when
     // nothing is stored: the spots are pushed at bridge load, after the pass
-    // exists). BridgePass::set_spots marks the probes dirty itself. Never
-    // raises for a stale/empty state.
+    // exists). BridgePass::set_spots marks the probes dirty itself when the
+    // list changed. Never raises for a stale/empty state.
     m.def("set_bridge_spots",
           [](const std::vector<std::tuple<std::tuple<float, float, float>,
                                           std::tuple<float, float, float>,
@@ -4294,7 +4294,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "(r, g, b), intensity)]; inner_deg/outer_deg are HALF-angles from the "
           "axis. Spots with any non-finite value are dropped; the rest keep the "
           "first 32. Returns the dropped count (invalid + over the cap). Marks "
-          "the reflection probes dirty. Never raises for a stale state.");
+          "the reflection probes dirty when the list differs from the current "
+          "one (never for an identical list). Never raises for a stale state.");
 
     m.def("set_bridge_pbr_enabled",
           [](bool on) {
@@ -4374,8 +4375,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
               else g_bridge_probe.capture_pending = true;
           },
           "Recapture both bridge reflection probes inside the next main-bridge "
-          "frame (bridge load, lighting / override / spot edits). Never per "
-          "frame.");
+          "frame (bridge load). Override and spot changes dirty the probes by "
+          "themselves. Never per frame.");
 
     m.def("bridge_debug_view",
           [] { return g_bridge_debug_view; },

@@ -288,3 +288,34 @@ def test_push_reports_cap_and_invalid_drops_together_not_subtracted(proj):
     assert len(cap_warnings) == 2
     assert invalid_warnings == ["1 bridge light(s) dropped as invalid (non-finite values)"]
     assert len(warnings) == 3
+
+
+# ── Final-review fix wave, finding 1: an alert change (and an identical
+# editor re-push) must not recapture the probes. BridgePass dirties them
+# itself only when the spots / overrides really change (C++:
+# BridgePbrFrame.SettingTheSameSpotsAgainDoesNotDirtyTheProbes,
+# ...MaterialOverridesDirtyTheProbesOnlyWhenTheyChange), so neither
+# on_alert() nor push() asks for a capture on its own. Only attach() -- a
+# bridge load, a new eye -- requests one unconditionally.
+
+def test_alert_changes_with_an_empty_doc_never_request_a_capture(proj):
+    io = FakeIO()          # a hashed bridge with NO lighting file: empty doc
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt.attach("iid")
+    io.calls.clear()
+    rt.on_alert(1)
+    rt.on_alert(2)
+    assert "request_bridge_probe_capture" not in names(io)
+    assert io.calls == [("set_bridge_spots", []), ("set_bridge_spots", [])]
+
+
+def test_push_leaves_the_capture_decision_to_the_pass(proj):
+    io = FakeIO()
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt.attach("iid")
+    io.calls.clear()
+    d = ld.empty_doc("x")
+    ld.shape_entry(d, 3, "floor")["material"] = {"metalness": 1.0}
+    rt.push(d, {"3:floor": 0})
+    assert ("set_bridge_material_overrides", "iid", [(0, -1.0, 1.0)]) in io.calls
+    assert "request_bridge_probe_capture" not in names(io)

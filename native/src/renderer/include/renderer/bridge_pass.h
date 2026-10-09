@@ -179,7 +179,10 @@ public:
     /// Per-shape roughness/metalness overrides for ONE model (the bridge).
     /// Replaces any previous set (including another model's). Production
     /// data: applied to the main bridge view only (never comm sets, never
-    /// officers). A later entry for the same mesh wins.
+    /// officers). A later entry for the same mesh wins. The probe capture
+    /// reads the metalness, so a set that DIFFERS from the current one marks
+    /// the probes dirty; an identical one (or none over none) does not.
+    /// clear_material_overrides() never dirties (session reset).
     void set_material_overrides(unsigned long long model_handle,
                                 std::vector<BridgeMaterialOverride> overrides);
     void clear_material_overrides();
@@ -229,8 +232,11 @@ public:
     /// and the legacy A/B path never see them). Replaces the previous set,
     /// keeping the first kBridgeMaxSpots; returns how many were dropped (the
     /// caller reports them -- never silently). The probe captures include the
-    /// spots' diffuse, so this ALWAYS marks the probes dirty -- here in the
-    /// pass, not in the binding, so every caller gets it (clearing too).
+    /// spots' diffuse, so a list that DIFFERS from the current one (compared
+    /// after the normalisation and truncation below) marks the probes dirty
+    /// -- here in the pass, not in the binding, so every caller gets it
+    /// (clearing a non-empty list too). An identical list, or empty over
+    /// empty, does not: an alert change re-pushes the same list every time.
     ///
     /// Expects a unit `direction` and cos_inner >= cos_outer, and finite
     /// values (the set_bridge_spots binding drops non-finite lights and

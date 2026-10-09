@@ -46,6 +46,9 @@ class BridgeRuntime:
                 dev_mode.log_swallowed(
                     "bridge lighting doc match_shapes", ld.BridgeLightingError(w))
             self.push(doc, matched)
+            # A bridge load always captures (a new room, a new eye), even
+            # when the pushed overrides/spots equal the previous bridge's.
+            self._io.request_bridge_probe_capture()
         except Exception as e:  # noqa: BLE001 - never let bridge data kill the frame
             dev_mode.log_swallowed("bridge runtime attach", e)
 
@@ -60,7 +63,12 @@ class BridgeRuntime:
         restatement of the cap count. Builds tuples from a doc that is
         already schema-validated, but the push to the native side still goes
         through a guard -- a value that slips past validation (or a
-        stale/garbage instance id) must not raise into the host loop."""
+        stale/garbage instance id) must not raise into the host loop.
+
+        Requests no probe capture itself: BridgePass marks the probes dirty
+        when the overrides or spots it is handed DIFFER from what it holds,
+        so an editor action that changed nothing (an empty undo, a value set
+        to itself) costs no recapture. attach() requests one explicitly."""
         if self._iid is None:
             return []
         self._doc = doc
@@ -80,16 +88,15 @@ class BridgeRuntime:
                 warnings.append(msg)
                 dev_mode.log_swallowed(
                     "bridge lighting spots dropped", ld.BridgeLightingError(msg))
-            self._io.request_bridge_probe_capture()
         except Exception as e:  # noqa: BLE001 - see docstring
             dev_mode.log_swallowed("bridge runtime push", e)
         return warnings
 
     def on_alert(self, level):
         """Re-push spots only on an alert change -- the probes keep their
-        last capture; set_bridge_spots itself marks them dirty for the next
-        one (native side), so a follow-up capture call here would be a
-        needless extra re-render."""
+        last capture. set_bridge_spots marks them dirty natively only when
+        the list really changed (an identical list, or empty over empty with
+        no lighting file, costs nothing), so no capture is requested here."""
         if self._iid is None or self._doc is None:
             return
         try:

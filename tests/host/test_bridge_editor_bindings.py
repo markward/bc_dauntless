@@ -407,3 +407,33 @@ def test_set_bridge_spots_drops_non_finite_on_a_live_bridge(probe_stash_guard, d
     bad_angle = ((0.0, 0.0, 50.0), (0.0, 0.0, -1.0), nan, 60.0, 120.0, (1.0, 1.0, 1.0), 2000.0)
     bad_rgb = ((0.0, 0.0, 50.0), (0.0, 0.0, -1.0), 30.0, 60.0, 120.0, (1.0, nan, 1.0), 2000.0)
     assert h.set_bridge_spots([bad_range, bad_dir, bad_angle, bad_rgb, _SPOT]) == 4
+
+
+# Final-review fix wave, finding 1: an alert change re-pushes the spots on
+# every level change -- with no lighting file, an EMPTY list over an empty
+# one. That must not recapture the probes (~14 ms for no visible change).
+# BridgePass dirties only when the sanitised list (or override set) differs.
+
+def test_identical_spot_and_override_pushes_do_not_dirty_the_probes(probe_stash_guard, dbridge):
+    h, iid = dbridge
+    assert h.bridge_probe_state()["capture_pending"] is False
+    assert h.set_bridge_spots([]) == 0
+    h.set_bridge_material_overrides(iid, [])
+    assert h.bridge_probe_state()["capture_pending"] is False
+
+
+def test_runtime_alert_changes_with_no_file_never_request_a_capture(
+        probe_stash_guard, dbridge, monkeypatch):
+    from engine.bridge_editor import lighting_doc as ld, runtime
+    h, iid = dbridge
+    monkeypatch.setattr(host_io, "_h", h)
+    rt = runtime.BridgeRuntime(io=host_io, eye=lambda: (0.0, 0.0, 0.0), alert=lambda: 0)
+    # The state attach() leaves behind for a bridge with no file, minus the
+    # load-time capture request attach() makes on purpose.
+    rt._iid = iid
+    rt.push(ld.empty_doc("x"), {})
+    assert h.bridge_probe_state()["capture_pending"] is False
+    rt.on_alert(1)
+    rt.on_alert(2)
+    rt.on_alert(0)
+    assert h.bridge_probe_state()["capture_pending"] is False

@@ -836,3 +836,75 @@ TEST_F(BridgePbrFrame, SetSpotsNormalisesTheAxisAndOrdersTheCone) {
     const glm::vec3 zero_axis = render_floor();
     for (int i = 0; i < 3; ++i) EXPECT_NEAR(zero_axis[i], clean[i], 1e-4f) << i;
 }
+
+// ── Final-review fix wave ──────────────────────────────────────────────────
+
+// Finding 1: set_spots dirties the probes only when the SANITISED list
+// changes. An alert change re-pushes an identical list (or, with no file, an
+// empty one over an empty one) every time -- that must not cost a recapture.
+TEST_F(BridgePbrFrame, SettingTheSameSpotsAgainDoesNotDirtyTheProbes) {
+    use_red_wall_corner();
+    const renderer::BridgeSpot s{{0, 0, 50}, {0, 0, -1}, 0.9f, 0.8f, 100.0f, glm::vec3(1.0f)};
+    pass->set_spots({s});
+    render_floor();                              // captures
+    ASSERT_FALSE(pass->probe_capture_pending());
+    pass->set_spots({s});
+    EXPECT_FALSE(pass->probe_capture_pending());
+    // Equal AFTER normalisation: a long axis and swapped cosines sanitise to
+    // the list already held.
+    renderer::BridgeSpot raw = s;
+    raw.direction = {0.0f, 0.0f, -7.0f};
+    pass->set_spots({raw});
+    EXPECT_FALSE(pass->probe_capture_pending());
+    // Equal AFTER truncation: the spots beyond the cap never count.
+    std::vector<renderer::BridgeSpot> many(renderer::kBridgeMaxSpots, s);
+    pass->set_spots(many);
+    EXPECT_TRUE(pass->probe_capture_pending());  // 1 -> 32: a real change
+    render_floor();
+    ASSERT_FALSE(pass->probe_capture_pending());
+    std::vector<renderer::BridgeSpot> more = many;
+    more.push_back(renderer::BridgeSpot{{9, 9, 9}, {1, 0, 0}, 0.5f, 0.4f, 10.0f, glm::vec3(5.0f)});
+    EXPECT_EQ(pass->set_spots(more), 1u);
+    EXPECT_FALSE(pass->probe_capture_pending());
+    // Any field differing is a change.
+    renderer::BridgeSpot moved = s;
+    moved.radiance = glm::vec3(2.0f);
+    pass->set_spots({moved});
+    EXPECT_TRUE(pass->probe_capture_pending());
+}
+
+TEST_F(BridgePbrFrame, EmptySpotsOverEmptySpotsIsANoOp) {
+    pass->set_spots({});
+    EXPECT_FALSE(pass->probe_capture_pending());
+    pass->set_spots({});
+    EXPECT_FALSE(pass->probe_capture_pending());
+}
+
+// Finding 1 (editor half): the probe capture reads the per-shape metalness,
+// so a CHANGED override set dirties the probes in the pass -- and an
+// identical re-push (the editor re-pushes after every dispatched action,
+// no-ops included) does not. clear_material_overrides() (session reset)
+// never dirties, like clear_spots().
+TEST_F(BridgePbrFrame, MaterialOverridesDirtyTheProbesOnlyWhenTheyChange) {
+    use_red_wall_corner();
+    render_floor();
+    EXPECT_FALSE(pass->probe_capture_pending());
+    set_floor_override(0.05f, 1.0f);
+    EXPECT_TRUE(pass->probe_capture_pending());
+    render_floor();                              // captures
+    ASSERT_FALSE(pass->probe_capture_pending());
+    set_floor_override(0.05f, 1.0f);             // identical re-push
+    EXPECT_FALSE(pass->probe_capture_pending());
+    set_floor_override(0.05f, 0.5f);             // a real edit
+    EXPECT_TRUE(pass->probe_capture_pending());
+    render_floor();
+    ASSERT_FALSE(pass->probe_capture_pending());
+    pass->set_material_overrides(handle() + 1, {{floor_mesh, 0.05f, 0.5f}});  // another model
+    EXPECT_TRUE(pass->probe_capture_pending());
+    render_floor();
+    ASSERT_FALSE(pass->probe_capture_pending());
+    pass->clear_material_overrides();
+    EXPECT_FALSE(pass->probe_capture_pending());
+    pass->set_material_overrides(0, {});        // none over none
+    EXPECT_FALSE(pass->probe_capture_pending());
+}
