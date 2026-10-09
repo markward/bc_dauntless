@@ -1905,3 +1905,112 @@ def test_survivor_warning_lists_only_pairs_that_produce_a_move(tmp_path):
     edit2.positions[k] = (2.0, 1.5, 0.0)
     e2 = match.diff_shape(s2, base2, edit2)
     assert e2["moved_survivors"] == [(k, _local(base2, (2, 1, 0)))]
+
+
+# --- Task 16: flipbook (numbered frame set) ---
+
+def _flip_pair(tmp_path, albedo):
+    s = _shape()
+    base, edit = _tex_pair(tmp_path, [s], f"newmtl m\nmap_Kd /blender/{albedo}\n")
+    return s, base, edit
+
+
+def test_numbered_frame_run_records_a_flipbook_up_to_the_first_gap(tmp_path):
+    s, base, edit = _flip_pair(tmp_path, "running_0.tga")
+    dirs = _tex_dirs(tmp_path, overlay_files=["running_0.tga", "running_1.tga",
+                                              "running_2.tga", "running_4.tga"])
+    [e] = match.diff([s], base, edit, texture_dirs=dirs)
+    assert e["albedo"] == "running_0.tga"
+    assert e["flipbook"] == {"frames": ["running_0.tga", "running_1.tga", "running_2.tga"],
+                             "fps": 5.0}
+
+
+def test_flipbook_frames_resolve_across_both_dirs_case_insensitively(tmp_path):
+    s, base, edit = _flip_pair(tmp_path, "RUN_0.TGA")
+    dirs = _tex_dirs(tmp_path, overlay_files=["run_0.tga", "Run_2.tga"],
+                     stock_files=["run_1.TGA"])
+    [e] = match.diff([s], base, edit, texture_dirs=dirs, flipbook_fps=12.0)
+    # frame 0 is the albedo as the .mtl names it (the loader requires
+    # albedo == frames[0]); later frames are the names found on disk.
+    assert e["flipbook"] == {"frames": ["RUN_0.TGA", "run_1.TGA", "Run_2.tga"], "fps": 12.0}
+
+
+@pytest.mark.parametrize("albedo,files", [
+    ("running_0.tga", ["running_0.tga"]),                     # a run of one
+    ("running_1.tga", ["running_1.tga", "running_2.tga"]),    # not frame 0
+    ("panel.tga", ["panel.tga", "panel_1.tga"]),              # not numbered
+    ("panel_00.tga", ["panel_00.tga", "panel_01.tga"]),       # not <stem>_0
+])
+def test_no_flipbook_without_a_run_starting_at_frame_0(tmp_path, albedo, files):
+    s, base, edit = _flip_pair(tmp_path, albedo)
+    [e] = match.diff([s], base, edit, texture_dirs=_tex_dirs(tmp_path, overlay_files=files))
+    assert e["albedo"] == albedo and "flipbook" not in e
+
+
+def test_make_fix_dict_carries_the_flipbook_on_its_texture_entry():
+    from tools import bridge_shape_diff as cli
+    fb = {"frames": ["running_0.tga", "running_1.tga"], "fps": 5.0}
+    edits = [{"block": 688, "orig_vertex_count": 4, "orig_triangle_count": 2,
+              "albedo": "running_0.tga", "flipbook": fb},
+             {"block": 29, "orig_vertex_count": 4, "orig_triangle_count": 2,
+              "albedo": "g.tga"}]
+    assert cli.make_fix_dict(DBRIDGE, edits)["textures"] == [
+        {"block": 29, "albedo": "g.tga"},
+        {"block": 688, "albedo": "running_0.tga", "flipbook": fb}]
+
+
+def test_main_summary_names_the_flipbook(monkeypatch, tmp_path, capsys):
+    cli, _ = _patched_cli(monkeypatch, tmp_path)
+    frames = [f"running_{k}.tga" for k in range(12)]
+    e = {"block": 688, "orig_vertex_count": 4, "orig_triangle_count": 2,
+         "moves": [], "uvs": [], "remove_triangles": [], "add_triangles": [],
+         "albedo": "running_0.tga", "flipbook": {"frames": frames, "fps": 5.0}}
+    monkeypatch.setattr(cli, "build_fix", lambda rel, base, edit:
+                        (cli.make_fix_dict(rel, [e]), [e]))
+    assert cli.main(["diff", "b.obj", "e.obj"]) == 0
+    assert ("block 688: texture -> running_0.tga (flipbook 12 frames @ 5 fps)"
+            in capsys.readouterr().out)
+
+
+def test_main_passes_flipbook_fps(monkeypatch, tmp_path):
+    cli, _ = _patched_cli(monkeypatch, tmp_path)
+    seen = {}
+
+    def fake(rel, base, edit, flipbook_fps=5.0):
+        seen["fps"] = flipbook_fps
+        return cli.make_fix_dict(rel, [GOLDEN_EDIT]), [GOLDEN_EDIT]
+    monkeypatch.setattr(cli, "build_fix", fake)
+    assert cli.main(["diff", "b.obj", "e.obj", "--flipbook-fps", "7.5"]) == 0
+    assert seen["fps"] == 7.5
+
+
+@pytest.mark.parametrize("fps", [0.0, -1.0, float("nan"), float("inf")])
+def test_build_fix_refuses_a_bad_flipbook_fps(tmp_path, fps):
+    from tools import bridge_shape_diff as cli
+    with pytest.raises(ShapeDiffError, match="flipbook fps"):
+        cli.build_fix(DBRIDGE, tmp_path / "b.obj", tmp_path / "e.obj", flipbook_fps=fps)
+
+
+def test_real_dbridge_flipbook_verifies(tmp_path, monkeypatch, capsys):
+    pytest.importorskip("_dauntless_host")
+    nif = paths.game_root() / DBRIDGE
+    if not nif.exists():
+        pytest.skip("BC content not configured")
+    from tools import bridge_shape_diff as cli
+    cli.export(DBRIDGE, tmp_path / "export")
+    base = tmp_path / "export" / "Dbridge.obj"
+    lines = base.read_text().splitlines()
+    o = lines.index(next(line for line in lines if line.startswith("o b0688")))
+    u = next(k for k in range(o, len(lines)) if lines[k].startswith("usemtl"))
+    lines[u] = "usemtl strip"
+    edit = tmp_path / "export" / "edit.obj"
+    edit.write_text("\n".join(lines).replace("mtllib Dbridge.mtl", "mtllib edit.mtl") + "\n")
+    (tmp_path / "export" / "edit.mtl").write_text(
+        (tmp_path / "export" / "Dbridge.mtl").read_text()
+        + "newmtl strip\nmap_Kd /elsewhere/strip_0.tga\n")
+    dirs = _tex_dirs(tmp_path, overlay_files=["strip_0.tga", "strip_1.tga", "strip_2.tga"])
+    monkeypatch.setattr(cli, "_texture_dirs", lambda rel: dirs)
+    fix, edits = cli.build_fix(DBRIDGE, base, edit, flipbook_fps=4.0)
+    assert fix["textures"] == [{"block": 688, "albedo": "strip_0.tga", "flipbook": {
+        "frames": ["strip_0.tga", "strip_1.tga", "strip_2.tga"], "fps": 4.0}}]
+    assert "verified 1 objects" in capsys.readouterr().out

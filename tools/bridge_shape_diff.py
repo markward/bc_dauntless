@@ -12,11 +12,14 @@ default settings; export base.obj before editing and edit.obj after, both
 with default settings. Don't join, split or rename objects. Accepted:
 vertex MOVES, UV0 EDITS, deleted faces/vertices, NEW vertices, added faces
 (n-gons are ear-clipped), and a new ALBEDO texture per object (map_Kd; the
-.tga must be in the replacements overlay or stock texture dir). A value equal
+.tga must be in the replacements overlay or stock texture dir; a map_Kd of
+`<stem>_0.tga` with `<stem>_1.tga`, ... beside it becomes a looping flipbook
+at `--flipbook-fps`, default 5). A value equal
 to an original's (a snapped vertex, a shared UV) is stored as a reference.
 `--exclude BLOCK` (repeatable) leaves a block out of the fix."""
 import argparse
 import json
+import math
 import posixpath
 import sys
 from pathlib import Path
@@ -74,10 +77,17 @@ def _has_geometry(e: dict) -> bool:
                                   "remove_triangles", "add_triangles"))
 
 
+def _texture_entry(e: dict) -> dict:
+    t = {"block": e["block"], "albedo": e["albedo"]}
+    if e.get("flipbook"):
+        t["flipbook"] = e["flipbook"]
+    return t
+
+
 def make_fix_dict(rel: str, edits: list) -> dict:
     geometry = [e for e in edits if _has_geometry(e)]
-    textures = sorted(({"block": e["block"], "albedo": e["albedo"]}
-                       for e in edits if e.get("albedo")), key=lambda t: t["block"])
+    textures = sorted((_texture_entry(e) for e in edits if e.get("albedo")),
+                      key=lambda t: t["block"])
     fix = {"format": 1, "source": rel, "generator": GENERATOR}
     if geometry or not textures:
         fix["shape_edits"] = payload.encode_b64(geometry)
@@ -103,7 +113,9 @@ def _summary(e: dict) -> str:
                      f"{len(e.get('add_triangles', []))} added, "
                      f"{len(addv)} vertices added{_by_ref(v['pos'] for v in addv)}")
     if e.get("albedo"):
-        parts.append(f"texture -> {e['albedo']}")
+        fb = e.get("flipbook")
+        flip = (f" (flipbook {len(fb['frames'])} frames @ {fb['fps']:g} fps)" if fb else "")
+        parts.append(f"texture -> {e['albedo']}{flip}")
     return f"block {e['block']}: " + ", ".join(parts)
 
 
@@ -112,17 +124,20 @@ def fix_text(fix: dict) -> str:
 
 
 def build_fix(rel: str, base_path: Path, edit_path: Path, partial: bool = False,
-              exclude=(), verify: bool = True):
+              exclude=(), verify: bool = True, flipbook_fps: float = 5.0):
     """Diff, then (unless verify=False -- unit tests only) apply the fix with
     the loader and check it reproduces edit.obj and leaves every other block
     stock (spec §5.4); a mismatch raises, so nothing unverified is written.
-    `exclude`: block numbers left out of the fix entirely (as if unedited)."""
+    `exclude`: block numbers left out of the fix entirely (as if unedited).
+    `flipbook_fps`: playback rate of every numbered frame run (spec §5.3)."""
+    if not (math.isfinite(flipbook_fps) and flipbook_fps > 0):
+        raise ShapeDiffError(f"flipbook fps must be finite and > 0, got {flipbook_fps}")
     base_objs = obj_io.read_objects(base_path)
     edit_objs = obj_io.read_objects(edit_path)
     dirs = _texture_dirs(rel)
     shapes = _shapes(rel)
     result = match.diff(shapes, base_objs, edit_objs, partial=partial,
-                        texture_dirs=dirs, exclude=exclude)
+                        texture_dirs=dirs, exclude=exclude, flipbook_fps=flipbook_fps)
     edits, skipped = result if partial else (result, [])
     fix = make_fix_dict(rel, edits)
     if verify:
@@ -157,12 +172,16 @@ def main(argv=None) -> int:
     df.add_argument("--partial", action="store_true")
     df.add_argument("--exclude", type=int, action="append", default=[], metavar="BLOCK",
                     help="leave this block out of the fix (repeatable)")
+    df.add_argument("--flipbook-fps", type=float, default=None, metavar="FPS",
+                    help="playback rate of a numbered frame run <stem>_0..N-1 (default 5)")
     a = ap.parse_args(argv)
     try:
         if a.cmd == "export":
             print(export(a.nif, a.out))
             return 0
         kw = {"exclude": a.exclude} if a.exclude else {}
+        if a.flipbook_fps is not None:
+            kw["flipbook_fps"] = a.flipbook_fps
         if a.partial:
             fix, edits, skipped = build_fix(a.nif, a.base, a.edit, partial=True, **kw)
         else:

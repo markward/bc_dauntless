@@ -2424,6 +2424,20 @@ void nif_shapes_collect_image(const nif::File& file, std::uint32_t img_link,
     out->push_back(nif_shapes_basename(img->file_name));
 }
 
+
+/// The NiImage link `tp` draws as its static Base: its own image_link, or --
+/// when that is 0 and its controller is a NiFlipController (BC's stock
+/// EBridge authoring, and the mesh-fix flipbook op) -- the controller's
+/// source 0, mirroring model_build.cc's flip_image_override_for_prop.
+std::uint32_t nif_shapes_property_image(const nif::File& file,
+                                        const nif::NiTextureProperty& tp) {
+    if (tp.image_link != 0 || tp.obj.controller_link == 0) return tp.image_link;
+    std::size_t idx = nif_shapes_index_of(file, tp.obj.controller_link);
+    if (idx == std::string::npos || idx >= file.blocks.size()) return 0;
+    const auto* ctrl = std::get_if<nif::NiFlipController>(&file.blocks[idx]);
+    return ctrl && !ctrl->image_links.empty() ? ctrl->image_links[0] : 0;
+}
+
 }  // namespace
 
 // Read-only geometry dump for the mesh-fix generator (tools/gen_mesh_fixes.py):
@@ -2465,7 +2479,7 @@ py::object nif_shapes_impl(const std::string& nif_abs_path,
             if (idx == std::string::npos || idx >= f.blocks.size()) continue;
             const auto& b = f.blocks[idx];
             if (const auto* tp = std::get_if<nif::NiTextureProperty>(&b)) {
-                nif_shapes_collect_image(f, tp->image_link, &textures);
+                nif_shapes_collect_image(f, nif_shapes_property_image(f, *tp), &textures);
             } else if (const auto* mtp = std::get_if<nif::NiMultiTextureProperty>(&b)) {
                 for (const auto& elem : mtp->elements) {
                     if (elem.has_image) nif_shapes_collect_image(f, elem.image_link, &textures);
@@ -2491,7 +2505,7 @@ py::object nif_shapes_impl(const std::string& nif_abs_path,
                     if (idx == std::string::npos || idx >= f.blocks.size()) continue;
                     const auto& b = f.blocks[idx];
                     if (const auto* tp = std::get_if<nif::NiTextureProperty>(&b)) {
-                        nif_shapes_collect_image(f, tp->image_link, &ancestor_textures);
+                        nif_shapes_collect_image(f, nif_shapes_property_image(f, *tp), &ancestor_textures);
                     } else if (const auto* mtp = std::get_if<nif::NiMultiTextureProperty>(&b)) {
                         for (const auto& elem : mtp->elements) {
                             if (elem.has_image) nif_shapes_collect_image(f, elem.image_link, &ancestor_textures);

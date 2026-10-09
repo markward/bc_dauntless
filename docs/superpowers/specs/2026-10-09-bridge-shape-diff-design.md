@@ -164,7 +164,13 @@ this correspondence.
    added. If it **faces the other way**, it is a real flip of a surviving
    face (a normal flipped in Blender, e.g. on a moved corner): the pairing
    stays and the flipped kept face is refused as before -- never shipped as
-   a back-face.
+   a back-face. **Qualified (parked minor, Task 15 ledger):** this holds for
+   the face under test, not its neighbours. Undoing a same-facing pairing
+   un-pairs its corner, and every face touching that corner is re-derived
+   as added -- so a GENUINE flip on a *neighbouring* face of an un-paired
+   corner can pass as an added back-face (needs a folded mesh plus a
+   deliberate flip; not seen on Mark's data). Enforcing it means checking
+   every face touching an about-to-be-unpaired corner.
 6. **Face propagation** (an unmatched vertex completing a base face, same
    winding, unique candidate) and **equal gaps** (a run facing as many
    unmatched base vertices, accepted only if every touching face maps onto a
@@ -261,6 +267,20 @@ An OBJ whose `mtllib` names a file that isn't there is a **file-level** error
 every textured object look retextured. An OBJ with no `mtllib` line carries
 no texture info and records no texture ops. A **base** object whose faces
 span two albedos is refused (base.obj must be the unaltered export).
+
+**Flipbook (Task 16, 2026-10-09).** When a recorded albedo's basename is
+`<stem>_0.<ext>` (case-insensitive) and the same two dirs, by the same
+case-insensitive existence rule, hold `<stem>_1.<ext>`, `<stem>_2.<ext>`, ...
+the contiguous run (stopping at the first gap; at most 256) of N >= 2 frames
+is recorded with the texture op as `flipbook: {frames, fps}`. Frame 0 is the
+albedo as the `.mtl` names it (the loader requires `albedo == frames[0]`);
+frames 1.. are the names found on disk. A run of one, a name not ending in
+`_0`, or `_00` record a plain albedo op. `fps` is `--flipbook-fps` (CLI,
+default 5 -- Mark's ruling for the LCARS strip; `build_fix(...,
+flipbook_fps=5.0)`), refused unless finite and > 0. Summary line:
+`texture -> running_0.tga (flipbook 12 frames @ 5 fps)`. The verifier
+(§5.4) is unchanged: `nif_shapes` reports a flipbook shape's texture as its
+frame 0 (below), which is what the albedo check compares.
 
 **Iteration 3, as built (2026-10-09).**
 
@@ -385,7 +405,12 @@ search list is `paths.game_asset_dirs(env)`, which already puts the
 replacements overlay dir first (pinned by
 `tests/host/test_realize_set.py::test_realize_set_bridge_texture_dirs_include_the_replacements_overlay`),
 so a file that exists only in the overlay is found. `shape_edits` is omitted
-when the diff holds texture ops but no geometry. A texture filename is a
+when the diff holds texture ops but no geometry.
+
+A `textures` entry may carry `"flipbook": {"frames": ["running_0.tga", ...,
+"running_11.tga"], "fps": 5.0}` (Task 16): the shape's albedo then loops
+through `frames` at `fps`. Frames follow the `albedo` name rules, 2..256 of
+them, `frames[0] == albedo`; `fps` finite and > 0. A texture filename is a
 name, not BC data, so it doesn't change §6.2.
 
 **Not human-readable by design** (Mark's ask): the edits are one packed binary
@@ -525,6 +550,31 @@ into `blocks`). Tests: `native/tests/assets/cpu/mesh_fix_texture_test.cc`
 four round-2b targets 29/45/59/479 take a swap -- none is overridden by an
 ancestor `NiMultiTextureProperty`).
 
+**Flipbook texture ops (Task 16).** Extra validation, same all-or-nothing
+contract: 2..256 frames, each a valid albedo name (bare, `.tga`, no reserved
+suffix), `frames[0] == albedo`, `fps` finite and > 0. Applied as BC's **only
+stock flip controller** is authored (`EBridge.nif`: `NiTextureProperty` 549
+-> `NiFlipController` 550, 8 LCARS frames; no stock ship has one -- the
+Sovereign example in `model_build.cc` is a mod): a `NiTextureProperty`
+(flags 0, **`image_link` 0**, `controller_link` -> the controller), a
+`NiFlipController` (`flags` 0x0009 = active, cycle type loop; `frequency` 1,
+`phase` 0, `start_time` 0, `delta` = 1/fps, `stop_time` = N x delta, as the
+stock N x delta; `texture_slot` 0; no next controller; the v3.1 target field
+`unknown_integer` = the property's link id, as stock), then one external
+`NiImage` per frame (parser defaults, as stock). Fresh ids in append order
+`max(block_ids) + 1 ..`; the property is linked onto the shape. `model_build`
+already turns that into `Model::texture_animations` + `Material::
+animation_index`, drawing source 0 as the static Base when `image_link` is
+0, and every Base-binding pass (bridge included) samples
+`animated_base_texture` -- no renderer change. The host's `nif_shapes`
+binding (which the verifier reads) now mirrors that source-0 substitution;
+before Task 16 it fell through to the ancestor's texture for such a
+property. Tests: `native/tests/assets/cpu/mesh_fix_flipbook_test.cc`
+(parse; frame k at t = k/fps and the wrap at N/fps; sibling untouched;
+every refusal leaves the file unchanged; spliced fields; the stock EBridge
+controller has exactly the mirrored shape; real `Dbridge.NIF` b0688
+animates `Map 7` / `Map 8`).
+
 ---
 
 ## 8. Testing
@@ -556,7 +606,8 @@ the scratchpad; in game, Developer Options → Lighting → Bridge Debug View
 | 2b | Per-shape albedo texture op (console top panels b0029/b0059 → g_imp_connops, wall inset slots b0045/b0479 → g_imp_redbars) | accepted by Mark in game 2026-10-09 (round 4b): textures + UVs on b0029/b0059 (g_imp_connops), b0045/b0479 (g_imp_redbars), b0063 (Map 22b), b0189/b0236/b0415 (Map 22c); back wall b0017 UV re-map on replaced Map 7 | `textures` field in the fix file (§6, §7); diff records it by `map_Kd` basename, one per object, file must exist in the overlay or stock dir (§5.3). Emissive/glow deliberately out of scope |
 | 2 | Turbolift header reshape: triangle remove/add | — | |
 | 3 | Extruded side panels: new verts/tris/UVs | — | Open: side-face texturing. Lean: collapse the new faces' UVs onto the panel border (stretch edge texels, no new texture); alternative: a project-owned trim texture |
-| 3 — new vertices + refs (cove b0392/b0395, LCARS b0688/b0697, b0471) | New vertices, BSD2 references (snapped moves become refs), robust correspondence, n-gon ear clipping, `--exclude`; b0392's removals land with b0395's rework | accepted by Mark in game 2026-10-09 (round 5): verified 21 objects; cove b0392+b0395, black panel b0471 (Map 22a), LCARS b0688 (running_0, static until flipbook) + b0697 (g_imp_redbars), seat panels b0121/b0124 (Map 22a); payload has no absolute coordinates | §5.2/§5.3 iteration-3 rules, §6.1 BSD2. Expect previously committed blocks unchanged except snapped moves turning into references. **Next, NOT built:** the `running_0..11` flipbook on b0688 (an animated texture sequence -- needs its own op) |
+| 3 — new vertices + refs (cove b0392/b0395, LCARS b0688/b0697, b0471) | New vertices, BSD2 references (snapped moves become refs), robust correspondence, n-gon ear clipping, `--exclude`; b0392's removals land with b0395's rework | accepted by Mark in game 2026-10-09 (round 5): verified 21 objects; cove b0392+b0395, black panel b0471 (Map 22a), LCARS b0688 (running_0, static until flipbook) + b0697 (g_imp_redbars), seat panels b0121/b0124 (Map 22a); payload has no absolute coordinates | §5.2/§5.3 iteration-3 rules, §6.1 BSD2. Expect previously committed blocks unchanged except snapped moves turning into references. The `running_0..11` flipbook on b0688 is row 4 |
+| 4 — flipbook (LCARS b0688 running_0..11 @ 5 fps) | Animated albedo: a numbered frame run becomes a looping `NiFlipController` | tool support built; awaiting regenerate (dry run on Mark's round-5 export: verified 21, b0688 `texture -> running_0.tga (flipbook 12 frames @ 5 fps)`) | `textures[].flipbook` (§6, §7); detection §5.3; fps 5, continuous loop (Mark 2026-10-09) |
 
 ---
 

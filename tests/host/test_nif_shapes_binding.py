@@ -96,3 +96,15 @@ def test_nif_shapes_raises_the_loaders_refusal():
         _host().nif_shapes(str(nif), bad)
     with pytest.raises(RuntimeError, match="parse"):
         _host().nif_shapes(str(nif), "{ nope")
+
+
+def test_nif_shapes_reports_a_flipbooks_frame_0_as_the_shapes_texture():
+    # A flipbook property has image_link 0 (as BC's stock EBridge one does);
+    # the renderer draws source 0 as its static Base, so nif_shapes must too.
+    import json
+    nif = _dbridge()
+    fix = json.dumps({"format": 1, "textures": [{
+        "block": 688, "albedo": "Map 7.tga",
+        "flipbook": {"frames": ["Map 7.tga", "Map 8.tga"], "fps": 5.0}}]})
+    fixed = {d["block"]: d for d in _host().nif_shapes(str(nif), fix)}
+    assert fixed[688]["textures"] == ["Map 7.tga"]

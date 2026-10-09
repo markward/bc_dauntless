@@ -12,7 +12,10 @@ face's welded vertex set, duplicates and reversed twins included), added
 triangles and new vertices. A value equal to an original's (a snapped
 position, a shared UV) is stored as a reference to it (spec §6.2). A
 changed albedo (by map_Kd basename, one per object, file present in the
-overlay or stock texture dir) is recorded as the edit's "albedo" key."""
+overlay or stock texture dir) is recorded as the edit's "albedo" key; when
+that albedo is frame 0 of a numbered run (<stem>_0 .. <stem>_{N-1}, N >= 2)
+the run is recorded too, as "flipbook"."""
+import re
 from pathlib import Path
 
 from tools.shape_diff import ShapeDiffError, frames, obj_io, triangulate
@@ -714,12 +717,42 @@ def _object_albedo(mesh):
 
 
 def _find_texture(name, texture_dirs):
+    """The on-disk name of the first file in `texture_dirs` whose name matches
+    `name` case-insensitively, or None."""
     want = name.casefold()
     for d in texture_dirs:
         d = Path(d)
-        if d.is_dir() and any(p.name.casefold() == want for p in d.iterdir() if p.is_file()):
-            return True
-    return False
+        if not d.is_dir():
+            continue
+        for p in d.iterdir():
+            if p.is_file() and p.name.casefold() == want:
+                return p.name
+    return None
+
+
+_FRAME_0 = re.compile(r"^(.*)_0(\.[^.]+)$", re.IGNORECASE)
+_MAX_FLIPBOOK_FRAMES = 256      # mesh_fix.cc kFlipbookMaxFrames
+
+
+def _flipbook(albedo, texture_dirs, fps):
+    """Spec §5.3: when `albedo` is `<stem>_0.<ext>` and `texture_dirs` hold a
+    contiguous run <stem>_1, <stem>_2, ... (stopping at the first gap), the
+    flipbook {frames, fps}; None for a run of one. Frame 0 is `albedo` as
+    written (the loader requires albedo == frames[0]); later frames are the
+    names found on disk."""
+    m = _FRAME_0.match(albedo)
+    if not m:
+        return None
+    stem, ext = m.groups()
+    frames = [albedo]
+    while len(frames) < _MAX_FLIPBOOK_FRAMES:
+        found = _find_texture(f"{stem}_{len(frames)}{ext}", texture_dirs)
+        if found is None:
+            break
+        frames.append(found)
+    if len(frames) < 2:
+        return None
+    return {"frames": frames, "fps": fps}
 
 
 def _albedo_op(block, base, edit, texture_dirs):
@@ -755,7 +788,8 @@ def _albedo_op(block, base, edit, texture_dirs):
     return new
 
 
-def diff_shape(shape: dict, base, edit, texture_dirs=None, index=None):
+def diff_shape(shape: dict, base, edit, texture_dirs=None, index=None,
+               flipbook_fps=5.0):
     """Diff one shape's base/edit OBJ pair (spec §5.3): vertex moves, UV0
     edits, removed faces, added triangles and new vertices, with values
     shared with an original stored as references (`index`, all shapes of the
@@ -842,11 +876,14 @@ def diff_shape(shape: dict, base, edit, texture_dirs=None, index=None):
         out["moved_survivors"] = survivors      # for the CLI's warning, never encoded
     if albedo is not None:
         out["albedo"] = albedo
+        flipbook = _flipbook(albedo, texture_dirs or (), flipbook_fps)
+        if flipbook is not None:
+            out["flipbook"] = flipbook
     return out
 
 
 def diff(shapes: list, base_objs: dict, edit_objs: dict, partial: bool = False,
-         texture_dirs=None, exclude=()):
+         texture_dirs=None, exclude=(), flipbook_fps=5.0):
     """Diff every object. With partial=False (default), the first object
     whose diff_shape raises ShapeDiffError aborts the whole call, and the
     return is just the edit list. With partial=True, an object-level
@@ -889,7 +926,7 @@ def diff(shapes: list, base_objs: dict, edit_objs: dict, partial: bool = False,
             raise ShapeDiffError(f"object {name}: block {block} is not a shape in this NIF")
         try:
             e = diff_shape(by_block[block], base_objs[name], edit_objs[name],
-                           texture_dirs, index)
+                           texture_dirs, index, flipbook_fps)
         except ShapeDiffError as exc:
             if not partial:
                 raise
