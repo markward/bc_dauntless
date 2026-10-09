@@ -16,6 +16,7 @@ import os as _os_mod
 from engine import renderer as r
 from engine import host_io
 from engine import paths as _paths
+from engine import mods as _mods
 from engine.appc.ship_iter import (
     iter_set_objects as _iter_set_objects,
     iter_ships as _iter_ships,
@@ -7953,6 +7954,13 @@ def _update_ui_for_tick(player, view_mode, session, active_set) -> None:
     return
 
 
+def _bridge_overlay_dirs(tex_rel) -> list:
+    """The replacements-overlay dirs holding project-authored PBR maps for a
+    stock bridge's textures (spec 2026-10-08-bridge-emitters §9.2). Resolved
+    at use; [] when the overlay has nothing there."""
+    return [str(d) for d in _mods.replacements().dirs_for(tex_rel)]
+
+
 def realize_set(controller, r, set_obj, *, is_bridge: bool,
                 comm_set_id: int = None) -> None:
     """Realize any SDK set's renderable content into the renderer.
@@ -8016,17 +8024,18 @@ def realize_set(controller, r, set_obj, *, is_bridge: bool,
         nif_abs = str(_paths.game_asset(nif))
         env = _App.g_kModelManager.env_for(nif)
         if env:
-            tex_abs = [str(p) for p in _paths.game_asset_dirs(env)]
+            tex_rel = env
         else:
             # No LoadModel-recorded env — comm sets declare geometry via
             # SetBackgroundModel, not LoadModel, so env_for is None. Set
             # textures live in <model_dir>/High by BC convention; use that
             # rather than the DBridge fallback (which holds only DBridge's tgas).
             import posixpath as _pp
-            tex_abs = [str(p) for p in
-                       _paths.game_asset_dirs(_pp.dirname(nif) + "/High")]
+            tex_rel = _pp.dirname(nif) + "/High"
+        tex_abs = [str(p) for p in _paths.game_asset_dirs(tex_rel)]
         if is_bridge:
-            handle = r.load_model(nif_abs, tex_abs, interior=True)
+            handle = r.load_model(nif_abs, tex_abs, interior=True,
+                                  sibling_overlay_dirs=_bridge_overlay_dirs(tex_rel))
             iid = r.create_bridge_instance(handle)
         else:
             # A comm/remote set is non-critical: if its NIF or a texture fails

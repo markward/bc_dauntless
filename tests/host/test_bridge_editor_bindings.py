@@ -125,3 +125,23 @@ def test_set_bridge_highlight_none_and_stale_never_raise_headless(host_module):
 
 def test_no_python_setter_for_the_developer_gate(host_module):
     assert not any("set_developer_mode" in n for n in dir(host_module))
+
+
+def test_model_identity_meshes_report_maps(monkeypatch):
+    from engine import host_io
+
+    class FakeHost:
+        @staticmethod
+        def instance_translation(iid):
+            return None
+
+        @staticmethod
+        def model_identity(iid):
+            return {"source": b"/x.nif", "content_hash": "ab", "meshes": [
+                {"mesh": 0, "block": 3, "name": b"floor", "node_chain": [],
+                 "material": 0, "textures": [b"floor.tga"],
+                 "maps": {"roughness": True, "metalness": False, "normal": False}}]}
+
+    monkeypatch.setattr(host_io, "_h", FakeHost)
+    mesh = host_io.model_identity(0)["meshes"][0]
+    assert mesh["maps"] == {"roughness": True, "metalness": False, "normal": False}

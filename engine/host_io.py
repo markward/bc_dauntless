@@ -552,11 +552,16 @@ def _lossy_str(v) -> str:
     return str(v)
 
 
+_NO_MAPS = {"roughness": False, "metalness": False, "normal": False}
+
+
 def model_identity(instance_id):
     """{source, content_hash, meshes:[{mesh, block, name, node_chain,
-    textures, material}]} for an instance's model; None headless or for a
-    stale id. `textures` is the Base-stage texture basename as BUILT (parent
-    inheritance resolved), or []. Names are str (lossily decoded)."""
+    textures, material, maps}]} for an instance's model; None headless or for
+    a stale id. `textures` is the Base-stage texture basename as BUILT (parent
+    inheritance resolved), or []. Names are str (lossily decoded). `maps` is
+    {roughness, metalness, normal} bool (spec 2026-10-09-bridge-pbr); all-False
+    when absent (a binary built before this field existed)."""
     fn = getattr(_h, "model_identity", None) if _h is not None else None
     info = None if fn is None else fn(instance_id)
     if info is None:
@@ -565,6 +570,8 @@ def model_identity(instance_id):
         m["name"] = _lossy_str(m["name"])
         m["node_chain"] = [_lossy_str(n) for n in m["node_chain"]]
         m["textures"] = [_lossy_str(t) for t in m.get("textures", ())]
+        if "maps" not in m:
+            m["maps"] = dict(_NO_MAPS)
     return info
 
 

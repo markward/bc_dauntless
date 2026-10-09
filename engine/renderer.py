@@ -188,7 +188,7 @@ def frame() -> None:
 def load_model(nif_path: str, texture_search_path,
                texture_replacements=None, decals=None,
                scale: float = 1.0, geosphere: bool = False,
-               interior: bool = False) -> int:
+               interior: bool = False, sibling_overlay_dirs=None) -> int:
     """Load (and cache) a NIF model. `texture_replacements`, when given, is a
     list of (old_substring, new_abs_path) pairs baking BC ReplaceTexture swaps
     into a distinct per-registry model variant (Federation hull names). None /
@@ -207,8 +207,14 @@ def load_model(nif_path: str, texture_search_path,
     non-sphere NIF loads unchanged.
 
     `interior` loads as an interior set: shapes authored without normals get
-    generated ones (spec 2026-10-08-bridge-lighting-baseline-design.md)."""
-    return _h.load_model(nif_path, texture_search_path, texture_replacements, decals, scale, geosphere, interior)
+    generated ones (spec 2026-10-08-bridge-lighting-baseline-design.md).
+
+    `sibling_overlay_dirs` is the replacements-overlay search list for the
+    bridge PBR roughness/metalness/normal sibling maps (spec
+    2026-10-09-bridge-pbr §9.2/§9.3): used only when `interior` is True. None
+    / empty is byte-identical to the plain interior load."""
+    return _h.load_model(nif_path, texture_search_path, texture_replacements, decals, scale, geosphere, interior,
+                          list(sibling_overlay_dirs or []))
 
 
 def create_instance(model: int) -> InstanceId:

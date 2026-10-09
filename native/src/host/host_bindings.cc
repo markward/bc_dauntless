@@ -675,7 +675,8 @@ scenegraph::ModelHandle load_model_impl(
     const py::object& decals,
     float scale,
     bool geosphere,
-    bool interior) {
+    bool interior,
+    const std::vector<std::string>& sibling_overlay_dirs) {
     if (!g_window) {
         throw std::runtime_error("load_model: init must be called first (asset upload needs a GL context)");
     }
@@ -765,6 +766,17 @@ scenegraph::ModelHandle load_model_impl(
         rep_key += "|interior";
     }
 
+    // Sibling-overlay search list for the bridge PBR roughness/metalness/
+    // normal maps (spec 2026-10-09-bridge-pbr §9.2/§9.3): folded into rep_key
+    // like interior, so two loads differing only in this list are distinct
+    // cached entries.
+    std::vector<std::filesystem::path> overlay_dirs;
+    overlay_dirs.reserve(sibling_overlay_dirs.size());
+    for (const auto& d : sibling_overlay_dirs) {
+        overlay_dirs.emplace_back(d);
+        rep_key += "|overlay:" + d;
+    }
+
     // Dedupe by (nif_path, replacements, decals): callers that load the same
     // NIF + registry + decal set for multiple ships get the same handle and
     // the underlying assets::AssetCache::load isn't even called a second
@@ -792,7 +804,7 @@ scenegraph::ModelHandle load_model_impl(
         };
         g_cache = std::make_unique<assets::AssetCache>(std::move(cfg));
     }
-    auto handle = g_cache->load(nif_path, search_paths, replacements, decal_requests, scale, geosphere, interior);
+    auto handle = g_cache->load(nif_path, search_paths, replacements, decal_requests, scale, geosphere, interior, overlay_dirs);
     LoadedModel lm;
     lm.nif_path         = std::move(canonical);
     lm.handle           = std::move(handle);
@@ -2948,7 +2960,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("decals") = py::none(),
           py::arg("scale") = 1.0f,
           py::arg("geosphere") = false,
-          py::arg("interior") = false);
+          py::arg("interior") = false,
+          py::arg("sibling_overlay_dirs") = std::vector<std::string>{});
     m.def("parse_set_camera", &parse_set_camera_impl,
           "Extract the embedded camera (frustum + world transform) from a set "
           "NIF, or None. Parse-only; no GL context required.");
@@ -3764,7 +3777,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
               std::filesystem::path tex_dir =
                   std::filesystem::path(nif_path).parent_path();
               auto handle = load_model_impl(nif_path, py::cast(tex_dir.string()),
-                                            py::none(), py::none(), 1.0f, false, false);
+                                            py::none(), py::none(), 1.0f, false, false,
+                                            {});
               auto id = g_world.create_instance(handle);
 
               // The host owns the cameras + pass state, so it places the
@@ -6364,6 +6378,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   d["node_chain"] = std::move(chain_b);
                   d["textures"] = std::move(textures);
                   d["material"] = mi;
+                  py::dict maps;
+                  const auto& mat = assets::material_or_default(*model, mi);
+                  using S = assets::Material::StageSlot;
+                  maps["roughness"] = mat.stages[static_cast<size_t>(S::Roughness)].texture_index >= 0;
+                  maps["metalness"] = mat.stages[static_cast<size_t>(S::Metalness)].texture_index >= 0;
+                  maps["normal"]    = mat.stages[static_cast<size_t>(S::Bump)].texture_index >= 0;
+                  d["maps"] = std::move(maps);
                   meshes.append(std::move(d));
               }
               py::dict out;
@@ -6374,9 +6395,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("instance_id"),
           "{source, content_hash, meshes:[{mesh, block, name, node_chain, "
-          "textures, material}]} for an instance's model, or None for a stale "
-          "id. name / node_chain / textures are BYTES (decode with "
-          "errors='replace'; host_io.model_identity does).");
+          "textures, material, maps}]} for an instance's model, or None for a "
+          "stale id. name / node_chain / textures are BYTES (decode with "
+          "errors='replace'; host_io.model_identity does). maps is "
+          "{roughness, metalness, normal}: whether the mesh's material has "
+          "that texture stage populated (spec 2026-10-09-bridge-pbr).");
 
     // Developer-only selection tint on the bridge (spec
     // 2026-10-08-bridge-emitters §4).

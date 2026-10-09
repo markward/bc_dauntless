@@ -10,7 +10,7 @@ class _FakeRenderer:
         self.interior_flags = []
         self._next = 1
 
-    def load_model(self, nif_abs, tex_abs, *, interior=False):
+    def load_model(self, nif_abs, tex_abs, *, interior=False, sibling_overlay_dirs=None):
         self.loaded.append((nif_abs, tex_abs))
         self.interior_flags.append(interior)
         return 100 + len(self.loaded)
