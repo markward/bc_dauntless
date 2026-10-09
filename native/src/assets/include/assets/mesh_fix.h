@@ -104,9 +104,19 @@ struct ShapeEdit {
 // NiTriShape at `block` (block-array index) samples `albedo` (a bare .tga
 // filename, resolved through the model's texture search dirs like any stock
 // NiImage) instead of the texture it inherits. Albedo only -- no glow.
+// With `flipbook` set the shape's albedo is an animated frame set instead:
+// `frames` (bare .tga names, 2..256, frames[0] == albedo) cycle at `fps`,
+// looping, through a spliced NiFlipController shaped like BC's only stock
+// one (EBridge.nif block 550).
+struct MeshFixFlipbook {
+    std::vector<std::string> frames;
+    float fps = 0.0f;
+};
+
 struct MeshFixTexture {
     std::uint32_t block = 0;
     std::string albedo;
+    std::optional<MeshFixFlipbook> flipbook;
 };
 
 // Top-level fix-file contents.
@@ -142,7 +152,8 @@ glm::mat4 nif_block_world(const nif::File& file, std::size_t block_index);
 
 // Apply every merge, shape edit and texture op in `fix` to `file`, or none
 // of them. A texture op appends an NiImage + NiTextureProperty block pair
-// (fresh link ids) and links the property onto the shape itself.
+// (fresh link ids) and links the property onto the shape itself; a flipbook
+// op appends a NiTextureProperty + NiFlipController + one NiImage per frame.
 // Returns "" on success, otherwise the reason and leaves `file` unchanged.
 std::string apply_mesh_fix(nif::File& file, const MeshFix& fix);
 

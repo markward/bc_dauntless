@@ -227,8 +227,20 @@ std::optional<MeshFix> parse_mesh_fix(std::string_view text, std::string* error)
 
         if (has_textures) {
             for (const auto& jt : j.at("textures")) {
-                fix.textures.push_back({jt.at("block").get<std::uint32_t>(),
-                                        jt.at("albedo").get<std::string>()});
+                MeshFixTexture t{jt.at("block").get<std::uint32_t>(),
+                                 jt.at("albedo").get<std::string>(), std::nullopt};
+                if (jt.contains("flipbook")) {
+                    const auto& jf = jt.at("flipbook");
+                    if (!jf.is_object()) return fail("flipbook is not an object");
+                    const auto& jframes = jf.at("frames");
+                    if (!jframes.is_array()) return fail("flipbook frames is not an array");
+                    if (!jf.at("fps").is_number()) return fail("flipbook fps is not a number");
+                    MeshFixFlipbook fb;
+                    for (const auto& name : jframes) fb.frames.push_back(name.get<std::string>());
+                    fb.fps = jf.at("fps").get<float>();
+                    t.flipbook = std::move(fb);
+                }
+                fix.textures.push_back(std::move(t));
             }
         }
 
@@ -721,62 +733,131 @@ void apply_edit(nif::File& file, const ShapeEdit& e, const EditPlan& plan) {
 
 /// Validate texture op `t` (index `tex_idx`) against the UNMODIFIED file.
 /// Returns "" or the refusal reason ("texture N: ...").
+/// "" if `name` can bind as a plain Base diffuse, else why not (`what` names
+/// the field in the message, e.g. "albedo" or "flipbook frame 3").
+std::string check_albedo_name(const std::string& name, const std::string& what) {
+    if (name.empty()) return what + " is empty";
+    if (name.find_first_of("/\\") != std::string::npos)
+        return what + " must be a bare filename (no directory)";
+    // The NIF texture loader decodes TGA only (model_build.cc: decode_tga).
+    const auto dot = name.find_last_of('.');
+    std::string ext = dot == std::string::npos ? "" : name.substr(dot);
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (ext != ".tga") return what + " must be a .tga file";
+    // Mirrors model_build.cc's filename_is_glow / _specular / _normal (case-
+    // insensitive, on the extension-less stem): such a file binds to Glow,
+    // Gloss or Bump rather than as a plain Base diffuse.
+    std::string stem = name.substr(0, dot);
+    std::transform(stem.begin(), stem.end(), stem.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    for (const char* suffix : {"_glow", "_specular", "_spec", "_normal", "_norm"}) {
+        const std::string_view sv(suffix);
+        if (stem.size() >= sv.size() && stem.compare(stem.size() - sv.size(), sv.size(), sv) == 0)
+            return what + " '" + name + "' has the reserved suffix '" +
+                   std::string(sv) + "' and would not bind as a plain diffuse";
+    }
+    return "";
+}
+
+constexpr std::size_t kFlipbookMinFrames = 2;
+constexpr std::size_t kFlipbookMaxFrames = 256;
+
 std::string validate_texture(const nif::File& file, const MeshFixTexture& t,
                              std::size_t tex_idx) {
     const std::string prefix = "texture " + std::to_string(tex_idx) + ": ";
     if (t.block >= file.blocks.size()) return prefix + "block out of range";
     if (!std::holds_alternative<nif::NiTriShape>(file.blocks[t.block]))
         return prefix + "block is not a NiTriShape";
-    if (t.albedo.empty()) return prefix + "albedo is empty";
-    if (t.albedo.find_first_of("/\\") != std::string::npos)
-        return prefix + "albedo must be a bare filename (no directory)";
-    // The NIF texture loader decodes TGA only (model_build.cc: decode_tga).
-    const auto dot = t.albedo.find_last_of('.');
-    std::string ext = dot == std::string::npos ? "" : t.albedo.substr(dot);
-    std::transform(ext.begin(), ext.end(), ext.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (ext != ".tga") return prefix + "albedo must be a .tga file";
-    // Mirrors model_build.cc's filename_is_glow / _specular / _normal (case-
-    // insensitive, on the extension-less stem): such a file binds to Glow,
-    // Gloss or Bump rather than as a plain Base diffuse.
-    std::string stem = t.albedo.substr(0, dot);
-    std::transform(stem.begin(), stem.end(), stem.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    for (const char* suffix : {"_glow", "_specular", "_spec", "_normal", "_norm"}) {
-        const std::string_view sv(suffix);
-        if (stem.size() >= sv.size() && stem.compare(stem.size() - sv.size(), sv.size(), sv) == 0)
-            return prefix + "albedo '" + t.albedo + "' has the reserved suffix '" +
-                   std::string(sv) + "' and would not bind as a plain diffuse";
+    if (std::string err = check_albedo_name(t.albedo, "albedo"); !err.empty())
+        return prefix + err;
+    if (!t.flipbook) return "";
+    const auto& fb = *t.flipbook;
+    if (fb.frames.size() < kFlipbookMinFrames || fb.frames.size() > kFlipbookMaxFrames)
+        return prefix + "flipbook needs 2..256 frames, has " + std::to_string(fb.frames.size());
+    for (std::size_t k = 0; k < fb.frames.size(); ++k) {
+        std::string err = check_albedo_name(fb.frames[k], "flipbook frame " + std::to_string(k));
+        if (!err.empty()) return prefix + err;
     }
+    if (fb.frames.front() != t.albedo)
+        return prefix + "albedo '" + t.albedo + "' must equal flipbook frame 0 '" +
+               fb.frames.front() + "'";
+    if (!std::isfinite(fb.fps) || fb.fps <= 0.0f)
+        return prefix + "flipbook fps must be finite and > 0";
     return "";
 }
 
-/// Give shape `t.block` its OWN NiTextureProperty -> external NiImage
-/// (`t.albedo`), appended with fresh link ids. gather_material_inputs visits
-/// the shape's own property_links before any ancestor's, so it wins over the
-/// inherited (shared) texture while siblings keep theirs. Field values mirror
-/// the stock DBridge pair (NiTextureProperty flags 0; NiImage defaults).
+/// Give shape `t.block` its OWN NiTextureProperty, appended with fresh link
+/// ids. gather_material_inputs visits the shape's own property_links before
+/// any ancestor's, so it wins over the inherited (shared) texture while
+/// siblings keep theirs.
+///
+/// Plain op: property -> one external NiImage (`t.albedo`); field values
+/// mirror the stock DBridge pair (NiTextureProperty flags 0; NiImage
+/// defaults).
+///
+/// Flipbook op: the shape of BC's only stock flip controller (EBridge.nif:
+/// NiTextureProperty 549 -> NiFlipController 550, guarded by
+/// MeshFixFlipbook.RealEbridgeStockControllerHasTheMirroredShape): the
+/// property's image_link is 0 and its controller_link names the controller
+/// (model_build substitutes source 0 as the static Base); the controller has
+/// flags 0x0009 (active, cycle type loop), frequency 1, phase 0, start 0,
+/// stop = N * delta, texture_slot 0, no next controller, and its v3.1
+/// target field (`unknown_integer`) naming the property; one external
+/// NiImage per frame. delta = 1 / fps.
 void apply_texture(nif::File& file, const MeshFixTexture& t) {
-    // Identity link ids (empty block_ids) for synthetic files: link == index.
+    // Link ids are handed out in append order, so block k appended after
+    // this point has id first_id + k. Identity ids (empty block_ids) for
+    // synthetic files: link == index.
     const bool identity = file.block_ids.empty();
-    std::uint32_t next_id = 0;
-    for (std::uint32_t id : file.block_ids) next_id = std::max(next_id, id);
-    auto fresh_id = [&]() -> std::uint32_t {
-        if (identity) return static_cast<std::uint32_t>(file.blocks.size());
-        return ++next_id;
+    std::uint32_t max_id = 0;
+    for (std::uint32_t id : file.block_ids) max_id = std::max(max_id, id);
+    const std::uint32_t first_id =
+        identity ? static_cast<std::uint32_t>(file.blocks.size()) : max_id + 1;
+    std::uint32_t appended = 0;
+    auto append = [&](nif::Block b) {
+        file.blocks.push_back(std::move(b));
+        if (!identity) file.block_ids.push_back(first_id + appended);
+        ++appended;
     };
-    const std::uint32_t image_id = fresh_id();
-    nif::NiImage img;
-    img.use_external = 1;
-    img.file_name = t.albedo;
-    file.blocks.push_back(img);
-    if (!identity) file.block_ids.push_back(image_id);
+    std::uint32_t prop_id = first_id;
 
-    const std::uint32_t prop_id = fresh_id();
-    nif::NiTextureProperty prop;
-    prop.image_link = image_id;
-    file.blocks.push_back(prop);
-    if (!identity) file.block_ids.push_back(prop_id);
+    if (!t.flipbook) {
+        nif::NiImage img;
+        img.use_external = 1;
+        img.file_name = t.albedo;
+        append(img);
+        prop_id = first_id + 1;
+        nif::NiTextureProperty prop;
+        prop.image_link = first_id;
+        append(prop);
+    } else {
+        const auto& fb = *t.flipbook;
+        const auto n = static_cast<std::uint32_t>(fb.frames.size());
+        const std::uint32_t ctrl_id = first_id + 1;
+        nif::NiTextureProperty prop;
+        prop.image_link = 0;
+        prop.obj.controller_link = ctrl_id;
+        append(prop);
+        nif::NiFlipController ctrl;
+        ctrl.flags = 0x0009;
+        ctrl.frequency = 1.0f;
+        ctrl.phase = 0.0f;
+        ctrl.start_time = 0.0f;
+        ctrl.delta = 1.0f / fb.fps;
+        ctrl.stop_time = static_cast<float>(n) * ctrl.delta;
+        ctrl.unknown_integer = prop_id;
+        ctrl.texture_slot = 0;
+        ctrl.num_sources = n;
+        for (std::uint32_t k = 0; k < n; ++k) ctrl.image_links.push_back(ctrl_id + 1 + k);
+        append(ctrl);
+        for (const auto& name : fb.frames) {
+            nif::NiImage img;
+            img.use_external = 1;
+            img.file_name = name;
+            append(img);
+        }
+    }
 
     std::get<nif::NiTriShape>(file.blocks[t.block]).av.property_links.push_back(prop_id);
 }

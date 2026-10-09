@@ -9,6 +9,7 @@ add_executable(assets_tests
     cpu/mesh_fix_apply_test.cc
     cpu/mesh_fix_shape_edit_test.cc
     cpu/mesh_fix_texture_test.cc
+    cpu/mesh_fix_flipbook_test.cc
     cpu/gltf_load_test.cc
     cpu/hull_source_test.cc
     cpu/model_build_test.cc
