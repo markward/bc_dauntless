@@ -10184,9 +10184,7 @@ def run(mission_name: Optional[str] = None,
         # runs, since that can realize a bridge on the very first call.
         from engine.bridge_editor.runtime import BridgeRuntime
 
-        def _bridge_runtime_alert_level():
-            sess = controller.session
-            _player = sess.player if sess is not None else None
+        def _bridge_alert_level_of(_player):
             if _player is None:
                 return 0
             try:
@@ -10194,6 +10192,13 @@ def run(mission_name: Optional[str] = None,
             except Exception as _e:
                 dev_mode.log_swallowed("bridge runtime alert probe", _e)
                 return 0
+
+        def _bridge_runtime_alert_level():
+            # Zero-arg form for BridgeRuntime itself (attach() can fire from
+            # realize_set during mission load, outside the per-frame block
+            # below where `player` is already in scope).
+            sess = controller.session
+            return _bridge_alert_level_of(sess.player if sess is not None else None)
 
         controller.bridge_runtime = BridgeRuntime(
             eye=lambda: _BRIDGE_CAMERA_EYE, alert=_bridge_runtime_alert_level)
@@ -12329,7 +12334,7 @@ def run(mission_name: Optional[str] = None,
             # paused-aware dt). The probes themselves are only ever
             # recaptured on load/edit/alert change (BridgeRuntime), never
             # per frame — this just blends between the two existing captures.
-            _bridge_alert_level = _bridge_runtime_alert_level()
+            _bridge_alert_level = _bridge_alert_level_of(player)
             host_io.set_bridge_probe_mix(
                 _bridge_probe_blend.update(_bridge_alert_level, _player_dt))
             if _bridge_alert_level != _bridge_probe_alert_last[0]:
