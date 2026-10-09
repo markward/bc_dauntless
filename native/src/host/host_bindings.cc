@@ -6272,6 +6272,92 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "instance-relative too (add instance_translation back). t is the "
           "world-space distance from origin.");
 
+    // Bridge editor pick (spec 2026-10-08-bridge-emitters §4): ray_trace_mesh
+    // plus WHICH mesh and triangle were hit, with meshes to see through (the
+    // "pick the surface behind" click). Same instance-relative convention.
+    m.def("ray_trace_mesh_pick",
+          [](scenegraph::InstanceId id,
+             std::tuple<float, float, float> origin,
+             std::tuple<float, float, float> direction,
+             float max_dist,
+             std::vector<int> exclude_meshes) -> py::object {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return py::none();
+              const assets::Model* model = resolve_model(inst->model_handle);
+              if (model == nullptr) return py::none();
+              const glm::vec3 o(std::get<0>(origin), std::get<1>(origin),
+                                std::get<2>(origin));
+              glm::vec3 d(std::get<0>(direction), std::get<1>(direction),
+                          std::get<2>(direction));
+              const float dlen = glm::length(d);
+              if (dlen < 1e-9f) return py::none();
+              d /= dlen;
+              if (!std::isfinite(max_dist) || max_dist <= 0.0f) return py::none();
+              auto hit = renderer::ray_trace_instance_linear(
+                  *model, inst->world_linear, o, d, max_dist,
+                  &inst->node_overrides, &exclude_meshes);
+              if (!hit) return py::none();
+              return py::make_tuple(
+                  py::make_tuple(hit->point.x, hit->point.y, hit->point.z),
+                  py::make_tuple(hit->normal.x, hit->normal.y, hit->normal.z),
+                  hit->t, hit->mesh_index, hit->triangle);
+          },
+          py::arg("instance_id"), py::arg("origin"), py::arg("direction"),
+          py::arg("max_dist"), py::arg("exclude_meshes") = std::vector<int>{},
+          "ray_trace_mesh plus (mesh_index, triangle) of the hit; triangles of "
+          "exclude_meshes are never hit. Instance-relative origin/point. None "
+          "on a miss or a stale id (never raises: the editor polls it).");
+
+    // Per-mesh shape identity of an instance's model (spec
+    // 2026-10-08-bridge-emitters §4): NIF block, shape name, node chain
+    // (root -> owning node), material index; plus the model's source path and
+    // content hash (empty unless loaded as an interior).
+    m.def("model_identity",
+          [](scenegraph::InstanceId id) -> py::object {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return py::none();
+              const assets::Model* model = resolve_model(inst->model_handle);
+              if (model == nullptr) return py::none();
+              std::vector<int> owner(model->meshes.size(), -1);
+              for (std::size_t n = 0; n < model->nodes.size(); ++n)
+                  for (int mi : model->nodes[n].meshes)
+                      if (mi >= 0 && mi < static_cast<int>(owner.size()))
+                          owner[mi] = static_cast<int>(n);
+              py::list meshes;
+              for (std::size_t i = 0; i < model->meshes.size(); ++i) {
+                  const auto& mesh = model->meshes[i];
+                  std::vector<std::string> chain;
+                  for (int n = owner[i]; n >= 0 &&
+                       n < static_cast<int>(model->nodes.size());
+                       n = model->nodes[n].parent_index) {
+                      chain.push_back(model->nodes[n].name);
+                      if (chain.size() > model->nodes.size()) break;  // cycle guard
+                  }
+                  std::reverse(chain.begin(), chain.end());
+                  py::dict d;
+                  d["mesh"] = static_cast<int>(i);
+                  d["block"] = mesh.source_block();
+                  d["name"] = mesh.shape_name();
+                  d["node_chain"] = py::cast(chain);
+                  d["material"] = mesh.material_index();
+                  meshes.append(std::move(d));
+              }
+              py::dict out;
+              out["source"] = model->source.string();
+              out["content_hash"] = model->content_hash;
+              out["meshes"] = std::move(meshes);
+              return out;
+          },
+          py::arg("instance_id"),
+          "{source, content_hash, meshes:[{mesh, block, name, node_chain, "
+          "material}]} for an instance's model, or None for a stale id.");
+
+    // Developer-only selection tint on the bridge (Task 4 gives it a body).
+    m.def("set_bridge_highlight",
+          [](py::object /*instance_id*/, int /*selected*/, int /*hover*/) {},
+          py::arg("instance_id"), py::arg("selected"), py::arg("hover"),
+          "Developer-only selection tint on the bridge (Task 4).");
+
     m.def("damage_decal_add",
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> world_point,

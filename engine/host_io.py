@@ -80,6 +80,8 @@ _OPTIONAL_BINDINGS = frozenset({
     "profiler_scopes", "profiler_frame",
     "set_swap_interval", "swap_interval",
     "set_cursor_shape",
+    "ray_trace_mesh_pick", "model_identity", "set_bridge_highlight",
+    "nif_shapes",
 })
 
 
@@ -518,6 +520,55 @@ def ray_trace_mesh(
         return None
     (px, py, pz), normal, dist = hit
     return (px + t[0], py + t[1], pz + t[2]), normal, dist
+
+
+def ray_trace_mesh_pick(instance_id, origin, direction, max_dist,
+                        exclude_meshes=()):
+    """Bridge editor pick: ray_trace_mesh plus (mesh_index, triangle).
+
+    World ray in, world hit out, like ray_trace_mesh. Triangles of
+    `exclude_meshes` are never hit. Unlike ray_trace_mesh this never raises:
+    the editor calls it every frame for the hover tint, so a stale id or a
+    stale binary is just "no hit"."""
+    fn = getattr(_h, "ray_trace_mesh_pick", None) if _h is not None else None
+    if fn is None:
+        return None
+    t = _h.instance_translation(instance_id)
+    rel = origin if t is None else _relative_to(t, origin)
+    hit = fn(instance_id, rel, direction, max_dist, list(exclude_meshes))
+    if hit is None:
+        return None
+    (px, py, pz), normal, dist, mesh, tri = hit
+    if t is not None:
+        px, py, pz = px + t[0], py + t[1], pz + t[2]
+    return (px, py, pz), normal, dist, mesh, tri
+
+
+def model_identity(instance_id):
+    """{source, content_hash, meshes:[{mesh, block, name, node_chain,
+    material}]} for an instance's model; None headless or for a stale id."""
+    fn = getattr(_h, "model_identity", None) if _h is not None else None
+    return None if fn is None else fn(instance_id)
+
+
+def set_bridge_highlight(instance_id, selected, hover) -> None:
+    """Developer-only selection tint on the bridge: `selected` / `hover` are
+    mesh indices into the instance's model (-1 = none). No-op headless."""
+    fn = getattr(_h, "set_bridge_highlight", None) if _h is not None else None
+    if fn is not None:
+        fn(instance_id, int(selected), int(hover))
+
+
+def nif_shape_textures(abs_path) -> dict:
+    """NIF block index -> texture basenames, from the parse-only nif_shapes
+    binding. {} headless, for a missing file, or on a parse failure."""
+    fn = getattr(_h, "nif_shapes", None) if _h is not None else None
+    if fn is None:
+        return {}
+    shapes = fn(str(abs_path))
+    if not shapes:
+        return {}
+    return {int(s["block"]): list(s["textures"]) for s in shapes}
 
 
 # ── Star map (Helm → Set Course) ─────────────────────────────────────────────
