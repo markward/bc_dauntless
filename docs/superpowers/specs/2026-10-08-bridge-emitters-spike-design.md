@@ -339,7 +339,7 @@ throws into the room.
   `set_rotation` on the direction, `pipette_fields_from`), so the SPV's
   Move/Rotate gizmos can be added later without a new branch in the panel.
 
-## 9. Bridge PBR *(in design, 2026-10-09)*
+## 9. Bridge PBR *(accepted 2026-10-09)*
 
 Open: the BRDF port (start from `origin/feat/pbr-ship-spike` 56575bb4,
 Cook-Torrance GGX); the reflection probe (one capture at the captain's
@@ -424,6 +424,47 @@ emitters in it exceed the threshold) and spot-light highlights can bloom.
 §1's invariant now reads: **lit diffuse never blooms; emitters and their
 reflections/highlights may.**
 
+### 9.6 Shading assembly *(accepted 2026-10-09)*
+
+**Why bridges suit PBR (Mark):** stock bridges author no specular, gloss or
+normal maps (§2.2) and their lightmaps are already gone, so PBR loses
+nothing BC had. Every added map is pure gain.
+
+- **Diffuse** = `albedo × (1 − metal) × (1 − F) × downlight irradiance × AO`,
+  then the 0.88 diffuse ceiling. The hemisphere downlight becomes the
+  diffuse ambient term; its shape stays, its constants are re-calibrated for
+  linear lighting (§9.1).
+- **Specular** = `probe(R, roughness) × (F0·A + B) × specular occlusion`,
+  uncapped (§9.5). The probe is box-projected, with the mip chosen by
+  roughness; A and B come from the BRDF lookup table; specular occlusion is
+  derived from AO (Lagarde) so creases don't shine.
+- **Spot lights** (§6.2) add GGX specular + Lambert diffuse; no AO.
+- **Probe capture content:** the bridge drawn with the **diffuse-only**
+  path in linear HDR (no reflections of reflections). **Excluded:**
+  officers (they move; they'd be baked in where they stood) and the
+  viewscreen (live feed; captured black). *Candidate for later:* a
+  viewscreen reflection layer (low-res probe updated a few times a second).
+  **When:** at bridge load and when the editor changes material or emitter
+  data — never per frame. Capture point: the captain's-chair eye. Box: the
+  bridge model's AABB.
+- **Officers** go through the same path with the defaults (metal 0,
+  rough 1): matte, with a slight Fresnel edge. Their textures can gain maps
+  by the same naming rule.
+- **Static spot lights in the PBR step:** picker-placed §6.2 lights. An
+  emitter with no `profile` uses a built-in steady white profile (level 1 in
+  every state), so the schema doesn't change between the PBR step and the
+  emitter step.
+- **Developer tools (Developer Options → Lighting):** a PBR on/off A/B
+  switch, **for the spike only** — removed once PBR is accepted (the
+  baseline deleted the old look rather than keeping an option); new debug
+  views: roughness, metalness, specular only, probe only (mirror sphere),
+  normal-map normals.
+- **Testing:** CPU twins pin the GGX terms, box projection and spot falloff;
+  unit tests for map resolution (stock → overlay, mod → beside the mod
+  albedo, per channel, A→B→C); a GL frame test proving diffuse stays
+  ≤ 0.88 while a specular highlight can exceed it; schema round-trip; the
+  gate (`scripts/check_tests.sh`) green with no new ledger entries.
+
 ## 10. Iteration log
 
 | # | Date | Change | Verdict | Sections |
@@ -438,3 +479,4 @@ reflections/highlights may.**
 | — | 2026-10-09 | PBR: base probes reduced to green + yellow/red; yellow-vs-red differences become layers | accepted | 9.4 |
 | — | 2026-10-09 | PBR: specular uncapped, diffuse keeps ceiling | accepted | 9.5 |
 | — | 2026-10-09 | Measured: stock bridges have no spec/gloss/normal maps; spike spec-mask not ported | recorded | 2.2 |
+| — | 2026-10-09 | PBR shading assembly accepted; §9 complete | accepted | 9.6 |
