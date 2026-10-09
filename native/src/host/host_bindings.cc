@@ -279,7 +279,9 @@ dauntless::BridgeHighlight g_bridge_highlight;
 // gated). Held here as well as on the pass, so values set before init() --
 // or across a pass re-creation -- are applied when the pass is constructed
 // (the g_bridge_highlight pattern). `capture_pending` is a request made while
-// no pass existed; init() hands it on and clears it.
+// no pass existed; init() hands it on and clears it. reset_frame_state() does
+// NOT touch this stash -- it runs at the start of init(), and clearing here
+// would drop exactly the values init() exists to apply.
 struct BridgeProbeSettings {
     glm::vec3 origin{0.0f};
     float green = 1.0f;
@@ -914,11 +916,9 @@ void reset_frame_state() {
     g_bridge_highlight = dauntless::BridgeHighlight{};
     // Bridge PBR material overrides are keyed by model handle too.
     if (g_bridge_pass) g_bridge_pass->clear_material_overrides();
-    // Reflection probes hold the old session's room: drop the captures, the
-    // pending request and the mix (and the per-handle box cache, whose keys
-    // die with the models). Origin and scales are configuration and stay.
-    g_bridge_probe.mix = 0.0f;
-    g_bridge_probe.capture_pending = false;
+    // Reflection probes hold the old session's room: drop the captures and
+    // the per-handle box cache (its keys die with the models). The
+    // g_bridge_probe stash is deliberately kept -- see its declaration.
     if (g_bridge_pass) g_bridge_pass->reset_probes();
 
     // Motion blur reprojects against the previous exterior frame's viewproj.
@@ -1066,6 +1066,7 @@ void init(int width, int height, const std::string& title) {
     g_bridge_pass->set_highlight(g_bridge_highlight.model,
                                  g_bridge_highlight.selected,
                                  g_bridge_highlight.hover);
+    g_bridge_pass->set_alert_ambient_scale(g_bridge_ambient_scale);
     g_bridge_pass->set_probe_origin(g_bridge_probe.origin);
     g_bridge_pass->set_probe_scales(g_bridge_probe.green, g_bridge_probe.yellow_red);
     g_bridge_pass->set_probe_mix(g_bridge_probe.mix);
@@ -2041,10 +2042,10 @@ void frame() {
         // The alert-level ambient scale applies to the interior render only;
         // the comm-set RTT above uses the unscaled g_bridge_lighting so the viewscreen
         // feed's brightness stays constant across alert levels.
-        renderer::Lighting interior = g_bridge_lighting;
-        interior.ambient *= g_bridge_ambient_scale;
+        // UNSCALED: the pass applies the alert scale to the main view itself
+        // (set_alert_ambient_scale), so its probe captures stay unscaled.
         g_bridge_pass->render(g_world, g_bridge_camera, *g_pipeline,
-                              lookup, interior);
+                              lookup, g_bridge_lighting);
     }
 
     // ── Non-finite probe (developer diagnostic) ────────────────────────────
@@ -4164,7 +4165,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "feeds the space scene).");
 
     m.def("set_bridge_ambient_scale",
-          [](float s) { g_bridge_ambient_scale = s; },
+          [](float s) {
+              g_bridge_ambient_scale = s;
+              if (g_bridge_pass) g_bridge_pass->set_alert_ambient_scale(s);
+          },
           py::arg("scale"),
           "Ambient multiplier for the bridge INTERIOR render only: the "
           "alert-level scale (engine/bridge_lighting.py: green x1.5, "
@@ -4264,6 +4268,24 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("t"),
           "Reflection cross-fade: 0 = the green probe, 1 = the yellow/red "
           "probe. Clamped to [0, 1].");
+
+    m.def("bridge_probe_state",
+          []() -> py::object {
+              if (!g_bridge_pass) return py::none();
+              py::dict d;
+              const glm::vec3 o = g_bridge_pass->probe_origin();
+              d["origin"] = py::make_tuple(o.x, o.y, o.z);
+              d["scales"] = py::make_tuple(g_bridge_pass->probe_scale_green(),
+                                           g_bridge_pass->probe_scale_yellow_red());
+              d["mix"] = g_bridge_pass->probe_mix();
+              d["capture_pending"] = g_bridge_pass->probe_capture_pending();
+              d["probes_valid"] = g_bridge_pass->probes_valid();
+              d["alert_ambient_scale"] = g_bridge_pass->alert_ambient_scale();
+              return d;
+          },
+          "Test/diagnostic snapshot of the bridge pass's probe state (origin, "
+          "scales, mix, capture_pending, probes_valid, alert_ambient_scale); "
+          "None before init().");
 
     m.def("request_bridge_probe_capture",
           [] {

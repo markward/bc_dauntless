@@ -258,6 +258,11 @@ void BridgePass::render(const scenegraph::World& world,
         glActiveTexture(GL_TEXTURE0);
     }
     const glm::mat4 inv_proj = glm::inverse(camera.proj_matrix());
+    // `lighting` is UNSCALED: the alert scale applies to the normal main-bridge
+    // draw only -- never a comm set, never a probe capture (capture_probes
+    // hands each face ambient x probe scale).
+    const glm::vec3 ambient = lighting.ambient *
+        ((main_bridge && !capture_pass_) ? alert_ambient_scale_ : 1.0f);
 
     // PBR on the main bridge view only: a comm set (another ship's room on
     // the viewscreen) keeps the legacy shading -- the probes would hold the
@@ -283,7 +288,7 @@ void BridgePass::render(const scenegraph::World& world,
     auto set_frame_uniforms = [&](Shader& s) {
         s.set_mat4("u_view", camera.view_matrix());
         s.set_mat4("u_proj", camera.proj_matrix());
-        s.set_vec3("u_ambient", lighting.ambient);
+        s.set_vec3("u_ambient", ambient);
         s.set_vec3("u_eye", camera.eye);
         s.set_vec3("u_up", kBridgeUp);
         s.set_float("u_down_top", kBridgeLighting.down_top);
@@ -318,6 +323,7 @@ void BridgePass::render(const scenegraph::World& world,
         s.set_int("u_has_probe", has_probe ? 1 : 0);
         s.set_float("u_probe_mix", probe_mix_);
         s.set_vec3("u_probe_pos", probe_origin_);
+        s.set_float("u_probe_max_mip", static_cast<float>(kBridgeProbeMips - 1));
         s.set_vec3("u_box_min", box_min_);
         s.set_vec3("u_box_max", box_max_);
         s.set_int("u_capture", capture_pass_ ? 1 : 0);

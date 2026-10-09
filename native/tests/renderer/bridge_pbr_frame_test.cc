@@ -660,3 +660,35 @@ TEST_F(BridgePbrFrame, ARequestWaitsForABridgeToCapture) {
     EXPECT_FALSE(pass->probe_capture_pending());
     EXPECT_GT(c.r, c.g * 1.5f);
 }
+
+// ── Alert ambient scale lives in the pass (Task 6 fix round 1) ─────────────
+
+// The probes capture at ambient x probe scale only: with probe scales (1, 1)
+// a capture taken at alert scale 1.5 reflects exactly what one at 1.0 does.
+TEST_F(BridgePbrFrame, CaptureIgnoresTheAlertAmbientScale) {
+    use_red_wall_corner();
+    set_floor_override(0.05f, 1.0f);             // metal floor: reflection only
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->set_probe_scales(1.0f, 1.0f);
+    pass->set_alert_ambient_scale(1.5f);
+    pass->request_probe_capture();
+    const glm::vec3 at_15 = render_floor();
+    pass->set_alert_ambient_scale(1.0f);
+    pass->request_probe_capture();
+    const glm::vec3 at_10 = render_floor();
+    EXPECT_GT(at_10.r, 0.05f);
+    for (int i = 0; i < 3; ++i) EXPECT_NEAR(at_15[i], at_10[i], 1e-4f) << i;
+}
+
+// The main view's lit floor follows the alert scale; a comm set never does.
+TEST_F(BridgePbrFrame, AlertScaleBrightensTheMainViewOnly) {
+    set_base({0.4f, 0.4f, 0.4f, 1.0f});
+    EXPECT_FLOAT_EQ(pass->alert_ambient_scale(), 1.0f);
+    const glm::vec3 main_10 = render_floor();
+    const glm::vec3 comm_10 = render_as_comm_set();
+    pass->set_alert_ambient_scale(1.5f);
+    const glm::vec3 main_15 = render_floor();
+    const glm::vec3 comm_15 = render_as_comm_set();
+    EXPECT_GT(main_15.r, main_10.r + 0.02f);
+    for (int i = 0; i < 3; ++i) EXPECT_NEAR(comm_15[i], comm_10[i], 1e-6f) << i;
+}

@@ -187,6 +187,16 @@ public:
         scale_green_ = green;
         scale_yr_ = yellow_red;
     }
+    float probe_scale_green() const { return scale_green_; }
+    float probe_scale_yellow_red() const { return scale_yr_; }
+
+    /// Alert-level ambient multiplier for the MAIN bridge view (green x1.5,
+    /// yellow/red x1.0 -- engine/bridge_lighting.py). render() is handed the
+    /// UNSCALED bridge lighting: only the normal main-bridge draw multiplies
+    /// by this. Comm sets never do, and probe captures use ambient x probe
+    /// scale alone (the probes ARE the per-alert captures). Default 1.
+    void set_alert_ambient_scale(float s) { alert_ambient_scale_ = s; }
+    float alert_ambient_scale() const { return alert_ambient_scale_; }
     /// 0 = the green probe, 1 = the yellow/red probe; clamped to [0, 1].
     void set_probe_mix(float t);
     float probe_mix() const { return probe_mix_; }
@@ -258,6 +268,7 @@ private:
     float       scale_green_ = 1.0f;
     float       scale_yr_ = 1.0f;
     float       probe_mix_ = 0.0f;
+    float       alert_ambient_scale_ = 1.0f;
     bool        probe_dirty_ = false;
     bool        probes_captured_ = false;   // cleared by reset_probes()
     bool        capture_pass_ = false;

@@ -99,6 +99,7 @@ uniform sampler2D   u_brdf_lut;   // unit 9: (A, B), x = NdotV, y = roughness
 uniform int         u_has_probe;
 uniform float       u_probe_mix;  // 0 green .. 1 yellow/red
 uniform vec3        u_probe_pos;  // capture point, world
+uniform float       u_probe_max_mip;  // kBridgeProbeMips - 1, set by BridgePass
 uniform vec3        u_box_min;    // bridge AABB, world
 uniform vec3        u_box_max;
 uniform int         u_capture;
@@ -248,10 +249,9 @@ vec3 box_project(vec3 pos, vec3 dir, vec3 bmin, vec3 bmax, vec3 probe) {
     return normalize(pos + dir * t - probe);
 }
 
-// Prefiltered mip for a roughness. Twin of pbr::prefilter_mip; 6.0 is
-// renderer::kBridgeProbeMips (bridge_lighting_tuning.h) -- keep in step.
-const float kBridgeProbeMips = 6.0;
-float prefilter_mip(float rough) { return clamp(rough, 0.0, 1.0) * (kBridgeProbeMips - 1.0); }
+// Prefiltered mip for a roughness. Twin of pbr::prefilter_mip; the top mip
+// arrives as u_probe_max_mip (renderer::kBridgeProbeMips - 1).
+float prefilter_mip(float rough) { return clamp(rough, 0.0, 1.0) * u_probe_max_mip; }
 
 float channel(int has_map, sampler2D map, float override_v, float dflt) {
     if (has_map != 0) return texture(map, v_uv).r;

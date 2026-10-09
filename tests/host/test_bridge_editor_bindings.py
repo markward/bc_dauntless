@@ -230,3 +230,43 @@ def test_host_io_probe_wrappers_forward(monkeypatch):
     host_io.request_bridge_probe_capture()
     assert calls == [("origin", (1.0, 2.0, 3.0)), ("scales", 1.5, 1.0),
                      ("mix", 1.0), ("capture",)]
+
+
+def test_probe_stash_set_before_init_survives_into_the_pass(host_module):
+    """Values set before init() (no pass yet) are applied to the pass init()
+    builds -- including a pending capture request and the alert scale."""
+    h = host_module
+    os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
+    h.set_bridge_probe_origin((1.0, 87.0, 50.0))
+    h.set_bridge_probe_scales(1.5, 0.75)
+    h.set_bridge_probe_mix(0.25)
+    h.request_bridge_probe_capture()
+    try:
+        try:
+            h.init(64, 64, "bridge-probe-stash-test")
+        except RuntimeError as e:
+            pytest.skip(f"no GL context: {e}")
+        st = h.bridge_probe_state()
+        assert st["origin"] == pytest.approx((1.0, 87.0, 50.0))
+        assert st["scales"] == pytest.approx((1.5, 0.75))
+        assert st["mix"] == pytest.approx(0.25)
+        assert st["capture_pending"] is True
+    finally:
+        h.shutdown()
+        os.environ.pop("OPEN_STBC_HOST_HEADLESS", None)
+        # Leave the process-wide stash at its defaults for later tests.
+        h.set_bridge_probe_origin((0.0, 0.0, 0.0))
+        h.set_bridge_probe_scales(1.0, 1.0)
+        h.set_bridge_probe_mix(0.0)
+
+
+def test_bridge_probe_state_is_none_before_init(host_module):
+    assert host_module.bridge_probe_state() is None
+
+
+def test_alert_ambient_scale_reaches_the_pass(dbridge):
+    h, _iid = dbridge
+    h.set_bridge_ambient_scale(1.5)
+    assert h.bridge_probe_state()["alert_ambient_scale"] == pytest.approx(1.5)
+    h.set_bridge_ambient_scale(1.0)
+    assert h.bridge_probe_state()["alert_ambient_scale"] == pytest.approx(1.0)
