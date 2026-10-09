@@ -256,6 +256,12 @@ def _added_triangles(block, shape, ids, base, added_faces, final_local, uv_edits
     return out
 
 
+# model_build.cc's filename_is_glow / _specular / _normal, on the
+# extension-less stem, case-insensitive (mesh_fix.cc mirrors the same list).
+_RESERVED_SUFFIXES = (("_glow", "glow"), ("_specular", "specular"), ("_spec", "specular"),
+                      ("_normal", "a normal map"), ("_norm", "a normal map"))
+
+
 def _object_albedo(mesh):
     """The one map_Kd basename every face of `mesh` uses, or None (no
     texture info, or no map_Kd). A face set split across two albedos -- or a
@@ -285,11 +291,22 @@ def _albedo_op(block, base, edit, texture_dirs):
             f"block {block}: faces use {len(new)} different textures {list(new)}; "
             "per-face material split isn't supported -- one texture per object")
     old = _object_albedo(base)
+    if isinstance(old, tuple):
+        raise ShapeDiffError(
+            f"block {block}: base faces use {len(old)} different textures {list(old)}; "
+            "base.obj must be the unaltered export (one texture per object)")
     if new is None or (isinstance(old, str) and old.casefold() == new.casefold()):
         return None
     if not new.lower().endswith(".tga"):
         raise ShapeDiffError(
             f"block {block}: texture {new!r} is not a .tga (the NIF loader reads TGA only)")
+    stem = new[:new.rfind(".")].lower()
+    for suffix, slot in _RESERVED_SUFFIXES:
+        if stem.endswith(suffix):
+            raise ShapeDiffError(
+                f"block {block}: texture {new!r} would bind as {slot}; an albedo op "
+                f"takes a plain diffuse (use {new[:len(stem) - len(suffix)]}"
+                f"{new[new.rfind('.'):]})")
     if not _find_texture(new, texture_dirs or ()):
         searched = ", ".join(str(d) for d in texture_dirs or ()) or "(none)"
         raise ShapeDiffError(

@@ -188,9 +188,16 @@ file and both dirs. Mod dirs are deliberately not searched: the fix applies
 with or without a mod. Summary line gains `, texture -> <name>`; a block
 with only a texture op prints `block N: texture -> <name>`. **Albedo only:**
 emissive / glow maps are deliberately out of scope (the PBR plan decides
-`_glow` vs `_emissive`). Note the loader still applies BC's filename
-conventions to the albedo it is given -- a `*_glow.tga` albedo binds to Base
-**and** Glow (alpha = emissive mask), exactly as a stock `_glow` image does.
+`_glow` vs `_emissive`). Because the loader applies BC's filename
+conventions to any image (`*_glow` → Base + Glow, `*_spec[ular]` → Gloss
+only, `*_norm[al]` → Bump only; case-insensitive on the extension-less stem),
+an albedo with one of those suffixes is **refused** ("would bind as glow; an
+albedo op takes a plain diffuse") -- by the diff and again by the loader.
+An OBJ whose `mtllib` names a file that isn't there is a **file-level** error
+(aborts even with `--partial`): a missing base `.mtl` would otherwise make
+every textured object look retextured. An OBJ with no `mtllib` line carries
+no texture info and records no texture ops. A **base** object whose faces
+span two albedos is refused (base.obj must be the unaltered export).
 
 **`--partial`:** by default a single unsupported object (one that needs
 topology, or a vertex-split UV conflict) aborts the whole diff -- nothing is
@@ -291,7 +298,9 @@ After applying: recompute the shape's bound centre/radius; clear match groups.
 block in range and a `NiTriShape`; `albedo` non-empty, a bare filename (no
 `/` or `\`), extension `.tga` (case-insensitive); each block at most once in
 `textures` (a texture op may share its block with a shape edit -- texture
-and geometry are independent). Applied last: append an external `NiImage`
+and geometry are independent); no reserved suffix (`_glow`, `_specular`,
+`_spec`, `_normal`, `_norm` on the stem, mirroring `model_build.cc`); and the
+block is not a merge's (hidden) patch. Applied last: append an external `NiImage`
 (`file_name` = albedo, other fields at the parser's defaults) and an
 `NiTextureProperty` (flags 0, as every stock DBridge one) pointing at it, with
 fresh link ids (`max(block_ids) + 1, + 2`), and push the property's link onto

@@ -106,6 +106,7 @@ def test_write_then_read_welds_by_position_and_keeps_uvs(tmp_path):
 
 def test_read_objects_ignores_colours_normals_and_groups(tmp_path):
     p = tmp_path / "b.obj"
+    (tmp_path / "b.mtl").write_text("newmtl m\n")
     p.write_text(
         "# Blender\nmtllib b.mtl\no b0003_x\n"
         "v 0 0 0 1 0 0\nv 1 0 0 1 0 0\nv 1 1 0 1 0 0\n"
@@ -872,11 +873,34 @@ def test_read_objects_records_each_faces_albedo_from_the_mtllib(tmp_path):
     assert m.face_albedos == [None, "Map 1.tga", "new.tga", None]
 
 
-def test_read_objects_without_the_mtl_file_has_no_albedos(tmp_path):
+def test_read_objects_refuses_a_named_mtllib_that_is_missing(tmp_path):
     p = tmp_path / "e.obj"
     p.write_text("mtllib missing.mtl\no b0003_x\nv 0 0 0\nv 1 0 0\nv 1 1 0\n"
                  "usemtl a\nf 1 2 3\n")
+    with pytest.raises(ShapeDiffError, match="missing.mtl"):
+        obj_io.read_objects(p)
+
+
+def test_read_objects_without_an_mtllib_line_has_no_albedos(tmp_path):
+    p = tmp_path / "e.obj"
+    p.write_text("o b0003_x\nv 0 0 0\nv 1 0 0\nv 1 1 0\nusemtl a\nf 1 2 3\n")
     assert obj_io.read_objects(p)["b0003_x"].face_albedos == [None]
+
+
+def _write_pair_then_drop(tmp_path, which):
+    s = _shape()
+    base, edit = _tex_pair(tmp_path, [s], "newmtl m\nmap_Kd /b/new.tga\n")
+    (tmp_path / f"{which}.mtl").unlink()
+    return tmp_path / "base.obj", tmp_path / "edit.obj"
+
+
+@pytest.mark.parametrize("which", ["base", "edit"])
+@pytest.mark.parametrize("partial", [False, True])
+def test_build_fix_aborts_when_either_mtl_is_missing(tmp_path, which, partial):
+    from tools import bridge_shape_diff as cli
+    base_obj, edit_obj = _write_pair_then_drop(tmp_path, which)
+    with pytest.raises(ShapeDiffError, match=f"{which}.mtl"):
+        cli.build_fix(DBRIDGE, base_obj, edit_obj, partial=partial)
 
 
 def _tex_dirs(tmp_path, overlay_files=(), stock_files=()):
@@ -1042,7 +1066,7 @@ def test_main_summary_names_the_texture_and_lists_texture_only_blocks(
 
 
 def test_real_dbridge_texture_op_resolves_against_the_stock_dir(tmp_path):
-    host = pytest.importorskip("_dauntless_host")
+    pytest.importorskip("_dauntless_host")
     nif = paths.game_root() / DBRIDGE
     if not nif.exists():
         pytest.skip("BC content not configured")
@@ -1060,4 +1084,33 @@ def test_real_dbridge_texture_op_resolves_against_the_stock_dir(tmp_path):
     fix, edits = cli.build_fix(DBRIDGE, base, edit)
     assert fix["textures"] == [{"block": 29, "albedo": "Map 7.tga"}]
     assert "shape_edits" not in fix
-    assert host is not None
+
+
+@pytest.mark.parametrize("name", ["panel_glow.tga", "panel_GLOW.TGA", "panel_specular.tga",
+                                  "panel_spec.tga", "panel_normal.tga", "panel_norm.tga"])
+def test_reserved_suffix_albedo_is_refused(tmp_path, name):
+    s = _shape()
+    base, edit = _tex_pair(tmp_path, [s], f"newmtl m\nmap_Kd /b/{name}\n")
+    dirs = _tex_dirs(tmp_path, overlay_files=[name])
+    with pytest.raises(ShapeDiffError, match="plain diffuse") as exc:
+        match.diff([s], base, edit, texture_dirs=dirs)
+    assert name in str(exc.value)
+
+
+def test_base_object_spanning_two_albedos_is_refused(tmp_path):
+    s = _seam_shape()
+    base_obj = tmp_path / "base.obj"
+    obj_io.write_obj([s], base_obj, tmp_path / "base.mtl", lambda n: Path("/s") / n)
+    lines = base_obj.read_text().splitlines()
+    f_at = [i for i, line in enumerate(lines) if line.startswith("f ")]
+    lines.insert(f_at[2], "usemtl second")
+    base_obj.write_text("\n".join(lines) + "\n")
+    (tmp_path / "base.mtl").write_text(
+        "newmtl Map_1.tga\nmap_Kd /s/a.tga\nnewmtl second\nmap_Kd /s/b.tga\n")
+    edit_obj = tmp_path / "edit.obj"
+    edit_obj.write_text(base_obj.read_text().replace("mtllib base.mtl", "mtllib edit.mtl")
+                        .replace("usemtl second\n", "usemtl Map_1.tga\n"))
+    (tmp_path / "edit.mtl").write_text("newmtl Map_1.tga\nmap_Kd /s/a.tga\n")
+    base, edit = obj_io.read_objects(base_obj), obj_io.read_objects(edit_obj)
+    with pytest.raises(ShapeDiffError, match="base"):
+        match.diff([s], base, edit, texture_dirs=_tex_dirs(tmp_path, overlay_files=["a.tga"]))

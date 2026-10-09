@@ -139,7 +139,13 @@ def read_objects(path: Path) -> dict:
         tag = parts[0]
         if tag == "mtllib":
             mtl_path = Path(path).parent / " ".join(parts[1:])
-            mtl = read_mtl(mtl_path) if mtl_path.is_file() else {}
+            if not mtl_path.is_file():
+                # File-level: without it every texture compare is wrong (a
+                # missing BASE .mtl would make every textured object "new").
+                raise ShapeDiffError(
+                    f"{Path(path).name} names mtllib {mtl_path}, which is missing -- "
+                    "export the .mtl beside the .obj")
+            mtl = read_mtl(mtl_path)
         elif tag == "usemtl":
             material = " ".join(parts[1:])
         elif tag == "o":
