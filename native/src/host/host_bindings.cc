@@ -2399,6 +2399,19 @@ std::string nif_shapes_basename(const std::string& path) {
     return pos == std::string::npos ? path : path.substr(pos + 1);
 }
 
+/// Block-array index of the NiNode whose child_links resolves to `idx`, or
+/// npos if `idx` is unparented. Mirrors mesh_fix.cc's local parent_of (not
+/// exported); nif_shapes needs its own copy for the ancestor texture walk.
+std::size_t nif_shapes_parent_of(const nif::File& file, std::size_t idx) {
+    for (std::size_t i = 0; i < file.blocks.size(); ++i) {
+        const auto* node = std::get_if<nif::NiNode>(&file.blocks[i]);
+        if (!node) continue;
+        for (std::uint32_t link : node->child_links)
+            if (nif_shapes_index_of(file, link) == idx) return i;
+    }
+    return std::string::npos;
+}
+
 /// Append the basename of the NiImage `img_link` resolves to, if any, to
 /// `out` -- only for external (on-disk) images; embedded images have no
 /// filename to report.
@@ -2447,6 +2460,36 @@ py::object nif_shapes_impl(const std::string& nif_abs_path) {
                 for (const auto& elem : mtp->elements) {
                     if (elem.has_image) nif_shapes_collect_image(f, elem.image_link, &textures);
                 }
+            }
+        }
+        // DBridge's NiTextureProperty sits on an ancestor NiNode, inherited
+        // rather than owned by the shape (final-review F1). Mirror the
+        // renderer's own ancestor walk (model_build.cc:gather_material_inputs):
+        // walk up, nearest ancestor with any texture wins. Never touches
+        // `textures` when the shape already has its own (gen_mesh_fixes.py's
+        // "ID" lookup and its drift test depend on that).
+        if (textures.empty()) {
+            std::size_t cur = i;
+            while (true) {
+                const std::size_t parent_idx = nif_shapes_parent_of(f, cur);
+                if (parent_idx == std::string::npos || parent_idx >= f.blocks.size()) break;
+                const auto* parent_node = std::get_if<nif::NiNode>(&f.blocks[parent_idx]);
+                if (!parent_node) break;
+                std::vector<std::string> ancestor_textures;
+                for (std::uint32_t link : parent_node->av.property_links) {
+                    std::size_t idx = nif_shapes_index_of(f, link);
+                    if (idx == std::string::npos || idx >= f.blocks.size()) continue;
+                    const auto& b = f.blocks[idx];
+                    if (const auto* tp = std::get_if<nif::NiTextureProperty>(&b)) {
+                        nif_shapes_collect_image(f, tp->image_link, &ancestor_textures);
+                    } else if (const auto* mtp = std::get_if<nif::NiMultiTextureProperty>(&b)) {
+                        for (const auto& elem : mtp->elements) {
+                            if (elem.has_image) nif_shapes_collect_image(f, elem.image_link, &ancestor_textures);
+                        }
+                    }
+                }
+                if (!ancestor_textures.empty()) { textures = std::move(ancestor_textures); break; }
+                cur = parent_idx;
             }
         }
         d["textures"] = textures;

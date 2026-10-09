@@ -44,3 +44,16 @@ def test_dbridge_shapes_carry_frame_parent_colours_and_uv1():
         assert len(s["colors"]) in (0, n)
         assert len(s["uvs1"]) in (0, n)
         assert all(len(c) == 4 for c in s["colors"])
+
+
+def test_dbridge_shapes_resolve_textures_through_ancestor_nodes():
+    # F1: DBridge's NiTextureProperty sits on ancestor NiNodes, not the
+    # shape's own property_links. Every visible shape must still report a
+    # texture (walked up the parent chain, nearest ancestor wins).
+    nif = paths.game_root() / "data/Models/Sets/DBridge/Dbridge.NIF"
+    if not nif.exists():
+        pytest.skip("BC content not configured")
+    shapes = _host().nif_shapes(str(nif))
+    visible = [s for s in shapes if not s["hidden"]]
+    untextured = [s["block"] for s in visible if not s["textures"]]
+    assert untextured == [], f"shapes with no resolved texture: {untextured}"
