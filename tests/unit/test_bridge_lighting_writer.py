@@ -53,3 +53,19 @@ def test_target_path_keeps_where_it_was_found(tmp_path, monkeypatch):
     assert lw.target_path(found, "abc") == found
     monkeypatch.setattr(ld.paths, "project_asset_root", lambda: tmp_path)
     assert lw.target_path(None, "abc") == tmp_path / "bridge_lighting" / "abc.json"
+
+
+def test_save_removes_tmp_on_replace_failure(tmp_path, monkeypatch):
+    p = tmp_path / "x.json"
+    p.write_text("original")
+
+    def fail_replace(tmp, target):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(lw.os, "replace", fail_replace)
+
+    with pytest.raises(OSError, match="replace failed"):
+        lw.save(doc(), p)
+
+    assert p.read_text() == "original"
+    assert [f.name for f in p.parent.iterdir()] == ["x.json"]

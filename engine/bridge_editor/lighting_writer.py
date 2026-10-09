@@ -40,5 +40,9 @@ def save(doc, path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(dumps(doc), encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        tmp.write_text(dumps(doc), encoding="utf-8")
+        os.replace(tmp, path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
