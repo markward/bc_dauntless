@@ -105,3 +105,43 @@ def test_read_objects_ignores_colours_normals_and_groups(tmp_path):
     assert a.faces == [[(0, (0.0, 0.0)), (1, (1.0, 0.0)), (2, (1.0, 1.0))]]
     assert b.faces == [[(0, None), (1, None), (2, None)]]  # global -> local indices
     assert b.positions[0] == pytest.approx((5, -5, 5))
+
+
+def test_hidden_shapes_are_written_and_read_correctly(tmp_path):
+    obj, mtl = tmp_path / "hidden.obj", tmp_path / "hidden.mtl"
+    visible = _shape(block=10, parent="visible panel")
+    hidden = _shape(block=20, parent="hidden panel", offset=(5.0, 0.0, 0.0))
+    hidden["hidden"] = True
+
+    obj_io.write_obj([visible, hidden], obj, mtl, lambda name: None)
+    objs = obj_io.read_objects(obj)
+
+    assert "b0010_visible_panel" in objs
+    vis = objs["b0010_visible_panel"]
+    assert len(vis.positions) > 0
+    assert len(vis.faces) > 0
+
+    assert "b0020_hidden_panel_hidden" in objs
+    hid = objs["b0020_hidden_panel_hidden"]
+    assert len(hid.positions) > 0
+    assert len(hid.faces) > 0
+
+    assert obj_io.block_of("b0020_hidden_panel_hidden") == 20
+
+
+def test_read_objects_preserves_n_gon_face_order(tmp_path):
+    p = tmp_path / "quad.obj"
+    p.write_text(
+        "o b0001_quad\n"
+        "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\n"
+        "vt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\n"
+        "f 1/1 2/2 3/3 4/4\n")
+    objs = obj_io.read_objects(p)
+    quad = objs["b0001_quad"]
+    assert len(quad.faces) == 1
+    face = quad.faces[0]
+    assert len(face) == 4
+    assert face[0] == (0, (0.0, 1.0))
+    assert face[1] == (1, (1.0, 1.0))
+    assert face[2] == (2, (1.0, 0.0))
+    assert face[3] == (3, (0.0, 0.0))
