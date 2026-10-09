@@ -240,9 +240,9 @@ the scratchpad; in game, Developer Options → Lighting → Bridge Debug View
 
 | # | Goal | Status | Notes |
 |---|---|---|---|
-| 1 | Move-only gap closing: export, diff, loader end to end | implemented, not yet live-verified | |
-| 1b | UV re-map of console seats (b0224/b0255) | tool support built; awaiting Mark's edit | `diff` now records `uv` alongside `move`; the loader (`apply_shape_edits`) already applied `uv` records before this task -- only the Python side refused them |
-| 1c | First live step: moves on b0468 / b0652 / b0663 | fix `dbcdbd4a43dc5a56.json` written, awaiting Mark's in-game check | Console sliver b0170/b0175 needs triangle add/remove (next) |
+| 1 | Move-only gap closing: export, diff, loader end to end | accepted 2026-10-09 (live, via 1c) | |
+| 1b | UV re-map of console seats (b0224/b0255) | tool support built; Mark's first edit turned out to hold no UV changes — unused so far | `diff` now records `uv` alongside `move`; the loader (`apply_shape_edits`) already applied `uv` records before this task -- only the Python side refused them |
+| 1c | First live step: moves on b0468 (13 NIF verts) / b0652 (28) / b0663 (28) | accepted by Mark in game 2026-10-09; fix `dbcdbd4a43dc5a56.json` committed | Console sliver b0170/b0175 needs triangle add/remove (next) |
 | 2 | Turbolift header reshape: triangle remove/add | — | |
 | 3 | Extruded side panels: new verts/tris/UVs | — | Open: side-face texturing. Lean: collapse the new faces' UVs onto the panel border (stretch edge texels, no new texture); alternative: a project-owned trim texture |
 
