@@ -488,5 +488,6 @@ nothing BC had. Every added map is pure gain.
 | — | 2026-10-09 | Measured: stock bridges have no spec/gloss/normal maps; spike spec-mask not ported | recorded | 2.2 |
 | — | 2026-10-09 | PBR shading assembly accepted; §9 complete | accepted | 9.6 |
 | — | 2026-10-09 | Self-review: stale cross-refs fixed; `material` schema defined; foundation + PBR planned as two plans | — | 1, 4, 5, 6, 7, 8, 9 |
+| P1 | 2026-10-09 | Bridge PBR built (plan 2026-10-09-bridge-pbr): linear GGX, layered material channels, normal/rough/metal maps, two box-projected probes, spot lights, live editor push | pending Mark's live calibration | 9 |
 | — | 2026-10-09 | Plan-time corrections: dev panels keep the pause menu open-but-hidden; loader rejects unknown keys (writer no longer "keeps" them); mod lookup path named | — | 4, 7 |
 | F1 | 2026-10-09 | Foundation built: fly camera, pick + identity, selection tint, lighting doc + writer, panel (plan 2026-10-09-bridge-editor-foundation) | live-verified (Mark, 2026-10-09: "works!") | 4, 7, 8 |

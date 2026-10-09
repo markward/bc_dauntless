@@ -4,8 +4,11 @@ docs/superpowers/specs/2026-10-08-bridge-emitters-spike-design.md §4, §7, §8)
 Foundation scope: fly camera (hold RMB to look, WASDQE to move, Shift fast,
 Alt slow), click-to-pick a NIF shape (Alt+click = the surface behind), a
 selection tint, and the per-shape PBR material override (§9.2 source B) saved
-to the per-bridge lighting document. The override is stored, not yet rendered:
-the bridge PBR plan consumes it.
+to the per-bridge lighting document. The override is rendered by bridge PBR
+(`BridgeRuntime` pushes it to `native/src/renderer/bridge_pass.cc` on every
+bridge load and on every edit). The panel also places spot lights (§9.6):
+pick a fixture, add a light, aim it, and the same runtime push drives the
+live GGX shading and probe recapture.
 
 Driven like every dev modal: a pause-menu row opens it, the host keeps the
 pause menu open-but-hidden (sim frozen) while it is open, calls handle_input(h)
