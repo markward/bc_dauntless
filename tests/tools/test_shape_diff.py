@@ -724,14 +724,16 @@ def test_deleting_a_face_and_its_vertices_removes_its_triangles_without_moves(tm
     assert e["moves"] == [] and e["uvs"] == [] and e["add_triangles"] == []
 
 
-def test_deletion_where_a_survivor_also_moved_is_refused(tmp_path):
+def test_deletion_where_a_survivor_also_moved_is_aligned_by_connectivity(tmp_path):
     s, base = _sliver_base(tmp_path)
     sliver = {_local(base, (5, 0, 0)), _local(base, (6, 0, 0)), _local(base, (5, 1, 0))}
     edit = _blender_delete(base, _face_on(base, sliver))
     k = next(i for i, p in enumerate(edit.positions) if p == pytest.approx((2, 1, 0)))
     edit.positions[k] = (2.0, 1.5, 0.0)
-    with pytest.raises(ShapeDiffError, match="can't align vertices after deletion"):
-        match.diff_shape(s, base, edit)
+    e = match.diff_shape(s, base, edit)
+    assert e["remove_triangles"] == [2, 5, 6]
+    assert e["moves"] == [(8, pytest.approx((2.0, 1.5, 0.0)))]
+    assert e["add_triangles"] == [] and e["uvs"] == []
 
 
 def _corner(base, pos, uv):
@@ -1234,3 +1236,76 @@ def test_authored_uv_stays_literal(tmp_path):
     edit = _retex(base, {(1, k): (0.123, 0.456)})
     e = match.diff_shape(s, base, edit)
     assert e["uvs"] == [(3, pytest.approx((0.123, 0.456)))]
+
+
+# --- Task 15: correspondence (spec §5.2) ---
+
+def _with(positions, faces):
+    out = obj_io.ObjMesh()
+    out.positions = list(positions)
+    out.faces = [list(f) for f in faces]
+    return out
+
+
+def test_correspondence_is_identity_for_equal_counts_and_unmoved_vertices(tmp_path):
+    s, base = _sliver_base(tmp_path)
+    assert match.correspond(175, base, _copy(base)) == list(range(len(base.positions)))
+
+
+def test_correspondence_survives_deletion_a_moved_survivor_and_appended_vertices(tmp_path):
+    # Equal vertex counts (3 deleted, 3 added) -- the old by-index rule would
+    # have read every survivor after the deletion as moved.
+    s, base = _sliver_base(tmp_path)
+    sliver = {_local(base, (5, 0, 0)), _local(base, (6, 0, 0)), _local(base, (5, 1, 0))}
+    edit = _blender_delete(base, _face_on(base, sliver))
+    l7 = _local(edit, (2, 0, 0))
+    l8 = _local(edit, (2, 1, 0))
+    edit.positions[l8] = (2.0, 1.5, 0.0)                        # moved survivor
+    n = len(edit.positions)
+    edit.positions += [(3.0, 0.0, 0.0), (3.0, 1.0, 0.0), (4.0, 0.5, 0.0)]
+    edit.faces += [[(l7, (0, 0)), (n, (0, 0)), (n + 1, (0, 0))],
+                   [(l7, (0, 0)), (n + 1, (0, 0)), (l8, (0, 0))],
+                   [(n, (0, 0)), (n + 2, (0, 0)), (n + 1, (0, 0))]]
+    assert len(edit.positions) == len(base.positions)
+    survivors = [_local(base, p) for p in [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+                                           (2, 0, 0), (2, 1, 0)]]
+    assert match.correspond(175, base, edit) == sorted(survivors) + [None, None, None]
+
+
+def test_correspondence_of_a_wholly_translated_island_is_identity(tmp_path):
+    s = _shape()
+    base = _export_read(tmp_path, [s])[obj_io.object_name(s)]
+    edit = _with([(x, y, z + 1.0) for x, y, z in base.positions], base.faces)
+    assert match.correspond(11, base, edit) == [0, 1, 2, 3]
+    e = match.diff_shape(s, base, edit)
+    assert [i for i, _ in e["moves"]] == [0, 1, 2, 3, 4]
+
+
+def test_correspondence_appends_new_vertices_as_none(tmp_path):
+    s = _shape()
+    base = _export_read(tmp_path, [s])[obj_io.object_name(s)]
+    edit = _copy(base)
+    edit.positions.append((0.5, 0.5, 1.0))
+    edit.faces.append([(0, (0, 0)), (1, (0.5, 0)), (4, (0.2, 0.2))])
+    assert match.correspond(11, base, edit) == [0, 1, 2, 3, None]
+
+
+def test_correspondence_refuses_a_survivor_reordered_past_others(tmp_path):
+    # Separate + join moved original L0 to the end: it could equally be the
+    # base vertex at that position or a new one -- refuse, never guess.
+    s = _seam_shape()
+    base = _export_read(tmp_path, [s])[obj_io.object_name(s)]
+    perm = list(range(1, len(base.positions))) + [0]
+    with pytest.raises(ShapeDiffError, match="ambiguous correspondence"):
+        match.correspond(11, base, _permute(base, perm))
+
+
+def test_correspondence_refuses_a_tie_between_two_candidate_survivors():
+    # Two triangles share edge X-Y; one apex was deleted and the other moved:
+    # either apex could be the survivor.
+    base = _with([(0, 0, 0), (1, 0, 0), (0.5, 1, 0), (0.5, -1, 0)],
+                 [[(0, None), (1, None), (2, None)], [(1, None), (0, None), (3, None)]])
+    edit = _with([(0, 0, 0), (1, 0, 0), (0.5, 2, 0)],
+                 [[(0, None), (1, None), (2, None)]])
+    with pytest.raises(ShapeDiffError, match="ambiguous correspondence"):
+        match.correspond(5, base, edit)
