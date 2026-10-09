@@ -4269,6 +4269,20 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Reflection cross-fade: 0 = the green probe, 1 = the yellow/red "
           "probe. Clamped to [0, 1].");
 
+    m.def("bridge_probe_stash",
+          [] {
+              py::dict d;
+              const glm::vec3 o = g_bridge_probe.origin;
+              d["origin"] = py::make_tuple(o.x, o.y, o.z);
+              d["scales"] = py::make_tuple(g_bridge_probe.green, g_bridge_probe.yellow_red);
+              d["mix"] = g_bridge_probe.mix;
+              d["capture_pending"] = g_bridge_probe.capture_pending;
+              return d;
+          },
+          "Read-only test snapshot of the process-wide probe stash the "
+          "set_bridge_probe_* bindings write (it survives shutdown()/init() by "
+          "design): origin, scales, mix, capture_pending.");
+
     m.def("bridge_probe_state",
           []() -> py::object {
               if (!g_bridge_pass) return py::none();

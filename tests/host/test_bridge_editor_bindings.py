@@ -1,6 +1,7 @@
 """Bridge editor bindings (spec 2026-10-08-bridge-emitters §4): they exist,
 and their host_io wrappers degrade to None/{} instead of raising when the
 host is absent or the id is stale."""
+import contextlib
 import os
 
 import pytest
@@ -179,20 +180,60 @@ def test_host_io_pbr_wrappers_degrade_headless(monkeypatch):
 # NOT developer-gated; no-ops before init (the values are stashed and applied
 # when the pass is created).
 
+# The set_bridge_probe_* stash is a C++ static that survives shutdown()/init()
+# BY DESIGN, and tests/conftest.py's autouse reset never touches C++ statics.
+# Every test that calls a real probe binding therefore restores it.
+_PROBE_STASH_DEFAULTS = {"origin": (0.0, 0.0, 0.0), "scales": (1.0, 1.0),
+                         "mix": 0.0, "capture_pending": False}
+
+
+@contextlib.contextmanager
+def restored_probe_stash(h):
+    """Snapshot the probe stash, run the body, restore it exactly. There is no
+    setter that clears a pending request (deliberately: no production clear);
+    init() hands a pending request to the new pass and clears it, so an
+    init/shutdown cycle on a headless host drains it."""
+    before = h.bridge_probe_stash()
+    try:
+        yield
+    finally:
+        h.set_bridge_probe_origin(before["origin"])
+        h.set_bridge_probe_scales(*before["scales"])
+        h.set_bridge_probe_mix(before["mix"])
+        if h.bridge_probe_stash()["capture_pending"] and not before["capture_pending"]:
+            os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
+            try:
+                h.init(16, 16, "probe-stash-drain")
+            except RuntimeError:
+                pass   # no GL: nothing renders, the flag cannot matter
+            else:
+                h.shutdown()
+            finally:
+                os.environ.pop("OPEN_STBC_HOST_HEADLESS", None)
+
+
+@pytest.fixture
+def probe_stash_guard(host_module):
+    """Request this BEFORE `dbridge` in a test's arguments, so it tears down
+    after dbridge's shutdown() and restores the stash with no pass alive."""
+    with restored_probe_stash(host_module):
+        yield
+
+
 @pytest.mark.parametrize("name", ["set_bridge_probe_origin", "set_bridge_probe_scales",
                                   "set_bridge_probe_mix", "request_bridge_probe_capture"])
 def test_probe_binding_exists(host_module, name):
     assert hasattr(host_module, name)
 
 
-def test_probe_bindings_are_safe_before_init(host_module):
+def test_probe_bindings_are_safe_before_init(probe_stash_guard, host_module):
     host_module.set_bridge_probe_origin((0.0, 87.0, 50.0))
     host_module.set_bridge_probe_scales(1.5, 1.0)
     host_module.set_bridge_probe_mix(0.25)
     host_module.request_bridge_probe_capture()
 
 
-def test_probe_bindings_on_a_live_bridge_never_raise(dbridge):
+def test_probe_bindings_on_a_live_bridge_never_raise(probe_stash_guard, dbridge):
     h, _iid = dbridge
     h.set_bridge_probe_origin((0.0, 87.0, 50.0))
     h.set_bridge_probe_scales(1.5, 1.0)
@@ -232,7 +273,7 @@ def test_host_io_probe_wrappers_forward(monkeypatch):
                      ("mix", 1.0), ("capture",)]
 
 
-def test_probe_stash_set_before_init_survives_into_the_pass(host_module):
+def test_probe_stash_set_before_init_survives_into_the_pass(probe_stash_guard, host_module):
     """Values set before init() (no pass yet) are applied to the pass init()
     builds -- including a pending capture request and the alert scale."""
     h = host_module
@@ -254,19 +295,44 @@ def test_probe_stash_set_before_init_survives_into_the_pass(host_module):
     finally:
         h.shutdown()
         os.environ.pop("OPEN_STBC_HOST_HEADLESS", None)
-        # Leave the process-wide stash at its defaults for later tests.
-        h.set_bridge_probe_origin((0.0, 0.0, 0.0))
-        h.set_bridge_probe_scales(1.0, 1.0)
-        h.set_bridge_probe_mix(0.0)
 
 
 def test_bridge_probe_state_is_none_before_init(host_module):
     assert host_module.bridge_probe_state() is None
 
 
-def test_alert_ambient_scale_reaches_the_pass(dbridge):
+def test_alert_ambient_scale_reaches_the_pass(probe_stash_guard, dbridge):
     h, _iid = dbridge
     h.set_bridge_ambient_scale(1.5)
     assert h.bridge_probe_state()["alert_ambient_scale"] == pytest.approx(1.5)
     h.set_bridge_ambient_scale(1.0)
     assert h.bridge_probe_state()["alert_ambient_scale"] == pytest.approx(1.0)
+
+
+def test_restored_probe_stash_undoes_every_probe_binding(host_module):
+    """The guard itself: whatever a probe test sets -- including a pending
+    request made with no pass -- is back as it was afterwards."""
+    h = host_module
+    before = h.bridge_probe_stash()
+    with restored_probe_stash(h):
+        h.set_bridge_probe_origin((3.0, 87.0, 50.0))
+        h.set_bridge_probe_scales(2.0, 0.5)
+        h.set_bridge_probe_mix(0.75)
+        h.request_bridge_probe_capture()
+        assert h.bridge_probe_stash()["capture_pending"] is True
+    after = h.bridge_probe_stash()
+    assert after["origin"] == pytest.approx(before["origin"])
+    assert after["scales"] == pytest.approx(before["scales"])
+    assert after["mix"] == pytest.approx(before["mix"])
+    assert after["capture_pending"] == before["capture_pending"]
+
+
+def test_probe_stash_is_at_defaults(host_module):
+    """Order-independent tripwire: every probe test in the process restores
+    the stash, so whenever this runs it reads the defaults. A future probe
+    test that forgets probe_stash_guard leaves it dirty and fails this."""
+    st = host_module.bridge_probe_stash()
+    assert st["origin"] == pytest.approx(_PROBE_STASH_DEFAULTS["origin"])
+    assert st["scales"] == pytest.approx(_PROBE_STASH_DEFAULTS["scales"])
+    assert st["mix"] == pytest.approx(_PROBE_STASH_DEFAULTS["mix"])
+    assert st["capture_pending"] is False
