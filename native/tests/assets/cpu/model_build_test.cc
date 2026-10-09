@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <type_traits>
+#include <utility>
 #include <vector>
 #ifdef _WIN32
 #include <process.h>
@@ -503,6 +505,34 @@ TEST_F(ModelBuildTest, UntexturedMaterialHasNoBaseTextureName) {
     auto model = assets::detail::build_model(f, make_ctx());
     ASSERT_EQ(model.materials.size(), 1u);
     EXPECT_EQ(model.materials[0].base_texture_name, "");
+}
+
+// Per-draw material lookup must never copy: Material holds a std::string
+// (base_texture_name), so `idx >= 0 ? materials[idx] : Material{}` would copy
+// the whole Material -- a possible heap allocation -- into a temporary on
+// every mesh draw. material_or_default returns a reference into
+// model.materials or to one shared default, so both arms are lvalues.
+static_assert(std::is_same_v<
+    decltype(assets::material_or_default(std::declval<const assets::Model&>(), 0)),
+    const assets::Material&>);
+
+TEST(MaterialOrDefault, ReturnsAReferenceIntoTheModelsMaterials) {
+    assets::Model model;
+    model.materials.resize(2);
+    model.materials[1].base_texture_name = "Map 3.tga";
+    EXPECT_EQ(&assets::material_or_default(model, 1), &model.materials[1]);
+    EXPECT_EQ(&assets::material_or_default(model, 0), &model.materials[0]);
+}
+
+TEST(MaterialOrDefault, NegativeIndexIsOneSharedDefaultMaterial) {
+    assets::Model a, b;
+    const assets::Material& d = assets::material_or_default(a, -1);
+    EXPECT_EQ(&d, &assets::material_or_default(b, -1));   // shared, not a temporary
+    const assets::Material fresh{};
+    EXPECT_EQ(d.diffuse, fresh.diffuse);
+    EXPECT_EQ(d.alpha, fresh.alpha);
+    EXPECT_EQ(d.base_texture_name, "");
+    EXPECT_EQ(d.stages[0].texture_index, -1);
 }
 
 TEST(MeshDefaults, SourceBlockIsMinusOneWhenNotBuiltFromANif) {

@@ -219,10 +219,8 @@ void MinorPass::render(const FragmentLookup& fragments, const std::vector<minors
         }
 
         // Material, as draw_model's mesh loop sets it.
-        static const assets::Material kDefaultMaterial{};
-        const assets::Material& mat = mesh.material_index() >= 0
-            ? model->materials[static_cast<std::size_t>(mesh.material_index())]
-            : kDefaultMaterial;
+        const assets::Material& mat =
+            assets::material_or_default(*model, mesh.material_index());
         s.set_vec3("u_diffuse_color", mat.diffuse);
         s.set_vec3("u_emissive_color", mat.emissive);
 

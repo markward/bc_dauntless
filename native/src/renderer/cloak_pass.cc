@@ -164,9 +164,8 @@ void CloakRefractionPass::render(const std::vector<CloakShipDescriptor>& ships,
             const auto& node = model->nodes[i];
             for (int mesh_idx : node.meshes) {
                 const auto& mesh = model->meshes[mesh_idx];
-                const assets::Material& mat = (mesh.material_index() >= 0
-                    ? model->materials[mesh.material_index()]
-                    : assets::Material{});
+                const assets::Material& mat =
+                    assets::material_or_default(*model, mesh.material_index());
                 shader.set_vec3("u_diffuse_color", mat.diffuse);
 
                 // Bind the hull's own base + glow textures so the cloaked hull

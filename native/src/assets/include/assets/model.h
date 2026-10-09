@@ -216,4 +216,17 @@ struct Model {
     mutable std::shared_ptr<void> trace_accel;
 };
 
+/// The material a mesh draws with: model.materials[material_index], or one
+/// shared default Material when the index is negative. Returns a REFERENCE in
+/// both cases: Material holds a std::string, so the old idiom
+/// `idx >= 0 ? materials[idx] : Material{}` copied the whole Material into a
+/// temporary on every draw. Precondition (as before): a non-negative index is
+/// in range.
+inline const Material& material_or_default(const Model& model, int material_index) {
+    static const Material kDefault{};
+    return material_index >= 0
+        ? model.materials[static_cast<std::size_t>(material_index)]
+        : kDefault;
+}
+
 }  // namespace assets

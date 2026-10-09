@@ -99,9 +99,8 @@ void walk_bridge_meshes(const scenegraph::World& world,
                 const auto& node = m->nodes[i];
                 for (int mesh_idx : node.meshes) {
                     const auto& mesh = m->meshes[mesh_idx];
-                    const auto& mat = (mesh.material_index() >= 0
-                        ? m->materials[mesh.material_index()]
-                        : assets::Material{});
+                    const auto& mat =
+                        assets::material_or_default(*m, mesh.material_index());
                     draw_one(*m, mesh, mat, world_per_node[i], inst.model_handle);
                 }
             }
@@ -343,8 +342,8 @@ void BridgePass::render(const scenegraph::World& world,
                 const auto& node = m->nodes[i];
                 for (int mesh_idx : node.meshes) {
                     const auto& mesh = m->meshes[mesh_idx];
-                    const auto& mat = (mesh.material_index() >= 0
-                        ? m->materials[mesh.material_index()] : assets::Material{});
+                    const auto& mat =
+                        assets::material_or_default(*m, mesh.material_index());
                     // Lip-sync: blend the head meshes' face texture when this
                     // officer has an active face override. Body meshes and
                     // non-speaking officers take the byte-identical normal path.
