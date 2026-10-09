@@ -408,6 +408,14 @@ environment is split into layers and summed in the shader:
   the two base probes (they differ only in ambient at first); the emitter
   step adds exclusions and layers.
 
+### 9.5 Bloom — specular uncapped *(Mark, 2026-10-09)*
+
+Diffuse keeps the 0.88 ceiling; **specular is uncapped**. In practice only
+emitter reflections (the probe holds a lit room capped at 0.88, so only
+emitters in it exceed the threshold) and spot-light highlights can bloom.
+§1's invariant now reads: **lit diffuse never blooms; emitters and their
+reflections/highlights may.**
+
 ## 10. Iteration log
 
 | # | Date | Change | Verdict | Sections |
@@ -420,3 +428,4 @@ environment is split into layers and summed in the shader:
 | — | 2026-10-09 | PBR: overlay maps only for stock albedo; mod maps beside the mod albedo (future) | accepted | 9.2 |
 | — | 2026-10-09 | PBR: normal maps by albedo name; per-alert base probes excluding animated emitters + later per-animation-group probe layers | accepted | 9.3, 9.4 |
 | — | 2026-10-09 | PBR: base probes reduced to green + yellow/red; yellow-vs-red differences become layers | accepted | 9.4 |
+| — | 2026-10-09 | PBR: specular uncapped, diffuse keeps ceiling | accepted | 9.5 |
