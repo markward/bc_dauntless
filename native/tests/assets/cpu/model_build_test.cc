@@ -450,6 +450,61 @@ TEST_F(ModelBuildTest, MeshRecordsItsSourceNifBlock) {
     EXPECT_EQ(model.meshes[0].shape_name(), "Saucer");
 }
 
+// The bridge editor's texture readout comes from the BUILT material: the
+// Base-stage texture's source basename, one per shape.
+TEST_F(ModelBuildTest, MaterialRecordsItsBaseTextureName) {
+    auto f = file_with_id_and_bridge_shapes();
+    auto model = assets::detail::build_model(f, make_ctx());
+    ASSERT_EQ(model.meshes.size(), 2u);
+    const auto name_of = [&](std::size_t mesh) {
+        return model.materials[model.meshes[mesh].material_index()].base_texture_name;
+    };
+    EXPECT_EQ(name_of(0), "hull_ID.tga");
+    EXPECT_EQ(name_of(1), "hull_bridge.tga");
+}
+
+// Stock DBridge hangs its NiTextureProperty on parent NiNodes, not on the
+// shapes; the name must follow that inheritance, and keep only the basename.
+TEST_F(ModelBuildTest, MaterialBaseTextureNameFollowsAnInheritedProperty) {
+    nif::File f;
+    nif::NiNode root;                           // 0: carries the texture
+    root.av.obj.name = "Root";
+    root.child_links = {1};
+    root.av.property_links = {3};
+    f.blocks.push_back(root);
+    nif::NiTriShape tri;                        // 1: no properties of its own
+    tri.data_link = 2;
+    f.blocks.push_back(tri);
+    nif::NiTriShapeData d;                      // 2
+    d.num_vertices = 3;
+    d.has_vertices = true;
+    d.vertices = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}};
+    d.has_uv = true;
+    d.uv_sets.push_back({{0, 0}, {1, 0}, {0, 1}});
+    d.num_triangles = 1;
+    d.triangles.push_back({0, 1, 2});
+    f.blocks.push_back(d);
+    nif::NiTextureProperty tex;                 // 3
+    tex.image_link = 4;
+    f.blocks.push_back(tex);
+    nif::NiImage img;                           // 4
+    img.use_external = 1;
+    img.file_name = "data\\Models\\Sets\\DBridge\\High\\Map 3.tga";
+    f.blocks.push_back(img);
+    f.block_ids = {0, 1, 2, 3, 4};   // the parent walk keys on link ids
+    auto model = assets::detail::build_model(f, make_ctx());
+    ASSERT_EQ(model.meshes.size(), 1u);
+    EXPECT_EQ(model.materials[model.meshes[0].material_index()].base_texture_name,
+              "Map 3.tga");
+}
+
+TEST_F(ModelBuildTest, UntexturedMaterialHasNoBaseTextureName) {
+    auto f = trivial_file_with_one_trishape();
+    auto model = assets::detail::build_model(f, make_ctx());
+    ASSERT_EQ(model.materials.size(), 1u);
+    EXPECT_EQ(model.materials[0].base_texture_name, "");
+}
+
 TEST(MeshDefaults, SourceBlockIsMinusOneWhenNotBuiltFromANif) {
     assets::Mesh mesh;
     EXPECT_EQ(mesh.source_block(), -1);

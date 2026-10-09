@@ -123,7 +123,6 @@ def test_optional_holds_exactly_the_soft_guarded_bindings():
         "set_swap_interval", "swap_interval",
         "set_cursor_shape",
         "ray_trace_mesh_pick", "model_identity", "set_bridge_highlight",
-        "nif_shapes",
     })
 
 

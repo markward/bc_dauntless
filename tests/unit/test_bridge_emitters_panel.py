@@ -10,31 +10,45 @@ HASH = "0123456789abcdef"
 INFO = {
     "source": "/abs/Dbridge.NIF", "content_hash": HASH,
     "meshes": [
-        {"mesh": 0, "block": 3, "name": "floor", "node_chain": ["Scene Root"], "material": 0},
+        {"mesh": 0, "block": 3, "name": "floor", "node_chain": ["Scene Root"],
+         "textures": [], "material": 0},
         {"mesh": 1, "block": 7, "name": "redalertpanel",
-         "node_chain": ["Scene Root", "Red On GlowAlpha"], "material": 1},
+         "node_chain": ["Scene Root", "Red On GlowAlpha"],
+         "textures": ["redalertpanel.tga"], "material": 1},
+        # Stock DBridge: every shape is unnamed; the owning node names it.
+        {"mesh": 2, "block": 11, "name": "",
+         "node_chain": ["", "Gamma", "wall side pnls 11"],
+         "textures": ["Map 20.tga"], "material": 2},
     ],
 }
 POSE = ((0.0, 0.0, 50.0), (0.0, 1.0, 50.0), (0.0, 0.0, 1.0), 0.785398)
 
 
 class FakeIO:
+    """`layers` = the meshes stacked front-to-back under the cursor."""
+
     def __init__(self, hit_mesh=1):
-        self.hit_mesh = hit_mesh
+        self.layers = [hit_mesh]
         self.highlights = []
         self.traces = []
+
+    @property
+    def hit_mesh(self):
+        return self.layers[0] if self.layers else None
+
+    @hit_mesh.setter
+    def hit_mesh(self, mesh):
+        self.layers = [] if mesh is None else [mesh]
 
     def model_identity(self, iid):
         return INFO
 
-    def nif_shape_textures(self, path):
-        return {7: ["redalertpanel.tga"]}
-
     def ray_trace_mesh_pick(self, iid, origin, direction, max_dist, exclude=()):
         self.traces.append((origin, direction, tuple(exclude)))
-        if self.hit_mesh is None or self.hit_mesh in exclude:
+        mesh = next((m for m in self.layers if m not in exclude), None)
+        if mesh is None:
             return None
-        return ((0, 10, 50), (0, -1, 0), 10.0, self.hit_mesh, 0)
+        return ((0, 10, 50), (0, -1, 0), 10.0, mesh, 0)
 
     def set_bridge_highlight(self, iid, selected, hover):
         self.highlights.append((iid, selected, hover))
@@ -140,6 +154,8 @@ def test_click_selects_and_highlights_the_shape(env):
     assert st["selected"]["key"] == "7:redalertpanel"
     assert st["selected"]["node_chain"] == ["Scene Root", "Red On GlowAlpha"]
     assert st["selected"]["textures"] == ["redalertpanel.tga"]
+    assert st["selected"]["display_name"] == "redalertpanel"
+    assert st["hover"] == "redalertpanel"
     assert io.highlights[-1] == ("iid", 1, 1)
 
 
@@ -195,10 +211,67 @@ def test_alt_click_picks_the_surface_behind(env):
     p, io, h, *_ = env
     p.open()
     click(p, h, (400.0, 300.0))
-    io.hit_mesh = 0                         # what lies behind mesh 1
+    io.layers = [1, 0]                      # mesh 0 lies behind mesh 1
     click(p, h, (400.0, 300.0), alt=True)
     assert io.traces[-1][2] == (1,)
     assert payload(p)["selected"]["key"] == "3:floor"
+
+
+def test_first_alt_click_at_a_fresh_spot_skips_the_front_surface(env):
+    # The selection (mesh 1) is unrelated to what is under the cursor now
+    # (mesh 2 in front of mesh 0): seeding the exclusion with the selection
+    # returned the FRONT surface. The first Alt+click must step past it.
+    p, io, h, *_ = env
+    p.open()
+    click(p, h, (400.0, 300.0))
+    assert payload(p)["selected"]["key"] == "7:redalertpanel"
+    io.layers = [2, 0]
+    click(p, h, (600.0, 300.0), alt=True)
+    assert payload(p)["selected"]["key"] == "3:floor"
+
+
+def test_repeated_alt_clicks_at_one_spot_step_deeper(env):
+    p, io, h, *_ = env
+    p.open()
+    io.layers = [2, 0, 1]
+    click(p, h, (600.0, 300.0), alt=True)
+    assert payload(p)["selected"]["key"] == "3:floor"
+    click(p, h, (601.0, 300.0), alt=True)
+    assert payload(p)["selected"]["key"] == "7:redalertpanel"
+
+
+def test_an_unnamed_shape_keys_on_its_block_and_displays_its_node(env):
+    p, io, h, *_ = env
+    p.open()
+    io.layers = [2]
+    click(p, h, (400.0, 300.0))
+    st = payload(p)
+    assert st["selected"]["key"] == "11:"
+    assert st["selected"]["name"] == ""
+    assert st["selected"]["display_name"] == "(node) wall side pnls 11"
+    assert st["selected"]["textures"] == ["Map 20.tga"]
+    assert st["hover"] == "(node) wall side pnls 11"
+
+
+def test_an_unnamed_shape_round_trips_through_save_and_revert(env):
+    p, io, h, t, tmp = env
+    p.open()
+    io.layers = [2]
+    click(p, h, (400.0, 300.0))
+    p.dispatch_event("material:metalness:0.75")
+    p.dispatch_event("save")
+    saved = json.loads((tmp / "bridge_lighting" / f"{HASH}.json").read_text())
+    assert saved["shapes"]["11:"] == {"block": 11, "name": "",
+                                      "material": {"metalness": 0.75}}
+    p.dispatch_event("material:metalness:0.1")
+    p.dispatch_event("revert")
+    st = payload(p)
+    assert st["status"] == ""                 # loaded cleanly, matched, no warning
+    assert st["selected"]["material"]["metalness"] == {"value": 0.75, "source": "override"}
+    p.close()                                 # a fresh session reads it back too
+    p.open()
+    click(p, h, (400.0, 300.0))
+    assert payload(p)["selected"]["material"]["metalness"]["value"] == 0.75
 
 
 def test_material_override_edit_and_sources(env):

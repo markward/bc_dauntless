@@ -2,7 +2,9 @@
 
 A pick is the ray through the cursor of the camera ACTUALLY drawn (the fly
 camera while the editor is open), traced against the bridge instance. A shape's
-identity across launches is (NIF content hash, block index, shape name)."""
+identity across launches is (NIF content hash, block index, shape name). Stock
+DBridge's shapes are all unnamed, so there the identity is effectively (hash,
+block) and the DISPLAY name falls back to the owning node's name."""
 from dataclasses import dataclass
 from typing import Optional
 
@@ -26,6 +28,18 @@ class ShapeIdentity:
     def key(self) -> str:
         return f"{self.block}:{self.name}"
 
+    @property
+    def display_name(self) -> str:
+        """The shape name; for an unnamed shape, "(node) <owning node>" --
+        the last named entry of node_chain. Display only: the key keeps the
+        real (possibly empty) name."""
+        if self.name:
+            return self.name
+        for node in reversed(self.node_chain):
+            if node:
+                return f"(node) {node}"
+        return "(unnamed)"
+
 
 def pick_mesh(trace, cursor_xy, viewport, pose, exclude=()) -> Optional[int]:
     """Mesh index under `cursor_xy` (framebuffer pixels, top-left origin) for
@@ -43,9 +57,10 @@ def pick_mesh(trace, cursor_xy, viewport, pose, exclude=()) -> Optional[int]:
     return int(hit[3])
 
 
-def identity_for(model_info, mesh, textures_by_block) -> Optional[ShapeIdentity]:
+def identity_for(model_info, mesh) -> Optional[ShapeIdentity]:
     """Resolve a mesh index to its ShapeIdentity; None if the mesh is unknown
-    or was not built from a NIF shape (block < 0)."""
+    or was not built from a NIF shape (block < 0). Textures come from the
+    mesh entry (host_io.model_identity: the Base texture as BUILT)."""
     for m in model_info.get("meshes", ()):
         if m["mesh"] != mesh:
             continue
@@ -54,14 +69,19 @@ def identity_for(model_info, mesh, textures_by_block) -> Optional[ShapeIdentity]
         return ShapeIdentity(
             mesh=int(mesh), block=int(m["block"]), name=str(m["name"]),
             node_chain=tuple(m["node_chain"]),
-            textures=tuple(textures_by_block.get(m["block"], ())),
+            textures=tuple(m.get("textures", ())),
             content_hash=str(model_info.get("content_hash", "")))
     return None
 
 
 class PickCycle:
-    """Alt+click = the surface behind: at the same spot, exclude every mesh
-    already picked there; a click anywhere else starts again."""
+    """Alt+click = the surface behind what is under the cursor.
+
+    At a spot different from the last Alt+click, pick the FRONT surface first
+    (no exclusion), exclude it, and pick again -- so the first Alt+click
+    always returns the surface behind, whatever was selected before.
+    Repeated Alt+clicks at the same spot exclude every mesh already passed
+    there and step deeper. A plain click (reset) starts again."""
 
     def __init__(self):
         self._xy = None
@@ -71,16 +91,18 @@ class PickCycle:
         self._xy = None
         self._excluded = ()
 
-    def next_exclusion(self, cursor_xy, current_mesh, slop_px=4.0) -> tuple:
-        if current_mesh < 0:
-            self.reset()
-            return ()
+    def alt_pick(self, pick, cursor_xy, slop_px=4.0) -> Optional[int]:
+        """`pick(exclude) -> mesh or None` traces the ray under `cursor_xy`."""
         same = (self._xy is not None
                 and abs(cursor_xy[0] - self._xy[0]) <= slop_px
                 and abs(cursor_xy[1] - self._xy[1]) <= slop_px)
         if not same:
-            self._excluded = ()
-        self._xy = (cursor_xy[0], cursor_xy[1])
-        if current_mesh not in self._excluded:
-            self._excluded = self._excluded + (current_mesh,)
-        return self._excluded
+            self._xy = (cursor_xy[0], cursor_xy[1])
+            front = pick(())
+            self._excluded = () if front is None else (front,)
+            if front is None:
+                return None
+        hit = pick(self._excluded)
+        if hit is not None and hit not in self._excluded:
+            self._excluded = self._excluded + (hit,)
+        return hit

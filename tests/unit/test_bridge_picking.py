@@ -7,9 +7,15 @@ INFO = {
     "source": "/abs/Dbridge.NIF",
     "content_hash": "0123456789abcdef",
     "meshes": [
-        {"mesh": 0, "block": 3, "name": "floor", "node_chain": ["Scene Root"], "material": 0},
+        {"mesh": 0, "block": 3, "name": "floor", "node_chain": ["Scene Root"],
+         "textures": [], "material": 0},
         {"mesh": 1, "block": 7, "name": "redalertpanel",
-         "node_chain": ["Scene Root", "Red On GlowAlpha"], "material": 1},
+         "node_chain": ["Scene Root", "Red On GlowAlpha"],
+         "textures": ["redalertpanel.tga"], "material": 1},
+        # Stock DBridge: every shape is unnamed; the owning node names it.
+        {"mesh": 2, "block": 11, "name": "",
+         "node_chain": ["", "Gamma", "wall side pnls 11"],
+         "textures": ["Map 20.tga"], "material": 2},
     ],
 }
 
@@ -46,28 +52,75 @@ def test_pick_forwards_the_exclusion():
 
 
 def test_identity_for_resolves_block_name_chain_textures_and_hash():
-    ident = picking.identity_for(INFO, 1, {7: ["redalertpanel.tga"]})
+    ident = picking.identity_for(INFO, 1)
     assert ident.key == "7:redalertpanel"
     assert ident.node_chain == ("Scene Root", "Red On GlowAlpha")
     assert ident.textures == ("redalertpanel.tga",)
     assert ident.content_hash == "0123456789abcdef"
+    assert ident.display_name == "redalertpanel"
+
+
+def test_identity_for_an_unnamed_shape_keys_on_the_empty_name_and_displays_its_node():
+    ident = picking.identity_for(INFO, 2)
+    assert ident.name == ""
+    assert ident.key == "11:"
+    assert ident.textures == ("Map 20.tga",)
+    assert ident.display_name == "(node) wall side pnls 11"
+
+
+def test_display_name_skips_unnamed_nodes_and_never_comes_back_empty():
+    ident = picking.ShapeIdentity(mesh=0, block=1, name="", node_chain=("", ""),
+                                  textures=(), content_hash="")
+    assert ident.display_name == "(unnamed)"
 
 
 def test_identity_for_unknown_mesh_or_block_is_none():
-    assert picking.identity_for(INFO, 9, {}) is None
+    assert picking.identity_for(INFO, 9) is None
     info = {"source": "", "content_hash": "", "meshes": [
-        {"mesh": 0, "block": -1, "name": "x", "node_chain": [], "material": 0}]}
-    assert picking.identity_for(info, 0, {}) is None
+        {"mesh": 0, "block": -1, "name": "x", "node_chain": [], "textures": [],
+         "material": 0}]}
+    assert picking.identity_for(info, 0) is None
 
 
-def test_pick_cycle_excludes_previous_picks_at_the_same_spot():
+def _layered(layers):
+    """A pick function over meshes stacked front-to-back along the ray."""
+    calls = []
+
+    def pick(exclude):
+        calls.append(tuple(exclude))
+        return next((m for m in layers if m not in exclude), None)
+    return pick, calls
+
+
+def test_alt_pick_at_a_fresh_spot_returns_the_surface_behind_the_cursor():
+    # The current selection (mesh 1) is unrelated to what is under the
+    # cursor: the first Alt+click must still step past the FRONT surface.
     cyc = picking.PickCycle()
-    assert cyc.next_exclusion((100, 100), current_mesh=1) == (1,)
-    assert cyc.next_exclusion((101, 100), current_mesh=0) == (1, 0)
-    assert cyc.next_exclusion((300, 100), current_mesh=2) == (2,)   # moved: restart
+    pick, calls = _layered([2, 0])
+    assert cyc.alt_pick(pick, (100, 100)) == 0
+    assert calls == [(), (2,)]
+
+
+def test_alt_pick_repeated_at_the_same_spot_steps_deeper():
+    cyc = picking.PickCycle()
+    pick, _ = _layered([2, 0, 5])
+    assert cyc.alt_pick(pick, (100, 100)) == 0
+    assert cyc.alt_pick(pick, (102, 99)) == 5          # within slop: deeper
+    assert cyc.alt_pick(pick, (101, 100)) is None      # nothing further behind
+
+
+def test_alt_pick_somewhere_else_starts_again_from_the_front():
+    cyc = picking.PickCycle()
+    pick, _ = _layered([2, 0, 5])
+    cyc.alt_pick(pick, (100, 100))
+    cyc.alt_pick(pick, (100, 100))
+    assert cyc.alt_pick(pick, (300, 100)) == 0
     cyc.reset()
-    assert cyc.next_exclusion((300, 100), current_mesh=2) == (2,)
+    assert cyc.alt_pick(pick, (300, 100)) == 0
 
 
-def test_pick_cycle_without_a_current_selection_excludes_nothing():
-    assert picking.PickCycle().next_exclusion((5, 5), current_mesh=-1) == ()
+def test_alt_pick_with_nothing_under_the_cursor_is_none():
+    cyc = picking.PickCycle()
+    pick, calls = _layered([])
+    assert cyc.alt_pick(pick, (5, 5)) is None
+    assert calls == [()]

@@ -53,7 +53,6 @@ class BridgeEmittersPanel(Panel):
         self._drag = 0.0
         self._info = None
         self._attached_iid = None
-        self._textures = None
         self._load = None
         self._doc = None
         self._saved_text = None
@@ -191,7 +190,6 @@ class BridgeEmittersPanel(Panel):
     def _attach(self, iid):
         self._attached_iid = iid
         self._info = self._io.model_identity(iid) or {"source": "", "content_hash": "", "meshes": []}
-        self._textures = self._io.nif_shape_textures(self._info["source"]) if self._info["source"] else {}
         h = self._info["content_hash"]
         if not h:
             self._status = "This bridge has no content hash (not an interior load); nothing can be saved."
@@ -208,15 +206,13 @@ class BridgeEmittersPanel(Panel):
         self._undo = []
 
     def _click(self, trace, xy, fb, pose):
-        exclude = ()
         if self._press_alt:
-            current = self._selected.mesh if self._selected else -1
-            exclude = self._cycle.next_exclusion(xy, current)
+            mesh = self._cycle.alt_pick(
+                lambda ex: pick_mesh(trace, xy, fb, pose, ex), xy)
         else:
             self._cycle.reset()
-        mesh = pick_mesh(trace, xy, fb, pose, exclude)
-        self._selected = (None if mesh is None
-                          else identity_for(self._info, mesh, self._textures))
+            mesh = pick_mesh(trace, xy, fb, pose)
+        self._selected = None if mesh is None else identity_for(self._info, mesh)
 
     def _push_highlight(self, iid):
         sel = self._selected.mesh if self._selected else -1
@@ -330,13 +326,14 @@ class BridgeEmittersPanel(Panel):
             if self._selected is not None and self._doc is not None:
                 sel = {"key": self._selected.key, "block": self._selected.block,
                        "name": self._selected.name,
+                       "display_name": self._selected.display_name,
                        "node_chain": list(self._selected.node_chain),
                        "textures": list(self._selected.textures),
                        "material": self._material_state()}
             hover = None
             if self._info and self._hover_mesh >= 0:
-                ident = identity_for(self._info, self._hover_mesh, self._textures or {})
-                hover = ident.key if ident else None
+                ident = identity_for(self._info, self._hover_mesh)
+                hover = ident.display_name if ident else None
             state = {
                 "visible": True,
                 "in_bridge": bool(self._in_bridge()),

@@ -81,7 +81,6 @@ _OPTIONAL_BINDINGS = frozenset({
     "set_swap_interval", "swap_interval",
     "set_cursor_shape",
     "ray_trace_mesh_pick", "model_identity", "set_bridge_highlight",
-    "nif_shapes",
 })
 
 
@@ -544,11 +543,29 @@ def ray_trace_mesh_pick(instance_id, origin, direction, max_dist,
     return (px, py, pz), normal, dist, mesh, tri
 
 
+def _lossy_str(v) -> str:
+    """A NIF name as str: the binding hands names over as bytes (a NIF holds
+    whatever bytes its exporter wrote), decoded here with errors="replace" so
+    a non-UTF-8 name can never raise into the host loop."""
+    if isinstance(v, (bytes, bytearray)):
+        return bytes(v).decode("utf-8", errors="replace")
+    return str(v)
+
+
 def model_identity(instance_id):
     """{source, content_hash, meshes:[{mesh, block, name, node_chain,
-    material}]} for an instance's model; None headless or for a stale id."""
+    textures, material}]} for an instance's model; None headless or for a
+    stale id. `textures` is the Base-stage texture basename as BUILT (parent
+    inheritance resolved), or []. Names are str (lossily decoded)."""
     fn = getattr(_h, "model_identity", None) if _h is not None else None
-    return None if fn is None else fn(instance_id)
+    info = None if fn is None else fn(instance_id)
+    if info is None:
+        return None
+    for m in info["meshes"]:
+        m["name"] = _lossy_str(m["name"])
+        m["node_chain"] = [_lossy_str(n) for n in m["node_chain"]]
+        m["textures"] = [_lossy_str(t) for t in m.get("textures", ())]
+    return info
 
 
 def set_bridge_highlight(instance_id, selected, hover) -> None:
@@ -557,18 +574,6 @@ def set_bridge_highlight(instance_id, selected, hover) -> None:
     fn = getattr(_h, "set_bridge_highlight", None) if _h is not None else None
     if fn is not None:
         fn(instance_id, int(selected), int(hover))
-
-
-def nif_shape_textures(abs_path) -> dict:
-    """NIF block index -> texture basenames, from the parse-only nif_shapes
-    binding. {} headless, for a missing file, or on a parse failure."""
-    fn = getattr(_h, "nif_shapes", None) if _h is not None else None
-    if fn is None:
-        return {}
-    shapes = fn(str(abs_path))
-    if not shapes:
-        return {}
-    return {int(s["block"]): list(s["textures"]) for s in shapes}
 
 
 # ── Star map (Helm → Set Course) ─────────────────────────────────────────────

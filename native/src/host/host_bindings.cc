@@ -269,6 +269,12 @@ renderer::BridgeQuality g_bridge_quality = renderer::kDefaultBridgeQuality;
 // --developer, so this stays 0 (Off) in production regardless of what
 // Python sends.
 int g_bridge_debug_view = 0;
+// Developer-only bridge editor selection tint (set_bridge_highlight). Held
+// here, not only on the pass, so it survives the pass being (re)created and
+// is readable headless (bridge_highlight()). 0 model handle = none.
+unsigned long long g_bridge_highlight_model = 0;
+int g_bridge_highlight_selected = -1;
+int g_bridge_highlight_hover = -1;
 std::vector<renderer::Backdrop> g_backdrops;
 bool g_sky_dirty = true;            // cubemap needs (re)baking
 bool g_sky_last_procedural = false; // procedural-toggle state at the last frame
@@ -1021,6 +1027,9 @@ void init(int width, int height, const std::string& title) {
     g_starmap_pass        = std::make_unique<renderer::StarMapPass>();
     g_bridge_pass         = std::make_unique<renderer::BridgePass>();
     g_bridge_pass->set_ao_settings(renderer::ao_settings_for(g_bridge_quality));
+    g_bridge_pass->set_highlight(g_bridge_highlight_model,
+                                 g_bridge_highlight_selected,
+                                 g_bridge_highlight_hover);
     g_viewscreen_static_pass = std::make_unique<renderer::ViewscreenStaticPass>();
     g_hdr_target      = std::make_unique<renderer::HdrTarget>();
     g_msaa_target     = std::make_unique<renderer::HdrMsaaTarget>();
@@ -1101,6 +1110,9 @@ void shutdown() {
     g_target_reticle_pass.reset();
     g_starmap_pass.reset();
     g_bridge_pass.reset();
+    // The highlighted model handle dies with this session's model cache.
+    g_bridge_highlight_model = 0;
+    g_bridge_highlight_selected = g_bridge_highlight_hover = -1;
     g_viewscreen_static_pass.reset();
     g_bloom_pass.reset();
     g_nonfinite_probe.reset();
@@ -6334,12 +6346,25 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       if (chain.size() > model->nodes.size()) break;  // cycle guard
                   }
                   std::reverse(chain.begin(), chain.end());
+                  // Names cross as BYTES: a NIF name is whatever the exporter
+                  // wrote, and pybind's str conversion raises on non-UTF-8.
+                  // host_io.model_identity decodes with errors="replace".
+                  py::list chain_b;
+                  for (const auto& c : chain) chain_b.append(py::bytes(c));
+                  // The Base-stage texture as BUILT (property inheritance
+                  // resolved), not nif_shapes' per-shape property walk.
+                  py::list textures;
+                  const int mi = mesh.material_index();
+                  if (mi >= 0 && mi < static_cast<int>(model->materials.size()) &&
+                      !model->materials[mi].base_texture_name.empty())
+                      textures.append(py::bytes(model->materials[mi].base_texture_name));
                   py::dict d;
                   d["mesh"] = static_cast<int>(i);
                   d["block"] = mesh.source_block();
-                  d["name"] = mesh.shape_name();
-                  d["node_chain"] = py::cast(chain);
-                  d["material"] = mesh.material_index();
+                  d["name"] = py::bytes(mesh.shape_name());
+                  d["node_chain"] = std::move(chain_b);
+                  d["textures"] = std::move(textures);
+                  d["material"] = mi;
                   meshes.append(std::move(d));
               }
               py::dict out;
@@ -6350,21 +6375,54 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("instance_id"),
           "{source, content_hash, meshes:[{mesh, block, name, node_chain, "
-          "material}]} for an instance's model, or None for a stale id.");
+          "textures, material}]} for an instance's model, or None for a stale "
+          "id. name / node_chain / textures are BYTES (decode with "
+          "errors='replace'; host_io.model_identity does).");
 
     // Developer-only selection tint on the bridge (spec
     // 2026-10-08-bridge-emitters §4).
     m.def("set_bridge_highlight",
           [](py::object instance_id, int selected, int hover) {
-              if (!dauntless::is_developer_mode() || !g_bridge_pass) return;
-              if (instance_id.is_none()) { g_bridge_pass->clear_highlight(); return; }
-              auto* inst = g_world.get(instance_id.cast<scenegraph::InstanceId>());
-              if (inst == nullptr) { g_bridge_pass->clear_highlight(); return; }
-              g_bridge_pass->set_highlight(inst->model_handle, selected, hover);
+              if (!dauntless::is_developer_mode()) return;
+              scenegraph::Instance* inst = nullptr;
+              if (!instance_id.is_none())
+                  inst = g_world.get(instance_id.cast<scenegraph::InstanceId>());
+              if (inst == nullptr) {         // None or a stale id: clear
+                  g_bridge_highlight_model = 0;
+                  g_bridge_highlight_selected = g_bridge_highlight_hover = -1;
+              } else {
+                  g_bridge_highlight_model = inst->model_handle;
+                  g_bridge_highlight_selected = selected;
+                  g_bridge_highlight_hover = hover;
+              }
+              if (g_bridge_pass)
+                  g_bridge_pass->set_highlight(g_bridge_highlight_model,
+                                               g_bridge_highlight_selected,
+                                               g_bridge_highlight_hover);
           },
           py::arg("instance_id"), py::arg("selected"), py::arg("hover"),
           "Developer-only bridge editor selection tint: mesh indices into the "
-          "instance's model, -1 = none; None clears. No-op without --developer.");
+          "instance's model, -1 = none; None or a stale id clears. No-op "
+          "without --developer.");
+
+    m.def("bridge_highlight",
+          [] {
+              return py::make_tuple(g_bridge_highlight_model != 0,
+                                    g_bridge_highlight_selected,
+                                    g_bridge_highlight_hover);
+          },
+          "(active, selected_mesh, hover_mesh) of the bridge editor tint "
+          "(see set_bridge_highlight); (False, -1, -1) when none.");
+
+    // TEST-ONLY: pytest loads the .so without host_main.cc's argv parsing, so
+    // dauntless::is_developer_mode() is permanently false there and every
+    // developer-gated binding would be untestable on its enabled path. Does
+    // NOT touch the module's `developer_mode` attribute (Python's view).
+    m.def("_test_only_set_developer_mode",
+          [](bool on) { dauntless::set_developer_mode(on); },
+          py::arg("enabled"),
+          "Test hook: set the C++ developer-mode flag. Never call from the "
+          "engine.");
 
     m.def("damage_decal_add",
           [](scenegraph::InstanceId id,

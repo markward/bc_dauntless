@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstdint>
+#include <string>
 
 #include <glm/glm.hpp>
 
@@ -68,6 +69,14 @@ struct Material {
     /// renderer reads animation_index at draw time and substitutes the
     /// current frame's texture for stages[Base].texture_index.
     int animation_index = -1;
+
+    /// Basename of the source file (NiImage::file_name) of the texture this
+    /// material's Base stage was built from, "" when Base has none or the
+    /// image is embedded. Recorded where the Base stage is resolved, so it
+    /// reflects property inheritance from parent nodes exactly as drawn
+    /// (nif_shapes' per-shape walk does not). Identity only -- the bridge
+    /// editor's readout (spec 2026-10-08-bridge-emitters §4); never drawn.
+    std::string base_texture_name;
 };
 
 }  // namespace assets

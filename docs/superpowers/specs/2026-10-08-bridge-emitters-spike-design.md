@@ -133,7 +133,9 @@ without a rewrite. Mark's addition: **a WASDQE fly camera**.
 - **Unit of selection** = one NIF shape. Stable identity across launches =
   **(NIF content hash, block index, shape name)**; the name is a sanity
   check, so a mismatch is reported, never silently applied to the wrong
-  shape.
+  shape. Stock DBridge's shapes are all unnamed (145 of 145), so there the
+  identity is effectively (hash, block) and the panel's display name falls
+  back to the owning node's name, shown as "(node) <name>".
 - **Display.** Dev-only `bridge.frag` overlay keyed by that stable identity
   (not the per-frame mesh counter): the selected shape gets a pulsing cyan
   tint, the shape under the cursor a faint tint. The panel shows the
