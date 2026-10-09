@@ -23,3 +23,24 @@ def test_galaxy_has_one_id_shape_with_consistent_arrays():
 
 def test_missing_file_returns_none():
     assert _host().nif_shapes("/nonexistent/x.nif") is None
+
+
+def test_dbridge_shapes_carry_frame_parent_colours_and_uv1():
+    nif = paths.game_root() / "data/Models/Sets/DBridge/Dbridge.NIF"
+    if not nif.exists():
+        pytest.skip("BC content not configured")
+    shapes = _host().nif_shapes(str(nif))
+    assert len(shapes) == 145
+    by_block = {s["block"]: s for s in shapes}
+    walls = by_block[468]
+    assert walls["parent"] == "Material: D walls 1"
+    assert walls["data_block"] >= 0
+    w = walls["world"]
+    assert len(w) == 16 and w[15] == 1.0
+    assert sum(1 for s in shapes if s["colors"]) == 123
+    assert sum(1 for s in shapes if s["uvs1"]) == 17
+    for s in shapes:
+        n = len(s["vertices"])
+        assert len(s["colors"]) in (0, n)
+        assert len(s["uvs1"]) in (0, n)
+        assert all(len(c) == 4 for c in s["colors"])

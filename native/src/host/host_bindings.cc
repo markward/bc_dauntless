@@ -2456,7 +2456,26 @@ py::object nif_shapes_impl(const std::string& nif_abs_path) {
         if (data_idx != std::string::npos && data_idx < f.blocks.size())
             data = std::get_if<nif::NiTriShapeData>(&f.blocks[data_idx]);
 
-        py::list vertices, normals, uvs, triangles;
+        // Parent NiNode name (label only; identity is the block index).
+        std::string parent_name;
+        for (std::size_t p = 0; p < f.blocks.size() && parent_name.empty(); ++p) {
+            const auto* node = std::get_if<nif::NiNode>(&f.blocks[p]);
+            if (!node) continue;
+            for (std::uint32_t link : node->child_links)
+                if (nif_shapes_index_of(f, link) == i) { parent_name = node->av.obj.name; break; }
+        }
+        d["parent"] = parent_name;
+        d["data_block"] = (data_idx != std::string::npos && data_idx < f.blocks.size())
+                              ? static_cast<int>(data_idx) : -1;
+        {
+            const glm::mat4 w = assets::nif_block_world(f, i);
+            py::list wl;
+            for (int c = 0; c < 4; ++c)
+                for (int r = 0; r < 4; ++r) wl.append(w[c][r]);
+            d["world"] = wl;
+        }
+
+        py::list vertices, normals, uvs, triangles, colors, uvs1;
         if (data) {
             const glm::mat4 world = assets::nif_block_world(f, i);
             const glm::mat3 normal_mat = glm::mat3(world);
@@ -2476,11 +2495,20 @@ py::object nif_shapes_impl(const std::string& nif_abs_path) {
             for (const auto& t : data->triangles) {
                 triangles.append(py::make_tuple(t[0], t[1], t[2]));
             }
+            if (data->has_vertex_colors) {
+                for (const auto& c : data->vertex_colors)
+                    colors.append(py::make_tuple(c.r, c.g, c.b, c.a));
+            }
+            if (data->uv_sets.size() >= 2) {
+                for (const auto& uv : data->uv_sets[1]) uvs1.append(py::make_tuple(uv.u, uv.v));
+            }
         }
         d["vertices"] = vertices;
         d["normals"] = normals;
         d["uvs"] = uvs;
         d["triangles"] = triangles;
+        d["colors"] = colors;
+        d["uvs1"] = uvs1;
         d["hidden"] = (shape->av.flags & 0x0001u) != 0;
 
         out.append(d);
@@ -2947,7 +2975,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "texture basenames, world-space vertices/normals, UV set 0, "
           "triangles, hidden flag. None if the file is missing or fails to "
           "parse. Parse-only, no GL context; applies no mesh fix. Feeds "
-          "tools/gen_mesh_fixes.py.");
+          "tools/gen_mesh_fixes.py. Also: world (16 floats, column-major, "
+          "data frame -> model), parent node name, data_block, per-vertex "
+          "colors (or []), UV set 1 (or []).");
 
     py::class_<scenegraph::InstanceId>(m, "InstanceId")
         .def(py::init<>())
