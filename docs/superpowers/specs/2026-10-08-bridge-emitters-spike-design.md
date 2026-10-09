@@ -331,13 +331,38 @@ throws into the room.
   `set_rotation` on the direction, `pipette_fields_from`), so the SPV's
   Move/Rotate gizmos can be added later without a new branch in the panel.
 
-## 9. Bridge PBR *(to be designed next)*
+## 9. Bridge PBR *(in design, 2026-10-09)*
 
-Placeholder. It must decide: the BRDF port; the `material` section of §7;
-map sources (replacements overlay, per texture); the reflection probe (one
-capture at the captain's chair, possibly one per steady alert state so
-emitters appear in reflections); whether specular may bloom (§6.1); how the
-downlight becomes diffuse irradiance; and how AO applies.
+Open: the BRDF port (start from `origin/feat/pbr-ship-spike` 56575bb4,
+Cook-Torrance GGX); the reflection probe (one capture at the captain's
+chair, possibly one per steady alert state so emitters appear in
+reflections); whether specular may bloom (§6.1); how the downlight becomes
+diffuse irradiance; how AO applies.
+
+### 9.1 Linear lighting — a deliberate tone shift
+
+`bridge.frag` today lights the raw (gamma-space) texture values. GGX needs
+linear albedo (`pow(base, 2.2)`, as the July spike did), so PBR shifts the
+whole bridge's tone before any roughness or metal comes in. The downlight's
+`down_top` / `down_bottom` and the ×1.5 green ambient are re-calibrated live
+in a dedicated iteration.
+
+### 9.2 Material sources — layered, per channel *(Mark, 2026-10-09)*
+
+Roughness and metalness are each resolved independently, first hit wins:
+
+| Order | Source | Detail |
+|---|---|---|
+| A | Maps found by the albedo's filename | `<albedo stem>_rough.tga` / `<albedo stem>_metal.tga`, resolved through the replacements overlay then the game install (`paths.game_asset`) — added without touching BC files. |
+| B | Per-shape override, a 0–1 float each | Picker-set; the shape's `material` section of the bridge file (§7). |
+| C | Default | metalness 0, roughness 1 |
+
+The NIF's own gloss/specular values are NOT a source.
+
+**Known trade-off:** a map always beats an override, so once a shared
+texture (DBridge texture 7, 22 shapes) gets a `_rough` map, no single shape
+using it can opt out. Accepted; flipping A and B for one shape is a one-line
+change if it ever bites.
 
 ## 10. Iteration log
 
@@ -347,3 +372,4 @@ downlight becomes diffuse irradiance; and how AO applies.
 | — | 2026-10-09 | Approach A + WASDQE fly camera chosen; camera & selection design | accepted | 3, 4 |
 | — | 2026-10-09 | Programme order (PBR first); emitter model documented assuming PBR; persistence + editor drafted | §5–6 documented; §7–8 draft | 5, 6, 7, 8, 9 |
 | — | 2026-10-09 | Persistence + editor accepted | accepted | 7, 8 |
+| — | 2026-10-09 | PBR: linear-lighting tone shift noted; material sources layered (maps by albedo name → per-shape 0-1 override → metal 0 / rough 1) | accepted | 9 |
