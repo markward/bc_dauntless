@@ -1517,3 +1517,14 @@ def test_main_passes_exclude_and_reports_it(monkeypatch, tmp_path, capsys):
     assert cli.main(["diff", "b.obj", "e.obj", "--exclude", "392", "--exclude", "395"]) == 0
     assert seen["exclude"] == [392, 395]
     assert "excluded: blocks 392, 395" in capsys.readouterr().out
+
+
+def test_correspondence_breaks_a_connectivity_tie_on_kept_corner_uvs():
+    # The two-apex tie above, but the kept face still shows apex 2's UV: a
+    # moved survivor keeps its corner UVs, so apex 2 (base 2) survived.
+    base = _with([(0, 0, 0), (1, 0, 0), (0.5, 1, 0), (0.5, -1, 0)],
+                 [[(0, (0, 0)), (1, (1, 0)), (2, (0.1, 0.9))],
+                  [(1, (1, 0)), (0, (0, 0)), (3, (0.2, 0.2))]])
+    edit = _with([(0, 0, 0), (1, 0, 0), (0.5, 2, 0)],
+                 [[(0, (0, 0)), (1, (1, 0)), (2, (0.1, 0.9))]])
+    assert match.correspond(5, base, edit) == [0, 1, 2]

@@ -192,24 +192,40 @@ def _neighbours(mesh):
     return out
 
 
+def _corner_uvs(mesh):
+    out = [[] for _ in mesh.positions]
+    for f in mesh.faces:
+        for v, uv in f:
+            if uv is not None and not any(_uv_equal(uv, u) for u in out[v]):
+                out[v].append(uv)
+    return out
+
+
 def _pair_weights(base, edit):
-    """Sparse agreement score per (edit, base) pair (spec §5.2): 2 for the
-    same position, plus 1 per edit neighbour that sits where one of the base
-    vertex's neighbours sits. Matching-independent, so it can drive one DP."""
+    """Sparse agreement score per (edit, base) pair (spec §5.2): 4 for the
+    same position, plus 2 per edit neighbour that sits where one of the base
+    vertex's neighbours sits, plus 1 when the pair already scores and a
+    corner UV of one equals a corner UV of the other (a moved survivor keeps
+    its UVs; it only breaks ties, never creates a candidate).
+    Matching-independent, so it can drive one DP."""
     grid = _grid(base.positions)
     bn, en = _neighbours(base), _neighbours(edit)
+    buv, euv = _corner_uvs(base), _corner_uvs(edit)
     weights = {}
     for e, ep in enumerate(edit.positions):
         w = {}
         for b in _near(grid, base.positions, ep):
-            w[b] = w.get(b, 0) + 2
+            w[b] = w.get(b, 0) + 4
         agree = {}
         for e2 in en[e]:
             for b2 in _near(grid, base.positions, edit.positions[e2]):
                 for b in bn[b2]:
                     agree.setdefault(b, set()).add(e2)
         for b, es in agree.items():
-            w[b] = w.get(b, 0) + len(es)
+            w[b] = w.get(b, 0) + 2 * len(es)
+        for b in w:
+            if any(_uv_equal(u, v) for u in euv[e] for v in buv[b]):
+                w[b] += 1
         if w:
             weights[e] = w
     return weights
