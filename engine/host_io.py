@@ -82,6 +82,8 @@ _OPTIONAL_BINDINGS = frozenset({
     "set_cursor_shape",
     "ray_trace_mesh_pick", "model_identity", "set_bridge_highlight",
     "set_bridge_material_overrides", "set_bridge_pbr_enabled",
+    "set_bridge_probe_origin", "set_bridge_probe_scales",
+    "set_bridge_probe_mix", "request_bridge_probe_capture",
 })
 
 
@@ -600,6 +602,41 @@ def set_bridge_pbr_enabled(on) -> None:
     fn = getattr(_h, "set_bridge_pbr_enabled", None) if _h is not None else None
     if fn is not None:
         fn(bool(on))
+
+
+def set_bridge_probe_origin(origin) -> None:
+    """Bridge reflection probe capture point (x, y, z), bridge world space --
+    the captain's-chair eye. Production (not developer-gated); takes effect at
+    the next capture. No-op headless."""
+    fn = getattr(_h, "set_bridge_probe_origin", None) if _h is not None else None
+    if fn is not None:
+        x, y, z = origin
+        fn((float(x), float(y), float(z)))
+
+
+def set_bridge_probe_scales(green, yellow_red) -> None:
+    """Ambient multipliers the green and yellow/red reflection probes are
+    captured with. Takes effect at the next capture. No-op headless."""
+    fn = getattr(_h, "set_bridge_probe_scales", None) if _h is not None else None
+    if fn is not None:
+        fn(float(green), float(yellow_red))
+
+
+def set_bridge_probe_mix(t) -> None:
+    """Reflection cross-fade, 0 = green probe .. 1 = yellow/red probe
+    (clamped natively). No-op headless."""
+    fn = getattr(_h, "set_bridge_probe_mix", None) if _h is not None else None
+    if fn is not None:
+        fn(float(t))
+
+
+def request_bridge_probe_capture() -> None:
+    """Recapture both bridge reflection probes in the next bridge frame (bridge
+    load, lighting / override / spot edits) -- never per frame. No-op
+    headless."""
+    fn = getattr(_h, "request_bridge_probe_capture", None) if _h is not None else None
+    if fn is not None:
+        fn()
 
 
 # ── Star map (Helm → Set Course) ─────────────────────────────────────────────

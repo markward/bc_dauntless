@@ -85,6 +85,24 @@ uniform int       u_has_metal_map;
 uniform float     u_rough_override;
 uniform float     u_metal_override;
 
+// ── Reflection probes (plan 2026-10-09-bridge-pbr Task 6) ──────────────
+// Two prefiltered captures of the room -- green (unit 7) and yellow/red
+// (unit 8) -- cross-faded by u_probe_mix, box-projected against the bridge
+// model's AABB, with the split-sum BRDF LUT on unit 9. u_has_probe = 0 until
+// BOTH are captured: the cube units are then EMPTY and must not be sampled.
+// u_capture = 1 while BridgePass draws a probe face: linear diffuse-only
+// radiance, no encode, no ceiling, no AO, no highlight, no specular, the
+// viewscreen black.
+uniform samplerCube u_probe_a;    // unit 7: green
+uniform samplerCube u_probe_b;    // unit 8: yellow/red
+uniform sampler2D   u_brdf_lut;   // unit 9: (A, B), x = NdotV, y = roughness
+uniform int         u_has_probe;
+uniform float       u_probe_mix;  // 0 green .. 1 yellow/red
+uniform vec3        u_probe_pos;  // capture point, world
+uniform vec3        u_box_min;    // bridge AABB, world
+uniform vec3        u_box_max;
+uniform int         u_capture;
+
 out vec4 FragColor;
 
 // Integer hash (Squirrel3-style, as used by the bridge-lighting debug-view
@@ -220,6 +238,21 @@ vec3 perturb_normal(vec3 N, vec2 uv, vec3 map_n) {
     return normalize(mat3(T * invmax, B * invmax, N) * map_n);
 }
 
+// Parallax-corrected lookup: where the ray pos + t*dir leaves the box, seen
+// from the probe. Twin of pbr::box_project.
+vec3 box_project(vec3 pos, vec3 dir, vec3 bmin, vec3 bmax, vec3 probe) {
+    vec3 inv = 1.0 / dir;
+    vec3 t1 = (bmax - pos) * inv, t2 = (bmin - pos) * inv;
+    vec3 tf = max(t1, t2);
+    float t = min(tf.x, min(tf.y, tf.z));
+    return normalize(pos + dir * t - probe);
+}
+
+// Prefiltered mip for a roughness. Twin of pbr::prefilter_mip; 6.0 is
+// renderer::kBridgeProbeMips (bridge_lighting_tuning.h) -- keep in step.
+const float kBridgeProbeMips = 6.0;
+float prefilter_mip(float rough) { return clamp(rough, 0.0, 1.0) * (kBridgeProbeMips - 1.0); }
+
 float channel(int has_map, sampler2D map, float override_v, float dflt) {
     if (has_map != 0) return texture(map, v_uv).r;
     return override_v >= 0.0 ? override_v : dflt;
@@ -233,6 +266,18 @@ void main() {
         base = mix(base, texture(u_face_b, base_uv), clamp(u_face_mix, 0.0, 1.0));
     if (base.a < u_alpha_test_threshold) discard;
     if (u_output_normal != 0) { FragColor = vec4(shading_normal(), 1.0); return; }
+    if (u_capture != 0) {
+        // Probe capture: the probe stores LINEAR radiance. The viewscreen
+        // feed is black (it changes every frame; a probe is captured once).
+        if (u_unlit != 0) { FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
+        vec3 nc = shading_normal();
+        float metal_c = clamp(channel(u_has_metal_map, u_metal_map, u_metal_override, 0.0), 0.0, 1.0);
+        float hc = clamp(dot(nc, u_up) * 0.5 + 0.5, 0.0, 1.0);
+        vec3 lit = decode(base.rgb) * (1.0 - metal_c)
+                 * decode(u_ambient * mix(u_down_bottom, u_down_top, hc));
+        FragColor = vec4(lit, 1.0);
+        return;
+    }
     if (u_unlit != 0) {
         vec3 col = base.rgb * u_viewscreen_brightness;
         col = mix(col, vec3(1.0), clamp(u_viewscreen_flash, 0.0, 1.0));
@@ -267,7 +312,23 @@ void main() {
         // the WHOLE legacy received term, so AO reads exactly as it does today.
         vec3 received = decode(u_ambient * mix(u_down_bottom, u_down_top, h) * ao);
         vec3 diffuse = albedo * (1.0 - metal) * (vec3(1.0) - Fv) * received;
-        vec3 spec = vec3(0.0);               // Task 6 adds the probe; Task 7 the spots
+        vec3 spec = vec3(0.0);               // Task 7 adds the spots
+        if (u_has_probe != 0) {
+            vec3 R = reflect(-V, N);
+            if (u_debug_view == 9) {
+                FragColor = vec4(encode(textureLod(u_probe_a, R, 0.0).rgb), 1.0);
+                return;
+            }
+            vec3 Rb = box_project(v_world, R, u_box_min, u_box_max, u_probe_pos);
+            // A ray exactly along a face it starts on is 0 * inf: fall back
+            // to the unprojected direction rather than feed NaN to bloom.
+            if (any(isnan(Rb)) || any(isinf(Rb))) Rb = R;
+            float mip = prefilter_mip(rough);
+            vec3 pre = mix(textureLod(u_probe_a, Rb, mip).rgb,
+                           textureLod(u_probe_b, Rb, mip).rgb, u_probe_mix);
+            vec2 ab = texture(u_brdf_lut, vec2(NdotV, rough)).rg;
+            spec = pre * (F0 * ab.x + ab.y) * specular_occlusion(NdotV, ao, rough);
+        }
         if (u_debug_view == 8) { FragColor = vec4(encode(spec), 1.0); return; }
         vec3 col = combine(diffuse, spec, u_diffuse_max) * u_viewscreen_brightness;
         col = mix(col, vec3(1.0), clamp(u_viewscreen_flash, 0.0, 1.0));

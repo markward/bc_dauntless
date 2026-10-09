@@ -275,6 +275,19 @@ int g_bridge_debug_view = 0;
 // here, not only on the pass, so it survives the pass being (re)created and
 // is readable headless (bridge_highlight()). model 0 = none.
 dauntless::BridgeHighlight g_bridge_highlight;
+// Bridge reflection probes (set_bridge_probe_*; production, NOT developer-
+// gated). Held here as well as on the pass, so values set before init() --
+// or across a pass re-creation -- are applied when the pass is constructed
+// (the g_bridge_highlight pattern). `capture_pending` is a request made while
+// no pass existed; init() hands it on and clears it.
+struct BridgeProbeSettings {
+    glm::vec3 origin{0.0f};
+    float green = 1.0f;
+    float yellow_red = 1.0f;
+    float mix = 0.0f;
+    bool capture_pending = false;
+};
+BridgeProbeSettings g_bridge_probe;
 std::vector<renderer::Backdrop> g_backdrops;
 bool g_sky_dirty = true;            // cubemap needs (re)baking
 bool g_sky_last_procedural = false; // procedural-toggle state at the last frame
@@ -901,6 +914,12 @@ void reset_frame_state() {
     g_bridge_highlight = dauntless::BridgeHighlight{};
     // Bridge PBR material overrides are keyed by model handle too.
     if (g_bridge_pass) g_bridge_pass->clear_material_overrides();
+    // Reflection probes hold the old session's room: drop the captures, the
+    // pending request and the mix (and the per-handle box cache, whose keys
+    // die with the models). Origin and scales are configuration and stay.
+    g_bridge_probe.mix = 0.0f;
+    g_bridge_probe.capture_pending = false;
+    if (g_bridge_pass) g_bridge_pass->reset_probes();
 
     // Motion blur reprojects against the previous exterior frame's viewproj.
     // Left set, frame 1 of a new session smears against the OLD camera.
@@ -1047,6 +1066,11 @@ void init(int width, int height, const std::string& title) {
     g_bridge_pass->set_highlight(g_bridge_highlight.model,
                                  g_bridge_highlight.selected,
                                  g_bridge_highlight.hover);
+    g_bridge_pass->set_probe_origin(g_bridge_probe.origin);
+    g_bridge_pass->set_probe_scales(g_bridge_probe.green, g_bridge_probe.yellow_red);
+    g_bridge_pass->set_probe_mix(g_bridge_probe.mix);
+    if (g_bridge_probe.capture_pending) g_bridge_pass->request_probe_capture();
+    g_bridge_probe.capture_pending = false;
     g_viewscreen_static_pass = std::make_unique<renderer::ViewscreenStaticPass>();
     g_hdr_target      = std::make_unique<renderer::HdrTarget>();
     g_msaa_target     = std::make_unique<renderer::HdrMsaaTarget>();
@@ -4207,6 +4231,48 @@ PYBIND11_MODULE(_dauntless_host, m) {
               g_bridge_pass->set_pbr_enabled(on);
           },
           py::arg("on"), "Developer-only A/B: bridge PBR on/off (default on).");
+
+    // Bridge reflection probes (spec 2026-10-08-bridge-emitters §9.3, plan
+    // 2026-10-09-bridge-pbr Task 6). Production: NOT developer-gated. Before
+    // init() they only stash their values, which init() applies.
+    m.def("set_bridge_probe_origin",
+          [](std::tuple<float, float, float> p) {
+              g_bridge_probe.origin = glm::vec3(std::get<0>(p), std::get<1>(p),
+                                                std::get<2>(p));
+              if (g_bridge_pass) g_bridge_pass->set_probe_origin(g_bridge_probe.origin);
+          },
+          py::arg("origin"),
+          "Bridge reflection probe capture point (x, y, z), bridge world space "
+          "(the captain's-chair eye). Takes effect at the next capture.");
+
+    m.def("set_bridge_probe_scales",
+          [](float green, float yellow_red) {
+              g_bridge_probe.green = green;
+              g_bridge_probe.yellow_red = yellow_red;
+              if (g_bridge_pass) g_bridge_pass->set_probe_scales(green, yellow_red);
+          },
+          py::arg("green"), py::arg("yellow_red"),
+          "Ambient multipliers the green and yellow/red probes are captured "
+          "with (x the bridge lighting's ambient). Take effect at the next "
+          "capture.");
+
+    m.def("set_bridge_probe_mix",
+          [](float t) {
+              g_bridge_probe.mix = std::isfinite(t) ? std::clamp(t, 0.0f, 1.0f) : 0.0f;
+              if (g_bridge_pass) g_bridge_pass->set_probe_mix(g_bridge_probe.mix);
+          },
+          py::arg("t"),
+          "Reflection cross-fade: 0 = the green probe, 1 = the yellow/red "
+          "probe. Clamped to [0, 1].");
+
+    m.def("request_bridge_probe_capture",
+          [] {
+              if (g_bridge_pass) g_bridge_pass->request_probe_capture();
+              else g_bridge_probe.capture_pending = true;
+          },
+          "Recapture both bridge reflection probes inside the next main-bridge "
+          "frame (bridge load, lighting / override / spot edits). Never per "
+          "frame.");
 
     m.def("bridge_debug_view",
           [] { return g_bridge_debug_view; },

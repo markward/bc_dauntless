@@ -173,3 +173,60 @@ def test_host_io_pbr_wrappers_degrade_headless(monkeypatch):
     monkeypatch.setattr(host_io, "_h", None)
     host_io.set_bridge_material_overrides(0, [(0, 0.5, -1.0)])
     host_io.set_bridge_pbr_enabled(False)
+
+
+# Bridge reflection probes (plan 2026-10-09-bridge-pbr Task 6): production,
+# NOT developer-gated; no-ops before init (the values are stashed and applied
+# when the pass is created).
+
+@pytest.mark.parametrize("name", ["set_bridge_probe_origin", "set_bridge_probe_scales",
+                                  "set_bridge_probe_mix", "request_bridge_probe_capture"])
+def test_probe_binding_exists(host_module, name):
+    assert hasattr(host_module, name)
+
+
+def test_probe_bindings_are_safe_before_init(host_module):
+    host_module.set_bridge_probe_origin((0.0, 87.0, 50.0))
+    host_module.set_bridge_probe_scales(1.5, 1.0)
+    host_module.set_bridge_probe_mix(0.25)
+    host_module.request_bridge_probe_capture()
+
+
+def test_probe_bindings_on_a_live_bridge_never_raise(dbridge):
+    h, _iid = dbridge
+    h.set_bridge_probe_origin((0.0, 87.0, 50.0))
+    h.set_bridge_probe_scales(1.5, 1.0)
+    h.set_bridge_probe_mix(1.0)
+    h.request_bridge_probe_capture()
+
+
+def test_host_io_probe_wrappers_degrade_headless(monkeypatch):
+    from engine import host_io
+    monkeypatch.setattr(host_io, "_h", None)
+    host_io.set_bridge_probe_origin((0.0, 87.0, 50.0))
+    host_io.set_bridge_probe_scales(1.5, 1.0)
+    host_io.set_bridge_probe_mix(0.25)
+    host_io.request_bridge_probe_capture()
+
+
+def test_host_io_probe_wrappers_forward(monkeypatch):
+    from engine import host_io
+    calls = []
+
+    class FakeHost:
+        @staticmethod
+        def set_bridge_probe_origin(p): calls.append(("origin", p))
+        @staticmethod
+        def set_bridge_probe_scales(g, yr): calls.append(("scales", g, yr))
+        @staticmethod
+        def set_bridge_probe_mix(t): calls.append(("mix", t))
+        @staticmethod
+        def request_bridge_probe_capture(): calls.append(("capture",))
+
+    monkeypatch.setattr(host_io, "_h", FakeHost)
+    host_io.set_bridge_probe_origin((1, 2, 3))
+    host_io.set_bridge_probe_scales(1.5, 1)
+    host_io.set_bridge_probe_mix(1)
+    host_io.request_bridge_probe_capture()
+    assert calls == [("origin", (1.0, 2.0, 3.0)), ("scales", 1.5, 1.0),
+                     ("mix", 1.0), ("capture",)]

@@ -2,6 +2,7 @@
 #pragma once
 
 #include <renderer/bridge_ao_pass.h>
+#include <renderer/bridge_probe.h>
 #include <renderer/frame.h>
 
 #include <scenegraph/instance.h>  // scenegraph::Pass
@@ -27,7 +28,7 @@ class Pipeline;
 /// drawn. The viewscreen feed (u_unlit) ignores every value here. 6..10 are
 /// the PBR views: they show only where the PBR path runs (u_pbr != 0); on a
 /// comm set or with PBR off they fall through to the lit colour. 9 (probe
-/// mirror) draws the lit colour until the probes exist (plan Task 6).
+/// mirror) draws the lit colour until both probes have been captured.
 enum class BridgeDebugView : int {
     Off          = 0,
     Normals      = 1,
@@ -172,6 +173,36 @@ public:
     void set_pbr_enabled(bool on) { pbr_enabled_ = on; }
     bool pbr_enabled() const { return pbr_enabled_; }
 
+    /// Bridge reflection probes (spec 2026-10-08-bridge-emitters §9.3): two
+    /// captures of the room -- green, and yellow/red -- box-projected against
+    /// the bridge model's AABB and cross-faded by set_probe_mix. Production
+    /// state; none of it is developer-gated.
+    ///
+    /// Capture point (world). Takes effect at the next capture.
+    void set_probe_origin(glm::vec3 origin) { probe_origin_ = origin; }
+    glm::vec3 probe_origin() const { return probe_origin_; }
+    /// Ambient multipliers each probe is captured with (lighting.ambient x
+    /// scale). Take effect at the next capture.
+    void set_probe_scales(float green, float yellow_red) {
+        scale_green_ = green;
+        scale_yr_ = yellow_red;
+    }
+    /// 0 = the green probe, 1 = the yellow/red probe; clamped to [0, 1].
+    void set_probe_mix(float t);
+    float probe_mix() const { return probe_mix_; }
+    /// Mark the probes dirty: both are recaptured inside the next main-bridge
+    /// render(), before its AO pre-pass. Never per frame otherwise -- except
+    /// that a different bridge model (the largest static bridge instance's
+    /// handle) re-dirties them by itself once they have been captured.
+    void request_probe_capture() { probe_dirty_ = true; }
+    bool probe_capture_pending() const { return probe_dirty_; }
+    /// True once both probes hold a capture the shader may sample.
+    bool probes_valid() const;
+    /// Mission swap: drop the captures (no specular until the next request),
+    /// the pending request, the mix and the cached boxes (model handles die
+    /// with the session). Origin and scales are configuration and are kept.
+    void reset_probes();
+
 private:
     /// Lazily-allocated 1x1 white texture, used as a fallback for any
     /// bridge mesh whose Base-stage texture failed to load. Same role
@@ -215,6 +246,37 @@ private:
     bool pbr_enabled_ = true;
     unsigned long long overrides_model_ = 0;
     std::unordered_map<int, std::pair<float, float>> overrides_;
+
+    /// Bridge reflection probes. `capture_pass_` is true while render()
+    /// re-enters itself to draw one probe face (sub-pass A, u_capture = 1).
+    /// The LUT is owned here (not process-wide): its destructor, like the
+    /// probes', needs this pass's GL context current.
+    BridgeProbe probe_green_;
+    BridgeProbe probe_yr_;
+    BrdfLut     brdf_lut_;
+    glm::vec3   probe_origin_{0.0f};
+    float       scale_green_ = 1.0f;
+    float       scale_yr_ = 1.0f;
+    float       probe_mix_ = 0.0f;
+    bool        probe_dirty_ = false;
+    bool        probes_captured_ = false;   // cleared by reset_probes()
+    bool        capture_pass_ = false;
+    void capture_probes(const scenegraph::World& world, Pipeline& pipeline,
+                        const ModelLookup& lookup, const Lighting& lighting);
+
+    /// The box the reflections are projected against: the bridge model (the
+    /// static main-bridge instance with the largest AABB) through its
+    /// instance world. Model-space AABBs are cached per model handle (CPU
+    /// mesh data through the node rest worlds); `box_handle_` is the handle
+    /// the current box came from, and a change re-dirties captured probes.
+    struct Aabb { glm::vec3 min{0.0f}; glm::vec3 max{0.0f}; bool valid = false; };
+    std::unordered_map<unsigned long long, Aabb> model_boxes_;
+    unsigned long long box_handle_ = 0;
+    glm::vec3 box_min_{-1.0f};
+    glm::vec3 box_max_{1.0f};
+    const Aabb& model_box(unsigned long long handle, const assets::Model& m);
+    /// False when no static main-bridge instance is drawn (box unchanged).
+    bool update_box(const scenegraph::World& world, const ModelLookup& lookup);
 };
 
 }  // namespace renderer

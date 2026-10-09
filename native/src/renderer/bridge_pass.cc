@@ -20,11 +20,13 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -223,14 +225,23 @@ void BridgePass::render(const scenegraph::World& world,
                         const Lighting& lighting,
                         scenegraph::Pass pass,
                         std::uint32_t comm_set_id) {
+    const bool main_bridge = pass == scenegraph::Pass::Bridge && comm_set_id == 0;
+    // Reflection probes: the box follows the bridge model; a pending capture
+    // runs here, BEFORE the AO pre-pass, into the probes' own FBOs (each face
+    // re-enters render() with capture_pass_ set). Never inside a nested pass,
+    // and never with no bridge drawn: the request then waits for one.
+    if (main_bridge && !normal_pass_ && !capture_pass_) {
+        const bool have_bridge = update_box(world, lookup);
+        if (probe_dirty_ && have_bridge)
+            capture_probes(world, pipeline, lookup, lighting);
+    }
     // Screen-space AO for the main bridge view only -- never the comm-set RTT
     // (a different camera into a different room), and not while this call is
-    // the AO's own normal pre-pass.
+    // the AO's own normal pre-pass or a probe face.
     GLint view_vp[4] = {0, 0, 0, 0};
     glGetIntegerv(GL_VIEWPORT, view_vp);
-    const bool main_bridge = pass == scenegraph::Pass::Bridge && comm_set_id == 0;
     bool ao_on = false;
-    if (main_bridge && !normal_pass_ && ao_enabled_) {
+    if (main_bridge && !normal_pass_ && !capture_pass_ && ao_enabled_) {
         ao_on = ao_.render(camera, view_vp[2], view_vp[3], ao_settings_, [&] {
             normal_pass_ = true;
             render(world, camera, pipeline, lookup, lighting,
@@ -247,6 +258,24 @@ void BridgePass::render(const scenegraph::World& world,
         glActiveTexture(GL_TEXTURE0);
     }
     const glm::mat4 inv_proj = glm::inverse(camera.proj_matrix());
+
+    // PBR on the main bridge view only: a comm set (another ship's room on
+    // the viewscreen) keeps the legacy shading -- the probes would hold the
+    // PLAYER's bridge, the wrong room to reflect.
+    const int pbr = (pbr_enabled_ && main_bridge) ? 1 : 0;
+    // The probes are sampled only once BOTH hold a capture: a samplerCube on
+    // a unit with no cube bound must never be sampled, so with no probe the
+    // units stay empty and u_has_probe = 0 keeps the shader off them.
+    const bool has_probe = pbr != 0 && !capture_pass_ && !normal_pass_ && probes_valid();
+    if (has_probe) {
+        glActiveTexture(GL_TEXTURE7);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, probe_green_.texture());
+        glActiveTexture(GL_TEXTURE8);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, probe_yr_.texture());
+        glActiveTexture(GL_TEXTURE9);
+        glBindTexture(GL_TEXTURE_2D, brdf_lut_.texture());
+        glActiveTexture(GL_TEXTURE0);
+    }
 
     // Uniforms common to both sub-passes: camera, the bridge ambient and the
     // ceiling downlight (kBridgeLighting, bridge_lighting_tuning.h).
@@ -280,11 +309,19 @@ void BridgePass::render(const scenegraph::World& world,
         s.set_int("u_normal_map", 1);
         s.set_int("u_rough_map", 5);
         s.set_int("u_metal_map", 6);
+        // Reflection probes + BRDF LUT: units 7/8/9 assigned on EVERY use,
+        // bound or not, so no two sampler types ever share a unit (a
+        // samplerCube left on unit 0 beside u_base_color fails every draw).
+        s.set_int("u_probe_a", 7);
+        s.set_int("u_probe_b", 8);
+        s.set_int("u_brdf_lut", 9);
+        s.set_int("u_has_probe", has_probe ? 1 : 0);
+        s.set_float("u_probe_mix", probe_mix_);
+        s.set_vec3("u_probe_pos", probe_origin_);
+        s.set_vec3("u_box_min", box_min_);
+        s.set_vec3("u_box_max", box_max_);
+        s.set_int("u_capture", capture_pass_ ? 1 : 0);
     };
-    // PBR on the main bridge view only: a comm set (another ship's room on
-    // the viewscreen) keeps the legacy shading -- the probes would hold the
-    // PLAYER's bridge, the wrong room to reflect.
-    const int pbr = (pbr_enabled_ && main_bridge) ? 1 : 0;
 
     // Developer Options debug view 5 (Mesh ID): a per-draw counter, reset
     // every render() call so numbering is stable within a frame.
@@ -352,62 +389,70 @@ void BridgePass::render(const scenegraph::World& world,
         });
 
     // ── Sub-pass B: skinned bridge characters ──────────────────────────────
-    // Any Pass::Bridge instance carrying a skeleton is drawn here, lit by the
-    // same downlight as the geometry (bridge.frag). The
-    // per-instance bone palette (SP2) poses the body.
-    //
-    // Culling stays DISABLED (as for the bridge shell). The officer skin
-    // matrix (world_pose · inverse_bind) and the instance world compose to a
-    // winding that isn't worth tracking per-frame, and characters are small —
-    // double-siding is cheaper. This stayed correct across the 2026-06-18
-    // right-handed un-mirror precisely because culling is off (the pass is
-    // winding-insensitive); the instance world is no longer reflected.
-    glDisable(GL_CULL_FACE);
-    auto& skin_shader = pipeline.skinned_bridge_shader();
-    skin_shader.use();
-    set_frame_uniforms(skin_shader);
-    // Officers carry authored normals: light the side that faces the eye.
-    skin_shader.set_int("u_face_by_winding", 0);
+    // A probe capture is sub-pass A only: officers are never in the probes.
+    if (!capture_pass_) {
+        // Any Pass::Bridge instance carrying a skeleton is drawn here, lit by the
+        // same downlight as the geometry (bridge.frag). The
+        // per-instance bone palette (SP2) poses the body.
+        //
+        // Culling stays DISABLED (as for the bridge shell). The officer skin
+        // matrix (world_pose · inverse_bind) and the instance world compose to a
+        // winding that isn't worth tracking per-frame, and characters are small —
+        // double-siding is cheaper. This stayed correct across the 2026-06-18
+        // right-handed un-mirror precisely because culling is off (the pass is
+        // winding-insensitive); the instance world is no longer reflected.
+        glDisable(GL_CULL_FACE);
+        auto& skin_shader = pipeline.skinned_bridge_shader();
+        skin_shader.use();
+        set_frame_uniforms(skin_shader);
+        // Officers carry authored normals: light the side that faces the eye.
+        skin_shader.set_int("u_face_by_winding", 0);
 
-    world.for_each_visible_in_pass(pass,
-        [&](const scenegraph::Instance& inst) {
-            if (comm_set_id != 0 && inst.comm_set_id != comm_set_id) return;
-            const assets::Model* m = lookup(inst.model_handle);
-            if (!m || m->skeleton.bones.empty()) return;
-            std::vector<glm::mat4> palette = inst.bone_palette.empty()
-                ? build_bone_palette(m->skeleton, nullptr)
-                : inst.bone_palette;
-            skin_shader.set_mat4_array("u_bones", palette.data(),
-                                       static_cast<int>(palette.size()));
-            // SP2: bind-model verts + palette => u_model is the instance world.
-            // The node loop now only enumerates meshes; the palette does all
-            // per-bone placement, so the per-node walk is no longer composed.
-            for (std::size_t i = 0; i < m->nodes.size(); ++i) {
-                const auto& node = m->nodes[i];
-                for (int mesh_idx : node.meshes) {
-                    const auto& mesh = m->meshes[mesh_idx];
-                    const auto& mat =
-                        assets::material_or_default(*m, mesh.material_index());
-                    // Lip-sync: blend the head meshes' face texture when this
-                    // officer has an active face override. Body meshes and
-                    // non-speaking officers take the byte-identical normal path.
-                    const bool is_head = m->head_mesh_begin >= 0
-                                         && mesh_idx >= m->head_mesh_begin;
-                    const bool face = inst.face_active && is_head;
-                    draw_mesh(*m, mesh, mat, skin_shader, inst.world, white, t, 0u,
-                              /*override_flip_v=*/true, 1.0f, 0.0f,
-                              face, inst.face_tex_a, inst.face_tex_b,
-                              inst.face_mix, mesh_id_counter++,
-                              /*highlight=*/0, pbr);  // officers: no overrides
+        world.for_each_visible_in_pass(pass,
+            [&](const scenegraph::Instance& inst) {
+                if (comm_set_id != 0 && inst.comm_set_id != comm_set_id) return;
+                const assets::Model* m = lookup(inst.model_handle);
+                if (!m || m->skeleton.bones.empty()) return;
+                std::vector<glm::mat4> palette = inst.bone_palette.empty()
+                    ? build_bone_palette(m->skeleton, nullptr)
+                    : inst.bone_palette;
+                skin_shader.set_mat4_array("u_bones", palette.data(),
+                                           static_cast<int>(palette.size()));
+                // SP2: bind-model verts + palette => u_model is the instance world.
+                // The node loop now only enumerates meshes; the palette does all
+                // per-bone placement, so the per-node walk is no longer composed.
+                for (std::size_t i = 0; i < m->nodes.size(); ++i) {
+                    const auto& node = m->nodes[i];
+                    for (int mesh_idx : node.meshes) {
+                        const auto& mesh = m->meshes[mesh_idx];
+                        const auto& mat =
+                            assets::material_or_default(*m, mesh.material_index());
+                        // Lip-sync: blend the head meshes' face texture when this
+                        // officer has an active face override. Body meshes and
+                        // non-speaking officers take the byte-identical normal path.
+                        const bool is_head = m->head_mesh_begin >= 0
+                                             && mesh_idx >= m->head_mesh_begin;
+                        const bool face = inst.face_active && is_head;
+                        draw_mesh(*m, mesh, mat, skin_shader, inst.world, white, t, 0u,
+                                  /*override_flip_v=*/true, 1.0f, 0.0f,
+                                  face, inst.face_tex_a, inst.face_tex_b,
+                                  inst.face_mix, mesh_id_counter++,
+                                  /*highlight=*/0, pbr);  // officers: no overrides
+                    }
                 }
-            }
-        });
+            });
+    }
 
     glBindVertexArray(0);
     // The PBR map units (bound per draw) never leak to the next pass.
-    for (GLenum unit : {GL_TEXTURE1, GL_TEXTURE5, GL_TEXTURE6}) {
+    for (GLenum unit : {GL_TEXTURE1, GL_TEXTURE5, GL_TEXTURE6, GL_TEXTURE9}) {
         glActiveTexture(unit);
         glBindTexture(GL_TEXTURE_2D, 0);
+    }
+    // ...nor the probe cubes.
+    for (GLenum unit : {GL_TEXTURE7, GL_TEXTURE8}) {
+        glActiveTexture(unit);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
     }
     glActiveTexture(GL_TEXTURE0);
     if (ao_on) {
@@ -436,6 +481,131 @@ void BridgePass::set_material_overrides(
 void BridgePass::clear_material_overrides() {
     overrides_.clear();
     overrides_model_ = 0;
+}
+
+void BridgePass::set_probe_mix(float t) {
+    probe_mix_ = std::isfinite(t) ? std::clamp(t, 0.0f, 1.0f) : 0.0f;
+}
+
+bool BridgePass::probes_valid() const {
+    return probes_captured_ && probe_green_.valid() && probe_yr_.valid() &&
+           brdf_lut_.texture() != 0;
+}
+
+void BridgePass::reset_probes() {
+    probes_captured_ = false;
+    probe_dirty_ = false;
+    probe_mix_ = 0.0f;
+    model_boxes_.clear();
+    box_handle_ = 0;
+    box_min_ = glm::vec3(-1.0f);
+    box_max_ = glm::vec3(1.0f);
+}
+
+void BridgePass::capture_probes(const scenegraph::World& world,
+                                Pipeline& pipeline,
+                                const ModelLookup& lookup,
+                                const Lighting& lighting) {
+    // One attempt per request: without a context (or with an incomplete
+    // target) the probes stay invalid and u_has_probe stays 0 rather than
+    // retrying every frame.
+    probe_dirty_ = false;
+    if (!brdf_lut_.ensure() || !probe_green_.ensure() || !probe_yr_.ensure()) {
+        std::fprintf(stderr, "[bridge] reflection probes: GL targets unavailable; "
+                             "no capture\n");
+        return;
+    }
+    struct CaptureFlag {
+        bool& f;
+        explicit CaptureFlag(bool& flag) : f(flag) { f = true; }
+        ~CaptureFlag() { f = false; }
+    };
+    auto capture_one = [&](BridgeProbe& probe, float scale) {
+        Lighting scaled = lighting;
+        scaled.ambient *= scale;
+        probe.capture(probe_origin_, [&](const scenegraph::Camera& face_cam) {
+            CaptureFlag flag(capture_pass_);
+            // render() sets the bridge state itself (depth LESS + write,
+            // blend off, cull off) before sub-pass A; the probe has bound and
+            // cleared the face.
+            render(world, face_cam, pipeline, lookup, scaled,
+                   scenegraph::Pass::Bridge, 0);
+        });
+    };
+    capture_one(probe_green_, scale_green_);
+    capture_one(probe_yr_, scale_yr_);
+    probes_captured_ = probe_green_.valid() && probe_yr_.valid();
+}
+
+const BridgePass::Aabb& BridgePass::model_box(unsigned long long handle,
+                                              const assets::Model& m) {
+    if (auto it = model_boxes_.find(handle); it != model_boxes_.end())
+        return it->second;
+    Aabb box;
+    box.min = glm::vec3(std::numeric_limits<float>::max());
+    box.max = glm::vec3(std::numeric_limits<float>::lowest());
+    // Rest pose: the node worlds with an identity instance world and no
+    // animated overrides.
+    const std::vector<glm::mat4> node_worlds =
+        compose_node_worlds(m, glm::mat4(1.0f), {});
+    for (std::size_t i = 0; i < m.nodes.size() && i < node_worlds.size(); ++i) {
+        for (int mesh_idx : m.nodes[i].meshes) {
+            if (mesh_idx < 0 || mesh_idx >= static_cast<int>(m.meshes.size())) continue;
+            const auto& cpu = m.meshes[static_cast<std::size_t>(mesh_idx)].cpu_data();
+            if (!cpu) continue;
+            for (const auto& v : cpu->vertices) {
+                const glm::vec3 p = glm::vec3(node_worlds[i] * glm::vec4(v.position, 1.0f));
+                box.min = glm::min(box.min, p);
+                box.max = glm::max(box.max, p);
+                box.valid = true;
+            }
+        }
+    }
+    return model_boxes_.emplace(handle, box).first->second;
+}
+
+bool BridgePass::update_box(const scenegraph::World& world,
+                            const ModelLookup& lookup) {
+    // The bridge model: the static main-bridge instance with the most meshes
+    // (the shell, ~145 shapes, never the one-mesh viewscreen or a prop).
+    const scenegraph::Instance* best = nullptr;
+    const assets::Model* best_model = nullptr;
+    world.for_each_visible_in_pass(scenegraph::Pass::Bridge,
+        [&](const scenegraph::Instance& inst) {
+            const assets::Model* m = lookup(inst.model_handle);
+            if (!m || !m->skeleton.bones.empty()) return;
+            if (!best_model || m->meshes.size() > best_model->meshes.size()) {
+                best = &inst;
+                best_model = m;
+            }
+        });
+    if (!best) return false;   // nothing drawn: keep the last box
+    if (best->model_handle != box_handle_) {
+        // A different bridge: captured probes hold the old room.
+        if (box_handle_ != 0 && probes_captured_) probe_dirty_ = true;
+        box_handle_ = best->model_handle;
+    }
+    const Aabb& local = model_box(best->model_handle, *best_model);
+    if (!local.valid) {
+        // No CPU geometry to bound: a box far beyond the room, so the
+        // projection degenerates to the plain reflection direction.
+        box_min_ = probe_origin_ - glm::vec3(1.0e5f);
+        box_max_ = probe_origin_ + glm::vec3(1.0e5f);
+        return true;
+    }
+    glm::vec3 mn(std::numeric_limits<float>::max());
+    glm::vec3 mx(std::numeric_limits<float>::lowest());
+    for (int c = 0; c < 8; ++c) {
+        const glm::vec3 corner((c & 1) ? local.max.x : local.min.x,
+                               (c & 2) ? local.max.y : local.min.y,
+                               (c & 4) ? local.max.z : local.min.z);
+        const glm::vec3 p = glm::vec3(best->world * glm::vec4(corner, 1.0f));
+        mn = glm::min(mn, p);
+        mx = glm::max(mx, p);
+    }
+    box_min_ = mn;
+    box_max_ = mx;
+    return true;
 }
 
 float BridgePass::highlight_phase() const {
