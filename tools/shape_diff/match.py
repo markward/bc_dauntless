@@ -3,7 +3,10 @@
 Blender does not preserve vertex order across import, so identity goes by
 position (POS_TOL), never by index. Between base.obj and edit.obj (both
 written by Blender from the same mesh) the vertex index IS stable for
-surviving vertices; diff_shape relies on that and checks it."""
+surviving vertices; diff_shape relies on that and checks it.
+
+diff_shape records moves and UV edits; topology changes (added/removed
+vertices or faces) are refused as iteration 2+."""
 from tools.shape_diff import ShapeDiffError, frames, obj_io
 
 POS_TOL = 1e-4
@@ -70,24 +73,58 @@ def _uv_equal(a, b):
     return abs(a[0] - b[0]) <= UV_TOL and abs(a[1] - b[1]) <= UV_TOL
 
 
-def _check_no_uv_changes(block, base_faces, edit_faces):
-    """Blender's Vertex/Edge Slide defaults to 'Correct UVs', so a gap-closing
-    slide can silently change corner UVs. Move-only mode (iteration 1) must
-    refuse that rather than ship stretched textures (spec §5.3)."""
+def _paired_faces(base_faces, edit_faces):
+    """Pair each base face with its edit counterpart by the same
+    rotation-invariant face-key match the topology check above already
+    requires, with corners rotation-aligned so the k-th base corner lines up
+    with the k-th edit corner."""
     base_sorted = sorted(((_face_key(f), _rotate_face(f)) for f in base_faces),
                          key=lambda x: x[0])
     edit_sorted = sorted(((_face_key(f), _rotate_face(f)) for f in edit_faces),
                          key=lambda x: x[0])
-    for (_, bf), (_, ef) in zip(base_sorted, edit_sorted):
-        for (_, buv), (_, euv) in zip(bf, ef):
-            if not _uv_equal(buv, euv):
+    return [(bf, ef) for (_, bf), (_, ef) in zip(base_sorted, edit_sorted)]
+
+
+def _resolve_uv_edits(block, shape, ids, base_faces, edit_faces):
+    """Record per-original-vertex UV edits (spec §5.3). obj_io.write_obj welds
+    positions, so a corner's OBJ vertex may map to several original vertices
+    at a seam; its UV (written per-corner, never per weld group) picks out
+    which original(s) it actually is, by matching the NIF's own UV0 for that
+    vertex. Refuses only a genuine vertex split: one original vertex whose
+    corners disagree on the new UV (spec: "needs a vertex split")."""
+    nif_uvs = shape["uvs"]
+    touched = {}
+    for bf, ef in _paired_faces(base_faces, edit_faces):
+        for (bv, buv), (_, euv) in zip(bf, ef):
+            if buv is None:
+                continue
+            candidates = [orig for orig in ids[bv] if _uv_equal(nif_uvs[orig], buv)]
+            if not candidates:
                 raise ShapeDiffError(
-                    f"block {block}: a corner UV changed; UV edits are iteration 2 "
-                    f"(this iteration is move-only -- turn off \"Correct UVs\" when "
-                    f"sliding vertices in Blender)")
+                    f"block {block}: OBJ vertex {bv} UV {buv} matches no original "
+                    f"vertex's UV (base.obj doesn't match the NIF)")
+            if euv is None:
+                raise ShapeDiffError(
+                    f"block {block}: OBJ vertex {bv} lost its UV in edit.obj")
+            for orig in candidates:
+                touched.setdefault(orig, []).append(euv)
+    uvs = {}
+    for orig, vals in touched.items():
+        first = vals[0]
+        for v in vals[1:]:
+            if not _uv_equal(v, first):
+                raise ShapeDiffError(
+                    f"block {block}: original vertex {orig} would need two "
+                    "different UVs -- that needs a vertex split (iteration 2)")
+        if not _uv_equal(first, nif_uvs[orig]):
+            uvs[orig] = first
+    return uvs
 
 
 def diff_shape(shape: dict, base, edit):
+    """Diff one shape's base/edit OBJ pair: records vertex moves and UV0
+    edits; refuses topology changes (added/removed vertices or faces) and a
+    UV edit that would need a vertex split (both iteration 2+)."""
     block = shape["block"]
     if len(edit.positions) != len(base.positions):
         raise ShapeDiffError(
@@ -96,9 +133,9 @@ def diff_shape(shape: dict, base, edit):
     if sorted(map(_face_key, edit.faces)) != sorted(map(_face_key, base.faces)):
         raise ShapeDiffError(
             f"block {block}: faces changed; topology edits are iteration 2 "
-            f"(this iteration is move-only)")
-    _check_no_uv_changes(block, base.faces, edit.faces)
+            f"(this iteration is moves and UV edits only)")
     ids = identify(shape, base)
+    uvs = _resolve_uv_edits(block, shape, ids, base.faces, edit.faces)
     inv = frames.affine_inverse(shape["world"])
     moves = {}
     for k, (bp, ep) in enumerate(zip(base.positions, edit.positions)):
@@ -107,13 +144,14 @@ def diff_shape(shape: dict, base, edit):
         local = frames.apply(inv, ep)
         for orig in ids[k]:
             moves[orig] = local
-    if not moves:
+    if not moves and not uvs:
         return None
     return {
         "block": block,
         "orig_vertex_count": len(shape["vertices"]),
         "orig_triangle_count": len(shape["triangles"]),
         "moves": sorted(moves.items()),
+        "uvs": sorted(uvs.items()),
     }
 
 

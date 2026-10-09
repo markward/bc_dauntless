@@ -224,6 +224,37 @@ def _moved(mesh, k, p):
     return out
 
 
+def _retex(mesh, changes):
+    """changes: {(face_index, local_vertex): new_uv} -- mutate only those
+    corners, leaving every other corner's UV untouched."""
+    out = obj_io.ObjMesh()
+    out.positions = list(mesh.positions)
+    out.faces = []
+    for fi, face in enumerate(mesh.faces):
+        out.faces.append([(v, changes.get((fi, v), uv)) for v, uv in face])
+    return out
+
+
+def _seam_shape(block=11, parent="wall side pnls 01"):
+    """Two quads sharing an edge. The shared edge's two vertices are each
+    duplicated -- one original copy per quad, same position, different
+    authored UV -- a real UV seam (unlike _shape()'s lone seam vertex, which
+    sits only in a triangle degenerate after welding)."""
+    verts = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+             (1, 0, 0), (2, 0, 0), (2, 1, 0), (1, 1, 0)]
+    uvs = [(0, 0), (0.5, 0), (0.5, 1), (0, 1),
+           (0, 0), (1, 0), (1, 1), (0, 1)]
+    return {
+        "block": block, "parent": parent, "hidden": False,
+        "vertices": verts,
+        "uvs": uvs,
+        "colors": [(1, 1, 1, 1)] * 8, "uvs1": [],
+        "triangles": [(0, 1, 2), (0, 2, 3), (4, 5, 6), (4, 6, 7)],
+        "textures": ["Map 1.tga"],
+        "world": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    }
+
+
 def test_unchanged_edit_produces_no_edits(tmp_path):
     s = _shape()
     objs = _export_read(tmp_path, [s])
@@ -249,17 +280,74 @@ def test_move_is_stored_in_shape_local_frame(tmp_path):
     assert e["moves"] == [(2, pytest.approx((1.0, 1.0, 0.75)))]
 
 
-def test_uv_change_alongside_a_move_is_refused(tmp_path):
+def test_move_and_uv_edit_together_are_both_recorded(tmp_path):
     s = _shape()
     base = _export_read(tmp_path, [s])["b0011_wall_side_pnls_01"]
     edit = _moved(base, 1, (1.25, 0.0, 0.5))           # move the seam vertex
-    edit.faces = [list(f) for f in edit.faces]
-    for face in edit.faces:
-        for i, (v, uv) in enumerate(face):
-            if v == 1 and uv is not None:
-                face[i] = (v, (uv[0] + 0.1, uv[1]))    # also touch its corner UV
-    with pytest.raises(ShapeDiffError, match="UV"):
+    # vertex 1's only corner is face 0 (vertex 4's degenerate triangle was
+    # dropped by the weld) -- touch its UV there too.
+    edit = _retex(edit, {(0, 1): (0.6, 0.0)})
+    e = match.diff_shape(s, base, edit)
+    assert [i for i, _ in e["moves"]] == [1, 4]
+    assert e["moves"][0][1] == pytest.approx((1.25, 0.0, 0.5))
+    assert e["uvs"] == [(1, pytest.approx((0.6, 0.0)))]
+
+
+def test_uv_only_edit_on_one_quad_records_only_that_quads_originals(tmp_path):
+    s = _seam_shape()
+    name = obj_io.object_name(s)
+    base = _export_read(tmp_path, [s])[name]
+    # faces 0, 1 are quad A (originals 0, 1, 2, 3); faces 2, 3 are quad B
+    # (originals 4, 5, 6, 7), sharing local vertices 1 and 2 at the seam.
+    changes = {}
+    for fi in (0, 1):
+        for v, uv in base.faces[fi]:
+            changes[(fi, v)] = (uv[0] + 0.1, uv[1] + 0.1)
+    edit = _retex(base, changes)
+    e = match.diff_shape(s, base, edit)
+    assert e["moves"] == []
+    assert sorted(i for i, _ in e["uvs"]) == [0, 1, 2, 3]
+    by_orig = dict(e["uvs"])
+    for orig in (0, 1, 2, 3):
+        bu, bv = s["uvs"][orig]
+        assert by_orig[orig] == pytest.approx((bu + 0.1, bv + 0.1))
+
+
+def test_uv_seam_edit_in_one_quad_leaves_the_other_quads_copy_untouched(tmp_path):
+    s = _seam_shape()
+    name = obj_io.object_name(s)
+    base = _export_read(tmp_path, [s])[name]
+    # Re-map the shared edge (local 1, local 2) only where quad A uses it:
+    # local 1 in face 0, local 2 in faces 0 and 1 (consistently).
+    edit = _retex(base, {(0, 1): (0.55, 0.05), (0, 2): (0.55, 0.95), (1, 2): (0.55, 0.95)})
+    e = match.diff_shape(s, base, edit)
+    assert sorted(i for i, _ in e["uvs"]) == [1, 2]
+    by_orig = dict(e["uvs"])
+    assert by_orig[1] == pytest.approx((0.55, 0.05))
+    assert by_orig[2] == pytest.approx((0.55, 0.95))
+
+
+def test_uv_conflict_on_a_non_seam_vertex_is_refused(tmp_path):
+    s = _seam_shape()
+    name = obj_io.object_name(s)
+    base = _export_read(tmp_path, [s])[name]
+    # local 0 (original 0, non-seam) is shared by faces 0 and 1 (quad A's own
+    # diagonal split) -- give it two different new UVs.
+    edit = _retex(base, {(0, 0): (0.2, 0.2), (1, 0): (0.3, 0.3)})
+    with pytest.raises(ShapeDiffError, match="vertex split"):
         match.diff_shape(s, base, edit)
+
+
+def test_recorded_uv_edit_round_trips_through_payload_encode(tmp_path):
+    from tools.shape_diff import payload
+    s = _seam_shape()
+    name = obj_io.object_name(s)
+    base = _export_read(tmp_path, [s])[name]
+    # vertex 0 is shared by faces 0 and 1 (quad A's diagonal) -- change both
+    # consistently, else it's the "two different UVs" conflict case.
+    edit = _retex(base, {(0, 0): (0.9, 0.9), (1, 0): (0.9, 0.9)})
+    e = match.diff_shape(s, base, edit)
+    payload.encode([e])  # must not raise
 
 
 def test_move_without_uv_change_still_accepted(tmp_path):

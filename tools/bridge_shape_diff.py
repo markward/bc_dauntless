@@ -10,7 +10,7 @@ OBJ files contain BC geometry: keep them OUT of the repo. Blender: import the
 OBJ into an EMPTY scene (delete Blender's default Cube/Camera/Light) with
 default settings; export base.obj before editing and edit.obj after, both
 with default settings. Don't join, split or rename objects. Iteration 1
-accepts vertex MOVES only."""
+accepts vertex MOVES and UV0 EDITS; topology changes are refused."""
 import argparse
 import json
 import sys
@@ -88,7 +88,8 @@ def main(argv=None) -> int:
             return 0
         fix, edits = build_fix(a.nif, a.base, a.edit)
         for e in edits:
-            print(f"block {e['block']}: {len(e['moves'])} vertices moved")
+            print(f"block {e['block']}: {len(e['moves'])} vertices moved, "
+                  f"{len(e['uvs'])} UVs changed")
         if not edits:
             print("no changes")
             return 0
