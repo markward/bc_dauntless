@@ -382,15 +382,56 @@ def test_uv_seam_edit_in_one_quad_leaves_the_other_quads_copy_untouched(tmp_path
     assert by_orig[2] == pytest.approx((0.55, 0.95))
 
 
-def test_uv_conflict_on_a_non_seam_vertex_is_refused(tmp_path):
+def test_uv_edit_tells_same_uv_copies_apart_by_their_triangle(tmp_path):
+    # DBridge b0331: separate originals at one corner (side, end, top faces)
+    # all share ONE UV, so the UV cannot say which copy a corner is. Each
+    # face's own NIF triangle can: re-mapping the two quads differently along
+    # their shared edge is a per-original edit, not a vertex split.
+    s = _seam_shape()
+    s["uvs"] = [(0, 0), (0.5, 0), (0.5, 1), (0, 1),
+                (0.5, 0), (1, 0), (1, 1), (0.5, 1)]     # 4, 7 == 1, 2
+    name = obj_io.object_name(s)
+    base = _export_read(tmp_path, [s])[name]
+    edit = _retex(base, {(0, 1): (0.55, 0.05), (0, 2): (0.55, 0.95), (1, 2): (0.55, 0.95)})
+    e = match.diff_shape(s, base, edit)
+    assert dict(e["uvs"]) == {1: pytest.approx((0.55, 0.05)), 2: pytest.approx((0.55, 0.95))}
+
+
+def test_uv_conflict_on_a_non_seam_vertex_splits_it(tmp_path):
     s = _seam_shape()
     name = obj_io.object_name(s)
     base = _export_read(tmp_path, [s])[name]
     # local 0 (original 0, non-seam) is shared by faces 0 and 1 (quad A's own
-    # diagonal split) -- give it two different new UVs.
+    # diagonal split) -- give it two different new UVs (a new seam through
+    # an original BC never split). A tie: the lower face key, (0, 1, 2),
+    # keeps original 0; face (0, 2, 3) is re-added on a split vertex placed
+    # by reference to original 0.
     edit = _retex(base, {(0, 0): (0.2, 0.2), (1, 0): (0.3, 0.3)})
-    with pytest.raises(ShapeDiffError, match="vertex split"):
-        match.diff_shape(s, base, edit)
+    e = match.diff_shape(s, base, edit)
+    assert e["uvs"] == [(0, pytest.approx((0.2, 0.2)))]
+    assert e["remove_triangles"] == [1]
+    assert e["add_vertices"] == [{"pos": payload.Ref(11, 0), "uv0": pytest.approx((0.3, 0.3)),
+                                  "attr_src": 0}]
+    assert e["add_triangles"] == [(8, 2, 3)]
+
+
+def test_vertex_split_keeps_the_uv_most_corners_agree_on(tmp_path):
+    # A fan: original 0 is the hub of three triangles. Re-map it in the
+    # lowest-keyed face only -- two corners keep the old UV, so the old UV
+    # keeps the original (majority beats the tie rule) and face 0 splits.
+    s = _seam_shape()
+    s.update(vertices=[(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (-1, 1, 0)],
+             uvs=[(0.5, 0), (1, 0), (1, 1), (0.5, 1), (0, 1)],
+             colors=[(1, 1, 1, 1)] * 5, triangles=[(0, 1, 2), (0, 2, 3), (0, 3, 4)])
+    name = obj_io.object_name(s)
+    base = _export_read(tmp_path, [s])[name]
+    edit = _retex(base, {(0, 0): (0.9, 0.9)})
+    e = match.diff_shape(s, base, edit)
+    assert e["uvs"] == []
+    assert e["remove_triangles"] == [0]
+    assert e["add_vertices"] == [{"pos": payload.Ref(11, 0), "uv0": pytest.approx((0.9, 0.9)),
+                                  "attr_src": 0}]
+    assert e["add_triangles"] == [(5, 1, 2)]
 
 
 def test_recorded_uv_edit_round_trips_through_payload_encode(tmp_path):
