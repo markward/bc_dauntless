@@ -1,6 +1,58 @@
 {
   "format": 1,
-  "profiles": {},
+  "profiles": {
+    "alcove": {
+      "fade_s": 0.5,
+      "green": {
+        "level": 1,
+        "tint": [
+          1,
+          1,
+          1
+        ]
+      },
+      "red": {
+        "level": 0.5,
+        "tint": [
+          1,
+          0.12,
+          0.08
+        ],
+        "wave": {
+          "min": 0.2,
+          "period_s": 2,
+          "shape": "sine"
+        }
+      }
+    },
+    "roof": {
+      "fade_s": 0.5,
+      "green": {
+        "level": 1,
+        "tint": [
+          1,
+          1,
+          1
+        ]
+      },
+      "red": {
+        "level": 0.6,
+        "tint": [
+          1,
+          1,
+          1
+        ]
+      },
+      "yellow": {
+        "level": 0.6,
+        "tint": [
+          1,
+          1,
+          1
+        ]
+      }
+    }
+  },
   "shapes": {
     "102:": {
       "block": 102,
@@ -228,6 +280,32 @@
       },
       "name": ""
     },
+    "401:": {
+      "block": 401,
+      "emitter": {
+        "glow": {
+          "src": "texture"
+        },
+        "light": {
+          "direction": [
+            0,
+            0,
+            -1
+          ],
+          "inner_deg": 45,
+          "intensity": 8000,
+          "outer_deg": 85,
+          "position": [
+            157,
+            -135,
+            105
+          ],
+          "range": 150
+        },
+        "profile": "alcove"
+      },
+      "name": ""
+    },
     "415:": {
       "block": 415,
       "material": {
@@ -235,10 +313,88 @@
       },
       "name": ""
     },
+    "423:": {
+      "block": 423,
+      "emitter": {
+        "glow": {
+          "src": "texture"
+        },
+        "light": {
+          "direction": [
+            0,
+            0,
+            -1
+          ],
+          "inner_deg": 45,
+          "intensity": 8000,
+          "outer_deg": 85,
+          "position": [
+            -146,
+            -137,
+            105
+          ],
+          "range": 150
+        },
+        "profile": "alcove"
+      },
+      "name": ""
+    },
     "426:": {
       "block": 426,
       "material": {
         "roughness": 0.98
+      },
+      "name": ""
+    },
+    "441:": {
+      "block": 441,
+      "emitter": {
+        "glow": {
+          "src": "texture"
+        },
+        "light": {
+          "direction": [
+            0,
+            0,
+            -1
+          ],
+          "inner_deg": 45,
+          "intensity": 8000,
+          "outer_deg": 85,
+          "position": [
+            -193,
+            156.5,
+            126
+          ],
+          "range": 150
+        },
+        "profile": "alcove"
+      },
+      "name": ""
+    },
+    "455:": {
+      "block": 455,
+      "emitter": {
+        "glow": {
+          "src": "texture"
+        },
+        "light": {
+          "direction": [
+            0,
+            0,
+            -1
+          ],
+          "inner_deg": 45,
+          "intensity": 8000,
+          "outer_deg": 85,
+          "position": [
+            156.5,
+            156,
+            127
+          ],
+          "range": 150
+        },
+        "profile": "alcove"
       },
       "name": ""
     },
@@ -370,6 +526,12 @@
     },
     "76:": {
       "block": 76,
+      "emitter": {
+        "glow": {
+          "src": "emissive"
+        },
+        "profile": "roof"
+      },
       "material": {
         "roughness": 0
       },
@@ -378,6 +540,9 @@
     "81:": {
       "block": 81,
       "emitter": {
+        "glow": {
+          "src": "emissive"
+        },
         "light": {
           "direction": [
             0,
@@ -393,12 +558,19 @@
             152.688126
           ],
           "range": 2000
-        }
+        },
+        "profile": "roof"
       },
       "name": ""
     },
     "84:": {
       "block": 84,
+      "emitter": {
+        "glow": {
+          "src": "emissive"
+        },
+        "profile": "roof"
+      },
       "material": {
         "roughness": 0
       },
@@ -406,6 +578,12 @@
     },
     "87:": {
       "block": 87,
+      "emitter": {
+        "glow": {
+          "src": "emissive"
+        },
+        "profile": "roof"
+      },
       "material": {
         "roughness": 0
       },
@@ -413,6 +591,12 @@
     },
     "90:": {
       "block": 90,
+      "emitter": {
+        "glow": {
+          "src": "emissive"
+        },
+        "profile": "roof"
+      },
       "material": {
         "roughness": 0
       },
