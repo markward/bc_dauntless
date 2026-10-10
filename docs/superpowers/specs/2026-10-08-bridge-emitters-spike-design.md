@@ -498,6 +498,13 @@ It is NOT the §6 emitter and does not replace it.
   `host_loop` pushes `set_bridge_alert_level(GetAlertLevel())` every frame
   beside the ambient scale (no player → green). Main bridge view only: a
   comm set always shows the default.
+- **Colour space:** the emissive texel is added UNCONVERTED, in display
+  (gamma) space — the space both bridge shading paths output and the HDR
+  target holds (RGBA8 textures, no sRGB decode on upload, no encode in
+  resolve). Do not add an sRGB→linear decode on the sample: the result is
+  never re-encoded, so a 0.5 texel would display as 0.218. Consequence:
+  over a lit, mid-bright albedo the glow reads brighter than a
+  linear-correct add; over dark albedo (the usual authoring) it is exact.
 - **Shading:** `emissive = texture(u_emissive_map, uv).rgb × kEmissiveScale`
   (1.0, `bridge_lighting_tuning.h`, rebuild to tune), added AFTER the
   diffuse ceiling on both the PBR and the legacy path, so it can exceed
@@ -539,4 +546,4 @@ It is NOT the §6 emitter and does not replace it.
 | P1 | 2026-10-09 | Bridge PBR built (plan 2026-10-09-bridge-pbr): linear GGX, layered material channels, normal/rough/metal maps, two box-projected probes, spot lights, live editor push | live-verified (Mark, 2026-10-09: "looks pretty good! I can't see any issues"); DBridge + EBridge material overrides authored live | 9 |
 | — | 2026-10-09 | Plan-time corrections: dev panels keep the pause menu open-but-hidden; loader rejects unknown keys (writer no longer "keeps" them); mod lookup path named | — | 4, 7 |
 | F1 | 2026-10-09 | Foundation built: fly camera, pick + identity, selection tint, lighting doc + writer, panel (plan 2026-10-09-bridge-editor-foundation) | live-verified (Mark, 2026-10-09: "works!") | 4, 7, 8 |
-| E1 | 2026-10-09 | Emissive sibling maps `_emissive{,_y,_r}` (task 17): interior loads, per-alert variant, after the diffuse ceiling, probes exclude | built; not live-verified | 6.1, 9.7 |
+| E1 | 2026-10-09 | Emissive sibling maps `_emissive{,_y,_r}` (task 17): interior loads, per-alert variant, after the diffuse ceiling, probes exclude | built; live-verified by Mark 2026-10-10 (green/yellow/red on DBridge) | 6.1, 9.7 |
