@@ -355,10 +355,11 @@ TEST(MeshFixTexture, RealDbridgeCommittedFixShapesGetTheirEmissiveSiblings) {
 
     auto f = nif::load(nif);
     ASSERT_EQ(assets::apply_mesh_fix(f, *fix), "");
-    const std::vector<std::uint32_t> map22a = {121, 124, 395, 471};
+    const std::vector<std::uint32_t> map22a = {395, 471};
     const std::vector<std::uint32_t> redbars = {45, 479, 697};
     const std::vector<std::uint32_t> connops = {29, 59};
-    for (const auto* group : {&map22a, &redbars, &connops})
+    const std::vector<std::uint32_t> map22d = {121, 124};    // round 7: seat panels
+    for (const auto* group : {&map22a, &redbars, &connops, &map22d})
         for (std::uint32_t b : *group)
             std::get<nif::NiTriShape>(f.blocks.at(b)).av.obj.name = "T" + std::to_string(b);
 
@@ -388,5 +389,11 @@ TEST(MeshFixTexture, RealDbridgeCommittedFixShapesGetTheirEmissiveSiblings) {
     for (std::uint32_t b : connops) {
         const std::string n = "T" + std::to_string(b);
         EXPECT_GE(emissive_slot_of(model, n, S::Emissive), 0) << n;
+    }
+    for (std::uint32_t b : map22d) {
+        const std::string n = "T" + std::to_string(b);
+        EXPECT_GE(emissive_slot_of(model, n, S::Emissive), 0) << n;
+        EXPECT_EQ(emissive_slot_of(model, n, S::EmissiveYellow), -1) << n;
+        EXPECT_EQ(emissive_slot_of(model, n, S::EmissiveRed), -1) << n;
     }
 }

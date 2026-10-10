@@ -2,6 +2,14 @@
   "format": 1,
   "profiles": {},
   "shapes": {
+    "102:": {
+      "block": 102,
+      "material": {
+        "metalness": 0,
+        "roughness": 0.63
+      },
+      "name": ""
+    },
     "133:": {
       "block": 133,
       "material": {
@@ -37,8 +45,43 @@
       },
       "name": ""
     },
+    "224:": {
+      "block": 224,
+      "material": {
+        "roughness": 0.53
+      },
+      "name": ""
+    },
     "236:": {
       "block": 236,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "255:": {
+      "block": 255,
+      "material": {
+        "roughness": 0.5
+      },
+      "name": ""
+    },
+    "277:": {
+      "block": 277,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "280:": {
+      "block": 280,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "283:": {
+      "block": 283,
       "material": {
         "roughness": 0
       },
@@ -47,7 +90,39 @@
     "288:": {
       "block": 288,
       "material": {
-        "roughness": 0.11
+        "roughness": 0.24
+      },
+      "name": ""
+    },
+    "291:": {
+      "block": 291,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "299:": {
+      "block": 299,
+      "emitter": {
+        "light": {
+          "direction": [
+            0.729672,
+            -0.404578,
+            -0.551268
+          ],
+          "inner_deg": 30,
+          "intensity": 10000,
+          "outer_deg": 90,
+          "position": [
+            -48.549065,
+            35.224983,
+            5.215477
+          ],
+          "range": 200
+        }
+      },
+      "material": {
+        "roughness": 0
       },
       "name": ""
     },
@@ -58,10 +133,70 @@
       },
       "name": ""
     },
+    "307:": {
+      "block": 307,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "315:": {
+      "block": 315,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "319:": {
+      "block": 319,
+      "emitter": {
+        "light": {
+          "direction": [
+            -0.729672,
+            -0.404578,
+            -0.551268
+          ],
+          "inner_deg": 30,
+          "intensity": 10000,
+          "outer_deg": 90,
+          "position": [
+            48.569176,
+            37.223564,
+            4.388153
+          ],
+          "range": 200
+        }
+      },
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "334:": {
+      "block": 334,
+      "material": {
+        "roughness": 0.01
+      },
+      "name": ""
+    },
     "337:": {
       "block": 337,
       "material": {
         "roughness": 0
+      },
+      "name": ""
+    },
+    "347:": {
+      "block": 347,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "355:": {
+      "block": 355,
+      "material": {
+        "roughness": 0.02
       },
       "name": ""
     },
@@ -72,10 +207,87 @@
       },
       "name": ""
     },
+    "368:": {
+      "block": 368,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "392:": {
+      "block": 392,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "395:": {
+      "block": 395,
+      "material": {
+        "roughness": 0.05
+      },
+      "name": ""
+    },
     "415:": {
       "block": 415,
       "material": {
         "roughness": 0
+      },
+      "name": ""
+    },
+    "426:": {
+      "block": 426,
+      "material": {
+        "roughness": 0.98
+      },
+      "name": ""
+    },
+    "45:": {
+      "block": 45,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "471:": {
+      "block": 471,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "479:": {
+      "block": 479,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "51:": {
+      "block": 51,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
+    "552:": {
+      "block": 552,
+      "material": {
+        "roughness": 0.53
+      },
+      "name": ""
+    },
+    "563:": {
+      "block": 563,
+      "material": {
+        "roughness": 0.54
+      },
+      "name": ""
+    },
+    "575:": {
+      "block": 575,
+      "material": {
+        "roughness": 0.54
       },
       "name": ""
     },
@@ -86,10 +298,24 @@
       },
       "name": ""
     },
+    "631:": {
+      "block": 631,
+      "material": {
+        "roughness": 0.53
+      },
+      "name": ""
+    },
     "63:": {
       "block": 63,
       "material": {
         "roughness": 0
+      },
+      "name": ""
+    },
+    "642:": {
+      "block": 642,
+      "material": {
+        "roughness": 0.53
       },
       "name": ""
     },
@@ -104,6 +330,13 @@
       "block": 666,
       "material": {
         "roughness": 0
+      },
+      "name": ""
+    },
+    "677:": {
+      "block": 677,
+      "material": {
+        "roughness": 0.54
       },
       "name": ""
     },
@@ -128,10 +361,39 @@
       },
       "name": ""
     },
+    "697:": {
+      "block": 697,
+      "material": {
+        "roughness": 0
+      },
+      "name": ""
+    },
     "76:": {
       "block": 76,
       "material": {
         "roughness": 0
+      },
+      "name": ""
+    },
+    "81:": {
+      "block": 81,
+      "emitter": {
+        "light": {
+          "direction": [
+            0,
+            0,
+            -1
+          ],
+          "inner_deg": 30,
+          "intensity": 30000,
+          "outer_deg": 90,
+          "position": [
+            -5.70129,
+            -73.241234,
+            152.688126
+          ],
+          "range": 2000
+        }
       },
       "name": ""
     },
