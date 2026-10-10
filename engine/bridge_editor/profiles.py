@@ -59,21 +59,36 @@ def state_output(profile, state, t, phase=0.0):
     return tuple(float(c) * k for c in st["tint"]), k
 
 
+MAX_FADE_CHAIN = 4
+
+
 class AlertFade:
-    """Which state the bridge shows and how far through the cross-fade from
-    the previous one it is. One per bridge: every profile fades on the same
-    alert change, each over its own `fade_s`. A change mid-fade restarts the
-    fade from the state it was heading to (a small step, accepted)."""
+    """Which state the bridge shows and how far through the cross-fade into
+    it. One per bridge: every profile fades on the same alert change, each
+    over its own `fade_s`. A fade starts from the LIVE output (spec §6.3):
+    a change mid-fade freezes the fade in progress as its `source`, so the
+    output never jumps. Waves keep running inside a frozen source; only its
+    blend weight stops. The chain is cut after MAX_FADE_CHAIN changes inside
+    one fade (rapid toggling), the oldest becoming a plain state."""
 
     def __init__(self, alert_level=0):
         self.state = state_name(alert_level)
-        self.prev = self.state
         self.since = math.inf
+        self.source = None
 
     def set_alert(self, alert_level):
         s = state_name(alert_level)
-        if s != self.state:
-            self.prev, self.state, self.since = self.state, s, 0.0
+        if s == self.state:
+            return
+        frozen = AlertFade.__new__(AlertFade)
+        frozen.state, frozen.since, frozen.source = self.state, self.since, self.source
+        node, depth = frozen, 1
+        while node.source is not None:
+            if depth >= MAX_FADE_CHAIN:
+                node.source = None
+                break
+            node, depth = node.source, depth + 1
+        self.state, self.since, self.source = s, 0.0, frozen
 
     def advance(self, dt):
         self.since += max(float(dt), 0.0)
@@ -81,9 +96,9 @@ class AlertFade:
     def output(self, profile, t, phase=0.0):
         new_rgb, new_k = state_output(profile, self.state, t, phase)
         fade = float(profile.get("fade_s", DEFAULT_FADE_S))
-        if fade <= 0.0 or self.since >= fade:
+        if self.source is None or fade <= 0.0 or self.since >= fade:
             return new_rgb, new_k
-        old_rgb, old_k = state_output(profile, self.prev, t, phase)
+        old_rgb, old_k = self.source.output(profile, t, phase)
         f = self.since / fade
         return (tuple(a + (b - a) * f for a, b in zip(old_rgb, new_rgb)),
                 old_k + (new_k - old_k) * f)

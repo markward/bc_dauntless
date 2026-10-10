@@ -80,14 +80,35 @@ def test_fade_is_continuous():
     assert f.output(PROF, 0.0)[1] == pytest.approx(0.0)
 
 
-def test_second_change_mid_fade_starts_from_the_new_previous():
-    f = pr.AlertFade(0)
-    f.set_alert(1)
+@pytest.mark.parametrize("first, second", [(1, 2), (2, 0), (0, 2)])
+def test_second_change_mid_fade_is_continuous(first, second):
+    # Spec §6.3: a fade starts from the LIVE output. Red -> green -> red
+    # within fade_s must not flash to full white (review finding).
+    start = 2 if first == 0 else 0
+    f = pr.AlertFade(start)
+    f.set_alert(first)
     f.advance(0.25)
-    f.set_alert(2)                        # yellow -> red, from yellow (off)
-    rgb, k = f.output(PROF, 0.0)
-    assert k == pytest.approx(0.0)
-    assert all(math.isfinite(c) for c in rgb)
+    before = f.output(PROF, 0.25)
+    f.set_alert(second)
+    after = f.output(PROF, 0.25)
+    assert after[1] == pytest.approx(before[1])
+    assert after[0] == pytest.approx(before[0])
+    f.advance(0.1)
+    step = f.output(PROF, 0.35)
+    assert all(math.isfinite(c) for c in step[0])
+    assert abs(step[1] - after[1]) < 0.5
+
+
+def test_rapid_toggling_keeps_a_bounded_history():
+    f = pr.AlertFade(0)
+    for i in range(100):
+        f.set_alert(2 if i % 2 == 0 else 0)
+        f.advance(0.01)
+    depth, src = 0, f.source
+    while src is not None:
+        depth, src = depth + 1, src.source
+    assert depth <= pr.MAX_FADE_CHAIN
+    assert all(math.isfinite(c) for c in f.output(PROF, 1.0)[0])
 
 
 def test_zero_fade_switches_at_once():
