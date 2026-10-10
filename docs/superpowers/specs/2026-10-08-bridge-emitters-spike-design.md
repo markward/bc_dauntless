@@ -5,6 +5,7 @@
 > Builds on the merged baseline (`2026-10-08-bridge-lighting-baseline-design.md`).
 > Updated with each accepted iteration; §10 is the iteration log.
 > **2026-10-10:** §11 = emitter glow slice 1 (branch `feat/dbridge-round7`), amending §6.1, §7 and §9.7.
+> **2026-10-11:** §12 = editor panes for glow and profiles (slice 2).
 
 ## 1. Goal
 
@@ -550,6 +551,7 @@ It is NOT the §6 emitter and does not replace it.
 | E1 | 2026-10-09 | Emissive sibling maps `_emissive{,_y,_r}` (task 17): interior loads, per-alert variant, after the diffuse ceiling, probes exclude | built; live-verified by Mark 2026-10-10 (green/yellow/red on DBridge) | 6.1, 9.7 |
 | G0 | 2026-10-10 | Emitter glow slice 1 designed: maps = where, profiles = how; `src` emissive/texture/flat; red falls back to yellow; light colour = evaluated^2.2; probe capture colours split from live colours | agreed with Mark | 9.7, 11 |
 | G1 | 2026-10-10 | Glow slice 1 built (plan 2026-10-10-bridge-emitter-glow-slice-1): per-mesh glow + dip, profiles/waves/fades, spot capture vs live colours, DBridge alcove + roof data | built; live-verified by Mark 2026-10-11 ("works as described") | 11 |
+| G2 | 2026-10-11 | Editor panes designed (§12): glow + profile panes, state tabs double as the alert preview, preview clock, shared colour wheel | agreed with Mark | 12 |
 
 ## 11. Emitter glow — slice 1 *(agreed with Mark 2026-10-10)*
 
@@ -651,3 +653,66 @@ clock); `base_alpha` / `luma` masks; probe animation layers; light occlusion.
   and red; Mark's existing spot on b0081 joins the profile.
 
 Numbers are Mark's to tune live.
+
+## 12. Editor panes for glow and profiles — slice 2 *(agreed with Mark 2026-10-11)*
+
+Fills in §8's Emitter / Profile / Preview panes for the §11 model. Slice 1
+(§11) is live-verified; until this lands, profiles are hand-edited JSON.
+
+### 12.1 Layout (the dock, under Light; selected shape only)
+
+- **Glow** -- on/off; source `emissive` / `texture` / `flat` (`emissive`
+  disabled, with the reason shown, when the shape's material has no
+  `_emissive` sibling -- `model_identity` `maps.emissive`); `scale`.
+- **Profile** -- dropdown of the bridge's profiles plus "none (steady
+  white)"; **New** (a copy of the current profile, or steady white from
+  none, named `profile N`); **Rename** (a text field; every shape using the
+  profile follows); "used by N shapes", because a shared profile changes
+  every shape on it. No delete in this slice: an unused profile stays in the
+  file, shown "used by 0".
+- **Green | Yellow | Red tabs**, one state at a time (the dock is 360 px):
+  - on/off (a missing state is off, §6.3);
+  - **colour**: a hue/saturation wheel with V = 1, so `tint` always has a
+    max channel of 1 and brightness lives only in `level`. Editing a tint
+    authored with a lower max channel replaces it;
+  - **level**: slider 0–4 plus a number field (any value ≥ 0);
+  - **pulse**: `steady` / `sine` / `square`; `period_s` (≥ 0.05), `min`
+    (0–1) for sine and square; `duty`, `soft` (0–1) for square only.
+- Profile `fade_s` and the shape's `phase` (0–1) under the tabs.
+
+### 12.2 Preview
+
+- **The selected tab IS the preview alert.** Choosing Yellow shows the
+  bridge at yellow: emissive map variant, probe mix, alert ambient, glows
+  and lights -- everything that reads the alert level takes the editor's
+  value while the editor is open. The ship's real alert is never changed
+  (§4). Switching tabs fades over the profile's `fade_s`, so the fade is
+  previewed too. Closing the editor returns to the player's alert (with a
+  fade).
+- **Preview clock.** While the editor is open the bridge clock runs on the
+  real frame time (the sim is paused, so the player dt is 0), with a
+  play/pause toggle in the panel. Closing returns to the paused-aware dt.
+
+### 12.3 Editing rules
+
+- Every control is one undoable action (§8 snapshot stack), pushed live;
+  Save / Revert / Undo cover the new fields. Values are clamped to the
+  schema's ranges before they enter the document, so Save can never be
+  refused by validation for a value the panel produced.
+- The colour wheel commits on pointer release (one undo step per drag),
+  showing its swatch live while dragging.
+- Turning Glow off removes `emitter.glow`; an emitter left with nothing is
+  removed (as Light's Remove already does).
+
+### 12.4 The colour wheel is shared
+
+The SPV's hue/saturation wheel (`ship_property_viewer.js`: HSV→RGB at V = 1,
+its inverse, the cached disc, pointer handling) moves to a shared
+`js/colour_wheel.js` that both panels use. The SPV's behaviour is unchanged.
+CEF OSR shows no native colour-picker popup, so a canvas wheel is the
+working control.
+
+### 12.5 Out of scope
+
+Pipette (copy an emitter between shapes), gizmos, colour-to-colour pulses,
+deleting profiles, a preview-clock speed control.
