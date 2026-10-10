@@ -18,10 +18,11 @@ import json
 import time
 from typing import Optional
 
-from engine import host_io
+from engine import dev_mode, host_io
 from engine.bridge_editor import lighting_doc as ld
 from engine.bridge_editor import lighting_writer as lw
 from engine.bridge_editor import lights as bridge_lights
+from engine.bridge_editor import profiles
 from engine.bridge_editor.fly_camera import FlyCamera
 from engine.bridge_editor.picking import PickCycle, identity_for, pick_hit, pick_mesh
 from engine.ui.panel import Panel
@@ -40,11 +41,15 @@ _LIGHT_RANGE = 200.0
 _LIGHT_INTENSITY = bridge_lights.DEFAULT_INTENSITY
 _LIGHT_MIN_RANGE = 0.01
 _LIGHT_FIELDS = ("inner_deg", "outer_deg", "range", "intensity")
+_WAVE_DEFAULTS = {"sine": {"period_s": 2.0, "min": 0.0},
+                  "square": {"period_s": 1.0, "min": 0.0, "duty": 0.5, "soft": 0.0}}
+_MIN_PERIOD_S = 0.05
+_EMITTER_PREFIXES = ("glow", "profile", "state", "fade:", "phase:", "tab:", "preview-")
 
 
 class BridgeEmittersPanel(Panel):
     def __init__(self, pose_provider, instance_provider, in_bridge_provider,
-                 clock=time.monotonic, io=host_io, runtime=None):
+                 clock=time.monotonic, io=host_io, runtime=None, alert_provider=None):
         super().__init__()
         self._pose = pose_provider
         self._iid = instance_provider
@@ -52,6 +57,7 @@ class BridgeEmittersPanel(Panel):
         self._clock = clock
         self._io = io
         self._runtime = runtime
+        self._alert = alert_provider
         self._visible = False
         self._last_pushed = None
         self._reset_session()
@@ -79,6 +85,8 @@ class BridgeEmittersPanel(Panel):
         self._push_warnings = []       # REPLACED by each push, never accumulated
         self._pushed_highlight = None
         self._h_for_release = None
+        self._tab = "green"            # the Profile state tab == the preview alert
+        self._preview_playing = True
 
     # ── Panel ────────────────────────────────────────────────────────────
     @property
@@ -90,6 +98,11 @@ class BridgeEmittersPanel(Panel):
 
     def open(self) -> None:
         self._reset_session()
+        try:
+            self._tab = profiles.state_name(self._alert()) if self._alert else "green"
+        except Exception as e:  # noqa: BLE001 - a bad provider must not block the editor
+            dev_mode.log_swallowed("bridge editor alert provider", e)
+            self._tab = "green"
         self._last_pushed = None
         self.visible = True
 
@@ -274,7 +287,7 @@ class BridgeEmittersPanel(Panel):
             return True
         if self._doc is None:
             return (action in ("save", "revert", "undo")
-                    or action.startswith(("material", "light")))
+                    or action.startswith(("material", "light", *_EMITTER_PREFIXES)))
         if action == "save":
             self._save()
         elif action == "revert":
@@ -303,6 +316,8 @@ class BridgeEmittersPanel(Panel):
             self._after_change()
         elif action.startswith("light:"):
             self._light_field(action[len("light:"):])
+            self._after_change()
+        elif self._emitter_action(action):
             self._after_change()
         else:
             return False
@@ -407,6 +422,213 @@ class BridgeEmittersPanel(Panel):
         elif field == "outer_deg" and v < light.get("inner_deg", 0.0):
             light["inner_deg"] = v
 
+    # ── glow + profile (spec 2026-10-08-bridge-emitters §12) ──────────────
+    def _edit(self, fn):
+        """Run one document edit as one undo step: snapshot, mutate, and keep
+        the snapshot only if the document changed (a no-op adds none)."""
+        before = copy.deepcopy(self._doc)
+        fn()
+        if self._doc != before:
+            self._undo.append(before)
+            del self._undo[:-_UNDO_LIMIT]
+
+    def _emitter(self, create=False):
+        if self._selected is None or self._doc is None:
+            return None
+        if create:
+            entry = ld.shape_entry(self._doc, self._selected.block, self._selected.name)
+            return entry.setdefault("emitter", {})
+        return self._doc["shapes"].get(self._selected.key, {}).get("emitter")
+
+    def _drop_empty(self):
+        entry = self._doc["shapes"].get(self._selected.key) if self._selected else None
+        if entry is None:
+            return
+        if entry.get("emitter") == {}:
+            del entry["emitter"]
+        if set(entry) == {"block", "name"}:
+            del self._doc["shapes"][self._selected.key]
+
+    def _profile_name(self):
+        return (self._emitter() or {}).get("profile")
+
+    def _has_emissive_map(self):
+        return bool(((self._selected_mesh_info() or {}).get("maps") or {}).get("emissive"))
+
+    @staticmethod
+    def _num(raw, lo=None, hi=None):
+        try:
+            v = float(raw)
+        except ValueError:
+            return None
+        if v != v or v in (float("inf"), float("-inf")):
+            return None
+        if lo is not None:
+            v = max(lo, v)
+        if hi is not None:
+            v = min(hi, v)
+        return v
+
+    def _emitter_action(self, action) -> bool:
+        """Glow / profile / state / preview actions; False for anything else."""
+        if action == "preview-toggle":
+            self._preview_playing = not self._preview_playing
+            return True
+        if action.startswith("tab:"):
+            if action[4:] in profiles.STATES:
+                self._tab = action[4:]
+            return True
+        if self._selected is None:
+            return action.startswith(_EMITTER_PREFIXES)
+        if action == "glow-on":
+            def on():
+                em = self._emitter(create=True)
+                em.setdefault("glow", {"src": "emissive" if self._has_emissive_map()
+                                       else "texture"})
+            self._edit(on)
+        elif action == "glow-off":
+            def off():
+                em = self._emitter()
+                if em is not None:
+                    em.pop("glow", None)
+                    self._drop_empty()
+            self._edit(off)
+        elif action.startswith("glow:"):
+            field, _, raw = action[5:].partition(":")
+            g = (self._emitter() or {}).get("glow")
+            if g is None:
+                return True
+            if field == "src" and raw in ld.GLOW_SRCS and (
+                    raw != "emissive" or self._has_emissive_map()):
+                self._edit(lambda: g.__setitem__("src", raw))
+            elif field == "scale":
+                v = self._num(raw, lo=0.0)
+                if v is not None:
+                    self._edit(lambda: g.__setitem__("scale", v))
+        elif action.startswith("profile-select:"):
+            name = action[len("profile-select:"):]
+            if name and name not in self._doc["profiles"]:
+                return True
+            def select():
+                if name:
+                    self._emitter(create=True)["profile"] = name
+                else:
+                    em = self._emitter()
+                    if em is not None:
+                        em.pop("profile", None)
+                        self._drop_empty()
+            self._edit(select)
+        elif action == "profile-new":
+            def new():
+                n = 1
+                while f"profile {n}" in self._doc["profiles"]:
+                    n += 1
+                cur = self._profile_name()
+                src = self._doc["profiles"].get(cur) if cur else None
+                data = copy.deepcopy(src) if src is not None else {
+                    "fade_s": profiles.DEFAULT_FADE_S,
+                    **copy.deepcopy(profiles.STEADY_WHITE)}
+                self._doc["profiles"][f"profile {n}"] = data
+                self._emitter(create=True)["profile"] = f"profile {n}"
+            self._edit(new)
+        elif action.startswith("profile-rename:"):
+            self._rename(action[len("profile-rename:"):].strip())
+        elif action.startswith(("state-on:", "state-off:", "state:", "fade:", "phase:")):
+            self._state_action(action)
+        else:
+            return False
+        return True
+
+    def _rename(self, new):
+        old = self._profile_name()
+        if old is None:
+            return
+        if not new:
+            self._status = "Rename refused: empty name"
+            return
+        if new in self._doc["profiles"]:
+            if new != old:
+                self._status = f"Rename refused: a profile named {new!r} exists"
+            return
+        def rename():
+            self._doc["profiles"][new] = self._doc["profiles"].pop(old)
+            for entry in self._doc["shapes"].values():
+                em = entry.get("emitter")
+                if em is not None and em.get("profile") == old:
+                    em["profile"] = new
+        self._edit(rename)
+        self._status = f"Renamed {old!r} to {new!r}"
+
+    def _state_action(self, action):
+        name = self._profile_name()
+        prof = self._doc["profiles"].get(name) if name else None
+        if action.startswith("phase:"):
+            v = self._num(action[6:], 0.0, 1.0)
+            if v is not None and self._emitter() is not None:
+                self._edit(lambda: self._emitter().__setitem__("phase", v))
+            return
+        if prof is None:
+            return
+        if action.startswith("fade:"):
+            v = self._num(action[5:], lo=0.0)
+            if v is not None:
+                self._edit(lambda: prof.__setitem__("fade_s", v))
+            return
+        if action.startswith(("state-on:", "state-off:")):
+            on, _, s = action.partition(":")
+            if s not in profiles.STATES:
+                return
+            if on == "state-on":
+                self._edit(lambda: prof.setdefault(s, {"tint": [1, 1, 1], "level": 1.0}))
+            else:
+                self._edit(lambda: prof.pop(s, None))
+            return
+        _, s, rest = action.split(":", 2) if action.count(":") >= 2 else ("", "", "")
+        st = prof.get(s)
+        if s not in profiles.STATES or st is None:
+            return
+        field, _, raw = rest.partition(":")
+        if field == "tint":
+            try:
+                rgb = [max(0.0, float(c)) for c in raw.split(",")]
+            except ValueError:
+                return
+            if len(rgb) != 3 or any(c != c or c == float("inf") for c in rgb):
+                return
+            m = max(rgb)
+            rgb = [round(c / m, 4) for c in rgb] if m > 0 else [0.0, 0.0, 0.0]
+            self._edit(lambda: st.__setitem__("tint", rgb))
+        elif field == "level":
+            v = self._num(raw, lo=0.0)
+            if v is not None:
+                self._edit(lambda: st.__setitem__("level", v))
+        elif field == "wave":
+            self._wave_field(st, raw)
+
+    def _wave_field(self, st, arg):
+        field, _, raw = arg.partition(":")
+        wave = st.get("wave")
+        if field == "shape":
+            if raw == "steady":
+                self._edit(lambda: st.pop("wave", None))
+            elif raw in _WAVE_DEFAULTS:
+                new = dict(_WAVE_DEFAULTS[raw], shape=raw)
+                for k in ("period_s", "min", "duty", "soft"):
+                    if wave and k in wave and k in new:
+                        new[k] = wave[k]
+                self._edit(lambda: st.__setitem__("wave", new))
+            return
+        if wave is None:
+            return
+        if field == "period_s":
+            v = self._num(raw, lo=_MIN_PERIOD_S)
+        elif field == "min" or (field in ("duty", "soft") and wave["shape"] == "square"):
+            v = self._num(raw, 0.0, 1.0)
+        else:
+            return
+        if v is not None:
+            self._edit(lambda: wave.__setitem__(field, v))
+
     def _edit_material(self, arg):
         ch, _, raw = arg.partition(":")
         if ch not in _CHANNELS or self._selected is None:
@@ -498,6 +720,25 @@ class BridgeEmittersPanel(Panel):
         light = self._light_entry()
         return None if light is None else dict(light)
 
+    def _glow_payload(self):
+        g = (self._emitter() or {}).get("glow")
+        return None if g is None else dict(g)
+
+    def _profile_payload(self):
+        name = self._profile_name()
+        prof = self._doc["profiles"].get(name) if name else None
+        return None if prof is None else copy.deepcopy(prof)
+
+    def _profiles_payload(self):
+        if self._doc is None:
+            return []
+        used = {}
+        for entry in self._doc["shapes"].values():
+            n = (entry.get("emitter") or {}).get("profile")
+            if n is not None:
+                used[n] = used.get(n, 0) + 1
+        return [{"name": n, "used_by": used.get(n, 0)} for n in sorted(self._doc["profiles"])]
+
     def render_payload(self) -> Optional[str]:
         if not self._visible:
             state = {"visible": False}
@@ -510,7 +751,12 @@ class BridgeEmittersPanel(Panel):
                        "node_chain": list(self._selected.node_chain),
                        "textures": list(self._selected.textures),
                        "material": self._material_state(),
-                       "light": self._light_payload()}
+                       "light": self._light_payload(),
+                       "glow": self._glow_payload(),
+                       "has_emissive_map": self._has_emissive_map(),
+                       "profile": self._profile_name(),
+                       "profile_data": self._profile_payload(),
+                       "phase": float((self._emitter() or {}).get("phase", 0.0))}
             hover = None
             if self._info and self._hover_mesh >= 0:
                 ident = identity_for(self._info, self._hover_mesh)
@@ -524,6 +770,9 @@ class BridgeEmittersPanel(Panel):
                 "can_save": self._can_save(),
                 "can_undo": bool(self._undo),
                 "status": self._status_text(),
+                "profiles": self._profiles_payload(),
+                "tab": self._tab,
+                "preview_playing": self._preview_playing,
             }
         js = "setBridgeEmitters(" + json.dumps(state) + ");"
         if js == self._last_pushed:

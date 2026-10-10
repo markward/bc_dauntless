@@ -621,3 +621,140 @@ def test_close_with_nothing_unsaved_pushes_nothing(env_rt):
     n = len(rt.pushes)
     p.close()
     assert len(rt.pushes) == n
+
+
+# ── Glow + profile panes (spec §12) ─────────────────────────────────────────
+
+def _open_on_panel(env_rt):
+    p, io, h, *_ , rt = env_rt
+    p.open()
+    click(p, h, (400.0, 300.0))          # selects mesh 1, block 7 "redalertpanel"
+    return p, rt
+
+
+def _em(p):
+    return p._doc["shapes"]["7:redalertpanel"]["emitter"]
+
+
+def test_glow_on_off_and_source(env_rt):
+    p, rt = _open_on_panel(env_rt)
+    p.dispatch_event("glow-on")
+    assert _em(p)["glow"] == {"src": "texture"}          # no _emissive map on mesh 1
+    p.dispatch_event("glow:src:emissive")                 # refused: no map
+    assert _em(p)["glow"]["src"] == "texture"
+    p.dispatch_event("glow:src:flat")
+    p.dispatch_event("glow:scale:-3")
+    assert _em(p)["glow"] == {"src": "flat", "scale": 0.0}
+    p.dispatch_event("glow-off")
+    assert "7:redalertpanel" not in p._doc["shapes"]      # emitter and entry left empty
+    assert payload(p)["selected"]["glow"] is None
+
+
+def test_profile_new_select_and_used_by(env_rt):
+    p, rt = _open_on_panel(env_rt)
+    p.dispatch_event("profile-new")
+    assert _em(p)["profile"] == "profile 1"
+    assert p._doc["profiles"]["profile 1"]["green"] == {"tint": [1, 1, 1], "level": 1}
+    st = payload(p)
+    assert st["profiles"] == [{"name": "profile 1", "used_by": 1}]
+    assert st["selected"]["profile"] == "profile 1"
+    p.dispatch_event("profile-new")                       # copies the current one
+    assert _em(p)["profile"] == "profile 2"
+    p.dispatch_event("profile-select:")
+    assert "7:redalertpanel" not in p._doc["shapes"]
+    assert [x["used_by"] for x in payload(p)["profiles"]] == [0, 0]
+
+
+def test_rename_moves_every_reference_and_refuses_clashes(env_rt):
+    p, rt = _open_on_panel(env_rt)
+    p.dispatch_event("profile-new")
+    ld.shape_entry(p._doc, 3, "floor")["emitter"] = {"profile": "profile 1"}
+    p.dispatch_event("profile-new")                       # selected shape -> profile 2
+    p.dispatch_event("profile-select:profile 1")
+    p.dispatch_event("profile-rename:alcove")
+    assert "profile 1" not in p._doc["profiles"] and "alcove" in p._doc["profiles"]
+    assert _em(p)["profile"] == "alcove"
+    assert p._doc["shapes"]["3:floor"]["emitter"]["profile"] == "alcove"
+    p.dispatch_event("profile-rename:profile 2")          # clash
+    assert _em(p)["profile"] == "alcove"
+    assert "exists" in payload(p)["status"]
+    p.dispatch_event("profile-rename:   ")                # empty
+    assert _em(p)["profile"] == "alcove"
+
+
+def test_state_edits_need_a_profile(env_rt):
+    p, rt = _open_on_panel(env_rt)
+    p.dispatch_event("state:red:level:2")
+    p.dispatch_event("state-on:red")
+    assert "7:redalertpanel" not in p._doc["shapes"]
+    assert payload(p)["selected"]["profile_data"] is None
+
+
+def test_state_on_off_tint_level(env_rt):
+    p, rt = _open_on_panel(env_rt)
+    p.dispatch_event("profile-new")
+    prof = p._doc["profiles"]["profile 1"]
+    p.dispatch_event("state-off:yellow")
+    assert "yellow" not in prof
+    p.dispatch_event("state-on:yellow")
+    assert prof["yellow"] == {"tint": [1, 1, 1], "level": 1.0}
+    p.dispatch_event("state:red:tint:0.5,0.1,0.05")       # normalised: max channel 1
+    assert prof["red"]["tint"] == pytest.approx([1.0, 0.2, 0.1])
+    p.dispatch_event("state:red:level:-1")
+    assert prof["red"]["level"] == 0.0
+    p.dispatch_event("state:red:level:6.5")               # the number field: any >= 0
+    assert prof["red"]["level"] == 6.5
+
+
+def test_wave_shape_switch_keeps_the_document_valid(env_rt):
+    p, rt = _open_on_panel(env_rt)
+    p.dispatch_event("profile-new")
+    prof = p._doc["profiles"]["profile 1"]
+    p.dispatch_event("state:red:wave:shape:square")
+    assert prof["red"]["wave"] == {"shape": "square", "period_s": 1.0, "min": 0.0,
+                                   "duty": 0.5, "soft": 0.0}
+    p.dispatch_event("state:red:wave:period_s:0.001")
+    p.dispatch_event("state:red:wave:duty:2")
+    assert prof["red"]["wave"]["period_s"] == 0.05 and prof["red"]["wave"]["duty"] == 1.0
+    p.dispatch_event("state:red:wave:shape:sine")
+    assert prof["red"]["wave"] == {"shape": "sine", "period_s": 0.05, "min": 0.0}
+    p.dispatch_event("state:red:wave:duty:0.3")           # square only: ignored
+    assert "duty" not in prof["red"]["wave"]
+    ld.validate(p._doc)
+    p.dispatch_event("state:red:wave:shape:steady")
+    assert "wave" not in prof["red"]
+    ld.validate(p._doc)
+
+
+def test_fade_and_phase_clamp(env_rt):
+    p, rt = _open_on_panel(env_rt)
+    p.dispatch_event("profile-new")
+    p.dispatch_event("fade:-1")
+    p.dispatch_event("phase:1.7")
+    assert p._doc["profiles"]["profile 1"]["fade_s"] == 0.0
+    assert _em(p)["phase"] == 1.0
+    assert payload(p)["selected"]["phase"] == 1.0
+
+
+def test_every_edit_is_one_undo_step_and_no_op_edits_add_none(env_rt):
+    p, rt = _open_on_panel(env_rt)
+    p.dispatch_event("profile-new")
+    n = len(p._undo)
+    p.dispatch_event("state:green:level:1")               # unchanged value
+    assert len(p._undo) == n
+    p.dispatch_event("state:green:level:2")
+    assert len(p._undo) == n + 1
+    p.dispatch_event("undo")
+    assert p._doc["profiles"]["profile 1"]["green"]["level"] == 1
+
+
+def test_tab_and_preview_toggle_are_not_document_edits(env_rt):
+    p, rt = _open_on_panel(env_rt)
+    n = len(p._undo)
+    p.dispatch_event("tab:red")
+    p.dispatch_event("preview-toggle")
+    st = payload(p)
+    assert st["tab"] == "red" and st["preview_playing"] is False
+    assert len(p._undo) == n
+    p.dispatch_event("tab:purple")
+    assert payload(p)["tab"] == "red"
