@@ -3533,7 +3533,7 @@ def _register_ai_inspector(registry):
 
 def _register_bridge_emitters(registry, bridge_camera, controller, view_mode,
                               runtime=None):
-    """Developer-only Bridge Emitters editor (docs/superpowers/specs/2026-10-08-bridge-emitters-spike-design.md §4): a pause-menu row and a panel that joins
+    """Developer-only Bridge Editor (docs/superpowers/specs/2026-10-08-bridge-emitters-spike-design.md §4): a pause-menu row and a panel that joins
     the modal blockers. Returns _NULL_PICKER without --developer.
 
     `runtime` is the production BridgeRuntime (engine.bridge_editor.runtime) --
@@ -3550,7 +3550,7 @@ def _register_bridge_emitters(registry, bridge_camera, controller, view_mode,
         in_bridge_provider=lambda: bool(view_mode.is_bridge),
         runtime=runtime)
     registry.register(panel)
-    dev_mode.register_dev_pause_menu_entry("Bridge Emitters…", panel.open)
+    dev_mode.register_dev_pause_menu_entry("Bridge Editor…", panel.open)
     return panel
 
 
@@ -12007,7 +12007,7 @@ def run(mission_name: Optional[str] = None,
                     # up) vectors from the exterior view, so it needs its own
                     # perturb call. The camera_shake module is global state,
                     # so the shake energy / phase is shared with the
-                    # exterior perturb above. While the Bridge Emitters
+                    # exterior perturb above. While the Bridge Editor
                     # editor has a fly pose, it takes over the bridge camera
                     # unshaken -- you are aiming at shapes, not flying the
                     # ship.

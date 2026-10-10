@@ -175,14 +175,14 @@
       </div>
     </section>
 
-    <!-- Bridge Emitters (developer-only, spec 2026-10-08-bridge-emitters §8).
+    <!-- Bridge Editor (developer-only, spec 2026-10-08-bridge-emitters §8).
          setBridgeEmitters({visible, in_bridge, selected, hover, dirty,
          can_save, can_undo, status}) drives it; actions are
          dauntlessEvent('bridge-emitters/<action>'). Docked right, the 3D view
          stays clickable. data-panel routes text-field keyboard capture. -->
     <div id="bridge-emitters-root" class="dev-only" data-panel="bridge-emitters">
       <div class="be-dock cp-modal">
-        <div class="cp-header">Bridge Emitters</div>
+        <div class="cp-header">Bridge Editor</div>
         <div class="cp-content"><div class="cp-body" id="bridge-emitters-body"></div></div>
         <div class="cp-footer">
           <button class="cp-done-button" id="be-undo" onclick="dauntlessEvent('bridge-emitters/undo')">Undo</button>

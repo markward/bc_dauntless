@@ -1,4 +1,4 @@
-// Bridge Emitters dev panel (spec 2026-10-08-bridge-emitters §8).
+// Bridge Editor dev panel (spec 2026-10-08-bridge-emitters §8).
 // Python pushes setBridgeEmitters(state); actions go back through
 // dauntlessEvent('bridge-emitters/<action>'). Sliders commit on `change`.
 
@@ -79,7 +79,7 @@ function _beBodyHtml(state) {
     let html = '';
     if (!state.in_bridge) {
         html += '<div class="be-help">Close this, press Space to go to the bridge, '
-              + 'then reopen Bridge Emitters.</div>';
+              + 'then reopen Bridge Editor.</div>';
     } else {
         html += '<div class="be-help">Hold right mouse to look · WASD move · Q/E down/up · '
               + 'Shift fast · Alt slow · Click to select · Alt+click: the surface behind</div>';

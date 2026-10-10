@@ -1,4 +1,4 @@
-/* Bridge Emitters (developer-only) -- a DOCKED editor over the live bridge,
+/* Bridge Editor (developer-only) -- a DOCKED editor over the live bridge,
    like #spv-root: the root covers the viewport but takes no pointer events,
    so clicks reach the 3D view; only the dock column is interactive. Width
    must match DOCK_CSS_PX in engine/ui/bridge_emitters_panel.py.

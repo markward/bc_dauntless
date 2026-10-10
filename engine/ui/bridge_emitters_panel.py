@@ -1,4 +1,4 @@
-"""Bridge Emitters -- developer-only bridge editor panel (spec
+"""Bridge Editor -- developer-only bridge editor panel (spec
 docs/superpowers/specs/2026-10-08-bridge-emitters-spike-design.md §4, §7, §8).
 
 Foundation scope: fly camera (hold RMB to look, WASDQE to move, Shift fast,
