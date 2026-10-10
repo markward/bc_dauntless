@@ -29,7 +29,7 @@ def full_doc():
                 "material": {"roughness": 0.4, "metalness": 0.0},
                 "emitter": {
                     "profile": "red_bar", "phase": 0.0,
-                    "glow": {"src": "flat", "mask": "whole", "scale": 1.0},
+                    "glow": {"src": "flat", "scale": 1.0},
                     "light": {"position": [191, 0, 40], "direction": [-1, 0, 0],
                               "inner_deg": 30, "outer_deg": 60, "range": 120,
                               "intensity": 1.0, "light_scale": 1.0},
@@ -55,7 +55,9 @@ def test_empty_doc_validates():
     (lambda d: d["shapes"]["137:wall inset slot left"]["material"].update(shine=1), "shine"),
     (lambda d: d["shapes"]["137:wall inset slot left"].update(name="other"), "key"),
     (lambda d: d["shapes"]["137:wall inset slot left"]["emitter"].update(profile="nope"), "nope"),
-    (lambda d: d["shapes"]["137:wall inset slot left"]["emitter"]["glow"].update(mask="map"), "map"),
+    (lambda d: d["shapes"]["137:wall inset slot left"]["emitter"]["glow"].update(mask="whole"), "mask"),
+    (lambda d: d["shapes"]["137:wall inset slot left"]["emitter"]["glow"].update(scale=-1), "scale"),
+    (lambda d: d["shapes"]["137:wall inset slot left"]["emitter"]["glow"].pop("src"), "src"),
     (lambda d: d["shapes"]["137:wall inset slot left"]["emitter"]["glow"].update(src="neon"), "src"),
     (lambda d: d["shapes"]["137:wall inset slot left"]["emitter"]["light"].update(direction=[0, 0, 0]), "direction"),
     (lambda d: d["shapes"]["137:wall inset slot left"]["emitter"]["light"].update(inner_deg=70), "inner_deg"),
@@ -71,6 +73,13 @@ def test_invalid_documents_are_rejected_naming_the_fault(mutate, fragment):
     mutate(d)
     with pytest.raises(ld.BridgeLightingError, match=fragment):
         ld.validate(d)
+
+
+@pytest.mark.parametrize("src", ["emissive", "texture", "flat"])
+def test_every_glow_source_validates(src):
+    d = full_doc()
+    d["shapes"]["137:wall inset slot left"]["emitter"]["glow"] = {"src": src}
+    assert ld.validate(d)
 
 
 def test_booleans_are_not_numbers():

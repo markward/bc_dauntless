@@ -122,18 +122,16 @@ def _profile(p, where):
                 _wave(st["wave"], f"{where}.{s}.wave")
 
 
+GLOW_SRCS = ("emissive", "texture", "flat")
+
+
 def _glow(g, where):
-    _obj(g, where, {"src", "mask", "scale", "luma_threshold", "luma_soft", "map"},
-         ("src", "mask"))
-    _enum(g["src"], f"{where}.src", ("texture", "flat"))
-    _enum(g["mask"], f"{where}.mask", ("whole", "base_alpha", "luma", "map"))
+    """Spec §11.2: what glows (`src`) and a per-shape multiplier (`scale`).
+    The colour, level and pulse come from the emitter's profile."""
+    _obj(g, where, {"src", "scale"}, ("src",))
+    _enum(g["src"], f"{where}.src", GLOW_SRCS)
     if "scale" in g:
         _num(g["scale"], f"{where}.scale", lo=0)
-    for k in ("luma_threshold", "luma_soft"):
-        if k in g:
-            _num(g[k], f"{where}.{k}", 0, 1)
-    if g["mask"] == "map" and not isinstance(g.get("map"), str):
-        _fail(f"{where}.map", "required (a texture name) when mask is map")
 
 
 def _light(l, where):
