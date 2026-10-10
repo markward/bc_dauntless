@@ -609,110 +609,21 @@ window.shipPropertyViewerEmitterKind = function (kind) {
     });
 };
 
-// HSV->RGB with V=1 always: the wheel only picks hue (angle) and saturation
-// (radius); brightness is the separate, HDR-range (0..8) intensity slider.
-function spvHsToRgb(hue, sat) {
-    var h = ((hue % 360) + 360) % 360;
-    var s = Math.max(0, Math.min(1, sat));
-    var c = s;                       // v(=1) * s
-    var x = c * (1 - Math.abs((h / 60) % 2 - 1));
-    var m = 1 - c;                   // v - c
-    var r, g, b;
-    if (h < 60)       { r = c; g = x; b = 0; }
-    else if (h < 120) { r = x; g = c; b = 0; }
-    else if (h < 180) { r = 0; g = c; b = x; }
-    else if (h < 240) { r = 0; g = x; b = c; }
-    else if (h < 300) { r = x; g = 0; b = c; }
-    else              { r = c; g = 0; b = x; }
-    return [r + m, g + m, b + m];
-}
-
-// Inverse of spvHsToRgb (V forced to 1), used only to seed the wheel's
-// hue/sat marker from a saved emitter's color when Edit opens.
-function spvRgbToHs(rgb) {
-    var r = rgb[0] || 0, g = rgb[1] || 0, b = rgb[2] || 0;
-    var max = Math.max(r, g, b), min = Math.min(r, g, b);
-    var d = max - min;
-    var h = 0;
-    if (d > 1e-6) {
-        if (max === r) h = 60 * (((g - b) / d) % 6);
-        else if (max === g) h = 60 * ((b - r) / d + 2);
-        else h = 60 * ((r - g) / d + 4);
-    }
-    if (h < 0) h += 360;
-    var sat = (max > 1e-6) ? d / max : 0;
-    return {hue: h, sat: Math.max(0, Math.min(1, sat))};
-}
-
-// Cached base disc (hue = angle, sat = radius, V = 1) painted once per page
-// load; only the selection marker is redrawn on every wheel interaction.
-var _spvWheelBase = null;
-
-function spvDrawWheel() {
-    var canvas = document.getElementById('spv-emitter-wheel');
-    if (!canvas || !spvEmitter) return;
-    var ctx = canvas.getContext('2d');
-    var w = canvas.width, h = canvas.height;
-    var cx = w / 2, cy = h / 2, R = Math.min(cx, cy) - 4;
-    if (!_spvWheelBase) {
-        var img = ctx.createImageData(w, h);
-        for (var y = 0; y < h; y++) {
-            for (var x = 0; x < w; x++) {
-                var dx = x - cx, dy = y - cy;
-                var dist = Math.sqrt(dx * dx + dy * dy);
-                var idx = (y * w + x) * 4;
-                if (dist > R) { img.data[idx + 3] = 0; continue; }
-                var angle = Math.atan2(dy, dx) * 180 / Math.PI;
-                if (angle < 0) angle += 360;
-                var rgb = spvHsToRgb(angle, Math.min(1, dist / R));
-                img.data[idx]     = Math.round(rgb[0] * 255);
-                img.data[idx + 1] = Math.round(rgb[1] * 255);
-                img.data[idx + 2] = Math.round(rgb[2] * 255);
-                img.data[idx + 3] = 255;
-            }
-        }
-        _spvWheelBase = img;
-    }
-    ctx.putImageData(_spvWheelBase, 0, 0);
-    var rad = spvEmitter.hue * Math.PI / 180;
-    var r = spvEmitter.sat * R;
-    var mx = cx + Math.cos(rad) * r, my = cy + Math.sin(rad) * r;
-    ctx.beginPath(); ctx.arc(mx, my, 5, 0, Math.PI * 2);
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
-    ctx.beginPath(); ctx.arc(mx, my, 3, 0, Math.PI * 2);
-    ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke();
-}
-
-function _spvSetHueSatFromEvent(canvas, clientX, clientY) {
-    var rect = canvas.getBoundingClientRect();
-    var cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
-    var R = Math.min(rect.width, rect.height) / 2 - 4;
-    var dx = clientX - cx, dy = clientY - cy;
-    var angle = Math.atan2(dy, dx) * 180 / Math.PI;
-    if (angle < 0) angle += 360;
-    spvEmitter.hue = angle;
-    spvEmitter.sat = Math.max(0, Math.min(1, Math.sqrt(dx * dx + dy * dy) / R));
-    spvDrawWheel();
-}
-var _spvWheelDragging = false;
-function _spvWheelPointerDown(e) {
-    var canvas = e.currentTarget;
-    canvas.setPointerCapture(e.pointerId);
-    _spvWheelDragging = true;
-    _spvSetHueSatFromEvent(canvas, e.clientX, e.clientY);
-}
-function _spvWheelPointerMove(e) {
-    if (!_spvWheelDragging) return;
-    _spvSetHueSatFromEvent(e.currentTarget, e.clientX, e.clientY);
-}
-function _spvWheelPointerUp() { _spvWheelDragging = false; }
+// The hue/sat wheel is the shared ColourWheel (js/colour_wheel.js).
+var _spvWheel = null;
 (function _spvWireEmitterWheel() {
     var canvas = document.getElementById('spv-emitter-wheel');
-    if (!canvas) return;
-    canvas.addEventListener('pointerdown', _spvWheelPointerDown);
-    canvas.addEventListener('pointermove', _spvWheelPointerMove);
-    canvas.addEventListener('pointerup', _spvWheelPointerUp);
+    if (!canvas || typeof ColourWheel === 'undefined') return;
+    _spvWheel = new ColourWheel(canvas, {hue: 40, sat: 0.3}, function (hs) {
+        if (!spvEmitter) return;
+        spvEmitter.hue = hs.hue;
+        spvEmitter.sat = hs.sat;
+    });
 })();
+
+function spvDrawWheel() {
+    if (_spvWheel && spvEmitter) _spvWheel.setHs(spvEmitter.hue, spvEmitter.sat);
+}
 
 function spvRenderEmitterIntensity() {
     var el = document.getElementById('spv-em-intensity');
@@ -777,7 +688,7 @@ window.shipPropertyViewerCtxEditEmitter = function () {
     var seed = spvRowEmitter[i + '/' + j];
     if (seed && typeof seed === 'object') {
         spvEmitter.kind = seed.kind || 'point';
-        var hs = spvRgbToHs(seed.color || [1.0, 0.9, 0.7]);
+        var hs = colourRgbToHs(seed.color || [1.0, 0.9, 0.7]);
         spvEmitter.hue = hs.hue; spvEmitter.sat = hs.sat;
         spvEmitter.intensity = (typeof seed.intensity === 'number') ? seed.intensity : 2.0;
     }
@@ -796,7 +707,7 @@ window.shipPropertyViewerCtxRemoveEmitter = function () {
 };
 
 window.shipPropertyViewerEmitterApply = function () {
-    var rgb = spvHsToRgb(spvEmitter.hue, spvEmitter.sat);
+    var rgb = colourHsToRgb(spvEmitter.hue, spvEmitter.sat);
     var payload;
     if (spvEmitterMode === 'add') {
         payload = {i: spvEmitterTarget.i, kind: spvEmitter.kind, color: rgb, intensity: spvEmitter.intensity};
