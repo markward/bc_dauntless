@@ -12408,6 +12408,9 @@ def run(mission_name: Optional[str] = None,
             if _bridge_alert_level != _bridge_probe_alert_last[0]:
                 _bridge_probe_alert_last[0] = _bridge_alert_level
                 controller.bridge_runtime.on_alert(_bridge_alert_level)
+            # Emitter profiles (spec 2026-10-08-bridge-emitters §11.3): pulses
+            # and alert fades on the bridge clock, frozen under pause.
+            controller.bridge_runtime.tick(_player_dt)
             # BC's NiFlipController observes *game time*, not wall time
             # — controllers advance with g_kTimerManager (which the
             # original engine scaled, instrumentation Q3). Feeding wall

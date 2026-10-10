@@ -64,13 +64,17 @@ def test_a_broken_file_is_ignored_not_raised(proj):
     assert ("set_bridge_material_overrides", "iid", []) in io.calls
 
 
-def test_alert_change_repushes_spots_only(proj):
+def test_alert_change_pushes_only_live_values_on_the_next_tick(proj):
+    # Spec §11.4: the spot list is static; an alert change only starts the
+    # fade, and tick() pushes the live glow + spot colours.
     io = FakeIO()
     rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
     rt.attach("iid")
     io.calls.clear()
     rt.on_alert(2)
-    assert names(io) == ["set_bridge_spots"]
+    assert names(io) == []
+    rt.tick(0.016)
+    assert names(io) == ["set_bridge_glow", "set_bridge_spot_colours"]
 
 
 # ── Obligation (review): neither overrides nor spots are cleared in C++ on a
@@ -227,7 +231,7 @@ def test_more_than_32_spots_warning_is_logged(proj, monkeypatch):
                         lambda ctx, exc: logged.append((ctx, str(exc))))
     io = FakeIO(info={"source": "/x.nif", "content_hash": HASH, "meshes": matched_meshes})
     runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0).attach("iid")
-    too_many = [(ctx, msg) for ctx, msg in logged if ctx == "bridge lighting too many spots"]
+    too_many = [(ctx, msg) for ctx, msg in logged if ctx == "bridge lighting emitters"]
     assert len(too_many) == 2
     assert all("dropped" in msg for _, msg in too_many)
 
@@ -305,8 +309,9 @@ def test_alert_changes_with_an_empty_doc_never_request_a_capture(proj):
     io.calls.clear()
     rt.on_alert(1)
     rt.on_alert(2)
+    rt.tick(0.1)
     assert "request_bridge_probe_capture" not in names(io)
-    assert io.calls == [("set_bridge_spots", []), ("set_bridge_spots", [])]
+    assert "set_bridge_spots" not in names(io)
 
 
 def test_push_leaves_the_capture_decision_to_the_pass(proj):
@@ -382,3 +387,69 @@ def test_attach_clear_failing_does_not_stop_the_load(proj):
     rt.attach("iid")
     assert ("set_bridge_probe_origin", (1.0, 2.0, 3.0)) in io.calls
     assert names(io)[-1] == "request_bridge_probe_capture"
+
+
+def _glow_doc(proj):
+    d = ld.empty_doc("x")
+    d["profiles"]["p"] = {"fade_s": 1.0,
+                          "green": {"tint": [1, 1, 1], "level": 1},
+                          "red": {"tint": [1, 0, 0], "level": 0.5,
+                                  "wave": {"shape": "sine", "period_s": 2.0, "min": 0.0}}}
+    ld.shape_entry(d, 3, "floor")["emitter"] = {
+        "profile": "p", "glow": {"src": "flat"},
+        "light": {"position": [0, 0, 9], "direction": [0, 0, -1], "intensity": 10}}
+    lw.save(d, proj / "bridge_lighting" / f"{HASH}.json")
+
+
+def last(io, name):
+    return [c for c in io.calls if c[0] == name][-1]
+
+
+def test_attach_pushes_glow_and_live_spot_colours(proj):
+    _glow_doc(proj)
+    io = FakeIO()
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt.attach("iid")
+    assert last(io, "set_bridge_glow") == ("set_bridge_glow", "iid", [(0, 2, (1.0, 1.0, 1.0), 1.0)])
+    assert last(io, "set_bridge_spot_colours") == ("set_bridge_spot_colours", [(10.0, 10.0, 10.0)])
+    (spot,) = last(io, "set_bridge_spots")[1]
+    assert len(spot) == 9
+
+
+def test_on_alert_fades_over_fade_s_and_tick_advances_the_clock(proj):
+    _glow_doc(proj)
+    io = FakeIO()
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt.attach("iid")
+    n_spots = len([c for c in io.calls if c[0] == "set_bridge_spots"])
+    rt.on_alert(2)
+    assert len([c for c in io.calls if c[0] == "set_bridge_spots"]) == n_spots   # no re-push
+    rt.tick(0.5)                               # half way: mix(white 1, red peak... at t=0.5)
+    (_, _, rgb, level), = last(io, "set_bridge_glow")[2]
+    assert 0.0 < level < 1.0
+    rt.tick(10.0)
+    (_, _, rgb, level), = last(io, "set_bridge_glow")[2]
+    assert rgb[1] == pytest.approx(0.0) and rgb[2] == pytest.approx(0.0)   # settled red
+
+
+def test_tick_with_zero_dt_keeps_the_same_output(proj):
+    _glow_doc(proj)
+    io = FakeIO()
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 2)
+    rt.attach("iid")
+    rt.tick(0.3)
+    a = last(io, "set_bridge_glow")
+    rt.tick(0.0)
+    assert last(io, "set_bridge_glow") == a
+
+
+def test_detach_clears_the_glow_and_tick_after_detach_is_a_no_op(proj):
+    _glow_doc(proj)
+    io = FakeIO()
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt.attach("iid")
+    rt.detach()
+    assert ("set_bridge_glow", None, []) in io.calls
+    n = len(io.calls)
+    rt.tick(1.0)
+    assert len(io.calls) == n
