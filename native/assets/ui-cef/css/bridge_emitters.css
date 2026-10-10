@@ -36,3 +36,8 @@
 #bridge-emitters-root .be-source { width: 60px; font-size: 11px; opacity: 0.8; }
 #bridge-emitters-root .be-chain { font-size: 11px; opacity: 0.8; word-break: break-word; }
 #bridge-emitters-root .be-status { font-size: 12px; min-height: 16px; color: #f0b060; }
+#bridge-emitters-root .be-tabs { display: flex; gap: 4px; margin: 6px 0; }
+#bridge-emitters-root .be-tab { flex: 1; text-transform: capitalize; opacity: 0.6; }
+#bridge-emitters-root .be-tab.active { opacity: 1; outline: 1px solid #f0b060; }
+#bridge-emitters-root .be-swatch { width: 40px; height: 40px; border: 1px solid #888; }
+#bridge-emitters-root canvas { cursor: crosshair; }

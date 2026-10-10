@@ -30,7 +30,7 @@ function el(id) {
 const root = el('bridge-emitters-root');
 root.contains = (n) => !!(n && n.inDock);
 const document = {getElementById: el, activeElement: null, body: el('body')};
-const ctx = {document, dauntlessEvent: () => {}, String, Number};
+const ctx = {document, dauntlessEvent: () => {}, String, Number, Math};
 vm.createContext(ctx);
 const [jsPath, stepsJson] = process.argv.slice(-2);
 vm.runInContext(fs.readFileSync(jsPath, 'utf8'), ctx);
@@ -170,3 +170,76 @@ def test_a_map_sourced_channel_renders_its_slider_disabled():
     # Both inputs in the map-sourced row carry `disabled`, not just the slider.
     assert rough_row.count("disabled") == 2
     assert 'type="range"' in metal_row and "disabled" not in metal_row
+
+
+PROFILE = {"fade_s": 0.5,
+           "green": {"tint": [1, 1, 1], "level": 1},
+           "red": {"tint": [1, 0.1, 0.1], "level": 0.5,
+                   "wave": {"shape": "square", "period_s": 1, "min": 0.2,
+                            "duty": 0.5, "soft": 0.1}}}
+
+
+def _sel(**over):
+    sel = dict(_state()["selected"], glow=None, has_emissive_map=False,
+               profile=None, profile_data=None, phase=0.0)
+    sel.update(over)
+    return sel
+
+
+def _st(sel, **over):
+    base = {"profiles": [{"name": "alcove", "used_by": 4}], "tab": "green",
+            "preview_playing": True}
+    base.update(over)
+    return _state(selected=sel, **base)
+
+
+def test_glow_off_shows_only_the_toggle():
+    [out] = _run([{"state": _st(_sel())}])
+    assert "bridge-emitters/glow-on" in out["body"] or "glow-' + (this.checked" in out["body"]
+    assert "glow:src:" not in out["body"]
+
+
+def test_glow_on_lists_sources_and_disables_emissive_without_a_map():
+    [out] = _run([{"state": _st(_sel(glow={"src": "texture"}))}])
+    body = out["body"]
+    assert 'value="emissive" disabled' in body
+    assert 'value="texture" selected' in body
+    assert "glow:scale:" in body
+
+
+def test_profile_dropdown_counts_users_and_offers_none():
+    [out] = _run([{"state": _st(_sel(profile="alcove", profile_data=PROFILE))}])
+    body = out["body"]
+    assert "none (steady white)" in body
+    assert "alcove (4)" in body
+    assert "profile-new" in body and "profile-rename:" in body
+
+
+def test_tabs_show_without_a_profile_but_no_state_editor():
+    [out] = _run([{"state": _st(_sel())}])
+    body = out["body"]
+    for t in ("green", "yellow", "red"):
+        assert f"bridge-emitters/tab:{t}" in body
+    assert "state:green:level:" not in body
+
+
+def test_the_active_tab_shows_its_state_fields():
+    [out] = _run([{"state": _st(_sel(profile="alcove", profile_data=PROFILE), tab="red")}])
+    body = out["body"]
+    assert 'be-tab active' in body
+    assert "state:red:level:" in body
+    assert "state:red:wave:duty:" in body and "state:red:wave:soft:" in body
+    assert 'id="be-wheel"' in body
+    assert "fade:" in body and "phase:" in body
+
+
+def test_an_off_state_offers_to_turn_it_on():
+    [out] = _run([{"state": _st(_sel(profile="alcove", profile_data=PROFILE), tab="yellow")}])
+    assert "state-' + (this.checked" in out["body"]
+    assert "state:yellow:level:" not in out["body"]
+
+
+def test_preview_toggle_label_follows_playing():
+    [out] = _run([{"state": _st(_sel(), preview_playing=False)}])
+    assert "bridge-emitters/preview-toggle" in out["body"]
+    assert "Play" in out["body"]
