@@ -490,3 +490,47 @@ def test_host_io_alert_level_degrades_headless_and_forwards(monkeypatch):
     host_io.set_bridge_alert_level(2.0)
     host_io.set_bridge_alert_level(None)       # unknown -> green
     assert calls == [2, 0]
+
+
+def test_set_bridge_spots_takes_capture_colours(host_module):
+    spot = ((0.0, 0.0, 50.0), (0.0, 0.0, -1.0), 30.0, 60.0, 100.0, (1.0, 1.0, 1.0), 10.0)
+    assert host_module.set_bridge_spots([spot], [((1.0, 1.0, 1.0), (0.0, 0.0, 0.0))]) == 0
+    assert host_module.set_bridge_spots([spot], [((float("nan"), 0.0, 0.0), (0.0, 0.0, 0.0))]) == 1
+    assert host_module.set_bridge_spots([spot], []) == 0          # mismatch: ignored
+    assert host_module.set_bridge_spots([]) == 0
+
+
+def test_set_bridge_spot_colours_and_glow_never_raise(host_module):
+    host_module.set_bridge_spot_colours([(1.0, 2.0, 3.0), (float("inf"), 0.0, 0.0)])
+    host_module.set_bridge_spot_colours([])
+    host_module.set_bridge_glow(None, [])
+    host_module.set_bridge_glow(0xFFFFFFFF, [(0, 2, (1.0, 1.0, 1.0), 1.0)])   # stale id
+
+
+def test_host_io_bridge_glow_wrappers_are_headless_safe(monkeypatch):
+    from engine import host_io
+    monkeypatch.setattr(host_io, "_h", None)
+    assert host_io.set_bridge_spots([((0, 0, 0), (0, 0, -1), 30, 60, 100, (1, 1, 1), 1,
+                                      (1, 1, 1), (0, 0, 0))]) == 0
+    host_io.set_bridge_spot_colours([(1, 1, 1)])
+    host_io.set_bridge_glow(None, [(0, 2, (1, 1, 1), 1)])
+
+
+def test_host_io_set_bridge_spots_splits_captures(monkeypatch):
+    from engine import host_io
+    calls = []
+
+    class H:
+        @staticmethod
+        def set_bridge_spots(rows, captures=None):
+            calls.append((rows, captures))
+            return 0
+
+    monkeypatch.setattr(host_io, "_h", H)
+    host_io.set_bridge_spots([((0, 0, 0), (0, 0, -1), 30, 60, 100, (1, 1, 1), 5,
+                               (1, 1, 1), (0, 0, 0))])
+    rows, caps = calls[-1]
+    assert rows == [((0.0, 0.0, 0.0), (0.0, 0.0, -1.0), 30.0, 60.0, 100.0, (1.0, 1.0, 1.0), 5.0)]
+    assert caps == [((1.0, 1.0, 1.0), (0.0, 0.0, 0.0))]
+    host_io.set_bridge_spots([((0, 0, 0), (0, 0, -1), 30, 60, 100, (1, 1, 1), 5)])
+    assert calls[-1][1] is None
