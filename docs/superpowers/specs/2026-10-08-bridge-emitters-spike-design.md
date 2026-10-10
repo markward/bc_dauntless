@@ -549,7 +549,7 @@ It is NOT the §6 emitter and does not replace it.
 | F1 | 2026-10-09 | Foundation built: fly camera, pick + identity, selection tint, lighting doc + writer, panel (plan 2026-10-09-bridge-editor-foundation) | live-verified (Mark, 2026-10-09: "works!") | 4, 7, 8 |
 | E1 | 2026-10-09 | Emissive sibling maps `_emissive{,_y,_r}` (task 17): interior loads, per-alert variant, after the diffuse ceiling, probes exclude | built; live-verified by Mark 2026-10-10 (green/yellow/red on DBridge) | 6.1, 9.7 |
 | G0 | 2026-10-10 | Emitter glow slice 1 designed: maps = where, profiles = how; `src` emissive/texture/flat; red falls back to yellow; light colour = evaluated^2.2; probe capture colours split from live colours | agreed with Mark | 9.7, 11 |
-| G1 | 2026-10-10 | Glow slice 1 built (plan 2026-10-10-bridge-emitter-glow-slice-1): per-mesh glow + dip, profiles/waves/fades, spot capture vs live colours, DBridge alcove + roof data | built; awaiting Mark's live check | 11 |
+| G1 | 2026-10-10 | Glow slice 1 built (plan 2026-10-10-bridge-emitter-glow-slice-1): per-mesh glow + dip, profiles/waves/fades, spot capture vs live colours, DBridge alcove + roof data | built; live-verified by Mark 2026-10-11 ("works as described") | 11 |
 
 ## 11. Emitter glow — slice 1 *(agreed with Mark 2026-10-10)*
 
