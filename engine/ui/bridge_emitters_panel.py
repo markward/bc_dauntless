@@ -285,6 +285,12 @@ class BridgeEmittersPanel(Panel):
         if action == "close":
             self.close()
             return True
+        # Preview actions (spec §12.2) need no document: the tab previews an
+        # alert even before anything is picked.
+        if action.startswith("tab:") or action == "preview-toggle":
+            self._emitter_action(action)
+            self._last_pushed = None
+            return True
         if self._doc is None:
             return (action in ("save", "revert", "undo")
                     or action.startswith(("material", "light", *_EMITTER_PREFIXES)))
@@ -421,6 +427,19 @@ class BridgeEmittersPanel(Panel):
             light["outer_deg"] = v
         elif field == "outer_deg" and v < light.get("inner_deg", 0.0):
             light["inner_deg"] = v
+
+    # ── preview (spec 2026-10-08-bridge-emitters §12.2) ───────────────────
+    def preview_alert(self):
+        """The alert level the bridge shows while the editor is open -- the
+        state tab; None when closed (the player's alert then)."""
+        return profiles.STATES.index(self._tab) if self._visible else None
+
+    def preview_dt(self, player_dt, frame_dt):
+        """The bridge clock's dt: the player's (paused-aware) when closed;
+        while open the real frame time, or 0 when the preview is paused."""
+        if not self._visible:
+            return player_dt
+        return frame_dt if self._preview_playing else 0.0
 
     # ── glow + profile (spec 2026-10-08-bridge-emitters §12) ──────────────
     def _edit(self, fn):

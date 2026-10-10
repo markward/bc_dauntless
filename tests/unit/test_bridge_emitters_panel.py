@@ -758,3 +758,33 @@ def test_tab_and_preview_toggle_are_not_document_edits(env_rt):
     assert len(p._undo) == n
     p.dispatch_event("tab:purple")
     assert payload(p)["tab"] == "red"
+
+
+def test_preview_is_none_and_dt_is_the_players_when_closed(env):
+    p, *_ = env
+    assert p.preview_alert() is None
+    assert p.preview_dt(0.0, 0.016) == 0.0
+    assert p.preview_dt(0.02, 0.016) == 0.02
+
+
+def test_preview_follows_the_tab_and_the_play_toggle(env):
+    p, *_ = env
+    p.open()
+    assert p.preview_alert() == 0
+    p.dispatch_event("tab:red")
+    assert p.preview_alert() == 2
+    assert p.preview_dt(0.0, 0.016) == 0.016          # paused sim, clock still runs
+    p.dispatch_event("preview-toggle")
+    assert p.preview_dt(0.0, 0.016) == 0.0
+    p.close()
+    assert p.preview_alert() is None
+
+
+def test_open_starts_on_the_players_alert(tmp_path, monkeypatch):
+    monkeypatch.setattr(ld.paths, "game_asset_dirs", lambda rel: [tmp_path / "stock" / rel])
+    monkeypatch.setattr(ld.paths, "project_asset_root", lambda: tmp_path)
+    p = bep.BridgeEmittersPanel(pose_provider=lambda: POSE, instance_provider=lambda: "iid",
+                                in_bridge_provider=lambda: True, io=FakeIO(),
+                                alert_provider=lambda: 1)
+    p.open()
+    assert p.preview_alert() == 1

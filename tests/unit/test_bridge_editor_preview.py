@@ -1,0 +1,25 @@
+"""Host-loop wiring of the Bridge Editor preview (spec §12.2)."""
+from engine import host_loop
+
+
+class Editor:
+    def __init__(self, alert, dt):
+        self._a, self._dt = alert, dt
+
+    def preview_alert(self):
+        return self._a
+
+    def preview_dt(self, player_dt, frame_dt):
+        return player_dt if self._a is None else self._dt
+
+
+def test_the_editor_overrides_the_alert_only_while_open():
+    assert host_loop._bridge_effective_alert(2, Editor(None, 0.0)) == 2
+    assert host_loop._bridge_effective_alert(2, Editor(1, 0.0)) == 1
+    assert host_loop._bridge_effective_alert(2, host_loop._NULL_PICKER) == 2
+
+
+def test_the_clock_dt_comes_from_the_editor_when_it_has_one():
+    assert host_loop._bridge_clock_dt(Editor(1, 0.016), 0.0, 0.016) == 0.016
+    assert host_loop._bridge_clock_dt(Editor(None, 0.0), 0.02, 0.016) == 0.02
+    assert host_loop._bridge_clock_dt(host_loop._NULL_PICKER, 0.02, 0.016) == 0.02

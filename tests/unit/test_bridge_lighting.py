@@ -124,10 +124,23 @@ def test_host_loop_feeds_probe_blend_and_gates_on_alert_on_change():
     assert update_call is not None, "no _bridge_probe_blend.update(level, dt) call found"
     assert len(update_call.args) == 2
     dt_arg = update_call.args[1]
-    assert isinstance(dt_arg, ast.Name) and dt_arg.id == "_player_dt", (
-        "ProbeBlend.update's second argument must be the Name _player_dt "
-        "(the paused-aware dt) -- TICK_DT or any other clock breaks "
-        f"'frozen under pause'; got {ast.dump(dt_arg)!r}")
+    # Spec §12.2: the dt is `_bridge_dt`, which _bridge_clock_dt derives from
+    # the paused-aware `_player_dt` -- the Bridge Editor's preview clock
+    # replaces it ONLY while the editor is open. Pin both links, so swapping
+    # in TICK_DT (or wall time) for production still fails.
+    assert isinstance(dt_arg, ast.Name) and dt_arg.id == "_bridge_dt", (
+        "ProbeBlend.update's second argument must be the Name _bridge_dt "
+        f"(the bridge clock dt); got {ast.dump(dt_arg)!r}")
+    clock_calls = [
+        n for n in ast.walk(run_fn)
+        if isinstance(n, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "_bridge_dt" for t in n.targets)
+        and isinstance(n.value, ast.Call) and isinstance(n.value.func, ast.Name)
+        and n.value.func.id == "_bridge_clock_dt"]
+    assert len(clock_calls) == 1, "_bridge_dt must be assigned once from _bridge_clock_dt(...)"
+    args = clock_calls[0].value.args
+    assert len(args) == 3 and isinstance(args[1], ast.Name) and args[1].id == "_player_dt", (
+        "_bridge_clock_dt's player-dt argument must be the paused-aware _player_dt")
 
     assert mix_call is not None, "no host_io.set_bridge_probe_mix(...) call found"
     # The mix call's sole argument must BE the update call (fed straight

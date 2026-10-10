@@ -3532,7 +3532,7 @@ def _register_ai_inspector(registry):
 
 
 def _register_bridge_emitters(registry, bridge_camera, controller, view_mode,
-                              runtime=None):
+                              runtime=None, alert_provider=None):
     """Developer-only Bridge Editor (docs/superpowers/specs/2026-10-08-bridge-emitters-spike-design.md §4): a pause-menu row and a panel that joins
     the modal blockers. Returns _NULL_PICKER without --developer.
 
@@ -3548,10 +3548,26 @@ def _register_bridge_emitters(registry, bridge_camera, controller, view_mode,
         pose_provider=bridge_camera.compute_camera,
         instance_provider=lambda: controller.bridge_instance,
         in_bridge_provider=lambda: bool(view_mode.is_bridge),
-        runtime=runtime)
+        runtime=runtime, alert_provider=alert_provider)
     registry.register(panel)
     dev_mode.register_dev_pause_menu_entry("Bridge Editor…", panel.open)
     return panel
+
+
+def _bridge_effective_alert(player_level, editor):
+    """The alert level the bridge draws: the Bridge Editor's preview tab
+    while it is open (spec 2026-10-08-bridge-emitters §12.2), else the
+    player's. `editor` may be _NULL_PICKER (no preview methods)."""
+    fn = getattr(editor, "preview_alert", None)
+    preview = fn() if fn is not None else None
+    return player_level if preview is None else preview
+
+
+def _bridge_clock_dt(editor, player_dt, frame_dt):
+    """The bridge clock's dt (§11.3, §12.2): the editor's preview clock while
+    it is open, else the paused-aware player dt."""
+    fn = getattr(editor, "preview_dt", None)
+    return player_dt if fn is None else fn(player_dt, frame_dt)
 
 
 def _bridge_camera_pose(editor, bridge_camera, shake):
@@ -10391,7 +10407,8 @@ def run(mission_name: Optional[str] = None,
         ai_inspector = _register_ai_inspector(registry)
         bridge_emitters = _register_bridge_emitters(registry, bridge_camera,
                                                     controller, view_mode,
-                                                    controller.bridge_runtime)
+                                                    controller.bridge_runtime,
+                                                    alert_provider=_bridge_runtime_alert_level)
 
         # Keyboard capture for CEF text fields: while one has focus the native
         # KeyGate makes every key read up. Registered as panel "kbd" so the
@@ -12391,7 +12408,11 @@ def run(mission_name: Optional[str] = None,
             # Alert-level bridge brightness (engine.bridge_lighting): sent as a
             # separate scale, not baked into the ambient, so the comm-set
             # viewscreen feed — another ship's room — keeps constant brightness.
-            r.set_bridge_ambient_scale(_bridge_lighting.player_bridge_ambient_scale(player))
+            # The Bridge Editor's state tab previews an alert (spec §12.2).
+            _bridge_preview = getattr(bridge_emitters, "preview_alert", lambda: None)()
+            r.set_bridge_ambient_scale(
+                _bridge_lighting.player_bridge_ambient_scale(player) if _bridge_preview is None
+                else _bridge_lighting.ambient_scale_for_alert(_bridge_preview))
             r.set_bridge_lighting(bridge_ambient, bridge_directionals)
             # Bridge PBR reflection-probe cross-fade (spec
             # 2026-10-09-bridge-pbr §6.3, §9.4): green <-> yellow/red over
@@ -12399,18 +12420,21 @@ def run(mission_name: Optional[str] = None,
             # paused-aware dt). The probes themselves are only ever
             # recaptured on load/edit/alert change (BridgeRuntime), never
             # per frame — this just blends between the two existing captures.
-            _bridge_alert_level = _bridge_alert_level_of(player)
+            _bridge_alert_level = _bridge_effective_alert(
+                _bridge_alert_level_of(player), bridge_emitters)
+            _bridge_dt = _bridge_clock_dt(
+                bridge_emitters, _player_dt, min(max(_frame_dt, 0.0), MAX_FRAME_DT))
             # Emissive sibling maps: the alert-level variant (task 17), every
             # frame, beside the ambient scale (a hard switch, no fade).
             host_io.set_bridge_alert_level(_bridge_alert_level)
             host_io.set_bridge_probe_mix(
-                _bridge_probe_blend.update(_bridge_alert_level, _player_dt))
+                _bridge_probe_blend.update(_bridge_alert_level, _bridge_dt))
             if _bridge_alert_level != _bridge_probe_alert_last[0]:
                 _bridge_probe_alert_last[0] = _bridge_alert_level
                 controller.bridge_runtime.on_alert(_bridge_alert_level)
             # Emitter profiles (spec 2026-10-08-bridge-emitters §11.3): pulses
             # and alert fades on the bridge clock, frozen under pause.
-            controller.bridge_runtime.tick(_player_dt)
+            controller.bridge_runtime.tick(_bridge_dt)
             # BC's NiFlipController observes *game time*, not wall time
             # — controllers advance with g_kTimerManager (which the
             # original engine scaled, instrumentation Q3). Feeding wall
