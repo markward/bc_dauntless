@@ -1,7 +1,7 @@
 # Bridge Shape Diff — design (living spike spec)
 
 **Date:** 2026-10-09
-**Status:** iterations 1–2b accepted live; iteration 3 (new vertices, BSD2 references, robust correspondence, n-gons, `--exclude`) built 2026-10-09, awaiting regenerate from Mark's export
+**Status:** spike COMPLETE in practice — six DBridge rounds plus flipbook accepted live by Mark (2026-10-09/10); toolchain supports moves, UV edits, face add/remove, vertex deletion, new vertices, references, per-shape albedo + flipbook, apply-and-compare verification. Branch not yet merged to `main`. **Start with §11 (runbook + current state)**; §§1–10 are the design record and partly historical.
 **Branch:** `spike/bridge-shape-diff` (worktree `.claude/worktrees/bridge-shape-diff`)
 **Living document:** updated after every accepted iteration (§9).
 
@@ -604,8 +604,8 @@ the scratchpad; in game, Developer Options → Lighting → Bridge Debug View
 | 1c | First live step: moves on b0468 (13 NIF verts) / b0652 (28) / b0663 (28) | accepted by Mark in game 2026-10-09; fix `dbcdbd4a43dc5a56.json` committed | Console sliver b0170/b0175 needs triangle add/remove (next) |
 | 2a | Triangle add/remove on existing vertices (console sliver b0170/b0175) | accepted by Mark in game 2026-10-09: b0175 loses NIF tris 4+5 (the squashed sliver, stored twice), b0170 gains (22, 9, 32) on existing originals/UVs; committed in fix `dbcdbd4a43dc5a56.json` with 1c's moves | Removal takes every NIF copy of the face (duplicates, reversed and seam twins); added triangles must sit on existing originals with existing UVs; vertex deletion aligned by order (§5.2) |
 | 2b | Per-shape albedo texture op (console top panels b0029/b0059 → g_imp_connops, wall inset slots b0045/b0479 → g_imp_redbars) | accepted by Mark in game 2026-10-09 (round 4b): textures + UVs on b0029/b0059 (g_imp_connops), b0045/b0479 (g_imp_redbars), b0063 (Map 22b), b0189/b0236/b0415 (Map 22c); back wall b0017 UV re-map on replaced Map 7 | `textures` field in the fix file (§6, §7); diff records it by `map_Kd` basename, one per object, file must exist in the overlay or stock dir (§5.3). Emissive/glow deliberately out of scope |
-| 2 | Turbolift header reshape: triangle remove/add | — | |
-| 3 | Extruded side panels: new verts/tris/UVs | — | Open: side-face texturing. Lean: collapse the new faces' UVs onto the panel border (stretch edge texels, no new texture); alternative: a project-owned trim texture |
+| 2 | Turbolift header reshape: triangle remove/add | superseded — the capability shipped as 2a/3; the header itself was not reworked as a separate round | |
+| 3 | Extruded side panels: new verts/tris/UVs | superseded — new vertices shipped as row "3 — new vertices + refs"; side panels not yet extruded | Open: side-face texturing. Lean: collapse the new faces' UVs onto the panel border (stretch edge texels, no new texture); alternative: a project-owned trim texture |
 | 3 — new vertices + refs (cove b0392/b0395, LCARS b0688/b0697, b0471) | New vertices, BSD2 references (snapped moves become refs), robust correspondence, n-gon ear clipping, `--exclude`; b0392's removals land with b0395's rework | accepted by Mark in game 2026-10-09 (round 5): verified 21 objects; cove b0392+b0395, black panel b0471 (Map 22a), LCARS b0688 (running_0, static until flipbook) + b0697 (g_imp_redbars), seat panels b0121/b0124 (Map 22a); payload has no absolute coordinates | §5.2/§5.3 iteration-3 rules, §6.1 BSD2. Expect previously committed blocks unchanged except snapped moves turning into references. The `running_0..11` flipbook on b0688 is row 4 |
 | 4 — flipbook (LCARS b0688 running_0..11 @ 5 fps) | Animated albedo: a numbered frame run becomes a looping `NiFlipController` | accepted by Mark in game 2026-10-09: b0688 cycles running_0..11 at 5 fps on game time (stock EBridge flip-controller shape) | `textures[].flipbook` (§6, §7); detection §5.3; fps 5, continuous loop (Mark 2026-10-09) |
 | 5 — roof rebuild (Mark's 'modified and enhanced' round) | Roof structure b0475 remodelled (352 moved, 239 new verts, 136 tris out / 444 in, own Map 28), new 32-gon roof centre b0051 on replaced Map 1, roof light ribs b0076/81/84/87/90 moved, seat backs b0244/b0267 and b0326 rebuilt | accepted by Mark in game 2026-10-09; verified 31 objects | Generated from a scratch copy with b0475_roof_structure.001 renamed to b0051_roof_center_hole (Mark renamed it in the .blend; his next export must reproduce this fix). Open: vertex colour of off-position survivors comes from the paired/nearest original — not verified (OBJ has no colours) |
@@ -613,6 +613,8 @@ the scratchpad; in game, Developer Options → Lighting → Bridge Debug View
 ---
 
 ## 10. As built (iteration 1)
+
+> **Historical.** Written after iteration 1; several limits below ("new vertices are refused", "topology is refused") were lifted later. §11 is current.
 
 - **No separate preview step.** §8's `preview` subcommand was dropped: Blender's
   own `edit.obj` export already *is* the preview (reopen it, or diff and inspect
@@ -656,3 +658,70 @@ the scratchpad; in game, Developer Options → Lighting → Bridge Debug View
   to run mid-series: objects the tool can't diff yet (anything needing
   topology, today) are skipped and listed instead of blocking the whole
   round's `--write`.
+
+---
+
+## 11. Runbook and current state (2026-10-10) — READ THIS FIRST
+
+### 11.1 What exists
+
+| Piece | Where |
+|---|---|
+| CLI | `tools/bridge_shape_diff.py` (`export`, `diff [--partial] [--exclude B]... [--flipbook-fps F] [--write]`) |
+| Library | `tools/shape_diff/` — `obj_io` (OBJ/MTL read/write), `match` (identity, correspondence, classification), `payload` (BSD1/BSD2 encoder), `frames`, `triangulate` (ear clip), `verify` (apply-and-compare) |
+| Loader | `native/src/assets/src/mesh_fix.cc` — `shape_edits` (BSD2 decode/validate/apply, refs resolved against the UNMODIFIED file), `textures` (per-shape albedo splice + optional `flipbook` NiFlipController shaped like stock EBridge block 550) |
+| Binding | `_dauntless_host.nif_shapes(path, fix_json=None)` — world matrix, parent, colours, UV1, inherited textures; applies a fix in memory when given one (used by the verifier) |
+| The DBridge fix | `native/assets/mesh_fixes/dbcdbd4a43dc5a56.json` (generator `tools/bridge_shape_diff.py`; the drift test skips it; `AssetCacheMeshFix.EveryCommittedFixApplies` guards it) |
+| Project textures | `native/assets/replacements/data/Models/Sets/DBridge/High/` — tracked via the narrow `.gitignore` exception `!native/assets/replacements/data/Models/Sets/**/*.tga` (`*.tga` stays ignored elsewhere) |
+| Emissive maps | not part of the diff: `<albedo stem>_emissive{,_y,_r}.tga` siblings, bridge PBR spec §9.7 |
+
+### 11.2 Mark's working files (outside the repo — BC geometry never enters git)
+
+`~/Documents/dauntless-blender/`:
+- `Dbridge_unmodified_rexport.obj/.mtl` — **the fixed base**. Exported from Blender right after importing the tool's export, never re-exported. Every diff runs against it.
+- `Dbridge_modified_and_enhanced_rexport.obj/.mtl` — the current edit (round 6). Earlier rounds used `Dbridge_modified_rexport.obj`; the name is whatever Mark exports, pass it explicitly.
+- `fixed-3.blend` — the live `.blend` holding EVERY accepted edit. Future rounds must continue in it (see 11.4).
+- `Dbridge.obj/.mtl` — the tool's original export (input to Blender).
+
+### 11.3 One round
+
+```
+cd <worktree>
+uv run python -m tools.bridge_shape_diff diff ~/Documents/dauntless-blender/Dbridge_unmodified_rexport.obj ~/Documents/dauntless-blender/<edit>.obj --partial
+```
+1. Read the dry run: per-block summary, `verified N objects`, `skipped` list, warnings. Investigate every `skipped`/`refused` before writing (see 11.5).
+2. `--write` regenerates the WHOLE fix cumulatively from base → edit (it never merges). It refuses to overwrite a fix owned by another generator, and refuses to write if verification fails.
+3. Mark checks in game (`./build/dauntless --developer` from the worktree; no rebuild needed for fix/texture changes — they are read at load).
+4. Only after Mark accepts: commit the fix + any new textures together, and add a §9 row.
+
+### 11.4 Rules for the Blender side
+
+- Import into an EMPTY scene. Don't join, split or rename objects. If Blender produces a `.001` object (join/separate), rename it back to the `bNNNN_...` shape it replaces before exporting — otherwise `diff` stops at the object-set check. (Rounds 5 and 6 needed this: `cove_black.001`→`b0395_Material_cove_graphic`, `Lcar_02.001`→`b0697_...`, `roof_structure.001`→`b0051_roof_center_hole`.)
+- New albedo: set the material's Base Color to a `.tga` in the overlay folder (only the FILENAME matters). Never a reserved suffix (`_glow`, `_spec(ular)`, `_norm(al)`, `_emissive*`). A `<stem>_0.tga` with `_1`, `_2`… beside it becomes a flipbook (default 5 fps, game time, loops).
+- One albedo per object (per-face material splits are refused). Keep the `.mtl` beside the `.obj` — a missing named `mtllib` aborts the diff.
+- Flipping a face's winding is refused (it would ship as a back-face).
+
+### 11.5 Reading refusals
+
+| Message | Meaning / action |
+|---|---|
+| `objects differ between base and edit` | a join/split/rename — rename the `.001` back (11.4) |
+| `ambiguous correspondence` | the tool can't tell which originals survived — it refuses rather than guess; `--exclude` that block to land the rest |
+| `depends on skipped/excluded bNNNN` | a block's triangle removals need another block's replacement; they land together or not at all |
+| `texture '…' not found` | the `.mtl` names a file not in the overlay/stock dir (often an old name or a main-checkout path) |
+| `would bind as glow/gloss/bump` | albedo uses a reserved suffix — point Base Color at the plain diffuse |
+| verifier mismatch | the produced fix does not reproduce `edit.obj` through the real loader — a tool bug; do not write |
+
+### 11.6 Known limitations (parked, with rulings)
+
+- **Vertex colour / UV1 of new or re-paired vertices** comes from the paired or nearest original (`attr_src`). Not verified — Mark's OBJs carry no colours. If remodelled areas (e.g. roof b0475) show colour patches, that's the cause.
+- **Flip cascade:** unpairing a corner for the genuine-deletion case (§5.2 step 5) can carry a deliberate flip on a NEIGHBOURING face through as an added back-face. Needs a folded mesh plus deliberate flips; not seen in data.
+- **Dependency guard is one-way:** `--exclude 392` lets b0395's additions land over b0392's unchanged faces (overlap, not a hole).
+- **Survivor snapped onto an earlier DELETED vertex** can mis-align (refusal or identical geometry only).
+- **Literal UVs** are authored values (allowed); positions are never absolute (refs or deltas).
+- **Emissive** on a flipbook shape is static (frame 0's stem).
+
+### 11.7 Before merging `spike/bridge-shape-diff` into `main`
+
+- The **main checkout** has UNTRACKED older copies in `native/assets/replacements/data/Models/Sets/DBridge/High/` (e.g. `g_imp_connops01.tga`, `g_imp_redbars_glow.tga`, `Map *.tga`) that collide with tracked files on this branch — move them aside first or git refuses the merge.
+- Run `scripts/check_tests.sh` on the merged result.
