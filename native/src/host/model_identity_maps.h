@@ -21,7 +21,7 @@ namespace dauntless {
 /// all-false maps) instead of each re-implementing (or skipping) the check.
 int safe_material_index(const assets::Model& model, int material_index);
 
-/// Which texture stages (roughness / metalness / normal == Bump) a mesh's
+/// Which texture stages (roughness / metalness / normal == Bump / emissive) a mesh's
 /// material has populated. `material_index` is bounds-checked internally via
 /// safe_material_index -- callers never need to check it themselves, and an
 /// out-of-range index yields the same all-false result as no material at
@@ -30,6 +30,7 @@ struct MeshMaps {
     bool roughness = false;
     bool metalness = false;
     bool normal = false;
+    bool emissive = false;   // the texture-level `_emissive` sibling (spec §11.2)
 };
 MeshMaps mesh_identity_maps(const assets::Model& model, int material_index);
 

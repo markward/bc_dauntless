@@ -97,3 +97,13 @@ TEST(MeshIdentityMaps, AllThreeStagesReadIndependently) {
     EXPECT_TRUE(maps.metalness);
     EXPECT_TRUE(maps.normal);
 }
+
+TEST(MeshIdentityMaps, ReportsAnEmissiveMap) {
+    assets::Model model;
+    assets::Material mat;
+    mat.stages[static_cast<std::size_t>(S::Emissive)].texture_index = 0;
+    model.materials.push_back(mat);
+    EXPECT_TRUE(dauntless::mesh_identity_maps(model, 0).emissive);
+    EXPECT_FALSE(dauntless::mesh_identity_maps(model, -1).emissive);
+    EXPECT_FALSE(dauntless::mesh_identity_maps(model_with_one_material_with_roughness(), 0).emissive);
+}

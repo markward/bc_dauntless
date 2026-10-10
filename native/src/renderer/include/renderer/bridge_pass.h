@@ -73,8 +73,8 @@ struct BridgeSpot {
 
 /// The Model::textures index of the emissive map a bridge material shows at
 /// alert level `alert` (0 green, 1 yellow, 2 red; anything else is green):
-/// yellow -> EmissiveYellow, red -> EmissiveRed, each falling back to Emissive
-/// when absent; green -> Emissive. -1 = no emissive map.
+/// yellow -> EmissiveYellow, red -> EmissiveRed then EmissiveYellow, each
+/// falling back to Emissive; green -> Emissive. -1 = no emissive map.
 int bridge_emissive_texture(const assets::Material& mat, int alert);
 
 /// Renders the bridge interior in two sub-passes, both through bridge.frag:

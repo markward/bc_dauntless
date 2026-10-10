@@ -6846,6 +6846,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   maps["roughness"] = mm.roughness;
                   maps["metalness"] = mm.metalness;
                   maps["normal"]    = mm.normal;
+                  maps["emissive"]  = mm.emissive;
                   d["maps"] = std::move(maps);
                   meshes.append(std::move(d));
               }
@@ -6860,7 +6861,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "textures, material, maps}]} for an instance's model, or None for a "
           "stale id. name / node_chain / textures are BYTES (decode with "
           "errors='replace'; host_io.model_identity does). maps is "
-          "{roughness, metalness, normal}: whether the mesh's material has "
+          "{roughness, metalness, normal, emissive}: whether the mesh's material has "
           "that texture stage populated (spec 2026-10-09-bridge-pbr).");
 
     // Developer-only selection tint on the bridge (spec

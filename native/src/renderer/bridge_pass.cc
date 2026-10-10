@@ -35,8 +35,11 @@ namespace renderer {
 int bridge_emissive_texture(const assets::Material& mat, int alert) {
     using S = assets::Material::StageSlot;
     auto slot = [&](S s) { return mat.stages[static_cast<std::size_t>(s)].texture_index; };
-    if (alert == 1 && slot(S::EmissiveYellow) >= 0) return slot(S::EmissiveYellow);
+    // Red tries its own map, then the yellow one (spec §11.1: yellow and red
+    // share the alert look, §9.4), then the default.
     if (alert == 2 && slot(S::EmissiveRed) >= 0) return slot(S::EmissiveRed);
+    if ((alert == 1 || alert == 2) && slot(S::EmissiveYellow) >= 0)
+        return slot(S::EmissiveYellow);
     return slot(S::Emissive) >= 0 ? slot(S::Emissive) : -1;
 }
 

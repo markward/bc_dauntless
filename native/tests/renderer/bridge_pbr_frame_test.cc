@@ -1033,7 +1033,13 @@ TEST(BridgeEmissiveSelect, YellowAndRedTakeTheirVariants) {
 TEST(BridgeEmissiveSelect, MissingVariantFallsBackToTheDefault) {
     EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material(4, -1, -1), 1), 4);
     EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material(4, -1, -1), 2), 4);
-    EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material(4, 5, -1), 2), 4);
+}
+
+// Spec §11.1: yellow and red share the alert look, so red tries the yellow
+// map before the default.
+TEST(BridgeEmissiveSelect, RedFallsBackToYellowBeforeTheDefault) {
+    EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material(4, 5, -1), 2), 5);
+    EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material(-1, 5, -1), 2), 5);
 }
 
 TEST(BridgeEmissiveSelect, UnknownAlertLevelIsGreen) {
@@ -1111,11 +1117,11 @@ TEST_F(BridgePbrFrame, AlertLevelPicksTheEmissiveVariant) {
     pass->set_alert_level(2);
     c = render_floor();
     EXPECT_NEAR(c.r, 0.0f, 1e-3f); EXPECT_NEAR(c.g, 0.0f, 1e-3f); EXPECT_NEAR(c.b, 0.5f, 3e-3f);
-    // No red variant: red alert falls back to the default.
+    // No red variant: red alert falls back to the YELLOW map (spec §11.1).
     model->materials[0].stages[static_cast<std::size_t>(
         assets::Material::StageSlot::EmissiveRed)].texture_index = -1;
     c = render_floor();
-    EXPECT_NEAR(c.r, 0.5f, 3e-3f); EXPECT_NEAR(c.b, 0.0f, 1e-3f);
+    EXPECT_NEAR(c.r, 0.0f, 1e-3f); EXPECT_NEAR(c.g, 0.5f, 3e-3f); EXPECT_NEAR(c.b, 0.0f, 1e-3f);
 }
 
 // The alert choice is the MAIN bridge view's: a comm set (another ship's

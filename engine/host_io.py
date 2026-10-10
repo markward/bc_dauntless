@@ -556,7 +556,7 @@ def _lossy_str(v) -> str:
     return str(v)
 
 
-_NO_MAPS = {"roughness": False, "metalness": False, "normal": False}
+_NO_MAPS = {"roughness": False, "metalness": False, "normal": False, "emissive": False}
 
 
 def model_identity(instance_id):
@@ -564,7 +564,8 @@ def model_identity(instance_id):
     textures, material, maps}]} for an instance's model; None headless or for
     a stale id. `textures` is the Base-stage texture basename as BUILT (parent
     inheritance resolved), or []. Names are str (lossily decoded). `maps` is
-    {roughness, metalness, normal} bool (spec 2026-10-09-bridge-pbr); all-False
+    {roughness, metalness, normal, emissive} bool (spec 2026-10-09-bridge-pbr;
+    emissive: spec 2026-10-08-bridge-emitters §11.2); all-False
     when absent (a binary built before this field existed)."""
     fn = getattr(_h, "model_identity", None) if _h is not None else None
     info = None if fn is None else fn(instance_id)
