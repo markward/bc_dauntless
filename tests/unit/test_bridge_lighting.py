@@ -139,3 +139,35 @@ def test_host_loop_feeds_probe_blend_and_gates_on_alert_on_change():
         "every on_alert(...) call must be inside an `if <level> != "
         "<something>:` guard comparing the SAME level variable fed to "
         "ProbeBlend.update, never unconditional")
+
+
+# Task 17: the per-frame block also pushes the alert level for the emissive
+# variants -- the SAME level variable ProbeBlend.update reads, every frame
+# (never gated on a level change: a fresh BridgePass after a re-init must
+# pick it up on the next frame).
+def test_host_loop_pushes_the_alert_level_every_frame():
+    import ast
+    import inspect
+
+    import engine.host_loop as hl
+
+    tree = ast.parse(inspect.getsource(hl))
+    run_fn = next(n for n in ast.walk(tree)
+                  if isinstance(n, ast.FunctionDef) and n.name == "run")
+    calls = [n for n in ast.walk(run_fn)
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)]
+    update = next(c for c in calls if c.func.attr == "update"
+                  and isinstance(c.func.value, ast.Name)
+                  and c.func.value.id == "_bridge_probe_blend")
+    pushes = [c for c in calls if c.func.attr == "set_bridge_alert_level"]
+    assert len(pushes) == 1, "exactly one set_bridge_alert_level(...) push in run()"
+    push = pushes[0]
+    assert isinstance(push.func.value, ast.Name) and push.func.value.id == "host_io"
+    assert len(push.args) == 1 and isinstance(push.args[0], ast.Name)
+    assert push.args[0].id == update.args[0].id
+    for node in ast.walk(run_fn):
+        if isinstance(node, ast.If) and push in list(ast.walk(node)):
+            for cmp in ast.walk(node.test):
+                assert not (isinstance(cmp, ast.Compare)
+                            and any(isinstance(op, ast.NotEq) for op in cmp.ops)), (
+                    "the alert-level push must not be gated on a level change")

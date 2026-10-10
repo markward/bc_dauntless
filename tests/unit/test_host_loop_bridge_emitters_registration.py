@@ -1,4 +1,4 @@
-"""Host-loop wiring of the Bridge Emitters dev panel."""
+"""Host-loop wiring of the Bridge Editor dev panel."""
 import pytest
 
 from engine.ui.panel_registry import PanelRegistry
@@ -40,7 +40,7 @@ def test_registered_under_developer_mode(dev_env):
     panel = host_loop._register_bridge_emitters(reg, _Cam(), _Ctl(), _View())
     assert reg.find("bridge-emitters") is panel
     labels = [label for label, _ in dev_mode._dev_pause_menu_entries]
-    assert "Bridge Emitters…" in labels
+    assert "Bridge Editor…" in labels
 
 
 def test_registration_passes_the_runtime_through_to_the_panel(dev_env):

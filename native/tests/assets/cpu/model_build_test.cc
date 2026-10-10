@@ -810,6 +810,129 @@ TEST_F(ModelBuildTest, ShipLoadsKeepProbingEverySearchPath) {
     EXPECT_GE(model.materials[0].stages[static_cast<size_t>(S::Bump)].texture_index, 0);
 }
 
+// ── Emissive sibling maps (task 17): `<stem>_emissive` (default / green),
+// `_emissive_y` (yellow alert), `_emissive_r` (red alert). Interior loads only.
+namespace {
+// The mod-albedo interior layout: the albedo lives in `mod`, so the policy
+// probes its siblings beside it.
+assets::detail::ModelBuildContext interior_mod_ctx(
+        assets::detail::ModelBuildContext ctx, const fs::path& mod, const fs::path& stock) {
+    ctx.texture_search_paths = {mod, stock};
+    ctx.interior_sibling_policy = true;
+    return ctx;
+}
+}  // namespace
+
+TEST_F(ModelBuildTest, InteriorEmissiveSiblingsBindAllThreeSlots) {
+    const fs::path stock = tmp_dir / "stock", mod = tmp_dir / "mod";
+    for (const auto& d : {stock, mod}) fs::create_directories(d);
+    write_tga_at(mod / "hull_ID.tga");
+    write_tga_at(mod / "hull_ID_emissive.tga");
+    write_tga_at(mod / "hull_ID_emissive_y.tga");
+    write_tga_at(mod / "hull_ID_emissive_r.tga");
+    auto model = assets::detail::build_model(file_with_textured_shape(),
+                                             interior_mod_ctx(make_ctx(), mod, stock));
+    using S = assets::Material::StageSlot;
+    const auto& st = model.materials[0].stages;
+    const int e = st[static_cast<size_t>(S::Emissive)].texture_index;
+    const int y = st[static_cast<size_t>(S::EmissiveYellow)].texture_index;
+    const int r = st[static_cast<size_t>(S::EmissiveRed)].texture_index;
+    EXPECT_GE(e, 0);
+    EXPECT_GE(y, 0);
+    EXPECT_GE(r, 0);
+    EXPECT_NE(e, y);
+    EXPECT_NE(e, r);
+    EXPECT_NE(y, r);
+    EXPECT_NE(e, base_texture_index(model));
+}
+
+TEST_F(ModelBuildTest, InteriorEmissiveWithoutAlertVariantsLeavesThemEmpty) {
+    const fs::path stock = tmp_dir / "stock", mod = tmp_dir / "mod";
+    for (const auto& d : {stock, mod}) fs::create_directories(d);
+    write_tga_at(mod / "hull_ID.tga");
+    write_tga_at(mod / "hull_ID_emissive.tga");
+    auto model = assets::detail::build_model(file_with_textured_shape(),
+                                             interior_mod_ctx(make_ctx(), mod, stock));
+    using S = assets::Material::StageSlot;
+    const auto& st = model.materials[0].stages;
+    EXPECT_GE(st[static_cast<size_t>(S::Emissive)].texture_index, 0);
+    EXPECT_EQ(st[static_cast<size_t>(S::EmissiveYellow)].texture_index, -1);
+    EXPECT_EQ(st[static_cast<size_t>(S::EmissiveRed)].texture_index, -1);
+}
+
+// A stock albedo takes its emissive siblings from the overlay only, like the
+// other interior siblings.
+TEST_F(ModelBuildTest, InteriorStockAlbedoTakesEmissiveFromTheOverlay) {
+    const fs::path stock = tmp_dir / "stock", overlay = tmp_dir / "overlay";
+    for (const auto& d : {stock, overlay}) fs::create_directories(d);
+    write_tga_at(stock / "hull_ID.tga");
+    write_tga_at(stock / "hull_ID_emissive_y.tga");   // beside a stock albedo: ignored
+    write_tga_at(overlay / "hull_ID_emissive_r.tga");
+    auto ctx = make_ctx();
+    ctx.texture_search_paths = {stock};
+    ctx.sibling_overlay_dirs = {overlay};
+    ctx.interior_sibling_policy = true;
+    auto model = assets::detail::build_model(file_with_textured_shape(), ctx);
+    using S = assets::Material::StageSlot;
+    const auto& st = model.materials[0].stages;
+    EXPECT_EQ(st[static_cast<size_t>(S::EmissiveYellow)].texture_index, -1);
+    EXPECT_GE(st[static_cast<size_t>(S::EmissiveRed)].texture_index, 0);
+}
+
+// Ship (non-interior) loads never probe for emissive siblings at all.
+TEST_F(ModelBuildTest, ShipLoadsNeverProbeEmissiveSiblings) {
+    write_tga("hull_ID.tga");
+    write_tga("hull_ID_emissive.tga");
+    write_tga("hull_ID_emissive_y.tga");
+    write_tga("hull_ID_emissive_r.tga");
+    auto model = assets::detail::build_model(file_with_textured_shape(), make_ctx());
+    using S = assets::Material::StageSlot;
+    const auto& st = model.materials[0].stages;
+    EXPECT_EQ(st[static_cast<size_t>(S::Emissive)].texture_index, -1);
+    EXPECT_EQ(st[static_cast<size_t>(S::EmissiveYellow)].texture_index, -1);
+    EXPECT_EQ(st[static_cast<size_t>(S::EmissiveRed)].texture_index, -1);
+    EXPECT_EQ(model.textures.size(), 1u) << "nothing but the albedo may be loaded";
+}
+
+// An `_emissive*` file referenced as an image is a derived map: no sibling of
+// any kind is probed for it (it would otherwise hunt "<x>_emissive_rough.tga").
+TEST_F(ModelBuildTest, EmissiveNamedImagesAreNeverProbedForSiblings) {
+    for (const char* name : {"panel_emissive.tga", "panel_emissive_y.tga",
+                             "panel_EMISSIVE_R.tga"}) {
+        const fs::path stock = tmp_dir / name / "stock", mod = tmp_dir / name / "mod";
+        for (const auto& d : {stock, mod}) fs::create_directories(d);
+        const std::string stem = fs::path(name).stem().string();
+        write_tga_at(mod / name);
+        for (const char* suffix : {"_emissive", "_rough", "_metal", "_normal"})
+            write_tga_at(mod / (stem + suffix + ".tga"));
+        auto f = file_with_textured_shape();
+        std::get<nif::NiImage>(f.blocks[5]).file_name = name;
+        auto model = assets::detail::build_model(f, interior_mod_ctx(make_ctx(), mod, stock));
+        using S = assets::Material::StageSlot;
+        EXPECT_EQ(model.materials[0].stages[static_cast<size_t>(S::Emissive)].texture_index, -1)
+            << name;
+        EXPECT_EQ(model.textures.size(), 1u) << name;
+    }
+}
+
+TEST(ModelBuildFilenames, EmissivePredicateMatchesAllThreeForms) {
+    using assets::detail::filename_is_emissive;
+    EXPECT_TRUE (filename_is_emissive("Map 22a_emissive.tga"));
+    EXPECT_TRUE (filename_is_emissive("Map 22a_emissive_y.tga"));
+    EXPECT_TRUE (filename_is_emissive("Map 22a_emissive_r.tga"));
+    EXPECT_TRUE (filename_is_emissive("PANEL_EMISSIVE_R.TGA"));   // case-insensitive
+    EXPECT_FALSE(filename_is_emissive("Map 22a.tga"));
+    EXPECT_FALSE(filename_is_emissive("emissive.tga"));
+    EXPECT_FALSE(filename_is_emissive("Map 22a_emissive_g.tga"));
+    EXPECT_FALSE(filename_is_emissive("Map 22a red_emissive_x.tga"));
+}
+
+TEST(ModelBuildFilenames, EmissiveSiblingNamesFollowTheSharedStemRule) {
+    using assets::detail::sibling_map_filename;
+    EXPECT_EQ(sibling_map_filename("Map 22a.tga", "_emissive_y"), "Map 22a_emissive_y.tga");
+    EXPECT_EQ(sibling_map_filename("wall_glow.TGA", "_emissive"), "wall_emissive.TGA");
+}
+
 TEST(ModelBuildFilenames, NormalPredicateMatchesLongAndShortForms) {
     using assets::detail::filename_is_normal;
     EXPECT_TRUE (filename_is_normal("Hull_normal.tga"));

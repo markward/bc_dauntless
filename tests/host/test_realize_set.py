@@ -477,6 +477,10 @@ def test_realize_set_bridge_texture_dir_searches_mod_override(monkeypatch, tmp_p
     game_root = tmp_path / "g"
     monkeypatch.setattr(paths, "game_root", lambda: game_root)
     monkeypatch.setattr(mods, "_INDEX", mods.build_index(tmp_path / "mods"))
+    # Hermetic: the project's real replacements overlay may hold DBridge
+    # textures, which would (correctly) sort ahead of the mod dir.
+    monkeypatch.setattr(paths, "project_asset_root", lambda: tmp_path / "no_assets")
+    monkeypatch.setattr(mods, "_REPLACEMENTS", None)
 
     prior_env = App.g_kModelManager._env.get(nif)
     App.g_kModelManager.LoadModel(nif, None, env)
@@ -496,6 +500,55 @@ def test_realize_set_bridge_texture_dir_searches_mod_override(monkeypatch, tmp_p
         assert tex_abs[-1] == str(game_root / "data" / "Models" / "Sets"
                                   / "DBridge" / "High")
     finally:
+        if prior_env is None:
+            App.g_kModelManager._env.pop(nif, None)
+        else:
+            App.g_kModelManager._env[nif] = prior_env
+
+
+def test_realize_set_bridge_texture_dirs_include_the_replacements_overlay(
+        monkeypatch, tmp_path):
+    """A mesh-fix texture op (bridge-shape-diff spec §6) names a .tga that may
+    exist ONLY in the project's replacements overlay
+    (native/assets/replacements/data/Models/Sets/DBridge/High/...). The C++
+    loader searches only the dirs it is handed, so the bridge's texture
+    search list must carry the overlay dir, ahead of stock."""
+    import App
+    from engine import mods, paths
+
+    nif = "data/Models/Sets/DBridge/DBridge.nif"
+    env = "data/Models/Sets/DBridge/High/"
+    s, _obj = _bridge_set_with_geometry(nif)
+
+    assets = tmp_path / "assets"
+    overlay_tex = (assets / "replacements" / "data" / "Models" / "Sets"
+                   / "DBridge" / "High" / "g_new_panel.tga")
+    overlay_tex.parent.mkdir(parents=True)
+    overlay_tex.write_bytes(b"tga")
+    game_root = tmp_path / "g"
+    monkeypatch.setattr(paths, "game_root", lambda: game_root)
+    monkeypatch.setattr(paths, "project_asset_root", lambda: assets)
+    monkeypatch.setattr(mods, "_REPLACEMENTS", None)
+    monkeypatch.setattr(mods, "_INDEX", None)
+
+    prior_env = App.g_kModelManager._env.get(nif)
+    App.g_kModelManager.LoadModel(nif, None, env)
+    try:
+        class _C:
+            bridge_instance = None
+            nif_to_handle = {}
+            comm_instances_by_set = {}
+            officer_instances = []
+        r = _FakeRenderer()
+
+        hl.realize_set(_C(), r, s, is_bridge=True)
+
+        _nif_abs, tex_abs = r.loaded[0]
+        assert tex_abs[0] == str(overlay_tex.parent)
+        assert tex_abs[-1] == str(game_root / "data" / "Models" / "Sets"
+                                  / "DBridge" / "High")
+    finally:
+        mods._REPLACEMENTS = None
         if prior_env is None:
             App.g_kModelManager._env.pop(nif, None)
         else:

@@ -25,9 +25,9 @@ TEST(AssetsHeaders, AllPublicHeadersInclude) {
 }
 
 TEST(AssetsHeaders, MaterialStageSlotCount) {
-    EXPECT_EQ(static_cast<int>(assets::Material::StageSlot::Count), 11);
+    EXPECT_EQ(static_cast<int>(assets::Material::StageSlot::Count), 14);
     assets::Material m;
-    EXPECT_EQ(m.stages.size(), 11u);
+    EXPECT_EQ(m.stages.size(), 14u);
     EXPECT_EQ(m.stages[0].texture_index, -1);  // unused by default
 }
 

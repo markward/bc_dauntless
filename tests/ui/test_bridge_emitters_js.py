@@ -122,7 +122,7 @@ def test_shape_row_shows_the_display_name_escaped():
 def test_outside_the_bridge_the_message_says_how_to_get_there():
     [out] = _run([{"state": _state(in_bridge=False)}])
     assert ("Close this, press Space to go to the bridge, then reopen "
-            "Bridge Emitters") in out["body"]
+            "Bridge Editor") in out["body"]
     assert out["display"] == "block"
 
 

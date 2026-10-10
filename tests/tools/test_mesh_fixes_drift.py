@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -23,5 +24,11 @@ def test_committed_fixes_match_generator_output():
                              g.TARGET_OVERRIDES.get(rel),
                              g.UV_CLAMP_OVERRIDES.get(rel))
         produced[g.fnv1a64_hex(data) + ".json"] = g.dumps(fix)
-    committed = {p.name: p.read_text() for p in FIX_DIR.glob("*.json")}
+    committed = {
+        p.name: p.read_text() for p in FIX_DIR.glob("*.json")
+        # Only gen_mesh_fixes' own files can be regenerated here; shape-edit
+        # fixes (tools/bridge_shape_diff.py) come from OBJs that are never
+        # committed, and are guarded by AssetCacheMeshFix.EveryCommittedFixApplies.
+        if json.loads(p.read_text()).get("generator") == "tools/gen_mesh_fixes.py"
+    }
     assert committed == produced

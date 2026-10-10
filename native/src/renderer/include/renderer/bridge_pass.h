@@ -8,6 +8,7 @@
 
 #include <scenegraph/instance.h>  // scenegraph::Pass
 
+#include <assets/material.h>
 #include <assets/texture.h>
 
 #include <cstddef>
@@ -69,6 +70,12 @@ struct BridgeSpot {
     float     range = 1.0f;
     glm::vec3 radiance{0.0f};
 };
+
+/// The Model::textures index of the emissive map a bridge material shows at
+/// alert level `alert` (0 green, 1 yellow, 2 red; anything else is green):
+/// yellow -> EmissiveYellow, red -> EmissiveRed, each falling back to Emissive
+/// when absent; green -> Emissive. -1 = no emissive map.
+int bridge_emissive_texture(const assets::Material& mat, int alert);
 
 /// Renders the bridge interior in two sub-passes, both through bridge.frag:
 ///   A. Base geometry — opaque, alpha-test, base x the ceiling downlight
@@ -217,6 +224,12 @@ public:
     /// scale alone (the probes ARE the per-alert captures). Default 1.
     void set_alert_ambient_scale(float s) { alert_ambient_scale_ = s; }
     float alert_ambient_scale() const { return alert_ambient_scale_; }
+    /// Player alert level (0 green, 1 yellow, 2 red) choosing each material's
+    /// emissive variant (bridge_emissive_texture) in the MAIN bridge view.
+    /// Comm sets always show the default (green) emissive; probe captures
+    /// hold no emissive at all. Hard switch, no fade. Default 0.
+    void set_alert_level(int level) { alert_level_ = level; }
+    int alert_level() const { return alert_level_; }
     /// 0 = the green probe, 1 = the yellow/red probe; clamped to [0, 1].
     void set_probe_mix(float t);
     float probe_mix() const { return probe_mix_; }
@@ -314,6 +327,7 @@ private:
     float       scale_yr_ = 1.0f;
     float       probe_mix_ = 0.0f;
     float       alert_ambient_scale_ = 1.0f;
+    int         alert_level_ = 0;
     bool        probe_dirty_ = false;
     bool        probes_captured_ = false;   // cleared by reset_probes()
     /// The (unscaled) bridge ambient the current captures were taken with --

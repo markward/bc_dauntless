@@ -32,6 +32,14 @@
 
 namespace renderer {
 
+int bridge_emissive_texture(const assets::Material& mat, int alert) {
+    using S = assets::Material::StageSlot;
+    auto slot = [&](S s) { return mat.stages[static_cast<std::size_t>(s)].texture_index; };
+    if (alert == 1 && slot(S::EmissiveYellow) >= 0) return slot(S::EmissiveYellow);
+    if (alert == 2 && slot(S::EmissiveRed) >= 0) return slot(S::EmissiveRed);
+    return slot(S::Emissive) >= 0 ? slot(S::Emissive) : -1;
+}
+
 BridgePass::~BridgePass() {
     if (white_texture_ != 0) {
         GLuint t = white_texture_;
@@ -128,7 +136,8 @@ void draw_mesh(const assets::Model& model,
                int highlight = 0,
                int pbr = 0,
                float rough_override = -1.0f,
-               float metal_override = -1.0f) {
+               float metal_override = -1.0f,
+               int emissive_alert = 0) {
     shader.set_mat4("u_model", world);
     // Debug view 5 (Mesh ID): a stable per-draw counter, reset each render().
     shader.set_int("u_mesh_id", mesh_id);
@@ -211,6 +220,17 @@ void draw_mesh(const assets::Model& model,
     bind_map(GL_TEXTURE1, assets::Material::StageSlot::Bump, "u_has_normal_map");
     bind_map(GL_TEXTURE5, assets::Material::StageSlot::Roughness, "u_has_rough_map");
     bind_map(GL_TEXTURE6, assets::Material::StageSlot::Metalness, "u_has_metal_map");
+    // Emissive sibling map (task 17), chosen per alert level; same contract
+    // as the maps above (white fallback + flag, set every draw).
+    {
+        const int ti = bridge_emissive_texture(mat, emissive_alert);
+        GLuint id = 0;
+        if (ti >= 0 && ti < static_cast<int>(model.textures.size()))
+            id = model.textures[static_cast<std::size_t>(ti)].id();
+        shader.set_int("u_has_emissive_map", id != 0 ? 1 : 0);
+        glActiveTexture(GL_TEXTURE0 + kBridgeEmissiveUnit);
+        glBindTexture(GL_TEXTURE_2D, id != 0 ? id : white_fallback);
+    }
     glActiveTexture(GL_TEXTURE0);
     glBindVertexArray(mesh.vao());
     glDrawElements(GL_TRIANGLES, mesh.index_count(), GL_UNSIGNED_INT, nullptr);
@@ -274,6 +294,10 @@ void BridgePass::render(const scenegraph::World& world,
     // the viewscreen) keeps the legacy shading -- the probes would hold the
     // PLAYER's bridge, the wrong room to reflect.
     const int pbr = (pbr_enabled_ && main_bridge) ? 1 : 0;
+    // Emissive variant by the player's alert level on the main bridge view
+    // only; a comm set shows the default. (Probe faces and the AO pre-pass
+    // return before the shader reads any emissive.)
+    const int emissive_alert = main_bridge ? alert_level_ : 0;
     // The probes are sampled only once BOTH hold a capture: a samplerCube on
     // a unit with no cube bound must never be sampled, so with no probe the
     // units stay empty and u_has_probe = 0 keeps the shader off them.
@@ -334,6 +358,8 @@ void BridgePass::render(const scenegraph::World& world,
         s.set_int("u_normal_map", 1);
         s.set_int("u_rough_map", 5);
         s.set_int("u_metal_map", 6);
+        s.set_int("u_emissive_map", kBridgeEmissiveUnit);
+        s.set_float("u_emissive_scale", kEmissiveScale);
         // Reflection probes + BRDF LUT: units 7/8/9 assigned on EVERY use,
         // bound or not, so no two sampler types ever share a unit (a
         // samplerCube left on unit 0 beside u_base_color fails every draw).
@@ -421,7 +447,7 @@ void BridgePass::render(const scenegraph::World& world,
                       viewscreen_brightness_, viewscreen_flash_,
                       /*face_blend=*/false, /*face_a=*/0u, /*face_b=*/0u,
                       /*face_mix=*/0.0f, mesh_id_counter++, hl,
-                      pbr, rough_ov, metal_ov);
+                      pbr, rough_ov, metal_ov, emissive_alert);
         });
 
     // ── Sub-pass B: skinned bridge characters ──────────────────────────────
@@ -473,7 +499,8 @@ void BridgePass::render(const scenegraph::World& world,
                                   /*override_flip_v=*/true, 1.0f, 0.0f,
                                   face, inst.face_tex_a, inst.face_tex_b,
                                   inst.face_mix, mesh_id_counter++,
-                                  /*highlight=*/0, pbr);  // officers: no overrides
+                                  /*highlight=*/0, pbr,  // officers: no overrides
+                                  -1.0f, -1.0f, emissive_alert);
                     }
                 }
             });
@@ -481,7 +508,9 @@ void BridgePass::render(const scenegraph::World& world,
 
     glBindVertexArray(0);
     // The PBR map units (bound per draw) never leak to the next pass.
-    for (GLenum unit : {GL_TEXTURE1, GL_TEXTURE5, GL_TEXTURE6, GL_TEXTURE9}) {
+    for (GLenum unit : {GLenum{GL_TEXTURE1}, GLenum{GL_TEXTURE5}, GLenum{GL_TEXTURE6},
+                        GLenum{GL_TEXTURE9},
+                        static_cast<GLenum>(GL_TEXTURE0 + kBridgeEmissiveUnit)}) {
         glActiveTexture(unit);
         glBindTexture(GL_TEXTURE_2D, 0);
     }

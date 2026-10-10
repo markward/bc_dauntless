@@ -262,6 +262,11 @@ renderer::Lighting g_bridge_lighting;
 // viewscreen shows another ship's room, whose lighting must not follow our
 // alert level.
 float g_bridge_ambient_scale = 1.0f;
+// Player alert level (0 green, 1 yellow, 2 red) choosing the bridge's
+// emissive sibling-map variant (BridgePass::set_alert_level). Per-frame
+// state like g_bridge_ambient_scale: pushed every frame by host_loop, reset
+// to green by reset_frame_state() (init and shutdown).
+int g_bridge_alert_level = 0;
 // Bridge AO quality preset (Low/Medium/High), set via set_bridge_quality().
 // Applied to g_bridge_pass's AO settings both where it is constructed and on
 // every set_bridge_quality() call, so a quality change takes effect even
@@ -876,6 +881,7 @@ void reset_frame_state() {
     g_lighting = renderer::Lighting{};
     g_bridge_lighting = renderer::Lighting{};
     g_bridge_ambient_scale = 1.0f;
+    g_bridge_alert_level = 0;
     g_bridge_quality = renderer::kDefaultBridgeQuality;
     g_bridge_pass_enabled = false;
     g_viewscreen_enabled = false;
@@ -1073,6 +1079,7 @@ void init(int width, int height, const std::string& title) {
                                  g_bridge_highlight.selected,
                                  g_bridge_highlight.hover);
     g_bridge_pass->set_alert_ambient_scale(g_bridge_ambient_scale);
+    g_bridge_pass->set_alert_level(g_bridge_alert_level);
     g_bridge_pass->set_probe_origin(g_bridge_probe.origin);
     g_bridge_pass->set_probe_scales(g_bridge_probe.green, g_bridge_probe.yellow_red);
     g_bridge_pass->set_probe_mix(g_bridge_probe.mix);
@@ -2468,6 +2475,19 @@ std::string nif_shapes_basename(const std::string& path) {
     return pos == std::string::npos ? path : path.substr(pos + 1);
 }
 
+/// Block-array index of the NiNode whose child_links resolves to `idx`, or
+/// npos if `idx` is unparented. Mirrors mesh_fix.cc's local parent_of (not
+/// exported); nif_shapes needs its own copy for the ancestor texture walk.
+std::size_t nif_shapes_parent_of(const nif::File& file, std::size_t idx) {
+    for (std::size_t i = 0; i < file.blocks.size(); ++i) {
+        const auto* node = std::get_if<nif::NiNode>(&file.blocks[i]);
+        if (!node) continue;
+        for (std::uint32_t link : node->child_links)
+            if (nif_shapes_index_of(file, link) == idx) return i;
+    }
+    return std::string::npos;
+}
+
 /// Append the basename of the NiImage `img_link` resolves to, if any, to
 /// `out` -- only for external (on-disk) images; embedded images have no
 /// filename to report.
@@ -2480,13 +2500,28 @@ void nif_shapes_collect_image(const nif::File& file, std::uint32_t img_link,
     out->push_back(nif_shapes_basename(img->file_name));
 }
 
+
+/// The NiImage link `tp` draws as its static Base: its own image_link, or --
+/// when that is 0 and its controller is a NiFlipController (BC's stock
+/// EBridge authoring, and the mesh-fix flipbook op) -- the controller's
+/// source 0, mirroring model_build.cc's flip_image_override_for_prop.
+std::uint32_t nif_shapes_property_image(const nif::File& file,
+                                        const nif::NiTextureProperty& tp) {
+    if (tp.image_link != 0 || tp.obj.controller_link == 0) return tp.image_link;
+    std::size_t idx = nif_shapes_index_of(file, tp.obj.controller_link);
+    if (idx == std::string::npos || idx >= file.blocks.size()) return 0;
+    const auto* ctrl = std::get_if<nif::NiFlipController>(&file.blocks[idx]);
+    return ctrl && !ctrl->image_links.empty() ? ctrl->image_links[0] : 0;
+}
+
 }  // namespace
 
 // Read-only geometry dump for the mesh-fix generator (tools/gen_mesh_fixes.py):
 // one dict per NiTriShape, in block order, with world-space vertices/normals,
 // UV set 0, triangles, texture basenames and the hidden flag. Parse-only, no
 // GL context, and applies no mesh fix -- callers see the raw stock geometry.
-py::object nif_shapes_impl(const std::string& nif_abs_path) {
+py::object nif_shapes_impl(const std::string& nif_abs_path,
+                           const std::optional<std::string>& fix_json) {
     std::filesystem::path path = nif_abs_path;
     if (!std::filesystem::exists(path)) return py::none();
     nif::File f;
@@ -2494,6 +2529,15 @@ py::object nif_shapes_impl(const std::string& nif_abs_path) {
         f = nif::load(path);
     } catch (const std::exception&) {
         return py::none();
+    }
+    if (fix_json) {
+        // The loader's own path (AssetCache::load), in memory: lets the
+        // shape-diff tool verify a fix before it is written.
+        std::string err;
+        auto fix = assets::parse_mesh_fix(*fix_json, &err);
+        if (!fix) throw std::runtime_error("mesh fix parse failed: " + err);
+        err = assets::apply_mesh_fix(f, *fix);
+        if (!err.empty()) throw std::runtime_error("mesh fix refused: " + err);
     }
 
     py::list out;
@@ -2511,11 +2555,41 @@ py::object nif_shapes_impl(const std::string& nif_abs_path) {
             if (idx == std::string::npos || idx >= f.blocks.size()) continue;
             const auto& b = f.blocks[idx];
             if (const auto* tp = std::get_if<nif::NiTextureProperty>(&b)) {
-                nif_shapes_collect_image(f, tp->image_link, &textures);
+                nif_shapes_collect_image(f, nif_shapes_property_image(f, *tp), &textures);
             } else if (const auto* mtp = std::get_if<nif::NiMultiTextureProperty>(&b)) {
                 for (const auto& elem : mtp->elements) {
                     if (elem.has_image) nif_shapes_collect_image(f, elem.image_link, &textures);
                 }
+            }
+        }
+        // DBridge's NiTextureProperty sits on an ancestor NiNode, inherited
+        // rather than owned by the shape (final-review F1). Mirror the
+        // renderer's own ancestor walk (model_build.cc:gather_material_inputs):
+        // walk up, nearest ancestor with any texture wins. Never touches
+        // `textures` when the shape already has its own (gen_mesh_fixes.py's
+        // "ID" lookup and its drift test depend on that).
+        if (textures.empty()) {
+            std::size_t cur = i;
+            while (true) {
+                const std::size_t parent_idx = nif_shapes_parent_of(f, cur);
+                if (parent_idx == std::string::npos || parent_idx >= f.blocks.size()) break;
+                const auto* parent_node = std::get_if<nif::NiNode>(&f.blocks[parent_idx]);
+                if (!parent_node) break;
+                std::vector<std::string> ancestor_textures;
+                for (std::uint32_t link : parent_node->av.property_links) {
+                    std::size_t idx = nif_shapes_index_of(f, link);
+                    if (idx == std::string::npos || idx >= f.blocks.size()) continue;
+                    const auto& b = f.blocks[idx];
+                    if (const auto* tp = std::get_if<nif::NiTextureProperty>(&b)) {
+                        nif_shapes_collect_image(f, nif_shapes_property_image(f, *tp), &ancestor_textures);
+                    } else if (const auto* mtp = std::get_if<nif::NiMultiTextureProperty>(&b)) {
+                        for (const auto& elem : mtp->elements) {
+                            if (elem.has_image) nif_shapes_collect_image(f, elem.image_link, &ancestor_textures);
+                        }
+                    }
+                }
+                if (!ancestor_textures.empty()) { textures = std::move(ancestor_textures); break; }
+                cur = parent_idx;
             }
         }
         d["textures"] = textures;
@@ -2525,7 +2599,26 @@ py::object nif_shapes_impl(const std::string& nif_abs_path) {
         if (data_idx != std::string::npos && data_idx < f.blocks.size())
             data = std::get_if<nif::NiTriShapeData>(&f.blocks[data_idx]);
 
-        py::list vertices, normals, uvs, triangles;
+        // Parent NiNode name (label only; identity is the block index).
+        std::string parent_name;
+        for (std::size_t p = 0; p < f.blocks.size() && parent_name.empty(); ++p) {
+            const auto* node = std::get_if<nif::NiNode>(&f.blocks[p]);
+            if (!node) continue;
+            for (std::uint32_t link : node->child_links)
+                if (nif_shapes_index_of(f, link) == i) { parent_name = node->av.obj.name; break; }
+        }
+        d["parent"] = parent_name;
+        d["data_block"] = (data_idx != std::string::npos && data_idx < f.blocks.size())
+                              ? static_cast<int>(data_idx) : -1;
+        {
+            const glm::mat4 w = assets::nif_block_world(f, i);
+            py::list wl;
+            for (int c = 0; c < 4; ++c)
+                for (int r = 0; r < 4; ++r) wl.append(w[c][r]);
+            d["world"] = wl;
+        }
+
+        py::list vertices, normals, uvs, triangles, colors, uvs1;
         if (data) {
             const glm::mat4 world = assets::nif_block_world(f, i);
             const glm::mat3 normal_mat = glm::mat3(world);
@@ -2545,11 +2638,20 @@ py::object nif_shapes_impl(const std::string& nif_abs_path) {
             for (const auto& t : data->triangles) {
                 triangles.append(py::make_tuple(t[0], t[1], t[2]));
             }
+            if (data->has_vertex_colors) {
+                for (const auto& c : data->vertex_colors)
+                    colors.append(py::make_tuple(c.r, c.g, c.b, c.a));
+            }
+            if (data->uv_sets.size() >= 2) {
+                for (const auto& uv : data->uv_sets[1]) uvs1.append(py::make_tuple(uv.u, uv.v));
+            }
         }
         d["vertices"] = vertices;
         d["normals"] = normals;
         d["uvs"] = uvs;
         d["triangles"] = triangles;
+        d["colors"] = colors;
+        d["uvs1"] = uvs1;
         d["hidden"] = (shape->av.flags & 0x0001u) != 0;
 
         out.append(d);
@@ -3065,12 +3167,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Extract the embedded camera (frustum + world transform) from a set "
           "NIF, or None. Parse-only; no GL context required.");
     m.def("nif_shapes", &nif_shapes_impl,
-          py::arg("abs_path"),
+          py::arg("abs_path"), py::arg("fix_json") = py::none(),
           "Every NiTriShape in a NIF, in block order: block index, name, "
           "texture basenames, world-space vertices/normals, UV set 0, "
           "triangles, hidden flag. None if the file is missing or fails to "
           "parse. Parse-only, no GL context; applies no mesh fix. Feeds "
-          "tools/gen_mesh_fixes.py.");
+          "tools/gen_mesh_fixes.py. Also: world (16 floats, column-major, "
+          "data frame -> model), parent node name, data_block, per-vertex "
+          "colors (or []), UV set 1 (or []). With fix_json (a mesh-fix file's "
+          "text), the fix is parsed and applied in memory first, exactly as the "
+          "loader does; a parse failure or refusal raises RuntimeError.");
 
     py::class_<scenegraph::InstanceId>(m, "InstanceId")
         .def(py::init<>())
@@ -4313,6 +4419,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "unscaled bridge lighting, so viewscreen brightness stays constant "
           "across alert levels. Default 1.0.");
 
+    m.def("set_bridge_alert_level",
+          [](int level) {
+              g_bridge_alert_level = level;
+              if (g_bridge_pass) g_bridge_pass->set_alert_level(level);
+          },
+          py::arg("level"),
+          "Player alert level (0 green, 1 yellow, 2 red; anything else reads as "
+          "green) choosing each bridge material's emissive sibling map "
+          "(<stem>_emissive / _emissive_y / _emissive_r, falling back to the "
+          "default). Main bridge view only; comm sets show the default. Hard "
+          "switch. Default 0; init() and shutdown() reset it.");
+
     m.def("set_bridge_quality",
           [](int q) {
               g_bridge_quality = renderer::clamp_bridge_quality(q);
@@ -4496,10 +4614,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
               d["capture_pending"] = g_bridge_pass->probe_capture_pending();
               d["probes_valid"] = g_bridge_pass->probes_valid();
               d["alert_ambient_scale"] = g_bridge_pass->alert_ambient_scale();
+              d["alert_level"] = g_bridge_pass->alert_level();
               return d;
           },
           "Test/diagnostic snapshot of the bridge pass's probe state (origin, "
-          "scales, mix, capture_pending, probes_valid, alert_ambient_scale); "
+          "scales, mix, capture_pending, probes_valid, alert_ambient_scale, "
+          "alert_level); "
           "None before init().");
 
     m.def("request_bridge_probe_capture",

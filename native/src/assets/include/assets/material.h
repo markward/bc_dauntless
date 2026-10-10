@@ -34,9 +34,15 @@ struct Material {
     ///
     /// Roughness/Metalness: `<stem>_rough` / `<stem>_metal` siblings, read
     /// only by the bridge PBR path (spec 2026-10-08-bridge-emitters §9.2).
+    ///
+    /// Emissive / EmissiveYellow / EmissiveRed: `<stem>_emissive`,
+    /// `<stem>_emissive_y`, `<stem>_emissive_r` siblings (RGB = emitted
+    /// colour), probed on INTERIOR loads only and chosen per alert level by
+    /// the bridge pass (renderer::bridge_emissive_texture).
     enum class StageSlot {
         Base = 0, Dark, Detail, Gloss, Glow, Bump, Decal0, Decal1, Decal2,
         Roughness, Metalness,
+        Emissive, EmissiveYellow, EmissiveRed,
         Count
     };
 

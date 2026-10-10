@@ -28,6 +28,8 @@
 *.bik
 # Project-authored renderer textures are ours, not BC content
 !native/assets/textures/*.tga
+# Project-owned bridge-set replacement textures (Mark-approved, 2026-10-09)
+!native/assets/replacements/data/Models/Sets/**/*.tga
 *.tgl
 # Project-authored crew dialogue (tools/dialogue/dauntless_crew.json);
 # tests/tools/test_dauntless_dialogue_drift.py fails on any unlisted file

@@ -1007,3 +1007,169 @@ TEST_F(BridgePbrFrame, ALightingChangeBeforeAnyCaptureRequestsNothing) {
     EXPECT_FALSE(pass->probe_capture_pending());
     EXPECT_FALSE(pass->probes_valid());
 }
+
+// ── Emissive sibling maps (task 17) ─────────────────────────────────────────
+
+namespace {
+assets::Material emissive_material(int e, int y, int r) {
+    using S = assets::Material::StageSlot;
+    assets::Material m;
+    m.stages[static_cast<std::size_t>(S::Emissive)].texture_index = e;
+    m.stages[static_cast<std::size_t>(S::EmissiveYellow)].texture_index = y;
+    m.stages[static_cast<std::size_t>(S::EmissiveRed)].texture_index = r;
+    return m;
+}
+}  // namespace
+
+TEST(BridgeEmissiveSelect, GreenTakesTheDefault) {
+    EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material(4, 5, 6), 0), 4);
+}
+
+TEST(BridgeEmissiveSelect, YellowAndRedTakeTheirVariants) {
+    EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material(4, 5, 6), 1), 5);
+    EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material(4, 5, 6), 2), 6);
+}
+
+TEST(BridgeEmissiveSelect, MissingVariantFallsBackToTheDefault) {
+    EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material(4, -1, -1), 1), 4);
+    EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material(4, -1, -1), 2), 4);
+    EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material(4, 5, -1), 2), 4);
+}
+
+TEST(BridgeEmissiveSelect, UnknownAlertLevelIsGreen) {
+    EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material(4, 5, 6), 3), 4);
+    EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material(4, 5, 6), -1), 4);
+}
+
+TEST(BridgeEmissiveSelect, NoMapsIsNone) {
+    EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material(-1, -1, -1), 0), -1);
+    // A variant with no default still serves its own alert level.
+    EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material(-1, 5, -1), 1), 5);
+    EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material(-1, 5, -1), 0), -1);
+}
+
+TEST(BridgeEmissiveSelect, ScaleIsOne) {
+    EXPECT_FLOAT_EQ(renderer::kEmissiveScale, 1.0f);
+}
+
+TEST_F(BridgePbrFrame, AlertLevelDefaultsToGreen) {
+    EXPECT_EQ(pass->alert_level(), 0);
+    pass->set_alert_level(2);
+    EXPECT_EQ(pass->alert_level(), 2);
+}
+
+// The emissive term adds AFTER the diffuse ceiling, so it can reach bloom --
+// on both the PBR and the legacy path.
+TEST_F(BridgePbrFrame, EmissiveMapAddsAboveTheDiffuseCeiling) {
+    set_base({1, 1, 1, 1});
+    renderer::Lighting bright;
+    bright.ambient = glm::vec3(8.0f);
+    for (bool pbr_on : {true, false}) {
+        pass->set_pbr_enabled(pbr_on);
+        const glm::vec3 capped = render_floor_with(bright);
+        ASSERT_LT(std::max({capped.r, capped.g, capped.b}), renderer::kBloomThreshold) << pbr_on;
+        model->materials[0].stages[static_cast<std::size_t>(
+            assets::Material::StageSlot::Emissive)].texture_index = -1;
+        set_map(assets::Material::StageSlot::Emissive, {0.5f, 0.5f, 0.5f, 1.0f});
+        const glm::vec3 lit = render_floor_with(bright);
+        EXPECT_GT(lit.r, renderer::kBloomThreshold) << pbr_on;
+        EXPECT_NEAR(lit.r, capped.r + 0.5f * renderer::kEmissiveScale, 2e-3f) << pbr_on;
+        model->materials[0].stages[static_cast<std::size_t>(
+            assets::Material::StageSlot::Emissive)].texture_index = -1;
+    }
+    pass->set_pbr_enabled(true);
+}
+
+TEST_F(BridgePbrFrame, BlackEmissiveMapLeavesThePixelUnchanged) {
+    set_base({0.6f, 0.5f, 0.4f, 1.0f});
+    const glm::vec3 before = render_floor();
+    set_map(assets::Material::StageSlot::Emissive, {0, 0, 0, 1});
+    const glm::vec3 after = render_floor();
+    for (int i = 0; i < 3; ++i) EXPECT_NEAR(after[i], before[i], 1e-5f) << i;
+}
+
+// Alpha is ignored: RGB is the emitted colour.
+TEST_F(BridgePbrFrame, EmissiveAlphaIsIgnored) {
+    set_base({0, 0, 0, 1});
+    set_map(assets::Material::StageSlot::Emissive, {0.0f, 0.5f, 0.0f, 0.0f});
+    EXPECT_NEAR(render_floor().g, 0.5f, 3e-3f);
+}
+
+// A black albedo leaves the pixel = the emissive alone, so the chosen variant
+// reads back by hue: default red, yellow-alert green, red-alert blue.
+TEST_F(BridgePbrFrame, AlertLevelPicksTheEmissiveVariant) {
+    set_base({0, 0, 0, 1});
+    set_map(assets::Material::StageSlot::Emissive, {0.5f, 0, 0, 1});
+    set_map(assets::Material::StageSlot::EmissiveYellow, {0, 0.5f, 0, 1});
+    set_map(assets::Material::StageSlot::EmissiveRed, {0, 0, 0.5f, 1});
+    pass->set_alert_level(0);
+    glm::vec3 c = render_floor();
+    EXPECT_NEAR(c.r, 0.5f, 3e-3f); EXPECT_NEAR(c.g, 0.0f, 1e-3f); EXPECT_NEAR(c.b, 0.0f, 1e-3f);
+    pass->set_alert_level(1);
+    c = render_floor();
+    EXPECT_NEAR(c.r, 0.0f, 1e-3f); EXPECT_NEAR(c.g, 0.5f, 3e-3f); EXPECT_NEAR(c.b, 0.0f, 1e-3f);
+    pass->set_alert_level(2);
+    c = render_floor();
+    EXPECT_NEAR(c.r, 0.0f, 1e-3f); EXPECT_NEAR(c.g, 0.0f, 1e-3f); EXPECT_NEAR(c.b, 0.5f, 3e-3f);
+    // No red variant: red alert falls back to the default.
+    model->materials[0].stages[static_cast<std::size_t>(
+        assets::Material::StageSlot::EmissiveRed)].texture_index = -1;
+    c = render_floor();
+    EXPECT_NEAR(c.r, 0.5f, 3e-3f); EXPECT_NEAR(c.b, 0.0f, 1e-3f);
+}
+
+// The alert choice is the MAIN bridge view's: a comm set (another ship's
+// room) always shows the default emissive.
+TEST_F(BridgePbrFrame, CommSetShowsTheDefaultEmissiveWhateverTheAlert) {
+    set_base({0, 0, 0, 1});
+    set_map(assets::Material::StageSlot::Emissive, {0.5f, 0, 0, 1});
+    set_map(assets::Material::StageSlot::EmissiveRed, {0, 0, 0.5f, 1});
+    pass->set_alert_level(2);
+    const glm::vec3 c = render_as_comm_set();
+    EXPECT_NEAR(c.r, 0.5f, 3e-3f);
+    EXPECT_NEAR(c.b, 0.0f, 1e-3f);
+}
+
+// Debug views show no emissive: "light only" (2) is received light, and the
+// channel views (6, 7) show their channel exactly.
+TEST_F(BridgePbrFrame, DebugViewsShowNoEmissive) {
+    set_base({0.6f, 0.6f, 0.6f, 1.0f});
+    for (auto v : {renderer::BridgeDebugView::LightOnly, renderer::BridgeDebugView::Roughness}) {
+        pass->set_debug_view(v);
+        model->materials[0].stages[static_cast<std::size_t>(
+            assets::Material::StageSlot::Emissive)].texture_index = -1;
+        const glm::vec3 before = render_floor();
+        set_map(assets::Material::StageSlot::Emissive, {0.5f, 0.5f, 0.5f, 1.0f});
+        const glm::vec3 after = render_floor();
+        for (int i = 0; i < 3; ++i)
+            EXPECT_NEAR(after[i], before[i], 1e-5f) << static_cast<int>(v) << " " << i;
+    }
+    pass->set_debug_view(renderer::BridgeDebugView::Off);
+}
+
+// Probe captures exclude emissive: a black wall that glows green leaves a
+// smooth metal floor's reflection black.
+TEST_F(BridgePbrFrame, ProbeCaptureExcludesEmissive) {
+    use_red_wall_corner(/*wall=*/{0.0f, 0.0f, 0.0f});
+    model->textures.push_back(solid_1x1({0.0f, 1.0f, 0.0f, 1.0f}));
+    model->materials[1].stages[static_cast<std::size_t>(
+        assets::Material::StageSlot::Emissive)].texture_index =
+        static_cast<int>(model->textures.size()) - 1;
+    set_floor_override(/*rough=*/0.05f, /*metal=*/1.0f);
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->set_probe_scales(1.0f, 1.0f);
+    pass->request_probe_capture();
+    const glm::vec3 c = render_floor();
+    EXPECT_LT(c.g, 0.02f);
+}
+
+TEST_F(BridgePbrFrame, EmissiveUnitIsUnboundAfterRender) {
+    set_base({0.6f, 0.6f, 0.6f, 1.0f});
+    set_map(assets::Material::StageSlot::Emissive, {0.5f, 0.5f, 0.5f, 1.0f});
+    render_floor();
+    glActiveTexture(GL_TEXTURE0 + renderer::kBridgeEmissiveUnit);
+    GLint bound = -1;
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &bound);
+    EXPECT_EQ(bound, 0);
+    glActiveTexture(GL_TEXTURE0);
+}

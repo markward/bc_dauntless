@@ -31,6 +31,14 @@ inline constexpr int kBridgeBrdfLutSize = 128;
 inline constexpr int kBridgeMaxSpots = 32;
 inline constexpr float kBridgeDefaultSpotIntensity = 2000.0f;
 
+/// Bridge emissive sibling maps (task 17): bridge.frag adds
+/// `texture(u_emissive_map, uv).rgb * kEmissiveScale` AFTER the diffuse
+/// ceiling, so an emissive texel can exceed the bloom threshold. Rebuild to tune.
+inline constexpr float kEmissiveScale = 1.0f;
+/// Texture unit the bridge pass binds the alert-selected emissive map on
+/// (0 base, 1 normal, 2 face b, 3/4 AO, 5 rough, 6 metal, 7/8 probes, 9 LUT).
+inline constexpr int kBridgeEmissiveUnit = 10;
+
 /// CPU twin of bridge.frag's diffuse_ceiling (tests pin the GLSL to it).
 /// Lit (reflecting) bridge surfaces must never feed bloom -- only emitters
 /// glow. Identity below 70% of the ceiling, then a soft exponential roll that

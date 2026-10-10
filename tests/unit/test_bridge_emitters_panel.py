@@ -1,4 +1,4 @@
-"""Bridge Emitters dev panel (spec 2026-10-08-bridge-emitters §4, §7, §8)."""
+"""Bridge Editor dev panel (spec 2026-10-08-bridge-emitters §4, §7, §8)."""
 import json
 
 import pytest
