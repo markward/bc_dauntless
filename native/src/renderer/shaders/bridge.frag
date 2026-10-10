@@ -320,9 +320,40 @@ void accumulate_spots(vec3 N, vec3 V, float NdotV, vec3 albedo, float metal,
     }
 }
 
-vec3 emissive_term(vec2 uv) {
-    if (u_has_emissive_map == 0 || u_debug_view != 0) return vec3(0.0);
-    return texture(u_emissive_map, uv).rgb * u_emissive_scale;
+// ── Emitter glow (spec 2026-10-08-bridge-emitters §11.2) ───────────────────
+// Per shape, pushed every frame: -1 = none (the texture-level _emissive
+// default above), 0 = the alert's emissive map, 1 = the albedo (this
+// frame's flipbook texel), 2 = flat. Display space, like the default.
+uniform int   u_glow_src;
+uniform vec3  u_glow_rgb;     // tint x level x wave x scale
+uniform float u_glow_level;   // level x wave x scale: the received-light dip
+
+vec3 emissive_term(vec2 uv, vec3 albedo) {
+    if (u_debug_view != 0) return vec3(0.0);
+    if (u_glow_src < 0) {
+        if (u_has_emissive_map == 0) return vec3(0.0);
+        return texture(u_emissive_map, uv).rgb * u_emissive_scale;
+    }
+    vec3 src = vec3(1.0);
+    if (u_glow_src == 0)
+        src = u_has_emissive_map != 0 ? texture(u_emissive_map, uv).rgb : vec3(0.0);
+    else if (u_glow_src == 1)
+        src = albedo;
+    return src * u_glow_rgb;
+}
+
+// The received light a glowing texel keeps (spec §6.1, §11.2): a lit screen
+// shows its emission, not emission + room light. m = 1 for albedo / flat,
+// the emissive texel's max channel for a map (its black areas stay ordinary
+// receivers).
+float glow_dip(vec2 uv) {
+    if (u_glow_src < 0 || u_debug_view != 0) return 1.0;
+    float m = 1.0;
+    if (u_glow_src == 0) {
+        vec3 e = u_has_emissive_map != 0 ? texture(u_emissive_map, uv).rgb : vec3(0.0);
+        m = max(e.r, max(e.g, e.b));
+    }
+    return 1.0 - m * clamp(u_glow_level, 0.0, 1.0);
 }
 
 float channel(int has_map, sampler2D map, float override_v, float dflt) {
@@ -420,8 +451,11 @@ void main() {
         // Static spots: direct light, never multiplied by AO. Their diffuse
         // goes through the ceiling in combine(); only specular may exceed it.
         accumulate_spots(N, V, NdotV, albedo, metal, rough, F0, diffuse, spec);
+        float dip = glow_dip(base_uv);
+        diffuse *= dip;
+        spec *= dip;
         if (u_debug_view == 8) { FragColor = vec4(encode(spec), 1.0); return; }
-        vec3 col = (combine(diffuse, spec, u_diffuse_max) + emissive_term(base_uv))
+        vec3 col = (combine(diffuse, spec, u_diffuse_max) + emissive_term(base_uv, base.rgb))
                  * u_viewscreen_brightness;
         col = mix(col, vec3(1.0), clamp(u_viewscreen_flash, 0.0, 1.0));
         FragColor = vec4(apply_highlight(col), 1.0);
@@ -429,8 +463,8 @@ void main() {
     }
     vec3 albedo = (u_debug_view == 2) ? vec3(1.0) : base.rgb;
     float h = clamp(dot(n, u_up) * 0.5 + 0.5, 0.0, 1.0);
-    vec3 received = u_ambient * mix(u_down_bottom, u_down_top, h) * ao;
-    vec3 col = (diffuse_ceiling(albedo * received) + emissive_term(base_uv))
+    vec3 received = u_ambient * mix(u_down_bottom, u_down_top, h) * ao * glow_dip(base_uv);
+    vec3 col = (diffuse_ceiling(albedo * received) + emissive_term(base_uv, base.rgb))
              * u_viewscreen_brightness;
     col = mix(col, vec3(1.0), clamp(u_viewscreen_flash, 0.0, 1.0));
     FragColor = vec4(apply_highlight(col), 1.0);
