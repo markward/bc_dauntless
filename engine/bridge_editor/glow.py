@@ -1,33 +1,28 @@
 """Objects -> per-mesh emitter glow (spec 2026-10-08-bridge-emitters §13.2):
-an object glows when its material has an emitter; WHAT glows is the
-material's surface resolved against the object's own texture (`auto`: its
-emission map if it has one, else its own texture)."""
+an object glows when its material has an emitter. WHAT glows follows the
+roughness/metalness rule (Mark 2026-10-11): the object's `_emissive` map
+whenever its texture has one, else the material's `without_map` (its own
+texture, or a flat colour). Strength 0 glows nothing but still owns the
+object's glow (the texture-level default stays off)."""
 from engine.bridge_editor import behaviour
 
 SRC = {"emission": 0, "texture": 1, "flat": 2}
 
 
 def glow_objects(doc, matched, meshes):
+    """([(mesh, src, material, strength)], warnings) in mesh order."""
     has_map = {m["mesh"]: bool((m.get("maps") or {}).get("emissive")) for m in meshes}
-    out, warnings = [], []
+    out = []
     for key in sorted(matched, key=lambda k: matched[k]):
         name = doc["objects"].get(key, {}).get("material")
         mat = doc["materials"].get(name) if name else None
         if mat is None or not behaviour.has_emitter(mat):
             continue
         mesh = matched[key]
-        surface = mat.get("surface", {})
-        src = surface.get("src", "auto")
-        if src == "none":
-            continue
-        if src == "auto":
-            src = "emission" if has_map.get(mesh) else "texture"
-        if src == "emission" and not has_map.get(mesh):
-            warnings.append(f"{key}: material {name!r} glows through an emission map but "
-                            "this object's texture has none; skipped")
-            continue
-        out.append((mesh, SRC[src], mat, float(surface.get("strength", 1.0))))
-    return out, warnings
+        emission = mat.get("emission", {})
+        src = "emission" if has_map.get(mesh) else emission.get("without_map", "texture")
+        out.append((mesh, SRC[src], mat, float(emission.get("strength", 1.0))))
+    return out, []
 
 
 def live(objs, fade, t):

@@ -397,7 +397,7 @@ def test_attach_clear_failing_does_not_stop_the_load(proj):
 
 def _glow_doc(proj):
     d = ld.empty_doc("x")
-    d["materials"]["p"] = {"fade_s": 1.0, "surface": {"src": "flat"}, "modifiers": [
+    d["materials"]["p"] = {"fade_s": 1.0, "emission": {"without_map": "flat"}, "modifiers": [
         {"type": "emitter", "scope": ["green"], "tint": [1, 1, 1], "level": 1},
         {"type": "emitter", "scope": ["red"], "tint": [1, 0, 0], "level": 0.5},
         {"type": "animation", "scope": ["red"], "shape": "sine", "period_s": 2.0, "min": 0.0}]}

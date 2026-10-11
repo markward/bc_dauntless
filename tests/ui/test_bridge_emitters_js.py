@@ -90,7 +90,7 @@ def _sel(**over):
 
 MAT = {"name": "alcove", "finish": {"roughness": {"value": 1.0, "source": "default"},
                                     "metalness": {"value": 0.0, "source": "default"}},
-       "surface": {"src": "auto", "strength": 1.0}, "fade_s": 0.5,
+       "emission": {"without_map": "texture", "strength": 1.0}, "fade_s": 0.5,
        "modifiers": [{"type": "emitter", "scope": ["red"], "tint": [1, 0.1, 0.1], "level": 0.5},
                      {"type": "animation", "scope": ["red"], "shape": "square",
                       "period_s": 1, "min": 0.2, "duty": 0.5, "soft": 0.1, "phase": 0}]}
@@ -139,7 +139,10 @@ def test_material_tab_shows_finish_surface_and_the_modifier_stack():
     [out] = _run([{"state": _state(selected=sel)}])
     body = out["body"]
     assert "material-rename:" in body and "finish:roughness:" in body
-    assert "surface:src:auto" in body and "surface:src:none" in body
+    assert "emission:without_map:texture" in body and "emission:without_map:flat" in body
+    assert "emission:strength:" in body and "fade:" in body
+    assert "source: emission map · Map 19_emissive" in body       # the object has a map
+    assert "surface" not in body.lower().replace("surface behind", "")
     assert "mod-add:emitter" in body and "mod-add:animation" in body
     assert "expand:mod:0" in body and "mod:0:level:" not in body     # collapsed
     assert "mod:1:duty:" in body and "mod:1:shape:sine" in body       # expanded
@@ -203,3 +206,10 @@ def test_enter_in_the_rename_field_commits_the_rename():
     i = out["body"].index('id="be-rename"')
     tag = out["body"][out["body"].rindex("<input", 0, i):out["body"].index(">", i)]
     assert "onchange=" in tag and "material-rename:" in tag
+
+
+def test_without_a_map_the_source_line_names_the_fallback():
+    m = dict(MAT, emission={"without_map": "flat", "strength": 1.0})
+    sel = _sel(tab="material", material="alcove", material_data=m, has_emission_map=False)
+    [out] = _run([{"state": _state(selected=sel)}])
+    assert "source: flat colour (no emission map)" in out["body"]

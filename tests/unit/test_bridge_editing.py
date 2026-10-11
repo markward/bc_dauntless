@@ -54,11 +54,11 @@ def test_rename_moves_every_link_and_refuses_clashes():
 def test_finish_surface_fade_clamp():
     m = {}
     ed.set_finish(m, "roughness", "1.7")
-    ed.set_surface(m, "src", "emission")
-    ed.set_surface(m, "src", "glow")              # refused: not a surface
-    ed.set_surface(m, "strength", "-2")
+    ed.set_emission(m, "without_map", "flat")
+    ed.set_emission(m, "without_map", "glow")     # refused: not a fallback
+    ed.set_emission(m, "strength", "-2")
     ed.set_fade(m, "-1")
-    assert m == {"roughness": 1.0, "surface": {"src": "emission", "strength": 0.0},
+    assert m == {"roughness": 1.0, "emission": {"without_map": "flat", "strength": 0.0},
                  "fade_s": 0.0}
     ed.clear_finish(m, "roughness")
     assert "roughness" not in m

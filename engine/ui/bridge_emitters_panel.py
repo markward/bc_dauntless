@@ -8,7 +8,7 @@ while an object (one NIF shape) is selected, with two tabs:
 
 - **Object**: the material it links to from the bridge's library (used-by
   count, New, Duplicate, unlink) and its Lights;
-- **Material**: the linked material's finish, surface, fade and its stack of
+- **Material**: the linked material's finish, emission, fade and its stack of
   scoped Emitter / Animation modifiers -- shared by every object that links it.
 
 Hold Shift to fly (mouse-look + WASDQE, scroll sets the speed); click picks an
@@ -45,7 +45,7 @@ HINT = ("Hold Shift: fly · WASD · Q/E · scroll: speed · click: select · "
         "Alt+click: surface behind · materials layer over the object's texture")
 # Actions that are not document edits and need no loaded document.
 _VIEW_ACTIONS = ("state:", "preview-toggle", "tab:", "expand:", "deselect")
-_EDIT_PREFIXES = ("material", "light", "finish", "surface", "fade:", "mod")
+_EDIT_PREFIXES = ("material", "light", "finish", "emission", "fade:", "mod")
 
 
 class BridgeEmittersPanel(Panel):
@@ -432,9 +432,9 @@ class BridgeEmittersPanel(Panel):
             self._edit(lambda: editing.set_finish(mat, ch, raw))
         elif head == "finish-clear":
             self._edit(lambda: editing.clear_finish(mat, rest))
-        elif head == "surface":
+        elif head == "emission":
             field, _, raw = rest.partition(":")
-            self._edit(lambda: editing.set_surface(mat, field, raw))
+            self._edit(lambda: editing.set_emission(mat, field, raw))
         elif head == "fade":
             self._edit(lambda: editing.set_fade(mat, rest))
         elif head == "mod-remove":
@@ -536,10 +536,10 @@ class BridgeEmittersPanel(Panel):
                 finish[ch] = {"value": mat[ch], "source": "material"}
             else:
                 finish[ch] = {"value": default, "source": "default"}
-        surface = mat.get("surface", {})
+        emission = mat.get("emission", {})
         return {"name": name, "finish": finish,
-                "surface": {"src": surface.get("src", "auto"),
-                            "strength": surface.get("strength", 1.0)},
+                "emission": {"without_map": emission.get("without_map", "texture"),
+                             "strength": emission.get("strength", 1.0)},
                 "fade_s": mat.get("fade_s", behaviour.DEFAULT_FADE_S),
                 "modifiers": copy.deepcopy(mat.get("modifiers", []))}
 

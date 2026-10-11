@@ -1,7 +1,7 @@
 """Per-bridge lighting document (spec 2026-10-08-bridge-emitters §7, §13.4).
 
 One JSON file per bridge NIF, keyed by the NIF's content hash: a `materials`
-library (finish, surface, scoped Emitter/Animation modifiers) and `objects`
+library (finish, emission, scoped Emitter/Animation modifiers) and `objects`
 (a material link and lights). Only references and parameters -- never BC
 geometry. Unknown keys are REJECTED: a typo must fail loudly. `format: 1`
 files (per-shape profiles) are upgraded on load."""
@@ -184,7 +184,10 @@ def _validate_v1(doc) -> dict:
 
 FORMAT = 2
 STATES = ("offline", "green", "yellow", "red", "special")
-SURFACES = ("auto", "emission", "texture", "flat", "none")
+# Emission (spec §13, Mark 2026-10-11): like roughness/metalness, an object's
+# `_emissive` map is used whenever its texture has one; `without_map` is what
+# glows for objects that have none -- their own texture, or a flat colour.
+EMISSION_WITHOUT_MAP = ("texture", "flat")
 _WAVES = ("sine", "square")
 
 
@@ -230,15 +233,17 @@ def _modifier(m, where):
 
 
 def _material(m, where):
-    _obj(m, where, {"roughness", "metalness", "surface", "fade_s", "modifiers"})
+    _obj(m, where, {"roughness", "metalness", "emission", "fade_s", "modifiers"})
     for ch in ("roughness", "metalness"):
         if ch in m:
             _num(m[ch], f"{where}.{ch}", 0, 1)
-    if "surface" in m:
-        _obj(m["surface"], f"{where}.surface", {"src", "strength"}, ("src",))
-        _enum(m["surface"]["src"], f"{where}.surface.src", SURFACES)
-        if "strength" in m["surface"]:
-            _num(m["surface"]["strength"], f"{where}.surface.strength", lo=0)
+    if "emission" in m:
+        e = m["emission"]
+        _obj(e, f"{where}.emission", {"without_map", "strength"})
+        if "without_map" in e:
+            _enum(e["without_map"], f"{where}.emission.without_map", EMISSION_WITHOUT_MAP)
+        if "strength" in e:
+            _num(e["strength"], f"{where}.emission.strength", lo=0)
     if "fade_s" in m:
         _num(m["fade_s"], f"{where}.fade_s", lo=0)
     if "modifiers" in m:
@@ -282,7 +287,9 @@ def validate(doc) -> dict:
 
 # ── format 1 -> 2 (spec §13.4) ───────────────────────────────────────────────
 
-_V1_SRC = {"emissive": "emission", "texture": "texture", "flat": "flat"}
+# v1 glow src -> v2 `without_map` ("emissive" needed a map, which v2 uses
+# automatically; its fallback is the own texture).
+_V1_SRC = {"emissive": "texture", "texture": "texture", "flat": "flat"}
 _V1_STATES = ("green", "yellow", "red")
 _V1_WHITE = {s: {"tint": [1, 1, 1], "level": 1} for s in _V1_STATES}
 
@@ -312,9 +319,9 @@ def _v1_modifiers(profile, phase):
 def upgrade(doc) -> dict:
     """A validated-shape `format: 1` document as `format: 2` (spec §13.4):
     each shape's material overrides + glow source/scale + profile (+ phase)
-    form one material; identical materials are shared -- named after the
-    profile when there is one (`<profile> 2`, ... on a clash), else
-    `material N`; the light becomes lights[0]."""
+    form one material; identical PROFILED materials are shared, named after
+    the profile (`<profile> 2`, ... on a clash); every other object gets its
+    own `material N`, never merged; the light becomes lights[0]."""
     doc = _validate_v1(doc)
     out = empty_doc(doc.get("source", ""))
     by_sig = {}
@@ -326,17 +333,24 @@ def upgrade(doc) -> dict:
         prof = doc["profiles"][prof_name] if prof_name else None
         glow = em.get("glow")
         if glow is not None or (prof is not None and "light" in em):
-            surface = {"src": _V1_SRC[glow["src"]] if glow else "none"}
-            if glow and glow.get("scale", 1) != 1:
-                surface["strength"] = glow["scale"]
-            mat["surface"] = surface
+            # No v1 glow (a profiled light only): strength 0 -- no glow, the
+            # light still follows the emitters.
+            emission = {"without_map": _V1_SRC[glow["src"]] if glow else "texture"}
+            if glow is None:
+                emission["strength"] = 0
+            elif glow.get("scale", 1) != 1:
+                emission["strength"] = glow["scale"]
+            mat["emission"] = emission
             if prof is not None and "fade_s" in prof:
                 mat["fade_s"] = prof["fade_s"]
             mat["modifiers"] = _v1_modifiers(prof or _V1_WHITE, em.get("phase", 0.0))
         obj = {"block": s["block"], "name": s["name"]}
         if mat:
-            sig = json.dumps(mat, sort_keys=True)
-            name = by_sig.get(sig)
+            # Only profiled materials share: v1 objects sharing a profile chose
+            # to; equal finish-only values are a coincidence, and merging them
+            # made one edit land on dozens of unrelated objects.
+            sig = json.dumps(mat, sort_keys=True) if prof_name else None
+            name = by_sig.get(sig) if sig else None
             if name is None:
                 if prof_name:
                     name, n = prof_name, 2
@@ -347,7 +361,8 @@ def upgrade(doc) -> dict:
                     while f"material {n}" in out["materials"]:
                         n += 1
                     name = f"material {n}"
-                by_sig[sig] = name
+                if sig:
+                    by_sig[sig] = name
                 out["materials"][name] = mat
             obj["material"] = name
         if "light" in em:

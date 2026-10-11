@@ -6,18 +6,38 @@
     },
     "material 10": {
       "metalness": 1,
-      "roughness": 0.04
+      "roughness": 0
     },
     "material 11": {
       "metalness": 1,
-      "roughness": 0.17
+      "roughness": 0.04
     },
     "material 12": {
+      "metalness": 1,
+      "roughness": 0.17
+    },
+    "material 13": {
+      "metalness": 1,
+      "roughness": 0.08
+    },
+    "material 14": {
       "metalness": 0.98,
       "roughness": 0
     },
-    "material 13": {
+    "material 15": {
       "metalness": 0.93,
+      "roughness": 0
+    },
+    "material 16": {
+      "roughness": 0
+    },
+    "material 17": {
+      "roughness": 0
+    },
+    "material 18": {
+      "roughness": 0
+    },
+    "material 19": {
       "roughness": 0
     },
     "material 2": {
@@ -35,19 +55,18 @@
       "roughness": 0.14
     },
     "material 6": {
-      "metalness": 1,
-      "roughness": 0.06
+      "roughness": 0
     },
     "material 7": {
       "metalness": 1,
-      "roughness": 0.02
+      "roughness": 0.06
     },
     "material 8": {
-      "metalness": 0.89,
-      "roughness": 0
+      "metalness": 1,
+      "roughness": 0.02
     },
     "material 9": {
-      "metalness": 1,
+      "metalness": 0.89,
       "roughness": 0
     }
   },
@@ -59,7 +78,7 @@
     },
     "176:Material: e chairs": {
       "block": 176,
-      "material": "material 6",
+      "material": "material 7",
       "name": "Material: e chairs"
     },
     "20:Dim Material": {
@@ -74,7 +93,7 @@
     },
     "341:Material: e chairs": {
       "block": 341,
-      "material": "material 7",
+      "material": "material 8",
       "name": "Material: e chairs"
     },
     "34:walllight 02 Material: Wall Light": {
@@ -84,57 +103,57 @@
     },
     "359:Material: door center1": {
       "block": 359,
-      "material": "material 8",
+      "material": "material 9",
       "name": "Material: door center1"
     },
     "389:Material: door center1": {
       "block": 389,
-      "material": "material 9",
+      "material": "material 10",
       "name": "Material: door center1"
     },
     "403:Material: door center1": {
       "block": 403,
-      "material": "material 10",
+      "material": "material 11",
       "name": "Material: door center1"
     },
     "476:Material: door center1": {
       "block": 476,
-      "material": "material 11",
+      "material": "material 12",
       "name": "Material: door center1"
     },
     "487:Material: door center": {
       "block": 487,
-      "material": "material 3",
+      "material": "material 13",
       "name": "Material: door center"
     },
     "499:Material: door center1": {
       "block": 499,
-      "material": "material 12",
+      "material": "material 14",
       "name": "Material: door center1"
     },
     "513:Material: door center1": {
       "block": 513,
-      "material": "material 13",
+      "material": "material 15",
       "name": "Material: door center1"
     },
     "530:Material: consoleLCARS": {
       "block": 530,
-      "material": "material 2",
+      "material": "material 16",
       "name": "Material: consoleLCARS"
     },
     "536:Material: consoleLCARS": {
       "block": 536,
-      "material": "material 2",
+      "material": "material 17",
       "name": "Material: consoleLCARS"
     },
     "546:Material: Lcars Schematic left": {
       "block": 546,
-      "material": "material 2",
+      "material": "material 18",
       "name": "Material: Lcars Schematic left"
     },
     "563:Material: Lcars Schematic right": {
       "block": 563,
-      "material": "material 2",
+      "material": "material 19",
       "name": "Material: Lcars Schematic right"
     },
     "63:Material: Material #38": {
@@ -144,7 +163,7 @@
     },
     "68:Material: Material #38": {
       "block": 68,
-      "material": "material 2",
+      "material": "material 6",
       "name": "Material: Material #38"
     }
   },

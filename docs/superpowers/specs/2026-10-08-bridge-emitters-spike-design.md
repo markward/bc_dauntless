@@ -757,11 +757,16 @@ they use the yellow/red probe.
 **A material holds** (Material tab):
 - **Finish**: `roughness`, `metalness` (0-1 each, optional). A texture map
   still beats the material's value per channel (§9.2).
-- **Surface** -- what glows: `auto` (default: the object's emission map when
-  its texture has one -- the variant for the current state, §13.1 -- else
-  its own texture) / `emission map` / `own texture` / `flat`; plus
-  `strength` (≥ 0, default 1). `auto` is what lets side bars (emission map)
-  and alcoves (own texture) share one material.
+- **Emission** -- what glows, following the roughness/metalness rule (Mark,
+  2026-10-11): the object's `_emissive` map whenever its texture has one
+  (the variant for the current state, §13.1; shown in the editor, not
+  chosen); `without_map` -- `texture` (its own texture, default) or `flat`
+  -- for objects that have none; plus `strength` (≥ 0, default 1; 0 = no
+  glow while the lights still follow the emitters). That is what lets side
+  bars (emission map) and alcoves (own texture) share one material.
+  *(Replaces the first build's "Surface" with auto / emission map / own
+  texture / flat / none: confusing beside Finish, and the map choice was
+  inconsistent with roughness/metalness.)*
 - **fade_s**: the cross-fade on a state change (default 0.5).
 - **Modifiers**, each with a **scope** -- any of the five states; none
   ticked = parked:
@@ -772,8 +777,8 @@ they use the yellow/red probe.
     MULTIPLY the emitters' sum.
 
 Output in state *s* = (Σ emitters scoped to *s*) × (Π animations scoped to
-*s*), cross-faded over `fade_s` on a state change; glow = surface ×
-output × strength. Examples: alcove = Emitter white [green] + Emitter red 0.5
+*s*), cross-faded over `fade_s` on a state change; glow = emission
+source × output × strength. Examples: alcove = Emitter white [green] + Emitter red 0.5
 [red] + Animation sine 2 s [red]; red bars = Emitter red [red] + Animation
 sine 2 s [red]; reserve power = Emitter red [offline].
 
@@ -808,7 +813,7 @@ steady).
     with "used by N", New, Duplicate, Unlink); the Light stack with
     **Add light**. With no material and a texture-level emission map, a
     read-only row: "Emission map · <name> · steady".
-  - **Material** -- name (Rename), Finish, Surface, fade, then the modifier
+  - **Material** -- name (Rename), Finish, Emission (source, strength, state fade), then the modifier
     stack with **Add modifier** (Emitter, Animation). Every stack entry is a
     header row (name, scope squares, ×) that expands on click.
 - Every choice is a chip row or an in-page menu, never a `<select>` (§12).
@@ -817,7 +822,7 @@ steady).
 
 ```json
 {"format": 2, "source": "...",
- "materials": {"alcove": {"roughness": 0, "surface": {"src": "auto", "strength": 1},
+ "materials": {"alcove": {"roughness": 0, "emission": {"without_map": "texture", "strength": 1},
    "fade_s": 0.5,
    "modifiers": [{"type": "emitter", "scope": ["green"], "tint": [1, 1, 1], "level": 1},
                  {"type": "emitter", "scope": ["red"], "tint": [1, 0.12, 0.08], "level": 0.5},
@@ -830,8 +835,11 @@ steady).
 
 Unknown keys REJECTED (as §7). **Reading `format: 1`** converts: each
 shape's material overrides + glow source/scale + profile (+ its phase) form a
-signature; shapes with identical signatures share one material, named after
-the profile when it has one, else `material N`; profile states become scoped
+signature; profiled shapes with identical signatures share one material,
+named after the profile (`<profile> 2` on a clash). Every other shape gets
+its own `material N`, never merged: equal finish values are a coincidence,
+not a choice to share, and merging them put 32 unrelated DBridge objects in
+one material (Mark, 2026-10-11). Profile states become scoped
 modifiers (a state's wave becomes an Animation scoped to that state); the
 light becomes `lights[0]`. The writer saves `format: 2`; the DBridge file is
 converted and committed.

@@ -132,8 +132,7 @@ function _beFinishRow(ch, f) {
         + '</div>';
 }
 
-const _BE_SURFACES = [['auto', 'auto'], ['emission', 'emission map'], ['texture', 'own texture'],
-                      ['flat', 'flat'], ['none', 'none']];
+const _BE_WITHOUT_MAP = [['texture', 'own texture'], ['flat', 'flat colour']];
 
 function _beModifier(m, i, expanded) {
     let fields = '';
@@ -191,13 +190,21 @@ function _beMaterialTab(s) {
     html += _beEntry('finish', 'Finish', !open('finish'), null, null,
                      _beFinishRow('roughness', m.finish.roughness)
                      + _beFinishRow('metalness', m.finish.metalness));
-    let surf = '<div class="be-row">';
-    _BE_SURFACES.forEach(function (p) {
-        surf += _beChip(p[1], 'surface:src:' + p[0], m.surface.src === p[0], false);
+    // Emission follows the roughness/metalness rule: the object's emission
+    // map whenever it has one (shown, not chosen); `without map` is what
+    // glows for objects that have none (spec §13, Mark 2026-10-11).
+    const stem = String((s.textures || [''])[0]).replace(/\.[^.]*$/, '');
+    const fallback = m.emission.without_map === 'flat' ? 'flat colour' : 'own texture';
+    let emis = '<div class="be-row"><span class="be-source">source: '
+        + (s.has_emission_map ? 'emission map · ' + _beEsc(stem) + '_emissive'
+                              : _beEsc(fallback) + ' (no emission map)')
+        + '</span></div><div class="be-row"><label>without a map</label>';
+    _BE_WITHOUT_MAP.forEach(function (p) {
+        emis += _beChip(p[1], 'emission:without_map:' + p[0], m.emission.without_map === p[0], false);
     });
-    surf += '</div>' + _beNumberRow('strength', 'surface:strength', m.surface.strength, 0.1);
-    html += _beEntry('surface', 'Surface: ' + m.surface.src, !open('surface'), null, null, surf);
-    html += _beNumberRow('fade s', 'fade', m.fade_s, 0.05);
+    emis += '</div>' + _beNumberRow('strength', 'emission:strength', m.emission.strength, 0.1)
+        + _beNumberRow('state fade s', 'fade', m.fade_s, 0.05);
+    html += _beEntry('emission', 'Emission', !open('emission'), null, null, emis);
     (m.modifiers || []).forEach(function (mod, i) {
         html += _beModifier(mod, i, open('mod:' + i));
     });

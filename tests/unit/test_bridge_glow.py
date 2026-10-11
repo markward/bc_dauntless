@@ -6,7 +6,7 @@ import pytest
 from engine.bridge_editor import behaviour as bh, glow, lighting_doc as ld
 
 MESHES = [{"mesh": 3, "maps": {"emissive": True}}, {"mesh": 4, "maps": {"emissive": False}}]
-ROOF = {"surface": {"src": "auto", "strength": 2}, "modifiers": [
+ROOF = {"emission": {"strength": 2}, "modifiers": [
     {"type": "emitter", "scope": ["green", "red"], "tint": [0.5, 0.5, 1], "level": 0.6}]}
 
 
@@ -34,19 +34,22 @@ def test_a_material_without_emitters_adds_no_glow():
     assert objs == []
 
 
-def test_emission_surface_without_a_map_is_skipped_with_a_warning():
+def test_the_map_wins_and_without_a_map_the_fallback_applies():
+    # Spec §13 (Mark 2026-10-11): like roughness/metalness, an object's
+    # emission map is used whenever it has one; otherwise `without_map`.
     d = _doc()
-    d["materials"]["roof"]["surface"]["src"] = "emission"
+    d["materials"]["roof"]["emission"]["without_map"] = "flat"
     objs, warnings = glow.glow_objects(d, MATCHED, MESHES)
-    assert [o[0] for o in objs] == [3]
-    assert warnings == ["11:alcove: material 'roof' glows through an emission map but "
-                        "this object's texture has none; skipped"]
+    assert [(m, s) for m, s, _, _ in objs] == [(3, 0), (4, 2)]
+    assert warnings == []
 
 
-def test_none_surface_adds_no_glow():
+def test_strength_zero_glows_nothing_but_still_owns_the_glow():
     d = _doc()
-    d["materials"]["roof"]["surface"]["src"] = "none"
-    assert glow.glow_objects(d, MATCHED, MESHES)[0] == []
+    d["materials"]["roof"]["emission"]["strength"] = 0
+    objs, _ = glow.glow_objects(d, MATCHED, MESHES)
+    (_, _, rgb, k), _ = glow.live(objs, bh.StateFade("red"), 0.0)
+    assert rgb == (0.0, 0.0, 0.0) and k == 0.0
 
 
 def test_live_scales_by_strength():

@@ -15,7 +15,7 @@ def full_doc():
         "materials": {
             "alcove": {
                 "roughness": 0.4, "metalness": 0.0,
-                "surface": {"src": "auto", "strength": 1.0},
+                "emission": {"without_map": "texture", "strength": 1.0},
                 "fade_s": 0.5,
                 "modifiers": [
                     {"type": "emitter", "scope": ["green"], "tint": [1, 1, 1], "level": 1},
@@ -53,8 +53,9 @@ def _mod(d, i):
     (lambda d: d["objects"][OBJ]["lights"][0].update(inner_deg=70), "inner_deg"),
     (lambda d: d["materials"]["alcove"].update(roughness=1.5), "roughness"),
     (lambda d: d["materials"]["alcove"].update(shine=1), "shine"),
-    (lambda d: d["materials"]["alcove"]["surface"].update(src="glow"), "src"),
-    (lambda d: d["materials"]["alcove"]["surface"].update(strength=-1), "strength"),
+    (lambda d: d["materials"]["alcove"]["emission"].update(without_map="glow"), "without_map"),
+    (lambda d: d["materials"]["alcove"]["emission"].update(src="auto"), "src"),
+    (lambda d: d["materials"]["alcove"]["emission"].update(strength=-1), "strength"),
     (lambda d: _mod(d, 0).update(scope=["green", "blue"]), "scope"),
     (lambda d: _mod(d, 0).update(scope=["green", "green"]), "scope"),
     (lambda d: _mod(d, 0).update(tint=[1, 1]), "tint"),
@@ -77,10 +78,10 @@ def test_an_empty_scope_is_a_parked_modifier():
     assert ld.validate(d)
 
 
-@pytest.mark.parametrize("src", ld.SURFACES)
-def test_every_surface_validates(src):
+@pytest.mark.parametrize("fallback", ld.EMISSION_WITHOUT_MAP)
+def test_every_emission_fallback_validates(fallback):
     d = full_doc()
-    d["materials"]["alcove"]["surface"] = {"src": src}
+    d["materials"]["alcove"]["emission"] = {"without_map": fallback}
     assert ld.validate(d)
 
 
@@ -125,17 +126,19 @@ def test_upgrade_of_the_real_dbridge_shape_is_lossless_where_it_matters():
     d = ld.validate(ld.upgrade(_v1()))
     m, o = d["materials"], d["objects"]
     assert o["401:"]["material"] == o["423:"]["material"] == "alcove"
-    assert m["alcove"]["surface"] == {"src": "texture"}
+    assert m["alcove"]["emission"] == {"without_map": "texture"}
     assert m["alcove"]["modifiers"] == [
         {"type": "emitter", "tint": [1, 1, 1], "level": 1, "scope": ["green"]},
         {"type": "emitter", "tint": [1, 0.12, 0.08], "level": 0.5, "scope": ["red"]},
         {"type": "animation", "shape": "sine", "period_s": 2, "min": 0.2, "phase": 0.0,
          "scope": ["red"]}]
     assert o["401:"]["lights"] == [{"position": [1, 2, 3], "direction": [0, 0, -1]}]
-    assert m["roof"]["surface"] == {"src": "emission", "strength": 2}
+    assert m["roof"]["emission"] == {"without_map": "texture", "strength": 2}
     assert [x["scope"] for x in m["roof"]["modifiers"]] == [["green"], ["yellow", "red"]]
-    assert o["133:"]["material"] == o["139:"]["material"] == "material 1"
-    assert m["material 1"] == {"roughness": 0}
+    # Finish-only objects are never merged: equal values are a coincidence,
+    # not a choice to share (Mark, 2026-10-11) -- each gets its own material.
+    assert (o["133:"]["material"], o["139:"]["material"]) == ("material 1", "material 2")
+    assert m["material 1"] == m["material 2"] == {"roughness": 0}
     assert o["299:"] == {"block": 299, "name": "", "lights": [{"position": [7, 8, 9],
                                                                "direction": [1, 0, 0]}]}
 

@@ -103,14 +103,14 @@ def clear_finish(mat, ch):
     mat.pop(ch, None)
 
 
-def set_surface(mat, field, raw):
-    s = mat.setdefault("surface", {"src": "auto"})
-    if field == "src" and raw in ld.SURFACES:
-        s["src"] = raw
+def set_emission(mat, field, raw):
+    e = mat.setdefault("emission", {})
+    if field == "without_map" and raw in ld.EMISSION_WITHOUT_MAP:
+        e["without_map"] = raw
     elif field == "strength":
         v = _num(raw, lo=0.0)
         if v is not None:
-            s["strength"] = v
+            e["strength"] = v
 
 
 def set_fade(mat, raw):
