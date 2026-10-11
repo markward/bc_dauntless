@@ -35,7 +35,7 @@ class BridgeRuntime:
         own guard: if anything after it raises (model_identity, the doc
         load), the old bridge's lights must not stay live on the new one."""
         self._iid, self._doc, self._matched = iid, None, {}
-        self._meshes, self._glow_shapes = [], []
+        self._meshes, self._glow_shapes, self._resolved = [], [], {}
         try:
             self._io.set_bridge_material_overrides(None, [])
             self._io.set_bridge_spots([])
@@ -97,11 +97,13 @@ class BridgeRuntime:
             self._matched = matched
         warnings = []
         try:
+            # Each mesh's material: its object's link, else its texture's.
+            self._resolved = ld.resolve(doc, self._meshes, self._matched)
             self._io.set_bridge_material_overrides(
-                self._iid, materials.overrides(doc, self._matched))
-            spot_list, warnings = lights.spots(doc, self._matched)
+                self._iid, materials.overrides(doc, self._resolved))
+            spot_list, warnings = lights.spots(doc, self._matched, self._resolved)
             self._glow_shapes, glow_warnings = glow.glow_objects(
-                doc, self._matched, self._meshes)
+                doc, self._resolved, self._meshes)
             warnings = warnings + glow_warnings
             for w in warnings:
                 dev_mode.log_swallowed(
@@ -140,7 +142,8 @@ class BridgeRuntime:
             self._io.set_bridge_glow(
                 self._iid, glow.live(self._glow_shapes, self._fade, self._t))
             self._io.set_bridge_spot_colours(
-                lights.live_colours(self._doc, self._matched, self._fade, self._t))
+                lights.live_colours(self._doc, self._matched, self._resolved,
+                                    self._fade, self._t))
         except Exception as e:  # noqa: BLE001 - never let bridge data kill the frame
             dev_mode.log_swallowed("bridge runtime live push", e)
 
@@ -157,4 +160,4 @@ class BridgeRuntime:
             dev_mode.log_swallowed("bridge runtime detach", e)
         finally:
             self._iid, self._doc, self._matched = None, None, {}
-            self._meshes, self._glow_shapes = [], []
+            self._meshes, self._glow_shapes, self._resolved = [], [], {}

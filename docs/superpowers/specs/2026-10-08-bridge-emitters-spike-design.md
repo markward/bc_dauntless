@@ -745,9 +745,27 @@ they use the yellow/red probe.
 
 - An **object** is one NIF shape (identity unchanged, §4).
 - The bridge file holds a **material library**: named materials. An object
-  links to at most one. Editing a material changes every object linked to
-  it ("used by N objects"); **Duplicate** gives the object its own copy to
-  diverge; **Unlink** returns it to the defaults.
+  links to at most one. Editing a material changes every object using it
+  ("used by N objects"); **Duplicate** gives the object its own copy to
+  diverge.
+- **Each TGA is a material** (Mark, 2026-10-11): `textures` maps a texture
+  (case-folded file name) to a material, named after it (`Map 13`). An
+  object with **no link uses its texture's material**, so editing one wall
+  panel's roughness changes every panel with that TGA. A link **replaces**
+  the texture's material (no layering) -- that is how 4 of the 22
+  `Map 19.tga` shapes are the alcove: select one, Duplicate (`Map 19 copy`),
+  rename it, link the other three. **Unlink** returns an object to its
+  texture's material (the chip names it, "texture · Map 19"). The texture's
+  material is made empty on its first edit; an object with no texture gets
+  a new linked material instead. One resolver (`lighting_doc.resolve`:
+  link, else texture) feeds the overrides, glow and lights.
+  *(Replaces per-object finish materials: identical TGAs showed up as
+  unrelated `material N` entries. The committed DBridge/EBridge files were
+  folded once (`fold_into_textures`, with the real built textures): per
+  texture the most common finish -- equal to 0.05 counts as one -- became
+  the texture's material, a tie going to the finish nearest the default so
+  the unlinked meshes that adopt it change least; each object that differs
+  kept a `<texture> 2`... link.)*
 - **Our material is properties layered over the object's texture**, not
   Blender's texture-owning material: the albedo still comes from the NIF and
   the mesh fixes, and `_rough` / `_metal` / `_normal` / `_emissive` maps are
@@ -827,7 +845,9 @@ steady).
    "modifiers": [{"type": "emitter", "scope": ["green"], "tint": [1, 1, 1], "level": 1},
                  {"type": "emitter", "scope": ["red"], "tint": [1, 0.12, 0.08], "level": 0.5},
                  {"type": "animation", "scope": ["red"], "shape": "sine", "period_s": 2,
-                  "min": 0.2, "phase": 0}]}},
+                  "min": 0.2, "phase": 0}]},
+   "Map 13": {"roughness": 0.3}},
+ "textures": {"map 13.tga": "Map 13"},
  "objects": {"401:": {"block": 401, "name": "", "material": "alcove",
    "lights": [{"position": [157, -135, 105], "direction": [0, 0, -1], "inner_deg": 45,
                "outer_deg": 85, "range": 150, "intensity": 8000}]}}}

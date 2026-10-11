@@ -681,7 +681,8 @@ def test_material_new_link_duplicate_and_library(env_rt):
     p.dispatch_event("material-new")
     sel = payload(p)["selected"]
     assert sel["material"] == "material 1"
-    assert sel["library"] == [{"name": "material 1", "used_by": 1}]
+    assert sel["library"] == [{"name": "material 1", "used_by": 1, "texture": False}]
+    assert sel["linked"] is True
     p.dispatch_event("material-duplicate")
     assert payload(p)["selected"]["material"] == "material 1 copy"
     p.dispatch_event("material-link:material 1")
@@ -691,16 +692,43 @@ def test_material_new_link_duplicate_and_library(env_rt):
     assert payload(p)["selected"]["material"] is None
 
 
-def test_material_edits_need_a_linked_material_except_mod_add(env_rt):
+def test_an_unlinked_object_edits_its_texture_material(env_rt):
+    """Each TGA is a material (Mark 2026-10-11): with no link, the Material
+    tab is the texture's material -- made on the first edit, never a link."""
     p, h, rt = _sel(env_rt)
+    sel = payload(p)["selected"]
+    assert sel["material"] is None and sel["linked"] is False
+    assert sel["texture_material"] == "redalertpanel"
+    assert (sel["material_data"]["name"], sel["material_data"]["kind"]) == ("redalertpanel", "texture")
     p.dispatch_event("finish:roughness:0.2")
-    assert "7:redalertpanel" not in p._doc["objects"]
+    assert "7:redalertpanel" not in p._doc["objects"]          # no link made
+    assert p._doc["textures"] == {"redalertpanel.tga": "redalertpanel"}
+    assert p._doc["materials"]["redalertpanel"] == {"roughness": 0.2}
     p.dispatch_event("tab:material")
     p.dispatch_event("state:red")
-    p.dispatch_event("mod-add:emitter")                # creates + links a material
+    p.dispatch_event("mod-add:emitter")
     sel = payload(p)["selected"]
-    assert sel["material"] == "material 1"
+    assert sel["material"] == "redalertpanel" and sel["material_data"]["used_by"] == 1
     assert sel["material_data"]["modifiers"][0]["scope"] == ["red"]   # the preview state
+    assert {"name": "redalertpanel", "used_by": 1, "texture": True} in sel["library"]
+
+
+def test_duplicate_splits_one_object_off_its_texture_material(env_rt):
+    p, h, rt = _sel(env_rt)
+    p.dispatch_event("finish:roughness:0.2")
+    p.dispatch_event("material-duplicate")
+    sel = payload(p)["selected"]
+    assert (sel["material"], sel["linked"]) == ("redalertpanel copy", True)
+    assert p._doc["materials"]["redalertpanel copy"] == {"roughness": 0.2}
+    p.dispatch_event("material-link:")                          # back to the texture's
+    assert payload(p)["selected"]["material"] == "redalertpanel"
+
+
+def test_rename_of_a_texture_material_keeps_the_texture_on_it(env_rt):
+    p, h, rt = _sel(env_rt)
+    p.dispatch_event("material-rename:red panels")              # before any edit: makes it
+    assert p._doc["textures"] == {"redalertpanel.tga": "red panels"}
+    assert payload(p)["selected"]["material"] == "red panels"
 
 
 def test_finish_source_reports_map_material_default(env_rt):

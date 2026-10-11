@@ -82,13 +82,14 @@ def _state(**over):
 def _sel(**over):
     s = {"key": "7:p", "block": 7, "name": "p", "display_name": "panel",
          "node_chain": ["Scene Root"], "textures": ["Map 19.tga"], "tab": "object",
-         "expanded": [], "has_emission_map": True, "material": None,
+         "expanded": [], "has_emission_map": True, "material": None, "linked": False,
+         "texture_material": "Map 19",
          "library": [{"name": "alcove", "used_by": 4}], "lights": [], "material_data": None}
     s.update(over)
     return s
 
 
-MAT = {"name": "alcove", "finish": {"roughness": {"value": 1.0, "source": "default"},
+MAT = {"name": "alcove", "kind": "linked", "used_by": 4, "finish": {"roughness": {"value": 1.0, "source": "default"},
                                     "metalness": {"value": 0.0, "source": "default"}},
        "emission": {"without_map": "texture", "strength": 1.0}, "fade_s": 0.5,
        "modifiers": [{"type": "emitter", "scope": ["red"], "tint": [1, 0.1, 0.1], "level": 0.5},
@@ -213,3 +214,18 @@ def test_without_a_map_the_source_line_names_the_fallback():
     sel = _sel(tab="material", material="alcove", material_data=m, has_emission_map=False)
     [out] = _run([{"state": _state(selected=sel)}])
     assert "source: flat colour (no emission map)" in out["body"]
+
+
+def test_the_unlink_chip_names_the_texture_material():
+    [out] = _run([{"state": _state(selected=_sel())}])
+    body = out["body"]
+    assert "texture · Map 19" in body and "material-link:" in body
+    assert "Material: Map 19 (texture)" in body
+    assert "material-duplicate" in body                 # split off the texture's material
+
+
+def test_a_texture_material_says_so_on_the_material_tab():
+    m = dict(MAT, name="Map 19", kind="texture", used_by=22)
+    sel = _sel(tab="material", material="Map 19", material_data=m)
+    [out] = _run([{"state": _state(selected=sel)}])
+    assert "texture material · used by 22 objects" in out["body"]

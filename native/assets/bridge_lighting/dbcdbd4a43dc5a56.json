@@ -1,6 +1,67 @@
 {
   "format": 2,
   "materials": {
+    "Map 1": {
+      "roughness": 0
+    },
+    "Map 12": {
+      "roughness": 0
+    },
+    "Map 15": {
+      "roughness": 0
+    },
+    "Map 16": {
+      "roughness": 0.24
+    },
+    "Map 18": {
+      "roughness": 0.53
+    },
+    "Map 18 2": {
+      "roughness": 0.5
+    },
+    "Map 19": {
+      "roughness": 0.98
+    },
+    "Map 19 2": {
+      "roughness": 0
+    },
+    "Map 22a": {
+      "roughness": 0.05
+    },
+    "Map 22a 2": {
+      "roughness": 0
+    },
+    "Map 22b": {
+      "roughness": 0
+    },
+    "Map 22c": {
+      "roughness": 0
+    },
+    "Map 24": {
+      "roughness": 0
+    },
+    "Map 26": {
+      "metalness": 0.63
+    },
+    "Map 27": {
+      "metalness": 0,
+      "roughness": 0.63
+    },
+    "Map 4": {
+      "roughness": 0.01
+    },
+    "Map 6": {
+      "roughness": 0
+    },
+    "Map 7": {
+      "roughness": 0
+    },
+    "Map 8": {
+      "roughness": 0
+    },
+    "Map 9": {
+      "roughness": 0.53
+    },
     "alcove": {
       "emission": {
         "without_map": "texture"
@@ -43,146 +104,10 @@
         }
       ]
     },
-    "material 1": {
+    "g_imp_connops": {
       "roughness": 0
     },
-    "material 10": {
-      "metalness": 0.63
-    },
-    "material 11": {
-      "roughness": 0
-    },
-    "material 12": {
-      "roughness": 0.53
-    },
-    "material 13": {
-      "roughness": 0
-    },
-    "material 14": {
-      "roughness": 0.5
-    },
-    "material 15": {
-      "roughness": 0
-    },
-    "material 16": {
-      "roughness": 0
-    },
-    "material 17": {
-      "roughness": 0
-    },
-    "material 18": {
-      "roughness": 0.24
-    },
-    "material 19": {
-      "roughness": 0
-    },
-    "material 2": {
-      "roughness": 0
-    },
-    "material 20": {
-      "roughness": 0
-    },
-    "material 21": {
-      "roughness": 0
-    },
-    "material 22": {
-      "roughness": 0
-    },
-    "material 23": {
-      "roughness": 0
-    },
-    "material 24": {
-      "roughness": 0.01
-    },
-    "material 25": {
-      "roughness": 0
-    },
-    "material 26": {
-      "roughness": 0
-    },
-    "material 27": {
-      "roughness": 0.02
-    },
-    "material 28": {
-      "roughness": 0
-    },
-    "material 29": {
-      "roughness": 0
-    },
-    "material 3": {
-      "roughness": 0
-    },
-    "material 30": {
-      "roughness": 0
-    },
-    "material 31": {
-      "roughness": 0.05
-    },
-    "material 32": {
-      "roughness": 0
-    },
-    "material 33": {
-      "roughness": 0.98
-    },
-    "material 34": {
-      "roughness": 0
-    },
-    "material 35": {
-      "roughness": 0
-    },
-    "material 36": {
-      "roughness": 0.53
-    },
-    "material 37": {
-      "roughness": 0.54
-    },
-    "material 38": {
-      "roughness": 0.54
-    },
-    "material 39": {
-      "roughness": 0.53
-    },
-    "material 4": {
-      "roughness": 0
-    },
-    "material 40": {
-      "roughness": 0.53
-    },
-    "material 41": {
-      "roughness": 0
-    },
-    "material 42": {
-      "roughness": 0
-    },
-    "material 43": {
-      "roughness": 0.54
-    },
-    "material 44": {
-      "roughness": 0
-    },
-    "material 45": {
-      "roughness": 0
-    },
-    "material 46": {
-      "roughness": 0
-    },
-    "material 47": {
-      "roughness": 0
-    },
-    "material 5": {
-      "roughness": 0
-    },
-    "material 6": {
-      "roughness": 0
-    },
-    "material 7": {
-      "metalness": 0,
-      "roughness": 0.63
-    },
-    "material 8": {
-      "roughness": 0
-    },
-    "material 9": {
+    "g_imp_redbars": {
       "roughness": 0
     },
     "roof": {
@@ -251,77 +176,15 @@
           "type": "emitter"
         }
       ]
+    },
+    "running_0": {
+      "roughness": 0
     }
   },
   "objects": {
-    "102:": {
-      "block": 102,
-      "material": "material 7",
-      "name": ""
-    },
-    "133:": {
-      "block": 133,
-      "material": "material 8",
-      "name": ""
-    },
-    "139:": {
-      "block": 139,
-      "material": "material 9",
-      "name": ""
-    },
-    "17:": {
-      "block": 17,
-      "material": "material 1",
-      "name": ""
-    },
-    "185:": {
-      "block": 185,
-      "material": "material 10",
-      "name": ""
-    },
-    "189:": {
-      "block": 189,
-      "material": "material 11",
-      "name": ""
-    },
-    "224:": {
-      "block": 224,
-      "material": "material 12",
-      "name": ""
-    },
-    "236:": {
-      "block": 236,
-      "material": "material 13",
-      "name": ""
-    },
     "255:": {
       "block": 255,
-      "material": "material 14",
-      "name": ""
-    },
-    "277:": {
-      "block": 277,
-      "material": "material 15",
-      "name": ""
-    },
-    "280:": {
-      "block": 280,
-      "material": "material 16",
-      "name": ""
-    },
-    "283:": {
-      "block": 283,
-      "material": "material 17",
-      "name": ""
-    },
-    "288:": {
-      "block": 288,
-      "material": "material 18",
-      "name": ""
-    },
-    "291:": {
-      "block": 291,
-      "material": "material 19",
+      "material": "Map 18 2",
       "name": ""
     },
     "299:": {
@@ -344,22 +207,6 @@
           "range": 200
         }
       ],
-      "material": "material 20",
-      "name": ""
-    },
-    "29:": {
-      "block": 29,
-      "material": "material 2",
-      "name": ""
-    },
-    "307:": {
-      "block": 307,
-      "material": "material 21",
-      "name": ""
-    },
-    "315:": {
-      "block": 315,
-      "material": "material 22",
       "name": ""
     },
     "319:": {
@@ -382,47 +229,11 @@
           "range": 200
         }
       ],
-      "material": "material 23",
-      "name": ""
-    },
-    "334:": {
-      "block": 334,
-      "material": "material 24",
-      "name": ""
-    },
-    "337:": {
-      "block": 337,
-      "material": "material 25",
-      "name": ""
-    },
-    "347:": {
-      "block": 347,
-      "material": "material 26",
-      "name": ""
-    },
-    "355:": {
-      "block": 355,
-      "material": "material 27",
-      "name": ""
-    },
-    "358:": {
-      "block": 358,
-      "material": "material 28",
-      "name": ""
-    },
-    "368:": {
-      "block": 368,
-      "material": "material 29",
       "name": ""
     },
     "392:": {
       "block": 392,
-      "material": "material 30",
-      "name": ""
-    },
-    "395:": {
-      "block": 395,
-      "material": "material 31",
+      "material": "Map 19 2",
       "name": ""
     },
     "401:": {
@@ -448,11 +259,6 @@
       "material": "alcove",
       "name": ""
     },
-    "415:": {
-      "block": 415,
-      "material": "material 32",
-      "name": ""
-    },
     "423:": {
       "block": 423,
       "lights": [
@@ -474,11 +280,6 @@
         }
       ],
       "material": "alcove",
-      "name": ""
-    },
-    "426:": {
-      "block": 426,
-      "material": "material 33",
       "name": ""
     },
     "441:": {
@@ -527,94 +328,9 @@
       "material": "alcove",
       "name": ""
     },
-    "45:": {
-      "block": 45,
-      "material": "material 3",
-      "name": ""
-    },
     "471:": {
       "block": 471,
-      "material": "material 34",
-      "name": ""
-    },
-    "479:": {
-      "block": 479,
-      "material": "material 35",
-      "name": ""
-    },
-    "51:": {
-      "block": 51,
-      "material": "material 4",
-      "name": ""
-    },
-    "552:": {
-      "block": 552,
-      "material": "material 36",
-      "name": ""
-    },
-    "563:": {
-      "block": 563,
-      "material": "material 37",
-      "name": ""
-    },
-    "575:": {
-      "block": 575,
-      "material": "material 38",
-      "name": ""
-    },
-    "59:": {
-      "block": 59,
-      "material": "material 5",
-      "name": ""
-    },
-    "631:": {
-      "block": 631,
-      "material": "material 39",
-      "name": ""
-    },
-    "63:": {
-      "block": 63,
-      "material": "material 6",
-      "name": ""
-    },
-    "642:": {
-      "block": 642,
-      "material": "material 40",
-      "name": ""
-    },
-    "655:": {
-      "block": 655,
-      "material": "material 41",
-      "name": ""
-    },
-    "666:": {
-      "block": 666,
-      "material": "material 42",
-      "name": ""
-    },
-    "677:": {
-      "block": 677,
-      "material": "material 43",
-      "name": ""
-    },
-    "685:": {
-      "block": 685,
-      "material": "material 44",
-      "name": ""
-    },
-    "688:": {
-      "block": 688,
-      "material": "material 45",
-      "name": ""
-    },
-    "691:": {
-      "block": 691,
-      "material": "material 46",
-      "name": ""
-    },
-    "697:": {
-      "block": 697,
-      "material": "material 47",
+      "material": "Map 22a 2",
       "name": ""
     },
     "76:": {
@@ -661,5 +377,27 @@
       "name": ""
     }
   },
-  "source": "/Users/mward/Documents/Star Trek Bridge Commander/game/data/Models/Sets/DBridge/DBridge.nif"
+  "source": "/Users/mward/Documents/Star Trek Bridge Commander/game/data/Models/Sets/DBridge/DBridge.nif",
+  "textures": {
+    "g_imp_connops.tga": "g_imp_connops",
+    "g_imp_redbars.tga": "g_imp_redbars",
+    "map 1.tga": "Map 1",
+    "map 12.tga": "Map 12",
+    "map 15.tga": "Map 15",
+    "map 16.tga": "Map 16",
+    "map 18.tga": "Map 18",
+    "map 19.tga": "Map 19",
+    "map 22a.tga": "Map 22a",
+    "map 22b.tga": "Map 22b",
+    "map 22c.tga": "Map 22c",
+    "map 24.tga": "Map 24",
+    "map 26.tga": "Map 26",
+    "map 27.tga": "Map 27",
+    "map 4.tga": "Map 4",
+    "map 6.tga": "Map 6",
+    "map 7.tga": "Map 7",
+    "map 8.tga": "Map 8",
+    "map 9.tga": "Map 9",
+    "running_0.tga": "running_0"
+  }
 }

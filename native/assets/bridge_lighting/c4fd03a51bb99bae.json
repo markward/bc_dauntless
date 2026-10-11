@@ -1,171 +1,120 @@
 {
   "format": 2,
   "materials": {
-    "material 1": {
-      "roughness": 0.02
-    },
-    "material 10": {
-      "metalness": 1,
+    "LCarsSchematicRight": {
       "roughness": 0
     },
-    "material 11": {
-      "metalness": 1,
-      "roughness": 0.04
-    },
-    "material 12": {
-      "metalness": 1,
-      "roughness": 0.17
-    },
-    "material 13": {
-      "metalness": 1,
-      "roughness": 0.08
-    },
-    "material 14": {
-      "metalness": 0.98,
+    "ceilingwhite": {
       "roughness": 0
     },
-    "material 15": {
-      "metalness": 0.93,
-      "roughness": 0
-    },
-    "material 16": {
-      "roughness": 0
-    },
-    "material 17": {
-      "roughness": 0
-    },
-    "material 18": {
-      "roughness": 0
-    },
-    "material 19": {
-      "roughness": 0
-    },
-    "material 2": {
-      "roughness": 0
-    },
-    "material 3": {
-      "metalness": 1,
-      "roughness": 0.08
-    },
-    "material 4": {
-      "metalness": 1,
-      "roughness": 0.14
-    },
-    "material 5": {
-      "roughness": 0.14
-    },
-    "material 6": {
-      "roughness": 0
-    },
-    "material 7": {
+    "chair": {
       "metalness": 1,
       "roughness": 0.06
     },
-    "material 8": {
+    "chair 2": {
       "metalness": 1,
       "roughness": 0.02
     },
-    "material 9": {
+    "consoletopview": {
+      "roughness": 0
+    },
+    "lcarsschematicleft": {
+      "roughness": 0
+    },
+    "newcomp": {
+      "metalness": 1,
+      "roughness": 0
+    },
+    "newcomp 2": {
       "metalness": 0.89,
       "roughness": 0
+    },
+    "newcomp 3": {
+      "metalness": 1,
+      "roughness": 0.04
+    },
+    "newcomp 4": {
+      "metalness": 1,
+      "roughness": 0.17
+    },
+    "newcomp 5": {
+      "metalness": 1,
+      "roughness": 0.08
+    },
+    "newcomp 6": {
+      "metalness": 0.93,
+      "roughness": 0
+    },
+    "roofcovelight": {
+      "roughness": 0.02
+    },
+    "walllcarspanel": {
+      "roughness": 0.14
+    },
+    "walllcarspanel 2": {
+      "roughness": 0
+    },
+    "walllight": {
+      "metalness": 1,
+      "roughness": 0.14
+    },
+    "walllight 2": {
+      "metalness": 1,
+      "roughness": 0.08
     }
   },
   "objects": {
-    "12:Material: roof grill": {
-      "block": 12,
-      "material": "material 1",
-      "name": "Material: roof grill"
-    },
-    "176:Material: e chairs": {
-      "block": 176,
-      "material": "material 7",
-      "name": "Material: e chairs"
-    },
-    "20:Dim Material": {
-      "block": 20,
-      "material": "material 2",
-      "name": "Dim Material"
-    },
     "29:walllight 01 Material: Wall Light": {
       "block": 29,
-      "material": "material 3",
+      "material": "walllight 2",
       "name": "walllight 01 Material: Wall Light"
     },
     "341:Material: e chairs": {
       "block": 341,
-      "material": "material 8",
+      "material": "chair 2",
       "name": "Material: e chairs"
-    },
-    "34:walllight 02 Material: Wall Light": {
-      "block": 34,
-      "material": "material 4",
-      "name": "walllight 02 Material: Wall Light"
     },
     "359:Material: door center1": {
       "block": 359,
-      "material": "material 9",
-      "name": "Material: door center1"
-    },
-    "389:Material: door center1": {
-      "block": 389,
-      "material": "material 10",
+      "material": "newcomp 2",
       "name": "Material: door center1"
     },
     "403:Material: door center1": {
       "block": 403,
-      "material": "material 11",
+      "material": "newcomp 3",
       "name": "Material: door center1"
     },
     "476:Material: door center1": {
       "block": 476,
-      "material": "material 12",
+      "material": "newcomp 4",
       "name": "Material: door center1"
     },
     "487:Material: door center": {
       "block": 487,
-      "material": "material 13",
+      "material": "newcomp 5",
       "name": "Material: door center"
-    },
-    "499:Material: door center1": {
-      "block": 499,
-      "material": "material 14",
-      "name": "Material: door center1"
     },
     "513:Material: door center1": {
       "block": 513,
-      "material": "material 15",
+      "material": "newcomp 6",
       "name": "Material: door center1"
-    },
-    "530:Material: consoleLCARS": {
-      "block": 530,
-      "material": "material 16",
-      "name": "Material: consoleLCARS"
-    },
-    "536:Material: consoleLCARS": {
-      "block": 536,
-      "material": "material 17",
-      "name": "Material: consoleLCARS"
-    },
-    "546:Material: Lcars Schematic left": {
-      "block": 546,
-      "material": "material 18",
-      "name": "Material: Lcars Schematic left"
-    },
-    "563:Material: Lcars Schematic right": {
-      "block": 563,
-      "material": "material 19",
-      "name": "Material: Lcars Schematic right"
-    },
-    "63:Material: Material #38": {
-      "block": 63,
-      "material": "material 5",
-      "name": "Material: Material #38"
     },
     "68:Material: Material #38": {
       "block": 68,
-      "material": "material 6",
+      "material": "walllcarspanel 2",
       "name": "Material: Material #38"
     }
   },
-  "source": "/Users/mward/Documents/Star Trek Bridge Commander/game/data/Models/Sets/EBridge/EBridge.nif"
+  "source": "/Users/mward/Documents/Star Trek Bridge Commander/game/data/Models/Sets/EBridge/EBridge.nif",
+  "textures": {
+    "ceilingwhite.tga": "ceilingwhite",
+    "chair.tga": "chair",
+    "consoletopview.tga": "consoletopview",
+    "lcarsschematicleft.tga": "lcarsschematicleft",
+    "lcarsschematicright.tga": "LCarsSchematicRight",
+    "newcomp.tga": "newcomp",
+    "roofcovelight.tga": "roofcovelight",
+    "walllcarspanel.tga": "walllcarspanel",
+    "walllight.tga": "walllight"
+  }
 }

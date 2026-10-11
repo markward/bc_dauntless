@@ -77,24 +77,29 @@ function _beUsers(n) {
     return 'used by ' + n + (n === 1 ? ' object' : ' objects');
 }
 
+// Each TGA is a material (Mark 2026-10-11): with no link an object uses its
+// texture's material, so "unlink" is the chip naming that material.
 function _beLibrary(s) {
-    let html = '<div class="be-list">' + _beChip('none', 'material-link:', !s.material, false);
+    const unlinked = s.texture_material ? 'texture · ' + s.texture_material : 'none';
+    let html = '<div class="be-list">' + _beChip(unlinked, 'material-link:', !s.linked, false);
     (s.library || []).forEach(function (m) {
-        html += '<button class="be-chip' + (m.name === s.material ? ' active' : '') + '"'
+        html += '<button class="be-chip' + (s.linked && m.name === s.material ? ' active' : '') + '"'
             + ' onclick="dauntlessEvent(\'bridge-emitters/material-link:' + _beJs(m.name) + '\')">'
-            + _beEsc(m.name + ' — ' + _beUsers(m.used_by)) + '</button>';
+            + _beEsc(m.name + (m.texture ? ' (texture)' : '') + ' — ' + _beUsers(m.used_by))
+            + '</button>';
     });
     html += '</div><div class="be-row">'
         + '<button onclick="dauntlessEvent(\'bridge-emitters/material-new\')">New</button>';
-    if (s.material)
+    if (s.material || s.texture_material)
         html += '<button onclick="dauntlessEvent(\'bridge-emitters/material-duplicate\')">Duplicate</button>';
     return html + '</div>';
 }
 
 function _beObjectTab(s) {
     const open = function (id) { return (s.expanded || []).indexOf(id) >= 0; };
-    let html = _beEntry('material', 'Material: ' + (s.material || 'none'), true, null, null,
-                        _beLibrary(s));
+    const title = s.linked ? s.material
+        : (s.texture_material ? s.texture_material + ' (texture)' : 'none');
+    let html = _beEntry('material', 'Material: ' + title, true, null, null, _beLibrary(s));
     if (!s.material && s.has_emission_map) {
         const stem = String((s.textures || [''])[0]).replace(/\.[^.]*$/, '');
         html += '<div class="be-help">Emission map · ' + _beEsc(stem) + '_emissive · steady</div>';
@@ -178,13 +183,13 @@ function _beMaterialTab(s) {
             + _beAddModifier();
     }
     const open = function (id) { return (s.expanded || []).indexOf(id) >= 0; };
-    const used = ((s.library || []).filter(function (x) { return x.name === m.name; })[0] || {}).used_by || 0;
     // Commits on `change` (Enter blurs via text_capture) and on the button.
     let html = '<div class="be-row"><input type="text" id="be-rename" value="' + _beEsc(m.name) + '"'
         + ' style="width:150px" onchange="dauntlessEvent(\'bridge-emitters/material-rename:\' + this.value)">'
         + '<button onclick="dauntlessEvent(\'bridge-emitters/material-rename:\' + '
         + 'document.getElementById(\'be-rename\').value)">Rename</button>'
-        + '<span class="be-source">' + _beEsc(_beUsers(used)) + '</span></div>';
+        + '<span class="be-source">' + _beEsc((m.kind === 'texture' ? 'texture material · ' : '')
+                                            + _beUsers(m.used_by || 0)) + '</span></div>';
     // Finish and Surface are fixed sections, open by default: toggling
     // their header collapses them (modifiers and lights start collapsed).
     html += _beEntry('finish', 'Finish', !open('finish'), null, null,

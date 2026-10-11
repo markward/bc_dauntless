@@ -360,8 +360,31 @@ class BridgeEmittersPanel(Panel):
     def _object(self):
         return self._doc["objects"].get(self._selected.key)
 
-    def _material_name(self):
+    def _linked(self):
         return (self._object() or {}).get("material")
+
+    def _texture(self):
+        return ld.mesh_texture(self._selected_mesh_info() or {})
+
+    def _material_name(self):
+        """The selected object's material as it renders: its link, else its
+        texture's material (Mark 2026-10-11: each TGA is a material); None
+        when neither exists yet."""
+        tex = self._texture()
+        return self._linked() or (self._doc.get("textures", {}).get(ld.texture_key(tex))
+                                  if tex else None)
+
+    def _ensure_material(self):
+        """The material to edit, made if need be -- the texture's (never a
+        link), or a new linked one for an object with no texture. Call only
+        inside an _edit, so the creation is part of that undo step."""
+        name = self._material_name()
+        if name is not None:
+            return name
+        tex = self._texture()
+        if tex:
+            return editing.texture_material(self._doc, tex)
+        return editing.new_material(self._doc, self._selected.block, self._selected.name)
 
     def _edit_action(self, action):
         b, n = self._selected.block, self._selected.name
@@ -369,18 +392,21 @@ class BridgeEmittersPanel(Panel):
         if action == "material-new":
             self._edit(lambda: editing.new_material(self._doc, b, n))
         elif action == "material-duplicate":
-            self._edit(lambda: editing.duplicate(self._doc, b, n))
+            self._edit(lambda: editing.duplicate(self._doc, b, n,
+                                                 current=self._ensure_material()))
         elif head == "material-link":
             self._edit(lambda: editing.link(self._doc, b, n, rest))
         elif head == "material-rename":
-            old = self._material_name()
-            if old is not None:
-                result = {}
-                self._edit(lambda: result.update(err=editing.rename(self._doc, old, rest)))
-                if result.get("err"):
-                    self._status = result["err"]
-                elif rest.strip() != old:     # the button after Enter re-commits: no-op
-                    self._status = f"Renamed {old!r} to {rest.strip()!r}"
+            result = {}
+
+            def rename():
+                result["old"] = old = self._ensure_material()
+                result["err"] = editing.rename(self._doc, old, rest)
+            self._edit(rename)
+            if result.get("err"):
+                self._status = result["err"]
+            elif rest.strip() != result.get("old"):   # the button after Enter re-commits: no-op
+                self._status = f"Renamed {result.get('old')!r} to {rest.strip()!r}"
         elif action == "light-add":
             if self._last_hit is not None:
                 pos, normal = self._last_hit
@@ -389,9 +415,7 @@ class BridgeEmittersPanel(Panel):
             self._light_action(head, rest)
         elif head == "mod-add":
             def add():
-                if self._material_name() is None:
-                    editing.new_material(self._doc, b, n)
-                editing.add_modifier(self._doc["materials"][self._material_name()],
+                editing.add_modifier(self._doc["materials"][self._ensure_material()],
                                      rest, self._state)
             self._edit(add)
         else:
@@ -423,26 +447,29 @@ class BridgeEmittersPanel(Panel):
             self._edit(lambda: editing.set_light(light, field, raw))
 
     def _material_action(self, head, rest):
-        name = self._material_name()
-        if name is None:
+        # Setting a value may make the texture's material; clearing or
+        # editing a modifier needs one that exists.
+        if self._material_name() is None and head not in ("finish", "emission", "fade"):
             return
-        mat = self._doc["materials"][name]
+
+        def mat():
+            return self._doc["materials"][self._ensure_material()]
         if head == "finish":
             ch, _, raw = rest.partition(":")
-            self._edit(lambda: editing.set_finish(mat, ch, raw))
+            self._edit(lambda: editing.set_finish(mat(), ch, raw))
         elif head == "finish-clear":
-            self._edit(lambda: editing.clear_finish(mat, rest))
+            self._edit(lambda: editing.clear_finish(mat(), rest))
         elif head == "emission":
             field, _, raw = rest.partition(":")
-            self._edit(lambda: editing.set_emission(mat, field, raw))
+            self._edit(lambda: editing.set_emission(mat(), field, raw))
         elif head == "fade":
-            self._edit(lambda: editing.set_fade(mat, rest))
+            self._edit(lambda: editing.set_fade(mat(), rest))
         elif head == "mod-remove":
             try:
                 i = int(rest)
             except ValueError:
                 return
-            self._edit(lambda: editing.remove_modifier(mat, i))
+            self._edit(lambda: editing.remove_modifier(mat(), i))
         elif head == "mod":
             idx, _, tail = rest.partition(":")
             field, _, raw = tail.partition(":")
@@ -451,9 +478,9 @@ class BridgeEmittersPanel(Panel):
             except ValueError:
                 return
             if field == "scope":
-                self._edit(lambda: editing.toggle_scope(mat, i, raw))
+                self._edit(lambda: editing.toggle_scope(mat(), i, raw))
             else:
-                self._edit(lambda: editing.set_modifier(mat, i, field, raw))
+                self._edit(lambda: editing.set_modifier(mat(), i, field, raw))
 
     def _after_change(self):
         """Re-push the live doc through the production BridgeRuntime after
@@ -522,11 +549,40 @@ class BridgeEmittersPanel(Panel):
     def _maps(self):
         return (self._selected_mesh_info() or {}).get("maps") or {}
 
-    def _material_payload(self):
-        name = self._material_name()
-        if name is None:
+    def _usage(self):
+        """{material: meshes rendering with it} over the whole bridge, and
+        the meshes with no link (which follow their texture's material)."""
+        meshes = (self._info or {}).get("meshes", [])
+        matched = ld.match_shapes(self._doc, meshes)[0]
+        resolved = ld.resolve(self._doc, meshes, matched)
+        counts = {}
+        for name in resolved.values():
+            counts[name] = counts.get(name, 0) + 1
+        linked = {matched[k] for k in matched if self._doc["objects"][k].get("material")}
+        return counts, [m for m in meshes if m["mesh"] not in linked]
+
+    def _texture_material(self):
+        """The selected object's texture's material name -- or the name it
+        will get when first edited; None for an object with no texture."""
+        tex = self._texture()
+        if not tex:
             return None
-        mat = self._doc["materials"][name]
+        return (self._doc.get("textures", {}).get(ld.texture_key(tex))
+                or ld.free_name(self._doc, ld.texture_stem(tex)))
+
+    def _material_payload(self, counts, unlinked):
+        name = self._material_name()
+        tex = self._texture()
+        if name is None and not tex:
+            return None
+        kind = "linked" if self._linked() else "texture"
+        if name is None:               # the texture's material, not made yet
+            key = ld.texture_key(tex)
+            name, mat = self._texture_material(), {}
+            used = sum(1 for m in unlinked
+                       if ld.mesh_texture(m) and ld.texture_key(ld.mesh_texture(m)) == key)
+        else:
+            mat, used = self._doc["materials"][name], counts.get(name, 0)
         maps = self._maps()
         finish = {}
         for ch, default in _CHANNELS.items():
@@ -537,7 +593,7 @@ class BridgeEmittersPanel(Panel):
             else:
                 finish[ch] = {"value": default, "source": "default"}
         emission = mat.get("emission", {})
-        return {"name": name, "finish": finish,
+        return {"name": name, "kind": kind, "used_by": used, "finish": finish,
                 "emission": {"without_map": emission.get("without_map", "texture"),
                              "strength": emission.get("strength", 1.0)},
                 "fade_s": mat.get("fade_s", behaviour.DEFAULT_FADE_S),
@@ -546,7 +602,8 @@ class BridgeEmittersPanel(Panel):
     def _selected_payload(self):
         if self._selected is None or self._doc is None:
             return None
-        users = editing.users(self._doc)
+        counts, unlinked = self._usage()
+        textured = set(self._doc.get("textures", {}).values())
         obj = self._object() or {}
         return {"key": self._selected.key, "block": self._selected.block,
                 "name": self._selected.name,
@@ -555,11 +612,13 @@ class BridgeEmittersPanel(Panel):
                 "textures": list(self._selected.textures),
                 "tab": self._tab, "expanded": sorted(self._expanded),
                 "has_emission_map": bool(self._maps().get("emissive")),
-                "material": obj.get("material"),
-                "library": [{"name": m, "used_by": users.get(m, 0)}
+                "material": self._material_name(),
+                "linked": bool(obj.get("material")),
+                "texture_material": self._texture_material(),
+                "library": [{"name": m, "used_by": counts.get(m, 0), "texture": m in textured}
                             for m in sorted(self._doc["materials"])],
                 "lights": copy.deepcopy(obj.get("lights", [])),
-                "material_data": self._material_payload()}
+                "material_data": self._material_payload(counts, unlinked)}
 
     def render_payload(self) -> Optional[str]:
         if not self._visible:

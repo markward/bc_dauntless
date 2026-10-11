@@ -253,8 +253,21 @@ def _material(m, where):
             _modifier(mod, f"{where}.modifiers[{i}]")
 
 
+def texture_key(name) -> str:
+    """A texture's identity in `textures`: its file name, case-folded (BC
+    paths mix case and separators)."""
+    return str(name).replace("\\", "/").rsplit("/", 1)[-1].lower()
+
+
+def texture_stem(name) -> str:
+    """The display name a texture's material gets: the file name as written,
+    without its extension."""
+    base = str(name).replace("\\", "/").rsplit("/", 1)[-1]
+    return base.rsplit(".", 1)[0] if "." in base else base
+
+
 def validate(doc) -> dict:
-    _obj(doc, "$", {"format", "source", "materials", "objects"},
+    _obj(doc, "$", {"format", "source", "materials", "objects", "textures"},
          ("format", "materials", "objects"))
     if doc["format"] != FORMAT:
         _fail("$.format", f"must be {FORMAT}")
@@ -282,6 +295,12 @@ def validate(doc) -> dict:
                 _fail(f"{where}.lights", "must be a list")
             for i, light in enumerate(o["lights"]):
                 _light(light, f"{where}.lights[{i}]")
+    if "textures" in doc:
+        if not isinstance(doc["textures"], dict):
+            _fail("$.textures", "must be an object")
+        for tex, name in doc["textures"].items():
+            if name not in doc["materials"]:
+                _fail(f"$.textures.{tex}", f"no material named {name!r}")
     return doc
 
 
@@ -413,3 +432,118 @@ def match_shapes(doc, meshes):
         else:
             matched[key] = m["mesh"]
     return matched, warnings
+
+
+# ── texture materials (Mark 2026-10-11: each TGA is a material) ─────────────
+
+def mesh_texture(mesh) -> Optional[str]:
+    """A mesh's Base texture as built (host_io.model_identity), or None."""
+    tex = mesh.get("textures") or ()
+    return tex[0] if tex else None
+
+
+def resolve(doc, meshes, matched) -> dict:
+    """{mesh_index: material name} for every mesh that has one: the object's
+    own link wins (only where its name matched, see match_shapes); otherwise
+    the material of the mesh's texture (`textures`). Meshes with neither are
+    absent -- they render with the defaults."""
+    linked = {}
+    for key, mesh in matched.items():
+        name = doc["objects"].get(key, {}).get("material")
+        if name:
+            linked[mesh] = name
+    by_tex = doc.get("textures", {})
+    out = {}
+    for m in meshes:
+        i = m["mesh"]
+        if i in linked:
+            out[i] = linked[i]
+            continue
+        tex = mesh_texture(m)
+        name = by_tex.get(texture_key(tex)) if tex else None
+        if name:
+            out[i] = name
+    return out
+
+
+def free_name(doc, base) -> str:
+    """`base`, or `base 2`, `base 3`, ... -- the first unused material name."""
+    name, n = base, 2
+    while name in doc["materials"]:
+        name, n = f"{base} {n}", n + 1
+    return name
+
+
+def _finish_only(mat) -> bool:
+    return set(mat) <= {"roughness", "metalness"}
+
+
+def _finish_sig(mat) -> str:
+    """Finishes equal when rounded to 0.05 are one surface (slider noise:
+    DBridge's Map 9 doors sit at 0.53 and 0.54)."""
+    return json.dumps({k: round(v * 20) / 20 for k, v in mat.items()}, sort_keys=True)
+
+
+def _from_default(mat) -> float:
+    return abs(mat.get("roughness", 1.0) - 1.0) + abs(mat.get("metalness", 0.0))
+
+
+def fold_into_textures(doc, meshes) -> dict:
+    """One-off conversion (Mark 2026-10-11): objects linked to a FINISH-ONLY
+    material (roughness/metalness, nothing else) fold into a material for
+    their texture. Per texture the most common finish among those objects
+    wins (finishes equal to 0.05 count as one, taking the first one's value;
+    a tie goes to the finish nearest the default, so meshes that adopt it
+    change least); each object that differs keeps a link to its own
+    `<texture> 2`, `<texture> 3`, ... Profiled materials
+    (emission, modifiers, fade) stay linked. Meshes of that texture with no
+    link at all adopt the texture's material -- that is the point.
+
+    Mutates `doc`; returns {material: {folded, kept: [keys], adopted}}."""
+    matched, _ = match_shapes(doc, meshes)
+    by_mesh = {m["mesh"]: m for m in meshes}
+    groups = {}
+    for key in sorted(matched, key=lambda k: (doc["objects"][k]["block"], k)):
+        name = doc["objects"][key].get("material")
+        tex = mesh_texture(by_mesh[matched[key]])
+        if not name or not tex or not _finish_only(doc["materials"][name]):
+            continue
+        groups.setdefault(texture_key(tex), (tex, []))[1].append(key)
+    linked_meshes = {matched[k] for k, o in doc["objects"].items()
+                     if k in matched and o.get("material")}
+    report, dropped = {}, set()
+    doc.setdefault("textures", {})
+    for tkey, (tex, keys) in sorted(groups.items()):
+        mats = [doc["materials"][doc["objects"][k]["material"]] for k in keys]
+        sigs = [_finish_sig(m) for m in mats]
+        counts, rep = {}, {}
+        for s, m in zip(sigs, mats):
+            counts[s] = counts.get(s, 0) + 1
+            rep.setdefault(s, m)               # the first (lowest block) one's value
+        win = max(counts, key=lambda s: (counts[s], -_from_default(rep[s]), -sigs.index(s)))
+        name = free_name(doc, texture_stem(tex))
+        doc["materials"][name] = dict(rep[win])
+        doc["textures"][tkey] = name
+        kept, odd = [], {}
+        for key, sig in zip(keys, sigs):
+            obj = doc["objects"][key]
+            dropped.add(obj["material"])
+            if sig == win:
+                del obj["material"]
+                if set(obj) == {"block", "name"}:
+                    del doc["objects"][key]
+                continue
+            if sig not in odd:
+                odd[sig] = free_name(doc, texture_stem(tex))
+                doc["materials"][odd[sig]] = dict(rep[sig])
+            obj["material"] = odd[sig]
+            kept.append(key)
+        adopted = sum(1 for m in meshes if m["mesh"] not in linked_meshes
+                      and mesh_texture(m) and texture_key(mesh_texture(m)) == tkey)
+        report[name] = {"folded": len(keys) - len(kept), "kept": kept, "adopted": adopted}
+    in_use = {o.get("material") for o in doc["objects"].values()} | set(doc["textures"].values())
+    for name in dropped - in_use:
+        del doc["materials"][name]
+    if not doc["textures"]:
+        del doc["textures"]
+    return report

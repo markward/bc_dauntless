@@ -468,3 +468,18 @@ def test_offline_state_turns_an_unscoped_material_off(proj):
     rt.attach("iid")
     (_, _, rgb, level), = last(io, "set_bridge_glow")[2]
     assert level == 0.0 and rgb == (0.0, 0.0, 0.0)
+
+
+def test_attach_applies_a_texture_material_to_a_mesh_with_no_object(proj):
+    """Each TGA is a material (Mark 2026-10-11): production applies the
+    texture's material to every unlinked mesh using that texture."""
+    info = {"source": "/x.nif", "content_hash": HASH, "meshes": [
+        {"mesh": 0, "block": 3, "name": "floor", "node_chain": [], "material": 0,
+         "textures": ["Map 13.tga"], "maps": {}}]}
+    d = ld.empty_doc("x")
+    d["materials"]["Map 13"] = {"metalness": 1}
+    d["textures"] = {"map 13.tga": "Map 13"}
+    lw.save(d, proj / "bridge_lighting" / f"{HASH}.json")
+    io = FakeIO(info=info)
+    runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0).attach("iid")
+    assert ("set_bridge_material_overrides", "iid", [(0, -1.0, 1.0)]) in io.calls

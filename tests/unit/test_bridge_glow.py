@@ -23,14 +23,19 @@ def _doc():
 MATCHED = {"10:panel": 3, "11:alcove": 4, "12:wall": 5}
 
 
+def _links(d, matched):
+    """The resolved {mesh: material} for meshes with no texture: links only."""
+    return ld.resolve(d, [{"mesh": i} for i in matched.values()], matched)
+
+
 def test_auto_surface_resolves_per_object():
-    objs, warnings = glow.glow_objects(_doc(), MATCHED, MESHES)
+    objs, warnings = glow.glow_objects(_doc(), _links(_doc(), MATCHED), MESHES)
     assert [(m, s, st) for m, s, _, st in objs] == [(3, 0, 2.0), (4, 1, 2.0)]
     assert warnings == []
 
 
 def test_a_material_without_emitters_adds_no_glow():
-    objs, _ = glow.glow_objects(_doc(), {"12:wall": 5}, MESHES)
+    objs, _ = glow.glow_objects(_doc(), _links(_doc(), {"12:wall": 5}), MESHES)
     assert objs == []
 
 
@@ -39,7 +44,7 @@ def test_the_map_wins_and_without_a_map_the_fallback_applies():
     # emission map is used whenever it has one; otherwise `without_map`.
     d = _doc()
     d["materials"]["roof"]["emission"]["without_map"] = "flat"
-    objs, warnings = glow.glow_objects(d, MATCHED, MESHES)
+    objs, warnings = glow.glow_objects(d, _links(d, MATCHED), MESHES)
     assert [(m, s) for m, s, _, _ in objs] == [(3, 0), (4, 2)]
     assert warnings == []
 
@@ -47,14 +52,26 @@ def test_the_map_wins_and_without_a_map_the_fallback_applies():
 def test_strength_zero_glows_nothing_but_still_owns_the_glow():
     d = _doc()
     d["materials"]["roof"]["emission"]["strength"] = 0
-    objs, _ = glow.glow_objects(d, MATCHED, MESHES)
+    objs, _ = glow.glow_objects(d, _links(d, MATCHED), MESHES)
     (_, _, rgb, k), _ = glow.live(objs, bh.StateFade("red"), 0.0)
     assert rgb == (0.0, 0.0, 0.0) and k == 0.0
 
 
 def test_live_scales_by_strength():
-    objs, _ = glow.glow_objects(_doc(), MATCHED, MESHES)
+    objs, _ = glow.glow_objects(_doc(), _links(_doc(), MATCHED), MESHES)
     (m, s, rgb, k), _ = glow.live(objs, bh.StateFade("red"), 0.0)
     assert (m, s) == (3, 0)
     assert rgb == pytest.approx((0.6, 0.6, 1.2))
     assert k == pytest.approx(1.2)
+
+
+def test_a_texture_material_with_an_emitter_glows_every_unlinked_mesh():
+    d = ld.empty_doc("x")
+    d["materials"]["Map 19"] = copy.deepcopy(ROOF)
+    d["textures"] = {"map 19.tga": "Map 19"}
+    meshes = [{"mesh": 3, "block": 30, "name": "a", "textures": ["Map 19.tga"],
+               "maps": {"emissive": False}},
+              {"mesh": 4, "block": 40, "name": "b", "textures": ["Map 19.tga"],
+               "maps": {"emissive": True}}]
+    objs, _ = glow.glow_objects(d, ld.resolve(d, meshes, {}), meshes)
+    assert [(m, s) for m, s, _, _ in objs] == [(3, 1), (4, 0)]

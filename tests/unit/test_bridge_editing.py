@@ -19,14 +19,14 @@ def test_new_material_links_and_names_in_order():
     assert d["materials"]["material 1"] == {}
 
 
-def test_link_unlink_prunes_and_users_count():
+def test_link_unlink_prunes():
     d = _doc()
     ed.new_material(d, 1, "a")
     ed.link(d, 2, "b", "material 1")
-    assert ed.users(d) == {"material 1": 2}
+    assert d["objects"]["2:b"]["material"] == "material 1"
     ed.link(d, 2, "b", "")
     assert "2:b" not in d["objects"]
-    assert ed.users(d) == {"material 1": 1}
+    assert d["objects"]["1:a"]["material"] == "material 1"
 
 
 def test_duplicate_copies_and_relinks_only_this_object():
@@ -109,3 +109,32 @@ def test_lights_add_remove_and_clamp():
     assert d["objects"]["1:a"]["lights"][0]["position"] == [4, 5, 6]
     ed.remove_light(d, 1, "a", 0)
     assert "1:a" not in d["objects"]
+
+
+# ── texture materials (Mark 2026-10-11: each TGA is a material) ─────────────
+
+def test_texture_material_is_made_once_and_named_after_the_texture():
+    d = _doc()
+    d["materials"]["Map 13"] = {}                    # a clash, e.g. a renamed link
+    assert ed.texture_material(d, "data/Map 13.tga") == "Map 13 2"
+    assert ed.texture_material(d, "MAP 13.TGA") == "Map 13 2"
+    assert d["textures"] == {"map 13.tga": "Map 13 2"}
+    assert d["materials"]["Map 13 2"] == {}
+
+
+def test_rename_moves_the_texture_mapping_too():
+    d = _doc()
+    ed.texture_material(d, "Map 13.tga")
+    assert ed.rename(d, "Map 13", "wall panels") is None
+    assert d["textures"] == {"map 13.tga": "wall panels"}
+    ld.validate(d)
+
+
+def test_duplicate_of_an_unlinked_object_copies_its_texture_material():
+    d = _doc()
+    name = ed.texture_material(d, "Map 19.tga")
+    d["materials"][name]["roughness"] = 0.4
+    assert ed.duplicate(d, 2, "b", current=name) == "Map 19 copy"
+    assert d["objects"]["2:b"]["material"] == "Map 19 copy"
+    assert d["materials"]["Map 19 copy"] == {"roughness": 0.4}
+    assert d["textures"] == {"map 19.tga": "Map 19"}   # the texture keeps its own

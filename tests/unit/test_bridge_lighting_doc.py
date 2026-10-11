@@ -247,3 +247,116 @@ def test_booleans_are_not_numbers():
     d["materials"]["alcove"]["roughness"] = True
     with pytest.raises(ld.BridgeLightingError, match="roughness"):
         ld.validate(d)
+
+
+# ── texture materials (Mark 2026-10-11: each TGA is a material) ─────────────
+
+def _tex_mesh(i, block, name, tex):
+    return {"mesh": i, "block": block, "name": name, "node_chain": [], "material": 0,
+            "textures": [tex] if tex else []}
+
+
+TEX_MESHES = [_tex_mesh(0, 10, "a", "Map 13.tga"), _tex_mesh(1, 11, "b", "map 13.TGA"),
+              _tex_mesh(2, 12, "c", "Map 19.tga"), _tex_mesh(3, 13, "d", None)]
+
+
+def test_texture_key_is_the_case_folded_file_name():
+    assert ld.texture_key("Map 13.tga") == ld.texture_key("data\\Sets\\MAP 13.TGA") == "map 13.tga"
+    assert ld.texture_stem("data/Sets/Map 13.tga") == "Map 13"
+
+
+def test_textures_map_validates_and_must_name_a_material():
+    d = ld.empty_doc("x")
+    d["materials"]["Map 13"] = {"roughness": 0}
+    d["textures"] = {"map 13.tga": "Map 13"}
+    assert ld.validate(d)["textures"] == {"map 13.tga": "Map 13"}
+    d["textures"] = {"map 13.tga": "ghost"}
+    with pytest.raises(ld.BridgeLightingError, match="ghost"):
+        ld.validate(d)
+    d["textures"] = ["map 13.tga"]
+    with pytest.raises(ld.BridgeLightingError, match="textures"):
+        ld.validate(d)
+
+
+def test_resolve_uses_the_link_else_the_texture_material():
+    d = ld.empty_doc("x")
+    d["materials"] = {"Map 13": {"roughness": 0}, "alcove": {}}
+    d["textures"] = {"map 13.tga": "Map 13"}
+    ld.object_entry(d, 11, "b")["material"] = "alcove"
+    ld.object_entry(d, 12, "c")["lights"] = []          # an entry without a link
+    matched, _ = ld.match_shapes(d, TEX_MESHES)
+    assert ld.resolve(d, TEX_MESHES, matched) == {0: "Map 13", 1: "alcove"}
+
+
+def test_resolve_ignores_a_link_whose_name_does_not_match():
+    d = ld.empty_doc("x")
+    d["materials"] = {"Map 13": {}, "alcove": {}}
+    d["textures"] = {"map 13.tga": "Map 13"}
+    ld.object_entry(d, 11, "renamed")["material"] = "alcove"
+    matched, _ = ld.match_shapes(d, TEX_MESHES)
+    assert ld.resolve(d, TEX_MESHES, matched)[1] == "Map 13"
+
+
+def _fold_doc():
+    d = ld.empty_doc("x")
+    d["materials"] = {"material 1": {"roughness": 0}, "material 2": {"roughness": 0},
+                      "material 3": {"roughness": 0.5}, "material 4": {"metalness": 1},
+                      "alcove": {"emission": {"without_map": "texture"}, "modifiers": []}}
+    meshes = [_tex_mesh(0, 10, "a", "Map 13.tga"), _tex_mesh(1, 11, "b", "Map 13.tga"),
+              _tex_mesh(2, 12, "c", "Map 13.tga"), _tex_mesh(3, 13, "d", "Map 13.tga"),
+              _tex_mesh(4, 14, "e", "Map 19.tga"), _tex_mesh(5, 15, "f", "Map 19.tga"),
+              _tex_mesh(6, 16, "g", None)]
+    for block, name, mat in ((10, "a", "material 1"), (11, "b", "material 2"),
+                             (12, "c", "material 3"), (14, "e", "alcove"),
+                             (16, "g", "material 4")):
+        ld.object_entry(d, block, name)["material"] = mat
+    ld.object_entry(d, 10, "a")["lights"] = [{"position": [0, 0, 0], "direction": [0, 0, -1]}]
+    return d, meshes
+
+
+def test_fold_makes_the_most_common_finish_the_texture_material():
+    d, meshes = _fold_doc()
+    report = ld.fold_into_textures(d, meshes)
+    ld.validate(d)
+    assert d["textures"] == {"map 13.tga": "Map 13"}
+    assert d["materials"]["Map 13"] == {"roughness": 0}
+    assert "material" not in d["objects"]["10:a"]           # lights kept, link dropped
+    assert d["objects"]["10:a"]["lights"]
+    assert "11:b" not in d["objects"]                       # nothing left: pruned
+    assert d["objects"]["12:c"]["material"] == "Map 13 2"   # the odd one out keeps a link
+    assert d["materials"]["Map 13 2"] == {"roughness": 0.5}
+    assert "material 1" not in d["materials"] and "material 3" not in d["materials"]
+    assert report["Map 13"] == {"folded": 2, "kept": ["12:c"], "adopted": 1}
+
+
+def test_fold_leaves_profiled_links_and_textureless_objects_alone():
+    d, meshes = _fold_doc()
+    ld.fold_into_textures(d, meshes)
+    assert d["objects"]["14:e"]["material"] == "alcove"
+    assert "map 19.tga" not in d["textures"]                # no finish-only object there
+    assert d["objects"]["16:g"]["material"] == "material 4"
+
+
+def test_fold_breaks_a_tie_toward_the_default_finish():
+    """A tie picks the finish nearest the default (roughness 1, metalness 0),
+    so meshes that adopt the texture's material change least -- DBridge
+    Map 19: 'cove black' 0 vs 'cove btm edge' 0.98 must not make 16 trim
+    pieces glossy."""
+    d, meshes = _fold_doc()
+    d["objects"]["11:b"]["material"] = "material 3"         # a: 0, b: 0.5 -- one each
+    del d["objects"]["12:c"]
+    ld.fold_into_textures(d, meshes)
+    assert d["materials"]["Map 13"] == {"roughness": 0.5}
+    assert d["objects"]["10:a"]["material"] == "Map 13 2"
+
+
+def test_fold_treats_finishes_rounding_to_the_same_twentieth_as_one():
+    """Slider noise (DBridge Map 9 doors at 0.53 and 0.54) is one surface:
+    finishes equal when rounded to 0.05 fold together, taking the first
+    one's value."""
+    d, meshes = _fold_doc()
+    d["materials"]["material 2"] = {"roughness": 0.02}
+    d["materials"]["material 3"] = {"roughness": 0.01}
+    report = ld.fold_into_textures(d, meshes)
+    assert d["materials"]["Map 13"] == {"roughness": 0}
+    assert report["Map 13"]["kept"] == []

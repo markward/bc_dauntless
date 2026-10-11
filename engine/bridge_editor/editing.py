@@ -37,14 +37,6 @@ def _prune(doc, block, name):
         del doc["objects"][_key(block, name)]
 
 
-def users(doc):
-    out = {}
-    for o in doc["objects"].values():
-        if o.get("material"):
-            out[o["material"]] = out.get(o["material"], 0) + 1
-    return out
-
-
 def link(doc, block, name, material):
     if material and material not in doc["materials"]:
         return
@@ -66,9 +58,23 @@ def new_material(doc, block, name):
     return mat
 
 
-def duplicate(doc, block, name):
-    cur = doc["objects"].get(_key(block, name), {}).get("material")
-    if not cur:
+def texture_material(doc, texture):
+    """The material of `texture` (each TGA is a material, Mark 2026-10-11),
+    made empty and named after the texture the first time it is needed."""
+    key = ld.texture_key(texture)
+    textures = doc.setdefault("textures", {})
+    if key not in textures:
+        name = ld.free_name(doc, ld.texture_stem(texture))
+        doc["materials"][name] = {}
+        textures[key] = name
+    return textures[key]
+
+
+def duplicate(doc, block, name, current=None):
+    """Copy `current` (default: the object's own link) -- e.g. its texture's
+    material -- and link this object alone to the copy."""
+    cur = current or doc["objects"].get(_key(block, name), {}).get("material")
+    if not cur or cur not in doc["materials"]:
         return None
     new = f"{cur} copy"
     while new in doc["materials"]:
@@ -90,6 +96,9 @@ def rename(doc, old, new):
     for o in doc["objects"].values():
         if o.get("material") == old:
             o["material"] = new
+    for tex, mat in doc.get("textures", {}).items():
+        if mat == old:
+            doc["textures"][tex] = new
     return None
 
 
