@@ -553,7 +553,7 @@ It is NOT the §6 emitter and does not replace it.
 | G1 | 2026-10-10 | Glow slice 1 built (plan 2026-10-10-bridge-emitter-glow-slice-1): per-mesh glow + dip, profiles/waves/fades, spot capture vs live colours, DBridge alcove + roof data | built; live-verified by Mark 2026-10-11 ("works as described") | 11 |
 | G2 | 2026-10-11 | Editor panes designed (§12): glow + profile panes, state tabs double as the alert preview, preview clock, shared colour wheel | agreed with Mark | 12 |
 | G3 | 2026-10-11 | Editor panes built (plan 2026-10-11-bridge-editor-glow-panes) | built; awaiting Mark's live check | 12 |
-| G4 | 2026-10-11 | Slice 3 designed (§13): profile library of scoped Emitter/Animation modifier stacks, five states (offline/special added), editor bar chrome, Shift-fly | designed with Mark; 2 assumptions to confirm | 13 |
+| G4 | 2026-10-11 | Slice 3 designed (§13): Object/Material tabs over a shared material library of scoped Emitter/Animation modifiers (phase in Animation), five states (offline/special), editor bar chrome, Shift-fly | designed with Mark; 2 recommendations to confirm | 13 |
 
 ## 11. Emitter glow — slice 1 *(agreed with Mark 2026-10-10)*
 
@@ -719,104 +719,124 @@ working control.
 Pipette (copy an emitter between shapes), gizmos, colour-to-colour pulses,
 deleting profiles, a preview-clock speed control.
 
-## 13. Modifier stacks, five bridge states, editor chrome — slice 3 *(designed with Mark 2026-10-11; supersedes §11's profile states and §12's panes)*
+## 13. Material library, Object / Material tabs, five bridge states, editor chrome — slice 3 *(designed with Mark 2026-10-11; supersedes §11's per-shape profile model and §12's panes)*
 
-Slice 2 (§12) proved the per-alert idea but crowded the dock and hid how
-glow, alert behaviour and pulses relate. This slice reorganises the editor
-Blender-style and widens the bridge states. Renderer contract (§11.2 glow,
-§11.4 spots) is unchanged except for the new states.
+Slice 2 (§12) proved the per-alert idea but crowded the dock. This slice
+reorganises the editor the Blender way -- **objects link to materials from a
+shared library** -- and widens the bridge states to five. The renderer
+contract (§11.2 per-mesh glow, §11.4 spot capture vs live colour) is
+unchanged apart from the new states. "Shape" becomes **object** in the editor.
 
 ### 13.1 Five bridge states
 
 | State | Square | In game | Room ambient | Emissive sibling |
 |---|---|---|---|---|
-| `offline` | ⬛ | the player ship's `PowerSubsystem` disabled or destroyed; overrides every alert level while it lasts | dimmed (a new value in `bridge_lighting`, below yellow/red) | none: **texture-level `_emissive` maps go dark** unless a profile lights the shape *(assumption -- Mark to confirm)* |
+| `offline` | ⬛ | the player ship's `PowerSubsystem` disabled or destroyed; overrides every other state while it lasts | dimmed (a new value in `bridge_lighting`, below yellow/red) | none: **texture-level `_emissive` maps go dark** on objects whose material does not light them *(recommendation -- Mark to confirm in review)* |
 | `green` | 🟩 | alert 0 | as today | `_emissive` |
 | `yellow` | 🟨 | alert 1 | as today | `_emissive_y` → `_emissive` |
 | `red` | 🟥 | alert 2 | as today | `_emissive_r` → `_emissive_y` → `_emissive` |
-| `special` | 🟦 | a generic hook (`set_special_alert(on)`) with no in-game caller yet; e.g. a future "multi-vector assault mode" blue alert. Overrides green/yellow/red, not offline | as red | `_emissive_s` → `_emissive` |
+| `special` | 🟦 | a generic hook (`set_special_alert(on)`), no in-game caller yet -- e.g. a future multi-vector assault "blue alert". Overrides green/yellow/red, not offline | as red | `_emissive_s` → `_emissive` |
 
 Reflection probes for `offline` / `special` are a later phase; until then
 they use the yellow/red probe.
 
-### 13.2 The profile library (Blender's material library)
+### 13.2 Objects and the material library
 
-The bridge file holds named **profiles**. A shape **links** to one; editing a
-profile changes every shape linked to it ("used by N shapes"); **Duplicate**
-gives one shape its own copy to diverge. A profile is:
+- An **object** is one NIF shape (identity unchanged, §4).
+- The bridge file holds a **material library**: named materials. An object
+  links to at most one. Editing a material changes every object linked to
+  it ("used by N objects"); **Duplicate** gives the object its own copy to
+  diverge; **Unlink** returns it to the defaults.
+- **Our material is properties layered over the object's texture**, not
+  Blender's texture-owning material: the albedo still comes from the NIF and
+  the mesh fixes, and `_rough` / `_metal` / `_normal` / `_emissive` maps are
+  still found by texture name (§9.2, §9.7). So one material can serve
+  objects with different textures.
 
-- `fade_s`: the cross-fade on a state change.
-- (No surface: WHAT glows depends on the shape's material, so it is per
-  shape, §13.3 -- side bars and alcoves can share one profile while glowing
-  through an emission map and their own texture respectively. Mark,
-  2026-10-11.)
-- an ordered list of **modifiers**, each with a **scope** (any of the five
-  states; none ticked = parked, does nothing):
+**A material holds** (Material tab):
+- **Finish**: `roughness`, `metalness` (0-1 each, optional). A texture map
+  still beats the material's value per channel (§9.2).
+- **Surface** -- what glows: `auto` (default: the object's emission map when
+  its texture has one -- the variant for the current state, §13.1 -- else
+  its own texture) / `emission map` / `own texture` / `flat`; plus
+  `strength` (≥ 0, default 1). `auto` is what lets side bars (emission map)
+  and alcoves (own texture) share one material.
+- **fade_s**: the cross-fade on a state change (default 0.5).
+- **Modifiers**, each with a **scope** -- any of the five states; none
+  ticked = parked:
   - **Emitter** (any number): colour (wheel, V = 1) and level. Emitters
     active in a state ADD.
-  - **Animation** (any number): `sine` / `square`, `period_s`, `min`, `duty`,
-    `soft`. Animations active in a state MULTIPLY the emitters' sum.
+  - **Animation** (any number): `sine` / `square`, `period_s`, `min`,
+    `duty`, `soft`, and **`phase`** (0-1). Animations active in a state
+    MULTIPLY the emitters' sum.
 
-So a shape's output in state *s* = (Σ emitters scoped to *s*) × (Π
-animations scoped to *s*), cross-faded over `fade_s` on a state change.
-Examples: alcove = Emitter white [green] + Emitter red 0.5 [red] + Animation
-sine 2 s [red]; red bars = Emitter red [red] + Animation sine 2 s [red];
-reserve-power lights = Emitter red [offline].
+Output in state *s* = (Σ emitters scoped to *s*) × (Π animations scoped to
+*s*), cross-faded over `fade_s` on a state change; glow = surface ×
+output × strength. Examples: alcove = Emitter white [green] + Emitter red 0.5
+[red] + Animation sine 2 s [red]; red bars = Emitter red [red] + Animation
+sine 2 s [red]; reserve power = Emitter red [offline].
 
-### 13.3 What stays per shape
+**An object holds** (Object tab):
+- its **material** link;
+- **Lights** (any number): position, aim, cone, range, intensity -- placed
+  per object; their colour follows the material's output, ^2.2 (§11.4).
 
-Placement differs per fixture, so it can't live in a shared profile:
-- **Material** (roughness / metalness) -- as today.
-- **Surface** -- what glows: `emission map` / `own texture` / `flat`, plus
-  `scale` (one fixture brighter than another on the same profile). Default:
-  the emission map when the shape's texture has one, else its own texture, so
-  linking a profile usually just works; `flat` is for black-textured bars.
-  One per shape, matching the renderer's one glow source per shape (§11.2).
-- **Light** (position, aim, cone, range, intensity): its colour follows the
-  shape's profile output, ^2.2 (§11.4). As today.
-- **phase** (0-1): offsets the profile's animations for this shape, so a row
-  of lights can chase.
-- **the profile link**.
+No per-object phase: objects on one material pulse in lockstep. A staggered
+"chase" needs a duplicated material with a different phase (accepted, Mark
+2026-10-11; a per-object offset can be added if it ever bites).
 
-A shape with no profile shows its texture-level emissive (steady; dark at
-`offline`).
+**No material**: roughness 1 / metalness 0, the texture's emission map
+steady (dark at `offline`), no lights unless the object adds them (white,
+steady).
 
-### 13.4 Editor chrome
+### 13.3 Editor chrome
 
-- **The bar** (top left, the only always-on chrome; its presence IS bridge
-  editing mode): `BRIDGE EDITOR | ⬛ 🟩 🟨 🟥 🟦 | ▶/⏸ | Undo · Revert · Save | ✕`.
-  The squares set the preview state (§12.2's rule: everything state-dependent
-  shows it; the game is never changed). ▶/⏸ is the preview clock. ✕ leaves.
-  Under it, one hint line: `Hold Shift: fly · WASD move · Q/E down/up ·
-  scroll: speed · click to select · Alt+click: surface behind`.
-- **Fly controls change** *(assumption -- Mark to confirm)*: hold **Shift**
-  (not RMB) to fly with mouse-look; the scroll wheel sets fly speed (Blender
-  fly mode); Alt-slow goes. RMB is freed.
-- **The side panel shows only while a shape is selected**; clicking empty
-  space deselects and hides it. Contents: the selection readout; then the
-  shape's stack -- Material, Surface, Light, the profile link (with
-  phase, Duplicate, Unlink, "used by N"), and the linked profile's fade and
-  modifiers. Every stack entry is a header row (name, scope squares, ×)
-  that expands on click. **Add modifier** opens an in-page menu (never a
-  `<select>`, §12) listing Material, Surface, Light, Emitter, Animation. Adding an
-  Emitter or Animation to a shape with no profile creates one (`profile N`)
-  and links it.
-- A shape with a texture-level `_emissive` map shows a read-only row
-  ("Emission map · <name> · steady") so nobody adds a profile just to keep a
-  glow that already works.
+- **The bar** (top left; its presence IS bridge editing mode):
+  `BRIDGE EDITOR | ⬛ 🟩 🟨 🟥 🟦 | ▶/⏸ | Undo · Revert · Save | ✕`. The squares
+  set the preview state (everything state-dependent shows it; the game is
+  never changed, §12.2). ▶/⏸ is the preview clock. ✕ leaves the editor. One
+  hint line under it: `Hold Shift: fly · WASD · Q/E · scroll: speed · click:
+  select · Alt+click: surface behind · materials layer over the object's
+  texture`.
+- **Fly controls** *(recommendation -- Mark to confirm in review)*: hold
+  **Shift** (not RMB) to fly with mouse-look; the scroll wheel sets the fly
+  speed; Alt-slow goes; RMB is freed.
+- **The side panel shows only while an object is selected** (clicking empty
+  space deselects and hides it), with two tabs:
+  - **Object** -- the selection readout; the material picker (library list
+    with "used by N", New, Duplicate, Unlink); the Light stack with
+    **Add light**. With no material and a texture-level emission map, a
+    read-only row: "Emission map · <name> · steady".
+  - **Material** -- name (Rename), Finish, Surface, fade, then the modifier
+    stack with **Add modifier** (Emitter, Animation). Every stack entry is a
+    header row (name, scope squares, ×) that expands on click.
+- Every choice is a chip row or an in-page menu, never a `<select>` (§12).
 
-### 13.5 Data
+### 13.4 Data (`format: 2`)
 
-Format bump (`format: 2`): `profiles.<name>` = `{fade_s, modifiers:
-[{type: "emitter", scope: [...], tint, level} | {type: "animation", scope:
-[...], shape, period_s, min?, duty?, soft?}]}`; per shape `{material?,
-surface?: {src, scale?}, light?, profile?, phase?}` (`emitter.glow` becomes
-the shape's `surface`; a shape glows when its linked profile has an emitter
-active in the current state). The loader converts `format: 1` files on
-read (states → scoped modifiers) and the writer saves `format: 2`; the
-DBridge file is converted and committed.
+```json
+{"format": 2, "source": "...",
+ "materials": {"alcove": {"roughness": 0, "surface": {"src": "auto", "strength": 1},
+   "fade_s": 0.5,
+   "modifiers": [{"type": "emitter", "scope": ["green"], "tint": [1, 1, 1], "level": 1},
+                 {"type": "emitter", "scope": ["red"], "tint": [1, 0.12, 0.08], "level": 0.5},
+                 {"type": "animation", "scope": ["red"], "shape": "sine", "period_s": 2,
+                  "min": 0.2, "phase": 0}]}},
+ "objects": {"401:": {"block": 401, "name": "", "material": "alcove",
+   "lights": [{"position": [157, -135, 105], "direction": [0, 0, -1], "inner_deg": 45,
+               "outer_deg": 85, "range": 150, "intensity": 8000}]}}}
+```
 
-### 13.6 Out of scope
+Unknown keys REJECTED (as §7). **Reading `format: 1`** converts: each
+shape's material overrides + glow source/scale + profile (+ its phase) form a
+signature; shapes with identical signatures share one material, named after
+the profile when it has one, else `material N`; profile states become scoped
+modifiers (a state's wave becomes an Animation scoped to that state); the
+light becomes `lights[0]`. The writer saves `format: 2`; the DBridge file is
+converted and committed.
 
-Reflection probes for the new states; per-emitter "throws light" switches;
-colour-to-colour animation; multi-select (B library makes it less needed).
+### 13.5 Out of scope
+
+Reflection probes for the new states; per-object phase offsets;
+multi-select; colour-to-colour animation; per-emitter "throws light"
+switches.
