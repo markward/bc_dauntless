@@ -1,9 +1,10 @@
-"""Per-bridge lighting document (spec 2026-10-08-bridge-emitters §7).
+"""Per-bridge lighting document (spec 2026-10-08-bridge-emitters §7, §13.4).
 
-One JSON file per bridge NIF, keyed by the NIF's content hash, holding
-per-shape `material` and `emitter` sections plus shared `profiles`. Only
-references and parameters -- never BC geometry. Unknown keys are REJECTED:
-a typo must fail loudly, not be silently ignored."""
+One JSON file per bridge NIF, keyed by the NIF's content hash: a `materials`
+library (finish, surface, scoped Emitter/Animation modifiers) and `objects`
+(a material link and lights). Only references and parameters -- never BC
+geometry. Unknown keys are REJECTED: a typo must fail loudly. `format: 1`
+files (per-shape profiles) are upgraded on load."""
 import json
 import math
 from dataclasses import dataclass
@@ -12,10 +13,8 @@ from typing import Optional
 
 from engine import paths
 
-FORMAT = 1
 MOD_REL = "dauntless/bridge_lighting"
 
-_STATES = ("green", "yellow", "red")
 
 
 class BridgeLightingError(ValueError):
@@ -41,17 +40,6 @@ def find(content_hash) -> Optional[Path]:
     return None
 
 
-def empty_doc(source) -> dict:
-    return {"format": FORMAT, "source": str(source), "profiles": {}, "shapes": {}}
-
-
-def shape_entry(doc, block, name) -> dict:
-    key = f"{block}:{name}"
-    entry = doc["shapes"].get(key)
-    if entry is None:
-        entry = {"block": int(block), "name": str(name)}
-        doc["shapes"][key] = entry
-    return entry
 
 
 # ── validation ──────────────────────────────────────────────────────────────
@@ -92,7 +80,7 @@ def _enum(v, where, options):
         _fail(where, f"must be one of {', '.join(options)}")
 
 
-def _wave(w, where):
+def _v1_wave(w, where):
     _obj(w, where, {"shape", "period_s", "duty", "soft", "min"}, ("shape",))
     _enum(w["shape"], f"{where}.shape", ("steady", "sine", "square"))
     if w["shape"] != "steady":
@@ -108,24 +96,24 @@ def _wave(w, where):
         _num(w["min"], f"{where}.min", 0, 1)
 
 
-def _profile(p, where):
-    _obj(p, where, {"fade_s", *_STATES})
+def _v1_profile(p, where):
+    _obj(p, where, {"fade_s", *_V1_STATES})
     if "fade_s" in p:
         _num(p["fade_s"], f"{where}.fade_s", lo=0)
-    for s in _STATES:
+    for s in _V1_STATES:
         if s in p:
             st = p[s]
             _obj(st, f"{where}.{s}", {"tint", "level", "wave"}, ("tint", "level"))
             _vec3(st["tint"], f"{where}.{s}.tint", lo=0)
             _num(st["level"], f"{where}.{s}.level", lo=0)
             if "wave" in st:
-                _wave(st["wave"], f"{where}.{s}.wave")
+                _v1_wave(st["wave"], f"{where}.{s}.wave")
 
 
 GLOW_SRCS = ("emissive", "texture", "flat")
 
 
-def _glow(g, where):
+def _v1_glow(g, where):
     """Spec §11.2: what glows (`src`) and a per-shape multiplier (`scale`).
     The colour, level and pulse come from the emitter's profile."""
     _obj(g, where, {"src", "scale"}, ("src",))
@@ -154,17 +142,17 @@ def _light(l, where):
             _num(l[k], f"{where}.{k}", lo=0)
 
 
-def validate(doc) -> dict:
+def _validate_v1(doc) -> dict:
     _obj(doc, "$", {"format", "source", "profiles", "shapes"},
          ("format", "profiles", "shapes"))
-    if doc["format"] != FORMAT:
-        _fail("$.format", f"must be {FORMAT}")
+    if doc["format"] != 1:
+        _fail("$.format", "must be 1")
     if "source" in doc and not isinstance(doc["source"], str):
         _fail("$.source", "must be a string")
     if not isinstance(doc["profiles"], dict):
         _fail("$.profiles", "must be an object")
     for name, p in doc["profiles"].items():
-        _profile(p, f"$.profiles.{name}")
+        _v1_profile(p, f"$.profiles.{name}")
     if not isinstance(doc["shapes"], dict):
         _fail("$.shapes", "must be an object")
     for key, s in doc["shapes"].items():
@@ -188,10 +176,185 @@ def validate(doc) -> dict:
             if "phase" in e:
                 _num(e["phase"], f"{where}.emitter.phase", 0, 1)
             if "glow" in e:
-                _glow(e["glow"], f"{where}.emitter.glow")
+                _v1_glow(e["glow"], f"{where}.emitter.glow")
             if "light" in e:
                 _light(e["light"], f"{where}.emitter.light")
     return doc
+
+
+FORMAT = 2
+STATES = ("offline", "green", "yellow", "red", "special")
+SURFACES = ("auto", "emission", "texture", "flat", "none")
+_WAVES = ("sine", "square")
+
+
+def empty_doc(source) -> dict:
+    return {"format": FORMAT, "source": str(source), "materials": {}, "objects": {}}
+
+
+def object_entry(doc, block, name) -> dict:
+    key = f"{block}:{name}"
+    entry = doc["objects"].get(key)
+    if entry is None:
+        entry = {"block": int(block), "name": str(name)}
+        doc["objects"][key] = entry
+    return entry
+
+
+def _scope(v, where):
+    if not isinstance(v, list) or any(s not in STATES for s in v) or len(set(v)) != len(v):
+        _fail(where, f"must be a list of distinct states from {', '.join(STATES)}")
+
+
+def _modifier(m, where):
+    if not isinstance(m, dict) or m.get("type") not in ("emitter", "animation"):
+        _fail(f"{where}.type", "must be emitter or animation")
+    if m["type"] == "emitter":
+        _obj(m, where, {"type", "scope", "tint", "level"}, ("scope", "tint", "level"))
+        _vec3(m["tint"], f"{where}.tint", lo=0)
+        _num(m["level"], f"{where}.level", lo=0)
+    else:
+        _obj(m, where, {"type", "scope", "shape", "period_s", "min", "duty", "soft", "phase"},
+             ("scope", "shape", "period_s"))
+        _enum(m["shape"], f"{where}.shape", _WAVES)
+        _num(m["period_s"], f"{where}.period_s", lo=0, lo_open=True)
+        for k in ("duty", "soft"):
+            if k in m:
+                if m["shape"] != "square":
+                    _fail(f"{where}.{k}", "only for square")
+                _num(m[k], f"{where}.{k}", 0, 1)
+        for k in ("min", "phase"):
+            if k in m:
+                _num(m[k], f"{where}.{k}", 0, 1)
+    _scope(m["scope"], f"{where}.scope")
+
+
+def _material(m, where):
+    _obj(m, where, {"roughness", "metalness", "surface", "fade_s", "modifiers"})
+    for ch in ("roughness", "metalness"):
+        if ch in m:
+            _num(m[ch], f"{where}.{ch}", 0, 1)
+    if "surface" in m:
+        _obj(m["surface"], f"{where}.surface", {"src", "strength"}, ("src",))
+        _enum(m["surface"]["src"], f"{where}.surface.src", SURFACES)
+        if "strength" in m["surface"]:
+            _num(m["surface"]["strength"], f"{where}.surface.strength", lo=0)
+    if "fade_s" in m:
+        _num(m["fade_s"], f"{where}.fade_s", lo=0)
+    if "modifiers" in m:
+        if not isinstance(m["modifiers"], list):
+            _fail(f"{where}.modifiers", "must be a list")
+        for i, mod in enumerate(m["modifiers"]):
+            _modifier(mod, f"{where}.modifiers[{i}]")
+
+
+def validate(doc) -> dict:
+    _obj(doc, "$", {"format", "source", "materials", "objects"},
+         ("format", "materials", "objects"))
+    if doc["format"] != FORMAT:
+        _fail("$.format", f"must be {FORMAT}")
+    if "source" in doc and not isinstance(doc["source"], str):
+        _fail("$.source", "must be a string")
+    if not isinstance(doc["materials"], dict):
+        _fail("$.materials", "must be an object")
+    for name, m in doc["materials"].items():
+        _material(m, f"$.materials.{name}")
+    if not isinstance(doc["objects"], dict):
+        _fail("$.objects", "must be an object")
+    for key, o in doc["objects"].items():
+        where = f"$.objects.{key}"
+        _obj(o, where, {"block", "name", "material", "lights"}, ("block", "name"))
+        if isinstance(o["block"], bool) or not isinstance(o["block"], int) or o["block"] < 0:
+            _fail(f"{where}.block", "must be a non-negative integer")
+        if not isinstance(o["name"], str):
+            _fail(f"{where}.name", "must be a string")
+        if key != f"{o['block']}:{o['name']}":
+            _fail(where, "key must be '<block>:<name>'")
+        if "material" in o and o["material"] not in doc["materials"]:
+            _fail(f"{where}.material", f"no material named {o['material']!r}")
+        if "lights" in o:
+            if not isinstance(o["lights"], list):
+                _fail(f"{where}.lights", "must be a list")
+            for i, light in enumerate(o["lights"]):
+                _light(light, f"{where}.lights[{i}]")
+    return doc
+
+
+# ── format 1 -> 2 (spec §13.4) ───────────────────────────────────────────────
+
+_V1_SRC = {"emissive": "emission", "texture": "texture", "flat": "flat"}
+_V1_STATES = ("green", "yellow", "red")
+_V1_WHITE = {s: {"tint": [1, 1, 1], "level": 1} for s in _V1_STATES}
+
+
+def _merge(mods, mod, state):
+    for m in mods:
+        if {k: v for k, v in m.items() if k != "scope"} == mod:
+            m["scope"].append(state)
+            return
+    mods.append(dict(mod, scope=[state]))
+
+
+def _v1_modifiers(profile, phase):
+    emitters, animations = [], []
+    for s in _V1_STATES:
+        st = profile.get(s)
+        if st is None:
+            continue
+        _merge(emitters, {"type": "emitter", "tint": list(st["tint"]), "level": st["level"]}, s)
+        w = st.get("wave")
+        if w and w["shape"] != "steady":
+            a = {"type": "animation", **{k: v for k, v in w.items()}, "phase": phase}
+            _merge(animations, a, s)
+    return emitters + animations
+
+
+def upgrade(doc) -> dict:
+    """A validated-shape `format: 1` document as `format: 2` (spec §13.4):
+    each shape's material overrides + glow source/scale + profile (+ phase)
+    form one material; identical materials are shared -- named after the
+    profile when there is one (`<profile> 2`, ... on a clash), else
+    `material N`; the light becomes lights[0]."""
+    doc = _validate_v1(doc)
+    out = empty_doc(doc.get("source", ""))
+    by_sig = {}
+    for key in sorted(doc["shapes"], key=lambda k: (doc["shapes"][k]["block"], k)):
+        s = doc["shapes"][key]
+        em = s.get("emitter", {})
+        mat = {ch: v for ch, v in s.get("material", {}).items()}
+        prof_name = em.get("profile")
+        prof = doc["profiles"][prof_name] if prof_name else None
+        glow = em.get("glow")
+        if glow is not None or (prof is not None and "light" in em):
+            surface = {"src": _V1_SRC[glow["src"]] if glow else "none"}
+            if glow and glow.get("scale", 1) != 1:
+                surface["strength"] = glow["scale"]
+            mat["surface"] = surface
+            if prof is not None and "fade_s" in prof:
+                mat["fade_s"] = prof["fade_s"]
+            mat["modifiers"] = _v1_modifiers(prof or _V1_WHITE, em.get("phase", 0.0))
+        obj = {"block": s["block"], "name": s["name"]}
+        if mat:
+            sig = json.dumps(mat, sort_keys=True)
+            name = by_sig.get(sig)
+            if name is None:
+                if prof_name:
+                    name, n = prof_name, 2
+                    while name in out["materials"]:
+                        name, n = f"{prof_name} {n}", n + 1
+                else:
+                    n = 1
+                    while f"material {n}" in out["materials"]:
+                        n += 1
+                    name = f"material {n}"
+                by_sig[sig] = name
+                out["materials"][name] = mat
+            obj["material"] = name
+        if "light" in em:
+            obj["lights"] = [dict(em["light"])]
+        if len(obj) > 2:
+            out["objects"][key] = obj
+    return out
 
 
 # ── load + match ────────────────────────────────────────────────────────────
@@ -211,7 +374,9 @@ def load(content_hash, source) -> LoadResult:
     if path is None:
         return LoadResult(empty_doc(source), None, None)
     try:
-        doc = validate(json.loads(path.read_text(encoding="utf-8")))
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        doc = validate(upgrade(raw) if isinstance(raw, dict) and raw.get("format") == 1
+                       else raw)
     except (OSError, ValueError) as e:      # JSONDecodeError and BridgeLightingError are ValueErrors
         return LoadResult(empty_doc(source), path, f"{path.name}: {e}")
     return LoadResult(doc, path, None)
@@ -223,7 +388,7 @@ def match_shapes(doc, meshes):
     different shape."""
     by_block = {m["block"]: m for m in meshes if m["block"] >= 0}
     matched, warnings = {}, []
-    for key, s in doc["shapes"].items():
+    for key, s in doc["objects"].items():
         m = by_block.get(s["block"])
         if m is None:
             warnings.append(f"{key}: no shape at block {s['block']}; skipped")
