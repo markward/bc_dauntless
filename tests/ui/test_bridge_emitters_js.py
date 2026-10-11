@@ -202,8 +202,9 @@ def test_glow_off_shows_only_the_toggle():
 def test_glow_on_lists_sources_and_disables_emissive_without_a_map():
     [out] = _run([{"state": _st(_sel(glow={"src": "texture"}))}])
     body = out["body"]
-    assert 'value="emissive" disabled' in body
-    assert 'value="texture" selected' in body
+    assert "<select" not in body                         # OSR draws no popup (review C2)
+    assert "glow:src:emissive')\" disabled" in body
+    assert "be-chip active\" onclick=\"dauntlessEvent('bridge-emitters/glow:src:texture')" in body
     assert "glow:scale:" in body
 
 
@@ -211,7 +212,9 @@ def test_profile_dropdown_counts_users_and_offers_none():
     [out] = _run([{"state": _st(_sel(profile="alcove", profile_data=PROFILE))}])
     body = out["body"]
     assert "none (steady white)" in body
-    assert "alcove (4)" in body
+    assert "<select" not in body
+    assert "alcove — used by 4 shapes" in body
+    assert "profile-select:alcove" in body and "profile-select:')" in body
     assert "profile-new" in body and "profile-rename:" in body
 
 
@@ -229,6 +232,8 @@ def test_the_active_tab_shows_its_state_fields():
     assert 'be-tab active' in body
     assert "state:red:level:" in body
     assert "state:red:wave:duty:" in body and "state:red:wave:soft:" in body
+    assert "<select" not in body
+    assert "state:red:wave:shape:sine" in body and "state:red:wave:shape:steady" in body
     assert 'id="be-wheel"' in body
     assert "fade:" in body and "phase:" in body
 

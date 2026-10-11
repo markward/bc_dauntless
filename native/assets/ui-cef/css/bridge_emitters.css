@@ -41,3 +41,8 @@
 #bridge-emitters-root .be-tab.active { opacity: 1; outline: 1px solid #f0b060; }
 #bridge-emitters-root .be-swatch { width: 40px; height: 40px; border: 1px solid #888; }
 #bridge-emitters-root canvas { cursor: crosshair; }
+#bridge-emitters-root .be-chip { opacity: 0.6; }
+#bridge-emitters-root .be-chip.active { opacity: 1; outline: 1px solid #f0b060; }
+#bridge-emitters-root .be-chip[disabled] { opacity: 0.3; }
+#bridge-emitters-root .be-list { display: flex; flex-direction: column; gap: 2px; margin: 4px 0; }
+#bridge-emitters-root .be-list .be-chip { text-align: left; }

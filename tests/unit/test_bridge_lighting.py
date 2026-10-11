@@ -141,6 +141,18 @@ def test_host_loop_feeds_probe_blend_and_gates_on_alert_on_change():
     args = clock_calls[0].value.args
     assert len(args) == 3 and isinstance(args[1], ast.Name) and args[1].id == "_player_dt", (
         "_bridge_clock_dt's player-dt argument must be the paused-aware _player_dt")
+    # The preview clock's frame dt must be the UNFROZEN wall delta: the
+    # editor runs under the (hidden) pause menu, which zeroes _frame_dt, so a
+    # _frame_dt-derived argument leaves the preview clock stuck at 0
+    # (review C1: no pulses, tab fades never progress).
+    third = {n.id for n in ast.walk(args[2]) if isinstance(n, ast.Name)}
+    assert "_wall_dt" in third and "_frame_dt" not in third, (
+        f"_bridge_clock_dt's frame-dt argument must come from _wall_dt; got {sorted(third)}")
+    wall = [n for n in ast.walk(run_fn) if isinstance(n, ast.Assign) and any(
+        isinstance(t, ast.Name) and t.id == "_wall_dt" for t in n.targets)]
+    assert len(wall) == 1, "_wall_dt must be assigned once (the raw wall delta)"
+    assert not any(isinstance(n, ast.Name) and n.id == "_frame_dt"
+                   for n in ast.walk(wall[0].value)), "_wall_dt must not read the frozen _frame_dt"
 
     assert mix_call is not None, "no host_io.set_bridge_probe_mix(...) call found"
     # The mix call's sole argument must BE the update call (fed straight

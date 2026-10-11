@@ -61,3 +61,41 @@ def test_the_spv_no_longer_carries_its_own_wheel():
                  "_spvSetHueSatFromEvent"):
         assert gone not in src
     assert "new ColourWheel(" in src
+
+
+_DRAG = r"""
+const fs = require('fs'); const vm = require('vm');
+function canvas() {
+  const ls = {};
+  return {width: 20, height: 20, ls,
+    addEventListener: (k, f) => { ls[k] = f; },
+    setPointerCapture: () => {},
+    getBoundingClientRect: () => ({left: 0, top: 0, width: 20, height: 20}),
+    getContext: () => ({createImageData: (w, h) => ({data: new Array(w * h * 4).fill(0)}),
+                        putImageData: () => {}, beginPath: () => {}, arc: () => {},
+                        stroke: () => {}})};
+}
+const ctx = {Math, document: {getElementById: () => null}};
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(process.argv[process.argv.length - 1], 'utf8'), ctx);
+const c = canvas(); const calls = [];
+const wheel = new ctx.ColourWheel(c, {hue: 0, sat: 0}, (hs, final) => calls.push(final));
+c.ls.pointerdown({pointerId: 1, clientX: 15, clientY: 10});
+const during = wheel.dragging;
+c.ls.lostpointercapture({pointerId: 1});
+const after = wheel.dragging;
+c.ls.pointerup({pointerId: 1, clientX: 15, clientY: 10});
+process.stdout.write(JSON.stringify({during, after, calls}));
+"""
+
+
+def test_a_lost_pointer_capture_ends_the_drag_without_committing():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not installed")
+    r = subprocess.run([node, "-e", _DRAG, "--", str(JS)], capture_output=True, text=True,
+                       timeout=30)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["during"] is True and out["after"] is False
+    assert out["calls"] == [False]          # the pointerdown preview only; no commit

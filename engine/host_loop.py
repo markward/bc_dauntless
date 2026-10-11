@@ -11202,7 +11202,11 @@ def run(mission_name: Optional[str] = None,
             # world so the overlay under inspection holds still).
             pause.set_external_freeze(_devtools_frozen(_h))
             _now = time.monotonic()
-            _frame_dt = _now - _previous_real_time
+            # The raw wall delta, kept apart from _frame_dt (which the freeze
+            # zeroes): the Bridge Editor's preview clock runs while the
+            # (hidden) pause menu freezes the sim (spec 2026-10-08-bridge-emitters §12.2).
+            _wall_dt = _now - _previous_real_time
+            _frame_dt = _wall_dt
             _previous_real_time = _now
             if pause.sim_frozen:
                 _frame_dt = 0.0
@@ -12423,7 +12427,7 @@ def run(mission_name: Optional[str] = None,
             _bridge_alert_level = _bridge_effective_alert(
                 _bridge_alert_level_of(player), bridge_emitters)
             _bridge_dt = _bridge_clock_dt(
-                bridge_emitters, _player_dt, min(max(_frame_dt, 0.0), MAX_FRAME_DT))
+                bridge_emitters, _player_dt, min(max(_wall_dt, 0.0), MAX_FRAME_DT))
             # Emissive sibling maps: the alert-level variant (task 17), every
             # frame, beside the ambient scale (a hard switch, no fade).
             host_io.set_bridge_alert_level(_bridge_alert_level)

@@ -63,6 +63,20 @@ function _beLightSection(light) {
     return html;
 }
 
+// A choice is a row of chips, never a <select>: CEF OSR draws no native
+// popup for a dropdown (review C2; the SPV registry chips do the same).
+function _beChip(label, action, active, disabled) {
+    return '<button class="be-chip' + (active ? ' active' : '') + '"'
+        + ' onclick="dauntlessEvent(\'bridge-emitters/' + action + '\')"'
+        + (disabled ? ' disabled' : '') + '>' + _beEsc(label) + '</button>';
+}
+
+// A value placed inside a single-quoted JS string in an onclick attribute:
+// JS-escape first, then HTML-escape (the attribute decodes &#39; back to ').
+function _beJs(s) {
+    return _beEsc(String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
+}
+
 function _beNumberRow(label, action, value, step) {
     return '<div class="be-row">'
         + '<label>' + _beEsc(label) + '</label>'
@@ -80,14 +94,10 @@ function _beGlowSection(s) {
         + '<div class="be-row"><label>glow</label><input type="checkbox"' + (g ? ' checked' : '')
         + ' onchange="dauntlessEvent(\'bridge-emitters/glow-\' + (this.checked ? \'on\' : \'off\'))"></div>';
     if (!g) return html;
-    const opt = function (v, label, dis) {
-        return '<option value="' + v + '"' + (g.src === v ? ' selected' : '')
-            + (dis ? ' disabled' : '') + '>' + label + '</option>';
-    };
     html += '<div class="be-row"><label>source</label>'
-        + '<select onchange="dauntlessEvent(\'bridge-emitters/glow:src:\' + this.value)">'
-        + opt('emissive', 'emissive map', !s.has_emissive_map)
-        + opt('texture', 'own texture', false) + opt('flat', 'flat', false) + '</select></div>';
+        + _beChip('emissive map', 'glow:src:emissive', g.src === 'emissive', !s.has_emissive_map)
+        + _beChip('own texture', 'glow:src:texture', g.src === 'texture', false)
+        + _beChip('flat', 'glow:src:flat', g.src === 'flat', false) + '</div>';
     if (!s.has_emissive_map)
         html += '<div class="be-help">No _emissive map beside this texture.</div>';
     html += _beNumberRow('scale', 'glow:scale', g.scale === undefined ? 1 : g.scale, 0.1);
@@ -106,12 +116,11 @@ function _beStateFields(tab, st) {
         + ' onchange="dauntlessEvent(\'bridge-emitters/state:' + tab + ':level:\' + this.value)">'
         + '<input type="number" min="0" step="0.01" value="' + lv.toFixed(2) + '" style="width:56px"'
         + ' onchange="dauntlessEvent(\'bridge-emitters/state:' + tab + ':level:\' + this.value)"></div>';
-    const shp = function (v) {
-        return '<option value="' + v + '"' + (w.shape === v ? ' selected' : '') + '>' + v + '</option>';
-    };
-    html += '<div class="be-row"><label>pulse</label>'
-        + '<select onchange="dauntlessEvent(\'bridge-emitters/state:' + tab + ':wave:shape:\' + this.value)">'
-        + shp('steady') + shp('sine') + shp('square') + '</select></div>';
+    html += '<div class="be-row"><label>pulse</label>';
+    ['steady', 'sine', 'square'].forEach(function (v) {
+        html += _beChip(v, 'state:' + tab + ':wave:shape:' + v, w.shape === v, false);
+    });
+    html += '</div>';
     if (w.shape !== 'steady') {
         html += _beNumberRow('period s', 'state:' + tab + ':wave:period_s', w.period_s, 0.05);
         html += _beNumberRow('min', 'state:' + tab + ':wave:min', w.min || 0, 0.05);
@@ -127,15 +136,17 @@ function _beStateFields(tab, st) {
 // the selected tab is also the alert the bridge previews (§12.2).
 function _beProfileSection(state) {
     const s = state.selected;
-    let html = '<div class="cp-section-title">Profile</div>'
-        + '<div class="be-row"><label>profile</label>'
-        + '<select onchange="dauntlessEvent(\'bridge-emitters/profile-select:\' + this.value)">'
-        + '<option value=""' + (s.profile ? '' : ' selected') + '>none (steady white)</option>';
+    // The profile list: one chip per profile, each saying how many shapes
+    // share it -- editing a shared profile changes all of them (§12.1).
+    let html = '<div class="cp-section-title">Profile</div><div class="be-list">'
+        + _beChip('none (steady white)', 'profile-select:', !s.profile, false);
     (state.profiles || []).forEach(function (p) {
-        html += '<option value="' + _beEsc(p.name) + '"' + (p.name === s.profile ? ' selected' : '')
-            + '>' + _beEsc(p.name) + ' (' + p.used_by + ')</option>';
+        const label = p.name + ' — used by ' + p.used_by + (p.used_by === 1 ? ' shape' : ' shapes');
+        html += '<button class="be-chip' + (p.name === s.profile ? ' active' : '') + '"'
+            + ' onclick="dauntlessEvent(\'bridge-emitters/profile-select:' + _beJs(p.name) + '\')">'
+            + _beEsc(label) + '</button>';
     });
-    html += '</select></div><div class="be-row">'
+    html += '</div><div class="be-row">'
         + '<button onclick="dauntlessEvent(\'bridge-emitters/profile-new\')">New</button>';
     if (s.profile) {
         html += '<input type="text" id="be-rename" value="' + _beEsc(s.profile) + '" style="width:120px">'
@@ -244,6 +255,7 @@ function setBridgeEmitters(state) {
     if (!root) return;
     if (!state || state.visible !== true) {
         root.style.display = 'none';
+        _beWheel = null;          // a hidden panel holds no drag (review M1)
         return;
     }
     const body = document.getElementById('bridge-emitters-body');

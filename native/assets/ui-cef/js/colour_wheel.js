@@ -58,6 +58,12 @@ function ColourWheel(canvas, hs, onChange) {
         self.dragging = false;
         self._fromEvent(e, true);
     });
+    // A drag that loses its pointer (the panel hidden mid-drag, Esc) ends
+    // WITHOUT committing; otherwise `dragging` would stick and block every
+    // later rebuild of the panel that hosts the wheel (review M1).
+    var cancel = function () { self.dragging = false; };
+    canvas.addEventListener('lostpointercapture', cancel);
+    canvas.addEventListener('pointercancel', cancel);
     this.draw();
 }
 
