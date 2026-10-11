@@ -319,12 +319,12 @@ def test_fold_makes_the_most_common_finish_the_texture_material():
     report = ld.fold_into_textures(d, meshes)
     ld.validate(d)
     assert d["textures"] == {"map 13.tga": "Map 13"}
-    assert d["materials"]["Map 13"] == {"roughness": 0}
+    assert d["materials"]["Map 13"] == {"roughness": 0, "texture": "map 13.tga"}
     assert "material" not in d["objects"]["10:a"]           # lights kept, link dropped
     assert d["objects"]["10:a"]["lights"]
     assert "11:b" not in d["objects"]                       # nothing left: pruned
     assert d["objects"]["12:c"]["material"] == "Map 13 2"   # the odd one out keeps a link
-    assert d["materials"]["Map 13 2"] == {"roughness": 0.5}
+    assert d["materials"]["Map 13 2"] == {"roughness": 0.5, "texture": "map 13.tga"}
     assert "material 1" not in d["materials"] and "material 3" not in d["materials"]
     assert report["Map 13"] == {"folded": 2, "kept": ["12:c"], "adopted": 1}
 
@@ -346,7 +346,7 @@ def test_fold_breaks_a_tie_toward_the_default_finish():
     d["objects"]["11:b"]["material"] = "material 3"         # a: 0, b: 0.5 -- one each
     del d["objects"]["12:c"]
     ld.fold_into_textures(d, meshes)
-    assert d["materials"]["Map 13"] == {"roughness": 0.5}
+    assert d["materials"]["Map 13"] == {"roughness": 0.5, "texture": "map 13.tga"}
     assert d["objects"]["10:a"]["material"] == "Map 13 2"
 
 
@@ -358,5 +358,52 @@ def test_fold_treats_finishes_rounding_to_the_same_twentieth_as_one():
     d["materials"]["material 2"] = {"roughness": 0.02}
     d["materials"]["material 3"] = {"roughness": 0.01}
     report = ld.fold_into_textures(d, meshes)
-    assert d["materials"]["Map 13"] == {"roughness": 0}
+    assert d["materials"]["Map 13"] == {"roughness": 0, "texture": "map 13.tga"}
     assert report["Map 13"]["kept"] == []
+
+
+# ── a material belongs to one texture (Mark 2026-10-11) ─────────────────────
+
+def test_a_texture_mapping_must_name_a_material_of_that_texture():
+    d = ld.empty_doc("x")
+    d["materials"]["Map 13"] = {"texture": "map 5.tga"}
+    d["textures"] = {"map 13.tga": "Map 13"}
+    with pytest.raises(ld.BridgeLightingError, match="map 13.tga"):
+        ld.validate(d)
+    d["materials"]["Map 13"]["texture"] = "map 13.tga"
+    ld.validate(d)
+    d["materials"]["Map 13"]["texture"] = 3
+    with pytest.raises(ld.BridgeLightingError, match="texture"):
+        ld.validate(d)
+
+
+def test_resolve_honours_a_link_only_on_its_own_texture():
+    d = ld.empty_doc("x")
+    d["materials"] = {"Map 13": {"texture": "map 13.tga"}, "Map 19 2": {"texture": "map 19.tga"},
+                      "loose": {}}
+    d["textures"] = {"map 13.tga": "Map 13"}
+    ld.object_entry(d, 10, "a")["material"] = "Map 19 2"    # a Map 13 mesh: wrong texture
+    ld.object_entry(d, 12, "c")["material"] = "Map 19 2"    # a Map 19 mesh: fine
+    ld.object_entry(d, 13, "d")["material"] = "loose"       # no texture recorded: any mesh
+    matched, _ = ld.match_shapes(d, TEX_MESHES)
+    assert ld.resolve(d, TEX_MESHES, matched) == {0: "Map 13", 1: "Map 13", 2: "Map 19 2",
+                                                  3: "loose"}
+    assert ld.link_mismatches(d, TEX_MESHES, matched) == [
+        "10:a: material 'Map 19 2' is for map 19.tga, the object uses map 13.tga; ignored"]
+
+
+def test_bind_textures_records_each_materials_texture_and_splits_a_spanning_one():
+    d = ld.empty_doc("x")
+    d["materials"] = {"roof": {"roughness": 0}, "Map 13": {}}
+    d["textures"] = {"map 13.tga": "Map 13"}
+    meshes = [_tex_mesh(0, 76, "", "Map 5.tga"), _tex_mesh(1, 84, "", "Map 5.tga"),
+              _tex_mesh(2, 87, "", "Map 13.tga")]
+    for b in (76, 84, 87):
+        ld.object_entry(d, b, "")["material"] = "roof"
+    splits = ld.bind_textures(d, meshes)
+    ld.validate(d)
+    assert d["materials"]["roof"] == {"roughness": 0, "texture": "map 5.tga"}   # most users
+    assert d["objects"]["87:"]["material"] == "roof (Map 13)"
+    assert d["materials"]["roof (Map 13)"] == {"roughness": 0, "texture": "map 13.tga"}
+    assert d["materials"]["Map 13"] == {"texture": "map 13.tga"}
+    assert splits == ["roof: Map 13 objects moved to 'roof (Map 13)'"]

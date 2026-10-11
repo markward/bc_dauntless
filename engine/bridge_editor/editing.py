@@ -48,12 +48,22 @@ def link(doc, block, name, material):
         _prune(doc, block, name)
 
 
-def new_material(doc, block, name):
-    n = 1
-    while f"material {n}" in doc["materials"]:
-        n += 1
-    mat = f"material {n}"
-    doc["materials"][mat] = {}
+def new_material(doc, block, name, texture=None):
+    """An empty material linked to this object: for a textured object a
+    variant of its texture (`<texture> 2`, ...: a material belongs to one
+    texture, Mark 2026-10-11), else `material N`."""
+    if texture:
+        stem, n = ld.texture_stem(texture), 2
+        while f"{stem} {n}" in doc["materials"]:
+            n += 1
+        mat = f"{stem} {n}"
+        doc["materials"][mat] = {"texture": ld.texture_key(texture)}
+    else:
+        n = 1
+        while f"material {n}" in doc["materials"]:
+            n += 1
+        mat = f"material {n}"
+        doc["materials"][mat] = {}
     link(doc, block, name, mat)
     return mat
 
@@ -65,7 +75,7 @@ def texture_material(doc, texture):
     textures = doc.setdefault("textures", {})
     if key not in textures:
         name = ld.free_name(doc, ld.texture_stem(texture))
-        doc["materials"][name] = {}
+        doc["materials"][name] = {"texture": key}
         textures[key] = name
     return textures[key]
 

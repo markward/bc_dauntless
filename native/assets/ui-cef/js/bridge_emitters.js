@@ -83,9 +83,10 @@ function _beLibrary(s) {
     const unlinked = s.texture_material ? 'texture · ' + s.texture_material : 'none';
     let html = '<div class="be-list">' + _beChip(unlinked, 'material-link:', !s.linked, false);
     (s.library || []).forEach(function (m) {
+        if (m.texture) return;              // the texture's own material: the first chip
         html += '<button class="be-chip' + (s.linked && m.name === s.material ? ' active' : '') + '"'
             + ' onclick="dauntlessEvent(\'bridge-emitters/material-link:' + _beJs(m.name) + '\')">'
-            + _beEsc(m.name + (m.texture ? ' (texture)' : '') + ' — ' + _beUsers(m.used_by))
+            + _beEsc(m.name + ' — ' + _beUsers(m.used_by))
             + '</button>';
     });
     html += '</div><div class="be-row">'
@@ -99,7 +100,9 @@ function _beObjectTab(s) {
     const open = function (id) { return (s.expanded || []).indexOf(id) >= 0; };
     const title = s.linked ? s.material
         : (s.texture_material ? s.texture_material + ' (texture)' : 'none');
-    let html = _beEntry('material', 'Material: ' + title, true, null, null, _beLibrary(s));
+    // The library is long (one material per TGA): collapsed until its caret opens it.
+    let html = _beEntry('material', 'Material: ' + title, open('material'), null, null,
+                        _beLibrary(s));
     if (!s.material && s.has_emission_map) {
         const stem = String((s.textures || [''])[0]).replace(/\.[^.]*$/, '');
         html += '<div class="be-help">Emission map · ' + _beEsc(stem) + '_emissive · steady</div>';
@@ -195,18 +198,19 @@ function _beMaterialTab(s) {
     html += _beEntry('finish', 'Finish', !open('finish'), null, null,
                      _beFinishRow('roughness', m.finish.roughness)
                      + _beFinishRow('metalness', m.finish.metalness));
-    // Emission follows the roughness/metalness rule: the object's emission
-    // map whenever it has one (shown, not chosen); `without map` is what
-    // glows for objects that have none (spec §13, Mark 2026-10-11).
+    // The TGA is part of the material (Mark 2026-10-11), so the texture
+    // decides the source: its `_emissive` map when it has one (shown, not
+    // chosen), else the choice of own texture or a flat colour.
     const stem = String((s.textures || [''])[0]).replace(/\.[^.]*$/, '');
-    const fallback = m.emission.without_map === 'flat' ? 'flat colour' : 'own texture';
-    let emis = '<div class="be-row"><span class="be-source">source: '
-        + (s.has_emission_map ? 'emission map · ' + _beEsc(stem) + '_emissive'
-                              : _beEsc(fallback) + ' (no emission map)')
-        + '</span></div><div class="be-row"><label>without a map</label>';
-    _BE_WITHOUT_MAP.forEach(function (p) {
-        emis += _beChip(p[1], 'emission:without_map:' + p[0], m.emission.without_map === p[0], false);
-    });
+    let emis;
+    if (s.has_emission_map) {
+        emis = '<div class="be-help">source: emission map · ' + _beEsc(stem) + '_emissive</div><div>';
+    } else {
+        emis = '<div class="be-help">no emission map</div><div class="be-row"><label>source</label>';
+        _BE_WITHOUT_MAP.forEach(function (p) {
+            emis += _beChip(p[1], 'emission:without_map:' + p[0], m.emission.without_map === p[0], false);
+        });
+    }
     emis += '</div>' + _beNumberRow('strength', 'emission:strength', m.emission.strength, 0.1)
         + _beNumberRow('state fade s', 'fade', m.fade_s, 0.05);
     html += _beEntry('emission', 'Emission', !open('emission'), null, null, emis);

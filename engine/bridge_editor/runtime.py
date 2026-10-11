@@ -104,7 +104,8 @@ class BridgeRuntime:
             spot_list, warnings = lights.spots(doc, self._matched, self._resolved)
             self._glow_shapes, glow_warnings = glow.glow_objects(
                 doc, self._resolved, self._meshes)
-            warnings = warnings + glow_warnings
+            warnings = (ld.link_mismatches(doc, self._meshes, self._matched)
+                        + warnings + glow_warnings)
             for w in warnings:
                 dev_mode.log_swallowed(
                     "bridge lighting emitters", ld.BridgeLightingError(w))

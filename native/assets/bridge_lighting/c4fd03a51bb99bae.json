@@ -2,65 +2,82 @@
   "format": 2,
   "materials": {
     "LCarsSchematicRight": {
-      "roughness": 0
+      "roughness": 0,
+      "texture": "lcarsschematicright.tga"
     },
     "ceilingwhite": {
-      "roughness": 0
+      "roughness": 0,
+      "texture": "ceilingwhite.tga"
     },
     "chair": {
       "metalness": 1,
-      "roughness": 0.06
+      "roughness": 0.06,
+      "texture": "chair.tga"
     },
     "chair 2": {
       "metalness": 1,
-      "roughness": 0.02
+      "roughness": 0.02,
+      "texture": "chair.tga"
     },
     "consoletopview": {
-      "roughness": 0
+      "roughness": 0,
+      "texture": "consoletopview.tga"
     },
     "lcarsschematicleft": {
-      "roughness": 0
+      "roughness": 0,
+      "texture": "lcarsschematicleft.tga"
     },
     "newcomp": {
       "metalness": 1,
-      "roughness": 0
+      "roughness": 0,
+      "texture": "newcomp.tga"
     },
     "newcomp 2": {
       "metalness": 0.89,
-      "roughness": 0
+      "roughness": 0,
+      "texture": "newcomp.tga"
     },
     "newcomp 3": {
       "metalness": 1,
-      "roughness": 0.04
+      "roughness": 0.04,
+      "texture": "newcomp.tga"
     },
     "newcomp 4": {
       "metalness": 1,
-      "roughness": 0.17
+      "roughness": 0.17,
+      "texture": "newcomp.tga"
     },
     "newcomp 5": {
       "metalness": 1,
-      "roughness": 0.08
+      "roughness": 0.08,
+      "texture": "newcomp.tga"
     },
     "newcomp 6": {
       "metalness": 0.93,
-      "roughness": 0
+      "roughness": 0,
+      "texture": "newcomp.tga"
     },
     "roofcovelight": {
-      "roughness": 0.02
+      "roughness": 0.02,
+      "texture": "roofcovelight.tga"
     },
     "walllcarspanel": {
-      "roughness": 0.14
+      "roughness": 0.14,
+      "texture": "walllcarspanel.tga"
     },
     "walllcarspanel 2": {
-      "roughness": 0
+      "roughness": 0,
+      "texture": "walllcarspanel.tga"
     },
     "walllight": {
       "metalness": 1,
-      "roughness": 0.14
+      "roughness": 0.14,
+      "texture": "walllight.tga"
     },
     "walllight 2": {
       "metalness": 1,
-      "roughness": 0.08
+      "roughness": 0.08,
+      "texture": "walllight.tga"
     }
   },
   "objects": {

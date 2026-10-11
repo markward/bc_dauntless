@@ -2,65 +2,85 @@
   "format": 2,
   "materials": {
     "Map 1": {
-      "roughness": 0
+      "roughness": 0,
+      "texture": "map 1.tga"
     },
     "Map 12": {
-      "roughness": 0
+      "roughness": 0,
+      "texture": "map 12.tga"
     },
     "Map 15": {
-      "roughness": 0
+      "roughness": 0,
+      "texture": "map 15.tga"
     },
     "Map 16": {
-      "roughness": 0.24
+      "roughness": 0.24,
+      "texture": "map 16.tga"
     },
     "Map 18": {
-      "roughness": 0.53
+      "roughness": 0.53,
+      "texture": "map 18.tga"
     },
     "Map 18 2": {
-      "roughness": 0.5
+      "roughness": 0.5,
+      "texture": "map 18.tga"
     },
     "Map 19": {
-      "roughness": 0.98
+      "roughness": 0.98,
+      "texture": "map 19.tga"
     },
     "Map 19 2": {
-      "roughness": 0
+      "roughness": 0,
+      "texture": "map 19.tga"
     },
     "Map 22a": {
-      "roughness": 0.05
+      "roughness": 0.05,
+      "texture": "map 22a.tga"
     },
     "Map 22a 2": {
-      "roughness": 0
+      "roughness": 0,
+      "texture": "map 22a.tga"
     },
     "Map 22b": {
-      "roughness": 0
+      "roughness": 0,
+      "texture": "map 22b.tga"
     },
     "Map 22c": {
-      "roughness": 0
+      "roughness": 0,
+      "texture": "map 22c.tga"
     },
     "Map 24": {
-      "roughness": 0
+      "roughness": 0,
+      "texture": "map 24.tga"
     },
     "Map 26": {
-      "metalness": 0.63
+      "metalness": 0.63,
+      "texture": "map 26.tga"
     },
     "Map 27": {
       "metalness": 0,
-      "roughness": 0.63
+      "roughness": 0.63,
+      "texture": "map 27.tga"
     },
     "Map 4": {
-      "roughness": 0.01
+      "roughness": 0.01,
+      "texture": "map 4.tga"
     },
     "Map 6": {
-      "roughness": 0
+      "roughness": 0,
+      "texture": "map 6.tga"
     },
     "Map 7": {
-      "roughness": 0
+      "roughness": 0,
+      "texture": "map 7.tga"
     },
     "Map 8": {
-      "roughness": 0
+      "roughness": 0,
+      "texture": "map 8.tga"
     },
     "Map 9": {
-      "roughness": 0.53
+      "roughness": 0.53,
+      "texture": "map 9.tga"
     },
     "alcove": {
       "emission": {
@@ -102,13 +122,16 @@
           "shape": "sine",
           "type": "animation"
         }
-      ]
+      ],
+      "texture": "map 19.tga"
     },
     "g_imp_connops": {
-      "roughness": 0
+      "roughness": 0,
+      "texture": "g_imp_connops.tga"
     },
     "g_imp_redbars": {
-      "roughness": 0
+      "roughness": 0,
+      "texture": "g_imp_redbars.tga"
     },
     "roof": {
       "emission": {
@@ -142,7 +165,43 @@
           "type": "emitter"
         }
       ],
-      "roughness": 0
+      "roughness": 0,
+      "texture": "map 5.tga"
+    },
+    "roof (Map 13)": {
+      "emission": {
+        "without_map": "texture"
+      },
+      "fade_s": 0.5,
+      "modifiers": [
+        {
+          "level": 1,
+          "scope": [
+            "green"
+          ],
+          "tint": [
+            1,
+            1,
+            1
+          ],
+          "type": "emitter"
+        },
+        {
+          "level": 0.6,
+          "scope": [
+            "yellow",
+            "red"
+          ],
+          "tint": [
+            1,
+            1,
+            1
+          ],
+          "type": "emitter"
+        }
+      ],
+      "roughness": 0,
+      "texture": "map 13.tga"
     },
     "roof 2": {
       "emission": {
@@ -175,10 +234,12 @@
           ],
           "type": "emitter"
         }
-      ]
+      ],
+      "texture": "map 13.tga"
     },
     "running_0": {
-      "roughness": 0
+      "roughness": 0,
+      "texture": "running_0.tga"
     }
   },
   "objects": {
@@ -368,7 +429,7 @@
     },
     "87:": {
       "block": 87,
-      "material": "roof",
+      "material": "roof (Map 13)",
       "name": ""
     },
     "90:": {

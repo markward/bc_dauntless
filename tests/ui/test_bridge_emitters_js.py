@@ -115,8 +115,15 @@ def test_the_dock_is_hidden_without_a_selection():
     assert out["dock_display"] == "flex"
 
 
-def test_object_tab_lists_the_library_and_the_emission_map_row():
+def test_the_library_is_collapsed_until_its_caret_opens_it():
     [out] = _run([{"state": _state(selected=_sel())}])
+    body = out["body"]
+    assert "expand:material" in body and "Material: Map 19 (texture)" in body
+    assert "material-link:alcove" not in body and "material-new" not in body
+
+
+def test_object_tab_lists_the_library_and_the_emission_map_row():
+    [out] = _run([{"state": _state(selected=_sel(expanded=["material"]))}])
     body = out["body"]
     assert "bridge-emitters/tab:material" in body
     assert "alcove — used by 4 objects" in body and "material-link:alcove" in body
@@ -140,9 +147,11 @@ def test_material_tab_shows_finish_surface_and_the_modifier_stack():
     [out] = _run([{"state": _state(selected=sel)}])
     body = out["body"]
     assert "material-rename:" in body and "finish:roughness:" in body
-    assert "emission:without_map:texture" in body and "emission:without_map:flat" in body
+    # The texture has an emission map: that IS the source, and nothing asks
+    # what would glow without one (the TGA is part of the material).
+    assert "source: emission map · Map 19_emissive" in body
+    assert "emission:without_map" not in body and "without a map" not in body
     assert "emission:strength:" in body and "fade:" in body
-    assert "source: emission map · Map 19_emissive" in body       # the object has a map
     assert "surface" not in body.lower().replace("surface behind", "")
     assert "mod-add:emitter" in body and "mod-add:animation" in body
     assert "expand:mod:0" in body and "mod:0:level:" not in body     # collapsed
@@ -209,15 +218,27 @@ def test_enter_in_the_rename_field_commits_the_rename():
     assert "onchange=" in tag and "material-rename:" in tag
 
 
-def test_without_a_map_the_source_line_names_the_fallback():
+def test_without_a_map_the_choice_is_the_source():
     m = dict(MAT, emission={"without_map": "flat", "strength": 1.0})
     sel = _sel(tab="material", material="alcove", material_data=m, has_emission_map=False)
     [out] = _run([{"state": _state(selected=sel)}])
-    assert "source: flat colour (no emission map)" in out["body"]
+    body = out["body"]
+    assert "<label>source</label>" in body and "no emission map" in body
+    assert "emission:without_map:texture" in body and "emission:without_map:flat" in body
+    assert "without a map" not in body
+
+
+def test_the_library_does_not_repeat_the_texture_material():
+    lib = [{"name": "Map 19", "used_by": 17, "texture": True},
+           {"name": "alcove", "used_by": 4, "texture": False}]
+    [out] = _run([{"state": _state(selected=_sel(expanded=["material"], library=lib))}])
+    body = out["body"]
+    assert "material-link:alcove" in body and "material-link:Map 19" not in body
+    assert "texture · Map 19" in body
 
 
 def test_the_unlink_chip_names_the_texture_material():
-    [out] = _run([{"state": _state(selected=_sel())}])
+    [out] = _run([{"state": _state(selected=_sel(expanded=["material"]))}])
     body = out["body"]
     assert "texture · Map 19" in body and "material-link:" in body
     assert "Material: Map 19 (texture)" in body

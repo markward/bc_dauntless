@@ -766,11 +766,18 @@ they use the yellow/red probe.
   the texture's material, a tie going to the finish nearest the default so
   the unlinked meshes that adopt it change least; each object that differs
   kept a `<texture> 2`... link.)*
-- **Our material is properties layered over the object's texture**, not
-  Blender's texture-owning material: the albedo still comes from the NIF and
-  the mesh fixes, and `_rough` / `_metal` / `_normal` / `_emissive` maps are
-  still found by texture name (§9.2, §9.7). So one material can serve
-  objects with different textures.
+- **A material belongs to one texture** (Mark, 2026-10-11: "the TGA is
+  part of the material"): it records `texture` (the case-folded file name),
+  the library offers only the selected object's texture's materials, and a
+  link counts only on an object of that texture (`lighting_doc.fits`; a
+  hand-edited mismatch is ignored with a warning). The albedo still comes
+  from the NIF and the mesh fixes, and `_rough` / `_metal` / `_normal` /
+  `_emissive` maps are still found by texture name (§9.2, §9.7). Two
+  textures pulsing together use two materials with the same settings --
+  one bridge clock keeps them in step. *(The first build let one material
+  span textures; DBridge's `roof` (Map 5 rear ribs + Map 13 front rib) was
+  split by `bind_textures`: the texture with most users kept the name, the
+  other got `roof (Map 13)`.)*
 
 **A material holds** (Material tab):
 - **Finish**: `roughness`, `metalness` (0-1 each, optional). A texture map
@@ -780,8 +787,9 @@ they use the yellow/red probe.
   (the variant for the current state, §13.1; shown in the editor, not
   chosen); `without_map` -- `texture` (its own texture, default) or `flat`
   -- for objects that have none; plus `strength` (≥ 0, default 1; 0 = no
-  glow while the lights still follow the emitters). That is what lets side
-  bars (emission map) and alcoves (own texture) share one material.
+  glow while the lights still follow the emitters). Since a material has
+  one texture, the editor shows the map as the source when there is one and
+  offers the own texture / flat choice only when there is not.
   *(Replaces the first build's "Surface" with auto / emission map / own
   texture / flat / none: confusing beside Finish, and the map choice was
   inconsistent with roughness/metalness.)*
@@ -840,13 +848,14 @@ steady).
 
 ```json
 {"format": 2, "source": "...",
- "materials": {"alcove": {"roughness": 0, "emission": {"without_map": "texture", "strength": 1},
+ "materials": {"alcove": {"texture": "map 19.tga", "roughness": 0,
+   "emission": {"without_map": "texture", "strength": 1},
    "fade_s": 0.5,
    "modifiers": [{"type": "emitter", "scope": ["green"], "tint": [1, 1, 1], "level": 1},
                  {"type": "emitter", "scope": ["red"], "tint": [1, 0.12, 0.08], "level": 0.5},
                  {"type": "animation", "scope": ["red"], "shape": "sine", "period_s": 2,
                   "min": 0.2, "phase": 0}]},
-   "Map 13": {"roughness": 0.3}},
+   "Map 13": {"texture": "map 13.tga", "roughness": 0.3}},
  "textures": {"map 13.tga": "Map 13"},
  "objects": {"401:": {"block": 401, "name": "", "material": "alcove",
    "lights": [{"position": [157, -135, 105], "direction": [0, 0, -1], "inner_deg": 45,

@@ -233,7 +233,9 @@ def _modifier(m, where):
 
 
 def _material(m, where):
-    _obj(m, where, {"roughness", "metalness", "emission", "fade_s", "modifiers"})
+    _obj(m, where, {"texture", "roughness", "metalness", "emission", "fade_s", "modifiers"})
+    if "texture" in m and not isinstance(m["texture"], str):
+        _fail(f"{where}.texture", "must be a string (the texture's file name, case-folded)")
     for ch in ("roughness", "metalness"):
         if ch in m:
             _num(m[ch], f"{where}.{ch}", 0, 1)
@@ -301,6 +303,9 @@ def validate(doc) -> dict:
         for tex, name in doc["textures"].items():
             if name not in doc["materials"]:
                 _fail(f"$.textures.{tex}", f"no material named {name!r}")
+            own = doc["materials"][name].get("texture")
+            if own is not None and own != tex:
+                _fail(f"$.textures.{tex}", f"material {name!r} is for {own}")
     return doc
 
 
@@ -447,10 +452,11 @@ def resolve(doc, meshes, matched) -> dict:
     own link wins (only where its name matched, see match_shapes); otherwise
     the material of the mesh's texture (`textures`). Meshes with neither are
     absent -- they render with the defaults."""
+    by_mesh = {m["mesh"]: m for m in meshes}
     linked = {}
     for key, mesh in matched.items():
         name = doc["objects"].get(key, {}).get("material")
-        if name:
+        if name and fits(doc, name, by_mesh.get(mesh, {})):
             linked[mesh] = name
     by_tex = doc.get("textures", {})
     out = {}
@@ -466,6 +472,32 @@ def resolve(doc, meshes, matched) -> dict:
     return out
 
 
+def fits(doc, name, mesh) -> bool:
+    """A material belongs to one texture (Mark 2026-10-11: the TGA is part
+    of the material); a link counts only on a mesh of that texture. A
+    material with no texture recorded (an upgraded format-1 file) fits any."""
+    own = doc["materials"].get(name, {}).get("texture")
+    if own is None:
+        return True
+    tex = mesh_texture(mesh)
+    return tex is not None and texture_key(tex) == own
+
+
+def link_mismatches(doc, meshes, matched) -> list:
+    """One warning per link that resolve() ignores: its material is for
+    another texture (only a hand-edited file can hold one)."""
+    by_mesh = {m["mesh"]: m for m in meshes}
+    out = []
+    for key in sorted(matched):
+        name = doc["objects"][key].get("material")
+        mesh = by_mesh.get(matched[key], {})
+        if name and not fits(doc, name, mesh):
+            tex = mesh_texture(mesh)
+            out.append(f"{key}: material {name!r} is for {doc['materials'][name]['texture']}, "
+                       f"the object uses {texture_key(tex) if tex else 'no texture'}; ignored")
+    return out
+
+
 def free_name(doc, base) -> str:
     """`base`, or `base 2`, `base 3`, ... -- the first unused material name."""
     name, n = base, 2
@@ -475,13 +507,14 @@ def free_name(doc, base) -> str:
 
 
 def _finish_only(mat) -> bool:
-    return set(mat) <= {"roughness", "metalness"}
+    return set(mat) <= {"roughness", "metalness", "texture"}
 
 
 def _finish_sig(mat) -> str:
     """Finishes equal when rounded to 0.05 are one surface (slider noise:
     DBridge's Map 9 doors sit at 0.53 and 0.54)."""
-    return json.dumps({k: round(v * 20) / 20 for k, v in mat.items()}, sort_keys=True)
+    return json.dumps({k: round(v * 20) / 20 for k, v in mat.items() if k != "texture"},
+                      sort_keys=True)
 
 
 def _from_default(mat) -> float:
@@ -522,7 +555,7 @@ def fold_into_textures(doc, meshes) -> dict:
             rep.setdefault(s, m)               # the first (lowest block) one's value
         win = max(counts, key=lambda s: (counts[s], -_from_default(rep[s]), -sigs.index(s)))
         name = free_name(doc, texture_stem(tex))
-        doc["materials"][name] = dict(rep[win])
+        doc["materials"][name] = dict(rep[win], texture=tkey)
         doc["textures"][tkey] = name
         kept, odd = [], {}
         for key, sig in zip(keys, sigs):
@@ -535,7 +568,7 @@ def fold_into_textures(doc, meshes) -> dict:
                 continue
             if sig not in odd:
                 odd[sig] = free_name(doc, texture_stem(tex))
-                doc["materials"][odd[sig]] = dict(rep[sig])
+                doc["materials"][odd[sig]] = dict(rep[sig], texture=tkey)
             obj["material"] = odd[sig]
             kept.append(key)
         adopted = sum(1 for m in meshes if m["mesh"] not in linked_meshes
@@ -547,3 +580,36 @@ def fold_into_textures(doc, meshes) -> dict:
     if not doc["textures"]:
         del doc["textures"]
     return report
+
+
+def bind_textures(doc, meshes) -> list:
+    """One-off conversion (Mark 2026-10-11: a material belongs to one
+    texture): record each material's texture from the objects using it. A
+    material used across textures splits -- the texture with the most users
+    (a tie: the lowest block) keeps the name, each other texture's objects
+    move to a copy `<name> (<texture>)`. Texture-mapped materials take their
+    mapping's texture; unused materials are left without one. Mutates
+    `doc`; returns one line per split."""
+    matched, _ = match_shapes(doc, meshes)
+    by_mesh = {m["mesh"]: m for m in meshes}
+    users = {}
+    for key in sorted(matched, key=lambda k: (doc["objects"][k]["block"], k)):
+        name = doc["objects"][key].get("material")
+        tex = mesh_texture(by_mesh[matched[key]])
+        if name and tex:
+            users.setdefault(name, {}).setdefault(texture_key(tex), (tex, []))[1].append(key)
+    for tkey, name in doc.get("textures", {}).items():
+        doc["materials"][name]["texture"] = tkey
+    splits = []
+    for name, by_tex in sorted(users.items()):
+        order = sorted(by_tex, key=lambda t: -len(by_tex[t][1]))   # stable: block order on a tie
+        doc["materials"][name]["texture"] = order[0]
+        for tkey in order[1:]:
+            tex, keys = by_tex[tkey]
+            copy_name = free_name(doc, f"{name} ({texture_stem(tex)})")
+            doc["materials"][copy_name] = json.loads(json.dumps(doc["materials"][name]))
+            doc["materials"][copy_name]["texture"] = tkey
+            for key in keys:
+                doc["objects"][key]["material"] = copy_name
+            splits.append(f"{name}: {texture_stem(tex)} objects moved to {copy_name!r}")
+    return splits

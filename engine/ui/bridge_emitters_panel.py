@@ -390,11 +390,15 @@ class BridgeEmittersPanel(Panel):
         b, n = self._selected.block, self._selected.name
         head, _, rest = action.partition(":")
         if action == "material-new":
-            self._edit(lambda: editing.new_material(self._doc, b, n))
+            self._edit(lambda: editing.new_material(self._doc, b, n, texture=self._texture()))
         elif action == "material-duplicate":
             self._edit(lambda: editing.duplicate(self._doc, b, n,
                                                  current=self._ensure_material()))
         elif head == "material-link":
+            if rest and not ld.fits(self._doc, rest, self._selected_mesh_info() or {}):
+                self._status = (f"{rest!r} is a material for another texture; "
+                                "a material belongs to one TGA")
+                return
             self._edit(lambda: editing.link(self._doc, b, n, rest))
         elif head == "material-rename":
             result = {}
@@ -615,8 +619,10 @@ class BridgeEmittersPanel(Panel):
                 "material": self._material_name(),
                 "linked": bool(obj.get("material")),
                 "texture_material": self._texture_material(),
+                # A material belongs to one texture: only this one's are offered.
                 "library": [{"name": m, "used_by": counts.get(m, 0), "texture": m in textured}
-                            for m in sorted(self._doc["materials"])],
+                            for m in sorted(self._doc["materials"])
+                            if ld.fits(self._doc, m, self._selected_mesh_info() or {})],
                 "lights": copy.deepcopy(obj.get("lights", [])),
                 "material_data": self._material_payload(counts, unlinked)}
 

@@ -437,8 +437,8 @@ def test_an_unnamed_shape_round_trips_through_save_and_revert(env):
     p.dispatch_event("finish:metalness:0.75")
     p.dispatch_event("save")
     saved = json.loads((tmp / "bridge_lighting" / f"{HASH}.json").read_text())
-    assert saved["objects"]["11:"] == {"block": 11, "name": "", "material": "material 1"}
-    assert saved["materials"]["material 1"] == {"metalness": 0.75}
+    assert saved["objects"]["11:"] == {"block": 11, "name": "", "material": "Map 20 2"}
+    assert saved["materials"]["Map 20 2"] == {"metalness": 0.75, "texture": "map 20.tga"}
     p.dispatch_event("finish:metalness:0.1")
     p.dispatch_event("revert")
     st = payload(p)
@@ -510,7 +510,8 @@ def test_save_writes_the_project_file_and_revert_reloads(env):
     p.dispatch_event("save")
     path = tmp / "bridge_lighting" / f"{HASH}.json"
     saved = json.loads(path.read_text())
-    assert saved["materials"][saved["objects"]["7:redalertpanel"]["material"]] == {"metalness": 0.25}
+    assert saved["materials"][saved["objects"]["7:redalertpanel"]["material"]] == {
+        "metalness": 0.25, "texture": "redalertpanel.tga"}
     assert payload(p)["dirty"] is False
     p.dispatch_event("finish:metalness:0.9")
     p.dispatch_event("revert")
@@ -680,12 +681,12 @@ def test_material_new_link_duplicate_and_library(env_rt):
     p, h, rt = _sel(env_rt)
     p.dispatch_event("material-new")
     sel = payload(p)["selected"]
-    assert sel["material"] == "material 1"
-    assert sel["library"] == [{"name": "material 1", "used_by": 1, "texture": False}]
+    assert sel["material"] == "redalertpanel 2"
+    assert sel["library"] == [{"name": "redalertpanel 2", "used_by": 1, "texture": False}]
     assert sel["linked"] is True
     p.dispatch_event("material-duplicate")
-    assert payload(p)["selected"]["material"] == "material 1 copy"
-    p.dispatch_event("material-link:material 1")
+    assert payload(p)["selected"]["material"] == "redalertpanel 2 copy"
+    p.dispatch_event("material-link:redalertpanel 2")
     p.dispatch_event("material-rename:alcove")
     assert payload(p)["selected"]["material"] == "alcove"
     p.dispatch_event("material-link:")
@@ -703,7 +704,7 @@ def test_an_unlinked_object_edits_its_texture_material(env_rt):
     p.dispatch_event("finish:roughness:0.2")
     assert "7:redalertpanel" not in p._doc["objects"]          # no link made
     assert p._doc["textures"] == {"redalertpanel.tga": "redalertpanel"}
-    assert p._doc["materials"]["redalertpanel"] == {"roughness": 0.2}
+    assert p._doc["materials"]["redalertpanel"] == {"roughness": 0.2, "texture": "redalertpanel.tga"}
     p.dispatch_event("tab:material")
     p.dispatch_event("state:red")
     p.dispatch_event("mod-add:emitter")
@@ -719,7 +720,8 @@ def test_duplicate_splits_one_object_off_its_texture_material(env_rt):
     p.dispatch_event("material-duplicate")
     sel = payload(p)["selected"]
     assert (sel["material"], sel["linked"]) == ("redalertpanel copy", True)
-    assert p._doc["materials"]["redalertpanel copy"] == {"roughness": 0.2}
+    assert p._doc["materials"]["redalertpanel copy"] == {"roughness": 0.2,
+                                                         "texture": "redalertpanel.tga"}
     p.dispatch_event("material-link:")                          # back to the texture's
     assert payload(p)["selected"]["material"] == "redalertpanel"
 
@@ -748,7 +750,7 @@ def test_every_edit_is_one_undo_step(env_rt):
     p.dispatch_event("fade:0.5")                         # unchanged: none
     assert len(p._undo) == n + 1
     p.dispatch_event("undo")
-    assert "fade_s" not in p._doc["materials"]["material 1"]
+    assert "fade_s" not in p._doc["materials"]["redalertpanel 2"]
 
 
 def test_lights_are_indexed(env_rt):
@@ -817,3 +819,22 @@ def test_clicks_on_the_hint_and_status_lines_under_the_bar_do_not_pick(env):
     p.open()
     click(p, h, (100.0, 200.0))                       # dsf 2 -> 100 CSS px down
     assert payload(p)["selected"] is None
+
+
+def test_the_library_lists_only_this_textures_materials(env_rt):
+    """A material belongs to one texture (Mark 2026-10-11): the library
+    offers the selected object's texture's materials, nothing else."""
+    p, h, rt = _sel(env_rt)
+    p._doc["materials"]["Map 20"] = {"texture": "map 20.tga"}
+    p._doc["materials"]["loose"] = {}                         # upgraded: no texture yet
+    p.dispatch_event("material-new")
+    names = [m["name"] for m in payload(p)["selected"]["library"]]
+    assert names == ["loose", "redalertpanel 2"]
+
+
+def test_linking_another_textures_material_is_refused(env_rt):
+    p, h, rt = _sel(env_rt)
+    p._doc["materials"]["Map 20"] = {"texture": "map 20.tga"}
+    p.dispatch_event("material-link:Map 20")
+    assert "7:redalertpanel" not in p._doc["objects"]
+    assert "Map 20" in payload(p)["status"]

@@ -119,7 +119,7 @@ def test_texture_material_is_made_once_and_named_after_the_texture():
     assert ed.texture_material(d, "data/Map 13.tga") == "Map 13 2"
     assert ed.texture_material(d, "MAP 13.TGA") == "Map 13 2"
     assert d["textures"] == {"map 13.tga": "Map 13 2"}
-    assert d["materials"]["Map 13 2"] == {}
+    assert d["materials"]["Map 13 2"] == {"texture": "map 13.tga"}
 
 
 def test_rename_moves_the_texture_mapping_too():
@@ -136,5 +136,14 @@ def test_duplicate_of_an_unlinked_object_copies_its_texture_material():
     d["materials"][name]["roughness"] = 0.4
     assert ed.duplicate(d, 2, "b", current=name) == "Map 19 copy"
     assert d["objects"]["2:b"]["material"] == "Map 19 copy"
-    assert d["materials"]["Map 19 copy"] == {"roughness": 0.4}
+    assert d["materials"]["Map 19 copy"] == {"roughness": 0.4, "texture": "map 19.tga"}
     assert d["textures"] == {"map 19.tga": "Map 19"}   # the texture keeps its own
+
+
+def test_new_on_a_textured_object_makes_a_variant_of_that_texture():
+    d = _doc()
+    ed.texture_material(d, "Map 19.tga")
+    assert ed.new_material(d, 2, "b", texture="Map 19.tga") == "Map 19 2"
+    assert d["materials"]["Map 19 2"] == {"texture": "map 19.tga"}
+    assert d["objects"]["2:b"]["material"] == "Map 19 2"
+    assert ed.new_material(d, 1, "a", texture="Map 19.tga") == "Map 19 3"

@@ -483,3 +483,16 @@ def test_attach_applies_a_texture_material_to_a_mesh_with_no_object(proj):
     io = FakeIO(info=info)
     runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0).attach("iid")
     assert ("set_bridge_material_overrides", "iid", [(0, -1.0, 1.0)]) in io.calls
+
+
+def test_push_reports_a_link_to_another_textures_material(proj):
+    info = {"source": "/x.nif", "content_hash": HASH, "meshes": [
+        {"mesh": 0, "block": 3, "name": "floor", "node_chain": [], "material": 0,
+         "textures": ["Map 13.tga"], "maps": {}}]}
+    rt = runtime.BridgeRuntime(io=FakeIO(info=info), eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt.attach("iid")
+    d = ld.empty_doc("x")
+    d["materials"]["Map 19 2"] = {"texture": "map 19.tga", "roughness": 0}
+    ld.object_entry(d, 3, "floor")["material"] = "Map 19 2"
+    warnings = rt.push(d, {"3:floor": 0})
+    assert any("Map 19 2" in w and "ignored" in w for w in warnings)
