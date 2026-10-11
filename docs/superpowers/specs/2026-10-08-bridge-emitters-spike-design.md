@@ -745,10 +745,11 @@ The bridge file holds named **profiles**. A shape **links** to one; editing a
 profile changes every shape linked to it ("used by N shapes"); **Duplicate**
 gives one shape its own copy to diverge. A profile is:
 
-- `surface`: `emission map` / `own texture` / `flat` -- what glows. One per
-  profile, because the renderer draws one glow source per shape (§11.2) and a
-  profile is one kind of fixture.
 - `fade_s`: the cross-fade on a state change.
+- (No surface: WHAT glows depends on the shape's material, so it is per
+  shape, §13.3 -- side bars and alcoves can share one profile while glowing
+  through an emission map and their own texture respectively. Mark,
+  2026-10-11.)
 - an ordered list of **modifiers**, each with a **scope** (any of the five
   states; none ticked = parked, does nothing):
   - **Emitter** (any number): colour (wheel, V = 1) and level. Emitters
@@ -766,6 +767,11 @@ reserve-power lights = Emitter red [offline].
 
 Placement differs per fixture, so it can't live in a shared profile:
 - **Material** (roughness / metalness) -- as today.
+- **Surface** -- what glows: `emission map` / `own texture` / `flat`, plus
+  `scale` (one fixture brighter than another on the same profile). Default:
+  the emission map when the shape's texture has one, else its own texture, so
+  linking a profile usually just works; `flat` is for black-textured bars.
+  One per shape, matching the renderer's one glow source per shape (§11.2).
 - **Light** (position, aim, cone, range, intensity): its colour follows the
   shape's profile output, ^2.2 (§11.4). As today.
 - **phase** (0-1): offsets the profile's animations for this shape, so a row
@@ -788,11 +794,11 @@ A shape with no profile shows its texture-level emissive (steady; dark at
   fly mode); Alt-slow goes. RMB is freed.
 - **The side panel shows only while a shape is selected**; clicking empty
   space deselects and hides it. Contents: the selection readout; then the
-  shape's stack -- Material, Light, the profile link (with phase,
-  Duplicate, Unlink, "used by N"), and the linked profile's surface, fade
-  and modifiers. Every stack entry is a header row (name, scope squares, ×)
+  shape's stack -- Material, Surface, Light, the profile link (with
+  phase, Duplicate, Unlink, "used by N"), and the linked profile's fade and
+  modifiers. Every stack entry is a header row (name, scope squares, ×)
   that expands on click. **Add modifier** opens an in-page menu (never a
-  `<select>`, §12) listing Material, Light, Emitter, Animation. Adding an
+  `<select>`, §12) listing Material, Surface, Light, Emitter, Animation. Adding an
   Emitter or Animation to a shape with no profile creates one (`profile N`)
   and links it.
 - A shape with a texture-level `_emissive` map shows a read-only row
@@ -801,11 +807,12 @@ A shape with no profile shows its texture-level emissive (steady; dark at
 
 ### 13.5 Data
 
-Format bump (`format: 2`): `profiles.<name>` = `{surface, fade_s, modifiers:
+Format bump (`format: 2`): `profiles.<name>` = `{fade_s, modifiers:
 [{type: "emitter", scope: [...], tint, level} | {type: "animation", scope:
 [...], shape, period_s, min?, duty?, soft?}]}`; per shape `{material?,
-light?, profile?, phase?}` (`emitter.glow` goes: a linked profile with an
-emitter glows from its `surface`). The loader converts `format: 1` files on
+surface?: {src, scale?}, light?, profile?, phase?}` (`emitter.glow` becomes
+the shape's `surface`; a shape glows when its linked profile has an emitter
+active in the current state). The loader converts `format: 1` files on
 read (states → scoped modifiers) and the writer saves `format: 2`; the
 DBridge file is converted and committed.
 
