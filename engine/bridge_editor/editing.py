@@ -1,0 +1,220 @@
+"""Pure document edits for the Bridge Editor (spec 2026-10-08-bridge-emitters
+§13). Every value is clamped to the schema before it enters the document
+(§12.3), so a save can never be refused for something the editor wrote."""
+import copy
+import math
+
+from engine.bridge_editor import lighting_doc as ld
+
+MIN_PERIOD_S = 0.05
+LIGHT_INNER_DEG, LIGHT_OUTER_DEG, LIGHT_RANGE = 30.0, 60.0, 200.0
+LIGHT_INTENSITY = 2000.0
+_LIGHT_MIN_RANGE = 0.01
+_WAVE_DEFAULTS = {"sine": {}, "square": {"duty": 0.5, "soft": 0.0}}
+
+
+def _num(raw, lo=None, hi=None):
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(v):
+        return None
+    if lo is not None:
+        v = max(lo, v)
+    if hi is not None:
+        v = min(hi, v)
+    return v
+
+
+def _key(block, name):
+    return f"{block}:{name}"
+
+
+def _prune(doc, block, name):
+    o = doc["objects"].get(_key(block, name))
+    if o is not None and set(o) == {"block", "name"}:
+        del doc["objects"][_key(block, name)]
+
+
+def users(doc):
+    out = {}
+    for o in doc["objects"].values():
+        if o.get("material"):
+            out[o["material"]] = out.get(o["material"], 0) + 1
+    return out
+
+
+def link(doc, block, name, material):
+    if material and material not in doc["materials"]:
+        return
+    o = ld.object_entry(doc, block, name)
+    if material:
+        o["material"] = material
+    else:
+        o.pop("material", None)
+        _prune(doc, block, name)
+
+
+def new_material(doc, block, name):
+    n = 1
+    while f"material {n}" in doc["materials"]:
+        n += 1
+    mat = f"material {n}"
+    doc["materials"][mat] = {}
+    link(doc, block, name, mat)
+    return mat
+
+
+def duplicate(doc, block, name):
+    cur = doc["objects"].get(_key(block, name), {}).get("material")
+    if not cur:
+        return None
+    new = f"{cur} copy"
+    while new in doc["materials"]:
+        new = f"{new} copy"
+    doc["materials"][new] = copy.deepcopy(doc["materials"][cur])
+    link(doc, block, name, new)
+    return new
+
+
+def rename(doc, old, new):
+    new = new.strip()
+    if not new:
+        return "Rename refused: empty name"
+    if new == old:
+        return None
+    if new in doc["materials"]:
+        return f"Rename refused: a material named {new!r} exists"
+    doc["materials"][new] = doc["materials"].pop(old)
+    for o in doc["objects"].values():
+        if o.get("material") == old:
+            o["material"] = new
+    return None
+
+
+def set_finish(mat, ch, raw):
+    v = _num(raw, 0.0, 1.0)
+    if ch in ("roughness", "metalness") and v is not None:
+        mat[ch] = v
+
+
+def clear_finish(mat, ch):
+    mat.pop(ch, None)
+
+
+def set_surface(mat, field, raw):
+    s = mat.setdefault("surface", {"src": "auto"})
+    if field == "src" and raw in ld.SURFACES:
+        s["src"] = raw
+    elif field == "strength":
+        v = _num(raw, lo=0.0)
+        if v is not None:
+            s["strength"] = v
+
+
+def set_fade(mat, raw):
+    v = _num(raw, lo=0.0)
+    if v is not None:
+        mat["fade_s"] = v
+
+
+def add_modifier(mat, kind, state):
+    scope = [state] if state in ld.STATES else []
+    if kind == "emitter":
+        m = {"type": "emitter", "scope": scope, "tint": [1, 1, 1], "level": 1.0}
+    elif kind == "animation":
+        m = {"type": "animation", "scope": scope, "shape": "sine", "period_s": 2.0,
+             "min": 0.0, "phase": 0.0}
+    else:
+        return
+    mat.setdefault("modifiers", []).append(m)
+
+
+def _mod(mat, i):
+    mods = mat.get("modifiers", [])
+    return mods[i] if 0 <= i < len(mods) else None
+
+
+def remove_modifier(mat, i):
+    if _mod(mat, i) is not None:
+        del mat["modifiers"][i]
+
+
+def toggle_scope(mat, i, state):
+    m = _mod(mat, i)
+    if m is None or state not in ld.STATES:
+        return
+    if state in m["scope"]:
+        m["scope"].remove(state)
+    else:
+        m["scope"] = [s for s in ld.STATES if s in m["scope"] or s == state]
+
+
+def set_modifier(mat, i, field, raw):
+    m = _mod(mat, i)
+    if m is None:
+        return
+    if m["type"] == "emitter":
+        if field == "tint":
+            try:
+                rgb = [max(0.0, float(c)) for c in str(raw).split(",")]
+            except ValueError:
+                return
+            if len(rgb) != 3 or not all(math.isfinite(c) for c in rgb):
+                return
+            top = max(rgb)
+            m["tint"] = [round(c / top, 4) for c in rgb] if top > 0 else [0.0, 0.0, 0.0]
+        elif field == "level":
+            v = _num(raw, lo=0.0)
+            if v is not None:
+                m["level"] = v
+        return
+    if field == "shape" and raw in _WAVE_DEFAULTS:
+        keep = {k: m[k] for k in ("type", "scope", "period_s", "min", "phase") if k in m}
+        extra = {k: m.get(k, d) for k, d in _WAVE_DEFAULTS[raw].items()}
+        m.clear()
+        m.update(keep, shape=raw, **extra)
+    elif field == "period_s":
+        v = _num(raw, lo=MIN_PERIOD_S)
+        if v is not None:
+            m["period_s"] = v
+    elif field in ("min", "phase") or (field in ("duty", "soft") and m["shape"] == "square"):
+        v = _num(raw, 0.0, 1.0)
+        if v is not None:
+            m[field] = v
+
+
+def add_light(doc, block, name, position, direction):
+    o = ld.object_entry(doc, block, name)
+    o.setdefault("lights", []).append({
+        "position": list(position), "direction": list(direction),
+        "inner_deg": LIGHT_INNER_DEG, "outer_deg": LIGHT_OUTER_DEG,
+        "range": LIGHT_RANGE, "intensity": LIGHT_INTENSITY})
+
+
+def remove_light(doc, block, name, i):
+    o = doc["objects"].get(_key(block, name))
+    if not o or not (0 <= i < len(o.get("lights", []))):
+        return
+    del o["lights"][i]
+    if not o["lights"]:
+        del o["lights"]
+    _prune(doc, block, name)
+
+
+def set_light(light, field, raw):
+    v = _num(raw)
+    if v is None:
+        return
+    if field in ("inner_deg", "outer_deg"):
+        v = min(90.0, max(0.0, v))
+        light[field] = v
+        if field == "inner_deg" and light.get("outer_deg", 90.0) < v:
+            light["outer_deg"] = v
+        elif field == "outer_deg" and v < light.get("inner_deg", 0.0):
+            light["inner_deg"] = v
+    elif field == "range":
+        light[field] = max(_LIGHT_MIN_RANGE, v)
+    elif field == "intensity":
+        light[field] = max(0.0, v)
