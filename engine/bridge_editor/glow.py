@@ -1,38 +1,38 @@
-"""Per-bridge document -> per-shape emitter glow (spec 2026-10-08-bridge-
-emitters §11.2): which meshes glow and from what (static, rebuilt on a
-document change), and the evaluated colour each frame (live)."""
-from engine.bridge_editor import profiles
+"""Objects -> per-mesh emitter glow (spec 2026-10-08-bridge-emitters §13.2):
+an object glows when its material has an emitter; WHAT glows is the
+material's surface resolved against the object's own texture (`auto`: its
+emission map if it has one, else its own texture)."""
+from engine.bridge_editor import behaviour
 
-SRC = {"emissive": 0, "texture": 1, "flat": 2}
+SRC = {"emission": 0, "texture": 1, "flat": 2}
 
 
-def glow_shapes(doc, matched, meshes):
-    """([(mesh, src_code, profile, phase, scale)], warnings) in mesh order.
-    `meshes` is model_identity's list; `src: emissive` on a mesh whose
-    material has no _emissive map is skipped with a warning naming it."""
-    has_map = {m["mesh"]: bool(m.get("maps", {}).get("emissive")) for m in meshes}
+def glow_objects(doc, matched, meshes):
+    has_map = {m["mesh"]: bool((m.get("maps") or {}).get("emissive")) for m in meshes}
     out, warnings = [], []
     for key in sorted(matched, key=lambda k: matched[k]):
-        e = doc["shapes"].get(key, {}).get("emitter") or {}
-        g = e.get("glow")
-        if g is None:
+        name = doc["objects"].get(key, {}).get("material")
+        mat = doc["materials"].get(name) if name else None
+        if mat is None or not behaviour.has_emitter(mat):
             continue
         mesh = matched[key]
-        if g["src"] == "emissive" and not has_map.get(mesh, False):
-            warnings.append(f"{key}: glow src 'emissive' but its albedo has no "
-                            "_emissive map; skipped")
+        surface = mat.get("surface", {})
+        src = surface.get("src", "auto")
+        if src == "none":
             continue
-        out.append((mesh, SRC[g["src"]], profiles.profile_of(doc, e),
-                    float(e.get("phase", 0.0)), float(g.get("scale", 1.0))))
+        if src == "auto":
+            src = "emission" if has_map.get(mesh) else "texture"
+        if src == "emission" and not has_map.get(mesh):
+            warnings.append(f"{key}: material {name!r} glows through an emission map but "
+                            "this object's texture has none; skipped")
+            continue
+        out.append((mesh, SRC[src], mat, float(surface.get("strength", 1.0))))
     return out, warnings
 
 
-def live(shapes, fade, t):
-    """[(mesh, src_code, (r, g, b), level)] this frame: rgb = tint x level x
-    wave x scale (display space); level = level x wave x scale (the
-    received-light dip)."""
+def live(objs, fade, t):
     out = []
-    for mesh, src, prof, phase, scale in shapes:
-        rgb, k = fade.output(prof, t, phase)
-        out.append((mesh, src, tuple(c * scale for c in rgb), k * scale))
+    for mesh, src, mat, strength in objs:
+        rgb, k = fade.output(mat, t)
+        out.append((mesh, src, tuple(c * strength for c in rgb), k * strength))
     return out
