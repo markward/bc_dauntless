@@ -1,162 +1,225 @@
 {
-  "format": 1,
-  "profiles": {
+  "format": 2,
+  "materials": {
     "alcove": {
       "fade_s": 0.5,
-      "green": {
-        "level": 1,
-        "tint": [
-          1,
-          1,
-          1
-        ]
-      },
-      "red": {
-        "level": 0.5,
-        "tint": [
-          1,
-          0.12,
-          0.08
-        ],
-        "wave": {
+      "modifiers": [
+        {
+          "level": 1,
+          "scope": [
+            "green"
+          ],
+          "tint": [
+            1,
+            1,
+            1
+          ],
+          "type": "emitter"
+        },
+        {
+          "level": 0.5,
+          "scope": [
+            "red"
+          ],
+          "tint": [
+            1,
+            0.12,
+            0.08
+          ],
+          "type": "emitter"
+        },
+        {
           "min": 0.2,
           "period_s": 2,
-          "shape": "sine"
+          "phase": 0,
+          "scope": [
+            "red"
+          ],
+          "shape": "sine",
+          "type": "animation"
         }
+      ],
+      "surface": {
+        "src": "texture"
       }
+    },
+    "material 1": {
+      "roughness": 0
+    },
+    "material 10": {
+      "roughness": 0.98
+    },
+    "material 11": {
+      "roughness": 0.54
+    },
+    "material 2": {
+      "metalness": 0,
+      "roughness": 0.63
+    },
+    "material 3": {
+      "metalness": 0.63
+    },
+    "material 4": {
+      "roughness": 0.53
+    },
+    "material 5": {
+      "roughness": 0.5
+    },
+    "material 6": {
+      "roughness": 0.24
+    },
+    "material 7": {
+      "roughness": 0.01
+    },
+    "material 8": {
+      "roughness": 0.02
+    },
+    "material 9": {
+      "roughness": 0.05
     },
     "roof": {
       "fade_s": 0.5,
-      "green": {
-        "level": 1,
-        "tint": [
-          1,
-          1,
-          1
-        ]
-      },
-      "red": {
-        "level": 0.6,
-        "tint": [
-          1,
-          1,
-          1
-        ]
-      },
-      "yellow": {
-        "level": 0.6,
-        "tint": [
-          1,
-          1,
-          1
-        ]
+      "modifiers": [
+        {
+          "level": 1,
+          "scope": [
+            "green"
+          ],
+          "tint": [
+            1,
+            1,
+            1
+          ],
+          "type": "emitter"
+        },
+        {
+          "level": 0.6,
+          "scope": [
+            "yellow",
+            "red"
+          ],
+          "tint": [
+            1,
+            1,
+            1
+          ],
+          "type": "emitter"
+        }
+      ],
+      "roughness": 0,
+      "surface": {
+        "src": "emission"
+      }
+    },
+    "roof 2": {
+      "fade_s": 0.5,
+      "modifiers": [
+        {
+          "level": 1,
+          "scope": [
+            "green"
+          ],
+          "tint": [
+            1,
+            1,
+            1
+          ],
+          "type": "emitter"
+        },
+        {
+          "level": 0.6,
+          "scope": [
+            "yellow",
+            "red"
+          ],
+          "tint": [
+            1,
+            1,
+            1
+          ],
+          "type": "emitter"
+        }
+      ],
+      "surface": {
+        "src": "emission"
       }
     }
   },
-  "shapes": {
+  "objects": {
     "102:": {
       "block": 102,
-      "material": {
-        "metalness": 0,
-        "roughness": 0.63
-      },
+      "material": "material 2",
       "name": ""
     },
     "133:": {
       "block": 133,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "139:": {
       "block": 139,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "17:": {
       "block": 17,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "185:": {
       "block": 185,
-      "material": {
-        "metalness": 0.63
-      },
+      "material": "material 3",
       "name": ""
     },
     "189:": {
       "block": 189,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "224:": {
       "block": 224,
-      "material": {
-        "roughness": 0.53
-      },
+      "material": "material 4",
       "name": ""
     },
     "236:": {
       "block": 236,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "255:": {
       "block": 255,
-      "material": {
-        "roughness": 0.5
-      },
+      "material": "material 5",
       "name": ""
     },
     "277:": {
       "block": 277,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "280:": {
       "block": 280,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "283:": {
       "block": 283,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "288:": {
       "block": 288,
-      "material": {
-        "roughness": 0.24
-      },
+      "material": "material 6",
       "name": ""
     },
     "291:": {
       "block": 291,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "299:": {
       "block": 299,
-      "emitter": {
-        "light": {
+      "lights": [
+        {
           "direction": [
             0.729672,
             -0.404578,
@@ -172,37 +235,29 @@
           ],
           "range": 200
         }
-      },
-      "material": {
-        "roughness": 0
-      },
+      ],
+      "material": "material 1",
       "name": ""
     },
     "29:": {
       "block": 29,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "307:": {
       "block": 307,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "315:": {
       "block": 315,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "319:": {
       "block": 319,
-      "emitter": {
-        "light": {
+      "lights": [
+        {
           "direction": [
             -0.729672,
             -0.404578,
@@ -218,75 +273,54 @@
           ],
           "range": 200
         }
-      },
-      "material": {
-        "roughness": 0
-      },
+      ],
+      "material": "material 1",
       "name": ""
     },
     "334:": {
       "block": 334,
-      "material": {
-        "roughness": 0.01
-      },
+      "material": "material 7",
       "name": ""
     },
     "337:": {
       "block": 337,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "347:": {
       "block": 347,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "355:": {
       "block": 355,
-      "material": {
-        "roughness": 0.02
-      },
+      "material": "material 8",
       "name": ""
     },
     "358:": {
       "block": 358,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "368:": {
       "block": 368,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "392:": {
       "block": 392,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "395:": {
       "block": 395,
-      "material": {
-        "roughness": 0.05
-      },
+      "material": "material 9",
       "name": ""
     },
     "401:": {
       "block": 401,
-      "emitter": {
-        "glow": {
-          "src": "texture"
-        },
-        "light": {
+      "lights": [
+        {
           "direction": [
             0,
             0,
@@ -301,25 +335,20 @@
             105
           ],
           "range": 150
-        },
-        "profile": "alcove"
-      },
+        }
+      ],
+      "material": "alcove",
       "name": ""
     },
     "415:": {
       "block": 415,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "423:": {
       "block": 423,
-      "emitter": {
-        "glow": {
-          "src": "texture"
-        },
-        "light": {
+      "lights": [
+        {
           "direction": [
             0,
             0,
@@ -334,25 +363,20 @@
             105
           ],
           "range": 150
-        },
-        "profile": "alcove"
-      },
+        }
+      ],
+      "material": "alcove",
       "name": ""
     },
     "426:": {
       "block": 426,
-      "material": {
-        "roughness": 0.98
-      },
+      "material": "material 10",
       "name": ""
     },
     "441:": {
       "block": 441,
-      "emitter": {
-        "glow": {
-          "src": "texture"
-        },
-        "light": {
+      "lights": [
+        {
           "direction": [
             0,
             0,
@@ -367,18 +391,15 @@
             126
           ],
           "range": 150
-        },
-        "profile": "alcove"
-      },
+        }
+      ],
+      "material": "alcove",
       "name": ""
     },
     "455:": {
       "block": 455,
-      "emitter": {
-        "glow": {
-          "src": "texture"
-        },
-        "light": {
+      "lights": [
+        {
           "direction": [
             0,
             0,
@@ -393,157 +414,110 @@
             127
           ],
           "range": 150
-        },
-        "profile": "alcove"
-      },
+        }
+      ],
+      "material": "alcove",
       "name": ""
     },
     "45:": {
       "block": 45,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "471:": {
       "block": 471,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "479:": {
       "block": 479,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "51:": {
       "block": 51,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "552:": {
       "block": 552,
-      "material": {
-        "roughness": 0.53
-      },
+      "material": "material 4",
       "name": ""
     },
     "563:": {
       "block": 563,
-      "material": {
-        "roughness": 0.54
-      },
+      "material": "material 11",
       "name": ""
     },
     "575:": {
       "block": 575,
-      "material": {
-        "roughness": 0.54
-      },
+      "material": "material 11",
       "name": ""
     },
     "59:": {
       "block": 59,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "631:": {
       "block": 631,
-      "material": {
-        "roughness": 0.53
-      },
+      "material": "material 4",
       "name": ""
     },
     "63:": {
       "block": 63,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "642:": {
       "block": 642,
-      "material": {
-        "roughness": 0.53
-      },
+      "material": "material 4",
       "name": ""
     },
     "655:": {
       "block": 655,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "666:": {
       "block": 666,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "677:": {
       "block": 677,
-      "material": {
-        "roughness": 0.54
-      },
+      "material": "material 11",
       "name": ""
     },
     "685:": {
       "block": 685,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "688:": {
       "block": 688,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "691:": {
       "block": 691,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "697:": {
       "block": 697,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 1",
       "name": ""
     },
     "76:": {
       "block": 76,
-      "emitter": {
-        "glow": {
-          "src": "emissive"
-        },
-        "profile": "roof"
-      },
-      "material": {
-        "roughness": 0
-      },
+      "material": "roof",
       "name": ""
     },
     "81:": {
       "block": 81,
-      "emitter": {
-        "glow": {
-          "src": "emissive"
-        },
-        "light": {
+      "lights": [
+        {
           "direction": [
             0,
             0,
@@ -558,48 +532,24 @@
             152.688126
           ],
           "range": 2000
-        },
-        "profile": "roof"
-      },
+        }
+      ],
+      "material": "roof 2",
       "name": ""
     },
     "84:": {
       "block": 84,
-      "emitter": {
-        "glow": {
-          "src": "emissive"
-        },
-        "profile": "roof"
-      },
-      "material": {
-        "roughness": 0
-      },
+      "material": "roof",
       "name": ""
     },
     "87:": {
       "block": 87,
-      "emitter": {
-        "glow": {
-          "src": "emissive"
-        },
-        "profile": "roof"
-      },
-      "material": {
-        "roughness": 0
-      },
+      "material": "roof",
       "name": ""
     },
     "90:": {
       "block": 90,
-      "emitter": {
-        "glow": {
-          "src": "emissive"
-        },
-        "profile": "roof"
-      },
-      "material": {
-        "roughness": 0
-      },
+      "material": "roof",
       "name": ""
     }
   },

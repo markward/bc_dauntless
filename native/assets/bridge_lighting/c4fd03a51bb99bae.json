@@ -1,149 +1,150 @@
 {
-  "format": 1,
-  "profiles": {},
-  "shapes": {
+  "format": 2,
+  "materials": {
+    "material 1": {
+      "roughness": 0.02
+    },
+    "material 10": {
+      "metalness": 1,
+      "roughness": 0.04
+    },
+    "material 11": {
+      "metalness": 1,
+      "roughness": 0.17
+    },
+    "material 12": {
+      "metalness": 0.98,
+      "roughness": 0
+    },
+    "material 13": {
+      "metalness": 0.93,
+      "roughness": 0
+    },
+    "material 2": {
+      "roughness": 0
+    },
+    "material 3": {
+      "metalness": 1,
+      "roughness": 0.08
+    },
+    "material 4": {
+      "metalness": 1,
+      "roughness": 0.14
+    },
+    "material 5": {
+      "roughness": 0.14
+    },
+    "material 6": {
+      "metalness": 1,
+      "roughness": 0.06
+    },
+    "material 7": {
+      "metalness": 1,
+      "roughness": 0.02
+    },
+    "material 8": {
+      "metalness": 0.89,
+      "roughness": 0
+    },
+    "material 9": {
+      "metalness": 1,
+      "roughness": 0
+    }
+  },
+  "objects": {
     "12:Material: roof grill": {
       "block": 12,
-      "material": {
-        "roughness": 0.02
-      },
+      "material": "material 1",
       "name": "Material: roof grill"
     },
     "176:Material: e chairs": {
       "block": 176,
-      "material": {
-        "metalness": 1,
-        "roughness": 0.06
-      },
+      "material": "material 6",
       "name": "Material: e chairs"
     },
     "20:Dim Material": {
       "block": 20,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 2",
       "name": "Dim Material"
     },
     "29:walllight 01 Material: Wall Light": {
       "block": 29,
-      "material": {
-        "metalness": 1,
-        "roughness": 0.08
-      },
+      "material": "material 3",
       "name": "walllight 01 Material: Wall Light"
     },
     "341:Material: e chairs": {
       "block": 341,
-      "material": {
-        "metalness": 1,
-        "roughness": 0.02
-      },
+      "material": "material 7",
       "name": "Material: e chairs"
     },
     "34:walllight 02 Material: Wall Light": {
       "block": 34,
-      "material": {
-        "metalness": 1,
-        "roughness": 0.14
-      },
+      "material": "material 4",
       "name": "walllight 02 Material: Wall Light"
     },
     "359:Material: door center1": {
       "block": 359,
-      "material": {
-        "metalness": 0.89,
-        "roughness": 0
-      },
+      "material": "material 8",
       "name": "Material: door center1"
     },
     "389:Material: door center1": {
       "block": 389,
-      "material": {
-        "metalness": 1,
-        "roughness": 0
-      },
+      "material": "material 9",
       "name": "Material: door center1"
     },
     "403:Material: door center1": {
       "block": 403,
-      "material": {
-        "metalness": 1,
-        "roughness": 0.04
-      },
+      "material": "material 10",
       "name": "Material: door center1"
     },
     "476:Material: door center1": {
       "block": 476,
-      "material": {
-        "metalness": 1,
-        "roughness": 0.17
-      },
+      "material": "material 11",
       "name": "Material: door center1"
     },
     "487:Material: door center": {
       "block": 487,
-      "material": {
-        "metalness": 1,
-        "roughness": 0.08
-      },
+      "material": "material 3",
       "name": "Material: door center"
     },
     "499:Material: door center1": {
       "block": 499,
-      "material": {
-        "metalness": 0.98,
-        "roughness": 0
-      },
+      "material": "material 12",
       "name": "Material: door center1"
     },
     "513:Material: door center1": {
       "block": 513,
-      "material": {
-        "metalness": 0.93,
-        "roughness": 0
-      },
+      "material": "material 13",
       "name": "Material: door center1"
     },
     "530:Material: consoleLCARS": {
       "block": 530,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 2",
       "name": "Material: consoleLCARS"
     },
     "536:Material: consoleLCARS": {
       "block": 536,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 2",
       "name": "Material: consoleLCARS"
     },
     "546:Material: Lcars Schematic left": {
       "block": 546,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 2",
       "name": "Material: Lcars Schematic left"
     },
     "563:Material: Lcars Schematic right": {
       "block": 563,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 2",
       "name": "Material: Lcars Schematic right"
     },
     "63:Material: Material #38": {
       "block": 63,
-      "material": {
-        "roughness": 0.14
-      },
+      "material": "material 5",
       "name": "Material: Material #38"
     },
     "68:Material: Material #38": {
       "block": 68,
-      "material": {
-        "roughness": 0
-      },
+      "material": "material 2",
       "name": "Material: Material #38"
     }
   },
