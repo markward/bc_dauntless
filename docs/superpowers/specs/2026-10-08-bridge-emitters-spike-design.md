@@ -553,7 +553,7 @@ It is NOT the §6 emitter and does not replace it.
 | G1 | 2026-10-10 | Glow slice 1 built (plan 2026-10-10-bridge-emitter-glow-slice-1): per-mesh glow + dip, profiles/waves/fades, spot capture vs live colours, DBridge alcove + roof data | built; live-verified by Mark 2026-10-11 ("works as described") | 11 |
 | G2 | 2026-10-11 | Editor panes designed (§12): glow + profile panes, state tabs double as the alert preview, preview clock, shared colour wheel | agreed with Mark | 12 |
 | G3 | 2026-10-11 | Editor panes built (plan 2026-10-11-bridge-editor-glow-panes) | built; awaiting Mark's live check | 12 |
-| G4 | 2026-10-11 | Slice 3 designed (§13): Object/Material tabs over a shared material library of scoped Emitter/Animation modifiers (phase in Animation), five states (offline/special), editor bar chrome, Shift-fly | designed with Mark; 2 recommendations to confirm | 13 |
+| G4 | 2026-10-11 | Slice 3 designed (§13): Object/Material tabs over a shared material library of scoped Emitter/Animation modifiers (phase in Animation), five states (offline/special), editor bar chrome, Shift-fly | approved by Mark 2026-10-11 (incl. Shift-fly and offline-dark) | 13 |
 
 ## 11. Emitter glow — slice 1 *(agreed with Mark 2026-10-10)*
 
@@ -731,7 +731,7 @@ unchanged apart from the new states. "Shape" becomes **object** in the editor.
 
 | State | Square | In game | Room ambient | Emissive sibling |
 |---|---|---|---|---|
-| `offline` | ⬛ | the player ship's `PowerSubsystem` disabled or destroyed; overrides every other state while it lasts | dimmed (a new value in `bridge_lighting`, below yellow/red) | none: **texture-level `_emissive` maps go dark** on objects whose material does not light them *(recommendation -- Mark to confirm in review)* |
+| `offline` | ⬛ | the player ship's `PowerSubsystem` disabled or destroyed; overrides every other state while it lasts | dimmed (a new value in `bridge_lighting`, below yellow/red) | none: **texture-level `_emissive` maps go dark** on objects whose material does not light them |
 | `green` | 🟩 | alert 0 | as today | `_emissive` |
 | `yellow` | 🟨 | alert 1 | as today | `_emissive_y` → `_emissive` |
 | `red` | 🟥 | alert 2 | as today | `_emissive_r` → `_emissive_y` → `_emissive` |
@@ -798,7 +798,7 @@ steady).
   hint line under it: `Hold Shift: fly · WASD · Q/E · scroll: speed · click:
   select · Alt+click: surface behind · materials layer over the object's
   texture`.
-- **Fly controls** *(recommendation -- Mark to confirm in review)*: hold
+- **Fly controls**: hold
   **Shift** (not RMB) to fly with mouse-look; the scroll wheel sets the fly
   speed; Alt-slow goes; RMB is freed.
 - **The side panel shows only while an object is selected** (clicking empty
