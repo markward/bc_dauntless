@@ -3,7 +3,7 @@ PRODUCTION path (spec 2026-10-08-bridge-emitters §7, §9): at bridge load, on
 editor edits, and on alert changes. Never raises into the host loop."""
 from engine import bridge_lighting, dev_mode, host_io
 from engine.bridge_editor import lighting_doc as ld
-from engine.bridge_editor import glow, lights, materials, profiles
+from engine.bridge_editor import behaviour, glow, lights, materials
 
 
 class BridgeRuntime:
@@ -16,7 +16,7 @@ class BridgeRuntime:
         self._matched = {}
         self._meshes = []
         self._glow_shapes = []
-        self._fade = profiles.AlertFade(0)
+        self._fade = behaviour.StateFade()
         self._t = 0.0          # the bridge clock (spec §11.3): paused-aware dt
 
     def attach(self, iid):
@@ -62,7 +62,7 @@ class BridgeRuntime:
                 dev_mode.log_swallowed(
                     "bridge lighting doc match_shapes", ld.BridgeLightingError(w))
             # A bridge load shows its alert state settled -- no fade.
-            self._fade = profiles.AlertFade(self._alert())
+            self._fade = behaviour.StateFade(behaviour.state_name(self._alert()))
             self.push(doc, matched)
             # A bridge load always captures (a new room, a new eye), even
             # when the pushed overrides/spots equal the previous bridge's.
@@ -100,7 +100,7 @@ class BridgeRuntime:
             self._io.set_bridge_material_overrides(
                 self._iid, materials.overrides(doc, self._matched))
             spot_list, warnings = lights.spots(doc, self._matched)
-            self._glow_shapes, glow_warnings = glow.glow_shapes(
+            self._glow_shapes, glow_warnings = glow.glow_objects(
                 doc, self._matched, self._meshes)
             warnings = warnings + glow_warnings
             for w in warnings:
@@ -118,10 +118,11 @@ class BridgeRuntime:
         return warnings
 
     def on_alert(self, level):
-        """Start the cross-fade to the new alert state (spec 2026-10-08-bridge-
-        emitters §11.3). The spot list is static -- live colours follow on the
-        next tick() -- so nothing is re-pushed and the probes never recapture."""
-        self._fade.set_alert(level)
+        """Start the cross-fade to a new bridge state (0-4, spec 2026-10-08-
+        bridge-emitters §13.1). The spot list is static -- live colours follow
+        on the next tick() -- so nothing is re-pushed and the probes never
+        recapture."""
+        self._fade.set_state(behaviour.state_name(level))
 
     def tick(self, dt):
         """Every frame: advance the bridge clock by the paused-aware player

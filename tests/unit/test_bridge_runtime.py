@@ -36,9 +36,15 @@ def names(io):
     return [c[0] for c in io.calls]
 
 
+def _link(d, block, name, finish):
+    """A format-2 material holding `finish`, linked by object <block>:<name>."""
+    d["materials"][f"m{block}"] = finish
+    ld.object_entry(d, block, name)["material"] = f"m{block}"
+
+
 def test_attach_pushes_overrides_spots_origin_scales_and_capture(proj):
     d = ld.empty_doc("x")
-    ld.shape_entry(d, 3, "floor")["material"] = {"roughness": 0.25}
+    _link(d, 3, "floor", {"roughness": 0.25})
     lw.save(d, proj / "bridge_lighting" / f"{HASH}.json")
     io = FakeIO()
     rt = runtime.BridgeRuntime(io=io, eye=lambda: (0.0, 87.0, 50.0), alert=lambda: 0)
@@ -84,9 +90,9 @@ def test_alert_change_pushes_only_live_values_on_the_next_tick(proj):
 
 def test_bridge_swap_from_a_bridge_with_data_to_one_without_clears_state(proj):
     d = ld.empty_doc("x")
-    ld.shape_entry(d, 3, "floor")["material"] = {"roughness": 0.25}
-    ld.shape_entry(d, 5, "bar")["emitter"] = {
-        "light": {"position": [0, 0, 0], "direction": [0, 0, -1]}}
+    _link(d, 3, "floor", {"roughness": 0.25})
+    ld.object_entry(d, 5, "bar")["lights"] = [
+        {"position": [0, 0, 0], "direction": [0, 0, -1]}]
     lw.save(d, proj / "bridge_lighting" / f"{HASH}.json")
 
     io = FakeIO()
@@ -106,8 +112,8 @@ def test_bridge_swap_from_a_bridge_with_data_to_one_without_clears_state(proj):
 
 def test_detach_clears_and_resets_so_a_later_push_is_inert(proj):
     d = ld.empty_doc("x")
-    ld.shape_entry(d, 5, "bar")["emitter"] = {
-        "light": {"position": [0, 0, 0], "direction": [0, 0, -1]}}
+    ld.object_entry(d, 5, "bar")["lights"] = [
+        {"position": [0, 0, 0], "direction": [0, 0, -1]}]
     lw.save(d, proj / "bridge_lighting" / f"{HASH}.json")
 
     io = FakeIO()
@@ -205,7 +211,7 @@ def test_broken_file_error_is_logged(proj, monkeypatch):
 
 def test_match_shapes_mismatch_warnings_are_logged(proj, monkeypatch):
     d = ld.empty_doc("x")
-    ld.shape_entry(d, 5, "bar")["material"] = {"roughness": 0.1}  # block 5
+    _link(d, 5, "bar", {"roughness": 0.1})  # block 5
     lw.save(d, proj / "bridge_lighting" / f"{HASH}.json")
     logged = []
     monkeypatch.setattr(runtime.dev_mode, "log_swallowed",
@@ -220,8 +226,8 @@ def test_more_than_32_spots_warning_is_logged(proj, monkeypatch):
     d = ld.empty_doc("x")
     matched_meshes = []
     for i in range(34):
-        ld.shape_entry(d, i, f"s{i}")["emitter"] = {
-            "light": {"position": [0, 0, 0], "direction": [0, 0, -1]}}
+        ld.object_entry(d, i, f"s{i}")["lights"] = [
+            {"position": [0, 0, 0], "direction": [0, 0, -1]}]
         matched_meshes.append({"mesh": i, "block": i, "name": f"s{i}", "node_chain": [],
                                "material": 0, "textures": [],
                                "maps": {"roughness": False, "metalness": False, "normal": False}})
@@ -242,8 +248,8 @@ def test_more_than_32_spots_warning_is_logged(proj, monkeypatch):
 
 def test_push_reports_a_warning_when_the_renderer_drops_invalid_spots(proj):
     d = ld.empty_doc("x")
-    ld.shape_entry(d, 5, "bar")["emitter"] = {
-        "light": {"position": [0, 0, 0], "direction": [0, 0, -1]}}
+    ld.object_entry(d, 5, "bar")["lights"] = [
+        {"position": [0, 0, 0], "direction": [0, 0, -1]}]
     lw.save(d, proj / "bridge_lighting" / f"{HASH}.json")
 
     class DroppingIO(FakeIO):
@@ -272,8 +278,8 @@ def test_push_reports_cap_and_invalid_drops_together_not_subtracted(proj):
     d = ld.empty_doc("x")
     matched = {}
     for i in range(34):
-        ld.shape_entry(d, i, f"s{i}")["emitter"] = {
-            "light": {"position": [0, 0, 0], "direction": [0, 0, -1]}}
+        ld.object_entry(d, i, f"s{i}")["lights"] = [
+            {"position": [0, 0, 0], "direction": [0, 0, -1]}]
         matched[f"{i}:s{i}"] = i
 
     class DroppingIO(FakeIO):
@@ -320,7 +326,7 @@ def test_push_leaves_the_capture_decision_to_the_pass(proj):
     rt.attach("iid")
     io.calls.clear()
     d = ld.empty_doc("x")
-    ld.shape_entry(d, 3, "floor")["material"] = {"metalness": 1.0}
+    _link(d, 3, "floor", {"metalness": 1.0})
     rt.push(d, {"3:floor": 0})
     assert ("set_bridge_material_overrides", "iid", [(0, -1.0, 1.0)]) in io.calls
     assert "request_bridge_probe_capture" not in names(io)
@@ -333,8 +339,8 @@ def test_push_leaves_the_capture_decision_to_the_pass(proj):
 
 def _attach_a_bridge_with_lights(proj, io):
     d = ld.empty_doc("x")
-    ld.shape_entry(d, 3, "floor")["emitter"] = {
-        "light": {"position": [0, 0, 0], "direction": [0, 0, -1]}}
+    ld.object_entry(d, 3, "floor")["lights"] = [
+        {"position": [0, 0, 0], "direction": [0, 0, -1]}]
     lw.save(d, proj / "bridge_lighting" / f"{HASH}.json")
     rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
     rt.attach("A")
@@ -391,13 +397,13 @@ def test_attach_clear_failing_does_not_stop_the_load(proj):
 
 def _glow_doc(proj):
     d = ld.empty_doc("x")
-    d["profiles"]["p"] = {"fade_s": 1.0,
-                          "green": {"tint": [1, 1, 1], "level": 1},
-                          "red": {"tint": [1, 0, 0], "level": 0.5,
-                                  "wave": {"shape": "sine", "period_s": 2.0, "min": 0.0}}}
-    ld.shape_entry(d, 3, "floor")["emitter"] = {
-        "profile": "p", "glow": {"src": "flat"},
-        "light": {"position": [0, 0, 9], "direction": [0, 0, -1], "intensity": 10}}
+    d["materials"]["p"] = {"fade_s": 1.0, "surface": {"src": "flat"}, "modifiers": [
+        {"type": "emitter", "scope": ["green"], "tint": [1, 1, 1], "level": 1},
+        {"type": "emitter", "scope": ["red"], "tint": [1, 0, 0], "level": 0.5},
+        {"type": "animation", "scope": ["red"], "shape": "sine", "period_s": 2.0, "min": 0.0}]}
+    e = ld.object_entry(d, 3, "floor")
+    e["material"] = "p"
+    e["lights"] = [{"position": [0, 0, 9], "direction": [0, 0, -1], "intensity": 10}]
     lw.save(d, proj / "bridge_lighting" / f"{HASH}.json")
 
 
@@ -453,3 +459,12 @@ def test_detach_clears_the_glow_and_tick_after_detach_is_a_no_op(proj):
     n = len(io.calls)
     rt.tick(1.0)
     assert len(io.calls) == n
+
+
+def test_offline_state_turns_an_unscoped_material_off(proj):
+    _glow_doc(proj)
+    io = FakeIO()
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 3)
+    rt.attach("iid")
+    (_, _, rgb, level), = last(io, "set_bridge_glow")[2]
+    assert level == 0.0 and rgb == (0.0, 0.0, 0.0)
