@@ -51,7 +51,7 @@
    with a selection (JS sets display: flex). Width/height must match
    BAR_CSS_W / BAR_CSS_H in engine/ui/bridge_emitters_panel.py. */
 #bridge-emitters-root .be-top { pointer-events: auto; position: absolute; top: 8px; left: 8px;
-    max-width: 560px; }
+    max-width: 560px; max-height: 112px; overflow: hidden; }
 #bridge-emitters-root .be-bar { display: flex; align-items: center; gap: 4px;
     background: rgba(0, 0, 0, 0.7); padding: 4px 8px; border-radius: 4px; }
 #bridge-emitters-root .be-title { letter-spacing: 1px; margin-right: 4px; }

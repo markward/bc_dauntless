@@ -781,3 +781,11 @@ def test_shift_flies_and_scroll_sets_the_speed(env):
     h.held.discard(FakeKeys.KEY_LEFT_SHIFT)
     p.handle_input(h)
     assert h.locked[-1] is False
+
+
+def test_clicks_on_the_hint_and_status_lines_under_the_bar_do_not_pick(env):
+    # Review M1: .be-top holds the bar + hint + hover/status rows (~90 CSS px).
+    p, io, h, *_ = env
+    p.open()
+    click(p, h, (100.0, 200.0))                       # dsf 2 -> 100 CSS px down
+    assert payload(p)["selected"] is None

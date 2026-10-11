@@ -193,3 +193,13 @@ def test_outside_the_bridge_the_hint_says_how_to_get_there():
 def test_hidden_state_hides_the_root():
     [out] = _run([{"state": {"visible": False}}])
     assert out["display"] == "none"
+
+
+def test_enter_in_the_rename_field_commits_the_rename():
+    # Review M5: text_capture turns Enter into a blur -> `change`; the field
+    # must commit on change (the panel contract), not only via the button.
+    sel = _sel(tab="material", material="alcove", material_data=MAT)
+    [out] = _run([{"state": _state(selected=sel)}])
+    i = out["body"].index('id="be-rename"')
+    tag = out["body"][out["body"].rindex("<input", 0, i):out["body"].index(">", i)]
+    assert "onchange=" in tag and "material-rename:" in tag

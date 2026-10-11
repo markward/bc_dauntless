@@ -34,8 +34,8 @@ from engine.bridge_editor.picking import PickCycle, identity_for, pick_hit, pick
 from engine.ui.panel import Panel
 
 DOCK_CSS_PX = 360          # width of the docked panel, CSS px (bridge_emitters.css)
-BAR_CSS_W = 560            # the top-left bar + hint block, CSS px (bridge_emitters.css)
-BAR_CSS_H = 64
+BAR_CSS_W = 560            # the top-left .be-top block, CSS px (bridge_emitters.css)
+BAR_CSS_H = 120            # bar + hint + hover/status; .be-top's max-height
 CLICK_SLOP_PX = 4.0
 DEFAULT_ROUGHNESS = 1.0    # spec §9.2 source C
 DEFAULT_METALNESS = 0.0
@@ -377,7 +377,10 @@ class BridgeEmittersPanel(Panel):
             if old is not None:
                 result = {}
                 self._edit(lambda: result.update(err=editing.rename(self._doc, old, rest)))
-                self._status = result.get("err") or f"Renamed {old!r} to {rest.strip()!r}"
+                if result.get("err"):
+                    self._status = result["err"]
+                elif rest.strip() != old:     # the button after Enter re-commits: no-op
+                    self._status = f"Renamed {old!r} to {rest.strip()!r}"
         elif action == "light-add":
             if self._last_hit is not None:
                 pos, normal = self._last_hit

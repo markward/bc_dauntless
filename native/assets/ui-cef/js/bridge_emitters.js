@@ -180,8 +180,10 @@ function _beMaterialTab(s) {
     }
     const open = function (id) { return (s.expanded || []).indexOf(id) >= 0; };
     const used = ((s.library || []).filter(function (x) { return x.name === m.name; })[0] || {}).used_by || 0;
+    // Commits on `change` (Enter blurs via text_capture) and on the button.
     let html = '<div class="be-row"><input type="text" id="be-rename" value="' + _beEsc(m.name) + '"'
-        + ' style="width:150px"><button onclick="dauntlessEvent(\'bridge-emitters/material-rename:\' + '
+        + ' style="width:150px" onchange="dauntlessEvent(\'bridge-emitters/material-rename:\' + this.value)">'
+        + '<button onclick="dauntlessEvent(\'bridge-emitters/material-rename:\' + '
         + 'document.getElementById(\'be-rename\').value)">Rename</button>'
         + '<span class="be-source">' + _beEsc(_beUsers(used)) + '</span></div>';
     // Finish and Surface are fixed sections, open by default: toggling

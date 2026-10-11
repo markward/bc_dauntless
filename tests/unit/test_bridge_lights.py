@@ -55,3 +55,19 @@ def test_more_than_32_are_reported_by_name():
     assert len(spots) == 32
     assert warnings == ["1:s light 33: dropped (more than 32 bridge lights)",
                         "1:s light 34: dropped (more than 32 bridge lights)"]
+
+
+def test_a_finish_only_material_keeps_the_light_steady_white():
+    # Review C1: DBridge 299/320 upgrade to {"roughness": 0} + a light; with
+    # no emitter the light must stay white (as v1's no-profile light was),
+    # not go dark.
+    d = ld.empty_doc("x")
+    d["materials"]["material 1"] = {"roughness": 0}
+    e = ld.object_entry(d, 299, "")
+    e["material"] = "material 1"
+    e["lights"] = [{"position": [0, 0, 0], "direction": [0, 0, -1], "intensity": 10000}]
+    (spot,), _ = lights.spots(d, {"299:": 1})
+    assert spot[7] == (1.0, 1.0, 1.0) and spot[8] == (1.0, 1.0, 1.0)
+    for s in ("green", "red", "offline"):
+        (c,) = lights.live_colours(d, {"299:": 1}, bh.StateFade(s), 0.0)
+        assert c == pytest.approx((10000.0, 10000.0, 10000.0))

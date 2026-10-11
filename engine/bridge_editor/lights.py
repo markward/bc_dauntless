@@ -21,15 +21,20 @@ def _intensity(light):
 
 
 def _material(doc, obj):
+    """The material a light's colour follows: the object's, unless it has no
+    emitter -- a finish-only material (roughness/metalness) lights like no
+    material at all: steady white (spec §13.2; review C1: the upgraded
+    DBridge 299/319 lights went dark)."""
     name = obj.get("material")
-    return doc["materials"].get(name) if name else behaviour.WHITE
+    mat = doc["materials"].get(name) if name else None
+    return mat if mat is not None and behaviour.has_emitter(mat) else behaviour.WHITE
 
 
 def _lit(doc, matched):
     out, warnings = [], []
     for key in sorted(matched, key=lambda k: matched[k]):
         obj = doc["objects"].get(key, {})
-        mat = _material(doc, obj) or behaviour.WHITE
+        mat = _material(doc, obj)
         for i, light in enumerate(obj.get("lights", ())):
             if len(out) >= MAX_SPOTS:
                 warnings.append(f"{key} light {i + 1}: dropped (more than {MAX_SPOTS} "
