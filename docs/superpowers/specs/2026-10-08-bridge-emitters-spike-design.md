@@ -552,6 +552,7 @@ It is NOT the §6 emitter and does not replace it.
 | G0 | 2026-10-10 | Emitter glow slice 1 designed: maps = where, profiles = how; `src` emissive/texture/flat; red falls back to yellow; light colour = evaluated^2.2; probe capture colours split from live colours | agreed with Mark | 9.7, 11 |
 | G1 | 2026-10-10 | Glow slice 1 built (plan 2026-10-10-bridge-emitter-glow-slice-1): per-mesh glow + dip, profiles/waves/fades, spot capture vs live colours, DBridge alcove + roof data | built; live-verified by Mark 2026-10-11 ("works as described") | 11 |
 | G2 | 2026-10-11 | Editor panes designed (§12): glow + profile panes, state tabs double as the alert preview, preview clock, shared colour wheel | agreed with Mark | 12 |
+| G3 | 2026-10-11 | Editor panes built (plan 2026-10-11-bridge-editor-glow-panes) | built; awaiting Mark's live check | 12 |
 
 ## 11. Emitter glow — slice 1 *(agreed with Mark 2026-10-10)*
 
