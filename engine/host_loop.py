@@ -10253,13 +10253,10 @@ def run(mission_name: Optional[str] = None,
         from engine.bridge_editor.runtime import BridgeRuntime
 
         def _bridge_alert_level_of(_player):
-            if _player is None:
-                return 0
-            try:
-                return int(_player.GetAlertLevel())
-            except Exception as _e:
-                dev_mode.log_swallowed("bridge runtime alert probe", _e)
-                return 0
+            # The bridge STATE (spec 2026-10-08-bridge-emitters §13.1): offline
+            # while the power plant is down, special via the hook, else the
+            # alert level. Guarded inside bridge_state_of.
+            return _bridge_lighting.bridge_state_of(_player)
 
         def _bridge_runtime_alert_level():
             # Zero-arg form for BridgeRuntime itself (attach() can fire from

@@ -2,7 +2,7 @@ import pytest
 from engine import bridge_lighting as bl
 
 
-@pytest.mark.parametrize("level,scale", [(0, 1.5), (1, 1.0), (2, 1.0), (3, 1.0), (-1, 1.0)])
+@pytest.mark.parametrize("level,scale", [(0, 1.5), (1, 1.0), (2, 1.0), (3, 0.4), (4, 1.0), (9, 1.0), (-1, 1.0)])
 def test_ambient_scale_for_alert(level, scale):
     assert bl.ambient_scale_for_alert(level) == scale
 
@@ -196,3 +196,60 @@ def test_host_loop_pushes_the_alert_level_every_frame():
                 assert not (isinstance(cmp, ast.Compare)
                             and any(isinstance(op, ast.NotEq) for op in cmp.ops)), (
                     "the alert-level push must not be gated on a level change")
+
+
+class _Power:
+    def __init__(self, disabled=False, destroyed=False):
+        self._d, self._x = disabled, destroyed
+
+    def IsDisabled(self):
+        return self._d
+
+    def IsDestroyed(self):
+        return self._x
+
+
+class _Player:
+    def __init__(self, alert=0, power=None):
+        self._a, self._p = alert, power
+
+    def GetAlertLevel(self):
+        return self._a
+
+    def GetPowerSubsystem(self):
+        return self._p
+
+
+@pytest.fixture
+def no_special():
+    bl.set_special_alert(False)
+    yield
+    bl.set_special_alert(False)
+
+
+def test_bridge_state_follows_the_alert_level(no_special):
+    assert [bl.bridge_state_of(_Player(a, _Power())) for a in (0, 1, 2)] == [0, 1, 2]
+    assert bl.bridge_state_of(None) == bl.GREEN
+
+
+def test_a_dead_power_plant_is_offline_over_any_alert(no_special):
+    assert bl.bridge_state_of(_Player(2, _Power(disabled=True))) == bl.OFFLINE
+    assert bl.bridge_state_of(_Player(0, _Power(destroyed=True))) == bl.OFFLINE
+    bl.set_special_alert(True)
+    assert bl.bridge_state_of(_Player(0, _Power(disabled=True))) == bl.OFFLINE
+
+
+def test_special_overrides_the_alert_levels(no_special):
+    bl.set_special_alert(True)
+    assert bl.special_alert() is True
+    assert bl.bridge_state_of(_Player(2, _Power())) == bl.SPECIAL
+
+
+def test_no_power_subsystem_reads_as_powered(no_special):
+    assert bl.bridge_state_of(_Player(1, None)) == bl.YELLOW
+
+
+def test_ambient_scales_cover_the_five_states():
+    assert bl.ambient_scale_for_alert(bl.OFFLINE) == bl.OFFLINE_AMBIENT_SCALE
+    assert bl.OFFLINE_AMBIENT_SCALE < bl.ambient_scale_for_alert(bl.RED)
+    assert bl.ambient_scale_for_alert(bl.SPECIAL) == bl.ambient_scale_for_alert(bl.RED)
