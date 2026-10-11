@@ -175,21 +175,19 @@
       </div>
     </section>
 
-    <!-- Bridge Editor (developer-only, spec 2026-10-08-bridge-emitters §8).
-         setBridgeEmitters({visible, in_bridge, selected, hover, dirty,
-         can_save, can_undo, status}) drives it; actions are
-         dauntlessEvent('bridge-emitters/<action>'). Docked right, the 3D view
-         stays clickable. data-panel routes text-field keyboard capture. -->
+    <!-- Bridge Editor (developer-only, spec 2026-10-08-bridge-emitters §8, §13.3).
+         setBridgeEmitters(state) drives it; actions are
+         dauntlessEvent('bridge-emitters/<action>'). The top-left bar is the
+         editor's chrome; the dock (right) shows only with a selection, so the
+         3D view stays clickable. data-panel routes text-field keyboard capture. -->
     <div id="bridge-emitters-root" class="dev-only" data-panel="bridge-emitters">
-      <div class="be-dock cp-modal">
-        <div class="cp-header">Bridge Editor</div>
+      <div class="be-top">
+        <div class="be-bar" id="be-bar"></div>
+        <div class="be-hint" id="be-hint"></div>
+        <div class="be-row be-hover-row"><span id="be-hover"></span><span class="be-status" id="be-status"></span></div>
+      </div>
+      <div class="be-dock cp-modal" id="be-dock">
         <div class="cp-content"><div class="cp-body" id="bridge-emitters-body"></div></div>
-        <div class="cp-footer">
-          <button class="cp-done-button" id="be-undo" onclick="dauntlessEvent('bridge-emitters/undo')">Undo</button>
-          <button class="cp-done-button" onclick="dauntlessEvent('bridge-emitters/revert')">Revert</button>
-          <button class="cp-done-button" id="be-save" onclick="dauntlessEvent('bridge-emitters/save')">Save</button>
-          <button class="cp-done-button" onclick="dauntlessEvent('bridge-emitters/close')">Close</button>
-        </div>
       </div>
     </div>
 

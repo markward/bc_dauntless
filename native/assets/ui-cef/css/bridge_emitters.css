@@ -46,3 +46,23 @@
 #bridge-emitters-root .be-chip[disabled] { opacity: 0.3; }
 #bridge-emitters-root .be-list { display: flex; flex-direction: column; gap: 2px; margin: 4px 0; }
 #bridge-emitters-root .be-list .be-chip { text-align: left; }
+
+/* Spec §13.3: the top-left bar is the editor's chrome; the dock shows only
+   with a selection (JS sets display: flex). Width/height must match
+   BAR_CSS_W / BAR_CSS_H in engine/ui/bridge_emitters_panel.py. */
+#bridge-emitters-root .be-top { pointer-events: auto; position: absolute; top: 8px; left: 8px;
+    max-width: 560px; }
+#bridge-emitters-root .be-bar { display: flex; align-items: center; gap: 4px;
+    background: rgba(0, 0, 0, 0.7); padding: 4px 8px; border-radius: 4px; }
+#bridge-emitters-root .be-title { letter-spacing: 1px; margin-right: 4px; }
+#bridge-emitters-root .be-sep { opacity: 0.5; margin: 0 4px; }
+#bridge-emitters-root .be-state, #bridge-emitters-root .be-scope { opacity: 0.45; }
+#bridge-emitters-root .be-state.active, #bridge-emitters-root .be-scope.on { opacity: 1;
+    outline: 1px solid #f0b060; }
+#bridge-emitters-root .be-hint { font-size: 11px; opacity: 0.75; margin-top: 4px; }
+#bridge-emitters-root .be-hover-row { font-size: 11px; }
+#bridge-emitters-root .be-entry { border-top: 1px solid rgba(255, 255, 255, 0.15); padding: 4px 0; }
+#bridge-emitters-root .be-entry-head { display: flex; align-items: center; gap: 4px; }
+#bridge-emitters-root .be-entry-title { flex: 1; }
+#bridge-emitters-root .be-entry-body { padding-left: 16px; }
+#bridge-emitters-root .be-dock { display: none; }

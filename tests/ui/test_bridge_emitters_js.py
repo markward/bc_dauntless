@@ -1,10 +1,12 @@
 """Behaviour of bridge_emitters.js's setBridgeEmitters (spec
-2026-10-08-bridge-emitters §8), run under node against a minimal fake DOM.
+2026-10-08-bridge-emitters §8, §13.3), run under node against a minimal fake
+DOM: the top-left bar (the editor's chrome), a dock shown only with a
+selection, Object / Material tabs and the modifier stacks.
 
-Pins two review findings: a payload (every hover change sends one) must not
-rebuild the body while a field inside the dock has focus -- that wiped a
-half-typed value -- and the exterior-view message must say how to get to the
-bridge, because SPACE is ignored while the editor is open."""
+Pins earlier review findings: a payload (every hover change sends one) must
+not rebuild the dock while a field inside it has focus -- that wiped a
+half-typed value; the exterior-view message says how to reach the bridge;
+and no control is a <select> (CEF OSR draws no popup for it)."""
 import json
 import shutil
 import subprocess
@@ -48,9 +50,11 @@ for (const step of steps) {
     }
     if (step.state) ctx.setBridgeEmitters(step.state);
     out.push({body: el('bridge-emitters-body').innerHTML,
+              bar: el('be-bar').innerHTML,
+              hint: el('be-hint').textContent,
+              dock_display: el('be-dock').style.display,
               hover: el('be-hover').textContent,
               status: el('be-status').textContent,
-              save_disabled: el('be-save').disabled,
               display: root.style.display});
 }
 process.stdout.write(JSON.stringify(out));
@@ -68,183 +72,124 @@ def _run(steps):
 
 
 def _state(**over):
-    st = {"visible": True, "in_bridge": True, "hover": "floor", "dirty": False,
-          "can_save": True, "can_undo": False, "status": "",
-          "selected": {"key": "7:redalertpanel", "block": 7, "name": "redalertpanel",
-                       "display_name": "redalertpanel",
-                       "node_chain": ["Scene Root", "Red On GlowAlpha"],
-                       "textures": ["redalertpanel.tga"],
-                       "material": {"roughness": {"value": 1.0, "source": "default"},
-                                    "metalness": {"value": 0.0, "source": "default"}},
-                       "light": None}}
+    st = {"visible": True, "in_bridge": True, "state": "green", "playing": True,
+          "dirty": False, "can_save": True, "can_undo": False, "status": "",
+          "hint": "Hold Shift: fly", "hover": None, "selected": None}
     st.update(over)
     return st
 
 
-def test_hover_goes_to_its_own_element_as_text():
-    [out] = _run([{"state": _state(hover="<b>panel</b>")}])
-    assert out["hover"] == "<b>panel</b>"           # textContent: never parsed
-    assert "<b>panel</b>" not in out["body"]
-    assert 'id="be-hover"' in out["body"]
+def _sel(**over):
+    s = {"key": "7:p", "block": 7, "name": "p", "display_name": "panel",
+         "node_chain": ["Scene Root"], "textures": ["Map 19.tga"], "tab": "object",
+         "expanded": [], "has_emission_map": True, "material": None,
+         "library": [{"name": "alcove", "used_by": 4}], "lights": [], "material_data": None}
+    s.update(over)
+    return s
 
 
-def test_a_focused_field_in_the_dock_is_not_rebuilt_but_status_hover_and_buttons_are():
+MAT = {"name": "alcove", "finish": {"roughness": {"value": 1.0, "source": "default"},
+                                    "metalness": {"value": 0.0, "source": "default"}},
+       "surface": {"src": "auto", "strength": 1.0}, "fade_s": 0.5,
+       "modifiers": [{"type": "emitter", "scope": ["red"], "tint": [1, 0.1, 0.1], "level": 0.5},
+                     {"type": "animation", "scope": ["red"], "shape": "square",
+                      "period_s": 1, "min": 0.2, "duty": 0.5, "soft": 0.1, "phase": 0}]}
+
+
+def test_the_bar_carries_the_five_states_preview_and_file_actions():
+    [out] = _run([{"state": _state(state="red")}])
+    bar = out["bar"]
+    for s in ("offline", "green", "yellow", "red", "special"):
+        assert f"bridge-emitters/state:{s}" in bar
+    assert 'be-state red active' in bar
+    for a in ("preview-toggle", "undo", "revert", "save", "close"):
+        assert f"bridge-emitters/{a}" in bar
+    assert "BRIDGE EDITOR" in bar
+
+
+def test_the_dock_is_hidden_without_a_selection():
+    [out] = _run([{"state": _state()}])
+    assert out["dock_display"] == "none"
+    [out] = _run([{"state": _state(selected=_sel())}])
+    assert out["dock_display"] == "flex"
+
+
+def test_object_tab_lists_the_library_and_the_emission_map_row():
+    [out] = _run([{"state": _state(selected=_sel())}])
+    body = out["body"]
+    assert "bridge-emitters/tab:material" in body
+    assert "alcove — used by 4 objects" in body and "material-link:alcove" in body
+    assert "material-new" in body and "light-add" in body
+    assert "Emission map" in body and "steady" in body
+    assert "<select" not in body
+
+
+def test_object_tab_lights_are_indexed_entries():
+    light = {"position": [1, 2, 3], "direction": [0, 0, -1], "inner_deg": 30,
+             "outer_deg": 60, "range": 200, "intensity": 2000}
+    [out] = _run([{"state": _state(selected=_sel(lights=[light, light], expanded=["light:1"]))}])
+    body = out["body"]
+    assert "expand:light:0" in body and "expand:light:1" in body
+    assert "light:1:intensity:" in body and "light:0:intensity:" not in body
+    assert "light-place:1" in body and "light-aim:1" in body and "light-remove:0" in body
+
+
+def test_material_tab_shows_finish_surface_and_the_modifier_stack():
+    sel = _sel(tab="material", material="alcove", material_data=MAT, expanded=["mod:1"])
+    [out] = _run([{"state": _state(selected=sel)}])
+    body = out["body"]
+    assert "material-rename:" in body and "finish:roughness:" in body
+    assert "surface:src:auto" in body and "surface:src:none" in body
+    assert "mod-add:emitter" in body and "mod-add:animation" in body
+    assert "expand:mod:0" in body and "mod:0:level:" not in body     # collapsed
+    assert "mod:1:duty:" in body and "mod:1:shape:sine" in body       # expanded
+    assert "mod:0:scope:red" in body and "mod-remove:0" in body
+    assert "<select" not in body
+
+
+def test_no_material_offers_new_on_the_material_tab():
+    [out] = _run([{"state": _state(selected=_sel(tab="material"))}])
+    assert "material-new" in out["body"] and "mod-add:emitter" in out["body"]
+
+
+def test_hover_and_status_are_text():
+    [out] = _run([{"state": _state(hover="<b>x</b>", status="<i>s</i>")}])
+    assert out["hover"] == "<b>x</b>" and out["status"] == "<i>s</i>"
+
+
+def test_a_focused_field_in_the_dock_is_not_rebuilt_but_the_bar_is():
     first, second = _run([
-        {"state": _state()},
-        {"focus": {"id": "be-num-roughness", "tag": "INPUT", "type": "number"},
-         "state": _state(hover="floor 2", status="Saved x.json", can_save=False,
-                         selected=dict(_state()["selected"], name="other",
-                                       display_name="other", key="9:other"))},
+        {"state": _state(selected=_sel())},
+        {"focus": {"id": "be-rename", "tag": "INPUT", "type": "text"},
+         "state": _state(state="red", status="Saved x.json",
+                         selected=_sel(display_name="other"))},
     ])
     assert second["body"] == first["body"]           # the half-typed field survives
-    assert second["hover"] == "floor 2"
+    assert "be-state red active" in second["bar"]
     assert second["status"] == "Saved x.json"
-    assert second["save_disabled"] is True
 
 
 def test_the_body_rebuilds_again_once_focus_leaves_the_dock():
     _first, _held, after = _run([
-        {"state": _state()},
-        {"focus": {"id": "be-num-roughness", "tag": "INPUT", "type": "number"},
-         "state": _state(selected=dict(_state()["selected"], display_name="other"))},
-        {"focus": None,
-         "state": _state(selected=dict(_state()["selected"], display_name="other"))},
+        {"state": _state(selected=_sel())},
+        {"focus": {"id": "be-rename", "tag": "INPUT", "type": "text"},
+         "state": _state(selected=_sel(display_name="other"))},
+        {"focus": None, "state": _state(selected=_sel(display_name="other"))},
     ])
     assert "other" in after["body"]
 
 
-def test_shape_row_shows_the_display_name_escaped():
-    sel = dict(_state()["selected"], name="", display_name="(node) <wall> & co")
-    [out] = _run([{"state": _state(selected=sel)}])
+def test_the_object_name_is_escaped():
+    [out] = _run([{"state": _state(selected=_sel(display_name="(node) <wall> & co"))}])
     assert "(node) &lt;wall&gt; &amp; co" in out["body"]
 
 
-def test_outside_the_bridge_the_message_says_how_to_get_there():
+def test_outside_the_bridge_the_hint_says_how_to_get_there():
     [out] = _run([{"state": _state(in_bridge=False)}])
-    assert ("Close this, press Space to go to the bridge, then reopen "
-            "Bridge Editor") in out["body"]
+    assert "Close this, press Space to go to the bridge, then reopen Bridge Editor" in out["hint"]
     assert out["display"] == "block"
 
 
 def test_hidden_state_hides_the_root():
     [out] = _run([{"state": {"visible": False}}])
     assert out["display"] == "none"
-
-
-def test_light_section_shows_an_add_button_when_light_is_null():
-    [out] = _run([{"state": _state()}])
-    assert "Light" in out["body"]
-    assert "Add light" in out["body"]
-    assert "bridge-emitters/light-add" in out["body"]
-    # None of the "a light exists" controls should render.
-    assert "bridge-emitters/light-place" not in out["body"]
-    assert "bridge-emitters/light-remove" not in out["body"]
-
-
-def test_light_section_shows_buttons_and_fields_when_light_is_set():
-    sel = dict(_state()["selected"], light={
-        "position": [0, 10, 50], "direction": [0, -1, 0],
-        "inner_deg": 30, "outer_deg": 60, "range": 200, "intensity": 2000})
-    [out] = _run([{"state": _state(selected=sel)}])
-    body = out["body"]
-    assert "bridge-emitters/light-place" in body
-    assert "bridge-emitters/light-aim" in body
-    assert "bridge-emitters/light-remove" in body
-    assert "bridge-emitters/light:inner_deg:" in body
-    assert "bridge-emitters/light:outer_deg:" in body
-    assert "bridge-emitters/light:range:" in body
-    assert "bridge-emitters/light:intensity:" in body
-    assert "Add light" not in body
-
-
-def test_a_map_sourced_channel_renders_its_slider_disabled():
-    sel = dict(_state()["selected"], material={
-        "roughness": {"value": 1.0, "source": "map"},
-        "metalness": {"value": 0.0, "source": "default"}})
-    [out] = _run([{"state": _state(selected=sel)}])
-    body = out["body"]
-    rough_row = body[body.index("roughness"):body.index("metalness")]
-    metal_row = body[body.index("metalness"):]
-    assert 'type="range"' in rough_row and "disabled" in rough_row
-    assert 'type="number"' in rough_row
-    # Both inputs in the map-sourced row carry `disabled`, not just the slider.
-    assert rough_row.count("disabled") == 2
-    assert 'type="range"' in metal_row and "disabled" not in metal_row
-
-
-PROFILE = {"fade_s": 0.5,
-           "green": {"tint": [1, 1, 1], "level": 1},
-           "red": {"tint": [1, 0.1, 0.1], "level": 0.5,
-                   "wave": {"shape": "square", "period_s": 1, "min": 0.2,
-                            "duty": 0.5, "soft": 0.1}}}
-
-
-def _sel(**over):
-    sel = dict(_state()["selected"], glow=None, has_emissive_map=False,
-               profile=None, profile_data=None, phase=0.0)
-    sel.update(over)
-    return sel
-
-
-def _st(sel, **over):
-    base = {"profiles": [{"name": "alcove", "used_by": 4}], "tab": "green",
-            "preview_playing": True}
-    base.update(over)
-    return _state(selected=sel, **base)
-
-
-def test_glow_off_shows_only_the_toggle():
-    [out] = _run([{"state": _st(_sel())}])
-    assert "bridge-emitters/glow-on" in out["body"] or "glow-' + (this.checked" in out["body"]
-    assert "glow:src:" not in out["body"]
-
-
-def test_glow_on_lists_sources_and_disables_emissive_without_a_map():
-    [out] = _run([{"state": _st(_sel(glow={"src": "texture"}))}])
-    body = out["body"]
-    assert "<select" not in body                         # OSR draws no popup (review C2)
-    assert "glow:src:emissive')\" disabled" in body
-    assert "be-chip active\" onclick=\"dauntlessEvent('bridge-emitters/glow:src:texture')" in body
-    assert "glow:scale:" in body
-
-
-def test_profile_dropdown_counts_users_and_offers_none():
-    [out] = _run([{"state": _st(_sel(profile="alcove", profile_data=PROFILE))}])
-    body = out["body"]
-    assert "none (steady white)" in body
-    assert "<select" not in body
-    assert "alcove — used by 4 shapes" in body
-    assert "profile-select:alcove" in body and "profile-select:')" in body
-    assert "profile-new" in body and "profile-rename:" in body
-
-
-def test_tabs_show_without_a_profile_but_no_state_editor():
-    [out] = _run([{"state": _st(_sel())}])
-    body = out["body"]
-    for t in ("green", "yellow", "red"):
-        assert f"bridge-emitters/tab:{t}" in body
-    assert "state:green:level:" not in body
-
-
-def test_the_active_tab_shows_its_state_fields():
-    [out] = _run([{"state": _st(_sel(profile="alcove", profile_data=PROFILE), tab="red")}])
-    body = out["body"]
-    assert 'be-tab active' in body
-    assert "state:red:level:" in body
-    assert "state:red:wave:duty:" in body and "state:red:wave:soft:" in body
-    assert "<select" not in body
-    assert "state:red:wave:shape:sine" in body and "state:red:wave:shape:steady" in body
-    assert 'id="be-wheel"' in body
-    assert "fade:" in body and "phase:" in body
-
-
-def test_an_off_state_offers_to_turn_it_on():
-    [out] = _run([{"state": _st(_sel(profile="alcove", profile_data=PROFILE), tab="yellow")}])
-    assert "state-' + (this.checked" in out["body"]
-    assert "state:yellow:level:" not in out["body"]
-
-
-def test_preview_toggle_label_follows_playing():
-    [out] = _run([{"state": _st(_sel(), preview_playing=False)}])
-    assert "bridge-emitters/preview-toggle" in out["body"]
-    assert "Play" in out["body"]

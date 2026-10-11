@@ -1,6 +1,9 @@
-// Bridge Editor dev panel (spec 2026-10-08-bridge-emitters §8).
+// Bridge Editor dev page (spec 2026-10-08-bridge-emitters §8, §13.3).
 // Python pushes setBridgeEmitters(state); actions go back through
-// dauntlessEvent('bridge-emitters/<action>'). Sliders commit on `change`.
+// dauntlessEvent('bridge-emitters/<action>'). The top-left bar is always
+// shown while the editor is open (its presence IS editing mode); the dock
+// shows only with a selection, as Object / Material tabs of collapsible
+// stack entries. No <select> anywhere: CEF OSR draws no native popup.
 
 function _beEsc(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
@@ -8,73 +11,16 @@ function _beEsc(s) {
     });
 }
 
-function _beMaterialRow(ch, m) {
-    const v = Number(m.value).toFixed(2);
-    // A map (baked texture) always wins over any stored per-shape override
-    // (spec 2026-10-09-bridge-pbr global constraints: map -> override ->
-    // default), so the slider/number field are shown but disabled -- the
-    // value they display is the DEFAULT, never a stale override.
-    const dis = m.source === 'map' ? ' disabled' : '';
-    return '<div class="be-row">'
-        + '<label>' + ch + '</label>'
-        + '<input type="range" min="0" max="1" step="0.01" value="' + v + '"' + dis
-        + ' onchange="dauntlessEvent(\'bridge-emitters/material:' + ch + ':\' + this.value)">'
-        + '<input type="number" min="0" max="1" step="0.01" value="' + v + '" style="width:56px"' + dis
-        + ' onchange="dauntlessEvent(\'bridge-emitters/material:' + ch + ':\' + this.value)">'
-        + '<span class="be-source">' + _beEsc(m.source) + '</span>'
-        + (m.source === 'override'
-            ? '<button onclick="dauntlessEvent(\'bridge-emitters/material-clear:' + ch + '\')">×</button>'
-            : '')
-        + '</div>';
-}
-
-function _beLightNumberRow(label, field, value) {
-    return '<div class="be-row">'
-        + '<label>' + _beEsc(label) + '</label>'
-        + '<input type="number" step="0.1" value="' + _beEsc(Number(value)) + '"'
-        + ' onchange="dauntlessEvent(\'bridge-emitters/light:' + field + ':\' + this.value)">'
-        + '</div>';
-}
-
-// The Light section: no emitter.light yet -> a single "Add light" button
-// (placed at the last pick's hit point, aimed along its normal); once one
-// exists -> Place/Aim/Remove plus the four number fields. Sliders aren't
-// used here (no natural 0-1 range), unlike the material rows.
-function _beLightSection(light) {
-    let html = '<div class="cp-section-title">Light</div>';
-    if (!light) {
-        html += '<div class="be-row">'
-              + '<button onclick="dauntlessEvent(\'bridge-emitters/light-add\')">Add light</button>'
-              + '</div>';
-        return html;
-    }
-    html += '<div class="be-row">'
-          + '<button onclick="dauntlessEvent(\'bridge-emitters/light-place\')">Place here</button>'
-          + '<button onclick="dauntlessEvent(\'bridge-emitters/light-aim\')">Aim where I\'m looking</button>'
-          + '<button onclick="dauntlessEvent(\'bridge-emitters/light-remove\')">Remove</button>'
-          + '</div>';
-    // "half-angle": inner_deg/outer_deg are HALF-angles (cone axis to edge,
-    // 0-90), not full cone-apex angles -- CEF OSR shows no native tooltips
-    // (title= is a no-op), so the label spells it out instead.
-    html += _beLightNumberRow('inner half-angle°', 'inner_deg', light.inner_deg);
-    html += _beLightNumberRow('outer half-angle°', 'outer_deg', light.outer_deg);
-    html += _beLightNumberRow('range', 'range', light.range);
-    html += _beLightNumberRow('intensity', 'intensity', light.intensity);
-    return html;
-}
-
-// A choice is a row of chips, never a <select>: CEF OSR draws no native
-// popup for a dropdown (review C2; the SPV registry chips do the same).
-function _beChip(label, action, active, disabled) {
-    return '<button class="be-chip' + (active ? ' active' : '') + '"'
-        + ' onclick="dauntlessEvent(\'bridge-emitters/' + action + '\')"'
-        + (disabled ? ' disabled' : '') + '>' + _beEsc(label) + '</button>';
-}
-
 // A value placed inside a single-quoted JS string in an onclick attribute:
 // JS-escape first, then HTML-escape (the attribute decodes &#39; back to ').
 function _beJs(s) {
     return _beEsc(String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
+}
+
+function _beChip(label, action, active, disabled) {
+    return '<button class="be-chip' + (active ? ' active' : '') + '"'
+        + ' onclick="dauntlessEvent(\'bridge-emitters/' + action + '\')"'
+        + (disabled ? ' disabled' : '') + '>' + _beEsc(label) + '</button>';
 }
 
 function _beNumberRow(label, action, value, step) {
@@ -85,131 +31,222 @@ function _beNumberRow(label, action, value, step) {
         + '</div>';
 }
 
-// Glow (spec §12.1): on/off, source, scale. "emissive map" is disabled when
-// the shape's material has no _emissive sibling (title= is a no-op in CEF
-// OSR, so the reason is a visible line).
-function _beGlowSection(s) {
-    const g = s.glow;
-    let html = '<div class="cp-section-title">Glow</div>'
-        + '<div class="be-row"><label>glow</label><input type="checkbox"' + (g ? ' checked' : '')
-        + ' onchange="dauntlessEvent(\'bridge-emitters/glow-\' + (this.checked ? \'on\' : \'off\'))"></div>';
-    if (!g) return html;
-    html += '<div class="be-row"><label>source</label>'
-        + _beChip('emissive map', 'glow:src:emissive', g.src === 'emissive', !s.has_emissive_map)
-        + _beChip('own texture', 'glow:src:texture', g.src === 'texture', false)
-        + _beChip('flat', 'glow:src:flat', g.src === 'flat', false) + '</div>';
-    if (!s.has_emissive_map)
-        html += '<div class="be-help">No _emissive map beside this texture.</div>';
-    html += _beNumberRow('scale', 'glow:scale', g.scale === undefined ? 1 : g.scale, 0.1);
-    return html;
-}
+const _BE_STATES = [['offline', '⬛'], ['green', '🟩'], ['yellow', '🟨'], ['red', '🟥'],
+                    ['special', '🟦']];
 
-const _BE_STATES = ['green', 'yellow', 'red'];
-
-function _beStateFields(tab, st) {
-    const w = st.wave || {shape: 'steady'};
-    const lv = Number(st.level);
-    let html = '<div class="be-row"><canvas id="be-wheel" width="120" height="120"></canvas>'
-        + '<div id="be-swatch" class="be-swatch"></div></div>'
-        + '<div class="be-row"><label>level</label>'
-        + '<input type="range" min="0" max="4" step="0.01" value="' + Math.min(lv, 4) + '"'
-        + ' onchange="dauntlessEvent(\'bridge-emitters/state:' + tab + ':level:\' + this.value)">'
-        + '<input type="number" min="0" step="0.01" value="' + lv.toFixed(2) + '" style="width:56px"'
-        + ' onchange="dauntlessEvent(\'bridge-emitters/state:' + tab + ':level:\' + this.value)"></div>';
-    html += '<div class="be-row"><label>pulse</label>';
-    ['steady', 'sine', 'square'].forEach(function (v) {
-        html += _beChip(v, 'state:' + tab + ':wave:shape:' + v, w.shape === v, false);
+function _beBar(state) {
+    let html = '<span class="be-title">BRIDGE EDITOR</span><span class="be-sep">|</span>';
+    _BE_STATES.forEach(function (p) {
+        html += '<button class="be-state ' + p[0] + (state.state === p[0] ? ' active' : '') + '"'
+            + ' onclick="dauntlessEvent(\'bridge-emitters/state:' + p[0] + '\')">' + p[1] + '</button>';
     });
-    html += '</div>';
-    if (w.shape !== 'steady') {
-        html += _beNumberRow('period s', 'state:' + tab + ':wave:period_s', w.period_s, 0.05);
-        html += _beNumberRow('min', 'state:' + tab + ':wave:min', w.min || 0, 0.05);
-    }
-    if (w.shape === 'square') {
-        html += _beNumberRow('duty', 'state:' + tab + ':wave:duty', w.duty === undefined ? 0.5 : w.duty, 0.05);
-        html += _beNumberRow('soft', 'state:' + tab + ':wave:soft', w.soft || 0, 0.05);
-    }
+    html += '<span class="be-sep">|</span>'
+        + '<button onclick="dauntlessEvent(\'bridge-emitters/preview-toggle\')">'
+        + (state.playing ? '⏸' : '▶') + '</button><span class="be-sep">|</span>'
+        + '<button' + (state.can_undo ? '' : ' disabled')
+        + ' onclick="dauntlessEvent(\'bridge-emitters/undo\')">Undo</button>'
+        + '<button onclick="dauntlessEvent(\'bridge-emitters/revert\')">Revert</button>'
+        + '<button' + (state.can_save ? '' : ' disabled')
+        + ' onclick="dauntlessEvent(\'bridge-emitters/save\')">Save' + (state.dirty ? '*' : '')
+        + '</button><span class="be-sep">|</span>'
+        + '<button onclick="dauntlessEvent(\'bridge-emitters/close\')">✕</button>';
     return html;
 }
 
-// Profile (spec §12.1): dropdown + New/Rename, then Green|Yellow|Red tabs --
-// the selected tab is also the alert the bridge previews (§12.2).
-function _beProfileSection(state) {
-    const s = state.selected;
-    // The profile list: one chip per profile, each saying how many shapes
-    // share it -- editing a shared profile changes all of them (§12.1).
-    let html = '<div class="cp-section-title">Profile</div><div class="be-list">'
-        + _beChip('none (steady white)', 'profile-select:', !s.profile, false);
-    (state.profiles || []).forEach(function (p) {
-        const label = p.name + ' — used by ' + p.used_by + (p.used_by === 1 ? ' shape' : ' shapes');
-        html += '<button class="be-chip' + (p.name === s.profile ? ' active' : '') + '"'
-            + ' onclick="dauntlessEvent(\'bridge-emitters/profile-select:' + _beJs(p.name) + '\')">'
-            + _beEsc(label) + '</button>';
+// One stack entry: a header row (expand toggle, title, optional scope
+// squares, optional ×) and, when expanded, its fields.
+function _beEntry(id, title, expanded, scope, removeAction, fields) {
+    let html = '<div class="be-entry"><div class="be-entry-head">'
+        + '<button class="be-caret" onclick="dauntlessEvent(\'bridge-emitters/expand:' + id + '\')">'
+        + (expanded ? '▾' : '▸') + '</button><span class="be-entry-title">' + _beEsc(title) + '</span>';
+    if (scope) {
+        _BE_STATES.forEach(function (p) {
+            html += '<button class="be-scope ' + p[0] + (scope.list.indexOf(p[0]) >= 0 ? ' on' : '') + '"'
+                + ' onclick="dauntlessEvent(\'bridge-emitters/' + scope.action + p[0] + '\')">'
+                + p[1] + '</button>';
+        });
+    }
+    if (removeAction)
+        html += '<button onclick="dauntlessEvent(\'bridge-emitters/' + removeAction + '\')">×</button>';
+    html += '</div>';
+    if (expanded) html += '<div class="be-entry-body">' + fields + '</div>';
+    return html + '</div>';
+}
+
+function _beUsers(n) {
+    return 'used by ' + n + (n === 1 ? ' object' : ' objects');
+}
+
+function _beLibrary(s) {
+    let html = '<div class="be-list">' + _beChip('none', 'material-link:', !s.material, false);
+    (s.library || []).forEach(function (m) {
+        html += '<button class="be-chip' + (m.name === s.material ? ' active' : '') + '"'
+            + ' onclick="dauntlessEvent(\'bridge-emitters/material-link:' + _beJs(m.name) + '\')">'
+            + _beEsc(m.name + ' — ' + _beUsers(m.used_by)) + '</button>';
     });
     html += '</div><div class="be-row">'
-        + '<button onclick="dauntlessEvent(\'bridge-emitters/profile-new\')">New</button>';
-    if (s.profile) {
-        html += '<input type="text" id="be-rename" value="' + _beEsc(s.profile) + '" style="width:120px">'
-            + '<button onclick="dauntlessEvent(\'bridge-emitters/profile-rename:\' + '
-            + 'document.getElementById(\'be-rename\').value)">Rename</button>';
+        + '<button onclick="dauntlessEvent(\'bridge-emitters/material-new\')">New</button>';
+    if (s.material)
+        html += '<button onclick="dauntlessEvent(\'bridge-emitters/material-duplicate\')">Duplicate</button>';
+    return html + '</div>';
+}
+
+function _beObjectTab(s) {
+    const open = function (id) { return (s.expanded || []).indexOf(id) >= 0; };
+    let html = _beEntry('material', 'Material: ' + (s.material || 'none'), true, null, null,
+                        _beLibrary(s));
+    if (!s.material && s.has_emission_map) {
+        const stem = String((s.textures || [''])[0]).replace(/\.[^.]*$/, '');
+        html += '<div class="be-help">Emission map · ' + _beEsc(stem) + '_emissive · steady</div>';
     }
-    html += '</div><div class="be-tabs">';
-    _BE_STATES.forEach(function (t) {
-        html += '<button class="be-tab' + (state.tab === t ? ' active' : '') + '"'
-            + ' onclick="dauntlessEvent(\'bridge-emitters/tab:' + t + '\')">' + t + '</button>';
+    (s.lights || []).forEach(function (l, i) {
+        const fields = '<div class="be-row">'
+            + '<button onclick="dauntlessEvent(\'bridge-emitters/light-place:' + i + '\')">Place here</button>'
+            + '<button onclick="dauntlessEvent(\'bridge-emitters/light-aim:' + i + '\')">Aim where I\'m looking</button>'
+            + '</div>'
+            // HALF-angles from the axis; CEF OSR shows no tooltips, so say so.
+            + _beNumberRow('inner half-angle°', 'light:' + i + ':inner_deg', l.inner_deg, 0.1)
+            + _beNumberRow('outer half-angle°', 'light:' + i + ':outer_deg', l.outer_deg, 0.1)
+            + _beNumberRow('range', 'light:' + i + ':range', l.range, 0.1)
+            + _beNumberRow('intensity', 'light:' + i + ':intensity', l.intensity, 1);
+        html += _beEntry('light:' + i, 'Light ' + (i + 1), open('light:' + i), null,
+                         'light-remove:' + i, fields);
     });
-    html += '<button onclick="dauntlessEvent(\'bridge-emitters/preview-toggle\')">'
-        + (state.preview_playing ? 'Pause' : 'Play') + '</button></div>';
-    const prof = s.profile_data;
-    if (!prof) {
-        html += '<div class="be-help">Previewing ' + _beEsc(state.tab)
-            + '. Pick or create a profile to edit its states.</div>';
-        return html;
-    }
-    const st = prof[state.tab];
-    html += '<div class="be-row"><label>' + _beEsc(state.tab) + '</label><input type="checkbox"'
-        + (st ? ' checked' : '')
-        + ' onchange="dauntlessEvent(\'bridge-emitters/state-\' + (this.checked ? \'on\' : \'off\') + \':'
-        + state.tab + '\')"><span>' + (st ? 'on' : 'off in this state') + '</span></div>';
-    if (st) html += _beStateFields(state.tab, st);
-    html += _beNumberRow('fade s', 'fade', prof.fade_s === undefined ? 0.5 : prof.fade_s, 0.05);
-    html += _beNumberRow('phase', 'phase', s.phase || 0, 0.05);
+    html += '<div class="be-row"><button onclick="dauntlessEvent(\'bridge-emitters/light-add\')">'
+        + 'Add light</button></div>';
     return html;
 }
 
-// The wheel is a canvas inside the rebuilt body: mount it after every
-// rebuild. A drag commits once, on release (one undo step); the swatch
-// follows live. `_beWheel.dragging` also blocks rebuilds (_beEditingInDock).
-var _beWheel = null;
-function _beMountWheel(state) {
-    _beWheel = null;
-    const canvas = document.getElementById('be-wheel');
+function _beFinishRow(ch, f) {
+    const v = Number(f.value).toFixed(2);
+    const dis = f.source === 'map' ? ' disabled' : '';
+    return '<div class="be-row"><label>' + ch + '</label>'
+        + '<input type="range" min="0" max="1" step="0.01" value="' + v + '"' + dis
+        + ' onchange="dauntlessEvent(\'bridge-emitters/finish:' + ch + ':\' + this.value)">'
+        + '<input type="number" min="0" max="1" step="0.01" value="' + v + '" style="width:56px"' + dis
+        + ' onchange="dauntlessEvent(\'bridge-emitters/finish:' + ch + ':\' + this.value)">'
+        + '<span class="be-source">' + _beEsc(f.source) + '</span>'
+        + (f.source === 'material'
+            ? '<button onclick="dauntlessEvent(\'bridge-emitters/finish-clear:' + ch + '\')">×</button>'
+            : '')
+        + '</div>';
+}
+
+const _BE_SURFACES = [['auto', 'auto'], ['emission', 'emission map'], ['texture', 'own texture'],
+                      ['flat', 'flat'], ['none', 'none']];
+
+function _beModifier(m, i, expanded) {
+    let fields = '';
+    if (m.type === 'emitter') {
+        const lv = Number(m.level);
+        fields = '<div class="be-row"><canvas id="be-wheel-' + i + '" width="120" height="120"></canvas>'
+            + '<div id="be-swatch-' + i + '" class="be-swatch"></div></div>'
+            + '<div class="be-row"><label>level</label>'
+            + '<input type="range" min="0" max="4" step="0.01" value="' + Math.min(lv, 4) + '"'
+            + ' onchange="dauntlessEvent(\'bridge-emitters/mod:' + i + ':level:\' + this.value)">'
+            + '<input type="number" min="0" step="0.01" value="' + lv.toFixed(2) + '" style="width:56px"'
+            + ' onchange="dauntlessEvent(\'bridge-emitters/mod:' + i + ':level:\' + this.value)"></div>';
+    } else {
+        fields = '<div class="be-row"><label>shape</label>'
+            + _beChip('sine', 'mod:' + i + ':shape:sine', m.shape === 'sine', false)
+            + _beChip('square', 'mod:' + i + ':shape:square', m.shape === 'square', false) + '</div>'
+            + _beNumberRow('period s', 'mod:' + i + ':period_s', m.period_s, 0.05)
+            + _beNumberRow('min', 'mod:' + i + ':min', m.min || 0, 0.05)
+            + _beNumberRow('phase', 'mod:' + i + ':phase', m.phase || 0, 0.05);
+        if (m.shape === 'square') {
+            fields += _beNumberRow('duty', 'mod:' + i + ':duty', m.duty === undefined ? 0.5 : m.duty, 0.05)
+                + _beNumberRow('soft', 'mod:' + i + ':soft', m.soft || 0, 0.05);
+        }
+    }
+    const title = m.type === 'emitter' ? 'Emitter' : 'Animation (' + m.shape + ')';
+    return _beEntry('mod:' + i, title, expanded,
+                    {list: m.scope || [], action: 'mod:' + i + ':scope:'},
+                    'mod-remove:' + i, fields);
+}
+
+function _beAddModifier() {
+    return '<div class="be-row"><label>add</label>'
+        + _beChip('Emitter', 'mod-add:emitter', false, false)
+        + _beChip('Animation', 'mod-add:animation', false, false) + '</div>';
+}
+
+function _beMaterialTab(s) {
+    const m = s.material_data;
+    if (!m) {
+        return '<div class="be-help">No material. New makes one for this object; adding a '
+            + 'modifier makes one too.</div><div class="be-row">'
+            + '<button onclick="dauntlessEvent(\'bridge-emitters/material-new\')">New</button></div>'
+            + _beAddModifier();
+    }
+    const open = function (id) { return (s.expanded || []).indexOf(id) >= 0; };
+    const used = ((s.library || []).filter(function (x) { return x.name === m.name; })[0] || {}).used_by || 0;
+    let html = '<div class="be-row"><input type="text" id="be-rename" value="' + _beEsc(m.name) + '"'
+        + ' style="width:150px"><button onclick="dauntlessEvent(\'bridge-emitters/material-rename:\' + '
+        + 'document.getElementById(\'be-rename\').value)">Rename</button>'
+        + '<span class="be-source">' + _beEsc(_beUsers(used)) + '</span></div>';
+    // Finish and Surface are fixed sections, open by default: toggling
+    // their header collapses them (modifiers and lights start collapsed).
+    html += _beEntry('finish', 'Finish', !open('finish'), null, null,
+                     _beFinishRow('roughness', m.finish.roughness)
+                     + _beFinishRow('metalness', m.finish.metalness));
+    let surf = '<div class="be-row">';
+    _BE_SURFACES.forEach(function (p) {
+        surf += _beChip(p[1], 'surface:src:' + p[0], m.surface.src === p[0], false);
+    });
+    surf += '</div>' + _beNumberRow('strength', 'surface:strength', m.surface.strength, 0.1);
+    html += _beEntry('surface', 'Surface: ' + m.surface.src, !open('surface'), null, null, surf);
+    html += _beNumberRow('fade s', 'fade', m.fade_s, 0.05);
+    (m.modifiers || []).forEach(function (mod, i) {
+        html += _beModifier(mod, i, open('mod:' + i));
+    });
+    return html + _beAddModifier();
+}
+
+function _beDockHtml(state) {
     const s = state.selected;
-    if (!canvas || !canvas.getContext || typeof ColourWheel === 'undefined' || !s
-        || !s.profile_data || !s.profile_data[state.tab]) return;
-    const tab = state.tab;
-    const tint = s.profile_data[tab].tint;
-    const swatch = document.getElementById('be-swatch');
-    const paint = function (rgb) {
-        if (swatch) swatch.style.background = 'rgb(' + rgb.map(function (c) {
-            return Math.round(Math.max(0, Math.min(1, c)) * 255);
-        }).join(',') + ')';
-    };
-    paint(tint);
-    _beWheel = new ColourWheel(canvas, colourRgbToHs(tint), function (hs, final) {
-        const rgb = colourHsToRgb(hs.hue, hs.sat);
-        paint(rgb);
-        if (final) dauntlessEvent('bridge-emitters/state:' + tab + ':tint:'
-            + rgb.map(function (c) { return c.toFixed(4); }).join(','));
+    let html = '<div class="be-row"><label>Object</label><span>'
+        + _beEsc(s.display_name || s.name) + '</span></div>'
+        + '<div class="be-row"><label>Block</label><span>' + _beEsc(s.block) + '</span></div>'
+        + '<div class="be-row"><label>Textures</label><span>'
+        + _beEsc((s.textures || []).join(', ') || '—') + '</span></div>'
+        + '<div class="be-chain">' + _beEsc((s.node_chain || []).join(' › ')) + '</div>'
+        + '<div class="be-tabs">'
+        + _beChip('Object', 'tab:object', s.tab === 'object', false)
+        + _beChip('Material', 'tab:material', s.tab === 'material', false) + '</div>';
+    return html + (s.tab === 'material' ? _beMaterialTab(s) : _beObjectTab(s));
+}
+
+// One wheel per expanded emitter. A drag commits once, on release (one undo
+// step); the swatch follows live. A dragging wheel blocks rebuilds.
+var _beWheels = [];
+function _beMountWheels(state) {
+    _beWheels = [];
+    const s = state.selected;
+    if (!s || !s.material_data || typeof ColourWheel === 'undefined') return;
+    (s.material_data.modifiers || []).forEach(function (m, i) {
+        const canvas = document.getElementById('be-wheel-' + i);
+        if (!canvas || !canvas.getContext || m.type !== 'emitter') return;
+        const swatch = document.getElementById('be-swatch-' + i);
+        const paint = function (rgb) {
+            if (swatch) swatch.style.background = 'rgb(' + rgb.map(function (c) {
+                return Math.round(Math.max(0, Math.min(1, c)) * 255);
+            }).join(',') + ')';
+        };
+        paint(m.tint);
+        _beWheels.push(new ColourWheel(canvas, colourRgbToHs(m.tint), function (hs, final) {
+            const rgb = colourHsToRgb(hs.hue, hs.sat);
+            paint(rgb);
+            if (final) dauntlessEvent('bridge-emitters/mod:' + i + ':tint:'
+                + rgb.map(function (c) { return c.toFixed(4); }).join(','));
+        }));
     });
 }
 
-// The body is rebuilt from the payload -- but never while the user is typing
-// in a field inside the dock: every hover change sends a payload, and a
-// rebuild destroys the focused field mid-edit. Range sliders and buttons
-// don't count (nothing half-typed to lose).
+// The dock is rebuilt from the payload -- but never while the user is typing
+// in a field inside it (every hover change sends a payload, and a rebuild
+// destroys the focused field mid-edit), nor while a colour wheel is dragging.
 function _beEditingInDock(root) {
-    if (_beWheel && _beWheel.dragging) return true;
+    if (_beWheels.some(function (w) { return w.dragging; })) return true;
     const a = document.activeElement;
     if (!a || !root.contains || !root.contains(a)) return false;
     if (a.tagName === 'TEXTAREA' || a.isContentEditable) return true;
@@ -217,59 +254,30 @@ function _beEditingInDock(root) {
         && a.type !== 'button';
 }
 
-function _beBodyHtml(state) {
-    let html = '';
-    if (!state.in_bridge) {
-        html += '<div class="be-help">Close this, press Space to go to the bridge, '
-              + 'then reopen Bridge Editor.</div>';
-    } else {
-        html += '<div class="be-help">Hold right mouse to look · WASD move · Q/E down/up · '
-              + 'Shift fast · Alt slow · Click to select · Alt+click: the surface behind</div>';
-        // Hover text is filled by textContent (see setBridgeEmitters).
-        html += '<div class="be-row"><label>Hover</label><span id="be-hover"></span></div>';
-        const s = state.selected;
-        if (!s) {
-            html += '<div class="be-help">Nothing selected.</div>';
-        } else {
-            html += '<div class="cp-section-title">Selection</div>';
-            html += '<div class="be-row"><label>Shape</label><span>'
-                  + _beEsc(s.display_name || s.name) + '</span></div>';
-            html += '<div class="be-row"><label>Block</label><span>' + _beEsc(s.block) + '</span></div>';
-            html += '<div class="be-row"><label>Textures</label><span>'
-                  + _beEsc((s.textures || []).join(', ') || '—') + '</span></div>';
-            html += '<div class="be-chain">' + _beEsc((s.node_chain || []).join(' › ')) + '</div>';
-            html += '<div class="cp-section-title">Material</div>';
-            html += _beMaterialRow('roughness', s.material.roughness);
-            html += _beMaterialRow('metalness', s.material.metalness);
-            html += _beLightSection(s.light);
-            html += _beGlowSection(s);
-            html += _beProfileSection(state);
-        }
-    }
-    html += '<div class="be-status" id="be-status"></div>';
-    return html;
-}
-
 function setBridgeEmitters(state) {
     const root = document.getElementById('bridge-emitters-root');
     if (!root) return;
     if (!state || state.visible !== true) {
         root.style.display = 'none';
-        _beWheel = null;          // a hidden panel holds no drag (review M1)
+        _beWheels = [];          // a hidden panel holds no drag
         return;
     }
-    const body = document.getElementById('bridge-emitters-body');
-    if (body && !_beEditingInDock(root)) {
-        body.innerHTML = _beBodyHtml(state);
-        _beMountWheel(state);
-    }
+    const bar = document.getElementById('be-bar');
+    if (bar) bar.innerHTML = _beBar(state);
+    const hint = document.getElementById('be-hint');
+    if (hint) hint.textContent = state.in_bridge === false
+        ? 'Close this, press Space to go to the bridge, then reopen Bridge Editor.'
+        : (state.hint || '');
     const hover = document.getElementById('be-hover');
-    if (hover) hover.textContent = state.hover || '—';
+    if (hover) hover.textContent = state.hover || '';
     const status = document.getElementById('be-status');
-    if (status) status.textContent = (state.status || '') + (state.dirty ? ' (unsaved)' : '');
-    const save = document.getElementById('be-save');
-    if (save) save.disabled = !state.can_save;
-    const undo = document.getElementById('be-undo');
-    if (undo) undo.disabled = !state.can_undo;
+    if (status) status.textContent = state.status || '';
+    const dock = document.getElementById('be-dock');
+    if (dock) dock.style.display = state.selected ? 'flex' : 'none';
+    const body = document.getElementById('bridge-emitters-body');
+    if (body && state.selected && !_beEditingInDock(root)) {
+        body.innerHTML = _beDockHtml(state);
+        _beMountWheels(state);
+    }
     root.style.display = 'block';
 }
