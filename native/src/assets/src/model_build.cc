@@ -173,6 +173,8 @@ struct TextureLoadResult {
     std::unordered_map<std::uint32_t, int> sibling_emissive_for_image;
     std::unordered_map<std::uint32_t, int> sibling_emissive_y_for_image;
     std::unordered_map<std::uint32_t, int> sibling_emissive_r_for_image;
+    /// "_emissive_s": the special-alert state (spec 2026-10-08-bridge-emitters §13.1).
+    std::unordered_map<std::uint32_t, int> sibling_emissive_s_for_image;
     /// NIF link ID -> source filename (NiImage::file_name) for external
     /// images. Used by material_build's lightmap-pass predicate.
     std::unordered_map<std::uint32_t, std::string> image_filename_for_link;
@@ -313,8 +315,9 @@ TextureLoadResult load_all_textures(
                 {"_emissive",   &out.sibling_emissive_for_image,   false},
                 {"_emissive_y", &out.sibling_emissive_y_for_image, false},
                 {"_emissive_r", &out.sibling_emissive_r_for_image, false},
+                {"_emissive_s", &out.sibling_emissive_s_for_image, false},
             };
-            const std::size_t probe_count = ctx.interior_sibling_policy ? 6 : 3;
+            const std::size_t probe_count = ctx.interior_sibling_policy ? 7 : 3;
             const auto sibling_dirs = resolved_albedo.empty()
                 ? ctx.texture_search_paths
                 : sibling_dirs_for(ctx, resolved_albedo);
@@ -850,7 +853,7 @@ bool filename_is_emissive(std::string_view fname) {
         return true;
     };
     return lower_ends_with(stem, "_emissive") || lower_ends_with(stem, "_emissive_y") ||
-           lower_ends_with(stem, "_emissive_r");
+           lower_ends_with(stem, "_emissive_r") || lower_ends_with(stem, "_emissive_s");
 }
 
 std::string sibling_map_filename(std::string_view fname, std::string_view suffix) {
@@ -1069,6 +1072,7 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         mat_inputs.sibling_emissive_for_image = &tex_result.sibling_emissive_for_image;
         mat_inputs.sibling_emissive_y_for_image = &tex_result.sibling_emissive_y_for_image;
         mat_inputs.sibling_emissive_r_for_image = &tex_result.sibling_emissive_r_for_image;
+        mat_inputs.sibling_emissive_s_for_image = &tex_result.sibling_emissive_s_for_image;
         mat_inputs.flip_image_override_for_prop = &flip_image_override_for_prop;
         mat_inputs.geometry_uv_set_count = data->uv_sets.size();
         Material mat = build_material(mat_inputs);

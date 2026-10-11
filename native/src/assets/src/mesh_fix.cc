@@ -759,7 +759,7 @@ std::string check_albedo_name(const std::string& name, const std::string& what) 
     }
     // Mirrors model_build.cc's filename_is_emissive: an emissive sibling map
     // (task 17) is a derived map that is never probed for siblings itself.
-    for (const char* suffix : {"_emissive_y", "_emissive_r", "_emissive"}) {
+    for (const char* suffix : {"_emissive_y", "_emissive_r", "_emissive_s", "_emissive"}) {
         const std::string_view sv(suffix);
         if (stem.size() >= sv.size() && stem.compare(stem.size() - sv.size(), sv.size(), sv) == 0)
             return what + " '" + name + "' has the reserved suffix '" + std::string(sv) +

@@ -1207,7 +1207,7 @@ def test_real_dbridge_texture_op_resolves_against_the_stock_dir(tmp_path):
 @pytest.mark.parametrize("name", ["panel_glow.tga", "panel_GLOW.TGA", "panel_specular.tga",
                                   "panel_spec.tga", "panel_normal.tga", "panel_norm.tga",
                                   "panel_emissive.tga", "panel_emissive_y.tga",
-                                  "panel_Emissive_R.TGA"])
+                                  "panel_Emissive_R.TGA", "panel_emissive_s.tga"])
 def test_reserved_suffix_albedo_is_refused(tmp_path, name):
     s = _shape()
     base, edit = _tex_pair(tmp_path, [s], f"newmtl m\nmap_Kd /b/{name}\n")
@@ -1219,7 +1219,8 @@ def test_reserved_suffix_albedo_is_refused(tmp_path, name):
 
 @pytest.mark.parametrize("name,suffix", [("Map 22a_emissive.tga", "_emissive"),
                                          ("Map 22a_emissive_y.tga", "_emissive_y"),
-                                         ("Map 22a_emissive_r.tga", "_emissive_r")])
+                                         ("Map 22a_emissive_r.tga", "_emissive_r"),
+                                         ("Map 22a_emissive_s.tga", "_emissive_s")])
 def test_emissive_albedo_refusal_names_the_emissive_map(tmp_path, name, suffix):
     s = _shape()
     base, edit = _tex_pair(tmp_path, [s], f"newmtl m\nmap_Kd /b/{name}\n")

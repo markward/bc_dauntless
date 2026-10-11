@@ -93,7 +93,7 @@ void apply_texture_property(
     const std::unordered_map<std::uint32_t, int>* sibling_normal_for_image,
     const std::unordered_map<std::uint32_t, int>* sibling_rough_for_image,
     const std::unordered_map<std::uint32_t, int>* sibling_metal_for_image,
-    const std::unordered_map<std::uint32_t, int>* const (&sibling_emissive_for_image)[3],
+    const std::unordered_map<std::uint32_t, int>* const (&sibling_emissive_for_image)[4],
     const std::unordered_map<std::uint32_t, std::string>* image_filename_for_link)
 {
     // Single-texture v3.x property — usually populates the Base stage.
@@ -201,10 +201,10 @@ void apply_texture_property(
     // Emissive siblings (task 17): default, yellow-alert, red-alert. Same
     // shape as the blocks above; the base image's FRAME 0 for a flipbook
     // (effective_image_link), so a flipbook's emissive is static.
-    constexpr Material::StageSlot kEmissiveSlots[3] = {
+    constexpr Material::StageSlot kEmissiveSlots[4] = {
         Material::StageSlot::Emissive, Material::StageSlot::EmissiveYellow,
-        Material::StageSlot::EmissiveRed};
-    for (int k = 0; k < 3; ++k) {
+        Material::StageSlot::EmissiveRed, Material::StageSlot::EmissiveSpecial};
+    for (int k = 0; k < 4; ++k) {
         const auto* sink = sibling_emissive_for_image[k];
         if (!sink) continue;
         auto it = sink->find(effective_image_link);
@@ -303,9 +303,9 @@ Material build_material(const MaterialInputs& in) {
     if (in.alpha)         apply_alpha_property(m, *in.alpha);
     if (in.zbuffer)       apply_zbuffer_property(m, *in.zbuffer);
     if (in.vertex_color)  apply_vertex_color_property(m, *in.vertex_color);
-    const std::unordered_map<std::uint32_t, int>* const emissive_sinks[3] = {
+    const std::unordered_map<std::uint32_t, int>* const emissive_sinks[4] = {
         in.sibling_emissive_for_image, in.sibling_emissive_y_for_image,
-        in.sibling_emissive_r_for_image};
+        in.sibling_emissive_r_for_image, in.sibling_emissive_s_for_image};
     if (in.texture) apply_texture_property(m, *in.texture,
         in.texture_link_id, in.flip_image_override_for_prop,
         in.image_to_texture, in.glow_image_links, in.specular_image_links,

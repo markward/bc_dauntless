@@ -860,6 +860,21 @@ TEST_F(ModelBuildTest, InteriorEmissiveWithoutAlertVariantsLeavesThemEmpty) {
     EXPECT_EQ(st[static_cast<size_t>(S::EmissiveRed)].texture_index, -1);
 }
 
+TEST_F(ModelBuildTest, InteriorEmissiveSpecialSiblingBinds) {
+    const fs::path stock = tmp_dir / "stock", mod = tmp_dir / "mod";
+    for (const auto& d : {stock, mod}) fs::create_directories(d);
+    write_tga_at(mod / "hull_ID.tga");
+    write_tga_at(mod / "hull_ID_emissive.tga");
+    write_tga_at(mod / "hull_ID_emissive_s.tga");
+    auto model = assets::detail::build_model(file_with_textured_shape(),
+                                             interior_mod_ctx(make_ctx(), mod, stock));
+    using S = assets::Material::StageSlot;
+    const auto& st = model.materials[0].stages;
+    const int s = st[static_cast<size_t>(S::EmissiveSpecial)].texture_index;
+    EXPECT_GE(s, 0);
+    EXPECT_NE(s, st[static_cast<size_t>(S::Emissive)].texture_index);
+}
+
 // A stock albedo takes its emissive siblings from the overlay only, like the
 // other interior siblings.
 TEST_F(ModelBuildTest, InteriorStockAlbedoTakesEmissiveFromTheOverlay) {

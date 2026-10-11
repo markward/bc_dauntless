@@ -1021,6 +1021,22 @@ assets::Material emissive_material(int e, int y, int r) {
 }
 }  // namespace
 
+assets::Material emissive_material4(int e, int y, int r, int s) {
+    assets::Material m = emissive_material(e, y, r);
+    m.stages[static_cast<std::size_t>(assets::Material::StageSlot::EmissiveSpecial)]
+        .texture_index = s;
+    return m;
+}
+
+TEST(BridgeEmissiveSelect, SpecialTakesItsOwnMapElseTheDefault) {
+    EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material4(4, 5, 6, 7), 4), 7);
+    EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material4(4, 5, 6, -1), 4), 4);
+}
+
+TEST(BridgeEmissiveSelect, OfflineTakesTheDefaultForMaterialGlows) {
+    EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material4(4, 5, 6, 7), 3), 4);
+}
+
 TEST(BridgeEmissiveSelect, GreenTakesTheDefault) {
     EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material(4, 5, 6), 0), 4);
 }
@@ -1279,4 +1295,17 @@ TEST_F(BridgePbrFrame, LiveSpotColourLightsTheFloor) {
     pass->set_spot_radiance({glm::vec3(2000.0f), glm::vec3(1.0f)});   // extra entry ignored
     pass->set_spot_radiance({});                                       // missing: kept
     EXPECT_GT(render_floor_with(dark).r, 0.05f);
+}
+
+// Spec §13.1: at offline the texture-level default goes dark, but a
+// material glow through the emission map still lights (reserve power).
+TEST_F(BridgePbrFrame, OfflineDarkensTheDefaultButNotAMaterialGlow) {
+    set_base({0, 0, 0, 1});
+    set_map(assets::Material::StageSlot::Emissive, {0.5f, 0.5f, 0.5f, 1.0f});
+    pass->set_alert_level(renderer::kBridgeStateOffline);
+    EXPECT_LT(render_floor().r, 1e-3f);
+    pass->set_glow(handle(), {{0, 0, {1.0f, 1.0f, 1.0f}, 0.0f}});
+    EXPECT_NEAR(render_floor().r, 0.5f, 3e-3f);
+    pass->clear_glow();
+    pass->set_alert_level(0);
 }

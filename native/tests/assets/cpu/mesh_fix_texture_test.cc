@@ -202,6 +202,7 @@ TEST(MeshFixTexture, RefusalsLeaveFileUntouched) {
     expect_refused(fix_of(1, "panel_emissive.tga"), "emissive suffix");
     expect_refused(fix_of(1, "panel_emissive_y.tga"), "yellow emissive suffix");
     expect_refused(fix_of(1, "panel_Emissive_R.TGA"), "red emissive suffix, mixed case");
+    expect_refused(fix_of(1, "panel_emissive_s.tga"), "special emissive suffix");
     {
         auto fix = fix_of(1, "b.tga");
         fix.textures.push_back({1, "c.tga"});

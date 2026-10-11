@@ -35,6 +35,10 @@ namespace renderer {
 int bridge_emissive_texture(const assets::Material& mat, int alert) {
     using S = assets::Material::StageSlot;
     auto slot = [&](S s) { return mat.stages[static_cast<std::size_t>(s)].texture_index; };
+    if (alert == kBridgeStateSpecial) {
+        if (slot(S::EmissiveSpecial) >= 0) return slot(S::EmissiveSpecial);
+        return slot(S::Emissive) >= 0 ? slot(S::Emissive) : -1;
+    }
     // Red tries its own map, then the yellow one (spec §11.1: yellow and red
     // share the alert look, §9.4), then the default.
     if (alert == 2 && slot(S::EmissiveRed) >= 0) return slot(S::EmissiveRed);
@@ -237,6 +241,9 @@ void draw_mesh(const assets::Model& model,
         GLuint id = 0;
         if (ti >= 0 && ti < static_cast<int>(model.textures.size()))
             id = model.textures[static_cast<std::size_t>(ti)].id();
+        // Spec §13.1: power offline darkens the texture-level default; a
+        // material glow (glow_src >= 0) still samples the map.
+        if (glow_src < 0 && emissive_alert == kBridgeStateOffline) id = 0;
         shader.set_int("u_has_emissive_map", id != 0 ? 1 : 0);
         glActiveTexture(GL_TEXTURE0 + kBridgeEmissiveUnit);
         glBindTexture(GL_TEXTURE_2D, id != 0 ? id : white_fallback);

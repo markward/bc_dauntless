@@ -89,10 +89,18 @@ struct BridgeGlow {
     float     level = 0.0f;
 };
 
+/// Bridge states beyond the alert levels (spec 2026-10-08-bridge-emitters §13.1):
+/// 0 green, 1 yellow, 2 red, 3 offline, 4 special.
+inline constexpr int kBridgeStateOffline = 3;
+inline constexpr int kBridgeStateSpecial = 4;
+
 /// The Model::textures index of the emissive map a bridge material shows at
 /// alert level `alert` (0 green, 1 yellow, 2 red; anything else is green):
 /// yellow -> EmissiveYellow, red -> EmissiveRed then EmissiveYellow, each
-/// falling back to Emissive; green -> Emissive. -1 = no emissive map.
+/// falling back to Emissive; green -> Emissive; special -> EmissiveSpecial
+/// else Emissive; offline -> Emissive (for a MATERIAL glow through the
+/// emission map; the texture-level default is dark at offline -- draw_mesh).
+/// -1 = no emissive map.
 int bridge_emissive_texture(const assets::Material& mat, int alert);
 
 /// Renders the bridge interior in two sub-passes, both through bridge.frag:

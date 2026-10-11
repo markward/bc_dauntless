@@ -4425,7 +4425,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               if (g_bridge_pass) g_bridge_pass->set_alert_level(level);
           },
           py::arg("level"),
-          "Player alert level (0 green, 1 yellow, 2 red; anything else reads as "
+          "Bridge state (0 green, 1 yellow, 2 red, 3 offline, 4 special; anything else reads as "
           "green) choosing each bridge material's emissive sibling map "
           "(<stem>_emissive / _emissive_y / _emissive_r, falling back to the "
           "default). Main bridge view only; comm sets show the default. Hard "

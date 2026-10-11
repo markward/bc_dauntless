@@ -757,7 +757,7 @@ _EMISSIVE = "an emissive sibling map (never an albedo)"
 _RESERVED_SUFFIXES = (("_glow", "glow"), ("_specular", "specular"), ("_spec", "specular"),
                       ("_normal", "a normal map"), ("_norm", "a normal map"),
                       ("_emissive", _EMISSIVE), ("_emissive_y", _EMISSIVE),
-                      ("_emissive_r", _EMISSIVE))
+                      ("_emissive_r", _EMISSIVE), ("_emissive_s", _EMISSIVE))
 
 
 def _object_albedo(mesh):
