@@ -79,3 +79,11 @@
 #bridge-emitters-root .be-entry-title { flex: 1; }
 #bridge-emitters-root .be-entry-body { padding-left: 0; }
 #bridge-emitters-root .be-dock { display: none; }
+#bridge-emitters-root .be-add { margin: 6px 0; }
+#bridge-emitters-root .be-add-button { width: 100%; }
+#bridge-emitters-root .be-menu { display: flex; flex-direction: column; margin-top: 2px;
+    border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 4px; background: rgba(0, 0, 0, 0.5); }
+#bridge-emitters-root .be-menu-item { display: flex; flex-direction: column; align-items: flex-start;
+    text-align: left; background: none; border: none; padding: 4px 8px; }
+#bridge-emitters-root .be-menu-item:hover { background: rgba(240, 176, 96, 0.2); }
+#bridge-emitters-root .be-menu-help { font-size: 11px; opacity: 0.7; }

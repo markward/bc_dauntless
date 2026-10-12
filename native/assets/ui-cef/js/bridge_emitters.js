@@ -201,11 +201,34 @@ function _beModifier(m, i, expanded) {
                     'mod-remove:' + i, fields);
 }
 
+// Blender-style "Add Modifier" menu (Mark 2026-10-12), drawn in the page:
+// CEF OSR draws no popup for a <select>. Open/closed is page-side state.
+let _beAddOpen = false;
+
+const _BE_MODIFIERS = [
+    ['state', 'State', 'Replaces the emission in the ticked states'],
+    ['animation', 'Animation', 'Pulses the glow (sine or square)'],
+    ['transition', 'Transition', 'Blend time into the ticked states']];
+
+function _beToggleAdd() {
+    _beAddOpen = !_beAddOpen;
+    if (_beLast) setBridgeEmitters(_beLast);
+}
+
 function _beAddModifier() {
-    return '<div class="be-row"><label>add</label>'
-        + _beChip('State', 'mod-add:state', false, false)
-        + _beChip('Animation', 'mod-add:animation', false, false)
-        + _beChip('Transition', 'mod-add:transition', false, false) + '</div>';
+    let html = '<div class="be-add"><button class="be-add-button" onclick="_beToggleAdd()">'
+        + 'Add Modifier ' + (_beAddOpen ? '▴' : '▾') + '</button>';
+    if (_beAddOpen) {
+        html += '<div class="be-menu">';
+        _BE_MODIFIERS.forEach(function (m) {
+            html += '<button class="be-menu-item" onclick="_beAddOpen = false; '
+                + 'dauntlessEvent(\'bridge-emitters/mod-add:' + m[0] + '\')">'
+                + '<span class="be-menu-name">' + m[1] + '</span>'
+                + '<span class="be-menu-help">' + m[2] + '</span></button>';
+        });
+        html += '</div>';
+    }
+    return html + '</div>';
 }
 
 function _beMaterialTab(s) {

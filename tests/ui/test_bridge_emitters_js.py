@@ -157,19 +157,17 @@ def test_material_tab_shows_finish_with_emission_and_the_modifier_stack():
     assert "disabled" not in body[body.rindex("<input", 0, i):body.index(">", i)]
     assert "emission-source:" not in body          # the map is the source
     assert "Emission</span>" not in body and "fade:" not in body and "strength" not in body
-    for kind in ("state", "animation", "transition"):
-        assert f"mod-add:{kind}" in body
-    assert "mod-add:emitter" not in body
+    assert "_beToggleAdd()" in body and "mod-add:emitter" not in body
     assert "expand:mod:0" in body and "mod:0:level:" not in body     # collapsed
     assert "mod:1:duty:" in body and "mod:2:seconds:" in body          # expanded
-    assert ">State<" in body and ">Transition<" in body
+    assert ">State<" in body and ">Transition (0.2 s)<" in body
     assert "mod:0:scope:red" in body and "mod-remove:0" in body
     assert "<select" not in body
 
 
 def test_no_material_offers_new_on_the_material_tab():
     [out] = _run([{"state": _state(selected=_sel(tab="material"))}])
-    assert "material-new" in out["body"] and "mod-add:state" in out["body"]
+    assert "material-new" in out["body"] and "_beToggleAdd()" in out["body"]
 
 
 def test_hover_and_status_are_text():
@@ -310,3 +308,27 @@ def test_a_state_level_is_a_slider_row_too():
                   {"call": "_beToggleType('mod:0:level')"}][:1])
     row = _finish_row(out["body"], "level")
     assert 'type="range"' in row and "_beToggleType('mod:0:level')" in row
+
+
+def test_add_modifier_is_one_menu_button_until_opened():
+    """Blender-style (Mark 2026-10-12): one "Add Modifier" button opens a
+    list -- drawn in the page, as CEF OSR shows no <select> popup."""
+    sel = _sel(tab="material", material="alcove", material_data=MAT)
+    closed, opened, again = _run([{"state": _state(selected=sel)},
+                                  {"call": "_beToggleAdd()"},
+                                  {"call": "_beToggleAdd()"}])
+    assert "Add Modifier" in closed["body"] and "mod-add:state" not in closed["body"]
+    body = opened["body"]
+    for kind, words in (("state", "Replaces the emission"), ("animation", "Pulses"),
+                        ("transition", "Blend time")):
+        assert f"mod-add:{kind}" in body and words in body
+    assert "<select" not in body
+    assert "mod-add:state" not in again["body"]
+
+
+def test_picking_a_modifier_closes_the_menu():
+    sel = _sel(tab="material", material="alcove", material_data=MAT)
+    _c, opened = _run([{"state": _state(selected=sel)}, {"call": "_beToggleAdd()"}])
+    i = opened["body"].index("mod-add:state")
+    onclick = opened["body"][opened["body"].rindex("onclick=", 0, i):opened["body"].index(">", i)]
+    assert "_beAddOpen = false" in onclick
