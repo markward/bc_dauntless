@@ -161,6 +161,33 @@ def test_spots_and_area_lights_share_one_budget_in_mesh_order():
     assert area_warnings == []                        # the cap is reported once, by spots()
 
 
+def test_a_zero_size_area_light_is_skipped_and_the_colours_stay_aligned():
+    # Review finding 1: a zero-size rectangle (start == end / x0 == x1, valid
+    # in format 4) must be dropped in Python, exactly like "no geometry" --
+    # otherwise set_bridge_area_lights drops the row in C++ (threshold 1e-8)
+    # while live_area_colours still emits a colour for it, misaligning every
+    # colour after it with its predecessor's light.
+    d = ld.empty_doc("x")
+    d["materials"]["red"] = {"emission": 0, "modifiers": [
+        {"type": "state", "scope": list(ld.STATES), "tint": [1, 0, 0], "level": 1}]}
+    ld.object_entry(d, 1, "zero")["lights"] = [
+        {"shape": "panel", "x": [0.4, 0.4], "intensity": 5}]
+    o2 = ld.object_entry(d, 2, "red")
+    o2["material"] = "red"
+    o2["lights"] = [{"shape": "panel", "intensity": 3}]
+    ld.object_entry(d, 3, "white")["lights"] = [{"shape": "panel", "intensity": 1}]
+    matched = {"1:zero": 1, "2:red": 2, "3:white": 3}
+    resolved = _links(d, matched)
+    rows, warnings = lights.areas(d, matched, resolved, lambda mesh: PANEL_FRAME)
+    assert len(rows) == 2
+    assert warnings == ["1:zero light 1: zero size; skipped"]
+    fade = bh.StateFade("green")
+    live = lights.live_area_colours(d, matched, resolved, fade, 0.0, lambda mesh: PANEL_FRAME)
+    assert len(live) == 2
+    assert live[0][0] > 0 and live[0][1] == 0          # red
+    assert live[1][0] == live[1][1] == live[1][2] > 0  # white
+
+
 def test_a_light_without_geometry_is_skipped_and_the_colours_stay_aligned():
     d = ld.empty_doc("x")
     d["materials"]["red"] = {"emission": 0, "modifiers": [

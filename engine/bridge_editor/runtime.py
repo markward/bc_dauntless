@@ -147,11 +147,22 @@ class BridgeRuntime:
 
     def _frame_for(self, mesh):
         """The object's light_shapes.Frame (spec §16.2), fetched once per mesh
-        per attach: the geometry is static, the eye is the bridge camera's."""
+        per attach: the geometry is static, the eye is the bridge camera's.
+        A mesh with no geometry caches as None until the next attach (the
+        geometry is static, so a later retry in the same attach would only
+        repeat the same failure). Facing uses the eye-oriented normal sum
+        (light_shapes.oriented_normal_sum over the raw vertices), never the
+        binding's raw winding sum -- DBridge's winding is mixed (spec
+        ruling, review item 2)."""
         if mesh not in self._frames:
             got = self._io.bridge_mesh_geometry(self._iid, mesh) if self._iid is not None else None
-            self._frames[mesh] = (light_shapes.frame(*got, eye=tuple(self._eye()))
-                                  if got else None)
+            if got:
+                verts, _raw_normal_sum, area = got
+                eye = tuple(self._eye())
+                oriented = light_shapes.oriented_normal_sum(verts, eye)
+                self._frames[mesh] = light_shapes.frame(verts, oriented, area, eye=eye)
+            else:
+                self._frames[mesh] = None
         return self._frames[mesh]
 
     def ambient_scale(self, level) -> Optional[float]:

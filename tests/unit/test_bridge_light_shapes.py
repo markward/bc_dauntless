@@ -137,6 +137,28 @@ def test_no_vertices_is_no_frame():
     assert ls.frame([], (0, 0, 0), 0.0, eye=EYE) is None
 
 
+# ── oriented_normal_sum (spec ruling, review item 2): DBridge's winding is
+# mixed, so the eye-oriented sum (bridge.frag's shading_normal() does the
+# same per-pixel) is used instead of the raw winding sum. ────────────────
+
+def test_oriented_sum_matches_regardless_of_one_triangles_winding():
+    a, b, c, d = (0.0, 50.0, 10.0), (40.0, 50.0, 10.0), (40.0, 50.0, 30.0), (0.0, 50.0, 30.0)
+    toward = [a, b, c, a, c, d]          # both triangles wound toward the eye
+    mixed = [a, b, c, a, d, c]           # the second triangle wound the other way
+    assert approx(ls.oriented_normal_sum(toward, EYE), ls.oriented_normal_sum(mixed, EYE))
+
+
+def test_a_triangle_wound_away_from_the_eye_comes_back_flipped_toward_it():
+    a, c, d = (0.0, 50.0, 10.0), (40.0, 50.0, 30.0), (0.0, 50.0, 30.0)
+    away = [a, d, c]                      # cross points +Y, away from the eye at y = 0
+    n = ls.oriented_normal_sum(away, EYE)
+    assert n[1] < 0                       # flipped to face the eye (toward -Y)
+
+
+def test_no_vertices_gives_zero_oriented_sum():
+    assert ls.oriented_normal_sum([], EYE) == (0.0, 0.0, 0.0)
+
+
 def test_light_rect_reads_a_lights_keys_with_their_defaults():
     fr = ls.frame(*_mesh(WALL), eye=EYE)
     assert ls.light_rect({"shape": "strip", "edge": "top"}, fr) == ls.strip_rect(fr, "top")

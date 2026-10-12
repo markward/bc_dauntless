@@ -18,6 +18,10 @@ DEFAULT_INTENSITY = 2000.0
 DEFAULT_AREA_INTENSITY = 1.0
 DEFAULT_RANGE = 200.0
 GAMMA = 2.2
+# Safely above the native binding's own drop threshold (1e-8, host_bindings.cc
+# set_bridge_area_lights) -- a rectangle this size or larger always survives
+# there once Python has already kept it (review finding 1).
+MIN_AREA = 1e-6
 
 
 def to_linear(rgb):
@@ -83,6 +87,13 @@ def spots(doc, matched, resolved, mapped=frozenset()):
     return out, warnings
 
 
+def _cross_len(a, b):
+    cx = a[1] * b[2] - a[2] * b[1]
+    cy = a[2] * b[0] - a[0] * b[2]
+    cz = a[0] * b[1] - a[1] * b[0]
+    return (cx * cx + cy * cy + cz * cz) ** 0.5
+
+
 def _areas_lit(doc, matched, resolved, frame_for, mapped):
     out, warnings = [], []
     for light, mat, has_map, mesh, label in _lit(doc, matched, resolved, mapped)[0]:
@@ -92,7 +103,11 @@ def _areas_lit(doc, matched, resolved, frame_for, mapped):
         if fr is None:
             warnings.append(f"{label}: no geometry for its object; skipped")
             continue
-        out.append((light, mat, has_map, light_shapes.light_rect(light, fr)))
+        r = light_shapes.light_rect(light, fr)
+        if _cross_len(r.half_u, r.half_v) < MIN_AREA:
+            warnings.append(f"{label}: zero size; skipped")
+            continue
+        out.append((light, mat, has_map, r))
     return out, warnings
 
 

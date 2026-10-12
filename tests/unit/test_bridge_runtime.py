@@ -646,6 +646,22 @@ def test_a_strip_with_no_geometry_is_warned_and_not_pushed(proj):
     assert any("no geometry" in w for w in warnings)
 
 
+def test_frame_for_uses_the_oriented_vertex_sum_not_the_raw_binding_sum(proj):
+    # Review ruling item 2: DBridge's winding is mixed, so _frame_for must
+    # derive facing from light_shapes.oriented_normal_sum(verts, eye), never
+    # from the binding's raw normal_sum. A deliberately WRONG raw sum
+    # (pointing +Y) paired with the correct vertices must still produce the
+    # same top-edge strip as WALL_GEOM's own (correct) raw sum.
+    _strip_doc(proj)
+    verts, _wrong_raw_sum, area = WALL_GEOM
+    io = GeomIO(geom=(verts, (0.0, 800.0, 0.0), area))
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (20.0, 0.0, 20.0), alert=lambda: 0)
+    rt.attach("iid")
+    [row] = _last(io, "set_bridge_area_lights")[1]
+    assert row[0] == (20.0, 50.0, 30.0) and row[3] == 150 and row[5] == 40
+    assert row[1] == (20.0, 0.0, 0.0)          # half_u sign: right-handed, unflipped by the bogus sum
+
+
 def test_detach_clears_the_area_lights(proj):
     _strip_doc(proj)
     io = GeomIO()

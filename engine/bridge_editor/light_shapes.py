@@ -55,6 +55,25 @@ class Rect:
         return _unit(_cross(self.half_u, self.half_v)) or (0.0, 0.0, 0.0)
 
 
+def oriented_normal_sum(vertices, eye) -> Vec:
+    """Sum of per-triangle normals, each oriented toward the eye (spec
+    ruling, review item 2): DBridge's winding is mixed (measured: 3/145
+    shapes fall to "no facing", 26 have raw normal sums < 0.8 of this sum),
+    which is why bridge.frag's shading_normal() already flips per-pixel
+    normals toward the viewer. `vertices` are consecutive triangles (a, b,
+    c); for each, n = cross(b - a, c - a) / 2, negated toward the eye when
+    it points away from it. A trailing partial triangle is ignored."""
+    total = (0.0, 0.0, 0.0)
+    for i in range(0, len(vertices) - 2, 3):
+        a, b, c = vertices[i], vertices[i + 1], vertices[i + 2]
+        n = _mul(_cross(_sub(b, a), _sub(c, a)), 0.5)
+        centroid = _mul(_add(_add(a, b), c), 1.0 / 3.0)
+        if _dot(n, _sub(eye, centroid)) < 0.0:
+            n = _mul(n, -1.0)
+        total = _add(total, n)
+    return total
+
+
 def frame(vertices, normal_sum, area, eye) -> Optional[Frame]:
     """The object's frame: facing = its area-weighted normal; up = room up
     without its facing part; right = up x facing (the viewer's right, seen
