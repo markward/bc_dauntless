@@ -422,3 +422,20 @@ def test_a_spot_entry_is_unchanged():
             "outer_deg": 60, "range": 200, "intensity": 2000}
     [out] = _run([{"state": _state(selected=_sel(lights=[spot], expanded=["light:0"]))}])
     assert "light-place:0" in out["body"] and "light:0:inner_deg:" in out["body"]
+
+
+def test_a_snapped_strip_offers_unsnap_and_hides_the_edge_chips():
+    """SPIKE (edge snap)."""
+    strip = {"shape": "strip", "edge": "top", "anchor": [1, 2, 3], "start": 0, "end": 1,
+             "offset": 1, "range": 200, "intensity": 40}
+    [out] = _run([{"state": _state(selected=_sel(lights=[strip], expanded=["light:0"]))}])
+    body = out["body"]
+    assert "light-snap:0" in body and "light-unsnap:0" in body
+    assert "light:0:edge:" not in body and "light:0:start" in body
+
+
+def test_an_unsnapped_strip_offers_snap_and_keeps_the_edge_chips():
+    strip = {"shape": "strip", "edge": "top", "range": 200, "intensity": 40}
+    [out] = _run([{"state": _state(selected=_sel(lights=[strip], expanded=["light:0"]))}])
+    assert "light-snap:0" in out["body"] and "light-unsnap:0" not in out["body"]
+    assert "light:0:edge:top" in out["body"]

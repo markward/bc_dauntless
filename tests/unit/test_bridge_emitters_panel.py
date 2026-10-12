@@ -987,3 +987,15 @@ def test_saved_area_lights_validate(env_rt):
     p.dispatch_event("light:1:x1:0.3")
     doc, _matched = rt.pushes[-1]
     ld.validate(json.loads(doc))
+
+
+def test_snap_sets_the_strips_anchor_from_the_last_click_and_unsnap_clears_it(env_rt):
+    """SPIKE (edge snap): Snap to edge here stores the last clicked point."""
+    p, io, h, *_ = env_rt
+    p.open()
+    click(p, h, (400.0, 300.0))
+    p.dispatch_event("light-add:strip")
+    p.dispatch_event("light-snap:0")
+    assert payload(p)["selected"]["lights"][0]["anchor"] == [0, 10, 50]   # FakeIO's hit point
+    p.dispatch_event("light-unsnap:0")
+    assert "anchor" not in payload(p)["selected"]["lights"][0]

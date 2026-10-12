@@ -134,11 +134,25 @@ function _beLightFields(l, i) {
     const tail = _beNumberRow('range', a + 'range', l.range, 0.1)
         + _beNumberRow('intensity', a + 'intensity', l.intensity, shape === 'spot' ? 1 : 0.1);
     if (shape === 'strip') {
-        let edges = '<div class="be-row"><label>edge</label><div class="be-list">';
-        _BE_EDGES.forEach(function (e) {
-            edges += _beChip(e[1], a + 'edge:' + e[0], (l.edge || 'top') === e[0], false);
-        });
-        return edges + '</div></div>'
+        // SPIKE (edge snap): click the surface to light, near its edge, then
+        // Snap -- the strip follows the mesh's sharp edge nearest that click.
+        const i = a.split(':')[1];
+        let snap = '<div class="be-row">'
+            + '<button onclick="dauntlessEvent(\'bridge-emitters/light-snap:' + i + '\')">Snap to edge here</button>'
+            + (l.anchor ? '<button onclick="dauntlessEvent(\'bridge-emitters/light-unsnap:' + i + '\')">Unsnap</button>' : '')
+            + '</div><div class="be-help">' + (l.anchor
+                ? 'Snapped to the edge nearest your click; start / end / offset still apply.'
+                : 'Click the surface to light, near the edge, then Snap. Unsnapped: the object\'s box edge.')
+            + '</div>';
+        let edges = '';
+        if (!l.anchor) {
+            edges = '<div class="be-row"><label>edge</label><div class="be-list">';
+            _BE_EDGES.forEach(function (e) {
+                edges += _beChip(e[1], a + 'edge:' + e[0], (l.edge || 'top') === e[0], false);
+            });
+            edges += '</div></div>';
+        }
+        return snap + edges
             + _beSlider('start', a + 'start', l.start === undefined ? 0 : l.start, 1, 1)
             + _beSlider('end', a + 'end', l.end === undefined ? 1 : l.end, 1, 1)
             + _beNumberRow('offset', a + 'offset', l.offset || 0, 0.1) + tail;

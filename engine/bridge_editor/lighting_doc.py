@@ -172,8 +172,10 @@ def _span(v, where):
 def _area_light(l, where, shape):
     common = {"shape", "offset", "range", "intensity", "light_scale"}
     if shape == "strip":
-        _obj(l, where, common | {"edge", "start", "end"}, ("edge",))
+        _obj(l, where, common | {"edge", "start", "end", "anchor"}, ("edge",))
         _enum(l["edge"], f"{where}.edge", EDGES)
+        if "anchor" in l:           # SPIKE (edge snap): the clicked point it snaps from
+            _vec3(l["anchor"], f"{where}.anchor")
         start, end = l.get("start", 0.0), l.get("end", 1.0)
         _num(start, f"{where}.start", 0, 1)
         _num(end, f"{where}.end", 0, 1)

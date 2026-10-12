@@ -246,6 +246,17 @@ def add_light(doc, block, name, position, direction):
         "range": LIGHT_RANGE, "intensity": LIGHT_INTENSITY})
 
 
+def snap_light(light, position):
+    """SPIKE (edge snap): a strip snaps to the sharp edge nearest the clicked
+    point (light_shapes.snap_edge); anything else is left alone."""
+    if light.get("shape") == "strip":
+        light["anchor"] = [float(c) for c in position]
+
+
+def unsnap_light(light):
+    light.pop("anchor", None)
+
+
 def add_area_light(doc, block, name, shape):
     """A strip along the top edge, or a panel over the whole front (spec
     §16.4); the rectangle is recomputed from the object at load."""

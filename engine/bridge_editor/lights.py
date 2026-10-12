@@ -103,11 +103,14 @@ def _areas_lit(doc, matched, resolved, frame_for, mapped):
         if fr is None:
             warnings.append(f"{label}: no geometry for its object; skipped")
             continue
-        r = light_shapes.light_rect(light, fr)
-        if _cross_len(r.half_u, r.half_v) < MIN_AREA:
-            warnings.append(f"{label}: zero size; skipped")
-            continue
-        out.append((light, mat, has_map, r))
+        if light.get("anchor") and light_shapes.snap_edge(fr, light["anchor"]) is None:
+            warnings.append(f"{label}: no sharp edge near its snap point; using its edge chips")
+        # A snapped strip (SPIKE, edge snap) is one rectangle per edge segment.
+        for r in light_shapes.light_rects(light, fr):
+            if _cross_len(r.half_u, r.half_v) < MIN_AREA:
+                warnings.append(f"{label}: zero size; skipped")
+                continue
+            out.append((light, mat, has_map, r))
     return out, warnings
 
 
