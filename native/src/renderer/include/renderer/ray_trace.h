@@ -1,6 +1,7 @@
 // native/src/renderer/include/renderer/ray_trace.h
 #pragma once
 
+#include <array>
 #include <optional>
 #include <unordered_map>
 #include <vector>
@@ -80,5 +81,13 @@ std::optional<RayHit> ray_trace_instance_linear(
     float max_dist,
     const std::unordered_map<int, glm::mat4>* node_overrides = nullptr,
     const std::vector<int>* exclude_meshes = nullptr);
+
+/// One mesh's rest-pose triangles (the trace accel's, so node transforms are
+/// applied and the winding is the mesh's own) through `linear`
+/// (Instance::world_linear): instance-relative, like the hits above. Empty
+/// for an unknown mesh. The bridge editor's light shapes measure objects
+/// with it (spec 2026-10-08-bridge-emitters §16.2).
+std::vector<std::array<glm::vec3, 3>> mesh_triangles_linear(
+    const assets::Model& model, const glm::mat3& linear, int mesh);
 
 }  // namespace renderer

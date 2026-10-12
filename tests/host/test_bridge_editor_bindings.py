@@ -534,3 +534,57 @@ def test_host_io_set_bridge_spots_splits_captures(monkeypatch):
     assert caps == [((1.0, 1.0, 1.0), (0.0, 0.0, 0.0))]
     host_io.set_bridge_spots([((0, 0, 0), (0, 0, -1), 30, 60, 100, (1, 1, 1), 5)])
     assert calls[-1][1] is None
+
+
+# Area lights + mesh geometry (spec 2026-10-12-bridge-area-lights §16.3).
+
+_AREA = ((0.0, 0.0, 50.0), (5.0, 0.0, 0.0), (0.0, -5.0, 0.0), 120.0, (1.0, 1.0, 1.0), 4.0)
+
+
+@pytest.mark.parametrize("name", [
+    "set_bridge_area_lights", "set_bridge_area_colours", "bridge_mesh_geometry"])
+def test_area_binding_exists(host_module, name):
+    assert hasattr(host_module, name)
+
+
+def test_set_bridge_area_lights_counts_drops_and_takes_empty_before_init(host_module):
+    assert host_module.set_bridge_area_lights([_AREA]) == 0
+    assert host_module.set_bridge_area_lights([_AREA] * 35) == 3
+    assert host_module.set_bridge_area_lights([]) == 0
+
+
+def test_a_zero_size_or_non_finite_area_light_is_dropped(host_module):
+    flat = ((0.0, 0.0, 50.0), (5.0, 0.0, 0.0), (0.0, 0.0, 0.0), 120.0, (1.0, 1.0, 1.0), 4.0)
+    nan = ((0.0, 0.0, float("nan")), (5.0, 0.0, 0.0), (0.0, -5.0, 0.0), 120.0,
+           (1.0, 1.0, 1.0), 4.0)
+    no_range = ((0.0, 0.0, 50.0), (5.0, 0.0, 0.0), (0.0, -5.0, 0.0), 0.0, (1.0, 1.0, 1.0), 4.0)
+    assert host_module.set_bridge_area_lights([flat, nan, no_range, _AREA]) == 3
+
+
+def test_set_bridge_area_lights_on_a_live_bridge_dirties_the_probes(probe_stash_guard, dbridge):
+    h, _iid = dbridge
+    assert h.bridge_probe_state()["capture_pending"] is False
+    assert h.set_bridge_area_lights([_AREA]) == 0
+    assert h.bridge_probe_state()["capture_pending"] is True
+    h.set_bridge_area_colours([(2.0, 2.0, 2.0)])          # never raises
+
+
+def test_mesh_geometry_on_dbridge(dbridge, monkeypatch):
+    h, iid = dbridge
+    monkeypatch.setattr(host_io, "_h", h)
+    verts, normal_sum, area = host_io.bridge_mesh_geometry(iid, 0)
+    assert len(verts) >= 3 and len(verts) % 3 == 0 and area > 0
+    assert len(normal_sum) == 3
+    assert host_io.bridge_mesh_geometry(iid, 10 ** 6) is None
+
+
+def test_mesh_geometry_of_a_stale_id_is_none(host_module, monkeypatch):
+    monkeypatch.setattr(host_io, "_h", host_module)
+    assert host_io.bridge_mesh_geometry(host_module.InstanceId(), 0) is None
+
+
+def test_area_wrappers_degrade_headless(monkeypatch):
+    monkeypatch.setattr(host_io, "_h", None)
+    assert host_io.set_bridge_area_lights([_AREA]) == 0
+    assert host_io.set_bridge_area_colours([(1.0, 1.0, 1.0)]) is None
+    assert host_io.bridge_mesh_geometry(object(), 0) is None

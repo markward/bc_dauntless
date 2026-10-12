@@ -4593,6 +4593,93 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "2026-10-08-bridge-emitters §11.4). Extra entries ignored, missing kept, "
           "non-finite -> 0. Never dirties the probes; no-op before init.");
 
+    // Static bridge area lights (spec 2026-10-08-bridge-emitters §16.3): rows
+    // (centre, half_u, half_v, range, rgb, intensity); each emits toward
+    // cross(half_u, half_v). A row with any non-finite value, a zero-size
+    // rectangle (|half_u x half_v| < 1e-8) or range <= 0 is dropped -- a NaN
+    // normal reaching the shader becomes a NaN bloom square. Returns the
+    // dropped count (invalid + over kBridgeMaxAreaLights; also before init).
+    // Captures as set_bridge_spots. BridgePass marks the probes dirty itself.
+    m.def("set_bridge_area_lights",
+          [](const std::vector<std::tuple<std::tuple<float, float, float>,
+                                          std::tuple<float, float, float>,
+                                          std::tuple<float, float, float>,
+                                          float,
+                                          std::tuple<float, float, float>,
+                                          float>>& areas,
+             py::object captures) -> std::size_t {
+              auto v3 = [](const std::tuple<float, float, float>& t) {
+                  return glm::vec3(std::get<0>(t), std::get<1>(t), std::get<2>(t));
+              };
+              auto finite3 = [](const glm::vec3& a) {
+                  return std::isfinite(a.x) && std::isfinite(a.y) && std::isfinite(a.z);
+              };
+              std::vector<std::pair<glm::vec3, glm::vec3>> caps;
+              if (!captures.is_none()) {
+                  try {
+                      for (auto item : captures) {
+                          auto pr = item.cast<std::tuple<std::tuple<float, float, float>,
+                                                         std::tuple<float, float, float>>>();
+                          caps.emplace_back(v3(std::get<0>(pr)), v3(std::get<1>(pr)));
+                      }
+                  } catch (const py::cast_error&) {
+                      caps.clear();
+                  }
+                  if (caps.size() != areas.size()) caps.clear();
+              }
+              std::vector<renderer::BridgeAreaLight> v;
+              v.reserve(areas.size());
+              std::size_t invalid = 0, index = 0;
+              for (const auto& a : areas) {
+                  const std::size_t i = index++;
+                  const auto& [c, u, w, range, rgb, intensity] = a;
+                  const glm::vec3 hu = v3(u), hv = v3(w);
+                  if (!finite3(v3(c)) || !finite3(hu) || !finite3(hv) || !finite3(v3(rgb)) ||
+                      !std::isfinite(range) || !(range > 0.0f) || !std::isfinite(intensity) ||
+                      !finite3(v3(rgb) * intensity) ||
+                      !(glm::length(glm::cross(hu, hv)) >= 1e-8f) ||
+                      (!caps.empty() && (!finite3(caps[i].first * intensity) ||
+                                         !finite3(caps[i].second * intensity)))) {
+                      ++invalid;
+                      continue;
+                  }
+                  renderer::BridgeAreaLight al;
+                  al.center = v3(c);
+                  al.half_u = hu;
+                  al.half_v = hv;
+                  al.range = range;
+                  al.radiance = v3(rgb) * intensity;
+                  if (!caps.empty()) {
+                      al.has_capture = true;
+                      al.capture_radiance[0] = caps[i].first * intensity;
+                      al.capture_radiance[1] = caps[i].second * intensity;
+                  }
+                  v.push_back(al);
+              }
+              const std::size_t cap = static_cast<std::size_t>(renderer::kBridgeMaxAreaLights);
+              if (!g_bridge_pass) return invalid + (v.size() > cap ? v.size() - cap : 0);
+              return invalid + g_bridge_pass->set_area_lights(std::move(v));
+          },
+          py::arg("areas"), py::arg("captures") = py::none(),
+          "Static bridge area lights (strips / panels): [(centre3, half_u3, half_v3, "
+          "range, (r, g, b), intensity)], emitting toward cross(half_u, half_v). "
+          "Invalid rows (non-finite, zero size, range <= 0) are dropped; the rest "
+          "keep the first 32. Returns the dropped count. captures as "
+          "set_bridge_spots. Never raises for a stale state.");
+
+    m.def("set_bridge_area_colours",
+          [](const std::vector<std::tuple<float, float, float>>& radiance) {
+              if (!g_bridge_pass) return;
+              std::vector<glm::vec3> v;
+              v.reserve(radiance.size());
+              for (const auto& [r, g, b] : radiance) v.emplace_back(r, g, b);
+              g_bridge_pass->set_area_radiance(v);
+          },
+          py::arg("radiance"),
+          "Live LINEAR radiance per bridge area light, in set_bridge_area_lights "
+          "order. Extra entries ignored, missing kept, non-finite -> 0. Never "
+          "dirties the probes; no-op before init.");
+
     m.def("set_bridge_glow",
           [](py::object instance_id,
              const std::vector<std::tuple<int, int, std::tuple<float, float, float>, float>>& glow) {
@@ -6864,6 +6951,35 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "ray_trace_mesh plus (mesh_index, triangle) of the hit; triangles of "
           "exclude_meshes are never hit. Instance-relative origin/point. None "
           "on a miss or a stale id (never raises: the editor polls it).");
+
+    // One mesh's triangles for the bridge editor's light shapes (spec
+    // 2026-10-08-bridge-emitters §16.2): (vertices -- three per triangle,
+    // instance-relative --, the area-weighted normal sum, the total area).
+    // None for a stale id or an unknown / empty mesh; never raises.
+    m.def("bridge_mesh_geometry",
+          [](scenegraph::InstanceId id, int mesh) -> py::object {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return py::none();
+              const assets::Model* model = resolve_model(inst->model_handle);
+              if (model == nullptr || mesh < 0 ||
+                  mesh >= static_cast<int>(model->meshes.size()))
+                  return py::none();
+              const auto tris = renderer::mesh_triangles_linear(*model, inst->world_linear, mesh);
+              if (tris.empty()) return py::none();
+              py::list verts;
+              glm::vec3 nsum(0.0f);
+              float area = 0.0f;
+              for (const auto& t : tris) {
+                  for (const auto& p : t) verts.append(py::make_tuple(p.x, p.y, p.z));
+                  const glm::vec3 c = glm::cross(t[1] - t[0], t[2] - t[0]) * 0.5f;
+                  nsum += c;
+                  area += glm::length(c);
+              }
+              return py::make_tuple(verts, py::make_tuple(nsum.x, nsum.y, nsum.z), area);
+          },
+          py::arg("instance_id"), py::arg("mesh"),
+          "One mesh's rest-pose triangles: (vertices, normal_sum, area), "
+          "instance-relative; None for a stale id or unknown mesh.");
 
     // Per-mesh shape identity of an instance's model (spec
     // 2026-10-08-bridge-emitters §4): NIF block, shape name, node chain
