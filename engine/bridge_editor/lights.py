@@ -1,10 +1,13 @@
-"""Object lights (spec 2026-10-08-bridge-emitters §13.2, §11.4). The spot
-LIST is static -- every light of every matched object, mesh order, with its
-green and yellow/red probe-capture colours -- so a state change or a pulse
-never recaptures the probes; `live_colours` gives the radiance per frame in
-the same order. A light's colour follows its mesh's resolved material -- the object's
-link, else its texture's (steady white without one), display -> linear by ^2.2. A capture colour is the steady
-value in that state, 0 when an animation runs there."""
+"""Object lights (spec 2026-10-08-bridge-emitters §13.2, §11.4, §14). The
+spot LIST is static -- every light of every matched object, mesh order, with
+its green and yellow/red probe-capture colours -- so a state change or a
+pulse never recaptures the probes; `live_colours` gives the radiance per
+frame in the same order. A light's colour follows the glow of its mesh's
+resolved material (the object's link, else its texture's; `mapped` = the
+meshes whose texture has an `_emissive` map, for the unset-emission
+default), display -> linear by ^2.2; a material that sets no glow lights
+steady white. A capture colour is the steady value in that state, 0 when an
+animation runs there."""
 from engine.bridge_editor import behaviour
 
 MAX_SPOTS = 32
@@ -21,53 +24,54 @@ def _intensity(light):
 
 
 def _material(doc, name):
-    """The material a light's colour follows: its mesh's (resolved), unless it has no
-    emitter -- a finish-only material (roughness/metalness) lights like no
-    material at all: steady white (spec §13.2; review C1: the upgraded
-    DBridge 299/319 lights went dark)."""
+    """The material a light's colour follows: its mesh's (resolved), unless
+    it sets no glow -- a finish-only material lights like no material at
+    all: steady white (spec §13.2; review C1: the upgraded DBridge 299/319
+    lights went dark)."""
     mat = doc["materials"].get(name) if name else None
-    return mat if mat is not None and behaviour.has_emitter(mat) else behaviour.WHITE
+    return mat if mat is not None and behaviour.drives_glow(mat) else behaviour.WHITE
 
 
-def _lit(doc, matched, resolved):
+def _lit(doc, matched, resolved, mapped):
     out, warnings = [], []
     for key in sorted(matched, key=lambda k: matched[k]):
         obj = doc["objects"].get(key, {})
-        mat = _material(doc, resolved.get(matched[key]))
+        mesh = matched[key]
+        mat = _material(doc, resolved.get(mesh))
         for i, light in enumerate(obj.get("lights", ())):
             if len(out) >= MAX_SPOTS:
                 warnings.append(f"{key} light {i + 1}: dropped (more than {MAX_SPOTS} "
                                 "bridge lights)")
                 continue
-            out.append((light, mat))
+            out.append((light, mat, mesh in mapped))
     return out, warnings
 
 
-def _capture(mat, state):
+def _capture(mat, state, has_map):
     if any(m["type"] == "animation" and state in m["scope"]
            for m in mat.get("modifiers", ())):
         return (0.0, 0.0, 0.0)
-    rgb, _ = behaviour.output(mat, state, 0.0)
+    rgb, _ = behaviour.output(mat, state, 0.0, has_map)
     return to_linear(rgb)
 
 
-def spots(doc, matched, resolved):
-    lit, warnings = _lit(doc, matched, resolved)
+def spots(doc, matched, resolved, mapped=frozenset()):
+    lit, warnings = _lit(doc, matched, resolved, mapped)
     out = []
-    for light, mat in lit:
-        green = _capture(mat, "green")
+    for light, mat, has_map in lit:
+        green = _capture(mat, "green", has_map)
         out.append((tuple(light["position"]), tuple(light["direction"]),
                     light.get("inner_deg", 30), light.get("outer_deg", 60),
                     light.get("range", 200), green, _intensity(light),
-                    green, _capture(mat, "yellow")))
+                    green, _capture(mat, "yellow", has_map)))
     return out, warnings
 
 
-def live_colours(doc, matched, resolved, fade, t):
-    lit, _ = _lit(doc, matched, resolved)
+def live_colours(doc, matched, resolved, fade, t, mapped=frozenset()):
+    lit, _ = _lit(doc, matched, resolved, mapped)
     out = []
-    for light, mat in lit:
-        rgb, _k = fade.output(mat, t)
+    for light, mat, has_map in lit:
+        rgb, _k = fade.output(mat, t, has_map)
         k = _intensity(light)
         out.append(tuple(c * k for c in to_linear(rgb)))
     return out

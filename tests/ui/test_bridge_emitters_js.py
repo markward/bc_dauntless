@@ -89,12 +89,15 @@ def _sel(**over):
     return s
 
 
-MAT = {"name": "alcove", "kind": "linked", "used_by": 4, "finish": {"roughness": {"value": 1.0, "source": "default"},
-                                    "metalness": {"value": 0.0, "source": "default"}},
-       "emission": {"without_map": "texture", "strength": 1.0}, "fade_s": 0.5,
-       "modifiers": [{"type": "emitter", "scope": ["red"], "tint": [1, 0.1, 0.1], "level": 0.5},
+MAT = {"name": "alcove", "kind": "linked", "used_by": 4,
+       "finish": {"roughness": {"value": 1.0, "source": "default"},
+                  "metalness": {"value": 0.0, "source": "default"},
+                  "emission": {"value": 1.0, "source": "map"}},
+       "emission_source": "texture",
+       "modifiers": [{"type": "state", "scope": ["red"], "tint": [1, 0.1, 0.1], "level": 0.5},
                      {"type": "animation", "scope": ["red"], "shape": "square",
-                      "period_s": 1, "min": 0.2, "duty": 0.5, "soft": 0.1, "phase": 0}]}
+                      "period_s": 1, "min": 0.2, "duty": 0.5, "soft": 0.1, "phase": 0},
+                     {"type": "transition", "scope": ["red"], "seconds": 0.2}]}
 
 
 def test_the_bar_carries_the_five_states_preview_and_file_actions():
@@ -142,27 +145,30 @@ def test_object_tab_lights_are_indexed_entries():
     assert "light-place:1" in body and "light-aim:1" in body and "light-remove:0" in body
 
 
-def test_material_tab_shows_finish_surface_and_the_modifier_stack():
-    sel = _sel(tab="material", material="alcove", material_data=MAT, expanded=["mod:1"])
+def test_material_tab_shows_finish_with_emission_and_the_modifier_stack():
+    sel = _sel(tab="material", material="alcove", material_data=MAT, expanded=["mod:1", "mod:2"])
     [out] = _run([{"state": _state(selected=sel)}])
     body = out["body"]
     assert "material-rename:" in body and "finish:roughness:" in body
-    # The texture has an emission map: that IS the source, and nothing asks
-    # what would glow without one (the TGA is part of the material).
-    assert "source: emission map · Map 19_emissive" in body
-    assert "emission:without_map" not in body and "without a map" not in body
-    assert "emission:strength:" in body and "fade:" in body
-    assert "surface" not in body.lower().replace("surface behind", "")
-    assert "mod-add:emitter" in body and "mod-add:animation" in body
+    # Emission is a Finish row (Mark 2026-10-12), editable over a map.
+    assert "finish:emission:" in body and "source: emission map · Map 19_emissive" in body
+    i = body.index("finish:emission:")
+    assert "disabled" not in body[body.rindex("<input", 0, i):body.index(">", i)]
+    assert "emission-source:" not in body          # the map is the source
+    assert "Emission</span>" not in body and "fade:" not in body and "strength" not in body
+    for kind in ("state", "animation", "transition"):
+        assert f"mod-add:{kind}" in body
+    assert "mod-add:emitter" not in body
     assert "expand:mod:0" in body and "mod:0:level:" not in body     # collapsed
-    assert "mod:1:duty:" in body and "mod:1:shape:sine" in body       # expanded
+    assert "mod:1:duty:" in body and "mod:2:seconds:" in body          # expanded
+    assert ">State<" in body and ">Transition<" in body
     assert "mod:0:scope:red" in body and "mod-remove:0" in body
     assert "<select" not in body
 
 
 def test_no_material_offers_new_on_the_material_tab():
     [out] = _run([{"state": _state(selected=_sel(tab="material"))}])
-    assert "material-new" in out["body"] and "mod-add:emitter" in out["body"]
+    assert "material-new" in out["body"] and "mod-add:state" in out["body"]
 
 
 def test_hover_and_status_are_text():
@@ -218,14 +224,16 @@ def test_enter_in_the_rename_field_commits_the_rename():
     assert "onchange=" in tag and "material-rename:" in tag
 
 
-def test_without_a_map_the_choice_is_the_source():
-    m = dict(MAT, emission={"without_map": "flat", "strength": 1.0})
+def test_without_a_map_the_source_chips_follow_the_emission_row():
+    fin = dict(MAT["finish"], emission={"value": 0.0, "source": "default"})
+    m = dict(MAT, finish=fin, emission_source="flat")
     sel = _sel(tab="material", material="alcove", material_data=m, has_emission_map=False)
     [out] = _run([{"state": _state(selected=sel)}])
     body = out["body"]
-    assert "<label>source</label>" in body and "no emission map" in body
-    assert "emission:without_map:texture" in body and "emission:without_map:flat" in body
-    assert "without a map" not in body
+    assert "emission-source:texture" in body and "emission-source:flat" in body
+    assert body.index("finish:emission:") < body.index("emission-source:texture")
+    assert "be-chip active" in body[body.index("emission-source:flat") - 80:
+                                    body.index("emission-source:flat")]
 
 
 def test_the_library_does_not_repeat_the_texture_material():

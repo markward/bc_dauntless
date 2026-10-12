@@ -45,7 +45,7 @@ HINT = ("Hold Shift: fly · WASD · Q/E · scroll: speed · click: select · "
         "Alt+click: surface behind · materials layer over the object's texture")
 # Actions that are not document edits and need no loaded document.
 _VIEW_ACTIONS = ("state:", "preview-toggle", "tab:", "expand:", "deselect")
-_EDIT_PREFIXES = ("material", "light", "finish", "emission", "fade:", "mod")
+_EDIT_PREFIXES = ("material", "light", "finish", "emission-source:", "mod")
 
 
 class BridgeEmittersPanel(Panel):
@@ -453,7 +453,7 @@ class BridgeEmittersPanel(Panel):
     def _material_action(self, head, rest):
         # Setting a value may make the texture's material; clearing or
         # editing a modifier needs one that exists.
-        if self._material_name() is None and head not in ("finish", "emission", "fade"):
+        if self._material_name() is None and head not in ("finish", "emission-source"):
             return
 
         def mat():
@@ -463,11 +463,8 @@ class BridgeEmittersPanel(Panel):
             self._edit(lambda: editing.set_finish(mat(), ch, raw))
         elif head == "finish-clear":
             self._edit(lambda: editing.clear_finish(mat(), rest))
-        elif head == "emission":
-            field, _, raw = rest.partition(":")
-            self._edit(lambda: editing.set_emission(mat(), field, raw))
-        elif head == "fade":
-            self._edit(lambda: editing.set_fade(mat(), rest))
+        elif head == "emission-source":
+            self._edit(lambda: editing.set_emission_source(mat(), rest))
         elif head == "mod-remove":
             try:
                 i = int(rest)
@@ -596,11 +593,17 @@ class BridgeEmittersPanel(Panel):
                 finish[ch] = {"value": mat[ch], "source": "material"}
             else:
                 finish[ch] = {"value": default, "source": "default"}
-        emission = mat.get("emission", {})
+        # Emission (spec §14): unlike roughness/metalness the material's level
+        # still applies over a map -- the map says what glows, the level how
+        # much; unset, a map glows as painted (1) and no map glows nothing.
+        if "emission" in mat:
+            finish["emission"] = {"value": mat["emission"], "source": "material"}
+        elif maps.get("emissive"):
+            finish["emission"] = {"value": 1.0, "source": "map"}
+        else:
+            finish["emission"] = {"value": 0.0, "source": "default"}
         return {"name": name, "kind": kind, "used_by": used, "finish": finish,
-                "emission": {"without_map": emission.get("without_map", "texture"),
-                             "strength": emission.get("strength", 1.0)},
-                "fade_s": mat.get("fade_s", behaviour.DEFAULT_FADE_S),
+                "emission_source": mat.get("emission_source", "texture"),
                 "modifiers": copy.deepcopy(mat.get("modifiers", []))}
 
     def _selected_payload(self):

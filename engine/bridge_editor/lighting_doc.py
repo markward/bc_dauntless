@@ -182,12 +182,14 @@ def _validate_v1(doc) -> dict:
     return doc
 
 
-FORMAT = 2
+FORMAT = 3
 STATES = ("offline", "green", "yellow", "red", "special")
-# Emission (spec §13, Mark 2026-10-11): like roughness/metalness, an object's
-# `_emissive` map is used whenever its texture has one; `without_map` is what
-# glows for objects that have none -- their own texture, or a flat colour.
-EMISSION_WITHOUT_MAP = ("texture", "flat")
+# Emission is a Finish level (spec §14, Mark 2026-10-12): the texture's
+# `_emissive` map glows when it has one; `emission_source` is what glows on a
+# texture without one -- its own texture, or a flat colour.
+EMISSION_SOURCES = ("texture", "flat")
+MODIFIERS = ("state", "animation", "transition")
+DEFAULT_FADE_S = 0.5          # a state change blends this long unless a Transition says
 _WAVES = ("sine", "square")
 
 
@@ -210,12 +212,15 @@ def _scope(v, where):
 
 
 def _modifier(m, where):
-    if not isinstance(m, dict) or m.get("type") not in ("emitter", "animation"):
-        _fail(f"{where}.type", "must be emitter or animation")
-    if m["type"] == "emitter":
+    if not isinstance(m, dict) or m.get("type") not in MODIFIERS:
+        _fail(f"{where}.type", f"must be one of {', '.join(MODIFIERS)}")
+    if m["type"] == "state":
         _obj(m, where, {"type", "scope", "tint", "level"}, ("scope", "tint", "level"))
         _vec3(m["tint"], f"{where}.tint", lo=0)
         _num(m["level"], f"{where}.level", lo=0)
+    elif m["type"] == "transition":
+        _obj(m, where, {"type", "scope", "seconds"}, ("scope", "seconds"))
+        _num(m["seconds"], f"{where}.seconds", lo=0)
     else:
         _obj(m, where, {"type", "scope", "shape", "period_s", "min", "duty", "soft", "phase"},
              ("scope", "shape", "period_s"))
@@ -233,21 +238,17 @@ def _modifier(m, where):
 
 
 def _material(m, where):
-    _obj(m, where, {"texture", "roughness", "metalness", "emission", "fade_s", "modifiers"})
+    _obj(m, where, {"texture", "roughness", "metalness", "emission", "emission_source",
+                    "modifiers"})
     if "texture" in m and not isinstance(m["texture"], str):
         _fail(f"{where}.texture", "must be a string (the texture's file name, case-folded)")
     for ch in ("roughness", "metalness"):
         if ch in m:
             _num(m[ch], f"{where}.{ch}", 0, 1)
     if "emission" in m:
-        e = m["emission"]
-        _obj(e, f"{where}.emission", {"without_map", "strength"})
-        if "without_map" in e:
-            _enum(e["without_map"], f"{where}.emission.without_map", EMISSION_WITHOUT_MAP)
-        if "strength" in e:
-            _num(e["strength"], f"{where}.emission.strength", lo=0)
-    if "fade_s" in m:
-        _num(m["fade_s"], f"{where}.fade_s", lo=0)
+        _num(m["emission"], f"{where}.emission", lo=0)
+    if "emission_source" in m:
+        _enum(m["emission_source"], f"{where}.emission_source", EMISSION_SOURCES)
     if "modifiers" in m:
         if not isinstance(m["modifiers"], list):
             _fail(f"{where}.modifiers", "must be a list")
@@ -341,13 +342,61 @@ def _v1_modifiers(profile, phase):
 
 
 def upgrade(doc) -> dict:
+    """An older document as the current format (`format: 1` via 2), or the
+    document itself when it is not an older format."""
+    if not isinstance(doc, dict):
+        return doc
+    if doc.get("format") == 1:
+        return _v2_to_v3(_v1_to_v2(doc))
+    if doc.get("format") == 2:
+        return _v2_to_v3(doc)
+    return doc
+
+
+def _v2_to_v3(doc) -> dict:
+    """`format: 2` -> 3 (spec §14, Mark 2026-10-12), every state looking the
+    same: emitters become State modifiers with the old emission strength
+    folded into their levels, and the base emission is 0 -- a state no
+    emitter covered was dark; `without_map` becomes `emission_source`; a
+    fade other than the 0.5 s default becomes a Transition on every state.
+    Strength or fade on a material with no emitters did nothing and is
+    dropped. (Lossy only for a v1 profiled light with no glow, strength 0:
+    its light now follows levels of 0.)"""
+    doc = json.loads(json.dumps(doc))
+    if not isinstance(doc.get("materials"), dict):
+        return doc
+    for mat in doc["materials"].values():
+        if not isinstance(mat, dict):
+            continue
+        e = mat.pop("emission", {})
+        e = e if isinstance(e, dict) else {}
+        strength = e.get("strength", 1)
+        if e.get("without_map", "texture") != "texture":
+            mat["emission_source"] = e["without_map"]
+        fade = mat.pop("fade_s", DEFAULT_FADE_S)
+        mods = mat.get("modifiers")
+        if not isinstance(mods, list) or not any(
+                isinstance(m, dict) and m.get("type") == "emitter" for m in mods):
+            continue
+        for m in mods:
+            if isinstance(m, dict) and m.get("type") == "emitter":
+                m["type"] = "state"
+                m["level"] = round(m.get("level", 0) * strength, 6)
+        mat["emission"] = 0
+        if fade != DEFAULT_FADE_S:
+            mods.append({"type": "transition", "scope": list(STATES), "seconds": fade})
+    doc["format"] = FORMAT
+    return doc
+
+
+def _v1_to_v2(doc) -> dict:
     """A validated-shape `format: 1` document as `format: 2` (spec §13.4):
     each shape's material overrides + glow source/scale + profile (+ phase)
     form one material; identical PROFILED materials are shared, named after
     the profile (`<profile> 2`, ... on a clash); every other object gets its
     own `material N`, never merged; the light becomes lights[0]."""
     doc = _validate_v1(doc)
-    out = empty_doc(doc.get("source", ""))
+    out = dict(empty_doc(doc.get("source", "")), format=2)
     by_sig = {}
     for key in sorted(doc["shapes"], key=lambda k: (doc["shapes"][k]["block"], k)):
         s = doc["shapes"][key]
@@ -414,8 +463,7 @@ def load(content_hash, source) -> LoadResult:
         return LoadResult(empty_doc(source), None, None)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-        doc = validate(upgrade(raw) if isinstance(raw, dict) and raw.get("format") == 1
-                       else raw)
+        doc = validate(upgrade(raw))
     except (OSError, ValueError) as e:      # JSONDecodeError and BridgeLightingError are ValueErrors
         return LoadResult(empty_doc(source), path, f"{path.name}: {e}")
     return LoadResult(doc, path, None)

@@ -51,27 +51,32 @@ def test_rename_moves_every_link_and_refuses_clashes():
     assert "empty" in ed.rename(d, "alcove", "  ")
 
 
-def test_finish_surface_fade_clamp():
+def test_finish_emission_and_source_clamp():
     m = {}
     ed.set_finish(m, "roughness", "1.7")
-    ed.set_emission(m, "without_map", "flat")
-    ed.set_emission(m, "without_map", "glow")     # refused: not a fallback
-    ed.set_emission(m, "strength", "-2")
-    ed.set_fade(m, "-1")
-    assert m == {"roughness": 1.0, "emission": {"without_map": "flat", "strength": 0.0},
-                 "fade_s": 0.0}
+    ed.set_finish(m, "emission", "-2")
+    assert m == {"roughness": 1.0, "emission": 0.0}
+    ed.set_finish(m, "emission", "40")              # above the slider's 4 is fine, to a cap
+    assert m["emission"] == ed.MAX_EMISSION
+    ed.set_emission_source(m, "flat")
+    ed.set_emission_source(m, "glow")               # refused: not a source
+    assert m["emission_source"] == "flat"
     ed.clear_finish(m, "roughness")
-    assert "roughness" not in m
+    ed.clear_finish(m, "emission")
+    assert m == {"emission_source": "flat"}
 
 
 def test_modifiers_add_scope_and_fields():
     m = {}
-    ed.add_modifier(m, "emitter", "red")
+    ed.add_modifier(m, "state", "red")
     ed.add_modifier(m, "animation", "red")
+    ed.add_modifier(m, "transition", "red")
+    ed.add_modifier(m, "emitter", "red")            # gone: refused
     assert m["modifiers"] == [
-        {"type": "emitter", "scope": ["red"], "tint": [1, 1, 1], "level": 1.0},
+        {"type": "state", "scope": ["red"], "tint": [1, 1, 1], "level": 1.0},
         {"type": "animation", "scope": ["red"], "shape": "sine", "period_s": 2.0, "min": 0.0,
-         "phase": 0.0}]
+         "phase": 0.0},
+        {"type": "transition", "scope": ["red"], "seconds": 0.5}]
     ed.toggle_scope(m, 0, "green")
     ed.toggle_scope(m, 0, "red")
     assert m["modifiers"][0]["scope"] == ["green"]
@@ -90,8 +95,14 @@ def test_modifiers_add_scope_and_fields():
                                  "period_s": 0.05, "min": 0.0, "phase": 1.0}
     ed.set_modifier(m, 1, "duty", "0.3")           # square only: ignored
     assert "duty" not in m["modifiers"][1]
+    ed.set_modifier(m, 2, "seconds", "-1")
+    assert m["modifiers"][2]["seconds"] == 0.0     # 0 = an instant cut
+    ed.set_modifier(m, 2, "seconds", "99")
+    assert m["modifiers"][2]["seconds"] == ed.MAX_TRANSITION_S
+    ed.set_modifier(m, 2, "level", "3")            # not a Transition field: ignored
+    assert "level" not in m["modifiers"][2]
     ed.remove_modifier(m, 0)
-    assert len(m["modifiers"]) == 1
+    assert len(m["modifiers"]) == 2
     d = ld.empty_doc("x")
     d["materials"]["m"] = m
     ld.validate(d)

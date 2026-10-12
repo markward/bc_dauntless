@@ -555,6 +555,7 @@ It is NOT the §6 emitter and does not replace it.
 | G3 | 2026-10-11 | Editor panes built (plan 2026-10-11-bridge-editor-glow-panes) | built; awaiting Mark's live check | 12 |
 | G4 | 2026-10-11 | Slice 3 designed (§13): Object/Material tabs over a shared material library of scoped Emitter/Animation modifiers (phase in Animation), five states (offline/special), editor bar chrome, Shift-fly | approved by Mark 2026-10-11 (incl. Shift-fly and offline-dark) | 13 |
 | G5 | 2026-10-11 | Slice 3 built (plan 2026-10-11-bridge-materials-slice-3) | built; awaiting Mark's live check | 13 |
+| G6 | 2026-10-12 | Emission is a Finish row; Emitter -> State override; strength and fade_s removed; Transition modifier (0.5 s default); `format: 3` | designed with Mark 2026-10-12; built | 14 |
 
 ## 11. Emitter glow — slice 1 *(agreed with Mark 2026-10-10)*
 
@@ -878,3 +879,48 @@ converted and committed.
 Reflection probes for the new states; per-object phase offsets;
 multi-select; colour-to-colour animation; per-emitter "throws light"
 switches.
+
+## 14. Emission as a Finish row; State, Animation, Transition *(designed with Mark 2026-10-12; supersedes §13.2's Emission section and Emitter modifier)*
+
+Why: Mark set Emission strength 3 on the Map 8 com lights and nothing
+glowed -- a material only glowed with an Emitter modifier, and Emission's
+strength and fade only acted on Emitters. Glow was split across two places
+and neither worked alone. Mark: "emission level COULD form part of Finish,
+which is a mandatory / non-removable modifier ... roughness and metalness
+already handle default vs map vs material really well."
+
+- **Finish = roughness, metalness, emission.** Emission is a level: steady
+  white x the source, in every state but Power offline (dark, as an
+  `_emissive` map is). Sources, as the other rows: **default** 0 without a
+  map; **map** 1 (the map as painted) when the texture has `_emissive`;
+  **material** once set. Unlike roughness/metalness the level stays
+  editable over a map -- the map says what glows, the level how much.
+  Slider 0-4, the box to 16.
+- **What glows** without a map: `emission_source` own texture (default) or
+  flat, as chips under the row, shown only when there is no map. *(Mark:
+  "not 100% sure ... happy to see it and tweak.")*
+- **State** modifier (was Emitter): in its ticked states it REPLACES the
+  emission (colour wheel + level; several add). Not "Emitter": it emits no
+  light -- lights are object-level (§13.2) and follow the result.
+- **Animation**: multiplies, unchanged.
+- **Transition** modifier: the blend time INTO its ticked states (0 = an
+  instant cut). With none, a state change blends over **0.5 s** -- Mark
+  kept the flat default, not "absent = instant".
+- **Strength is gone** (redundant with the State levels) and so is
+  `fade_s`.
+- A material sets a glow (is in the glow table) when it has an emission
+  level, a State or an Animation (`behaviour.drives_glow`); otherwise the
+  texture default stands. A light on a material that sets no glow stays
+  steady white.
+
+**Data `format: 3`.** Material keys: `texture`, `roughness`, `metalness`,
+`emission` (number >= 0), `emission_source`, `modifiers` (`state`,
+`animation`, `transition {scope, seconds}`). Formats 1 and 2 upgrade on load
+with every state looking the same: emitters become States with the old
+strength folded into their levels and base emission 0 (a state no emitter
+covered was dark); `without_map` becomes `emission_source`; a fade other
+than 0.5 s becomes a Transition on every state; strength or fade on a
+material with no emitters did nothing and is dropped. Lossy only for a v1
+profiled light with no glow (strength 0): its light follows levels of 0.
+Committed files stay `format: 2` until next saved from the editor.
+

@@ -397,10 +397,11 @@ def test_attach_clear_failing_does_not_stop_the_load(proj):
 
 def _glow_doc(proj):
     d = ld.empty_doc("x")
-    d["materials"]["p"] = {"fade_s": 1.0, "emission": {"without_map": "flat"}, "modifiers": [
-        {"type": "emitter", "scope": ["green"], "tint": [1, 1, 1], "level": 1},
-        {"type": "emitter", "scope": ["red"], "tint": [1, 0, 0], "level": 0.5},
-        {"type": "animation", "scope": ["red"], "shape": "sine", "period_s": 2.0, "min": 0.0}]}
+    d["materials"]["p"] = {"emission": 0, "emission_source": "flat", "modifiers": [
+        {"type": "state", "scope": ["green"], "tint": [1, 1, 1], "level": 1},
+        {"type": "state", "scope": ["red"], "tint": [1, 0, 0], "level": 0.5},
+        {"type": "animation", "scope": ["red"], "shape": "sine", "period_s": 2.0, "min": 0.0},
+        {"type": "transition", "scope": list(ld.STATES), "seconds": 1.0}]}
     e = ld.object_entry(d, 3, "floor")
     e["material"] = "p"
     e["lights"] = [{"position": [0, 0, 9], "direction": [0, 0, -1], "intensity": 10}]
@@ -422,7 +423,7 @@ def test_attach_pushes_glow_and_live_spot_colours(proj):
     assert len(spot) == 9
 
 
-def test_on_alert_fades_over_fade_s_and_tick_advances_the_clock(proj):
+def test_on_alert_fades_over_its_transition_and_tick_advances_the_clock(proj):
     _glow_doc(proj)
     io = FakeIO()
     rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
@@ -496,3 +497,22 @@ def test_push_reports_a_link_to_another_textures_material(proj):
     ld.object_entry(d, 3, "floor")["material"] = "Map 19 2"
     warnings = rt.push(d, {"3:floor": 0})
     assert any("Map 19 2" in w and "ignored" in w for w in warnings)
+
+
+def test_a_light_on_a_mapped_mesh_gets_the_map_default(proj):
+    """The runtime tells the lights which meshes have an `_emissive` map, so
+    an unset emission lights like the map as painted (1), not dark."""
+    info = {"source": "/x.nif", "content_hash": HASH, "meshes": [
+        {"mesh": 0, "block": 3, "name": "floor", "node_chain": [], "material": 0,
+         "textures": ["Map 13.tga"], "maps": {"emissive": True}}]}
+    d = ld.empty_doc("x")
+    d["materials"]["Map 13"] = {"texture": "map 13.tga", "modifiers": [
+        {"type": "state", "scope": ["red"], "tint": [1, 0, 0], "level": 1}]}
+    d["textures"] = {"map 13.tga": "Map 13"}
+    ld.object_entry(d, 3, "floor")["lights"] = [
+        {"position": [0, 0, 0], "direction": [0, 0, -1], "intensity": 10}]
+    lw.save(d, proj / "bridge_lighting" / f"{HASH}.json")
+    io = FakeIO(info=info)
+    runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0).attach("iid")
+    colours = [c for c in io.calls if c[0] == "set_bridge_spot_colours"]
+    assert colours[-1][1] == [(10.0, 10.0, 10.0)]

@@ -6,8 +6,8 @@ import pytest
 from engine.bridge_editor import behaviour as bh, glow, lighting_doc as ld
 
 MESHES = [{"mesh": 3, "maps": {"emissive": True}}, {"mesh": 4, "maps": {"emissive": False}}]
-ROOF = {"emission": {"strength": 2}, "modifiers": [
-    {"type": "emitter", "scope": ["green", "red"], "tint": [0.5, 0.5, 1], "level": 0.6}]}
+ROOF = {"emission": 0, "modifiers": [
+    {"type": "state", "scope": ["green", "red"], "tint": [0.5, 0.5, 1], "level": 1.2}]}
 
 
 def _doc():
@@ -28,41 +28,48 @@ def _links(d, matched):
     return ld.resolve(d, [{"mesh": i} for i in matched.values()], matched)
 
 
-def test_auto_surface_resolves_per_object():
+def test_the_map_is_the_source_where_there_is_one_else_the_material_says():
     objs, warnings = glow.glow_objects(_doc(), _links(_doc(), MATCHED), MESHES)
-    assert [(m, s, st) for m, s, _, st in objs] == [(3, 0, 2.0), (4, 1, 2.0)]
+    assert [(m, s, has_map) for m, s, _, has_map in objs] == [(3, 0, True), (4, 1, False)]
     assert warnings == []
 
 
-def test_a_material_without_emitters_adds_no_glow():
+def test_a_finish_only_material_adds_no_glow():
     objs, _ = glow.glow_objects(_doc(), _links(_doc(), {"12:wall": 5}), MESHES)
     assert objs == []
 
 
-def test_the_map_wins_and_without_a_map_the_fallback_applies():
-    # Spec §13 (Mark 2026-10-11): like roughness/metalness, an object's
-    # emission map is used whenever it has one; otherwise `without_map`.
+def test_without_a_map_a_flat_source_glows_flat():
     d = _doc()
-    d["materials"]["roof"]["emission"]["without_map"] = "flat"
+    d["materials"]["roof"]["emission_source"] = "flat"
     objs, warnings = glow.glow_objects(d, _links(d, MATCHED), MESHES)
     assert [(m, s) for m, s, _, _ in objs] == [(3, 0), (4, 2)]
-    assert warnings == []
 
 
-def test_strength_zero_glows_nothing_but_still_owns_the_glow():
+def test_an_emission_level_alone_glows():
+    """Mark's com lights: a Finish emission level with no modifiers glows."""
     d = _doc()
-    d["materials"]["roof"]["emission"]["strength"] = 0
-    objs, _ = glow.glow_objects(d, _links(d, MATCHED), MESHES)
-    (_, _, rgb, k), _ = glow.live(objs, bh.StateFade("red"), 0.0)
-    assert rgb == (0.0, 0.0, 0.0) and k == 0.0
+    d["materials"]["finish only"]["emission"] = 3
+    objs, _ = glow.glow_objects(d, _links(d, {"12:wall": 5}), MESHES)
+    (_, _, rgb, k), = glow.live(objs, bh.StateFade("yellow"), 0.0)
+    assert rgb == (3.0, 3.0, 3.0) and k == 3.0
 
 
-def test_live_scales_by_strength():
+def test_live_follows_the_state_modifier():
     objs, _ = glow.glow_objects(_doc(), _links(_doc(), MATCHED), MESHES)
     (m, s, rgb, k), _ = glow.live(objs, bh.StateFade("red"), 0.0)
     assert (m, s) == (3, 0)
     assert rgb == pytest.approx((0.6, 0.6, 1.2))
     assert k == pytest.approx(1.2)
+
+
+def test_the_default_on_a_mapped_mesh_is_the_map_as_painted():
+    d = _doc()
+    d["materials"]["roof"].pop("emission")
+    objs, _ = glow.glow_objects(d, _links(d, MATCHED), MESHES)
+    _, (_, _, rgb, _) = glow.live(objs, bh.StateFade("yellow"), 0.0)   # mesh 4: no map
+    (_, _, mapped, _), _ = glow.live(objs, bh.StateFade("yellow"), 0.0)
+    assert mapped == (1.0, 1.0, 1.0) and rgb == (0.0, 0.0, 0.0)
 
 
 def test_a_texture_material_with_an_emitter_glows_every_unlinked_mesh():

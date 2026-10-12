@@ -6,9 +6,9 @@ from engine.bridge_editor import behaviour as bh, lighting_doc as ld, lights
 
 def _doc():
     d = ld.empty_doc("x")
-    d["materials"]["alcove"] = {"modifiers": [
-        {"type": "emitter", "scope": ["green"], "tint": [1, 1, 1], "level": 1},
-        {"type": "emitter", "scope": ["red"], "tint": [1, 0.5, 0.5], "level": 0.5},
+    d["materials"]["alcove"] = {"emission": 0, "modifiers": [
+        {"type": "state", "scope": ["green"], "tint": [1, 1, 1], "level": 1},
+        {"type": "state", "scope": ["red"], "tint": [1, 0.5, 0.5], "level": 0.5},
         {"type": "animation", "scope": ["red"], "shape": "sine", "period_s": 2, "min": 0.2}]}
     e = ld.object_entry(d, 5, "roof")
     e["material"] = "alcove"
@@ -86,4 +86,24 @@ def test_a_light_on_an_unlinked_object_follows_its_texture_material():
               {"mesh": 2, "block": 6, "name": "lamp", "textures": []}]
     resolved = ld.resolve(d, meshes, MATCHED)
     cols = lights.live_colours(d, MATCHED, resolved, bh.StateFade("yellow"), 0.0)
-    assert cols[0] == (0.0, 0.0, 0.0)          # alcove has no yellow emitter: off
+    assert cols[0] == (0.0, 0.0, 0.0)          # alcove has no yellow State: off
+
+
+
+def test_a_light_follows_the_finish_emission_level():
+    d = _doc()
+    d["materials"]["alcove"] = {"emission": 2}
+    cols = lights.live_colours(d, MATCHED, _links(d, MATCHED), bh.StateFade("yellow"), 0.0)
+    assert cols[0] == pytest.approx((2.0 ** 2.2 * 100,) * 3)
+
+
+def test_on_a_mapped_mesh_an_unset_emission_lights_like_the_map():
+    """The default emission is the map as painted (1) on a mapped texture:
+    a State only at red leaves green at 1, not dark."""
+    d = _doc()
+    d["materials"]["alcove"] = {"modifiers": [
+        {"type": "state", "scope": ["red"], "tint": [1, 0, 0], "level": 1}]}
+    links = _links(d, MATCHED)
+    green = bh.StateFade("green")
+    assert lights.live_colours(d, MATCHED, links, green, 0.0, mapped={1})[0] == (100.0,) * 3
+    assert lights.live_colours(d, MATCHED, links, green, 0.0)[0] == (0.0,) * 3

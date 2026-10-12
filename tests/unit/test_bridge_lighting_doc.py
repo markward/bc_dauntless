@@ -1,4 +1,4 @@
-"""Per-bridge lighting document, format 2 (spec 2026-10-08-bridge-emitters §7, §13.4)."""
+"""Per-bridge lighting document, format 3 (spec 2026-10-08-bridge-emitters §7, §13.4, §14)."""
 import json
 
 import pytest
@@ -10,18 +10,18 @@ HASH = "0123456789abcdef"
 
 def full_doc():
     return {
-        "format": 2,
+        "format": 3,
         "source": "data/Models/Sets/DBridge/DBridge.nif",
         "materials": {
             "alcove": {
-                "roughness": 0.4, "metalness": 0.0,
-                "emission": {"without_map": "texture", "strength": 1.0},
-                "fade_s": 0.5,
+                "roughness": 0.4, "metalness": 0.0, "emission": 0.0,
+                "emission_source": "texture",
                 "modifiers": [
-                    {"type": "emitter", "scope": ["green"], "tint": [1, 1, 1], "level": 1},
-                    {"type": "emitter", "scope": ["red"], "tint": [1, 0.1, 0.1], "level": 0.5},
+                    {"type": "state", "scope": ["green"], "tint": [1, 1, 1], "level": 1},
+                    {"type": "state", "scope": ["red"], "tint": [1, 0.1, 0.1], "level": 0.5},
                     {"type": "animation", "scope": ["red"], "shape": "square",
                      "period_s": 1.0, "min": 0.2, "duty": 0.5, "soft": 0.1, "phase": 0.0},
+                    {"type": "transition", "scope": ["red"], "seconds": 0.2},
                 ],
             }
         },
@@ -45,7 +45,7 @@ def _mod(d, i):
 
 @pytest.mark.parametrize("mutate, fragment", [
     (lambda d: d.update(extra=1), "extra"),
-    (lambda d: d.update(format=3), "format"),
+    (lambda d: d.update(format=2), "format"),
     (lambda d: d["objects"][OBJ].update(colour=1), "colour"),
     (lambda d: d["objects"][OBJ].update(name="other"), "key"),
     (lambda d: d["objects"][OBJ].update(material="nope"), "nope"),
@@ -53,9 +53,13 @@ def _mod(d, i):
     (lambda d: d["objects"][OBJ]["lights"][0].update(inner_deg=70), "inner_deg"),
     (lambda d: d["materials"]["alcove"].update(roughness=1.5), "roughness"),
     (lambda d: d["materials"]["alcove"].update(shine=1), "shine"),
-    (lambda d: d["materials"]["alcove"]["emission"].update(without_map="glow"), "without_map"),
-    (lambda d: d["materials"]["alcove"]["emission"].update(src="auto"), "src"),
-    (lambda d: d["materials"]["alcove"]["emission"].update(strength=-1), "strength"),
+    (lambda d: d["materials"]["alcove"].update(emission=-1), "emission"),
+    (lambda d: d["materials"]["alcove"].update(emission={"strength": 1}), "emission"),
+    (lambda d: d["materials"]["alcove"].update(emission_source="glow"), "emission_source"),
+    (lambda d: d["materials"]["alcove"].update(fade_s=0.5), "fade_s"),
+    (lambda d: _mod(d, 0).update(type="emitter"), "type"),
+    (lambda d: _mod(d, 3).update(seconds=-1), "seconds"),
+    (lambda d: _mod(d, 3).update(tint=[1, 1, 1]), "tint"),
     (lambda d: _mod(d, 0).update(scope=["green", "blue"]), "scope"),
     (lambda d: _mod(d, 0).update(scope=["green", "green"]), "scope"),
     (lambda d: _mod(d, 0).update(tint=[1, 1]), "tint"),
@@ -78,10 +82,10 @@ def test_an_empty_scope_is_a_parked_modifier():
     assert ld.validate(d)
 
 
-@pytest.mark.parametrize("fallback", ld.EMISSION_WITHOUT_MAP)
-def test_every_emission_fallback_validates(fallback):
+@pytest.mark.parametrize("source", ld.EMISSION_SOURCES)
+def test_every_emission_source_validates(source):
     d = full_doc()
-    d["materials"]["alcove"]["emission"] = {"without_map": fallback}
+    d["materials"]["alcove"]["emission_source"] = source
     assert ld.validate(d)
 
 
@@ -126,15 +130,17 @@ def test_upgrade_of_the_real_dbridge_shape_is_lossless_where_it_matters():
     d = ld.validate(ld.upgrade(_v1()))
     m, o = d["materials"], d["objects"]
     assert o["401:"]["material"] == o["423:"]["material"] == "alcove"
-    assert m["alcove"]["emission"] == {"without_map": "texture"}
+    assert m["alcove"]["emission"] == 0          # states without a State modifier stay dark
     assert m["alcove"]["modifiers"] == [
-        {"type": "emitter", "tint": [1, 1, 1], "level": 1, "scope": ["green"]},
-        {"type": "emitter", "tint": [1, 0.12, 0.08], "level": 0.5, "scope": ["red"]},
+        {"type": "state", "tint": [1, 1, 1], "level": 1, "scope": ["green"]},
+        {"type": "state", "tint": [1, 0.12, 0.08], "level": 0.5, "scope": ["red"]},
         {"type": "animation", "shape": "sine", "period_s": 2, "min": 0.2, "phase": 0.0,
          "scope": ["red"]}]
+    assert "fade_s" not in m["alcove"]           # 0.5 is the default
     assert o["401:"]["lights"] == [{"position": [1, 2, 3], "direction": [0, 0, -1]}]
-    assert m["roof"]["emission"] == {"without_map": "texture", "strength": 2}
-    assert [x["scope"] for x in m["roof"]["modifiers"]] == [["green"], ["yellow", "red"]]
+    # The v1 glow scale (2x) folds into the State levels.
+    assert [(x["scope"], x["level"]) for x in m["roof"]["modifiers"]] == [
+        (["green"], 2), (["yellow", "red"], 1.2)]
     # Finish-only objects are never merged: equal values are a coincidence,
     # not a choice to share (Mark, 2026-10-11) -- each gets its own material.
     assert (o["133:"]["material"], o["139:"]["material"]) == ("material 1", "material 2")
@@ -157,7 +163,7 @@ def test_load_upgrades_a_format_1_file(tmp_path, monkeypatch):
     (tmp_path / "bridge_lighting").mkdir()
     (tmp_path / "bridge_lighting" / f"{HASH}.json").write_text(json.dumps(_v1()))
     res = ld.load(HASH, "x")
-    assert res.error is None and res.doc["format"] == 2
+    assert res.error is None and res.doc["format"] == 3
 
 
 def test_lookup_prefers_mod_dirs_then_project(tmp_path, monkeypatch):
@@ -235,7 +241,7 @@ def test_match_shapes_warns_on_a_missing_block():
 
 
 def test_the_spec_example_validates():
-    assert ld.validate(full_doc())["format"] == 2
+    assert ld.validate(full_doc())["format"] == 3
 
 
 def test_empty_doc_validates():
@@ -301,7 +307,7 @@ def _fold_doc():
     d = ld.empty_doc("x")
     d["materials"] = {"material 1": {"roughness": 0}, "material 2": {"roughness": 0},
                       "material 3": {"roughness": 0.5}, "material 4": {"metalness": 1},
-                      "alcove": {"emission": {"without_map": "texture"}, "modifiers": []}}
+                      "alcove": {"emission": 0, "modifiers": []}}
     meshes = [_tex_mesh(0, 10, "a", "Map 13.tga"), _tex_mesh(1, 11, "b", "Map 13.tga"),
               _tex_mesh(2, 12, "c", "Map 13.tga"), _tex_mesh(3, 13, "d", "Map 13.tga"),
               _tex_mesh(4, 14, "e", "Map 19.tga"), _tex_mesh(5, 15, "f", "Map 19.tga"),
@@ -407,3 +413,49 @@ def test_bind_textures_records_each_materials_texture_and_splits_a_spanning_one(
     assert d["materials"]["roof (Map 13)"] == {"roughness": 0, "texture": "map 13.tga"}
     assert d["materials"]["Map 13"] == {"texture": "map 13.tga"}
     assert splits == ["roof: Map 13 objects moved to 'roof (Map 13)'"]
+
+
+
+# ── format 2 -> 3 (Mark 2026-10-12: Emission is a Finish level; Emitter ->
+#    State; strength folded into levels; fade -> Transition) ────────────────
+
+def _v2():
+    return {"format": 2, "source": "x", "materials": {
+        "alcove": {"texture": "map 19.tga", "emission": {"without_map": "flat"}, "fade_s": 0.5,
+                   "modifiers": [
+                       {"type": "emitter", "scope": ["green"], "tint": [1, 1, 1], "level": 1},
+                       {"type": "animation", "scope": ["red"], "shape": "sine",
+                        "period_s": 2}]},
+        "Map 8": {"emission": {"strength": 3, "without_map": "texture"}, "fade_s": 1.5,
+                  "modifiers": [{"type": "emitter", "scope": ["green", "red"],
+                                 "tint": [1, 0.5, 0.5], "level": 0.25}]},
+        "plain": {"roughness": 0.2, "emission": {"strength": 4}}},
+        "textures": {"map 8.tga": "Map 8"},
+        "objects": {"1:a": {"block": 1, "name": "a", "material": "alcove"}}}
+
+
+def test_upgrade_of_format_2_keeps_every_state_looking_the_same():
+    d = ld.validate(ld.upgrade(_v2()))
+    m = d["materials"]
+    assert d["format"] == 3 and d["textures"] == {"map 8.tga": "Map 8"}
+    assert m["alcove"] == {"texture": "map 19.tga", "emission": 0, "emission_source": "flat",
+                           "modifiers": [
+                               {"type": "state", "scope": ["green"], "tint": [1, 1, 1],
+                                "level": 1},
+                               {"type": "animation", "scope": ["red"], "shape": "sine",
+                                "period_s": 2}]}
+    assert m["Map 8"]["emission"] == 0
+    assert m["Map 8"]["modifiers"] == [
+        {"type": "state", "scope": ["green", "red"], "tint": [1, 0.5, 0.5], "level": 0.75},
+        {"type": "transition", "scope": list(ld.STATES), "seconds": 1.5}]
+    # Strength without emitters glowed nothing: it is dropped, not turned on.
+    assert m["plain"] == {"roughness": 0.2}
+
+
+def test_load_upgrades_a_format_2_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(ld.paths, "game_asset_dirs", lambda rel: [tmp_path / "stock" / rel])
+    monkeypatch.setattr(ld.paths, "project_asset_root", lambda: tmp_path)
+    (tmp_path / "bridge_lighting").mkdir()
+    (tmp_path / "bridge_lighting" / f"{HASH}.json").write_text(json.dumps(_v2()))
+    res = ld.load(HASH, "x")
+    assert res.error is None and res.doc["format"] == 3

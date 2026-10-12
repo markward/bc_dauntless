@@ -460,7 +460,8 @@ def test_material_override_edit_and_sources(env):
     p.dispatch_event("material-new")
     st = payload(p)["selected"]["material_data"]["finish"]
     assert st == {"roughness": {"value": 1.0, "source": "map"},
-                  "metalness": {"value": 0.0, "source": "default"}}
+                  "metalness": {"value": 0.0, "source": "default"},
+                  "emission": {"value": 0.0, "source": "default"}}
     assert p.dispatch_event("finish:metalness:0.35")
     st = payload(p)
     assert st["selected"]["material_data"]["finish"]["metalness"] == {"value": 0.35, "source": "material"}
@@ -707,7 +708,7 @@ def test_an_unlinked_object_edits_its_texture_material(env_rt):
     assert p._doc["materials"]["redalertpanel"] == {"roughness": 0.2, "texture": "redalertpanel.tga"}
     p.dispatch_event("tab:material")
     p.dispatch_event("state:red")
-    p.dispatch_event("mod-add:emitter")
+    p.dispatch_event("mod-add:state")
     sel = payload(p)["selected"]
     assert sel["material"] == "redalertpanel" and sel["material_data"]["used_by"] == 1
     assert sel["material_data"]["modifiers"][0]["scope"] == ["red"]   # the preview state
@@ -746,11 +747,11 @@ def test_every_edit_is_one_undo_step(env_rt):
     p, h, rt = _sel(env_rt)
     p.dispatch_event("material-new")
     n = len(p._undo)
-    p.dispatch_event("fade:0.5")                         # same as default? sets it: one step
-    p.dispatch_event("fade:0.5")                         # unchanged: none
+    p.dispatch_event("finish:emission:0.5")              # sets it: one step
+    p.dispatch_event("finish:emission:0.5")              # unchanged: none
     assert len(p._undo) == n + 1
     p.dispatch_event("undo")
-    assert "fade_s" not in p._doc["materials"]["redalertpanel 2"]
+    assert "emission" not in p._doc["materials"]["redalertpanel 2"]
 
 
 def test_lights_are_indexed(env_rt):
@@ -838,3 +839,42 @@ def test_linking_another_textures_material_is_refused(env_rt):
     p.dispatch_event("material-link:Map 20")
     assert "7:redalertpanel" not in p._doc["objects"]
     assert "Map 20" in payload(p)["status"]
+
+
+
+# ── emission is a Finish row; State / Animation / Transition (spec §14) ─────
+
+def test_emission_is_a_finish_row_with_default_map_and_material_sources(env_rt):
+    p, h, rt = _sel(env_rt)                    # redalertpanel.tga: no emission map
+    fin = payload(p)["selected"]["material_data"]["finish"]
+    assert fin["emission"] == {"value": 0.0, "source": "default"}
+    p.dispatch_event("finish:emission:3")
+    fin = payload(p)["selected"]["material_data"]["finish"]
+    assert fin["emission"] == {"value": 3.0, "source": "material"}
+    assert p._doc["materials"]["redalertpanel"]["emission"] == 3.0   # the texture's material
+    p.dispatch_event("finish-clear:emission")
+    assert payload(p)["selected"]["material_data"]["finish"]["emission"]["source"] == "default"
+
+
+def test_on_a_mapped_texture_the_emission_default_is_the_map(env_rt):
+    p, h, rt = _sel(env_rt)
+    p._info = json.loads(json.dumps(p._info))   # INFO is shared: edit a copy
+    p._info["meshes"][1]["maps"]["emissive"] = True
+    fin = payload(p)["selected"]["material_data"]["finish"]
+    assert fin["emission"] == {"value": 1.0, "source": "map"}
+    p.dispatch_event("finish:emission:0.4")    # dims the map: still editable
+    assert payload(p)["selected"]["material_data"]["finish"]["emission"] == {
+        "value": 0.4, "source": "material"}
+
+
+def test_emission_source_and_the_new_modifiers(env_rt):
+    p, h, rt = _sel(env_rt)
+    p.dispatch_event("emission-source:flat")
+    assert payload(p)["selected"]["material_data"]["emission_source"] == "flat"
+    p.dispatch_event("state:red")
+    for kind in ("state", "animation", "transition"):
+        p.dispatch_event(f"mod-add:{kind}")
+    p.dispatch_event("mod:2:seconds:0.2")
+    mods = payload(p)["selected"]["material_data"]["modifiers"]
+    assert [m["type"] for m in mods] == ["state", "animation", "transition"]
+    assert mods[2] == {"type": "transition", "scope": ["red"], "seconds": 0.2}

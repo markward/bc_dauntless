@@ -7,6 +7,8 @@ import math
 from engine.bridge_editor import lighting_doc as ld
 
 MIN_PERIOD_S = 0.05
+MAX_EMISSION = 16.0           # the slider runs 0-4; typing goes higher, to this
+MAX_TRANSITION_S = 10.0
 LIGHT_INNER_DEG, LIGHT_OUTER_DEG, LIGHT_RANGE = 30.0, 60.0, 200.0
 LIGHT_INTENSITY = 2000.0
 _LIGHT_MIN_RANGE = 0.01
@@ -113,8 +115,15 @@ def rename(doc, old, new):
 
 
 def set_finish(mat, ch, raw):
-    v = _num(raw, 0.0, 1.0)
-    if ch in ("roughness", "metalness") and v is not None:
+    """roughness/metalness 0-1; emission 0-MAX_EMISSION (spec §14: the
+    Finish emission level, Mark 2026-10-12)."""
+    if ch in ("roughness", "metalness"):
+        v = _num(raw, 0.0, 1.0)
+    elif ch == "emission":
+        v = _num(raw, 0.0, MAX_EMISSION)
+    else:
+        return
+    if v is not None:
         mat[ch] = v
 
 
@@ -122,29 +131,21 @@ def clear_finish(mat, ch):
     mat.pop(ch, None)
 
 
-def set_emission(mat, field, raw):
-    e = mat.setdefault("emission", {})
-    if field == "without_map" and raw in ld.EMISSION_WITHOUT_MAP:
-        e["without_map"] = raw
-    elif field == "strength":
-        v = _num(raw, lo=0.0)
-        if v is not None:
-            e["strength"] = v
-
-
-def set_fade(mat, raw):
-    v = _num(raw, lo=0.0)
-    if v is not None:
-        mat["fade_s"] = v
+def set_emission_source(mat, raw):
+    """What glows on a texture with no `_emissive` map: own texture or flat."""
+    if raw in ld.EMISSION_SOURCES:
+        mat["emission_source"] = raw
 
 
 def add_modifier(mat, kind, state):
     scope = [state] if state in ld.STATES else []
-    if kind == "emitter":
-        m = {"type": "emitter", "scope": scope, "tint": [1, 1, 1], "level": 1.0}
+    if kind == "state":
+        m = {"type": "state", "scope": scope, "tint": [1, 1, 1], "level": 1.0}
     elif kind == "animation":
         m = {"type": "animation", "scope": scope, "shape": "sine", "period_s": 2.0,
              "min": 0.0, "phase": 0.0}
+    elif kind == "transition":
+        m = {"type": "transition", "scope": scope, "seconds": ld.DEFAULT_FADE_S}
     else:
         return
     mat.setdefault("modifiers", []).append(m)
@@ -174,7 +175,13 @@ def set_modifier(mat, i, field, raw):
     m = _mod(mat, i)
     if m is None:
         return
-    if m["type"] == "emitter":
+    if m["type"] == "transition":
+        if field == "seconds":
+            v = _num(raw, 0.0, MAX_TRANSITION_S)
+            if v is not None:
+                m["seconds"] = v
+        return
+    if m["type"] == "state":
         if field == "tint":
             try:
                 rgb = [max(0.0, float(c)) for c in str(raw).split(",")]

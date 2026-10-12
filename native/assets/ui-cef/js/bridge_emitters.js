@@ -125,13 +125,19 @@ function _beObjectTab(s) {
     return html;
 }
 
+// Emission's slider runs 0-4 (the box goes higher) and stays editable over a
+// map: the map says what glows, the level how much (spec §14).
 function _beFinishRow(ch, f) {
+    const emission = ch === 'emission';
     const v = Number(f.value).toFixed(2);
-    const dis = f.source === 'map' ? ' disabled' : '';
+    const dis = f.source === 'map' && !emission ? ' disabled' : '';
+    const top = emission ? 4 : 1;
     return '<div class="be-row"><label>' + ch + '</label>'
-        + '<input type="range" min="0" max="1" step="0.01" value="' + v + '"' + dis
+        + '<input type="range" min="0" max="' + top + '" step="0.01" value="'
+        + Math.min(Number(f.value), top).toFixed(2) + '"' + dis
         + ' onchange="dauntlessEvent(\'bridge-emitters/finish:' + ch + ':\' + this.value)">'
-        + '<input type="number" min="0" max="1" step="0.01" value="' + v + '" style="width:56px"' + dis
+        + '<input type="number" min="0"' + (emission ? '' : ' max="1"') + ' step="0.01" value="'
+        + v + '" style="width:56px"' + dis
         + ' onchange="dauntlessEvent(\'bridge-emitters/finish:' + ch + ':\' + this.value)">'
         + '<span class="be-source">' + _beEsc(f.source) + '</span>'
         + (f.source === 'material'
@@ -140,11 +146,11 @@ function _beFinishRow(ch, f) {
         + '</div>';
 }
 
-const _BE_WITHOUT_MAP = [['texture', 'own texture'], ['flat', 'flat colour']];
+const _BE_SOURCES = [['texture', 'own texture'], ['flat', 'flat colour']];
 
 function _beModifier(m, i, expanded) {
     let fields = '';
-    if (m.type === 'emitter') {
+    if (m.type === 'state') {
         const lv = Number(m.level);
         fields = '<div class="be-row"><canvas id="be-wheel-' + i + '" width="120" height="120"></canvas>'
             + '<div id="be-swatch-' + i + '" class="be-swatch"></div></div>'
@@ -153,6 +159,8 @@ function _beModifier(m, i, expanded) {
             + ' onchange="dauntlessEvent(\'bridge-emitters/mod:' + i + ':level:\' + this.value)">'
             + '<input type="number" min="0" step="0.01" value="' + lv.toFixed(2) + '" style="width:56px"'
             + ' onchange="dauntlessEvent(\'bridge-emitters/mod:' + i + ':level:\' + this.value)"></div>';
+    } else if (m.type === 'transition') {
+        fields = _beNumberRow('seconds', 'mod:' + i + ':seconds', m.seconds, 0.05);
     } else {
         fields = '<div class="be-row"><label>shape</label>'
             + _beChip('sine', 'mod:' + i + ':shape:sine', m.shape === 'sine', false)
@@ -165,7 +173,9 @@ function _beModifier(m, i, expanded) {
                 + _beNumberRow('soft', 'mod:' + i + ':soft', m.soft || 0, 0.05);
         }
     }
-    const title = m.type === 'emitter' ? 'Emitter' : 'Animation (' + m.shape + ')';
+    const title = m.type === 'state' ? 'State'
+        : m.type === 'transition' ? 'Transition (' + Number(m.seconds) + ' s)'
+        : 'Animation (' + m.shape + ')';
     return _beEntry('mod:' + i, title, expanded,
                     {list: m.scope || [], action: 'mod:' + i + ':scope:'},
                     'mod-remove:' + i, fields);
@@ -173,8 +183,9 @@ function _beModifier(m, i, expanded) {
 
 function _beAddModifier() {
     return '<div class="be-row"><label>add</label>'
-        + _beChip('Emitter', 'mod-add:emitter', false, false)
-        + _beChip('Animation', 'mod-add:animation', false, false) + '</div>';
+        + _beChip('State', 'mod-add:state', false, false)
+        + _beChip('Animation', 'mod-add:animation', false, false)
+        + _beChip('Transition', 'mod-add:transition', false, false) + '</div>';
 }
 
 function _beMaterialTab(s) {
@@ -193,27 +204,24 @@ function _beMaterialTab(s) {
         + 'document.getElementById(\'be-rename\').value)">Rename</button>'
         + '<span class="be-source">' + _beEsc((m.kind === 'texture' ? 'texture material · ' : '')
                                             + _beUsers(m.used_by || 0)) + '</span></div>';
-    // Finish and Surface are fixed sections, open by default: toggling
-    // their header collapses them (modifiers and lights start collapsed).
-    html += _beEntry('finish', 'Finish', !open('finish'), null, null,
-                     _beFinishRow('roughness', m.finish.roughness)
-                     + _beFinishRow('metalness', m.finish.metalness));
-    // The TGA is part of the material (Mark 2026-10-11), so the texture
-    // decides the source: its `_emissive` map when it has one (shown, not
-    // chosen), else the choice of own texture or a flat colour.
+    // Finish is fixed and open by default: toggling its header collapses it
+    // (modifiers and lights start collapsed). Emission is a Finish row (Mark
+    // 2026-10-12); the texture decides what glows -- its `_emissive` map when
+    // it has one (shown, not chosen), else own texture or a flat colour.
     const stem = String((s.textures || [''])[0]).replace(/\.[^.]*$/, '');
-    let emis;
+    let fin = _beFinishRow('roughness', m.finish.roughness)
+        + _beFinishRow('metalness', m.finish.metalness)
+        + _beFinishRow('emission', m.finish.emission);
     if (s.has_emission_map) {
-        emis = '<div class="be-help">source: emission map · ' + _beEsc(stem) + '_emissive</div><div>';
+        fin += '<div class="be-help">source: emission map · ' + _beEsc(stem) + '_emissive</div>';
     } else {
-        emis = '<div class="be-help">no emission map</div><div class="be-row"><label>source</label>';
-        _BE_WITHOUT_MAP.forEach(function (p) {
-            emis += _beChip(p[1], 'emission:without_map:' + p[0], m.emission.without_map === p[0], false);
+        fin += '<div class="be-row"><label>glows</label>';
+        _BE_SOURCES.forEach(function (p) {
+            fin += _beChip(p[1], 'emission-source:' + p[0], m.emission_source === p[0], false);
         });
+        fin += '</div>';
     }
-    emis += '</div>' + _beNumberRow('strength', 'emission:strength', m.emission.strength, 0.1)
-        + _beNumberRow('state fade s', 'fade', m.fade_s, 0.05);
-    html += _beEntry('emission', 'Emission', !open('emission'), null, null, emis);
+    html += _beEntry('finish', 'Finish', !open('finish'), null, null, fin);
     (m.modifiers || []).forEach(function (mod, i) {
         html += _beModifier(mod, i, open('mod:' + i));
     });
@@ -234,7 +242,7 @@ function _beDockHtml(state) {
     return html + (s.tab === 'material' ? _beMaterialTab(s) : _beObjectTab(s));
 }
 
-// One wheel per expanded emitter. A drag commits once, on release (one undo
+// One wheel per expanded State modifier. A drag commits once, on release (one undo
 // step); the swatch follows live. A dragging wheel blocks rebuilds.
 var _beWheels = [];
 function _beMountWheels(state) {
@@ -243,7 +251,7 @@ function _beMountWheels(state) {
     if (!s || !s.material_data || typeof ColourWheel === 'undefined') return;
     (s.material_data.modifiers || []).forEach(function (m, i) {
         const canvas = document.getElementById('be-wheel-' + i);
-        if (!canvas || !canvas.getContext || m.type !== 'emitter') return;
+        if (!canvas || !canvas.getContext || m.type !== 'state') return;
         const swatch = document.getElementById('be-swatch-' + i);
         const paint = function (rgb) {
             if (swatch) swatch.style.background = 'rgb(' + rgb.map(function (c) {
