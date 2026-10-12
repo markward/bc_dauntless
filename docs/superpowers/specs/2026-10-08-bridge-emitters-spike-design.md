@@ -1090,3 +1090,11 @@ and its area-weighted normal sum (C++ owns the triangles).
 Strips that follow the rim (`follow: "rim"`); disc or curved panels; an LTC
 specular table; shadows from area lights; drawing the light rectangle in the
 editor.
+
+### 16.7 As built
+
+Built on `feat/bridge-area-lights` (plan
+`docs/superpowers/plans/2026-10-12-bridge-area-lights.md`). **Not live-verified**
+-- Mark's DBridge check (a strip on an alcove lip, a panel on the dome) is owed,
+and the defaults (`STRIP_INTENSITY` 40, `PANEL_INTENSITY` 2, `STRIP_OFFSET` 1 in
+`engine/bridge_editor/editing.py`) are first guesses to tune there.
