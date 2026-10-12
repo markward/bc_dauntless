@@ -139,7 +139,7 @@ def test_object_tab_lists_the_library_and_the_emission_map_row():
     body = out["body"]
     assert "bridge-emitters/tab:material" in body
     assert "alcove — used by 4 objects" in body and "material-link:alcove" in body
-    assert "material-new" in body and "light-add" in body
+    assert "material-new" in body and "_beToggleAddLight()" in body
     assert "Emission map" in body and "steady" in body
     assert "<select" not in body
 
@@ -369,3 +369,56 @@ def test_the_cog_moves_left_of_the_dock_while_it_shows():
     [closed] = _run([{"state": _state()}])
     [docked] = _run([{"state": _state(selected=_sel())}])
     assert "be-has-dock" not in closed["root_class"] and "be-has-dock" in docked["root_class"]
+
+
+# ── Lights with size (spec §16.4) ───────────────────────────────────────────
+
+def test_add_light_is_one_menu_button_until_opened():
+    closed, opened, again = _run([{"state": _state(selected=_sel())},
+                                  {"call": "_beToggleAddLight()"},
+                                  {"call": "_beToggleAddLight()"}])
+    assert "Add Light" in closed["body"] and "light-add:strip" not in closed["body"]
+    body = opened["body"]
+    for kind, words in (("spot", "cone"), ("strip", "edge"), ("panel", "front")):
+        assert f"light-add:{kind}" in body and words in body
+    assert "<select" not in body
+    assert "light-add:strip" not in again["body"]
+
+
+def test_picking_a_light_closes_the_menu():
+    _c, opened = _run([{"state": _state(selected=_sel())}, {"call": "_beToggleAddLight()"}])
+    i = opened["body"].index("light-add:strip")
+    onclick = opened["body"][opened["body"].rindex("onclick=", 0, i):opened["body"].index(">", i)]
+    assert "_beAddLightOpen = false" in onclick
+
+
+def test_a_strip_shows_edge_chips_and_start_end_sliders_not_place_and_aim():
+    strip = {"shape": "strip", "edge": "left", "start": 0.2, "end": 0.9, "offset": 1,
+             "range": 200, "intensity": 40}
+    [out] = _run([{"state": _state(selected=_sel(lights=[strip], expanded=["light:0"]))}])
+    body = out["body"]
+    assert "Strip" in body
+    for e in ("top", "bottom", "left", "right"):
+        assert f"light:0:edge:{e}" in body
+    assert 'be-chip active"' in body.split("light:0:edge:left")[0].rsplit("<button", 1)[1]
+    assert "light:0:start" in body and "light:0:end" in body
+    assert "light:0:offset:" in body and "light:0:intensity:" in body
+    assert "light-place:0" not in body and "light-aim:0" not in body
+
+
+def test_a_panel_shows_x_and_y_spans():
+    panel = {"shape": "panel", "x": [0, 0.5], "y": [0, 1], "offset": 0, "range": 200,
+             "intensity": 2}
+    [out] = _run([{"state": _state(selected=_sel(lights=[panel], expanded=["light:0"]))}])
+    body = out["body"]
+    assert "Panel" in body
+    for f in ("x0", "x1", "y0", "y1", "offset", "range", "intensity"):
+        assert f"light:0:{f}" in body
+    assert "light:0:edge:" not in body
+
+
+def test_a_spot_entry_is_unchanged():
+    spot = {"position": [1, 2, 3], "direction": [0, 0, -1], "inner_deg": 30,
+            "outer_deg": 60, "range": 200, "intensity": 2000}
+    [out] = _run([{"state": _state(selected=_sel(lights=[spot], expanded=["light:0"]))}])
+    assert "light-place:0" in out["body"] and "light:0:inner_deg:" in out["body"]
