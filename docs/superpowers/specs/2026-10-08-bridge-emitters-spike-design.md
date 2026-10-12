@@ -958,3 +958,135 @@ rendering was being overpowered by the base illumination".
   row per state, `default`/`bridge` source and a × back to the default.
   Python owns open/closed for the click region (`COG_CSS_PX`,
   `SETTINGS_CSS_W/H` = the CSS). Bridge-level edits need no selection.
+
+## 16. Lights with size: strips and panels *(designed with Mark 2026-10-12)*
+
+Why: two asks with one cause. Mark wanted a **strip light** along an
+object's top / bottom / left / right edge, with a start and end along it,
+facing perpendicular to the edge and on average toward the object's centre.
+Separately, lights on the ceiling dome read as downlights, not a wide wash.
+The cone is not the limit (`outer_deg` is a half-angle, clamped to 90 = the
+whole hemisphere already): a POINT source puts 1/d² and a high N·L straight
+below it and grazes the walls. Both need a light with **size**. Mark: "which
+is exactly why it seems related!" Strips and panels are one feature: a
+rectangular area light, cut from the object's front rectangle.
+
+Mark, on the whole section: "I have areas I'm not sure how well they will
+work but I think we are best to proceed and find out." The judgement is live.
+
+### 16.1 Data (`format: 4`)
+
+A light gains `shape`; absent = `spot`. The reader rejects unknown keys, so
+the new keys need a format bump; `format: 3` upgrades on load unchanged (it
+holds only spots).
+
+| `shape` | keys |
+|---|---|
+| `spot` | as §13.4: `position`, `direction`, `inner_deg`, `outer_deg`, `range`, `intensity` |
+| `strip` | `edge` (`top` / `bottom` / `left` / `right`), `start`, `end` (0-1 along the edge, defaults 0 and 1, `start` <= `end`), `offset`, `range`, `intensity` |
+| `panel` | `x`, `y` (each `[from, to]`, 0-1 across the front rectangle, default `[0, 1]`, from <= to), `offset`, `range`, `intensity` |
+
+```json
+"lights": [{"shape": "strip", "edge": "top", "start": 0.1, "end": 0.9,
+            "offset": 1, "range": 150, "intensity": 4},
+           {"shape": "panel", "x": [0, 1], "y": [0, 1], "offset": 0,
+            "range": 400, "intensity": 1}]
+```
+
+- **No coordinates are stored** for a strip or panel: the rectangle is
+  recomputed from the mesh at load (§16.2), so it follows mesh fixes and
+  shape diffs. A later `follow: "rim"` (a strip along the real outline -- Mark
+  expects a top edge of at most ~7 vertices) is an added key, not a break.
+- **`intensity` is surface brightness** (radiance per unit area, before the
+  colour): shortening a strip removes light, as covering part of an LED strip
+  would, rather than concentrating it.
+- **Colour follows the material** exactly as a spot's (§13.2, §11.4): the
+  object's resolved material, `^2.2`, steady white when it sets no glow; the
+  same static capture colours and per-frame live colours.
+
+### 16.2 Geometry: the front rectangle
+
+`engine/bridge_editor/light_shapes.py`, pure Python, no GL. Input from a new
+host query `bridge_mesh_geometry(iid, mesh)`: the shape's world-space vertices
+and its area-weighted normal sum (C++ owns the triangles).
+
+- **Frame**: *facing* = the normalised normal sum; *up* = room up (+Z) with
+  its facing component removed, normalised; *right* = up x facing. The
+  object's box in (right, up, facing) gives the **front rectangle**: the box
+  face at max facing (toward the room). An alcove's front rectangle is its
+  lip; a flat panel's is the panel.
+- **Fallbacks**:
+  - no facing (normal sum < 5% of the total area -- a closed shape such as a
+    pillar): facing = the horizontal direction from the box centre to the
+    bridge camera eye (`_BRIDGE_CAMERA_EYE`, passed in), so the front is the
+    side the captain sees;
+  - facing within 25° of vertical (a ceiling or floor piece): up = the
+    horizontal direction from the eye to the box centre, so **top is the edge
+    farther from the captain's chair**. A panel does not care.
+- **Strip**: that edge of the front rectangle, cut to `[start, end]`, a thin
+  rectangle (`STRIP_WIDTH`, an engine constant) moved out along facing by
+  `offset`. Its normal = (box centre - strip centre) with the component along
+  the edge removed, normalised: perpendicular to the edge, toward the centre
+  on average. `offset` is what lets a strip on a FLAT panel light the panel
+  itself -- at 0 its normal lies in the panel's plane and the panel receives
+  only grazing light.
+- **Panel**: the `x` x `y` sub-rectangle of the front rectangle, moved out
+  along facing by `offset`, normal = facing.
+- **Known approximation**: a panel on the dome is its rectangular footprint,
+  so its corners emit where there is no dome. A disc shape is a small addition
+  if that shows.
+
+### 16.3 Renderer
+
+- `BridgeAreaLight`: 4 corners, normal, range, live radiance, green and
+  yellow/red capture colours; uploaded as `u_area_*` arrays beside the spots.
+  **Spots and area lights share the 32-light budget**: `lights.py` caps the
+  combined list in mesh order and warns per dropped light, as today.
+- `bridge.frag accumulate_area_lights`:
+  - **diffuse**: the horizon-clipped Lambert edge integral (Heitz), ported
+    from the 2026-09-04 quad-area-light spike (`spike/ebridge-emissive-sh`:
+    `clip_quad_to_horizon`, the quad form factor, and its C++ twin's test
+    against numerical quadrature); exact for a rectangle;
+  - **one-sided**: a receiver behind the rectangle's plane gets nothing;
+  - **range**: the spot window (`spot_falloff`'s `w`), on the distance to
+    the nearest point of the rectangle;
+  - **specular**: GGX at a representative point (the reflection ray meets the
+    rectangle's plane, clamped into it), energy-normalised for the light's
+    size. The part most likely to need tuning; the upgrade is an LTC table.
+- C++ twins in `bridge_pbr.h`, as the spot formulas.
+- **Probes**: the capture pass adds the area lights' diffuse half exactly as
+  the spots'; a geometry or parameter change recaptures, a pulse or state
+  change does not (§11.4).
+- `runtime.py` builds the area list from `light_shapes` at load and after
+  every edit and pushes it through `host_io.set_bridge_area_lights` /
+  `set_bridge_area_colours`. A bridge with no strips or panels uploads a count
+  of 0: its frame is unchanged.
+
+### 16.4 Editor
+
+- **Add light** becomes a menu -- Spot, Strip, Panel -- like Add Modifier.
+- **Strip** row: edge chips (Top, Bottom, Left, Right), start and end
+  sliders, offset, range, intensity. **Panel** row: x from / to, y from / to,
+  offset, range, intensity.
+- One undo step per edit; an edit recomputes that object's rectangles.
+- No outline is drawn: a strip is placed by the light it casts. Drawing the
+  rectangle while its row is expanded is the add-on if that proves hard.
+
+### 16.5 Tests
+
+- `light_shapes` on synthetic meshes: a flat panel, a sloped console, an
+  alcove shell, a closed box (no-facing fallback), a ceiling piece
+  (near-vertical fallback): frame, front rectangle, each edge, spans, offset,
+  normals.
+- Format: 3 -> 4 upgrade; round trip; rejection of unknown keys, a bad edge,
+  a span outside 0-1, from > to.
+- The shared budget: spots + area lights cap at 32 together.
+- C++: the form factor against quadrature (the spike's test, ported); with no
+  area lights the frame is byte-identical.
+- Live (Mark, DBridge): a strip on an alcove lip; a panel on the dome.
+
+### 16.6 Out of scope
+
+Strips that follow the rim (`follow: "rim"`); disc or curved panels; an LTC
+specular table; shadows from area lights; drawing the light rectangle in the
+editor.
