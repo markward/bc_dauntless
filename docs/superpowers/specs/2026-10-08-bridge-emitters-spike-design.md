@@ -1024,7 +1024,7 @@ and its area-weighted normal sum (C++ owns the triangles).
     horizontal direction from the eye to the box centre, so **top is the edge
     farther from the captain's chair**. A panel does not care.
 - **Strip**: that edge of the front rectangle, cut to `[start, end]`, a thin
-  rectangle (`STRIP_WIDTH`, an engine constant) moved out along facing by
+  rectangle (`STRIP_WIDTH` = 0.5 bridge units, an engine constant) moved out along facing by
   `offset`. Its normal = (box centre - strip centre) with the component along
   the edge removed, normalised: perpendicular to the edge, toward the centre
   on average. `offset` is what lets a strip on a FLAT panel light the panel
