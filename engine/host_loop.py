@@ -12411,9 +12411,12 @@ def run(mission_name: Optional[str] = None,
             # viewscreen feed — another ship's room — keeps constant brightness.
             # The Bridge Editor's state tab previews an alert (spec §12.2).
             _bridge_preview = getattr(bridge_emitters, "preview_alert", lambda: None)()
-            r.set_bridge_ambient_scale(
-                _bridge_lighting.player_bridge_ambient_scale(player) if _bridge_preview is None
-                else _bridge_lighting.ambient_scale_for_alert(_bridge_preview))
+            # The bridge's own room light wins (a bridge with lights defaults
+            # to 0, Mark 2026-10-12); else the per-state default.
+            _bridge_rt = getattr(controller, "bridge_runtime", None)
+            r.set_bridge_ambient_scale(_bridge_lighting.bridge_ambient_scale(
+                player, _bridge_preview,
+                _bridge_rt.ambient_scale if _bridge_rt is not None else None))
             r.set_bridge_lighting(bridge_ambient, bridge_directionals)
             # Bridge PBR reflection-probe cross-fade (spec
             # 2026-10-09-bridge-pbr §6.3, §9.4): green <-> yellow/red over

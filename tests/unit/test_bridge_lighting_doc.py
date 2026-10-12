@@ -459,3 +459,27 @@ def test_load_upgrades_a_format_2_file(tmp_path, monkeypatch):
     (tmp_path / "bridge_lighting" / f"{HASH}.json").write_text(json.dumps(_v2()))
     res = ld.load(HASH, "x")
     assert res.error is None and res.doc["format"] == 3
+
+
+# ── room light (Mark 2026-10-12: a bridge that defines its own lights is lit
+#    by them; the default room light stays only for bridges with none) ──────
+
+def test_room_light_validates_per_state():
+    d = full_doc()
+    d["room_light"] = {"green": 0.2, "red": 0}
+    assert ld.validate(d)["room_light"] == {"green": 0.2, "red": 0}
+    for bad, frag in (({"blue": 1}, "blue"), ({"green": -1}, "green"), ([0.2], "room_light")):
+        d["room_light"] = bad
+        with pytest.raises(ld.BridgeLightingError, match=frag):
+            ld.validate(d)
+
+
+def test_room_light_is_the_bridges_own_else_off_when_it_has_lights_else_default():
+    d = full_doc()                                    # object 137 has a light
+    assert ld.room_light(d, "green") == 0.0
+    d["room_light"] = {"green": 0.2}
+    assert ld.room_light(d, "green") == 0.2 and ld.room_light(d, "red") == 0.0
+    e = ld.empty_doc("x")                             # no lights: None = the default
+    assert ld.room_light(e, "green") is None
+    e["room_light"] = {"red": 0.5}
+    assert ld.room_light(e, "red") == 0.5 and ld.room_light(e, "green") is None

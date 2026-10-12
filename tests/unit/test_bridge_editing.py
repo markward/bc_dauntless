@@ -158,3 +158,16 @@ def test_new_on_a_textured_object_makes_a_variant_of_that_texture():
     assert d["materials"]["Map 19 2"] == {"texture": "map 19.tga"}
     assert d["objects"]["2:b"]["material"] == "Map 19 2"
     assert ed.new_material(d, 1, "a", texture="Map 19.tga") == "Map 19 3"
+
+
+def test_room_light_set_clamp_and_clear():
+    d = _doc()
+    ed.set_room_light(d, "green", "0.2")
+    ed.set_room_light(d, "red", "-1")
+    ed.set_room_light(d, "blue", "1")               # not a state: refused
+    ed.set_room_light(d, "yellow", "99")
+    assert d["room_light"] == {"green": 0.2, "red": 0.0, "yellow": ed.MAX_ROOM_LIGHT}
+    ld.validate(d)
+    for s in ("green", "red", "yellow"):
+        ed.clear_room_light(d, s)
+    assert "room_light" not in d                    # pruned when empty

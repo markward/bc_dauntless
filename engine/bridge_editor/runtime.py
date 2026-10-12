@@ -1,6 +1,8 @@
 """Applies a bridge's per-bridge lighting document to the renderer — the
 PRODUCTION path (spec 2026-10-08-bridge-emitters §7, §9): at bridge load, on
 editor edits, and on alert changes. Never raises into the host loop."""
+from typing import Optional
+
 from engine import bridge_lighting, dev_mode, host_io
 from engine.bridge_editor import lighting_doc as ld
 from engine.bridge_editor import behaviour, glow, lights, materials
@@ -18,6 +20,8 @@ class BridgeRuntime:
         self._glow_shapes = []
         self._fade = behaviour.StateFade()
         self._t = 0.0          # the bridge clock (spec §11.3): paused-aware dt
+        # The probe scales last pushed; the default until a bridge says otherwise.
+        self._probe_scales = bridge_lighting.probe_scales()
 
     def attach(self, iid):
         """Neither overrides nor spots are cleared by C++ on a mission swap,
@@ -46,7 +50,8 @@ class BridgeRuntime:
             info = self._io.model_identity(iid) or {}
             self._meshes = info.get("meshes", [])
             self._io.set_bridge_probe_origin(tuple(self._eye()))
-            self._io.set_bridge_probe_scales(*bridge_lighting.probe_scales())
+            self._probe_scales = bridge_lighting.probe_scales()
+            self._io.set_bridge_probe_scales(*self._probe_scales)
             h = info.get("content_hash", "")
             if not h:
                 self.detach()
@@ -97,6 +102,7 @@ class BridgeRuntime:
             self._matched = matched
         warnings = []
         try:
+            self._push_probe_scales(doc)
             # Each mesh's material: its object's link, else its texture's.
             self._resolved = ld.resolve(doc, self._meshes, self._matched)
             # Meshes whose texture has an `_emissive` map: an unset emission
@@ -123,6 +129,26 @@ class BridgeRuntime:
         except Exception as e:  # noqa: BLE001 - see docstring
             dev_mode.log_swallowed("bridge runtime push", e)
         return warnings
+
+    def ambient_scale(self, level) -> Optional[float]:
+        """The room light for bridge state `level` (0-4): this bridge's own
+        (lighting_doc.room_light -- 0 when it defines lights and sets no
+        level), or None for the engine default (bridge_lighting)."""
+        if self._doc is None:
+            return None
+        return ld.room_light(self._doc, behaviour.state_name(level))
+
+    def _push_probe_scales(self, doc):
+        """The reflection probes are captured under the room light they
+        reflect (green probe: green; yellow/red probe: yellow -- as the spot
+        capture colours are); recaptured only when that changes."""
+        default = bridge_lighting.probe_scales()
+        scales = tuple(d if v is None else v for v, d in
+                       zip((ld.room_light(doc, "green"), ld.room_light(doc, "yellow")), default))
+        if scales != self._probe_scales:
+            self._probe_scales = scales
+            self._io.set_bridge_probe_scales(*scales)
+            self._io.request_bridge_probe_capture()
 
     def on_alert(self, level):
         """Start the cross-fade to a new bridge state (0-4, spec 2026-10-08-

@@ -256,6 +256,21 @@ def _material(m, where):
             _modifier(mod, f"{where}.modifiers[{i}]")
 
 
+def has_lights(doc) -> bool:
+    return any(o.get("lights") for o in doc.get("objects", {}).values())
+
+
+def room_light(doc, state) -> Optional[float]:
+    """The room light (the bridge ambient's multiplier) for `state` (Mark
+    2026-10-12): the bridge's own `room_light` level when it sets one; else
+    0 when the bridge defines lights of its own (they light the room);
+    else None -- the engine default (engine/bridge_lighting.py)."""
+    own = doc.get("room_light", {}).get(state)
+    if own is not None:
+        return float(own)
+    return 0.0 if has_lights(doc) else None
+
+
 def texture_key(name) -> str:
     """A texture's identity in `textures`: its file name, case-folded (BC
     paths mix case and separators)."""
@@ -270,7 +285,7 @@ def texture_stem(name) -> str:
 
 
 def validate(doc) -> dict:
-    _obj(doc, "$", {"format", "source", "materials", "objects", "textures"},
+    _obj(doc, "$", {"format", "source", "materials", "objects", "textures", "room_light"},
          ("format", "materials", "objects"))
     if doc["format"] != FORMAT:
         _fail("$.format", f"must be {FORMAT}")
@@ -298,6 +313,13 @@ def validate(doc) -> dict:
                 _fail(f"{where}.lights", "must be a list")
             for i, light in enumerate(o["lights"]):
                 _light(light, f"{where}.lights[{i}]")
+    if "room_light" in doc:
+        if not isinstance(doc["room_light"], dict):
+            _fail("$.room_light", "must be an object of state: level")
+        for state, v in doc["room_light"].items():
+            if state not in STATES:
+                _fail(f"$.room_light.{state}", f"must be one of {', '.join(STATES)}")
+            _num(v, f"$.room_light.{state}", lo=0)
     if "textures" in doc:
         if not isinstance(doc["textures"], dict):
             _fail("$.textures", "must be an object")

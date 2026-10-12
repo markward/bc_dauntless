@@ -40,6 +40,27 @@ def player_bridge_ambient_scale(player) -> float:
     return 1.0 if state is None else ambient_scale_for_alert(state)
 
 
+def bridge_ambient_scale(player, preview=None, room=None) -> float:
+    """The bridge view's room-light scale (Mark 2026-10-12): `room(level)` is
+    the bridge's own level for a state (BridgeRuntime.ambient_scale; None =
+    use the default), taken for the editor's preview state or else the
+    player's (green with no player). The default is the per-state scale
+    above (player_bridge_ambient_scale's rules)."""
+    if room is not None:
+        if preview is not None:
+            level = preview
+        elif player is None:
+            level = GREEN
+        else:
+            level = bridge_state_of(player, default=None)
+        own = room(level) if level is not None else None
+        if own is not None:
+            return float(own)
+    if preview is not None:
+        return ambient_scale_for_alert(preview)
+    return player_bridge_ambient_scale(player)
+
+
 def bridge_state_of(player, default=GREEN):
     """The state the player's bridge shows: offline while the power plant is
     disabled or destroyed, else special while the hook is on, else the alert

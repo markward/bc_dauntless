@@ -878,3 +878,66 @@ def test_emission_source_and_the_new_modifiers(env_rt):
     mods = payload(p)["selected"]["material_data"]["modifiers"]
     assert [m["type"] for m in mods] == ["state", "animation", "transition"]
     assert mods[2] == {"type": "transition", "scope": ["red"], "seconds": 0.2}
+
+
+# ── Bridge Settings: the cog, bottom right (Mark 2026-10-12) ────────────────
+
+def _rooms(p):
+    p._last_pushed = None                 # render_payload dedupes an unchanged push
+    return {r["state"]: (r["value"], r["source"]) for r in payload(p)["settings"]["room_light"]}
+
+
+def test_bridge_settings_toggle_and_list_every_states_room_light(env):
+    p, io, h, *_ = env
+    p.open()
+    assert payload(p)["settings"]["open"] is False
+    p.dispatch_event("settings-toggle")
+    st = payload(p)["settings"]
+    assert st["open"] is True and st["has_lights"] is False
+    assert [r["state"] for r in st["room_light"]] == list(ld.STATES)
+    assert _rooms(p)["green"] == (1.5, "default") and _rooms(p)["red"] == (1.0, "default")
+
+
+def test_room_light_edits_need_no_selection_and_are_one_undo_step(env):
+    p, io, h, *_ = env
+    p.open()
+    p.handle_input(h)                                 # attaches the bridge's document
+    assert p._selected is None
+    p.dispatch_event("room:red:0.2")
+    assert p._doc["room_light"] == {"red": 0.2} and _rooms(p)["red"] == (0.2, "bridge")
+    p.dispatch_event("undo")
+    assert "room_light" not in p._doc
+    p.dispatch_event("room:red:0.2")
+    p.dispatch_event("room-clear:red")
+    assert "room_light" not in p._doc
+
+
+def test_a_bridge_with_lights_defaults_its_room_light_to_off(env):
+    p, io, h, *_ = env
+    p.open()
+    click(p, h, (400.0, 300.0))
+    p.dispatch_event("light-add")
+    assert payload(p)["settings"]["has_lights"] is True
+    assert _rooms(p)["green"] == (0.0, "default")
+
+
+def test_clicks_on_the_cog_or_the_open_settings_do_not_pick(env):
+    p, io, h, *_ = env
+    p.open()
+    click(p, h, (1560.0, 1160.0))                     # dsf 2: the cog, bottom right
+    assert payload(p)["selected"] is None
+    click(p, h, (1100.0, 800.0))                      # closed: this is the 3D view
+    assert payload(p)["selected"] is not None
+    p.dispatch_event("deselect")
+    p.dispatch_event("settings-toggle")
+    click(p, h, (1100.0, 800.0))                      # open: the settings panel
+    assert payload(p)["selected"] is None
+
+
+def test_with_the_dock_open_the_cog_sits_left_of_it(env):
+    p, io, h, *_ = env
+    p.open()
+    click(p, h, (400.0, 300.0))                       # the dock: x >= 880
+    io.layers = [0]
+    click(p, h, (840.0, 1160.0))                      # the cog, just left of the dock
+    assert payload(p)["selected"]["key"] == "7:redalertpanel"

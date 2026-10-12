@@ -516,3 +516,58 @@ def test_a_light_on_a_mapped_mesh_gets_the_map_default(proj):
     runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0).attach("iid")
     colours = [c for c in io.calls if c[0] == "set_bridge_spot_colours"]
     assert colours[-1][1] == [(10.0, 10.0, 10.0)]
+
+
+# ── room light (Mark 2026-10-12) ────────────────────────────────────────────
+
+def _lit_doc():
+    d = ld.empty_doc("x")
+    ld.object_entry(d, 3, "floor")["lights"] = [
+        {"position": [0, 0, 9], "direction": [0, 0, -1], "intensity": 10}]
+    return d
+
+
+def test_a_bridge_with_lights_has_no_room_light_and_its_reflections_follow(proj):
+    lw.save(_lit_doc(), proj / "bridge_lighting" / f"{HASH}.json")
+    io = FakeIO()
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt.attach("iid")
+    assert rt.ambient_scale(0) == 0.0 and rt.ambient_scale(2) == 0.0
+    assert last(io, "set_bridge_probe_scales") == ("set_bridge_probe_scales", 0.0, 0.0)
+    assert names(io)[-1] == "request_bridge_probe_capture"
+
+
+def test_a_bridge_without_lights_keeps_the_default(proj):
+    lw.save(ld.empty_doc("x"), proj / "bridge_lighting" / f"{HASH}.json")
+    io = FakeIO()
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt.attach("iid")
+    assert rt.ambient_scale(0) is None
+    assert last(io, "set_bridge_probe_scales") == ("set_bridge_probe_scales",
+                                                   *bridge_lighting.probe_scales())
+
+
+def test_an_edited_room_light_recaptures_once(proj):
+    lw.save(_lit_doc(), proj / "bridge_lighting" / f"{HASH}.json")
+    io = FakeIO()
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt.attach("iid")
+    d = _lit_doc()
+    d["room_light"] = {"green": 0.2, "yellow": 0.1}
+    n = names(io).count("request_bridge_probe_capture")
+    rt.push(d, {"3:floor": 0})
+    assert rt.ambient_scale(0) == 0.2
+    assert last(io, "set_bridge_probe_scales") == ("set_bridge_probe_scales", 0.2, 0.1)
+    assert names(io).count("request_bridge_probe_capture") == n + 1
+    rt.push(d, {"3:floor": 0})                          # unchanged: no recapture
+    assert names(io).count("request_bridge_probe_capture") == n + 1
+
+
+def test_a_push_without_attach_and_no_lights_requests_no_capture():
+    """Gate catch (host test): the runtime starts from the default probe
+    scales, so a bridge with no lights never asks for a recapture."""
+    io = FakeIO()
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt._iid = "iid"
+    rt.push(ld.empty_doc("x"), {})
+    assert "request_bridge_probe_capture" not in names(io)

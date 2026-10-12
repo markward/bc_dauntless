@@ -56,6 +56,8 @@ for (const step of steps) {
               dock_display: el('be-dock').style.display,
               hover: el('be-hover').textContent,
               status: el('be-status').textContent,
+              settings: el('be-settings').innerHTML,
+              root_class: root.className || '',
               display: root.style.display});
 }
 process.stdout.write(JSON.stringify(out));
@@ -72,10 +74,16 @@ def _run(steps):
     return json.loads(r.stdout)
 
 
+SETTINGS = {"open": False, "has_lights": True, "room_light": [
+    {"state": s, "value": 0.0, "source": "default"}
+    for s in ("offline", "green", "yellow", "red", "special")]}
+
+
 def _state(**over):
     st = {"visible": True, "in_bridge": True, "state": "green", "playing": True,
           "dirty": False, "can_save": True, "can_undo": False, "status": "",
-          "hint": "Hold Shift: fly", "hover": None, "selected": None}
+          "hint": "Hold Shift: fly", "hover": None, "selected": None,
+          "settings": SETTINGS}
     st.update(over)
     return st
 
@@ -332,3 +340,32 @@ def test_picking_a_modifier_closes_the_menu():
     i = opened["body"].index("mod-add:state")
     onclick = opened["body"][opened["body"].rindex("onclick=", 0, i):opened["body"].index(">", i)]
     assert "_beAddOpen = false" in onclick
+
+
+
+# ── Bridge Settings: the cog, bottom right (Mark 2026-10-12) ────────────────
+
+def test_the_cog_shows_closed_settings():
+    [out] = _run([{"state": _state()}])
+    assert "bridge-emitters/settings-toggle" in out["settings"] and "⚙" in out["settings"]
+    assert "room:" not in out["settings"]
+
+
+def test_open_settings_list_a_room_light_slider_per_state():
+    rows = [dict(r) for r in SETTINGS["room_light"]]
+    rows[3] = {"state": "red", "value": 0.2, "source": "bridge"}
+    settings = dict(SETTINGS, open=True, room_light=rows)
+    [out] = _run([{"state": _state(settings=settings)}])
+    html = out["settings"]
+    assert "Bridge Settings" in html and "Room light" in html
+    for s in ("offline", "green", "yellow", "red", "special"):
+        assert f"bridge-emitters/room:{s}:" in html and f"_beToggleType('room:{s}')" in html
+    assert "room-clear:red" in html and "room-clear:green" not in html   # only set rows
+    assert "own lights" in html                       # why the default is 0
+    assert "<select" not in html
+
+
+def test_the_cog_moves_left_of_the_dock_while_it_shows():
+    [closed] = _run([{"state": _state()}])
+    [docked] = _run([{"state": _state(selected=_sel())}])
+    assert "be-has-dock" not in closed["root_class"] and "be-has-dock" in docked["root_class"]

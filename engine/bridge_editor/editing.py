@@ -9,6 +9,7 @@ from engine.bridge_editor import lighting_doc as ld
 MIN_PERIOD_S = 0.05
 MAX_EMISSION = 16.0           # the slider runs 0-4; typing goes higher, to this
 MAX_TRANSITION_S = 10.0
+MAX_ROOM_LIGHT = 4.0
 LIGHT_INNER_DEG, LIGHT_OUTER_DEG, LIGHT_RANGE = 30.0, 60.0, 200.0
 LIGHT_INTENSITY = 2000.0
 _LIGHT_MIN_RANGE = 0.01
@@ -129,6 +130,21 @@ def set_finish(mat, ch, raw):
 
 def clear_finish(mat, ch):
     mat.pop(ch, None)
+
+
+def set_room_light(doc, state, raw):
+    """The bridge's room light for one state (Mark 2026-10-12), 0-MAX."""
+    v = _num(raw, 0.0, MAX_ROOM_LIGHT)
+    if state in ld.STATES and v is not None:
+        doc.setdefault("room_light", {})[state] = v
+
+
+def clear_room_light(doc, state):
+    """Back to the default for that state (0 on a bridge with lights)."""
+    room = doc.get("room_light", {})
+    room.pop(state, None)
+    if not room:
+        doc.pop("room_light", None)
 
 
 def set_emission_source(mat, raw):

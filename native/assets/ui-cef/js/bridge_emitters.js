@@ -323,6 +323,38 @@ function _beEditingInDock(root) {
         && a.type !== 'button';
 }
 
+// Bridge Settings (Mark 2026-10-12): a cog at the bottom right opens the
+// bridge-level settings -- the room light per state. Python owns open/closed
+// (it needs the click region); rows reuse the slider + pencil rows.
+const _BE_STATE_NAMES = {offline: 'Power offline', green: 'Green', yellow: 'Yellow',
+                         red: 'Red', special: 'Special'};
+
+function _beSettingsHtml(st) {
+    st = st || {};
+    let html = '';
+    if (st.open) {
+        html += '<div class="be-settings-panel"><div class="be-entry-title">Bridge Settings</div>'
+            + '<div class="be-entry"><div class="be-entry-head"><span class="be-entry-title">'
+            + 'Room light</span></div><div class="be-help">'
+            + (st.has_lights
+                ? 'This bridge has its own lights, so the room light defaults to 0.'
+                : 'No lights of its own: the engine default per state.')
+            + '</div>';
+        (st.room_light || []).forEach(function (r) {
+            const tail = '<span class="be-tail"><span class="be-source">' + _beEsc(r.source) + '</span>'
+                + (r.source === 'bridge'
+                    ? '<button class="be-clear" onclick="dauntlessEvent(\'bridge-emitters/room-clear:'
+                      + r.state + '\')">×</button>'
+                    : '') + '</span>';
+            html += _beSlider(_BE_STATE_NAMES[r.state] || r.state, 'room:' + r.state, r.value,
+                              2, 4, tail, false);
+        });
+        html += '</div></div>';
+    }
+    return html + '<button class="be-cog' + (st.open ? ' active' : '') + '"'
+        + ' onclick="dauntlessEvent(\'bridge-emitters/settings-toggle\')">⚙</button>';
+}
+
 function setBridgeEmitters(state) {
     const root = document.getElementById('bridge-emitters-root');
     if (!root) return;
@@ -344,6 +376,9 @@ function setBridgeEmitters(state) {
     if (status) status.textContent = state.status || '';
     const dock = document.getElementById('be-dock');
     if (dock) dock.style.display = state.selected ? 'flex' : 'none';
+    root.className = state.selected ? 'dev-only be-has-dock' : 'dev-only';
+    const settings = document.getElementById('be-settings');
+    if (settings && !_beEditingInDock(root)) settings.innerHTML = _beSettingsHtml(state.settings);
     const body = document.getElementById('bridge-emitters-body');
     if (body && state.selected && !_beEditingInDock(root)) {
         body.innerHTML = _beDockHtml(state);

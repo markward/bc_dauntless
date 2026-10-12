@@ -556,6 +556,7 @@ It is NOT the §6 emitter and does not replace it.
 | G4 | 2026-10-11 | Slice 3 designed (§13): Object/Material tabs over a shared material library of scoped Emitter/Animation modifiers (phase in Animation), five states (offline/special), editor bar chrome, Shift-fly | approved by Mark 2026-10-11 (incl. Shift-fly and offline-dark) | 13 |
 | G5 | 2026-10-11 | Slice 3 built (plan 2026-10-11-bridge-materials-slice-3) | built; awaiting Mark's live check | 13 |
 | G6 | 2026-10-12 | Emission is a Finish row; Emitter -> State override; strength and fade_s removed; Transition modifier (0.5 s default); `format: 3` | designed with Mark 2026-10-12; built | 14 |
+| G7 | 2026-10-12 | Room light: a bridge with its own lights is lit by them (room light 0 unless set per state); Bridge Settings cog; reflections captured under it | designed with Mark 2026-10-12; built | 15 |
 
 ## 11. Emitter glow — slice 1 *(agreed with Mark 2026-10-10)*
 
@@ -924,3 +925,36 @@ material with no emitters did nothing and is dropped. Lossy only for a v1
 profiled light with no glow (strength 0): its light follows levels of 0.
 Committed files stay `format: 2` until next saved from the editor.
 
+
+
+## 15. Room light and Bridge Settings *(designed with Mark 2026-10-12)*
+
+Why: the alcoves' normal maps showed no relief under their red pulsing
+lights. Measured (shader formulas, a wall 60 units from the cove light): the
+room light (the bridge ambient, white, x1.0 at red) put ~0.09 linear on the
+wall against the red spot's ~0.03 at its pulse peak (level 0.5 -> 22% after
+^2.2), so relief from the normal map was ~3/255. With the room light zeroed
+(a launch-time experiment) the relief showed at once -- Mark: "the normal
+rendering was being overpowered by the base illumination".
+
+- **Room light** = the bridge ambient's multiplier, per state.
+  `lighting_doc.room_light(doc, state)`: the bridge's own `room_light`
+  level when set; else **0 when the bridge defines lights of its own**
+  (any object with `lights`); else the engine default
+  (`bridge_lighting._ALERT_AMBIENT_SCALE`: green 1.5, yellow/red 1.0,
+  offline 0.4) -- unchanged for every bridge with no lighting file or no
+  lights. `bridge_lighting.bridge_ambient_scale(player, preview, room)` picks
+  it for the editor's preview state, else the player's (green with no
+  player, so a mission swap never flashes a lit bridge to the default).
+- **Reflections follow it**: the green probe is captured under the green
+  room light, the yellow/red probe under yellow's (as the spot capture
+  colours are), through the existing `set_bridge_probe_scales`; the runtime
+  recaptures only when they change. The comm viewscreen feed keeps its own
+  constant lighting.
+- **Data**: optional top-level `room_light: {state: level >= 0}` (editor
+  0-4); unknown states rejected.
+- **Editor**: a cog at the bottom right of the free view (left of the dock
+  while it shows) opens **Bridge Settings** above it -- a slider + pencil
+  row per state, `default`/`bridge` source and a × back to the default.
+  Python owns open/closed for the click region (`COG_CSS_PX`,
+  `SETTINGS_CSS_W/H` = the CSS). Bridge-level edits need no selection.

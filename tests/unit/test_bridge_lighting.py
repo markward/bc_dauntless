@@ -26,7 +26,7 @@ def test_green_player():
 def test_host_loop_uses_the_module():
     import inspect, engine.host_loop as hl
     src = inspect.getsource(hl)
-    assert "player_bridge_ambient_scale(" in src
+    assert "_bridge_lighting.bridge_ambient_scale(" in src
     assert "_bridge_dim = 0.5" not in src
 
 
@@ -253,3 +253,31 @@ def test_ambient_scales_cover_the_five_states():
     assert bl.ambient_scale_for_alert(bl.OFFLINE) == bl.OFFLINE_AMBIENT_SCALE
     assert bl.OFFLINE_AMBIENT_SCALE < bl.ambient_scale_for_alert(bl.RED)
     assert bl.ambient_scale_for_alert(bl.SPECIAL) == bl.ambient_scale_for_alert(bl.RED)
+
+
+# ── room light (Mark 2026-10-12): the bridge's own level wins ───────────────
+
+def test_the_bridges_own_room_light_wins_over_the_default(no_special):
+    own = {2: 0.0, 0: 0.2}.get                       # red 0, green 0.2, others: default
+    assert bl.bridge_ambient_scale(_Player(alert=2), room=own) == 0.0
+    assert bl.bridge_ambient_scale(_Player(alert=0), room=own) == 0.2
+    assert bl.bridge_ambient_scale(_Player(alert=1), room=own) == 1.0      # None -> default
+    assert bl.bridge_ambient_scale(_Player(alert=0)) == 1.5                # no bridge data
+
+
+def test_the_editor_preview_state_picks_the_room_light(no_special):
+    own = {2: 0.0}.get
+    assert bl.bridge_ambient_scale(_Player(alert=0), preview=2, room=own) == 0.0
+    assert bl.bridge_ambient_scale(_Player(alert=2), preview=0, room=own) == 1.5
+
+
+def test_no_player_uses_the_green_room_light_else_the_authored_ambient():
+    """A mission swap must not flash a lit bridge back to the default."""
+    assert bl.bridge_ambient_scale(None, room={0: 0.0}.get) == 0.0
+    assert bl.bridge_ambient_scale(None) == 1.0
+
+
+def test_host_loop_asks_the_runtime_for_the_room_light():
+    import inspect, engine.host_loop as hl
+    src = inspect.getsource(hl)
+    assert "bridge_ambient_scale(" in src and "DAUNTLESS_BRIDGE_AMBIENT" not in src

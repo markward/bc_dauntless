@@ -24,7 +24,7 @@ import json
 import time
 from typing import Optional
 
-from engine import dev_mode, host_io
+from engine import bridge_lighting, dev_mode, host_io
 from engine.bridge_editor import behaviour
 from engine.bridge_editor import editing
 from engine.bridge_editor import lighting_doc as ld
@@ -36,6 +36,12 @@ from engine.ui.panel import Panel
 DOCK_CSS_PX = 360          # width of the docked panel, CSS px (bridge_emitters.css)
 BAR_CSS_W = 560            # the top-left .be-top block, CSS px (bridge_emitters.css)
 BAR_CSS_H = 120            # bar + hint + hover/status; .be-top's max-height
+# Bridge Settings (Mark 2026-10-12): a cog at the bottom right of the free
+# view (left of the dock when it shows) opens a panel above it. Must match
+# .be-settings / .be-cog in bridge_emitters.css.
+COG_CSS_PX = 48
+SETTINGS_CSS_W = 300
+SETTINGS_CSS_H = 280
 CLICK_SLOP_PX = 4.0
 DEFAULT_ROUGHNESS = 1.0    # spec §9.2 source C
 DEFAULT_METALNESS = 0.0
@@ -44,7 +50,9 @@ _UNDO_LIMIT = 100
 HINT = ("Hold Shift: fly · WASD · Q/E · scroll: speed · click: select · "
         "Alt+click: surface behind · materials layer over the object's texture")
 # Actions that are not document edits and need no loaded document.
-_VIEW_ACTIONS = ("state:", "preview-toggle", "tab:", "expand:", "deselect")
+_VIEW_ACTIONS = ("state:", "preview-toggle", "tab:", "expand:", "deselect", "settings-toggle")
+# Bridge-level edits: no selection needed.
+_ROOM_PREFIXES = ("room:", "room-clear:")
 _EDIT_PREFIXES = ("material", "light", "finish", "emission-source:", "mod")
 
 
@@ -90,6 +98,7 @@ class BridgeEmittersPanel(Panel):
         self._preview_playing = True
         self._tab = "object"
         self._expanded = set()
+        self._settings_open = False
 
     # ── Panel ────────────────────────────────────────────────────────────
     @property
@@ -213,7 +222,8 @@ class BridgeEmittersPanel(Panel):
         fb = h.framebuffer_size()
         dsf = self._dsf(h, fb)
         over_ui = ((self._selected is not None and x >= fb[0] - DOCK_CSS_PX * dsf)
-                   or (x < BAR_CSS_W * dsf and y < BAR_CSS_H * dsf))
+                   or (x < BAR_CSS_W * dsf and y < BAR_CSS_H * dsf)
+                   or self._over_settings(x, y, fb, dsf))
         trace = lambda o, d, m, ex: self._io.ray_trace_mesh_pick(iid, o, d, m, ex)
         pose = self._camera.pose()
         hover = None if over_ui else pick_mesh(trace, (x, y), fb, pose)
@@ -314,7 +324,8 @@ class BridgeEmittersPanel(Panel):
             self._last_pushed = None
             return True
         if self._doc is None:
-            return action in ("save", "revert", "undo") or action.startswith(_EDIT_PREFIXES)
+            return (action in ("save", "revert", "undo")
+                    or action.startswith(_EDIT_PREFIXES + _ROOM_PREFIXES))
         if action == "save":
             self._save()
         elif action == "revert":
@@ -322,6 +333,9 @@ class BridgeEmittersPanel(Panel):
         elif action == "undo":
             if self._undo:
                 self._doc = self._undo.pop()
+            self._after_change()
+        elif action.startswith(_ROOM_PREFIXES):
+            self._room_action(action)
             self._after_change()
         elif action.startswith(_EDIT_PREFIXES):
             if self._selected is not None:
@@ -347,6 +361,41 @@ class BridgeEmittersPanel(Panel):
         elif action == "deselect":
             self._selected = None
             self._last_hit = None
+        elif action == "settings-toggle":
+            self._settings_open = not self._settings_open
+
+    def _room_action(self, action):
+        """room:<state>:<level> / room-clear:<state> -- the bridge's room
+        light per state (Mark 2026-10-12), one undo step each."""
+        head, _, rest = action.partition(":")
+        if head == "room":
+            state, _, raw = rest.partition(":")
+            self._edit(lambda: editing.set_room_light(self._doc, state, raw))
+        else:
+            self._edit(lambda: editing.clear_room_light(self._doc, rest))
+
+    def _over_settings(self, x, y, fb, dsf):
+        """The cog, or the Bridge Settings panel when open: bottom right of
+        the free view -- left of the dock while it shows."""
+        right = fb[0] - (DOCK_CSS_PX * dsf if self._selected is not None else 0)
+        w, hgt = ((SETTINGS_CSS_W, SETTINGS_CSS_H) if self._settings_open
+                  else (COG_CSS_PX, COG_CSS_PX))
+        return right - w * dsf <= x <= right and y >= fb[1] - hgt * dsf
+
+    def _settings_payload(self):
+        rows = []
+        for state in ld.STATES:
+            own = (self._doc or {}).get("room_light", {}).get(state)
+            if own is not None:
+                rows.append({"state": state, "value": float(own), "source": "bridge"})
+                continue
+            v = ld.room_light(self._doc, state) if self._doc is not None else None
+            if v is None:
+                v = bridge_lighting.ambient_scale_for_alert(behaviour.state_index(state))
+            rows.append({"state": state, "value": float(v), "source": "default"})
+        return {"open": self._settings_open,
+                "has_lights": bool(self._doc is not None and ld.has_lights(self._doc)),
+                "room_light": rows}
 
     def _edit(self, fn):
         """Run one document edit as one undo step: snapshot, mutate, and keep
@@ -649,6 +698,7 @@ class BridgeEmittersPanel(Panel):
                 "can_save": self._can_save(),
                 "can_undo": bool(self._undo),
                 "status": self._status_text(),
+                "settings": self._settings_payload(),
             }
         js = "setBridgeEmitters(" + json.dumps(state) + ");"
         if js == self._last_pushed:
