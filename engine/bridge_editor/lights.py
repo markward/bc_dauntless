@@ -1,19 +1,23 @@
 """Object lights (spec 2026-10-08-bridge-emitters §13.2, §11.4, §14, §16). The
-light LISTS are static -- every light of every matched object, mesh order,
-with green and yellow/red probe-capture colours -- so a state change or a
-pulse never recaptures the probes; `live_colours` / `live_area_colours`
-give the radiance per frame in the same orders. Spots, strips and panels
-share ONE budget of MAX_LIGHTS (§16.3). A light's colour follows the glow of
-its mesh's resolved material (the object's link, else its texture's;
+rows are built ONCE per push by `build()` -- every light of every matched
+object, mesh order, with green and yellow/red probe-capture colours baked in
+-- so a state change or a pulse never recaptures the probes; `live()` gives
+this frame's radiance for the built rows, in their own order. Spots, strip
+segments and panels share ONE budget of MAX_LIGHTS rows (§16.3, §16.8): a
+spot costs one row, a strip or panel costs one row per rectangle (a snapped
+strip can cost up to MAX_SEGMENTS), and a light that does not fit whole is
+dropped with a warning -- never cut short. A light's colour follows the glow
+of its mesh's resolved material (the object's link, else its texture's;
 `mapped` = the meshes whose texture has an `_emissive` map, for the
 unset-emission default), display -> linear by ^2.2; a material that sets no
 glow lights steady white. A capture colour is the steady value in that
 state, 0 when an animation runs there. A strip or panel's rectangle comes
-from its object's frame (light_shapes, §16.2)."""
-from engine.bridge_editor import behaviour, edge_snap, light_shapes
+from its object's frame (light_shapes, §16.2) via edge_snap."""
+from dataclasses import dataclass, field
+
+from engine.bridge_editor import behaviour, edge_snap
 
 MAX_LIGHTS = 32
-MAX_SPOTS = MAX_LIGHTS          # the old name; the budget is shared now
 DEFAULT_INTENSITY = 2000.0
 DEFAULT_AREA_INTENSITY = 1.0
 DEFAULT_RANGE = 200.0
@@ -46,45 +50,12 @@ def _material(doc, name):
     return mat if mat is not None and behaviour.drives_glow(mat) else behaviour.WHITE
 
 
-def _lit(doc, matched, resolved, mapped):
-    """Every light within the shared budget, mesh order: (light, material,
-    has_map, mesh, label); plus one warning per light dropped by the cap."""
-    out, warnings = [], []
-    for key in sorted(matched, key=lambda k: matched[k]):
-        obj = doc["objects"].get(key, {})
-        mesh = matched[key]
-        mat = _material(doc, resolved.get(mesh))
-        for i, light in enumerate(obj.get("lights", ())):
-            label = f"{key} light {i + 1}"
-            if len(out) >= MAX_LIGHTS:
-                warnings.append(f"{label}: dropped (more than {MAX_LIGHTS} bridge lights)")
-                continue
-            out.append((light, mat, mesh in mapped, mesh, label))
-    return out, warnings
-
-
 def _capture(mat, state, has_map):
     if any(m["type"] == "animation" and state in m["scope"]
            for m in mat.get("modifiers", ())):
         return (0.0, 0.0, 0.0)
     rgb, _ = behaviour.output(mat, state, 0.0, has_map)
     return to_linear(rgb)
-
-
-def spots(doc, matched, resolved, mapped=frozenset()):
-    """The spot rows, and the shared budget's drop warnings (reported here
-    only, so a caller that also asks for areas() sees each once)."""
-    lit, warnings = _lit(doc, matched, resolved, mapped)
-    out = []
-    for light, mat, has_map, _mesh, _label in lit:
-        if not _is_spot(light):
-            continue
-        green = _capture(mat, "green", has_map)
-        out.append((tuple(light["position"]), tuple(light["direction"]),
-                    light.get("inner_deg", 30), light.get("outer_deg", 60),
-                    light.get("range", DEFAULT_RANGE), green, _intensity(light),
-                    green, _capture(mat, "yellow", has_map)))
-    return out, warnings
 
 
 def _cross_len(a, b):
@@ -94,58 +65,81 @@ def _cross_len(a, b):
     return (cx * cx + cy * cy + cz * cz) ** 0.5
 
 
-def _areas_lit(doc, matched, resolved, frame_for, mapped):
-    out, warnings = [], []
-    for light, mat, has_map, mesh, label in _lit(doc, matched, resolved, mapped)[0]:
-        if _is_spot(light):
-            continue
-        fr = frame_for(mesh)
-        if fr is None:
-            warnings.append(f"{label}: no geometry for its object; skipped")
-            continue
-        if light.get("anchor") and edge_snap.snap(fr, light["anchor"]) is None:
-            warnings.append(f"{label}: no sharp edge near its snap point; using its edge chips")
-        # A snapped strip (edge_snap, §16.8) is one rectangle per edge segment.
-        for r in edge_snap.light_rects(light, fr):
-            if _cross_len(r.half_u, r.half_v) < MIN_AREA:
-                warnings.append(f"{label}: zero size; skipped")
+@dataclass
+class Built:
+    """The static rows for one push, and what their live colours follow."""
+    spot_rows: list = field(default_factory=list)
+    area_rows: list = field(default_factory=list)
+    warnings: list = field(default_factory=list)
+    spot_lit: list = field(default_factory=list)    # (light, material, has_map) per spot row
+    area_lit: list = field(default_factory=list)    # (light, material, has_map) per area row
+
+
+def build(doc, matched, resolved, frame_for=lambda mesh: None, mapped=frozenset()) -> Built:
+    """Every light of every matched object, mesh order, as renderer rows (spec
+    §16.3, §16.8). The budget of MAX_LIGHTS counts ROWS: a spot is one, a
+    strip or panel one per rectangle (a snapped strip one per edge segment).
+    A light that does not fit whole is dropped with a warning -- never cut
+    short -- and a later light that still fits is kept. A strip or panel
+    needs its object's frame (`frame_for(mesh)`); without one it is skipped
+    with a warning."""
+    out = Built()
+    for key in sorted(matched, key=lambda k: matched[k]):
+        obj = doc["objects"].get(key, {})
+        mesh = matched[key]
+        mat = _material(doc, resolved.get(mesh))
+        has_map = mesh in mapped
+        for i, light in enumerate(obj.get("lights", ())):
+            label = f"{key} light {i + 1}"
+            rects = None
+            if not _is_spot(light):
+                fr = frame_for(mesh)
+                if fr is None:
+                    out.warnings.append(f"{label}: no geometry for its object; skipped")
+                    continue
+                if light.get("anchor") and edge_snap.snap(fr, light["anchor"]) is None:
+                    out.warnings.append(
+                        f"{label}: no sharp edge near its snap point; using its edge chips")
+                rects = []
+                for r in edge_snap.light_rects(light, fr):
+                    if _cross_len(r.half_u, r.half_v) < MIN_AREA:
+                        out.warnings.append(f"{label}: zero size; skipped")
+                    else:
+                        rects.append(r)
+                if not rects:
+                    continue
+            cost = 1 if rects is None else len(rects)
+            used = len(out.spot_rows) + len(out.area_rows)
+            if used + cost > MAX_LIGHTS:
+                out.warnings.append(f"{label}: dropped (needs {cost} of the {MAX_LIGHTS} "
+                                    f"bridge lights, {MAX_LIGHTS - used} left)")
                 continue
-            out.append((light, mat, has_map, r))
-    return out, warnings
-
-
-def areas(doc, matched, resolved, frame_for, mapped=frozenset()):
-    """The strip / panel rows: (centre, half_u, half_v, range, colour,
-    intensity, capture_green, capture_alert). `frame_for(mesh)` is the
-    object's light_shapes.Frame, or None -- that light is skipped with a
-    warning (and live_area_colours skips it too, so colours stay aligned)."""
-    lit, warnings = _areas_lit(doc, matched, resolved, frame_for, mapped)
-    out = []
-    for light, mat, has_map, r in lit:
-        green = _capture(mat, "green", has_map)
-        out.append((r.centre, r.half_u, r.half_v, light.get("range", DEFAULT_RANGE),
-                    green, _intensity(light), green, _capture(mat, "yellow", has_map),
-                    r.joins))
-    return out, warnings
-
-
-def live_colours(doc, matched, resolved, fade, t, mapped=frozenset()):
-    lit, _ = _lit(doc, matched, resolved, mapped)
-    out = []
-    for light, mat, has_map, _mesh, _label in lit:
-        if not _is_spot(light):
-            continue
-        rgb, _k = fade.output(mat, t, has_map)
-        k = _intensity(light)
-        out.append(tuple(c * k for c in to_linear(rgb)))
+            green = _capture(mat, "green", has_map)
+            alert = _capture(mat, "yellow", has_map)
+            if rects is None:
+                out.spot_rows.append((tuple(light["position"]), tuple(light["direction"]),
+                                      light.get("inner_deg", 30), light.get("outer_deg", 60),
+                                      light.get("range", DEFAULT_RANGE), green,
+                                      _intensity(light), green, alert))
+                out.spot_lit.append((light, mat, has_map))
+                continue
+            for r in rects:
+                out.area_rows.append((r.centre, r.half_u, r.half_v,
+                                      light.get("range", DEFAULT_RANGE), green,
+                                      _intensity(light), green, alert, r.joins))
+                out.area_lit.append((light, mat, has_map))
     return out
 
 
-def live_area_colours(doc, matched, resolved, fade, t, frame_for, mapped=frozenset()):
-    lit, _ = _areas_lit(doc, matched, resolved, frame_for, mapped)
-    out = []
-    for light, mat, has_map, _r in lit:
-        rgb, _k = fade.output(mat, t, has_map)
-        k = _intensity(light)
-        out.append(tuple(c * k for c in to_linear(rgb)))
-    return out
+def live(built, fade, t):
+    """This frame's LINEAR radiance per spot row and per area row, in the
+    rows' own order (spec §11.4): the material's output through the state
+    fade, ^2.2, x the light's intensity."""
+    def colours(lit):
+        out = []
+        for light, mat, has_map in lit:
+            rgb, _k = fade.output(mat, t, has_map)
+            k = _intensity(light)
+            out.append(tuple(c * k for c in to_linear(rgb)))
+        return out
+    return colours(built.spot_lit), colours(built.area_lit)

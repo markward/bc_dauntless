@@ -18,6 +18,7 @@ class BridgeRuntime:
         self._matched = {}
         self._meshes = []
         self._glow_shapes = []
+        self._built = None
         self._fade = behaviour.StateFade()
         self._t = 0.0          # the bridge clock (spec §11.3): paused-aware dt
         # The probe scales last pushed; the default until a bridge says otherwise.
@@ -42,6 +43,7 @@ class BridgeRuntime:
         self._iid, self._doc, self._matched = iid, None, {}
         self._meshes, self._glow_shapes, self._resolved, self._mapped = [], [], {}, frozenset()
         self._frames = {}
+        self._built = None
         try:
             self._io.set_bridge_material_overrides(None, [])
             self._io.set_bridge_spots([])
@@ -84,10 +86,10 @@ class BridgeRuntime:
         editor, or attach()), then this frame's live values; tick() re-pushes the live
         values every frame. Returns warnings: emitter warnings (cap drops by
         name and glows skipped for a missing _emissive map, from
-        lights.spots, BEFORE the list ever reaches native), plus a separate
+        lights.build, BEFORE the list ever reaches native), plus a separate
         warning if the renderer itself reports spots dropped as invalid.
-        These are two unrelated populations -- lights.spots already caps the
-        list at MAX_SPOTS, so whatever set_bridge_spots reports dropped can
+        These are two unrelated populations -- lights.build already caps the
+        rows at MAX_LIGHTS, so whatever set_bridge_spots reports dropped can
         only be non-finite values among the <=32 actually sent, never a
         restatement of the cap count. Builds tuples from a doc that is
         already schema-validated, but the push to the native side still goes
@@ -114,11 +116,14 @@ class BridgeRuntime:
                                      if (m.get("maps") or {}).get("emissive"))
             self._io.set_bridge_material_overrides(
                 self._iid, materials.overrides(doc, self._resolved))
-            spot_list, warnings = lights.spots(doc, self._matched, self._resolved, self._mapped)
+            built = lights.build(doc, self._matched, self._resolved,
+                                 self._frame_for, self._mapped)
+            self._built = built
+            spot_list, area_list = built.spot_rows, built.area_rows
             self._glow_shapes, glow_warnings = glow.glow_objects(
                 doc, self._resolved, self._meshes)
             warnings = (ld.link_mismatches(doc, self._meshes, self._matched)
-                        + warnings + glow_warnings)
+                        + built.warnings + glow_warnings)
             for w in warnings:
                 dev_mode.log_swallowed(
                     "bridge lighting emitters", ld.BridgeLightingError(w))
@@ -128,11 +133,6 @@ class BridgeRuntime:
                 warnings.append(msg)
                 dev_mode.log_swallowed(
                     "bridge lighting spots dropped", ld.BridgeLightingError(msg))
-            area_list, area_warnings = lights.areas(
-                doc, self._matched, self._resolved, self._frame_for, self._mapped)
-            for w in area_warnings:
-                dev_mode.log_swallowed("bridge lighting emitters", ld.BridgeLightingError(w))
-            warnings += area_warnings
             dropped = self._io.set_bridge_area_lights(area_list)
             if dropped:
                 msg = (f"{dropped} bridge area light(s) dropped as invalid "
@@ -207,12 +207,12 @@ class BridgeRuntime:
         try:
             self._io.set_bridge_glow(
                 self._iid, glow.live(self._glow_shapes, self._fade, self._t))
-            self._io.set_bridge_spot_colours(
-                lights.live_colours(self._doc, self._matched, self._resolved,
-                                    self._fade, self._t, self._mapped))
-            self._io.set_bridge_area_colours(
-                lights.live_area_colours(self._doc, self._matched, self._resolved,
-                                         self._fade, self._t, self._frame_for, self._mapped))
+            if self._built is None:
+                spot_cols, area_cols = [], []
+            else:
+                spot_cols, area_cols = lights.live(self._built, self._fade, self._t)
+            self._io.set_bridge_spot_colours(spot_cols)
+            self._io.set_bridge_area_colours(area_cols)
         except Exception as e:  # noqa: BLE001 - never let bridge data kill the frame
             dev_mode.log_swallowed("bridge runtime live push", e)
 
@@ -232,3 +232,4 @@ class BridgeRuntime:
             self._iid, self._doc, self._matched = None, None, {}
             self._meshes, self._glow_shapes, self._resolved, self._mapped = [], [], {}, frozenset()
             self._frames = {}
+            self._built = None

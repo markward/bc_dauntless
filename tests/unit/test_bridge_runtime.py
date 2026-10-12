@@ -268,8 +268,8 @@ def test_push_reports_a_warning_when_the_renderer_drops_invalid_spots(proj):
 def test_push_reports_cap_and_invalid_drops_together_not_subtracted(proj):
     # Round-2 fix: push() previously did `if dropped > len(cap_warnings)`,
     # treating the native dropped-count and the cap-warning count as the
-    # SAME population. They are not -- lights.spots() already truncates the
-    # list to 32 before it ever reaches native, so whatever native reports
+    # SAME population. They are not -- lights.build() already caps the rows
+    # at 32 before they ever reach native, so whatever native reports
     # dropped can only be non-finite values among the <=32 it was SENT, and
     # must always be reported in addition to the cap warnings, never only
     # when it exceeds them. 34 matched lights -> 2 cap warnings; 1 of the 32
@@ -293,7 +293,7 @@ def test_push_reports_cap_and_invalid_drops_together_not_subtracted(proj):
 
     warnings = rt.push(d, matched)
 
-    cap_warnings = [w for w in warnings if "more than 32" in w]
+    cap_warnings = [w for w in warnings if "dropped (needs" in w]
     invalid_warnings = [w for w in warnings if "dropped as invalid" in w]
     assert len(cap_warnings) == 2
     assert invalid_warnings == ["1 bridge light(s) dropped as invalid (non-finite values)"]

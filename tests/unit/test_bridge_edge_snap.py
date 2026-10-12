@@ -82,8 +82,8 @@ def test_nothing_in_reach_falls_back_to_the_box_edge_and_warns():
     assert edge_snap.light_rects(light, fr) == [ls.light_rect(light, fr)]
     d = ld.empty_doc("x")
     ld.object_entry(d, 1, "alcove")["lights"] = [dict(light, intensity=4)]
-    rows, warnings = lights.areas(d, {"1:alcove": 1}, {}, lambda m: fr)
-    assert len(rows) == 1 and "no sharp edge near its snap point" in warnings[0]
+    b = lights.build(d, {"1:alcove": 1}, {}, lambda m: fr)
+    assert len(b.area_rows) == 1 and "no sharp edge near its snap point" in b.warnings[0]
 
 
 def test_a_curved_run_becomes_several_segments():
