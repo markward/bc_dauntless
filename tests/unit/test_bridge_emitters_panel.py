@@ -941,3 +941,49 @@ def test_with_the_dock_open_the_cog_sits_left_of_it(env):
     io.layers = [0]
     click(p, h, (840.0, 1160.0))                      # the cog, just left of the dock
     assert payload(p)["selected"]["key"] == "7:redalertpanel"
+
+
+def test_light_add_strip_and_panel_need_no_hit(env_rt):
+    p, io, h, *_ = env_rt
+    p.open()
+    click(p, h, (400.0, 300.0))
+    p.dispatch_event("light-add:strip")
+    p.dispatch_event("light-add:panel")
+    shapes = [l["shape"] for l in payload(p)["selected"]["lights"]]
+    assert shapes == ["strip", "panel"]
+
+
+def test_strip_fields_edit_through_light_actions(env_rt):
+    p, io, h, *_ = env_rt
+    p.open()
+    click(p, h, (400.0, 300.0))
+    p.dispatch_event("light-add:strip")
+    p.dispatch_event("light:0:edge:bottom")
+    p.dispatch_event("light:0:start:0.9")
+    p.dispatch_event("light:0:end:0.4")
+    light = payload(p)["selected"]["lights"][0]
+    assert (light["edge"], light["start"], light["end"]) == ("bottom", 0.4, 0.4)
+
+
+def test_place_and_aim_do_nothing_to_an_area_light(env_rt):
+    p, io, h, *_ = env_rt
+    p.open()
+    click(p, h, (400.0, 300.0))
+    p.dispatch_event("light-add:panel")
+    before = payload(p)["selected"]["lights"]
+    p.dispatch_event("light-place:0")
+    p.dispatch_event("light-aim:0")
+    lights = payload(p)["selected"]["lights"]
+    assert "position" not in lights[0] and "direction" not in lights[0]
+    assert lights == before
+
+
+def test_saved_area_lights_validate(env_rt):
+    p, io, h, t, tmp, rt = env_rt
+    p.open()
+    click(p, h, (400.0, 300.0))
+    p.dispatch_event("light-add:strip")
+    p.dispatch_event("light-add:panel")
+    p.dispatch_event("light:1:x1:0.3")
+    doc, _matched = rt.pushes[-1]
+    ld.validate(json.loads(doc))

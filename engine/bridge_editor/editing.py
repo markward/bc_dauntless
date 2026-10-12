@@ -12,6 +12,9 @@ MAX_TRANSITION_S = 10.0
 MAX_ROOM_LIGHT = 4.0
 LIGHT_INNER_DEG, LIGHT_OUTER_DEG, LIGHT_RANGE = 30.0, 60.0, 200.0
 LIGHT_INTENSITY = 2000.0
+STRIP_INTENSITY = 40.0        # surface brightness (spec §16.1): a thin strip needs a lot
+PANEL_INTENSITY = 2.0
+STRIP_OFFSET = 1.0            # out from the surface, so a strip on a flat panel lights it
 _LIGHT_MIN_RANGE = 0.01
 _WAVE_DEFAULTS = {"sine": {}, "square": {"duty": 0.5, "soft": 0.0}}
 
@@ -235,6 +238,21 @@ def add_light(doc, block, name, position, direction):
         "range": LIGHT_RANGE, "intensity": LIGHT_INTENSITY})
 
 
+def add_area_light(doc, block, name, shape):
+    """A strip along the top edge, or a panel over the whole front (spec
+    §16.4); the rectangle is recomputed from the object at load."""
+    o = ld.object_entry(doc, block, name)
+    if shape == "strip":
+        light = {"shape": "strip", "edge": "top", "start": 0.0, "end": 1.0,
+                 "offset": STRIP_OFFSET, "range": LIGHT_RANGE, "intensity": STRIP_INTENSITY}
+    elif shape == "panel":
+        light = {"shape": "panel", "x": [0.0, 1.0], "y": [0.0, 1.0], "offset": 0.0,
+                 "range": LIGHT_RANGE, "intensity": PANEL_INTENSITY}
+    else:
+        return
+    o.setdefault("lights", []).append(light)
+
+
 def remove_light(doc, block, name, i):
     o = doc["objects"].get(_key(block, name))
     if not o or not (0 <= i < len(o.get("lights", []))):
@@ -246,6 +264,10 @@ def remove_light(doc, block, name, i):
 
 
 def set_light(light, field, raw):
+    if field == "edge":
+        if raw in ld.EDGES:
+            light["edge"] = raw
+        return
     v = _num(raw)
     if v is None:
         return
@@ -256,6 +278,22 @@ def set_light(light, field, raw):
             light["outer_deg"] = v
         elif field == "outer_deg" and v < light.get("inner_deg", 0.0):
             light["inner_deg"] = v
+    elif field in ("start", "end"):
+        v = min(1.0, max(0.0, v))
+        light[field] = v
+        if field == "start" and light.get("end", 1.0) < v:
+            light["end"] = v
+        elif field == "end" and v < light.get("start", 0.0):
+            light["start"] = v
+    elif field in ("x0", "x1", "y0", "y1"):
+        axis, i = field[0], int(field[1])
+        span = [float(c) for c in light.get(axis, [0.0, 1.0])]
+        span[i] = min(1.0, max(0.0, v))
+        if span[0] > span[1]:
+            span[1 - i] = span[i]
+        light[axis] = span
+    elif field == "offset":
+        light[field] = v
     elif field == "range":
         light[field] = max(_LIGHT_MIN_RANGE, v)
     elif field == "intensity":

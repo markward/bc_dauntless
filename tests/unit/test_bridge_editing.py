@@ -171,3 +171,44 @@ def test_room_light_set_clamp_and_clear():
     for s in ("green", "red", "yellow"):
         ed.clear_room_light(d, s)
     assert "room_light" not in d                    # pruned when empty
+
+
+# ── strips and panels (spec §16.4) ──────────────────────────────────────────
+
+def test_add_area_light_appends_a_strip_or_a_panel_with_defaults():
+    d = ld.empty_doc("x")
+    ed.add_area_light(d, 5, "lip", "strip")
+    ed.add_area_light(d, 5, "lip", "panel")
+    strip, panel = d["objects"]["5:lip"]["lights"]
+    assert strip == {"shape": "strip", "edge": "top", "start": 0.0, "end": 1.0,
+                     "offset": ed.STRIP_OFFSET, "range": ed.LIGHT_RANGE,
+                     "intensity": ed.STRIP_INTENSITY}
+    assert panel == {"shape": "panel", "x": [0.0, 1.0], "y": [0.0, 1.0], "offset": 0.0,
+                     "range": ed.LIGHT_RANGE, "intensity": ed.PANEL_INTENSITY}
+    ld.validate(d)
+
+
+def test_strip_fields_clamp_and_keep_start_le_end():
+    light = {"shape": "strip", "edge": "top", "start": 0.0, "end": 1.0}
+    ed.set_light(light, "edge", "left")
+    ed.set_light(light, "edge", "middle")          # ignored
+    assert light["edge"] == "left"
+    ed.set_light(light, "start", "0.8")
+    ed.set_light(light, "end", "0.5")              # drags start down with it
+    assert (light["start"], light["end"]) == (0.5, 0.5)
+    ed.set_light(light, "end", "7")
+    assert light["end"] == 1.0
+    ed.set_light(light, "offset", "-2.5")
+    assert light["offset"] == -2.5
+
+
+def test_panel_span_ends_drag_each_other_and_stay_valid():
+    light = {"shape": "panel", "x": [0.0, 1.0], "y": [0.0, 1.0]}
+    ed.set_light(light, "x0", "0.7")
+    ed.set_light(light, "x1", "0.2")
+    assert light["x"] == [0.2, 0.2]
+    ed.set_light(light, "y1", "-1")
+    assert light["y"] == [0.0, 0.0]
+    d = ld.empty_doc("x")
+    ld.object_entry(d, 5, "lip")["lights"] = [light]
+    ld.validate(d)
