@@ -1150,7 +1150,10 @@ doubling at the joints was fixed (below).
   carries join bits (bit 0: joined at its -u end, bit 1: at +u); at a joined
   end the highlight fades to half over the lobe footprint `d x a_eff`, so
   neighbours sum to one (`pbr::area_join_weight`, GLSL twin). Diffuse is
-  exact and untouched; lone rectangles and free ends are unchanged.
+  exact and untouched; lone rectangles and free ends are unchanged. Known
+  limit: at far field (a receiver ~20 units from the strip) the joined
+  highlight measures ~9% below a single rectangle's -- a faint notch in
+  distant glossy reflections.
 - **Budget**: segments, not lights. Spots, strip segments and panels share
   the 32; rows are built once, in mesh order, by one builder that both the
   static rows and the live colours use. A light that does not fit **whole**

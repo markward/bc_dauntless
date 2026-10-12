@@ -1388,6 +1388,13 @@ TEST_F(BridgePbrFrame, JoinedStripHalvesMatchOneStripAtTheJoint) {
     // V = normalize((0, 0.6, 1)), zero x-component: the strip runs along x
     // one unit above the floor, so the reflection's nearest point on each
     // half clamps to that half's OWN joined end -- exactly the joint.
+    //
+    // Deliberately NEAR-FIELD (the strip sits 1 unit above the sampled
+    // floor point): this is the regime of the live bug (a snapped strip
+    // washing the surface it sits close to). At FAR field (the strip ~20
+    // units up) the joined measurement comes in ~9% below the single
+    // rectangle's -- a known limit of the join weighting (spec §16.8,
+    // "Known limit") -- so this test does not exercise that distance.
     eye_ = {70.0f, 30.0f, 50.0f};
     target_ = sample_;
     auto strip = [&](glm::vec3 c, float half_len, int joins) {
@@ -1402,6 +1409,8 @@ TEST_F(BridgePbrFrame, JoinedStripHalvesMatchOneStripAtTheJoint) {
     const float joined = render_floor().r;
     pass->set_area_lights({strip({60, 0, 1}, 10.0f, 0), strip({80, 0, 1}, 10.0f, 0)});
     const float unjoined = render_floor().r;
-    EXPECT_NEAR(joined, one, 0.02f);
+    // Review item 10 (deferred T4): tightened from 0.02 (measured diff
+    // 0.0025) to 0.008 -- two 8-bit colour steps (1/255 ~ 0.0039 each).
+    EXPECT_NEAR(joined, one, 0.008f);
     EXPECT_GT(unjoined, joined + 0.01f);                  // the doubling this guards against
 }
