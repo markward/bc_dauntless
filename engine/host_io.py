@@ -704,8 +704,8 @@ def set_bridge_area_lights(areas) -> int:
 
     rows, caps = [], []
     for a in areas:
-        c, u, v, r, rgb, k = a[:6]
-        rows.append((_v3(c), _v3(u), _v3(v), float(r), _v3(rgb), float(k)))
+        c, hu, hv, r, rgb, k = a[:6]
+        rows.append((_v3(c), _v3(hu), _v3(hv), float(r), _v3(rgb), float(k)))
         if len(a) >= 8:
             caps.append((_v3(a[6]), _v3(a[7])))
     if caps and len(caps) == len(rows):

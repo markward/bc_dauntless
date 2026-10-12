@@ -639,6 +639,41 @@ const assets::Model* resolve_model(scenegraph::ModelHandle h) {
     return g_loaded_models[h - 1].handle.get();
 }
 
+// Shared by set_bridge_spots and set_bridge_area_lights: a float3 tuple as a
+// glm::vec3, and a finite-components check used to drop a row whose
+// position/direction/colour carries a NaN or Inf -- one reaching the shader
+// becomes a NaN bloom square.
+glm::vec3 bridge_v3(const std::tuple<float, float, float>& t) {
+    return glm::vec3(std::get<0>(t), std::get<1>(t), std::get<2>(t));
+}
+bool bridge_finite3(const glm::vec3& a) {
+    return std::isfinite(a.x) && std::isfinite(a.y) && std::isfinite(a.z);
+}
+
+// Parses the optional per-light probe-capture colour pairs shared by
+// set_bridge_spots and set_bridge_area_lights (spec 2026-10-08-bridge-emitters
+// §11.4 / §16.3): [(green3, yellow/red3)] in the same order as the light rows.
+// Returns an empty vector for None, a cast failure, or a length mismatch
+// against `n` -- in every one of those cases the caller's rule is "no
+// captures: the probes see the live colour", so an empty return means exactly
+// that to both bindings.
+std::vector<std::pair<glm::vec3, glm::vec3>> parse_bridge_captures(
+    py::object captures, std::size_t n) {
+    std::vector<std::pair<glm::vec3, glm::vec3>> caps;
+    if (captures.is_none()) return caps;
+    try {
+        for (auto item : captures) {
+            auto pr = item.cast<std::tuple<std::tuple<float, float, float>,
+                                           std::tuple<float, float, float>>>();
+            caps.emplace_back(bridge_v3(std::get<0>(pr)), bridge_v3(std::get<1>(pr)));
+        }
+    } catch (const py::cast_error&) {
+        return {};
+    }
+    if (caps.size() != n) return {};
+    return caps;
+}
+
 // Tracks key state from the previous frame() so key_pressed can detect
 // rising edges. Only keys that have been queried via key_pressed appear
 // here; lookup misses (key never queried) are treated as "previously up".
@@ -4503,29 +4538,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                           std::tuple<float, float, float>,
                                           float>>& spots,
              py::object captures) -> std::size_t {
-              auto v3 = [](const std::tuple<float, float, float>& t) {
-                  return glm::vec3(std::get<0>(t), std::get<1>(t), std::get<2>(t));
-              };
-              auto finite3 = [](const glm::vec3& a) {
-                  return std::isfinite(a.x) && std::isfinite(a.y) && std::isfinite(a.z);
-              };
               // Spec 2026-10-08-bridge-emitters §11.4: per-spot probe-capture
               // colours (green, yellow/red), in input order, x that spot's
               // intensity. A length mismatch ignores them (the PBR-step rule:
               // the captures see the radiance).
-              std::vector<std::pair<glm::vec3, glm::vec3>> caps;
-              if (!captures.is_none()) {
-                  try {
-                      for (auto item : captures) {
-                          auto pr = item.cast<std::tuple<std::tuple<float, float, float>,
-                                                         std::tuple<float, float, float>>>();
-                          caps.emplace_back(v3(std::get<0>(pr)), v3(std::get<1>(pr)));
-                      }
-                  } catch (const py::cast_error&) {
-                      caps.clear();
-                  }
-                  if (caps.size() != spots.size()) caps.clear();
-              }
+              const std::vector<std::pair<glm::vec3, glm::vec3>> caps =
+                  parse_bridge_captures(captures, spots.size());
               std::vector<renderer::BridgeSpot> v;
               v.reserve(spots.size());
               std::size_t invalid = 0;
@@ -4533,18 +4551,19 @@ PYBIND11_MODULE(_dauntless_host, m) {
               for (const auto& s : spots) {
                   const std::size_t i = index++;
                   const auto& [pos, dir, inner_deg, outer_deg, range, rgb, intensity] = s;
-                  if (!finite3(v3(pos)) || !finite3(v3(dir)) || !finite3(v3(rgb)) ||
+                  if (!bridge_finite3(bridge_v3(pos)) || !bridge_finite3(bridge_v3(dir)) ||
+                      !bridge_finite3(bridge_v3(rgb)) ||
                       !std::isfinite(inner_deg) || !std::isfinite(outer_deg) ||
                       !std::isfinite(range) || !std::isfinite(intensity) ||
-                      !finite3(v3(rgb) * intensity) ||
-                      (!caps.empty() && (!finite3(caps[i].first * intensity) ||
-                                         !finite3(caps[i].second * intensity)))) {
+                      !bridge_finite3(bridge_v3(rgb) * intensity) ||
+                      (!caps.empty() && (!bridge_finite3(caps[i].first * intensity) ||
+                                         !bridge_finite3(caps[i].second * intensity)))) {
                       ++invalid;
                       continue;
                   }
                   renderer::BridgeSpot sp;
-                  sp.position = v3(pos);
-                  const glm::vec3 d = v3(dir);
+                  sp.position = bridge_v3(pos);
+                  const glm::vec3 d = bridge_v3(dir);
                   const float len = glm::length(d);
                   // A zero / non-finite axis points straight down (-Z, the
                   // bridge's floor) rather than feeding NaN to the shader.
@@ -4556,7 +4575,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   sp.cos_inner = std::cos(glm::radians(inner));
                   sp.cos_outer = std::cos(glm::radians(outer));
                   sp.range = std::max(range, 0.0f);
-                  sp.radiance = v3(rgb) * intensity;
+                  sp.radiance = bridge_v3(rgb) * intensity;
                   if (!caps.empty()) {
                       sp.has_capture = true;
                       sp.capture_radiance[0] = caps[i].first * intensity;
@@ -4608,47 +4627,31 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                           std::tuple<float, float, float>,
                                           float>>& areas,
              py::object captures) -> std::size_t {
-              auto v3 = [](const std::tuple<float, float, float>& t) {
-                  return glm::vec3(std::get<0>(t), std::get<1>(t), std::get<2>(t));
-              };
-              auto finite3 = [](const glm::vec3& a) {
-                  return std::isfinite(a.x) && std::isfinite(a.y) && std::isfinite(a.z);
-              };
-              std::vector<std::pair<glm::vec3, glm::vec3>> caps;
-              if (!captures.is_none()) {
-                  try {
-                      for (auto item : captures) {
-                          auto pr = item.cast<std::tuple<std::tuple<float, float, float>,
-                                                         std::tuple<float, float, float>>>();
-                          caps.emplace_back(v3(std::get<0>(pr)), v3(std::get<1>(pr)));
-                      }
-                  } catch (const py::cast_error&) {
-                      caps.clear();
-                  }
-                  if (caps.size() != areas.size()) caps.clear();
-              }
+              const std::vector<std::pair<glm::vec3, glm::vec3>> caps =
+                  parse_bridge_captures(captures, areas.size());
               std::vector<renderer::BridgeAreaLight> v;
               v.reserve(areas.size());
               std::size_t invalid = 0, index = 0;
               for (const auto& a : areas) {
                   const std::size_t i = index++;
                   const auto& [c, u, w, range, rgb, intensity] = a;
-                  const glm::vec3 hu = v3(u), hv = v3(w);
-                  if (!finite3(v3(c)) || !finite3(hu) || !finite3(hv) || !finite3(v3(rgb)) ||
+                  const glm::vec3 hu = bridge_v3(u), hv = bridge_v3(w);
+                  if (!bridge_finite3(bridge_v3(c)) || !bridge_finite3(hu) ||
+                      !bridge_finite3(hv) || !bridge_finite3(bridge_v3(rgb)) ||
                       !std::isfinite(range) || !(range > 0.0f) || !std::isfinite(intensity) ||
-                      !finite3(v3(rgb) * intensity) ||
+                      !bridge_finite3(bridge_v3(rgb) * intensity) ||
                       !(glm::length(glm::cross(hu, hv)) >= 1e-8f) ||
-                      (!caps.empty() && (!finite3(caps[i].first * intensity) ||
-                                         !finite3(caps[i].second * intensity)))) {
+                      (!caps.empty() && (!bridge_finite3(caps[i].first * intensity) ||
+                                         !bridge_finite3(caps[i].second * intensity)))) {
                       ++invalid;
                       continue;
                   }
                   renderer::BridgeAreaLight al;
-                  al.center = v3(c);
+                  al.center = bridge_v3(c);
                   al.half_u = hu;
                   al.half_v = hv;
                   al.range = range;
-                  al.radiance = v3(rgb) * intensity;
+                  al.radiance = bridge_v3(rgb) * intensity;
                   if (!caps.empty()) {
                       al.has_capture = true;
                       al.capture_radiance[0] = caps[i].first * intensity;
