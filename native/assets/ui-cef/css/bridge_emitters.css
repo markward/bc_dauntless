@@ -31,9 +31,19 @@
 #bridge-emitters-root .be-dock .cp-content { flex: 1; overflow-y: auto; }
 #bridge-emitters-root .be-help { opacity: 0.75; font-size: 12px; margin-bottom: 8px; }
 #bridge-emitters-root .be-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
-#bridge-emitters-root .be-row label { width: 90px; }
-#bridge-emitters-root .be-row input[type=range] { flex: 1; }
-#bridge-emitters-root .be-source { width: 60px; font-size: 11px; opacity: 0.8; }
+#bridge-emitters-root .be-row label { width: 72px; flex: none; font-size: 12px; }
+/* A range input has an intrinsic ~130px minimum: without min-width 0 it
+   cannot shrink, and the Finish row's × was pushed past the dock edge. */
+#bridge-emitters-root .be-row input[type=range] { flex: 1 1 0; min-width: 0; }
+#bridge-emitters-root .be-row input[type=number],
+#bridge-emitters-root .be-row button { flex: none; }
+#bridge-emitters-root .be-source { width: 48px; flex: none; font-size: 11px; opacity: 0.8; }
+#bridge-emitters-root .be-value { width: 34px; flex: none; font-size: 11px; text-align: right; }
+#bridge-emitters-root .be-typed { flex: 1 1 0; min-width: 0; }
+#bridge-emitters-root .be-pencil { padding: 0 4px; font-size: 11px; opacity: 0.7; }
+#bridge-emitters-root .be-tail { display: flex; align-items: center; width: 64px; flex: none; }
+#bridge-emitters-root .be-tail .be-source { width: auto; }
+#bridge-emitters-root .be-clear { margin: 0; padding: 0 3px; font-size: 10px; line-height: 14px; }
 #bridge-emitters-root .be-chain { font-size: 11px; opacity: 0.8; word-break: break-word; }
 #bridge-emitters-root .be-status { font-size: 12px; min-height: 16px; color: #f0b060; }
 #bridge-emitters-root .be-tabs { display: flex; gap: 4px; margin: 6px 0; }
@@ -61,8 +71,11 @@
     outline: 1px solid #f0b060; }
 #bridge-emitters-root .be-hint { font-size: 11px; opacity: 0.75; margin-top: 4px; }
 #bridge-emitters-root .be-hover-row { font-size: 11px; }
-#bridge-emitters-root .be-entry { border-top: 1px solid rgba(255, 255, 255, 0.15); padding: 4px 0; }
+/* Each stack entry (Finish, modifiers, lights) is a bordered box: the border
+   carries the hierarchy, so its fields sit flush left (Mark 2026-10-12). */
+#bridge-emitters-root .be-entry { border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px; padding: 4px 6px; margin: 6px 0; }
 #bridge-emitters-root .be-entry-head { display: flex; align-items: center; gap: 4px; }
 #bridge-emitters-root .be-entry-title { flex: 1; }
-#bridge-emitters-root .be-entry-body { padding-left: 16px; }
+#bridge-emitters-root .be-entry-body { padding-left: 0; }
 #bridge-emitters-root .be-dock { display: none; }

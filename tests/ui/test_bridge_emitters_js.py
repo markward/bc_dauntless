@@ -49,6 +49,7 @@ for (const step of steps) {
         }
     }
     if (step.state) ctx.setBridgeEmitters(step.state);
+    if (step.call) vm.runInContext(step.call, ctx);
     out.push({body: el('bridge-emitters-body').innerHTML,
               bar: el('be-bar').innerHTML,
               hint: el('be-hint').textContent,
@@ -258,3 +259,54 @@ def test_a_texture_material_says_so_on_the_material_tab():
     sel = _sel(tab="material", material="Map 19", material_data=m)
     [out] = _run([{"state": _state(selected=sel)}])
     assert "texture material · used by 22 objects" in out["body"]
+
+
+
+def _finish_row(body, ch):
+    i = body.index(f"<label>{ch}</label>")
+    return body[i:body.index("</div>", i)]
+
+
+def test_a_slider_row_shows_the_value_and_a_pencil_not_a_number_box():
+    sel = _sel(tab="material", material="alcove", material_data=MAT)
+    [out] = _run([{"state": _state(selected=sel)}])
+    row = _finish_row(out["body"], "metalness")
+    assert 'type="range"' in row and 'type="number"' not in row
+    assert "_beToggleType(" in row and ">0.00<" in row          # the value, as text
+
+
+def test_the_pencil_swaps_the_slider_for_a_typed_number_and_back():
+    sel = _sel(tab="material", material="alcove", material_data=MAT)
+    first, typed, back = _run([
+        {"state": _state(selected=sel)},
+        {"call": "_beToggleType('finish:metalness')"},
+        {"call": "_beToggleType('finish:metalness')"}])
+    row = _finish_row(typed["body"], "metalness")
+    assert 'type="number"' in row and 'type="range"' not in row
+    assert "finish:metalness:" in row
+    assert 'type="range"' in _finish_row(typed["body"], "roughness")   # only that row
+    assert 'type="range"' in _finish_row(back["body"], "metalness")
+
+
+def test_the_typed_mode_survives_a_payload_refresh():
+    sel = _sel(tab="material", material="alcove", material_data=MAT)
+    *_, after = _run([{"state": _state(selected=sel)},
+                      {"call": "_beToggleType('finish:emission')"},
+                      {"state": _state(selected=sel, status="Saved")}])
+    assert 'type="number"' in _finish_row(after["body"], "emission")
+
+
+def test_a_map_driven_row_has_no_pencil():
+    fin = dict(MAT["finish"], roughness={"value": 1.0, "source": "map"})
+    sel = _sel(tab="material", material="alcove", material_data=dict(MAT, finish=fin))
+    [out] = _run([{"state": _state(selected=sel)}])
+    row = _finish_row(out["body"], "roughness")
+    assert "disabled" in row and "_beToggleType(" not in row
+
+
+def test_a_state_level_is_a_slider_row_too():
+    sel = _sel(tab="material", material="alcove", material_data=MAT, expanded=["mod:0"])
+    [out] = _run([{"state": _state(selected=sel)},
+                  {"call": "_beToggleType('mod:0:level')"}][:1])
+    row = _finish_row(out["body"], "level")
+    assert 'type="range"' in row and "_beToggleType('mod:0:level')" in row

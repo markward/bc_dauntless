@@ -125,25 +125,49 @@ function _beObjectTab(s) {
     return html;
 }
 
-// Emission's slider runs 0-4 (the box goes higher) and stays editable over a
+// Slider rows show the slider and its value; the pencil swaps in a typed
+// number box (Mark 2026-10-12), remembered per action across refreshes.
+let _beTyping = {};
+let _beLast = null;
+
+function _beToggleType(action) {
+    if (_beTyping[action]) delete _beTyping[action];
+    else _beTyping[action] = true;
+    if (_beLast) setBridgeEmitters(_beLast);
+}
+
+// One slider row. `top` is the slider's end (typing may go past it, to
+// what Python clamps); `max` caps the typed box when set; `extra` follows
+// (source label, ×); a disabled row (a map wins) has no pencil.
+function _beSlider(label, action, value, top, max, extra, disabled) {
+    const v = Number(value);
+    const commit = ' onchange="dauntlessEvent(\'bridge-emitters/' + action + ':\' + this.value)"';
+    let html = '<div class="be-row"><label>' + _beEsc(label) + '</label>';
+    if (_beTyping[action] && !disabled) {
+        html += '<input type="number" min="0"' + (max !== null ? ' max="' + max + '"' : '')
+            + ' step="0.01" value="' + v.toFixed(2) + '" class="be-typed"' + commit + '>';
+    } else {
+        html += '<input type="range" min="0" max="' + top + '" step="0.01" value="'
+            + Math.min(v, top).toFixed(2) + '"' + (disabled ? ' disabled' : '') + commit + '>'
+            + '<span class="be-value">' + v.toFixed(2) + '</span>';
+    }
+    if (!disabled)
+        html += '<button class="be-pencil" onclick="_beToggleType(\'' + action + '\')">✎</button>';
+    return html + (extra || '') + '</div>';
+}
+
+// Emission's slider runs 0-4 (typing goes higher) and stays editable over a
 // map: the map says what glows, the level how much (spec §14).
 function _beFinishRow(ch, f) {
     const emission = ch === 'emission';
-    const v = Number(f.value).toFixed(2);
-    const dis = f.source === 'map' && !emission ? ' disabled' : '';
-    const top = emission ? 4 : 1;
-    return '<div class="be-row"><label>' + ch + '</label>'
-        + '<input type="range" min="0" max="' + top + '" step="0.01" value="'
-        + Math.min(Number(f.value), top).toFixed(2) + '"' + dis
-        + ' onchange="dauntlessEvent(\'bridge-emitters/finish:' + ch + ':\' + this.value)">'
-        + '<input type="number" min="0"' + (emission ? '' : ' max="1"') + ' step="0.01" value="'
-        + v + '" style="width:56px"' + dis
-        + ' onchange="dauntlessEvent(\'bridge-emitters/finish:' + ch + ':\' + this.value)">'
-        + '<span class="be-source">' + _beEsc(f.source) + '</span>'
+    // Source and × share one fixed-width tail, × tight against the word.
+    const extra = '<span class="be-tail"><span class="be-source">' + _beEsc(f.source) + '</span>'
         + (f.source === 'material'
-            ? '<button onclick="dauntlessEvent(\'bridge-emitters/finish-clear:' + ch + '\')">×</button>'
-            : '')
-        + '</div>';
+            ? '<button class="be-clear" onclick="dauntlessEvent(\'bridge-emitters/finish-clear:'
+              + ch + '\')">×</button>'
+            : '') + '</span>';
+    return _beSlider(ch, 'finish:' + ch, f.value, emission ? 4 : 1, emission ? null : 1, extra,
+                     f.source === 'map' && !emission);
 }
 
 const _BE_SOURCES = [['texture', 'own texture'], ['flat', 'flat colour']];
@@ -154,11 +178,7 @@ function _beModifier(m, i, expanded) {
         const lv = Number(m.level);
         fields = '<div class="be-row"><canvas id="be-wheel-' + i + '" width="120" height="120"></canvas>'
             + '<div id="be-swatch-' + i + '" class="be-swatch"></div></div>'
-            + '<div class="be-row"><label>level</label>'
-            + '<input type="range" min="0" max="4" step="0.01" value="' + Math.min(lv, 4) + '"'
-            + ' onchange="dauntlessEvent(\'bridge-emitters/mod:' + i + ':level:\' + this.value)">'
-            + '<input type="number" min="0" step="0.01" value="' + lv.toFixed(2) + '" style="width:56px"'
-            + ' onchange="dauntlessEvent(\'bridge-emitters/mod:' + i + ':level:\' + this.value)"></div>';
+            + _beSlider('level', 'mod:' + i + ':level', lv, 4, null, '', false);
     } else if (m.type === 'transition') {
         fields = _beNumberRow('seconds', 'mod:' + i + ':seconds', m.seconds, 0.05);
     } else {
@@ -283,6 +303,7 @@ function _beEditingInDock(root) {
 function setBridgeEmitters(state) {
     const root = document.getElementById('bridge-emitters-root');
     if (!root) return;
+    _beLast = state;
     if (!state || state.visible !== true) {
         root.style.display = 'none';
         _beWheels = [];          // a hidden panel holds no drag
