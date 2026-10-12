@@ -348,7 +348,7 @@ TEST(BridgePbrArea, NearestPointOppositeViewGivesFiniteDiffuse) {
     EXPECT_TRUE(finite3(a.spec));
 }
 
-// SPIKE (edge snap): a snapped strip is a chain of rectangles; at a joint
+// Spec §16.8: a snapped strip is a chain of rectangles; at a joint
 // each neighbour used to put a full highlight (DBridge Map 3: bloom blobs at
 // every joint). With the joined ends flagged, the two sum to about the one
 // highlight a single rectangle would give.

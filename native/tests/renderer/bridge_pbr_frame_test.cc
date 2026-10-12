@@ -1378,3 +1378,30 @@ TEST_F(BridgePbrFrame, AnAreaLightNeverMakesLitDiffuseBloom) {
     pass->set_area_lights({area({70, 0, 10}, {50, 0, 0}, {0, -50, 0}, 300.0f, glm::vec3(100.0f))});
     EXPECT_LT(render_floor().r, renderer::kBridgeLighting.diffuse_max + 0.25f);
 }
+
+// Spec §16.8: two JOINED halves of a strip light the floor under their joint
+// like the one strip they replace; unjoined, their highlights add.
+TEST_F(BridgePbrFrame, JoinedStripHalvesMatchOneStripAtTheJoint) {
+    set_base({0.6f, 0.6f, 0.6f, 1.0f});
+    set_floor_override(0.3f, 0.0f);                       // glossy enough to show the highlight
+    sample_ = {70.0f, 0.0f, 0.0f};
+    // V = normalize((0, 0.6, 1)), zero x-component: the strip runs along x
+    // one unit above the floor, so the reflection's nearest point on each
+    // half clamps to that half's OWN joined end -- exactly the joint.
+    eye_ = {70.0f, 30.0f, 50.0f};
+    target_ = sample_;
+    auto strip = [&](glm::vec3 c, float half_len, int joins) {
+        renderer::BridgeAreaLight a = area(c, {half_len, 0, 0}, {0, -0.25f, 0}, 300.0f,
+                                           glm::vec3(2.0f));
+        a.joins = joins;
+        return a;
+    };
+    pass->set_area_lights({strip({70, 0, 1}, 20.0f, 0)});
+    const float one = render_floor().r;
+    pass->set_area_lights({strip({60, 0, 1}, 10.0f, 2), strip({80, 0, 1}, 10.0f, 1)});
+    const float joined = render_floor().r;
+    pass->set_area_lights({strip({60, 0, 1}, 10.0f, 0), strip({80, 0, 1}, 10.0f, 0)});
+    const float unjoined = render_floor().r;
+    EXPECT_NEAR(joined, one, 0.02f);
+    EXPECT_GT(unjoined, joined + 0.01f);                  // the doubling this guards against
+}

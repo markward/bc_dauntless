@@ -176,7 +176,7 @@ inline glm::vec3 rect_representative(glm::vec3 p, glm::vec3 r, glm::vec3 c, glm:
 
 struct AreaTerms { glm::vec3 diffuse{0.0f}; glm::vec3 spec{0.0f}; };
 
-// SPIKE (edge snap): a snapped strip is a chain of rectangles. Each gives
+// Spec §16.8: a snapped strip is a chain of rectangles. Each gives
 // its own representative-point highlight, so where two meet both put a full
 // highlight on the joint (measured on DBridge Map 3: 0.75 + 0.75 against
 // 0.65 mid-segment -- bloom blobs at every joint). At an end JOINED to a

@@ -137,7 +137,7 @@ uniform vec4 u_area_center_range[MAX_AREA_LIGHTS];
 uniform vec3 u_area_u[MAX_AREA_LIGHTS];
 uniform vec3 u_area_v[MAX_AREA_LIGHTS];
 uniform vec3 u_area_radiance[MAX_AREA_LIGHTS];
-uniform int  u_area_joins[MAX_AREA_LIGHTS];   // SPIKE (edge snap): pbr::area_join_weight's bits
+uniform int  u_area_joins[MAX_AREA_LIGHTS];   // spec §16.8: pbr::area_join_weight's bits
 
 out vec4 FragColor;
 
@@ -424,7 +424,7 @@ vec3 rect_representative(vec3 p, vec3 r, vec3 c, vec3 u, vec3 v) {
 // Adds every area light's linear diffuse and GGX specular at this fragment
 // (pbr::area_light). The probe capture passes its own normal/view and
 // ignores `spec`.
-// Twin of pbr::area_join_weight (SPIKE, edge snap).
+// Twin of pbr::area_join_weight (spec §16.8).
 float area_join_weight(vec3 p, vec3 r, vec3 c, vec3 u, vec3 nl, int joins, float margin) {
     if (joins == 0) return 1.0;
     float denom = dot(r, nl);

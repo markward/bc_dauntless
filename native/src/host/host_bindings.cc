@@ -4629,8 +4629,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
              py::object captures, py::object joins) -> std::size_t {
               const std::vector<std::pair<glm::vec3, glm::vec3>> caps =
                   parse_bridge_captures(captures, areas.size());
-              // SPIKE (edge snap): per-row join bits (pbr::area_join_weight),
-              // in input order; anything unusable means no joins.
+              // Spec §16.8: per-row join bits (pbr::area_join_weight), in
+              // input order; anything unusable means no joins.
               std::vector<int> join_bits;
               if (!joins.is_none()) {
                   try {

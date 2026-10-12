@@ -708,7 +708,7 @@ def set_bridge_area_lights(areas) -> int:
         rows.append((_v3(c), _v3(hu), _v3(hv), float(r), _v3(rgb), float(k)))
         if len(a) >= 8:
             caps.append((_v3(a[6]), _v3(a[7])))
-        joins.append(int(a[8]) if len(a) >= 9 else 0)   # SPIKE (edge snap): join bits
+        joins.append(int(a[8]) if len(a) >= 9 else 0)   # spec §16.8: join bits
     kw = {"joins": joins} if any(joins) else {}
     if caps and len(caps) == len(rows):
         return int(fn(rows, caps, **kw))
