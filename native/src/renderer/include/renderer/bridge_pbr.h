@@ -176,10 +176,33 @@ inline glm::vec3 rect_representative(glm::vec3 p, glm::vec3 r, glm::vec3 c, glm:
 
 struct AreaTerms { glm::vec3 diffuse{0.0f}; glm::vec3 spec{0.0f}; };
 
+// SPIKE (edge snap): a snapped strip is a chain of rectangles. Each gives
+// its own representative-point highlight, so where two meet both put a full
+// highlight on the joint (measured on DBridge Map 3: 0.75 + 0.75 against
+// 0.65 mid-segment -- bloom blobs at every joint). At an end JOINED to a
+// neighbour (bit 0: the -u end, bit 1: the +u end) the highlight fades to
+// half as the reflection reaches that end and to nothing past it, over the
+// lobe's footprint d x a_eff, so the two neighbours sum to one. Free ends
+// are untouched (a lone rectangle is exactly as before).
+inline float area_join_weight(glm::vec3 p, glm::vec3 r, glm::vec3 c, glm::vec3 u, glm::vec3 nl,
+                              int joins, float margin) {
+    if (joins == 0) return 1.0f;
+    const float denom = glm::dot(r, nl);
+    float t = denom < -1e-6f ? glm::dot(c - p, nl) / denom : -1.0f;
+    const glm::vec3 hit = t > 0.0f ? p + r * t : p - nl * glm::dot(p - c, nl);
+    const float half = glm::length(u);
+    const float along = glm::dot(hit - c, u) / std::max(half, 1e-6f);
+    const float m = std::max(margin, 1e-3f);
+    float w = 1.0f;
+    if (joins & 1) w *= std::clamp(0.5f + (along + half) / m, 0.0f, 1.0f);
+    if (joins & 2) w *= std::clamp(0.5f + (half - along) / m, 0.0f, 1.0f);
+    return w;
+}
+
 inline AreaTerms area_light(glm::vec3 p, glm::vec3 N, glm::vec3 V, float n_dot_v,
                             glm::vec3 albedo, float metal, float rough, glm::vec3 f0,
                             glm::vec3 c, glm::vec3 u, glm::vec3 v,
-                            glm::vec3 radiance, float range) {
+                            glm::vec3 radiance, float range, int joins = 0) {
     AreaTerms out;
     const glm::vec3 uv = glm::cross(u, v);
     if (glm::dot(uv, uv) < 1e-12f) return out;                         // zero-area: no light
@@ -213,7 +236,8 @@ inline AreaTerms area_light(glm::vec3 p, glm::vec3 N, glm::vec3 V, float n_dot_v
     const glm::vec3 F = F_schlick(std::max(glm::dot(V, H), 0.0f), f0);
     out.spec = D_ggx(std::max(glm::dot(N, H), 0.0f), std::sqrt(a_eff)) *
                G_smith(n_dot_v, n_dot_l, rough) * F /
-               std::max(4.0f * n_dot_v * n_dot_l, 1e-4f) * rad * n_dot_l * omega;
+               std::max(4.0f * n_dot_v * n_dot_l, 1e-4f) * rad * n_dot_l * omega *
+               area_join_weight(p, glm::reflect(-V, N), c, u, nl, joins, d * a_eff);
     return out;
 }
 

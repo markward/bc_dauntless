@@ -350,6 +350,7 @@ void BridgePass::render(const scenegraph::World& world,
     glm::vec3 area_u[kBridgeMaxAreaLights];
     glm::vec3 area_v[kBridgeMaxAreaLights];
     glm::vec3 area_rad[kBridgeMaxAreaLights];
+    int area_joins[kBridgeMaxAreaLights];
     for (int i = 0; i < area_count; ++i) {
         const BridgeAreaLight& a = area_lights_[static_cast<std::size_t>(i)];
         area_cr[i] = glm::vec4(a.center, a.range);
@@ -357,6 +358,7 @@ void BridgePass::render(const scenegraph::World& world,
         area_v[i] = a.half_v;
         area_rad[i] = (capture_pass_ && a.has_capture)
             ? a.capture_radiance[capture_probe_] : a.radiance;
+        area_joins[i] = a.joins;
     }
 
     // Uniforms common to both sub-passes: camera, the bridge ambient and the
@@ -422,6 +424,7 @@ void BridgePass::render(const scenegraph::World& world,
             s.set_vec3_array("u_area_u", area_u, area_count);
             s.set_vec3_array("u_area_v", area_v, area_count);
             s.set_vec3_array("u_area_radiance", area_rad, area_count);
+            s.set_int_array("u_area_joins", area_joins, area_count);
         }
     };
 

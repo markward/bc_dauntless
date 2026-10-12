@@ -4626,9 +4626,20 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                           float,
                                           std::tuple<float, float, float>,
                                           float>>& areas,
-             py::object captures) -> std::size_t {
+             py::object captures, py::object joins) -> std::size_t {
               const std::vector<std::pair<glm::vec3, glm::vec3>> caps =
                   parse_bridge_captures(captures, areas.size());
+              // SPIKE (edge snap): per-row join bits (pbr::area_join_weight),
+              // in input order; anything unusable means no joins.
+              std::vector<int> join_bits;
+              if (!joins.is_none()) {
+                  try {
+                      join_bits = joins.cast<std::vector<int>>();
+                  } catch (const py::cast_error&) {
+                      join_bits.clear();
+                  }
+                  if (join_bits.size() != areas.size()) join_bits.clear();
+              }
               std::vector<renderer::BridgeAreaLight> v;
               v.reserve(areas.size());
               std::size_t invalid = 0, index = 0;
@@ -4657,13 +4668,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       al.capture_radiance[0] = caps[i].first * intensity;
                       al.capture_radiance[1] = caps[i].second * intensity;
                   }
+                  if (!join_bits.empty()) al.joins = join_bits[i] & 3;
                   v.push_back(al);
               }
               const std::size_t cap = static_cast<std::size_t>(renderer::kBridgeMaxAreaLights);
               if (!g_bridge_pass) return invalid + (v.size() > cap ? v.size() - cap : 0);
               return invalid + g_bridge_pass->set_area_lights(std::move(v));
           },
-          py::arg("areas"), py::arg("captures") = py::none(),
+          py::arg("areas"), py::arg("captures") = py::none(), py::arg("joins") = py::none(),
           "Static bridge area lights (strips / panels): [(centre3, half_u3, half_v3, "
           "range, (r, g, b), intensity)], emitting toward cross(half_u, half_v). "
           "Invalid rows (non-finite, zero size, range <= 0) are dropped; the rest "

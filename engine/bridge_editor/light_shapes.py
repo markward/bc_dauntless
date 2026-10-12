@@ -67,6 +67,7 @@ class Rect:
     centre: Vec
     half_u: Vec
     half_v: Vec      # cross(half_u, half_v) points where it emits
+    joins: int = 0   # SPIKE (edge snap): bit 0 / 1 = joined to a neighbour at the -u / +u end
 
     @property
     def normal(self) -> Vec:
@@ -377,7 +378,8 @@ def snapped_strip_rects(fr, light):
         anchor, poly[nearest], poly[nearest + 1]))) >= 0.0 else -1.0
     offset = float(light.get("offset", 0.0))
     rects = []
-    for a, b in zip(part, part[1:]):
+    segments = [(a, b) for a, b in zip(part, part[1:]) if _unit(_sub(b, a)) is not None]
+    for k, (a, b) in enumerate(segments):
         d = _unit(_sub(b, a))
         if d is None:
             continue
@@ -386,8 +388,9 @@ def snapped_strip_rects(fr, light):
         c = _add(mid, _mul(ns, offset))
         aim = _sub(_add(mid, _mul(across, WASH_DEPTH)), c)
         n = _unit(_sub(aim, _mul(d, _dot(aim, d)))) or across
+        joins = (1 if k > 0 else 0) | (2 if k < len(segments) - 1 else 0)
         rects.append(Rect(c, _mul(d, _len(_sub(b, a)) / 2.0),
-                          _mul(_cross(n, d), STRIP_WIDTH / 2.0)))
+                          _mul(_cross(n, d), STRIP_WIDTH / 2.0), joins))
     return rects
 
 

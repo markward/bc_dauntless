@@ -124,7 +124,8 @@ def areas(doc, matched, resolved, frame_for, mapped=frozenset()):
     for light, mat, has_map, r in lit:
         green = _capture(mat, "green", has_map)
         out.append((r.centre, r.half_u, r.half_v, light.get("range", DEFAULT_RANGE),
-                    green, _intensity(light), green, _capture(mat, "yellow", has_map)))
+                    green, _intensity(light), green, _capture(mat, "yellow", has_map),
+                    r.joins))
     return out, warnings
 
 

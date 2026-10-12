@@ -91,6 +91,9 @@ struct BridgeAreaLight {
     glm::vec3 radiance{0.0f};
     bool      has_capture = false;
     glm::vec3 capture_radiance[2] = {glm::vec3(0.0f), glm::vec3(0.0f)};
+    /// SPIKE (edge snap): bit 0 / bit 1 = joined to a neighbour at the -u /
+    /// +u end (pbr::area_join_weight). Highlight only: never recaptures.
+    int       joins = 0;
 };
 
 /// One per-shape emitter glow (spec 2026-10-08-bridge-emitters §11.2),

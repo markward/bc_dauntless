@@ -347,3 +347,44 @@ TEST(BridgePbrArea, NearestPointOppositeViewGivesFiniteDiffuse) {
     EXPECT_TRUE(finite3(a.diffuse));
     EXPECT_TRUE(finite3(a.spec));
 }
+
+// SPIKE (edge snap): a snapped strip is a chain of rectangles; at a joint
+// each neighbour used to put a full highlight (DBridge Map 3: bloom blobs at
+// every joint). With the joined ends flagged, the two sum to about the one
+// highlight a single rectangle would give.
+TEST(BridgePbrArea, JoinedSegmentsGiveOneHighlightAtTheJoint) {
+    using namespace renderer::pbr;
+    const glm::vec3 albedo{0.5f}, f0 = f0_for(albedo, 0.0f), rad{40.0f};
+    const glm::vec3 N{0, 0, 1};
+    // A strip 0.5 wide and 40 long, 1 unit above the receiver row, emitting down.
+    const glm::vec3 one_c{0, 0, 1}, one_u{20, 0, 0}, v{0, -0.25f, 0};
+    const glm::vec3 a_c{-10, 0, 1}, b_c{10, 0, 1}, half_u{10, 0, 0};
+    for (float x : {-0.5f, 0.0f, 0.5f}) {
+        const glm::vec3 p{x, 0.3f, 0}, V = glm::normalize(glm::vec3(0.0f, 0.6f, 1.0f));
+        const float nv = glm::dot(N, V);
+        const float single = area_light(p, N, V, nv, albedo, 0.0f, 0.5f, f0, one_c, one_u, v,
+                                        rad, 100.0f).spec.r;
+        const float split = area_light(p, N, V, nv, albedo, 0.0f, 0.5f, f0, a_c, half_u, v,
+                                       rad, 100.0f, 2).spec.r +
+                            area_light(p, N, V, nv, albedo, 0.0f, 0.5f, f0, b_c, half_u, v,
+                                       rad, 100.0f, 1).spec.r;
+        const float unjoined = area_light(p, N, V, nv, albedo, 0.0f, 0.5f, f0, a_c, half_u, v,
+                                          rad, 100.0f).spec.r +
+                               area_light(p, N, V, nv, albedo, 0.0f, 0.5f, f0, b_c, half_u, v,
+                                          rad, 100.0f).spec.r;
+        EXPECT_GT(unjoined / single, 1.5f) << "x=" << x;      // the bug this guards
+        EXPECT_NEAR(split / single, 1.0f, 0.2f) << "x=" << x;
+    }
+}
+
+TEST(BridgePbrArea, JoinsNeverTouchTheDiffuse) {
+    using namespace renderer::pbr;
+    const glm::vec3 albedo{0.5f}, f0 = f0_for(albedo, 0.0f);
+    const glm::vec3 p{9.5f, 0.3f, 0}, N{0, 0, 1}, V = glm::normalize(glm::vec3(0, 0.6f, 1));
+    const AreaTerms a = area_light(p, N, V, glm::dot(N, V), albedo, 0.0f, 0.5f, f0,
+                                   {0, 0, 1}, {10, 0, 0}, {0, -0.25f, 0}, glm::vec3(40.0f), 100.0f);
+    const AreaTerms b = area_light(p, N, V, glm::dot(N, V), albedo, 0.0f, 0.5f, f0,
+                                   {0, 0, 1}, {10, 0, 0}, {0, -0.25f, 0}, glm::vec3(40.0f), 100.0f, 3);
+    EXPECT_EQ(a.diffuse, b.diffuse);
+    EXPECT_LT(b.spec.r, a.spec.r);       // near a joined end the highlight is shared
+}

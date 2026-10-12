@@ -137,6 +137,7 @@ uniform vec4 u_area_center_range[MAX_AREA_LIGHTS];
 uniform vec3 u_area_u[MAX_AREA_LIGHTS];
 uniform vec3 u_area_v[MAX_AREA_LIGHTS];
 uniform vec3 u_area_radiance[MAX_AREA_LIGHTS];
+uniform int  u_area_joins[MAX_AREA_LIGHTS];   // SPIKE (edge snap): pbr::area_join_weight's bits
 
 out vec4 FragColor;
 
@@ -423,6 +424,21 @@ vec3 rect_representative(vec3 p, vec3 r, vec3 c, vec3 u, vec3 v) {
 // Adds every area light's linear diffuse and GGX specular at this fragment
 // (pbr::area_light). The probe capture passes its own normal/view and
 // ignores `spec`.
+// Twin of pbr::area_join_weight (SPIKE, edge snap).
+float area_join_weight(vec3 p, vec3 r, vec3 c, vec3 u, vec3 nl, int joins, float margin) {
+    if (joins == 0) return 1.0;
+    float denom = dot(r, nl);
+    float t = denom < -1e-6 ? dot(c - p, nl) / denom : -1.0;
+    vec3 hit = t > 0.0 ? p + r * t : p - nl * dot(p - c, nl);
+    float half_len = length(u);
+    float along = dot(hit - c, u) / max(half_len, 1e-6);
+    float m = max(margin, 1e-3);
+    float w = 1.0;
+    if ((joins & 1) != 0) w *= clamp(0.5 + (along + half_len) / m, 0.0, 1.0);
+    if ((joins & 2) != 0) w *= clamp(0.5 + (half_len - along) / m, 0.0, 1.0);
+    return w;
+}
+
 void accumulate_area_lights(vec3 N, vec3 V, float NdotV, vec3 albedo, float metal,
                             float rough, vec3 F0, inout vec3 diffuse, inout vec3 spec) {
     for (int i = 0; i < u_area_count; ++i) {
@@ -460,7 +476,8 @@ void accumulate_area_lights(vec3 N, vec3 V, float NdotV, vec3 albedo, float meta
         vec3 H = normalize(L + V);
         vec3 F = F_schlick(max(dot(V, H), 0.0), F0);
         spec += D_ggx(max(dot(N, H), 0.0), sqrt(a_eff)) * G_smith(NdotV, NdotL, rough) * F
-              / max(4.0 * NdotV * NdotL, 1e-4) * rad * NdotL * omega;
+              / max(4.0 * NdotV * NdotL, 1e-4) * rad * NdotL * omega
+              * area_join_weight(v_world, reflect(-V, N), c, u, nl, u_area_joins[i], d * a_eff);
     }
 }
 

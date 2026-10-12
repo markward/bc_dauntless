@@ -702,15 +702,17 @@ def set_bridge_area_lights(areas) -> int:
         x, y, z = v
         return (float(x), float(y), float(z))
 
-    rows, caps = [], []
+    rows, caps, joins = [], [], []
     for a in areas:
         c, hu, hv, r, rgb, k = a[:6]
         rows.append((_v3(c), _v3(hu), _v3(hv), float(r), _v3(rgb), float(k)))
         if len(a) >= 8:
             caps.append((_v3(a[6]), _v3(a[7])))
+        joins.append(int(a[8]) if len(a) >= 9 else 0)   # SPIKE (edge snap): join bits
+    kw = {"joins": joins} if any(joins) else {}
     if caps and len(caps) == len(rows):
-        return int(fn(rows, caps))
-    return int(fn(rows))
+        return int(fn(rows, caps, **kw))
+    return int(fn(rows, **kw))
 
 
 def set_bridge_area_colours(colours) -> None:

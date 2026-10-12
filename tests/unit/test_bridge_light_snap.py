@@ -117,3 +117,20 @@ def test_a_panel_cannot_be_snapped():
     light = {"shape": "panel"}
     editing.snap_light(light, (1, 2, 3))
     assert "anchor" not in light
+
+
+def test_snapped_segments_flag_their_joined_ends():
+    import math
+    pts = [(100 * math.cos(math.radians(a)), 100 * math.sin(math.radians(a)), 20.0)
+           for a in (0, 10, 20, 30)]
+    quads = [(p, q, (q[0] * 0.8, q[1] * 0.8, 20.0), (p[0] * 0.8, p[1] * 0.8, 20.0))
+             for p, q in zip(pts, pts[1:])]
+    v = [tuple(c) for c in _quads_to_tris(quads)]
+    eye = (0.0, 0.0, 0.0)
+    fr = ls.frame(v, ls.oriented_normal_sum(v, eye), 1.0, eye)
+    rects = ls.snapped_strip_rects(fr, {"shape": "strip", "edge": "top",
+                                        "anchor": [95 * 0.98, 95 * 0.17, 20.0]})
+    assert [r.joins for r in rects] == [2] + [3] * (len(rects) - 2) + [1]
+    [lone] = ls.snapped_strip_rects(_frame(), {"shape": "strip", "edge": "top",
+                                                "anchor": [15.0, 51.0, 20.0]})
+    assert lone.joins == 0
