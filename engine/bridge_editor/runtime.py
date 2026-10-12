@@ -5,7 +5,7 @@ from typing import Optional
 
 from engine import bridge_lighting, dev_mode, host_io
 from engine.bridge_editor import lighting_doc as ld
-from engine.bridge_editor import behaviour, glow, lights, materials
+from engine.bridge_editor import behaviour, glow, light_shapes, lights, materials
 
 
 class BridgeRuntime:
@@ -22,6 +22,7 @@ class BridgeRuntime:
         self._t = 0.0          # the bridge clock (spec §11.3): paused-aware dt
         # The probe scales last pushed; the default until a bridge says otherwise.
         self._probe_scales = bridge_lighting.probe_scales()
+        self._frames = {}
 
     def attach(self, iid):
         """Neither overrides nor spots are cleared by C++ on a mission swap,
@@ -40,9 +41,11 @@ class BridgeRuntime:
         load), the old bridge's lights must not stay live on the new one."""
         self._iid, self._doc, self._matched = iid, None, {}
         self._meshes, self._glow_shapes, self._resolved, self._mapped = [], [], {}, frozenset()
+        self._frames = {}
         try:
             self._io.set_bridge_material_overrides(None, [])
             self._io.set_bridge_spots([])
+            self._io.set_bridge_area_lights([])
             self._io.set_bridge_glow(None, [])
         except Exception as e:  # noqa: BLE001 - never let bridge data kill the frame
             dev_mode.log_swallowed("bridge runtime attach clear", e)
@@ -76,9 +79,9 @@ class BridgeRuntime:
             dev_mode.log_swallowed("bridge runtime attach", e)
 
     def push(self, doc, matched=None):
-        """Re-push overrides, the static spot list (geometry + probe-capture
-        colours) and the glow table from an edited doc (the live editor, or
-        attach()), then this frame's live values; tick() re-pushes the live
+        """Re-push overrides, the static spot and area-light lists (geometry +
+        probe-capture colours) and the glow table from an edited doc (the live
+        editor, or attach()), then this frame's live values; tick() re-pushes the live
         values every frame. Returns warnings: emitter warnings (cap drops by
         name and glows skipped for a missing _emissive map, from
         lights.spots, BEFORE the list ever reaches native), plus a separate
@@ -125,10 +128,31 @@ class BridgeRuntime:
                 warnings.append(msg)
                 dev_mode.log_swallowed(
                     "bridge lighting spots dropped", ld.BridgeLightingError(msg))
+            area_list, area_warnings = lights.areas(
+                doc, self._matched, self._resolved, self._frame_for, self._mapped)
+            for w in area_warnings:
+                dev_mode.log_swallowed("bridge lighting emitters", ld.BridgeLightingError(w))
+            warnings += area_warnings
+            dropped = self._io.set_bridge_area_lights(area_list)
+            if dropped:
+                msg = (f"{dropped} bridge area light(s) dropped as invalid "
+                       "(zero size or non-finite values)")
+                warnings.append(msg)
+                dev_mode.log_swallowed(
+                    "bridge lighting area lights dropped", ld.BridgeLightingError(msg))
             self._push_live()
         except Exception as e:  # noqa: BLE001 - see docstring
             dev_mode.log_swallowed("bridge runtime push", e)
         return warnings
+
+    def _frame_for(self, mesh):
+        """The object's light_shapes.Frame (spec §16.2), fetched once per mesh
+        per attach: the geometry is static, the eye is the bridge camera's."""
+        if mesh not in self._frames:
+            got = self._io.bridge_mesh_geometry(self._iid, mesh) if self._iid is not None else None
+            self._frames[mesh] = (light_shapes.frame(*got, eye=tuple(self._eye()))
+                                  if got else None)
+        return self._frames[mesh]
 
     def ambient_scale(self, level) -> Optional[float]:
         """The room light for bridge state `level` (0-4): this bridge's own
@@ -175,6 +199,9 @@ class BridgeRuntime:
             self._io.set_bridge_spot_colours(
                 lights.live_colours(self._doc, self._matched, self._resolved,
                                     self._fade, self._t, self._mapped))
+            self._io.set_bridge_area_colours(
+                lights.live_area_colours(self._doc, self._matched, self._resolved,
+                                         self._fade, self._t, self._frame_for, self._mapped))
         except Exception as e:  # noqa: BLE001 - never let bridge data kill the frame
             dev_mode.log_swallowed("bridge runtime live push", e)
 
@@ -186,9 +213,11 @@ class BridgeRuntime:
         try:
             self._io.set_bridge_material_overrides(None, [])
             self._io.set_bridge_spots([])
+            self._io.set_bridge_area_lights([])
             self._io.set_bridge_glow(None, [])
         except Exception as e:  # noqa: BLE001 - never let bridge data kill the frame
             dev_mode.log_swallowed("bridge runtime detach", e)
         finally:
             self._iid, self._doc, self._matched = None, None, {}
             self._meshes, self._glow_shapes, self._resolved, self._mapped = [], [], {}, frozenset()
+            self._frames = {}
