@@ -17,6 +17,14 @@ PANEL_INTENSITY = 2.0
 STRIP_OFFSET = 1.0            # out from the surface, so a strip on a flat panel lights it
 _LIGHT_MIN_RANGE = 0.01
 _WAVE_DEFAULTS = {"sine": {}, "square": {"duty": 0.5, "soft": 0.0}}
+# Fields each shape's validator accepts (spec §16.1/§16.4); set_light drops
+# any other field for that shape so an edit can never write a document the
+# validator -- and so a save -- would refuse.
+_SHAPE_FIELDS = {
+    "spot": {"inner_deg", "outer_deg", "range", "intensity"},
+    "strip": {"edge", "start", "end", "offset", "range", "intensity"},
+    "panel": {"x0", "x1", "y0", "y1", "offset", "range", "intensity"},
+}
 
 
 def _num(raw, lo=None, hi=None):
@@ -264,6 +272,8 @@ def remove_light(doc, block, name, i):
 
 
 def set_light(light, field, raw):
+    if field not in _SHAPE_FIELDS.get(light.get("shape", "spot"), ()):
+        return
     if field == "edge":
         if raw in ld.EDGES:
             light["edge"] = raw

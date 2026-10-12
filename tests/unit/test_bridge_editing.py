@@ -212,3 +212,31 @@ def test_panel_span_ends_drag_each_other_and_stay_valid():
     d = ld.empty_doc("x")
     ld.object_entry(d, 5, "lip")["lights"] = [light]
     ld.validate(d)
+
+
+def test_set_light_drops_fields_not_valid_for_the_lights_own_shape():
+    spot = {"position": [0, 0, 0], "direction": [0, 1, 0],
+            "inner_deg": 30.0, "outer_deg": 60.0}
+    ed.set_light(spot, "edge", "left")
+    ed.set_light(spot, "start", "0.5")
+    ed.set_light(spot, "x0", "0.5")
+    ed.set_light(spot, "offset", "2.0")
+    assert "edge" not in spot and "start" not in spot
+    assert "x0" not in spot and "offset" not in spot
+
+    strip = {"shape": "strip", "edge": "top", "start": 0.0, "end": 1.0}
+    ed.set_light(strip, "inner_deg", "10")
+    ed.set_light(strip, "x0", "0.3")
+    assert "inner_deg" not in strip and "x0" not in strip
+
+    panel = {"shape": "panel", "x": [0.0, 1.0], "y": [0.0, 1.0]}
+    ed.set_light(panel, "edge", "left")
+    ed.set_light(panel, "start", "0.5")
+    ed.set_light(panel, "inner_deg", "10")
+    assert "edge" not in panel and "start" not in panel and "inner_deg" not in panel
+
+    d = ld.empty_doc("x")
+    ld.object_entry(d, 1, "a")["lights"] = [spot]
+    ld.object_entry(d, 2, "b")["lights"] = [strip]
+    ld.object_entry(d, 3, "c")["lights"] = [panel]
+    ld.validate(d)
