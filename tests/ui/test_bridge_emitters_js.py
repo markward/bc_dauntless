@@ -434,6 +434,18 @@ def test_a_snapped_strip_offers_unsnap_and_hides_the_edge_chips():
     assert "light:0:edge:" not in body and "light:0:start" in body
 
 
+def test_an_anchored_strip_s_help_text_is_true_even_when_the_snap_fell_back():
+    """Review item 5 (Minor): the panel cannot know at render time whether
+    the snap actually found an edge or fell back to the box edge (the
+    status line says so, via the build-time warning) -- so the help text
+    for an anchored strip must not unconditionally claim "Snapped"."""
+    strip = {"shape": "strip", "edge": "top", "anchor": [1, 2, 3], "range": 200, "intensity": 40}
+    [out] = _run([{"state": _state(selected=_sel(lights=[strip], expanded=["light:0"]))}])
+    body = out["body"]
+    assert "if none is in reach the status line says so, and the box edge is used" in body
+    assert "start / end / offset still apply" in body
+
+
 def test_an_unsnapped_strip_offers_snap_and_keeps_the_edge_chips():
     """Edge snap (spec §16.8)."""
     strip = {"shape": "strip", "edge": "top", "range": 200, "intensity": 40}
@@ -442,7 +454,7 @@ def test_an_unsnapped_strip_offers_snap_and_keeps_the_edge_chips():
     assert "light:0:edge:top" in out["body"]
 
 
-def test_the_snap_help_says_strips_snap_on_add():
+def test_an_unsnapped_strip_says_it_is_not_snapped():
     strip = {"shape": "strip", "edge": "top", "range": 200, "intensity": 40}
     [out] = _run([{"state": _state(selected=_sel(lights=[strip], expanded=["light:0"]))}])
     assert "Not snapped" in out["body"]

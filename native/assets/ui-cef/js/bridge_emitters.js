@@ -135,12 +135,12 @@ function _beLightFields(l, i) {
         + _beNumberRow('intensity', a + 'intensity', l.intensity, shape === 'spot' ? 1 : 0.1);
     if (shape === 'strip') {
         // Edge snap (spec §16.8).
-        const i = a.split(':')[1];
         let snap = '<div class="be-row">'
             + '<button onclick="dauntlessEvent(\'bridge-emitters/light-snap:' + i + '\')">Snap to edge here</button>'
             + (l.anchor ? '<button onclick="dauntlessEvent(\'bridge-emitters/light-unsnap:' + i + '\')">Unsnap</button>' : '')
             + '</div><div class="be-help">' + (l.anchor
-                ? 'Snapped to the edge nearest your click; start / end / offset still apply.'
+                ? 'Snapped to the edge nearest your click (if none is in reach the status line '
+                  + 'says so, and the box edge is used); start / end / offset still apply.'
                 : 'Not snapped: on the object\'s box edge. Click the surface to light, near its edge, then Snap.')
             + '</div>';
         let edges = '';
