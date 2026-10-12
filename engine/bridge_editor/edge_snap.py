@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from engine.bridge_editor.light_shapes import (
-    ROOM_UP, STRIP_WIDTH, Rect, Vec, _add, _cross, _dot, _len, _mul, _sub, _unit,
-    light_rect)
+    ROOM_UP, STRIP_WIDTH, VERTICAL_DEG, Rect, Vec, _add, _cross, _dot, _horizontal, _len, _mul,
+    _sub, _unit, light_rect)
 
 CREASE_DEG = 30.0                   # faces meeting at more than this: a sharp edge
 STRAIGHT_DEG = 20.0                 # a run continues while it turns less than this
@@ -83,15 +83,21 @@ def _closest_on_segment(p, a, b):
 def _surface_normal(p, pts, tris, normals):
     """The oriented normal of the triangle under `p` (the clicked one): the
     triangle whose plane is nearest among those `p` projects inside; else the
-    triangle with the nearest centroid."""
+    triangle with the nearest centroid. The inside test is sign-agnostic
+    (every edge term >= -eps, OR every term <= eps): `_welded` orients each
+    triangle's STORED normal toward the eye but never touches its vertex
+    order, so a kept triangle whose winding was the back-facing copy has a
+    normal that points opposite its own winding -- a point truly inside it
+    then gives every term NEGATIVE, not positive."""
     best, best_d = None, float("inf")
     for (a, b, c), n in zip(tris, normals):
         if n is None:
             continue
         d = abs(_dot(_sub(p, pts[a]), n))
         q = _sub(p, _mul(n, _dot(_sub(p, pts[a]), n)))
-        inside = all(_dot(_cross(_sub(pts[v], pts[u]), _sub(q, pts[u])), n) >= -1e-6
-                     for u, v in ((a, b), (b, c), (c, a)))
+        terms = [_dot(_cross(_sub(pts[v], pts[u]), _sub(q, pts[u])), n)
+                 for u, v in ((a, b), (b, c), (c, a))]
+        inside = all(t >= -1e-6 for t in terms) or all(t <= 1e-6 for t in terms)
         if inside and d < best_d:
             best, best_d = n, d
     if best is not None:
@@ -183,7 +189,18 @@ def snap(fr, anchor) -> Optional[Snap]:
     while len(simple) - 1 > MAX_SEGMENTS:
         tol *= 2.0
         simple = _simplify(poly, tol)
-    up = _unit(_sub(ROOM_UP, _mul(ns, _dot(ROOM_UP, ns)))) or (0.0, 1.0, 0.0)
+    # frame()'s own rule for ordering: a near-horizontal surface (ceiling or
+    # floor) uses the horizontal direction from the eye to the run's
+    # midpoint as its hint, not ROOM_UP -- ROOM_UP projected onto a flat
+    # ceiling/floor is always degenerate regardless of where the eye is, so
+    # using it directly (falling back to a FIXED (0, 1, 0) only in that
+    # degenerate case) ignored the eye's side of the room entirely.
+    if abs(_dot(ns, ROOM_UP)) > math.cos(math.radians(VERTICAL_DEG)):
+        mid = _mul(_add(simple[0], simple[-1]), 0.5)
+        hint = _horizontal(_sub(mid, fr.eye)) or (0.0, 1.0, 0.0)
+    else:
+        hint = ROOM_UP
+    up = _unit(_sub(hint, _mul(ns, _dot(hint, ns)))) or (0.0, 1.0, 0.0)
     right = _cross(up, ns)
     run = _sub(simple[-1], simple[0])
     lean = _dot(run, right) if abs(_dot(_unit(run) or up, up)) < 0.7 else _dot(run, up)

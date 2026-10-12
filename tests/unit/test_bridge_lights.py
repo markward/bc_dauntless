@@ -162,8 +162,11 @@ def test_spots_and_area_lights_share_one_budget_in_mesh_order():
     resolved = _links(d, matched)
     b = lights.build(d, matched, resolved, lambda m: PANEL_FRAME)
     assert len(b.spot_rows) == 20 and len(b.area_rows) == 12
-    dropped = [w for w in b.warnings if "dropped" in w]
-    assert len(dropped) == 8 and "2:b light 13" in dropped[0]
+    # Review item 9: 20 spots fill the budget to 20; 12 of "b"'s 20 panels
+    # fit (20 -> 32); the other 8 (light 13..20) each find 0 left.
+    assert b.warnings == [
+        f"2:b light {n}: dropped (needs 1 of the 32 bridge lights, 0 left)"
+        for n in range(13, 21)]
 
 
 def test_a_zero_size_area_light_is_skipped_and_the_colours_stay_aligned():
@@ -232,7 +235,9 @@ def test_the_budget_counts_segments_and_drops_a_strip_whole(monkeypatch):
     matched = {"1:a": 1, "2:b": 2}
     b = lights.build(d, matched, _links(d, matched), lambda m: PANEL_FRAME)
     assert len(b.spot_rows) == 28 and len(b.area_rows) == 1
-    assert any("2:b light 1" in w and "dropped" in w for w in b.warnings)
+    # Review item 9: the strip needs 6 of the 4 left after 28 spots, so it is
+    # dropped whole; the panel after it still fits (28 + 1 <= 32).
+    assert b.warnings == ["2:b light 1: dropped (needs 6 of the 32 bridge lights, 4 left)"]
     assert len(b.area_lit) == len(b.area_rows) and len(b.spot_lit) == len(b.spot_rows)
 
 

@@ -516,6 +516,38 @@ def test_host_io_bridge_glow_wrappers_are_headless_safe(monkeypatch):
     host_io.set_bridge_glow(None, [(0, 2, (1, 1, 1), 1)])
 
 
+def test_host_io_set_bridge_area_lights_passes_joins_only_when_any_are_set(monkeypatch):
+    """Review item 3 (Important): host_io.set_bridge_area_lights splits the
+    9th element (join bits, spec §16.8) off the row tuple into a `joins=`
+    kwarg aligned with the rows -- but only when at least one row carries a
+    nonzero bit; an all-zero strip (or a plain spot-free call) must pass no
+    `joins` kwarg at all, matching the C++ default."""
+    from engine import host_io
+    calls = []
+
+    class H:
+        @staticmethod
+        def set_bridge_area_lights(rows, captures=None, joins=None):
+            calls.append((rows, captures, joins))
+            return 0
+
+    monkeypatch.setattr(host_io, "_h", H)
+
+    def area(joins):
+        return ((0.0, 0.0, 50.0), (5.0, 0.0, 0.0), (0.0, -5.0, 0.0), 120.0,
+                (1.0, 1.0, 1.0), 4.0, (1.0, 1.0, 1.0), (1.0, 1.0, 1.0), joins)
+
+    host_io.set_bridge_area_lights([area(2), area(1)])
+    rows, caps, joins = calls[-1]
+    assert joins == [2, 1]
+    assert len(rows[0]) == 6                          # joins split off, not left in the row
+    assert caps == [((1.0, 1.0, 1.0), (1.0, 1.0, 1.0))] * 2
+
+    host_io.set_bridge_area_lights([area(0), area(0)])
+    _rows, _caps, joins = calls[-1]
+    assert joins is None
+
+
 def test_host_io_set_bridge_spots_splits_captures(monkeypatch):
     from engine import host_io
     calls = []
@@ -551,6 +583,17 @@ def test_set_bridge_area_lights_counts_drops_and_takes_empty_before_init(host_mo
     assert host_module.set_bridge_area_lights([_AREA]) == 0
     assert host_module.set_bridge_area_lights([_AREA] * 35) == 3
     assert host_module.set_bridge_area_lights([]) == 0
+
+
+def test_set_bridge_area_lights_accepts_joins_aligned_with_rows(host_module):
+    """Review item 3 (Important): the `joins` kwarg (spec §16.8) was wired
+    into the binding but never exercised by a test. A wrong length or a
+    non-int entry must be ignored (no joins applied) without raising --
+    same dropped count as not passing it at all."""
+    base = host_module.set_bridge_area_lights([_AREA, _AREA])
+    assert host_module.set_bridge_area_lights([_AREA, _AREA], joins=[2, 1]) == base
+    assert host_module.set_bridge_area_lights([_AREA, _AREA], joins=[2]) == base       # wrong length
+    assert host_module.set_bridge_area_lights([_AREA, _AREA], joins=["x", "y"]) == base  # non-int
 
 
 def test_a_zero_size_or_non_finite_area_light_is_dropped(host_module):
@@ -602,12 +645,28 @@ def test_a_click_under_a_map_3_alcove_lip_snaps_to_the_curved_lip(dbridge, monke
     verts, _n, area = host_io.bridge_mesh_geometry(iid, mesh)
     eye = (0.0, 0.0, 50.0)
     fr = ls.frame(verts, ls.oriented_normal_sum(verts, eye), area, eye)
-    pts, tris, _normals = edge_snap._welded(fr.vertices, eye)
+    pts, tris, normals = edge_snap._welded(fr.vertices, eye)
     target = (-170.5, 28.9, 88.6)              # just under the lip, on the wall
     centroids = [tuple(sum(pts[i][k] for i in t) / 3.0 for k in range(3)) for t in tris]
-    anchor = min(centroids, key=lambda c: sum((c[k] - target[k]) ** 2 for k in range(3)))
+    anchor_index = min(range(len(centroids)),
+                       key=lambda i: sum((centroids[i][k] - target[k]) ** 2 for k in range(3)))
+    anchor = centroids[anchor_index]
     s = edge_snap.snap(fr, anchor)
     assert s is not None
     length = sum(ls._len(ls._sub(b, a)) for a, b in zip(s.polyline, s.polyline[1:]))
     assert length > 100 and 2 <= len(s.polyline) - 1 <= edge_snap.MAX_SEGMENTS
     assert all(88.0 < p[2] < 90.5 for p in s.polyline)
+    # Review item 1 (Critical): the clicked triangle's own (eye-oriented)
+    # normal must be the one the snap reports -- the bug this regresses let
+    # a winding-flipped neighbour win instead.
+    assert ls._dot(s.surface_normal, normals[anchor_index]) > 0.99
+
+    # And every welded triangle in the lip region (block 652 keeps 79 of 281
+    # triangles with reversed winding there) must agree with its own click,
+    # not a neighbour's -- this loop is what would have caught the bug.
+    lip = [i for i, c in enumerate(centroids) if c[2] > 80]
+    assert lip
+    for i in lip:
+        sn = edge_snap.snap(fr, centroids[i])
+        assert sn is not None, centroids[i]
+        assert ls._dot(sn.surface_normal, normals[i]) > 0.99, centroids[i]

@@ -48,9 +48,29 @@ def test_a_click_under_the_lip_snaps_to_the_whole_lip():
     assert sorted(p[0] for p in (poly[0], poly[-1])) == [0, 30]
     assert all(approx(p[1:], (50, 20)) for p in poly)
     assert approx(ns, (0, 0, -1))                    # the ceiling, facing the room
-    # A ceiling's "top" is its edge farther from the eye (frame()'s rule), so
-    # left to right runs -x here.
+    # Ordering follows frame()'s hint for a near-horizontal surface: the
+    # horizontal direction from the eye (15, 0, 10) to the run's midpoint
+    # (15, 50, 20) is +y, giving right = up x ns = -x, so left to right
+    # runs -x here.
     assert approx(poly[0], (30, 50, 20))
+
+
+def test_the_ceiling_ordering_follows_frame_s_hint_not_a_fixed_axis():
+    """Review item 2 (Important): edge_snap used to project ROOM_UP onto the
+    surface and fall back to a fixed (0, 1, 0) only when that projection was
+    exactly degenerate -- which it always is for a flat ceiling/floor,
+    regardless of where the eye is. frame()'s own rule for a near-horizontal
+    surface is different: the hint is the horizontal direction from the eye
+    to the run's midpoint. Moving the eye to the opposite side of the room
+    must reverse which end of the polyline is "left"."""
+    near = edge_snap.snap(_frame(), (15.0, 51.0, 20.0))
+    v = [tuple(float(c) for c in p) for p in ALCOVE]
+    far_eye = (15.0, 110.0, 10.0)
+    far_fr = ls.frame(v, ls.oriented_normal_sum(v, far_eye), 1.0, far_eye)
+    far = edge_snap.snap(far_fr, (15.0, 51.0, 20.0))
+    assert approx(near.surface_normal, far.surface_normal)    # same ceiling plane
+    assert approx(near.polyline[0], far.polyline[-1])
+    assert approx(near.polyline[-1], far.polyline[0])
 
 
 def test_on_a_wall_the_run_goes_left_to_right_as_seen_from_the_room():
@@ -58,6 +78,42 @@ def test_on_a_wall_the_run_goes_left_to_right_as_seen_from_the_room():
     poly, ns = s.polyline, s.surface_normal
     assert approx(ns, (0, -1, 0))
     assert approx(poly[0], (0, 60, 20)) and approx(poly[-1], (30, 60, 20))
+
+
+def _alcove_with_reversed_ceiling_first():
+    """The same alcove as ALCOVE, but the ceiling quad's back-facing
+    (reversed-winding) copy is listed BEFORE its room-facing one -- so
+    `_welded`'s "whichever copy comes first" rule keeps the reversed
+    winding for that triangle (review item 1 repro: DBridge block 652 keeps
+    79 of 281 triangles with this same reversed winding)."""
+    other = [
+        ((0, 60, 0), (30, 60, 0), (30, 60, 20), (0, 60, 20)),
+        ((0, 50, 0), (30, 50, 0), (30, 60, 0), (0, 60, 0)),
+        ((0, 50, 0), (0, 60, 0), (0, 60, 20), (0, 50, 20)),
+        ((30, 50, 0), (30, 50, 20), (30, 60, 20), (30, 60, 0)),
+    ]
+    v = list(_quads_to_tris(other))
+    a, b, c, d = (0, 50, 20), (0, 60, 20), (30, 60, 20), (30, 50, 20)   # the ceiling quad
+    v += [a, c, b, a, d, c, a, b, c, a, c, d]          # reversed copy FIRST, normal second
+    return [tuple(float(x) for x in p) for p in v]
+
+
+def test_the_clicked_surface_normal_is_winding_independent():
+    """Review item 1 (Critical): `_welded` always orients a kept triangle's
+    STORED normal toward the eye, but it never touches the triangle's own
+    vertex order -- so when the kept copy is the back-facing one, that
+    normal was flipped relative to the triangle's own winding. The old
+    inside-test in `_surface_normal` assumed every edge term is
+    >= -eps (consistent winding), so it never matched the ceiling triangle
+    under the click and a different, wrong triangle won instead."""
+    v = _alcove_with_reversed_ceiling_first()
+    eye = EYE
+    fr = ls.frame(v, ls.oriented_normal_sum(v, eye), 1.0, eye)
+    s = edge_snap.snap(fr, (15.0, 51.0, 20.0))
+    assert approx(s.surface_normal, (0, 0, -1))
+    light = {"shape": "strip", "edge": "top", "anchor": [15.0, 51.0, 20.0], "offset": 1.0}
+    [r] = edge_snap.strip_rects(fr, light)
+    assert r.normal[1] > 0 and r.normal[2] > 0       # into the alcove, back onto the ceiling
 
 
 def test_the_snapped_strip_washes_the_clicked_surface_and_offset_moves_it_off_it():
@@ -101,6 +157,49 @@ def test_a_curved_run_becomes_several_segments():
     s = edge_snap.snap(fr, (95 * 0.98, 95 * 0.17, 20.0))
     poly = s.polyline
     assert len(poly) >= 3                    # not one chord across the curve
+
+
+def test_a_snapped_strip_with_zero_length_cut_warns_like_the_unsnapped_case():
+    """Review item 4 (Minor): edge_snap.light_rects returns [] OUTRIGHT for a
+    snapped strip whose start == end (zero-length cut) -- not a per-
+    rectangle zero area -- so lights.build's MIN_AREA loop never ran at
+    all, and the light vanished with no warning whatsoever."""
+    fr = _frame()
+    d = ld.empty_doc("x")
+    ld.object_entry(d, 1, "alcove")["lights"] = [
+        {"shape": "strip", "edge": "top", "anchor": [15.0, 51.0, 20.0],
+         "start": 0.5, "end": 0.5, "intensity": 4}]
+    b = lights.build(d, {"1:alcove": 1}, {}, lambda m: fr)
+    assert b.area_rows == []
+    assert b.warnings == ["1:alcove light 1: zero size; skipped"]
+
+
+def test_a_snapped_strip_s_join_bits_reach_lights_build():
+    """Review item 3 (Important): the join-bit path from edge_snap through
+    lights.build into the renderer row shape was never exercised end to
+    end. The 9th element of an area row is the join bits; a lone (unsnapped
+    or single-segment) light's is 0."""
+    import math
+    pts = [(100 * math.cos(math.radians(a)), 100 * math.sin(math.radians(a)), 20.0)
+           for a in (0, 10, 20, 30)]
+    quads = [(p, q, (q[0] * 0.8, q[1] * 0.8, 20.0), (p[0] * 0.8, p[1] * 0.8, 20.0))
+             for p, q in zip(pts, pts[1:])]
+    v = [tuple(c) for c in _quads_to_tris(quads)]
+    eye = (0.0, 0.0, 0.0)
+    curve_fr = ls.frame(v, ls.oriented_normal_sum(v, eye), 1.0, eye)
+    d = ld.empty_doc("x")
+    ld.object_entry(d, 1, "curve")["lights"] = [
+        {"shape": "strip", "edge": "top", "anchor": [95 * 0.98, 95 * 0.17, 20.0]}]
+    ld.object_entry(d, 2, "lone")["lights"] = [{"shape": "panel"}]
+    matched = {"1:curve": 1, "2:lone": 2}
+    frames = {1: curve_fr, 2: _frame()}
+    b = lights.build(d, matched, {}, frames.get)
+    assert b.warnings == []
+    joins = [row[8] for row in b.area_rows]
+    n = len(joins) - 1                                # the last row is the lone panel
+    assert n >= 2
+    assert joins[:n] == [2] + [3] * (n - 2) + [1]
+    assert joins[-1] == 0
 
 
 def test_the_anchor_is_validated_and_editable():

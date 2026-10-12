@@ -100,8 +100,15 @@ def build(doc, matched, resolved, frame_for=lambda mesh: None, mapped=frozenset(
                 if light.get("anchor") and edge_snap.snap(fr, light["anchor"]) is None:
                     out.warnings.append(
                         f"{label}: no sharp edge near its snap point; using its edge chips")
+                raw_rects = edge_snap.light_rects(light, fr)
+                if not raw_rects:
+                    # A snapped strip whose start == end cuts to zero length:
+                    # edge_snap returns [] outright (not one zero-area
+                    # rectangle), so the per-rectangle check below never runs.
+                    out.warnings.append(f"{label}: zero size; skipped")
+                    continue
                 rects = []
-                for r in edge_snap.light_rects(light, fr):
+                for r in raw_rects:
                     if _cross_len(r.half_u, r.half_v) < MIN_AREA:
                         out.warnings.append(f"{label}: zero size; skipped")
                     else:

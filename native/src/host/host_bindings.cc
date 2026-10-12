@@ -4680,7 +4680,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "range, (r, g, b), intensity)], emitting toward cross(half_u, half_v). "
           "Invalid rows (non-finite, zero size, range <= 0) are dropped; the rest "
           "keep the first 32. Returns the dropped count. captures as "
-          "set_bridge_spots. Never raises for a stale state.");
+          "set_bridge_spots. joins: per-row join bits, bit 0 = joined at -u, bit 1 = "
+          "at +u, spec §16.8; a wrong length is ignored. Never raises for a stale "
+          "state.");
 
     m.def("set_bridge_area_colours",
           [](const std::vector<std::tuple<float, float, float>>& radiance) {
