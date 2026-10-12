@@ -181,7 +181,9 @@ inline AreaTerms area_light(glm::vec3 p, glm::vec3 N, glm::vec3 V, float n_dot_v
                             glm::vec3 c, glm::vec3 u, glm::vec3 v,
                             glm::vec3 radiance, float range) {
     AreaTerms out;
-    const glm::vec3 nl = glm::normalize(glm::cross(u, v));
+    const glm::vec3 uv = glm::cross(u, v);
+    if (glm::dot(uv, uv) < 1e-12f) return out;                         // zero-area: no light
+    const glm::vec3 nl = glm::normalize(uv);
     if (glm::dot(nl, p - c) <= 0.0f) return out;                       // behind / on it
     const glm::vec3 near_p = rect_nearest(p, c, u, v);
     const float dn = glm::length(near_p - p);
@@ -191,7 +193,10 @@ inline AreaTerms area_light(glm::vec3 p, glm::vec3 N, glm::vec3 V, float n_dot_v
     rect_corners(c, u, v, q);
     const float ff = rect_form_factor(p, N, q);
     const glm::vec3 Ln = (near_p - p) / std::max(dn, 1e-4f);
-    const glm::vec3 Fd = F_schlick(std::max(glm::dot(V, glm::normalize(Ln + V)), 0.0f), f0);
+    const glm::vec3 h = Ln + V;
+    const float hl = glm::length(h);
+    const glm::vec3 Hd = hl > 1e-6f ? h / hl : N;                       // Ln == -V: no half-vector
+    const glm::vec3 Fd = F_schlick(std::max(glm::dot(V, Hd), 0.0f), f0);
     const glm::vec3 rad = radiance * win;
     out.diffuse = (glm::vec3(1.0f) - Fd) * (1.0f - metal) * albedo * rad * ff;
     const glm::vec3 rep = rect_representative(p, glm::reflect(-V, N), c, u, v);

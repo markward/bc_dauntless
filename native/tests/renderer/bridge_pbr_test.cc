@@ -309,3 +309,41 @@ TEST(BridgePbrArea, AReceiverOnTheLightIsFiniteZero) {
         EXPECT_EQ(a.spec, glm::vec3(0.0f));
     }
 }
+
+// Review fix round 1, finding 1: a zero-area rectangle (u or v collapsed to
+// zero) made cross(u,v) zero, so normalize() produced NaN that survived the
+// behind/on-it early-out (NaN compares false to <= 0) and propagated into spec.
+TEST(BridgePbrArea, AZeroSizeRectGivesFiniteZero) {
+    using namespace renderer::pbr;
+    const glm::vec3 albedo{0.5f}, f0 = f0_for(albedo, 0.0f);
+    const glm::vec3 c{0, 0, 5}, N{0, 0, 1}, V{0, 0, 1}, p{0, 0, 0};
+    const AreaTerms zero_u = area_light(p, N, V, 1.0f, albedo, 0.0f, 0.5f, f0,
+                                        c, glm::vec3(0.0f), glm::vec3(0, 5, 0),
+                                        glm::vec3(5.0f), 100.0f);
+    EXPECT_TRUE(finite3(zero_u.diffuse) && finite3(zero_u.spec));
+    EXPECT_EQ(zero_u.diffuse, glm::vec3(0.0f));
+    EXPECT_EQ(zero_u.spec, glm::vec3(0.0f));
+    const AreaTerms zero_uv = area_light(p, N, V, 1.0f, albedo, 0.0f, 0.5f, f0,
+                                         c, glm::vec3(0.0f), glm::vec3(0.0f),
+                                         glm::vec3(5.0f), 100.0f);
+    EXPECT_TRUE(finite3(zero_uv.diffuse) && finite3(zero_uv.spec));
+    EXPECT_EQ(zero_uv.diffuse, glm::vec3(0.0f));
+    EXPECT_EQ(zero_uv.spec, glm::vec3(0.0f));
+}
+
+// Review fix round 1, finding 2: when the nearest-point direction Ln is
+// exactly -V, Ln + V == 0 and normalize() of it is NaN, which fed the
+// diffuse Fresnel term. N.V = 0.6 (N = (1,0,0), V = (0.6,0.8,0)); the
+// rectangle's normal is V itself and p sits on the normal through the
+// rectangle's centre, so the nearest-point direction is exactly -V.
+TEST(BridgePbrArea, NearestPointOppositeViewGivesFiniteDiffuse) {
+    using namespace renderer::pbr;
+    const glm::vec3 N{1, 0, 0}, V{0.6f, 0.8f, 0.0f};
+    const glm::vec3 p{3, 4, 0};
+    const glm::vec3 c{0, 0, 0}, u{0, 0, 2}, v{1.6f, -1.2f, 0};      // normalize(cross(u,v)) == V
+    const glm::vec3 albedo{0.5f}, f0 = f0_for(albedo, 0.0f);
+    const AreaTerms a = area_light(p, N, V, glm::dot(N, V), albedo, 0.0f, 0.5f, f0,
+                                   c, u, v, glm::vec3(5.0f), 100.0f);
+    EXPECT_TRUE(finite3(a.diffuse));
+    EXPECT_TRUE(finite3(a.spec));
+}
