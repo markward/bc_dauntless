@@ -588,3 +588,26 @@ def test_area_wrappers_degrade_headless(monkeypatch):
     assert host_io.set_bridge_area_lights([_AREA]) == 0
     assert host_io.set_bridge_area_colours([(1.0, 1.0, 1.0)]) is None
     assert host_io.bridge_mesh_geometry(object(), 0) is None
+
+
+def test_a_click_under_a_map_3_alcove_lip_snaps_to_the_curved_lip(dbridge, monkeypatch):
+    """Spec §16.8: DBridge's Map 3 left wall (block 652) holds three alcoves
+    in one mesh. A click under an alcove's top lip snaps to the curved lip
+    run (measured 2026-10-12: 116 units, y -37..79, z 88.7..89.6)."""
+    from engine.bridge_editor import edge_snap, light_shapes as ls
+    h, iid = dbridge
+    monkeypatch.setattr(host_io, "_h", h)
+    info = host_io.model_identity(iid)
+    [mesh] = [m["mesh"] for m in info["meshes"] if m["block"] == 652]
+    verts, _n, area = host_io.bridge_mesh_geometry(iid, mesh)
+    eye = (0.0, 0.0, 50.0)
+    fr = ls.frame(verts, ls.oriented_normal_sum(verts, eye), area, eye)
+    pts, tris, _normals = edge_snap._welded(fr.vertices, eye)
+    target = (-170.5, 28.9, 88.6)              # just under the lip, on the wall
+    centroids = [tuple(sum(pts[i][k] for i in t) / 3.0 for k in range(3)) for t in tris]
+    anchor = min(centroids, key=lambda c: sum((c[k] - target[k]) ** 2 for k in range(3)))
+    s = edge_snap.snap(fr, anchor)
+    assert s is not None
+    length = sum(ls._len(ls._sub(b, a)) for a, b in zip(s.polyline, s.polyline[1:]))
+    assert length > 100 and 2 <= len(s.polyline) - 1 <= edge_snap.MAX_SEGMENTS
+    assert all(88.0 < p[2] < 90.5 for p in s.polyline)
