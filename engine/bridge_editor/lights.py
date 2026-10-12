@@ -10,7 +10,7 @@ unset-emission default), display -> linear by ^2.2; a material that sets no
 glow lights steady white. A capture colour is the steady value in that
 state, 0 when an animation runs there. A strip or panel's rectangle comes
 from its object's frame (light_shapes, §16.2)."""
-from engine.bridge_editor import behaviour, light_shapes
+from engine.bridge_editor import behaviour, edge_snap, light_shapes
 
 MAX_LIGHTS = 32
 MAX_SPOTS = MAX_LIGHTS          # the old name; the budget is shared now
@@ -103,10 +103,10 @@ def _areas_lit(doc, matched, resolved, frame_for, mapped):
         if fr is None:
             warnings.append(f"{label}: no geometry for its object; skipped")
             continue
-        if light.get("anchor") and light_shapes.snap_edge(fr, light["anchor"]) is None:
+        if light.get("anchor") and edge_snap.snap(fr, light["anchor"]) is None:
             warnings.append(f"{label}: no sharp edge near its snap point; using its edge chips")
-        # A snapped strip (SPIKE, edge snap) is one rectangle per edge segment.
-        for r in light_shapes.light_rects(light, fr):
+        # A snapped strip (edge_snap, §16.8) is one rectangle per edge segment.
+        for r in edge_snap.light_rects(light, fr):
             if _cross_len(r.half_u, r.half_v) < MIN_AREA:
                 warnings.append(f"{label}: zero size; skipped")
                 continue

@@ -1,12 +1,13 @@
-"""SPIKE (edge snap, 2026-10-12): a strip with an `anchor` sits on the mesh's
-sharp edge nearest the clicked point instead of the object's box edge -- the
-fix for compound meshes such as DBridge's Map 3 walls, whose box spans a whole
-wall of alcoves. Synthetic double-sided alcove, no GL."""
+"""Edge snap (spec 2026-10-08-bridge-emitters §16.8): a strip with an
+`anchor` sits on the mesh's sharp edge nearest the clicked point instead of
+the object's box edge -- the fix for compound meshes such as DBridge's Map 3
+walls, whose box spans a whole wall of alcoves. Synthetic double-sided
+alcove, no GL."""
 import json
 
 import pytest
 
-from engine.bridge_editor import editing, light_shapes as ls, lighting_doc as ld, lights
+from engine.bridge_editor import edge_snap, editing, light_shapes as ls, lighting_doc as ld, lights
 
 EYE = (15.0, 0.0, 10.0)
 
@@ -42,7 +43,8 @@ def approx(v, w, tol=1e-6):
 
 
 def test_a_click_under_the_lip_snaps_to_the_whole_lip():
-    poly, ns = ls.snap_edge(_frame(), (15.0, 51.0, 20.0))
+    s = edge_snap.snap(_frame(), (15.0, 51.0, 20.0))
+    poly, ns = s.polyline, s.surface_normal
     assert sorted(p[0] for p in (poly[0], poly[-1])) == [0, 30]
     assert all(approx(p[1:], (50, 20)) for p in poly)
     assert approx(ns, (0, 0, -1))                    # the ceiling, facing the room
@@ -52,14 +54,15 @@ def test_a_click_under_the_lip_snaps_to_the_whole_lip():
 
 
 def test_on_a_wall_the_run_goes_left_to_right_as_seen_from_the_room():
-    poly, ns = ls.snap_edge(_frame(), (15.0, 60.0, 19.0))     # back wall, under its top crease
+    s = edge_snap.snap(_frame(), (15.0, 60.0, 19.0))     # back wall, under its top crease
+    poly, ns = s.polyline, s.surface_normal
     assert approx(ns, (0, -1, 0))
     assert approx(poly[0], (0, 60, 20)) and approx(poly[-1], (30, 60, 20))
 
 
 def test_the_snapped_strip_washes_the_clicked_surface_and_offset_moves_it_off_it():
     light = {"shape": "strip", "edge": "top", "anchor": [15.0, 51.0, 20.0], "offset": 1.0}
-    [r] = ls.snapped_strip_rects(_frame(), light)
+    [r] = edge_snap.strip_rects(_frame(), light)
     assert approx(r.centre, (15, 50, 19)) and approx(r.half_u, (-15, 0, 0))
     assert r.normal[1] > 0 and r.normal[2] > 0       # into the alcove, back onto the ceiling
     assert abs(r.normal[0]) < 1e-9                   # perpendicular to the edge
@@ -68,15 +71,15 @@ def test_the_snapped_strip_washes_the_clicked_surface_and_offset_moves_it_off_it
 def test_start_and_end_cut_the_snapped_run():
     light = {"shape": "strip", "edge": "top", "anchor": [15.0, 51.0, 20.0],
              "start": 0.5, "end": 1.0}
-    [r] = ls.snapped_strip_rects(_frame(), light)
+    [r] = edge_snap.strip_rects(_frame(), light)
     assert approx(r.centre, (7.5, 50, 20)) and approx(r.half_u, (-7.5, 0, 0))
 
 
 def test_nothing_in_reach_falls_back_to_the_box_edge_and_warns():
     fr = _frame()
     light = {"shape": "strip", "edge": "top", "anchor": [500.0, 500.0, 500.0]}
-    assert ls.snap_edge(fr, light["anchor"]) is None
-    assert ls.light_rects(light, fr) == [ls.light_rect(light, fr)]
+    assert edge_snap.snap(fr, light["anchor"]) is None
+    assert edge_snap.light_rects(light, fr) == [ls.light_rect(light, fr)]
     d = ld.empty_doc("x")
     ld.object_entry(d, 1, "alcove")["lights"] = [dict(light, intensity=4)]
     rows, warnings = lights.areas(d, {"1:alcove": 1}, {}, lambda m: fr)
@@ -95,7 +98,8 @@ def test_a_curved_run_becomes_several_segments():
     v = [tuple(c) for c in _quads_to_tris(quads)]
     eye = (0.0, 0.0, 0.0)
     fr = ls.frame(v, ls.oriented_normal_sum(v, eye), 1.0, eye)
-    poly, _ns = ls.snap_edge(fr, (95 * 0.98, 95 * 0.17, 20.0))
+    s = edge_snap.snap(fr, (95 * 0.98, 95 * 0.17, 20.0))
+    poly = s.polyline
     assert len(poly) >= 3                    # not one chord across the curve
 
 
@@ -128,9 +132,15 @@ def test_snapped_segments_flag_their_joined_ends():
     v = [tuple(c) for c in _quads_to_tris(quads)]
     eye = (0.0, 0.0, 0.0)
     fr = ls.frame(v, ls.oriented_normal_sum(v, eye), 1.0, eye)
-    rects = ls.snapped_strip_rects(fr, {"shape": "strip", "edge": "top",
-                                        "anchor": [95 * 0.98, 95 * 0.17, 20.0]})
+    rects = edge_snap.strip_rects(fr, {"shape": "strip", "edge": "top",
+                                       "anchor": [95 * 0.98, 95 * 0.17, 20.0]})
     assert [r.joins for r in rects] == [2] + [3] * (len(rects) - 2) + [1]
-    [lone] = ls.snapped_strip_rects(_frame(), {"shape": "strip", "edge": "top",
-                                                "anchor": [15.0, 51.0, 20.0]})
+    [lone] = edge_snap.strip_rects(_frame(), {"shape": "strip", "edge": "top",
+                                               "anchor": [15.0, 51.0, 20.0]})
     assert lone.joins == 0
+
+
+def test_constants_match_the_spec():
+    assert (edge_snap.CREASE_DEG, edge_snap.STRAIGHT_DEG, edge_snap.SNAP_REACH, edge_snap.SNAP_TIE,
+            edge_snap.SIMPLIFY_TOL, edge_snap.MAX_SEGMENTS, edge_snap.WASH_DEPTH) == \
+        (30.0, 20.0, 20.0, 2.0, 0.5, 6, 10.0)

@@ -247,8 +247,8 @@ def add_light(doc, block, name, position, direction):
 
 
 def snap_light(light, position):
-    """SPIKE (edge snap): a strip snaps to the sharp edge nearest the clicked
-    point (light_shapes.snap_edge); anything else is left alone."""
+    """Edge snap (§16.8): a strip snaps to the sharp edge nearest the clicked
+    point (edge_snap.snap); anything else is left alone."""
     if light.get("shape") == "strip":
         light["anchor"] = [float(c) for c in position]
 

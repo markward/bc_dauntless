@@ -174,7 +174,7 @@ def _area_light(l, where, shape):
     if shape == "strip":
         _obj(l, where, common | {"edge", "start", "end", "anchor"}, ("edge",))
         _enum(l["edge"], f"{where}.edge", EDGES)
-        if "anchor" in l:           # SPIKE (edge snap): the clicked point it snaps from
+        if "anchor" in l:           # edge snap (§16.8): the clicked point it snaps from
             _vec3(l["anchor"], f"{where}.anchor")
         start, end = l.get("start", 0.0), l.get("end", 1.0)
         _num(start, f"{where}.start", 0, 1)
