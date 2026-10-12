@@ -77,6 +77,22 @@ struct BridgeSpot {
     glm::vec3 capture_radiance[2] = {glm::vec3(0.0f), glm::vec3(0.0f)};
 };
 
+/// One static bridge area light (spec 2026-10-08-bridge-emitters §16.3): a
+/// rectangle, centre + perpendicular half-axes, emitting toward
+/// cross(half_u, half_v) only -- a strip or panel cut from an object's front
+/// rectangle (engine/bridge_editor/light_shapes.py). `radiance` is LINEAR
+/// colour x intensity (surface brightness); the capture colours follow the
+/// BridgeSpot rule (§11.4).
+struct BridgeAreaLight {
+    glm::vec3 center{0.0f};
+    glm::vec3 half_u{1.0f, 0.0f, 0.0f};
+    glm::vec3 half_v{0.0f, -1.0f, 0.0f};
+    float     range = 1.0f;
+    glm::vec3 radiance{0.0f};
+    bool      has_capture = false;
+    glm::vec3 capture_radiance[2] = {glm::vec3(0.0f), glm::vec3(0.0f)};
+};
+
 /// One per-shape emitter glow (spec 2026-10-08-bridge-emitters §11.2),
 /// pushed every frame. `src`: 0 the alert's emissive sibling map, 1 the
 /// albedo (the current flipbook frame), 2 flat. `rgb` = profile tint x level
@@ -293,6 +309,14 @@ public:
     /// Extra entries are ignored, missing ones keep their value, non-finite
     /// becomes 0. Never dirties the probes.
     void set_spot_radiance(const std::vector<glm::vec3>& radiance);
+    /// Static area lights (spec §16.3), main bridge view + its probe
+    /// captures only. Keeps the first kBridgeMaxAreaLights, returns how many
+    /// were dropped; marks the probes dirty only when the list changed
+    /// (geometry, range or capture colours -- the set_spots rule).
+    std::size_t set_area_lights(std::vector<BridgeAreaLight> lights);
+    /// Live radiance in set_area_lights order; never dirties the probes.
+    void set_area_radiance(const std::vector<glm::vec3>& radiance);
+    std::size_t area_light_count() const { return area_lights_.size(); }
     /// Per-shape glow for ONE model (the bridge), replacing the previous set;
     /// a later entry for the same mesh wins. Main bridge view only. Never
     /// dirties the probes: glow is not captured (§9.7).
@@ -373,6 +397,8 @@ private:
     bool        capture_pass_ = false;
     /// Static spot lights, at most kBridgeMaxSpots (set_spots truncates).
     std::vector<BridgeSpot> spots_;
+    /// Static area lights, at most kBridgeMaxAreaLights.
+    std::vector<BridgeAreaLight> area_lights_;
     /// Per-shape emitter glow of the model `glow_model_` (0 = none).
     unsigned long long glow_model_ = 0;
     std::unordered_map<int, BridgeGlow> glow_;

@@ -30,6 +30,7 @@ inline constexpr int kBridgeProbeMips = 6;
 inline constexpr int kBridgeBrdfLutSize = 128;
 inline constexpr int kBridgeMaxSpots = 32;
 inline constexpr float kBridgeDefaultSpotIntensity = 2000.0f;
+inline constexpr int kBridgeMaxAreaLights = 32;   // spec §16.3; Python caps spots + areas at 32 together
 
 /// Bridge emissive sibling maps (task 17): bridge.frag adds
 /// `texture(u_emissive_map, uv).rgb * kEmissiveScale` AFTER the diffuse

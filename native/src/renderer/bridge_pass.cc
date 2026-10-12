@@ -344,6 +344,21 @@ void BridgePass::render(const scenegraph::World& world,
         spot_params[i] = glm::vec4(sp.cos_inner, sp.cos_outer, sp.range, 0.0f);
     }
 
+    // Static area lights (spec §16.3), packed like the spots.
+    const int area_count = main_bridge ? static_cast<int>(area_lights_.size()) : 0;
+    glm::vec4 area_cr[kBridgeMaxAreaLights];   // xyz centre, w range
+    glm::vec3 area_u[kBridgeMaxAreaLights];
+    glm::vec3 area_v[kBridgeMaxAreaLights];
+    glm::vec3 area_rad[kBridgeMaxAreaLights];
+    for (int i = 0; i < area_count; ++i) {
+        const BridgeAreaLight& a = area_lights_[static_cast<std::size_t>(i)];
+        area_cr[i] = glm::vec4(a.center, a.range);
+        area_u[i] = a.half_u;
+        area_v[i] = a.half_v;
+        area_rad[i] = (capture_pass_ && a.has_capture)
+            ? a.capture_radiance[capture_probe_] : a.radiance;
+    }
+
     // Uniforms common to both sub-passes: camera, the bridge ambient and the
     // ceiling downlight (kBridgeLighting, bridge_lighting_tuning.h).
     const float pulse_phase = highlight_phase();
@@ -400,6 +415,13 @@ void BridgePass::render(const scenegraph::World& world,
             s.set_vec3_array("u_spot_dir", spot_dir, spot_count);
             s.set_vec3_array("u_spot_radiance", spot_rad, spot_count);
             s.set_vec4_array("u_spot_params", spot_params, spot_count);
+        }
+        s.set_int("u_area_count", area_count);
+        if (area_count > 0) {
+            s.set_vec4_array("u_area_center_range", area_cr, area_count);
+            s.set_vec3_array("u_area_u", area_u, area_count);
+            s.set_vec3_array("u_area_v", area_v, area_count);
+            s.set_vec3_array("u_area_radiance", area_rad, area_count);
         }
     };
 
@@ -624,6 +646,35 @@ void BridgePass::set_spot_radiance(const std::vector<glm::vec3>& radiance) {
     for (std::size_t i = 0; i < n; ++i) {
         const glm::vec3& r = radiance[i];
         spots_[i].radiance = (std::isfinite(r.x) && std::isfinite(r.y) && std::isfinite(r.z))
+            ? r : glm::vec3(0.0f);
+    }
+}
+
+std::size_t BridgePass::set_area_lights(std::vector<BridgeAreaLight> lights) {
+    const std::size_t cap = static_cast<std::size_t>(kBridgeMaxAreaLights);
+    const std::size_t dropped = lights.size() > cap ? lights.size() - cap : 0;
+    if (dropped > 0) lights.resize(cap);
+    auto same = [](const BridgeAreaLight& a, const BridgeAreaLight& b) {
+        if (!(a.center == b.center && a.half_u == b.half_u && a.half_v == b.half_v &&
+              a.range == b.range && a.has_capture == b.has_capture))
+            return false;
+        if (a.has_capture)
+            return a.capture_radiance[0] == b.capture_radiance[0] &&
+                   a.capture_radiance[1] == b.capture_radiance[1];
+        return a.radiance == b.radiance;
+    };
+    const bool unchanged = lights.size() == area_lights_.size() &&
+        std::equal(lights.begin(), lights.end(), area_lights_.begin(), same);
+    area_lights_ = std::move(lights);
+    if (!unchanged) request_probe_capture();
+    return dropped;
+}
+
+void BridgePass::set_area_radiance(const std::vector<glm::vec3>& radiance) {
+    const std::size_t n = std::min(radiance.size(), area_lights_.size());
+    for (std::size_t i = 0; i < n; ++i) {
+        const glm::vec3& r = radiance[i];
+        area_lights_[i].radiance = (std::isfinite(r.x) && std::isfinite(r.y) && std::isfinite(r.z))
             ? r : glm::vec3(0.0f);
     }
 }

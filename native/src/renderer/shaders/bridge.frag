@@ -127,6 +127,17 @@ uniform vec3 u_spot_dir[MAX_SPOTS];       // unit cone axis
 uniform vec3 u_spot_radiance[MAX_SPOTS];
 uniform vec4 u_spot_params[MAX_SPOTS];    // x cos_inner, y cos_outer, z range
 
+// ── Static area lights: strips and panels (spec 2026-10-08-bridge-emitters §16.3) ──
+// Rectangles: centre (xyz) + range (w), perpendicular half-axes u and v;
+// each emits toward cross(u, v) only. Twins of the pbr:: functions of the
+// same names in bridge_pbr.h.
+const int MAX_AREA_LIGHTS = 32;     // renderer::kBridgeMaxAreaLights
+uniform int  u_area_count;
+uniform vec4 u_area_center_range[MAX_AREA_LIGHTS];
+uniform vec3 u_area_u[MAX_AREA_LIGHTS];
+uniform vec3 u_area_v[MAX_AREA_LIGHTS];
+uniform vec3 u_area_radiance[MAX_AREA_LIGHTS];
+
 out vec4 FragColor;
 
 // Integer hash (Squirrel3-style, as used by the bridge-lighting debug-view
@@ -320,6 +331,139 @@ void accumulate_spots(vec3 N, vec3 V, float NdotV, vec3 albedo, float metal,
     }
 }
 
+// ── Static area lights: strips and panels (spec 2026-10-08-bridge-emitters §16.3) ──
+// Rectangles: centre c, half-axes u and v (perpendicular); each emits toward
+// cross(u, v) only. Diffuse is the exact horizon-clipped Lambert edge
+// integral (Heitz); specular is GGX at a representative point (Karis), its
+// lobe widened by the light's size. Twins of renderer::pbr's same names
+// (bridge_pbr.h) -- that header is the authority; keep this in step.
+float range_window(float d, float range) {
+    float r = d / max(range, 1e-4);
+    float w = clamp(1.0 - r * r * r * r, 0.0, 1.0);
+    return w * w;
+}
+
+float area_integrate_edge(vec3 v1, vec3 v2) {
+    float cos_t = clamp(dot(v1, v2), -1.0, 1.0);
+    float theta = acos(cos_t);
+    return cross(v1, v2).z * ((theta > 0.001) ? theta / sin(theta) : 1.0);
+}
+
+// Heitz's ClipQuadToHorizon (tangent space, z up). Returns the vertex count.
+int area_clip_quad_to_horizon(inout vec3 L[5]) {
+    int config = 0;
+    if (L[0].z > 0.0) config += 1;
+    if (L[1].z > 0.0) config += 2;
+    if (L[2].z > 0.0) config += 4;
+    if (L[3].z > 0.0) config += 8;
+    int n = 0;
+    if (config == 0) { n = 0; }
+    else if (config == 1) { n = 3; L[1] = -L[1].z * L[0] + L[0].z * L[1]; L[2] = -L[3].z * L[0] + L[0].z * L[3]; }
+    else if (config == 2) { n = 3; L[0] = -L[0].z * L[1] + L[1].z * L[0]; L[2] = -L[2].z * L[1] + L[1].z * L[2]; }
+    else if (config == 3) { n = 4; L[2] = -L[2].z * L[1] + L[1].z * L[2]; L[3] = -L[3].z * L[0] + L[0].z * L[3]; }
+    else if (config == 4) { n = 3; L[0] = -L[3].z * L[2] + L[2].z * L[3]; L[1] = -L[1].z * L[2] + L[2].z * L[1]; }
+    else if (config == 5) { n = 0; }
+    else if (config == 6) { n = 4; L[0] = -L[0].z * L[1] + L[1].z * L[0]; L[3] = -L[3].z * L[2] + L[2].z * L[3]; }
+    else if (config == 7) { n = 5; L[4] = -L[3].z * L[0] + L[0].z * L[3]; L[3] = -L[3].z * L[2] + L[2].z * L[3]; }
+    else if (config == 8) { n = 3; L[0] = -L[0].z * L[3] + L[3].z * L[0]; L[1] = -L[2].z * L[3] + L[3].z * L[2]; L[2] = L[3]; }
+    else if (config == 9) { n = 4; L[1] = -L[1].z * L[0] + L[0].z * L[1]; L[2] = -L[2].z * L[3] + L[3].z * L[2]; }
+    else if (config == 10) { n = 0; }
+    else if (config == 11) { n = 5; L[4] = L[3]; L[3] = -L[2].z * L[3] + L[3].z * L[2]; L[2] = -L[2].z * L[1] + L[1].z * L[2]; }
+    else if (config == 12) { n = 4; L[1] = -L[1].z * L[2] + L[2].z * L[1]; L[0] = -L[0].z * L[3] + L[3].z * L[0]; }
+    else if (config == 13) { n = 5; L[4] = L[3]; L[3] = L[2]; L[2] = -L[1].z * L[2] + L[2].z * L[1]; L[1] = -L[1].z * L[0] + L[0].z * L[1]; }
+    else if (config == 14) { n = 5; L[4] = -L[0].z * L[3] + L[3].z * L[0]; L[0] = -L[0].z * L[1] + L[1].z * L[0]; }
+    else { n = 4; }
+    if (n == 3) L[3] = L[0];
+    if (n == 4) L[4] = L[0];
+    return n;
+}
+
+float rect_form_factor(vec3 p, vec3 n, vec3 c0, vec3 c1, vec3 c2, vec3 c3) {
+    vec3 ln = normalize(cross(c1 - c0, c3 - c0));
+    if (dot(ln, p - c0) <= 0.0) return 0.0;
+    vec3 helper = (abs(n.z) < 0.9) ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+    vec3 t1 = normalize(cross(helper, n));
+    vec3 t2 = cross(n, t1);
+    vec3 L[5];
+    vec3 d0 = c0 - p, d1 = c1 - p, d2 = c2 - p, d3 = c3 - p;
+    L[0] = vec3(dot(d0, t1), dot(d0, t2), dot(d0, n));
+    L[1] = vec3(dot(d1, t1), dot(d1, t2), dot(d1, n));
+    L[2] = vec3(dot(d2, t1), dot(d2, t2), dot(d2, n));
+    L[3] = vec3(dot(d3, t1), dot(d3, t2), dot(d3, n));
+    L[4] = L[0];
+    int m = area_clip_quad_to_horizon(L);
+    if (m == 0) return 0.0;
+    for (int i = 0; i < 5; ++i) {
+        float len = length(L[i]);
+        if (len < 1e-9) return 0.0;
+        L[i] /= len;
+    }
+    float s = area_integrate_edge(L[0], L[1]) + area_integrate_edge(L[1], L[2])
+            + area_integrate_edge(L[2], L[3]);
+    if (m >= 4) s += area_integrate_edge(L[3], L[4]);
+    if (m == 5) s += area_integrate_edge(L[4], L[0]);
+    return clamp(abs(s) / (2.0 * kPi), 0.0, 1.0);
+}
+
+vec3 rect_nearest(vec3 p, vec3 c, vec3 u, vec3 v) {
+    float s = clamp(dot(p - c, u) / max(dot(u, u), 1e-12), -1.0, 1.0);
+    float t = clamp(dot(p - c, v) / max(dot(v, v), 1e-12), -1.0, 1.0);
+    return c + u * s + v * t;
+}
+
+vec3 rect_representative(vec3 p, vec3 r, vec3 c, vec3 u, vec3 v) {
+    vec3 n = normalize(cross(u, v));
+    float denom = dot(r, n);
+    if (denom > -1e-6) return rect_nearest(p, c, u, v);
+    float t = dot(c - p, n) / denom;
+    if (t <= 0.0) return rect_nearest(p, c, u, v);
+    return rect_nearest(p + r * t, c, u, v);
+}
+
+// Adds every area light's linear diffuse and GGX specular at this fragment
+// (pbr::area_light). The probe capture passes its own normal/view and
+// ignores `spec`.
+void accumulate_area_lights(vec3 N, vec3 V, float NdotV, vec3 albedo, float metal,
+                            float rough, vec3 F0, inout vec3 diffuse, inout vec3 spec) {
+    for (int i = 0; i < u_area_count; ++i) {
+        vec3 c = u_area_center_range[i].xyz;
+        vec3 u = u_area_u[i], v = u_area_v[i];
+        // Zero-area early-out, before normalising (pbr::area_light's NaN guard).
+        vec3 uv = cross(u, v);
+        if (dot(uv, uv) < 1e-12) continue;
+        vec3 nl = normalize(uv);
+        if (dot(nl, v_world - c) <= 0.0) continue;
+        vec3 near_p = rect_nearest(v_world, c, u, v);
+        float dn = length(near_p - v_world);
+        float win = range_window(dn, u_area_center_range[i].w);
+        if (win <= 0.0) continue;
+        float ff = rect_form_factor(v_world, N, c - u - v, c + u - v, c + u + v, c - u + v);
+        vec3 Ln = (near_p - v_world) / max(dn, 1e-4);
+        // Guarded half-vector: Ln == -V on the degenerate on-plane case would
+        // otherwise normalize a zero vector (pbr::area_light's other NaN guard).
+        vec3 h = Ln + V;
+        float hl = length(h);
+        vec3 Hd = hl > 1e-6 ? h / hl : N;
+        vec3 Fd = F_schlick(max(dot(V, Hd), 0.0), F0);
+        vec3 rad = u_area_radiance[i] * win;
+        diffuse += (vec3(1.0) - Fd) * (1.0 - metal) * albedo * rad * ff;
+        vec3 rep = rect_representative(v_world, reflect(-V, N), c, u, v);
+        float d = max(length(rep - v_world), 1e-4);
+        vec3 L = (rep - v_world) / d;
+        float NdotL = max(dot(N, L), 0.0);
+        if (NdotL <= 0.0) continue;
+        float cos_l = max(dot(-L, nl), 0.0);
+        float area = 4.0 * length(u) * length(v);
+        float omega = min(area * cos_l / (d * d), 2.0 * kPi);
+        float a = rough * rough;
+        float a_eff = min(a + sqrt(area / kPi) / (2.0 * d), 1.0);
+        vec3 H = normalize(L + V);
+        vec3 F = F_schlick(max(dot(V, H), 0.0), F0);
+        spec += D_ggx(max(dot(N, H), 0.0), sqrt(a_eff)) * G_smith(NdotV, NdotL, rough) * F
+              / max(4.0 * NdotV * NdotL, 1e-4) * rad * NdotL * omega;
+    }
+}
+
 // ── Emitter glow (spec 2026-10-08-bridge-emitters §11.2) ───────────────────
 // Per shape, pushed every frame: -1 = none (the texture-level _emissive
 // default above), 0 = the alert's emissive map, 1 = the albedo (this
@@ -383,12 +527,14 @@ void main() {
         // accumulate_spots, so it carries the (1 - F) factor that the
         // capture's downlight term above does not -- ~4% at F0 0.04.
         // Accepted: the probe only feeds the (small) dielectric reflection.
-        if (u_spot_count > 0) {
+        if (u_spot_count > 0 || u_area_count > 0) {
             float rough_c = clamp(channel(u_has_rough_map, u_rough_map, u_rough_override, 1.0), 0.04, 1.0);
             vec3 Vc = normalize(u_eye - v_world);
             vec3 spec_unused = vec3(0.0);
             accumulate_spots(nc, Vc, max(dot(nc, Vc), 1e-4), albedo_c, metal_c, rough_c,
                              f0_for(albedo_c, metal_c), lit, spec_unused);
+            accumulate_area_lights(nc, Vc, max(dot(nc, Vc), 1e-4), albedo_c, metal_c, rough_c,
+                                   f0_for(albedo_c, metal_c), lit, spec_unused);
         }
         // The view caps lit diffuse in display space; the probe stores the
         // same capped radiance, back in linear.
@@ -448,9 +594,11 @@ void main() {
             vec2 ab = texture(u_brdf_lut, vec2(NdotV, rough)).rg;
             spec = pre * (F0 * ab.x + ab.y) * specular_occlusion(NdotV, ao, rough);
         }
-        // Static spots: direct light, never multiplied by AO. Their diffuse
-        // goes through the ceiling in combine(); only specular may exceed it.
+        // Static spots and area lights: direct light, never multiplied by AO.
+        // Their diffuse goes through the ceiling in combine(); only specular
+        // may exceed it.
         accumulate_spots(N, V, NdotV, albedo, metal, rough, F0, diffuse, spec);
+        accumulate_area_lights(N, V, NdotV, albedo, metal, rough, F0, diffuse, spec);
         float dip = glow_dip(base_uv);
         diffuse *= dip;
         spec *= dip;
