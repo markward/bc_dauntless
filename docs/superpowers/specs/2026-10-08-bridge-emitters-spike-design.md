@@ -1010,7 +1010,11 @@ holds only spots).
 host query `bridge_mesh_geometry(iid, mesh)`: the shape's world-space vertices
 and its area-weighted normal sum (C++ owns the triangles).
 
-- **Frame**: *facing* = the normalised normal sum; *up* = room up (+Z) with
+- **Frame**: *facing* = the normalised normal sum -- each triangle's normal
+  first turned toward the bridge eye (`light_shapes.oriented_normal_sum`;
+  DBridge's walls carry a back-facing copy of every face, so raw winding
+  cancels: final review 2026-10-12, 3 of 145 shapes fell to "no facing");
+  *up* = room up (+Z) with
   its facing component removed, normalised; *right* = up x facing. The
   object's box in (right, up, facing) gives the **front rectangle**: the box
   face at max facing (toward the room). An alcove's front rectangle is its
@@ -1087,9 +1091,9 @@ and its area-weighted normal sum (C++ owns the triangles).
 
 ### 16.6 Out of scope
 
-Strips that follow the rim (`follow: "rim"`); disc or curved panels; an LTC
-specular table; shadows from area lights; drawing the light rectangle in the
-editor.
+Disc or curved panels; an LTC specular table; shadows from area lights;
+drawing the light rectangle in the editor. (Strips that follow the rim:
+§16.8.)
 
 ### 16.7 As built
 
@@ -1098,3 +1102,66 @@ Built on `feat/bridge-area-lights` (plan
 -- Mark's DBridge check (a strip on an alcove lip, a panel on the dome) is owed,
 and the defaults (`STRIP_INTENSITY` 40, `PANEL_INTENSITY` 2, `STRIP_OFFSET` 1 in
 `engine/bridge_editor/editing.py`) are first guesses to tune there.
+
+### 16.8 Edge snap: strips on the edge you click *(designed with Mark 2026-10-12)*
+
+Why: the first live check put a strip on DBridge's Map 3 above the alcove,
+not in it. Map 3 is one mesh per side wall (blocks 652 / 663: 578 triangles,
+y -185 to 94, z 0 to 107) holding three alcoves, the cabinets and the door
+frame, so its front rectangle is the whole wall and no box edge, start / end
+or offset reaches the alcove lip. Compound meshes like it are the rule on the
+bridge sets. A spike (`spike/strip-edge-snap`) snapped a strip to the mesh's
+own edge nearest a click; Mark: "looks much better" -- once a highlight
+doubling at the joints was fixed (below).
+
+- **Data** (still `format: 4`, unshipped): a strip may carry `anchor`
+  (`[x, y, z]`, the clicked point, bridge space like a spot's `position`).
+  With it the strip sits on the sharp edge nearest the anchor, recomputed
+  from the mesh at load; `edge` stays required and is the fallback when no
+  edge is in reach (status line says so). `start`, `end`, `offset` apply to
+  both.
+- **Snap** (`engine/bridge_editor/edge_snap.py`, pure Python), constants in
+  one block:
+  - weld vertices at 0.01 units; drop degenerate and duplicate triangles
+    (the back-facing copies); orient each normal toward the eye;
+  - sharp edges: open edges, and edges whose faces meet at more than
+    `CREASE_DEG` 30;
+  - candidates: sharp edges within `SNAP_TIE` 2 units of the nearest one,
+    all within `SNAP_REACH` 20; each is walked both ways while the run turns
+    less than `STRAIGHT_DEG` 20; the **longest run wins** (a click by a lip
+    must not take the short fillet at its corner);
+  - the run is simplified (Douglas-Peucker, `SIMPLIFY_TOL` 0.5 units, the
+    tolerance doubled until at most `MAX_SEGMENTS` 6) -- Map 3's lips are
+    7-10-vertex runs on a curved wall, and a single chord floats ~3 units off
+    it;
+  - ordered left to right as seen from the clicked surface (`frame()`'s
+    rule: an upright edge bottom to top, a ceiling's "top" its far edge);
+    cut to `[start, end]` by arc length;
+  - one rectangle per segment, `STRIP_WIDTH` wide, moved out along the
+    clicked surface's normal by `offset`, aimed at the clicked surface
+    `WASH_DEPTH` 10 units in from the edge: it washes the surface you
+    clicked (under a lip: down the wall; on a ceiling: along it).
+- **Joints** (renderer): each segment is its own area light, and each gave a
+  full representative-point highlight, so both neighbours lit every joint
+  (Map 3: 0.75 + 0.75 against 0.65 mid-segment -- bloom blobs). A segment
+  carries join bits (bit 0: joined at its -u end, bit 1: at +u); at a joined
+  end the highlight fades to half over the lobe footprint `d x a_eff`, so
+  neighbours sum to one (`pbr::area_join_weight`, GLSL twin). Diffuse is
+  exact and untouched; lone rectangles and free ends are unchanged.
+- **Budget**: segments, not lights. Spots, strip segments and panels share
+  the 32; rows are built once, in mesh order, by one builder that both the
+  static rows and the live colours use. A light that does not fit **whole**
+  is dropped with a warning -- a snapped strip is never cut short.
+- **Editor**: **Add Light -> Strip** snaps at once to the edge nearest the
+  click that selected the object; with no click on record, or nothing in
+  reach, it is an unsnapped strip with the edge chips. On a strip row:
+  **Snap to edge here** (re-snap to the latest click) and **Unsnap**; the
+  edge chips show only while unsnapped.
+- **Tests**: synthetic double-sided alcove (lip, left-to-right, wash
+  direction, offset, start / end, curved run kept as a polyline, nothing in
+  reach -> fallback + warning, join bits); the C++ joint test (unjoined
+  segments > 1.5x a single rectangle at the joint, joined within 20%) and a
+  frame test pinning the shader to it; the budget counting segments and
+  dropping a whole strip; a DBridge test (asset-backed): a click under the
+  Map 3 alcove lip snaps to the curved lip run, > 100 units, <= 6 segments.
+- **Out of scope**: drawing the snapped edge; panels from a clicked face.
