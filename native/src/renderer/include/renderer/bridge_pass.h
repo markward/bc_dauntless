@@ -69,12 +69,38 @@ struct BridgeSpot {
     float     cos_outer = 1.0f;
     float     range = 1.0f;
     glm::vec3 radiance{0.0f};
+    /// Spec 2026-10-08-bridge-emitters §11.4: the radiance each probe capture
+    /// sees -- [0] the green probe, [1] the yellow/red one -- separate from the
+    /// live `radiance` (set_spot_radiance), so a pulsing or fading light never
+    /// recaptures. false = both captures use `radiance` (the PBR-step rule).
+    bool      has_capture = false;
+    glm::vec3 capture_radiance[2] = {glm::vec3(0.0f), glm::vec3(0.0f)};
 };
+
+/// One per-shape emitter glow (spec 2026-10-08-bridge-emitters §11.2),
+/// pushed every frame. `src`: 0 the alert's emissive sibling map, 1 the
+/// albedo (the current flipbook frame), 2 flat. `rgb` = profile tint x level
+/// x wave x scale, DISPLAY space, added after the diffuse ceiling; `level` =
+/// level x wave x scale, which dips the received light (1 - m x clamp(level)).
+struct BridgeGlow {
+    int       mesh = -1;
+    int       src = 0;
+    glm::vec3 rgb{0.0f};
+    float     level = 0.0f;
+};
+
+/// Bridge states beyond the alert levels (spec 2026-10-08-bridge-emitters §13.1):
+/// 0 green, 1 yellow, 2 red, 3 offline, 4 special.
+inline constexpr int kBridgeStateOffline = 3;
+inline constexpr int kBridgeStateSpecial = 4;
 
 /// The Model::textures index of the emissive map a bridge material shows at
 /// alert level `alert` (0 green, 1 yellow, 2 red; anything else is green):
-/// yellow -> EmissiveYellow, red -> EmissiveRed, each falling back to Emissive
-/// when absent; green -> Emissive. -1 = no emissive map.
+/// yellow -> EmissiveYellow, red -> EmissiveRed then EmissiveYellow, each
+/// falling back to Emissive; green -> Emissive; special -> EmissiveSpecial
+/// else Emissive; offline -> Emissive (for a MATERIAL glow through the
+/// emission map; the texture-level default is dark at offline -- draw_mesh).
+/// -1 = no emissive map.
 int bridge_emissive_texture(const assets::Material& mat, int alert);
 
 /// Renders the bridge interior in two sub-passes, both through bridge.frag:
@@ -263,6 +289,16 @@ public:
     /// reset_probes(), which drops the captures and the request). The host
     /// does not call it: a new session builds a fresh BridgePass.
     void clear_spots() { spots_.clear(); }
+    /// Live radiance for the current spots in set_spots order (spec §11.4).
+    /// Extra entries are ignored, missing ones keep their value, non-finite
+    /// becomes 0. Never dirties the probes.
+    void set_spot_radiance(const std::vector<glm::vec3>& radiance);
+    /// Per-shape glow for ONE model (the bridge), replacing the previous set;
+    /// a later entry for the same mesh wins. Main bridge view only. Never
+    /// dirties the probes: glow is not captured (§9.7).
+    void set_glow(unsigned long long model_handle, std::vector<BridgeGlow> glow);
+    void clear_glow() { glow_.clear(); glow_model_ = 0; }
+    std::size_t glow_count() const { return glow_.size(); }
     std::size_t spot_count() const { return spots_.size(); }
 
     /// Drop the captures (no specular until the next request), the pending
@@ -337,6 +373,11 @@ private:
     bool        capture_pass_ = false;
     /// Static spot lights, at most kBridgeMaxSpots (set_spots truncates).
     std::vector<BridgeSpot> spots_;
+    /// Per-shape emitter glow of the model `glow_model_` (0 = none).
+    unsigned long long glow_model_ = 0;
+    std::unordered_map<int, BridgeGlow> glow_;
+    /// Which probe a capture pass is drawing: 0 green, 1 yellow/red.
+    int capture_probe_ = 0;
     void capture_probes(const scenegraph::World& world, Pipeline& pipeline,
                         const ModelLookup& lookup, const Lighting& lighting);
 

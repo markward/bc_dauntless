@@ -4,6 +4,8 @@
 > (worktree `.claude/worktrees/bridge-emitters`), off local `main` `08045a2d`.
 > Builds on the merged baseline (`2026-10-08-bridge-lighting-baseline-design.md`).
 > Updated with each accepted iteration; §10 is the iteration log.
+> **2026-10-10:** §11 = emitter glow slice 1 (branch `feat/dbridge-round7`), amending §6.1, §7 and §9.7.
+> **2026-10-11:** §12 = editor panes for glow and profiles (slice 2). §13 = modifier stacks, five states, editor chrome (slice 3; supersedes §11's state shape and §12's panes).
 
 ## 1. Goal
 
@@ -175,7 +177,7 @@ throws into the room.
   - `texture`: the shape's own base colour (albedo);
   - `flat`: 1. Needed because DBridge's alert bars are textured **black**,
     so texture × tint gives nothing.
-- **`mask`** sets which texels glow:
+- **`mask`** sets which texels glow *(dropped from the schema for slice 1 -- §11.2)*:
   - `whole`: every texel of the shape;
   - `base_alpha`: the base texture's alpha (BC's GlowAlpha textures already
     store a bulb mask there — redalertpanel is 7% bulbs);
@@ -492,7 +494,7 @@ It is NOT the §6 emitter and does not replace it.
   probe them. An `_emissive*` file is a derived map: never probed for
   siblings itself, and refused as a mesh-fix / shape-diff albedo
   (`check_albedo_name`, `_RESERVED_SUFFIXES`).
-- **Alert selection** (`renderer::bridge_emissive_texture`): yellow →
+- **Alert selection** *(red's fallback amended by §11.1: `_r`, else `_y`, else default)* (`renderer::bridge_emissive_texture`): yellow →
   `_emissive_y` else `_emissive`; red → `_emissive_r` else `_emissive`;
   green and any unknown level → `_emissive`. A hard switch, no fade.
   `host_loop` pushes `set_bridge_alert_level(GetAlertLevel())` every frame
@@ -547,3 +549,412 @@ It is NOT the §6 emitter and does not replace it.
 | — | 2026-10-09 | Plan-time corrections: dev panels keep the pause menu open-but-hidden; loader rejects unknown keys (writer no longer "keeps" them); mod lookup path named | — | 4, 7 |
 | F1 | 2026-10-09 | Foundation built: fly camera, pick + identity, selection tint, lighting doc + writer, panel (plan 2026-10-09-bridge-editor-foundation) | live-verified (Mark, 2026-10-09: "works!") | 4, 7, 8 |
 | E1 | 2026-10-09 | Emissive sibling maps `_emissive{,_y,_r}` (task 17): interior loads, per-alert variant, after the diffuse ceiling, probes exclude | built; live-verified by Mark 2026-10-10 (green/yellow/red on DBridge) | 6.1, 9.7 |
+| G0 | 2026-10-10 | Emitter glow slice 1 designed: maps = where, profiles = how; `src` emissive/texture/flat; red falls back to yellow; light colour = evaluated^2.2; probe capture colours split from live colours | agreed with Mark | 9.7, 11 |
+| G1 | 2026-10-10 | Glow slice 1 built (plan 2026-10-10-bridge-emitter-glow-slice-1): per-mesh glow + dip, profiles/waves/fades, spot capture vs live colours, DBridge alcove + roof data | built; live-verified by Mark 2026-10-11 ("works as described") | 11 |
+| G2 | 2026-10-11 | Editor panes designed (§12): glow + profile panes, state tabs double as the alert preview, preview clock, shared colour wheel | agreed with Mark | 12 |
+| G3 | 2026-10-11 | Editor panes built (plan 2026-10-11-bridge-editor-glow-panes) | built; awaiting Mark's live check | 12 |
+| G4 | 2026-10-11 | Slice 3 designed (§13): Object/Material tabs over a shared material library of scoped Emitter/Animation modifiers (phase in Animation), five states (offline/special), editor bar chrome, Shift-fly | approved by Mark 2026-10-11 (incl. Shift-fly and offline-dark) | 13 |
+| G5 | 2026-10-11 | Slice 3 built (plan 2026-10-11-bridge-materials-slice-3) | built; awaiting Mark's live check | 13 |
+| G6 | 2026-10-12 | Emission is a Finish row; Emitter -> State override; strength and fade_s removed; Transition modifier (0.5 s default); `format: 3` | designed with Mark 2026-10-12; built | 14 |
+| G7 | 2026-10-12 | Room light: a bridge with its own lights is lit by them (room light 0 unless set per state); Bridge Settings cog; reflections captured under it | designed with Mark 2026-10-12; built | 15 |
+
+## 11. Emitter glow — slice 1 *(agreed with Mark 2026-10-10)*
+
+The first build step of §6. It amends §6/§7/§9.7 where it says so; everything
+else in §6 stands.
+
+### 11.1 The rule: maps say WHERE, profiles say HOW
+
+- **Maps** decide which texels glow and their colour detail (an `_emissive`
+  map, or the albedo itself). Pixels never change over time.
+- **Profiles** decide the colour, brightness and motion per alert state:
+  `tint`, `level`, `wave`, and the `fade_s` between states (§6.3). One profile
+  drives the glow AND the shape's cast light, so they match by construction.
+- **`_emissive_y` / `_emissive_r` stay**, but only for alerts where the
+  PATTERN changes (measured: Map 22a's green map lights only the middle block;
+  its yellow map lights the whole strip; its red map is the yellow one × about
+  (1.05, 0.08, 0.19) -- a tint). The profile multiplies whichever map is chosen.
+- **Fallback amended (§9.7):** red → `_emissive_r`, else `_emissive_y`, else
+  `_emissive` (it skipped yellow before). Matches the green vs yellow/red probe
+  pairing (§9.4). No shipped data changes: nothing has `_y` without `_r`.
+- Why not maps alone: a light has no pixels, so its alert colours live in JSON
+  anyway; pulses as maps are flipbooks; reflections are linear in the source,
+  so pattern × scalar lets one capture serve every alert and every pulse
+  (§9.4 layers); an 8-bit map stops at 1.0, just over bloom's 0.9, so
+  brightness needs a per-shape level regardless.
+
+### 11.2 Glow, per shape
+
+`glow = src(uv) × tint(t) × level(t) × scale`, added after the diffuse ceiling
+in display space exactly like §9.7's term (so it can bloom). `emitter.glow`:
+
+| field | values | meaning |
+|---|---|---|
+| `src` | `emissive` | the albedo's `_emissive` sibling for the CURRENT alert (fallback above). Refused at load, naming the shape, if the albedo has no `_emissive` sibling |
+| | `texture` | the albedo's current texel -- the current flipbook frame, so an animated LCARS glows its frame (lifts §9.7's "emissive on a flipbook is static" for this source) |
+| | `flat` | 1 (DBridge alert bars are textured black) |
+| `scale` | ≥ 0, default 1 | per-shape multiplier on top of the profile |
+
+- **Per shape, never per texture.** The alcove roofs (b0401/423/441/455) draw
+  `Map 19.tga`, a 32×32 swatch shared by 22 shapes; `src: texture` on just
+  those four lights only them.
+- **A shape with a glow replaces its texture-level default.** Shapes without
+  `emitter.glow` keep §9.7 unchanged (sibling map × `kEmissiveScale`).
+- **Received-light dip (§6.1):** received light (diffuse and specular) ×
+  `(1 − m × clamp(level·wave, 0, 1))`, where `m` = 1 for `texture`/`flat` and
+  the emissive texel's max channel for `emissive` (so a map's black ribs stay
+  ordinary receivers). At level 0 the shape is an ordinary surface.
+- **Amends §6.1/§7:** `mask` and its `luma_*` / `map` fields are dropped from
+  the schema for now -- `src: emissive` replaces the per-shape `map` mask, and
+  `base_alpha` / `luma` come back when a shape needs them. Unknown keys are
+  still rejected.
+- **No profile** = the built-in steady white profile (level 1 in every state),
+  as §9.6 already says for lights.
+
+### 11.3 Profiles, clock, fades
+
+As §6.3, built now: states `{tint, level, wave}`, a missing state = off;
+waves `steady | sine | square` with `period_s`, `min`, `duty`, `soft`; `phase`
+per emitter; **one bridge clock** = game time accumulated from the player dt
+(frozen under pause; the editor's preview clock is a later slice). An alert
+change cross-fades from the live output of the old state to the new over the
+profile's `fade_s` (default 0.5 s). Evaluated in Python each frame as pure
+functions (unit-tested without GL) and pushed as one small per-shape array:
+`(mesh, src, rgb)` where `rgb = tint × level × wave × scale` after the fade.
+
+### 11.4 Cast light follows the profile
+
+- A shape's `emitter.light` takes its colour from the same evaluated value.
+- **Colour space:** glow is added in display space, spots light in linear
+  (§9.1). Spot colour = `(evaluated rgb)^2.2` per channel × `light_scale`; a
+  tint converts exactly (multiplying commutes with the curve), brightness goes
+  through it. `intensity` is unchanged. Spots with no profile stay white.
+- **Probes never recapture per frame (~14 ms for both).** The spot list splits:
+  `set_bridge_spots` carries geometry plus each spot's CAPTURE colour for the
+  green probe and for the yellow/red probe (its steady state colour; 0 when
+  its wave there is not `steady`) and still dirties the probes on change. A
+  new per-frame `set_bridge_spot_colours` carries the live colours and never
+  dirties them. So a pulsing or fading spot lights the room live, and its
+  reflection is absent until §9.4's animation layers.
+- Glow stays out of the probes (§9.7, unchanged).
+
+### 11.5 Slice 1 scope
+
+In: §11.1 fallback; §11.2 glow (`emissive` / `texture` / `flat`, `scale`,
+dip); §11.3 profiles, waves, phase, clock, fades; §11.4 light colour + probe
+split; schema + loader + writer round-trip. Authored **by hand** in the
+DBridge file; the editor's Revert reloads it.
+
+Out (next slices): editor panes (glow, profile, alert preview switch, preview
+clock); `base_alpha` / `luma` masks; probe animation layers; light occlusion.
+
+**Test cases (DBridge):**
+- *Alcoves* -- roofs b0401/423/441/455, `src: texture`, profile `alcove`:
+  green white, yellow off, red a dim red sine pulse; one downward spot per
+  alcove on the same profile, so the floor goes white → dark → pulsing red
+  with the roof.
+- *Roof* -- b0076/81/84/87/90 on Mark's `Map 5` / `Map 13` emissive maps,
+  `src: emissive`, profile `roof`: glowing in every state, dimmer at yellow
+  and red; Mark's existing spot on b0081 joins the profile.
+
+Numbers are Mark's to tune live.
+
+## 12. Editor panes for glow and profiles — slice 2 *(agreed with Mark 2026-10-11)*
+
+Fills in §8's Emitter / Profile / Preview panes for the §11 model. Slice 1
+(§11) is live-verified; until this lands, profiles are hand-edited JSON.
+
+### 12.1 Layout (the dock, under Light; selected shape only)
+
+- **Glow** -- on/off; source `emissive` / `texture` / `flat` (`emissive`
+  disabled, with the reason shown, when the shape's material has no
+  `_emissive` sibling -- `model_identity` `maps.emissive`); `scale`.
+- **Profile** -- dropdown of the bridge's profiles plus "none (steady
+  white)"; **New** (a copy of the current profile, or steady white from
+  none, named `profile N`); **Rename** (a text field; every shape using the
+  profile follows); "used by N shapes", because a shared profile changes
+  every shape on it. No delete in this slice: an unused profile stays in the
+  file, shown "used by 0".
+- **Green | Yellow | Red tabs**, one state at a time (the dock is 360 px):
+  - on/off (a missing state is off, §6.3);
+  - **colour**: a hue/saturation wheel with V = 1, so `tint` always has a
+    max channel of 1 and brightness lives only in `level`. Editing a tint
+    authored with a lower max channel replaces it;
+  - **level**: slider 0–4 plus a number field (any value ≥ 0);
+  - **pulse**: `steady` / `sine` / `square`; `period_s` (≥ 0.05), `min`
+    (0–1) for sine and square; `duty`, `soft` (0–1) for square only.
+- Profile `fade_s` and the shape's `phase` (0–1) under the tabs.
+
+### 12.2 Preview
+
+- **The selected tab IS the preview alert.** Choosing Yellow shows the
+  bridge at yellow: emissive map variant, probe mix, alert ambient, glows
+  and lights -- everything that reads the alert level takes the editor's
+  value while the editor is open. The ship's real alert is never changed
+  (§4). Switching tabs fades over the profile's `fade_s`, so the fade is
+  previewed too. Closing the editor returns to the player's alert (with a
+  fade).
+- **Preview clock.** While the editor is open the bridge clock runs on the
+  real frame time (the sim is paused, so the player dt is 0), with a
+  play/pause toggle in the panel. Closing returns to the paused-aware dt.
+
+### 12.3 Editing rules
+
+- Every control is one undoable action (§8 snapshot stack), pushed live;
+  Save / Revert / Undo cover the new fields. Values are clamped to the
+  schema's ranges before they enter the document, so Save can never be
+  refused by validation for a value the panel produced.
+- The colour wheel commits on pointer release (one undo step per drag),
+  showing its swatch live while dragging.
+- Turning Glow off removes `emitter.glow`; an emitter left with nothing is
+  removed (as Light's Remove already does).
+
+### 12.4 The colour wheel is shared
+
+The SPV's hue/saturation wheel (`ship_property_viewer.js`: HSV→RGB at V = 1,
+its inverse, the cached disc, pointer handling) moves to a shared
+`js/colour_wheel.js` that both panels use. The SPV's behaviour is unchanged.
+CEF OSR shows no native colour-picker popup, so a canvas wheel is the
+working control.
+
+### 12.5 Out of scope
+
+Pipette (copy an emitter between shapes), gizmos, colour-to-colour pulses,
+deleting profiles, a preview-clock speed control.
+
+## 13. Material library, Object / Material tabs, five bridge states, editor chrome — slice 3 *(designed with Mark 2026-10-11; supersedes §11's per-shape profile model and §12's panes)*
+
+Slice 2 (§12) proved the per-alert idea but crowded the dock. This slice
+reorganises the editor the Blender way -- **objects link to materials from a
+shared library** -- and widens the bridge states to five. The renderer
+contract (§11.2 per-mesh glow, §11.4 spot capture vs live colour) is
+unchanged apart from the new states. "Shape" becomes **object** in the editor.
+
+### 13.1 Five bridge states
+
+| State | Square | In game | Room ambient | Emissive sibling |
+|---|---|---|---|---|
+| `offline` | ⬛ | the player ship's `PowerSubsystem` disabled or destroyed; overrides every other state while it lasts | dimmed (a new value in `bridge_lighting`, below yellow/red) | none: **texture-level `_emissive` maps go dark** on objects whose material does not light them |
+| `green` | 🟩 | alert 0 | as today | `_emissive` |
+| `yellow` | 🟨 | alert 1 | as today | `_emissive_y` → `_emissive` |
+| `red` | 🟥 | alert 2 | as today | `_emissive_r` → `_emissive_y` → `_emissive` |
+| `special` | 🟦 | a generic hook (`set_special_alert(on)`), no in-game caller yet -- e.g. a future multi-vector assault "blue alert". Overrides green/yellow/red, not offline | as red | `_emissive_s` → `_emissive` |
+
+Reflection probes for `offline` / `special` are a later phase; until then
+they use the yellow/red probe.
+
+### 13.2 Objects and the material library
+
+- An **object** is one NIF shape (identity unchanged, §4).
+- The bridge file holds a **material library**: named materials. An object
+  links to at most one. Editing a material changes every object using it
+  ("used by N objects"); **Duplicate** gives the object its own copy to
+  diverge.
+- **Each TGA is a material** (Mark, 2026-10-11): `textures` maps a texture
+  (case-folded file name) to a material, named after it (`Map 13`). An
+  object with **no link uses its texture's material**, so editing one wall
+  panel's roughness changes every panel with that TGA. A link **replaces**
+  the texture's material (no layering) -- that is how 4 of the 22
+  `Map 19.tga` shapes are the alcove: select one, Duplicate (`Map 19 copy`),
+  rename it, link the other three. **Unlink** returns an object to its
+  texture's material (the chip names it, "texture · Map 19"). The texture's
+  material is made empty on its first edit; an object with no texture gets
+  a new linked material instead. One resolver (`lighting_doc.resolve`:
+  link, else texture) feeds the overrides, glow and lights.
+  *(Replaces per-object finish materials: identical TGAs showed up as
+  unrelated `material N` entries. The committed DBridge/EBridge files were
+  folded once (`fold_into_textures`, with the real built textures): per
+  texture the most common finish -- equal to 0.05 counts as one -- became
+  the texture's material, a tie going to the finish nearest the default so
+  the unlinked meshes that adopt it change least; each object that differs
+  kept a `<texture> 2`... link.)*
+- **A material belongs to one texture** (Mark, 2026-10-11: "the TGA is
+  part of the material"): it records `texture` (the case-folded file name),
+  the library offers only the selected object's texture's materials, and a
+  link counts only on an object of that texture (`lighting_doc.fits`; a
+  hand-edited mismatch is ignored with a warning). The albedo still comes
+  from the NIF and the mesh fixes, and `_rough` / `_metal` / `_normal` /
+  `_emissive` maps are still found by texture name (§9.2, §9.7). Two
+  textures pulsing together use two materials with the same settings --
+  one bridge clock keeps them in step. *(The first build let one material
+  span textures; DBridge's `roof` (Map 5 rear ribs + Map 13 front rib) was
+  split by `bind_textures`: the texture with most users kept the name, the
+  other got `roof (Map 13)`.)*
+
+**A material holds** (Material tab):
+- **Finish**: `roughness`, `metalness` (0-1 each, optional). A texture map
+  still beats the material's value per channel (§9.2).
+- **Emission** -- what glows, following the roughness/metalness rule (Mark,
+  2026-10-11): the object's `_emissive` map whenever its texture has one
+  (the variant for the current state, §13.1; shown in the editor, not
+  chosen); `without_map` -- `texture` (its own texture, default) or `flat`
+  -- for objects that have none; plus `strength` (≥ 0, default 1; 0 = no
+  glow while the lights still follow the emitters). Since a material has
+  one texture, the editor shows the map as the source when there is one and
+  offers the own texture / flat choice only when there is not.
+  *(Replaces the first build's "Surface" with auto / emission map / own
+  texture / flat / none: confusing beside Finish, and the map choice was
+  inconsistent with roughness/metalness.)*
+- **fade_s**: the cross-fade on a state change (default 0.5).
+- **Modifiers**, each with a **scope** -- any of the five states; none
+  ticked = parked:
+  - **Emitter** (any number): colour (wheel, V = 1) and level. Emitters
+    active in a state ADD.
+  - **Animation** (any number): `sine` / `square`, `period_s`, `min`,
+    `duty`, `soft`, and **`phase`** (0-1). Animations active in a state
+    MULTIPLY the emitters' sum.
+
+Output in state *s* = (Σ emitters scoped to *s*) × (Π animations scoped to
+*s*), cross-faded over `fade_s` on a state change; glow = emission
+source × output × strength. Examples: alcove = Emitter white [green] + Emitter red 0.5
+[red] + Animation sine 2 s [red]; red bars = Emitter red [red] + Animation
+sine 2 s [red]; reserve power = Emitter red [offline].
+
+**An object holds** (Object tab):
+- its **material** link;
+- **Lights** (any number): position, aim, cone, range, intensity -- placed
+  per object; their colour follows the material's output, ^2.2 (§11.4).
+
+No per-object phase: objects on one material pulse in lockstep. A staggered
+"chase" needs a duplicated material with a different phase (accepted, Mark
+2026-10-11; a per-object offset can be added if it ever bites).
+
+**No material**: roughness 1 / metalness 0, the texture's emission map
+steady (dark at `offline`), no lights unless the object adds them (white,
+steady).
+
+### 13.3 Editor chrome
+
+- **The bar** (top left; its presence IS bridge editing mode):
+  `BRIDGE EDITOR | ⬛ 🟩 🟨 🟥 🟦 | ▶/⏸ | Undo · Revert · Save | ✕`. The squares
+  set the preview state (everything state-dependent shows it; the game is
+  never changed, §12.2). ▶/⏸ is the preview clock. ✕ leaves the editor. One
+  hint line under it: `Hold Shift: fly · WASD · Q/E · scroll: speed · click:
+  select · Alt+click: surface behind · materials layer over the object's
+  texture`.
+- **Fly controls**: hold
+  **Shift** (not RMB) to fly with mouse-look; the scroll wheel sets the fly
+  speed; Alt-slow goes; RMB is freed.
+- **The side panel shows only while an object is selected** (clicking empty
+  space deselects and hides it), with two tabs:
+  - **Object** -- the selection readout; the material picker (library list
+    with "used by N", New, Duplicate, Unlink); the Light stack with
+    **Add light**. With no material and a texture-level emission map, a
+    read-only row: "Emission map · <name> · steady".
+  - **Material** -- name (Rename), Finish, Emission (source, strength, state fade), then the modifier
+    stack with **Add modifier** (Emitter, Animation). Every stack entry is a
+    header row (name, scope squares, ×) that expands on click.
+- Every choice is a chip row or an in-page menu, never a `<select>` (§12).
+
+### 13.4 Data (`format: 2`)
+
+```json
+{"format": 2, "source": "...",
+ "materials": {"alcove": {"texture": "map 19.tga", "roughness": 0,
+   "emission": {"without_map": "texture", "strength": 1},
+   "fade_s": 0.5,
+   "modifiers": [{"type": "emitter", "scope": ["green"], "tint": [1, 1, 1], "level": 1},
+                 {"type": "emitter", "scope": ["red"], "tint": [1, 0.12, 0.08], "level": 0.5},
+                 {"type": "animation", "scope": ["red"], "shape": "sine", "period_s": 2,
+                  "min": 0.2, "phase": 0}]},
+   "Map 13": {"texture": "map 13.tga", "roughness": 0.3}},
+ "textures": {"map 13.tga": "Map 13"},
+ "objects": {"401:": {"block": 401, "name": "", "material": "alcove",
+   "lights": [{"position": [157, -135, 105], "direction": [0, 0, -1], "inner_deg": 45,
+               "outer_deg": 85, "range": 150, "intensity": 8000}]}}}
+```
+
+Unknown keys REJECTED (as §7). **Reading `format: 1`** converts: each
+shape's material overrides + glow source/scale + profile (+ its phase) form a
+signature; profiled shapes with identical signatures share one material,
+named after the profile (`<profile> 2` on a clash). Every other shape gets
+its own `material N`, never merged: equal finish values are a coincidence,
+not a choice to share, and merging them put 32 unrelated DBridge objects in
+one material (Mark, 2026-10-11). Profile states become scoped
+modifiers (a state's wave becomes an Animation scoped to that state); the
+light becomes `lights[0]`. The writer saves `format: 2`; the DBridge file is
+converted and committed.
+
+### 13.5 Out of scope
+
+Reflection probes for the new states; per-object phase offsets;
+multi-select; colour-to-colour animation; per-emitter "throws light"
+switches.
+
+## 14. Emission as a Finish row; State, Animation, Transition *(designed with Mark 2026-10-12; supersedes §13.2's Emission section and Emitter modifier)*
+
+Why: Mark set Emission strength 3 on the Map 8 com lights and nothing
+glowed -- a material only glowed with an Emitter modifier, and Emission's
+strength and fade only acted on Emitters. Glow was split across two places
+and neither worked alone. Mark: "emission level COULD form part of Finish,
+which is a mandatory / non-removable modifier ... roughness and metalness
+already handle default vs map vs material really well."
+
+- **Finish = roughness, metalness, emission.** Emission is a level: steady
+  white x the source, in every state but Power offline (dark, as an
+  `_emissive` map is). Sources, as the other rows: **default** 0 without a
+  map; **map** 1 (the map as painted) when the texture has `_emissive`;
+  **material** once set. Unlike roughness/metalness the level stays
+  editable over a map -- the map says what glows, the level how much.
+  Slider 0-4, the box to 16.
+- **What glows** without a map: `emission_source` own texture (default) or
+  flat, as chips under the row, shown only when there is no map. *(Mark:
+  "not 100% sure ... happy to see it and tweak.")*
+- **State** modifier (was Emitter): in its ticked states it REPLACES the
+  emission (colour wheel + level; several add). Not "Emitter": it emits no
+  light -- lights are object-level (§13.2) and follow the result.
+- **Animation**: multiplies, unchanged.
+- **Transition** modifier: the blend time INTO its ticked states (0 = an
+  instant cut). With none, a state change blends over **0.5 s** -- Mark
+  kept the flat default, not "absent = instant".
+- **Strength is gone** (redundant with the State levels) and so is
+  `fade_s`.
+- A material sets a glow (is in the glow table) when it has an emission
+  level, a State or an Animation (`behaviour.drives_glow`); otherwise the
+  texture default stands. A light on a material that sets no glow stays
+  steady white.
+
+**Data `format: 3`.** Material keys: `texture`, `roughness`, `metalness`,
+`emission` (number >= 0), `emission_source`, `modifiers` (`state`,
+`animation`, `transition {scope, seconds}`). Formats 1 and 2 upgrade on load
+with every state looking the same: emitters become States with the old
+strength folded into their levels and base emission 0 (a state no emitter
+covered was dark); `without_map` becomes `emission_source`; a fade other
+than 0.5 s becomes a Transition on every state; strength or fade on a
+material with no emitters did nothing and is dropped. Lossy only for a v1
+profiled light with no glow (strength 0): its light follows levels of 0.
+Committed files stay `format: 2` until next saved from the editor.
+
+
+
+## 15. Room light and Bridge Settings *(designed with Mark 2026-10-12)*
+
+Why: the alcoves' normal maps showed no relief under their red pulsing
+lights. Measured (shader formulas, a wall 60 units from the cove light): the
+room light (the bridge ambient, white, x1.0 at red) put ~0.09 linear on the
+wall against the red spot's ~0.03 at its pulse peak (level 0.5 -> 22% after
+^2.2), so relief from the normal map was ~3/255. With the room light zeroed
+(a launch-time experiment) the relief showed at once -- Mark: "the normal
+rendering was being overpowered by the base illumination".
+
+- **Room light** = the bridge ambient's multiplier, per state.
+  `lighting_doc.room_light(doc, state)`: the bridge's own `room_light`
+  level when set; else **0 when the bridge defines lights of its own**
+  (any object with `lights`); else the engine default
+  (`bridge_lighting._ALERT_AMBIENT_SCALE`: green 1.5, yellow/red 1.0,
+  offline 0.4) -- unchanged for every bridge with no lighting file or no
+  lights. `bridge_lighting.bridge_ambient_scale(player, preview, room)` picks
+  it for the editor's preview state, else the player's (green with no
+  player, so a mission swap never flashes a lit bridge to the default).
+- **Reflections follow it**: the green probe is captured under the green
+  room light, the yellow/red probe under yellow's (as the spot capture
+  colours are), through the existing `set_bridge_probe_scales`; the runtime
+  recaptures only when they change. The comm viewscreen feed keeps its own
+  constant lighting.
+- **Data**: optional top-level `room_light: {state: level >= 0}` (editor
+  0-4); unknown states rejected.
+- **Editor**: a cog at the bottom right of the free view (left of the dock
+  while it shows) opens **Bridge Settings** above it -- a slider + pencil
+  row per state, `default`/`bridge` source and a × back to the default.
+  Python owns open/closed for the click region (`COG_CSS_PX`,
+  `SETTINGS_CSS_W/H` = the CSS). Bridge-level edits need no selection.

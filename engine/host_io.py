@@ -85,6 +85,7 @@ _OPTIONAL_BINDINGS = frozenset({
     "set_bridge_probe_origin", "set_bridge_probe_scales",
     "set_bridge_probe_mix", "request_bridge_probe_capture",
     "set_bridge_spots", "set_bridge_alert_level",
+    "set_bridge_spot_colours", "set_bridge_glow",
 })
 
 
@@ -556,7 +557,7 @@ def _lossy_str(v) -> str:
     return str(v)
 
 
-_NO_MAPS = {"roughness": False, "metalness": False, "normal": False}
+_NO_MAPS = {"roughness": False, "metalness": False, "normal": False, "emissive": False}
 
 
 def model_identity(instance_id):
@@ -564,7 +565,8 @@ def model_identity(instance_id):
     textures, material, maps}]} for an instance's model; None headless or for
     a stale id. `textures` is the Base-stage texture basename as BUILT (parent
     inheritance resolved), or []. Names are str (lossily decoded). `maps` is
-    {roughness, metalness, normal} bool (spec 2026-10-09-bridge-pbr); all-False
+    {roughness, metalness, normal, emissive} bool (spec 2026-10-09-bridge-pbr;
+    emissive: spec 2026-10-08-bridge-emitters §11.2); all-False
     when absent (a binary built before this field existed)."""
     fn = getattr(_h, "model_identity", None) if _h is not None else None
     info = None if fn is None else fn(instance_id)
@@ -650,12 +652,13 @@ def request_bridge_probe_capture() -> None:
 
 
 def set_bridge_spots(spots) -> int:
-    """Static bridge spot lights (production, not developer-gated): `spots` is
-    [(pos3, dir3, inner_deg, outer_deg, range, (r, g, b), intensity)], the
-    angles HALF-angles from the axis. Spots with any non-finite value are
-    dropped; the rest keep the first 32. Returns how many were DROPPED
-    (invalid + over the cap), for the caller to report by name; marks the
-    reflection probes dirty. 0 headless."""
+    """Bridge spot lights (production, not developer-gated): `spots` is
+    [(pos3, dir3, inner_deg, outer_deg, range, (r, g, b), intensity
+    [, capture_green3, capture_alert3])], the angles HALF-angles from the
+    axis. With capture colours (spec 2026-10-08-bridge-emitters §11.4, every
+    spot or none) the probes see those and the live colour
+    (set_bridge_spot_colours) never recaptures. Returns how many were DROPPED
+    (invalid + over the cap). 0 headless."""
     fn = getattr(_h, "set_bridge_spots", None) if _h is not None else None
     if fn is None:
         return 0
@@ -664,8 +667,32 @@ def set_bridge_spots(spots) -> int:
         x, y, z = v
         return (float(x), float(y), float(z))
 
-    return int(fn([(_v3(p), _v3(d), float(i), float(o), float(r), _v3(c), float(k))
-                   for p, d, i, o, r, c, k in spots]))
+    rows, caps = [], []
+    for s in spots:
+        p, d, i, o, r, c, k = s[:7]
+        rows.append((_v3(p), _v3(d), float(i), float(o), float(r), _v3(c), float(k)))
+        if len(s) >= 9:
+            caps.append((_v3(s[7]), _v3(s[8])))
+    if caps and len(caps) == len(rows):
+        return int(fn(rows, caps))
+    return int(fn(rows))
+
+
+def set_bridge_spot_colours(colours) -> None:
+    """Live LINEAR radiance per bridge spot, in set_bridge_spots order (spec
+    §11.4); never recaptures the probes. No-op headless."""
+    fn = getattr(_h, "set_bridge_spot_colours", None) if _h is not None else None
+    if fn is not None:
+        fn([(float(r), float(g), float(b)) for r, g, b in colours])
+
+
+def set_bridge_glow(instance_id, glow) -> None:
+    """Per-mesh emitter glow for the bridge (spec §11.2): [(mesh, src_code,
+    (r, g, b), level)]; None clears. No-op headless."""
+    fn = getattr(_h, "set_bridge_glow", None) if _h is not None else None
+    if fn is not None:
+        fn(instance_id, [(int(m), int(s), (float(c[0]), float(c[1]), float(c[2])), float(lv))
+                         for m, s, c, lv in glow])
 
 
 # ── Star map (Helm → Set Course) ─────────────────────────────────────────────

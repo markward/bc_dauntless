@@ -20,6 +20,7 @@ MeshMaps mesh_identity_maps(const assets::Model& model, int material_index) {
     maps.roughness = mat.stages[static_cast<std::size_t>(S::Roughness)].texture_index >= 0;
     maps.metalness = mat.stages[static_cast<std::size_t>(S::Metalness)].texture_index >= 0;
     maps.normal    = mat.stages[static_cast<std::size_t>(S::Bump)].texture_index >= 0;
+    maps.emissive  = mat.stages[static_cast<std::size_t>(S::Emissive)].texture_index >= 0;
     return maps;
 }
 

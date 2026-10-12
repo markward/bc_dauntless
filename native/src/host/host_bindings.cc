@@ -4425,7 +4425,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               if (g_bridge_pass) g_bridge_pass->set_alert_level(level);
           },
           py::arg("level"),
-          "Player alert level (0 green, 1 yellow, 2 red; anything else reads as "
+          "Bridge state (0 green, 1 yellow, 2 red, 3 offline, 4 special; anything else reads as "
           "green) choosing each bridge material's emissive sibling map "
           "(<stem>_emissive / _emissive_y / _emissive_r, falling back to the "
           "default). Main bridge view only; comm sets show the default. Hard "
@@ -4501,21 +4501,44 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                           std::tuple<float, float, float>,
                                           float, float, float,
                                           std::tuple<float, float, float>,
-                                          float>>& spots) -> std::size_t {
+                                          float>>& spots,
+             py::object captures) -> std::size_t {
               auto v3 = [](const std::tuple<float, float, float>& t) {
                   return glm::vec3(std::get<0>(t), std::get<1>(t), std::get<2>(t));
               };
               auto finite3 = [](const glm::vec3& a) {
                   return std::isfinite(a.x) && std::isfinite(a.y) && std::isfinite(a.z);
               };
+              // Spec 2026-10-08-bridge-emitters §11.4: per-spot probe-capture
+              // colours (green, yellow/red), in input order, x that spot's
+              // intensity. A length mismatch ignores them (the PBR-step rule:
+              // the captures see the radiance).
+              std::vector<std::pair<glm::vec3, glm::vec3>> caps;
+              if (!captures.is_none()) {
+                  try {
+                      for (auto item : captures) {
+                          auto pr = item.cast<std::tuple<std::tuple<float, float, float>,
+                                                         std::tuple<float, float, float>>>();
+                          caps.emplace_back(v3(std::get<0>(pr)), v3(std::get<1>(pr)));
+                      }
+                  } catch (const py::cast_error&) {
+                      caps.clear();
+                  }
+                  if (caps.size() != spots.size()) caps.clear();
+              }
               std::vector<renderer::BridgeSpot> v;
               v.reserve(spots.size());
               std::size_t invalid = 0;
-              for (const auto& [pos, dir, inner_deg, outer_deg, range, rgb, intensity] : spots) {
+              std::size_t index = 0;
+              for (const auto& s : spots) {
+                  const std::size_t i = index++;
+                  const auto& [pos, dir, inner_deg, outer_deg, range, rgb, intensity] = s;
                   if (!finite3(v3(pos)) || !finite3(v3(dir)) || !finite3(v3(rgb)) ||
                       !std::isfinite(inner_deg) || !std::isfinite(outer_deg) ||
                       !std::isfinite(range) || !std::isfinite(intensity) ||
-                      !finite3(v3(rgb) * intensity)) {
+                      !finite3(v3(rgb) * intensity) ||
+                      (!caps.empty() && (!finite3(caps[i].first * intensity) ||
+                                         !finite3(caps[i].second * intensity)))) {
                       ++invalid;
                       continue;
                   }
@@ -4534,19 +4557,71 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   sp.cos_outer = std::cos(glm::radians(outer));
                   sp.range = std::max(range, 0.0f);
                   sp.radiance = v3(rgb) * intensity;
+                  if (!caps.empty()) {
+                      sp.has_capture = true;
+                      sp.capture_radiance[0] = caps[i].first * intensity;
+                      sp.capture_radiance[1] = caps[i].second * intensity;
+                  }
                   v.push_back(sp);
               }
               const std::size_t cap = static_cast<std::size_t>(renderer::kBridgeMaxSpots);
               if (!g_bridge_pass) return invalid + (v.size() > cap ? v.size() - cap : 0);
               return invalid + g_bridge_pass->set_spots(std::move(v));
           },
-          py::arg("spots"),
+          py::arg("spots"), py::arg("captures") = py::none(),
           "Static bridge spot lights: [(pos3, dir3, inner_deg, outer_deg, range, "
           "(r, g, b), intensity)]; inner_deg/outer_deg are HALF-angles from the "
           "axis. Spots with any non-finite value are dropped; the rest keep the "
           "first 32. Returns the dropped count (invalid + over the cap). Marks "
           "the reflection probes dirty when the list differs from the current "
-          "one (never for an identical list). Never raises for a stale state.");
+          "one (never for an identical list). Never raises for a stale state. "
+          "captures (optional): [((r,g,b) green, (r,g,b) yellow/red)] per spot, x "
+          "its intensity: what each probe capture sees; the live colour "
+          "(set_bridge_spot_colours) then never recaptures (spec "
+          "2026-10-08-bridge-emitters §11.4). A length mismatch ignores them.");
+
+    m.def("set_bridge_spot_colours",
+          [](const std::vector<std::tuple<float, float, float>>& radiance) {
+              if (!g_bridge_pass) return;
+              std::vector<glm::vec3> v;
+              v.reserve(radiance.size());
+              for (const auto& [r, g, b] : radiance) v.emplace_back(r, g, b);
+              g_bridge_pass->set_spot_radiance(v);
+          },
+          py::arg("radiance"),
+          "Live LINEAR radiance per bridge spot, in set_bridge_spots order (spec "
+          "2026-10-08-bridge-emitters §11.4). Extra entries ignored, missing kept, "
+          "non-finite -> 0. Never dirties the probes; no-op before init.");
+
+    m.def("set_bridge_glow",
+          [](py::object instance_id,
+             const std::vector<std::tuple<int, int, std::tuple<float, float, float>, float>>& glow) {
+              if (!g_bridge_pass) return;
+              scenegraph::Instance* inst = nullptr;
+              if (!instance_id.is_none()) {
+                  try {
+                      inst = g_world.get(instance_id.cast<scenegraph::InstanceId>());
+                  } catch (const py::cast_error&) {
+                      inst = nullptr;   // not an InstanceId: treated as stale
+                  }
+              }
+              if (inst == nullptr) { g_bridge_pass->clear_glow(); return; }
+              std::vector<renderer::BridgeGlow> v;
+              v.reserve(glow.size());
+              for (const auto& [mesh, src, rgb, level] : glow) {
+                  const glm::vec3 c(std::get<0>(rgb), std::get<1>(rgb), std::get<2>(rgb));
+                  if (src < 0 || src > 2 || !std::isfinite(c.x) || !std::isfinite(c.y) ||
+                      !std::isfinite(c.z) || !std::isfinite(level))
+                      continue;
+                  v.push_back({mesh, src, c, level});
+              }
+              g_bridge_pass->set_glow(inst->model_handle, std::move(v));
+          },
+          py::arg("instance_id"), py::arg("glow"),
+          "Per-mesh emitter glow for the bridge (spec 2026-10-08-bridge-emitters "
+          "§11.2): [(mesh, src 0 emissive map / 1 albedo / 2 flat, (r,g,b) display "
+          "space, level)]. None or a stale id clears; invalid entries are dropped. "
+          "Never dirties the probes; never raises.");
 
     m.def("set_bridge_pbr_enabled",
           [](bool on) {
@@ -6846,6 +6921,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   maps["roughness"] = mm.roughness;
                   maps["metalness"] = mm.metalness;
                   maps["normal"]    = mm.normal;
+                  maps["emissive"]  = mm.emissive;
                   d["maps"] = std::move(maps);
                   meshes.append(std::move(d));
               }
@@ -6860,7 +6936,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "textures, material, maps}]} for an instance's model, or None for a "
           "stale id. name / node_chain / textures are BYTES (decode with "
           "errors='replace'; host_io.model_identity does). maps is "
-          "{roughness, metalness, normal}: whether the mesh's material has "
+          "{roughness, metalness, normal, emissive}: whether the mesh's material has "
           "that texture stage populated (spec 2026-10-09-bridge-pbr).");
 
     // Developer-only selection tint on the bridge (spec

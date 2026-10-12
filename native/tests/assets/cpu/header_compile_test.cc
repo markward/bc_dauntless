@@ -25,9 +25,10 @@ TEST(AssetsHeaders, AllPublicHeadersInclude) {
 }
 
 TEST(AssetsHeaders, MaterialStageSlotCount) {
-    EXPECT_EQ(static_cast<int>(assets::Material::StageSlot::Count), 14);
+    // 15 since EmissiveSpecial (`_emissive_s`, spec 2026-10-08-bridge-emitters §13.1).
+    EXPECT_EQ(static_cast<int>(assets::Material::StageSlot::Count), 15);
     assets::Material m;
-    EXPECT_EQ(m.stages.size(), 14u);
+    EXPECT_EQ(m.stages.size(), 15u);
     EXPECT_EQ(m.stages[0].texture_index, -1);  // unused by default
 }
 

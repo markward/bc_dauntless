@@ -1,14 +1,20 @@
 """Bridge Editor -- developer-only bridge editor panel (spec
-docs/superpowers/specs/2026-10-08-bridge-emitters-spike-design.md §4, §7, §8).
+docs/superpowers/specs/2026-10-08-bridge-emitters-spike-design.md §4, §13).
 
-Foundation scope: fly camera (hold RMB to look, WASDQE to move, Shift fast,
-Alt slow), click-to-pick a NIF shape (Alt+click = the surface behind), a
-selection tint, and the per-shape PBR material override (§9.2 source B) saved
-to the per-bridge lighting document. The override is rendered by bridge PBR
-(`BridgeRuntime` pushes it to `native/src/renderer/bridge_pass.cc` on every
-bridge load and on every edit). The panel also places spot lights (§9.6):
-pick a fixture, add a light, aim it, and the same runtime push drives the
-live GGX shading and probe recapture.
+A top-left bar is the editor's chrome -- its presence IS bridge editing mode:
+the five bridge-state squares (the preview state; the game is never changed),
+the preview clock, Undo / Revert / Save and ✕. The side panel appears only
+while an object (one NIF shape) is selected, with two tabs:
+
+- **Object**: the material it links to from the bridge's library (used-by
+  count, New, Duplicate, unlink) and its Lights;
+- **Material**: the linked material's finish, emission, fade and its stack of
+  scoped Emitter / Animation modifiers -- shared by every object that links it.
+
+Hold Shift to fly (mouse-look + WASDQE, scroll sets the speed); click picks an
+object (Alt+click = the surface behind), clicking empty space deselects. Every
+edit is one undo step through `engine.bridge_editor.editing` and is pushed
+live through the production `BridgeRuntime`.
 
 Driven like every dev modal: a pause-menu row opens it, the host keeps the
 pause menu open-but-hidden (sim frozen) while it is open, calls handle_input(h)
@@ -18,33 +24,41 @@ import json
 import time
 from typing import Optional
 
-from engine import host_io
+from engine import bridge_lighting, dev_mode, host_io
+from engine.bridge_editor import behaviour
+from engine.bridge_editor import editing
 from engine.bridge_editor import lighting_doc as ld
 from engine.bridge_editor import lighting_writer as lw
-from engine.bridge_editor import lights as bridge_lights
 from engine.bridge_editor.fly_camera import FlyCamera
 from engine.bridge_editor.picking import PickCycle, identity_for, pick_hit, pick_mesh
 from engine.ui.panel import Panel
 
 DOCK_CSS_PX = 360          # width of the docked panel, CSS px (bridge_emitters.css)
+BAR_CSS_W = 560            # the top-left .be-top block, CSS px (bridge_emitters.css)
+BAR_CSS_H = 120            # bar + hint + hover/status; .be-top's max-height
+# Bridge Settings (Mark 2026-10-12): a cog at the bottom right of the free
+# view (left of the dock when it shows) opens a panel above it. Must match
+# .be-settings / .be-cog in bridge_emitters.css.
+COG_CSS_PX = 48
+SETTINGS_CSS_W = 300
+SETTINGS_CSS_H = 280
 CLICK_SLOP_PX = 4.0
 DEFAULT_ROUGHNESS = 1.0    # spec §9.2 source C
 DEFAULT_METALNESS = 0.0
 _CHANNELS = {"roughness": DEFAULT_ROUGHNESS, "metalness": DEFAULT_METALNESS}
 _UNDO_LIMIT = 100
-
-# emitter.light defaults (spec §9.6); angles are HALF-angles 0-90, inner<=outer.
-_LIGHT_INNER_DEG = 30.0
-_LIGHT_OUTER_DEG = 60.0
-_LIGHT_RANGE = 200.0
-_LIGHT_INTENSITY = bridge_lights.DEFAULT_INTENSITY
-_LIGHT_MIN_RANGE = 0.01
-_LIGHT_FIELDS = ("inner_deg", "outer_deg", "range", "intensity")
+HINT = ("Hold Shift: fly · WASD · Q/E · scroll: speed · click: select · "
+        "Alt+click: surface behind · materials layer over the object's texture")
+# Actions that are not document edits and need no loaded document.
+_VIEW_ACTIONS = ("state:", "preview-toggle", "tab:", "expand:", "deselect", "settings-toggle")
+# Bridge-level edits: no selection needed.
+_ROOM_PREFIXES = ("room:", "room-clear:")
+_EDIT_PREFIXES = ("material", "light", "finish", "emission-source:", "mod")
 
 
 class BridgeEmittersPanel(Panel):
     def __init__(self, pose_provider, instance_provider, in_bridge_provider,
-                 clock=time.monotonic, io=host_io, runtime=None):
+                 clock=time.monotonic, io=host_io, runtime=None, alert_provider=None):
         super().__init__()
         self._pose = pose_provider
         self._iid = instance_provider
@@ -52,6 +66,7 @@ class BridgeEmittersPanel(Panel):
         self._clock = clock
         self._io = io
         self._runtime = runtime
+        self._alert = alert_provider
         self._visible = False
         self._last_pushed = None
         self._reset_session()
@@ -59,7 +74,7 @@ class BridgeEmittersPanel(Panel):
     def _reset_session(self):
         self._camera = None
         self._last_t = None
-        self._rmb = False
+        self._shift = False
         self._left = False
         self._press_xy = None
         self._press_alt = False
@@ -79,6 +94,11 @@ class BridgeEmittersPanel(Panel):
         self._push_warnings = []       # REPLACED by each push, never accumulated
         self._pushed_highlight = None
         self._h_for_release = None
+        self._state = "green"          # the previewed bridge state (§13.1)
+        self._preview_playing = True
+        self._tab = "object"
+        self._expanded = set()
+        self._settings_open = False
 
     # ── Panel ────────────────────────────────────────────────────────────
     @property
@@ -90,12 +110,17 @@ class BridgeEmittersPanel(Panel):
 
     def open(self) -> None:
         self._reset_session()
+        try:
+            self._state = behaviour.state_name(self._alert()) if self._alert else "green"
+        except Exception as e:  # noqa: BLE001 - a bad provider must not block the editor
+            dev_mode.log_swallowed("bridge editor alert provider", e)
+            self._state = "green"
         self._last_pushed = None
         self.visible = True
 
     def close(self) -> None:
         h = self._h_for_release
-        if self._rmb and h is not None:
+        if self._shift and h is not None:
             h.set_cursor_locked(False)
         self._io.set_bridge_highlight(None, -1, -1)
         self._revert_unsaved_render()
@@ -123,6 +148,19 @@ class BridgeEmittersPanel(Panel):
 
     def camera_pose(self):
         return self._camera.pose() if (self._visible and self._camera) else None
+
+    # ── preview (spec 2026-10-08-bridge-emitters §12.2, §13.3) ────────────
+    def preview_alert(self):
+        """The bridge state (0-4) the bridge shows while the editor is open --
+        the bar's selected square; None when closed (the game's state then)."""
+        return behaviour.state_index(self._state) if self._visible else None
+
+    def preview_dt(self, player_dt, frame_dt):
+        """The bridge clock's dt: the player's (paused-aware) when closed;
+        while open the real frame time, or 0 when the preview is paused."""
+        if not self._visible:
+            return player_dt
+        return frame_dt if self._preview_playing else 0.0
 
     # ── per-frame input ──────────────────────────────────────────────────
     def handle_input(self, h) -> None:
@@ -152,42 +190,50 @@ class BridgeEmittersPanel(Panel):
         dt = 0.0 if self._last_t is None else min(max(now - self._last_t, 0.0), 0.1)
         self._last_t = now
         keys = h.keys
+        ks = h.key_state
 
-        rmb = bool(h.mouse_button_state(keys.MOUSE_BUTTON_RIGHT))
-        if rmb and not self._rmb:
+        # Hold Shift to fly (spec §13.3): mouse-look + WASDQE; scroll sets
+        # the speed. Never while a text field has focus -- the KeyGate masks
+        # every key then, Shift included.
+        shift = bool(ks(keys.KEY_LEFT_SHIFT) or ks(keys.KEY_RIGHT_SHIFT))
+        if shift and not self._shift:
             h.set_cursor_locked(True)
             h.consume_mouse_delta()
-        elif not rmb and self._rmb:
+        elif not shift and self._shift:
             h.set_cursor_locked(False)
-        self._rmb = rmb
-        if rmb:
+        self._shift = shift
+        if shift:
             dx, dy = h.consume_mouse_delta()
             self._camera.look(dx, dy)
-            ks = h.key_state
+            scroll = getattr(h, "consume_scroll_y", None)
+            if scroll is not None:
+                notches = scroll()
+                if notches:
+                    self._camera.adjust_speed(notches)
             self._camera.move(
                 dt,
                 forward=int(ks(keys.KEY_W)) - int(ks(keys.KEY_S)),
                 strafe=int(ks(keys.KEY_D)) - int(ks(keys.KEY_A)),
-                lift=int(ks(keys.KEY_E)) - int(ks(keys.KEY_Q)),
-                fast=ks(keys.KEY_LEFT_SHIFT) or ks(keys.KEY_RIGHT_SHIFT),
-                slow=ks(keys.KEY_LEFT_ALT) or ks(keys.KEY_RIGHT_ALT))
+                lift=int(ks(keys.KEY_E)) - int(ks(keys.KEY_Q)))
             self._push_highlight(iid)
             return
 
         x, y = h.cursor_pos()
         fb = h.framebuffer_size()
-        over_dock = x >= fb[0] - DOCK_CSS_PX * self._dsf(h, fb)
+        dsf = self._dsf(h, fb)
+        over_ui = ((self._selected is not None and x >= fb[0] - DOCK_CSS_PX * dsf)
+                   or (x < BAR_CSS_W * dsf and y < BAR_CSS_H * dsf)
+                   or self._over_settings(x, y, fb, dsf))
         trace = lambda o, d, m, ex: self._io.ray_trace_mesh_pick(iid, o, d, m, ex)
         pose = self._camera.pose()
-        hover = None if over_dock else pick_mesh(trace, (x, y), fb, pose)
+        hover = None if over_ui else pick_mesh(trace, (x, y), fb, pose)
         self._hover_mesh = -1 if hover is None else hover
 
         left = bool(h.mouse_button_state(keys.MOUSE_BUTTON_LEFT))
         if left and not self._left:                      # press edge
-            # A press that starts over the dock is the panel's, never a pick.
-            self._press_xy = None if over_dock else (x, y)
-            self._press_alt = bool(h.key_state(keys.KEY_LEFT_ALT)
-                                   or h.key_state(keys.KEY_RIGHT_ALT))
+            # A press that starts over the bar or the dock is the page's.
+            self._press_xy = None if over_ui else (x, y)
+            self._press_alt = bool(ks(keys.KEY_LEFT_ALT) or ks(keys.KEY_RIGHT_ALT))
             self._drag = 0.0
         elif left and self._press_xy is not None:        # held: measure drag
             self._drag = max(self._drag, abs(x - self._press_xy[0]) + abs(y - self._press_xy[1]))
@@ -199,14 +245,13 @@ class BridgeEmittersPanel(Panel):
         self._push_highlight(iid)
 
     def _unlock_cursor(self, h):
-        """Release RMB-fly cursor lock when the view/instance disappears out
+        """Release the fly cursor lock when the view/instance disappears out
         from under it. Without this, leaving the bridge (or the instance
-        vanishing) while RMB is held strands the cursor locked forever --
-        handle_input returns before the normal rmb-edge-release code below
-        ever runs again, since there is no live camera/iid to fly."""
-        if self._rmb:
+        vanishing) while Shift is held strands the cursor locked forever --
+        handle_input returns before the normal release code runs again."""
+        if self._shift:
             h.set_cursor_locked(False)
-            self._rmb = False
+            self._shift = False
 
     @staticmethod
     def _dsf(h, fb):
@@ -255,7 +300,9 @@ class BridgeEmittersPanel(Panel):
         else:
             self._cycle.reset()
             mesh = _pick(())
+        # A miss deselects (spec §13.3: the dock shows only with a selection).
         self._selected = None if mesh is None else identity_for(self._info, mesh)
+        self._last_hit = None
         if mesh is not None and "hit" in captured:
             point, normal = captured["hit"][0], captured["hit"][1]
             self._last_hit = (tuple(point), tuple(normal))
@@ -272,9 +319,13 @@ class BridgeEmittersPanel(Panel):
         if action == "close":
             self.close()
             return True
+        if action.startswith(_VIEW_ACTIONS):
+            self._view_action(action)
+            self._last_pushed = None
+            return True
         if self._doc is None:
             return (action in ("save", "revert", "undo")
-                    or action.startswith(("material", "light")))
+                    or action.startswith(_EDIT_PREFIXES + _ROOM_PREFIXES))
         if action == "save":
             self._save()
         elif action == "revert":
@@ -283,31 +334,203 @@ class BridgeEmittersPanel(Panel):
             if self._undo:
                 self._doc = self._undo.pop()
             self._after_change()
-        elif action.startswith("material:"):
-            self._edit_material(action[len("material:"):])
+        elif action.startswith(_ROOM_PREFIXES):
+            self._room_action(action)
             self._after_change()
-        elif action.startswith("material-clear:"):
-            self._clear_material(action[len("material-clear:"):])
-            self._after_change()
-        elif action == "light-add":
-            self._light_add()
-            self._after_change()
-        elif action == "light-remove":
-            self._light_remove()
-            self._after_change()
-        elif action == "light-aim":
-            self._light_aim()
-            self._after_change()
-        elif action == "light-place":
-            self._light_place()
-            self._after_change()
-        elif action.startswith("light:"):
-            self._light_field(action[len("light:"):])
-            self._after_change()
+        elif action.startswith(_EDIT_PREFIXES):
+            if self._selected is not None:
+                self._edit_action(action)
+                self._after_change()
         else:
             return False
         self._last_pushed = None
         return True
+
+    def _view_action(self, action):
+        """Bar / panel state that is not a document edit (no undo step)."""
+        if action.startswith("state:"):
+            if action[6:] in ld.STATES:
+                self._state = action[6:]
+        elif action == "preview-toggle":
+            self._preview_playing = not self._preview_playing
+        elif action.startswith("tab:"):
+            if action[4:] in ("object", "material"):
+                self._tab = action[4:]
+        elif action.startswith("expand:"):
+            self._expanded ^= {action[7:]}
+        elif action == "deselect":
+            self._selected = None
+            self._last_hit = None
+        elif action == "settings-toggle":
+            self._settings_open = not self._settings_open
+
+    def _room_action(self, action):
+        """room:<state>:<level> / room-clear:<state> -- the bridge's room
+        light per state (Mark 2026-10-12), one undo step each."""
+        head, _, rest = action.partition(":")
+        if head == "room":
+            state, _, raw = rest.partition(":")
+            self._edit(lambda: editing.set_room_light(self._doc, state, raw))
+        else:
+            self._edit(lambda: editing.clear_room_light(self._doc, rest))
+
+    def _over_settings(self, x, y, fb, dsf):
+        """The cog, or the Bridge Settings panel when open: bottom right of
+        the free view -- left of the dock while it shows."""
+        right = fb[0] - (DOCK_CSS_PX * dsf if self._selected is not None else 0)
+        w, hgt = ((SETTINGS_CSS_W, SETTINGS_CSS_H) if self._settings_open
+                  else (COG_CSS_PX, COG_CSS_PX))
+        return right - w * dsf <= x <= right and y >= fb[1] - hgt * dsf
+
+    def _settings_payload(self):
+        rows = []
+        for state in ld.STATES:
+            own = (self._doc or {}).get("room_light", {}).get(state)
+            if own is not None:
+                rows.append({"state": state, "value": float(own), "source": "bridge"})
+                continue
+            v = ld.room_light(self._doc, state) if self._doc is not None else None
+            if v is None:
+                v = bridge_lighting.ambient_scale_for_alert(behaviour.state_index(state))
+            rows.append({"state": state, "value": float(v), "source": "default"})
+        return {"open": self._settings_open,
+                "has_lights": bool(self._doc is not None and ld.has_lights(self._doc)),
+                "room_light": rows}
+
+    def _edit(self, fn):
+        """Run one document edit as one undo step: snapshot, mutate, and keep
+        the snapshot only if the document changed (a no-op adds none)."""
+        before = copy.deepcopy(self._doc)
+        fn()
+        if self._doc != before:
+            self._undo.append(before)
+            del self._undo[:-_UNDO_LIMIT]
+
+    def _object(self):
+        return self._doc["objects"].get(self._selected.key)
+
+    def _linked(self):
+        return (self._object() or {}).get("material")
+
+    def _texture(self):
+        return ld.mesh_texture(self._selected_mesh_info() or {})
+
+    def _material_name(self):
+        """The selected object's material as it renders: its link, else its
+        texture's material (Mark 2026-10-11: each TGA is a material); None
+        when neither exists yet."""
+        tex = self._texture()
+        return self._linked() or (self._doc.get("textures", {}).get(ld.texture_key(tex))
+                                  if tex else None)
+
+    def _ensure_material(self):
+        """The material to edit, made if need be -- the texture's (never a
+        link), or a new linked one for an object with no texture. Call only
+        inside an _edit, so the creation is part of that undo step."""
+        name = self._material_name()
+        if name is not None:
+            return name
+        tex = self._texture()
+        if tex:
+            return editing.texture_material(self._doc, tex)
+        return editing.new_material(self._doc, self._selected.block, self._selected.name)
+
+    def _edit_action(self, action):
+        b, n = self._selected.block, self._selected.name
+        head, _, rest = action.partition(":")
+        if action == "material-new":
+            self._edit(lambda: editing.new_material(self._doc, b, n, texture=self._texture()))
+        elif action == "material-duplicate":
+            self._edit(lambda: editing.duplicate(self._doc, b, n,
+                                                 current=self._ensure_material()))
+        elif head == "material-link":
+            if rest and not ld.fits(self._doc, rest, self._selected_mesh_info() or {}):
+                self._status = (f"{rest!r} is a material for another texture; "
+                                "a material belongs to one TGA")
+                return
+            self._edit(lambda: editing.link(self._doc, b, n, rest))
+        elif head == "material-rename":
+            result = {}
+
+            def rename():
+                result["old"] = old = self._ensure_material()
+                result["err"] = editing.rename(self._doc, old, rest)
+            self._edit(rename)
+            if result.get("err"):
+                self._status = result["err"]
+            elif rest.strip() != result.get("old"):   # the button after Enter re-commits: no-op
+                self._status = f"Renamed {result.get('old')!r} to {rest.strip()!r}"
+        elif action == "light-add":
+            if self._last_hit is not None:
+                pos, normal = self._last_hit
+                self._edit(lambda: editing.add_light(self._doc, b, n, pos, normal))
+        elif head in ("light-remove", "light-place", "light-aim", "light"):
+            self._light_action(head, rest)
+        elif head == "mod-add":
+            def add():
+                editing.add_modifier(self._doc["materials"][self._ensure_material()],
+                                     rest, self._state)
+            self._edit(add)
+        else:
+            self._material_action(head, rest)
+
+    def _light_action(self, head, rest):
+        idx, _, tail = rest.partition(":")
+        try:
+            i = int(idx)
+        except ValueError:
+            return
+        lights = (self._object() or {}).get("lights", [])
+        if not 0 <= i < len(lights):
+            return
+        light = lights[i]
+        if head == "light-remove":
+            b, n = self._selected.block, self._selected.name
+            self._edit(lambda: editing.remove_light(self._doc, b, n, i))
+        elif head == "light-place":
+            if self._last_hit is not None:
+                pos = list(self._last_hit[0])
+                self._edit(lambda: light.__setitem__("position", pos))
+        elif head == "light-aim":
+            if self._camera is not None:
+                fwd = list(self._camera.forward())
+                self._edit(lambda: light.__setitem__("direction", fwd))
+        else:
+            field, _, raw = tail.partition(":")
+            self._edit(lambda: editing.set_light(light, field, raw))
+
+    def _material_action(self, head, rest):
+        # Setting a value may make the texture's material; clearing or
+        # editing a modifier needs one that exists.
+        if self._material_name() is None and head not in ("finish", "emission-source"):
+            return
+
+        def mat():
+            return self._doc["materials"][self._ensure_material()]
+        if head == "finish":
+            ch, _, raw = rest.partition(":")
+            self._edit(lambda: editing.set_finish(mat(), ch, raw))
+        elif head == "finish-clear":
+            self._edit(lambda: editing.clear_finish(mat(), rest))
+        elif head == "emission-source":
+            self._edit(lambda: editing.set_emission_source(mat(), rest))
+        elif head == "mod-remove":
+            try:
+                i = int(rest)
+            except ValueError:
+                return
+            self._edit(lambda: editing.remove_modifier(mat(), i))
+        elif head == "mod":
+            idx, _, tail = rest.partition(":")
+            field, _, raw = tail.partition(":")
+            try:
+                i = int(idx)
+            except ValueError:
+                return
+            if field == "scope":
+                self._edit(lambda: editing.toggle_scope(mat(), i, raw))
+            else:
+                self._edit(lambda: editing.set_modifier(mat(), i, field, raw))
 
     def _after_change(self):
         """Re-push the live doc through the production BridgeRuntime after
@@ -331,112 +554,6 @@ class BridgeEmittersPanel(Panel):
         if self._status and extra:
             return f"{self._status}; {extra}"
         return self._status or extra
-
-    def _snapshot(self):
-        self._undo.append(copy.deepcopy(self._doc))
-        del self._undo[:-_UNDO_LIMIT]
-
-    # ── light (emitter.light) actions ───────────────────────────────────
-    def _light_entry(self):
-        if self._selected is None or self._doc is None:
-            return None
-        return (self._doc["shapes"].get(self._selected.key, {})
-                .get("emitter", {}).get("light"))
-
-    def _light_add(self):
-        if self._selected is None or self._last_hit is None:
-            return
-        self._snapshot()
-        point, normal = self._last_hit
-        entry = ld.shape_entry(self._doc, self._selected.block, self._selected.name)
-        entry.setdefault("emitter", {})["light"] = {
-            "position": list(point), "direction": list(normal),
-            "inner_deg": _LIGHT_INNER_DEG, "outer_deg": _LIGHT_OUTER_DEG,
-            "range": _LIGHT_RANGE, "intensity": _LIGHT_INTENSITY,
-        }
-
-    def _light_remove(self):
-        if self._selected is None or self._doc is None:
-            return
-        entry = self._doc["shapes"].get(self._selected.key)
-        if not entry or "light" not in entry.get("emitter", {}):
-            return
-        self._snapshot()
-        entry = self._doc["shapes"][self._selected.key]
-        del entry["emitter"]["light"]
-        if not entry["emitter"]:
-            del entry["emitter"]
-        if set(entry) == {"block", "name"}:
-            del self._doc["shapes"][self._selected.key]
-
-    def _light_aim(self):
-        light = self._light_entry()
-        if light is None or self._camera is None:
-            return
-        self._snapshot()
-        light["direction"] = list(self._camera.forward())
-
-    def _light_place(self):
-        light = self._light_entry()
-        if light is None or self._last_hit is None:
-            return
-        self._snapshot()
-        light["position"] = list(self._last_hit[0])
-
-    def _light_field(self, arg):
-        field, _, raw = arg.partition(":")
-        light = self._light_entry()
-        if field not in _LIGHT_FIELDS or light is None:
-            return
-        try:
-            v = float(raw)
-        except ValueError:
-            return
-        if field in ("inner_deg", "outer_deg"):
-            v = min(90.0, max(0.0, v))
-        elif field == "range":
-            v = max(_LIGHT_MIN_RANGE, v)
-        elif field == "intensity":
-            v = max(0.0, v)
-        if light.get(field) == v:
-            return
-        self._snapshot()
-        light[field] = v
-        if field == "inner_deg" and light.get("outer_deg", 90.0) < v:
-            light["outer_deg"] = v
-        elif field == "outer_deg" and v < light.get("inner_deg", 0.0):
-            light["inner_deg"] = v
-
-    def _edit_material(self, arg):
-        ch, _, raw = arg.partition(":")
-        if ch not in _CHANNELS or self._selected is None:
-            return
-        try:
-            v = float(raw)
-        except ValueError:
-            return
-        v = min(1.0, max(0.0, v))
-        current = (self._doc["shapes"].get(self._selected.key, {})
-                   .get("material", {}).get(ch))
-        if current == v:
-            return
-        self._snapshot()
-        entry = ld.shape_entry(self._doc, self._selected.block, self._selected.name)
-        entry.setdefault("material", {})[ch] = v
-
-    def _clear_material(self, ch):
-        if ch not in _CHANNELS or self._selected is None:
-            return
-        entry = self._doc["shapes"].get(self._selected.key)
-        if not entry or ch not in entry.get("material", {}):
-            return
-        self._snapshot()
-        entry = self._doc["shapes"][self._selected.key]
-        del entry["material"][ch]
-        if not entry["material"]:
-            del entry["material"]
-        if set(entry) == {"block", "name"}:
-            del self._doc["shapes"][self._selected.key]
 
     def _can_save(self):
         return bool(self._info and self._load and self._load.error is None
@@ -479,38 +596,92 @@ class BridgeEmittersPanel(Panel):
                 return m
         return None
 
-    def _material_state(self):
-        entry = self._doc["shapes"].get(self._selected.key, {}) if self._doc else {}
-        mat = entry.get("material", {})
-        mesh_info = self._selected_mesh_info()
-        maps = (mesh_info or {}).get("maps", {})
-        out = {}
+    def _maps(self):
+        return (self._selected_mesh_info() or {}).get("maps") or {}
+
+    def _usage(self):
+        """{material: meshes rendering with it} over the whole bridge, and
+        the meshes with no link (which follow their texture's material)."""
+        meshes = (self._info or {}).get("meshes", [])
+        matched = ld.match_shapes(self._doc, meshes)[0]
+        resolved = ld.resolve(self._doc, meshes, matched)
+        counts = {}
+        for name in resolved.values():
+            counts[name] = counts.get(name, 0) + 1
+        linked = {matched[k] for k in matched if self._doc["objects"][k].get("material")}
+        return counts, [m for m in meshes if m["mesh"] not in linked]
+
+    def _texture_material(self):
+        """The selected object's texture's material name -- or the name it
+        will get when first edited; None for an object with no texture."""
+        tex = self._texture()
+        if not tex:
+            return None
+        return (self._doc.get("textures", {}).get(ld.texture_key(tex))
+                or ld.free_name(self._doc, ld.texture_stem(tex)))
+
+    def _material_payload(self, counts, unlinked):
+        name = self._material_name()
+        tex = self._texture()
+        if name is None and not tex:
+            return None
+        kind = "linked" if self._linked() else "texture"
+        if name is None:               # the texture's material, not made yet
+            key = ld.texture_key(tex)
+            name, mat = self._texture_material(), {}
+            used = sum(1 for m in unlinked
+                       if ld.mesh_texture(m) and ld.texture_key(ld.mesh_texture(m)) == key)
+        else:
+            mat, used = self._doc["materials"][name], counts.get(name, 0)
+        maps = self._maps()
+        finish = {}
         for ch, default in _CHANNELS.items():
             if maps.get(ch):
-                out[ch] = {"value": default, "source": "map"}
+                finish[ch] = {"value": default, "source": "map"}
             elif ch in mat:
-                out[ch] = {"value": mat[ch], "source": "override"}
+                finish[ch] = {"value": mat[ch], "source": "material"}
             else:
-                out[ch] = {"value": default, "source": "default"}
-        return out
+                finish[ch] = {"value": default, "source": "default"}
+        # Emission (spec §14): unlike roughness/metalness the material's level
+        # still applies over a map -- the map says what glows, the level how
+        # much; unset, a map glows as painted (1) and no map glows nothing.
+        if "emission" in mat:
+            finish["emission"] = {"value": mat["emission"], "source": "material"}
+        elif maps.get("emissive"):
+            finish["emission"] = {"value": 1.0, "source": "map"}
+        else:
+            finish["emission"] = {"value": 0.0, "source": "default"}
+        return {"name": name, "kind": kind, "used_by": used, "finish": finish,
+                "emission_source": mat.get("emission_source", "texture"),
+                "modifiers": copy.deepcopy(mat.get("modifiers", []))}
 
-    def _light_payload(self):
-        light = self._light_entry()
-        return None if light is None else dict(light)
+    def _selected_payload(self):
+        if self._selected is None or self._doc is None:
+            return None
+        counts, unlinked = self._usage()
+        textured = set(self._doc.get("textures", {}).values())
+        obj = self._object() or {}
+        return {"key": self._selected.key, "block": self._selected.block,
+                "name": self._selected.name,
+                "display_name": self._selected.display_name,
+                "node_chain": list(self._selected.node_chain),
+                "textures": list(self._selected.textures),
+                "tab": self._tab, "expanded": sorted(self._expanded),
+                "has_emission_map": bool(self._maps().get("emissive")),
+                "material": self._material_name(),
+                "linked": bool(obj.get("material")),
+                "texture_material": self._texture_material(),
+                # A material belongs to one texture: only this one's are offered.
+                "library": [{"name": m, "used_by": counts.get(m, 0), "texture": m in textured}
+                            for m in sorted(self._doc["materials"])
+                            if ld.fits(self._doc, m, self._selected_mesh_info() or {})],
+                "lights": copy.deepcopy(obj.get("lights", [])),
+                "material_data": self._material_payload(counts, unlinked)}
 
     def render_payload(self) -> Optional[str]:
         if not self._visible:
             state = {"visible": False}
         else:
-            sel = None
-            if self._selected is not None and self._doc is not None:
-                sel = {"key": self._selected.key, "block": self._selected.block,
-                       "name": self._selected.name,
-                       "display_name": self._selected.display_name,
-                       "node_chain": list(self._selected.node_chain),
-                       "textures": list(self._selected.textures),
-                       "material": self._material_state(),
-                       "light": self._light_payload()}
             hover = None
             if self._info and self._hover_mesh >= 0:
                 ident = identity_for(self._info, self._hover_mesh)
@@ -518,12 +689,16 @@ class BridgeEmittersPanel(Panel):
             state = {
                 "visible": True,
                 "in_bridge": bool(self._in_bridge()),
-                "selected": sel,
+                "state": self._state,
+                "playing": self._preview_playing,
+                "selected": self._selected_payload(),
                 "hover": hover,
+                "hint": HINT,
                 "dirty": (self._doc is not None and lw.dumps(self._doc) != self._saved_text),
                 "can_save": self._can_save(),
                 "can_undo": bool(self._undo),
                 "status": self._status_text(),
+                "settings": self._settings_payload(),
             }
         js = "setBridgeEmitters(" + json.dumps(state) + ");"
         if js == self._last_pushed:

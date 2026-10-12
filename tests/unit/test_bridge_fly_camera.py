@@ -61,16 +61,17 @@ def test_move_forward_strafe_and_lift():
     assert approx(cam.eye, (fc.BASE_SPEED, fc.BASE_SPEED, -fc.BASE_SPEED))
 
 
-def test_fast_and_slow_scale_speed():
-    cam = fc.FlyCamera.from_pose(eye=(0, 0, 0), target=(0, 1, 0))
-    cam.move(1.0, forward=1, strafe=0, lift=0, fast=True)
-    assert cam.eye[1] == pytest.approx(fc.BASE_SPEED * fc.FAST_MULT)
-    cam = fc.FlyCamera.from_pose(eye=(0, 0, 0), target=(0, 1, 0))
-    cam.move(1.0, forward=1, strafe=0, lift=0, slow=True)
-    assert cam.eye[1] == pytest.approx(fc.BASE_SPEED * fc.SLOW_MULT)
+def test_scroll_notches_scale_the_speed_within_bounds():
+    cam = fc.FlyCamera((0, 0, 0), 0.0, 0.0)
+    cam.adjust_speed(2)
+    assert cam.speed == pytest.approx(fc.BASE_SPEED * 1.25 ** 2)
+    cam.adjust_speed(-100)
+    assert cam.speed == pytest.approx(fc.BASE_SPEED * fc.MIN_SPEED_MULT)
+    cam.move(1.0, forward=1, strafe=0, lift=0)
+    assert cam.eye[1] == pytest.approx(fc.BASE_SPEED * fc.MIN_SPEED_MULT)
 
 
 def test_zero_dt_does_not_move():
     cam = fc.FlyCamera.from_pose(eye=(1, 2, 3), target=(1, 3, 3))
-    cam.move(0.0, forward=1, strafe=1, lift=1, fast=True)
+    cam.move(0.0, forward=1, strafe=1, lift=1)
     assert approx(cam.eye, (1, 2, 3))

@@ -1,161 +1,563 @@
 {
-  "format": 1,
-  "profiles": {},
-  "shapes": {
-    "133:": {
-      "block": 133,
-      "material": {
-        "roughness": 0
-      },
+  "format": 3,
+  "materials": {
+    "Map 1": {
+      "roughness": 0,
+      "texture": "map 1.tga"
+    },
+    "Map 12": {
+      "roughness": 0,
+      "texture": "map 12.tga"
+    },
+    "Map 15": {
+      "roughness": 0,
+      "texture": "map 15.tga"
+    },
+    "Map 16": {
+      "roughness": 0.24,
+      "texture": "map 16.tga"
+    },
+    "Map 18": {
+      "roughness": 0.53,
+      "texture": "map 18.tga"
+    },
+    "Map 18 2": {
+      "roughness": 0.5,
+      "texture": "map 18.tga"
+    },
+    "Map 19": {
+      "roughness": 0.98,
+      "texture": "map 19.tga"
+    },
+    "Map 19 2": {
+      "roughness": 0,
+      "texture": "map 19.tga"
+    },
+    "Map 22a": {
+      "roughness": 0.05,
+      "texture": "map 22a.tga"
+    },
+    "Map 22a 2": {
+      "roughness": 0,
+      "texture": "map 22a.tga"
+    },
+    "Map 22b": {
+      "emission": 0.98,
+      "roughness": 0,
+      "texture": "map 22b.tga"
+    },
+    "Map 22c": {
+      "roughness": 0,
+      "texture": "map 22c.tga"
+    },
+    "Map 24": {
+      "roughness": 0,
+      "texture": "map 24.tga"
+    },
+    "Map 26": {
+      "metalness": 0.63,
+      "texture": "map 26.tga"
+    },
+    "Map 27": {
+      "metalness": 0,
+      "roughness": 0.63,
+      "texture": "map 27.tga"
+    },
+    "Map 4": {
+      "roughness": 0.01,
+      "texture": "map 4.tga"
+    },
+    "Map 6": {
+      "roughness": 0,
+      "texture": "map 6.tga"
+    },
+    "Map 7": {
+      "emission": 0.98,
+      "roughness": 0,
+      "texture": "map 7.tga"
+    },
+    "Map 8": {
+      "roughness": 0,
+      "texture": "map 8.tga"
+    },
+    "Map 9": {
+      "roughness": 0.53,
+      "texture": "map 9.tga"
+    },
+    "alcove": {
+      "emission": 0,
+      "modifiers": [
+        {
+          "level": 1,
+          "scope": [
+            "green"
+          ],
+          "tint": [
+            1,
+            1,
+            1
+          ],
+          "type": "state"
+        },
+        {
+          "level": 0.5,
+          "scope": [
+            "red"
+          ],
+          "tint": [
+            1,
+            0.12,
+            0.08
+          ],
+          "type": "state"
+        },
+        {
+          "min": 0.2,
+          "period_s": 2,
+          "phase": 0,
+          "scope": [
+            "red"
+          ],
+          "shape": "sine",
+          "type": "animation"
+        }
+      ],
+      "texture": "map 19.tga"
+    },
+    "g_imp_connops": {
+      "roughness": 0,
+      "texture": "g_imp_connops.tga"
+    },
+    "g_imp_redbars": {
+      "modifiers": [
+        {
+          "scope": [
+            "offline",
+            "green",
+            "yellow",
+            "red",
+            "special"
+          ],
+          "seconds": 0.5,
+          "type": "transition"
+        },
+        {
+          "level": 0,
+          "scope": [
+            "green",
+            "yellow",
+            "special"
+          ],
+          "tint": [
+            1,
+            1,
+            1
+          ],
+          "type": "state"
+        },
+        {
+          "min": 0,
+          "period_s": 2,
+          "phase": 0,
+          "scope": [
+            "red"
+          ],
+          "shape": "sine",
+          "type": "animation"
+        }
+      ],
+      "roughness": 0,
+      "texture": "g_imp_redbars.tga"
+    },
+    "roof": {
+      "emission": 0,
+      "modifiers": [
+        {
+          "level": 1,
+          "scope": [
+            "green"
+          ],
+          "tint": [
+            1,
+            1,
+            1
+          ],
+          "type": "state"
+        },
+        {
+          "level": 0.6,
+          "scope": [
+            "yellow",
+            "red"
+          ],
+          "tint": [
+            1,
+            1,
+            1
+          ],
+          "type": "state"
+        }
+      ],
+      "roughness": 0,
+      "texture": "map 5.tga"
+    },
+    "roof (Map 13)": {
+      "emission": 1.43,
+      "modifiers": [
+        {
+          "level": 1.1,
+          "scope": [
+            "green"
+          ],
+          "tint": [
+            1,
+            1,
+            1
+          ],
+          "type": "state"
+        },
+        {
+          "level": 0.6,
+          "scope": [
+            "yellow",
+            "red"
+          ],
+          "tint": [
+            1,
+            1,
+            1
+          ],
+          "type": "state"
+        }
+      ],
+      "roughness": 0,
+      "texture": "map 13.tga"
+    },
+    "roof 2": {
+      "emission": 1.3,
+      "modifiers": [
+        {
+          "level": 1.1,
+          "scope": [
+            "green"
+          ],
+          "tint": [
+            1,
+            1,
+            1
+          ],
+          "type": "state"
+        },
+        {
+          "level": 0.6,
+          "scope": [
+            "yellow",
+            "red"
+          ],
+          "tint": [
+            1,
+            1,
+            1
+          ],
+          "type": "state"
+        }
+      ],
+      "texture": "map 13.tga"
+    },
+    "running_0": {
+      "roughness": 0,
+      "texture": "running_0.tga"
+    }
+  },
+  "objects": {
+    "255:": {
+      "block": 255,
+      "material": "Map 18 2",
       "name": ""
     },
-    "139:": {
-      "block": 139,
-      "material": {
-        "roughness": 0
-      },
+    "299:": {
+      "block": 299,
+      "lights": [
+        {
+          "direction": [
+            0.729672,
+            -0.404578,
+            -0.551268
+          ],
+          "inner_deg": 30,
+          "intensity": 10000,
+          "outer_deg": 90,
+          "position": [
+            -48.549065,
+            35.224983,
+            5.215477
+          ],
+          "range": 200
+        }
+      ],
       "name": ""
     },
-    "17:": {
-      "block": 17,
-      "material": {
-        "roughness": 0
-      },
+    "319:": {
+      "block": 319,
+      "lights": [
+        {
+          "direction": [
+            -0.729672,
+            -0.404578,
+            -0.551268
+          ],
+          "inner_deg": 30,
+          "intensity": 10000,
+          "outer_deg": 90,
+          "position": [
+            48.569176,
+            37.223564,
+            4.388153
+          ],
+          "range": 200
+        }
+      ],
       "name": ""
     },
-    "185:": {
-      "block": 185,
-      "material": {
-        "metalness": 0.63
-      },
+    "392:": {
+      "block": 392,
+      "material": "Map 19 2",
       "name": ""
     },
-    "189:": {
-      "block": 189,
-      "material": {
-        "roughness": 0
-      },
+    "401:": {
+      "block": 401,
+      "lights": [
+        {
+          "direction": [
+            0,
+            0,
+            -1
+          ],
+          "inner_deg": 45,
+          "intensity": 8000,
+          "outer_deg": 85,
+          "position": [
+            157,
+            -135,
+            105
+          ],
+          "range": 150
+        }
+      ],
+      "material": "alcove",
       "name": ""
     },
-    "236:": {
-      "block": 236,
-      "material": {
-        "roughness": 0
-      },
+    "423:": {
+      "block": 423,
+      "lights": [
+        {
+          "direction": [
+            0,
+            0,
+            -1
+          ],
+          "inner_deg": 45,
+          "intensity": 8000,
+          "outer_deg": 85,
+          "position": [
+            -146,
+            -137,
+            105
+          ],
+          "range": 150
+        }
+      ],
+      "material": "alcove",
       "name": ""
     },
-    "288:": {
-      "block": 288,
-      "material": {
-        "roughness": 0.11
-      },
+    "441:": {
+      "block": 441,
+      "lights": [
+        {
+          "direction": [
+            0,
+            0,
+            -1
+          ],
+          "inner_deg": 45,
+          "intensity": 8000,
+          "outer_deg": 85,
+          "position": [
+            -193,
+            156.5,
+            126
+          ],
+          "range": 150
+        }
+      ],
+      "material": "alcove",
       "name": ""
     },
-    "29:": {
-      "block": 29,
-      "material": {
-        "roughness": 0
-      },
+    "455:": {
+      "block": 455,
+      "lights": [
+        {
+          "direction": [
+            0,
+            0,
+            -1
+          ],
+          "inner_deg": 45,
+          "intensity": 8000,
+          "outer_deg": 85,
+          "position": [
+            156.5,
+            156,
+            127
+          ],
+          "range": 150
+        }
+      ],
+      "material": "alcove",
       "name": ""
     },
-    "337:": {
-      "block": 337,
-      "material": {
-        "roughness": 0
-      },
-      "name": ""
-    },
-    "358:": {
-      "block": 358,
-      "material": {
-        "roughness": 0
-      },
-      "name": ""
-    },
-    "415:": {
-      "block": 415,
-      "material": {
-        "roughness": 0
-      },
-      "name": ""
-    },
-    "59:": {
-      "block": 59,
-      "material": {
-        "roughness": 0
-      },
-      "name": ""
-    },
-    "63:": {
-      "block": 63,
-      "material": {
-        "roughness": 0
-      },
-      "name": ""
-    },
-    "655:": {
-      "block": 655,
-      "material": {
-        "roughness": 0
-      },
-      "name": ""
-    },
-    "666:": {
-      "block": 666,
-      "material": {
-        "roughness": 0
-      },
-      "name": ""
-    },
-    "685:": {
-      "block": 685,
-      "material": {
-        "roughness": 0
-      },
-      "name": ""
-    },
-    "688:": {
-      "block": 688,
-      "material": {
-        "roughness": 0
-      },
-      "name": ""
-    },
-    "691:": {
-      "block": 691,
-      "material": {
-        "roughness": 0
-      },
+    "471:": {
+      "block": 471,
+      "material": "Map 22a 2",
       "name": ""
     },
     "76:": {
       "block": 76,
-      "material": {
-        "roughness": 0
-      },
+      "lights": [
+        {
+          "direction": [
+            -0.73032,
+            -0.293865,
+            -0.616666
+          ],
+          "inner_deg": 70,
+          "intensity": 5000,
+          "outer_deg": 90,
+          "position": [
+            146.742661,
+            106.294434,
+            126.114777
+          ],
+          "range": 500
+        }
+      ],
+      "material": "roof",
+      "name": ""
+    },
+    "81:": {
+      "block": 81,
+      "lights": [
+        {
+          "direction": [
+            0.012305,
+            0.445835,
+            -0.895031
+          ],
+          "inner_deg": 70,
+          "intensity": 5000,
+          "outer_deg": 90,
+          "position": [
+            -5.089623,
+            -179.167404,
+            135.315338
+          ],
+          "range": 200
+        }
+      ],
+      "material": "roof 2",
       "name": ""
     },
     "84:": {
       "block": 84,
-      "material": {
-        "roughness": 0
-      },
+      "lights": [
+        {
+          "direction": [
+            0.411412,
+            -0.10185,
+            -0.905741
+          ],
+          "inner_deg": 70,
+          "intensity": 5000,
+          "outer_deg": 90,
+          "position": [
+            -116.296661,
+            92.798981,
+            143.393005
+          ],
+          "range": 500
+        }
+      ],
+      "material": "roof",
       "name": ""
     },
     "87:": {
       "block": 87,
-      "material": {
-        "roughness": 0
-      },
+      "lights": [
+        {
+          "direction": [
+            0.002574,
+            0.240971,
+            -0.970529
+          ],
+          "inner_deg": 70,
+          "intensity": 4000,
+          "outer_deg": 90,
+          "position": [
+            -70.969406,
+            -147.401047,
+            138.629578
+          ],
+          "range": 800
+        }
+      ],
+      "material": "roof (Map 13)",
       "name": ""
     },
     "90:": {
       "block": 90,
-      "material": {
-        "roughness": 0
-      },
+      "lights": [
+        {
+          "direction": [
+            -0.121672,
+            -0.436174,
+            -0.891599
+          ],
+          "inner_deg": 60,
+          "intensity": 6500,
+          "outer_deg": 90,
+          "position": [
+            -29.32332,
+            179.751892,
+            140.335709
+          ],
+          "range": 500
+        }
+      ],
+      "material": "roof",
       "name": ""
     }
   },
-  "source": "/Users/mward/Documents/Star Trek Bridge Commander/game/data/Models/Sets/DBridge/DBridge.nif"
+  "source": "/Users/mward/Documents/Star Trek Bridge Commander/game/data/Models/Sets/DBridge/DBridge.nif",
+  "textures": {
+    "g_imp_connops.tga": "g_imp_connops",
+    "g_imp_redbars.tga": "g_imp_redbars",
+    "map 1.tga": "Map 1",
+    "map 12.tga": "Map 12",
+    "map 15.tga": "Map 15",
+    "map 16.tga": "Map 16",
+    "map 18.tga": "Map 18",
+    "map 19.tga": "Map 19",
+    "map 22a.tga": "Map 22a",
+    "map 22b.tga": "Map 22b",
+    "map 22c.tga": "Map 22c",
+    "map 24.tga": "Map 24",
+    "map 26.tga": "Map 26",
+    "map 27.tga": "Map 27",
+    "map 4.tga": "Map 4",
+    "map 6.tga": "Map 6",
+    "map 7.tga": "Map 7",
+    "map 8.tga": "Map 8",
+    "map 9.tga": "Map 9",
+    "running_0.tga": "running_0"
+  }
 }

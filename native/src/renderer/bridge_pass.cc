@@ -35,8 +35,15 @@ namespace renderer {
 int bridge_emissive_texture(const assets::Material& mat, int alert) {
     using S = assets::Material::StageSlot;
     auto slot = [&](S s) { return mat.stages[static_cast<std::size_t>(s)].texture_index; };
-    if (alert == 1 && slot(S::EmissiveYellow) >= 0) return slot(S::EmissiveYellow);
+    if (alert == kBridgeStateSpecial) {
+        if (slot(S::EmissiveSpecial) >= 0) return slot(S::EmissiveSpecial);
+        return slot(S::Emissive) >= 0 ? slot(S::Emissive) : -1;
+    }
+    // Red tries its own map, then the yellow one (spec §11.1: yellow and red
+    // share the alert look, §9.4), then the default.
     if (alert == 2 && slot(S::EmissiveRed) >= 0) return slot(S::EmissiveRed);
+    if ((alert == 1 || alert == 2) && slot(S::EmissiveYellow) >= 0)
+        return slot(S::EmissiveYellow);
     return slot(S::Emissive) >= 0 ? slot(S::Emissive) : -1;
 }
 
@@ -137,7 +144,10 @@ void draw_mesh(const assets::Model& model,
                int pbr = 0,
                float rough_override = -1.0f,
                float metal_override = -1.0f,
-               int emissive_alert = 0) {
+               int emissive_alert = 0,
+               int glow_src = -1,
+               glm::vec3 glow_rgb = glm::vec3(0.0f),
+               float glow_level = 0.0f) {
     shader.set_mat4("u_model", world);
     // Debug view 5 (Mesh ID): a stable per-draw counter, reset each render().
     shader.set_int("u_mesh_id", mesh_id);
@@ -207,6 +217,10 @@ void draw_mesh(const assets::Model& model,
     shader.set_int("u_pbr", pbr);
     shader.set_float("u_rough_override", rough_override);
     shader.set_float("u_metal_override", metal_override);
+    // Emitter glow (spec §11.2): -1 = none (the texture-level emissive default).
+    shader.set_int("u_glow_src", glow_src);
+    shader.set_vec3("u_glow_rgb", glow_rgb);
+    shader.set_float("u_glow_level", glow_level);
     auto bind_map = [&](GLenum unit, assets::Material::StageSlot slot,
                         const char* has_name) {
         const int ti = mat.stages[static_cast<std::size_t>(slot)].texture_index;
@@ -227,6 +241,9 @@ void draw_mesh(const assets::Model& model,
         GLuint id = 0;
         if (ti >= 0 && ti < static_cast<int>(model.textures.size()))
             id = model.textures[static_cast<std::size_t>(ti)].id();
+        // Spec §13.1: power offline darkens the texture-level default; a
+        // material glow (glow_src >= 0) still samples the map.
+        if (glow_src < 0 && emissive_alert == kBridgeStateOffline) id = 0;
         shader.set_int("u_has_emissive_map", id != 0 ? 1 : 0);
         glActiveTexture(GL_TEXTURE0 + kBridgeEmissiveUnit);
         glBindTexture(GL_TEXTURE_2D, id != 0 ? id : white_fallback);
@@ -322,7 +339,8 @@ void BridgePass::render(const scenegraph::World& world,
         const BridgeSpot& sp = spots_[static_cast<std::size_t>(i)];
         spot_pos[i] = sp.position;
         spot_dir[i] = sp.direction;
-        spot_rad[i] = sp.radiance;
+        spot_rad[i] = (capture_pass_ && sp.has_capture)
+            ? sp.capture_radiance[capture_probe_] : sp.radiance;
         spot_params[i] = glm::vec4(sp.cos_inner, sp.cos_outer, sp.range, 0.0f);
     }
 
@@ -443,11 +461,24 @@ void BridgePass::render(const scenegraph::World& world,
                     metal_ov = it->second.second;
                 }
             }
+            // Emitter glow: the main bridge view only, never a probe face.
+            int glow_src = -1;
+            glm::vec3 glow_rgb(0.0f);
+            float glow_level = 0.0f;
+            if (main_bridge && !capture_pass_ && glow_model_ != 0 && mh == glow_model_) {
+                const int mi = static_cast<int>(&mesh - m.meshes.data());
+                if (auto it = glow_.find(mi); it != glow_.end()) {
+                    glow_src = it->second.src;
+                    glow_rgb = it->second.rgb;
+                    glow_level = it->second.level;
+                }
+            }
             draw_mesh(m, mesh, mat, base_shader, w, white, t, ov, flip,
                       viewscreen_brightness_, viewscreen_flash_,
                       /*face_blend=*/false, /*face_a=*/0u, /*face_b=*/0u,
                       /*face_mix=*/0.0f, mesh_id_counter++, hl,
-                      pbr, rough_ov, metal_ov, emissive_alert);
+                      pbr, rough_ov, metal_ov, emissive_alert,
+                      glow_src, glow_rgb, glow_level);
         });
 
     // ── Sub-pass B: skinned bridge characters ──────────────────────────────
@@ -570,15 +601,37 @@ std::size_t BridgePass::set_spots(std::vector<BridgeSpot> spots) {
     // same list (an empty one over an empty one with no lighting file), and
     // a capture of both probes costs ~14 ms for no visible change.
     auto same_spot = [](const BridgeSpot& a, const BridgeSpot& b) {
-        return a.position == b.position && a.direction == b.direction &&
-               a.cos_inner == b.cos_inner && a.cos_outer == b.cos_outer &&
-               a.range == b.range && a.radiance == b.radiance;
+        if (!(a.position == b.position && a.direction == b.direction &&
+              a.cos_inner == b.cos_inner && a.cos_outer == b.cos_outer &&
+              a.range == b.range && a.has_capture == b.has_capture))
+            return false;
+        // With capture colours the live radiance is per-frame data and never
+        // recaptures; without them the radiance IS what the probes hold.
+        if (a.has_capture)
+            return a.capture_radiance[0] == b.capture_radiance[0] &&
+                   a.capture_radiance[1] == b.capture_radiance[1];
+        return a.radiance == b.radiance;
     };
     const bool same = spots.size() == spots_.size() &&
         std::equal(spots.begin(), spots.end(), spots_.begin(), same_spot);
     spots_ = std::move(spots);
     if (!same) request_probe_capture();
     return dropped;
+}
+
+void BridgePass::set_spot_radiance(const std::vector<glm::vec3>& radiance) {
+    const std::size_t n = std::min(radiance.size(), spots_.size());
+    for (std::size_t i = 0; i < n; ++i) {
+        const glm::vec3& r = radiance[i];
+        spots_[i].radiance = (std::isfinite(r.x) && std::isfinite(r.y) && std::isfinite(r.z))
+            ? r : glm::vec3(0.0f);
+    }
+}
+
+void BridgePass::set_glow(unsigned long long model_handle, std::vector<BridgeGlow> glow) {
+    glow_.clear();
+    for (const auto& g : glow) glow_[g.mesh] = g;
+    glow_model_ = glow_.empty() ? 0 : model_handle;
 }
 
 void BridgePass::set_probe_mix(float t) {
@@ -618,9 +671,10 @@ void BridgePass::capture_probes(const scenegraph::World& world,
         explicit CaptureFlag(bool& flag) : f(flag) { f = true; }
         ~CaptureFlag() { f = false; }
     };
-    auto capture_one = [&](BridgeProbe& probe, float scale) {
+    auto capture_one = [&](BridgeProbe& probe, float scale, int probe_index) {
         Lighting scaled = lighting;
         scaled.ambient *= scale;
+        capture_probe_ = probe_index;
         probe.capture(probe_origin_, [&](const scenegraph::Camera& face_cam) {
             CaptureFlag flag(capture_pass_);
             // render() sets the bridge state itself (depth LESS + write,
@@ -630,8 +684,8 @@ void BridgePass::capture_probes(const scenegraph::World& world,
                    scenegraph::Pass::Bridge, 0);
         });
     };
-    capture_one(probe_green_, scale_green_);
-    capture_one(probe_yr_, scale_yr_);
+    capture_one(probe_green_, scale_green_, 0);
+    capture_one(probe_yr_, scale_yr_, 1);
     probes_captured_ = probe_green_.valid() && probe_yr_.valid();
     capture_ambient_ = lighting.ambient;
 }

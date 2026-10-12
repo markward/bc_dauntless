@@ -1,4 +1,4 @@
-"""Bridge lighting writer (spec 2026-10-08-bridge-emitters §7): deterministic,
+"""Bridge lighting writer (spec 2026-10-08-bridge-emitters §7, §13.4): deterministic,
 atomic, round-trip byte-identical."""
 import json
 
@@ -10,8 +10,10 @@ from engine.bridge_editor import lighting_writer as lw
 
 def doc():
     d = ld.empty_doc("data/Models/Sets/DBridge/DBridge.nif")
-    ld.shape_entry(d, 12, "roof light")["material"] = {"roughness": 0.123456789, "metalness": 1}
-    ld.shape_entry(d, 3, "floor")["material"] = {"roughness": 0.5}
+    d["materials"]["polished"] = {"roughness": 0.123456789, "metalness": 1}
+    d["materials"]["matte"] = {"roughness": 0.5}
+    ld.object_entry(d, 12, "roof light")["material"] = "polished"
+    ld.object_entry(d, 3, "floor")["material"] = "matte"
     return d
 
 
@@ -42,7 +44,7 @@ def test_save_refuses_an_invalid_doc_without_touching_the_file(tmp_path):
     p = tmp_path / "x.json"
     p.write_text("original")
     bad = doc()
-    bad["shapes"]["3:floor"]["material"]["roughness"] = 7
+    bad["materials"]["matte"]["roughness"] = 7
     with pytest.raises(ld.BridgeLightingError):
         lw.save(bad, p)
     assert p.read_text() == "original"

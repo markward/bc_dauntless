@@ -304,6 +304,8 @@ frame 0 (below), which is what the albedo check compares.
   final position (a reference when unmoved) with the corner's UV and
   `attr_src` from the nearest original. A UV conflict on a **kept** face is
   still refused as before (re-pointing NIF triangles is out of scope).
+  *(Lifted in iteration 6 -- see §11.6: a kept face that would split an
+  original is removed and re-added through this same path.)*
 - **N-gons.** Added faces with more than 3 corners are ear-clipped
   (`tools/shape_diff/triangulate.py`, ported from the parked spike) on the
   corners' edit positions in the polygon's dominant plane, keeping its
@@ -609,6 +611,7 @@ the scratchpad; in game, Developer Options → Lighting → Bridge Debug View
 | 3 — new vertices + refs (cove b0392/b0395, LCARS b0688/b0697, b0471) | New vertices, BSD2 references (snapped moves become refs), robust correspondence, n-gon ear clipping, `--exclude`; b0392's removals land with b0395's rework | accepted by Mark in game 2026-10-09 (round 5): verified 21 objects; cove b0392+b0395, black panel b0471 (Map 22a), LCARS b0688 (running_0, static until flipbook) + b0697 (g_imp_redbars), seat panels b0121/b0124 (Map 22a); payload has no absolute coordinates | §5.2/§5.3 iteration-3 rules, §6.1 BSD2. Expect previously committed blocks unchanged except snapped moves turning into references. The `running_0..11` flipbook on b0688 is row 4 |
 | 4 — flipbook (LCARS b0688 running_0..11 @ 5 fps) | Animated albedo: a numbered frame run becomes a looping `NiFlipController` | accepted by Mark in game 2026-10-09: b0688 cycles running_0..11 at 5 fps on game time (stock EBridge flip-controller shape) | `textures[].flipbook` (§6, §7); detection §5.3; fps 5, continuous loop (Mark 2026-10-09) |
 | 5 — roof rebuild (Mark's 'modified and enhanced' round) | Roof structure b0475 remodelled (352 moved, 239 new verts, 136 tris out / 444 in, own Map 28), new 32-gon roof centre b0051 on replaced Map 1, roof light ribs b0076/81/84/87/90 moved, seat backs b0244/b0267 and b0326 rebuilt | accepted by Mark in game 2026-10-09; verified 31 objects | Generated from a scratch copy with b0475_roof_structure.001 renamed to b0051_roof_center_hole (Mark renamed it in the .blend; his next export must reproduce this fix). Open: vertex colour of off-position survivors comes from the paired/nearest original — not verified (OBJ has no colours) |
+| 6 — consoles, ribs, seat panels | Console bases b0331/b0352 re-unwrapped and rebuilt, roof ribs b0076/81/84/87/90 moved, seat panels b0121/124 onto Map 22d, consoles b0175/203/491/506 onto Map 4a | committed on Mark's go-ahead 2026-10-10; verified 41 objects, nothing skipped | Needed two tool changes: same-UV copies at one corner are told apart by their source NIF triangle (b0331 vertex 2 was a false split), and a genuine seam through an original vertex now SPLITS it (§11.6) instead of refusing. Generated from Mark's re-export after renaming b0337/b0358 `.001` back to b0331/b0352 and moving one stray Map 28 face to Map 17 |
 
 ---
 
@@ -713,6 +716,14 @@ uv run python -m tools.bridge_shape_diff diff ~/Documents/dauntless-blender/Dbri
 | verifier mismatch | the produced fix does not reproduce `edit.obj` through the real loader — a tool bug; do not write |
 
 ### 11.6 Known limitations (parked, with rulings)
+
+- **Vertex splits (iteration 6).** An original vertex whose kept faces disagree on
+  its new UV (a seam BC never cut) keeps the UV most of its corners show (tie:
+  the lowest face key); every face showing another UV there is removed (all NIF
+  copies) and re-added, that corner becoming an added vertex placed by reference
+  to the original. Several originals at one position sharing ONE UV (BC's
+  side/end/top copies) are told apart by the NIF triangle each face came from,
+  not by UV -- they are not splits.
 
 - **Vertex colour / UV1 of new or re-paired vertices** comes from the paired or nearest original (`attr_src`). Not verified — Mark's OBJs carry no colours. If remodelled areas (e.g. roof b0475) show colour patches, that's the cause.
 - **Flip cascade:** unpairing a corner for the genuine-deletion case (§5.2 step 5) can carry a deliberate flip on a NEIGHBOURING face through as an added back-face. Needs a folded mesh plus deliberate flips; not seen in data.

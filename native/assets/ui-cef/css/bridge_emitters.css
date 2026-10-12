@@ -31,8 +31,73 @@
 #bridge-emitters-root .be-dock .cp-content { flex: 1; overflow-y: auto; }
 #bridge-emitters-root .be-help { opacity: 0.75; font-size: 12px; margin-bottom: 8px; }
 #bridge-emitters-root .be-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
-#bridge-emitters-root .be-row label { width: 90px; }
-#bridge-emitters-root .be-row input[type=range] { flex: 1; }
-#bridge-emitters-root .be-source { width: 60px; font-size: 11px; opacity: 0.8; }
+#bridge-emitters-root .be-row label { width: 72px; flex: none; font-size: 12px; }
+/* A range input has an intrinsic ~130px minimum: without min-width 0 it
+   cannot shrink, and the Finish row's × was pushed past the dock edge. */
+#bridge-emitters-root .be-row input[type=range] { flex: 1 1 0; min-width: 0; }
+#bridge-emitters-root .be-row input[type=number],
+#bridge-emitters-root .be-row button { flex: none; }
+#bridge-emitters-root .be-source { width: 48px; flex: none; font-size: 11px; opacity: 0.8; }
+#bridge-emitters-root .be-value { width: 34px; flex: none; font-size: 11px; text-align: right; }
+#bridge-emitters-root .be-typed { flex: 1 1 0; min-width: 0; }
+#bridge-emitters-root .be-pencil { padding: 0 4px; font-size: 11px; opacity: 0.7; }
+#bridge-emitters-root .be-tail { display: flex; align-items: center; width: 64px; flex: none; }
+#bridge-emitters-root .be-tail .be-source { width: auto; }
+#bridge-emitters-root .be-clear { margin: 0; padding: 0 3px; font-size: 10px; line-height: 14px; }
 #bridge-emitters-root .be-chain { font-size: 11px; opacity: 0.8; word-break: break-word; }
 #bridge-emitters-root .be-status { font-size: 12px; min-height: 16px; color: #f0b060; }
+#bridge-emitters-root .be-tabs { display: flex; gap: 4px; margin: 6px 0; }
+#bridge-emitters-root .be-tab { flex: 1; text-transform: capitalize; opacity: 0.6; }
+#bridge-emitters-root .be-tab.active { opacity: 1; outline: 1px solid #f0b060; }
+#bridge-emitters-root .be-swatch { width: 40px; height: 40px; border: 1px solid #888; }
+#bridge-emitters-root canvas { cursor: crosshair; }
+#bridge-emitters-root .be-chip { opacity: 0.6; }
+#bridge-emitters-root .be-chip.active { opacity: 1; outline: 1px solid #f0b060; }
+#bridge-emitters-root .be-chip[disabled] { opacity: 0.3; }
+#bridge-emitters-root .be-list { display: flex; flex-direction: column; gap: 2px; margin: 4px 0; }
+#bridge-emitters-root .be-list .be-chip { text-align: left; }
+
+/* Spec §13.3: the top-left bar is the editor's chrome; the dock shows only
+   with a selection (JS sets display: flex). Width/height must match
+   BAR_CSS_W / BAR_CSS_H in engine/ui/bridge_emitters_panel.py. */
+#bridge-emitters-root .be-top { pointer-events: auto; position: absolute; top: 8px; left: 8px;
+    max-width: 560px; max-height: 112px; overflow: hidden; }
+#bridge-emitters-root .be-bar { display: flex; align-items: center; gap: 4px;
+    background: rgba(0, 0, 0, 0.7); padding: 4px 8px; border-radius: 4px; }
+#bridge-emitters-root .be-title { letter-spacing: 1px; margin-right: 4px; }
+#bridge-emitters-root .be-sep { opacity: 0.5; margin: 0 4px; }
+#bridge-emitters-root .be-state, #bridge-emitters-root .be-scope { opacity: 0.45; }
+#bridge-emitters-root .be-state.active, #bridge-emitters-root .be-scope.on { opacity: 1;
+    outline: 1px solid #f0b060; }
+#bridge-emitters-root .be-hint { font-size: 11px; opacity: 0.75; margin-top: 4px; }
+#bridge-emitters-root .be-hover-row { font-size: 11px; }
+/* Each stack entry (Finish, modifiers, lights) is a bordered box: the border
+   carries the hierarchy, so its fields sit flush left (Mark 2026-10-12). */
+#bridge-emitters-root .be-entry { border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px; padding: 4px 6px; margin: 6px 0; }
+#bridge-emitters-root .be-entry-head { display: flex; align-items: center; gap: 4px; }
+#bridge-emitters-root .be-entry-title { flex: 1; }
+#bridge-emitters-root .be-entry-body { padding-left: 0; }
+#bridge-emitters-root .be-dock { display: none; }
+#bridge-emitters-root .be-add { margin: 6px 0; }
+#bridge-emitters-root .be-add-button { width: 100%; }
+#bridge-emitters-root .be-menu { display: flex; flex-direction: column; margin-top: 2px;
+    border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 4px; background: rgba(0, 0, 0, 0.5); }
+#bridge-emitters-root .be-menu-item { display: flex; flex-direction: column; align-items: flex-start;
+    text-align: left; background: none; border: none; padding: 4px 8px; }
+#bridge-emitters-root .be-menu-item:hover { background: rgba(240, 176, 96, 0.2); }
+#bridge-emitters-root .be-menu-help { font-size: 11px; opacity: 0.7; }
+
+/* Bridge Settings (Mark 2026-10-12): the cog sits at the bottom right of the
+   free view (left of the dock while it shows); the panel opens above it.
+   Sizes must match COG_CSS_PX / SETTINGS_CSS_W / SETTINGS_CSS_H in
+   engine/ui/bridge_emitters_panel.py (its click region). */
+#bridge-emitters-root .be-settings { pointer-events: auto; position: absolute; right: 8px;
+    bottom: 8px; display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+    max-width: 300px; max-height: 280px; }
+#bridge-emitters-root.be-has-dock .be-settings { right: 368px; }
+#bridge-emitters-root .be-settings-panel { width: 300px; box-sizing: border-box;
+    max-height: 230px; overflow-y: auto; padding: 6px 8px; border-radius: 4px;
+    background: rgba(0, 0, 0, 0.8); border: 1px solid rgba(255, 255, 255, 0.2); }
+#bridge-emitters-root .be-cog { width: 40px; height: 40px; font-size: 22px; padding: 0; }
+#bridge-emitters-root .be-cog.active { outline: 1px solid #f0b060; }

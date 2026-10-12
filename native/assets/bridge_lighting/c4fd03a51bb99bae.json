@@ -1,151 +1,137 @@
 {
-  "format": 1,
-  "profiles": {},
-  "shapes": {
-    "12:Material: roof grill": {
-      "block": 12,
-      "material": {
-        "roughness": 0.02
-      },
-      "name": "Material: roof grill"
+  "format": 2,
+  "materials": {
+    "LCarsSchematicRight": {
+      "roughness": 0,
+      "texture": "lcarsschematicright.tga"
     },
-    "176:Material: e chairs": {
-      "block": 176,
-      "material": {
-        "metalness": 1,
-        "roughness": 0.06
-      },
-      "name": "Material: e chairs"
+    "ceilingwhite": {
+      "roughness": 0,
+      "texture": "ceilingwhite.tga"
     },
-    "20:Dim Material": {
-      "block": 20,
-      "material": {
-        "roughness": 0
-      },
-      "name": "Dim Material"
+    "chair": {
+      "metalness": 1,
+      "roughness": 0.06,
+      "texture": "chair.tga"
     },
+    "chair 2": {
+      "metalness": 1,
+      "roughness": 0.02,
+      "texture": "chair.tga"
+    },
+    "consoletopview": {
+      "roughness": 0,
+      "texture": "consoletopview.tga"
+    },
+    "lcarsschematicleft": {
+      "roughness": 0,
+      "texture": "lcarsschematicleft.tga"
+    },
+    "newcomp": {
+      "metalness": 1,
+      "roughness": 0,
+      "texture": "newcomp.tga"
+    },
+    "newcomp 2": {
+      "metalness": 0.89,
+      "roughness": 0,
+      "texture": "newcomp.tga"
+    },
+    "newcomp 3": {
+      "metalness": 1,
+      "roughness": 0.04,
+      "texture": "newcomp.tga"
+    },
+    "newcomp 4": {
+      "metalness": 1,
+      "roughness": 0.17,
+      "texture": "newcomp.tga"
+    },
+    "newcomp 5": {
+      "metalness": 1,
+      "roughness": 0.08,
+      "texture": "newcomp.tga"
+    },
+    "newcomp 6": {
+      "metalness": 0.93,
+      "roughness": 0,
+      "texture": "newcomp.tga"
+    },
+    "roofcovelight": {
+      "roughness": 0.02,
+      "texture": "roofcovelight.tga"
+    },
+    "walllcarspanel": {
+      "roughness": 0.14,
+      "texture": "walllcarspanel.tga"
+    },
+    "walllcarspanel 2": {
+      "roughness": 0,
+      "texture": "walllcarspanel.tga"
+    },
+    "walllight": {
+      "metalness": 1,
+      "roughness": 0.14,
+      "texture": "walllight.tga"
+    },
+    "walllight 2": {
+      "metalness": 1,
+      "roughness": 0.08,
+      "texture": "walllight.tga"
+    }
+  },
+  "objects": {
     "29:walllight 01 Material: Wall Light": {
       "block": 29,
-      "material": {
-        "metalness": 1,
-        "roughness": 0.08
-      },
+      "material": "walllight 2",
       "name": "walllight 01 Material: Wall Light"
     },
     "341:Material: e chairs": {
       "block": 341,
-      "material": {
-        "metalness": 1,
-        "roughness": 0.02
-      },
+      "material": "chair 2",
       "name": "Material: e chairs"
-    },
-    "34:walllight 02 Material: Wall Light": {
-      "block": 34,
-      "material": {
-        "metalness": 1,
-        "roughness": 0.14
-      },
-      "name": "walllight 02 Material: Wall Light"
     },
     "359:Material: door center1": {
       "block": 359,
-      "material": {
-        "metalness": 0.89,
-        "roughness": 0
-      },
-      "name": "Material: door center1"
-    },
-    "389:Material: door center1": {
-      "block": 389,
-      "material": {
-        "metalness": 1,
-        "roughness": 0
-      },
+      "material": "newcomp 2",
       "name": "Material: door center1"
     },
     "403:Material: door center1": {
       "block": 403,
-      "material": {
-        "metalness": 1,
-        "roughness": 0.04
-      },
+      "material": "newcomp 3",
       "name": "Material: door center1"
     },
     "476:Material: door center1": {
       "block": 476,
-      "material": {
-        "metalness": 1,
-        "roughness": 0.17
-      },
+      "material": "newcomp 4",
       "name": "Material: door center1"
     },
     "487:Material: door center": {
       "block": 487,
-      "material": {
-        "metalness": 1,
-        "roughness": 0.08
-      },
+      "material": "newcomp 5",
       "name": "Material: door center"
-    },
-    "499:Material: door center1": {
-      "block": 499,
-      "material": {
-        "metalness": 0.98,
-        "roughness": 0
-      },
-      "name": "Material: door center1"
     },
     "513:Material: door center1": {
       "block": 513,
-      "material": {
-        "metalness": 0.93,
-        "roughness": 0
-      },
+      "material": "newcomp 6",
       "name": "Material: door center1"
-    },
-    "530:Material: consoleLCARS": {
-      "block": 530,
-      "material": {
-        "roughness": 0
-      },
-      "name": "Material: consoleLCARS"
-    },
-    "536:Material: consoleLCARS": {
-      "block": 536,
-      "material": {
-        "roughness": 0
-      },
-      "name": "Material: consoleLCARS"
-    },
-    "546:Material: Lcars Schematic left": {
-      "block": 546,
-      "material": {
-        "roughness": 0
-      },
-      "name": "Material: Lcars Schematic left"
-    },
-    "563:Material: Lcars Schematic right": {
-      "block": 563,
-      "material": {
-        "roughness": 0
-      },
-      "name": "Material: Lcars Schematic right"
-    },
-    "63:Material: Material #38": {
-      "block": 63,
-      "material": {
-        "roughness": 0.14
-      },
-      "name": "Material: Material #38"
     },
     "68:Material: Material #38": {
       "block": 68,
-      "material": {
-        "roughness": 0
-      },
+      "material": "walllcarspanel 2",
       "name": "Material: Material #38"
     }
   },
-  "source": "/Users/mward/Documents/Star Trek Bridge Commander/game/data/Models/Sets/EBridge/EBridge.nif"
+  "source": "/Users/mward/Documents/Star Trek Bridge Commander/game/data/Models/Sets/EBridge/EBridge.nif",
+  "textures": {
+    "ceilingwhite.tga": "ceilingwhite",
+    "chair.tga": "chair",
+    "consoletopview.tga": "consoletopview",
+    "lcarsschematicleft.tga": "lcarsschematicleft",
+    "lcarsschematicright.tga": "LCarsSchematicRight",
+    "newcomp.tga": "newcomp",
+    "roofcovelight.tga": "roofcovelight",
+    "walllcarspanel.tga": "walllcarspanel",
+    "walllight.tga": "walllight"
+  }
 }

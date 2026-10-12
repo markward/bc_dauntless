@@ -1,15 +1,16 @@
 """Free fly camera for the bridge editor (spec 2026-10-08-bridge-emitters §4).
 
-Hold RMB to look; W/S forward/back, A/D strafe, Q/E down/up; Shift fast, Alt
-slow. Pure: the panel feeds it mouse deltas and key axes. Conventions match
+Hold Shift to look and move (spec §13.3); W/S forward/back, A/D strafe, Q/E
+down/up; the scroll wheel sets the speed (Blender fly mode). Pure: the panel feeds it mouse deltas and key axes. Conventions match
 host_loop._BridgeCamera -- bridge-local units, up +Z, forward at yaw 0 is +Y,
 +dx looks right, +dy (screen down) looks down."""
 import math
 
 FOV_Y_RAD = math.radians(45.0)        # _BridgeCamera.FOV_Y_RAD
 BASE_SPEED = 60.0                     # bridge units / s; a DBridge is ~400 across
-FAST_MULT = 4.0
-SLOW_MULT = 0.25
+SPEED_STEP = 1.25                     # x per scroll notch
+MIN_SPEED_MULT = 0.1
+MAX_SPEED_MULT = 16.0
 SENSITIVITY = 0.0015                  # rad per pixel, _BridgeCamera's
 PITCH_LIMIT_RAD = math.radians(85.0)
 UP = (0.0, 0.0, 1.0)
@@ -20,6 +21,7 @@ class FlyCamera:
         self.eye = (float(eye[0]), float(eye[1]), float(eye[2]))
         self.yaw = float(yaw)
         self.pitch = max(-PITCH_LIMIT_RAD, min(PITCH_LIMIT_RAD, float(pitch)))
+        self.speed = BASE_SPEED
 
     @classmethod
     def from_pose(cls, eye, target):
@@ -46,12 +48,16 @@ class FlyCamera:
         self.pitch -= dy * SENSITIVITY
         self.pitch = max(-PITCH_LIMIT_RAD, min(PITCH_LIMIT_RAD, self.pitch))
 
-    def move(self, dt, forward, strafe, lift, fast=False, slow=False):
+    def adjust_speed(self, notches):
+        """Scroll: SPEED_STEP per notch (up = faster), within the bounds."""
+        mult = (self.speed / BASE_SPEED) * SPEED_STEP ** float(notches)
+        self.speed = BASE_SPEED * min(MAX_SPEED_MULT, max(MIN_SPEED_MULT, mult))
+
+    def move(self, dt, forward, strafe, lift):
         if dt <= 0.0:
             return
-        speed = BASE_SPEED * (FAST_MULT if fast else 1.0) * (SLOW_MULT if slow else 1.0)
         f, r = self.forward(), self.right()
-        step = speed * dt
+        step = self.speed * dt
         self.eye = tuple(
             self.eye[i] + (f[i] * forward + r[i] * strafe + UP[i] * lift) * step
             for i in range(3))

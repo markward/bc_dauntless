@@ -127,6 +127,7 @@ def test_optional_holds_exactly_the_soft_guarded_bindings():
         "set_bridge_probe_origin", "set_bridge_probe_scales",
         "set_bridge_probe_mix", "request_bridge_probe_capture",
         "set_bridge_spots", "set_bridge_alert_level",
+        "set_bridge_spot_colours", "set_bridge_glow",
     })
 
 

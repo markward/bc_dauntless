@@ -1021,6 +1021,22 @@ assets::Material emissive_material(int e, int y, int r) {
 }
 }  // namespace
 
+assets::Material emissive_material4(int e, int y, int r, int s) {
+    assets::Material m = emissive_material(e, y, r);
+    m.stages[static_cast<std::size_t>(assets::Material::StageSlot::EmissiveSpecial)]
+        .texture_index = s;
+    return m;
+}
+
+TEST(BridgeEmissiveSelect, SpecialTakesItsOwnMapElseTheDefault) {
+    EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material4(4, 5, 6, 7), 4), 7);
+    EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material4(4, 5, 6, -1), 4), 4);
+}
+
+TEST(BridgeEmissiveSelect, OfflineTakesTheDefaultForMaterialGlows) {
+    EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material4(4, 5, 6, 7), 3), 4);
+}
+
 TEST(BridgeEmissiveSelect, GreenTakesTheDefault) {
     EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material(4, 5, 6), 0), 4);
 }
@@ -1033,7 +1049,13 @@ TEST(BridgeEmissiveSelect, YellowAndRedTakeTheirVariants) {
 TEST(BridgeEmissiveSelect, MissingVariantFallsBackToTheDefault) {
     EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material(4, -1, -1), 1), 4);
     EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material(4, -1, -1), 2), 4);
-    EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material(4, 5, -1), 2), 4);
+}
+
+// Spec §11.1: yellow and red share the alert look, so red tries the yellow
+// map before the default.
+TEST(BridgeEmissiveSelect, RedFallsBackToYellowBeforeTheDefault) {
+    EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material(4, 5, -1), 2), 5);
+    EXPECT_EQ(renderer::bridge_emissive_texture(emissive_material(-1, 5, -1), 2), 5);
 }
 
 TEST(BridgeEmissiveSelect, UnknownAlertLevelIsGreen) {
@@ -1111,11 +1133,11 @@ TEST_F(BridgePbrFrame, AlertLevelPicksTheEmissiveVariant) {
     pass->set_alert_level(2);
     c = render_floor();
     EXPECT_NEAR(c.r, 0.0f, 1e-3f); EXPECT_NEAR(c.g, 0.0f, 1e-3f); EXPECT_NEAR(c.b, 0.5f, 3e-3f);
-    // No red variant: red alert falls back to the default.
+    // No red variant: red alert falls back to the YELLOW map (spec §11.1).
     model->materials[0].stages[static_cast<std::size_t>(
         assets::Material::StageSlot::EmissiveRed)].texture_index = -1;
     c = render_floor();
-    EXPECT_NEAR(c.r, 0.5f, 3e-3f); EXPECT_NEAR(c.b, 0.0f, 1e-3f);
+    EXPECT_NEAR(c.r, 0.0f, 1e-3f); EXPECT_NEAR(c.g, 0.5f, 3e-3f); EXPECT_NEAR(c.b, 0.0f, 1e-3f);
 }
 
 // The alert choice is the MAIN bridge view's: a comm set (another ship's
@@ -1172,4 +1194,118 @@ TEST_F(BridgePbrFrame, EmissiveUnitIsUnboundAfterRender) {
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &bound);
     EXPECT_EQ(bound, 0);
     glActiveTexture(GL_TEXTURE0);
+}
+
+// ── Emitter glow (spec 2026-10-08-bridge-emitters §11.2) ───────────────────
+
+TEST_F(BridgePbrFrame, FlatGlowAddsItsColour) {
+    set_base({0, 0, 0, 1});
+    pass->set_glow(handle(), {{0, 2, {0.4f, 0.2f, 0.1f}, 0.0f}});
+    const glm::vec3 c = render_floor();
+    EXPECT_NEAR(c.r, 0.4f, 3e-3f); EXPECT_NEAR(c.g, 0.2f, 3e-3f); EXPECT_NEAR(c.b, 0.1f, 3e-3f);
+}
+
+// level 1 removes the received light (the dip), so the pixel is the glow
+// alone: albedo x rgb.
+TEST_F(BridgePbrFrame, TextureGlowIsTheAlbedoTimesItsColour) {
+    set_base({0.5f, 0.25f, 0.1f, 1.0f});
+    pass->set_glow(handle(), {{0, 1, {2.0f, 2.0f, 2.0f}, 1.0f}});
+    const glm::vec3 c = render_floor();
+    EXPECT_NEAR(c.r, 1.0f, 5e-3f); EXPECT_NEAR(c.g, 0.5f, 5e-3f); EXPECT_NEAR(c.b, 0.2f, 5e-3f);
+}
+
+// src emissive multiplies the alert's map, and REPLACES the texture-level
+// default (which would add another 0.5).
+TEST_F(BridgePbrFrame, EmissiveGlowMultipliesTheMapAndReplacesTheDefault) {
+    set_base({0, 0, 0, 1});
+    set_map(assets::Material::StageSlot::Emissive, {0.5f, 0.5f, 0.5f, 1.0f});
+    pass->set_glow(handle(), {{0, 0, {0.2f, 0.4f, 1.0f}, 0.0f}});
+    const glm::vec3 c = render_floor();
+    EXPECT_NEAR(c.r, 0.1f, 3e-3f); EXPECT_NEAR(c.g, 0.2f, 3e-3f); EXPECT_NEAR(c.b, 0.5f, 3e-3f);
+}
+
+TEST_F(BridgePbrFrame, GlowLevelDipsTheReceivedLight) {
+    set_base({1, 1, 1, 1});
+    const glm::vec3 lit = render_floor();
+    ASSERT_GT(lit.r, 0.1f);
+    pass->set_glow(handle(), {{0, 2, {0.0f, 0.0f, 0.0f}, 0.0f}});
+    EXPECT_NEAR(render_floor().r, lit.r, 1e-4f);          // level 0: an ordinary receiver
+    pass->set_glow(handle(), {{0, 2, {0.0f, 0.0f, 0.0f}, 0.5f}});
+    // The dip halves LINEAR received light; displayed that is ~0.73x (the
+    // 2.2 curve), so only bound it.
+    const float half = render_floor().r;
+    EXPECT_GT(half, 0.3f * lit.r);
+    EXPECT_LT(half, 0.95f * lit.r);
+    pass->set_glow(handle(), {{0, 2, {0.0f, 0.0f, 0.0f}, 1.0f}});
+    EXPECT_LT(render_floor().r, 1e-3f);
+}
+
+TEST_F(BridgePbrFrame, GlowAppliesOnlyToItsMeshAndModel) {
+    set_base({0, 0, 0, 1});
+    pass->set_glow(handle(), {{1, 2, {0.5f, 0.5f, 0.5f}, 0.0f}});   // another mesh
+    EXPECT_LT(render_floor().r, 1e-3f);
+    pass->set_glow(handle() + 1, {{0, 2, {0.5f, 0.5f, 0.5f}, 0.0f}}); // another model
+    EXPECT_LT(render_floor().r, 1e-3f);
+    pass->clear_glow();
+    EXPECT_EQ(pass->glow_count(), 0u);
+}
+
+TEST_F(BridgePbrFrame, ACommSetNeverGlows) {
+    set_base({0, 0, 0, 1});
+    pass->set_glow(handle(), {{0, 2, {0.5f, 0.5f, 0.5f}, 0.0f}});
+    EXPECT_LT(render_as_comm_set().r, 1e-3f);
+}
+
+TEST_F(BridgePbrFrame, GlowNeverDirtiesTheProbes) {
+    ASSERT_FALSE(pass->probe_capture_pending());
+    pass->set_glow(handle(), {{0, 2, {1.0f, 1.0f, 1.0f}, 1.0f}});
+    EXPECT_FALSE(pass->probe_capture_pending());
+}
+
+// Spec §11.4: capture colours dirty the probes; live colours never do.
+TEST_F(BridgePbrFrame, LiveSpotColourNeverDirtiesTheProbes) {
+    renderer::BridgeSpot sp{{70.0f, 0.0f, 60.0f}, {0.0f, 0.0f, -1.0f}, 0.9f, 0.5f, 200.0f,
+                            glm::vec3(0.0f)};
+    sp.has_capture = true;
+    sp.capture_radiance[0] = glm::vec3(100.0f);
+    pass->set_spots({sp});
+    EXPECT_TRUE(pass->probe_capture_pending());
+    pass->reset_probes();
+    pass->set_spot_radiance({glm::vec3(5000.0f)});
+    EXPECT_FALSE(pass->probe_capture_pending());
+    sp.radiance = glm::vec3(7.0f);                         // live differs, capture same
+    pass->set_spots({sp});
+    EXPECT_FALSE(pass->probe_capture_pending());
+    sp.capture_radiance[1] = glm::vec3(3.0f);
+    pass->set_spots({sp});
+    EXPECT_TRUE(pass->probe_capture_pending());
+}
+
+TEST_F(BridgePbrFrame, LiveSpotColourLightsTheFloor) {
+    set_base({1, 1, 1, 1});
+    renderer::Lighting dark;
+    dark.ambient = glm::vec3(0.0f);
+    renderer::BridgeSpot sp{{70.0f, 0.0f, 60.0f}, {0.0f, 0.0f, -1.0f}, 0.9f, 0.5f, 200.0f,
+                            glm::vec3(0.0f)};
+    sp.has_capture = true;
+    pass->set_spots({sp});
+    EXPECT_LT(render_floor_with(dark).r, 1e-3f);
+    pass->set_spot_radiance({glm::vec3(2000.0f)});
+    EXPECT_GT(render_floor_with(dark).r, 0.05f);
+    pass->set_spot_radiance({glm::vec3(2000.0f), glm::vec3(1.0f)});   // extra entry ignored
+    pass->set_spot_radiance({});                                       // missing: kept
+    EXPECT_GT(render_floor_with(dark).r, 0.05f);
+}
+
+// Spec §13.1: at offline the texture-level default goes dark, but a
+// material glow through the emission map still lights (reserve power).
+TEST_F(BridgePbrFrame, OfflineDarkensTheDefaultButNotAMaterialGlow) {
+    set_base({0, 0, 0, 1});
+    set_map(assets::Material::StageSlot::Emissive, {0.5f, 0.5f, 0.5f, 1.0f});
+    pass->set_alert_level(renderer::kBridgeStateOffline);
+    EXPECT_LT(render_floor().r, 1e-3f);
+    pass->set_glow(handle(), {{0, 0, {1.0f, 1.0f, 1.0f}, 0.0f}});
+    EXPECT_NEAR(render_floor().r, 0.5f, 3e-3f);
+    pass->clear_glow();
+    pass->set_alert_level(0);
 }

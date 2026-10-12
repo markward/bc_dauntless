@@ -2,7 +2,7 @@ import pytest
 from engine import bridge_lighting as bl
 
 
-@pytest.mark.parametrize("level,scale", [(0, 1.5), (1, 1.0), (2, 1.0), (3, 1.0), (-1, 1.0)])
+@pytest.mark.parametrize("level,scale", [(0, 1.5), (1, 1.0), (2, 1.0), (3, 0.4), (4, 1.0), (9, 1.0), (-1, 1.0)])
 def test_ambient_scale_for_alert(level, scale):
     assert bl.ambient_scale_for_alert(level) == scale
 
@@ -26,7 +26,7 @@ def test_green_player():
 def test_host_loop_uses_the_module():
     import inspect, engine.host_loop as hl
     src = inspect.getsource(hl)
-    assert "player_bridge_ambient_scale(" in src
+    assert "_bridge_lighting.bridge_ambient_scale(" in src
     assert "_bridge_dim = 0.5" not in src
 
 
@@ -124,10 +124,35 @@ def test_host_loop_feeds_probe_blend_and_gates_on_alert_on_change():
     assert update_call is not None, "no _bridge_probe_blend.update(level, dt) call found"
     assert len(update_call.args) == 2
     dt_arg = update_call.args[1]
-    assert isinstance(dt_arg, ast.Name) and dt_arg.id == "_player_dt", (
-        "ProbeBlend.update's second argument must be the Name _player_dt "
-        "(the paused-aware dt) -- TICK_DT or any other clock breaks "
-        f"'frozen under pause'; got {ast.dump(dt_arg)!r}")
+    # Spec §12.2: the dt is `_bridge_dt`, which _bridge_clock_dt derives from
+    # the paused-aware `_player_dt` -- the Bridge Editor's preview clock
+    # replaces it ONLY while the editor is open. Pin both links, so swapping
+    # in TICK_DT (or wall time) for production still fails.
+    assert isinstance(dt_arg, ast.Name) and dt_arg.id == "_bridge_dt", (
+        "ProbeBlend.update's second argument must be the Name _bridge_dt "
+        f"(the bridge clock dt); got {ast.dump(dt_arg)!r}")
+    clock_calls = [
+        n for n in ast.walk(run_fn)
+        if isinstance(n, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "_bridge_dt" for t in n.targets)
+        and isinstance(n.value, ast.Call) and isinstance(n.value.func, ast.Name)
+        and n.value.func.id == "_bridge_clock_dt"]
+    assert len(clock_calls) == 1, "_bridge_dt must be assigned once from _bridge_clock_dt(...)"
+    args = clock_calls[0].value.args
+    assert len(args) == 3 and isinstance(args[1], ast.Name) and args[1].id == "_player_dt", (
+        "_bridge_clock_dt's player-dt argument must be the paused-aware _player_dt")
+    # The preview clock's frame dt must be the UNFROZEN wall delta: the
+    # editor runs under the (hidden) pause menu, which zeroes _frame_dt, so a
+    # _frame_dt-derived argument leaves the preview clock stuck at 0
+    # (review C1: no pulses, tab fades never progress).
+    third = {n.id for n in ast.walk(args[2]) if isinstance(n, ast.Name)}
+    assert "_wall_dt" in third and "_frame_dt" not in third, (
+        f"_bridge_clock_dt's frame-dt argument must come from _wall_dt; got {sorted(third)}")
+    wall = [n for n in ast.walk(run_fn) if isinstance(n, ast.Assign) and any(
+        isinstance(t, ast.Name) and t.id == "_wall_dt" for t in n.targets)]
+    assert len(wall) == 1, "_wall_dt must be assigned once (the raw wall delta)"
+    assert not any(isinstance(n, ast.Name) and n.id == "_frame_dt"
+                   for n in ast.walk(wall[0].value)), "_wall_dt must not read the frozen _frame_dt"
 
     assert mix_call is not None, "no host_io.set_bridge_probe_mix(...) call found"
     # The mix call's sole argument must BE the update call (fed straight
@@ -171,3 +196,88 @@ def test_host_loop_pushes_the_alert_level_every_frame():
                 assert not (isinstance(cmp, ast.Compare)
                             and any(isinstance(op, ast.NotEq) for op in cmp.ops)), (
                     "the alert-level push must not be gated on a level change")
+
+
+class _Power:
+    def __init__(self, disabled=False, destroyed=False):
+        self._d, self._x = disabled, destroyed
+
+    def IsDisabled(self):
+        return self._d
+
+    def IsDestroyed(self):
+        return self._x
+
+
+class _Player:
+    def __init__(self, alert=0, power=None):
+        self._a, self._p = alert, power
+
+    def GetAlertLevel(self):
+        return self._a
+
+    def GetPowerSubsystem(self):
+        return self._p
+
+
+@pytest.fixture
+def no_special():
+    bl.set_special_alert(False)
+    yield
+    bl.set_special_alert(False)
+
+
+def test_bridge_state_follows_the_alert_level(no_special):
+    assert [bl.bridge_state_of(_Player(a, _Power())) for a in (0, 1, 2)] == [0, 1, 2]
+    assert bl.bridge_state_of(None) == bl.GREEN
+
+
+def test_a_dead_power_plant_is_offline_over_any_alert(no_special):
+    assert bl.bridge_state_of(_Player(2, _Power(disabled=True))) == bl.OFFLINE
+    assert bl.bridge_state_of(_Player(0, _Power(destroyed=True))) == bl.OFFLINE
+    bl.set_special_alert(True)
+    assert bl.bridge_state_of(_Player(0, _Power(disabled=True))) == bl.OFFLINE
+
+
+def test_special_overrides_the_alert_levels(no_special):
+    bl.set_special_alert(True)
+    assert bl.special_alert() is True
+    assert bl.bridge_state_of(_Player(2, _Power())) == bl.SPECIAL
+
+
+def test_no_power_subsystem_reads_as_powered(no_special):
+    assert bl.bridge_state_of(_Player(1, None)) == bl.YELLOW
+
+
+def test_ambient_scales_cover_the_five_states():
+    assert bl.ambient_scale_for_alert(bl.OFFLINE) == bl.OFFLINE_AMBIENT_SCALE
+    assert bl.OFFLINE_AMBIENT_SCALE < bl.ambient_scale_for_alert(bl.RED)
+    assert bl.ambient_scale_for_alert(bl.SPECIAL) == bl.ambient_scale_for_alert(bl.RED)
+
+
+# ── room light (Mark 2026-10-12): the bridge's own level wins ───────────────
+
+def test_the_bridges_own_room_light_wins_over_the_default(no_special):
+    own = {2: 0.0, 0: 0.2}.get                       # red 0, green 0.2, others: default
+    assert bl.bridge_ambient_scale(_Player(alert=2), room=own) == 0.0
+    assert bl.bridge_ambient_scale(_Player(alert=0), room=own) == 0.2
+    assert bl.bridge_ambient_scale(_Player(alert=1), room=own) == 1.0      # None -> default
+    assert bl.bridge_ambient_scale(_Player(alert=0)) == 1.5                # no bridge data
+
+
+def test_the_editor_preview_state_picks_the_room_light(no_special):
+    own = {2: 0.0}.get
+    assert bl.bridge_ambient_scale(_Player(alert=0), preview=2, room=own) == 0.0
+    assert bl.bridge_ambient_scale(_Player(alert=2), preview=0, room=own) == 1.5
+
+
+def test_no_player_uses_the_green_room_light_else_the_authored_ambient():
+    """A mission swap must not flash a lit bridge back to the default."""
+    assert bl.bridge_ambient_scale(None, room={0: 0.0}.get) == 0.0
+    assert bl.bridge_ambient_scale(None) == 1.0
+
+
+def test_host_loop_asks_the_runtime_for_the_room_light():
+    import inspect, engine.host_loop as hl
+    src = inspect.getsource(hl)
+    assert "bridge_ambient_scale(" in src and "DAUNTLESS_BRIDGE_AMBIENT" not in src

@@ -143,20 +143,55 @@ def _paired_faces(base_faces, edit_faces):
     return [(bf, ef) for (_, bf), (_, ef) in zip(base_sorted, edit_sorted)]
 
 
-def _resolve_uv_edits(block, shape, ids, base_faces, edit_faces):
-    """Record per-original-vertex UV edits (spec §5.3). obj_io.write_obj welds
-    positions, so a corner's OBJ vertex may map to several original vertices
-    at a seam; its UV (written per-corner, never per weld group) picks out
-    which original(s) it actually is, by matching the NIF's own UV0 for that
-    vertex. Refuses only a genuine vertex split: one original vertex whose
-    corners disagree on the new UV (spec: "needs a vertex split")."""
+def _source_corners(shape, ids, face):
+    """Per corner of a base face, the originals the NIF triangle(s) it was
+    exported from place there -- [] per corner when no triangle matches.
+    Separates same-UV copies at one position (b0331's side/end/top corner
+    copies all carry one UV), which the UV test alone cannot."""
+    if len(face) != 3:
+        return None
+    owner = {o: v for v, origs in enumerate(ids) for o in origs}
     nif_uvs = shape["uvs"]
-    touched = {}
+    want = sorted(v for v, _ in face)
+    out = [set() for _ in face]
+    for t in shape["triangles"]:
+        if sorted(owner.get(o, -1) for o in t) != want:
+            continue
+        for perm in ((0, 1, 2), (0, 2, 1), (1, 0, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0)):
+            picks = [t[p] for p in perm]
+            if all(owner[o] == v and _uv_equal(nif_uvs[o], uv)
+                   for o, (v, uv) in zip(picks, face)):
+                for k, o in enumerate(picks):
+                    out[k].add(o)
+    return out if all(out) else None
+
+
+def _resolve_uv_edits(block, shape, ids, base_faces, edit_faces):
+    """Per-original-vertex UV edits (spec §5.3), plus the faces that need a
+    vertex split. obj_io.write_obj welds positions, so a corner's OBJ vertex
+    may map to several original vertices at a seam. The NIF triangle the face
+    came from names the original at each corner; failing that, the corner's
+    UV (written per-corner, never per weld group) picks out which original(s)
+    it is, by matching the NIF's own UV0.
+
+    An original whose corners disagree on the new UV (a seam through a vertex
+    BC never split) keeps the UV most of its corners show -- a tie goes to
+    the lowest face key -- and every face showing another UV there is
+    returned in `split` (as its OBJ vertex set): diff_shape removes it (every
+    NIF copy) and re-adds it, so that corner becomes an added vertex placed
+    by reference to the original. Returns (uvs, split)."""
+    nif_uvs = shape["uvs"]
+    corners = []                       # (original, new uv, face vertex set)
     for bf, ef in _paired_faces(base_faces, edit_faces):
-        for (bv, buv), (_, euv) in zip(bf, ef):
+        vset = frozenset(v for v, _ in bf)
+        sources = _source_corners(shape, ids, bf)
+        for k, ((bv, buv), (_, euv)) in enumerate(zip(bf, ef)):
             if buv is None:
                 continue
-            candidates = [orig for orig in ids[bv] if _uv_equal(nif_uvs[orig], buv)]
+            if sources is not None:
+                candidates = sorted(sources[k])
+            else:
+                candidates = [orig for orig in ids[bv] if _uv_equal(nif_uvs[orig], buv)]
             if not candidates:
                 raise ShapeDiffError(
                     f"block {block}: OBJ vertex {bv} UV {buv} matches no original "
@@ -165,18 +200,32 @@ def _resolve_uv_edits(block, shape, ids, base_faces, edit_faces):
                 raise ShapeDiffError(
                     f"block {block}: OBJ vertex {bv} lost its UV in edit.obj")
             for orig in candidates:
-                touched.setdefault(orig, []).append(euv)
-    uvs = {}
-    for orig, vals in touched.items():
-        first = vals[0]
-        for v in vals[1:]:
-            if not _uv_equal(v, first):
-                raise ShapeDiffError(
-                    f"block {block}: original vertex {orig} would need two "
-                    "different UVs -- that needs a vertex split (iteration 2)")
-        if not _uv_equal(first, nif_uvs[orig]):
-            uvs[orig] = first
-    return uvs
+                corners.append((orig, euv, vset))
+    split = set()
+    while True:
+        by_orig = {}
+        for orig, euv, vset in corners:
+            if vset not in split:
+                by_orig.setdefault(orig, []).append((euv, vset))
+        more = set()
+        for vals in by_orig.values():
+            groups = []                # [uv, corner count], first seen first
+            for euv, _ in vals:
+                for g in groups:
+                    if _uv_equal(g[0], euv):
+                        g[1] += 1
+                        break
+                else:
+                    groups.append([euv, 1])
+            if len(groups) > 1:
+                keep = max(groups, key=lambda g: g[1])[0]
+                more |= {vset for euv, vset in vals if not _uv_equal(euv, keep)}
+        if not more:
+            break
+        split |= more
+    uvs = {orig: vals[0][0] for orig, vals in by_orig.items()
+           if not _uv_equal(vals[0][0], nif_uvs[orig])}
+    return uvs, split
 
 
 def _same_pos(p, q):
@@ -708,7 +757,7 @@ _EMISSIVE = "an emissive sibling map (never an albedo)"
 _RESERVED_SUFFIXES = (("_glow", "glow"), ("_specular", "specular"), ("_spec", "specular"),
                       ("_normal", "a normal map"), ("_norm", "a normal map"),
                       ("_emissive", _EMISSIVE), ("_emissive_y", _EMISSIVE),
-                      ("_emissive_r", _EMISSIVE))
+                      ("_emissive_r", _EMISSIVE), ("_emissive_s", _EMISSIVE))
 
 
 def _object_albedo(mesh):
@@ -799,9 +848,10 @@ def diff_shape(shape: dict, base, edit, texture_dirs=None, index=None,
     edits, removed faces, added triangles and new vertices, with values
     shared with an original stored as references (`index`, all shapes of the
     NIF; this shape alone when omitted). Refuses (all-or-nothing for the
-    object) an ambiguous vertex correspondence, an added n-gon or degenerate
-    triangle, a flipped existing face, a corner without a UV, and a UV edit
-    on a kept face that would need a vertex split."""
+    object) an ambiguous vertex correspondence, an untriangulable or
+    degenerate added face, a flipped existing face and a corner without a UV.
+    A UV edit that puts a seam through an original vertex splits it
+    (`_resolve_uv_edits`)."""
     block = shape["block"]
     index = index or NifIndex([shape])
     corr = correspond(block, base, edit)
@@ -820,7 +870,7 @@ def diff_shape(shape: dict, base, edit, texture_dirs=None, index=None,
                 "winding (flipped normal?) -- not supported yet")
         common_base += bfs
         common_edit += efs
-    uvs = _resolve_uv_edits(block, shape, ids, common_base, common_edit)
+    uvs, split = _resolve_uv_edits(block, shape, ids, common_base, common_edit)
     inv = frames.affine_inverse(shape["world"])
     moved = {}          # original -> new MODEL-space position
     for k, ep in enumerate(edit.positions):
@@ -830,8 +880,12 @@ def diff_shape(shape: dict, base, edit, texture_dirs=None, index=None,
             continue
         for orig in ids[corr[k]]:
             moved[orig] = ep
-    removed_sets = base_sets.keys() - edit_sets.keys()
-    added_faces = [f for f in edit_faces if frozenset(v for v, _ in f) not in base_sets]
+    # A split face goes and comes back: its NIF copies are removed and the
+    # edit face re-added, the split corner as an added vertex (by reference).
+    removed_sets = (base_sets.keys() - edit_sets.keys()) | split
+    added_faces = [f for f in edit_faces
+                   if frozenset(v for v, _ in f) not in base_sets
+                   or frozenset(v for v, _ in f) in split]
     _refuse_overlapping_groups(block, ids, removed_sets, added_faces)
     remove = _removed_triangles(block, shape, ids, removed_sets)
     final_local = [frames.apply(inv, p) for p in shape["vertices"]]
