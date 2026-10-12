@@ -257,13 +257,17 @@ def unsnap_light(light):
     light.pop("anchor", None)
 
 
-def add_area_light(doc, block, name, shape):
-    """A strip along the top edge, or a panel over the whole front (spec
-    §16.4); the rectangle is recomputed from the object at load."""
+def add_area_light(doc, block, name, shape, anchor=None):
+    """A strip or a panel (spec §16.4). A strip given `anchor` -- the click
+    that selected the object -- snaps to the sharp edge nearest it (§16.8);
+    without one it sits on the object's top box edge. The rectangles are
+    recomputed from the object at load."""
     o = ld.object_entry(doc, block, name)
     if shape == "strip":
         light = {"shape": "strip", "edge": "top", "start": 0.0, "end": 1.0,
                  "offset": STRIP_OFFSET, "range": LIGHT_RANGE, "intensity": STRIP_INTENSITY}
+        if anchor is not None:
+            light["anchor"] = [float(c) for c in anchor]
     elif shape == "panel":
         light = {"shape": "panel", "x": [0.0, 1.0], "y": [0.0, 1.0], "offset": 0.0,
                  "range": LIGHT_RANGE, "intensity": PANEL_INTENSITY}

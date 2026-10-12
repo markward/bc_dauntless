@@ -214,6 +214,15 @@ def test_panel_span_ends_drag_each_other_and_stay_valid():
     ld.validate(d)
 
 
+def test_a_strip_added_with_an_anchor_is_snapped():
+    d = ld.empty_doc("x")
+    ed.add_area_light(d, 5, "lip", "strip", anchor=(1, 2, 3))
+    ed.add_area_light(d, 5, "lip", "panel", anchor=(1, 2, 3))
+    strip, panel = d["objects"]["5:lip"]["lights"]
+    assert strip["anchor"] == [1.0, 2.0, 3.0] and "anchor" not in panel
+    ld.validate(d)
+
+
 def test_set_light_drops_fields_not_valid_for_the_lights_own_shape():
     spot = {"position": [0, 0, 0], "direction": [0, 1, 0],
             "inner_deg": 30.0, "outer_deg": 60.0}

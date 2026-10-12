@@ -467,7 +467,8 @@ class BridgeEmittersPanel(Panel):
                     pos, normal = self._last_hit
                     self._edit(lambda: editing.add_light(self._doc, b, n, pos, normal))
             elif shape in ld.LIGHT_SHAPES:
-                self._edit(lambda: editing.add_area_light(self._doc, b, n, shape))
+                anchor = self._last_hit[0] if self._last_hit is not None else None
+                self._edit(lambda: editing.add_area_light(self._doc, b, n, shape, anchor))
         elif head in ("light-remove", "light-place", "light-aim", "light-snap", "light-unsnap", "light"):
             self._light_action(head, rest)
         elif head == "mod-add":

@@ -990,7 +990,7 @@ def test_saved_area_lights_validate(env_rt):
 
 
 def test_snap_sets_the_strips_anchor_from_the_last_click_and_unsnap_clears_it(env_rt):
-    """SPIKE (edge snap): Snap to edge here stores the last clicked point."""
+    """Snap to edge here stores the last clicked point (spec §16.8)."""
     p, io, h, *_ = env_rt
     p.open()
     click(p, h, (400.0, 300.0))
@@ -999,3 +999,21 @@ def test_snap_sets_the_strips_anchor_from_the_last_click_and_unsnap_clears_it(en
     assert payload(p)["selected"]["lights"][0]["anchor"] == [0, 10, 50]   # FakeIO's hit point
     p.dispatch_event("light-unsnap:0")
     assert "anchor" not in payload(p)["selected"]["lights"][0]
+
+
+def test_add_strip_snaps_at_the_selecting_click(env_rt):
+    p, io, h, *_ = env_rt
+    p.open()
+    click(p, h, (400.0, 300.0))
+    p.dispatch_event("light-add:strip")
+    assert payload(p)["selected"]["lights"][0]["anchor"] == [0, 10, 50]   # FakeIO's hit point
+
+
+def test_add_strip_with_no_click_on_record_is_unsnapped(env_rt):
+    p, io, h, *_ = env_rt
+    p.open()
+    click(p, h, (400.0, 300.0))
+    p._last_hit = None
+    p.dispatch_event("light-add:strip")
+    light = payload(p)["selected"]["lights"][0]
+    assert "anchor" not in light and light["edge"] == "top"
