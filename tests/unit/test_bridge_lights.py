@@ -107,3 +107,73 @@ def test_on_a_mapped_mesh_an_unset_emission_lights_like_the_map():
     green = bh.StateFade("green")
     assert lights.live_colours(d, MATCHED, links, green, 0.0, mapped={1})[0] == (100.0,) * 3
     assert lights.live_colours(d, MATCHED, links, green, 0.0)[0] == (0.0,) * 3
+
+
+# ── strips and panels (spec §16.1, §16.3) ───────────────────────────────────
+
+from engine.bridge_editor import light_shapes as ls
+
+PANEL_FRAME = ls.Frame(right=(1.0, 0.0, 0.0), up=(0.0, 0.0, 1.0), facing=(0.0, -1.0, 0.0),
+                       centre=(20.0, 50.0, 20.0), half=(20.0, 10.0, 0.0))
+
+
+def _area_doc():
+    d = _doc()
+    ld.object_entry(d, 6, "lamp")["lights"].append(
+        {"shape": "strip", "edge": "top", "intensity": 40, "range": 150})
+    ld.object_entry(d, 7, "wall")["lights"] = [{"shape": "panel", "intensity": 2}]
+    return d
+
+
+AREA_MATCHED = {"5:roof": 1, "6:lamp": 2, "7:wall": 3}
+
+
+def test_spots_leave_out_strips_and_panels():
+    d = _area_doc()
+    spots, _ = lights.spots(d, AREA_MATCHED, _links(d, AREA_MATCHED))
+    assert [s[0] for s in spots] == [(1, 2, 3), (4, 5, 6), (0, 0, 9)]
+
+
+def test_area_rows_carry_the_rectangle_range_colour_and_intensity():
+    d = _area_doc()
+    rows, warnings = lights.areas(d, AREA_MATCHED, _links(d, AREA_MATCHED),
+                                  lambda mesh: PANEL_FRAME)
+    assert warnings == [] and len(rows) == 2
+    strip, panel = rows
+    want = ls.strip_rect(PANEL_FRAME, "top")
+    assert strip[:3] == (want.centre, want.half_u, want.half_v)
+    assert strip[3] == 150 and strip[5] == 40
+    assert panel[3] == lights.DEFAULT_RANGE and panel[5] == 2
+    assert panel[4] == panel[6] == (1.0, 1.0, 1.0)      # no material: steady white
+
+
+def test_spots_and_area_lights_share_one_budget_in_mesh_order():
+    d = ld.empty_doc("x")
+    ld.object_entry(d, 1, "a")["lights"] = [
+        {"position": [0, 0, i], "direction": [0, 0, -1]} for i in range(20)]
+    ld.object_entry(d, 2, "b")["lights"] = [{"shape": "panel"} for _ in range(20)]
+    matched = {"1:a": 1, "2:b": 2}
+    resolved = _links(d, matched)
+    spots, warnings = lights.spots(d, matched, resolved)
+    rows, area_warnings = lights.areas(d, matched, resolved, lambda m: PANEL_FRAME)
+    assert len(spots) == 20 and len(rows) == 12
+    assert len(warnings) == 8 and "2:b light 13" in warnings[0]
+    assert area_warnings == []                        # the cap is reported once, by spots()
+
+
+def test_a_light_without_geometry_is_skipped_and_the_colours_stay_aligned():
+    d = ld.empty_doc("x")
+    d["materials"]["red"] = {"emission": 0, "modifiers": [
+        {"type": "state", "scope": list(ld.STATES), "tint": [1, 0, 0], "level": 1}]}
+    ld.object_entry(d, 1, "gone")["lights"] = [{"shape": "panel", "intensity": 1}]
+    o = ld.object_entry(d, 2, "here")
+    o["material"] = "red"
+    o["lights"] = [{"shape": "panel", "intensity": 3}]
+    matched = {"1:gone": 1, "2:here": 2}
+    resolved = _links(d, matched)
+    frames = {2: PANEL_FRAME}
+    rows, warnings = lights.areas(d, matched, resolved, frames.get)
+    assert len(rows) == 1 and warnings == ["1:gone light 1: no geometry for its object; skipped"]
+    fade = bh.StateFade("green")
+    live = lights.live_area_colours(d, matched, resolved, fade, 0.0, frames.get)
+    assert len(live) == 1 and live[0][0] > 0 and live[0][1] == 0     # the red light's colour
