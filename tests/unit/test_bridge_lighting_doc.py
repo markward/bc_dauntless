@@ -10,7 +10,7 @@ HASH = "0123456789abcdef"
 
 def full_doc():
     return {
-        "format": 3,
+        "format": ld.FORMAT,
         "source": "data/Models/Sets/DBridge/DBridge.nif",
         "materials": {
             "alcove": {
@@ -163,7 +163,7 @@ def test_load_upgrades_a_format_1_file(tmp_path, monkeypatch):
     (tmp_path / "bridge_lighting").mkdir()
     (tmp_path / "bridge_lighting" / f"{HASH}.json").write_text(json.dumps(_v1()))
     res = ld.load(HASH, "x")
-    assert res.error is None and res.doc["format"] == 3
+    assert res.error is None and res.doc["format"] == ld.FORMAT
 
 
 def test_lookup_prefers_mod_dirs_then_project(tmp_path, monkeypatch):
@@ -241,7 +241,7 @@ def test_match_shapes_warns_on_a_missing_block():
 
 
 def test_the_spec_example_validates():
-    assert ld.validate(full_doc())["format"] == 3
+    assert ld.validate(full_doc())["format"] == ld.FORMAT
 
 
 def test_empty_doc_validates():
@@ -437,7 +437,7 @@ def _v2():
 def test_upgrade_of_format_2_keeps_every_state_looking_the_same():
     d = ld.validate(ld.upgrade(_v2()))
     m = d["materials"]
-    assert d["format"] == 3 and d["textures"] == {"map 8.tga": "Map 8"}
+    assert d["format"] == ld.FORMAT and d["textures"] == {"map 8.tga": "Map 8"}
     assert m["alcove"] == {"texture": "map 19.tga", "emission": 0, "emission_source": "flat",
                            "modifiers": [
                                {"type": "state", "scope": ["green"], "tint": [1, 1, 1],
@@ -458,7 +458,7 @@ def test_load_upgrades_a_format_2_file(tmp_path, monkeypatch):
     (tmp_path / "bridge_lighting").mkdir()
     (tmp_path / "bridge_lighting" / f"{HASH}.json").write_text(json.dumps(_v2()))
     res = ld.load(HASH, "x")
-    assert res.error is None and res.doc["format"] == 3
+    assert res.error is None and res.doc["format"] == ld.FORMAT
 
 
 # ── room light (Mark 2026-10-12: a bridge that defines its own lights is lit
@@ -483,3 +483,66 @@ def test_room_light_is_the_bridges_own_else_off_when_it_has_lights_else_default(
     assert ld.room_light(e, "green") is None
     e["room_light"] = {"red": 0.5}
     assert ld.room_light(e, "red") == 0.5 and ld.room_light(e, "green") is None
+
+
+# ── format 4: lights with size (spec §16.1) ─────────────────────────────────
+
+def _with_lights(lights):
+    d = ld.empty_doc("x")
+    ld.object_entry(d, 5, "lip")["lights"] = lights
+    return d
+
+
+def test_format_is_4():
+    assert ld.FORMAT == 4 and ld.empty_doc("x")["format"] == 4
+
+
+def test_strip_and_panel_lights_validate():
+    d = _with_lights([
+        {"shape": "strip", "edge": "top", "start": 0.1, "end": 0.9, "offset": 1,
+         "range": 150, "intensity": 4},
+        {"shape": "panel", "x": [0, 1], "y": [0.2, 0.8], "offset": 0, "range": 400,
+         "intensity": 1},
+        {"shape": "strip", "edge": "left"},
+        {"shape": "panel"},
+        {"shape": "spot", "position": [0, 0, 0], "direction": [0, 0, -1]},
+        {"position": [0, 0, 0], "direction": [0, 0, -1]}])
+    assert ld.validate(d) is d
+
+
+@pytest.mark.parametrize("light, where", [
+    ({"shape": "tube"}, "shape"),
+    ({"shape": "strip"}, "edge"),
+    ({"shape": "strip", "edge": "middle"}, "edge"),
+    ({"shape": "strip", "edge": "top", "start": -0.1}, "start"),
+    ({"shape": "strip", "edge": "top", "end": 1.5}, "end"),
+    ({"shape": "strip", "edge": "top", "start": 0.8, "end": 0.2}, "start"),
+    ({"shape": "strip", "edge": "top", "x": [0, 1]}, "x"),
+    ({"shape": "panel", "x": [0.5]}, "x"),
+    ({"shape": "panel", "x": [0.6, 0.4]}, "x"),
+    ({"shape": "panel", "y": [0, 2]}, "y"),
+    ({"shape": "panel", "edge": "top"}, "edge"),
+    ({"shape": "panel", "range": 0}, "range"),
+    ({"shape": "panel", "intensity": -1}, "intensity"),
+    ({"shape": "panel", "offset": float("nan")}, "offset"),
+    ({"shape": "panel", "position": [0, 0, 0]}, "position"),
+])
+def test_bad_area_lights_are_rejected(light, where):
+    with pytest.raises(ld.BridgeLightingError, match=where):
+        ld.validate(_with_lights([light]))
+
+
+def test_format_3_upgrades_to_4_unchanged_but_the_number():
+    v3 = _with_lights([{"position": [1, 2, 3], "direction": [0, 0, -1], "intensity": 9}])
+    v3["format"] = 3
+    v3["materials"]["m"] = {"emission": 0.5}
+    up = ld.validate(ld.upgrade(v3))
+    assert up["format"] == 4
+    assert {k: v for k, v in up.items() if k != "format"} == \
+        {k: v for k, v in v3.items() if k != "format"}
+    assert v3["format"] == 3                       # the input is not mutated
+
+
+def test_format_2_upgrades_through_3_to_4():
+    v2 = {"format": 2, "source": "x", "materials": {}, "objects": {}}
+    assert ld.upgrade(v2)["format"] == 4
