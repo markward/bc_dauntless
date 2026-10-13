@@ -1,5 +1,5 @@
 {
-  "format": 3,
+  "format": 4,
   "materials": {
     "Map 1": {
       "roughness": 0,
@@ -62,6 +62,27 @@
       "metalness": 0,
       "roughness": 0.63,
       "texture": "map 27.tga"
+    },
+    "Map 3": {
+      "modifiers": [
+        {
+          "glows": false,
+          "level": 1,
+          "scope": [
+            "green",
+            "yellow",
+            "red",
+            "special"
+          ],
+          "tint": [
+            0.7363,
+            0.8756,
+            1
+          ],
+          "type": "state"
+        }
+      ],
+      "texture": "map 3.tga"
     },
     "Map 4": {
       "roughness": 0.01,
@@ -284,8 +305,8 @@
             -0.404578,
             -0.551268
           ],
-          "inner_deg": 30,
-          "intensity": 10000,
+          "inner_deg": 50,
+          "intensity": 1000,
           "outer_deg": 90,
           "position": [
             -48.549065,
@@ -306,8 +327,8 @@
             -0.404578,
             -0.551268
           ],
-          "inner_deg": 30,
-          "intensity": 10000,
+          "inner_deg": 50,
+          "intensity": 1000,
           "outer_deg": 90,
           "position": [
             48.569176,
@@ -421,72 +442,58 @@
       "material": "Map 22a 2",
       "name": ""
     },
-    "76:": {
-      "block": 76,
+    "652:": {
+      "block": 652,
       "lights": [
         {
-          "direction": [
-            -0.73032,
-            -0.293865,
-            -0.616666
+          "anchor": [
+            -169.682693,
+            -1.533379,
+            102.367439
           ],
-          "inner_deg": 70,
-          "intensity": 5000,
-          "outer_deg": 90,
-          "position": [
-            146.742661,
-            106.294434,
-            126.114777
-          ],
-          "range": 500
+          "edge": "top",
+          "end": 1,
+          "intensity": 40,
+          "offset": 1,
+          "range": 200,
+          "shape": "strip",
+          "start": 0
         }
       ],
+      "name": ""
+    },
+    "663:": {
+      "block": 663,
+      "lights": [
+        {
+          "anchor": [
+            169.605484,
+            -1.829147,
+            103.251167
+          ],
+          "edge": "top",
+          "end": 1,
+          "intensity": 40,
+          "offset": 1,
+          "range": 200,
+          "shape": "strip",
+          "start": 0
+        }
+      ],
+      "name": ""
+    },
+    "76:": {
+      "block": 76,
       "material": "roof",
       "name": ""
     },
     "81:": {
       "block": 81,
-      "lights": [
-        {
-          "direction": [
-            0.012305,
-            0.445835,
-            -0.895031
-          ],
-          "inner_deg": 70,
-          "intensity": 5000,
-          "outer_deg": 90,
-          "position": [
-            -5.089623,
-            -179.167404,
-            135.315338
-          ],
-          "range": 200
-        }
-      ],
       "material": "roof 2",
       "name": ""
     },
     "84:": {
       "block": 84,
-      "lights": [
-        {
-          "direction": [
-            0.411412,
-            -0.10185,
-            -0.905741
-          ],
-          "inner_deg": 70,
-          "intensity": 5000,
-          "outer_deg": 90,
-          "position": [
-            -116.296661,
-            92.798981,
-            143.393005
-          ],
-          "range": 500
-        }
-      ],
       "material": "roof",
       "name": ""
     },
@@ -494,20 +501,18 @@
       "block": 87,
       "lights": [
         {
-          "direction": [
-            0.002574,
-            0.240971,
-            -0.970529
+          "intensity": 1.5,
+          "offset": -100,
+          "range": 400,
+          "shape": "panel",
+          "x": [
+            0,
+            1
           ],
-          "inner_deg": 70,
-          "intensity": 4000,
-          "outer_deg": 90,
-          "position": [
-            -70.969406,
-            -147.401047,
-            138.629578
-          ],
-          "range": 800
+          "y": [
+            0,
+            1
+          ]
         }
       ],
       "material": "roof (Map 13)",
@@ -517,20 +522,18 @@
       "block": 90,
       "lights": [
         {
-          "direction": [
-            -0.121672,
-            -0.436174,
-            -0.891599
+          "intensity": 2,
+          "offset": -50,
+          "range": 300,
+          "shape": "panel",
+          "x": [
+            0,
+            1
           ],
-          "inner_deg": 60,
-          "intensity": 6500,
-          "outer_deg": 90,
-          "position": [
-            -29.32332,
-            179.751892,
-            140.335709
-          ],
-          "range": 500
+          "y": [
+            0,
+            1
+          ]
         }
       ],
       "material": "roof",
@@ -553,6 +556,7 @@
     "map 24.tga": "Map 24",
     "map 26.tga": "Map 26",
     "map 27.tga": "Map 27",
+    "map 3.tga": "Map 3",
     "map 4.tga": "Map 4",
     "map 6.tga": "Map 6",
     "map 7.tga": "Map 7",
