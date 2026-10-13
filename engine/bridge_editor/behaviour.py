@@ -8,7 +8,12 @@ carry a scope (bridge states): State modifiers scoped to s REPLACE it there
 (rgb = sum(tint x level)), Animations scoped to s multiply, and the blend
 INTO s takes the last Transition scoped to s, else 0.5 s. k = the level
 sum (the received-light dip, §11.2). DISPLAY space; lights convert
-(lights.py). State changes cross-fade from the LIVE output."""
+(lights.py). State changes cross-fade from the LIVE output.
+
+A State with `"glows": false` (spec §16.9) colours the object's LIGHTS only:
+the surface output skips it (keeping the base emission -- a tiled wall can
+colour its cove strip without lighting up), the light output
+(`for_light=True`) counts it like any other State."""
 import math
 
 from engine.bridge_editor import lighting_doc as ld
@@ -68,12 +73,14 @@ def wave_factor(anim, t) -> float:
     return lo + (1.0 - lo) * f
 
 
-def output(material, state, t, has_map=False):
+def output(material, state, t, has_map=False, for_light=False):
     rgb, k, f, overridden = [0.0, 0.0, 0.0], 0.0, 1.0, False
     for m in material.get("modifiers", ()):
         if state not in m["scope"]:
             continue
         if m["type"] == "state":
+            if not for_light and m.get("glows") is False:
+                continue                  # lights only: the surface keeps its base
             overridden = True
             lv = float(m["level"])
             for i in range(3):
@@ -111,12 +118,12 @@ class StateFade:
     def advance(self, dt):
         self.since += max(float(dt), 0.0)
 
-    def output(self, material, t, has_map=False):
-        new_rgb, new_k = output(material, self.state, t, has_map)
+    def output(self, material, t, has_map=False, for_light=False):
+        new_rgb, new_k = output(material, self.state, t, has_map, for_light)
         fade = transition_s(material, self.state)
         if self.source is None or fade <= 0.0 or self.since >= fade:
             return new_rgb, new_k
-        old_rgb, old_k = self.source.output(material, t, has_map)
+        old_rgb, old_k = self.source.output(material, t, has_map, for_light)
         f = self.since / fade
         return (tuple(a + (b - a) * f for a, b in zip(old_rgb, new_rgb)),
                 old_k + (new_k - old_k) * f)

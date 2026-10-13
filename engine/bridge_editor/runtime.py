@@ -5,7 +5,7 @@ from typing import Optional
 
 from engine import bridge_lighting, dev_mode, host_io
 from engine.bridge_editor import lighting_doc as ld
-from engine.bridge_editor import behaviour, glow, lights, materials
+from engine.bridge_editor import behaviour, glow, light_shapes, lights, materials
 
 
 class BridgeRuntime:
@@ -18,10 +18,12 @@ class BridgeRuntime:
         self._matched = {}
         self._meshes = []
         self._glow_shapes = []
+        self._built = None
         self._fade = behaviour.StateFade()
         self._t = 0.0          # the bridge clock (spec §11.3): paused-aware dt
         # The probe scales last pushed; the default until a bridge says otherwise.
         self._probe_scales = bridge_lighting.probe_scales()
+        self._frames = {}
 
     def attach(self, iid):
         """Neither overrides nor spots are cleared by C++ on a mission swap,
@@ -40,9 +42,12 @@ class BridgeRuntime:
         load), the old bridge's lights must not stay live on the new one."""
         self._iid, self._doc, self._matched = iid, None, {}
         self._meshes, self._glow_shapes, self._resolved, self._mapped = [], [], {}, frozenset()
+        self._frames = {}
+        self._built = None
         try:
             self._io.set_bridge_material_overrides(None, [])
             self._io.set_bridge_spots([])
+            self._io.set_bridge_area_lights([])
             self._io.set_bridge_glow(None, [])
         except Exception as e:  # noqa: BLE001 - never let bridge data kill the frame
             dev_mode.log_swallowed("bridge runtime attach clear", e)
@@ -76,15 +81,15 @@ class BridgeRuntime:
             dev_mode.log_swallowed("bridge runtime attach", e)
 
     def push(self, doc, matched=None):
-        """Re-push overrides, the static spot list (geometry + probe-capture
-        colours) and the glow table from an edited doc (the live editor, or
-        attach()), then this frame's live values; tick() re-pushes the live
+        """Re-push overrides, the static spot and area-light lists (geometry +
+        probe-capture colours) and the glow table from an edited doc (the live
+        editor, or attach()), then this frame's live values; tick() re-pushes the live
         values every frame. Returns warnings: emitter warnings (cap drops by
         name and glows skipped for a missing _emissive map, from
-        lights.spots, BEFORE the list ever reaches native), plus a separate
+        lights.build, BEFORE the list ever reaches native), plus a separate
         warning if the renderer itself reports spots dropped as invalid.
-        These are two unrelated populations -- lights.spots already caps the
-        list at MAX_SPOTS, so whatever set_bridge_spots reports dropped can
+        These are two unrelated populations -- lights.build already caps the
+        rows at MAX_LIGHTS, so whatever set_bridge_spots reports dropped can
         only be non-finite values among the <=32 actually sent, never a
         restatement of the cap count. Builds tuples from a doc that is
         already schema-validated, but the push to the native side still goes
@@ -111,11 +116,14 @@ class BridgeRuntime:
                                      if (m.get("maps") or {}).get("emissive"))
             self._io.set_bridge_material_overrides(
                 self._iid, materials.overrides(doc, self._resolved))
-            spot_list, warnings = lights.spots(doc, self._matched, self._resolved, self._mapped)
+            built = lights.build(doc, self._matched, self._resolved,
+                                 self._frame_for, self._mapped)
+            self._built = built
+            spot_list, area_list = built.spot_rows, built.area_rows
             self._glow_shapes, glow_warnings = glow.glow_objects(
                 doc, self._resolved, self._meshes)
             warnings = (ld.link_mismatches(doc, self._meshes, self._matched)
-                        + warnings + glow_warnings)
+                        + built.warnings + glow_warnings)
             for w in warnings:
                 dev_mode.log_swallowed(
                     "bridge lighting emitters", ld.BridgeLightingError(w))
@@ -125,10 +133,37 @@ class BridgeRuntime:
                 warnings.append(msg)
                 dev_mode.log_swallowed(
                     "bridge lighting spots dropped", ld.BridgeLightingError(msg))
+            dropped = self._io.set_bridge_area_lights(area_list)
+            if dropped:
+                msg = (f"{dropped} bridge area light(s) dropped as invalid "
+                       "(zero size or non-finite values)")
+                warnings.append(msg)
+                dev_mode.log_swallowed(
+                    "bridge lighting area lights dropped", ld.BridgeLightingError(msg))
             self._push_live()
         except Exception as e:  # noqa: BLE001 - see docstring
             dev_mode.log_swallowed("bridge runtime push", e)
         return warnings
+
+    def _frame_for(self, mesh):
+        """The object's light_shapes.Frame (spec §16.2), fetched once per mesh
+        per attach: the geometry is static, the eye is the bridge camera's.
+        A mesh with no geometry caches as None until the next attach (the
+        geometry is static, so a later retry in the same attach would only
+        repeat the same failure). Facing uses the eye-oriented normal sum
+        (light_shapes.oriented_normal_sum over the raw vertices), never the
+        binding's raw winding sum -- DBridge's winding is mixed (spec
+        ruling, review item 2)."""
+        if mesh not in self._frames:
+            got = self._io.bridge_mesh_geometry(self._iid, mesh) if self._iid is not None else None
+            if got:
+                verts, _raw_normal_sum, area = got
+                eye = tuple(self._eye())
+                oriented = light_shapes.oriented_normal_sum(verts, eye)
+                self._frames[mesh] = light_shapes.frame(verts, oriented, area, eye=eye)
+            else:
+                self._frames[mesh] = None
+        return self._frames[mesh]
 
     def ambient_scale(self, level) -> Optional[float]:
         """The room light for bridge state `level` (0-4): this bridge's own
@@ -172,9 +207,12 @@ class BridgeRuntime:
         try:
             self._io.set_bridge_glow(
                 self._iid, glow.live(self._glow_shapes, self._fade, self._t))
-            self._io.set_bridge_spot_colours(
-                lights.live_colours(self._doc, self._matched, self._resolved,
-                                    self._fade, self._t, self._mapped))
+            if self._built is None:
+                spot_cols, area_cols = [], []
+            else:
+                spot_cols, area_cols = lights.live(self._built, self._fade, self._t)
+            self._io.set_bridge_spot_colours(spot_cols)
+            self._io.set_bridge_area_colours(area_cols)
         except Exception as e:  # noqa: BLE001 - never let bridge data kill the frame
             dev_mode.log_swallowed("bridge runtime live push", e)
 
@@ -186,9 +224,12 @@ class BridgeRuntime:
         try:
             self._io.set_bridge_material_overrides(None, [])
             self._io.set_bridge_spots([])
+            self._io.set_bridge_area_lights([])
             self._io.set_bridge_glow(None, [])
         except Exception as e:  # noqa: BLE001 - never let bridge data kill the frame
             dev_mode.log_swallowed("bridge runtime detach", e)
         finally:
             self._iid, self._doc, self._matched = None, None, {}
             self._meshes, self._glow_shapes, self._resolved, self._mapped = [], [], {}, frozenset()
+            self._frames = {}
+            self._built = None

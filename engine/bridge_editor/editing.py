@@ -12,8 +12,19 @@ MAX_TRANSITION_S = 10.0
 MAX_ROOM_LIGHT = 4.0
 LIGHT_INNER_DEG, LIGHT_OUTER_DEG, LIGHT_RANGE = 30.0, 60.0, 200.0
 LIGHT_INTENSITY = 2000.0
+STRIP_INTENSITY = 40.0        # surface brightness (spec §16.1): a thin strip needs a lot
+PANEL_INTENSITY = 2.0
+STRIP_OFFSET = 1.0            # out from the surface, so a strip on a flat panel lights it
 _LIGHT_MIN_RANGE = 0.01
 _WAVE_DEFAULTS = {"sine": {}, "square": {"duty": 0.5, "soft": 0.0}}
+# Fields each shape's validator accepts (spec §16.1/§16.4); set_light drops
+# any other field for that shape so an edit can never write a document the
+# validator -- and so a save -- would refuse.
+_SHAPE_FIELDS = {
+    "spot": {"inner_deg", "outer_deg", "range", "intensity"},
+    "strip": {"edge", "start", "end", "offset", "range", "intensity"},
+    "panel": {"x0", "x1", "y0", "y1", "offset", "range", "intensity"},
+}
 
 
 def _num(raw, lo=None, hi=None):
@@ -211,6 +222,12 @@ def set_modifier(mat, i, field, raw):
             v = _num(raw, lo=0.0)
             if v is not None:
                 m["level"] = v
+        elif field == "glows":
+            # Spec §16.9: absent = glows (the default); false = lights only.
+            if raw == "false":
+                m["glows"] = False
+            elif raw == "true":
+                m.pop("glows", None)
         return
     if field == "shape" and raw in _WAVE_DEFAULTS:
         keep = {k: m[k] for k in ("type", "scope", "period_s", "min", "phase") if k in m}
@@ -235,6 +252,36 @@ def add_light(doc, block, name, position, direction):
         "range": LIGHT_RANGE, "intensity": LIGHT_INTENSITY})
 
 
+def snap_light(light, position):
+    """Edge snap (§16.8): a strip snaps to the sharp edge nearest the clicked
+    point (edge_snap.snap); anything else is left alone."""
+    if light.get("shape") == "strip":
+        light["anchor"] = [float(c) for c in position]
+
+
+def unsnap_light(light):
+    light.pop("anchor", None)
+
+
+def add_area_light(doc, block, name, shape, anchor=None):
+    """A strip or a panel (spec §16.4). A strip given `anchor` -- the click
+    that selected the object -- snaps to the sharp edge nearest it (§16.8);
+    without one it sits on the object's top box edge. The rectangles are
+    recomputed from the object at load."""
+    o = ld.object_entry(doc, block, name)
+    if shape == "strip":
+        light = {"shape": "strip", "edge": "top", "start": 0.0, "end": 1.0,
+                 "offset": STRIP_OFFSET, "range": LIGHT_RANGE, "intensity": STRIP_INTENSITY}
+        if anchor is not None:
+            light["anchor"] = [float(c) for c in anchor]
+    elif shape == "panel":
+        light = {"shape": "panel", "x": [0.0, 1.0], "y": [0.0, 1.0], "offset": 0.0,
+                 "range": LIGHT_RANGE, "intensity": PANEL_INTENSITY}
+    else:
+        return
+    o.setdefault("lights", []).append(light)
+
+
 def remove_light(doc, block, name, i):
     o = doc["objects"].get(_key(block, name))
     if not o or not (0 <= i < len(o.get("lights", []))):
@@ -246,6 +293,12 @@ def remove_light(doc, block, name, i):
 
 
 def set_light(light, field, raw):
+    if field not in _SHAPE_FIELDS.get(light.get("shape", "spot"), ()):
+        return
+    if field == "edge":
+        if raw in ld.EDGES:
+            light["edge"] = raw
+        return
     v = _num(raw)
     if v is None:
         return
@@ -256,6 +309,22 @@ def set_light(light, field, raw):
             light["outer_deg"] = v
         elif field == "outer_deg" and v < light.get("inner_deg", 0.0):
             light["inner_deg"] = v
+    elif field in ("start", "end"):
+        v = min(1.0, max(0.0, v))
+        light[field] = v
+        if field == "start" and light.get("end", 1.0) < v:
+            light["end"] = v
+        elif field == "end" and v < light.get("start", 0.0):
+            light["start"] = v
+    elif field in ("x0", "x1", "y0", "y1"):
+        axis, i = field[0], int(field[1])
+        span = [float(c) for c in light.get(axis, [0.0, 1.0])]
+        span[i] = min(1.0, max(0.0, v))
+        if span[0] > span[1]:
+            span[1 - i] = span[i]
+        light[axis] = span
+    elif field == "offset":
+        light[field] = v
     elif field == "range":
         light[field] = max(_LIGHT_MIN_RANGE, v)
     elif field == "intensity":

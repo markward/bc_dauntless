@@ -958,3 +958,238 @@ rendering was being overpowered by the base illumination".
   row per state, `default`/`bridge` source and a × back to the default.
   Python owns open/closed for the click region (`COG_CSS_PX`,
   `SETTINGS_CSS_W/H` = the CSS). Bridge-level edits need no selection.
+
+## 16. Lights with size: strips and panels *(designed with Mark 2026-10-12)*
+
+Why: two asks with one cause. Mark wanted a **strip light** along an
+object's top / bottom / left / right edge, with a start and end along it,
+facing perpendicular to the edge and on average toward the object's centre.
+Separately, lights on the ceiling dome read as downlights, not a wide wash.
+The cone is not the limit (`outer_deg` is a half-angle, clamped to 90 = the
+whole hemisphere already): a POINT source puts 1/d² and a high N·L straight
+below it and grazes the walls. Both need a light with **size**. Mark: "which
+is exactly why it seems related!" Strips and panels are one feature: a
+rectangular area light, cut from the object's front rectangle.
+
+Mark, on the whole section: "I have areas I'm not sure how well they will
+work but I think we are best to proceed and find out." The judgement is live.
+
+### 16.1 Data (`format: 4`)
+
+A light gains `shape`; absent = `spot`. The reader rejects unknown keys, so
+the new keys need a format bump; `format: 3` upgrades on load unchanged (it
+holds only spots).
+
+| `shape` | keys |
+|---|---|
+| `spot` | as §13.4: `position`, `direction`, `inner_deg`, `outer_deg`, `range`, `intensity` |
+| `strip` | `edge` (`top` / `bottom` / `left` / `right`), `start`, `end` (0-1 along the edge, defaults 0 and 1, `start` <= `end`), `offset`, `range`, `intensity` |
+| `panel` | `x`, `y` (each `[from, to]`, 0-1 across the front rectangle, default `[0, 1]`, from <= to), `offset`, `range`, `intensity` |
+
+```json
+"lights": [{"shape": "strip", "edge": "top", "start": 0.1, "end": 0.9,
+            "offset": 1, "range": 150, "intensity": 4},
+           {"shape": "panel", "x": [0, 1], "y": [0, 1], "offset": 0,
+            "range": 400, "intensity": 1}]
+```
+
+- **No coordinates are stored** for a strip or panel: the rectangle is
+  recomputed from the mesh at load (§16.2), so it follows mesh fixes and
+  shape diffs. A later `follow: "rim"` (a strip along the real outline -- Mark
+  expects a top edge of at most ~7 vertices) is an added key, not a break.
+- **`intensity` is surface brightness** (radiance per unit area, before the
+  colour): shortening a strip removes light, as covering part of an LED strip
+  would, rather than concentrating it.
+- **Colour follows the material** exactly as a spot's (§13.2, §11.4): the
+  object's resolved material, `^2.2`, steady white when it sets no glow; the
+  same static capture colours and per-frame live colours.
+
+### 16.2 Geometry: the front rectangle
+
+`engine/bridge_editor/light_shapes.py`, pure Python, no GL. Input from a new
+host query `bridge_mesh_geometry(iid, mesh)`: the shape's world-space vertices
+and its area-weighted normal sum (C++ owns the triangles).
+
+- **Frame**: *facing* = the normalised normal sum -- each triangle's normal
+  first turned toward the bridge eye (`light_shapes.oriented_normal_sum`;
+  DBridge's walls carry a back-facing copy of every face, so raw winding
+  cancels: final review 2026-10-12, 3 of 145 shapes fell to "no facing");
+  *up* = room up (+Z) with
+  its facing component removed, normalised; *right* = up x facing. The
+  object's box in (right, up, facing) gives the **front rectangle**: the box
+  face at max facing (toward the room). An alcove's front rectangle is its
+  lip; a flat panel's is the panel.
+- **Fallbacks**:
+  - no facing (normal sum < 5% of the total area -- a closed shape such as a
+    pillar): facing = the horizontal direction from the box centre to the
+    bridge camera eye (`_BRIDGE_CAMERA_EYE`, passed in), so the front is the
+    side the captain sees;
+  - facing within 25° of vertical (a ceiling or floor piece): up = the
+    horizontal direction from the eye to the box centre, so **top is the edge
+    farther from the captain's chair**. A panel does not care.
+- **Strip**: that edge of the front rectangle, cut to `[start, end]`, a thin
+  rectangle (`STRIP_WIDTH` = 0.5 bridge units, an engine constant) moved out along facing by
+  `offset`. Its normal = (box centre - strip centre) with the component along
+  the edge removed, normalised: perpendicular to the edge, toward the centre
+  on average. `offset` is what lets a strip on a FLAT panel light the panel
+  itself -- at 0 its normal lies in the panel's plane and the panel receives
+  only grazing light.
+- **Panel**: the `x` x `y` sub-rectangle of the front rectangle, moved out
+  along facing by `offset`, normal = facing.
+- **Known approximation**: a panel on the dome is its rectangular footprint,
+  so its corners emit where there is no dome. A disc shape is a small addition
+  if that shows.
+
+### 16.3 Renderer
+
+- `BridgeAreaLight`: 4 corners, normal, range, live radiance, green and
+  yellow/red capture colours; uploaded as `u_area_*` arrays beside the spots.
+  **Spots and area lights share the 32-light budget**: `lights.py` caps the
+  combined list in mesh order and warns per dropped light, as today.
+- `bridge.frag accumulate_area_lights`:
+  - **diffuse**: the horizon-clipped Lambert edge integral (Heitz), ported
+    from the 2026-09-04 quad-area-light spike (`spike/ebridge-emissive-sh`:
+    `clip_quad_to_horizon`, the quad form factor, and its C++ twin's test
+    against numerical quadrature); exact for a rectangle;
+  - **one-sided**: a receiver behind the rectangle's plane gets nothing;
+  - **range**: the spot window (`spot_falloff`'s `w`), on the distance to
+    the nearest point of the rectangle;
+  - **specular**: GGX at a representative point (the reflection ray meets the
+    rectangle's plane, clamped into it), energy-normalised for the light's
+    size. The part most likely to need tuning; the upgrade is an LTC table.
+- C++ twins in `bridge_pbr.h`, as the spot formulas.
+- **Probes**: the capture pass adds the area lights' diffuse half exactly as
+  the spots'; a geometry or parameter change recaptures, a pulse or state
+  change does not (§11.4).
+- `runtime.py` builds the area list from `light_shapes` at load and after
+  every edit and pushes it through `host_io.set_bridge_area_lights` /
+  `set_bridge_area_colours`. A bridge with no strips or panels uploads a count
+  of 0: its frame is unchanged.
+
+### 16.4 Editor
+
+- **Add light** becomes a menu -- Spot, Strip, Panel -- like Add Modifier.
+- **Strip** row: edge chips (Top, Bottom, Left, Right), start and end
+  sliders, offset, range, intensity. **Panel** row: x from / to, y from / to,
+  offset, range, intensity.
+- One undo step per edit; an edit recomputes that object's rectangles.
+- No outline is drawn: a strip is placed by the light it casts. Drawing the
+  rectangle while its row is expanded is the add-on if that proves hard.
+
+### 16.5 Tests
+
+- `light_shapes` on synthetic meshes: a flat panel, a sloped console, an
+  alcove shell, a closed box (no-facing fallback), a ceiling piece
+  (near-vertical fallback): frame, front rectangle, each edge, spans, offset,
+  normals.
+- Format: 3 -> 4 upgrade; round trip; rejection of unknown keys, a bad edge,
+  a span outside 0-1, from > to.
+- The shared budget: spots + area lights cap at 32 together.
+- C++: the form factor against quadrature (the spike's test, ported); with no
+  area lights the frame is byte-identical.
+- Live (Mark, DBridge): a strip on an alcove lip; a panel on the dome.
+
+### 16.6 Out of scope
+
+Disc or curved panels; an LTC specular table; shadows from area lights;
+drawing the light rectangle in the editor. (Strips that follow the rim:
+§16.8.)
+
+### 16.7 As built
+
+Built on `feat/bridge-area-lights` (plan
+`docs/superpowers/plans/2026-10-12-bridge-area-lights.md`). **Not live-verified**
+-- Mark's DBridge check (a strip on an alcove lip, a panel on the dome) is owed,
+and the defaults (`STRIP_INTENSITY` 40, `PANEL_INTENSITY` 2, `STRIP_OFFSET` 1 in
+`engine/bridge_editor/editing.py`) are first guesses to tune there. Edge snap
+(§16.8) built on `spike/strip-edge-snap` (plan
+`docs/superpowers/plans/2026-10-12-strip-edge-snap.md`). Not live-verified
+beyond Mark's spike check ("looks much better").
+
+### 16.8 Edge snap: strips on the edge you click *(designed with Mark 2026-10-12)*
+
+Why: the first live check put a strip on DBridge's Map 3 above the alcove,
+not in it. Map 3 is one mesh per side wall (blocks 652 / 663: 578 triangles,
+y -185 to 94, z 0 to 107) holding three alcoves, the cabinets and the door
+frame, so its front rectangle is the whole wall and no box edge, start / end
+or offset reaches the alcove lip. Compound meshes like it are the rule on the
+bridge sets. A spike (`spike/strip-edge-snap`) snapped a strip to the mesh's
+own edge nearest a click; Mark: "looks much better" -- once a highlight
+doubling at the joints was fixed (below).
+
+- **Data** (still `format: 4`, unshipped): a strip may carry `anchor`
+  (`[x, y, z]`, the clicked point, bridge space like a spot's `position`).
+  With it the strip sits on the sharp edge nearest the anchor, recomputed
+  from the mesh at load; `edge` stays required and is the fallback when no
+  edge is in reach (status line says so). `start`, `end`, `offset` apply to
+  both.
+- **Snap** (`engine/bridge_editor/edge_snap.py`, pure Python), constants in
+  one block:
+  - weld vertices at 0.01 units; drop degenerate and duplicate triangles
+    (the back-facing copies); orient each normal toward the eye;
+  - sharp edges: open edges, and edges whose faces meet at more than
+    `CREASE_DEG` 30;
+  - candidates: sharp edges within `SNAP_TIE` 2 units of the nearest one,
+    all within `SNAP_REACH` 20; each is walked both ways while the run turns
+    less than `STRAIGHT_DEG` 20; the **longest run wins** (a click by a lip
+    must not take the short fillet at its corner);
+  - the run is simplified (Douglas-Peucker, `SIMPLIFY_TOL` 0.5 units, the
+    tolerance doubled until at most `MAX_SEGMENTS` 6) -- Map 3's lips are
+    7-10-vertex runs on a curved wall, and a single chord floats ~3 units off
+    it;
+  - ordered left to right as seen from the clicked surface (`frame()`'s
+    rule: an upright edge bottom to top, a ceiling's "top" its far edge);
+    cut to `[start, end]` by arc length;
+  - one rectangle per segment, `STRIP_WIDTH` wide, moved out along the
+    clicked surface's normal by `offset`, aimed at the clicked surface
+    `WASH_DEPTH` 10 units in from the edge: it washes the surface you
+    clicked (under a lip: down the wall; on a ceiling: along it).
+- **Joints** (renderer): each segment is its own area light, and each gave a
+  full representative-point highlight, so both neighbours lit every joint
+  (Map 3: 0.75 + 0.75 against 0.65 mid-segment -- bloom blobs). A segment
+  carries join bits (bit 0: joined at its -u end, bit 1: at +u); at a joined
+  end the highlight fades to half over the lobe footprint `d x a_eff`, so
+  neighbours sum to one (`pbr::area_join_weight`, GLSL twin). Diffuse is
+  exact and untouched; lone rectangles and free ends are unchanged. Known
+  limit: at far field (a receiver ~20 units from the strip) the joined
+  highlight measures ~9% below a single rectangle's -- a faint notch in
+  distant glossy reflections.
+- **Budget**: segments, not lights. Spots, strip segments and panels share
+  the 32; rows are built once, in mesh order, by one builder that both the
+  static rows and the live colours use. A light that does not fit **whole**
+  is dropped with a warning -- a snapped strip is never cut short.
+- **Editor**: **Add Light -> Strip** snaps at once to the edge nearest the
+  click that selected the object; with no click on record, or nothing in
+  reach, it is an unsnapped strip with the edge chips. On a strip row:
+  **Snap to edge here** (re-snap to the latest click) and **Unsnap**; the
+  edge chips show only while unsnapped.
+- **Tests**: synthetic double-sided alcove (lip, left-to-right, wash
+  direction, offset, start / end, curved run kept as a polyline, nothing in
+  reach -> fallback + warning, join bits); the C++ joint test (unjoined
+  segments > 1.5x a single rectangle at the joint, joined within 20%) and a
+  frame test pinning the shader to it; the budget counting segments and
+  dropping a whole strip; a DBridge test (asset-backed): a click under the
+  Map 3 alcove lip snaps to the curved lip run, > 100 units, <= 6 segments.
+- **Out of scope**: drawing the snapped edge; panels from a clicked face.
+
+### 16.9 A State that lights without glowing *(designed with Mark 2026-10-13)*
+
+Why: DBridge's Map 3 wall texture is tiled, so no `_emissive` map can mark a
+cove strip along it, and a light's colour is its material's output (§13.2):
+the only way to colour a snapped strip was a State with a level, which also
+lit the whole wall. A State at level 0 kept the wall dark but blacked out
+the light too (Mark: "the light disappears altogether").
+
+- A State modifier may carry `"glows": false` -- **lights only**: the
+  surface output skips it (keeping the base emission: the Finish level, or
+  the map as painted, dark at offline), while the lights' output counts it
+  like any other State. Absent (the default) = glows, as before; existing
+  files are unchanged.
+- Per State, so states mix: e.g. lights-only warm white at green, a glowing
+  red State at red alert. Animations and Transitions act on both outputs.
+- `behaviour.output(..., for_light=True)` / `StateFade.output(..., for_light=True)`
+  is the lights' view (`lights.py` captures and live colours); the glow
+  table keeps the surface view.
+- Editor: a **surface: glows / lights only** chip pair on each State entry.
+- A material shared by several objects colours all their lights; Duplicate
+  gives one object its own.

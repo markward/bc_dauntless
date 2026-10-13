@@ -112,3 +112,42 @@ def test_fade_is_continuous_across_two_changes():
 def test_the_fade_passes_has_map_through():
     f = bh.StateFade("green")
     assert f.output({}, 0.0, has_map=True) == ((1.0, 1.0, 1.0), 1.0)
+
+
+# ── a State may light without glowing (spec §16.9) ─────────────────────────
+
+COVE = {"emission": 0, "modifiers": [
+    {"type": "state", "scope": ["green"], "tint": [1, 0.8, 0.6], "level": 1, "glows": False},
+    {"type": "state", "scope": ["red"], "tint": [1, 0, 0], "level": 0.5},
+    {"type": "state", "scope": ["red"], "tint": [0, 0, 1], "level": 1, "glows": False}]}
+
+
+def test_a_lights_only_state_leaves_the_surface_at_its_base_emission():
+    assert bh.output(COVE, "green", 0.0) == ((0.0, 0.0, 0.0), 0.0)
+    assert bh.output(COVE, "green", 0.0, has_map=True) == ((0.0, 0.0, 0.0), 0.0)   # emission 0 set
+    unset = {"modifiers": COVE["modifiers"]}                  # no emission: the map as painted
+    assert bh.output(unset, "green", 0.0, has_map=True) == ((1.0, 1.0, 1.0), 1.0)
+
+
+def test_a_lights_only_state_still_colours_the_lights():
+    rgb, k = bh.output(COVE, "green", 0.0, for_light=True)
+    assert rgb == (1.0, 0.8, 0.6) and k == 1.0
+
+
+def test_glowing_and_lights_only_states_split_between_surface_and_lights():
+    assert bh.output(COVE, "red", 0.0) == ((0.5, 0.0, 0.0), 0.5)
+    assert bh.output(COVE, "red", 0.0, for_light=True) == ((0.5, 0.0, 1.0), 1.5)
+
+
+def test_a_state_without_the_key_glows_as_before():
+    assert bh.output(ALCOVE, "green", 0.0) == bh.output(ALCOVE, "green", 0.0, for_light=True)
+
+
+def test_the_fade_passes_for_light_through():
+    fade = bh.StateFade("green")
+    assert fade.output(COVE, 0.0) == ((0.0, 0.0, 0.0), 0.0)
+    assert fade.output(COVE, 0.0, for_light=True) == ((1.0, 0.8, 0.6), 1.0)
+    fade.set_state("red")
+    fade.advance(0.25)                           # halfway through the 0.5 s blend
+    rgb, _k = fade.output(COVE, 0.0, for_light=True)
+    assert rgb == pytest.approx((0.75, 0.4, 0.8))

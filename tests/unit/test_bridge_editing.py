@@ -171,3 +171,95 @@ def test_room_light_set_clamp_and_clear():
     for s in ("green", "red", "yellow"):
         ed.clear_room_light(d, s)
     assert "room_light" not in d                    # pruned when empty
+
+
+# ── strips and panels (spec §16.4) ──────────────────────────────────────────
+
+def test_add_area_light_appends_a_strip_or_a_panel_with_defaults():
+    d = ld.empty_doc("x")
+    ed.add_area_light(d, 5, "lip", "strip")
+    ed.add_area_light(d, 5, "lip", "panel")
+    strip, panel = d["objects"]["5:lip"]["lights"]
+    assert strip == {"shape": "strip", "edge": "top", "start": 0.0, "end": 1.0,
+                     "offset": ed.STRIP_OFFSET, "range": ed.LIGHT_RANGE,
+                     "intensity": ed.STRIP_INTENSITY}
+    assert panel == {"shape": "panel", "x": [0.0, 1.0], "y": [0.0, 1.0], "offset": 0.0,
+                     "range": ed.LIGHT_RANGE, "intensity": ed.PANEL_INTENSITY}
+    ld.validate(d)
+
+
+def test_strip_fields_clamp_and_keep_start_le_end():
+    light = {"shape": "strip", "edge": "top", "start": 0.0, "end": 1.0}
+    ed.set_light(light, "edge", "left")
+    ed.set_light(light, "edge", "middle")          # ignored
+    assert light["edge"] == "left"
+    ed.set_light(light, "start", "0.8")
+    ed.set_light(light, "end", "0.5")              # drags start down with it
+    assert (light["start"], light["end"]) == (0.5, 0.5)
+    ed.set_light(light, "end", "7")
+    assert light["end"] == 1.0
+    ed.set_light(light, "offset", "-2.5")
+    assert light["offset"] == -2.5
+
+
+def test_panel_span_ends_drag_each_other_and_stay_valid():
+    light = {"shape": "panel", "x": [0.0, 1.0], "y": [0.0, 1.0]}
+    ed.set_light(light, "x0", "0.7")
+    ed.set_light(light, "x1", "0.2")
+    assert light["x"] == [0.2, 0.2]
+    ed.set_light(light, "y1", "-1")
+    assert light["y"] == [0.0, 0.0]
+    d = ld.empty_doc("x")
+    ld.object_entry(d, 5, "lip")["lights"] = [light]
+    ld.validate(d)
+
+
+def test_a_strip_added_with_an_anchor_is_snapped():
+    d = ld.empty_doc("x")
+    ed.add_area_light(d, 5, "lip", "strip", anchor=(1, 2, 3))
+    ed.add_area_light(d, 5, "lip", "panel", anchor=(1, 2, 3))
+    strip, panel = d["objects"]["5:lip"]["lights"]
+    assert strip["anchor"] == [1.0, 2.0, 3.0] and "anchor" not in panel
+    ld.validate(d)
+
+
+def test_set_light_drops_fields_not_valid_for_the_lights_own_shape():
+    spot = {"position": [0, 0, 0], "direction": [0, 1, 0],
+            "inner_deg": 30.0, "outer_deg": 60.0}
+    ed.set_light(spot, "edge", "left")
+    ed.set_light(spot, "start", "0.5")
+    ed.set_light(spot, "x0", "0.5")
+    ed.set_light(spot, "offset", "2.0")
+    assert "edge" not in spot and "start" not in spot
+    assert "x0" not in spot and "offset" not in spot
+
+    strip = {"shape": "strip", "edge": "top", "start": 0.0, "end": 1.0}
+    ed.set_light(strip, "inner_deg", "10")
+    ed.set_light(strip, "x0", "0.3")
+    assert "inner_deg" not in strip and "x0" not in strip
+
+    panel = {"shape": "panel", "x": [0.0, 1.0], "y": [0.0, 1.0]}
+    ed.set_light(panel, "edge", "left")
+    ed.set_light(panel, "start", "0.5")
+    ed.set_light(panel, "inner_deg", "10")
+    assert "edge" not in panel and "start" not in panel and "inner_deg" not in panel
+
+    d = ld.empty_doc("x")
+    ld.object_entry(d, 1, "a")["lights"] = [spot]
+    ld.object_entry(d, 2, "b")["lights"] = [strip]
+    ld.object_entry(d, 3, "c")["lights"] = [panel]
+    ld.validate(d)
+
+
+def test_a_state_can_be_switched_to_lights_only_and_back():
+    """Spec §16.9: "glows" is absent by default (the State glows)."""
+    m = {"modifiers": [{"type": "state", "scope": ["green"], "tint": [1, 1, 1], "level": 1},
+                       {"type": "animation", "scope": ["green"], "shape": "sine", "period_s": 2}]}
+    ed.set_modifier(m, 0, "glows", "false")
+    assert m["modifiers"][0]["glows"] is False
+    ed.set_modifier(m, 0, "glows", "true")
+    assert "glows" not in m["modifiers"][0]
+    ed.set_modifier(m, 0, "glows", "maybe")
+    assert "glows" not in m["modifiers"][0]
+    ed.set_modifier(m, 1, "glows", "false")
+    assert "glows" not in m["modifiers"][1]

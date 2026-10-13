@@ -1,4 +1,4 @@
-"""Per-bridge lighting document (spec 2026-10-08-bridge-emitters §7, §13.4).
+"""Per-bridge lighting document (spec 2026-10-08-bridge-emitters §7, §13.4, §16).
 
 One JSON file per bridge NIF, keyed by the NIF's content hash: a `materials`
 library (finish, emission, scoped Emitter/Animation modifiers) and `objects`
@@ -122,8 +122,26 @@ def _v1_glow(g, where):
         _num(g["scale"], f"{where}.scale", lo=0)
 
 
+LIGHT_SHAPES = ("spot", "strip", "panel")
+EDGES = ("top", "bottom", "left", "right")
+
+
 def _light(l, where):
-    _obj(l, where, {"position", "direction", "inner_deg", "outer_deg", "range",
+    """A light (spec §13.2, §16.1): a `spot` (also when `shape` is absent),
+    or a `strip` / `panel` cut from the object's front rectangle -- which
+    stores parameters only, never coordinates."""
+    if not isinstance(l, dict):
+        _fail(where, "must be an object")
+    shape = l.get("shape", "spot")
+    _enum(shape, f"{where}.shape", LIGHT_SHAPES)
+    if shape == "spot":
+        _spot(l, where)
+    else:
+        _area_light(l, where, shape)
+
+
+def _spot(l, where):
+    _obj(l, where, {"shape", "position", "direction", "inner_deg", "outer_deg", "range",
                     "intensity", "light_scale"}, ("position", "direction"))
     _vec3(l["position"], f"{where}.position")
     _vec3(l["direction"], f"{where}.direction")
@@ -135,6 +153,41 @@ def _light(l, where):
     _num(outer, f"{where}.outer_deg", 0, 90)
     if inner > outer:
         _fail(f"{where}.inner_deg", "must be <= outer_deg")
+    if "range" in l:
+        _num(l["range"], f"{where}.range", lo=0, lo_open=True)
+    for k in ("intensity", "light_scale"):
+        if k in l:
+            _num(l[k], f"{where}.{k}", lo=0)
+
+
+def _span(v, where):
+    if not isinstance(v, list) or len(v) != 2:
+        _fail(where, "must be [from, to]")
+    _num(v[0], f"{where}[0]", 0, 1)
+    _num(v[1], f"{where}[1]", 0, 1)
+    if v[0] > v[1]:
+        _fail(where, "from must be <= to")
+
+
+def _area_light(l, where, shape):
+    common = {"shape", "offset", "range", "intensity", "light_scale"}
+    if shape == "strip":
+        _obj(l, where, common | {"edge", "start", "end", "anchor"}, ("edge",))
+        _enum(l["edge"], f"{where}.edge", EDGES)
+        if "anchor" in l:           # edge snap (§16.8): the clicked point it snaps from
+            _vec3(l["anchor"], f"{where}.anchor")
+        start, end = l.get("start", 0.0), l.get("end", 1.0)
+        _num(start, f"{where}.start", 0, 1)
+        _num(end, f"{where}.end", 0, 1)
+        if start > end:
+            _fail(f"{where}.start", "must be <= end")
+    else:
+        _obj(l, where, common | {"x", "y"})
+        for k in ("x", "y"):
+            if k in l:
+                _span(l[k], f"{where}.{k}")
+    if "offset" in l:
+        _num(l["offset"], f"{where}.offset")
     if "range" in l:
         _num(l["range"], f"{where}.range", lo=0, lo_open=True)
     for k in ("intensity", "light_scale"):
@@ -182,7 +235,7 @@ def _validate_v1(doc) -> dict:
     return doc
 
 
-FORMAT = 3
+FORMAT = 4
 STATES = ("offline", "green", "yellow", "red", "special")
 # Emission is a Finish level (spec §14, Mark 2026-10-12): the texture's
 # `_emissive` map glows when it has one; `emission_source` is what glows on a
@@ -215,9 +268,11 @@ def _modifier(m, where):
     if not isinstance(m, dict) or m.get("type") not in MODIFIERS:
         _fail(f"{where}.type", f"must be one of {', '.join(MODIFIERS)}")
     if m["type"] == "state":
-        _obj(m, where, {"type", "scope", "tint", "level"}, ("scope", "tint", "level"))
+        _obj(m, where, {"type", "scope", "tint", "level", "glows"}, ("scope", "tint", "level"))
         _vec3(m["tint"], f"{where}.tint", lo=0)
         _num(m["level"], f"{where}.level", lo=0)
+        if "glows" in m and not isinstance(m["glows"], bool):
+            _fail(f"{where}.glows", "must be true or false")    # spec §16.9
     elif m["type"] == "transition":
         _obj(m, where, {"type", "scope", "seconds"}, ("scope", "seconds"))
         _num(m["seconds"], f"{where}.seconds", lo=0)
@@ -363,15 +418,25 @@ def _v1_modifiers(profile, phase):
     return emitters + animations
 
 
+def _v3_to_v4(doc) -> dict:
+    """`format: 3` -> 4 (spec §16.1): lights gained `shape`; a light without
+    one is a spot, which is every light a format-3 file holds."""
+    doc = json.loads(json.dumps(doc))
+    doc["format"] = 4
+    return doc
+
+
 def upgrade(doc) -> dict:
-    """An older document as the current format (`format: 1` via 2), or the
+    """An older document as the current format (1 -> 2 -> 3 -> 4), or the
     document itself when it is not an older format."""
     if not isinstance(doc, dict):
         return doc
     if doc.get("format") == 1:
-        return _v2_to_v3(_v1_to_v2(doc))
+        return _v3_to_v4(_v2_to_v3(_v1_to_v2(doc)))
     if doc.get("format") == 2:
-        return _v2_to_v3(doc)
+        return _v3_to_v4(_v2_to_v3(doc))
+    if doc.get("format") == 3:
+        return _v3_to_v4(doc)
     return doc
 
 
@@ -407,7 +472,7 @@ def _v2_to_v3(doc) -> dict:
         mat["emission"] = 0
         if fade != DEFAULT_FADE_S:
             mods.append({"type": "transition", "scope": list(STATES), "seconds": fade})
-    doc["format"] = FORMAT
+    doc["format"] = 3
     return doc
 
 

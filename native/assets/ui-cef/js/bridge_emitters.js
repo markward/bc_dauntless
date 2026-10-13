@@ -96,6 +96,81 @@ function _beLibrary(s) {
     return html + '</div>';
 }
 
+// Add Light (spec §16.4): one menu, like Add Modifier. A spot is placed
+// where you clicked; a strip or panel is cut from the object's front.
+let _beAddLightOpen = false;
+
+const _BE_LIGHTS = [
+    ['spot', 'Spot', 'A cone from a point: placed where you clicked'],
+    ['strip', 'Strip', 'A line of light along one edge of the object'],
+    ['panel', 'Panel', 'The object\'s front, or part of it, as a soft light']];
+
+function _beToggleAddLight() {
+    _beAddLightOpen = !_beAddLightOpen;
+    if (_beLast) setBridgeEmitters(_beLast);
+}
+
+function _beAddLight() {
+    let html = '<div class="be-add"><button class="be-add-button" onclick="_beToggleAddLight()">'
+        + 'Add Light ' + (_beAddLightOpen ? '▴' : '▾') + '</button>';
+    if (_beAddLightOpen) {
+        html += '<div class="be-menu">';
+        _BE_LIGHTS.forEach(function (m) {
+            html += '<button class="be-menu-item" onclick="_beAddLightOpen = false; '
+                + 'dauntlessEvent(\'bridge-emitters/light-add:' + m[0] + '\')">'
+                + '<span class="be-menu-name">' + m[1] + '</span>'
+                + '<span class="be-menu-help">' + m[2] + '</span></button>';
+        });
+        html += '</div>';
+    }
+    return html + '</div>';
+}
+
+const _BE_EDGES = [['top', 'Top'], ['bottom', 'Bottom'], ['left', 'Left'], ['right', 'Right']];
+
+function _beLightFields(l, i) {
+    const a = 'light:' + i + ':';
+    const shape = l.shape || 'spot';
+    const tail = _beNumberRow('range', a + 'range', l.range, 0.1)
+        + _beNumberRow('intensity', a + 'intensity', l.intensity, shape === 'spot' ? 1 : 0.1);
+    if (shape === 'strip') {
+        // Edge snap (spec §16.8).
+        let snap = '<div class="be-row">'
+            + '<button onclick="dauntlessEvent(\'bridge-emitters/light-snap:' + i + '\')">Snap to edge here</button>'
+            + (l.anchor ? '<button onclick="dauntlessEvent(\'bridge-emitters/light-unsnap:' + i + '\')">Unsnap</button>' : '')
+            + '</div><div class="be-help">' + (l.anchor
+                ? 'Snapped to the edge nearest your click (if none is in reach the status line '
+                  + 'says so, and the box edge is used); start / end / offset still apply.'
+                : 'Not snapped: on the object\'s box edge. Click the surface to light, near its edge, then Snap.')
+            + '</div>';
+        let edges = '';
+        if (!l.anchor) {
+            edges = '<div class="be-row"><label>edge</label><div class="be-list">';
+            _BE_EDGES.forEach(function (e) {
+                edges += _beChip(e[1], a + 'edge:' + e[0], (l.edge || 'top') === e[0], false);
+            });
+            edges += '</div></div>';
+        }
+        return snap + edges
+            + _beSlider('start', a + 'start', l.start === undefined ? 0 : l.start, 1, 1)
+            + _beSlider('end', a + 'end', l.end === undefined ? 1 : l.end, 1, 1)
+            + _beNumberRow('offset', a + 'offset', l.offset || 0, 0.1) + tail;
+    }
+    if (shape === 'panel') {
+        const x = l.x || [0, 1], y = l.y || [0, 1];
+        return _beSlider('x from', a + 'x0', x[0], 1, 1) + _beSlider('x to', a + 'x1', x[1], 1, 1)
+            + _beSlider('y from', a + 'y0', y[0], 1, 1) + _beSlider('y to', a + 'y1', y[1], 1, 1)
+            + _beNumberRow('offset', a + 'offset', l.offset || 0, 0.1) + tail;
+    }
+    return '<div class="be-row">'
+        + '<button onclick="dauntlessEvent(\'bridge-emitters/light-place:' + i + '\')">Place here</button>'
+        + '<button onclick="dauntlessEvent(\'bridge-emitters/light-aim:' + i + '\')">Aim where I\'m looking</button>'
+        + '</div>'
+        // HALF-angles from the axis; CEF OSR shows no tooltips, so say so.
+        + _beNumberRow('inner half-angle°', a + 'inner_deg', l.inner_deg, 0.1)
+        + _beNumberRow('outer half-angle°', a + 'outer_deg', l.outer_deg, 0.1) + tail;
+}
+
 function _beObjectTab(s) {
     const open = function (id) { return (s.expanded || []).indexOf(id) >= 0; };
     const title = s.linked ? s.material
@@ -108,20 +183,13 @@ function _beObjectTab(s) {
         html += '<div class="be-help">Emission map · ' + _beEsc(stem) + '_emissive · steady</div>';
     }
     (s.lights || []).forEach(function (l, i) {
-        const fields = '<div class="be-row">'
-            + '<button onclick="dauntlessEvent(\'bridge-emitters/light-place:' + i + '\')">Place here</button>'
-            + '<button onclick="dauntlessEvent(\'bridge-emitters/light-aim:' + i + '\')">Aim where I\'m looking</button>'
-            + '</div>'
-            // HALF-angles from the axis; CEF OSR shows no tooltips, so say so.
-            + _beNumberRow('inner half-angle°', 'light:' + i + ':inner_deg', l.inner_deg, 0.1)
-            + _beNumberRow('outer half-angle°', 'light:' + i + ':outer_deg', l.outer_deg, 0.1)
-            + _beNumberRow('range', 'light:' + i + ':range', l.range, 0.1)
-            + _beNumberRow('intensity', 'light:' + i + ':intensity', l.intensity, 1);
-        html += _beEntry('light:' + i, 'Light ' + (i + 1), open('light:' + i), null,
-                         'light-remove:' + i, fields);
+        const shape = l.shape || 'spot';
+        const title = 'Light ' + (i + 1)
+            + (shape === 'spot' ? '' : ' · ' + shape.charAt(0).toUpperCase() + shape.slice(1));
+        html += _beEntry('light:' + i, title, open('light:' + i), null,
+                         'light-remove:' + i, _beLightFields(l, i));
     });
-    html += '<div class="be-row"><button onclick="dauntlessEvent(\'bridge-emitters/light-add\')">'
-        + 'Add light</button></div>';
+    html += _beAddLight();
     return html;
 }
 
@@ -178,7 +246,13 @@ function _beModifier(m, i, expanded) {
         const lv = Number(m.level);
         fields = '<div class="be-row"><canvas id="be-wheel-' + i + '" width="120" height="120"></canvas>'
             + '<div id="be-swatch-' + i + '" class="be-swatch"></div></div>'
-            + _beSlider('level', 'mod:' + i + ':level', lv, 4, null, '', false);
+            + _beSlider('level', 'mod:' + i + ':level', lv, 4, null, '', false)
+            // Spec §16.9: a State may colour the object's lights without the
+            // surface glowing (a tiled wall lighting its cove strip).
+            + '<div class="be-row"><label>surface</label>'
+            + _beChip('glows', 'mod:' + i + ':glows:true', m.glows !== false, false)
+            + _beChip('lights only', 'mod:' + i + ':glows:false', m.glows === false, false)
+            + '</div>';
     } else if (m.type === 'transition') {
         fields = _beNumberRow('seconds', 'mod:' + i + ':seconds', m.seconds, 0.05);
     } else {

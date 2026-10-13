@@ -86,6 +86,7 @@ _OPTIONAL_BINDINGS = frozenset({
     "set_bridge_probe_mix", "request_bridge_probe_capture",
     "set_bridge_spots", "set_bridge_alert_level",
     "set_bridge_spot_colours", "set_bridge_glow",
+    "set_bridge_area_lights", "set_bridge_area_colours", "bridge_mesh_geometry",
 })
 
 
@@ -684,6 +685,64 @@ def set_bridge_spot_colours(colours) -> None:
     fn = getattr(_h, "set_bridge_spot_colours", None) if _h is not None else None
     if fn is not None:
         fn([(float(r), float(g), float(b)) for r, g, b in colours])
+
+
+def set_bridge_area_lights(areas) -> int:
+    """Bridge area lights -- strips and panels (spec 2026-10-08-bridge-emitters
+    §16.3; production, not developer-gated): `areas` is [(centre3, half_u3,
+    half_v3, range, (r, g, b), intensity[, capture_green3, capture_alert3])],
+    each emitting toward cross(half_u, half_v). Captures as set_bridge_spots
+    (every light or none). Returns how many were DROPPED (invalid + over the
+    cap). 0 headless."""
+    fn = getattr(_h, "set_bridge_area_lights", None) if _h is not None else None
+    if fn is None:
+        return 0
+
+    def _v3(v):
+        x, y, z = v
+        return (float(x), float(y), float(z))
+
+    rows, caps, joins = [], [], []
+    for a in areas:
+        c, hu, hv, r, rgb, k = a[:6]
+        rows.append((_v3(c), _v3(hu), _v3(hv), float(r), _v3(rgb), float(k)))
+        if len(a) >= 8:
+            caps.append((_v3(a[6]), _v3(a[7])))
+        joins.append(int(a[8]) if len(a) >= 9 else 0)   # spec §16.8: join bits
+    kw = {"joins": joins} if any(joins) else {}
+    if caps and len(caps) == len(rows):
+        return int(fn(rows, caps, **kw))
+    return int(fn(rows, **kw))
+
+
+def set_bridge_area_colours(colours) -> None:
+    """Live LINEAR radiance per bridge area light, in set_bridge_area_lights
+    order; never recaptures the probes. No-op headless."""
+    fn = getattr(_h, "set_bridge_area_colours", None) if _h is not None else None
+    if fn is not None:
+        fn([(float(r), float(g), float(b)) for r, g, b in colours])
+
+
+def bridge_mesh_geometry(instance_id, mesh):
+    """One bridge mesh's rest-pose triangles in WORLD space (spec §16.2):
+    (vertices, normal_sum, area), three vertices per triangle, the normal sum
+    area-weighted and wound as drawn. None headless, for a stale id or an
+    unknown mesh; never raises (the runtime asks at every bridge load)."""
+    fn = getattr(_h, "bridge_mesh_geometry", None) if _h is not None else None
+    if fn is None:
+        return None
+    try:
+        got = fn(instance_id, int(mesh))
+        if got is None:
+            return None
+        verts, n, area = got
+        t = _h.instance_translation(instance_id)
+    except Exception:  # noqa: BLE001 - a stale id / binary is "no geometry"
+        return None
+    if t is not None:
+        verts = [(x + t[0], y + t[1], z + t[2]) for x, y, z in verts]
+    return ([(float(x), float(y), float(z)) for x, y, z in verts],
+            (float(n[0]), float(n[1]), float(n[2])), float(area))
 
 
 def set_bridge_glow(instance_id, glow) -> None:

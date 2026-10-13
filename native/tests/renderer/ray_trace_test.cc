@@ -81,6 +81,26 @@ assets::Model single_triangle_model(glm::vec3 v0, glm::vec3 v1, glm::vec3 v2) {
 
 }  // namespace
 
+// ── mesh_triangles_linear ────────────────────────────────────────────────────
+
+TEST(MeshTrianglesLinear, ReturnsTheMeshesTrianglesInWindingOrder) {
+    const auto m = single_triangle_model({0, 0, 0}, {1, 0, 0}, {0, 1, 0});
+    const auto tris = renderer::mesh_triangles_linear(m, glm::mat3(1.0f), 0);
+    ASSERT_EQ(tris.size(), 1u);
+    EXPECT_EQ(tris[0][0], glm::vec3(0, 0, 0));
+    EXPECT_EQ(tris[0][1], glm::vec3(1, 0, 0));
+    EXPECT_EQ(tris[0][2], glm::vec3(0, 1, 0));
+}
+
+TEST(MeshTrianglesLinear, AppliesTheLinearPartAndSkipsOtherMeshes) {
+    const auto m = single_triangle_model({0, 0, 0}, {1, 0, 0}, {0, 1, 0});
+    const auto tris = renderer::mesh_triangles_linear(m, glm::mat3(2.0f), 0);
+    ASSERT_EQ(tris.size(), 1u);
+    EXPECT_EQ(tris[0][1], glm::vec3(2, 0, 0));
+    EXPECT_TRUE(renderer::mesh_triangles_linear(m, glm::mat3(1.0f), 1).empty());
+    EXPECT_TRUE(renderer::mesh_triangles_linear(m, glm::mat3(1.0f), -1).empty());
+}
+
 namespace {
 
 // Root (no geometry) + a child holding one triangle at x = +10, so an

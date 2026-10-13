@@ -550,4 +550,15 @@ std::optional<RayHit> ray_trace_instance_linear(
                               max_dist, node_overrides, exclude_meshes);
 }
 
+std::vector<std::array<glm::vec3, 3>> mesh_triangles_linear(
+    const assets::Model& model, const glm::mat3& linear, int mesh)
+{
+    std::vector<std::array<glm::vec3, 3>> out;
+    if (mesh < 0 || model.nodes.empty() || model.meshes.empty()) return out;
+    const TraceAccel& accel = ensure_trace_accel(model);
+    for (const TraceTri& t : accel.tris)
+        if (t.mesh == mesh) out.push_back({linear * t.v0, linear * t.v1, linear * t.v2});
+    return out;
+}
+
 }  // namespace renderer

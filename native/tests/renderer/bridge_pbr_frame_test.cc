@@ -1309,3 +1309,108 @@ TEST_F(BridgePbrFrame, OfflineDarkensTheDefaultButNotAMaterialGlow) {
     pass->clear_glow();
     pass->set_alert_level(0);
 }
+
+// ── Area lights: strips and panels (spec §16.3) ──────────────────────────────
+
+namespace {
+renderer::BridgeAreaLight area(glm::vec3 c, glm::vec3 u, glm::vec3 v, float range,
+                               glm::vec3 radiance) {
+    renderer::BridgeAreaLight a;
+    a.center = c; a.half_u = u; a.half_v = v; a.range = range; a.radiance = radiance;
+    return a;
+}
+}  // namespace
+
+TEST_F(BridgePbrFrame, AnAreaLightLightsTheFloorInFrontOfIt) {
+    set_base({0.6f, 0.6f, 0.6f, 1.0f});
+    const glm::vec3 dark = render_floor();
+    // 20 x 20 panel over the sample point, emitting down (cross(u, v) = -z).
+    pass->set_area_lights({area({70, 0, 40}, {10, 0, 0}, {0, -10, 0}, 300.0f, glm::vec3(10.0f))});
+    EXPECT_GT(render_floor().r, dark.r + 0.05f);
+}
+
+TEST_F(BridgePbrFrame, AnAreaLightFacingAwayLightsNothing) {
+    set_base({0.6f, 0.6f, 0.6f, 1.0f});
+    const glm::vec3 dark = render_floor();
+    pass->set_area_lights({area({70, 0, 40}, {10, 0, 0}, {0, 10, 0}, 300.0f, glm::vec3(10.0f))});
+    EXPECT_NEAR(render_floor().r, dark.r, 1e-3f);
+}
+
+TEST_F(BridgePbrFrame, NoAreaLightsRendersExactlyAsBefore) {
+    set_base({0.6f, 0.6f, 0.6f, 1.0f});
+    const glm::vec3 before = render_floor();
+    EXPECT_EQ(pass->set_area_lights({}), 0u);
+    const glm::vec3 after = render_floor();
+    EXPECT_EQ(before, after);
+}
+
+TEST_F(BridgePbrFrame, AreaLightsBeyondTheCapAreDroppedAndCounted) {
+    std::vector<renderer::BridgeAreaLight> many(
+        renderer::kBridgeMaxAreaLights + 3,
+        area({0, 0, 50}, {1, 0, 0}, {0, -1, 0}, 100.0f, glm::vec3(1.0f)));
+    EXPECT_EQ(pass->set_area_lights(many), 3u);
+    EXPECT_EQ(pass->area_light_count(), static_cast<std::size_t>(renderer::kBridgeMaxAreaLights));
+    render_floor();
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+TEST_F(BridgePbrFrame, SettingAreaLightsMarksTheProbesDirtyButColoursDoNot) {
+    EXPECT_FALSE(pass->probe_capture_pending());
+    pass->set_area_lights({area({0, 0, 50}, {1, 0, 0}, {0, -1, 0}, 100.0f, glm::vec3(1.0f))});
+    EXPECT_TRUE(pass->probe_capture_pending());
+    use_red_wall_corner();
+    render_floor();                              // captures
+    EXPECT_FALSE(pass->probe_capture_pending());
+    pass->set_area_radiance({glm::vec3(5.0f)});
+    EXPECT_FALSE(pass->probe_capture_pending());
+    pass->set_area_lights({});
+    EXPECT_TRUE(pass->probe_capture_pending());
+}
+
+TEST_F(BridgePbrFrame, AnAreaLightNeverMakesLitDiffuseBloom) {
+    set_base({1, 1, 1, 1});
+    set_floor_override(1.0f, 0.0f);
+    // 100, not 1e4: specular is deliberately UNCAPPED (spec §9.5), so a huge
+    // radiance on a close, overhead, fully-rough panel pushes it past the
+    // bound too -- that's correct, not a bug. 100 still drives diffuse ~10x
+    // past the ceiling (proving the cap) while keeping the rough-dielectric
+    // specular small.
+    pass->set_area_lights({area({70, 0, 10}, {50, 0, 0}, {0, -50, 0}, 300.0f, glm::vec3(100.0f))});
+    EXPECT_LT(render_floor().r, renderer::kBridgeLighting.diffuse_max + 0.25f);
+}
+
+// Spec §16.8: two JOINED halves of a strip light the floor under their joint
+// like the one strip they replace; unjoined, their highlights add.
+TEST_F(BridgePbrFrame, JoinedStripHalvesMatchOneStripAtTheJoint) {
+    set_base({0.6f, 0.6f, 0.6f, 1.0f});
+    set_floor_override(0.3f, 0.0f);                       // glossy enough to show the highlight
+    sample_ = {70.0f, 0.0f, 0.0f};
+    // V = normalize((0, 0.6, 1)), zero x-component: the strip runs along x
+    // one unit above the floor, so the reflection's nearest point on each
+    // half clamps to that half's OWN joined end -- exactly the joint.
+    //
+    // Deliberately NEAR-FIELD (the strip sits 1 unit above the sampled
+    // floor point): this is the regime of the live bug (a snapped strip
+    // washing the surface it sits close to). At FAR field (the strip ~20
+    // units up) the joined measurement comes in ~9% below the single
+    // rectangle's -- a known limit of the join weighting (spec §16.8,
+    // "Known limit") -- so this test does not exercise that distance.
+    eye_ = {70.0f, 30.0f, 50.0f};
+    target_ = sample_;
+    auto strip = [&](glm::vec3 c, float half_len, int joins) {
+        renderer::BridgeAreaLight a = area(c, {half_len, 0, 0}, {0, -0.25f, 0}, 300.0f,
+                                           glm::vec3(2.0f));
+        a.joins = joins;
+        return a;
+    };
+    pass->set_area_lights({strip({70, 0, 1}, 20.0f, 0)});
+    const float one = render_floor().r;
+    pass->set_area_lights({strip({60, 0, 1}, 10.0f, 2), strip({80, 0, 1}, 10.0f, 1)});
+    const float joined = render_floor().r;
+    pass->set_area_lights({strip({60, 0, 1}, 10.0f, 0), strip({80, 0, 1}, 10.0f, 0)});
+    const float unjoined = render_floor().r;
+    // Review item 10 (deferred T4): tightened from 0.02 (measured diff
+    // 0.0025) to 0.008 -- two 8-bit colour steps (1/255 ~ 0.0039 each).
+    EXPECT_NEAR(joined, one, 0.008f);
+    EXPECT_GT(unjoined, joined + 0.01f);                  // the doubling this guards against
+}

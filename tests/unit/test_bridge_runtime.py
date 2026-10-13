@@ -71,8 +71,8 @@ def test_a_broken_file_is_ignored_not_raised(proj):
 
 
 def test_alert_change_pushes_only_live_values_on_the_next_tick(proj):
-    # Spec §11.4: the spot list is static; an alert change only starts the
-    # fade, and tick() pushes the live glow + spot colours.
+    # Spec §11.4: the spot/area lists are static; an alert change only starts
+    # the fade, and tick() pushes the live glow + spot + area colours.
     io = FakeIO()
     rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
     rt.attach("iid")
@@ -80,7 +80,7 @@ def test_alert_change_pushes_only_live_values_on_the_next_tick(proj):
     rt.on_alert(2)
     assert names(io) == []
     rt.tick(0.016)
-    assert names(io) == ["set_bridge_glow", "set_bridge_spot_colours"]
+    assert names(io) == ["set_bridge_glow", "set_bridge_spot_colours", "set_bridge_area_colours"]
 
 
 # ── Obligation (review): neither overrides nor spots are cleared in C++ on a
@@ -268,8 +268,8 @@ def test_push_reports_a_warning_when_the_renderer_drops_invalid_spots(proj):
 def test_push_reports_cap_and_invalid_drops_together_not_subtracted(proj):
     # Round-2 fix: push() previously did `if dropped > len(cap_warnings)`,
     # treating the native dropped-count and the cap-warning count as the
-    # SAME population. They are not -- lights.spots() already truncates the
-    # list to 32 before it ever reaches native, so whatever native reports
+    # SAME population. They are not -- lights.build() already caps the rows
+    # at 32 before they ever reach native, so whatever native reports
     # dropped can only be non-finite values among the <=32 it was SENT, and
     # must always be reported in addition to the cap warnings, never only
     # when it exceeds them. 34 matched lights -> 2 cap warnings; 1 of the 32
@@ -293,7 +293,7 @@ def test_push_reports_cap_and_invalid_drops_together_not_subtracted(proj):
 
     warnings = rt.push(d, matched)
 
-    cap_warnings = [w for w in warnings if "more than 32" in w]
+    cap_warnings = [w for w in warnings if "dropped (needs" in w]
     invalid_warnings = [w for w in warnings if "dropped as invalid" in w]
     assert len(cap_warnings) == 2
     assert invalid_warnings == ["1 bridge light(s) dropped as invalid (non-finite values)"]
@@ -571,3 +571,101 @@ def test_a_push_without_attach_and_no_lights_requests_no_capture():
     rt._iid = "iid"
     rt.push(ld.empty_doc("x"), {})
     assert "request_bridge_probe_capture" not in names(io)
+
+
+# ── strips and panels (spec §16.3) ──────────────────────────────────────────
+
+WALL_GEOM = ([(0.0, 50.0, 10.0), (0.0, 50.0, 30.0), (40.0, 50.0, 30.0),
+              (0.0, 50.0, 10.0), (40.0, 50.0, 30.0), (40.0, 50.0, 10.0)],
+             (0.0, -800.0, 0.0), 800.0)
+
+
+class GeomIO(FakeIO):
+    def __init__(self, geom=WALL_GEOM, **kw):
+        super().__init__(**kw)
+        self.geom = geom
+        self.geom_calls = 0
+
+    def bridge_mesh_geometry(self, iid, mesh):
+        self.geom_calls += 1
+        return self.geom
+
+
+def _strip_doc(proj):
+    d = ld.empty_doc("x")
+    ld.object_entry(d, 3, "floor")["lights"] = [
+        {"shape": "strip", "edge": "top", "intensity": 40, "range": 150}]
+    lw.save(d, proj / "bridge_lighting" / f"{HASH}.json")
+    return d
+
+
+def _last(io, name):
+    return [c for c in io.calls if c[0] == name][-1]
+
+
+def test_attach_clears_then_pushes_the_strip_on_its_top_edge(proj):
+    _strip_doc(proj)
+    io = GeomIO()
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (20.0, 0.0, 20.0), alert=lambda: 0)
+    rt.attach("iid")
+    pushes = [c for c in io.calls if c[0] == "set_bridge_area_lights"]
+    assert pushes[0] == ("set_bridge_area_lights", [])          # the previous bridge's cleared
+    [row] = pushes[-1][1]
+    assert row[0] == (20.0, 50.0, 30.0) and row[3] == 150 and row[5] == 40
+
+
+def test_tick_pushes_live_area_colours(proj):
+    _strip_doc(proj)
+    io = GeomIO()
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (20.0, 0.0, 20.0), alert=lambda: 0)
+    rt.attach("iid")
+    rt.tick(0.016)
+    assert len(_last(io, "set_bridge_area_colours")[1]) == 1
+
+
+def test_geometry_is_fetched_once_per_mesh_per_attach(proj):
+    _strip_doc(proj)
+    io = GeomIO()
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (20.0, 0.0, 20.0), alert=lambda: 0)
+    rt.attach("iid")
+    for _ in range(5):
+        rt.tick(0.016)
+    rt.push(rt._doc)
+    assert io.geom_calls == 1
+    rt.attach("iid")
+    assert io.geom_calls == 2
+
+
+def test_a_strip_with_no_geometry_is_warned_and_not_pushed(proj):
+    _strip_doc(proj)
+    io = GeomIO(geom=None)
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (20.0, 0.0, 20.0), alert=lambda: 0)
+    rt.attach("iid")
+    assert _last(io, "set_bridge_area_lights")[1] == []
+    warnings = rt.push(rt._doc)
+    assert any("no geometry" in w for w in warnings)
+
+
+def test_frame_for_uses_the_oriented_vertex_sum_not_the_raw_binding_sum(proj):
+    # Review ruling item 2: DBridge's winding is mixed, so _frame_for must
+    # derive facing from light_shapes.oriented_normal_sum(verts, eye), never
+    # from the binding's raw normal_sum. A deliberately WRONG raw sum
+    # (pointing +Y) paired with the correct vertices must still produce the
+    # same top-edge strip as WALL_GEOM's own (correct) raw sum.
+    _strip_doc(proj)
+    verts, _wrong_raw_sum, area = WALL_GEOM
+    io = GeomIO(geom=(verts, (0.0, 800.0, 0.0), area))
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (20.0, 0.0, 20.0), alert=lambda: 0)
+    rt.attach("iid")
+    [row] = _last(io, "set_bridge_area_lights")[1]
+    assert row[0] == (20.0, 50.0, 30.0) and row[3] == 150 and row[5] == 40
+    assert row[1] == (20.0, 0.0, 0.0)          # half_u sign: right-handed, unflipped by the bogus sum
+
+
+def test_detach_clears_the_area_lights(proj):
+    _strip_doc(proj)
+    io = GeomIO()
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (20.0, 0.0, 20.0), alert=lambda: 0)
+    rt.attach("iid")
+    rt.detach()
+    assert _last(io, "set_bridge_area_lights") == ("set_bridge_area_lights", [])
