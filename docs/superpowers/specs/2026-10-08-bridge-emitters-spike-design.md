@@ -462,8 +462,15 @@ nothing BC had. Every added map is pure gain.
   data — never per frame. Capture point: the captain's-chair eye. Box: the
   bridge model's AABB.
 - **Officers** go through the same path with the defaults (metal 0,
-  rough 1): matte, with a slight Fresnel edge. Their textures can gain maps
-  by the same naming rule.
+  rough 1) and **reflect nothing** (2026-10-13, `u_reflectance` = 0 in the
+  skinned sub-pass: F0, every Fresnel factor and the probe term). BC paints
+  hair and cloth near-black (hair ~0.003 linear), so the dielectric sheen
+  (1.4-3.5% of a probe at rough 1, achromatic) outweighed their diffuse ~8-10x
+  and washed the heads out grey -- measured from the Specular-only and Light
+  Only debug views, confirmed live by a spike. ⚠️ Officer skins can NOT gain
+  `_rough`/`_metal`/`_normal` maps today: siblings are looked up at NIF build
+  against the NIF's own image name (the `head.tga`/`body.tga` placeholders),
+  and `set_base_texture` swaps only the Base slot.
 - **Static spot lights in the PBR step:** picker-placed §6.2 lights. An
   emitter with no `profile` uses a built-in steady white profile (level 1 in
   every state), so the schema doesn't change between the PBR step and the
