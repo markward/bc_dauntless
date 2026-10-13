@@ -54,7 +54,7 @@ def _capture(mat, state, has_map):
     if any(m["type"] == "animation" and state in m["scope"]
            for m in mat.get("modifiers", ())):
         return (0.0, 0.0, 0.0)
-    rgb, _ = behaviour.output(mat, state, 0.0, has_map)
+    rgb, _ = behaviour.output(mat, state, 0.0, has_map, for_light=True)
     return to_linear(rgb)
 
 
@@ -145,7 +145,7 @@ def live(built, fade, t):
     def colours(lit):
         out = []
         for light, mat, has_map in lit:
-            rgb, _k = fade.output(mat, t, has_map)
+            rgb, _k = fade.output(mat, t, has_map, for_light=True)
             k = _intensity(light)
             out.append(tuple(c * k for c in to_linear(rgb)))
         return out

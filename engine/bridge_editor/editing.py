@@ -222,6 +222,12 @@ def set_modifier(mat, i, field, raw):
             v = _num(raw, lo=0.0)
             if v is not None:
                 m["level"] = v
+        elif field == "glows":
+            # Spec §16.9: absent = glows (the default); false = lights only.
+            if raw == "false":
+                m["glows"] = False
+            elif raw == "true":
+                m.pop("glows", None)
         return
     if field == "shape" and raw in _WAVE_DEFAULTS:
         keep = {k: m[k] for k in ("type", "scope", "period_s", "min", "phase") if k in m}

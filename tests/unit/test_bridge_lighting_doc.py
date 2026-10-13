@@ -546,3 +546,31 @@ def test_format_3_upgrades_to_4_unchanged_but_the_number():
 def test_format_2_upgrades_through_3_to_4():
     v2 = {"format": 2, "source": "x", "materials": {}, "objects": {}}
     assert ld.upgrade(v2)["format"] == 4
+
+
+# ── "glows" on a State (spec §16.9) ─────────────────────────────────────────
+
+def _with_state(extra):
+    d = ld.empty_doc("x")
+    d["materials"]["m"] = {"modifiers": [dict(
+        {"type": "state", "scope": ["green"], "tint": [1, 1, 1], "level": 1}, **extra)]}
+    return d
+
+
+def test_a_state_may_say_it_does_not_glow():
+    assert ld.validate(_with_state({"glows": False}))
+    assert ld.validate(_with_state({"glows": True}))
+
+
+@pytest.mark.parametrize("bad", [0, 1, "no", None])
+def test_glows_must_be_a_boolean(bad):
+    with pytest.raises(ld.BridgeLightingError, match="glows"):
+        ld.validate(_with_state({"glows": bad}))
+
+
+def test_only_a_state_has_glows():
+    d = ld.empty_doc("x")
+    d["materials"]["m"] = {"modifiers": [
+        {"type": "animation", "scope": ["green"], "shape": "sine", "period_s": 2, "glows": False}]}
+    with pytest.raises(ld.BridgeLightingError, match="glows"):
+        ld.validate(d)

@@ -1171,3 +1171,25 @@ doubling at the joints was fixed (below).
   dropping a whole strip; a DBridge test (asset-backed): a click under the
   Map 3 alcove lip snaps to the curved lip run, > 100 units, <= 6 segments.
 - **Out of scope**: drawing the snapped edge; panels from a clicked face.
+
+### 16.9 A State that lights without glowing *(designed with Mark 2026-10-13)*
+
+Why: DBridge's Map 3 wall texture is tiled, so no `_emissive` map can mark a
+cove strip along it, and a light's colour is its material's output (§13.2):
+the only way to colour a snapped strip was a State with a level, which also
+lit the whole wall. A State at level 0 kept the wall dark but blacked out
+the light too (Mark: "the light disappears altogether").
+
+- A State modifier may carry `"glows": false` -- **lights only**: the
+  surface output skips it (keeping the base emission: the Finish level, or
+  the map as painted, dark at offline), while the lights' output counts it
+  like any other State. Absent (the default) = glows, as before; existing
+  files are unchanged.
+- Per State, so states mix: e.g. lights-only warm white at green, a glowing
+  red State at red alert. Animations and Transitions act on both outputs.
+- `behaviour.output(..., for_light=True)` / `StateFade.output(..., for_light=True)`
+  is the lights' view (`lights.py` captures and live colours); the glow
+  table keeps the surface view.
+- Editor: a **surface: glows / lights only** chip pair on each State entry.
+- A material shared by several objects colours all their lights; Duplicate
+  gives one object its own.

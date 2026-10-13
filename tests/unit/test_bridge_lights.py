@@ -260,3 +260,22 @@ def test_a_snap_with_nothing_in_reach_warns_and_keeps_the_box_edge():
     assert len(b.area_rows) == 1
     assert b.area_rows[0][0] == ls.strip_rect(fr, "top", offset=0.0).centre
     assert any("no sharp edge" in w for w in b.warnings)
+
+
+# ── a State may light without glowing (spec §16.9) ─────────────────────────
+
+def test_a_lights_only_state_colours_the_light_and_its_captures():
+    d = ld.empty_doc("x")
+    d["materials"]["wall"] = {"modifiers": [
+        {"type": "state", "scope": list(ld.STATES), "tint": [1, 0.5, 0.25], "level": 1,
+         "glows": False}]}
+    o = ld.object_entry(d, 1, "w")
+    o["material"] = "wall"
+    o["lights"] = [{"position": [0, 0, 9], "direction": [0, 0, -1], "intensity": 10}]
+    matched = {"1:w": 1}
+    b = lights.build(d, matched, _links(d, matched))
+    [spot] = b.spot_rows
+    want = tuple(c ** 2.2 for c in (1.0, 0.5, 0.25))
+    assert spot[5] == pytest.approx(want) and spot[7] == pytest.approx(want)
+    [live] = lights.live(b, bh.StateFade("green"), 0.0)[0]
+    assert live == pytest.approx(tuple(10 * c for c in want))

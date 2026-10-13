@@ -246,7 +246,13 @@ function _beModifier(m, i, expanded) {
         const lv = Number(m.level);
         fields = '<div class="be-row"><canvas id="be-wheel-' + i + '" width="120" height="120"></canvas>'
             + '<div id="be-swatch-' + i + '" class="be-swatch"></div></div>'
-            + _beSlider('level', 'mod:' + i + ':level', lv, 4, null, '', false);
+            + _beSlider('level', 'mod:' + i + ':level', lv, 4, null, '', false)
+            // Spec §16.9: a State may colour the object's lights without the
+            // surface glowing (a tiled wall lighting its cove strip).
+            + '<div class="be-row"><label>surface</label>'
+            + _beChip('glows', 'mod:' + i + ':glows:true', m.glows !== false, false)
+            + _beChip('lights only', 'mod:' + i + ':glows:false', m.glows === false, false)
+            + '</div>';
     } else if (m.type === 'transition') {
         fields = _beNumberRow('seconds', 'mod:' + i + ':seconds', m.seconds, 0.05);
     } else {

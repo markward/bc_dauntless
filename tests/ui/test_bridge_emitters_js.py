@@ -458,3 +458,15 @@ def test_an_unsnapped_strip_says_it_is_not_snapped():
     strip = {"shape": "strip", "edge": "top", "range": 200, "intensity": 40}
     [out] = _run([{"state": _state(selected=_sel(lights=[strip], expanded=["light:0"]))}])
     assert "Not snapped" in out["body"]
+
+
+def test_a_state_entry_offers_glows_or_lights_only():
+    """Spec §16.9: a State may colour the object's lights without the surface glowing."""
+    mat = dict(MAT, modifiers=[
+        {"type": "state", "scope": ["green"], "tint": [1, 1, 1], "level": 1, "glows": False}])
+    sel = _sel(tab="material", material="alcove", material_data=mat, expanded=["mod:0"])
+    [out] = _run([{"state": _state(selected=sel)}])
+    body = out["body"]
+    assert "mod:0:glows:true" in body and "mod:0:glows:false" in body
+    lights_only = body.split("mod:0:glows:false")[0].rsplit("<button", 1)[1]
+    assert 'be-chip active"' in lights_only

@@ -249,3 +249,17 @@ def test_set_light_drops_fields_not_valid_for_the_lights_own_shape():
     ld.object_entry(d, 2, "b")["lights"] = [strip]
     ld.object_entry(d, 3, "c")["lights"] = [panel]
     ld.validate(d)
+
+
+def test_a_state_can_be_switched_to_lights_only_and_back():
+    """Spec §16.9: "glows" is absent by default (the State glows)."""
+    m = {"modifiers": [{"type": "state", "scope": ["green"], "tint": [1, 1, 1], "level": 1},
+                       {"type": "animation", "scope": ["green"], "shape": "sine", "period_s": 2}]}
+    ed.set_modifier(m, 0, "glows", "false")
+    assert m["modifiers"][0]["glows"] is False
+    ed.set_modifier(m, 0, "glows", "true")
+    assert "glows" not in m["modifiers"][0]
+    ed.set_modifier(m, 0, "glows", "maybe")
+    assert "glows" not in m["modifiers"][0]
+    ed.set_modifier(m, 1, "glows", "false")
+    assert "glows" not in m["modifiers"][1]

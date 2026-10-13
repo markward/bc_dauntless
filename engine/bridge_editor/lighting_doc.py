@@ -268,9 +268,11 @@ def _modifier(m, where):
     if not isinstance(m, dict) or m.get("type") not in MODIFIERS:
         _fail(f"{where}.type", f"must be one of {', '.join(MODIFIERS)}")
     if m["type"] == "state":
-        _obj(m, where, {"type", "scope", "tint", "level"}, ("scope", "tint", "level"))
+        _obj(m, where, {"type", "scope", "tint", "level", "glows"}, ("scope", "tint", "level"))
         _vec3(m["tint"], f"{where}.tint", lo=0)
         _num(m["level"], f"{where}.level", lo=0)
+        if "glows" in m and not isinstance(m["glows"], bool):
+            _fail(f"{where}.glows", "must be true or false")    # spec §16.9
     elif m["type"] == "transition":
         _obj(m, where, {"type", "scope", "seconds"}, ("scope", "seconds"))
         _num(m["seconds"], f"{where}.seconds", lo=0)

@@ -82,3 +82,15 @@ def test_a_texture_material_with_an_emitter_glows_every_unlinked_mesh():
                "maps": {"emissive": True}}]
     objs, _ = glow.glow_objects(d, ld.resolve(d, meshes, {}), meshes)
     assert [(m, s) for m, s, _, _ in objs] == [(3, 1), (4, 0)]
+
+
+def test_a_lights_only_state_does_not_glow_the_surface():
+    """Spec §16.9: a State with "glows": false colours the lights only."""
+    d = _doc()
+    d["materials"]["roof"]["modifiers"][0]["glows"] = False
+    objs, _ = glow.glow_objects(d, _links(d, MATCHED), MESHES)
+    live = glow.live(objs, bh.StateFade("green"), 0.0)
+    # ROOF sets emission 0: both surfaces stay at that base, not the State's tint.
+    for mesh in (3, 4):
+        g = [g for g in live if g[0] == mesh][0]
+        assert g[2] == (0.0, 0.0, 0.0) and g[3] == 0.0
