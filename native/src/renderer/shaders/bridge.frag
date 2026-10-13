@@ -84,6 +84,10 @@ uniform int       u_has_rough_map;
 uniform int       u_has_metal_map;
 uniform float     u_rough_override;
 uniform float     u_metal_override;
+// SPIKE (spike/officer-reflectance): scales F0 and all specular. 1 = the
+// room (unchanged); 0 = skinned characters, to test whether the dielectric
+// sheen is what washes the officers' heads out.
+uniform float     u_reflectance;
 
 // ── Emissive sibling maps (task 17) ────────────────────────────────────
 // `<stem>_emissive{,_y,_r}` beside the albedo; BridgePass binds the variant
@@ -586,7 +590,7 @@ void main() {
         vec3 albedo = (u_debug_view == 2) ? vec3(1.0) : decode(base.rgb);
         vec3 V = normalize(u_eye - v_world);
         float NdotV = max(dot(N, V), 1e-4);
-        vec3 F0 = f0_for(albedo, metal);
+        vec3 F0 = f0_for(albedo, metal) * u_reflectance;
         // Roughness-aware: plain Schlick here darkened a rough dielectric by
         // up to ~1/3 at grazing views, re-lighting the room when PBR is on.
         vec3 Fv = F_schlick_rough(NdotV, F0, rough);
@@ -619,7 +623,7 @@ void main() {
         accumulate_area_lights(N, V, NdotV, albedo, metal, rough, F0, diffuse, spec);
         float dip = glow_dip(base_uv);
         diffuse *= dip;
-        spec *= dip;
+        spec *= dip * u_reflectance;
         if (u_debug_view == 8) { FragColor = vec4(encode(spec), 1.0); return; }
         vec3 col = (combine(diffuse, spec, u_diffuse_max) + emissive_term(base_uv, base.rgb))
                  * u_viewscreen_brightness;

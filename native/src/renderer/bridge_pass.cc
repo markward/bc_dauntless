@@ -408,6 +408,7 @@ void BridgePass::render(const scenegraph::World& world,
         s.set_vec3("u_box_min", box_min_);
         s.set_vec3("u_box_max", box_max_);
         s.set_int("u_capture", capture_pass_ ? 1 : 0);
+        s.set_float("u_reflectance", 1.0f);   // SPIKE: sub-pass B sets 0
         // Static spots: main bridge view only (its probe captures included;
         // they light the capture's diffuse). Comm sets get 0. Only the count
         // in use is uploaded; the shader never reads past u_spot_count.
@@ -525,6 +526,8 @@ void BridgePass::render(const scenegraph::World& world,
         set_frame_uniforms(skin_shader);
         // Officers carry authored normals: light the side that faces the eye.
         skin_shader.set_int("u_face_by_winding", 0);
+        // SPIKE (spike/officer-reflectance): no reflection on characters.
+        skin_shader.set_float("u_reflectance", 0.0f);
 
         world.for_each_visible_in_pass(pass,
             [&](const scenegraph::Instance& inst) {
