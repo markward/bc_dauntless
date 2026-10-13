@@ -96,9 +96,24 @@ def registered_module_path(character, key):
     return None
 
 
+def _actions_of(built):
+    """The actions an SDK builder produced, in order.
+
+    Most builders return a TGSequence, but every officer-to-officer turn
+    (``<Station>Turn<X>`` / ``<Station>Back<X>``, e.g. MediumAnimations.DBHTalkT)
+    returns ONE TGAnimAction, which has no GetNumActions/GetAction -- asking it
+    walks stubs and silently loses the clip.
+    """
+    from engine.appc.actions import TGAction, TGSequence
+    if isinstance(built, TGAction) and not isinstance(built, TGSequence):
+        return [built]
+    return [built.GetAction(i) for i in range(built.GetNumActions())]
+
+
 def resolve_builder(character, key):
     """Call the SDK builder registered under the literal *key* and return its
-    TGSequence, or None (unregistered / import error / empty sequence).
+    TGSequence -- or the single action some builders return (see _actions_of)
+    -- or None (unregistered / import error / empty sequence).
 
     The builder RETURNS the sequence; it does not play it. That is BC's contract.
     """
@@ -114,7 +129,7 @@ def resolve_builder(character, key):
         seq = func(character)
     except Exception:
         return None
-    if seq is None or seq.GetNumActions() == 0:
+    if seq is None or not _actions_of(seq):
         return None
     return seq
 
@@ -155,14 +170,14 @@ def capture_registered_clip(character, suffix):
     # bridge set node, kind="object") — and the chair comes LAST. Pick the last
     # action targeting the CHARACTER so we get the officer's actual turn clip,
     # not the bridge chair animation. Fall back to the last action.
+    actions = _actions_of(seq)
     action = None
-    for i in range(seq.GetNumActions() - 1, -1, -1):
-        a = seq.GetAction(i)
+    for a in reversed(actions):
         if getattr(getattr(a, "_anim_node", None), "kind", None) == "character":
             action = a
             break
     if action is None:
-        action = seq.GetAction(seq.GetNumActions() - 1)
+        action = actions[-1]
     clip_name = getattr(action, "_clip", "") or getattr(action, "name", "")
     if not clip_name:
         return None
@@ -178,8 +193,7 @@ def walk_action_of(seq):
     """The builder sequence's WALK action: the last action targeting the CHARACTER
     anim node. A move builder also carries set/door actions, and its FIRST
     character-node action is EyesOpenMouthClosed (a facial clip), never the walk."""
-    for i in range(seq.GetNumActions() - 1, -1, -1):
-        a = seq.GetAction(i)
+    for a in reversed(_actions_of(seq)):
         if getattr(getattr(a, "_anim_node", None), "kind", None) == "character":
             return a
     return None
@@ -195,8 +209,7 @@ def capture_chair_clip(character, suffix):
     if seq is None:
         return None
     action = None
-    for i in range(seq.GetNumActions() - 1, -1, -1):
-        a = seq.GetAction(i)
+    for a in reversed(_actions_of(seq)):
         if getattr(getattr(a, "_anim_node", None), "kind", None) == "object":
             action = a
             break
