@@ -1098,13 +1098,14 @@ drawing the light rectangle in the editor. (Strips that follow the rim:
 ### 16.7 As built
 
 Built on `feat/bridge-area-lights` (plan
-`docs/superpowers/plans/2026-10-12-bridge-area-lights.md`). **Not live-verified**
--- Mark's DBridge check (a strip on an alcove lip, a panel on the dome) is owed,
-and the defaults (`STRIP_INTENSITY` 40, `PANEL_INTENSITY` 2, `STRIP_OFFSET` 1 in
-`engine/bridge_editor/editing.py`) are first guesses to tune there. Edge snap
-(§16.8) built on `spike/strip-edge-snap` (plan
-`docs/superpowers/plans/2026-10-12-strip-edge-snap.md`). Not live-verified
-beyond Mark's spike check ("looks much better").
+`docs/superpowers/plans/2026-10-12-bridge-area-lights.md`); edge snap (§16.8)
+and lights-only States (§16.9) on `feat/strip-edge-snap` (plan
+`docs/superpowers/plans/2026-10-12-strip-edge-snap.md`). Merged to main
+d6e1bd09 (2026-10-13). **Live-verified by Mark on DBridge** (2026-10-13):
+snapped strips on the Map 3 alcove lips, panels, the production snap fixes
+and the lights-only State. The defaults (`STRIP_INTENSITY` 40,
+`PANEL_INTENSITY` 2, `STRIP_OFFSET` 1 in `engine/bridge_editor/editing.py`)
+remain first guesses, tuned per light in the editor.
 
 ### 16.8 Edge snap: strips on the edge you click *(designed with Mark 2026-10-12)*
 
