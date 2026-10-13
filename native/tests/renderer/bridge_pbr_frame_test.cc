@@ -11,6 +11,7 @@
 
 #include <renderer/bloom_pass.h>
 #include <renderer/bridge_pass.h>
+#include <renderer/bridge_pbr.h>
 #include <renderer/frame.h>
 #include <renderer/hdr_target.h>
 #include <renderer/pipeline.h>
@@ -672,6 +673,57 @@ TEST_F(BridgePbrFrame, OfficersAreNotInTheProbes) {
     const glm::vec3 c = render_floor();
     EXPECT_GT(c.r, 0.05f);
     EXPECT_GT(c.r, c.g * 1.5f);
+}
+
+// Characters reflect nothing (2026-10-13): BC's officer textures paint hair
+// and cloth near-black, so the default dielectric sheen (F0 0.04) became most
+// of what showed and washed the heads out grey. With a captured probe and a
+// spot on the officer, the Specular-only view reads black on the officer and
+// still shows the room's reflection on the floor beside it.
+TEST_F(BridgePbrFrame, OfficersReflectNothing) {
+    use_red_wall_corner();
+    officer = make_green_officer();
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->request_probe_capture();
+    pass->set_spots({{{40.0f, 0.0f, 20.0f}, {-1.0f, 0.0f, 0.0f},
+                      std::cos(glm::radians(30.0f)), std::cos(glm::radians(60.0f)),
+                      200.0f, glm::vec3(1.0f) * 2000.0f}});
+    pass->set_debug_view(renderer::BridgeDebugView::SpecularOnly);
+    sample_ = {70.0f, 0.0f, 0.0f};
+    const glm::vec3 floor = render_floor();
+    sample_ = {5.0f, 0.0f, 20.0f};
+    const glm::vec3 off = render_floor();
+    pass->set_debug_view(renderer::BridgeDebugView::Off);
+    EXPECT_GT(floor.r + floor.g + floor.b, 0.01f);   // the room still reflects
+    EXPECT_LT(off.r + off.g + off.b, 1e-4f);
+}
+
+// ...and gives up no diffuse to a reflection it no longer makes: under one
+// spot, no ambient and no probe, an officer texel is plain Lambert -- no
+// (1 - F) cut. The light skims the panel from below while the eye looks down
+// at it (V.H ~ 0.37), where Schlick's grazing term alone, F0 or not, would
+// take ~10% of the diffuse.
+TEST_F(BridgePbrFrame, OfficerDiffuseHasNoFresnelLoss) {
+    officer = make_green_officer();
+    sample_ = {5.0f, 0.0f, 20.0f};
+    const glm::vec3 spot_pos(8.0f, 0.0f, -10.0f);
+    const glm::vec3 to_spot = spot_pos - sample_;
+    const float d = glm::length(to_spot);
+    const glm::vec3 L = to_spot / d;
+    const float range = 200.0f;
+    const float radiance = 5700.0f;   // ~0.2 linear: under the diffuse ceiling's knee
+    pass->set_spots({{spot_pos, -L,
+                      std::cos(glm::radians(30.0f)), std::cos(glm::radians(60.0f)),
+                      range, glm::vec3(radiance)}});
+    renderer::Lighting dark;
+    dark.ambient = glm::vec3(0.0f);
+    const glm::vec3 c = render_floor_with(dark);
+    const glm::vec3 N(1.0f, 0.0f, 0.0f);
+    const float lambert = (1.0f / renderer::pbr::kPi) * radiance
+                        * renderer::pbr::spot_falloff(d, range) * glm::dot(N, L);
+    const float want = renderer::pbr::encode(glm::vec3(lambert)).g;
+    EXPECT_NEAR(c.g, want, 0.004f);
+    EXPECT_LT(c.r + c.b, 1e-4f);
 }
 
 // A request made before any bridge is drawn (the host requests at bridge

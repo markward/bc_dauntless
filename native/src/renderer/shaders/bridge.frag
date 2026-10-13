@@ -84,6 +84,12 @@ uniform int       u_has_rough_map;
 uniform int       u_has_metal_map;
 uniform float     u_rough_override;
 uniform float     u_metal_override;
+// Scales every Fresnel term -- F0, the spots' and area lights' F, the
+// ambient Fv and the probe's split sum -- so 0 reflects nothing and gives no
+// diffuse up to a reflection. 1 for the room (the pbr:: twins hold there);
+// 0 for skinned characters: BC paints their hair and cloth near-black, and
+// the dielectric sheen (F0 0.04) washed them out grey (2026-10-13).
+uniform float     u_reflectance;
 
 // ── Emissive sibling maps (task 17) ────────────────────────────────────
 // `<stem>_emissive{,_y,_r}` beside the albedo; BridgePass binds the variant
@@ -324,7 +330,7 @@ void accumulate_spots(vec3 N, vec3 V, float NdotV, vec3 albedo, float metal,
         if (att <= 0.0) continue;
         vec3 H = normalize(L + V);
         float NdotH = max(dot(N, H), 0.0);
-        vec3 F = F_schlick(max(dot(V, H), 0.0), F0);
+        vec3 F = F_schlick(max(dot(V, H), 0.0), F0) * u_reflectance;
         vec3 radiance = u_spot_radiance[i] * att * NdotL;
         diffuse += (vec3(1.0) - F) * (1.0 - metal) * albedo / kPi * radiance;
         spec += D_ggx(NdotH, rough) * G_smith(NdotV, NdotL, rough) * F
@@ -460,7 +466,7 @@ void accumulate_area_lights(vec3 N, vec3 V, float NdotV, vec3 albedo, float meta
         vec3 h = Ln + V;
         float hl = length(h);
         vec3 Hd = hl > 1e-6 ? h / hl : N;
-        vec3 Fd = F_schlick(max(dot(V, Hd), 0.0), F0);
+        vec3 Fd = F_schlick(max(dot(V, Hd), 0.0), F0) * u_reflectance;
         vec3 rad = u_area_radiance[i] * win;
         diffuse += (vec3(1.0) - Fd) * (1.0 - metal) * albedo * rad * ff;
         vec3 rep = rect_representative(v_world, reflect(-V, N), c, u, v);
@@ -474,7 +480,7 @@ void accumulate_area_lights(vec3 N, vec3 V, float NdotV, vec3 albedo, float meta
         float a = rough * rough;
         float a_eff = min(a + sqrt(area / kPi) / (2.0 * d), 1.0);
         vec3 H = normalize(L + V);
-        vec3 F = F_schlick(max(dot(V, H), 0.0), F0);
+        vec3 F = F_schlick(max(dot(V, H), 0.0), F0) * u_reflectance;
         spec += D_ggx(max(dot(N, H), 0.0), sqrt(a_eff)) * G_smith(NdotV, NdotL, rough) * F
               / max(4.0 * NdotV * NdotL, 1e-4) * rad * NdotL * omega
               * area_join_weight(v_world, reflect(-V, N), c, u, nl, u_area_joins[i], d * a_eff);
@@ -586,10 +592,10 @@ void main() {
         vec3 albedo = (u_debug_view == 2) ? vec3(1.0) : decode(base.rgb);
         vec3 V = normalize(u_eye - v_world);
         float NdotV = max(dot(N, V), 1e-4);
-        vec3 F0 = f0_for(albedo, metal);
+        vec3 F0 = f0_for(albedo, metal) * u_reflectance;
         // Roughness-aware: plain Schlick here darkened a rough dielectric by
         // up to ~1/3 at grazing views, re-lighting the room when PBR is on.
-        vec3 Fv = F_schlick_rough(NdotV, F0, rough);
+        vec3 Fv = F_schlick_rough(NdotV, F0, rough) * u_reflectance;
         float h = clamp(dot(N, u_up) * 0.5 + 0.5, 0.0, 1.0);
         // The downlight (AO included) is authored in display space: decode
         // the WHOLE legacy received term, so AO reads exactly as it does today.
@@ -610,7 +616,8 @@ void main() {
             vec3 pre = mix(textureLod(u_probe_a, Rb, mip).rgb,
                            textureLod(u_probe_b, Rb, mip).rgb, u_probe_mix);
             vec2 ab = texture(u_brdf_lut, vec2(NdotV, rough)).rg;
-            spec = pre * (F0 * ab.x + ab.y) * specular_occlusion(NdotV, ao, rough);
+            spec = pre * (F0 * ab.x + ab.y * u_reflectance)
+                 * specular_occlusion(NdotV, ao, rough);
         }
         // Static spots and area lights: direct light, never multiplied by AO.
         // Their diffuse goes through the ceiling in combine(); only specular
