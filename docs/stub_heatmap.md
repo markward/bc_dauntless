@@ -1,6 +1,6 @@
 # Stub Telemetry Heatmap
 
-Accumulated from **628 runs** (2026-07-13 08:53 UTC .. 2026-09-19 19:39 UTC). Open: 192, resolved: 349, regressed: 1.
+Accumulated from **783 runs** (2026-07-13 08:53 UTC .. 2026-10-13 08:10 UTC). Open: 176, resolved: 375, regressed: 1.
 
 _Regression check: a resolved stub hit again (lastSeenOn > markedResolvedOn) is flagged below._
 
@@ -8,7 +8,7 @@ _Regression check: a resolved stub hit again (lastSeenOn > markedResolvedOn) is 
 
 | owner | attr | markedResolvedOn | lastSeenOn | hits |
 |---|---|---|---|---|
-| TGAnimAction | _anim_node.kind | 2026-07-13 | 2026-09-04 21:03 UTC | 109 |
+| TGAnimAction | _anim_node.kind | 2026-07-13 | 2026-10-06 12:13 UTC | 117 |
 
 ## Unimplemented-attribute roadmap (open)
 
@@ -20,198 +20,182 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 
 | rank | owner | attr | total hits | coverage | lastSeenOn | markedResolvedOn |
 |---|---|---|---|---|---|---|
-| 1 | TGIcon | GetRight | 45933 | 413/628 | 2026-09-19 19:39 UTC |  |
-| 2 | TGParagraph | SetString | 45066 | 175/628 | 2026-08-18 15:23 UTC |  |
-| 3 | g_kMainMenuButton2HighlightedColor | a | 39970 | 6/628 | 2026-09-15 20:08 UTC |  |
-| 4 | g_kMainMenuButton2HighlightedColor | b | 39970 | 6/628 | 2026-09-15 20:08 UTC |  |
-| 5 | g_kMainMenuButton2HighlightedColor | g | 39970 | 6/628 | 2026-09-15 20:08 UTC |  |
-| 6 | g_kMainMenuButton2HighlightedColor | r | 39970 | 6/628 | 2026-09-15 20:08 UTC |  |
-| 7 | App | CharacterClass_IsCollisionAlertEnabled | 19818 | 521/628 | 2026-09-19 19:39 UTC |  |
-| 8 | App | SortedRegionMenu_GetRoot | 18167 | 63/628 | 2026-09-16 17:29 UTC |  |
-| 9 | SortedRegionMenu_GetRoot() | GetNumChildren | 18167 | 63/628 | 2026-09-16 17:29 UTC |  |
-| 10 | App | UtopiaModule_ConvertGameUnitsToKilometers | 18077 | 72/628 | 2026-08-21 12:29 UTC |  |
-| 11 | TGFrame | GetRight | 16026 | 110/628 | 2026-09-16 14:15 UTC |  |
-| 12 | TGPane | GetBottom | 14252 | 396/628 | 2026-09-19 19:39 UTC |  |
-| 13 | App | __path__ | 11026 | 270/628 | 2026-09-19 19:39 UTC |  |
-| 14 | SparkEmitterProperty_Create() | SetOrientation | 6784 | 144/628 | 2026-09-19 19:39 UTC |  |
-| 15 | SparkEmitterProperty_Create() | SetPosition | 6784 | 144/628 | 2026-09-19 19:39 UTC |  |
-| 16 | PhaserSystem | CanFire | 6352 | 3/628 | 2026-09-14 15:59 UTC |  |
-| 17 | PhaserSystem | GetAmmo | 6352 | 3/628 | 2026-09-14 15:59 UTC |  |
-| 18 | TorpedoSystem | CanFire | 6352 | 3/628 | 2026-09-14 15:59 UTC |  |
-| 19 | TGParagraph | GetRight | 6108 | 396/628 | 2026-09-19 19:39 UTC |  |
-| 20 | App | TGProfilingInfo_SetTimingData | 5405 | 36/628 | 2026-09-19 19:39 UTC |  |
-| 21 | TractorBeamSystem | CanFire | 5208 | 3/628 | 2026-09-14 15:59 UTC |  |
-| 22 | TractorBeamSystem | GetAmmo | 5208 | 3/628 | 2026-09-14 15:59 UTC |  |
-| 23 | TGPane | GetRight | 5090 | 396/628 | 2026-09-19 19:39 UTC |  |
-| 24 | App | SparkEmitterProperty_Create | 5074 | 144/628 | 2026-09-19 19:39 UTC |  |
-| 25 | SparkEmitterProperty_Create() | GetName | 5074 | 144/628 | 2026-09-19 19:39 UTC |  |
-| 26 | SmokeEmitterProperty_Create() | SetOrientation | 4103 | 171/628 | 2026-09-19 19:39 UTC |  |
-| 27 | SmokeEmitterProperty_Create() | SetPosition | 4103 | 171/628 | 2026-09-19 19:39 UTC |  |
-| 28 | App | SmokeEmitterProperty_Create | 3203 | 171/628 | 2026-09-19 19:39 UTC |  |
-| 29 | SmokeEmitterProperty_Create() | GetName | 3203 | 171/628 | 2026-09-19 19:39 UTC |  |
-| 30 | TorpedoSystem | GetAmmo | 3176 | 3/628 | 2026-09-14 15:59 UTC |  |
-| 31 | ShieldSubsystem | GetNumShields | 2932 | 2/628 | 2026-08-30 21:41 UTC |  |
-| 32 | ShipClass | subsystems | 2049 | 396/628 | 2026-09-19 19:39 UTC |  |
-| 33 | EngPowerCtrl | GetBottom | 2036 | 396/628 | 2026-09-19 19:39 UTC |  |
-| 34 | KeyboardBinding | LaunchEvent | 1948 | 42/628 | 2026-09-16 17:29 UTC |  |
-| 35 | TGInputManager | MoveMouseCursorTo | 1725 | 603/628 | 2026-09-19 19:39 UTC |  |
-| 36 | CharacterClass | SetGender | 1619 | 129/628 | 2026-09-16 09:50 UTC |  |
-| 37 | CharacterClass | SetRandomAnimationChance | 1619 | 129/628 | 2026-09-16 09:50 UTC |  |
-| 38 | CharacterClass | SetSize | 1619 | 129/628 | 2026-09-16 09:50 UTC |  |
-| 39 | ExplodeEmitterProperty_Create() | SetOrientation | 1596 | 144/628 | 2026-09-19 19:39 UTC |  |
-| 40 | ExplodeEmitterProperty_Create() | SetPosition | 1596 | 144/628 | 2026-09-19 19:39 UTC |  |
-| 41 | CharacterClass | SetBlinkChance | 1440 | 129/628 | 2026-09-16 09:50 UTC |  |
-| 42 | STSubPane | ResizeToContents | 1318 | 302/628 | 2026-09-19 19:39 UTC |  |
-| 43 | _STStylizedWindow | ScrollToBottom | 1318 | 302/628 | 2026-09-19 19:39 UTC |  |
-| 44 | CharacterClass | SetAnimatedSpeaking | 1229 | 129/628 | 2026-09-16 09:50 UTC |  |
-| 45 | CharacterClass | SetBlinkStages | 1229 | 129/628 | 2026-09-16 09:50 UTC |  |
-| 46 | App | ExplodeEmitterProperty_Create | 1146 | 144/628 | 2026-09-19 19:39 UTC |  |
-| 47 | ExplodeEmitterProperty_Create() | GetName | 1146 | 144/628 | 2026-09-19 19:39 UTC |  |
-| 48 | Mission | AddPrecreatedShip | 1092 | 142/628 | 2026-09-16 09:50 UTC |  |
-| 49 | STButton | SetName | 1088 | 374/628 | 2026-09-19 19:39 UTC |  |
-| 50 | EngPowerCtrl | GetRight | 1018 | 396/628 | 2026-09-19 19:39 UTC |  |
-| 51 | TGFrame | GetBottom | 1018 | 396/628 | 2026-09-19 19:39 UTC |  |
-| 52 | TGParagraph | GetBottom | 1018 | 396/628 | 2026-09-19 19:39 UTC |  |
-| 53 | STTopLevelMenu | GetContainingWindow | 878 | 142/628 | 2026-09-16 09:50 UTC |  |
-| 54 | STButton | GetName | 645 | 288/628 | 2026-09-19 19:39 UTC |  |
-| 55 | App | g_kMainMenuButton2HighlightedColor | 619 | 88/628 | 2026-09-16 09:50 UTC |  |
-| 56 | Planet | GetCloakingSubsystem | 619 | 2/628 | 2026-08-17 14:57 UTC |  |
-| 57 | Planet | GetCloakingSubsystem.IsTryingToCloak | 619 | 2/628 | 2026-08-17 14:57 UTC |  |
-| 58 | Game | AddPersistentModule | 618 | 618/628 | 2026-09-19 19:39 UTC |  |
-| 59 | _STStylizedWindow | ScrollToTop | 542 | 268/628 | 2026-09-19 19:39 UTC |  |
-| 60 | KeyboardBinding | FindKey | 528 | 87/628 | 2026-09-16 09:50 UTC |  |
-| 61 | STTargetMenu | GetHeight | 439 | 142/628 | 2026-09-16 09:50 UTC |  |
-| 62 | STTargetMenu | Resize | 439 | 142/628 | 2026-09-16 09:50 UTC |  |
-| 63 | STTopLevelMenu | GetContainingWindow.GetBorderWidth | 439 | 142/628 | 2026-09-16 09:50 UTC |  |
-| 64 | STTopLevelMenu | GetContainingWindow.GetMaximumHeight | 439 | 142/628 | 2026-09-16 09:50 UTC |  |
-| 65 | STTopLevelMenu | GetContainingWindow.SetMaximumSize | 439 | 142/628 | 2026-09-16 09:50 UTC |  |
-| 66 | TGPane | SetAlwaysHandleEvents | 337 | 302/628 | 2026-09-19 19:39 UTC |  |
-| 67 | TGPane | SetNotAlwaysHandleEvents | 335 | 300/628 | 2026-09-19 19:39 UTC |  |
-| 68 | TGAnimAction | GetNumActions | 299 | 16/628 | 2026-09-04 21:03 UTC |  |
-| 69 | STTopLevelMenu | ForceUpdate | 292 | 142/628 | 2026-09-16 09:50 UTC |  |
-| 70 | TGParagraph | SetFontGroup | 292 | 142/628 | 2026-09-16 09:50 UTC |  |
-| 71 | CharacterClass | SetLookAtAdj | 264 | 129/628 | 2026-09-19 19:39 UTC |  |
-| 72 | PulseWeaponSystem | CanFire | 244 | 1/628 | 2026-09-14 15:59 UTC |  |
-| 73 | PulseWeaponSystem | GetAmmo | 244 | 1/628 | 2026-09-14 15:59 UTC |  |
-| 74 | App | BlinkingLightProperty_Create | 202 | 41/628 | 2026-09-16 21:47 UTC |  |
-| 75 | BlinkingLightProperty_Create() | GetName | 202 | 41/628 | 2026-09-16 21:47 UTC |  |
-| 76 | BlinkingLightProperty_Create() | SetColor | 202 | 41/628 | 2026-09-16 21:47 UTC |  |
-| 77 | BlinkingLightProperty_Create() | SetDuration | 202 | 41/628 | 2026-09-16 21:47 UTC |  |
-| 78 | BlinkingLightProperty_Create() | SetOrientation | 202 | 41/628 | 2026-09-16 21:47 UTC |  |
-| 79 | BlinkingLightProperty_Create() | SetPeriod | 202 | 41/628 | 2026-09-16 21:47 UTC |  |
-| 80 | BlinkingLightProperty_Create() | SetPosition | 202 | 41/628 | 2026-09-16 21:47 UTC |  |
-| 81 | BlinkingLightProperty_Create() | SetRadius | 202 | 41/628 | 2026-09-16 21:47 UTC |  |
-| 82 | TGAnimAction | GetAction | 190 | 16/628 | 2026-09-04 21:03 UTC |  |
-| 83 | TGParagraph | RecalcBounds | 186 | 29/628 | 2026-09-16 17:29 UTC |  |
-| 84 | WaypointEvent_Create() | GetEventType | 180 | 31/628 | 2026-08-10 11:34 UTC |  |
-| 85 | BlinkingLightProperty_Create() | SetTextureName | 179 | 30/628 | 2026-09-16 21:47 UTC |  |
-| 86 | CharacterClass | SetAsExtra | 162 | 54/628 | 2026-09-19 19:39 UTC |  |
-| 87 | STTargetMenu | ForceUpdate | 146 | 142/628 | 2026-09-16 09:50 UTC |  |
-| 88 | STTopLevelMenu | Resize | 146 | 142/628 | 2026-09-16 09:50 UTC |  |
-| 89 | STTopLevelMenu | ResizeToContents | 146 | 142/628 | 2026-09-16 09:50 UTC |  |
-| 90 | App | MapWindow_Cast | 143 | 122/628 | 2026-09-16 09:50 UTC |  |
-| 91 | MapWindow_Cast() | IsWindowActive | 143 | 122/628 | 2026-09-16 09:50 UTC |  |
-| 92 | TacticalControlWindow | SetNotVisible | 143 | 122/628 | 2026-09-16 09:50 UTC |  |
-| 93 | CharacterClass | SetAudioMode | 130 | 127/628 | 2026-09-16 09:50 UTC |  |
-| 94 | PhaserBank | SetConditionPercentage | 129 | 17/628 | 2026-09-04 20:31 UTC |  |
-| 95 | CharacterClass | SetMenuEnabled | 112 | 76/628 | 2026-09-16 09:50 UTC |  |
-| 96 | TGAnimAction | GetAction._anim_node | 109 | 16/628 | 2026-09-04 21:03 UTC |  |
-| 97 | TorpedoTube | SetConditionPercentage | 102 | 17/628 | 2026-09-04 20:31 UTC |  |
-| 98 | App | g_kSTMenu2Selected | 101 | 88/628 | 2026-09-16 09:50 UTC |  |
-| 99 | App | EngineGlowProperty_Create | 99 | 28/628 | 2026-09-16 21:47 UTC |  |
-| 100 | EngineGlowProperty_Create() | GetName | 99 | 28/628 | 2026-09-16 21:47 UTC |  |
-| 101 | App | EnergyWeapon_Cast | 96 | 10/628 | 2026-09-15 19:46 UTC |  |
-| 102 | EnergyWeapon_Cast() | GetMaxCharge | 96 | 10/628 | 2026-09-15 19:46 UTC |  |
-| 103 | EnergyWeapon_Cast() | SetChargeLevel | 96 | 10/628 | 2026-09-15 19:46 UTC |  |
-| 104 | App | WaypointEvent_Create | 90 | 31/628 | 2026-08-10 11:34 UTC |  |
-| 105 | WaypointEvent_Create() | GetDestination | 90 | 31/628 | 2026-08-10 11:34 UTC |  |
-| 106 | WaypointEvent_Create() | SetDestination | 90 | 31/628 | 2026-08-10 11:34 UTC |  |
-| 107 | WaypointEvent_Create() | SetEventType | 90 | 31/628 | 2026-08-10 11:34 UTC |  |
-| 108 | WaypointEvent_Create() | SetPlacement | 90 | 31/628 | 2026-08-10 11:34 UTC |  |
-| 109 | TGAnimAction | GetAction._clip | 81 | 16/628 | 2026-09-04 21:03 UTC |  |
-| 110 | ShipSubsystem | SetConditionPercentage | 79 | 17/628 | 2026-09-04 20:31 UTC |  |
-| 111 | CharacterClass | SetRandomAnimationEnabled | 77 | 76/628 | 2026-09-16 09:50 UTC |  |
-| 112 | _CinematicWindow | AddChild | 77 | 31/628 | 2026-09-16 17:29 UTC |  |
-| 113 | _CinematicWindow | DeleteChild | 70 | 25/628 | 2026-09-16 17:29 UTC |  |
-| 114 | SortedRegionMenu | SetPlacementName | 67 | 66/628 | 2026-08-21 09:37 UTC |  |
-| 115 | TGKeyboardEvent | EventHandled | 64 | 3/628 | 2026-08-18 15:40 UTC |  |
-| 116 | HullSubsystem | SetConditionPercentage | 36 | 17/628 | 2026-09-04 20:31 UTC |  |
-| 117 | TractorBeam | SetConditionPercentage | 34 | 17/628 | 2026-09-04 20:31 UTC |  |
-| 118 | TGEvent | GetObjPtr | 33 | 1/628 | 2026-08-22 07:37 UTC |  |
-| 119 | App | InterfaceModule_ForceFocusOnObject | 30 | 9/628 | 2026-09-16 16:55 UTC |  |
-| 120 | WarpSequence | SetEventDestination | 23 | 23/628 | 2026-09-04 20:57 UTC |  |
-| 121 | PowerSubsystem | SetConditionPercentage | 20 | 17/628 | 2026-09-04 20:31 UTC |  |
-| 122 | SensorSubsystem | SetConditionPercentage | 20 | 17/628 | 2026-09-04 20:31 UTC |  |
-| 123 | ShieldSubsystem | SetConditionPercentage | 20 | 17/628 | 2026-09-04 20:31 UTC |  |
-| 124 | Waypoint | StartGetSubsystemMatch | 19 | 4/628 | 2026-08-06 10:09 UTC |  |
-| 125 | ShipClass | SetTargetable | 18 | 3/628 | 2026-08-06 10:09 UTC |  |
-| 126 | SortedRegionMenu | SetMissionName | 18 | 12/628 | 2026-09-02 19:35 UTC |  |
-| 127 | RepairSubsystem | SetConditionPercentage | 16 | 16/628 | 2026-09-04 20:31 UTC |  |
-| 128 | SensorSubsystem | SetNumProbes | 16 | 11/628 | 2026-09-15 19:46 UTC |  |
-| 129 | App | WarpFlash_CreateWithoutShip | 12 | 12/628 | 2026-09-15 20:08 UTC |  |
-| 130 | WarpEngineSubsystem | GetWarpExitLocation | 12 | 12/628 | 2026-09-15 20:08 UTC |  |
-| 131 | WarpEngineSubsystem | GetWarpExitRotation | 12 | 12/628 | 2026-09-15 20:08 UTC |  |
-| 132 | WarpEngineSubsystem | SetPlacement | 12 | 12/628 | 2026-09-15 20:08 UTC |  |
-| 133 | PulseWeapon | SetConditionPercentage | 8 | 1/628 | 2026-09-04 20:26 UTC |  |
-| 134 | App | ZoomCameraObjectClass_Cast | 7 | 7/628 | 2026-09-15 19:46 UTC |  |
-| 135 | TGKeyboardEvent | SetHandled | 7 | 3/628 | 2026-08-18 15:40 UTC |  |
-| 136 | ZoomCameraObjectClass_Cast() | ToggleZoom | 7 | 7/628 | 2026-09-15 19:46 UTC |  |
-| 137 | App | g_kSTMenu1NormalBase | 6 | 1/628 | 2026-08-22 07:37 UTC |  |
-| 138 | Game | InGodMode | 6 | 2/628 | 2026-07-16 18:38 UTC |  |
-| 139 | GridClass | GetPhaserSystem.GetNumChildSubsystems | 6 | 2/628 | 2026-07-13 12:09 UTC |  |
-| 140 | GridClass | GetPulseWeaponSystem.GetNumChildSubsystems | 6 | 2/628 | 2026-07-13 12:09 UTC |  |
-| 141 | GridClass | GetTorpedoSystem.GetNumChildSubsystems | 6 | 2/628 | 2026-07-13 12:09 UTC |  |
-| 142 | GridClass | GetTractorBeamSystem.GetNumChildSubsystems | 6 | 2/628 | 2026-07-13 12:09 UTC |  |
-| 143 | Sun | GetPhaserSystem.GetNumChildSubsystems | 6 | 2/628 | 2026-07-13 12:09 UTC |  |
-| 144 | Sun | GetPulseWeaponSystem.GetNumChildSubsystems | 6 | 2/628 | 2026-07-13 12:09 UTC |  |
-| 145 | Sun | GetTorpedoSystem.GetNumChildSubsystems | 6 | 2/628 | 2026-07-13 12:09 UTC |  |
-| 146 | Sun | GetTractorBeamSystem.GetNumChildSubsystems | 6 | 2/628 | 2026-07-13 12:09 UTC |  |
-| 147 | App | g_kSTMenu3NormalBase | 5 | 1/628 | 2026-08-22 07:37 UTC |  |
-| 148 | CloakingSubsystem | SetConditionPercentage | 4 | 1/628 | 2026-09-04 20:26 UTC |  |
-| 149 | SensorSubsystem | GetIdentificationTime | 4 | 4/628 | 2026-09-01 08:26 UTC |  |
-| 150 | App | CharacterClass_SetAllowExtras | 3 | 2/628 | 2026-09-02 19:35 UTC |  |
-| 151 | Game | SetGodMode | 3 | 2/628 | 2026-07-16 18:38 UTC |  |
-| 152 | GridClass | GetPhaserSystem | 3 | 2/628 | 2026-07-13 12:09 UTC |  |
-| 153 | GridClass | GetPulseWeaponSystem | 3 | 2/628 | 2026-07-13 12:09 UTC |  |
-| 154 | GridClass | GetTorpedoSystem | 3 | 2/628 | 2026-07-13 12:09 UTC |  |
-| 155 | GridClass | GetTractorBeamSystem | 3 | 2/628 | 2026-07-13 12:09 UTC |  |
-| 156 | Sun | GetPhaserSystem | 3 | 2/628 | 2026-07-13 12:09 UTC |  |
-| 157 | Sun | GetPulseWeaponSystem | 3 | 2/628 | 2026-07-13 12:09 UTC |  |
-| 158 | Sun | GetTorpedoSystem | 3 | 2/628 | 2026-07-13 12:09 UTC |  |
-| 159 | Sun | GetTractorBeamSystem | 3 | 2/628 | 2026-07-13 12:09 UTC |  |
-| 160 | TorpedoSystem | IsTubeReady | 3 | 3/628 | 2026-09-16 16:44 UTC |  |
-| 161 | App | InterfaceModule_DoTheRightThing | 2 | 2/628 | 2026-09-04 09:16 UTC |  |
-| 162 | App | STStylizedWindow_Create | 2 | 2/628 | 2026-09-04 09:16 UTC |  |
-| 163 | App | g_kRadarEnemyColor | 2 | 1/628 | 2026-08-22 07:37 UTC |  |
-| 164 | AsteroidField | SetNavPoint | 2 | 2/628 | 2026-08-16 15:23 UTC |  |
-| 165 | AsteroidField | SetStatic | 2 | 2/628 | 2026-08-16 15:23 UTC |  |
-| 166 | STStylizedWindow_Create() | AddChild | 2 | 2/628 | 2026-09-04 09:16 UTC |  |
-| 167 | STStylizedWindow_Create() | InteriorChangedSize | 2 | 2/628 | 2026-09-04 09:16 UTC |  |
-| 168 | STStylizedWindow_Create() | SetVisible | 2 | 2/628 | 2026-09-04 09:16 UTC |  |
-| 169 | STSubPane | GetConceptualParent | 2 | 1/628 | 2026-08-21 15:53 UTC |  |
-| 170 | STSubPane | GetConceptualParent.SetNotVisible | 2 | 1/628 | 2026-08-21 15:53 UTC |  |
-| 171 | TacticalControlWindow | GetOpenMenu | 2 | 1/628 | 2026-08-21 15:53 UTC |  |
-| 172 | _CinematicWindow | MoveToFront | 2 | 2/628 | 2026-09-04 09:16 UTC |  |
-| 173 | _CinematicWindow | SetFocus | 2 | 2/628 | 2026-09-04 09:16 UTC |  |
-| 174 | App | CharacterClass_GetCharacterFromMenu | 1 | 1/628 | 2026-08-21 15:53 UTC |  |
-| 175 | App | STMissionLog_GetMissionLog | 1 | 1/628 | 2026-08-31 13:22 UTC |  |
-| 176 | App | g_kDamageDisplayDamagedColor | 1 | 1/628 | 2026-08-22 07:37 UTC |  |
-| 177 | App | g_kDamageDisplayDestroyedColor | 1 | 1/628 | 2026-08-22 07:37 UTC |  |
-| 178 | App | g_kDamageDisplayDisabledColor | 1 | 1/628 | 2026-08-22 07:37 UTC |  |
-| 179 | App | g_kMainMenuButtonColor | 1 | 1/628 | 2026-08-22 07:37 UTC |  |
-| 180 | App | g_kRadarFriendlyColor | 1 | 1/628 | 2026-08-22 07:37 UTC |  |
-| 181 | App | g_kRadarNeutralColor | 1 | 1/628 | 2026-08-22 07:37 UTC |  |
-| 182 | App | g_kRadarUnknownColor | 1 | 1/628 | 2026-08-22 07:37 UTC |  |
-| 183 | CharacterClass_GetCharacterFromMenu() | GetName | 1 | 1/628 | 2026-08-21 15:53 UTC |  |
-| 184 | PhaserSystem | GetObjType | 1 | 1/628 | 2026-07-14 00:15 UTC |  |
-| 185 | STMissionLog_GetMissionLog() | GetFirstChild | 1 | 1/628 | 2026-08-31 13:22 UTC |  |
-| 186 | STMissionLog_GetMissionLog() | SetVisible | 1 | 1/628 | 2026-08-31 13:22 UTC |  |
-| 187 | STTopLevelMenu | GetConceptualParent | 1 | 1/628 | 2026-08-21 15:53 UTC |  |
-| 188 | STTopLevelMenu | GetConceptualParent.SetNotVisible | 1 | 1/628 | 2026-08-21 15:53 UTC |  |
-| 189 | TGEvent | GetCString | 1 | 1/628 | 2026-07-13 23:37 UTC |  |
-| 190 | TGPane | GetConceptualParent | 1 | 1/628 | 2026-08-21 15:53 UTC |  |
-| 191 | TGPane | GetConceptualParent.SetNotVisible | 1 | 1/628 | 2026-08-21 15:53 UTC |  |
-| 192 | TacticalControlWindow | SetVisible | 1 | 1/628 | 2026-08-21 15:53 UTC |  |
+| 1 | TGIcon | GetRight | 46772 | 529/783 | 2026-10-08 20:09 UTC |  |
+| 2 | g_kMainMenuButton2HighlightedColor | a | 42392 | 9/783 | 2026-10-08 20:09 UTC |  |
+| 3 | g_kMainMenuButton2HighlightedColor | b | 42392 | 9/783 | 2026-10-08 20:09 UTC |  |
+| 4 | g_kMainMenuButton2HighlightedColor | g | 42392 | 9/783 | 2026-10-08 20:09 UTC |  |
+| 5 | g_kMainMenuButton2HighlightedColor | r | 42392 | 9/783 | 2026-10-08 20:09 UTC |  |
+| 6 | App | CharacterClass_IsCollisionAlertEnabled | 22873 | 669/783 | 2026-10-13 08:10 UTC |  |
+| 7 | App | SortedRegionMenu_GetRoot | 19307 | 78/783 | 2026-10-08 20:09 UTC |  |
+| 8 | SortedRegionMenu_GetRoot() | GetNumChildren | 19307 | 78/783 | 2026-10-08 20:09 UTC |  |
+| 9 | TGPane | GetBottom | 19180 | 511/783 | 2026-10-08 20:09 UTC |  |
+| 10 | App | __path__ | 17498 | 392/783 | 2026-10-08 20:09 UTC |  |
+| 11 | TGFrame | GetRight | 16078 | 115/783 | 2026-10-08 20:09 UTC |  |
+| 12 | SparkEmitterProperty_Create() | SetOrientation | 13449 | 246/783 | 2026-10-08 20:09 UTC |  |
+| 13 | SparkEmitterProperty_Create() | SetPosition | 13449 | 246/783 | 2026-10-08 20:09 UTC |  |
+| 14 | App | SparkEmitterProperty_Create | 10770 | 246/783 | 2026-10-08 20:09 UTC |  |
+| 15 | SparkEmitterProperty_Create() | GetName | 10770 | 246/783 | 2026-10-08 20:09 UTC |  |
+| 16 | SmokeEmitterProperty_Create() | SetOrientation | 8269 | 273/783 | 2026-10-08 20:09 UTC |  |
+| 17 | SmokeEmitterProperty_Create() | SetPosition | 8269 | 273/783 | 2026-10-08 20:09 UTC |  |
+| 18 | TGParagraph | GetRight | 8220 | 511/783 | 2026-10-08 20:09 UTC |  |
+| 19 | App | TGProfilingInfo_SetTimingData | 8214 | 61/783 | 2026-09-29 14:03 UTC |  |
+| 20 | App | SmokeEmitterProperty_Create | 6859 | 273/783 | 2026-10-08 20:09 UTC |  |
+| 21 | SmokeEmitterProperty_Create() | GetName | 6859 | 273/783 | 2026-10-08 20:09 UTC |  |
+| 22 | TGPane | GetRight | 6850 | 511/783 | 2026-10-08 20:09 UTC |  |
+| 23 | PhaserSystem | CanFire | 6352 | 3/783 | 2026-09-14 15:59 UTC |  |
+| 24 | PhaserSystem | GetAmmo | 6352 | 3/783 | 2026-09-14 15:59 UTC |  |
+| 25 | TorpedoSystem | CanFire | 6352 | 3/783 | 2026-09-14 15:59 UTC |  |
+| 26 | TractorBeamSystem | CanFire | 5208 | 3/783 | 2026-09-14 15:59 UTC |  |
+| 27 | TractorBeamSystem | GetAmmo | 5208 | 3/783 | 2026-09-14 15:59 UTC |  |
+| 28 | TorpedoSystem | GetAmmo | 3176 | 3/783 | 2026-09-14 15:59 UTC |  |
+| 29 | ExplodeEmitterProperty_Create() | SetOrientation | 3084 | 246/783 | 2026-10-08 20:09 UTC |  |
+| 30 | ExplodeEmitterProperty_Create() | SetPosition | 3084 | 246/783 | 2026-10-08 20:09 UTC |  |
+| 31 | EngPowerCtrl | GetBottom | 2740 | 511/783 | 2026-10-08 20:09 UTC |  |
+| 32 | ShipClass | subsystems | 2474 | 513/783 | 2026-10-08 20:09 UTC |  |
+| 33 | App | ExplodeEmitterProperty_Create | 2379 | 246/783 | 2026-10-08 20:09 UTC |  |
+| 34 | ExplodeEmitterProperty_Create() | GetName | 2379 | 246/783 | 2026-10-08 20:09 UTC |  |
+| 35 | KeyboardBinding | LaunchEvent | 2172 | 48/783 | 2026-09-29 18:39 UTC |  |
+| 36 | CharacterClass | SetGender | 2054 | 167/783 | 2026-10-08 20:09 UTC |  |
+| 37 | CharacterClass | SetRandomAnimationChance | 2054 | 167/783 | 2026-10-08 20:09 UTC |  |
+| 38 | CharacterClass | SetSize | 2054 | 167/783 | 2026-10-08 20:09 UTC |  |
+| 39 | TGInputManager | MoveMouseCursorTo | 1890 | 758/783 | 2026-10-13 08:10 UTC |  |
+| 40 | CharacterClass | SetBlinkChance | 1855 | 167/783 | 2026-10-08 20:09 UTC |  |
+| 41 | STSubPane | ResizeToContents | 1658 | 390/783 | 2026-10-06 09:09 UTC |  |
+| 42 | _STStylizedWindow | ScrollToBottom | 1658 | 390/783 | 2026-10-06 09:09 UTC |  |
+| 43 | CharacterClass | SetAnimatedSpeaking | 1520 | 167/783 | 2026-10-08 20:09 UTC |  |
+| 44 | CharacterClass | SetBlinkStages | 1520 | 167/783 | 2026-10-08 20:09 UTC |  |
+| 45 | App | BlinkingLightProperty_Create | 1476 | 68/783 | 2026-10-06 09:09 UTC |  |
+| 46 | BlinkingLightProperty_Create() | GetName | 1476 | 68/783 | 2026-10-06 09:09 UTC |  |
+| 47 | BlinkingLightProperty_Create() | SetColor | 1476 | 68/783 | 2026-10-06 09:09 UTC |  |
+| 48 | BlinkingLightProperty_Create() | SetDuration | 1476 | 68/783 | 2026-10-06 09:09 UTC |  |
+| 49 | BlinkingLightProperty_Create() | SetOrientation | 1476 | 68/783 | 2026-10-06 09:09 UTC |  |
+| 50 | BlinkingLightProperty_Create() | SetPeriod | 1476 | 68/783 | 2026-10-06 09:09 UTC |  |
+| 51 | BlinkingLightProperty_Create() | SetPosition | 1476 | 68/783 | 2026-10-06 09:09 UTC |  |
+| 52 | BlinkingLightProperty_Create() | SetRadius | 1476 | 68/783 | 2026-10-06 09:09 UTC |  |
+| 53 | BlinkingLightProperty_Create() | SetTextureName | 1451 | 57/783 | 2026-10-06 09:09 UTC |  |
+| 54 | STButton | SetName | 1387 | 470/783 | 2026-10-08 20:09 UTC |  |
+| 55 | EngPowerCtrl | GetRight | 1370 | 511/783 | 2026-10-08 20:09 UTC |  |
+| 56 | TGFrame | GetBottom | 1370 | 511/783 | 2026-10-08 20:09 UTC |  |
+| 57 | TGParagraph | GetBottom | 1370 | 511/783 | 2026-10-08 20:09 UTC |  |
+| 58 | Mission | AddPrecreatedShip | 1208 | 153/783 | 2026-10-08 20:09 UTC |  |
+| 59 | STTopLevelMenu | GetContainingWindow | 1166 | 179/783 | 2026-10-08 20:09 UTC |  |
+| 60 | STButton | GetName | 842 | 337/783 | 2026-10-08 20:09 UTC |  |
+| 61 | Game | AddPersistentModule | 773 | 773/783 | 2026-10-13 08:10 UTC |  |
+| 62 | _STStylizedWindow | ScrollToTop | 694 | 349/783 | 2026-09-30 06:36 UTC |  |
+| 63 | App | g_kMainMenuButton2HighlightedColor | 658 | 96/783 | 2026-10-08 20:09 UTC |  |
+| 64 | Planet | GetCloakingSubsystem | 619 | 2/783 | 2026-08-17 14:57 UTC |  |
+| 65 | Planet | GetCloakingSubsystem.IsTryingToCloak | 619 | 2/783 | 2026-08-17 14:57 UTC |  |
+| 66 | STTargetMenu | GetHeight | 583 | 179/783 | 2026-10-08 20:09 UTC |  |
+| 67 | STTargetMenu | Resize | 583 | 179/783 | 2026-10-08 20:09 UTC |  |
+| 68 | STTopLevelMenu | GetContainingWindow.GetBorderWidth | 583 | 179/783 | 2026-10-08 20:09 UTC |  |
+| 69 | STTopLevelMenu | GetContainingWindow.GetMaximumHeight | 583 | 179/783 | 2026-10-08 20:09 UTC |  |
+| 70 | STTopLevelMenu | GetContainingWindow.SetMaximumSize | 583 | 179/783 | 2026-10-08 20:09 UTC |  |
+| 71 | KeyboardBinding | FindKey | 546 | 90/783 | 2026-10-08 20:09 UTC |  |
+| 72 | CharacterClass | SetLookAtAdj | 544 | 231/783 | 2026-10-08 20:09 UTC |  |
+| 73 | TGPane | SetAlwaysHandleEvents | 446 | 390/783 | 2026-10-06 09:09 UTC |  |
+| 74 | TGPane | SetNotAlwaysHandleEvents | 443 | 388/783 | 2026-10-06 09:09 UTC |  |
+| 75 | CharacterClass | SetAsExtra | 429 | 128/783 | 2026-10-06 12:29 UTC |  |
+| 76 | STTopLevelMenu | ForceUpdate | 388 | 179/783 | 2026-10-08 20:09 UTC |  |
+| 77 | TGParagraph | SetFontGroup | 388 | 179/783 | 2026-10-08 20:09 UTC |  |
+| 78 | PhaserBank | CalculateRoughDirection | 349 | 1/783 | 2026-09-24 08:51 UTC |  |
+| 79 | PhaserBank | CalculateRoughDirection.Dot | 349 | 1/783 | 2026-09-24 08:51 UTC |  |
+| 80 | TGAnimAction | GetNumActions | 321 | 17/783 | 2026-10-06 12:13 UTC |  |
+| 81 | PulseWeaponSystem | CanFire | 244 | 1/783 | 2026-09-14 15:59 UTC |  |
+| 82 | PulseWeaponSystem | GetAmmo | 244 | 1/783 | 2026-09-14 15:59 UTC |  |
+| 83 | TGParagraph | RecalcBounds | 218 | 34/783 | 2026-09-29 18:39 UTC |  |
+| 84 | TGAnimAction | GetAction | 204 | 17/783 | 2026-10-06 12:13 UTC |  |
+| 85 | STTargetMenu | ForceUpdate | 194 | 179/783 | 2026-10-08 20:09 UTC |  |
+| 86 | STTopLevelMenu | Resize | 194 | 179/783 | 2026-10-08 20:09 UTC |  |
+| 87 | STTopLevelMenu | ResizeToContents | 194 | 179/783 | 2026-10-08 20:09 UTC |  |
+| 88 | RockClass | subsystems | 192 | 6/783 | 2026-10-08 20:09 UTC |  |
+| 89 | App | g_kSTMenu2Selected | 187 | 97/783 | 2026-10-08 20:09 UTC |  |
+| 90 | CharacterClass | SetAudioMode | 178 | 164/783 | 2026-10-08 20:09 UTC |  |
+| 91 | App | MapWindow_Cast | 157 | 132/783 | 2026-10-08 20:09 UTC |  |
+| 92 | MapWindow_Cast() | IsWindowActive | 157 | 132/783 | 2026-10-08 20:09 UTC |  |
+| 93 | App | EngineGlowProperty_Create | 148 | 39/783 | 2026-09-28 11:45 UTC |  |
+| 94 | EngineGlowProperty_Create() | GetName | 148 | 39/783 | 2026-09-28 11:45 UTC |  |
+| 95 | PhaserBank | SetConditionPercentage | 129 | 17/783 | 2026-09-04 20:31 UTC |  |
+| 96 | CharacterClass | SetMenuEnabled | 118 | 79/783 | 2026-10-08 20:09 UTC |  |
+| 97 | TGAnimAction | GetAction._anim_node | 117 | 17/783 | 2026-10-06 12:13 UTC |  |
+| 98 | App | EnergyWeapon_Cast | 104 | 11/783 | 2026-10-08 20:09 UTC |  |
+| 99 | EnergyWeapon_Cast() | GetMaxCharge | 104 | 11/783 | 2026-10-08 20:09 UTC |  |
+| 100 | EnergyWeapon_Cast() | SetChargeLevel | 104 | 11/783 | 2026-10-08 20:09 UTC |  |
+| 101 | TorpedoTube | SetConditionPercentage | 102 | 17/783 | 2026-09-04 20:31 UTC |  |
+| 102 | _CinematicWindow | AddChild | 89 | 36/783 | 2026-09-29 18:39 UTC |  |
+| 103 | TGAnimAction | GetAction._clip | 87 | 17/783 | 2026-10-06 12:13 UTC |  |
+| 104 | ShipSubsystem | SetConditionPercentage | 83 | 18/783 | 2026-09-29 21:10 UTC |  |
+| 105 | _CinematicWindow | DeleteChild | 82 | 30/783 | 2026-09-29 18:39 UTC |  |
+| 106 | CharacterClass | SetRandomAnimationEnabled | 80 | 79/783 | 2026-10-08 20:09 UTC |  |
+| 107 | TGEvent | GetObjPtr | 43 | 2/783 | 2026-10-07 08:58 UTC |  |
+| 108 | App | g_kSTMenu1NormalBase | 42 | 7/783 | 2026-10-08 20:09 UTC |  |
+| 109 | HullSubsystem | SetConditionPercentage | 36 | 17/783 | 2026-09-04 20:31 UTC |  |
+| 110 | TGEventManager | BroadcastEvent | 36 | 22/783 | 2026-09-29 14:03 UTC |  |
+| 111 | App | g_kSTMenu3NormalBase | 35 | 7/783 | 2026-10-08 20:09 UTC |  |
+| 112 | TractorBeam | SetConditionPercentage | 34 | 17/783 | 2026-09-04 20:31 UTC |  |
+| 113 | App | InterfaceModule_ForceFocusOnObject | 32 | 10/783 | 2026-09-24 10:28 UTC |  |
+| 114 | WarpSequence | SetEventDestination | 24 | 24/783 | 2026-10-06 12:13 UTC |  |
+| 115 | PowerSubsystem | SetConditionPercentage | 20 | 17/783 | 2026-09-04 20:31 UTC |  |
+| 116 | SensorSubsystem | SetConditionPercentage | 20 | 17/783 | 2026-09-04 20:31 UTC |  |
+| 117 | ShieldSubsystem | SetConditionPercentage | 20 | 17/783 | 2026-09-04 20:31 UTC |  |
+| 118 | Waypoint | StartGetSubsystemMatch | 19 | 4/783 | 2026-08-06 10:09 UTC |  |
+| 119 | RepairSubsystem | SetConditionPercentage | 16 | 16/783 | 2026-09-04 20:31 UTC |  |
+| 120 | App | WarpFlash_CreateWithoutShip | 14 | 14/783 | 2026-10-08 20:09 UTC |  |
+| 121 | WarpEngineSubsystem | GetWarpExitLocation | 14 | 14/783 | 2026-10-08 20:09 UTC |  |
+| 122 | WarpEngineSubsystem | GetWarpExitRotation | 14 | 14/783 | 2026-10-08 20:09 UTC |  |
+| 123 | WarpEngineSubsystem | SetPlacement | 14 | 14/783 | 2026-10-08 20:09 UTC |  |
+| 124 | App | ZoomCameraObjectClass_Cast | 8 | 8/783 | 2026-10-08 20:09 UTC |  |
+| 125 | App | g_kDamageDisplayDisabledColor | 8 | 8/783 | 2026-10-08 20:09 UTC |  |
+| 126 | PulseWeapon | SetConditionPercentage | 8 | 1/783 | 2026-09-04 20:26 UTC |  |
+| 127 | ZoomCameraObjectClass_Cast() | ToggleZoom | 8 | 8/783 | 2026-10-08 20:09 UTC |  |
+| 128 | App | g_kDamageDisplayDamagedColor | 7 | 7/783 | 2026-10-08 20:09 UTC |  |
+| 129 | App | g_kDamageDisplayDestroyedColor | 7 | 7/783 | 2026-10-08 20:09 UTC |  |
+| 130 | App | g_kMainMenuButtonColor | 7 | 7/783 | 2026-10-08 20:09 UTC |  |
+| 131 | Game | InGodMode | 6 | 2/783 | 2026-07-16 18:38 UTC |  |
+| 132 | GridClass | GetPhaserSystem.GetNumChildSubsystems | 6 | 2/783 | 2026-07-13 12:09 UTC |  |
+| 133 | GridClass | GetPulseWeaponSystem.GetNumChildSubsystems | 6 | 2/783 | 2026-07-13 12:09 UTC |  |
+| 134 | GridClass | GetTorpedoSystem.GetNumChildSubsystems | 6 | 2/783 | 2026-07-13 12:09 UTC |  |
+| 135 | GridClass | GetTractorBeamSystem.GetNumChildSubsystems | 6 | 2/783 | 2026-07-13 12:09 UTC |  |
+| 136 | Sun | GetPhaserSystem.GetNumChildSubsystems | 6 | 2/783 | 2026-07-13 12:09 UTC |  |
+| 137 | Sun | GetPulseWeaponSystem.GetNumChildSubsystems | 6 | 2/783 | 2026-07-13 12:09 UTC |  |
+| 138 | Sun | GetTorpedoSystem.GetNumChildSubsystems | 6 | 2/783 | 2026-07-13 12:09 UTC |  |
+| 139 | Sun | GetTractorBeamSystem.GetNumChildSubsystems | 6 | 2/783 | 2026-07-13 12:09 UTC |  |
+| 140 | CloakingSubsystem | SetConditionPercentage | 4 | 1/783 | 2026-09-04 20:26 UTC |  |
+| 141 | ShipClass | DisableGlowAlphaMaps | 4 | 1/783 | 2026-09-29 21:10 UTC |  |
+| 142 | App | CharacterClass_SetAllowExtras | 3 | 2/783 | 2026-09-02 19:35 UTC |  |
+| 143 | AsteroidField | SetNavPoint | 3 | 3/783 | 2026-10-06 12:13 UTC |  |
+| 144 | AsteroidField | SetStatic | 3 | 3/783 | 2026-10-06 12:13 UTC |  |
+| 145 | Game | SetGodMode | 3 | 2/783 | 2026-07-16 18:38 UTC |  |
+| 146 | GridClass | GetPhaserSystem | 3 | 2/783 | 2026-07-13 12:09 UTC |  |
+| 147 | GridClass | GetPulseWeaponSystem | 3 | 2/783 | 2026-07-13 12:09 UTC |  |
+| 148 | GridClass | GetTorpedoSystem | 3 | 2/783 | 2026-07-13 12:09 UTC |  |
+| 149 | GridClass | GetTractorBeamSystem | 3 | 2/783 | 2026-07-13 12:09 UTC |  |
+| 150 | Sun | GetPhaserSystem | 3 | 2/783 | 2026-07-13 12:09 UTC |  |
+| 151 | Sun | GetPulseWeaponSystem | 3 | 2/783 | 2026-07-13 12:09 UTC |  |
+| 152 | Sun | GetTorpedoSystem | 3 | 2/783 | 2026-07-13 12:09 UTC |  |
+| 153 | Sun | GetTractorBeamSystem | 3 | 2/783 | 2026-07-13 12:09 UTC |  |
+| 154 | TGEventHandlerObject_Cast() | RemoveHandlerForInstance | 3 | 1/783 | 2026-10-08 20:09 UTC |  |
+| 155 | TorpedoSystem | IsTubeReady | 3 | 3/783 | 2026-09-16 16:44 UTC |  |
+| 156 | App | InterfaceModule_DoTheRightThing | 2 | 2/783 | 2026-09-04 09:16 UTC |  |
+| 157 | App | STStylizedWindow_Create | 2 | 2/783 | 2026-09-04 09:16 UTC |  |
+| 158 | App | TGEventHandlerObject_Cast | 2 | 1/783 | 2026-10-08 20:09 UTC |  |
+| 159 | STStylizedWindow_Create() | AddChild | 2 | 2/783 | 2026-09-04 09:16 UTC |  |
+| 160 | STStylizedWindow_Create() | InteriorChangedSize | 2 | 2/783 | 2026-09-04 09:16 UTC |  |
+| 161 | STStylizedWindow_Create() | SetVisible | 2 | 2/783 | 2026-09-04 09:16 UTC |  |
+| 162 | STSubPane | GetConceptualParent | 2 | 1/783 | 2026-08-21 15:53 UTC |  |
+| 163 | STSubPane | GetConceptualParent.SetNotVisible | 2 | 1/783 | 2026-08-21 15:53 UTC |  |
+| 164 | _CinematicWindow | MoveToFront | 2 | 2/783 | 2026-09-04 09:16 UTC |  |
+| 165 | _CinematicWindow | SetFocus | 2 | 2/783 | 2026-09-04 09:16 UTC |  |
+| 166 | App | CharacterClass_GetCharacterFromMenu | 1 | 1/783 | 2026-08-21 15:53 UTC |  |
+| 167 | App | STMissionLog_GetMissionLog | 1 | 1/783 | 2026-08-31 13:22 UTC |  |
+| 168 | App | WarpFlash_Create | 1 | 1/783 | 2026-10-06 12:29 UTC |  |
+| 169 | CharacterClass_GetCharacterFromMenu() | GetName | 1 | 1/783 | 2026-08-21 15:53 UTC |  |
+| 170 | STMissionLog_GetMissionLog() | GetFirstChild | 1 | 1/783 | 2026-08-31 13:22 UTC |  |
+| 171 | STMissionLog_GetMissionLog() | SetVisible | 1 | 1/783 | 2026-08-31 13:22 UTC |  |
+| 172 | STTopLevelMenu | GetConceptualParent | 1 | 1/783 | 2026-08-21 15:53 UTC |  |
+| 173 | STTopLevelMenu | GetConceptualParent.SetNotVisible | 1 | 1/783 | 2026-08-21 15:53 UTC |  |
+| 174 | SortedRegionMenu | SetRegionName | 1 | 1/783 | 2026-09-29 21:10 UTC |  |
+| 175 | TGPane | GetConceptualParent | 1 | 1/783 | 2026-08-21 15:53 UTC |  |
+| 176 | TGPane | GetConceptualParent.SetNotVisible | 1 | 1/783 | 2026-08-21 15:53 UTC |  |
 
 ## Resolved
 
@@ -279,6 +263,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | EventType | ET_SCANNABLE_CHANGE | 2026-07-14 | 2026-07-14 00:31 UTC |
 | EventType | ET_TARGET_WAS_CHANGED | 2026-07-14 | 2026-07-14 00:31 UTC |
 | HullSubsystem | GetObjType | 2026-07-14 | 2026-07-14 00:15 UTC |
+| PhaserSystem | GetObjType | 2026-07-14 | 2026-07-14 00:15 UTC |
 | PhaserSystem | ShouldBeAimed | 2026-07-14 | 2026-07-14 00:15 UTC |
 | Planet | IsScannable | 2026-07-14 | 2026-07-14 00:31 UTC |
 | PulseWeaponSystem_Cast() | GetNumChildSubsystems | 2026-07-14 | 2026-07-14 00:15 UTC |
@@ -444,16 +429,30 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | ShipClass | SetScannable | 2026-08-09 | 2026-07-13 23:37 UTC |
 | ShipClass | SetSplashDamage | 2026-08-09 | 2026-07-23 19:20 UTC |
 | ShipSubsystem | SetInvincible | 2026-08-09 | 2026-07-13 23:39 UTC |
+| TGEvent | GetCString | 2026-08-09 | 2026-07-13 23:37 UTC |
 | Torpedo_Cast() | GetObjID | 2026-08-09 | 2026-07-17 19:27 UTC |
 | WarpEngineSubsystem | SetInvincible | 2026-08-09 | 2026-07-13 23:39 UTC |
 | App | g_kMusicManager | 2026-08-10 | 2026-08-07 07:51 UTC |
 | g_kMusicManager | PlayFanfare | 2026-08-10 | 2026-08-07 07:51 UTC |
 | App | WarpSequence_Cast | 2026-08-11 | 2026-08-11 17:55 UTC |
+| App | WaypointEvent_Create | 2026-08-11 | 2026-08-10 11:34 UTC |
 | WarpSequence_Cast() | GetDestination | 2026-08-11 | 2026-08-11 17:55 UTC |
 | WarpSequence_Cast() | GetDestinationMission | 2026-08-11 | 2026-08-11 17:55 UTC |
+| WaypointEvent_Create() | GetDestination | 2026-08-11 | 2026-08-10 11:34 UTC |
+| WaypointEvent_Create() | GetEventType | 2026-08-11 | 2026-08-10 11:34 UTC |
+| WaypointEvent_Create() | SetDestination | 2026-08-11 | 2026-08-10 11:34 UTC |
+| WaypointEvent_Create() | SetEventType | 2026-08-11 | 2026-08-10 11:34 UTC |
+| WaypointEvent_Create() | SetPlacement | 2026-08-11 | 2026-08-10 11:34 UTC |
+| ShipClass | SetTargetable | 2026-08-16 | 2026-08-06 10:09 UTC |
 | TGInputManager | GetDisplayStringFromUnicode | 2026-08-16 | 2026-08-11 21:48 UTC |
 | App | CinematicWindow_Cast | 2026-08-18 | 2026-08-18 13:43 UTC |
 | CinematicWindow_Cast() | SetInteractive | 2026-08-18 | 2026-08-18 13:43 UTC |
+| TGKeyboardEvent | EventHandled | 2026-08-18 | 2026-08-18 15:40 UTC |
+| TGKeyboardEvent | SetHandled | 2026-08-18 | 2026-08-18 15:40 UTC |
+| TGParagraph | SetString | 2026-08-18 | 2026-08-18 15:23 UTC |
+| App | UtopiaModule_ConvertGameUnitsToKilometers | 2026-08-21 | 2026-08-21 12:29 UTC |
+| SortedRegionMenu | SetPlacementName | 2026-08-21 | 2026-08-21 09:37 UTC |
+| ShieldSubsystem | GetNumShields | 2026-08-30 | 2026-08-30 21:41 UTC |
 | App | ET_AI_REACHED_WAYPOINT | 2026-08-31 | 2026-08-10 11:34 UTC |
 | App | ET_CAMERA_ANIMATION_DONE | 2026-08-31 | 2026-08-22 08:23 UTC |
 | App | ET_CANCEL | 2026-08-31 | 2026-07-13 23:39 UTC |
@@ -538,6 +537,7 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | EventType | ET_TRACTOR_BEAM_STOPPED_HITTING | 2026-08-31 | 2026-08-22 09:52 UTC |
 | EventType | ET_UI_REPOSITION | 2026-08-31 | 2026-08-22 08:23 UTC |
 | EventType | ET_WEAPON_FIRED | 2026-08-31 | 2026-07-13 23:37 UTC |
+| SortedRegionMenu | SetMissionName | 2026-09-02 | 2026-09-02 19:35 UTC |
 | ShipClass | GetTargetOffsetTG | 2026-09-14 | 2026-09-14 20:14 UTC |
 | App | PhaserBank_Cast | 2026-09-19 | 2026-09-16 16:55 UTC |
 | App | PulseWeaponProperty_Cast | 2026-09-19 | 2026-09-19 19:39 UTC |
@@ -566,86 +566,98 @@ _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell 
 | TGPoint3_GetRandomUnitVector() | z | 2026-09-19 | 2026-09-19 19:39 UTC |
 | WeaponSystem_Cast() | IsInTargetList | 2026-09-19 | 2026-09-15 21:01 UTC |
 | WeaponSystem_Cast() | StopFiring | 2026-09-19 | 2026-08-17 16:31 UTC |
+| SensorSubsystem | GetIdentificationTime | 2026-10-04 | 2026-09-01 08:26 UTC |
+| App | g_kRadarEnemyColor | 2026-10-05 | 2026-09-26 06:36 UTC |
+| App | g_kRadarFriendlyColor | 2026-10-05 | 2026-09-26 06:36 UTC |
+| App | g_kRadarNeutralColor | 2026-10-05 | 2026-09-26 06:36 UTC |
+| App | g_kRadarUnknownColor | 2026-10-05 | 2026-09-26 06:36 UTC |
+| SensorSubsystem | GetNumProbes | 2026-10-07 | 2026-10-07 10:20 UTC |
+| SensorSubsystem | SetNumProbes | 2026-10-07 | 2026-10-07 10:20 UTC |
+| TacticalControlWindow | GetOpenMenu | 2026-10-08 | 2026-08-21 15:53 UTC |
+| TacticalControlWindow | SetNotVisible | 2026-10-08 | 2026-10-08 20:09 UTC |
+| TacticalControlWindow | SetVisible | 2026-10-08 | 2026-08-21 15:53 UTC |
 
 ## Boolean-test call sites (truthiness risk)
 
 | rank | file:line | total hits | coverage |
 |---|---|---|---|
-| 1 | /Users/mward/Documents/Projects/bc_dauntless/engine/ui/tactical_orders_panel.py:109 | 116655 | 5/628 |
-| 2 | /Users/mward/Documents/Projects/bc_dauntless/engine/bridge_idle_gestures.py:30 | 106740 | 25/628 |
-| 3 | /Users/mward/Documents/Projects/bc_dauntless/engine/ui/tactical_orders_panel.py:100 | 65160 | 2/628 |
-| 4 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/AI/PlainAI/PhaserSweep.py:175 | 23864 | 20/628 |
-| 5 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/Bridge/HelmMenuHandlers.py:2422 | 17873 | 436/628 |
-| 6 | /Users/mward/Documents/Projects/bc_dauntless/engine/ui/ai_inspector_model.py:333 | 9078 | 3/628 |
-| 7 | /Users/mward/Documents/Star Trek Bridge Commander/sdk/Build/scripts/Bridge/HelmMenuHandlers.py:2422 | 1924 | 84/628 |
-| 8 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/AI/Preprocessors.py:644 | 1808 | 3/628 |
-| 9 | /Users/mward/Documents/Projects/bc_dauntless/engine/bridge_idle_gestures.py:29 | 1685 | 8/628 |
-| 10 | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/weapon_subsystems.py:515 | 1006 | 8/628 |
-| 11 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/Bridge/TacticalMenuHandlers.py:1909 | 684 | 89/628 |
-| 12 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/AI/PlainAI/IntelligentCircleObject.py:63 | 650 | 5/628 |
-| 13 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/Tactical/Interface/TacticalControlWindow.py:408 | 424 | 137/628 |
-| 14 | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/collisions.py:249 | 324 | 1/628 |
-| 15 | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/collisions.py:274 | 295 | 1/628 |
-| 16 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/MissionLib.py:785 | 286 | 269/628 |
-| 17 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/Conditions/ConditionWarpingToMission.py:23 | 278 | 59/628 |
-| 18 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/MissionLib.py:748 | 264 | 112/628 |
-| 19 | /Users/mward/Documents/Projects/bc_dauntless/engine/audio/engine_rumble.py:44 | 251 | 49/628 |
-| 20 | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/weapon_subsystems.py:531 | 247 | 4/628 |
-| 21 | /Users/mward/Documents/Star Trek Bridge Commander/sdk/Build/scripts/AI/Preprocessors.py:1699 | 229 | 18/628 |
-| 22 | /Users/mward/Documents/Star Trek Bridge Commander/sdk/Build/scripts/Conditions/ConditionInPhaserFiringArc.py:175 | 198 | 20/628 |
-| 23 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/Conditions/ConditionWarpingToSet.py:83 | 153 | 60/628 |
-| 24 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/AI/Preprocessors.py:1699 | 151 | 9/628 |
-| 25 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/Conditions/ConditionIncomingTorps.py:261 | 110 | 9/628 |
-| 26 | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/bridge_placement.py:166 | 81 | 16/628 |
-| 27 | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/bridge_placement.py:167 | 81 | 16/628 |
-| 28 | /Users/mward/Documents/Star Trek Bridge Commander/sdk/Build/scripts/AI/PlainAI/PhaserSweep.py:175 | 67 | 2/628 |
-| 29 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/Conditions/ConditionIncomingTorps.py:234 | 60 | 5/628 |
-| 30 | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/weapon_subsystems.py:298 | 40 | 1/628 |
-| 31 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/CinematicInterfaceHandlers.py:121 | 32 | 3/628 |
-| 32 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/Conditions/ConditionInPhaserFiringArc.py:175 | 30 | 7/628 |
-| 33 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/AI/PlainAI/StarbaseAttack.py:114 | 28 | 1/628 |
-| 34 | /Users/mward/Documents/Star Trek Bridge Commander/sdk/Build/scripts/AI/PlainAI/StarbaseAttack.py:114 | 24 | 1/628 |
-| 35 | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/sdk/Build/scripts/Bridge/HelmMenuHandlers.py:2422 | 21 | 1/628 |
-| 36 | /Users/mward/Documents/Star Trek Bridge Commander/sdk/Build/scripts/MissionLib.py:748 | 20 | 9/628 |
-| 37 | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/subsystem_cascade.py:25 | 19 | 10/628 |
-| 38 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/MissionLib.py:2537 | 17 | 3/628 |
-| 39 | /Users/mward/Documents/Star Trek Bridge Commander/sdk/Build/scripts/Tactical/Interface/TacticalControlWindow.py:408 | 12 | 4/628 |
-| 40 | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/engine/audio/engine_rumble.py:44 | 9 | 1/628 |
-| 41 | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/engine/appc/weapon_subsystems.py:531 | 7 | 1/628 |
-| 42 | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/sdk/Build/scripts/Tactical/Interface/TacticalControlWindow.py:408 | 3 | 1/628 |
-| 43 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/TacticalInterfaceHandlers.py:1127 | 3 | 2/628 |
-| 44 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/TacticalInterfaceHandlers.py:1129 | 3 | 2/628 |
-| 45 | /Users/mward/Documents/Star Trek Bridge Commander/sdk/Build/scripts/AI/Preprocessors.py:2307 | 3 | 3/628 |
-| 46 | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/sdk/Build/scripts/Bridge/TacticalMenuHandlers.py:1909 | 2 | 1/628 |
-| 47 | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/sdk/Build/scripts/Conditions/ConditionWarpingToMission.py:23 | 2 | 1/628 |
-| 48 | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/sdk/Build/scripts/MissionLib.py:748 | 2 | 1/628 |
-| 49 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/AI/Compound/DockWithStarbase.py:272 | 2 | 1/628 |
-| 50 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/AI/PlainAI/StarbaseAttack.py:130 | 2 | 1/628 |
-| 51 | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/sdk/Build/scripts/Conditions/ConditionWarpingToSet.py:83 | 1 | 1/628 |
-| 52 | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/sdk/Build/scripts/MissionLib.py:785 | 1 | 1/628 |
-| 53 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/Actions/CameraScriptActions.py:398 | 1 | 1/628 |
-| 54 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/Tactical/Interface/TacticalControlWindow.py:321 | 1 | 1/628 |
+| 1 | /Users/mward/Documents/Projects/bc_dauntless/engine/ui/tactical_orders_panel.py:109 | 116655 | 5/783 |
+| 2 | /Users/mward/Documents/Projects/bc_dauntless/engine/bridge_idle_gestures.py:30 | 106740 | 25/783 |
+| 3 | /Users/mward/Documents/Projects/bc_dauntless/engine/ui/tactical_orders_panel.py:100 | 65160 | 2/783 |
+| 4 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/AI/PlainAI/PhaserSweep.py:175 | 23864 | 20/783 |
+| 5 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/Bridge/HelmMenuHandlers.py:2422 | 17873 | 436/783 |
+| 6 | /Users/mward/Documents/Projects/bc_dauntless/engine/ui/ai_inspector_model.py:333 | 9078 | 3/783 |
+| 7 | /Users/mward/Documents/Star Trek Bridge Commander/sdk/Build/scripts/Bridge/HelmMenuHandlers.py:2422 | 4979 | 232/783 |
+| 8 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/AI/Preprocessors.py:644 | 1808 | 3/783 |
+| 9 | /Users/mward/Documents/Projects/bc_dauntless/engine/bridge_idle_gestures.py:29 | 1685 | 8/783 |
+| 10 | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/weapon_subsystems.py:515 | 1006 | 8/783 |
+| 11 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/Bridge/TacticalMenuHandlers.py:1909 | 684 | 89/783 |
+| 12 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/AI/PlainAI/IntelligentCircleObject.py:63 | 650 | 5/783 |
+| 13 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/Tactical/Interface/TacticalControlWindow.py:408 | 424 | 137/783 |
+| 14 | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/collisions.py:249 | 324 | 1/783 |
+| 15 | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/collisions.py:274 | 295 | 1/783 |
+| 16 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/MissionLib.py:785 | 286 | 269/783 |
+| 17 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/Conditions/ConditionWarpingToMission.py:23 | 278 | 59/783 |
+| 18 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/MissionLib.py:748 | 264 | 112/783 |
+| 19 | /Users/mward/Documents/Projects/bc_dauntless/engine/audio/engine_rumble.py:44 | 251 | 49/783 |
+| 20 | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/weapon_subsystems.py:531 | 247 | 4/783 |
+| 21 | /Users/mward/Documents/Star Trek Bridge Commander/sdk/Build/scripts/AI/Preprocessors.py:1699 | 229 | 18/783 |
+| 22 | /Users/mward/Documents/Star Trek Bridge Commander/sdk/Build/scripts/Conditions/ConditionInPhaserFiringArc.py:175 | 198 | 20/783 |
+| 23 | /Users/mward/Documents/Star Trek Bridge Commander/sdk/Build/scripts/Tactical/Interface/TacticalControlWindow.py:408 | 156 | 41/783 |
+| 24 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/Conditions/ConditionWarpingToSet.py:83 | 153 | 60/783 |
+| 25 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/AI/Preprocessors.py:1699 | 151 | 9/783 |
+| 26 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/Conditions/ConditionIncomingTorps.py:261 | 110 | 9/783 |
+| 27 | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/bridge_placement.py:166 | 87 | 17/783 |
+| 28 | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/bridge_placement.py:167 | 87 | 17/783 |
+| 29 | /Users/mward/Documents/Star Trek Bridge Commander/sdk/Build/scripts/AI/PlainAI/PhaserSweep.py:175 | 67 | 2/783 |
+| 30 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/Conditions/ConditionIncomingTorps.py:234 | 60 | 5/783 |
+| 31 | /Users/mward/Documents/Star Trek Bridge Commander/sdk/Build/scripts/MissionLib.py:748 | 48 | 19/783 |
+| 32 | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/weapon_subsystems.py:298 | 40 | 1/783 |
+| 33 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/CinematicInterfaceHandlers.py:121 | 32 | 3/783 |
+| 34 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/Conditions/ConditionInPhaserFiringArc.py:175 | 30 | 7/783 |
+| 35 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/AI/PlainAI/StarbaseAttack.py:114 | 28 | 1/783 |
+| 36 | /Users/mward/Documents/Star Trek Bridge Commander/sdk/Build/scripts/AI/PlainAI/StarbaseAttack.py:114 | 24 | 1/783 |
+| 37 | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/sdk/Build/scripts/Bridge/HelmMenuHandlers.py:2422 | 21 | 1/783 |
+| 38 | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/subsystem_cascade.py:25 | 19 | 10/783 |
+| 39 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/MissionLib.py:2537 | 17 | 3/783 |
+| 40 | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/engine/audio/engine_rumble.py:44 | 9 | 1/783 |
+| 41 | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/engine/appc/weapon_subsystems.py:531 | 7 | 1/783 |
+| 42 | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/sdk/Build/scripts/Tactical/Interface/TacticalControlWindow.py:408 | 3 | 1/783 |
+| 43 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/TacticalInterfaceHandlers.py:1127 | 3 | 2/783 |
+| 44 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/TacticalInterfaceHandlers.py:1129 | 3 | 2/783 |
+| 45 | /Users/mward/Documents/Star Trek Bridge Commander/sdk/Build/scripts/AI/Preprocessors.py:2307 | 3 | 3/783 |
+| 46 | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/sdk/Build/scripts/Bridge/TacticalMenuHandlers.py:1909 | 2 | 1/783 |
+| 47 | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/sdk/Build/scripts/Conditions/ConditionWarpingToMission.py:23 | 2 | 1/783 |
+| 48 | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/sdk/Build/scripts/MissionLib.py:748 | 2 | 1/783 |
+| 49 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/AI/Compound/DockWithStarbase.py:272 | 2 | 1/783 |
+| 50 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/AI/PlainAI/StarbaseAttack.py:130 | 2 | 1/783 |
+| 51 | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/sdk/Build/scripts/Conditions/ConditionWarpingToSet.py:83 | 1 | 1/783 |
+| 52 | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/sdk/Build/scripts/MissionLib.py:785 | 1 | 1/783 |
+| 53 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/Actions/CameraScriptActions.py:398 | 1 | 1/783 |
+| 54 | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/Tactical/Interface/TacticalControlWindow.py:321 | 1 | 1/783 |
+| 55 | /Users/mward/Documents/Star Trek Bridge Commander/sdk/Build/scripts/MissionLib.py:4292 | 1 | 1/783 |
+| 56 | /Users/mward/Documents/Star Trek Bridge Commander/sdk/Build/scripts/MissionLib.py:4302 | 1 | 1/783 |
 
 ## Numeric-coercion call sites (int()==0 risk)
 
 | rank | kind | file:line | total hits | coverage |
 |---|---|---|---|---|
-| 1 | index | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/BridgeHandlers.py:1355 | 17933 | 58/628 |
-| 2 | int | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/input.py:123 | 7820 | 46/628 |
-| 3 | float | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/math.py:21 | 2990 | 50/628 |
-| 4 | float | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/math.py:22 | 2990 | 50/628 |
-| 5 | float | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/math.py:23 | 2990 | 50/628 |
-| 6 | int | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/input.py:179 | 1472 | 46/628 |
-| 7 | index | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/AI/Preprocessors.py:774 | 1039 | 3/628 |
-| 8 | int | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/input.py:214 | 920 | 92/628 |
-| 9 | int | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/tg_ui/widgets.py:316 | 613 | 187/628 |
-| 10 | index | /Users/mward/Documents/Star Trek Bridge Commander/sdk/Build/scripts/BridgeHandlers.py:1355 | 234 | 5/628 |
-| 11 | int | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/engine/appc/input.py:123 | 170 | 1/628 |
-| 12 | int | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/tg_ui/widgets.py:294 | 59 | 26/628 |
-| 13 | int | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/windows.py:533 | 38 | 37/628 |
-| 14 | int | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/engine/appc/input.py:179 | 32 | 1/628 |
-| 15 | int | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/input.py:210 | 10 | 1/628 |
-| 16 | int | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/windows.py:470 | 10 | 10/628 |
-| 17 | int | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/windows.py:526 | 4 | 3/628 |
-| 18 | int | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/engine/appc/tg_ui/widgets.py:294 | 1 | 1/628 |
-| 19 | int | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/engine/appc/windows.py:533 | 1 | 1/628 |
+| 1 | index | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/BridgeHandlers.py:1355 | 17933 | 58/783 |
+| 2 | int | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/input.py:123 | 7820 | 46/783 |
+| 3 | float | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/math.py:21 | 2990 | 50/783 |
+| 4 | float | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/math.py:22 | 2990 | 50/783 |
+| 5 | float | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/math.py:23 | 2990 | 50/783 |
+| 6 | int | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/input.py:179 | 1472 | 46/783 |
+| 7 | index | /Users/mward/Documents/Star Trek Bridge Commander/sdk/Build/scripts/BridgeHandlers.py:1355 | 1374 | 20/783 |
+| 8 | index | /Users/mward/Documents/Projects/bc_dauntless/sdk/Build/scripts/AI/Preprocessors.py:774 | 1039 | 3/783 |
+| 9 | int | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/input.py:214 | 920 | 92/783 |
+| 10 | int | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/tg_ui/widgets.py:316 | 613 | 187/783 |
+| 11 | int | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/engine/appc/input.py:123 | 170 | 1/783 |
+| 12 | int | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/tg_ui/widgets.py:294 | 59 | 26/783 |
+| 13 | int | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/windows.py:533 | 38 | 37/783 |
+| 14 | int | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/engine/appc/input.py:179 | 32 | 1/783 |
+| 15 | int | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/input.py:210 | 10 | 1/783 |
+| 16 | int | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/windows.py:470 | 10 | 10/783 |
+| 17 | int | /Users/mward/Documents/Projects/bc_dauntless/engine/appc/windows.py:526 | 4 | 3/783 |
+| 18 | int | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/engine/appc/tg_ui/widgets.py:294 | 1 | 1/783 |
+| 19 | int | /Users/mward/Documents/Projects/bc_dauntless/.claude/worktrees/anim-channel-binder/engine/appc/windows.py:533 | 1 | 1/783 |
