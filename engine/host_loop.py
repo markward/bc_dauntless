@@ -7990,6 +7990,10 @@ def _active_cutscene_camera():
     import App as _App
     from engine.core import ids as _ids
     rendered = _App.g_kSetManager.get_explicit_rendered_set()
+    if rendered is not None and _is_bridge_set(rendered):
+        # A bridge-set camera is a BRIDGE shot, not an exterior one: it is
+        # handled by _bridge_cutscene_camera() and drives the bridge camera.
+        rendered = None
     if rendered is not None:
         get_active = getattr(rendered, "GetActiveCamera", None)
         cam = get_active() if callable(get_active) else None
@@ -8010,6 +8014,41 @@ def _active_cutscene_camera():
             _mode = _pcam.GetCurrentCameraMode()       # hierarchy-resolved
             if _mode is not None and _mode.IsValid():
                 return (_pcam, _mode)
+    return None
+
+
+def _is_bridge_set(pSet) -> bool:
+    """The same bridge test _resolve_active_set uses."""
+    from engine.appc.bridge_set import BridgeSet
+    return isinstance(pSet, BridgeSet) or pSet.GetName() == "bridge"
+
+
+def _bridge_cutscene_camera():
+    """(camera, mode) when the bridge set's active camera holds a live
+    PlacementMode, else None.
+
+    Every SDK camera action aimed at the bridge is PlacementWatch or
+    PlacementOffsetWatch (223 uses, 18 missions) and both build a
+    PlacementMode. Gating on the mode TYPE -- not on the camera or the rendered
+    set -- covers shots on a CutsceneCameraBegin camera and on the bridge
+    maincamera alike (E4M4 MissionFailDialog), and shots in cutscenes that never
+    ChangeRenderedSet("bridge") (E3M2 BerkeleyIntro), while never matching the
+    Galaxy seated GalaxyBridgeCaptain mode. Bridge placements are bridge-local
+    render coordinates (Player Cam == the maincamera == the captain eye), so the
+    pose needs no conversion. Spec 2026-10-13-bridge-cutscene-camera-design."""
+    import App as _App
+    from engine.appc.camera_modes import PlacementMode
+    bridge = _App.g_kSetManager.GetSet("bridge")
+    if bridge is None:
+        return None
+    get_active = getattr(bridge, "GetActiveCamera", None)
+    cam = get_active() if callable(get_active) else None
+    if cam is None:
+        return None
+    get_mode = getattr(cam, "GetCurrentCameraMode", None)
+    mode = get_mode() if callable(get_mode) else None
+    if isinstance(mode, PlacementMode) and mode.IsValid():
+        return (cam, mode)
     return None
 
 
