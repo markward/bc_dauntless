@@ -3865,6 +3865,12 @@ class _BridgeCamera:
         # it when ResetBridgeCamera re-pushes that mode. See
         # docs/superpowers/specs/2026-07-25-bridge-camera-stand-persistence-design.md.
         self._held_pose = None
+        # Bridge cutscene SHOT: the pose of a live PlacementMode on the bridge
+        # set's active camera (PlacementWatch "bridge"), fed every frame by
+        # host_loop._sync_bridge_mode_pose. Ranks below a walk-on camera clip
+        # (_anim_pose) and above the held/captain view; never latched by
+        # hold_anim_pose. Spec 2026-10-13-bridge-cutscene-camera-design.
+        self._mode_pose = None
 
     def _eye_offset(self, horiz=None) -> tuple:
         """Captain's-chair eye for a horizontal facing. Base is the
@@ -3961,12 +3967,20 @@ class _BridgeCamera:
     def clear_anim_pose(self) -> None:
         self._anim_pose = None
 
+    def set_mode_pose(self, eye, target, up) -> None:
+        """Override the camera with a bridge cutscene shot (bridge-local)."""
+        self._mode_pose = (tuple(eye), tuple(target), tuple(up))
+
+    def clear_mode_pose(self) -> None:
+        self._mode_pose = None
+
     def reset_cutscene_pose(self) -> None:
         """Drop any active/held cutscene pose. Called on mission swap so a stand
         (or other held camera pose) from the prior mission cannot leak into the
         next bridge (which may push no seated mode of its own)."""
         self._anim_pose = None
         self._held_pose = None
+        self._mode_pose = None
 
     def hold_anim_pose(self) -> None:
         """Latch the current (final) cutscene pose as the persistent held pose
@@ -3992,7 +4006,7 @@ class _BridgeCamera:
         """Accumulate mouse delta into yaw/pitch with sign conventions:
         right-mouse (+dx) → look-right (-yaw); up-mouse (-dy in screen
         coords) → look-up (+pitch). Pitch clamps; yaw wraps freely."""
-        if self._anim_pose is not None:
+        if self._anim_pose is not None or self._mode_pose is not None:
             return
         # A held cutscene pose (seated mode popped) is a static transform: freeze
         # mouse-look so accumulated yaw/pitch cannot snap the view when the held
@@ -4017,6 +4031,9 @@ class _BridgeCamera:
         FOV_Y_RAD * min_zoom, both over the SDK zoom time."""
         if self._anim_pose is not None:
             eye, target, up = self._anim_pose
+            return eye, target, up, self.FOV_Y_RAD * _BRIDGE_ZOOM_MAX
+        if self._mode_pose is not None:
+            eye, target, up = self._mode_pose
             return eye, target, up, self.FOV_Y_RAD * _BRIDGE_ZOOM_MAX
         held = None
         if self._held_pose is not None:
