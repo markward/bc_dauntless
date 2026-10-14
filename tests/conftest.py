@@ -1509,6 +1509,12 @@ def _reset_leakable_engine_globals():
         sensor_dials.reset()
     except Exception:
         pass
+    # Running-light dials: same leak shape as the sensor dials above.
+    try:
+        from engine.appc import running_light_dials as _rl_dials
+        _rl_dials.reset()
+    except Exception:
+        pass
     # Occlusion caches: per-(observer,target) and per-set major-rock lists
     # keyed on game time/tick time/bucket size, so a test that cached a
     # blocked() answer would otherwise leave it stale for the next test.
