@@ -84,7 +84,7 @@ def test_quickbattle_helm_clicks_speak_through_live_path(monkeypatch):
     spoken = []
     monkeypatch.setattr(
         crew_speech.bus(), "speak",
-        lambda speaker, text, wav, priority, now=None:
+        lambda speaker, text, wav, priority, now=None, lips=True:
             spoken.append((speaker, text, wav)) or 1.0)
 
     from engine.ui.crew_menu_panel import CrewMenuPanel
