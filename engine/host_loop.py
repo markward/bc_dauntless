@@ -728,6 +728,51 @@ def _poll_skip_dialogue(host, input_map) -> None:
     _skip_dialogue_prev = down
 
 
+def _register_running_lights(r, session, ship, iid) -> None:
+    """Send a ship's BlinkingLightProperty running lights to native once, at
+    spawn (running-lights spec §4.3). Unlit ships send nothing."""
+    from engine.appc import running_lights
+    specs = running_lights.lights_for(ship)
+    if not specs:
+        return
+    phase = running_lights.phase_for(ship)
+    session.ship_running_lights[iid] = phase
+    r.set_running_lights(iid, [s.as_tuple() for s in specs], phase)
+
+
+def _push_running_lights(r, session) -> None:
+    """Per-frame running-light brightness + dials (spec §4.3). Level folds in
+    death, power-plant state and the live cloak fraction; a scope-hidden or
+    vanished ship is sent 0. No lit ships => no calls at all."""
+    lit = getattr(session, "ship_running_lights", None)
+    if not lit:
+        return
+    import App  # deferred, as elsewhere in this module (sound-manager init order)
+    from engine.appc import running_lights, running_light_dials
+    now = App.g_kUtopiaModule.GetGameTime()
+    by_iid = {iid: ship for ship, iid in session.ship_instances.items()}
+    hidden = getattr(session, "scope_hidden", ())
+    levels = []
+    for iid, phase in lit.items():
+        ship = by_iid.get(iid)
+        if ship is None or iid in hidden:
+            levels.append((iid, 0.0))
+            continue
+        frac = 0.0
+        get_cloak = getattr(ship, "GetCloakingSubsystem", None)
+        cloak = get_cloak() if get_cloak is not None else None
+        if cloak is not None:
+            frac = float(cloak.GetTransitionFraction())
+        try:
+            levels.append((iid, running_lights.level_for(ship, frac, now, phase)))
+        except Exception as _e:
+            dev_mode.log_swallowed("running light level", _e)
+            levels.append((iid, 0.0))
+    r.set_running_light_levels(levels)
+    d = running_light_dials.current()
+    r.set_running_light_dials(d["size_gu_per_radius"], d["min_px"], d["intensity"])
+
+
 def _push_cloak_refraction(r, session, player) -> None:
     """Per-frame cloak VFX wiring.
 
@@ -6211,6 +6256,9 @@ class MissionSession:
     # `_build_ship_emitter_cache(ship)` list consumed each frame by
     # `_build_emitter_light_render_data`. Best-effort VFX; ships with no
     # baked LightEmitter* fields simply get an empty/absent entry.
+    # Running lights registered at spawn: render InstanceId -> blink phase (s).
+    # Fed per frame by _push_running_lights (running-lights spec §4.3).
+    ship_running_lights: dict[object, float] = field(default_factory=dict)
     ship_emitters: dict[object, list] = field(default_factory=dict)  # keyed by the renderer InstanceId (not int): the value is passed straight through as each light's instance_id
     planet_instances: dict[Any, int] = field(default_factory=dict)
     # Per-planet natural_scale = GetRadius() / NIF_extent, cached at load.
@@ -6263,6 +6311,7 @@ class MissionSession:
         self.ship_instances.clear()
         self.ship_glow_controllers.clear()
         self.ship_emitters.clear()
+        self.ship_running_lights.clear()
         self.ship_articulation.clear()
         self.scope_hidden.clear()
         self.planet_instances.clear()
@@ -6481,6 +6530,12 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
             session.ship_emitters[iid] = _build_ship_emitter_cache(ship)
         except Exception as _e:
             dev_mode.log_swallowed("realize ship_emitters cache", _e)
+
+        # Running lights (best-effort VFX); never block spawn.
+        try:
+            _register_running_lights(r_, session, ship, iid)
+        except Exception as _e:
+            dev_mode.log_swallowed("realize running lights", _e)
 
         # Shield render state. No-op for ships without a ShieldProperty.
         # The hull box is cached unconditionally (even for unshielded hulls) —
@@ -6783,6 +6838,7 @@ def _reconcile_runtime_instances(session, renderer, *,
                 session.ship_glow_controllers.pop(iid, None)
                 session.ship_articulation.pop(iid, None)
                 session.ship_emitters.pop(iid, None)
+                session.ship_running_lights.pop(iid, None)
                 session.scope_hidden.discard(iid)
                 # The transform-slot binding died with the instance.
                 session.slot_bindings.pop(ship, None)
@@ -7669,6 +7725,12 @@ class _MissionLoader:
                 sess.ship_emitters[iid] = _build_ship_emitter_cache(ship)
             except Exception as _e:
                 dev_mode.log_swallowed("ship_emitters cache", _e)
+
+            # Running lights (best-effort VFX); never block spawn.
+            try:
+                _register_running_lights(r_, sess, ship, iid)
+            except Exception as _e:
+                dev_mode.log_swallowed("realize running lights", _e)
 
             # Register shield render state. Reads ShieldProperty data-bag
             # for glow color, decay, and skin-mode flag. No-op for ships
@@ -10377,6 +10439,8 @@ def run(mission_name: Optional[str] = None,
                 _far_dials.register()
                 from engine.appc import sensor_dials as _sensor_dials
                 _sensor_dials.register()
+                from engine.appc import running_light_dials as _rl_dials
+                _rl_dials.register()
                 from engine.planets import atmosphere_dials as _atmo_dials
                 _atmo_dials.set_target_fn(
                     lambda: _nearest_live_planet(controller.session)
@@ -12608,6 +12672,7 @@ def run(mission_name: Optional[str] = None,
                 r, active_set, _warp_streaking, player=player)
 
             _push_cloak_refraction(r, session, player)
+            _push_running_lights(r, session)
 
             _pump_letterbox(r, _letterbox_anim, _player_dt)
 
