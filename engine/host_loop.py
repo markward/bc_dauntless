@@ -6616,6 +6616,10 @@ def teardown_set_objects(session, pSet, renderer) -> None:
             # at the static pose until its deflection next CHANGED.
             session.ship_articulation.pop(iid, None)
             session.scope_hidden.discard(iid)
+            # Per-iid light caches (emitter lights, running lights): a
+            # recycled iid must not inherit a destroyed hull's lights.
+            session.ship_emitters.pop(iid, None)
+            session.ship_running_lights.pop(iid, None)
             # The transform-slot binding died with the instance; drop the
             # re-bind guard so a re-realized object binds afresh.
             session.slot_bindings.pop(ship, None)
