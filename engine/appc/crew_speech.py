@@ -60,6 +60,8 @@ def annoying_dialogue_disabled() -> bool:
 # every listener with (speaker, wav_or_None, duration, now). Decoupled from
 # rendering so the bus stays audio/GL-free and testable; listeners must never
 # raise (failures are swallowed). BridgeCharacterAnimController subscribes here.
+# Listeners also receive `lips=` (keyword): False for AT_SPEAK_LINE_NO_FLAP_LIPS,
+# BC's voice-over variant -- the line plays but the mouth must not move.
 _speech_listeners: list = []
 
 
@@ -73,10 +75,10 @@ def remove_speech_listener(fn) -> None:
         _speech_listeners.remove(fn)
 
 
-def _notify_speech(speaker, wav, duration, now) -> None:
+def _notify_speech(speaker, wav, duration, now, lips=True) -> None:
     for fn in list(_speech_listeners):
         try:
-            fn(speaker, wav, duration, now)
+            fn(speaker, wav, duration, now, lips=lips)
         except Exception:
             pass
 
@@ -142,7 +144,7 @@ class CrewSpeechBus:
             pass
         _notify_speech("", None, 0.0, now)
 
-    def speak(self, speaker, text, wav, priority, now=None) -> float:
+    def speak(self, speaker, text, wav, priority, now=None, lips=True) -> float:
         """Arbitrate one line. Returns its duration in seconds (0.0 if dropped).
         The returned value also drives the subtitle dwell and the bus free-up,
         so they can never disagree, and is what gates the owning action's
@@ -175,7 +177,8 @@ class CrewSpeechBus:
         if text:
             self._route_subtitle(str(speaker), str(text), duration)
         # Cue lip-sync (and any other observers) for this accepted line.
-        _notify_speech(str(speaker), str(wav) if wav else None, duration, now)
+        _notify_speech(str(speaker), str(wav) if wav else None, duration, now,
+                       lips=bool(lips))
         # Stamp when this character last spoke (game time, not the wall clock
         # `now`) so CharacterClass.GetLastTalkTime can gate idle chatter. Only
         # accepted lines reach here — a priority-dropped line (above) must not
@@ -239,7 +242,7 @@ def last_talk_time(speaker) -> float:
     return bus()._last_talk.get(str(speaker), 0.0)
 
 
-def emit(speaker, db, line_id, priority) -> float:
+def emit(speaker, db, line_id, priority, lips=True) -> float:
     """Resolve a line's subtitle text and voice wav from a localization DB,
     then feed the speech bus. Single home for the HasString gate +
     isinstance(str) stub-DB guards shared by SpeakLine/SayLine and
@@ -256,7 +259,7 @@ def emit(speaker, db, line_id, priority) -> float:
     wav = db.GetFilename(line) if db is not None else None
     if not isinstance(wav, str) or not wav:         # drop stub-DB / empty
         wav = None
-    return bus().speak(speaker, text, wav, int(priority))
+    return bus().speak(speaker, text, wav, int(priority), lips=lips)
 
 
 def _mission_database():

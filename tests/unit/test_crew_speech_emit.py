@@ -147,7 +147,7 @@ def test_skip_current_notifies_listeners_speech_ended(monkeypatch):
                         lambda self, wav: (5.0, _FakeVoiceHandle()),
                         raising=True)
     cues = []
-    listener = lambda speaker, wav, dur, now: cues.append((speaker, wav, dur))
+    listener = lambda speaker, wav, dur, now, **k: cues.append((speaker, wav, dur))
     crew_speech.add_speech_listener(listener)
     try:
         b.speak("Tactical", "Shields holding", "line.wav",
@@ -163,10 +163,23 @@ def test_skip_current_notifies_listeners_speech_ended(monkeypatch):
 def test_skip_current_noop_when_idle():
     crew_speech.bus().reset()
     cues = []
-    listener = lambda *a: cues.append(a)
+    listener = lambda *a, **k: cues.append(a)
     crew_speech.add_speech_listener(listener)
     try:
         crew_speech.bus().skip_current(now=50.0)   # must not raise
     finally:
         crew_speech.remove_speech_listener(listener)
     assert cues == []                              # no phantom skip cue
+
+
+def test_emit_forwards_no_lips_to_the_speech_cue():
+    crew_speech.bus().reset()
+    seen = []
+    listener = lambda *a, **k: seen.append(k.get("lips"))
+    crew_speech.add_speech_listener(listener)
+    try:
+        db = TGLocalizationDatabase("x.tgl", strings={"L1": "Captain's log"})
+        crew_speech.emit("Tactical", db, "L1", CSP_NORMAL, lips=False)
+    finally:
+        crew_speech.remove_speech_listener(listener)
+    assert seen == [False]

@@ -2122,7 +2122,10 @@ class CharacterAction(TGAction):
             # Without the fallback the line resolves to no text and no wav
             # and the bus stays silent.
             db = cc.GetDatabase()
-        dur = crew_speech.emit(name, db, self._detail, self._priority) or 0.0
+        # AT_SPEAK_LINE_NO_FLAP_LIPS is BC's voice-over variant: no lip-sync.
+        dur = crew_speech.emit(
+            name, db, self._detail, self._priority,
+            lips=self._action_type != self.AT_SPEAK_LINE_NO_FLAP_LIPS) or 0.0
         # crew_speech.emit()/bus().speak() return a truthy duration only when
         # the bus actually accepted this line (0.0 means dropped -- nothing
         # to say, or a higher-priority line still holds the channel). Only a
