@@ -471,8 +471,16 @@ def schedule_scan(obj, delay_s: float, now_gt=None) -> None:
 
 def on_exited_set(pSet, obj) -> None:
     """Called by SetClass after the ET_EXITED_SET broadcast (so Science's
-    ExitedSet has already found the placeholder button)."""
+    ExitedSet has already found the placeholder button).
+
+    Every set calls this, the bridge set included, so *obj* may be a set
+    member that can never be a contact (the bridge model's BridgeObjectClass
+    has no ObjID). Anything that can be identified -- ship, planet, or
+    whatever the SDK hands ForceObjectIdentified -- is an ObjectClass."""
     from engine.appc import unknown_labels
+    from engine.appc.objects import ObjectClass
+    if not isinstance(obj, ObjectClass):
+        return
     _near.discard(obj)
     _far.discard(obj)
     _pending.pop(obj, None)

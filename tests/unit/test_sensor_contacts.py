@@ -263,3 +263,20 @@ def test_scheduled_scan_before_first_tick_still_commits():
         assert sensors.IsObjectKnown(bird) == 1
     finally:
         sc._now = orig_now
+
+
+def test_a_non_contact_leaving_a_set_never_reaches_the_sensors(monkeypatch):
+    """The bridge model (BridgeObjectClass) is a set member but not an
+    ObjectClass: it has no ObjID and can never be a sensor contact. Its
+    removal from the bridge set must not reach RemoveKnownObject, which
+    raised on the missing GetObjID (swallowed, logged under --developer)."""
+    from engine.appc.bridge_set import BridgeObjectClass
+    s, player, sensors = _world()
+    seen = []
+    monkeypatch.setattr(sensors, "RemoveKnownObject", seen.append)
+    bridge = SetClass()
+    for name in ("bridge", "bridge2"):
+        bridge.AddObjectToSet(BridgeObjectClass("data/Models/Sets/DBridge/DBridge.nif"), name)
+    bridge.RemoveObjectFromSet("bridge")
+    bridge.DeleteObjectFromSet("bridge2")
+    assert seen == []
