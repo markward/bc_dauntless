@@ -8,9 +8,15 @@ uniform float u_half_size;  // billboard half-size (GU)
 
 out vec2 v_uv;
 void main() {
-    vec3 right = vec3(u_view[0][0], u_view[1][0], u_view[2][0]);
-    vec3 up    = vec3(u_view[0][1], u_view[1][1], u_view[2][1]);
-    vec3 wp = u_center + (right * a_corner.x + up * a_corner.y) * u_half_size;
+    // View space, where the billboard axes are simply x and y. Pull the centre
+    // toward the eye by the sprite's half size (never past 90% of the way), so
+    // a light authored ON the hull skin is a whole disc instead of half-clipped
+    // or z-fighting with its own surface. The bias is tiny (~0.03 GU) against
+    // any hull's thickness, so far-side lights stay occluded (spec §4.4).
+    vec3 c = (u_view * vec4(u_center, 1.0)).xyz;
+    float d = length(c);
+    if (d > 0.0) c *= 1.0 - min(u_half_size / d, 0.9);
+    vec3 vp = c + vec3(a_corner * u_half_size, 0.0);
     v_uv = a_corner;
-    gl_Position = u_proj * u_view * vec4(wp, 1.0);
+    gl_Position = u_proj * vec4(vp, 1.0);
 }
