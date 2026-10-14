@@ -1146,24 +1146,32 @@ class CharacterClass(ObjectClass):
         return 1
 
     def TurnTowards(self, name, now=False, on_complete=None) -> int:
-        # tier-0 §4.10: acts only for the Captain while active; ALWAYS returns 0.
-        # No-op path fires on_complete inline so a waiting sequence never hangs.
-        if not name or not self.IsActive() or str(name) != "Captain":
+        # BC 0x0066b990 builds "%sTurn%s" for ANY target and queues the animated
+        # turn (STBC-RE bridge-character-system.md §8.3); ALWAYS returns 0.
+        # tier-0 §4.10 describes only its busy-officer shortcut (IsActive and
+        # "Captain" -> a glance pair). That shortcut is NOT reproduced: our
+        # IsActive defaults to 1 where BC's defaults to 0, so honouring it would
+        # turn every captain turn into a glance.
+        # No-name path fires on_complete inline so a waiting sequence never hangs.
+        if not name:
             if on_complete is not None:
                 try:
                     on_complete()
                 except Exception:
                     pass
             return 0
-        self.SetCurrentAnimation(None, self.CAT_TURN, 0, "Captain",
+        self.SetCurrentAnimation(None, self.CAT_TURN, 0, str(name),
                                  on_complete=on_complete, hold=True, now=bool(now))
         return 0
 
     def TurnBack(self, now=False, on_complete=None, *args) -> int:
+        # BC 0x0066bba0 turns back from the stored turn target (+0xA0
+        # TurnTowardsLocation): after AT_TURN "T", Kiska plays BackT.
+        target = self._target_name or "Captain"
         for c in (self.CAT_BREATHE, self.CAT_INTERRUPTABLE,
                   self.CAT_GLANCE, self.CAT_GLANCE_BACK):
             self.ClearAnimationsOfType(c)
-        self.SetCurrentAnimation(None, self.CAT_TURN_BACK, 0, "Captain",
+        self.SetCurrentAnimation(None, self.CAT_TURN_BACK, 0, str(target),
                                  on_complete=on_complete, hold=True, now=bool(now))
         return 1
 

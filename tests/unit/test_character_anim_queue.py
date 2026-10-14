@@ -528,21 +528,60 @@ def test_turntowards_captain_enqueues_turn_record_and_returns_zero():
     assert rec.now is True
 
 
-def test_turntowards_non_captain_or_none_fires_on_complete_inline_and_enqueues_nothing():
-    # tier-0 SS4.10: acts only for the Captain -- the no-op path MUST fire
-    # on_complete inline (else the re-pointed CharacterAction caller's
-    # self.Completed is lost and a waiting mission TGSequence hangs).
+def test_turntowards_another_officer_enqueues_turn_record():
+    # BC TurnTowards (0x0066b990) builds "%sTurn%s" for ANY target and queues
+    # the animated turn (STBC-RE bridge-character-system.md §8.3). "Captain"
+    # only matters for the busy-officer glance shortcut. E6M1: Kiska AT_TURN
+    # "T" (turns to Felix at Tactical) -- this used to be a silent no-op.
     c = CharacterClass_Create()
-    c.SetActive(1)
     fired = []
-    assert c.TurnTowards("Data", on_complete=lambda: fired.append(1)) == 0
+    cb = lambda: fired.append(1)
+    assert c.TurnTowards("T", on_complete=cb) == 0
+    assert len(c._anim_pending) == 1
+    rec = c._anim_pending[0]
+    assert rec.category == CharacterClass.CAT_TURN
+    assert rec.name == "T"
+    assert rec.on_complete is cb
+    assert fired == []                    # completes when the turn settles
+
+
+def test_turntowards_captain_turns_an_inactive_officer():
+    # BC: IsActive == 0 takes the normal animated-turn path (gate
+    # 0066b9be JZ 0x0066bacf).
+    c = CharacterClass_Create()
+    c.SetActive(0)
+    assert c.TurnTowards("Captain") == 0
+    assert [r.name for r in c._anim_pending] == ["Captain"]
+
+
+def test_turntowards_none_fires_on_complete_inline_and_enqueues_nothing():
+    # The no-op path MUST fire on_complete inline (else the CharacterAction
+    # caller's self.Completed is lost and a waiting mission TGSequence hangs).
+    c = CharacterClass_Create()
+    fired = []
+    assert c.TurnTowards(None, on_complete=lambda: fired.append(1)) == 0
     assert c._anim_pending == []
     assert fired == [1]
 
-    fired2 = []
-    assert c.TurnTowards(None, on_complete=lambda: fired2.append(1)) == 0
-    assert c._anim_pending == []
-    assert fired2 == [1]
+
+def test_turnback_turns_back_from_the_stored_target():
+    # BC TurnBack builds "%sBack%s" from TurnTowardsLocation (+0xA0) -- after
+    # turning to Tactical, Kiska plays BackT, not BackCaptain.
+    c = CharacterClass_Create()
+    c.TurnTowards("T")
+    c.PreparePlay(c._anim_pending.pop(0))   # the turn plays: target stored
+    c.TurnBack()
+    backs = [r for r in c._anim_pending
+             if r.category == CharacterClass.CAT_TURN_BACK]
+    assert [r.name for r in backs] == ["T"]
+
+
+def test_turnback_without_a_stored_target_turns_back_from_captain():
+    c = CharacterClass_Create()
+    c.TurnBack()
+    backs = [r for r in c._anim_pending
+             if r.category == CharacterClass.CAT_TURN_BACK]
+    assert [r.name for r in backs] == ["Captain"]
 
 
 def test_turnback_clears_interruptable_set_and_enqueues_turn_back():

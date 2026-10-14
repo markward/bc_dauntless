@@ -79,16 +79,25 @@ def test_at_turn_now_still_defers_until_the_queue_drains(monkeypatch):
     assert act.IsPlaying() is False
 
 
-def test_at_turn_non_captain_detail_is_a_captain_only_noop(monkeypatch):
-    # tier-0 §4.10: TurnTowards only acts for name == "Captain"; any other
-    # detail no-ops, firing on_complete inline so the sequence never hangs.
+def test_at_turn_toward_another_officer_turns_and_turns_back(monkeypatch):
+    # BC TurnTowards (0x0066b990) builds "%sTurn%s" for ANY target; "Captain"
+    # only gates the busy-officer glance shortcut (STBC-RE
+    # bridge-character-system.md §8.3). E6M1: Kiska AT_TURN "T", then
+    # AT_TURN_BACK -- which turns back from T (BC +0xA0), not from Captain.
     ch = _char()
     ctrl, calls = _real_controller_recording_turns(monkeypatch)
-    act = CharacterAction(ch, CharacterAction.AT_TURN, "Science")
+    act = CharacterAction(ch, CharacterAction.AT_TURN, "T")
     act.Play()
+    assert act.IsPlaying() is True                     # deferred, like Captain
+    ch.UpdateAnimationQueue()
+    assert [(c["detail"], c["back"]) for c in calls] == [("T", False)]
+    calls[0]["on_complete"]()
     assert act.IsPlaying() is False
-    assert ch._anim_pending == []
-    assert calls == []
+
+    back = CharacterAction(ch, CharacterAction.AT_TURN_BACK)
+    back.Play()
+    assert [(r.category, r.name) for r in ch._anim_pending] == [
+        (ch.CAT_TURN_BACK, "T")]
 
 
 def test_at_turn_back_enqueues_via_turnback(monkeypatch):
