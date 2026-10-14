@@ -91,6 +91,8 @@ embed_shader(SHADER_HIT_VFX_VS shaders/hit_vfx.vert hit_vfx_vs)
 embed_shader(SHADER_HIT_VFX_FS shaders/hit_vfx.frag hit_vfx_fs)
 embed_shader(SHADER_HULL_DISCHARGE_VS shaders/hull_discharge.vert hull_discharge_vs)
 embed_shader(SHADER_HULL_DISCHARGE_FS shaders/hull_discharge.frag hull_discharge_fs)
+embed_shader(SHADER_RUNNING_LIGHT_VS shaders/running_light.vert running_light_vs)
+embed_shader(SHADER_RUNNING_LIGHT_FS shaders/running_light.frag running_light_fs)
 embed_shader(SHADER_NEBULA_WAKE_VS shaders/nebula_wake.vert nebula_wake_vs)
 embed_shader(SHADER_NEBULA_WAKE_FS shaders/nebula_wake.frag nebula_wake_fs)
 embed_shader(SHADER_PHASER_VS shaders/phaser.vert phaser_vs)
@@ -206,6 +208,7 @@ add_library(renderer STATIC
     torpedo_pass.cc
     hit_vfx_pass.cc
     hull_discharge_pass.cc
+    running_light_pass.cc
     running_light_math.cc
     running_light_store.cc
     nebula_wake_pass.cc

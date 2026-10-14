@@ -37,6 +37,7 @@ public:
     Shader& disruptor_shader() noexcept  { return *disruptor_; }
     Shader& hit_vfx_shader() noexcept    { return *hit_vfx_; }
     Shader& hull_discharge_shader() noexcept { return *hull_discharge_; }
+    Shader& running_light_shader() noexcept { return *running_light_; }
     Shader& nebula_wake_shader() noexcept { return *nebula_wake_; }
     Shader& phaser_shader() noexcept          { return *phaser_; }
     Shader& hologram_shader() noexcept        { return *hologram_; }
@@ -78,6 +79,7 @@ private:
     std::unique_ptr<Shader> disruptor_;
     std::unique_ptr<Shader> hit_vfx_;
     std::unique_ptr<Shader> hull_discharge_;
+    std::unique_ptr<Shader> running_light_;
     std::unique_ptr<Shader> nebula_wake_;
     std::unique_ptr<Shader> phaser_;
     std::unique_ptr<Shader> hologram_;

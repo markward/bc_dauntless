@@ -9,6 +9,7 @@
 #include <renderer/nebula_volumetric_pass.h>
 #include <renderer/nebula_godray_pass.h>
 #include <renderer/hull_discharge_pass.h>
+#include <renderer/running_light_pass.h>
 #include <renderer/nebula_wake_pass.h>
 #include <renderer/hdr_target.h>
 #include <renderer/pipeline.h>
@@ -3543,4 +3544,72 @@ TEST_F(TangentBasisTest, OpaquePassLeavesUnanimatedMaterialOnStaticBase) {
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
     const auto t1 = centre_rg();
     EXPECT_GT(t1.first, t1.second + 64) << "unanimated material must stay RED";
+}
+
+TEST_F(FrameTest, RunningLightDrawsAndIsDepthOccluded) {
+    const int kW = 256, kH = 256;
+    renderer::HdrTarget hdr;
+    hdr.resize(kW, kH);
+
+    scenegraph::Camera cam;
+    cam.eye    = glm::vec3(0.0f, 0.0f, -10.0f);
+    cam.target = glm::vec3(0.0f, 0.0f, 0.0f);
+    cam.up     = glm::vec3(0.0f, 1.0f, 0.0f);
+    cam.aspect = 1.0f;
+    cam.near   = 0.1f;
+    cam.far    = 1000.0f;
+
+    renderer::RunningLightSprite sp;
+    sp.world_pos = glm::vec3(0.0f);
+    sp.half_size = 0.2f;
+    sp.color     = glm::vec3(4.0f, 0.0f, 0.0f);   // HDR red
+
+    renderer::RunningLightPass pass;
+
+    auto centre = [&]() {
+        float px[4] = {0};
+        glReadPixels(kW / 2, kH / 2, 1, 1, GL_RGBA, GL_FLOAT, px);
+        return glm::vec3(px[0], px[1], px[2]);
+    };
+    auto clear_to_depth = [&](float depth) {
+        hdr.bind();
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClearDepth(depth);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glClearDepth(1.0);
+    };
+
+    // Empty list: zero GL work, target untouched.
+    clear_to_depth(1.0f);
+    pass.render(cam, *p, {});
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    EXPECT_FLOAT_EQ(centre().r, 0.0f);
+
+    // Open scene: the sprite centre is bright red, additive HDR (> 1).
+    clear_to_depth(1.0f);
+    pass.render(cam, *p, {sp});
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const glm::vec3 lit = centre();
+    EXPECT_GT(lit.r, 1.0f);
+    EXPECT_FLOAT_EQ(lit.g, 0.0f);
+
+    // Depth already at the near plane (a hull in front): occluded.
+    clear_to_depth(0.0f);
+    pass.render(cam, *p, {sp});
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    EXPECT_FLOAT_EQ(centre().r, 0.0f);
+
+    // The pass must not write depth: a second sprite behind the first still draws.
+    clear_to_depth(1.0f);
+    renderer::RunningLightSprite behind = sp;
+    behind.world_pos = glm::vec3(0.0f, 0.0f, 5.0f);
+    behind.color = glm::vec3(0.0f, 4.0f, 0.0f);
+    pass.render(cam, *p, {sp, behind});
+    EXPECT_GT(centre().g, 0.0f);
+
+    // GL state restored to canonical defaults.
+    GLboolean depth_mask = GL_FALSE;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &depth_mask);
+    EXPECT_EQ(depth_mask, GL_TRUE);
+    EXPECT_FALSE(glIsEnabled(GL_BLEND));
 }
