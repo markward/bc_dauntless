@@ -23,7 +23,7 @@
 - Never capture a path at import; never spell `game`/`sdk` as a path segment (`tests/unit/test_path_indirection.py`).
 - Commit after every task with a message ending in:
   `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`
-- Dial start values (spec §4.5): `size_gu_per_radius = 0.02`, `min_px = 1.5`, `intensity = 4.0`.
+- Dial start values (spec §4.5): `size_gu_per_radius = 0.02`, `min_px = 2.5` (was 1.5; raised by the final review, I2), `intensity = 4.0`.
 - Blink ramps are `0.1 × duration` (BC's key spacing). Static = `duration <= 0`.
 - Running lights are ON by default in production.
 

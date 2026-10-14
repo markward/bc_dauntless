@@ -127,7 +127,14 @@ hull.
 - **Every frame**, alongside `_push_cloak_refraction` (`host_loop.py:731`),
   which already reads each ship's `GetTransitionFraction()`:
   `renderer.set_running_light_levels([(iid, level), ...])` for every ship that
-  has lights. A ship in `session.scope_hidden` is sent level 0.
+  has lights. Because the pass ignores the instance's visible flag (4.4), every
+  hull hide the host loop applies is mirrored as level 0, from the same
+  predicate its visibility writer uses: a ship in `session.scope_hidden`; the
+  player while `_apply_bridge_player_visibility` hides it for bridge view (it
+  returns the iids it hid, passed as `_push_running_lights(hidden_iids=...)`);
+  and every ship the warp-transit hide in `_sync_instance_transforms` hides
+  (recorded as `session.warp_hidden_iids`). Without this the player's forward
+  blinkers float mid-viewscreen in bridge view (final review C1).
 
 ### 4.4 Native (`native/src/renderer/running_light_{math,store,pass}.{h,cc}`)
 
@@ -143,7 +150,8 @@ hull.
 
 **`RunningLightStore`**
 - `set(id, lights, phase)` (an empty list erases), `set_levels(list)` (ids not
-  listed are treated as level 0 that frame), `erase(id)`, `clear()`.
+  listed are treated as level 0 that frame; a level that is not > 0, NaN
+  included, reads 0, and levels clamp at 1), `erase(id)`, `clear()`.
 - `erase` is called from the `destroy_instance` binding's `was_valid` branch
   (`host_bindings.cc:3224`). `clear` is called from `reset_frame_state`
   (`host_bindings.cc:915`), which runs at native init/shutdown only. A mission
@@ -165,8 +173,19 @@ hull.
 - Draw: one draw per sprite with per-sprite uniforms (the `hull_discharge_pass` pattern; tens to hundreds of sprites); camera-facing quads; additive
   (`GL_ONE, GL_ONE`, colour premultiplied by alpha); depth test on (the hull
   occludes its far-side lights), depth write off.
-- Fragment: a soft radial disc, `rgb × intensity × alpha × falloff(r)`. There
-  is **no separate halo**: with HDR on, the core sits above the bloom threshold
+- **Eye-ward bias** (vertex shader): the quad centre is pulled toward the eye
+  by the sprite's half size, in view space
+  (`c *= 1 − min(half_size / |c|, 0.9)`), so a light authored on the hull skin
+  is a whole disc instead of half-clipped or z-fighting with its own surface.
+  The bias is ~0.03 GU against hulls far thicker, so far-side lights stay
+  occluded.
+- Fragment: a soft radial disc, `rgb × intensity × alpha × falloff(r)` with
+  `falloff(r) = exp(−3 r²)` (≈0.05 at the quad edge, cut off at r ≥ 1). The
+  profile is deliberately broad: when the `min_px` floor wins the quad is a
+  couple of pixels across, and a falloff that is ~0 near the edge left a
+  sprite centred on a pixel corner black, so moving lights twinkled. There is
+  no energy conservation when the floor wins: distant lights stay visible
+  pinpoints. There is **no separate halo**: with HDR on, the core sits above the bloom threshold
   and bloom supplies the glow, like every other bright source; with HDR off
   ("camera realism" off, `settings_store.py:300-308`) the soft edge still reads
   as a small light.
@@ -182,7 +201,7 @@ hull.
   | Dial | Start | Meaning |
   |---|---|---|
   | `size_gu_per_radius` | 0.02 | GU per Radius unit (Radius 1.5 ⇒ 0.03 GU ≈ 5 m) |
-  | `min_px` | 1.5 | Smallest on-screen diameter |
+  | `min_px` | 2.5 | Smallest on-screen diameter (below ~2 px a sprite centred on a pixel corner twinkles) |
   | `intensity` | 4.0 | HDR multiplier on the core colour |
 
   The start values are calibrated from the reference screenshot; final values
@@ -206,16 +225,22 @@ hull.
   - `level_for`: healthy 1; disabled equals `emitter_flicker`; destroyed 0;
     no power subsystem 1; cloak 0 / 0.5 / 1; dying and dead 0; the forced dev
     glow preview overrides.
-- Host loop: spawning a lit ship calls `set_running_lights` once; levels are
-  pushed every frame; a scope-hidden ship gets 0; an unlit ship never appears.
+- Host loop: spawning a lit ship through either spawn site
+  (`realize_set_objects`, `_MissionLoader._realize_session`) calls
+  `set_running_lights` once; levels are pushed every frame; a scope-hidden, a
+  bridge-view-hidden and a warp-hidden ship get 0; an unlit ship never
+  appears; `teardown_set_objects` forgets the ship's lights.
 
 **gtest**
 - `blink_alpha`: static and degenerate cases are 1; on, off and both ramps at
   the right times; phase shifts the window.
 - `sprite_world_size`: world size wins near, the `min_px` floor wins far.
-- `RunningLightStore`: set / levels / erase / clear; an unlisted id reads 0.
+- `RunningLightStore`: set / levels / erase / clear; an unlisted id reads 0;
+  a NaN or negative level draws nothing.
 - GL frame test: a light in front of a hull lights its pixel; the same light
-  behind the hull does not; level 0 draws nothing.
+  behind the hull does not; level 0 draws nothing; a light at (or just under)
+  the surface depth still draws (bias); a floored sprite centred on a pixel
+  corner lights all four neighbouring pixels.
 
 **Gate:** `scripts/check_tests.sh` green before merge.
 
@@ -227,7 +252,10 @@ Quick Battle as the LC Intrepid:
 3. hull occludes far-side lights;
 4. cloak fades them out and back in;
 5. destroying the power plant puts them out (disabled ⇒ flicker);
-6. lights go out when the ship dies.
+6. lights go out when the ship dies;
+7. bridge viewscreen shows no own-ship lights;
+8. a slowly moving lit ship at 50-200 GU shows steady, non-twinkling lights;
+9. lights on the hull skin are whole discs, not half-clipped.
 
 ## 7. Docs
 
