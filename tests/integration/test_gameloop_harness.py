@@ -99,9 +99,20 @@ def test_idempotent(sdk_setup):
     assert t1 == t2 == 60
 
 
-def test_profile_flag_produces_report(sdk_setup):
+def test_profile_flag_produces_report(sdk_setup, monkeypatch):
     import App
     App._stub_tracker.clear()
+    # M1Basic no longer reaches any real stub (the emitter and blinking-light
+    # properties it used to hit are implemented), so make one deterministic
+    # stub call inside the mission to prove the report plumbing.
+    from engine.core.loop import GameLoop
+    real_tick = GameLoop.tick
+
+    def _tick_hitting_a_stub(self, *a, **kw):
+        App._ProfileProbeStub_Create()
+        return real_tick(self, *a, **kw)
+
+    monkeypatch.setattr(GameLoop, "tick", _tick_hitting_a_stub)
     from tools.gameloop_harness import run_mission_with_loop
     status, exc, ticks = run_mission_with_loop(
         "Custom.Tutorial.Episode.M1Basic.M1Basic", n_ticks=60, profile=True
