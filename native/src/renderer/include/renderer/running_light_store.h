@@ -13,7 +13,8 @@
 namespace renderer {
 
 struct RunningLight { glm::vec3 body_pos{0}; glm::vec3 rgb{1}; float size = 0.1f, period = 3.0f, duration = 1.0f; };
-struct RunningLightDials { float size_gu_per_radius = 0.02f, min_px = 1.5f, intensity = 4.0f; };
+// Spec §4.5 start values; mirrored by engine/appc/running_light_dials.py DEFAULTS.
+struct RunningLightDials { float size_gu_per_radius = 0.02f, min_px = 2.5f, intensity = 4.0f; };
 struct RunningLightSprite { glm::vec3 world_pos{0}; float half_size = 0.0f; glm::vec3 color{0}; };
 constexpr std::size_t kMaxRunningLightSprites = 4096;
 

@@ -8,7 +8,8 @@ selects "running lights" (engine/dev_dial_groups.py). Not persisted.
 """
 DEFAULTS: dict = {
     "size_gu_per_radius": 0.02,   # Radius 1.5 => 0.03 GU ~ 5 m
-    "min_px": 1.5,                # smallest on-screen diameter
+    "min_px": 2.5,                # smallest on-screen diameter; below ~2 px a
+                                  # sprite centred on a pixel corner twinkles
     "intensity": 4.0,             # HDR multiplier; above the bloom threshold
 }
 DIAL_ORDER: tuple = tuple(DEFAULTS)

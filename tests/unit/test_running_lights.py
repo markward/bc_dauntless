@@ -120,7 +120,7 @@ def test_forced_dev_glow_preview_drives_the_lights(monkeypatch):
 def test_dials_defaults_and_reset():
     running_light_dials.reset()
     assert running_light_dials.current() == {
-        "size_gu_per_radius": 0.02, "min_px": 1.5, "intensity": 4.0}
+        "size_gu_per_radius": 0.02, "min_px": 2.5, "intensity": 4.0}
 
 
 def test_dials_step_clamps_at_minimum():

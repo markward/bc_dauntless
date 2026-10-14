@@ -22,7 +22,9 @@ void RunningLightStore::set_levels(
     for (auto& e : entries_) e.level = 0.0f;   // unlisted this frame => dark
     for (const auto& [id, level] : levels)
         for (auto& e : entries_)
-            if (e.id == id) e.level = std::clamp(level, 0.0f, 1.0f);
+            // Not std::clamp: it passes NaN through, and a NaN level would
+            // survive build_sprites' "level <= 0" skip. Anything not > 0 is dark.
+            if (e.id == id) e.level = (level > 0.0f) ? std::min(level, 1.0f) : 0.0f;
 }
 
 void RunningLightStore::erase(scenegraph::InstanceId id) {

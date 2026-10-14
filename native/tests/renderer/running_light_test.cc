@@ -193,3 +193,30 @@ TEST(RunningLightStore, SpriteCountIsCapped) {
     EXPECT_EQ(s.build_sprites(world, 0.0f, RunningLightDials{}, {0, 0, -1}, 0.0f, 0).size(),
               renderer::kMaxRunningLightSprites);
 }
+
+TEST(RunningLightStore, NonFiniteOrNegativeLevelDrawsNothing) {
+    // std::clamp passes NaN straight through, and NaN <= 0 is false, so a NaN
+    // level used to survive build_sprites' "level <= 0" skip.
+    scenegraph::World world;
+    const auto a = world.create_instance(1);
+    world.set_world_transform(a, glm::mat4(1.0f));
+    RunningLightStore s;
+    s.set(a, {static_light({0, 0, 0}, {1, 1, 1})}, 0.0f);
+    for (float bad : {std::numeric_limits<float>::quiet_NaN(), -0.5f}) {
+        s.set_levels({{a, bad}});
+        EXPECT_FLOAT_EQ(s.level(a), 0.0f);
+        EXPECT_TRUE(s.build_sprites(world, 0.0f, RunningLightDials{}, {0, 0, -1}, 0.0f, 0)
+                        .empty());
+    }
+    s.set_levels({{a, 7.0f}});
+    EXPECT_FLOAT_EQ(s.level(a), 1.0f);
+}
+
+TEST(RunningLightDials, DefaultsMatchTheSpec) {
+    // Spec §4.5 start values; min_px 2.5 so a floored sprite centred on a pixel
+    // corner still lights its neighbours (final review I2).
+    const RunningLightDials d;
+    EXPECT_FLOAT_EQ(d.size_gu_per_radius, 0.02f);
+    EXPECT_FLOAT_EQ(d.min_px, 2.5f);
+    EXPECT_FLOAT_EQ(d.intensity, 4.0f);
+}
