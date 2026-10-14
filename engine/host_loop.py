@@ -740,10 +740,18 @@ def _register_running_lights(r, session, ship, iid) -> None:
     r.set_running_lights(iid, [s.as_tuple() for s in specs], phase)
 
 
-def _push_running_lights(r, session) -> None:
+def _push_running_lights(r, session, hidden_iids=()) -> None:
     """Per-frame running-light brightness + dials (spec §4.3). Level folds in
-    death, power-plant state and the live cloak fraction; a scope-hidden or
-    vanished ship is sent 0. No lit ships => no calls at all."""
+    death, power-plant state and the live cloak fraction; a vanished ship, or
+    one whose hull the host loop hides, is sent 0. No lit ships => no calls.
+
+    The pass ignores the instance's visible flag on purpose (a cloaking hull
+    is hidden while its lights fade), so every OTHER hull hide must be
+    mirrored here or the lights float on their own: `session.scope_hidden`,
+    the warp-transit hide (`session.warp_hidden_iids`, recorded by
+    `_sync_instance_transforms` where it hides them) and `hidden_iids` — the
+    bridge-view player hide, as returned by `_apply_bridge_player_visibility`.
+    """
     lit = getattr(session, "ship_running_lights", None)
     if not lit:
         return
@@ -751,7 +759,9 @@ def _push_running_lights(r, session) -> None:
     from engine.appc import running_lights, running_light_dials
     now = App.g_kUtopiaModule.GetGameTime()
     by_iid = {iid: ship for ship, iid in session.ship_instances.items()}
-    hidden = getattr(session, "scope_hidden", ())
+    hidden = (set(getattr(session, "scope_hidden", ()))
+              | set(getattr(session, "warp_hidden_iids", ()))
+              | set(hidden_iids))
     levels = []
     for iid, phase in lit.items():
         ship = by_iid.get(iid)
@@ -6281,6 +6291,10 @@ class MissionSession:
     # or past the draw distance; _reconcile_runtime_instances). Consulted by
     # every other per-frame visibility writer so none re-shows them.
     scope_hidden: set = field(default_factory=set)
+    # Ship instance ids the warp-transit hide hid on the last
+    # _sync_instance_transforms run (empty when not warping). Read by
+    # _push_running_lights, whose pass ignores the visible flag.
+    warp_hidden_iids: set = field(default_factory=set)
     # The system map's planets and moons (system-frames Plan 3 Task 4),
     # diffed each tick against celestial.draw_list(viewing_set()) by
     # _reconcile_celestial_instances. celestial_instances: body key -> iid;
@@ -6314,6 +6328,7 @@ class MissionSession:
         self.ship_running_lights.clear()
         self.ship_articulation.clear()
         self.scope_hidden.clear()
+        self.warp_hidden_iids.clear()
         self.planet_instances.clear()
         self.planet_natural_scale.clear()
         # The bindings themselves died with the instances above; drop the
@@ -8986,17 +9001,22 @@ def drive_viewscreen_static_and_brightness(r, controller, ramp, dt,
 
 
 def _apply_bridge_player_visibility(r, player_iid, *, is_bridge, spv_open,
-                                    scope_hidden=False) -> None:
+                                    scope_hidden=False) -> frozenset:
     """Hide the player ship while in bridge view so it doesn't appear on its
     own viewscreen feed (and the centre-mounted forward cam doesn't clip its
     hull). No-op while the Ship Property Viewer owns the frame (it manages
     visibility itself). Idempotent — safe to call every frame.
 
     `scope_hidden`: the render scope hides the player while a cutscene shows
-    another frame (_reconcile_runtime_instances); this must not re-show it."""
+    another frame (_reconcile_runtime_instances); this must not re-show it.
+
+    Returns the iids it hid FOR BRIDGE VIEW (the player, or nothing), so the
+    running lights — which ignore the visible flag — go dark with the hull
+    (`_push_running_lights(hidden_iids=...)`)."""
     if spv_open or player_iid is None:
-        return
+        return frozenset()
     r.set_visible(player_iid, not is_bridge and not scope_hidden)
+    return frozenset((player_iid,)) if is_bridge else frozenset()
 
 
 def _ensure_target_menu() -> None:
@@ -9385,6 +9405,9 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
     _warp_hide = _wh.is_active() and _wh.streak_intensity() > 0.0
     _warp_apply_vis = _warp_hide or _warp_hidden
     _warp_hidden = _warp_hide
+    # The ships this frame's warp hide hides: their running lights ignore the
+    # visible flag, so _push_running_lights reads this to darken them too.
+    _warp_hid_iids = set()
     _live_ship_iids = []
     # Hull-discharge emissive boost for the player: `_hull_discharge` is a
     # module global (HullDischargeDriver | None).  Returns exactly 1.0 when
@@ -9464,6 +9487,8 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
         if _warp_apply_vis:
             r.set_visible(iid, not _warp_hide
                           and iid not in session.scope_hidden)
+            if _warp_hide:
+                _warp_hid_iids.add(iid)
         # NOTE: scale is read live, not interpolated — the
         # buffer only stores loc+rot. Fine for steady scale;
         # a mid-animation GetScale() change applies the
@@ -9481,6 +9506,7 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
         r.set_world_transform(
             iid, _world_matrix_from(_iloc, _irot, model_scale * _ps))
     xform_buf.prune(_live_ship_iids)
+    session.warp_hidden_iids = _warp_hid_iids
     # Drop controllers for instances no longer present. The
     # player iid is excluded from _live_ship_iids (handled by
     # the continue above), so key the keep-set on the full
@@ -12504,7 +12530,7 @@ def run(mission_name: Optional[str] = None,
             # the player is on the bridge in state. Without this the hide-on-
             # bridge (so the ship doesn't show on its own viewscreen) leaves the
             # cutscene exterior empty — the ship you're watching is invisible.
-            _apply_bridge_player_visibility(
+            _bridge_hidden_iids = _apply_bridge_player_visibility(
                 r, _player_iid_vs,
                 is_bridge=view_mode.is_bridge and _cc is None, spv_open=_spv_open,
                 scope_hidden=(session is not None
@@ -12672,7 +12698,7 @@ def run(mission_name: Optional[str] = None,
                 r, active_set, _warp_streaking, player=player)
 
             _push_cloak_refraction(r, session, player)
-            _push_running_lights(r, session)
+            _push_running_lights(r, session, hidden_iids=_bridge_hidden_iids)
 
             _pump_letterbox(r, _letterbox_anim, _player_dt)
 
