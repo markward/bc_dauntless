@@ -207,6 +207,7 @@ add_library(renderer STATIC
     hit_vfx_pass.cc
     hull_discharge_pass.cc
     running_light_math.cc
+    running_light_store.cc
     nebula_wake_pass.cc
     particle_pass.cc
     phaser_pass.cc
