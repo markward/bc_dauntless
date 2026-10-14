@@ -1682,3 +1682,15 @@ def test_app_exports_kill_actions_as_a_callable_not_a_stub():
     import App
     assert callable(App.TGActionManager_KillActions)
     assert type(App.TGActionManager_KillActions).__name__ != "_NamedStub"
+
+
+def test_no_flap_lips_speak_line_asks_for_no_lip_movement(monkeypatch):
+    import engine.appc.crew_speech as crew_speech
+    from engine.appc.ai import CharacterAction
+    seen = []
+    monkeypatch.setattr(crew_speech, "emit",
+                        lambda *a, **k: seen.append(k.get("lips", True)) or 0.0,
+                        raising=True)
+    CharacterAction(None, CharacterAction.AT_SPEAK_LINE_NO_FLAP_LIPS, "L").Play()
+    CharacterAction(None, CharacterAction.AT_SPEAK_LINE, "L").Play()
+    assert seen == [False, True]

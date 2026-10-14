@@ -26,9 +26,9 @@ def test_supply_conversation_plays_to_the_end(monkeypatch, shields_up):
     spoken = []
     real_emit = crew_speech.emit
 
-    def spy(speaker, db, line_id, priority):
+    def spy(speaker, db, line_id, priority, lips=True):
         spoken.append(str(line_id))
-        return real_emit(speaker, db, line_id, priority)
+        return real_emit(speaker, db, line_id, priority, lips=lips)
 
     monkeypatch.setattr(crew_speech, "emit", spy)
     player = App.Game_GetCurrentPlayer()
@@ -68,9 +68,9 @@ def _spy(monkeypatch):
     spoken = []
     real_emit = crew_speech.emit
 
-    def spy(speaker, db, line_id, priority):
+    def spy(speaker, db, line_id, priority, lips=True):
         spoken.append(str(line_id))
-        return real_emit(speaker, db, line_id, priority)
+        return real_emit(speaker, db, line_id, priority, lips=lips)
 
     monkeypatch.setattr(crew_speech, "emit", spy)
     return spoken

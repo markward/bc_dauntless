@@ -147,3 +147,18 @@ def test_line_with_no_wav_is_ignored():
         assert r.jaw_calls == []
     finally:
         rt.close()
+
+
+def test_no_flap_line_never_moves_the_mouth():
+    # AT_SPEAK_LINE_NO_FLAP_LIPS (E6M1 Felix intro): voice plays, mouth still.
+    r = _FakeRenderer()
+    rt = LipSyncRuntime(r, lambda: [_Char("Felix", 3)])
+    try:
+        rt._on_speech("Felix", "sfx/Bridge/Crew/Tactical/__definitely_missing__.mp3",
+                      duration=1.0, now=100.0, lips=False)
+        rt.update(100.10)
+        rt.update(100.20)
+        assert not any(c[1] != "neutral" for c in r.calls if c[0] == 3)
+        assert not any(c[1] > 0.0 for c in r.jaw_calls if c[0] == 3)
+    finally:
+        rt.close()

@@ -14,7 +14,7 @@ from engine.appc.ai import CSP_NORMAL, CSP_MISSION_CRITICAL, CSP_SPONTANEOUS
 
 def test_listener_notified_for_accepted_line():
     seen = []
-    fn = lambda *a: seen.append(a)
+    fn = lambda *a, **k: seen.append(a)
     add_speech_listener(fn)
     try:
         bus = CrewSpeechBus()
@@ -26,7 +26,7 @@ def test_listener_notified_for_accepted_line():
 
 def test_listener_not_notified_for_dropped_line():
     seen = []
-    fn = lambda *a: seen.append(a)
+    fn = lambda *a, **k: seen.append(a)
     add_speech_listener(fn)
     try:
         bus = CrewSpeechBus()
@@ -41,7 +41,7 @@ def test_listener_not_notified_for_dropped_line():
 
 def test_listener_wav_none_when_no_voice():
     seen = []
-    fn = lambda *a: seen.append(a)
+    fn = lambda *a, **k: seen.append(a)
     add_speech_listener(fn)
     try:
         bus = CrewSpeechBus()
@@ -54,7 +54,7 @@ def test_listener_wav_none_when_no_voice():
 
 def test_remove_listener_stops_notifications():
     seen = []
-    fn = lambda *a: seen.append(a)
+    fn = lambda *a, **k: seen.append(a)
     add_speech_listener(fn)
     remove_speech_listener(fn)
     bus = CrewSpeechBus()
@@ -63,7 +63,7 @@ def test_remove_listener_stops_notifications():
 
 
 def test_listener_exception_does_not_break_speak():
-    def boom(*a):
+    def boom(*a, **k):
         raise RuntimeError("listener blew up")
 
     add_speech_listener(boom)
@@ -72,3 +72,18 @@ def test_listener_exception_does_not_break_speak():
         assert bus.speak("Picard", "Engage", "x.mp3", CSP_NORMAL, now=0.0) > 0.0
     finally:
         remove_speech_listener(boom)
+
+
+def test_listener_told_whether_the_line_moves_lips():
+    # AT_SPEAK_LINE_NO_FLAP_LIPS is a voice-over: the line plays, the mouth
+    # does not move (STBC-RE bridge-character-system.md:1402). Default: lips.
+    seen = []
+    fn = lambda *a, **k: seen.append(k.get("lips"))
+    add_speech_listener(fn)
+    try:
+        bus = CrewSpeechBus()
+        bus.speak("Felix", "intro", "x.mp3", CSP_NORMAL, now=0.0, lips=False)
+        bus.speak("Felix", "more", "y.mp3", CSP_NORMAL, now=100.0)
+        assert seen == [False, True]
+    finally:
+        remove_speech_listener(fn)

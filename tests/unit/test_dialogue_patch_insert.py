@@ -30,9 +30,9 @@ def world(monkeypatch):
     spoken = []
     real_emit = crew_speech.emit
 
-    def spy(speaker, d, line_id, priority):
+    def spy(speaker, d, line_id, priority, lips=True):
         spoken.append(str(line_id))
-        return real_emit(speaker, d, line_id, priority)
+        return real_emit(speaker, d, line_id, priority, lips=lips)
 
     monkeypatch.setattr(crew_speech, "emit", spy)
     yield {"db": db, "table": table, "spoken": spoken, "sets": sets}
