@@ -24,10 +24,26 @@ def ear_clip(pts):
     """Triangulate a simple planar polygon (3D points, any winding) by ear
     clipping in its dominant projection plane. Returns index triples that
     keep the polygon's winding. Raises ShapeDiffError when the polygon is
-    degenerate or not simple (no ear, or ears that don't tile its area)."""
+    degenerate or not simple (no ear, or ears that don't tile its area).
+
+    Consecutive corners at the SAME position -- an unwelded mirror seam,
+    Blender's -0.0 and 0.0 copies of one vertex -- are collapsed first (the
+    face's area is unchanged), and a face that collapses below three corners
+    yields no triangles: it has no area, so it renders nothing in Blender
+    either (spec §11.6)."""
     n = len(pts)
     if n < 3:
         raise ShapeDiffError(f"a {n}-corner face can't be triangulated")
+    keep = [i for i in range(n) if tuple(pts[i]) != tuple(pts[i - 1])]
+    if len(keep) == n:
+        return _clip(pts)
+    if len(keep) < 3:
+        return []
+    return [(keep[a], keep[b], keep[c]) for a, b, c in _clip([pts[i] for i in keep])]
+
+
+def _clip(pts):
+    n = len(pts)
     if n == 3:
         return [(0, 1, 2)]
     # Newell normal -> drop the dominant axis

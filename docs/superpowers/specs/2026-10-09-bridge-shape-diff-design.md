@@ -671,7 +671,7 @@ the scratchpad; in game, Developer Options → Lighting → Bridge Debug View
 
 | Piece | Where |
 |---|---|
-| CLI | `tools/bridge_shape_diff.py` (`export`, `diff [--partial] [--exclude B]... [--flipbook-fps F] [--write]`) |
+| CLI | `tools/bridge_shape_diff.py` (`export`, `diff [--partial] [--exclude B]... [--delete B]... [--flipbook-fps F] [--write]`) |
 | Library | `tools/shape_diff/` — `obj_io` (OBJ/MTL read/write), `match` (identity, correspondence, classification), `payload` (BSD1/BSD2 encoder), `frames`, `triangulate` (ear clip), `verify` (apply-and-compare) |
 | Loader | `native/src/assets/src/mesh_fix.cc` — `shape_edits` (BSD2 decode/validate/apply, refs resolved against the UNMODIFIED file), `textures` (per-shape albedo splice + optional `flipbook` NiFlipController shaped like stock EBridge block 550) |
 | Binding | `_dauntless_host.nif_shapes(path, fix_json=None)` — world matrix, parent, colours, UV1, inherited textures; applies a fix in memory when given one (used by the verifier) |
@@ -709,7 +709,7 @@ uv run python -m tools.bridge_shape_diff diff ~/Documents/dauntless-blender/Dbri
 
 | Message | Meaning / action |
 |---|---|
-| `objects differ between base and edit` | a join/split/rename — rename the `.001` back (11.4) |
+| `objects differ between base and edit` | a join/split/rename — rename the `.001` back (11.4). If objects are only MISSING and the message suggests `--delete N`, check they were deleted on purpose (their vertices appear in no other object), then pass those flags |
 | `ambiguous correspondence` | the tool can't tell which originals survived — it refuses rather than guess; `--exclude` that block to land the rest |
 | `depends on skipped/excluded bNNNN` | a block's triangle removals need another block's replacement; they land together or not at all |
 | `texture '…' not found` | the `.mtl` names a file not in the overlay/stock dir (often an old name or a main-checkout path) |
@@ -717,6 +717,20 @@ uv run python -m tools.bridge_shape_diff diff ~/Documents/dauntless-blender/Dbri
 | verifier mismatch | the produced fix does not reproduce `edit.obj` through the real loader — a tool bug; do not write |
 
 ### 11.6 Known limitations (parked, with rulings)
+
+- **Deleted objects (2026-10-14).** Deleting a whole object in Blender is
+  explicit: `--delete BLOCK` stands an empty object in for it and every
+  triangle the export carries is removed (a NIF triangle that is zero-area once
+  welded never reaches the OBJ and stays, rendering nothing). Without the flag
+  the export still refuses -- a missing object is indistinguishable by name
+  from an accidental join. First use: ceiling rebuild, ribs b0084 + b0087.
+- **Unwelded mirror seams (2026-10-14).** Consecutive face corners at the SAME
+  position (Blender's `-0.0`/`0.0` copies on an unmerged x=0 seam) are
+  collapsed before ear clipping; a face that collapses below three corners is
+  dropped (no area). Non-consecutive coincident corners (a polygon touching
+  itself) are still refused. The duplicate vertices themselves are kept, so
+  generated normals may show a crease on the seam -- Merge by Distance in
+  Blender removes it.
 
 - **Vertex splits (iteration 6).** An original vertex whose kept faces disagree on
   its new UV (a seam BC never cut) keeps the UV most of its corners show (tie:

@@ -941,6 +941,24 @@ def diff_shape(shape: dict, base, edit, texture_dirs=None, index=None,
     return out
 
 
+def with_deletions(base_objs: dict, edit_objs: dict, delete=()) -> dict:
+    """`edit_objs` with an EMPTY object standing in for each block in
+    `delete`, so diff() removes every triangle of a shape whose object was
+    deleted in Blender. Deletion is explicit (--delete) because a missing
+    object is indistinguishable from an accidental join by name alone; a
+    block in `delete` must have a base object and none in the edit."""
+    base_names = {obj_io.block_of(n): n for n in base_objs}
+    edit_blocks = {obj_io.block_of(n) for n in edit_objs}
+    out = dict(edit_objs)
+    for block in delete:
+        if block not in base_names:
+            raise ShapeDiffError(f"--delete {block}: no object for block {block} in the base")
+        if block in edit_blocks:
+            raise ShapeDiffError(f"--delete {block}: {base_names[block]} is still in the edit")
+        out[base_names[block]] = obj_io.ObjMesh()
+    return out
+
+
 def diff(shapes: list, base_objs: dict, edit_objs: dict, partial: bool = False,
          texture_dirs=None, exclude=(), flipbook_fps=5.0):
     """Diff every object. With partial=False (default), the first object
@@ -959,8 +977,12 @@ def diff(shapes: list, base_objs: dict, edit_objs: dict, partial: bool = False,
     one object's edit is unsupported."""
     if set(base_objs) != set(edit_objs):
         missing = sorted(set(base_objs) ^ set(edit_objs))
+        hint = ""
+        if set(edit_objs) <= set(base_objs):
+            hint = "; if you deleted them, pass " + " ".join(
+                f"--delete {obj_io.block_of(n)}" for n in missing)
         raise ShapeDiffError(f"objects differ between base and edit: {missing[:5]} "
-                             f"(don't join, split or rename objects)")
+                             f"(don't join, split or rename objects{hint})")
     block_to_names = {}
     for name in base_objs:
         block_to_names.setdefault(obj_io.block_of(name), []).append(name)
