@@ -55,6 +55,8 @@
 #include <renderer/torpedo_pass.h>
 #include <renderer/hit_vfx_pass.h>
 #include <renderer/hull_discharge_pass.h>
+#include <renderer/running_light_pass.h>
+#include <renderer/running_light_store.h>
 #include <renderer/nebula_wake_pass.h>
 #include <renderer/shockwave_pass.h>
 #include <renderer/particle_pass.h>
@@ -412,6 +414,13 @@ std::vector<renderer::HitVfxDescriptor>    g_hit_vfx;
 std::unique_ptr<renderer::HitVfxPass>      g_hit_vfx_pass;
 std::vector<renderer::HullDischarge>       g_hull_discharges;
 std::unique_ptr<renderer::HullDischargePass> g_hull_discharge_pass;
+
+// Ship running lights (running-lights spec §4.4). The store is per-instance
+// and Python-fed at spawn; levels arrive every frame.
+renderer::RunningLightStore                  g_running_lights;
+renderer::RunningLightDials                  g_running_light_dials;
+bool                                         g_running_lights_enabled = true;
+std::unique_ptr<renderer::RunningLightPass>  g_running_light_pass;
 std::unique_ptr<renderer::NebulaWakePass> g_nebula_wake_pass;
 std::vector<renderer::ParticleEmitterDescriptor> g_particle_emitters;
 std::unique_ptr<renderer::ParticlePass>          g_particle_pass;
@@ -939,6 +948,7 @@ void reset_frame_state() {
     g_dynamic_lights.clear();
     g_lens_flares.clear();
     g_hull_discharges.clear();
+    g_running_lights.clear();
     g_cloak_ships.clear();
     g_subsystem_pins.clear();
     g_debug_cylinders.clear();
@@ -1093,6 +1103,7 @@ void init(int width, int height, const std::string& title) {
     g_torpedo_pass = std::make_unique<renderer::TorpedoPass>();
     g_hit_vfx_pass = std::make_unique<renderer::HitVfxPass>();
     g_hull_discharge_pass = std::make_unique<renderer::HullDischargePass>();
+    g_running_light_pass = std::make_unique<renderer::RunningLightPass>();
     g_nebula_wake_pass = std::make_unique<renderer::NebulaWakePass>();
     g_particle_pass = std::make_unique<renderer::ParticlePass>();
     g_phaser_pass        = std::make_unique<renderer::PhaserPass>();
@@ -1187,6 +1198,7 @@ void shutdown() {
     g_shockwave_pass.reset();
     g_hit_vfx_pass.reset();
     g_hull_discharge_pass.reset();
+    g_running_light_pass.reset();
     g_nebula_wake_pass.reset();
     g_particle_pass.reset();
     g_phaser_pass.reset();
@@ -1817,6 +1829,13 @@ void frame() {
             if (g_phaser_pass)  g_phaser_pass ->render(g_phaser_beams, cam, *g_pipeline);
             if (g_phaser_pass)  g_phaser_pass ->render(g_tractor_beams, cam, *g_pipeline);
             if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx, g_world, cam, *g_pipeline);
+        }
+        if (g_running_lights_enabled && g_running_light_pass && g_running_lights.size() > 0) {
+            DAUNTLESS_FRAME_SCOPE("space.running_lights");
+            const auto sprites = g_running_lights.build_sprites(
+                g_world, g_decal_game_time, g_running_light_dials,
+                cam.eye, cam.proj_matrix()[1][1], vh);
+            g_running_light_pass->render(cam, *g_pipeline, sprites);
         }
         if (dauntless_nebula_lightning::enabled()
                 && g_hull_discharge_pass && !g_hull_discharges.empty())
@@ -3233,6 +3252,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const bool was_valid = g_world.is_valid(id);
               g_world.destroy_instance(id);
               if (was_valid) {
+                  g_running_lights.erase(id);
                   // Purge any bridge node-anim state keyed on this index BEFORE
                   // it can be recycled by a new instance in the same Python step
                   // (the lazy per-frame sweep in update_bridge_node_anims runs
@@ -6048,6 +6068,40 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("clear_hologram_ship",
           []() { g_hologram_ship = renderer::HologramShip{}; },
           "Clear the hologram overlay (deactivates it). Takes effect next frame().");
+    m.def("set_running_lights",
+          [](scenegraph::InstanceId id,
+             const std::vector<std::array<float, 9>>& lights, float phase) {
+              std::vector<renderer::RunningLight> out;
+              out.reserve(lights.size());
+              for (const auto& a : lights) {
+                  renderer::RunningLight l;
+                  l.body_pos = {a[0], a[1], a[2]};
+                  l.rgb      = {a[3], a[4], a[5]};
+                  l.size = a[6]; l.period = a[7]; l.duration = a[8];
+                  out.push_back(l);
+              }
+              g_running_lights.set(id, std::move(out), phase);
+          },
+          py::arg("instance_id"), py::arg("lights"), py::arg("phase"),
+          "Set a ship's running lights: each (px,py,pz, r,g,b, size, period, "
+          "duration), body frame, unscaled GU. An empty list removes the ship.");
+    m.def("set_running_light_levels",
+          [](const std::vector<std::pair<scenegraph::InstanceId, float>>& levels) {
+              g_running_lights.set_levels(levels);
+          },
+          py::arg("levels"),
+          "Per-frame brightness (instance_id, level in [0,1]). Ships not listed "
+          "draw dark this frame.");
+    m.def("set_running_light_dials",
+          [](float size_gu_per_radius, float min_px, float intensity) {
+              g_running_light_dials = {size_gu_per_radius, min_px, intensity};
+          },
+          py::arg("size_gu_per_radius"), py::arg("min_px"), py::arg("intensity"));
+    m.def("running_lights_set_enabled",
+          [](bool v) { g_running_lights_enabled = v; }, py::arg("enabled"));
+    m.def("running_lights_enabled", []() { return g_running_lights_enabled; });
+    m.def("running_light_count",
+          []() { return static_cast<int>(g_running_lights.size()); });
     m.def("set_cloak_ships",
           [](const std::vector<std::pair<scenegraph::InstanceId, float>>& ships) {
               g_cloak_ships.clear();

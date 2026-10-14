@@ -175,3 +175,26 @@ def test_js_has_a_reload_surfaces_action_row_and_focusable():
     assert ("_doActionRow('Reload Planet Surfaces', 'reload_surfaces',\n"
             "                         'Reload', isFoc('reload_surfaces'));") in text
     assert "out.push({kind: 'ctrl', target: 'reload_surfaces'});" in text
+
+
+def test_running_lights_row_is_on_the_lighting_tab(monkeypatch):
+    import engine.renderer as renderer
+    monkeypatch.setattr(renderer, "running_lights_enabled", lambda: True)
+    p = DeveloperOptionsPanel()
+    p.open()
+    assert p.dispatch_event("tab:lighting")
+    assert ("ctrl", "running_lights") in p._focusables()
+    assert _payload(p)["settings"]["running_lights"] is True
+
+
+def test_running_lights_toggle_flips_the_renderer(monkeypatch):
+    import engine.renderer as renderer
+    calls = []
+    monkeypatch.setattr(renderer, "running_lights_set_enabled", calls.append)
+    monkeypatch.setattr(renderer, "running_lights_enabled", lambda: True)
+    p = DeveloperOptionsPanel()
+    p.open()
+    assert p.dispatch_event("tab:lighting")
+    assert p.dispatch_event("toggle:running_lights")
+    assert calls == [False]
+    assert _payload(p)["settings"]["running_lights"] is False

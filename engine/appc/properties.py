@@ -217,6 +217,79 @@ class ObjectEmitterProperty(PositionOrientationProperty):
         return self._emitted_type
 
 
+class EffectEmitterProperty(PositionOrientationProperty):
+    """Base of BC's effect emitter points (SDK App.py:9872, CT 0x8141).
+
+    No surface of its own: position and orientation, inherited. The Smoke /
+    Spark / Explode subclasses are bridge-interior damage-effect spawn points
+    (EBridgeProperties.py, dbridgeproperties.py); they are placement-only until
+    bridge damage effects are built (running-lights spec, sub-project B).
+    """
+
+
+class SmokeEmitterProperty(EffectEmitterProperty):
+    """CT 0x8142 — SDK App.py:9889."""
+
+
+class SparkEmitterProperty(EffectEmitterProperty):
+    """CT 0x8143 — SDK App.py:9906."""
+
+
+class ExplodeEmitterProperty(EffectEmitterProperty):
+    """CT 0x8144 — SDK App.py:9923."""
+
+
+class BlinkingLightProperty(EffectEmitterProperty):
+    """A ship running light (CT 0x8145, SDK App.py:9940-9968).
+
+    Defaults match the binary's constructor (FUN_0067B590): Radius 0.1,
+    Period 3.0, Duration 1.0, no texture. Colour is stored as an RGBA tuple
+    and handed out as a fresh TGColorA, so callers may mutate either side
+    without touching the property. How the lights render, and why it departs
+    from BC, is docs/superpowers/specs/2026-10-14-ship-running-lights-design.md.
+    """
+
+    def __init__(self, name: str = ""):
+        super().__init__(name)
+        self._color = (1.0, 1.0, 1.0, 1.0)
+        self._radius = 0.1
+        self._period = 3.0
+        self._duration = 1.0
+        self._texture_name = None
+
+    def SetColor(self, color) -> None:
+        self._color = (float(color.r), float(color.g),
+                       float(color.b), float(color.a))
+
+    def GetColor(self):
+        import App
+        return App.TGColorA(*self._color)
+
+    def SetRadius(self, value) -> None:
+        self._radius = float(value)
+
+    def GetRadius(self) -> float:
+        return self._radius
+
+    def SetPeriod(self, value) -> None:
+        self._period = float(value)
+
+    def GetPeriod(self) -> float:
+        return self._period
+
+    def SetDuration(self, value) -> None:
+        self._duration = float(value)
+
+    def GetDuration(self) -> float:
+        return self._duration
+
+    def SetTextureName(self, name) -> None:
+        self._texture_name = None if name is None else str(name)
+
+    def GetTextureName(self):
+        return self._texture_name
+
+
 class EngineGlowProperty(TGModelProperty):
     pass
 
@@ -1000,6 +1073,31 @@ def ObjectEmitterProperty_Cast(obj):
     if isinstance(obj, ObjectEmitterProperty):
         return obj
     return None
+
+
+def EffectEmitterProperty_Create(name):    return EffectEmitterProperty(name)
+def SmokeEmitterProperty_Create(name):     return SmokeEmitterProperty(name)
+def SparkEmitterProperty_Create(name):     return SparkEmitterProperty(name)
+def ExplodeEmitterProperty_Create(name):   return ExplodeEmitterProperty(name)
+def BlinkingLightProperty_Create(name):    return BlinkingLightProperty(name)
+
+
+def _strict_cast(obj, cls):
+    """obj if it is a `cls`, else None (stubs included) — the
+    ObjectEmitterProperty_Cast contract, for the EffectEmitter family."""
+    if obj is None:
+        return None
+    import App
+    if isinstance(obj, App._NamedStub):
+        return None
+    return obj if isinstance(obj, cls) else None
+
+
+def EffectEmitterProperty_Cast(obj):   return _strict_cast(obj, EffectEmitterProperty)
+def SmokeEmitterProperty_Cast(obj):    return _strict_cast(obj, SmokeEmitterProperty)
+def SparkEmitterProperty_Cast(obj):    return _strict_cast(obj, SparkEmitterProperty)
+def ExplodeEmitterProperty_Cast(obj):  return _strict_cast(obj, ExplodeEmitterProperty)
+def BlinkingLightProperty_Cast(obj):   return _strict_cast(obj, BlinkingLightProperty)
 
 
 # ── TGModelPropertyManager ────────────────────────────────────────────────────

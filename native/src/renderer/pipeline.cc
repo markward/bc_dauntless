@@ -48,6 +48,8 @@
 #include "embedded_hit_vfx_fs.h"
 #include "embedded_hull_discharge_vs.h"
 #include "embedded_hull_discharge_fs.h"
+#include "embedded_running_light_vs.h"
+#include "embedded_running_light_fs.h"
 #include "embedded_nebula_wake_vs.h"
 #include "embedded_nebula_wake_fs.h"
 #include "embedded_phaser_vs.h"
@@ -151,6 +153,7 @@ Pipeline::Pipeline() {
     disruptor_  = std::make_unique<Shader>(shader_src::disruptor_vs,  shader_src::disruptor_fs);
     hit_vfx_    = std::make_unique<Shader>(shader_src::hit_vfx_vs,    shader_src::hit_vfx_fs);
     hull_discharge_ = std::make_unique<Shader>(shader_src::hull_discharge_vs, shader_src::hull_discharge_fs);
+    running_light_ = std::make_unique<Shader>(shader_src::running_light_vs, shader_src::running_light_fs);
     nebula_wake_ = std::make_unique<Shader>(shader_src::nebula_wake_vs, shader_src::nebula_wake_fs);
     phaser_        = std::make_unique<Shader>(shader_src::phaser_vs,        shader_src::phaser_fs);
     hologram_      = std::make_unique<Shader>(shader_src::hologram_vs,      shader_src::hologram_fs);

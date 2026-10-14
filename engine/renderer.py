@@ -31,6 +31,8 @@ InstanceId = _h.InstanceId
 #   hard-fails `import`, so it needs no manifest entry.
 _REQUIRED_BINDINGS = frozenset({
     "add_box_region", "add_cylinder_region", "add_sphere_region",
+    "running_light_count", "running_lights_enabled", "running_lights_set_enabled",
+    "set_running_light_dials", "set_running_light_levels", "set_running_lights",
     "ambient_gradient_get", "ambient_gradient_set", "ambient_gradient_set_enabled",
     "assemble_officer", "bridge_pass_set_enabled", "bridge_quality",
     "cef_composite", "cef_devtools_open", "cef_initialize", "cef_pump",
@@ -1531,6 +1533,39 @@ def set_hologram_ship(instance_id: InstanceId,
 def clear_hologram_ship() -> None:
     """Deactivate the hologram overlay. Takes effect next frame()."""
     _h.clear_hologram_ship()
+
+
+# ── Running lights (docs/superpowers/specs/2026-10-14-ship-running-lights-design.md) ──
+
+def set_running_lights(iid, lights, phase: float) -> None:
+    """A ship's running lights, sent once at spawn (running-lights spec §4.3).
+    `lights` is a list of 9-tuples (px,py,pz, r,g,b, size, period, duration),
+    body frame, unscaled GU. An empty list removes the ship."""
+    _h.set_running_lights(iid, [tuple(float(v) for v in l) for l in lights],
+                          float(phase))
+
+
+def set_running_light_levels(levels) -> None:
+    """Per-frame (instance_id, level) brightness; unlisted ships draw dark."""
+    _h.set_running_light_levels([(iid, float(lv)) for iid, lv in levels])
+
+
+def set_running_light_dials(size_gu_per_radius: float, min_px: float,
+                            intensity: float) -> None:
+    _h.set_running_light_dials(float(size_gu_per_radius), float(min_px),
+                               float(intensity))
+
+
+def running_lights_set_enabled(enabled: bool) -> None:
+    _h.running_lights_set_enabled(bool(enabled))
+
+
+def running_lights_enabled() -> bool:
+    return bool(_h.running_lights_enabled())
+
+
+def running_light_count() -> int:
+    return int(_h.running_light_count())
 
 
 # ── Cloak refraction ─────────────────────────────────────────────────────────

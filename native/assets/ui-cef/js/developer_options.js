@@ -28,6 +28,7 @@ function _doFocusableList(state) {
     if (state.selected_tab === 'lighting') {
         out.push({kind: 'ctrl', target: 'systems_damaged'});
         out.push({kind: 'ctrl', target: 'systems_disabled'});
+        out.push({kind: 'ctrl', target: 'running_lights'});
         out.push({kind: 'ctrl', target: 'normal_maps'});
         out.push({kind: 'ctrl', target: 'normal_flip_g'});
         out.push({kind: 'ctrl', target: 'normal_strength'});
@@ -158,6 +159,8 @@ function _doRenderLightingBody(state, focusables) {
                          s.systems_damaged, isFoc('systems_damaged'));
     html += _doToggleRow('Set Systems Disabled', 'systems_disabled',
                          s.systems_disabled, isFoc('systems_disabled'));
+    html += _doToggleRow('Running Lights', 'running_lights',
+                         s.running_lights, isFoc('running_lights'));
     html += _doToggleRow('Normal Maps', 'normal_maps',
                          s.normal_maps, isFoc('normal_maps'));
     html += _doToggleRow('Normal Map Green Flip', 'normal_flip_g',

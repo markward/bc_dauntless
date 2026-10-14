@@ -125,6 +125,7 @@ def test_render_payload_shape(panel):
         "god_mode": False, "double_weapons": False, "no_npc_shields": False,
         "disable_collisions": False, "sensor_occlusion": True,
         "systems_damaged": False, "systems_disabled": False,
+        "running_lights": True,
         "normal_maps": True, "normal_flip_g": True, "normal_strength": 1.0,
         "bridge_pbr": True,
         "bridge_debug_view": "Off",

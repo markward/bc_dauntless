@@ -9,6 +9,8 @@
 #include <renderer/nebula_volumetric_pass.h>
 #include <renderer/nebula_godray_pass.h>
 #include <renderer/hull_discharge_pass.h>
+#include <renderer/running_light_pass.h>
+#include <renderer/running_light_math.h>
 #include <renderer/nebula_wake_pass.h>
 #include <renderer/hdr_target.h>
 #include <renderer/pipeline.h>
@@ -3543,4 +3545,136 @@ TEST_F(TangentBasisTest, OpaquePassLeavesUnanimatedMaterialOnStaticBase) {
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
     const auto t1 = centre_rg();
     EXPECT_GT(t1.first, t1.second + 64) << "unanimated material must stay RED";
+}
+
+TEST_F(FrameTest, RunningLightDrawsAndIsDepthOccluded) {
+    const int kW = 256, kH = 256;
+    renderer::HdrTarget hdr;
+    hdr.resize(kW, kH);
+
+    scenegraph::Camera cam;
+    cam.eye    = glm::vec3(0.0f, 0.0f, -10.0f);
+    cam.target = glm::vec3(0.0f, 0.0f, 0.0f);
+    cam.up     = glm::vec3(0.0f, 1.0f, 0.0f);
+    cam.aspect = 1.0f;
+    cam.near   = 0.1f;
+    cam.far    = 1000.0f;
+
+    renderer::RunningLightSprite sp;
+    sp.world_pos = glm::vec3(0.0f);
+    sp.half_size = 0.2f;
+    sp.color     = glm::vec3(4.0f, 0.0f, 0.0f);   // HDR red
+
+    renderer::RunningLightPass pass;
+
+    auto centre = [&]() {
+        float px[4] = {0};
+        glReadPixels(kW / 2, kH / 2, 1, 1, GL_RGBA, GL_FLOAT, px);
+        return glm::vec3(px[0], px[1], px[2]);
+    };
+    auto clear_to_depth = [&](float depth) {
+        hdr.bind();
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClearDepth(depth);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glClearDepth(1.0);
+    };
+
+    // Empty list: zero GL work, target untouched.
+    clear_to_depth(1.0f);
+    pass.render(cam, *p, {});
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    EXPECT_FLOAT_EQ(centre().r, 0.0f);
+
+    // Open scene: the sprite centre is bright red, additive HDR (> 1).
+    clear_to_depth(1.0f);
+    pass.render(cam, *p, {sp});
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    const glm::vec3 lit = centre();
+    EXPECT_GT(lit.r, 1.0f);
+    EXPECT_FLOAT_EQ(lit.g, 0.0f);
+
+    // Depth already at the near plane (a hull in front): occluded.
+    clear_to_depth(0.0f);
+    pass.render(cam, *p, {sp});
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    EXPECT_FLOAT_EQ(centre().r, 0.0f);
+
+    // Window depth of a world point on the eye->light line, `ahead` GU in
+    // front of the light (final review I3).
+    const glm::mat4 vp = cam.proj_matrix() * cam.view_matrix();
+    auto depth_ahead_of_light = [&](float ahead) {
+        const glm::vec3 to_eye = glm::normalize(cam.eye - sp.world_pos);
+        const glm::vec4 c = vp * glm::vec4(sp.world_pos + to_eye * ahead, 1.0f);
+        return 0.5f * (c.z / c.w) + 0.5f;
+    };
+
+    // A light authored ON the hull skin: the surface is at the light's own
+    // depth, or curves slightly over it. The eye-ward bias (half the sprite
+    // size) keeps it a whole disc instead of half-clipped / z-fighting.
+    clear_to_depth(depth_ahead_of_light(0.0f));
+    pass.render(cam, *p, {sp});
+    EXPECT_GT(centre().r, 1.0f) << "skin light at the surface depth must draw";
+    clear_to_depth(depth_ahead_of_light(0.25f * sp.half_size));
+    pass.render(cam, *p, {sp});
+    EXPECT_GT(centre().r, 1.0f) << "skin light just under the surface must draw";
+
+    // ...but the bias is only the sprite's half size: a hull a few half-sizes
+    // thick in front (a far-side light) still occludes it.
+    clear_to_depth(depth_ahead_of_light(3.0f * sp.half_size));
+    pass.render(cam, *p, {sp});
+    EXPECT_FLOAT_EQ(centre().r, 0.0f) << "far-side light must stay occluded";
+
+    // The pass must not write depth: a second sprite behind the first still draws.
+    clear_to_depth(1.0f);
+    renderer::RunningLightSprite behind = sp;
+    behind.world_pos = glm::vec3(0.0f, 0.0f, 5.0f);
+    behind.color = glm::vec3(0.0f, 4.0f, 0.0f);
+    pass.render(cam, *p, {sp, behind});
+    EXPECT_GT(centre().g, 0.0f);
+
+    // GL state restored to canonical defaults.
+    GLboolean depth_mask = GL_FALSE;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &depth_mask);
+    EXPECT_EQ(depth_mask, GL_TRUE);
+    EXPECT_FALSE(glIsEnabled(GL_BLEND));
+}
+
+TEST_F(FrameTest, RunningLightFlooredSpriteOnAPixelCornerLightsItsNeighbours) {
+    // Final review I2: when the min_px floor wins the quad is a pixel or two
+    // across. A sprite centred on a pixel CORNER puts the nearest pixel
+    // centres at 0.707 px; a falloff that is ~0 there makes a moving ship's
+    // lights flicker between blooming and invisible. Even at the old 1.5 px
+    // floor (r ~0.94 at those centres) all four neighbours must stay lit.
+    const int kW = 256, kH = 256;
+    renderer::HdrTarget hdr;
+    hdr.resize(kW, kH);
+
+    scenegraph::Camera cam;
+    cam.eye    = glm::vec3(0.0f, 0.0f, -10.0f);
+    cam.target = glm::vec3(0.0f, 0.0f, 0.0f);
+    cam.up     = glm::vec3(0.0f, 1.0f, 0.0f);
+    cam.aspect = 1.0f;
+    cam.near   = 0.1f;
+    cam.far    = 1000.0f;
+
+    // The origin projects to window (128, 128): the shared corner of pixels
+    // 127 and 128 on both axes. Size from the real floor function.
+    renderer::RunningLightSprite sp;
+    sp.world_pos = glm::vec3(0.0f);
+    sp.half_size = 0.5f * renderer::running_light_world_size(
+        1.0f, 0.0f, 1.5f, 10.0f, cam.proj_matrix()[1][1], kH);
+    sp.color     = glm::vec3(4.0f, 0.0f, 0.0f);   // intensity-4 red
+
+    hdr.bind();
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    renderer::RunningLightPass pass;
+    pass.render(cam, *p, {sp});
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+
+    float px[2 * 2 * 4] = {0};
+    glReadPixels(kW / 2 - 1, kH / 2 - 1, 2, 2, GL_RGBA, GL_FLOAT, px);
+    for (int i = 0; i < 4; ++i)
+        EXPECT_GT(px[i * 4 + 0], 0.1f) << "neighbour pixel " << i << " went dark";
 }
