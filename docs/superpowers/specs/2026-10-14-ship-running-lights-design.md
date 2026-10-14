@@ -118,17 +118,16 @@ hull.
     lights too;
   - × `(1 − clamp(cloak_frac, 0, 1))`.
 
-### 4.3 Host loop (`engine/host_loop.py`, `engine/host_io.py`)
+### 4.3 Host loop (`engine/host_loop.py`, `engine/renderer.py` façade)
 
 - **Spawn:** next to every `_build_ship_emitter_cache` site
   (`host_loop.py:1414, 6481, 7669`), call
-  `host_io.set_running_lights(iid, specs, phase)` when `lights_for` is
+  `renderer.set_running_lights(iid, specs, phase)` when `lights_for` is
   non-empty. Ships without lights send nothing.
 - **Every frame**, alongside `_push_cloak_refraction` (`host_loop.py:731`),
   which already reads each ship's `GetTransitionFraction()`:
-  `host_io.set_running_light_levels([(iid, level), ...])` for every ship that
+  `renderer.set_running_light_levels([(iid, level), ...])` for every ship that
   has lights. A ship in `session.scope_hidden` is sent level 0.
-- Rocks are skipped (`ship_iter.iter_non_rock_ships`).
 
 ### 4.4 Native (`native/src/renderer/running_light_{math,store,pass}.{h,cc}`)
 
@@ -147,7 +146,8 @@ hull.
   listed are treated as level 0 that frame), `erase(id)`, `clear()`.
 - `erase` is called from the `destroy_instance` binding's `was_valid` branch
   (`host_bindings.cc:3224`). `clear` is called from `reset_frame_state`
-  (`host_bindings.cc:915`), the mission-swap reset.
+  (`host_bindings.cc:915`), which runs at native init/shutdown only. A mission
+  swap is covered by `erase`: session teardown destroys every ship instance.
 
 **`RunningLightPass`**
 - Runs in the space phase right after the `space.weapons` scope
@@ -162,7 +162,7 @@ hull.
   never lag the interpolated hull.
 - Alpha = `level × blink_alpha(g_decal_game_time, …)`. Game time, so blinkers
   freeze under pause.
-- Draw: all sprites in one dynamic-VBO draw; camera-facing quads; additive
+- Draw: one draw per sprite with per-sprite uniforms (the `hull_discharge_pass` pattern; tens to hundreds of sprites); camera-facing quads; additive
   (`GL_ONE, GL_ONE`, colour premultiplied by alpha); depth test on (the hull
   occludes its far-side lights), depth write off.
 - Fragment: a soft radial disc, `rgb × intensity × alpha × falloff(r)`. There
@@ -177,7 +177,7 @@ hull.
 
 - Dial group **"running lights"** on the shared `/ L O` keys
   (`engine/dev_dial_groups.register_group`), pushed through
-  `host_io.set_running_light_dials(...)`. Read at use, so changes are live.
+  `renderer.set_running_light_dials(...)`. Read at use, so changes are live.
 
   | Dial | Start | Meaning |
   |---|---|---|
@@ -188,7 +188,7 @@ hull.
   The start values are calibrated from the reference screenshot; final values
   are set live by Mark.
 - Developer Options → Lighting → **"Running Lights"** toggle
-  (`host_io.set_running_lights_enabled`). **On by default in production**; off
+  (`renderer.running_lights_set_enabled`). **On by default in production**; off
   skips the pass. Not persisted.
 
 ## 5. Testing
