@@ -467,7 +467,6 @@ def test_level_disabled_power_flickers_like_the_emitters():
     ship = _Ship(power=_Sub(disabled=True))
     got = running_lights.level_for(ship, 0.0, 12.5, 7.0)
     assert got == pytest.approx(emitter_flicker(12.5, 7.0))
-    assert got < 1.0 or emitter_flicker(12.5, 7.0) == 1.0
 
 
 def test_level_destroyed_power_is_zero():
@@ -1755,10 +1754,13 @@ def test_push_drops_a_lit_iid_whose_ship_is_gone():
 
 
 def test_mission_session_teardown_clears_running_lights():
-    import inspect
-    src = inspect.getsource(host_loop.MissionSession)
-    assert "ship_running_lights" in src
-    assert "self.ship_running_lights.clear()" in inspect.getsource(host_loop)
+    class _R:
+        def destroy_instance(self, iid):
+            pass
+    sess = host_loop.MissionSession(mission_name="t")
+    sess.ship_running_lights[9] = 1.0
+    sess.teardown(_R())
+    assert sess.ship_running_lights == {}
 ```
 
 Also add to `tests/unit/test_reconcile_runtime_ships.py` (it already has the
