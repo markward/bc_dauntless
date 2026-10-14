@@ -3865,6 +3865,12 @@ class _BridgeCamera:
         # it when ResetBridgeCamera re-pushes that mode. See
         # docs/superpowers/specs/2026-07-25-bridge-camera-stand-persistence-design.md.
         self._held_pose = None
+        # Bridge cutscene SHOT: the pose of a live PlacementMode on the bridge
+        # set's active camera (PlacementWatch "bridge"), fed every frame by
+        # host_loop._sync_bridge_mode_pose. Ranks below a walk-on camera clip
+        # (_anim_pose) and above the held/captain view; never latched by
+        # hold_anim_pose. Spec 2026-10-13-bridge-cutscene-camera-design.
+        self._mode_pose = None
 
     def _eye_offset(self, horiz=None) -> tuple:
         """Captain's-chair eye for a horizontal facing. Base is the
@@ -3961,12 +3967,20 @@ class _BridgeCamera:
     def clear_anim_pose(self) -> None:
         self._anim_pose = None
 
+    def set_mode_pose(self, eye, target, up) -> None:
+        """Override the camera with a bridge cutscene shot (bridge-local)."""
+        self._mode_pose = (tuple(eye), tuple(target), tuple(up))
+
+    def clear_mode_pose(self) -> None:
+        self._mode_pose = None
+
     def reset_cutscene_pose(self) -> None:
         """Drop any active/held cutscene pose. Called on mission swap so a stand
         (or other held camera pose) from the prior mission cannot leak into the
         next bridge (which may push no seated mode of its own)."""
         self._anim_pose = None
         self._held_pose = None
+        self._mode_pose = None
 
     def hold_anim_pose(self) -> None:
         """Latch the current (final) cutscene pose as the persistent held pose
@@ -3992,7 +4006,7 @@ class _BridgeCamera:
         """Accumulate mouse delta into yaw/pitch with sign conventions:
         right-mouse (+dx) → look-right (-yaw); up-mouse (-dy in screen
         coords) → look-up (+pitch). Pitch clamps; yaw wraps freely."""
-        if self._anim_pose is not None:
+        if self._anim_pose is not None or self._mode_pose is not None:
             return
         # A held cutscene pose (seated mode popped) is a static transform: freeze
         # mouse-look so accumulated yaw/pitch cannot snap the view when the held
@@ -4017,6 +4031,9 @@ class _BridgeCamera:
         FOV_Y_RAD * min_zoom, both over the SDK zoom time."""
         if self._anim_pose is not None:
             eye, target, up = self._anim_pose
+            return eye, target, up, self.FOV_Y_RAD * _BRIDGE_ZOOM_MAX
+        if self._mode_pose is not None:
+            eye, target, up = self._mode_pose
             return eye, target, up, self.FOV_Y_RAD * _BRIDGE_ZOOM_MAX
         held = None
         if self._held_pose is not None:
@@ -7990,6 +8007,10 @@ def _active_cutscene_camera():
     import App as _App
     from engine.core import ids as _ids
     rendered = _App.g_kSetManager.get_explicit_rendered_set()
+    if rendered is not None and _is_bridge_set(rendered):
+        # A bridge-set camera is a BRIDGE shot, not an exterior one: it is
+        # handled by _bridge_cutscene_camera() and drives the bridge camera.
+        rendered = None
     if rendered is not None:
         get_active = getattr(rendered, "GetActiveCamera", None)
         cam = get_active() if callable(get_active) else None
@@ -8011,6 +8032,55 @@ def _active_cutscene_camera():
             if _mode is not None and _mode.IsValid():
                 return (_pcam, _mode)
     return None
+
+
+def _is_bridge_set(pSet) -> bool:
+    """The same bridge test _resolve_active_set uses."""
+    from engine.appc.bridge_set import BridgeSet
+    return isinstance(pSet, BridgeSet) or pSet.GetName() == "bridge"
+
+
+def _bridge_cutscene_camera():
+    """(camera, mode) when the bridge set's active camera holds a live
+    PlacementMode, else None.
+
+    Every SDK camera action aimed at the bridge is PlacementWatch or
+    PlacementOffsetWatch (223 uses, 18 missions) and both build a
+    PlacementMode. Gating on the mode TYPE -- not on the camera or the rendered
+    set -- covers shots on a CutsceneCameraBegin camera and on the bridge
+    maincamera alike (E4M4 MissionFailDialog), and shots in cutscenes that never
+    ChangeRenderedSet("bridge") (E3M2 BerkeleyIntro), while never matching the
+    Galaxy seated GalaxyBridgeCaptain mode. Bridge placements are bridge-local
+    render coordinates (Player Cam == the maincamera == the captain eye), so the
+    pose needs no conversion. Spec 2026-10-13-bridge-cutscene-camera-design."""
+    import App as _App
+    from engine.appc.camera_modes import PlacementMode
+    bridge = _App.g_kSetManager.GetSet("bridge")
+    if bridge is None:
+        return None
+    get_active = getattr(bridge, "GetActiveCamera", None)
+    cam = get_active() if callable(get_active) else None
+    if cam is None:
+        return None
+    get_mode = getattr(cam, "GetCurrentCameraMode", None)
+    mode = get_mode() if callable(get_mode) else None
+    if isinstance(mode, PlacementMode) and mode.IsValid():
+        return (cam, mode)
+    return None
+
+
+def _sync_bridge_mode_pose(bridge_camera, dt, *, exterior_active, paused) -> None:
+    """Feed a live bridge PlacementWatch shot into the bridge camera's
+    mode-pose slot, or clear it. Paused: leave the slot alone so the shot holds.
+    An exterior cutscene camera owning the frame clears it (exterior wins)."""
+    if paused:
+        return
+    bcc = None if exterior_active else _bridge_cutscene_camera()
+    if bcc is None:
+        bridge_camera.clear_mode_pose()
+        return
+    eye, target, up = _cutscene_pose(bcc[1], dt)
+    bridge_camera.set_mode_pose(eye, target, up)
 
 
 def _cutscene_pose(mode, dt, pose_of=None):
@@ -11909,6 +11979,11 @@ def run(mission_name: Optional[str] = None,
                     view_mode.set_bridge()
                 if view_mode.is_bridge:
                     import App as _App
+                    # Bridge cutscene SHOT (PlacementWatch "bridge"): drive the
+                    # bridge camera from it -- see _bridge_cutscene_camera.
+                    _sync_bridge_mode_pose(bridge_camera, _player_dt,
+                                           exterior_active=_cc is not None,
+                                           paused=pause.sim_frozen)
                     if not pause.sim_frozen:
                         # CAMERA half only — the door half (_update_doors) is
                         # pumped view-independently above (_pump_bridge_doors).
