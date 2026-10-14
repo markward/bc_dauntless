@@ -49,6 +49,15 @@ def _far_enabled() -> bool:
         return True
 
 
+def _running_lights_enabled() -> bool:
+    """renderer.running_lights_enabled(), or True (the native default) when
+    the renderer is unavailable -- this panel is constructed in headless tests."""
+    try:
+        return bool(renderer.running_lights_enabled())
+    except Exception:
+        return True
+
+
 def _rock_specks_enabled() -> bool:
     """renderer.rock_specks_enabled(), or True (the native default) when the
     renderer is unavailable -- this panel is constructed in headless tests."""
@@ -130,6 +139,7 @@ class DeveloperOptionsPanel(Panel):
         self._minor_rocks = _minors_enabled()
         self._far_tier = _far_enabled()
         self._rock_specks = _rock_specks_enabled()
+        self._running_lights = _running_lights_enabled()
         self._rock_puffs = _rock_puffs_enabled()
         self._dial_group = dev_dial_groups.active() or "nebula"
         # Read live, never assumed off: DAUNTLESS_PROFILE_FRAMES enables the
@@ -165,6 +175,7 @@ class DeveloperOptionsPanel(Panel):
         self._minor_rocks = _minors_enabled()
         self._far_tier = _far_enabled()
         self._rock_specks = _rock_specks_enabled()
+        self._running_lights = _running_lights_enabled()
         self._rock_puffs = _rock_puffs_enabled()
         self._planet_geosphere = planet_geosphere.enabled()
         self._planet_atmosphere = planet_atmosphere.enabled()
@@ -196,7 +207,7 @@ class DeveloperOptionsPanel(Panel):
             self._bridge_pbr, self._bridge_debug_view,
             self._profiler, self._rock_catalogue, self._dial_group,
             self._minor_rocks, self._far_tier,
-            self._rock_specks, self._rock_puffs,
+            self._rock_specks, self._rock_puffs, self._running_lights,
             self._planet_geosphere, self._planet_atmosphere,
             self._planet_surface, self._surface_debug,
         )
@@ -229,6 +240,7 @@ class DeveloperOptionsPanel(Panel):
                 "minor_rocks": self._minor_rocks,
                 "far_tier": self._far_tier,
                 "rock_specks": self._rock_specks,
+                "running_lights": self._running_lights,
                 "rock_puffs": self._rock_puffs,
                 "planet_geosphere": self._planet_geosphere,
                 "planet_atmosphere": self._planet_atmosphere,
@@ -289,6 +301,10 @@ class DeveloperOptionsPanel(Panel):
             light_preview.set_systems_disabled(not self._systems_disabled)
             self._systems_damaged = light_preview.systems_damaged_active()
             self._systems_disabled = light_preview.systems_disabled_active()
+            return True
+        if action == "toggle:running_lights":
+            renderer.running_lights_set_enabled(not self._running_lights)
+            self._running_lights = not self._running_lights
             return True
         if action == "toggle:normal_maps":
             renderer.set_normal_map_enabled(not self._normal_maps)
@@ -420,6 +436,7 @@ class DeveloperOptionsPanel(Panel):
                     ("ctrl", "sensor_occlusion"), ("ctrl", "quick_repair")]
         if self._selected_tab == "lighting":
             out += [("ctrl", "systems_damaged"), ("ctrl", "systems_disabled"),
+                    ("ctrl", "running_lights"),
                     ("ctrl", "normal_maps"), ("ctrl", "normal_flip_g"),
                     ("ctrl", "normal_strength"), ("ctrl", "bridge_pbr"),
                     ("ctrl", "bridge_debug_view")]
