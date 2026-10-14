@@ -96,3 +96,45 @@ def test_bridge_cutscene_camera_none_for_invalid_placement(bridge_slot):
 def test_bridge_cutscene_camera_none_without_bridge_set(bridge_slot):
     App.g_kSetManager.DeleteSet("bridge")
     assert _bridge_cutscene_camera() is None
+
+
+from engine.host_loop import _BridgeCamera, _sync_bridge_mode_pose
+
+
+def test_sync_sets_bridge_pose_from_shot(bridge_slot):
+    _bridge_with_shot()
+    cam = _BridgeCamera()
+    _sync_bridge_mode_pose(cam, 0.0, exterior_active=False, paused=False)
+    eye, target, up, _ = cam.compute_camera()
+    assert eye == (-35.0, -142.0, 45.0)              # at ShotCam
+    # looking from ShotCam toward Shot Head (+X, +Y, +Z)
+    assert target[0] > eye[0] and target[1] > eye[1] and target[2] > eye[2]
+
+
+def test_sync_clears_when_shot_ends(bridge_slot):
+    b, cam_obj, eye, head = _bridge_with_shot()
+    cam = _BridgeCamera()
+    base = cam.compute_camera()
+    _sync_bridge_mode_pose(cam, 0.0, exterior_active=False, paused=False)
+    App.g_kSetManager.DeleteSet("bridge")            # shot gone (camera removed)
+    _sync_bridge_mode_pose(cam, 0.0, exterior_active=False, paused=False)
+    assert cam.compute_camera() == base
+
+
+def test_sync_clears_when_exterior_active(bridge_slot):
+    _bridge_with_shot()
+    cam = _BridgeCamera()
+    cam.set_mode_pose((9.0, 9.0, 9.0), (9.0, 10.0, 9.0), (0.0, 0.0, 1.0))
+    base_cam = _BridgeCamera()
+    _sync_bridge_mode_pose(cam, 0.0, exterior_active=True, paused=False)
+    assert cam.compute_camera() == base_cam.compute_camera()
+
+
+def test_sync_paused_leaves_slot_untouched(bridge_slot):
+    _bridge_with_shot()
+    cam = _BridgeCamera()
+    held = ((1.0, 1.0, 1.0), (1.0, 2.0, 1.0), (0.0, 0.0, 1.0))
+    cam.set_mode_pose(*held)
+    _sync_bridge_mode_pose(cam, 0.0, exterior_active=False, paused=True)
+    eye, target, up, _ = cam.compute_camera()
+    assert (eye, target, up) == held

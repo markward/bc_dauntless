@@ -8069,6 +8069,20 @@ def _bridge_cutscene_camera():
     return None
 
 
+def _sync_bridge_mode_pose(bridge_camera, dt, *, exterior_active, paused) -> None:
+    """Feed a live bridge PlacementWatch shot into the bridge camera's
+    mode-pose slot, or clear it. Paused: leave the slot alone so the shot holds.
+    An exterior cutscene camera owning the frame clears it (exterior wins)."""
+    if paused:
+        return
+    bcc = None if exterior_active else _bridge_cutscene_camera()
+    if bcc is None:
+        bridge_camera.clear_mode_pose()
+        return
+    eye, target, up = _cutscene_pose(bcc[1], dt)
+    bridge_camera.set_mode_pose(eye, target, up)
+
+
 def _cutscene_pose(mode, dt, pose_of=None):
     """Convert a cutscene CameraMode's Update() result — (eye, forward_dir, up)
     in world game units — into the (eye, look_at_point, up) triple the main
@@ -11965,6 +11979,11 @@ def run(mission_name: Optional[str] = None,
                     view_mode.set_bridge()
                 if view_mode.is_bridge:
                     import App as _App
+                    # Bridge cutscene SHOT (PlacementWatch "bridge"): drive the
+                    # bridge camera from it -- see _bridge_cutscene_camera.
+                    _sync_bridge_mode_pose(bridge_camera, _player_dt,
+                                           exterior_active=_cc is not None,
+                                           paused=pause.sim_frozen)
                     if not pause.sim_frozen:
                         # CAMERA half only — the door half (_update_doors) is
                         # pumped view-independently above (_pump_bridge_doors).
