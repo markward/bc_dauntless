@@ -1535,7 +1535,7 @@ def clear_hologram_ship() -> None:
     _h.clear_hologram_ship()
 
 
-# ── Cloak refraction ─────────────────────────────────────────────────────────
+# ── Running lights (docs/superpowers/specs/2026-10-14-ship-running-lights-design.md) ──
 
 def set_running_lights(iid, lights, phase: float) -> None:
     """A ship's running lights, sent once at spawn (running-lights spec §4.3).
@@ -1567,6 +1567,8 @@ def running_lights_enabled() -> bool:
 def running_light_count() -> int:
     return int(_h.running_light_count())
 
+
+# ── Cloak refraction ─────────────────────────────────────────────────────────
 
 def set_cloak_ships(ships) -> None:
     """Set the cloaking ships drawn as refractive shells this frame.

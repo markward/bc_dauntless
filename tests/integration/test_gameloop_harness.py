@@ -120,6 +120,9 @@ def test_profile_flag_produces_report(sdk_setup, monkeypatch):
     assert status == "pass"
     rows = App._stub_tracker.report()
     assert len(rows) > 0
+    # The probe's own row, not just any row: another stub reaching the
+    # report must not stand in for the plumbing this test proves.
+    assert "_ProfileProbeStub_Create" in [r[0] for r in rows]
     for name, mission_count, total_calls in rows:
         assert isinstance(name, str)
         assert isinstance(mission_count, int)
