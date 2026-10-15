@@ -108,9 +108,9 @@ struct Instance {
         // Shell-HALO brightness multiplier only (not the surface limb term
         // above): the shader's in-scatter saturates at ~0.06 against a sun
         // colour of ~1 at the lit limb, far under the lit surface, so the
-        // halo is invisible after tonemapping without this. Default 20.0
+        // halo is invisible after tonemapping without this. Default 9.0
         // matches engine.planets.atmosphere.Atmosphere's own default.
-        float     intensity = 20.0f;
+        float     intensity = 9.0f;
         // Grey Mie forward-lobe strength (sigma * mie in every channel).
         // Default 0.2 matches engine.planets.atmosphere.Atmosphere's.
         float     mie = 0.2f;

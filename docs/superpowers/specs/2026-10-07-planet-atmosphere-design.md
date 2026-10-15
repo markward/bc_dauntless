@@ -61,7 +61,7 @@ The example below shows the format only; the `Vesuvi5/Mori` override does not sh
 | `density` | haze strength multiplier | [0, 4] |
 | `limb` | surface Fresnel-limb strength | [0, 4] |
 | `sunset_color` | optional terminator tint; defaults to `color` | — |
-| `intensity` | shell-HALO brightness multiplier only (not the surface `limb` term above); optional, default **20.0 (tuned live by Mark 2026-10-07)** | [0, 50] |
+| `intensity` | shell-HALO brightness multiplier only (not the surface `limb` term above); optional, default **9.0 (tuned live by Mark 2026-10-15; was 20.0 from 2026-10-07)** | [0, 50] |
 | `mie` | grey Mie forward-lobe strength (Mie extinction = σ·`mie` in every channel, HG g = 0.76); optional, default **0.2** | [0, 4] |
 | `atmosphere` | `false` means airless; any other fields are ignored | — |
 
@@ -147,7 +147,7 @@ Instances whose model has no `sphere_map` are skipped, so the atmosphere require
    - Mie extinction `σ_m = σ·mie`, the same in every channel, sharing the density profile ρ.
    - Total extinction per channel `σ_r + σ_m`; the view and sun optical depths are RGB. `T = exp(−(τ_view_mid + τ_sun))` per channel.
    - In-scatter = `Σ ρ·σ_r·T·Δs · 3/(16π)(1+c²)  +  Σ ρ·σ_m·T·Δs · HG(0.76, c)`, `c = dot(view, sun)`. There is **no** final multiply by `color` — the hue comes from the coefficients, so a blue `color` gives a blue sunlit halo and a reddened terminator / back-lit rim.
-5. Output `in_scatter · sun_color · sun_intensity · intensity`, where `sun_color` is directional light 0's colour (§4) and `intensity` is the catalogue entry's shell-halo multiplier (default 20.0, §3.2). The raw in-scatter saturates at ~0.06 at the lit limb regardless of tier (density/thickness are optically saturated there), against a sun colour of ~1 — about a sixth of the lit surface, invisible after tonemapping — so `intensity` is the only knob that makes the halo visible; it must be applied **before** the finite/clamp guard below, as a flat multiply on the final colour. It must be finite: NaN feeds bloom and produces black squares, so the shader guards both degenerate intersections and zero-length segments.
+5. Output `in_scatter · sun_color · sun_intensity · intensity`, where `sun_color` is directional light 0's colour (§4) and `intensity` is the catalogue entry's shell-halo multiplier (default 9.0, §3.2). The raw in-scatter saturates at ~0.06 at the lit limb regardless of tier (density/thickness are optically saturated there), against a sun colour of ~1 — about a sixth of the lit surface, invisible after tonemapping — so `intensity` is the only knob that makes the halo visible; it must be applied **before** the finite/clamp guard below, as a flat multiply on the final colour. It must be finite: NaN feeds bloom and produces black squares, so the shader guards both degenerate intersections and zero-length segments.
 
 **CPU twin.** The march lives as a pure C++ function in `atmosphere_math.{h,cc}` (`renderer` library, GL-free): ray-shell segment, optical depth and in-scatter. The shader mirrors it, as `nebula_atmosphere.h` is mirrored, so tests pin the numbers.
 
