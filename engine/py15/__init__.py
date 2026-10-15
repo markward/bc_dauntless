@@ -43,7 +43,15 @@ def load_tree(path, fullname: str) -> ast.Module:
     callers with a fallback (the projectile and torpedo-ammo resolvers)
     use it."""
     try:
-        return lift_file(path)
+        tree = lift_file(path)
+        try:
+            compile(tree, str(path), "exec")
+        except (SyntaxError, ValueError, TypeError, RecursionError) as exc:
+            err = Py15Unsupported("lifted code does not compile: %s: %s"
+                                  % (type(exc).__name__, exc))
+            err.path = str(path)
+            raise err from exc
+        return tree
     except Py15Unsupported as exc:
         key = str(path)
         if key not in _reported:

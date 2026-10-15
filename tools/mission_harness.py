@@ -706,20 +706,18 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
             # No stock file of that name anywhere, but a mod may still add one
             # in a subdirectory -- this branch is the only route to it. Cannot
             # change stock behaviour: it runs only when the rglob found nothing.
-            for _key, _mf in sorted(_mods.current().files.items()):
-                if _mf.target != "sdk" or "/" not in _key:  # paths-guard: kind label
-                    continue
-                _leaf = _key.rpartition("/")[2]
-                if _leaf == fullname.lower() + ".py":
-                    _logical = _key[:-len(".py")]
-                elif _leaf == fullname.lower() + ".pyc":
-                    _logical = _key[:-len(".pyc")]
-                else:
-                    continue
-                _spec = _mod_override_spec(
-                    fullname, _logical, _stock_dotted_name(_logical, fullname))
-                if _spec is not None:
-                    return _spec
+            # Any mod's .py beats any mod's .pyc (spec 4.3), across directories.
+            for _suffix in (".py", ".pyc"):
+                for _key, _mf in sorted(_mods.current().files.items()):
+                    if _mf.target != "sdk" or "/" not in _key:  # paths-guard: kind label
+                        continue
+                    if _key.rpartition("/")[2] != fullname.lower() + _suffix:
+                        continue
+                    _logical = _key[:-len(_suffix)]
+                    _spec = _mod_override_spec(
+                        fullname, _logical, _stock_dotted_name(_logical, fullname))
+                    if _spec is not None:
+                        return _spec
         return None
 
 

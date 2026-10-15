@@ -285,3 +285,31 @@ def test_a_call_as_the_first_print_item_still_lifts():
               ("LOAD_CONST", 1), ("PRINT_ITEM",), ("PRINT_NEWLINE",)] + RET,
              consts=(None, "a"), names=("f",))
     _same(code, "print(f(), 'a')")
+
+
+def test_a_statement_with_values_pending_on_the_stack_is_refused():
+    """f() g() POP_TOP POP_TOP would lift as g(); f() -- 1.5 runs f first."""
+    code = M([("LOAD_NAME", 0), ("CALL_FUNCTION", 0), ("LOAD_NAME", 1),
+              ("CALL_FUNCTION", 0), ("POP_TOP",), ("POP_TOP",)] + RET,
+             names=("f", "g"))
+    with pytest.raises(Py15Unsupported,
+                       match="statement with values pending on the stack"):
+        lift(A.pyc(code))
+
+
+def test_a_lifted_def_spans_its_whole_body():
+    tree = lift(A.pyc(A.projectile_module()))
+    func = tree.body[1]
+    assert func.end_lineno >= func.body[-1].lineno
+
+
+def test_a_lift_that_python_3_cannot_compile_is_refused_and_named_once(
+        tmp_path, _fresh_reports, capsys):
+    path = tmp_path / "NoneStore.pyc"
+    path.write_bytes(A.pyc(M([("LOAD_CONST", 1), ("STORE_NAME", 0)] + RET,
+                             consts=(None, 1), names=("None",))))
+    with pytest.raises(Py15Unsupported, match="does not compile") as info:
+        py15.load_tree(path, "Custom.NoneStore")
+    assert info.value.path == str(path)
+    lines = [l for l in capsys.readouterr().out.splitlines() if "[sdk-loader]" in l]
+    assert len(lines) == 1

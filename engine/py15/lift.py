@@ -92,8 +92,11 @@ def _instructions(code: bytes):
 
 
 def _text(raw: bytes) -> str:
-    # The SDK loader reads source as utf-8 with errors="replace"; a string
-    # constant must come out the way the same bytes would from a .py.
+    # The SDK loader reads source as utf-8 with errors="replace"; raw high
+    # bytes in a string constant come out the way the same bytes would from a
+    # .py. Not exact for a source ESCAPE: "\xe9" parses to U+00E9 from source,
+    # but the same byte here decodes to U+FFFD. One of the two cases has to
+    # diverge; this one was chosen to match raw bytes.
     return raw.decode("utf-8", errors="replace")
 
 
@@ -130,7 +133,15 @@ class _Lifter:
     def emit(self, stmt):
         if self.print_items is not None:
             raise Py15Unsupported("statement inside a print statement")
-        self.body.append(_place(stmt, self.lineno))
+        if self.stack:
+            # Values still pending would be evaluated AFTER this statement
+            # once lifted (f() g() POP POP runs f first in 1.5, g first here).
+            raise Py15Unsupported("statement with values pending on the stack")
+        span_end = getattr(stmt, "end_lineno", None)   # a def computed its own
+        _place(stmt, self.lineno)
+        if span_end is not None:
+            stmt.end_lineno = max(span_end, self.lineno)
+        self.body.append(stmt)
 
     def pop_expr(self, opcode, offset):
         if not self.stack:
@@ -344,7 +355,8 @@ def lift(data: bytes) -> ast.Module:
         raise Py15Unsupported("not a readable Python 1.5 .pyc: %s" % exc) from exc
     try:
         body = _Lifter(code, in_function=False).run()
-    except (IndexError, KeyError, AttributeError, TypeError) as exc:
+    except (IndexError, KeyError, AttributeError, TypeError, ValueError,
+            RecursionError) as exc:
         # An operand index past its table, or a stack shape no real
         # compiler emits: corrupt or hand-made bytecode, not a new shape.
         raise Py15Unsupported("malformed bytecode: %s: %s"

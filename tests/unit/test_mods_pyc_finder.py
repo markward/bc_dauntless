@@ -183,3 +183,14 @@ def test_reload_re_lifts_the_pyc(tmp_path):
         assert importlib.reload(module).GetDamage() == 2.0
     finally:
         sys.modules.pop(name, None)
+
+
+def test_a_py_in_a_later_directory_beats_a_pyc_in_an_earlier_one(finder, tmp_path):
+    _mod_file(tmp_path, "M", "Custom/Aaa/_DauntlessCrossDir.pyc",
+              A.pyc(A.projectile_module(750.0)))
+    _mod_file(tmp_path, "M", "Custom/Bbb/_DauntlessCrossDir.py",
+              "def GetDamage():\n    return 1.0\n")
+    _index(tmp_path)
+    spec = finder.find_spec("_DauntlessCrossDir", None)
+    assert spec is not None
+    assert spec.origin.endswith(".py")
