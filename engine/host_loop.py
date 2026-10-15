@@ -1681,7 +1681,11 @@ def _part_pose_at(ship, iid, position):
     """The live pose of the articulated part a hull-attached point sits on.
 
     `position` is the point's authored rest position (body frame, ship
-    units -- the frame of the derived part boxes). Returns the part's pose
+    units -- the frame of the derived part boxes), attributed by the
+    authored-skin rule (`part_severance.part_for_surface_point`: smallest
+    box within a skin tolerance), NOT the weapon-hit rule -- a hull box
+    spans the Intrepid's nacelles, so the hit rule gave every nacelle light
+    to the hull. Returns the part's pose
     (R, t), None when the point does not move (unrigged ship, no part, a part
     at its identity pose), or `_PART_SEVERED` when its part has been shot
     off. Shared by every per-frame attached effect -- the subsystem emitter
@@ -1692,8 +1696,8 @@ def _part_pose_at(ship, iid, position):
     if not names:
         return None
     leaf = articulation.leaf_for(ship)
-    from engine.appc.part_severance import part_for_point, is_detached
-    name = part_for_point(leaf, tuple(position), iid)
+    from engine.appc.part_severance import part_for_surface_point, is_detached
+    name = part_for_surface_point(leaf, tuple(position), iid)
     if name is None:
         return None
     if is_detached(ship, name):

@@ -351,3 +351,76 @@ def test_teardown_and_removal_drop_the_articulation_record():
     sess.ship_running_light_specs[9] = ((), ())
     sess.teardown(_R())
     assert sess.ship_running_light_specs == {}
+
+
+# ── Intrepid-shaped rig: nacelle lights authored ON the skin ─────────────────
+# Boxes measured from LCintrepid.nif (node transforms applied, ship units).
+# The hull box spans the full saucer width, so it CONTAINS every nacelle light;
+# the dorsal nacelle light sits 0.0003 above the nacelle box's top face and the
+# ventral one on its bottom face. "Inside exactly one box" attribution handed
+# both to the hull, so they never moved when the nacelles folded for warp.
+
+_INTREPID_BOXES = {
+    "hull": ((-0.663, -1.71, -0.326), (0.663, 1.71, 0.326)),
+    "wing left": ((-0.724, -1.556, -0.217), (-0.331, -0.585, -0.0700)),
+    "wing right": ((0.331, -1.556, -0.217), (0.724, -0.585, -0.0700)),
+}
+_PORT_DORSAL_NACELLE = (-0.631987, -1.417070, -0.069732)
+_PORT_VENTRAL_NACELLE = (-0.630074, -1.416740, -0.217036)
+_AFT_HULL_LIGHT = (-0.146119, -1.638580, -0.114352)
+
+
+def _intrepid_rig():
+    from engine.appc import part_pose
+    from engine.appc.articulated_part import ArticulatedPartProperty
+    rig = []
+    for name, x, angle in (("wing left", -0.323, 40.0), ("wing right", 0.323, -40.0)):
+        p = ArticulatedPartProperty(name)
+        anchor = (x, -1.2446, -0.1434)
+        p.SetAnchor(*anchor)
+        p.SetStatePose("warp", *part_pose.pose_to6(
+            part_pose.hinge_pose(anchor, (0.0, 1.0, 0.0), angle)))
+        rig.append(p)
+    return tuple(rig)
+
+
+@pytest.fixture
+def intrepid_leaf(monkeypatch):
+    from engine.appc import articulated_part, articulation
+    monkeypatch.setitem(articulated_part._BY_LEAF, "intrepidfixture", _intrepid_rig())
+    monkeypatch.setitem(articulation._derived_boxes, "intrepidfixture", _INTREPID_BOXES)
+    return "intrepidfixture"
+
+
+def test_nacelle_lights_on_the_skin_fold_with_the_nacelle(intrepid_leaf):
+    from engine.appc import articulation, part_pose
+    r = _FakeRenderer()
+    ship = _RiggedShip([_PORT_DORSAL_NACELLE, _PORT_VENTRAL_NACELLE, _AFT_HULL_LIGHT])
+    ship._articulation_leaf = intrepid_leaf
+    s = _Session({ship: 21})
+    host_loop._register_running_lights(r, s, ship, 21)
+    part = articulation.parts_for_ship(ship)[0]
+    warp = articulation.target_pose(part, "warp")
+    articulation.force_part_pose(ship, "wing left", warp)
+    host_loop._push_running_lights(r, s)
+    dorsal, ventral, aft = _sent_positions(r, 21)
+    assert dorsal == pytest.approx(part_pose.apply(warp, _PORT_DORSAL_NACELLE))
+    assert ventral == pytest.approx(part_pose.apply(warp, _PORT_VENTRAL_NACELLE))
+    assert aft == pytest.approx(_AFT_HULL_LIGHT)          # hull light stays put
+
+
+def test_surface_attribution_prefers_the_smallest_containing_box(intrepid_leaf):
+    from engine.appc.part_severance import part_for_surface_point
+    assert part_for_surface_point(intrepid_leaf, _PORT_DORSAL_NACELLE) == "wing left"
+    assert part_for_surface_point(intrepid_leaf, _PORT_VENTRAL_NACELLE) == "wing left"
+    assert part_for_surface_point(intrepid_leaf, _AFT_HULL_LIGHT) == "hull"
+    assert part_for_surface_point(intrepid_leaf, (0.0, 0.0, 5.0)) is None
+
+
+def test_hit_attribution_is_unchanged_for_the_same_points(intrepid_leaf):
+    """Weapon-hit attribution keeps its own rule (inside exactly one box wins;
+    a point just off the nacelle's skin is the hull's); only authored skin
+    points use the smallest-box rule."""
+    from engine.appc.part_severance import part_for_point
+    assert part_for_point(intrepid_leaf, _PORT_VENTRAL_NACELLE) == "hull"
+    assert part_for_point(intrepid_leaf, _PORT_DORSAL_NACELLE) == "hull"

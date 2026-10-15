@@ -110,6 +110,39 @@ def part_for_point(leaf, point, iid=None):
     return None
 
 
+# How far outside a part's box an AUTHORED skin point may sit and still belong
+# to it, in ship units (one model unit, ~1.75 m). Lights are authored on the
+# mesh surface, i.e. on or a hair outside the box faces -- the LC Intrepid's
+# dorsal nacelle light is 0.0003 above its nacelle box.
+SURFACE_TOLERANCE = 0.01
+
+
+def part_for_surface_point(leaf, point, iid=None,
+                           tolerance=SURFACE_TOLERANCE):
+    """Which part an AUTHORED point on the model's skin -- a running light,
+    a subsystem emitter light -- belongs to, or None. SHIP units, rest pose.
+
+    The smallest box that contains the point to within `tolerance` wins.
+    `part_for_point`'s rule (inside exactly one box) is right for weapon hits
+    but wrong here: a hull box routinely spans a sub-part (the Intrepid's
+    saucer is as wide as its nacelle span), so every nacelle light is inside
+    the hull box and on the nacelle box's skin, and that rule gave all of
+    them to the hull -- they stayed put while the nacelles folded for warp.
+    A sub-part's box is always smaller than the body box that encloses it.
+    Ties (equal volume) go to the first name in sort order, deterministically.
+    """
+    boxes = articulation.part_boxes_for(leaf, iid)
+    best = None
+    for name, box in sorted(boxes.items()):
+        if _distance_to_box(point, box) > tolerance:
+            continue
+        lo, hi = box
+        volume = ((hi[0] - lo[0]) * (hi[1] - lo[1]) * (hi[2] - lo[2]))
+        if best is None or volume < best[0]:
+            best = (volume, name)
+    return best[1] if best is not None else None
+
+
 def part_for_live_point(ship, point, iid=None):
     """Which part a body-frame point in SHIP UNITS belongs to IN THE SHIP'S
     LIVE POSE, or None. The posed-space twin of `part_for_point`.
