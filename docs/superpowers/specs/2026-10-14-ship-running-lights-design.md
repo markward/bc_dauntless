@@ -120,6 +120,15 @@ hull.
 
 ### 4.3 Host loop (`engine/host_loop.py`, `engine/renderer.py` façade)
 
+- **Articulated parts (added 2026-10-15, after the LC Intrepid's warp-folding
+  nacelles left their lights behind):** native caches positions at send time
+  and places them only through the hull's matrix, so each light is carried by
+  the part it sits on in Python, by the subsystem emitter lights' rule
+  (`host_loop._part_pose_at`: attributed from the authored position, live pose,
+  severance). Lights are sent articulated at spawn and re-sent from
+  `_push_running_lights` whenever the articulated positions change
+  (`session.ship_running_light_specs` keeps the rest specs and the last list
+  sent); a light on a severed part is dropped.
 - **Spawn:** next to every `_build_ship_emitter_cache` site
   (`host_loop.py:1414, 6481, 7669`), call
   `renderer.set_running_lights(iid, specs, phase)` when `lights_for` is
