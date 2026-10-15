@@ -1,8 +1,8 @@
 # Loading `.pyc`-only mod modules: design
 
-**Status:** approach (b) approved by Mark 2026-10-15, scoped to **Phase 1: loading mod scripts only** (§0). Nothing is implemented.
+**Status:** approach (b) approved by Mark 2026-10-15, scoped to **Phase 1: loading mod scripts only** (§0). Phase 1 is implemented on branch `feat/pyc-only-mod-modules`, not yet live-verified; Phase 2 is not started.
 **Date:** 2026-10-15
-**Branch:** `docs/pyc-mod-loading-spec` (worktree `.claude/worktrees/pyc-mod-loading`, based on local `main` at `a9a1897f`)
+**Branch:** `feat/pyc-only-mod-modules` (worktree `.claude/worktrees/pyc-mod-loading`, based on local `main` at `a9a1897f`)
 **Supersedes, once built:** the photon substitution as the *normal* outcome for the LC Intrepid's torpedoes. It stays as the fallback for bytecode this design cannot load. See `weapon_subsystems._resolve_projectile_module` and branch `fix/torp-ammo-fallback-script` (`be914a7b`, not merged).
 
 ---
@@ -211,7 +211,7 @@ A mod `.pyc` therefore beats the stock SDK `.py` of the same module. That matche
 
 ### 4.6 Python 1.5 semantics we inherit, on purpose
 
-A lifted module runs under Python 3 exactly as its source would through our pipeline, including that pipeline's known departures from 1.5. The main one is `BINARY_DIVIDE` on two ints, which floors in 1.5 but is true division in Python 3. Neither `_fix_py2_syntax` nor any AST transform corrects it for SDK source today. Fixing it for `.pyc` alone would make a module behave differently depending on whether its author shipped source. If it is ever fixed, it gets fixed once, as a transform both paths share. Both Intrepid modules divide floats only.
+A lifted module runs under Python 3 exactly as its source would through our pipeline, including that pipeline's known departures from 1.5. The main one is `BINARY_DIVIDE` on two ints, which floors in 1.5 but is true division in Python 3. Neither `_fix_py2_syntax` nor any AST transform corrects it for SDK source today. Fixing it for `.pyc` alone would make a module behave differently depending on whether its author shipped source. If it is ever fixed, it gets fixed once, as a transform both paths share. Both Intrepid modules divide floats only. Dict-literal evaluation order also differs (1.5 evaluates the value before the key; Python 3.8+ evaluates the key first), and both load paths inherit it.
 
 ---
 
