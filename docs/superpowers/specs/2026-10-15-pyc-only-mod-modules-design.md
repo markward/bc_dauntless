@@ -1,9 +1,31 @@
 # Loading `.pyc`-only mod modules: design
 
-**Status:** design, awaiting Mark's review. Nothing is implemented.
+**Status:** approach (b) approved by Mark 2026-10-15, scoped to **Phase 1: loading mod scripts only** (§0). Nothing is implemented.
 **Date:** 2026-10-15
 **Branch:** `docs/pyc-mod-loading-spec` (worktree `.claude/worktrees/pyc-mod-loading`, based on local `main` at `a9a1897f`)
 **Supersedes, once built:** the photon substitution as the *normal* outcome for the LC Intrepid's torpedoes. It stays as the fallback for bytecode this design cannot load. See `weapon_subsystems._resolve_projectile_module` and branch `fix/torp-ammo-fallback-script` (`be914a7b`, not merged).
+
+---
+
+## 0. Phases
+
+Mark, 2026-10-15: *"lets do B focused only on loading mod scripts for phase 1"*.
+
+**Phase 1: load mod `.pyc`-only scripts.** This is the work the implementation plan covers:
+
+- `engine/py15/` (§4.1): the unmarshal reader, opcode table and lifter for the straight-line subset (§4.2).
+- The finder and loader wiring in **both** twins, for **mod-provided files only** (§4.3), plus the extended twin-parity test.
+- Failure handling (§4.4): `Py15Unsupported`, the one-time production `[sdk-loader]` log line, and the projectile/ammo photon fallback (docstrings only).
+- Tests T1–T5 (§7).
+
+**Later phases, not in the Phase 1 plan:**
+
+- Phase 2: the mod boot-report line (§4.5) and the q20 BC differential probe plus its digest test (§7, T6).
+- Unscheduled: control-flow recovery and `.pyc`-only Foundation plugins (§9).
+
+"Mod scripts only" means the lifter is reached **only** through `_mod_override_spec` and the mod-index branches of the finder. Stock content keeps loading from SDK `.py` source, and the retail install's 1201 stock `.pyc` are used only as the T1/T2 test oracle, never as a load path.
+
+Decisions D1–D3 (§8) take their recommended options unless Mark overrides them.
 
 ---
 
