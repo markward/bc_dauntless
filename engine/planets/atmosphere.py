@@ -119,7 +119,7 @@ class Atmosphere:
     # ~0.06 at the lit limb against a sun colour of ~1, far under the lit
     # surface -- this covers the gap. Last field so existing positional
     # 5-arg construction stays compatible.
-    intensity: float = 20.0
+    intensity: float = 9.0
     # Grey Mie forward-lobe strength (extinction sigma * mie in every
     # channel, HG g = 0.76). After `intensity` so positional 5- and 6-arg
     # construction stays compatible.
@@ -219,7 +219,7 @@ def parse_entry(key: str, entry: dict):
         raise ValueError(f"missing required field(s) {sorted(missing)}")
     color = srgb_hex_to_linear(entry["color"])
     sunset = srgb_hex_to_linear(entry["sunset_color"]) if "sunset_color" in entry else color
-    intensity = _num(entry, "intensity", 0.0, 50.0) if "intensity" in entry else 20.0
+    intensity = _num(entry, "intensity", 0.0, 50.0) if "intensity" in entry else 9.0
     mie = _num(entry, "mie", 0.0, 4.0) if "mie" in entry else 0.2
     return Atmosphere(
         color=color, sunset_color=sunset,

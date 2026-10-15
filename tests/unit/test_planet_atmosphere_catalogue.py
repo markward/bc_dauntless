@@ -90,9 +90,9 @@ def test_malformed_entry_warns_once_and_is_none(tmp_path, monkeypatch, capsys, b
     assert err.count("pinkgasplanet") == 1
 
 
-def test_parse_entry_default_intensity_is_twenty():
+def test_parse_entry_default_intensity_is_nine():
     a = atmo.parse_entry("k", GAS)
-    assert a.intensity == pytest.approx(20.0)
+    assert a.intensity == pytest.approx(9.0)
 
 
 def test_parse_entry_explicit_intensity_is_parsed():
@@ -113,7 +113,7 @@ def test_parse_entry_explicit_mie_is_parsed():
 
 def test_atmosphere_positional_construction_stays_compatible():
     five = atmo.Atmosphere((1.0, 0.5, 0.25), (0.9, 0.4, 0.2), 0.06, 1.4, 1.0)
-    assert five.intensity == pytest.approx(20.0) and five.mie == pytest.approx(0.2)
+    assert five.intensity == pytest.approx(9.0) and five.mie == pytest.approx(0.2)
     six = atmo.Atmosphere((1.0, 0.5, 0.25), (0.9, 0.4, 0.2), 0.06, 1.4, 1.0, 12.0)
     assert six.intensity == pytest.approx(12.0) and six.mie == pytest.approx(0.2)
 
