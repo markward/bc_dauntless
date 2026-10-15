@@ -625,6 +625,29 @@ def parts_for_ship(ship) -> tuple:
 # report referenced above.
 _derived_boxes: dict = {}
 
+# leaf -> loaded MODEL handle, recorded the first time any caller hands
+# `part_boxes_for` a real render instance of that leaf (ship realize does, via
+# hull_bounds). The model -- not the instance -- is what
+# `part_severance.part_for_mount` queries, so the answer survives the
+# instance that supplied it and serves callers that have no iid (mounts).
+_leaf_models: dict = {}
+
+
+def _remember_leaf_model(leaf, iid) -> None:
+    from engine import host_io
+    try:
+        handle = host_io.instance_model(iid)
+    except Exception:  # noqa: BLE001 - a fake/stale iid must not raise
+        return
+    if handle:
+        _leaf_models[leaf] = handle
+
+
+def leaf_model(leaf):
+    """The loaded model handle for `leaf`, or None before any instance of it
+    has been realized (or headless)."""
+    return _leaf_models.get(str(leaf).lower()) if leaf else None
+
 
 def part_boxes_for(leaf, iid=None):
     """Per-part AABBs (ship units) for a hardpoint leaf, derived from the
@@ -644,6 +667,8 @@ def part_boxes_for(leaf, iid=None):
     if not leaf:
         return {}
     leaf = str(leaf).lower()
+    if iid is not None and leaf not in _leaf_models:
+        _remember_leaf_model(leaf, iid)
     cached = _derived_boxes.get(leaf)
     if cached is not None:
         return cached
@@ -730,11 +755,11 @@ def _live_part(ship, name, point):
     if not names:
         return None
 
-    from engine.appc.part_severance import part_for_point, is_detached
+    from engine.appc.part_severance import part_for_mount, is_detached
     if name is None:
         if point is None:
             return None
-        name = part_for_point(leaf_for(ship), point)
+        name = part_for_mount(leaf_for(ship), point)
     if name is None:
         return None
     if is_detached(ship, name):

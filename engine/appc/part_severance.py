@@ -110,6 +110,52 @@ def part_for_point(leaf, point, iid=None):
     return None
 
 
+# (leaf, rounded point) -> part name, for answers the MODEL gave. Rest
+# geometry never changes, so an answer holds for the process lifetime.
+_mount_parts: dict = {}
+
+
+def part_for_mount(leaf, point, iid=None):
+    """Which part an AUTHORED point is on -- a hardpoint mount, an emitter
+    light, a running light -- or None. Body frame, SHIP units, rest pose.
+
+    THE one rule for that question: `articulation.part_transform_point`
+    (where a mount is drawn and fires from), `_destroy_subsystems_on_part`
+    (what a severed part takes with it) and `host_loop._part_pose_at` (both
+    kinds of light) all call it, so a weapon, its glowing light and its fate
+    when the part is shot off can never disagree.
+
+    It asks the model's geometry: the part whose rest-pose triangles are
+    nearest (`host_io.model_nearest_part`). `part_for_point`'s box rule
+    cannot answer it -- on the LC Intrepid the hull's box spans both
+    nacelles and a nacelle's box covers the hull-mounted ventral aft
+    phasers. Weapon HITS keep the box rule (`part_for_point` /
+    `part_for_live_point`): a hit point is arbitrary, not authored.
+
+    Falls back to `part_for_point` until a model is known for `leaf`
+    (headless, or before any instance of it has been realized) and when the
+    model gives no answer; fallbacks are not cached.
+    """
+    if not leaf:
+        return None
+    leaf = str(leaf).lower()
+    point = (float(point[0]), float(point[1]), float(point[2]))
+    key = (leaf, tuple(round(v, 6) for v in point))
+    cached = _mount_parts.get(key)
+    if cached is not None:
+        return cached
+    if iid is not None:
+        articulation.part_boxes_for(leaf, iid)   # records the leaf's model
+    model = articulation.leaf_model(leaf)
+    if model:
+        from engine import host_io
+        name = host_io.model_nearest_part(model, point)
+        if name:
+            _mount_parts[key] = name
+            return name
+    return part_for_point(leaf, point, iid)
+
+
 def part_for_live_point(ship, point, iid=None):
     """Which part a body-frame point in SHIP UNITS belongs to IN THE SHIP'S
     LIVE POSE, or None. The posed-space twin of `part_for_point`.
@@ -453,7 +499,7 @@ def _destroy_subsystems_on_part(ship, part_name, iid=None) -> list:
             point = (pos.GetX(), pos.GetY(), pos.GetZ())
         except Exception:  # noqa: BLE001 - not a mounted subsystem
             continue
-        if part_for_point(leaf, point, iid) != part_name:
+        if part_for_mount(leaf, point, iid) != part_name:
             continue
         try:
             sub.SetCondition(0.0)

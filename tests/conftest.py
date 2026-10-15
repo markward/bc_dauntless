@@ -1607,6 +1607,16 @@ def _reset_leakable_engine_globals():
     # snapshot above: this dict is process-lifetime and never reset by
     # production code (the geometry never changes), so this only ever does
     # real work once.
+    # Authored-point part answers (part_severance.part_for_mount) and the
+    # leaf -> model handles they query: both process-lifetime caches, so a
+    # test's fake geometry would otherwise answer for every later test.
+    try:
+        from engine.appc import articulation as _articulation_models
+        from engine.appc import part_severance as _part_severance_mod
+        _articulation_models._leaf_models.clear()
+        _part_severance_mod._mount_parts.clear()
+    except Exception:
+        pass
     try:
         from engine.appc import articulation as _articulation_mod
         if "birdofprey" not in _articulation_mod._derived_boxes:

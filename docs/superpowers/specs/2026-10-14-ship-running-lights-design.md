@@ -123,9 +123,13 @@ hull.
 - **Articulated parts (added 2026-10-15, after the LC Intrepid's warp-folding
   nacelles left their lights behind):** native caches positions at send time
   and places them only through the hull's matrix, so each light is carried by
-  the part it sits on in Python, by the subsystem emitter lights' rule
-  (`host_loop._part_pose_at`: attributed from the authored position, live pose,
-  severance). Lights are sent articulated at spawn and re-sent from
+  the part it sits on in Python (`host_loop._part_pose_at`: live pose,
+  severance), attributed by `part_severance.part_for_mount` -- the ONE rule
+  for "which part is this authored point on", shared with hardpoint mounts
+  (`articulation.part_transform_point`) and severance. It asks the model's
+  geometry (`model_nearest_part`: nearest rest-pose triangles); the box rule
+  failed on the LC Intrepid, whose hull box spans its nacelles and whose
+  nacelle box covers its hull-mounted aft phasers. Weapon hits keep boxes. Lights are sent articulated at spawn and re-sent from
   `_push_running_lights` whenever the articulated positions change
   (`session.ship_running_light_specs` keeps the rest specs and the last list
   sent); a light on a severed part is dropped.
