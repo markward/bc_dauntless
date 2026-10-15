@@ -728,16 +728,56 @@ def _poll_skip_dialogue(host, input_map) -> None:
     _skip_dialogue_prev = down
 
 
+def _articulated_running_lights(ship, iid, specs) -> tuple:
+    """The 9-tuples to send for `specs` (rest positions), each light carried
+    by the articulated part it sits on and dropped if that part was severed
+    -- the subsystem emitter lights' rule (`_part_pose_at`)."""
+    from engine.appc import part_pose
+    out = []
+    for s in specs:
+        t = s.as_tuple()
+        pose = _part_pose_at(ship, iid, s.pos)
+        if pose is _PART_SEVERED:
+            continue
+        if pose is not None:
+            t = part_pose.apply(pose, s.pos) + t[3:]
+        out.append(t)
+    return tuple(out)
+
+
 def _register_running_lights(r, session, ship, iid) -> None:
-    """Send a ship's BlinkingLightProperty running lights to native once, at
-    spawn (running-lights spec §4.3). Unlit ships send nothing."""
+    """Send a ship's BlinkingLightProperty running lights to native at spawn
+    (running-lights spec §4.3). Unlit ships send nothing. The rest specs and
+    the sent list are kept so `_push_running_lights` can re-send when an
+    articulated part moves."""
     from engine.appc import running_lights
     specs = running_lights.lights_for(ship)
     if not specs:
         return
     phase = running_lights.phase_for(ship)
     session.ship_running_lights[iid] = phase
-    r.set_running_lights(iid, [s.as_tuple() for s in specs], phase)
+    sent = _articulated_running_lights(ship, iid, specs)
+    session.ship_running_light_specs[iid] = (tuple(specs), sent)
+    r.set_running_lights(iid, list(sent), phase)
+
+
+def _resend_articulated_running_lights(r, session, ship, iid, phase) -> None:
+    """Re-send `ship`'s lights when an articulated part has moved them since
+    the last send. Native caches positions at send time and places them only
+    through the hull's own matrix, so a part's pose reaches the lights ONLY
+    through here. Unrigged ships cost one rig lookup."""
+    record = session.ship_running_light_specs.get(iid)
+    if record is None:
+        return
+    from engine.appc import articulation
+    if not articulation.posed_part_names(ship):
+        return
+    specs, last = record
+    sent = _articulated_running_lights(ship, iid, specs)
+    if sent == last:
+        return
+    session.ship_running_light_specs[iid] = (specs, sent)
+    r.set_running_lights(iid, list(sent), phase)
 
 
 def _push_running_lights(r, session, hidden_iids=()) -> None:
@@ -768,6 +808,10 @@ def _push_running_lights(r, session, hidden_iids=()) -> None:
         if ship is None or iid in hidden:
             levels.append((iid, 0.0))
             continue
+        try:
+            _resend_articulated_running_lights(r, session, ship, iid, phase)
+        except Exception as _e:
+            dev_mode.log_swallowed("running light articulation", _e)
         frac = 0.0
         get_cloak = getattr(ship, "GetCloakingSubsystem", None)
         cloak = get_cloak() if get_cloak is not None else None
@@ -1630,6 +1674,39 @@ def _build_explosion_light_render_data():
     return out
 
 
+_PART_SEVERED = object()
+
+
+def _part_pose_at(ship, iid, position):
+    """The live pose of the articulated part a hull-attached point sits on.
+
+    `position` is the point's authored rest position (body frame, ship
+    units -- the frame of the derived part boxes). Returns the part's pose
+    (R, t), None when the point does not move (unrigged ship, no part, a part
+    at its identity pose), or `_PART_SEVERED` when its part has been shot
+    off. Shared by every per-frame attached effect -- the subsystem emitter
+    lights and the running lights -- so they follow exactly the pose
+    `_sync_ship_articulation` pushes to the renderer this frame."""
+    from engine.appc import articulation
+    names = articulation.posed_part_names(ship)
+    if not names:
+        return None
+    leaf = articulation.leaf_for(ship)
+    from engine.appc.part_severance import part_for_point, is_detached
+    name = part_for_point(leaf, tuple(position), iid)
+    if name is None:
+        return None
+    if is_detached(ship, name):
+        return _PART_SEVERED
+    if name not in names:
+        return None
+    from engine.appc import part_pose
+    pose = articulation.pose_for_part(ship, name)
+    if part_pose.is_identity(pose):
+        return None
+    return pose
+
+
 def _articulate_emitter_light(ship, iid, spec, d):
     """Carry body-frame light dict `d` with the articulated part it sits on,
     or return None when that part has been severed.
@@ -1650,23 +1727,12 @@ def _articulate_emitter_light(ship, iid, spec, d):
     Identity -- the same dict, untouched -- for an unrigged ship, a light on
     no part, or a part at its identity pose.
     """
-    from engine.appc import articulation
-    names = articulation.posed_part_names(ship)
-    if not names:
-        return d
-    leaf = articulation.leaf_for(ship)
-    from engine.appc.part_severance import part_for_point, is_detached
-    name = part_for_point(leaf, tuple(spec["position"]), iid)
-    if name is None:
-        return d
-    if is_detached(ship, name):
+    pose = _part_pose_at(ship, iid, spec["position"])
+    if pose is _PART_SEVERED:
         return None
-    if name not in names:
+    if pose is None:
         return d
     from engine.appc import part_pose
-    pose = articulation.pose_for_part(ship, name)
-    if part_pose.is_identity(pose):
-        return d
     for key in ("position", "position_b"):
         if key in d:
             d[key] = part_pose.apply(pose, d[key])
@@ -6269,6 +6335,9 @@ class MissionSession:
     # Running lights registered at spawn: render InstanceId -> blink phase (s).
     # Fed per frame by _push_running_lights (running-lights spec §4.3).
     ship_running_lights: dict[object, float] = field(default_factory=dict)
+    # Running lights' rest specs + the list last sent, per render InstanceId,
+    # so a moving articulated part re-sends them (_resend_articulated_running_lights).
+    ship_running_light_specs: dict[object, tuple] = field(default_factory=dict)
     ship_emitters: dict[object, list] = field(default_factory=dict)  # keyed by the renderer InstanceId (not int): the value is passed straight through as each light's instance_id
     planet_instances: dict[Any, int] = field(default_factory=dict)
     # Per-planet natural_scale = GetRadius() / NIF_extent, cached at load.
@@ -6326,6 +6395,7 @@ class MissionSession:
         self.ship_glow_controllers.clear()
         self.ship_emitters.clear()
         self.ship_running_lights.clear()
+        self.ship_running_light_specs.clear()
         self.ship_articulation.clear()
         self.scope_hidden.clear()
         self.warp_hidden_iids.clear()
@@ -6620,6 +6690,7 @@ def teardown_set_objects(session, pSet, renderer) -> None:
             # recycled iid must not inherit a destroyed hull's lights.
             session.ship_emitters.pop(iid, None)
             session.ship_running_lights.pop(iid, None)
+            session.ship_running_light_specs.pop(iid, None)
             # The transform-slot binding died with the instance; drop the
             # re-bind guard so a re-realized object binds afresh.
             session.slot_bindings.pop(ship, None)
@@ -6858,6 +6929,7 @@ def _reconcile_runtime_instances(session, renderer, *,
                 session.ship_articulation.pop(iid, None)
                 session.ship_emitters.pop(iid, None)
                 session.ship_running_lights.pop(iid, None)
+                session.ship_running_light_specs.pop(iid, None)
                 session.scope_hidden.discard(iid)
                 # The transform-slot binding died with the instance.
                 session.slot_bindings.pop(ship, None)

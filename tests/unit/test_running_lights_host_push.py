@@ -14,8 +14,10 @@ class _FakeRenderer:
         self.lights = {}
         self.levels = None
         self.dials = None
+        self.calls = []
     def set_running_lights(self, iid, lights, phase):
         self.lights[iid] = (list(lights), phase)
+        self.calls.append(iid)
     def set_running_light_levels(self, levels):
         self.levels = list(levels)
     def set_running_light_dials(self, size_gu_per_radius, min_px, intensity):
@@ -43,6 +45,7 @@ class _Session:
     def __init__(self, mapping):
         self.ship_instances = dict(mapping)
         self.ship_running_lights = {}
+        self.ship_running_light_specs = {}
         self.scope_hidden = set()
 
 
@@ -248,3 +251,103 @@ def test_run_feeds_both_hull_hides_to_the_running_light_push():
     assert push >= 0, "run() must pass the bridge-view hide to the push"
     assert 0 <= bridge < push
     assert 0 <= warp < push
+
+
+# ── Articulated parts (lights ride the part they sit on) ──────────────────────
+# The conftest seeds a frozen Bird of Prey rig ("left wing", "left wing01") and
+# its per-part boxes under leaf "birdofprey"; a ship double opts in by setting
+# `_articulation_leaf`, exactly as the part-articulation suite does.
+
+_WING_LIGHT = (-0.6, 0.0, -0.2)      # inside the "left wing" box only
+_BODY_LIGHT = (0.0, 0.0, 0.0)        # inside the hull-body box only
+
+
+class _RiggedShip(_Ship):
+    def __init__(self, positions, name="IKS Rigged"):
+        super().__init__(n_lights=0, name=name)
+        for i, pos in enumerate(positions):
+            p = App.BlinkingLightProperty_Create("R%d" % i)
+            pt = TGPoint3(); pt.SetXYZ(*pos)
+            p.SetPosition(pt)
+            self._pset.AddToSet("Scene Root", p)
+        self._articulation_leaf = "birdofprey"
+
+
+def _wing_pose():
+    from engine.appc import part_pose
+    return part_pose.hinge_pose((-0.16, 0.0, 0.05), (0.0, 1.0, 0.0), 45.0)
+
+
+def _sent_positions(r, iid):
+    return [tuple(l[:3]) for l in r.lights[iid][0]]
+
+
+def test_light_on_a_posed_part_is_sent_at_the_posed_position():
+    from engine.appc import articulation, part_pose
+    r = _FakeRenderer()
+    ship = _RiggedShip([_WING_LIGHT, _BODY_LIGHT])
+    s = _Session({ship: 11})
+    host_loop._register_running_lights(r, s, ship, 11)
+    articulation.force_part_pose(ship, "left wing", _wing_pose())
+    host_loop._push_running_lights(r, s)
+    wing, body = _sent_positions(r, 11)
+    assert wing == pytest.approx(part_pose.apply(_wing_pose(), _WING_LIGHT))
+    assert wing != pytest.approx(_WING_LIGHT)
+    assert body == pytest.approx(_BODY_LIGHT)
+
+
+def test_a_pose_change_resends_once_and_a_steady_pose_sends_nothing():
+    from engine.appc import articulation
+    r = _FakeRenderer()
+    ship = _RiggedShip([_WING_LIGHT])
+    s = _Session({ship: 12})
+    host_loop._register_running_lights(r, s, ship, 12)
+    host_loop._push_running_lights(r, s)          # rest pose: matches spawn send
+    assert r.calls == [12]
+    articulation.force_part_pose(ship, "left wing", _wing_pose())
+    host_loop._push_running_lights(r, s)
+    assert r.calls == [12, 12]
+    host_loop._push_running_lights(r, s)          # pose unchanged
+    assert r.calls == [12, 12]
+
+
+def test_a_part_already_posed_at_spawn_is_sent_posed():
+    from engine.appc import articulation, part_pose
+    r = _FakeRenderer()
+    ship = _RiggedShip([_WING_LIGHT])
+    articulation.force_part_pose(ship, "left wing", _wing_pose())
+    s = _Session({ship: 13})
+    host_loop._register_running_lights(r, s, ship, 13)
+    assert _sent_positions(r, 13)[0] == pytest.approx(
+        part_pose.apply(_wing_pose(), _WING_LIGHT))
+
+
+def test_lights_on_a_severed_part_are_dropped():
+    from engine.appc import part_severance
+    r = _FakeRenderer()
+    ship = _RiggedShip([_WING_LIGHT, _BODY_LIGHT])
+    s = _Session({ship: 14})
+    host_loop._register_running_lights(r, s, ship, 14)
+    part_severance.detached_parts(ship).add("left wing")
+    host_loop._push_running_lights(r, s)
+    assert _sent_positions(r, 14) == [pytest.approx(_BODY_LIGHT)]
+
+
+def test_unrigged_ship_is_never_resent():
+    r = _FakeRenderer()
+    ship = _Ship(n_lights=2)
+    s = _Session({ship: 15})
+    host_loop._register_running_lights(r, s, ship, 15)
+    for _ in range(3):
+        host_loop._push_running_lights(r, s)
+    assert r.calls == [15]
+
+
+def test_teardown_and_removal_drop_the_articulation_record():
+    class _R:
+        def destroy_instance(self, iid):
+            pass
+    sess = host_loop.MissionSession(mission_name="t")
+    sess.ship_running_light_specs[9] = ((), ())
+    sess.teardown(_R())
+    assert sess.ship_running_light_specs == {}

@@ -350,6 +350,7 @@ def test_realize_set_objects_registers_a_ships_running_lights(monkeypatch):
     assert [c[0] for c in r.running_lights] == [iid]
     assert len(r.running_lights[0][1]) == 1
     assert iid in sess.ship_running_lights
+    assert iid in sess.ship_running_light_specs
 
 
 def test_realize_session_registers_a_ships_running_lights(monkeypatch):
@@ -370,6 +371,7 @@ def test_realize_session_registers_a_ships_running_lights(monkeypatch):
     iid = sess.ship_instances[ship]
     assert [c[0] for c in controller.renderer.running_lights] == [iid]
     assert iid in sess.ship_running_lights
+    assert iid in sess.ship_running_light_specs
 
 
 def test_teardown_set_objects_forgets_running_lights_and_emitters(monkeypatch):
@@ -388,8 +390,10 @@ def test_teardown_set_objects_forgets_running_lights_and_emitters(monkeypatch):
     iid = sess.ship_instances[ship]
     sess.ship_emitters[iid] = ["premise: an emitter cache entry"]
     assert iid in sess.ship_running_lights
+    assert iid in sess.ship_running_light_specs
 
     hl.teardown_set_objects(sess, s, r)
 
     assert iid not in sess.ship_running_lights
+    assert iid not in sess.ship_running_light_specs
     assert iid not in sess.ship_emitters
