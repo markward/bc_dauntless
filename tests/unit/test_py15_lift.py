@@ -248,3 +248,40 @@ def test_load_tree_names_an_unloadable_file_exactly_once(tmp_path, _fresh_report
     assert len(lines) == 1
     assert "Tactical.Projectiles.Jumpy" in lines[0]
     assert "JUMP_FORWARD" in lines[0]
+
+
+def test_a_global_import_is_refused_not_lifted_as_a_local():
+    """`global X; import X` in a def: STORE_GLOBAL of an import must not
+    drop the global declaration (that would bind X as a local)."""
+    body = [("IMPORT_NAME", 0), ("STORE_GLOBAL", 1)] + RET
+    code = _def(F("f", body, consts=(None,), names=("X", "X")))
+    with pytest.raises(Py15Unsupported, match="global import or def"):
+        lift(A.pyc(code))
+
+
+def test_a_print_item_evaluated_after_output_began_is_refused():
+    """1.5 prints 'a' before f() runs; a flushed print(*items) would not."""
+    code = M([("LOAD_CONST", 1), ("PRINT_ITEM",), ("LOAD_NAME", 0),
+              ("CALL_FUNCTION", 0), ("PRINT_ITEM",), ("PRINT_NEWLINE",)] + RET,
+             consts=(None, "a"), names=("f",))
+    with pytest.raises(Py15Unsupported,
+                       match="print item evaluated after output began"):
+        lift(A.pyc(code))
+
+
+def test_a_statement_inside_a_print_statement_is_refused():
+    """A trailing-comma print must not carry its pending items past foo()."""
+    code = M([("LOAD_CONST", 1), ("PRINT_ITEM",), ("LOAD_NAME", 0),
+              ("CALL_FUNCTION", 0), ("POP_TOP",), ("LOAD_CONST", 2),
+              ("PRINT_ITEM",), ("PRINT_NEWLINE",)] + RET,
+             consts=(None, "a", "b"), names=("foo",))
+    with pytest.raises(Py15Unsupported,
+                       match="statement inside a print statement"):
+        lift(A.pyc(code))
+
+
+def test_a_call_as_the_first_print_item_still_lifts():
+    code = M([("LOAD_NAME", 0), ("CALL_FUNCTION", 0), ("PRINT_ITEM",),
+              ("LOAD_CONST", 1), ("PRINT_ITEM",), ("PRINT_NEWLINE",)] + RET,
+             consts=(None, "a"), names=("f",))
+    _same(code, "print(f(), 'a')")

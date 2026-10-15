@@ -128,6 +128,8 @@ class _Lifter:
 
     # -- helpers ---------------------------------------------------------
     def emit(self, stmt):
+        if self.print_items is not None:
+            raise Py15Unsupported("statement inside a print statement")
         self.body.append(_place(stmt, self.lineno))
 
     def pop_expr(self, opcode, offset):
@@ -141,6 +143,10 @@ class _Lifter:
 
     def store(self, name, is_global, opcode, offset):
         value = self.stack.pop()
+        if is_global and isinstance(value, (_Import, _Function)):
+            # `global X; import X` would lift as a plain import, which binds
+            # X locally; the global declaration cannot be kept in this shape.
+            raise Py15Unsupported("global import or def", opcode, offset)
         if isinstance(value, _Import):
             if value.name.split(".")[0] != name:
                 raise Py15Unsupported("import alias", opcode, offset)
@@ -304,13 +310,18 @@ class _Lifter:
                 defaults = [self.pop_expr(name, offset) for _ in range(arg)][::-1]
                 self.stack.append(_Function(code.code, defaults))
             elif name == "PRINT_ITEM":
+                item = self.pop_expr(name, offset)
                 if self.print_items is None:
                     self.print_items = []
-                self.print_items.append(self.pop_expr(name, offset))
+                elif not isinstance(item, (ast.Constant, ast.Name)):
+                    # 1.5 writes the earlier items before this one runs.
+                    raise Py15Unsupported("print item evaluated after output began",
+                                          name, offset)
+                self.print_items.append(item)
             elif name == "PRINT_NEWLINE":
+                items, self.print_items = self.print_items or [], None
                 self.emit(ast.Expr(ast.Call(ast.Name("print", ast.Load()),
-                                            self.print_items or [], [])))
-                self.print_items = None
+                                            items, [])))
             else:
                 raise Py15Unsupported("unsupported opcode", name, offset)
         if self.stack:
