@@ -18,7 +18,7 @@ from engine.appc.events import (
     ET_FRIENDLY_FIRE_DAMAGE, ET_FRIENDLY_FIRE_REPORT, ET_FRIENDLY_FIRE_GAME_OVER,
     ObjectExplodingEvent, ObjectExplodingEvent_Create,
     WaypointEvent, WaypointEvent_Create,
-    TGEventHandlerObject, TGEventManager,
+    TGEventHandlerObject, TGEventHandlerObject_Cast, TGEventManager,
     TGPythonInstanceWrapper,
     ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL,
 )
