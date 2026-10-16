@@ -946,10 +946,13 @@ def _reset_leakable_engine_globals():
     # The projectile-module cache memoises import FAILURES, so one test
     # firing a tube with an unimportable script would otherwise decide every
     # later test's torpedoes for that script name.
+    # Same for the once-only [weapons] announcements: one test's missing
+    # module would otherwise silence the line for every later test.
     try:
         from engine.appc.weapon_subsystems import (
-            _reset_projectile_module_cache)
+            _announced, _reset_projectile_module_cache)
         _reset_projectile_module_cache()
+        _announced.clear()
     except Exception:
         pass
     # Part-articulation dev override: a forced wing deflection set by one test
