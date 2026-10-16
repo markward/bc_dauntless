@@ -328,10 +328,18 @@ def test_windows_console_streams_are_rewrapped_and_restored(tmp_path):
 def test_no_console_still_writes_the_log(tmp_path):
     """A GUI-subsystem exe has no std handles. That disables only the
     console mirror; fds 1/2 still go to the log. (Closed std fds also make
-    os.open hand out fd 1 or 2, which must not be clobbered.)"""
+    os.open hand out fd 1 or 2, which must not be clobbered.)
+
+    sys.stdout/sys.stderr are None there, so print(), the
+    report_write_failure line and an uncaught exception's traceback would
+    all be dropped by Python before reaching any fd. The tee installs text
+    streams on fds 1/2 for its lifetime and puts None back at stop(); the
+    checks after stop run in an atexit handler registered BEFORE start(),
+    so it runs after the tee's own atexit stop."""
     log = tmp_path / "logs" / "dauntless.log"
     proc = _run("""
-        import threading
+        import atexit, threading
+        from engine import paths
         sys.stdout = sys.stderr = None
         os.close(1)
         os.close(2)
@@ -341,19 +349,29 @@ def test_no_console_still_writes_the_log(tmp_path):
             except OSError:
                 return True
             return False
+        def after_stop():
+            ok = (not log_tee.is_active() and closed(1) and closed(2)
+                  and sys.stdout is None and sys.stderr is None)
+            os._exit(0 if ok else 8)
+        atexit.register(after_stop)
         ok = log_tee.start(LOG) is True and log_tee.is_active()
         ok = ok and log_tee._state.log_fd > 2      # not handed fd 1 or 2
         ok = ok and not [t for t in threading.enumerate()
                          if t.name == "dauntless-log-follower"]
+        if not ok:
+            os._exit(7)
         os.write(1, b"gui-out\\n")
         os.write(2, b"gui-err\\n")
-        log_tee.stop()
-        ok = ok and not log_tee.is_active() and closed(1) and closed(2)
-        os._exit(0 if ok else 7)
+        print("gui-print \\u00e9")
+        paths.report_write_failure("/no/such/gui-target", OSError(13, "denied"))
+        raise RuntimeError("gui-uncaught")
     """, log, tmp_path)
-    assert proc.returncode == 0
-    text = log.read_text()
+    assert proc.returncode == 0, proc.returncode
+    text = log.read_text(encoding="utf-8")
     assert "gui-out" in text and "gui-err" in text
+    assert "gui-print \u00e9" in text
+    assert "[dauntless] could not write /no/such/gui-target" in text
+    assert "RuntimeError: gui-uncaught" in text
 
 
 def test_closed_stdout_keeps_the_mirror_and_the_log(tmp_path):

@@ -9,7 +9,10 @@ output never passes through Python: C++ `fprintf(stderr)`, CEF's console
 Mechanism (Ruling 8): fds 1 and 2 are dup2'd onto the log FILE itself,
 opened for append. Every writer -- Python, C++, CEF, inherited children --
 writes straight into the kernel file, so no writer ever waits on a reader,
-and the log is complete even when the process dies without stopping it.
+and what reached an fd survives the process dying without stopping it.
+That covers stderr (unbuffered), but not C/C++ stdout text still sitting
+in a stdio buffer at a hard crash: with fd 1 a file, C stdout is fully
+buffered, so its last lines can be lost.
 A daemon "follower" thread reads what is appended through its own read
 handle and copies it to a saved duplicate of the original stderr. The
 follower is best effort: while C++ holds the GIL it can't run, so the
@@ -30,8 +33,10 @@ go to the log.
 
 Windows console: sys.stdout/sys.stderr sit on _WindowsConsoleIO, which
 calls WriteConsoleW on the fd's handle -- a file after the redirect, where it
-fails. Those streams are swapped for plain UTF-8 text streams on the same
-fd while the tee runs, and put back by stop().
+fails. No console: sys.stdout/sys.stderr are None, and Python drops print(),
+warnings and uncaught-exception tracebacks before they reach any fd. In both
+cases the stream is replaced by a plain UTF-8, line-buffered text stream on
+the same fd while the tee runs, and put back (None included) by stop().
 
 The follower uses only os.read/os.write. It never touches sys.stdout or
 sys.stderr, which now point at the log, so it cannot feed back into it.
@@ -141,20 +146,24 @@ def _console_io_types() -> tuple:
     return (windows_console_io,) if windows_console_io is not None else ()
 
 
-def _rewrap_console_streams(tee: _Tee) -> None:
+def _install_text_streams(tee: _Tee) -> None:
+    """Point sys.stdout/sys.stderr at plain UTF-8 text streams on fds 1/2
+    where the current stream can't reach the log: a Windows console stream
+    (it writes to the console handle, not the fd), or None (a GUI-subsystem
+    exe, or the fd closed at launch -- Python then drops print(), warnings
+    and uncaught-exception tracebacks before they reach any fd)."""
     types = _console_io_types()
-    if not types:
-        return
     for fd, name in _STREAM_NAMES.items():
         stream = getattr(sys, name, None)
-        raw = getattr(getattr(stream, "buffer", None), "raw", None)
-        if raw is None or not isinstance(raw, types):
-            continue
+        if stream is not None:
+            raw = getattr(getattr(stream, "buffer", None), "raw", None)
+            if not types or raw is None or not isinstance(raw, types):
+                continue
         replacement = open(fd, "w", encoding="utf-8",
                            errors="backslashreplace", buffering=1,
                            closefd=False)
         setattr(sys, name, replacement)
-        tee.swapped[name] = stream
+        tee.swapped[name] = stream      # None is put back as None
 
 
 def _restore_console_streams(tee: _Tee) -> None:
@@ -296,7 +305,7 @@ def start(path: Path) -> bool:
             for fd in _STREAM_FDS:
                 os.dup2(log_fd, fd)
                 tee.redirected.add(fd)
-            _rewrap_console_streams(tee)
+            _install_text_streams(tee)
             if console is not None:
                 follower = threading.Thread(
                     target=_follow, args=(tee, console),
