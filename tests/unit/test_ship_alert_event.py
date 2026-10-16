@@ -115,3 +115,22 @@ def test_other_events_to_a_ship_leave_the_alert_alone():
     App.g_kEventManager.AddEvent(evt)
 
     assert ship.GetAlertLevel() == ShipClass.GREEN_ALERT
+
+
+def test_one_xo_click_plays_the_klaxon_exactly_once(monkeypatch):
+    """XOMenuHandlers plays the klaxon; the ship's step must not add one."""
+    from engine.audio.tg_sound import TGSoundManager
+    played = []
+    monkeypatch.setattr(TGSoundManager.instance(), "PlaySound",
+                        lambda name, *a, **k: played.append(name))
+    _green_player()
+    menu = App.STMenu_CreateW("Commander")
+    menu.AddPythonFuncHandlerForInstance(App.ET_SET_ALERT_LEVEL,
+                                         "Bridge.XOMenuHandlers.SetAlertLevel")
+    button = BridgeUtils.CreateBridgeMenuButton(
+        "Red Alert", App.ET_SET_ALERT_LEVEL,
+        App.CharacterClass.EST_ALERT_RED, menu)
+
+    button.SendActivationEvent()
+
+    assert played == ["RedAlertSound"]

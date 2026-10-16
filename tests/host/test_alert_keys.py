@@ -1,12 +1,36 @@
-"""Shift+1/2/3 → SetAlertLevel(GREEN/YELLOW/RED) on the player ship.
+"""Shift+1/2/3 → GREEN/YELLOW/RED alert on the player ship.
 
 Mirrors BC's DefaultKeyboardBinding (WC_EXCLAMATION/WC_AT_SIGN/
-WC_NUMBER_SIGN → ET_SET_ALERT_LEVEL). The shift modifier disambiguates
-from the impulse-throttle keys (KEY_1..9), which share digit codes —
-holding Shift while pressing a digit must NOT bump the throttle.
+WC_NUMBER_SIGN → ET_SET_ALERT_LEVEL with EST_ALERT_*), which
+BridgeHandlers.SetAlertLevel forwards to the XO's menu — so the XO speaks,
+the SDK plays the klaxon, and XOMenuHandlers posts the level to the ship.
+With no bridge XO handling it, the key sets the level directly. The shift
+modifier disambiguates from the impulse-throttle keys (KEY_1..9), which
+share digit codes — holding Shift while pressing a digit must NOT bump the
+throttle.
 """
+import App
+import pytest
+import Bridge.XOMenuHandlers  # noqa: F401 -- handler lookup reads sys.modules
+from engine.appc.sets import SetClass
 from engine.appc.ships import ShipClass
+from engine.core.game import Game, _set_current_game
 from engine.host_loop import _PlayerControl, _apply_alert_keys
+
+
+@pytest.fixture(autouse=True)
+def _no_bridge_set():
+    """g_kSetManager is not reset between tests: park any leaked "bridge"
+    set so the no-XO cases really have no XO, and restore it after."""
+    mgr = App.g_kSetManager
+    saved = mgr.GetSet("bridge")
+    if saved is not None:
+        mgr.DeleteSet("bridge")
+    yield
+    if mgr.GetSet("bridge") is not None:
+        mgr.DeleteSet("bridge")
+    if saved is not None:
+        mgr.AddSet(saved, "bridge")
 
 
 class _FakeKeys:
@@ -139,3 +163,82 @@ def test_plain_digit_still_bumps_throttle():
     reader.pressed_once.add(reader.keys.KEY_5)
     pc.apply(ship, dt=1.0/60, h=reader)
     assert pc.impulse_level == 5
+
+
+_XO_SAW = []
+
+
+def _record_xo_alert(pMenu, pEvent):
+    _XO_SAW.append(pEvent.GetInt())
+    pMenu.CallNextHandler(pEvent)
+
+
+def _bridge_xo_and_player():
+    """A bridge set whose XO holds a menu wired like XOMenuHandlers.CreateMenus
+    (plus a recorder, newest, standing in for XOCharacterHandlers), and the
+    current game's player."""
+    menu = App.STTopLevelMenu_CreateW("Commander")
+    menu.AddPythonFuncHandlerForInstance(App.ET_SET_ALERT_LEVEL,
+                                         "Bridge.XOMenuHandlers.SetAlertLevel")
+    menu.AddPythonFuncHandlerForInstance(App.ET_SET_ALERT_LEVEL,
+                                         __name__ + "._record_xo_alert")
+    xo = App.CharacterClass_Create("b.nif", "h.nif")
+    xo.SetMenu(menu)
+    bridge = SetClass()
+    bridge.AddObjectToSet(xo, "XO")
+    App.g_kSetManager.AddSet(bridge, "bridge")
+
+    player = _FakeShip()
+    game = Game()
+    game.SetPlayer(player)
+    _set_current_game(game)
+    player.SetAlertLevel(ShipClass.GREEN_ALERT)
+    return player
+
+
+def test_shift_plus_3_goes_through_the_xo_menu():
+    """BC's binding: the XO's menu gets EST_ALERT_RED (her line, the SDK's
+    klaxon), and XOMenuHandlers' post to the ship sets the level."""
+    _XO_SAW.clear()
+    player = _bridge_xo_and_player()
+    reader = _FakeKeyReader()
+    reader.held.add(reader.keys.KEY_LEFT_SHIFT)
+    reader.pressed_once.add(reader.keys.KEY_3)
+
+    _apply_alert_keys(reader, player)
+
+    assert _XO_SAW == [App.CharacterClass.EST_ALERT_RED]
+    assert player.GetAlertLevel() == ShipClass.RED_ALERT
+
+
+def test_shift_plus_1_through_the_xo_menu_sets_green():
+    _XO_SAW.clear()
+    player = _bridge_xo_and_player()
+    player.SetAlertLevel(ShipClass.RED_ALERT)
+    reader = _FakeKeyReader()
+    reader.held.add(reader.keys.KEY_LEFT_SHIFT)
+    reader.pressed_once.add(reader.keys.KEY_1)
+
+    _apply_alert_keys(reader, player)
+
+    assert _XO_SAW == [App.CharacterClass.EST_ALERT_GREEN]
+    assert player.GetAlertLevel() == ShipClass.GREEN_ALERT
+
+
+def test_an_xo_menu_with_no_alert_handler_falls_back_to_direct():
+    """A bare XO menu (no XOMenuHandlers) would swallow the event; the key
+    must still change the alert."""
+    xo = App.CharacterClass_Create("b.nif", "h.nif")
+    xo.SetMenu(App.STTopLevelMenu_CreateW("Commander"))
+    bridge = SetClass()
+    bridge.AddObjectToSet(xo, "XO")
+    App.g_kSetManager.AddSet(bridge, "bridge")
+    ship = _FakeShip()
+    ship.SetAlertLevel(ShipClass.GREEN_ALERT)
+    reader = _FakeKeyReader()
+    reader.held.add(reader.keys.KEY_LEFT_SHIFT)
+    reader.pressed_once.add(reader.keys.KEY_3)
+
+    _apply_alert_keys(reader, ship)
+
+    assert ship.GetAlertLevel() == ShipClass.RED_ALERT
