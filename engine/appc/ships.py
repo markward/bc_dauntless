@@ -956,6 +956,29 @@ class ShipClass(DamageableObject):
     # BridgeHandlers.py:1442 (bridge crew behavior keys off this).
     def GetAlertLevel(self) -> int:                     return self._alert_level
 
+    def ProcessEvent(self, event) -> None:
+        """Script handlers first, then the ship's own ET_SET_ALERT_LEVEL step.
+
+        In BC the ship's native handler applied ET_SET_ALERT_LEVEL; every SDK
+        path that changes the player's alert ends by posting it here
+        (Bridge/XOMenuHandlers.SetAlertLevel, MissionLib.RedAlert,
+        QuickBattle). Without this step the event was dropped: the XO spoke
+        her line and the alert never changed.
+
+        The step runs as the OLDEST handler -- only when the instance chain
+        passes, so a script handler that returns without CallNextHandler
+        cancels it, like every BC default. No sound here: the SDK scripts play
+        the klaxon themselves before posting.
+        """
+        import App
+        if event.GetEventType() != App.ET_SET_ALERT_LEVEL:
+            super().ProcessEvent(event)
+            return
+        event._chain_passed = True          # no handlers = passes
+        super().ProcessEvent(event)
+        if event._chain_passed is True:
+            self.SetAlertLevel(event.GetInt())
+
     def SetAlertLevel(self, v) -> None:
         """Apply the alert-level → power policy for weapons and shields.
 
@@ -969,9 +992,9 @@ class ShipClass(DamageableObject):
         green — stbc-oracle bible §5.3 S5 measured the same 9.2–9.5/s at
         red, yellow and green.
 
-        In stock BC these side-effects flow through the XO menu after
-        BridgeHandlers.SetAlertLevel; we collapse that layer until the
-        bridge menu system is wired.
+        The SDK's player-alert paths (the XO's buttons, MissionLib.RedAlert,
+        QuickBattle) do not call this: they post ET_SET_ALERT_LEVEL to the
+        ship, which ProcessEvent below turns into this call.
         """
         self._alert_level = int(v)
         weapons_on = (self._alert_level == ShipClass.RED_ALERT)
