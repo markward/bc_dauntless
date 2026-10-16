@@ -965,6 +965,7 @@ g_kMusicManager = MusicManager()
 g_kTGActionManager = TGActionManager()
 g_kModelPropertyManager = TGModelPropertyManager()
 g_kLODModelManager = LODModelManager()
+from engine.appc.texture_anim import g_kTextureAnimManager  # noqa: E402 (spec 2026-10-16 §7.5)
 g_kLocalizationManager = TGLocalizationManager()
 g_kConfigMapping = TGConfigMapping()
 # VarManager shares the event-type allocator with Game_GetNextEventType so

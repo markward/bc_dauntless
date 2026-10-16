@@ -1800,6 +1800,13 @@ def _reset_leakable_engine_globals():
         _atmo_req.clear_requested()
     except Exception:
         pass
+    try:
+        from engine import sprites as _sprites
+        _sprites.reset()
+        from engine.appc import texture_anim as _texture_anim
+        _texture_anim.reset()
+    except Exception:
+        pass
 
 
 def bop_fixture_rig():

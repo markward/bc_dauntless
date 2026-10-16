@@ -10,22 +10,13 @@ import random as _random
 
 import engine.dev_mode as dev_mode
 
-# Known sprite-sheet textures, by lowercase basename -> (cols, rows).
-# BC's stock explosion sheets are 256x256 with an 8x8 grid: 8 animation
-# frames across, 8 explosion variants down (B is the greyscale twin of A).
-# CreateTarget applies these automatically; SetTextureCells can override.
-_KNOWN_SHEET_TEXTURES = {
-    "explosiona.tga": (8, 8),
-    "explosionb.tga": (8, 8),
-}
+from engine import sprites as _sprites
+from engine.appc import texture_anim as _texture_anim
 
-# Per-texture brightness boost, by lowercase basename. Applied to the color
-# keys at descriptor time so it covers every emitter using the texture (SDK
-# Effects factories and our own) without editing the gitignored SDK tree.
-# ExplosionA reads too dim against the HDR pipeline (tune-by-eye).
-_TEXTURE_BRIGHTNESS = {
-    "explosiona.tga": 2.0,
-}
+# The stock sheets' grid (8x8; B is the greyscale twin of A) and ExplosionA's
+# brightness boost now live in native/assets/sprites/manifest.json
+# (stock_explosion_a/b); CreateTarget applies them via engine.sprites.
+# SetTextureCells can still override.
 
 
 class AnimTSParticleController:
@@ -57,6 +48,16 @@ class AnimTSParticleController:
         # (frame from age, row from a per-particle hash).
         self._atlas_cols = 1
         self._atlas_rows = 1
+        # Sprite library (spec 2026-10-16 §7). Defaults reproduce today's
+        # behaviour exactly; only a library-resolved path changes them.
+        self._library_kind = "sprite"   # "sprite" | "native" | "none"
+        self._native = None
+        self._playback = 0
+        self._fps = 0.0
+        self._size_scale = 1.0
+        self._pivot = (0.0, 0.0)
+        self._orient = 0
+        self._roll_rate = 0.0
         # Stable per-emitter hash seed. The renderer derives ALL per-particle
         # randomness (jitter, birth offset, variant row) from this, NOT from
         # the emitter's world position — a moving emitter must not re-roll
@@ -79,16 +80,30 @@ class AnimTSParticleController:
     def SetInheritsVelocity(self, on): self._inherit = 1.0 if on else 0.0
     def SetDrawOldToNew(self, on):     self._draw_old_to_new = 1 if on else 0
     def CreateTarget(self, path):
+        """Bind the target texture. A path the sprite library knows (spec
+        2026-10-16 §7: legacy alias, or a stock sheet) applies its entry; a
+        path declared through g_kTextureAnimManager gets its grid; anything
+        else is used as-is, as before."""
         self._texture_path = path
-        # Auto-detect known sprite-sheet textures so every SDK Effects
-        # caller (weapon-hit explosions, smoke, plumes) animates frames
-        # instead of billboarding the whole 8x8 grid. SDK scripts never
-        # declare the grid — the original engine knew it natively.
-        base = str(path).replace("\\", "/").rsplit("/", 1)[-1].lower()
-        cells = _KNOWN_SHEET_TEXTURES.get(base)
-        if cells is not None:
-            self._atlas_cols, self._atlas_rows = cells
-        self._brightness = _TEXTURE_BRIGHTNESS.get(base, 1.0)
+        ref = _sprites.resolve(path)
+        if ref is None:
+            grid = _texture_anim.grid_for(path)
+            if grid is not None:
+                self._atlas_cols, self._atlas_rows = grid
+            self._brightness = 1.0
+            return
+        self._library_kind = ref.kind
+        self._native = ref.native
+        if ref.kind != "sprite":
+            return
+        self._texture_path = ref.texture_path
+        self._atlas_cols, self._atlas_rows = ref.cols, ref.rows
+        self._brightness = ref.brightness
+        self._playback = _sprites.PLAYBACK_CODES.get(ref.playback, 0)
+        self._fps = ref.fps
+        self._size_scale = ref.scale
+        self._pivot = ref.pivot
+        self._orient = _sprites.ORIENT_CODES.get(ref.orient, 0)
     def SetTextureCells(self, cols, rows):
         """Declare the target texture as a `cols` x `rows` sprite sheet:
         `cols` animation frames per variant, `rows` variants. Default 1x1

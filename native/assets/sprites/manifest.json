@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "sprites": {
+    "stock_explosion_a": {"stock": "data/Textures/Effects/ExplosionA.tga", "match_stock": true, "grid": [8, 8], "playback": "life_columns", "brightness": 2.0},
+    "stock_explosion_b": {"stock": "data/Textures/Effects/ExplosionB.tga", "match_stock": true, "grid": [8, 8], "playback": "life_columns"},
+    "stock_explode_sharp": {"stock": "data/explodeSharp.tga"},
+    "stock_round": {"stock": "data/round.tga"},
+    "stock_smooth": {"stock": "data/smooth.tga"},
+    "stock_rough": {"stock": "data/rough.tga"},
+    "stock_sun_flares_white": {"stock": "data/Textures/Effects/SunFlaresWhite.tga", "grid": [8, 8], "playback": "life_columns"},
+    "stock_starstreak": {"stock": "data/Textures/starstreak.tga"},
+    "stock_spacedust": {"stock": "data/Textures/spacedust.tga"},
+    "stock_warpflash": {"stock": "data/Textures/warpflash3.tga"},
+
+    "fireball": {"file": "fireball.png", "grid": [8, 4], "playback": "life_sequence", "fallback": "stock_explosion_a"},
+    "fireball_hot": {"fallback": "stock_explosion_b"},
+    "fire_jet": {"file": "fire_jet.png", "grid": [8, 4], "playback": "life_sequence", "pivot": [0.0, -1.0], "orient": "emit_dir", "fallback": "stock_explosion_a"},
+    "glint_burst": {"file": "glint_burst.png", "grid": [4, 4], "playback": "life_sequence", "scale": 0.6, "fallback": "stock_explode_sharp"},
+    "glint": {"fallback": "stock_round"},
+    "spark": {"fallback": "stock_smooth"},
+    "plasma_puff": {"fallback": "stock_sun_flares_white"},
+    "debris_chunk": {"file": "debris_chunk.png", "grid": [6, 4], "playback": "loop", "fps": 8.0, "fallback": "stock_rough"},
+    "shock_ring": {"kind": "native", "native": {"effect": "shockwave", "radius_scale": 1.0}},
+    "shock_sphere": {"file": "shock_sphere.png", "grid": [8, 4], "playback": "life_sequence", "fallback": "stock_explode_sharp"},
+    "nova_flare": {"kind": "none"},
+    "star_streak": {"fallback": "stock_starstreak"},
+    "space_dust": {"fallback": "stock_spacedust"},
+    "warp_flash": {"fallback": "stock_warpflash"},
+    "none": {"kind": "none"}
+  }
+}
