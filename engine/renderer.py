@@ -93,7 +93,7 @@ _REQUIRED_BINDINGS = frozenset({
     "minors_drain_contacts", "minors_stats", "minors_clear",
     "far_set_catalogue", "far_set_rocks", "far_set_sources",
     "far_set_frame", "far_set_dials", "far_set_enabled", "far_enabled",
-    "far_stats", "far_clear",
+    "far_stats", "far_clear", "far_prefetch_atlases", "far_pump_atlas_uploads",
     "rock_specks_set_enabled", "rock_specks_enabled",
     "rock_puffs_set_enabled", "rock_puffs_enabled",
     "rockfield_drain_contacts", "rockfield_set_shield_inflate",
@@ -735,6 +735,18 @@ def far_clear() -> None:
     """Drop sources, flagged rocks, frame and the near band's cells and
     contacts (keeps the catalogue)."""
     _h.far_clear()
+
+
+def far_prefetch_atlases() -> None:
+    """Start decoding every impostor atlas not yet loaded, on worker threads
+    (warp-tunnel preload). No GL work; a no-op before the far pass exists."""
+    _h.far_prefetch_atlases()
+
+
+def far_pump_atlas_uploads(max_uploads: int) -> int:
+    """Upload at most `max_uploads` prefetched atlases whose decode finished
+    (never waits on one) and return how many are still pending."""
+    return _h.far_pump_atlas_uploads(int(max_uploads))
 
 
 def rockfield_drain_contacts() -> list:

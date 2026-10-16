@@ -5408,6 +5408,21 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "{'speck_cells'} now, {'band_specks', 'puffs'} submitted, and "
           "{'impostors', 'specks' (far + minor), "
           "'draw_calls'} summed over the cameras the last frame drew.");
+    m.def("far_prefetch_atlases",
+          []() {
+              if (g_far_pass) g_far_pass->prefetch_atlases();
+          },
+          "Start decoding (worker threads) every impostor atlas the far pass "
+          "has not loaded, failed or already started. No GL work; a no-op "
+          "with no far pass.");
+    m.def("far_pump_atlas_uploads",
+          [](int max_uploads) {
+              return g_far_pass ? g_far_pass->pump_atlas_uploads(max_uploads) : 0;
+          },
+          py::arg("max_uploads"),
+          "Upload at most `max_uploads` prefetched atlases whose decode has "
+          "finished (never waits) and return how many are still pending; 0 "
+          "with no far pass.");
     m.def("far_clear",
           []() {
               far_zero_fades(g_far_flagged_keys);

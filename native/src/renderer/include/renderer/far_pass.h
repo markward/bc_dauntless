@@ -7,8 +7,10 @@
 // premultiplied, area-weighted screen quads through Pipeline::speck_shader().
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <future>
 #include <map>
 #include <set>
 #include <string>
@@ -103,25 +105,50 @@ public:
     void reset_counts() { draw_calls_ = 0; }
     bool atlas_loaded(int index) const { return atlases_.count(index) != 0; }
     // Whether catalogue rock `index` can draw an impostor: loads its atlas now
-    // if needed (GL must be current). False for a missing/corrupt file or no
+    // if needed (GL must be current; a prefetched one is waited on, not
+    // decoded again). False for a missing/corrupt file or no
     // path -- the host then tells FarField the rock has no impostor.
     bool has_atlas(int index) { return atlas_for(index) != nullptr; }
+
+    // Warp-tunnel preload: start decoding + dilating (CPU) every atlas in the
+    // path list that is not loaded, failed or already pending, each on its
+    // own worker thread (std::async). No GL; nothing is installed yet. A rock
+    // with an empty path (no impostor) is skipped. set_atlas_paths and the
+    // destructor join and drop any decode still pending.
+    void prefetch_atlases();
+    // Upload (GL must be current) up to `max_uploads` prefetched atlases whose
+    // decode has FINISHED -- never waits on a worker -- and return how many
+    // are still pending. A decode that threw becomes a remembered failure
+    // (as a lazy load's would) and costs no budget.
+    int pump_atlas_uploads(int max_uploads);
+    // TEST-ONLY: block until every pending decode has finished (installs nothing).
+    void debug_wait_atlas_decodes();
+    // TEST-ONLY: atlas image files decoded so far (two per atlas), lazily or
+    // by a worker -- pins that a pending atlas is never decoded twice.
+    int debug_decode_count() const { return decodes_.load(); }
 
     // TEST-ONLY: inject an atlas instead of loading files.
     void debug_set_atlas(int index, const assets::Image& albedo, const assets::Image& normal);
 
 private:
     struct AtlasGpu { assets::Texture albedo, normal; };
+    struct AtlasCpu { assets::Image albedo, normal; };   // decoded AND dilated
     const AtlasGpu* atlas_for(int index);   // lazy load; nullptr = none
     void draw_impostors(const std::vector<far::ImpostorBin>& bins, const scenegraph::Camera& cam,
                         Pipeline& pipeline, const Lighting& lighting, float ambient_scale,
                         float rim_strength, bool blended);
     void install_atlas(int index, assets::Image albedo, assets::Image normal);
+    void install_dilated(int index, const AtlasCpu& atlas);   // upload only
+    // Wait for `index`'s pending decode and install it (or remember the
+    // failure); erases the pending entry. True when installed.
+    bool finish_pending(int index);
     void ensure_geometry();
 
     std::vector<std::pair<std::string, std::string>> paths_;
     std::map<int, AtlasGpu> atlases_;
     std::set<int> failed_;                  // warned once; never retried
+    std::atomic<int> decodes_{0};           // bumped by workers: declared before pending_
+    std::map<int, std::future<AtlasCpu>> pending_;   // prefetched, not yet installed
     std::uint32_t vao_ = 0;
     std::uint32_t corner_vbo_ = 0;
     std::uint32_t instance_vbo_ = 0;

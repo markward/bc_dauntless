@@ -46,17 +46,28 @@
 #include <scenegraph/camera.h>
 #include <scenegraph/world.h>
 
+// skinned_bridge_test.cc defines STB_IMAGE_WRITE_IMPLEMENTATION in this
+// binary; include the same header copy so the declarations match it.
+#include "../../third_party/glfw/deps/stb_image_write.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 
 #include "support/content_root.h"
 
@@ -1167,4 +1178,177 @@ TEST_F(FarPassGLTest, BlendedImpostorKeepsTheNanDebugCauseCode) {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     const float centre_alpha = px[(static_cast<std::size_t>(kH / 2) * kW + kW / 2) * 4 + 3];
     EXPECT_GE(centre_alpha, 1.5f) << "the cause code was overwritten by the fade alpha";
+}
+
+// ---- Atlases decoded off the main thread (warp-tunnel preload, task 5) ----
+//
+// prefetch_atlases() decodes + dilates every unloaded atlas on worker threads;
+// pump_atlas_uploads(n) uploads at most n READY ones (GL) and returns how many
+// are still pending; atlas_for waits on a pending decode instead of decoding
+// again. The atlases are small PNGs written here, one directory per process.
+
+namespace {
+
+namespace fs = std::filesystem;
+
+inline int current_pid() {
+#ifdef _WIN32
+    return _getpid();
+#else
+    return static_cast<int>(::getpid());
+#endif
+}
+
+class FarPassPrefetchTest : public FarPassGLTest {
+protected:
+    fs::path dir;
+
+    void SetUp() override {
+        FarPassGLTest::SetUp();
+        if (IsSkipped()) return;
+        dir = fs::temp_directory_path() /
+              ("far_pass_prefetch_" + std::to_string(current_pid()));
+        fs::create_directories(dir);
+    }
+
+    void TearDown() override {
+        std::error_code ec;
+        if (!dir.empty()) fs::remove_all(dir, ec);
+        FarPassGLTest::TearDown();
+    }
+
+    // A 16x16 RGBA PNG: the left half covered in `shade`, the right half
+    // transparent (so dilation has something to do).
+    std::string write_png(const std::string& name, std::uint8_t shade) {
+        constexpr int kSide = 16;
+        std::vector<std::uint8_t> px(static_cast<std::size_t>(kSide) * kSide * 4, 0);
+        for (int y = 0; y < kSide; ++y)
+            for (int x = 0; x < kSide / 2; ++x) {
+                std::uint8_t* d = &px[(static_cast<std::size_t>(y) * kSide + x) * 4];
+                d[0] = shade; d[1] = shade; d[2] = shade; d[3] = 255;
+            }
+        const fs::path path = dir / name;
+        EXPECT_NE(stbi_write_png(path.string().c_str(), kSide, kSide, 4, px.data(), kSide * 4), 0);
+        return path.string();
+    }
+
+    std::vector<std::pair<std::string, std::string>> atlas_paths(int n) {
+        std::vector<std::pair<std::string, std::string>> out;
+        for (int i = 0; i < n; ++i)
+            out.emplace_back(write_png("a" + std::to_string(i) + ".png", 100),
+                             write_png("n" + std::to_string(i) + ".png", 128));
+        return out;
+    }
+
+    // Pump one upload per call until nothing is pending (bounded: a worker
+    // that never finishes fails the test instead of hanging it).
+    static void pump_until_done(renderer::FarPass& pass) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+        while (pass.pump_atlas_uploads(1) > 0) {
+            ASSERT_LT(std::chrono::steady_clock::now(), deadline) << "pending decodes never finished";
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+};
+
+}  // namespace
+
+TEST_F(FarPassPrefetchTest, PrefetchThenPumpInstallsAll) {
+    renderer::FarPass pass;
+    pass.set_atlas_paths(atlas_paths(3));
+    pass.prefetch_atlases();
+    for (int i = 0; i < 3; ++i) EXPECT_FALSE(pass.atlas_loaded(i)) << "prefetch uploads nothing";
+    pump_until_done(pass);
+    for (int i = 0; i < 3; ++i) EXPECT_TRUE(pass.atlas_loaded(i)) << "rock " << i;
+    EXPECT_EQ(pass.pump_atlas_uploads(4), 0);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+TEST_F(FarPassPrefetchTest, PumpRespectsBudget) {
+    renderer::FarPass pass;
+    pass.set_atlas_paths(atlas_paths(3));
+    pass.prefetch_atlases();
+    pass.debug_wait_atlas_decodes();   // all three ready
+    EXPECT_EQ(pass.pump_atlas_uploads(2), 1);
+    int loaded = 0;
+    for (int i = 0; i < 3; ++i) loaded += pass.atlas_loaded(i) ? 1 : 0;
+    EXPECT_EQ(loaded, 2);
+    EXPECT_EQ(pass.pump_atlas_uploads(0), 1) << "a zero budget uploads nothing";
+    EXPECT_EQ(pass.pump_atlas_uploads(2), 0);
+    for (int i = 0; i < 3; ++i) EXPECT_TRUE(pass.atlas_loaded(i));
+}
+
+TEST_F(FarPassPrefetchTest, AtlasForWaitsOnPending) {
+    renderer::FarPass pass;
+    pass.set_atlas_paths(atlas_paths(2));
+    const Atlas atlas = sphere_atlas(kRed, kBlue);
+    pass.debug_set_atlas(1, atlas.albedo, atlas.normal);   // loaded: never decoded
+    pass.prefetch_atlases();
+    pass.prefetch_atlases();                               // pending: not decoded twice
+    EXPECT_TRUE(pass.has_atlas(0)) << "atlas_for waits on the pending decode";
+    EXPECT_TRUE(pass.atlas_loaded(0));
+    EXPECT_EQ(pass.debug_decode_count(), 2) << "one albedo + one normal, decoded once";
+    EXPECT_EQ(pass.pump_atlas_uploads(4), 0) << "the waited-on entry is no longer pending";
+    pass.prefetch_atlases();                               // loaded: nothing to do
+    EXPECT_EQ(pass.pump_atlas_uploads(4), 0);
+    EXPECT_EQ(pass.debug_decode_count(), 2);
+}
+
+TEST_F(FarPassPrefetchTest, BadPathIsRememberedAsFailed) {
+    renderer::FarPass pass;
+    auto paths = atlas_paths(1);
+    paths.emplace_back((dir / "missing_a.png").string(), (dir / "missing_n.png").string());
+    pass.set_atlas_paths(paths);
+    pass.prefetch_atlases();
+    pump_until_done(pass);
+    EXPECT_TRUE(pass.atlas_loaded(0));
+    EXPECT_FALSE(pass.atlas_loaded(1));
+    const int decodes = pass.debug_decode_count();
+    EXPECT_FALSE(pass.has_atlas(1)) << "the worker's failure is remembered";
+    pass.prefetch_atlases();
+    EXPECT_EQ(pass.pump_atlas_uploads(4), 0) << "a remembered failure is not prefetched again";
+    EXPECT_EQ(pass.debug_decode_count(), decodes) << "and not decoded again";
+
+    // A pending decode that fails, reached through atlas_for: nullptr, remembered.
+    renderer::FarPass lazy;
+    lazy.set_atlas_paths({{(dir / "gone_a.png").string(), (dir / "gone_n.png").string()}});
+    lazy.prefetch_atlases();
+    EXPECT_FALSE(lazy.has_atlas(0));
+    EXPECT_EQ(lazy.pump_atlas_uploads(4), 0);
+    EXPECT_FALSE(lazy.has_atlas(0));
+}
+
+// New paths drop decodes of the old ones: nothing stale is installed.
+TEST_F(FarPassPrefetchTest, SetAtlasPathsDropsPendingDecodes) {
+    renderer::FarPass pass;
+    pass.set_atlas_paths(atlas_paths(2));
+    pass.prefetch_atlases();
+    pass.set_atlas_paths({});
+    EXPECT_EQ(pass.pump_atlas_uploads(4), 0);
+    EXPECT_FALSE(pass.atlas_loaded(0));
+    EXPECT_FALSE(pass.atlas_loaded(1));
+}
+
+// A pass destroyed with decodes in flight neither crashes nor leaks a worker.
+TEST_F(FarPassPrefetchTest, DestroyWithPendingDecodes) {
+    auto pass = std::make_unique<renderer::FarPass>();
+    pass->set_atlas_paths(atlas_paths(3));
+    pass->prefetch_atlases();
+    pass.reset();
+    SUCCEED();
+}
+
+// A catalogue rock with no impostor has empty paths: prefetch leaves it alone
+// (no worker, no warning), exactly as the lazy path never loads it.
+TEST_F(FarPassPrefetchTest, PrefetchSkipsRocksWithNoAtlasPath) {
+    renderer::FarPass pass;
+    auto paths = atlas_paths(1);
+    paths.emplace_back("", "");
+    pass.set_atlas_paths(paths);
+    pass.prefetch_atlases();
+    pass.debug_wait_atlas_decodes();
+    EXPECT_EQ(pass.debug_decode_count(), 2) << "only rock 0's two images";
+    EXPECT_EQ(pass.pump_atlas_uploads(4), 0);
+    EXPECT_TRUE(pass.atlas_loaded(0));
+    EXPECT_FALSE(pass.atlas_loaded(1));
 }
