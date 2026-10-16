@@ -60,5 +60,19 @@ def test_unknown_class_falls_back_to_default(lib):
     assert a == atmosphere.parse_entry("Class-M", atmosphere.class_preset("Class-M"))
 
 
+def test_planet_without_a_set_logs_instead_of_silently_returning(lib, capsys):
+    class _Loose:
+        def GetContainingSet(self):
+            return None
+
+        def GetName(self):
+            return "Drifter"
+
+    lib.CreateAtmosphereFX(_Loose(), "data/x/zz.nif", "Class-H")
+    err = capsys.readouterr().err
+    assert "CreateAtmosphereFX" in err and "Drifter" in err
+    assert atmosphere._requested == {}
+
+
 def test_unrequested_uncatalogued_stays_airless():
     assert atmosphere.resolve("S", "P", "data/x/zz_nothing.nif") is None

@@ -1,7 +1,6 @@
 """Custom.NanoFXv2.NanoFX_Lib -- NanoFX 2.0's public helper API rebuilt on
 Dauntless systems (spec 2026-10-16 §8.2). The import name is fixed by the
-mods that call it; nothing here is NanoFX's code. CreateAtmosphereFX is
-added in a later task."""
+mods that call it; nothing here is NanoFX's code."""
 import App
 
 _ACTIONS = "Custom.NanoFXv2.NanoFX_ScriptActions"
@@ -134,6 +133,9 @@ def GetRaceTextureColor(sRace):
     return _RACE_RGB.get(sRace, _DEFAULT_RGB)
 
 
+_warned_planets = set()
+
+
 def CreateAtmosphereFX(pPlanet, sNifPath="data/models/environment/planet.nif",
                        sTexturePath="Class-M"):
     """Request an atmosphere for pPlanet from the planet-class preset named
@@ -144,6 +146,17 @@ def CreateAtmosphereFX(pPlanet, sNifPath="data/models/environment/planet.nif",
         set_name = pPlanet.GetContainingSet().GetName()
         obj_name = pPlanet.GetName()
     except Exception:
+        set_name = obj_name = None
+    if not set_name or not obj_name:
+        try:
+            who = pPlanet.GetName()
+        except Exception:
+            who = repr(pPlanet)
+        if who not in _warned_planets:
+            _warned_planets.add(who)
+            import sys
+            sys.stderr.write("[NanoFX_Lib] CreateAtmosphereFX: planet %r has no "
+                             "containing set or name; no atmosphere requested\n" % (who,))
         return
     preset = atmosphere.class_preset(sTexturePath)
     if preset is not None and set_name and obj_name:

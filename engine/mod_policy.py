@@ -48,7 +48,9 @@ _FOUNDATION_ALWAYS_RE = re.compile(
 _FOUNDATION_CONDITIONAL = frozenset({
     "loadtacticalsounds.py", "quickbattle/quickbattle.py", "mainmenu/mainmenu.py",
 })
-_FOUNDATION_IMPORTS = frozenset({"Foundation", "FoundationMenu"})
+_QB = "quickbattle/quickbattle.py"
+_QB_GAME = "quickbattle/quickbattlegame.py"
+_FOUNDATION_IMPORTS =frozenset({"Foundation", "FoundationMenu"})
 
 # Everything else NanoFX 2.0's installer ships (tests/fixtures/mod_layouts/
 # nanofx_2_0_beta.txt): Foundation's bundled QB/menu support, its 000-*
@@ -123,4 +125,10 @@ def decide(files: list, imports: dict) -> PolicyDecision:
         reason = _foundation_reason(f, imports)
         if reason is not None:
             decision.refused[f.rel] = reason
+    # Foundation's QuickBattleGame.py has SetupMusic commented out because
+    # Foundation's QuickBattle.py takes over DynamicMusic init. Refusing the
+    # latter alone would leave Quick Battle silent, so the pair goes together.
+    if decision.refused.get(_QB) == REASON_FOUNDATION and any(
+            f.target == SDK and f.rel == _QB_GAME for f in files):
+        decision.refused[_QB_GAME] = REASON_FOUNDATION
     return decision

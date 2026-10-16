@@ -1718,6 +1718,8 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters,
         entries = ship_emitters.get(iid)
         if not entries:
             continue
+        if _glow_maps.is_dark(ship):
+            continue    # DisableGlowAlphaMaps / global glow off: lights too.
         try:
             loc = ship.GetWorldLocation()
             frac = commanded_impulse_frac(ship)

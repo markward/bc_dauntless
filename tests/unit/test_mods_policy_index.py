@@ -80,3 +80,12 @@ def test_describe_reports_block_and_refusals(tmp_path):
     text = mods.describe(mods.build_index(tmp_path))
     assert "NanoFX_2.0 BETA: not loaded -- " + mod_policy.REASON_NANOFX_BLOCKED in text
     assert "refused 1 file(s) -- " + mod_policy.REASON_FOUNDATION + ": Foundation.py" in text
+
+
+def test_foundation_quickbattle_py_refusal_also_refuses_quickbattlegame(tmp_path):
+    _touch(tmp_path / "P" / "scripts" / "QuickBattle" / "QuickBattle.py",
+           "import App\nimport FoundationMenu\n")
+    _touch(tmp_path / "P" / "scripts" / "QuickBattle" / "QuickBattleGame.py")
+    idx = mods.build_index(tmp_path)
+    assert idx.lookup("QuickBattle/QuickBattle.py") is None
+    assert idx.lookup("QuickBattle/QuickBattleGame.py") is None

@@ -46,6 +46,19 @@ def test_none_kind_never_emits():
     assert P.active_count() == 0
 
 
+def test_unknown_native_effect_logs_once_per_name(capsys):
+    P.reset()
+    for effect in ("plasma_arc", "plasma_arc", "other_thing"):
+        c = P.AnimTSParticleController_Create()
+        c.__dict__["_library_kind"] = "native"
+        c._native = {"effect": effect}
+        P.EffectAction_Create(c).Start()
+    err = capsys.readouterr().err
+    assert err.count("plasma_arc") == 1
+    assert err.count("other_thing") == 1
+    assert P.active_count() == 0
+
+
 def test_default_tint_is_white():
     shockwaves.reset()
     shockwaves.spawn((0.0, 0.0, 0.0), 5.0, 1.0)

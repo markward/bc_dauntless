@@ -398,11 +398,20 @@ def _controller_world_pos(c):
     return None
 
 
+_warned_native_effects = set()
+
+
 def _spawn_native(c):
     """kind:native (spec 2026-10-16 §7.5): play a Dauntless procedural effect
     instead of registering a particle emitter."""
     native = c._native or {}
-    if native.get("effect") != "shockwave":
+    effect = native.get("effect")
+    if effect != "shockwave":
+        if effect not in _warned_native_effects:
+            _warned_native_effects.add(effect)
+            import sys
+            sys.stderr.write("[particles] native sprite effect %r is not "
+                             "implemented; nothing played\n" % (effect,))
         return
     from engine.appc import shockwaves
     center = _controller_world_pos(c)

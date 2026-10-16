@@ -328,8 +328,10 @@ Runtime fields:
 - `scale`: size multiplier calibrating the art's fill against the original
   (e.g. `glint_burst` ≈ 0.6)
 - `pivot`: anchor within the cell, default centre
-- `orient`: `camera` | `emit_dir`, with the art's authored axis (`fire_jet`
-  points `+x`)
+- `orient`: `camera` | `emit_dir`. There is no authored-axis field: the art
+  is rotated at prep time so its origin edge sits where `pivot` expects it
+  (`fire_jet`, §7.3). `emit_dir` goes through the streak path with the quad
+  length equal to the particle size.
 - `brightness`
 - `fallback`: stock path + grid
 - `native`: effect name + parameter mapping, when `kind` is `native`
@@ -377,7 +379,7 @@ the failing cells. Reference measurement for the delivered debris pair:
 | `fireball` | Smoke and sparks cross cell edges in frames 11–25 → `edge_fade`. Non-square 344×384 cells → resample. |
 | `glint_burst` | Rays touch edges at ≤ 18/255 → `edge_fade`. `scale` ≈ 0.6. |
 | `shock_sphere` | Rim reaches edges in frames 12–17 → `edge_fade`. Frame 1 warm haze (edge median 8) → `black_cut` ≥ 10 for that sheet. |
-| `fire_jet` | Origin on the left cell edge plus a pale blue root band → `origin_ramp` (left, ~10% width). `pivot` left-centre. `orient: emit_dir`, axis `+x`. |
+| `fire_jet` | Source jet points `+x` with its origin on the left cell edge, plus a pale blue root band → `origin_ramp` (left, 0.12 of the cell), then `rotate: "cw"`, so the origin ends on the cell's TOP edge. Images upload top row first, so the cell top maps to the quad's bottom; runtime `pivot [0, -1]` puts the quad's bottom-centre on the emit point. `orient: emit_dir` via the streak path, length = particle size. |
 | `debris_chunk` | `green_matte`. `keep_rows` 1, 2, 4, 6 (row 3 has an odd frame; row 5 is static). The 1 px shrink removes the generator's stippled outline. |
 
 ### 7.4 Playback modes (particle pass)

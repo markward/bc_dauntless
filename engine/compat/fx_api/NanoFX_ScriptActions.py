@@ -1,6 +1,5 @@
 """Custom.NanoFXv2.NanoFX_ScriptActions on Dauntless systems
-(spec 2026-10-16 §8.4). Script-action functions return 0 (BC: "completed").
-CreateControllerFX / SetupController are added in a later task."""
+(spec 2026-10-16 §8.4). Script-action functions return 0 (BC: "completed")."""
 import App
 
 from engine.appc import glow_maps

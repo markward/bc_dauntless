@@ -261,8 +261,11 @@ def resolve(set_name: str, obj_name: str, nif_path: str):
     if key in _overrides:
         return _overrides[key]
     entry = load().get(key)
-    if entry is None:
-        entry = _requested.get(key)
+    if entry is None or (isinstance(entry, dict) and not (set(entry) - {"surface"})
+                         and key in _requested):
+        # Absent, or a surface-only entry (no air of its own): a mod's
+        # request for this key supplies the air.
+        entry = _requested.get(key, entry)
     try:
         return parse_entry(key, entry)
     except (ValueError, KeyError, TypeError) as e:

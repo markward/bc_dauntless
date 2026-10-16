@@ -79,3 +79,23 @@ def test_needs_imports_is_false_for_everything_else():
 def test_a_plain_ship_pack_is_untouched():
     d = P.decide([_pf("scripts/ships/A.py"), _pf("data/Models/A.nif")], {})
     assert d.blocked is None and d.refused == {}
+
+
+def test_refused_quickbattle_py_drags_its_quickbattlegame_py_along():
+    # Foundation's QuickBattleGame.py has SetupMusic commented out because
+    # Foundation's QuickBattle.py takes over DynamicMusic; keeping it alone
+    # would leave Quick Battle with no music.
+    files = _nanofx_files() + [_pf("scripts/ships/MyShip.py")]
+    qb = _pf("scripts/QuickBattle/QuickBattle.py")
+    qbg = _pf("scripts/QuickBattle/QuickBattleGame.py")
+    assert qb in files and qbg in files
+    d = P.decide(files, {qb.rel: {"App", "FoundationMenu"}})
+    assert d.refused[qb.rel] == P.REASON_FOUNDATION
+    assert d.refused[qbg.rel] == P.REASON_FOUNDATION
+
+
+def test_quickbattlegame_kept_when_quickbattle_py_is_not_foundation():
+    qb = _pf("scripts/QuickBattle/QuickBattle.py")
+    qbg = _pf("scripts/QuickBattle/QuickBattleGame.py")
+    d = P.decide([qb, qbg], {qb.rel: {"App"}})
+    assert d.refused == {}

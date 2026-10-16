@@ -76,3 +76,10 @@ def test_from_import_of_unprovided_submodule_then_call(capsys):
     assert WarpFX_GUI.GetWarpSpeed() is None
     assert WarpFX_GUI.SetupWarpSpeedButtons(9) is None
     assert "NanoFX effect API not supported: Custom.NanoFXv2.WarpFX.WarpFX_GUI.GetWarpSpeed" in capsys.readouterr().err
+
+
+def test_unsupported_names_are_falsy_but_still_callable(capsys):
+    from Custom.NanoFXv2.WarpFX import WarpFX_GUI
+    assert bool(WarpFX_GUI.Anything) is False
+    assert bool(WarpFX_GUI.Anything.Deeper) is False
+    assert WarpFX_GUI.Anything() is None

@@ -7,8 +7,9 @@ taken: `Custom` itself and every other `Custom.*` still resolve from mods and
 the SDK -- a root-level Custom/__init__.py would have shadowed them all.
 
 A claimed name we do not provide (NanoFX's effect modules, its warp AI, ...)
-still imports: it becomes an "unsupported" package whose every function logs
-once and returns None. Never a truthy stub object.
+still imports: it becomes an "unsupported" package whose every name is a callable
+object that logs once when called and returns None. Never a truthy stub (the
+objects are falsy, spec §8.5).
 """
 from __future__ import annotations
 
@@ -51,6 +52,9 @@ class _UnsupportedName:
     def __call__(self, *_args, **_kwargs):
         _note_unsupported(self._qualname)
         return None
+
+    def __bool__(self):
+        return False   # never a truthy stub (spec §8.5)
 
     def __getattr__(self, name):
         if name.startswith("__"):
