@@ -67,9 +67,12 @@ def CreateFlickerSeq(pShip, fTotalTime, fFlickerSpeed=0.2, sStatus="On"):
     seq.AddAction(App.TGScriptAction_Create(_ACTIONS, "SetShipGlow", pShip, final),
                   float(fTotalTime))
     name = pShip.GetName() if pShip is not None else None
-    # Record-only: a ship that has ever been flickered off stays listed.
-    if name is not None and final == 0 and name not in g_LightsOff:
-        g_LightsOff.append(name)
+    # g_LightsOff = ships whose lights are currently left dark.
+    if name is not None:
+        if final == 0 and name not in g_LightsOff:
+            g_LightsOff.append(name)
+        if final == 1 and name in g_LightsOff:
+            g_LightsOff.remove(name)
     ControlFlickers(None, 1)
     seq.AddAction(App.TGScriptAction_Create(__name__, "ControlFlickers", -1),
                   float(fTotalTime))

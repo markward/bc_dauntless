@@ -57,11 +57,24 @@ def test_flicker_ends_on_requested_state_and_caps_concurrency(lib, monkeypatch):
     assert {s[1][1] for s in glow[:-1]} == {0, 1}           # it actually flickers
     assert ("ControlFlickers", (-1,), 1.0) in steps
     assert lib.g_FlickerControl == 1
+    assert "F" in lib.g_LightsOff
     lib.CreateFlickerSeq(ship, 1.0)
     assert lib.g_FlickerControl == 2
-    third = lib.CreateFlickerSeq(ship, 1.0)
+    assert "F" not in lib.g_LightsOff
+    third = lib.CreateFlickerSeq(ship, 1.0, 0.2, "Off")
     assert third._steps == [] and lib.g_FlickerControl == 2
-    assert "F" in lib.g_LightsOff
+    assert "F" not in lib.g_LightsOff       # capped: nothing built, nothing recorded
+
+
+def test_set_game_speed_calls_simpleapi(acts, monkeypatch):
+    import sys
+    import types
+    seen = []
+    fake = types.ModuleType("SimpleAPI")
+    fake.Speed = seen.append
+    monkeypatch.setitem(sys.modules, "SimpleAPI", fake)
+    assert acts.SetGameSpeed(None, 0.5) == 0
+    assert seen == [0.5]
 
 
 def test_set_ship_glow_toggles_one_ship(acts):
