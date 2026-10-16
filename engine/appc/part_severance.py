@@ -135,6 +135,13 @@ def part_for_mount(leaf, point, iid=None):
     Falls back to `part_for_point` until a model is known for `leaf`
     (headless, or before any instance of it has been realized) and when the
     model gives no answer; fallbacks are not cached.
+
+    ⚠️ KNOWN LIMITATION (articulation spec OQ-13): reliable for points on a
+    part's skin, a guess for INTERIOR points. On the stock Bird of Prey the
+    `Impulse Engines` / `Warp Engines` SYSTEM points resolve to a wing, so
+    that whole system follows the wing and dies with it. The intended fix is
+    explicit membership (subsystems nested under model parts), not a better
+    guess.
     """
     if not leaf:
         return None

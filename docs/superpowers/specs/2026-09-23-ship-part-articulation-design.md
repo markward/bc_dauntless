@@ -943,3 +943,21 @@ geometric (a hit point is arbitrary, not authored). Costs: an SPV authoring
 change, a data-format addition, and migrating the Bird of Prey rig (whose
 weapons currently ride by inference). This subsumes OQ-5. Not designed or
 scheduled.
+
+**KNOWN LIMITATION (accepted 2026-10-16, Mark), until nesting replaces
+inference.** Nearest-mesh attribution is reliable for points authored on a
+part's skin (running lights, emitter lights, the Intrepid's nacelle
+warp/impulse mounts) but not for INTERIOR points, and BC meshes are not closed
+solids, so "is this point inside that part" cannot be answered either (a
+6-ray parity probe on BirdOfPrey.nif read the body-centre `Hull` point as
+inside the body on only 4/6 rays, `Engineering` on 0/6). Measured consequence on
+the stock Bird of Prey (real mesh, 2026-10-16): the SYSTEM points
+`Impulse Engines` (-0.235, -0.219, -0.047) and `Warp Engines` (0.238, -0.307,
+0.053) are nearest the port / starboard wing surfaces (0.002 / 0.025 ship
+units, vs 0.069 / 0.035 to the body), so they follow that wing's deflection and
+are DESTROYED when that wing is severed -- the whole impulse or warp system
+goes with one wing. Under the old box rule they were ambiguous and stayed with
+the hull. `Port Warp` / `Star Warp` now follow their wings, which matches OQ-5
+("physically they are on the wings"). Not mitigated with a margin or a
+"systems are never part members" rule on purpose: both are guesses too, and the
+fix is explicit membership (nesting, above).
