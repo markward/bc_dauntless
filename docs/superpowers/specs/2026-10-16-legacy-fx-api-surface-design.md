@@ -316,7 +316,7 @@ native/assets/sprites/
 - `keep_rows` / `keep_frames`
 - `background`: `black` | `black_solid` | `green_matte` | `alpha`
 - `black_cut`
-- `edge_fade` (px), **or** `origin_ramp` (edge + width) for directional sprites
+- `edge_fade` (fraction of the cell), **or** `origin_ramp` (edge + width as a fraction of the cell) for directional sprites
 - `cell` (output cell size, a power of two)
 
 Runtime fields:
@@ -360,7 +360,7 @@ the failing cells. Reference measurement for the delivered debris pair:
 
 - **Pipeline:** slice → per-cell crop and resample to `cell` → background mode
   → black cut → edge fade / origin ramp → row and frame selection → pack PNG.
-- **Without `--write`** it previews only (writes to a temp dir and reports).
+- **Without `--write`** it previews only: it builds every sprite and reports sizes without writing anything.
 - **Determinism:** fixed algorithms and Pillow (already a project dependency).
 
 **Drift test** (`tests/tools/test_sprite_drift.py`):
