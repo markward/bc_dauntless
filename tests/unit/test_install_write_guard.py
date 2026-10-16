@@ -30,6 +30,9 @@ _ALLOWED_REPO_WRITERS: dict = {
     "engine/systems/map.py:map_dir":
         "system-map authoring: save() writes the checked-in maps beside "
         "__file__; no engine caller of save()",
+    "engine/appc/override_routing.py:HardpointOverridesFileTarget":
+        "V1 hardpoint authoring: _PATH is beside __file__, reaches write() via "
+        "self.path; refuses when packaged",
     "engine/ui/ship_icons.py:icon_path_for_species":
         "dev-mode-only inspection PNG (guarded by dev_mode.is_enabled())",
     "engine/ui/weapon_icons.py:export_reference_pngs":
@@ -190,10 +193,11 @@ def _tainted_constants(tree):
 
 
 def _constant_offenses(tree, rel, allowed):
+    """Functions reading a tainted constant while writing, plus classes whose
+    methods together write and read a tainted constant / project ref (taint
+    crossing methods through an attribute: `self.path = path`)."""
     out = []
     tainted = _tainted_constants(tree)
-    if not tainted:
-        return out
     for fn in ast.walk(tree):
         if not isinstance(fn, _FUNCS) or f"{rel}:{fn.name}" in allowed:
             continue
@@ -202,8 +206,19 @@ def _constant_offenses(tree, rel, allowed):
             continue
         for n in nodes:
             if isinstance(n, ast.Name) and n.id in tainted:
-                out.append(f"{rel}:{tainted[n.id]}: {n.id} read by writer {fn.name}")
+                out.append(f"{rel}:{fn.lineno}: {fn.name} (writer reads {n.id})")
                 break
+    for cls in ast.walk(tree):
+        if not isinstance(cls, ast.ClassDef) or f"{rel}:{cls.name}" in allowed:
+            continue
+        nodes = [n for m in cls.body if isinstance(m, _FUNCS)
+                 for n in _own_nodes(m)]
+        if not any(_is_write_call(n) for n in nodes):
+            continue
+        if any(_is_project_ref(n)
+               or (isinstance(n, ast.Name) and n.id in tainted) for n in nodes):
+            out.append(f"{rel}:{cls.lineno}: {cls.name} (class writes and "
+                       "reads a project-derived path)")
     return out
 
 
@@ -233,6 +248,8 @@ def test_no_module_level_project_path_constant_in_a_writing_module():
 
 
 def test_allowlist_has_no_stale_entries():
+    """Each entry must name an existing function/class that the rules WOULD
+    flag without it, so an entry that no longer protects anything is caught."""
     stale = []
     for key in _ALLOWED_REPO_WRITERS:
         rel, _, name = key.partition(":")
@@ -241,13 +258,13 @@ def test_allowlist_has_no_stale_entries():
             stale.append(f"{key}: module missing")
             continue
         tree = _parsed(path)
-        fns = [n for n in ast.walk(tree)
-               if isinstance(n, _FUNCS) and n.name == name] if tree else []
-        if not fns:
-            stale.append(f"{key}: function missing")
-        elif not any(_is_write_call(n) or _is_project_ref(n) or _is_relative_write(n)
-                     for fn in fns for n in _own_nodes(fn)):
-            stale.append(f"{key}: no write call or project path")
+        flagged = set()
+        if tree is not None:
+            for h in (_function_offenses(tree, rel, set())
+                      + _constant_offenses(tree, rel, set())):
+                flagged.add(h.split()[1])
+        if name not in flagged:
+            stale.append(f"{key}: would not be flagged without its entry")
     assert stale == [], "stale allowlist entries:\n" + "\n".join(stale)
 
 
@@ -310,3 +327,35 @@ def test_per_function_allowlist_skips_only_that_function():
     assert len(_offenses(src)) == 2
     hits = _offenses(src, allowed={"m.py:ok"})
     assert len(hits) == 1 and "bad" in hits[0]
+
+
+# --- class-scoped taint (taint crossing methods through an attribute) --------
+
+_ATTR_SHAPE = (
+    "import os\n"
+    "_PATH = os.path.join(os.path.dirname(__file__), 'x.py')\n"
+    "class Target:\n"
+    "    def __init__(self, path=_PATH):\n"
+    "        self.path = path\n"
+    "    def write(self, text):\n"
+    "        with open(self.path, 'w') as fh:\n"
+    "            fh.write(text)\n"
+)
+
+
+def test_taint_through_default_arg_and_self_attribute_fires():
+    hits = _offenses(_ATTR_SHAPE)
+    assert any(h.split()[1] == "Target" for h in hits), hits
+
+
+def test_class_allowlist_entry_silences_it():
+    assert _offenses(_ATTR_SHAPE, allowed={"m.py:Target"}) == []
+
+
+def test_override_routing_class_is_allowlisted_and_would_be_flagged():
+    key = "engine/appc/override_routing.py:HardpointOverridesFileTarget"
+    assert key in _ALLOWED_REPO_WRITERS
+    tree = _parsed(PROJECT_ROOT / "engine/appc/override_routing.py")
+    unguarded = _function_offenses(tree, "engine/appc/override_routing.py", set())
+    unguarded += _constant_offenses(tree, "engine/appc/override_routing.py", set())
+    assert any(h.split()[1] == "HardpointOverridesFileTarget" for h in unguarded)
