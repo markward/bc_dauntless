@@ -476,6 +476,44 @@ def sever(ship, iid, part_name):
     return part_name
 
 
+def _mounted_subsystems(ship):
+    """(subsystem, body-frame mount point) for every subsystem of `ship` that
+    has an authored position (`combat._iter_subsystems`: hull excluded)."""
+    it = getattr(ship, "_iter_subsystems", None)
+    try:
+        if it is None:
+            from engine.appc.combat import _iter_subsystems as it_fn
+            subs = it_fn(ship)
+        else:
+            subs = it()
+        subs = list(subs or [])
+    except Exception:  # noqa: BLE001 - a target with no subsystems (a planet)
+        return []
+    out = []
+    for sub in subs:
+        try:
+            pos = sub.GetPosition()
+            out.append((sub, (pos.GetX(), pos.GetY(), pos.GetZ())))
+        except Exception:  # noqa: BLE001 - not a mounted subsystem
+            continue
+    return out
+
+
+def is_authored_mount(ship, point, eps=1e-5) -> bool:
+    """Is body-frame `point` one of `ship`'s authored subsystem mounts?
+
+    How `subsystems.target_offset_world` tells a subsystem LOCK's offset (the
+    SDK's `SetTargetOffset(pSubsystem.GetPosition())`, the AI's
+    `GetPositionTG()` -- an authored point, attributed by `part_for_mount`)
+    from an arbitrary one (a Manual Aim pick, a random point on the model --
+    box rule, exactly as before the mount rule existed)."""
+    for _sub, mount in _mounted_subsystems(ship):
+        if (abs(mount[0] - point[0]) <= eps and abs(mount[1] - point[1]) <= eps
+                and abs(mount[2] - point[2]) <= eps):
+            return True
+    return False
+
+
 def _destroy_subsystems_on_part(ship, part_name, iid=None) -> list:
     """Destroy every subsystem whose mount lies on `part_name`, and return
     them.
@@ -490,22 +528,8 @@ def _destroy_subsystems_on_part(ship, part_name, iid=None) -> list:
     already flips to DESTROYED.
     """
     leaf = articulation.leaf_for(ship)
-    it = getattr(ship, "_iter_subsystems", None)
-    if it is None:
-        try:
-            from engine.appc.combat import _iter_subsystems as it_fn
-        except Exception:  # noqa: BLE001
-            return []
-        subs = it_fn(ship)
-    else:
-        subs = it()
     killed = []
-    for sub in list(subs or []):
-        try:
-            pos = sub.GetPosition()
-            point = (pos.GetX(), pos.GetY(), pos.GetZ())
-        except Exception:  # noqa: BLE001 - not a mounted subsystem
-            continue
+    for sub, point in _mounted_subsystems(ship):
         if part_for_mount(leaf, point, iid) != part_name:
             continue
         try:

@@ -163,3 +163,65 @@ def test_lights_use_the_same_rule(native):
     articulation.force_part_pose(ship, "wing left", _warp_pose())
     assert host_loop._part_pose_at(ship, None, PORT_NACELLE_LIGHT) is not None
     assert host_loop._part_pose_at(ship, None, VENTRAL_AFT_PORT) is None
+
+
+# ── Target offsets: only AUTHORED offsets use the mount rule ─────────────────
+# A Manual Aim offset is a per-tick cursor pick, pulled back to rest with the
+# BOX rule (`rest_point_for_live_point`). Pushing it forward with the MESH rule
+# broke the round trip (the aim landed off the cursor on a folded nacelle) and
+# scanned the model + grew `_mount_parts` every tick. A subsystem lock's
+# offset IS an authored mount, so it keeps the shared rule.
+
+class _Target(_Ship):
+    def GetWorldLocation(self):
+        from engine.appc.math import TGPoint3
+        return TGPoint3(0.0, 0.0, 0.0)
+
+    def GetWorldRotation(self):
+        from engine.appc.math import TGMatrix3
+        return TGMatrix3()
+
+    def GetScale(self):
+        return 1.0
+
+    def GetHull(self):
+        return None
+
+
+def _world(target, point):
+    from engine.appc.math import TGPoint3
+    from engine.appc.subsystems import target_offset_world
+    w = target_offset_world(target, TGPoint3(*point))
+    return (w.x, w.y, w.z)
+
+
+def test_a_manual_pick_on_a_folded_nacelle_round_trips_to_the_cursor(native):
+    target = _Target([_Sub("Port Warp", PORT_WARP)])
+    articulation.force_part_pose(target, "wing left", _warp_pose())
+    # Drawn nacelle surface, at the warp pose: the rest point is inside both
+    # the hull and the nacelle boxes, the mesh says nacelle.
+    pick = part_pose.apply(_warp_pose(), (-0.6, -1.0, -0.15))
+    rest = part_severance.rest_point_for_live_point(target, pick)
+    assert _world(target, rest) == pytest.approx(pick)
+
+
+def test_manual_offsets_never_scan_the_model_or_grow_the_cache(native):
+    target = _Target([_Sub("Port Warp", PORT_WARP)])
+    articulation.force_part_pose(target, "wing left", _warp_pose())
+    for i in range(50):
+        _world(target, (-0.6 + i * 0.001, -1.0, -0.15))
+    assert native == []
+    assert part_severance._mount_parts == {}
+
+
+def test_a_subsystem_lock_offset_follows_its_part_by_the_mount_rule(native):
+    target = _Target([_Sub("Port Warp", PORT_WARP)])
+    articulation.force_part_pose(target, "wing left", _warp_pose())
+    assert _world(target, PORT_WARP) == pytest.approx(
+        part_pose.apply(_warp_pose(), PORT_WARP))
+
+
+def test_a_target_without_subsystems_is_never_an_authored_mount():
+    class _Planet:
+        pass
+    assert part_severance.is_authored_mount(_Planet(), PORT_WARP) is False

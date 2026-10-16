@@ -701,7 +701,7 @@ def detachable_for(leaf):
             for p in rig_for(leaf) if p.break_fraction is not None}
 
 
-def part_transform_point(ship, point, part=None):
+def part_transform_point(ship, point, part=None, *, authored=True):
     """Where a body-frame point ends up once its part has articulated.
 
     In and out are BODY frame, SHIP units (what subsystem mounts and the
@@ -722,8 +722,13 @@ def part_transform_point(ship, point, part=None):
     Passing it skips `part_for_point`, which would otherwise re-derive that
     same answer with a full sorted distance scan over every box on the hull,
     per piece, per sweep, per frame. Omit it and attribution runs as before.
+
+    `authored` (default True) says `point` is an authored mount, attributed
+    by the shared `part_severance.part_for_mount`; pass False for an
+    arbitrary point (a Manual Aim pick), which keeps the box rule -- see
+    `subsystems.target_offset_world`.
     """
-    found = _live_part(ship, part, point)
+    found = _live_part(ship, part, point, authored)
     if found is None:
         return point
     pose = pose_for_part(ship, found)
@@ -747,19 +752,27 @@ def part_transform_vector(ship, vec, part_name):
     return part_pose.apply_vector(pose, vec)
 
 
-def _live_part(ship, name, point):
+def _live_part(ship, name, point, authored=True):
     """The NAME of `ship`'s posable, NOT-detached part `name` (attributed
     from `point` when `name` is None), or None. Posable = in the rig, or
-    posed by name in `ship._articulation_poses` (`posed_part_names`)."""
+    posed by name in `ship._articulation_poses` (`posed_part_names`).
+
+    `authored` picks the attribution rule for `point`: an AUTHORED point (a
+    hardpoint mount, a light) uses `part_for_mount`; anything else (a Manual
+    Aim pick, a random point on the model) uses the box rule its pull-back
+    (`part_severance.rest_point_for_live_point`) used, so the round trip
+    stays exact."""
     names = posed_part_names(ship)
     if not names:
         return None
 
-    from engine.appc.part_severance import part_for_mount, is_detached
+    from engine.appc.part_severance import (part_for_mount, part_for_point,
+                                            is_detached)
     if name is None:
         if point is None:
             return None
-        name = part_for_mount(leaf_for(ship), point)
+        rule = part_for_mount if authored else part_for_point
+        name = rule(leaf_for(ship), point)
     if name is None:
         return None
     if is_detached(ship, name):
