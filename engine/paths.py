@@ -421,6 +421,23 @@ def is_packaged() -> bool:
     return (PROJECT_ROOT / PACKAGED_MARKER).is_file()
 
 
+class RepoWriteInPackagedBuild(OSError):
+    """A developer authoring save targeted the install folder of a packaged
+    build. An OSError so the panels' existing "Save failed" paths catch it."""
+
+
+def refuse_repo_write_when_packaged(path) -> None:
+    """Raise RepoWriteInPackagedBuild when `path` is inside the packaged
+    install (resolved on both sides); a no-op in a source checkout."""
+    if not is_packaged():
+        return
+    target = Path(path).resolve()
+    if target.is_relative_to(PROJECT_ROOT.resolve()):
+        raise RepoWriteInPackagedBuild(
+            "%s is inside the Dauntless install; developer authoring saves "
+            "need a source checkout" % path)
+
+
 def data_dir_override(argv=None, env=None) -> Optional[Path]:
     """The user-data root asked for by `--data-dir` or DAUNTLESS_DATA_DIR.
 

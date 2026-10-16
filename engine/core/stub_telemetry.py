@@ -39,13 +39,11 @@ def _default_sidecar_path() -> str:
     configured = os.environ.get("DAUNTLESS_STUB_TELEMETRY_FILE", "")
     if configured:
         return configured
-    # Resolve to absolute at import time — the atexit write runs at shutdown,
-    # and GLFW's macOS chdir-hijack can move the CWD after init, so a lazily
-    # resolved relative path could land in the wrong directory.
-    return os.path.abspath("stub_hits.jsonl")
-
-
-SIDECAR_PATH: str = _default_sidecar_path()
+    # Absolute and resolved at use (persist_run): the atexit write runs at
+    # shutdown, and GLFW's macOS chdir-hijack can move the CWD after init, so
+    # a relative path could land in the wrong directory.
+    from engine import paths
+    return str(paths.log_dir() / "stub_hits.jsonl")
 
 _attr_hits: "Counter" = Counter()      # (owner_type, attr_name) -> count
 _bool_sites: "Counter" = Counter()     # "file:lineno" -> count
@@ -208,7 +206,7 @@ def persist_run(path: str | None = None) -> None:
     persistence can never crash the game. The (owner, attr) pair is encoded as
     a tab-separated key so a dotted breadcrumb attr stays unambiguous."""
     if path is None:
-        path = SIDECAR_PATH
+        path = _default_sidecar_path()
     try:
         record = {
             "t": time.time(),
@@ -225,8 +223,12 @@ def persist_run(path: str | None = None) -> None:
         line = json.dumps(record)
         with open(path, "a") as f:
             f.write(line + "\n")
-    except Exception:
-        pass
+    except Exception as exc:
+        try:
+            from engine import paths
+            paths.report_write_failure(path, exc)
+        except Exception:
+            pass
 
 
 if ENABLED:

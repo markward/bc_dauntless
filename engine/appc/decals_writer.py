@@ -144,6 +144,8 @@ def write_decals(path: Path, placements: List["decal_editor.Placement"],
     hand rather than silently clobbering whatever is wrong with it.
     """
     path = Path(path)
+    from engine import paths
+    paths.refuse_repo_write_when_packaged(path)
 
     existing = {}
     if path.is_file():
