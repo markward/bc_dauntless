@@ -17,7 +17,10 @@ Spec: docs/superpowers/specs/2026-09-05-bc-path-resolution-design.md
 """
 from __future__ import annotations
 
+import ntpath
 import os
+import sys
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -428,6 +431,102 @@ def project_asset_root() -> Path:
     this is ours. Computed fresh on every call, like hull_volume_cache_root().
     """
     return PROJECT_ROOT / "native" / "assets"
+
+
+# --- per-user OS folders ----------------------------------------------------
+
+def _windows_known_folder(name: str) -> Optional[Path]:
+    """SHGetKnownFolderPath for "RoamingAppData" / "LocalAppData", or None on
+    any failure. Windows only; never called elsewhere."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        guids = {
+            "RoamingAppData": "{3EB685DB-65F9-4CF6-A03A-E3EF65729F3D}",
+            "LocalAppData": "{F1B32785-6FBA-4FCF-9D55-7B8E7F157091}",
+        }
+        import uuid
+        u = uuid.UUID(guids[name])
+
+        class _GUID(ctypes.Structure):
+            _fields_ = [("Data1", ctypes.c_ulong), ("Data2", ctypes.c_ushort),
+                        ("Data3", ctypes.c_ushort), ("Data4", ctypes.c_ubyte * 8)]
+
+        guid = _GUID(u.time_low, u.time_mid, u.time_hi_version,
+                     (ctypes.c_ubyte * 8)(*u.bytes[8:]))
+        out = ctypes.c_wchar_p()
+        fn = ctypes.windll.shell32.SHGetKnownFolderPath
+        fn.argtypes = [ctypes.POINTER(_GUID), wintypes.DWORD, wintypes.HANDLE,
+                       ctypes.POINTER(ctypes.c_wchar_p)]
+        if fn(ctypes.byref(guid), 0, None, ctypes.byref(out)) != 0 or not out.value:
+            return None
+        try:
+            return Path(out.value)
+        finally:
+            ctypes.windll.ole32.CoTaskMemFree(out)
+    except Exception:
+        return None
+
+
+def os_user_dirs(platform: Optional[str] = None,
+                 env: Optional[Mapping[str, str]] = None,
+                 home: Optional[Path] = None,
+                 known_folder: Optional[Callable[[str], Optional[Path]]] = None
+                 ) -> dict[str, Path]:
+    """Where the per-OS user folders live: config, saves, mods, cache, logs.
+
+    Pure apart from its defaults (sys.platform, os.environ, Path.home(),
+    the Windows known-folder API). Computed fresh per call; callers must
+    never capture the result at import. An XDG_* / APPDATA value that is
+    unset, empty or relative is ignored.
+    """
+    platform = sys.platform if platform is None else platform
+    env = os.environ if env is None else env
+    home = Path.home() if home is None else home
+
+    if platform == "win32":
+        kf = known_folder if known_folder is not None else _windows_known_folder
+
+        def _win(folder: str, var: str, fallback: str) -> Path:
+            got = kf(folder)
+            if got is not None:
+                return Path(got)
+            val = env.get(var, "")
+            if val and ntpath.isabs(val):
+                return Path(val)
+            return home / "AppData" / fallback
+
+        roaming = _win("RoamingAppData", "APPDATA", "Roaming")
+        local = _win("LocalAppData", "LOCALAPPDATA", "Local")
+        config = roaming / "Dauntless"
+        return {"config": config, "saves": config / "saves",
+                "mods": config / "mods",
+                "cache": local / "Dauntless" / "Cache",
+                "logs": local / "Dauntless" / "Logs"}
+
+    if platform == "darwin":
+        lib = home / "Library"
+        config = lib / "Application Support" / "Dauntless"
+        return {"config": config, "saves": config / "saves",
+                "mods": config / "mods",
+                "cache": lib / "Caches" / "Dauntless",
+                "logs": lib / "Logs" / "Dauntless"}
+
+    def _xdg(var: str, default: Path) -> Path:
+        val = env.get(var, "")
+        if val and os.path.isabs(val):
+            return Path(val)
+        return default
+
+    cfg = _xdg("XDG_CONFIG_HOME", home / ".config")
+    data = _xdg("XDG_DATA_HOME", home / ".local" / "share")
+    cache = _xdg("XDG_CACHE_HOME", home / ".cache")
+    state = _xdg("XDG_STATE_HOME", home / ".local" / "state")
+    return {"config": cfg / "dauntless",
+            "saves": data / "dauntless" / "saves",
+            "mods": data / "dauntless" / "mods",
+            "cache": cache / "dauntless",
+            "logs": state / "dauntless" / "logs"}
 
 
 def game_asset_dirs(rel) -> list:
