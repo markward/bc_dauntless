@@ -6735,6 +6735,26 @@ PYBIND11_MODULE(_dauntless_host, m) {
               return out;
           },
           "Per-pass render timings from the last resolved frame.");
+    m.def("profiler_last_frame_raw",
+          []() {
+              // RAW CPU ms of the frame just closed -- not smoothed, not
+              // lagged. The spike log reads one long frame's own numbers.
+              py::list scopes;
+              const auto& t = renderer::frame_timer();
+              for (const auto& r : t.last_frame_raw()) {
+                  py::dict d;
+                  d["name"]   = r.name;
+                  d["cpu_ms"] = r.cpu_ms;
+                  d["calls"]  = r.calls;
+                  d["depth"]  = r.depth;
+                  scopes.append(std::move(d));
+              }
+              py::dict out;
+              out["cpu_ms"] = t.last_frame_raw_cpu_ms();
+              out["scopes"] = scopes;
+              return out;
+          },
+          "The last frame's raw (un-smoothed) render CPU times, no GPU.");
     m.def("profiler_frame",
           []() {
               py::dict d;

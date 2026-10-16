@@ -74,6 +74,8 @@ void FrameTimer::reset() {
     open_t0_.clear();
     open_sample_.clear();
     results_.clear();
+    last_raw_.clear();
+    last_raw_cpu_ms_ = 0.0;
     frame_cpu_ms_ = 0.0;
     frame_gpu_ms_ = 0.0;
     cpu_total_seeded_ = false;
@@ -156,6 +158,21 @@ void FrameTimer::end_frame() {
     // corrupts the next frame's stack.
     while (!open_.empty()) pop();
     current_->frame_cpu_ns = static_cast<double>(now_ns() - frame_t0_);
+
+    last_raw_.clear();
+    last_raw_.reserve(current_->order.size());
+    for (int slot : current_->order) {
+        const auto i = static_cast<std::size_t>(slot);
+        if (i >= slots_.size()) continue;
+        ScopeResult r;
+        r.name = slots_[i].name;
+        r.cpu_ms = (i < current_->cpu_ns.size() ? current_->cpu_ns[i] : 0.0) / 1e6;
+        r.calls = (i < current_->calls.size() ? current_->calls[i] : 0);
+        r.depth = (i < current_->depth.size() ? current_->depth[i] : 0);
+        last_raw_.push_back(std::move(r));
+    }
+    last_raw_cpu_ms_ = current_->frame_cpu_ns / 1e6;
+
     current_->pending = true;
     current_ = nullptr;
     ++frame_index_;

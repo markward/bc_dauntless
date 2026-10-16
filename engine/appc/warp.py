@@ -490,8 +490,9 @@ class _MissionChangePoint(TGAction):
         mission = self._seq.GetDestinationMission()
         episode = self._seq.GetDestinationEpisode()
         if mission or episode:
-            from engine.core import mission_change
-            mission_change.change(mission=mission, episode=episode)
+            from engine.core import mission_change, frame_profiler
+            with frame_profiler.scope("warp.mission_change"):
+                mission_change.change(mission=mission, episode=episode)
 
 
 class _HoldUntilAction(TGAction):
@@ -568,6 +569,11 @@ class ChangeRenderedSetAction(TGAction):
         self._ship = None
 
     def _do_play(self):
+        from engine.core import frame_profiler
+        with frame_profiler.scope("warp.swap_set"):
+            self._swap()
+
+    def _swap(self):
         import App
         pSet = self._set
         if pSet is None:
@@ -582,8 +588,10 @@ class ChangeRenderedSetAction(TGAction):
                 # Lazy-load: import the region module and Initialize() it.
                 # Fail loud — a bad module raises here.
                 import importlib
-                mod = importlib.import_module(self._module)
-                mod.Initialize()
+                from engine.core import frame_profiler
+                with frame_profiler.scope("warp.region_init"):
+                    mod = importlib.import_module(self._module)
+                    mod.Initialize()
                 pSet = App.g_kSetManager.GetSet(name)
                 if pSet is None:
                     raise RuntimeError(
@@ -593,7 +601,9 @@ class ChangeRenderedSetAction(TGAction):
             return
         App.g_kSetManager.MakeRenderedSet(pSet.GetName())
         if _realize_hook is not None:
-            _realize_hook(pSet)
+            from engine.core import frame_profiler
+            with frame_profiler.scope("warp.realize_set"):
+                _realize_hook(pSet)
 
 
 def ChangeRenderedSetAction_Create(module):

@@ -321,3 +321,22 @@ def test_the_whole_frame_gpu_total_agrees_with_the_frame_row(host):
     # returns zeros they are both 0.
     assert abs(total - by_name["frame"]["gpu_ms"]) <= 0.5 + 0.05 * total, (
         total, by_name["frame"])
+
+
+def test_last_frame_raw_is_available_immediately_and_unsmoothed(host):
+    """The spike log reads the frame that JUST ended: no ring latency, and
+    the frame row's raw CPU time matches the whole-frame raw total."""
+    host.profiler_set_enabled(True)
+    _run_frames(1)
+    raw = host.profiler_last_frame_raw()
+    by_name = {s["name"]: s for s in raw["scopes"]}
+    assert "frame" in by_name, sorted(by_name)
+    assert by_name["frame"]["depth"] == 0
+    assert by_name["frame"]["cpu_ms"] > 0.0
+    assert by_name["frame"]["cpu_ms"] <= raw["cpu_ms"] + 1e-6
+    assert set(raw["scopes"][0]) == {"name", "cpu_ms", "calls", "depth"}
+
+
+def test_last_frame_raw_is_empty_when_disabled(host):
+    _run_frames(2)
+    assert host.profiler_last_frame_raw()["scopes"] == []

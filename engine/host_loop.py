@@ -5437,7 +5437,8 @@ def _push_environment_feeds(r, active_set, warp_streaking, player=None):
     suns = [] if warp_streaking else _aggregate_suns()
     suns = _with_render_positions(suns, "position", to_view_render)
     r.set_suns(suns)
-    _push_system_nebula(r, player, suns, warp_streaking)
+    with frame_profiler.scope("env.system_nebula"):
+        _push_system_nebula(r, player, suns, warp_streaking)
 
     planets = _with_render_positions(_aggregate_dust_planets(view),
                                      "position", to_view_render)
@@ -5521,7 +5522,8 @@ def _load_planet_model(r_, nif_path: str, *, cache=None,
     planet_tex_search = [str(p) for p in
                          _paths.game_asset_dirs(DEFAULT_PLANET_TEXTURE_SEARCH)]
     try:
-        handle = r_.load_model(nif_path, planet_tex_search, geosphere=geo)
+        with frame_profiler.scope("load.planet_model"):
+            handle = r_.load_model(nif_path, planet_tex_search, geosphere=geo)
     except Exception as e:
         if verbose:
             print(f"[host_loop]   skip planet: load_model({nif_path}) raised: "
@@ -6566,7 +6568,8 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
     for ship in (_iter_ships_in_set(pSet) if ships is None else ships):
         if ship in session.ship_instances:
             continue
-        loaded = _load_runtime_ship_model(ship, r_, verbose=verbose)
+        with frame_profiler.scope("realize.ship_model"):
+            loaded = _load_runtime_ship_model(ship, r_, verbose=verbose)
         if loaded is None:
             continue
         handle, model_path, _nif_path, model_scale = loaded
@@ -6595,7 +6598,8 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
         # as push_resolution above.
         try:
             from engine.appc.hull_volume import prewarm_field
-            prewarm_field(iid)
+            with frame_profiler.scope("realize.hull_prewarm"):
+                prewarm_field(iid)
         except Exception as _e:
             dev_mode.log_swallowed("prewarm hull volume field", _e)
         render_instances.register(ship, iid)
@@ -7148,21 +7152,49 @@ def _reconcile_scene(session, renderer, *, nif_cache=None,
     the FIRST visibility writer of the frame -- warp hide, the SPV hull hide,
     bridge-player visibility and the cloak push all AND with scope_hidden,
     and the scope only writes on a change."""
-    _ensure_system_loaded(session)
+    with frame_profiler.scope("scene.system_load"):
+        _ensure_system_loaded(session)
     if session is None:
         return
-    _reconcile_runtime_instances(
-        session, renderer, on_player_change=on_player_change, verbose=verbose)
+    with frame_profiler.scope("scene.ships"):
+        _reconcile_runtime_instances(
+            session, renderer, on_player_change=on_player_change,
+            verbose=verbose)
     # Minor-rock clouds for the viewed set (minor-rocks spec §1): reads the
     # rocks the scope reconcile just realised. Never raises.
     from engine.rocks import minors as _minors
-    _minors.reconcile(session, renderer)
+    with frame_profiler.scope("scene.minors"):
+        _minors.reconcile(session, renderer)
     # Far tier (far-tier plan Task 10): frame, sources and flagged rocks for
     # the same viewed set. Never raises.
-    _far_tier.reconcile(session, renderer)
-    _reconcile_celestial_instances(
-        session, renderer, nif_cache=nif_cache, verbose=verbose)
+    with frame_profiler.scope("scene.far_tier"):
+        _far_tier.reconcile(session, renderer)
+    with frame_profiler.scope("scene.celestial"):
+        _reconcile_celestial_instances(
+            session, renderer, nif_cache=nif_cache, verbose=verbose)
     _check_mapped_bodies_untouched(_frames.viewing_set())
+
+
+def _spike_context(session, warp_streaking) -> str:
+    """One line for a spike-log record: what was being viewed, where the
+    player was, and whether the warp tunnel was up. Never raises."""
+    def _name(obj):
+        try:
+            return obj.GetName() if obj is not None else "-"
+        except Exception:
+            return "?"
+    view = player_set = "?"
+    try:
+        view = _name(_frames.viewing_set())
+    except Exception:
+        pass
+    try:
+        player = session.player if session is not None else None
+        player_set = _name(player.GetContainingSet()) if player else "-"
+    except Exception:
+        pass
+    return ("view=%s player_set=%s warp_streaking=%s"
+            % (view, player_set, bool(warp_streaking)))
 
 
 def _fire_pending_preload_done() -> None:
@@ -11033,6 +11065,13 @@ def run(mission_name: Optional[str] = None,
             host_io.set_swap_interval(0)
             if max_ticks is None or max_ticks > _profile_frames:
                 max_ticks = _profile_frames
+        # DAUNTLESS_PROFILE_SPIKES=<path>: write every frame over the
+        # threshold (DAUNTLESS_PROFILE_SPIKE_MS, default 100) to a file, raw.
+        # Works without --developer; vsync is left as it is.
+        if frame_profiler.configure_spike_log_from_env():
+            print("[host_loop] spike capture -> %s (>= %.0f ms)"
+                  % (frame_profiler.spike_log_path(),
+                     frame_profiler.spike_threshold_ms()), flush=True)
 
         while not r.should_close():
             # Frame profiler: phase timeline for the Python half of the frame.
@@ -12561,7 +12600,8 @@ def run(mission_name: Optional[str] = None,
             # background geometry + characters render on the viewscreen instead
             # of a black void. Idempotent; before the character visibility sync
             # + RTT below.
-            _realize_comm_sets(controller, r)
+            with frame_profiler.scope("scene.comm_sets"):
+                _realize_comm_sets(controller, r)
             # Reveal/hide comm-set characters per their SDK IsHidden() flag
             # (MissionLib.ViewscreenOn un-hides the hailing one) before the RTT
             # renders the set.
@@ -12806,6 +12846,8 @@ def run(mission_name: Optional[str] = None,
             # "r.frame" phase carries the whole render call and the loop total
             # is the real wall-clock cost of one iteration.
             frame_profiler.end_frame()
+            frame_profiler.maybe_log_spike(
+                context=lambda: _spike_context(session, _warp_streaking))
             if frame_profiler.should_report():
                 frame_profiler.print_report()
             ticks += 1
