@@ -44,7 +44,9 @@ def _build_panel(mode: str, error: str = ""):
     stock = {r.values["title"]: r.values for r in ship_catalog.ships("stock") if r.values.get("title")}
     return ModsScreenPanel(mode, incomplete, readonly,
                            species=[s.name for s in ship_catalog.species()],
-                           stock_classes=stock, writer=_write_rows, error=error)
+                           stock_classes=stock, writer=_write_rows, error=error,
+                           blocked=[(s.name, s.blocked) for s in mods.current().mods
+                                    if s.blocked])
 
 
 def run_mods_screen(run_panel: Callable, argv=None) -> str:
