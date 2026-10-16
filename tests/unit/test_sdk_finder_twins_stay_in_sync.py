@@ -92,7 +92,8 @@ def test_the_two_sdk_finder_find_spec_bodies_are_identical():
     )
 
 
-@pytest.mark.parametrize("helper", ["_mods_may_override", "_mod_override_spec"])
+@pytest.mark.parametrize("helper", ["_mods_may_override", "_mod_override_spec",
+                                    "_module_tree"])
 def test_the_shared_mod_helpers_are_identical_too(helper):
     """find_spec delegates to these, so drift here is drift there.
 

@@ -1,10 +1,11 @@
 """An unimportable projectile script falls back to the stock photon.
 
-Community ship mods routinely ship their projectile modules as Python 1.5
-`.pyc` with no source — the LC Intrepid pack's `ZZ_VoyPhoton` and
-`ZZ_Tricobalt` are both magic 0x4E99, the Python that `stbc.exe` embeds.
-CPython cannot load those, so `import_module` raises and the tube used to
-`return` out of `_spawn_torpedo` in silence.
+Community ship mods can ship their projectile modules as Python 1.5 `.pyc`
+with no source. engine/py15 now loads the straight-line ones (the LC Intrepid
+pack's `ZZ_VoyPhoton` and `ZZ_Tricobalt`; see
+tests/unit/test_lc_intrepid_pyc_projectiles.py), but a module it refuses --
+or any other unimportable script -- still makes `import_module` raise, and
+the tube used to `return` out of `_spawn_torpedo` in silence.
 
 That silence was the bug, not the missing module. `Fire()` calls
 `_spawn_torpedo` AFTER it has already decremented `_num_ready`, started the

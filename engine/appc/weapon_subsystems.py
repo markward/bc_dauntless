@@ -348,12 +348,13 @@ _projectile_modules: dict = {}
 def _resolve_projectile_module(script_name):
     """The SDK module for `script_name`, falling back to the stock photon.
 
-    Community ship mods routinely ship projectile modules as Python 1.5
-    `.pyc` with NO source — the LC Intrepid pack's ZZ_VoyPhoton and
-    ZZ_Tricobalt are both magic 0x4E99, the Python `stbc.exe` embeds — and
-    CPython cannot load those. The mod overlay does index the `.pyc`, but the
-    SDK finders only ever look for `.py` / `/__init__.py`, so the import
-    raises either way.
+    Community ship mods can ship projectile modules as Python 1.5 `.pyc`
+    with NO source — the LC Intrepid pack's ZZ_VoyPhoton and ZZ_Tricobalt
+    are magic 0x4E99, the Python `stbc.exe` embeds. Those now load: both SDK
+    finders take a mod `.pyc` and engine/py15 lifts straight-line 1.5
+    bytecode into the AST its source would have parsed to. What still lands
+    here is bytecode the lifter refuses (it prints one `[sdk-loader]` line
+    naming the module) or any other import failure.
 
     Substituting a photon is a DELIBERATE INFIDELITY, chosen so a sideloaded
     ship is flyable: a mod's tricobalt becomes an ordinary photon rather than
