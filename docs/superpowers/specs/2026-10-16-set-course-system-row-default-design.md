@@ -60,9 +60,14 @@ region list must stay reachable from the drop-down.
   `SortedRegionMenu_GetRoot` was a stub, `STMenu` had no
   `GetNumChildren`/`GetNthChild`, `STMenu.IsTypeOf` was a hardcoded 0, and
   `STMenu.GetName(kString)` raised. `GetRoot` returning the warp button's
-  course menu is inferred from the SDK, not measured. Tests:
+  course menu is inferred from the SDK, not measured. A Dauntless-only
+  fallback in `engine/ui/tooltip_dispatch.py` names courses no Set Course row
+  lists (star map, QuickBattle) as BC would name the row. Tests:
   `tests/unit/test_sorted_region_menu_walk.py`,
-  `tests/integration/test_helm_destination_tooltip.py`.
+  `tests/integration/test_helm_destination_tooltip.py`. **Live-verified
+  2026-10-16 (Mark):** hovering Kiska shows `Destination : Starbase 12` for a
+  mission-added Set Course row, and a Destination line for a QuickBattle
+  star map course.
 - E1M1's own route to the Vesuvi offer (after docking at Starbase 12) is not
   driven headlessly; E3M2 (Vesuvi offered from the start) and E4M6's
   `OpenCebalrai` cover the same code end to end.
