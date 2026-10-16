@@ -917,3 +917,29 @@ carried.
 **Ruling 1 STANDS** — see the corrected §4.3.1: the bounds a subsystem kill
 compares against never moved into the live pose, so neither
 characterisation test needed inverting.
+
+**OQ-13 — Added 2026-10-16. FUTURE: nest subsystems (and lights) under model
+parts, instead of inferring which part each one is on.** Today every consumer
+that asks "which articulated part is this AUTHORED point on" — hardpoint mounts
+(`articulation.part_transform_point`: where a weapon is drawn and fires from),
+the subsystems a severed part destroys (`_destroy_subsystems_on_part`), and
+emitter + running lights (`host_loop._part_pose_at`) — shares ONE inferred
+rule, `part_severance.part_for_mount`: the part whose rest-pose triangles are
+nearest the point (`renderer::nearest_model_part`), falling back to the box
+rule (`part_for_point`) until a model is loaded. It replaced the box rule for
+these consumers on 2026-10-15 because boxes failed on the LC Intrepid: its hull
+box spans both nacelles, and a nacelle box covers the hull-mounted ventral aft
+phasers.
+
+Inference still guesses. A subsystem position is often a point INSIDE the hull
+rather than on its skin, and nearest-mesh picks whichever part happens to be
+closest. Rigging is already hand-authored in the SPV's Model Parts tree, so the
+simpler model is explicit membership: nest each subsystem, emitter and running
+light under the part node it belongs to, stored as Dauntless-only data beside
+the rig (gated like it; stock BC never sees it). Inference would then only
+PROPOSE membership when a part is created, for a human to correct; untagged
+hardpoints on rigged ships keep the inferred rule; weapon-HIT attribution stays
+geometric (a hit point is arbitrary, not authored). Costs: an SPV authoring
+change, a data-format addition, and migrating the Bird of Prey rig (whose
+weapons currently ride by inference). This subsumes OQ-5. Not designed or
+scheduled.

@@ -278,6 +278,10 @@ Quick Battle as the LC Intrepid:
 
 ## 8. Risks and open points
 
+- **Part attribution is inferred** (nearest mesh, `part_severance.part_for_mount`).
+  The intended long-term fix is explicit membership — nesting subsystems and
+  lights under model parts in the SPV; see the articulation spec
+  (`2026-09-23-ship-part-articulation-design.md`) OQ-13.
 - **Size calibration** comes from one screenshot; expect `size_gu_per_radius`
   to move in the live check.
 - **Ship scale:** positions and sizes follow the emitter-light convention
