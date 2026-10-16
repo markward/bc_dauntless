@@ -15,6 +15,22 @@ def test_region_module_defaults_none():
     assert m.GetRegionModule() is None
 
 
+def test_region_name_reads_the_region_the_menu_was_built_with():
+    """BC's own getter (App.py:8766). BridgeHandlers.FindCourseButton compares
+    it against the warp button's destination to name the Helm tooltip."""
+    m = SortedRegionMenu_CreateW("Vesuvi", "Systems.Vesuvi.Vesuvi6")
+    assert m.GetRegionName() == "Systems.Vesuvi.Vesuvi6"
+
+
+def test_set_region_name_replaces_the_menus_region():
+    """Episode4.py:187 / E4M5.py:1438 / E4M6.py:2046,2095 move a system's
+    default. Unimplemented this was a silent _Stub (heatmap rank 170)."""
+    m = SortedRegionMenu_CreateW("Nepenthe", "Systems.Nepenthe.Nepenthe3")
+    m.SetRegionName("Systems.Nepenthe.Nepenthe1")
+    assert m.GetRegionName() == "Systems.Nepenthe.Nepenthe1"
+    assert m.GetRegionModule() == "Systems.Nepenthe.Nepenthe1"
+
+
 def test_warp_event_constant_exists():
     import App
     assert isinstance(App.ET_WARP_BUTTON_PRESSED, int)
