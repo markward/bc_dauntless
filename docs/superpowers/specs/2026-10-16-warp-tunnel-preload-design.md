@@ -60,6 +60,39 @@ What the numbers say:
 5. Boot also pays `scene.far_tier` 1164 ms (the catalogue push) on frame 1. That
    is outside this design's scope, but noted.
 
+### Second measurement (Task 1 scopes, 2026-10-16)
+
+Same route (`logs/warp-spikes-2.log`) plus an E1M1 → E1M2 mission warp
+(`logs/warp-spikes-mission.log`), Debug, `--developer`.
+
+| Arrival / frame | Total | Attribution |
+|---|---|---|
+| Vesuvi6, first visit | 9405 ms | `env.system_nebula` 7606 · `rock.atlas.load` ×8 **1185** (inside `rock.impostor.draw`) · `load.planet_model` ×5 257 · `warp.swap_set` 136 · `scene.system_load` 109 |
+| Starbase12 (QuickBattle) | 1208 ms | **`warp.place_player` 804** · `env.system_nebula` 200 · `load.planet_model` ×2 95 |
+| Tunnel start, leaving Vesuvi | 448 ms | **`warp.depart` 400** |
+| Vesuvi6, return | 7391 ms | `env.system_nebula` 7265 |
+| E1M1 → E1M2 tunnel | 404 ms | `warp.mission_change` 278 (exempt) · `scene.comm_sets` 75 |
+| E1M2 arrival at Vesuvi6 | 9364 ms | `env.system_nebula` 7153 · `rock.atlas.load` ×8 1132 · `realize.ship_model` ×7 **532** · `load.planet_model` ×5 233 · `scene.system_load` 85 · `realize.hull_prewarm` ×7 71 |
+
+Item 2 (atlases) is **confirmed**. The 817/402 ms blocks are `warp.place_player`
+and `warp.depart`. They are not loading, so they cannot be preloaded.
+
+**Deferred follow-ups (Mark, 2026-10-16: "make a note of them but continue
+with the plan"):**
+
+- `warp.place_player` **804 ms** on the QuickBattle Starbase12 arrival:
+  `RemoveObjectFromSet` / `AddObjectToSet` / `PlaceObjectByName`. It was
+  < 0.5 ms on the E1M2 arrival, so it is likely QuickBattle-specific (a handler
+  on set entry). It needs finer attribution, then a fix.
+- `warp.depart` **400 ms** leaving Vesuvi (< 1 ms leaving Starbase12): the
+  source-set teardown hook. It scales with what the source set held. It needs
+  finer attribution, then a fix.
+- First QuickBattle → Vesuvi warp: ~10 tunnel frames of ~105 ms, each
+  `cef.composite` ~90 ms. That is a CEF repaint, not loading.
+- `scene.comm_sets` 75 ms rides the exempt mission-change frame. It is left
+  where it is (ruling: not worth a preload item while it shares an
+  already-exempt frame).
+
 **This work also turns the haze on for production** (Mark, 2026-10-16: "yes
 lets turn it on by default"). Today it is gated on `--developer` + Volumetric
 Nebulae, pending live approval. That gate goes; see §4. So the 7.4 s build
