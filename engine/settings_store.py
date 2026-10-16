@@ -121,6 +121,7 @@ class SettingsStore:
                        self._path.parent / (self._path.name + ".corrupt"))
         except OSError as exc:
             dev_mode.log_swallowed("SettingsStore quarantine", exc)
+            paths.report_write_failure(self._path, exc)
 
     # ── Access ──────────────────────────────────────────────────────────────
     def _section(self, section: str) -> dict:

@@ -112,7 +112,7 @@ def test_report_write_failure_prints_once_per_path(capsys):
 def test_override_pointing_at_a_file_reports_and_continues(
         monkeypatch, tmp_path, capsys):
     from engine import settings_store
-    # Any write that leaks past the (not yet wired) override lands in tmp,
+    # Any write that leaks past the override lands in tmp,
     # never in the real checkout.
     leak = tmp_path / "leak"
     leak.mkdir()

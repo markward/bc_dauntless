@@ -45,3 +45,16 @@ def test_failed_save_is_reported_not_raised(monkeypatch, tmp_path, capsys):
     store = settings_store.SettingsStore()
     store._save()
     assert "could not write" in capsys.readouterr().err
+
+
+def test_failed_quarantine_is_reported_not_raised(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv(paths.DATA_DIR_ENV, str(tmp_path))
+    bad = tmp_path / "settings.json"
+    bad.write_text("{not json")
+    (tmp_path / "settings.json.corrupt").mkdir()
+    store = settings_store.SettingsStore()
+    store.load()
+    store.load()
+    err = capsys.readouterr().err
+    assert err.count("could not write") == 1
+    assert "settings.json" in err
