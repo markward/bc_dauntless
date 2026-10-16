@@ -57,7 +57,6 @@ try:
 except (ImportError, AttributeError):
     _audio_mod = None
 
-from engine.audio.alert_audio import AlertAudioListener
 from engine.audio.engine_rumble import install_engine_rumble_listener
 # Engine-rumble names come from LoadTacticalSounds.LoadSounds(); bridge/alert
 # names from the real LoadBridge.LoadSounds() at mission load (against a live
@@ -115,8 +114,6 @@ from engine.appc.subsystems import (
 )
 from engine.appc.weapon_subsystems import _target_undetectable, _same_set
 
-_alert_listener: "AlertAudioListener" = AlertAudioListener()
-
 
 def _project_root_for_cef():
     """Return the project root path for resolving native/assets/ui-cef/ files."""
@@ -147,7 +144,6 @@ def init_audio() -> None:
         return
     init_audio_backend()
     install_engine_rumble_listener()
-    _alert_listener.reset()
 
 
 def shutdown_audio() -> None:
@@ -260,7 +256,6 @@ def tick_audio(*, camera_position, camera_forward, camera_up, dt, player) -> Non
     fx, fy, fz = camera_forward
     ux, uy, uz = camera_up
     _audio_mod.update(px, py, pz, fx, fy, fz, ux, uy, uz, dt)
-    _alert_listener.tick(player)
     # Music ramps on the same dt as the rest of the audio layer, so it freezes
     # under pause rather than sliding on wall-clock.
     _pump_music(dt)
@@ -2422,7 +2417,7 @@ def _ctrl_held_either(h) -> bool:
 
 
 def _apply_alert_keys(h, player) -> None:
-    """Shift+1/2/3 → SetAlertLevel(GREEN/YELLOW/RED) on the player ship.
+    """Shift+1/2/3 → GREEN/YELLOW/RED alert on the player ship.
 
     Mirrors BC's DefaultKeyboardBinding: !/@/# → ET_SET_ALERT_LEVEL with
     EST_ALERT_{GREEN,YELLOW,RED}. Called once per tick before the throttle
@@ -2431,13 +2426,51 @@ def _apply_alert_keys(h, player) -> None:
     """
     if player is None or not _shift_held(h):
         return
+    # RemoveControl (AllowKeyboardInput(0)) blocks BC's binding like every
+    # non-crew-menu key -- see engine/appc/input._OnKeyboardEvent_Dispatch.
+    from engine.appc.top_window import keyboard_input_enabled
+    if not keyboard_input_enabled():
+        return
+    import App
     keys = h.keys
     if h.key_pressed(keys.KEY_1):
-        player.SetAlertLevel(ShipClass.GREEN_ALERT)
+        _request_alert(player, App.CharacterClass.EST_ALERT_GREEN,
+                       ShipClass.GREEN_ALERT)
     elif h.key_pressed(keys.KEY_2):
-        player.SetAlertLevel(ShipClass.YELLOW_ALERT)
+        _request_alert(player, App.CharacterClass.EST_ALERT_YELLOW,
+                       ShipClass.YELLOW_ALERT)
     elif h.key_pressed(keys.KEY_3):
-        player.SetAlertLevel(ShipClass.RED_ALERT)
+        _request_alert(player, App.CharacterClass.EST_ALERT_RED,
+                       ShipClass.RED_ALERT)
+
+
+def _request_alert(player, est, level) -> None:
+    """BC's alert binding: BridgeHandlers.SetAlertLevel forwards the EST_* event
+    to the XO's menu, where XOCharacterHandlers speaks her line and
+    XOMenuHandlers plays the klaxon and posts the level to the ship
+    (ShipClass.ProcessEvent applies it). The engine plays no klaxon of its own.
+
+    No bridge XO whose menu handles the event (no bridge loaded, a bare menu):
+    set the level directly, silently — the event would otherwise be swallowed.
+    """
+    import App
+    from engine.appc.characters import CharacterClass_GetObjectStrict
+    xo = CharacterClass_GetObjectStrict(App.g_kSetManager.GetSet("bridge"), "XO")
+    menu = xo.GetMenu() if xo is not None else None
+    if menu is None or not menu._handlers.get(App.ET_SET_ALERT_LEVEL):
+        player.SetAlertLevel(level)
+        return
+    evt = App.TGIntEvent_Create()
+    evt.SetEventType(App.ET_SET_ALERT_LEVEL)
+    evt.SetDestination(menu)
+    evt.SetInt(est)
+    # SDK handlers on the menu can raise (XOCharacterHandlers reads
+    # pShields.IsOn() unguarded -- a shieldless ship). Swallow and log like a
+    # button click (STButton.SendActivationEvent); BC printed and kept going.
+    try:
+        App.g_kEventManager.AddEvent(evt)
+    except Exception as _e:
+        dev_mode.log_swallowed("alert key ET_SET_ALERT_LEVEL", _e)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -4418,6 +4451,9 @@ def reset_sdk_globals() -> None:
     if hasattr(App.g_kEventManager, "_method_handlers"):
         App.g_kEventManager._method_handlers.clear()
     register_input_handlers(App.g_kEventManager)
+    # Queued ET_SET_ALERT_LEVEL levels belong to the outgoing mission's ships.
+    from engine.appc import ships as _ships
+    del _ships._pending_alert_levels[:]
     # Reset the TopWindow shim so cutscene/fade/view/input flags don't
     # bleed across missions or in-process swaps. See
     # docs/superpowers/specs/2026-06-03-top-window-shim-design.md.

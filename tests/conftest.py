@@ -920,6 +920,13 @@ def _reset_leakable_engine_globals():
         _ship_catalog.reset_session()
     except Exception:
         pass
+    # Queued ET_SET_ALERT_LEVEL levels (engine/appc/ships.py): a test that
+    # posts without ticking would land its level on a later test's ship.
+    try:
+        from engine.appc import ships as _ships
+        del _ships._pending_alert_levels[:]
+    except Exception:
+        pass
     # Swapped-module split: fixtures that re-import an SDK module
     # (sys.modules.pop -> import -> restore the saved entry; e.g.
     # Bridge.HelmMenuHandlers in tests/unit/test_dash_set_course.py) put the
