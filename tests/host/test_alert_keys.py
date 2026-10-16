@@ -13,7 +13,7 @@ import App
 import pytest
 import Bridge.XOMenuHandlers  # noqa: F401 -- handler lookup reads sys.modules
 from engine.appc.sets import SetClass
-from engine.appc.ships import ShipClass
+from engine.appc.ships import ShipClass, apply_pending_alert_levels
 from engine.core.game import Game, _set_current_game
 from engine.host_loop import _PlayerControl, _apply_alert_keys
 
@@ -206,6 +206,7 @@ def test_shift_plus_3_goes_through_the_xo_menu():
     reader.pressed_once.add(reader.keys.KEY_3)
 
     _apply_alert_keys(reader, player)
+    apply_pending_alert_levels()            # the next GameLoop tick
 
     assert _XO_SAW == [App.CharacterClass.EST_ALERT_RED]
     assert player.GetAlertLevel() == ShipClass.RED_ALERT
@@ -220,6 +221,7 @@ def test_shift_plus_1_through_the_xo_menu_sets_green():
     reader.pressed_once.add(reader.keys.KEY_1)
 
     _apply_alert_keys(reader, player)
+    apply_pending_alert_levels()            # the next GameLoop tick
 
     assert _XO_SAW == [App.CharacterClass.EST_ALERT_GREEN]
     assert player.GetAlertLevel() == ShipClass.GREEN_ALERT
@@ -242,3 +244,44 @@ def test_an_xo_menu_with_no_alert_handler_falls_back_to_direct():
     _apply_alert_keys(reader, ship)
 
     assert ship.GetAlertLevel() == ShipClass.RED_ALERT
+
+
+def test_alert_keys_respect_the_keyboard_lockout():
+    """RemoveControl (TopWindow.AllowKeyboardInput(0)) blocks BC's alert
+    binding like every non-crew-menu key (engine/appc/input.py)."""
+    top = App.TopWindow_GetTopWindow()
+    ship = _FakeShip()
+    ship.SetAlertLevel(ShipClass.GREEN_ALERT)
+    reader = _FakeKeyReader()
+    reader.held.add(reader.keys.KEY_LEFT_SHIFT)
+    reader.pressed_once.add(reader.keys.KEY_3)
+    top.AllowKeyboardInput(0)
+    try:
+        _apply_alert_keys(reader, ship)
+    finally:
+        top.AllowKeyboardInput(1)
+
+    assert ship.GetAlertLevel() == ShipClass.GREEN_ALERT
+
+
+def _raise(pMenu, pEvent):
+    raise AttributeError("'NoneType' object has no attribute 'IsOn'")
+
+
+def test_a_raising_xo_handler_does_not_escape_the_key_press():
+    """XOCharacterHandlers.SetAlertLevel calls pShields.IsOn() unguarded; a
+    shieldless player ship raises there. A button click swallows and logs it
+    (SendActivationEvent); the key press must too, not kill the host loop."""
+    menu = App.STTopLevelMenu_CreateW("Commander")
+    menu.AddPythonFuncHandlerForInstance(App.ET_SET_ALERT_LEVEL,
+                                         __name__ + "._raise")
+    xo = App.CharacterClass_Create("b.nif", "h.nif")
+    xo.SetMenu(menu)
+    bridge = SetClass()
+    bridge.AddObjectToSet(xo, "XO")
+    App.g_kSetManager.AddSet(bridge, "bridge")
+    reader = _FakeKeyReader()
+    reader.held.add(reader.keys.KEY_LEFT_SHIFT)
+    reader.pressed_once.add(reader.keys.KEY_3)
+
+    _apply_alert_keys(reader, _FakeShip())            # must not raise

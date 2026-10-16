@@ -2426,6 +2426,11 @@ def _apply_alert_keys(h, player) -> None:
     """
     if player is None or not _shift_held(h):
         return
+    # RemoveControl (AllowKeyboardInput(0)) blocks BC's binding like every
+    # non-crew-menu key -- see engine/appc/input._OnKeyboardEvent_Dispatch.
+    from engine.appc.top_window import keyboard_input_enabled
+    if not keyboard_input_enabled():
+        return
     import App
     keys = h.keys
     if h.key_pressed(keys.KEY_1):
@@ -2459,7 +2464,13 @@ def _request_alert(player, est, level) -> None:
     evt.SetEventType(App.ET_SET_ALERT_LEVEL)
     evt.SetDestination(menu)
     evt.SetInt(est)
-    App.g_kEventManager.AddEvent(evt)
+    # SDK handlers on the menu can raise (XOCharacterHandlers reads
+    # pShields.IsOn() unguarded -- a shieldless ship). Swallow and log like a
+    # button click (STButton.SendActivationEvent); BC printed and kept going.
+    try:
+        App.g_kEventManager.AddEvent(evt)
+    except Exception as _e:
+        dev_mode.log_swallowed("alert key ET_SET_ALERT_LEVEL", _e)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -4440,6 +4451,9 @@ def reset_sdk_globals() -> None:
     if hasattr(App.g_kEventManager, "_method_handlers"):
         App.g_kEventManager._method_handlers.clear()
     register_input_handlers(App.g_kEventManager)
+    # Queued ET_SET_ALERT_LEVEL levels belong to the outgoing mission's ships.
+    from engine.appc import ships as _ships
+    del _ships._pending_alert_levels[:]
     # Reset the TopWindow shim so cutscene/fade/view/input flags don't
     # bleed across missions or in-process swaps. See
     # docs/superpowers/specs/2026-06-03-top-window-shim-design.md.

@@ -959,16 +959,19 @@ class ShipClass(DamageableObject):
     def ProcessEvent(self, event) -> None:
         """Script handlers first, then the ship's own ET_SET_ALERT_LEVEL step.
 
-        In BC the ship's native handler applied ET_SET_ALERT_LEVEL; every SDK
-        path that changes the player's alert ends by posting it here
-        (Bridge/XOMenuHandlers.SetAlertLevel, MissionLib.RedAlert,
-        QuickBattle). Without this step the event was dropped: the XO spoke
-        her line and the alert never changed.
+        In BC the ship's native handler applied ET_SET_ALERT_LEVEL, which the
+        SDK posts here from the XO's alert buttons (Bridge/XOMenuHandlers),
+        MissionLib.RedAlert, QuickBattle and missions. Without this step the
+        event was dropped: the XO spoke her line and the alert never changed.
 
         The step runs as the OLDEST handler -- only when the instance chain
         passes, so a script handler that returns without CallNextHandler
-        cancels it, like every BC default. No sound here: the SDK scripts play
-        the klaxon themselves before posting.
+        cancels it, like every BC default. The level is QUEUED, not applied
+        here: our AddEvent dispatches synchronously, BC's queued
+        (docs/gap_analysis.md OQ-4.2), and MissionLib.RedAlert posts the
+        event and THEN reads pShields.IsOn() to pick the XO's line.
+        apply_pending_alert_levels applies it on the next GameLoop tick. No
+        sound here: the SDK scripts play the klaxon themselves.
         """
         import App
         if event.GetEventType() != App.ET_SET_ALERT_LEVEL:
@@ -977,7 +980,7 @@ class ShipClass(DamageableObject):
         event._chain_passed = True          # no handlers = passes
         super().ProcessEvent(event)
         if event._chain_passed is True:
-            self.SetAlertLevel(event.GetInt())
+            _pending_alert_levels.append((self, int(event.GetInt())))
 
     def SetAlertLevel(self, v) -> None:
         """Apply the alert-level → power policy for weapons and shields.
@@ -992,9 +995,9 @@ class ShipClass(DamageableObject):
         green — stbc-oracle bible §5.3 S5 measured the same 9.2–9.5/s at
         red, yellow and green.
 
-        The SDK's player-alert paths (the XO's buttons, MissionLib.RedAlert,
-        QuickBattle) do not call this: they post ET_SET_ALERT_LEVEL to the
-        ship, which ProcessEvent below turns into this call.
+        The XO's buttons, MissionLib.RedAlert and QuickBattle do not call
+        this: they post ET_SET_ALERT_LEVEL to the ship, which ProcessEvent
+        (above) queues for this call on the next tick.
         """
         self._alert_level = int(v)
         weapons_on = (self._alert_level == ShipClass.RED_ALERT)
@@ -1960,6 +1963,20 @@ def _resolve_torpedo_ammo(ts_prop, slot: int):
                                power_cost=PHOTON_POWER_COST,
                                max_torpedoes=declared_max,
                                script=_FALLBACK_PROJECTILE)
+
+
+# (ship, level) from ET_SET_ALERT_LEVEL events whose chain passed, in posting
+# order. See ShipClass.ProcessEvent.
+_pending_alert_levels: list = []
+
+
+def apply_pending_alert_levels() -> None:
+    """Apply the queued ET_SET_ALERT_LEVEL levels. GameLoop.tick calls this
+    once per tick, after the AI window, where BC drained its event queue."""
+    pending = list(_pending_alert_levels)
+    del _pending_alert_levels[:]
+    for ship, level in pending:
+        ship.SetAlertLevel(level)
 
 
 def ShipClass_Create(class_name: str = "") -> ShipClass:
