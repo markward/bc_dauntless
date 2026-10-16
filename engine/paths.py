@@ -14,6 +14,18 @@ Nothing outside this module may spell "game" or "sdk" as a path segment.
 tests/unit/test_path_indirection.py enforces both halves.
 
 Spec: docs/superpowers/specs/2026-09-05-bc-path-resolution-design.md
+
+User-data half. Where Dauntless WRITES, as opposed to where BC content is read.
+    Three modes, highest first: ``--data-dir`` / ``DAUNTLESS_DATA_DIR`` (one
+    folder for everything), a packaged build (marker file
+    ``dauntless-packaged.json`` beside the install: the OS per-user folders),
+    else a checkout (PROJECT_ROOT, today's layout). Use ``config_dir``,
+    ``saves_dir``, ``mods_default_dir``, ``cache_dir``, ``log_dir`` and
+    ``log_file_path``; resolve at use, like the content roots. A write that
+    fails goes through ``report_write_failure(path, exc)``, which names the
+    path on stderr once per path instead of swallowing it.
+
+Spec: docs/superpowers/specs/2026-10-16-per-user-data-dirs-design.md
 """
 from __future__ import annotations
 

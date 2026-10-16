@@ -1,7 +1,15 @@
 # Per-user data dirs — design
 
 **Date:** 2026-10-16
+**Status:** Implemented on branch feat/per-user-data-dirs (2026-10-16); Windows verification pending
 **Input:** `docs/superpowers/specs/2026-10-16-per-user-data-dirs-scoping.md`. It holds the full write inventory (rows P1–P15, D1, V1–V6), the method and its limits, and Mark's seven rulings. This document refers to rows by those IDs and does not repeat the evidence.
+
+## Outcomes
+
+- **H1 (QuickBattle without a writable `Options.cfg`), as observed and decided (Task 12).** Confirmed with one refinement: boot returns normally and prints one write-failure line, but `BuildDialog` early-returns so `g_pStartButton` is None, and the player's Start then raises `AttributeError` in `DisableSimulationMenus`. Decision: boot completes. When the `Options.cfg` save fails, `load_quickbattle` runs the QuickBattle init with `LoadConfigFile("Options.cfg")` answering 1 from the in-memory map, scoped to that call. The player loses that session's options (reported once) but not Quick Battle. Pinned by `tests/host/test_quickbattle_unwritable_config.py`.
+- **Ruling 8, the log tee design changed.** The first design was a pipe tee. It deadlocks when one GIL-holding C++ write exceeds about two pipe buffers (measured: 200 KB and 1 MB writes hang on macOS; a Windows pipe holds about 4 KB). It also loses in-pipe output on a crash. Replaced by pointing fds 1 and 2 at the log file itself, so writers never block and the log survives a crash, plus a best-effort follower thread that mirrors new file bytes to the saved console fds on stderr. The console may lag or lose its tail on a hard crash; the file is complete.
+- **Windows run: pending.** Nothing is claimed verified on Windows. The checklist (the pytest command and the log tee items) is in `.superpowers/sdd/2026-10-16-per-user-data-dirs/task-13-report.md`, section "Instructions for Mark: Windows run", plus the Task 10 items (a-g) it carries.
+- **Known follow-up, not in this branch.** A second `_init_mission` of the same mission in one process reuses stale module globals (no re-import). E3M4 failed on a re-run. This plausibly affects mission restart in production. The test side evicts mission modules in a fixture.
 
 ## 1. Intent
 
