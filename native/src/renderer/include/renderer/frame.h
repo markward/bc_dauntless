@@ -254,6 +254,18 @@ struct ParticleEmitterDescriptor {
     // emitter's world position, which moves with an attached ship and would
     // re-roll every particle each frame (teleporting/flickering puffs).
     float seed = 0.0f;
+    // Sprite-library playback (spec 2026-10-16 §7.4). 0 = life_columns
+    // (today: frame along the columns over life, random variant row);
+    // 1 = life_sequence (whole sheet row-major over life); 2 = loop (random
+    // variant row, columns cycle at `fps` from a random start).
+    int       playback = 0;
+    float     fps      = 0.0f;
+    // Quad anchor in corner units: (0,0) = centred (today); (0,-1) puts the
+    // quad's bottom-centre on the emit point.
+    glm::vec2 pivot{0.0f};
+    // 0 = camera-facing (today); 1 = stretched along the emit direction
+    // (streak path, length = particle size).
+    int       orient   = 0;
 };
 
 /// Phaser-beam render descriptor.  One entry per concentric beam layer

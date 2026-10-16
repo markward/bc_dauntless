@@ -5855,6 +5855,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   e.atlas_cols  = d.contains("atlas_cols")  ? d["atlas_cols"].cast<int>()    : 1;
                   e.atlas_rows  = d.contains("atlas_rows")  ? d["atlas_rows"].cast<int>()    : 1;
                   e.seed        = d.contains("seed")        ? d["seed"].cast<float>()        : 0.0f;
+                  // Sprite library (spec 2026-10-16 §7.4); defaults = today.
+                  e.playback  = d.contains("playback")  ? d["playback"].cast<int>()    : 0;
+                  e.fps       = d.contains("fps")       ? d["fps"].cast<float>()       : 0.0f;
+                  e.orient    = d.contains("orient")    ? d["orient"].cast<int>()      : 0;
+                  e.roll_rate = d.contains("roll_rate") ? d["roll_rate"].cast<float>() : 0.0f;
+                  if (d.contains("pivot")) {
+                      auto p = d["pivot"].cast<std::tuple<float, float>>();
+                      e.pivot = glm::vec2(std::get<0>(p), std::get<1>(p));
+                  }
                   g_particle_emitters.push_back(std::move(e));
               }
           },

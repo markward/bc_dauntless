@@ -236,6 +236,7 @@ void HitVfxPass::render(const std::vector<HitVfxDescriptor>& vfx,
     // each frame, so without the reset every impact flash inherits the previous
     // frame's last particle roll and visibly spins.
     shader.set_float("u_roll", 0.0f);
+    shader.set_vec2("u_pivot", glm::vec2(0.0f));   // shared shader: never inherit the particle pass's anchor
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);

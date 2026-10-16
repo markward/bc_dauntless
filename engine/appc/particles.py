@@ -312,11 +312,17 @@ def _descriptor_for(c, resolve_attach):
                                b * c._brightness)
                               for (t, r, g, b) in c._color_keys],
         "alpha_keys":        list(c._alpha_keys),
-        "size_keys":         list(c._size_keys),
+        "size_keys":         [(t, s * c._size_scale) for (t, s) in c._size_keys],
         "texture_path":      c._texture_path,
         "atlas_cols":        int(c._atlas_cols),
         "atlas_rows":        int(c._atlas_rows),
         "seed":              float(c._seed),
+        # Sprite library (spec 2026-10-16 §7.4). Defaults = today's behaviour.
+        "playback":          int(c._playback),
+        "fps":               float(c._fps),
+        "pivot":             (float(c._pivot[0]), float(c._pivot[1])),
+        "orient":            int(c._orient),
+        "roll_rate":         float(c._roll_rate),
     }
 
 
