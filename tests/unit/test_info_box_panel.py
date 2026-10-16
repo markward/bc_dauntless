@@ -253,3 +253,38 @@ def test_destroy_info_box_on_an_unparented_box_does_not_raise():
     box = MissionLib.SetupInfoBox("StylizedWindow", "body", 300, 200,
                                   None, None, App.ET_CHARACTER_MENU, player, 0)
     MissionLib.DestroyInfoBox(box.GetObjID())
+
+
+# MissionLib.DestroyInfoBox unhooks the box's Open/Close/ToggleInfoTarget
+# handlers through `App.TGEventHandlerObject_Cast(ptr)` and then removes the
+# box's row from g_lInfoCloseSource. With the cast unimplemented it returned a
+# truthy stub, RemoveHandlerForInstance was a silent no-op, and the handler
+# outlived its row: the next ET_CHARACTER_MENU on that officer reached
+# CloseInfoTarget, whose `g_lInfoCloseSource.index(id)` raised ValueError
+# (live crash, E1M2 tactical tutorial, closing an officer's menu).
+
+def test_destroy_info_box_unhooks_its_handler_from_the_close_target():
+    import MissionLib
+    from engine.appc.characters import CharacterClass_Create, dispatch_character_menu
+    officer = CharacterClass_Create("body.nif", "head.nif")
+    box = MissionLib.SetupInfoBox("StylizedWindow", "body", 300, 200,
+                                  None, None, App.ET_CHARACTER_MENU, officer, 0)
+    TacticalControlWindow.GetInstance().AddChild(box, 0, 0)
+
+    MissionLib.DestroyInfoBox(box.GetObjID())
+
+    assert "MissionLib.CloseInfoTarget" not in officer._handlers.get(
+        App.ET_CHARACTER_MENU, [])
+    dispatch_character_menu(officer, is_open=False)   # raised ValueError
+
+
+def test_tg_event_handler_object_cast():
+    from engine.appc.top_window import _TopWindow
+    handler = App.TGEventHandlerObject()
+    assert App.TGEventHandlerObject_Cast(handler) is handler
+    assert App.TGEventHandlerObject_Cast(None) is None
+    assert App.TGEventHandlerObject_Cast(App.TGObject()) is None
+    # _TopWindow carries the handler surface without the base class.
+    top = App.TopWindow_GetTopWindow()
+    assert isinstance(top, _TopWindow)
+    assert App.TGEventHandlerObject_Cast(top) is top
