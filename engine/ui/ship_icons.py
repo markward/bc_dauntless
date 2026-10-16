@@ -93,13 +93,17 @@ def icon_path_for_species(name: str) -> Optional[str]:
         return None
 
     # Keep the disk cache for inspection / debugging.
-    try:
-        os.makedirs(_CACHE_DIR, exist_ok=True)
-        cache_path = os.path.join(_CACHE_DIR, name + ".png")
-        with open(cache_path, "wb") as fp:
-            fp.write(png)
-    except OSError:
-        pass  # disk cache is best-effort; data URL still works
+    # Developer-only: the PNG lands in the repo tree, which is read-only in an
+    # installed build. The data URL below is what the UI actually uses.
+    from engine import dev_mode
+    if dev_mode.is_enabled():
+        try:
+            os.makedirs(_CACHE_DIR, exist_ok=True)
+            cache_path = os.path.join(_CACHE_DIR, name + ".png")
+            with open(cache_path, "wb") as fp:
+                fp.write(png)
+        except OSError:
+            pass  # disk cache is best-effort; data URL still works
 
     data_url = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
     _resolved[name] = data_url

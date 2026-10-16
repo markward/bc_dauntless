@@ -100,7 +100,10 @@ _REFERENCE_DIR = os.path.join(_CURATED_DIR, "reference")
 
 # SVG trace cache — gitignored, regenerates on first use after a
 # mod swaps the source TGA.
-_SVG_CACHE_DIR = os.path.join(_PROJECT_ROOT, "cache", "icons", "weapons")
+def _svg_cache_dir() -> str:
+    """Auto-trace cache dir under the user cache folder. Resolved at USE."""
+    from engine import paths
+    return str(paths.cache_dir() / "icons" / "weapons")
 
 
 # ── Registry ────────────────────────────────────────────────────────────
@@ -186,8 +189,13 @@ def trace_atlas(tga_dir: Optional[str], registry: dict[int, IconSpec],
             svg = _trace_to_svg(rgba, w, h)
         except (subprocess.CalledProcessError, PotraceMissingError):
             continue
-        with open(out_path, "w") as fp:
-            fp.write(svg)
+        try:
+            with open(out_path, "w") as fp:
+                fp.write(svg)
+        except OSError as exc:
+            from engine import paths
+            paths.report_write_failure(out_path, exc)
+            continue
         written.add(num)
     return written
 
@@ -198,7 +206,7 @@ def trace_all(tga_dir: Optional[str] = None,
     return trace_atlas(
         tga_dir=tga_dir,
         registry=ICON_REGISTRY,
-        output_dir=output_dir or _SVG_CACHE_DIR,
+        output_dir=output_dir or _svg_cache_dir(),
     )
 
 
@@ -316,7 +324,7 @@ def icon_svg_for_num(num: int) -> Optional[str]:
         svg = _wrap_with_inset_clip(svg)
         _svg_cache[num] = svg
         return svg
-    svg_path = os.path.join(_SVG_CACHE_DIR, f"{num}.svg")
+    svg_path = os.path.join(_svg_cache_dir(), f"{num}.svg")
     if not os.path.isfile(svg_path):
         try:
             trace_all()

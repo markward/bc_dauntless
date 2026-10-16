@@ -7522,7 +7522,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
     // comment in carve_field_cache.h.
     m.def("hull_volume_set_cache_root",
           [](const std::string& root) {
-              renderer::set_hull_volume_cache_root(root);
+              // pybind11 hands the Python str over as UTF-8. path(std::string)
+              // would decode it in the ANSI codepage on Windows and mangle a
+              // non-ASCII user name. (u8path is deprecated in C++20.)
+              renderer::set_hull_volume_cache_root(std::filesystem::path(
+                  std::u8string(reinterpret_cast<const char8_t*>(root.data()),
+                                root.size())));
           },
           py::arg("root"),
           "Directory HullVolumeCache reads/writes its on-disk .dhv bakes "
