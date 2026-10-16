@@ -21,9 +21,17 @@ on a full pipe that the reader could never drain without the GIL: measured
 at 200 KB on macOS, a permanent freeze. tests/unit/test_log_tee.py
 reproduces it.)
 
-The console mirror merges stdout and stderr onto the original stderr: one
-file can't say which stream a byte came from, and stderr is the diagnostic
-stream, so stdout's consumers never see interleaved diagnostics.
+The console mirror merges stdout and stderr onto the original stderr (or
+the original stdout when there is no stderr): one file can't say which
+stream a byte came from, and stderr is the diagnostic stream, so stdout's
+consumers never see interleaved diagnostics. With no console at all (a
+GUI-subsystem exe has no std handles) only the mirror is off; fds 1/2 still
+go to the log.
+
+Windows console: sys.stdout/sys.stderr sit on _WindowsConsoleIO, which
+calls WriteConsoleW on the fd's handle -- a file after the redirect, where it
+fails. Those streams are swapped for plain UTF-8 text streams on the same
+fd while the tee runs, and put back by stop().
 
 The follower uses only os.read/os.write. It never touches sys.stdout or
 sys.stderr, which now point at the log, so it cannot feed back into it.
@@ -34,15 +42,15 @@ Stdlib only, and nothing here resolves a path: the caller passes it
 from __future__ import annotations
 
 import atexit
+import io
 import os
 import sys
 import threading
-import time
 from pathlib import Path
 from typing import Optional
 
 _STREAM_FDS = (1, 2)
-_CONSOLE_FD = 2             # the original stream the mirror writes to
+_STREAM_NAMES = {1: "stdout", 2: "stderr"}
 _POLL_S = 0.05              # follower's idle wait between reads
 _DRAIN_S = 0.5              # how long stop() lets the follower catch up
 _READ_CHUNK = 65536
@@ -53,10 +61,13 @@ _atexit_registered = False
 
 
 class _Tee:
-    def __init__(self, log_fd: int, read_fd: int):
+    def __init__(self, log_fd: int):
         self.log_fd = log_fd        # append handle the fds were dup2'd from
-        self.read_fd = read_fd      # the follower's own read handle
-        self.saved: dict = {}       # stream fd -> duplicate of the original
+        self.read_fd: Optional[int] = None   # the follower's read handle
+        self.saved: dict = {}       # stream fd -> duplicate of the original;
+        #                             absent when that fd was not open
+        self.redirected: set = set()          # fds already dup2'd to the log
+        self.swapped: dict = {}     # "stdout"/"stderr" -> original stream
         self.stopping = threading.Event()
         self.follower: Optional[threading.Thread] = None
 
@@ -109,6 +120,55 @@ def _close(fd: int) -> None:
         pass
 
 
+def _above_std(fd: int) -> int:
+    """Move `fd` above 0-2. With std fds closed at launch, os.open/os.dup
+    hand out 1 or 2, which the dup2 onto fds 1/2 would then clobber."""
+    low = []
+    try:
+        while fd <= 2:
+            low.append(fd)
+            fd = os.dup(fd)
+    finally:
+        for taken in low:
+            _close(taken)
+    return fd
+
+
+def _console_io_types() -> tuple:
+    """Raw stream types that write to a console handle, not to the fd's
+    file. Windows only; a function so tests can inject a stand-in."""
+    windows_console_io = getattr(io, "_WindowsConsoleIO", None)
+    return (windows_console_io,) if windows_console_io is not None else ()
+
+
+def _rewrap_console_streams(tee: _Tee) -> None:
+    types = _console_io_types()
+    if not types:
+        return
+    for fd, name in _STREAM_NAMES.items():
+        stream = getattr(sys, name, None)
+        raw = getattr(getattr(stream, "buffer", None), "raw", None)
+        if raw is None or not isinstance(raw, types):
+            continue
+        replacement = open(fd, "w", encoding="utf-8",
+                           errors="backslashreplace", buffering=1,
+                           closefd=False)
+        setattr(sys, name, replacement)
+        tee.swapped[name] = stream
+
+
+def _restore_console_streams(tee: _Tee) -> None:
+    for name, original in tee.swapped.items():
+        replacement = getattr(sys, name, None)
+        try:
+            if replacement is not None:
+                replacement.flush()     # into the log, before fds go back
+        except Exception:  # noqa: BLE001 -- restoring must not stop here
+            pass
+        setattr(sys, name, original)
+    tee.swapped.clear()
+
+
 def is_active() -> bool:
     return _state is not None
 
@@ -133,10 +193,9 @@ def rotate(path: Path) -> Optional[str]:
     return None
 
 
-def _follow(tee: _Tee) -> None:
+def _follow(tee: _Tee, console: int) -> None:
     """Copy what is appended to the log onto the console until stop() asks,
     then drain to EOF once (bounded by stop()'s join) and return."""
-    console = tee.saved[_CONSOLE_FD]
     while True:
         # Sample the flag BEFORE reading: an EOF only proves the drain is
         # complete if stop() had already asked when the read began. (An EOF
@@ -159,20 +218,29 @@ def _follow(tee: _Tee) -> None:
 
 
 def _dismantle(tee: _Tee) -> None:
-    """Put fds 1 and 2 back, let the follower catch up, release the rest.
-    Safe on a half-built tee (start() failing part way)."""
-    for fd, original in tee.saved.items():
+    """Put sys.stdout/err and fds 1 and 2 back as they were, let the
+    follower catch up, release the rest. Safe on a half-built tee (start()
+    failing part way)."""
+    _restore_console_streams(tee)
+    for fd in tee.redirected:
         try:
-            os.dup2(original, fd)
+            if fd in tee.saved:
+                os.dup2(tee.saved[fd], fd)
+            else:
+                os.close(fd)    # it was not open before start()
         except OSError:
             pass
+    tee.redirected.clear()
     tee.stopping.set()
     if tee.follower is not None:
         tee.follower.join(_DRAIN_S)
         if tee.follower.is_alive():
             return      # still copying: it owns its fds until exit
-    for owned in (tee.read_fd, tee.log_fd, *tee.saved.values()):
-        _close(owned)
+    owned = [tee.log_fd, *tee.saved.values()]
+    if tee.read_fd is not None:
+        owned.append(tee.read_fd)
+    for fd in owned:
+        _close(fd)
 
 
 def start(path: Path) -> bool:
@@ -195,45 +263,52 @@ def start(path: Path) -> bool:
                      % (path.parent, exc.strerror or exc))
             return False
         rotation_error = rotate(path)
-        flags = (os.O_WRONLY | os.O_CREAT | os.O_APPEND
-                 | getattr(os, "O_BINARY", 0))
+
+        def fail(reason: str) -> bool:
+            if rotation_error:
+                _console(rotation_error)
+            _console("log file disabled: " + reason)
+            return False
+
+        binary = getattr(os, "O_BINARY", 0)
         try:
             # Append, so a failed rotation never destroys the previous run.
             # After a successful rotation the file is new anyway.
-            log_fd = os.open(path, flags, 0o644)
+            log_fd = _above_std(os.open(
+                path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | binary, 0o644))
         except OSError as exc:
-            _console("log file disabled: cannot open %s (%s)"
-                     % (path, exc.strerror or exc))
-            return False
-        try:
-            read_fd = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
-            # The mirror starts at this run, not at an old run appended to.
-            os.lseek(read_fd, 0, os.SEEK_END)
-        except OSError as exc:
-            _close(log_fd)
-            _console("log file disabled: cannot read back %s (%s)"
-                     % (path, exc.strerror or exc))
-            return False
+            return fail("cannot open %s (%s)" % (path, exc.strerror or exc))
 
         _flush_python_streams()
         _flush_c_stdio()
-        tee = _Tee(log_fd, read_fd)
+        tee = _Tee(log_fd)
         try:
             for fd in _STREAM_FDS:
-                tee.saved[fd] = os.dup(fd)
+                try:
+                    tee.saved[fd] = _above_std(os.dup(fd))
+                except OSError:
+                    pass    # no such stream (GUI exe): nothing to mirror to
+            console = tee.saved.get(2, tee.saved.get(1))
+            if console is not None:
+                tee.read_fd = _above_std(os.open(path, os.O_RDONLY | binary))
+                # The mirror starts at this run, not at an old one.
+                os.lseek(tee.read_fd, 0, os.SEEK_END)
             for fd in _STREAM_FDS:
                 os.dup2(log_fd, fd)
-            follower = threading.Thread(
-                target=_follow, args=(tee,), name="dauntless-log-follower",
-                daemon=True)
-            follower.start()
-            tee.follower = follower
+                tee.redirected.add(fd)
+            _rewrap_console_streams(tee)
+            if console is not None:
+                follower = threading.Thread(
+                    target=_follow, args=(tee, console),
+                    name="dauntless-log-follower", daemon=True)
+                follower.start()
+                tee.follower = follower
         except (OSError, RuntimeError) as exc:
-            # Without a follower the console would go silent: undo it all.
+            # A half-built tee (say, a console with no follower) is worse
+            # than none: undo it all.
             _dismantle(tee)
-            _console("log file disabled: cannot redirect output to %s (%s)"
-                     % (path, getattr(exc, "strerror", None) or exc))
-            return False
+            return fail("cannot redirect output to %s (%s)"
+                        % (path, getattr(exc, "strerror", None) or exc))
 
         _state = tee
         if not _atexit_registered:
@@ -257,6 +332,8 @@ def stop() -> None:
         _state = None
     if tee is None:
         return
-    _flush_python_streams()
-    _flush_c_stdio()
-    _dismantle(tee)
+    try:
+        _flush_python_streams()
+        _flush_c_stdio()
+    finally:
+        _dismantle(tee)

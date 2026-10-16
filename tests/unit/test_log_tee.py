@@ -189,6 +189,7 @@ def test_gil_holding_writer_is_never_blocked(tmp_path):
     log = tmp_path / "logs" / "dauntless.log"
     proc = _run("""
         import ctypes
+        log_tee._DRAIN_S = 30.0          # load-proof: copy all 1 MB to console
         assert log_tee.start(LOG) is True
         data = (b"y" * 99 + b"\\n") * 10000 + b"gil-done\\n"
         libc = ctypes.PyDLL(None)        # PyDLL: the call HOLDS the GIL
@@ -254,11 +255,12 @@ def test_follower_copies_a_write_that_lands_just_before_stop(tmp_path):
     """Race found while stress-running the GIL test (about 1 run in 15):
     the follower reads EOF, a final write lands and stop() runs before the
     follower gets the GIL back, and it took that stale EOF as "drained".
-    The follower's first EOF read is held here until stop() has asked, which
-    forces that interleaving every time."""
+    Forced here: the final write waits for the follower's first EOF, and that
+    EOF read is held until stop() has asked."""
     log = tmp_path / "logs" / "dauntless.log"
     proc = _run("""
         import threading, types
+        first_eof = threading.Event()
         released = threading.Event()
         class _Os(types.ModuleType):
             def __getattr__(self, name):
@@ -268,6 +270,7 @@ def test_follower_copies_a_write_that_lands_just_before_stop(tmp_path):
             data = os.read(fd, n)
             if (threading.current_thread().name == "dauntless-log-follower"
                     and not data and not released.is_set()):
+                first_eof.set()
                 released.wait(5)      # stale EOF, observed before stop()
             return data
         proxy.read = read
@@ -279,9 +282,157 @@ def test_follower_copies_a_write_that_lands_just_before_stop(tmp_path):
             real_set()
             released.set()
         stopping.set = set_and_release
-        os.write(2, b"just-before-stop\\\\n")
+        assert first_eof.wait(5)
+        os.write(2, b"just-before-stop\\n")
         log_tee.stop()
     """, log, tmp_path, timeout=30)
     assert proc.returncode == 0, proc.stderr
-    assert b"just-before-stop" in log.read_bytes()
-    assert b"just-before-stop" in _console(proc)
+    assert b"just-before-stop\n" in log.read_bytes()
+    assert b"just-before-stop\n" in _console(proc)
+
+
+def test_windows_console_streams_are_rewrapped_and_restored(tmp_path):
+    """On a Windows console, sys.stdout/err sit on _WindowsConsoleIO, which
+    calls WriteConsoleW on the fd's handle -- a FILE after the redirect, so
+    every print would raise. Faked here with a raw type that refuses regular
+    files, injected as the console-IO type."""
+    log = tmp_path / "logs" / "dauntless.log"
+    proc = _run("""
+        import io, stat
+        class FakeConsoleIO(io.FileIO):
+            def write(self, b):
+                if stat.S_ISREG(os.fstat(self.fileno()).st_mode):
+                    raise OSError(22, "WriteConsoleW on a file handle")
+                return super().write(b)
+        fake = io.TextIOWrapper(
+            io.BufferedWriter(FakeConsoleIO(1, "w", closefd=False)),
+            encoding="utf-8", line_buffering=True)
+        sys.stdout = fake
+        plain_err = sys.stderr
+        log_tee._console_io_types = lambda: (FakeConsoleIO,)
+        assert log_tee.start(LOG) is True
+        assert sys.stdout is not fake
+        assert sys.stderr is plain_err          # not console IO: untouched
+        print("swapped-print \\u00e9")
+        log_tee.stop()
+        assert sys.stdout is fake
+        print("after-stop")
+    """, log, tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    text = log.read_text(encoding="utf-8")
+    assert "swapped-print é" in text
+    assert "after-stop" not in text
+    assert b"after-stop" in proc.stdout
+
+
+def test_no_console_still_writes_the_log(tmp_path):
+    """A GUI-subsystem exe has no std handles. That disables only the
+    console mirror; fds 1/2 still go to the log. (Closed std fds also make
+    os.open hand out fd 1 or 2, which must not be clobbered.)"""
+    log = tmp_path / "logs" / "dauntless.log"
+    proc = _run("""
+        import threading
+        sys.stdout = sys.stderr = None
+        os.close(1)
+        os.close(2)
+        def closed(fd):
+            try:
+                os.fstat(fd)
+            except OSError:
+                return True
+            return False
+        ok = log_tee.start(LOG) is True and log_tee.is_active()
+        ok = ok and log_tee._state.log_fd > 2      # not handed fd 1 or 2
+        ok = ok and not [t for t in threading.enumerate()
+                         if t.name == "dauntless-log-follower"]
+        os.write(1, b"gui-out\\n")
+        os.write(2, b"gui-err\\n")
+        log_tee.stop()
+        ok = ok and not log_tee.is_active() and closed(1) and closed(2)
+        os._exit(0 if ok else 7)
+    """, log, tmp_path)
+    assert proc.returncode == 0
+    text = log.read_text()
+    assert "gui-out" in text and "gui-err" in text
+
+
+def test_closed_stdout_keeps_the_mirror_and_the_log(tmp_path):
+    log = tmp_path / "logs" / "dauntless.log"
+    proc = _run("""
+        sys.stdout = None
+        os.close(1)
+        assert log_tee.start(LOG) is True
+        assert log_tee._state.log_fd > 2 and log_tee._state.read_fd > 2
+        os.write(1, b"half-out\\n")
+        os.write(2, b"half-err\\n")
+        log_tee.stop()
+        try:
+            os.fstat(1)
+        except OSError:
+            pass
+        else:
+            raise AssertionError("fd 1 was closed before start; stop left it open")
+    """, log, tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    text = log.read_text()
+    assert text.count("half-out") == 1 and text.count("half-err") == 1
+    assert b"half-out" in proc.stderr and b"half-err" in proc.stderr
+
+
+def test_closed_stderr_mirrors_to_stdout(tmp_path):
+    """With fd 2 closed, saving fd 1 hands out fd 2 -- which the redirect
+    would then turn into the log, so the mirror would copy the log into
+    itself."""
+    log = tmp_path / "logs" / "dauntless.log"
+    proc = _run("""
+        sys.stderr = None
+        os.close(2)
+        assert log_tee.start(LOG) is True
+        os.write(1, b"solo-out\\n")
+        log_tee.stop()
+        os.write(1, b"after-stop\\n")          # fd 1 is the console again
+        try:
+            os.fstat(2)
+        except OSError:
+            pass
+        else:
+            os.write(1, b"fd 2 left open\\n")
+    """, log, tmp_path)
+    assert proc.returncode == 0
+    text = log.read_text()
+    assert text.count("solo-out") == 1
+    assert "after-stop" not in text
+    assert b"solo-out" in proc.stdout and b"after-stop" in proc.stdout
+    assert b"fd 2 left open" not in proc.stdout
+
+
+def test_rotation_and_open_both_failing_reports_both(tmp_path):
+    log = tmp_path / "logs" / "dauntless.log"
+    log.mkdir(parents=True)                         # can't be opened
+    prev = log.with_name("dauntless.prev.log")
+    (prev / "keep").mkdir(parents=True)             # can't be replaced
+    proc = _run("""
+        assert log_tee.start(LOG) is False
+    """, log, tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert len(_lines(proc.stderr, "could not rotate")) == 1, proc.stderr
+    assert len(_lines(proc.stderr, "cannot open")) == 1, proc.stderr
+
+
+def test_stop_restores_the_fds_even_if_a_flush_raises(tmp_path):
+    log = tmp_path / "logs" / "dauntless.log"
+    proc = _run("""
+        before = os.fstat(1).st_ino
+        assert log_tee.start(LOG) is True
+        class Broken:
+            def flush(self):
+                raise RuntimeError("flush exploded")
+        real_stdout, sys.stdout = sys.stdout, Broken()
+        try:
+            log_tee.stop()
+        except RuntimeError:
+            pass
+        sys.stdout = real_stdout
+        assert os.fstat(1).st_ino == before
+    """, log, tmp_path)
+    assert proc.returncode == 0, proc.stderr
