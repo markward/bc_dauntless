@@ -1,16 +1,32 @@
-"""Packaged builds: tee everything written to fds 1 and 2 into a log file.
+"""Packaged builds: everything written to fds 1 and 2 goes to a log file,
+and is mirrored to the console.
 
 Spec 2026-10-16 per-user data dirs, §5.5. The capture is at the FILE
 DESCRIPTOR level, not sys.stdout/sys.stderr, because most of the process's
 output never passes through Python: C++ `fprintf(stderr)`, CEF's console
 `printf`, and Python's own fatal-error dumps all write straight to fd 1/2.
 
-Mechanism: one pipe per stream is dup2'd onto fd 1 / fd 2. A daemon reader
-thread per pipe copies each chunk to a saved duplicate of the ORIGINAL fd
-(so the console still sees it, on the same stream) and to the log file,
-flushed per chunk. The readers use only os.read/os.write and the file
-object; they never touch sys.stdout/sys.stderr, which now feed the very pipe
-being read.
+Mechanism (Ruling 8): fds 1 and 2 are dup2'd onto the log FILE itself,
+opened for append. Every writer -- Python, C++, CEF, inherited children --
+writes straight into the kernel file, so no writer ever waits on a reader,
+and the log is complete even when the process dies without stopping it.
+A daemon "follower" thread reads what is appended through its own read
+handle and copies it to a saved duplicate of the original stderr. The
+follower is best effort: while C++ holds the GIL it can't run, so the
+console lags, but nothing blocks.
+
+(The first design dup2'd pipes onto fd 1/2 with Python reader threads. A
+GIL-holding C++ call writing more than about two pipe buffers then blocked
+on a full pipe that the reader could never drain without the GIL: measured
+at 200 KB on macOS, a permanent freeze. tests/unit/test_log_tee.py
+reproduces it.)
+
+The console mirror merges stdout and stderr onto the original stderr: one
+file can't say which stream a byte came from, and stderr is the diagnostic
+stream, so stdout's consumers never see interleaved diagnostics.
+
+The follower uses only os.read/os.write. It never touches sys.stdout or
+sys.stderr, which now point at the log, so it cannot feed back into it.
 
 Stdlib only, and nothing here resolves a path: the caller passes it
 (engine/__init__.py, from paths.log_file_path()).
@@ -26,10 +42,9 @@ from pathlib import Path
 from typing import Optional
 
 _STREAM_FDS = (1, 2)
-# How long stop() waits, in total, for the readers to drain after the pipes close.
-# A child process that inherited fd 1/2 (a CEF helper) keeps the pipe's write
-# end open, so EOF can be late; the daemon thread must never hold up exit.
-_JOIN_TIMEOUT_S = 2.0
+_CONSOLE_FD = 2             # the original stream the mirror writes to
+_POLL_S = 0.05              # follower's idle wait between reads
+_DRAIN_S = 0.5              # how long stop() lets the follower catch up
 _READ_CHUNK = 65536
 
 _lock = threading.Lock()
@@ -38,16 +53,17 @@ _atexit_registered = False
 
 
 class _Tee:
-    def __init__(self, log, saved: dict, readers: list):
-        self.log = log
-        self.saved = saved          # stream fd -> duplicate of the original
-        self.readers = readers      # reader threads
-        self.write_lock = threading.Lock()
+    def __init__(self, log_fd: int, read_fd: int):
+        self.log_fd = log_fd        # append handle the fds were dup2'd from
+        self.read_fd = read_fd      # the follower's own read handle
+        self.saved: dict = {}       # stream fd -> duplicate of the original
+        self.stopping = threading.Event()
+        self.follower: Optional[threading.Thread] = None
 
 
 def _console(message: str) -> None:
-    """One line on the console's stderr, straight to the fd (sys.stderr may
-    be None in a GUI process, and must not be used while the tee is live)."""
+    """One line on stderr, straight to the fd: sys.stderr may be None in a
+    GUI process, and points at the log while the tee is live."""
     try:
         os.write(2, ("dauntless: %s\n" % message).encode("utf-8", "replace"))
     except OSError:
@@ -71,7 +87,7 @@ def _flush_python_streams() -> None:
 
 
 def _flush_c_stdio() -> None:
-    """fflush(NULL): C stdout is fully buffered once fd 1 is a pipe, so CEF's
+    """fflush(NULL): C stdout is fully buffered once fd 1 is a file, so CEF's
     console `printf` lines would otherwise be flushed at C exit -- after
     stop() restored the fds, i.e. to the console but never into the log.
 
@@ -83,6 +99,13 @@ def _flush_c_stdio() -> None:
         import ctypes
         ctypes.CDLL(None).fflush(None)
     except Exception:  # noqa: BLE001 -- best effort; never block start/stop
+        pass
+
+
+def _close(fd: int) -> None:
+    try:
+        os.close(fd)
+    except OSError:
         pass
 
 
@@ -110,67 +133,51 @@ def rotate(path: Path) -> Optional[str]:
     return None
 
 
-def _pump(read_fd: int, console_fd: int, tee: _Tee) -> None:
-    try:
-        while True:
-            try:
-                chunk = os.read(read_fd, _READ_CHUNK)
-            except OSError:
-                break
-            if not chunk:
-                break
-            try:
-                _write_all(console_fd, chunk)
-            except OSError:
-                pass        # a closed console must not stop the log
-            with tee.write_lock:
-                try:
-                    tee.log.write(chunk)
-                    tee.log.flush()
-                except (OSError, ValueError):
-                    pass
-    finally:
+def _follow(tee: _Tee) -> None:
+    """Copy what is appended to the log onto the console until stop() asks,
+    then drain to EOF once (bounded by stop()'s join) and return."""
+    console = tee.saved[_CONSOLE_FD]
+    while True:
+        # Sample the flag BEFORE reading: an EOF only proves the drain is
+        # complete if stop() had already asked when the read began. (An EOF
+        # read just before a final write + stop() would otherwise end the
+        # follower with that write never copied.)
+        stopping = tee.stopping.is_set()
         try:
-            os.close(read_fd)
+            chunk = os.read(tee.read_fd, _READ_CHUNK)
         except OSError:
-            pass
+            return
+        if chunk:
+            try:
+                _write_all(console, chunk)
+            except OSError:
+                pass        # a closed console must not stop the follower
+            continue
+        if stopping:
+            return          # caught up after stop(): done
+        tee.stopping.wait(_POLL_S)
 
 
-def _dismantle(tee: _Tee, unread_pipes: tuple = ()) -> None:
-    """Put fds 1 and 2 back and let the readers drain, then release what the
-    tee owns. dup2 over fd 1/2 drops the last pipe write ends this process
-    holds, so each reader sees EOF once it has copied what was written.
-    `unread_pipes` are read ends whose reader never started (start() failed).
-    """
+def _dismantle(tee: _Tee) -> None:
+    """Put fds 1 and 2 back, let the follower catch up, release the rest.
+    Safe on a half-built tee (start() failing part way)."""
     for fd, original in tee.saved.items():
         try:
             os.dup2(original, fd)
         except OSError:
             pass
-    for read_fd in unread_pipes:
-        try:
-            os.close(read_fd)
-        except OSError:
-            pass
-    deadline = time.monotonic() + _JOIN_TIMEOUT_S
-    for reader in tee.readers:
-        reader.join(max(0.0, deadline - time.monotonic()))
-    if any(reader.is_alive() for reader in tee.readers):
-        return      # still draining: it owns the fds and file until exit
-    for original in tee.saved.values():
-        try:
-            os.close(original)
-        except OSError:
-            pass
-    with tee.write_lock:
-        try:
-            tee.log.close()
-        except OSError:
-            pass
+    tee.stopping.set()
+    if tee.follower is not None:
+        tee.follower.join(_DRAIN_S)
+        if tee.follower.is_alive():
+            return      # still copying: it owns its fds until exit
+    for owned in (tee.read_fd, tee.log_fd, *tee.saved.values()):
+        _close(owned)
 
 
 def start(path: Path) -> bool:
-    """Tee fds 1 and 2 into `path` (rotating the previous run's log first).
+    """Send fds 1 and 2 to `path` (rotating the previous run's log first)
+    and mirror it to the console.
 
     Returns True when the tee is running (including when it already was).
     Returns False, after one console line saying why, when the log can't be
@@ -188,40 +195,42 @@ def start(path: Path) -> bool:
                      % (path.parent, exc.strerror or exc))
             return False
         rotation_error = rotate(path)
+        flags = (os.O_WRONLY | os.O_CREAT | os.O_APPEND
+                 | getattr(os, "O_BINARY", 0))
         try:
             # Append, so a failed rotation never destroys the previous run.
             # After a successful rotation the file is new anyway.
-            log = open(path, "ab")
+            log_fd = os.open(path, flags, 0o644)
         except OSError as exc:
             _console("log file disabled: cannot open %s (%s)"
+                     % (path, exc.strerror or exc))
+            return False
+        try:
+            read_fd = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+            # The mirror starts at this run, not at an old run appended to.
+            os.lseek(read_fd, 0, os.SEEK_END)
+        except OSError as exc:
+            _close(log_fd)
+            _console("log file disabled: cannot read back %s (%s)"
                      % (path, exc.strerror or exc))
             return False
 
         _flush_python_streams()
         _flush_c_stdio()
-        saved: dict = {}
-        pipes: list = []
-        tee = _Tee(log, saved, [])
+        tee = _Tee(log_fd, read_fd)
         try:
             for fd in _STREAM_FDS:
-                saved[fd] = os.dup(fd)
+                tee.saved[fd] = os.dup(fd)
             for fd in _STREAM_FDS:
-                read_fd, write_fd = os.pipe()
-                pipes.append(read_fd)
-                try:
-                    os.dup2(write_fd, fd)
-                finally:
-                    os.close(write_fd)
-            for fd, read_fd in zip(_STREAM_FDS, pipes):
-                reader = threading.Thread(
-                    target=_pump, args=(read_fd, saved[fd], tee),
-                    name="dauntless-log-tee-%d" % fd, daemon=True)
-                reader.start()
-                tee.readers.append(reader)
+                os.dup2(log_fd, fd)
+            follower = threading.Thread(
+                target=_follow, args=(tee,), name="dauntless-log-follower",
+                daemon=True)
+            follower.start()
+            tee.follower = follower
         except (OSError, RuntimeError) as exc:
-            # A redirected fd with no reader would block once its pipe
-            # fills, so any failure here puts every fd back first.
-            _dismantle(tee, tuple(pipes[len(tee.readers):]))
+            # Without a follower the console would go silent: undo it all.
+            _dismantle(tee)
             _console("log file disabled: cannot redirect output to %s (%s)"
                      % (path, getattr(exc, "strerror", None) or exc))
             return False
@@ -232,13 +241,16 @@ def start(path: Path) -> bool:
             _atexit_registered = True
 
     if rotation_error:
-        # Through the tee, so it reaches the console AND the log.
+        # Through the log, so it reaches the file AND the console.
         _console("%s; appending to the old log instead" % rotation_error)
     return True
 
 
 def stop() -> None:
-    """Restore fds 1 and 2 and let the readers drain. Safe to call twice."""
+    """Restore fds 1 and 2 and let the follower drain. Safe to call twice.
+
+    Children that inherited fd 1/2 (CEF helpers) keep appending to the file
+    after this; that is never waited on and never mirrored."""
     global _state
     with _lock:
         tee = _state

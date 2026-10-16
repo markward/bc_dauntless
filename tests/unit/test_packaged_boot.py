@@ -40,11 +40,12 @@ def test_packaged_import_disables_bytecode_and_starts_tee(tmp_path):
     install, proc = _packaged_import(tmp_path, data)
 
     assert proc.returncode == 0, proc.stderr
-    assert b"dont_write_bytecode=True" in proc.stdout
     log = data / "logs" / "dauntless.log"
     assert log.is_file()
+    assert "dont_write_bytecode=True" in log.read_text()
     assert "boot-line" in log.read_text()
-    assert b"boot-line" in proc.stdout
+    # The console mirror merges stdout onto the original stderr.
+    assert b"boot-line" in proc.stdout + proc.stderr
     # Modules imported after the switch leave no bytecode in the install.
     assert not list((install / "engine").glob("__pycache__/units.*"))
 
