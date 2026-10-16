@@ -1919,8 +1919,10 @@ def _resolve_torpedo_ammo(ts_prop, slot: int):
         return TorpedoAmmoType(name, launch_speed=launch_speed, power_cost=power_cost,
                                max_torpedoes=declared_max, script=script_name)
     except Exception as _e:
-        # Unimportable module (a mod's Python 1.5 .pyc-only projectile): the
-        # launch already substitutes the stock photon
+        # Unimportable module -- typically from a dependency pack the player
+        # never installed (DCMPv2's Tactical.Projectiles.blackelm* torpedoes
+        # need Elminster's Common Weapons Pack), or 1.5 bytecode engine/py15
+        # refuses. The launch already substitutes the stock photon
         # (weapon_subsystems._resolve_projectile_module), so the ammo type
         # names that same module. With no script, the SDK's
         # FireScript.ChooseTorpType imported None and raised before its weapon
