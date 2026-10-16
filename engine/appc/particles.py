@@ -369,6 +369,51 @@ def snapshot_descriptors(resolve_attach=None, to_view=None):
     return out
 
 
+def _mid_colour(c):
+    """The colour key nearest t=0.5 (NanoFX puts the caller's tint there)."""
+    if not c._color_keys:
+        return None
+    t, r, g, b = min(c._color_keys, key=lambda k: abs(k[0] - 0.5))
+    return (float(r), float(g), float(b))
+
+
+def _controller_world_pos(c):
+    """World position of a controller's emit point, or None."""
+    from engine.appc.math import TGPoint3
+    from engine.appc.objects import _ObjectNodeRef
+    from engine.appc.sets import SetEffectRoot
+    x, y, z = _vec3(c._emit_pos)
+    src = c._emit_from
+    if src is None and isinstance(c._attach_node, _ObjectNodeRef):
+        src = c._attach_node._owner()
+    if src is None:
+        return (x, y, z) if isinstance(c._attach_node, SetEffectRoot) else None
+    if hasattr(src, "GetWorldLocation") and hasattr(src, "GetWorldRotation"):
+        p = TGPoint3(x, y, z)
+        p.MultMatrixLeft(src.GetWorldRotation())
+        loc = src.GetWorldLocation()
+        return (loc.x + p.x, loc.y + p.y, loc.z + p.z)
+    if hasattr(src, "x"):
+        return (src.x, src.y, src.z)
+    return None
+
+
+def _spawn_native(c):
+    """kind:native (spec 2026-10-16 §7.5): play a Dauntless procedural effect
+    instead of registering a particle emitter."""
+    native = c._native or {}
+    if native.get("effect") != "shockwave":
+        return
+    from engine.appc import shockwaves
+    center = _controller_world_pos(c)
+    if center is None:
+        return
+    sizes = [s for (_t, s) in c._size_keys] or [1.0]
+    radius = max(sizes) * float(native.get("radius_scale", 1.0))
+    shockwaves.spawn(center, radius, max(0.1, float(c._emit_life)),
+                     _controller_set(c), tint=_mid_colour(c))
+
+
 class EffectAction:
     """Mirror of the SDK action wrapper: Start() registers the controller in
     the active set, Stop() deregisters it."""
@@ -376,7 +421,14 @@ class EffectAction:
         self._controller = controller
 
     def Start(self):
-        register(self._controller)
+        c = self._controller
+        kind = c.__dict__.get("_library_kind", "sprite")
+        if kind == "none":
+            return
+        if kind == "native":
+            _spawn_native(c)
+            return
+        register(c)
 
     def Play(self):
         self.Start()

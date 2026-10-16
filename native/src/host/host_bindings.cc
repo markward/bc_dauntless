@@ -5744,6 +5744,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   s.max_radius = d["max_radius"].cast<float>();
                   s.age        = d["age"].cast<float>();
                   s.lifetime   = d["lifetime"].cast<float>();
+                  if (d.contains("tint")) {
+                      auto t = d["tint"].cast<std::tuple<float, float, float>>();
+                      s.tint = {std::get<0>(t), std::get<1>(t), std::get<2>(t)};
+                  }
                   g_shockwaves.push_back(std::move(s));
               }
           },

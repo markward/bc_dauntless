@@ -55,6 +55,7 @@ void ShockwavePass::render(const scenegraph::Camera& cam,
         sh.set_vec3("u_center", s.world_center);
         sh.set_float("u_max_radius", s.max_radius);
         sh.set_float("u_t", t);
+        sh.set_vec3("u_tint", s.tint);
         glDrawArrays(GL_TRIANGLES, 0, 6);
     }
     glBindVertexArray(0);

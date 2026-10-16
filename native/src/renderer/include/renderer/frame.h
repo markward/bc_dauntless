@@ -181,6 +181,7 @@ struct ShockwaveDescriptor {
     float max_radius;
     float age;
     float lifetime;
+    glm::vec3 tint{1.0f};   // ring colour multiplier; white = default look (spec 2026-10-16 §7.5)
 };
 
 /// Hit-VFX render descriptor.  Engine ages each entry; renderer dispatches
