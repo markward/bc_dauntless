@@ -460,6 +460,29 @@ TEST(Dhv, OverflowingDimsProductIsRejected) {
            "product must still be rejected, not accepted via wraparound";
 }
 
+TEST(Dhv, WritesUnderANonAsciiPath) {
+    // The per-user cache dir sits under the player's profile, whose name
+    // can be any Unicode. The temp sibling must be built on the path
+    // itself: `path.string() + ".tmp"` round-trips through the ANSI code
+    // page on MSVC and throws for a character it can't map (CJK and
+    // Cyrillic are outside cp1252). Passes on POSIX either way; this is
+    // the Windows regression check.
+    const auto dir = scratch_dir() / std::filesystem::path(u8"\u5b87\u5b99_\u0417");
+    const auto p   = dir / std::filesystem::path(u8"\u0437\u0432\u0435\u0437\u0434\u0430.dhv");
+    voxel::DistanceField out;
+    voxel::HullVolumeMeta mo;
+    bool wrote = false;
+    EXPECT_NO_THROW(wrote = voxel::write_dhv(p, sample_field(), sample_meta()));
+    EXPECT_TRUE(wrote);
+    EXPECT_TRUE(voxel::read_dhv(p, out, mo));
+    EXPECT_EQ(out.dims, sample_field().dims);
+    auto tmp = p;
+    tmp += ".tmp";
+    EXPECT_FALSE(std::filesystem::exists(tmp));
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
+
 TEST(Dhv, InconsistentDistSizeIsRejected) {
     // dims (3,4,5) implies 60 cells; a payload of a different size is
     // internally inconsistent and must be rejected at WRITE time, not left

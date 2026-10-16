@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <string>
 #include <system_error>
 #include <thread>
 
@@ -259,6 +260,48 @@ TEST(HullVolumeCache, RepeatedGetReturnsTheSameObject) {
     const voxel::DistanceField& a = c.get(src, 10.0f, 2.0f);
     const voxel::DistanceField& b = c.get(src, 10.0f, 2.0f);
     EXPECT_EQ(&a, &b) << "references must stay stable for the cache's lifetime";
+}
+
+namespace {
+std::size_t count_of(const std::string& hay, const std::string& needle) {
+    std::size_t n = 0;
+    for (auto at = hay.find(needle); at != std::string::npos;
+         at = hay.find(needle, at + needle.size()))
+        ++n;
+    return n;
+}
+}  // namespace
+
+TEST(HullVolumeCache, FailedWriteSaysSoOncePerPath) {
+    // A cache dir that can't be written must not stop the game loading,
+    // but it must not be silent either: one stderr line per path per
+    // process, in the same shape as Python's paths.report_write_failure,
+    // with the path in UTF-8. A cache root that is an existing FILE makes
+    // every write fail. Two caches on that root re-attempt the same path
+    // (each has its own memo); the line still appears once.
+    clear_scratch();
+    ScratchGuard guard;
+    const auto src = make_source("hullW.nif", "hull-w");
+    const auto blocker = scratch_root() / "not_a_dir";
+    { std::ofstream(blocker) << "x"; }
+    voxel::HullVolumeCache a(blocker);
+    voxel::HullVolumeCache b(blocker);
+    const auto u8 = a.path_for(src, 10.0f, 1.0f).u8string();
+    const std::string shown(u8.begin(), u8.end());
+
+    testing::internal::CaptureStderr();
+    (void)a.get(src, 10.0f, 1.0f);
+    (void)b.get(src, 10.0f, 1.0f);
+    const std::string err = testing::internal::GetCapturedStderr();
+
+    const std::string prefix = "[dauntless] could not write " + shown + ": ";
+    EXPECT_EQ(count_of(err, prefix), 1u) << err;
+    EXPECT_EQ(count_of(err, "[dauntless] could not write"), 1u) << err;
+    const auto at = err.find(prefix);
+    ASSERT_NE(at, std::string::npos) << err;
+    const auto eol = err.find('\n', at);
+    ASSERT_NE(eol, std::string::npos) << err;
+    EXPECT_GT(eol, at + prefix.size()) << "the reason is missing: " << err;
 }
 
 namespace {

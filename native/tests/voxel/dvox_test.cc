@@ -16,6 +16,24 @@ TEST(Dvox, RoundTrip) {
     EXPECT_TRUE(r.solid(2,3,4)); EXPECT_FALSE(r.solid(1,1,1));
 }
 
+TEST(Dvox, WritesUnderANonAsciiPath) {
+    // Same Windows trap as Dhv.WritesUnderANonAsciiPath: the temp sibling
+    // must not be built through path.string() (ANSI on MSVC).
+    voxel::VoxelVolume v; v.dims = {2, 2, 2}; v.origin = {0, 0, 0}; v.cell = {1, 1, 1};
+    v.occ.assign(8, 1);
+    const auto dir = std::filesystem::temp_directory_path() /
+                     std::filesystem::path(u8"dvox_\u5b87\u5b99_\u0417");
+    const auto p = dir / std::filesystem::path(u8"\u0437\u0432.dvox");
+    bool wrote = false;
+    EXPECT_NO_THROW(wrote = voxel::write_dvox(p, v));
+    EXPECT_TRUE(wrote);
+    voxel::VoxelVolume r;
+    EXPECT_TRUE(voxel::read_dvox(p, r));
+    EXPECT_EQ(r.solid_count(), 8u);
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
+
 TEST(Dvox, RejectsBadMagic) {
     auto p = std::filesystem::temp_directory_path() / "dvox_bad.dvox";
     { std::ofstream(p) << "NOPE"; }

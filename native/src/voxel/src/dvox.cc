@@ -41,7 +41,10 @@ bool write_dvox(const std::filesystem::path& p, const VoxelVolume& v) {
     std::error_code ec;
     if (p.has_parent_path()) std::filesystem::create_directories(p.parent_path(), ec);
 
-    const std::filesystem::path tmp = p.string() + ".tmp";
+    // Appended on the path itself, never through p.string(): that is the
+    // ANSI code page on MSVC and throws for an unmappable folder name.
+    std::filesystem::path tmp = p;
+    tmp += ".tmp";
     bool write_ok = false;
     {
         std::ofstream s(tmp, std::ios::binary | std::ios::trunc);
