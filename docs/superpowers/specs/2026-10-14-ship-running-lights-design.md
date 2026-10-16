@@ -196,9 +196,12 @@ hull.
   `falloff(r) = exp(−3 r²)` (≈0.05 at the quad edge, cut off at r ≥ 1). The
   profile is deliberately broad: when the `min_px` floor wins the quad is a
   couple of pixels across, and a falloff that is ~0 near the edge left a
-  sprite centred on a pixel corner black, so moving lights twinkled. There is
-  no energy conservation when the floor wins: distant lights stay visible
-  pinpoints. There is **no separate halo**: with HDR on, the core sits above the bloom threshold
+  sprite centred on a pixel corner black, so moving lights twinkled. When the
+  floor wins the colour is scaled by `(world size / drawn size)²`, so the
+  light's on-screen energy keeps falling as 1/d² and distant lights dim out.
+  (Shipped first without this: every floored light drew at the same size AND
+  full brightness, so — with bloom on top — a ship's lights looked identical
+  at any range. Mark flagged it 2026-10-16.) There is **no separate halo**: with HDR on, the core sits above the bloom threshold
   and bloom supplies the glow, like every other bright source; with HDR off
   ("camera realism" off, `settings_store.py:300-308`) the soft edge still reads
   as a small light.
@@ -248,6 +251,7 @@ hull.
 - `blink_alpha`: static and degenerate cases are 1; on, off and both ramps at
   the right times; phase shifts the window.
 - `sprite_world_size`: world size wins near, the `min_px` floor wins far.
+- Floored sprites conserve energy: at 2× / 10× the floor distance the colour is ¼ / 1⁄100.
 - `RunningLightStore`: set / levels / erase / clear; an unlisted id reads 0;
   a NaN or negative level draws nothing.
 - GL frame test: a light in front of a hull lights its pixel; the same light

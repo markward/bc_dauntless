@@ -72,9 +72,16 @@ std::vector<RunningLightSprite> RunningLightStore::build_sprites(
             RunningLightSprite sp;
             sp.world_pos = t + (RS * l.body_pos) / s;
             const float dist = glm::length(sp.world_pos - cam_eye);
-            sp.half_size = 0.5f * running_light_world_size(
+            const float drawn = running_light_world_size(
                 l.size, dials.size_gu_per_radius, dials.min_px, dist, proj11, viewport_h);
-            sp.color = l.rgb * (dials.intensity * a);
+            sp.half_size = 0.5f * drawn;
+            // Once the min_px floor wins the sprite stops shrinking on screen;
+            // dim it by the area it was blown up by, so its energy keeps
+            // falling as 1/d^2 instead of every light looking the same at
+            // any range.
+            const float true_size = std::max(0.0f, l.size) * dials.size_gu_per_radius;
+            const float k = drawn > true_size ? true_size / drawn : 1.0f;
+            sp.color = l.rgb * (dials.intensity * a * k * k);
             out.push_back(sp);
         }
     }
