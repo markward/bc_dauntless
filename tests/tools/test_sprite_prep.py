@@ -71,3 +71,25 @@ def test_green_matte_refuses_misaligned_pair(tmp_path):
     _sheet(tmp_path, "green.jpeg", 1, 1, 64, (0, 255, 0), (90, 90, 100), draw_off=20)
     with pytest.raises(prep.PrepError, match="cell"):
         prep.build("x", {"grid": [1, 1], "background": "green_matte", "cell": 64}, tmp_path)
+
+
+def test_black_solid_keeps_dark_object_opaque_and_unbrightened(tmp_path):
+    src = _sheet(tmp_path, "black.jpeg", 1, 1, 64, (0, 0, 0), (40, 40, 48))
+    out = prep.build("x", {"grid": [1, 1], "background": "black_solid", "cell": 64}, src)
+    r, g, b, a = out.getpixel((32, 32))
+    assert a == 255 and (r, g, b) == pytest.approx((40, 40, 48), abs=6)
+    assert out.getpixel((2, 2))[3] == 0
+
+
+def test_alpha_mode_reads_alpha_png_even_if_black_jpeg_exists(tmp_path):
+    Image.new("RGB", (16, 16), (255, 255, 255)).save(tmp_path / "black.jpeg")
+    Image.new("RGBA", (16, 16), (255, 0, 0, 77)).save(tmp_path / "alpha.png")
+    out = prep.build("x", {"grid": [1, 1], "background": "alpha", "cell": 16}, tmp_path)
+    assert out.getpixel((8, 8)) == (255, 0, 0, 77)
+
+
+def test_main_reports_bad_prep_data_as_failed_line(tmp_path, monkeypatch, capsys):
+    (tmp_path / "manifest.json").write_text('{"sprites": {"s": {"file": "s.png", "prep": {}}}}')
+    monkeypatch.setattr(prep, "sprites_dir", lambda: tmp_path)
+    assert prep.main(["s"]) == 1
+    assert "s: FAILED" in capsys.readouterr().err

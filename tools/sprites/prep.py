@@ -29,6 +29,13 @@ class PrepError(Exception):
     pass
 
 
+def _pixels(im):
+    """Pixel list, version-safe (getdata is deprecated in newer Pillow)."""
+    if hasattr(im, "get_flattened_data"):
+        return list(im.get_flattened_data())
+    return list(im.getdata())
+
+
 def _cells(img, cols, rows):
     """Rows of cell images; fractional cell sizes allowed."""
     w, h = img.size
@@ -49,7 +56,7 @@ def _resize(cell, size):
 
 def _key_black(cell, cut):
     rgba = []
-    for r, g, b in cell.convert("RGB").getdata():
+    for r, g, b in _pixels(cell.convert("RGB")):
         a = max(r, g, b)
         if a <= cut:
             rgba.append((0, 0, 0, 0))
@@ -65,7 +72,7 @@ def _key_black_solid(cell, lo, hi):
     rgb = cell.convert("RGB")
     alpha = Image.new("L", rgb.size)
     alpha.putdata([int(255 * min(1.0, max(0.0, (max(p) - lo) / float(hi - lo))))
-                   for p in rgb.getdata()])
+                   for p in _pixels(rgb)])
     alpha = alpha.filter(ImageFilter.MaxFilter(3)).filter(ImageFilter.MinFilter(3))
     alpha = alpha.filter(ImageFilter.GaussianBlur(0.7))
     out = rgb.convert("RGBA")
@@ -76,7 +83,7 @@ def _key_black_solid(cell, lo, hi):
 def _green_alpha(green, lo, hi):
     a = Image.new("L", green.size)
     a.putdata([int(255 * (1.0 - min(1.0, max(0.0, ((g - max(r, b)) - lo) / float(hi - lo)))))
-               for r, g, b in green.convert("RGB").getdata()])
+               for r, g, b in _pixels(green.convert("RGB"))])
     return a
 
 
@@ -84,13 +91,13 @@ def _silhouette_outside(black, green, lo):
     """Fraction of the green-keyed object lying outside the black sheet's
     object (brightness > 16) dilated by 2 px."""
     obj = Image.new("L", black.size)
-    obj.putdata([255 if max(p) > 16 else 0 for p in black.convert("RGB").getdata()])
+    obj.putdata([255 if max(p) > 16 else 0 for p in _pixels(black.convert("RGB"))])
     obj = obj.filter(ImageFilter.MaxFilter(5))
-    g_obj = [(g - max(r, b)) < lo for r, g, b in green.convert("RGB").getdata()]
+    g_obj = [(g - max(r, b)) < lo for r, g, b in _pixels(green.convert("RGB"))]
     total = sum(g_obj)
     if total == 0:
         return 0.0
-    outside = sum(1 for inside, o in zip(g_obj, obj.getdata()) if inside and o == 0)
+    outside = sum(1 for inside, o in zip(g_obj, _pixels(obj)) if inside and o == 0)
     return outside / float(total)
 
 
@@ -135,8 +142,10 @@ def build(sprite_id: str, prep: dict, src_dir: Path) -> Image.Image:
     cols, rows = prep["grid"]
     cell = int(prep.get("cell", 256))
     mode = prep.get("background", "black")
-    black_img = Image.open(src_dir / "black.jpeg").convert("RGB") \
-        if (src_dir / "black.jpeg").exists() else Image.open(src_dir / "alpha.png").convert("RGBA")
+    if mode == "alpha":
+        black_img = Image.open(src_dir / "alpha.png").convert("RGBA")
+    else:
+        black_img = Image.open(src_dir / "black.jpeg").convert("RGB")
     black_cells = _cells(black_img, cols, rows)
     green_cells = None
     if mode == "green_matte":
@@ -207,7 +216,7 @@ def main(argv=None) -> int:
             continue
         try:
             sheet = build(sid, entry["prep"], sprites_dir() / "src" / sid)
-        except (PrepError, OSError) as e:
+        except (PrepError, OSError, KeyError, IndexError, ValueError) as e:
             print(f"{sid}: FAILED -- {e}", file=sys.stderr)
             status = 1
             continue
