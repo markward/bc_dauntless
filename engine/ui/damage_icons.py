@@ -117,7 +117,12 @@ def trace_all() -> set[int]:
     the others). Same idempotency contract as weapon_icons.trace_all.
     """
     cache_dir = _svg_cache_dir()
-    os.makedirs(cache_dir, exist_ok=True)
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+    except OSError as exc:
+        from engine import paths
+        paths.report_write_failure(cache_dir, exc)
+        raise
     written: set[int] = set()
     tga_cache: dict[str, bytes] = {}
     for num, spec in ICON_REGISTRY.items():

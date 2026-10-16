@@ -30,6 +30,7 @@ def _tga(w: int, h: int) -> bytes:
 @pytest.mark.parametrize("mod,sub", [(weapon_icons, "weapons"),
                                      (damage_icons, "damage")])
 def test_weapon_and_damage_traces_land_in_cache_dir(monkeypatch, tmp_path, mod, sub):
+    monkeypatch.setenv(paths.DATA_DIR_ENV, str(tmp_path / "data"))
     tga = tmp_path / "Synth.tga"
     tga.write_bytes(_tga(8, 8))
     monkeypatch.setattr(mod, "ICON_REGISTRY",
@@ -79,6 +80,21 @@ def test_icon_trace_write_failure_is_reported(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(weapon_icons, "_needs_rebuild", lambda *a: True)
     weapon_icons.trace_atlas(str(tmp_path), {999: spec}, str(out))
     assert "999.svg" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("mod,call", [
+    (weapon_icons, lambda m, d: m.trace_atlas(None, {}, d)),
+    (damage_icons, lambda m, d: m.trace_all()),
+])
+def test_unwritable_cache_dir_is_reported(monkeypatch, tmp_path, capsys, mod, call):
+    paths._reset_write_failure_reports()
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file, not a dir")
+    monkeypatch.setattr(mod, "_svg_cache_dir", lambda: str(blocker))
+    with pytest.raises(OSError):
+        call(mod, str(blocker))
+    err = capsys.readouterr().err
+    assert err.count("blocker") == 1
 
 
 def _smallest_hull() -> Path | None:

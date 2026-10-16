@@ -166,7 +166,12 @@ def trace_atlas(tga_dir: Optional[str], registry: dict[int, IconSpec],
     on individual sprites are swallowed too — a corrupt sprite
     shouldn't block the rest of the atlas.
     """
-    os.makedirs(output_dir, exist_ok=True)
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+    except OSError as exc:
+        from engine import paths
+        paths.report_write_failure(output_dir, exc)
+        raise
     written: set[int] = set()
     tga_cache: dict[str, bytes] = {}
 
