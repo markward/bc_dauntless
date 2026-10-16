@@ -63,6 +63,7 @@ def test_discover_missing_root_is_empty_not_an_error(tmp_path):
 
 
 def test_mods_root_defaults_to_project_root(monkeypatch, tmp_path):
+    monkeypatch.delenv(mods.paths.DATA_DIR_ENV, raising=False)
     monkeypatch.setattr(mods.paths, "PROJECT_ROOT", tmp_path)
     assert mods.mods_root(argv=[], env={}) == tmp_path / "mods"
 
@@ -80,5 +81,33 @@ def test_mods_root_env_used_when_no_flag(tmp_path):
 
 def test_mods_root_empty_env_is_unset(monkeypatch, tmp_path):
     # Mirrors paths.py: an empty env var is idiomatic shell for "unset".
+    monkeypatch.delenv(mods.paths.DATA_DIR_ENV, raising=False)
     monkeypatch.setattr(mods.paths, "PROJECT_ROOT", tmp_path)
     assert mods.mods_root(argv=[], env={"DAUNTLESS_MODS_DIR": ""}) == tmp_path / "mods"
+
+
+def test_mods_default_follows_data_dir(monkeypatch, tmp_path):
+    from engine import paths
+    monkeypatch.setenv(paths.DATA_DIR_ENV, str(tmp_path / "data"))
+    monkeypatch.delenv(mods.ENV_VAR, raising=False)
+    assert mods.mods_root(argv=[]) == tmp_path / "data" / "mods"
+
+
+def test_mods_flag_and_env_still_win(monkeypatch, tmp_path):
+    from engine import paths
+    monkeypatch.setenv(paths.DATA_DIR_ENV, str(tmp_path / "data"))
+    env_dir = tmp_path / "from_env"
+    flag_dir = tmp_path / "from_flag"
+    assert mods.mods_root(argv=[], env={mods.ENV_VAR: str(env_dir)}) == env_dir
+    assert mods.mods_root(argv=[mods.CLI_FLAG, str(flag_dir)],
+                          env={mods.ENV_VAR: str(env_dir)}) == flag_dir
+
+
+def test_checkout_mods_default_unchanged(monkeypatch, tmp_path):
+    from engine import paths
+    monkeypatch.delenv(paths.DATA_DIR_ENV, raising=False)
+    monkeypatch.delenv(mods.ENV_VAR, raising=False)
+    root = tmp_path / "checkout"
+    root.mkdir()
+    monkeypatch.setattr(paths, "PROJECT_ROOT", root)
+    assert mods.mods_root(argv=[], env={}) == root / "mods"

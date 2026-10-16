@@ -58,7 +58,8 @@ class ModCandidate:
 
 
 def mods_root(argv=None, env=None) -> Path:
-    """Where mods live. CLI flag, then env, then PROJECT_ROOT/mods.
+    """Where mods live. CLI flag, then env, then paths.mods_default_dir()
+    (<data dir>/mods: the checkout root, the override, or the per-user folder).
 
     Deliberately simpler than paths.resolve(): there is no settings tier and
     no validation, because an absent or empty mods root is not an error --
@@ -79,7 +80,7 @@ def mods_root(argv=None, env=None) -> Path:
     if from_env:
         return paths.normalise(from_env)
 
-    return paths.PROJECT_ROOT / "mods"
+    return paths.mods_default_dir()
 
 
 def mods_disabled_by(argv=None, env=None) -> Optional[str]:
