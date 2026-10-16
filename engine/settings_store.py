@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from engine import dev_mode
+from engine import dev_mode, paths
 from engine.cameras import EXTERIOR_FOV_Y_RAD
 from engine.ui.configuration_panel import (
     AA_MODE_SAMPLES, AA_MSAA_8X, AA_OFF, AA_SMAA,
@@ -42,10 +42,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def default_settings_path() -> Path:
-    """Where settings.json lives. A function, not a constant, because this is
-    the single seam that has to move if the file ever needs a per-user OS
-    config directory — an installed game's own directory may be read-only."""
-    return PROJECT_ROOT / "settings.json"
+    """Where settings.json lives: the config dir (the checkout root in a
+    checkout layout, the per-user OS config folder when packaged, or the
+    data-dir override). A function, not a constant, so it is resolved at use."""
+    return paths.config_dir() / "settings.json"
 
 
 class SettingsStore:
@@ -202,6 +202,7 @@ class SettingsStore:
             # store.set -> on_change -> the panel toggle, which would
             # contradict "a failed write does not raise" above.
             dev_mode.log_swallowed("SettingsStore.save", exc)
+            paths.report_write_failure(self._path, exc)
             try:
                 tmp.unlink()
             except OSError:

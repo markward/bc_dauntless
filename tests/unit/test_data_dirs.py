@@ -109,7 +109,6 @@ def test_report_write_failure_prints_once_per_path(capsys):
     assert "/b/y" in err[1] and "PermissionError" in err[1]
 
 
-@pytest.mark.xfail(strict=True, reason="wired in Task 4")
 def test_override_pointing_at_a_file_reports_and_continues(
         monkeypatch, tmp_path, capsys):
     from engine import settings_store
