@@ -220,3 +220,36 @@ TEST(RunningLightDials, DefaultsMatchTheSpec) {
     EXPECT_FLOAT_EQ(d.min_px, 2.5f);
     EXPECT_FLOAT_EQ(d.intensity, 4.0f);
 }
+
+TEST(RunningLightStore, FlooredSpritesConserveEnergySoDistantLightsDim) {
+    // Past the distance where min_px wins, the sprite stops shrinking on
+    // screen; holding its brightness made every light look the same at any
+    // range. Scale the colour by (true size / drawn size)^2 instead, so the
+    // light's on-screen energy keeps falling as 1/d^2.
+    scenegraph::World world;
+    const auto a = world.create_instance(1);
+    world.set_world_transform(a, glm::mat4(1.0f));
+    RunningLightStore s;
+    s.set(a, {static_light({0, 0, 0}, {1, 1, 1})}, 0.0f);
+    s.set_levels({{a, 1.0f}});
+    const RunningLightDials dials;  // 0.03 GU sprite, 2.5 px floor, intensity 4
+    const float proj11 = 1.0f / std::tan(0.5236f);
+    const int vh = 1080;
+    const float world_size = 1.5f * dials.size_gu_per_radius;
+    // Distance at which the floor exactly equals the world size.
+    const float d_floor = world_size * proj11 * vh / (2.0f * dials.min_px);
+
+    const auto near = s.build_sprites(world, 0.0f, dials, {0, 0, -0.5f * d_floor}, proj11, vh);
+    ASSERT_EQ(near.size(), 1u);
+    EXPECT_NEAR(near[0].color.r, 4.0f, 1e-4f);                // world size wins: full
+    EXPECT_NEAR(near[0].half_size, 0.5f * world_size, 1e-6f);
+
+    const auto far2 = s.build_sprites(world, 0.0f, dials, {0, 0, -2.0f * d_floor}, proj11, vh);
+    ASSERT_EQ(far2.size(), 1u);
+    EXPECT_NEAR(far2[0].half_size, world_size, 1e-4f);        // floor doubles it
+    EXPECT_NEAR(far2[0].color.r, 4.0f / 4.0f, 1e-3f);         // (1/2)^2
+
+    const auto far10 = s.build_sprites(world, 0.0f, dials, {0, 0, -10.0f * d_floor}, proj11, vh);
+    ASSERT_EQ(far10.size(), 1u);
+    EXPECT_NEAR(far10[0].color.r, 4.0f / 100.0f, 1e-4f);      // (1/10)^2
+}
