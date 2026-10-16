@@ -411,17 +411,113 @@ def game_asset(rel) -> Path:
     return game_root() / rel
 
 
-def hull_volume_cache_root() -> Path:
-    """Where the per-instance hull-volume SDF bake cache (.dhv files) lives.
+PACKAGED_MARKER = "dauntless-packaged.json"
+DATA_DIR_FLAG = "--data-dir"
+DATA_DIR_ENV = "DAUNTLESS_DATA_DIR"
 
-    <PROJECT_ROOT>/cache/hull_volumes -- matching the cache/icons/... layout
-    engine/ui/weapon_icons.py already uses, and covered by the `cache/` line
-    in .gitignore. Unlike game_root()/sdk_root(), this does not depend on the
-    first-run picker's resolution (PROJECT_ROOT never moves at runtime), but
-    it is still computed fresh on every call rather than cached in a module
-    constant: callers must never capture its return value at import either.
+
+def is_packaged() -> bool:
+    """True when the install folder carries the packaged-build marker."""
+    return (PROJECT_ROOT / PACKAGED_MARKER).is_file()
+
+
+def data_dir_override(argv=None, env=None) -> Optional[Path]:
+    """The user-data root asked for by `--data-dir` or DAUNTLESS_DATA_DIR.
+
+    Flag first, then env. An empty value counts as unset (unlike the game/sdk
+    flags, an empty data dir has no meaning to correct). Read on every call.
     """
-    return PROJECT_ROOT / "cache" / "hull_volumes"
+    if argv is None:
+        argv = sys.argv[1:]
+    if env is None:
+        env = os.environ
+    flag = _flag_value(argv, DATA_DIR_FLAG)
+    if flag is not _UNSET and str(flag).strip():
+        return normalise(flag)
+    from_env = env.get(DATA_DIR_ENV)
+    if from_env and from_env.strip():
+        return normalise(from_env)
+    return None
+
+
+def data_layout() -> tuple[str, Optional[Path]]:
+    """("override", root) | ("packaged", None) | ("checkout", PROJECT_ROOT)."""
+    override = data_dir_override()
+    if override is not None:
+        return ("override", override)
+    if is_packaged():
+        return ("packaged", None)
+    return ("checkout", PROJECT_ROOT)
+
+
+def _checkout_root() -> Optional[Path]:
+    """The root of the checkout-style layout, or None when packaged."""
+    return data_layout()[1]
+
+
+def config_dir() -> Path:
+    root = _checkout_root()
+    return root if root is not None else os_user_dirs()["config"]
+
+
+def saves_dir() -> Path:
+    root = _checkout_root()
+    return root / "saves" if root is not None else os_user_dirs()["saves"]
+
+
+def mods_default_dir() -> Path:
+    root = _checkout_root()
+    return root / "mods" if root is not None else os_user_dirs()["mods"]
+
+
+def cache_dir() -> Path:
+    root = _checkout_root()
+    return root / "cache" if root is not None else os_user_dirs()["cache"]
+
+
+def log_dir() -> Path:
+    root = _checkout_root()
+    return root if root is not None else os_user_dirs()["logs"]
+
+
+def log_file_path() -> Path:
+    root = _checkout_root()
+    if root is not None:
+        return root / "logs" / "dauntless.log"
+    return os_user_dirs()["logs"] / "dauntless.log"
+
+
+def hull_volume_cache_root() -> Path:
+    """Where the per-instance hull-volume SDF bake cache (.dhv files) lives:
+    <cache_dir()>/hull_volumes. Computed fresh on every call; callers must
+    never capture the result at import.
+    """
+    return cache_dir() / "hull_volumes"
+
+
+_reported_write_failures: set[str] = set()
+
+
+def _reset_write_failure_reports() -> None:
+    """Forget which paths were reported (tests)."""
+    _reported_write_failures.clear()
+
+
+def report_write_failure(path, exc: BaseException) -> None:
+    """Say once per path per process that a user-data write failed.
+
+    Always prints to stderr, with or without --developer: a player whose
+    saves silently vanish needs to see why. Never raises.
+    """
+    try:
+        key = str(path)
+        if key in _reported_write_failures:
+            return
+        _reported_write_failures.add(key)
+        print("[dauntless] could not write %s: %s: %s"
+              % (key, type(exc).__name__, exc), file=sys.stderr)
+    except Exception:
+        pass
 
 
 def project_asset_root() -> Path:
