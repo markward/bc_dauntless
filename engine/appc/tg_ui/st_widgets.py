@@ -272,6 +272,18 @@ class SortedRegionMenu(STMenu):
     def GetRegionModule(self):
         return self._region
 
+    # BC's own name for the same field (App.py:8760/:8766). On a SYSTEM node
+    # it is the system's default — "Region file that you go to if you select
+    # the menu" (Systems/Utils.py:24) — and missions move it: Episode4.py:187
+    # sends Nepenthe to Nepenthe1 instead of its stock Nepenthe3 (also
+    # E4M5.py:1438, E4M6.py:2046/:2095). Unimplemented this was a silent
+    # _Stub (heatmap rank 170), so those overrides were lost.
+    def SetRegionName(self, region) -> None:
+        self._region = str(region) if region is not None else None
+
+    def GetRegionName(self):
+        return self._region
+
     # BC's own "warping here starts mission X" marker, and the thing that
     # makes the star map's blue reticle mean *objective* rather than merely
     # *reachable*. Real published surface (sdk/.../App.py:8762/:8768).
