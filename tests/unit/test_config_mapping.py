@@ -12,7 +12,10 @@ def fresh_config():
 @pytest.fixture
 def config_under_tmp(tmp_path, monkeypatch):
     """Anchor relative filenames to a tmp dir so SaveConfigFile/LoadConfigFile
-    don't pollute the project root."""
+    don't pollute the project root. Relative names resolve into the config
+    dir, so the data-dir override points at the same tmp dir."""
+    from engine import paths
+    monkeypatch.setenv(paths.DATA_DIR_ENV, str(tmp_path))
     monkeypatch.chdir(tmp_path)
     yield tmp_path
 
