@@ -84,6 +84,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_subsystem_pins", "set_suns",
     "set_system_nebula_profile", "set_system_nebula_star",
     "set_system_nebula_flashes",
+    "system_nebula_prebuild", "system_nebula_prebuilt",
     "system_nebula_set_dials", "system_nebula_dials",
     "minors_add_cloud", "minors_remove_cloud", "minors_detach",
     "minors_fade_out", "minors_set_fragments", "minors_set_player",
@@ -539,10 +540,27 @@ def set_system_nebula_profile(profile: dict | None) -> None:
     """Set (dict) or clear (None) the system-scale nebula profile: keys r,
     nebula (lists, GU / 0-1), k_sys, star_radius, cloud_rgb, star_rgb
     (3-tuples), optional g, floor, scatter, far_gu. Builds and uploads the
-    far-field table (CPU, ~1-2s) -- push once per system, never per frame.
+    far-field table (CPU, seconds; cached per session -- system_nebula_prebuild
+    builds it ahead on a worker) -- push once per system, never per frame.
     Drawn only under --developer with Volumetric Nebulae on
     (docs/superpowers/specs/2026-09-29-system-nebula-render-design.md)."""
     _h.set_system_nebula_profile(profile)
+
+
+def system_nebula_prebuild(profile: dict) -> None:
+    """Start building `profile`'s far-field table (same keys as
+    set_system_nebula_profile) on a worker thread and return at once, so a
+    later set_system_nebula_profile(profile) costs only the texture upload.
+    Built tables are cached for the session; a no-op if already built or
+    building."""
+    _h.system_nebula_prebuild(profile)
+
+
+def system_nebula_prebuilt(profile: dict) -> bool:
+    """True once `profile`'s far-field table is built -- by a prebuild or an
+    earlier set_system_nebula_profile. Never blocks; False with the host
+    down."""
+    return bool(_h.system_nebula_prebuilt(profile))
 
 
 def set_system_nebula_star(pos: tuple | None) -> None:

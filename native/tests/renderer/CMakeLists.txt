@@ -45,6 +45,7 @@ add_executable(renderer_tests
     planet_detail_pass_test.cc
     planet_detail_bench_test.cc
     system_nebula_pass_test.cc
+    system_nebula_cache_test.cc
     motion_blur_shutter_test.cc
     letterbox_pass_test.cc
     aabb_test.cc

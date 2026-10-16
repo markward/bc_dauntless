@@ -2472,6 +2472,35 @@ namespace dauntless_hull_damage {
     bool enabled();            // defined in frame.cc
 }
 
+/// The dict -> (profile, look) parse shared by set_system_nebula_profile,
+/// system_nebula_prebuild and system_nebula_prebuilt, so all three key the
+/// table cache identically. Throws ValueError on mismatched rows.
+static std::pair<renderer::atmosphere::RadialProfile,
+                 renderer::atmosphere::LookParams>
+parse_system_nebula_profile(const py::dict& d) {
+    renderer::atmosphere::RadialProfile p;
+    p.r = d["r"].cast<std::vector<float>>();
+    p.nebula = d["nebula"].cast<std::vector<float>>();
+    if (p.r.empty() || p.r.size() != p.nebula.size())
+        throw py::value_error(
+            "system nebula profile: 'r' and 'nebula' must be "
+            "non-empty and the same length");
+    p.k_sys = d["k_sys"].cast<float>();
+    p.star_radius = d["star_radius"].cast<float>();
+    auto rgb3 = [&](const char* key) {
+        auto t = d[key].cast<std::tuple<float, float, float>>();
+        return glm::vec3(std::get<0>(t), std::get<1>(t), std::get<2>(t));
+    };
+    p.cloud_rgb = rgb3("cloud_rgb");
+    p.star_rgb = rgb3("star_rgb");
+    renderer::atmosphere::LookParams look;
+    if (d.contains("g"))       look.g = d["g"].cast<float>();
+    if (d.contains("floor"))   look.floor = d["floor"].cast<float>();
+    if (d.contains("scatter")) look.scatter = d["scatter"].cast<float>();
+    if (d.contains("far_gu"))  look.far_gu = d["far_gu"].cast<float>();
+    return {std::move(p), look};
+}
+
 static renderer::PhaserBeamDescriptor beam_from_dict(const py::dict& d) {
     renderer::PhaserBeamDescriptor b;
     auto e = d["emitter"].cast<std::tuple<float, float, float>>();
@@ -4991,27 +5020,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   if (g_system_nebula_pass) g_system_nebula_pass->clear_profile();
                   return;
               }
-              const py::dict d = desc.cast<py::dict>();
-              renderer::atmosphere::RadialProfile p;
-              p.r = d["r"].cast<std::vector<float>>();
-              p.nebula = d["nebula"].cast<std::vector<float>>();
-              if (p.r.empty() || p.r.size() != p.nebula.size())
-                  throw py::value_error(
-                      "set_system_nebula_profile: 'r' and 'nebula' must be "
-                      "non-empty and the same length");
-              p.k_sys = d["k_sys"].cast<float>();
-              p.star_radius = d["star_radius"].cast<float>();
-              auto rgb3 = [&](const char* key) {
-                  auto t = d[key].cast<std::tuple<float, float, float>>();
-                  return glm::vec3(std::get<0>(t), std::get<1>(t), std::get<2>(t));
-              };
-              p.cloud_rgb = rgb3("cloud_rgb");
-              p.star_rgb = rgb3("star_rgb");
-              renderer::atmosphere::LookParams look;
-              if (d.contains("g"))       look.g = d["g"].cast<float>();
-              if (d.contains("floor"))   look.floor = d["floor"].cast<float>();
-              if (d.contains("scatter")) look.scatter = d["scatter"].cast<float>();
-              if (d.contains("far_gu"))  look.far_gu = d["far_gu"].cast<float>();
+              const auto [p, look] =
+                  parse_system_nebula_profile(desc.cast<py::dict>());
               // Validated above even with the host down; the upload needs GL.
               if (!g_system_nebula_pass) return;
               g_system_nebula_pass->set_profile(p, look);
@@ -5020,8 +5030,31 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Set (dict) or clear (None) the system-scale nebula profile: keys "
           "r, nebula (lists, GU / 0-1), k_sys, star_radius, cloud_rgb, "
           "star_rgb (3-tuples), optional g, floor, scatter, far_gu. Builds "
-          "and uploads the far-field table (CPU, ~1-2 s). Drawn only under "
+          "(CPU, seconds; cached per session, see system_nebula_prebuild) "
+          "and uploads the far-field table. Drawn only under "
           "--developer with Volumetric Nebulae on.");
+    m.def("system_nebula_prebuild",
+          [](py::dict d) {
+              const auto [p, look] = parse_system_nebula_profile(d);
+              // Validated even with the host down; the cache lives in the pass.
+              if (!g_system_nebula_pass) return;
+              g_system_nebula_pass->prebuild(p, look);
+          },
+          py::arg("profile"),
+          "Start building the system nebula far-field table for `profile` "
+          "(same keys as set_system_nebula_profile) on a worker thread and "
+          "return at once; a later set_system_nebula_profile with the same "
+          "dict then costs only the upload. No-op if already built/building.");
+    m.def("system_nebula_prebuilt",
+          [](py::dict d) {
+              const auto [p, look] = parse_system_nebula_profile(d);
+              if (!g_system_nebula_pass) return false;
+              return g_system_nebula_pass->prebuilt(p, look);
+          },
+          py::arg("profile"),
+          "True once `profile`'s far-field table is built (by a prebuild or "
+          "an earlier set_system_nebula_profile). Never blocks. False with "
+          "the host down.");
     m.def("set_system_nebula_star",
           [](py::object pos) {
               if (!g_system_nebula_pass) return;

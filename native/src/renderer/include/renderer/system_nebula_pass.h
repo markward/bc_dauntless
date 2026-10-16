@@ -3,6 +3,7 @@
 
 #include "renderer/nebula_atmosphere.h"
 #include "renderer/nebula_godray_pass.h"   // GodrayFlash
+#include "renderer/system_nebula_cache.h"
 
 #include <glm/glm.hpp>
 
@@ -81,15 +82,26 @@ public:
     SystemNebulaPass(const SystemNebulaPass&) = delete;
     SystemNebulaPass& operator=(const SystemNebulaPass&) = delete;
 
-    /// Build the radial texels and far-field table on the CPU and upload
-    /// them: radial -> GL_RG32F kRadialTexels x 1; table -> two GL_RGB32F
-    /// kTableR x kTableMu (optical depth, inscatter). Needs a current context.
+    /// Upload the radial texels and far-field table: radial -> GL_RG32F
+    /// kRadialTexels x 1; table -> two GL_RGB32F kTableR x kTableMu (optical
+    /// depth, inscatter). The CPU build comes from the session TableCache: a
+    /// hit or finished prebuild() costs only the upload; a miss builds
+    /// synchronously (seconds). Needs a current context.
     void set_profile(const atmosphere::RadialProfile& profile,
                      const atmosphere::LookParams& look);
     /// Delete the profile textures and forget the profile and the star; the
     /// haze stops drawing.
     void clear_profile();
     bool has_profile() const { return has_profile_; }
+
+    /// Start building (profile, look)'s table on a worker thread so a later
+    /// set_profile with the same inputs costs only the upload. No GL; a
+    /// no-op when already built or building.
+    void prebuild(const atmosphere::RadialProfile& profile,
+                  const atmosphere::LookParams& look) { cache_.prebuild(profile, look); }
+    /// True once (profile, look)'s table is built (never blocks).
+    bool prebuilt(const atmosphere::RadialProfile& profile,
+                  const atmosphere::LookParams& look) { return cache_.ready(profile, look); }
 
     /// Set the near-field/table look dials. A change to `g` or `floor` with
     /// a profile already uploaded rebuilds the far-field table (re-runs
@@ -180,6 +192,7 @@ private:
     std::vector<GodrayFlash> flashes_;
     Dials        dials_;
     int          profile_rebuild_count_ = 0;
+    atmosphere::TableCache cache_;   // built tables, per session (never evicted)
 };
 
 }  // namespace renderer
