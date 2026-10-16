@@ -7694,6 +7694,23 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "hull_carve_add deposit during combat. No-op when no authored "
           "resolution has been pushed for this hull yet.");
 
+    // Same as hull_volume_set_resolution + hull_volume_prewarm, but from a
+    // MODEL handle: the warp-tunnel preload warms hulls before any ship is
+    // realised, so there is no instance to resolve through. Creates none.
+    m.def("hull_volume_prewarm_model",
+          [](scenegraph::ModelHandle model_handle, float resolution) {
+              if (!(resolution > 0.0f)) return;
+              const assets::Model* model = resolve_model(model_handle);
+              if (model == nullptr || model->source.empty()) return;
+              renderer::set_hull_volume_resolution(model->source, resolution);
+              renderer::hull_volume_cache().get(model->source, resolution,
+                                                voxel::kDefaultQuality);
+          },
+          pybind11::arg("model"), pybind11::arg("resolution"),
+          "Set the authored resolution for this model's hull and bake (or "
+          "load the on-disk .dhv of) its damage volume now, without creating "
+          "an instance. No-op for an unknown handle or resolution <= 0.");
+
     m.def("compute_capsule_region",
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> center,

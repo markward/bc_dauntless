@@ -48,6 +48,7 @@ _REQUIRED_BINDINGS = frozenset({
     "get_instance_head_center", "hdr_lens_flare_enabled",
     "hdr_lens_flare_set_enabled", "hdr_set_enabled",
     "hull_volume_bake_to_disk", "hull_volume_prewarm",
+    "hull_volume_prewarm_model",
     "hull_volume_set_cache_root", "hull_volume_set_resolution",
     "hull_source_string",
     "init", "letterbox_set",
@@ -903,6 +904,16 @@ def hull_volume_prewarm(iid: InstanceId) -> None:
     missing-binding failure into a silent skip.
     """
     _h.hull_volume_prewarm(iid)
+
+
+def hull_volume_prewarm_model(model: int, resolution: float) -> None:
+    """Bake/load a hull's damage volume from its MODEL handle, creating no
+    instance. Sets the authored resolution for the model's source, then warms
+    the cache. No-op for an unknown handle or non-positive resolution.
+
+    No hasattr guard, deliberately (see hull_volume_prewarm).
+    """
+    _h.hull_volume_prewarm_model(model, float(resolution))
 
 
 def hull_volume_bake_to_disk(hull_path: str, authored_res: float) -> bool:
