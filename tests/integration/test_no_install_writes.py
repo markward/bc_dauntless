@@ -8,16 +8,16 @@ working directory is invisible to it. Here an audit hook
 every campaign mission loaded and warped exactly as the warp-button sweep
 does, and the QuickBattle boot.
 
-Allowed: anything under the suite's user-data dir (tests/conftest.py points
-DAUNTLESS_DATA_DIR at a temp dir), pytest's temp dirs and `__pycache__`.
+Allowed: anything under the test's own temp user-data dir (each test sets
+DAUNTLESS_DATA_DIR to a tmp_path dir, so a developer's own setting cannot
+widen the exemption), pytest's temp dirs and `__pycache__`.
 """
 import sys
 
 import pytest
 
-import App
 from engine import paths
-from engine.appc import save_load, warp_button
+from engine.appc import save_load
 from tests.helpers import headless_mission as hm
 from tests.helpers import write_audit
 from tests.integration.test_warp_button_handler_sweep import MISSIONS
@@ -56,12 +56,14 @@ def autosaves(monkeypatch):
 def fresh_mission_module(request):
     """Run the mission from a fresh import, and leave none behind.
 
-    hm.load does not re-import a mission module that is already in
-    sys.modules, so its module globals carry over from any earlier load in
-    the process. This sweep repeats test_warp_button_handler_sweep's
-    missions, and E3M4 run twice fails the second time (g_bItari etc. still
-    set, so UncloakWarbirds finds no "Soryak"). Evict the mission's package
-    modules before and after, whichever sweep runs first.
+    Works around a KNOWN ENGINE ISSUE (tracked as a follow-up): a second
+    host_loop._init_mission of the same mission in one process reuses the
+    cached module and its stale globals. This sweep repeats
+    test_warp_button_handler_sweep's missions, and E3M4 breaks on the
+    second run (g_iPartOneProgress / g_bItari still set, so
+    UncloakWarbirds finds no "Soryak"). Evict the mission's package modules
+    before and after, whichever sweep runs first. Remove this fixture once
+    the engine re-imports a mission on load.
     """
     package = request.getfixturevalue("name").rsplit(".", 1)[0]
 
@@ -76,26 +78,12 @@ def fresh_mission_module(request):
 
 @pytest.mark.parametrize("name", MISSIONS)
 def test_campaign_missions_write_nothing_into_install_or_game(
-        name, autosaves, fresh_mission_module):
+        name, autosaves, fresh_mission_module, monkeypatch, tmp_path):
+    # This test's own data dir: the exemption covers only it, never a
+    # developer's DAUNTLESS_DATA_DIR (which might sit inside the checkout).
+    monkeypatch.setenv(paths.DATA_DIR_ENV, str(tmp_path / "data"))
     with write_audit.recording() as records:
-        # The same per-mission work as test_pressing_warp_never_raises:
-        # load, press Warp with a course, let it finish, press with none.
-        hm.load(name)
-        btn = hm.the_warp_button()
-        player = App.Game_GetCurrentPlayer()
-        here = player.GetContainingSet() if player is not None else None
-        course = btn.GetDestination() or hm.first_offered_course(
-            here.GetName() if here is not None else None)
-        if course:
-            hm.plot_course(btn, course)
-        warp_button.press(btn)
-        hm.tick(5.0)
-        if player is not None and warp_button.is_warp_active(player):
-            hm.tick_until(lambda: not warp_button.is_warp_active(player),
-                          bound_s=hm.MASTER_DIALOGUE_BOUND_S)
-        btn.set_player_destination(None)
-        warp_button.press(btn)
-        hm.tick(5.0)
+        hm.drive_warp(name)  # the warp-button sweep's own body
 
     assert _install_writes(records) == []
     if name in NO_AUTOSAVE_IN_THIS_RUN:

@@ -24,6 +24,11 @@ Each record is ``(event, abs_path, first_project_frame)``:
   * ``first_project_frame`` is ``"file:line"`` of the innermost stack frame
     in the project or the SDK scripts, or "" when none is on the stack.
 
+Blind spot: only writes through Python's audited APIs are seen. C/C++
+code that writes with its own I/O (the native renderer's hull-volume
+cache, CEF) is invisible here; Task 13's end-to-end test covers the
+hull-cache root.
+
 Audit hooks can never be removed, so `install_once` adds one per process and
 the hook checks a module-level flag first: outside `recording()` it costs one
 global read per audit event.
@@ -192,12 +197,22 @@ def stray_writes(records: list[Record], *roots) -> list[Record]:
 
     Allowed: `__pycache__` segments (bytecode is the packaged build's
     concern, Task 10), anything under the user-data dir active when this
-    is called (tests/conftest.py's temp DAUNTLESS_DATA_DIR, or a test's own
-    override; where writes SHOULD land, even if a developer points it
-    inside the checkout) and pytest's own temp dirs.
+    is called (where writes SHOULD land; give each guard test its own temp
+    DAUNTLESS_DATA_DIR) and pytest's own temp dirs.
+
+    Raises RuntimeError if an allowed dir equals or contains a guarded
+    root: every write there would be exempt and the guard would pass
+    vacuously (e.g. a developer's DAUNTLESS_DATA_DIR pointed at the
+    checkout).
     """
     from engine import paths
     allowed = [_real(d) for d in _allowed_dirs(paths)]
+    for root in roots:
+        covering = [d for d in allowed if _is_within(_real(root), d)]
+        if covering:
+            raise RuntimeError(
+                "write guard would be vacuous: allowed dir %s covers "
+                "guarded root %s" % (covering[0], root))
     return [rec for rec in under(records, *roots)
             if "__pycache__" not in Path(rec[1]).parts
             and not any(_is_within(_real(rec[1]), d) for d in allowed)]
