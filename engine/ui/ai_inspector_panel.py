@@ -101,6 +101,7 @@ class AIInspectorPanel(Panel):
         inspector down mid-fight: losing one export is better than losing the
         instrument you were using when the bug appeared.
         """
+        export_path = None
         try:
             payload = {
                 "captured_wall_time": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -112,6 +113,7 @@ class AIInspectorPanel(Panel):
             except Exception:
                 payload["game_time"] = None      # headless, or no module yet
             export_path = _export_path()
+            export_path.parent.mkdir(parents=True, exist_ok=True)
             export_path.write_text(
                 json.dumps(payload, indent=2, default=str), encoding="utf-8")
             n = len(payload["ships"])
@@ -119,6 +121,11 @@ class AIInspectorPanel(Panel):
                 f"[ai-inspector] exported {n} ship(s) to {export_path}\n")
         except Exception as exc:                 # noqa: BLE001 - see docstring
             sys.stderr.write(f"[ai-inspector] export FAILED: {exc!r}\n")
+            try:
+                from engine import paths
+                paths.report_write_failure(export_path or _export_path(), exc)
+            except Exception:                    # noqa: BLE001
+                pass
 
     def invalidate(self) -> None:
         self._last_pushed = None

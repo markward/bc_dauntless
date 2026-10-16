@@ -311,9 +311,16 @@ def render(attr_rows: "list", bool_rows: "list", meta: dict,
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Merge stub_hits.jsonl into a heatmap.")
-    p.add_argument("--sidecar", default="stub_hits.jsonl")
+    p.add_argument("--sidecar", default=None)
     p.add_argument("--out", default="docs/stub_heatmap.md")
     args = p.parse_args(argv)
+    if args.sidecar is None:
+        # Where the writer put it, resolved now (not at import).
+        import os
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from engine.core import stub_telemetry
+        args.sidecar = stub_telemetry._default_sidecar_path()
     runs, line_skipped = load_runs(args.sidecar)
     if not runs:
         print("no runs accumulated yet (sidecar: %s)" % args.sidecar)

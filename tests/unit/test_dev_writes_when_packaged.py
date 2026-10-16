@@ -160,3 +160,53 @@ def test_refuse_compares_resolved_paths(tmp_path, monkeypatch):
         paths.refuse_repo_write_when_packaged(link / "x.json")
     with pytest.raises(paths.RepoWriteInPackagedBuild):
         paths.refuse_repo_write_when_packaged(root / "a" / ".." / "x.json")
+
+
+# --- fix round 1: log dir may not exist yet ---------------------------------
+
+def test_sidecar_creates_missing_log_dir(tmp_path, monkeypatch):
+    monkeypatch.delenv("DAUNTLESS_STUB_TELEMETRY_FILE", raising=False)
+    root = tmp_path / "not" / "yet"
+    monkeypatch.setenv(paths.DATA_DIR_ENV, str(root))
+    assert not paths.log_dir().exists()
+    _hit_and_persist()
+    assert (paths.log_dir() / "stub_hits.jsonl").is_file()
+
+
+def test_ai_export_creates_missing_log_dir(tmp_path, monkeypatch):
+    from engine.ui import ai_inspector_panel as mod
+    monkeypatch.setenv(paths.DATA_DIR_ENV, str(tmp_path / "not" / "yet"))
+    monkeypatch.setattr(mod, "collect_all_ship_ai", lambda: [{"ship_name": "A"}])
+    panel = mod.AIInspectorPanel()
+    panel.open()
+    panel.dispatch_event("export")
+    assert (paths.log_dir() / "ai_inspector_export.json").is_file()
+
+
+def test_ai_export_failure_reports_path(tmp_path, monkeypatch, capsys):
+    from engine.ui import ai_inspector_panel as mod
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    target = blocker / "e.json"
+    paths._reset_write_failure_reports()
+    monkeypatch.setattr(mod, "_export_path", lambda: target)
+    monkeypatch.setattr(mod, "collect_all_ship_ai", lambda: [])
+    panel = mod.AIInspectorPanel()
+    panel.open()
+    panel.dispatch_event("export")
+    err = capsys.readouterr().err
+    assert "could not write" in err and str(target) in err
+    assert "export FAILED" in err
+
+
+def test_heatmap_sidecar_default_follows_writer(tmp_path, monkeypatch, capsys):
+    import sys
+    sys.path.insert(0, str(paths.PROJECT_ROOT / "tools"))
+    try:
+        import stub_heatmap
+    finally:
+        sys.path.pop(0)
+    monkeypatch.delenv("DAUNTLESS_STUB_TELEMETRY_FILE", raising=False)
+    monkeypatch.setenv(paths.DATA_DIR_ENV, str(tmp_path))
+    stub_heatmap.main(["--out", str(tmp_path / "out.md")])
+    assert str(paths.log_dir() / "stub_hits.jsonl") in capsys.readouterr().out

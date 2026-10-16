@@ -221,6 +221,7 @@ def persist_run(path: str | None = None) -> None:
             },
         }
         line = json.dumps(record)
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         with open(path, "a") as f:
             f.write(line + "\n")
     except Exception as exc:
