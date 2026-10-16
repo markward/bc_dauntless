@@ -1776,6 +1776,13 @@ def _reset_leakable_engine_globals():
     # reset would raise StaleHandleError the next time it was read. The real
     # fix is the rule the conformance suite already states and follows:
     # every test that allocates a transform handle must free it.
+    # Legacy FX API surface (spec 2026-10-16): global glow/specular flags and
+    # per-object glow disables.
+    try:
+        from engine.appc import glow_maps as _glow_maps
+        _glow_maps.reset()
+    except Exception:
+        pass
 
 
 def bop_fixture_rig():
