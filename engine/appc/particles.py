@@ -474,6 +474,19 @@ def SparkParticleController_Create(total_life=1.0, duration=1.0, emit_rate=0.005
     return SparkParticleController(total_life, duration, emit_rate)
 
 
+class DebrisParticleController(SparkParticleController):
+    """Tumbling debris billboards (spec 2026-10-16 §8.4): a spark controller
+    with no tail and a billboard tumble. No stock script creates one, so
+    adding it changes no production effect."""
+    def __init__(self, total_life=1.0, duration=1.0, emit_rate=0.005):
+        super().__init__(total_life, duration, emit_rate)
+        self._roll_rate = 2.0
+
+
+def DebrisParticleController_Create(total_life=1.0, duration=1.0, emit_rate=0.005):
+    return DebrisParticleController(total_life, duration, emit_rate)
+
+
 def EffectAction_Create(controller):
     return EffectAction(controller)
 

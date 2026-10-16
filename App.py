@@ -112,6 +112,7 @@ from engine.appc.math import (
     TGPoint3_GetRandomUnitVector,
     TGGeomUtils_LineSphereIntersection,
 )
+NiPoint3 = TGPoint3  # SDK App.py:189 binds NiPoint3; ours is the same 3-vector (no stock script calls it)
 from engine.appc.objects import (
     ObjectClass, PhysicsObjectClass, DamageableObject,
     ObjectGroup, ObjectGroupWithInfo,
@@ -327,6 +328,7 @@ from engine.appc.articulated_part import (
 from engine.appc.particles import (
     AnimTSParticleController_Create,
     SparkParticleController_Create,
+    DebrisParticleController_Create,
     EffectAction_Create,
     ExplosionPlumeController_Create,
     EffectController,
