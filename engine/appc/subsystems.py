@@ -76,8 +76,15 @@ def target_offset_world(target, offset):
     (`host_loop._phaser_aim_point`) all call it.
     """
     from engine.appc.articulation import part_transform_point
+    from engine.appc.part_severance import is_authored_mount
     pos = target.GetWorldLocation()
-    px, py, pz = part_transform_point(target, (offset.x, offset.y, offset.z))
+    point = (offset.x, offset.y, offset.z)
+    # A subsystem lock's offset is an AUTHORED mount: the shared mount rule,
+    # so the shot goes where the mount is drawn. Anything else (a Manual Aim
+    # pick, pulled back to rest by the box rule) keeps the box rule, so the
+    # round trip is exact and no per-tick pick scans the model.
+    px, py, pz = part_transform_point(
+        target, point, authored=is_authored_mount(target, point))
     scale = float(target.GetScale()) if hasattr(target, "GetScale") else 1.0
     o = TGPoint3(px * scale, py * scale, pz * scale)
     rot = target.GetWorldRotation() if hasattr(target, "GetWorldRotation") else None

@@ -4,6 +4,7 @@
 #include <limits>
 
 #include <assets/model.h>
+#include <voxel/distance_field.h>
 
 namespace renderer {
 namespace {
@@ -29,15 +30,11 @@ int part_parent_index(const assets::Model& model) {
     return -1;
 }
 
-}  // namespace
 
-std::vector<ModelPart> model_parts(const assets::Model& model) {
-    std::vector<ModelPart> out;
+/// Rest world-per-node. The asset pipeline orders nodes so parents precede
+/// children, so one linear pass suffices (same as aabb.cc).
+std::vector<glm::mat4> rest_world_per_node(const assets::Model& model) {
     const std::size_t n = model.nodes.size();
-    if (n == 0) return out;
-
-    // Rest world-per-node. The asset pipeline orders nodes so parents precede
-    // children, so one linear pass suffices (same as aabb.cc).
     std::vector<glm::mat4> rest(n, glm::mat4(1.0f));
     if (model.root_node >= 0 && static_cast<std::size_t>(model.root_node) < n) {
         rest[model.root_node] = model.nodes[model.root_node].local_transform;
@@ -48,6 +45,17 @@ std::vector<ModelPart> model_parts(const assets::Model& model) {
             rest[i] = rest[parent] * model.nodes[i].local_transform;
         }
     }
+    return rest;
+}
+
+}  // namespace
+
+std::vector<ModelPart> model_parts(const assets::Model& model) {
+    std::vector<ModelPart> out;
+    const std::size_t n = model.nodes.size();
+    if (n == 0) return out;
+
+    const std::vector<glm::mat4> rest = rest_world_per_node(model);
 
     const int part_parent = part_parent_index(model);
 
@@ -94,6 +102,52 @@ std::vector<ModelPart> model_parts(const assets::Model& model) {
         out.push_back(std::move(p));
     }
     return out;
+}
+
+std::string nearest_model_part(const assets::Model& model, const glm::vec3& point) {
+    const std::size_t n = model.nodes.size();
+    const int part_parent = part_parent_index(model);
+    if (n == 0 || part_parent < 0) return "";
+    const std::vector<glm::mat4> rest = rest_world_per_node(model);
+
+    std::string best_name;
+    float best = std::numeric_limits<float>::max();
+    for (std::size_t j = 0; j < n; ++j) {
+        if (model.nodes[j].meshes.empty()) continue;
+        // The candidate part this node's geometry belongs to: itself, or the
+        // ancestor whose parent is the part parent (meshes hang off __NDL).
+        int part = static_cast<int>(j);
+        while (part >= 0 && model.nodes[part].parent_index != part_parent) {
+            part = model.nodes[part].parent_index;
+        }
+        if (part < 0) continue;                   // geometry outside any part
+        for (int mesh_idx : model.nodes[j].meshes) {
+            if (mesh_idx < 0 ||
+                static_cast<std::size_t>(mesh_idx) >= model.meshes.size()) {
+                continue;
+            }
+            const auto& cpu = model.meshes[mesh_idx].cpu_data();
+            if (!cpu.has_value()) continue;
+            const auto& v = cpu->vertices;
+            const auto& idx = cpu->indices;
+            for (std::size_t t = 0; t + 2 < idx.size(); t += 3) {
+                if (idx[t] >= v.size() || idx[t + 1] >= v.size() ||
+                    idx[t + 2] >= v.size()) {
+                    continue;
+                }
+                const voxel::Tri tri{
+                    glm::vec3(rest[j] * glm::vec4(v[idx[t]].position, 1.0f)),
+                    glm::vec3(rest[j] * glm::vec4(v[idx[t + 1]].position, 1.0f)),
+                    glm::vec3(rest[j] * glm::vec4(v[idx[t + 2]].position, 1.0f))};
+                const float d = voxel::point_triangle_distance(point, tri);
+                if (d < best) {
+                    best = d;
+                    best_name = model.nodes[part].name;
+                }
+            }
+        }
+    }
+    return best_name;
 }
 
 }  // namespace renderer

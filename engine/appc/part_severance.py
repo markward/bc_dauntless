@@ -110,6 +110,59 @@ def part_for_point(leaf, point, iid=None):
     return None
 
 
+# (leaf, rounded point) -> part name, for answers the MODEL gave. Rest
+# geometry never changes, so an answer holds for the process lifetime.
+_mount_parts: dict = {}
+
+
+def part_for_mount(leaf, point, iid=None):
+    """Which part an AUTHORED point is on -- a hardpoint mount, an emitter
+    light, a running light -- or None. Body frame, SHIP units, rest pose.
+
+    THE one rule for that question: `articulation.part_transform_point`
+    (where a mount is drawn and fires from), `_destroy_subsystems_on_part`
+    (what a severed part takes with it) and `host_loop._part_pose_at` (both
+    kinds of light) all call it, so a weapon, its glowing light and its fate
+    when the part is shot off can never disagree.
+
+    It asks the model's geometry: the part whose rest-pose triangles are
+    nearest (`host_io.model_nearest_part`). `part_for_point`'s box rule
+    cannot answer it -- on the LC Intrepid the hull's box spans both
+    nacelles and a nacelle's box covers the hull-mounted ventral aft
+    phasers. Weapon HITS keep the box rule (`part_for_point` /
+    `part_for_live_point`): a hit point is arbitrary, not authored.
+
+    Falls back to `part_for_point` until a model is known for `leaf`
+    (headless, or before any instance of it has been realized) and when the
+    model gives no answer; fallbacks are not cached.
+
+    ⚠️ KNOWN LIMITATION (articulation spec OQ-13): reliable for points on a
+    part's skin, a guess for INTERIOR points. On the stock Bird of Prey the
+    `Impulse Engines` / `Warp Engines` SYSTEM points resolve to a wing, so
+    that whole system follows the wing and dies with it. The intended fix is
+    explicit membership (subsystems nested under model parts), not a better
+    guess.
+    """
+    if not leaf:
+        return None
+    leaf = str(leaf).lower()
+    point = (float(point[0]), float(point[1]), float(point[2]))
+    key = (leaf, tuple(round(v, 6) for v in point))
+    cached = _mount_parts.get(key)
+    if cached is not None:
+        return cached
+    if iid is not None:
+        articulation.part_boxes_for(leaf, iid)   # records the leaf's model
+    model = articulation.leaf_model(leaf)
+    if model:
+        from engine import host_io
+        name = host_io.model_nearest_part(model, point)
+        if name:
+            _mount_parts[key] = name
+            return name
+    return part_for_point(leaf, point, iid)
+
+
 def part_for_live_point(ship, point, iid=None):
     """Which part a body-frame point in SHIP UNITS belongs to IN THE SHIP'S
     LIVE POSE, or None. The posed-space twin of `part_for_point`.
@@ -423,6 +476,44 @@ def sever(ship, iid, part_name):
     return part_name
 
 
+def _mounted_subsystems(ship):
+    """(subsystem, body-frame mount point) for every subsystem of `ship` that
+    has an authored position (`combat._iter_subsystems`: hull excluded)."""
+    it = getattr(ship, "_iter_subsystems", None)
+    try:
+        if it is None:
+            from engine.appc.combat import _iter_subsystems as it_fn
+            subs = it_fn(ship)
+        else:
+            subs = it()
+        subs = list(subs or [])
+    except Exception:  # noqa: BLE001 - a target with no subsystems (a planet)
+        return []
+    out = []
+    for sub in subs:
+        try:
+            pos = sub.GetPosition()
+            out.append((sub, (pos.GetX(), pos.GetY(), pos.GetZ())))
+        except Exception:  # noqa: BLE001 - not a mounted subsystem
+            continue
+    return out
+
+
+def is_authored_mount(ship, point, eps=1e-5) -> bool:
+    """Is body-frame `point` one of `ship`'s authored subsystem mounts?
+
+    How `subsystems.target_offset_world` tells a subsystem LOCK's offset (the
+    SDK's `SetTargetOffset(pSubsystem.GetPosition())`, the AI's
+    `GetPositionTG()` -- an authored point, attributed by `part_for_mount`)
+    from an arbitrary one (a Manual Aim pick, a random point on the model --
+    box rule, exactly as before the mount rule existed)."""
+    for _sub, mount in _mounted_subsystems(ship):
+        if (abs(mount[0] - point[0]) <= eps and abs(mount[1] - point[1]) <= eps
+                and abs(mount[2] - point[2]) <= eps):
+            return True
+    return False
+
+
 def _destroy_subsystems_on_part(ship, part_name, iid=None) -> list:
     """Destroy every subsystem whose mount lies on `part_name`, and return
     them.
@@ -437,23 +528,9 @@ def _destroy_subsystems_on_part(ship, part_name, iid=None) -> list:
     already flips to DESTROYED.
     """
     leaf = articulation.leaf_for(ship)
-    it = getattr(ship, "_iter_subsystems", None)
-    if it is None:
-        try:
-            from engine.appc.combat import _iter_subsystems as it_fn
-        except Exception:  # noqa: BLE001
-            return []
-        subs = it_fn(ship)
-    else:
-        subs = it()
     killed = []
-    for sub in list(subs or []):
-        try:
-            pos = sub.GetPosition()
-            point = (pos.GetX(), pos.GetY(), pos.GetZ())
-        except Exception:  # noqa: BLE001 - not a mounted subsystem
-            continue
-        if part_for_point(leaf, point, iid) != part_name:
+    for sub, point in _mounted_subsystems(ship):
+        if part_for_mount(leaf, point, iid) != part_name:
             continue
         try:
             sub.SetCondition(0.0)

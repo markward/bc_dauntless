@@ -3713,6 +3713,25 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "somewhere in its subtree, bounds in SHIP units. `candidate` marks "
           "the nodes a human would call a part (renderer::model_parts).");
 
+    m.def("model_nearest_part",
+          [](scenegraph::ModelHandle h,
+             std::tuple<float, float, float> point) -> std::string {
+              // SHIP units in, like model_nodes' bounds out.
+              constexpr float kShipToModel = 100.0f;
+              const assets::Model* model = resolve_model(h);
+              if (model == nullptr) return "";
+              const glm::vec3 p(std::get<0>(point) * kShipToModel,
+                                std::get<1>(point) * kShipToModel,
+                                std::get<2>(point) * kShipToModel);
+              return renderer::nearest_model_part(*model, p);
+          },
+          py::arg("model"), py::arg("point"),
+          "The candidate part (renderer::model_parts) whose rest-pose "
+          "triangles lie nearest `point` (SHIP units, rest pose), or '' when "
+          "the model is not loaded or has no part geometry. Which part an "
+          "AUTHORED point -- a hardpoint mount, an emitter or running light -- "
+          "is on; see part_severance.part_for_mount.");
+
     // ── Per-instance decal override (SPV live preview) ───────────────────
     // Spec 2026-09-28-spv-decal-editing-design.md §2.5. Never throws: a bad
     // entry is skipped (warned once), an unknown id / a host that is down is
