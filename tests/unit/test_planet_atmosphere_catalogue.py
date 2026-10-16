@@ -229,3 +229,17 @@ def test_reload_file_clears_warned_like_the_full_reload(tmp_path, monkeypatch):
     assert (key, "p#surface") in atmo._warned
     atmo.reload_file()
     assert (key, "p#surface") not in atmo._warned
+
+
+def test_surface_only_set_entry_does_not_hide_a_mod_requested_air(tmp_path, monkeypatch):
+    """A surface-only "<set>/<name>" entry carries no air; with an uncatalogued
+    stem and a mod request for the same key, the planet gets the requested air
+    (not 'malformed -> airless')."""
+    _write(tmp_path, monkeypatch, {"Sys/World": {"surface": {}}})
+    atmo.clear_requested()
+    try:
+        atmo.request("Sys", "World", GAS)
+        got = atmo.resolve("Sys", "World", "data/models/environment/zz_uncatalogued.nif")
+        assert got == atmo.parse_entry("Sys/World", GAS)
+    finally:
+        atmo.clear_requested()

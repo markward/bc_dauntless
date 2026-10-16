@@ -111,3 +111,21 @@ class LODModelManager:
     # Convenience for the renderer host and tests — not part of the SWIG API.
     def Get(self, name: str) -> LODModel | None:
         return self._models.get(name)
+
+    # Stock glow/specular switches (spec 2026-10-16 §6.3). The SDK compares
+    # the getters with == 1, so they return ints.
+    def SetGlowMapsEnabled(self, on) -> None:
+        from engine.appc import glow_maps
+        glow_maps.set_glow_enabled(on)
+
+    def AreGlowMapsEnabled(self) -> int:
+        from engine.appc import glow_maps
+        return 1 if glow_maps.glow_enabled() else 0
+
+    def SetSpecularMapsEnabled(self, on) -> None:
+        from engine.appc import glow_maps
+        glow_maps.set_specular_enabled(on)
+
+    def AreSpecularMapsEnabled(self) -> int:
+        from engine.appc import glow_maps
+        return 1 if glow_maps.specular_enabled() else 0

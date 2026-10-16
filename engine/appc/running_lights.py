@@ -9,6 +9,8 @@ Spec: docs/superpowers/specs/2026-10-14-ship-running-lights-design.md. Read its
 import zlib
 from dataclasses import dataclass
 
+from engine.appc import glow_maps
+
 
 @dataclass(frozen=True)
 class RunningLightSpec:
@@ -57,6 +59,8 @@ def phase_for(ship) -> float:
 def level_for(ship, cloak_frac: float, now: float, phase: float) -> float:
     """Brightness in [0, 1]: alive x power-plant state x (1 - cloak)."""
     if ship.IsDying() or ship.IsDead():
+        return 0.0
+    if glow_maps.is_dark(ship):
         return 0.0
     from engine.appc import subsystem_glow
     from engine.appc.light_emitters import emitter_flicker

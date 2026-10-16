@@ -25,6 +25,14 @@ _warned: set = set()  # (str(path), key) already reported
 # "reload action", or the test suite's autouse reset) drops live tuning too.
 _overrides: dict = {}
 
+# Mod-requested atmospheres (spec 2026-10-16 §8.3): "<set>/<name>" -> raw
+# entry in the catalogue's own schema, from the legacy FX API's
+# CreateAtmosphereFX. Consulted only when the catalogue has neither the
+# "<set>/<name>" override nor the NIF stem. Kept for the whole session (a set
+# can be re-realised without re-running its Initialize), cleared at session
+# teardown and by the test suite's autouse reset.
+_requested: dict = {}
+
 # Live registry of every planet instance the current session has pushed an
 # atmosphere decision for while the toggle was on -- airless (None) ones
 # INCLUDED, so a catalogue reload can re-push them (atmosphere_dials.
@@ -240,7 +248,10 @@ def resolve_key(set_name: str, obj_name: str, nif_path: str):
     if entry is not None and (not isinstance(entry, dict) or set(entry) - {"surface"}):
         return override
     stem = nif_stem(nif_path)
-    return stem if stem in raw else None
+    if stem in raw:
+        return stem
+    requested = f"{set_name}/{obj_name}"
+    return requested if set_name and requested in _requested else None
 
 
 def resolve(set_name: str, obj_name: str, nif_path: str):
@@ -249,8 +260,42 @@ def resolve(set_name: str, obj_name: str, nif_path: str):
         return None
     if key in _overrides:
         return _overrides[key]
+    entry = load().get(key)
+    if entry is None or (isinstance(entry, dict) and not (set(entry) - {"surface"})
+                         and key in _requested):
+        # Absent, or a surface-only entry (no air of its own): a mod's
+        # request for this key supplies the air.
+        entry = _requested.get(key, entry)
     try:
-        return parse_entry(key, load()[key])
+        return parse_entry(key, entry)
     except (ValueError, KeyError, TypeError) as e:
         _warn(str(catalogue_path()), key, f"malformed ({e}); treated as airless")
         return None
+
+
+def request(set_name: str, obj_name: str, entry: dict) -> None:
+    """Register a mod-requested atmosphere for one planet (spec 2026-10-16
+    §8.3). The catalogue always wins over it."""
+    _requested[f"{set_name}/{obj_name}"] = dict(entry)
+
+
+def clear_requested() -> None:
+    _requested.clear()
+
+
+def class_presets_path() -> pathlib.Path:
+    return catalogue_path().with_name("atmosphere_classes.json")
+
+
+def class_preset(name: str):
+    """The planet-class preset entry for `name` ("Class-M", ...), else the
+    file's "default" class, else None. Resolved at use."""
+    try:
+        presets = json.loads(class_presets_path().read_text())
+    except (OSError, ValueError) as e:
+        _warn(str(class_presets_path()), "atmosphere_classes.json", f"unreadable ({e})")
+        return None
+    entry = presets.get(name)
+    if not isinstance(entry, dict):
+        entry = presets.get(presets.get("default", ""))
+    return dict(entry) if isinstance(entry, dict) else None

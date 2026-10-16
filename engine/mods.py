@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from engine import paths
+from engine import mod_policy, paths
 
 # Top-level directories inside a mod that we know how to place. Lowercase
 # because every comparison here is case-folded.
@@ -221,6 +221,11 @@ class ModStatus:
     # Sovereign -- which is indistinguishable from "the mod failed to load"
     # unless we say so.
     replaces_ships: list = None
+    # Whole-mod block reason (engine/mod_policy, spec 2026-10-16 §5): the mod
+    # contributed NO files. None for every normally-loaded mod.
+    blocked: Optional[str] = None
+    # Files refused by engine/mod_policy: [(raw_rel, reason), ...].
+    refused: list = None
 
     def __post_init__(self):
         if self.unplaced is None:
@@ -231,6 +236,8 @@ class ModStatus:
             self.orphan_hardpoints = []
         if self.replaces_ships is None:
             self.replaces_ships = []
+        if self.refused is None:
+            self.refused = []
 
 
 @dataclass
@@ -316,6 +323,7 @@ def build_index(root: Path) -> ModIndex:
         if candidate.content_root is None:
             continue
 
+        pending: list = []   # (path, target, raw_rel, rel) for this mod
         try:
             for path in _walk_files(candidate.content_root, status):
                 if not path.is_file():
@@ -335,13 +343,7 @@ def build_index(root: Path) -> ModIndex:
                 # game_asset() is called with "data/..." paths.
                 keep = rel_parts if target == "game" else rel_parts[1:]  # paths-guard: kind label
                 raw_rel = "/".join(keep)
-                rel = fold(raw_rel)
-                existing = files.get(rel)
-                if existing is not None and existing.mod_name != candidate.name:
-                    conflicts.append((rel, existing.mod_name, candidate.name))
-                files[rel] = ModFile(abs_path=path, mod_name=candidate.name,
-                                     target=target, rel=rel, raw_rel=raw_rel)
-                status.placed += 1
+                pending.append((path, target, raw_rel, fold(raw_rel)))
         except OSError:
             # Belt and braces: _walk_files() already routes every directory
             # read failure to status.read_error, so this catches only a
@@ -349,7 +351,39 @@ def build_index(root: Path) -> ModIndex:
             # directory became unreadable mid-walk).
             status.read_error = True
 
+        # Policy BEFORE insertion (spec 2026-10-16 §5): a refused file must
+        # never displace an earlier mod's copy of the same path.
+        decision = _policy_decision(pending)
+        if decision.blocked:
+            status.blocked = decision.blocked
+            continue
+        for path, target, raw_rel, rel in pending:
+            reason = decision.refused.get(rel)
+            if reason is not None:
+                status.refused.append((raw_rel, reason))
+                continue
+            existing = files.get(rel)
+            if existing is not None and existing.mod_name != candidate.name:
+                conflicts.append((rel, existing.mod_name, candidate.name))
+            files[rel] = ModFile(abs_path=path, mod_name=candidate.name,
+                                 target=target, rel=rel, raw_rel=raw_rel)
+            status.placed += 1
+
     return ModIndex(files=files, mods=statuses, conflicts=conflicts)
+
+
+def _policy_decision(pending: list) -> "mod_policy.PolicyDecision":
+    """engine/mod_policy's verdict for one mod's files. Reads only the few
+    files whose verdict depends on their imports."""
+    files = [mod_policy.PolicyFile(target, rel) for _p, target, _r, rel in pending]
+    imports: dict = {}
+    for path, target, _raw, rel in pending:
+        if mod_policy.needs_imports(mod_policy.PolicyFile(target, rel)):
+            try:
+                imports[rel] = _imported_names(path.read_text(errors="replace"))
+            except OSError:
+                imports[rel] = set()
+    return mod_policy.decide(files, imports)
 
 
 def classify(index: ModIndex, game_root: Path, sdk_scripts: Path) -> None:
@@ -688,6 +722,9 @@ def describe(index: ModIndex) -> str:
         if status.content_root is None:
             lines.append(f"  {status.name}: no BC content found -- not loaded")
             continue
+        if status.blocked:
+            lines.append(f"  {status.name}: not loaded -- {status.blocked}")
+            continue
         line = f"  {status.name}: {status.placed} files"
         if status.ignored:
             line += f", {status.ignored} ignored"
@@ -704,6 +741,15 @@ def describe(index: ModIndex) -> str:
             line += (f", hardpoint "
                      f"{', '.join(repr(s) for s in status.orphan_hardpoints)}"
                      f" has no ship script -- needs the base mod")
+        if status.refused:
+            by_reason: dict = {}
+            for raw_rel, reason in status.refused:
+                by_reason.setdefault(reason, []).append(raw_rel)
+            for reason, rels in by_reason.items():
+                shown = ", ".join(rels[:4])
+                if len(rels) > 4:
+                    shown += f" (+{len(rels) - 4} more)"
+                line += f", refused {len(rels)} file(s) -- {reason}: {shown}"
         if status.read_error:
             # An unreadable subtree is a PARTIAL failure: some files may have
             # been placed already, so the count stays and the warning is

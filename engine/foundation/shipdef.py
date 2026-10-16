@@ -93,7 +93,8 @@ class ShipDefinition:
         if _listed:
             _ALL_DEFINITIONS.append(self)
         self._origin = _CURRENT_ORIGIN
-        self.race = race
+        from engine.foundation.race import Race
+        self.race = Race(race) if race is not None else None
         self.abbrev = abbrev
         self.species = species
         details = details or {}

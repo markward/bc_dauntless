@@ -8,7 +8,8 @@ uniform vec3  u_world_position;
 uniform float u_size;
 uniform vec3  u_streak_axis;    // world-space velocity direction (streak long axis)
 uniform float u_streak_length;  // 0 => camera-facing billboard (default)
-uniform float u_roll;           // radians, in-billboard-plane; 0 => unrotated
+uniform vec2  u_pivot;
+uniform float u_roll;          // radians, in-billboard-plane; 0 => unrotated
 
 out vec2 v_uv;
 
@@ -33,7 +34,10 @@ void main() {
         right = ( u_camera_right * c + u_camera_up * s) * u_size;
         up    = (-u_camera_right * s + u_camera_up * c) * u_size;
     }
-    vec3 world_pos = u_world_position + right * a_corner.x + up * a_corner.y;
+    // u_pivot (corner units) moves the quad's anchor off its centre; (0,0)
+    // = centred (default; hit VFX always). Spec 2026-10-16 §7.4.
+    vec3 world_pos = u_world_position + right * (a_corner.x - u_pivot.x)
+                                      + up    * (a_corner.y - u_pivot.y);
     gl_Position = u_view_proj * vec4(world_pos, 1.0);
     v_uv = a_corner * 0.5 + 0.5;
 }

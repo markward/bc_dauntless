@@ -651,6 +651,16 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
             return None
         if (PROJECT_ROOT / rel).is_dir() and (PROJECT_ROOT / rel / "__init__.py").exists():
             return None
+        # Dotted names Dauntless claims outright (spec 2026-10-16 §8.1):
+        # after the project-root shims, BEFORE the mod overlay, so a mod's
+        # own copy of a claimed package never loads.
+        from engine.compat import claimed as _claimed
+        # claimed.py's own imports re-enter this finder while it is still
+        # half-initialised; it has no claimed_spec yet, so decline.
+        _claimed_spec = getattr(_claimed, "claimed_spec", None)
+        _cspec = _claimed_spec(fullname) if _claimed_spec is not None else None
+        if _cspec is not None:
+            return _cspec
         # An installed mod's script wins over the stock SDK module. Checked
         # after the project-root shims (those are OUR replacements and must
         # not be overridable) and before the SDK itself. Never over the
@@ -926,6 +936,13 @@ def _reset_leakable_engine_globals():
     try:
         from engine import ship_catalog as _ship_catalog
         _ship_catalog.reset_session()
+    except Exception:
+        pass
+    # Queued ET_SET_ALERT_LEVEL levels (engine/appc/ships.py): a test that
+    # posts without ticking would land its level on a later test's ship.
+    try:
+        from engine.appc import ships as _ships
+        del _ships._pending_alert_levels[:]
     except Exception:
         pass
     # Swapped-module split: fixtures that re-import an SDK module
@@ -1807,6 +1824,30 @@ def _reset_leakable_engine_globals():
     # reset would raise StaleHandleError the next time it was read. The real
     # fix is the rule the conformance suite already states and follows:
     # every test that allocates a transform handle must free it.
+    # Legacy FX API surface (spec 2026-10-16): global glow/specular flags and
+    # per-object glow disables.
+    try:
+        from engine.appc import glow_maps as _glow_maps
+        _glow_maps.reset()
+    except Exception:
+        pass
+    try:
+        from engine.compat import claimed as _claimed
+        _claimed.reset()
+    except Exception:
+        pass
+    try:
+        from engine.planets import atmosphere as _atmo_req
+        _atmo_req.clear_requested()
+    except Exception:
+        pass
+    try:
+        from engine import sprites as _sprites
+        _sprites.reset()
+        from engine.appc import texture_anim as _texture_anim
+        _texture_anim.reset()
+    except Exception:
+        pass
 
 
 def bop_fixture_rig():

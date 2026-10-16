@@ -58,7 +58,6 @@ try:
 except (ImportError, AttributeError):
     _audio_mod = None
 
-from engine.audio.alert_audio import AlertAudioListener
 from engine.audio.engine_rumble import install_engine_rumble_listener
 # Engine-rumble names come from LoadTacticalSounds.LoadSounds(); bridge/alert
 # names from the real LoadBridge.LoadSounds() at mission load (against a live
@@ -104,6 +103,7 @@ from engine.systems import frames as _frames
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.ships import ShipClass
 from engine.appc.ship_death import _out_of_action as _oa
+from engine.appc import glow_maps as _glow_maps
 from engine.appc.ship_motion import _effective_motion, _cap_keep, _asymptote_step
 from engine.appc.subsystems import (
     TorpedoTube,
@@ -114,8 +114,6 @@ from engine.appc.subsystems import (
     impulse_online_fraction,
 )
 from engine.appc.weapon_subsystems import _target_undetectable, _same_set
-
-_alert_listener: "AlertAudioListener" = AlertAudioListener()
 
 
 def _project_root_for_cef():
@@ -147,7 +145,6 @@ def init_audio() -> None:
         return
     init_audio_backend()
     install_engine_rumble_listener()
-    _alert_listener.reset()
 
 
 def shutdown_audio() -> None:
@@ -260,7 +257,6 @@ def tick_audio(*, camera_position, camera_forward, camera_up, dt, player) -> Non
     fx, fy, fz = camera_forward
     ux, uy, uz = camera_up
     _audio_mod.update(px, py, pz, fx, fy, fz, ux, uy, uz, dt)
-    _alert_listener.tick(player)
     # Music ramps on the same dt as the rest of the audio layer, so it freezes
     # under pause rather than sliding on wall-clock.
     _pump_music(dt)
@@ -1786,6 +1782,8 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters,
         entries = ship_emitters.get(iid)
         if not entries:
             continue
+        if _glow_maps.is_dark(ship):
+            continue    # DisableGlowAlphaMaps / global glow off: lights too.
         try:
             loc = ship.GetWorldLocation()
             frac = commanded_impulse_frac(ship)
@@ -2420,7 +2418,7 @@ def _ctrl_held_either(h) -> bool:
 
 
 def _apply_alert_keys(h, player) -> None:
-    """Shift+1/2/3 → SetAlertLevel(GREEN/YELLOW/RED) on the player ship.
+    """Shift+1/2/3 → GREEN/YELLOW/RED alert on the player ship.
 
     Mirrors BC's DefaultKeyboardBinding: !/@/# → ET_SET_ALERT_LEVEL with
     EST_ALERT_{GREEN,YELLOW,RED}. Called once per tick before the throttle
@@ -2429,13 +2427,51 @@ def _apply_alert_keys(h, player) -> None:
     """
     if player is None or not _shift_held(h):
         return
+    # RemoveControl (AllowKeyboardInput(0)) blocks BC's binding like every
+    # non-crew-menu key -- see engine/appc/input._OnKeyboardEvent_Dispatch.
+    from engine.appc.top_window import keyboard_input_enabled
+    if not keyboard_input_enabled():
+        return
+    import App
     keys = h.keys
     if h.key_pressed(keys.KEY_1):
-        player.SetAlertLevel(ShipClass.GREEN_ALERT)
+        _request_alert(player, App.CharacterClass.EST_ALERT_GREEN,
+                       ShipClass.GREEN_ALERT)
     elif h.key_pressed(keys.KEY_2):
-        player.SetAlertLevel(ShipClass.YELLOW_ALERT)
+        _request_alert(player, App.CharacterClass.EST_ALERT_YELLOW,
+                       ShipClass.YELLOW_ALERT)
     elif h.key_pressed(keys.KEY_3):
-        player.SetAlertLevel(ShipClass.RED_ALERT)
+        _request_alert(player, App.CharacterClass.EST_ALERT_RED,
+                       ShipClass.RED_ALERT)
+
+
+def _request_alert(player, est, level) -> None:
+    """BC's alert binding: BridgeHandlers.SetAlertLevel forwards the EST_* event
+    to the XO's menu, where XOCharacterHandlers speaks her line and
+    XOMenuHandlers plays the klaxon and posts the level to the ship
+    (ShipClass.ProcessEvent applies it). The engine plays no klaxon of its own.
+
+    No bridge XO whose menu handles the event (no bridge loaded, a bare menu):
+    set the level directly, silently — the event would otherwise be swallowed.
+    """
+    import App
+    from engine.appc.characters import CharacterClass_GetObjectStrict
+    xo = CharacterClass_GetObjectStrict(App.g_kSetManager.GetSet("bridge"), "XO")
+    menu = xo.GetMenu() if xo is not None else None
+    if menu is None or not menu._handlers.get(App.ET_SET_ALERT_LEVEL):
+        player.SetAlertLevel(level)
+        return
+    evt = App.TGIntEvent_Create()
+    evt.SetEventType(App.ET_SET_ALERT_LEVEL)
+    evt.SetDestination(menu)
+    evt.SetInt(est)
+    # SDK handlers on the menu can raise (XOCharacterHandlers reads
+    # pShields.IsOn() unguarded -- a shieldless ship). Swallow and log like a
+    # button click (STButton.SendActivationEvent); BC printed and kept going.
+    try:
+        App.g_kEventManager.AddEvent(evt)
+    except Exception as _e:
+        dev_mode.log_swallowed("alert key ET_SET_ALERT_LEVEL", _e)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -4416,6 +4452,9 @@ def reset_sdk_globals() -> None:
     if hasattr(App.g_kEventManager, "_method_handlers"):
         App.g_kEventManager._method_handlers.clear()
     register_input_handlers(App.g_kEventManager)
+    # Queued ET_SET_ALERT_LEVEL levels belong to the outgoing mission's ships.
+    from engine.appc import ships as _ships
+    del _ships._pending_alert_levels[:]
     # Reset the TopWindow shim so cutscene/fade/view/input flags don't
     # bleed across missions or in-process swaps. See
     # docs/superpowers/specs/2026-06-03-top-window-shim-design.md.
@@ -6390,6 +6429,7 @@ class MissionSession:
         for iid in list(self.celestial_instances.values()):
             renderer.destroy_instance(iid)
         _atmosphere.clear_live()
+        _atmosphere.clear_requested()
         _surface.clear_live()
         self.celestial_instances.clear()
         self.celestial_placed.clear()
@@ -9439,6 +9479,15 @@ def _sync_spv_articulation(session, spv_panel) -> None:
         _sync_ship_articulation(session, ship, iid)
 
 
+def _emissive_scale_for(ship, is_player: bool, hd_boost: float) -> float:
+    """Per-ship self-illumination scale: 0 for a dead hulk or a ship whose
+    glow maps are disabled (spec 2026-10-16 §6.2), the HDR boost for the
+    player, else 1."""
+    if _oa(ship) or _glow_maps.is_dark(ship):
+        return 0.0
+    return hd_boost if is_player else 1.0
+
+
 def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
                               game_time, model_scale, player_control=None,
                               player_interp_pose=None,
@@ -9550,12 +9599,7 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
                        _player_warp_glow if ship is player else None)
         # Destroyed (dying/dead) ships lose self-illumination —
         # a dark hulk in space. Hull stays lit by external light.
-        if _oa(ship):
-            r.set_emissive_scale(iid, 0.0)
-        elif ship is player:
-            r.set_emissive_scale(iid, _hd_boost)
-        else:
-            r.set_emissive_scale(iid, 1.0)
+        r.set_emissive_scale(iid, _emissive_scale_for(ship, ship is player, _hd_boost))
         _off = _view_offset(ship)
         if iid == _player_iid and _off is None:
             if player_interp_pose is not None:

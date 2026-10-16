@@ -10,22 +10,13 @@ import random as _random
 
 import engine.dev_mode as dev_mode
 
-# Known sprite-sheet textures, by lowercase basename -> (cols, rows).
-# BC's stock explosion sheets are 256x256 with an 8x8 grid: 8 animation
-# frames across, 8 explosion variants down (B is the greyscale twin of A).
-# CreateTarget applies these automatically; SetTextureCells can override.
-_KNOWN_SHEET_TEXTURES = {
-    "explosiona.tga": (8, 8),
-    "explosionb.tga": (8, 8),
-}
+from engine import sprites as _sprites
+from engine.appc import texture_anim as _texture_anim
 
-# Per-texture brightness boost, by lowercase basename. Applied to the color
-# keys at descriptor time so it covers every emitter using the texture (SDK
-# Effects factories and our own) without editing the gitignored SDK tree.
-# ExplosionA reads too dim against the HDR pipeline (tune-by-eye).
-_TEXTURE_BRIGHTNESS = {
-    "explosiona.tga": 2.0,
-}
+# The stock sheets' grid (8x8; B is the greyscale twin of A) and ExplosionA's
+# brightness boost now live in native/assets/sprites/manifest.json
+# (stock_explosion_a/b); CreateTarget applies them via engine.sprites.
+# SetTextureCells can still override.
 
 
 class AnimTSParticleController:
@@ -57,6 +48,16 @@ class AnimTSParticleController:
         # (frame from age, row from a per-particle hash).
         self._atlas_cols = 1
         self._atlas_rows = 1
+        # Sprite library (spec 2026-10-16 §7). Defaults reproduce today's
+        # behaviour exactly; only a library-resolved path changes them.
+        self._library_kind = "sprite"   # "sprite" | "native" | "none"
+        self._native = None
+        self._playback = 0
+        self._fps = 0.0
+        self._size_scale = 1.0
+        self._pivot = (0.0, 0.0)
+        self._orient = 0
+        self._roll_rate = 0.0
         # Stable per-emitter hash seed. The renderer derives ALL per-particle
         # randomness (jitter, birth offset, variant row) from this, NOT from
         # the emitter's world position — a moving emitter must not re-roll
@@ -79,16 +80,30 @@ class AnimTSParticleController:
     def SetInheritsVelocity(self, on): self._inherit = 1.0 if on else 0.0
     def SetDrawOldToNew(self, on):     self._draw_old_to_new = 1 if on else 0
     def CreateTarget(self, path):
+        """Bind the target texture. A path the sprite library knows (spec
+        2026-10-16 §7: legacy alias, or a stock sheet) applies its entry; a
+        path declared through g_kTextureAnimManager gets its grid; anything
+        else is used as-is, as before."""
         self._texture_path = path
-        # Auto-detect known sprite-sheet textures so every SDK Effects
-        # caller (weapon-hit explosions, smoke, plumes) animates frames
-        # instead of billboarding the whole 8x8 grid. SDK scripts never
-        # declare the grid — the original engine knew it natively.
-        base = str(path).replace("\\", "/").rsplit("/", 1)[-1].lower()
-        cells = _KNOWN_SHEET_TEXTURES.get(base)
-        if cells is not None:
-            self._atlas_cols, self._atlas_rows = cells
-        self._brightness = _TEXTURE_BRIGHTNESS.get(base, 1.0)
+        ref = _sprites.resolve(path)
+        if ref is None:
+            grid = _texture_anim.grid_for(path)
+            if grid is not None:
+                self._atlas_cols, self._atlas_rows = grid
+            self._brightness = 1.0
+            return
+        self._library_kind = ref.kind
+        self._native = ref.native
+        if ref.kind != "sprite":
+            return
+        self._texture_path = ref.texture_path
+        self._atlas_cols, self._atlas_rows = ref.cols, ref.rows
+        self._brightness = ref.brightness
+        self._playback = _sprites.PLAYBACK_CODES.get(ref.playback, 0)
+        self._fps = ref.fps
+        self._size_scale = ref.scale
+        self._pivot = ref.pivot
+        self._orient = _sprites.ORIENT_CODES.get(ref.orient, 0)
     def SetTextureCells(self, cols, rows):
         """Declare the target texture as a `cols` x `rows` sprite sheet:
         `cols` animation frames per variant, `rows` variants. Default 1x1
@@ -297,11 +312,17 @@ def _descriptor_for(c, resolve_attach):
                                b * c._brightness)
                               for (t, r, g, b) in c._color_keys],
         "alpha_keys":        list(c._alpha_keys),
-        "size_keys":         list(c._size_keys),
+        "size_keys":         [(t, s * c._size_scale) for (t, s) in c._size_keys],
         "texture_path":      c._texture_path,
         "atlas_cols":        int(c._atlas_cols),
         "atlas_rows":        int(c._atlas_rows),
         "seed":              float(c._seed),
+        # Sprite library (spec 2026-10-16 §7.4). Defaults = today's behaviour.
+        "playback":          int(c._playback),
+        "fps":               float(c._fps),
+        "pivot":             (float(c._pivot[0]), float(c._pivot[1])),
+        "orient":            int(c._orient),
+        "roll_rate":         float(c._roll_rate),
     }
 
 
@@ -348,6 +369,60 @@ def snapshot_descriptors(resolve_attach=None, to_view=None):
     return out
 
 
+def _mid_colour(c):
+    """The colour key nearest t=0.5 (NanoFX puts the caller's tint there)."""
+    if not c._color_keys:
+        return None
+    t, r, g, b = min(c._color_keys, key=lambda k: abs(k[0] - 0.5))
+    return (float(r), float(g), float(b))
+
+
+def _controller_world_pos(c):
+    """World position of a controller's emit point, or None."""
+    from engine.appc.math import TGPoint3
+    from engine.appc.objects import _ObjectNodeRef
+    from engine.appc.sets import SetEffectRoot
+    x, y, z = _vec3(c._emit_pos)
+    src = c._emit_from
+    if src is None and isinstance(c._attach_node, _ObjectNodeRef):
+        src = c._attach_node._owner()
+    if src is None:
+        return (x, y, z) if isinstance(c._attach_node, SetEffectRoot) else None
+    if hasattr(src, "GetWorldLocation") and hasattr(src, "GetWorldRotation"):
+        p = TGPoint3(x, y, z)
+        p.MultMatrixLeft(src.GetWorldRotation())
+        loc = src.GetWorldLocation()
+        return (loc.x + p.x, loc.y + p.y, loc.z + p.z)
+    if hasattr(src, "x"):
+        return (src.x, src.y, src.z)
+    return None
+
+
+_warned_native_effects = set()
+
+
+def _spawn_native(c):
+    """kind:native (spec 2026-10-16 §7.5): play a Dauntless procedural effect
+    instead of registering a particle emitter."""
+    native = c._native or {}
+    effect = native.get("effect")
+    if effect != "shockwave":
+        if effect not in _warned_native_effects:
+            _warned_native_effects.add(effect)
+            import sys
+            sys.stderr.write("[particles] native sprite effect %r is not "
+                             "implemented; nothing played\n" % (effect,))
+        return
+    from engine.appc import shockwaves
+    center = _controller_world_pos(c)
+    if center is None:
+        return
+    sizes = [s for (_t, s) in c._size_keys] or [1.0]
+    radius = max(sizes) * float(native.get("radius_scale", 1.0))
+    shockwaves.spawn(center, radius, max(0.1, float(c._emit_life)),
+                     _controller_set(c), tint=_mid_colour(c))
+
+
 class EffectAction:
     """Mirror of the SDK action wrapper: Start() registers the controller in
     the active set, Stop() deregisters it."""
@@ -355,7 +430,14 @@ class EffectAction:
         self._controller = controller
 
     def Start(self):
-        register(self._controller)
+        c = self._controller
+        kind = c.__dict__.get("_library_kind", "sprite")
+        if kind == "none":
+            return
+        if kind == "native":
+            _spawn_native(c)
+            return
+        register(c)
 
     def Play(self):
         self.Start()
@@ -399,6 +481,19 @@ class SparkParticleController(AnimTSParticleController):
 
 def SparkParticleController_Create(total_life=1.0, duration=1.0, emit_rate=0.005):
     return SparkParticleController(total_life, duration, emit_rate)
+
+
+class DebrisParticleController(SparkParticleController):
+    """Tumbling debris billboards (spec 2026-10-16 §8.4): a spark controller
+    with no tail and a billboard tumble. No stock script creates one, so
+    adding it changes no production effect."""
+    def __init__(self, total_life=1.0, duration=1.0, emit_rate=0.005):
+        super().__init__(total_life, duration, emit_rate)
+        self._roll_rate = 2.0
+
+
+def DebrisParticleController_Create(total_life=1.0, duration=1.0, emit_rate=0.005):
+    return DebrisParticleController(total_life, duration, emit_rate)
 
 
 def EffectAction_Create(controller):

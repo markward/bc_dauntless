@@ -188,3 +188,25 @@ TEST(ParticleMath, StreakQuadIgnoresRoll) {
             << "corner " << i << " moved: roll must not touch the streak path";
     }
 }
+
+TEST(ParticleMath, AtlasCellLifeColumnsMatchesLegacyRule) {
+    // playback 0: frame = t*cols along the columns; row from the hash.
+    EXPECT_EQ(atlas_cell(0, 0.0f, 0.0f, 8, 8, 0.0f, 0.99f, 0.0f), glm::ivec2(0, 7));
+    EXPECT_EQ(atlas_cell(0, 0.5f, 0.0f, 8, 8, 0.0f, 0.0f, 0.0f), glm::ivec2(4, 0));
+    EXPECT_EQ(atlas_cell(0, 1.0f, 0.0f, 8, 8, 0.0f, 0.0f, 0.0f), glm::ivec2(7, 0));
+    EXPECT_EQ(atlas_cell(0, 0.3f, 0.0f, 1, 1, 0.0f, 0.7f, 0.0f), glm::ivec2(0, 0));
+}
+
+TEST(ParticleMath, AtlasCellLifeSequenceWalksTheWholeSheetRowMajor) {
+    // 8x4 = 32 frames; t in [0,1] walks rows top to bottom.
+    EXPECT_EQ(atlas_cell(1, 0.0f,    0.0f, 8, 4, 0.0f, 0.9f, 0.9f), glm::ivec2(0, 0));
+    EXPECT_EQ(atlas_cell(1, 9.0f / 32.0f, 0.0f, 8, 4, 0.0f, 0.9f, 0.9f), glm::ivec2(1, 1));
+    EXPECT_EQ(atlas_cell(1, 1.0f,    0.0f, 8, 4, 0.0f, 0.9f, 0.9f), glm::ivec2(7, 3));
+}
+
+TEST(ParticleMath, AtlasCellLoopCyclesColumnsAtFpsOnAStableRow) {
+    // 6 columns, start column from hash_phase 0.5 -> 3; 8 fps.
+    EXPECT_EQ(atlas_cell(2, 0.9f, 0.0f,   6, 4, 8.0f, 0.3f, 0.5f), glm::ivec2(3, 1));
+    EXPECT_EQ(atlas_cell(2, 0.9f, 0.125f, 6, 4, 8.0f, 0.3f, 0.5f), glm::ivec2(4, 1));
+    EXPECT_EQ(atlas_cell(2, 0.9f, 0.375f, 6, 4, 8.0f, 0.3f, 0.5f), glm::ivec2(0, 1));
+}

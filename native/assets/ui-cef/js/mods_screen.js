@@ -95,6 +95,12 @@ function msRender() {
     var err = document.getElementById('ms-error');
     err.textContent = p.error || '';
     err.style.display = p.error ? 'block' : 'none';
+    var blk = document.getElementById('ms-blocked');
+    var bl = p.blocked || [];
+    blk.innerHTML = bl.map(function (b) {
+        return '<div>' + msEsc(b.name) + ' — not loaded: ' + msEsc(b.reason) + '</div>';
+    }).join('');
+    blk.style.display = bl.length ? 'block' : 'none';
     var sel = document.getElementById('ms-selbar');
     sel.style.display = p.ticked ? 'flex' : 'none';
     sel.innerHTML = p.ticked ? p.ticked + ' ticked — any edit to a ticked row applies to all ' + p.ticked +

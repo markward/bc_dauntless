@@ -70,6 +70,46 @@ def test_a_region_row_click_sets_the_warp_button_course():
     assert ticked == [region["label"]]
 
 
+def test_e3m2_a_click_on_the_vesuvi_row_plots_its_outer_edge():
+    """E3M2 offers Vesuvi from the start (E3M2.py:249-260). A click on the
+    system row — not a region inside it — plots the system's default,
+    Vesuvi6, exactly as BC's "Region file that you go to if you select the
+    menu" (Systems/Utils.py:24)."""
+    hm.load("Maelstrom.Episode3.E3M2.E3M2")
+    from engine.host_loop import record_course_selection
+
+    panel = CrewMenuPanel(on_course_set=record_course_selection)
+    _menu, node = _set_course_node(panel)
+    vesuvi = next(c for c in node["children"] if c["label"] == "Vesuvi")
+    assert vesuvi["sets_course"] is True
+
+    assert panel.dispatch_event("click:%d" % vesuvi["id"]) is True
+
+    assert hm.the_warp_button().GetDestination() == "Systems.Vesuvi.Vesuvi6"
+    _menu, node = _set_course_node(panel)
+    vesuvi = next(c for c in node["children"] if c["label"] == "Vesuvi")
+    assert vesuvi["chosen"] is True
+
+
+def test_e4m6_set_region_name_steers_the_system_click_and_its_arrival():
+    """E4M6's own OpenCebalrai step (E4M6.py:2040-2054) moves Cebalrai's
+    default to Cebalrai2 and links the system row to "Player Start
+    Cebalrai2". A click on the Cebalrai row must plot both."""
+    hm.load("Maelstrom.Episode4.E4M6.E4M6")
+    import Maelstrom.Episode4.E4M6.E4M6 as e4m6
+    from engine.host_loop import record_course_selection
+    e4m6.OpenCebalrai(None)
+
+    panel = CrewMenuPanel(on_course_set=record_course_selection)
+    _menu, node = _set_course_node(panel)
+    cebalrai = next(c for c in node["children"] if c["label"] == "Cebalrai")
+    assert panel.dispatch_event("click:%d" % cebalrai["id"]) is True
+
+    btn = hm.the_warp_button()
+    assert btn.GetDestination() == "Systems.Cebalrai.Cebalrai2"
+    assert btn.GetPlacementName() == "Player Start Cebalrai2"
+
+
 def test_e7m3_grows_to_six_systems_after_its_briefing():
     hm.load("Maelstrom.Episode7.E7M3.E7M3")
     hm.tick_until(lambda: len(_shape(_set_course_node(CrewMenuPanel())[1])) >= 6,

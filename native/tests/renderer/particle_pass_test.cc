@@ -482,3 +482,31 @@ TEST_F(ParticlePassTest, ParticlesSampleTheirTextureAndAreNotBlack) {
     EXPECT_GT(static_cast<int>(px[0]) + px[1] + px[2], 30)
         << "centre pixel is black — the particle drew without its texture bound";
 }
+
+// Sprite-library PNGs (spec 2026-10-16 §7.5): the pass decodes PNG as well as
+// TGA, so an absolute PNG path renders.
+TEST_F(ParticlePassTest, AbsolutePngTextureLoads) {
+    const auto png = (project_root() / "native" / "tests" / "renderer" /
+                      "fixtures" / "sprite_4x4.png").string();
+    renderer::ParticleEmitterDescriptor e;
+    e.texture_path = png;
+    e.emit_life = 1.0f;
+    e.emit_frequency = 0.5f;
+    e.effect_age = 0.25f;
+    e.num_size_keys = 1; e.size_keys[0].t = 0.0f; e.size_keys[0].v = 1.0f;
+    e.playback = 1;
+    e.atlas_cols = 2; e.atlas_rows = 2;
+    e.pivot = glm::vec2(0.0f, -1.0f);
+    e.orient = 1;
+    renderer::ParticlePass pass;
+    scenegraph::World world;
+    scenegraph::Camera camera;
+    camera.eye    = {0.0f, 0.0f, 100.0f};
+    camera.target = {0.0f, 0.0f,   0.0f};
+    camera.up     = {0.0f, 1.0f,   0.0f};
+    camera.aspect = 1.0f;
+    while (glGetError() != GL_NO_ERROR) {}
+    pass.render({e}, world, camera, *pipeline);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+    EXPECT_EQ(pass.loaded_texture_count(), 1u);
+}

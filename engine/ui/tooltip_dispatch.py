@@ -106,3 +106,43 @@ def run_update_tooltip(owner, now, state, period=0.25) -> None:
         fn(owner)
     except Exception:
         pass        # a handler fault must never break the frame
+    if station == "Helm":
+        try:
+            _helm_unlisted_destination(handlers, owner)
+        except Exception as e:
+            from engine import dev_mode
+            dev_mode.log_swallowed("helm unlisted destination", e)
+
+
+# Status key HelmUpdateToolTip writes its destination to (BridgeHandlers.py:1417).
+_DESTINATION_KEY = 3
+
+
+def _helm_unlisted_destination(handlers, helm) -> None:
+    """DAUNTLESS-ONLY: name a course no Set Course row lists.
+
+    HelmUpdateToolTip writes "Destination :" only when FindCourseButton finds
+    the Set Course row for the warp button's destination, and otherwise leaves
+    key 3 untouched. In BC a course could only come from Set Course, so a row
+    always existed. Our star map plots anywhere in its catalog (QuickBattle
+    lists no rows at all), which left no line -- or the PREVIOUS course's line.
+    So when the SDK finds no row, write the line ourselves, naming the region
+    exactly as Systems/Utils.py:82-84 names a region row:
+    SetClass_MakeDisplayName of the region module's set name.
+    """
+    import App
+    button = App.SortedRegionMenu_GetWarpButton()
+    dest = button.GetDestination() if button is not None else None
+    if not dest or handlers.FindCourseButton(dest) is not None:
+        return
+    try:
+        set_name = __import__(dest, fromlist=["GetSetName"]).GetSetName()
+    except Exception:
+        set_name = str(dest).split(".")[-1]
+    db = App.g_kLocalizationManager.Load("data/TGL/Bridge Menus.TGL")
+    try:
+        line = db.GetString("Destination :")
+        helm.SetStatus(line.Append(App.SetClass_MakeDisplayName(set_name)),
+                       _DESTINATION_KEY)
+    finally:
+        App.g_kLocalizationManager.Unload(db)
