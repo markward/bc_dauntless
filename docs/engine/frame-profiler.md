@@ -383,6 +383,13 @@ ships at lower frequency; (c) move hot paths to C++.
   (`host_bindings.cc`) add `rock.near.stream`, `rock.near.draw`,
   `rock.fade.draw` (the translucent impostor fades), `rock.puffs.draw` and
   `rock.specks.draw`, alongside the earlier far-tier `space.far.*` scopes.
+  Spike-capture attribution scopes (warp arrival): `gl.timers.game` /
+  `gl.timers.real` (timer ticks in `loop.py`), `warp.depart`,
+  `warp.place_player`, `warp.arrive_finalize`, `warp.exited_warp`,
+  `warp.clear_targets` (the arrival actions in `engine/appc/warp.py`), and
+  `rock.near.draw` split into `rock.near.build`, `rock.near.mesh_draw`,
+  `rock.impostor.draw`, with `rock.atlas.load` (first-visit impostor atlas
+  read + upload in `FarPass::atlas_for`).
   `planet_detail` (clipmap bake for the planet surface detail pass) is a
   top-level, GPU-timed scope — a sibling of `space`/`bloom`/`post`, not
   nested under any of them.

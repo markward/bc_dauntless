@@ -179,3 +179,37 @@ def test_context_callable_runs_only_for_a_spike(tmp_path):
     fp.maybe_log_spike(context=ctx)
     assert calls == [1]
     assert "view=Starbase12" in (tmp_path / "s.log").read_text()
+
+
+def test_warp_arrival_actions_are_scoped():
+    """Each arrival action is its own profiler scope, so a spike owned by one
+    of them is attributable instead of vanishing into the sim phase."""
+    from engine.appc import warp
+
+    # Degenerate inputs take each action's early-out path: the scope must
+    # wrap the whole body, early-outs included.
+    actions = {
+        "warp.depart": warp._WarpDepartAction(None, None, hard_cut=True),
+        "warp.place_player": warp._PlacePlayerAction(None, None, None),
+        "warp.arrive_finalize": warp._ArriveFinalizeAction(None),
+        "warp.exited_warp": warp._ArrivalExitedWarpAction(None),
+        "warp.clear_targets": warp._ArrivalClearTargetsAction(None),
+    }
+    fp.set_enabled(True, native=False)
+    fp.begin_frame()
+    fp.mark("sim")
+    for action in actions.values():
+        action._do_play()
+    fp.end_frame()
+    assert set(actions) <= set(fp.parents())
+
+
+def test_game_loop_timer_ticks_are_scoped():
+    from engine.core.loop import GameLoop
+
+    fp.set_enabled(True, native=False)
+    fp.begin_frame()
+    fp.mark("sim")
+    GameLoop().tick()
+    fp.end_frame()
+    assert {"gl.timers.game", "gl.timers.real"} <= set(fp.parents())

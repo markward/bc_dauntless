@@ -1597,13 +1597,22 @@ void frame() {
             in.anchor_sys = g_far_field.anchor();
             in.game_time = g_decal_game_time;
             in.lod0_pixel_radius = g_minor_field.dials().lod0_pixel_radius;
-            g_near_field.build(in, g_near_out);
-            g_minor_pass->render(near_fragment, g_near_out.meshes, cam, *g_pipeline,
-                                 [](std::uint64_t h) { return resolve_model(h); },
-                                 g_lighting, ambient_scale, rim);
+            {
+                DAUNTLESS_FRAME_SCOPE("rock.near.build");
+                g_near_field.build(in, g_near_out);
+            }
+            {
+                DAUNTLESS_FRAME_SCOPE("rock.near.mesh_draw");
+                g_minor_pass->render(near_fragment, g_near_out.meshes, cam, *g_pipeline,
+                                     [](std::uint64_t h) { return resolve_model(h); },
+                                     g_lighting, ambient_scale, rim);
+            }
             g_far_draw_calls += g_minor_pass->last_draw_calls();
-            g_far_pass->render_impostors(g_near_out.billboards, cam, *g_pipeline, g_lighting,
-                                         ambient_scale, rim);
+            {
+                DAUNTLESS_FRAME_SCOPE("rock.impostor.draw");
+                g_far_pass->render_impostors(g_near_out.billboards, cam, *g_pipeline, g_lighting,
+                                             ambient_scale, rim);
+            }
             // billboards_fading draw translucent in render_space_vfx (rock.fade.draw).
             // A billboard bin whose atlas cannot load is skipped by
             // render_impostors (its rock still draws in the mesh tier); the

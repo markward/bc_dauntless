@@ -19,6 +19,7 @@
 
 #include "renderer/asset_path.h"
 #include "renderer/frame.h"
+#include "renderer/frame_timer.h"
 #include "renderer/pipeline.h"
 #include "renderer/rock_shading.h"
 #include "renderer/shader.h"
@@ -153,6 +154,7 @@ const FarPass::AtlasGpu* FarPass::atlas_for(int index) {
     }
     const auto& [albedo_path, normal_path] = paths_[static_cast<std::size_t>(index)];
     try {
+        DAUNTLESS_FRAME_SCOPE("rock.atlas.load");
         install_atlas(index, read_image(albedo_path), read_image(normal_path));
     } catch (const std::exception& e) {
         failed_.insert(index);

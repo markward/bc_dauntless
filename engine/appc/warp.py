@@ -8,6 +8,7 @@ Renderer realize/teardown is reached via module-level hooks the host
 registers; unset hooks make those steps no-ops (headless set/placement logic
 still runs). See docs/superpowers/specs/2026-06-22-warp-stage1-hard-cut-design.md.
 """
+import functools
 import math
 
 from engine.appc.actions import TGAction, TGSequence
@@ -300,6 +301,19 @@ class _ClearTargetsAction(TGAction):
             dev_mode.log_swallowed("stand down player AI for warp", _e)
 
 
+def _profiled(scope_name):
+    """Run an action's ``_do_play`` inside a frame-profiler scope, so a
+    spike it owns is attributable in the spike log."""
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(self):
+            from engine.core import frame_profiler
+            with frame_profiler.scope(scope_name):
+                return fn(self)
+        return wrapper
+    return deco
+
+
 class _ArrivalClearTargetsAction(TGAction):
     """Drop the target AGAIN on arrival — BC's clear, and the one that holds.
 
@@ -339,6 +353,7 @@ class _ArrivalClearTargetsAction(TGAction):
         super().__init__()
         self._ship = ship
 
+    @_profiled("warp.clear_targets")
     def _do_play(self):
         # Player only, like the SDK's schedule of PostWarpEnableMenu
         # (WarpSequence.py:322).
@@ -363,6 +378,7 @@ class _ArrivalExitedWarpAction(TGAction):
         super().__init__()
         self._ship = ship
 
+    @_profiled("warp.exited_warp")
     def _do_play(self):
         if _is_current_player(self._ship):
             from engine.systems import handoff
@@ -635,6 +651,7 @@ class _PlacePlayerAction(TGAction):
         self._dest_name = dest_name
         self._placement = placement
 
+    @_profiled("warp.place_player")
     def _do_play(self):
         import App
         ship = self._ship
@@ -748,6 +765,7 @@ class _WarpDepartAction(TGAction):
         self._seq = seq     # records whether we took the WarpVFX hold
         self._hard_cut = hard_cut
 
+    @_profiled("warp.depart")
     def _do_play(self):
         import App
         src = self._source
@@ -824,6 +842,7 @@ class _ArriveFinalizeAction(TGAction):
         self._source = source_set
         self._ship = ship
 
+    @_profiled("warp.arrive_finalize")
     def _do_play(self):
         import App
         src = self._source
