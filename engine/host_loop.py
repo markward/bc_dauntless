@@ -5,6 +5,7 @@ pick_simplest_mission.py / pick_default_skybox.py scan results.
 """
 from __future__ import annotations
 
+import contextlib
 import importlib
 import sys
 from dataclasses import dataclass, field
@@ -7513,6 +7514,35 @@ def _after_mission_change(controller, snap_scene, close_star_map) -> None:
     snap_scene()
 
 
+@contextlib.contextmanager
+def _options_cfg_from_memory(cfg, active: bool):
+    """While active, LoadConfigFile("Options.cfg") on `cfg` returns 1 without
+    touching disk.
+
+    For the QuickBattle boot when Options.cfg could not be written: the
+    in-memory mapping is exactly what a successful write would have read
+    back (SaveConfigFile serialises it, LoadConfigFile merges it back), so
+    BuildDialog builds the dialog, Start button included. Scoped to the
+    cascade; a later load of the missing file returns 0 again.
+    """
+    if not active:
+        yield
+        return
+    shadowed = "LoadConfigFile" in vars(cfg)
+    real_load = cfg.LoadConfigFile
+
+    def _load(filename):
+        return 1 if filename == "Options.cfg" else real_load(filename)
+    cfg.LoadConfigFile = _load
+    try:
+        yield
+    finally:
+        if shadowed:
+            cfg.LoadConfigFile = real_load
+        else:
+            del cfg.LoadConfigFile
+
+
 class _MissionLoader:
     """Bundles _init_mission + render-instance construction so HostController
     can call a single .load(name) method.
@@ -7559,11 +7589,15 @@ class _MissionLoader:
         # writes it). QuickBattle.BuildDialog early-returns — skipping the
         # config-dialog buttons including g_pStartButton — when
         # LoadConfigFile("Options.cfg") returns 0, and StartSimulation later
-        # dereferences g_pStartButton unconditionally. Headless there is no
-        # launcher, so guarantee the file exists (matching the real launch
-        # invariant) before the cascade builds the dialog.
-        if App.g_kConfigMapping.LoadConfigFile("Options.cfg") == 0:
-            App.g_kConfigMapping.SaveConfigFile("Options.cfg")
+        # dereferences g_pStartButton unconditionally. We have no launcher,
+        # so write the file into paths.config_dir() (matching the real
+        # launch invariant) before the cascade builds the dialog. When
+        # config_dir() is unwritable the save fails (SaveConfigFile reports
+        # it once) and the cascade's load answers from memory instead — see
+        # _options_cfg_from_memory — so Quick Battle still starts.
+        _cfg = App.g_kConfigMapping
+        _options_unsaved = (_cfg.LoadConfigFile("Options.cfg") == 0
+                            and _cfg.SaveConfigFile("Options.cfg") == 0)
 
         # Ship->bridge matrix + home-ship player-type rule: wrap
         # RecreatePlayer before the cascade's Initialize runs it, so even
@@ -7584,7 +7618,8 @@ class _MissionLoader:
         _qb_spawn.set_radius_fn(self._seed_quickbattle_ship_radius)
 
         import QuickBattle.QuickBattleGame as _QBGame
-        _QBGame.Initialize(game)
+        with _options_cfg_from_memory(_cfg, _options_unsaved):
+            _QBGame.Initialize(game)
 
         # QuickBattle.Initialize (inside the cascade above) has just run
         # BuildDialog(). A Foundation ship registered into the five tables

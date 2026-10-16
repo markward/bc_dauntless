@@ -44,6 +44,8 @@ def test_root_is_resolved_at_call_time_not_captured(monkeypatch, tmp_path):
     discriminating step is patching PROJECT_ROOT and asserting the SECOND call
     reflects it.
     """
+    # The suite pins a temp data dir; this test is about the checkout layout.
+    monkeypatch.delenv(paths.DATA_DIR_ENV, raising=False)
     first = paths.hull_volume_cache_root()
 
     fake_root = tmp_path / "a-different-checkout"

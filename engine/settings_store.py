@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from engine import dev_mode
+from engine import dev_mode, paths
 from engine.cameras import EXTERIOR_FOV_Y_RAD
 from engine.ui.configuration_panel import (
     AA_MODE_SAMPLES, AA_MSAA_8X, AA_OFF, AA_SMAA,
@@ -35,17 +35,11 @@ from engine.ui.configuration_panel import (
 #    MSAA merged into one mutually-exclusive selector. See _migrate.
 SCHEMA_VERSION = 2
 
-# engine/settings_store.py -> engine/ -> <project root>, matching
-# host_loop.PROJECT_ROOT. Kept local rather than imported so the store has no
-# dependency on the host loop.
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
-
 def default_settings_path() -> Path:
-    """Where settings.json lives. A function, not a constant, because this is
-    the single seam that has to move if the file ever needs a per-user OS
-    config directory — an installed game's own directory may be read-only."""
-    return PROJECT_ROOT / "settings.json"
+    """Where settings.json lives: the config dir (the checkout root in a
+    checkout layout, the per-user OS config folder when packaged, or the
+    data-dir override). A function, not a constant, so it is resolved at use."""
+    return paths.config_dir() / "settings.json"
 
 
 class SettingsStore:
@@ -121,6 +115,7 @@ class SettingsStore:
                        self._path.parent / (self._path.name + ".corrupt"))
         except OSError as exc:
             dev_mode.log_swallowed("SettingsStore quarantine", exc)
+            paths.report_write_failure(self._path, exc)
 
     # ── Access ──────────────────────────────────────────────────────────────
     def _section(self, section: str) -> dict:
@@ -164,7 +159,8 @@ class SettingsStore:
         """Remove the file and forget its contents. The 'absent ⇒ defaults'
         store (bridges.json) uses this for Reset: emptying the document would
         leave a present-but-empty file, which is an authoritative 'no pins',
-        not first-launch. Never raises."""
+        not first-launch. A failure is reported like a failed save
+        (paths.report_write_failure). Never raises."""
         self._doc = {"version": SCHEMA_VERSION}
         try:
             self._path.unlink()
@@ -172,6 +168,7 @@ class SettingsStore:
             pass
         except OSError as exc:
             dev_mode.log_swallowed("SettingsStore.delete_file", exc)
+            paths.report_write_failure(self._path, exc)
 
     # ── Write ───────────────────────────────────────────────────────────────
     def _save(self) -> None:
@@ -202,6 +199,7 @@ class SettingsStore:
             # store.set -> on_change -> the panel toggle, which would
             # contradict "a failed write does not raise" above.
             dev_mode.log_swallowed("SettingsStore.save", exc)
+            paths.report_write_failure(self._path, exc)
             try:
                 tmp.unlink()
             except OSError:

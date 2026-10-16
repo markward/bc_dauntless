@@ -132,3 +132,33 @@ def tick_until(pred, bound_s=WARP_BOUND_S) -> None:
             return
         _sim_tick(loop)
     raise AssertionError("condition not reached in %.0f s" % bound_s)
+
+
+def drive_warp(name, press_without_course=None) -> None:
+    """The warp-button sweep's per-mission body, shared so every sweep over
+    the campaign does the same work (test_warp_button_handler_sweep,
+    test_no_install_writes).
+
+    Load `name`; press Warp with a course (the mission's own, else the first
+    other region the menu offers) and let that warp finish, so the next
+    press is not ignored as a second warp; then clear the course, press
+    again through `press_without_course(button)` (default: a plain press)
+    and tick 5 s.
+    """
+    load(name)
+    btn = the_warp_button()
+    assert btn is not None
+    player = App.Game_GetCurrentPlayer()
+    here = player.GetContainingSet() if player is not None else None
+    course = btn.GetDestination() or first_offered_course(
+        here.GetName() if here is not None else None)
+    if course:
+        plot_course(btn, course)
+    warp_button.press(btn)
+    tick(5.0)
+    if player is not None and warp_button.is_warp_active(player):
+        tick_until(lambda: not warp_button.is_warp_active(player),
+                   bound_s=MASTER_DIALOGUE_BOUND_S)
+    btn.set_player_destination(None)
+    (press_without_course or warp_button.press)(btn)
+    tick(5.0)

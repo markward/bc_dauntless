@@ -22,10 +22,13 @@ from typing import Optional
 from engine.ui.panel import Panel
 from engine.ui.ai_inspector_model import collect_all_ship_ai
 
-# Fixed name, project root, overwritten every press. The debug loop is
-# fly -> observe -> export -> read the file in another window; a timestamped
-# file per press would turn that into a directory to sift through. Gitignored.
-EXPORT_PATH = Path(__file__).resolve().parents[2] / "ai_inspector_export.json"
+def _export_path() -> Path:
+    """Fixed name in the log directory, overwritten every press. The debug loop
+    is fly -> observe -> export -> read the file in another window; a
+    timestamped file per press would turn that into a directory to sift
+    through. Resolved at use, never at import."""
+    from engine import paths
+    return paths.log_dir() / "ai_inspector_export.json"
 
 
 class AIInspectorPanel(Panel):
@@ -87,7 +90,7 @@ class AIInspectorPanel(Panel):
         return False
 
     def _export(self) -> None:
-        """Write the live AI state to EXPORT_PATH.
+        """Write the live AI state to _export_path().
 
         Goes through collect_all_ship_ai -- the panel's own model -- rather
         than a parallel path, so enriching what the panel shows enriches the
@@ -98,6 +101,7 @@ class AIInspectorPanel(Panel):
         inspector down mid-fight: losing one export is better than losing the
         instrument you were using when the bug appeared.
         """
+        export_path = None
         try:
             payload = {
                 "captured_wall_time": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -108,13 +112,20 @@ class AIInspectorPanel(Panel):
                 payload["game_time"] = App.g_kUtopiaModule.GetGameTime()
             except Exception:
                 payload["game_time"] = None      # headless, or no module yet
-            EXPORT_PATH.write_text(
+            export_path = _export_path()
+            export_path.parent.mkdir(parents=True, exist_ok=True)
+            export_path.write_text(
                 json.dumps(payload, indent=2, default=str), encoding="utf-8")
             n = len(payload["ships"])
             sys.stderr.write(
-                f"[ai-inspector] exported {n} ship(s) to {EXPORT_PATH}\n")
+                f"[ai-inspector] exported {n} ship(s) to {export_path}\n")
         except Exception as exc:                 # noqa: BLE001 - see docstring
             sys.stderr.write(f"[ai-inspector] export FAILED: {exc!r}\n")
+            try:
+                from engine import paths
+                paths.report_write_failure(export_path or _export_path(), exc)
+            except Exception:                    # noqa: BLE001
+                pass
 
     def invalidate(self) -> None:
         self._last_pushed = None

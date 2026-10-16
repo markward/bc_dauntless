@@ -583,6 +583,21 @@ def test_delete_file_when_absent_does_not_raise(tmp_path):
     store.delete_file()   # no file yet
 
 
+def test_delete_file_failure_is_reported_to_the_player(tmp_path, capsys):
+    """bridges.json Reset that can't remove the file must say so, like any
+    other failed user-data write (paths.report_write_failure). A directory
+    at the path makes unlink fail with an OSError that is not
+    FileNotFoundError on every platform."""
+    from engine.settings_store import SettingsStore
+    p = tmp_path / "bridges.json"
+    p.mkdir()
+    store = SettingsStore(p)
+    store.delete_file()     # must not raise
+    err = capsys.readouterr().err
+    assert "[dauntless] could not write %s: " % p in err
+    assert p.is_dir()
+
+
 def test_set_section_replaces_the_whole_section_and_saves(tmp_path):
     import json
     from engine.settings_store import SettingsStore

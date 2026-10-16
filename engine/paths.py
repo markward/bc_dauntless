@@ -14,10 +14,25 @@ Nothing outside this module may spell "game" or "sdk" as a path segment.
 tests/unit/test_path_indirection.py enforces both halves.
 
 Spec: docs/superpowers/specs/2026-09-05-bc-path-resolution-design.md
+
+User-data half. Where Dauntless WRITES, as opposed to where BC content is read.
+    Three modes, highest first: ``--data-dir`` / ``DAUNTLESS_DATA_DIR`` (one
+    folder for everything), a packaged build (marker file
+    ``dauntless-packaged.json`` beside the install: the OS per-user folders),
+    else a checkout (PROJECT_ROOT, today's layout). Use ``config_dir``,
+    ``saves_dir``, ``mods_default_dir``, ``cache_dir``, ``log_dir`` and
+    ``log_file_path``; resolve at use, like the content roots. A write that
+    fails goes through ``report_write_failure(path, exc)``, which names the
+    path on stderr once per path instead of swallowing it.
+
+Spec: docs/superpowers/specs/2026-10-16-per-user-data-dirs-design.md
 """
 from __future__ import annotations
 
+import ntpath
 import os
+import sys
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -408,17 +423,130 @@ def game_asset(rel) -> Path:
     return game_root() / rel
 
 
-def hull_volume_cache_root() -> Path:
-    """Where the per-instance hull-volume SDF bake cache (.dhv files) lives.
+PACKAGED_MARKER = "dauntless-packaged.json"
+DATA_DIR_FLAG = "--data-dir"
+DATA_DIR_ENV = "DAUNTLESS_DATA_DIR"
 
-    <PROJECT_ROOT>/cache/hull_volumes -- matching the cache/icons/... layout
-    engine/ui/weapon_icons.py already uses, and covered by the `cache/` line
-    in .gitignore. Unlike game_root()/sdk_root(), this does not depend on the
-    first-run picker's resolution (PROJECT_ROOT never moves at runtime), but
-    it is still computed fresh on every call rather than cached in a module
-    constant: callers must never capture its return value at import either.
+
+def is_packaged() -> bool:
+    """True when the install folder carries the packaged-build marker."""
+    return (PROJECT_ROOT / PACKAGED_MARKER).is_file()
+
+
+class RepoWriteInPackagedBuild(OSError):
+    """A developer authoring save targeted the install folder of a packaged
+    build. An OSError so the panels' existing "Save failed" paths catch it."""
+
+
+def refuse_repo_write_when_packaged(path) -> None:
+    """Raise RepoWriteInPackagedBuild when `path` is inside the packaged
+    install (resolved on both sides); a no-op in a source checkout."""
+    if not is_packaged():
+        return
+    target = Path(path).resolve()
+    if target.is_relative_to(PROJECT_ROOT.resolve()):
+        raise RepoWriteInPackagedBuild(
+            "%s is inside the Dauntless install; developer authoring saves "
+            "need a source checkout" % path)
+
+
+def data_dir_override(argv=None, env=None) -> Optional[Path]:
+    """The user-data root asked for by `--data-dir` or DAUNTLESS_DATA_DIR.
+
+    Flag first, then env. An empty value counts as unset (unlike the game/sdk
+    flags, an empty data dir has no meaning to correct). Read on every call.
     """
-    return PROJECT_ROOT / "cache" / "hull_volumes"
+    if argv is None:
+        argv = sys.argv[1:]
+    if env is None:
+        env = os.environ
+    flag = _flag_value(argv, DATA_DIR_FLAG)
+    if flag is not _UNSET and str(flag).strip():
+        return normalise(flag)
+    from_env = env.get(DATA_DIR_ENV)
+    if from_env and from_env.strip():
+        return normalise(from_env)
+    return None
+
+
+def data_layout() -> tuple[str, Optional[Path]]:
+    """("override", root) | ("packaged", None) | ("checkout", PROJECT_ROOT)."""
+    override = data_dir_override()
+    if override is not None:
+        return ("override", override)
+    if is_packaged():
+        return ("packaged", None)
+    return ("checkout", PROJECT_ROOT)
+
+
+def _checkout_root() -> Optional[Path]:
+    """The root of the checkout-style layout, or None when packaged."""
+    return data_layout()[1]
+
+
+def config_dir() -> Path:
+    root = _checkout_root()
+    return root if root is not None else os_user_dirs()["config"]
+
+
+def saves_dir() -> Path:
+    root = _checkout_root()
+    return root / "saves" if root is not None else os_user_dirs()["saves"]
+
+
+def mods_default_dir() -> Path:
+    root = _checkout_root()
+    return root / "mods" if root is not None else os_user_dirs()["mods"]
+
+
+def cache_dir() -> Path:
+    root = _checkout_root()
+    return root / "cache" if root is not None else os_user_dirs()["cache"]
+
+
+def log_dir() -> Path:
+    root = _checkout_root()
+    return root if root is not None else os_user_dirs()["logs"]
+
+
+def log_file_path() -> Path:
+    root = _checkout_root()
+    if root is not None:
+        return root / "logs" / "dauntless.log"
+    return os_user_dirs()["logs"] / "dauntless.log"
+
+
+def hull_volume_cache_root() -> Path:
+    """Where the per-instance hull-volume SDF bake cache (.dhv files) lives:
+    <cache_dir()>/hull_volumes. Computed fresh on every call; callers must
+    never capture the result at import.
+    """
+    return cache_dir() / "hull_volumes"
+
+
+_reported_write_failures: set[str] = set()
+
+
+def _reset_write_failure_reports() -> None:
+    """Forget which paths were reported (tests)."""
+    _reported_write_failures.clear()
+
+
+def report_write_failure(path, exc: BaseException) -> None:
+    """Say once per path per process that a user-data write failed.
+
+    Always prints to stderr, with or without --developer: a player whose
+    saves silently vanish needs to see why. Never raises.
+    """
+    try:
+        key = str(path)
+        if key in _reported_write_failures:
+            return
+        _reported_write_failures.add(key)
+        print("[dauntless] could not write %s: %s: %s"
+              % (key, type(exc).__name__, exc), file=sys.stderr)
+    except Exception:
+        pass
 
 
 def project_asset_root() -> Path:
@@ -428,6 +556,102 @@ def project_asset_root() -> Path:
     this is ours. Computed fresh on every call, like hull_volume_cache_root().
     """
     return PROJECT_ROOT / "native" / "assets"
+
+
+# --- per-user OS folders ----------------------------------------------------
+
+def _windows_known_folder(name: str) -> Optional[Path]:
+    """SHGetKnownFolderPath for "RoamingAppData" / "LocalAppData", or None on
+    any failure. Windows only; never called elsewhere."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        guids = {
+            "RoamingAppData": "{3EB685DB-65F9-4CF6-A03A-E3EF65729F3D}",
+            "LocalAppData": "{F1B32785-6FBA-4FCF-9D55-7B8E7F157091}",
+        }
+        import uuid
+        u = uuid.UUID(guids[name])
+
+        class _GUID(ctypes.Structure):
+            _fields_ = [("Data1", ctypes.c_ulong), ("Data2", ctypes.c_ushort),
+                        ("Data3", ctypes.c_ushort), ("Data4", ctypes.c_ubyte * 8)]
+
+        guid = _GUID(u.time_low, u.time_mid, u.time_hi_version,
+                     (ctypes.c_ubyte * 8)(*u.bytes[8:]))
+        out = ctypes.c_wchar_p()
+        fn = ctypes.windll.shell32.SHGetKnownFolderPath
+        fn.argtypes = [ctypes.POINTER(_GUID), wintypes.DWORD, wintypes.HANDLE,
+                       ctypes.POINTER(ctypes.c_wchar_p)]
+        if fn(ctypes.byref(guid), 0, None, ctypes.byref(out)) != 0 or not out.value:
+            return None
+        try:
+            return Path(out.value)
+        finally:
+            ctypes.windll.ole32.CoTaskMemFree(out)
+    except Exception:
+        return None
+
+
+def os_user_dirs(platform: Optional[str] = None,
+                 env: Optional[Mapping[str, str]] = None,
+                 home: Optional[Path] = None,
+                 known_folder: Optional[Callable[[str], Optional[Path]]] = None
+                 ) -> dict[str, Path]:
+    """Where the per-OS user folders live: config, saves, mods, cache, logs.
+
+    Pure apart from its defaults (sys.platform, os.environ, Path.home(),
+    the Windows known-folder API). Computed fresh per call; callers must
+    never capture the result at import. An XDG_* / APPDATA value that is
+    unset, empty or relative is ignored.
+    """
+    platform = sys.platform if platform is None else platform
+    env = os.environ if env is None else env
+    home = Path.home() if home is None else home
+
+    if platform == "win32":
+        kf = known_folder if known_folder is not None else _windows_known_folder
+
+        def _win(folder: str, var: str, fallback: str) -> Path:
+            got = kf(folder)
+            if got is not None:
+                return Path(got)
+            val = env.get(var, "")
+            if val and ntpath.isabs(val):
+                return Path(val)
+            return home / "AppData" / fallback
+
+        roaming = _win("RoamingAppData", "APPDATA", "Roaming")
+        local = _win("LocalAppData", "LOCALAPPDATA", "Local")
+        config = roaming / "Dauntless"
+        return {"config": config, "saves": config / "saves",
+                "mods": config / "mods",
+                "cache": local / "Dauntless" / "Cache",
+                "logs": local / "Dauntless" / "Logs"}
+
+    if platform == "darwin":
+        lib = home / "Library"
+        config = lib / "Application Support" / "Dauntless"
+        return {"config": config, "saves": config / "saves",
+                "mods": config / "mods",
+                "cache": lib / "Caches" / "Dauntless",
+                "logs": lib / "Logs" / "Dauntless"}
+
+    def _xdg(var: str, default: Path) -> Path:
+        val = env.get(var, "")
+        if val and os.path.isabs(val):
+            return Path(val)
+        return default
+
+    cfg = _xdg("XDG_CONFIG_HOME", home / ".config")
+    data = _xdg("XDG_DATA_HOME", home / ".local" / "share")
+    cache = _xdg("XDG_CACHE_HOME", home / ".cache")
+    state = _xdg("XDG_STATE_HOME", home / ".local" / "state")
+    return {"config": cfg / "dauntless",
+            "saves": data / "dauntless" / "saves",
+            "mods": data / "dauntless" / "mods",
+            "cache": cache / "dauntless",
+            "logs": state / "dauntless" / "logs"}
 
 
 def game_asset_dirs(rel) -> list:

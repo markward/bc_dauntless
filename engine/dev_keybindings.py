@@ -5,7 +5,6 @@ tick via register_for_frame(); pure-static handlers can be registered once
 at module import time.
 """
 import sys
-from pathlib import Path
 
 import engine.dev_mode as dev_mode
 # Step sizes live with the constants they move -- the one-home rule.
@@ -18,10 +17,6 @@ from engine.appc.explosion_lights import (
 # Module-level (not closure state) because register_for_frame re-binds the
 # handler every tick, so the toggle state must survive across re-binds.
 _test_character_iid = None
-
-# Kept for the non-BC-asset dev dump dir below (nonfinite_dumps/); not used
-# for anything under the game/SDK install.
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _test_character_nif():
@@ -213,10 +208,10 @@ def register_for_frame(_h, session, player) -> None:
     #
     # Off by default even in dev mode: every texel is inspected and the
     # readback stalls the pipeline.
-    _nfprobe_dump_dir = _PROJECT_ROOT / "nonfinite_dumps"
-
     def _toggle_nonfinite_probe() -> None:
+        from engine import paths as _paths
         from engine import renderer as _r
+        _nfprobe_dump_dir = _paths.log_dir() / "nonfinite_dumps"
         if _r.nonfinite_probe_enabled():
             stats = _r.nonfinite_probe_stats()
             _r.set_nonfinite_probe_enabled(False)

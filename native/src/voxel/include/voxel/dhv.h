@@ -47,10 +47,12 @@ struct HullVolumeMeta {
 
 /// Write `field` + `meta` to `path`, creating parent directories. Writes to a
 /// sibling temporary and renames, so a crash mid-write cannot leave a
-/// half-written file where a valid one is expected. False on any I/O failure.
+/// half-written file where a valid one is expected. False on any I/O failure;
+/// then, when `why` is given, it receives a one-line reason.
 bool write_dhv(const std::filesystem::path& path,
                const DistanceField& field,
-               const HullVolumeMeta& meta);
+               const HullVolumeMeta& meta,
+               std::string* why = nullptr);
 
 /// Read `path`. Returns false -- and leaves the outputs untouched -- for a
 /// missing file, a bad magic, a format or baker version mismatch, an

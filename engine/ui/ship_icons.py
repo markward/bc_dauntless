@@ -6,7 +6,8 @@ sdk/Build/scripts/Icons/ShipIcons.py), decodes the TGA, encodes a PNG,
 base64-encodes the PNG into a `data:image/png;base64,...` URL, and
 caches that URL in memory keyed by species filename stem. The PNG is
 also written to disk under native/assets/ui-cef/icons/ships/ for
-inspection/debugging — that copy is gitignored.
+inspection/debugging in a developer checkout (never a packaged build) — that
+copy is gitignored.
 
 Returning a data URL (instead of a relative file path) sidesteps
 Chromium's file:// same-origin restriction: an <img src="data:..."> is
@@ -93,13 +94,18 @@ def icon_path_for_species(name: str) -> Optional[str]:
         return None
 
     # Keep the disk cache for inspection / debugging.
-    try:
-        os.makedirs(_CACHE_DIR, exist_ok=True)
-        cache_path = os.path.join(_CACHE_DIR, name + ".png")
-        with open(cache_path, "wb") as fp:
-            fp.write(png)
-    except OSError:
-        pass  # disk cache is best-effort; data URL still works
+    # Developer checkouts only: the PNG lands in the repo tree, which is
+    # read-only in an installed build (even under --developer). The data URL
+    # below is what the UI actually uses.
+    from engine import dev_mode, paths
+    if dev_mode.is_enabled() and not paths.is_packaged():
+        try:
+            os.makedirs(_CACHE_DIR, exist_ok=True)
+            cache_path = os.path.join(_CACHE_DIR, name + ".png")
+            with open(cache_path, "wb") as fp:
+                fp.write(png)
+        except OSError:
+            pass  # disk cache is best-effort; data URL still works
 
     data_url = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
     _resolved[name] = data_url
