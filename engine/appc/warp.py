@@ -50,13 +50,37 @@ _realize_hook = None
 _teardown_hook = None
 # Optional current-player fallback when App.Game_GetCurrentPlayer() is None.
 _player_hook = None
+# Destination preload over the tunnel (engine/warp_preload.py), host-bound.
+# Player warps only. None => no preload: the hold ends at its floor as before.
+#   begin(dest_set_name)  at burst      ready() -> bool    polled by the hold
+#   replan()  after a mission change    end()  on Completed/Abort
+#   pending() -> [str]  named in the "late" line when the cap releases
+_preload_begin_hook = None
+_preload_ready_hook = None
+_preload_replan_hook = None
+_preload_end_hook = None
+_preload_pending_hook = None
+# The WarpSequence whose preload is running: only it may end it, so an older
+# warp finishing late never ends a newer warp's preload.
+_preload_owner = None
 
 
-def configure_warp_hooks(realize=None, teardown=None, current_player=None):
+def configure_warp_hooks(realize=None, teardown=None, current_player=None,
+                         preload_begin=None, preload_ready=None,
+                         preload_replan=None, preload_end=None,
+                         preload_pending=None):
     global _realize_hook, _teardown_hook, _player_hook
+    global _preload_begin_hook, _preload_ready_hook, _preload_replan_hook
+    global _preload_end_hook, _preload_pending_hook, _preload_owner
     _realize_hook = realize
     _teardown_hook = teardown
     _player_hook = current_player
+    _preload_begin_hook = preload_begin
+    _preload_ready_hook = preload_ready
+    _preload_replan_hook = preload_replan
+    _preload_end_hook = preload_end
+    _preload_pending_hook = preload_pending
+    _preload_owner = None
 
 
 # ── Warp-VFX flythrough (Stage 2) ────────────────────────────────────────────
@@ -509,6 +533,18 @@ class _MissionChangePoint(TGAction):
             from engine.core import mission_change, frame_profiler
             with frame_profiler.scope("warp.mission_change"):
                 mission_change.change(mission=mission, episode=episode)
+            # The new mission's Initialize may have built the destination
+            # set's ships: queue them on the running preload.
+            if _preload_replan_hook is not None:
+                _preload_replan_hook()
+
+
+# The tunnel is the loading screen: past its floor, the player's hold waits
+# for the destination preload, polling every PRELOAD_POLL_S real seconds, but
+# never more than PRELOAD_CAP_S real seconds -- then it releases anyway and
+# names what was still pending.
+PRELOAD_CAP_S = 30.0
+PRELOAD_POLL_S = 0.05
 
 
 class _HoldUntilAction(TGAction):
@@ -518,12 +554,18 @@ class _HoldUntilAction(TGAction):
     release 0.1 * t_transit later, at transit end under the flash. Completes
     at once when that deadline has already passed -- a queue or the master
     sequence ran long and the streak has been held (spec §1 "Transit holds").
-    Game time, via g_kTimerManager, like TGSequence's own step delays."""
+    Game time, via g_kTimerManager, like TGSequence's own step delays.
+
+    Past that floor the PLAYER's hold also waits for the destination preload
+    (`preload_ready`), polling on g_kRealtimeTimerManager, capped at
+    PRELOAD_CAP_S real seconds. Every wait goes through the one deferred
+    timer _complete_after holds, so Abort() cancels the whole chain."""
 
     def __init__(self, seq, t_burst, t_transit):
         super().__init__()
         self._seq = seq
         self._span = float(t_burst) + 0.9 * float(t_transit)
+        self._t_floor_real = 0.0    # real time the floor was reached
 
     def Play(self):
         import App
@@ -532,8 +574,55 @@ class _HoldUntilAction(TGAction):
         now = App.g_kUtopiaModule.GetGameTime()
         # A sequence never Play()ed has no start: fail open to an early swap.
         remaining = 0.0 if start is None else start + self._span - now
-        # <= 0 completes inline; otherwise a game-time timer (Abort cancels).
-        self._complete_after(remaining, mgr=App.g_kTimerManager)
+        # <= 0 reaches the floor inline; otherwise a game-time timer (Abort
+        # cancels).
+        self._complete_after(remaining, on_elapsed=self._floor_reached,
+                             mgr=App.g_kTimerManager)
+
+    def _floor_reached(self):
+        import App
+        self._t_floor_real = App.g_kRealtimeTimerManager.get_time()
+        self._poll()
+
+    def _poll(self):
+        import App
+        if not self._playing:
+            return
+        if (_preload_ready_hook is None
+                or not _is_current_player(self._seq._ship)
+                or self._preload_ready()):
+            self.Completed()
+            return
+        waited = App.g_kRealtimeTimerManager.get_time() - self._t_floor_real
+        if waited >= PRELOAD_CAP_S:
+            import sys
+            print("[warp-preload] late: " + ", ".join(self._preload_pending()),
+                  file=sys.stderr, flush=True)
+            self.Completed()
+            return
+        self._complete_after(PRELOAD_POLL_S, on_elapsed=self._poll,
+                             mgr=App.g_kRealtimeTimerManager)
+
+    @staticmethod
+    def _preload_pending():
+        if _preload_pending_hook is None:
+            return []
+        try:
+            return [str(p) for p in _preload_pending_hook()]
+        except Exception as e:
+            from engine import dev_mode
+            dev_mode.log_swallowed("warp preload pending", e)
+            return ["(unknown)"]
+
+    @staticmethod
+    def _preload_ready():
+        # Fail open: a broken preload never holds the warp.
+        try:
+            return bool(_preload_ready_hook())
+        except Exception as e:
+            from engine import dev_mode
+            dev_mode.log_swallowed("warp preload ready", e)
+            return True
 
 
 class _TransitReleaseAction(TGAction):
@@ -828,6 +917,26 @@ class _WarpDepartAction(TGAction):
                 _teardown_hook(src)
             except Exception:
                 pass
+        # 4. Start preloading the destination for the tunnel to wait on
+        #    (_HoldUntilAction). Player only, and only with a sequence -- its
+        #    Completed/Abort is what ends the preload.
+        if scene and self._seq is not None:
+            _begin_preload(self._seq)
+
+
+def _begin_preload(seq):
+    """Begin the destination preload for the player's warp `seq`, which then
+    owns it. Fail-open: a preload that will not start never blocks the warp."""
+    global _preload_owner
+    dest = _set_name_from_module(seq.GetDestination())
+    if _preload_begin_hook is None or dest is None:
+        return
+    try:
+        _preload_begin_hook(dest)
+        _preload_owner = seq
+    except Exception as e:
+        from engine import dev_mode
+        dev_mode.log_swallowed("warp preload begin", e)
 
 
 class _ArriveFinalizeAction(TGAction):
@@ -936,12 +1045,28 @@ class WarpSequence(TGSequence):
         # Stated assumption: BC clears the sequence on arrival. The same
         # ping fires, so the condition re-reads None and turns off.
         self._detach_from_engine()
+        self._end_preload()
 
     def Abort(self) -> None:
         # An aborted warp must not leave ConditionWarpingToSet reading
         # "warping" forever -- mirror Completed()'s detach.
         super().Abort()
         self._detach_from_engine()
+        self._end_preload()
+
+    def _end_preload(self) -> None:
+        """End the preload this warp began (the player's), once -- and only
+        while it is still the running one."""
+        global _preload_owner
+        if _preload_owner is not self:
+            return
+        _preload_owner = None
+        if _preload_end_hook is not None:
+            try:
+                _preload_end_hook()
+            except Exception as e:
+                from engine import dev_mode
+                dev_mode.log_swallowed("warp preload end", e)
 
     def _detach_from_engine(self) -> None:
         """Clear the engine's warp sequence, but only if it's still us --

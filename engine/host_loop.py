@@ -6516,6 +6516,90 @@ def _extent_key(model_path: str, nif_path: str, model_scale: float) -> str:
     return nif_path if model_scale == 1.0 else f"{model_path}#s={model_scale:.6g}"
 
 
+def _warp_preload_deps(controller, r_) -> dict:
+    """The `engine.warp_preload.Preload` deps, built when a warp begins its
+    preload. Each loader is the SAME call realization makes on arrival, with
+    the same arguments, so the arrival hits what the tunnel loaded: the
+    native load_model dedupe for ships, controller's nif_to_handle for map
+    bodies (`_reconcile_celestial_instances`' key)."""
+    import App
+
+    def ships(name):
+        # Exactly the ships realize_set_objects would load: in the set, not
+        # yet realized. The destination set may not exist until the swap.
+        pSet = App.g_kSetManager.GetSet(name)
+        if pSet is None:
+            return []
+        session = controller.session
+        realized = session.ship_instances if session is not None else {}
+        return [s for s in _iter_ships_in_set(pSet) if s not in realized]
+
+    def load_ship(ship):
+        loaded = _load_runtime_ship_model(ship, r_)
+        if loaded is not None:
+            from engine.appc import hull_volume as _hull_volume
+            _hull_volume.prewarm_for_model(ship, loaded[0])
+
+    def planet_models(name):
+        from engine.systems import resolve
+        found = resolve.for_set(name)
+        if found is None:
+            return []
+        return [b.appearance.model for b in found[0].bodies
+                if b.orbits is not None]
+
+    def load_planet(model):
+        nif_path = _planet_model_path(model)
+        if nif_path is not None:
+            _load_planet_model(r_, nif_path, cache=controller)
+
+    return dict(renderer=r_, haze_enabled=lambda: _system_nebula_gate(r_),
+                planet_models=planet_models, load_planet=load_planet,
+                ships=ships, load_ship=load_ship,
+                atlases=bool(r_.far_enabled()))
+
+
+def _warp_preload_ready() -> bool:
+    """warp.py's preload_ready hook: no preload running is ready."""
+    from engine import warp_preload
+    p = warp_preload.active()
+    return True if p is None else bool(p.ready())
+
+
+def _warp_preload_hooks(controller, r_) -> dict:
+    """The preload_* kwargs for warp.configure_warp_hooks."""
+    from engine import warp_preload
+
+    def begin(name):
+        warp_preload.begin(name, **_warp_preload_deps(controller, r_))
+
+    def replan():
+        p = warp_preload.active()
+        if p is not None:
+            p.replan()
+
+    def pending():
+        p = warp_preload.active()
+        return [] if p is None else p.pending()
+
+    return dict(preload_begin=begin, preload_ready=_warp_preload_ready,
+                preload_replan=replan, preload_end=warp_preload.end,
+                preload_pending=pending)
+
+
+def _step_warp_preload() -> None:
+    """One step of the running warp preload, once per frame. A preload
+    failure must never take the frame loop down."""
+    from engine import warp_preload
+    p = warp_preload.active()
+    if p is None:
+        return
+    try:
+        p.step()
+    except Exception as e:
+        dev_mode.log_swallowed("warp preload step", e)
+
+
 def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
                         include_planets: bool = True,
                         ships: Optional[Iterable] = None) -> None:
@@ -10206,10 +10290,13 @@ def run(mission_name: Optional[str] = None,
         def _warp_teardown(pSet):
             if controller.session is not None:
                 teardown_set_objects(controller.session, pSet, controller.renderer)
+        # The destination preload the tunnel waits on (engine/warp_preload):
+        # begun at the player's burst, stepped once per frame below.
         _warp.configure_warp_hooks(
             realize=_warp_realize, teardown=_warp_teardown,
             current_player=lambda: (controller.session.player
-                                    if controller.session is not None else None))
+                                    if controller.session is not None else None),
+            **_warp_preload_hooks(controller, r))
 
         # Warp-VFX flythrough (Stage 2): when the "Warp Flythrough" toggle is on
         # AND the procedural sky is on, WarpSequence_Create builds a timed
@@ -11503,6 +11590,10 @@ def run(mission_name: Optional[str] = None,
                 # from the weapon/combat pumps below, which it does NOT drive.
                 with frame_profiler.scope("sim.gameloop"):
                     loop.tick()
+            # The warp tunnel's destination preload: at most one model load
+            # per frame, so no tunnel frame pays for the whole destination.
+            with frame_profiler.scope("warp.preload"):
+                _step_warp_preload()
 
             # Only snap the camera when a sim tick actually fired —
             # no tick means no state change to follow.
@@ -12856,9 +12947,12 @@ def run(mission_name: Optional[str] = None,
         _mission_change.configure(on_changed=None)
         # The warp hooks close over this controller too; left installed they
         # outlive it (a stale starbase line-of-sight hook refused every later
-        # warp near Starbase 12).
+        # warp near Starbase 12). The preload_* hooks default to None, and a
+        # preload still running holds this controller and renderer too.
         from engine.appc import warp as _warp_hooks, warp_gates as _gate_hooks
         _warp_hooks.configure_warp_hooks(realize=None, teardown=None)
+        from engine import warp_preload as _warp_preload
+        _warp_preload.end()
         _warp_hooks.configure_warp_vfx(start=None, stop=None, enabled=None,
                                        vantage_of=None)
         _gate_hooks.configure_gate_hooks(ray_collide=None)
