@@ -633,6 +633,13 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
             return None
         if (PROJECT_ROOT / rel).is_dir() and (PROJECT_ROOT / rel / "__init__.py").exists():
             return None
+        # Dotted names Dauntless claims outright (spec 2026-10-16 §8.1):
+        # after the project-root shims, BEFORE the mod overlay, so a mod's
+        # own copy of a claimed package never loads.
+        from engine.compat import claimed as _claimed
+        _cspec = _claimed.claimed_spec(fullname)
+        if _cspec is not None:
+            return _cspec
         # An installed mod's script wins over the stock SDK module. Checked
         # after the project-root shims (those are OUR replacements and must
         # not be overridable) and before the SDK itself. Never over the
@@ -1781,6 +1788,11 @@ def _reset_leakable_engine_globals():
     try:
         from engine.appc import glow_maps as _glow_maps
         _glow_maps.reset()
+    except Exception:
+        pass
+    try:
+        from engine.compat import claimed as _claimed
+        _claimed.reset()
     except Exception:
         pass
 
