@@ -1879,9 +1879,12 @@ def _resolve_torpedo_ammo(ts_prop, slot: int):
     the bug this fixes.  ``declared_max`` is the property's SetMaxTorpedoes(slot):
     an int (incl. 0) when declared, or ``None`` (undeclared → unlimited reserve).
 
-    Falls back to ``("Photon", 19.0)`` with an unlimited reserve if the slot has
-    no script or the import fails — Photon's 19 GU/s avoids the divide-by-zero in
-    FireScript.PredictTargetLocation that a launch_speed of 0 would cause.
+    Falls back to ``("Photon", 19.0)`` if the slot has no script or the import
+    fails — Photon's 19 GU/s avoids the divide-by-zero in
+    FireScript.PredictTargetLocation that a launch_speed of 0 would cause. An
+    import failure also names the stock photon module as the type's script, the
+    same module the launch substitutes, so FireScript.ChooseTorpType can import
+    it.
     """
     from engine.appc.subsystems import TorpedoAmmoType
     # Photon defaults — used for the unbound-slot path and any import failure.
@@ -1915,11 +1918,23 @@ def _resolve_torpedo_ammo(ts_prop, slot: int):
         power_cost = float(mod.GetPowerCost()) if hasattr(mod, "GetPowerCost") else 0.0
         return TorpedoAmmoType(name, launch_speed=launch_speed, power_cost=power_cost,
                                max_torpedoes=declared_max, script=script_name)
-    except Exception:
+    except Exception as _e:
+        # Unimportable module (a mod's Python 1.5 .pyc-only projectile): the
+        # launch already substitutes the stock photon
+        # (weapon_subsystems._resolve_projectile_module), so the ammo type
+        # names that same module. With no script, the SDK's
+        # FireScript.ChooseTorpType imported None and raised before its weapon
+        # cycle advanced, so the ship's fire script never reached its phasers.
+        from engine import dev_mode
+        from engine.appc.weapon_subsystems import _FALLBACK_PROJECTILE
+        dev_mode.log_swallowed(
+            "torpedo ammo script %r unimportable; ammo type uses %s"
+            % (script_name, _FALLBACK_PROJECTILE), _e)
         return TorpedoAmmoType("Photon",
                                launch_speed=PHOTON_LAUNCH_SPEED,
                                power_cost=PHOTON_POWER_COST,
-                               max_torpedoes=declared_max)
+                               max_torpedoes=declared_max,
+                               script=_FALLBACK_PROJECTILE)
 
 
 def ShipClass_Create(class_name: str = "") -> ShipClass:
