@@ -55,9 +55,19 @@ region list must stay reachable from the drop-down.
 - `ClearInfo` is still a no-op. Whether BC's `ClearInfo` resets a
   `SetRegionName` override when a later mission re-runs `CreateMenus` is not
   known; for now an override persists.
-- The Helm tooltip's "Destination :" line (`BridgeHandlers.FindCourseButton`)
-  still never resolves: `SortedRegionMenu_GetRoot` is a stub and `IsTypeOf`
-  returns 0. Unchanged by this work.
+- ~~The Helm tooltip's "Destination :" line never resolves.~~ Fixed on
+  `fix/helm-destination-tooltip`. Four links were broken, not two:
+  `SortedRegionMenu_GetRoot` was a stub, `STMenu` had no
+  `GetNumChildren`/`GetNthChild`, `STMenu.IsTypeOf` was a hardcoded 0, and
+  `STMenu.GetName(kString)` raised. `GetRoot` returning the warp button's
+  course menu is inferred from the SDK, not measured. A Dauntless-only
+  fallback in `engine/ui/tooltip_dispatch.py` names courses no Set Course row
+  lists (star map, QuickBattle) as BC would name the row. Tests:
+  `tests/unit/test_sorted_region_menu_walk.py`,
+  `tests/integration/test_helm_destination_tooltip.py`. **Live-verified
+  2026-10-16 (Mark):** hovering Kiska shows `Destination : Starbase 12` for a
+  mission-added Set Course row, and a Destination line for a QuickBattle
+  star map course.
 - E1M1's own route to the Vesuvi offer (after docking at Starbase 12) is not
   driven headlessly; E3M2 (Vesuvi offered from the start) and E4M6's
   `OpenCebalrai` cover the same code end to end.

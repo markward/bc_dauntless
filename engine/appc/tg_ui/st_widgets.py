@@ -50,21 +50,12 @@ class STCharacterMenu(STMenu):
     def GetLastChild(self):
         return self._children[-1] if self._children else None
 
-    def GetNthChild(self, n):
-        # TacticalMenuHandlers.GetOrderString:1908 reads the CURRENT order's
-        # button via GetNthChild(iIndex) and, when it is disabled, walks from
-        # GetFirstChild to the first ENABLED order instead. Without this the
-        # lookup fell through to a truthy _Stub, `not pButton.IsEnabled()`
-        # was False, and the fallback never ran -- GetTactic()/GetManeuver()
-        # kept reporting a tactic UpdateOrderMenus had just disabled. For the
-        # two attack orders g_dAIs has no (order, None, None) catch-all, so
-        # ChooseAIFromOrders then returned (None, None) and StartPlayerAI
-        # bailed at :1838: the tactical officer never engaged.
-        #
-        # Explicit bounds rather than a bare index: a negative n must be None,
-        # not Python's wrap-around to a real button from the other end.
-        i = int(n)
-        return self._children[i] if 0 <= i < len(self._children) else None
+    # GetNthChild lives on STMenu now (it is TGPane surface, and
+    # SortedRegionMenu needs it too). TacticalMenuHandlers.GetOrderString:1908
+    # depends on it here: without it the current-order lookup fell through to
+    # a truthy _Stub, the disabled-order fallback never ran, and for the two
+    # attack orders StartPlayerAI bailed at :1838 -- the tactical officer
+    # never engaged.
 
     def GetNextChild(self, child):
         try:
@@ -387,6 +378,23 @@ def SortedRegionMenu_SetWarpButton(button) -> None:
 
 def SortedRegionMenu_GetWarpButton():
     return _warp_button
+
+
+def SortedRegionMenu_GetRoot():
+    """The Set Course menu: the root BridgeHandlers.FindCourseButton walks
+    (SDK BridgeHandlers.py:1352) to name the Helm tooltip's destination.
+
+    INFERRED from the SDK, not measured: the RE symbol table lists GetRoot
+    only as a static. The one SortedRegionMenu created with no region is Set
+    Course (HelmMenuHandlers.py:197), every system and region menu is added
+    beneath it (Systems/Utils.py:76-93), and HelmMenuHandlers.py:206 hands
+    exactly that menu to the warp button with SetCourseMenu. None before the
+    Helm menu exists -- never a truthy stub, which the walk would descend.
+    Unimplemented this was a _NamedStub (heatmap rank 7, 19,307 hits).
+    """
+    if _warp_button is None:
+        return None
+    return _warp_button.GetCourseMenu()
 
 
 def SortedRegionMenu_SetPauseSorting(flag) -> None:
