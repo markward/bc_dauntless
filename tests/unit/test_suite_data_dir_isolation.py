@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 
+import pytest
+
 from engine import mods, paths
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -21,5 +23,5 @@ def test_suite_still_finds_content_without_settings_json():
 
 def test_suite_keeps_project_mods():
     if os.environ.get(mods.ENV_VAR) != str(PROJECT_ROOT / "mods"):
-        return  # developer set their own DAUNTLESS_MODS_DIR
+        pytest.skip("developer set their own %s" % mods.ENV_VAR)
     assert mods.mods_root() == PROJECT_ROOT / "mods"

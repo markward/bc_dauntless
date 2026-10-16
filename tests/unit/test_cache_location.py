@@ -68,6 +68,26 @@ def test_ship_icon_png_written_only_in_dev_mode(monkeypatch, tmp_path):
     assert (repo_cache / "Galaxy.png").is_file()
 
 
+def test_ship_icon_png_never_written_in_a_packaged_build(monkeypatch, tmp_path):
+    """--developer on an installed build: _CACHE_DIR is in the read-only
+    install folder, so the inspection PNG must not be attempted at all."""
+    icons_dir = tmp_path / "icons"
+    icons_dir.mkdir()
+    (icons_dir / "Galaxy.tga").write_bytes(_tga(2, 1))
+    monkeypatch.setattr(ship_icons, "_game_icon_file",
+                        lambda name: icons_dir / (name + ".tga"))
+    repo_cache = tmp_path / "repo_cache"
+    monkeypatch.setattr(ship_icons, "_CACHE_DIR", str(repo_cache))
+    monkeypatch.setattr(dev_mode, "is_enabled", lambda: True)
+    monkeypatch.setattr(paths, "is_packaged", lambda: True)
+    ship_icons.reset_cache()
+
+    url = ship_icons.icon_path_for_species("Galaxy")
+    assert url.startswith("data:image/png;base64,")
+    assert not repo_cache.exists()
+    ship_icons.reset_cache()
+
+
 def test_icon_trace_write_failure_is_reported(monkeypatch, tmp_path, capsys):
     paths._reset_write_failure_reports()
     tga = tmp_path / "Synth.tga"

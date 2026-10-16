@@ -116,7 +116,6 @@ def test_override_pointing_at_a_file_reports_and_continues(
     # never in the real checkout.
     leak = tmp_path / "leak"
     leak.mkdir()
-    monkeypatch.setattr(settings_store, "PROJECT_ROOT", leak)
     monkeypatch.setattr(paths, "PROJECT_ROOT", leak)
     afile = tmp_path / "afile"
     afile.write_text("x")

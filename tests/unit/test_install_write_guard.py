@@ -1,6 +1,6 @@
 """Static guard: nothing in engine/ or a root shim writes to the install folder.
 
-Per-user data lives under the platform user dirs (engine.user_dirs). A function
+Per-user data lives under the platform user dirs (engine.paths). A function
 that writes AND derives a path from the project root / __file__ / the cwd is how
 a packaged build ends up writing into a read-only install, so this is structural.
 
@@ -34,7 +34,8 @@ _ALLOWED_REPO_WRITERS: dict = {
         "V1 hardpoint authoring: _PATH is beside __file__, reaches write() via "
         "self.path; refuses when packaged",
     "engine/ui/ship_icons.py:icon_path_for_species":
-        "dev-mode-only inspection PNG (guarded by dev_mode.is_enabled())",
+        "dev-checkout-only inspection PNG (guarded by dev_mode.is_enabled() "
+        "and not paths.is_packaged())",
     "engine/ui/weapon_icons.py:export_reference_pngs":
         "tool-only: writes curated references into the repo; no runtime caller "
         "(trace_atlas, the SVG generator, writes to paths.cache_dir())",
@@ -229,7 +230,7 @@ def test_no_function_writes_to_a_project_derived_path():
         if tree is not None:
             offenders += _function_offenses(tree, rel, _ALLOWED_REPO_WRITERS)
     assert offenders == [], (
-        "install-folder / cwd writes (write under engine.user_dirs instead):\n"
+        "install-folder / cwd writes (write under engine.paths user dirs instead):\n"
         + "\n".join(offenders))
 
 

@@ -35,12 +35,6 @@ from engine.ui.configuration_panel import (
 #    MSAA merged into one mutually-exclusive selector. See _migrate.
 SCHEMA_VERSION = 2
 
-# engine/settings_store.py -> engine/ -> <project root>, matching
-# host_loop.PROJECT_ROOT. Kept local rather than imported so the store has no
-# dependency on the host loop.
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
-
 def default_settings_path() -> Path:
     """Where settings.json lives: the config dir (the checkout root in a
     checkout layout, the per-user OS config folder when packaged, or the
@@ -165,7 +159,8 @@ class SettingsStore:
         """Remove the file and forget its contents. The 'absent ⇒ defaults'
         store (bridges.json) uses this for Reset: emptying the document would
         leave a present-but-empty file, which is an authoritative 'no pins',
-        not first-launch. Never raises."""
+        not first-launch. A failure is reported like a failed save
+        (paths.report_write_failure). Never raises."""
         self._doc = {"version": SCHEMA_VERSION}
         try:
             self._path.unlink()
@@ -173,6 +168,7 @@ class SettingsStore:
             pass
         except OSError as exc:
             dev_mode.log_swallowed("SettingsStore.delete_file", exc)
+            paths.report_write_failure(self._path, exc)
 
     # ── Write ───────────────────────────────────────────────────────────────
     def _save(self) -> None:
