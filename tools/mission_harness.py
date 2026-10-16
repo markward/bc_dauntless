@@ -605,6 +605,16 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
             return None
         if (_PROJECT_ROOT / rel).is_dir() and (_PROJECT_ROOT / rel / "__init__.py").exists():
             return None
+        # Dotted names Dauntless claims outright (spec 2026-10-16 §8.1):
+        # after the project-root shims, BEFORE the mod overlay, so a mod's
+        # own copy of a claimed package never loads.
+        from engine.compat import claimed as _claimed
+        # claimed.py's own imports re-enter this finder while it is still
+        # half-initialised; it has no claimed_spec yet, so decline.
+        _claimed_spec = getattr(_claimed, "claimed_spec", None)
+        _cspec = _claimed_spec(fullname) if _claimed_spec is not None else None
+        if _cspec is not None:
+            return _cspec
         # An installed mod's script wins over the stock SDK module. Checked
         # after the project-root shims (those are OUR replacements and must
         # not be overridable) and before the SDK itself. Never over the

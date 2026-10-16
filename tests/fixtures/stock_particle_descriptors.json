@@ -1,0 +1,528 @@
+{
+ "debris_smoke": [
+  {
+   "alpha_keys": [
+    [
+     0.0,
+     0.8
+    ],
+    [
+     1.0,
+     0.0
+    ]
+   ],
+   "angle_variance": 0.0,
+   "atlas_cols": 1,
+   "atlas_rows": 1,
+   "blend_mode": 0,
+   "color_keys": [
+    [
+     0.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    [
+     1.0,
+     0.1,
+     0.1,
+     0.1
+    ]
+   ],
+   "damping": 0.0,
+   "draw_old_to_new": 1,
+   "effect_age": 0.0,
+   "emit_dir": [
+    0.0,
+    -1.0,
+    0.0
+   ],
+   "emit_frequency": 0.05,
+   "emit_life": 1.0,
+   "emit_life_variance": 0.2,
+   "emit_pos": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "emit_radius": 0.0,
+   "emit_vel_world": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "emit_velocity": 0.2,
+   "inherit": 1.0,
+   "instance_id": null,
+   "random_velocity_cone": 0.0,
+   "random_velocity_speed": 0.0,
+   "size_keys": [
+    [
+     0.0,
+     0.8
+    ],
+    [
+     1.0,
+     1.6
+    ]
+   ],
+   "stop_age": 1.0,
+   "tail_length": 0.0,
+   "texture_path": "data/rough.tga"
+  }
+ ],
+ "debris_sparks": [
+  {
+   "alpha_keys": [
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.9,
+     0.9
+    ],
+    [
+     1.0,
+     0.0
+    ]
+   ],
+   "angle_variance": 360.0,
+   "atlas_cols": 1,
+   "atlas_rows": 1,
+   "blend_mode": 0,
+   "color_keys": [
+    [
+     0.0,
+     1.0,
+     1.0,
+     0.8
+    ],
+    [
+     0.8,
+     1.0,
+     1.0,
+     0.6
+    ],
+    [
+     1.0,
+     1.0,
+     1.0,
+     0.0
+    ]
+   ],
+   "damping": 0.0,
+   "draw_old_to_new": 1,
+   "effect_age": 0.0,
+   "emit_dir": [
+    0.0,
+    -1.0,
+    0.0
+   ],
+   "emit_frequency": 0.005,
+   "emit_life": 1.0,
+   "emit_life_variance": 0.75,
+   "emit_pos": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "emit_radius": 0.0,
+   "emit_vel_world": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "emit_velocity": 4.0,
+   "inherit": 1.0,
+   "instance_id": null,
+   "random_velocity_cone": 0.0,
+   "random_velocity_speed": 0.0,
+   "size_keys": [
+    [
+     0.0,
+     0.01
+    ],
+    [
+     0.2,
+     0.04
+    ],
+    [
+     0.8,
+     0.04
+    ],
+    [
+     1.0,
+     0.01
+    ]
+   ],
+   "stop_age": 3.0,
+   "tail_length": 0.1,
+   "texture_path": "data/smooth.tga"
+  }
+ ],
+ "explosion_a": [
+  {
+   "alpha_keys": [
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "angle_variance": 0.0,
+   "atlas_cols": 8,
+   "atlas_rows": 8,
+   "blend_mode": 0,
+   "color_keys": [
+    [
+     0.0,
+     2.0,
+     1.0,
+     0.5
+    ]
+   ],
+   "damping": 0.0,
+   "draw_old_to_new": 1,
+   "effect_age": 0.0,
+   "emit_dir": [
+    0.0,
+    -1.0,
+    0.0
+   ],
+   "emit_frequency": 0.05,
+   "emit_life": 1.0,
+   "emit_life_variance": 0.0,
+   "emit_pos": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "emit_radius": 0.0,
+   "emit_vel_world": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "emit_velocity": 1.0,
+   "inherit": 1.0,
+   "instance_id": null,
+   "random_velocity_cone": 0.0,
+   "random_velocity_speed": 0.0,
+   "size_keys": [
+    [
+     0.0,
+     2.0
+    ]
+   ],
+   "stop_age": 1.0,
+   "tail_length": 0.0,
+   "texture_path": "data/Textures/Effects/ExplosionA.tga"
+  }
+ ],
+ "explosion_a_case": [
+  {
+   "alpha_keys": [
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "angle_variance": 0.0,
+   "atlas_cols": 8,
+   "atlas_rows": 8,
+   "blend_mode": 0,
+   "color_keys": [
+    [
+     0.0,
+     2.0,
+     1.0,
+     0.5
+    ]
+   ],
+   "damping": 0.0,
+   "draw_old_to_new": 1,
+   "effect_age": 0.0,
+   "emit_dir": [
+    0.0,
+    -1.0,
+    0.0
+   ],
+   "emit_frequency": 0.05,
+   "emit_life": 1.0,
+   "emit_life_variance": 0.0,
+   "emit_pos": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "emit_radius": 0.0,
+   "emit_vel_world": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "emit_velocity": 1.0,
+   "inherit": 1.0,
+   "instance_id": null,
+   "random_velocity_cone": 0.0,
+   "random_velocity_speed": 0.0,
+   "size_keys": [
+    [
+     0.0,
+     2.0
+    ]
+   ],
+   "stop_age": 1.0,
+   "tail_length": 0.0,
+   "texture_path": "Data\\Textures\\Effects\\EXPLOSIONA.TGA"
+  }
+ ],
+ "explosion_b": [
+  {
+   "alpha_keys": [
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "angle_variance": 0.0,
+   "atlas_cols": 8,
+   "atlas_rows": 8,
+   "blend_mode": 0,
+   "color_keys": [
+    [
+     0.0,
+     1.0,
+     0.5,
+     0.25
+    ]
+   ],
+   "damping": 0.0,
+   "draw_old_to_new": 1,
+   "effect_age": 0.0,
+   "emit_dir": [
+    0.0,
+    -1.0,
+    0.0
+   ],
+   "emit_frequency": 0.05,
+   "emit_life": 1.0,
+   "emit_life_variance": 0.0,
+   "emit_pos": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "emit_radius": 0.0,
+   "emit_vel_world": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "emit_velocity": 1.0,
+   "inherit": 1.0,
+   "instance_id": null,
+   "random_velocity_cone": 0.0,
+   "random_velocity_speed": 0.0,
+   "size_keys": [
+    [
+     0.0,
+     2.0
+    ]
+   ],
+   "stop_age": 1.0,
+   "tail_length": 0.0,
+   "texture_path": "data/Textures/Effects/ExplosionB.tga"
+  }
+ ],
+ "rough": [
+  {
+   "alpha_keys": [
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "angle_variance": 0.0,
+   "atlas_cols": 1,
+   "atlas_rows": 1,
+   "blend_mode": 0,
+   "color_keys": [
+    [
+     0.0,
+     1.0,
+     0.5,
+     0.25
+    ]
+   ],
+   "damping": 0.0,
+   "draw_old_to_new": 1,
+   "effect_age": 0.0,
+   "emit_dir": [
+    0.0,
+    -1.0,
+    0.0
+   ],
+   "emit_frequency": 0.05,
+   "emit_life": 1.0,
+   "emit_life_variance": 0.0,
+   "emit_pos": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "emit_radius": 0.0,
+   "emit_vel_world": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "emit_velocity": 1.0,
+   "inherit": 1.0,
+   "instance_id": null,
+   "random_velocity_cone": 0.0,
+   "random_velocity_speed": 0.0,
+   "size_keys": [
+    [
+     0.0,
+     2.0
+    ]
+   ],
+   "stop_age": 1.0,
+   "tail_length": 0.0,
+   "texture_path": "data/rough.tga"
+  }
+ ],
+ "smoke_high": [
+  {
+   "alpha_keys": [
+    [
+     0.0,
+     0.6
+    ],
+    [
+     0.5,
+     0.5
+    ],
+    [
+     1.0,
+     0.0
+    ]
+   ],
+   "angle_variance": 60.0,
+   "atlas_cols": 8,
+   "atlas_rows": 8,
+   "blend_mode": 0,
+   "color_keys": [
+    [
+     0.0,
+     1.0,
+     1.0,
+     1.0
+    ]
+   ],
+   "damping": 0.0,
+   "draw_old_to_new": 0,
+   "effect_age": 0.0,
+   "emit_dir": [
+    0.0,
+    -1.0,
+    0.0
+   ],
+   "emit_frequency": 0.05,
+   "emit_life": 1.5,
+   "emit_life_variance": 0.0,
+   "emit_pos": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "emit_radius": 0.0,
+   "emit_vel_world": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "emit_velocity": 2.0,
+   "inherit": 1.0,
+   "instance_id": null,
+   "random_velocity_cone": 0.0,
+   "random_velocity_speed": 0.0,
+   "size_keys": [
+    [
+     0.0,
+     0.12
+    ],
+    [
+     0.6,
+     0.6
+    ],
+    [
+     0.9,
+     1.2
+    ]
+   ],
+   "stop_age": 10.3,
+   "tail_length": 0.0,
+   "texture_path": "data/Textures/Effects/ExplosionB.tga"
+  }
+ ],
+ "unknown": [
+  {
+   "alpha_keys": [
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "angle_variance": 0.0,
+   "atlas_cols": 1,
+   "atlas_rows": 1,
+   "blend_mode": 0,
+   "color_keys": [
+    [
+     0.0,
+     1.0,
+     0.5,
+     0.25
+    ]
+   ],
+   "damping": 0.0,
+   "draw_old_to_new": 1,
+   "effect_age": 0.0,
+   "emit_dir": [
+    0.0,
+    -1.0,
+    0.0
+   ],
+   "emit_frequency": 0.05,
+   "emit_life": 1.0,
+   "emit_life_variance": 0.0,
+   "emit_pos": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "emit_radius": 0.0,
+   "emit_vel_world": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "emit_velocity": 1.0,
+   "inherit": 1.0,
+   "instance_id": null,
+   "random_velocity_cone": 0.0,
+   "random_velocity_speed": 0.0,
+   "size_keys": [
+    [
+     0.0,
+     2.0
+    ]
+   ],
+   "stop_age": 1.0,
+   "tail_length": 0.0,
+   "texture_path": "data/Textures/whatever.tga"
+  }
+ ]
+}

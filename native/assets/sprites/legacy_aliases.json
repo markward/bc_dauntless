@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "exact": {
+    "scripts/custom/nanofxv2/explosionfx/gfx/explosions/exp_expdeb.tga": "fireball_hot",
+    "scripts/custom/nanofxv2/explosionfx/gfx/explosions/exp_flare.tga": "fire_jet",
+    "scripts/custom/nanofxv2/explosionfx/gfx/explosions/exp_starflare.tga": "fire_jet",
+    "scripts/custom/nanofxv2/specialfx/gfx/weapon/weaponflash.tga": "glint_burst",
+    "scripts/custom/nanofxv2/warpfx/gfx/nacelleflash/nacelleflash_core.tga": "glint_burst",
+    "scripts/custom/nanofxv2/warpfx/gfx/nacelleflash/nacelleflash_outter.tga": "glint_burst",
+    "scripts/custom/nanofxv2/specialfx/gfx/blinker/blinker.tga": "glint",
+    "scripts/custom/nanofxv2/specialfx/gfx/blinker/blank.tga": "none",
+    "scripts/custom/nanofxv2/explosionfx/gfx/particles/sparks.tga": "spark",
+    "scripts/custom/nanofxv2/specialfx/gfx/plasma/plasma.tga": "plasma_puff",
+    "scripts/custom/nanofxv2/warpfx/gfx/starstreaks_nano.tga": "star_streak",
+    "scripts/custom/nanofxv2/warpfx/gfx/spacedust_nano.tga": "space_dust"
+  },
+  "prefix": {
+    "scripts/custom/nanofxv2/explosionfx/gfx/explosions/": "fireball",
+    "scripts/custom/nanofxv2/explosionfx/gfx/expflash/": "glint_burst",
+    "scripts/custom/nanofxv2/explosionfx/gfx/debris/": "debris_chunk",
+    "scripts/custom/nanofxv2/explosionfx/gfx/novaring/": "shock_ring",
+    "scripts/custom/nanofxv2/explosionfx/gfx/novasphere/": "shock_sphere",
+    "scripts/custom/nanofxv2/explosionfx/gfx/novaflash/": "nova_flare",
+    "scripts/custom/nanofxv2/warpfx/gfx/warpflash/": "warp_flash"
+  }
+}

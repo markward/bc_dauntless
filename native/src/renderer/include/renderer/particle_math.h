@@ -176,4 +176,29 @@ inline std::array<glm::vec3, 4> streak_quad(const glm::vec3& center,
     };
 }
 
+/// Sprite-sheet cell (column, row) for one particle (spec 2026-10-16 §7.4).
+/// `t` is life fraction [0,1], `tau` the particle's age in seconds,
+/// `hash_row`/`hash_phase` stable per-particle hashes in [0,1).
+/// playback 0 reproduces the pre-library rule exactly.
+inline glm::ivec2 atlas_cell(int playback, float t, float tau, int cols, int rows,
+                             float fps, float hash_row, float hash_phase) {
+    cols = std::max(1, cols);
+    rows = std::max(1, rows);
+    t = std::clamp(t, 0.0f, 1.0f);
+    if (playback == 1) {
+        const int n = cols * rows;
+        const int f = std::min(static_cast<int>(t * n), n - 1);
+        return {f % cols, f / cols};
+    }
+    const int row = std::min(static_cast<int>(hash_row * rows), rows - 1);
+    if (playback == 2) {
+        const int start = std::min(static_cast<int>(hash_phase * cols), cols - 1);
+        const int step = fps > 0.0f
+            ? static_cast<int>(std::floor(std::max(0.0f, tau) * fps)) : 0;
+        return {(start + step) % cols, row};
+    }
+    const int frame = std::min(std::max(static_cast<int>(t * cols), 0), cols - 1);
+    return {frame, row};
+}
+
 }  // namespace renderer

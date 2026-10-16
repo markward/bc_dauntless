@@ -443,7 +443,7 @@ def test_shockwaves_by_frame(world):
     assert by_r[2.0] == pytest.approx(_shifted(B, off))
     assert 3.0 not in by_r
     for e in out:
-        assert set(e) == {"world_center", "max_radius", "age", "lifetime"}
+        assert set(e) == {"world_center", "max_radius", "age", "lifetime", "tint"}
 
 
 def test_a_breach_shockwave_records_the_ships_set(world, monkeypatch):

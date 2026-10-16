@@ -1,0 +1,442 @@
+data/Movies/Loading.bik
+data/Movies/NanoFXLogo.bik
+data/Movies/Paramount.bik
+data/Textures/Effects/Damage.tga
+scripts/Custom/AdvancedTechnologies/Data/ATP_Lib.py
+scripts/Custom/AdvancedTechnologies/Data/ATP_Wrapper.py
+scripts/Custom/AdvancedTechnologies/Data/GUI/ATP_GUIUtils.py
+scripts/Custom/AdvancedTechnologies/Data/GUI/__init__.py
+scripts/Custom/AdvancedTechnologies/Data/__init__.py
+scripts/Custom/AdvancedTechnologies/__init__.py
+scripts/Custom/Autoload/000-Fixes20030221.py
+scripts/Custom/Autoload/000-Fixes20030305-FoundationTriggers.py
+scripts/Custom/Autoload/000-Fixes20030402-FoundationRedirect.py
+scripts/Custom/Autoload/000-Utilities-FoundationMusic-20030410.py
+scripts/Custom/Autoload/000-Utilities-GetFileNames-20030402.py
+scripts/Custom/Autoload/LoadNanoFX.py
+scripts/Custom/NanoFXv2/BridgeFX/BrdgFX.py
+scripts/Custom/NanoFXv2/BridgeFX/BrdgGfx.py
+scripts/Custom/NanoFXv2/BridgeFX/Gfx/Explosions/Exp_Spark.tga
+scripts/Custom/NanoFXv2/BridgeFX/Gfx/Explosions/explosion1a.tga
+scripts/Custom/NanoFXv2/BridgeFX/Gfx/Explosions/explosion2a.tga
+scripts/Custom/NanoFXv2/BridgeFX/Gfx/Explosions/explosion3a.tga
+scripts/Custom/NanoFXv2/BridgeFX/__init__.py
+scripts/Custom/NanoFXv2/CameraFX/CamFX.py
+scripts/Custom/NanoFXv2/CameraFX/__init__.py
+scripts/Custom/NanoFXv2/ExplosionFX/ExpFX.py
+scripts/Custom/NanoFXv2/ExplosionFX/ExpGfx.py
+scripts/Custom/NanoFXv2/ExplosionFX/ExpSfx.py
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0000.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0001.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0002.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0003.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0004.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0005.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0006.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0007.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0008.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0009.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0010.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0011.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0012.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0013.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0014.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0015.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0016.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0017.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0018.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0019.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0020.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0021.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0022.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0023.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0024.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0025.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0026.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0027.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0028.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0029.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0030.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Damage/Damage_Nano0031.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Debris/nano_debris1a.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Debris/nano_debris1b.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Debris/nano_debris1c.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Debris/nano_debris2a.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Debris/nano_debris2b.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Debris/nano_debris2c.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Debris/nano_debris3a.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Debris/nano_debris3b.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Debris/nano_debris3c.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Debris/nano_debris4a.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Debris/nano_debris4b.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Debris/nano_debris4c.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Debris/nano_debris5a.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Debris/nano_debris5b.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Debris/nano_debris5c.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Debris/nano_debris6a.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Debris/nano_debris6b.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Debris/nano_debris6c.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/ExpFlash/ExpFlash1.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Explosions/Exp_ExpDeb.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Explosions/Exp_Fire.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Explosions/Exp_Flare.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Explosions/Exp_Nano1.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Explosions/Exp_Nano10.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Explosions/Exp_Nano11.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Explosions/Exp_Nano12.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Explosions/Exp_Nano2.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Explosions/Exp_Nano3.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Explosions/Exp_Nano4.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Explosions/Exp_Nano5.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Explosions/Exp_Nano6.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Explosions/Exp_Nano7.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Explosions/Exp_Nano8.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Explosions/Exp_Nano9.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Explosions/Exp_Starflare.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/NovaFlash/Nova_Flash1a.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/NovaFlash/Nova_Flash2a.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/NovaFlash/Nova_Flash3a.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/NovaRing/Nova_Ring2a.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/NovaRing/Nova_Ring4a.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/NovaRing/Nova_Ring5a.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/NovaSphere/Nova_Sphere3a.tga
+scripts/Custom/NanoFXv2/ExplosionFX/Gfx/Particles/Sparks.tga
+scripts/Custom/NanoFXv2/ExplosionFX/GlowFX.py
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpCollision/Collision_Nano1.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpCollision/Collision_Nano2.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpCollision/Collision_Nano3.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpCollision/Collision_Nano4.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpCollision/Collision_Nano5.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpCollision/Collision_Nano6.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpCollision/Collision_Nano7.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpCollision/Collision_Nano8.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpLarge/large 01.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpLarge/large 02.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpLarge/large 03.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpLarge/large 04.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpLarge/large 05.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpLarge/large 06.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 01.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 02.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 03.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 04.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 05.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 06.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 07.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 08.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 09.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 10.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 11.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 12.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 13.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 14.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 15.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 16.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 17.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 18.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 19.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 20.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 21.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 22.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 23.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 24.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 25.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 26.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 27.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 28.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 29.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 30.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 31.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 32.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 33.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 34.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 35.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 36.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpMed/med 37.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpNova/nova 01.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpNova/nova 02.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpNova/nova 03.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpNova/nova 04.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpNova/nova 05.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpNova/nova 06.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/HitShield1.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/HitShield2.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/HitShield3.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 01.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 02.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 03.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 04.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 05.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 06.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 07.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 08.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 09.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 10.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 11.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 12.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 13.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 14.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 15.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 16.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 17.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 18.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 19.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 20.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 21.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 22.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 23.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpShield/shield 24.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 10.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 11.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 12.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 13.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 14.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 15.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 16.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 17.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 27.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 28.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 29.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 30.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 31.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 33.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 34.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 35.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 37.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 38.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 39.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 40.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 41.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 47.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 48.wav
+scripts/Custom/NanoFXv2/ExplosionFX/Sfx/ExpSmall/small 49.wav
+scripts/Custom/NanoFXv2/ExplosionFX/__init__.py
+scripts/Custom/NanoFXv2/NanoFX_Config.py
+scripts/Custom/NanoFXv2/NanoFX_ConfigPanel.py
+scripts/Custom/NanoFXv2/NanoFX_Lib.py
+scripts/Custom/NanoFXv2/NanoFX_ScriptActions.py
+scripts/Custom/NanoFXv2/NanoFX_Setup.py
+scripts/Custom/NanoFXv2/SpecialFX/AtmosphereFX.py
+scripts/Custom/NanoFXv2/SpecialFX/BlinkerFX.py
+scripts/Custom/NanoFXv2/SpecialFX/Gfx/Atmosphere/Class-H/Clouds.tga
+scripts/Custom/NanoFXv2/SpecialFX/Gfx/Atmosphere/Class-H/GlowColor.tga
+scripts/Custom/NanoFXv2/SpecialFX/Gfx/Atmosphere/Class-K/Clouds.tga
+scripts/Custom/NanoFXv2/SpecialFX/Gfx/Atmosphere/Class-K/GlowColor.tga
+scripts/Custom/NanoFXv2/SpecialFX/Gfx/Atmosphere/Class-M/Clouds.tga
+scripts/Custom/NanoFXv2/SpecialFX/Gfx/Atmosphere/Class-M/GlowColor.tga
+scripts/Custom/NanoFXv2/SpecialFX/Gfx/Atmosphere/Class-O/Clouds.tga
+scripts/Custom/NanoFXv2/SpecialFX/Gfx/Atmosphere/Class-O/GlowColor.tga
+scripts/Custom/NanoFXv2/SpecialFX/Gfx/Atmosphere/Glow.tga
+scripts/Custom/NanoFXv2/SpecialFX/Gfx/Blinker/Blank.tga
+scripts/Custom/NanoFXv2/SpecialFX/Gfx/Blinker/Blinker.tga
+scripts/Custom/NanoFXv2/SpecialFX/Gfx/Plasma/Plasma.tga
+scripts/Custom/NanoFXv2/SpecialFX/Gfx/Weapon/WeaponFlash.tga
+scripts/Custom/NanoFXv2/SpecialFX/PlasmaFX.py
+scripts/Custom/NanoFXv2/SpecialFX/Sfx/Plasma/AI_Burst.wav
+scripts/Custom/NanoFXv2/SpecialFX/Sfx/Plasma/AI_Seal.wav
+scripts/Custom/NanoFXv2/SpecialFX/Sfx/Plasma/AI_Vent.wav
+scripts/Custom/NanoFXv2/SpecialFX/Sfx/Plasma/Comp_Burst.wav
+scripts/Custom/NanoFXv2/SpecialFX/Sfx/Plasma/Comp_Seal.wav
+scripts/Custom/NanoFXv2/SpecialFX/Sfx/Plasma/Player_Burst.wav
+scripts/Custom/NanoFXv2/SpecialFX/Sfx/Plasma/Player_Seal.wav
+scripts/Custom/NanoFXv2/SpecialFX/Sfx/Plasma/Player_Vent.wav
+scripts/Custom/NanoFXv2/SpecialFX/SpecialGfx.py
+scripts/Custom/NanoFXv2/SpecialFX/SpecialSfx.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Albirea/Albirea.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Albirea/Albirea1_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Albirea/Albirea2_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Albirea/Albirea3_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Albirea/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Alioth/Alioth.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Alioth/Alioth1_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Alioth/Alioth2_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Alioth/Alioth3_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Alioth/Alioth4_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Alioth/Alioth5_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Alioth/Alioth6_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Alioth/Alioth7_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Alioth/Alioth8_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Alioth/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Artrus/Artrus.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Artrus/Artrus1_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Artrus/Artrus2_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Artrus/Artrus3_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Artrus/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Ascella/Ascella.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Ascella/Ascella1_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Ascella/Ascella2_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Ascella/Ascella3_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Ascella/Ascella4_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Ascella/Ascella5_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Ascella/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Belaruz/Belaruz.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Belaruz/Belaruz2_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Belaruz/Belaruz3_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Belaruz/Belaruz4_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Belaruz/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Beol/Beol.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Beol/Beol1_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Beol/Beol2_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Beol/Beol3_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Beol/Beol4_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Beol/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Biranu/Biranu.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Biranu/Biranu1_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Biranu/Biranu2_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Biranu/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Cebalrai/Cebalrai.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Cebalrai/Cebalrai1_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Cebalrai/Cebalrai2_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Cebalrai/Cebalrai3_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Cebalrai/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Chambana/Chambana.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Chambana/Chambana1_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Chambana/Chambana2_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Chambana/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Geble/Geble.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Geble/Geble1_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Geble/Geble2_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Geble/Geble3_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Geble/Geble4_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Geble/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Itari/Itari.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Itari/Itari1_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Itari/Itari2_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Itari/Itari3_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Itari/Itari4_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Itari/Itari5_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Itari/Itari6_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Itari/Itari7_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Itari/Itari8_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Itari/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Nepenthe/Nepenthe.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Nepenthe/Nepenthe1_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Nepenthe/Nepenthe2_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Nepenthe/Nepenthe3_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Nepenthe/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/OmegaDraconis/OmegaDraconis.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/OmegaDraconis/OmegaDraconis1_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/OmegaDraconis/OmegaDraconis2_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/OmegaDraconis/OmegaDraconis3_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/OmegaDraconis/OmegaDraconis4_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/OmegaDraconis/OmegaDraconis5_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/OmegaDraconis/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Ona/Ona.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Ona/Ona1_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Ona/Ona2_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Ona/Ona3_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Ona/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Poseidon/Poseidon.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Poseidon/Poseidon1_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Poseidon/Poseidon2_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Poseidon/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Prendel/Prendel.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Prendel/Prendel1_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Prendel/Prendel2_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Prendel/Prendel3_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Prendel/Prendel4_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Prendel/Prendel5_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Prendel/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Riha/Riha.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Riha/Riha1_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Riha/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Savoy/Savoy.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Savoy/Savoy1_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Savoy/Savoy2_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Savoy/Savoy3_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Savoy/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Serris/Serris.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Serris/Serris1_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Serris/Serris2_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Serris/Serris3_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Serris/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Starbase12/Starbase12.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Starbase12/Starbase12_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Starbase12/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Tevron/Tevron.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Tevron/Tevron1_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Tevron/Tevron2_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Tevron/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Tezle/Tezle.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Tezle/Tezle1_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Tezle/Tezle2_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Tezle/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Vesuvi/Vesuvi.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Vesuvi/Vesuvi5_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Vesuvi/Vesuvi6_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Vesuvi/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Voltair/Voltair.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Voltair/Voltair1_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Voltair/Voltair2_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Voltair/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/XiEntrades/XiEntrades.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/XiEntrades/XiEntrades1_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/XiEntrades/XiEntrades2_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/XiEntrades/XiEntrades3_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/XiEntrades/XiEntrades4_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/XiEntrades/XiEntrades5_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/XiEntrades/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Yiles/Yiles.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Yiles/Yiles1_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Yiles/Yiles2_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Yiles/Yiles3_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Yiles/Yiles4_S.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/Yiles/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/Systems/__init__.py
+scripts/Custom/NanoFXv2/SpecialFX/WeaponFlashFX.py
+scripts/Custom/NanoFXv2/SpecialFX/__init__.py
+scripts/Custom/NanoFXv2/WarpFX/AI/NanoFollowThroughWarp.py
+scripts/Custom/NanoFXv2/WarpFX/AI/NanoIntercept.py
+scripts/Custom/NanoFXv2/WarpFX/AI/NanoWarp.py
+scripts/Custom/NanoFXv2/WarpFX/AI/__init__.py
+scripts/Custom/NanoFXv2/WarpFX/Gfx/NacelleFlash/NacelleFlash_Core.tga
+scripts/Custom/NanoFXv2/WarpFX/Gfx/NacelleFlash/NacelleFlash_Outter.tga
+scripts/Custom/NanoFXv2/WarpFX/Gfx/SpaceDust_Nano.tga
+scripts/Custom/NanoFXv2/WarpFX/Gfx/StarStreaks_Nano.tga
+scripts/Custom/NanoFXv2/WarpFX/Gfx/WarpFlash/WarpFlash_Nano01.tga
+scripts/Custom/NanoFXv2/WarpFX/Gfx/WarpFlash/WarpFlash_Nano02.tga
+scripts/Custom/NanoFXv2/WarpFX/Gfx/WarpFlash/WarpFlash_Nano03.tga
+scripts/Custom/NanoFXv2/WarpFX/Gfx/WarpFlash/WarpFlash_Nano04.tga
+scripts/Custom/NanoFXv2/WarpFX/Gfx/WarpFlash/WarpFlash_Nano05.tga
+scripts/Custom/NanoFXv2/WarpFX/Gfx/WarpFlash/WarpFlash_Nano06.tga
+scripts/Custom/NanoFXv2/WarpFX/Gfx/WarpFlash/WarpFlash_Nano07.tga
+scripts/Custom/NanoFXv2/WarpFX/Gfx/WarpFlash/WarpFlash_Nano08.tga
+scripts/Custom/NanoFXv2/WarpFX/Gfx/WarpFlash/WarpFlash_Nano09.tga
+scripts/Custom/NanoFXv2/WarpFX/Gfx/WarpFlash/WarpFlash_Nano10.tga
+scripts/Custom/NanoFXv2/WarpFX/Gfx/WarpFlash/WarpFlash_Nano11.tga
+scripts/Custom/NanoFXv2/WarpFX/Gfx/WarpFlash/WarpFlash_Nano12.tga
+scripts/Custom/NanoFXv2/WarpFX/Gfx/WarpFlash/WarpFlash_Nano13.tga
+scripts/Custom/NanoFXv2/WarpFX/Sfx/Borg/BorgEnterWarp.wav
+scripts/Custom/NanoFXv2/WarpFX/Sfx/Borg/BorgExitWarp.wav
+scripts/Custom/NanoFXv2/WarpFX/Sfx/Cardassian/CardassianEnterWarp.wav
+scripts/Custom/NanoFXv2/WarpFX/Sfx/Cardassian/CardassianExitWarp.wav
+scripts/Custom/NanoFXv2/WarpFX/Sfx/Default/DefaultEnterWarp.wav
+scripts/Custom/NanoFXv2/WarpFX/Sfx/Default/DefaultExitWarp.wav
+scripts/Custom/NanoFXv2/WarpFX/Sfx/Dominion/DominionEnterWarp.wav
+scripts/Custom/NanoFXv2/WarpFX/Sfx/Dominion/DominionExitWarp.wav
+scripts/Custom/NanoFXv2/WarpFX/Sfx/Federation/FederationEnterWarp.wav
+scripts/Custom/NanoFXv2/WarpFX/Sfx/Federation/FederationExitWarp.wav
+scripts/Custom/NanoFXv2/WarpFX/Sfx/Ferengi/FerengiEnterWarp.wav
+scripts/Custom/NanoFXv2/WarpFX/Sfx/Ferengi/FerengiExitWarp.wav
+scripts/Custom/NanoFXv2/WarpFX/Sfx/Kessok/KessokEnterWarp.wav
+scripts/Custom/NanoFXv2/WarpFX/Sfx/Kessok/KessokExitWarp.wav
+scripts/Custom/NanoFXv2/WarpFX/Sfx/Klingon/KlingonEnterWarp.wav
+scripts/Custom/NanoFXv2/WarpFX/Sfx/Klingon/KlingonExitWarp.wav
+scripts/Custom/NanoFXv2/WarpFX/Sfx/NanoWarpFlash.wav
+scripts/Custom/NanoFXv2/WarpFX/Sfx/Romulan/RomulanEnterWarp.wav
+scripts/Custom/NanoFXv2/WarpFX/Sfx/Romulan/RomulanExitWarp.wav
+scripts/Custom/NanoFXv2/WarpFX/WarpFX.py
+scripts/Custom/NanoFXv2/WarpFX/WarpFX_GUI.py
+scripts/Custom/NanoFXv2/WarpFX/WarpGfx.py
+scripts/Custom/NanoFXv2/WarpFX/WarpSfx.py
+scripts/Custom/NanoFXv2/WarpFX/__init__.py
+scripts/Custom/NanoFXv2/__init__.py
+scripts/Fixes20030217.py
+scripts/Foundation.py
+scripts/FoundationMenu.py
+scripts/FoundationTriggers.py
+scripts/LoadTacticalSounds.py
+scripts/MainMenu/MutatorMenu.py
+scripts/MainMenu/mainmenu.py
+scripts/QuickBattle/QuickBattle.py
+scripts/QuickBattle/QuickBattleGame.py

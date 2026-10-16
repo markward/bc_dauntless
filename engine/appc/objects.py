@@ -987,6 +987,13 @@ class DamageableObject(PhysicsObjectClass):
         from engine.appc import visible_damage
         visible_damage.queue_body_volume(self, x, y, z, influRad, strength)
 
+    def DisableGlowAlphaMaps(self) -> None:
+        """Stock surface (SDK App.py:5353; E4M5 calls it on its Kessok ships):
+        this object's self-illumination and running lights go dark until
+        global glow maps are switched back on. Spec 2026-10-16 §6.2."""
+        from engine.appc import glow_maps
+        glow_maps.disable_object(self)
+
     def AddDamage(self, pEmitPos, fRadius, fDamage) -> None:
         """SDK ``DamageableObject_AddDamage(pEmitPos, fRadius, fDamage)`` — the
         explosion / collision damage primitive (Effects.DeathExplosionDamage,

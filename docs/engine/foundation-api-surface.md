@@ -58,7 +58,7 @@ mutators (tier C, confirmed by tier A usage).
 | Name | Signature (inferred) | Tier |
 |---|---|---|
 | `MutatorElementDef` | `(name, dict)` — base of the family | A |
-| `MutatorDef` | `(name)` → object with `.Activate()` / `.Deactivate()` | A, C |
+| `MutatorDef` | `(name)` → object with `.Activate()` / `.Deactivate()` | A, C — **implemented** (inert, always on; engine/foundation/mutator.py) |
 | `OverrideDef` | `(name, target_dotted, replacement_dotted [, dict])` | A, C |
 | `SoundDef` | `(file, name, volume [, dict])` | A, C |
 | `SystemDef` | `(name, n_planets [, n_missing_inner])` | C |
@@ -69,6 +69,10 @@ mutators (tier C, confirmed by tier A usage).
 | `ListenerDef` | unknown signature | A |
 | `PropertyDef` | unknown signature | A |
 | `SystemMenuBuilderDef` | `(tglDatabase)` | C |
+
+`MutatorDef.Stock`, `.StockSounds`, `.StockShips`, `.QuickBattle` exist as the
+four standard instances (spec 2026-10-16 §6.1). `OverrideDef`/`TriggerDef`
+remain unimplemented.
 
 Observed literal calls, verbatim:
 

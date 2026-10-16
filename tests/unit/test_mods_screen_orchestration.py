@@ -88,7 +88,7 @@ def test_build_panel_passes_stock_classes_dict(monkeypatch):
 
     class _FakePanelCls:
         def __init__(self, mode, editable, readonly, *, species, stock_classes,
-                     writer=None, suggest=None, error=""):
+                     writer=None, suggest=None, error="", blocked=()):
             captured["stock_classes"] = stock_classes
 
         @property

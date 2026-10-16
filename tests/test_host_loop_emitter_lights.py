@@ -310,3 +310,23 @@ def test_cache_entries_carry_the_prebuilt_body_frame_struct(monkeypatch):
     assert struct["position"] == pytest.approx((1.0, 3.0, 3.0))
     assert struct["position_b"] == pytest.approx((1.0, 1.0, 3.0))
     assert "instance_id" not in struct   # the producer adds it per frame
+
+
+def test_glow_disabled_ship_casts_no_emitter_lights():
+    """DisableGlowAlphaMaps / global glow off darken a ship's emitter lights
+    too (spec 2026-10-16 §6.2)."""
+    from engine.appc import glow_maps
+    ship = _Ship()
+    prop = _point_prop((1.0, 2.0, 3.0))
+    spec = light_emitters.baked_emitters(prop)[0]
+    ship_instances = {ship: 42}
+    ship_emitters = {42: [_entry(_Sub(prop), spec)]}
+    try:
+        assert len(_build_emitter_light_render_data(ship_instances, ship_emitters)) == 1
+        glow_maps.disable_object(ship)
+        assert _build_emitter_light_render_data(ship_instances, ship_emitters) == []
+        glow_maps.enable_object(ship)
+        glow_maps.set_glow_enabled(False)
+        assert _build_emitter_light_render_data(ship_instances, ship_emitters) == []
+    finally:
+        glow_maps.reset()

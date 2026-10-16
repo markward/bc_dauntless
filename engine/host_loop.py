@@ -103,6 +103,7 @@ from engine.systems import frames as _frames
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.ships import ShipClass
 from engine.appc.ship_death import _out_of_action as _oa
+from engine.appc import glow_maps as _glow_maps
 from engine.appc.ship_motion import _effective_motion, _cap_keep, _asymptote_step
 from engine.appc.subsystems import (
     TorpedoTube,
@@ -1785,6 +1786,8 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters,
         entries = ship_emitters.get(iid)
         if not entries:
             continue
+        if _glow_maps.is_dark(ship):
+            continue    # DisableGlowAlphaMaps / global glow off: lights too.
         try:
             loc = ship.GetWorldLocation()
             frac = commanded_impulse_frac(ship)
@@ -6389,6 +6392,7 @@ class MissionSession:
         for iid in list(self.celestial_instances.values()):
             renderer.destroy_instance(iid)
         _atmosphere.clear_live()
+        _atmosphere.clear_requested()
         _surface.clear_live()
         self.celestial_instances.clear()
         self.celestial_placed.clear()
@@ -9404,6 +9408,15 @@ def _sync_spv_articulation(session, spv_panel) -> None:
         _sync_ship_articulation(session, ship, iid)
 
 
+def _emissive_scale_for(ship, is_player: bool, hd_boost: float) -> float:
+    """Per-ship self-illumination scale: 0 for a dead hulk or a ship whose
+    glow maps are disabled (spec 2026-10-16 §6.2), the HDR boost for the
+    player, else 1."""
+    if _oa(ship) or _glow_maps.is_dark(ship):
+        return 0.0
+    return hd_boost if is_player else 1.0
+
+
 def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
                               game_time, model_scale, player_control=None,
                               player_interp_pose=None,
@@ -9515,12 +9528,7 @@ def _sync_instance_transforms(r, session, player, xform_buf, interp_alpha,
                        _player_warp_glow if ship is player else None)
         # Destroyed (dying/dead) ships lose self-illumination —
         # a dark hulk in space. Hull stays lit by external light.
-        if _oa(ship):
-            r.set_emissive_scale(iid, 0.0)
-        elif ship is player:
-            r.set_emissive_scale(iid, _hd_boost)
-        else:
-            r.set_emissive_scale(iid, 1.0)
+        r.set_emissive_scale(iid, _emissive_scale_for(ship, ship is player, _hd_boost))
         _off = _view_offset(ship)
         if iid == _player_iid and _off is None:
             if player_interp_pose is not None:
