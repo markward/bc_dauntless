@@ -5271,7 +5271,6 @@ def _push_system_nebula(r, player, suns, warp_streaking) -> None:
             _system_nebula_pushed_for = None
         return
     from engine.systems import frames, resolve
-    from engine.systems import profile as _profile
     m = None
     if player is not None and not warp_streaking:
         pos = frames.system_position(player)
@@ -5286,21 +5285,10 @@ def _push_system_nebula(r, player, suns, warp_streaking) -> None:
             _system_nebula_pushed_for = None
     elif (_system_nebula_pushed_for != m.system
             or _system_nebula_pushed_veil != veil):
-        colour = m.profile.color or (0.0, 0.0, 0.0)
-        star_rgb = (tuple(star.appearance.color) if star.appearance.color
-                    else (1.0, 1.0, 1.0))
-        dials = dev_nebula_dials.current()
-        r.set_system_nebula_profile({
-            "r": [row.distance_gu for row in m.profile.rows],
-            "nebula": [row.nebula for row in m.profile.rows],
-            "k_sys": _profile.k_sys(m, veil),
-            "star_radius": star.radius_gu,
-            "cloud_rgb": tuple(colour),
-            "star_rgb": star_rgb,
-            "far_gu": SCENE_FAR_GU,
-            "g": dials["g"],
-            "floor": dials["floor"],
-        })
+        from engine import system_haze
+        r.set_system_nebula_profile(system_haze.profile_dict(
+            m, veil=veil, dials=dev_nebula_dials.current(),
+            far_gu=SCENE_FAR_GU))
         _system_nebula_pushed_for = m.system
         _system_nebula_pushed_veil = veil
     r.set_system_nebula_star(tuple(suns[0]["position"]) if suns else None)
