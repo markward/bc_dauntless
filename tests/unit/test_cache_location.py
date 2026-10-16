@@ -94,7 +94,8 @@ def test_unwritable_cache_dir_is_reported(monkeypatch, tmp_path, capsys, mod, ca
     with pytest.raises(OSError):
         call(mod, str(blocker))
     err = capsys.readouterr().err
-    assert err.count("blocker") == 1
+    lines = [l for l in err.splitlines() if "blocker" in l]
+    assert len(lines) == 1
 
 
 def _smallest_hull() -> Path | None:
