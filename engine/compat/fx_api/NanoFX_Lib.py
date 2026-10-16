@@ -132,3 +132,19 @@ def GetOverrideColor(pShip, sEffectType):
 
 def GetRaceTextureColor(sRace):
     return _RACE_RGB.get(sRace, _DEFAULT_RGB)
+
+
+def CreateAtmosphereFX(pPlanet, sNifPath="data/models/environment/planet.nif",
+                       sTexturePath="Class-M"):
+    """Request an atmosphere for pPlanet from the planet-class preset named
+    by sTexturePath ("Class-M", "Class-H", ...). Creates no objects: NanoFX's
+    sun-shell layers are not built (spec 2026-10-16 §8.3)."""
+    from engine.planets import atmosphere
+    try:
+        set_name = pPlanet.GetContainingSet().GetName()
+        obj_name = pPlanet.GetName()
+    except Exception:
+        return
+    preset = atmosphere.class_preset(sTexturePath)
+    if preset is not None and set_name and obj_name:
+        atmosphere.request(set_name, obj_name, preset)

@@ -1795,6 +1795,11 @@ def _reset_leakable_engine_globals():
         _claimed.reset()
     except Exception:
         pass
+    try:
+        from engine.planets import atmosphere as _atmo_req
+        _atmo_req.clear_requested()
+    except Exception:
+        pass
 
 
 def bop_fixture_rig():

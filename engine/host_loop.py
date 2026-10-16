@@ -6319,6 +6319,7 @@ class MissionSession:
         for iid in list(self.celestial_instances.values()):
             renderer.destroy_instance(iid)
         _atmosphere.clear_live()
+        _atmosphere.clear_requested()
         _surface.clear_live()
         self.celestial_instances.clear()
         self.celestial_placed.clear()

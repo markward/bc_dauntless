@@ -498,7 +498,9 @@ applies, as the case requires:
 - The entry comes from a planet-class preset in
   `native/assets/planets/atmosphere_classes.json` (`Class-M`, `-H`, `-K`, `-O`,
   plus a default). It uses the catalogue's own field schema and validation.
-- Mod-requested entries are cleared with the set (`clear_live_for_set`).
+- Mod-requested entries are kept for the whole session and cleared at session
+  teardown (next to `clear_live()`). A set can be re-realised without
+  re-running its `Initialize`, so clearing per set would lose them.
 
 ### 8.4 `NanoFX_ScriptActions` and `NanoFX_Config`
 
