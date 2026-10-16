@@ -66,3 +66,32 @@ def test_escape_attempts_stay_inside(fresh_game, name):
 def test_checkout_saves_path_unchanged(monkeypatch):
     monkeypatch.delenv(paths.DATA_DIR_ENV, raising=False)
     assert _normalize("saves\\QuickSav.BCS") == paths.PROJECT_ROOT / "saves" / "QuickSav.BCS"
+
+
+@pytest.mark.parametrize("name", ["C:\\x.BCS", "../x.BCS"])
+def test_more_escape_forms(fresh_game, name):
+    assert SaveLoadManager().SaveToFile(name) == 0
+    assert not (paths.saves_dir().parent / "x.BCS").exists()
+
+
+def test_mission_module_with_dotdot_stays_inside(fresh_game):
+    mgr = SaveLoadManager()
+    mgr._current_mission_module = lambda: "../../evil"
+    assert mgr.SaveMissionState() == 0
+    root = paths.saves_dir()
+    assert not (root.parent / "evil.json").exists()
+    assert not (root.parent.parent / "evil.json").exists()
+
+
+def test_write_failure_reports_resolved_path(fresh_game, capsys, tmp_path, monkeypatch):
+    monkeypatch.setenv(paths.DATA_DIR_ENV, str(tmp_path / "fresh"))
+    paths._reset_write_failure_reports()
+    root = paths.saves_dir()
+    root.parent.mkdir(parents=True, exist_ok=True)
+    root.write_text("a file, so mkdir/write under it fails")
+    try:
+        assert SaveLoadManager().SaveToFile("saves//Captain Save-E1M1Picard.BCS") == 0
+    finally:
+        root.unlink()
+    err = capsys.readouterr().err
+    assert str(root / "Captain Save-E1M1Picard.BCS") in err
