@@ -41,18 +41,28 @@ def reset() -> None:
     _noted.clear()
 
 
+class _UnsupportedName:
+    """Callable AND attribute-chainable: `from pkg import X` binds this when X
+    is not a provided submodule, and X.f() must still be a logged no-op."""
+
+    def __init__(self, qualname):
+        self._qualname = qualname
+
+    def __call__(self, *_args, **_kwargs):
+        _note_unsupported(self._qualname)
+        return None
+
+    def __getattr__(self, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        return _UnsupportedName("%s.%s" % (self._qualname, name))
+
+
 class _UnsupportedModule(types.ModuleType):
     def __getattr__(self, name):
         if name.startswith("__"):
             raise AttributeError(name)
-        qualname = "%s.%s" % (self.__name__, name)
-
-        def _unsupported(*_args, **_kwargs):
-            _note_unsupported(qualname)
-            return None
-
-        _unsupported.__name__ = name
-        return _unsupported
+        return _UnsupportedName("%s.%s" % (self.__name__, name))
 
 
 class _UnsupportedLoader(importlib.abc.Loader):

@@ -69,3 +69,10 @@ def _pop():
     yield names
     for n in reversed(names):
         sys.modules.pop(n, None)
+
+
+def test_from_import_of_unprovided_submodule_then_call(capsys):
+    from Custom.NanoFXv2.WarpFX import WarpFX_GUI
+    assert WarpFX_GUI.GetWarpSpeed() is None
+    assert WarpFX_GUI.SetupWarpSpeedButtons(9) is None
+    assert "NanoFX effect API not supported: Custom.NanoFXv2.WarpFX.WarpFX_GUI.GetWarpSpeed" in capsys.readouterr().err
