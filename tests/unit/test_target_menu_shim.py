@@ -95,6 +95,21 @@ def test_st_target_menu_child_traversal():
     assert target_menu.GetPrevChild(sub_a) is None
 
 
+def test_st_target_menu_nth_child_indexes_the_listed_rows():
+    """GetNthChild must index the same rows GetNumChildren counts; STMenu's
+    generic one indexes _children, which the target menu does not use."""
+    target_menu = App.STTargetMenu("Targets")
+    ship_a, ship_b = ShipClass(), ShipClass()
+    ship_a.SetName("A"); ship_b.SetName("B")
+    target_menu.set_contacts(_listed(ship_a, ship_b))
+
+    assert target_menu.GetNumChildren() == 2
+    assert target_menu.GetNthChild(0) is target_menu.GetObjectEntry(ship_a)
+    assert target_menu.GetNthChild(1) is target_menu.GetObjectEntry(ship_b)
+    assert target_menu.GetNthChild(2) is None
+    assert target_menu.GetNthChild(-1) is None
+
+
 def test_st_target_menu_get_object_entry_by_ship_identity():
     target_menu = App.STTargetMenu("Targets")
     ship_a, ship_b = ShipClass(), ShipClass()
