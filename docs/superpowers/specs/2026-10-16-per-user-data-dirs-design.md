@@ -7,9 +7,51 @@
 ## Outcomes
 
 - **H1 (QuickBattle without a writable `Options.cfg`), as observed and decided (Task 12).** Confirmed with one refinement: boot returns normally and prints one write-failure line, but `BuildDialog` early-returns so `g_pStartButton` is None, and the player's Start then raises `AttributeError` in `DisableSimulationMenus`. Decision: boot completes. When the `Options.cfg` save fails, `load_quickbattle` runs the QuickBattle init with `LoadConfigFile("Options.cfg")` answering 1 from the in-memory map, scoped to that call. The player loses that session's options (reported once) but not Quick Battle. Pinned by `tests/host/test_quickbattle_unwritable_config.py`.
-- **Ruling 8, the log tee design changed.** The first design was a pipe tee. It deadlocks when one GIL-holding C++ write exceeds about two pipe buffers (measured: 200 KB and 1 MB writes hang on macOS; a Windows pipe holds about 4 KB). It also loses in-pipe output on a crash. Replaced by pointing fds 1 and 2 at the log file itself, so writers never block and the log survives a crash, plus a best-effort follower thread that mirrors new file bytes to the saved console fds on stderr. The console may lag or lose its tail on a hard crash; the file is complete.
-- **Windows run: pending.** Nothing is claimed verified on Windows. The checklist (the pytest command and the log tee items) is in `.superpowers/sdd/2026-10-16-per-user-data-dirs/task-13-report.md`, section "Instructions for Mark: Windows run", plus the Task 10 items (a-g) it carries.
+- **Ruling 8, the log tee design changed.** The first design was a pipe tee. It deadlocks when one GIL-holding C++ write exceeds about two pipe buffers (measured: 200 KB and 1 MB writes hang on macOS; a Windows pipe holds about 4 KB). It also loses in-pipe output on a crash. Replaced by pointing fds 1 and 2 at the log file itself, so writers never block and whatever reached an fd survives a crash, plus a best-effort follower thread that mirrors new file bytes to the saved console fds on stderr. The console may lag or lose its tail on a hard crash. The file has every stderr write, but not C/C++ stdout text still in a stdio buffer at a hard crash: with fd 1 a file, C stdout is fully buffered, so its last lines can be lost. With no console at all (`sys.stdout`/`sys.stderr` None), the tee installs UTF-8 line-buffered text streams on fds 1/2 for its lifetime, so `print`, write-failure lines and uncaught tracebacks still reach the log.
+- **Windows run: pending.** Nothing is claimed verified on Windows. The full checklist is below: the pytest commands, the log tee items (a)–(h), and the Windows-only paths nothing on macOS exercises.
 - **Known follow-up, not in this branch.** A second `_init_mission` of the same mission in one process reuses stale module globals (no re-import). E3M4 failed on a re-run. This plausibly affects mission restart in production. The test side evicts mission modules in a fixture.
+
+### Windows checklist (not yet run)
+
+Do not call Windows verified until all of this has run. Report pass, fail or skip (with the skip reason) for each item.
+
+**1. Tests.** Open a Windows terminal in the repo, ideally logged in as a user whose profile path has non-ASCII characters (so `%TEMP%`, `%APPDATA%` and `%LOCALAPPDATA%` do too). Then:
+
+```
+scripts\win_env.bat
+uv run pytest tests/unit/test_user_dirs_lookup.py tests/unit/test_cache_location.py tests/integration/test_packaged_readonly_e2e.py -v
+uv run pytest tests/unit/test_log_tee.py -v
+cmake --build build -j
+ctest --test-dir build -R "Dhv|Dvox|HullVolumeCache" --output-on-failure
+```
+
+- The first command is the per-user folder lookup, the caches and the read-only packaged end-to-end run.
+- `test_log_tee.py` checks the fd-level tee. `test_no_console_still_writes_the_log` is the no-console case: `print`, a `report_write_failure` line and an uncaught traceback must all reach the log.
+- `Dhv.WritesUnderANonAsciiPath` and `Dvox.WritesUnderANonAsciiPath` are the MSVC regression checks for the `.tmp` sibling path, which used to go through the ANSI code page and throw on an unmappable character. They pass on macOS either way, so only a Windows run proves them.
+- `HullVolumeCache.FailedWriteSaysSoOncePerPath` checks the one-line `[dauntless] could not write <path>: <reason>` report for a failed `.dhv` write. On Windows, also check that the path is printed as UTF-8 and is not mangled.
+
+**2. Paths the macOS runs never exercise (Ruling 2).**
+- **The known-folder call.** `SHGetKnownFolderPath` (`paths._windows_known_folder`) has never run live. The unit tests inject it. Check that a packaged run lands in `%APPDATA%\Dauntless` (config, saves, mods) and `%LOCALAPPDATA%\Dauntless` (Cache, Logs).
+- **The e2e test's hand-executed import.** On win32 only, `import engine` would start the log tee before any patch could apply. So the e2e driver builds the `engine` package by hand, patches `paths._windows_known_folder` to return None (so the env fallback, pointed at a temp dir, is used and the real AppData is untouched), and then executes `engine/__init__.py`. That path is untested; this run is its first.
+- **Directory chmod does not make a folder read-only on Windows.** In the read-only e2e test, the guard that actually catches an install write is the before/after digest of the install tree, not the permissions. A pass on Windows comes from the digest.
+
+**3. Log tee, with a real packaged build.** The log is `%LOCALAPPDATA%\Dauntless\Logs\dauntless.log`.
+
+Handled in code, to confirm:
+- **(a) Console launch.** `sys.stdout`/`sys.stderr` sit on `_WindowsConsoleIO`, which is rewrapped while the tee runs. Check that `print("é")` and `sys.stderr.write` reach `dauntless.log`, that nothing raises, and that `sys.stdout` is the original object again after `stop()`.
+- **(d) No console.** A GUI-subsystem launch, or a launch with the std handles detached, still writes a log with the boot output, and start returns True. `print`, write-failure lines and uncaught tracebacks must be in it, because the tee replaces the None streams.
+
+Still to verify, Windows only:
+- **(b) C++ host output.** Check that `fprintf(stderr)` from the C++ host lands in the log. It only will if the host and Python share one dynamic UCRT (`/MD`), because `os.dup2` edits that CRT's fd table.
+- **(c) CEF output.** Check that CEF and CEF-helper output lands in the log. It depends on `_dup2` calling `SetStdHandle`, so that CEF children inherit the redirected handles. That happens only for a console-subsystem exe. A GUI exe will very likely log Python output only.
+- **(e) Two instances at once.** Start a second instance while the first holds the log open. Rotation should fail with `PermissionError`, there should be one console line about it, and the second instance should append. Check that the two runs' lines do not overwrite each other: CRT `O_APPEND` is emulated by seeking, and children inheriting the OS handle write at the shared position.
+- **(f) Follower read.** Check that the read handle on a log open for writing works (CRT share mode deny-none), and that the console mirror appears.
+- **(g) C stdio flush.** `_flush_c_stdio` is skipped on Windows, so check whether CEF `printf` lines reach the log before exit.
+- **(h) Unicode on a legacy-codepage console.** Check how a non-ASCII line looks in the console mirror. That is cosmetic; the log itself is UTF-8.
+
+Known gap: a console stream captured BEFORE the tee starts (for example a `logging.StreamHandler` created before `import engine`) still holds the original `_WindowsConsoleIO` object, so its writes still go to the console handle and fail while the tee runs. Check whether anything in the packaged boot does this.
+
+**4. Cache write failure, live.** With the cache folder made unwritable, a packaged run prints one `[dauntless] could not write ...dhv: <reason>` line per hull into the log and keeps loading.
 
 ## 1. Intent
 
@@ -179,3 +221,5 @@ The packaging job is separate, but it must:
 - Keep the layout the host relies on to find its root. Today that's "two parents up from the binary" (`host_main.cc:34-40`), or the job changes that rule.
 - Ship `.pyc` files compiled with `--invalidation-mode unchecked-hash` for `engine/` and the root shims.
 - Ship nothing user-writable that a player needs to edit. In particular, no `Options.cfg`: the engine creates it in the config dir.
+- Read diagnostics from stderr or the log, never stdout. In a packaged build the console mirror merges stdout onto stderr, so anything that parses the `--smoke-check` or `--banner` output (packaging checks, CI) must read stderr or `dauntless.log`.
+- Ship precompiled bytecode for any bundled Python standard library too. It is imported before `engine` sets `sys.dont_write_bytecode`, so without it the first launch tries to write `.pyc` files into the install.
