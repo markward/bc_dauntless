@@ -1,6 +1,6 @@
 # Set Course system row — label plots the system default, caret opens regions
 
-Status: implemented on `feat/set-course-system-default`. Not yet live-verified.
+Status: merged to local main (90676d3a). Live-verified by Mark 2026-10-16.
 
 ## Problem
 
