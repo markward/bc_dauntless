@@ -48,6 +48,13 @@ class BridgeCameraWatchController:
         self._snap_pending = False
         self._hold = False
 
+    def release_resting(self) -> None:
+        """Drop an AT_LOOK_AT_ME[_NOW] resting aim; keep an AT_WATCH_ME follow.
+        The zoom camera's LookForward is the 'next beat' a resting aim waits
+        for (see ZoomCameraObjectClass.LookForward)."""
+        if not self._hold:
+            self.clear()
+
     def is_watching(self) -> bool:
         return self._watched is not None
 
