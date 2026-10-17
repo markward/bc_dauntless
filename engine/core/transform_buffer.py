@@ -35,6 +35,12 @@ class TransformBuffer:
         self._prev[iid] = (loc, rot)
         self._cur[iid] = (loc, rot)
 
+    def set_previous(self, iid, loc, rot) -> None:
+        """Re-seat prev for an iid already tracked (advance_ticks); an
+        untracked iid is ignored, so this never starts tracking one."""
+        if iid in self._cur:
+            self._prev[iid] = (loc, rot)
+
     def reset_all(self) -> None:
         """Forget all snapshots (mission swap / scene discontinuity)."""
         self._prev.clear()
@@ -54,3 +60,28 @@ class TransformBuffer:
             return None
         prev = self._prev.get(iid, cur)
         return lerp_transform(prev[0], prev[1], cur[0], cur[1], alpha)
+
+
+def advance_ticks(buf, n, tick, live_poses) -> None:
+    """Run `n` sim ticks (`tick()`), keeping `buf`'s prev snapshots exactly
+    ONE tick behind the cur the caller records afterwards.
+
+    `alpha` (accumulator / tick_dt) is a fraction of one tick, so
+    lerp(prev, cur, alpha) is only right when prev is the pose before the
+    LAST tick. A render frame slower than a tick runs two or more; rolling
+    once before the batch left prev that many ticks back, so the drawn ship
+    lagged on each multi-tick frame and leapt on the next -- the judder seen
+    whenever the frame rate dips under 60 Hz while interpolation draws a ship
+    (E1M1's undock at ~20 ms frames).
+
+    `live_poses()` -> iterable of (iid, loc, rot) for the objects the buffer
+    may track; called only on multi-tick frames, just before the last tick,
+    and only iids already tracked are re-seated. 0 ticks: nothing runs."""
+    if n <= 0:
+        return
+    buf.roll()
+    for i in range(n):
+        if i == n - 1 and n > 1:
+            for iid, loc, rot in live_poses():
+                buf.set_previous(iid, loc, rot)
+        tick()
