@@ -15,6 +15,9 @@ class TGModelProperty:
         # PositionOrientationProperty.SetPosition(TGPoint3) (App.py:9107).
         # Both fell through to __getattr__'s data-bag before this fix.
         self._position = None
+        # Name of the mesh part this mount rides on (physical-parents spec).
+        # None = Auto: the resolver picks the nearest part.
+        self._physical_parent = None
 
     def GetName(self):
         # Real Appc returns a TGString (App.py:436 binds CompareC on it); SDK
@@ -68,6 +71,13 @@ class TGModelProperty:
         # SDK exposes both GetPosition (NiPoint3) and GetPositionTG
         # (TGPoint3). Our shim doesn't distinguish; both return TGPoint3.
         return self.GetPosition()
+
+    def SetPhysicalParent(self, name) -> None:
+        """Mesh part this mount rides on; ``None`` means Auto (unset)."""
+        self._physical_parent = None if name is None else str(name)
+
+    def GetPhysicalParent(self):
+        return self._physical_parent
 
     def __getattr__(self, attr: str):
         if attr.startswith("Set"):
