@@ -4881,14 +4881,22 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "ambient). Take effect at the next capture.");
 
     m.def("set_bridge_probe_layers",
-          [](const std::vector<int>& states) -> std::size_t {
+          [](const std::vector<int>& states,
+             const std::vector<std::uint64_t>& identities) -> std::size_t {
+              if (identities.size() != states.size())
+                  throw py::value_error(
+                      "set_bridge_probe_layers needs one identity per state");
               if (!g_bridge_pass) return 0;
-              return g_bridge_pass->set_probe_layers(states);
+              return g_bridge_pass->set_probe_layers(states, identities);
           },
-          py::arg("states"),
+          py::arg("states"), py::arg("identities"),
           "The state each animation layer's probe belongs to (spec 2026-10-17 "
-          "§4.4), layer k = probe 5+k. States outside 0-4 are dropped; returns "
-          "how many. No-op before init.");
+          "§4.4), layer k = probe 5+k, and each layer's identity (a stable "
+          "uint64 of its state and wave key): a layer whose identity at its "
+          "index changed reads as absent until its own capture lands. States "
+          "outside 0-4 are dropped with their identity; returns how many. "
+          "Raises ValueError when the lists differ in length; otherwise a "
+          "no-op before init.");
 
     m.def("set_bridge_glow_captures",
           [](py::object instance_id, py::object rows) {

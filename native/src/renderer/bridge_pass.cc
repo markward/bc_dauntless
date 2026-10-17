@@ -746,6 +746,32 @@ std::uint64_t BridgePass::probe_signature(int probe) const {
     return h.value();
 }
 
+std::size_t BridgePass::set_probe_layers(std::vector<int> layer_states,
+                                         std::vector<std::uint64_t> identities) {
+    std::vector<int> states;
+    std::vector<std::uint64_t> ids;
+    for (std::size_t k = 0; k < layer_states.size(); ++k) {
+        const int st = layer_states[k];
+        if (st < 0 || st >= kBridgeStates) continue;
+        states.push_back(st);
+        ids.push_back(k < identities.size() ? identities[k]
+                                            : static_cast<std::uint64_t>(st));
+    }
+    // A slot whose layer changed holds another layer's capture (or one freed
+    // with the old count): never sample it before its own lands.
+    for (std::size_t k = 0; k < ids.size(); ++k) {
+        if (k < layer_ids_.size() && layer_ids_[k] == ids[k]) continue;
+        const int probe = kBridgeStates + static_cast<int>(k);
+        probes_.invalidate(probe);
+        if (static_cast<std::size_t>(probe) < captured_sigs_.size())
+            captured_sigs_[static_cast<std::size_t>(probe)] = 0;
+    }
+    const std::size_t dropped = layer_states.size() - states.size();
+    layer_states_ = std::move(states);
+    layer_ids_ = std::move(ids);
+    return dropped;
+}
+
 void BridgePass::set_glow_captures(unsigned long long model_handle,
                                    std::vector<BridgeGlowCapture> captures) {
     glow_captures_ = std::move(captures);

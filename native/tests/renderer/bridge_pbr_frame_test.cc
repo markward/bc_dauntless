@@ -1033,6 +1033,76 @@ TEST_F(BridgePbrFrame, ALayerAddsItsWeightedReflection) {
     EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
 }
 
+// A re-plan that changes a layer's identity (spec §4.4: a quality drop, an
+// edit adding an animated material earlier) never shows another layer's old
+// content: layers {green, red} -> {red} moves the red layer into slot 5,
+// which held the green layer's capture. Slot 5 reads as absent (no entry)
+// until the red layer's own capture lands, then shows it.
+TEST_F(BridgePbrFrame, AReplannedLayerIsNotSampledUntilItsCaptureLands) {
+    use_red_wall_corner({0.6f, 0.6f, 0.6f});    // a grey wall
+    set_floor_override(0.05f, 1.0f);
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->set_probe_state(2, 0.0f);              // red shown
+    pass->request_probe_capture();
+    const glm::vec3 room = render_floor();       // no member, no layer
+    // The green layer's member (layer 0 at green) lights red; the red
+    // layer's (layer 1 at red) green. Same geometry: the bases never requeue.
+    renderer::BridgeSpot a = layer_spot({2000.0f, 0.0f, 0.0f});
+    a.layer[2] = -1;
+    a.layer[0] = 0;
+    a.layer_radiance[0] = {2000.0f, 0.0f, 0.0f};
+    renderer::BridgeSpot b = layer_spot({0.0f, 2000.0f, 0.0f});
+    b.layer[2] = 1;
+    pass->set_spots({a, b});
+    pass->set_probe_layers({0, 2}, {11u, 22u});
+    pass->set_layer_values({1.0f, 1.0f});
+    render_floor();
+    ASSERT_TRUE(pass->probes_settled());
+    ASSERT_TRUE(pass->probe_valid(renderer::kBridgeStates));
+    const std::vector<int> before = completed();
+
+    // The re-plan: only the red layer is left, now layer 0 (slot 5).
+    pass->set_probe_steps_per_frame(1);
+    a.layer[0] = -1;
+    b.layer[2] = 0;
+    pass->set_spots({a, b});
+    pass->set_probe_layers({2}, {22u});
+    pass->set_layer_values({1.0f});
+    EXPECT_FALSE(pass->probe_valid(renderer::kBridgeStates));
+    int frames = 0;
+    while (!pass->probe_valid(renderer::kBridgeStates) && frames < 500) {
+        const glm::vec3 c = render_floor();
+        ++frames;
+        if (pass->probe_valid(renderer::kBridgeStates)) break;
+        for (int i = 0; i < 3; ++i) EXPECT_NEAR(c[i], room[i], 1e-4f) << frames << " " << i;
+    }
+    EXPECT_EQ(frames, pass->steps_per_probe());   // its own capture, nothing first
+    for (int i = 0; i < renderer::kBridgeStates; ++i)
+        EXPECT_EQ(pass->probe_captures_completed(i), before[static_cast<std::size_t>(i)]) << i;
+    const glm::vec3 after = render_floor();
+    EXPECT_GT(after.g, room.g + 0.05f);          // the red layer's own (green) member
+    EXPECT_NEAR(after.r, room.r, 1e-4f);         // never the green layer's red one
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+// The same identity at the same index keeps the layer's capture: a re-push
+// of an unchanged plan (every editor action) samples it on the very next frame.
+TEST_F(BridgePbrFrame, AnUnchangedLayerIdentityKeepsItsCapture) {
+    use_red_wall_corner({0.6f, 0.6f, 0.6f});
+    set_floor_override(0.05f, 1.0f);
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->set_probe_state(2, 0.0f);
+    pass->set_spots({layer_spot({2000.0f, 0.0f, 0.0f})});
+    pass->set_probe_layers({2}, {22u});
+    pass->set_layer_values({1.0f});
+    pass->request_probe_capture();
+    render_floor();
+    ASSERT_TRUE(pass->probe_valid(renderer::kBridgeStates));
+    pass->set_probe_layers({2}, {22u});
+    EXPECT_TRUE(pass->probe_valid(renderer::kBridgeStates));
+    EXPECT_TRUE(pass->probes_settled());
+}
+
 // Debug view 11 shows the layer entries alone (a green member over a grey
 // room reads pure green, and black at value 0); view 9 shows the composed
 // reflection, bases and layers.

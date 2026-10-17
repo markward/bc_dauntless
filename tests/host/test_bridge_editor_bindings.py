@@ -718,10 +718,15 @@ def test_new_probe_bindings_exist(host_module):
 def test_probe_layers_set_probe_count_and_drop_bad_states(probe_stash_guard, dbridge):
     h, _iid = dbridge
     assert h.bridge_probe_state()["probe_count"] == 5
-    assert h.set_bridge_probe_layers([2, 0, 9]) == 1
+    assert h.set_bridge_probe_layers([2, 0, 9], [1, 2, 2 ** 64 - 1]) == 1
     assert h.bridge_probe_state()["probe_count"] == 7
     assert len(h.bridge_probe_signatures()) == 7
-    h.set_bridge_probe_layers([])
+    h.set_bridge_probe_layers([], [])
+
+
+def test_probe_layers_need_one_identity_per_state(host_module):
+    with pytest.raises(ValueError):
+        host_module.set_bridge_probe_layers([2, 0], [1])
 
 
 def test_probe_signatures_move_with_red_captures(probe_stash_guard, dbridge):
@@ -750,7 +755,7 @@ def test_glow_captures_never_raise(host_module):
 
 def test_host_io_new_wrappers_degrade_headless_and_forward(monkeypatch):
     monkeypatch.setattr(host_io, "_h", None)
-    host_io.set_bridge_probe_layers([2])
+    host_io.set_bridge_probe_layers([2], [7])
     host_io.set_bridge_glow_captures(None, [])
     assert host_io.bridge_probe_signatures() is None
     assert host_io.bridge_quality() == 1
@@ -758,18 +763,18 @@ def test_host_io_new_wrappers_degrade_headless_and_forward(monkeypatch):
 
     class H:
         @staticmethod
-        def set_bridge_probe_layers(s): calls.append(("layers", s))
+        def set_bridge_probe_layers(s, i): calls.append(("layers", s, i))
         @staticmethod
         def set_bridge_glow_captures(i, r): calls.append(("glow", i, r))
         @staticmethod
         def bridge_quality(): return 2
 
     monkeypatch.setattr(host_io, "_h", H)
-    host_io.set_bridge_probe_layers([2.0])
+    host_io.set_bridge_probe_layers([2.0], [2 ** 64 - 1])
     z = [(0, 0, 0)] * 5
     host_io.set_bridge_glow_captures("i", [(3, 0, z, [-1] * 5, z)])
     assert host_io.bridge_quality() == 2
-    assert calls == [("layers", [2]),
+    assert calls == [("layers", [2], [2 ** 64 - 1]),
                      ("glow", "i", [(3, 0, [(0.0, 0.0, 0.0)] * 5, [-1] * 5, [(0.0, 0.0, 0.0)] * 5)])]
 
 

@@ -641,12 +641,15 @@ def set_bridge_probe_scales(scales) -> None:
         fn([float(v) for v in scales])
 
 
-def set_bridge_probe_layers(states) -> None:
+def set_bridge_probe_layers(states, identities) -> None:
     """The state each animation layer's probe belongs to (spec 2026-10-17
-    §4.4), layer k = probe 5+k. No-op headless."""
+    §4.4), layer k = probe 5+k, and each layer's identity
+    (probe_layers.layer_identity, same length): a changed identity at an
+    index keeps that layer out of the reflection until its own capture
+    lands. No-op headless."""
     fn = getattr(_h, "set_bridge_probe_layers", None) if _h is not None else None
     if fn is not None:
-        fn([int(s) for s in states])
+        fn([int(s) for s in states], [int(i) for i in identities])
 
 
 def bridge_probe_signatures():

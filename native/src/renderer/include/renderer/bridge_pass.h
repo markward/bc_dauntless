@@ -299,17 +299,18 @@ public:
         return (state >= 0 && state < kBridgeStates)
             ? scales_[static_cast<std::size_t>(state)] : 0.0f;
     }
-    /// The state each animation layer k belongs to (probe id kBridgeStates+k).
-    /// Entries outside [0, kBridgeStates) are dropped; returns how many.
-    std::size_t set_probe_layers(std::vector<int> layer_states) {
-        const std::size_t before = layer_states.size();
-        layer_states.erase(
-            std::remove_if(layer_states.begin(), layer_states.end(),
-                           [](int s) { return s < 0 || s >= kBridgeStates; }),
-            layer_states.end());
-        layer_states_ = std::move(layer_states);
-        return before - layer_states_.size();
-    }
+    /// The state each animation layer k belongs to (probe id kBridgeStates+k)
+    /// and its identity (spec §4.4: a stable hash of its state and wave key;
+    /// a missing identity is the state itself). Entries whose state is
+    /// outside [0, kBridgeStates) are dropped with their identity; returns
+    /// how many. A layer whose identity at its index differs from the one
+    /// there before (or that is new at its index) holds another layer's
+    /// capture, or none: its slot is invalidated (BridgeProbeArray::
+    /// invalidate) so it reads as absent -- never sampled -- until its own
+    /// capture lands. An unchanged identity keeps the capture (a changed
+    /// member then requeues it by signature, the old content showing).
+    std::size_t set_probe_layers(std::vector<int> layer_states,
+                                 std::vector<std::uint64_t> identities = {});
     /// kBridgeStates base probes + one per layer.
     int probe_count() const {
         return kBridgeStates + static_cast<int>(layer_states_.size());
@@ -508,6 +509,8 @@ private:
     glm::vec3   probe_origin_{0.0f};
     std::array<float, kBridgeStates> scales_{1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
     std::vector<int> layer_states_;
+    /// Each layer's identity, by layer index (set_probe_layers).
+    std::vector<std::uint64_t> layer_ids_;
     unsigned long long glow_capture_model_ = 0;
     std::vector<BridgeGlowCapture> glow_captures_;
     /// Signature each probe's completed capture was taken with, by probe id;

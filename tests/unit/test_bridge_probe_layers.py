@@ -124,3 +124,28 @@ def test_layer_values_are_wave_to_the_2_2():
     p = _plan(_doc(a=_glow(_anim())))
     assert pl.layer_values(p, 0.75) == [pytest.approx(0.6 ** 2.2)]
     assert pl.layer_values(p, 0.0) == [pytest.approx(1.0)]
+
+
+
+def test_layer_identity_is_a_uint64_of_state_and_key_alone():
+    d = _doc(a=_glow(_anim()), b=_glow(_anim(scope=("green",))),
+             c=_glow(_anim(period_s=5)))
+    green_b, red_a, red_c = sorted(_plan(d).layers, key=lambda l: (l.state, l.key))
+    ids = [pl.layer_identity(l) for l in (green_b, red_a, red_c)]
+    assert all(isinstance(i, int) and 0 <= i < 2 ** 64 for i in ids)
+    assert len(set(ids)) == 3                     # state and key both count
+    # Members and index do not: the same state + key in another plan.
+    other = _plan(_doc(z=_glow(_anim(period_s=5)), y=_glow(_anim(period_s=5)))).layers
+    assert pl.layer_identity(other[0]) == pl.layer_identity(red_c)
+
+
+def test_layer_identity_has_no_per_process_salt():
+    import subprocess
+    import sys
+    code = ("from engine.bridge_editor import probe_layers as pl;"
+            "print(pl.layer_identity(pl.Layer('red', (('sine', 3.0, 0.0, 0.2, 0.0, 0.0),), ())))")
+    outs = {subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                           check=True, env={**__import__("os").environ,
+                                            "PYTHONHASHSEED": seed}).stdout
+            for seed in ("1", "2")}
+    assert len(outs) == 1

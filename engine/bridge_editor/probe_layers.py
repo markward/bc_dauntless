@@ -6,6 +6,7 @@ layer for that state: the probe captures them at their peak, and the layer's
 live value v = w(t)^2.2 scales the capture at draw time. Layers are capped
 per state by bridge quality; waves past the cap are dropped (and warned),
 keeping authored order."""
+import hashlib
 from dataclasses import dataclass, field
 
 from engine.bridge_editor import behaviour as bh
@@ -89,6 +90,17 @@ def plan(doc, resolved, light_materials, mapped, cap) -> ProbePlan:
                     "bridge reflections: %s wave on %s dropped past the layer cap of %d"
                     % (state, ", ".join(names), cap))
     return out
+
+
+def layer_identity(layer) -> int:
+    """A layer's identity for the renderer (spec §4.4): a stable unsigned
+    64-bit hash of its state and wave key -- never its members or index, and
+    never Python's salted hash(). BridgePass invalidates a layer's slot when
+    the identity at its index changes, so a re-plan never shows another
+    layer's capture."""
+    digest = hashlib.blake2b(repr((layer.state, layer.key)).encode("utf-8"),
+                             digest_size=8).digest()
+    return int.from_bytes(digest, "little")
 
 
 def layer_values(plan, t) -> list:

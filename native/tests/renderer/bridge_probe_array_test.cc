@@ -405,6 +405,32 @@ TEST_F(BridgeProbeArrayGl, ShrinkKeepsTheLeadingSlots) {
     EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
 }
 
+// A slot whose meaning changed (a re-planned layer) reads as absent until a
+// new capture lands in it; a probe in flight for it is dropped (it was begun
+// under the old meaning), one for another slot is not.
+TEST_F(BridgeProbeArrayGl, InvalidateDropsTheSlotAndItsProbeInFlight) {
+    renderer::BridgeProbeArray a;
+    ASSERT_TRUE(a.ensure(2));
+    ASSERT_EQ(capture_all(a, 0, red), a.steps_per_probe());
+    ASSERT_EQ(capture_all(a, 1, red), a.steps_per_probe());
+    int drawn = 0;
+    a.begin(1);
+    ASSERT_FALSE(a.step(glm::vec3(0.0f), ClearFaces{blue, &drawn}));
+    a.invalidate(0);
+    EXPECT_FALSE(a.valid(0));
+    EXPECT_TRUE(a.valid(1));
+    EXPECT_EQ(a.in_flight_slot(), 1);             // another slot's probe survives
+    a.invalidate(1);
+    EXPECT_FALSE(a.valid(1));
+    EXPECT_FALSE(a.in_flight());                  // its own is dropped
+    a.invalidate(-1);                             // out of range: nothing
+    a.invalidate(2);
+    EXPECT_EQ(capture_all(a, 0, green), a.steps_per_probe());
+    EXPECT_TRUE(a.valid(0));
+    EXPECT_GT(centre(read_array_face(a.texture(), a.layer_of(0), 0, 0), 0).g, 0.9f);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
 TEST_F(BridgeProbeArrayGl, AbandonLeavesTheSlotUntouched) {
     renderer::BridgeProbeArray a;
     ASSERT_TRUE(a.ensure(1));

@@ -96,6 +96,13 @@ public:
     /// and content.
     void abandon();
 
+    /// Mark `slot` as holding no completed probe (its meaning changed: a
+    /// re-planned layer), so it reads as absent until a new capture lands in
+    /// it. A probe in flight for `slot` is abandoned too: it was begun under
+    /// the old meaning. Its layer keeps its (now unread) content. Out of
+    /// range: nothing.
+    void invalidate(int slot);
+
     /// Steps one probe takes: 6 faces + 1 (mip chain + mip 0) + 6 (mip 1, per
     /// face) + kBridgeProbeMips - 2 (mips 2..) = 17 at 6 mips.
     int steps_per_probe() const;

@@ -90,7 +90,7 @@ class BridgeRuntime:
         self._io.set_bridge_area_lights([])
         self._io.set_bridge_glow(None, [])
         self._io.set_bridge_glow_captures(None, [])
-        self._io.set_bridge_probe_layers([])
+        self._io.set_bridge_probe_layers([], [])
 
     def push(self, doc, matched=None):
         """Re-push overrides, the static spot and area-light lists (geometry +
@@ -145,7 +145,8 @@ class BridgeRuntime:
             self._glow_shapes, glow_warnings = glow.glow_objects(
                 doc, self._resolved, self._meshes)
             self._io.set_bridge_probe_layers(
-                [behaviour.state_index(layer.state) for layer in plan.layers])
+                [behaviour.state_index(layer.state) for layer in plan.layers],
+                [probe_layers.layer_identity(layer) for layer in plan.layers])
             self._io.set_bridge_glow_captures(
                 self._iid, glow.captures(self._glow_shapes, plan))
             warnings = (ld.link_mismatches(doc, self._meshes, self._matched)

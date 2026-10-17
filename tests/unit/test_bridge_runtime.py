@@ -2,6 +2,7 @@ import pytest
 
 from engine import bridge_lighting
 from engine.bridge_editor import behaviour, lighting_doc as ld, lighting_writer as lw, runtime
+from engine.bridge_editor import probe_layers
 
 HASH = "0123456789abcdef"
 HASH_B = "fedcba9876543210"
@@ -679,7 +680,10 @@ def test_push_sends_layers_and_glow_captures(proj):
     io = FakeIO()
     rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
     rt.attach("iid")
-    assert last(io, "set_bridge_probe_layers") == ("set_bridge_probe_layers", [2])
+    (_, states, ids) = last(io, "set_bridge_probe_layers")
+    assert states == [2]
+    # Each layer's identity (spec §4.4) rides beside its state.
+    assert ids == [probe_layers.layer_identity(rt._plan.layers[0])]
     assert last(io, "set_bridge_probe_scales")[1] == (0.0,) * 5     # a lit bridge: no room light
     (iid, rows) = last(io, "set_bridge_glow_captures")[1:]
     assert iid == "iid" and len(rows) == 1
@@ -700,7 +704,7 @@ def test_attach_clears_glow_captures_and_layers(proj):
     io = FakeIO(info={"source": "", "content_hash": "", "meshes": []})
     runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0).attach("iid")
     assert ("set_bridge_glow_captures", None, []) in io.calls
-    assert ("set_bridge_probe_layers", []) in io.calls
+    assert ("set_bridge_probe_layers", [], []) in io.calls
 
 
 def test_plan_warnings_reach_the_status_line(proj):
@@ -785,4 +789,6 @@ def test_quality_change_replans_layers(proj, monkeypatch):
     rt.tick(0.1)
     assert any("m2" in w and "layer cap" in w for w in logged)
     assert len(last(io, "set_bridge_layer_values")[1]) == 2
-    assert len(last(io, "set_bridge_probe_layers")[1]) == 2
+    (_, states, ids) = last(io, "set_bridge_probe_layers")
+    assert len(states) == 2 and ids == [probe_layers.layer_identity(l)
+                                        for l in rt._plan.layers]

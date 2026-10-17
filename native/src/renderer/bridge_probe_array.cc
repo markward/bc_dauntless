@@ -180,6 +180,12 @@ void BridgeProbeArray::abandon() {
     step_ = 0;
 }
 
+void BridgeProbeArray::invalidate(int slot) {
+    if (slot < 0 || slot >= capacity()) return;
+    valid_[static_cast<size_t>(slot)] = false;
+    if (in_flight_slot_ == slot) abandon();
+}
+
 int BridgeProbeArray::steps_per_probe() const {
     // Faces, the raw chain + mip 0, mip 1 per face, the remaining mips.
     return 6 + 1 + 6 + (kBridgeProbeMips - 2);
