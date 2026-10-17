@@ -1,6 +1,6 @@
 # Subsystem physical parents — design
 
-Status: DRAFT, 2026-10-17. Branch `feat/physical-parents`
+Status: APPROVED by Mark 2026-10-17. Branch `feat/physical-parents`
 (worktree `.claude/worktrees/physical-parents`).
 Supersedes OQ-13 of `2026-09-23-ship-part-articulation-design.md` (and
 subsumes its OQ-5).
@@ -219,12 +219,10 @@ same colours as a chosen row. The tab choice is per-session SPV state.
   left rail** on SET rows (Mark). The gold "dirty" rail is the Functional
   tab's unsaved marker; on the Physical tab, unsaved state is carried by the
   Save button's pending count.
-- A property with no authored position cannot be placed by AUTO and no
-  consumer can act on it (every consumer starts from a point:
-  `_mounted_subsystems` and `lights_for` skip positionless entries). List it
-  in a trailing group, **read-only**: Move to is disabled there (my call). A
-  hand-written physical parent on such a property is listed under its part
-  but changes nothing in game.
+- A property with no authored position is not listed. Neither source lists
+  one: `build_descriptors` (`ship_property_viewer.py:215`) skips subsystems
+  without a position, and `running_lights.lights_for` skips unplaced lights.
+  No consumer can act on one anyway, since every consumer starts from a point.
 - Row click selects the subsystem exactly as the Functional tab does (same
   pin selection), so the hologram shows what you are moving. A running-light
   row has no pin, so clicking it highlights the row only. Hologram markers
@@ -370,7 +368,7 @@ Calls I made (check these)
 - Model Parts pane unchanged and separate.
 - Headless (no model) trusts the name.
 - Choosing the ticked part on an AUTO row confirms it as SET.
-- Positionless properties are read-only on the Physical tab.
+- Positionless properties are not listed (neither source yields them).
 - Mod files: hand-written physical parents are overridden by the managed
   block; Reset writes `SetPhysicalParent(None)` when needed.
 
