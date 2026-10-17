@@ -112,11 +112,14 @@ and layers are one list of (probe, weight) entries; the shader sums them.
 
 - **Base weights `b_i` (the state cross-fade) live in C++** *(my call: the
   renderer is the only side that knows when a base has landed)*. Python sends
-  the shown state and the paused-aware bridge dt each frame. Every base's weight
-  moves toward 1 (the shown state) or 0 (all others) at 1/0.5 s per second; the
-  shown state's base starts rising only once it is valid, and the weights are
-  renormalised to sum 1. A change mid-fade simply retargets — no pop, no chain
-  limit (a red → green → yellow click mid-fade briefly weighs three bases).
+  the shown state and the paused-aware bridge dt each frame. The shown state's
+  base rises by up to dt/0.5 per update and the other bases give that up in
+  proportion to their weights, so the weights always sum to 1 (with two bases
+  this is exactly "the other falls at dt/0.5"; *amended as built, ruling R8 —
+  the original "others fall at dt/0.5, then renormalise" jumped on a mid-fade
+  retarget*). The shown state's base starts rising only once it is valid. A
+  change mid-fade simply retargets — no pop, no chain limit (a red → green →
+  yellow click mid-fade briefly weighs three bases).
   Replaces `ProbeBlend` and `set_bridge_probe_mix`.
 - **Layer weights** `weight[k] = v_k(t) × b_{s(k)}`: Python sends `v_k = w(t)^2.2`
   per layer, where `w(t)` is the product of the layer's wave factors
@@ -280,3 +283,40 @@ cubes and the R11G11B10F fallback (§4.6); the exact shape of the native data
 (§4.5) within the stated rules; where the layer planner lives; the warning text;
 how the probe storage grows when a layer is added; the queue order among the
 non-shown states.
+
+## 8. As built (2026-10-17)
+
+- **Storage** (§4.6, as specified): one `GL_TEXTURE_CUBE_MAP_ARRAY`, 384², 6
+  mips, `GL_R11F_G11F_B10F` (`BridgeProbeArray`), precise enough on this Mac's
+  GL 4.1 — tests allow one ulp per channel (1/64 R and G, 1/32 B; the driver
+  truncates). One shared RGBA16F raw capture cube is the scratch. The array
+  holds every probe plus **one spare layer**; the probe in flight is
+  prefiltered into the spare and its last step swaps the two, so a slot's
+  layer moves — the pass indexes through a slot → layer table. Growth (a new
+  layer) allocates a bigger array and **blits** every layer, face and mip
+  across (GL 4.1 has no `glCopyImageSubData`); a probe in flight survives.
+  Shrinking repacks.
+- **The step** (§4.7, ruling R9): **17 steps per probe**, one per frame
+  (`kBridgeProbeStepsPerFrame = 1`): 6 faces, 1 for the raw mip chain + mip 0,
+  6 for mip 1 (one face each), 1 each for mips 2–5. The swap is the last step.
+  DBridge (6 probes) fills in ~102 steps ≈ 1.7 s at 60 fps, the shown base
+  first after 17 steps ≈ 0.3 s (§4.7's "~7 frames" and "~42 steps" were for an
+  even split that did not hold).
+- **Measured** (DBridge, QuickBattle headless, 600 frames, 6 probes at 384²,
+  GPU drained around each step, before R9): settled `bridge` scope 4.72 ms GPU;
+  refilling continuously at one step per frame 8.07 ms average (+3.35 ms). Per
+  step, average / max: faces ≈ 2.0 / ≤ 4.8 ms; mip chain + mip 0 0.87 / 5.1;
+  **mip 1 (all six faces) 8.99 / 14.59** — the one step far above "a few ms",
+  hence R9; mip 2 2.62 / 2.95; mip 3 2.16; mip 4 1.24; mip 5 0.87. A probe ≈
+  29 ms of stepped work, about twice §3's one-shot ~14 ms (not investigated;
+  the per-step drain was for measurement only). `bridge.probe_capture` is nested in `bridge`, so on
+  this Mac it reads CPU only; a step's GPU lands in `bridge`. *Not yet
+  re-measured after R9* (expected ~1.5 ms per mip-1 face).
+- **Fade** (§4.2): as amended above (R8). With no base weighing anything (a
+  new bridge) the first valid shown base snaps to 1. A non-positive or
+  non-finite dt moves nothing.
+- **Bridge-model change** (ruling R7): invalidates **every** probe, not just
+  the one in flight, so a new room never reflects the old one — no reflection
+  until the new shown base lands, then the rest fill in.
+- **Layer values**: `set_bridge_layer_values` clamps each `w^2.2` to [0, 1]
+  (non-finite → 0) in the binding.
