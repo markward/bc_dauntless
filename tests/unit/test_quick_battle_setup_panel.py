@@ -644,3 +644,90 @@ def test_panel_is_throttled_but_events_still_bypass(panel):
     panel.dispatch_event("add:Warbird")                # registry marks due itself;
     panel.handle_key_esc()                             # esc marks due here
     assert panel.consume_due()
+
+
+# ── Prewarm (first open must not stall) ────────────────────────────────────
+
+class _CountingStats(_Stats):
+    def __init__(self):
+        self.probed, self.resets = [], 0
+        self._memo = {}
+
+    def get(self, f):
+        if f not in self._memo:
+            self.probed.append(f)
+            self._memo[f] = ShipStats(1000.0, 2000.0)
+        return self._memo[f]
+
+    def maxima(self, entries):
+        for ce in entries:
+            self.get(ce.ship_id)
+        return (24000.0, 49500.0)
+
+    def reset(self):
+        self.resets += 1
+        self._memo.clear()
+
+
+def _closed(tmp_path, catalog_fn, **kw):
+    kw.setdefault("presets", presets_mod.load_presets(tmp_path / "p.json"))
+    kw.setdefault("bio_fn", lambda ce: "bio")
+    kw.setdefault("qb_module", None)
+    return QuickBattleSetupPanel(catalog_fn=catalog_fn, **kw)
+
+
+def test_prewarm_does_the_stats_work_so_the_first_open_probes_nothing(tmp_path):
+    """Measured 2026-10-17: the first open spent 1.4 s of 1.5 s probing hull
+    and shield totals (one hardpoint run per ship). prewarm() does that while
+    Quick Battle loads; the first catalog push then reads the warm cache."""
+    stats = _CountingStats()
+    p = _closed(tmp_path, lambda: list(CATALOG), stats=stats)
+    p.prewarm()
+    assert sorted(stats.probed) == sorted(c.ship_id for c in CATALOG)
+    stats.probed.clear()
+    p.open()
+    assert "setQuickBattleCatalog(" in p.render_payload()
+    assert stats.probed == [] and stats.resets == 0
+
+
+def test_prewarm_warms_bios_icons_and_insignia(tmp_path, monkeypatch):
+    from engine.ui import quick_battle_setup_panel as mod
+    seen = {"bio": [], "icon": [], "insignia": []}
+    monkeypatch.setattr(mod.QuickBattleSetupPanel, "_icon",
+                        staticmethod(lambda stem: seen["icon"].append(stem)))
+    monkeypatch.setattr(mod.QuickBattleSetupPanel, "_insignia",
+                        staticmethod(lambda name: seen["insignia"].append(name)))
+    p = _closed(tmp_path, lambda: list(CATALOG), stats=_Stats(),
+                bio_fn=lambda ce: seen["bio"].append(ce.ship_id))
+    p.prewarm()
+    ids = {c.ship_id for c in CATALOG}
+    assert set(seen["bio"]) == ids and ids <= set(seen["icon"])
+    assert "Federation" in seen["insignia"] and "Romulan" in seen["insignia"]
+
+
+def test_prewarm_has_no_game_state_side_effects(tmp_path, monkeypatch):
+    """Warming must not reconcile the scenario or sync the SDK (preload
+    manifests, XO Start button): that stays where it happened before, on the
+    first real refresh."""
+    from types import SimpleNamespace
+    from engine.quickbattle import spawn
+    synced = []
+    monkeypatch.setattr(spawn, "sync_sdk", lambda qb, plan: synced.append(plan))
+    qb = SimpleNamespace(bInSimulation=0)
+    p = _closed(tmp_path, lambda: list(CATALOG), stats=_Stats(), qb_module=qb)
+    p.prewarm()
+    assert synced == []
+    p.open()
+    p.render_payload()
+    assert len(synced) == 1
+
+
+def test_a_catalog_change_after_prewarm_still_resets_the_stats(tmp_path):
+    cat = list(CATALOG)
+    stats = _CountingStats()
+    p = _closed(tmp_path, lambda: list(cat), stats=stats)
+    p.prewarm()
+    cat.append(_ce("Akira"))
+    p.open()
+    p.render_payload()
+    assert stats.resets == 1
