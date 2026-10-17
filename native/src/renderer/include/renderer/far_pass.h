@@ -31,6 +31,11 @@ namespace renderer {
 class Pipeline;
 struct Lighting;
 
+// Warp-tunnel atlas prefetch: at most this many decode workers at once. Each
+// is two 512^2 decodes + an 8-pass dilate; the catalogue has ~37 atlases, and
+// one thread each would compete with the main thread on a 4-8 core machine.
+inline constexpr int kMaxAtlasDecodesInFlight = 4;
+
 class FarPass {
 public:
     FarPass() = default;
@@ -110,22 +115,29 @@ public:
     // path -- the host then tells FarField the rock has no impostor.
     bool has_atlas(int index) { return atlas_for(index) != nullptr; }
 
-    // Warp-tunnel preload: start decoding + dilating (CPU) every atlas in the
-    // path list that is not loaded, failed or already pending, each on its
-    // own worker thread (std::async). No GL; nothing is installed yet. A rock
-    // with an empty path (no impostor) is skipped. set_atlas_paths and the
-    // destructor join and drop any decode still pending.
+    // Warp-tunnel preload: decode + dilate (CPU) every atlas in the path list
+    // that is not loaded, failed, pending or queued, on worker threads
+    // (std::async) -- at most kMaxAtlasDecodesInFlight at once; the rest queue
+    // (paths resolved now, on the main thread) and start from
+    // pump_atlas_uploads as slots free. No GL; nothing is installed yet. A rock
+    // with an empty path (no impostor) is skipped. atlas_for on a queued
+    // index takes it off the queue and loads it lazily. set_atlas_paths and
+    // the destructor drop the queue and join and drop any decode still pending.
     void prefetch_atlases();
     // Upload (GL must be current) up to `max_uploads` prefetched atlases whose
-    // decode has FINISHED -- never waits on a worker -- and return how many
-    // are still pending. A decode that threw becomes a remembered failure
+    // decode has FINISHED -- never waits on a worker -- then start queued
+    // decodes into the freed slots, and return how many are still pending
+    // (in flight + queued). A decode that threw becomes a remembered failure
     // (as a lazy load's would) and costs no budget.
     int pump_atlas_uploads(int max_uploads);
-    // TEST-ONLY: block until every pending decode has finished (installs nothing).
+    // TEST-ONLY: block until every started decode has finished (installs
+    // nothing, starts nothing from the queue).
     void debug_wait_atlas_decodes();
     // TEST-ONLY: atlas image files decoded so far (two per atlas), lazily or
     // by a worker -- pins that a pending atlas is never decoded twice.
     int debug_decode_count() const { return decodes_.load(); }
+    // TEST-ONLY: decode workers started and not yet installed.
+    int debug_decodes_in_flight() const { return static_cast<int>(pending_.size()); }
 
     // TEST-ONLY: inject an atlas instead of loading files.
     void debug_set_atlas(int index, const assets::Image& albedo, const assets::Image& normal);
@@ -142,6 +154,8 @@ private:
     // Wait for `index`'s pending decode and install it (or remember the
     // failure); erases the pending entry. True when installed.
     bool finish_pending(int index);
+    // Start queued decodes while fewer than kMaxAtlasDecodesInFlight run.
+    void start_queued_decodes();
     void ensure_geometry();
 
     std::vector<std::pair<std::string, std::string>> paths_;
@@ -149,6 +163,9 @@ private:
     std::set<int> failed_;                  // warned once; never retried
     std::atomic<int> decodes_{0};           // bumped by workers: declared before pending_
     std::map<int, std::future<AtlasCpu>> pending_;   // prefetched, not yet installed
+    // Prefetched but not started (over the in-flight cap): index -> resolved
+    // (albedo, normal) paths. Main thread only.
+    std::map<int, std::pair<std::string, std::string>> queued_;
     std::uint32_t vao_ = 0;
     std::uint32_t corner_vbo_ = 0;
     std::uint32_t instance_vbo_ = 0;

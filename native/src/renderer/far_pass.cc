@@ -132,6 +132,7 @@ void dilate_coverage(assets::Image& img, int passes) {
 }
 
 FarPass::~FarPass() {
+    queued_.clear();
     pending_.clear();   // joins any worker still decoding (it writes decodes_)
     atlases_.clear();
     if (vao_ != 0) { GLuint v = vao_; glDeleteVertexArrays(1, &v); }
@@ -148,6 +149,7 @@ FarPass::~FarPass() {
 }
 
 void FarPass::set_atlas_paths(std::vector<std::pair<std::string, std::string>> albedo_normal) {
+    queued_.clear();   // queued for the OLD paths: never started
     pending_.clear();  // decodes of the OLD paths: joined and dropped, never installed
     paths_ = std::move(albedo_normal);
     failed_.clear();   // new paths: a failure is retried, not remembered
@@ -186,12 +188,23 @@ void FarPass::prefetch_atlases() {
     for (std::size_t i = 0; i < paths_.size(); ++i) {
         const int index = static_cast<int>(i);
         if (atlases_.count(index) != 0 || failed_.count(index) != 0 ||
-            pending_.count(index) != 0)
+            pending_.count(index) != 0 || queued_.count(index) != 0)
             continue;
         // No impostor (empty path): never drawn, so never loaded -- as lazily.
         if (paths_[i].first.empty() || paths_[i].second.empty()) continue;
-        const std::string albedo = resolve_atlas_path(paths_[i].first);
-        const std::string normal = resolve_atlas_path(paths_[i].second);
+        queued_.emplace(index, std::make_pair(resolve_atlas_path(paths_[i].first),
+                                              resolve_atlas_path(paths_[i].second)));
+    }
+    start_queued_decodes();
+}
+
+void FarPass::start_queued_decodes() {
+    while (!queued_.empty() &&
+           static_cast<int>(pending_.size()) < kMaxAtlasDecodesInFlight) {
+        const auto it = queued_.begin();
+        const int index = it->first;
+        const std::string albedo = it->second.first;
+        const std::string normal = it->second.second;
         try {
             pending_.emplace(index, std::async(std::launch::async,
                                                [albedo, normal, decodes = &decodes_] {
@@ -201,8 +214,10 @@ void FarPass::prefetch_atlases() {
                                                    return a;
                                                }));
         } catch (const std::system_error&) {
-            return;   // no thread to be had: the rest load lazily, as before
+            queued_.clear();   // no thread to be had: the rest load lazily, as before
+            return;
         }
+        queued_.erase(index);
     }
 }
 
@@ -217,7 +232,8 @@ int FarPass::pump_atlas_uploads(int max_uploads) {
         ++it;   // finish_pending erases `index`'s entry
         if (finish_pending(index)) ++uploaded;
     }
-    return static_cast<int>(pending_.size());
+    start_queued_decodes();
+    return static_cast<int>(pending_.size() + queued_.size());
 }
 
 void FarPass::debug_wait_atlas_decodes() {
@@ -235,6 +251,7 @@ const FarPass::AtlasGpu* FarPass::atlas_for(int index) {
         DAUNTLESS_FRAME_SCOPE("rock.atlas.load");   // the wait + upload left on the frame
         return finish_pending(index) ? &atlases_.at(index) : nullptr;
     }
+    queued_.erase(index);   // queued, not started: the lazy load below replaces it
     if (index < 0 || static_cast<std::size_t>(index) >= paths_.size()) {
         failed_.insert(index);
         std::fprintf(stderr, "[far_pass] no atlas path for catalogue rock %d\n", index);

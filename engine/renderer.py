@@ -739,13 +739,15 @@ def far_clear() -> None:
 
 def far_prefetch_atlases() -> None:
     """Start decoding every impostor atlas not yet loaded, on worker threads
-    (warp-tunnel preload). No GL work; a no-op before the far pass exists."""
+    (warp-tunnel preload) -- at most kMaxAtlasDecodesInFlight at once, the
+    rest queued for the pump. No GL work; a no-op before the far pass exists."""
     _h.far_prefetch_atlases()
 
 
 def far_pump_atlas_uploads(max_uploads: int) -> int:
     """Upload at most `max_uploads` prefetched atlases whose decode finished
-    (never waits on one) and return how many are still pending."""
+    (never waits on one), start queued decodes into the freed slots, and
+    return how many are still pending (in flight + queued)."""
     return _h.far_pump_atlas_uploads(int(max_uploads))
 
 

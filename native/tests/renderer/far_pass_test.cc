@@ -1352,3 +1352,52 @@ TEST_F(FarPassPrefetchTest, PrefetchSkipsRocksWithNoAtlasPath) {
     EXPECT_TRUE(pass.atlas_loaded(0));
     EXPECT_FALSE(pass.atlas_loaded(1));
 }
+
+// At most kMaxAtlasDecodesInFlight workers at once; the rest queue and start
+// from the pump as slots free, until every atlas is installed, each decoded once.
+TEST_F(FarPassPrefetchTest, PrefetchCapsDecodesInFlight) {
+    constexpr int kCap = renderer::kMaxAtlasDecodesInFlight;
+    constexpr int kN = kCap + 3;
+    renderer::FarPass pass;
+    pass.set_atlas_paths(atlas_paths(kN));
+    pass.prefetch_atlases();
+    EXPECT_EQ(pass.debug_decodes_in_flight(), kCap);
+    pass.debug_wait_atlas_decodes();
+    EXPECT_EQ(pass.debug_decode_count(), 2 * kCap) << "no worker past the cap";
+    EXPECT_EQ(pass.pump_atlas_uploads(0), kN) << "queued atlases count as pending";
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (pass.pump_atlas_uploads(1) > 0) {
+        ASSERT_LE(pass.debug_decodes_in_flight(), kCap);
+        ASSERT_LT(std::chrono::steady_clock::now(), deadline) << "pending decodes never finished";
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    for (int i = 0; i < kN; ++i) EXPECT_TRUE(pass.atlas_loaded(i)) << "rock " << i;
+    EXPECT_EQ(pass.debug_decode_count(), 2 * kN) << "each atlas decoded once";
+}
+
+// atlas_for on a queued (not yet started) index loads it lazily and takes it
+// off the queue, so the pump never decodes it again.
+TEST_F(FarPassPrefetchTest, AtlasForOnQueuedIndexLoadsOnce) {
+    constexpr int kN = renderer::kMaxAtlasDecodesInFlight + 2;
+    renderer::FarPass pass;
+    pass.set_atlas_paths(atlas_paths(kN));
+    pass.prefetch_atlases();
+    EXPECT_TRUE(pass.has_atlas(kN - 1));
+    EXPECT_TRUE(pass.atlas_loaded(kN - 1));
+    EXPECT_EQ(pass.pump_atlas_uploads(0), kN - 1) << "no longer queued";
+    pump_until_done(pass);
+    for (int i = 0; i < kN; ++i) EXPECT_TRUE(pass.atlas_loaded(i)) << "rock " << i;
+    EXPECT_EQ(pass.debug_decode_count(), 2 * kN) << "the queued one decoded once";
+}
+
+// New paths drop the queue too: nothing queued for the old paths ever starts.
+TEST_F(FarPassPrefetchTest, SetAtlasPathsClearsTheQueue) {
+    constexpr int kN = renderer::kMaxAtlasDecodesInFlight + 2;
+    renderer::FarPass pass;
+    pass.set_atlas_paths(atlas_paths(kN));
+    pass.prefetch_atlases();
+    pass.set_atlas_paths({});
+    EXPECT_EQ(pass.pump_atlas_uploads(4), 0);
+    EXPECT_EQ(pass.debug_decodes_in_flight(), 0);
+    for (int i = 0; i < kN; ++i) EXPECT_FALSE(pass.atlas_loaded(i));
+}
