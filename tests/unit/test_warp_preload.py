@@ -184,3 +184,110 @@ def test_a_failing_loader_does_not_block_ready(monkeypatch):
     p.step()
     assert p.ready()
     assert len(logged) == 1
+
+
+# -- F2: one planning failure never drops another section ---------------------
+
+def _boom(*_a, **_k):
+    raise RuntimeError("boom")
+
+
+def _swallowed(monkeypatch):
+    logged = []
+    monkeypatch.setattr("engine.dev_mode.log_swallowed",
+                        lambda ctx, exc: logged.append(ctx))
+    return logged
+
+
+def test_planet_models_raising_still_kicks_the_haze(monkeypatch):
+    logged = _swallowed(monkeypatch)
+    r = FakeRenderer(prebuilt=False)
+    p = Preload("Mapped", renderer=r, haze_enabled=lambda: True,
+                planet_models=_boom, load_planet=lambda m: None,
+                ships=lambda s: [], load_ship=lambda s: None)
+    p.step()
+    assert r.prebuild_calls == [PROFILE]
+    assert r.prefetch_calls == 1
+    assert p._queue == []
+    assert not p.ready()                    # still waits on the haze
+    assert logged
+
+
+def test_ships_raising_still_kicks_the_haze(monkeypatch):
+    _swallowed(monkeypatch)
+    r = FakeRenderer(prebuilt=True)
+    log = []
+    p = Preload("Mapped", renderer=r, haze_enabled=lambda: True,
+                planet_models=lambda s: ["a"],
+                load_planet=lambda m: log.append(m),
+                ships=_boom, load_ship=lambda s: None)
+    p.step()
+    assert r.prebuild_calls == [PROFILE] and r.prefetch_calls == 1
+    assert log == ["a"]
+    p.replan()                              # a raising replan is swallowed too
+
+
+def test_profile_raising_still_loads_and_does_not_wait_on_haze(monkeypatch):
+    logged = _swallowed(monkeypatch)
+    monkeypatch.setattr("engine.system_haze.profile_dict_for_set", _boom)
+    r = FakeRenderer(prebuilt=False)
+    p, r, log, _ = make(renderer=r, planets=["a"], ships=[Ship("s1")])
+    p.step()
+    p.step()
+    assert log == [("planet", "a"), ("ship", "s1")]
+    assert r.prebuild_calls == []
+    assert r.prefetch_calls == 1
+    assert p.ready()
+    assert logged
+
+
+def test_prebuild_raising_does_not_wait_on_haze(monkeypatch):
+    _swallowed(monkeypatch)
+    r = FakeRenderer(prebuilt=False)
+    r.system_nebula_prebuild = _boom
+    p, r, _, _ = make(renderer=r)
+    p.step()
+    assert r.prefetch_calls == 1
+    assert p.ready()
+
+
+def test_prefetch_raising_does_not_block_ready(monkeypatch):
+    _swallowed(monkeypatch)
+    r = FakeRenderer(prebuilt=True, pending=0)
+    r.far_prefetch_atlases = _boom
+    p, r, _, _ = make(renderer=r)
+    p.step()
+    assert p.ready()
+
+
+def test_pump_raising_does_not_propagate(monkeypatch):
+    logged = _swallowed(monkeypatch)
+    r = FakeRenderer(prebuilt=True)
+    r.far_pump_atlas_uploads = _boom
+    p, r, _, _ = make(renderer=r)
+    p.step()
+    assert logged
+    assert p.ready()                        # fail open
+
+
+# -- F6: ships are deduped by the object, not id() ------------------------------
+
+def test_a_ship_in_both_the_initial_and_replanned_list_loads_once():
+    s1 = Ship("s1")
+    p, r, log, ships = make(ships=[s1])
+    p.step()
+    ships.append(Ship("s2"))
+    p.replan()
+    p.step()
+    p.step()
+    assert log == [("ship", "s1"), ("ship", "s2")]
+
+
+def test_an_id_collision_never_collapses_two_ships(monkeypatch):
+    """id() is only unique among LIVE objects: a recycled id must never make
+    a different ship look already-loaded."""
+    monkeypatch.setattr(warp_preload, "id", lambda _o: 42, raising=False)
+    p, r, log, _ = make(ships=[Ship("s1"), Ship("s2")])
+    p.step()
+    p.step()
+    assert log == [("ship", "s1"), ("ship", "s2")]

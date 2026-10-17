@@ -27,9 +27,19 @@ class Preload:
         self._seen = set()      # keys ever queued (done work is kept)
 
     # -- planning ---------------------------------------------------------
+    # Every planning section is guarded on its own: one raising (a bad map
+    # entry, a broken set) must never drop another -- above all the haze
+    # prebuild, whose miss is a multi-second main-thread build on arrival.
     def _enqueue_ships(self):
-        for sh in self._ships(self._dest):
-            key = ("ship", id(sh))
+        try:
+            ships = list(self._ships(self._dest))
+        except Exception as exc:
+            dev_mode.log_swallowed("warp_preload ships", exc)
+            return
+        for sh in ships:
+            # Keyed on the ship itself (ships are hashable): an id() is only
+            # unique among live objects, so a recycled one could skip a ship.
+            key = ("ship", sh)
             if key in self._seen:
                 continue
             self._seen.add(key)
@@ -39,21 +49,44 @@ class Preload:
                 label = repr(sh)
             self._queue.append(["ship", key, "ship " + label, sh])
 
-    def _start(self):
-        self._started = True
-        for m in self._planet_models(self._dest):
+    def _enqueue_planets(self):
+        try:
+            models = list(self._planet_models(self._dest))
+        except Exception as exc:
+            dev_mode.log_swallowed("warp_preload planets", exc)
+            return
+        for m in models:
             key = ("planet", m)
             if key not in self._seen:
                 self._seen.add(key)
                 self._queue.append(["planet", key, "planet " + str(m), m])
-        self._enqueue_ships()
-        if self._haze_enabled():
-            self._profile = system_haze.profile_dict_for_set(self._dest)
-        if self._profile is not None:
-            self._r.system_nebula_prebuild(self._profile)
-        if self._atlases:
+
+    def _kick_haze(self):
+        try:
+            if self._haze_enabled():
+                profile = system_haze.profile_dict_for_set(self._dest)
+                if profile is not None:
+                    self._r.system_nebula_prebuild(profile)
+                    self._profile = profile   # awaited only once kicked
+        except Exception as exc:
+            dev_mode.log_swallowed("warp_preload haze", exc)
+
+    def _kick_atlases(self):
+        if not self._atlases:
+            return
+        try:
             self._r.far_prefetch_atlases()
             self._atlas_pending = 1  # unknown until the first pump
+        except Exception as exc:
+            dev_mode.log_swallowed("warp_preload atlases", exc)
+            self._atlases = False    # fail open: arrival takes the lazy path
+
+    def _start(self):
+        self._started = True
+        self._enqueue_planets()
+        self._enqueue_ships()
+        self._kick_haze()
+        self._kick_atlases()
 
     # -- per-frame --------------------------------------------------------
     def step(self):
@@ -69,7 +102,11 @@ class Preload:
             except Exception as exc:  # counted as done; never blocks the warp
                 dev_mode.log_swallowed("warp_preload " + label, exc)
         if self._atlases:
-            self._atlas_pending = self._r.far_pump_atlas_uploads(2)
+            try:
+                self._atlas_pending = self._r.far_pump_atlas_uploads(2)
+            except Exception as exc:  # fail open: never blocks the warp
+                dev_mode.log_swallowed("warp_preload atlas pump", exc)
+                self._atlas_pending = 0
 
     def replan(self):
         if self._started:
