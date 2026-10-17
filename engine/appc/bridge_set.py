@@ -272,6 +272,21 @@ class ZoomCameraObjectClass(_LoudStub):
         # SDK surface (MissionLib.ViewscreenOn / LookForward): aim at the
         # viewscreen (base-forward). Was a silent _LoudStub no-op.
         self._look_at = None
+        # It also supersedes a resting AT_LOOK_AT_ME aim, which BC never
+        # releases: E1M2 SecondHavenHail is AT_LOOK_AT_ME(Kiska) ->
+        # ViewscreenOn (-> LookForward in a cutscene, MissionLib.py:1260), and
+        # E7M2 is AT_LOOK_AT_ME(Saffi) -> ViewscreenOn -> LookForward. The host
+        # re-picks the engagement every frame and ranks a resting look-at above
+        # the viewscreen hail, so without this the camera stays on the officer.
+        # An AT_WATCH_ME follow is left alone: BC releases it explicitly.
+        try:
+            from engine import bridge_camera_watch
+            ctrl = bridge_camera_watch.get_controller()
+            if ctrl is not None:
+                ctrl.release_resting()
+        except Exception as exc:
+            from engine import dev_mode
+            dev_mode.log_swallowed("ZoomCamera.LookForward watch release", exc)
 
     def UpdateViewFrustum(self) -> None:
         # SDK surface: the frustum is realized by _BridgeCamera.compute_camera
