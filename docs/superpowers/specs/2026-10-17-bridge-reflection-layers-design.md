@@ -303,15 +303,19 @@ non-shown states.
   first after 17 steps ≈ 0.3 s (§4.7's "~7 frames" and "~42 steps" were for an
   even split that did not hold).
 - **Measured** (DBridge, QuickBattle headless, 600 frames, 6 probes at 384²,
-  GPU drained around each step, before R9): settled `bridge` scope 4.72 ms GPU;
-  refilling continuously at one step per frame 8.07 ms average (+3.35 ms). Per
-  step, average / max: faces ≈ 2.0 / ≤ 4.8 ms; mip chain + mip 0 0.87 / 5.1;
-  **mip 1 (all six faces) 8.99 / 14.59** — the one step far above "a few ms",
-  hence R9; mip 2 2.62 / 2.95; mip 3 2.16; mip 4 1.24; mip 5 0.87. A probe ≈
-  29 ms of stepped work, about twice §3's one-shot ~14 ms (not investigated;
-  the per-step drain was for measurement only). `bridge.probe_capture` is nested in `bridge`, so on
-  this Mac it reads CPU only; a step's GPU lands in `bridge`. *Not yet
-  re-measured after R9* (expected ~1.5 ms per mip-1 face).
+  GPU drained around each step). *Before R9*: settled `bridge` 4.72 ms GPU,
+  continuous fill at one step per frame 8.07 ms (+3.35 ms); **mip 1 (all six
+  faces) 8.99 / 14.59 ms** avg / max — the one step far above "a few ms",
+  hence R9. *After R9* (avg / max ms): faces 2.13/4.72, 2.22/3.11, 2.00/2.43,
+  2.06/3.18, 1.84/2.21, 2.00/3.02; mip chain + mip 0 0.93/5.73; mip-1 faces
+  2.00/3.58, 1.58/2.58, 1.60/2.58, 1.63/2.75, 1.70/4.54, 1.64/2.86; mip 2
+  2.95/5.20; mip 3 2.59/6.22; mip 4 1.24/1.82; mip 5 0.97/1.54. `bridge`
+  settled 4.72 ms, continuous fill 7.90 ms (+3.2 ms). So the worst step
+  averages ~3 ms, with occasional single-step peaks to ~6 ms. A probe ≈ 29–30
+  ms of stepped work against §3's one-shot ~14 ms — not investigated; the
+  harness's per-step glFinish inflates it. `bridge.probe_capture` is nested
+  in `bridge`, so on this Mac it reads CPU only; a step's GPU lands in
+  `bridge`.
 - **Fade** (§4.2): as amended above (R8). With no base weighing anything (a
   new bridge) the first valid shown base snaps to 1. A non-positive or
   non-finite dt moves nothing.
