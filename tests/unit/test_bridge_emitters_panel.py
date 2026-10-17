@@ -140,9 +140,11 @@ def payload(p):
 class FakeRuntime:
     def __init__(self):
         self.pushes = []
+        self.last_warnings = []
 
     def push(self, doc, matched=None):
         self.pushes.append((json.dumps(doc, sort_keys=True), dict(matched or {})))
+        self.last_warnings = []
         return []
 
 
@@ -237,17 +239,39 @@ class FakeConstantWarningRuntime:
     once, not re-announced and concatenated on every later edit."""
     def __init__(self, warning):
         self._warning = warning
+        self.last_warnings = []
 
     def push(self, doc, matched=None):
-        return [self._warning]
+        self.last_warnings = [self._warning]
+        return self.last_warnings
 
 
 class FakeToggleWarningRuntime:
     def __init__(self):
         self.on = True
+        self.last_warnings = []
 
     def push(self, doc, matched=None):
-        return ["too many bridge lights"] if self.on else []
+        self.last_warnings = ["too many bridge lights"] if self.on else []
+        return self.last_warnings
+
+
+def test_a_runtime_replan_s_warnings_reach_the_status_line(env):
+    """Spec 2026-10-17 §4.4: a bridge-quality re-plan happens in
+    BridgeRuntime.tick, not through the panel; its warnings replace the
+    status line's push warnings all the same."""
+    p, io, h, *_ = env
+    rt = FakeToggleWarningRuntime()
+    rt.on = False
+    p._runtime = rt
+    p.open()
+    click(p, h, (400.0, 300.0))
+    p.dispatch_event("material-new")
+    assert "layer cap" not in payload(p)["status"]
+    rt.last_warnings = ["bridge reflections: red wave on m2 dropped past the layer cap of 2"]
+    assert "layer cap of 2" in payload(p)["status"]
+    rt.last_warnings = []
+    assert "layer cap" not in payload(p)["status"]
 
 
 def test_push_warnings_replace_not_accumulate(env):

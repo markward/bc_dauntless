@@ -27,6 +27,11 @@ class BridgeRuntime:
         # The probe scales last pushed; the default until a bridge says otherwise.
         self._probe_scales = bridge_lighting.probe_scales()
         self._frames = {}
+        # The latest push()'s warnings, whoever made it (an editor edit,
+        # attach, or tick's quality re-plan, spec 2026-10-17 §4.4): the
+        # editor status line reads them. Replaced by every push, never
+        # accumulated; [] once detached.
+        self.last_warnings = []
 
     def attach(self, iid):
         """Neither overrides nor spots are cleared by C++ on a mission swap,
@@ -108,11 +113,15 @@ class BridgeRuntime:
         through a guard -- a value that slips past validation (or a
         stale/garbage instance id) must not raise into the host loop.
 
-        Requests no probe capture itself: BridgePass marks the probes dirty
-        when the overrides or spots it is handed DIFFER from what it holds,
-        so an editor action that changed nothing (an empty undo, a value set
-        to itself) costs no recapture. attach() requests one explicitly."""
+        Requests no probe capture itself: every input pushed here (overrides,
+        lights, glow captures, layers, probe scales) is part of the probe
+        signatures BridgePass derives, so it queues exactly the probes whose
+        inputs changed -- time-sliced, the old content showing until each
+        lands -- and an editor action that changed nothing (an empty undo, a
+        value set to itself) queues none. attach() requests one explicitly
+        (a new room). The warnings are also kept as last_warnings."""
         if self._iid is None:
+            self.last_warnings = []
             return []
         self._doc = doc
         if matched is not None:
@@ -170,6 +179,7 @@ class BridgeRuntime:
             self._push_live()
         except Exception as e:  # noqa: BLE001 - see docstring
             dev_mode.log_swallowed("bridge runtime push", e)
+        self.last_warnings = warnings
         return warnings
 
     def _frame_for(self, mesh):
@@ -202,8 +212,9 @@ class BridgeRuntime:
 
     def _push_probe_scales(self, doc):
         """Each state's reflection probe is captured under the room light of
-        that state (the bridge's own, else the default); recaptured only when
-        that changes."""
+        that state (the bridge's own, else the default). The scales are a
+        probe-signature input: a changed one queues only its own state's base,
+        so no capture is requested here."""
         default = bridge_lighting.probe_scales()
         scales = tuple(d if v is None else v for v, d in
                        zip((ld.room_light(doc, behaviour.state_name(i))
@@ -211,7 +222,6 @@ class BridgeRuntime:
         if scales != self._probe_scales:
             self._probe_scales = scales
             self._io.set_bridge_probe_scales(scales)
-            self._io.request_bridge_probe_capture()
 
     def on_alert(self, level):
         """Start the cross-fade to a new bridge state (0-4, spec 2026-10-08-
@@ -231,7 +241,11 @@ class BridgeRuntime:
         self._fade.advance(dt)
         try:
             # A quality change re-plans the layers (spec 2026-10-17 §4.4).
-            if self._io.bridge_quality() != self._plan_quality:
+            # The quality is recorded BEFORE the push: a push that fails
+            # part-way is logged once, not retried every frame.
+            quality = self._io.bridge_quality()
+            if quality != self._plan_quality:
+                self._plan_quality = quality
                 self.push(self._doc)
         except Exception as e:  # noqa: BLE001 - never let bridge data kill the frame
             dev_mode.log_swallowed("bridge runtime quality replan", e)
@@ -267,3 +281,4 @@ class BridgeRuntime:
             self._frames = {}
             self._built = None
             self._plan, self._plan_quality = probe_layers.EMPTY, None
+            self.last_warnings = []

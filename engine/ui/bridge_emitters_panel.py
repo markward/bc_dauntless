@@ -91,7 +91,6 @@ class BridgeEmittersPanel(Panel):
         self._hover_mesh = -1
         self._cycle = PickCycle()
         self._status = ""
-        self._push_warnings = []       # REPLACED by each push, never accumulated
         self._pushed_highlight = None
         self._h_for_release = None
         self._state = "green"          # the previewed bridge state (§13.1)
@@ -553,21 +552,27 @@ class BridgeEmittersPanel(Panel):
         BridgeRuntime.push() already guards itself; this only has to guard
         the lack of a runtime/attached model.
 
-        `_push_warnings` is REPLACED by this call's result, never appended:
-        a persistent condition (too many spot lights, a non-finite value)
-        would otherwise re-announce itself on every subsequent edit and grow
-        the status line without bound. The current push's warnings, not a
-        history of every past one, is what `_status_text()` shows."""
-        self._push_warnings = []
+        The status line shows the runtime's last_warnings: REPLACED by every
+        push, never appended -- a persistent condition (too many spot lights,
+        a non-finite value) would otherwise re-announce itself on every
+        subsequent edit and grow the status line without bound."""
         if self._runtime and self._info:
             matched = ld.match_shapes(self._doc, self._info["meshes"])[0]
-            self._push_warnings = self._runtime.push(self._doc, matched)
+            self._runtime.push(self._doc, matched)
 
     def _status_text(self):
-        extra = "; ".join(self._push_warnings)
+        extra = "; ".join(self._current_push_warnings())
         if self._status and extra:
             return f"{self._status}; {extra}"
         return self._status or extra
+
+    def _current_push_warnings(self):
+        """The latest push's warnings, whoever pushed: an edit here, or the
+        runtime's own bridge-quality re-plan in BridgeRuntime.tick, which
+        never goes through the panel (spec 2026-10-17 §4.4)."""
+        if self._runtime is None or not self._info:
+            return []
+        return self._runtime.last_warnings
 
     def _can_save(self):
         return bool(self._info and self._load and self._load.error is None
