@@ -134,3 +134,17 @@ TEST(BridgeProbeSignature, GlowCaptureBaseMovesItsState) {
     p.set_glow_captures(5, {g});
     EXPECT_EQ(moved(before, sigs(p)), std::vector<int>({0}));
 }
+
+TEST(BridgeProbeSignature, OutOfRangeLayerStatesAreDropped) {
+    renderer::BridgePass p;
+    EXPECT_EQ(p.set_probe_layers({2, -1, 5, 4}), static_cast<std::size_t>(2));
+    EXPECT_EQ(p.probe_count(), kBridgeStates + 2);
+}
+
+TEST(BridgeProbeSignature, OutOfRangeProbeAndScaleAreSafe) {
+    renderer::BridgePass p;
+    EXPECT_EQ(p.probe_scale(-1), 0.0f);
+    EXPECT_EQ(p.probe_scale(5), 0.0f);
+    EXPECT_EQ(p.probe_signature(-1), 0u);
+    EXPECT_EQ(p.probe_signature(p.probe_count()), 0u);
+}

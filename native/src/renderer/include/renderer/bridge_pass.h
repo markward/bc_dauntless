@@ -11,6 +11,7 @@
 #include <assets/material.h>
 #include <assets/texture.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -283,12 +284,21 @@ public:
     void set_probe_scales(const std::array<float, kBridgeStates>& scales) {
         scales_ = scales;
     }
+    /// 0 for a state outside [0, kBridgeStates).
     float probe_scale(int state) const {
-        return scales_[static_cast<std::size_t>(state)];
+        return (state >= 0 && state < kBridgeStates)
+            ? scales_[static_cast<std::size_t>(state)] : 0.0f;
     }
     /// The state each animation layer k belongs to (probe id kBridgeStates+k).
-    void set_probe_layers(std::vector<int> layer_states) {
+    /// Entries outside [0, kBridgeStates) are dropped; returns how many.
+    std::size_t set_probe_layers(std::vector<int> layer_states) {
+        const std::size_t before = layer_states.size();
+        layer_states.erase(
+            std::remove_if(layer_states.begin(), layer_states.end(),
+                           [](int s) { return s < 0 || s >= kBridgeStates; }),
+            layer_states.end());
         layer_states_ = std::move(layer_states);
+        return before - layer_states_.size();
     }
     /// kBridgeStates base probes + one per layer.
     int probe_count() const {
