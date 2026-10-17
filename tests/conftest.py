@@ -1003,6 +1003,12 @@ def _reset_leakable_engine_globals():
         _articulation.reset()
     except Exception:
         pass
+    # Physical-parent preview overlay + one-time missing-part warnings.
+    try:
+        from engine.appc import physical_parents as _physical_parents
+        _physical_parents.reset()
+    except Exception:
+        pass
     # SPV Model Parts pane: expanded/selection are module-level (mirrors the
     # panel's own session state) so one test's selection would otherwise
     # decide whether the next test's pane starts expanded/selected.
