@@ -73,7 +73,8 @@ def wave_factor(anim, t) -> float:
     return lo + (1.0 - lo) * f
 
 
-def output(material, state, t, has_map=False, for_light=False):
+def output(material, state, t, has_map=False, for_light=False, waves=True):
+    """`waves=False` treats every Animation factor as 1 (the peak)."""
     rgb, k, f, overridden = [0.0, 0.0, 0.0], 0.0, 1.0, False
     for m in material.get("modifiers", ()):
         if state not in m["scope"]:
@@ -86,7 +87,7 @@ def output(material, state, t, has_map=False, for_light=False):
             for i in range(3):
                 rgb[i] += float(m["tint"][i]) * lv
             k += lv
-        elif m["type"] == "animation":
+        elif m["type"] == "animation" and waves:
             f *= wave_factor(m, t)
     if not overridden and state != "offline":
         k = float(material.get("emission", 1.0 if has_map else 0.0))
