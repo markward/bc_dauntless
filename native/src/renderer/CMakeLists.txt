@@ -233,6 +233,7 @@ add_library(renderer STATIC
     bridge_pass.cc
     bridge_ao_pass.cc
     bridge_probe.cc
+    bridge_probe_array.cc
     viewscreen_static_pass.cc
     light_matrix.cc
     shadow_map_target.cc
