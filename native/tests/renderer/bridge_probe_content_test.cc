@@ -198,6 +198,32 @@ TEST_F(BridgeProbeContent, OfflineBaseDarkensTheTextureDefault) {
     EXPECT_LT(offline.g, 1e-3f);
 }
 
+// A MATERIAL glow through the emissive map (src 0) lands as map x colour,
+// decoded, in its base -- and still shows offline, where only the
+// texture-level default goes dark (spec §13.1).
+TEST_F(BridgeProbeContent, MapGlowShowsMapTimesColourEvenOffline) {
+    lighting.ambient = glm::vec3(0.0f);   // the texel is the glow alone
+    const glm::vec3 map(0.5f, 0.8f, 0.25f);
+    give_wall_emissive({map, 1.0f});
+    renderer::BridgeGlowCapture g;
+    g.mesh = kWallMesh;
+    g.src = 0;
+    g.base[0] = {1.0f, 2.0f, 0.5f};
+    g.base[renderer::kBridgeStateOffline] = glm::vec3(1.0f);
+    pass->set_glow_captures(handle(), {g});
+    const glm::vec3 green = centre(capture(0), kFaceMinusX, 0);
+    const glm::vec3 offline = centre(capture(renderer::kBridgeStateOffline), kFaceMinusX, 0);
+    const glm::vec3 want_green = glm::pow(map * g.base[0], glm::vec3(2.2f));
+    const glm::vec3 want_offline = glm::pow(map, glm::vec3(2.2f));
+    for (int i = 0; i < 3; ++i) {
+        EXPECT_NEAR(green[i], want_green[i], 0.03f * want_green[i] + 1e-3f) << i;
+        EXPECT_NEAR(offline[i], want_offline[i], 0.03f * want_offline[i] + 1e-3f) << i;
+    }
+    EXPECT_GT(green.g, 1.0f);             // 1.6 decoded: uncapped
+    EXPECT_GT(offline.g, 0.5f);           // not dark
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
 // A light that animates in red is 0 in red's base: the base matches the same
 // room with no spot at all (and the spot really does light the floor when it
 // is steady, so the comparison is not vacuous).

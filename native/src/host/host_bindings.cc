@@ -5007,10 +5007,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
               d["base_weights"] = bw;
               return d;
           },
-          "Test/diagnostic snapshot of the bridge pass's probe state (origin, "
-          "scales, capture_pending, probes_valid, alert_ambient_scale, "
-          "alert_level); "
-          "None before init().");
+          "Test/diagnostic snapshot of the bridge pass's probe state: origin, "
+          "scales, probe_count (5 bases + one per layer), capture_pending "
+          "(the time-sliced capture queue has work or a probe in flight), "
+          "probes_valid (the shown state's base holds a capture), "
+          "alert_ambient_scale, alert_level, base_weights (each state base's "
+          "cross-fade weight); None before init().");
 
     m.def("bridge_probe_signatures",
           []() -> py::object {

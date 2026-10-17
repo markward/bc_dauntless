@@ -692,9 +692,12 @@ def set_bridge_alert_level(level) -> None:
 
 
 def request_bridge_probe_capture() -> None:
-    """Recapture both bridge reflection probes in the next bridge frame (bridge
-    load, lighting / override / spot edits) -- never per frame. No-op
-    headless."""
+    """Recapture every bridge reflection probe (each state's base and every
+    layer), time-sliced over the following main-bridge frames, the old
+    content showing until each lands -- a bridge load only, never per frame.
+    Edits need no request: the renderer queues exactly the probes whose
+    inputs (lights, overrides, scales, glow captures, layers) changed, by
+    signature. No-op headless."""
     fn = getattr(_h, "request_bridge_probe_capture", None) if _h is not None else None
     if fn is not None:
         fn()

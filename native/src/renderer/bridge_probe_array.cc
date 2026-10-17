@@ -221,6 +221,8 @@ scenegraph::Camera BridgeProbeArray::begin_face(glm::vec3 origin) {
 bool BridgeProbeArray::prefilter_step() {
     // Steps after the faces: [6] the raw chain + mip 0, [7, 13) mip 1 one
     // face each (the costliest mip by far, ruling R9), then mips 2.. whole.
+    static_assert(kBridgeProbeMips >= 2,
+                  "the step mapping has a mip 0 step and six mip 1 steps");
     const int p = step_ - 6;
     const int mip = p == 0 ? 0 : (p <= 6 ? 1 : p - 5);
     if (mip == 0) {

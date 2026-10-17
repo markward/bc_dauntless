@@ -3,7 +3,7 @@
 
 #include <renderer/bridge_ao_pass.h>
 #include <renderer/bridge_lighting_tuning.h>   // kBridgeMaxSpots
-#include <renderer/bridge_probe.h>
+#include <renderer/bridge_probe.h>         // BrdfLut (BridgeProbe is test-only)
 #include <renderer/bridge_probe_array.h>
 #include <renderer/bridge_probe_schedule.h>  // kBridgeStates, next_probe
 #include <renderer/frame.h>
