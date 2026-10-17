@@ -48,8 +48,9 @@ def test_probe_blend_holds_with_zero_dt():
     assert b.update(2, 0.0) == 0.0
 
 
-def test_probe_scales_are_the_green_and_yellow_ambient():
-    assert bl.probe_scales() == (bl.ambient_scale_for_alert(0), bl.ambient_scale_for_alert(1))
+def test_probe_scales_has_five_states():
+    assert bl.probe_scales() == (1.5, 1.0, 1.0, 0.4, 1.0)
+    assert bl.probe_scales() == tuple(bl.ambient_scale_for_alert(i) for i in range(5))
 
 
 # ── Review fix round 1, item 1 (second bullet): a structural check that the

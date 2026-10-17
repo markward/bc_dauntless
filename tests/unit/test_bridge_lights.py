@@ -1,7 +1,7 @@
 """Object lights (spec §13.2)."""
 import pytest
 
-from engine.bridge_editor import behaviour as bh, lighting_doc as ld, lights
+from engine.bridge_editor import behaviour as bh, lighting_doc as ld, lights, probe_layers as pl
 
 
 def _doc():
@@ -36,15 +36,17 @@ def test_every_object_light_is_listed_in_mesh_order():
 
 def test_no_material_is_steady_white_with_light_scale():
     b = lights.build(_doc(), {"6:lamp": 2}, _links(_doc(), {"6:lamp": 2}))
-    assert b.spot_rows == [((0, 0, 9), (0, 0, -1), 10, 20, 50, (1.0, 1.0, 1.0), 1800,
-                            (1.0, 1.0, 1.0), (1.0, 1.0, 1.0))]
+    white = (1.0, 1.0, 1.0)
+    assert b.spot_rows == [((0, 0, 9), (0, 0, -1), 10, 20, 50, white, 1800,
+                            [white] * 5, [-1] * 5, [(0.0, 0.0, 0.0)] * 5)]
 
 
 def test_capture_colours_are_steady_states_only():
     b = lights.build(_doc(), MATCHED, _links(_doc(), MATCHED))
     a, _b, _c = b.spot_rows
-    assert a[7] == pytest.approx((1.0, 1.0, 1.0))      # green steady
-    assert a[8] == (0.0, 0.0, 0.0)                       # yellow: nothing scoped
+    caps = a[7]
+    assert caps[0] == pytest.approx((1.0, 1.0, 1.0))      # green steady
+    assert caps[1] == (0.0, 0.0, 0.0)                       # yellow: nothing scoped
 
 
 def test_live_colour_is_linear_radiance_and_off_states_are_zero():
@@ -75,7 +77,7 @@ def test_a_finish_only_material_keeps_the_light_steady_white():
     e["lights"] = [{"position": [0, 0, 0], "direction": [0, 0, -1], "intensity": 10000}]
     built = lights.build(d, {"299:": 1}, _links(d, {"299:": 1}))
     (spot,) = built.spot_rows
-    assert spot[7] == (1.0, 1.0, 1.0) and spot[8] == (1.0, 1.0, 1.0)
+    assert spot[7] == [(1.0, 1.0, 1.0)] * 5
     for s in ("green", "red", "offline"):
         (c,), _ = lights.live(built, bh.StateFade(s), 0.0)
         assert c == pytest.approx((10000.0, 10000.0, 10000.0))
@@ -150,7 +152,7 @@ def test_area_rows_carry_the_rectangle_range_colour_and_intensity():
     assert strip[:3] == (want.centre, want.half_u, want.half_v)
     assert strip[3] == 150 and strip[5] == 40
     assert panel[3] == lights.DEFAULT_RANGE and panel[5] == 2
-    assert panel[4] == panel[6] == (1.0, 1.0, 1.0)      # no material: steady white
+    assert panel[4] == panel[6][0] == (1.0, 1.0, 1.0)      # no material: steady white
 
 
 def test_spots_and_area_lights_share_one_budget_in_mesh_order():
@@ -276,6 +278,72 @@ def test_a_lights_only_state_colours_the_light_and_its_captures():
     b = lights.build(d, matched, _links(d, matched))
     [spot] = b.spot_rows
     want = tuple(c ** 2.2 for c in (1.0, 0.5, 0.25))
-    assert spot[5] == pytest.approx(want) and spot[7] == pytest.approx(want)
+    assert spot[5] == pytest.approx(want) and spot[7][0] == pytest.approx(want)
     [live] = lights.live(b, bh.StateFade("green"), 0.0)[0]
     assert live == pytest.approx(tuple(10 * c for c in want))
+
+
+# ── per-state capture rows and layers (spec 2026-10-17 §4.1) ───────────────
+
+def _alcove_doc():
+    d = ld.empty_doc("x")
+    d["materials"]["alcove"] = {"emission": 0, "modifiers": [
+        {"type": "state", "scope": ["green"], "tint": [1, 1, 1], "level": 1},
+        {"type": "state", "scope": ["red"], "tint": [1, 0.12, 0.08], "level": 0.5},
+        {"type": "animation", "scope": ["red"], "shape": "sine", "period_s": 2, "min": 0.2}]}
+    e = ld.object_entry(d, 5, "roof")
+    e["material"] = "alcove"
+    e["lights"] = [{"position": [1, 2, 3], "direction": [0, 0, -1], "intensity": 100}]
+    return d
+
+
+M1 = {"5:roof": 1}
+
+
+def _planned(d, cap=8):
+    resolved = _links(d, M1)
+    plan = pl.plan(d, resolved, {"alcove"}, frozenset(), cap)
+    return resolved, plan
+
+
+def test_capture_per_state_zero_when_animated():
+    d = _alcove_doc()
+    resolved, plan = _planned(d)
+    (row,) = lights.build(d, M1, resolved, plan=plan).spot_rows
+    caps, layers, rgbs = row[7], row[8], row[9]
+    assert caps[0] == pytest.approx((1.0, 1.0, 1.0))
+    assert caps[2] == (0.0, 0.0, 0.0)
+    assert layers == [-1, -1, 0, -1, -1]
+    assert rgbs[2] == pytest.approx(lights.to_linear((0.5, 0.06, 0.04)))
+    assert rgbs[0] == (0.0, 0.0, 0.0)
+
+
+def test_dropped_layer_member_is_absent():
+    d = _alcove_doc()
+    resolved, plan = _planned(d, cap=0)
+    (row,) = lights.build(d, M1, resolved, plan=plan).spot_rows
+    assert row[7][2] == (0.0, 0.0, 0.0)
+    assert row[8][2] == -1
+
+
+def test_live_equals_layer_times_value():
+    """The Python half of the linearity proof: live == layer_rgb x intensity x v."""
+    d = _alcove_doc()
+    resolved, plan = _planned(d)
+    built = lights.build(d, M1, resolved, plan=plan)
+    t = 0.75
+    (live,), _ = lights.live(built, bh.StateFade("red"), t)
+    rgb = built.spot_rows[0][9][2]
+    v = pl.layer_values(plan, t)[0]
+    assert live == pytest.approx(tuple(c * 100 * v for c in rgb), rel=1e-6)
+
+
+def test_area_rows_carry_per_state_captures_and_joins_last():
+    d = _alcove_doc()
+    d["objects"]["5:roof"]["lights"] = [{"shape": "panel", "intensity": 2}]
+    resolved, plan = _planned(d)
+    b = lights.build(d, M1, resolved, lambda mesh: PANEL_FRAME, plan=plan)
+    (row,) = b.area_rows
+    assert len(row) == 10
+    assert row[6][0] == pytest.approx((1.0, 1.0, 1.0)) and row[7] == [-1, -1, 0, -1, -1]
+    assert len(row[8]) == 5 and isinstance(row[9], int)

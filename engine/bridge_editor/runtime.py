@@ -5,7 +5,8 @@ from typing import Optional
 
 from engine import bridge_lighting, dev_mode, host_io
 from engine.bridge_editor import lighting_doc as ld
-from engine.bridge_editor import behaviour, glow, light_shapes, lights, materials
+from engine.bridge_editor import (behaviour, glow, light_shapes, lights, materials,
+                                  probe_layers)
 
 
 class BridgeRuntime:
@@ -19,6 +20,8 @@ class BridgeRuntime:
         self._meshes = []
         self._glow_shapes = []
         self._built = None
+        self._plan = probe_layers.EMPTY      # spec 2026-10-17 §4.4
+        self._plan_quality = None            # the bridge quality it was planned for
         self._fade = behaviour.StateFade()
         self._t = 0.0          # the bridge clock (spec §11.3): paused-aware dt
         # The probe scales last pushed; the default until a bridge says otherwise.
@@ -44,11 +47,9 @@ class BridgeRuntime:
         self._meshes, self._glow_shapes, self._resolved, self._mapped = [], [], {}, frozenset()
         self._frames = {}
         self._built = None
+        self._plan, self._plan_quality = probe_layers.EMPTY, None
         try:
-            self._io.set_bridge_material_overrides(None, [])
-            self._io.set_bridge_spots([])
-            self._io.set_bridge_area_lights([])
-            self._io.set_bridge_glow(None, [])
+            self._clear_io()
         except Exception as e:  # noqa: BLE001 - never let bridge data kill the frame
             dev_mode.log_swallowed("bridge runtime attach clear", e)
         try:
@@ -56,7 +57,7 @@ class BridgeRuntime:
             self._meshes = info.get("meshes", [])
             self._io.set_bridge_probe_origin(tuple(self._eye()))
             self._probe_scales = bridge_lighting.probe_scales()
-            self._io.set_bridge_probe_scales(*self._probe_scales)
+            self._io.set_bridge_probe_scales(self._probe_scales)
             h = info.get("content_hash", "")
             if not h:
                 self.detach()
@@ -79,6 +80,17 @@ class BridgeRuntime:
             self._io.request_bridge_probe_capture()
         except Exception as e:  # noqa: BLE001 - never let bridge data kill the frame
             dev_mode.log_swallowed("bridge runtime attach", e)
+
+    def _clear_io(self):
+        """Everything a bridge leaves in the renderer that C++ never clears
+        itself: overrides, lights, glow, and the probe plan's glow captures
+        and layers."""
+        self._io.set_bridge_material_overrides(None, [])
+        self._io.set_bridge_spots([])
+        self._io.set_bridge_area_lights([])
+        self._io.set_bridge_glow(None, [])
+        self._io.set_bridge_glow_captures(None, [])
+        self._io.set_bridge_probe_layers([])
 
     def push(self, doc, matched=None):
         """Re-push overrides, the static spot and area-light lists (geometry +
@@ -116,14 +128,28 @@ class BridgeRuntime:
                                      if (m.get("maps") or {}).get("emissive"))
             self._io.set_bridge_material_overrides(
                 self._iid, materials.overrides(doc, self._resolved))
+            # Spec 2026-10-17 §4.4: animated materials share one reflection
+            # layer per identical wave, capped by the bridge quality.
+            quality = self._io.bridge_quality()
+            light_materials = {self._resolved[self._matched[k]]
+                               for k, o in doc["objects"].items()
+                               if o.get("lights") and k in self._matched
+                               and self._matched[k] in self._resolved}
+            plan = probe_layers.plan(doc, self._resolved, light_materials, self._mapped,
+                                     probe_layers.layer_cap(quality))
+            self._plan, self._plan_quality = plan, quality
             built = lights.build(doc, self._matched, self._resolved,
-                                 self._frame_for, self._mapped)
+                                 self._frame_for, self._mapped, plan)
             self._built = built
             spot_list, area_list = built.spot_rows, built.area_rows
             self._glow_shapes, glow_warnings = glow.glow_objects(
                 doc, self._resolved, self._meshes)
+            self._io.set_bridge_probe_layers(
+                [behaviour.state_index(layer.state) for layer in plan.layers])
+            self._io.set_bridge_glow_captures(
+                self._iid, glow.captures(self._glow_shapes, plan))
             warnings = (ld.link_mismatches(doc, self._meshes, self._matched)
-                        + built.warnings + glow_warnings)
+                        + built.warnings + glow_warnings + plan.warnings)
             for w in warnings:
                 dev_mode.log_swallowed(
                     "bridge lighting emitters", ld.BridgeLightingError(w))
@@ -174,15 +200,16 @@ class BridgeRuntime:
         return ld.room_light(self._doc, behaviour.state_name(level))
 
     def _push_probe_scales(self, doc):
-        """The reflection probes are captured under the room light they
-        reflect (green probe: green; yellow/red probe: yellow -- as the spot
-        capture colours are); recaptured only when that changes."""
+        """Each state's reflection probe is captured under the room light of
+        that state (the bridge's own, else the default); recaptured only when
+        that changes."""
         default = bridge_lighting.probe_scales()
         scales = tuple(d if v is None else v for v, d in
-                       zip((ld.room_light(doc, "green"), ld.room_light(doc, "yellow")), default))
+                       zip((ld.room_light(doc, behaviour.state_name(i))
+                            for i in range(len(default))), default))
         if scales != self._probe_scales:
             self._probe_scales = scales
-            self._io.set_bridge_probe_scales(*scales)
+            self._io.set_bridge_probe_scales(scales)
             self._io.request_bridge_probe_capture()
 
     def on_alert(self, level):
@@ -222,10 +249,7 @@ class BridgeRuntime:
         from the panel, a frame in flight) is a no-op rather than acting on
         the instance that just went away."""
         try:
-            self._io.set_bridge_material_overrides(None, [])
-            self._io.set_bridge_spots([])
-            self._io.set_bridge_area_lights([])
-            self._io.set_bridge_glow(None, [])
+            self._clear_io()
         except Exception as e:  # noqa: BLE001 - never let bridge data kill the frame
             dev_mode.log_swallowed("bridge runtime detach", e)
         finally:
@@ -233,3 +257,4 @@ class BridgeRuntime:
             self._meshes, self._glow_shapes, self._resolved, self._mapped = [], [], {}, frozenset()
             self._frames = {}
             self._built = None
+            self._plan, self._plan_quality = probe_layers.EMPTY, None

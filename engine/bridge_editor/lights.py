@@ -1,6 +1,6 @@
 """Object lights (spec 2026-10-08-bridge-emitters §13.2, §11.4, §14, §16). The
 rows are built ONCE per push by `build()` -- every light of every matched
-object, mesh order, with green and yellow/red probe-capture colours baked in
+object, mesh order, with per-state probe-capture data baked in
 -- so a state change or a pulse never recaptures the probes; `live()` gives
 this frame's radiance for the built rows, in their own order. Spots, strip
 segments and panels share ONE budget of MAX_LIGHTS rows (§16.3, §16.8): a
@@ -11,11 +11,13 @@ of its mesh's resolved material (the object's link, else its texture's;
 `mapped` = the meshes whose texture has an `_emissive` map, for the
 unset-emission default), display -> linear by ^2.2; a material that sets no
 glow lights steady white. A capture colour is the steady value in that
-state, 0 when an animation runs there. A strip or panel's rectangle comes
+state, 0 when an animation runs there -- the wave then lives in a probe
+layer (probe_layers, spec 2026-10-17 §4.1): a row carries, per state, that
+layer's index (-1 none) and the light's at-peak colour. A strip or panel's rectangle comes
 from its object's frame (light_shapes, §16.2) via edge_snap."""
 from dataclasses import dataclass, field
 
-from engine.bridge_editor import behaviour, edge_snap
+from engine.bridge_editor import behaviour, edge_snap, probe_layers
 
 MAX_LIGHTS = 32
 DEFAULT_INTENSITY = 2000.0
@@ -50,12 +52,25 @@ def _material(doc, name):
     return mat if mat is not None and behaviour.drives_glow(mat) else behaviour.WHITE
 
 
-def _capture(mat, state, has_map):
-    if any(m["type"] == "animation" and state in m["scope"]
-           for m in mat.get("modifiers", ())):
-        return (0.0, 0.0, 0.0)
-    rgb, _ = behaviour.output(mat, state, 0.0, has_map, for_light=True)
-    return to_linear(rgb)
+def _captures(mat, name, has_map, plan):
+    """(caps5, layers5, layer_rgbs5) for one light, in state order (spec
+    2026-10-17 §4.1): the steady LINEAR colour where nothing animates there
+    (else black), the plan's layer index (-1 none) and, for a kept layer, the
+    at-peak LINEAR colour (waves off)."""
+    zero = (0.0, 0.0, 0.0)
+    caps, layers, rgbs = [], [], []
+    for state in sorted(behaviour.STATES, key=behaviour.state_index):
+        animated = plan.animated(name, state)
+        rgb, _ = behaviour.output(mat, state, 0.0, has_map, for_light=True)
+        caps.append(zero if animated else to_linear(rgb))
+        layer = plan.layer_of(name, state)
+        layers.append(layer)
+        if layer >= 0:
+            peak, _ = behaviour.output(mat, state, 0.0, has_map, for_light=True, waves=False)
+            rgbs.append(to_linear(peak))
+        else:
+            rgbs.append(zero)
+    return caps, layers, rgbs
 
 
 def _cross_len(a, b):
@@ -75,7 +90,8 @@ class Built:
     area_lit: list = field(default_factory=list)    # (light, material, has_map) per area row
 
 
-def build(doc, matched, resolved, frame_for=lambda mesh: None, mapped=frozenset()) -> Built:
+def build(doc, matched, resolved, frame_for=lambda mesh: None, mapped=frozenset(),
+          plan=probe_layers.EMPTY) -> Built:
     """Every light of every matched object, mesh order, as renderer rows (spec
     §16.3, §16.8). The budget of MAX_LIGHTS counts ROWS: a spot is one, a
     strip or panel one per rectangle (a snapped strip one per edge segment).
@@ -87,7 +103,8 @@ def build(doc, matched, resolved, frame_for=lambda mesh: None, mapped=frozenset(
     for key in sorted(matched, key=lambda k: matched[k]):
         obj = doc["objects"].get(key, {})
         mesh = matched[key]
-        mat = _material(doc, resolved.get(mesh))
+        mat_name = resolved.get(mesh)
+        mat = _material(doc, mat_name)
         has_map = mesh in mapped
         for i, light in enumerate(obj.get("lights", ())):
             label = f"{key} light {i + 1}"
@@ -121,19 +138,19 @@ def build(doc, matched, resolved, frame_for=lambda mesh: None, mapped=frozenset(
                 out.warnings.append(f"{label}: dropped (needs {cost} of the {MAX_LIGHTS} "
                                     f"bridge lights, {MAX_LIGHTS - used} left)")
                 continue
-            green = _capture(mat, "green", has_map)
-            alert = _capture(mat, "yellow", has_map)
+            caps, layers, rgbs = _captures(mat, mat_name, has_map, plan)
+            green = caps[0]
             if rects is None:
                 out.spot_rows.append((tuple(light["position"]), tuple(light["direction"]),
                                       light.get("inner_deg", 30), light.get("outer_deg", 60),
                                       light.get("range", DEFAULT_RANGE), green,
-                                      _intensity(light), green, alert))
+                                      _intensity(light), caps, layers, rgbs))
                 out.spot_lit.append((light, mat, has_map))
                 continue
             for r in rects:
                 out.area_rows.append((r.centre, r.half_u, r.half_v,
                                       light.get("range", DEFAULT_RANGE), green,
-                                      _intensity(light), green, alert, r.joins))
+                                      _intensity(light), caps, layers, rgbs, r.joins))
                 out.area_lit.append((light, mat, has_map))
     return out
 

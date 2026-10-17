@@ -195,7 +195,7 @@ def test_a_snapped_strip_s_join_bits_reach_lights_build():
     frames = {1: curve_fr, 2: _frame()}
     b = lights.build(d, matched, {}, frames.get)
     assert b.warnings == []
-    joins = [row[8] for row in b.area_rows]
+    joins = [row[9] for row in b.area_rows]
     n = len(joins) - 1                                # the last row is the lone panel
     assert n >= 2
     assert joins[:n] == [2] + [3] * (n - 2) + [1]

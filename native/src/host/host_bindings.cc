@@ -292,8 +292,7 @@ dauntless::BridgeHighlight g_bridge_highlight;
 // would drop exactly the values init() exists to apply.
 struct BridgeProbeSettings {
     glm::vec3 origin{0.0f};
-    float green = 1.0f;
-    float yellow_red = 1.0f;
+    std::array<float, renderer::kBridgeStates> scales{1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
     float mix = 0.0f;
     bool capture_pending = false;
 };
@@ -659,28 +658,79 @@ bool bridge_finite3(const glm::vec3& a) {
     return std::isfinite(a.x) && std::isfinite(a.y) && std::isfinite(a.z);
 }
 
-// Parses the optional per-light probe-capture colour pairs shared by
-// set_bridge_spots and set_bridge_area_lights (spec 2026-10-08-bridge-emitters
-// §11.4 / §16.3): [(green3, yellow/red3)] in the same order as the light rows.
-// Returns an empty vector for None, a cast failure, or a length mismatch
-// against `n` -- in every one of those cases the caller's rule is "no
-// captures: the probes see the live colour", so an empty return means exactly
-// that to both bindings.
-std::vector<std::pair<glm::vec3, glm::vec3>> parse_bridge_captures(
-    py::object captures, std::size_t n) {
-    std::vector<std::pair<glm::vec3, glm::vec3>> caps;
-    if (captures.is_none()) return caps;
+// One light's per-state probe-capture data (spec 2026-10-17 §4.1): five
+// LINEAR colours in state order (what the base probe of each state sees),
+// the animation layer each state's member belongs to (-1 = none) and the
+// at-peak colour it adds to that layer.
+struct BridgeCaptureRow {
+    glm::vec3 caps[renderer::kBridgeStates] = {};
+    int layers[renderer::kBridgeStates] = {-1, -1, -1, -1, -1};
+    glm::vec3 layer_rgbs[renderer::kBridgeStates] = {};
+};
+
+using BridgeV3 = std::tuple<float, float, float>;
+
+// Parses one (caps5, layers5, layer_rgbs5) triple, shared by the light rows
+// and the glow rows. False on a cast failure or any list not of length 5.
+bool parse_bridge_capture_row(py::handle item, BridgeCaptureRow* out) {
+    try {
+        auto t = item.cast<std::tuple<std::vector<BridgeV3>, std::vector<int>,
+                                      std::vector<BridgeV3>>>();
+        const auto& caps = std::get<0>(t);
+        const auto& layers = std::get<1>(t);
+        const auto& rgbs = std::get<2>(t);
+        const std::size_t n = static_cast<std::size_t>(renderer::kBridgeStates);
+        if (caps.size() != n || layers.size() != n || rgbs.size() != n) return false;
+        for (std::size_t i = 0; i < n; ++i) {
+            out->caps[i] = bridge_v3(caps[i]);
+            out->layers[i] = layers[i];
+            out->layer_rgbs[i] = bridge_v3(rgbs[i]);
+        }
+        return true;
+    } catch (const py::cast_error&) {
+        return false;
+    }
+}
+
+// Parses the optional per-light probe-capture rows shared by set_bridge_spots
+// and set_bridge_area_lights (spec 2026-10-08-bridge-emitters §11.4 / §16.3,
+// 2026-10-17 §4.1): one (caps5, layers5, layer_rgbs5) per light row, in row
+// order. Returns an empty vector for None, a cast failure, or a length
+// mismatch against `n` -- in every one of those cases the caller's rule is
+// "no captures: the probes see the live colour", so an empty return means
+// exactly that to both bindings.
+std::vector<BridgeCaptureRow> parse_bridge_captures(py::object captures, std::size_t n) {
+    std::vector<BridgeCaptureRow> rows;
+    if (captures.is_none()) return rows;
     try {
         for (auto item : captures) {
-            auto pr = item.cast<std::tuple<std::tuple<float, float, float>,
-                                           std::tuple<float, float, float>>>();
-            caps.emplace_back(bridge_v3(std::get<0>(pr)), bridge_v3(std::get<1>(pr)));
+            BridgeCaptureRow r;
+            if (!parse_bridge_capture_row(item, &r)) return {};
+            rows.push_back(r);
         }
-    } catch (const py::cast_error&) {
+    } catch (const py::error_already_set&) {
         return {};
     }
-    if (caps.size() != n) return {};
-    return caps;
+    if (rows.size() != n) return {};
+    return rows;
+}
+
+// True when every colour of the row, scaled by `k`, is finite.
+bool bridge_capture_finite(const BridgeCaptureRow& r, float k) {
+    for (int i = 0; i < renderer::kBridgeStates; ++i)
+        if (!bridge_finite3(r.caps[i] * k) || !bridge_finite3(r.layer_rgbs[i] * k)) return false;
+    return true;
+}
+
+// Copies a parsed row onto a light's capture fields, colours x `k`.
+template <typename Light>
+void apply_bridge_capture(Light& l, const BridgeCaptureRow& r, float k) {
+    l.has_capture = true;
+    for (int i = 0; i < renderer::kBridgeStates; ++i) {
+        l.capture_radiance[i] = r.caps[i] * k;
+        l.layer[i] = r.layers[i];
+        l.layer_radiance[i] = r.layer_rgbs[i] * k;
+    }
 }
 
 // Tracks key state from the previous frame() so key_pressed can detect
@@ -1127,9 +1177,7 @@ void init(int width, int height, const std::string& title) {
     g_bridge_pass->set_alert_ambient_scale(g_bridge_ambient_scale);
     g_bridge_pass->set_alert_level(g_bridge_alert_level);
     g_bridge_pass->set_probe_origin(g_bridge_probe.origin);
-    g_bridge_pass->set_probe_scales({g_bridge_probe.green, g_bridge_probe.yellow_red,
-                                                g_bridge_probe.yellow_red, g_bridge_probe.yellow_red,
-                                                g_bridge_probe.yellow_red});
+    g_bridge_pass->set_probe_scales(g_bridge_probe.scales);
     g_bridge_pass->set_probe_mix(g_bridge_probe.mix);
     if (g_bridge_probe.capture_pending) g_bridge_pass->request_probe_capture();
     g_bridge_probe.capture_pending = false;
@@ -4625,7 +4673,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               // colours (green, yellow/red), in input order, x that spot's
               // intensity. A length mismatch ignores them (the PBR-step rule:
               // the captures see the radiance).
-              const std::vector<std::pair<glm::vec3, glm::vec3>> caps =
+              const std::vector<BridgeCaptureRow> caps =
                   parse_bridge_captures(captures, spots.size());
               std::vector<renderer::BridgeSpot> v;
               v.reserve(spots.size());
@@ -4639,8 +4687,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       !std::isfinite(inner_deg) || !std::isfinite(outer_deg) ||
                       !std::isfinite(range) || !std::isfinite(intensity) ||
                       !bridge_finite3(bridge_v3(rgb) * intensity) ||
-                      (!caps.empty() && (!bridge_finite3(caps[i].first * intensity) ||
-                                         !bridge_finite3(caps[i].second * intensity)))) {
+                      (!caps.empty() && !bridge_capture_finite(caps[i], intensity))) {
                       ++invalid;
                       continue;
                   }
@@ -4659,12 +4706,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   sp.cos_outer = std::cos(glm::radians(outer));
                   sp.range = std::max(range, 0.0f);
                   sp.radiance = bridge_v3(rgb) * intensity;
-                  if (!caps.empty()) {
-                      sp.has_capture = true;
-                      sp.capture_radiance[0] = caps[i].first * intensity;
-                      for (int s = 1; s < renderer::kBridgeStates; ++s)
-                          sp.capture_radiance[s] = caps[i].second * intensity;
-                  }
+                  if (!caps.empty()) apply_bridge_capture(sp, caps[i], intensity);
                   v.push_back(sp);
               }
               const std::size_t cap = static_cast<std::size_t>(renderer::kBridgeMaxSpots);
@@ -4711,7 +4753,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                           std::tuple<float, float, float>,
                                           float>>& areas,
              py::object captures, py::object joins) -> std::size_t {
-              const std::vector<std::pair<glm::vec3, glm::vec3>> caps =
+              const std::vector<BridgeCaptureRow> caps =
                   parse_bridge_captures(captures, areas.size());
               // Spec §16.8: per-row join bits (pbr::area_join_weight), in
               // input order; anything unusable means no joins.
@@ -4736,8 +4778,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       !std::isfinite(range) || !(range > 0.0f) || !std::isfinite(intensity) ||
                       !bridge_finite3(bridge_v3(rgb) * intensity) ||
                       !(glm::length(glm::cross(hu, hv)) >= 1e-8f) ||
-                      (!caps.empty() && (!bridge_finite3(caps[i].first * intensity) ||
-                                         !bridge_finite3(caps[i].second * intensity)))) {
+                      (!caps.empty() && !bridge_capture_finite(caps[i], intensity))) {
                       ++invalid;
                       continue;
                   }
@@ -4747,12 +4788,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   al.half_v = hv;
                   al.range = range;
                   al.radiance = bridge_v3(rgb) * intensity;
-                  if (!caps.empty()) {
-                      al.has_capture = true;
-                      al.capture_radiance[0] = caps[i].first * intensity;
-                      for (int s = 1; s < renderer::kBridgeStates; ++s)
-                          al.capture_radiance[s] = caps[i].second * intensity;
-                  }
+                  if (!caps.empty()) apply_bridge_capture(al, caps[i], intensity);
                   if (!join_bits.empty()) al.joins = join_bits[i] & 3;
                   v.push_back(al);
               }
@@ -4833,16 +4869,78 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "(the captain's-chair eye). Takes effect at the next capture.");
 
     m.def("set_bridge_probe_scales",
-          [](float green, float yellow_red) {
-              g_bridge_probe.green = green;
-              g_bridge_probe.yellow_red = yellow_red;
-              if (g_bridge_pass) g_bridge_pass->set_probe_scales({green, yellow_red, yellow_red,
-                                                                 yellow_red, yellow_red});
+          [](const std::vector<float>& scales) {
+              if (scales.size() != static_cast<std::size_t>(renderer::kBridgeStates))
+                  throw py::value_error("set_bridge_probe_scales needs 5 values");
+              for (int i = 0; i < renderer::kBridgeStates; ++i)
+                  g_bridge_probe.scales[static_cast<std::size_t>(i)] =
+                      scales[static_cast<std::size_t>(i)];
+              if (g_bridge_pass) g_bridge_pass->set_probe_scales(g_bridge_probe.scales);
           },
-          py::arg("green"), py::arg("yellow_red"),
-          "Ambient multipliers the green and yellow/red probes are captured "
-          "with (x the bridge lighting's ambient). Take effect at the next "
-          "capture.");
+          py::arg("scales"),
+          "Ambient multipliers the five state probes (green, yellow, red, "
+          "offline, special) are captured with (x the bridge lighting's "
+          "ambient). Take effect at the next capture.");
+
+    m.def("set_bridge_probe_layers",
+          [](const std::vector<int>& states) -> std::size_t {
+              if (!g_bridge_pass) return 0;
+              return g_bridge_pass->set_probe_layers(states);
+          },
+          py::arg("states"),
+          "The state each animation layer's probe belongs to (spec 2026-10-17 "
+          "§4.4), layer k = probe 5+k. States outside 0-4 are dropped; returns "
+          "how many. No-op before init.");
+
+    m.def("set_bridge_glow_captures",
+          [](py::object instance_id, py::object rows) {
+              if (!g_bridge_pass) return;
+              scenegraph::Instance* inst = nullptr;
+              if (!instance_id.is_none()) {
+                  try {
+                      inst = g_world.get(instance_id.cast<scenegraph::InstanceId>());
+                  } catch (const py::cast_error&) {
+                      inst = nullptr;   // not an InstanceId: treated as stale
+                  }
+              }
+              if (inst == nullptr) { g_bridge_pass->clear_glow_captures(); return; }
+              std::vector<renderer::BridgeGlowCapture> v;
+              try {
+                  for (auto item : rows) {
+                      auto t = item.cast<std::tuple<int, int, std::vector<BridgeV3>,
+                                                    std::vector<int>, std::vector<BridgeV3>>>();
+                      const auto& caps = std::get<2>(t);
+                      const auto& layers = std::get<3>(t);
+                      const auto& rgbs = std::get<4>(t);
+                      const std::size_t n = static_cast<std::size_t>(renderer::kBridgeStates);
+                      const int src = std::get<1>(t);
+                      if (caps.size() != n || layers.size() != n || rgbs.size() != n ||
+                          src < 0 || src > 2)
+                          continue;
+                      renderer::BridgeGlowCapture gc;
+                      gc.mesh = std::get<0>(t);
+                      gc.src = src;
+                      bool finite = true;
+                      for (std::size_t i = 0; i < n; ++i) {
+                          gc.base[i] = bridge_v3(caps[i]);
+                          gc.layer[i] = layers[i];
+                          gc.layer_rgb[i] = bridge_v3(rgbs[i]);
+                          finite = finite && bridge_finite3(gc.base[i]) &&
+                                   bridge_finite3(gc.layer_rgb[i]);
+                      }
+                      if (finite) v.push_back(gc);
+                  }
+              } catch (const py::cast_error&) {
+                  g_bridge_pass->clear_glow_captures();
+                  return;
+              }
+              g_bridge_pass->set_glow_captures(inst->model_handle, std::move(v));
+          },
+          py::arg("instance_id"), py::arg("rows"),
+          "Per-mesh glow contribution to the probes (spec 2026-10-17 §4.5): "
+          "[(mesh, src, caps5, layers5, layer_rgbs5)], display space (the pass "
+          "decodes). None or a stale id clears; non-finite rows are dropped. "
+          "Signature input only; never raises.");
 
     m.def("set_bridge_probe_mix",
           [](float t) {
@@ -4858,7 +4956,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::dict d;
               const glm::vec3 o = g_bridge_probe.origin;
               d["origin"] = py::make_tuple(o.x, o.y, o.z);
-              d["scales"] = py::make_tuple(g_bridge_probe.green, g_bridge_probe.yellow_red);
+              py::tuple sc(renderer::kBridgeStates);
+              for (int i = 0; i < renderer::kBridgeStates; ++i)
+                  sc[static_cast<std::size_t>(i)] = g_bridge_probe.scales[static_cast<std::size_t>(i)];
+              d["scales"] = sc;
               d["mix"] = g_bridge_probe.mix;
               d["capture_pending"] = g_bridge_probe.capture_pending;
               return d;
@@ -4873,8 +4974,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::dict d;
               const glm::vec3 o = g_bridge_pass->probe_origin();
               d["origin"] = py::make_tuple(o.x, o.y, o.z);
-              d["scales"] = py::make_tuple(g_bridge_pass->probe_scale(0),
-                                           g_bridge_pass->probe_scale(1));
+              py::tuple sc(renderer::kBridgeStates);
+              for (int i = 0; i < renderer::kBridgeStates; ++i)
+                  sc[static_cast<std::size_t>(i)] = g_bridge_pass->probe_scale(i);
+              d["scales"] = sc;
+              d["probe_count"] = g_bridge_pass->probe_count();
               d["mix"] = g_bridge_pass->probe_mix();
               d["capture_pending"] = g_bridge_pass->probe_capture_pending();
               d["probes_valid"] = g_bridge_pass->probes_valid();
@@ -4886,6 +4990,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "scales, mix, capture_pending, probes_valid, alert_ambient_scale, "
           "alert_level); "
           "None before init().");
+
+    m.def("bridge_probe_signatures",
+          []() -> py::object {
+              if (!g_bridge_pass) return py::none();
+              py::list l;
+              for (int i = 0; i < g_bridge_pass->probe_count(); ++i)
+                  l.append(py::int_(g_bridge_pass->probe_signature(i)));
+              return l;
+          },
+          "Test/diagnostic: the input signature of every probe (kBridgeStates "
+          "bases, then one per layer); None before init().");
 
     m.def("request_bridge_probe_capture",
           [] {

@@ -183,7 +183,7 @@ def test_host_io_pbr_wrappers_degrade_headless(monkeypatch):
 # The set_bridge_probe_* stash is a C++ static that survives shutdown()/init()
 # BY DESIGN, and tests/conftest.py's autouse reset never touches C++ statics.
 # Every test that calls a real probe binding therefore restores it.
-_PROBE_STASH_DEFAULTS = {"origin": (0.0, 0.0, 0.0), "scales": (1.0, 1.0),
+_PROBE_STASH_DEFAULTS = {"origin": (0.0, 0.0, 0.0), "scales": (1.0,) * 5,
                          "mix": 0.0, "capture_pending": False}
 
 
@@ -198,7 +198,7 @@ def restored_probe_stash(h):
         yield
     finally:
         h.set_bridge_probe_origin(before["origin"])
-        h.set_bridge_probe_scales(*before["scales"])
+        h.set_bridge_probe_scales(before["scales"])
         h.set_bridge_probe_mix(before["mix"])
         if h.bridge_probe_stash()["capture_pending"] and not before["capture_pending"]:
             os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
@@ -228,7 +228,7 @@ def test_probe_binding_exists(host_module, name):
 
 def test_probe_bindings_are_safe_before_init(probe_stash_guard, host_module):
     host_module.set_bridge_probe_origin((0.0, 87.0, 50.0))
-    host_module.set_bridge_probe_scales(1.5, 1.0)
+    host_module.set_bridge_probe_scales((1.5, 1.0, 1.0, 0.4, 1.0))
     host_module.set_bridge_probe_mix(0.25)
     host_module.request_bridge_probe_capture()
 
@@ -236,7 +236,7 @@ def test_probe_bindings_are_safe_before_init(probe_stash_guard, host_module):
 def test_probe_bindings_on_a_live_bridge_never_raise(probe_stash_guard, dbridge):
     h, _iid = dbridge
     h.set_bridge_probe_origin((0.0, 87.0, 50.0))
-    h.set_bridge_probe_scales(1.5, 1.0)
+    h.set_bridge_probe_scales((1.5, 1.0, 1.0, 0.4, 1.0))
     h.set_bridge_probe_mix(1.0)
     h.request_bridge_probe_capture()
 
@@ -245,7 +245,7 @@ def test_host_io_probe_wrappers_degrade_headless(monkeypatch):
     from engine import host_io
     monkeypatch.setattr(host_io, "_h", None)
     host_io.set_bridge_probe_origin((0.0, 87.0, 50.0))
-    host_io.set_bridge_probe_scales(1.5, 1.0)
+    host_io.set_bridge_probe_scales((1.5, 1.0, 1.0, 0.4, 1.0))
     host_io.set_bridge_probe_mix(0.25)
     host_io.request_bridge_probe_capture()
 
@@ -258,7 +258,7 @@ def test_host_io_probe_wrappers_forward(monkeypatch):
         @staticmethod
         def set_bridge_probe_origin(p): calls.append(("origin", p))
         @staticmethod
-        def set_bridge_probe_scales(g, yr): calls.append(("scales", g, yr))
+        def set_bridge_probe_scales(sc): calls.append(("scales", sc))
         @staticmethod
         def set_bridge_probe_mix(t): calls.append(("mix", t))
         @staticmethod
@@ -266,10 +266,10 @@ def test_host_io_probe_wrappers_forward(monkeypatch):
 
     monkeypatch.setattr(host_io, "_h", FakeHost)
     host_io.set_bridge_probe_origin((1, 2, 3))
-    host_io.set_bridge_probe_scales(1.5, 1)
+    host_io.set_bridge_probe_scales((1.5, 1, 1, 1, 1))
     host_io.set_bridge_probe_mix(1)
     host_io.request_bridge_probe_capture()
-    assert calls == [("origin", (1.0, 2.0, 3.0)), ("scales", 1.5, 1.0),
+    assert calls == [("origin", (1.0, 2.0, 3.0)), ("scales", [1.5, 1.0, 1.0, 1.0, 1.0]),
                      ("mix", 1.0), ("capture",)]
 
 
@@ -279,7 +279,7 @@ def test_probe_stash_set_before_init_survives_into_the_pass(probe_stash_guard, h
     h = host_module
     os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
     h.set_bridge_probe_origin((1.0, 87.0, 50.0))
-    h.set_bridge_probe_scales(1.5, 0.75)
+    h.set_bridge_probe_scales((1.5, 0.75, 0.75, 0.4, 1.0))
     h.set_bridge_probe_mix(0.25)
     h.request_bridge_probe_capture()
     try:
@@ -289,7 +289,7 @@ def test_probe_stash_set_before_init_survives_into_the_pass(probe_stash_guard, h
             pytest.skip(f"no GL context: {e}")
         st = h.bridge_probe_state()
         assert st["origin"] == pytest.approx((1.0, 87.0, 50.0))
-        assert st["scales"] == pytest.approx((1.5, 0.75))
+        assert st["scales"] == pytest.approx((1.5, 0.75, 0.75, 0.4, 1.0))
         assert st["mix"] == pytest.approx(0.25)
         assert st["capture_pending"] is True
     finally:
@@ -316,7 +316,7 @@ def test_restored_probe_stash_undoes_every_probe_binding(host_module):
     before = h.bridge_probe_stash()
     with restored_probe_stash(h):
         h.set_bridge_probe_origin((3.0, 87.0, 50.0))
-        h.set_bridge_probe_scales(2.0, 0.5)
+        h.set_bridge_probe_scales((2.0, 0.5, 0.5, 0.5, 0.5))
         h.set_bridge_probe_mix(0.75)
         h.request_bridge_probe_capture()
         assert h.bridge_probe_stash()["capture_pending"] is True
@@ -492,10 +492,18 @@ def test_host_io_alert_level_degrades_headless_and_forwards(monkeypatch):
     assert calls == [2, 0]
 
 
+_Z = (0.0, 0.0, 0.0)
+_CAP = ([(1.0, 1.0, 1.0)] + [_Z] * 4, [-1, -1, 0, -1, -1], [_Z, _Z, (0.5, 0.0, 0.0), _Z, _Z])
+
+
+def _nan_cap():
+    return ([(float("nan"), 0.0, 0.0)] + [_Z] * 4, [-1] * 5, [_Z] * 5)
+
+
 def test_set_bridge_spots_takes_capture_colours(host_module):
     spot = ((0.0, 0.0, 50.0), (0.0, 0.0, -1.0), 30.0, 60.0, 100.0, (1.0, 1.0, 1.0), 10.0)
-    assert host_module.set_bridge_spots([spot], [((1.0, 1.0, 1.0), (0.0, 0.0, 0.0))]) == 0
-    assert host_module.set_bridge_spots([spot], [((float("nan"), 0.0, 0.0), (0.0, 0.0, 0.0))]) == 1
+    assert host_module.set_bridge_spots([spot], [_CAP]) == 0
+    assert host_module.set_bridge_spots([spot], [_nan_cap()]) == 1
     assert host_module.set_bridge_spots([spot], []) == 0          # mismatch: ignored
     assert host_module.set_bridge_spots([]) == 0
 
@@ -511,7 +519,7 @@ def test_host_io_bridge_glow_wrappers_are_headless_safe(monkeypatch):
     from engine import host_io
     monkeypatch.setattr(host_io, "_h", None)
     assert host_io.set_bridge_spots([((0, 0, 0), (0, 0, -1), 30, 60, 100, (1, 1, 1), 1,
-                                      (1, 1, 1), (0, 0, 0))]) == 0
+                                      [(1, 1, 1)] * 5, [-1] * 5, [(0, 0, 0)] * 5)]) == 0
     host_io.set_bridge_spot_colours([(1, 1, 1)])
     host_io.set_bridge_glow(None, [(0, 2, (1, 1, 1), 1)])
 
@@ -535,13 +543,14 @@ def test_host_io_set_bridge_area_lights_passes_joins_only_when_any_are_set(monke
 
     def area(joins):
         return ((0.0, 0.0, 50.0), (5.0, 0.0, 0.0), (0.0, -5.0, 0.0), 120.0,
-                (1.0, 1.0, 1.0), 4.0, (1.0, 1.0, 1.0), (1.0, 1.0, 1.0), joins)
+                (1.0, 1.0, 1.0), 4.0, [(1.0, 1.0, 1.0)] * 5, [-1] * 5, [(0.0, 0.0, 0.0)] * 5,
+                joins)
 
     host_io.set_bridge_area_lights([area(2), area(1)])
     rows, caps, joins = calls[-1]
     assert joins == [2, 1]
     assert len(rows[0]) == 6                          # joins split off, not left in the row
-    assert caps == [((1.0, 1.0, 1.0), (1.0, 1.0, 1.0))] * 2
+    assert caps == [([(1.0, 1.0, 1.0)] * 5, [-1] * 5, [(0.0, 0.0, 0.0)] * 5)] * 2
 
     host_io.set_bridge_area_lights([area(0), area(0)])
     _rows, _caps, joins = calls[-1]
@@ -560,10 +569,12 @@ def test_host_io_set_bridge_spots_splits_captures(monkeypatch):
 
     monkeypatch.setattr(host_io, "_h", H)
     host_io.set_bridge_spots([((0, 0, 0), (0, 0, -1), 30, 60, 100, (1, 1, 1), 5,
-                               (1, 1, 1), (0, 0, 0))])
+                               [(1, 1, 1)] + [(0, 0, 0)] * 4, [-1, -1, 0, -1, -1],
+                               [(0, 0, 0)] * 2 + [(0.5, 0, 0)] + [(0, 0, 0)] * 2)])
     rows, caps = calls[-1]
     assert rows == [((0.0, 0.0, 0.0), (0.0, 0.0, -1.0), 30.0, 60.0, 100.0, (1.0, 1.0, 1.0), 5.0)]
-    assert caps == [((1.0, 1.0, 1.0), (0.0, 0.0, 0.0))]
+    assert caps == [([(1.0, 1.0, 1.0)] + [(0.0, 0.0, 0.0)] * 4, [-1, -1, 0, -1, -1],
+                     [(0.0, 0.0, 0.0)] * 2 + [(0.5, 0.0, 0.0)] + [(0.0, 0.0, 0.0)] * 2)]
     host_io.set_bridge_spots([((0, 0, 0), (0, 0, -1), 30, 60, 100, (1, 1, 1), 5)])
     assert calls[-1][1] is None
 
@@ -679,3 +690,69 @@ def test_a_click_under_a_map_3_alcove_lip_snaps_to_the_curved_lip(dbridge, monke
         sn = edge_snap.snap(fr, centroids[i])
         assert sn is not None, centroids[i]
         assert ls._dot(sn.surface_normal, normals[i]) > 0.99, centroids[i]
+
+
+# ── per-state probes (spec 2026-10-17 §4.1, §4.4) ───────────────────────────
+
+def test_new_probe_bindings_exist(host_module):
+    for name in ("set_bridge_probe_layers", "set_bridge_glow_captures",
+                 "bridge_probe_signatures"):
+        assert hasattr(host_module, name)
+
+
+def test_probe_layers_set_probe_count_and_drop_bad_states(probe_stash_guard, dbridge):
+    h, _iid = dbridge
+    assert h.bridge_probe_state()["probe_count"] == 5
+    assert h.set_bridge_probe_layers([2, 0, 9]) == 1
+    assert h.bridge_probe_state()["probe_count"] == 7
+    assert len(h.bridge_probe_signatures()) == 7
+    h.set_bridge_probe_layers([])
+
+
+def test_probe_signatures_move_with_red_captures(probe_stash_guard, dbridge):
+    h, _iid = dbridge
+    spot = ((0.0, 0.0, 50.0), (0.0, 0.0, -1.0), 30.0, 60.0, 100.0, (1.0, 1.0, 1.0), 10.0)
+
+    def cap(red):
+        return ([(1.0, 1.0, 1.0), _Z, (red, 0.0, 0.0), _Z, _Z], [-1] * 5, [_Z] * 5)
+
+    assert h.set_bridge_spots([spot], [cap(0.25)]) == 0
+    before = h.bridge_probe_signatures()
+    assert h.set_bridge_spots([spot], [cap(0.75)]) == 0
+    after = h.bridge_probe_signatures()
+    assert [i for i, (a, b) in enumerate(zip(before, after)) if a != b] == [2]
+
+
+def test_probe_scales_must_be_five_values(host_module):
+    with pytest.raises(ValueError):
+        host_module.set_bridge_probe_scales([1.0, 1.0])
+
+
+def test_glow_captures_never_raise(host_module):
+    host_module.set_bridge_glow_captures(None, [])
+    host_module.set_bridge_glow_captures(host_module.InstanceId(), [(0, 0, [], [], [])])
+
+
+def test_host_io_new_wrappers_degrade_headless_and_forward(monkeypatch):
+    monkeypatch.setattr(host_io, "_h", None)
+    host_io.set_bridge_probe_layers([2])
+    host_io.set_bridge_glow_captures(None, [])
+    assert host_io.bridge_probe_signatures() is None
+    assert host_io.bridge_quality() == 1
+    calls = []
+
+    class H:
+        @staticmethod
+        def set_bridge_probe_layers(s): calls.append(("layers", s))
+        @staticmethod
+        def set_bridge_glow_captures(i, r): calls.append(("glow", i, r))
+        @staticmethod
+        def bridge_quality(): return 2
+
+    monkeypatch.setattr(host_io, "_h", H)
+    host_io.set_bridge_probe_layers([2.0])
+    z = [(0, 0, 0)] * 5
+    host_io.set_bridge_glow_captures("i", [(3, 0, z, [-1] * 5, z)])
+    assert host_io.bridge_quality() == 2
+    assert calls == [("layers", [2]),
+                     ("glow", "i", [(3, 0, [(0.0, 0.0, 0.0)] * 5, [-1] * 5, [(0.0, 0.0, 0.0)] * 5)])]

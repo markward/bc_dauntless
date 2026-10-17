@@ -3,7 +3,7 @@ import copy
 
 import pytest
 
-from engine.bridge_editor import behaviour as bh, glow, lighting_doc as ld
+from engine.bridge_editor import behaviour as bh, glow, lighting_doc as ld, probe_layers as pl
 
 MESHES = [{"mesh": 3, "maps": {"emissive": True}}, {"mesh": 4, "maps": {"emissive": False}}]
 ROOF = {"emission": 0, "modifiers": [
@@ -94,3 +94,37 @@ def test_a_lights_only_state_does_not_glow_the_surface():
     for mesh in (3, 4):
         g = [g for g in live if g[0] == mesh][0]
         assert g[2] == (0.0, 0.0, 0.0) and g[3] == 0.0
+
+
+def _map22a():
+    """Map 22a-shaped: a mapped mesh, a red sine pulse (min 0.2), no State."""
+    d = ld.empty_doc("x")
+    d["materials"]["Map 22a"] = {"modifiers": [
+        {"type": "animation", "scope": ["red"], "shape": "sine", "period_s": 2.0, "min": 0.2}]}
+    d["textures"] = {"map 22a.tga": "Map 22a"}
+    meshes = [{"mesh": 3, "block": 30, "name": "a", "textures": ["Map 22a.tga"],
+               "maps": {"emissive": True}}]
+    resolved = ld.resolve(d, meshes, {})
+    objs, _ = glow.glow_objects(d, resolved, meshes)
+    plan = pl.plan(d, resolved, set(), frozenset({3}), 8)
+    return objs, plan
+
+
+def test_glow_captures_base_and_layer():
+    objs, plan = _map22a()
+    ((mesh, src, caps, layers, rgbs),) = glow.captures(objs, plan)
+    assert (mesh, src) == (3, 0)
+    assert caps[0] == (1.0, 1.0, 1.0)          # the map as painted
+    assert caps[2] == (0.0, 0.0, 0.0)          # animated in red: the layer carries it
+    assert layers == [-1, -1, 0, -1, -1]
+    assert rgbs[2] == pytest.approx((1.0, 1.0, 1.0))
+
+
+def test_glow_live_decoded_equals_layer_decoded_times_value():
+    objs, plan = _map22a()
+    ((_m, _s, _c, _l, rgbs),) = glow.captures(objs, plan)
+    t = 0.75
+    ((_, _, live_rgb, _k),) = glow.live(objs, bh.StateFade("red"), t)
+    v = pl.layer_values(plan, t)[0]
+    for got, base in zip(live_rgb, rgbs[2]):
+        assert got ** 2.2 == pytest.approx(base ** 2.2 * v, rel=1e-6)

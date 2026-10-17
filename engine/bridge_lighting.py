@@ -107,5 +107,6 @@ class ProbeBlend:
 
 
 def probe_scales():
-    """Ambient scales the green and the yellow/red probes are captured with."""
-    return ambient_scale_for_alert(0), ambient_scale_for_alert(1)
+    """Ambient scales the five state probes (green, yellow, red, offline,
+    special) are captured with (spec 2026-10-17 §4.4)."""
+    return tuple(ambient_scale_for_alert(i) for i in range(5))

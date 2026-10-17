@@ -173,8 +173,7 @@ def test_attach_without_a_hash_still_pushes_fresh_probe_state(proj):
     rt = runtime.BridgeRuntime(io=io, eye=lambda: (3.0, 4.0, 5.0), alert=lambda: 0)
     rt.attach("iid")
     assert ("set_bridge_probe_origin", (3.0, 4.0, 5.0)) in io.calls
-    green, yellow_red = bridge_lighting.probe_scales()
-    assert ("set_bridge_probe_scales", green, yellow_red) in io.calls
+    assert ("set_bridge_probe_scales", bridge_lighting.probe_scales()) in io.calls
     assert names(io)[-1] == "request_bridge_probe_capture"
 
 
@@ -420,7 +419,7 @@ def test_attach_pushes_glow_and_live_spot_colours(proj):
     assert last(io, "set_bridge_glow") == ("set_bridge_glow", "iid", [(0, 2, (1.0, 1.0, 1.0), 1.0)])
     assert last(io, "set_bridge_spot_colours") == ("set_bridge_spot_colours", [(10.0, 10.0, 10.0)])
     (spot,) = last(io, "set_bridge_spots")[1]
-    assert len(spot) == 9
+    assert len(spot) == 10
 
 
 def test_on_alert_fades_over_its_transition_and_tick_advances_the_clock(proj):
@@ -533,7 +532,7 @@ def test_a_bridge_with_lights_has_no_room_light_and_its_reflections_follow(proj)
     rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
     rt.attach("iid")
     assert rt.ambient_scale(0) == 0.0 and rt.ambient_scale(2) == 0.0
-    assert last(io, "set_bridge_probe_scales") == ("set_bridge_probe_scales", 0.0, 0.0)
+    assert last(io, "set_bridge_probe_scales") == ("set_bridge_probe_scales", (0.0,) * 5)
     assert names(io)[-1] == "request_bridge_probe_capture"
 
 
@@ -544,7 +543,7 @@ def test_a_bridge_without_lights_keeps_the_default(proj):
     rt.attach("iid")
     assert rt.ambient_scale(0) is None
     assert last(io, "set_bridge_probe_scales") == ("set_bridge_probe_scales",
-                                                   *bridge_lighting.probe_scales())
+                                                   bridge_lighting.probe_scales())
 
 
 def test_an_edited_room_light_recaptures_once(proj):
@@ -557,7 +556,8 @@ def test_an_edited_room_light_recaptures_once(proj):
     n = names(io).count("request_bridge_probe_capture")
     rt.push(d, {"3:floor": 0})
     assert rt.ambient_scale(0) == 0.2
-    assert last(io, "set_bridge_probe_scales") == ("set_bridge_probe_scales", 0.2, 0.1)
+    assert last(io, "set_bridge_probe_scales") == (
+        "set_bridge_probe_scales", (0.2, 0.1, 0.0, 0.0, 0.0))   # a lit bridge: unset levels are 0
     assert names(io).count("request_bridge_probe_capture") == n + 1
     rt.push(d, {"3:floor": 0})                          # unchanged: no recapture
     assert names(io).count("request_bridge_probe_capture") == n + 1
@@ -669,3 +669,56 @@ def test_detach_clears_the_area_lights(proj):
     rt.attach("iid")
     rt.detach()
     assert _last(io, "set_bridge_area_lights") == ("set_bridge_area_lights", [])
+
+
+# ── per-state probes (spec 2026-10-17 §4.4) ─────────────────────────────────
+
+def test_push_sends_layers_and_glow_captures(proj):
+    _glow_doc(proj)    # a red sine on the lit and glowing material
+    io = FakeIO()
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt.attach("iid")
+    assert last(io, "set_bridge_probe_layers") == ("set_bridge_probe_layers", [2])
+    assert last(io, "set_bridge_probe_scales")[1] == (0.0,) * 5     # a lit bridge: no room light
+    (iid, rows) = last(io, "set_bridge_glow_captures")[1:]
+    assert iid == "iid" and len(rows) == 1
+    (mesh, src, caps, layers, rgbs) = rows[0]
+    assert layers[2] == 0 and caps[2] == (0.0, 0.0, 0.0)
+
+
+def test_bridge_without_doc_plans_no_layers_and_five_scales(proj):
+    io = FakeIO(info={"source": "", "content_hash": "", "meshes": []})
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt.attach("iid")
+    sent = [c for c in io.calls if c[0] == "set_bridge_probe_layers" and c[1]]
+    assert sent == []
+    assert len(last(io, "set_bridge_probe_scales")[1]) == 5
+
+
+def test_attach_clears_glow_captures_and_layers(proj):
+    io = FakeIO(info={"source": "", "content_hash": "", "meshes": []})
+    runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0).attach("iid")
+    assert ("set_bridge_glow_captures", None, []) in io.calls
+    assert ("set_bridge_probe_layers", []) in io.calls
+
+
+def test_plan_warnings_reach_the_status_line(proj):
+    d = ld.empty_doc("x")
+    d["materials"]["p"] = {"emission": 1, "modifiers": [
+        {"type": "animation", "scope": ["red"], "shape": "sine", "period_s": p}
+        for p in (1.0,)]}
+    d["materials"]["q"] = {"emission": 1, "modifiers": [
+        {"type": "animation", "scope": ["red"], "shape": "sine", "period_s": 3.0}]}
+    d["materials"]["r"] = {"emission": 1, "modifiers": [
+        {"type": "animation", "scope": ["red"], "shape": "sine", "period_s": 5.0}]}
+    for i, m in enumerate("pqr"):
+        ld.object_entry(d, 10 + i, f"o{i}")["material"] = m
+    meshes = [{"mesh": i, "block": 10 + i, "name": f"o{i}", "node_chain": [], "material": 0,
+               "textures": [], "maps": {"roughness": False, "metalness": False, "normal": False}}
+              for i in range(3)]
+    lw.save(d, proj / "bridge_lighting" / f"{HASH}.json")
+    io = FakeIO(info={"source": "/x.nif", "content_hash": HASH, "meshes": meshes})
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt.attach("iid")      # FakeIO quality 0 -> cap 2: one wave is dropped
+    warnings = rt.push(d, {f"{10 + i}:o{i}": i for i in range(3)})
+    assert any("layer cap" in w for w in warnings)

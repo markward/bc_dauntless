@@ -87,6 +87,8 @@ _OPTIONAL_BINDINGS = frozenset({
     "set_bridge_spots", "set_bridge_alert_level",
     "set_bridge_spot_colours", "set_bridge_glow",
     "set_bridge_area_lights", "set_bridge_area_colours", "bridge_mesh_geometry",
+    "set_bridge_glow_captures", "set_bridge_probe_layers",
+    "bridge_probe_signatures", "bridge_quality",
 })
 
 
@@ -629,12 +631,34 @@ def set_bridge_probe_origin(origin) -> None:
         fn((float(x), float(y), float(z)))
 
 
-def set_bridge_probe_scales(green, yellow_red) -> None:
-    """Ambient multipliers the green and yellow/red reflection probes are
-    captured with. Takes effect at the next capture. No-op headless."""
+def set_bridge_probe_scales(scales) -> None:
+    """Ambient multipliers the five state reflection probes (green, yellow,
+    red, offline, special) are captured with. Takes effect at the next
+    capture. No-op headless."""
     fn = getattr(_h, "set_bridge_probe_scales", None) if _h is not None else None
     if fn is not None:
-        fn(float(green), float(yellow_red))
+        fn([float(v) for v in scales])
+
+
+def set_bridge_probe_layers(states) -> None:
+    """The state each animation layer's probe belongs to (spec 2026-10-17
+    §4.4), layer k = probe 5+k. No-op headless."""
+    fn = getattr(_h, "set_bridge_probe_layers", None) if _h is not None else None
+    if fn is not None:
+        fn([int(s) for s in states])
+
+
+def bridge_probe_signatures():
+    """Every probe's input signature (test/diagnostic); None headless."""
+    fn = getattr(_h, "bridge_probe_signatures", None) if _h is not None else None
+    return fn() if fn is not None else None
+
+
+def bridge_quality() -> int:
+    """The bridge rendering quality level (0 Low, 1 Medium, 2 High); 1
+    (Medium) headless."""
+    fn = getattr(_h, "bridge_quality", None) if _h is not None else None
+    return int(fn()) if fn is not None else 1
 
 
 def set_bridge_probe_mix(t) -> None:
@@ -663,28 +687,34 @@ def request_bridge_probe_capture() -> None:
         fn()
 
 
+def _v3(v):
+    x, y, z = v
+    return (float(x), float(y), float(z))
+
+
+def _capture_row(caps, layers, rgbs):
+    """One light's (caps5, layers5, layer_rgbs5) in binding form."""
+    return ([_v3(c) for c in caps], [int(i) for i in layers], [_v3(c) for c in rgbs])
+
+
 def set_bridge_spots(spots) -> int:
     """Bridge spot lights (production, not developer-gated): `spots` is
     [(pos3, dir3, inner_deg, outer_deg, range, (r, g, b), intensity
-    [, capture_green3, capture_alert3])], the angles HALF-angles from the
-    axis. With capture colours (spec 2026-10-08-bridge-emitters §11.4, every
-    spot or none) the probes see those and the live colour
-    (set_bridge_spot_colours) never recaptures. Returns how many were DROPPED
-    (invalid + over the cap). 0 headless."""
+    [, caps5, layers5, layer_rgbs5])], the angles HALF-angles from the axis.
+    With capture data (spec 2026-10-17 §4.1, every spot or none) the probes
+    see those -- five LINEAR state colours, the animation layer per state
+    (-1 none) and its at-peak colour -- and the live colour
+    (set_bridge_spot_colours) never recaptures. Returns how many were
+    DROPPED (invalid + over the cap). 0 headless."""
     fn = getattr(_h, "set_bridge_spots", None) if _h is not None else None
     if fn is None:
         return 0
-
-    def _v3(v):
-        x, y, z = v
-        return (float(x), float(y), float(z))
-
     rows, caps = [], []
     for s in spots:
         p, d, i, o, r, c, k = s[:7]
         rows.append((_v3(p), _v3(d), float(i), float(o), float(r), _v3(c), float(k)))
-        if len(s) >= 9:
-            caps.append((_v3(s[7]), _v3(s[8])))
+        if len(s) >= 10:
+            caps.append(_capture_row(s[7], s[8], s[9]))
     if caps and len(caps) == len(rows):
         return int(fn(rows, caps))
     return int(fn(rows))
@@ -701,25 +731,20 @@ def set_bridge_spot_colours(colours) -> None:
 def set_bridge_area_lights(areas) -> int:
     """Bridge area lights -- strips and panels (spec 2026-10-08-bridge-emitters
     §16.3; production, not developer-gated): `areas` is [(centre3, half_u3,
-    half_v3, range, (r, g, b), intensity[, capture_green3, capture_alert3])],
-    each emitting toward cross(half_u, half_v). Captures as set_bridge_spots
-    (every light or none). Returns how many were DROPPED (invalid + over the
-    cap). 0 headless."""
+    half_v3, range, (r, g, b), intensity[, caps5, layers5, layer_rgbs5
+    [, joins]])], each emitting toward cross(half_u, half_v). Captures as
+    set_bridge_spots (every light or none). Returns how many were DROPPED
+    (invalid + over the cap). 0 headless."""
     fn = getattr(_h, "set_bridge_area_lights", None) if _h is not None else None
     if fn is None:
         return 0
-
-    def _v3(v):
-        x, y, z = v
-        return (float(x), float(y), float(z))
-
     rows, caps, joins = [], [], []
     for a in areas:
         c, hu, hv, r, rgb, k = a[:6]
         rows.append((_v3(c), _v3(hu), _v3(hv), float(r), _v3(rgb), float(k)))
-        if len(a) >= 8:
-            caps.append((_v3(a[6]), _v3(a[7])))
-        joins.append(int(a[8]) if len(a) >= 9 else 0)   # spec §16.8: join bits
+        if len(a) >= 9:
+            caps.append(_capture_row(a[6], a[7], a[8]))
+        joins.append(int(a[9]) if len(a) >= 10 else 0)   # spec §16.8: join bits
     kw = {"joins": joins} if any(joins) else {}
     if caps and len(caps) == len(rows):
         return int(fn(rows, caps, **kw))
@@ -763,6 +788,15 @@ def set_bridge_glow(instance_id, glow) -> None:
     if fn is not None:
         fn(instance_id, [(int(m), int(s), (float(c[0]), float(c[1]), float(c[2])), float(lv))
                          for m, s, c, lv in glow])
+
+
+def set_bridge_glow_captures(instance_id, rows) -> None:
+    """Per-mesh glow contribution to the probes (spec 2026-10-17 §4.5):
+    [(mesh, src, caps5, layers5, layer_rgbs5)], display space; None clears.
+    No-op headless."""
+    fn = getattr(_h, "set_bridge_glow_captures", None) if _h is not None else None
+    if fn is not None:
+        fn(instance_id, [(int(m), int(s), *_capture_row(c, l, r)) for m, s, c, l, r in rows])
 
 
 # ── Star map (Helm → Set Course) ─────────────────────────────────────────────
