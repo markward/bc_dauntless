@@ -11141,9 +11141,23 @@ def run(mission_name: Optional[str] = None,
         # for the crew menu); used to swallow the matching release edge so it
         # never leaks to phaser fire. See the officer-pick block below.
         _bridge_left_pick_active = False
-        from engine.core.transform_buffer import TransformBuffer
+        from engine.core.transform_buffer import TransformBuffer, advance_ticks
         from engine.core.handover_smoother import HandoverSmoother
         _xform_buf = TransformBuffer()
+
+        def _tick_gameloop():
+            with frame_profiler.scope("sim.gameloop"):
+                loop.tick()
+
+        def _interp_live_poses():
+            """Live poses of every realised ship the buffer may track, for
+            advance_ticks' pre-last-tick re-seat (multi-tick frames only)."""
+            _s = controller.session
+            if _s is None:
+                return ()
+            return [(iid, obj.GetWorldLocation(), obj.GetWorldRotation())
+                    for obj, iid in list(_s.ship_instances.items())
+                    if _xform_buf.has(iid)]
         # Eases the player's drawn pose across a helm handover; see
         # engine/core/handover_smoother. Inert except during a handover window.
         _handover = HandoverSmoother()
@@ -11666,15 +11680,15 @@ def run(mission_name: Optional[str] = None,
             # stalled frame doesn't teleport the player.
             _player_dt = 0.0 if pause.sim_frozen else min(max(_frame_dt, 0.0), MAX_FRAME_DT)
             _interp_alpha = _accumulator / TICK_DT  # in [0, 1) after step_accumulator
-            if _sim_ticks_this_frame > 0:
-                _xform_buf.roll()
-            for _ in range(_sim_ticks_this_frame):
-                # GameLoop = timers, the TimeSliceProcess scheduler, the AI
-                # tree-walk, collision avoidance, motion integration and the
-                # per-ship shield/power/cloak/repair updates. Timed separately
-                # from the weapon/combat pumps below, which it does NOT drive.
-                with frame_profiler.scope("sim.gameloop"):
-                    loop.tick()
+            # GameLoop = timers, the TimeSliceProcess scheduler, the AI
+            # tree-walk, collision avoidance, motion integration and the
+            # per-ship shield/power/cloak/repair updates. Timed separately
+            # from the weapon/combat pumps below, which it does NOT drive.
+            # advance_ticks rolls the interpolation buffer and, on a frame
+            # that runs 2+ ticks, re-seats its prev just before the last one,
+            # so the drawn pose always blends across exactly one tick.
+            advance_ticks(_xform_buf, _sim_ticks_this_frame,
+                          _tick_gameloop, _interp_live_poses)
             # The warp tunnel's destination preload: at most one model load
             # per frame, so no tunnel frame pays for the whole destination.
             with frame_profiler.scope("warp.preload"):
