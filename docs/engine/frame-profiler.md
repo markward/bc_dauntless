@@ -194,6 +194,15 @@ The availability check must therefore be on the last query **issued**
 
 ## Cost when ON — the profiler is not free on this Mac
 
+⚠️ **Superseded by a live measurement (2026-10-17, `perf-register.md` M-6,
+SIG-019).** In a real scene, the GPU timer makes the CPU wait for the GPU every
+frame, which adds **roughly the GPU frame time**, not the +0.6 to +2.4 ms below.
+The wait lands in the overlay's draw call inside `cef.composite`, so that row
+reads as a large cost when it is really the profiler. Measured with the
+profiler off: 29.7 → 21.3 ms per frame in a scene with 10.5 ms of GPU time.
+**Never read frame time from a GPU-timed capture.** The bench below measured a
+light headless scene and is kept for its per-pass breakdown.
+
 Measured 2026-10-08, headless Debug build, `tools/bench_idle_passes.py`
 (640x360, one shielded Galaxy; "loaded" = 40 extra hulls), profiler on vs off,
 best of three rounds:
