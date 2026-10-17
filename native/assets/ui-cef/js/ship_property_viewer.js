@@ -95,6 +95,7 @@ window.setShipPropertyViewer = function (data) {
         (typeof data.selected_index === 'number') ? data.selected_index : null,
         (typeof data.selected_light_index === 'number') ? data.selected_light_index : null,
         data.selected_emitter || null);
+    renderSPVPhysical(data.physical);
 
     // Preview lock (Task 7): while data.model_parts.mount_editing_reason is
     // set, subsystem/light/emitter editing is refused -- see
@@ -386,7 +387,7 @@ var spvCtxEmitterIndex = null;      // emitter index within that subsystem
 // itself already knows the overlay closed (ESC via close_overlays, or the
 // whole panel closing per Fix 2) so we don't double-fire overlay:0.
 function spvHideOverlaysNoEvent() {
-    ['spv-ctxmenu', 'spv-radius', 'spv-light', 'spv-emitter', 'spv-confirm',
+    ['spv-ctxmenu', 'spv-ctxsub', 'spv-radius', 'spv-light', 'spv-emitter', 'spv-confirm',
      'spv-part-anchor', 'spv-part-break', 'spv-part-addstate'].forEach(function (id) {
         var el = document.getElementById(id); if (el) el.style.display = 'none';
     });
@@ -397,8 +398,11 @@ function spvHideOverlays() {
 }
 document.addEventListener('click', function (e) {
     var menu = document.getElementById('spv-ctxmenu');
-    if (menu && menu.style.display !== 'none' && !menu.contains(e.target)) {
+    var subMenu = document.getElementById('spv-ctxsub');
+    if (menu && menu.style.display !== 'none' && !menu.contains(e.target)
+        && !(subMenu && subMenu.contains(e.target))) {
         menu.style.display = 'none';
+        if (subMenu) subMenu.style.display = 'none';
         if (document.getElementById('spv-radius').style.display === 'none'
             && document.getElementById('spv-confirm').style.display === 'none') {
             dauntlessEvent('ship-property-viewer/overlay:0');
@@ -455,11 +459,16 @@ function spvShowMenuItems(show) {
                removeemitter: 'spv-ctx-removeemitter',
                addanchor: 'spv-ctx-addanchor', addstate: 'spv-ctx-addstate',
                makebreakable: 'spv-ctx-makebreakable', editanchor: 'spv-ctx-editanchor',
-               editbreak: 'spv-ctx-editbreak', removenode: 'spv-ctx-removenode'};
+               editbreak: 'spv-ctx-editbreak', removenode: 'spv-ctx-removenode',
+               moveto: 'spv-ctx-moveto', reset: 'spv-ctx-reset',
+               moveall: 'spv-ctx-moveall', resetall: 'spv-ctx-resetall'};
     Object.keys(map).forEach(function (k) {
         var el = document.getElementById(map[k]);
         if (el) el.style.display = show[k] ? 'block' : 'none';
     });
+    // A fresh parent menu never inherits an open Physical submenu.
+    var sub = document.getElementById('spv-ctxsub');
+    if (sub) sub.style.display = 'none';
 }
 function spvOpenMenuAt(event) {
     var menu = document.getElementById('spv-ctxmenu');
@@ -1474,3 +1483,176 @@ function spvRowHtml(row, selectedIndex, selectedLight, selectedEmitterKey, depth
          + ' oncontextmenu="' + menuJs + '">'
          + lead + body + '</div>';
 }
+
+// ---- Physical tab (spec 2026-10-17 section 7) ----------------------------
+// The Subsystems column has two tabs. Functional is the existing list
+// (renderSPVSubsystemList, untouched); Physical groups every subsystem and
+// running light under the model part it is mounted on, tagged AUTO (derived
+// from position) or SET (an explicit SetPhysicalParent). Identities travel
+// in data-* attributes only, never inside an on* string literal (see the
+// spvPartRowHtml comment for why). Python owns every value: the menus only
+// dispatch physical/move | reset | move_all | reset_all | tab.
+var spvPhysical = {tab: 'functional', parts: [], groups: []};
+var spvPhysChosenLight = null;          // JS-local: lights have no pin to select
+var spvCtxPhysKey = null, spvCtxPhysSource = null, spvCtxPhysPart = null;
+var spvCtxPhysMissing = null, spvPhysSubMode = null;
+
+function spvPhysRowHtml(row) {
+    var chosen = row.kind === 'running_light'
+        ? (row.key === spvPhysChosenLight) : (row.chosen === true);
+    var src = row.source === 'set' ? 'SET' : 'AUTO';
+    return '<div class="spv-sys-row spv-sys-row--child'
+        + (chosen ? ' spv-sys-row--chosen' : '') + '"'
+        + ' data-key="' + escapeHtmlSPV(row.key || '') + '"'
+        + ' data-kind="' + escapeHtmlSPV(row.kind || '') + '"'
+        + ' data-index="' + (typeof row.index === 'number' ? row.index : '') + '"'
+        + ' data-source="' + (row.source === 'set' ? 'set' : 'auto') + '"'
+        + ' data-part="' + escapeHtmlSPV(row.__part || '') + '"'
+        + ' onclick="shipPropertyViewerPhysRowClick(this)"'
+        + ' oncontextmenu="return shipPropertyViewerPhysChildMenu(event, this)">'
+        + '<span class="spv-sys-caret spv-sys-caret--none"></span>'
+        + '<span class="spv-sys-row__name">' + escapeHtmlSPV(row.name || '') + '</span>'
+        + '<span class="spv-src spv-src--' + (row.source === 'set' ? 'set' : 'auto') + '">'
+        + src + '</span></div>';
+}
+
+function spvPhysGroupHtml(group) {
+    var missing = group.missing === true;
+    var label = group.part === null || group.part === undefined
+        ? 'No part' : String(group.part);
+    var text = escapeHtmlSPV(label);
+    if (missing) text = '⚠ ' + text + ' (missing)';
+    var out = ['<div class="spv-sys-row"'
+        + (missing ? ' data-part="' + escapeHtmlSPV(group.part) + '" data-missing="true"'
+            + ' oncontextmenu="return shipPropertyViewerPhysGroupMenu(event, this)"' : '')
+        + '><span class="spv-sys-caret spv-sys-caret--none">▾</span>'
+        + '<span class="spv-sys-row__part' + (missing ? ' spv-sys-row__part--missing' : '')
+        + '">' + text + '</span></div>'];
+    var rows = group.rows || [];
+    for (var i = 0; i < rows.length; i++) {
+        var r = rows[i] || {};
+        r.__part = group.part;
+        out.push(spvPhysRowHtml(r));
+    }
+    return out.join('');
+}
+
+window.renderSPVPhysical = function (physical) {
+    if (!physical) return;
+    spvPhysical = physical;
+    var physTab = physical.tab === 'physical';
+    var fb = document.getElementById('spv-syslist-body');
+    var pb = document.getElementById('spv-physical-body');
+    if (fb) fb.style.display = physTab ? 'none' : '';
+    if (pb) pb.style.display = physTab ? '' : 'none';
+    var tf = document.getElementById('spv-tab-functional');
+    var tp = document.getElementById('spv-tab-physical');
+    if (tf) tf.classList.toggle('spv-tab--active', !physTab);
+    if (tp) tp.classList.toggle('spv-tab--active', physTab);
+    if (!pb || !physTab) return;
+    var out = [];
+    var groups = physical.groups || [];
+    for (var i = 0; i < groups.length; i++) out.push(spvPhysGroupHtml(groups[i] || {}));
+    pb.innerHTML = out.join('');
+};
+
+window.shipPropertyViewerPhysTab = function (el) {
+    spvPhysChosenLight = null;
+    dauntlessEvent('ship-property-viewer/physical/tab:'
+                   + JSON.stringify({tab: el.dataset.tab}));
+};
+
+// A subsystem row selects its pin like the Functional tab; a running light has
+// no pin, so it only marks itself (kept in JS, re-applied on every re-render).
+window.shipPropertyViewerPhysRowClick = function (el) {
+    if (el.dataset.kind === 'running_light') {
+        spvPhysChosenLight = el.dataset.key;
+        return;
+    }
+    spvPhysChosenLight = null;
+    dauntlessEvent('ship-property-viewer/select_pin:' + el.dataset.index);
+};
+
+function spvPhysShowMenu(show) {
+    spvShowMenuItems({radius: false, addlight: false, light: false, removelight: false,
+                       addemitter: false, editemitter: false, removeemitter: false,
+                       moveto: show.moveto, reset: show.reset,
+                       moveall: show.moveall, resetall: show.resetall});
+}
+function spvPhysInert(id, inert) {
+    var el = document.getElementById(id);
+    if (el) el.classList.toggle('spv-ctxmenu__item--inert', inert);
+}
+
+window.shipPropertyViewerPhysChildMenu = function (event, el) {
+    event.preventDefault(); event.stopPropagation();
+    spvCtxPhysKey = el.dataset.key; spvCtxPhysSource = el.dataset.source;
+    spvCtxPhysPart = el.dataset.part; spvCtxPhysMissing = null;
+    spvPhysShowMenu({moveto: true, reset: true, moveall: false, resetall: false});
+    spvPhysInert('spv-ctx-moveto', el.dataset.source === 'set');
+    spvPhysInert('spv-ctx-reset', el.dataset.source !== 'set');
+    spvOpenMenuAt(event);
+    return false;
+};
+
+window.shipPropertyViewerPhysGroupMenu = function (event, el) {
+    event.preventDefault(); event.stopPropagation();
+    spvCtxPhysMissing = el.dataset.part; spvCtxPhysKey = null;
+    spvCtxPhysPart = null;
+    spvPhysShowMenu({moveto: false, reset: false, moveall: true, resetall: true});
+    spvPhysInert('spv-ctx-moveall', false);
+    spvPhysInert('spv-ctx-resetall', false);
+    spvOpenMenuAt(event);
+    return false;
+};
+
+// The submenu is a second .spv-ctxmenu at the parent menu's right edge.
+window.shipPropertyViewerPhysOpenSub = function (el) {
+    var sub = document.getElementById('spv-ctxsub');
+    if (!sub) return;
+    if (el.classList && el.classList.contains('spv-ctxmenu__item--inert')) return;
+    if (el.dataset.mode === 'move' && spvCtxPhysSource === 'set') return;
+    spvPhysSubMode = el.dataset.mode;
+    var parts = spvPhysical.parts || [];
+    var out = [];
+    for (var i = 0; i < parts.length; i++) {
+        var current = spvPhysSubMode === 'move' && parts[i] === spvCtxPhysPart;
+        out.push('<div class="spv-ctxmenu__item" data-part="' + escapeHtmlSPV(parts[i])
+            + '" onclick="shipPropertyViewerPhysPickPart(this)">'
+            + (current ? '✓ ' : '') + escapeHtmlSPV(parts[i]) + '</div>');
+    }
+    sub.innerHTML = out.join('');
+    var menu = document.getElementById('spv-ctxmenu');
+    var r = menu.getBoundingClientRect();
+    var rowEl = (el.getBoundingClientRect ? el.getBoundingClientRect() : r);
+    sub.style.left = r.right + 'px';
+    sub.style.top = rowEl.top + 'px';
+    sub.style.display = 'block';
+};
+
+window.shipPropertyViewerPhysPickPart = function (el) {
+    var part = el.dataset.part;
+    if (spvPhysSubMode === 'moveall') {
+        dauntlessEvent('ship-property-viewer/physical/move_all:'
+            + JSON.stringify({missing: spvCtxPhysMissing, part: part}));
+    } else {
+        dauntlessEvent('ship-property-viewer/physical/move:'
+            + JSON.stringify({key: spvCtxPhysKey, part: part}));
+    }
+    spvHideOverlays();
+};
+
+window.shipPropertyViewerPhysReset = function () {
+    if (spvCtxPhysSource !== 'set' || spvCtxPhysKey === null) return;
+    dauntlessEvent('ship-property-viewer/physical/reset:'
+        + JSON.stringify({key: spvCtxPhysKey}));
+    spvHideOverlays();
+};
+
+window.shipPropertyViewerPhysResetAll = function () {
+    if (spvCtxPhysMissing === null) return;
+    dauntlessEvent('ship-property-viewer/physical/reset_all:'
+        + JSON.stringify({missing: spvCtxPhysMissing}));
+    spvHideOverlays();
+};
+// ---- end Physical tab
