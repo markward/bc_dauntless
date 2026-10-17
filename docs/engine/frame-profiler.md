@@ -49,7 +49,8 @@ DAUNTLESS_PROFILE_SPIKES=/tmp/spikes.log ./build/dauntless
   `realize.hull_prewarm`; `scene.system_load`, `scene.ships`, `scene.minors`,
   `scene.far_tier`, `scene.celestial` ⊃ `load.planet_model`;
   `scene.comm_sets`; `env.system_nebula`; native `rock.near.stream`,
-  `space.far.build`, `sky.bake`. During the tunnel: `warp.preload` (the
+  `space.far.build`, `sky.bake`, `rock.atlas.load`; `warp.place_player` and
+  `warp.depart` (the QuickBattle arrival and the departure). During the tunnel: `warp.preload` (the
   destination preload's one step per frame, `engine/warp_preload.py`).
 
 **Run it through `dauntless.exe`, not `python -c "host_loop.run()"`.** CEF only

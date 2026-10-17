@@ -1,8 +1,10 @@
 # Warp tunnel as the loading screen — design
 
 **Date:** 2026-10-16
-**Status:** design, awaiting Mark's review. Not implemented. Includes turning the
-system haze on for production (§4).
+**Status:** implemented 2026-10-17 on perf/warp-arrival-spike-log; arrival freeze
+live-checked by Mark 2026-10-17; tunnel judder on rock-heavy destinations OPEN
+(follow-up). Includes turning the system haze on for production (§4). See
+"Acceptance (2026-10-17)" at the end.
 **Branch:** `perf/warp-arrival-spike-log` (worktree `.claude/worktrees/warp-arrival-spikes`).
 The spike-capture tooling this design relies on is committed there (`636df711`).
 **Area:** `engine/appc/warp.py`, `engine/host_loop.py`, `native/src/renderer/system_nebula_pass.{h,cc}`,
@@ -317,3 +319,45 @@ makes no renderer call"; don't delete them.
 - An unpreloadable cost stops the build and goes back to Mark.
 - The arrival goal is 250 ms, not "one frame". Matching or beating the
   pre-existing per-frame noise on the bridge is out of scope here.
+
+## Acceptance (2026-10-17)
+
+Spike capture (`DAUNTLESS_PROFILE_SPIKES`), Debug build. Runs: dev ×2 and prod
+(`logs/warp-spikes-3-dev.log`, `-3-prod.log`, `-4-dev.log`, `-4-prod.log`,
+`-4-mission.log`; logs are not committed). Arrival-frame time, before (the two
+measurements above) to after.
+
+| Arrival | Before | After |
+|---|---|---|
+| Vesuvi Haven, first visit, dev | 9151 ms (E1M2 route: 9364) | 322 ms (second run 372) |
+| Vesuvi Haven, first visit, prod | not measured | 325 ms (second run 345) |
+| Vesuvi Haven, return | 7376 ms | 105 ms dev (run 2: 114), 107 ms prod |
+| Starbase12 (QuickBattle) | 1208-1219 ms | 875-887 ms; 921-952 ms in the later runs (`warp.place_player` ~790-800 ms, deferred) |
+| Vesuvi Dust Cloud (Vesuvi4), from Starbase12, prod | not measured | 176 ms (12 rocks realized, models cached) |
+| E1M2 (Vesuvi6) via E1M1 mission change, dev | 9364 ms | 249 ms (meets the 250 ms goal; `realize.ship_model` 1.1 ms x7, preloaded) |
+
+- Mark's decision: accepted the 0.32-0.37 s first-visit Vesuvi arrival. The
+  250 ms goal is missed there. The remainder is SDK setup at its BC moment:
+  `scene.system_load` ~100 ms, `warp.region_init` ~50 ms, the
+  Initialize-created ship plus hull prewarm ~72 ms, `rock.near.stream` ~39 ms.
+  Belt pre-fill is impossible on a first visit (the arrival point is unknown
+  until the region's `Initialize`); not pursued.
+- No `[warp-preload] late:` line appeared in any run (Mark).
+- System haze in production: the Dust Cloud nebula looked consistent across the
+  developer runs and the production run (Mark).
+- **Open follow-up (Mark agreed it is a separate project): tunnel judder when
+  the preload loads catalogue rocks or planets.** Tunnel frames of ~100-180 ms:
+  4 frames on Starbase12 to Vesuvi Dust Cloud (each `warp.preload` ~107 ms, the
+  12 Asteroidh1 rocks the system loader pre-creates), and ~10 frames after the
+  E1M1 to E1M2 mission change (planets 47 ms each, debris rocks 120-140 ms).
+  The 100 ms tunnel-frame budget is exceeded there. Proposed fix: split the
+  model loader into a worker "prepare" (file read, PNG decode, mesh build) and
+  a budgeted main-thread "finish" (GL upload), like the impostor-atlas
+  prefetch. First confirm with a scope inside the model load that texture
+  decode dominates (inferred, not measured).
+- Other deferred follow-ups: `warp.place_player` ~0.8 s (QuickBattle
+  Starbase12), `warp.depart` ~0.4 s (leaving Vesuvi), first-warp CEF repaint
+  frames (~85 ms `cef.composite`), `WarpSequence.Stop()` never calls
+  `_detach_from_engine()` (pre-existing), and a boot-time prebuild of every
+  mapped system's haze table for non-warp mission starts.
+- Not claimed: Mark has not said the warp feels seamless (Acceptance item 5).
