@@ -340,8 +340,9 @@ def test_probe_stash_is_at_defaults(host_module):
 
 # Bridge static spot lights (plan 2026-10-09-bridge-pbr Task 7): production,
 # NOT developer-gated; returns the dropped count, never raises. Setting spots
-# marks the probes dirty -- BridgePass::set_spots does it, so the binding
-# needs no separate request (and touches no probe stash).
+# moves the probe signatures the capture queue compares against (spec
+# 2026-10-17 §4.7), so the binding needs no separate request (and touches no
+# probe stash). Nothing is queued before the first capture request.
 
 _SPOT = ((0.0, 0.0, 50.0), (0.0, 0.0, -1.0), 30.0, 60.0, 120.0, (1.0, 1.0, 1.0), 2000.0)
 
@@ -363,8 +364,14 @@ def test_set_bridge_spots_degenerate_values_never_raise(host_module):
 
 def test_set_bridge_spots_on_a_live_bridge_dirties_the_probes(probe_stash_guard, dbridge):
     h, _iid = dbridge
-    assert h.bridge_probe_state()["capture_pending"] is False
+    before = h.bridge_probe_signatures()
     assert h.set_bridge_spots([_SPOT] * 33) == 1
+    after = h.bridge_probe_signatures()
+    assert len(after) == len(before) >= 5
+    assert all(a != b for a, b in zip(after, before))   # every base reads the spots
+    # No request yet: nothing is queued, so nothing is pending.
+    assert h.bridge_probe_state()["capture_pending"] is False
+    h.request_bridge_probe_capture()
     assert h.bridge_probe_state()["capture_pending"] is True
 
 
@@ -416,9 +423,11 @@ def test_set_bridge_spots_drops_non_finite_on_a_live_bridge(probe_stash_guard, d
 
 def test_identical_spot_and_override_pushes_do_not_dirty_the_probes(probe_stash_guard, dbridge):
     h, iid = dbridge
+    before = h.bridge_probe_signatures()
     assert h.bridge_probe_state()["capture_pending"] is False
     assert h.set_bridge_spots([]) == 0
     h.set_bridge_material_overrides(iid, [])
+    assert h.bridge_probe_signatures() == before
     assert h.bridge_probe_state()["capture_pending"] is False
 
 
@@ -617,10 +626,13 @@ def test_a_zero_size_or_non_finite_area_light_is_dropped(host_module):
 
 def test_set_bridge_area_lights_on_a_live_bridge_dirties_the_probes(probe_stash_guard, dbridge):
     h, _iid = dbridge
-    assert h.bridge_probe_state()["capture_pending"] is False
+    before = h.bridge_probe_signatures()
     assert h.set_bridge_area_lights([_AREA]) == 0
-    assert h.bridge_probe_state()["capture_pending"] is True
-    h.set_bridge_area_colours([(2.0, 2.0, 2.0)])          # never raises
+    lit = h.bridge_probe_signatures()
+    assert all(a != b for a, b in zip(lit, before))
+    h.set_bridge_area_colours([(2.0, 2.0, 2.0)])          # never raises...
+    assert h.bridge_probe_signatures() == lit             # ...nor moves a signature
+    assert h.bridge_probe_state()["capture_pending"] is False   # no request yet
 
 
 def test_mesh_geometry_on_dbridge(dbridge, monkeypatch):

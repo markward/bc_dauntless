@@ -27,6 +27,10 @@ inline constexpr glm::vec3 kBridgeUp{0.0f, 0.0f, 1.0f};  // set instances draw w
 // Bridge PBR constants (spec 2026-10-08-bridge-emitters §9, Global Constraints)
 inline constexpr int kBridgeProbeFace = 384;
 inline constexpr int kBridgeProbeMips = 6;
+/// Capture steps per main-bridge frame (spec 2026-10-17 §4.7): a step is one
+/// probe cube face or one prefilter mip, so a probe takes 6 + kBridgeProbeMips
+/// frames. Tune live against the profiler's `bridge.probe_capture` scope.
+inline constexpr int kBridgeProbeStepsPerFrame = 1;
 inline constexpr int kBridgeBrdfLutSize = 128;
 inline constexpr int kBridgeMaxSpots = 32;
 inline constexpr float kBridgeDefaultSpotIntensity = 2000.0f;
@@ -37,7 +41,8 @@ inline constexpr int kBridgeMaxAreaLights = 32;   // spec §16.3; Python caps sp
 /// ceiling, so an emissive texel can exceed the bloom threshold. Rebuild to tune.
 inline constexpr float kEmissiveScale = 1.0f;
 /// Texture unit the bridge pass binds the alert-selected emissive map on
-/// (0 base, 1 normal, 2 face b, 3/4 AO, 5 rough, 6 metal, 7/8 probes, 9 LUT).
+/// (0 base, 1 normal, 2 face b, 3/4 AO, 5 rough, 6 metal, 7 probe array,
+/// 8 unused, 9 LUT).
 inline constexpr int kBridgeEmissiveUnit = 10;
 
 /// CPU twin of bridge.frag's diffuse_ceiling (tests pin the GLSL to it).

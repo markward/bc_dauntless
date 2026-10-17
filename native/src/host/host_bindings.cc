@@ -4980,7 +4980,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               d["scales"] = sc;
               d["probe_count"] = g_bridge_pass->probe_count();
               d["mix"] = g_bridge_pass->probe_mix();
-              d["capture_pending"] = g_bridge_pass->probe_capture_pending();
+              d["capture_pending"] = !g_bridge_pass->probes_settled();
               d["probes_valid"] = g_bridge_pass->probes_valid();
               d["alert_ambient_scale"] = g_bridge_pass->alert_ambient_scale();
               d["alert_level"] = g_bridge_pass->alert_level();
@@ -5007,9 +5007,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
               if (g_bridge_pass) g_bridge_pass->request_probe_capture();
               else g_bridge_probe.capture_pending = true;
           },
-          "Recapture both bridge reflection probes inside the next main-bridge "
-          "frame (bridge load). Override and spot changes dirty the probes by "
-          "themselves. Never per frame.");
+          "Recapture every bridge reflection probe, time-sliced over the "
+          "following main-bridge frames (bridge load); nothing is captured "
+          "before the first request. Afterwards an input change (spots, "
+          "overrides, scales, ...) queues the probes it touches by itself. "
+          "Never per frame.");
 
     m.def("bridge_debug_view",
           [] { return g_bridge_debug_view; },

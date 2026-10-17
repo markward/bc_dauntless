@@ -103,17 +103,20 @@ uniform int       u_has_emissive_map;
 uniform float     u_emissive_scale;  // renderer::kEmissiveScale
 
 // ── Reflection probes (plan 2026-10-09-bridge-pbr Task 6) ──────────────
-// Two prefiltered captures of the room -- green (unit 7) and yellow/red
-// (unit 8) -- cross-faded by u_probe_mix, box-projected against the bridge
-// model's AABB, with the split-sum BRDF LUT on unit 9. u_has_probe = 0 until
-// BOTH are captured: the cube units are then EMPTY and must not be sampled.
+// Every prefiltered capture of the room (each state's base and its layers)
+// in ONE cube-map array on unit 7; this samples the green and yellow bases
+// at the array layers BridgePass hands it each frame (a recapture swaps a
+// probe's layer), cross-faded by u_probe_mix, box-projected against the
+// bridge model's AABB, with the split-sum BRDF LUT on unit 9. u_has_probe = 0
+// until BOTH bases are captured: unit 7 is then EMPTY and must not be sampled.
 // u_capture = 1 while BridgePass draws a probe face: linear diffuse-only
 // radiance under the same diffuse ceiling as the view (spec §9.5: the probe
 // holds a lit room capped at 0.88, so only emitters in it may bloom through
 // a reflection) plus the decoded, uncapped glow, no AO, no highlight, no
 // specular, the viewscreen black.
-uniform samplerCube u_probe_a;    // unit 7: green
-uniform samplerCube u_probe_b;    // unit 8: yellow/red
+uniform samplerCubeArray u_probes;  // unit 7: every probe, one cube layer each
+uniform int         u_probe_layer_a;  // array layer of the green base (probe 0)
+uniform int         u_probe_layer_b;  // array layer of the yellow base (probe 1)
 uniform sampler2D   u_brdf_lut;   // unit 9: (A, B), x = NdotV, y = roughness
 uniform int         u_has_probe;
 uniform float       u_probe_mix;  // 0 green .. 1 yellow/red
@@ -635,7 +638,8 @@ void main() {
         if (u_has_probe != 0) {
             vec3 R = reflect(-V, N);
             if (u_debug_view == 9) {
-                FragColor = vec4(encode(textureLod(u_probe_a, R, 0.0).rgb), 1.0);
+                FragColor = vec4(encode(textureLod(u_probes, vec4(R, float(u_probe_layer_a)),
+                                                   0.0).rgb), 1.0);
                 return;
             }
             vec3 Rb = box_project(v_world, R, u_box_min, u_box_max, u_probe_pos);
@@ -643,8 +647,9 @@ void main() {
             // to the unprojected direction rather than feed NaN to bloom.
             if (any(isnan(Rb)) || any(isinf(Rb))) Rb = R;
             float mip = prefilter_mip(rough);
-            vec3 pre = mix(textureLod(u_probe_a, Rb, mip).rgb,
-                           textureLod(u_probe_b, Rb, mip).rgb, u_probe_mix);
+            vec3 pre = mix(textureLod(u_probes, vec4(Rb, float(u_probe_layer_a)), mip).rgb,
+                           textureLod(u_probes, vec4(Rb, float(u_probe_layer_b)), mip).rgb,
+                           u_probe_mix);
             vec2 ab = texture(u_brdf_lut, vec2(NdotV, rough)).rg;
             spec = pre * (F0 * ab.x + ab.y * u_reflectance)
                  * specular_occlusion(NdotV, ao, rough);

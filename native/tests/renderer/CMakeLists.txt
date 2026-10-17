@@ -68,6 +68,7 @@ add_executable(renderer_tests
     lens_flare_pass_test.cc
     bridge_pass_test.cc
     bridge_probe_signature_test.cc
+    bridge_probe_schedule_test.cc
     bridge_lighting_test.cc
     bridge_pbr_test.cc
     bridge_ao_test.cc

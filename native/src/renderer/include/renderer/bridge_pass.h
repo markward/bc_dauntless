@@ -5,6 +5,7 @@
 #include <renderer/bridge_lighting_tuning.h>   // kBridgeMaxSpots
 #include <renderer/bridge_probe.h>
 #include <renderer/bridge_probe_array.h>
+#include <renderer/bridge_probe_schedule.h>  // kBridgeStates, next_probe
 #include <renderer/frame.h>
 
 #include <scenegraph/instance.h>  // scenegraph::Pass
@@ -28,18 +29,14 @@ namespace renderer {
 
 class Pipeline;
 
-/// Bridge states (spec 2026-10-17-bridge-reflection-layers §4): 0 green,
-/// 1 yellow, 2 red, 3 offline, 4 special. Probe ids: base of state s = s,
-/// animation layer k = kBridgeStates + k.
-inline constexpr int kBridgeStates = 5;
-
 /// Developer-only bridge debug views (Developer Options -> Lighting tab).
 /// Off is production: byte-identical to no debug support existing at all.
 /// Selected via BridgePass::set_debug_view; see bridge.frag for how each is
 /// drawn. The viewscreen feed (u_unlit) ignores every value here. 6..10 are
 /// the PBR views: they show only where the PBR path runs (u_pbr != 0); on a
 /// comm set or with PBR off they fall through to the lit colour. 9 (probe
-/// mirror) draws the lit colour until both probes have been captured.
+/// mirror) draws the lit colour until the green and yellow bases have been
+/// captured.
 enum class BridgeDebugView : int {
     Off          = 0,
     Normals      = 1,
@@ -80,7 +77,10 @@ struct BridgeSpot {
     /// Spec 2026-10-08-bridge-emitters §11.4: the radiance each state's base
     /// probe capture sees (index = state), separate from the live `radiance`
     /// (set_spot_radiance), so a pulsing or fading light never recaptures.
-    /// false = every capture uses `radiance` (the PBR-step rule).
+    /// false = every state's capture uses the `radiance` the light was
+    /// pushed with: set_spots / set_area_lights copy it into
+    /// capture_radiance and set this, so a later live colour never reaches
+    /// a probe.
     bool      has_capture = false;
     glm::vec3 capture_radiance[kBridgeStates] = {};
     /// Reflection layers (spec 2026-10-17 §4.5): per state, the layer this row
@@ -259,9 +259,11 @@ public:
     /// Replaces any previous set (including another model's). Production
     /// data: applied to the main bridge view only (never comm sets, never
     /// officers). A later entry for the same mesh wins. The probe capture
-    /// reads the metalness, so a set that DIFFERS from the current one marks
-    /// the probes dirty; an identical one (or none over none) does not.
-    /// clear_material_overrides() never dirties (session reset).
+    /// reads the metalness, so the set is a signature input of every probe
+    /// (probe_signature): a set that DIFFERS from the one a probe was
+    /// captured with queues it; an identical one (or none over none) does
+    /// not. clear_material_overrides() is the session reset's half (beside
+    /// reset_probes()).
     void set_material_overrides(unsigned long long model_handle,
                                 std::vector<BridgeMaterialOverride> overrides);
     void clear_material_overrides();
@@ -272,10 +274,12 @@ public:
     void set_pbr_enabled(bool on) { pbr_enabled_ = on; }
     bool pbr_enabled() const { return pbr_enabled_; }
 
-    /// Bridge reflection probes (spec 2026-10-08-bridge-emitters §9.3): two
-    /// captures of the room -- green, and yellow/red -- box-projected against
-    /// the bridge model's AABB and cross-faded by set_probe_mix. Production
-    /// state; none of it is developer-gated.
+    /// Bridge reflection probes (spec 2026-10-08-bridge-emitters §9.3, spec
+    /// 2026-10-17-bridge-reflection-layers §4): one capture of the room per
+    /// state (its base) plus one per animation layer, all in one cube-map
+    /// array, box-projected against the bridge model's AABB. The shader
+    /// samples the green and yellow bases, cross-faded by set_probe_mix.
+    /// Production state; none of it is developer-gated.
     ///
     /// Capture point (world). Takes effect at the next capture.
     void set_probe_origin(glm::vec3 origin) { probe_origin_ = origin; }
@@ -331,31 +335,54 @@ public:
     /// fade. Default 0.
     void set_alert_level(int level) { alert_level_ = level; }
     int alert_level() const { return alert_level_; }
-    /// 0 = the green probe, 1 = the yellow/red probe; clamped to [0, 1].
+    /// 0 = the green base (probe 0), 1 = the yellow base (probe 1); clamped
+    /// to [0, 1].
     void set_probe_mix(float t);
     float probe_mix() const { return probe_mix_; }
-    /// Mark the probes dirty: both are recaptured inside the next main-bridge
-    /// render(), before its AO pre-pass. Never per frame otherwise -- except
-    /// that, once they have been captured, two changes re-dirty them by
-    /// themselves: a different bridge model (the static bridge instance with
-    /// the most meshes), and a different bridge lighting (the unscaled
-    /// ambient render() is handed; the alert scale never counts).
-    void request_probe_capture() {
-        probe_dirty_ = true;
-        captured_sigs_.clear();   // every probe's captured signature is stale
-    }
-    bool probe_capture_pending() const { return probe_dirty_; }
-    /// True once both probes hold a capture the shader may sample.
+    /// The capture queue (spec 2026-10-17 §4.7). A probe needs a capture
+    /// while it holds none, or while the signature it was captured with
+    /// differs from probe_signature() now -- so a setter never requests one;
+    /// changing an input a probe reads (spots, area lights, overrides,
+    /// scales, glow captures, layers, the origin, the bridge model, the
+    /// unscaled ambient render() is handed) queues exactly the probes that
+    /// read it. Nothing is captured before the first request (the bridge
+    /// load makes it). Each main-bridge render(), before its AO pre-pass,
+    /// runs kBridgeProbeStepsPerFrame steps of the probe in flight, picked by
+    /// next_probe with the alert level as the shown state. A probe in flight
+    /// draws every face from the inputs snapshotted at its first step; a
+    /// change meanwhile requeues it once it lands. A different bridge model
+    /// drops the probe in flight.
+    ///
+    /// request_probe_capture(): forget every captured signature (each probe
+    /// recaptures, its old content showing until then) and drop the probe in
+    /// flight. Never per frame.
+    void request_probe_capture();
+    /// True once the shown state's base (alert_level()) holds a capture.
     bool probes_valid() const;
+    /// True once probe `probe` holds a completed capture (it keeps showing
+    /// while a recapture of it is in flight). False out of range.
+    bool probe_valid(int probe) const;
+    /// Nothing queued and nothing in flight. Always true before the first
+    /// request_probe_capture() (and after reset_probes()).
+    bool probes_settled() const;
+    /// Test accessor: completed captures of probe `probe` since construction
+    /// (capture_probe_now's included). 0 out of range.
+    int probe_captures_completed(int probe) const;
+    /// Test seam: capture steps per main-bridge render(); 0 = unlimited (the
+    /// whole queue drains inside one render()). Default
+    /// kBridgeProbeStepsPerFrame -- production never changes it.
+    void set_probe_steps_per_frame(int n) { steps_per_frame_ = n; }
+    /// Steps one probe takes (BridgeProbeArray::steps_per_probe).
+    int steps_per_probe() const { return probes_.steps_per_probe(); }
     /// Static spot lights for the main bridge view (PBR path only; comm sets
     /// and the legacy A/B path never see them). Replaces the previous set,
     /// keeping the first kBridgeMaxSpots; returns how many were dropped (the
     /// caller reports them -- never silently). The probe captures include the
-    /// spots' diffuse, so a list that DIFFERS from the current one (compared
-    /// after the normalisation and truncation below) marks the probes dirty
-    /// -- here in the pass, not in the binding, so every caller gets it
+    /// spots' diffuse: the stored (normalised, truncated) list is a signature
+    /// input, so a list that differs queues the probes that read the change
     /// (clearing a non-empty list too). An identical list, or empty over
-    /// empty, does not: an alert change re-pushes the same list every time.
+    /// empty, queues nothing: an alert change re-pushes the same list every
+    /// time.
     ///
     /// Expects a unit `direction` and cos_inner >= cos_outer, and finite
     /// values (the set_bridge_spots binding drops non-finite lights and
@@ -363,8 +390,8 @@ public:
     /// becomes straight down, -Z) and lowers cos_outer to cos_inner if the
     /// two arrive swapped.
     std::size_t set_spots(std::vector<BridgeSpot> spots);
-    /// Drop every spot WITHOUT marking the probes dirty (paired with
-    /// reset_probes(), which drops the captures and the request). The host
+    /// Drop every spot (paired with reset_probes(), which drops the captures
+    /// and the request, so nothing is queued by it). The host
     /// does not call it: a new session builds a fresh BridgePass.
     void clear_spots() { spots_.clear(); }
     /// Live radiance for the current spots in set_spots order (spec §11.4).
@@ -373,8 +400,8 @@ public:
     void set_spot_radiance(const std::vector<glm::vec3>& radiance);
     /// Static area lights (spec §16.3), main bridge view + its probe
     /// captures only. Keeps the first kBridgeMaxAreaLights, returns how many
-    /// were dropped; marks the probes dirty only when the list changed
-    /// (geometry, range or capture colours -- the set_spots rule).
+    /// were dropped; a signature input like the spots (geometry, range and
+    /// capture colours; joins and live colours never).
     std::size_t set_area_lights(std::vector<BridgeAreaLight> lights);
     /// Live radiance in set_area_lights order; never dirties the probes.
     void set_area_radiance(const std::vector<glm::vec3>& radiance);
@@ -388,19 +415,21 @@ public:
     std::size_t glow_count() const { return glow_.size(); }
     std::size_t spot_count() const { return spots_.size(); }
 
-    /// Drop the captures (no specular until the next request), the pending
-    /// request, the mix and the cached boxes (model handles die with the
-    /// session). Origin and scales are configuration and are kept. The host
-    /// does not call it: a new session builds a fresh BridgePass.
+    /// Drop the captures (the probe array is freed: no specular until the
+    /// next request), the request, the probe in flight, the mix and the
+    /// cached boxes (model handles die with the session). Origin and scales
+    /// are configuration and are kept. Needs the GL context current to free
+    /// the array. The host does not call it: a new session builds a fresh
+    /// BridgePass.
     void reset_probes();
 
     /// Capture probe `probe` (a base: the state id; a layer: kBridgeStates +
-    /// k) whole, in one call, into the probe array -- every step of
-    /// BridgeProbeArray back to back, each face drawn with that probe's
-    /// content (spec 2026-10-17 §4.1). Test seam, and the body the stepped
-    /// capture slices: production never captures a whole probe in one frame.
-    /// The shader does not sample the array yet. Out-of-range probe, or no GL
-    /// targets: nothing. Never touches the dirtiness or the legacy probes.
+    /// k) whole, in one call, into the probe array -- every step of the
+    /// scheduler's path back to back (snapshot, steps, completion), each face
+    /// drawn with that probe's content (spec 2026-10-17 §4.1). Takes
+    /// `lighting.ambient` as the current unscaled ambient. Replaces any probe
+    /// in flight. Test seam: production never captures a whole probe in one
+    /// frame. Out-of-range probe, or no GL targets: nothing.
     void capture_probe_now(int probe, const scenegraph::World& world, Pipeline& pipeline,
                            const ModelLookup& lookup, const Lighting& lighting);
     /// Test seam: every texel of probe `probe`'s six faces at `mip` (face-
@@ -457,25 +486,31 @@ private:
     /// Bridge reflection probes. `capture_pass_` is true while render()
     /// re-enters itself to draw one probe face (sub-pass A, u_capture = 1).
     /// The LUT is owned here (not process-wide): its destructor, like the
-    /// probes', needs this pass's GL context current.
-    BridgeProbe probe_green_;
-    BridgeProbe probe_yr_;
+    /// probe array's, needs this pass's GL context current.
     BrdfLut     brdf_lut_;
     glm::vec3   probe_origin_{0.0f};
     std::array<float, kBridgeStates> scales_{1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
     std::vector<int> layer_states_;
     unsigned long long glow_capture_model_ = 0;
     std::vector<BridgeGlowCapture> glow_captures_;
-    /// Signature each probe was captured with; cleared by request_probe_capture.
+    /// Signature each probe's completed capture was taken with, by probe id;
+    /// 0 = none (request_probe_capture() zeroes them all).
     std::vector<std::uint64_t> captured_sigs_;
+    /// Completed captures by probe id since construction (test accessor).
+    std::vector<int> captures_completed_;
     float       probe_mix_ = 0.0f;
+    int         steps_per_frame_ = kBridgeProbeStepsPerFrame;
     float       alert_ambient_scale_ = 1.0f;
     int         alert_level_ = 0;
-    bool        probe_dirty_ = false;
-    bool        probes_captured_ = false;   // cleared by reset_probes()
-    /// The (unscaled) bridge ambient the current captures were taken with --
-    /// the only Lighting field the pass reads. A main-bridge render handed a
-    /// different one re-dirties captured probes.
+    /// Set by request_probe_capture(), cleared by reset_probes(): nothing is
+    /// queued before the first request.
+    bool        capture_requested_ = false;
+    /// The probe array could not be allocated: one report per request, no
+    /// retry every frame.
+    bool        storage_failed_ = false;
+    /// The (unscaled) bridge ambient the last main-bridge render() was handed
+    /// -- the only Lighting field the pass reads. A signature input: a
+    /// different one queues every probe.
     glm::vec3   capture_ambient_{0.0f};
     bool        capture_pass_ = false;
     /// Static spot lights, at most kBridgeMaxSpots (set_spots truncates).
@@ -485,25 +520,57 @@ private:
     /// Per-shape emitter glow of the model `glow_model_` (0 = none).
     unsigned long long glow_model_ = 0;
     std::unordered_map<int, BridgeGlow> glow_;
-    /// Every probe (bases and layers) for capture_probe_now. The shader
-    /// still samples probe_green_ / probe_yr_.
+    /// Every probe (bases and layers): slot = probe id.
     BridgeProbeArray probes_;
     /// Which probe a capture pass is drawing: a probe id (base s = s, layer
-    /// k = kBridgeStates + k). The legacy cubes draw bases 0 and 1.
+    /// k = kBridgeStates + k).
     int capture_probe_ = 0;
+
+    /// Every input a probe capture reads, as snapshotted at a probe's first
+    /// step (spec §4.7): the probe in flight draws all its faces from it.
+    struct ProbeInputs {
+        std::vector<BridgeSpot> spots;
+        std::vector<BridgeAreaLight> areas;
+        unsigned long long glow_capture_model = 0;
+        std::vector<BridgeGlowCapture> glow_captures;
+        unsigned long long overrides_model = 0;
+        std::unordered_map<int, std::pair<float, float>> overrides;
+        std::array<float, kBridgeStates> scales{};
+        std::vector<int> layer_states;
+        glm::vec3 origin{0.0f};
+        glm::vec3 ambient{0.0f};
+    };
+    ProbeInputs   snapshot_;
+    std::uint64_t snapshot_sig_ = 0;
+    /// Exchange the live inputs with `in` (both ways: a step swaps the
+    /// snapshot in, draws, and swaps it back out).
+    void swap_inputs(ProbeInputs& in);
+    /// The state whose probes go first: the alert level (0 when out of range).
+    int shown_state() const;
+    bool probe_needs_capture(int probe) const;
+    /// Size the array (and the per-probe bookkeeping) to probe_count().
+    bool sync_probe_storage();
+    /// Snapshot the inputs and start probe `probe` in the array.
+    void begin_probe(int probe);
+    /// One step of the probe in flight, drawn from the snapshot; on its last
+    /// step, record the snapshot's signature and count the completion.
+    void step_probe(const scenegraph::World& world, Pipeline& pipeline,
+                    const ModelLookup& lookup, const Lighting& lighting);
+    /// The per-frame budget of steps (render()'s capture block).
+    void run_capture_steps(const scenegraph::World& world, Pipeline& pipeline,
+                           const ModelLookup& lookup, const Lighting& lighting);
     /// Draw one face of probe `probe` from `face_cam` into the bound target:
     /// render() re-entered with capture_pass_ set, sub-pass A only.
     void draw_probe_face(int probe, const scenegraph::Camera& face_cam,
                          const scenegraph::World& world, Pipeline& pipeline,
                          const ModelLookup& lookup, const Lighting& lighting);
-    void capture_probes(const scenegraph::World& world, Pipeline& pipeline,
-                        const ModelLookup& lookup, const Lighting& lighting);
 
     /// The box the reflections are projected against: the bridge model (the
     /// static main-bridge instance with the most meshes) through its
     /// instance world. Model-space AABBs are cached per model handle (CPU
     /// mesh data through the node rest worlds); `box_handle_` is the handle
-    /// the current box came from, and a change re-dirties captured probes.
+    /// the current box came from (a signature input), and a change drops the
+    /// probe in flight.
     struct Aabb { glm::vec3 min{0.0f}; glm::vec3 max{0.0f}; bool valid = false; };
     std::unordered_map<unsigned long long, Aabb> model_boxes_;
     unsigned long long box_handle_ = 0;
