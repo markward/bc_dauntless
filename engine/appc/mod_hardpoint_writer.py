@@ -314,6 +314,12 @@ def rewrite(text, leaf, edits):
                 if calls:
                     models[leaf][subsystem] = [(s, a) for (s, a) in calls if s != setter]
                 continue
+        if (tree is not None and len(edit) == 3 and edit[1] == "__unset__"
+                and find_setter_call(tree, edit[0], edit[2]) is not None):
+            # The author's own call sits above the block and cannot be
+            # rewritten, so the block overrides it with None (= unset).
+            _w.set_setter(models, leaf, edit[0], edit[2], (None,))
+            continue
         _w.apply_edit(models, leaf, edit)
 
     _check_no_overlapping_spans(replacements)
