@@ -722,6 +722,20 @@ def test_prewarm_has_no_game_state_side_effects(tmp_path, monkeypatch):
     assert len(synced) == 1
 
 
+def test_catalog_icons_are_file_urls_not_inline_copies(tmp_path, monkeypatch):
+    """41 base64 icons were 725 KB of the 960 KB first push (2026-10-17)."""
+    from engine.ui import ship_icons
+    monkeypatch.setattr(ship_icons, "icon_file_url_for_species",
+                        lambda stem: "file:///cache/%s.png" % stem)
+    monkeypatch.setattr(ship_icons, "icon_path_for_species",
+                        lambda stem: pytest.fail("inline data URL used"))
+    p = _make(tmp_path, lambda: list(CATALOG))
+    out = p.render_payload()
+    cat = json.loads(out.split("setQuickBattleCatalog(", 1)[1].split(");", 1)[0])
+    assert next(s for s in cat["ships"] if s["id"] == "Galaxy")["icon"] == \
+        "file:///cache/Galaxy.png"
+
+
 def test_a_catalog_change_after_prewarm_still_resets_the_stats(tmp_path):
     cat = list(CATALOG)
     stats = _CountingStats()

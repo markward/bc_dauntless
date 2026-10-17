@@ -275,8 +275,10 @@ class QuickBattleSetupPanel(Panel):
         if not stem:
             return None
         try:
+            # A file URL, not an inline data URL: the catalog lists every
+            # ship's icon at once (41 inline copies were 725 KB of the push).
             from engine.ui import ship_icons
-            return ship_icons.icon_path_for_species(stem) or None
+            return ship_icons.icon_file_url_for_species(stem) or None
         except Exception as e:                # decoration: costs only itself
             _log.info("quickbattle icon %r unavailable: %s", stem, e)
             return None
