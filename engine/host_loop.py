@@ -11228,6 +11228,10 @@ def run(mission_name: Optional[str] = None,
             print("[host_loop] spike capture -> %s (>= %.0f ms)"
                   % (frame_profiler.spike_log_path(),
                      frame_profiler.spike_threshold_ms()), flush=True)
+        # DAUNTLESS_MOTION_TRACE=<path>: one CSV row per render frame of the
+        # player's live vs drawn pose and the camera (engine/core/motion_trace).
+        from engine.core import motion_trace
+        motion_trace.configure_from_env()
 
         while not r.should_close():
             # Frame profiler: phase timeline for the Python half of the frame.
@@ -13002,6 +13006,19 @@ def run(mission_name: Optional[str] = None,
 
             frame_profiler.mark("r.frame")
             r.frame()
+            if motion_trace.enabled():
+                _mt_interp = locals().get("_interp_player")
+                motion_trace.record(
+                    t_start=_now, frame_dt=_frame_dt,
+                    ticks=_sim_ticks_this_frame, alpha=_interp_alpha,
+                    interp=_mt_interp,
+                    ai=(player is not None and player.GetAI() is not None),
+                    cutscene=_cc is not None, handover=_handover.active,
+                    live=(player.GetWorldLocation()
+                          if player is not None else None),
+                    drawn=(_player_interp_pose[0]
+                           if _player_interp_pose is not None else None),
+                    eye=locals().get("eye"), target=locals().get("target"))
             # Close the frame timeline. Deliberately AFTER r.frame(), so the
             # "r.frame" phase carries the whole render call and the loop total
             # is the real wall-clock cost of one iteration.
