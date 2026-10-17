@@ -151,3 +151,9 @@ def test_the_fade_passes_for_light_through():
     fade.advance(0.25)                           # halfway through the 0.5 s blend
     rgb, _k = fade.output(COVE, 0.0, for_light=True)
     assert rgb == pytest.approx((0.75, 0.4, 0.8))
+
+
+def test_output_waves_false_is_the_peak():
+    peak = bh.output(ALCOVE, "red", 0.0)[0]
+    assert bh.output(ALCOVE, "red", 0.75, waves=False)[0] == peak
+    assert bh.output(ALCOVE, "red", 0.75)[0] != peak

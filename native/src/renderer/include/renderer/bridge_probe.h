@@ -16,9 +16,12 @@ class Shader;
 
 /// One bridge reflection probe: a six-face capture of the room from a point,
 /// GGX-prefiltered over kBridgeProbeMips mips (mip k = roughness
-/// k / (kBridgeProbeMips - 1); mip 0 is a straight copy), for the bridge
-/// shader to sample with textureLod(cube, R, rough * (mips - 1)). Captured on
-/// demand (bridge load, lighting edits), never per frame.
+/// k / (kBridgeProbeMips - 1); mip 0 is a straight copy), all in one call.
+/// The one-shot REFERENCE: no production code uses it any more -- BridgePass
+/// captures through the time-sliced BridgeProbeArray, which must match it
+/// (bridge_probe_array_test.cc's SteppedCaptureMatchesOneShot is the oracle;
+/// bridge_probe_test.cc covers the capture and prefilter themselves). The
+/// production half of this header is BrdfLut, below.
 ///
 /// Face order and orientation are BackdropPass::bake's table, so a
 /// texture(cube, worldDir) sample returns what was drawn looking along

@@ -9,6 +9,8 @@
 #include <gtest/gtest.h>
 #include <glad/glad.h>
 
+#include "bridge_test_room.h"
+
 #include <renderer/bloom_pass.h>
 #include <renderer/bridge_pass.h>
 #include <renderer/bridge_pbr.h>
@@ -41,27 +43,10 @@ namespace {
 
 constexpr int kWin = 256;
 
-assets::Texture solid_1x1(glm::vec4 rgba);
-
-// One quad from four corners with an authored normal `n`, wound
-// counter-clockwise as seen from the side the normal faces. `uv_axes` picks
-// which two position components (scaled by 1/100) become the UV; {-1, -1}
-// leaves the UVs at zero (a UV-less mesh).
-void append_quad(assets::MeshCpu& cpu, const glm::vec3 (&c)[4], const glm::vec3& n,
-                 glm::ivec2 uv_axes) {
-    const auto base = static_cast<std::uint32_t>(cpu.vertices.size());
-    for (const auto& p : c) {
-        assets::MeshCpu::Vertex v;
-        v.position = p;
-        v.normal = n;
-        if (uv_axes.x >= 0) v.uv = glm::vec2(p[uv_axes.x], p[uv_axes.y]) / 100.0f;
-        cpu.vertices.push_back(v);
-    }
-    if (glm::dot(glm::cross(c[1] - c[0], c[2] - c[0]), n) >= 0.0f)
-        cpu.indices.insert(cpu.indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
-    else
-        cpu.indices.insert(cpu.indices.end(), {base, base + 2, base + 1, base, base + 3, base + 2});
-}
+using bridge_test_room::append_quad;
+using bridge_test_room::lookup_fn;
+using bridge_test_room::make_two_mesh_corner;
+using bridge_test_room::solid_1x1;
 
 // Floor z = 0 (x >= 0, normal +Z) and wall x = 0 (z >= 0, normal +X).
 // with_uvs: floor uv = xy / 100, wall uv = yz / 100; else every uv is 0.
@@ -82,43 +67,6 @@ std::unique_ptr<assets::Model> make_corner(bool with_uvs) {
     root.parent_index = -1;
     root.local_transform = glm::mat4(1.0f);
     root.meshes = {0};
-    m->nodes.push_back(std::move(root));
-    m->root_node = 0;
-    return m;
-}
-
-// The corner as TWO meshes so a reflection is identifiable by hue: mesh 0 the
-// floor (material 0, grey `floor_rgb`), mesh 1 the wall (material 1, `wall_rgb`).
-std::unique_ptr<assets::Model> make_two_mesh_corner(glm::vec3 floor_rgb, glm::vec3 wall_rgb) {
-    auto m = std::make_unique<assets::Model>();
-    constexpr float L = 300.0f;
-    const glm::vec3 floor_c[4] = {{0, -L, 0}, {L, -L, 0}, {L, L, 0}, {0, L, 0}};
-    const glm::vec3 wall_c[4]  = {{0, -L, 0}, {0, L, 0}, {0, L, L}, {0, -L, L}};
-    assets::MeshCpu floor_cpu, wall_cpu;
-    append_quad(floor_cpu, floor_c, {0, 0, 1}, glm::ivec2(0, 1));
-    append_quad(wall_cpu, wall_c, {1, 0, 0}, glm::ivec2(1, 2));
-    floor_cpu.material_index = 0;
-    floor_cpu.node_index = 0;
-    wall_cpu.material_index = 1;
-    wall_cpu.node_index = 0;
-    // CPU data retained, as an interior load keeps it: the probe box is the
-    // model's AABB from it.
-    m->meshes.push_back(assets::upload_mesh(floor_cpu));
-    m->meshes.back().set_cpu_data(floor_cpu);
-    m->meshes.push_back(assets::upload_mesh(wall_cpu));
-    m->meshes.back().set_cpu_data(wall_cpu);
-    const glm::vec3 cols[2] = {floor_rgb, wall_rgb};
-    for (int i = 0; i < 2; ++i) {
-        m->textures.push_back(solid_1x1(glm::vec4(cols[i], 1.0f)));
-        assets::Material mat;
-        mat.stages[static_cast<std::size_t>(assets::Material::StageSlot::Base)].texture_index = i;
-        m->materials.push_back(mat);
-    }
-    assets::Node root;
-    root.name = "root";
-    root.parent_index = -1;
-    root.local_transform = glm::mat4(1.0f);
-    root.meshes = {0, 1};
     m->nodes.push_back(std::move(root));
     m->root_node = 0;
     return m;
@@ -172,26 +120,6 @@ scenegraph::Camera corner_camera(int w, int h,
     return cam;
 }
 
-const assets::Model* lookup_fn(unsigned long long h) {
-    return reinterpret_cast<const assets::Model*>(h);
-}
-
-// A 1x1 RGBA8 texture of `rgba` (0..1 per channel), owned by the returned
-// assets::Texture (same upload as bridge_lighting_test.cc's red_1x1()).
-assets::Texture solid_1x1(glm::vec4 rgba) {
-    GLuint t = 0;
-    glGenTextures(1, &t);
-    glBindTexture(GL_TEXTURE_2D, t);
-    unsigned char px[4];
-    for (int i = 0; i < 4; ++i)
-        px[i] = static_cast<unsigned char>(std::lround(std::clamp(rgba[i], 0.0f, 1.0f) * 255.0f));
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glBindTexture(GL_TEXTURE_2D, 0);
-    return assets::Texture(t, 1, 1, false);
-}
-
 class BridgePbrFrame : public ::testing::Test {
 protected:
     // World point whose 9x9 screen block render_impl averages. The open floor
@@ -219,7 +147,34 @@ protected:
         p = std::make_unique<renderer::Pipeline>();
         pass = std::make_unique<renderer::BridgePass>();
         pass->set_ao_enabled(false);
+        // Every queued probe captures inside one render() (test seam): the
+        // tests below that are not about the time-slicing read a reflection
+        // from the very render that captured it. The scheduler tests set 1.
+        pass->set_probe_steps_per_frame(0);
+        // Green shown (spec 2026-10-17 §4.2): with no state given the pass
+        // reflects nothing, so every test that reads a reflection needs one.
+        // The base snaps in as soon as it lands; nothing else moves at dt 0.
+        pass->set_probe_state(0, 0.0f);
         model = make_corner(/*with_uvs=*/true);
+    }
+
+    /// Render the floor until the capture queue drains (at most 500 frames);
+    /// returns the frames rendered.
+    int settle() {
+        int n = 0;
+        while (!pass->probes_settled() && n < 500) {
+            render_floor();
+            ++n;
+        }
+        return n;
+    }
+
+    /// Completed captures of every probe, by probe id.
+    std::vector<int> completed() const {
+        std::vector<int> v;
+        for (int i = 0; i < pass->probe_count(); ++i)
+            v.push_back(pass->probe_captures_completed(i));
+        return v;
     }
 
     /// Give the corner's material a solid-colour texture in `slot`.
@@ -405,7 +360,7 @@ TEST_F(BridgePbrFrame, CommSetKeepsLegacyShading) {
 }
 
 TEST_F(BridgePbrFrame, DebugViewsDrawWithoutGlErrors) {
-    for (int v = 6; v <= 10; ++v) {
+    for (int v = 6; v <= 11; ++v) {
         pass->set_debug_view(static_cast<renderer::BridgeDebugView>(v));
         render_floor();
         EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR)) << v;
@@ -451,7 +406,7 @@ TEST_F(BridgePbrFrame, ASmoothMetalFloorReflectsTheRedWall) {
     use_red_wall_corner();
     set_floor_override(/*rough=*/0.05f, /*metal=*/1.0f);
     pass->set_probe_origin({60.0f, 0.0f, 40.0f});
-    pass->set_probe_scales(1.0f, 1.0f);
+    pass->set_probe_scales({1.0f, 1.0f, 1.0f, 1.0f, 1.0f});
     pass->request_probe_capture();
     const glm::vec3 c = render_floor();
     EXPECT_GT(c.r, c.g * 1.5f);                 // the floor shows red
@@ -470,20 +425,33 @@ TEST_F(BridgePbrFrame, RoughFloorReflectsLessDistinctly) {
     EXPECT_GT(smooth.r - smooth.g, rough.r - rough.g);
 }
 
-TEST_F(BridgePbrFrame, ProbeMixCrossFadesBetweenTheTwoProbes) {
+// The state cross-fade (spec §4.2) runs in C++ on the bridge dt: green
+// settled -> red; 0.25 s on, both bases contribute; 0.5 s on, only red.
+TEST_F(BridgePbrFrame, StateChangeCrossFadesTheBases) {
     use_red_wall_corner();
     set_floor_override(0.05f, 1.0f);
     pass->set_probe_origin({60.0f, 0.0f, 40.0f});
-    pass->set_probe_scales(2.0f, 0.5f);          // green probe 4x brighter
+    pass->set_probe_scales({2.0f, 0.5f, 0.5f, 0.5f, 0.5f});          // green probe 4x brighter
     pass->request_probe_capture();
-    pass->set_probe_mix(0.0f);
-    const float green = render_floor().r;
-    pass->set_probe_mix(1.0f);
-    const float yr = render_floor().r;
-    pass->set_probe_mix(0.5f);
+    const float green = render_floor().r;                            // every probe lands
+    ASSERT_TRUE(pass->probes_settled());
+    EXPECT_FLOAT_EQ(pass->base_weight(0), 1.0f);
+    pass->set_probe_state(2, 0.0f);                                  // red: paused, no move
+    EXPECT_FLOAT_EQ(pass->base_weight(0), 1.0f);
+    EXPECT_NEAR(render_floor().r, green, 1e-4f);
+    pass->set_probe_state(2, 0.25f);
+    EXPECT_NEAR(pass->base_weight(0), 0.5f, 1e-5f);
+    EXPECT_NEAR(pass->base_weight(2), 0.5f, 1e-5f);
     const float mid = render_floor().r;
-    EXPECT_GT(green, yr);
-    EXPECT_LT(mid, green); EXPECT_GT(mid, yr);
+    pass->set_probe_state(2, 0.25f);
+    EXPECT_FLOAT_EQ(pass->base_weight(0), 0.0f);
+    EXPECT_FLOAT_EQ(pass->base_weight(2), 1.0f);
+    const float red = render_floor().r;
+    EXPECT_GT(green, red);
+    EXPECT_LT(mid, green - 1e-3f);
+    EXPECT_GT(mid, red + 1e-3f);
+    pass->set_probe_state(2, 1.0f);                                  // settled: stays
+    EXPECT_NEAR(render_floor().r, red, 1e-5f);
 }
 
 // Spec §9.5: the probe holds a lit room CAPPED like the view (the diffuse
@@ -497,7 +465,7 @@ TEST_F(BridgePbrFrame, ReflectionOfALitRoomNeverReachesTheThreshold) {
         sample_ = {25.0f, 0.0f, 0.0f};
         set_floor_override(0.05f, 1.0f);
         pass->set_probe_origin({60.0f, 0.0f, 40.0f});
-        pass->set_probe_scales(scale, scale);
+        pass->set_probe_scales({scale, scale, scale, scale, scale});
         pass->request_probe_capture();
         const glm::vec3 c = render_floor();
         EXPECT_GT(c.r, 0.1f) << scale;           // it really reflects the room
@@ -554,9 +522,17 @@ TEST_F(BridgePbrFrame, ProbesAreNotRecapturedEveryFrame) {
     pass->set_probe_origin({60.0f, 0.0f, 40.0f});
     pass->request_probe_capture();
     const glm::vec3 first = render_floor();
-    // Repaint the wall blue in place (same model handle): no recapture.
+    ASSERT_TRUE(pass->probes_settled());
+    const std::vector<int> once = completed();
+    for (int c : once) EXPECT_EQ(c, 1);
+    // Repaint the wall blue in place (same model handle): no recapture --
+    // no step runs at all once the queue is settled, at any step budget.
     model->textures[1] = solid_1x1({0.0f, 0.0f, 1.0f, 1.0f});
     const glm::vec3 again = render_floor();
+    pass->set_probe_steps_per_frame(1);
+    for (int i = 0; i < 20; ++i) render_floor();
+    EXPECT_EQ(completed(), once);
+    pass->set_probe_steps_per_frame(0);
     EXPECT_GT(again.r, again.b);
     EXPECT_NEAR(again.r, first.r, 1e-3f);
     pass->request_probe_capture();               // now it does
@@ -587,21 +563,28 @@ TEST_F(BridgePbrFrame, ResetProbesDropsTheReflection) {
     pass->request_probe_capture();
     EXPECT_GT(render_floor().r, 0.05f);
     pass->reset_probes();
+    // The array's probes go too, not just the request.
+    for (int i = 0; i < pass->probe_count(); ++i) EXPECT_FALSE(pass->probe_valid(i)) << i;
+    EXPECT_FALSE(pass->probes_valid());
     const glm::vec3 c = render_floor();
     EXPECT_LT(std::max(c.r, std::max(c.g, c.b)), 1e-3f);
+    EXPECT_TRUE(pass->probes_settled());         // nothing queued until a request
 }
 
-// Units 7/8/9 (probe cubes, BRDF LUT) are unbound when render() returns.
+// Units 7/8/9 (probe array, BRDF LUT) are unbound when render() returns.
 TEST_F(BridgePbrFrame, ProbeUnitsAreUnboundAfterRender) {
     use_red_wall_corner();
     set_floor_override(0.05f, 1.0f);
     pass->set_probe_origin({60.0f, 0.0f, 40.0f});
     pass->request_probe_capture();
     render_floor();
+    ASSERT_TRUE(pass->probes_valid());
     for (GLenum unit : {GL_TEXTURE7, GL_TEXTURE8}) {
         glActiveTexture(unit);
         GLint bound = -1;
         glGetIntegerv(GL_TEXTURE_BINDING_CUBE_MAP, &bound);
+        EXPECT_EQ(bound, 0) << (unit - GL_TEXTURE0);
+        glGetIntegerv(GL_TEXTURE_BINDING_CUBE_MAP_ARRAY, &bound);
         EXPECT_EQ(bound, 0) << (unit - GL_TEXTURE0);
     }
     glActiveTexture(GL_TEXTURE9);
@@ -625,7 +608,7 @@ TEST_F(BridgePbrFrame, CommSetIgnoresTheProbes) {
     for (int i = 0; i < 3; ++i) EXPECT_NEAR(comm[i], legacy[i], 1e-4f) << i;
 }
 
-// Cost of one capture of both probes (logged, not asserted).
+// Cost of one capture of every probe (logged, not asserted).
 TEST_F(BridgePbrFrame, CaptureCostIsLogged) {
     use_red_wall_corner();
     pass->set_probe_origin({60.0f, 0.0f, 40.0f});
@@ -643,8 +626,27 @@ TEST_F(BridgePbrFrame, CaptureCostIsLogged) {
     const auto t2 = std::chrono::steady_clock::now();
     const double with_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     const double plain_ms = std::chrono::duration<double, std::milli>(t2 - t1).count();
-    std::printf("[bridge-probe] capture of both probes: ~%.2f ms (frame with capture %.2f ms, "
-                "without %.2f ms)\n", with_ms - plain_ms, with_ms, plain_ms);
+    std::printf("[bridge-probe] capture of all %d probes in one frame: ~%.2f ms (frame with "
+                "capture %.2f ms, without %.2f ms)\n", pass->probe_count(),
+                with_ms - plain_ms, with_ms, plain_ms);
+    // One production step (steps per frame 1): the cost a frame really pays.
+    pass->set_probe_steps_per_frame(renderer::kBridgeProbeStepsPerFrame);
+    pass->request_probe_capture();
+    double worst_ms = 0.0, total_ms = 0.0;
+    int frames = 0;
+    while (!pass->probes_settled() && frames < 500) {
+        glFinish();
+        const auto s0 = std::chrono::steady_clock::now();
+        render_floor();
+        glFinish();
+        const double ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - s0).count() - plain_ms;
+        worst_ms = std::max(worst_ms, ms);
+        total_ms += ms;
+        ++frames;
+    }
+    std::printf("[bridge-probe] time-sliced: %d frames, ~%.2f ms per step on average, "
+                "worst ~%.2f ms\n", frames, frames ? total_ms / frames : 0.0, worst_ms);
 }
 
 // Box projection: from a probe at (200, 0, 40) the floor's raw mirror
@@ -740,10 +742,399 @@ TEST_F(BridgePbrFrame, ARequestWaitsForABridgeToCapture) {
     glViewport(0, 0, kWin, kWin);
     pass->render(empty, corner_camera(kWin, kWin), *p, lookup_fn, default_lighting());
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    EXPECT_TRUE(pass->probe_capture_pending());
+    EXPECT_FALSE(pass->probes_settled());
     const glm::vec3 c = render_floor();
-    EXPECT_FALSE(pass->probe_capture_pending());
+    EXPECT_TRUE(pass->probes_settled());
     EXPECT_GT(c.r, c.g * 1.5f);
+}
+
+// ── Capture scheduler (spec 2026-10-17-bridge-reflection-layers §4.7) ──────
+//
+// One step (a cube face or a prefilter mip) per frame in production: the
+// shown state's base lands first, a recapture never blanks a valid probe,
+// and a probe in flight draws every face from the snapshot its first step
+// took.
+
+namespace {
+/// A steady spot on the wall where the floor's mirror ray lands, with the
+/// same capture colour in every state.
+renderer::BridgeSpot wall_spot(float capture) {
+    renderer::BridgeSpot sp{{30.0f, 0.0f, 64.0f}, {-1.0f, 0.0f, 0.0f},
+                            std::cos(glm::radians(30.0f)), std::cos(glm::radians(45.0f)),
+                            200.0f, glm::vec3(0.0f)};
+    sp.has_capture = true;
+    for (auto& c : sp.capture_radiance) c = glm::vec3(capture);
+    return sp;
+}
+
+/// Largest per-channel difference between two read_probe results.
+float max_diff(const std::vector<glm::vec3>& a, const std::vector<glm::vec3>& b) {
+    if (a.size() != b.size()) return 1e30f;
+    float m = 0.0f;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        const glm::vec3 d = glm::abs(a[i] - b[i]);
+        m = std::max(m, std::max(d.r, std::max(d.g, d.b)));
+    }
+    return m;
+}
+}  // namespace
+
+TEST_F(BridgePbrFrame, CaptureIsSpreadAcrossFrames) {
+    use_red_wall_corner();
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->set_probe_steps_per_frame(1);
+    pass->request_probe_capture();
+    render_floor();
+    EXPECT_FALSE(pass->probes_settled());
+    for (int i = 0; i < pass->probe_count(); ++i) EXPECT_FALSE(pass->probe_valid(i)) << i;
+    EXPECT_FALSE(pass->probes_valid());
+    const int steps = pass->steps_per_probe();
+    ASSERT_GT(steps, 1);
+    for (int i = 1; i < steps - 1; ++i) render_floor();
+    EXPECT_FALSE(pass->probe_valid(0));          // one step short
+    render_floor();
+    EXPECT_TRUE(pass->probe_valid(0));           // exactly one probe-length of frames
+    EXPECT_TRUE(pass->probes_valid());
+    EXPECT_FALSE(pass->probe_valid(1));
+    EXPECT_FALSE(pass->probes_settled());
+    // The rest fill in, one step a frame: 5 probes x steps frames in all.
+    EXPECT_EQ(settle(), (pass->probe_count() - 1) * steps);
+    for (int i = 0; i < pass->probe_count(); ++i) EXPECT_TRUE(pass->probe_valid(i)) << i;
+}
+
+// The shown state (set_probe_state's target, not the alert level) lands first.
+TEST_F(BridgePbrFrame, TheShownStatesBaseLandsFirst) {
+    use_red_wall_corner();
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->set_probe_steps_per_frame(1);
+    pass->set_alert_level(1);
+    pass->set_probe_state(2, 0.0f);
+    pass->request_probe_capture();
+    for (int i = 0; i < pass->steps_per_probe(); ++i) render_floor();
+    EXPECT_TRUE(pass->probe_valid(2));
+    EXPECT_TRUE(pass->probes_valid());
+    EXPECT_FALSE(pass->probe_valid(0));
+    EXPECT_FALSE(pass->probe_valid(1));
+}
+
+TEST_F(BridgePbrFrame, ARedOnlyEditRequeuesOnlyTheRedBase) {
+    use_red_wall_corner();
+    set_floor_override(0.05f, 1.0f);
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->set_probe_steps_per_frame(1);
+    renderer::BridgeSpot sp = wall_spot(500.0f);
+    pass->set_spots({sp});
+    pass->request_probe_capture();
+    ASSERT_LT(settle(), 500);
+    const std::vector<int> before = completed();
+    sp.capture_radiance[2] = glm::vec3(2000.0f);
+    pass->set_spots({sp});
+    EXPECT_FALSE(pass->probes_settled());
+    int frames = 0;
+    while (!pass->probes_settled() && frames < 500) {
+        render_floor();
+        ++frames;
+        EXPECT_TRUE(pass->probe_valid(2)) << frames;   // never blanked mid-recapture
+    }
+    EXPECT_EQ(frames, pass->steps_per_probe());
+    const std::vector<int> after = completed();
+    ASSERT_EQ(after.size(), before.size());
+    for (std::size_t i = 0; i < after.size(); ++i)
+        EXPECT_EQ(after[i], before[i] + (i == 2 ? 1 : 0)) << i;
+}
+
+TEST_F(BridgePbrFrame, AnInputChangeMidCaptureFinishesThenRequeuesOnce) {
+    use_red_wall_corner();
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->set_probe_steps_per_frame(1);
+    renderer::BridgeSpot sp = wall_spot(500.0f);
+    pass->set_spots({sp});
+    pass->request_probe_capture();
+    ASSERT_LT(settle(), 500);
+    const std::vector<int> c0 = completed();
+    sp.capture_radiance[0] = glm::vec3(1000.0f);  // green only
+    pass->set_spots({sp});
+    render_floor();
+    render_floor();                              // base 0 in flight, two steps in
+    sp.capture_radiance[0] = glm::vec3(1500.0f);  // a change mid-capture
+    pass->set_spots({sp});
+    const int steps = pass->steps_per_probe();
+    for (int i = 2; i < steps; ++i) render_floor();
+    EXPECT_EQ(pass->probe_captures_completed(0), c0[0] + 1);   // finished, not restarted
+    EXPECT_FALSE(pass->probes_settled());                      // ...and requeued
+    EXPECT_EQ(settle(), steps);                                // once
+    const std::vector<int> c1 = completed();
+    for (std::size_t i = 0; i < c1.size(); ++i)
+        EXPECT_EQ(c1[i], c0[i] + (i == 0 ? 2 : 0)) << i;
+}
+
+// Every face of a probe in flight draws from the snapshot its first step
+// took: a change after face 0 does not reach faces 1-5 (face 1, -X, holds
+// the lit wall).
+TEST_F(BridgePbrFrame, EveryFaceOfAProbeDrawsFromItsSnapshot) {
+    use_red_wall_corner();
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->set_probe_steps_per_frame(1);
+    pass->set_spots({wall_spot(2000.0f)});
+    pass->request_probe_capture();
+    ASSERT_LT(settle(), 500);
+    std::vector<glm::vec3> lit, dark, mixed;
+    ASSERT_TRUE(pass->read_probe(0, 0, lit));
+    pass->set_spots({wall_spot(0.0f)});
+    ASSERT_LT(settle(), 500);
+    ASSERT_TRUE(pass->read_probe(0, 0, dark));
+    ASSERT_GT(max_diff(lit, dark), 0.05f);       // the spot really shows in the probe
+    pass->set_spots({wall_spot(2000.0f)});
+    render_floor();                              // snapshot: lit; face 0 drawn
+    pass->set_spots({wall_spot(0.0f)});
+    for (int i = 1; i < pass->steps_per_probe(); ++i) render_floor();
+    ASSERT_TRUE(pass->read_probe(0, 0, mixed));
+    EXPECT_LT(max_diff(mixed, lit), 1e-3f);
+}
+
+TEST_F(BridgePbrFrame, ANewBridgeModelMidCaptureDiscardsTheInFlightProbe) {
+    use_red_wall_corner();
+    set_floor_override(0.05f, 1.0f);
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->set_probe_steps_per_frame(1);
+    pass->request_probe_capture();
+    for (int i = 0; i < 3; ++i) render_floor();  // base 0 in flight
+    auto old = std::move(model);                 // keep the old handle unique
+    use_red_wall_corner({0.0f, 0.0f, 1.0f});
+    set_floor_override(0.05f, 1.0f);
+    const int steps = pass->steps_per_probe();
+    for (int i = 3; i < steps; ++i) render_floor();
+    EXPECT_EQ(pass->probe_captures_completed(0), 0);   // the old room never landed
+    EXPECT_FALSE(pass->probe_valid(0));
+    for (int i = 0; i < 3; ++i) render_floor();
+    EXPECT_EQ(pass->probe_captures_completed(0), 1);   // one probe-length after the swap
+    ASSERT_LT(settle(), 500);
+    const glm::vec3 c = render_floor();
+    EXPECT_GT(c.b, c.r * 1.5f);                  // the new room
+}
+
+// A new bridge model (spec 2026-10-17 §4.7, ruling R7) drops every probe and
+// every base weight: frame by frame, the floor never reflects the old red
+// room -- nothing at all until the new room's shown base lands, then it.
+TEST_F(BridgePbrFrame, ANewBridgeModelNeverReflectsTheOldRoom) {
+    use_red_wall_corner();
+    set_floor_override(0.05f, 1.0f);
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->request_probe_capture();
+    ASSERT_GT(render_floor().r, 0.05f);          // the old room, settled
+    ASSERT_TRUE(pass->probes_settled());
+    pass->set_probe_steps_per_frame(1);
+    auto old = std::move(model);                 // keep the old handle unique
+    use_red_wall_corner({0.0f, 0.0f, 1.0f});
+    set_floor_override(0.05f, 1.0f);
+    int frames = 0, dark = 0;
+    while (!pass->probes_settled() && frames < 500) {
+        const glm::vec3 c = render_floor();
+        ++frames;
+        EXPECT_LT(c.r, 0.01f) << frames;         // never the old room
+        if (!pass->probe_valid(0)) {
+            ++dark;
+            EXPECT_LT(std::max(c.r, std::max(c.g, c.b)), 1e-3f) << frames;
+        } else {
+            EXPECT_GT(c.b, 0.05f) << frames;     // the new room, at once
+        }
+    }
+    EXPECT_EQ(dark, pass->steps_per_probe() - 1);
+    EXPECT_FLOAT_EQ(pass->base_weight(0), 1.0f);
+}
+
+TEST_F(BridgePbrFrame, ARequestMidCaptureRestartsTheProbe) {
+    use_red_wall_corner();
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->set_probe_steps_per_frame(1);
+    pass->request_probe_capture();
+    for (int i = 0; i < 3; ++i) render_floor();
+    pass->request_probe_capture();
+    const int steps = pass->steps_per_probe();
+    for (int i = 3; i < steps; ++i) render_floor();
+    EXPECT_EQ(pass->probe_captures_completed(0), 0);
+    for (int i = 0; i < 3; ++i) render_floor();
+    EXPECT_EQ(pass->probe_captures_completed(0), 1);
+}
+
+// The probe storage follows the layer count: a new layer is queued and
+// captured, the bases untouched; a dropped one is freed.
+TEST_F(BridgePbrFrame, ALayerAddedIsQueuedAndARemovedOneFreed) {
+    use_red_wall_corner();
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->request_probe_capture();
+    render_floor();
+    ASSERT_TRUE(pass->probes_settled());
+    const std::vector<int> bases = completed();
+    pass->set_probe_layers({0});
+    EXPECT_FALSE(pass->probes_settled());
+    EXPECT_FALSE(pass->probe_valid(renderer::kBridgeStates));
+    render_floor();
+    EXPECT_TRUE(pass->probes_settled());
+    EXPECT_TRUE(pass->probe_valid(renderer::kBridgeStates));
+    EXPECT_EQ(pass->probe_captures_completed(renderer::kBridgeStates), 1);
+    for (int i = 0; i < renderer::kBridgeStates; ++i)
+        EXPECT_EQ(pass->probe_captures_completed(i), bases[static_cast<std::size_t>(i)]) << i;
+    pass->set_probe_layers({});
+    render_floor();
+    EXPECT_TRUE(pass->probes_settled());
+    EXPECT_FALSE(pass->probe_valid(renderer::kBridgeStates));
+    for (int i = 0; i < renderer::kBridgeStates; ++i) EXPECT_TRUE(pass->probe_valid(i)) << i;
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+// ── Reflection layers (spec 2026-10-17 §4.2) ───────────────────────────────
+
+namespace {
+/// A member of layer 0 at red: in no base (capture colour 0 in every state),
+/// `at_peak` in the layer, live radiance 0 (the view never sees it lit). It
+/// lights a disc of the wall round (0, 0, z): z = 64 is where the floor's
+/// box-projected mirror ray lands; z = 194 where the unprojected ray from the
+/// probe at (60, 0, 40) does (the debug views).
+renderer::BridgeSpot layer_spot(glm::vec3 at_peak, float z = 64.0f) {
+    renderer::BridgeSpot sp = wall_spot(0.0f);
+    sp.position.z = z;
+    sp.layer[2] = 0;
+    sp.layer_radiance[2] = at_peak;
+    return sp;
+}
+}  // namespace
+
+// The layer adds its reflection x its live value: 1 brighter than 0, 0.5
+// between, and at 0 the floor is exactly the room without the member.
+TEST_F(BridgePbrFrame, ALayerAddsItsWeightedReflection) {
+    use_red_wall_corner({0.6f, 0.6f, 0.6f});    // a grey wall
+    set_floor_override(0.05f, 1.0f);
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->set_probe_state(2, 0.0f);
+    pass->request_probe_capture();
+    const glm::vec3 room = render_floor();       // no member, no layer
+    pass->set_spots({layer_spot({2000.0f, 0.0f, 0.0f})});
+    pass->set_probe_layers({2});
+    pass->set_layer_values({0.0f});
+    const glm::vec3 off = render_floor();
+    ASSERT_TRUE(pass->probes_settled());
+    ASSERT_TRUE(pass->probe_valid(renderer::kBridgeStates));
+    pass->set_layer_values({1.0f});
+    const glm::vec3 on = render_floor();
+    pass->set_layer_values({0.5f});
+    const glm::vec3 half = render_floor();
+    for (int i = 0; i < 3; ++i) EXPECT_NEAR(off[i], room[i], 1e-4f) << i;
+    EXPECT_GT(on.r, off.r + 0.05f);
+    EXPECT_NEAR(on.g, off.g, 1e-4f);             // a red light adds red only
+    EXPECT_GT(half.r, off.r + 1e-3f);
+    EXPECT_LT(half.r, on.r - 1e-3f);
+    // A layer weighs by its state's base: green shown, the red layer is out.
+    pass->set_probe_state(0, 1.0f);
+    pass->set_layer_values({1.0f});
+    const glm::vec3 green = render_floor();
+    EXPECT_FLOAT_EQ(pass->base_weight(2), 0.0f);
+    EXPECT_NEAR(green.r, green.g, 1e-3f);        // the grey room, no red
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+// A re-plan that changes a layer's identity (spec §4.4: a quality drop, an
+// edit adding an animated material earlier) never shows another layer's old
+// content: layers {green, red} -> {red} moves the red layer into slot 5,
+// which held the green layer's capture. Slot 5 reads as absent (no entry)
+// until the red layer's own capture lands, then shows it.
+TEST_F(BridgePbrFrame, AReplannedLayerIsNotSampledUntilItsCaptureLands) {
+    use_red_wall_corner({0.6f, 0.6f, 0.6f});    // a grey wall
+    set_floor_override(0.05f, 1.0f);
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->set_probe_state(2, 0.0f);              // red shown
+    pass->request_probe_capture();
+    const glm::vec3 room = render_floor();       // no member, no layer
+    // The green layer's member (layer 0 at green) lights red; the red
+    // layer's (layer 1 at red) green. Same geometry: the bases never requeue.
+    renderer::BridgeSpot a = layer_spot({2000.0f, 0.0f, 0.0f});
+    a.layer[2] = -1;
+    a.layer[0] = 0;
+    a.layer_radiance[0] = {2000.0f, 0.0f, 0.0f};
+    renderer::BridgeSpot b = layer_spot({0.0f, 2000.0f, 0.0f});
+    b.layer[2] = 1;
+    pass->set_spots({a, b});
+    pass->set_probe_layers({0, 2}, {11u, 22u});
+    pass->set_layer_values({1.0f, 1.0f});
+    render_floor();
+    ASSERT_TRUE(pass->probes_settled());
+    ASSERT_TRUE(pass->probe_valid(renderer::kBridgeStates));
+    const std::vector<int> before = completed();
+
+    // The re-plan: only the red layer is left, now layer 0 (slot 5).
+    pass->set_probe_steps_per_frame(1);
+    a.layer[0] = -1;
+    b.layer[2] = 0;
+    pass->set_spots({a, b});
+    pass->set_probe_layers({2}, {22u});
+    pass->set_layer_values({1.0f});
+    EXPECT_FALSE(pass->probe_valid(renderer::kBridgeStates));
+    int frames = 0;
+    while (!pass->probe_valid(renderer::kBridgeStates) && frames < 500) {
+        const glm::vec3 c = render_floor();
+        ++frames;
+        if (pass->probe_valid(renderer::kBridgeStates)) break;
+        for (int i = 0; i < 3; ++i) EXPECT_NEAR(c[i], room[i], 1e-4f) << frames << " " << i;
+    }
+    EXPECT_EQ(frames, pass->steps_per_probe());   // its own capture, nothing first
+    for (int i = 0; i < renderer::kBridgeStates; ++i)
+        EXPECT_EQ(pass->probe_captures_completed(i), before[static_cast<std::size_t>(i)]) << i;
+    const glm::vec3 after = render_floor();
+    EXPECT_GT(after.g, room.g + 0.05f);          // the red layer's own (green) member
+    EXPECT_NEAR(after.r, room.r, 1e-4f);         // never the green layer's red one
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+// The same identity at the same index keeps the layer's capture: a re-push
+// of an unchanged plan (every editor action) samples it on the very next frame.
+TEST_F(BridgePbrFrame, AnUnchangedLayerIdentityKeepsItsCapture) {
+    use_red_wall_corner({0.6f, 0.6f, 0.6f});
+    set_floor_override(0.05f, 1.0f);
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->set_probe_state(2, 0.0f);
+    pass->set_spots({layer_spot({2000.0f, 0.0f, 0.0f})});
+    pass->set_probe_layers({2}, {22u});
+    pass->set_layer_values({1.0f});
+    pass->request_probe_capture();
+    render_floor();
+    ASSERT_TRUE(pass->probe_valid(renderer::kBridgeStates));
+    pass->set_probe_layers({2}, {22u});
+    EXPECT_TRUE(pass->probe_valid(renderer::kBridgeStates));
+    EXPECT_TRUE(pass->probes_settled());
+}
+
+// Debug view 11 shows the layer entries alone (a green member over a grey
+// room reads pure green, and black at value 0); view 9 shows the composed
+// reflection, bases and layers.
+TEST_F(BridgePbrFrame, ReflectionLayersViewShowsOnlyLayers) {
+    use_red_wall_corner({0.6f, 0.6f, 0.6f});
+    set_floor_override(0.05f, 1.0f);
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->set_probe_state(2, 0.0f);
+    pass->set_spots({layer_spot({0.0f, 2000.0f, 0.0f}, 194.0f)});
+    pass->set_probe_layers({2});
+    pass->set_layer_values({1.0f});
+    pass->request_probe_capture();
+    render_floor();
+    ASSERT_TRUE(pass->probes_settled());
+    pass->set_debug_view(renderer::BridgeDebugView::ReflectionLayers);
+    const glm::vec3 layers = render_floor();
+    pass->set_debug_view(renderer::BridgeDebugView::ProbeMirror);
+    const glm::vec3 composed = render_floor();
+    pass->set_layer_values({0.0f});
+    pass->set_debug_view(renderer::BridgeDebugView::ReflectionLayers);
+    const glm::vec3 none = render_floor();
+    pass->set_debug_view(renderer::BridgeDebugView::Off);
+    EXPECT_GT(layers.g, 0.05f);
+    EXPECT_LT(layers.r, 1e-3f);                  // no base in it
+    EXPECT_LT(layers.b, 1e-3f);
+    EXPECT_GT(composed.r, 0.05f);                // the grey room...
+    EXPECT_GT(composed.g, composed.r + 0.05f);   // ...plus the green layer
+    EXPECT_LT(std::max(none.r, std::max(none.g, none.b)), 1e-4f);
+}
+
+TEST(BridgeProbeStepsTuning, OneStepPerFrameInProduction) {
+    EXPECT_EQ(renderer::kBridgeProbeStepsPerFrame, 1);
 }
 
 // ── Alert ambient scale lives in the pass (Task 6 fix round 1) ─────────────
@@ -754,7 +1145,7 @@ TEST_F(BridgePbrFrame, CaptureIgnoresTheAlertAmbientScale) {
     use_red_wall_corner();
     set_floor_override(0.05f, 1.0f);             // metal floor: reflection only
     pass->set_probe_origin({60.0f, 0.0f, 40.0f});
-    pass->set_probe_scales(1.0f, 1.0f);
+    pass->set_probe_scales({1.0f, 1.0f, 1.0f, 1.0f, 1.0f});
     pass->set_alert_ambient_scale(1.5f);
     pass->request_probe_capture();
     const glm::vec3 at_15 = render_floor();
@@ -819,16 +1210,19 @@ TEST_F(BridgePbrFrame, ASpotNeverMakesLitDiffuseBloom) {
 }
 
 // Setting spots -- including clearing them -- changes the room the probes
-// hold, so the PASS marks them dirty (the binding needs no extra call).
+// hold, so the probes they read need a capture: their signatures move (the
+// binding needs no extra call). Nothing is queued before the first request.
 TEST_F(BridgePbrFrame, SettingSpotsMarksTheProbesDirty) {
-    EXPECT_FALSE(pass->probe_capture_pending());
+    EXPECT_TRUE(pass->probes_settled());         // no request yet: nothing queued
     pass->set_spots({{{0, 0, 50}, {0, 0, -1}, 0.9f, 0.8f, 100.0f, glm::vec3(1.0f)}});
-    EXPECT_TRUE(pass->probe_capture_pending());
+    EXPECT_TRUE(pass->probes_settled());
     use_red_wall_corner();
+    pass->request_probe_capture();
+    EXPECT_FALSE(pass->probes_settled());
     render_floor();                              // captures
-    EXPECT_FALSE(pass->probe_capture_pending());
+    EXPECT_TRUE(pass->probes_settled());
     pass->set_spots({});
-    EXPECT_TRUE(pass->probe_capture_pending());
+    EXPECT_FALSE(pass->probes_settled());
 }
 
 // Clearing the spots uploads a count of 0: the floor is exactly as unlit.
@@ -890,11 +1284,13 @@ TEST_F(BridgePbrFrame, AoNeverDarkensASpot) {
 // clear_spots() (the host's session reset) empties the spots WITHOUT marking
 // the probes dirty: reset_probes() beside it has just dropped the request.
 TEST_F(BridgePbrFrame, ClearSpotsEmptiesWithoutDirtyingTheProbes) {
+    pass->request_probe_capture();
     pass->set_spots({{{0, 0, 50}, {0, 0, -1}, 0.9f, 0.8f, 100.0f, glm::vec3(1.0f)}});
+    ASSERT_FALSE(pass->probes_settled());
     pass->reset_probes();                        // drops the pending request
     pass->clear_spots();
     EXPECT_EQ(pass->spot_count(), 0u);
-    EXPECT_FALSE(pass->probe_capture_pending());
+    EXPECT_TRUE(pass->probes_settled());
 }
 
 // set_spots normalises the axis and keeps the outer edge outside the inner
@@ -931,67 +1327,76 @@ TEST_F(BridgePbrFrame, SettingTheSameSpotsAgainDoesNotDirtyTheProbes) {
     use_red_wall_corner();
     const renderer::BridgeSpot s{{0, 0, 50}, {0, 0, -1}, 0.9f, 0.8f, 100.0f, glm::vec3(1.0f)};
     pass->set_spots({s});
+    pass->request_probe_capture();
     render_floor();                              // captures
-    ASSERT_FALSE(pass->probe_capture_pending());
+    ASSERT_TRUE(pass->probes_settled());
     pass->set_spots({s});
-    EXPECT_FALSE(pass->probe_capture_pending());
+    EXPECT_TRUE(pass->probes_settled());
     // Equal AFTER normalisation: a long axis and swapped cosines sanitise to
     // the list already held.
     renderer::BridgeSpot raw = s;
     raw.direction = {0.0f, 0.0f, -7.0f};
     pass->set_spots({raw});
-    EXPECT_FALSE(pass->probe_capture_pending());
+    EXPECT_TRUE(pass->probes_settled());
     // Equal AFTER truncation: the spots beyond the cap never count.
     std::vector<renderer::BridgeSpot> many(renderer::kBridgeMaxSpots, s);
     pass->set_spots(many);
-    EXPECT_TRUE(pass->probe_capture_pending());  // 1 -> 32: a real change
+    EXPECT_FALSE(pass->probes_settled());  // 1 -> 32: a real change
     render_floor();
-    ASSERT_FALSE(pass->probe_capture_pending());
+    ASSERT_TRUE(pass->probes_settled());
     std::vector<renderer::BridgeSpot> more = many;
     more.push_back(renderer::BridgeSpot{{9, 9, 9}, {1, 0, 0}, 0.5f, 0.4f, 10.0f, glm::vec3(5.0f)});
     EXPECT_EQ(pass->set_spots(more), 1u);
-    EXPECT_FALSE(pass->probe_capture_pending());
+    EXPECT_TRUE(pass->probes_settled());
     // Any field differing is a change.
     renderer::BridgeSpot moved = s;
     moved.radiance = glm::vec3(2.0f);
     pass->set_spots({moved});
-    EXPECT_TRUE(pass->probe_capture_pending());
+    EXPECT_FALSE(pass->probes_settled());
 }
 
 TEST_F(BridgePbrFrame, EmptySpotsOverEmptySpotsIsANoOp) {
+    pass->request_probe_capture();
+    render_floor();                              // captures
+    ASSERT_TRUE(pass->probes_settled());
     pass->set_spots({});
-    EXPECT_FALSE(pass->probe_capture_pending());
+    EXPECT_TRUE(pass->probes_settled());
     pass->set_spots({});
-    EXPECT_FALSE(pass->probe_capture_pending());
+    EXPECT_TRUE(pass->probes_settled());
 }
 
 // Finding 1 (editor half): the probe capture reads the per-shape metalness,
 // so a CHANGED override set dirties the probes in the pass -- and an
 // identical re-push (the editor re-pushes after every dispatched action,
-// no-ops included) does not. clear_material_overrides() (session reset)
-// never dirties, like clear_spots().
+// no-ops included) does not. clear_material_overrides() is a session reset,
+// paired with reset_probes(), which leaves nothing queued.
 TEST_F(BridgePbrFrame, MaterialOverridesDirtyTheProbesOnlyWhenTheyChange) {
     use_red_wall_corner();
+    pass->request_probe_capture();
     render_floor();
-    EXPECT_FALSE(pass->probe_capture_pending());
+    EXPECT_TRUE(pass->probes_settled());
     set_floor_override(0.05f, 1.0f);
-    EXPECT_TRUE(pass->probe_capture_pending());
+    EXPECT_FALSE(pass->probes_settled());
     render_floor();                              // captures
-    ASSERT_FALSE(pass->probe_capture_pending());
+    ASSERT_TRUE(pass->probes_settled());
     set_floor_override(0.05f, 1.0f);             // identical re-push
-    EXPECT_FALSE(pass->probe_capture_pending());
+    EXPECT_TRUE(pass->probes_settled());
     set_floor_override(0.05f, 0.5f);             // a real edit
-    EXPECT_TRUE(pass->probe_capture_pending());
+    EXPECT_FALSE(pass->probes_settled());
     render_floor();
-    ASSERT_FALSE(pass->probe_capture_pending());
+    ASSERT_TRUE(pass->probes_settled());
     pass->set_material_overrides(handle() + 1, {{floor_mesh, 0.05f, 0.5f}});  // another model
-    EXPECT_TRUE(pass->probe_capture_pending());
+    EXPECT_FALSE(pass->probes_settled());
     render_floor();
-    ASSERT_FALSE(pass->probe_capture_pending());
+    ASSERT_TRUE(pass->probes_settled());
     pass->clear_material_overrides();
-    EXPECT_FALSE(pass->probe_capture_pending());
+    pass->reset_probes();
+    EXPECT_TRUE(pass->probes_settled());
+    pass->request_probe_capture();
+    render_floor();
+    ASSERT_TRUE(pass->probes_settled());
     pass->set_material_overrides(0, {});        // none over none
-    EXPECT_FALSE(pass->probe_capture_pending());
+    EXPECT_TRUE(pass->probes_settled());
 }
 
 // Finding 2: the ambient diffuse weight is (1 - F_schlick_rough), so the
@@ -1031,7 +1436,7 @@ TEST_F(BridgePbrFrame, ABridgeLightingChangeRecapturesTheProbes) {
     b.ambient = glm::vec3(0.5f, 0.6f, 0.7f);
     const glm::vec3 changed = render_floor_with(b);
     EXPECT_GT(changed.b, changed.r);             // recaptured: now blue
-    EXPECT_FALSE(pass->probe_capture_pending());
+    EXPECT_TRUE(pass->probes_settled());
 }
 
 // The alert scale lives in the pass and never reaches a capture: changing
@@ -1056,7 +1461,7 @@ TEST_F(BridgePbrFrame, ALightingChangeBeforeAnyCaptureRequestsNothing) {
     renderer::Lighting b = default_lighting();
     b.ambient = glm::vec3(0.2f);
     render_floor_with(b);
-    EXPECT_FALSE(pass->probe_capture_pending());
+    EXPECT_TRUE(pass->probes_settled());
     EXPECT_FALSE(pass->probes_valid());
 }
 
@@ -1221,9 +1626,11 @@ TEST_F(BridgePbrFrame, DebugViewsShowNoEmissive) {
     pass->set_debug_view(renderer::BridgeDebugView::Off);
 }
 
-// Probe captures exclude emissive: a black wall that glows green leaves a
-// smooth metal floor's reflection black.
-TEST_F(BridgePbrFrame, ProbeCaptureExcludesEmissive) {
+// Probe captures hold the glow (spec 2026-10-17-bridge-reflection-layers D1;
+// this test asserted the opposite before): a black wall that glows green
+// shows green in a smooth metal floor's reflection, through both legacy
+// cubes (green = base 0, yellow/red = base 1).
+TEST_F(BridgePbrFrame, ProbeCaptureIncludesEmissive) {
     use_red_wall_corner(/*wall=*/{0.0f, 0.0f, 0.0f});
     model->textures.push_back(solid_1x1({0.0f, 1.0f, 0.0f, 1.0f}));
     model->materials[1].stages[static_cast<std::size_t>(
@@ -1231,10 +1638,15 @@ TEST_F(BridgePbrFrame, ProbeCaptureExcludesEmissive) {
         static_cast<int>(model->textures.size()) - 1;
     set_floor_override(/*rough=*/0.05f, /*metal=*/1.0f);
     pass->set_probe_origin({60.0f, 0.0f, 40.0f});
-    pass->set_probe_scales(1.0f, 1.0f);
+    pass->set_probe_scales({1.0f, 1.0f, 1.0f, 1.0f, 1.0f});
     pass->request_probe_capture();
-    const glm::vec3 c = render_floor();
-    EXPECT_LT(c.g, 0.02f);
+    for (int state : {0, 1}) {
+        pass->set_probe_state(state, 1.0f);      // settled on that state's base
+        const glm::vec3 c = render_floor();
+        EXPECT_FLOAT_EQ(pass->base_weight(state), 1.0f) << state;
+        EXPECT_GT(c.g, 0.3f) << state;
+        EXPECT_LT(c.r, 0.02f) << state;
+    }
 }
 
 TEST_F(BridgePbrFrame, EmissiveUnitIsUnboundAfterRender) {
@@ -1309,9 +1721,11 @@ TEST_F(BridgePbrFrame, ACommSetNeverGlows) {
 }
 
 TEST_F(BridgePbrFrame, GlowNeverDirtiesTheProbes) {
-    ASSERT_FALSE(pass->probe_capture_pending());
+    pass->request_probe_capture();
+    render_floor();                              // captures
+    ASSERT_TRUE(pass->probes_settled());
     pass->set_glow(handle(), {{0, 2, {1.0f, 1.0f, 1.0f}, 1.0f}});
-    EXPECT_FALSE(pass->probe_capture_pending());
+    EXPECT_TRUE(pass->probes_settled());
 }
 
 // Spec §11.4: capture colours dirty the probes; live colours never do.
@@ -1320,17 +1734,21 @@ TEST_F(BridgePbrFrame, LiveSpotColourNeverDirtiesTheProbes) {
                             glm::vec3(0.0f)};
     sp.has_capture = true;
     sp.capture_radiance[0] = glm::vec3(100.0f);
+    pass->request_probe_capture();
+    render_floor();                              // captures
+    ASSERT_TRUE(pass->probes_settled());
     pass->set_spots({sp});
-    EXPECT_TRUE(pass->probe_capture_pending());
-    pass->reset_probes();
+    EXPECT_FALSE(pass->probes_settled());
+    render_floor();
+    ASSERT_TRUE(pass->probes_settled());
     pass->set_spot_radiance({glm::vec3(5000.0f)});
-    EXPECT_FALSE(pass->probe_capture_pending());
+    EXPECT_TRUE(pass->probes_settled());
     sp.radiance = glm::vec3(7.0f);                         // live differs, capture same
     pass->set_spots({sp});
-    EXPECT_FALSE(pass->probe_capture_pending());
+    EXPECT_TRUE(pass->probes_settled());
     sp.capture_radiance[1] = glm::vec3(3.0f);
     pass->set_spots({sp});
-    EXPECT_TRUE(pass->probe_capture_pending());
+    EXPECT_FALSE(pass->probes_settled());
 }
 
 TEST_F(BridgePbrFrame, LiveSpotColourLightsTheFloor) {
@@ -1407,16 +1825,18 @@ TEST_F(BridgePbrFrame, AreaLightsBeyondTheCapAreDroppedAndCounted) {
 }
 
 TEST_F(BridgePbrFrame, SettingAreaLightsMarksTheProbesDirtyButColoursDoNot) {
-    EXPECT_FALSE(pass->probe_capture_pending());
-    pass->set_area_lights({area({0, 0, 50}, {1, 0, 0}, {0, -1, 0}, 100.0f, glm::vec3(1.0f))});
-    EXPECT_TRUE(pass->probe_capture_pending());
     use_red_wall_corner();
+    pass->request_probe_capture();
     render_floor();                              // captures
-    EXPECT_FALSE(pass->probe_capture_pending());
+    ASSERT_TRUE(pass->probes_settled());
+    pass->set_area_lights({area({0, 0, 50}, {1, 0, 0}, {0, -1, 0}, 100.0f, glm::vec3(1.0f))});
+    EXPECT_FALSE(pass->probes_settled());
+    render_floor();                              // captures
+    EXPECT_TRUE(pass->probes_settled());
     pass->set_area_radiance({glm::vec3(5.0f)});
-    EXPECT_FALSE(pass->probe_capture_pending());
+    EXPECT_TRUE(pass->probes_settled());
     pass->set_area_lights({});
-    EXPECT_TRUE(pass->probe_capture_pending());
+    EXPECT_FALSE(pass->probes_settled());
 }
 
 TEST_F(BridgePbrFrame, AnAreaLightNeverMakesLitDiffuseBloom) {

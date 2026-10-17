@@ -51,7 +51,7 @@
     "Map 22a": {
       "modifiers": [
         {
-          "min": 0,
+          "min": 0.2,
           "period_s": 3,
           "phase": 0,
           "scope": [
@@ -67,7 +67,7 @@
     "Map 22a 2": {
       "modifiers": [
         {
-          "min": 0,
+          "min": 0.2,
           "period_s": 3,
           "phase": 0,
           "scope": [
@@ -102,7 +102,7 @@
       "metalness": 0,
       "modifiers": [
         {
-          "min": 0,
+          "min": 0.2,
           "period_s": 3,
           "phase": 0,
           "scope": [
@@ -240,6 +240,18 @@
           ],
           "shape": "sine",
           "type": "animation"
+        },
+        {
+          "level": 0.5,
+          "scope": [
+            "offline"
+          ],
+          "tint": [
+            1,
+            0.3368,
+            0.3027
+          ],
+          "type": "state"
         }
       ],
       "texture": "map 19.tga"
@@ -290,7 +302,7 @@
           "type": "state"
         },
         {
-          "min": 0,
+          "min": 0.2,
           "period_s": 3,
           "phase": 0,
           "scope": [
@@ -376,7 +388,7 @@
           "type": "state"
         },
         {
-          "level": 0.24,
+          "level": 0.06,
           "scope": [
             "offline"
           ],
@@ -419,14 +431,14 @@
           "type": "state"
         },
         {
-          "level": 0.21,
+          "level": 0.06,
           "scope": [
             "offline"
           ],
           "tint": [
             1,
-            0.0335,
-            0
+            0.2592,
+            0.1737
           ],
           "type": "state"
         },

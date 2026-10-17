@@ -213,6 +213,17 @@ protected:
         draw(world, planet_camera(*geo), sun_lighting(fallback_dir, 0.0f), hdr, suns);
         return read_rgba(hdr);
     }
+
+    // Terminator frame with ambient, so the night side is visible too.
+    std::vector<float> ambient_terminator_frame(bool enabled, renderer::HdrTarget& hdr) {
+        auto geo = load_planet();
+        EXPECT_TRUE(geo->sphere_map.has_value());
+        scenegraph::World world;
+        auto iid = add(world, geo, glm::mat4(1.0f));
+        world.set_atmosphere(iid, sunset_atmo(enabled));
+        draw(world, planet_camera(*geo), sun_lighting({1, 0, 0}, 0.2f), hdr);
+        return read_rgba(hdr);
+    }
 };
 
 TEST_F(AtmosphereSurfaceTest, LimbHazeTintsTheEdge) {
@@ -254,6 +265,44 @@ TEST_F(AtmosphereSurfaceTest, TerminatorTakesTheSunsetTint) {
     const float rg_on = b.r / std::max(b.g, 1e-6f);
     EXPECT_GT(rg_on, rg_off) << "terminator r/g on " << rg_on << " vs off " << rg_off
                              << " at column " << x;
+}
+
+// The sunset band fades out on the night side; it must never stop in a hard
+// edge (seen live as a sharp "longitude line" a few degrees past the
+// terminator). With a pure-red sunset tint, on.g / off.g = 1 - band at every
+// pixel, independent of texture and lighting, so the band's profile along the
+// centre row (sun on +X, terminator at the disc centre) is read directly.
+TEST_F(AtmosphereSurfaceTest, TerminatorBandHasNoHardEdge) {
+    renderer::HdrTarget hdr;
+    hdr.resize(kSize, kSize);
+    const auto off = ambient_terminator_frame(false, hdr);
+    const auto on = ambient_terminator_frame(true, hdr);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+
+    const int first = first_lit_column(off);
+    const int last = last_lit_column(off);
+    ASSERT_GT(first, 0);
+    ASSERT_GT(last, first + 16);
+    const int y = kSize / 2;
+    float min_t = 1.0f;
+    float max_step = 0.0f;
+    int max_step_x = -1;
+    float prev = -1.0f;
+    // Stay a couple of columns inside the silhouette (partial coverage).
+    for (int x = first + 2; x <= last - 2; ++x) {
+        const float g_off = rgb(off, x, y).g;
+        ASSERT_GT(g_off, 0.0f) << "column " << x << " is unlit with ambient on";
+        const float t = rgb(on, x, y).g / g_off;
+        min_t = std::min(min_t, t);
+        if (prev >= 0.0f && std::fabs(t - prev) > max_step) {
+            max_step = std::fabs(t - prev);
+            max_step_x = x;
+        }
+        prev = t;
+    }
+    EXPECT_LT(min_t, 0.6f) << "the sunset band never appeared on the centre row";
+    EXPECT_LT(max_step, 0.2f) << "sunset band jumps by " << max_step << " between columns "
+                              << max_step_x - 1 << " and " << max_step_x;
 }
 
 // The submitter's sun direction comes from the system's suns when given, not
