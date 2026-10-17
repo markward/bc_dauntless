@@ -46,8 +46,14 @@ void resize(int view_width, int view_height, float device_scale_factor);
 // Call once per frame after the 3D scene renders.
 //   pump()      runs CEF's message loop (may invoke OnPaint synchronously);
 //   composite() blits the latest CEF bitmap with premultiplied-alpha blend.
+//               It is composite_upload() then composite_draw(); the host
+//               calls the two halves directly so each gets a profiler scope.
+//               DAUNTLESS_CEF_UPLOAD (cef_upload_policy.h) decides whether a
+//               frame uploads.
 void pump();
 void composite();
+void composite_upload();
+void composite_draw();
 
 // F12 / Cmd+R handlers. No-op if no browser is alive.
 void toggle_devtools();

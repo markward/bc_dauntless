@@ -117,6 +117,10 @@ public:
     // Returns nullptr if no bitmap has arrived yet.
     const std::uint8_t* latest_bitmap(int* out_width, int* out_height) const;
 
+    // Bumped by every overlay OnPaint. The composite compares it with the
+    // generation it last uploaded to tell a repainted frame from a stale one.
+    std::uint64_t paint_generation() const { return paint_generation_; }
+
     CefRefPtr<CefBrowser> browser() const { return browser_; }
 
     // Event-handler injection. cef_lifecycle::set_event_handler routes
@@ -139,6 +143,7 @@ private:
     int bitmap_width_  = 0;
     int bitmap_height_ = 0;
     bool ready_ = false;
+    std::uint64_t paint_generation_ = 0;
 
     CefRefPtr<CefBrowser> browser_;
 

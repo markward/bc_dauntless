@@ -3,6 +3,7 @@
 
 #include <glad/glad.h>
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 
@@ -92,8 +93,8 @@ CefCompositePass::~CefCompositePass() {
     if (program_id_) glDeleteProgram(program_id_);
 }
 
-void CefCompositePass::draw_fullscreen(const std::uint8_t* pixels,
-                                       int width, int height) {
+void CefCompositePass::upload(const std::uint8_t* pixels,
+                              int width, int height) {
     if (!pixels) return;
 
     glBindTexture(GL_TEXTURE_2D, tex_id_);
@@ -111,11 +112,21 @@ void CefCompositePass::draw_fullscreen(const std::uint8_t* pixels,
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
                         GL_BGRA, GL_UNSIGNED_BYTE, pixels);
     }
+}
+
+void CefCompositePass::draw() {
+    if (!allocated()) return;
+
+    // Section timing for the A-1 experiment: cef.draw tracks the GPU frame
+    // time, so one of these sections is where the CPU waits for the GPU.
+    using Clock = std::chrono::steady_clock;
+    const auto t0 = Clock::now();
 
     glUseProgram(program_id_);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, tex_id_);
     glUniform1i(glGetUniformLocation(program_id_, "u_tex"), 0);
+    const auto t1 = Clock::now();
 
     // Save state we are about to clobber so the next frame's 3D passes
     // see the same GL config they had before the composite ran.
@@ -129,6 +140,7 @@ void CefCompositePass::draw_fullscreen(const std::uint8_t* pixels,
     glGetIntegerv(GL_BLEND_DST_RGB,   &prev_blend_dst_rgb);
     glGetIntegerv(GL_BLEND_SRC_ALPHA, &prev_blend_src_alpha);
     glGetIntegerv(GL_BLEND_DST_ALPHA, &prev_blend_dst_alpha);
+    const auto t2 = Clock::now();
 
     glDisable(GL_CULL_FACE);
     glDisable(GL_SCISSOR_TEST);
@@ -144,6 +156,7 @@ void CefCompositePass::draw_fullscreen(const std::uint8_t* pixels,
     glBindVertexArray(vao_);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindVertexArray(0);
+    const auto t3 = Clock::now();
 
     // Restore everything.
     glDepthMask(GL_TRUE);
@@ -155,6 +168,16 @@ void CefCompositePass::draw_fullscreen(const std::uint8_t* pixels,
                         static_cast<GLenum>(prev_blend_dst_rgb),
                         static_cast<GLenum>(prev_blend_src_alpha),
                         static_cast<GLenum>(prev_blend_dst_alpha));
+    const auto t4 = Clock::now();
+
+    auto ms = [](Clock::time_point a, Clock::time_point b) {
+        return std::chrono::duration<double, std::milli>(b - a).count();
+    };
+    draw_timings_.setup_ms   += ms(t0, t1);
+    draw_timings_.query_ms   += ms(t1, t2);
+    draw_timings_.draw_ms    += ms(t2, t3);
+    draw_timings_.restore_ms += ms(t3, t4);
+    ++draw_timings_.draws;
 }
 
 }  // namespace dauntless::ui_cef

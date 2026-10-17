@@ -2447,11 +2447,21 @@ void frame() {
         dauntless::ui_cef::pump();
     }
     {
-        // The composite uploads the ENTIRE CEF surface every frame — no
-        // dirty-rect, no PBO — so this scope carries that cost. At 2560x1440
-        // BGRA that is ~14.7 MB of synchronous glTexSubImage2D per frame.
+        // By default the composite uploads the ENTIRE CEF surface every
+        // frame — no dirty-rect, no PBO. At 2560x1440 BGRA that is ~14.7 MB
+        // of glTexSubImage2D per frame. Upload and draw are timed separately
+        // because the upload is where the CPU appears to wait for the GPU
+        // (docs/engine/perf-register.md, A-1); DAUNTLESS_CEF_UPLOAD switches
+        // the upload policy for that experiment.
         DAUNTLESS_FRAME_SCOPE("cef.composite");
-        dauntless::ui_cef::composite();
+        {
+            DAUNTLESS_FRAME_SCOPE("cef.upload");
+            dauntless::ui_cef::composite_upload();
+        }
+        {
+            DAUNTLESS_FRAME_SCOPE("cef.draw");
+            dauntless::ui_cef::composite_draw();
+        }
     }
 #endif
 
