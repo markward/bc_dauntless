@@ -58,11 +58,11 @@ EMPTY = ProbePlan([], [])
 
 
 def _contributes(name, material, state, resolved, light_materials, mapped):
-    if any(bh.output(material, state, 0.0, mesh in mapped, waves=False)[0][0]
+    if any(any(bh.output(material, state, 0.0, mesh in mapped, waves=False)[0])
            for mesh, mat in resolved.items() if mat == name):
         return True
-    return name in light_materials and bool(
-        bh.output(material, state, 0.0, False, for_light=True, waves=False)[0][0])
+    return name in light_materials and any(
+        bh.output(material, state, 0.0, False, for_light=True, waves=False)[0])
 
 
 def plan(doc, resolved, light_materials, mapped, cap) -> ProbePlan:

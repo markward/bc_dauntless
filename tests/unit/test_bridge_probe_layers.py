@@ -62,14 +62,29 @@ def test_layer_per_state():
 
 
 def test_cap_keeps_authored_order_and_warns():
-    d = _doc(a=_glow(_anim(period_s=1)), b=_glow(_anim(period_s=2)),
-             c=_glow(_anim(period_s=4)))
+    d = _doc(mat_kept1=_glow(_anim(period_s=1)), mat_kept2=_glow(_anim(period_s=2)),
+             mat_dropped=_glow(_anim(period_s=4)))
     p = _plan(d, cap=2)
-    assert [l.materials for l in p.layers] == [("a",), ("b",)]
-    assert len(p.warnings) == 1 and "c" in p.warnings[0]
-    assert p.animated("c", "red") is True
-    assert p.layer_of("c", "red") == -1
-    assert p.layer_of("a", "red") == 0
+    assert [l.materials for l in p.layers] == [("mat_kept1",), ("mat_kept2",)]
+    assert len(p.warnings) == 1
+    assert "mat_dropped" in p.warnings[0]
+    assert "mat_kept1" not in p.warnings[0] and "mat_kept2" not in p.warnings[0]
+    assert p.animated("mat_dropped", "red") is True
+    assert p.layer_of("mat_dropped", "red") == -1
+    assert p.layer_of("mat_kept1", "red") == 0
+
+
+def test_non_red_tint_still_contributes():
+    st = {"type": "state", "scope": ["red"], "tint": [0, 1, 0], "level": 1}
+    assert len(_plan(_doc(a=_glow(st, _anim(), emission=0))).layers) == 1
+
+
+def test_non_red_tint_lights_only_contributes():
+    st = {"type": "state", "scope": ["red"], "tint": [0, 0, 1], "level": 1,
+          "glows": False}
+    d = _doc(a=_glow(st, _anim(), emission=0))
+    assert _plan(d).layers == []
+    assert len(_plan(d, lights=frozenset({"a"})).layers) == 1
 
 
 def test_material_contributing_nothing_makes_no_layer():
