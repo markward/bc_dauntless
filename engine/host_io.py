@@ -83,12 +83,13 @@ _OPTIONAL_BINDINGS = frozenset({
     "ray_trace_mesh_pick", "model_identity", "set_bridge_highlight",
     "set_bridge_material_overrides", "set_bridge_pbr_enabled",
     "set_bridge_probe_origin", "set_bridge_probe_scales",
-    "set_bridge_probe_mix", "request_bridge_probe_capture",
+    "request_bridge_probe_capture",
     "set_bridge_spots", "set_bridge_alert_level",
     "set_bridge_spot_colours", "set_bridge_glow",
     "set_bridge_area_lights", "set_bridge_area_colours", "bridge_mesh_geometry",
     "set_bridge_glow_captures", "set_bridge_probe_layers",
     "bridge_probe_signatures", "bridge_quality",
+    "set_bridge_probe_state", "set_bridge_layer_values",
 })
 
 
@@ -661,12 +662,21 @@ def bridge_quality() -> int:
     return int(fn()) if fn is not None else 1
 
 
-def set_bridge_probe_mix(t) -> None:
-    """Reflection cross-fade, 0 = green probe .. 1 = yellow/red probe
-    (clamped natively). No-op headless."""
-    fn = getattr(_h, "set_bridge_probe_mix", None) if _h is not None else None
+def set_bridge_probe_state(state, dt) -> None:
+    """The shown bridge state (0-4) and the paused-aware bridge dt; the
+    renderer cross-fades the base reflection probes (spec 2026-10-17 §4.2).
+    No-op headless."""
+    fn = getattr(_h, "set_bridge_probe_state", None) if _h is not None else None
     if fn is not None:
-        fn(float(t))
+        fn(int(state), float(dt))
+
+
+def set_bridge_layer_values(values) -> None:
+    """Live value per reflection layer (w^2.2, clamped to [0, 1] natively).
+    No-op headless."""
+    fn = getattr(_h, "set_bridge_layer_values", None) if _h is not None else None
+    if fn is not None:
+        fn([float(v) for v in values])
 
 
 def set_bridge_alert_level(level) -> None:

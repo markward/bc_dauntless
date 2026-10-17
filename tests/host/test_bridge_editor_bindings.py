@@ -184,7 +184,7 @@ def test_host_io_pbr_wrappers_degrade_headless(monkeypatch):
 # BY DESIGN, and tests/conftest.py's autouse reset never touches C++ statics.
 # Every test that calls a real probe binding therefore restores it.
 _PROBE_STASH_DEFAULTS = {"origin": (0.0, 0.0, 0.0), "scales": (1.0,) * 5,
-                         "mix": 0.0, "capture_pending": False}
+                         "capture_pending": False}
 
 
 @contextlib.contextmanager
@@ -199,7 +199,6 @@ def restored_probe_stash(h):
     finally:
         h.set_bridge_probe_origin(before["origin"])
         h.set_bridge_probe_scales(before["scales"])
-        h.set_bridge_probe_mix(before["mix"])
         if h.bridge_probe_stash()["capture_pending"] and not before["capture_pending"]:
             os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
             try:
@@ -221,7 +220,8 @@ def probe_stash_guard(host_module):
 
 
 @pytest.mark.parametrize("name", ["set_bridge_probe_origin", "set_bridge_probe_scales",
-                                  "set_bridge_probe_mix", "request_bridge_probe_capture"])
+                                  "set_bridge_probe_state", "set_bridge_layer_values",
+                                  "request_bridge_probe_capture"])
 def test_probe_binding_exists(host_module, name):
     assert hasattr(host_module, name)
 
@@ -229,7 +229,8 @@ def test_probe_binding_exists(host_module, name):
 def test_probe_bindings_are_safe_before_init(probe_stash_guard, host_module):
     host_module.set_bridge_probe_origin((0.0, 87.0, 50.0))
     host_module.set_bridge_probe_scales((1.5, 1.0, 1.0, 0.4, 1.0))
-    host_module.set_bridge_probe_mix(0.25)
+    host_module.set_bridge_probe_state(2, 0.016)
+    host_module.set_bridge_layer_values([0.5, 1.0])
     host_module.request_bridge_probe_capture()
 
 
@@ -237,7 +238,8 @@ def test_probe_bindings_on_a_live_bridge_never_raise(probe_stash_guard, dbridge)
     h, _iid = dbridge
     h.set_bridge_probe_origin((0.0, 87.0, 50.0))
     h.set_bridge_probe_scales((1.5, 1.0, 1.0, 0.4, 1.0))
-    h.set_bridge_probe_mix(1.0)
+    h.set_bridge_probe_state(2, 0.016)
+    h.set_bridge_layer_values([0.5, 2.0, float("nan")])
     h.request_bridge_probe_capture()
 
 
@@ -246,7 +248,8 @@ def test_host_io_probe_wrappers_degrade_headless(monkeypatch):
     monkeypatch.setattr(host_io, "_h", None)
     host_io.set_bridge_probe_origin((0.0, 87.0, 50.0))
     host_io.set_bridge_probe_scales((1.5, 1.0, 1.0, 0.4, 1.0))
-    host_io.set_bridge_probe_mix(0.25)
+    host_io.set_bridge_probe_state(2, 0.016)
+    host_io.set_bridge_layer_values([0.5])
     host_io.request_bridge_probe_capture()
 
 
@@ -260,17 +263,20 @@ def test_host_io_probe_wrappers_forward(monkeypatch):
         @staticmethod
         def set_bridge_probe_scales(sc): calls.append(("scales", sc))
         @staticmethod
-        def set_bridge_probe_mix(t): calls.append(("mix", t))
+        def set_bridge_probe_state(s, dt): calls.append(("state", s, dt))
+        @staticmethod
+        def set_bridge_layer_values(v): calls.append(("layers", v))
         @staticmethod
         def request_bridge_probe_capture(): calls.append(("capture",))
 
     monkeypatch.setattr(host_io, "_h", FakeHost)
     host_io.set_bridge_probe_origin((1, 2, 3))
     host_io.set_bridge_probe_scales((1.5, 1, 1, 1, 1))
-    host_io.set_bridge_probe_mix(1)
+    host_io.set_bridge_probe_state(2, 1)
+    host_io.set_bridge_layer_values([0, 1])
     host_io.request_bridge_probe_capture()
     assert calls == [("origin", (1.0, 2.0, 3.0)), ("scales", [1.5, 1.0, 1.0, 1.0, 1.0]),
-                     ("mix", 1.0), ("capture",)]
+                     ("state", 2, 1.0), ("layers", [0.0, 1.0]), ("capture",)]
 
 
 def test_probe_stash_set_before_init_survives_into_the_pass(probe_stash_guard, host_module):
@@ -280,7 +286,7 @@ def test_probe_stash_set_before_init_survives_into_the_pass(probe_stash_guard, h
     os.environ["OPEN_STBC_HOST_HEADLESS"] = "1"
     h.set_bridge_probe_origin((1.0, 87.0, 50.0))
     h.set_bridge_probe_scales((1.5, 0.75, 0.75, 0.4, 1.0))
-    h.set_bridge_probe_mix(0.25)
+    h.set_bridge_probe_state(2, 0.016)
     h.request_bridge_probe_capture()
     try:
         try:
@@ -317,13 +323,11 @@ def test_restored_probe_stash_undoes_every_probe_binding(host_module):
     with restored_probe_stash(h):
         h.set_bridge_probe_origin((3.0, 87.0, 50.0))
         h.set_bridge_probe_scales((2.0, 0.5, 0.5, 0.5, 0.5))
-        h.set_bridge_probe_mix(0.75)
         h.request_bridge_probe_capture()
         assert h.bridge_probe_stash()["capture_pending"] is True
     after = h.bridge_probe_stash()
     assert after["origin"] == pytest.approx(before["origin"])
     assert after["scales"] == pytest.approx(before["scales"])
-    assert after["mix"] == pytest.approx(before["mix"])
     assert after["capture_pending"] == before["capture_pending"]
 
 
@@ -334,7 +338,6 @@ def test_probe_stash_is_at_defaults(host_module):
     st = host_module.bridge_probe_stash()
     assert st["origin"] == pytest.approx(_PROBE_STASH_DEFAULTS["origin"])
     assert st["scales"] == pytest.approx(_PROBE_STASH_DEFAULTS["scales"])
-    assert st["mix"] == pytest.approx(_PROBE_STASH_DEFAULTS["mix"])
     assert st["capture_pending"] is False
 
 
@@ -768,3 +771,10 @@ def test_host_io_new_wrappers_degrade_headless_and_forward(monkeypatch):
     assert host_io.bridge_quality() == 2
     assert calls == [("layers", [2]),
                      ("glow", "i", [(3, 0, [(0.0, 0.0, 0.0)] * 5, [-1] * 5, [(0.0, 0.0, 0.0)] * 5)])]
+
+
+def test_probe_state_holds_without_a_valid_base(probe_stash_guard, dbridge):
+    """No bridge drawn => no valid base probe, so the fade holds at zero."""
+    h, _iid = dbridge
+    h.set_bridge_probe_state(2, 1.0)
+    assert h.bridge_probe_state()["base_weights"] == (0.0,) * 5

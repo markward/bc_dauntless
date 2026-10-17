@@ -293,7 +293,6 @@ dauntless::BridgeHighlight g_bridge_highlight;
 struct BridgeProbeSettings {
     glm::vec3 origin{0.0f};
     std::array<float, renderer::kBridgeStates> scales{1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
-    float mix = 0.0f;
     bool capture_pending = false;
 };
 BridgeProbeSettings g_bridge_probe;
@@ -4941,17 +4940,27 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "decodes). None or a stale id clears; non-finite rows are dropped. "
           "Signature input only; never raises.");
 
-    m.def("set_bridge_probe_mix",
-          [](float t) {
-              // Inert (spec 2026-10-17 §4.2): the base cross-fade now runs in
-              // BridgePass::set_probe_state. Only the stash records the value
-              // (bridge_probe_stash) until the Python caller is removed.
-              g_bridge_probe.mix = std::isfinite(t) ? std::clamp(t, 0.0f, 1.0f) : 0.0f;
+    m.def("set_bridge_probe_state",
+          [](int state, float dt) {
+              // Spec 2026-10-17 §4.2: the base cross-fade runs in the pass.
+              // No pass yet: nothing to fade, the next frame pushes again.
+              if (g_bridge_pass) g_bridge_pass->set_probe_state(state, dt);
           },
-          py::arg("t"),
-          "INERT: the reflection cross-fade runs in the renderer now "
-          "(set_probe_state). Records the clamped value in the probe stash "
-          "only; the pass never reads it.");
+          py::arg("state"), py::arg("dt"),
+          "Shown bridge state (0-4) and the paused-aware bridge dt; the pass "
+          "cross-fades the base probe weights (dt <= 0 freezes). Never raises.");
+
+    m.def("set_bridge_layer_values",
+          [](const std::vector<float>& values) {
+              std::vector<float> v;
+              v.reserve(values.size());
+              for (float x : values)
+                  v.push_back(std::isfinite(x) ? std::clamp(x, 0.0f, 1.0f) : 0.0f);
+              if (g_bridge_pass) g_bridge_pass->set_layer_values(std::move(v));
+          },
+          py::arg("values"),
+          "Live value per reflection layer (w^2.2), clamped to [0, 1]; "
+          "non-finite -> 0. Never raises.");
 
     m.def("bridge_probe_stash",
           [] {
@@ -4962,13 +4971,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
               for (int i = 0; i < renderer::kBridgeStates; ++i)
                   sc[static_cast<std::size_t>(i)] = g_bridge_probe.scales[static_cast<std::size_t>(i)];
               d["scales"] = sc;
-              d["mix"] = g_bridge_probe.mix;
               d["capture_pending"] = g_bridge_probe.capture_pending;
               return d;
           },
           "Read-only test snapshot of the process-wide probe stash the "
           "set_bridge_probe_* bindings write (it survives shutdown()/init() by "
-          "design): origin, scales, mix, capture_pending.");
+          "design): origin, scales, capture_pending.");
 
     m.def("bridge_probe_state",
           []() -> py::object {
@@ -4985,6 +4993,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
               d["probes_valid"] = g_bridge_pass->probes_valid();
               d["alert_ambient_scale"] = g_bridge_pass->alert_ambient_scale();
               d["alert_level"] = g_bridge_pass->alert_level();
+              py::tuple bw(renderer::kBridgeStates);
+              for (int i = 0; i < renderer::kBridgeStates; ++i)
+                  bw[static_cast<std::size_t>(i)] = g_bridge_pass->base_weight(i);
+              d["base_weights"] = bw;
               return d;
           },
           "Test/diagnostic snapshot of the bridge pass's probe state (origin, "

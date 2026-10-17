@@ -125,12 +125,13 @@ def test_optional_holds_exactly_the_soft_guarded_bindings():
         "ray_trace_mesh_pick", "model_identity", "set_bridge_highlight",
         "set_bridge_material_overrides", "set_bridge_pbr_enabled",
         "set_bridge_probe_origin", "set_bridge_probe_scales",
-        "set_bridge_probe_mix", "request_bridge_probe_capture",
+        "request_bridge_probe_capture",
         "set_bridge_spots", "set_bridge_alert_level",
         "set_bridge_spot_colours", "set_bridge_glow",
         "set_bridge_area_lights", "set_bridge_area_colours", "bridge_mesh_geometry",
         "set_bridge_glow_captures", "set_bridge_probe_layers",
         "bridge_probe_signatures", "bridge_quality",
+        "set_bridge_probe_state", "set_bridge_layer_values",
     })
 
 

@@ -228,6 +228,12 @@ class BridgeRuntime:
         dt = max(float(dt), 0.0)
         self._t += dt
         self._fade.advance(dt)
+        try:
+            # A quality change re-plans the layers (spec 2026-10-17 §4.4).
+            if self._io.bridge_quality() != self._plan_quality:
+                self.push(self._doc)
+        except Exception as e:  # noqa: BLE001 - never let bridge data kill the frame
+            dev_mode.log_swallowed("bridge runtime quality replan", e)
         self._push_live()
 
     def _push_live(self):
@@ -240,6 +246,8 @@ class BridgeRuntime:
                 spot_cols, area_cols = lights.live(self._built, self._fade, self._t)
             self._io.set_bridge_spot_colours(spot_cols)
             self._io.set_bridge_area_colours(area_cols)
+            self._io.set_bridge_layer_values(
+                probe_layers.layer_values(self._plan, self._t))
         except Exception as e:  # noqa: BLE001 - never let bridge data kill the frame
             dev_mode.log_swallowed("bridge runtime live push", e)
 

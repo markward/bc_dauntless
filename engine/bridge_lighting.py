@@ -84,28 +84,6 @@ def bridge_state_of(player, default=GREEN):
     return level if level in (GREEN, YELLOW, RED) else GREEN
 
 
-class ProbeBlend:
-    """Green <-> yellow/red reflection-probe mix (spec 2026-10-08-bridge-emitters
-    §9.4): 0 = green, 1 = yellow/red, moving at 1/fade_s per second. The first
-    update lands on its target. Feed it the paused-aware player dt."""
-
-    def __init__(self, fade_s=0.5):
-        self._fade_s = max(float(fade_s), 1e-6)
-        self._mix = None
-
-    def update(self, alert_level, dt) -> float:
-        target = 0.0 if int(alert_level) == 0 else 1.0
-        if self._mix is None:
-            self._mix = target
-            return self._mix
-        step = max(float(dt), 0.0) / self._fade_s
-        if self._mix < target:
-            self._mix = min(target, self._mix + step)
-        else:
-            self._mix = max(target, self._mix - step)
-        return self._mix
-
-
 def probe_scales():
     """Ambient scales the five state probes (green, yellow, red, offline,
     special) are captured with (spec 2026-10-17 §4.4)."""

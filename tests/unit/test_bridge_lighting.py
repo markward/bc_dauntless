@@ -30,32 +30,14 @@ def test_host_loop_uses_the_module():
     assert "_bridge_dim = 0.5" not in src
 
 
-def test_probe_blend_starts_at_its_target_and_fades():
-    b = bl.ProbeBlend(fade_s=0.5)
-    assert b.update(0, 0.016) == 0.0
-    assert b.update(2, 0.25) == pytest.approx(0.5)
-    assert b.update(2, 0.5) == 1.0
-    assert b.update(1, 1.0) == 1.0          # yellow and red share a probe
-
-
-def test_probe_blend_first_call_has_no_fade():
-    assert bl.ProbeBlend().update(2, 0.016) == 1.0
-
-
-def test_probe_blend_holds_with_zero_dt():
-    b = bl.ProbeBlend()
-    b.update(0, 0.0)
-    assert b.update(2, 0.0) == 0.0
-
-
 def test_probe_scales_has_five_states():
     assert bl.probe_scales() == (1.5, 1.0, 1.0, 0.4, 1.0)
     assert bl.probe_scales() == tuple(bl.ambient_scale_for_alert(i) for i in range(5))
 
 
 # ── Review fix round 1, item 1 (second bullet): a structural check that the
-# per-frame block in host_loop.run() feeds ProbeBlend.update(level, dt) into
-# set_bridge_probe_mix, and calls bridge_runtime.on_alert(...) only inside an
+# per-frame block in host_loop.run() feeds (level, dt) to
+# host_io.set_bridge_probe_state, and calls bridge_runtime.on_alert(...) only inside an
 # `if` gated on a level-changed comparison -- never unconditionally every
 # frame. A full behavioural test would need a live renderer/CEF/mission
 # loop (host_loop.run() itself), so this inspects run()'s AST instead of
@@ -71,10 +53,10 @@ def test_probe_scales_has_five_states():
 # string-matching the literal name `_bridge_probe_alert_last` in the `If`'s
 # dumped AST, it checks structurally that the `If`'s test is a `Compare`
 # with a `NotEq` op that mentions the SAME level variable passed to
-# `ProbeBlend.update` -- tied to the real data dependency, not a name that
+# `set_bridge_probe_state` -- tied to the real data dependency, not a name that
 # happens to appear in the source. ──
 
-def test_host_loop_feeds_probe_blend_and_gates_on_alert_on_change():
+def test_host_loop_feeds_probe_state_and_gates_on_alert_on_change():
     import ast
     import inspect
 
@@ -86,7 +68,6 @@ def test_host_loop_feeds_probe_blend_and_gates_on_alert_on_change():
         if isinstance(n, ast.FunctionDef) and n.name == "run")
 
     update_call = None
-    mix_call = None
     on_alert_calls_with_guard = []
 
     def _is_guard(test, level_name):
@@ -111,18 +92,15 @@ def test_host_loop_feeds_probe_blend_and_gates_on_alert_on_change():
             self.generic_visit(node)
 
         def visit_Call(self, node):
-            nonlocal update_call, mix_call
-            if (isinstance(node.func, ast.Attribute) and node.func.attr == "update"
-                    and isinstance(node.func.value, ast.Name)
-                    and node.func.value.id == "_bridge_probe_blend"):
+            nonlocal update_call
+            if (isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "set_bridge_probe_state"):
                 update_call = node
-            if isinstance(node.func, ast.Attribute) and node.func.attr == "set_bridge_probe_mix":
-                mix_call = node
             self.generic_visit(node)
 
     Visitor().visit(run_fn)
 
-    assert update_call is not None, "no _bridge_probe_blend.update(level, dt) call found"
+    assert update_call is not None, "no host_io.set_bridge_probe_state(level, dt) call found"
     assert len(update_call.args) == 2
     dt_arg = update_call.args[1]
     # Spec §12.2: the dt is `_bridge_dt`, which _bridge_clock_dt derives from
@@ -130,7 +108,7 @@ def test_host_loop_feeds_probe_blend_and_gates_on_alert_on_change():
     # replaces it ONLY while the editor is open. Pin both links, so swapping
     # in TICK_DT (or wall time) for production still fails.
     assert isinstance(dt_arg, ast.Name) and dt_arg.id == "_bridge_dt", (
-        "ProbeBlend.update's second argument must be the Name _bridge_dt "
+        "set_bridge_probe_state's second argument must be the Name _bridge_dt "
         f"(the bridge clock dt); got {ast.dump(dt_arg)!r}")
     clock_calls = [
         n for n in ast.walk(run_fn)
@@ -155,20 +133,15 @@ def test_host_loop_feeds_probe_blend_and_gates_on_alert_on_change():
     assert not any(isinstance(n, ast.Name) and n.id == "_frame_dt"
                    for n in ast.walk(wall[0].value)), "_wall_dt must not read the frozen _frame_dt"
 
-    assert mix_call is not None, "no host_io.set_bridge_probe_mix(...) call found"
-    # The mix call's sole argument must BE the update call (fed straight
-    # through), not a separately-computed value.
-    assert len(mix_call.args) == 1 and mix_call.args[0] is update_call
-
     assert on_alert_calls_with_guard, "on_alert(...) is never called from run()"
     assert all(on_alert_calls_with_guard), (
         "every on_alert(...) call must be inside an `if <level> != "
         "<something>:` guard comparing the SAME level variable fed to "
-        "ProbeBlend.update, never unconditional")
+        "set_bridge_probe_state, never unconditional")
 
 
 # Task 17: the per-frame block also pushes the alert level for the emissive
-# variants -- the SAME level variable ProbeBlend.update reads, every frame
+# variants -- the SAME level variable set_bridge_probe_state reads, every frame
 # (never gated on a level change: a fresh BridgePass after a re-init must
 # pick it up on the next frame).
 def test_host_loop_pushes_the_alert_level_every_frame():
@@ -182,9 +155,7 @@ def test_host_loop_pushes_the_alert_level_every_frame():
                   if isinstance(n, ast.FunctionDef) and n.name == "run")
     calls = [n for n in ast.walk(run_fn)
              if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)]
-    update = next(c for c in calls if c.func.attr == "update"
-                  and isinstance(c.func.value, ast.Name)
-                  and c.func.value.id == "_bridge_probe_blend")
+    update = next(c for c in calls if c.func.attr == "set_bridge_probe_state")
     pushes = [c for c in calls if c.func.attr == "set_bridge_alert_level"]
     assert len(pushes) == 1, "exactly one set_bridge_alert_level(...) push in run()"
     push = pushes[0]

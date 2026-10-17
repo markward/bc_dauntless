@@ -10699,9 +10699,6 @@ def run(mission_name: Optional[str] = None,
 
         controller.bridge_runtime = BridgeRuntime(
             eye=lambda: _BRIDGE_CAMERA_EYE, alert=_bridge_runtime_alert_level)
-        # Green <-> yellow/red reflection-probe cross-fade (bridge_lighting.
-        # ProbeBlend); fed the paused-aware player dt each frame below.
-        _bridge_probe_blend = _bridge_lighting.ProbeBlend()
         _bridge_probe_alert_last = [None]   # mutable box: last frame's level
 
         _after_mission_loaded()
@@ -12869,12 +12866,11 @@ def run(mission_name: Optional[str] = None,
                 player, _bridge_preview,
                 _bridge_rt.ambient_scale if _bridge_rt is not None else None))
             r.set_bridge_lighting(bridge_ambient, bridge_directionals)
-            # Bridge PBR reflection-probe cross-fade (spec
-            # 2026-10-09-bridge-pbr §6.3, §9.4): green <-> yellow/red over
-            # ProbeBlend's fade_s, frozen under pause (_player_dt is the
-            # paused-aware dt). The probes themselves are only ever
-            # recaptured on load/edit/alert change (BridgeRuntime), never
-            # per frame — this just blends between the two existing captures.
+            # Bridge reflection-probe cross-fade (spec 2026-10-17 §4.2): the
+            # renderer fades the base weights over 0.5 s, frozen under pause
+            # (_bridge_dt derives from the paused-aware _player_dt). The probes
+            # are only recaptured on load/edit (BridgeRuntime), never per
+            # frame — this just blends between the existing captures.
             _bridge_alert_level = _bridge_effective_alert(
                 _bridge_alert_level_of(player), bridge_emitters)
             _bridge_dt = _bridge_clock_dt(
@@ -12882,8 +12878,7 @@ def run(mission_name: Optional[str] = None,
             # Emissive sibling maps: the alert-level variant (task 17), every
             # frame, beside the ambient scale (a hard switch, no fade).
             host_io.set_bridge_alert_level(_bridge_alert_level)
-            host_io.set_bridge_probe_mix(
-                _bridge_probe_blend.update(_bridge_alert_level, _bridge_dt))
+            host_io.set_bridge_probe_state(_bridge_alert_level, _bridge_dt)
             if _bridge_alert_level != _bridge_probe_alert_last[0]:
                 _bridge_probe_alert_last[0] = _bridge_alert_level
                 controller.bridge_runtime.on_alert(_bridge_alert_level)
