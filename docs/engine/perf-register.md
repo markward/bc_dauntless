@@ -76,14 +76,14 @@ turns off the periodic report, so it needs its own run (M-5).
 | C-001 | 2026-10-17 22:18 | B1 | `57e6b66a` | **Debug** | M3 Pro, 3840×1200 external + built-in Retina | 2,683 / 23 | Window size not recorded. Sim paused in report 2. Exterior view from report 13. The kill shows as hull-damaged going 1→2 at report 14. |
 | C-002 | 2026-10-17 22:20 | B2 | `57e6b66a` | **Debug** | same | 19,069 / 159 | Window size not recorded. Idle on bridge for reports 0–7, battle from about report 13. Ended by destroying the Birds of Prey, not by ramming. |
 | C-003 | 2026-10-17 22:53–22:59 | `combat_stress`, 4 ships, `DAUNTLESS_CEF_UPLOAD` = always / on_paint / never, visible window | `perf/cef-upload-sync` (pre-`60b74418`) | **Debug** | same | 3,000 each | ⚠️ Ran **during a pytest run** (CPU contention), and the binary **lacked the `cef.upload`/`cef.draw` scopes** (a stale `host_bindings.cc` object). Use only for upload counts and relative `cef.composite`. |
-| C-004 | 2026-10-17 23:0x | `combat_stress`, 4 ships, always, **headless** | `perf/cef-upload-sync` | **Debug** | same | 3,000 | First capture with the `cef.upload` / `cef.draw` scopes. |
-| C-005 | 2026-10-17 23:1x | as C-004, plus draw section timing | `perf/cef-upload-sync` | **Debug** | same | 3,000 | |
-| C-006 | 2026-10-17 23:1x | as C-005, **profiler off** (`timeout 90`) | `perf/cef-upload-sync` | **Debug** | same | ~6 stats lines | Timing from the `[cef-upload]` line only. |
-| C-007 | 2026-10-17 23:2x | `combat_stress`, paired profiler on (3,600 frames) / off (`timeout 100`), headless | `60b74418` code | **Debug** | same | 5 / 7 stats lines | Frame time from the `[cef-upload]` line, independent of the profiler. |
-| C-008 | 2026-10-17 23:3x | `rock_fields_inside`, paired profiler on (3,000) / off (`timeout 100`), headless | `60b74418` code | **Debug** | same | 4 / 7 stats lines | GPU frame about 10.5 ms with the profiler on (bridge view). |
+| C-004 | 2026-10-17 23:03 | `combat_stress`, 4 ships, always, **headless** | `perf/cef-upload-sync` | **Debug** | same | 3,000 | First capture with the `cef.upload` / `cef.draw` scopes. |
+| C-005 | 2026-10-17 23:05 | as C-004, plus draw section timing | `perf/cef-upload-sync` | **Debug** | same | 3,000 | |
+| C-006 | 2026-10-17 23:07 | as C-005, **profiler off** (`timeout 90`) | `perf/cef-upload-sync` | **Debug** | same | ~6 stats lines | Timing from the `[cef-upload]` line only. |
+| C-007 | 2026-10-17 23:08–23:11 | `combat_stress`, paired profiler on (3,600 frames) / off (`timeout 100`), headless | `60b74418` code | **Debug** | same | 5 / 7 stats lines | Frame time from the `[cef-upload]` line, independent of the profiler. |
+| C-008 | 2026-10-17 23:12–23:15 | `rock_fields_inside`, paired profiler on (3,000) / off (`timeout 100`), headless | `60b74418` code | **Debug** | same | 4 / 7 stats lines | GPU frame about 10.5 ms with the profiler on (bridge view). |
 
 Logs for C-003 to C-008: `~/Documents/dauntless-perf/cef-*.log`, `cef2-*` …
-`cef6-*`. Clock times for C-004 to C-008 are approximate.
+`cef6-*`.
 
 Log files: `~/Documents/dauntless-perf/e1m2-haven-death-20261017-2218.log` and
 `qb-sov-vs-2bop-ram-20261017-2220.log`.
