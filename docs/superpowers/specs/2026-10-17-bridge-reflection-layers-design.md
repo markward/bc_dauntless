@@ -286,6 +286,9 @@ non-shown states.
 
 ## 8. As built (2026-10-17)
 
+**Live-verified by Mark on DBridge, 2026-10-17** (the five states via the Bridge
+Editor preview squares; the red pulse in the reflections).
+
 - **Storage** (§4.6, as specified): one `GL_TEXTURE_CUBE_MAP_ARRAY`, 384², 6
   mips, `GL_R11F_G11F_B10F` (`BridgeProbeArray`), precise enough on this Mac's
   GL 4.1 — tests allow one ulp per channel (1/64 R and G, 1/32 B; the driver
