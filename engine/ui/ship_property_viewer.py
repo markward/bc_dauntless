@@ -243,6 +243,7 @@ def build_descriptors(ship) -> List[dict]:
             "condition_pct": _condition_pct_for(sub),
             "parent_index": index_of.get(id(parent)) if parent is not None else None,
             "properties": props,
+            "physical_parent": _baked_physical_parent(sub),
         })
     # Post-pass: annotate every subsystem descriptor with its light volume.
     # `light` = a baked region 0 exists; `light_region` = that baked spec or a
@@ -295,8 +296,17 @@ def build_descriptors(ship) -> List[dict]:
             "parent_index": None,
             "properties": {"name": em.GetName(),
                            "emitted_type": em.GetEmittedObjectType()},
+            "physical_parent": _baked_physical_parent(em),
         })
     return out
+
+
+def _baked_physical_parent(obj):
+    """The baked `SetPhysicalParent` name on `obj`'s property, or None (Auto,
+    or no property able to carry one)."""
+    from engine.appc import physical_parents
+    prop = physical_parents.property_of(obj)
+    return prop.GetPhysicalParent() if prop is not None else None
 
 
 def _iter_subsystems(ship):

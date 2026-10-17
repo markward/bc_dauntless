@@ -28,19 +28,26 @@ class RunningLightSpec:
                 self.size, self.period, self.duration)
 
 
-def lights_for(ship) -> list:
-    """The ship's running lights in property-set order. A light that was never
-    placed (no SetPosition) is skipped rather than drawn at the hull origin."""
+def light_properties(ship) -> list:
+    """The ship's placed `BlinkingLightProperty` objects in property-set order.
+    A light that was never placed (no SetPosition) is skipped rather than
+    drawn at the hull origin. The one skip rule `lights_for` and the Ship
+    Property Viewer's Physical tab share."""
     import App
     get_set = getattr(ship, "GetPropertySet", None)
     pset = get_set() if get_set is not None else None
     if pset is None:
         return []
+    return [prop for prop in
+            pset.GetPropertiesByType(App.CT_BLINKING_LIGHT_PROPERTY)
+            if prop.GetPosition() is not None]
+
+
+def lights_for(ship) -> list:
+    """The ship's running lights in property-set order (`light_properties`)."""
     out = []
-    for prop in pset.GetPropertiesByType(App.CT_BLINKING_LIGHT_PROPERTY):
+    for prop in light_properties(ship):
         pos = prop.GetPosition()
-        if pos is None:
-            continue
         c = prop.GetColor()
         out.append(RunningLightSpec(
             pos=(float(pos.x), float(pos.y), float(pos.z)),
