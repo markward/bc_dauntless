@@ -27,9 +27,10 @@ inline constexpr glm::vec3 kBridgeUp{0.0f, 0.0f, 1.0f};  // set instances draw w
 // Bridge PBR constants (spec 2026-10-08-bridge-emitters §9, Global Constraints)
 inline constexpr int kBridgeProbeFace = 384;
 inline constexpr int kBridgeProbeMips = 6;
-/// Capture steps per main-bridge frame (spec 2026-10-17 §4.7): a step is one
-/// probe cube face or one prefilter mip, so a probe takes 6 + kBridgeProbeMips
-/// frames. Tune live against the profiler's `bridge.probe_capture` scope.
+/// Capture steps per main-bridge frame (spec 2026-10-17 §4.7, §8): a step is
+/// one probe cube face, the raw mip chain + mip 0, one face of mip 1, or one
+/// of mips 2.., so a probe takes BridgeProbeArray::steps_per_probe() (17)
+/// frames. The step's GPU cost lands in the top-level `bridge` scope.
 inline constexpr int kBridgeProbeStepsPerFrame = 1;
 inline constexpr int kBridgeBrdfLutSize = 128;
 inline constexpr int kBridgeMaxSpots = 32;

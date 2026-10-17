@@ -2,8 +2,9 @@
 //
 // BridgeProbeArray: every bridge reflection probe in one cube-map array, plus
 // a spare slot the in-flight probe is captured into and swapped in from, a
-// shared raw capture cube, and a capture split into steps (one face, or one
-// prefilter mip) so no frame pays for a whole probe. Every test reads the GPU
+// shared raw capture cube, and a capture split into steps (one face, the mip
+// chain + mip 0, one face of mip 1, or one of mips 2-5) so no frame pays for a
+// whole probe. Every test reads the GPU
 // result back; every test skips cleanly when no GL context is available.
 #include <gtest/gtest.h>
 #include <glad/glad.h>
@@ -135,7 +136,8 @@ TEST_F(BridgeProbeArrayGl, FormatIsR11G11B10F) {
     EXPECT_EQ(max_level, kBridgeProbeMips - 1);
     EXPECT_EQ(last, mip_size(kBridgeProbeMips - 1));
     EXPECT_EQ(a.capacity(), 1);
-    EXPECT_EQ(a.steps_per_probe(), 6 + kBridgeProbeMips);
+    // 6 faces + (mip chain + mip 0) + mip 1 per face + mips 2-5 (ruling R9).
+    EXPECT_EQ(a.steps_per_probe(), 6 + 1 + 6 + (kBridgeProbeMips - 2));
     EXPECT_FALSE(a.valid(0));
     EXPECT_FALSE(a.in_flight());
     EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
@@ -180,6 +182,53 @@ TEST_F(BridgeProbeArrayGl, SteppedCaptureMatchesOneShot) {
     }
     // Sanity: the faces really are distinct (mip 0 is the capture itself).
     EXPECT_NEAR(centre(read_array_face(a.texture(), a.layer_of(1), 4, 0), 0).r, 0.5f, 0.01f);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+// Ruling R9 (measured 2026-10-17): prefiltering mip 1 is the costliest step
+// by far (~9 ms avg, ~15 ms max on DBridge), so it runs as one step per face.
+TEST_F(BridgeProbeArrayGl, Mip1PrefilterIsOneStepPerFace) {
+    renderer::BridgeProbeArray a;
+    ASSERT_TRUE(a.ensure(1));
+    EXPECT_EQ(a.steps_per_probe(), 17);
+    // Two red captures leave BOTH layers (the slot's and the spare) red at
+    // every face and mip, so a blue texel in the spare is this capture's.
+    ASSERT_EQ(capture_all(a, 0, red), a.steps_per_probe());
+    ASSERT_EQ(capture_all(a, 0, red), a.steps_per_probe());
+    // Two layers: the spare is whichever one slot 0 is not in.
+    const int spare = 1 - a.layer_of(0);
+    ASSERT_TRUE(spare == 0 || spare == 1);
+
+    const auto blue_faces = [&](int mip) {
+        int n = 0;
+        for (int f = 0; f < 6; ++f) {
+            const glm::vec3 c = centre(read_array_face(a.texture(), spare, f, mip), mip);
+            if (c.b > 0.5f && c.r < 0.01f) ++n;
+            else EXPECT_GT(c.r, 0.5f) << "mip " << mip << " face " << f << " neither";
+        }
+        return n;
+    };
+
+    int drawn = 0;
+    a.begin(0);
+    for (int i = 0; i < 7; ++i)   // six faces, then the mip chain + mip 0
+        ASSERT_FALSE(a.step(glm::vec3(0.0f), ClearFaces{blue, &drawn})) << i;
+    EXPECT_EQ(blue_faces(0), 6);
+    EXPECT_EQ(blue_faces(1), 0);
+    for (int k = 1; k <= 6; ++k) {
+        ASSERT_FALSE(a.step(glm::vec3(0.0f), ClearFaces{blue, &drawn})) << k;
+        EXPECT_EQ(blue_faces(1), k) << "after " << k << " mip-1 steps";
+        EXPECT_EQ(blue_faces(2), 0) << "after " << k << " mip-1 steps";
+    }
+    // Then one step per remaining mip; the last swaps the spare in.
+    for (int mip = 2; mip < kBridgeProbeMips; ++mip) {
+        const bool done = a.step(glm::vec3(0.0f), ClearFaces{blue, &drawn});
+        EXPECT_EQ(done, mip == kBridgeProbeMips - 1) << mip;
+        if (!done) EXPECT_EQ(blue_faces(mip), 6) << mip;
+    }
+    EXPECT_FALSE(a.in_flight());
+    EXPECT_EQ(a.layer_of(0), spare);
+    EXPECT_EQ(drawn, 6);
     EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
 }
 
@@ -294,7 +343,7 @@ TEST_F(BridgeProbeArrayGl, GrowMidCaptureKeepsTheProbeInFlight) {
     ASSERT_TRUE(a.ensure(1));
     int drawn = 0;
     a.begin(0);
-    // All faces and the first two prefilter mips land before the grow.
+    // All faces, mip 0 and the first face of mip 1 land before the grow.
     for (int i = 0; i < 8; ++i) ASSERT_FALSE(a.step(glm::vec3(0.0f), ClearFaces{green, &drawn}));
     ASSERT_TRUE(a.ensure(4));
     EXPECT_TRUE(a.in_flight());

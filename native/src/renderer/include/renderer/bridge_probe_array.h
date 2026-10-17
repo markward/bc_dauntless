@@ -22,8 +22,8 @@ class Shader;
 /// roughness k / (kBridgeProbeMips - 1); mip 0 a copy), with BridgeProbe's
 /// face order and orientation (BackdropPass::bake's table).
 ///
-/// A probe is captured in STEPS -- one cube face, or one prefilter mip -- so
-/// no frame pays for a whole probe. The probe in flight is drawn into one
+/// A probe is captured in STEPS -- one cube face, the raw mip chain + mip 0,
+/// one face of mip 1, or one of mips 2.. -- so no frame pays for a whole probe. The probe in flight is drawn into one
 /// shared RGBA16F raw cube and prefiltered into a SPARE array layer; the
 /// slot's old content keeps showing until the last step, which swaps the two
 /// layers. So a slot's array layer moves: the shader must index by
@@ -63,9 +63,10 @@ public:
     /// the raw cube: it is bound (viewport = kBridgeProbeFace², cleared to
     /// opaque black, depth cleared, scissor off) and `draw_face(const
     /// scenegraph::Camera&)` is called with a 90° square camera at `origin`
-    /// looking down that face. The next kBridgeProbeMips steps each prefilter
-    /// one mip (all six faces) into the spare layer (the first also builds the
-    /// raw cube's mip chain). The last swaps the spare in as the slot's layer
+    /// looking down that face. Then, into the spare layer: one step builds the
+    /// raw cube's mip chain and prefilters mip 0 (six faces); six steps
+    /// prefilter mip 1 one face each (the costliest mip, ruling R9); one step
+    /// each prefilters mips 2.. (six faces). The last swaps the spare in as the slot's layer
     /// and returns true; every other step, and any step with nothing in
     /// flight, returns false. If draw_face throws, that face is retried by the
     /// next step. The caller's FBO, viewport, clear colour, program, VAO,
@@ -95,7 +96,8 @@ public:
     /// and content.
     void abandon();
 
-    /// Steps one probe takes: 6 faces + kBridgeProbeMips prefilter mips.
+    /// Steps one probe takes: 6 faces + 1 (mip chain + mip 0) + 6 (mip 1, per
+    /// face) + kBridgeProbeMips - 2 (mips 2..) = 17 at 6 mips.
     int steps_per_probe() const;
 
     /// The GL_TEXTURE_CUBE_MAP_ARRAY (0 before ensure() / after shrink_to(0)).

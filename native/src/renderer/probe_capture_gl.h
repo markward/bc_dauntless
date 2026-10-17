@@ -155,22 +155,26 @@ inline void begin_prefilter(const Shader& prog, GLuint raw, GLuint vao) {
     glBindVertexArray(vao);
 }
 
-/// Prefilter all six faces of output mip `mip` (after begin_prefilter):
+/// Prefilter ONE face of output mip `mip` (after begin_prefilter):
 /// `bind_face(face)` binds that face of that mip as the target and sets the
 /// viewport to its size. Mip k is roughness k / (mips - 1); mip 0 is
 /// roughness 0 = a copy.
 template <class BindFace>
-void prefilter_mip(const Shader& prog, int mip, BindFace bind_face) {
+void prefilter_face(const Shader& prog, int mip, int face, BindFace bind_face) {
     const float rough = (kBridgeProbeMips > 1)
         ? static_cast<float>(mip) / static_cast<float>(kBridgeProbeMips - 1)
         : 0.0f;
     prog.set_float("u_roughness", rough);
     prog.set_float("u_face_size", static_cast<float>(mip_size(mip)));
-    for (int face = 0; face < 6; ++face) {
-        bind_face(face);
-        prog.set_int("u_face", face);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-    }
+    bind_face(face);
+    prog.set_int("u_face", face);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+}
+
+/// Prefilter all six faces of output mip `mip` (prefilter_face per face).
+template <class BindFace>
+void prefilter_mip(const Shader& prog, int mip, BindFace bind_face) {
+    for (int face = 0; face < 6; ++face) prefilter_face(prog, mip, face, bind_face);
 }
 
 }  // namespace renderer::probe_gl

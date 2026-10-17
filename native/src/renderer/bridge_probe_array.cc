@@ -180,7 +180,10 @@ void BridgeProbeArray::abandon() {
     step_ = 0;
 }
 
-int BridgeProbeArray::steps_per_probe() const { return 6 + kBridgeProbeMips; }
+int BridgeProbeArray::steps_per_probe() const {
+    // Faces, the raw chain + mip 0, mip 1 per face, the remaining mips.
+    return 6 + 1 + 6 + (kBridgeProbeMips - 2);
+}
 
 int BridgeProbeArray::layer_of(int slot) const {
     if (slot < 0 || slot >= capacity()) return -1;
@@ -210,7 +213,10 @@ scenegraph::Camera BridgeProbeArray::begin_face(glm::vec3 origin) {
 }
 
 bool BridgeProbeArray::prefilter_step() {
-    const int mip = step_ - 6;
+    // Steps after the faces: [6] the raw chain + mip 0, [7, 13) mip 1 one
+    // face each (the costliest mip by far, ruling R9), then mips 2.. whole.
+    const int p = step_ - 6;
+    const int mip = p == 0 ? 0 : (p <= 6 ? 1 : p - 5);
     if (mip == 0) {
         // All six faces are in: the raw chain for the pdf-driven sample level.
         glActiveTexture(GL_TEXTURE0);
@@ -219,10 +225,12 @@ bool BridgeProbeArray::prefilter_step() {
     probe_gl::begin_prefilter(*prefilter_, raw_.texture(), vao_);
     glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
     const int sz = probe_gl::mip_size(mip);
-    probe_gl::prefilter_mip(*prefilter_, mip, [&](int face) {
+    const auto bind = [&](int face) {
         attach_layer(GL_FRAMEBUFFER, tex_, mip, spare_layer_, face);
         glViewport(0, 0, sz, sz);
-    });
+    };
+    if (mip == 1) probe_gl::prefilter_face(*prefilter_, mip, p - 1, bind);
+    else probe_gl::prefilter_mip(*prefilter_, mip, bind);
     glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, 0, 0);
     ++step_;
     if (step_ < steps_per_probe()) return false;
