@@ -52,13 +52,15 @@ unreachable on Mark's MacBook.
 
 The veil is not a native dial: it sets the star's transmittance from the
 system's outermost region, so host_loop re-solves `k_sys` with
-`profile.k_sys(m, veil())` and re-pushes the profile (a ~1.6s table
-rebuild) whenever it changes, and the flare veil uses the same value via
+`profile.k_sys(m, veil())` and re-pushes the profile (a table rebuild)
+whenever it changes, and the flare veil uses the same value via
 `profile.star_transmittance(player, veil())`. The four native dials go to
 `engine.renderer.system_nebula_set_dials` as one dict each press
 (`lane_size` rides along unchanged -- the native struct expects the whole
-set). A `g` or `floor` change rebuilds the far-field table (~1.6s);
-`lane_contrast` and `near_range` never rebuild anything.
+set). A `g` or `floor` change rebuilds the far-field table too. A table
+build is measured ~7 s for Vesuvi (15 rows) on the Debug build, ~0.2 s for
+3-row systems; built tables are cached per session and prebuilt during the
+warp tunnel. `lane_contrast` and `near_range` never rebuild anything.
 """
 DEFAULTS: dict = {
     "veil": 0.15,   # == engine.systems.profile.VEIL_DEFAULT (test-pinned)

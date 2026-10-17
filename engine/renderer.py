@@ -584,7 +584,9 @@ def system_nebula_set_dials(dials: dict) -> None:
     engine/dev_nebula_dials.py): optional keys lane_size, lane_contrast, g,
     floor, near_range; any key omitted resets that dial to
     the native struct default. A g or floor change rebuilds the far-field
-    table (~1-2s) when a profile is already uploaded."""
+    table when a profile is already uploaded (measured ~7 s for Vesuvi
+    (15 rows) on the Debug build, ~0.2 s for 3-row systems; cached per
+    session and prebuilt during the warp tunnel)."""
     _h.system_nebula_set_dials(dials)
 
 

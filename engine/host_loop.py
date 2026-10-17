@@ -5260,7 +5260,10 @@ def _system_nebula_gate(r) -> bool:
 def _push_system_nebula(r, player, suns, warp_streaking) -> None:
     """Feed the SystemNebulaPass: the mapped system's radial
     profile once per system (or veil-dial) change -- the pass builds its
-    far-field table from it, ~1.6s -- and, every frame the gate is open, the
+    far-field table from it (measured ~7 s for Vesuvi (15 rows) on the Debug
+    build, ~0.2 s for 3-row systems; cached per session and prebuilt during
+    the warp tunnel, so a warp arrival is only the upload) -- and, every
+    frame the gate is open, the
     star's render position, or None when the viewed set has no sun (the pass
     then lights clumps by the emissive floor only and draws no star-centred
     haze). The pushed profile carries the live dev dials' g/floor (the pass
@@ -5268,7 +5271,11 @@ def _push_system_nebula(r, player, suns, warp_streaking) -> None:
     a k_sys solved for the live veil dial.
 
     Follows the Volumetric Nebulae setting only (no --developer needed);
-    closing the setting drops any held profile with a single None push."""
+    closing the setting drops any held profile with a single None push.
+    After a mission swap that found a table held, the latch is UNKNOWN, so
+    the first frame either clears it (unmapped or setting off) or re-pushes
+    it (mapped, even the same system); a swap with nothing held pushes
+    nothing."""
     global _system_nebula_pushed_for, _system_nebula_pushed_veil
     if not _system_nebula_gate(r):
         if _system_nebula_pushed_for is not None:

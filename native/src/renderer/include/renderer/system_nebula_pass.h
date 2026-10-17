@@ -104,7 +104,9 @@ public:
 
     /// Set the near-field/table look dials. A change to `g` or `floor` with
     /// a profile already uploaded rebuilds the far-field table (re-runs
-    /// set_profile with the updated LookParams, ~1-2s); `lane_size`,
+    /// set_profile with the updated LookParams; measured ~7 s for Vesuvi
+    /// (15 rows) on the Debug build, ~0.2 s for 3-row systems; cached per
+    /// session and prebuilt during the warp tunnel); `lane_size`,
     /// `lane_contrast` and `near_range` are read directly by the shader
     /// every frame and never trigger a rebuild.
     void set_dials(const Dials& dials);

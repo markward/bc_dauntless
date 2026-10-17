@@ -37,7 +37,10 @@ def host():
 
 
 def _three_row_profile() -> dict:
-    # A k_sys no other test uses, so the session cache cannot already hold it.
+    # The table cache lives in the SystemNebulaPass, which this module's
+    # host fixture creates (init) and destroys (shutdown): no other module
+    # can have filled it. Within this module, the never-built test changes
+    # k_sys so it cannot hit the table this one prebuilds.
     return {
         "r": [0.0, 60000.0, 240000.0],
         "nebula": [0.1, 1.0, 0.05],
