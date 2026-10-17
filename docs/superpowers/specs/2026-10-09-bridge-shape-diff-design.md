@@ -613,6 +613,7 @@ the scratchpad; in game, Developer Options → Lighting → Bridge Debug View
 | 5 — roof rebuild (Mark's 'modified and enhanced' round) | Roof structure b0475 remodelled (352 moved, 239 new verts, 136 tris out / 444 in, own Map 28), new 32-gon roof centre b0051 on replaced Map 1, roof light ribs b0076/81/84/87/90 moved, seat backs b0244/b0267 and b0326 rebuilt | accepted by Mark in game 2026-10-09; verified 31 objects | Generated from a scratch copy with b0475_roof_structure.001 renamed to b0051_roof_center_hole (Mark renamed it in the .blend; his next export must reproduce this fix). Open: vertex colour of off-position survivors comes from the paired/nearest original — not verified (OBJ has no colours) |
 | 6 — consoles, ribs, seat panels | Console bases b0331/b0352 re-unwrapped and rebuilt, roof ribs b0076/81/84/87/90 moved, seat panels b0121/124 onto Map 22d, consoles b0175/203/491/506 onto Map 4a | committed on Mark's go-ahead 2026-10-10; verified 41 objects, nothing skipped | Needed two tool changes: same-UV copies at one corner are told apart by their source NIF triangle (b0331 vertex 2 was a false split), and a genuine seam through an original vertex now SPLITS it (§11.6) instead of refusing. Generated from Mark's re-export after renaming b0337/b0358 `.001` back to b0331/b0352 and moving one stray Map 28 face to Map 17 |
 | 7 — UV re-maps + roof rib b0087 | UV-only re-maps on b0149/157/161/165/179/207 (new to the fix); roof rib b0087 reworked (36 moved, 7 new verts, 28 tris out / 14 in); b0471 re-encoded, same op counts | accepted by Mark in game 2026-10-14; verified 47 objects, nothing skipped | Generated from `Dbridge/Dbridge_modified_and_enhanced_rexport.obj` (Mark's working files now live under `~/Documents/dauntless-blender/Dbridge/`) with no tool changes and no new textures |
+| 8 — ceiling rebuild, wall insets, consoles | New ceiling b0081 (all-new geometry on reworked Map 13); roof b0475 rebuilt on Map 3; roof ribs b0084/b0090 deleted; white light panels on spare shapes (roof panels on b0087, rear-wall panel split from b0102 on b0076, both Map 13); walls b0468 on Map 3; wall insets b0652/b0663 rebuilt (left mirrored from right); helm consoles joined into their bases (right into b0331, left into b0352; helm displays b0340/343/361/364 emptied); console seats b0224/b0255, side panels b0488/b0503, com sides b0024/b0056 UV re-maps | accepted by Mark in game 2026-10-17; verified 64 objects, nothing skipped | Needed two tool changes: `--delete BLOCK` empties a shape whose object was deleted (explicit -- a missing object is indistinguishable from a join), and coincident consecutive corners from an unwelded mirror seam are collapsed before ear clipping (§11.6). Generated from a scratch copy of `Dbridge/Dbridge_CEILING_replaced.obj` with `b0475_roof_structure.001`→b0087, `b0102_wall_rear_panel_04.001`→b0076, `b0343_Material_console_helm_4`→b0331 renamed and the empty `path1.002` dropped; flags `--delete 84 --delete 90 --delete 340 --delete 343 --delete 361 --delete 364`. Lighting: b0090's orphaned panel light removed, b0076 linked to `roof (Map 13)`. A subdivided b0468 was tried and reverted: the dark soffit band is the baseline downlight (`down_bottom` 0.25 on down-facing surfaces, confirmed in Light Only view), not geometry -- open, to be lit per-bridge |
 
 ---
 
@@ -671,7 +672,7 @@ the scratchpad; in game, Developer Options → Lighting → Bridge Debug View
 
 | Piece | Where |
 |---|---|
-| CLI | `tools/bridge_shape_diff.py` (`export`, `diff [--partial] [--exclude B]... [--flipbook-fps F] [--write]`) |
+| CLI | `tools/bridge_shape_diff.py` (`export`, `diff [--partial] [--exclude B]... [--delete B]... [--flipbook-fps F] [--write]`) |
 | Library | `tools/shape_diff/` — `obj_io` (OBJ/MTL read/write), `match` (identity, correspondence, classification), `payload` (BSD1/BSD2 encoder), `frames`, `triangulate` (ear clip), `verify` (apply-and-compare) |
 | Loader | `native/src/assets/src/mesh_fix.cc` — `shape_edits` (BSD2 decode/validate/apply, refs resolved against the UNMODIFIED file), `textures` (per-shape albedo splice + optional `flipbook` NiFlipController shaped like stock EBridge block 550) |
 | Binding | `_dauntless_host.nif_shapes(path, fix_json=None)` — world matrix, parent, colours, UV1, inherited textures; applies a fix in memory when given one (used by the verifier) |
@@ -709,7 +710,7 @@ uv run python -m tools.bridge_shape_diff diff ~/Documents/dauntless-blender/Dbri
 
 | Message | Meaning / action |
 |---|---|
-| `objects differ between base and edit` | a join/split/rename — rename the `.001` back (11.4) |
+| `objects differ between base and edit` | a join/split/rename — rename the `.001` back (11.4). If objects are only MISSING and the message suggests `--delete N`, check they were deleted on purpose (their vertices appear in no other object), then pass those flags |
 | `ambiguous correspondence` | the tool can't tell which originals survived — it refuses rather than guess; `--exclude` that block to land the rest |
 | `depends on skipped/excluded bNNNN` | a block's triangle removals need another block's replacement; they land together or not at all |
 | `texture '…' not found` | the `.mtl` names a file not in the overlay/stock dir (often an old name or a main-checkout path) |
@@ -717,6 +718,20 @@ uv run python -m tools.bridge_shape_diff diff ~/Documents/dauntless-blender/Dbri
 | verifier mismatch | the produced fix does not reproduce `edit.obj` through the real loader — a tool bug; do not write |
 
 ### 11.6 Known limitations (parked, with rulings)
+
+- **Deleted objects (2026-10-14).** Deleting a whole object in Blender is
+  explicit: `--delete BLOCK` stands an empty object in for it and every
+  triangle the export carries is removed (a NIF triangle that is zero-area once
+  welded never reaches the OBJ and stays, rendering nothing). Without the flag
+  the export still refuses -- a missing object is indistinguishable by name
+  from an accidental join. First use: ceiling rebuild, ribs b0084 + b0087.
+- **Unwelded mirror seams (2026-10-14).** Consecutive face corners at the SAME
+  position (Blender's `-0.0`/`0.0` copies on an unmerged x=0 seam) are
+  collapsed before ear clipping; a face that collapses below three corners is
+  dropped (no area). Non-consecutive coincident corners (a polygon touching
+  itself) are still refused. The duplicate vertices themselves are kept, so
+  generated normals may show a crease on the seam -- Merge by Distance in
+  Blender removes it.
 
 - **Vertex splits (iteration 6).** An original vertex whose kept faces disagree on
   its new UV (a seam BC never cut) keeps the UV most of its corners show (tie:
