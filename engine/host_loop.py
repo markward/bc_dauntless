@@ -730,10 +730,13 @@ def _articulated_running_lights(ship, iid, specs) -> tuple:
     by the articulated part it sits on and dropped if that part was severed
     -- the subsystem emitter lights' rule (`_part_pose_at`)."""
     from engine.appc import part_pose
+    from engine.appc.physical_parents import PropRef
     out = []
     for s in specs:
         t = s.as_tuple()
-        pose = _part_pose_at(ship, iid, s.pos)
+        pose = _part_pose_at(
+            ship, iid, s.pos,
+            prop=PropRef(s.name, s.physical_parent))
         if pose is _PART_SEVERED:
             continue
         if pose is not None:
@@ -1674,7 +1677,7 @@ def _build_explosion_light_render_data():
 _PART_SEVERED = object()
 
 
-def _part_pose_at(ship, iid, position):
+def _part_pose_at(ship, iid, position, prop=None):
     """The live pose of the articulated part a hull-attached point sits on.
 
     `position` is the point's authored rest position (body frame, ship
@@ -1692,7 +1695,12 @@ def _part_pose_at(ship, iid, position):
         return None
     leaf = articulation.leaf_for(ship)
     from engine.appc.part_severance import part_for_mount, is_detached
-    name = part_for_mount(leaf, tuple(position), iid)
+    if prop is None:
+        name = part_for_mount(leaf, tuple(position), iid)
+    else:
+        from engine.appc import physical_parents
+        name = physical_parents.part_for_property(
+            leaf, prop, tuple(position), iid)
     if name is None:
         return None
     if is_detached(ship, name):

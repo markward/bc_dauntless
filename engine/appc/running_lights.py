@@ -19,6 +19,8 @@ class RunningLightSpec:
     size: float       # the property's Radius; scaled by the size dial in C++
     period: float
     duration: float   # <= 0 means a static (always-on) light
+    name: str = ""
+    physical_parent: "str | None" = None   # SetPhysicalParent; None = Auto
 
     def as_tuple(self) -> tuple:
         return (self.pos[0], self.pos[1], self.pos[2],
@@ -45,7 +47,9 @@ def lights_for(ship) -> list:
             rgb=(float(c.r), float(c.g), float(c.b)),
             size=float(prop.GetRadius()),
             period=float(prop.GetPeriod()),
-            duration=float(prop.GetDuration())))
+            duration=float(prop.GetDuration()),
+            name=prop.GetName(),
+            physical_parent=prop.GetPhysicalParent()))
     return out
 
 

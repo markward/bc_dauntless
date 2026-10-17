@@ -31,13 +31,22 @@ _preview = {}      # leaf -> {property name: part name | None}
 _warned = set()    # (leaf, part name)
 
 
+def _has_parent_api(obj):
+    # type(), not hasattr: TGObject.__getattr__ vends a truthy stub for any
+    # unknown name, so hasattr is vacuously true on a real object.
+    return hasattr(type(obj), "GetPhysicalParent")
+
+
 def property_of(obj):
+    """The property object carrying `obj`'s physical parent, or None when it
+    has none to give (a test double, a subsystem with no property): None
+    takes the geometric rule unchanged."""
     getter = getattr(obj, "GetProperty", None)
     if getter is not None:
         prop = getter()
         if prop is not None:
-            return prop
-    return obj
+            return prop if _has_parent_api(prop) else None
+    return obj if _has_parent_api(obj) else None
 
 
 def explicit_parent(leaf, prop):
@@ -61,6 +70,8 @@ def is_missing(leaf, name):
 def part_for_property(leaf, prop, point, iid=None):
     from engine.appc import part_severance
     leaf = str(leaf).lower()
+    if prop is None:     # nothing to read a parent from: today's rule
+        return part_severance.part_for_mount(leaf, point, iid)
     name = explicit_parent(leaf, prop)
     if name is not None:
         if not is_missing(leaf, name):
