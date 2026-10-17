@@ -654,6 +654,23 @@ def test_hiding_the_arrows_clears_the_mark(no_arrows):
     assert _payload(p.render_payload())["mission_systems"] == []
 
 
+def test_an_arrow_on_a_system_with_regions_marks_its_default_region(no_arrows):
+    """E1M1 points at "Vesuvi" itself (E1M1.py:3603), never a region inside
+    it. The system node carries its own default — the region a click on it
+    reaches (Systems/Utils.py:24) — so that row, Haven, is the objective."""
+    from engine.ui import ui_attention
+    menu = _e3m2_course_menu()
+    vesuvi = menu._children[0]
+    ui_attention.show_pointer_arrow(None, vesuvi)
+    p = StarMapPanel()
+    p.open(set_name="Starbase12", course_menu=menu)
+    p.dispatch_event("select-system:vesuvi")
+    rows = {r["label"]: r for r in _payload(p.render_payload())["warp_points"]}
+    assert rows["Haven Colony"]["mission"] is True
+    assert rows["Geki Colony"]["mission"] is False
+    assert rows["Vesuvi Dust Cloud"]["mission"] is False
+
+
 # --- hidden labels + the "show all" escape hatch ---------------------------
 # The offer decides which system NAMES are drawn. Unlisted stars keep their
 # dot (and stay clickable), they just don't shout. A toggle restores the rest
@@ -945,6 +962,17 @@ def test_tau_ceti_with_no_default_takes_its_last_destination():
     system default of its own."""
     p = StarMapPanel()
     assert p._outermost_module("tauceti") == "Systems.Starbase12.Starbase12"
+
+
+def test_the_outermost_module_follows_a_missions_set_region_name():
+    """Episode4.py:187 moves Nepenthe's default; the double-click must land
+    where a click on the Set Course system row would — the live menu, not
+    the offline bake."""
+    menu = _e3m2_course_menu()
+    menu._children[0].SetRegionName("Systems.Vesuvi.Vesuvi4")
+    p = StarMapPanel()
+    p.open(set_name="Starbase12", course_menu=menu)
+    assert p._outermost_module("vesuvi") == "Systems.Vesuvi.Vesuvi4"
 
 
 def test_double_clicking_empty_space_sets_nothing():

@@ -132,6 +132,75 @@ TEST(ModelParts, ANodeWithNoGeometryAnywhereHasNoBounds) {
     EXPECT_FALSE(empty->has_bounds);
 }
 
+// ── nearest_model_part: which part an AUTHORED point is on ───────────────
+// The LC Intrepid's shape, reduced: the hull's box spans the nacelle, and the
+// nacelle's box covers a strip of hull. Box containment cannot separate the
+// two cases below; the nearest triangle can.
+
+int add_quad_mesh(assets::Model& m, float x0, float x1, float y0, float y1,
+                  float z) {
+    assets::MeshCpu cpu;
+    cpu.vertices.push_back({.position = glm::vec3(x0, y0, z)});
+    cpu.vertices.push_back({.position = glm::vec3(x1, y0, z)});
+    cpu.vertices.push_back({.position = glm::vec3(x1, y1, z)});
+    cpu.vertices.push_back({.position = glm::vec3(x0, y1, z)});
+    cpu.indices = {0u, 1u, 2u, 0u, 2u, 3u};
+    assets::Mesh mesh;
+    mesh.set_cpu_data(std::move(cpu));
+    m.meshes.push_back(std::move(mesh));
+    return static_cast<int>(m.meshes.size()) - 1;
+}
+
+// Scene Root -> hull (top z=+2, bottom z=-2, x/y +-10, plus a low strip at
+// z=0 under x -5.5..-4.5, y 2..3) and 'wing left' translated to x=-6 whose
+// nacelle is two faces at z=+-0.5 spanning local x +-1, y +-3.
+assets::Model intrepid_shaped_model() {
+    assets::Model m;
+    m.root_node = 0;
+    const int w0 = add_node(m, "", -1);
+    const int root = add_node(m, "Scene Root", w0);
+
+    const int hull = add_node(m, "hull", root);
+    const int hull_mtl = add_node(m, "__NDL_MultiMtl_Node", hull);
+    m.nodes[hull_mtl].meshes.push_back(add_quad_mesh(m, -10, 10, -10, 10, 2.0f));
+    m.nodes[hull_mtl].meshes.push_back(add_quad_mesh(m, -10, 10, -10, 10, -2.0f));
+    m.nodes[hull_mtl].meshes.push_back(add_quad_mesh(m, -5.5f, -4.5f, 2, 3, 0.0f));
+
+    const int wing = add_node(m, "wing left", root,
+                              glm::translate(glm::mat4(1.0f), glm::vec3(-6, 0, 0)));
+    const int wing_mtl = add_node(m, "__NDL_MultiMtl_Node", wing);
+    m.nodes[wing_mtl].meshes.push_back(add_quad_mesh(m, -1, 1, -3, 3, 0.5f));
+    m.nodes[wing_mtl].meshes.push_back(add_quad_mesh(m, -1, 1, -3, 3, -0.5f));
+    return m;
+}
+
+TEST(NearestModelPart, ANacelleSkinPointInsideTheHullBoxIsTheNacelles) {
+    const auto m = intrepid_shaped_model();
+    // On the nacelle's top face; inside the hull's box (z -2..2) too.
+    EXPECT_EQ(renderer::nearest_model_part(m, glm::vec3(-6, 0, 0.5f)), "wing left");
+}
+
+TEST(NearestModelPart, AHullPointInsideTheNacelleBoxIsTheHulls) {
+    const auto m = intrepid_shaped_model();
+    // On the hull strip at z=0, x=-5.2, y=2.5: inside the nacelle's box
+    // (x -7..-5, y +-3, z +-0.5) as well as the hull's.
+    EXPECT_EQ(renderer::nearest_model_part(m, glm::vec3(-5.2f, 2.5f, 0.0f)), "hull");
+}
+
+TEST(NearestModelPart, UsesTheRestPoseNodeChain) {
+    const auto m = intrepid_shaped_model();
+    // Just above the nacelle's top face only once the x=-6 node translation
+    // is applied; at local x=-6 untranslated there is no nacelle geometry.
+    EXPECT_EQ(renderer::nearest_model_part(m, glm::vec3(-6.5f, -2.5f, 0.6f)), "wing left");
+}
+
+TEST(NearestModelPart, AModelWithNoCandidateGeometryAnswersEmpty) {
+    assets::Model m;
+    m.root_node = 0;
+    add_node(m, "", -1);
+    EXPECT_EQ(renderer::nearest_model_part(m, glm::vec3(0.0f)), "");
+}
+
 TEST(ModelParts, FallsBackToTheFirstBranchingNodeWithoutASceneRoot) {
     // Not every hull names its root 'Scene Root'. The rule degrades to "the
     // first node with more than one child" rather than returning nothing --

@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 
 from engine.foundation.shipdef import ShipDefinition, ShipList, _ShipDefNamespace
+from engine.foundation.mutator import MutatorDef  # noqa: F401  (spec 2026-10-16 §6.1)
 
 ShipDef = _ShipDefNamespace()
 shipList = ShipList()

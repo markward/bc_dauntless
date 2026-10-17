@@ -18,7 +18,7 @@ from engine.appc.events import (
     ET_FRIENDLY_FIRE_DAMAGE, ET_FRIENDLY_FIRE_REPORT, ET_FRIENDLY_FIRE_GAME_OVER,
     ObjectExplodingEvent, ObjectExplodingEvent_Create,
     WaypointEvent, WaypointEvent_Create,
-    TGEventHandlerObject, TGEventManager,
+    TGEventHandlerObject, TGEventHandlerObject_Cast, TGEventManager,
     TGPythonInstanceWrapper,
     ET_INPUT_TOGGLE_BRIDGE_AND_TACTICAL,
 )
@@ -86,7 +86,7 @@ from engine.appc.tg_ui.st_widgets import (
     SortedRegionMenu, SortedRegionMenu_CreateW, SortedRegionMenu_Cast,
     SortedRegionMenu_SetWarpButton, SortedRegionMenu_GetWarpButton,
     SortedRegionMenu_SetPauseSorting, SortedRegionMenu_ClearSetCourseMenu,
-    SortedRegionMenu_IsSortingPaused,
+    SortedRegionMenu_IsSortingPaused, SortedRegionMenu_GetRoot,
     STRoundedButton, STRoundedButton_CreateW, STRoundedButton_Cast,
     STSubPane, STSubPane_Create, STSubPane_Cast,
     STButton_Cast, STStylizedWindow_Cast,
@@ -112,6 +112,7 @@ from engine.appc.math import (
     TGPoint3_GetRandomUnitVector,
     TGGeomUtils_LineSphereIntersection,
 )
+NiPoint3 = TGPoint3  # SDK App.py:189 binds NiPoint3; ours is the same 3-vector (no stock script calls it)
 from engine.appc.objects import (
     ObjectClass, PhysicsObjectClass, DamageableObject,
     ObjectGroup, ObjectGroupWithInfo,
@@ -290,6 +291,8 @@ from engine.appc.properties import (
     TGModelPropertyManager, TGModelPropertySet,
     PositionOrientationProperty,
     ObjectEmitterProperty,
+    EffectEmitterProperty, SmokeEmitterProperty, SparkEmitterProperty,
+    ExplodeEmitterProperty, BlinkingLightProperty,
     EngineGlowProperty,
     SubsystemProperty,
     HullProperty, PowerProperty,
@@ -313,6 +316,11 @@ from engine.appc.properties import (
     WeaponSystemProperty_Create,
     CloakingSubsystemProperty_Create,
     ObjectEmitterProperty_Create, ObjectEmitterProperty_Cast,
+    EffectEmitterProperty_Create, EffectEmitterProperty_Cast,
+    SmokeEmitterProperty_Create, SmokeEmitterProperty_Cast,
+    SparkEmitterProperty_Create, SparkEmitterProperty_Cast,
+    ExplodeEmitterProperty_Create, ExplodeEmitterProperty_Cast,
+    BlinkingLightProperty_Create, BlinkingLightProperty_Cast,
 )
 from engine.appc.articulated_part import (
     ArticulatedPartProperty, ArticulatedPartProperty_Create,
@@ -320,6 +328,7 @@ from engine.appc.articulated_part import (
 from engine.appc.particles import (
     AnimTSParticleController_Create,
     SparkParticleController_Create,
+    DebrisParticleController_Create,
     EffectAction_Create,
     ExplosionPlumeController_Create,
     EffectController,
@@ -419,6 +428,11 @@ _CT_CLASS_FOR_TAG = [
     ("CT_SUBSYSTEM_PROPERTY",            SubsystemProperty),
     ("CT_POSITION_ORIENTATION_PROPERTY", PositionOrientationProperty),
     ("CT_OBJECT_EMITTER_PROPERTY",       ObjectEmitterProperty),
+    ("CT_EFFECT_EMITTER_PROPERTY",       EffectEmitterProperty),
+    ("CT_SMOKE_EMITTER_PROPERTY",        SmokeEmitterProperty),
+    ("CT_SPARK_EMITTER_PROPERTY",        SparkEmitterProperty),
+    ("CT_EXPLODE_EMITTER_PROPERTY",      ExplodeEmitterProperty),
+    ("CT_BLINKING_LIGHT_PROPERTY",       BlinkingLightProperty),
     ("CT_HULL_SUBSYSTEM",                HullProperty),
     ("CT_POWER_SUBSYSTEM",               PowerProperty),
     ("CT_SHIELD_SUBSYSTEM",              ShieldProperty),
@@ -953,6 +967,7 @@ g_kMusicManager = MusicManager()
 g_kTGActionManager = TGActionManager()
 g_kModelPropertyManager = TGModelPropertyManager()
 g_kLODModelManager = LODModelManager()
+from engine.appc.texture_anim import g_kTextureAnimManager  # noqa: E402 (spec 2026-10-16 §7.5)
 g_kLocalizationManager = TGLocalizationManager()
 g_kConfigMapping = TGConfigMapping()
 # VarManager shares the event-type allocator with Game_GetNextEventType so

@@ -25,6 +25,14 @@ _warned: set = set()  # (str(path), key) already reported
 # "reload action", or the test suite's autouse reset) drops live tuning too.
 _overrides: dict = {}
 
+# Mod-requested atmospheres (spec 2026-10-16 §8.3): "<set>/<name>" -> raw
+# entry in the catalogue's own schema, from the legacy FX API's
+# CreateAtmosphereFX. Consulted only when the catalogue has neither the
+# "<set>/<name>" override nor the NIF stem. Kept for the whole session (a set
+# can be re-realised without re-running its Initialize), cleared at session
+# teardown and by the test suite's autouse reset.
+_requested: dict = {}
+
 # Live registry of every planet instance the current session has pushed an
 # atmosphere decision for while the toggle was on -- airless (None) ones
 # INCLUDED, so a catalogue reload can re-push them (atmosphere_dials.
@@ -119,7 +127,7 @@ class Atmosphere:
     # ~0.06 at the lit limb against a sun colour of ~1, far under the lit
     # surface -- this covers the gap. Last field so existing positional
     # 5-arg construction stays compatible.
-    intensity: float = 20.0
+    intensity: float = 9.0
     # Grey Mie forward-lobe strength (extinction sigma * mie in every
     # channel, HG g = 0.76). After `intensity` so positional 5- and 6-arg
     # construction stays compatible.
@@ -219,7 +227,7 @@ def parse_entry(key: str, entry: dict):
         raise ValueError(f"missing required field(s) {sorted(missing)}")
     color = srgb_hex_to_linear(entry["color"])
     sunset = srgb_hex_to_linear(entry["sunset_color"]) if "sunset_color" in entry else color
-    intensity = _num(entry, "intensity", 0.0, 50.0) if "intensity" in entry else 20.0
+    intensity = _num(entry, "intensity", 0.0, 50.0) if "intensity" in entry else 9.0
     mie = _num(entry, "mie", 0.0, 4.0) if "mie" in entry else 0.2
     return Atmosphere(
         color=color, sunset_color=sunset,
@@ -240,7 +248,10 @@ def resolve_key(set_name: str, obj_name: str, nif_path: str):
     if entry is not None and (not isinstance(entry, dict) or set(entry) - {"surface"}):
         return override
     stem = nif_stem(nif_path)
-    return stem if stem in raw else None
+    if stem in raw:
+        return stem
+    requested = f"{set_name}/{obj_name}"
+    return requested if set_name and requested in _requested else None
 
 
 def resolve(set_name: str, obj_name: str, nif_path: str):
@@ -249,8 +260,42 @@ def resolve(set_name: str, obj_name: str, nif_path: str):
         return None
     if key in _overrides:
         return _overrides[key]
+    entry = load().get(key)
+    if entry is None or (isinstance(entry, dict) and not (set(entry) - {"surface"})
+                         and key in _requested):
+        # Absent, or a surface-only entry (no air of its own): a mod's
+        # request for this key supplies the air.
+        entry = _requested.get(key, entry)
     try:
-        return parse_entry(key, load()[key])
+        return parse_entry(key, entry)
     except (ValueError, KeyError, TypeError) as e:
         _warn(str(catalogue_path()), key, f"malformed ({e}); treated as airless")
         return None
+
+
+def request(set_name: str, obj_name: str, entry: dict) -> None:
+    """Register a mod-requested atmosphere for one planet (spec 2026-10-16
+    §8.3). The catalogue always wins over it."""
+    _requested[f"{set_name}/{obj_name}"] = dict(entry)
+
+
+def clear_requested() -> None:
+    _requested.clear()
+
+
+def class_presets_path() -> pathlib.Path:
+    return catalogue_path().with_name("atmosphere_classes.json")
+
+
+def class_preset(name: str):
+    """The planet-class preset entry for `name` ("Class-M", ...), else the
+    file's "default" class, else None. Resolved at use."""
+    try:
+        presets = json.loads(class_presets_path().read_text())
+    except (OSError, ValueError) as e:
+        _warn(str(class_presets_path()), "atmosphere_classes.json", f"unreadable ({e})")
+        return None
+    entry = presets.get(name)
+    if not isinstance(entry, dict):
+        entry = presets.get(presets.get("default", ""))
+    return dict(entry) if isinstance(entry, dict) else None

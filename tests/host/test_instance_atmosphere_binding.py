@@ -8,9 +8,9 @@ test-only `_h.atmosphere_debug(iid)` reads it back as
 disabled — later tasks read `inst.atmosphere` straight off the renderer's own
 `scenegraph::Instance`, so this binding only needs to prove the round trip.
 
-`intensity` (shell-halo brightness multiplier only, default 20.0) travels as an
+`intensity` (shell-halo brightness multiplier only, default 9.0) travels as an
 OPTIONAL 6th tuple element on the raw `_h.set_instance_atmosphere` call — a
-5-tuple (the pre-intensity shape) must still default to 20.0 so an older
+5-tuple (the pre-intensity shape) must still default to 9.0 so an older
 caller is unaffected. `mie` (grey Mie strength, default 0.2) is likewise an
 OPTIONAL 7th element; 5- and 6-tuples keep 0.2.
 """
@@ -42,7 +42,7 @@ def test_set_instance_atmosphere_round_trips():
         assert thickness == pytest.approx(0.06)
         assert density == pytest.approx(1.4)
         assert limb == pytest.approx(1.0)
-        assert intensity == pytest.approx(20.0)   # Atmosphere's own default
+        assert intensity == pytest.approx(9.0)    # Atmosphere's own default
         assert mie == pytest.approx(0.2)          # Atmosphere's own default
 
         r.set_instance_atmosphere(iid, None)
@@ -79,7 +79,7 @@ def test_wrapper_passes_mie():
         r.destroy_instance(iid)
 
 
-def test_raw_binding_5_tuple_defaults_intensity_to_twenty():
+def test_raw_binding_5_tuple_defaults_intensity_to_nine():
     """Backward compatibility: a caller built before `intensity` existed that
     still hands the binding a bare 5-tuple must not regress."""
     iid = r.create_instance(0)
@@ -87,7 +87,7 @@ def test_raw_binding_5_tuple_defaults_intensity_to_twenty():
         r._h.set_instance_atmosphere(
             iid, ((1.0, 0.5, 0.25), (0.9, 0.4, 0.2), 0.06, 1.4, 1.0))
         *_, intensity, mie = r._h.atmosphere_debug(iid)
-        assert intensity == pytest.approx(20.0)
+        assert intensity == pytest.approx(9.0)
         assert mie == pytest.approx(0.2)
     finally:
         r.destroy_instance(iid)

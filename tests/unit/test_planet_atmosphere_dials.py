@@ -22,14 +22,14 @@ def test_current_reports_the_targets_entry():
     _setup()
     d = dials.current()
     assert d["thickness"] == 0.06 and d["density"] == 1.4
-    assert d["intensity"] == pytest.approx(20.0)
+    assert d["intensity"] == pytest.approx(9.0)
 
 
 def test_step_intensity_updates_and_clamps():
     pushes = _setup()
     dials.step("intensity", +1)
-    assert all(a.intensity == pytest.approx(20.5) for _, a in pushes)
-    assert atmo.resolve("Albirea3", "Albirea 3", "x/PinkGasPlanet.nif").intensity == pytest.approx(20.5)
+    assert all(a.intensity == pytest.approx(9.5) for _, a in pushes)
+    assert atmo.resolve("Albirea3", "Albirea 3", "x/PinkGasPlanet.nif").intensity == pytest.approx(9.5)
 
     for _ in range(200):
         dials.step("intensity", +1)
@@ -57,7 +57,7 @@ def test_step_mie_updates_and_clamps():
     assert all(a.mie == pytest.approx(0.25) for _, a in pushes)
     assert atmo.resolve("Albirea3", "Albirea 3", "x/PinkGasPlanet.nif").mie == pytest.approx(0.25)
     # Other fields survive a mie step (intensity included).
-    assert all(a.intensity == pytest.approx(20.0) for _, a in pushes)
+    assert all(a.intensity == pytest.approx(9.0) for _, a in pushes)
 
     for _ in range(200):
         dials.step("mie", +1)

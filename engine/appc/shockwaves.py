@@ -24,19 +24,22 @@ def _center_xyz(center):
     return (float(center[0]), float(center[1]), float(center[2]))
 
 
-def spawn(center_world, max_radius_gu, lifetime, pSet=None) -> None:
+def spawn(center_world, max_radius_gu, lifetime, pSet=None, tint=None) -> None:
     """Register a shockwave centered at `center_world` (world space) that
     expands to `max_radius_gu` over `lifetime` seconds.
 
     `pSet` is the set `center_world` is local to (the breaching ship's); the
     render feed drops a shockwave outside the viewed frame and expresses one
-    inside it in the viewed set's coordinates. None: in no frame, not drawn."""
+    inside it in the viewed set's coordinates. None: in no frame, not drawn.
+
+    `tint` (r, g, b) multiplies the ring colour; white = today's look (spec 2026-10-16 §7.5)."""
     _active.append({
         "center": _center_xyz(center_world),
         "set": pSet,
         "max_radius": float(max_radius_gu),
         "age": 0.0,
         "lifetime": float(lifetime),
+        "tint": tuple(float(v) for v in tint) if tint is not None else (1.0, 1.0, 1.0),
     })
 
 
@@ -64,6 +67,7 @@ def render_data() -> list:
             "max_radius": entry["max_radius"],
             "age": entry["age"],
             "lifetime": entry["lifetime"],
+            "tint": entry["tint"],
         }
         for entry in _active
     ]

@@ -38,6 +38,8 @@ def target_path(found: Optional[Path], content_hash) -> Path:
 def save(doc, path) -> None:
     ld.validate(doc)
     path = Path(path)
+    from engine import paths
+    paths.refuse_repo_write_when_packaged(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     try:

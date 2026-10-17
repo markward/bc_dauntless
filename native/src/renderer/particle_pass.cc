@@ -112,7 +112,7 @@ assets::Texture* ParticlePass::texture_for(const std::string& path) {
     in.read(reinterpret_cast<char*>(bytes.data()),
             static_cast<std::streamsize>(size));
     try {
-        assets::Image img = assets::decode_tga(bytes);
+        assets::Image img = assets::decode_image(bytes);
         assets::Texture tex = assets::upload_image(img, /*generate_mipmaps=*/true);
         auto slot = std::make_unique<assets::Texture>(std::move(tex));
         assets::Texture* ptr = slot.get();
@@ -124,6 +124,13 @@ assets::Texture* ParticlePass::texture_for(const std::string& path) {
         textures_[path] = std::make_unique<assets::Texture>();
         return nullptr;
     }
+}
+
+std::size_t ParticlePass::loaded_texture_count() const {
+    std::size_t n = 0;
+    for (const auto& kv : textures_)
+        if (kv.second && kv.second->id() != 0) ++n;
+    return n;
 }
 
 void ParticlePass::render(const std::vector<ParticleEmitterDescriptor>& emitters,
@@ -216,6 +223,7 @@ void ParticlePass::render(const std::vector<ParticleEmitterDescriptor>& emitters
         // per-particle branch below, so pre-zero the uniform once here.
         shader.set_float("u_streak_length", 0.0f);
         shader.set_float("u_roll", 0.0f);
+        shader.set_vec2("u_pivot", e.pivot);
         // Texture-sheet grid (1x1 = whole texture). Per-particle cell set below.
         const int atlas_cols = std::max(1, e.atlas_cols);
         const int atlas_rows = std::max(1, e.atlas_rows);
@@ -272,17 +280,13 @@ void ParticlePass::render(const std::vector<ParticleEmitterDescriptor>& emitters
             const float g     = curve_lerp1(kt, kg, e.num_color_keys, t);
             const float bl    = curve_lerp1(kt, kb, e.num_color_keys, t);
 
-            // Sprite-sheet cell: frame steps along the columns over the
-            // particle's life (0->cols-1); the variant row is a stable
-            // per-particle hash. For a 1x1 grid this is always (0,0).
-            int frame = static_cast<int>(t * atlas_cols);
-            frame = std::min(std::max(frame, 0), atlas_cols - 1);
-            int row = 0;
-            if (atlas_rows > 1) {
-                const glm::vec2 rh = hash3(hseed, i + 4099);
-                row = std::min(static_cast<int>(rh.x * atlas_rows), atlas_rows - 1);
-            }
-            shader.set_vec2("u_atlas_cell", glm::vec2(float(frame), float(row)));
+            // Sprite-sheet cell (spec 2026-10-16 §7.4); playback 0 is the
+            // pre-library rule: frame along the columns over life, variant
+            // row from a stable per-particle hash.
+            const glm::vec2 rh = hash3(hseed, i + 4099);
+            const glm::ivec2 cell = atlas_cell(e.playback, t, tau, atlas_cols,
+                                               atlas_rows, e.fps, rh.x, rh.y);
+            shader.set_vec2("u_atlas_cell", glm::vec2(float(cell.x), float(cell.y)));
 
             shader.set_vec4 ("u_tint",           glm::vec4(r, g, bl, 1.0f));
             shader.set_vec3 ("u_world_position", pos);
@@ -296,7 +300,12 @@ void ParticlePass::render(const std::vector<ParticleEmitterDescriptor>& emitters
                              particle_roll(hash3(hseed, i + 6151),
                                            e.roll_rate, tau));
             // A3: streak uniforms. tail_length==0 => camera-facing billboard (A1/A2 path).
-            if (e.tail_length > 0.0f) {
+            if (e.orient == 1) {
+                // Stretched along the emit direction (fire_jet): the quad's
+                // long axis is the hit normal, length = particle size.
+                shader.set_vec3 ("u_streak_axis",   emit_dir_world);
+                shader.set_float("u_streak_length", size);
+            } else if (e.tail_length > 0.0f) {
                 const float speed = e.emit_velocity * std::exp(-e.damping * tau);
                 shader.set_vec3 ("u_streak_axis",   dir);
                 shader.set_float("u_streak_length", e.tail_length * speed);

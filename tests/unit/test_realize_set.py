@@ -306,3 +306,94 @@ def test_script_less_rock_realises_in_mission_loader_session(monkeypatch):
 
     assert rock in sess.ship_instances
     assert loaded == [rock_model_override(rock)[0]]
+
+
+# ── running lights at spawn (running-lights final review I4 / M5) ──────────
+
+
+class _LightRecorder(_FakeRenderer):
+    def __init__(self):
+        super().__init__()
+        self.running_lights = []
+
+    def set_running_lights(self, iid, lights, phase):
+        self.running_lights.append((iid, list(lights), phase))
+
+
+def _lit_ship(name="Lit"):
+    from engine.appc.math import TGPoint3
+    ship = App.ShipClass_Create()
+    ship.SetName(name)
+    p = App.BlinkingLightProperty_Create("Dorsal For Blinker")
+    pt = TGPoint3()
+    pt.SetXYZ(0.0, 1.69, 0.044)
+    p.SetPosition(pt)
+    ship.GetPropertySet().AddToSet("Scene Root", p)
+    return ship
+
+
+def test_realize_set_objects_registers_a_ships_running_lights(monkeypatch):
+    """Site 1: realize_set_objects' call is wrapped in log_swallowed, so only
+    a test through it can see the call going missing."""
+    from engine import host_loop as hl
+    monkeypatch.setattr(hl, "_ship_nif_path", lambda ship, **k: "fake.nif")
+    sess = hl.MissionSession(mission_name="t")
+    r = _LightRecorder()
+    s = SetClass_Create()
+    App.g_kSetManager.AddSet(s, "S")
+    ship = _lit_ship()
+    s.AddObjectToSet(ship, "Lit")
+
+    hl.realize_set_objects(sess, s, r)
+
+    iid = sess.ship_instances[ship]
+    assert [c[0] for c in r.running_lights] == [iid]
+    assert len(r.running_lights[0][1]) == 1
+    assert iid in sess.ship_running_lights
+    assert iid in sess.ship_running_light_specs
+
+
+def test_realize_session_registers_a_ships_running_lights(monkeypatch):
+    """Site 2: _MissionLoader._realize_session (mission load / QuickBattle
+    boot) -- the harness of test_script_less_rock_realises_in_mission_loader_
+    session."""
+    from engine import host_loop as hl
+    ship = _lit_ship()
+    monkeypatch.setattr(hl, "_ship_nif_path", lambda ship, **k: "fake.nif")
+    monkeypatch.setattr(hl, "_iter_active_ships", lambda **k: [ship])
+    monkeypatch.setattr(hl, "_iter_active_planets", lambda **k: [], raising=False)
+
+    controller = hl.HostController()
+    controller.renderer = _LightRecorder()
+    controller.loader = hl._MissionLoader(controller, verbose=False)
+    sess = controller.loader._realize_session(hl.MissionSession(mission_name="t"))
+
+    iid = sess.ship_instances[ship]
+    assert [c[0] for c in controller.renderer.running_lights] == [iid]
+    assert iid in sess.ship_running_lights
+    assert iid in sess.ship_running_light_specs
+
+
+def test_teardown_set_objects_forgets_running_lights_and_emitters(monkeypatch):
+    """The set-to-set warp teardown destroys the instance, so its per-iid
+    running-light and emitter-light entries must go too (a recycled iid
+    must not inherit them)."""
+    from engine import host_loop as hl
+    monkeypatch.setattr(hl, "_ship_nif_path", lambda ship, **k: "fake.nif")
+    sess = hl.MissionSession(mission_name="t")
+    r = _LightRecorder()
+    s = SetClass_Create()
+    App.g_kSetManager.AddSet(s, "S")
+    ship = _lit_ship()
+    s.AddObjectToSet(ship, "Lit")
+    hl.realize_set_objects(sess, s, r)
+    iid = sess.ship_instances[ship]
+    sess.ship_emitters[iid] = ["premise: an emitter cache entry"]
+    assert iid in sess.ship_running_lights
+    assert iid in sess.ship_running_light_specs
+
+    hl.teardown_set_objects(sess, s, r)
+
+    assert iid not in sess.ship_running_lights
+    assert iid not in sess.ship_running_light_specs
+    assert iid not in sess.ship_emitters

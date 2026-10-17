@@ -32,6 +32,9 @@ public:
                 const scenegraph::Camera& camera,
                 Pipeline& pipeline);
 
+    /// Textures decoded and uploaded so far (tests).
+    std::size_t loaded_texture_count() const;
+
 private:
     unsigned int quad_vao_ = 0;
     unsigned int quad_vbo_ = 0;

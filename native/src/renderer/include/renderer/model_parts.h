@@ -41,4 +41,13 @@ struct ModelPart {
 /// be empty for every part on every real hull.
 std::vector<ModelPart> model_parts(const assets::Model& model);
 
+/// The CANDIDATE part (see `model_parts`) whose rest-pose triangles lie
+/// nearest `point` (MODEL units, rest pose), or "" when no candidate part has
+/// triangles. Answers "which part is this AUTHORED point on" -- a hardpoint
+/// mount, an emitter light, a running light. Box containment cannot: a hull's
+/// box routinely spans a sub-part (the LC Intrepid's saucer is as wide as its
+/// nacelle span) and a sub-part's box covers strips of hull (its hull-mounted
+/// aft phasers sit in the nacelle box). Ties go to the earlier node.
+std::string nearest_model_part(const assets::Model& model, const glm::vec3& point);
+
 }  // namespace renderer

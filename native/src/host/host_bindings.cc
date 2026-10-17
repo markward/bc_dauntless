@@ -55,6 +55,8 @@
 #include <renderer/torpedo_pass.h>
 #include <renderer/hit_vfx_pass.h>
 #include <renderer/hull_discharge_pass.h>
+#include <renderer/running_light_pass.h>
+#include <renderer/running_light_store.h>
 #include <renderer/nebula_wake_pass.h>
 #include <renderer/shockwave_pass.h>
 #include <renderer/particle_pass.h>
@@ -412,6 +414,13 @@ std::vector<renderer::HitVfxDescriptor>    g_hit_vfx;
 std::unique_ptr<renderer::HitVfxPass>      g_hit_vfx_pass;
 std::vector<renderer::HullDischarge>       g_hull_discharges;
 std::unique_ptr<renderer::HullDischargePass> g_hull_discharge_pass;
+
+// Ship running lights (running-lights spec §4.4). The store is per-instance
+// and Python-fed at spawn; levels arrive every frame.
+renderer::RunningLightStore                  g_running_lights;
+renderer::RunningLightDials                  g_running_light_dials;
+bool                                         g_running_lights_enabled = true;
+std::unique_ptr<renderer::RunningLightPass>  g_running_light_pass;
 std::unique_ptr<renderer::NebulaWakePass> g_nebula_wake_pass;
 std::vector<renderer::ParticleEmitterDescriptor> g_particle_emitters;
 std::unique_ptr<renderer::ParticlePass>          g_particle_pass;
@@ -939,6 +948,7 @@ void reset_frame_state() {
     g_dynamic_lights.clear();
     g_lens_flares.clear();
     g_hull_discharges.clear();
+    g_running_lights.clear();
     g_cloak_ships.clear();
     g_subsystem_pins.clear();
     g_debug_cylinders.clear();
@@ -1093,6 +1103,7 @@ void init(int width, int height, const std::string& title) {
     g_torpedo_pass = std::make_unique<renderer::TorpedoPass>();
     g_hit_vfx_pass = std::make_unique<renderer::HitVfxPass>();
     g_hull_discharge_pass = std::make_unique<renderer::HullDischargePass>();
+    g_running_light_pass = std::make_unique<renderer::RunningLightPass>();
     g_nebula_wake_pass = std::make_unique<renderer::NebulaWakePass>();
     g_particle_pass = std::make_unique<renderer::ParticlePass>();
     g_phaser_pass        = std::make_unique<renderer::PhaserPass>();
@@ -1187,6 +1198,7 @@ void shutdown() {
     g_shockwave_pass.reset();
     g_hit_vfx_pass.reset();
     g_hull_discharge_pass.reset();
+    g_running_light_pass.reset();
     g_nebula_wake_pass.reset();
     g_particle_pass.reset();
     g_phaser_pass.reset();
@@ -1817,6 +1829,13 @@ void frame() {
             if (g_phaser_pass)  g_phaser_pass ->render(g_phaser_beams, cam, *g_pipeline);
             if (g_phaser_pass)  g_phaser_pass ->render(g_tractor_beams, cam, *g_pipeline);
             if (g_hit_vfx_pass) g_hit_vfx_pass->render(g_hit_vfx, g_world, cam, *g_pipeline);
+        }
+        if (g_running_lights_enabled && g_running_light_pass && g_running_lights.size() > 0) {
+            DAUNTLESS_FRAME_SCOPE("space.running_lights");
+            const auto sprites = g_running_lights.build_sprites(
+                g_world, g_decal_game_time, g_running_light_dials,
+                cam.eye, cam.proj_matrix()[1][1], vh);
+            g_running_light_pass->render(cam, *g_pipeline, sprites);
         }
         if (dauntless_nebula_lightning::enabled()
                 && g_hull_discharge_pass && !g_hull_discharges.empty())
@@ -3233,6 +3252,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const bool was_valid = g_world.is_valid(id);
               g_world.destroy_instance(id);
               if (was_valid) {
+                  g_running_lights.erase(id);
                   // Purge any bridge node-anim state keyed on this index BEFORE
                   // it can be recycled by a new instance in the same Python step
                   // (the lazy per-frame sweep in update_bridge_node_anims runs
@@ -3693,6 +3713,25 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "somewhere in its subtree, bounds in SHIP units. `candidate` marks "
           "the nodes a human would call a part (renderer::model_parts).");
 
+    m.def("model_nearest_part",
+          [](scenegraph::ModelHandle h,
+             std::tuple<float, float, float> point) -> std::string {
+              // SHIP units in, like model_nodes' bounds out.
+              constexpr float kShipToModel = 100.0f;
+              const assets::Model* model = resolve_model(h);
+              if (model == nullptr) return "";
+              const glm::vec3 p(std::get<0>(point) * kShipToModel,
+                                std::get<1>(point) * kShipToModel,
+                                std::get<2>(point) * kShipToModel);
+              return renderer::nearest_model_part(*model, p);
+          },
+          py::arg("model"), py::arg("point"),
+          "The candidate part (renderer::model_parts) whose rest-pose "
+          "triangles lie nearest `point` (SHIP units, rest pose), or '' when "
+          "the model is not loaded or has no part geometry. Which part an "
+          "AUTHORED point -- a hardpoint mount, an emitter or running light -- "
+          "is on; see part_severance.part_for_mount.");
+
     // ── Per-instance decal override (SPV live preview) ───────────────────
     // Spec 2026-09-28-spv-decal-editing-design.md §2.5. Never throws: a bad
     // entry is skipped (warned once), an unknown id / a host that is down is
@@ -3967,7 +4006,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   a.limb = t[4].cast<float>();
                   // intensity (shell-halo brightness multiplier only) is an
                   // OPTIONAL 6th element added after this binding shipped;
-                  // a 5-tuple caller keeps the struct default (20.0).
+                  // a 5-tuple caller keeps the struct default (9.0).
                   if (t.size() >= 6) a.intensity = t[5].cast<float>();
                   // mie (grey Mie strength) is an OPTIONAL 7th element;
                   // 5- and 6-tuple callers keep the struct default (0.2).
@@ -3978,7 +4017,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("id"), py::arg("params"),
           "Planet atmosphere (spec 2026-10-07): None disables; else "
           "(color, sunset_color, thickness, density, limb[, intensity[, mie]]), "
-          "colours linear RGB; intensity defaults to 20.0 and mie to 0.2 "
+          "colours linear RGB; intensity defaults to 9.0 and mie to 0.2 "
           "when omitted.");
     m.def("set_instance_surface",
           [](scenegraph::InstanceId id, py::object params) {
@@ -5724,6 +5763,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   s.max_radius = d["max_radius"].cast<float>();
                   s.age        = d["age"].cast<float>();
                   s.lifetime   = d["lifetime"].cast<float>();
+                  if (d.contains("tint")) {
+                      auto t = d["tint"].cast<std::tuple<float, float, float>>();
+                      s.tint = {std::get<0>(t), std::get<1>(t), std::get<2>(t)};
+                  }
                   g_shockwaves.push_back(std::move(s));
               }
           },
@@ -5835,6 +5878,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   e.atlas_cols  = d.contains("atlas_cols")  ? d["atlas_cols"].cast<int>()    : 1;
                   e.atlas_rows  = d.contains("atlas_rows")  ? d["atlas_rows"].cast<int>()    : 1;
                   e.seed        = d.contains("seed")        ? d["seed"].cast<float>()        : 0.0f;
+                  // Sprite library (spec 2026-10-16 §7.4); defaults = today.
+                  e.playback  = d.contains("playback")  ? d["playback"].cast<int>()    : 0;
+                  e.fps       = d.contains("fps")       ? d["fps"].cast<float>()       : 0.0f;
+                  e.orient    = d.contains("orient")    ? d["orient"].cast<int>()      : 0;
+                  e.roll_rate = d.contains("roll_rate") ? d["roll_rate"].cast<float>() : 0.0f;
+                  if (d.contains("pivot")) {
+                      auto p = d["pivot"].cast<std::tuple<float, float>>();
+                      e.pivot = glm::vec2(std::get<0>(p), std::get<1>(p));
+                  }
                   g_particle_emitters.push_back(std::move(e));
               }
           },
@@ -6048,6 +6100,40 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("clear_hologram_ship",
           []() { g_hologram_ship = renderer::HologramShip{}; },
           "Clear the hologram overlay (deactivates it). Takes effect next frame().");
+    m.def("set_running_lights",
+          [](scenegraph::InstanceId id,
+             const std::vector<std::array<float, 9>>& lights, float phase) {
+              std::vector<renderer::RunningLight> out;
+              out.reserve(lights.size());
+              for (const auto& a : lights) {
+                  renderer::RunningLight l;
+                  l.body_pos = {a[0], a[1], a[2]};
+                  l.rgb      = {a[3], a[4], a[5]};
+                  l.size = a[6]; l.period = a[7]; l.duration = a[8];
+                  out.push_back(l);
+              }
+              g_running_lights.set(id, std::move(out), phase);
+          },
+          py::arg("instance_id"), py::arg("lights"), py::arg("phase"),
+          "Set a ship's running lights: each (px,py,pz, r,g,b, size, period, "
+          "duration), body frame, unscaled GU. An empty list removes the ship.");
+    m.def("set_running_light_levels",
+          [](const std::vector<std::pair<scenegraph::InstanceId, float>>& levels) {
+              g_running_lights.set_levels(levels);
+          },
+          py::arg("levels"),
+          "Per-frame brightness (instance_id, level in [0,1]). Ships not listed "
+          "draw dark this frame.");
+    m.def("set_running_light_dials",
+          [](float size_gu_per_radius, float min_px, float intensity) {
+              g_running_light_dials = {size_gu_per_radius, min_px, intensity};
+          },
+          py::arg("size_gu_per_radius"), py::arg("min_px"), py::arg("intensity"));
+    m.def("running_lights_set_enabled",
+          [](bool v) { g_running_lights_enabled = v; }, py::arg("enabled"));
+    m.def("running_lights_enabled", []() { return g_running_lights_enabled; });
+    m.def("running_light_count",
+          []() { return static_cast<int>(g_running_lights.size()); });
     m.def("set_cloak_ships",
           [](const std::vector<std::pair<scenegraph::InstanceId, float>>& ships) {
               g_cloak_ships.clear();
@@ -7449,7 +7535,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
     // comment in carve_field_cache.h.
     m.def("hull_volume_set_cache_root",
           [](const std::string& root) {
-              renderer::set_hull_volume_cache_root(root);
+              // pybind11 hands the Python str over as UTF-8. path(std::string)
+              // would decode it in the ANSI codepage on Windows and mangle a
+              // non-ASCII user name. (u8path is deprecated in C++20.)
+              renderer::set_hull_volume_cache_root(std::filesystem::path(
+                  std::u8string(reinterpret_cast<const char8_t*>(root.data()),
+                                root.size())));
           },
           py::arg("root"),
           "Directory HullVolumeCache reads/writes its on-disk .dhv bakes "

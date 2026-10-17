@@ -449,3 +449,25 @@ def test_the_scene_reconcile_uses_the_same_player_sync():
     src = inspect.getsource(hl._reconcile_runtime_instances)
     assert "_sync_player_identity(" in src
     assert "session.player = " not in src
+
+
+def test_reconcile_removal_drops_running_lights(monkeypatch):
+    """A ship removed at runtime must not leave its running-light entry behind
+    for a recycled instance id to inherit."""
+    from engine import host_loop as hl
+    _force_nif(monkeypatch, hl)
+    App.g_kSetManager.DeleteAllSets()
+    s = _make_set("S")
+    App.g_kSetManager.MakeRenderedSet("S")
+    drop = _add_ship(s, "drop")
+    sess = hl.MissionSession(mission_name="t")
+    r = _FakeRenderer()
+    hl.realize_set_objects(sess, s, r)
+    drop_iid = sess.ship_instances[drop]
+    sess.ship_running_lights[drop_iid] = 12.5      # as if it had lights
+    sess.ship_running_light_specs[drop_iid] = ((), ())
+    s.RemoveObjectFromSet("drop")
+    hl._reconcile_runtime_instances(sess, r)
+    assert drop_iid not in sess.ship_running_lights
+    assert drop_iid not in sess.ship_running_light_specs
+    App.g_kSetManager.DeleteAllSets()

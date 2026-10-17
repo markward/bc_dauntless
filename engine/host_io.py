@@ -47,7 +47,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_phaser_beams", "set_tractor_beams",
     "cursor_pos",
     "shield_hit", "world_to_body", "damage_decal_add", "hull_carve_add",
-    "model_nodes", "set_instance_decals",
+    "model_nodes", "model_nearest_part", "set_instance_decals",
     "hull_split_detached", "hull_carve_capsule", "breach_burst",
     "ray_trace_mesh", "instance_translation",
     "transform_alloc", "transform_free", "transform_get_position",
@@ -446,6 +446,17 @@ def model_nodes(instance_id: int) -> List[dict]:
     if _h is None:
         return []
     return _h.model_nodes(instance_id)
+
+
+def model_nearest_part(model, point) -> str:
+    """The part whose rest-pose triangles lie nearest `point` (SHIP units,
+    rest pose) on loaded model `model` (a model handle, see
+    `instance_model`), or "" when headless, unloaded or partless. Use
+    `part_severance.part_for_mount`, which caches and falls back, rather
+    than calling this directly."""
+    if _h is None:
+        return ""
+    return _h.model_nearest_part(model, tuple(float(v) for v in point))
 
 
 def set_instance_decals(instance_id, decals) -> None:

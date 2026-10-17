@@ -106,6 +106,7 @@ add_executable(renderer_tests
     torpedo_anim_test.cc
     torpedo_pass_test.cc
     dynamic_lights_test.cc
+    running_light_test.cc
     debug_volume_pass_test.cc
     starmap_pass_test.cc
     text_input_test.cc

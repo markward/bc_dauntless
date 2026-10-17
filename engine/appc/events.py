@@ -658,6 +658,27 @@ class TGEventHandlerObject(TGObject):
             self._invoke_next_handler(self._dispatch_stack[-1])
 
 
+def TGEventHandlerObject_Cast(obj):
+    """Return obj if it carries the per-instance handler surface, else None.
+
+    The SDK's only caller is MissionLib.DestroyInfoBox, which unhooks a box's
+    Open/Close/ToggleInfoTarget handlers through this cast. Unimplemented, it
+    vended a truthy stub whose RemoveHandlerForInstance did nothing, so the
+    handler outlived its g_lInfoCloseSource row and the next close event
+    raised ValueError in CloseInfoTarget (E1M2 tactical tutorial).
+
+    The surface is looked up on the CLASS, never through getattr: every
+    TGObject's __getattr__ vends a stub for any name. _TopWindow carries the
+    surface without subclassing TGEventHandlerObject.
+    """
+    if isinstance(obj, TGEventHandlerObject):
+        return obj
+    if obj is not None and any("RemoveHandlerForInstance" in vars(k)
+                               for k in type(obj).__mro__):
+        return obj
+    return None
+
+
 class TGPythonInstanceWrapper(TGEventHandlerObject):
     """Bridge between TGEventHandlerObject (the event-manager's destination
     type) and a Python instance's named methods. SDK conditions use this to

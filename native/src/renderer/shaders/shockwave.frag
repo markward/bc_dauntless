@@ -1,6 +1,7 @@
 #version 410 core
 in vec2 v_uv;                 // radial coord; length 0 at center, ~1 at edge
 uniform float u_t;            // age / lifetime, 0..1
+uniform vec3  u_tint;         // ring colour multiplier (white = default)
 out vec4 frag;
 
 const float kBand      = 0.10; // ring band half-width (normalized radius)
@@ -25,7 +26,7 @@ void main() {
     vec3 ring_col  = mix(vec3(0.70, 0.90, 1.0), vec3(0.30, 0.60, 1.0), t);
     vec3 flash_col = vec3(1.0, 1.0, 1.0);
 
-    vec3 col = ring_col * ring_alpha + flash_col * flash;
+    vec3 col = ring_col * u_tint * ring_alpha + flash_col * flash;
     float a  = clamp(ring_alpha + flash, 0.0, 1.0);
     if (a <= 0.002) discard;
     frag = vec4(col, a);

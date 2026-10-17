@@ -331,6 +331,23 @@ def _resolve_fire_sound(prop) -> str:
     return prop.GetFireSound() or ""
 
 
+# Keys already announced by _announce_once. Per process, never reset on a
+# mission swap: the point is to tell the player once, not once per mission.
+_announced: set = set()
+
+
+def _announce_once(key, message: str) -> None:
+    """Print a `[weapons]` line the first time `key` is seen.
+
+    For weapons a sideloaded mod left without a projectile module or a fire
+    sound -- usually because it depends on a pack the player never
+    installed. Production output, not --developer only: otherwise the player
+    sees a dead or mute weapon and nothing says why."""
+    if key in _announced:
+        return
+    _announced.add(key)
+    print("[weapons] " + message, flush=True)
+
 
 # The substitute when a hardpoint's projectile module cannot be imported.
 # BC's own baseline round, and already the ammo layer's fallback: when
@@ -348,12 +365,13 @@ _projectile_modules: dict = {}
 def _resolve_projectile_module(script_name):
     """The SDK module for `script_name`, falling back to the stock photon.
 
-    Community ship mods routinely ship projectile modules as Python 1.5
-    `.pyc` with NO source — the LC Intrepid pack's ZZ_VoyPhoton and
-    ZZ_Tricobalt are both magic 0x4E99, the Python `stbc.exe` embeds — and
-    CPython cannot load those. The mod overlay does index the `.pyc`, but the
-    SDK finders only ever look for `.py` / `/__init__.py`, so the import
-    raises either way.
+    Community ship mods can ship projectile modules as Python 1.5 `.pyc`
+    with NO source — the LC Intrepid pack's ZZ_VoyPhoton and ZZ_Tricobalt
+    are magic 0x4E99, the Python `stbc.exe` embeds. Those now load: both SDK
+    finders take a mod `.pyc` and engine/py15 lifts straight-line 1.5
+    bytecode into the AST its source would have parsed to. What still lands
+    here is bytecode the lifter refuses (it prints one `[sdk-loader]` line
+    naming the module) or any other import failure.
 
     Substituting a photon is a DELIBERATE INFIDELITY, chosen so a sideloaded
     ship is flyable: a mod's tricobalt becomes an ordinary photon rather than
@@ -379,6 +397,9 @@ def _resolve_projectile_module(script_name):
         dev_mode.log_swallowed(
             "projectile module %r unimportable; substituting %s"
             % (script_name, _FALLBACK_PROJECTILE), _e)
+        _announce_once(("projectile", script_name),
+                       "torpedo module %s not loadable -- firing %s instead"
+                       % (script_name, _FALLBACK_PROJECTILE))
         try:
             mod = importlib.import_module(_FALLBACK_PROJECTILE)
         except Exception as _e2:
@@ -891,6 +912,14 @@ class _EnergyWeaponFireMixin:
             loop_snd.SetLooping(True)
             loop_snd.SetPriority(priority - CO_FIRED_PRIORITY_STEP)
             self._loop_handle = loop_snd.Play(attach_node=attach_node)
+
+        # "(null)" is what hardpoint editors write for "no sound" (DCMPv2
+        # ships it); only a real name that nothing registered is news.
+        if (start_snd is None and loop_snd is None
+                and name.lower() != "(null)"):
+            _announce_once(("fire sound", name),
+                           "fire sound %r not registered -- those weapons "
+                           "fire silently" % name)
 
     def _firing_ship_node(self):
         """Walk parent_subsystem → parent_ship → GetNode() for the sound anchor.
@@ -2631,6 +2660,11 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         try:
             mod = importlib.import_module(script)
         except ImportError:
+            # No fallback bolt (unlike torpedoes): the cannon stays dead, but
+            # it says why instead of just never firing.
+            _announce_once(("projectile", script),
+                           "pulse module %s not loadable -- those cannons "
+                           "will not fire" % script)
             return False
         ship = self._climb_to_ship()
         # BC WeaponSystem::Fire picks the branch: the weapon's own target,

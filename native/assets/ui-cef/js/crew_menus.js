@@ -98,10 +98,21 @@ function appendCrewRows(body, nodes, depth) {
     row.setAttribute("data-depth", String(Math.min(depth, 2)));
     applyHighlightClasses(row, node);
 
+    // A Set Course system row (node.sets_course) is BC's menu-that-selects:
+    // the caret alone opens its regions, the rest of the row sets course to
+    // the system's default region.
+    const split = hasChildren && node.sets_course === true;
+
     if (hasChildren) {
       const caret = document.createElement("span");
-      caret.className = "crew-menu__caret";
+      caret.className = "crew-menu__caret" + (split ? " crew-menu__caret--split" : "");
       caret.textContent = node.expanded ? "▾" : "▸";   // down / right
+      if (split && node.enabled) {
+        caret.onclick = (ev) => {
+          ev.stopPropagation();
+          dauntlessEvent("crew-menu/expand:" + node.id);
+        };
+      }
       row.appendChild(caret);
     }
 
@@ -118,7 +129,9 @@ function appendCrewRows(body, nodes, depth) {
     }
 
     if (node.enabled) {
-      if (hasChildren) {
+      if (split) {
+        row.onclick = () => dauntlessEvent("crew-menu/click:" + node.id);
+      } else if (hasChildren) {
         row.onclick = () => dauntlessEvent("crew-menu/expand:" + node.id);
       } else if (node.type === "button") {
         row.onclick = () => dauntlessEvent("crew-menu/click:" + node.id);

@@ -66,7 +66,7 @@ def test_registry_covers_every_previously_class_bound_constant():
     for tag in registered_tags():
         assert isinstance(class_for(tag), type), tag
     # Sanity: the registry is not trivially empty or half-populated.
-    assert len(registered_tags()) == 37
+    assert len(registered_tags()) == 42
 
 
 # Independent copy of App.py's `_CT_CLASS_FOR_TAG` table (App.py:384-425),
@@ -82,6 +82,11 @@ _EXPECTED_CT_CLASS_ATTR = {
     "CT_SUBSYSTEM_PROPERTY":            "SubsystemProperty",
     "CT_POSITION_ORIENTATION_PROPERTY": "PositionOrientationProperty",
     "CT_OBJECT_EMITTER_PROPERTY":       "ObjectEmitterProperty",
+    "CT_EFFECT_EMITTER_PROPERTY":       "EffectEmitterProperty",
+    "CT_SMOKE_EMITTER_PROPERTY":        "SmokeEmitterProperty",
+    "CT_SPARK_EMITTER_PROPERTY":        "SparkEmitterProperty",
+    "CT_EXPLODE_EMITTER_PROPERTY":      "ExplodeEmitterProperty",
+    "CT_BLINKING_LIGHT_PROPERTY":       "BlinkingLightProperty",
     "CT_HULL_SUBSYSTEM":                "HullProperty",
     "CT_POWER_SUBSYSTEM":               "PowerProperty",
     "CT_SHIELD_SUBSYSTEM":              "ShieldProperty",
@@ -138,8 +143,8 @@ def test_every_ct_row_resolves_to_its_own_declared_class():
     pairs were pinned). Check `class_for(App.CT_X) is X` for all 37 (one
     documented exception: see `_SUBCLASS_NOT_IDENTITY`)."""
     import App
-    assert len(App._CT_CLASS_FOR_TAG) == 37
-    assert len(_EXPECTED_CT_CLASS_ATTR) == 37
+    assert len(App._CT_CLASS_FOR_TAG) == 42
+    assert len(_EXPECTED_CT_CLASS_ATTR) == 42
     for ct_name, cls_attr in _EXPECTED_CT_CLASS_ATTR.items():
         registered = class_for(getattr(App, ct_name))
         expected = getattr(App, cls_attr)

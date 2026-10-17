@@ -956,6 +956,32 @@ class ShipClass(DamageableObject):
     # BridgeHandlers.py:1442 (bridge crew behavior keys off this).
     def GetAlertLevel(self) -> int:                     return self._alert_level
 
+    def ProcessEvent(self, event) -> None:
+        """Script handlers first, then the ship's own ET_SET_ALERT_LEVEL step.
+
+        In BC the ship's native handler applied ET_SET_ALERT_LEVEL, which the
+        SDK posts here from the XO's alert buttons (Bridge/XOMenuHandlers),
+        MissionLib.RedAlert, QuickBattle and missions. Without this step the
+        event was dropped: the XO spoke her line and the alert never changed.
+
+        The step runs as the OLDEST handler -- only when the instance chain
+        passes, so a script handler that returns without CallNextHandler
+        cancels it, like every BC default. The level is QUEUED, not applied
+        here: our AddEvent dispatches synchronously, BC's queued
+        (docs/gap_analysis.md OQ-4.2), and MissionLib.RedAlert posts the
+        event and THEN reads pShields.IsOn() to pick the XO's line.
+        apply_pending_alert_levels applies it on the next GameLoop tick. No
+        sound here: the SDK scripts play the klaxon themselves.
+        """
+        import App
+        if event.GetEventType() != App.ET_SET_ALERT_LEVEL:
+            super().ProcessEvent(event)
+            return
+        event._chain_passed = True          # no handlers = passes
+        super().ProcessEvent(event)
+        if event._chain_passed is True:
+            _pending_alert_levels.append((self, int(event.GetInt())))
+
     def SetAlertLevel(self, v) -> None:
         """Apply the alert-level → power policy for weapons and shields.
 
@@ -969,9 +995,9 @@ class ShipClass(DamageableObject):
         green — stbc-oracle bible §5.3 S5 measured the same 9.2–9.5/s at
         red, yellow and green.
 
-        In stock BC these side-effects flow through the XO menu after
-        BridgeHandlers.SetAlertLevel; we collapse that layer until the
-        bridge menu system is wired.
+        The XO's buttons, MissionLib.RedAlert and QuickBattle do not call
+        this: they post ET_SET_ALERT_LEVEL to the ship, which ProcessEvent
+        (above) queues for this call on the next tick.
         """
         self._alert_level = int(v)
         weapons_on = (self._alert_level == ShipClass.RED_ALERT)
@@ -1879,9 +1905,12 @@ def _resolve_torpedo_ammo(ts_prop, slot: int):
     the bug this fixes.  ``declared_max`` is the property's SetMaxTorpedoes(slot):
     an int (incl. 0) when declared, or ``None`` (undeclared → unlimited reserve).
 
-    Falls back to ``("Photon", 19.0)`` with an unlimited reserve if the slot has
-    no script or the import fails — Photon's 19 GU/s avoids the divide-by-zero in
-    FireScript.PredictTargetLocation that a launch_speed of 0 would cause.
+    Falls back to ``("Photon", 19.0)`` if the slot has no script or the import
+    fails — Photon's 19 GU/s avoids the divide-by-zero in
+    FireScript.PredictTargetLocation that a launch_speed of 0 would cause. An
+    import failure also names the stock photon module as the type's script, the
+    same module the launch substitutes, so FireScript.ChooseTorpType can import
+    it.
     """
     from engine.appc.subsystems import TorpedoAmmoType
     # Photon defaults — used for the unbound-slot path and any import failure.
@@ -1915,11 +1944,39 @@ def _resolve_torpedo_ammo(ts_prop, slot: int):
         power_cost = float(mod.GetPowerCost()) if hasattr(mod, "GetPowerCost") else 0.0
         return TorpedoAmmoType(name, launch_speed=launch_speed, power_cost=power_cost,
                                max_torpedoes=declared_max, script=script_name)
-    except Exception:
+    except Exception as _e:
+        # Unimportable module -- typically from a dependency pack the player
+        # never installed (DCMPv2's Tactical.Projectiles.blackelm* torpedoes
+        # need Elminster's Common Weapons Pack), or 1.5 bytecode engine/py15
+        # refuses. The launch already substitutes the stock photon
+        # (weapon_subsystems._resolve_projectile_module), so the ammo type
+        # names that same module. With no script, the SDK's
+        # FireScript.ChooseTorpType imported None and raised before its weapon
+        # cycle advanced, so the ship's fire script never reached its phasers.
+        from engine import dev_mode
+        from engine.appc.weapon_subsystems import _FALLBACK_PROJECTILE
+        dev_mode.log_swallowed(
+            "torpedo ammo script %r unimportable; ammo type uses %s"
+            % (script_name, _FALLBACK_PROJECTILE), _e)
         return TorpedoAmmoType("Photon",
                                launch_speed=PHOTON_LAUNCH_SPEED,
                                power_cost=PHOTON_POWER_COST,
-                               max_torpedoes=declared_max)
+                               max_torpedoes=declared_max,
+                               script=_FALLBACK_PROJECTILE)
+
+
+# (ship, level) from ET_SET_ALERT_LEVEL events whose chain passed, in posting
+# order. See ShipClass.ProcessEvent.
+_pending_alert_levels: list = []
+
+
+def apply_pending_alert_levels() -> None:
+    """Apply the queued ET_SET_ALERT_LEVEL levels. GameLoop.tick calls this
+    once per tick, after the AI window, where BC drained its event queue."""
+    pending = list(_pending_alert_levels)
+    del _pending_alert_levels[:]
+    for ship, level in pending:
+        ship.SetAlertLevel(level)
 
 
 def ShipClass_Create(class_name: str = "") -> ShipClass:

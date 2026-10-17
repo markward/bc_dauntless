@@ -353,7 +353,7 @@ TEST_F(AtmospherePassTest, DefaultIntensityHaloIsVisible) {
     ASSERT_TRUE(geo->sphere_map.has_value());
     scenegraph::World world;
     auto iid = add(world, geo, scaled(kScale));
-    world.set_atmosphere(iid, atmo(true));   // default intensity (20.0)
+    world.set_atmosphere(iid, atmo(true));   // default intensity (9.0)
     scenegraph::Camera cam;
     cam.eye = {0.0f, 0.0f, 9000.0f};
     cam.target = {0.0f, 0.0f, 0.0f};

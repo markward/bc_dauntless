@@ -129,7 +129,7 @@ def test_export_writes_the_live_tree_to_a_fixed_path(tmp_path, monkeypatch):
     from engine.ui import ai_inspector_panel as mod
 
     target = tmp_path / "ai_inspector_export.json"
-    monkeypatch.setattr(mod, "EXPORT_PATH", target)
+    monkeypatch.setattr(mod, "_export_path", lambda: target)
     monkeypatch.setattr(mod, "collect_all_ship_ai",
                         lambda: [{"ship_name": "Enemy 1", "tree": {"type": "PriorityListAI"}}])
 
@@ -158,7 +158,7 @@ def test_export_captures_the_same_data_the_panel_renders(tmp_path, monkeypatch):
         calls.append(1)
         return [{"ship_name": "S", "tree": {}, "future_field": 42}]
 
-    monkeypatch.setattr(mod, "EXPORT_PATH", tmp_path / "e.json")
+    monkeypatch.setattr(mod, "_export_path", lambda: tmp_path / "e.json")
     monkeypatch.setattr(mod, "collect_all_ship_ai", _spy)
 
     panel = mod.AIInspectorPanel()
@@ -175,7 +175,7 @@ def test_export_overwrites_rather_than_appending(tmp_path, monkeypatch):
     from engine.ui import ai_inspector_panel as mod
 
     target = tmp_path / "ai_inspector_export.json"
-    monkeypatch.setattr(mod, "EXPORT_PATH", target)
+    monkeypatch.setattr(mod, "_export_path", lambda: target)
     monkeypatch.setattr(mod, "collect_all_ship_ai", lambda: [{"ship_name": "A"}])
     panel = mod.AIInspectorPanel()
     panel.open()
@@ -193,7 +193,7 @@ def test_export_failure_does_not_take_the_panel_down(tmp_path, monkeypatch):
     -- losing the inspector is worse than losing one export."""
     from engine.ui import ai_inspector_panel as mod
 
-    monkeypatch.setattr(mod, "EXPORT_PATH", tmp_path / "nope" / "deep" / "e.json")
+    monkeypatch.setattr(mod, "_export_path", lambda: tmp_path / "nope" / "deep" / "e.json")
     monkeypatch.setattr(mod, "collect_all_ship_ai", lambda: [{"ship_name": "A"}])
     panel = mod.AIInspectorPanel()
     panel.open()
@@ -220,7 +220,7 @@ def test_every_action_the_markup_fires_is_handled_by_the_panel(tmp_path, monkeyp
     # Redirect the export: this test dispatches every action for real, and the
     # export action writes a file. A test that litters the project root is a
     # test that changes the thing it runs in.
-    monkeypatch.setattr(mod, "EXPORT_PATH", tmp_path / "export.json")
+    monkeypatch.setattr(mod, "_export_path", lambda: tmp_path / "export.json")
 
     html = (_P(__file__).resolve().parents[2]
             / "native" / "assets" / "ui-cef" / "index.html").read_text(encoding="utf-8")

@@ -7,8 +7,11 @@
 
 #include <cstdio>
 #include <exception>
+#include <mutex>
 #include <sstream>
+#include <string>
 #include <system_error>
+#include <unordered_set>
 
 namespace voxel {
 
@@ -82,12 +85,13 @@ bool read_valid_dhv(const std::filesystem::path& cache_file,
 // suite -- not a NIF in the first place) yields an empty field rather than
 // propagating the parse exception: the cache's job is to answer "what's the
 // field for this path", not to assume every path is a well-formed asset.
-// Returns true when the write succeeded.
+// Returns true when the write succeeded; on failure `why` (when given) gets
+// write_dhv's reason.
 bool bake_and_write(const std::filesystem::path& cache_file,
                     const std::filesystem::path& hull_nif,
                     float authored_res, float quality,
                     std::uint32_t size, std::int64_t mtime,
-                    DistanceField& field) {
+                    DistanceField& field, std::string* why = nullptr) {
     field = DistanceField{};
     try {
         const std::vector<Tri> tris = collect_hull_triangles_from_source(hull_nif);
@@ -125,7 +129,25 @@ bool bake_and_write(const std::filesystem::path& cache_file,
     meta.authored_res  = authored_res;
     meta.quality       = quality;
     meta.source_path   = hull_nif.string();
-    return write_dhv(cache_file, field, meta);
+    return write_dhv(cache_file, field, meta, why);
+}
+
+// One stderr line per cache file per process, in the shape of Python's
+// paths.report_write_failure, so a read-only or full cache dir is visible
+// in the log without flooding it. The path is printed as UTF-8 (never
+// path::string(), which is the ANSI code page on MSVC).
+void report_write_failure(const std::filesystem::path& cache_file,
+                          const std::string& why) {
+    static std::mutex lock;
+    static std::unordered_set<std::string> reported;
+    const std::u8string u8 = cache_file.u8string();
+    std::string shown(u8.begin(), u8.end());
+    {
+        std::lock_guard<std::mutex> hold(lock);
+        if (!reported.insert(shown).second) return;
+    }
+    std::fprintf(stderr, "[dauntless] could not write %s: %s\n",
+                 shown.c_str(), why.empty() ? "unknown error" : why.c_str());
 }
 
 }  // namespace
@@ -179,9 +201,11 @@ const DistanceField& HullVolumeCache::get(
         ++bakes_;
         if (std::filesystem::exists(h.path)) {
             // Best effort: a read-only cache dir must not stop the game
-            // loading, so the write's result is deliberately ignored.
-            (void)bake_and_write(cache_file, hull_nif, authored_res, quality,
-                                 size, mtime, field);
+            // loading, so a failed write only says so (once per path).
+            std::string why;
+            if (!bake_and_write(cache_file, hull_nif, authored_res, quality,
+                                size, mtime, field, &why))
+                report_write_failure(cache_file, why);
         }
     }
 

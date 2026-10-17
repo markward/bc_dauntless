@@ -48,7 +48,7 @@ class _Row:
 class ModsScreenPanel(Panel):
     def __init__(self, mode: str, editable: list, readonly: list, *, species, stock_classes,
                  writer: Optional[Callable] = None, suggest: Optional[Callable] = None,
-                 error: str = "") -> None:
+                 error: str = "", blocked=()) -> None:
         super().__init__()
         self._mode = mode
         self._species = list(species)
@@ -69,6 +69,7 @@ class ModsScreenPanel(Panel):
             self._rows.append(_Row(r, False, answers))
         self._outcome: Optional[str] = None
         self._error = error
+        self._blocked = list(blocked)
         self._last_pushed: Optional[str] = None
         self.visible = True
 
@@ -318,4 +319,5 @@ class ModsScreenPanel(Panel):
             "ticked": len(self._ticked()), "status": status,
             "status_ok": not incomplete, "can_continue": self._ready(),
             "error": self._error,
+            "blocked": [{"name": n, "reason": r} for n, r in self._blocked],
         }

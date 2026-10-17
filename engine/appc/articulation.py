@@ -625,6 +625,29 @@ def parts_for_ship(ship) -> tuple:
 # report referenced above.
 _derived_boxes: dict = {}
 
+# leaf -> loaded MODEL handle, recorded the first time any caller hands
+# `part_boxes_for` a real render instance of that leaf (ship realize does, via
+# hull_bounds). The model -- not the instance -- is what
+# `part_severance.part_for_mount` queries, so the answer survives the
+# instance that supplied it and serves callers that have no iid (mounts).
+_leaf_models: dict = {}
+
+
+def _remember_leaf_model(leaf, iid) -> None:
+    from engine import host_io
+    try:
+        handle = host_io.instance_model(iid)
+    except Exception:  # noqa: BLE001 - a fake/stale iid must not raise
+        return
+    if handle:
+        _leaf_models[leaf] = handle
+
+
+def leaf_model(leaf):
+    """The loaded model handle for `leaf`, or None before any instance of it
+    has been realized (or headless)."""
+    return _leaf_models.get(str(leaf).lower()) if leaf else None
+
 
 def part_boxes_for(leaf, iid=None):
     """Per-part AABBs (ship units) for a hardpoint leaf, derived from the
@@ -644,6 +667,8 @@ def part_boxes_for(leaf, iid=None):
     if not leaf:
         return {}
     leaf = str(leaf).lower()
+    if iid is not None and leaf not in _leaf_models:
+        _remember_leaf_model(leaf, iid)
     cached = _derived_boxes.get(leaf)
     if cached is not None:
         return cached
@@ -676,7 +701,7 @@ def detachable_for(leaf):
             for p in rig_for(leaf) if p.break_fraction is not None}
 
 
-def part_transform_point(ship, point, part=None):
+def part_transform_point(ship, point, part=None, *, authored=True):
     """Where a body-frame point ends up once its part has articulated.
 
     In and out are BODY frame, SHIP units (what subsystem mounts and the
@@ -697,8 +722,13 @@ def part_transform_point(ship, point, part=None):
     Passing it skips `part_for_point`, which would otherwise re-derive that
     same answer with a full sorted distance scan over every box on the hull,
     per piece, per sweep, per frame. Omit it and attribution runs as before.
+
+    `authored` (default True) says `point` is an authored mount, attributed
+    by the shared `part_severance.part_for_mount`; pass False for an
+    arbitrary point (a Manual Aim pick), which keeps the box rule -- see
+    `subsystems.target_offset_world`.
     """
-    found = _live_part(ship, part, point)
+    found = _live_part(ship, part, point, authored)
     if found is None:
         return point
     pose = pose_for_part(ship, found)
@@ -722,19 +752,27 @@ def part_transform_vector(ship, vec, part_name):
     return part_pose.apply_vector(pose, vec)
 
 
-def _live_part(ship, name, point):
+def _live_part(ship, name, point, authored=True):
     """The NAME of `ship`'s posable, NOT-detached part `name` (attributed
     from `point` when `name` is None), or None. Posable = in the rig, or
-    posed by name in `ship._articulation_poses` (`posed_part_names`)."""
+    posed by name in `ship._articulation_poses` (`posed_part_names`).
+
+    `authored` picks the attribution rule for `point`: an AUTHORED point (a
+    hardpoint mount, a light) uses `part_for_mount`; anything else (a Manual
+    Aim pick, a random point on the model) uses the box rule its pull-back
+    (`part_severance.rest_point_for_live_point`) used, so the round trip
+    stays exact."""
     names = posed_part_names(ship)
     if not names:
         return None
 
-    from engine.appc.part_severance import part_for_point, is_detached
+    from engine.appc.part_severance import (part_for_mount, part_for_point,
+                                            is_detached)
     if name is None:
         if point is None:
             return None
-        name = part_for_point(leaf_for(ship), point)
+        rule = part_for_mount if authored else part_for_point
+        name = rule(leaf_for(ship), point)
     if name is None:
         return None
     if is_detached(ship, name):
