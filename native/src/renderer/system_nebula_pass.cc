@@ -34,15 +34,13 @@ constexpr float kDitherAmount = 0.5f;      // half-step jitter — less per-fram
                                            // variance for temporal to resolve
 }  // namespace
 
-NebulaDrawPlan plan_nebula_draws(bool volumetric_setting, bool developer,
-                                 bool has_profile, bool have_volumes,
-                                 bool have_wake) {
+NebulaDrawPlan plan_nebula_draws(bool volumetric_setting, bool has_profile,
+                                 bool have_volumes, bool have_wake) {
     NebulaDrawPlan p;
-    p.system = volumetric_setting && developer && (has_profile || have_volumes);
+    p.system = volumetric_setting && (has_profile || have_volumes);
     p.legacy = !p.system && have_volumes;
     // Drawn over the cloud so its soft-glow billboards add on top of the
-    // density -- after EITHER branch, and only when one of them drew (so
-    // production, where only the legacy branch exists, is unchanged).
+    // density -- after EITHER branch, and only when one of them drew.
     p.wake = volumetric_setting && have_wake && (p.system || p.legacy);
     return p;
 }
@@ -95,17 +93,16 @@ void SystemNebulaPass::set_profile(const atmosphere::RadialProfile& profile,
     dials_.g = look.g;
     dials_.floor = look.floor;
 
-    const std::vector<glm::vec2> radial = atm::build_radial_texels(profile, look);
-    const atm::Table table = atm::build_table(profile, look);
-    // Optical depth, never transmittance: see SystemNebulaPass / tau_from_table.
-    const std::vector<glm::vec3> tau = atm::tau_from_table(table);
+    // A cache hit (or a finished prebuild) skips the multi-second CPU build;
+    // a miss -- a new system, or a g/floor dial change -- builds here.
+    const std::shared_ptr<const atm::BuiltProfile> built = cache_.get(profile, look);
 
     radial_tex_ = make_float_texture(GL_RG32F, GL_RG, atm::kRadialTexels, 1,
-                                     &radial[0].x);
+                                     &built->radial[0].x);
     table_tau_ = make_float_texture(GL_RGB32F, GL_RGB, atm::kTableR, atm::kTableMu,
-                                    &tau[0].x);
+                                    &built->tau[0].x);
     table_S_ = make_float_texture(GL_RGB32F, GL_RGB, atm::kTableR, atm::kTableMu,
-                                  &table.inscatter[0].x);
+                                  &built->inscatter[0].x);
     has_profile_ = true;
     have_history_ = false;   // a new atmosphere: last frame's cloud is stale
     ++profile_rebuild_count_;

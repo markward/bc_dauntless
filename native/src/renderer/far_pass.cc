@@ -3,12 +3,14 @@
 #include "renderer/far_pass.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include <glad/glad.h>
@@ -19,6 +21,7 @@
 
 #include "renderer/asset_path.h"
 #include "renderer/frame.h"
+#include "renderer/frame_timer.h"
 #include "renderer/pipeline.h"
 #include "renderer/rock_shading.h"
 #include "renderer/shader.h"
@@ -56,8 +59,8 @@ GLuint make_1x1(const std::uint8_t rgba[4]) {
     return t;
 }
 
-assets::Texture upload_atlas(assets::Image img) {
-    dilate_coverage(img, kDilatePasses);
+// Upload an atlas image that is ALREADY dilated (GL; main thread only).
+assets::Texture upload_dilated(const assets::Image& img) {
     assets::Texture t = assets::upload_image(img, /*generate_mipmaps=*/true);
     // Cells tile the atlas: never wrap one edge's texels onto the other.
     glBindTexture(GL_TEXTURE_2D, t.id());
@@ -67,13 +70,28 @@ assets::Texture upload_atlas(assets::Image img) {
     return t;
 }
 
-assets::Image read_image(const std::string& path) {
-    const std::string resolved = is_absolute_asset_path(path) ? path : project_asset_path(path);
+// MAIN THREAD: project_asset_path reads the mutable project asset root, so
+// a path is resolved before any worker sees it.
+std::string resolve_atlas_path(const std::string& path) {
+    return is_absolute_asset_path(path) ? path : project_asset_path(path);
+}
+
+// Any thread: file read + decode + dilate, touching nothing shared but the
+// atomic decode counter.
+assets::Image read_dilated(const std::string& resolved, std::atomic<int>* decodes) {
+    decodes->fetch_add(1);
     std::ifstream in(resolved, std::ios::binary);
     if (!in) throw std::runtime_error("cannot open " + resolved);
     std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)),
                                     std::istreambuf_iterator<char>());
-    return assets::decode_image(bytes);
+    assets::Image img = assets::decode_image(bytes);
+    dilate_coverage(img, kDilatePasses);
+    return img;
+}
+
+void warn_not_loaded(int index, const char* why) {
+    std::fprintf(stderr, "[far_pass] impostor atlas for catalogue rock %d not loaded: %s\n",
+                 index, why);
 }
 
 }  // namespace
@@ -114,6 +132,8 @@ void dilate_coverage(assets::Image& img, int passes) {
 }
 
 FarPass::~FarPass() {
+    queued_.clear();
+    pending_.clear();   // joins any worker still decoding (it writes decodes_)
     atlases_.clear();
     if (vao_ != 0) { GLuint v = vao_; glDeleteVertexArrays(1, &v); }
     if (corner_vbo_ != 0) { GLuint b = corner_vbo_; glDeleteBuffers(1, &b); }
@@ -129,14 +149,95 @@ FarPass::~FarPass() {
 }
 
 void FarPass::set_atlas_paths(std::vector<std::pair<std::string, std::string>> albedo_normal) {
+    queued_.clear();   // queued for the OLD paths: never started
+    pending_.clear();  // decodes of the OLD paths: joined and dropped, never installed
     paths_ = std::move(albedo_normal);
     failed_.clear();   // new paths: a failure is retried, not remembered
 }
 
 void FarPass::install_atlas(int index, assets::Image albedo, assets::Image normal) {
-    AtlasGpu a{upload_atlas(std::move(albedo)), upload_atlas(std::move(normal))};
+    dilate_coverage(albedo, kDilatePasses);
+    dilate_coverage(normal, kDilatePasses);
+    install_dilated(index, AtlasCpu{std::move(albedo), std::move(normal)});
+}
+
+void FarPass::install_dilated(int index, const AtlasCpu& atlas) {
+    AtlasGpu a{upload_dilated(atlas.albedo), upload_dilated(atlas.normal)};
     atlases_.insert_or_assign(index, std::move(a));
     failed_.erase(index);
+}
+
+bool FarPass::finish_pending(int index) {
+    const auto it = pending_.find(index);
+    std::future<AtlasCpu> decoding = std::move(it->second);
+    pending_.erase(it);
+    try {
+        install_dilated(index, decoding.get());   // get() rethrows a worker's exception
+        return true;
+    } catch (const std::exception& e) {
+        failed_.insert(index);
+        warn_not_loaded(index, e.what());
+    } catch (...) {
+        failed_.insert(index);
+        warn_not_loaded(index, "unknown error");
+    }
+    return false;
+}
+
+void FarPass::prefetch_atlases() {
+    for (std::size_t i = 0; i < paths_.size(); ++i) {
+        const int index = static_cast<int>(i);
+        if (atlases_.count(index) != 0 || failed_.count(index) != 0 ||
+            pending_.count(index) != 0 || queued_.count(index) != 0)
+            continue;
+        // No impostor (empty path): never drawn, so never loaded -- as lazily.
+        if (paths_[i].first.empty() || paths_[i].second.empty()) continue;
+        queued_.emplace(index, std::make_pair(resolve_atlas_path(paths_[i].first),
+                                              resolve_atlas_path(paths_[i].second)));
+    }
+    start_queued_decodes();
+}
+
+void FarPass::start_queued_decodes() {
+    while (!queued_.empty() &&
+           static_cast<int>(pending_.size()) < kMaxAtlasDecodesInFlight) {
+        const auto it = queued_.begin();
+        const int index = it->first;
+        const std::string albedo = it->second.first;
+        const std::string normal = it->second.second;
+        try {
+            pending_.emplace(index, std::async(std::launch::async,
+                                               [albedo, normal, decodes = &decodes_] {
+                                                   AtlasCpu a;
+                                                   a.albedo = read_dilated(albedo, decodes);
+                                                   a.normal = read_dilated(normal, decodes);
+                                                   return a;
+                                               }));
+        } catch (const std::system_error&) {
+            queued_.clear();   // no thread to be had: the rest load lazily, as before
+            return;
+        }
+        queued_.erase(index);
+    }
+}
+
+int FarPass::pump_atlas_uploads(int max_uploads) {
+    int uploaded = 0;
+    for (auto it = pending_.begin(); it != pending_.end() && uploaded < max_uploads;) {
+        if (it->second.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+            ++it;
+            continue;
+        }
+        const int index = it->first;
+        ++it;   // finish_pending erases `index`'s entry
+        if (finish_pending(index)) ++uploaded;
+    }
+    start_queued_decodes();
+    return static_cast<int>(pending_.size() + queued_.size());
+}
+
+void FarPass::debug_wait_atlas_decodes() {
+    for (auto& [index, decoding] : pending_) decoding.wait();
 }
 
 void FarPass::debug_set_atlas(int index, const assets::Image& albedo, const assets::Image& normal) {
@@ -146,6 +247,11 @@ void FarPass::debug_set_atlas(int index, const assets::Image& albedo, const asse
 const FarPass::AtlasGpu* FarPass::atlas_for(int index) {
     if (auto it = atlases_.find(index); it != atlases_.end()) return &it->second;
     if (failed_.count(index) != 0) return nullptr;
+    if (pending_.count(index) != 0) {
+        DAUNTLESS_FRAME_SCOPE("rock.atlas.load");   // the wait + upload left on the frame
+        return finish_pending(index) ? &atlases_.at(index) : nullptr;
+    }
+    queued_.erase(index);   // queued, not started: the lazy load below replaces it
     if (index < 0 || static_cast<std::size_t>(index) >= paths_.size()) {
         failed_.insert(index);
         std::fprintf(stderr, "[far_pass] no atlas path for catalogue rock %d\n", index);
@@ -153,11 +259,14 @@ const FarPass::AtlasGpu* FarPass::atlas_for(int index) {
     }
     const auto& [albedo_path, normal_path] = paths_[static_cast<std::size_t>(index)];
     try {
-        install_atlas(index, read_image(albedo_path), read_image(normal_path));
+        DAUNTLESS_FRAME_SCOPE("rock.atlas.load");
+        AtlasCpu a;
+        a.albedo = read_dilated(resolve_atlas_path(albedo_path), &decodes_);
+        a.normal = read_dilated(resolve_atlas_path(normal_path), &decodes_);
+        install_dilated(index, a);
     } catch (const std::exception& e) {
         failed_.insert(index);
-        std::fprintf(stderr, "[far_pass] impostor atlas for catalogue rock %d not loaded: %s\n",
-                     index, e.what());
+        warn_not_loaded(index, e.what());
         return nullptr;
     }
     return &atlases_.at(index);

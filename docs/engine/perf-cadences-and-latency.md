@@ -186,3 +186,19 @@ it read more settled than it is.
 To test: set `DAUNTLESS_AVOID_EVADE_DELAY_S=0` and `DAUNTLESS_AI_MAX_SLEEP=0`
 and compare separation and reaction timing against the defaults in a live combat
 scene (`DAUNTLESS_MISSION=engine.dev_missions.combat_stress`).
+
+---
+
+## Not a cadence, same trap: a long warp tunnel is the preload
+
+Since the warp tunnel became the loading screen (2026-10-16,
+`docs/superpowers/specs/2026-10-16-warp-tunnel-preload-design.md`), the
+player's tunnel lasts its normal length **and then waits for the destination
+to finish loading** (`engine/warp_preload.py`, held by `_HoldUntilAction` in
+`engine/appc/warp.py`). On a slow machine that wait can run up to
+`PRELOAD_CAP_S` = **30 s past the normal length** — 30 s of *sim ticks*
+(`g_kRealtimeTimerManager`, frozen under pause, at most `MAX_FRAME_DT` per
+render frame), so wall clock can be longer still. That is the preload, not a
+hang. At the cap the warp releases anyway and prints
+`[warp-preload] late: <items>` to stderr, naming what was still loading.
+NPC warps never wait.

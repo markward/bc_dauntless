@@ -48,6 +48,7 @@ _REQUIRED_BINDINGS = frozenset({
     "get_instance_head_center", "hdr_lens_flare_enabled",
     "hdr_lens_flare_set_enabled", "hdr_set_enabled",
     "hull_volume_bake_to_disk", "hull_volume_prewarm",
+    "hull_volume_prewarm_model",
     "hull_volume_set_cache_root", "hull_volume_set_resolution",
     "hull_source_string",
     "init", "letterbox_set",
@@ -84,6 +85,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_subsystem_pins", "set_suns",
     "set_system_nebula_profile", "set_system_nebula_star",
     "set_system_nebula_flashes",
+    "system_nebula_prebuild", "system_nebula_prebuilt",
     "system_nebula_set_dials", "system_nebula_dials",
     "minors_add_cloud", "minors_remove_cloud", "minors_detach",
     "minors_fade_out", "minors_set_fragments", "minors_set_player",
@@ -91,7 +93,7 @@ _REQUIRED_BINDINGS = frozenset({
     "minors_drain_contacts", "minors_stats", "minors_clear",
     "far_set_catalogue", "far_set_rocks", "far_set_sources",
     "far_set_frame", "far_set_dials", "far_set_enabled", "far_enabled",
-    "far_stats", "far_clear",
+    "far_stats", "far_clear", "far_prefetch_atlases", "far_pump_atlas_uploads",
     "rock_specks_set_enabled", "rock_specks_enabled",
     "rock_puffs_set_enabled", "rock_puffs_enabled",
     "rockfield_drain_contacts", "rockfield_set_shield_inflate",
@@ -539,10 +541,27 @@ def set_system_nebula_profile(profile: dict | None) -> None:
     """Set (dict) or clear (None) the system-scale nebula profile: keys r,
     nebula (lists, GU / 0-1), k_sys, star_radius, cloud_rgb, star_rgb
     (3-tuples), optional g, floor, scatter, far_gu. Builds and uploads the
-    far-field table (CPU, ~1-2s) -- push once per system, never per frame.
-    Drawn only under --developer with Volumetric Nebulae on
+    far-field table (CPU, seconds; cached per session -- system_nebula_prebuild
+    builds it ahead on a worker) -- push once per system, never per frame.
+    Drawn whenever Volumetric Nebulae is on
     (docs/superpowers/specs/2026-09-29-system-nebula-render-design.md)."""
     _h.set_system_nebula_profile(profile)
+
+
+def system_nebula_prebuild(profile: dict) -> None:
+    """Start building `profile`'s far-field table (same keys as
+    set_system_nebula_profile) on a worker thread and return at once, so a
+    later set_system_nebula_profile(profile) costs only the texture upload.
+    Built tables are cached for the session; a no-op if already built or
+    building."""
+    _h.system_nebula_prebuild(profile)
+
+
+def system_nebula_prebuilt(profile: dict) -> bool:
+    """True once `profile`'s far-field table is built -- by a prebuild or an
+    earlier set_system_nebula_profile. Never blocks; False with the host
+    down."""
+    return bool(_h.system_nebula_prebuilt(profile))
 
 
 def set_system_nebula_star(pos: tuple | None) -> None:
@@ -565,7 +584,9 @@ def system_nebula_set_dials(dials: dict) -> None:
     engine/dev_nebula_dials.py): optional keys lane_size, lane_contrast, g,
     floor, near_range; any key omitted resets that dial to
     the native struct default. A g or floor change rebuilds the far-field
-    table (~1-2s) when a profile is already uploaded."""
+    table when a profile is already uploaded (measured ~7 s for Vesuvi
+    (15 rows) on the Debug build, ~0.2 s for 3-row systems; cached per
+    session and prebuilt during the warp tunnel)."""
     _h.system_nebula_set_dials(dials)
 
 
@@ -716,6 +737,20 @@ def far_clear() -> None:
     """Drop sources, flagged rocks, frame and the near band's cells and
     contacts (keeps the catalogue)."""
     _h.far_clear()
+
+
+def far_prefetch_atlases() -> None:
+    """Start decoding every impostor atlas not yet loaded, on worker threads
+    (warp-tunnel preload) -- at most kMaxAtlasDecodesInFlight at once, the
+    rest queued for the pump. No GL work; a no-op before the far pass exists."""
+    _h.far_prefetch_atlases()
+
+
+def far_pump_atlas_uploads(max_uploads: int) -> int:
+    """Upload at most `max_uploads` prefetched atlases whose decode finished
+    (never waits on one), start queued decodes into the freed slots, and
+    return how many are still pending (in flight + queued)."""
+    return _h.far_pump_atlas_uploads(int(max_uploads))
 
 
 def rockfield_drain_contacts() -> list:
@@ -885,6 +920,16 @@ def hull_volume_prewarm(iid: InstanceId) -> None:
     missing-binding failure into a silent skip.
     """
     _h.hull_volume_prewarm(iid)
+
+
+def hull_volume_prewarm_model(model: int, resolution: float) -> None:
+    """Bake/load a hull's damage volume from its MODEL handle, creating no
+    instance. Sets the authored resolution for the model's source, then warms
+    the cache. No-op for an unknown handle or non-positive resolution.
+
+    No hasattr guard, deliberately (see hull_volume_prewarm).
+    """
+    _h.hull_volume_prewarm_model(model, float(resolution))
 
 
 def hull_volume_bake_to_disk(hull_path: str, authored_res: float) -> bool:

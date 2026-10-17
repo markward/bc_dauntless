@@ -24,6 +24,36 @@ OPEN_STBC_HOST_HEADLESS=1 DAUNTLESS_PROFILE_FRAMES=600 ./build/dauntless --devel
 `DAUNTLESS_PROFILE_FRAMES=N` enables both halves, sets swap interval 0, runs N
 frames, prints one report and exits.
 
+### Spike capture — one-off long frames, to a file
+
+The averaged report **cannot see a single slow frame**: a 5 s hitch is blended
+in at alpha 0.15 and has decayed before the next 120-frame report prints. For a
+load hitch (a warp arrival, a mission change) write the raw breakdown of every
+slow frame to a file instead:
+
+```bash
+DAUNTLESS_PROFILE_SPIKES=/tmp/spikes.log ./build/dauntless
+```
+
+- Every frame at or over `DAUNTLESS_PROFILE_SPIKE_MS` (default 100) is appended
+  as one record: the frame's **raw** Python phases/scopes (ms + calls), then the
+  render scopes' raw CPU ms for the same frame (`profiler_last_frame_raw` — GPU
+  resolves frames later and is left out), plus a context line (viewed set,
+  player's set, warp tunnel up or not).
+- Rows under 0.5 ms are omitted. Indented rows are included in their parent.
+- Works **without** `--developer`; vsync is left alone; the periodic stderr
+  report is suppressed while it is on. Toggling the profiler off from Developer
+  Options stops the capture.
+- Arrival-path scopes it reads: `warp.mission_change`, `warp.swap_set` ⊃
+  `warp.region_init` / `warp.realize_set` ⊃ `realize.ship_model` /
+  `realize.hull_prewarm`; `scene.system_load`, `scene.ships`, `scene.minors`,
+  `scene.far_tier`, `scene.celestial` ⊃ `load.planet_model`;
+  `scene.comm_sets`; `env.system_nebula`; native `rock.near.stream`,
+  `space.far.build`, `sky.bake`, `rock.atlas.load`; `warp.place_player` and
+  `warp.depart` (the QuickBattle arrival and the departure). During the
+  tunnel: `warp.preload` (the destination preload's one step per frame,
+  `engine/warp_preload.py`).
+
 **Run it through `dauntless.exe`, not `python -c "host_loop.run()"`.** CEF only
 initialises when the process was launched through the binary — its `main()`
 calls `dispatch_subprocess` before Python starts — so a Python-driven capture
@@ -356,6 +386,13 @@ ships at lower frequency; (c) move hot paths to C++.
   (`host_bindings.cc`) add `rock.near.stream`, `rock.near.draw`,
   `rock.fade.draw` (the translucent impostor fades), `rock.puffs.draw` and
   `rock.specks.draw`, alongside the earlier far-tier `space.far.*` scopes.
+  Spike-capture attribution scopes (warp arrival): `gl.timers.game` /
+  `gl.timers.real` (timer ticks in `loop.py`), `warp.depart`,
+  `warp.place_player`, `warp.arrive_finalize`, `warp.exited_warp`,
+  `warp.clear_targets` (the arrival actions in `engine/appc/warp.py`), and
+  `rock.near.draw` split into `rock.near.build`, `rock.near.mesh_draw`,
+  `rock.impostor.draw`, with `rock.atlas.load` (first-visit impostor atlas
+  read + upload in `FarPass::atlas_for`).
   `planet_detail` (clipmap bake for the planet surface detail pass) is a
   top-level, GPU-timed scope — a sibling of `space`/`bloom`/`post`, not
   nested under any of them.

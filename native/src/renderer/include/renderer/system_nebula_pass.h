@@ -3,6 +3,7 @@
 
 #include "renderer/nebula_atmosphere.h"
 #include "renderer/nebula_godray_pass.h"   // GodrayFlash
+#include "renderer/system_nebula_cache.h"
 
 #include <glm/glm.hpp>
 
@@ -19,9 +20,9 @@ struct Lighting;
 
 /// System-scale nebula: the whole star system as a star-centred atmosphere
 /// (docs/superpowers/specs/2026-09-29-system-nebula-render-design.md).
-/// DEVELOPER-ONLY for now -- host frame() gates it on --developer AND the
-/// volumetric-nebula setting; without both, NebulaVolumetricPass / NebulaPass
-/// render exactly as before.
+/// On in production (2026-10-16): host frame() gates it on the
+/// volumetric-nebula setting alone; with it off, NebulaVolumetricPass /
+/// NebulaPass render exactly as before.
 ///
 /// Started as a copy of NebulaVolumetricPass and keeps its performance
 /// machinery unchanged: quarter-resolution ping-pong target, dither step
@@ -68,9 +69,8 @@ struct NebulaDrawPlan {
 };
 
 /// frame()'s nebula decision, pure so it is testable without a host.
-NebulaDrawPlan plan_nebula_draws(bool volumetric_setting, bool developer,
-                                 bool has_profile, bool have_volumes,
-                                 bool have_wake);
+NebulaDrawPlan plan_nebula_draws(bool volumetric_setting, bool has_profile,
+                                 bool have_volumes, bool have_wake);
 
 class SystemNebulaPass {
 public:
@@ -81,9 +81,11 @@ public:
     SystemNebulaPass(const SystemNebulaPass&) = delete;
     SystemNebulaPass& operator=(const SystemNebulaPass&) = delete;
 
-    /// Build the radial texels and far-field table on the CPU and upload
-    /// them: radial -> GL_RG32F kRadialTexels x 1; table -> two GL_RGB32F
-    /// kTableR x kTableMu (optical depth, inscatter). Needs a current context.
+    /// Upload the radial texels and far-field table: radial -> GL_RG32F
+    /// kRadialTexels x 1; table -> two GL_RGB32F kTableR x kTableMu (optical
+    /// depth, inscatter). The CPU build comes from the session TableCache: a
+    /// hit or finished prebuild() costs only the upload; a miss builds
+    /// synchronously (seconds). Needs a current context.
     void set_profile(const atmosphere::RadialProfile& profile,
                      const atmosphere::LookParams& look);
     /// Delete the profile textures and forget the profile and the star; the
@@ -91,9 +93,20 @@ public:
     void clear_profile();
     bool has_profile() const { return has_profile_; }
 
+    /// Start building (profile, look)'s table on a worker thread so a later
+    /// set_profile with the same inputs costs only the upload. No GL; a
+    /// no-op when already built or building.
+    void prebuild(const atmosphere::RadialProfile& profile,
+                  const atmosphere::LookParams& look) { cache_.prebuild(profile, look); }
+    /// True once (profile, look)'s table is built (never blocks).
+    bool prebuilt(const atmosphere::RadialProfile& profile,
+                  const atmosphere::LookParams& look) { return cache_.ready(profile, look); }
+
     /// Set the near-field/table look dials. A change to `g` or `floor` with
     /// a profile already uploaded rebuilds the far-field table (re-runs
-    /// set_profile with the updated LookParams, ~1-2s); `lane_size`,
+    /// set_profile with the updated LookParams; measured ~7 s for Vesuvi
+    /// (15 rows) on the Debug build, ~0.2 s for 3-row systems; cached per
+    /// session and prebuilt during the warp tunnel); `lane_size`,
     /// `lane_contrast` and `near_range` are read directly by the shader
     /// every frame and never trigger a rebuild.
     void set_dials(const Dials& dials);
@@ -180,6 +193,7 @@ private:
     std::vector<GodrayFlash> flashes_;
     Dials        dials_;
     int          profile_rebuild_count_ = 0;
+    atmosphere::TableCache cache_;   // built tables, per session (never evicted)
 };
 
 }  // namespace renderer

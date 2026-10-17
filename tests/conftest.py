@@ -928,6 +928,12 @@ def _reset_leakable_engine_globals():
         _mods.configure(None)
     except Exception:
         pass
+    # Warp preload: begin/active/end hold one module-global Preload.
+    try:
+        from engine import warp_preload as _warp_preload
+        _warp_preload.end()
+    except Exception:
+        pass
     # Ship catalog memo (engine/ship_catalog/catalog.py): keyed on the mod
     # index, but a test that mutates a ShipDef in place would otherwise leak
     # a stale snapshot into the next test that happens to share the index.

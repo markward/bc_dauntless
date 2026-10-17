@@ -1,8 +1,9 @@
 # System-scale nebula rendering — a star-centred atmosphere (design)
 
 **Date:** 2026-09-29
-**Status:** design approved section by section (2026-09-29); awaiting review of
-this written spec. Not implemented.
+**Status:** shipped to production 2026-10-16 (Mark): the pass follows the
+Volumetric Nebulae setting alone, no `--developer` needed; the dials stay
+developer-only and production uses `dev_nebula_dials.DEFAULTS`.
 **Supersedes:** the developer-only nebula spike (`engine/systems/profile_render.py`,
 plan `2026-09-28-radial-system-profile.md` Task 13) and `nebula_volumetric_pass`.
 **Relates to:** `2026-09-23-radial-system-profile-design.md` (the `nebula` column
@@ -54,8 +55,8 @@ construction.
 | on | `system_nebula_pass`: profile haze (mapped systems) + every local MetaNebula as a density bump (all sets, incl. Multi5/6) |
 | off | BC's faithful `nebula_pass`, unchanged |
 
-Ships **`--developer`-only** until Mark approves it live, then to production
-behind the setting.
+Shipped to production behind the setting (2026-10-16); `--developer` only
+gates the tuning dials.
 
 ### Per system (on load, and when the profile changes)
 
@@ -165,7 +166,7 @@ re-acquire line). Keys: `/` cycles, L / O step (`engine/dev_nebula_dials.py`).
   column is separate and unaffected).
 - The faithful path with the setting off.
 - Warp tunnel: nebula feeds stay empty while streaking.
-- Production with the setting on but without `--developer`, until approval.
+- (Lifted 2026-10-16: production with the setting on now draws the system pass.)
 
 ## Testing
 

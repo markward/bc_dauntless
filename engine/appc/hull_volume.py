@@ -84,6 +84,27 @@ def prewarm_field(iid) -> None:
     _renderer.hull_volume_prewarm(iid)
 
 
+def prewarm_for_model(ship, handle) -> bool:
+    """Prewarm `ship`'s hull volume from a loaded MODEL handle, no instance.
+
+    For the warp-tunnel preload, which runs before the ship is realised.
+    Same error contract as `push_resolution`: a missing/non-numeric
+    GetDamageResolution is swallowed (False); a renderer failure propagates.
+    Returns True when a prewarm was issued.
+    """
+    getter = getattr(ship, "GetDamageResolution", None)
+    if getter is None:
+        return False
+    try:
+        resolution = float(getter())
+    except (TypeError, ValueError):
+        return False
+    if not resolution > 0.0:
+        return False
+    _renderer.hull_volume_prewarm_model(handle, resolution)
+    return True
+
+
 # ── Boot-time pre-bake ─────────────────────────────────────────────────────
 #
 # prewarm_field moved the bake from "first combat hit" to "spawn". That was
