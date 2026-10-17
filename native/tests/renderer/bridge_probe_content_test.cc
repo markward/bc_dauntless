@@ -229,6 +229,40 @@ TEST_F(BridgeProbeContent, LayerHoldsOnlyItsMembers) {
     expect_same(capture(kLayer0), member_only, "non-member in the layer");
 }
 
+// A layer holds no glow but its members' (spec §4.1): neither the texture-
+// level _emissive default (the floor's map) nor a non-member glow shape (the
+// wall: steady in red's base, and a member of red's OTHER layer) -- else
+// every default glow would count once in the base and again in each
+// weighted layer. The other layer holds the wall; once the wall is layer
+// 0's member, layer 0 holds it too. The floor's default still shows in red's
+// base, so the map is really there.
+//
+// Mutations checked once (2026-10-17), each FAILS this test: the shader's
+// `u_capture_layer < 0 &&` dropped (the default enters a layer); a
+// non-member drawn as in a base (src + base[s]); a non-member drawn at its
+// layer_rgb (the membership check dropped).
+TEST_F(BridgeProbeContent, LayerExcludesTextureDefaultAndNonMemberGlow) {
+    lighting.ambient = glm::vec3(0.8f);
+    pass->set_probe_layers({kRed, kRed});           // probes 5 (layer 0) and 6 (layer 1)
+    model->textures.push_back(solid_1x1({0.0f, 0.8f, 0.0f, 1.0f}));
+    model->materials[0].stages[static_cast<std::size_t>(
+        assets::Material::StageSlot::Emissive)].texture_index =
+        static_cast<int>(model->textures.size()) - 1;   // the floor's default glow
+    const glm::vec3 g(1.5f, 1.0f, 0.5f);
+    renderer::BridgeGlowCapture other = wall_glow(g, /*layer_red=*/1, g);
+    pass->set_glow_captures(handle(), {other});
+    EXPECT_GT(centre(capture(kRed), kFaceMinusZ, 0).g, 0.5f) << "floor default in the base";
+    const std::vector<glm::vec3> layer0 = capture(kLayer0);
+    EXPECT_LT(max_channel(layer0), 1e-3f);
+    EXPECT_LT(centre(layer0, kFaceMinusZ, 0).g, 1e-3f) << "floor default";
+    EXPECT_LT(centre(layer0, kFaceMinusX, 0).r, 1e-3f) << "non-member wall glow";
+    EXPECT_GT(centre(capture(kLayer0 + 1), kFaceMinusX, 0).r, 1.0f) << "its own layer";
+    pass->set_glow_captures(handle(), {wall_glow(glm::vec3(0.0f), 0, g)});
+    const std::vector<glm::vec3> member = capture(kLayer0);
+    EXPECT_NEAR(centre(member, kFaceMinusX, 0).r, std::pow(1.5f, 2.2f), 0.06f);
+    EXPECT_LT(centre(member, kFaceMinusZ, 0).g, 1e-3f) << "floor default";
+}
+
 // THE LINEARITY FALSIFIER (spec §6). Below the diffuse knee, the room with a
 // member's wave forced to w = 0.6 (probe A: its contribution folded into the
 // base) equals base + layer x 0.6^2.2 (probes B and C: the member at 0 in the
