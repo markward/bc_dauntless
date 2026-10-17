@@ -193,6 +193,33 @@ class STMenu(ObjectClass):
                 return
         self._children.append(child)
 
+    # ── TGPane child walk (SWIG binds both on TGPane, App.py:1390) ──
+    # BridgeHandlers.FindCourseButton:1354-1356 walks the Set Course tree with
+    # `for i in range(pMenu.GetNumChildren()): pMenu.GetNthChild(i)`. Missing
+    # here, both fell through to a _Stub whose int() is 0, so the loop ran
+    # zero times and the Helm tooltip's "Destination :" line never resolved.
+    def GetNumChildren(self) -> int:
+        return len(self._children)
+
+    def GetNthChild(self, n):
+        # TacticalMenuHandlers.GetOrderString:1908 reads the current order's
+        # button via GetNthChild(iIndex) on an STCharacterMenu. Explicit
+        # bounds rather than a bare index: a negative n must be None, not
+        # Python's wrap-around to a real button from the other end.
+        i = int(n)
+        return self._children[i] if 0 <= i < len(self._children) else None
+
+    def GetName(self, out=None):
+        """SWIG STMenu.GetName (App.py:7758) fills a TGString with the menu's
+        name; every SDK caller uses that form (BridgeHandlers.py:1416,
+        BridgeMenus.py:134, E4M4.py:1015, UITree.py:262). Inherited from
+        ObjectClass it took no argument and raised TypeError. The bare call
+        keeps ObjectClass's answer for engine callers."""
+        if out is None:
+            return super().GetName()
+        out.SetString(self._label)
+        return None
+
     def GetButtonW(self, label) -> "STButton | None":
         # Faithful to Appc: return the existing button or None. The SDK relies
         # on None-when-absent as an EXISTENCE CHECK in many places — e.g.
@@ -314,7 +341,13 @@ class STMenu(ObjectClass):
     def SetFocus(self, *args) -> None:            self._focus = True
     def SetHighlighted(self, *args) -> None:      self._highlighted = True
     def SetNotHighlighted(self, *args) -> None:   self._highlighted = False
-    def IsTypeOf(self, type_id) -> int:           return 0
+    # IsTypeOf is ObjectClass's: the CT_ tag resolves through the
+    # object_types registry (CT_ST_MENU -> STMenu, CT_SORTED_REGION_MENU ->
+    # SortedRegionMenu, App.py's CT_ block). It was a hardcoded 0, so
+    # FindCourseButton:1357 never recognised a region menu. Only two SDK sites
+    # ask a menu: that one, and MissionLib.CallWaiting:4542, whose Close() is a
+    # no-op here. Our STMenu derives ObjectClass, so IsTypeOf(CT_OBJECT) is 1
+    # where BC's TGUIObject says 0; no SDK caller asks a menu that.
     def Close(self, *args) -> None:               pass
     # CallNextHandler is inherited from TGEventHandlerObject, which advances
     # the LIFO handler chain (SDK handlers end with pMenu.CallNextHandler to

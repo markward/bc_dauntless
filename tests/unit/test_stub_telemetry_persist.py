@@ -59,4 +59,4 @@ def test_persist_run_never_raises_on_bad_path():
 
 
 def test_sidecar_path_is_absolute():
-    assert os.path.isabs(stub_telemetry.SIDECAR_PATH)
+    assert os.path.isabs(stub_telemetry._default_sidecar_path())

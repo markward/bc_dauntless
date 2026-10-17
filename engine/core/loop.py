@@ -47,6 +47,10 @@ class GameLoop:
             tick_defensive_cloak(TICK_DELTA)
         with _prof.scope("gl.ai"):
             tick_all_ai(game_time=game_time)
+        # ET_SET_ALERT_LEVEL levels posted since the last tick land here, after
+        # the AI window, where BC drained its event queue (ShipClass.ProcessEvent).
+        from engine.appc.ships import apply_pending_alert_levels
+        apply_pending_alert_levels()
         # Drive each bridge officer's CharacterClass animation queue one step --
         # the headless equivalent of host_loop._pump_character_queues. A
         # re-pointed CharacterAction (turn / glance / gesture / breathe / menu)

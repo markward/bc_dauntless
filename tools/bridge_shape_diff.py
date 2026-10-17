@@ -16,7 +16,8 @@ vertex MOVES, UV0 EDITS, deleted faces/vertices, NEW vertices, added faces
 `<stem>_0.tga` with `<stem>_1.tga`, ... beside it becomes a looping flipbook
 at `--flipbook-fps`, default 5). A value equal
 to an original's (a snapped vertex, a shared UV) is stored as a reference.
-`--exclude BLOCK` (repeatable) leaves a block out of the fix."""
+`--exclude BLOCK` (repeatable) leaves a block out of the fix; `--delete BLOCK`
+(repeatable) removes every triangle of a shape whose object was deleted."""
 import argparse
 import json
 import math
@@ -124,16 +125,18 @@ def fix_text(fix: dict) -> str:
 
 
 def build_fix(rel: str, base_path: Path, edit_path: Path, partial: bool = False,
-              exclude=(), verify: bool = True, flipbook_fps: float = 5.0):
+              exclude=(), verify: bool = True, flipbook_fps: float = 5.0, delete=()):
     """Diff, then (unless verify=False -- unit tests only) apply the fix with
     the loader and check it reproduces edit.obj and leaves every other block
     stock (spec §5.4); a mismatch raises, so nothing unverified is written.
     `exclude`: block numbers left out of the fix entirely (as if unedited).
-    `flipbook_fps`: playback rate of every numbered frame run (spec §5.3)."""
+    `flipbook_fps`: playback rate of every numbered frame run (spec §5.3).
+    `delete`: block numbers whose objects were deleted in Blender -- every
+    triangle of the shape is removed (match.with_deletions)."""
     if not (math.isfinite(flipbook_fps) and flipbook_fps > 0):
         raise ShapeDiffError(f"flipbook fps must be finite and > 0, got {flipbook_fps}")
     base_objs = obj_io.read_objects(base_path)
-    edit_objs = obj_io.read_objects(edit_path)
+    edit_objs = match.with_deletions(base_objs, obj_io.read_objects(edit_path), delete)
     dirs = _texture_dirs(rel)
     shapes = _shapes(rel)
     result = match.diff(shapes, base_objs, edit_objs, partial=partial,
@@ -172,6 +175,8 @@ def main(argv=None) -> int:
     df.add_argument("--partial", action="store_true")
     df.add_argument("--exclude", type=int, action="append", default=[], metavar="BLOCK",
                     help="leave this block out of the fix (repeatable)")
+    df.add_argument("--delete", type=int, action="append", default=[], metavar="BLOCK",
+                    help="remove this block's shape entirely (its object was deleted; repeatable)")
     df.add_argument("--flipbook-fps", type=float, default=None, metavar="FPS",
                     help="playback rate of a numbered frame run <stem>_0..N-1 (default 5)")
     a = ap.parse_args(argv)
@@ -180,6 +185,8 @@ def main(argv=None) -> int:
             print(export(a.nif, a.out))
             return 0
         kw = {"exclude": a.exclude} if a.exclude else {}
+        if a.delete:
+            kw["delete"] = a.delete
         if a.flipbook_fps is not None:
             kw["flipbook_fps"] = a.flipbook_fps
         if a.partial:
@@ -191,6 +198,8 @@ def main(argv=None) -> int:
             print(_summary(e))
         if a.exclude:
             print("excluded: blocks " + ", ".join(str(b) for b in a.exclude))
+        if a.delete:
+            print("deleted: blocks " + ", ".join(str(b) for b in a.delete))
         if skipped:
             print("skipped (not yet supported):")
             for name, reason in skipped:

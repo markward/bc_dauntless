@@ -46,6 +46,22 @@ def _is_course_leaf(widget) -> bool:
             and (not widget._children or not widget.IsOpenable()))
 
 
+def _is_course_system(widget) -> bool:
+    """A Set Course system row that both OPENS onto its regions and SETS a
+    course to its own default region.
+
+    BC's system node is two things at once: CreateSystemMenu hands it the
+    "Region file that you go to if you select the menu" (Systems/Utils.py:24)
+    AND its regions as children. Selecting the row picks that default — the
+    outermost region in every stock system, unless a mission moved it with
+    SetRegionName — while its caret opens the list. E1M1's tutorial arrow sits
+    on this row ("Vesuvi", E1M1.py:3603) and expects one click to plot Haven.
+    """
+    return (isinstance(widget, SortedRegionMenu)
+            and widget.GetRegionModule() is not None
+            and bool(widget._children) and bool(widget.IsOpenable()))
+
+
 def _is_lone_course_root(widget) -> bool:
     """The Set Course root with no system under it.
 
@@ -224,9 +240,12 @@ class CrewMenuPanel(Panel):
             "visible": bool(widget.IsVisible()),
             "chosen": bool(widget.IsChosen()) if isinstance(widget, STButton) else False,
         }
-        if _is_course_leaf(widget):
+        if _is_course_leaf(widget) or _is_course_system(widget):
             node["chosen"] = (course is not None
                               and widget.GetRegionModule() == course)
+        if _is_course_system(widget):
+            # Tells CEF to split the row: caret expands, label sets course.
+            node["sets_course"] = True
         # Applies to every node type that gets an id — STMenu/submenu rows
         # (the E1M1 "Set Course" target is a submenu, not a leaf) AND
         # STButton leaves alike.
@@ -313,11 +332,13 @@ class CrewMenuPanel(Panel):
                 if self._on_set_course is not None:
                     self._on_set_course(widget)
                 return True
-            if _is_course_leaf(widget):
-                # A region row: set the course to it. The menu stays open so
-                # the tick moves to the row just chosen. No SDK button event —
-                # record_course_selection fires ET_SET_COURSE at the Helm menu
-                # itself (the crew ack stock BC's course buttons produced).
+            if _is_course_leaf(widget) or _is_course_system(widget):
+                # A region row, or a system row's label (its default region):
+                # set the course to it. The menu stays open so the tick moves
+                # to the row just chosen; a system row is NOT expanded — its
+                # caret does that. No SDK button event — record_course_selection
+                # fires ET_SET_COURSE at the Helm menu itself (the crew ack
+                # stock BC's course buttons produced).
                 if self._on_course_set is not None:
                     self._on_course_set(widget.GetRegionModule())
                 return True

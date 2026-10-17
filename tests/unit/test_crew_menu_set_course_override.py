@@ -133,13 +133,91 @@ def test_clicking_a_region_sets_the_course_and_fires_no_button_event(monkeypatch
     assert events == []
 
 
-def test_clicking_a_system_with_regions_does_not_set_a_course():
+def test_expanding_a_system_with_regions_does_not_set_a_course():
+    """The caret only opens the region list; the course is the label's job."""
     root, vesuvi, *_ = _course_tree()
     seen = []
     panel = _registered(CrewMenuPanel(on_course_set=seen.append), root)
     panel.dispatch_event("expand:%d" % ensure_widget_id(vesuvi))
     assert seen == []
     assert ensure_widget_id(vesuvi) in panel._expanded_ids
+
+
+# --- a system row is BC's two-in-one: its label sets the default course ----
+# Systems/Utils.py:24 — the 2nd CreateSystemMenu argument is the "Region file
+# that you go to if you select the menu". The row both carries that default
+# and opens onto its regions; the caret opens, the label selects.
+
+def test_a_system_with_regions_is_marked_as_also_setting_a_course():
+    root, *_ = _course_tree()
+    node = CrewMenuPanel()._snapshot_node(root)
+    vesuvi, riha = node["children"][0], node["children"][1]
+    assert vesuvi["type"] == "menu"
+    assert vesuvi["sets_course"] is True
+    # Only a system that opens AND selects needs the split row; a region or
+    # single-region row is a plain button, the root a plain menu.
+    assert "sets_course" not in riha
+    assert "sets_course" not in node
+
+
+def test_clicking_a_system_sets_course_to_its_default_region(monkeypatch):
+    """E1M1's arrow sits on "Vesuvi" itself (E1M1.py:3603); one click there
+    must reach Haven (Vesuvi6), the system's outer edge."""
+    import App
+    root, vesuvi, *_ = _course_tree()
+    seen = []
+    panel = _registered(CrewMenuPanel(on_course_set=seen.append), root)
+    events = []
+    monkeypatch.setattr(App.g_kEventManager, "AddEvent", events.append)
+
+    assert panel.dispatch_event("click:%d" % ensure_widget_id(vesuvi)) is True
+
+    assert seen == ["Systems.Vesuvi.Vesuvi6"]
+    assert ensure_widget_id(vesuvi) not in panel._expanded_ids
+    assert events == []
+
+
+def test_a_disabled_system_sets_no_course():
+    root, vesuvi, *_ = _course_tree()
+    vesuvi.SetDisabled()
+    seen = []
+    panel = _registered(CrewMenuPanel(on_course_set=seen.append), root)
+    panel.dispatch_event("click:%d" % ensure_widget_id(vesuvi))
+    assert seen == []
+
+
+def test_clicking_the_set_course_root_sets_no_course():
+    root, *_ = _course_tree()
+    seen = []
+    panel = _registered(CrewMenuPanel(on_course_set=seen.append), root)
+    panel.dispatch_event("click:%d" % ensure_widget_id(root))
+    assert seen == []
+
+
+@pytest.mark.parametrize("dest, system_ticked, regions_ticked", [
+    ("Systems.Vesuvi.Vesuvi6", True, [False, True]),
+    ("Systems.Vesuvi.Vesuvi4", False, [True, False]),
+])
+def test_the_system_row_is_ticked_when_its_default_is_the_course(
+        dest, system_ticked, regions_ticked):
+    root, *_ = _course_tree()
+    btn = STWarpButton("Warp")
+    st_widgets.SortedRegionMenu_SetWarpButton(btn)
+    btn.SetDestination(dest)
+    vesuvi = CrewMenuPanel()._snapshot_node(root)["children"][0]
+    assert vesuvi["chosen"] is system_ticked
+    assert [c["chosen"] for c in vesuvi["children"]] == regions_ticked
+
+
+def test_set_region_name_moves_the_default_a_system_click_reaches():
+    """Episode4.py:187 points Nepenthe at Nepenthe1 rather than its stock
+    Nepenthe3; the same mechanism here, on Vesuvi."""
+    root, vesuvi, *_ = _course_tree()
+    vesuvi.SetRegionName("Systems.Vesuvi.Vesuvi4")
+    seen = []
+    panel = _registered(CrewMenuPanel(on_course_set=seen.append), root)
+    panel.dispatch_event("click:%d" % ensure_widget_id(vesuvi))
+    assert seen == ["Systems.Vesuvi.Vesuvi4"]
 
 
 def test_stellar_cartography_opens_the_map_on_the_set_course_menu():

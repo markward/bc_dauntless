@@ -2,10 +2,25 @@
   "format": 4,
   "materials": {
     "Map 1": {
+      "emission": 0.72,
       "roughness": 0,
       "texture": "map 1.tga"
     },
     "Map 12": {
+      "modifiers": [
+        {
+          "level": 0.3,
+          "scope": [
+            "offline"
+          ],
+          "tint": [
+            1,
+            1,
+            1
+          ],
+          "type": "state"
+        }
+      ],
       "roughness": 0,
       "texture": "map 12.tga"
     },
@@ -34,10 +49,34 @@
       "texture": "map 19.tga"
     },
     "Map 22a": {
+      "modifiers": [
+        {
+          "min": 0,
+          "period_s": 3,
+          "phase": 0,
+          "scope": [
+            "red"
+          ],
+          "shape": "sine",
+          "type": "animation"
+        }
+      ],
       "roughness": 0.05,
       "texture": "map 22a.tga"
     },
     "Map 22a 2": {
+      "modifiers": [
+        {
+          "min": 0,
+          "period_s": 3,
+          "phase": 0,
+          "scope": [
+            "red"
+          ],
+          "shape": "sine",
+          "type": "animation"
+        }
+      ],
       "roughness": 0,
       "texture": "map 22a.tga"
     },
@@ -51,6 +90,7 @@
       "texture": "map 22c.tga"
     },
     "Map 24": {
+      "emission": 0.78,
       "roughness": 0,
       "texture": "map 24.tga"
     },
@@ -60,6 +100,18 @@
     },
     "Map 27": {
       "metalness": 0,
+      "modifiers": [
+        {
+          "min": 0,
+          "period_s": 3,
+          "phase": 0,
+          "scope": [
+            "red"
+          ],
+          "shape": "sine",
+          "type": "animation"
+        }
+      ],
       "roughness": 0.63,
       "texture": "map 27.tga"
     },
@@ -67,16 +119,41 @@
       "modifiers": [
         {
           "glows": false,
-          "level": 1,
+          "level": 0,
+          "scope": [
+            "offline"
+          ],
+          "tint": [
+            1,
+            0.9821,
+            0.9821
+          ],
+          "type": "state"
+        },
+        {
+          "glows": false,
+          "level": 1.26,
           "scope": [
             "green",
-            "yellow",
+            "yellow"
+          ],
+          "tint": [
+            1,
+            1,
+            1
+          ],
+          "type": "state"
+        },
+        {
+          "glows": false,
+          "level": 0.3,
+          "scope": [
             "red",
             "special"
           ],
           "tint": [
-            0.7363,
-            0.8756,
+            1,
+            1,
             1
           ],
           "type": "state"
@@ -98,12 +175,34 @@
       "texture": "map 7.tga"
     },
     "Map 8": {
+      "emission": 0.91,
       "roughness": 0,
       "texture": "map 8.tga"
     },
     "Map 9": {
-      "roughness": 0.53,
+      "roughness": 0.75,
       "texture": "map 9.tga"
+    },
+    "Rear Console Strip Light": {
+      "emission": 1.43,
+      "modifiers": [
+        {
+          "level": 0.48,
+          "scope": [
+            "green",
+            "yellow",
+            "red"
+          ],
+          "tint": [
+            1,
+            1,
+            1
+          ],
+          "type": "state"
+        }
+      ],
+      "roughness": 0,
+      "texture": "map 13.tga"
     },
     "alcove": {
       "emission": 0,
@@ -134,7 +233,7 @@
         },
         {
           "min": 0.2,
-          "period_s": 2,
+          "period_s": 3,
           "phase": 0,
           "scope": [
             "red"
@@ -146,6 +245,20 @@
       "texture": "map 19.tga"
     },
     "g_imp_connops": {
+      "modifiers": [
+        {
+          "level": 0.42,
+          "scope": [
+            "offline"
+          ],
+          "tint": [
+            1,
+            1,
+            1
+          ],
+          "type": "state"
+        }
+      ],
       "roughness": 0,
       "texture": "g_imp_connops.tga"
     },
@@ -178,7 +291,7 @@
         },
         {
           "min": 0,
-          "period_s": 2,
+          "period_s": 3,
           "phase": 0,
           "scope": [
             "red"
@@ -226,7 +339,7 @@
       "emission": 1.43,
       "modifiers": [
         {
-          "level": 1.1,
+          "level": 0.99,
           "scope": [
             "green"
           ],
@@ -238,27 +351,51 @@
           "type": "state"
         },
         {
-          "level": 0.6,
+          "level": 0.66,
           "scope": [
-            "yellow",
-            "red"
+            "yellow"
+          ],
+          "tint": [
+            0.9911,
+            1,
+            0.9821
+          ],
+          "type": "state"
+        },
+        {
+          "level": 0.24,
+          "scope": [
+            "red",
+            "special"
+          ],
+          "tint": [
+            0.2498,
+            0.5219,
+            1
+          ],
+          "type": "state"
+        },
+        {
+          "level": 0.24,
+          "scope": [
+            "offline"
           ],
           "tint": [
             1,
-            1,
-            1
+            0.1062,
+            0.0891
           ],
           "type": "state"
         }
       ],
-      "roughness": 0,
+      "roughness": 0.23,
       "texture": "map 13.tga"
     },
     "roof 2": {
       "emission": 1.3,
       "modifiers": [
         {
-          "level": 1.1,
+          "level": 0.99,
           "scope": [
             "green"
           ],
@@ -270,30 +407,100 @@
           "type": "state"
         },
         {
-          "level": 0.6,
+          "level": 0.75,
           "scope": [
-            "yellow",
-            "red"
+            "yellow"
+          ],
+          "tint": [
+            0.9821,
+            1,
+            1
+          ],
+          "type": "state"
+        },
+        {
+          "level": 0.21,
+          "scope": [
+            "offline"
           ],
           "tint": [
             1,
-            1,
+            0.0335,
+            0
+          ],
+          "type": "state"
+        },
+        {
+          "level": 0.24,
+          "scope": [
+            "red",
+            "special"
+          ],
+          "tint": [
+            0.2749,
+            0.5408,
             1
           ],
           "type": "state"
         }
       ],
+      "roughness": 0.54,
       "texture": "map 13.tga"
     },
     "running_0": {
+      "emission": 0.72,
       "roughness": 0,
       "texture": "running_0.tga"
     }
   },
   "objects": {
+    "195:": {
+      "block": 195,
+      "lights": [
+        {
+          "direction": [
+            0.00027,
+            -0.840197,
+            -0.542281
+          ],
+          "inner_deg": 60,
+          "intensity": 2000,
+          "outer_deg": 90,
+          "position": [
+            -52.536095,
+            -127.74131,
+            11.529737
+          ],
+          "range": 100
+        }
+      ],
+      "name": ""
+    },
     "255:": {
       "block": 255,
       "material": "Map 18 2",
+      "name": ""
+    },
+    "295:": {
+      "block": 295,
+      "lights": [
+        {
+          "direction": [
+            -0.000465,
+            -0.840261,
+            -0.542182
+          ],
+          "inner_deg": 60,
+          "intensity": 2000,
+          "outer_deg": 90,
+          "position": [
+            54.986553,
+            -125.57859,
+            8.177403
+          ],
+          "range": 100
+        }
+      ],
       "name": ""
     },
     "299:": {
@@ -305,7 +512,7 @@
             -0.404578,
             -0.551268
           ],
-          "inner_deg": 50,
+          "inner_deg": 60,
           "intensity": 1000,
           "outer_deg": 90,
           "position": [
@@ -313,7 +520,7 @@
             35.224983,
             5.215477
           ],
-          "range": 200
+          "range": 100
         }
       ],
       "name": ""
@@ -335,7 +542,7 @@
             37.223564,
             4.388153
           ],
-          "range": 200
+          "range": 100
         }
       ],
       "name": ""
@@ -453,7 +660,7 @@
           ],
           "edge": "top",
           "end": 1,
-          "intensity": 40,
+          "intensity": 30,
           "offset": 1,
           "range": 200,
           "shape": "strip",
@@ -473,7 +680,7 @@
           ],
           "edge": "top",
           "end": 1,
-          "intensity": 40,
+          "intensity": 30,
           "offset": 1,
           "range": 200,
           "shape": "strip",
@@ -484,26 +691,11 @@
     },
     "76:": {
       "block": 76,
-      "material": "roof",
-      "name": ""
-    },
-    "81:": {
-      "block": 81,
-      "material": "roof 2",
-      "name": ""
-    },
-    "84:": {
-      "block": 84,
-      "material": "roof",
-      "name": ""
-    },
-    "87:": {
-      "block": 87,
       "lights": [
         {
-          "intensity": 1.5,
-          "offset": -100,
-          "range": 400,
+          "intensity": 1,
+          "offset": 0,
+          "range": 120,
           "shape": "panel",
           "x": [
             0,
@@ -515,11 +707,37 @@
           ]
         }
       ],
-      "material": "roof (Map 13)",
+      "material": "Rear Console Strip Light",
       "name": ""
     },
-    "90:": {
-      "block": 90,
+    "81:": {
+      "block": 81,
+      "lights": [
+        {
+          "intensity": 2,
+          "offset": -100,
+          "range": 300,
+          "shape": "panel",
+          "x": [
+            0,
+            1
+          ],
+          "y": [
+            0,
+            1
+          ]
+        }
+      ],
+      "material": "roof 2",
+      "name": ""
+    },
+    "84:": {
+      "block": 84,
+      "material": "roof",
+      "name": ""
+    },
+    "87:": {
+      "block": 87,
       "lights": [
         {
           "intensity": 2,
@@ -536,6 +754,11 @@
           ]
         }
       ],
+      "material": "roof (Map 13)",
+      "name": ""
+    },
+    "90:": {
+      "block": 90,
       "material": "roof",
       "name": ""
     }

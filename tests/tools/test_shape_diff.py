@@ -2070,3 +2070,138 @@ def test_real_dbridge_flipbook_verifies(tmp_path, monkeypatch, capsys):
     assert fix["textures"] == [{"block": 688, "albedo": "strip_0.tga", "flipbook": {
         "frames": ["strip_0.tga", "strip_1.tga", "strip_2.tga"], "fps": 4.0}}]
     assert "verified 1 objects" in capsys.readouterr().out
+
+
+# --- Mirror seams and whole-object deletion (spec §11.6, 2026-10-14) ---
+
+def test_ear_clip_collapses_consecutive_coincident_corners():
+    # A square drawn over an unwelded mirror seam: corners 1 and 2 are two
+    # vertices at one position (Blender's -0.0 and 0.0 copies).
+    pts = [(0.0, 0.0, 0.0), (1.0, -0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0), (0.0, 1.0, 0.0)]
+    tris = triangulate.ear_clip(pts)
+    assert len(tris) == 2
+    for t in tris:                                   # never both copies in one triangle
+        assert not {1, 2} <= set(t)
+    assert _area2(pts, tris) == pytest.approx(1.0)   # tiles the square exactly
+
+
+def test_ear_clip_collapses_a_coincident_pair_across_the_wrap():
+    pts = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0), (0.0, 1.0, 0.0), (-0.0, 0.0, 0.0)]
+    tris = triangulate.ear_clip(pts)
+    assert len(tris) == 2 and all(not {0, 4} <= set(t) for t in tris)
+
+
+def test_ear_clip_of_a_face_that_collapses_below_three_corners_is_empty():
+    # b0475's seam quad: two pairs of coincident corners -- a line, no area.
+    pts = [(-0.0, -95.0349, 150.3881), (-0.0, -95.0304, 154.2836),
+           (0.0, -95.0304, 154.2836), (0.0, -95.0349, 150.3881)]
+    assert triangulate.ear_clip(pts) == []
+
+
+def test_ear_clip_still_refuses_collinear_distinct_corners():
+    with pytest.raises(ShapeDiffError, match="no area"):
+        triangulate.ear_clip([(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0)])
+
+
+def test_added_n_gon_over_an_unwelded_seam_is_ear_clipped(tmp_path):
+    s, base = _sliver_base(tmp_path)
+    edit = _copy(base)
+    edit.positions.append(base.positions[_local(base, (5, 0, 0))])   # a second copy of (5,0,0)
+    dup = len(edit.positions) - 1
+    edit.faces.append([_corner(base, (2, 0, 0), (0.2, 0.0)),        # 7
+                       _corner(base, (5, 0, 0), (0.5, 0.0)),        # 2
+                       (dup, (0.5, 0.0)),                           # its unwelded twin
+                       _corner(base, (5, 1, 0), (0.5, 1.0)),        # 6
+                       _corner(base, (2, 1, 0), (0.2, 1.0))])       # 8
+    e = match.diff_shape(s, base, edit)
+    assert len(e["add_triangles"]) == 2
+    for tri in e["add_triangles"]:
+        assert len({tuple(s["vertices"][i]) if i < len(s["vertices"]) else ("new", i)
+                    for i in tri}) == 3
+
+
+def test_added_face_collapsing_to_a_line_adds_nothing(tmp_path):
+    s, base = _sliver_base(tmp_path)
+    edit = _copy(base)
+    a, b = _local(base, (2, 0, 0)), _local(base, (2, 1, 0))
+    edit.positions += [base.positions[a], base.positions[b]]
+    a2, b2 = len(edit.positions) - 2, len(edit.positions) - 1
+    edit.faces.append([(a, (0.2, 0.0)), (b, (0.2, 1.0)), (b2, (0.2, 1.0)), (a2, (0.2, 0.0))])
+    assert match.diff_shape(s, base, edit) is None
+
+
+def test_deleted_object_is_refused_with_a_delete_hint(tmp_path):
+    a = _shape(block=11)
+    b = _shape(block=12, parent="console top", offset=(5.0, 0.0, 0.0))
+    base = _export_read(tmp_path, [a, b])
+    edit = {obj_io.object_name(a): base[obj_io.object_name(a)]}
+    with pytest.raises(ShapeDiffError, match="--delete 12"):
+        match.diff([a, b], base, edit)
+
+
+def test_with_deletions_stands_an_empty_object_in_for_a_deleted_block(tmp_path):
+    a = _shape(block=11)
+    b = _shape(block=12, parent="console top", offset=(5.0, 0.0, 0.0))
+    base = _export_read(tmp_path, [a, b])
+    edit = {obj_io.object_name(a): base[obj_io.object_name(a)]}
+    full = match.with_deletions(base, edit, [12])
+    assert set(full) == set(base)
+    gone = full[obj_io.object_name(b)]
+    assert gone.positions == [] and gone.faces == []
+    edits = match.diff([a, b], base, full)
+    assert [e["block"] for e in edits] == [12]
+    # every triangle the export carries; tri 2 is zero-area once welded (1, 4
+    # coincide), never reaches the OBJ, and renders nothing where it stays
+    assert edits[0]["remove_triangles"] == [0, 1]
+    assert edits[0]["add_triangles"] == [] and edits[0]["moves"] == []
+
+
+def test_with_deletions_refuses_a_block_still_in_the_edit(tmp_path):
+    a = _shape(block=11)
+    base = _export_read(tmp_path, [a])
+    with pytest.raises(ShapeDiffError, match="--delete 11: .* still in the edit"):
+        match.with_deletions(base, dict(base), [11])
+
+
+def test_with_deletions_refuses_a_block_with_no_base_object(tmp_path):
+    a = _shape(block=11)
+    base = _export_read(tmp_path, [a])
+    with pytest.raises(ShapeDiffError, match="--delete 99: no object"):
+        match.with_deletions(base, dict(base), [99])
+
+
+def test_main_passes_delete_and_reports_it(monkeypatch, tmp_path, capsys):
+    cli, _ = _patched_cli(monkeypatch, tmp_path)
+    seen = {}
+
+    def fake(rel, base, edit, delete=()):
+        seen["delete"] = list(delete)
+        return cli.make_fix_dict(rel, [GOLDEN_EDIT]), [GOLDEN_EDIT]
+    monkeypatch.setattr(cli, "build_fix", fake)
+    assert cli.main(["diff", "b.obj", "e.obj", "--delete", "84", "--delete", "87"]) == 0
+    assert seen["delete"] == [84, 87]
+    assert "deleted: blocks 84, 87" in capsys.readouterr().out
+
+
+def test_real_dbridge_deleted_object_verifies(tmp_path, capsys):
+    pytest.importorskip("_dauntless_host")
+    nif = paths.game_root() / DBRIDGE
+    if not nif.exists():
+        pytest.skip("BC content not configured")
+    from tools import bridge_shape_diff as cli
+    cli.export(DBRIDGE, tmp_path)
+    base = tmp_path / "Dbridge.obj"
+    lines = base.read_text().splitlines()
+    o = lines.index(next(line for line in lines if line.startswith("o b0084")))
+    end = next(k for k in range(o + 1, len(lines)) if lines[k].startswith("o "))
+    # Drop the object's header and faces; its v/vt lines stay as loose
+    # vertices (Blender would drop them, renumbering -- a loose vertex is
+    # equivalent here, and keeps every other object's indices valid).
+    kept = lines[:o] + [ln for ln in lines[o + 1:end] if not ln.startswith(("f ", "usemtl"))] + lines[end:]
+    edit = tmp_path / "edit.obj"
+    edit.write_text("\n".join(kept) + "\n")
+    with pytest.raises(ShapeDiffError, match="--delete 84"):
+        cli.build_fix(DBRIDGE, base, edit)
+    fix, edits = cli.build_fix(DBRIDGE, base, edit, delete=[84])
+    assert [e["block"] for e in edits] == [84]
+    assert "verified 1 objects" in capsys.readouterr().out

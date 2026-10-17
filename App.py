@@ -86,7 +86,7 @@ from engine.appc.tg_ui.st_widgets import (
     SortedRegionMenu, SortedRegionMenu_CreateW, SortedRegionMenu_Cast,
     SortedRegionMenu_SetWarpButton, SortedRegionMenu_GetWarpButton,
     SortedRegionMenu_SetPauseSorting, SortedRegionMenu_ClearSetCourseMenu,
-    SortedRegionMenu_IsSortingPaused,
+    SortedRegionMenu_IsSortingPaused, SortedRegionMenu_GetRoot,
     STRoundedButton, STRoundedButton_CreateW, STRoundedButton_Cast,
     STSubPane, STSubPane_Create, STSubPane_Cast,
     STButton_Cast, STStylizedWindow_Cast,

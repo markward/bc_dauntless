@@ -24,43 +24,29 @@ def test_the_sweep_covers_the_campaign():
 
 @pytest.mark.parametrize("name", MISSIONS)
 def test_pressing_warp_never_raises(name, monkeypatch, no_logged_failures):
-    hm.load(name)
-    btn = hm.the_warp_button()
-    assert btn is not None
-    player = App.Game_GetCurrentPlayer()
-    # With a course: the mission's own, else the first other region the
-    # menu offers.
-    here = player.GetContainingSet() if player is not None else None
-    course = btn.GetDestination() or hm.first_offered_course(
-        here.GetName() if here is not None else None)
-    if course:
-        hm.plot_course(btn, course)
-    warp_button.press(btn)
-    hm.tick(5.0)
-    # Let that warp finish, so the next press is not ignored as a second warp.
-    if player is not None and warp_button.is_warp_active(player):
-        hm.tick_until(lambda: not warp_button.is_warp_active(player),
-                      bound_s=hm.MASTER_DIALOGUE_BOUND_S)
-    # With none.
-    player = App.Game_GetCurrentPlayer()
-    btn.set_player_destination(None)
-    ran = []
-    real_resolve = events._resolve_handler
+    def _press_without_course_and_check(btn):
+        player = App.Game_GetCurrentPlayer()
+        ran = []
+        real_resolve = events._resolve_handler
 
-    def _recording(qualified):
-        ran.append(qualified)
-        return real_resolve(qualified)
-    monkeypatch.setattr(events, "_resolve_handler", _recording)
-    warp_button.press(btn)
-    monkeypatch.setattr(events, "_resolve_handler", real_resolve)
-    # The chain ran newest-first and stopped either at the engine step, which
-    # starts nothing without a course, or at a mission handler that consumed
-    # the press (8 missions refuse a course-less Warp with their own line,
-    # e.g. E1M2's WarpButtonHandler).
-    chain = list(reversed(btn._handlers.get(App.ET_WARP_BUTTON_PRESSED, [])))
-    assert ran and ran == chain[:len(ran)], (ran, chain)
-    if ran[-1] == warp_button.ENGINE_STEP:
-        assert player is None or not warp_button.is_warp_active(player)
-    else:
-        assert ran[-1].startswith("Maelstrom."), ran
-    hm.tick(5.0)
+        def _recording(qualified):
+            ran.append(qualified)
+            return real_resolve(qualified)
+        monkeypatch.setattr(events, "_resolve_handler", _recording)
+        warp_button.press(btn)
+        monkeypatch.setattr(events, "_resolve_handler", real_resolve)
+        # The chain ran newest-first and stopped either at the engine step,
+        # which starts nothing without a course, or at a mission handler
+        # that consumed the press (8 missions refuse a course-less Warp with
+        # their own line, e.g. E1M2's WarpButtonHandler).
+        chain = list(reversed(btn._handlers.get(App.ET_WARP_BUTTON_PRESSED,
+                                                [])))
+        assert ran and ran == chain[:len(ran)], (ran, chain)
+        if ran[-1] == warp_button.ENGINE_STEP:
+            assert player is None or not warp_button.is_warp_active(player)
+        else:
+            assert ran[-1].startswith("Maelstrom."), ran
+
+    # With a course (the mission's own, else the first other region the
+    # menu offers), then with none, checked above.
+    hm.drive_warp(name, press_without_course=_press_without_course_and_check)

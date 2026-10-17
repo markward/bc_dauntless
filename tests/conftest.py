@@ -36,6 +36,24 @@ if not _RESOLUTION.ok:
         "s.set('paths','sdk','/path/to/sdk')\"\n"
     )
 
+# Hermetic user data: every write site resolves under a throwaway data dir
+# (removed at interpreter exit), and the content roots are pinned in the
+# environment so a later paths.resolve() finds them without the developer's
+# real settings.json. setdefault, so a developer's own env still wins.
+import atexit
+import shutil
+import tempfile
+
+from engine import mods as _mods
+
+if _paths.DATA_DIR_ENV not in os.environ:
+    _TEST_DATA_DIR = tempfile.mkdtemp(prefix="dauntless-test-data-")
+    os.environ[_paths.DATA_DIR_ENV] = _TEST_DATA_DIR
+    atexit.register(shutil.rmtree, _TEST_DATA_DIR, ignore_errors=True)
+for _kind, _root in (("game", _RESOLUTION.game), ("sdk", _RESOLUTION.sdk)):  # paths-guard: ENV_VARS kind labels
+    os.environ.setdefault(_paths.ENV_VARS[_kind], str(_root))
+os.environ.setdefault(_mods.ENV_VAR, str(PROJECT_ROOT / "mods"))
+
 SDK_SCRIPTS = _paths.sdk_scripts()
 
 # Make the C++-built _dauntless_host extension importable. CMake outputs it
@@ -924,6 +942,13 @@ def _reset_leakable_engine_globals():
     try:
         from engine import ship_catalog as _ship_catalog
         _ship_catalog.reset_session()
+    except Exception:
+        pass
+    # Queued ET_SET_ALERT_LEVEL levels (engine/appc/ships.py): a test that
+    # posts without ticking would land its level on a later test's ship.
+    try:
+        from engine.appc import ships as _ships
+        del _ships._pending_alert_levels[:]
     except Exception:
         pass
     # Swapped-module split: fixtures that re-import an SDK module

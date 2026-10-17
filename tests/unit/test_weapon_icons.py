@@ -23,6 +23,7 @@ import time
 
 import pytest
 
+from engine import paths
 from engine.ui import icon_tracer, weapon_icons
 
 
@@ -390,7 +391,7 @@ def test_icon_svg_for_num_returns_none_when_potrace_missing(monkeypatch, tmp_pat
     Returning None drops the icon silently — the rest of the UI
     continues to render."""
     monkeypatch.setattr(weapon_icons, "_CURATED_DIR", str(tmp_path / "curated"))
-    monkeypatch.setattr(weapon_icons, "_SVG_CACHE_DIR", str(tmp_path / "empty"))
+    monkeypatch.setenv("DAUNTLESS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setattr(icon_tracer, "_potrace_available", lambda: False)
     weapon_icons.reset_cache()
     assert weapon_icons.icon_svg_for_num(350) is None
@@ -407,14 +408,14 @@ def test_curated_svg_overrides_auto_trace(monkeypatch, tmp_path):
         '<svg xmlns="http://www.w3.org/2000/svg" width="54" height="24">'
         '<title>hand-authored</title></svg>'
     )
-    cache = tmp_path / "cache"
-    cache.mkdir()
+    monkeypatch.setenv("DAUNTLESS_DATA_DIR", str(tmp_path / "data"))
+    cache = paths.cache_dir() / "icons" / "weapons"
+    cache.mkdir(parents=True)
     (cache / "350.svg").write_text(
         '<svg xmlns="http://www.w3.org/2000/svg" width="54" height="24">'
         '<title>auto-traced</title></svg>'
     )
     monkeypatch.setattr(weapon_icons, "_CURATED_DIR", str(curated))
-    monkeypatch.setattr(weapon_icons, "_SVG_CACHE_DIR", str(cache))
     weapon_icons.reset_cache()
 
     svg = weapon_icons.icon_svg_for_num(350)
@@ -430,14 +431,14 @@ def test_curated_dir_miss_falls_through_to_cache(monkeypatch, tmp_path):
     interim."""
     curated = tmp_path / "curated"
     curated.mkdir()  # empty
-    cache = tmp_path / "cache"
-    cache.mkdir()
+    monkeypatch.setenv("DAUNTLESS_DATA_DIR", str(tmp_path / "data"))
+    cache = paths.cache_dir() / "icons" / "weapons"
+    cache.mkdir(parents=True)
     (cache / "350.svg").write_text(
         '<svg xmlns="http://www.w3.org/2000/svg" width="54" height="24">'
         '<title>auto-traced</title></svg>'
     )
     monkeypatch.setattr(weapon_icons, "_CURATED_DIR", str(curated))
-    monkeypatch.setattr(weapon_icons, "_SVG_CACHE_DIR", str(cache))
     weapon_icons.reset_cache()
 
     svg = weapon_icons.icon_svg_for_num(350)

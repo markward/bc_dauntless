@@ -1,10 +1,13 @@
 // native/src/voxel/src/dhv.cc
 #include <voxel/dhv.h>
 
+#include <cerrno>
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <string>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace voxel {
@@ -31,7 +34,12 @@ bool get(std::istream& s, T& v) {
 
 bool write_dhv(const std::filesystem::path& path,
                const DistanceField& field,
-               const HullVolumeMeta& meta) {
+               const HullVolumeMeta& meta,
+               std::string* why) {
+    const auto fail = [why](std::string reason) {
+        if (why) *why = std::move(reason);
+        return false;
+    };
     // A payload size inconsistent with dims is an internally malformed
     // field: writing it would either short a later gcount() check (too few
     // bytes) or silently drop trailing bytes (too many). Reject at the
@@ -43,17 +51,28 @@ bool write_dhv(const std::filesystem::path& path,
         static_cast<std::int64_t>(field.dims.z);
     if (expected_cells < 0 ||
         static_cast<std::int64_t>(field.dist.size()) != expected_cells)
-        return false;
+        return fail("distance payload does not match its dimensions");
 
     std::error_code ec;
     if (path.has_parent_path())
         std::filesystem::create_directories(path.parent_path(), ec);
+    const std::error_code dir_ec = ec;
 
-    const std::filesystem::path tmp = path.string() + ".tmp";
+    // Appended on the path itself: `path.string() + ".tmp"` would round-trip
+    // through the ANSI code page on MSVC and throw for a profile folder name
+    // it can't map.
+    std::filesystem::path tmp = path;
+    tmp += ".tmp";
     bool write_ok = false;
     {
         std::ofstream s(tmp, std::ios::binary | std::ios::trunc);
-        if (!s) return false;
+        if (!s) {
+            const int err = errno;
+            if (dir_ec)
+                return fail("cannot create the folder (" + dir_ec.message() + ")");
+            return fail("cannot open a temporary file (" +
+                        std::generic_category().message(err) + ")");
+        }
 
         s.write(kMagic, 4);
         put(s, kFormat);
@@ -92,12 +111,17 @@ bool write_dhv(const std::filesystem::path& path,
         // later run might mistake for a stale-but-otherwise-valid cache
         // entry (it never sits at `path`, so read_dhv would never see it
         // anyway, but there is no reason to leak it).
+        const int err = errno;
         std::error_code rm_ec;
         std::filesystem::remove(tmp, rm_ec);
-        return false;
+        return fail("write failed (" + std::generic_category().message(err) + ")");
     }
     std::filesystem::rename(tmp, path, ec);
-    if (ec) { std::filesystem::remove(tmp, ec); return false; }
+    if (ec) {
+        const std::string reason = "rename failed (" + ec.message() + ")";
+        std::filesystem::remove(tmp, ec);
+        return fail(reason);
+    }
     return true;
 }
 

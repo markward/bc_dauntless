@@ -9,10 +9,9 @@ from engine.core.game import Game, Episode, Mission, _set_current_game
 
 @pytest.fixture
 def saves_under_tmp(tmp_path, monkeypatch):
-    """Re-anchor the saves/ directory to a tmp path so tests don't pollute
-    the project's saves/ directory."""
-    monkeypatch.chdir(tmp_path)
-    yield tmp_path / "saves"
+    """The saves dir under the suite's temp DAUNTLESS_DATA_DIR."""
+    from engine import paths
+    yield paths.saves_dir()
 
 
 @pytest.fixture

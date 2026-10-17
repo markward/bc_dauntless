@@ -60,6 +60,19 @@
   color: white;
 }
 
+/* Set Course system row: the caret is its own hit target (it opens the
+   regions; the rest of the row sets course to the system's default). It
+   spans the row's full height and carries its own hover and a hairline, so
+   it reads as a separate control instead of BC's invisible strip. The
+   negative margins keep its footprint at 22px, so labels stay aligned. */
+.crew-menu__caret--split {
+  width: 24px;
+  margin: -6px 4px -6px -6px;
+  padding: 6px 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.18);
+}
+.crew-menu__caret--split:hover { background: rgba(255, 255, 255, 0.16); }
+
 /* Leaf rows have no caret — pad the label to align with carried rows. */
 .crew-menu__row--leaf .crew-menu__label { margin-left: 22px; }
 

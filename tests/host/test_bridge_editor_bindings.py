@@ -636,7 +636,9 @@ def test_area_wrappers_degrade_headless(monkeypatch):
 def test_a_click_under_a_map_3_alcove_lip_snaps_to_the_curved_lip(dbridge, monkeypatch):
     """Spec §16.8: DBridge's Map 3 left wall (block 652) holds three alcoves
     in one mesh. A click under an alcove's top lip snaps to the curved lip
-    run (measured 2026-10-12: 116 units, y -37..79, z 88.7..89.6)."""
+    run (measured 2026-10-12: 116 units, y -37..79, z 88.7..89.6; after the
+    round-8 rebuild of block 652, mirrored from 663, measured 2026-10-17:
+    87.8 units in 3 segments, y -36..52, z 89.05..89.56)."""
     from engine.bridge_editor import edge_snap, light_shapes as ls
     h, iid = dbridge
     monkeypatch.setattr(host_io, "_h", h)
@@ -654,7 +656,7 @@ def test_a_click_under_a_map_3_alcove_lip_snaps_to_the_curved_lip(dbridge, monke
     s = edge_snap.snap(fr, anchor)
     assert s is not None
     length = sum(ls._len(ls._sub(b, a)) for a, b in zip(s.polyline, s.polyline[1:]))
-    assert length > 100 and 2 <= len(s.polyline) - 1 <= edge_snap.MAX_SEGMENTS
+    assert length > 80 and 2 <= len(s.polyline) - 1 <= edge_snap.MAX_SEGMENTS
     assert all(88.0 < p[2] < 90.5 for p in s.polyline)
     # Review item 1 (Critical): the clicked triangle's own (eye-oriented)
     # normal must be the one the snap reports -- the bug this regresses let
@@ -664,8 +666,15 @@ def test_a_click_under_a_map_3_alcove_lip_snaps_to_the_curved_lip(dbridge, monke
     # And every welded triangle in the lip region (block 652 keeps 79 of 281
     # triangles with reversed winding there) must agree with its own click,
     # not a neighbour's -- this loop is what would have caught the bug.
-    lip = [i for i, c in enumerate(centroids) if c[2] > 80]
-    assert lip
+    # A sliver too thin to click is skipped: round 8's block 652 has one
+    # (0.03 units wide) whose centroid lies exactly on its neighbour's edge
+    # and plane, so the click is on both surfaces and either answer is right.
+    def width(t):
+        a, b, c = (pts[k] for k in t)
+        area2 = ls._len(ls._cross(ls._sub(b, a), ls._sub(c, a)))
+        return area2 / max(ls._len(ls._sub(b, a)), ls._len(ls._sub(c, b)), ls._len(ls._sub(a, c)))
+    lip = [i for i, c in enumerate(centroids) if c[2] > 80 and width(tris[i]) > 0.1]
+    assert len(lip) > 100
     for i in lip:
         sn = edge_snap.snap(fr, centroids[i])
         assert sn is not None, centroids[i]

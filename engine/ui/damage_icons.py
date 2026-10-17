@@ -47,7 +47,10 @@ def _game_icon_file(stem: str):
 _CURATED_DIR = os.path.join(
     _PROJECT_ROOT, "native", "assets", "ui-cef", "icons", "damage",
 )
-_SVG_CACHE_DIR = os.path.join(_PROJECT_ROOT, "cache", "icons", "damage")
+def _svg_cache_dir() -> str:
+    """Auto-trace cache dir under the user cache folder. Resolved at USE."""
+    from engine import paths
+    return str(paths.cache_dir() / "icons" / "damage")
 
 
 # Damage TGAs are 16x16 standalone files (not an atlas), so every
@@ -113,11 +116,17 @@ def trace_all() -> set[int]:
     Swallows individual potrace failures (one bad icon doesn't block
     the others). Same idempotency contract as weapon_icons.trace_all.
     """
-    os.makedirs(_SVG_CACHE_DIR, exist_ok=True)
+    cache_dir = _svg_cache_dir()
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+    except OSError as exc:
+        from engine import paths
+        paths.report_write_failure(cache_dir, exc)
+        raise
     written: set[int] = set()
     tga_cache: dict[str, bytes] = {}
     for num, spec in ICON_REGISTRY.items():
-        out_path = os.path.join(_SVG_CACHE_DIR, f"{num}.svg")
+        out_path = os.path.join(cache_dir, f"{num}.svg")
         stem = os.path.splitext(spec.tga)[0]
         source_path = str(_game_icon_file(stem))
         if not os.path.isfile(source_path):
@@ -136,8 +145,13 @@ def trace_all() -> set[int]:
             svg = _trace_to_svg(rgba, w, h)
         except (subprocess.CalledProcessError, PotraceMissingError):
             continue
-        with open(out_path, "w") as fp:
-            fp.write(svg)
+        try:
+            with open(out_path, "w") as fp:
+                fp.write(svg)
+        except OSError as exc:
+            from engine import paths
+            paths.report_write_failure(out_path, exc)
+            continue
         written.add(num)
     return written
 
@@ -163,7 +177,7 @@ def icon_svg_for_num(num: int) -> Optional[str]:
         svg = _wrap_with_inset_clip(svg)
         _svg_cache[num] = svg
         return svg
-    svg_path = os.path.join(_SVG_CACHE_DIR, f"{num}.svg")
+    svg_path = os.path.join(_svg_cache_dir(), f"{num}.svg")
     if not os.path.isfile(svg_path):
         try:
             trace_all()

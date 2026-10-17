@@ -25,31 +25,48 @@ that's not part of Phase 1.
 
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
 def _save_dir() -> Path:
-    """Resolve the saves directory.
-
-    SDK callers reference ``saves\\QuickSav.BCS`` or ``saves//<name>.BCS``
-    (mixed Windows/Unix slashes) as relative paths.  Anchor everything to
-    the project working directory and let the OS handle the slash form.
+    """The saves directory (``paths.saves_dir()``).  Not created here: loads
+    must not make a folder; writers create the parent right before writing.
     """
-    base = Path.cwd() / "saves"
-    base.mkdir(parents=True, exist_ok=True)
-    return base
+    from engine import paths
+    return paths.saves_dir()
 
 
 def _normalize(filename: str) -> Path:
-    """Strip leading ``saves/`` or ``saves\\`` and any extension; return
-    a project-anchored path under the saves directory."""
+    """Strip a leading ``saves/``, ``saves\\`` or ``saves//`` and return the
+    path under the saves directory.
+
+    SDK callers pass ``saves\\QuickSav.BCS`` / ``saves//<name>.BCS`` (mixed
+    slash forms; the captain name inside is player-controlled text).  Raises
+    ValueError if the result would leave the saves directory -- absolute
+    inputs and ``..`` escapes alike.
+    """
     name = filename.replace("\\", "/")
     if name.startswith("saves/"):
-        name = name[len("saves/"):]
-    # Collapse any leading double-slash that the SDK's "saves//" pattern
-    # produces after stripping.
-    name = name.lstrip("/")
-    return _save_dir() / name
+        # Also collapses the "saves//" pattern's leftover leading slash.
+        name = name[len("saves/"):].lstrip("/")
+    if PurePosixPath(name).is_absolute() or PureWindowsPath(name).drive:
+        raise ValueError("save path must be relative: %r" % filename)
+    return _contained(name)
+
+
+def _contained(rel: str) -> Path:
+    """``saves_dir()/rel``, or ValueError if it resolves outside saves_dir().
+    The one guard every writer goes through."""
+    root = _save_dir()
+    path = root / rel
+    if not path.resolve().is_relative_to(root.resolve()):
+        raise ValueError("path escapes the saves directory: %r" % rel)
+    return path
+
+
+def _report(target, exc) -> None:
+    from engine import paths
+    paths.report_write_failure(target, exc)
 
 
 class SaveLoadManager:
@@ -89,14 +106,17 @@ class SaveLoadManager:
         Returns 1 on success (file written), 0 on any failure.  SDK callers
         treat the result as a boolean.
         """
+        target = filename
         try:
             state = self._build_save_state()
             path = _normalize(filename)
+            target = path
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(state, indent=2, default=str))
             self._save_filename = str(filename)
             return 1
-        except Exception:
+        except Exception as exc:
+            _report(target, exc)
             return 0
 
     def LoadFromFile(self, filename: str) -> int:
@@ -121,17 +141,20 @@ class SaveLoadManager:
         it up by name.  Also persisted to disk under saves/missions/<name>.json
         so cross-process restarts work.
         """
+        target = "saves/missions"
         try:
             module_name = self._current_mission_module()
             if not module_name:
                 return 0
             state = self._build_mission_state()
             self._mission_states[module_name] = state
-            path = _save_dir() / "missions" / f"{module_name}.json"
+            path = _contained("missions/%s.json" % module_name)
+            target = path
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(state, indent=2, default=str))
             return 1
-        except Exception:
+        except Exception as exc:
+            _report(target, exc)
             return 0
 
     def LoadMissionState(self, module_name: str) -> int:
@@ -145,7 +168,7 @@ class SaveLoadManager:
         try:
             state = self._mission_states.get(module_name)
             if state is None:
-                path = _save_dir() / "missions" / f"{module_name}.json"
+                path = _contained("missions/%s.json" % module_name)
                 if not path.exists():
                     return 0
                 state = json.loads(path.read_text(encoding="utf-8"))

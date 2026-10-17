@@ -112,6 +112,7 @@ class TGConfigMapping:
         layout the real game's Options.cfg uses, so files written here can
         be read back by the original engine if it ever runs the same path.
         """
+        path = filename
         try:
             path = self._resolve_path(filename)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -123,18 +124,21 @@ class TGConfigMapping:
                 lines.append("")
             path.write_text("\n".join(lines))
             return 1
-        except Exception:
+        except Exception as exc:
+            from engine import paths
+            paths.report_write_failure(path, exc)
             return 0
 
     def _resolve_path(self, filename: str) -> Path:
-        """Anchor relative filenames to the project working directory.
+        """Anchor relative filenames to the config dir.
 
         SDK callers pass bare filenames ("Options.cfg", "BCTickLog.cfg") —
-        the original engine writes those next to the running .exe; the
-        headless harness writes them next to the project root so the
-        instrumentation tooling and tests can find them.
+        the original engine writes those next to the running .exe. Here they
+        land in paths.config_dir() (the checkout root in a checkout layout,
+        the per-user config folder when packaged); never the cwd.
         """
+        from engine import paths
         p = Path(filename.replace("\\", "/"))
         if p.is_absolute():
             return p
-        return Path.cwd() / p
+        return paths.config_dir() / p

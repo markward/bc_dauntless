@@ -56,6 +56,8 @@ def test_converts_tga_and_returns_data_url(tmp_path, monkeypatch):
     monkeypatch.setattr(ship_icons, "_game_icon_file",
                          lambda name: icons_dir / (name + ".tga"))
     monkeypatch.setattr(ship_icons, "_CACHE_DIR",      str(cache_dir))
+    from engine import dev_mode
+    monkeypatch.setattr(dev_mode, "is_enabled", lambda: True)
     ship_icons.reset_cache()
 
     url = ship_icons.icon_path_for_species("Galaxy")

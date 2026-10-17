@@ -45,6 +45,8 @@ class HardpointOverridesFileTarget:
         calls) / (subsystem, "__emitter__", index, calls) 4-tuples.
         Reload → apply → emit → atomic."""
         import types
+        from engine import paths
+        paths.refuse_repo_write_when_packaged(self.path)
         with open(self.path, "r", encoding="utf-8") as fh:
             src = fh.read()
         module = types.ModuleType("_ho_load")

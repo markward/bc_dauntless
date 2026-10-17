@@ -337,6 +337,13 @@ class StarMapPanel(Panel):
                 if sm.system_id_for_set(node.GetLabel()) != sid:
                     continue
                 children = getattr(node, "_children", []) or []
+                # An arrow on a system that HAS regions points at the region
+                # a click on it reaches: its own default (Systems/Utils.py:24,
+                # moved by SetRegionName). E1M1 arrows "Vesuvi" this way
+                # (E1M1.py:3603), meaning Haven.
+                node_default = (node.GetRegionModule()
+                                if children and self._is_pointed_at(node)
+                                else None)
                 # A node with regions offers those; a single-region system
                 # (Riha, Starbase 12) offers ITSELF, via its own module.
                 for child in children or [node]:
@@ -345,16 +352,15 @@ class StarMapPanel(Panel):
                         continue
                     seen.add(mod)
                     # An arrow on the node that CONTRIBUTES this row. For a
-                    # system with regions that is the region node; for a
-                    # single-region system (and each half of the Tau Ceti
-                    # fold) it is the system node itself, which is what makes
-                    # E1M1's arrow on "Starbase 12" mark that row and not
-                    # "Dry Dock" beside it. An arrow on a system that HAS
-                    # regions marks the system only — it never said which
-                    # region, so neither do we.
+                    # system with regions that is the region node (or the
+                    # system, for its default); for a single-region system
+                    # (and each half of the Tau Ceti fold) it is the system
+                    # node itself, which is what makes E1M1's arrow on
+                    # "Starbase 12" mark that row and not "Dry Dock" beside it.
                     rows.append({"id": str(mod), "label": child.GetLabel(),
                                  "module": mod,
-                                 "attention": self._is_pointed_at(child)})
+                                 "attention": (self._is_pointed_at(child)
+                                               or mod == node_default)})
             except Exception as e:
                 dev_mode.log_swallowed("star map offered rows", e)
         return rows
@@ -502,7 +508,14 @@ class StarMapPanel(Panel):
         multi-region system (Vesuvi6, Alioth8, Itari8). A system with no
         default of its own (Tau Ceti folds Starbase 12 and Dry Dock onto one
         star) takes the last destination it lists.
+
+        The live Set Course menu wins over the offline bake, so a mission's
+        SetRegionName (Episode4.py:187) lands the double-click exactly where a
+        click on the drop-down's system row would.
         """
+        mod = self._live_system_default(sid)
+        if mod is not None:
+            return mod
         mod = sm.system_module(sid)
         if mod is not None:
             return mod
@@ -510,6 +523,23 @@ class StarMapPanel(Panel):
                                           sm.warp_points_for(sid))]
         mods = [m for m in mods if m is not None]
         return mods[-1] if mods else None
+
+    def _live_system_default(self, sid) -> Optional[str]:
+        """Default region of the live menu's system node for `sid`, or None.
+
+        Only a node WITH regions has a default distinct from its rows; a
+        single-region node (and each half of the Tau Ceti fold) is left to
+        the caller's existing rules.
+        """
+        for node in getattr(self._course_menu, "_children", []) or []:
+            try:
+                if (sm.system_id_for_set(node.GetLabel()) == sid
+                        and getattr(node, "_children", None)
+                        and node.GetRegionModule() is not None):
+                    return node.GetRegionModule()
+            except Exception as e:
+                dev_mode.log_swallowed("star map live system default", e)
+        return None
 
     def _module_for(self, warp_id) -> Optional[str]:
         sid = self._info_system
