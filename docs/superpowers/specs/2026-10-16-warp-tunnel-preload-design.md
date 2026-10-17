@@ -329,7 +329,7 @@ measurements above) to after.
 
 | Arrival | Before | After |
 |---|---|---|
-| Vesuvi Haven, first visit, dev | 9151 ms (E1M2 route: 9364) | 322 ms (second run 372) |
+| Vesuvi Haven, first visit, dev | 9151 ms and 9405 ms (E1M2 route: 9364) | 322 ms (second run 372) |
 | Vesuvi Haven, first visit, prod | not measured | 325 ms (second run 345) |
 | Vesuvi Haven, return | 7376 ms | 105 ms dev (run 2: 114), 107 ms prod |
 | Starbase12 (QuickBattle) | 1208-1219 ms | 875-887 ms; 921-952 ms in the later runs (`warp.place_player` ~790-800 ms, deferred) |
@@ -345,7 +345,7 @@ measurements above) to after.
 - No `[warp-preload] late:` line appeared in any run (Mark).
 - System haze in production: the Dust Cloud nebula looked consistent across the
   developer runs and the production run (Mark).
-- **Open follow-up (Mark agreed it is a separate project): tunnel judder when
+- **Open follow-up: tunnel judder when
   the preload loads catalogue rocks or planets.** Tunnel frames of ~100-180 ms:
   4 frames on Starbase12 to Vesuvi Dust Cloud (each `warp.preload` ~107 ms, the
   12 Asteroidh1 rocks the system loader pre-creates), and ~10 frames after the
@@ -354,10 +354,16 @@ measurements above) to after.
   model loader into a worker "prepare" (file read, PNG decode, mesh build) and
   a budgeted main-thread "finish" (GL upload), like the impostor-atlas
   prefetch. First confirm with a scope inside the model load that texture
-  decode dominates (inferred, not measured).
+  decode dominates (inferred, not measured). Mark asked whether this could be offloaded to a
+  secondary thread in a follow-up project; Task 9 was closed with the judder
+  recorded as OPEN on that basis.
 - Other deferred follow-ups: `warp.place_player` ~0.8 s (QuickBattle
-  Starbase12), `warp.depart` ~0.4 s (leaving Vesuvi), first-warp CEF repaint
-  frames (~85 ms `cef.composite`), `WarpSequence.Stop()` never calls
+  Starbase12), `warp.depart` ~0.4 s (leaving Vesuvi), QuickBattle to Vesuvi warp: ~8 tunnel
+  frames with ~85 ms `cef.composite` (a CEF repaint, not loading),
+  `WarpSequence.Stop()` never calls
   `_detach_from_engine()` (pre-existing), and a boot-time prebuild of every
-  mapped system's haze table for non-warp mission starts.
+  mapped system's haze table for non-warp mission starts (final review
+  recommendation: missions that start in a profiled system without a warp,
+  such as boot, a direct `LoadEpisode` or a dev swap, pay the table build on
+  the main thread, ~200 ms for 3-row systems and seconds for Vesuvi/Belaruz).
 - Not claimed: Mark has not said the warp feels seamless (Acceptance item 5).
