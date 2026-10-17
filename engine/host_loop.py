@@ -4706,8 +4706,11 @@ def _reset_sensor_state() -> None:
     # The native pass keeps its old far-field table across a mission swap --
     # mark our latch UNKNOWN (not None) so the next _push_system_nebula call
     # is forced to either clear it (unmapped/gate-closed) or rebuild it fresh
-    # (mapped, even into the same system name as before the swap).
-    _system_nebula_pushed_for = _SYSTEM_NEBULA_UNKNOWN
+    # (mapped, even into the same system name as before the swap). A latch
+    # already None means the pass holds nothing (never fed, or cleared), and
+    # a swap does not change that: leave it, so a closed setting pushes nothing.
+    if _system_nebula_pushed_for is not None:
+        _system_nebula_pushed_for = _SYSTEM_NEBULA_UNKNOWN
     # Clear concealment lock-break latches so a new mission's ships don't
     # inherit stale id()-keyed latches from the prior mission.
     from engine.appc.sensor_detection import reset_concealment_state
@@ -5031,8 +5034,8 @@ _SYSTEM_NEBULA_UNKNOWN = object()
 
 # System name whose radial-profile table the SystemNebulaPass currently holds,
 # or None once we know it holds nothing, or _SYSTEM_NEBULA_UNKNOWN right after
-# a mission swap (_reset_sensor_state) until the next _push_system_nebula call
-# resolves it one way or the other. Also reset to None whenever the
+# a mission swap (_reset_sensor_state) that found a table held, until the next
+# _push_system_nebula call resolves it one way or the other. Also reset to None whenever the
 # developer/volumetric gate closes, so re-opening it re-pushes.
 _system_nebula_pushed_for = None  # str | None | _SYSTEM_NEBULA_UNKNOWN
 # The veil (engine.dev_nebula_dials) the held profile's k_sys was solved

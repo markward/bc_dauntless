@@ -303,15 +303,30 @@ def test_profile_map_without_a_star_does_not_raise(monkeypatch):
     assert r.profiles == [None], "no star to centre the haze on: clear it"
 
 
-def test_production_setting_off_makes_no_native_call_after_a_mission_swap(monkeypatch):
-    """Setting off + nothing ever pushed: even the UNKNOWN latch a mission
-    swap leaves must not reach the renderer."""
+def test_production_setting_off_pushes_nothing_after_a_mission_swap(monkeypatch):
+    """Setting off + nothing ever pushed: the native pass holds no table, so
+    a mission swap must not invent a clear for it -- no profile (not even
+    None) and no star reach the renderer. The setting itself is still read
+    every frame: that query is the gate."""
     _guard_latch_restore(monkeypatch)
     monkeypatch.setattr(dev_mode, "is_enabled", lambda: False)
+    host_loop._system_nebula_pushed_for = None      # nothing ever pushed
     host_loop._reset_sensor_state()
     r = _R(volumetric=False)
     host_loop._push_system_nebula(r, object(), [{"position": (1.0, 2.0, 3.0)}], False)
-    assert r.stars == []
+    assert r.profiles == [] and r.stars == []
+
+
+def test_swap_after_a_push_still_forces_the_clear(monkeypatch):
+    """A table WAS pushed before the swap: the native pass keeps it, so the
+    gate-closed frame after the swap must clear it once."""
+    _guard_latch_restore(monkeypatch)
+    host_loop._system_nebula_pushed_for = "Vesuvi"
+    host_loop._reset_sensor_state()
+    r = _R(volumetric=False)
+    host_loop._push_system_nebula(r, object(), [], False)
+    host_loop._push_system_nebula(r, object(), [], False)
+    assert r.profiles == [None]
 
 
 def test_flare_veil_and_profile_push_share_one_gate():
