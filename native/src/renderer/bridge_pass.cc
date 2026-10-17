@@ -23,7 +23,9 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <iterator>
 #include <limits>
@@ -593,6 +595,98 @@ void BridgePass::render(const scenegraph::World& world,
     }
 }
 
+namespace {
+
+/// Per-state capture colours and layer membership of two lights (spot or
+/// area): the part of a light the probes hold.
+template <class L>
+bool same_capture_data(const L& a, const L& b) {
+    for (int s = 0; s < kBridgeStates; ++s)
+        if (a.capture_radiance[s] != b.capture_radiance[s] ||
+            a.layer[s] != b.layer[s] ||
+            a.layer_radiance[s] != b.layer_radiance[s])
+            return false;
+    return true;
+}
+
+/// FNV-1a, 64 bit, over raw bytes.
+class Fnv1a {
+public:
+    template <class T>
+    void add(const T& v) {
+        unsigned char b[sizeof(T)];
+        std::memcpy(b, &v, sizeof(T));
+        for (unsigned char c : b) { h_ ^= c; h_ *= 1099511628211ull; }
+    }
+    void add(const glm::vec3& v) { add(v.x); add(v.y); add(v.z); }
+    std::uint64_t value() const { return h_; }
+private:
+    std::uint64_t h_ = 14695981039346656037ull;
+};
+
+}  // namespace
+
+std::uint64_t BridgePass::probe_signature(int probe) const {
+    if (probe < 0 || probe >= probe_count()) return 0;
+    const bool layer = probe >= kBridgeStates;
+    const int k = probe - kBridgeStates;
+    const int s = layer ? layer_states_[static_cast<std::size_t>(k)] : probe;
+    Fnv1a h;
+    h.add(layer ? 1 : 0);
+    h.add(s);
+    // Inputs every probe reads.
+    h.add(overrides_model_);
+    std::vector<std::pair<int, std::pair<float, float>>> ov(overrides_.begin(),
+                                                            overrides_.end());
+    std::sort(ov.begin(), ov.end());       // unordered_map: hash in a stable order
+    for (const auto& o : ov) { h.add(o.first); h.add(o.second.first); h.add(o.second.second); }
+    h.add(probe_origin_);
+    h.add(box_handle_);
+    h.add(capture_ambient_);
+    for (const auto& sp : spots_) {
+        h.add(sp.position); h.add(sp.direction);
+        h.add(sp.cos_inner); h.add(sp.cos_outer); h.add(sp.range);
+    }
+    for (const auto& al : area_lights_) {
+        h.add(al.center); h.add(al.half_u); h.add(al.half_v); h.add(al.range);
+    }
+    h.add(glow_capture_model_);
+    for (const auto& g : glow_captures_) { h.add(g.mesh); h.add(g.src); }
+    // Inputs only this probe reads.
+    if (!layer) {
+        h.add(scales_[static_cast<std::size_t>(s)]);
+        auto light = [&](const auto& l) {
+            h.add(l.has_capture);
+            h.add(l.has_capture ? l.capture_radiance[s] : l.radiance);
+        };
+        for (const auto& sp : spots_) light(sp);
+        for (const auto& al : area_lights_) light(al);
+        for (const auto& g : glow_captures_) h.add(g.base[s]);
+    } else {
+        auto member = [&](const auto& l, int idx) {
+            if (l.layer[s] != k) return;
+            h.add(idx);
+            h.add(l.layer_radiance[s]);
+        };
+        int i = 0;
+        for (const auto& sp : spots_) member(sp, i++);
+        i = 0;
+        for (const auto& al : area_lights_) member(al, i++);
+        i = 0;
+        for (const auto& g : glow_captures_) {
+            if (g.layer[s] == k) { h.add(i); h.add(g.layer_rgb[s]); }
+            ++i;
+        }
+    }
+    return h.value();
+}
+
+void BridgePass::set_glow_captures(unsigned long long model_handle,
+                                   std::vector<BridgeGlowCapture> captures) {
+    glow_captures_ = std::move(captures);
+    glow_capture_model_ = glow_captures_.empty() ? 0 : model_handle;
+}
+
 void BridgePass::set_material_overrides(
         unsigned long long model_handle,
         std::vector<BridgeMaterialOverride> overrides) {
@@ -636,8 +730,7 @@ std::size_t BridgePass::set_spots(std::vector<BridgeSpot> spots) {
         // With capture colours the live radiance is per-frame data and never
         // recaptures; without them the radiance IS what the probes hold.
         if (a.has_capture)
-            return a.capture_radiance[0] == b.capture_radiance[0] &&
-                   a.capture_radiance[1] == b.capture_radiance[1];
+            return same_capture_data(a, b);
         return a.radiance == b.radiance;
     };
     const bool same = spots.size() == spots_.size() &&
@@ -665,8 +758,7 @@ std::size_t BridgePass::set_area_lights(std::vector<BridgeAreaLight> lights) {
               a.range == b.range && a.has_capture == b.has_capture))
             return false;
         if (a.has_capture)
-            return a.capture_radiance[0] == b.capture_radiance[0] &&
-                   a.capture_radiance[1] == b.capture_radiance[1];
+            return same_capture_data(a, b);
         return a.radiance == b.radiance;
     };
     const bool unchanged = lights.size() == area_lights_.size() &&
@@ -741,8 +833,8 @@ void BridgePass::capture_probes(const scenegraph::World& world,
                    scenegraph::Pass::Bridge, 0);
         });
     };
-    capture_one(probe_green_, scale_green_, 0);
-    capture_one(probe_yr_, scale_yr_, 1);
+    capture_one(probe_green_, probe_scale(0), 0);   // state 0
+    capture_one(probe_yr_, probe_scale(1), 1);      // state 1 (one-shot path until Task 5/6)
     probes_captured_ = probe_green_.valid() && probe_yr_.valid();
     capture_ambient_ = lighting.ambient;
 }

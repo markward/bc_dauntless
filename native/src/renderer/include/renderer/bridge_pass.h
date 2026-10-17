@@ -11,6 +11,7 @@
 #include <assets/material.h>
 #include <assets/texture.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -24,6 +25,11 @@ namespace scenegraph { class World; struct Camera; }
 namespace renderer {
 
 class Pipeline;
+
+/// Bridge states (spec 2026-10-17-bridge-reflection-layers §4): 0 green,
+/// 1 yellow, 2 red, 3 offline, 4 special. Probe ids: base of state s = s,
+/// animation layer k = kBridgeStates + k.
+inline constexpr int kBridgeStates = 5;
 
 /// Developer-only bridge debug views (Developer Options -> Lighting tab).
 /// Off is production: byte-identical to no debug support existing at all.
@@ -69,12 +75,17 @@ struct BridgeSpot {
     float     cos_outer = 1.0f;
     float     range = 1.0f;
     glm::vec3 radiance{0.0f};
-    /// Spec 2026-10-08-bridge-emitters §11.4: the radiance each probe capture
-    /// sees -- [0] the green probe, [1] the yellow/red one -- separate from the
-    /// live `radiance` (set_spot_radiance), so a pulsing or fading light never
-    /// recaptures. false = both captures use `radiance` (the PBR-step rule).
+    /// Spec 2026-10-08-bridge-emitters §11.4: the radiance each state's base
+    /// probe capture sees (index = state), separate from the live `radiance`
+    /// (set_spot_radiance), so a pulsing or fading light never recaptures.
+    /// false = every capture uses `radiance` (the PBR-step rule).
     bool      has_capture = false;
-    glm::vec3 capture_radiance[2] = {glm::vec3(0.0f), glm::vec3(0.0f)};
+    glm::vec3 capture_radiance[kBridgeStates] = {};
+    /// Reflection layers (spec 2026-10-17 §4.5): per state, the layer this row
+    /// belongs to there (-1 = none; a row is in at most one layer per state)
+    /// and its at-peak radiance in that layer.
+    int       layer[kBridgeStates] = {-1, -1, -1, -1, -1};
+    glm::vec3 layer_radiance[kBridgeStates] = {};
 };
 
 /// One static bridge area light (spec 2026-10-08-bridge-emitters §16.3): a
@@ -90,7 +101,9 @@ struct BridgeAreaLight {
     float     range = 1.0f;
     glm::vec3 radiance{0.0f};
     bool      has_capture = false;
-    glm::vec3 capture_radiance[2] = {glm::vec3(0.0f), glm::vec3(0.0f)};
+    glm::vec3 capture_radiance[kBridgeStates] = {};
+    int       layer[kBridgeStates] = {-1, -1, -1, -1, -1};
+    glm::vec3 layer_radiance[kBridgeStates] = {};
     /// Spec §16.8: bit 0 / bit 1 = joined to a neighbour at the -u / +u end
     /// (pbr::area_join_weight). Highlight only: never recaptures.
     int       joins = 0;
@@ -106,6 +119,18 @@ struct BridgeGlow {
     int       src = 0;
     glm::vec3 rgb{0.0f};
     float     level = 0.0f;
+};
+
+/// `BridgeGlow`'s capture-side twin (spec 2026-10-17 §4.5): what a glow shape
+/// contributes to each state's base probe and to the layers it belongs to.
+/// Display-space values, as BridgeGlow::rgb. Never live: it only feeds probe
+/// signatures and (later) captures.
+struct BridgeGlowCapture {
+    int       mesh = -1;
+    int       src = 0;
+    glm::vec3 base[kBridgeStates] = {};
+    int       layer[kBridgeStates] = {-1, -1, -1, -1, -1};
+    glm::vec3 layer_rgb[kBridgeStates] = {};
 };
 
 /// Bridge states beyond the alert levels (spec 2026-10-08-bridge-emitters §13.1):
@@ -255,12 +280,31 @@ public:
     glm::vec3 probe_origin() const { return probe_origin_; }
     /// Ambient multipliers each probe is captured with (lighting.ambient x
     /// scale). Take effect at the next capture.
-    void set_probe_scales(float green, float yellow_red) {
-        scale_green_ = green;
-        scale_yr_ = yellow_red;
+    void set_probe_scales(const std::array<float, kBridgeStates>& scales) {
+        scales_ = scales;
     }
-    float probe_scale_green() const { return scale_green_; }
-    float probe_scale_yellow_red() const { return scale_yr_; }
+    float probe_scale(int state) const {
+        return scales_[static_cast<std::size_t>(state)];
+    }
+    /// The state each animation layer k belongs to (probe id kBridgeStates+k).
+    void set_probe_layers(std::vector<int> layer_states) {
+        layer_states_ = std::move(layer_states);
+    }
+    /// kBridgeStates base probes + one per layer.
+    int probe_count() const {
+        return kBridgeStates + static_cast<int>(layer_states_.size());
+    }
+    /// FNV-1a over exactly the inputs probe `probe` reads (spec §4.5): the
+    /// shared ones (overrides, origin, box, unscaled ambient, light geometry,
+    /// glow-capture shapes) plus, for a base, its scale and per-state capture
+    /// colours; for a layer, its state and its members' at-peak values. Live
+    /// radiance and set_glow never enter. Out of range -> 0.
+    std::uint64_t probe_signature(int probe) const;
+    /// Per-shape glow contribution to the probes for ONE model; replaces the
+    /// previous set. Signature input only.
+    void set_glow_captures(unsigned long long model_handle,
+                           std::vector<BridgeGlowCapture> captures);
+    void clear_glow_captures() { glow_captures_.clear(); glow_capture_model_ = 0; }
 
     /// Alert-level ambient multiplier for the MAIN bridge view (green x1.5,
     /// yellow/red x1.0 -- engine/bridge_lighting.py). render() is handed the
@@ -284,7 +328,10 @@ public:
     /// themselves: a different bridge model (the static bridge instance with
     /// the most meshes), and a different bridge lighting (the unscaled
     /// ambient render() is handed; the alert scale never counts).
-    void request_probe_capture() { probe_dirty_ = true; }
+    void request_probe_capture() {
+        probe_dirty_ = true;
+        captured_sigs_.clear();   // every probe's captured signature is stale
+    }
     bool probe_capture_pending() const { return probe_dirty_; }
     /// True once both probes hold a capture the shader may sample.
     bool probes_valid() const;
@@ -386,8 +433,12 @@ private:
     BridgeProbe probe_yr_;
     BrdfLut     brdf_lut_;
     glm::vec3   probe_origin_{0.0f};
-    float       scale_green_ = 1.0f;
-    float       scale_yr_ = 1.0f;
+    std::array<float, kBridgeStates> scales_{1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+    std::vector<int> layer_states_;
+    unsigned long long glow_capture_model_ = 0;
+    std::vector<BridgeGlowCapture> glow_captures_;
+    /// Signature each probe was captured with; cleared by request_probe_capture.
+    std::vector<std::uint64_t> captured_sigs_;
     float       probe_mix_ = 0.0f;
     float       alert_ambient_scale_ = 1.0f;
     int         alert_level_ = 0;

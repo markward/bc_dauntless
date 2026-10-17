@@ -451,7 +451,7 @@ TEST_F(BridgePbrFrame, ASmoothMetalFloorReflectsTheRedWall) {
     use_red_wall_corner();
     set_floor_override(/*rough=*/0.05f, /*metal=*/1.0f);
     pass->set_probe_origin({60.0f, 0.0f, 40.0f});
-    pass->set_probe_scales(1.0f, 1.0f);
+    pass->set_probe_scales({1.0f, 1.0f, 1.0f, 1.0f, 1.0f});
     pass->request_probe_capture();
     const glm::vec3 c = render_floor();
     EXPECT_GT(c.r, c.g * 1.5f);                 // the floor shows red
@@ -474,7 +474,7 @@ TEST_F(BridgePbrFrame, ProbeMixCrossFadesBetweenTheTwoProbes) {
     use_red_wall_corner();
     set_floor_override(0.05f, 1.0f);
     pass->set_probe_origin({60.0f, 0.0f, 40.0f});
-    pass->set_probe_scales(2.0f, 0.5f);          // green probe 4x brighter
+    pass->set_probe_scales({2.0f, 0.5f, 0.5f, 0.5f, 0.5f});          // green probe 4x brighter
     pass->request_probe_capture();
     pass->set_probe_mix(0.0f);
     const float green = render_floor().r;
@@ -497,7 +497,7 @@ TEST_F(BridgePbrFrame, ReflectionOfALitRoomNeverReachesTheThreshold) {
         sample_ = {25.0f, 0.0f, 0.0f};
         set_floor_override(0.05f, 1.0f);
         pass->set_probe_origin({60.0f, 0.0f, 40.0f});
-        pass->set_probe_scales(scale, scale);
+        pass->set_probe_scales({scale, scale, scale, scale, scale});
         pass->request_probe_capture();
         const glm::vec3 c = render_floor();
         EXPECT_GT(c.r, 0.1f) << scale;           // it really reflects the room
@@ -754,7 +754,7 @@ TEST_F(BridgePbrFrame, CaptureIgnoresTheAlertAmbientScale) {
     use_red_wall_corner();
     set_floor_override(0.05f, 1.0f);             // metal floor: reflection only
     pass->set_probe_origin({60.0f, 0.0f, 40.0f});
-    pass->set_probe_scales(1.0f, 1.0f);
+    pass->set_probe_scales({1.0f, 1.0f, 1.0f, 1.0f, 1.0f});
     pass->set_alert_ambient_scale(1.5f);
     pass->request_probe_capture();
     const glm::vec3 at_15 = render_floor();
@@ -1231,7 +1231,7 @@ TEST_F(BridgePbrFrame, ProbeCaptureExcludesEmissive) {
         static_cast<int>(model->textures.size()) - 1;
     set_floor_override(/*rough=*/0.05f, /*metal=*/1.0f);
     pass->set_probe_origin({60.0f, 0.0f, 40.0f});
-    pass->set_probe_scales(1.0f, 1.0f);
+    pass->set_probe_scales({1.0f, 1.0f, 1.0f, 1.0f, 1.0f});
     pass->request_probe_capture();
     const glm::vec3 c = render_floor();
     EXPECT_LT(c.g, 0.02f);

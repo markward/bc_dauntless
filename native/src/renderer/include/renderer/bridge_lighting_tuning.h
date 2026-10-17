@@ -25,7 +25,7 @@ inline constexpr glm::vec3 kBridgeUp{0.0f, 0.0f, 1.0f};  // set instances draw w
 // assets::detail::kSetNormalCreaseDeg (native/src/assets/src/normal_gen.h).
 
 // Bridge PBR constants (spec 2026-10-08-bridge-emitters §9, Global Constraints)
-inline constexpr int kBridgeProbeFace = 256;
+inline constexpr int kBridgeProbeFace = 384;
 inline constexpr int kBridgeProbeMips = 6;
 inline constexpr int kBridgeBrdfLutSize = 128;
 inline constexpr int kBridgeMaxSpots = 32;

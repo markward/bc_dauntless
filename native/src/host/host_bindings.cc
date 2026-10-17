@@ -1127,7 +1127,9 @@ void init(int width, int height, const std::string& title) {
     g_bridge_pass->set_alert_ambient_scale(g_bridge_ambient_scale);
     g_bridge_pass->set_alert_level(g_bridge_alert_level);
     g_bridge_pass->set_probe_origin(g_bridge_probe.origin);
-    g_bridge_pass->set_probe_scales(g_bridge_probe.green, g_bridge_probe.yellow_red);
+    g_bridge_pass->set_probe_scales({g_bridge_probe.green, g_bridge_probe.yellow_red,
+                                                g_bridge_probe.yellow_red, g_bridge_probe.yellow_red,
+                                                g_bridge_probe.yellow_red});
     g_bridge_pass->set_probe_mix(g_bridge_probe.mix);
     if (g_bridge_probe.capture_pending) g_bridge_pass->request_probe_capture();
     g_bridge_probe.capture_pending = false;
@@ -4660,7 +4662,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   if (!caps.empty()) {
                       sp.has_capture = true;
                       sp.capture_radiance[0] = caps[i].first * intensity;
-                      sp.capture_radiance[1] = caps[i].second * intensity;
+                      for (int s = 1; s < renderer::kBridgeStates; ++s)
+                          sp.capture_radiance[s] = caps[i].second * intensity;
                   }
                   v.push_back(sp);
               }
@@ -4747,7 +4750,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   if (!caps.empty()) {
                       al.has_capture = true;
                       al.capture_radiance[0] = caps[i].first * intensity;
-                      al.capture_radiance[1] = caps[i].second * intensity;
+                      for (int s = 1; s < renderer::kBridgeStates; ++s)
+                          al.capture_radiance[s] = caps[i].second * intensity;
                   }
                   if (!join_bits.empty()) al.joins = join_bits[i] & 3;
                   v.push_back(al);
@@ -4832,7 +4836,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](float green, float yellow_red) {
               g_bridge_probe.green = green;
               g_bridge_probe.yellow_red = yellow_red;
-              if (g_bridge_pass) g_bridge_pass->set_probe_scales(green, yellow_red);
+              if (g_bridge_pass) g_bridge_pass->set_probe_scales({green, yellow_red, yellow_red,
+                                                                 yellow_red, yellow_red});
           },
           py::arg("green"), py::arg("yellow_red"),
           "Ambient multipliers the green and yellow/red probes are captured "
@@ -4868,8 +4873,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::dict d;
               const glm::vec3 o = g_bridge_pass->probe_origin();
               d["origin"] = py::make_tuple(o.x, o.y, o.z);
-              d["scales"] = py::make_tuple(g_bridge_pass->probe_scale_green(),
-                                           g_bridge_pass->probe_scale_yellow_red());
+              d["scales"] = py::make_tuple(g_bridge_pass->probe_scale(0),
+                                           g_bridge_pass->probe_scale(1));
               d["mix"] = g_bridge_pass->probe_mix();
               d["capture_pending"] = g_bridge_pass->probe_capture_pending();
               d["probes_valid"] = g_bridge_pass->probes_valid();
