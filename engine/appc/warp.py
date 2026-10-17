@@ -83,6 +83,14 @@ def configure_warp_hooks(realize=None, teardown=None, current_player=None,
     _preload_owner = None
 
 
+def reset_preload_state():
+    """Forget the running preload's owner. For a mission swap, which drops
+    the timers mid-tunnel so the owning WarpSequence never reaches Completed
+    or Abort; the caller ends the preload itself (warp_preload.end())."""
+    global _preload_owner
+    _preload_owner = None
+
+
 # ── Warp-VFX flythrough (Stage 2) ────────────────────────────────────────────
 # Distance-based transit duration. T = clamp(T_MIN, T_MAX, T_BASE + K*dist),
 # dist in galaxy-map units between the source and destination system vantages.
@@ -588,7 +596,11 @@ class _HoldUntilAction(TGAction):
         import App
         if not self._playing:
             return
+        # Only the warp that began the running preload waits on it: a stale
+        # preload (its begin failed, or a swap dropped its owner) is never
+        # this hold's to wait for.
         if (_preload_ready_hook is None
+                or _preload_owner is not self._seq
                 or not _is_current_player(self._seq._ship)
                 or self._preload_ready()):
             self.Completed()
@@ -1052,6 +1064,11 @@ class WarpSequence(TGSequence):
         # "warping" forever -- mirror Completed()'s detach.
         super().Abort()
         self._detach_from_engine()
+        self._end_preload()
+
+    def Stop(self) -> None:
+        # A stopped warp ends its preload exactly as an aborted one does.
+        super().Stop()
         self._end_preload()
 
     def _end_preload(self) -> None:

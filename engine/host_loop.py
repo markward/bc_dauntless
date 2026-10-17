@@ -4408,6 +4408,13 @@ def reset_sdk_globals() -> None:
     App.g_kTimerManager._time = 0.0
     App.g_kRealtimeTimerManager._time = 0.0
     _reset_timers()
+    # The timers just dropped include any mid-tunnel warp's, so its
+    # WarpSequence never reaches Completed/Abort: end its preload here, or
+    # the old mission's loads keep stepping into the new one.
+    from engine import warp_preload as _warp_preload
+    from engine.appc import warp as _warp
+    _warp_preload.end()
+    _warp.reset_preload_state()
     # Drop the object→render-instance mirror; the instances themselves are
     # torn down with the set, and the next mission's realize loops repopulate.
     render_instances.reset()

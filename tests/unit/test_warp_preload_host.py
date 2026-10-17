@@ -235,3 +235,14 @@ def test_run_steps_the_preload_once_per_frame_after_the_ticks():
                      if isinstance(n, ast.Call)}
             if tick_line in inner:
                 assert steps[0] not in inner    # not once per sim tick
+
+
+# -- F1: a mission swap drops the running preload -----------------------------
+
+def test_mission_swap_reset_drops_the_preload_and_its_owner(monkeypatch):
+    from engine.appc import warp
+    monkeypatch.setattr(warp_preload, "_active", object())
+    monkeypatch.setattr(warp, "_preload_owner", object())
+    host_loop.reset_sdk_globals()
+    assert warp_preload.active() is None
+    assert warp._preload_owner is None

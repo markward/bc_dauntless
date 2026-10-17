@@ -270,3 +270,62 @@ def test_a_raising_pending_hook_still_releases_at_the_cap(monkeypatch, capsys):
     _advance(floor + warp.PRELOAD_CAP_S + 0.5)
     assert len(done) == 1
     assert "[warp-preload] late:" in capsys.readouterr().err
+
+
+# -- F1: a stale preload never holds a warp it does not belong to -------------
+
+def test_a_hold_whose_sequence_is_not_the_owner_completes_at_its_floor(
+        monkeypatch):
+    """A stale preload (left running by a mission swap) is not ready; this
+    warp's own begin did not run, so it is not the owner -- it must not wait
+    on someone else's preload."""
+    def _no_begin(name):
+        raise RuntimeError("begin failed")
+    hooks = _Hooks(ready=False); hooks.begin = _no_begin; hooks.install()
+    _ship, seq, hold, floor = _flythrough_warp("PHNotOwner", monkeypatch)
+    done = _track_completion(hold)
+    seq.Play()
+    _advance(floor - 0.1)
+    assert done == []
+    assert warp._preload_owner is not seq
+    _advance(0.2)
+    assert len(done) == 1
+
+
+def test_stop_ends_the_owned_preload(monkeypatch):
+    hooks = _Hooks(ready=False); hooks.install()
+    _ship, seq, hold, floor = _flythrough_warp("PHStop", monkeypatch)
+    seq.Play()
+    _advance(floor + 1.0)                   # owner, waiting on the preload
+    assert warp._preload_owner is seq
+    seq.Stop()
+    assert hooks.count("end") == 1
+    assert warp._preload_owner is None
+    seq.Stop()                              # owner-gated: ends it once
+    assert hooks.count("end") == 1
+
+
+def test_stop_never_ends_a_newer_warps_preload(monkeypatch):
+    hooks = _Hooks(ready=True); hooks.install()
+    _ship, first, _hold, _floor = _flythrough_warp("PHStopA", monkeypatch)
+    first.Play()
+    _advance(warp._T_ALIGN_MIN + 0.1)
+    App.g_kSetManager._sets.clear()
+    _ship, second, _hold, _floor = _flythrough_warp("PHStopB", monkeypatch)
+    second.Play()
+    _advance(warp._T_ALIGN_MIN + 0.1)
+    first.Stop()
+    assert hooks.count("end") == 0
+    second.Abort()
+
+
+def test_reset_preload_state_clears_the_owner(monkeypatch):
+    hooks = _Hooks(ready=False); hooks.install()
+    _ship, seq, _hold, floor = _flythrough_warp("PHReset", monkeypatch)
+    seq.Play()
+    _advance(floor + 0.5)
+    assert warp._preload_owner is seq
+    warp.reset_preload_state()
+    assert warp._preload_owner is None
+    seq.Abort()                             # no longer the owner: no end
+    assert hooks.count("end") == 0
