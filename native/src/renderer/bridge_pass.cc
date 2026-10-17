@@ -149,7 +149,9 @@ void draw_mesh(const assets::Model& model,
                int emissive_alert = 0,
                int glow_src = -1,
                glm::vec3 glow_rgb = glm::vec3(0.0f),
-               float glow_level = 0.0f) {
+               float glow_level = 0.0f,
+               int capture_glow_src = -1,
+               glm::vec3 capture_glow_rgb = glm::vec3(0.0f)) {
     shader.set_mat4("u_model", world);
     // Debug view 5 (Mesh ID): a stable per-draw counter, reset each render().
     shader.set_int("u_mesh_id", mesh_id);
@@ -223,6 +225,10 @@ void draw_mesh(const assets::Model& model,
     shader.set_int("u_glow_src", glow_src);
     shader.set_vec3("u_glow_rgb", glow_rgb);
     shader.set_float("u_glow_level", glow_level);
+    // A probe face's glow (spec 2026-10-17 §4.1): read only by the capture
+    // branch; -1 = none (a base then shows the texture-level default).
+    shader.set_int("u_capture_glow_src", capture_glow_src);
+    shader.set_vec3("u_capture_glow_rgb", capture_glow_rgb);
     auto bind_map = [&](GLenum unit, assets::Material::StageSlot slot,
                         const char* has_name) {
         const int ti = mat.stages[static_cast<std::size_t>(slot)].texture_index;
@@ -244,8 +250,10 @@ void draw_mesh(const assets::Model& model,
         if (ti >= 0 && ti < static_cast<int>(model.textures.size()))
             id = model.textures[static_cast<std::size_t>(ti)].id();
         // Spec §13.1: power offline darkens the texture-level default; a
-        // material glow (glow_src >= 0) still samples the map.
-        if (glow_src < 0 && emissive_alert == kBridgeStateOffline) id = 0;
+        // material glow (live, or a probe face's) still samples the map.
+        if (glow_src < 0 && capture_glow_src < 0 &&
+            emissive_alert == kBridgeStateOffline)
+            id = 0;
         shader.set_int("u_has_emissive_map", id != 0 ? 1 : 0);
         glActiveTexture(GL_TEXTURE0 + kBridgeEmissiveUnit);
         glBindTexture(GL_TEXTURE_2D, id != 0 ? id : white_fallback);
@@ -265,6 +273,13 @@ void BridgePass::render(const scenegraph::World& world,
                         scenegraph::Pass pass,
                         std::uint32_t comm_set_id) {
     const bool main_bridge = pass == scenegraph::Pass::Bridge && comm_set_id == 0;
+    // A probe face (spec 2026-10-17 §4.1): which state it shows and which of
+    // that state's layers it holds (-1 = the state's base).
+    const int cap_layer = (capture_pass_ && capture_probe_ >= kBridgeStates)
+        ? capture_probe_ - kBridgeStates : -1;
+    const int cap_state = !capture_pass_ ? 0
+        : cap_layer >= 0 ? layer_states_[static_cast<std::size_t>(cap_layer)]
+                         : capture_probe_;
     // Reflection probes: the box follows the bridge model; a pending capture
     // runs here, BEFORE the AO pre-pass, into the probes' own FBOs (each face
     // re-enters render() with capture_pass_ set). Never inside a nested pass,
@@ -304,8 +319,8 @@ void BridgePass::render(const scenegraph::World& world,
     }
     const glm::mat4 inv_proj = glm::inverse(camera.proj_matrix());
     // `lighting` is UNSCALED: the alert scale applies to the normal main-bridge
-    // draw only -- never a comm set, never a probe capture (capture_probes
-    // hands each face ambient x probe scale).
+    // draw only -- never a comm set, never a probe capture (draw_probe_face
+    // hands each face its probe's ambient).
     const glm::vec3 ambient = lighting.ambient *
         ((main_bridge && !capture_pass_) ? alert_ambient_scale_ : 1.0f);
 
@@ -314,9 +329,10 @@ void BridgePass::render(const scenegraph::World& world,
     // PLAYER's bridge, the wrong room to reflect.
     const int pbr = (pbr_enabled_ && main_bridge) ? 1 : 0;
     // Emissive variant by the player's alert level on the main bridge view
-    // only; a comm set shows the default. (Probe faces and the AO pre-pass
-    // return before the shader reads any emissive.)
-    const int emissive_alert = main_bridge ? alert_level_ : 0;
+    // only; a comm set shows the default. A probe face shows its own state's.
+    // (The AO pre-pass returns before the shader reads any emissive.)
+    const int emissive_alert = capture_pass_ ? cap_state
+                             : main_bridge ? alert_level_ : 0;
     // The probes are sampled only once BOTH hold a capture: a samplerCube on
     // a unit with no cube bound must never be sampled, so with no probe the
     // units stay empty and u_has_probe = 0 keeps the shader off them.
@@ -331,6 +347,16 @@ void BridgePass::render(const scenegraph::World& world,
         glActiveTexture(GL_TEXTURE0);
     }
 
+    // A light's radiance in this draw: live outside a capture; in a base, its
+    // steady capture colour for the state (live when it has none); in a
+    // layer, its at-peak colour if it is a member, else nothing.
+    auto capture_light_radiance = [&](const auto& l, int state, int layer) -> glm::vec3 {
+        if (!capture_pass_) return l.radiance;
+        if (layer >= 0)
+            return l.layer[state] == layer ? l.layer_radiance[state] : glm::vec3(0.0f);
+        return l.has_capture ? l.capture_radiance[state] : l.radiance;
+    };
+
     // Static spot lights, packed once per render() (both sub-passes share them).
     const int spot_count = main_bridge ? static_cast<int>(spots_.size()) : 0;
     glm::vec3 spot_pos[kBridgeMaxSpots];
@@ -341,8 +367,7 @@ void BridgePass::render(const scenegraph::World& world,
         const BridgeSpot& sp = spots_[static_cast<std::size_t>(i)];
         spot_pos[i] = sp.position;
         spot_dir[i] = sp.direction;
-        spot_rad[i] = (capture_pass_ && sp.has_capture)
-            ? sp.capture_radiance[capture_probe_] : sp.radiance;
+        spot_rad[i] = capture_light_radiance(sp, cap_state, cap_layer);
         spot_params[i] = glm::vec4(sp.cos_inner, sp.cos_outer, sp.range, 0.0f);
     }
 
@@ -358,8 +383,7 @@ void BridgePass::render(const scenegraph::World& world,
         area_cr[i] = glm::vec4(a.center, a.range);
         area_u[i] = a.half_u;
         area_v[i] = a.half_v;
-        area_rad[i] = (capture_pass_ && a.has_capture)
-            ? a.capture_radiance[capture_probe_] : a.radiance;
+        area_rad[i] = capture_light_radiance(a, cap_state, cap_layer);
         area_joins[i] = a.joins;
     }
 
@@ -410,6 +434,8 @@ void BridgePass::render(const scenegraph::World& world,
         s.set_vec3("u_box_min", box_min_);
         s.set_vec3("u_box_max", box_max_);
         s.set_int("u_capture", capture_pass_ ? 1 : 0);
+        s.set_int("u_capture_state", cap_state);
+        s.set_int("u_capture_layer", cap_layer);
         s.set_float("u_reflectance", 1.0f);   // the room; sub-pass B sets 0
         // Static spots: main bridge view only (its probe captures included;
         // they light the capture's diffuse). Comm sets get 0. Only the count
@@ -469,6 +495,10 @@ void BridgePass::render(const scenegraph::World& world,
         if (viewscreen_tex_ != 0) return {viewscreen_tex_, true};
         return {off_tex, false};
     };
+    // A probe face's glow shapes, by mesh (a later entry for a mesh wins).
+    std::unordered_map<int, const BridgeGlowCapture*> capture_glow;
+    if (capture_pass_ && glow_capture_model_ != 0)
+        for (const auto& g : glow_captures_) capture_glow[g.mesh] = &g;
     walk_bridge_meshes(world, lookup, pass, comm_set_id,
         [&](const assets::Model& m, const assets::Mesh& mesh,
             const assets::Material& mat, const glm::mat4& w,
@@ -501,12 +531,29 @@ void BridgePass::render(const scenegraph::World& world,
                     glow_level = it->second.level;
                 }
             }
+            // A probe face's glow (spec 2026-10-17 §4.1): a base shows a glow
+            // shape at its steady value; a layer only its members, at peak.
+            int cap_glow_src = -1;
+            glm::vec3 cap_glow_rgb(0.0f);
+            if (!capture_glow.empty() && mh == glow_capture_model_) {
+                const int mi = static_cast<int>(&mesh - m.meshes.data());
+                if (auto it = capture_glow.find(mi); it != capture_glow.end()) {
+                    const BridgeGlowCapture& g = *it->second;
+                    if (cap_layer < 0) {
+                        cap_glow_src = g.src;
+                        cap_glow_rgb = g.base[cap_state];
+                    } else if (g.layer[cap_state] == cap_layer) {
+                        cap_glow_src = g.src;
+                        cap_glow_rgb = g.layer_rgb[cap_state];
+                    }
+                }
+            }
             draw_mesh(m, mesh, mat, base_shader, w, white, t, ov, flip,
                       viewscreen_brightness_, viewscreen_flash_,
                       /*face_blend=*/false, /*face_a=*/0u, /*face_b=*/0u,
                       /*face_mix=*/0.0f, mesh_id_counter++, hl,
                       pbr, rough_ov, metal_ov, emissive_alert,
-                      glow_src, glow_rgb, glow_level);
+                      glow_src, glow_rgb, glow_level, cap_glow_src, cap_glow_rgb);
         });
 
     // ── Sub-pass B: skinned bridge characters ──────────────────────────────
@@ -815,28 +862,90 @@ void BridgePass::capture_probes(const scenegraph::World& world,
                              "no capture\n");
         return;
     }
+    // Each cube draws through the same per-probe content as the probe array
+    // (draw_probe_face): green = base of state 0, yellow/red = base of
+    // state 1 (one-shot path until Task 6). render() sets the bridge state
+    // itself (depth LESS + write, blend off, cull off) before sub-pass A; the
+    // probe has bound and cleared the face.
+    auto capture_one = [&](BridgeProbe& cube, int probe) {
+        cube.capture(probe_origin_, [&](const scenegraph::Camera& face_cam) {
+            draw_probe_face(probe, face_cam, world, pipeline, lookup, lighting);
+        });
+    };
+    capture_one(probe_green_, 0);
+    capture_one(probe_yr_, 1);
+    probes_captured_ = probe_green_.valid() && probe_yr_.valid();
+    capture_ambient_ = lighting.ambient;
+}
+
+void BridgePass::draw_probe_face(int probe, const scenegraph::Camera& face_cam,
+                                 const scenegraph::World& world, Pipeline& pipeline,
+                                 const ModelLookup& lookup, const Lighting& lighting) {
     struct CaptureFlag {
         bool& f;
         explicit CaptureFlag(bool& flag) : f(flag) { f = true; }
         ~CaptureFlag() { f = false; }
     };
-    auto capture_one = [&](BridgeProbe& probe, float scale, int probe_index) {
-        Lighting scaled = lighting;
-        scaled.ambient *= scale;
-        capture_probe_ = probe_index;
-        probe.capture(probe_origin_, [&](const scenegraph::Camera& face_cam) {
-            CaptureFlag flag(capture_pass_);
-            // render() sets the bridge state itself (depth LESS + write,
-            // blend off, cull off) before sub-pass A; the probe has bound and
-            // cleared the face.
-            render(world, face_cam, pipeline, lookup, scaled,
-                   scenegraph::Pass::Bridge, 0);
-        });
-    };
-    capture_one(probe_green_, probe_scale(0), 0);   // state 0
-    capture_one(probe_yr_, probe_scale(1), 1);      // state 1 (one-shot path until Task 5/6)
-    probes_captured_ = probe_green_.valid() && probe_yr_.valid();
-    capture_ambient_ = lighting.ambient;
+    // A base is lit by the state's ambient (the unscaled bridge ambient x its
+    // probe scale); a layer by its members alone.
+    Lighting scaled = lighting;
+    scaled.ambient = probe >= kBridgeStates ? glm::vec3(0.0f)
+                                            : lighting.ambient * probe_scale(probe);
+    capture_probe_ = probe;
+    CaptureFlag flag(capture_pass_);
+    render(world, face_cam, pipeline, lookup, scaled, scenegraph::Pass::Bridge, 0);
+}
+
+void BridgePass::capture_probe_now(int probe, const scenegraph::World& world,
+                                   Pipeline& pipeline, const ModelLookup& lookup,
+                                   const Lighting& lighting) {
+    if (probe < 0 || probe >= probe_count()) return;
+    if (!probes_.ensure(probe_count())) {
+        std::fprintf(stderr, "[bridge] reflection probe array: GL targets unavailable; "
+                             "no capture\n");
+        return;
+    }
+    probes_.begin(probe);
+    for (int i = 0; i < probes_.steps_per_probe() && probes_.in_flight(); ++i) {
+        if (probes_.step(probe_origin_, [&](const scenegraph::Camera& face_cam) {
+                draw_probe_face(probe, face_cam, world, pipeline, lookup, lighting);
+            }))
+            break;
+    }
+}
+
+bool BridgePass::read_probe(int probe, int mip, std::vector<glm::vec3>& rgb) const {
+    rgb.clear();
+    if (probe < 0 || probe >= probes_.capacity() || !probes_.valid(probe) ||
+        mip < 0 || mip >= kBridgeProbeMips || probes_.texture() == 0)
+        return false;
+    const int n = std::max(1, kBridgeProbeFace >> mip);
+    GLint prev_read = 0, prev_pack = 4;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prev_read);
+    glGetIntegerv(GL_PACK_ALIGNMENT, &prev_pack);
+    GLuint fbo = 0;
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+    std::vector<float> px(static_cast<std::size_t>(n) * n * 4);
+    rgb.reserve(static_cast<std::size_t>(6) * n * n);
+    bool ok = true;
+    for (int face = 0; face < 6 && ok; ++face) {
+        glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                  probes_.texture(), mip,
+                                  probes_.layer_of(probe) * 6 + face);
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        ok = glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        if (!ok) break;
+        glReadPixels(0, 0, n, n, GL_RGBA, GL_FLOAT, px.data());
+        for (std::size_t i = 0; i < static_cast<std::size_t>(n) * n; ++i)
+            rgb.emplace_back(px[i * 4], px[i * 4 + 1], px[i * 4 + 2]);
+    }
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(prev_read));
+    glDeleteFramebuffers(1, &fbo);
+    glPixelStorei(GL_PACK_ALIGNMENT, prev_pack);
+    if (!ok) rgb.clear();
+    return ok;
 }
 
 const BridgePass::Aabb& BridgePass::model_box(unsigned long long handle,

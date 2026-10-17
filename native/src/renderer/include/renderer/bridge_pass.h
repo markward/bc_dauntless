@@ -4,6 +4,7 @@
 #include <renderer/bridge_ao_pass.h>
 #include <renderer/bridge_lighting_tuning.h>   // kBridgeMaxSpots
 #include <renderer/bridge_probe.h>
+#include <renderer/bridge_probe_array.h>
 #include <renderer/frame.h>
 
 #include <scenegraph/instance.h>  // scenegraph::Pass
@@ -124,8 +125,8 @@ struct BridgeGlow {
 
 /// `BridgeGlow`'s capture-side twin (spec 2026-10-17 §4.5): what a glow shape
 /// contributes to each state's base probe and to the layers it belongs to.
-/// Display-space values, as BridgeGlow::rgb. Never live: it only feeds probe
-/// signatures and (later) captures.
+/// Display-space values, as BridgeGlow::rgb. Never live: it feeds probe
+/// signatures and captures (a capture adds decode(value), uncapped).
 struct BridgeGlowCapture {
     int       mesh = -1;
     int       src = 0;
@@ -325,8 +326,9 @@ public:
     float alert_ambient_scale() const { return alert_ambient_scale_; }
     /// Player alert level (0 green, 1 yellow, 2 red) choosing each material's
     /// emissive variant (bridge_emissive_texture) in the MAIN bridge view.
-    /// Comm sets always show the default (green) emissive; probe captures
-    /// hold no emissive at all. Hard switch, no fade. Default 0.
+    /// Comm sets always show the default (green) emissive; a probe capture
+    /// shows its own state's variant, whatever this says. Hard switch, no
+    /// fade. Default 0.
     void set_alert_level(int level) { alert_level_ = level; }
     int alert_level() const { return alert_level_; }
     /// 0 = the green probe, 1 = the yellow/red probe; clamped to [0, 1].
@@ -379,7 +381,8 @@ public:
     std::size_t area_light_count() const { return area_lights_.size(); }
     /// Per-shape glow for ONE model (the bridge), replacing the previous set;
     /// a later entry for the same mesh wins. Main bridge view only. Never
-    /// dirties the probes: glow is not captured (§9.7).
+    /// dirties the probes: live glow is not captured (§9.7) -- the probes
+    /// hold set_glow_captures' values instead.
     void set_glow(unsigned long long model_handle, std::vector<BridgeGlow> glow);
     void clear_glow() { glow_.clear(); glow_model_ = 0; }
     std::size_t glow_count() const { return glow_.size(); }
@@ -390,6 +393,22 @@ public:
     /// session). Origin and scales are configuration and are kept. The host
     /// does not call it: a new session builds a fresh BridgePass.
     void reset_probes();
+
+    /// Capture probe `probe` (a base: the state id; a layer: kBridgeStates +
+    /// k) whole, in one call, into the probe array -- every step of
+    /// BridgeProbeArray back to back, each face drawn with that probe's
+    /// content (spec 2026-10-17 §4.1). Test seam, and the body the stepped
+    /// capture slices: production never captures a whole probe in one frame.
+    /// The shader does not sample the array yet. Out-of-range probe, or no GL
+    /// targets: nothing. Never touches the dirtiness or the legacy probes.
+    void capture_probe_now(int probe, const scenegraph::World& world, Pipeline& pipeline,
+                           const ModelLookup& lookup, const Lighting& lighting);
+    /// Test seam: every texel of probe `probe`'s six faces at `mip` (face-
+    /// major, GL face order +X -X +Y -Y +Z -Z, rows bottom-up), linear RGB,
+    /// read back from the probe array. False (and `rgb` emptied) when that
+    /// probe holds no completed capture or `mip` is out of range. Restores
+    /// the read framebuffer and pack alignment.
+    bool read_probe(int probe, int mip, std::vector<glm::vec3>& rgb) const;
 
 private:
     /// Lazily-allocated 1x1 white texture, used as a fallback for any
@@ -466,8 +485,17 @@ private:
     /// Per-shape emitter glow of the model `glow_model_` (0 = none).
     unsigned long long glow_model_ = 0;
     std::unordered_map<int, BridgeGlow> glow_;
-    /// Which probe a capture pass is drawing: 0 green, 1 yellow/red.
+    /// Every probe (bases and layers) for capture_probe_now. The shader
+    /// still samples probe_green_ / probe_yr_.
+    BridgeProbeArray probes_;
+    /// Which probe a capture pass is drawing: a probe id (base s = s, layer
+    /// k = kBridgeStates + k). The legacy cubes draw bases 0 and 1.
     int capture_probe_ = 0;
+    /// Draw one face of probe `probe` from `face_cam` into the bound target:
+    /// render() re-entered with capture_pass_ set, sub-pass A only.
+    void draw_probe_face(int probe, const scenegraph::Camera& face_cam,
+                         const scenegraph::World& world, Pipeline& pipeline,
+                         const ModelLookup& lookup, const Lighting& lighting);
     void capture_probes(const scenegraph::World& world, Pipeline& pipeline,
                         const ModelLookup& lookup, const Lighting& lighting);
 

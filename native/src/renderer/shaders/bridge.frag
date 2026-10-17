@@ -96,7 +96,8 @@ uniform float     u_reflectance;
 // for the player's alert level (main bridge view; comm sets the default).
 // RGB = emitted colour, alpha ignored, sampled with the base UV. Added AFTER
 // the diffuse ceiling, so it can exceed bloom. Both shading paths; never in a
-// debug view, the AO pre-pass or a probe capture.
+// debug view or the AO pre-pass. A probe capture adds it (decoded) to a base
+// probe, with the variant for the probe's state -- see u_capture_glow_src.
 uniform sampler2D u_emissive_map;    // unit 10 (renderer::kBridgeEmissiveUnit)
 uniform int       u_has_emissive_map;
 uniform float     u_emissive_scale;  // renderer::kEmissiveScale
@@ -109,7 +110,8 @@ uniform float     u_emissive_scale;  // renderer::kEmissiveScale
 // u_capture = 1 while BridgePass draws a probe face: linear diffuse-only
 // radiance under the same diffuse ceiling as the view (spec §9.5: the probe
 // holds a lit room capped at 0.88, so only emitters in it may bloom through
-// a reflection), no AO, no highlight, no specular, the viewscreen black.
+// a reflection) plus the decoded, uncapped glow, no AO, no highlight, no
+// specular, the viewscreen black.
 uniform samplerCube u_probe_a;    // unit 7: green
 uniform samplerCube u_probe_b;    // unit 8: yellow/red
 uniform sampler2D   u_brdf_lut;   // unit 9: (A, B), x = NdotV, y = roughness
@@ -120,6 +122,17 @@ uniform float       u_probe_max_mip;  // kBridgeProbeMips - 1, set by BridgePass
 uniform vec3        u_box_min;    // bridge AABB, world
 uniform vec3        u_box_max;
 uniform int         u_capture;
+// Per probe (spec 2026-10-17-bridge-reflection-layers §4.1): the state the
+// probe shows (BridgePass binds that state's emissive variant) and the layer
+// it holds (-1 = the state's base). Per draw: the shape's glow in this probe
+// -- src as u_glow_src (-1 none), DISPLAY-space colour. A base shows a glow
+// shape at its steady value and every other shape's texture-level default
+// (dark at offline); a layer shows only its members' glow, at the peak.
+uniform int         u_capture_state;
+uniform int         u_capture_layer;
+uniform int         u_capture_glow_src;
+uniform vec3        u_capture_glow_rgb;
+const int kCaptureOffline = 3;    // renderer::kBridgeStateOffline
 
 // ── Static spot lights (plan 2026-10-09-bridge-pbr Task 7) ─────────────
 // Main bridge view only (comm sets: count 0), PBR path only. BridgePass
@@ -560,9 +573,26 @@ void main() {
             accumulate_area_lights(nc, Vc, max(dot(nc, Vc), 1e-4), albedo_c, metal_c, rough_c,
                                    f0_for(albedo_c, metal_c), lit, spec_unused);
         }
+        // Glow, in display space like the view's emissive_term: a glow
+        // shape's source x its colour in this probe; else, in a base only,
+        // the texture-level default for the probe's state (dark offline).
+        vec3 glow_c = vec3(0.0);
+        if (u_capture_glow_src >= 0) {
+            vec3 src = vec3(1.0);
+            if (u_capture_glow_src == 0)
+                src = u_has_emissive_map != 0 ? texture(u_emissive_map, base_uv).rgb : vec3(0.0);
+            else if (u_capture_glow_src == 1)
+                src = base.rgb;
+            glow_c = src * u_capture_glow_rgb;
+        } else if (u_capture_layer < 0 && u_capture_state != kCaptureOffline
+                   && u_has_emissive_map != 0) {
+            glow_c = texture(u_emissive_map, base_uv).rgb * u_emissive_scale;
+        }
         // The view caps lit diffuse in display space; the probe stores the
-        // same capped radiance, back in linear.
-        FragColor = vec4(decode(diffuse_ceiling(encode(lit), u_diffuse_max)), 1.0);
+        // same capped radiance, back in linear -- then the glow, decoded and
+        // UNCAPPED (> 1 stays HDR, so a reflected emitter can bloom).
+        FragColor = vec4(decode(diffuse_ceiling(encode(lit), u_diffuse_max)) + decode(glow_c),
+                         1.0);
         return;
     }
     if (u_unlit != 0) {

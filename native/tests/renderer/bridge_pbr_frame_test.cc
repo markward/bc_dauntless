@@ -9,6 +9,8 @@
 #include <gtest/gtest.h>
 #include <glad/glad.h>
 
+#include "bridge_test_room.h"
+
 #include <renderer/bloom_pass.h>
 #include <renderer/bridge_pass.h>
 #include <renderer/bridge_pbr.h>
@@ -41,27 +43,10 @@ namespace {
 
 constexpr int kWin = 256;
 
-assets::Texture solid_1x1(glm::vec4 rgba);
-
-// One quad from four corners with an authored normal `n`, wound
-// counter-clockwise as seen from the side the normal faces. `uv_axes` picks
-// which two position components (scaled by 1/100) become the UV; {-1, -1}
-// leaves the UVs at zero (a UV-less mesh).
-void append_quad(assets::MeshCpu& cpu, const glm::vec3 (&c)[4], const glm::vec3& n,
-                 glm::ivec2 uv_axes) {
-    const auto base = static_cast<std::uint32_t>(cpu.vertices.size());
-    for (const auto& p : c) {
-        assets::MeshCpu::Vertex v;
-        v.position = p;
-        v.normal = n;
-        if (uv_axes.x >= 0) v.uv = glm::vec2(p[uv_axes.x], p[uv_axes.y]) / 100.0f;
-        cpu.vertices.push_back(v);
-    }
-    if (glm::dot(glm::cross(c[1] - c[0], c[2] - c[0]), n) >= 0.0f)
-        cpu.indices.insert(cpu.indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
-    else
-        cpu.indices.insert(cpu.indices.end(), {base, base + 2, base + 1, base, base + 3, base + 2});
-}
+using bridge_test_room::append_quad;
+using bridge_test_room::lookup_fn;
+using bridge_test_room::make_two_mesh_corner;
+using bridge_test_room::solid_1x1;
 
 // Floor z = 0 (x >= 0, normal +Z) and wall x = 0 (z >= 0, normal +X).
 // with_uvs: floor uv = xy / 100, wall uv = yz / 100; else every uv is 0.
@@ -82,43 +67,6 @@ std::unique_ptr<assets::Model> make_corner(bool with_uvs) {
     root.parent_index = -1;
     root.local_transform = glm::mat4(1.0f);
     root.meshes = {0};
-    m->nodes.push_back(std::move(root));
-    m->root_node = 0;
-    return m;
-}
-
-// The corner as TWO meshes so a reflection is identifiable by hue: mesh 0 the
-// floor (material 0, grey `floor_rgb`), mesh 1 the wall (material 1, `wall_rgb`).
-std::unique_ptr<assets::Model> make_two_mesh_corner(glm::vec3 floor_rgb, glm::vec3 wall_rgb) {
-    auto m = std::make_unique<assets::Model>();
-    constexpr float L = 300.0f;
-    const glm::vec3 floor_c[4] = {{0, -L, 0}, {L, -L, 0}, {L, L, 0}, {0, L, 0}};
-    const glm::vec3 wall_c[4]  = {{0, -L, 0}, {0, L, 0}, {0, L, L}, {0, -L, L}};
-    assets::MeshCpu floor_cpu, wall_cpu;
-    append_quad(floor_cpu, floor_c, {0, 0, 1}, glm::ivec2(0, 1));
-    append_quad(wall_cpu, wall_c, {1, 0, 0}, glm::ivec2(1, 2));
-    floor_cpu.material_index = 0;
-    floor_cpu.node_index = 0;
-    wall_cpu.material_index = 1;
-    wall_cpu.node_index = 0;
-    // CPU data retained, as an interior load keeps it: the probe box is the
-    // model's AABB from it.
-    m->meshes.push_back(assets::upload_mesh(floor_cpu));
-    m->meshes.back().set_cpu_data(floor_cpu);
-    m->meshes.push_back(assets::upload_mesh(wall_cpu));
-    m->meshes.back().set_cpu_data(wall_cpu);
-    const glm::vec3 cols[2] = {floor_rgb, wall_rgb};
-    for (int i = 0; i < 2; ++i) {
-        m->textures.push_back(solid_1x1(glm::vec4(cols[i], 1.0f)));
-        assets::Material mat;
-        mat.stages[static_cast<std::size_t>(assets::Material::StageSlot::Base)].texture_index = i;
-        m->materials.push_back(mat);
-    }
-    assets::Node root;
-    root.name = "root";
-    root.parent_index = -1;
-    root.local_transform = glm::mat4(1.0f);
-    root.meshes = {0, 1};
     m->nodes.push_back(std::move(root));
     m->root_node = 0;
     return m;
@@ -170,26 +118,6 @@ scenegraph::Camera corner_camera(int w, int h,
     cam.near = 0.5f;
     cam.far = 2000.0f;
     return cam;
-}
-
-const assets::Model* lookup_fn(unsigned long long h) {
-    return reinterpret_cast<const assets::Model*>(h);
-}
-
-// A 1x1 RGBA8 texture of `rgba` (0..1 per channel), owned by the returned
-// assets::Texture (same upload as bridge_lighting_test.cc's red_1x1()).
-assets::Texture solid_1x1(glm::vec4 rgba) {
-    GLuint t = 0;
-    glGenTextures(1, &t);
-    glBindTexture(GL_TEXTURE_2D, t);
-    unsigned char px[4];
-    for (int i = 0; i < 4; ++i)
-        px[i] = static_cast<unsigned char>(std::lround(std::clamp(rgba[i], 0.0f, 1.0f) * 255.0f));
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glBindTexture(GL_TEXTURE_2D, 0);
-    return assets::Texture(t, 1, 1, false);
 }
 
 class BridgePbrFrame : public ::testing::Test {
@@ -1221,9 +1149,11 @@ TEST_F(BridgePbrFrame, DebugViewsShowNoEmissive) {
     pass->set_debug_view(renderer::BridgeDebugView::Off);
 }
 
-// Probe captures exclude emissive: a black wall that glows green leaves a
-// smooth metal floor's reflection black.
-TEST_F(BridgePbrFrame, ProbeCaptureExcludesEmissive) {
+// Probe captures hold the glow (spec 2026-10-17-bridge-reflection-layers D1;
+// this test asserted the opposite before): a black wall that glows green
+// shows green in a smooth metal floor's reflection, through both legacy
+// cubes (green = base 0, yellow/red = base 1).
+TEST_F(BridgePbrFrame, ProbeCaptureIncludesEmissive) {
     use_red_wall_corner(/*wall=*/{0.0f, 0.0f, 0.0f});
     model->textures.push_back(solid_1x1({0.0f, 1.0f, 0.0f, 1.0f}));
     model->materials[1].stages[static_cast<std::size_t>(
@@ -1233,8 +1163,12 @@ TEST_F(BridgePbrFrame, ProbeCaptureExcludesEmissive) {
     pass->set_probe_origin({60.0f, 0.0f, 40.0f});
     pass->set_probe_scales({1.0f, 1.0f, 1.0f, 1.0f, 1.0f});
     pass->request_probe_capture();
-    const glm::vec3 c = render_floor();
-    EXPECT_LT(c.g, 0.02f);
+    for (float mix : {0.0f, 1.0f}) {
+        pass->set_probe_mix(mix);
+        const glm::vec3 c = render_floor();
+        EXPECT_GT(c.g, 0.3f) << mix;
+        EXPECT_LT(c.r, 0.02f) << mix;
+    }
 }
 
 TEST_F(BridgePbrFrame, EmissiveUnitIsUnboundAfterRender) {
