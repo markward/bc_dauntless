@@ -34,15 +34,13 @@ constexpr float kDitherAmount = 0.5f;      // half-step jitter — less per-fram
                                            // variance for temporal to resolve
 }  // namespace
 
-NebulaDrawPlan plan_nebula_draws(bool volumetric_setting, bool developer,
-                                 bool has_profile, bool have_volumes,
-                                 bool have_wake) {
+NebulaDrawPlan plan_nebula_draws(bool volumetric_setting, bool has_profile,
+                                 bool have_volumes, bool have_wake) {
     NebulaDrawPlan p;
-    p.system = volumetric_setting && developer && (has_profile || have_volumes);
+    p.system = volumetric_setting && (has_profile || have_volumes);
     p.legacy = !p.system && have_volumes;
     // Drawn over the cloud so its soft-glow billboards add on top of the
-    // density -- after EITHER branch, and only when one of them drew (so
-    // production, where only the legacy branch exists, is unchanged).
+    // density -- after EITHER branch, and only when one of them drew.
     p.wake = volumetric_setting && have_wake && (p.system || p.legacy);
     return p;
 }

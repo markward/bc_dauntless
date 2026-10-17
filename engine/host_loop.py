@@ -5240,16 +5240,15 @@ def _push_dust_profile(r, player, warp_streaking) -> None:
 
 
 def _system_nebula_gate(r) -> bool:
-    """The one gate for everything that feeds or follows the developer-only
-    SystemNebulaPass (the profile/star push AND the flare veil): developer
-    mode AND the Volumetric Nebulae setting, matching the native pass's own
-    gate. Developer mode is tested FIRST so production short-circuits
-    without a single renderer call."""
-    return dev_mode.is_enabled() and r.volumetric_nebulae_enabled()
+    """The one gate for everything that feeds or follows the SystemNebulaPass
+    (the profile/star push AND the flare veil): the Volumetric Nebulae
+    setting (part of Improved Space), matching the native pass's own gate.
+    On in production since 2026-10-16; --developer no longer matters."""
+    return bool(r.volumetric_nebulae_enabled())
 
 
 def _push_system_nebula(r, player, suns, warp_streaking) -> None:
-    """Feed the developer-only SystemNebulaPass: the mapped system's radial
+    """Feed the SystemNebulaPass: the mapped system's radial
     profile once per system (or veil-dial) change -- the pass builds its
     far-field table from it, ~1.6s -- and, every frame the gate is open, the
     star's render position, or None when the viewed set has no sun (the pass
@@ -5258,13 +5257,9 @@ def _push_system_nebula(r, player, suns, warp_streaking) -> None:
     syncs its dials from it, so omitting them would revert tuned values) and
     a k_sys solved for the live veil dial.
 
-    Production (no --developer) returns before any renderer call: the pass
-    never runs there and was never fed, so there is nothing to clear -- even
-    after a mission swap leaves the latch UNKNOWN. With --developer, closing
-    the setting drops any held profile with a single None push."""
+    Follows the Volumetric Nebulae setting only (no --developer needed);
+    closing the setting drops any held profile with a single None push."""
     global _system_nebula_pushed_for, _system_nebula_pushed_veil
-    if not dev_mode.is_enabled():
-        return
     if not _system_nebula_gate(r):
         if _system_nebula_pushed_for is not None:
             r.set_system_nebula_profile(None)
@@ -5338,7 +5333,7 @@ def _veil_flares(r, flares, player):
     under the system nebula pass they take the exact eye->star transmittance
     (spec 2026-09-29, "The sun and its flares") for the same live veil dial
     the haze's k_sys was solved for. Same gate as the pass itself
-    (_system_nebula_gate), so a developer run with the setting off does not
+    (_system_nebula_gate), so a run with the setting off does not
     dim the flare while no haze is drawn."""
     if not _system_nebula_gate(r) or player is None or not flares:
         return flares
@@ -5349,28 +5344,26 @@ def _veil_flares(r, flares, player):
 
 def _push_nebula_godrays(r, player, suns, warp_streaking) -> None:
     """The lightning flashes, to the god-ray pass (as ever) and -- under the
-    system-nebula gate, developer-only -- to SystemNebulaPass, which lights
+    system-nebula gate -- to SystemNebulaPass, which lights
     the haze and clumps from them (the new pass scatters only the star, so
-    without this a flash never lit the gas). The developer gate closed or a
-    warp streak pushes [] there; production never calls it at all, and does
-    not even ask the volumetric setting."""
+    without this a flash never lit the gas). The gate closed or a
+    warp streak pushes [] there."""
     flashes = []
     if _nebula_thunder is not None and not warp_streaking and r.nebula_lightning_enabled():
         flashes = [{"dir": f.dir, "intensity": f.intensity, "color": f.color}
                    for f in _nebula_thunder.active_flashes()]
     godrays = list(flashes)
-    if dev_mode.is_enabled():
-        system_open = _system_nebula_gate(r) and not warp_streaking
-        r.set_system_nebula_flashes(flashes if system_open else [])
-        if system_open and suns and player is not None:
-            star = _star_godray(player, suns[0]["position"])
-            if star is not None:
-                godrays.append(star)
+    system_open = _system_nebula_gate(r) and not warp_streaking
+    r.set_system_nebula_flashes(flashes if system_open else [])
+    if system_open and suns and player is not None:
+        star = _star_godray(player, suns[0]["position"])
+        if star is not None:
+            godrays.append(star)
     r.set_nebula_godrays(godrays)
 
 
 def _star_godray(player, star_render_pos):
-    """The star as a steady god-ray source (developer, system-nebula gate):
+    """The star as a steady god-ray source (system-nebula gate):
     toward the star from the render origin (the camera sits at ~0), at
     profile_fx.star_godray_intensity(godray_gain dial, the profile at the
     player, the eye->star transmittance), in the map star's colour. None

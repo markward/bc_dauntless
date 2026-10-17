@@ -20,9 +20,9 @@ struct Lighting;
 
 /// System-scale nebula: the whole star system as a star-centred atmosphere
 /// (docs/superpowers/specs/2026-09-29-system-nebula-render-design.md).
-/// DEVELOPER-ONLY for now -- host frame() gates it on --developer AND the
-/// volumetric-nebula setting; without both, NebulaVolumetricPass / NebulaPass
-/// render exactly as before.
+/// On in production (2026-10-16): host frame() gates it on the
+/// volumetric-nebula setting alone; with it off, NebulaVolumetricPass /
+/// NebulaPass render exactly as before.
 ///
 /// Started as a copy of NebulaVolumetricPass and keeps its performance
 /// machinery unchanged: quarter-resolution ping-pong target, dither step
@@ -69,9 +69,8 @@ struct NebulaDrawPlan {
 };
 
 /// frame()'s nebula decision, pure so it is testable without a host.
-NebulaDrawPlan plan_nebula_draws(bool volumetric_setting, bool developer,
-                                 bool has_profile, bool have_volumes,
-                                 bool have_wake);
+NebulaDrawPlan plan_nebula_draws(bool volumetric_setting, bool has_profile,
+                                 bool have_volumes, bool have_wake);
 
 class SystemNebulaPass {
 public:

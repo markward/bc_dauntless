@@ -394,8 +394,8 @@ std::vector<renderer::NebulaVolume> g_nebulae;
 std::vector<renderer::NebulaWakePoint> g_nebula_wake;   // world pos, faded strength, pod size
 std::unique_ptr<renderer::NebulaPass> g_nebula_pass;
 std::unique_ptr<renderer::NebulaVolumetricPass> g_nebula_volumetric_pass;
-// System-scale nebula (star-centred atmosphere). DEVELOPER-ONLY: frame()
-// runs it only under --developer with Volumetric Nebulae on.
+// System-scale nebula (star-centred atmosphere). On in production: frame()
+// runs it whenever Volumetric Nebulae is on and a profile is pushed.
 std::unique_ptr<renderer::SystemNebulaPass> g_system_nebula_pass;
 std::vector<renderer::GodrayFlash> g_nebula_godrays;
 std::unique_ptr<renderer::NebulaGodrayPass> g_nebula_godray_pass;
@@ -1786,14 +1786,13 @@ void frame() {
                                                  g_lighting, ambient_scale, rim);
             g_far_draw_calls += g_far_pass->last_draw_calls();
         }
-        // System-scale nebula: developer-only. Without --developer (or with
-        // Volumetric Nebulae off) the legacy branch runs exactly as before.
+        // System-scale nebula: follows the Volumetric Nebulae setting. With it
+        // off (or no profile pushed) the legacy branch runs.
         const renderer::NebulaDrawPlan neb_plan = renderer::plan_nebula_draws(
             dauntless_volumetric_nebulae::enabled(),
-            dauntless::is_developer_mode() && g_system_nebula_pass != nullptr,
             g_system_nebula_pass && g_system_nebula_pass->has_profile(),
             !g_nebulae.empty(), !g_nebula_wake.empty());
-        if (neb_plan.system) {
+        if (neb_plan.system && g_system_nebula_pass) {
             DAUNTLESS_FRAME_SCOPE("space.system_nebula");
             const glm::mat4 inv_vp =
                 glm::inverse(cam.proj_matrix() * cam.view_matrix());
@@ -3225,8 +3224,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   g_render_origin.x, g_render_origin.y, g_render_origin.z);
               d["dust_motion_history"] =
                   g_dust_pass ? g_dust_pass->has_motion_history() : false;
-              d["nebula_history"] = g_nebula_volumetric_pass
-                  ? g_nebula_volumetric_pass->has_history() : false;
+              // Either cloud pass: with Volumetric Nebulae on, the system
+              // pass draws the volumes (production since 2026-10-16).
+              d["nebula_history"] =
+                  (g_nebula_volumetric_pass
+                       && g_nebula_volumetric_pass->has_history())
+                  || (g_system_nebula_pass
+                       && g_system_nebula_pass->has_history());
               d["letterbox_covered"]      = renderer::letterbox::covered();
               d["sky_dirty"]              = g_sky_dirty;
               d["prev_input_edges"]       = g_prev_key_state.size()
@@ -5031,8 +5035,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "r, nebula (lists, GU / 0-1), k_sys, star_radius, cloud_rgb, "
           "star_rgb (3-tuples), optional g, floor, scatter, far_gu. Builds "
           "(CPU, seconds; cached per session, see system_nebula_prebuild) "
-          "and uploads the far-field table. Drawn only under "
-          "--developer with Volumetric Nebulae on.");
+          "and uploads the far-field table. Drawn "
+          "whenever Volumetric Nebulae is on.");
     m.def("system_nebula_prebuild",
           [](py::dict d) {
               const auto [p, look] = parse_system_nebula_profile(d);

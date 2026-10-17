@@ -543,7 +543,7 @@ def set_system_nebula_profile(profile: dict | None) -> None:
     (3-tuples), optional g, floor, scatter, far_gu. Builds and uploads the
     far-field table (CPU, seconds; cached per session -- system_nebula_prebuild
     builds it ahead on a worker) -- push once per system, never per frame.
-    Drawn only under --developer with Volumetric Nebulae on
+    Drawn whenever Volumetric Nebulae is on
     (docs/superpowers/specs/2026-09-29-system-nebula-render-design.md)."""
     _h.set_system_nebula_profile(profile)
 

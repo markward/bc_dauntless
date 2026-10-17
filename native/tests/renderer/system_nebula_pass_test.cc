@@ -435,33 +435,40 @@ TEST_F(SystemNebulaPassTest, ProfileWithoutAStarDrawsNoHaze) {
 // draw only inside the legacy branch, so under the system pass it vanished.
 TEST(SystemNebulaDrawPlan, WakeDrawsAfterEitherBranchUnderTheVolumetricGate) {
     using renderer::plan_nebula_draws;
-    // developer + volumetric + profile: the system pass, and the wake over it
-    auto p = plan_nebula_draws(/*volumetric=*/true, /*developer=*/true,
-                               /*has_profile=*/true, /*have_volumes=*/false,
-                               /*have_wake=*/true);
+    // volumetric + profile: the system pass, and the wake over it
+    auto p = plan_nebula_draws(/*volumetric=*/true, /*has_profile=*/true,
+                               /*have_volumes=*/false, /*have_wake=*/true);
     EXPECT_TRUE(p.system);
     EXPECT_FALSE(p.legacy);
     EXPECT_TRUE(p.wake) << "wake missing under the system nebula pass";
 
-    // production (no --developer): the legacy branch, wake exactly as before
-    p = plan_nebula_draws(true, false, true, true, true);
-    EXPECT_FALSE(p.system);
-    EXPECT_TRUE(p.legacy);
+    // local volumes alone also take the system pass (MetaNebula density bump)
+    p = plan_nebula_draws(true, false, true, true);
+    EXPECT_TRUE(p.system);
+    EXPECT_FALSE(p.legacy);
     EXPECT_TRUE(p.wake);
-    // ...and no volumes => no branch => no wake (byte-identical production)
-    p = plan_nebula_draws(true, false, true, false, true);
+    // nothing to draw => no branch => no wake
+    p = plan_nebula_draws(true, false, false, true);
     EXPECT_FALSE(p.system);
     EXPECT_FALSE(p.legacy);
     EXPECT_FALSE(p.wake);
-    // setting off: faithful pass, never the wake
-    p = plan_nebula_draws(false, true, true, true, true);
+    // setting off: faithful pass, never the wake, never the system pass
+    p = plan_nebula_draws(false, true, true, true);
     EXPECT_FALSE(p.system);
     EXPECT_TRUE(p.legacy);
     EXPECT_FALSE(p.wake);
     // nothing to wake
-    p = plan_nebula_draws(true, true, true, true, false);
+    p = plan_nebula_draws(true, true, true, false);
     EXPECT_TRUE(p.system);
     EXPECT_FALSE(p.wake);
+}
+
+// Production (no --developer) draws the system pass: the plan has no
+// developer input any more, only the Volumetric Nebulae setting.
+TEST(SystemNebulaDrawPlan, SystemDrawsWithoutDeveloper) {
+    auto p = renderer::plan_nebula_draws(true, true, true, false);
+    EXPECT_TRUE(p.system);
+    EXPECT_FALSE(p.legacy);
 }
 
 // Every MetaNebula volume is a union of up to 4 spheres (as gameplay
