@@ -165,7 +165,7 @@ uniform vec3  u_atmo_sun_dir_ws;    // per planet, from §4
 
 When it is on:
 - **Limb haze.** `f = pow(1 − max(dot(n, V), 0), 3) · u_atmo_limb`, lit by `max(dot(n, L), 0)` plus a small wrap. Mix the lit result toward `u_atmo_color · sun_color` by `clamp(f, 0, 1)`.
-- **Terminator.** With `x = dot(n, L)`, multiply the lit colour by `mix(vec3(1), u_atmo_sunset, smoothstep(0.25, 0.0, x) · step(-0.1, x) · 0.6)`, so a band near the terminator takes the sunset tint.
+- **Terminator.** With `x = dot(n, L)`, multiply the lit colour by `mix(vec3(1), u_atmo_sunset, (1 − smoothstep(0, 0.25, x)) · smoothstep(−0.2, −0.05, x) · 0.6)`, so a band near the terminator takes the sunset tint, fading out on both sides. The night-side edge was originally `step(-0.1, x)`: the tint dropped from 0.6 to 0 in one pixel, which showed live (2026-10-17) as a hard "longitude line" a few degrees past the terminator. `AtmosphereSurfaceTest.TerminatorBandHasNoHardEdge` guards it. (The day-side fade is spelled `1 − smoothstep(0, 0.25, x)` because GLSL leaves `smoothstep` with `edge0 ≥ edge1` undefined.)
 
 With `u_atmo_enabled == 0`, every existing path is byte-identical. The term runs after lighting and before the emissive and glow composite. No new derivatives are added, so the discard/derivative ordering is unchanged.
 

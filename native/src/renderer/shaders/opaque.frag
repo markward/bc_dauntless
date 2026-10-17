@@ -1870,8 +1870,10 @@ void main() {
         float x    = dot(n, La);
         float wrap = clamp((x + 0.2) / 1.2, 0.0, 1.0);
         vec3  sunc = u_dir_light_count > 0 ? u_dir_light_color[0] : vec3(1.0);
-        // Terminator: a band where the sun grazes takes the sunset tint.
-        float band = smoothstep(0.25, 0.0, x) * step(-0.1, x) * 0.6;
+        // Terminator: a band where the sun grazes takes the sunset tint,
+        // fading out on BOTH sides. A hard night-side cut (step(-0.1, x))
+        // drew a sharp "longitude line" a few degrees past the terminator.
+        float band = (1.0 - smoothstep(0.0, 0.25, x)) * smoothstep(-0.2, -0.05, x) * 0.6;
         lit *= mix(vec3(1.0), u_atmo_sunset, band);
         // Fresnel limb: the surface hazes toward the air colour at grazing view angles.
         float f = pow(1.0 - clamp(dot(n, V), 0.0, 1.0), 3.0) * u_atmo_limb;
