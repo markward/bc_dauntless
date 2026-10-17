@@ -98,7 +98,8 @@ function qbsNoArt(cls) {
     return '<div class="qbs-noart ' + (cls || '') + '">No art</div>';
 }
 
-// `src` is a data: URL (ship icons) or a file:// URL (insignias).
+// `src` is a file:// URL (ship icons, insignias), or a data: URL when the
+// icon cache could not be written.
 function qbsArt(src, cls) {
     if (!src) return qbsNoArt(cls);
     return '<img src="' + qbsEsc(src) + '" alt="" ' +

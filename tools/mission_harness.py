@@ -470,17 +470,27 @@ class _SDKLoader(importlib.abc.Loader):
         return None
 
     def exec_module(self, module):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            tree = _module_tree(self.path, module.__name__)
-            tree = _MoveGlobalsToTop().visit(tree)
-            tree = _implicit_relative_fixer(self.path, self.logical_rel).visit(tree)
-            tree = _FixDottedImport().visit(tree)
-            tree = _FixPy2Sort().visit(tree)
-            tree = _FixPy2DictView().visit(tree)
-            tree = _FixPy2Compare().visit(tree)
-            ast.fix_missing_locations(tree)
-            code = compile(tree, self.path, "exec")
+        fixer = _implicit_relative_fixer(self.path, self.logical_rel)
+
+        def build():
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                tree = _module_tree(self.path, module.__name__)
+                tree = _MoveGlobalsToTop().visit(tree)
+                tree = fixer.visit(tree)
+                tree = _FixDottedImport().visit(tree)
+                tree = _FixPy2Sort().visit(tree)
+                tree = _FixPy2DictView().visit(tree)
+                tree = _FixPy2Compare().visit(tree)
+                ast.fix_missing_locations(tree)
+                return compile(tree, self.path, "exec")
+        # Parse + transform + compile once per file content (a reload() --
+        # one per ship spawn -- used to pay it every time). Keep in sync with
+        # the twin in tests/conftest.py.
+        from engine import sdk_code_cache
+        code = sdk_code_cache.compiled(
+            __name__, self.path, module.__name__, (fixer._pkg, fixer._self_name),
+            fixer._sibling_dirs, build)
         module.__dict__.setdefault('apply', lambda f, a=(), kw={}: f(*a, **kw))
         # SDK loadspacehelper.py:91 calls `reload(mod)` after ClearLocalTemplates()
         # to re-register hardpoint templates by re-running the module top-level.

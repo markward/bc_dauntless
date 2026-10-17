@@ -7379,6 +7379,16 @@ def _process_object_deletions() -> None:
                 broadcast_object_deleted(obj)
 
 
+def _prewarm_quick_battle_panel(panel) -> None:
+    """Warm the Quick Battle setup screen's caches during boot. Best effort:
+    a failure only moves the cost back to the first open, so it never stops
+    boot."""
+    try:
+        panel.prewarm()
+    except Exception as _e:  # noqa: BLE001 - never block boot
+        dev_mode.log_swallowed("quick battle panel prewarm", _e)
+
+
 def _sync_quick_battle_panel(controller) -> None:
     """Mirror the QuickBattle config dialog's open/closed state onto the CEF
     Quick Battle Setup panel.
@@ -10919,6 +10929,11 @@ def run(mission_name: Optional[str] = None,
         quick_battle_setup_panel = QuickBattleSetupPanel(
             on_start=lambda: controller.loader.start_quickbattle())
         controller.quick_battle_setup_panel = quick_battle_setup_panel
+        if boot_quickbattle:
+            # Do the screen's first-open work (hull/shield probes, icons)
+            # now, while Quick Battle is still loading, instead of as a
+            # stall when the player first opens it from the XO menu.
+            _prewarm_quick_battle_panel(quick_battle_setup_panel)
 
         from engine.ui.pause_menu import default_pause_menu
         def _quit_and_manage_mods():
