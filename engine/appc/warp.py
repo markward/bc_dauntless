@@ -548,9 +548,12 @@ class _MissionChangePoint(TGAction):
 
 
 # The tunnel is the loading screen: past its floor, the player's hold waits
-# for the destination preload, polling every PRELOAD_POLL_S real seconds, but
-# never more than PRELOAD_CAP_S real seconds -- then it releases anyway and
-# names what was still pending.
+# for the destination preload, polling every PRELOAD_POLL_S, but never more
+# than PRELOAD_CAP_S past the floor -- then it releases anyway and names what
+# was still pending. Both run on g_kRealtimeTimerManager, which advances per
+# SIM TICK (1/60 s each; at most MAX_FRAME_DT of ticks per render frame, and
+# frozen under pause) -- so "30 s" is 30 s of sim ticks, not wall clock: a
+# frame that stalls for seconds advances the cap by at most MAX_FRAME_DT.
 PRELOAD_CAP_S = 30.0
 PRELOAD_POLL_S = 0.05
 
@@ -565,9 +568,12 @@ class _HoldUntilAction(TGAction):
     Game time, via g_kTimerManager, like TGSequence's own step delays.
 
     Past that floor the PLAYER's hold also waits for the destination preload
-    (`preload_ready`), polling on g_kRealtimeTimerManager, capped at
-    PRELOAD_CAP_S real seconds. Every wait goes through the one deferred
-    timer _complete_after holds, so Abort() cancels the whole chain."""
+    (`preload_ready`) -- only when its sequence owns the running preload --
+    polling on g_kRealtimeTimerManager, capped at PRELOAD_CAP_S. That
+    manager advances per sim tick (clamped by host_loop's MAX_FRAME_DT,
+    frozen under pause), so the cap is PRELOAD_CAP_S of sim ticks, not wall
+    clock. Every wait goes through the one deferred timer _complete_after
+    holds, so Abort() cancels the whole chain."""
 
     def __init__(self, seq, t_burst, t_transit):
         super().__init__()
