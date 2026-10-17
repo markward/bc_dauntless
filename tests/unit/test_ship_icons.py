@@ -144,6 +144,32 @@ def test_a_changed_tga_never_serves_the_old_png(icon_env):
     assert ship_icons.icon_file_url_for_species("Galaxy") != old
 
 
+def test_a_converter_change_never_serves_the_old_png(icon_env, monkeypatch):
+    """The PNGs outlive the build: a decoder/encoder fix must bump the cache
+    version, which renames every file."""
+    from engine.ui import ship_icons
+    icons_dir, _cache, _d = icon_env
+    (icons_dir / "Galaxy.tga").write_bytes(_tga())
+    old = ship_icons.icon_file_url_for_species("Galaxy")
+    ship_icons.reset_cache()
+    monkeypatch.setattr(ship_icons, "_PNG_CACHE_VERSION", ship_icons._PNG_CACHE_VERSION + 1)
+    assert ship_icons.icon_file_url_for_species("Galaxy") != old
+
+
+def test_a_leftover_temp_path_does_not_break_the_write(icon_env):
+    """Two game processes at once used to share one fixed temp name."""
+    from engine.ui import ship_icons
+    icons_dir, cache, _d = icon_env
+    (icons_dir / "Galaxy.tga").write_bytes(_tga())
+    url = ship_icons.icon_file_url_for_species("Galaxy")
+    target = _file_of(url)
+    target.unlink()
+    (cache / (target.name + ".tmp")).mkdir()        # the old fixed name, taken
+    ship_icons.reset_cache()
+    assert ship_icons.icon_file_url_for_species("Galaxy") == url
+    assert target.is_file()
+
+
 def test_missing_or_undecodable_icons_give_none(icon_env):
     from engine.ui import ship_icons
     icons_dir, _cache, _d = icon_env

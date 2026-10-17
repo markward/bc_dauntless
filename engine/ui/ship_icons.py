@@ -24,6 +24,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+import tempfile
 from typing import Optional
 
 from engine.ui.tga import decode_tga
@@ -54,6 +55,9 @@ _CACHE_DIR      = os.path.join(_PROJECT_ROOT, "native", "assets", "ui-cef", "ico
 _resolved: dict[str, Optional[str]] = {}
 # species stem → file:// URL (or a data-URL fallback, or None).
 _file_urls: dict[str, Optional[str]] = {}
+# Salts the cached PNG names. The files outlive the build, so BUMP THIS when
+# decode_tga or encode_png_rgba changes what they produce.
+_PNG_CACHE_VERSION = 1
 
 
 def reset_cache() -> None:
@@ -89,7 +93,7 @@ def icon_file_url_for_species(name: str) -> Optional[str]:
 
     from engine import paths
     safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in name)
-    digest = hashlib.sha1(blob).hexdigest()[:16]
+    digest = hashlib.sha1(b"v%d:" % _PNG_CACHE_VERSION + blob).hexdigest()[:16]
     target = paths.cache_dir() / "icons" / "ships" / ("%s-%s.png" % (safe, digest))
     if not target.is_file():
         try:
@@ -102,9 +106,19 @@ def icon_file_url_for_species(name: str) -> Optional[str]:
             return None
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
-            tmp = target.with_name(target.name + ".tmp")
-            tmp.write_bytes(png)
-            os.replace(tmp, target)
+            # A unique temp name: two game processes may write the same icon.
+            fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=target.name,
+                                       suffix=".tmp")
+            try:
+                with os.fdopen(fd, "wb") as fp:
+                    fp.write(png)
+                os.replace(tmp, target)
+            except BaseException:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
         except OSError as e:
             paths.report_write_failure(target, e)
             _file_urls[name] = icon_path_for_species(name)

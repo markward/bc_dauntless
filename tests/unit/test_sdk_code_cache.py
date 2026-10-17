@@ -76,6 +76,32 @@ def test_an_edited_file_recompiles(tmp_path, monkeypatch, twin):
 
 
 @pytest.mark.parametrize("twin", TWINS, ids=["mission_harness", "conftest"])
+def test_a_same_size_rewrite_with_the_old_mtime_still_recompiles(tmp_path, monkeypatch, twin):
+    """(mtime, size) alone can collide (coarse timestamps, `cp -p`); the
+    inode-change time cannot be set back."""
+    src = tmp_path / "cache_probe_mod.py"
+    src.write_text("X = 1\n")
+    st = os.stat(src)
+    assert _load(twin, src).X == 1
+    src.write_text("X = 2\n")
+    os.utime(src, ns=(st.st_atime_ns, st.st_mtime_ns))
+    assert _load(twin, src).X == 2
+
+
+def test_the_two_twins_never_share_compiled_code(tmp_path, monkeypatch):
+    """Tests that call mission_harness.setup_sdk() must run the PRODUCTION
+    transforms, never code the conftest twin compiled for the same file --
+    or a fix landing in one twin only would be hidden."""
+    src = tmp_path / "cache_probe_mod.py"
+    src.write_text("X = 1\n")
+    harness_calls = _count_parses(monkeypatch, mission_harness)
+    conftest_calls = _count_parses(monkeypatch, conftest)
+    _load(conftest, src)
+    _load(mission_harness, src)
+    assert len(conftest_calls) == 1 and len(harness_calls) == 1
+
+
+@pytest.mark.parametrize("twin", TWINS, ids=["mission_harness", "conftest"])
 def test_a_sibling_file_appearing_recompiles(tmp_path, monkeypatch, twin):
     """`import b` is rewritten to `from <pkg> import b` only when b.py is a
     sibling, so the compiled code depends on the directory listing."""

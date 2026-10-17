@@ -238,9 +238,13 @@ class QuickBattleSetupPanel(Panel):
         per ship, 1.4 s of a 1.5 s first open measured 2026-10-17), icons,
         bios and insignia. host_loop calls it while Quick Battle loads.
 
-        Side-effect free on purpose: the catalog generation, the scenario
-        reconcile and the SDK sync all stay with the first real refresh,
-        exactly where they happened before."""
+        Leaves the screen's own state alone: the catalog generation, the
+        scenario reconcile and the SDK sync all stay with the first real
+        refresh, exactly where they happened before. It does what a first
+        open did, only earlier and on every Quick Battle boot: imports the
+        ship and hardpoint modules (reloading loaded ones; the property
+        manager and part registry are restored, see stats.probe) and writes
+        the icon PNGs to the user cache."""
         entries = list(self._catalog_fn())
         self._warmed_generation = tuple(entries)
         for ce in entries:

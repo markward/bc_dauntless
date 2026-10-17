@@ -489,7 +489,7 @@ class _SDKLoader(importlib.abc.Loader):
         # the twin in tests/conftest.py.
         from engine import sdk_code_cache
         code = sdk_code_cache.compiled(
-            self.path, module.__name__, (fixer._pkg, fixer._self_name),
+            __name__, self.path, module.__name__, (fixer._pkg, fixer._self_name),
             fixer._sibling_dirs, build)
         module.__dict__.setdefault('apply', lambda f, a=(), kw={}: f(*a, **kw))
         # SDK loadspacehelper.py:91 calls `reload(mod)` after ClearLocalTemplates()
