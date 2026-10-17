@@ -100,6 +100,11 @@ _sim_ticks = 0
 _sim_ticks_avg = 0.0
 _sim_ticks_seeded = False
 
+# The last completed frame's RAW per-name milliseconds and wall-clock total,
+# before smoothing. Only the spike log reads them.
+_last_raw: dict[str, float] = {}
+_last_total_ms = 0.0
+
 # Rows that are summed over the frame's catch-up ticks rather than measured
 # once per frame. Only the ROOT is named: everything nested inside it inherits
 # the property, which the parent chain already knows. This is host_loop's
@@ -145,7 +150,7 @@ def set_enabled(value: bool, *, native: bool = True) -> None:
 def reset() -> None:
     global _open_name, _open_t0, _frame_t0, _frame_ms, _frame_seeded, _frames
     global _frame_open, _sim_ticks, _since_report
-    global _sim_ticks_avg, _sim_ticks_seeded
+    global _sim_ticks_avg, _sim_ticks_seeded, _last_total_ms
     _phases.clear()
     _seeded.clear()
     _frame_acc.clear()
@@ -169,6 +174,8 @@ def reset() -> None:
     _sim_ticks_avg = 0.0
     _sim_ticks_seeded = False
     _since_report = 0
+    _last_raw.clear()
+    _last_total_ms = 0.0
 
 
 def begin_frame() -> None:
@@ -215,6 +222,7 @@ def mark(name: str) -> None:
 def end_frame() -> None:
     """Close the open phase and fold the frame total into its average."""
     global _open_name, _frame_ms, _frame_seeded, _frames, _frame_open
+    global _last_total_ms
     if not _enabled:
         return
     # The profiler is toggled on mid-frame -- that is the documented workflow --
@@ -237,6 +245,10 @@ def end_frame() -> None:
     # a live cost. (renderer::FrameTimer does the same, for the same reason.)
     for name in list(_phases) + [n for n in _frame_acc if n not in _phases]:
         _fold(name, _frame_acc.get(name, 0.0))
+    # Kept raw for the spike log, which needs THIS frame's numbers, not the
+    # averages they were just folded into.
+    _last_raw.clear()
+    _last_raw.update(_frame_acc)
     _frame_acc.clear()
     # Raw, not smoothed, and for the frame just closed only -- the same rule
     # the C++ timer's `calls` follows, so the two tables mean the same thing.
@@ -244,6 +256,7 @@ def end_frame() -> None:
     _calls.update(_frame_calls)
 
     total = (now - _frame_t0) * 1000.0
+    _last_total_ms = total
     if _frame_seeded:
         _frame_ms += EMA_ALPHA * (total - _frame_ms)
     else:
@@ -399,7 +412,9 @@ GPU_ZERO_FRAMES = 30
 def should_report() -> bool:
     """True once every REPORT_EVERY frames while enabled. Advances the counter."""
     global _since_report
-    if not _enabled:
+    if not _enabled or _spike_path is not None:
+        # Spike mode writes to its file and keeps stderr quiet: a capture
+        # session is long, and the periodic report would bury everything.
         return False
     _since_report += 1
     if _since_report < REPORT_EVERY:
@@ -629,6 +644,138 @@ def print_report() -> None:
             sys.stderr.write(line + "\n")
     except Exception:
         pass
+
+
+# ── Spike log ────────────────────────────────────────────────────────────────
+# The averaged report cannot see a one-off long frame: a 5 s hitch is blended
+# in at EMA_ALPHA and has decayed before the next REPORT_EVERY report prints.
+# Spike mode appends the RAW breakdown of every frame at or over a threshold
+# to a file instead -- the Python phases and scopes, then the render scopes'
+# CPU time for the same frame (GPU is resolved frames later and is left out).
+#
+#   DAUNTLESS_PROFILE_SPIKES=<path>      enable from boot and write here
+#   DAUNTLESS_PROFILE_SPIKE_MS=<ms>      threshold (default DEFAULT_SPIKE_MS)
+#
+# Works without --developer. While on, the periodic stderr report is off.
+
+SPIKE_ENV = "DAUNTLESS_PROFILE_SPIKES"
+SPIKE_MS_ENV = "DAUNTLESS_PROFILE_SPIKE_MS"
+DEFAULT_SPIKE_MS = 100.0
+# Rows under this many ms are left out of a spike record; a 5 s frame has
+# dozens of sub-millisecond rows that only bury the ones that matter.
+SPIKE_ROW_FLOOR_MS = 0.5
+
+_spike_path = None
+_spike_ms = DEFAULT_SPIKE_MS
+_spike_count = 0
+_spike_t0 = 0.0
+
+
+def configure_spike_log(path, *, threshold_ms: float = DEFAULT_SPIKE_MS,
+                        native: bool = True) -> None:
+    """Start writing spike records to `path` (and enable the profiler), or
+    stop with `path=None`. Stopping leaves the profiler's enabled state alone."""
+    global _spike_path, _spike_ms, _spike_count, _spike_t0
+    from pathlib import Path
+    _spike_path = Path(path) if path is not None else None
+    _spike_ms = float(threshold_ms)
+    _spike_count = 0
+    _spike_t0 = _perf()
+    if _spike_path is not None:
+        try:
+            _spike_path.parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        set_enabled(True, native=native)
+        _write_spike_lines([
+            "== spike capture started %s, threshold %.0f ms =="
+            % (time.strftime("%Y-%m-%d %H:%M:%S"), _spike_ms),
+            "   (python rows: raw ms and calls for that frame; rows under "
+            "%.1f ms left out; an indented row is included in its parent)"
+            % SPIKE_ROW_FLOOR_MS,
+        ])
+
+
+def configure_spike_log_from_env(*, native: bool = True) -> bool:
+    """configure_spike_log from SPIKE_ENV / SPIKE_MS_ENV. True when enabled."""
+    import os
+    path = os.environ.get(SPIKE_ENV, "").strip()
+    if not path:
+        return False
+    try:
+        ms = float(os.environ.get(SPIKE_MS_ENV, DEFAULT_SPIKE_MS))
+    except ValueError:
+        ms = DEFAULT_SPIKE_MS
+    configure_spike_log(path, threshold_ms=ms, native=native)
+    return True
+
+
+def spike_log_path():
+    return _spike_path
+
+
+def spike_threshold_ms() -> float:
+    return _spike_ms
+
+
+def _write_spike_lines(lines: list[str]) -> bool:
+    try:
+        with open(_spike_path, "a", encoding="ascii", errors="replace") as f:
+            f.write("\n".join(lines) + "\n")
+        return True
+    except Exception:
+        return False
+
+
+def maybe_log_spike(context="") -> bool:
+    """Append the last completed frame to the spike log if it was at or over
+    the threshold. Call right after end_frame(). `context` is a string or a
+    zero-arg callable returning one, called only when a record is written.
+    Never raises; True when a record was written."""
+    global _spike_count
+    if _spike_path is None or not _enabled or _last_total_ms < _spike_ms:
+        return False
+    try:
+        if callable(context):
+            context = context()
+        lines = _spike_record_lines(str(context or ""))
+    except Exception as e:
+        lines = ["== spike (record failed: %s: %s) ==" % (type(e).__name__, e)]
+    if not _write_spike_lines(lines):
+        return False
+    _spike_count += 1
+    return True
+
+
+def _spike_record_lines(context: str) -> list[str]:
+    from engine import host_io
+    lines = ["", "== spike #%d: %.1f ms, frame %d, t+%.1f s, %s, %d sim "
+             "ticks ==" % (_spike_count + 1, _last_total_ms, _frames,
+                           _perf() - _spike_t0, time.strftime("%H:%M:%S"),
+                           _sim_ticks)]
+    if context:
+        lines.append("   " + context)
+    lines.append("  %-32s %9s %5s" % ("python", "ms", "calls"))
+    for depth, name in _phase_tree():
+        ms = _last_raw.get(name)
+        if ms is None or ms < SPIKE_ROW_FLOOR_MS:
+            continue
+        lines.append("    %-30s %9.1f %5d"
+                     % (_fit("  " * depth + name), ms, _calls.get(name, 0)))
+    raw = host_io.profiler_last_frame_raw()
+    scopes = raw.get("scopes") or []
+    if scopes:
+        lines.append("  %-32s %9s %5s" % ("render (cpu)", "ms", "calls"))
+        for s in scopes:
+            ms = float(s.get("cpu_ms", 0.0))
+            if ms < SPIKE_ROW_FLOOR_MS:
+                continue
+            label = "  " * int(s.get("depth", 0)) + str(s.get("name", "?"))
+            lines.append("    %-30s %9.1f %5d"
+                         % (_fit(label), ms, int(s.get("calls", 0))))
+    else:
+        lines.append("  render (cpu): none recorded")
+    return lines
 
 
 # ── Scene load ───────────────────────────────────────────────────────────────

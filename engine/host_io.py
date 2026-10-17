@@ -77,7 +77,7 @@ _OPTIONAL_BINDINGS = frozenset({
     "starmap_set_enabled", "starmap_set_viewport",
     "starmap_set_camera", "starmap_set_scene",
     "profiler_set_enabled", "profiler_enabled",
-    "profiler_scopes", "profiler_frame",
+    "profiler_scopes", "profiler_frame", "profiler_last_frame_raw",
     "set_swap_interval", "swap_interval",
     "set_cursor_shape",
     "ray_trace_mesh_pick", "model_identity", "set_bridge_highlight",
@@ -863,6 +863,16 @@ def profiler_scopes() -> List[dict]:
     """
     fn = getattr(_h, "profiler_scopes", None)
     return list(fn()) if fn is not None else []
+
+
+def profiler_last_frame_raw() -> dict:
+    """The last frame's RAW render CPU times, not smoothed and not lagged:
+    {cpu_ms, scopes: [{name, cpu_ms, calls, depth}, ...]}. No GPU -- that
+    resolves frames later. For the spike log; empty when the binding is absent."""
+    fn = getattr(_h, "profiler_last_frame_raw", None)
+    if fn is None:
+        return {"cpu_ms": 0.0, "scopes": []}
+    return dict(fn())
 
 
 def profiler_frame() -> dict:

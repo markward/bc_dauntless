@@ -307,7 +307,7 @@ Because override radii are absolute, they go stale if the layout moves again
 | radiation drain, outages, events | new driver beside `NebulaTracker` (`host_loop.py` ≈ 10436) | fixed sim tick |
 | concealment | `sensor_detection.concealment_at` | on demand |
 | dust density | `r.set_dust_profile(dust)` from `_push_environment_feeds`, `max` in `compute_dust_influence` | render frame |
-| nebula look | a render pass fed from `_push_environment_feeds` | render frame — **last phase, behind a live spike** |
+| nebula look | a render pass fed from `_push_environment_feeds` | render frame — **on in production since 2026-10-16** (follows Volumetric Nebulae; Mark) |
 
 Profile events carry no source (there is no nebula object). No SDK handler reads
 it: E3M2's `CoreDamage` is the only SDK handler for this event (checked

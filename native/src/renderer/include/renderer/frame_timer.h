@@ -119,6 +119,13 @@ public:
     /// decaying internally in case it comes back.
     const std::vector<ScopeResult>& results() const { return results_; }
 
+    /// The frame end_frame() just closed, CPU only and RAW: not smoothed and
+    /// not lagged by the ring (CPU time is known at pop). gpu_ms is 0 and
+    /// gpu_measured false on every row. For the spike log, which needs one
+    /// long frame's own numbers -- the EMA in results() hides a single hitch.
+    const std::vector<ScopeResult>& last_frame_raw() const { return last_raw_; }
+    double last_frame_raw_cpu_ms() const { return last_raw_cpu_ms_; }
+
     /// Whole-frame totals, EMA-smoothed, in ms.
     double frame_cpu_ms() const { return frame_cpu_ms_; }
     double frame_gpu_ms() const { return frame_gpu_ms_; }
@@ -226,6 +233,8 @@ private:
     bool   gpu_total_seeded_ = false;
 
     std::vector<ScopeResult> results_;
+    std::vector<ScopeResult> last_raw_;
+    double last_raw_cpu_ms_ = 0.0;
 };
 
 /// RAII scope. Zero cost when the timer is disabled.

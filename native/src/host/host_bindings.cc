@@ -394,8 +394,8 @@ std::vector<renderer::NebulaVolume> g_nebulae;
 std::vector<renderer::NebulaWakePoint> g_nebula_wake;   // world pos, faded strength, pod size
 std::unique_ptr<renderer::NebulaPass> g_nebula_pass;
 std::unique_ptr<renderer::NebulaVolumetricPass> g_nebula_volumetric_pass;
-// System-scale nebula (star-centred atmosphere). DEVELOPER-ONLY: frame()
-// runs it only under --developer with Volumetric Nebulae on.
+// System-scale nebula (star-centred atmosphere). On in production: frame()
+// runs it whenever Volumetric Nebulae is on and a profile is pushed.
 std::unique_ptr<renderer::SystemNebulaPass> g_system_nebula_pass;
 std::vector<renderer::GodrayFlash> g_nebula_godrays;
 std::unique_ptr<renderer::NebulaGodrayPass> g_nebula_godray_pass;
@@ -1597,13 +1597,22 @@ void frame() {
             in.anchor_sys = g_far_field.anchor();
             in.game_time = g_decal_game_time;
             in.lod0_pixel_radius = g_minor_field.dials().lod0_pixel_radius;
-            g_near_field.build(in, g_near_out);
-            g_minor_pass->render(near_fragment, g_near_out.meshes, cam, *g_pipeline,
-                                 [](std::uint64_t h) { return resolve_model(h); },
-                                 g_lighting, ambient_scale, rim);
+            {
+                DAUNTLESS_FRAME_SCOPE("rock.near.build");
+                g_near_field.build(in, g_near_out);
+            }
+            {
+                DAUNTLESS_FRAME_SCOPE("rock.near.mesh_draw");
+                g_minor_pass->render(near_fragment, g_near_out.meshes, cam, *g_pipeline,
+                                     [](std::uint64_t h) { return resolve_model(h); },
+                                     g_lighting, ambient_scale, rim);
+            }
             g_far_draw_calls += g_minor_pass->last_draw_calls();
-            g_far_pass->render_impostors(g_near_out.billboards, cam, *g_pipeline, g_lighting,
-                                         ambient_scale, rim);
+            {
+                DAUNTLESS_FRAME_SCOPE("rock.impostor.draw");
+                g_far_pass->render_impostors(g_near_out.billboards, cam, *g_pipeline, g_lighting,
+                                             ambient_scale, rim);
+            }
             // billboards_fading draw translucent in render_space_vfx (rock.fade.draw).
             // A billboard bin whose atlas cannot load is skipped by
             // render_impostors (its rock still draws in the mesh tier); the
@@ -1777,14 +1786,13 @@ void frame() {
                                                  g_lighting, ambient_scale, rim);
             g_far_draw_calls += g_far_pass->last_draw_calls();
         }
-        // System-scale nebula: developer-only. Without --developer (or with
-        // Volumetric Nebulae off) the legacy branch runs exactly as before.
+        // System-scale nebula: follows the Volumetric Nebulae setting. With it
+        // off (or no profile pushed) the legacy branch runs.
         const renderer::NebulaDrawPlan neb_plan = renderer::plan_nebula_draws(
             dauntless_volumetric_nebulae::enabled(),
-            dauntless::is_developer_mode() && g_system_nebula_pass != nullptr,
             g_system_nebula_pass && g_system_nebula_pass->has_profile(),
             !g_nebulae.empty(), !g_nebula_wake.empty());
-        if (neb_plan.system) {
+        if (neb_plan.system && g_system_nebula_pass) {
             DAUNTLESS_FRAME_SCOPE("space.system_nebula");
             const glm::mat4 inv_vp =
                 glm::inverse(cam.proj_matrix() * cam.view_matrix());
@@ -2461,6 +2469,35 @@ namespace dauntless_normal_map {
 // Hull-breach renderer pass — always-on gate. Defined in frame.cc.
 namespace dauntless_hull_damage {
     bool enabled();            // defined in frame.cc
+}
+
+/// The dict -> (profile, look) parse shared by set_system_nebula_profile,
+/// system_nebula_prebuild and system_nebula_prebuilt, so all three key the
+/// table cache identically. Throws ValueError on mismatched rows.
+static std::pair<renderer::atmosphere::RadialProfile,
+                 renderer::atmosphere::LookParams>
+parse_system_nebula_profile(const py::dict& d) {
+    renderer::atmosphere::RadialProfile p;
+    p.r = d["r"].cast<std::vector<float>>();
+    p.nebula = d["nebula"].cast<std::vector<float>>();
+    if (p.r.empty() || p.r.size() != p.nebula.size())
+        throw py::value_error(
+            "system nebula profile: 'r' and 'nebula' must be "
+            "non-empty and the same length");
+    p.k_sys = d["k_sys"].cast<float>();
+    p.star_radius = d["star_radius"].cast<float>();
+    auto rgb3 = [&](const char* key) {
+        auto t = d[key].cast<std::tuple<float, float, float>>();
+        return glm::vec3(std::get<0>(t), std::get<1>(t), std::get<2>(t));
+    };
+    p.cloud_rgb = rgb3("cloud_rgb");
+    p.star_rgb = rgb3("star_rgb");
+    renderer::atmosphere::LookParams look;
+    if (d.contains("g"))       look.g = d["g"].cast<float>();
+    if (d.contains("floor"))   look.floor = d["floor"].cast<float>();
+    if (d.contains("scatter")) look.scatter = d["scatter"].cast<float>();
+    if (d.contains("far_gu"))  look.far_gu = d["far_gu"].cast<float>();
+    return {std::move(p), look};
 }
 
 static renderer::PhaserBeamDescriptor beam_from_dict(const py::dict& d) {
@@ -3187,8 +3224,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   g_render_origin.x, g_render_origin.y, g_render_origin.z);
               d["dust_motion_history"] =
                   g_dust_pass ? g_dust_pass->has_motion_history() : false;
-              d["nebula_history"] = g_nebula_volumetric_pass
-                  ? g_nebula_volumetric_pass->has_history() : false;
+              // Either cloud pass: with Volumetric Nebulae on, the system
+              // pass draws the volumes (production since 2026-10-16).
+              d["nebula_history"] =
+                  (g_nebula_volumetric_pass
+                       && g_nebula_volumetric_pass->has_history())
+                  || (g_system_nebula_pass
+                       && g_system_nebula_pass->has_history());
               d["letterbox_covered"]      = renderer::letterbox::covered();
               d["sky_dirty"]              = g_sky_dirty;
               d["prev_input_edges"]       = g_prev_key_state.size()
@@ -4982,27 +5024,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   if (g_system_nebula_pass) g_system_nebula_pass->clear_profile();
                   return;
               }
-              const py::dict d = desc.cast<py::dict>();
-              renderer::atmosphere::RadialProfile p;
-              p.r = d["r"].cast<std::vector<float>>();
-              p.nebula = d["nebula"].cast<std::vector<float>>();
-              if (p.r.empty() || p.r.size() != p.nebula.size())
-                  throw py::value_error(
-                      "set_system_nebula_profile: 'r' and 'nebula' must be "
-                      "non-empty and the same length");
-              p.k_sys = d["k_sys"].cast<float>();
-              p.star_radius = d["star_radius"].cast<float>();
-              auto rgb3 = [&](const char* key) {
-                  auto t = d[key].cast<std::tuple<float, float, float>>();
-                  return glm::vec3(std::get<0>(t), std::get<1>(t), std::get<2>(t));
-              };
-              p.cloud_rgb = rgb3("cloud_rgb");
-              p.star_rgb = rgb3("star_rgb");
-              renderer::atmosphere::LookParams look;
-              if (d.contains("g"))       look.g = d["g"].cast<float>();
-              if (d.contains("floor"))   look.floor = d["floor"].cast<float>();
-              if (d.contains("scatter")) look.scatter = d["scatter"].cast<float>();
-              if (d.contains("far_gu"))  look.far_gu = d["far_gu"].cast<float>();
+              const auto [p, look] =
+                  parse_system_nebula_profile(desc.cast<py::dict>());
               // Validated above even with the host down; the upload needs GL.
               if (!g_system_nebula_pass) return;
               g_system_nebula_pass->set_profile(p, look);
@@ -5011,8 +5034,31 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Set (dict) or clear (None) the system-scale nebula profile: keys "
           "r, nebula (lists, GU / 0-1), k_sys, star_radius, cloud_rgb, "
           "star_rgb (3-tuples), optional g, floor, scatter, far_gu. Builds "
-          "and uploads the far-field table (CPU, ~1-2 s). Drawn only under "
-          "--developer with Volumetric Nebulae on.");
+          "(CPU, seconds; cached per session, see system_nebula_prebuild) "
+          "and uploads the far-field table. Drawn "
+          "whenever Volumetric Nebulae is on.");
+    m.def("system_nebula_prebuild",
+          [](py::dict d) {
+              const auto [p, look] = parse_system_nebula_profile(d);
+              // Validated even with the host down; the cache lives in the pass.
+              if (!g_system_nebula_pass) return;
+              g_system_nebula_pass->prebuild(p, look);
+          },
+          py::arg("profile"),
+          "Start building the system nebula far-field table for `profile` "
+          "(same keys as set_system_nebula_profile) on a worker thread and "
+          "return at once; a later set_system_nebula_profile with the same "
+          "dict then costs only the upload. No-op if already built/building.");
+    m.def("system_nebula_prebuilt",
+          [](py::dict d) {
+              const auto [p, look] = parse_system_nebula_profile(d);
+              if (!g_system_nebula_pass) return false;
+              return g_system_nebula_pass->prebuilt(p, look);
+          },
+          py::arg("profile"),
+          "True once `profile`'s far-field table is built (by a prebuild or "
+          "an earlier set_system_nebula_profile). Never blocks. False with "
+          "the host down.");
     m.def("set_system_nebula_star",
           [](py::object pos) {
               if (!g_system_nebula_pass) return;
@@ -5089,8 +5135,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Set the system-scale nebula's live look dials: optional keys "
           "lane_size, lane_contrast, g, floor, near_range -- any "
           "key omitted resets that dial to the struct default. A change to "
-          "g or floor rebuilds the far-field table (~1-2s) when a profile is "
-          "already uploaded; lane_size/lane_contrast/near_range never "
+          "g or floor rebuilds the far-field table when a profile is "
+          "already uploaded (measured ~7 s for Vesuvi, 15 rows, on the Debug "
+          "build; ~0.2 s for 3-row systems; cached per session and prebuilt "
+          "during the warp tunnel); lane_size/lane_contrast/near_range never "
           "rebuild. Developer-only tuning: engine/dev_nebula_dials.py.");
     m.def("system_nebula_dials",
           []() -> py::dict {
@@ -5366,6 +5414,24 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "{'speck_cells'} now, {'band_specks', 'puffs'} submitted, and "
           "{'impostors', 'specks' (far + minor), "
           "'draw_calls'} summed over the cameras the last frame drew.");
+    m.def("far_prefetch_atlases",
+          []() {
+              if (g_far_pass) g_far_pass->prefetch_atlases();
+          },
+          "Start decoding (worker threads, at most "
+          "kMaxAtlasDecodesInFlight at once; the rest queue and start from "
+          "far_pump_atlas_uploads) every impostor atlas the far pass has not "
+          "loaded, failed, started or queued. No GL work; a no-op with no "
+          "far pass.");
+    m.def("far_pump_atlas_uploads",
+          [](int max_uploads) {
+              return g_far_pass ? g_far_pass->pump_atlas_uploads(max_uploads) : 0;
+          },
+          py::arg("max_uploads"),
+          "Upload at most `max_uploads` prefetched atlases whose decode has "
+          "finished (never waits), start queued decodes into the freed "
+          "slots, and return how many are still pending (in flight + "
+          "queued); 0 with no far pass.");
     m.def("far_clear",
           []() {
               far_zero_fades(g_far_flagged_keys);
@@ -6735,6 +6801,26 @@ PYBIND11_MODULE(_dauntless_host, m) {
               return out;
           },
           "Per-pass render timings from the last resolved frame.");
+    m.def("profiler_last_frame_raw",
+          []() {
+              // RAW CPU ms of the frame just closed -- not smoothed, not
+              // lagged. The spike log reads one long frame's own numbers.
+              py::list scopes;
+              const auto& t = renderer::frame_timer();
+              for (const auto& r : t.last_frame_raw()) {
+                  py::dict d;
+                  d["name"]   = r.name;
+                  d["cpu_ms"] = r.cpu_ms;
+                  d["calls"]  = r.calls;
+                  d["depth"]  = r.depth;
+                  scopes.append(std::move(d));
+              }
+              py::dict out;
+              out["cpu_ms"] = t.last_frame_raw_cpu_ms();
+              out["scopes"] = scopes;
+              return out;
+          },
+          "The last frame's raw (un-smoothed) render CPU times, no GPU.");
     m.def("profiler_frame",
           []() {
               py::dict d;
@@ -7636,6 +7722,23 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "on-disk .dhv cache), instead of lazily on its first "
           "hull_carve_add deposit during combat. No-op when no authored "
           "resolution has been pushed for this hull yet.");
+
+    // Same as hull_volume_set_resolution + hull_volume_prewarm, but from a
+    // MODEL handle: the warp-tunnel preload warms hulls before any ship is
+    // realised, so there is no instance to resolve through. Creates none.
+    m.def("hull_volume_prewarm_model",
+          [](scenegraph::ModelHandle model_handle, float resolution) {
+              if (!(resolution > 0.0f)) return;
+              const assets::Model* model = resolve_model(model_handle);
+              if (model == nullptr || model->source.empty()) return;
+              renderer::set_hull_volume_resolution(model->source, resolution);
+              renderer::hull_volume_cache().get(model->source, resolution,
+                                                voxel::kDefaultQuality);
+          },
+          pybind11::arg("model"), pybind11::arg("resolution"),
+          "Set the authored resolution for this model's hull and bake (or "
+          "load the on-disk .dhv of) its damage volume now, without creating "
+          "an instance. No-op for an unknown handle or resolution <= 0.");
 
     m.def("compute_capsule_region",
           [](scenegraph::InstanceId id,

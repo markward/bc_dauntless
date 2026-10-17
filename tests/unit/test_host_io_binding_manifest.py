@@ -119,7 +119,7 @@ def test_optional_holds_exactly_the_soft_guarded_bindings():
         "starmap_set_enabled", "starmap_set_viewport",
         "starmap_set_camera", "starmap_set_scene",
         "profiler_set_enabled", "profiler_enabled",
-        "profiler_scopes", "profiler_frame",
+        "profiler_scopes", "profiler_frame", "profiler_last_frame_raw",
         "set_swap_interval", "swap_interval",
         "set_cursor_shape",
         "ray_trace_mesh_pick", "model_identity", "set_bridge_highlight",

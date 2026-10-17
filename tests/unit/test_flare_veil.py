@@ -20,12 +20,14 @@ def test_flares_take_the_star_transmittance_under_developer(monkeypatch):
     assert out[0]["brightness"] == 0.2
 
 
-def test_flares_untouched_without_developer(monkeypatch):
+def test_flares_take_the_star_transmittance_in_production(monkeypatch):
+    """The haze is on without --developer, so the flare follows it."""
     monkeypatch.setattr(dev_mode, "is_enabled", lambda: False)
+    monkeypatch.setattr(P, "star_transmittance", lambda obj, veil=P.VEIL_DEFAULT: 0.2)
     r = _Renderer(volumetric_enabled=True)
-    flares = [{"source_world_pos": (1.0, 2.0, 3.0), "elements": []}]
-    assert host_loop._veil_flares(r, flares, object()) == flares
-    assert "brightness" not in flares[0]
+    out = host_loop._veil_flares(
+        r, [{"source_world_pos": (1.0, 2.0, 3.0), "elements": []}], object())
+    assert out[0]["brightness"] == 0.2
 
 
 def test_flares_untouched_when_volumetric_nebulae_setting_is_off(monkeypatch):

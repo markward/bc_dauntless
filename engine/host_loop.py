@@ -4442,6 +4442,13 @@ def reset_sdk_globals() -> None:
     App.g_kTimerManager._time = 0.0
     App.g_kRealtimeTimerManager._time = 0.0
     _reset_timers()
+    # The timers just dropped include any mid-tunnel warp's, so its
+    # WarpSequence never reaches Completed/Abort: end its preload here, or
+    # the old mission's loads keep stepping into the new one.
+    from engine import warp_preload as _warp_preload
+    from engine.appc import warp as _warp
+    _warp_preload.end()
+    _warp.reset_preload_state()
     # Drop the object→render-instance mirror; the instances themselves are
     # torn down with the set, and the next mission's realize loops repopulate.
     render_instances.reset()
@@ -4736,8 +4743,11 @@ def _reset_sensor_state() -> None:
     # The native pass keeps its old far-field table across a mission swap --
     # mark our latch UNKNOWN (not None) so the next _push_system_nebula call
     # is forced to either clear it (unmapped/gate-closed) or rebuild it fresh
-    # (mapped, even into the same system name as before the swap).
-    _system_nebula_pushed_for = _SYSTEM_NEBULA_UNKNOWN
+    # (mapped, even into the same system name as before the swap). A latch
+    # already None means the pass holds nothing (never fed, or cleared), and
+    # a swap does not change that: leave it, so a closed setting pushes nothing.
+    if _system_nebula_pushed_for is not None:
+        _system_nebula_pushed_for = _SYSTEM_NEBULA_UNKNOWN
     # Clear concealment lock-break latches so a new mission's ships don't
     # inherit stale id()-keyed latches from the prior mission.
     from engine.appc.sensor_detection import reset_concealment_state
@@ -5061,8 +5071,8 @@ _SYSTEM_NEBULA_UNKNOWN = object()
 
 # System name whose radial-profile table the SystemNebulaPass currently holds,
 # or None once we know it holds nothing, or _SYSTEM_NEBULA_UNKNOWN right after
-# a mission swap (_reset_sensor_state) until the next _push_system_nebula call
-# resolves it one way or the other. Also reset to None whenever the
+# a mission swap (_reset_sensor_state) that found a table held, until the next
+# _push_system_nebula call resolves it one way or the other. Also reset to None whenever the
 # developer/volumetric gate closes, so re-opening it re-pushes.
 _system_nebula_pushed_for = None  # str | None | _SYSTEM_NEBULA_UNKNOWN
 # The veil (engine.dev_nebula_dials) the held profile's k_sys was solved
@@ -5277,38 +5287,39 @@ def _push_dust_profile(r, player, warp_streaking) -> None:
 
 
 def _system_nebula_gate(r) -> bool:
-    """The one gate for everything that feeds or follows the developer-only
-    SystemNebulaPass (the profile/star push AND the flare veil): developer
-    mode AND the Volumetric Nebulae setting, matching the native pass's own
-    gate. Developer mode is tested FIRST so production short-circuits
-    without a single renderer call."""
-    return dev_mode.is_enabled() and r.volumetric_nebulae_enabled()
+    """The one gate for everything that feeds or follows the SystemNebulaPass
+    (the profile/star push AND the flare veil): the Volumetric Nebulae
+    setting (part of Improved Space), matching the native pass's own gate.
+    On in production since 2026-10-16; --developer no longer matters."""
+    return bool(r.volumetric_nebulae_enabled())
 
 
 def _push_system_nebula(r, player, suns, warp_streaking) -> None:
-    """Feed the developer-only SystemNebulaPass: the mapped system's radial
+    """Feed the SystemNebulaPass: the mapped system's radial
     profile once per system (or veil-dial) change -- the pass builds its
-    far-field table from it, ~1.6s -- and, every frame the gate is open, the
+    far-field table from it (measured ~7 s for Vesuvi (15 rows) on the Debug
+    build, ~0.2 s for 3-row systems; cached per session and prebuilt during
+    the warp tunnel, so a warp arrival is only the upload) -- and, every
+    frame the gate is open, the
     star's render position, or None when the viewed set has no sun (the pass
     then lights clumps by the emissive floor only and draws no star-centred
     haze). The pushed profile carries the live dev dials' g/floor (the pass
     syncs its dials from it, so omitting them would revert tuned values) and
     a k_sys solved for the live veil dial.
 
-    Production (no --developer) returns before any renderer call: the pass
-    never runs there and was never fed, so there is nothing to clear -- even
-    after a mission swap leaves the latch UNKNOWN. With --developer, closing
-    the setting drops any held profile with a single None push."""
+    Follows the Volumetric Nebulae setting only (no --developer needed);
+    closing the setting drops any held profile with a single None push.
+    After a mission swap that found a table held, the latch is UNKNOWN, so
+    the first frame either clears it (unmapped or setting off) or re-pushes
+    it (mapped, even the same system); a swap with nothing held pushes
+    nothing."""
     global _system_nebula_pushed_for, _system_nebula_pushed_veil
-    if not dev_mode.is_enabled():
-        return
     if not _system_nebula_gate(r):
         if _system_nebula_pushed_for is not None:
             r.set_system_nebula_profile(None)
             _system_nebula_pushed_for = None
         return
     from engine.systems import frames, resolve
-    from engine.systems import profile as _profile
     m = None
     if player is not None and not warp_streaking:
         pos = frames.system_position(player)
@@ -5323,21 +5334,10 @@ def _push_system_nebula(r, player, suns, warp_streaking) -> None:
             _system_nebula_pushed_for = None
     elif (_system_nebula_pushed_for != m.system
             or _system_nebula_pushed_veil != veil):
-        colour = m.profile.color or (0.0, 0.0, 0.0)
-        star_rgb = (tuple(star.appearance.color) if star.appearance.color
-                    else (1.0, 1.0, 1.0))
-        dials = dev_nebula_dials.current()
-        r.set_system_nebula_profile({
-            "r": [row.distance_gu for row in m.profile.rows],
-            "nebula": [row.nebula for row in m.profile.rows],
-            "k_sys": _profile.k_sys(m, veil),
-            "star_radius": star.radius_gu,
-            "cloud_rgb": tuple(colour),
-            "star_rgb": star_rgb,
-            "far_gu": SCENE_FAR_GU,
-            "g": dials["g"],
-            "floor": dials["floor"],
-        })
+        from engine import system_haze
+        r.set_system_nebula_profile(system_haze.profile_dict(
+            m, veil=veil, dials=dev_nebula_dials.current(),
+            far_gu=SCENE_FAR_GU))
         _system_nebula_pushed_for = m.system
         _system_nebula_pushed_veil = veil
     r.set_system_nebula_star(tuple(suns[0]["position"]) if suns else None)
@@ -5387,7 +5387,7 @@ def _veil_flares(r, flares, player):
     under the system nebula pass they take the exact eye->star transmittance
     (spec 2026-09-29, "The sun and its flares") for the same live veil dial
     the haze's k_sys was solved for. Same gate as the pass itself
-    (_system_nebula_gate), so a developer run with the setting off does not
+    (_system_nebula_gate), so a run with the setting off does not
     dim the flare while no haze is drawn."""
     if not _system_nebula_gate(r) or player is None or not flares:
         return flares
@@ -5398,28 +5398,26 @@ def _veil_flares(r, flares, player):
 
 def _push_nebula_godrays(r, player, suns, warp_streaking) -> None:
     """The lightning flashes, to the god-ray pass (as ever) and -- under the
-    system-nebula gate, developer-only -- to SystemNebulaPass, which lights
+    system-nebula gate -- to SystemNebulaPass, which lights
     the haze and clumps from them (the new pass scatters only the star, so
-    without this a flash never lit the gas). The developer gate closed or a
-    warp streak pushes [] there; production never calls it at all, and does
-    not even ask the volumetric setting."""
+    without this a flash never lit the gas). The gate closed or a
+    warp streak pushes [] there."""
     flashes = []
     if _nebula_thunder is not None and not warp_streaking and r.nebula_lightning_enabled():
         flashes = [{"dir": f.dir, "intensity": f.intensity, "color": f.color}
                    for f in _nebula_thunder.active_flashes()]
     godrays = list(flashes)
-    if dev_mode.is_enabled():
-        system_open = _system_nebula_gate(r) and not warp_streaking
-        r.set_system_nebula_flashes(flashes if system_open else [])
-        if system_open and suns and player is not None:
-            star = _star_godray(player, suns[0]["position"])
-            if star is not None:
-                godrays.append(star)
+    system_open = _system_nebula_gate(r) and not warp_streaking
+    r.set_system_nebula_flashes(flashes if system_open else [])
+    if system_open and suns and player is not None:
+        star = _star_godray(player, suns[0]["position"])
+        if star is not None:
+            godrays.append(star)
     r.set_nebula_godrays(godrays)
 
 
 def _star_godray(player, star_render_pos):
-    """The star as a steady god-ray source (developer, system-nebula gate):
+    """The star as a steady god-ray source (system-nebula gate):
     toward the star from the render origin (the camera sits at ~0), at
     profile_fx.star_godray_intensity(godray_gain dial, the profile at the
     player, the eye->star transmittance), in the map star's colour. None
@@ -5474,7 +5472,8 @@ def _push_environment_feeds(r, active_set, warp_streaking, player=None):
     suns = [] if warp_streaking else _aggregate_suns()
     suns = _with_render_positions(suns, "position", to_view_render)
     r.set_suns(suns)
-    _push_system_nebula(r, player, suns, warp_streaking)
+    with frame_profiler.scope("env.system_nebula"):
+        _push_system_nebula(r, player, suns, warp_streaking)
 
     planets = _with_render_positions(_aggregate_dust_planets(view),
                                      "position", to_view_render)
@@ -5558,7 +5557,8 @@ def _load_planet_model(r_, nif_path: str, *, cache=None,
     planet_tex_search = [str(p) for p in
                          _paths.game_asset_dirs(DEFAULT_PLANET_TEXTURE_SEARCH)]
     try:
-        handle = r_.load_model(nif_path, planet_tex_search, geosphere=geo)
+        with frame_profiler.scope("load.planet_model"):
+            handle = r_.load_model(nif_path, planet_tex_search, geosphere=geo)
     except Exception as e:
         if verbose:
             print(f"[host_loop]   skip planet: load_model({nif_path}) raised: "
@@ -6563,6 +6563,90 @@ def _extent_key(model_path: str, nif_path: str, model_scale: float) -> str:
     return nif_path if model_scale == 1.0 else f"{model_path}#s={model_scale:.6g}"
 
 
+def _warp_preload_deps(controller, r_) -> dict:
+    """The `engine.warp_preload.Preload` deps, built when a warp begins its
+    preload. Each loader is the SAME call realization makes on arrival, with
+    the same arguments, so the arrival hits what the tunnel loaded: the
+    native load_model dedupe for ships, controller's nif_to_handle for map
+    bodies (`_reconcile_celestial_instances`' key)."""
+    import App
+
+    def ships(name):
+        # Exactly the ships realize_set_objects would load: in the set, not
+        # yet realized. The destination set may not exist until the swap.
+        pSet = App.g_kSetManager.GetSet(name)
+        if pSet is None:
+            return []
+        session = controller.session
+        realized = session.ship_instances if session is not None else {}
+        return [s for s in _iter_ships_in_set(pSet) if s not in realized]
+
+    def load_ship(ship):
+        loaded = _load_runtime_ship_model(ship, r_)
+        if loaded is not None:
+            from engine.appc import hull_volume as _hull_volume
+            _hull_volume.prewarm_for_model(ship, loaded[0])
+
+    def planet_models(name):
+        from engine.systems import resolve
+        found = resolve.for_set(name)
+        if found is None:
+            return []
+        return [b.appearance.model for b in found[0].bodies
+                if b.orbits is not None]
+
+    def load_planet(model):
+        nif_path = _planet_model_path(model)
+        if nif_path is not None:
+            _load_planet_model(r_, nif_path, cache=controller)
+
+    return dict(renderer=r_, haze_enabled=lambda: _system_nebula_gate(r_),
+                planet_models=planet_models, load_planet=load_planet,
+                ships=ships, load_ship=load_ship,
+                atlases=bool(r_.far_enabled()))
+
+
+def _warp_preload_ready() -> bool:
+    """warp.py's preload_ready hook: no preload running is ready."""
+    from engine import warp_preload
+    p = warp_preload.active()
+    return True if p is None else bool(p.ready())
+
+
+def _warp_preload_hooks(controller, r_) -> dict:
+    """The preload_* kwargs for warp.configure_warp_hooks."""
+    from engine import warp_preload
+
+    def begin(name):
+        warp_preload.begin(name, **_warp_preload_deps(controller, r_))
+
+    def replan():
+        p = warp_preload.active()
+        if p is not None:
+            p.replan()
+
+    def pending():
+        p = warp_preload.active()
+        return [] if p is None else p.pending()
+
+    return dict(preload_begin=begin, preload_ready=_warp_preload_ready,
+                preload_replan=replan, preload_end=warp_preload.end,
+                preload_pending=pending)
+
+
+def _step_warp_preload() -> None:
+    """One step of the running warp preload, once per frame. A preload
+    failure must never take the frame loop down."""
+    from engine import warp_preload
+    p = warp_preload.active()
+    if p is None:
+        return
+    try:
+        p.step()
+    except Exception as e:
+        dev_mode.log_swallowed("warp preload step", e)
+
+
 def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
                         include_planets: bool = True,
                         ships: Optional[Iterable] = None) -> None:
@@ -6603,7 +6687,8 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
     for ship in (_iter_ships_in_set(pSet) if ships is None else ships):
         if ship in session.ship_instances:
             continue
-        loaded = _load_runtime_ship_model(ship, r_, verbose=verbose)
+        with frame_profiler.scope("realize.ship_model"):
+            loaded = _load_runtime_ship_model(ship, r_, verbose=verbose)
         if loaded is None:
             continue
         handle, model_path, _nif_path, model_scale = loaded
@@ -6632,7 +6717,8 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
         # as push_resolution above.
         try:
             from engine.appc.hull_volume import prewarm_field
-            prewarm_field(iid)
+            with frame_profiler.scope("realize.hull_prewarm"):
+                prewarm_field(iid)
         except Exception as _e:
             dev_mode.log_swallowed("prewarm hull volume field", _e)
         render_instances.register(ship, iid)
@@ -7185,21 +7271,49 @@ def _reconcile_scene(session, renderer, *, nif_cache=None,
     the FIRST visibility writer of the frame -- warp hide, the SPV hull hide,
     bridge-player visibility and the cloak push all AND with scope_hidden,
     and the scope only writes on a change."""
-    _ensure_system_loaded(session)
+    with frame_profiler.scope("scene.system_load"):
+        _ensure_system_loaded(session)
     if session is None:
         return
-    _reconcile_runtime_instances(
-        session, renderer, on_player_change=on_player_change, verbose=verbose)
+    with frame_profiler.scope("scene.ships"):
+        _reconcile_runtime_instances(
+            session, renderer, on_player_change=on_player_change,
+            verbose=verbose)
     # Minor-rock clouds for the viewed set (minor-rocks spec §1): reads the
     # rocks the scope reconcile just realised. Never raises.
     from engine.rocks import minors as _minors
-    _minors.reconcile(session, renderer)
+    with frame_profiler.scope("scene.minors"):
+        _minors.reconcile(session, renderer)
     # Far tier (far-tier plan Task 10): frame, sources and flagged rocks for
     # the same viewed set. Never raises.
-    _far_tier.reconcile(session, renderer)
-    _reconcile_celestial_instances(
-        session, renderer, nif_cache=nif_cache, verbose=verbose)
+    with frame_profiler.scope("scene.far_tier"):
+        _far_tier.reconcile(session, renderer)
+    with frame_profiler.scope("scene.celestial"):
+        _reconcile_celestial_instances(
+            session, renderer, nif_cache=nif_cache, verbose=verbose)
     _check_mapped_bodies_untouched(_frames.viewing_set())
+
+
+def _spike_context(session, warp_streaking) -> str:
+    """One line for a spike-log record: what was being viewed, where the
+    player was, and whether the warp tunnel was up. Never raises."""
+    def _name(obj):
+        try:
+            return obj.GetName() if obj is not None else "-"
+        except Exception:
+            return "?"
+    view = player_set = "?"
+    try:
+        view = _name(_frames.viewing_set())
+    except Exception:
+        pass
+    try:
+        player = session.player if session is not None else None
+        player_set = _name(player.GetContainingSet()) if player else "-"
+    except Exception:
+        pass
+    return ("view=%s player_set=%s warp_streaking=%s"
+            % (view, player_set, bool(warp_streaking)))
 
 
 def _fire_pending_preload_done() -> None:
@@ -10257,10 +10371,13 @@ def run(mission_name: Optional[str] = None,
         def _warp_teardown(pSet):
             if controller.session is not None:
                 teardown_set_objects(controller.session, pSet, controller.renderer)
+        # The destination preload the tunnel waits on (engine/warp_preload):
+        # begun at the player's burst, stepped once per frame below.
         _warp.configure_warp_hooks(
             realize=_warp_realize, teardown=_warp_teardown,
             current_player=lambda: (controller.session.player
-                                    if controller.session is not None else None))
+                                    if controller.session is not None else None),
+            **_warp_preload_hooks(controller, r))
 
         # Warp-VFX flythrough (Stage 2): when the "Warp Flythrough" toggle is on
         # AND the procedural sky is on, WarpSequence_Create builds a timed
@@ -11104,6 +11221,13 @@ def run(mission_name: Optional[str] = None,
             host_io.set_swap_interval(0)
             if max_ticks is None or max_ticks > _profile_frames:
                 max_ticks = _profile_frames
+        # DAUNTLESS_PROFILE_SPIKES=<path>: write every frame over the
+        # threshold (DAUNTLESS_PROFILE_SPIKE_MS, default 100) to a file, raw.
+        # Works without --developer; vsync is left as it is.
+        if frame_profiler.configure_spike_log_from_env():
+            print("[host_loop] spike capture -> %s (>= %.0f ms)"
+                  % (frame_profiler.spike_log_path(),
+                     frame_profiler.spike_threshold_ms()), flush=True)
 
         while not r.should_close():
             # Frame profiler: phase timeline for the Python half of the frame.
@@ -11547,6 +11671,10 @@ def run(mission_name: Optional[str] = None,
                 # from the weapon/combat pumps below, which it does NOT drive.
                 with frame_profiler.scope("sim.gameloop"):
                     loop.tick()
+            # The warp tunnel's destination preload: at most one model load
+            # per frame, so no tunnel frame pays for the whole destination.
+            with frame_profiler.scope("warp.preload"):
+                _step_warp_preload()
 
             # Only snap the camera when a sim tick actually fired —
             # no tick means no state change to follow.
@@ -12632,7 +12760,8 @@ def run(mission_name: Optional[str] = None,
             # background geometry + characters render on the viewscreen instead
             # of a black void. Idempotent; before the character visibility sync
             # + RTT below.
-            _realize_comm_sets(controller, r)
+            with frame_profiler.scope("scene.comm_sets"):
+                _realize_comm_sets(controller, r)
             # Reveal/hide comm-set characters per their SDK IsHidden() flag
             # (MissionLib.ViewscreenOn un-hides the hailing one) before the RTT
             # renders the set.
@@ -12877,6 +13006,8 @@ def run(mission_name: Optional[str] = None,
             # "r.frame" phase carries the whole render call and the loop total
             # is the real wall-clock cost of one iteration.
             frame_profiler.end_frame()
+            frame_profiler.maybe_log_spike(
+                context=lambda: _spike_context(session, _warp_streaking))
             if frame_profiler.should_report():
                 frame_profiler.print_report()
             ticks += 1
@@ -12897,9 +13028,12 @@ def run(mission_name: Optional[str] = None,
         _mission_change.configure(on_changed=None)
         # The warp hooks close over this controller too; left installed they
         # outlive it (a stale starbase line-of-sight hook refused every later
-        # warp near Starbase 12).
+        # warp near Starbase 12). The preload_* hooks default to None, and a
+        # preload still running holds this controller and renderer too.
         from engine.appc import warp as _warp_hooks, warp_gates as _gate_hooks
         _warp_hooks.configure_warp_hooks(realize=None, teardown=None)
+        from engine import warp_preload as _warp_preload
+        _warp_preload.end()
         _warp_hooks.configure_warp_vfx(start=None, stop=None, enabled=None,
                                        vantage_of=None)
         _gate_hooks.configure_gate_hooks(ray_collide=None)

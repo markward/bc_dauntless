@@ -119,18 +119,39 @@ def test_star_position_pushed_every_frame_even_without_a_profile(monkeypatch):
     assert r.stars == [(9.0, 8.0, 7.0)]
 
 
-def test_gate_closed_dev_mode_off_never_touches_frames_or_pushes(monkeypatch):
+def test_production_setting_on_pushes_profile_and_star_like_developer(monkeypatch):
+    m = _map()
+    _patch(monkeypatch, m)
+    monkeypatch.setattr(dev_mode, "is_enabled", lambda: False)
+    r = _R()
+    suns = [{"position": (5.0, 6.0, 7.0)}]
+    host_loop._push_system_nebula(r, object(), suns, False)
+    assert len(r.profiles) == 1 and r.profiles[0] is not None
+    assert r.stars == [(5.0, 6.0, 7.0)]
+
+
+def test_production_setting_off_makes_no_renderer_call(monkeypatch):
     from engine.systems import frames
     monkeypatch.setattr(dev_mode, "is_enabled", lambda: False)
     monkeypatch.setattr(host_loop, "_system_nebula_pushed_for", None)
     touched = []
     monkeypatch.setattr(frames, "system_position", lambda obj: touched.append(1))
+    r = _R(volumetric=False)
+    host_loop._push_system_nebula(r, object(), [{"position": (5.0, 6.0, 7.0)}], False)
+    assert r.profiles == [] and r.stars == []
+    assert touched == []
+
+
+def test_production_pushes_default_dials(monkeypatch):
+    m = _map()
+    _patch(monkeypatch, m)
+    monkeypatch.setattr(dev_mode, "is_enabled", lambda: False)
     r = _R()
-    suns = [{"position": (5.0, 6.0, 7.0)}]
-    host_loop._push_system_nebula(r, object(), suns, False)
-    assert r.profiles == []
-    assert r.stars == []
-    assert touched == [], "gate closed must never build a table in production"
+    host_loop._push_system_nebula(r, object(), [{"position": (5.0, 6.0, 7.0)}], False)
+    prof = r.profiles[0]
+    assert prof["g"] == D.DEFAULTS["g"]
+    assert prof["floor"] == D.DEFAULTS["floor"]
+    assert prof["k_sys"] > 0
 
 
 def test_gate_closed_when_volumetric_toggle_off(monkeypatch):
@@ -282,16 +303,30 @@ def test_profile_map_without_a_star_does_not_raise(monkeypatch):
     assert r.profiles == [None], "no star to centre the haze on: clear it"
 
 
-def test_production_makes_no_native_call_after_a_mission_swap(monkeypatch):
-    """Without --developer the pass never runs and was never fed, so even
-    the UNKNOWN latch a mission swap leaves must not reach the renderer."""
+def test_production_setting_off_pushes_nothing_after_a_mission_swap(monkeypatch):
+    """Setting off + nothing ever pushed: the native pass holds no table, so
+    a mission swap must not invent a clear for it -- no profile (not even
+    None) and no star reach the renderer. The setting itself is still read
+    every frame: that query is the gate."""
     _guard_latch_restore(monkeypatch)
     monkeypatch.setattr(dev_mode, "is_enabled", lambda: False)
+    host_loop._system_nebula_pushed_for = None      # nothing ever pushed
     host_loop._reset_sensor_state()
-    r = _R()
+    r = _R(volumetric=False)
     host_loop._push_system_nebula(r, object(), [{"position": (1.0, 2.0, 3.0)}], False)
     assert r.profiles == [] and r.stars == []
-    assert r.volumetric_queries == 0
+
+
+def test_swap_after_a_push_still_forces_the_clear(monkeypatch):
+    """A table WAS pushed before the swap: the native pass keeps it, so the
+    gate-closed frame after the swap must clear it once."""
+    _guard_latch_restore(monkeypatch)
+    host_loop._system_nebula_pushed_for = "Vesuvi"
+    host_loop._reset_sensor_state()
+    r = _R(volumetric=False)
+    host_loop._push_system_nebula(r, object(), [], False)
+    host_loop._push_system_nebula(r, object(), [], False)
+    assert r.profiles == [None]
 
 
 def test_flare_veil_and_profile_push_share_one_gate():
@@ -345,15 +380,12 @@ def test_warp_streaking_pushes_no_flashes(monkeypatch):
     assert r.godrays == [[]]
 
 
-def test_production_never_pushes_system_nebula_flashes(monkeypatch):
+def test_production_setting_on_pushes_system_nebula_flashes(monkeypatch):
     monkeypatch.setattr(dev_mode, "is_enabled", lambda: False)
     monkeypatch.setattr(host_loop, "_nebula_thunder", _Thunder([_Flash()]))
     r = _R()
     host_loop._push_nebula_godrays(r, None, [{"position": (1.0, 0.0, 0.0)}], False)
-    assert r.flashes == []
-    assert r.godrays == [[_FLASH_DICT]]
-    assert r.volumetric_queries == 0, "production must not even ask the gate"
-
+    assert r.flashes == [[_FLASH_DICT]]
 
 
 # ── The star as a steady godray source (Part C, 2026-09-30) ────────────────
@@ -417,10 +449,9 @@ def test_the_star_godray_defaults_to_white_without_a_map_colour(monkeypatch):
     assert r.godrays[0][1]["color"] == (1.0, 1.0, 1.0)
 
 
-def test_production_godray_list_is_exactly_the_flashes(monkeypatch):
+def test_production_setting_on_star_is_a_godray_source(monkeypatch):
     _star_feed(monkeypatch)
     monkeypatch.setattr(dev_mode, "is_enabled", lambda: False)
     r = _R()
     host_loop._push_nebula_godrays(r, object(), [{"position": (0.0, 0.0, 300.0)}], False)
-    assert r.godrays == [[_FLASH_DICT]]
-    assert r.flashes == []
+    assert len(r.godrays[0]) == 2 and r.godrays[0][0] == _FLASH_DICT

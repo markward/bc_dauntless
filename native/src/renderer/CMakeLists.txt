@@ -193,6 +193,7 @@ add_library(renderer STATIC
     planet_detail_pass.cc
     atmosphere_pass.cc
     system_nebula_pass.cc
+    system_nebula_cache.cc
     nebula_godray_pass.cc
     shockwave_pass.cc
     aabb.cc
