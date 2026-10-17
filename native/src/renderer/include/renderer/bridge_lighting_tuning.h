@@ -25,8 +25,13 @@ inline constexpr glm::vec3 kBridgeUp{0.0f, 0.0f, 1.0f};  // set instances draw w
 // assets::detail::kSetNormalCreaseDeg (native/src/assets/src/normal_gen.h).
 
 // Bridge PBR constants (spec 2026-10-08-bridge-emitters §9, Global Constraints)
-inline constexpr int kBridgeProbeFace = 256;
+inline constexpr int kBridgeProbeFace = 384;
 inline constexpr int kBridgeProbeMips = 6;
+/// Capture steps per main-bridge frame (spec 2026-10-17 §4.7, §8): a step is
+/// one probe cube face, the raw mip chain + mip 0, one face of mip 1, or one
+/// of mips 2.., so a probe takes BridgeProbeArray::steps_per_probe() (17)
+/// frames. The step's GPU cost lands in the top-level `bridge` scope.
+inline constexpr int kBridgeProbeStepsPerFrame = 1;
 inline constexpr int kBridgeBrdfLutSize = 128;
 inline constexpr int kBridgeMaxSpots = 32;
 inline constexpr float kBridgeDefaultSpotIntensity = 2000.0f;
@@ -37,7 +42,8 @@ inline constexpr int kBridgeMaxAreaLights = 32;   // spec §16.3; Python caps sp
 /// ceiling, so an emissive texel can exceed the bloom threshold. Rebuild to tune.
 inline constexpr float kEmissiveScale = 1.0f;
 /// Texture unit the bridge pass binds the alert-selected emissive map on
-/// (0 base, 1 normal, 2 face b, 3/4 AO, 5 rough, 6 metal, 7/8 probes, 9 LUT).
+/// (0 base, 1 normal, 2 face b, 3/4 AO, 5 rough, 6 metal, 7 probe array,
+/// 8 unused, 9 LUT).
 inline constexpr int kBridgeEmissiveUnit = 10;
 
 /// CPU twin of bridge.frag's diffuse_ceiling (tests pin the GLSL to it).

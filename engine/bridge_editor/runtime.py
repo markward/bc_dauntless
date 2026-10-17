@@ -5,7 +5,8 @@ from typing import Optional
 
 from engine import bridge_lighting, dev_mode, host_io
 from engine.bridge_editor import lighting_doc as ld
-from engine.bridge_editor import behaviour, glow, light_shapes, lights, materials
+from engine.bridge_editor import (behaviour, glow, light_shapes, lights, materials,
+                                  probe_layers)
 
 
 class BridgeRuntime:
@@ -19,11 +20,18 @@ class BridgeRuntime:
         self._meshes = []
         self._glow_shapes = []
         self._built = None
+        self._plan = probe_layers.EMPTY      # spec 2026-10-17 §4.4
+        self._plan_quality = None            # the bridge quality it was planned for
         self._fade = behaviour.StateFade()
         self._t = 0.0          # the bridge clock (spec §11.3): paused-aware dt
         # The probe scales last pushed; the default until a bridge says otherwise.
         self._probe_scales = bridge_lighting.probe_scales()
         self._frames = {}
+        # The latest push()'s warnings, whoever made it (an editor edit,
+        # attach, or tick's quality re-plan, spec 2026-10-17 §4.4): the
+        # editor status line reads them. Replaced by every push, never
+        # accumulated; [] once detached.
+        self.last_warnings = []
 
     def attach(self, iid):
         """Neither overrides nor spots are cleared by C++ on a mission swap,
@@ -44,11 +52,9 @@ class BridgeRuntime:
         self._meshes, self._glow_shapes, self._resolved, self._mapped = [], [], {}, frozenset()
         self._frames = {}
         self._built = None
+        self._plan, self._plan_quality = probe_layers.EMPTY, None
         try:
-            self._io.set_bridge_material_overrides(None, [])
-            self._io.set_bridge_spots([])
-            self._io.set_bridge_area_lights([])
-            self._io.set_bridge_glow(None, [])
+            self._clear_io()
         except Exception as e:  # noqa: BLE001 - never let bridge data kill the frame
             dev_mode.log_swallowed("bridge runtime attach clear", e)
         try:
@@ -56,7 +62,7 @@ class BridgeRuntime:
             self._meshes = info.get("meshes", [])
             self._io.set_bridge_probe_origin(tuple(self._eye()))
             self._probe_scales = bridge_lighting.probe_scales()
-            self._io.set_bridge_probe_scales(*self._probe_scales)
+            self._io.set_bridge_probe_scales(self._probe_scales)
             h = info.get("content_hash", "")
             if not h:
                 self.detach()
@@ -80,6 +86,17 @@ class BridgeRuntime:
         except Exception as e:  # noqa: BLE001 - never let bridge data kill the frame
             dev_mode.log_swallowed("bridge runtime attach", e)
 
+    def _clear_io(self):
+        """Everything a bridge leaves in the renderer that C++ never clears
+        itself: overrides, lights, glow, and the probe plan's glow captures
+        and layers."""
+        self._io.set_bridge_material_overrides(None, [])
+        self._io.set_bridge_spots([])
+        self._io.set_bridge_area_lights([])
+        self._io.set_bridge_glow(None, [])
+        self._io.set_bridge_glow_captures(None, [])
+        self._io.set_bridge_probe_layers([], [])
+
     def push(self, doc, matched=None):
         """Re-push overrides, the static spot and area-light lists (geometry +
         probe-capture colours) and the glow table from an edited doc (the live
@@ -96,11 +113,15 @@ class BridgeRuntime:
         through a guard -- a value that slips past validation (or a
         stale/garbage instance id) must not raise into the host loop.
 
-        Requests no probe capture itself: BridgePass marks the probes dirty
-        when the overrides or spots it is handed DIFFER from what it holds,
-        so an editor action that changed nothing (an empty undo, a value set
-        to itself) costs no recapture. attach() requests one explicitly."""
+        Requests no probe capture itself: every input pushed here (overrides,
+        lights, glow captures, layers, probe scales) is part of the probe
+        signatures BridgePass derives, so it queues exactly the probes whose
+        inputs changed -- time-sliced, the old content showing until each
+        lands -- and an editor action that changed nothing (an empty undo, a
+        value set to itself) queues none. attach() requests one explicitly
+        (a new room). The warnings are also kept as last_warnings."""
         if self._iid is None:
+            self.last_warnings = []
             return []
         self._doc = doc
         if matched is not None:
@@ -116,14 +137,29 @@ class BridgeRuntime:
                                      if (m.get("maps") or {}).get("emissive"))
             self._io.set_bridge_material_overrides(
                 self._iid, materials.overrides(doc, self._resolved))
+            # Spec 2026-10-17 §4.4: animated materials share one reflection
+            # layer per identical wave, capped by the bridge quality.
+            quality = self._io.bridge_quality()
+            light_materials = {self._resolved[self._matched[k]]
+                               for k, o in doc["objects"].items()
+                               if o.get("lights") and k in self._matched
+                               and self._matched[k] in self._resolved}
+            plan = probe_layers.plan(doc, self._resolved, light_materials, self._mapped,
+                                     probe_layers.layer_cap(quality))
+            self._plan, self._plan_quality = plan, quality
             built = lights.build(doc, self._matched, self._resolved,
-                                 self._frame_for, self._mapped)
+                                 self._frame_for, self._mapped, plan)
             self._built = built
             spot_list, area_list = built.spot_rows, built.area_rows
             self._glow_shapes, glow_warnings = glow.glow_objects(
                 doc, self._resolved, self._meshes)
+            self._io.set_bridge_probe_layers(
+                [behaviour.state_index(layer.state) for layer in plan.layers],
+                [probe_layers.layer_identity(layer) for layer in plan.layers])
+            self._io.set_bridge_glow_captures(
+                self._iid, glow.captures(self._glow_shapes, plan))
             warnings = (ld.link_mismatches(doc, self._meshes, self._matched)
-                        + built.warnings + glow_warnings)
+                        + built.warnings + glow_warnings + plan.warnings)
             for w in warnings:
                 dev_mode.log_swallowed(
                     "bridge lighting emitters", ld.BridgeLightingError(w))
@@ -143,6 +179,7 @@ class BridgeRuntime:
             self._push_live()
         except Exception as e:  # noqa: BLE001 - see docstring
             dev_mode.log_swallowed("bridge runtime push", e)
+        self.last_warnings = warnings
         return warnings
 
     def _frame_for(self, mesh):
@@ -174,16 +211,17 @@ class BridgeRuntime:
         return ld.room_light(self._doc, behaviour.state_name(level))
 
     def _push_probe_scales(self, doc):
-        """The reflection probes are captured under the room light they
-        reflect (green probe: green; yellow/red probe: yellow -- as the spot
-        capture colours are); recaptured only when that changes."""
+        """Each state's reflection probe is captured under the room light of
+        that state (the bridge's own, else the default). The scales are a
+        probe-signature input: a changed one queues only its own state's base,
+        so no capture is requested here."""
         default = bridge_lighting.probe_scales()
         scales = tuple(d if v is None else v for v, d in
-                       zip((ld.room_light(doc, "green"), ld.room_light(doc, "yellow")), default))
+                       zip((ld.room_light(doc, behaviour.state_name(i))
+                            for i in range(len(default))), default))
         if scales != self._probe_scales:
             self._probe_scales = scales
-            self._io.set_bridge_probe_scales(*scales)
-            self._io.request_bridge_probe_capture()
+            self._io.set_bridge_probe_scales(scales)
 
     def on_alert(self, level):
         """Start the cross-fade to a new bridge state (0-4, spec 2026-10-08-
@@ -201,6 +239,16 @@ class BridgeRuntime:
         dt = max(float(dt), 0.0)
         self._t += dt
         self._fade.advance(dt)
+        try:
+            # A quality change re-plans the layers (spec 2026-10-17 §4.4).
+            # The quality is recorded BEFORE the push: a push that fails
+            # part-way is logged once, not retried every frame.
+            quality = self._io.bridge_quality()
+            if quality != self._plan_quality:
+                self._plan_quality = quality
+                self.push(self._doc)
+        except Exception as e:  # noqa: BLE001 - never let bridge data kill the frame
+            dev_mode.log_swallowed("bridge runtime quality replan", e)
         self._push_live()
 
     def _push_live(self):
@@ -213,6 +261,8 @@ class BridgeRuntime:
                 spot_cols, area_cols = lights.live(self._built, self._fade, self._t)
             self._io.set_bridge_spot_colours(spot_cols)
             self._io.set_bridge_area_colours(area_cols)
+            self._io.set_bridge_layer_values(
+                probe_layers.layer_values(self._plan, self._t))
         except Exception as e:  # noqa: BLE001 - never let bridge data kill the frame
             dev_mode.log_swallowed("bridge runtime live push", e)
 
@@ -222,10 +272,7 @@ class BridgeRuntime:
         from the panel, a frame in flight) is a no-op rather than acting on
         the instance that just went away."""
         try:
-            self._io.set_bridge_material_overrides(None, [])
-            self._io.set_bridge_spots([])
-            self._io.set_bridge_area_lights([])
-            self._io.set_bridge_glow(None, [])
+            self._clear_io()
         except Exception as e:  # noqa: BLE001 - never let bridge data kill the frame
             dev_mode.log_swallowed("bridge runtime detach", e)
         finally:
@@ -233,3 +280,5 @@ class BridgeRuntime:
             self._meshes, self._glow_shapes, self._resolved, self._mapped = [], [], {}, frozenset()
             self._frames = {}
             self._built = None
+            self._plan, self._plan_quality = probe_layers.EMPTY, None
+            self.last_warnings = []

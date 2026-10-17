@@ -67,12 +67,16 @@ add_executable(renderer_tests
     skin_shield_test.cc
     lens_flare_pass_test.cc
     bridge_pass_test.cc
+    bridge_probe_signature_test.cc
+    bridge_probe_schedule_test.cc
     bridge_lighting_test.cc
     bridge_pbr_test.cc
     bridge_ao_test.cc
     bridge_highlight_test.cc
     bridge_pbr_frame_test.cc
     bridge_probe_test.cc
+    bridge_probe_array_test.cc
+    bridge_probe_content_test.cc
     skinned_bridge_test.cc
     head_weld_seam_test.cc
     officer_jaw_test.cc

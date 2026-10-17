@@ -402,6 +402,10 @@ need no tangent data.
 
 ### 9.4 Reflections — per-alert base probes + animation layers *(Mark, 2026-10-09)*
 
+> **Superseded 2026-10-17** by `2026-10-17-bridge-reflection-layers-design.md`:
+> one base probe per state (all five), glow in reflections, animation layers
+> per (state, whole wave), capped 2/4/8 by Bridge Quality, 384², time-sliced.
+
 Reflected light is the sum of each source's contribution, so the
 environment is split into layers and summed in the shader:
 
@@ -564,6 +568,7 @@ It is NOT the §6 emitter and does not replace it.
 | G5 | 2026-10-11 | Slice 3 built (plan 2026-10-11-bridge-materials-slice-3) | built; awaiting Mark's live check | 13 |
 | G6 | 2026-10-12 | Emission is a Finish row; Emitter -> State override; strength and fade_s removed; Transition modifier (0.5 s default); `format: 3` | designed with Mark 2026-10-12; built | 14 |
 | G7 | 2026-10-12 | Room light: a bridge with its own lights is lit by them (room light 0 unless set per state); Bridge Settings cog; reflections captured under it | designed with Mark 2026-10-12; built | 15 |
+| R1 | 2026-10-17 | Reflections round: per-state base probes, glow in reflections, (state, whole-wave) animation layers capped 2/4/8 by Bridge Quality, 384², time-sliced captures; measured capture cost (~24 ms for today's two probes at 256², ~14 ms per probe at 384²) | designed with Mark 2026-10-17; built on `feat/bridge-reflections`; live-verified by Mark 2026-10-17; spec `2026-10-17-bridge-reflection-layers-design.md` | 9.4, 9.7, 11.4, 13.1 |
 
 ## 11. Emitter glow — slice 1 *(agreed with Mark 2026-10-10)*
 
@@ -748,7 +753,8 @@ unchanged apart from the new states. "Shape" becomes **object** in the editor.
 | `special` | 🟦 | a generic hook (`set_special_alert(on)`), no in-game caller yet -- e.g. a future multi-vector assault "blue alert". Overrides green/yellow/red, not offline | as red | `_emissive_s` → `_emissive` |
 
 Reflection probes for `offline` / `special` are a later phase; until then
-they use the yellow/red probe.
+they use the yellow/red probe. *(Superseded 2026-10-17: every state gets its own base probe —
+`2026-10-17-bridge-reflection-layers-design.md`.)*
 
 ### 13.2 Objects and the material library
 

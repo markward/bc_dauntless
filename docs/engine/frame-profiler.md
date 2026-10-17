@@ -159,6 +159,13 @@ number and reach a wrong conclusion:
 * **A missing render half says UNAVAILABLE.** A stale extension module yields an
   empty scope list, and a report that silently omitted the render passes would
   read as "the render costs nothing".
+* **`bridge.probe_capture` is CPU only on this Mac.** It wraps each bridge
+  reflection-probe capture step (one per frame while probes are dirty, 17 per
+  probe — spec `2026-10-17-bridge-reflection-layers-design.md` §8) and is
+  nested in the top-level `bridge` scope, so under `GL_TIME_ELAPSED` it prints
+  `-` for GPU and the step's GPU cost lands in `bridge`. To measure a step,
+  compare `bridge` during a fill with `bridge` once settled (or with no
+  reflections dirty).
 
 `calls` is the raw count from the last resolved frame, not an average, so a pass
 that ran twice (the exterior view **and** the bridge viewscreen RTT both call

@@ -1,7 +1,8 @@
 import pytest
 
 from engine import bridge_lighting
-from engine.bridge_editor import lighting_doc as ld, lighting_writer as lw, runtime
+from engine.bridge_editor import behaviour, lighting_doc as ld, lighting_writer as lw, runtime
+from engine.bridge_editor import probe_layers
 
 HASH = "0123456789abcdef"
 HASH_B = "fedcba9876543210"
@@ -80,7 +81,8 @@ def test_alert_change_pushes_only_live_values_on_the_next_tick(proj):
     rt.on_alert(2)
     assert names(io) == []
     rt.tick(0.016)
-    assert names(io) == ["set_bridge_glow", "set_bridge_spot_colours", "set_bridge_area_colours"]
+    assert names(io) == ["bridge_quality", "set_bridge_glow", "set_bridge_spot_colours",
+                         "set_bridge_area_colours", "set_bridge_layer_values"]
 
 
 # ── Obligation (review): neither overrides nor spots are cleared in C++ on a
@@ -144,7 +146,7 @@ def test_push_never_raises_even_with_a_hostile_io():
         def set_bridge_probe_scales(self, *a):
             raise RuntimeError("native boom")
 
-        def set_bridge_probe_mix(self, *a):
+        def set_bridge_layer_values(self, *a):
             raise RuntimeError("native boom")
 
         def set_bridge_material_overrides(self, *a):
@@ -173,8 +175,7 @@ def test_attach_without_a_hash_still_pushes_fresh_probe_state(proj):
     rt = runtime.BridgeRuntime(io=io, eye=lambda: (3.0, 4.0, 5.0), alert=lambda: 0)
     rt.attach("iid")
     assert ("set_bridge_probe_origin", (3.0, 4.0, 5.0)) in io.calls
-    green, yellow_red = bridge_lighting.probe_scales()
-    assert ("set_bridge_probe_scales", green, yellow_red) in io.calls
+    assert ("set_bridge_probe_scales", bridge_lighting.probe_scales()) in io.calls
     assert names(io)[-1] == "request_bridge_probe_capture"
 
 
@@ -420,7 +421,7 @@ def test_attach_pushes_glow_and_live_spot_colours(proj):
     assert last(io, "set_bridge_glow") == ("set_bridge_glow", "iid", [(0, 2, (1.0, 1.0, 1.0), 1.0)])
     assert last(io, "set_bridge_spot_colours") == ("set_bridge_spot_colours", [(10.0, 10.0, 10.0)])
     (spot,) = last(io, "set_bridge_spots")[1]
-    assert len(spot) == 9
+    assert len(spot) == 10
 
 
 def test_on_alert_fades_over_its_transition_and_tick_advances_the_clock(proj):
@@ -533,7 +534,7 @@ def test_a_bridge_with_lights_has_no_room_light_and_its_reflections_follow(proj)
     rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
     rt.attach("iid")
     assert rt.ambient_scale(0) == 0.0 and rt.ambient_scale(2) == 0.0
-    assert last(io, "set_bridge_probe_scales") == ("set_bridge_probe_scales", 0.0, 0.0)
+    assert last(io, "set_bridge_probe_scales") == ("set_bridge_probe_scales", (0.0,) * 5)
     assert names(io)[-1] == "request_bridge_probe_capture"
 
 
@@ -544,23 +545,31 @@ def test_a_bridge_without_lights_keeps_the_default(proj):
     rt.attach("iid")
     assert rt.ambient_scale(0) is None
     assert last(io, "set_bridge_probe_scales") == ("set_bridge_probe_scales",
-                                                   *bridge_lighting.probe_scales())
+                                                   bridge_lighting.probe_scales())
 
 
-def test_an_edited_room_light_recaptures_once(proj):
+def test_an_edited_room_light_pushes_its_scales_and_requests_no_capture(proj):
+    """Scales are a probe-signature input: the pass queues only the probes
+    whose scale changed. A request would forget every captured signature and
+    refill every probe for one state's room-light edit."""
     lw.save(_lit_doc(), proj / "bridge_lighting" / f"{HASH}.json")
     io = FakeIO()
     rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
     rt.attach("iid")
+    before = last(io, "set_bridge_probe_scales")[1]
     d = _lit_doc()
-    d["room_light"] = {"green": 0.2, "yellow": 0.1}
-    n = names(io).count("request_bridge_probe_capture")
+    d["room_light"] = {"red": 0.2}
+    io.calls.clear()
     rt.push(d, {"3:floor": 0})
-    assert rt.ambient_scale(0) == 0.2
-    assert last(io, "set_bridge_probe_scales") == ("set_bridge_probe_scales", 0.2, 0.1)
-    assert names(io).count("request_bridge_probe_capture") == n + 1
-    rt.push(d, {"3:floor": 0})                          # unchanged: no recapture
-    assert names(io).count("request_bridge_probe_capture") == n + 1
+    assert rt.ambient_scale(2) == 0.2
+    after = last(io, "set_bridge_probe_scales")[1]
+    assert after == (0.0, 0.0, 0.2, 0.0, 0.0)          # a lit bridge: unset levels are 0
+    assert [i for i, (a, b) in enumerate(zip(before, after)) if a != b] == [2]
+    assert "request_bridge_probe_capture" not in names(io)
+    io.calls.clear()
+    rt.push(d, {"3:floor": 0})                          # unchanged: not even re-sent
+    assert "set_bridge_probe_scales" not in names(io)
+    assert "request_bridge_probe_capture" not in names(io)
 
 
 def test_a_push_without_attach_and_no_lights_requests_no_capture():
@@ -669,3 +678,183 @@ def test_detach_clears_the_area_lights(proj):
     rt.attach("iid")
     rt.detach()
     assert _last(io, "set_bridge_area_lights") == ("set_bridge_area_lights", [])
+
+
+# ── per-state probes (spec 2026-10-17 §4.4) ─────────────────────────────────
+
+def test_push_sends_layers_and_glow_captures(proj):
+    _glow_doc(proj)    # a red sine on the lit and glowing material
+    io = FakeIO()
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt.attach("iid")
+    (_, states, ids) = last(io, "set_bridge_probe_layers")
+    assert states == [2]
+    # Each layer's identity (spec §4.4) rides beside its state.
+    assert ids == [probe_layers.layer_identity(rt._plan.layers[0])]
+    assert last(io, "set_bridge_probe_scales")[1] == (0.0,) * 5     # a lit bridge: no room light
+    (iid, rows) = last(io, "set_bridge_glow_captures")[1:]
+    assert iid == "iid" and len(rows) == 1
+    (mesh, src, caps, layers, rgbs) = rows[0]
+    assert layers[2] == 0 and caps[2] == (0.0, 0.0, 0.0)
+
+
+def test_bridge_without_doc_plans_no_layers_and_five_scales(proj):
+    io = FakeIO(info={"source": "", "content_hash": "", "meshes": []})
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt.attach("iid")
+    sent = [c for c in io.calls if c[0] == "set_bridge_probe_layers" and c[1]]
+    assert sent == []
+    assert len(last(io, "set_bridge_probe_scales")[1]) == 5
+
+
+def test_attach_clears_glow_captures_and_layers(proj):
+    io = FakeIO(info={"source": "", "content_hash": "", "meshes": []})
+    runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0).attach("iid")
+    assert ("set_bridge_glow_captures", None, []) in io.calls
+    assert ("set_bridge_probe_layers", [], []) in io.calls
+
+
+def test_plan_warnings_reach_the_status_line(proj):
+    d = ld.empty_doc("x")
+    d["materials"]["p"] = {"emission": 1, "modifiers": [
+        {"type": "animation", "scope": ["red"], "shape": "sine", "period_s": p}
+        for p in (1.0,)]}
+    d["materials"]["q"] = {"emission": 1, "modifiers": [
+        {"type": "animation", "scope": ["red"], "shape": "sine", "period_s": 3.0}]}
+    d["materials"]["r"] = {"emission": 1, "modifiers": [
+        {"type": "animation", "scope": ["red"], "shape": "sine", "period_s": 5.0}]}
+    for i, m in enumerate("pqr"):
+        ld.object_entry(d, 10 + i, f"o{i}")["material"] = m
+    meshes = [{"mesh": i, "block": 10 + i, "name": f"o{i}", "node_chain": [], "material": 0,
+               "textures": [], "maps": {"roughness": False, "metalness": False, "normal": False}}
+              for i in range(3)]
+    lw.save(d, proj / "bridge_lighting" / f"{HASH}.json")
+    io = FakeIO(info={"source": "/x.nif", "content_hash": HASH, "meshes": meshes})
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt.attach("iid")      # FakeIO quality 0 -> cap 2: one wave is dropped
+    warnings = rt.push(d, {f"{10 + i}:o{i}": i for i in range(3)})
+    assert any("layer cap" in w for w in warnings)
+
+
+# ── per-frame layer values and quality re-plans (spec 2026-10-17 §4.2, §4.4) ──
+
+class QualityIO(FakeIO):
+    def __init__(self, quality, info=INFO):
+        super().__init__(info)
+        self.quality = quality
+
+    def bridge_quality(self):
+        return self.quality
+
+
+def test_tick_pushes_layer_values(proj):
+    _glow_doc(proj)    # one red sine, period 2 s, min 0
+    io = QualityIO(1)
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt.attach("iid")
+    io.calls.clear()
+    rt.tick(0.75)
+    expected = behaviour.wave_factor(
+        {"shape": "sine", "period_s": 2.0, "phase": 0.0, "min": 0.0}, 0.75) ** 2.2
+    (_, vals) = last(io, "set_bridge_layer_values")
+    assert len(vals) == 1 and vals[0] == pytest.approx(expected)
+
+
+def test_layer_values_freeze_under_pause(proj):
+    _glow_doc(proj)    # one red sine, period 2 s, min 0
+    io = QualityIO(1)
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt.attach("iid")
+    rt.tick(0.0)
+    at_zero = last(io, "set_bridge_layer_values")
+    rt.tick(0.3)
+    a = last(io, "set_bridge_layer_values")
+    assert a[1][0] != pytest.approx(at_zero[1][0])     # the value moves with time...
+    rt.tick(0.0)
+    assert last(io, "set_bridge_layer_values") == a    # ...and holds under pause
+    rt.tick(0.0)
+    assert last(io, "set_bridge_layer_values") == a
+
+
+def test_quality_change_replans_layers(proj, monkeypatch):
+    d = ld.empty_doc("x")
+    for i, p in enumerate((1.0, 3.0, 5.0)):
+        d["materials"]["m%d" % i] = {"emission": 1, "modifiers": [
+            {"type": "animation", "scope": ["red"], "shape": "sine", "period_s": p}]}
+        ld.object_entry(d, 10 + i, "o%d" % i)["material"] = "m%d" % i
+    meshes = [{"mesh": i, "block": 10 + i, "name": "o%d" % i, "node_chain": [],
+               "material": 0, "textures": [],
+               "maps": {"roughness": False, "metalness": False, "normal": False}}
+              for i in range(3)]
+    lw.save(d, proj / "bridge_lighting" / f"{HASH}.json")
+    io = QualityIO(1, info={"source": "/x.nif", "content_hash": HASH, "meshes": meshes})
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt.attach("iid")
+    rt.tick(0.1)
+    assert len(last(io, "set_bridge_layer_values")[1]) == 3
+    logged = []
+    monkeypatch.setattr(runtime.dev_mode, "log_swallowed",
+                        lambda where, e: logged.append(str(e)))
+    io.quality = 0
+    io.calls.clear()
+    rt.tick(0.1)
+    assert any("m2" in w and "layer cap" in w for w in logged)
+    assert len(last(io, "set_bridge_layer_values")[1]) == 2
+    (_, states, ids) = last(io, "set_bridge_probe_layers")
+    assert len(states) == 2 and ids == [probe_layers.layer_identity(l)
+                                        for l in rt._plan.layers]
+
+
+def test_quality_replan_warnings_reach_last_warnings(proj):
+    """Spec §4.4: a quality change's warnings go to the dev log AND the
+    editor status line, which reads BridgeRuntime.last_warnings."""
+    d = ld.empty_doc("x")
+    for i, p in enumerate((1.0, 3.0, 5.0)):
+        d["materials"]["m%d" % i] = {"emission": 1, "modifiers": [
+            {"type": "animation", "scope": ["red"], "shape": "sine", "period_s": p}]}
+        ld.object_entry(d, 10 + i, "o%d" % i)["material"] = "m%d" % i
+    meshes = [{"mesh": i, "block": 10 + i, "name": "o%d" % i, "node_chain": [],
+               "material": 0, "textures": [],
+               "maps": {"roughness": False, "metalness": False, "normal": False}}
+              for i in range(3)]
+    lw.save(d, proj / "bridge_lighting" / f"{HASH}.json")
+    io = QualityIO(1, info={"source": "/x.nif", "content_hash": HASH, "meshes": meshes})
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt.attach("iid")
+    assert rt.last_warnings == []
+    io.quality = 0
+    rt.tick(0.1)
+    assert any("m2" in w and "layer cap" in w for w in rt.last_warnings)
+    io.quality = 1
+    rt.tick(0.1)
+    assert rt.last_warnings == []                       # replaced, never accumulated
+    rt.detach()
+    assert rt.last_warnings == []
+
+
+class FailingOverridesIO(QualityIO):
+    def __init__(self, quality):
+        super().__init__(quality)
+        self.fail = False
+        self.attempts = 0
+
+    def set_bridge_material_overrides(self, iid, rows):
+        if self.fail:
+            self.attempts += 1
+            raise RuntimeError("boom")
+
+
+def test_a_failing_replan_push_is_not_retried_every_tick(proj, monkeypatch):
+    _glow_doc(proj)
+    io = FailingOverridesIO(1)
+    rt = runtime.BridgeRuntime(io=io, eye=lambda: (0, 0, 0), alert=lambda: 0)
+    rt.attach("iid")
+    logged = []
+    monkeypatch.setattr(runtime.dev_mode, "log_swallowed",
+                        lambda where, e: logged.append(where))
+    io.fail = True
+    io.quality = 2
+    for _ in range(5):
+        rt.tick(0.016)
+    assert io.attempts == 1
+    assert logged.count("bridge runtime push") == 1
