@@ -51,7 +51,7 @@
     "Map 22a": {
       "modifiers": [
         {
-          "min": 0,
+          "min": 0.2,
           "period_s": 3,
           "phase": 0,
           "scope": [
@@ -67,7 +67,7 @@
     "Map 22a 2": {
       "modifiers": [
         {
-          "min": 0,
+          "min": 0.2,
           "period_s": 3,
           "phase": 0,
           "scope": [
@@ -102,7 +102,7 @@
       "metalness": 0,
       "modifiers": [
         {
-          "min": 0,
+          "min": 0.2,
           "period_s": 3,
           "phase": 0,
           "scope": [
@@ -290,7 +290,7 @@
           "type": "state"
         },
         {
-          "min": 0,
+          "min": 0.2,
           "period_s": 3,
           "phase": 0,
           "scope": [
