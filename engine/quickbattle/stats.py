@@ -43,7 +43,12 @@ def probe(ship_file) -> Optional[ShipStats]:
         ship_mod = importlib.import_module("ships." + ship_file)
         hp_file = ship_mod.GetShipStats()["HardpointFile"]
         mgr.ClearLocalTemplates()
-        hp_mod = importlib.reload(importlib.import_module("ships.Hardpoints." + hp_file))
+        hp_mod = importlib.import_module("ships.Hardpoints." + hp_file)
+        # An import that just executed the module (it was not loaded yet)
+        # has already registered its templates since the clear; only a
+        # module loaded earlier needs the reload to re-register them.
+        if not mgr._local:
+            hp_mod = importlib.reload(hp_mod)
         pset = TGModelPropertySet()
         hp_mod.LoadPropertySet(pset)
         props = [p for _n, p in pset._entries]

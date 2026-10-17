@@ -19,6 +19,41 @@ def test_stock_values(sdk):
     assert stats.probe("Sovereign").shields == pytest.approx(49500.0)
 
 
+def _count_reloads(monkeypatch):
+    import importlib
+    calls = []
+    real = importlib.reload
+
+    def spy(mod):
+        calls.append(mod.__name__)
+        return real(mod)
+    monkeypatch.setattr(importlib, "reload", spy)
+    return calls
+
+
+def test_a_hardpoint_the_probe_just_imported_is_not_run_twice(sdk, monkeypatch):
+    """The import happens after ClearLocalTemplates, so a hardpoint it just
+    executed has already registered its templates; reloading it re-ran the
+    whole module for nothing (half the Quick Battle first-open cost)."""
+    import sys
+    from engine.quickbattle import stats
+    monkeypatch.delitem(sys.modules, "ships.Hardpoints.warbird", raising=False)
+    reloads = _count_reloads(monkeypatch)
+    assert stats.probe("Warbird").hull == pytest.approx(24000.0)
+    assert reloads == []
+
+
+def test_an_already_loaded_hardpoint_is_still_reloaded(sdk, monkeypatch):
+    """A module imported earlier must re-run, or ClearLocalTemplates would
+    leave the scratch set empty."""
+    import importlib
+    from engine.quickbattle import stats
+    importlib.import_module("ships.Hardpoints.warbird")
+    reloads = _count_reloads(monkeypatch)
+    assert stats.probe("Warbird").hull == pytest.approx(24000.0)
+    assert reloads == ["ships.Hardpoints.warbird"]
+
+
 def test_probe_restores_local_templates(sdk):
     from engine.quickbattle import stats
     mgr = sdk.g_kModelPropertyManager
