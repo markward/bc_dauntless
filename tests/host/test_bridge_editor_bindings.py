@@ -290,7 +290,7 @@ def test_probe_stash_set_before_init_survives_into_the_pass(probe_stash_guard, h
         st = h.bridge_probe_state()
         assert st["origin"] == pytest.approx((1.0, 87.0, 50.0))
         assert st["scales"] == pytest.approx((1.5, 0.75, 0.75, 0.4, 1.0))
-        assert st["mix"] == pytest.approx(0.25)
+        assert "mix" not in st   # the cross-fade runs in the renderer now
         assert st["capture_pending"] is True
     finally:
         h.shutdown()

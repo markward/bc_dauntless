@@ -294,6 +294,9 @@ void BridgePass::render(const scenegraph::World& world,
         const bool have_bridge = update_box(world, lookup);
         if (capture_requested_ && have_bridge)
             run_capture_steps(world, pipeline, lookup, lighting);
+        // A base that just landed with nothing showing snaps in this frame;
+        // at dt 0 nothing else moves.
+        fade_.update(probe_target_, 0.0f, [this](int s) { return probe_valid(s); });
     }
     // Screen-space AO for the main bridge view only -- never the comm-set RTT
     // (a different camera into a different room), and not while this call is
@@ -333,17 +336,28 @@ void BridgePass::render(const scenegraph::World& world,
     // (The AO pre-pass returns before the shader reads any emissive.)
     const int emissive_alert = capture_pass_ ? cap_state
                              : main_bridge ? alert_level_ : 0;
-    // The shader samples the green and yellow bases (cross-faded by
-    // probe_mix_), so only once BOTH hold a capture: a sampler on a unit with
-    // nothing bound must never be sampled, so with no probe the unit stays
-    // empty and u_has_probe = 0 keeps the shader off it. The array's texture
-    // and each slot's layer move with every reallocation and completed
-    // capture: read them now, never cached.
-    const bool has_probe = pbr != 0 && !capture_pass_ && !normal_pass_ &&
-        probes_.valid(0) && probes_.valid(1) && probes_.texture() != 0 &&
-        brdf_lut_.texture() != 0;
-    const int probe_layer_a = has_probe ? probes_.layer_of(0) : 0;
-    const int probe_layer_b = has_probe ? probes_.layer_of(1) : 0;
+    // The reflection (spec §4.2): one weighted list of valid probes -- the
+    // bases by their cross-fade weight, the layers by value x their state's
+    // base weight. A sampler on a unit with nothing bound must never be
+    // sampled, so with no entry the unit stays empty and u_probe_entries = 0
+    // keeps the shader off it. The array's texture and each slot's layer move
+    // with every reallocation and completed capture: read them now, never
+    // cached. Debug view 11 samples the layer entries alone.
+    int probe_entries_n = 0;
+    int probe_layer[kBridgeMaxProbeEntries] = {};
+    float probe_weight[kBridgeMaxProbeEntries] = {};
+    if (pbr != 0 && !capture_pass_ && !normal_pass_ && probes_.texture() != 0 &&
+        brdf_lut_.texture() != 0) {
+        for (const ProbeEntry& e : probe_entries(fade_.w, layer_states_, layer_values_,
+                                                 [this](int p) { return probe_valid(p); })) {
+            if (debug_view_ == BridgeDebugView::ReflectionLayers && e.probe < kBridgeStates)
+                continue;
+            probe_layer[probe_entries_n] = probes_.layer_of(e.probe);
+            probe_weight[probe_entries_n] = e.weight;
+            ++probe_entries_n;
+        }
+    }
+    const bool has_probe = probe_entries_n > 0;
     if (has_probe) {
         glActiveTexture(GL_TEXTURE7);
         glBindTexture(GL_TEXTURE_CUBE_MAP_ARRAY, probes_.texture());
@@ -430,11 +444,12 @@ void BridgePass::render(const scenegraph::World& world,
         // bound or not, so no two sampler types ever share a unit (a cube
         // sampler left on unit 0 beside u_base_color fails every draw).
         s.set_int("u_probes", 7);
-        s.set_int("u_probe_layer_a", probe_layer_a);
-        s.set_int("u_probe_layer_b", probe_layer_b);
+        s.set_int("u_probe_entries", probe_entries_n);
+        if (probe_entries_n > 0) {
+            s.set_int_array("u_probe_layer", probe_layer, probe_entries_n);
+            s.set_float_array("u_probe_weight", probe_weight, probe_entries_n);
+        }
         s.set_int("u_brdf_lut", 9);
-        s.set_int("u_has_probe", has_probe ? 1 : 0);
-        s.set_float("u_probe_mix", probe_mix_);
         s.set_vec3("u_probe_pos", probe_origin_);
         s.set_float("u_probe_max_mip", static_cast<float>(kBridgeProbeMips - 1));
         s.set_vec3("u_box_min", box_min_);
@@ -807,12 +822,23 @@ void BridgePass::set_glow(unsigned long long model_handle, std::vector<BridgeGlo
     glow_model_ = glow_.empty() ? 0 : model_handle;
 }
 
-void BridgePass::set_probe_mix(float t) {
-    probe_mix_ = std::isfinite(t) ? std::clamp(t, 0.0f, 1.0f) : 0.0f;
+void BridgePass::set_probe_state(int state, float dt) {
+    probe_target_ = (state >= 0 && state < kBridgeStates) ? state : -1;
+    fade_.update(probe_target_, dt, [this](int s) { return probe_valid(s); });
+}
+
+float BridgePass::base_weight(int state) const {
+    return (state >= 0 && state < kBridgeStates) ? fade_.w[state] : 0.0f;
+}
+
+void BridgePass::set_layer_values(std::vector<float> values) {
+    for (float& v : values)
+        if (!std::isfinite(v)) v = 0.0f;
+    layer_values_ = std::move(values);
 }
 
 int BridgePass::shown_state() const {
-    return (alert_level_ >= 0 && alert_level_ < kBridgeStates) ? alert_level_ : 0;
+    return probe_target_ >= 0 ? probe_target_ : 0;
 }
 
 bool BridgePass::probe_valid(int probe) const {
@@ -855,7 +881,7 @@ void BridgePass::reset_probes() {
     captured_sigs_.clear();
     probes_.shrink_to(0);   // frees every probe (and drops the one in flight)
     probes_.abandon();      // ...even with nothing allocated to free
-    probe_mix_ = 0.0f;
+    fade_ = ProbeFade{};
     model_boxes_.clear();
     box_handle_ = 0;
     box_min_ = glm::vec3(-1.0f);
@@ -928,7 +954,7 @@ void BridgePass::run_capture_steps(const scenegraph::World& world, Pipeline& pip
     if (storage_failed_) return;
     if (!brdf_lut_.ensure() || !sync_probe_storage()) {
         // One report per request: without a context (or with an incomplete
-        // target) the probes stay invalid and u_has_probe stays 0 rather
+        // target) the probes stay invalid and u_probe_entries stays 0 rather
         // than retrying every frame.
         storage_failed_ = true;
         std::fprintf(stderr, "[bridge] reflection probes: GL targets unavailable; "
@@ -1064,9 +1090,15 @@ bool BridgePass::update_box(const scenegraph::World& world,
         });
     if (!best) return false;   // nothing drawn: keep the last box
     if (best->model_handle != box_handle_) {
-        // A different bridge: the probe in flight is drawing the old room.
-        // (The handle is a signature input, so every probe requeues.)
-        if (box_handle_ != 0) probes_.abandon();
+        // A different bridge: every probe (and the one in flight) holds the
+        // old room. Free them all and zero the base weights, so nothing is
+        // reflected until the new room's shown base lands (then it snaps).
+        // Nothing is bound yet: this runs before render() binds a unit.
+        if (box_handle_ != 0) {
+            probes_.shrink_to(0);
+            probes_.abandon();
+            fade_ = ProbeFade{};
+        }
         box_handle_ = best->model_handle;
     }
     const Aabb& local = model_box(best->model_handle, *best_model);

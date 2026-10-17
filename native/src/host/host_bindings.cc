@@ -1178,7 +1178,6 @@ void init(int width, int height, const std::string& title) {
     g_bridge_pass->set_alert_level(g_bridge_alert_level);
     g_bridge_pass->set_probe_origin(g_bridge_probe.origin);
     g_bridge_pass->set_probe_scales(g_bridge_probe.scales);
-    g_bridge_pass->set_probe_mix(g_bridge_probe.mix);
     if (g_bridge_probe.capture_pending) g_bridge_pass->request_probe_capture();
     g_bridge_probe.capture_pending = false;
     g_viewscreen_static_pass = std::make_unique<renderer::ViewscreenStaticPass>();
@@ -4615,7 +4614,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("set_bridge_debug_view",
           [](int v) {
               if (!dauntless::is_developer_mode()) return;
-              v = std::clamp(v, 0, 10);
+              v = std::clamp(v, 0, 11);
               g_bridge_debug_view = v;
               if (g_bridge_pass)
                   g_bridge_pass->set_debug_view(
@@ -4625,8 +4624,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "DEV ONLY (--developer; no-op otherwise): Developer Options -> "
           "Lighting tab's Bridge Debug View row. 0 Off, 1 Normals, "
           "2 Light Only, 3 AO Only, 4 Triangle ID, 5 Mesh ID, 6 Roughness, "
-          "7 Metalness, 8 Specular Only, 9 Probe Mirror, 10 Map Normals "
-          "(6-10 show only where bridge PBR runs).");
+          "7 Metalness, 8 Specular Only, 9 Probe Mirror, 10 Map Normals, "
+          "11 Reflection Layers (6-11 show only where bridge PBR runs).");
 
     // Bridge PBR per-shape material overrides (spec 2026-10-08-bridge-emitters
     // §9.2 source B). Production data: NOT developer-gated. None / stale clears.
@@ -4944,12 +4943,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
 
     m.def("set_bridge_probe_mix",
           [](float t) {
+              // Inert (spec 2026-10-17 §4.2): the base cross-fade now runs in
+              // BridgePass::set_probe_state. Only the stash records the value
+              // (bridge_probe_stash) until the Python caller is removed.
               g_bridge_probe.mix = std::isfinite(t) ? std::clamp(t, 0.0f, 1.0f) : 0.0f;
-              if (g_bridge_pass) g_bridge_pass->set_probe_mix(g_bridge_probe.mix);
           },
           py::arg("t"),
-          "Reflection cross-fade: 0 = the green probe, 1 = the yellow/red "
-          "probe. Clamped to [0, 1].");
+          "INERT: the reflection cross-fade runs in the renderer now "
+          "(set_probe_state). Records the clamped value in the probe stash "
+          "only; the pass never reads it.");
 
     m.def("bridge_probe_stash",
           [] {
@@ -4979,7 +4981,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   sc[static_cast<std::size_t>(i)] = g_bridge_pass->probe_scale(i);
               d["scales"] = sc;
               d["probe_count"] = g_bridge_pass->probe_count();
-              d["mix"] = g_bridge_pass->probe_mix();
               d["capture_pending"] = !g_bridge_pass->probes_settled();
               d["probes_valid"] = g_bridge_pass->probes_valid();
               d["alert_ambient_scale"] = g_bridge_pass->alert_ambient_scale();
@@ -4987,7 +4988,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               return d;
           },
           "Test/diagnostic snapshot of the bridge pass's probe state (origin, "
-          "scales, mix, capture_pending, probes_valid, alert_ambient_scale, "
+          "scales, capture_pending, probes_valid, alert_ambient_scale, "
           "alert_level); "
           "None before init().");
 

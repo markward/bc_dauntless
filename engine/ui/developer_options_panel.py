@@ -96,11 +96,12 @@ class DeveloperOptionsPanel(Panel):
     _NORMAL_STRENGTHS = (0.0, 0.5, 1.0, 2.0, 4.0)
 
     # Names cycled through by the "bridge_debug_view" action row, index ==
-    # renderer.BridgeDebugView's int value (0 Off .. 10 Map normals). 6-10
-    # are the bridge-PBR debug views added alongside the PBR A/B switch.
+    # renderer.BridgeDebugView's int value (0 Off .. 11 Reflection layers).
+    # 6-11 are the bridge-PBR debug views added alongside the PBR A/B switch.
     _BRIDGE_DEBUG_VIEWS = ("Off", "Normals", "Light Only", "AO Only",
                           "Triangle ID", "Mesh ID", "Roughness", "Metalness",
-                          "Specular only", "Probe (mirror)", "Map normals")
+                          "Specular only", "Probe (mirror)", "Map normals",
+                          "Reflection layers")
 
     def __init__(self) -> None:
         super().__init__()

@@ -151,6 +151,10 @@ protected:
         // tests below that are not about the time-slicing read a reflection
         // from the very render that captured it. The scheduler tests set 1.
         pass->set_probe_steps_per_frame(0);
+        // Green shown (spec 2026-10-17 §4.2): with no state given the pass
+        // reflects nothing, so every test that reads a reflection needs one.
+        // The base snaps in as soon as it lands; nothing else moves at dt 0.
+        pass->set_probe_state(0, 0.0f);
         model = make_corner(/*with_uvs=*/true);
     }
 
@@ -356,7 +360,7 @@ TEST_F(BridgePbrFrame, CommSetKeepsLegacyShading) {
 }
 
 TEST_F(BridgePbrFrame, DebugViewsDrawWithoutGlErrors) {
-    for (int v = 6; v <= 10; ++v) {
+    for (int v = 6; v <= 11; ++v) {
         pass->set_debug_view(static_cast<renderer::BridgeDebugView>(v));
         render_floor();
         EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR)) << v;
@@ -421,20 +425,33 @@ TEST_F(BridgePbrFrame, RoughFloorReflectsLessDistinctly) {
     EXPECT_GT(smooth.r - smooth.g, rough.r - rough.g);
 }
 
-TEST_F(BridgePbrFrame, ProbeMixCrossFadesBetweenTheTwoProbes) {
+// The state cross-fade (spec §4.2) runs in C++ on the bridge dt: green
+// settled -> red; 0.25 s on, both bases contribute; 0.5 s on, only red.
+TEST_F(BridgePbrFrame, StateChangeCrossFadesTheBases) {
     use_red_wall_corner();
     set_floor_override(0.05f, 1.0f);
     pass->set_probe_origin({60.0f, 0.0f, 40.0f});
     pass->set_probe_scales({2.0f, 0.5f, 0.5f, 0.5f, 0.5f});          // green probe 4x brighter
     pass->request_probe_capture();
-    pass->set_probe_mix(0.0f);
-    const float green = render_floor().r;
-    pass->set_probe_mix(1.0f);
-    const float yr = render_floor().r;
-    pass->set_probe_mix(0.5f);
+    const float green = render_floor().r;                            // every probe lands
+    ASSERT_TRUE(pass->probes_settled());
+    EXPECT_FLOAT_EQ(pass->base_weight(0), 1.0f);
+    pass->set_probe_state(2, 0.0f);                                  // red: paused, no move
+    EXPECT_FLOAT_EQ(pass->base_weight(0), 1.0f);
+    EXPECT_NEAR(render_floor().r, green, 1e-4f);
+    pass->set_probe_state(2, 0.25f);
+    EXPECT_NEAR(pass->base_weight(0), 0.5f, 1e-5f);
+    EXPECT_NEAR(pass->base_weight(2), 0.5f, 1e-5f);
     const float mid = render_floor().r;
-    EXPECT_GT(green, yr);
-    EXPECT_LT(mid, green); EXPECT_GT(mid, yr);
+    pass->set_probe_state(2, 0.25f);
+    EXPECT_FLOAT_EQ(pass->base_weight(0), 0.0f);
+    EXPECT_FLOAT_EQ(pass->base_weight(2), 1.0f);
+    const float red = render_floor().r;
+    EXPECT_GT(green, red);
+    EXPECT_LT(mid, green - 1e-3f);
+    EXPECT_GT(mid, red + 1e-3f);
+    pass->set_probe_state(2, 1.0f);                                  // settled: stays
+    EXPECT_NEAR(render_floor().r, red, 1e-5f);
 }
 
 // Spec §9.5: the probe holds a lit room CAPPED like the view (the diffuse
@@ -785,18 +802,19 @@ TEST_F(BridgePbrFrame, CaptureIsSpreadAcrossFrames) {
     for (int i = 0; i < pass->probe_count(); ++i) EXPECT_TRUE(pass->probe_valid(i)) << i;
 }
 
-// The shown state (the alert level until the base fade exists) lands first.
+// The shown state (set_probe_state's target, not the alert level) lands first.
 TEST_F(BridgePbrFrame, TheShownStatesBaseLandsFirst) {
     use_red_wall_corner();
     pass->set_probe_origin({60.0f, 0.0f, 40.0f});
     pass->set_probe_steps_per_frame(1);
-    pass->set_alert_level(2);
+    pass->set_alert_level(1);
+    pass->set_probe_state(2, 0.0f);
     pass->request_probe_capture();
     for (int i = 0; i < pass->steps_per_probe(); ++i) render_floor();
     EXPECT_TRUE(pass->probe_valid(2));
     EXPECT_TRUE(pass->probes_valid());
     EXPECT_FALSE(pass->probe_valid(0));
-    pass->set_alert_level(0);
+    EXPECT_FALSE(pass->probe_valid(1));
 }
 
 TEST_F(BridgePbrFrame, ARedOnlyEditRequeuesOnlyTheRedBase) {
@@ -895,6 +913,36 @@ TEST_F(BridgePbrFrame, ANewBridgeModelMidCaptureDiscardsTheInFlightProbe) {
     EXPECT_GT(c.b, c.r * 1.5f);                  // the new room
 }
 
+// A new bridge model (spec 2026-10-17 §4.7, ruling R7) drops every probe and
+// every base weight: frame by frame, the floor never reflects the old red
+// room -- nothing at all until the new room's shown base lands, then it.
+TEST_F(BridgePbrFrame, ANewBridgeModelNeverReflectsTheOldRoom) {
+    use_red_wall_corner();
+    set_floor_override(0.05f, 1.0f);
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->request_probe_capture();
+    ASSERT_GT(render_floor().r, 0.05f);          // the old room, settled
+    ASSERT_TRUE(pass->probes_settled());
+    pass->set_probe_steps_per_frame(1);
+    auto old = std::move(model);                 // keep the old handle unique
+    use_red_wall_corner({0.0f, 0.0f, 1.0f});
+    set_floor_override(0.05f, 1.0f);
+    int frames = 0, dark = 0;
+    while (!pass->probes_settled() && frames < 500) {
+        const glm::vec3 c = render_floor();
+        ++frames;
+        EXPECT_LT(c.r, 0.01f) << frames;         // never the old room
+        if (!pass->probe_valid(0)) {
+            ++dark;
+            EXPECT_LT(std::max(c.r, std::max(c.g, c.b)), 1e-3f) << frames;
+        } else {
+            EXPECT_GT(c.b, 0.05f) << frames;     // the new room, at once
+        }
+    }
+    EXPECT_EQ(dark, pass->steps_per_probe() - 1);
+    EXPECT_FLOAT_EQ(pass->base_weight(0), 1.0f);
+}
+
 TEST_F(BridgePbrFrame, ARequestMidCaptureRestartsTheProbe) {
     use_red_wall_corner();
     pass->set_probe_origin({60.0f, 0.0f, 40.0f});
@@ -933,6 +981,86 @@ TEST_F(BridgePbrFrame, ALayerAddedIsQueuedAndARemovedOneFreed) {
     EXPECT_FALSE(pass->probe_valid(renderer::kBridgeStates));
     for (int i = 0; i < renderer::kBridgeStates; ++i) EXPECT_TRUE(pass->probe_valid(i)) << i;
     EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+// ── Reflection layers (spec 2026-10-17 §4.2) ───────────────────────────────
+
+namespace {
+/// A member of layer 0 at red: in no base (capture colour 0 in every state),
+/// `at_peak` in the layer, live radiance 0 (the view never sees it lit). It
+/// lights a disc of the wall round (0, 0, z): z = 64 is where the floor's
+/// box-projected mirror ray lands; z = 194 where the unprojected ray from the
+/// probe at (60, 0, 40) does (the debug views).
+renderer::BridgeSpot layer_spot(glm::vec3 at_peak, float z = 64.0f) {
+    renderer::BridgeSpot sp = wall_spot(0.0f);
+    sp.position.z = z;
+    sp.layer[2] = 0;
+    sp.layer_radiance[2] = at_peak;
+    return sp;
+}
+}  // namespace
+
+// The layer adds its reflection x its live value: 1 brighter than 0, 0.5
+// between, and at 0 the floor is exactly the room without the member.
+TEST_F(BridgePbrFrame, ALayerAddsItsWeightedReflection) {
+    use_red_wall_corner({0.6f, 0.6f, 0.6f});    // a grey wall
+    set_floor_override(0.05f, 1.0f);
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->set_probe_state(2, 0.0f);
+    pass->request_probe_capture();
+    const glm::vec3 room = render_floor();       // no member, no layer
+    pass->set_spots({layer_spot({2000.0f, 0.0f, 0.0f})});
+    pass->set_probe_layers({2});
+    pass->set_layer_values({0.0f});
+    const glm::vec3 off = render_floor();
+    ASSERT_TRUE(pass->probes_settled());
+    ASSERT_TRUE(pass->probe_valid(renderer::kBridgeStates));
+    pass->set_layer_values({1.0f});
+    const glm::vec3 on = render_floor();
+    pass->set_layer_values({0.5f});
+    const glm::vec3 half = render_floor();
+    for (int i = 0; i < 3; ++i) EXPECT_NEAR(off[i], room[i], 1e-4f) << i;
+    EXPECT_GT(on.r, off.r + 0.05f);
+    EXPECT_NEAR(on.g, off.g, 1e-4f);             // a red light adds red only
+    EXPECT_GT(half.r, off.r + 1e-3f);
+    EXPECT_LT(half.r, on.r - 1e-3f);
+    // A layer weighs by its state's base: green shown, the red layer is out.
+    pass->set_probe_state(0, 1.0f);
+    pass->set_layer_values({1.0f});
+    const glm::vec3 green = render_floor();
+    EXPECT_FLOAT_EQ(pass->base_weight(2), 0.0f);
+    EXPECT_NEAR(green.r, green.g, 1e-3f);        // the grey room, no red
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+// Debug view 11 shows the layer entries alone (a green member over a grey
+// room reads pure green, and black at value 0); view 9 shows the composed
+// reflection, bases and layers.
+TEST_F(BridgePbrFrame, ReflectionLayersViewShowsOnlyLayers) {
+    use_red_wall_corner({0.6f, 0.6f, 0.6f});
+    set_floor_override(0.05f, 1.0f);
+    pass->set_probe_origin({60.0f, 0.0f, 40.0f});
+    pass->set_probe_state(2, 0.0f);
+    pass->set_spots({layer_spot({0.0f, 2000.0f, 0.0f}, 194.0f)});
+    pass->set_probe_layers({2});
+    pass->set_layer_values({1.0f});
+    pass->request_probe_capture();
+    render_floor();
+    ASSERT_TRUE(pass->probes_settled());
+    pass->set_debug_view(renderer::BridgeDebugView::ReflectionLayers);
+    const glm::vec3 layers = render_floor();
+    pass->set_debug_view(renderer::BridgeDebugView::ProbeMirror);
+    const glm::vec3 composed = render_floor();
+    pass->set_layer_values({0.0f});
+    pass->set_debug_view(renderer::BridgeDebugView::ReflectionLayers);
+    const glm::vec3 none = render_floor();
+    pass->set_debug_view(renderer::BridgeDebugView::Off);
+    EXPECT_GT(layers.g, 0.05f);
+    EXPECT_LT(layers.r, 1e-3f);                  // no base in it
+    EXPECT_LT(layers.b, 1e-3f);
+    EXPECT_GT(composed.r, 0.05f);                // the grey room...
+    EXPECT_GT(composed.g, composed.r + 0.05f);   // ...plus the green layer
+    EXPECT_LT(std::max(none.r, std::max(none.g, none.b)), 1e-4f);
 }
 
 TEST(BridgeProbeStepsTuning, OneStepPerFrameInProduction) {
@@ -1442,11 +1570,12 @@ TEST_F(BridgePbrFrame, ProbeCaptureIncludesEmissive) {
     pass->set_probe_origin({60.0f, 0.0f, 40.0f});
     pass->set_probe_scales({1.0f, 1.0f, 1.0f, 1.0f, 1.0f});
     pass->request_probe_capture();
-    for (float mix : {0.0f, 1.0f}) {
-        pass->set_probe_mix(mix);
+    for (int state : {0, 1}) {
+        pass->set_probe_state(state, 1.0f);      // settled on that state's base
         const glm::vec3 c = render_floor();
-        EXPECT_GT(c.g, 0.3f) << mix;
-        EXPECT_LT(c.r, 0.02f) << mix;
+        EXPECT_FLOAT_EQ(pass->base_weight(state), 1.0f) << state;
+        EXPECT_GT(c.g, 0.3f) << state;
+        EXPECT_LT(c.r, 0.02f) << state;
     }
 }
 

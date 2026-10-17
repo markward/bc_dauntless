@@ -32,11 +32,13 @@ class Pipeline;
 /// Developer-only bridge debug views (Developer Options -> Lighting tab).
 /// Off is production: byte-identical to no debug support existing at all.
 /// Selected via BridgePass::set_debug_view; see bridge.frag for how each is
-/// drawn. The viewscreen feed (u_unlit) ignores every value here. 6..10 are
+/// drawn. The viewscreen feed (u_unlit) ignores every value here. 6..11 are
 /// the PBR views: they show only where the PBR path runs (u_pbr != 0); on a
 /// comm set or with PBR off they fall through to the lit colour. 9 (probe
-/// mirror) draws the lit colour until the green and yellow bases have been
-/// captured.
+/// mirror) is the composed reflection -- every sampled base and layer, x its
+/// weight, along the unprojected mirror ray at mip 0 -- and draws the lit
+/// colour while nothing is sampled. 11 is the same with the layer entries
+/// only (black when no layer is sampled).
 enum class BridgeDebugView : int {
     Off          = 0,
     Normals      = 1,
@@ -49,6 +51,7 @@ enum class BridgeDebugView : int {
     SpecularOnly = 8,
     ProbeMirror  = 9,
     MapNormals   = 10,
+    ReflectionLayers = 11,
 };
 
 /// One per-shape PBR material override (spec 2026-10-08-bridge-emitters
@@ -277,9 +280,11 @@ public:
     /// Bridge reflection probes (spec 2026-10-08-bridge-emitters §9.3, spec
     /// 2026-10-17-bridge-reflection-layers §4): one capture of the room per
     /// state (its base) plus one per animation layer, all in one cube-map
-    /// array, box-projected against the bridge model's AABB. The shader
-    /// samples the green and yellow bases, cross-faded by set_probe_mix.
-    /// Production state; none of it is developer-gated.
+    /// array, box-projected against the bridge model's AABB. The shader sums
+    /// one weighted list of them (spec §4.2): every base by its cross-fade
+    /// weight (set_probe_state) and every layer by its live value
+    /// (set_layer_values) x its state's base weight. Production state; none
+    /// of it is developer-gated.
     ///
     /// Capture point (world). Takes effect at the next capture.
     void set_probe_origin(glm::vec3 origin) { probe_origin_ = origin; }
@@ -335,10 +340,20 @@ public:
     /// fade. Default 0.
     void set_alert_level(int level) { alert_level_ = level; }
     int alert_level() const { return alert_level_; }
-    /// 0 = the green base (probe 0), 1 = the yellow base (probe 1); clamped
-    /// to [0, 1].
-    void set_probe_mix(float t);
-    float probe_mix() const { return probe_mix_; }
+    /// The shown bridge state and the paused-aware bridge dt, once per frame
+    /// (spec §4.2): runs the base cross-fade (ProbeFade, 0.5 s, frozen at dt
+    /// 0) toward `state`'s base, which starts rising only once it is valid
+    /// (the old base keeps showing until then). `state` is also the shown
+    /// state the capture queue serves first. Out of range = no state: every
+    /// weight holds. Before the first call nothing is shown: no reflection.
+    /// render() re-runs the fade at dt 0 after its capture steps, so a base
+    /// that lands with nothing showing (a new bridge) snaps in that frame.
+    void set_probe_state(int state, float dt);
+    /// Base `state`'s weight in the reflection; 0 out of range.
+    float base_weight(int state) const;
+    /// Each layer's live value, by layer index: v_k = w(t)^2.2 (spec §4.2).
+    /// A missing value is 0; a non-finite one becomes 0. Never dirties a probe.
+    void set_layer_values(std::vector<float> values);
     /// The capture queue (spec 2026-10-17 §4.7). A probe needs a capture
     /// while it holds none, or while the signature it was captured with
     /// differs from probe_signature() now -- so a setter never requests one;
@@ -348,16 +363,18 @@ public:
     /// read it. Nothing is captured before the first request (the bridge
     /// load makes it). Each main-bridge render(), before its AO pre-pass,
     /// runs kBridgeProbeStepsPerFrame steps of the probe in flight, picked by
-    /// next_probe with the alert level as the shown state. A probe in flight
-    /// draws every face from the inputs snapshotted at its first step; a
-    /// change meanwhile requeues it once it lands. A different bridge model
-    /// drops the probe in flight.
+    /// next_probe with set_probe_state's state as the shown state. A probe in
+    /// flight draws every face from the inputs snapshotted at its first step;
+    /// a change meanwhile requeues it once it lands. A different bridge model
+    /// frees every probe and zeroes every base weight, so the new room never
+    /// reflects the old one: no reflection until its shown base lands.
     ///
     /// request_probe_capture(): forget every captured signature (each probe
     /// recaptures, its old content showing until then) and drop the probe in
     /// flight. Never per frame.
     void request_probe_capture();
-    /// True once the shown state's base (alert_level()) holds a capture.
+    /// True once the shown state's base (set_probe_state's state; 0 when
+    /// none) holds a capture.
     bool probes_valid() const;
     /// True once probe `probe` holds a completed capture (it keeps showing
     /// while a recapture of it is in flight). False out of range.
@@ -416,7 +433,7 @@ public:
     std::size_t spot_count() const { return spots_.size(); }
 
     /// Drop the captures (the probe array is freed: no specular until the
-    /// next request), the request, the probe in flight, the mix and the
+    /// next request), the request, the probe in flight, the base weights and the
     /// cached boxes (model handles die with the session). Origin and scales
     /// are configuration and are kept. Needs the GL context current to free
     /// the array. The host does not call it: a new session builds a fresh
@@ -498,7 +515,11 @@ private:
     std::vector<std::uint64_t> captured_sigs_;
     /// Completed captures by probe id since construction (test accessor).
     std::vector<int> captures_completed_;
-    float       probe_mix_ = 0.0f;
+    /// The base cross-fade, its target (-1 = none) and each layer's live
+    /// value (spec §4.2).
+    ProbeFade   fade_;
+    int         probe_target_ = -1;
+    std::vector<float> layer_values_;
     int         steps_per_frame_ = kBridgeProbeStepsPerFrame;
     float       alert_ambient_scale_ = 1.0f;
     int         alert_level_ = 0;
@@ -545,7 +566,7 @@ private:
     /// Exchange the live inputs with `in` (both ways: a step swaps the
     /// snapshot in, draws, and swaps it back out).
     void swap_inputs(ProbeInputs& in);
-    /// The state whose probes go first: the alert level (0 when out of range).
+    /// The state whose probes go first: probe_target_ (0 when none).
     int shown_state() const;
     bool probe_needs_capture(int probe) const;
     /// Size the array (and the per-probe bookkeeping) to probe_count().
@@ -569,8 +590,8 @@ private:
     /// static main-bridge instance with the most meshes) through its
     /// instance world. Model-space AABBs are cached per model handle (CPU
     /// mesh data through the node rest worlds); `box_handle_` is the handle
-    /// the current box came from (a signature input), and a change drops the
-    /// probe in flight.
+    /// the current box came from (a signature input); a change frees every
+    /// probe and zeroes the base weights.
     struct Aabb { glm::vec3 min{0.0f}; glm::vec3 max{0.0f}; bool valid = false; };
     std::unordered_map<unsigned long long, Aabb> model_boxes_;
     unsigned long long box_handle_ = 0;

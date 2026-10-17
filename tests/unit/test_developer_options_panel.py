@@ -371,7 +371,7 @@ def test_bridge_debug_view_cycles(monkeypatch):
     calls = []
     monkeypatch.setattr(renderer, "set_bridge_debug_view", calls.append)
     p = DeveloperOptionsPanel()
-    for expected in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0):
+    for expected in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0):
         assert p.dispatch_event("action:bridge_debug_view")
         assert calls[-1] == expected
 
@@ -383,6 +383,15 @@ def test_bridge_debug_view_cycles_through_the_pbr_views(panel):
     names = p.bridge_debug_view_names()
     assert names[6:11] == ["Roughness", "Metalness", "Specular only",
                            "Probe (mirror)", "Map normals"]
+
+
+def test_bridge_debug_view_names_end_with_reflection_layers(panel):
+    """View 11 (spec 2026-10-17-bridge-reflection-layers §4.8): the
+    reflection layers alone, last in the cycle."""
+    p, _ = panel
+    names = p.bridge_debug_view_names()
+    assert len(names) == 12
+    assert names[11] == "Reflection layers"
 
 
 def test_bridge_pbr_toggle_defaults_on_and_calls_the_binding(panel, monkeypatch):

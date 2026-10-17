@@ -104,22 +104,24 @@ uniform float     u_emissive_scale;  // renderer::kEmissiveScale
 
 // ── Reflection probes (plan 2026-10-09-bridge-pbr Task 6) ──────────────
 // Every prefiltered capture of the room (each state's base and its layers)
-// in ONE cube-map array on unit 7; this samples the green and yellow bases
-// at the array layers BridgePass hands it each frame (a recapture swaps a
-// probe's layer), cross-faded by u_probe_mix, box-projected against the
-// bridge model's AABB, with the split-sum BRDF LUT on unit 9. u_has_probe = 0
-// until BOTH bases are captured: unit 7 is then EMPTY and must not be sampled.
+// in ONE cube-map array on unit 7. BridgePass hands over one weighted list
+// each frame (spec 2026-10-17-bridge-reflection-layers §4.2): entry i is the
+// array layer u_probe_layer[i] (a recapture swaps a probe's layer) times
+// u_probe_weight[i] -- the bases by their cross-fade weight, the layers by
+// value x their state's base weight -- summed, box-projected against the
+// bridge model's AABB, with the split-sum BRDF LUT on unit 9. With
+// u_probe_entries = 0 unit 7 is EMPTY and must not be sampled.
 // u_capture = 1 while BridgePass draws a probe face: linear diffuse-only
 // radiance under the same diffuse ceiling as the view (spec §9.5: the probe
 // holds a lit room capped at 0.88, so only emitters in it may bloom through
 // a reflection) plus the decoded, uncapped glow, no AO, no highlight, no
 // specular, the viewscreen black.
 uniform samplerCubeArray u_probes;  // unit 7: every probe, one cube layer each
-uniform int         u_probe_layer_a;  // array layer of the green base (probe 0)
-uniform int         u_probe_layer_b;  // array layer of the yellow base (probe 1)
+const int           kMaxProbeEntries = 19;  // renderer::kBridgeMaxProbeEntries
+uniform int         u_probe_entries;  // 0 .. kMaxProbeEntries
+uniform int         u_probe_layer[kMaxProbeEntries];   // array layer per entry
+uniform float       u_probe_weight[kMaxProbeEntries];  // weight per entry
 uniform sampler2D   u_brdf_lut;   // unit 9: (A, B), x = NdotV, y = roughness
-uniform int         u_has_probe;
-uniform float       u_probe_mix;  // 0 green .. 1 yellow/red
 uniform vec3        u_probe_pos;  // capture point, world
 uniform float       u_probe_max_mip;  // kBridgeProbeMips - 1, set by BridgePass
 uniform vec3        u_box_min;    // bridge AABB, world
@@ -317,6 +319,16 @@ vec3 box_project(vec3 pos, vec3 dir, vec3 bmin, vec3 bmax, vec3 probe) {
 // Prefiltered mip for a roughness. Twin of pbr::prefilter_mip; the top mip
 // arrives as u_probe_max_mip (renderer::kBridgeProbeMips - 1).
 float prefilter_mip(float rough) { return clamp(rough, 0.0, 1.0) * u_probe_max_mip; }
+
+// The weighted sum of every probe entry along `dir` at `mip` (linear).
+vec3 sample_probes(vec3 dir, float mip) {
+    vec3 sum = vec3(0.0);
+    int n = min(u_probe_entries, kMaxProbeEntries);
+    for (int i = 0; i < n; ++i)
+        sum += u_probe_weight[i]
+             * textureLod(u_probes, vec4(dir, float(u_probe_layer[i])), mip).rgb;
+    return sum;
+}
 
 // Windowed inverse-square falloff and smoothstep-squared cone: twins of
 // pbr::spot_falloff / pbr::spot_cone (bridge_pbr.h), same formulas.
@@ -635,21 +647,18 @@ void main() {
         vec3 received = decode(u_ambient * mix(u_down_bottom, u_down_top, h) * ao);
         vec3 diffuse = albedo * (1.0 - metal) * (vec3(1.0) - Fv) * received;
         vec3 spec = vec3(0.0);
-        if (u_has_probe != 0) {
-            vec3 R = reflect(-V, N);
-            if (u_debug_view == 9) {
-                FragColor = vec4(encode(textureLod(u_probes, vec4(R, float(u_probe_layer_a)),
-                                                   0.0).rgb), 1.0);
-                return;
-            }
+        vec3 R = reflect(-V, N);
+        // Reflection layers only: BridgePass sends just the layer entries
+        // (none: black).
+        if (u_debug_view == 11) { FragColor = vec4(encode(sample_probes(R, 0.0)), 1.0); return; }
+        if (u_probe_entries > 0) {
+            if (u_debug_view == 9) { FragColor = vec4(encode(sample_probes(R, 0.0)), 1.0); return; }
             vec3 Rb = box_project(v_world, R, u_box_min, u_box_max, u_probe_pos);
             // A ray exactly along a face it starts on is 0 * inf: fall back
             // to the unprojected direction rather than feed NaN to bloom.
             if (any(isnan(Rb)) || any(isinf(Rb))) Rb = R;
             float mip = prefilter_mip(rough);
-            vec3 pre = mix(textureLod(u_probes, vec4(Rb, float(u_probe_layer_a)), mip).rgb,
-                           textureLod(u_probes, vec4(Rb, float(u_probe_layer_b)), mip).rgb,
-                           u_probe_mix);
+            vec3 pre = sample_probes(Rb, mip);
             vec2 ab = texture(u_brdf_lut, vec2(NdotV, rough)).rg;
             spec = pre * (F0 * ab.x + ab.y * u_reflectance)
                  * specular_occlusion(NdotV, ao, rough);
