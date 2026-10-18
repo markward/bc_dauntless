@@ -21,6 +21,8 @@ sphere position + radius drive a Gap-1 carve.
 
 See docs/engine/damagetool-and-hull-damage-gaps.md.
 """
+import time
+
 import engine.dev_mode as dev_mode
 from engine import host_io
 from engine.core import frame_profiler
@@ -31,6 +33,14 @@ from engine.appc.hit_feedback import _mesh_xyz
 # ship's render instance to be realized, then drop — so a headless run, a culled
 # ship, or a failed spawn never leaks an un-emittable entry.
 MAX_PENDING_AGE = 5.0
+
+# Per-frame time budget for emitting queued carves (ms). Each carve is a
+# whole reach-box brush pass; a dying ship's SDK cascade can land 2-6 in one
+# frame, ~5.7 ms each in Debug for a Sovereign (perf-register P-4, SIG-044).
+# advance() always emits at least one, so the queue drains; the rest wait a
+# frame or two, which the cascade's ~0.2 s blast spacing hides. Only the
+# visible hole waits -- AddDamage's gameplay damage is applied when called.
+CARVE_BUDGET_MS = 3.0
 
 # Standoff (GU) for the surface-normal probe in `_mesh_normal`: the ray starts
 # this far outside the sample point along the radial and casts twice as far
@@ -115,18 +125,30 @@ def reset() -> None:
     _pending.clear()
 
 
-def advance(dt=0.0, ship_instances=None) -> None:
-    """Emit queued volumes for any ship whose render instance is now realized;
-    keep the rest until they realize or age out. Raise-safe per entry."""
+def advance(dt=0.0, ship_instances=None, budget_ms=CARVE_BUDGET_MS,
+            clock=time.perf_counter) -> None:
+    """Emit queued volumes for any ship whose render instance is now realized,
+    in queue order, until `budget_ms` is spent (always at least one); keep the
+    rest -- unrealized ones age out after MAX_PENDING_AGE, budget-held ones
+    never age. Raise-safe per entry."""
     if not _pending:
         return
+    start = clock()
+    emitted = False
     survivors = []
     for entry in _pending:
+        realized = (ship_instances is not None
+                    and ship_instances.get(entry["ship"]) is not None)
+        if realized and emitted and (clock() - start) * 1000.0 >= budget_ms:
+            survivors.append(entry)
+            continue
         try:
             keep = _advance_one(entry, float(dt), ship_instances)
         except Exception as _e:
             dev_mode.log_swallowed("visible damage advance", _e)
             keep = False
+        if realized:
+            emitted = True
         if keep:
             survivors.append(entry)
     _pending[:] = survivors
