@@ -198,9 +198,13 @@ size for the 10 stations that already set `DamageRadMod`; reverted to absolute +
 modifier on 2026-06-30.)
 
 (Note: the older `ShipProperty.SetDamageResolution` per-ship value — Galaxy 10,
-Akira 8, kessokmine 2 … — is still stored-but-unused in `engine/appc/ships.py:460`; it is
-BC's `SetSurfaceDamageRes`, the carve **granularity** knob, complementary to these
-modifiers.)
+Akira 8, kessokmine 2 … — is BC's `SetSurfaceDamageRes`, the carve **granularity** knob,
+complementary to these modifiers. It sets the cell of the hull's damage lattice
+(`engine/appc/hull_volume.py:_ship_resolution`). Since 2026-10-18 a hull with
+`DamageRadMod` > ∛2 bakes with its cell scaled by `DamageRadMod / ∛2`
+(`effective_resolution`), because the authored value is sized for ship-sized holes:
+FedOutpost 13.4M → about 90k cells. The lattice is capped at 2^22 cells
+(`kMaxFieldCells`). `perf-register.md` P-4, SIG-036, SIG-037.)
 
 ### Collision scuffs (below-iso, non-carving hits)
 A collision that never crosses the carve iso previously left no visible mark at all.

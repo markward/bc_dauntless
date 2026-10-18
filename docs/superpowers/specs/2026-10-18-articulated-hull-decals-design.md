@@ -1,7 +1,9 @@
 # Hull name decals on articulated parts — design
 
 Date: 2026-10-18. Branch `fix/articulated-hull-decals`, from integration branch
-`int/2026-10-18-01`. Status: approved approach (option 1 below), Mark 2026-10-18.
+`int/2026-10-18-01`. Status: **implemented and live-verified** (option 1 below; merged
+into `int/2026-10-18-01` as `4aefe4cd`, to main as `5fc58ec8`; Mark checked §8 on the LC
+Intrepid's nacelles, 2026-10-18).
 
 ## 1. Why
 
