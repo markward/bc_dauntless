@@ -5580,20 +5580,19 @@ PYBIND11_MODULE(_dauntless_host, m) {
           []() {
               if (g_far_pass) g_far_pass->prefetch_atlases();
           },
-          "Start decoding (worker threads, at most "
-          "kMaxAtlasDecodesInFlight at once; the rest queue and start from "
-          "far_pump_atlas_uploads) every impostor atlas the far pass has not "
-          "loaded, failed, started or queued. No GL work; a no-op with no "
-          "far pass.");
+          "Queue every impostor atlas the far pass has not loaded, failed "
+          "or queued for decoding on worker threads (at most "
+          "kMaxAtlasDecodesInFlight, which take queued atlases themselves "
+          "until none is left). No GL work; a no-op with no far pass.");
     m.def("far_pump_atlas_uploads",
           [](int max_uploads) {
               return g_far_pass ? g_far_pass->pump_atlas_uploads(max_uploads) : 0;
           },
           py::arg("max_uploads"),
           "Upload at most `max_uploads` prefetched atlases whose decode has "
-          "finished (never waits), start queued decodes into the freed "
-          "slots, and return how many are still pending (in flight + "
-          "queued); 0 with no far pass.");
+          "finished (never waits) and return how many are still pending "
+          "(queued, decoding, or decoded and not uploaded); 0 with no far "
+          "pass.");
     m.def("far_clear",
           []() {
               far_zero_fades(g_far_flagged_keys);

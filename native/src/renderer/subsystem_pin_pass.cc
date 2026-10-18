@@ -4,6 +4,7 @@
 
 #include <renderer/asset_path.h>
 
+#include <assets/file_bytes.h>
 #include <assets/texture.h>
 #include <scenegraph/camera.h>
 
@@ -12,8 +13,6 @@
 
 #include <cstdio>
 #include <cstdint>
-#include <fstream>
-#include <iterator>
 #include <string>
 #include <vector>
 
@@ -81,18 +80,15 @@ void SubsystemPinPass::ensure_glyphs() {
 
     for (int i = 0; i < 10; ++i) {
         const std::string glyph_path = resolve_asset_path(kGlyphFiles[i]);
-        std::ifstream in(glyph_path, std::ios::binary);
-        if (!in) {
+        const auto bytes = assets::read_binary_file(glyph_path);
+        if (!bytes) {
             std::fprintf(stderr, "[subsystem_pin] glyph %d: failed to open '%s' (using blank disc)\n",
                          i, glyph_path.c_str());
             glyphs_[i] = std::make_unique<assets::Texture>();
             continue;
         }
-        std::vector<std::uint8_t> bytes(
-            (std::istreambuf_iterator<char>(in)),
-            std::istreambuf_iterator<char>());
         try {
-            assets::Image img = assets::decode_tga(bytes);
+            assets::Image img = assets::decode_tga(*bytes);
             assets::Texture tex = assets::upload_image(img, /*generate_mipmaps=*/true);
             glyphs_[i] = std::make_unique<assets::Texture>(std::move(tex));
         } catch (const std::exception& e) {

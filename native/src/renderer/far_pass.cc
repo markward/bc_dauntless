@@ -6,8 +6,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
-#include <fstream>
-#include <iterator>
+#include <exception>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -18,6 +17,8 @@
 #include <glm/glm.hpp>
 
 #include <scenegraph/camera.h>
+
+#include <assets/file_bytes.h>
 
 #include "renderer/asset_path.h"
 #include "renderer/frame.h"
@@ -80,11 +81,9 @@ std::string resolve_atlas_path(const std::string& path) {
 // atomic decode counter.
 assets::Image read_dilated(const std::string& resolved, std::atomic<int>* decodes) {
     decodes->fetch_add(1);
-    std::ifstream in(resolved, std::ios::binary);
-    if (!in) throw std::runtime_error("cannot open " + resolved);
-    std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)),
-                                    std::istreambuf_iterator<char>());
-    assets::Image img = assets::decode_image(bytes);
+    const auto bytes = assets::read_binary_file(resolved);
+    if (!bytes) throw std::runtime_error("cannot open " + resolved);
+    assets::Image img = assets::decode_image(*bytes);
     dilate_coverage(img, kDilatePasses);
     return img;
 }
@@ -132,8 +131,7 @@ void dilate_coverage(assets::Image& img, int passes) {
 }
 
 FarPass::~FarPass() {
-    queued_.clear();
-    pending_.clear();   // joins any worker still decoding (it writes decodes_)
+    drop_decodes();     // joins the workers before anything they touch goes
     atlases_.clear();
     if (vao_ != 0) { GLuint v = vao_; glDeleteVertexArrays(1, &v); }
     if (corner_vbo_ != 0) { GLuint b = corner_vbo_; glDeleteBuffers(1, &b); }
@@ -149,8 +147,7 @@ FarPass::~FarPass() {
 }
 
 void FarPass::set_atlas_paths(std::vector<std::pair<std::string, std::string>> albedo_normal) {
-    queued_.clear();   // queued for the OLD paths: never started
-    pending_.clear();  // decodes of the OLD paths: joined and dropped, never installed
+    drop_decodes();    // decodes of the OLD paths: never installed
     paths_ = std::move(albedo_normal);
     failed_.clear();   // new paths: a failure is retried, not remembered
 }
@@ -185,40 +182,92 @@ bool FarPass::finish_pending(int index) {
 }
 
 void FarPass::prefetch_atlases() {
-    for (std::size_t i = 0; i < paths_.size(); ++i) {
-        const int index = static_cast<int>(i);
-        if (atlases_.count(index) != 0 || failed_.count(index) != 0 ||
-            pending_.count(index) != 0 || queued_.count(index) != 0)
-            continue;
-        // No impostor (empty path): never drawn, so never loaded -- as lazily.
-        if (paths_[i].first.empty() || paths_[i].second.empty()) continue;
-        queued_.emplace(index, std::make_pair(resolve_atlas_path(paths_[i].first),
-                                              resolve_atlas_path(paths_[i].second)));
+    {
+        std::lock_guard<std::mutex> lock(queue_->mutex);
+        for (std::size_t i = 0; i < paths_.size(); ++i) {
+            const int index = static_cast<int>(i);
+            if (atlases_.count(index) != 0 || failed_.count(index) != 0 ||
+                pending_.count(index) != 0)
+                continue;
+            // No impostor (empty path): never drawn, so never loaded -- as lazily.
+            if (paths_[i].first.empty() || paths_[i].second.empty()) continue;
+            DecodeJob job{resolve_atlas_path(paths_[i].first),
+                          resolve_atlas_path(paths_[i].second), {}};
+            pending_.emplace(index, job.done.get_future());
+            queue_->jobs.emplace(index, std::move(job));
+        }
     }
-    start_queued_decodes();
+    start_decode_workers();
 }
 
-void FarPass::start_queued_decodes() {
-    while (!queued_.empty() &&
-           static_cast<int>(pending_.size()) < kMaxAtlasDecodesInFlight) {
-        const auto it = queued_.begin();
-        const int index = it->first;
-        const std::string albedo = it->second.first;
-        const std::string normal = it->second.second;
-        try {
-            pending_.emplace(index, std::async(std::launch::async,
-                                               [albedo, normal, decodes = &decodes_] {
-                                                   AtlasCpu a;
-                                                   a.albedo = read_dilated(albedo, decodes);
-                                                   a.normal = read_dilated(normal, decodes);
-                                                   return a;
-                                               }));
-        } catch (const std::system_error&) {
-            queued_.clear();   // no thread to be had: the rest load lazily, as before
-            return;
+void FarPass::decode_worker(std::shared_ptr<DecodeQueue> queue) {
+    for (;;) {
+        DecodeJob job;
+        {
+            std::lock_guard<std::mutex> lock(queue->mutex);
+            if (queue->jobs.empty()) {
+                --queue->workers;   // under the lock: a prefetch now starts a new one
+                return;
+            }
+            const auto it = queue->jobs.begin();
+            job = std::move(it->second);
+            queue->jobs.erase(it);
         }
-        queued_.erase(index);
+        const int now = queue->running.fetch_add(1) + 1;
+        int seen = queue->max_running.load();
+        while (now > seen && !queue->max_running.compare_exchange_weak(seen, now)) {}
+        try {
+            AtlasCpu a;
+            a.albedo = read_dilated(job.albedo, &queue->decodes);
+            a.normal = read_dilated(job.normal, &queue->decodes);
+            job.done.set_value(std::move(a));
+        } catch (...) {
+            job.done.set_exception(std::current_exception());
+        }
+        queue->running.fetch_sub(1);
     }
+}
+
+void FarPass::start_decode_workers() {
+    // A worker returns once the queue is empty: forget the finished ones.
+    workers_.erase(std::remove_if(workers_.begin(), workers_.end(),
+                                  [](const std::future<void>& w) {
+                                      return w.wait_for(std::chrono::seconds(0)) ==
+                                             std::future_status::ready;
+                                  }),
+                   workers_.end());
+    if (workers_paused_) return;
+    int wanted = 0;
+    {
+        std::lock_guard<std::mutex> lock(queue_->mutex);
+        if (queue_->jobs.empty()) return;
+        wanted = kMaxAtlasDecodesInFlight - queue_->workers;
+        queue_->workers += wanted;   // counted before they run: each decrements on exit
+    }
+    int started = 0;
+    for (; started < wanted; ++started) {
+        try {
+            workers_.push_back(std::async(std::launch::async, decode_worker, queue_));
+        } catch (const std::system_error&) {
+            break;
+        }
+    }
+    std::lock_guard<std::mutex> lock(queue_->mutex);
+    queue_->workers -= wanted - started;
+    if (queue_->workers > 0) return;
+    // No thread to be had: the queued atlases load lazily, as before.
+    for (const auto& [index, job] : queue_->jobs) pending_.erase(index);
+    queue_->jobs.clear();
+}
+
+void FarPass::drop_decodes() {
+    {
+        std::lock_guard<std::mutex> lock(queue_->mutex);
+        queue_->jobs.clear();   // never started
+    }
+    for (auto& w : workers_) w.wait();   // each finishes the atlas it holds
+    workers_.clear();
+    pending_.clear();
 }
 
 int FarPass::pump_atlas_uploads(int max_uploads) {
@@ -232,12 +281,16 @@ int FarPass::pump_atlas_uploads(int max_uploads) {
         ++it;   // finish_pending erases `index`'s entry
         if (finish_pending(index)) ++uploaded;
     }
-    start_queued_decodes();
-    return static_cast<int>(pending_.size() + queued_.size());
+    return static_cast<int>(pending_.size());
+}
+
+void FarPass::debug_pause_decode_workers(bool paused) {
+    workers_paused_ = paused;
+    if (!paused) start_decode_workers();
 }
 
 void FarPass::debug_wait_atlas_decodes() {
-    for (auto& [index, decoding] : pending_) decoding.wait();
+    for (auto& w : workers_) w.wait();
 }
 
 void FarPass::debug_set_atlas(int index, const assets::Image& albedo, const assets::Image& normal) {
@@ -248,10 +301,17 @@ const FarPass::AtlasGpu* FarPass::atlas_for(int index) {
     if (auto it = atlases_.find(index); it != atlases_.end()) return &it->second;
     if (failed_.count(index) != 0) return nullptr;
     if (pending_.count(index) != 0) {
-        DAUNTLESS_FRAME_SCOPE("rock.atlas.load");   // the wait + upload left on the frame
-        return finish_pending(index) ? &atlases_.at(index) : nullptr;
+        bool taken = false;   // no worker has it yet: load it here, not behind the queue
+        {
+            std::lock_guard<std::mutex> lock(queue_->mutex);
+            taken = queue_->jobs.erase(index) != 0;
+        }
+        if (!taken) {
+            DAUNTLESS_FRAME_SCOPE("rock.atlas.load");   // the wait + upload left on the frame
+            return finish_pending(index) ? &atlases_.at(index) : nullptr;
+        }
+        pending_.erase(index);   // the lazy load below replaces it
     }
-    queued_.erase(index);   // queued, not started: the lazy load below replaces it
     if (index < 0 || static_cast<std::size_t>(index) >= paths_.size()) {
         failed_.insert(index);
         std::fprintf(stderr, "[far_pass] no atlas path for catalogue rock %d\n", index);
@@ -261,8 +321,8 @@ const FarPass::AtlasGpu* FarPass::atlas_for(int index) {
     try {
         DAUNTLESS_FRAME_SCOPE("rock.atlas.load");
         AtlasCpu a;
-        a.albedo = read_dilated(resolve_atlas_path(albedo_path), &decodes_);
-        a.normal = read_dilated(resolve_atlas_path(normal_path), &decodes_);
+        a.albedo = read_dilated(resolve_atlas_path(albedo_path), &queue_->decodes);
+        a.normal = read_dilated(resolve_atlas_path(normal_path), &queue_->decodes);
         install_dilated(index, a);
     } catch (const std::exception& e) {
         failed_.insert(index);

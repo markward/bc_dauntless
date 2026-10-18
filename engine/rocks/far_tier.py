@@ -19,6 +19,15 @@ Python owns the INPUTS; native (renderer.far_*) owns the field. Every frame
 and `reconcile` pushes the near band's own contact player
 (rockfield_set_player, every frame) and its shield inflate.
 
+Once the catalogue is pushed and the viewed set has rock content (belt or
+field sources, or a flagged catalogue rock), with the far tier on, every
+impostor atlas starts decoding on the far pass's worker threads
+(far_prefetch_atlases); each reconcile then uploads at most one finished
+atlas (far_pump_atlas_uploads(1)) until none is pending. Without this an
+atlas loaded on its rock's first draw, ~120 ms a rock in Debug, mostly PNG
+decode + dilate (perf-register P-11). A set with no rocks loads none. The
+warp preload does the same for a warp's destination.
+
 A rock is flagged by `note_model` at realise time, with the model path and
 scale that were ACTUALLY loaded: a catalogue rock carries its catalogue index
 (impostor) and bound radius; a stock asteroid NIF (the catalogue-off or
@@ -44,6 +53,13 @@ _sources_dirty = False
 _system = _UNSET                 # system whose sources native holds
 _tiles = _UNSET                  # the tile DiscSources native holds
 _rocks_pushed = _UNSET           # the last far_set_rocks list
+_source_count = 0                # density sources in the last far_set_sources
+_prefetch_due = False            # catalogue pushed, atlas prefetch not started
+_atlases_pending = 0             # atlases decoding or awaiting upload (0: no pump)
+
+# Finished atlases uploaded per reconcile: each is ~7.6 ms of GL (two 512^2
+# atlases with mipmaps), so one a frame keeps every frame clear of a hitch.
+_ATLAS_UPLOADS_PER_FRAME = 1
 
 
 def _swallow(what: str, e: BaseException) -> None:
@@ -118,7 +134,8 @@ def on_dials_changed(names) -> None:
 def reset(r=None) -> None:
     """Forget everything (mission swap); r.far_clear() when given."""
     global _catalogue_root, _dials_pushed, _dials_dirty, _sources_dirty
-    global _system, _rocks_pushed, _tiles, _near_pushed
+    global _system, _rocks_pushed, _tiles, _near_pushed, _atlases_pending
+    global _source_count, _prefetch_due
     _models.clear()
     _belt_cache.clear()
     _catalogue_root = None
@@ -129,6 +146,9 @@ def reset(r=None) -> None:
     _system = _UNSET
     _tiles = _UNSET
     _rocks_pushed = _UNSET
+    _source_count = 0
+    _prefetch_due = False
+    _atlases_pending = 0
     if fd.on_change() is on_dials_changed:
         fd.set_on_change(None)
     if r is not None:
@@ -178,7 +198,7 @@ def _native_lost_near(r) -> bool:
 
 
 def _push_catalogue(r) -> None:
-    global _catalogue_root, _near_pushed
+    global _catalogue_root, _near_pushed, _prefetch_due
     from engine.rocks import catalogue
     root = str(catalogue.catalogue_root())
     if root == _catalogue_root and not _native_lost_near(r):
@@ -191,6 +211,39 @@ def _push_catalogue(r) -> None:
         return
     _catalogue_root = root   # pushed: only now, so a failure is retried
     _near_pushed = sum(1 for e in entries if "lod0" in e)
+    _prefetch_due = True
+
+
+def _start_atlas_prefetch(r, rocks: list) -> None:
+    """Once the viewed set has rock content, start decoding every impostor
+    atlas off the main thread (mission load) rather than on each rock's
+    first draw. Never while the far tier is off."""
+    global _atlases_pending, _prefetch_due
+    if not _prefetch_due:
+        return
+    if _source_count == 0 and not any(d["index"] >= 0 for d in rocks):
+        return
+    try:
+        if not r.far_enabled():
+            return
+        _prefetch_due = False
+        r.far_prefetch_atlases()
+        _atlases_pending = 1   # unknown until the first pump
+    except Exception as e:
+        _swallow("prefetch_atlases", e)
+        _atlases_pending = 0   # fail open: atlases load on first draw
+
+
+def _pump_atlases(r) -> None:
+    """Upload at most one finished atlas; stops once none is pending."""
+    global _atlases_pending
+    if not _atlases_pending:
+        return
+    try:
+        _atlases_pending = int(r.far_pump_atlas_uploads(_ATLAS_UPLOADS_PER_FRAME))
+    except Exception as e:
+        _swallow("pump_atlas_uploads", e)
+        _atlases_pending = 0
 
 
 def _push_dials(r) -> None:
@@ -233,7 +286,7 @@ def tile_sources(view_set, fields) -> list:
 
 
 def _push_sources(r, system, tiles) -> None:
-    global _system, _sources_dirty, _tiles
+    global _system, _sources_dirty, _tiles, _source_count
     if system == _system and tiles == _tiles and not _sources_dirty:
         return
     _system = system
@@ -242,7 +295,9 @@ def _push_sources(r, system, tiles) -> None:
     try:
         from engine.rocks import density
         belts = density.sources_for_system(system) if system else []
-        r.far_set_sources([density.to_native(s) for s in belts + list(tiles)])
+        sources = [density.to_native(s) for s in belts + list(tiles)]
+        r.far_set_sources(sources)
+        _source_count = len(sources)
     except Exception as e:
         _swallow("set_sources", e)
 
@@ -271,6 +326,8 @@ def reconcile_with(r, view_set, rock_instances: dict, fields=()) -> None:
             r.far_set_rocks(rocks)
         except Exception as e:
             _swallow("set_rocks", e)
+    _start_atlas_prefetch(r, rocks)
+    _pump_atlases(r)
 
 
 def reconcile(session, r) -> None:
