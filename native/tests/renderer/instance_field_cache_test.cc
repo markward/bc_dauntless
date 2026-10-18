@@ -1339,3 +1339,53 @@ TEST_F(InstanceFieldCacheTest, RecarvingFullyCarvedMaterialNeitherReuploadsNorAr
     EXPECT_TRUE(cache.take_severance_box(id).empty())
         << "nothing changed, so no severance check is owed";
 }
+
+// perf-register P-4: a merged deposit that does not grow its slot re-applies
+// the slot's identical carve (same centre, normal and radius -- a merge keeps
+// all three), which can change no cell. A dying Sovereign's warp-core breach
+// emitted one such deposit every frame for 1.5 s: 101 carves, 5.7 ms each in
+// Debug, every one a no-op. The field carve runs only when the slot is new or
+// its radius grew; the field must still end up exactly as before.
+TEST_F(InstanceFieldCacheTest, MergedDepositThatDoesNotGrowItsSlotSkipsTheFieldCarve) {
+    voxel::HullVolumeCache bake_cache(scratch_root() / "cache_merge_no_grow");
+    const auto src = make_source("hull_merge_no_grow.nif", "hull");
+    const voxel::DistanceField baked = make_baked_field();
+    ASSERT_TRUE(seed_baked_field(bake_cache, src, kAuthoredRes,
+                                 voxel::kDefaultQuality, baked));
+    scenegraph::HullCarveField sphere_field;
+    InstanceFieldCache cache(&bake_cache);
+    const scenegraph::InstanceId id{1, 0};
+    const glm::vec3 c(5.0f, 5.0f, 5.0f);
+
+    // A big floored carve, then smaller re-hits that merge into its slot
+    // without growing it (strength 0, floor below the slot's radius).
+    const auto first = renderer::hull_carve_deposit(
+        sphere_field, &cache, id, src, kAuthoredRes, c, kUp,
+        /*influ*/3.0f, /*strength*/0.0f, /*floor*/3.0f, 1.0f, 1.0f);
+    ASSERT_GT(first.radius, 0.0f);
+    ASSERT_EQ(cache.field_carves(), 1u);
+    for (int i = 0; i < 5; ++i) {
+        const auto again = renderer::hull_carve_deposit(
+            sphere_field, &cache, id, src, kAuthoredRes,
+            c + glm::vec3(0.2f, 0.0f, 0.0f), kUp,
+            /*influ*/3.0f, /*strength*/0.0f, /*floor*/1.0f, 1.0f, 1.0f);
+        ASSERT_EQ(again.radius, again.prev_radius) << "the slot did not grow";
+    }
+    ASSERT_EQ(sphere_field.count(), 1u) << "every re-hit merged";
+    EXPECT_EQ(cache.field_carves(), 1u) << "no field carve for an unchanged slot";
+
+    // A re-hit that DOES grow the slot still carves.
+    const auto grown = renderer::hull_carve_deposit(
+        sphere_field, &cache, id, src, kAuthoredRes, c, kUp,
+        3.0f, 0.0f, /*floor*/4.0f, 1.0f, 1.0f);
+    ASSERT_GT(grown.radius, grown.prev_radius);
+    EXPECT_EQ(cache.field_carves(), 2u);
+
+    // And the field is exactly the slot's carves applied in order.
+    voxel::DistanceField expected = no_damage_field(baked);
+    voxel::field_carve_oblate(expected, c, kUp, first.radius);
+    voxel::field_carve_oblate(expected, c, kUp, grown.radius);
+    const voxel::DistanceField* f = cache.field(id);
+    ASSERT_NE(f, nullptr);
+    EXPECT_TRUE(f->dist == expected.dist);
+}

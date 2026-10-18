@@ -67,6 +67,7 @@ void InstanceFieldCache::carve(scenegraph::InstanceId id,
         it = instances_.emplace(id, make_blank_like(baked)).first;
     }
 
+    ++field_carves_;
     const voxel::CellBox box = voxel::field_carve_oblate(
         it->second.field, center_body, normal_body, radius);
     it->second.dirty_box.include(box);
@@ -318,7 +319,17 @@ HullCarveDepositResult hull_carve_deposit(
     // ship. `fill == nullptr` means no fill volume was available to gate
     // with, so the carve proceeds exactly as it did before this gate
     // existed.
-    if (field_cache != nullptr && !source.empty() &&
+    //
+    // Only a NEW slot or a GROWN one can change the field. A merge keeps the
+    // slot's centre, normal and (monotonic) radius, so a merged deposit that
+    // does not grow it would re-apply the identical carve -- a no-op that
+    // still walks the whole reach box. A fresh slot starts at radius 0, so
+    // `c.radius > prev_radius` is exactly "new or grown". The backing gate
+    // reads the same centre and normal, so it cannot answer differently
+    // either. Measured (perf-register P-4): a dying Sovereign's core breach
+    // merged into its death carve every frame for 1.5 s -- 101 no-op carves
+    // of 5.7 ms each in Debug.
+    if (field_cache != nullptr && !source.empty() && c.radius > prev_radius &&
         (fill == nullptr || carve_has_backing(*fill, c.center_body,
                                               c.surface_normal))) {
         field_cache->carve(id, source, authored_res, c.center_body,
