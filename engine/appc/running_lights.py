@@ -7,7 +7,7 @@ Spec: docs/superpowers/specs/2026-10-14-ship-running-lights-design.md. Read its
 ~9 Hz flicker and its statics are invisible, and both departures are rulings.
 """
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from engine.appc import glow_maps
 
@@ -21,6 +21,10 @@ class RunningLightSpec:
     duration: float   # <= 0 means a static (always-on) light
     name: str = ""
     physical_parent: "str | None" = None   # SetPhysicalParent; None = Auto
+    # The live BlinkingLightProperty, so a physical parent Saved in the SPV
+    # after spawn is honoured by these spawn-time specs (`physical_parent`
+    # above is only the value at spawn). Not part of equality or the tuple.
+    prop: object = field(default=None, compare=False, repr=False)
 
     def as_tuple(self) -> tuple:
         return (self.pos[0], self.pos[1], self.pos[2],
@@ -56,7 +60,8 @@ def lights_for(ship) -> list:
             period=float(prop.GetPeriod()),
             duration=float(prop.GetDuration()),
             name=prop.GetName(),
-            physical_parent=prop.GetPhysicalParent()))
+            physical_parent=prop.GetPhysicalParent(),
+            prop=prop))
     return out
 
 

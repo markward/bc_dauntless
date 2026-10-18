@@ -471,3 +471,123 @@ def test_build_descriptors_carries_baked_physical_parent(monkeypatch):
     monkeypatch.setattr(spv, "_iter_subsystems", lambda ship: subs)
     descs = spv.build_descriptors(_Ship())
     assert [d["physical_parent"] for d in descs] == ["birdofprey", None, None]
+
+
+# ---------------------------------------------------------------------------
+# Save reaches the LIVE ship: the property objects themselves are updated,
+# so the preview overlay carries pending edits only and nothing that clears
+# it (another ship opened, close, Cancel) can undo a save.
+# ---------------------------------------------------------------------------
+
+
+class _LiveSub:
+    def __init__(self, name, pos, parent=None):
+        self._name = name
+        self._pos = TGPoint3(*pos)
+        self._prop = TGModelProperty(name)
+        self._prop.SetPhysicalParent(parent)
+
+    def GetName(self):
+        return self._name
+
+    def GetPosition(self):
+        return self._pos
+
+    def GetProperty(self):
+        return self._prop
+
+
+@pytest.fixture
+def live(monkeypatch):
+    """Live subsystems behind the BoP descriptors, by name, walked by
+    `ship_property_viewer._iter_subsystems` as build_descriptors walks them."""
+    import engine.ui.ship_property_viewer as spv
+    subs = {}
+
+    def _install(descs):
+        subs.clear()
+        for d in descs:
+            subs[d["name"]] = _LiveSub(d["name"], d["properties"]["position"],
+                                       d.get("physical_parent"))
+        monkeypatch.setattr(spv, "_iter_subsystems",
+                            lambda ship: list(subs.values()))
+        return subs
+    return _install
+
+
+def _live_parent(subs, name):
+    return subs[name].GetProperty().GetPhysicalParent()
+
+
+def test_save_applies_to_live_property(make_panel, live):
+    descs = _bop_descriptors()
+    subs = live(descs)
+    p = make_panel(descs)
+    _act(p, "move", key="sub:0", part="birdofprey")
+    assert _live_parent(subs, "Impulse Engines") is None    # pending only
+    assert p.dispatch_event("save") is True
+    assert _live_parent(subs, "Impulse Engines") == "birdofprey"
+    assert _live_parent(subs, "Warp Engines") is None       # untouched
+
+
+def test_saved_choice_survives_overlay_clear(make_panel, live):
+    descs = _bop_descriptors()
+    subs = live(descs)
+    p = make_panel(descs)
+    _act(p, "move", key="sub:0", part="birdofprey")
+    assert p.dispatch_event("save") is True
+    physical_parents.clear_preview()
+    assert physical_parents.explicit_parent(
+        _LEAF, subs["Impulse Engines"].GetProperty()) == "birdofprey"
+    # The panel's own rows read the saved value too, overlay or not.
+    part, row = _row(_physical(p), "Impulse Engines")
+    assert (part, row["source"]) == ("birdofprey", "set")
+
+
+def test_saved_reset_sets_live_none(make_panel, live):
+    descs = _bop_descriptors()
+    descs[3]["physical_parent"] = "birdofprey"
+    subs = live(descs)
+    p = make_panel(descs)
+    _act(p, "reset", key="sub:3")
+    assert p.dispatch_event("save") is True
+    assert _live_parent(subs, "Star Warp") is None
+    physical_parents.clear_preview()
+    part, row = _row(_physical(p), "Star Warp")
+    assert (part, row["source"]) == ("right wing outer", "auto")
+
+
+def test_overlay_holds_only_pending_after_save(make_panel, live):
+    descs = _bop_descriptors()
+    live(descs)
+    p = make_panel(descs)
+    _act(p, "move", key="sub:0", part="birdofprey")
+    assert p.dispatch_event("save") is True
+    assert physical_parents._preview.get(_LEAF) is None
+    _act(p, "move", key="sub:1", part="head")
+    assert physical_parents._preview.get(_LEAF) == {"Warp Engines": "head"}
+    assert p.dispatch_event("cancel") is True
+    assert physical_parents._preview.get(_LEAF) is None
+
+
+def test_failed_save_applies_nothing(make_panel, live, monkeypatch):
+    descs = _bop_descriptors()
+    subs = live(descs)
+    p = make_panel(descs)
+
+    def boom(leaf, edits):
+        raise OSError("disk full")
+    monkeypatch.setattr(make_panel.target, "write", boom)
+    _act(p, "move", key="sub:0", part="birdofprey")
+    assert p.dispatch_event("save") is True
+    assert _live_parent(subs, "Impulse Engines") is None
+    assert p._pending_physical == {"Impulse Engines": "birdofprey"}
+    assert p._saved_physical == {}
+
+
+def test_saved_running_light_applies_to_its_property(make_panel):
+    lights = [_light("Port Nav", (-0.2, 0.1, 0.0))]
+    p = make_panel(lights=lights)
+    _act(p, "move", key="light:Port Nav", part="head")
+    assert p.dispatch_event("save") is True
+    assert lights[0].GetPhysicalParent() == "head"
