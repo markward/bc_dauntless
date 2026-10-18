@@ -812,6 +812,16 @@ int part_of_shape(const assets::Model& m, const std::string& shape) {
     return -1;
 }
 
+// count_pixels over everything except the top-right corner (screen x, y >= 192;
+// GL row 0 is the bottom) where test 3 parks its shrunk articulated ship.
+Counts count_outside_corner(std::vector<std::uint8_t> px) {
+    for (int y = 192; y < kSize; ++y)
+        for (int x = 192; x < kSize; ++x)
+            for (int c = 0; c < 4; ++c)
+                px[(static_cast<std::size_t>(y) * kSize + x) * 4 + c] = 0;
+    return count_pixels(px);
+}
+
 std::size_t differing_texels(const std::vector<std::uint8_t>& a,
                              const std::vector<std::uint8_t>& b) {
     std::size_t n = 0;
@@ -890,22 +900,60 @@ TEST_F(DecalRenderTest, ArticulatedShipDrawnFirstDoesNotShiftAPlainShipsDecal) {
     const Counts alone = count_pixels(render_world_top_down(w0, box));
     ASSERT_GT(alone.red, 200);
 
-    // A rotated, shrunk ship created FIRST (drawn first), parked in a corner;
-    // u_node_rest_fix must not leak from it onto the plain ship's decal.
+    // A rotated, shrunk ship created FIRST (drawn first), parked IN VIEW in
+    // the top-right corner (so it stays drawn even if culling is ever added);
+    // u_node_rest_fix must not leak from it onto the plain ship's decal. Only
+    // pixels outside that corner are counted, in both renders.
     scenegraph::World w1;
+    const float half = std::max(box.half_extents.x, box.half_extents.y);
     const auto a1 = w1.create_instance(handle);
     w1.set_world_transform(a1,
-        glm::translate(glm::mat4(1.0f), box.center + glm::vec3(0.9f * box.half_extents.x * 2.0f,
-                                                               0.9f * box.half_extents.y * 2.0f, 0.0f)) *
+        glm::translate(glm::mat4(1.0f), glm::vec3(box.center.x + half, box.center.y + half, 0.0f)) *
         glm::scale(glm::mat4(1.0f), glm::vec3(0.1f)));
     w1.get(a1)->node_overrides[decal->root_node] =
         spun_about_up(*decal, decal->root_node, box.center);
     const auto p1 = w1.create_instance(handle);
     w1.set_world_transform(p1, glm::mat4(1.0f));
-    const Counts after = count_pixels(render_world_top_down(w1, box));
+    const auto px_alone = render_world_top_down(w0, box);
+    const auto px_after = render_world_top_down(w1, box);
+    ASSERT_GT(count_pixels(px_after).red, count_pixels(px_alone).red - 1)
+        << "guard: the corner ship must be drawn (adds red) or the test is vacuous";
+    const Counts a = count_outside_corner(px_alone);
+    const Counts b = count_outside_corner(px_after);
 
-    EXPECT_EQ(after.red, alone.red);
-    EXPECT_DOUBLE_EQ(after.red_mean_row(), alone.red_mean_row());
+    EXPECT_EQ(b.red, a.red);
+    EXPECT_DOUBLE_EQ(b.red_mean_row(), a.red_mean_row());
+}
+
+// The NORMAL correction: a bottom-facing decal (normal -Z) on a hull flipped
+// 180 degrees about body +X. Seen from above, the posed surface faces +Z; only
+// the rest-frame normal (-Z) passes the decal's facing test. A position-only
+// correction would leave the posed normal and paint nothing.
+TEST_F(DecalRenderTest, DecalNormalIsCorrectedForARotatedNode) {
+    const renderer::Aabb box = plain_aabb();
+    const std::uint8_t red[3] = {255, 0, 0};
+    auto decal = cache->load(ambassador_nif(), ambassador_search(), {},
+        {whole_hull(box, /*from_below=*/true, write_mask("red.png", red, red), "amb saucer:0")});
+    ASSERT_EQ(decal->decals.size(), 1u);
+
+    constexpr float kNarrowFov = 0.1f;
+    const Counts rest_top = count_pixels(render_top_down(decal, box, false, kNarrowFov));
+    ASSERT_LT(rest_top.red, 10) << "guard: the bottom decal must be hidden from above";
+
+    scenegraph::World world;
+    const auto iid = world.create_instance(
+        reinterpret_cast<scenegraph::ModelHandle>(decal.get()));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+    world.get(iid)->node_overrides[decal->root_node] =
+        decal->nodes[decal->root_node].local_transform *
+        glm::translate(glm::mat4(1.0f), box.center) *
+        glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(1, 0, 0)) *
+        glm::translate(glm::mat4(1.0f), -box.center);
+    const Counts flipped = count_pixels(render_world_top_down(world, box, false, kNarrowFov));
+    std::fprintf(stderr, "[DecalRender] flipped bottom decal from above: red=%d\n", flipped.red);
+
+    EXPECT_GT(flipped.red, 200) << "the decal normal was not rest-corrected";
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
 }
 
 TEST_F(DecalRenderTest, SeveredNodeTakesItsDecalToTheChunk) {

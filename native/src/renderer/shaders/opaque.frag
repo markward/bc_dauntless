@@ -1653,7 +1653,8 @@ void main() {
         // authored on a part keeps covering it while an override moves it.
         // No normalize(): the correction is rigid (see the glow path's note),
         // and identity for every unarticulated draw, so those are unchanged.
-        // Computed outside every branch; the derivatives were taken earlier.
+        // Computed outside the per-decal loop and its non-uniform branches; the
+        // derivatives were taken earlier, outside all branches.
         vec3 p_dec    = (u_node_rest_fix * vec4(p_body, 1.0)).xyz;
         vec3 n_dec    = mat3(u_node_rest_fix) * n_body;
         vec3 dpdx_dec = mat3(u_node_rest_fix) * dpdx_d;
