@@ -44,6 +44,14 @@ void FrameTimer::set_enabled(bool v) {
     reset();
 }
 
+void FrameTimer::set_gpu_requested(bool v) {
+    if (v == gpu_requested_) return;
+    gpu_requested_ = v;
+    // reset() also re-probes, so the next frame picks its timer from the new
+    // request. Called between frames (from Python), never with a query open.
+    if (enabled_) reset();
+}
+
 void FrameTimer::reset() {
     for (auto& rec : ring_) {
         rec.samples.clear();
@@ -131,7 +139,7 @@ void FrameTimer::begin_frame() {
         glGetQueryiv(GL_TIME_ELAPSED, GL_QUERY_COUNTER_BITS, &te);
         timestamp_bits_ = ts;
         elapsed_bits_ = te;
-        gpu_timer_ = choose_gpu_timer(ts, te);
+        gpu_timer_ = select_gpu_timer(gpu_requested_, ts, te);
     }
 
     current_ = &next;
