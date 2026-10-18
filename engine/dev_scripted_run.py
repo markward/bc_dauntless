@@ -107,3 +107,47 @@ class ScriptedRun:
             log("[dev-scripted] destroyed %s after %.1f s clear of cutscenes"
                 % (self.target, self._clear_s))
         return False
+
+
+# ── Quit requests from a dev mission ────────────────────────────────────────
+# A dev mission knows when its run is over (felix_destroy: a few seconds after
+# the first ship death) but only the host loop can leave the frame loop. The
+# mission calls request_quit; the host loop calls tick_quit_request every
+# frame and breaks on True. The earliest deadline wins, so a time cap set at
+# mission start never holds back a shorter post-death quit.
+
+_quit_remaining_s: Optional[float] = None
+_quit_reason = ""
+
+
+def request_quit(after_s: float, reason: str) -> None:
+    global _quit_remaining_s, _quit_reason
+    after_s = max(0.0, float(after_s))
+    if _quit_remaining_s is None or after_s < _quit_remaining_s:
+        _quit_remaining_s = after_s
+        _quit_reason = reason
+
+
+def pending_quit_s() -> Optional[float]:
+    """Seconds until the requested quit, or None when none is pending."""
+    return _quit_remaining_s
+
+
+def clear_quit_request() -> None:
+    global _quit_remaining_s, _quit_reason
+    _quit_remaining_s = None
+    _quit_reason = ""
+
+
+def tick_quit_request(dt: float,
+                      log: Callable[[str], None] = lambda _line: None) -> bool:
+    """Advance a pending quit by `dt`. True on the tick it falls due."""
+    global _quit_remaining_s
+    if _quit_remaining_s is None:
+        return False
+    _quit_remaining_s -= dt
+    if _quit_remaining_s > 1e-9:
+        return False
+    log("[dev-scripted] quit: %s" % (_quit_reason or "requested"))
+    clear_quit_request()
+    return True

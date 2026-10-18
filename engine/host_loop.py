@@ -3665,6 +3665,10 @@ def _developer_family_entry():
                 module_name="engine.dev_missions.rock_fields_inside",
                 dir_name="Rock Fields Inside",
                 display_name="Rock Fields: inside Beol 4",
+            ), MissionEntry(
+                module_name="engine.dev_missions.felix_destroy",
+                dir_name="Felix Destroy",
+                display_name="Felix: Destroy (B2 baseline)",
             )],
         )],
     )
@@ -13102,6 +13106,11 @@ def run(mission_name: Optional[str] = None,
                 frame_profiler.print_report()
             ticks += 1
             if max_ticks is not None and ticks >= max_ticks:
+                break
+            # A dev mission may ask to end the run (felix_destroy, after the
+            # first ship death); see engine/dev_scripted_run.py.
+            if dev_mode.is_enabled() and dev_scripted_run.tick_quit_request(
+                    _player_dt, log=_scripted_log):
                 break
             if _scripted_run is not None:
                 from engine.appc.top_window import TopWindow_GetTopWindow

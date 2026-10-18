@@ -128,6 +128,57 @@ def test_no_view_is_forced_unless_asked():
     assert views == []
 
 
+# ── Quit requests from a dev mission ────────────────────────────────────────
+# A mission (felix_destroy) knows when its run is over -- the first ship death
+# -- but only the host loop can leave the frame loop. request_quit carries
+# that across; the host loop calls tick_quit_request every frame.
+
+from engine import dev_scripted_run as dsr
+
+
+def _ticks_until_quit(limit=100, dt=1.0):
+    for i in range(1, limit + 1):
+        if dsr.tick_quit_request(dt):
+            return i
+    return None
+
+
+def test_no_request_never_quits():
+    dsr.clear_quit_request()
+    assert _ticks_until_quit() is None
+    assert dsr.pending_quit_s() is None
+
+
+def test_a_quit_request_fires_after_its_delay():
+    dsr.clear_quit_request()
+    dsr.request_quit(3.0, "test")
+    assert _ticks_until_quit() == 3
+    dsr.clear_quit_request()
+
+
+def test_the_earliest_deadline_wins():
+    """A time cap set at mission start must not hold back a shorter
+    post-death quit, and a later, longer request must not extend it."""
+    dsr.clear_quit_request()
+    dsr.request_quit(10.0, "cap")
+    dsr.tick_quit_request(2.0)
+    dsr.request_quit(3.0, "first death")
+    assert dsr.pending_quit_s() == 3.0
+    dsr.request_quit(50.0, "later")
+    assert dsr.pending_quit_s() == 3.0
+    assert _ticks_until_quit() == 3
+    dsr.clear_quit_request()
+
+
+def test_the_quit_is_logged_with_its_reason():
+    dsr.clear_quit_request()
+    lines = []
+    dsr.request_quit(1.0, "first ship destroyed")
+    assert dsr.tick_quit_request(1.0, log=lines.append) is True
+    assert "first ship destroyed" in "\n".join(lines)
+    dsr.clear_quit_request()
+
+
 def test_events_are_reported_for_the_log():
     lines = []
     run, d = _run(delay_s=1.0, quit_after_s=1.0), _Destroyer()
