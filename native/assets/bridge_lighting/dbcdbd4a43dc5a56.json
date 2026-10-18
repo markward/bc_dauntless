@@ -187,7 +187,7 @@
       "emission": 1.43,
       "modifiers": [
         {
-          "level": 0.48,
+          "level": 1,
           "scope": [
             "green",
             "yellow",
@@ -375,7 +375,7 @@
           "type": "state"
         },
         {
-          "level": 0.24,
+          "level": 0.4,
           "scope": [
             "red",
             "special"
@@ -443,7 +443,7 @@
           "type": "state"
         },
         {
-          "level": 0.24,
+          "level": 0.4,
           "scope": [
             "red",
             "special"
@@ -705,7 +705,7 @@
       "block": 76,
       "lights": [
         {
-          "intensity": 1,
+          "intensity": 0.6,
           "offset": 0,
           "range": 120,
           "shape": "panel",
