@@ -10158,6 +10158,20 @@ def _resolve_paths_or_report(view_w=1280, view_h=720, *, cef_ready=True):
     return resolution
 
 
+def _initial_window_size(environ) -> tuple:
+    """Starting window size: DAUNTLESS_WINDOW_SIZE=WxH, else 1280x720.
+
+    A perf baseline must be taken at a known size -- GPU cost scales with the
+    pixels drawn (docs/engine/perf-register.md, M-4). A bad value falls back
+    to the default rather than stopping the game.
+    """
+    raw = str(environ.get("DAUNTLESS_WINDOW_SIZE", "")).strip().lower()
+    w, sep, h = raw.partition("x")
+    if sep and w.isdigit() and h.isdigit() and int(w) > 0 and int(h) > 0:
+        return int(w), int(h)
+    return 1280, 720
+
+
 def run(mission_name: Optional[str] = None,
         max_ticks: Optional[int] = None) -> int:
     """Boot the renderer, init the named mission, run until the window closes
@@ -10198,7 +10212,8 @@ def run(mission_name: Optional[str] = None,
 
     boot_quickbattle = mission_name is None
 
-    r.init(1280, 720, "open_stbc")
+    _init_w, _init_h = _initial_window_size(_os.environ)
+    r.init(_init_w, _init_h, "open_stbc")
     # Verify the native module exposes every binding the renderer façade calls.
     # Catches a stale/incomplete .so at boot (a recurring hazard — host_bindings
     # compiles into both this module and build/dauntless) instead of as a
@@ -10220,7 +10235,7 @@ def run(mission_name: Optional[str] = None,
     # are reused by the pause-menu mouse-forwarding path to scale
     # framebuffer-pixel cursor coords back into the OSR view's logical
     # pixel space on Retina.
-    _CEF_VIEW_W, _CEF_VIEW_H = 1280, 720
+    _CEF_VIEW_W, _CEF_VIEW_H = _init_w, _init_h
     _cef_html = _project_root_for_cef() / "native" / "assets" / "ui-cef" / "index.html"
     # Detect the framebuffer's device-pixel ratio so CEF renders at
     # high-DPI density on Retina. Without this, the composite pass
@@ -11249,6 +11264,49 @@ def run(mission_name: Optional[str] = None,
         # player's live vs drawn pose and the camera (engine/core/motion_trace).
         from engine.core import motion_trace
         motion_trace.configure_from_env()
+        # Record what was captured: the drawn size drives GPU cost, and two
+        # captures at different sizes are not comparable
+        # (docs/engine/perf-register.md, M-4).
+        if frame_profiler.is_enabled():
+            try:
+                _fbw0, _fbh0 = host_io.framebuffer_size()
+                _wnw0, _wnh0 = host_io.window_size()
+                print("[profile] framebuffer %dx%d, window %dx%d, headless=%s, "
+                      "gpu timing=%s"
+                      % (_fbw0, _fbh0, _wnw0, _wnh0,
+                         bool(_os.environ.get("OPEN_STBC_HOST_HEADLESS")),
+                         "on" if host_io.profiler_gpu_enabled() else "off"),
+                      flush=True)
+            except Exception as _e:  # a profiler must never stop the game
+                print("[profile] capture header failed: %s" % _e, flush=True)
+        # DAUNTLESS_DEV_DESTROY=<name>: destroy that object once cutscenes are
+        # over, optionally quit after (engine/dev_scripted_run.py). Lets a
+        # perf baseline that needs one keypress run unattended.
+        from engine import dev_scripted_run
+        _scripted_run = dev_scripted_run.ScriptedRun.from_env(
+            _os.environ, developer=dev_mode.is_enabled())
+
+        def _scripted_destroy(name):
+            # Same death path as the `]` dev key (engine/dev_keybindings.py).
+            _sess = controller.session
+            for _ship in list(getattr(_sess, "ship_instances", {}) or {}):
+                if _ship.GetName() == name and hasattr(_ship, "DestroySystem"):
+                    _hull = _ship.GetHull()
+                    if _hull is not None:
+                        _ship.DestroySystem(_hull)
+                        return True
+            return False
+
+        def _scripted_log(line):
+            import sys
+            print(line, file=sys.stderr, flush=True)
+
+        def _scripted_view(view):
+            # What the player's view toggle does; "exterior" is the only view
+            # a baseline needs today.
+            if view == "exterior":
+                from engine.appc.top_window import TopWindow_GetTopWindow
+                TopWindow_GetTopWindow().ForceTacticalVisible()
 
         while not r.should_close():
             # Frame profiler: phase timeline for the Python half of the frame.
@@ -13045,6 +13103,15 @@ def run(mission_name: Optional[str] = None,
             ticks += 1
             if max_ticks is not None and ticks >= max_ticks:
                 break
+            if _scripted_run is not None:
+                from engine.appc.top_window import TopWindow_GetTopWindow
+                if _scripted_run.tick(
+                        _player_dt,
+                        TopWindow_GetTopWindow().IsCutsceneMode(),
+                        _scripted_destroy,
+                        log=_scripted_log,
+                        force_view=_scripted_view):
+                    break
 
         # Final report while the window (and therefore the GL context and the
         # swap-interval reading) still exists -- the teardown below destroys

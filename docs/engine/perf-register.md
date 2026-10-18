@@ -35,16 +35,26 @@ so the run lasts until you quit. A report is printed every 120 frames, plus
 a final one on quit. Logs go **outside the project**, to
 `~/Documents/dauntless-perf/`.
 
-### B1 — E1M2, Haven Facility death at Vesuvi
+### B1 — E1M2, Haven Facility death at Vesuvi (unattended)
+
+E1M2 starts at Haven; no warp is needed. The station's object name is
+`Facility`. The run needs nobody at the keyboard:
 
 ```bash
-DAUNTLESS_MISSION=Maelstrom.Episode1.E1M2.E1M2 DAUNTLESS_PROFILE_FRAMES=100000000 ./build/dauntless --developer 2>&1 | tee ~/Documents/dauntless-perf/e1m2-haven-death-$(date +%Y%m%d-%H%M).log
+DAUNTLESS_WINDOW_SIZE=1280x720 DAUNTLESS_MISSION=Maelstrom.Episode1.E1M2.E1M2 DAUNTLESS_PROFILE_FRAMES=100000000 DAUNTLESS_DEV_DESTROY=Facility DAUNTLESS_DEV_VIEW=exterior DAUNTLESS_DEV_QUIT_AFTER_S=40 ./build/dauntless --developer 2>&1 | tee ~/Documents/dauntless-perf/b1-$(date +%Y%m%d-%H%M).log
 ```
 
-1. Warp to Vesuvi.
-2. Target the Haven Facility and press `]`. This is the dev key that destroys
-   the target through the real death path (`engine/dev_keybindings.py`).
-3. Wait for the death sequence to finish, then quit.
+`engine/dev_scripted_run.py` waits for the opening cutscene to end, switches
+to the exterior view, destroys `Facility` 10 s later through the same death
+path as the `]` dev key, and quits 40 s after that. Each step prints a
+`[dev-scripted]` line into the log. The window size is pinned
+(`DAUNTLESS_WINDOW_SIZE`), and the `[profile]` header line records the
+framebuffer actually drawn.
+
+⚠️ **The window opens on the main display.** On the external 1× monitor,
+1280x720 draws 1280x720 pixels. On the 2× laptop screen, the same window draws
+four times as many. Compare only captures with the same `[profile]`
+framebuffer line.
 
 ### B2 — Quick Battle, Sovereign vs 2 Birds of Prey
 
@@ -82,9 +92,17 @@ turns off the periodic report, so it needs its own run (M-5).
 | C-007 | 2026-10-17 23:08–23:11 | `combat_stress`, paired profiler on (3,600 frames) / off (`timeout 100`), headless | `60b74418` code | **Debug** | same | 5 / 7 stats lines | Frame time from the `[cef-upload]` line, independent of the profiler. |
 | C-008 | 2026-10-17 23:12–23:15 | `rock_fields_inside`, paired profiler on (3,000) / off (`timeout 100`), headless | `60b74418` code | **Debug** | same | 4 / 7 stats lines | GPU frame about 10.5 ms with the profiler on (bridge view). |
 | C-009 | 2026-10-18 08:34 | `rock_fields_inside`, **CPU-only profiler** (the new default), 3,000 frames, headless | `perf/cef-upload-sync` | **Debug** | same | 3,000 | First capture in the CPU-only mode. Frame time from both the report and the `[cef-upload]` line. |
+| C-010 | 2026-10-18 08:41 | B1, by hand | **old build** (main checkout, GPU timing on) | **Debug** | 4K laptop screen, window size not recorded | 26 reports | Meant as the CPU-only re-run, but ran from the main checkout. Another GPU-timed capture, comparable to C-001. |
+| C-011 | 2026-10-18 08:44 | B1 unattended, headless, **bridge view only** | `perf/cef-upload-sync` | **Debug** | 1280x720 | 37 reports | First unattended run. Stayed on the bridge, so not comparable to C-001. |
+| C-012 | 2026-10-18 08:47 | B1 unattended, headless, exterior | `perf/cef-upload-sync` | **Debug** | 1280x720 | 47 reports | |
+| C-013 | 2026-10-18 08:50 | B1 unattended, **visible**, exterior | `perf/cef-upload-sync` | **Debug** | framebuffer 1280x720 (external monitor, 1×) | 35 reports | First capture with the `[profile]` header line. |
+| C-014 | 2026-10-18 08:52 | B1 unattended, visible, exterior | `perf/cef-upload-sync` | **Debug** | framebuffer 1512x945 (external monitor, 1×) | 45 reports | Aimed at the laptop's maximised size, but opened on the 1× monitor. |
 
 Logs for C-003 to C-008: `~/Documents/dauntless-perf/cef-*.log`, `cef2-*` …
 `cef6-*`.
+
+C-001 and C-002 ran maximised on the 4K laptop screen (Retina, 2×), so they drew
+several times the pixels of the 1280x720 captures below.
 
 Log files: `~/Documents/dauntless-perf/e1m2-haven-death-20261017-2218.log` and
 `qb-sov-vs-2bop-ram-20261017-2220.log`.
@@ -123,6 +141,10 @@ bound, not the actual size.
 
 | ID | Capture | What the data shows | Tier | Feeds |
 |---|---|---|---|---|
+| SIG-025 | C-011 | On the E1M2 bridge after the cutscene, `render_prep` is about **6 ms** (0.3 ms during the cutscene). So P-7 is not specific to Quick Battle. | Measured | P-7 |
+| SIG-024 | C-012, C-013, C-014 | **The Facility destroy hitch varies widely between identical runs.** `sim` in the destroy report: 7.6 ms (C-012), 7.8 ms (C-013), **211 ms** (C-014), meaning one frame of at least about 50 ms in the first two and about 1.4 s in the last. Mostly `cb.damage_sys` again. | Derived (EMA bound) | P-4, A-2 |
+| SIG-023 | C-013, C-014 | **The drawn size moves the exterior from CPU-bound to GPU-bound.** Before the destroy at Vesuvi, the frame is 12.3 ms at 1280x720 and 19.0 ms at 1512x945 (1.55× the pixels). `cef.composite` is 0.5 vs **8.0 ms**: in CPU-only mode it is the CPU waiting for a GPU that is behind (real backpressure, not the M-6 artifact). | Measured | P-1, M-4 |
+| SIG-022 | C-013 | CPU-only B1 at 1280x720: opening cutscene on the bridge about **20 ms** (49 fps); exterior at Vesuvi about **12.5 ms** (80 fps). During the cutscene `sim` is 7.8 ms with about 6 ms outside every child scope; after it, 1.8 ms. **The unscoped sim time of SIG-006 belongs to the cutscene.** | Measured | M-2 |
 | SIG-021 | C-009 vs C-008 | With the CPU-only profiler, `rock_fields_inside` runs at **22.9 ms** per frame: 1.6 ms above profiler-off (21.3 ms) and 6.8 ms below GPU-timed (29.7 ms). `cef.composite` drops to 0.52 ms, the upload alone. The report's python loop total (22.7 ms) matches the profiler-independent frame time (22.9 ms). | Measured | M-6 |
 | SIG-020 | C-003, C-004, C-007 | The overlay rarely repaints in `combat_stress` and `rock_fields_inside`: 3–31 paints in total over 2,400–4,200 frames. With `on_paint`, 96–100% of uploads are skipped. A full-surface upload costs about **0.53 ms CPU** a frame (headless window size). Not measured in a HUD-heavy scene. | Measured | P-10 |
 | SIG-019 | C-007, C-008 | **The profiler's GPU timing adds roughly the GPU frame time to every frame.** Frame time measured without the profiler: `combat_stress` 25.4 ms on vs 22.2 ms off (GPU about 2.7 ms); `rock_fields_inside` 29.7 ms on vs 21.3 ms off (GPU about 10.5 ms). With the profiler on, the overlay draw takes 2.5 ms and 7.7 ms respectively; with it off, 0.005 ms. The wait does not move elsewhere; it disappears. | Measured | A-1, M-6 |
@@ -181,8 +203,8 @@ its own right.
 | ID | Gap | Effect | Fix |
 |---|---|---|---|
 | M-1 | Apple GL can only time top-level passes. Nested rows print `-` for GPU. | P-1's 27.6 ms cannot be broken down. | An opt-in mode that promotes one chosen sub-pass to top level. |
-| M-2 | Some `sim` time is outside every child scope. | About 6.5 ms in E1M2 before the warp (SIG-006), and the battle-start hitch (SIG-005), cannot be attributed. | Add scopes until the unscoped part is under 0.5 ms. |
-| M-3 | The log has no event markers (warp arrival, ship death, battle start), and the scene line does not count deaths (SIG-015). | Reports are lined up with game events by inference. | Print a one-line marker to stderr on each such event while the profiler is on. |
-| M-4 | Capture details are not written to the log: window size, build type, commit, quality settings. | C-001 and C-002 lack window size. Build type had to be read from `CMakeCache.txt`. | Print a header line when profiling starts. |
+| M-2 | Some `sim` time is outside every child scope. It happens during the E1M2 opening cutscene (SIG-022). | About 6.5 ms in E1M2 before the warp (SIG-006), and the battle-start hitch (SIG-005), cannot be attributed. | Add scopes until the unscoped part is under 0.5 ms. |
+| M-3 | The log has no event markers (warp arrival, ship death, battle start), and the scene line does not count deaths (SIG-015). **Partly closed:** an unattended run prints `[dev-scripted]` lines for cutscene start/end, view, destroy and quit. | Reports are lined up with game events by inference. | Print a one-line marker to stderr on each such event while the profiler is on. |
+| M-4 | Capture details are not written to the log: window size, build type, commit, quality settings. **Partly closed:** a `[profile]` line now records framebuffer and window size, headless, and GPU timing; `DAUNTLESS_WINDOW_SIZE=WxH` pins the size. Build type, commit and quality settings are still missing. | C-001 and C-002 lack window size. Build type had to be read from `CMakeCache.txt`. | Print a header line when profiling starts. |
 | M-5 | The periodic report and spike capture cannot run together. | A hitch in a periodic capture gives only a lower bound (the EMA rule above). | Allow both at once, or always pair a periodic run with a spike run. |
 | M-6 | **Mitigated on `perf/cef-upload-sync`: the profiler is now CPU-only by default; `DAUNTLESS_PROFILE_GPU=1` opts in to GPU timing** (SIG-021). With its GPU timer on, the profiler adds roughly the GPU frame time to every frame (SIG-019). It makes the CPU wait for the GPU, and the wait shows up in the overlay's draw call inside `cef.composite`. The earlier `frame-profiler.md` figure (+0.6 to +2.4 ms) came from a light headless bench and understates it. Mechanism not established. | Every loop time in C-001 and C-002 is inflated by about their GPU time. `cef.composite` reads as a big cost when it is really the profiler's wait. | Done: CPU-only is the default. Remaining: re-capture B1 and B2 in CPU-only mode. The CPU-only profiler still costs about 1.6 ms a frame (SIG-021). |
