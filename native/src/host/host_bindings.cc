@@ -7885,12 +7885,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
               if (!(authored_res > 0.0f)) return;
               renderer::hull_volume_cache().get(model->source, authored_res,
                                                 voxel::kDefaultQuality);
+              renderer::prewarm_trace_accel(*model);
           },
           pybind11::arg("instance_id"),
           "Force this instance's hull damage field to bake now (or load its "
-          "on-disk .dhv cache), instead of lazily on its first "
-          "hull_carve_add deposit during combat. No-op when no authored "
-          "resolution has been pushed for this hull yet.");
+          "on-disk .dhv cache), and its model's ray-trace BVH to build, "
+          "instead of lazily on the first hull_carve_add deposit / first "
+          "trace during combat. No-op when no authored resolution has been "
+          "pushed for this hull yet.");
 
     // Same as hull_volume_set_resolution + hull_volume_prewarm, but from a
     // MODEL handle: the warp-tunnel preload warms hulls before any ship is
@@ -7903,11 +7905,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
               renderer::set_hull_volume_resolution(model->source, resolution);
               renderer::hull_volume_cache().get(model->source, resolution,
                                                 voxel::kDefaultQuality);
+              renderer::prewarm_trace_accel(*model);
           },
           pybind11::arg("model"), pybind11::arg("resolution"),
           "Set the authored resolution for this model's hull and bake (or "
-          "load the on-disk .dhv of) its damage volume now, without creating "
-          "an instance. No-op for an unknown handle or resolution <= 0.");
+          "load the on-disk .dhv of) its damage volume now, and build its "
+          "ray-trace BVH, without creating an instance. No-op for an unknown "
+          "handle or resolution <= 0.");
 
     m.def("compute_capsule_region",
           [](scenegraph::InstanceId id,

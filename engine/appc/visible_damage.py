@@ -182,7 +182,8 @@ def _advance_one(entry, dt, ship_instances) -> bool:
         )
         return False
 
-    world_pt, normal = _resolve(entry, ship, iid)
+    with frame_profiler.scope("vd.resolve"):
+        world_pt, normal = _resolve(entry, ship, iid)
     if world_pt is None:
         return False
 
