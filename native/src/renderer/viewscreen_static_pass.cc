@@ -1,20 +1,17 @@
 #include <renderer/viewscreen_static_pass.h>
 #include <renderer/shader.h>
+#include <assets/file_bytes.h>
 #include <assets/flip_frame.h>
 #include <glad/glad.h>
-#include <fstream>
-#include <iterator>
 #include <cstdio>
 
 namespace renderer {
 
 namespace {
 assets::Texture load_tga(const std::string& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) { std::fprintf(stderr, "[vs-static] open '%s' failed\n", path.c_str()); return {}; }
-    std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)),
-                                     std::istreambuf_iterator<char>());
-    try { return assets::upload_image(assets::decode_tga(bytes), /*generate_mipmaps=*/false); }
+    const auto bytes = assets::read_binary_file(path);
+    if (!bytes) { std::fprintf(stderr, "[vs-static] open '%s' failed\n", path.c_str()); return {}; }
+    try { return assets::upload_image(assets::decode_tga(*bytes), /*generate_mipmaps=*/false); }
     catch (const std::exception& e) {
         std::fprintf(stderr, "[vs-static] decode '%s': %s\n", path.c_str(), e.what());
         return {};

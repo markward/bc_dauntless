@@ -5,14 +5,15 @@
 // uses (model_build.h), so a placement previewed through an override and the
 // same placement baked into a model can never disagree.
 #include <assets/decal_override.h>
+#include <assets/file_bytes.h>
 
 #include "model_build.h"
 
 #include <algorithm>
 #include <cstdio>
-#include <fstream>
 #include <stdexcept>
 #include <unordered_set>
+#include <utility>
 
 namespace fs = std::filesystem;
 
@@ -26,10 +27,9 @@ bool warn_once(const std::string& key) {
 }
 
 std::vector<std::uint8_t> read_bytes(const fs::path& p) {
-    std::ifstream in(p, std::ios::binary);
-    if (!in) throw std::runtime_error("could not open " + p.string());
-    return std::vector<std::uint8_t>(std::istreambuf_iterator<char>(in),
-                                     std::istreambuf_iterator<char>());
+    auto bytes = read_binary_file(p);
+    if (!bytes) throw std::runtime_error("could not open " + p.string());
+    return std::move(*bytes);
 }
 
 }  // namespace

@@ -6,8 +6,6 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
-#include <fstream>
-#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -18,6 +16,8 @@
 #include <glm/glm.hpp>
 
 #include <scenegraph/camera.h>
+
+#include <assets/file_bytes.h>
 
 #include "renderer/asset_path.h"
 #include "renderer/frame.h"
@@ -80,11 +80,9 @@ std::string resolve_atlas_path(const std::string& path) {
 // atomic decode counter.
 assets::Image read_dilated(const std::string& resolved, std::atomic<int>* decodes) {
     decodes->fetch_add(1);
-    std::ifstream in(resolved, std::ios::binary);
-    if (!in) throw std::runtime_error("cannot open " + resolved);
-    std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)),
-                                    std::istreambuf_iterator<char>());
-    assets::Image img = assets::decode_image(bytes);
+    const auto bytes = assets::read_binary_file(resolved);
+    if (!bytes) throw std::runtime_error("cannot open " + resolved);
+    assets::Image img = assets::decode_image(*bytes);
     dilate_coverage(img, kDilatePasses);
     return img;
 }

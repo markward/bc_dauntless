@@ -19,8 +19,6 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
-#include <fstream>
-#include <iterator>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -34,6 +32,7 @@
 #include <scenegraph/damage_decals.h>
 #include <scenegraph/hull_carve.h>
 
+#include <assets/file_bytes.h>
 #include <assets/flip_frame.h>
 #include <assets/geosphere.h>
 #include <assets/model.h>
@@ -293,15 +292,13 @@ unsigned int ensure_damage_decal_texture() {
 
     constexpr const char* kPath = "data/Textures/Effects/Damage.tga";
     const std::string resolved = resolve_asset_path(kPath);
-    std::ifstream in(resolved, std::ios::binary);
-    if (!in) {
+    const auto bytes = assets::read_binary_file(resolved);
+    if (!bytes) {
         // game root not installed — framework will be silently disabled.
         return 0;
     }
-    std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)),
-                                    std::istreambuf_iterator<char>());
     try {
-        assets::Image   img = assets::decode_tga(bytes);
+        assets::Image   img = assets::decode_tga(*bytes);
         assets::Texture tex = assets::upload_image(img, /*generate_mipmaps=*/true);
         g_decal_id    = tex.id();
         g_decal_owner = std::move(tex);

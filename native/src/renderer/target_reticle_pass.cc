@@ -4,6 +4,7 @@
 
 #include <renderer/asset_path.h>
 
+#include <assets/file_bytes.h>
 #include <assets/texture.h>
 #include <scenegraph/camera.h>
 
@@ -12,8 +13,6 @@
 
 #include <cstdio>
 #include <cstdint>
-#include <fstream>
-#include <iterator>
 #include <vector>
 
 namespace renderer {
@@ -58,15 +57,13 @@ constexpr glm::vec4 kFullUvRect {0.0f,   0.0f, 1.0f,   1.0f};
 constexpr glm::vec4 kArrowUvRect{0.375f, 0.0f, 0.281f, 0.70f};
 
 std::unique_ptr<assets::Texture> load_tga(const char* path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
+    const auto bytes = assets::read_binary_file(path);
+    if (!bytes) {
         std::fprintf(stderr, "[target_reticle] failed to open '%s'\n", path);
         return std::make_unique<assets::Texture>();
     }
-    std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)),
-                                    std::istreambuf_iterator<char>());
     try {
-        assets::Image img = assets::decode_tga(bytes);
+        assets::Image img = assets::decode_tga(*bytes);
         assets::Texture tex = assets::upload_image(img, /*generate_mipmaps=*/true);
         return std::make_unique<assets::Texture>(std::move(tex));
     } catch (const std::exception& e) {
