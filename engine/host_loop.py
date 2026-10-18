@@ -728,7 +728,9 @@ def _poll_skip_dialogue(host, input_map) -> None:
 def _articulated_running_lights(ship, iid, specs) -> tuple:
     """The 9-tuples to send for `specs` (rest positions), each light carried
     by the articulated part it sits on and dropped if that part was severed
-    -- the subsystem emitter lights' rule (`_part_pose_at`)."""
+    (`_part_pose_at`). The part is the light's explicit physical parent when
+    set, else the geometric `part_for_mount` rule, via
+    `physical_parents.part_for_property`."""
     from engine.appc import part_pose
     from engine.appc.physical_parents import PropRef
     out = []
@@ -1683,9 +1685,11 @@ def _part_pose_at(ship, iid, position, prop=None):
     """The live pose of the articulated part a hull-attached point sits on.
 
     `position` is the point's authored rest position (body frame, ship
-    units), attributed by `part_severance.part_for_mount` -- the one rule
-    hardpoint mounts and severance also use, so a light, the weapon beside
-    it and what dies with the part always agree. Returns the part's pose
+    units). With `prop` (a running light's property) the part is resolved by
+    `physical_parents.part_for_property` -- the explicit physical parent, else
+    `part_severance.part_for_mount`, the rule hardpoint mounts and severance
+    share. Without `prop` (the subsystem emitter lights, deliberately) it is
+    `part_for_mount` on the point's own position. Returns the part's pose
     (R, t), None when the point does not move (unrigged ship, no part, a part
     at its identity pose), or `_PART_SEVERED` when its part has been shot
     off. Shared by every per-frame attached effect -- the subsystem emitter
