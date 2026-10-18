@@ -3,6 +3,7 @@ add_library(assets STATIC
     src/animation_load.cc
     src/cache.cc
     src/decal_override.cc
+    src/file_bytes.cc
     src/gl_handle.cc
     src/flip_frame.cc
     src/gltf_load.cc

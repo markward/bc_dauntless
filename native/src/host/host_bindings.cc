@@ -3215,6 +3215,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "renderer textures (the collision-scuff normal map) resolve against "
           "this, never the BC install. Pushed at boot beside set_game_root.");
 
+    m.def("prewarm_scuff_normal_texture",
+          []() { renderer::ensure_scuff_normal_texture(); },
+          "Load the collision-scuff normal map now rather than on the first "
+          "scuff drawn: 12.6 MB, ~0.6 s in that frame in Debug "
+          "(perf-register P-11). Call after set_project_asset_root, with the "
+          "GL context current.");
+
     m.def("set_asset_overrides",
           [](const std::map<std::string, std::string>& overrides) {
               renderer::set_asset_overrides(overrides);

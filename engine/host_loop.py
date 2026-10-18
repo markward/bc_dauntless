@@ -10354,6 +10354,10 @@ def run(mission_name: Optional[str] = None,
     # normal map resolves against this, not the BC install. Bare, like the
     # two pushes around it.
     r.set_project_asset_root(str(_paths.project_asset_root()))
+    # The 12.6 MB scuff normal map resolves against that root; load it now,
+    # not in the frame of the session's first collision scuff (~0.6 s in
+    # Debug, perf-register P-11).
+    r.prewarm_scuff_normal_texture()
     # Where the native HullVolumeCache bakes/reads .dhv files for per-instance
     # hull damage fields. Pushed here, right alongside set_game_root, for the
     # same reason: it must land before the first hull volume lookup, and

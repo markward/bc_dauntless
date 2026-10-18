@@ -3,11 +3,10 @@
 
 #include <cstdint>
 #include <cstdio>
-#include <fstream>
-#include <iterator>
 #include <string>
 #include <vector>
 
+#include <assets/file_bytes.h>
 #include <assets/texture.h>
 #include <renderer/asset_path.h>
 
@@ -19,13 +18,6 @@ unsigned int    g_override = 0;
 bool            g_tried    = false;
 assets::Texture g_owner;            // owns g_id
 
-bool read_file(const std::string& path, std::vector<std::uint8_t>& out) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) return false;
-    out.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-    return true;
-}
-
 }  // namespace
 
 unsigned int ensure_scuff_normal_texture() {
@@ -36,14 +28,16 @@ unsigned int ensure_scuff_normal_texture() {
     // TGA, decoded with decode_tga. PNG would also work now through
     // assets::decode_image (decode_tga alone refuses a PNG as "indexed").
     const std::string resolved = project_asset_path("textures/scuff_normal.tga");
-    std::vector<std::uint8_t> bytes;
-    if (!read_file(resolved, bytes)) {
+    // One block, not istreambuf_iterator: byte-at-a-time this 12.6 MB file
+    // cost ~350 ms in Debug (perf-register P-11).
+    const auto file = assets::read_binary_file(resolved);
+    if (!file) {
         std::fprintf(stderr, "[scuff] no normal map at %s -- collision scuffs draw "
                      "albedo only\n", resolved.c_str());
         return 0;
     }
     try {
-        assets::Image img = assets::decode_tga(bytes);
+        assets::Image img = assets::decode_tga(*file);
         assets::reconstruct_normal_map_z(img);
         // GL_REPEAT (upload_image's default) is what the per-scuff UV offset
         // relies on; mipmaps are the band limit at range.
