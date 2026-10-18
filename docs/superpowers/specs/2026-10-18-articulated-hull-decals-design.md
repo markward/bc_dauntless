@@ -143,8 +143,8 @@ that draws decals without it would read a stale matrix from the previous ship.
      `model_parts` candidates are the children of Scene Root, which include
      the main hull, so that rule would restrict every hull click.)*
 3. **Re-derive after every move** *(Claude's call)*. Any edit that changes a
-   placement's position — Add, Reposition, gizmo Move (on release), Paste,
-   Mirror — re-derives `shape` by rule 2 from a trace at the placement's new
+   placement's centre — Add, Reposition, a gizmo Move (each drag step),
+   Paste, a typed coordinate, Mirror — re-derives `shape` by rule 2 from a trace at the placement's new
    centre along its −normal. So Mirror of a `wing left:0` decal lands as
    `wing right:0`; a move onto the plain hull clears `shape` to `""`; a move
    whose trace misses keeps the old `shape`. Rotate and Scale do not move the
@@ -181,7 +181,7 @@ on `frame_test.cc`'s `GlowRegionFollowsARotatedNode` family:
 Python tests for §6.2 in the SPV decal-pane test file(s) the builder finds
 (`tests/ui/` — focused files only): rest pose forced on placement; `shape`
 filled on an articulated-part hit, left empty on a hull hit; re-derived on
-Reposition, gizmo Move release, Paste and Mirror (left → right, part → hull
+Reposition, gizmo Move, Paste and Mirror (left → right, part → hull
 clears, a miss keeps the old value); untouched by Rotate and Scale.
 
 Shader edits surface at runtime: after the edit, `cmake -B build -S .` (the
