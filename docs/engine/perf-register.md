@@ -56,20 +56,23 @@ framebuffer actually drawn.
 four times as many. Compare only captures with the same `[profile]`
 framebuffer line.
 
-### B2 — Quick Battle, Sovereign vs 2 Birds of Prey
+### B2 — Felix: Destroy, five Birds of Prey vs one Sovereign (unattended)
 
 ```bash
-DAUNTLESS_PROFILE_FRAMES=100000000 ./build/dauntless --developer 2>&1 | tee ~/Documents/dauntless-perf/qb-sov-vs-2bop-$(date +%Y%m%d-%H%M).log
+DAUNTLESS_WINDOW_SIZE=1280x720 DAUNTLESS_MISSION=engine.dev_missions.felix_destroy DAUNTLESS_DEV_AUTOQUIT=1 DAUNTLESS_DEV_VIEW=exterior DAUNTLESS_PROFILE_FRAMES=100000000 ./build/dauntless --developer 2>&1 | tee ~/Documents/dauntless-perf/b2-$(date +%Y%m%d-%H%M).log
 ```
 
-1. In the setup screen, the player flies the Sovereign against two Birds of
-   Prey. Save this as a preset.
-2. Fight, then quit once the battle ends.
+`engine/dev_missions/felix_destroy.py`: the player's Bird of Prey and four AI
+Bird of Prey wingmen in a V, against one enemy Sovereign 40 GU ahead. After 3 s
+the player targets the Sovereign and Felix's Destroy order is pressed through
+the Orders pane's real button. The run quits 5 s after the first
+`ET_OBJECT_DESTROYED`, or at a 180 s cap. Each step prints a
+`[felix_destroy]` line into the log.
 
-⚠️ **The ending is not yet fixed.** The plan was to end by ramming. C-002
-could not ram, so the Birds of Prey were destroyed by weapons. Until the
-ending is fixed (for example, `]` on each Bird of Prey after a set time), B2
-runs are only roughly comparable.
+The fight still varies run to run, so the time to the first kill is part of
+each capture, not a constant. The earlier hand-run B2 (Quick Battle, the
+player's Sovereign against two Birds of Prey, C-002) is retired: its ending
+depended on the player.
 
 ### To catch hitches
 
@@ -97,6 +100,7 @@ turns off the periodic report, so it needs its own run (M-5).
 | C-012 | 2026-10-18 08:47 | B1 unattended, headless, exterior | `perf/cef-upload-sync` | **Debug** | 1280x720 | 47 reports | |
 | C-013 | 2026-10-18 08:50 | B1 unattended, **visible**, exterior | `perf/cef-upload-sync` | **Debug** | framebuffer 1280x720 (external monitor, 1×) | 35 reports | First capture with the `[profile]` header line. |
 | C-014 | 2026-10-18 08:52 | B1 unattended, visible, exterior | `perf/cef-upload-sync` | **Debug** | framebuffer 1512x945 (external monitor, 1×) | 45 reports | Aimed at the laptop's maximised size, but opened on the 1× monitor. |
+| C-015 | 2026-10-18 09:36 | **B2 (Felix: Destroy)** unattended, headless, exterior | `perf/cef-upload-sync` | **Debug** | framebuffer 1280x720 | 17,225 frames / 144 reports | First ship destroyed: the enemy Sovereign, exploding at report 134 (about 160 s in), removed at report 139. |
 
 Logs for C-003 to C-008: `~/Documents/dauntless-perf/cef-*.log`, `cef2-*` …
 `cef6-*`.
@@ -141,6 +145,7 @@ bound, not the actual size.
 
 | ID | Capture | What the data shows | Tier | Feeds |
 |---|---|---|---|---|
+| SIG-026 | C-015 | B2 at 1280x720, exterior, 6 ships and 0–20 projectiles in flight: about **10 ms** per frame (about 100 fps) for most of the fight, rising to 11–12.5 ms near the end. The Sovereign's death costs `cb.damage_sys` 7.6 ms in the death report (one frame of at least about 50 ms), with `space.particles` 1.7 ms. `cb.damage_sys` now hitches at a death in all three scenarios (C-001, C-012–14, C-015). | Measured / derived (EMA bound) | P-4, A-2 |
 | SIG-025 | C-011 | On the E1M2 bridge after the cutscene, `render_prep` is about **6 ms** (0.3 ms during the cutscene). So P-7 is not specific to Quick Battle. | Measured | P-7 |
 | SIG-024 | C-012, C-013, C-014 | **The Facility destroy hitch varies widely between identical runs.** `sim` in the destroy report: 7.6 ms (C-012), 7.8 ms (C-013), **211 ms** (C-014), meaning one frame of at least about 50 ms in the first two and about 1.4 s in the last. Mostly `cb.damage_sys` again. | Derived (EMA bound) | P-4, A-2 |
 | SIG-023 | C-013, C-014 | **The drawn size moves the exterior from CPU-bound to GPU-bound.** Before the destroy at Vesuvi, the frame is 12.3 ms at 1280x720 and 19.0 ms at 1512x945 (1.55× the pixels). `cef.composite` is 0.5 vs **8.0 ms**: in CPU-only mode it is the CPU waiting for a GPU that is behind (real backpressure, not the M-6 artifact). | Measured | P-1, M-4 |

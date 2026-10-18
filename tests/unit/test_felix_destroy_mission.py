@@ -1,7 +1,8 @@
 """The "Felix: Destroy" dev mission -- baseline B2 run with nobody at the
-keyboard (docs/engine/perf-register.md). A player Sovereign against five
-Birds of Prey, Felix ordered to Destroy through the real tactical button, and
-the run ends a few seconds after the first ship is destroyed."""
+keyboard (docs/engine/perf-register.md). Five Birds of Prey (the player and
+four AI wingmen) against one Sovereign, Felix ordered to Destroy through the
+real tactical button, and the run ends a few seconds after the first ship is
+destroyed, or at a three-minute cap."""
 import math
 
 import App
@@ -18,20 +19,27 @@ def test_registered_in_the_developer_mission_picker():
     assert "engine.dev_missions.felix_destroy" in modules
 
 
-def test_five_birds_of_prey_ahead_of_the_player_at_a_fixed_range():
-    pts = fd.bop_positions(5)
-    assert len(pts) == 5
-    assert pts == fd.bop_positions(5), "placement must be deterministic"
-    for x, y, z in pts:
-        assert y > 0.0, "every Bird of Prey starts ahead (+Y is forward)"
-        assert math.isclose(math.hypot(x, y, z), fd.BOP_RANGE_GU, rel_tol=1e-6)
+def test_five_birds_of_prey_the_player_and_four_ai_wingmen():
+    assert fd.PLAYER_SHIP == "BirdOfPrey"
+    assert fd.WINGMAN_SHIP == "BirdOfPrey"
+    assert len(fd.WINGMAN_POSITIONS) == 4
 
 
-def test_the_birds_of_prey_do_not_spawn_inside_each_other():
-    pts = fd.bop_positions(5)
+def test_one_enemy_sovereign_ahead_of_the_player():
+    assert fd.ENEMY_SHIP == "Sovereign"
+    x, y, z = fd.ENEMY_POSITION
+    assert y > 0.0, "the enemy starts ahead (+Y is forward)"
+
+
+def test_nobody_spawns_inside_anybody_else():
+    pts = [(0.0, 0.0, 0.0), fd.ENEMY_POSITION] + list(fd.WINGMAN_POSITIONS)
     for i, a in enumerate(pts):
         for b in pts[i + 1:]:
             assert math.dist(a, b) >= 4.0 * fd.NOMINAL_HULL_RADIUS_GU, (a, b)
+
+
+def test_the_run_is_capped_at_three_minutes():
+    assert fd.TIME_CAP_S == 180.0
 
 
 def test_exterior_view_is_opt_in():

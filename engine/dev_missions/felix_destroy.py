@@ -1,10 +1,11 @@
 """Developer "Felix: Destroy" mission -- perf baseline B2, run unattended.
 
-A player Sovereign against five Birds of Prey. A few seconds in, the player
-targets the nearest Bird of Prey and Felix is ordered to Destroy through the
-Orders pane's own Destroy button, so Bridge.TacticalMenuHandlers runs
-Maneuver -> UpdateOrders -> StartAI exactly as for a player click. The Birds of
-Prey run the SDK's BasicAttack against the player, as in combat_stress.
+Five Birds of Prey -- the player's and four AI wingmen in a V behind it --
+against one enemy Sovereign ahead. A few seconds in, the player targets the
+Sovereign and Felix is ordered to Destroy through the Orders pane's own
+Destroy button, so Bridge.TacticalMenuHandlers runs Maneuver -> UpdateOrders
+-> StartAI exactly as for a player click. The wingmen and the Sovereign run
+the SDK's BasicAttack against the other side, as in combat_stress.
 
 With DAUNTLESS_DEV_AUTOQUIT=1 the run quits POST_DEATH_S after the first ship
 is destroyed (ET_OBJECT_DESTROYED, i.e. after its death sequence), or after
@@ -27,11 +28,15 @@ import loadspacehelper
 
 from engine import dev_scripted_run
 
-BOP_COUNT = 5
-# Ahead of the player on an arc, inside weapons range so the fight starts in
-# seconds rather than after a long approach.
-BOP_RANGE_GU = 40.0
-_ARC_HALF_ANGLE_DEG = 60.0
+PLAYER_SHIP = "BirdOfPrey"
+WINGMAN_SHIP = "BirdOfPrey"
+ENEMY_SHIP = "Sovereign"
+# A V behind the player, a little over one hull diameter between neighbours.
+WINGMAN_POSITIONS = ((-32.0, -8.0, 0.0), (-16.0, -4.0, 0.0),
+                     (16.0, -4.0, 0.0), (32.0, -8.0, 0.0))
+# Ahead, inside weapons range, so the fight starts in seconds rather than
+# after a long approach.
+ENEMY_POSITION = (0.0, 40.0, 0.0)
 # Seeded only in headless runs, where nothing realizes a model (as in
 # combat_stress, whose _NOMINAL_HULL_RADIUS_GU this matches).
 NOMINAL_HULL_RADIUS_GU = 4.0
@@ -40,7 +45,7 @@ ORDER_DELAY_S = 3.0
 # After ET_OBJECT_DESTROYED the death sequence is already over; a few seconds
 # more catches the wreck settling and the target-list churn.
 POST_DEATH_S = 5.0
-TIME_CAP_S = 300.0
+TIME_CAP_S = 180.0
 
 _ATTACK_AI_MODULE = "AI.Compound.BasicAttack"
 _AI_DIFFICULTY = 2
@@ -60,18 +65,6 @@ def wants_exterior_view(environ=None) -> bool:
     player did in the hand-run B2 captures (the same switch as B1's)."""
     environ = os.environ if environ is None else environ
     return environ.get("DAUNTLESS_DEV_VIEW", "").strip() == "exterior"
-
-
-def bop_positions(n: int):
-    """n points on an arc of radius BOP_RANGE_GU ahead (+Y) of the origin."""
-    if n <= 1:
-        return [(0.0, BOP_RANGE_GU, 0.0)]
-    out = []
-    for i in range(n):
-        deg = -_ARC_HALF_ANGLE_DEG + (2.0 * _ARC_HALF_ANGLE_DEG) * i / (n - 1)
-        rad = math.radians(deg)
-        out.append((BOP_RANGE_GU * math.sin(rad), BOP_RANGE_GU * math.cos(rad), 0.0))
-    return out
 
 
 def reset_run_state() -> None:
@@ -100,7 +93,7 @@ def _seed_radius(pShip) -> None:
 
 def PreLoadAssets(pMission):
     import importlib
-    for name in ("Sovereign", "BirdOfPrey"):
+    for name in (PLAYER_SHIP, ENEMY_SHIP):
         try:
             mod = importlib.import_module("ships." + name)
             if hasattr(mod, "PreLoadModel"):
@@ -144,7 +137,7 @@ def Initialize(pMission):
     Systems.QuickBattle.QuickBattleRegion.Initialize()
     pSet = App.g_kSetManager.GetSet("QuickBattleRegion")
 
-    pPlayer = MissionLib.CreatePlayerShip("Sovereign", pSet, "Player", "")
+    pPlayer = MissionLib.CreatePlayerShip(PLAYER_SHIP, pSet, "Player", "")
     pPlayer.SetTranslateXYZ(0.0, 0.0, 0.0)
     pPlayer.UpdateNodeOnly()
     _seed_radius(pPlayer)
@@ -153,21 +146,25 @@ def Initialize(pMission):
     pEnemies = pMission.GetEnemyGroup()
     pFriendlies.AddName("Player")
 
-    _enemy_names = []
-    for i, (x, y, z) in enumerate(bop_positions(BOP_COUNT)):
-        name = "BoP-%d" % (i + 1)
-        pShip = loadspacehelper.CreateShip("BirdOfPrey", pSet, name, "")
+    def _spawn(ship_type, name, pos, group):
+        pShip = loadspacehelper.CreateShip(ship_type, pSet, name, "")
         if App.IsNull(pShip):
             raise RuntimeError("felix_destroy: could not create %s" % name)
-        pShip.SetTranslateXYZ(x, y, z)
+        pShip.SetTranslateXYZ(*pos)
         pShip.UpdateNodeOnly()
         _seed_radius(pShip)
-        pEnemies.AddName(name)
-        _enemy_names.append(name)
+        group.AddName(name)
+        return pShip
+
+    wingmen = [_spawn(WINGMAN_SHIP, "Wing-%d" % (i + 1), pos, pFriendlies)
+               for i, pos in enumerate(WINGMAN_POSITIONS)]
+    _enemy_names = ["Enemy-Sovereign"]
+    enemy = _spawn(ENEMY_SHIP, _enemy_names[0], ENEMY_POSITION, pEnemies)
 
     # AI last, once every ship exists (see combat_stress).
-    for name in _enemy_names:
-        _attach_attack_ai(App.ShipClass_GetObject(pSet, name), pFriendlies)
+    for pShip in wingmen:
+        _attach_attack_ai(pShip, pEnemies)
+    _attach_attack_ai(enemy, pFriendlies)
 
     try:
         pPlayer.SetAlertLevel(App.ShipClass.RED_ALERT)
@@ -186,10 +183,10 @@ def Initialize(pMission):
 
     if autoquit_enabled():
         dev_scripted_run.request_quit(TIME_CAP_S, "time cap, nobody died")
-    _log("player Sovereign vs %d Birds of Prey at %.0f GU; Destroy order in "
-         "%.0f s; autoquit=%s"
-         % (len(_enemy_names), BOP_RANGE_GU, ORDER_DELAY_S,
-            "on" if autoquit_enabled() else "off"))
+    _log("player %s + %d AI %s vs 1 %s; Destroy order in %.0f s; "
+         "autoquit=%s (cap %.0f s)"
+         % (PLAYER_SHIP, len(wingmen), WINGMAN_SHIP, ENEMY_SHIP,
+            ORDER_DELAY_S, "on" if autoquit_enabled() else "off", TIME_CAP_S))
 
 
 def _nearest(player, names):
