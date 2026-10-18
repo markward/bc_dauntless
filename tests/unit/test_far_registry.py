@@ -442,3 +442,122 @@ def test_a_scope_hidden_or_absent_player_pushes_none():
     finally:
         far_tier.reset()
     assert _player_pushes(r) == [None, None, None]
+
+
+# ── Atlas prefetch at mission load (perf-register P-11, 2026-10-18) ──────
+# The impostor atlases used to load lazily, on a rock's first draw: ~120 ms
+# a rock in Debug, mostly PNG decode + dilate. Once the catalogue is pushed
+# and the viewed set has rock content (belt or field sources, or a flagged
+# catalogue rock), every atlas starts decoding on the far pass's worker
+# threads, and each reconcile uploads at most one finished atlas (~7.6 ms of
+# GL) until none is pending. A set with no rocks loads none: B2d showed the
+# uploads alone add a 30 ms frame to a mission that never draws a rock.
+
+
+class _Pump(_R):
+    """far_pump_atlas_uploads returns the scripted pending counts in turn."""
+    def __init__(self, pending=(), enabled=True):
+        super().__init__()
+        self._pending = list(pending)
+        self._enabled = enabled
+    def far_enabled(self):
+        return self._enabled
+    def far_pump_atlas_uploads(self, max_uploads):
+        self.calls.append(("far_pump_atlas_uploads", (max_uploads,)))
+        return self._pending.pop(0) if self._pending else 0
+
+
+def _flagged(index=3):
+    """A rock instance dict whose rock far_tier has noted with `index`."""
+    rock = object()
+    far_tier._models[rock] = (index, 10.0)
+    return {rock: 7}
+
+
+def test_no_prefetch_while_the_viewed_set_has_no_rocks():
+    r = _Pump()
+    far_tier.reconcile_with(r, None, {})
+    far_tier.reconcile_with(r, None, {})
+    assert "far_set_catalogue" in _names(r)
+    assert "far_prefetch_atlases" not in _names(r)
+    assert "far_pump_atlas_uploads" not in _names(r)
+
+
+def test_a_flagged_catalogue_rock_starts_the_prefetch_once():
+    r = _Pump(pending=[5, 5, 5])
+    rocks = _flagged()
+    far_tier.reconcile_with(r, None, rocks)
+    far_tier.reconcile_with(r, None, rocks)
+    names = _names(r)
+    assert names.count("far_prefetch_atlases") == 1
+    assert names.index("far_prefetch_atlases") > names.index("far_set_catalogue")
+
+
+def test_a_stock_asteroid_needs_no_atlas():
+    r = _Pump()
+    far_tier.reconcile_with(r, None, _flagged(index=-1))
+    assert "far_prefetch_atlases" not in _names(r)
+
+
+def test_field_or_belt_sources_start_the_prefetch(monkeypatch):
+    from engine.rocks import density
+    monkeypatch.setattr(far_tier, "tile_sources", lambda view_set, fields: ["field"])
+    monkeypatch.setattr(density, "to_native", lambda s: s)
+    r = _Pump()
+    far_tier.reconcile_with(r, object(), {})
+    assert _names(r).count("far_prefetch_atlases") == 1
+
+
+def test_rocks_appearing_later_start_the_prefetch_then():
+    r = _Pump(pending=[0])
+    far_tier.reconcile_with(r, None, {})
+    assert "far_prefetch_atlases" not in _names(r)
+    far_tier.reconcile_with(r, None, _flagged())
+    assert _names(r).count("far_prefetch_atlases") == 1
+
+
+def test_prefetched_atlases_upload_one_per_reconcile_until_none_is_pending():
+    r = _Pump(pending=[2, 1, 0])
+    rocks = _flagged()
+    for _ in range(5):
+        far_tier.reconcile_with(r, None, rocks)
+    pumps = [a for n, a in r.calls if n == "far_pump_atlas_uploads"]
+    assert pumps == [(1,), (1,), (1,)], "one upload a frame, stopping at 0 pending"
+
+
+def test_no_prefetch_while_the_far_tier_is_off():
+    r = _Pump(enabled=False)
+    rocks = _flagged()
+    far_tier.reconcile_with(r, None, rocks)
+    far_tier.reconcile_with(r, None, rocks)
+    assert "far_prefetch_atlases" not in _names(r)
+    assert "far_pump_atlas_uploads" not in _names(r)
+
+
+def test_a_failed_catalogue_push_starts_no_prefetch():
+    class _Refuses(_Pump):
+        def far_set_catalogue(self, *a):
+            raise RuntimeError("native refused")
+    r = _Refuses()
+    far_tier.reconcile_with(r, None, _flagged())
+    assert "far_prefetch_atlases" not in _names(r)
+
+
+def test_a_raising_pump_stops_pumping_and_never_raises():
+    class _Boom(_Pump):
+        def far_pump_atlas_uploads(self, max_uploads):
+            self.calls.append(("far_pump_atlas_uploads", (max_uploads,)))
+            raise RuntimeError("pass gone")
+    r = _Boom()
+    rocks = _flagged()
+    far_tier.reconcile_with(r, None, rocks)
+    far_tier.reconcile_with(r, None, rocks)
+    assert _names(r).count("far_pump_atlas_uploads") == 1
+
+
+def test_reset_prefetches_again_on_the_next_push():
+    r = _Pump(pending=[0, 0])
+    far_tier.reconcile_with(r, None, _flagged())
+    far_tier.reset(None)
+    far_tier.reconcile_with(r, None, _flagged())
+    assert _names(r).count("far_prefetch_atlases") == 2
