@@ -54,6 +54,7 @@ void DauntlessCefClient::OnPaint(CefRefPtr<CefBrowser> browser,
     bitmap_width_  = width;
     bitmap_height_ = height;
     ready_ = true;
+    ++paint_generation_;
 }
 
 void DauntlessCefClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {

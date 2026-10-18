@@ -7,7 +7,7 @@ Spec: docs/superpowers/specs/2026-10-14-ship-running-lights-design.md. Read its
 ~9 Hz flicker and its statics are invisible, and both departures are rulings.
 """
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from engine.appc import glow_maps
 
@@ -19,6 +19,12 @@ class RunningLightSpec:
     size: float       # the property's Radius; scaled by the size dial in C++
     period: float
     duration: float   # <= 0 means a static (always-on) light
+    name: str = ""
+    physical_parent: "str | None" = None   # SetPhysicalParent; None = Auto
+    # The live BlinkingLightProperty, so a physical parent Saved in the SPV
+    # after spawn is honoured by these spawn-time specs (`physical_parent`
+    # above is only the value at spawn). Not part of equality or the tuple.
+    prop: object = field(default=None, compare=False, repr=False)
 
     def as_tuple(self) -> tuple:
         return (self.pos[0], self.pos[1], self.pos[2],
@@ -26,26 +32,36 @@ class RunningLightSpec:
                 self.size, self.period, self.duration)
 
 
-def lights_for(ship) -> list:
-    """The ship's running lights in property-set order. A light that was never
-    placed (no SetPosition) is skipped rather than drawn at the hull origin."""
+def light_properties(ship) -> list:
+    """The ship's placed `BlinkingLightProperty` objects in property-set order.
+    A light that was never placed (no SetPosition) is skipped rather than
+    drawn at the hull origin. The one skip rule `lights_for` and the Ship
+    Property Viewer's Physical tab share."""
     import App
     get_set = getattr(ship, "GetPropertySet", None)
     pset = get_set() if get_set is not None else None
     if pset is None:
         return []
+    return [prop for prop in
+            pset.GetPropertiesByType(App.CT_BLINKING_LIGHT_PROPERTY)
+            if prop.GetPosition() is not None]
+
+
+def lights_for(ship) -> list:
+    """The ship's running lights in property-set order (`light_properties`)."""
     out = []
-    for prop in pset.GetPropertiesByType(App.CT_BLINKING_LIGHT_PROPERTY):
+    for prop in light_properties(ship):
         pos = prop.GetPosition()
-        if pos is None:
-            continue
         c = prop.GetColor()
         out.append(RunningLightSpec(
             pos=(float(pos.x), float(pos.y), float(pos.z)),
             rgb=(float(c.r), float(c.g), float(c.b)),
             size=float(prop.GetRadius()),
             period=float(prop.GetPeriod()),
-            duration=float(prop.GetDuration())))
+            duration=float(prop.GetDuration()),
+            name=prop.GetName(),
+            physical_parent=prop.GetPhysicalParent(),
+            prop=prop))
     return out
 
 

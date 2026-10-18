@@ -931,6 +931,8 @@ these consumers on 2026-10-15 because boxes failed on the LC Intrepid: its hull
 box spans both nacelles, and a nacelle box covers the hull-mounted ventral aft
 phasers.
 
+Superseded by `2026-10-17-subsystem-physical-parents-design.md`.
+
 Inference still guesses. A subsystem position is often a point INSIDE the hull
 rather than on its skin, and nearest-mesh picks whichever part happens to be
 closest. Rigging is already hand-authored in the SPV's Model Parts tree, so the

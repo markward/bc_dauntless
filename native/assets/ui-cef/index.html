@@ -347,11 +347,16 @@
              articulated pose (angles not all zero) locks subsystem/light/
              emitter editing so a mount is never authored through the wrong
              pose. The Python side (_dispatch_event_inner) is the real gate;
-             this + #spv-syslist's greyed-out state are the visible half. -->
+             this + the greyed-out #spv-syslist-body are the visible half. -->
         <div id="spv-lock-banner" class="spv-lock-banner" style="display:none"></div>
         <div id="spv-syslist" class="spv-pane">
           <div class="spv-syslist__header">Subsystems</div>
+          <div id="spv-systabs" class="spv-tabs">
+            <div id="spv-tab-functional" class="spv-tab spv-tab--active" data-tab="functional" onclick="shipPropertyViewerPhysTab(this)">Functional</div>
+            <div id="spv-tab-physical" class="spv-tab" data-tab="physical" onclick="shipPropertyViewerPhysTab(this)">Physical</div>
+          </div>
           <div id="spv-syslist-body" class="spv-syslist__body"></div>
+          <div id="spv-physical-body" class="spv-syslist__body" style="display:none;"></div>
         </div>
         <!-- Model Parts pane: collapsed by default, 25% of the vertical when
              the header is clicked open (dauntlessEvent
@@ -562,7 +567,14 @@
         <div id="spv-ctx-editanchor" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxEditAnchor()">Edit Anchor…</div>
         <div id="spv-ctx-editbreak" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxEditBreak()">Edit Breakage…</div>
         <div id="spv-ctx-removenode" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxRemoveNode()">Remove</div>
+        <div id="spv-ctx-moveto" class="spv-ctxmenu__item" style="display:none;" data-mode="move" onclick="shipPropertyViewerPhysOpenSub(this)">Move to &#9656;</div>
+        <div id="spv-ctx-reset" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerPhysReset()">Reset to Auto</div>
+        <div id="spv-ctx-moveall" class="spv-ctxmenu__item" style="display:none;" data-mode="moveall" onclick="shipPropertyViewerPhysOpenSub(this)">Move all to &#9656;</div>
+        <div id="spv-ctx-resetall" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerPhysResetAll()">Reset all to Auto</div>
       </div>
+      <!-- Physical tab "Move to" / "Move all to" submenu: a second ctxmenu
+           positioned at the parent menu's right edge; items are built by JS. -->
+      <div id="spv-ctxsub" class="spv-ctxmenu" style="display:none;"></div>
       <!-- Part popups (spec section 7.3): the tree rows carry names only;
            a part's attributes are set here. Mouse-only steppers, like
            #spv-radius: mouse-only; typed input is available through the

@@ -243,6 +243,7 @@ def build_descriptors(ship) -> List[dict]:
             "condition_pct": _condition_pct_for(sub),
             "parent_index": index_of.get(id(parent)) if parent is not None else None,
             "properties": props,
+            "physical_parent": _baked_physical_parent(sub),
         })
     # Post-pass: annotate every subsystem descriptor with its light volume.
     # `light` = a baked region 0 exists; `light_region` = that baked spec or a
@@ -295,8 +296,41 @@ def build_descriptors(ship) -> List[dict]:
             "parent_index": None,
             "properties": {"name": em.GetName(),
                            "emitted_type": em.GetEmittedObjectType()},
+            "physical_parent": _baked_physical_parent(em),
         })
     return out
+
+
+def _baked_physical_parent(obj):
+    """The baked `SetPhysicalParent` name on `obj`'s property, or None (Auto,
+    or no property able to carry one)."""
+    from engine.appc import physical_parents
+    prop = physical_parents.property_of(obj)
+    return prop.GetPhysicalParent() if prop is not None else None
+
+
+def apply_physical_parents(ship, edits: dict) -> None:
+    """Apply saved physical parents (`{property name: part | None}`) to
+    `ship`'s LIVE properties, so a Save reaches the running game without a
+    rebuild: every subsystem and object-emitter mount (walked as
+    `build_descriptors` walks them) and every running light whose name is in
+    `edits`. Keyed by name, like the hardpoint writer."""
+    if not edits:
+        return
+    from engine.appc import physical_parents, running_lights
+    objs = list(_iter_subsystems(ship))
+    if hasattr(ship, "GetObjectEmitters"):
+        objs += list(ship.GetObjectEmitters())
+    for obj in objs:
+        name = obj.GetName() if hasattr(obj, "GetName") else None
+        if name not in edits:
+            continue
+        prop = physical_parents.property_of(obj)
+        if prop is not None:
+            prop.SetPhysicalParent(edits[name])
+    for light in running_lights.light_properties(ship):
+        if light.GetName() in edits:
+            light.SetPhysicalParent(edits[light.GetName()])
 
 
 def _iter_subsystems(ship):

@@ -4,6 +4,7 @@
 #include "cef_app.h"
 #include "cef_client.h"
 #include "cef_composite_pass.h"
+#include "cef_upload_policy.h"
 
 #include "platform/exe_path.h"
 
@@ -11,6 +12,7 @@
 #include "include/cef_browser.h"
 #include "include/wrapper/cef_library_loader.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -31,6 +33,23 @@ CefRefPtr<DauntlessCefClient>             g_client;
 std::unique_ptr<CefCompositePass>         g_composite;
 bool                                      g_initialized = false;
 std::function<void()>                     g_capture_reset;
+
+// Overlay upload policy (perf-register A-1). DAUNTLESS_CEF_UPLOAD picks the
+// mode at init; unset means `always`, the original every-frame upload. When
+// the variable is set, a one-line upload/skip count goes to stderr every
+// kUploadStatsEvery composites so a capture shows how often CEF repaints.
+struct UploadStats {
+    int frames  = 0;
+    int uploads = 0;
+    int skips   = 0;
+    double frame_ms_sum = 0.0;
+    double frame_ms_max = 0.0;
+};
+constexpr int    kUploadStatsEvery = 600;
+UploadMode       g_upload_mode = UploadMode::Always;
+bool             g_upload_stats_enabled = false;
+std::uint64_t    g_uploaded_gen = 0;
+UploadStats      g_upload_stats;
 
 // On macOS without a .app bundle, CEF's NSBundle-based path discovery
 // fails. We must tell CEF where its framework, locales, resources, and
@@ -278,6 +297,17 @@ bool initialize(int view_width, int view_height,
                                   browser_settings, nullptr, nullptr);
 
     g_composite = std::make_unique<CefCompositePass>();
+    {
+        const char* mode = std::getenv("DAUNTLESS_CEF_UPLOAD");
+        g_upload_mode = parse_upload_mode(mode);
+        g_upload_stats_enabled = mode != nullptr && *mode != '\0';
+        g_uploaded_gen = 0;
+        g_upload_stats = UploadStats{};
+        if (g_upload_stats_enabled) {
+            std::fprintf(stderr, "[cef-upload] mode=%s\n",
+                         upload_mode_name(g_upload_mode));
+        }
+    }
     g_initialized = true;
     return true;
 }
@@ -315,11 +345,61 @@ void pump() {
     // so panels still repaint on change without the blunt full-view force.
 }
 
-void composite() {
+void composite_upload() {
     if (!g_initialized || !g_client || !g_composite) return;
     int w = 0, h = 0;
     const std::uint8_t* pixels = g_client->latest_bitmap(&w, &h);
-    g_composite->draw_fullscreen(pixels, w, h);
+    if (!pixels) return;
+    const std::uint64_t gen = g_client->paint_generation();
+    if (should_upload(g_upload_mode, g_composite->allocated(),
+                      g_composite->size_differs(w, h), gen, g_uploaded_gen)) {
+        g_composite->upload(pixels, w, h);
+        g_uploaded_gen = gen;
+        ++g_upload_stats.uploads;
+    } else {
+        ++g_upload_stats.skips;
+    }
+    // Wall time between composites = the whole frame, measured without the
+    // frame profiler (whose GPU queries are under suspicion themselves).
+    {
+        using Clock = std::chrono::steady_clock;
+        static Clock::time_point prev;
+        const auto now = Clock::now();
+        if (prev.time_since_epoch().count() != 0) {
+            const double ms =
+                std::chrono::duration<double, std::milli>(now - prev).count();
+            g_upload_stats.frame_ms_sum += ms;
+            if (ms > g_upload_stats.frame_ms_max) g_upload_stats.frame_ms_max = ms;
+        }
+        prev = now;
+    }
+    if (g_upload_stats_enabled && ++g_upload_stats.frames >= kUploadStatsEvery) {
+        const auto t = g_composite->take_draw_timings();
+        const double n = t.draws > 0 ? t.draws : 1;
+        std::fprintf(stderr,
+                     "[cef-upload] mode=%s last %d frames: %d uploaded, %d "
+                     "skipped, %llu paints total | frame mean %.2f ms max %.1f "
+                     "ms | draw mean ms: setup %.3f query %.3f draw %.3f "
+                     "restore %.3f\n",
+                     upload_mode_name(g_upload_mode), g_upload_stats.frames,
+                     g_upload_stats.uploads, g_upload_stats.skips,
+                     static_cast<unsigned long long>(gen),
+                     g_upload_stats.frame_ms_sum / g_upload_stats.frames,
+                     g_upload_stats.frame_ms_max,
+                     t.setup_ms / n, t.query_ms / n, t.draw_ms / n,
+                     t.restore_ms / n);
+        g_upload_stats = UploadStats{};
+    }
+}
+
+void composite_draw() {
+    if (!g_initialized || !g_composite) return;
+    g_composite->draw();
+}
+
+void composite() {
+    composite_upload();
+    composite_draw();
 }
 
 void toggle_devtools() {

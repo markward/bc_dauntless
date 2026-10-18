@@ -484,6 +484,50 @@ def test_a_driver_with_no_gpu_timer_is_unavailable_from_the_first_frame(monkeypa
     assert "counter" in text
 
 
+def _cpu_only_report(monkeypatch):
+    from engine import host_io
+    monkeypatch.setattr(host_io, "profiler_scopes", lambda: [
+        {"name": "frame", "cpu_ms": 8.0, "gpu_ms": 0.0, "calls": 1, "depth": 0,
+         "gpu_measured": False},
+        {"name": "space", "cpu_ms": 3.0, "gpu_ms": 0.0, "calls": 1, "depth": 1,
+         "gpu_measured": False},
+    ])
+    monkeypatch.setattr(
+        host_io, "profiler_frame",
+        lambda: {"cpu_ms": 8.0, "gpu_ms": 0.0, "frames": 400, "enabled": True,
+                 "swap_interval": 0, "gpu_timer": "none",
+                 "gpu_requested": False},
+    )
+    fp.set_enabled(True, native=False)
+    fp.begin_frame(); fp.mark("p"); fp.end_frame()
+    return fp.report_lines()
+
+
+def test_cpu_only_report_says_gpu_timing_is_off_not_unavailable(monkeypatch):
+    """Off is a choice, not a broken driver. Calling it UNAVAILABLE would send
+    a reader chasing a driver fault that does not exist."""
+    text = "\n".join(_cpu_only_report(monkeypatch))
+    assert "GPU timing OFF" in text
+    assert "UNAVAILABLE" not in text
+    assert "DAUNTLESS_PROFILE_GPU=1" in text
+
+
+def test_cpu_only_report_prints_no_gpu_numbers(monkeypatch):
+    lines = _cpu_only_report(monkeypatch)
+    assert _row(lines, "space").split()[:3] == ["space", "3.000", "-"]
+    totals = [ln for ln in lines if ln.strip().startswith("totals:")][0]
+    assert "gpu off" in totals, totals
+
+
+def test_gpu_timing_is_requested_only_by_profile_gpu_1(monkeypatch):
+    monkeypatch.delenv("DAUNTLESS_PROFILE_GPU", raising=False)
+    assert fp.gpu_timing_requested_from_env() is False
+    for value, expected in (("1", True), ("0", False), ("", False),
+                            ("yes", False)):
+        monkeypatch.setenv("DAUNTLESS_PROFILE_GPU", value)
+        assert fp.gpu_timing_requested_from_env() is expected, value
+
+
 def test_a_working_gpu_column_is_not_flagged(monkeypatch):
     """The flag must key on 'zero across many resolved frames', not on any
     zero: a cheap pass legitimately measures 0.000."""

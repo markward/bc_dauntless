@@ -46,7 +46,10 @@ def subsystem_world_position(sub, ship=None):
     # Identity for unrigged hulls, body mounts and deflection 0 — so the
     # overwhelming majority of calls are unchanged.
     from engine.appc.articulation import part_transform_point
-    px, py, pz = part_transform_point(ship, (local.x, local.y, local.z))
+    from engine.appc import physical_parents
+    px, py, pz = part_transform_point(
+        ship, (local.x, local.y, local.z),
+        prop=physical_parents.property_of(sub))
     offset = TGPoint3(px, py, pz)
     if hasattr(ship, "GetWorldRotation"):
         rot = ship.GetWorldRotation()
@@ -76,15 +79,19 @@ def target_offset_world(target, offset):
     (`host_loop._phaser_aim_point`) all call it.
     """
     from engine.appc.articulation import part_transform_point
-    from engine.appc.part_severance import is_authored_mount
+    from engine.appc import physical_parents
+    from engine.appc.part_severance import authored_mount_subsystem
     pos = target.GetWorldLocation()
     point = (offset.x, offset.y, offset.z)
     # A subsystem lock's offset is an AUTHORED mount: the shared mount rule,
     # so the shot goes where the mount is drawn. Anything else (a Manual Aim
     # pick, pulled back to rest by the box rule) keeps the box rule, so the
     # round trip is exact and no per-tick pick scans the model.
+    mount_sub = authored_mount_subsystem(target, point)
     px, py, pz = part_transform_point(
-        target, point, authored=is_authored_mount(target, point))
+        target, point, authored=mount_sub is not None,
+        prop=(physical_parents.property_of(mount_sub)
+              if mount_sub is not None else None))
     scale = float(target.GetScale()) if hasattr(target, "GetScale") else 1.0
     o = TGPoint3(px * scale, py * scale, pz * scale)
     rot = target.GetWorldRotation() if hasattr(target, "GetWorldRotation") else None

@@ -317,6 +317,27 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         self._saved_emitter = {}
         self._saved_pos = {}
         self._saved_part = {}
+        # Physical tab (physical-parents spec section 7). Staged/saved
+        # SetPhysicalParent choices keyed by PROPERTY NAME (a subsystem's or
+        # a running light's), None = Reset to Auto. Pending ones reach the
+        # game through the physical_parents preview overlay; a Save writes
+        # them onto the LIVE properties (_apply_saved_physical), so saved ones
+        # never ride the overlay. Neither marks a Functional row dirty.
+        self._pending_physical: dict = {}
+        self._saved_physical: dict = {}
+        # "functional" | "physical": which Subsystems tab shows. Reset every
+        # open; switching is not an edit.
+        self._systems_tab = "functional"
+        # Snapshotted at open(): the ship's placed running lights
+        # ({"name", "position", "physical_parent"}, property order) and its
+        # object-emitter mount body points (name -> (x, y, z)) -- the two
+        # Physical-tab inputs the descriptors do not carry.
+        self._physical_lights: List[dict] = []
+        self._mount_points: dict = {}
+        # The leaf the preview overlay was last written for, and the overlay
+        # last written -- see _physical_sync_preview.
+        self._physical_preview_leaf: Optional[str] = None
+        self._physical_preview_last = None
         # Decals pane (engine/ui/spv_decals_pane.py). Session state: reset
         # every open/close, like the staged-edit dicts above.
         self._decal_reset_state()
@@ -380,6 +401,10 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         self._pending_emitter = {}
         self._pending_pos = {}
         self._pending_part = {}
+        self._pending_physical = {}
+        self._systems_tab = "functional"
+        self._physical_lights, self._mount_points = (
+            self._fetch_physical_sources(ship))
         # Persist the saved-edit overlay across open/close of the SAME ship so a
         # re-opened SPV reflects edits saved this session (build_descriptors
         # reads the still-original property until the next ship build). Drop it
@@ -389,6 +414,7 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         if sid != self._authored_ship_id:
             self._clear_saved_edits()
             self._authored_ship_id = sid
+        self._physical_sync_preview()
         self._overlay_open = False
         self._close_overlays = False
         self._axis_drag = None
@@ -425,6 +451,7 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         self._saved_emitter = {}
         self._saved_pos = {}
         self._saved_part = {}
+        self._saved_physical = {}
 
     def close(self) -> None:
         self.visible = False
@@ -448,6 +475,12 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         self._pending_emitter = {}
         self._pending_pos = {}
         self._pending_part = {}
+        # Unsaved physical parents leave the preview overlay with the other
+        # staged edits (saved ones are already on the live properties).
+        self._pending_physical = {}
+        self._physical_lights = []
+        self._mount_points = {}
+        self._physical_sync_preview()
         from engine.appc import articulation as _articulation
         # Closing returns every part to the NIF pose (spec section 7.3) -- the
         # pose the viewer opened in, so a State Transformation previewed here
@@ -1158,14 +1191,22 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
 
         Identity for an unrigged hull, a body mount, a severed part and at
         angle 0 -- so the common case is byte-identical.
+
+        The descriptor's baked physical parent rides along as a `PropRef`,
+        so a SET (or previewed) part decides the hinge exactly as it does
+        for the cached pins (`subsystem_world_position`).
         """
         from engine.ui.ship_property_viewer import world_from_body
         from engine.appc.articulation import part_transform_point
+        from engine.appc.physical_parents import PropRef
         ship = self._ship_getter()
+        d = self._descriptors[index]
         if ship is None or not hasattr(ship, "GetWorldLocation"):
-            return self._descriptors[index].get("world_pos", (0.0, 0.0, 0.0))
+            return d.get("world_pos", (0.0, 0.0, 0.0))
+        prop = PropRef(d.get("name", ""), d.get("physical_parent"))
         return world_from_body(
-            ship, part_transform_point(ship, self._effective_pos(index)))
+            ship, part_transform_point(ship, self._effective_pos(index),
+                                       prop=prop))
 
     def set_subsystem_position(self, index: int, body_pos) -> None:
         """Stage a body-frame position edit for `index`. Not applied to the
@@ -1200,10 +1241,256 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         self._last_pushed = None
 
     # ------------------------------------------------------------------
+    # Physical tab (physical-parents spec section 7)
+    # ------------------------------------------------------------------
+    # A row is a property that can carry SetPhysicalParent: every descriptor
+    # (key "sub:<index>") then every placed running light (key
+    # "light:<name>"). Its EXPLICIT value is pending, else saved, else baked
+    # (None = Auto); an Auto row sits on what the geometric rule
+    # (`part_severance.part_for_mount`) answers for its COMMITTED rest point
+    # -- saved this session, else baked. A staged (dragged) position is
+    # deliberately not used: it never reaches the sim, and a drag would feed
+    # the model query (and its per-point cache) a new point every frame.
+    _SYSTEMS_TABS = ("functional", "physical")
+
+    @staticmethod
+    def _fetch_physical_sources(ship):
+        """(running lights, object-emitter mount points) for `ship`, or
+        ([], {}) when it has none or they cannot be read."""
+        if ship is None:
+            return [], {}
+        from engine.appc import running_lights
+        try:
+            lights = []
+            for prop in running_lights.light_properties(ship):
+                pos = prop.GetPosition()
+                lights.append({
+                    "name": prop.GetName(),
+                    "position": (float(pos.x), float(pos.y), float(pos.z)),
+                    "physical_parent": prop.GetPhysicalParent()})
+            mounts = {}
+            emitters = (ship.GetObjectEmitters()
+                        if hasattr(ship, "GetObjectEmitters") else [])
+            for em in emitters:
+                pos = em.GetPosition() if hasattr(em, "GetPosition") else None
+                if pos is not None:
+                    mounts[em.GetName()] = (float(pos.x), float(pos.y),
+                                            float(pos.z))
+        except Exception as e:
+            from engine import dev_mode
+            dev_mode.log_swallowed("spv physical sources", e)
+            return [], {}
+        return lights, mounts
+
+    def _physical_part_names(self) -> List[str]:
+        """Every candidate model part, in node order (no duplicates)."""
+        out: List[str] = []
+        for n in self._model_part_nodes:
+            name = n.get("name")
+            if n.get("candidate") and name and name not in out:
+                out.append(name)
+        return out
+
+    def _physical_entries(self) -> List[dict]:
+        """Every Physical-tab row's inputs, in row order."""
+        out = []
+        for i, d in enumerate(self._descriptors):
+            name = d.get("name", "")
+            props = d.get("properties", {})
+            if i in self._saved_pos:
+                point = self._saved_pos[i]
+            elif props.get("position") is not None:
+                point = tuple(props["position"])
+            else:
+                point = self._mount_points.get(name)
+            out.append({"key": "sub:%d" % i, "name": name,
+                        "kind": "subsystem", "index": i,
+                        "baked": d.get("physical_parent"), "point": point})
+        for light in self._physical_lights:
+            out.append({"key": "light:" + light["name"],
+                        "name": light["name"], "kind": "running_light",
+                        "index": None, "baked": light["physical_parent"],
+                        "point": light["position"]})
+        return out
+
+    def _physical_committed(self, entry):
+        """Saved this session, else baked."""
+        name = entry["name"]
+        if name in self._saved_physical:
+            return self._saved_physical[name]
+        return entry["baked"]
+
+    def _physical_explicit(self, entry):
+        """Pending, else saved, else baked; None = Auto."""
+        if entry["name"] in self._pending_physical:
+            return self._pending_physical[entry["name"]]
+        return self._physical_committed(entry)
+
+    def _physical_auto_part(self, point):
+        if point is None:
+            return None
+        ship = self._ship_getter()
+        if ship is None:
+            return None
+        from engine.appc import articulation, part_severance
+        iid = None
+        if self._iid_getter is not None:
+            try:
+                iid = self._iid_getter()
+            except Exception:
+                iid = None
+        return part_severance.part_for_mount(
+            articulation.leaf_for(ship), tuple(point), iid)
+
+    def _physical_payload(self) -> dict:
+        """{"tab", "parts", "groups"}: missing-part groups first (a SET name
+        the model does not have), then one group per part in `parts` order,
+        empty ones included. A row that resolves to no listed part (no model
+        parts, or no point to attribute) goes in a trailing group whose
+        `part` is None."""
+        parts = self._physical_part_names()
+        by_part = {n: [] for n in parts}
+        missing: dict = {}
+        unplaced: List[dict] = []
+        for entry in self._physical_entries():
+            explicit = self._physical_explicit(entry)
+            part = (explicit if explicit is not None
+                    else self._physical_auto_part(entry["point"]))
+            row = {"key": entry["key"], "name": entry["name"],
+                   "kind": entry["kind"],
+                   "source": "auto" if explicit is None else "set",
+                   "chosen": (entry["index"] is not None
+                              and entry["index"] == self.selected_index),
+                   "index": entry["index"]}
+            if part in by_part:
+                by_part[part].append(row)
+            elif explicit is not None and parts:
+                missing.setdefault(explicit, []).append(row)
+            else:
+                unplaced.append(row)
+        groups = [{"part": m, "missing": True, "rows": rows}
+                  for m, rows in missing.items()]
+        groups += [{"part": n, "missing": False, "rows": by_part[n]}
+                   for n in parts]
+        if unplaced:
+            groups.append({"part": None, "missing": False, "rows": unplaced})
+        return {"tab": self._systems_tab, "parts": parts, "groups": groups}
+
+    def _physical_entry(self, key):
+        if not isinstance(key, str):
+            return None
+        for entry in self._physical_entries():
+            if entry["key"] == key:
+                return entry
+        return None
+
+    def _stage_physical(self, entry, value) -> None:
+        """Stage `value` for `entry` unless it is already its explicit value
+        (choosing a SET row's own part, or resetting an Auto row, is inert).
+        Staging back to the committed value drops the pending entry."""
+        if value == self._physical_explicit(entry):
+            return
+        if value == self._physical_committed(entry):
+            self._pending_physical.pop(entry["name"], None)
+        else:
+            self._pending_physical[entry["name"]] = value
+
+    def _dispatch_physical_action(self, action: str) -> bool:
+        """physical/tab | move | reset | move_all | reset_all, each with a
+        JSON argument after the colon (see the payload contract in the
+        task brief / spec section 7)."""
+        verb, _, raw = action[len("physical/"):].partition(":")
+        try:
+            arg = json.loads(raw)
+        except ValueError:
+            return False
+        if not isinstance(arg, dict):
+            return False
+        if verb == "tab":
+            if arg.get("tab") not in self._SYSTEMS_TABS:
+                return False
+            self._systems_tab = arg["tab"]
+            self._last_pushed = None
+            return True
+        if verb in ("move", "reset"):
+            entry = self._physical_entry(arg.get("key"))
+            if entry is None:
+                return False
+            targets = [entry]
+        elif verb in ("move_all", "reset_all"):
+            name = arg.get("missing")
+            if not isinstance(name, str):
+                return False
+            targets = [e for e in self._physical_entries()
+                       if self._physical_explicit(e) == name]
+        else:
+            return False
+        if verb in ("move", "move_all"):
+            value = arg.get("part")
+            if value not in self._physical_part_names():
+                return False
+        else:
+            value = None
+        for entry in targets:
+            self._stage_physical(entry, value)
+        self._physical_sync_preview()
+        self._last_pushed = None
+        return True
+
+    def _apply_saved_physical(self, ship, edits: dict) -> None:
+        """A successful Save's physical parents onto the live ship
+        (`ship_property_viewer.apply_physical_parents`) and onto the panel's
+        open-time snapshots (descriptor / running-light `physical_parent`),
+        which now hold the live value. Best-effort, like the other live
+        refreshes after a Save: the file is already written."""
+        if not edits:
+            return
+        try:
+            _spv.apply_physical_parents(ship, edits)
+        except Exception as e:
+            from engine import dev_mode
+            dev_mode.log_swallowed("spv physical-parent live apply", e)
+        for d in self._descriptors:
+            if d.get("name") in edits:
+                d["physical_parent"] = edits[d["name"]]
+        for light in self._physical_lights:
+            if light["name"] in edits:
+                light["physical_parent"] = edits[light["name"]]
+
+    def _physical_sync_preview(self) -> None:
+        """Point the `physical_parents` preview overlay at the PENDING
+        physical parents, so every consumer (pins, mounts, severance,
+        running lights) sees an unsaved choice live, and re-resolve the
+        cached pin positions when the overlay changed. Saved choices are not
+        here: Save writes them onto the live properties
+        (`_apply_saved_physical`). Never touches the overlay for a session
+        with no pending physical edits. Clearing a previous leaf's overlay
+        still matters for pending edits whose ship changed under an open
+        panel."""
+        merged = dict(self._pending_physical)
+        if not merged and self._physical_preview_leaf is None:
+            return
+        from engine.appc import articulation, physical_parents
+        ship = self._ship_getter()
+        leaf = articulation.leaf_for(ship) if ship is not None else ""
+        old = self._physical_preview_leaf
+        if old and old != leaf:
+            physical_parents.clear_preview(old)
+        if leaf and merged:
+            physical_parents.set_preview(leaf, merged)
+        elif leaf:
+            physical_parents.clear_preview(leaf)
+        self._physical_preview_leaf = leaf if (leaf and merged) else None
+        state = (leaf, tuple(sorted(merged.items(), key=lambda kv: kv[0])))
+        if state != self._physical_preview_last:
+            self._physical_preview_last = state
+            self._refresh_world_positions()
+
+    # ------------------------------------------------------------------
     # Undo (pending-only; no redo; cleared on Save)
     # ------------------------------------------------------------------
     def _snapshot_pending(self):
-        """Deep copy of the five staged-edit dicts plus the decal working
+        """Deep copy of the six staged-edit dicts plus the decal working
         list and staged default registry — one undo unit. (Placements are
         frozen dataclasses, so a tuple of them is already a copy.)"""
         import copy
@@ -1214,14 +1501,15 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                 copy.deepcopy(self._pending_emitter),
                 copy.deepcopy(self._pending_pos),
                 copy.deepcopy(self._pending_part),
+                dict(self._pending_physical),
                 (decals, self._decal_default, dict(self._decal_passthrough)))
 
     def _restore_pending(self, snap) -> None:
-        """Replace the five staged-edit dicts and the decal list from a
+        """Replace the six staged-edit dicts and the decal list from a
         snapshot, drop a now-stale emitter/decal selection, re-push the decal
-        override, and force a CEF re-push."""
+        override and the physical-parent preview, and force a CEF re-push."""
         import copy
-        r, l, e, p, pt, (decals, decal_default, passthrough) = snap
+        r, l, e, p, pt, phys, (decals, decal_default, passthrough) = snap
         if decals is not None:
             self._decal_working = list(decals)
             self._decal_default = decal_default
@@ -1243,6 +1531,8 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         self._pending_emitter = copy.deepcopy(e)
         self._pending_pos = copy.deepcopy(p)
         self._pending_part = copy.deepcopy(pt)
+        self._pending_physical = dict(phys)
+        self._physical_sync_preview()
         if self._selected_emitter is not None:
             i, j = self._selected_emitter
             if not (0 <= i < len(self._descriptors)) \
@@ -1797,6 +2087,11 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                     tuple(sorted(self._pending_emitter)),  # subsystem indices with a staged emitter list
                     tuple(sorted(self._pending_pos.items())),
                     tuple(sorted(self._pending_part)),    # names with a staged part edit
+                    self._systems_tab,
+                    tuple(sorted(self._pending_physical.items(),
+                                 key=lambda kv: kv[0])),
+                    tuple(sorted(self._saved_physical.items(),
+                                 key=lambda kv: kv[0])),
                     tuple(sorted(self._expanded_groups)),
                     self._coord_clipboard,
                     self._scale_clipboard,
@@ -1844,9 +2139,11 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             "pending_count": (len(set(self._pending_radius) | set(self._pending_light)
                                   | set(self._pending_pos) | set(self._pending_emitter))
                               + len(self._pending_part)
+                              + len(self._pending_physical)
                               + (1 if self._decal_dirty() else 0)),
             "pending": self._pending_edits(),
             "subsystems": self._subsystem_rows(),
+            "physical": self._physical_payload(),
             "model_parts": self._model_parts_payload(),
             "decals": self._decals_payload(),
             "close_overlays": self._close_overlays,
@@ -1877,6 +2174,11 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             counts[name] += (1 if i in self._pending_pos else 0)
             counts[name] += (1 if i in self._pending_emitter else 0)
         for name in sorted(self._pending_part):
+            if name not in counts:
+                counts[name] = 0
+                order.append(name)
+            counts[name] += 1
+        for name in sorted(self._pending_physical):
             if name not in counts:
                 counts[name] = 0
                 order.append(name)
@@ -2413,6 +2715,8 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             self._decal_reposition = False
         # Any action may have changed the decal working list or registry.
         self._decal_sync_override()
+        # ...or the physical parents (an edit, an undo, Cancel, Save).
+        self._physical_sync_preview()
         # Every action -- a node select, an undo, a node removed from under
         # its selection -- may change which pose the rig should be drawn in.
         if self._visible:
@@ -2465,7 +2769,13 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         an edit through. Covers ACTION STRINGS only -- the raw mouse-driven
         gizmo drag (`_handle_gizmo_input`) never goes through
         `_dispatch_event_inner` at all and is gated separately, by
-        `_current_target_is_locked_mount()` directly."""
+        `_current_target_is_locked_mount()` directly.
+
+        `physical/` actions are never locked (spec section 7.7): a physical
+        parent authors no position, so the pose being previewed cannot
+        record it wrong."""
+        if action.startswith("physical/"):
+            return False
         if action.startswith(self._MOUNT_SELECT_ACTIONS):
             return True
         if action in self._MOUNT_GIZMO_VERBS or action.startswith(self._MOUNT_GIZMO_PREFIXES):
@@ -2533,6 +2843,8 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             self._pipette_armed = False
             self._last_pushed = None
             # fall through to normal handling of the non-select action
+        if action.startswith("physical/"):
+            return self._dispatch_physical_action(action)
         if action == "undo":
             self.undo()
             return True
@@ -2985,7 +3297,7 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             hardpoints_pending = bool(
                 self._pending_radius or self._pending_light
                 or self._pending_pos or self._pending_emitter
-                or self._pending_part)
+                or self._pending_part or self._pending_physical)
             if self._decal_dirty():
                 # decals.json first; a failure keeps EVERY staged edit (and
                 # its toast) so nothing is half-saved behind the player.
@@ -3015,6 +3327,10 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                       for i, v in sorted(self._pending_pos.items())]
             edits += self._emitter_save_edits()
             edits += _spv.part_save_edits(self._pending_part)
+            edits += [(name, "SetPhysicalParent", (part,)) if part is not None
+                      else (name, "__unset__", "SetPhysicalParent")
+                      for name, part in sorted(self._pending_physical.items(),
+                                               key=lambda kv: kv[0])]
             try:
                 target = resolve_override_target(ship)
                 target.write(leaf, edits)
@@ -3043,6 +3359,13 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             self._pending_emitter = {}
             self._saved_part.update(self._pending_part)
             self._pending_part = {}
+            # Physical parents go straight onto the LIVE properties (the
+            # in-game consumers read them every frame), so the preview
+            # overlay is left holding pending edits only and nothing that
+            # clears it can undo a save.
+            self._apply_saved_physical(ship, self._pending_physical)
+            self._saved_physical.update(self._pending_physical)
+            self._pending_physical = {}
             self._undo_stack.clear()
             self._drag_undo_before = None
             self._last_pushed = None

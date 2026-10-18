@@ -1012,6 +1012,12 @@ def _reset_leakable_engine_globals():
         _articulation.reset()
     except Exception:
         pass
+    # Physical-parent preview overlay + one-time missing-part warnings.
+    try:
+        from engine.appc import physical_parents as _physical_parents
+        _physical_parents.reset()
+    except Exception:
+        pass
     # SPV Model Parts pane: expanded/selection are module-level (mirrors the
     # panel's own session state) so one test's selection would otherwise
     # decide whether the next test's pane starts expanded/selected.
@@ -1156,6 +1162,19 @@ def _reset_leakable_engine_globals():
     try:
         import _dauntless_host as _host
         _host.ambient_gradient_set_enabled(True)
+    except Exception:
+        pass
+    # Bridge probe stash (origin + per-state scales) is process-lifetime C++
+    # state too: any host_loop.run() of a bridge mission leaves it at the
+    # bridge camera eye with scales 0, which broke
+    # test_bridge_editor_bindings.py::test_probe_stash_is_at_defaults
+    # whenever it ran after one. A pending capture is NOT reset here (no
+    # production clear exists; draining it takes a GL init/shutdown), so that
+    # tripwire still catches a test that leaks one.
+    try:
+        import _dauntless_host as _host
+        _host.set_bridge_probe_origin((0.0, 0.0, 0.0))
+        _host.set_bridge_probe_scales((1.0,) * 5)
     except Exception:
         pass
     # Hull-hit smoke beam throttle: keyed by (id(target), id(source)), and

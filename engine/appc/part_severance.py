@@ -139,9 +139,9 @@ def part_for_mount(leaf, point, iid=None):
     ⚠️ KNOWN LIMITATION (articulation spec OQ-13): reliable for points on a
     part's skin, a guess for INTERIOR points. On the stock Bird of Prey the
     `Impulse Engines` / `Warp Engines` SYSTEM points resolve to a wing, so
-    that whole system follows the wing and dies with it. The intended fix is
-    explicit membership (subsystems nested under model parts), not a better
-    guess.
+    that whole system follows the wing and dies with it. The fix is
+    explicit membership: `physical_parents.part_for_property` (a subsystem's
+    or light's `SetPhysicalParent`, falling back to this rule when unset).
     """
     if not leaf:
         return None
@@ -499,8 +499,8 @@ def _mounted_subsystems(ship):
     return out
 
 
-def is_authored_mount(ship, point, eps=1e-5) -> bool:
-    """Is body-frame `point` one of `ship`'s authored subsystem mounts?
+def authored_mount_subsystem(ship, point, eps=1e-5):
+    """The subsystem whose authored mount is body-frame `point`, or None.
 
     How `subsystems.target_offset_world` tells a subsystem LOCK's offset (the
     SDK's `SetTargetOffset(pSubsystem.GetPosition())`, the AI's
@@ -510,8 +510,13 @@ def is_authored_mount(ship, point, eps=1e-5) -> bool:
     for _sub, mount in _mounted_subsystems(ship):
         if (abs(mount[0] - point[0]) <= eps and abs(mount[1] - point[1]) <= eps
                 and abs(mount[2] - point[2]) <= eps):
-            return True
-    return False
+            return _sub
+    return None
+
+
+def is_authored_mount(ship, point, eps=1e-5) -> bool:
+    """Is body-frame `point` one of `ship`'s authored subsystem mounts?"""
+    return authored_mount_subsystem(ship, point, eps) is not None
 
 
 def _destroy_subsystems_on_part(ship, part_name, iid=None) -> list:
@@ -529,8 +534,11 @@ def _destroy_subsystems_on_part(ship, part_name, iid=None) -> list:
     """
     leaf = articulation.leaf_for(ship)
     killed = []
+    from engine.appc import physical_parents   # lazy: it imports us lazily too
     for sub, point in _mounted_subsystems(ship):
-        if part_for_mount(leaf, point, iid) != part_name:
+        if physical_parents.part_for_property(
+                leaf, physical_parents.property_of(sub), point,
+                iid) != part_name:
             continue
         try:
             sub.SetCondition(0.0)

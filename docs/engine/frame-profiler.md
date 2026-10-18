@@ -24,6 +24,19 @@ OPEN_STBC_HOST_HEADLESS=1 DAUNTLESS_PROFILE_FRAMES=600 ./build/dauntless --devel
 `DAUNTLESS_PROFILE_FRAMES=N` enables both halves, sets swap interval 0, runs N
 frames, prints one report and exits.
 
+### GPU timing is opt-in — `DAUNTLESS_PROFILE_GPU=1`
+
+By default the profiler is **CPU-only**: no GPU timer query is issued, the gpu
+column prints `-`, and the report says `GPU timing OFF`. That is the mode for
+frame time. `DAUNTLESS_PROFILE_GPU=1` turns on GPU timing to split GPU cost
+between the top-level passes. **Never read frame time from that run:** on this
+Mac the queries make the CPU wait for the GPU every frame, adding about the
+GPU frame time (`perf-register.md` M-6, SIG-019). The wait shows up as a large
+`cef.composite`.
+
+Measured in `rock_fields_inside` (`perf-register.md` C-008, C-009): profiler off
+21.3 ms per frame, CPU-only 22.9 ms, GPU-timed 29.7 ms.
+
 ### Spike capture — one-off long frames, to a file
 
 The averaged report **cannot see a single slow frame**: a 5 s hitch is blended
@@ -193,6 +206,15 @@ The availability check must therefore be on the last query **issued**
 `samples.back()` — the last scope pushed, whose end query is issued earlier.
 
 ## Cost when ON — the profiler is not free on this Mac
+
+⚠️ **Superseded by a live measurement (2026-10-17, `perf-register.md` M-6,
+SIG-019).** In a real scene, the GPU timer makes the CPU wait for the GPU every
+frame, which adds **roughly the GPU frame time**, not the +0.6 to +2.4 ms below.
+The wait lands in the overlay's draw call inside `cef.composite`, so that row
+reads as a large cost when it is really the profiler. Measured with the
+profiler off: 29.7 → 21.3 ms per frame in a scene with 10.5 ms of GPU time.
+**Never read frame time from a GPU-timed capture.** The bench below measured a
+light headless scene and is kept for its per-pass breakdown.
 
 Measured 2026-10-08, headless Debug build, `tools/bench_idle_passes.py`
 (640x360, one shielded Galaxy; "loaded" = 40 extra hulls), profiler on vs off,

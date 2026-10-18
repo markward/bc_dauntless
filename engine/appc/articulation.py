@@ -701,7 +701,7 @@ def detachable_for(leaf):
             for p in rig_for(leaf) if p.break_fraction is not None}
 
 
-def part_transform_point(ship, point, part=None, *, authored=True):
+def part_transform_point(ship, point, part=None, *, authored=True, prop=None):
     """Where a body-frame point ends up once its part has articulated.
 
     In and out are BODY frame, SHIP units (what subsystem mounts and the
@@ -727,8 +727,13 @@ def part_transform_point(ship, point, part=None, *, authored=True):
     by the shared `part_severance.part_for_mount`; pass False for an
     arbitrary point (a Manual Aim pick), which keeps the box rule -- see
     `subsystems.target_offset_world`.
+
+    `prop` is the authored property the point belongs to, when the caller has
+    one: a SET `physical_parent` on it decides the part instead of the
+    geometric rule (`physical_parents.part_for_property`). Only consulted for
+    an authored point with no explicit `part`.
     """
-    found = _live_part(ship, part, point, authored)
+    found = _live_part(ship, part, point, authored, prop)
     if found is None:
         return point
     pose = pose_for_part(ship, found)
@@ -752,7 +757,7 @@ def part_transform_vector(ship, vec, part_name):
     return part_pose.apply_vector(pose, vec)
 
 
-def _live_part(ship, name, point, authored=True):
+def _live_part(ship, name, point, authored=True, prop=None):
     """The NAME of `ship`'s posable, NOT-detached part `name` (attributed
     from `point` when `name` is None), or None. Posable = in the rig, or
     posed by name in `ship._articulation_poses` (`posed_part_names`).
@@ -771,8 +776,14 @@ def _live_part(ship, name, point, authored=True):
     if name is None:
         if point is None:
             return None
-        rule = part_for_mount if authored else part_for_point
-        name = rule(leaf_for(ship), point)
+        if authored and prop is not None:
+            # Lazy: physical_parents imports this module lazily too.
+            from engine.appc import physical_parents
+            name = physical_parents.part_for_property(
+                leaf_for(ship), prop, point)
+        else:
+            rule = part_for_mount if authored else part_for_point
+            name = rule(leaf_for(ship), point)
     if name is None:
         return None
     if is_detached(ship, name):

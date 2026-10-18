@@ -35,9 +35,42 @@ def host():
 
 @pytest.fixture(autouse=True)
 def _clean_profiler(host):
+    # Most of this module covers the GPU query path, so it opts in to GPU
+    # timing, which is OFF by default (perf-register.md M-6). The CPU-only
+    # tests turn it back off themselves.
     host.profiler_set_enabled(False)
+    host.profiler_set_gpu_enabled(True)
     yield
     host.profiler_set_enabled(False)
+    host.profiler_set_gpu_enabled(False)
+
+
+def test_cpu_only_mode_issues_no_gpu_queries_and_still_times_the_cpu(host):
+    """GPU timing off is the default because the queries themselves make the
+    CPU wait for the GPU (perf-register.md SIG-019). Off must mean no query of
+    any kind, while the CPU column keeps measuring."""
+    host.profiler_set_gpu_enabled(False)
+    host.profiler_set_enabled(True)
+    _run_frames(20)
+    f = host.profiler_frame()
+    assert f["gpu_requested"] is False, f
+    assert f["gpu_timer"] == "none", f
+    assert f["gpu_queries"] is False, f
+    assert f["timestamp_queries"] == 0, f
+    scopes = host.profiler_scopes()
+    assert scopes, "nothing resolved"
+    assert not any(s["gpu_measured"] for s in scopes), scopes
+    frame_row = [s for s in scopes if s["name"] == "frame"][0]
+    assert frame_row["cpu_ms"] > 0.0, frame_row
+
+
+def test_requesting_gpu_timing_uses_the_drivers_timer(host):
+    host.profiler_set_enabled(True)
+    _run_frames(8)
+    f = host.profiler_frame()
+    assert f["gpu_requested"] is True, f
+    assert f["gpu_timer"] == _expected_timer(f["timestamp_bits"],
+                                             f["elapsed_bits"]), f
 
 
 def _run_frames(n):

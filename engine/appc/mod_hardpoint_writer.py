@@ -289,6 +289,21 @@ def _check_finite(edits):
                                      % (x, subsystem, setter))
 
 
+def _author_calls_setter(tree, subsystem, setter):
+    """Whether the author text calls `V.<setter>(...)` at ANY depth (guarded
+    by an `if`, in a loop, ...) on a variable bound to the Create of
+    `<subsystem>`. Unlike `find_setter_call` this is not a rewrite-safety
+    test: it only decides whether an unset must be written as an override."""
+    if _create_count(tree, subsystem) < 1:
+        return False
+    for n in ast.walk(tree):
+        if (isinstance(n, ast.Assign) and _is_create_of(n.value, subsystem)):
+            for t in n.targets:
+                if isinstance(t, ast.Name) and _contains_setter_call(tree, t.id, setter):
+                    return True
+    return False
+
+
 def rewrite(text, leaf, edits):
     _check_finite(edits)
     newline = _newline_of(text)
@@ -314,6 +329,12 @@ def rewrite(text, leaf, edits):
                 if calls:
                     models[leaf][subsystem] = [(s, a) for (s, a) in calls if s != setter]
                 continue
+        if (tree is not None and len(edit) == 3 and edit[1] == "__unset__"
+                and _author_calls_setter(tree, edit[0], edit[2])):
+            # The author's own call sits above the block and cannot be
+            # rewritten, so the block overrides it with None (= unset).
+            _w.set_setter(models, leaf, edit[0], edit[2], (None,))
+            continue
         _w.apply_edit(models, leaf, edit)
 
     _check_no_overlapping_spans(replacements)
