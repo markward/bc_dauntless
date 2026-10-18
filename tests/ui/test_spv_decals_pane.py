@@ -1210,3 +1210,63 @@ def test_save_writes_the_mask_key_only_where_it_differs(env):
     assert "mask" not in doc["decals"]["pylon"]
     assert doc["decals"]["pylon_2"]["mask"] == "pylon"
     assert "mask" not in doc["decals"]["top"]
+
+
+# ── the pane authors at the NIF pose ───────────────────────────────────────
+
+@pytest.fixture
+def rigged(env, monkeypatch):
+    """`env` with its ship resolving to the Bird of Prey rig and a `warp`
+    Transformation node selected, so the rig is posed before the pane opens."""
+    import engine.ui.ship_property_viewer_panel as mod
+    from engine.appc import articulation
+    ship = env["ship"]
+    ship._articulation_leaf = "birdofprey"
+    ship._articulation_poses = {}
+    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda s: "birdofprey")
+    p = env["p"]
+    p._model_part_nodes = [
+        {"name": "left wing", "parent": "Scene Root", "candidate": True,
+         "bounds_min": (-1.0, -0.5, -0.5), "bounds_max": (-0.1, 0.5, 0.5)}]
+    p.dispatch_event("part/select_node:" + json.dumps(
+        {"name": "left wing", "kind": "warp"}))
+    part = next(q for q in articulation.rig_for("birdofprey")
+                if q.GetName() == "left wing")
+    return dict(env, part=part)
+
+
+def _wing_is_nif(env):
+    from engine.appc import articulation, part_pose
+    return part_pose.is_identity(
+        articulation.pose_for_part(env["ship"], env["part"]))
+
+
+def test_entering_the_decals_pane_returns_a_posed_ship_to_the_nif_pose(rigged):
+    p = rigged["p"]
+    assert not _wing_is_nif(rigged), "fixture: the warp state is posed"
+    assert p._applied_part_pose is not None
+    p.dispatch_event("decal-pane")
+    assert _wing_is_nif(rigged)
+    assert p._applied_part_pose is None
+
+
+def test_leaving_the_decals_pane_restores_the_selected_state_pose(rigged):
+    p = rigged["p"]
+    p.dispatch_event("decal-pane")
+    p.dispatch_event("decal-pane")
+    assert not _wing_is_nif(rigged)
+    assert p._applied_part_pose[0] == "warp"
+
+
+def test_selecting_a_state_node_while_the_decals_pane_is_active_keeps_the_nif_pose(
+        rigged):
+    p = rigged["p"]
+    p.dispatch_event("part/select_node:" + json.dumps(
+        {"name": "left wing", "kind": "anchor"}))
+    p.dispatch_event("decal-pane")
+    assert p._decals_active
+    p.dispatch_event("part/select_node:" + json.dumps(
+        {"name": "left wing", "kind": "warp"}))
+    assert p._decals_active, "selecting a node does not leave the pane"
+    assert _wing_is_nif(rigged)
+    assert p._applied_part_pose is None

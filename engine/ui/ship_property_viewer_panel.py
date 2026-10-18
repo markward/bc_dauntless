@@ -731,7 +731,8 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         effective pose for the state takes it, and every other part stays at
         the NIF pose (`articulation.force_state_poses`). Editing the selected
         pose re-posts the whole state, so the other parts stay posed while
-        it moves. Anything else -- the part row, the Anchor or Breakage node, a mount,
+        it moves. While the Decals pane is active the NIF pose is drawn
+        whatever is selected. Anything else -- the part row, the Anchor or Breakage node, a mount,
         nothing -- draws the whole rig at the NIF pose
         (`articulation.force_pose(ship, None)`), the frame a hardpoint mount
         is stored in. The SPV freezes the sim, so nothing else would move
@@ -752,7 +753,10 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             _spv.select_part_node(None, None)
         state_node = self._selected_state_node()
         want = None
-        if state_node is not None:
+        # The Decals pane authors in the REST frame: a trace and
+        # `world_to_body` must see the NIF pose, so an active pane counts as
+        # "no state selected". Leaving it re-applies the selection.
+        if state_node is not None and not self._decals_active:
             state = state_node[1]
             want = (state, tuple(sorted(self._state_pose6s(state).items())))
         if want == self._applied_part_pose:
