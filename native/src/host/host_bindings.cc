@@ -6933,6 +6933,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("profiler_gpu_enabled",
           []() { return renderer::frame_timer().gpu_requested(); },
           "True when GPU timing has been requested.");
+    m.def("profiler_set_gpu_focus",
+          [](std::vector<std::string> names) {
+              renderer::frame_timer().set_gpu_focus(std::move(names));
+          },
+          py::arg("names"),
+          "Nested scopes to GPU-time under GL_TIME_ELAPSED, which otherwise "
+          "times only the top-level passes (perf-register.md M-1). The "
+          "enclosing top-level pass's query is split around each one, so its "
+          "own total is unchanged. Empty = top-level only (the default).");
     m.def("profiler_reset",
           []() { renderer::frame_timer().reset(); },
           "Drop all accumulated averages and the scope table.");
@@ -7011,6 +7020,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
               d["gpu_queries"] = t.gpu_queries_active();
               // False = CPU-only by choice (the default), not a dead driver.
               d["gpu_requested"] = t.gpu_requested();
+              // Nested scopes timed by splitting their top-level pass's query.
+              py::list focus;
+              for (const auto& f : t.gpu_focus()) focus.append(f);
+              d["gpu_focus"] = focus;
               // What the driver declared (GL_QUERY_COUNTER_BITS), -1 until the
               // first enabled frame has read it.
               d["timestamp_bits"] = t.timestamp_bits();

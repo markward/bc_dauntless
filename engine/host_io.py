@@ -78,6 +78,7 @@ _OPTIONAL_BINDINGS = frozenset({
     "starmap_set_camera", "starmap_set_scene",
     "profiler_set_enabled", "profiler_enabled",
     "profiler_set_gpu_enabled", "profiler_gpu_enabled",
+    "profiler_set_gpu_focus",
     "profiler_scopes", "profiler_frame", "profiler_last_frame_raw",
     "set_swap_interval", "swap_interval",
     "set_cursor_shape",
@@ -916,6 +917,15 @@ def profiler_set_gpu_enabled(enabled: bool) -> None:
     fn = getattr(_h, "profiler_set_gpu_enabled", None)
     if fn is not None:
         fn(bool(enabled))
+
+
+def profiler_set_gpu_focus(names) -> None:
+    """Nested scopes to GPU-time too (perf-register.md M-1). Apple's GL times
+    only the top-level passes; each focus scope gets its own span by splitting
+    its top-level pass's query, whose total is unchanged. Empty = none."""
+    fn = getattr(_h, "profiler_set_gpu_focus", None)
+    if fn is not None:
+        fn([str(n) for n in names])
 
 
 def profiler_gpu_enabled() -> bool:

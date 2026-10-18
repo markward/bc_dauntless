@@ -373,3 +373,87 @@ def test_last_frame_raw_is_available_immediately_and_unsmoothed(host):
 def test_last_frame_raw_is_empty_when_disabled(host):
     _run_frames(2)
     assert host.profiler_last_frame_raw()["scopes"] == []
+
+
+# ── GPU focus (perf-register.md M-1) ─────────────────────────────────────────
+# GL_TIME_ELAPSED cannot nest, so on Apple's GL a nested pass has no GPU
+# figure. A focus names nested scopes to time anyway: the enclosing top-level
+# pass's query is suspended while the focus scope runs and resumed after, so
+# the top-level row still totals all of it.
+
+def _nested_rows_with_parents(scopes):
+    """(nested row, its depth-1 ancestor row) for every row deeper than 1."""
+    out, parent = [], None
+    for s in scopes:
+        if s["depth"] == 1:
+            parent = s
+        elif s["depth"] >= 2 and parent is not None:
+            out.append((s, parent))
+    return out
+
+
+@pytest.fixture
+def _no_focus(host):
+    yield
+    host.profiler_set_gpu_focus([])
+
+
+def test_no_gpu_focus_by_default(host):
+    host.profiler_set_enabled(True)
+    _run_frames(8)
+    assert host.profiler_frame()["gpu_focus"] == []
+
+
+def test_a_focus_scope_is_gpu_timed_while_nested(host, _no_focus):
+    host.profiler_set_enabled(True)
+    _run_frames(10)
+    pairs = _nested_rows_with_parents(host.profiler_scopes())
+    assert pairs, "an empty headless frame has no nested scope to focus"
+    target, parent = pairs[0]
+
+    host.profiler_set_gpu_focus([target["name"]])
+    _run_frames(40)
+    f = host.profiler_frame()
+    assert f["gpu_focus"] == [target["name"]], f
+    if f["gpu_timer"] != "elapsed":
+        pytest.skip("focus only changes anything under GL_TIME_ELAPSED")
+    by_name = {s["name"]: s for s in host.profiler_scopes()}
+    assert by_name[target["name"]]["gpu_measured"], by_name[target["name"]]
+    assert by_name[parent["name"]]["gpu_measured"], by_name[parent["name"]]
+    # The parent's segments include the focus scope's, frame by frame, and
+    # both averages blend the same frames, so the parent can never read less.
+    assert (by_name[parent["name"]]["gpu_ms"] + 1e-6
+            >= by_name[target["name"]]["gpu_ms"]), (by_name[parent["name"]],
+                                                     by_name[target["name"]])
+    # Every other nested row is still unmeasured.
+    for s in host.profiler_scopes():
+        if s["depth"] >= 2 and s["name"] != target["name"]:
+            assert not s["gpu_measured"], s
+
+
+def test_focus_keeps_the_frame_total_equal_to_the_frame_row(host, _no_focus):
+    host.profiler_set_enabled(True)
+    _run_frames(10)
+    pairs = _nested_rows_with_parents(host.profiler_scopes())
+    assert pairs
+    host.profiler_set_gpu_focus([p[0]["name"] for p in pairs])
+    _run_frames(30)
+    by_name = {s["name"]: s for s in host.profiler_scopes()}
+    total = host.profiler_frame()["gpu_ms"]
+    assert abs(total - by_name["frame"]["gpu_ms"]) <= 0.5 + 0.05 * total, (
+        total, by_name["frame"])
+
+
+def test_clearing_the_focus_restores_the_top_level_rule(host, _no_focus):
+    host.profiler_set_enabled(True)
+    _run_frames(10)
+    pairs = _nested_rows_with_parents(host.profiler_scopes())
+    assert pairs
+    host.profiler_set_gpu_focus([pairs[0][0]["name"]])
+    _run_frames(10)
+    host.profiler_set_gpu_focus([])
+    _run_frames(40)
+    if host.profiler_frame()["gpu_timer"] != "elapsed":
+        pytest.skip("only GL_TIME_ELAPSED has a top-level rule")
+    for s in host.profiler_scopes():
+        assert s["gpu_measured"] == (s["depth"] <= 1), s

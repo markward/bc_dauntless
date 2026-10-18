@@ -22,6 +22,15 @@
 //     sum of its timed children.
 //   * Nothing, when neither counter has bits.
 //
+// GPU FOCUS (perf-register.md M-1): under GL_TIME_ELAPSED, named nested scopes
+// can be timed too. While a focus scope runs, its depth-1 ancestor's query is
+// ended and a new one begun for the focus scope; when it closes, a new query
+// resumes the ancestor. The ancestor's GPU time is the sum of all its
+// segments, the focus scope's included, so the top-level rows read exactly as
+// without a focus. Opt-in, for attribution only: every split is one more query
+// pair, so a focused capture is no more a frame-time measurement than any
+// other GPU-timed one.
+//
 // A 0-bit GL_TIMESTAMP counter is never queried at all: Apple's driver answers
 // with zeros yet charges 2-6 ms/frame for the queries (measured 2026-10-03).
 //
@@ -85,6 +94,15 @@ public:
                          : GpuTimer::None;
     }
 
+    /// Under GL_TIME_ELAPSED, whether entering a scope splits the open
+    /// depth-1 query to time it: a focus scope, nested below the top-level
+    /// passes, with no other focus scope already open (a focus inside a focus
+    /// is part of the outer one's segment and stays untimed).
+    static constexpr bool focus_splits(int depth, bool is_focus,
+                                       bool focus_open) {
+        return is_focus && !focus_open && depth > 1;
+    }
+
     /// Under GL_TIME_ELAPSED, the one scope depth that gets a query: the
     /// children of the outermost scope. They are sequential, so at most one
     /// TIME_ELAPSED query is ever active.
@@ -112,6 +130,13 @@ public:
     /// set_enabled, so one report never mixes timed and untimed frames.
     void set_gpu_requested(bool v);
     bool gpu_requested() const { return gpu_requested_; }
+
+    /// Nested scopes to GPU-time under GL_TIME_ELAPSED (see GPU FOCUS above).
+    /// Names match exactly. Empty (the default) = top-level passes only. A
+    /// change while enabled resets the averages, like set_gpu_requested.
+    void set_gpu_focus(std::vector<std::string> names);
+    const std::vector<std::string>& gpu_focus() const { return gpu_focus_; }
+    bool is_gpu_focus(const std::string& name) const;
 
     /// Frame boundary. begin_frame resolves the oldest pending record and
     /// starts a new one; end_frame closes it. Both are no-ops when disabled.
@@ -197,8 +222,19 @@ private:
         int parent = -1;
     };
 
+    // GL_TIME_ELAPSED only: one query's span, credited to the scope that
+    // owned it and, for a focus scope, to its depth-1 ancestor as well (the
+    // ancestor's own segments are the rest of its time).
+    struct Segment {
+        unsigned int query = 0;
+        int owner = -1;     // sample index whose scope the span belongs to
+        int top = -1;       // sample index of the depth-1 ancestor (== owner
+                            // for a top-level pass's own segment)
+    };
+
     struct Record {
         std::vector<Sample> samples;
+        std::vector<Segment> segments;       // GL_TIME_ELAPSED spans, in order
         std::vector<unsigned int> queries;   // owned pool, grows to high water
         std::size_t used = 0;                // queries handed out this frame
         std::vector<double> cpu_ns;          // per slot
@@ -233,6 +269,12 @@ private:
     int timestamp_bits_ = -1;
     int elapsed_bits_ = -1;
     bool elapsed_open_ = false;                  // a TIME_ELAPSED query is active
+    unsigned int elapsed_query_ = 0;             // ...and its name
+    std::vector<std::string> gpu_focus_;
+    bool focus_open_ = false;                    // a focus scope holds the query
+    std::size_t focus_sample_ = 0;               // ...its sample index
+    void begin_segment(int owner, int top);
+    void end_segment();
     std::uint64_t timestamp_queries_ = 0;
     std::uint64_t frame_index_ = 0;
     std::uint64_t frames_resolved_ = 0;

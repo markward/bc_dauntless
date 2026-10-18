@@ -10653,6 +10653,18 @@ def run(mission_name: Optional[str] = None,
         from engine import bridge_selection as _bs
         controller.bridge_pins = _bs.load_bridge_pins()
         init_audio_backend()
+        # DAUNTLESS_DEV_RENDER_OFF=a,b: perf A/B runs with features switched
+        # off (engine/dev_render_off.py). Applied here because the planet
+        # flags are read when the boot mission realises its planets, and again
+        # after the saved settings below. A bad name stops the boot: a typo
+        # must not pass for an A/B of the unchanged scene.
+        from engine import dev_render_off as _dev_render_off
+        _render_off = _dev_render_off.from_env(_os.environ,
+                                               developer=dev_mode.is_enabled())
+        if _render_off:
+            _dev_render_off.apply(_render_off, r)
+            print("[dev-render-off] off: %s" % ", ".join(_render_off),
+                  flush=True)
         if boot_quickbattle:
             # Real SDK QuickBattle entry cascade: builds the QuickBattleRegion
             # set, GalaxyBridge, and initial player, injects the player-only
@@ -10945,6 +10957,8 @@ def run(mission_name: Optional[str] = None,
             light_emitters=_light_emitters, camera_shake=_camera_shake, App=App,
         )
         _settings.apply_all(_store, _settings_ctx)
+        if _render_off:
+            _dev_render_off.apply(_render_off, r)
         configuration_panel = ConfigurationPanel(
             tabs=[("graphics", "Graphics"), ("gameplay", "Gameplay"),
                   ("controls", "Controls"), ("bridges", "Bridges")],
@@ -11310,6 +11324,9 @@ def run(mission_name: Optional[str] = None,
         # (docs/engine/perf-register.md, M-6).
         host_io.profiler_set_gpu_enabled(
             frame_profiler.gpu_timing_requested_from_env())
+        # DAUNTLESS_PROFILE_GPU_FOCUS=a,b: GPU-time these nested scopes too
+        # (perf-register.md M-1). Attribution only, like any GPU-timed run.
+        host_io.profiler_set_gpu_focus(frame_profiler.gpu_focus_from_env())
         try:
             _profile_frames = int(_os.environ.get('DAUNTLESS_PROFILE_FRAMES', '0'))
         except ValueError:
@@ -11337,11 +11354,14 @@ def run(mission_name: Optional[str] = None,
             try:
                 _fbw0, _fbh0 = host_io.framebuffer_size()
                 _wnw0, _wnh0 = host_io.window_size()
+                _focus0 = frame_profiler.gpu_focus_from_env()
                 print("[profile] framebuffer %dx%d, window %dx%d, headless=%s, "
-                      "gpu timing=%s"
+                      "gpu timing=%s%s"
                       % (_fbw0, _fbh0, _wnw0, _wnh0,
                          bool(_os.environ.get("OPEN_STBC_HOST_HEADLESS")),
-                         "on" if host_io.profiler_gpu_enabled() else "off"),
+                         "on" if host_io.profiler_gpu_enabled() else "off",
+                         (", gpu focus=%s" % ",".join(_focus0))
+                         if _focus0 else ""),
                       flush=True)
             except Exception as _e:  # a profiler must never stop the game
                 print("[profile] capture header failed: %s" % _e, flush=True)
