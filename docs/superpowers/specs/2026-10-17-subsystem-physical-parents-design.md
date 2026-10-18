@@ -342,6 +342,11 @@ the part moves (decal spec line 312). **The LC Intrepid needs this soon**
 an immediate follow-up, not a parked one. Also unverified: whether a decal
 leaves with its part on severance.
 
+**Resolved** by `2026-10-18-articulated-hull-decals-design.md`: decals test
+in the rest frame via `u_node_rest_fix` (a decal on a shot-off part leaves with
+the chunk, its goal 2), and the SPV places at the NIF pose and fills `shape` on
+rigged parts.
+
 ## 11. Decisions
 
 By Mark (2026-10-17)

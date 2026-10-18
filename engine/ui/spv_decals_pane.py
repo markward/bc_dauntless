@@ -21,6 +21,13 @@ is 1 / (0.01 * GetScale()) body units -- NOT 1 / GetScale().
 - The gizmo, the other way: `body_to_world` through host_loop's own
   `_world_matrix_from(loc, rot, instance_scale(ship))`, and a drag of `t` GU
   along a world gizmo axis is `t / instance_scale(ship)` body units.
+
+Articulated parts (spec 2026-10-18-articulated-hull-decals S6.2). While the
+pane is active every part is at the NIF pose, so body points are REST-frame
+points. A placement whose centre lands on a mesh under a part this ship's rig
+articulates gets that mesh's `shape` (so it follows the part); any other mesh
+clears it. Derived on Add, Reposition, Move, Paste and Mirror -- never on a
+Rotate/Scale (same centre) -- and a trace miss keeps the old shape.
 """
 from __future__ import annotations
 
@@ -70,6 +77,9 @@ MASK_CAP_HINT = ("At most %d distinct masks per ship -- reuse one of: "
 NOT_IN_GAME_HINT = ("Not shown in game — no registry for this ship. "
                     "Use 'Make X the class default'.")
 MIN_DEPTH = 1e-4
+# A centre that moved less than this (NIF units) did not move: Rotate and
+# Scale rebuild the origin from the centre, which round-trips only to ~1e-13.
+CENTRE_MOVED_EPS = 1e-6
 # The top-right tool panels' steppers are authored for hardpoints (+-0.01 /
 # +-0.1 body GU). A decal's numbers are NIF units (1 GU = 1 / BC_MODEL_SCALE
 # of them), so the JS multiplies -- and relabels -- a decal's steps by
@@ -184,6 +194,8 @@ class DecalsPaneMixin:
         self._decal_override_iid = None
         self._decal_last_push = None
         self._decal_last_push_time = 0.0
+        # (iid, host_io.model_identity(iid)) for shape derivation, or None.
+        self._decal_identity = None
 
     # ------------------------------------------------------------------
     # Resolution
@@ -473,6 +485,7 @@ class DecalsPaneMixin:
         self._decal_reposition = False
         self._decal_error = None
         self._decal_grab = None
+        self._decal_identity = None
         if self._decal_dirty():
             self._show_toast("Decal edits are not saved yet -- Save to keep them")
 
@@ -605,6 +618,63 @@ class DecalsPaneMixin:
         pb, nb = body
         return tuple(float(c) for c in pb), _unit(tuple(float(c) for c in nb))
 
+    def _decal_mesh_entry(self, iid, mesh) -> Optional[dict]:
+        """`model_identity`'s entry for mesh index `mesh`, cached per iid."""
+        from engine import host_io
+        if self._decal_identity is None or self._decal_identity[0] != iid:
+            self._decal_identity = (iid, host_io.model_identity(iid))
+        info = self._decal_identity[1]
+        for m in (info or {}).get("meshes", ()):
+            if m.get("mesh") == mesh:
+                return m
+        return None
+
+    def _decal_shape_at(self, body_point: Vec3, body_normal: Vec3,
+                        depth: float = 1.0) -> Optional[str]:
+        """The shape a placement centred on `body_point` should carry: the
+        hit mesh's shape name when it hangs under a part this ship's rig
+        articulates, "" for any other mesh, None when the trace misses (the
+        caller keeps the old shape). The ray starts max(depth, 1) body units
+        outside along the normal and reaches as far inside, through the same
+        frames as `_decal_hull_hit` (body -> SET -> VIEW coords)."""
+        ship, iid = self._ship_getter(), self._decal_iid()
+        if ship is None or iid is None:
+            return None
+        from engine import host_io
+        from engine.appc import articulation
+        from engine.appc.math import TGPoint3
+        from engine.systems import frames
+        try:
+            n = _unit(body_normal)
+            d = max(float(depth), 1.0)
+            start = body_to_world(ship, tuple(
+                body_point[k] + d * n[k] for k in range(3)))
+            off = frames.view_offset(frames.containing_set(ship))
+            o = frames.shifted(TGPoint3(*start), off, 1.0)
+            hit = host_io.ray_trace_mesh_pick(
+                iid, (o.x, o.y, o.z), body_dir_to_world(ship, tuple(-c for c in n)),
+                2.0 * d * instance_scale(ship))
+            if hit is None:
+                return None
+            entry = self._decal_mesh_entry(iid, hit[3])
+            if entry is None:
+                return None
+            parts = {articulation._part_name(q)
+                     for q in articulation.parts_for_ship(ship)}
+        except Exception as e:
+            from engine import dev_mode
+            dev_mode.log_swallowed("spv decal shape trace", e)
+            return None
+        if any(node in parts for node in entry.get("node_chain", ())):
+            return str(entry.get("name", ""))
+        return ""
+
+    def _decal_with_derived_shape(self, p: decal_editor.Placement
+                                  ) -> decal_editor.Placement:
+        """`p` with the shape under its centre, or `p` itself on a miss."""
+        shape = self._decal_shape_at(decal_editor.centre(p), p.normal, p.depth)
+        return p if shape is None else replace(p, shape=shape)
+
     def decal_click(self, x, y, viewport) -> bool:
         """A viewport click while the Decals pane is active. Places the
         pending Add, or re-seats the selection under Reposition. True when
@@ -630,8 +700,8 @@ class DecalsPaneMixin:
                     self._decal_ship_radius(self._ship_getter()),
                     self._decal_aspect(mask))
                 # "" when the name IS the mask: no redundant "mask" key.
-                self._decal_working.append(
-                    replace(p, mask="" if mask == name else mask))
+                self._decal_working.append(self._decal_with_derived_shape(
+                    replace(p, mask="" if mask == name else mask)))
                 self._decal_selected = name
                 self._decal_adding = None
                 self._decal_adding_mask = ""
@@ -640,8 +710,9 @@ class DecalsPaneMixin:
                 if i is None:
                     self._decal_reposition = False
                     return True
-                self._decal_working[i] = decal_editor.reposition(
-                    self._decal_working[i], pb, nb, BODY_FORWARD, BODY_UP)
+                self._decal_working[i] = self._decal_with_derived_shape(
+                    decal_editor.reposition(
+                        self._decal_working[i], pb, nb, BODY_FORWARD, BODY_UP))
                 self._decal_reposition = False
         except ValueError as e:
             self._decal_error = "Cannot place there: %s" % e
@@ -668,10 +739,15 @@ class DecalsPaneMixin:
 
     def _decal_apply(self, new_p) -> None:
         """Replace the selected placement with `new_p` and re-push the
-        override (every `DecalTarget` edit lands here)."""
+        override (every `DecalTarget` edit lands here). A moved centre
+        re-derives the shape; Rotate and Scale keep it, so never re-trace."""
         i = self._decal_index(self._decal_selected)
         if i is None:
             return
+        c0 = decal_editor.centre(self._decal_working[i])
+        c1 = decal_editor.centre(new_p)
+        if any(abs(a - b) > CENTRE_MOVED_EPS for a, b in zip(c0, c1)):
+            new_p = self._decal_with_derived_shape(new_p)
         self._decal_working[i] = new_p
         self._last_pushed = None
         self._decal_sync_override()
