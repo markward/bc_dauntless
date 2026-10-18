@@ -1074,12 +1074,15 @@ def _advance_combat(ships, dt: float, ship_instances=None,
         shockwaves.advance(dt)
         particles.advance(dt)
     with frame_profiler.scope("cb.death"):
-        ship_death.advance(dt)
+        with frame_profiler.scope("death.ship"):
+            ship_death.advance(dt)
         # Fireball lights age on the same clock as the death sequence that
         # scheduled them.
-        _explosion_lights.advance(dt)
+        with frame_profiler.scope("death.lights"):
+            _explosion_lights.advance(dt)
         from engine.appc import object_lifetime
-        object_lifetime.advance(dt)
+        with frame_profiler.scope("death.lifetime"):
+            object_lifetime.advance(dt)
     with frame_profiler.scope("cb.damage_sys"):
         from engine.appc import subsystem_cascade, warp_core_breach
         with frame_profiler.scope("dmg.cascade"):
@@ -4434,6 +4437,27 @@ def _start_hull_prebake() -> None:
         hull_volume.prebake_all()
     except Exception as _e:  # noqa: BLE001 - never block boot
         dev_mode.log_swallowed("start hull volume prebake", _e)
+
+
+# SDK modules the engine itself imports lazily in combat. The SDK loader
+# parses, transforms and compiles a script on its first import in a process
+# (engine/sdk_code_cache.py is in-memory), and only five SDK missions import
+# Effects themselves, so elsewhere the first death cascade blast or hull-hit
+# smoke paid it mid-combat: 15.8 ms of a dying Sovereign's death frame in
+# Debug (perf-register P-4). Effects' module body is `import App` and three
+# constants, so importing it early has no side effects.
+_PREWARM_SDK_MODULES = ("Effects",)
+
+
+def _prewarm_sdk_modules() -> None:
+    """Import _PREWARM_SDK_MODULES at boot, after _setup_sdk. Best effort:
+    a module that fails here still imports on first use, as before."""
+    import importlib
+    for name in _PREWARM_SDK_MODULES:
+        try:
+            importlib.import_module(name)
+        except Exception as _e:  # noqa: BLE001 - never block boot
+            dev_mode.log_swallowed("prewarm SDK module %s" % name, _e)
 
 
 def _setup_sdk() -> None:
@@ -10389,6 +10413,7 @@ def run(mission_name: Optional[str] = None,
             return 0
 
     _start_hull_prebake()
+    _prewarm_sdk_modules()
 
     import App
     from engine.core.loop import GameLoop
