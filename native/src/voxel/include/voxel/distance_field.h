@@ -30,14 +30,19 @@ inline constexpr float kDefaultBandCells = 4.0f;
 /// do: every shipped station _vox.nif uses cell 85 against the authored 15,
 /// and the largest volume in the whole corpus is 206k cells.
 ///
-/// 2^24 sits just above the largest lattice any hull with a BC _vox produces
-/// at the authored resolution (SpaceFacility / FedOutpost: 153 x 283 x 310 =
-/// 13.4M, live-verified), so every hull BC voxelised bakes exactly as before
-/// and only FedStarbase (350x larger than the next hull) is coarsened.
+/// A BACKSTOP, not the sizing rule. Stations are sized by their hole
+/// modifier before they get here (engine/appc/hull_volume.py
+/// effective_resolution: FedOutpost 13.4M -> about 50k cells). 2^22 sits
+/// just above the largest ship lattice (the Defiant-class mod hulls,
+/// 218 x 306 x 56 = 3.7M), so no ship is coarsened; it catches what the
+/// modifier cannot -- a mod missile authored at resolution 2 (13.4M) and
+/// catalogue rocks scaled up 8x (up to 5.8M). Every whole-lattice pass (the
+/// first severance BFS, a full atlas upload) scales with this count: at
+/// 13.4M each cost 130-240 ms in Debug (perf-register P-4).
 ///
 /// This is a bake INPUT: changing it changes the output for hulls above the
 /// old or new value, so bump dhv.h's kBakerVersion in the same change.
-inline constexpr std::size_t kMaxFieldCells = std::size_t{1} << 24;
+inline constexpr std::size_t kMaxFieldCells = std::size_t{1} << 22;
 
 /// Signed distance field over a uniform body-frame lattice, model units.
 ///

@@ -74,7 +74,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_dust_planets", "set_dust_profile", "set_emissive_scale", "set_game_root", "set_glow_region_dim",
     "set_instance_atmosphere",
     "set_instance_surface",
-    "set_project_asset_root",
+    "set_project_asset_root", "prewarm_scuff_normal_texture",
     "set_glow_region_gain",
     "set_hologram_only_mode", "set_hologram_ship", "set_hull_discharges",
     "set_instance_decals",
@@ -278,6 +278,12 @@ def set_project_asset_root(root: str) -> None:
     the checkout. Pushed once at boot beside set_game_root; no hasattr guard
     (see hull_volume_set_cache_root)."""
     _h.set_project_asset_root(str(root))
+
+
+def prewarm_scuff_normal_texture() -> None:
+    """Load the collision-scuff normal map at boot instead of on the first
+    scuff drawn (perf-register P-11). After set_project_asset_root."""
+    _h.prewarm_scuff_normal_texture()
 
 
 def set_asset_overrides(overrides: dict) -> None:

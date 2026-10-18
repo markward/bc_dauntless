@@ -1313,3 +1313,122 @@ TEST_F(InstanceFieldCacheTest, FirstSeveranceCheckIsReportedOncePerInstance) {
     EXPECT_TRUE(cache.take_first_severance_check(child));
     EXPECT_FALSE(cache.take_first_severance_check(id)) << "the parent stays checked";
 }
+
+// perf-register P-4: a dead station's wreck kept carving a field the first
+// carve had already saturated. Each repeat changed no cell but re-uploaded
+// the whole atlas and re-armed the full-lattice severance check.
+TEST_F(InstanceFieldCacheTest, RecarvingFullyCarvedMaterialNeitherReuploadsNorArmsSeverance) {
+    voxel::HullVolumeCache bake_cache(scratch_root() / "cache_recarve_saturated");
+    const auto src = make_source("hull_recarve_saturated.nif", "hull");
+    ASSERT_TRUE(seed_baked_field(bake_cache, src, kAuthoredRes,
+                                 voxel::kDefaultQuality, make_baked_field()));
+    InstanceFieldCache cache(&bake_cache);
+    const scenegraph::InstanceId id{1, 0};
+
+    cache.carve(id, src, kAuthoredRes, glm::vec3(20, 20, 20), kUp, 500.0f);
+    ASSERT_NE(cache.get(id), nullptr);
+    ASSERT_EQ(cache.uploads(), 1u);
+    ASSERT_FALSE(cache.take_severance_box(id).empty());
+
+    cache.carve(id, src, kAuthoredRes, glm::vec3(22, 18, 20), kUp, 500.0f);
+    cache.carve(id, src, kAuthoredRes, glm::vec3(5, 5, 5), kUp, 3.0f);
+    cache.carve_capsule(id, src, kAuthoredRes, glm::vec3(10, 30, 5),
+                        glm::vec3(30, 30, 5), 2.0f);
+    ASSERT_NE(cache.get(id), nullptr);
+    EXPECT_EQ(cache.uploads(), 1u) << "nothing changed, so nothing to upload";
+    EXPECT_TRUE(cache.take_severance_box(id).empty())
+        << "nothing changed, so no severance check is owed";
+}
+
+// perf-register P-4: a merged deposit that does not grow its slot re-applies
+// the slot's identical carve (same centre, normal and radius -- a merge keeps
+// all three), which can change no cell. A dying Sovereign's warp-core breach
+// emitted one such deposit every frame for 1.5 s: 101 carves, 5.7 ms each in
+// Debug, every one a no-op. The field carve runs only when the slot is new or
+// its radius grew; the field must still end up exactly as before.
+TEST_F(InstanceFieldCacheTest, MergedDepositThatDoesNotGrowItsSlotSkipsTheFieldCarve) {
+    voxel::HullVolumeCache bake_cache(scratch_root() / "cache_merge_no_grow");
+    const auto src = make_source("hull_merge_no_grow.nif", "hull");
+    const voxel::DistanceField baked = make_baked_field();
+    ASSERT_TRUE(seed_baked_field(bake_cache, src, kAuthoredRes,
+                                 voxel::kDefaultQuality, baked));
+    scenegraph::HullCarveField sphere_field;
+    InstanceFieldCache cache(&bake_cache);
+    const scenegraph::InstanceId id{1, 0};
+    const glm::vec3 c(5.0f, 5.0f, 5.0f);
+
+    // A big floored carve, then smaller re-hits that merge into its slot
+    // without growing it (strength 0, floor below the slot's radius).
+    const auto first = renderer::hull_carve_deposit(
+        sphere_field, &cache, id, src, kAuthoredRes, c, kUp,
+        /*influ*/3.0f, /*strength*/0.0f, /*floor*/3.0f, 1.0f, 1.0f);
+    ASSERT_GT(first.radius, 0.0f);
+    ASSERT_EQ(cache.field_carves(), 1u);
+    for (int i = 0; i < 5; ++i) {
+        const auto again = renderer::hull_carve_deposit(
+            sphere_field, &cache, id, src, kAuthoredRes,
+            c + glm::vec3(0.2f, 0.0f, 0.0f), kUp,
+            /*influ*/3.0f, /*strength*/0.0f, /*floor*/1.0f, 1.0f, 1.0f);
+        ASSERT_EQ(again.radius, again.prev_radius) << "the slot did not grow";
+    }
+    ASSERT_EQ(sphere_field.count(), 1u) << "every re-hit merged";
+    EXPECT_EQ(cache.field_carves(), 1u) << "no field carve for an unchanged slot";
+
+    // A re-hit that DOES grow the slot still carves.
+    const auto grown = renderer::hull_carve_deposit(
+        sphere_field, &cache, id, src, kAuthoredRes, c, kUp,
+        3.0f, 0.0f, /*floor*/4.0f, 1.0f, 1.0f);
+    ASSERT_GT(grown.radius, grown.prev_radius);
+    EXPECT_EQ(cache.field_carves(), 2u);
+
+    // And the field is exactly the slot's carves applied in order.
+    voxel::DistanceField expected = no_damage_field(baked);
+    voxel::field_carve_oblate(expected, c, kUp, first.radius);
+    voxel::field_carve_oblate(expected, c, kUp, grown.radius);
+    const voxel::DistanceField* f = cache.field(id);
+    ASSERT_NE(f, nullptr);
+    EXPECT_TRUE(f->dist == expected.dist);
+}
+
+// perf-register P-4: a growing core breach deposits every frame so the sphere
+// ring (which alone draws a tracked carve -- opaque.frag gates the field off
+// inside it) grows on screen, but asks for the field only on its last frame.
+// A bigger brush at the same centre dominates a smaller one at every cell, so
+// the field after the growth is the final carve alone. The final deposit must
+// carve even when it does not grow the slot past the deferred ones.
+TEST_F(InstanceFieldCacheTest, DeferredDepositsGrowTheSlotAndTheFinalOneCarvesTheFieldOnce) {
+    voxel::HullVolumeCache bake_cache(scratch_root() / "cache_deferred_field");
+    const auto src = make_source("hull_deferred_field.nif", "hull");
+    const voxel::DistanceField baked = make_baked_field();
+    ASSERT_TRUE(seed_baked_field(bake_cache, src, kAuthoredRes,
+                                 voxel::kDefaultQuality, baked));
+    scenegraph::HullCarveField sphere_field;
+    InstanceFieldCache cache(&bake_cache);
+    const scenegraph::InstanceId id{1, 0};
+    const glm::vec3 c(5.0f, 5.0f, 5.0f);
+
+    for (float r : {1.0f, 2.0f, 3.0f}) {
+        renderer::hull_carve_deposit(sphere_field, &cache, id, src, kAuthoredRes,
+                                     c, kUp, r, 0.0f, r, 1.0f, 1.0f, nullptr,
+                                     /*carve_field=*/false);
+    }
+    ASSERT_EQ(sphere_field.count(), 1u);
+    EXPECT_FLOAT_EQ(sphere_field.slots()[0].radius, 3.0f) << "the ring still grows";
+    EXPECT_EQ(cache.field_carves(), 0u) << "no field carve while deferred";
+
+    // The last frame: same radius as the last deferred one, field wanted.
+    renderer::hull_carve_deposit(sphere_field, &cache, id, src, kAuthoredRes,
+                                 c, kUp, 3.0f, 0.0f, 3.0f, 1.0f, 1.0f, nullptr,
+                                 /*carve_field=*/true);
+    EXPECT_EQ(cache.field_carves(), 1u);
+    voxel::DistanceField expected = no_damage_field(baked);
+    voxel::field_carve_oblate(expected, c, kUp, 3.0f);
+    const voxel::DistanceField* f = cache.field(id);
+    ASSERT_NE(f, nullptr);
+    EXPECT_TRUE(f->dist == expected.dist);
+
+    // And once the field holds the slot's radius, a repeat asks for nothing.
+    renderer::hull_carve_deposit(sphere_field, &cache, id, src, kAuthoredRes,
+                                 c, kUp, 3.0f, 0.0f, 3.0f, 1.0f, 1.0f, nullptr, true);
+    EXPECT_EQ(cache.field_carves(), 1u);
+}

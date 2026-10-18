@@ -492,3 +492,197 @@ TEST(FieldBrushBox, UnionGrowsToCoverBoth) {
     b.include(voxel::CellBox{});
     EXPECT_EQ(b.lo, glm::ivec3(0, 4, 9)) << "including an empty box changes nothing";
 }
+
+// ── Tight box, and no work where nothing can change (perf-register P-4) ─────
+// A carve returns the box of cells it actually CHANGED, not the brush's
+// reach. The upload and the severance check both key off that box, so a
+// carve that changes nothing -- a brush landing on material already fully
+// carved (+127, the ceiling of the monotonic max) -- must report an empty
+// box. Measured: a dead Haven station's wreck took six 35 GU carves, each
+// covering the whole 13.4 M-cell lattice; the first saturated every cell,
+// the other five changed none yet cost 1.5 s of brush plus a full re-upload
+// and a full-lattice BFS each.
+
+namespace {
+
+// The brush loops exactly as they were before the fast paths: every cell in
+// the reach box, no skip, no fill. The fast paths must match these byte for
+// byte. The reach box is part of the behaviour, not just a bound: the oblate's
+// distance is scaled by its SMALLEST half-extent, so outside the box it would
+// still raise very deep cells -- the brush never writes there.
+bool reach_cells(const voxel::DistanceField& f, glm::vec3 lo, glm::vec3 hi,
+                 glm::ivec3& c0, glm::ivec3& c1) {
+    auto to_cell = [&](const glm::vec3& p) {
+        const glm::vec3 g = (p - f.origin) / f.cell;
+        return glm::ivec3(int(std::floor(g.x)), int(std::floor(g.y)), int(std::floor(g.z)));
+    };
+    c0 = glm::max(to_cell(lo), glm::ivec3(0));
+    c1 = glm::min(to_cell(hi), f.dims - 1);
+    return !(c0.x > c1.x || c0.y > c1.y || c0.z > c1.z);
+}
+
+void reference_oblate(voxel::DistanceField& f, glm::vec3 c, glm::vec3 n,
+                      float radius) {
+    const float nl = glm::length(n);
+    n = (nl > 1e-4f) ? n / nl : glm::vec3(0.0f, 0.0f, 1.0f);
+    const float min_cell = std::min(f.cell.x, std::min(f.cell.y, f.cell.z));
+    const float lat    = radius * (1.0f + voxel::kCarveRimAmp);
+    const float depth  = std::max(voxel::kCarveDepthFactor * radius,
+                                  voxel::kCarveDepthFloorCells * min_cell);
+    const float offset = voxel::kCarveFieldOffsetCells * min_cell;
+    const float reach = std::max(lat, depth) * (1.0f + offset / std::min(lat, depth));
+    glm::ivec3 c0, c1;
+    if (!reach_cells(f, c - glm::vec3(reach), c + glm::vec3(reach), c0, c1)) return;
+    for (int z = c0.z; z <= c1.z; ++z)
+    for (int y = c0.y; y <= c1.y; ++y)
+    for (int x = c0.x; x <= c1.x; ++x) {
+        const glm::vec3 p = f.origin + (glm::vec3(x, y, z) + 0.5f) * f.cell;
+        const glm::vec3 v = p - c;
+        const float along = glm::dot(v, n);
+        const float ld = glm::length(v - along * n);
+        const float u = ld / lat;
+        const float w = along / depth;
+        const float d_brush = (std::sqrt(u * u + w * w) - 1.0f) * std::min(lat, depth);
+        const std::size_t i = f.index(x, y, z);
+        const float d_new = std::max(static_cast<float>(f.dist[i]) * f.scale,
+                                     -d_brush + offset);
+        float q = std::round(d_new / f.scale);
+        q = std::max(-127.0f, std::min(127.0f, q));
+        f.dist[i] = static_cast<std::int8_t>(q);
+    }
+}
+
+void reference_capsule(voxel::DistanceField& f, glm::vec3 p0, glm::vec3 p1,
+                       float radius) {
+    const float min_cell = std::min(f.cell.x, std::min(f.cell.y, f.cell.z));
+    const float r      = std::max(radius, voxel::kCarveDepthFloorCells * min_cell);
+    const float offset = voxel::kCarveFieldOffsetCells * min_cell;
+    const glm::vec3 ab = p1 - p0;
+    const float ab2 = glm::dot(ab, ab);
+    glm::ivec3 c0, c1;
+    if (!reach_cells(f, glm::min(p0, p1) - glm::vec3(r + offset),
+                     glm::max(p0, p1) + glm::vec3(r + offset), c0, c1)) return;
+    for (int z = c0.z; z <= c1.z; ++z)
+    for (int y = c0.y; y <= c1.y; ++y)
+    for (int x = c0.x; x <= c1.x; ++x) {
+        const glm::vec3 p = f.origin + (glm::vec3(x, y, z) + 0.5f) * f.cell;
+        const float t = (ab2 > 0.0f)
+            ? std::max(0.0f, std::min(1.0f, glm::dot(p - p0, ab) / ab2)) : 0.0f;
+        const float d_brush = glm::length(p - (p0 + ab * t)) - r;
+        const std::size_t i = f.index(x, y, z);
+        const float d_new = std::max(static_cast<float>(f.dist[i]) * f.scale,
+                                     -d_brush + offset);
+        float q = std::round(d_new / f.scale);
+        q = std::max(-127.0f, std::min(127.0f, q));
+        f.dist[i] = static_cast<std::int8_t>(q);
+    }
+}
+
+// Deterministic mixed field: deep material, surface values, and some cells
+// already at the +127 ceiling, so every branch of a fast path is exercised.
+voxel::DistanceField mixed_field(glm::ivec3 dims) {
+    voxel::DistanceField f;
+    f.dims   = dims;
+    f.origin = glm::vec3(-1.5f, 2.0f, 0.25f);
+    f.cell   = glm::vec3(1.0f, 1.25f, 0.75f);
+    f.scale  = 0.25f;
+    f.dist.resize(static_cast<std::size_t>(dims.x) * dims.y * dims.z);
+    std::uint32_t s = 12345u;
+    for (auto& d : f.dist) {
+        s = s * 1664525u + 1013904223u;
+        const std::uint32_t r = s >> 24;
+        d = (r < 40) ? std::int8_t(127) : static_cast<std::int8_t>(int(r % 255) - 127);
+    }
+    return f;
+}
+
+voxel::CellBox changed_box(const voxel::DistanceField& a, const voxel::DistanceField& b) {
+    voxel::CellBox box;
+    for (int z = 0; z < a.dims.z; ++z) for (int y = 0; y < a.dims.y; ++y)
+    for (int x = 0; x < a.dims.x; ++x) {
+        const std::size_t i = a.index(x, y, z);
+        if (a.dist[i] != b.dist[i])
+            box.include(voxel::CellBox{glm::ivec3(x, y, z), glm::ivec3(x, y, z)});
+    }
+    return box;
+}
+
+void expect_same_box(const voxel::CellBox& got, const voxel::CellBox& want) {
+    ASSERT_EQ(got.empty(), want.empty());
+    if (want.empty()) return;
+    EXPECT_EQ(got.lo, want.lo);
+    EXPECT_EQ(got.hi, want.hi);
+}
+
+}  // namespace
+
+TEST(FieldBrushTight, OblateMatchesTheReferenceAndReportsOnlyChangedCells) {
+    struct Case { glm::vec3 c; glm::vec3 n; float r; const char* what; };
+    const Case cases[] = {
+        {{10.0f, 14.0f, 9.0f}, {0.0f, 0.0f, 1.0f}, 4.0f,   "small, interior"},
+        {{2.0f, 30.0f, 3.0f},  {0.3f, -0.4f, 0.8f}, 9.0f,  "touches the lattice edge"},
+        {{10.0f, 18.0f, 10.0f}, {0.0f, 1.0f, 0.0f}, 400.0f, "swallows the lattice"},
+        {{10.0f, 18.0f, 10.0f}, {1.0f, 0.0f, 0.0f}, 20.0f, "large, partly saturating"},
+        {{-30.0f, 18.0f, 10.0f}, {1.0f, 0.0f, 0.0f}, 3.0f, "wholly off-grid"},
+    };
+    for (const Case& k : cases) {
+        voxel::DistanceField got = mixed_field(glm::ivec3(21, 27, 25));
+        voxel::DistanceField want = got;
+        const voxel::DistanceField before = got;
+        const voxel::CellBox box = voxel::field_carve_oblate(got, k.c, k.n, k.r);
+        reference_oblate(want, k.c, k.n, k.r);
+        EXPECT_TRUE(got.dist == want.dist) << k.what << ": values differ from the reference";
+        expect_same_box(box, changed_box(before, got));
+        if (::testing::Test::HasFailure()) { ADD_FAILURE() << "case: " << k.what; return; }
+    }
+}
+
+TEST(FieldBrushTight, CapsuleMatchesTheReferenceAndReportsOnlyChangedCells) {
+    struct Case { glm::vec3 a; glm::vec3 b; float r; const char* what; };
+    const Case cases[] = {
+        {{4.0f, 10.0f, 8.0f}, {14.0f, 20.0f, 8.0f}, 2.0f,   "thin cut"},
+        {{-5.0f, 5.0f, 5.0f}, {30.0f, 40.0f, 20.0f}, 6.0f,  "crosses the lattice"},
+        {{8.0f, 18.0f, 9.0f}, {9.0f, 19.0f, 9.0f}, 300.0f,  "swallows the lattice"},
+    };
+    for (const Case& k : cases) {
+        voxel::DistanceField got = mixed_field(glm::ivec3(21, 27, 25));
+        voxel::DistanceField want = got;
+        const voxel::DistanceField before = got;
+        const voxel::CellBox box = voxel::field_carve_capsule(got, k.a, k.b, k.r);
+        reference_capsule(want, k.a, k.b, k.r);
+        EXPECT_TRUE(got.dist == want.dist) << k.what << ": values differ from the reference";
+        expect_same_box(box, changed_box(before, got));
+        if (::testing::Test::HasFailure()) { ADD_FAILURE() << "case: " << k.what; return; }
+    }
+}
+
+TEST(FieldBrushTight, CarvingFullyCarvedMaterialChangesNothingAndReportsEmpty) {
+    voxel::DistanceField f = solid_block(30);
+    std::fill(f.dist.begin(), f.dist.end(), static_cast<std::int8_t>(127));
+    const voxel::DistanceField before = f;
+    EXPECT_TRUE(voxel::field_carve_oblate(f, glm::vec3(15.0f), kUp, 500.0f).empty())
+        << "a lattice-swallowing carve on a fully carved field";
+    EXPECT_TRUE(voxel::field_carve_oblate(f, glm::vec3(15.0f), kUp, 3.0f).empty())
+        << "a small carve on a fully carved field";
+    EXPECT_TRUE(voxel::field_carve_capsule(f, glm::vec3(5.0f), glm::vec3(25.0f), 4.0f).empty());
+    EXPECT_TRUE(f.dist == before.dist);
+}
+
+TEST(FieldBrushTight, BoxStopsAtMaterialThatIsAlreadyFullyCarved) {
+    voxel::DistanceField f = solid_block(40);
+    for (int z = 0; z < 40; ++z) for (int y = 0; y < 40; ++y)
+        for (int x = 20; x < 40; ++x) f.dist[f.index(x, y, z)] = 127;
+    const voxel::DistanceField before = f;
+    const voxel::CellBox box =
+        voxel::field_carve_oblate(f, glm::vec3(20.0f, 20.0f, 20.0f), kUp, 6.0f);
+    ASSERT_FALSE(box.empty());
+    expect_same_box(box, changed_box(before, f));
+    EXPECT_LT(box.hi.x, 20) << "the carved half cannot change, so it is not in the box";
+
+    voxel::DistanceField g = before;
+    const voxel::CellBox cbox = voxel::field_carve_capsule(
+        g, glm::vec3(10.0f, 20.0f, 20.0f), glm::vec3(30.0f, 20.0f, 20.0f), 3.0f);
+    ASSERT_FALSE(cbox.empty());
+    expect_same_box(cbox, changed_box(before, g));
+    EXPECT_LT(cbox.hi.x, 20);
+}

@@ -125,6 +125,21 @@ def test_discovery_resolves_the_pair_the_cache_is_keyed_on(install):
     ]
 
 
+def test_discovery_applies_the_hole_modifier_like_spawn_does(install):
+    """The boot pre-bake must key the cache exactly as the spawn will
+    (hull_volume.effective_resolution), or a station's prebaked entry is
+    never hit. The modifier comes from GetShipStats' DamageRadMod, the
+    value loadspacehelper hands SetVisibleDamageRadiusModifier."""
+    stats = install.modules["ships.Station"].GetShipStats()
+    stats["DamageRadMod"] = 8.0
+    install.modules["ships.Station"] = types.SimpleNamespace(
+        GetShipStats=lambda: dict(stats))
+    targets = dict((p.name, r) for p, r in hull_volume.discover_bake_targets())
+    assert targets["Galaxy.nif"] == 10.0
+    assert targets["Station.nif"] == pytest.approx(
+        hull_volume.effective_resolution(15.0, 8.0))
+
+
 def test_discovery_uses_game_asset_so_a_mod_hull_wins(install, monkeypatch):
     """The runtime loads hulls through paths.game_asset (mod overlay first).
     The cache key is that absolute path, so discovery must go through the
@@ -253,7 +268,10 @@ def test_real_sdk_discovery_finds_the_starbase_and_the_galaxy():
         all_targets = hull_volume.discover_bake_targets()
         targets = {p.name: r for p, r in all_targets if isinstance(p, Path)}
         assert targets.get("Galaxy.nif") == 10.0
-        assert targets.get("FedStarbase.nif") == 15.0
+        # FedStarbase: authored 15, DamageRadMod 15 -> cell ~89 model
+        # units, next to BC's own station cell of 85.
+        assert targets.get("FedStarbase.nif") == pytest.approx(
+            hull_volume.effective_resolution(15.0, 15.0))
         for p, _ in all_targets:
             f = hull_volume._hull_file(p)
             assert f.is_absolute() and f.is_file()

@@ -62,10 +62,13 @@ inline constexpr float kCarveFieldOffsetCells = 1.25f;
 /// radius, non-finite centre_body or normal_body components, or a carve
 /// entirely off the grid are all no-ops.
 ///
-/// Returns the inclusive box of cells the brush WROTE (clamped to the
-/// lattice; empty for every no-op above). Every changed cell lies inside it;
-/// it is not promised tight. The atlas upload and the severance check both
-/// work on this box instead of the whole lattice -- see CellBox.
+/// Returns the tight inclusive box of cells the brush CHANGED (empty for
+/// every no-op above, and for a carve that lands only on material already
+/// fully carved). The atlas upload and the severance check both work on this
+/// box instead of the whole lattice -- see CellBox -- so a carve that changes
+/// nothing costs them nothing. Cells already at +127 are skipped, and a brush
+/// that saturates its whole reach box is a fill (field_brush.cc explains why
+/// both are exact).
 CellBox field_carve_oblate(DistanceField& f,
                         const glm::vec3& center_body,
                         const glm::vec3& normal_body,

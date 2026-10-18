@@ -39,11 +39,13 @@ class _CarveSpy:
 
     def __init__(self):
         self.carves = []  # (iid, point, normal, influ, strength, time, floor)
+        self.field_flags = []  # carve_field per emission
 
     def __call__(self, iid, point, normal, influ, strength, time,
-                 floor_radius=0.0, radius_modifier=1.0):
+                 floor_radius=0.0, radius_modifier=1.0, carve_field=True):
         self.carves.append((iid, point, normal, influ, strength, time,
                             floor_radius))
+        self.field_flags.append(carve_field)
 
 
 @pytest.fixture
@@ -152,3 +154,22 @@ def test_reset_clears_registry(host):
     core_breach_carve.reset()
     core_breach_carve.advance(0.1, {ship: 1})
     assert host.carves == []
+
+
+def test_only_the_full_size_emission_asks_for_the_field(host):
+    """perf-register P-4: every frame of growth re-carved the hull field at
+    the new radius -- ~85 whole-reach-box brush passes, ~4 ms each in Debug,
+    for a dying Sovereign. The sphere ring alone draws a tracked carve
+    (opaque.frag gates the field off inside it), and the largest brush
+    dominates every smaller one, so only the full-size emission carves the
+    field. Every emission still grows the ring."""
+    ship = _Ship(radius=2.0)
+    si = {ship: 3}
+    core_breach_carve.schedule(ship)
+    steps = int(core_breach_carve.GROW_DURATION / 0.1) + 2
+    for _ in range(steps):
+        core_breach_carve.advance(0.1, si)
+    assert len(host.field_flags) >= 10
+    assert host.field_flags[-1] is True
+    assert not any(host.field_flags[:-1])
+    assert host.carves[-1][3] == pytest.approx(0.5), "the field carve is full size"

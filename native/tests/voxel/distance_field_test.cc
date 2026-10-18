@@ -421,15 +421,18 @@ TEST(DistanceField, LatticeUnderBudgetKeepsTheRequestedCell) {
     EXPECT_EQ(f.cell, requested);
 }
 
-TEST(DistanceField, DefaultBudgetAdmitsEveryHullBCShipsAVolumeFor) {
-    // The largest lattice any hull with a BC _vox.nif produces at the
-    // authored resolution is SpaceFacility / FedOutpost: 153 x 283 x 310 =
-    // 13,422,690 cells (measured 2026-09-15, cached as
-    // cache/hull_volumes/4f499edff4966212.dhv and live-verified). The default
-    // budget must not coarsen those -- only hulls BC never voxelised at all
-    // (FedStarbase: 28.7G cells) or far beyond its own cell choice.
-    EXPECT_GE(voxel::kMaxFieldCells, std::size_t{153} * 283 * 310);
-    // ...and it must be a real ceiling, not a formality: FedStarbase's
-    // lattice must NOT fit.
-    EXPECT_LT(voxel::kMaxFieldCells, std::size_t{2582} * 2587 * 4293);
+TEST(DistanceField, DefaultBudgetKeepsEveryShipAndCoarsensStations) {
+    // Every ship keeps its authored resolution. The largest ship lattices in
+    // the baked cache (2026-10-18) are the Defiant-class mod hulls,
+    // 218 x 306 x 56 = 3,735,648 cells, and KessokHeavy, 230 x 255 x 61 =
+    // 3,577,650. Stock ships run 50k-800k.
+    EXPECT_GE(voxel::kMaxFieldCells, std::size_t{218} * 306 * 56);
+    // Stations do not. SpaceFacility / FedOutpost at the authored cell 7.5
+    // is 153 x 283 x 310 = 13.4M cells, and every whole-lattice pass over it
+    // -- the first severance BFS, the first atlas upload, a station-sized
+    // brush -- cost 130-240 ms each in Debug when it died (perf-register
+    // P-4, SIG-032). BC's own station volumes use cell 85, and its largest
+    // volume is 206k cells, so a coarser station lattice is still finer
+    // than BC's.
+    EXPECT_LT(voxel::kMaxFieldCells, std::size_t{153} * 283 * 310);
 }

@@ -422,6 +422,12 @@ ships at lower frequency; (c) move hot paths to C++.
   `rock.near.draw` split into `rock.near.build`, `rock.near.mesh_draw`,
   `rock.impostor.draw`, with `rock.atlas.load` (first-visit impostor atlas
   read + upload in `FarPass::atlas_for`).
+  Death-path attribution scopes (`perf-register.md` P-4): under
+  `cb.damage_sys`, `dmg.cascade` / `dmg.core_breach` / `dmg.core_carve` /
+  `dmg.visible` ⊃ `vd.carve` (the native `hull_carve_add` brush) and
+  `vd.after_carve` ⊃ `hb.split_detached` (the connectivity BFS) /
+  `hb.spawn` (chunk spawns); under `sim.debris_chunks`, `dc.tick` and
+  `dc.breakup_drain` (the throttled split, ⊃ the same `hb.*`).
   `planet_detail` (clipmap bake for the planet surface detail pass) is a
   top-level, GPU-timed scope — a sibling of `space`/`bloom`/`post`, not
   nested under any of them.

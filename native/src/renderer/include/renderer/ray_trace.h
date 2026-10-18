@@ -82,6 +82,15 @@ std::optional<RayHit> ray_trace_instance_linear(
     const std::unordered_map<int, glm::mat4>* node_overrides = nullptr,
     const std::vector<int>* exclude_meshes = nullptr);
 
+/// Build `model`'s trace acceleration structure now, if no trace has yet.
+/// The traces build it lazily on first use, which charged the frame of a
+/// hull's first trace -- a station's death carve probing its surface normal
+/// paid 7.7 ms (perf-register P-4). It is valid for the model's whole life
+/// (Model::trace_accel), so the hull-volume prewarm builds it at spawn and in
+/// the warp preload. Main thread only, like every trace (see the threading
+/// note on Model::trace_accel).
+void prewarm_trace_accel(const assets::Model& model);
+
 /// One mesh's rest-pose triangles (the trace accel's, so node transforms are
 /// applied and the winding is the mesh's own) through `linear`
 /// (Instance::world_linear): instance-relative, like the hits above. Empty

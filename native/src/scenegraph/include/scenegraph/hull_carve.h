@@ -51,6 +51,10 @@ struct HullCarve {
     glm::vec3     surface_normal{0.0f, 0.0f, 1.0f};  // body-frame outward normal
     std::uint64_t seq = 0;     // insertion order (0 = never used)
     bool          active = false;
+    float         field_radius = 0.0f;  // radius the instance field already
+                                        // holds for this slot (model units);
+                                        // renderer::hull_carve_deposit carves
+                                        // the field only past it. 0 = never.
 };
 
 /// Fixed-capacity per-instance carve store: accumulate-merge-then-evict.

@@ -12,7 +12,7 @@ namespace voxel {
 /// Bump whenever bake OUTPUT changes for the same inputs. Every cached file
 /// carries it, and read_dhv rejects any mismatch, so a baker change
 /// invalidates the whole cache without anyone having to remember to clear it.
-inline constexpr std::uint16_t kBakerVersion = 1;
+inline constexpr std::uint16_t kBakerVersion = 2;  // 2: kMaxFieldCells 2^24 -> 2^22
 
 /// Provenance stored alongside the field, so a cache entry can be validated
 /// against the hull it claims to describe.

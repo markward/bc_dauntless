@@ -21,6 +21,7 @@ COST. Neither replaces the other.
 """
 import engine.dev_mode as dev_mode
 from engine import host_io
+from engine.core import frame_profiler
 from engine.appc import damage_geometry, debris_chunk
 from engine.appc.math import TGPoint3
 
@@ -69,7 +70,8 @@ def _check(ship, iid, ship_instances, now):
     Always call with the throttle already cleared for `ship`."""
     _last_check[id(ship)] = now
     try:
-        comps = host_io.hull_split_detached(iid, debris_chunk.kChunkMinCells)
+        with frame_profiler.scope("hb.split_detached"):
+            comps = host_io.hull_split_detached(iid, debris_chunk.kChunkMinCells)
     except Exception as _e:
         dev_mode.log_swallowed("hull_split_detached", _e)
         return []
@@ -81,6 +83,12 @@ def _check(ship, iid, ship_instances, now):
     parent_mass = float(ship.GetMass()) if hasattr(ship, "GetMass") else 1.0
 
     spawned = []
+    with frame_profiler.scope("hb.spawn"):
+        _spawn_components(ship, iid, comps, parent_mass, total_cells, spawned)
+    return spawned
+
+
+def _spawn_components(ship, iid, comps, parent_mass, total_cells, spawned):
     for c in comps:
         _destroy_subsystems_inside(ship, c["bounds_min"], c["bounds_max"])
         if c.get("instance_id") is None:
@@ -102,7 +110,6 @@ def _check(ship, iid, ship_instances, now):
                 renderer.destroy_instance(c["instance_id"])
             except Exception as _e2:
                 dev_mode.log_swallowed("orphaned chunk instance destroy", _e2)
-    return spawned
 
 
 def _destroy_subsystems_inside(ship, lo, hi):
