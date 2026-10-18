@@ -20,6 +20,10 @@ public:
     Shader& speck_shader() noexcept      { return *speck_; }
     Shader& rock_speck_shader() noexcept { return *rock_speck_; }
     Shader& rock_puff_shader() noexcept  { return *rock_puff_; }
+    /// Bakes rock_puff.frag's lattice hash table (FarPass, once).
+    Shader& rock_puff_hash_shader() noexcept { return *rock_puff_hash_; }
+    /// The texture unit rock_puff.frag reads the hash table from.
+    static constexpr int kRockPuffHashUnit = 13;
     Shader& backdrop_shader() noexcept   { return *backdrop_; }
     Shader& sun_shader() noexcept        { return *sun_; }
     Shader& sun_flare_shader() noexcept  { return *sun_flare_; }
@@ -62,6 +66,7 @@ private:
     std::unique_ptr<Shader> speck_;
     std::unique_ptr<Shader> rock_speck_;
     std::unique_ptr<Shader> rock_puff_;
+    std::unique_ptr<Shader> rock_puff_hash_;
     std::unique_ptr<Shader> backdrop_;
     std::unique_ptr<Shader> sun_;
     std::unique_ptr<Shader> sun_flare_;

@@ -30,6 +30,13 @@ struct PuffDials {   // defaults MUST equal far_dials.py DEFAULTS puff_* keys
     float belt_size_h = 1.2f;
 };
 
+// rock_puff.frag's hash table, baked by FarPass on the GPU: the noise's
+// lattice point i is texel i + kPuffHashOffset of a kPuffHashSize square
+// R32F texture. The shader declares the same two constants
+// (RockPuffHashTable tests pin both and the domain they must cover).
+inline constexpr int kPuffHashOffset = 20;
+inline constexpr int kPuffHashSize = 576;
+
 struct PuffGpu {
     glm::vec3 pos;                // relative to PuffField::origin_sys()
     float radius;

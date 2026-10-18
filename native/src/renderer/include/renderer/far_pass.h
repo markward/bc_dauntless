@@ -108,6 +108,9 @@ public:
                            const scenegraph::Camera& cam, Pipeline& pipeline,
                            const Lighting& lighting, float ambient_scale);
     int rock_puff_count() const { return rock_puff_count_; }
+    // The puff noise's hash table (rockfield::kPuffHashSize square, R32F),
+    // baked on the first render_rock_puffs; 0 before that.
+    std::uint32_t rock_puff_hash_texture() const { return rock_puff_hash_tex_; }
 
     int last_draw_calls() const { return draw_calls_; }   // since the last reset_counts()
     void reset_counts() { draw_calls_ = 0; }
@@ -210,6 +213,8 @@ private:
     std::uint32_t rock_puff_vao_ = 0;
     std::uint32_t rock_puff_vbo_ = 0;
     int rock_puff_count_ = 0;
+    std::uint32_t rock_puff_hash_tex_ = 0;
+    void bake_rock_puff_hash(Pipeline& pipeline);
     std::uint32_t white_texture_ = 0;
     std::uint32_t black_texture_ = 0;
     int draw_calls_ = 0;

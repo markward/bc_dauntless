@@ -142,6 +142,7 @@ FarPass::~FarPass() {
     if (rock_speck_vbo_ != 0) { GLuint b = rock_speck_vbo_; glDeleteBuffers(1, &b); }
     if (rock_puff_vao_ != 0) { GLuint v = rock_puff_vao_; glDeleteVertexArrays(1, &v); }
     if (rock_puff_vbo_ != 0) { GLuint b = rock_puff_vbo_; glDeleteBuffers(1, &b); }
+    if (rock_puff_hash_tex_ != 0) { GLuint t = rock_puff_hash_tex_; glDeleteTextures(1, &t); }
     if (white_texture_ != 0) { GLuint t = white_texture_; glDeleteTextures(1, &t); }
     if (black_texture_ != 0) { GLuint t = black_texture_; glDeleteTextures(1, &t); }
 }
@@ -689,16 +690,62 @@ void FarPass::upload_rock_puffs(const std::vector<rockfield::PuffGpu>& puffs) {
     rock_puff_count_ = static_cast<int>(puffs.size());
 }
 
+void FarPass::bake_rock_puff_hash(Pipeline& pipeline) {
+    // Once per FarPass: the table depends on nothing but the expression.
+    const int n = rockfield::kPuffHashSize;
+    GLint prev_fbo = 0, prev_vp[4] = {0, 0, 0, 0}, prev_tex = 0, prev_unit = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev_fbo);
+    glGetIntegerv(GL_VIEWPORT, prev_vp);
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &prev_unit);
+    glActiveTexture(GL_TEXTURE0 + Pipeline::kRockPuffHashUnit);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &prev_tex);
+    const GLboolean depth_on = glIsEnabled(GL_DEPTH_TEST);
+    const GLboolean blend_on = glIsEnabled(GL_BLEND);
+    const GLboolean cull_on = glIsEnabled(GL_CULL_FACE);
+
+    GLuint tex = 0, fbo = 0, vao = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, n, n, 0, GL_RED, GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    glViewport(0, 0, n, n);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glGenVertexArrays(1, &vao);
+    pipeline.rock_puff_hash_shader().use();
+    glBindVertexArray(vao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);   // one full-target triangle
+    glBindVertexArray(0);
+    glDeleteVertexArrays(1, &vao);
+    glDeleteFramebuffers(1, &fbo);
+    rock_puff_hash_tex_ = tex;
+
+    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prev_tex));
+    glActiveTexture(static_cast<GLenum>(prev_unit));
+    glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prev_fbo));
+    glViewport(prev_vp[0], prev_vp[1], prev_vp[2], prev_vp[3]);
+    if (depth_on) glEnable(GL_DEPTH_TEST);
+    if (blend_on) glEnable(GL_BLEND);
+    if (cull_on) glEnable(GL_CULL_FACE);
+}
+
 void FarPass::render_rock_puffs(const glm::vec3& offset, const rockfield::PuffDials& d,
                                 const scenegraph::Camera& cam, Pipeline& pipeline,
                                 const Lighting& lighting, float ambient_scale) {
     if (rock_puff_count_ <= 0 || rock_puff_vao_ == 0) return;
+    if (rock_puff_hash_tex_ == 0) bake_rock_puff_hash(pipeline);
     Shader& s = pipeline.rock_puff_shader();
     s.use();
     s.set_mat4("u_view", cam.view_matrix());
     s.set_mat4("u_proj", cam.proj_matrix());
     const glm::vec3 eye = glm::vec3(glm::inverse(cam.view_matrix())[3]);
-    s.set_vec3("u_camera_pos_ws", eye);
     s.set_vec3("u_eye", eye);
     s.set_vec3("u_offset", offset);
     s.set_float("u_opacity", d.opacity);
@@ -725,10 +772,15 @@ void FarPass::render_rock_puffs(const glm::vec3& offset, const rockfield::PuffDi
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
     glDisable(GL_CULL_FACE);
+    GLint prev_unit = 0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &prev_unit);
+    glActiveTexture(GL_TEXTURE0 + Pipeline::kRockPuffHashUnit);
+    glBindTexture(GL_TEXTURE_2D, rock_puff_hash_tex_);
     glBindVertexArray(rock_puff_vao_);
     glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, static_cast<GLsizei>(rock_puff_count_));
     ++draw_calls_;
     glBindVertexArray(0);
+    glActiveTexture(static_cast<GLenum>(prev_unit));
     glEnable(GL_CULL_FACE);
     glDepthMask(GL_TRUE);
     glBlendFuncSeparate(static_cast<GLenum>(blend_src_rgb), static_cast<GLenum>(blend_dst_rgb),

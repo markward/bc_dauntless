@@ -150,6 +150,7 @@ target_include_directories(renderer_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/native/tests/assets/gpu  # reuse gl_fixture for offscreen contexts
     ${CMAKE_SOURCE_DIR}/native/src/assets/src    # model_build.h (model_parts_test.cc)
     ${CMAKE_SOURCE_DIR}/native/tests             # support/content_root.h
+    ${CMAKE_BINARY_DIR}/native/src/renderer      # embedded_*_{vs,fs}.h (shader source guards)
 )
 
 gtest_discover_tests(renderer_tests
