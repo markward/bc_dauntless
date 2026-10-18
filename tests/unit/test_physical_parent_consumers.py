@@ -138,6 +138,56 @@ def test_running_light_set_part_follows_it():
     assert u[:3] == pytest.approx(LIGHT)
 
 
+def test_running_light_honours_save_without_respawn(monkeypatch):
+    """The spawn-time specs (what the host keeps and re-resolves every frame)
+    see a running light SET in the SPV and Saved, with the overlay gone."""
+    import App
+    import engine.ui.ship_property_viewer_panel as mod
+    from engine.appc import running_lights
+    from engine.appc.properties import TGModelPropertySet
+    from engine.ui.ship_property_viewer_panel import ShipPropertyViewerPanel
+
+    class _LitShip(_Ship):
+        def __init__(self):
+            super().__init__()
+            self._pset = TGModelPropertySet()
+            nav = App.BlinkingLightProperty_Create("nav")
+            pt = TGPoint3()
+            pt.SetXYZ(*LIGHT)
+            nav.SetPosition(pt)
+            self._pset.AddToSet("Scene Root", nav)
+
+        def GetPropertySet(self):
+            return self._pset
+
+    class _Target:
+        def write(self, leaf, edits):
+            pass
+
+    monkeypatch.setattr(mod, "build_descriptors", lambda ship: [])
+    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda ship: LEAF)
+    monkeypatch.setattr(mod, "resolve_override_target", lambda ship: _Target())
+    ship = _LitShip()
+    poses = dict(ship._articulation_poses)
+    specs = running_lights.lights_for(ship)          # captured at spawn
+    (t,) = host_loop._articulated_running_lights(ship, None, specs)
+    assert t[:3] == pytest.approx(LIGHT)              # Auto: the body
+
+    p = ShipPropertyViewerPanel(ship_getter=lambda: ship)
+    p.open()
+    p._model_part_nodes = [{"name": n, "candidate": True} for n in BOXES]
+    assert p.dispatch_event(
+        'physical/move:{"key": "light:nav", "part": "left wing"}') is True
+    assert p.dispatch_event("save") is True
+    p.close()
+    physical_parents.clear_preview()
+    ship._articulation_poses = poses                  # the SPV forced rest
+
+    (t,) = host_loop._articulated_running_lights(ship, None, specs)
+    assert t[:3] == pytest.approx(
+        part_pose.apply(_pose_of(ship, "left wing"), LIGHT))
+
+
 def test_running_light_spec_tuple_unchanged():
     spec = RunningLightSpec(pos=(1, 2, 3), rgb=(4, 5, 6), size=7.0, period=8.0,
                             duration=9.0, name="x", physical_parent="p")

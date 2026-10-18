@@ -309,6 +309,30 @@ def _baked_physical_parent(obj):
     return prop.GetPhysicalParent() if prop is not None else None
 
 
+def apply_physical_parents(ship, edits: dict) -> None:
+    """Apply saved physical parents (`{property name: part | None}`) to
+    `ship`'s LIVE properties, so a Save reaches the running game without a
+    rebuild: every subsystem and object-emitter mount (walked as
+    `build_descriptors` walks them) and every running light whose name is in
+    `edits`. Keyed by name, like the hardpoint writer."""
+    if not edits:
+        return
+    from engine.appc import physical_parents, running_lights
+    objs = list(_iter_subsystems(ship))
+    if hasattr(ship, "GetObjectEmitters"):
+        objs += list(ship.GetObjectEmitters())
+    for obj in objs:
+        name = obj.GetName() if hasattr(obj, "GetName") else None
+        if name not in edits:
+            continue
+        prop = physical_parents.property_of(obj)
+        if prop is not None:
+            prop.SetPhysicalParent(edits[name])
+    for light in running_lights.light_properties(ship):
+        if light.GetName() in edits:
+            light.SetPhysicalParent(edits[light.GetName()])
+
+
 def _iter_subsystems(ship):
     """Yield damage-relevant subsystems of a ship. Mirrors
     engine.ui.ship_display_panel._iter_damage_subsystems. Falls back to

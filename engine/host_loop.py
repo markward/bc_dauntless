@@ -734,9 +734,11 @@ def _articulated_running_lights(ship, iid, specs) -> tuple:
     out = []
     for s in specs:
         t = s.as_tuple()
-        pose = _part_pose_at(
-            ship, iid, s.pos,
-            prop=PropRef(s.name, s.physical_parent))
+        # The live property when the spec carries one, so a Save in the SPV
+        # reaches these spawn-time specs without a respawn.
+        prop = s.prop if s.prop is not None else PropRef(s.name,
+                                                         s.physical_parent)
+        pose = _part_pose_at(ship, iid, s.pos, prop=prop)
         if pose is _PART_SEVERED:
             continue
         if pose is not None:

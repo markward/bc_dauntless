@@ -319,8 +319,10 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         self._saved_part = {}
         # Physical tab (physical-parents spec section 7). Staged/saved
         # SetPhysicalParent choices keyed by PROPERTY NAME (a subsystem's or
-        # a running light's), None = Reset to Auto. Same pending/saved story
-        # as the dicts above; neither ever marks a Functional row dirty.
+        # a running light's), None = Reset to Auto. Pending ones reach the
+        # game through the physical_parents preview overlay; a Save writes
+        # them onto the LIVE properties (_apply_saved_physical), so saved ones
+        # never ride the overlay. Neither marks a Functional row dirty.
         self._pending_physical: dict = {}
         self._saved_physical: dict = {}
         # "functional" | "physical": which Subsystems tab shows. Reset every
@@ -474,7 +476,7 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         self._pending_pos = {}
         self._pending_part = {}
         # Unsaved physical parents leave the preview overlay with the other
-        # staged edits; saved ones keep driving it, like the _saved_* dicts.
+        # staged edits (saved ones are already on the live properties).
         self._pending_physical = {}
         self._physical_lights = []
         self._mount_points = {}
@@ -1435,14 +1437,37 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         self._last_pushed = None
         return True
 
+    def _apply_saved_physical(self, ship, edits: dict) -> None:
+        """A successful Save's physical parents onto the live ship
+        (`ship_property_viewer.apply_physical_parents`) and onto the panel's
+        open-time snapshots (descriptor / running-light `physical_parent`),
+        which now hold the live value. Best-effort, like the other live
+        refreshes after a Save: the file is already written."""
+        if not edits:
+            return
+        try:
+            _spv.apply_physical_parents(ship, edits)
+        except Exception as e:
+            from engine import dev_mode
+            dev_mode.log_swallowed("spv physical-parent live apply", e)
+        for d in self._descriptors:
+            if d.get("name") in edits:
+                d["physical_parent"] = edits[d["name"]]
+        for light in self._physical_lights:
+            if light["name"] in edits:
+                light["physical_parent"] = edits[light["name"]]
+
     def _physical_sync_preview(self) -> None:
-        """Point the `physical_parents` preview overlay at saved + pending,
-        so every consumer (pins, mounts, severance, running lights) sees an
-        unsaved choice live, and re-resolve the cached pin positions when
-        the overlay changed. Never touches the overlay for a session with
-        no physical edits."""
-        merged = dict(self._saved_physical)
-        merged.update(self._pending_physical)
+        """Point the `physical_parents` preview overlay at the PENDING
+        physical parents, so every consumer (pins, mounts, severance,
+        running lights) sees an unsaved choice live, and re-resolve the
+        cached pin positions when the overlay changed. Saved choices are not
+        here: Save writes them onto the live properties
+        (`_apply_saved_physical`). Never touches the overlay for a session
+        with no pending physical edits. Clearing a previous leaf's overlay
+        still matters for pending edits whose ship changed under an open
+        panel."""
+        merged = dict(self._pending_physical)
         if not merged and self._physical_preview_leaf is None:
             return
         from engine.appc import articulation, physical_parents
@@ -3334,6 +3359,11 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             self._pending_emitter = {}
             self._saved_part.update(self._pending_part)
             self._pending_part = {}
+            # Physical parents go straight onto the LIVE properties (the
+            # in-game consumers read them every frame), so the preview
+            # overlay is left holding pending edits only and nothing that
+            # clears it can undo a save.
+            self._apply_saved_physical(ship, self._pending_physical)
             self._saved_physical.update(self._pending_physical)
             self._pending_physical = {}
             self._undo_stack.clear()
