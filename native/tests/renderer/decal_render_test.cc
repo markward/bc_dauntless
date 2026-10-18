@@ -822,6 +822,19 @@ Counts count_outside_corner(std::vector<std::uint8_t> px) {
     return count_pixels(px);
 }
 
+// Texels that differ between `a` and `b` INSIDE that corner: non-zero only
+// if something is drawn there in one render and not the other.
+std::size_t differing_corner_texels(const std::vector<std::uint8_t>& a,
+                                    const std::vector<std::uint8_t>& b) {
+    std::size_t n = 0;
+    for (int y = 192; y < kSize; ++y)
+        for (int x = 192; x < kSize; ++x) {
+            const std::size_t i = (static_cast<std::size_t>(y) * kSize + x) * 4;
+            if (a[i] != b[i] || a[i + 1] != b[i + 1] || a[i + 2] != b[i + 2]) ++n;
+        }
+    return n;
+}
+
 std::size_t differing_texels(const std::vector<std::uint8_t>& a,
                              const std::vector<std::uint8_t>& b) {
     std::size_t n = 0;
@@ -916,8 +929,10 @@ TEST_F(DecalRenderTest, ArticulatedShipDrawnFirstDoesNotShiftAPlainShipsDecal) {
     w1.set_world_transform(p1, glm::mat4(1.0f));
     const auto px_alone = render_world_top_down(w0, box);
     const auto px_after = render_world_top_down(w1, box);
-    ASSERT_GT(count_pixels(px_after).red, count_pixels(px_alone).red - 1)
-        << "guard: the corner ship must be drawn (adds red) or the test is vacuous";
+    const std::size_t corner = differing_corner_texels(px_alone, px_after);
+    std::fprintf(stderr, "[DecalRender] corner ship texels: %zu\n", corner);
+    ASSERT_GT(corner, 50u)
+        << "guard: the corner ship must be drawn in the corner or the test is vacuous";
     const Counts a = count_outside_corner(px_alone);
     const Counts b = count_outside_corner(px_after);
 
