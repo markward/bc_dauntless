@@ -1158,6 +1158,19 @@ def _reset_leakable_engine_globals():
         _host.ambient_gradient_set_enabled(True)
     except Exception:
         pass
+    # Bridge probe stash (origin + per-state scales) is process-lifetime C++
+    # state too: any host_loop.run() of a bridge mission leaves it at the
+    # bridge camera eye with scales 0, which broke
+    # test_bridge_editor_bindings.py::test_probe_stash_is_at_defaults
+    # whenever it ran after one. A pending capture is NOT reset here (no
+    # production clear exists; draining it takes a GL init/shutdown), so that
+    # tripwire still catches a test that leaks one.
+    try:
+        import _dauntless_host as _host
+        _host.set_bridge_probe_origin((0.0, 0.0, 0.0))
+        _host.set_bridge_probe_scales((1.0,) * 5)
+    except Exception:
+        pass
     # Hull-hit smoke beam throttle: keyed by (id(target), id(source)), and
     # ids of short-lived test doubles get recycled, so a stale entry can
     # silence a later test's first puff.
