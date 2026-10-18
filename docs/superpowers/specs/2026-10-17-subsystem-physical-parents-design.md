@@ -1,7 +1,9 @@
 # Subsystem physical parents — design
 
-Status: APPROVED by Mark 2026-10-17. Branch `feat/physical-parents`
-(worktree `.claude/worktrees/physical-parents`).
+Status: APPROVED by Mark 2026-10-17. Implemented on `feat/physical-parents`
+and live-verified by Mark 2026-10-18. Mark's in-game save set the Bird of
+Prey's Impulse Engines, Sensor Array and Warp Engines to `birdofprey`
+(commit 58f8dfa7a). Worktree `.claude/worktrees/physical-parents`.
 Supersedes OQ-13 of `2026-09-23-ship-part-articulation-design.md` (and
 subsumes its OQ-5).
 
