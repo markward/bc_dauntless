@@ -23,6 +23,7 @@ See docs/engine/damagetool-and-hull-damage-gaps.md.
 """
 import engine.dev_mode as dev_mode
 from engine import host_io
+from engine.core import frame_profiler
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.hit_feedback import _mesh_xyz
 
@@ -142,10 +143,12 @@ def _advance_one(entry, dt, ship_instances) -> bool:
 
     if entry.get("kind") == "capsule":
         p0, p1 = entry["p0"], entry["p1"]
-        host_io.hull_carve_capsule(iid, _mesh_xyz(ship, p0), _mesh_xyz(ship, p1),
-                                   entry["radius"])
+        with frame_profiler.scope("vd.carve"):
+            host_io.hull_carve_capsule(iid, _mesh_xyz(ship, p0), _mesh_xyz(ship, p1),
+                                       entry["radius"])
         from engine.appc import hull_breakup
-        hull_breakup.after_carve(ship, iid, ship_instances)
+        with frame_profiler.scope("vd.after_carve"):
+            hull_breakup.after_carve(ship, iid, ship_instances)
         return False
 
     if entry.get("kind") == "scuff":
@@ -196,18 +199,20 @@ def _advance_one(entry, dt, ship_instances) -> bool:
     # Carve sizes are absolute; the only per-ship scale is BC's DamageRadMod
     # (applied to both the authored `floor` and the strength curve). The authored
     # `floor` still guarantees the wreck's visible size.
-    host_io.hull_carve_add(
-        iid,
-        _mesh_xyz(ship, world_pt),
-        (normal.x, normal.y, normal.z),
-        influ,
-        strength,
-        now,
-        floor,
-        rad_mod,
-    )
+    with frame_profiler.scope("vd.carve"):
+        host_io.hull_carve_add(
+            iid,
+            _mesh_xyz(ship, world_pt),
+            (normal.x, normal.y, normal.z),
+            influ,
+            strength,
+            now,
+            floor,
+            rad_mod,
+        )
     from engine.appc import hull_breakup
-    hull_breakup.after_carve(ship, iid, ship_instances)
+    with frame_profiler.scope("vd.after_carve"):
+        hull_breakup.after_carve(ship, iid, ship_instances)
     return False   # emitted once -> drop
 
 

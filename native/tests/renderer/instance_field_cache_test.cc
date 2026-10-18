@@ -1313,3 +1313,29 @@ TEST_F(InstanceFieldCacheTest, FirstSeveranceCheckIsReportedOncePerInstance) {
     EXPECT_TRUE(cache.take_first_severance_check(child));
     EXPECT_FALSE(cache.take_first_severance_check(id)) << "the parent stays checked";
 }
+
+// perf-register P-4: a dead station's wreck kept carving a field the first
+// carve had already saturated. Each repeat changed no cell but re-uploaded
+// the whole atlas and re-armed the full-lattice severance check.
+TEST_F(InstanceFieldCacheTest, RecarvingFullyCarvedMaterialNeitherReuploadsNorArmsSeverance) {
+    voxel::HullVolumeCache bake_cache(scratch_root() / "cache_recarve_saturated");
+    const auto src = make_source("hull_recarve_saturated.nif", "hull");
+    ASSERT_TRUE(seed_baked_field(bake_cache, src, kAuthoredRes,
+                                 voxel::kDefaultQuality, make_baked_field()));
+    InstanceFieldCache cache(&bake_cache);
+    const scenegraph::InstanceId id{1, 0};
+
+    cache.carve(id, src, kAuthoredRes, glm::vec3(20, 20, 20), kUp, 500.0f);
+    ASSERT_NE(cache.get(id), nullptr);
+    ASSERT_EQ(cache.uploads(), 1u);
+    ASSERT_FALSE(cache.take_severance_box(id).empty());
+
+    cache.carve(id, src, kAuthoredRes, glm::vec3(22, 18, 20), kUp, 500.0f);
+    cache.carve(id, src, kAuthoredRes, glm::vec3(5, 5, 5), kUp, 3.0f);
+    cache.carve_capsule(id, src, kAuthoredRes, glm::vec3(10, 30, 5),
+                        glm::vec3(30, 30, 5), 2.0f);
+    ASSERT_NE(cache.get(id), nullptr);
+    EXPECT_EQ(cache.uploads(), 1u) << "nothing changed, so nothing to upload";
+    EXPECT_TRUE(cache.take_severance_box(id).empty())
+        << "nothing changed, so no severance check is owed";
+}

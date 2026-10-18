@@ -1082,12 +1082,16 @@ def _advance_combat(ships, dt: float, ship_instances=None,
         object_lifetime.advance(dt)
     with frame_profiler.scope("cb.damage_sys"):
         from engine.appc import subsystem_cascade, warp_core_breach
-        subsystem_cascade.advance(dt)
-        warp_core_breach.advance(dt, ship_instances=ship_instances)
+        with frame_profiler.scope("dmg.cascade"):
+            subsystem_cascade.advance(dt)
+        with frame_profiler.scope("dmg.core_breach"):
+            warp_core_breach.advance(dt, ship_instances=ship_instances)
         from engine.appc import core_breach_carve
-        core_breach_carve.advance(dt, ship_instances=ship_instances)
+        with frame_profiler.scope("dmg.core_carve"):
+            core_breach_carve.advance(dt, ship_instances=ship_instances)
         from engine.appc import visible_damage
-        visible_damage.advance(dt, ship_instances=ship_instances)
+        with frame_profiler.scope("dmg.visible"):
+            visible_damage.advance(dt, ship_instances=ship_instances)
         camera_shake.update(dt)
 
     # BC WeaponSystem tick: one update_weapons per armed system per frame.
@@ -12221,9 +12225,11 @@ def run(mission_name: Optional[str] = None,
 
                 with frame_profiler.scope("sim.debris_chunks"):
                     from engine.appc import debris_chunk as _debris_chunk
-                    _debris_chunk.tick(_player_dt, r)
+                    with frame_profiler.scope("dc.tick"):
+                        _debris_chunk.tick(_player_dt, r)
                     from engine.appc import hull_breakup as _hull_breakup
-                    _hull_breakup.drain()
+                    with frame_profiler.scope("dc.breakup_drain"):
+                        _hull_breakup.drain()
 
                 with frame_profiler.scope("sim.collisions"):
                     collisions.tick_collisions(
