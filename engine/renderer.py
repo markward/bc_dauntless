@@ -116,6 +116,7 @@ _REQUIRED_BINDINGS = frozenset({
 # never fatal. `set_officer_face` also appears as a hard `_h.set_officer_face`
 # call *inside* its own hasattr guard, so it is optional despite that inner ref.
 _OPTIONAL_BINDINGS = frozenset({
+    "request_frame_png",
     "cef_execute_javascript", "clear_debug_boxes", "clear_debug_cones",
     "clear_debug_cylinders",
     "clear_debug_spheres",
@@ -988,6 +989,14 @@ def nonfinite_probe_stats() -> dict:
     grid_h, last_cells (list of (x, y), bottom-left origin).
     """
     return dict(_h.nonfinite_probe_stats())
+
+
+def request_frame_png(path: str) -> None:
+    """Write the next finished frame to `path` as a PNG, once (developer
+    diagnostics; engine/dev_scripted_run.py's DAUNTLESS_DEV_SCREENSHOT)."""
+    fn = getattr(_h, "request_frame_png", None)
+    if fn is not None:
+        fn(str(path))
 
 
 def set_shadows_enabled(enabled: bool) -> None:

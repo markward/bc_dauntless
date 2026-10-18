@@ -457,3 +457,25 @@ def test_clearing_the_focus_restores_the_top_level_rule(host, _no_focus):
         pytest.skip("only GL_TIME_ELAPSED has a top-level rule")
     for s in host.profiler_scopes():
         assert s["gpu_measured"] == (s["depth"] <= 1), s
+
+
+# ── Frame PNG (engine/dev_scripted_run.py screenshots) ───────────────────────
+
+def test_a_requested_frame_png_is_written_at_the_end_of_the_next_frame(
+        host, tmp_path):
+    path = tmp_path / "shot.png"
+    host.request_frame_png(str(path))
+    assert not path.exists(), "written before any frame ran"
+    _run_frames(1)
+    assert path.exists()
+    data = path.read_bytes()
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    # IHDR width/height: the framebuffer the frame drew.
+    import struct
+    w, h = struct.unpack(">II", data[16:24])
+    fw, fh = host.framebuffer_size()
+    assert (w, h) == (fw, fh)
+    assert w > 0 and h > 0
+    path.unlink()
+    _run_frames(2)
+    assert not path.exists(), "one request, one file"

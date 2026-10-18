@@ -13203,7 +13203,8 @@ def run(mission_name: Optional[str] = None,
                         TopWindow_GetTopWindow().IsCutsceneMode(),
                         _scripted_destroy,
                         log=_scripted_log,
-                        force_view=_scripted_view):
+                        force_view=_scripted_view,
+                        screenshot=r.request_frame_png):
                     break
 
         # Final report while the window (and therefore the GL context and the

@@ -143,6 +143,9 @@
 #include <functional>
 #include <vector>
 
+// Pending request_frame_png path; empty = none. Read and cleared in frame().
+static std::string g_frame_png_path;
+
 namespace py = pybind11;
 
 // Toggle for the HDR resolve pass. Defined in frame.cc (librenderer).
@@ -2485,6 +2488,18 @@ void frame() {
         } else {
             std::fprintf(stderr, "[nonfinite] FAILED to write %s\n", path.c_str());
         }
+    }
+
+    // A requested frame PNG (request_frame_png): the finished frame, overlay
+    // included, read from the back buffer before the swap makes it undefined.
+    if (!g_frame_png_path.empty()) {
+        if (dauntless::dump_default_framebuffer_png(g_frame_png_path, fw, fh))
+            std::fprintf(stderr, "[frame-png] wrote %s (%dx%d)\n",
+                         g_frame_png_path.c_str(), fw, fh);
+        else
+            std::fprintf(stderr, "[frame-png] FAILED to write %s\n",
+                         g_frame_png_path.c_str());
+        g_frame_png_path.clear();
     }
 
     {
@@ -8484,6 +8499,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("x"), py::arg("y"));
 
     // Test/debug helper: return the current framebuffer size.
+    m.def("request_frame_png",
+          [](const std::string& path) { g_frame_png_path = path; },
+          py::arg("path"),
+          "Write the next finished frame (default framebuffer, overlay "
+          "included) to `path` as a PNG, once. Developer diagnostics: the "
+          "unattended runs' before/after screenshots (dev_scripted_run).");
     m.def("framebuffer_size",
           []() {
               if (!g_window) {
