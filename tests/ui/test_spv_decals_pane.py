@@ -1289,25 +1289,41 @@ _FAKE_MESHES = [
      "node_chain": ["Scene Root", "wing left", "__NDL_MultiMtl_Node"]},
     {"mesh": 2, "name": "wing right:0",
      "node_chain": ["Scene Root", "wing right", "__NDL_MultiMtl_Node"]},
+    # The LC nacelle's small material-split shape, proud of `wing left:0`.
+    {"mesh": 3, "name": "wing left:1",
+     "node_chain": ["Scene Root", "wing left", "__NDL_MultiMtl_Node"]},
 ]
 
 
 @pytest.fixture
 def winged(env, monkeypatch):
-    """`env` with a mesh-pick stub (the mesh follows the sign of the trace
-    origin's body X) and a rig articulating `wing left` / `wing right`."""
+    """`env` with a mesh-pick stub and a rig articulating `wing left` /
+    `wing right`. The mesh follows the sign of the hit's body X. A CLICK ray
+    (cast to the camera's far plane) hits the armed `_arm_hit` point; a
+    re-trace (a short ray at a placement's centre) hits at its origin, on
+    `pick["retrace_mesh"]` when that is set."""
     from engine.appc import articulation
     ship = env["ship"]
     w2b = _fake_world_to_body(ship)
     picks = []
-    pick = {"miss": False}
+    pick = {"miss": False, "retrace_mesh": None}
+
+    def _mesh_at(iid, point):
+        x = w2b(iid, point, (0.0, 0.0, 1.0))[0][0]
+        return 1 if x < -_WING_X else 2 if x > _WING_X else 0
 
     def _pick(iid, origin, direction, max_dist, exclude_meshes=()):
         picks.append((iid, origin, direction, max_dist))
+        if max_dist >= env["p"].camera.far:
+            armed = env["hit"]["value"]
+            if armed is None:
+                return None
+            return armed + (_mesh_at(iid, armed[0]), 0)
         if pick["miss"]:
             return None
-        x = w2b(iid, origin, (0.0, 0.0, 1.0))[0][0]
-        mesh = 1 if x < -_WING_X else 2 if x > _WING_X else 0
+        mesh = pick["retrace_mesh"]
+        if mesh is None:
+            mesh = _mesh_at(iid, origin)
         return origin, (0.0, 0.0, 1.0), 1.0, mesh, 0
     monkeypatch.setattr(host_io, "ray_trace_mesh_pick", _pick)
     monkeypatch.setattr(host_io, "model_identity", lambda iid: {
@@ -1333,6 +1349,14 @@ def _add_bottom(env, at):
 def test_a_click_on_an_articulated_part_fills_the_shape(winged):
     assert _add_bottom(winged, _LEFT_WING).shape == "wing left:0"
     assert winged["calls"][-1][1][1][0] == "wing left:0", "override carries it"
+
+
+def test_the_clicked_mesh_wins_over_a_shape_proud_of_it(winged):
+    """Add takes the mesh the CLICK hit (`wing left:0`), not the first one a
+    re-trace from above the centre would meet (`wing left:1`)."""
+    winged["pick"]["retrace_mesh"] = 3
+    assert _add_bottom(winged, _LEFT_WING).shape == "wing left:0"
+    assert _reposition_bottom(winged, _LEFT_WING).shape == "wing left:0"
 
 
 def test_a_click_on_the_hull_leaves_the_shape_empty(winged):

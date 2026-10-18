@@ -143,14 +143,16 @@ that draws decals without it would read a stale matrix from the previous ship.
      `model_parts` candidates are the children of Scene Root, which include
      the main hull, so that rule would restrict every hull click.)*
 3. **Re-derive after every move** *(Claude's call)*. Any edit that changes a
-   placement's centre — Add, Reposition, a gizmo Move (each drag step),
-   Paste, a typed coordinate, Mirror — re-derives `shape` by rule 2 from a trace at the placement's new
-   centre along its −normal. So Mirror of a `wing left:0` decal lands as
-   `wing right:0`; a move onto the plain hull clears `shape` to `""`; a move
-   whose trace misses keeps the old `shape`. Rotate and Scale do not move the
-   centre and leave `shape` alone. Only a shape on an articulated part is
-   cleared; a hand-authored shape off the parts (the Ambassador's
-   `amb saucer:0`) is kept.
+   placement's centre re-derives `shape` by rule 2. Add and Reposition take
+   the mesh the click itself hit (`ray_trace_mesh_pick`), so a surface proud
+   of the clicked one (`wing left:1` over `wing left:0`) cannot win. A gizmo
+   Move (each drag step), Paste, a typed coordinate and Mirror re-trace at the
+   placement's new centre along its −normal. So Mirror of a `wing left:0`
+   decal lands as `wing right:0`; a move onto the plain hull clears `shape` to
+   `""`; a click or trace that misses keeps the old `shape`. Rotate and Scale
+   do not move the centre and leave `shape` alone. Only a shape on an
+   articulated part is cleared; a hand-authored shape off the parts (the
+   Ambassador's `amb saucer:0`) is kept.
 
 ### 6.3 Docs
 

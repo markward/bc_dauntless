@@ -328,7 +328,7 @@ merge is not precluded.
 - The UI needs Mark's in-game look before the gate (memory: UI look first,
   gate last).
 
-## 10. Out of scope: decals (IMMEDIATE follow-up — resolved by spec 2026-10-18)
+## 10. Out of scope: decals (IMMEDIATE follow-up — resolved by spec 2026-10-18, not yet live-verified)
 
 Decals already carry an explicit physical binding: each placement names its
 NIF **shape** (`2026-09-28-hull-name-decals-design.md`, `shape`), from which
@@ -342,7 +342,7 @@ the part moves (decal spec line 312). **The LC Intrepid needs this soon**
 an immediate follow-up, not a parked one. Also unverified: whether a decal
 leaves with its part on severance.
 
-**Resolved** by `2026-10-18-articulated-hull-decals-design.md`: decals test
+**Resolved** by `2026-10-18-articulated-hull-decals-design.md` (not yet live-verified — spec §8): decals test
 in the rest frame via `u_node_rest_fix` (a decal on a shot-off part leaves with
 the chunk, its goal 2), and the SPV places at the NIF pose and fills `shape` on
 rigged parts.
@@ -386,7 +386,7 @@ Left to the builder
 ## 12. Follow-ups (not this work)
 
 - ~~**Decal sliding on articulated parts**: immediate, for the LC Intrepid (§10).~~
-  Resolved by `2026-10-18-articulated-hull-decals-design.md`.
+  Resolved by `2026-10-18-articulated-hull-decals-design.md` (not yet live-verified — spec §8).
 - **Per-emitter-light physical parents**: only if mis-placed emitter lights
   turn out to be a real problem (Mark, 2026-10-17). Emitter lights are placed
   by their **own** position, on purpose (`host_loop._articulate_emitter_light`

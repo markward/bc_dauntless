@@ -27,9 +27,9 @@ pane is active every part is at the NIF pose, so body points are REST-frame
 points. A placement whose centre lands on a mesh under a part this ship's rig
 articulates gets that mesh's `shape` (so it follows the part). Any other mesh
 clears a part's shape but keeps a hand-authored one off the parts (the
-committed Ambassador `top`'s "amb saucer:0"). Derived on Add, Reposition,
-Move, Paste and Mirror -- never on a Rotate/Scale (same centre) -- and a
-trace miss keeps the old shape.
+committed Ambassador `top`'s "amb saucer:0"). Add and Reposition take the
+mesh the click itself hit; Move, Paste and Mirror re-trace at the new centre;
+Rotate/Scale (same centre) never do. A miss keeps the old shape.
 """
 from __future__ import annotations
 
@@ -586,8 +586,10 @@ class DecalsPaneMixin:
     # Hull clicks
     # ------------------------------------------------------------------
     def _decal_hull_hit(self, x, y, viewport):
-        """(body point, body normal) under the cursor on the SPV instance's
-        hull, or None on a miss. See the module docstring for the frames."""
+        """(body point, body normal, mesh index) under the cursor on the SPV
+        instance's hull, or None on a miss. The mesh is None when only
+        `ray_trace_mesh` answered (no pick binding, or the pick missed). See
+        the module docstring for the frames."""
         ship, iid, cam = self._ship_getter(), self._decal_iid(), self.camera
         if ship is None or iid is None or cam is None:
             return None
@@ -601,10 +603,21 @@ class DecalsPaneMixin:
         origin, direction = ray
         off = frames.view_offset(frames.containing_set(ship))
         o = frames.shifted(TGPoint3(*origin), off, 1.0)
+        # The pick names the mesh the author clicked (the shape comes from it,
+        # not from a re-trace that could meet a surface proud of this one).
+        mesh = None
         try:
-            hit = host_io.ray_trace_mesh(iid, (o.x, o.y, o.z), direction, cam.far)
+            hit = host_io.ray_trace_mesh_pick(
+                iid, (o.x, o.y, o.z), direction, cam.far)
         except Exception:
             hit = None
+        if hit is not None:
+            hit, mesh = hit[:3], hit[3]
+        else:
+            try:
+                hit = host_io.ray_trace_mesh(iid, (o.x, o.y, o.z), direction, cam.far)
+            except Exception:
+                hit = None
         if hit is None:
             return None
         (px, py, pz), normal, _t = hit
@@ -618,7 +631,8 @@ class DecalsPaneMixin:
         if body is None:
             return None
         pb, nb = body
-        return tuple(float(c) for c in pb), _unit(tuple(float(c) for c in nb))
+        return (tuple(float(c) for c in pb), _unit(tuple(float(c) for c in nb)),
+                mesh)
 
     def _decal_meshes(self, iid) -> list:
         """`model_identity(iid)["meshes"]`, cached per iid. A None (an
@@ -666,16 +680,27 @@ class DecalsPaneMixin:
             hit = host_io.ray_trace_mesh_pick(
                 iid, (o.x, o.y, o.z), body_dir_to_world(ship, tuple(-c for c in n)),
                 2.0 * d * instance_scale(ship))
-            if hit is None:
-                return None
+        except Exception as e:
+            from engine import dev_mode
+            dev_mode.log_swallowed("spv decal shape trace", e)
+            return None
+        return None if hit is None else self._decal_shape_of_mesh(hit[3])
+
+    def _decal_shape_of_mesh(self, mesh) -> Optional[str]:
+        """Rule 2 for mesh index `mesh`: its shape name when it hangs under a
+        part this ship's rig articulates, else ""; None when unknown."""
+        ship, iid = self._ship_getter(), self._decal_iid()
+        if mesh is None or ship is None or iid is None:
+            return None
+        try:
             entry = next((m for m in self._decal_meshes(iid)
-                          if m.get("mesh") == hit[3]), None)
+                          if m.get("mesh") == mesh), None)
             if entry is None:
                 return None
             parts = self._decal_part_names(ship)
         except Exception as e:
             from engine import dev_mode
-            dev_mode.log_swallowed("spv decal shape trace", e)
+            dev_mode.log_swallowed("spv decal mesh shape", e)
             return None
         if self._decal_under_part(entry, parts):
             return str(entry.get("name", ""))
@@ -698,10 +723,15 @@ class DecalsPaneMixin:
 
     def _decal_with_derived_shape(self, p: decal_editor.Placement
                                   ) -> decal_editor.Placement:
-        """`p` with the shape under its centre, or `p` itself on a miss.
-        Off the parts ("") only a part's shape is cleared: a hand-authored
-        shape there is kept."""
-        shape = self._decal_shape_at(decal_editor.centre(p), p.normal, p.depth)
+        """`p` with the shape re-traced under its centre (a centre MOVE)."""
+        return self._decal_with_shape(
+            p, self._decal_shape_at(decal_editor.centre(p), p.normal, p.depth))
+
+    def _decal_with_shape(self, p: decal_editor.Placement,
+                          shape: Optional[str]) -> decal_editor.Placement:
+        """`p` carrying a derived `shape`, or `p` itself when it is None (a
+        miss). Off the parts ("") only a part's shape is cleared: a
+        hand-authored shape there is kept."""
         if shape is None or (shape == "" and p.shape
                              and not self._decal_is_part_shape(p.shape)):
             return p
@@ -722,7 +752,8 @@ class DecalsPaneMixin:
         if hit is None:
             self._decal_error = MISS_HINT
             return True
-        pb, nb = hit
+        pb, nb, mesh = hit
+        shape = self._decal_shape_of_mesh(mesh)
         try:
             if self._decal_adding is not None:
                 name = self._decal_adding
@@ -732,8 +763,8 @@ class DecalsPaneMixin:
                     self._decal_ship_radius(self._ship_getter()),
                     self._decal_aspect(mask))
                 # "" when the name IS the mask: no redundant "mask" key.
-                self._decal_working.append(self._decal_with_derived_shape(
-                    replace(p, mask="" if mask == name else mask)))
+                self._decal_working.append(self._decal_with_shape(
+                    replace(p, mask="" if mask == name else mask), shape))
                 self._decal_selected = name
                 self._decal_adding = None
                 self._decal_adding_mask = ""
@@ -742,9 +773,10 @@ class DecalsPaneMixin:
                 if i is None:
                     self._decal_reposition = False
                     return True
-                self._decal_working[i] = self._decal_with_derived_shape(
+                self._decal_working[i] = self._decal_with_shape(
                     decal_editor.reposition(
-                        self._decal_working[i], pb, nb, BODY_FORWARD, BODY_UP))
+                        self._decal_working[i], pb, nb, BODY_FORWARD, BODY_UP),
+                    shape)
                 self._decal_reposition = False
         except ValueError as e:
             self._decal_error = "Cannot place there: %s" % e
