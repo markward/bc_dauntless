@@ -74,6 +74,18 @@ each capture, not a constant. The earlier hand-run B2 (Quick Battle, the
 player's Sovereign against two Birds of Prey, C-002) is retired: its ending
 depended on the player.
 
+### B2d — B2 with a scripted Sovereign kill (unattended)
+
+B2 does not always produce a kill inside its 180 s cap (SIG-035). For a death
+that happens every run, add the B1 destroy hook to B2:
+
+```bash
+DAUNTLESS_WINDOW_SIZE=1280x720 DAUNTLESS_MISSION=engine.dev_missions.felix_destroy DAUNTLESS_DEV_AUTOQUIT=1 DAUNTLESS_DEV_VIEW=exterior DAUNTLESS_DEV_DESTROY=Enemy-Sovereign DAUNTLESS_DEV_QUIT_AFTER_S=40 DAUNTLESS_PROFILE_FRAMES=100000000 ./build/dauntless --developer 2>&1 | tee ~/Documents/dauntless-perf/b2d-$(date +%Y%m%d-%H%M).log
+```
+
+The Sovereign dies 10 s in through the same death path as `]`, and the run
+quits 5 s after `ET_OBJECT_DESTROYED`.
+
 ### To catch hitches
 
 Add `DAUNTLESS_PROFILE_SPIKES=<path> DAUNTLESS_PROFILE_SPIKE_MS=50` in place
@@ -101,6 +113,19 @@ turns off the periodic report, so it needs its own run (M-5).
 | C-013 | 2026-10-18 08:50 | B1 unattended, **visible**, exterior | `perf/cef-upload-sync` | **Debug** | framebuffer 1280x720 (external monitor, 1×) | 35 reports | First capture with the `[profile]` header line. |
 | C-014 | 2026-10-18 08:52 | B1 unattended, visible, exterior | `perf/cef-upload-sync` | **Debug** | framebuffer 1512x945 (external monitor, 1×) | 45 reports | Aimed at the laptop's maximised size, but opened on the 1× monitor. |
 | C-015 | 2026-10-18 09:36 | **B2 (Felix: Destroy)** unattended, headless, exterior | `perf/cef-upload-sync` | **Debug** | framebuffer 1280x720 | 17,225 frames / 144 reports | First ship destroyed: the enemy Sovereign, exploding at report 134 (about 160 s in), removed at report 139. |
+| C-016 | 2026-10-18 10:00 | B1, **spike capture** (30 ms), headless | `perf/death-hitch` @ `8ca120a7` (= int/2026-10-18-01) | **Debug** | framebuffer 1280x720 | 42 spikes | `p4-b1-pre-1`. 15 freezes after the death. |
+| C-017 | 2026-10-18 10:03 | as C-016 | same | **Debug** | 1280x720 | 32 spikes | `p4-b1-pre-2`. 6 freezes. |
+| C-018 | 2026-10-18 10:05 | as C-016 | same | **Debug** | 1280x720 | 26 spikes | `p4-b1-pre-3`. 4 freezes. |
+| C-019 | 2026-10-18 10:08 | B2, spike capture (30 ms), headless | same | **Debug** | 1280x720 | 7 spikes | `p4-b2-pre-1`. **No kill**: quit at the 180 s cap. |
+| C-020 | 2026-10-18 10:11 | as C-019 | same | **Debug** | 1280x720 | 17 spikes | `p4-b2-pre-2`. **No kill** again. |
+| C-021 | 2026-10-18 10:14 | **B2d**, spike capture (30 ms), headless | same | **Debug** | 1280x720 | 9 spikes | `p4-b2d-pre-1`. Sovereign destroyed by script at about 11 s. |
+| C-022 | 2026-10-18 10:17 | B1, spike capture with the new `dmg.*`/`vd.*`/`hb.*`/`dc.*` scopes | same + scopes | **Debug** | 1280x720 | 246 spikes | `p4-b1-scoped-1`. |
+| C-023 | 2026-10-18 10:21 | B1 + macOS `sample` (15 s at 1 ms) from the destroy | same + scopes | **Debug** | 1280x720 | — | `p4-b1-sample`; stack file in session scratch, not kept. |
+| C-024 | 2026-10-18 10:24–10:45 | B1 with a **temporary** per-carve timing print (native and Python), four runs | scratch builds, never committed | **Debug** | 1280x720 | — | `p4-b1-diag`…`diag4`. For carve sizes and counts only: the print itself costs time (a full-field copy per carve in diag3). |
+| C-025 | 2026-10-18 10:33–10:38 | B1 spike capture ×3, **first fix** (skip +127 cells, tight box, whole-box fill) | uncommitted intermediate | **Debug** | 1280x720 | — | `p4-b1-post-1`…`3`. Superseded by C-026. |
+| C-026 | 2026-10-18 10:47–10:53 | B1 spike capture ×3, **block fill** | `87d93f22` | **Debug** | 1280x720 | 55 / 34 / 24 spikes | `p4-b1-post2-1`…`3`. |
+| C-027 | 2026-10-18 10:50 | B2d spike capture | `87d93f22` | **Debug** | 1280x720 | 8 spikes | `p4-b2d-post-1`. |
+| C-028 | 2026-10-18 10:51 | B2d + `sample` (20 s at 1 ms) from the destroy, spike threshold 100 ms | `87d93f22` | **Debug** | 1280x720 | 2 spikes (boot) | `p4-b2d-sample`. |
 
 Logs for C-003 to C-008: `~/Documents/dauntless-perf/cef-*.log`, `cef2-*` …
 `cef6-*`.
@@ -145,6 +170,15 @@ bound, not the actual size.
 
 | ID | Capture | What the data shows | Tier | Feeds |
 |---|---|---|---|---|
+| SIG-035 | C-019, C-020 | B2 produced **no kill** in two runs out of two: both quit at the 180 s cap ("time cap, nobody died"). C-015 killed at about 160 s. B2 is not a reliable death scenario; B2d is. | Measured | P-4 |
+| SIG-034 | C-019, C-020, C-027 | **Lone `space.opaque` spikes of 573–578 ms**, with nothing else slow in the frame: at 39.6 s (C-019) and 19.3 s (C-020) of B2 with no death, near `[severance]` lines, and 11 s after the B2d death in C-027. Absent from C-028. Not tied to the death path. Cause unknown. | Measured | P-11 |
+| SIG-033 | C-021, C-027 | **Counter-signal:** a normal ship's death is not the station's problem. The Sovereign's death costs `cb.damage_sys` 15–27 ms per carve frame before the fix and 17–24 ms after: `vd.carve` 10–17 ms and `hb.split_detached` 3–6 ms. Its carves are ordinary size, so the brush still evaluates every cell in each reach box. | Measured | P-4 |
+| SIG-032 | C-026 | **After the fix (B1 ×3):** no frame of 1 s or more (before: 4–15 per run). Worst frame 0.45 s: the first carve frame = `vd.carve` 62–117 ms + the first full `hb.split_detached` BFS 133 ms + the first full field upload in `space.opaque` 165–210 ms. One more frame of up to 0.40 s in two runs (a drain BFS of 175–240 ms + a full re-upload of 207–370 ms). Each later wreck carve: `vd.carve` 28–63 ms, with no BFS and no upload. | Measured | P-4 |
+| SIG-031 | C-016–C-018, C-024 | **Why B1 varies.** SDK `Effects.ObjectExploding` gives the wreck a random 5–15 s life with a small explosion every 0–0.45 s. Each explosion has a 30% chance (`GetRandomNumber(10) < 3`) to call `AddDamage(point, radius/4, 600)`. Each such carve froze the game for about 1.7 s while game time barely advanced, so the run saw as many freezes as rolls came up: 15, 6 and 4. | Derived (SDK source + spike counts) | P-4 |
+| SIG-030 | C-024 | **The slow carves are 35 GU wreck carves that cover the whole lattice.** Radius 3,501.5 model units = floor `influ` 4.377 GU (the station's radius / 4) × `DamageRadMod` 8 at 100 model units per GU. Reach box = all 153×283×310 = 13.4 M cells of the FedOutpost lattice, 1,450–1,500 ms each. Every other carve is under 13 ms (the core-breach growth carves run 0.1–12 ms). After the first two big carves **every cell is +127**; each later one changes 0 cells. | Measured | P-4 |
+| SIG-029 | C-023 | Stack sample during the freezes: 5,087 of 5,125 samples inside `renderer::hull_carve_deposit` are in `voxel::field_carve_oblate`, the per-cell brush. The bake (`make_blank_like`, 38) and the backing gate (`volume_for_source`, 2) barely register. The `space.opaque` share is `InstanceFieldCache::upload`, re-uploading the field. | Measured | P-4 |
+| SIG-028 | C-022 | Finer scopes: each freeze is `dmg.visible` → `vd.carve` (native `hull_carve_add`, 2 calls) 1.5–3.1 s, plus `hb.split_detached` about 135 ms, either in the same frame or a frame later from `hull_breakup.drain` (that is the `sim.debris_chunks` frame). `hb.spawn` never appears: no chunk breaks off. `dmg.cascade`, `dmg.core_breach` and `dmg.core_carve` stay under 0.5 ms. | Measured | P-4 |
+| SIG-027 | C-016–C-018 | **The Facility death is not one hitch.** Spike capture at 30 ms: after the destroy the game freezes for **1.5–3.3 s, every 2–3 s**, for 11–36 s: 15, 6 and 4 freezes in three identical runs. Each freeze is almost all `cb.damage_sys`, with `space.opaque` 110–180 ms in the same frame, and `sim.debris_chunks` about 135 ms in a frame shortly after. Supersedes the lower bounds of SIG-003 and SIG-024. | Measured | P-4, A-2 |
 | SIG-026 | C-015 | B2 at 1280x720, exterior, 6 ships and 0–20 projectiles in flight: about **10 ms** per frame (about 100 fps) for most of the fight, rising to 11–12.5 ms near the end. The Sovereign's death costs `cb.damage_sys` 7.6 ms in the death report (one frame of at least about 50 ms), with `space.particles` 1.7 ms. `cb.damage_sys` now hitches at a death in all three scenarios (C-001, C-012–14, C-015). | Measured / derived (EMA bound) | P-4, A-2 |
 | SIG-025 | C-011 | On the E1M2 bridge after the cutscene, `render_prep` is about **6 ms** (0.3 ms during the cutscene). So P-7 is not specific to Quick Battle. | Measured | P-7 |
 | SIG-024 | C-012, C-013, C-014 | **The Facility destroy hitch varies widely between identical runs.** `sim` in the destroy report: 7.6 ms (C-012), 7.8 ms (C-013), **211 ms** (C-014), meaning one frame of at least about 50 ms in the first two and about 1.4 s in the last. Mostly `cb.damage_sys` again. | Derived (EMA bound) | P-4, A-2 |
@@ -179,7 +213,7 @@ bound, not the actual size.
 | ID | Issue | Status | Signals | Next step |
 |---|---|---|---|---|
 | A-1 | ~~The CPU and GPU take turns instead of overlapping.~~ | **Closed: not an engine problem.** The serialisation is real only while the profiler's GPU timer is on, and it disappears without it (SIG-019). The upload was never the cause (SIG-016, SIG-017). Moved to M-6. | SIG-001, SIG-002, SIG-016–SIG-019 | None for the engine. The upload policy stays as a small separate win (P-10). |
-| A-2 | **Heavy one-off work runs inside a single frame, with no budget.** Deaths, battle start and warp arrival each do their work all at once. | Measured (as lower bounds) | SIG-003, SIG-004, SIG-005; `frame-profiler.md` warp-tunnel frames of 100–180 ms | Size each case with a spike capture. Then add a common way to spread work across frames or prepare it on a worker, instead of each subsystem doing its own thing. |
+| A-2 | **Heavy one-off work runs inside a single frame, with no budget.** Deaths, battle start and warp arrival each do their work all at once. | Measured (as lower bounds; P-4's station case now measured raw, SIG-027) | SIG-003, SIG-004, SIG-005, SIG-027; `frame-profiler.md` warp-tunnel frames of 100–180 ms | Size each case with a spike capture. Then add a common way to spread work across frames or prepare it on a worker, instead of each subsystem doing its own thing. |
 | A-3 | **Only some work can move to another thread.** CEF cannot: on macOS its UI thread must be the main thread. The Python sim cannot gain from threads because of the GIL. C++ work that doesn't touch Python can (asset decode, rock streaming, voxel carve), with a short GPU upload step at the end. | Constraint | — | Use this for A-2. Do not reopen the CEF-thread idea (see the CEF threading memory). |
 | A-4 | **Sim cost grows with the number of Python calls.** Earlier captures: about 200,000 calls per tick at 100 ships, scaling linearly. `TimeSliceProcess` and sim LOD are barely used. | Measured in earlier captures. **Not visible in B1 or B2** (SIG-014). | SIG-014 (counter) | Add a large-fleet baseline (B3, for example `combat_stress` with 33+ ships) so this issue has signals of its own. |
 
@@ -190,12 +224,13 @@ bound, not the actual size.
 | P-1 | `space` pass at Vesuvi, 27.6 ms GPU | Measured; cause unknown | SIG-007 | Close M-1 first. Candidates: system haze, rock puffs (2000), rock fields, planets. None tested. |
 | P-2 | `bridge` pass, 13 ms GPU at times | Measured; cause of the 3→13 ms jump unknown | SIG-008 | Find what changed between C-001 reports 2 and 3 (alert state, probe capture, camera). Candidates: reflection-probe fill, SSAO quality, PBR lights. |
 | P-3 | Post chain (dof + bloom + resolve + post), 5 ms GPU | Measured | SIG-009 | Cost each pass against what it adds visually. DOF alone is 0.9–2.2 ms. |
-| P-4 | Death damage path (`cb.damage_sys`, `sim.debris_chunks`) | Measured, lower bound ≥ 480 ms | SIG-003, SIG-004 | Spike capture of B1, then find what `damage_sys` does all at once on death. Linked to A-2. |
+| P-4 | Death damage path (`cb.damage_sys`, `sim.debris_chunks`) | **Dominant cost fixed** (`87d93f22`, branch `perf/death-hitch`): the station wreck's repeated whole-lattice carves (SIG-027–SIG-031). B1's worst frame 3.25 s → 0.45 s; frames ≥ 1 s 4–15 per run → 0 (SIG-032). **Left:** one or two one-off frames of 0.26–0.45 s at the station's first carve (first full BFS + first full upload + the carve), about 30 ms per later wreck carve, and 17–24 ms carve frames on a normal ship's death (SIG-033). | SIG-003, SIG-004, SIG-024, SIG-027–SIG-033 | (1) The first full-lattice BFS and the full upload scale with lattice size: candidates are an early-out for a saturated field and a cheaper first pack. (2) Open fidelity question, not perf: a 35 GU floor on a 23 GU station leaves every cell +127, which may erase the whole wreck at its first explosion carve. Ask Mark before touching the size. |
 | P-5 | Damaged hull on the viewscreen (`carve_stencil` + `breach`), 11 ms CPU | Measured, one report | SIG-010 | Check whether per-frame work could be cached while the damage is unchanged. |
 | P-6 | `anim` bone palettes, 1.5–2.8 ms CPU every frame | Measured | SIG-011 | Skip instances that are not visible (e.g. the bridge crew in exterior view) or far away. `frame-profiler.md` already notes there is no gate. |
 | P-7 | `render_prep` about 6 ms on the Quick Battle bridge before the battle | Measured; cause unknown | SIG-012 | Find which child scope is responsible. `frame-profiler.md`'s first capture saw 15.8 ms in the same scene. |
 | P-8 | `ui_panels` (Python) at scale | Cheap at B1/B2 scale; 10–17 ms in earlier 17-ship captures | SIG-013 (counter) | Measure in B3. Profile each panel. The sensors panel may re-send its data every frame (inferred from the code). |
 | P-9 | AI avoidance all-pairs scan | Earlier captures only | — | Needs B3. A spatial broadphase, as the projectile loop got. |
+| P-11 | Lone `space.opaque` spikes of about 575 ms in B2/B2d | Measured; cause unknown; not every run | SIG-034 | Catch one under `sample` (C-028 missed it). Seen near `[severance]` lines, so a part-severance or first-draw cost is a candidate, not a finding. |
 | P-10 | CEF overlay full-surface upload, about 0.53 ms CPU a frame even when nothing repainted | Measured; small | SIG-020 | `DAUNTLESS_CEF_UPLOAD=on_paint` (branch `perf/cef-upload-sync`) skips unrepainted frames losslessly. Measure the paint rate in a HUD-heavy scene (B2) before deciding whether to make it the default. |
 
 ---
