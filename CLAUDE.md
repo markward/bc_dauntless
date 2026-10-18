@@ -352,8 +352,19 @@ uv run pytest
 
 ## Test gate — both suites, machine-checked baseline
 
-`scripts/run_tests.sh` is **pytest-only** and cannot see C++ regressions. Before
-merging, run the GATE instead:
+⛔ **The gate runs ONLY when merging into `main`, and only when Mark says so.**
+Never per feature, never per task, never on an integration branch. Features
+merge into an integration branch (`int/<date>-NN`) with **no gate**: that
+branch is a bubble, and the one full gate runs when it merges into main. Never
+run whole pytest suites either (`tests`, `tests/unit`, `tests/ui`: ~15 min of
+CPU). During development run **only the focused test files** for your change,
+and tell every subagent you dispatch the same. **Why:** this machine is shared
+and used for performance testing; every surprise gate or whole-suite run wrecks
+a perf baseline. This overrides any plan, skill or brief step that says "run the
+full suite" or "run the gate".
+
+`scripts/run_tests.sh` is **pytest-only** and cannot see C++ regressions. When
+merging into main, run the GATE instead:
 
 ```bash
 scripts/check_tests.sh        # builds C++, runs pytest + ctest, diffs failures
@@ -369,7 +380,7 @@ so with a BC content root configured, any ctest skip not baselined as
 binary once, whole, from the project root (failures report as `inproc:<name>`),
 because ctest's one-process-per-case from the build dir hid a real renderer bug
 and a GL-state leak between fixtures. **Never call a failure "pre-existing" by
-eyeball; run the gate.**
+eyeball** — the ledger and the main-merge gate decide that.
 
 **Read the ledger, never a remembered count.** This paragraph used to name "the
 7 headless-GL scorch/heat-glow `FrameTest`s" long after they were fixed
@@ -388,5 +399,6 @@ cross-test pollution (reset leaked globals in `tests/conftest.py`'s autouse
 ## Executing plans
 
 When asked to execute a plan in `docs/plans/`, dispatch one `tdd-engineer`
-subagent per task in order, run the full suite and commit between tasks, and
-stop on any BLOCKED.
+subagent per task in order, run that task's focused test files (never the full
+suite or the gate — see "Test gate") and commit between tasks, and stop on any
+BLOCKED.
