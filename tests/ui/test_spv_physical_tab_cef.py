@@ -189,6 +189,24 @@ take("escEvents");
 
 shipPropertyViewerPhysTab({dataset: {tab: "functional"}});
 take("tabEvents");
+
+renderSPVPhysical(payload);
+function hdrKey(part) { return part === null ? "none" : "p:" + part; }
+out.expandedHtml = els["spv-physical-body"].innerHTML;
+shipPropertyViewerPhysGroupToggle({dataset: {gkey: hdrKey("birdofprey")}});
+out.collapsedHtml = els["spv-physical-body"].innerHTML;
+renderSPVPhysical(payload);
+out.rerenderHtml = els["spv-physical-body"].innerHTML;
+shipPropertyViewerPhysGroupToggle({dataset: {gkey: hdrKey("birdofprey")}});
+out.restoredHtml = els["spv-physical-body"].innerHTML;
+shipPropertyViewerPhysGroupToggle({dataset: {gkey: hdrKey(null)}});
+out.noPartCollapsed = els["spv-physical-body"].innerHTML;
+shipPropertyViewerPhysGroupToggle({dataset: {gkey: hdrKey(null)}});
+shipPropertyViewerPhysGroupToggle({dataset: {gkey: hdrKey("old wing")}});
+out.missingCollapsed = els["spv-physical-body"].innerHTML;
+take("toggleEvents");
+shipPropertyViewerPhysGroupMenu(ev(), {dataset: {part: "old wing", missing: "true"}});
+out.collapsedMenuMoveAll = els["spv-ctx-moveall"].style.display;
 console.log(JSON.stringify(out));
 """
 
@@ -275,3 +293,20 @@ def test_names_are_escaped(harness):
 def test_tab_click_dispatches(harness):
     assert harness["tabEvents"] == [
         'ship-property-viewer/physical/tab:{"tab":"functional"}']
+
+
+def test_group_toggle(harness):
+    exp, col = harness["expandedHtml"], harness["collapsedHtml"]
+    assert 'data-key="sub:3"' in exp and 'data-key="light:nav1"' in exp
+    assert 'data-key="sub:3"' not in col and 'data-key="light:nav1"' not in col
+    assert 'data-key="sub:9"' in col  # other groups untouched
+    assert col.count("▸") == 1 and col.count("▾") == exp.count("▾") - 1
+    # state survives a re-render of the same payload
+    assert 'data-key="sub:3"' not in harness["rerenderHtml"]
+    assert harness["restoredHtml"] == exp
+    # the No part and missing groups toggle too, with no event dispatched
+    assert 'data-key="sub:9"' not in harness["noPartCollapsed"]
+    assert 'data-key="sub:1"' not in harness["missingCollapsed"]
+    assert harness["toggleEvents"] == []
+    # a collapsed missing header still opens Move all to
+    assert harness["collapsedMenuMoveAll"] == "block"

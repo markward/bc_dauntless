@@ -1516,19 +1516,36 @@ function spvPhysRowHtml(row) {
         + src + '</span></div>';
 }
 
+// Collapsed groups, JS-local (no event): key 'p:<part>' or 'none' for the
+// part-less group. Survives payload re-renders. Glyph swap, never a rotation.
+var spvPhysCollapsed = {};
+function spvPhysGroupKey(group) {
+    return (group.part === null || group.part === undefined)
+        ? 'none' : 'p:' + group.part;
+}
+window.shipPropertyViewerPhysGroupToggle = function (el) {
+    var k = el.dataset.gkey;
+    spvPhysCollapsed[k] = spvPhysCollapsed[k] !== true;
+    renderSPVPhysical(spvPhysical);
+};
+
 function spvPhysGroupHtml(group) {
     var missing = group.missing === true;
     var label = group.part === null || group.part === undefined
         ? 'No part' : String(group.part);
     var text = escapeHtmlSPV(label);
     if (missing) text = '⚠ ' + text + ' (missing)';
-    var out = ['<div class="spv-sys-row"'
+    var gkey = spvPhysGroupKey(group);
+    var collapsed = spvPhysCollapsed[gkey] === true;
+    var out = ['<div class="spv-sys-row" data-gkey="' + escapeHtmlSPV(gkey) + '"'
+        + ' onclick="shipPropertyViewerPhysGroupToggle(this)"'
         + (missing ? ' data-part="' + escapeHtmlSPV(group.part) + '" data-missing="true"'
             + ' oncontextmenu="return shipPropertyViewerPhysGroupMenu(event, this)"' : '')
-        + '><span class="spv-sys-caret spv-sys-caret--none">▾</span>'
+        + '><span class="spv-sys-caret">'
+        + (collapsed ? '▸' : '▾') + '</span>'
         + '<span class="spv-sys-row__part' + (missing ? ' spv-sys-row__part--missing' : '')
         + '">' + text + '</span></div>'];
-    var rows = group.rows || [];
+    var rows = collapsed ? [] : (group.rows || []);
     for (var i = 0; i < rows.length; i++) {
         var r = rows[i] || {};
         r.__part = group.part;
