@@ -1390,16 +1390,20 @@ TEST_F(FarPassPrefetchTest, APrefetchAfterTheWorkersExitStartsNewOnes) {
     for (int i = 0; i < 3; ++i) EXPECT_TRUE(pass.atlas_loaded(i)) << "rock " << i;
 }
 
-// atlas_for on a queued (not yet started) index loads it lazily and takes it
-// off the queue, so the pump never decodes it again.
+// atlas_for on a queued atlas no worker has taken loads it itself and takes
+// it off the queue, so no worker decodes it again. Workers held back so the
+// atlas is still queued when atlas_for runs.
 TEST_F(FarPassPrefetchTest, AtlasForOnQueuedIndexLoadsOnce) {
     constexpr int kN = renderer::kMaxAtlasDecodesInFlight + 2;
     renderer::FarPass pass;
     pass.set_atlas_paths(atlas_paths(kN));
+    pass.debug_pause_decode_workers(true);
     pass.prefetch_atlases();
     EXPECT_TRUE(pass.has_atlas(kN - 1));
     EXPECT_TRUE(pass.atlas_loaded(kN - 1));
+    EXPECT_EQ(pass.debug_decode_count(), 2) << "loaded on the main thread, no worker ran";
     EXPECT_EQ(pass.pump_atlas_uploads(0), kN - 1) << "no longer queued";
+    pass.debug_pause_decode_workers(false);
     pump_until_done(pass);
     for (int i = 0; i < kN; ++i) EXPECT_TRUE(pass.atlas_loaded(i)) << "rock " << i;
     EXPECT_EQ(pass.debug_decode_count(), 2 * kN) << "the queued one decoded once";
@@ -1410,9 +1414,12 @@ TEST_F(FarPassPrefetchTest, SetAtlasPathsClearsTheQueue) {
     constexpr int kN = renderer::kMaxAtlasDecodesInFlight + 2;
     renderer::FarPass pass;
     pass.set_atlas_paths(atlas_paths(kN));
+    pass.debug_pause_decode_workers(true);
     pass.prefetch_atlases();
     pass.set_atlas_paths({});
+    pass.debug_pause_decode_workers(false);
     EXPECT_EQ(pass.pump_atlas_uploads(4), 0);
     EXPECT_EQ(pass.debug_decodes_in_flight(), 0);
+    EXPECT_EQ(pass.debug_decode_count(), 0) << "nothing queued for the old paths started";
     for (int i = 0; i < kN; ++i) EXPECT_FALSE(pass.atlas_loaded(i));
 }

@@ -236,6 +236,7 @@ void FarPass::start_decode_workers() {
                                              std::future_status::ready;
                                   }),
                    workers_.end());
+    if (workers_paused_) return;
     int wanted = 0;
     {
         std::lock_guard<std::mutex> lock(queue_->mutex);
@@ -281,6 +282,11 @@ int FarPass::pump_atlas_uploads(int max_uploads) {
         if (finish_pending(index)) ++uploaded;
     }
     return static_cast<int>(pending_.size());
+}
+
+void FarPass::debug_pause_decode_workers(bool paused) {
+    workers_paused_ = paused;
+    if (!paused) start_decode_workers();
 }
 
 void FarPass::debug_wait_atlas_decodes() {

@@ -144,6 +144,9 @@ public:
     // TEST-ONLY: prefetched atlases not yet installed (queued, decoding or
     // decoded and not uploaded).
     int debug_decodes_in_flight() const { return static_cast<int>(pending_.size()); }
+    // TEST-ONLY: while paused no decode worker starts, so queued atlases stay
+    // queued (atlas_for's take-it-yourself path); unpausing starts them.
+    void debug_pause_decode_workers(bool paused);
     // TEST-ONLY: the most atlases ever decoding at once on the workers.
     int debug_max_decodes_in_flight() const { return queue_->max_running.load(); }
 
@@ -192,6 +195,7 @@ private:
     std::map<int, std::future<AtlasCpu>> pending_;
     std::shared_ptr<DecodeQueue> queue_ = std::make_shared<DecodeQueue>();
     std::vector<std::future<void>> workers_;   // decode_worker loops
+    bool workers_paused_ = false;               // debug_pause_decode_workers
     std::uint32_t vao_ = 0;
     std::uint32_t corner_vbo_ = 0;
     std::uint32_t instance_vbo_ = 0;
