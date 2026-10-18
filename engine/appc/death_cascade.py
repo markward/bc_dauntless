@@ -39,6 +39,7 @@ we fire immediately from a live reference.
 See docs/engine/damagetool-and-hull-damage-gaps.md for the carve curve.
 """
 import engine.dev_mode as dev_mode
+from engine.core import frame_profiler
 
 # ── BC constants (Effects.py) ────────────────────────────────────────────────
 THROES_MIN = 5.0          # random(100)/10.0 + 5.0 -> [5.0, 15.0)
@@ -186,11 +187,13 @@ def _fire(state: dict, sound_ok: bool) -> None:
     ship = state["ship"]
     rand = state["rand"] or _rand
     try:
-        point = ship.GetRandomPointOnModel()
+        with frame_profiler.scope("casc.point"):
+            point = ship.GetRandomPointOnModel()
         radius = float(ship.GetRadius())
 
         if rand(10) < DAMAGE_CHANCE_IN_10:
-            ship.AddDamage(point, radius * DAMAGE_RADIUS_FRACTION, DAMAGE_STRENGTH)
+            with frame_profiler.scope("casc.add_damage"):
+                ship.AddDamage(point, radius * DAMAGE_RADIUS_FRACTION, DAMAGE_STRENGTH)
 
             from engine.appc import damage_geometry
             if damage_geometry.breakables_allowed_for(ship):
@@ -199,10 +202,13 @@ def _fire(state: dict, sound_ok: bool) -> None:
                 visible_damage.queue_world_capsule(ship, point, point2,
                                                    kCascadeCapsuleRadiusGu)
 
-        _debris_explosion(ship, point, radius * BLAST_SIZE_FRACTION, rand)
-        _light(ship, radius * BLAST_SIZE_FRACTION)
+        with frame_profiler.scope("casc.explosion"):
+            _debris_explosion(ship, point, radius * BLAST_SIZE_FRACTION, rand)
+        with frame_profiler.scope("casc.light"):
+            _light(ship, radius * BLAST_SIZE_FRACTION)
         if sound_ok:
-            _death_sound(ship)
+            with frame_profiler.scope("casc.sound"):
+                _death_sound(ship)
     except Exception as _e:
         dev_mode.log_swallowed("death cascade blast", _e)
 

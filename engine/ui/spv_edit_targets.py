@@ -1227,7 +1227,8 @@ class DecalTarget(EditTarget):
         # "" when the name IS the mask: no redundant "mask" key (as Add).
         q = replace(p, name=name, mask="" if name == mask else mask,
                     origin=new_origin, u_axis=new_u, v_axis=v, normal=n)
-        pane._decal_working.append(q)
+        # A left-wing decal's copy belongs on the right wing's shape.
+        pane._decal_working.append(pane._decal_with_derived_shape(q))
         pane._decal_selected = name
         pane._decal_reposition = False
         pane._decal_error = None

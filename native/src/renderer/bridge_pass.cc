@@ -13,6 +13,7 @@
 #include <scenegraph/camera.h>
 #include <scenegraph/instance.h>
 
+#include <assets/file_bytes.h>
 #include <assets/flip_frame.h>
 #include <assets/model.h>
 #include <assets/mesh.h>
@@ -28,8 +29,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <fstream>
-#include <iterator>
 #include <limits>
 #include <utility>
 #include <vector>
@@ -78,16 +77,14 @@ void BridgePass::ensure_off_texture() {
     off_tex_loaded_ = off_tex_path_;
     off_tex_ = {};
     if (off_tex_path_.empty()) return;
-    std::ifstream in(off_tex_path_, std::ios::binary);
-    if (!in) {
+    const auto bytes = assets::read_binary_file(off_tex_path_);
+    if (!bytes) {
         std::fprintf(stderr, "[bridge] viewscreen off texture: open '%s' failed\n",
                      off_tex_path_.c_str());
         return;
     }
-    std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)),
-                                    std::istreambuf_iterator<char>());
     try {
-        off_tex_ = assets::upload_image(assets::decode_tga(bytes),
+        off_tex_ = assets::upload_image(assets::decode_tga(*bytes),
                                         /*generate_mipmaps=*/false);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "[bridge] viewscreen off texture: decode '%s': %s\n",

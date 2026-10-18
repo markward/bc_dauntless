@@ -432,14 +432,18 @@ def hull_carve_add(
     time: float,
     floor_radius: float = 0.0,
     radius_modifier: float = 1.0,
+    carve_field: bool = True,
 ) -> None:
+    """`carve_field=False` grows the sphere ring only; the instance field is
+    carved by a later deposit (see renderer::hull_carve_deposit)."""
     if _h is None:
         return
     rel = _instance_relative(instance_id, world_point)
     if rel is None:
         return
     _h.hull_carve_add(instance_id, rel, world_normal, influ_radius,
-                     strength, time, floor_radius, radius_modifier)
+                     strength, time, floor_radius, radius_modifier,
+                     carve_field)
 
 
 def model_nodes(instance_id: int) -> List[dict]:

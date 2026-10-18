@@ -74,7 +74,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_dust_planets", "set_dust_profile", "set_emissive_scale", "set_game_root", "set_glow_region_dim",
     "set_instance_atmosphere",
     "set_instance_surface",
-    "set_project_asset_root",
+    "set_project_asset_root", "prewarm_scuff_normal_texture",
     "set_glow_region_gain",
     "set_hologram_only_mode", "set_hologram_ship", "set_hull_discharges",
     "set_instance_decals",
@@ -278,6 +278,12 @@ def set_project_asset_root(root: str) -> None:
     the checkout. Pushed once at boot beside set_game_root; no hasattr guard
     (see hull_volume_set_cache_root)."""
     _h.set_project_asset_root(str(root))
+
+
+def prewarm_scuff_normal_texture() -> None:
+    """Load the collision-scuff normal map at boot instead of on the first
+    scuff drawn (perf-register P-11). After set_project_asset_root."""
+    _h.prewarm_scuff_normal_texture()
 
 
 def set_asset_overrides(overrides: dict) -> None:
@@ -740,16 +746,17 @@ def far_clear() -> None:
 
 
 def far_prefetch_atlases() -> None:
-    """Start decoding every impostor atlas not yet loaded, on worker threads
-    (warp-tunnel preload) -- at most kMaxAtlasDecodesInFlight at once, the
-    rest queued for the pump. No GL work; a no-op before the far pass exists."""
+    """Queue every impostor atlas not yet loaded for decoding on worker
+    threads (mission load in far_tier, and the warp-tunnel preload): at most
+    kMaxAtlasDecodesInFlight workers, which take queued atlases themselves
+    until none is left. No GL work; a no-op before the far pass exists."""
     _h.far_prefetch_atlases()
 
 
 def far_pump_atlas_uploads(max_uploads: int) -> int:
     """Upload at most `max_uploads` prefetched atlases whose decode finished
-    (never waits on one), start queued decodes into the freed slots, and
-    return how many are still pending (in flight + queued)."""
+    (never waits on one) and return how many are still pending (queued,
+    decoding, or decoded and not uploaded)."""
     return _h.far_pump_atlas_uploads(int(max_uploads))
 
 

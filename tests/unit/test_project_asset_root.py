@@ -48,3 +48,21 @@ def test_host_loop_pushes_it_beside_the_game_root():
     """Same boot site as set_game_root / hull_volume_set_cache_root, bare."""
     src = Path(inspect.getsourcefile(__import__("engine.host_loop").host_loop)).read_text()
     assert "r.set_project_asset_root(str(_paths.project_asset_root()))" in src
+
+
+def test_scuff_texture_prewarm_reaches_the_renderer(monkeypatch):
+    """perf-register P-11: the 12.6 MB scuff normal map loaded on the first
+    collision scuff of a session, ~0.6 s in that frame in Debug. Boot loads
+    it instead, right after the project asset root it resolves against."""
+    fake = MagicMock()
+    monkeypatch.setattr(renderer, "_h", fake)
+    renderer.prewarm_scuff_normal_texture()
+    fake.prewarm_scuff_normal_texture.assert_called_once_with()
+    assert "prewarm_scuff_normal_texture" in renderer._REQUIRED_BINDINGS
+
+
+def test_host_loop_prewarms_the_scuff_texture_after_the_root():
+    src = Path(inspect.getsourcefile(__import__("engine.host_loop").host_loop)).read_text()
+    root = src.index("r.set_project_asset_root(str(_paths.project_asset_root()))")
+    warm = src.index("r.prewarm_scuff_normal_texture()")
+    assert warm > root

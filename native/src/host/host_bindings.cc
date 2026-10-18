@@ -3215,6 +3215,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "renderer textures (the collision-scuff normal map) resolve against "
           "this, never the BC install. Pushed at boot beside set_game_root.");
 
+    m.def("prewarm_scuff_normal_texture",
+          []() { renderer::ensure_scuff_normal_texture(); },
+          "Load the collision-scuff normal map now rather than on the first "
+          "scuff drawn: 12.6 MB, ~0.6 s in that frame in Debug "
+          "(perf-register P-11). Call after set_project_asset_root, with the "
+          "GL context current.");
+
     m.def("set_asset_overrides",
           [](const std::map<std::string, std::string>& overrides) {
               renderer::set_asset_overrides(overrides);
@@ -5573,20 +5580,19 @@ PYBIND11_MODULE(_dauntless_host, m) {
           []() {
               if (g_far_pass) g_far_pass->prefetch_atlases();
           },
-          "Start decoding (worker threads, at most "
-          "kMaxAtlasDecodesInFlight at once; the rest queue and start from "
-          "far_pump_atlas_uploads) every impostor atlas the far pass has not "
-          "loaded, failed, started or queued. No GL work; a no-op with no "
-          "far pass.");
+          "Queue every impostor atlas the far pass has not loaded, failed "
+          "or queued for decoding on worker threads (at most "
+          "kMaxAtlasDecodesInFlight, which take queued atlases themselves "
+          "until none is left). No GL work; a no-op with no far pass.");
     m.def("far_pump_atlas_uploads",
           [](int max_uploads) {
               return g_far_pass ? g_far_pass->pump_atlas_uploads(max_uploads) : 0;
           },
           py::arg("max_uploads"),
           "Upload at most `max_uploads` prefetched atlases whose decode has "
-          "finished (never waits), start queued decodes into the freed "
-          "slots, and return how many are still pending (in flight + "
-          "queued); 0 with no far pass.");
+          "finished (never waits) and return how many are still pending "
+          "(queued, decoding, or decoded and not uploaded); 0 with no far "
+          "pass.");
     m.def("far_clear",
           []() {
               far_zero_fades(g_far_flagged_keys);
@@ -7494,7 +7500,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
              std::tuple<float, float, float> world_point,
              std::tuple<float, float, float> world_normal,
              float influ_radius, float strength, float /*time*/,
-             float floor_radius, float radius_modifier) {
+             float floor_radius, float radius_modifier, bool carve_field) {
               auto* inst = g_world.get(id);
               if (inst == nullptr) return;  // stale id — drop silently
               const glm::vec3 pw(std::get<0>(world_point),
@@ -7596,7 +7602,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   renderer::hull_carve_deposit(
                       inst->carve, g_instance_field_cache.get(), id, source,
                       authored_res, pb, nb, influ_model, strength,
-                      floor_model, radius_modifier, inv_s, fill_for_gate);
+                      floor_model, radius_modifier, inv_s, fill_for_gate,
+                      carve_field);
 
               // Breach event (transient VFX: debris, venting, rim) only when the
               // carve newly appears or visibly grows — sub-iso accumulation is
@@ -7622,6 +7629,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
           py::arg("influ_radius"), py::arg("strength"), py::arg("time"),
           py::arg("floor_radius") = 0.0f, py::arg("radius_modifier") = 1.0f,
+          py::arg("carve_field") = true,
           "Deposit hull-damage strength onto a ship instance (BC additive "
           "metaball field). World-space point + normal are transformed to body "
           "frame (model units). influ_radius is the merge proximity; strength "
@@ -7632,7 +7640,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "floor_radius guarantees a size for authored / core-breach carves "
           "(combat hits pass floor 0 and stay invisible until accumulated "
           "strength crosses the iso). time is accepted for call-shape symmetry "
-          "with damage_decal_add but unused.");
+          "with damage_decal_add but unused. carve_field=False grows the "
+          "sphere ring only and leaves the per-instance field for a later "
+          "deposit (a growing carve carves the field once, at full size).");
 
     m.def("hull_split_detached",
           [](scenegraph::InstanceId id, int min_cells) {
@@ -7885,12 +7895,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
               if (!(authored_res > 0.0f)) return;
               renderer::hull_volume_cache().get(model->source, authored_res,
                                                 voxel::kDefaultQuality);
+              renderer::prewarm_trace_accel(*model);
           },
           pybind11::arg("instance_id"),
           "Force this instance's hull damage field to bake now (or load its "
-          "on-disk .dhv cache), instead of lazily on its first "
-          "hull_carve_add deposit during combat. No-op when no authored "
-          "resolution has been pushed for this hull yet.");
+          "on-disk .dhv cache), and its model's ray-trace BVH to build, "
+          "instead of lazily on the first hull_carve_add deposit / first "
+          "trace during combat. No-op when no authored resolution has been "
+          "pushed for this hull yet.");
 
     // Same as hull_volume_set_resolution + hull_volume_prewarm, but from a
     // MODEL handle: the warp-tunnel preload warms hulls before any ship is
@@ -7903,11 +7915,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
               renderer::set_hull_volume_resolution(model->source, resolution);
               renderer::hull_volume_cache().get(model->source, resolution,
                                                 voxel::kDefaultQuality);
+              renderer::prewarm_trace_accel(*model);
           },
           pybind11::arg("model"), pybind11::arg("resolution"),
           "Set the authored resolution for this model's hull and bake (or "
-          "load the on-disk .dhv of) its damage volume now, without creating "
-          "an instance. No-op for an unknown handle or resolution <= 0.");
+          "load the on-disk .dhv of) its damage volume now, and build its "
+          "ray-trace BVH, without creating an instance. No-op for an unknown "
+          "handle or resolution <= 0.");
 
     m.def("compute_capsule_region",
           [](scenegraph::InstanceId id,

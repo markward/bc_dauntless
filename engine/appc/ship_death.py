@@ -18,6 +18,7 @@ engine/appc/death_cascade.py.
 
 import engine.dev_mode as dev_mode
 from engine.appc import death_cascade, explosion_lights
+from engine.core import frame_profiler
 from engine.core.ids import implements
 
 # There is no selectable window after the throes. On the original exe the
@@ -145,18 +146,21 @@ def advance(dt: float) -> None:
         # Drive the explosion cascade before the timer, so a blast scheduled at
         # the very end of the window still fires on the frame the throes expire.
         if entry["phase"] == "throes" and entry["cascade"] is not None:
-            death_cascade.advance(entry["cascade"], dt)
+            with frame_profiler.scope("death.cascade"):
+                death_cascade.advance(entry["cascade"], dt)
         entry["time_left"] -= dt
         if entry["time_left"] > 0.0:
             survivors.append(entry)
             continue
         if entry["phase"] == "throes":
-            _mark_dead(entry["ship"])
+            with frame_profiler.scope("death.mark_dead"):
+                _mark_dead(entry["ship"])
             entry["cascade"] = None          # stop carving; the ship is dead
             # Release every lock HERE, on the sample the throes end: the hulk
             # leaves the target list at this moment (V7), so a player still
             # tracking it would otherwise stay locked onto a corpse.
-            _clear_target_locks(entry["ship"])
+            with frame_profiler.scope("death.clear_locks"):
+                _clear_target_locks(entry["ship"])
             entry["phase"] = "hulk"
             survivors.append(entry)
     _active[:] = survivors

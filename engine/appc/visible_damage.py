@@ -21,8 +21,11 @@ sphere position + radius drive a Gap-1 carve.
 
 See docs/engine/damagetool-and-hull-damage-gaps.md.
 """
+import time
+
 import engine.dev_mode as dev_mode
 from engine import host_io
+from engine.core import frame_profiler
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.hit_feedback import _mesh_xyz
 
@@ -30,6 +33,14 @@ from engine.appc.hit_feedback import _mesh_xyz
 # ship's render instance to be realized, then drop — so a headless run, a culled
 # ship, or a failed spawn never leaks an un-emittable entry.
 MAX_PENDING_AGE = 5.0
+
+# Per-frame time budget for emitting queued carves (ms). Each carve is a
+# whole reach-box brush pass; a dying ship's SDK cascade can land 2-6 in one
+# frame, ~5.7 ms each in Debug for a Sovereign (perf-register P-4, SIG-044).
+# advance() always emits at least one, so the queue drains; the rest wait a
+# frame or two, which the cascade's ~0.2 s blast spacing hides. Only the
+# visible hole waits -- AddDamage's gameplay damage is applied when called.
+CARVE_BUDGET_MS = 3.0
 
 # Standoff (GU) for the surface-normal probe in `_mesh_normal`: the ray starts
 # this far outside the sample point along the radial and casts twice as far
@@ -114,18 +125,30 @@ def reset() -> None:
     _pending.clear()
 
 
-def advance(dt=0.0, ship_instances=None) -> None:
-    """Emit queued volumes for any ship whose render instance is now realized;
-    keep the rest until they realize or age out. Raise-safe per entry."""
+def advance(dt=0.0, ship_instances=None, budget_ms=CARVE_BUDGET_MS,
+            clock=time.perf_counter) -> None:
+    """Emit queued volumes for any ship whose render instance is now realized,
+    in queue order, until `budget_ms` is spent (always at least one); keep the
+    rest -- unrealized ones age out after MAX_PENDING_AGE, budget-held ones
+    never age. Raise-safe per entry."""
     if not _pending:
         return
+    start = clock()
+    emitted = False
     survivors = []
     for entry in _pending:
+        realized = (ship_instances is not None
+                    and ship_instances.get(entry["ship"]) is not None)
+        if realized and emitted and (clock() - start) * 1000.0 >= budget_ms:
+            survivors.append(entry)
+            continue
         try:
             keep = _advance_one(entry, float(dt), ship_instances)
         except Exception as _e:
             dev_mode.log_swallowed("visible damage advance", _e)
             keep = False
+        if realized:
+            emitted = True
         if keep:
             survivors.append(entry)
     _pending[:] = survivors
@@ -142,10 +165,12 @@ def _advance_one(entry, dt, ship_instances) -> bool:
 
     if entry.get("kind") == "capsule":
         p0, p1 = entry["p0"], entry["p1"]
-        host_io.hull_carve_capsule(iid, _mesh_xyz(ship, p0), _mesh_xyz(ship, p1),
-                                   entry["radius"])
+        with frame_profiler.scope("vd.carve"):
+            host_io.hull_carve_capsule(iid, _mesh_xyz(ship, p0), _mesh_xyz(ship, p1),
+                                       entry["radius"])
         from engine.appc import hull_breakup
-        hull_breakup.after_carve(ship, iid, ship_instances)
+        with frame_profiler.scope("vd.after_carve"):
+            hull_breakup.after_carve(ship, iid, ship_instances)
         return False
 
     if entry.get("kind") == "scuff":
@@ -179,7 +204,8 @@ def _advance_one(entry, dt, ship_instances) -> bool:
         )
         return False
 
-    world_pt, normal = _resolve(entry, ship, iid)
+    with frame_profiler.scope("vd.resolve"):
+        world_pt, normal = _resolve(entry, ship, iid)
     if world_pt is None:
         return False
 
@@ -196,18 +222,20 @@ def _advance_one(entry, dt, ship_instances) -> bool:
     # Carve sizes are absolute; the only per-ship scale is BC's DamageRadMod
     # (applied to both the authored `floor` and the strength curve). The authored
     # `floor` still guarantees the wreck's visible size.
-    host_io.hull_carve_add(
-        iid,
-        _mesh_xyz(ship, world_pt),
-        (normal.x, normal.y, normal.z),
-        influ,
-        strength,
-        now,
-        floor,
-        rad_mod,
-    )
+    with frame_profiler.scope("vd.carve"):
+        host_io.hull_carve_add(
+            iid,
+            _mesh_xyz(ship, world_pt),
+            (normal.x, normal.y, normal.z),
+            influ,
+            strength,
+            now,
+            floor,
+            rad_mod,
+        )
     from engine.appc import hull_breakup
-    hull_breakup.after_carve(ship, iid, ship_instances)
+    with frame_profiler.scope("vd.after_carve"):
+        hull_breakup.after_carve(ship, iid, ship_instances)
     return False   # emitted once -> drop
 
 

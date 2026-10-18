@@ -12,6 +12,7 @@
 #include <scenegraph/camera.h>
 #include <scenegraph/instance.h>
 #include <scenegraph/world.h>
+#include <assets/file_bytes.h>
 #include <assets/model.h>
 #include <assets/texture.h>
 
@@ -21,8 +22,6 @@
 
 #include <cstdint>
 #include <cstdio>
-#include <fstream>
-#include <iterator>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -67,15 +66,13 @@ constexpr float kTexScale = 1.0f / 40.0f;
 // pass means shutdown()'s g_breach_pass.reset() releases them in the correct,
 // still-current context.
 assets::Texture load_damage_tga(const char* path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
+    const auto bytes = assets::read_binary_file(path);
+    if (!bytes) {
         std::fprintf(stderr, "[breach] failed to open '%s'\n", path);
         return assets::Texture{};
     }
-    std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)),
-                                    std::istreambuf_iterator<char>());
     try {
-        assets::Image img = assets::decode_tga(bytes);
+        assets::Image img = assets::decode_tga(*bytes);
         return assets::upload_image(img, /*generate_mipmaps=*/true);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "[breach] decode/upload '%s' failed: %s\n",

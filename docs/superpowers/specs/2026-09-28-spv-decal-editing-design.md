@@ -251,6 +251,8 @@ except the removed "no mesh fix" row. New rows:
 - Painting or editing mask images in the SPV (artwork stays in Gimp or
   Photoshop).
 - More than 4 decals per model.
-- Decals on articulated shapes (no rest-frame correction; unchanged from
-  the hull-name-decals spec §7).
+- ~~Decals on articulated shapes (no rest-frame correction; unchanged from
+  the hull-name-decals spec §7).~~ **Resolved** by
+  `2026-10-18-articulated-hull-decals-design.md` (not yet live-verified — spec §8): the pane places at the NIF
+  pose and fills `shape` when a placement's centre lands on a rigged part.
 - Guarding the refit-over-stock double name (accepted in §1).

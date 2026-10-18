@@ -550,6 +550,10 @@ std::optional<RayHit> ray_trace_instance_linear(
                               max_dist, node_overrides, exclude_meshes);
 }
 
+void prewarm_trace_accel(const assets::Model& model) {
+    ensure_trace_accel(model);
+}
+
 std::vector<std::array<glm::vec3, 3>> mesh_triangles_linear(
     const assets::Model& model, const glm::mat3& linear, int mesh)
 {

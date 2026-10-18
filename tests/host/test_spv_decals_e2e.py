@@ -9,8 +9,10 @@ decals.json` must never be written), then re-resolve through
 `hull_decals.decals_for` and confirm `load_model` accepts the result.
 
 "Synthetic hit" mirrors tests/ui/test_spv_decals_pane.py's `_arm_hit`: only
-`host_io.ray_trace_mesh` is faked (a hull click's geometric trace), because
-the fixed-camera hit-test math is exercised elsewhere. Every other step --
+the hull click's geometric trace is faked -- `host_io.ray_trace_mesh_pick`,
+which a click tries first for its mesh index, and `host_io.ray_trace_mesh`,
+its fallback -- because the fixed-camera hit-test math is exercised
+elsewhere. Every other step --
 `host_io.world_to_body`'s inversion, `host_io.set_instance_decals`,
 `host_io.instance_model` + `renderer.model_aabb` for sizing, the Save routing
 and `hull_decals.decals_for` + `load_model` -- runs through the real
@@ -209,6 +211,10 @@ def test_spv_decal_authoring_end_to_end(tmp_path, monkeypatch):
         monkeypatch.setattr(
             host_io, "ray_trace_mesh",
             lambda iid_, origin, direction, max_dist: (hit_world, hit_normal, 5.0))
+        monkeypatch.setattr(
+            host_io, "ray_trace_mesh_pick",
+            lambda iid_, origin, direction, max_dist, exclude_meshes=():
+                (hit_world, hit_normal, 5.0, 0, 0))
 
         assert p.dispatch_event("decal-add:bottom")
         p.decal_click(320.0, 240.0, (640, 480))
@@ -223,6 +229,7 @@ def test_spv_decal_authoring_end_to_end(tmp_path, monkeypatch):
         for got, want in zip(bottom.normal, BOTTOM_BODY_NORMAL):
             assert got == pytest.approx(want, abs=1e-3)
         assert decal_editor.chirality_ok(bottom)
+        assert bottom.shape == "", "the Ambassador has no rig: no shape fill"
         assert host.instance_decal_override_size(iid) == 2
 
         # ── 3. Save to the temp replacements root -- never the committed

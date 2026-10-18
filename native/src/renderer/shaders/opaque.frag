@@ -175,8 +175,12 @@ vec4 sample_hull_decal_mask(int slot, vec2 uv, vec2 gx, vec2 gy) {
 // composite and paint specular read later. Both use the associative "over"
 // operator, so N decals in order equal one decal of the combined coverage --
 // and a single decal reproduces the pre-list math exactly (cover_a == m.a,
-// cover_rgb == m.rgb). dpdx/dpdy are p_body's screen derivatives, taken by
-// the caller OUTSIDE all branches.
+// cover_rgb == m.rgb). Projectors are tested in the REST frame: the caller
+// passes p_body / n_body / derivatives already corrected by u_node_rest_fix
+// (identity unless the draw is articulated), so a decal follows its part --
+// docs/superpowers/specs/2026-10-18-articulated-hull-decals-design.md.
+// dpdx/dpdy are those positions' screen derivatives, taken by the caller
+// OUTSIDE all branches.
 void apply_hull_decal(int i, vec3 p_body, vec3 n_body,
                       vec3 dpdx, vec3 dpdy, inout vec3 base_rgb,
                       inout float cover_a, inout vec3 cover_rgb) {
@@ -1644,9 +1648,20 @@ void main() {
     float decal_a = 0.0;
     vec3 decal_premult_rgb = vec3(0.0);
     if (u_decal_enabled_mask != 0) {
+        // REST-frame inputs (spec 2026-10-18-articulated-hull-decals §2): the
+        // same u_node_rest_fix correction the glow regions use, so a decal
+        // authored on a part keeps covering it while an override moves it.
+        // No normalize(): the correction is rigid (see the glow path's note),
+        // and identity for every unarticulated draw, so those are unchanged.
+        // Computed outside the per-decal loop and its non-uniform branches; the
+        // derivatives were taken earlier, outside all branches.
+        vec3 p_dec    = (u_node_rest_fix * vec4(p_body, 1.0)).xyz;
+        vec3 n_dec    = mat3(u_node_rest_fix) * n_body;
+        vec3 dpdx_dec = mat3(u_node_rest_fix) * dpdx_d;
+        vec3 dpdy_dec = mat3(u_node_rest_fix) * dpdy_d;
         for (int i = 0; i < MAX_HULL_DECALS; ++i) {
             if (i >= u_hull_decal_count) break;
-            apply_hull_decal(i, p_body, n_body, dpdx_d, dpdy_d,
+            apply_hull_decal(i, p_dec, n_dec, dpdx_dec, dpdy_dec,
                              base.rgb, decal_a, decal_premult_rgb);
         }
     }

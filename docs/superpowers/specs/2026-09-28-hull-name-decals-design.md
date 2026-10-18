@@ -309,4 +309,4 @@ plan -- two gaps called out explicitly below are real and unclosed.
 - A Ship Property Viewer placement tool.
 - Distance culling or fading: only High LOD is loaded, and the cost is one masked sample.
 - The glTF / KTX2 asset pipeline.
-- Decals on articulated shapes: the projector uses `p_body` with no `u_node_rest_fix` correction, so a decal on a moving part would slide with it. Fine for the Fed saucers this covers; a follow-up if an articulated placement is ever authored.
+- ~~Decals on articulated shapes: the projector uses `p_body` with no `u_node_rest_fix` correction, so a decal on a moving part would slide with it.~~ **Resolved** by `2026-10-18-articulated-hull-decals-design.md` (not yet live-verified — spec §8): decals test in the rest frame via `u_node_rest_fix`, and the SPV fills `shape` for placements on rigged parts.

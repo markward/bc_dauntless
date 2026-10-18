@@ -756,3 +756,34 @@ TEST(RayTracePick, MovedPartHitStillReportsItsMesh) {
     EXPECT_EQ(hit->mesh_index, 0);
     EXPECT_EQ(hit->triangle, 0);
 }
+
+// ── prewarm_trace_accel ──────────────────────────────────────────────────────
+// The BVH is valid for the model's whole life (see Model::trace_accel), so it
+// can be built when the hull is warmed at spawn instead of on the first trace.
+// Measured (perf-register P-4): the first trace against the Haven station --
+// its death carve's surface-normal probe -- cost the death frame 7.7 ms.
+
+TEST(PrewarmTraceAccel, BuildsTheAccelBeforeAnyTrace) {
+    const auto m = single_triangle_model({0, 0, 0}, {1, 0, 0}, {0, 1, 0});
+    ASSERT_EQ(m.trace_accel, nullptr) << "nothing has traced it yet";
+    renderer::prewarm_trace_accel(m);
+    EXPECT_NE(m.trace_accel, nullptr);
+}
+
+TEST(PrewarmTraceAccel, IsIdempotentAndTracesAreUnchanged) {
+    const auto cold = single_triangle_model({0, 0, 0}, {1, 0, 0}, {0, 1, 0});
+    const auto warm = single_triangle_model({0, 0, 0}, {1, 0, 0}, {0, 1, 0});
+    renderer::prewarm_trace_accel(warm);
+    const auto first = warm.trace_accel;
+    renderer::prewarm_trace_accel(warm);
+    EXPECT_EQ(warm.trace_accel, first) << "a second prewarm must not rebuild";
+
+    const glm::vec3 o(0.25f, 0.25f, 1.0f), d(0.0f, 0.0f, -1.0f);
+    const auto a = renderer::ray_trace_instance(cold, glm::mat4(1.0f), o, d, 10.0f);
+    const auto b = renderer::ray_trace_instance(warm, glm::mat4(1.0f), o, d, 10.0f);
+    ASSERT_TRUE(a.has_value());
+    ASSERT_TRUE(b.has_value());
+    EXPECT_EQ(a->point, b->point);
+    EXPECT_EQ(a->normal, b->normal);
+    EXPECT_EQ(a->t, b->t);
+}

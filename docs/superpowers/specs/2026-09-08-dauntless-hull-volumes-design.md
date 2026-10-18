@@ -152,6 +152,15 @@ CardStation and CardStarbase (33M / 81M authored) coarsen to cell ≈ 9.5 / 12.9
 FedStarbase bakes at cell 92.6 (217 × 217 × 355), which with its authored
 `DamageRadMod 15.0` is still ~8 cells across a maximum carve.
 
+**Superseded 2026-10-18 (perf-register P-4).** A station's lattice is now
+sized by its hole modifier first: `engine/appc/hull_volume.py`
+`effective_resolution` scales the cell by `DamageRadMod / ∛2`, so FedOutpost
+bakes at cell 47.6 (90k cells, was 13.4M) and FedStarbase at cell 89 before
+the budget. `kMaxFieldCells` dropped to 2²² as a backstop above the largest
+ship lattice (3.7M); it now only coarsens the mod KessokMissile, the
+8×-scaled catalogue rocks and FedStarbase (cell 150). The 13.4M station
+lattice made every whole-lattice pass at its death cost 130–240 ms in Debug.
+
 ### 2.5 Bake cost is a first-load-only cost
 
 Occupancy voxelization alone (Galaxy, single-threaded, including NIF parse and

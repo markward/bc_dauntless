@@ -400,3 +400,51 @@ def test_decal_move_drag_first_frame_does_not_jump(make_panel):
                             p.camera, fb())
     p._apply_axis_drag(t_now)
     assert centre(p._decal_by_name("pylon")) == pytest.approx(centre(_PYLON))
+
+
+# ── Mirror re-derives the shape on articulated parts (spec 2026-10-18) ──────
+
+class _FakePart:
+    def __init__(self, name):
+        self._name = name
+
+    def GetName(self):
+        return self._name
+
+
+def test_mirroring_a_left_wing_decal_restricts_the_copy_to_the_right_wing(
+        make_panel, monkeypatch):
+    """The fake ship sits at the origin, unrotated, at instance scale
+    BC_MODEL_SCALE: a trace origin's body X is its world X / BC_MODEL_SCALE.
+    Beyond +-100 NIF units is a wing mesh, else the hull."""
+    from engine import host_io
+    from engine.appc import articulation
+    from engine.host_loop import BC_MODEL_SCALE
+
+    def _pick(iid, origin, direction, max_dist, exclude_meshes=()):
+        x = origin[0] / BC_MODEL_SCALE
+        mesh = 1 if x < -100.0 else 2 if x > 100.0 else 0
+        return origin, (0.0, 0.0, 1.0), 1.0, mesh, 0
+    monkeypatch.setattr(host_io, "ray_trace_mesh_pick", _pick)
+    monkeypatch.setattr(host_io, "model_identity", lambda iid: {
+        "source": "", "content_hash": "", "meshes": [
+            {"mesh": 0, "name": "hull:0", "node_chain": ["Scene Root", "hull"]},
+            {"mesh": 1, "name": "wing left:0",
+             "node_chain": ["Scene Root", "wing left", "__NDL_MultiMtl_Node"]},
+            {"mesh": 2, "name": "wing right:0",
+             "node_chain": ["Scene Root", "wing right", "__NDL_MultiMtl_Node"]}]})
+    monkeypatch.setattr(articulation, "parts_for_ship", lambda s: (
+        _FakePart("wing left"), _FakePart("wing right")))
+    monkeypatch.setattr(host_io, "set_instance_decals", lambda iid, d: None)
+    wing = decal_editor.Placement(
+        name="pylon", origin=(-170.0, 10.0, 20.0), u_axis=(40.0, 0.0, 0.0),
+        v_axis=(0.0, -20.0, 0.0), normal=(0.0, 0.0, 1.0), depth=2.0,
+        shape="wing left:0")
+    p = make_panel([wing])
+    p._iid_getter = lambda: 7
+    _select(p, "pylon")
+    p.dispatch_event("mirror_element")
+    assert p._decal_by_name("pylon") == wing
+    new = p._decal_by_name("pylon_2")
+    assert centre(new)[0] == pytest.approx(150.0)
+    assert new.shape == "wing right:0"

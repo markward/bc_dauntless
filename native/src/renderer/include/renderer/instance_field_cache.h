@@ -160,6 +160,12 @@ public:
     /// back to full uploads would still render correctly.
     std::size_t partial_uploads() const { return partial_uploads_; }
 
+    /// How many oblate carves have reached an instance field's brush. A
+    /// carve is a whole-reach-box pass, so one that could change nothing must
+    /// never get here; the test pins hull_carve_deposit's skip of a merged
+    /// deposit that leaves its slot unchanged (perf-register P-4).
+    std::size_t field_carves() const { return field_carves_; }
+
 private:
     // Deliberately not std::unordered_map<InstanceId, ...>: that needs a
     // std::hash<scenegraph::InstanceId> specialization, and the only one in
@@ -214,6 +220,7 @@ private:
     voxel::HullVolumeCache* bake_cache_ = nullptr;
     std::size_t uploads_ = 0;
     std::size_t partial_uploads_ = 0;
+    std::size_t field_carves_ = 0;
 };
 
 /// Result of hull_carve_deposit: the sphere slot's visible radius before and
@@ -301,6 +308,14 @@ struct HullCarveDepositResult {
 /// moving the gate inside scenegraph::HullCarveField::add) is follow-up
 /// work, not done here.
 ///
+/// The field is carved only when `carve_field` is set AND the slot's radius
+/// is past the one the field already holds for it (HullCarve::field_radius).
+/// A merge keeps a slot's centre, normal and radius, and a bigger brush at
+/// the same centre dominates every smaller one, so that is exactly "the field
+/// would change". `carve_field = false` grows the sphere ring only: a growing
+/// carve (the core breach) asks for the field once, at full size -- the ring
+/// alone draws a tracked carve (opaque.frag gates the field off inside it).
+///
 /// Every radius argument here is already in MODEL UNITS (or a plain
 /// multiplier, for radius_modifier/inv_scale); this function performs no
 /// GU<->model conversion of its own -- the caller does that once, the same
@@ -318,6 +333,7 @@ HullCarveDepositResult hull_carve_deposit(
     float floor_radius_model,
     float radius_modifier,
     float inv_scale,
-    const voxel::VoxelVolume* fill = nullptr);
+    const voxel::VoxelVolume* fill = nullptr,
+    bool carve_field = true);
 
 }  // namespace renderer
