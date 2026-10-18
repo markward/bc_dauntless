@@ -1210,3 +1210,301 @@ def test_save_writes_the_mask_key_only_where_it_differs(env):
     assert "mask" not in doc["decals"]["pylon"]
     assert doc["decals"]["pylon_2"]["mask"] == "pylon"
     assert "mask" not in doc["decals"]["top"]
+
+
+# ── the pane authors at the NIF pose ───────────────────────────────────────
+
+@pytest.fixture
+def rigged(env, monkeypatch):
+    """`env` with its ship resolving to the Bird of Prey rig and a `warp`
+    Transformation node selected, so the rig is posed before the pane opens."""
+    import engine.ui.ship_property_viewer_panel as mod
+    from engine.appc import articulation
+    ship = env["ship"]
+    ship._articulation_leaf = "birdofprey"
+    ship._articulation_poses = {}
+    monkeypatch.setattr(mod, "hardpoint_leaf_for_ship", lambda s: "birdofprey")
+    p = env["p"]
+    p._model_part_nodes = [
+        {"name": "left wing", "parent": "Scene Root", "candidate": True,
+         "bounds_min": (-1.0, -0.5, -0.5), "bounds_max": (-0.1, 0.5, 0.5)}]
+    p.dispatch_event("part/select_node:" + json.dumps(
+        {"name": "left wing", "kind": "warp"}))
+    part = next(q for q in articulation.rig_for("birdofprey")
+                if q.GetName() == "left wing")
+    return dict(env, part=part)
+
+
+def _wing_is_nif(env):
+    from engine.appc import articulation, part_pose
+    return part_pose.is_identity(
+        articulation.pose_for_part(env["ship"], env["part"]))
+
+
+def test_entering_the_decals_pane_returns_a_posed_ship_to_the_nif_pose(rigged):
+    p = rigged["p"]
+    assert not _wing_is_nif(rigged), "fixture: the warp state is posed"
+    assert p._applied_part_pose is not None
+    p.dispatch_event("decal-pane")
+    assert _wing_is_nif(rigged)
+    assert p._applied_part_pose is None
+
+
+def test_leaving_the_decals_pane_restores_the_selected_state_pose(rigged):
+    p = rigged["p"]
+    p.dispatch_event("decal-pane")
+    p.dispatch_event("decal-pane")
+    assert not _wing_is_nif(rigged)
+    assert p._applied_part_pose[0] == "warp"
+
+
+def test_selecting_a_state_node_while_the_decals_pane_is_active_keeps_the_nif_pose(
+        rigged):
+    p = rigged["p"]
+    p.dispatch_event("part/select_node:" + json.dumps(
+        {"name": "left wing", "kind": "anchor"}))
+    p.dispatch_event("decal-pane")
+    assert p._decals_active
+    p.dispatch_event("part/select_node:" + json.dumps(
+        {"name": "left wing", "kind": "warp"}))
+    assert p._decals_active, "selecting a node does not leave the pane"
+    assert _wing_is_nif(rigged)
+    assert p._applied_part_pose is None
+
+
+# ── shape derived from the mesh under a decal (spec 2026-10-18 S6.2) ───────
+
+class _FakePart:
+    def __init__(self, name):
+        self._name = name
+
+    def GetName(self):
+        return self._name
+
+
+_WING_X = 100.0            # body |X| beyond this is a wing, else the hull
+_FAKE_MESHES = [
+    {"mesh": 0, "name": "hull:0", "node_chain": ["Scene Root", "hull"]},
+    {"mesh": 1, "name": "wing left:0",
+     "node_chain": ["Scene Root", "wing left", "__NDL_MultiMtl_Node"]},
+    {"mesh": 2, "name": "wing right:0",
+     "node_chain": ["Scene Root", "wing right", "__NDL_MultiMtl_Node"]},
+    # The LC nacelle's small material-split shape, proud of `wing left:0`.
+    {"mesh": 3, "name": "wing left:1",
+     "node_chain": ["Scene Root", "wing left", "__NDL_MultiMtl_Node"]},
+]
+
+
+@pytest.fixture
+def winged(env, monkeypatch):
+    """`env` with a mesh-pick stub and a rig articulating `wing left` /
+    `wing right`. The mesh follows the sign of the hit's body X. A CLICK ray
+    (cast to the camera's far plane) hits the armed `_arm_hit` point; a
+    re-trace (a short ray at a placement's centre) hits at its origin, on
+    `pick["retrace_mesh"]` when that is set."""
+    from engine.appc import articulation
+    ship = env["ship"]
+    w2b = _fake_world_to_body(ship)
+    picks = []
+    pick = {"miss": False, "retrace_mesh": None}
+
+    def _mesh_at(iid, point):
+        x = w2b(iid, point, (0.0, 0.0, 1.0))[0][0]
+        return 1 if x < -_WING_X else 2 if x > _WING_X else 0
+
+    def _pick(iid, origin, direction, max_dist, exclude_meshes=()):
+        picks.append((iid, origin, direction, max_dist))
+        if max_dist >= env["p"].camera.far:
+            armed = env["hit"]["value"]
+            if armed is None:
+                return None
+            return armed + (_mesh_at(iid, armed[0]), 0)
+        if pick["miss"]:
+            return None
+        mesh = pick["retrace_mesh"]
+        if mesh is None:
+            mesh = _mesh_at(iid, origin)
+        return origin, (0.0, 0.0, 1.0), 1.0, mesh, 0
+    monkeypatch.setattr(host_io, "ray_trace_mesh_pick", _pick)
+    monkeypatch.setattr(host_io, "model_identity", lambda iid: {
+        "source": AMB_MODEL, "content_hash": "",
+        "meshes": [dict(m) for m in _FAKE_MESHES]})
+    rig = {"parts": (_FakePart("wing left"), _FakePart("wing right"))}
+    monkeypatch.setattr(articulation, "parts_for_ship", lambda s: rig["parts"])
+    env["p"].dispatch_event("decal-pane")
+    return dict(env, picks=picks, pick=pick, rig=rig)
+
+
+_LEFT_WING = (-150.0, 0.0, 10.0)
+_RIGHT_WING = (150.0, 0.0, 10.0)
+_HULL = (0.0, 40.0, 10.0)
+_UP_N = (0.0, 0.0, 1.0)
+
+
+def _add_bottom(env, at):
+    _add(env, "bottom", at=at, normal=_UP_N)
+    return env["p"]._decal_by_name("bottom")
+
+
+def test_a_click_on_an_articulated_part_fills_the_shape(winged):
+    assert _add_bottom(winged, _LEFT_WING).shape == "wing left:0"
+    assert winged["calls"][-1][1][1][0] == "wing left:0", "override carries it"
+
+
+def test_the_clicked_mesh_wins_over_a_shape_proud_of_it(winged):
+    """Add takes the mesh the CLICK hit (`wing left:0`), not the first one a
+    re-trace from above the centre would meet (`wing left:1`)."""
+    winged["pick"]["retrace_mesh"] = 3
+    assert _add_bottom(winged, _LEFT_WING).shape == "wing left:0"
+    assert _reposition_bottom(winged, _LEFT_WING).shape == "wing left:0"
+
+
+def test_a_click_on_the_hull_leaves_the_shape_empty(winged):
+    assert winged["picks"] == []
+    assert _add_bottom(winged, _HULL).shape == ""
+    assert winged["picks"], "the hull click was traced too"
+
+
+def test_a_part_on_a_ship_without_a_rig_leaves_the_shape_empty(winged):
+    winged["rig"]["parts"] = ()
+    assert _add_bottom(winged, _LEFT_WING).shape == ""
+
+
+def _reposition_bottom(env, at):
+    """Re-seat `bottom` (still selected from its Add) on a click at `at`."""
+    p = env["p"]
+    p.dispatch_event("decal-reposition")
+    _arm_hit(env, at, _UP_N)
+    p.decal_click(1.0, 1.0, (1280, 720))
+    return p._decal_by_name("bottom")
+
+
+def test_reposition_onto_the_hull_clears_the_shape(winged):
+    assert _add_bottom(winged, _LEFT_WING).shape == "wing left:0"
+    assert _reposition_bottom(winged, _HULL).shape == ""
+
+
+def test_reposition_onto_the_other_wing_replaces_the_shape(winged):
+    _add_bottom(winged, _LEFT_WING)
+    assert _reposition_bottom(winged, _RIGHT_WING).shape == "wing right:0"
+
+
+def test_a_gizmo_move_onto_the_hull_clears_the_shape(winged):
+    p = winged["p"]
+    bl = _add_bottom(winged, _LEFT_WING)
+    assert bl.shape == "wing left:0"
+    p.dispatch_event("set_tool:transform")
+    ux = _u_hat(bl)[0]
+    assert abs(ux) > 0.5, "fixture: u runs along body X"
+    p._begin_axis_drag(0, 0.0)
+    # 150 NIF units toward X = 0, in GU along the world u axis.
+    p._apply_axis_drag((150.0 / ux) * BC_MODEL_SCALE * SCALE)
+    pl = p._decal_by_name("bottom")
+    assert abs(decal_editor.centre(pl)[0]) < _WING_X, "fixture: now over the hull"
+    assert pl.shape == ""
+
+
+def test_a_paste_whose_trace_misses_keeps_the_shape(winged):
+    p = winged["p"]
+    _add_bottom(winged, _LEFT_WING)
+    p.dispatch_event("decal-select:top")
+    p.dispatch_event("set_tool:transform")
+    p.dispatch_event("coord_copy")
+    p.dispatch_event("decal-select:bottom")
+    winged["pick"]["miss"] = True
+    n = len(winged["picks"])
+    p.dispatch_event("coord_paste")
+    pl = p._decal_by_name("bottom")
+    assert _close(decal_editor.centre(pl),
+                  decal_editor.centre(p._decal_by_name("top")), 1e-9)
+    assert len(winged["picks"]) > n, "the pasted centre was traced"
+    assert pl.shape == "wing left:0"
+
+
+def test_rotate_and_scale_do_not_retrace(winged):
+    p = winged["p"]
+    _add_bottom(winged, _LEFT_WING)
+    p.dispatch_event("set_tool:rotate")
+    n = len(winged["picks"])
+    assert p.dispatch_event('rotate_nudge:{"axis":0,"delta":10}')
+    p.dispatch_event("set_tool:scale")
+    assert p.dispatch_event('scale_nudge:{"index":0,"delta":10}')
+    assert len(winged["picks"]) == n
+    # ... while a Move does re-trace.
+    p.dispatch_event("set_tool:transform")
+    assert p.dispatch_event('coord_nudge:{"axis":2,"delta":5}')
+    assert len(winged["picks"]) > n
+
+
+def test_headless_trace_keeps_todays_behaviour(env, monkeypatch):
+    monkeypatch.setattr(host_io, "ray_trace_mesh_pick",
+                        lambda *a, **k: None)
+    p = env["p"]
+    p.dispatch_event("decal-pane")
+    assert _add_bottom(env, _LEFT_WING).shape == ""
+    p.dispatch_event("decal-select:top")
+    p.dispatch_event("decal-reposition")
+    _arm_hit(env, _LEFT_WING, _UP_N)
+    p.decal_click(1.0, 1.0, (1280, 720))
+    assert p._decal_by_name("top").shape == "amb saucer:0"
+
+
+def _hand_shape_bottom(env, shape):
+    """Add `bottom` on the hull, then give it a hand-authored `shape`."""
+    from dataclasses import replace
+    p = env["p"]
+    _add_bottom(env, _HULL)
+    i = p._decal_index("bottom")
+    p._decal_working[i] = replace(p._decal_working[i], shape=shape)
+    return p
+
+
+def test_a_hand_authored_hull_shape_survives_a_move_on_a_ship_without_a_rig(winged):
+    """Only a shape on an articulated part is cleared: a hand-authored one
+    off the parts (the committed Ambassador `top`'s "amb saucer:0") is kept."""
+    winged["rig"]["parts"] = ()
+    p = _hand_shape_bottom(winged, "hull:0")
+    p.dispatch_event("set_tool:transform")
+    n = len(winged["picks"])
+    assert p.dispatch_event('coord_nudge:{"axis":1,"delta":5}')
+    assert len(winged["picks"]) > n, "the move was traced"
+    assert p._decal_by_name("bottom").shape == "hull:0"
+
+
+def test_a_hand_authored_hull_shape_survives_a_gizmo_move_on_a_rigged_ship(winged):
+    p = _hand_shape_bottom(winged, "hull:0")
+    p.dispatch_event("set_tool:transform")
+    p._begin_axis_drag(0, 0.0)
+    p._apply_axis_drag(1.0)
+    assert p._decal_by_name("bottom").shape == "hull:0"
+
+
+def test_the_committed_saucer_shape_survives_a_coord_nudge(winged):
+    p = winged["p"]
+    p.dispatch_event("decal-select:top")
+    p.dispatch_event("set_tool:transform")
+    assert p.dispatch_event('coord_nudge:{"axis":2,"delta":5}')
+    assert p._decal_by_name("top").shape == "amb saucer:0"
+
+
+def test_a_hand_authored_shape_moved_onto_a_part_takes_the_parts_shape(winged):
+    p = _hand_shape_bottom(winged, "hull:0")
+    p.dispatch_event("decal-reposition")
+    _arm_hit(winged, _LEFT_WING, _UP_N)
+    p.decal_click(1.0, 1.0, (1280, 720))
+    assert p._decal_by_name("bottom").shape == "wing left:0"
+
+
+def test_a_model_identity_not_yet_available_is_not_cached(winged, monkeypatch):
+    """A not-yet-realised instance (model_identity None) must not disable
+    derivation for the pane's lifetime."""
+    ident = {"value": None}
+    monkeypatch.setattr(host_io, "model_identity", lambda iid: ident["value"])
+    p = winged["p"]
+    assert _add_bottom(winged, _LEFT_WING).shape == ""
+    ident["value"] = {"source": AMB_MODEL, "content_hash": "",
+                      "meshes": [dict(m) for m in _FAKE_MESHES]}
+    p.dispatch_event("decal-reposition")
+    _arm_hit(winged, _LEFT_WING, _UP_N)
+    p.decal_click(1.0, 1.0, (1280, 720))
+    assert p._decal_by_name("bottom").shape == "wing left:0"

@@ -751,3 +751,259 @@ TEST_F(DecalRenderTest, InstanceOverrideReplacesTheBakedList) {
     EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
     renderer::clear_instance_decal_overrides();
 }
+
+// ── Decals follow an articulated node (spec 2026-10-18-articulated-hull-decals
+//    §2/§6.1) ────────────────────────────────────────────────────────────────
+// opaque.frag used to test decal projectors against the POSED body position,
+// so a decal slid off a part that an override had moved. It now tests them in
+// the REST frame through u_node_rest_fix, exactly like the glow regions.
+namespace {
+
+// Opaque red over the body +X half of the saucer top only (asymmetric).
+assets::DecalRequest right_half_saucer(const renderer::Aabb& box,
+                                       const fs::path& mask) {
+    const glm::vec3 lo = box.center - box.half_extents;
+    const glm::vec3 hi = box.center + box.half_extents;
+    assets::DecalRequest req;
+    req.shape = "amb saucer:0";
+    req.origin = {box.center.x, lo.y, hi.z};
+    req.u_axis = {hi.x - box.center.x, 0.0f, 0.0f};
+    req.v_axis = {0.0f, hi.y - lo.y, 0.0f};
+    req.normal = {0.0f, 0.0f, 1.0f};
+    req.depth = hi.z - lo.z;
+    req.mask = mask;
+    return req;
+}
+
+// Red pixels in the screen-left (x < kSize/2) or screen-right half.
+int red_in_half(const std::vector<std::uint8_t>& px, bool right) {
+    int n = 0;
+    for (int y = 0; y < kSize; ++y) {
+        for (int x = (right ? kSize / 2 : 0); x < (right ? kSize : kSize / 2); ++x) {
+            const std::uint8_t* p = &px[(static_cast<std::size_t>(y) * kSize + x) * 4];
+            if (p[0] > 2 * p[1] && p[0] > 2 * p[2]) ++n;
+        }
+    }
+    return n;
+}
+
+// The node's own rest local, then 180 degrees about body +Z (up) around
+// `pivot`, so the hull stays centred in view with its top still facing +Z.
+glm::mat4 spun_about_up(const assets::Model& m, int node, const glm::vec3& pivot) {
+    return m.nodes[node].local_transform *
+           glm::translate(glm::mat4(1.0f), pivot) *
+           glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(0, 0, 1)) *
+           glm::translate(glm::mat4(1.0f), -pivot);
+}
+
+// The "part" node (a child of the node named "Scene Root", the rule in
+// renderer/model_parts.h) that owns the mesh built from `shape`, or -1.
+int part_of_shape(const assets::Model& m, const std::string& shape) {
+    int scene_root = -1;
+    for (std::size_t i = 0; i < m.nodes.size(); ++i)
+        if (m.nodes[i].name == "Scene Root") { scene_root = static_cast<int>(i); break; }
+    if (scene_root < 0) return -1;
+    for (const auto& mesh : m.meshes) {
+        if (mesh.shape_name() != shape) continue;
+        int n = mesh.node_index();
+        while (n >= 0 && m.nodes[n].parent_index != scene_root) n = m.nodes[n].parent_index;
+        return n;
+    }
+    return -1;
+}
+
+// count_pixels over everything except the top-right corner (screen x, y >= 192;
+// GL row 0 is the bottom) where test 3 parks its shrunk articulated ship.
+Counts count_outside_corner(std::vector<std::uint8_t> px) {
+    for (int y = 192; y < kSize; ++y)
+        for (int x = 192; x < kSize; ++x)
+            for (int c = 0; c < 4; ++c)
+                px[(static_cast<std::size_t>(y) * kSize + x) * 4 + c] = 0;
+    return count_pixels(px);
+}
+
+// Texels that differ between `a` and `b` INSIDE that corner: non-zero only
+// if something is drawn there in one render and not the other.
+std::size_t differing_corner_texels(const std::vector<std::uint8_t>& a,
+                                    const std::vector<std::uint8_t>& b) {
+    std::size_t n = 0;
+    for (int y = 192; y < kSize; ++y)
+        for (int x = 192; x < kSize; ++x) {
+            const std::size_t i = (static_cast<std::size_t>(y) * kSize + x) * 4;
+            if (a[i] != b[i] || a[i + 1] != b[i + 1] || a[i + 2] != b[i + 2]) ++n;
+        }
+    return n;
+}
+
+std::size_t differing_texels(const std::vector<std::uint8_t>& a,
+                             const std::vector<std::uint8_t>& b) {
+    std::size_t n = 0;
+    for (std::size_t i = 0; i + 3 < a.size(); i += 4)
+        if (a[i] != b[i] || a[i + 1] != b[i + 1] || a[i + 2] != b[i + 2] ||
+            a[i + 3] != b[i + 3]) ++n;
+    return n;
+}
+
+}  // namespace
+
+TEST_F(DecalRenderTest, DecalFollowsANodeRotatedAboutUp) {
+    const renderer::Aabb box = plain_aabb();
+    const std::uint8_t red[3] = {255, 0, 0};
+    auto decal = cache->load(ambassador_nif(), ambassador_search(), {},
+        {right_half_saucer(box, write_mask("red.png", red, red))});
+    ASSERT_EQ(decal->decals.size(), 1u);
+
+    const auto base = render_top_down(decal, box);
+    const int base_right = red_in_half(base, true);
+    const int base_left = red_in_half(base, false);
+    const int base_total = count_pixels(base).red;
+    ASSERT_GT(base_right, 200) << "guard: unrotated decal must sit screen-right";
+    ASSERT_LT(base_left, base_right / 10) << "guard: unrotated decal must not reach screen-left";
+
+    scenegraph::World world;
+    const auto iid = world.create_instance(
+        reinterpret_cast<scenegraph::ModelHandle>(decal.get()));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+    world.get(iid)->node_overrides[decal->root_node] =
+        spun_about_up(*decal, decal->root_node, box.center);
+    const auto spun = render_world_top_down(world, box);
+    const int spun_left = red_in_half(spun, false);
+    const int spun_right = red_in_half(spun, true);
+    const int spun_total = count_pixels(spun).red;
+    std::fprintf(stderr,
+        "[DecalRender] spun: left=%d right=%d total=%d (unrotated right=%d total=%d)\n",
+        spun_left, spun_right, spun_total, base_right, base_total);
+
+    EXPECT_GE(spun_left, 0.8 * base_right) << "the decal did not follow its surface";
+    EXPECT_LE(spun_right, 0.1 * base_right) << "the decal stayed at its rest position";
+    EXPECT_NEAR(spun_total, base_total, 0.1 * base_total);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+TEST_F(DecalRenderTest, RestPoseOverrideRendersDecalIdentically) {
+    const renderer::Aabb box = plain_aabb();
+    const std::uint8_t red[3] = {255, 0, 0};
+    auto decal = cache->load(ambassador_nif(), ambassador_search(), {},
+        {right_half_saucer(box, write_mask("red.png", red, red))});
+
+    const auto plain = render_top_down(decal, box);
+
+    scenegraph::World world;
+    const auto iid = world.create_instance(
+        reinterpret_cast<scenegraph::ModelHandle>(decal.get()));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+    world.get(iid)->node_overrides[decal->root_node] =
+        decal->nodes[decal->root_node].local_transform;
+    const auto overridden = render_world_top_down(world, box);
+
+    ASSERT_GT(count_pixels(plain).red, 200);
+    EXPECT_EQ(differing_texels(plain, overridden), 0u);
+}
+
+TEST_F(DecalRenderTest, ArticulatedShipDrawnFirstDoesNotShiftAPlainShipsDecal) {
+    const renderer::Aabb box = plain_aabb();
+    const std::uint8_t red[3] = {255, 0, 0};
+    auto decal = cache->load(ambassador_nif(), ambassador_search(), {},
+        {right_half_saucer(box, write_mask("red.png", red, red))});
+    const auto handle = reinterpret_cast<scenegraph::ModelHandle>(decal.get());
+
+    scenegraph::World w0;
+    const auto p0 = w0.create_instance(handle);
+    w0.set_world_transform(p0, glm::mat4(1.0f));
+    const Counts alone = count_pixels(render_world_top_down(w0, box));
+    ASSERT_GT(alone.red, 200);
+
+    // A rotated, shrunk ship created FIRST (drawn first), parked IN VIEW in
+    // the top-right corner (so it stays drawn even if culling is ever added);
+    // u_node_rest_fix must not leak from it onto the plain ship's decal. Only
+    // pixels outside that corner are counted, in both renders.
+    scenegraph::World w1;
+    const float half = std::max(box.half_extents.x, box.half_extents.y);
+    const auto a1 = w1.create_instance(handle);
+    w1.set_world_transform(a1,
+        glm::translate(glm::mat4(1.0f), glm::vec3(box.center.x + half, box.center.y + half, 0.0f)) *
+        glm::scale(glm::mat4(1.0f), glm::vec3(0.1f)));
+    w1.get(a1)->node_overrides[decal->root_node] =
+        spun_about_up(*decal, decal->root_node, box.center);
+    const auto p1 = w1.create_instance(handle);
+    w1.set_world_transform(p1, glm::mat4(1.0f));
+    const auto px_alone = render_world_top_down(w0, box);
+    const auto px_after = render_world_top_down(w1, box);
+    const std::size_t corner = differing_corner_texels(px_alone, px_after);
+    std::fprintf(stderr, "[DecalRender] corner ship texels: %zu\n", corner);
+    ASSERT_GT(corner, 50u)
+        << "guard: the corner ship must be drawn in the corner or the test is vacuous";
+    const Counts a = count_outside_corner(px_alone);
+    const Counts b = count_outside_corner(px_after);
+
+    EXPECT_EQ(b.red, a.red);
+    EXPECT_DOUBLE_EQ(b.red_mean_row(), a.red_mean_row());
+}
+
+// The NORMAL correction: a bottom-facing decal (normal -Z) on a hull flipped
+// 180 degrees about body +X. Seen from above, the posed surface faces +Z; only
+// the rest-frame normal (-Z) passes the decal's facing test. A position-only
+// correction would leave the posed normal and paint nothing.
+TEST_F(DecalRenderTest, DecalNormalIsCorrectedForARotatedNode) {
+    const renderer::Aabb box = plain_aabb();
+    const std::uint8_t red[3] = {255, 0, 0};
+    auto decal = cache->load(ambassador_nif(), ambassador_search(), {},
+        {whole_hull(box, /*from_below=*/true, write_mask("red.png", red, red), "amb saucer:0")});
+    ASSERT_EQ(decal->decals.size(), 1u);
+
+    constexpr float kNarrowFov = 0.1f;
+    const Counts rest_top = count_pixels(render_top_down(decal, box, false, kNarrowFov));
+    ASSERT_LT(rest_top.red, 10) << "guard: the bottom decal must be hidden from above";
+
+    scenegraph::World world;
+    const auto iid = world.create_instance(
+        reinterpret_cast<scenegraph::ModelHandle>(decal.get()));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+    world.get(iid)->node_overrides[decal->root_node] =
+        decal->nodes[decal->root_node].local_transform *
+        glm::translate(glm::mat4(1.0f), box.center) *
+        glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), glm::vec3(1, 0, 0)) *
+        glm::translate(glm::mat4(1.0f), -box.center);
+    const Counts flipped = count_pixels(render_world_top_down(world, box, false, kNarrowFov));
+    std::fprintf(stderr, "[DecalRender] flipped bottom decal from above: red=%d\n", flipped.red);
+
+    EXPECT_GT(flipped.red, 200) << "the decal normal was not rest-corrected";
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+TEST_F(DecalRenderTest, SeveredNodeTakesItsDecalToTheChunk) {
+    const renderer::Aabb box = plain_aabb();
+    const std::uint8_t red[3] = {255, 0, 0};
+    auto decal = cache->load(ambassador_nif(), ambassador_search(), {},
+        {right_half_saucer(box, write_mask("red.png", red, red))});
+    const auto handle = reinterpret_cast<scenegraph::ModelHandle>(decal.get());
+
+    const int saucer = part_of_shape(*decal, "amb saucer:0");
+    ASSERT_GE(saucer, 0) << "saucer part node not found";
+    int scene_root = decal->nodes[saucer].parent_index;
+    ASSERT_GE(scene_root, 0);
+
+    const Counts plain = count_pixels(render_top_down(decal, box));
+    ASSERT_GT(plain.red, 200);
+
+    // The ship with the saucer severed (what set_instance_node_hidden writes).
+    scenegraph::World w0;
+    const auto ship = w0.create_instance(handle);
+    w0.set_world_transform(ship, glm::mat4(1.0f));
+    w0.get(ship)->node_overrides[saucer] = glm::mat4(0.0f);
+    const Counts severed = count_pixels(render_world_top_down(w0, box));
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+    EXPECT_EQ(severed.red, 0) << "the severed part's decal stayed on the ship";
+
+    // The chunk: every OTHER part hidden.
+    scenegraph::World w1;
+    const auto chunk = w1.create_instance(handle);
+    w1.set_world_transform(chunk, glm::mat4(1.0f));
+    for (int child : decal->nodes[scene_root].children)
+        if (child != saucer) w1.get(chunk)->node_overrides[child] = glm::mat4(0.0f);
+    const Counts chunked = count_pixels(render_world_top_down(w1, box));
+    std::fprintf(stderr, "[DecalRender] severed: ship=%d chunk=%d plain=%d\n",
+                 severed.red, chunked.red, plain.red);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+    EXPECT_NEAR(chunked.red, plain.red, 0.05 * plain.red);
+}
