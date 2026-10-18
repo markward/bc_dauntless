@@ -565,14 +565,26 @@ def report_lines() -> list[str]:
     # renderer::FrameTimer::choose_gpu_timer). Absent from a stale .so, which
     # only ever used GL_TIMESTAMP.
     gpu_timer = native.get("gpu_timer")
-    no_counter = gpu_timer == "none" and native.get("frames", 0) >= 1
+    # CPU-only is the default (perf-register.md M-6): GPU timing makes the CPU
+    # wait for the GPU, so it is opt-in. Off by choice is not a dead driver,
+    # and must not be reported as UNAVAILABLE. A stale .so omits the key and
+    # always timed the GPU.
+    gpu_off = native.get("gpu_requested", True) is False
+    no_counter = (not gpu_off and gpu_timer == "none"
+                  and native.get("frames", 0) >= 1)
     # A driver that declares a counter yet returns zeros reports every span as
     # zero, and zero reads as "free". Say so instead, for the same reason a
     # missing binding says UNAVAILABLE rather than printing zeros.
-    zeroed = (native.get("gpu_ms", 0.0) == 0.0
+    zeroed = (not gpu_off and native.get("gpu_ms", 0.0) == 0.0
               and native.get("frames", 0) >= GPU_ZERO_FRAMES)
     gpu_dead = no_counter or zeroed
-    if no_counter:
+    if gpu_off:
+        lines.append("  GPU timing OFF (CPU-only), so frame times are real. "
+                     "DAUNTLESS_PROFILE_GPU=1 times the top-level passes on "
+                     "the GPU, but makes the CPU wait for the GPU, adding "
+                     "about the GPU frame time: never read frame time from "
+                     "such a run (docs/engine/perf-register.md, M-6).")
+    elif no_counter:
         lines.append("  GPU TIMING UNAVAILABLE: the driver declares no GPU "
                      "timer counter (0 bits for both GL_TIMESTAMP and "
                      "GL_TIME_ELAPSED), so no GPU query is issued. The gpu "
@@ -607,7 +619,8 @@ def report_lines() -> list[str]:
                         else "   <- swap + queued GPU drain (not a vsync wait)")
             # gpu_measured is False for a scope no query covered (nested under
             # GL_TIME_ELAPSED); a stale .so omits it and timed every scope.
-            gpu = ("      -" if gpu_dead or not s.get("gpu_measured", True)
+            gpu = ("      -" if gpu_off or gpu_dead
+                   or not s.get("gpu_measured", True)
                    else "%7.3f" % s.get("gpu_ms", 0.0))
             lines.append("    %-30s %7.3f %s %5d%s"
                          % (_fit(label), s.get("cpu_ms", 0.0), gpu,
@@ -625,7 +638,8 @@ def report_lines() -> list[str]:
     lines.append("  totals: python loop %.3f ms (includes r.frame); "
                  "render cpu %.3f ms, gpu %s over %d frames"
                  % (_frame_ms, native.get("cpu_ms", 0.0),
-                    "UNAVAILABLE" if gpu_dead
+                    "off" if gpu_off
+                    else "UNAVAILABLE" if gpu_dead
                     else "%.3f ms" % native.get("gpu_ms", 0.0),
                     native.get("frames", 0)))
     return lines
@@ -657,6 +671,17 @@ def print_report() -> None:
 #   DAUNTLESS_PROFILE_SPIKE_MS=<ms>      threshold (default DEFAULT_SPIKE_MS)
 #
 # Works without --developer. While on, the periodic stderr report is off.
+
+GPU_ENV = "DAUNTLESS_PROFILE_GPU"
+
+
+def gpu_timing_requested_from_env() -> bool:
+    """True only for DAUNTLESS_PROFILE_GPU=1. GPU timing is opt-in: its timer
+    queries make the CPU wait for the GPU, adding about the GPU frame time
+    (docs/engine/perf-register.md, M-6)."""
+    import os
+    return os.environ.get(GPU_ENV, "").strip() == "1"
+
 
 SPIKE_ENV = "DAUNTLESS_PROFILE_SPIKES"
 SPIKE_MS_ENV = "DAUNTLESS_PROFILE_SPIKE_MS"

@@ -24,6 +24,19 @@ OPEN_STBC_HOST_HEADLESS=1 DAUNTLESS_PROFILE_FRAMES=600 ./build/dauntless --devel
 `DAUNTLESS_PROFILE_FRAMES=N` enables both halves, sets swap interval 0, runs N
 frames, prints one report and exits.
 
+### GPU timing is opt-in — `DAUNTLESS_PROFILE_GPU=1`
+
+By default the profiler is **CPU-only**: no GPU timer query is issued, the gpu
+column prints `-`, and the report says `GPU timing OFF`. That is the mode for
+frame time. `DAUNTLESS_PROFILE_GPU=1` turns on GPU timing to split GPU cost
+between the top-level passes. **Never read frame time from that run:** on this
+Mac the queries make the CPU wait for the GPU every frame, adding about the
+GPU frame time (`perf-register.md` M-6, SIG-019). The wait shows up as a large
+`cef.composite`.
+
+Measured in `rock_fields_inside` (`perf-register.md` C-008, C-009): profiler off
+21.3 ms per frame, CPU-only 22.9 ms, GPU-timed 29.7 ms.
+
 ### Spike capture — one-off long frames, to a file
 
 The averaged report **cannot see a single slow frame**: a 5 s hitch is blended

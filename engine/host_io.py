@@ -77,6 +77,7 @@ _OPTIONAL_BINDINGS = frozenset({
     "starmap_set_enabled", "starmap_set_viewport",
     "starmap_set_camera", "starmap_set_scene",
     "profiler_set_enabled", "profiler_enabled",
+    "profiler_set_gpu_enabled", "profiler_gpu_enabled",
     "profiler_scopes", "profiler_frame", "profiler_last_frame_raw",
     "set_swap_interval", "swap_interval",
     "set_cursor_shape",
@@ -897,6 +898,25 @@ def profiler_set_enabled(enabled: bool) -> None:
 def profiler_enabled() -> bool:
     """True when the render half is recording. False when the binding is absent."""
     fn = getattr(_h, "profiler_enabled", None)
+    return bool(fn()) if fn is not None else False
+
+
+def profiler_set_gpu_enabled(enabled: bool) -> None:
+    """Opt in to GPU timer queries. Off by default.
+
+    On Apple's GL the queries make the CPU wait for the GPU every frame, which
+    adds about the GPU frame time, so a GPU-timed capture is not a frame-time
+    measurement (docs/engine/perf-register.md, M-6). Turn it on only to split
+    GPU cost between passes.
+    """
+    fn = getattr(_h, "profiler_set_gpu_enabled", None)
+    if fn is not None:
+        fn(bool(enabled))
+
+
+def profiler_gpu_enabled() -> bool:
+    """True when GPU timing was requested. False when the binding is absent."""
+    fn = getattr(_h, "profiler_gpu_enabled", None)
     return bool(fn()) if fn is not None else False
 
 

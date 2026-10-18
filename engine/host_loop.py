@@ -11223,6 +11223,12 @@ def run(mission_name: Optional[str] = None,
         # Vsync off is not optional for a capture: a capped frame measures
         # the monitor. A hidden window already defaults to interval 0; this
         # sets it explicitly so a visible-window capture is uncapped too.
+        # GPU timing is opt-in (DAUNTLESS_PROFILE_GPU=1). Its timer queries
+        # make the CPU wait for the GPU, adding about the GPU frame time, so
+        # by default every capture below is CPU-only and its frame time real
+        # (docs/engine/perf-register.md, M-6).
+        host_io.profiler_set_gpu_enabled(
+            frame_profiler.gpu_timing_requested_from_env())
         try:
             _profile_frames = int(_os.environ.get('DAUNTLESS_PROFILE_FRAMES', '0'))
         except ValueError:

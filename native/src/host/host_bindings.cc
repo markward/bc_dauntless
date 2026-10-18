@@ -6915,6 +6915,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("profiler_enabled",
           []() { return renderer::frame_timer().enabled(); },
           "True when per-pass frame timing is recording.");
+    m.def("profiler_set_gpu_enabled",
+          [](bool enabled) {
+              renderer::frame_timer().set_gpu_requested(enabled);
+          },
+          py::arg("enabled"),
+          "Opt in to GPU timer queries. Off by default: on Apple's GL they "
+          "make the CPU wait for the GPU, adding about the GPU frame time, "
+          "so a GPU-timed capture is not a frame-time measurement "
+          "(docs/engine/perf-register.md, M-6).");
+    m.def("profiler_gpu_enabled",
+          []() { return renderer::frame_timer().gpu_requested(); },
+          "True when GPU timing has been requested.");
     m.def("profiler_reset",
           []() { renderer::frame_timer().reset(); },
           "Drop all accumulated averages and the scope table.");
@@ -6991,6 +7003,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                              : timer == GpuTimer::Elapsed   ? "elapsed"
                                                             : "none";
               d["gpu_queries"] = t.gpu_queries_active();
+              // False = CPU-only by choice (the default), not a dead driver.
+              d["gpu_requested"] = t.gpu_requested();
               // What the driver declared (GL_QUERY_COUNTER_BITS), -1 until the
               // first enabled frame has read it.
               d["timestamp_bits"] = t.timestamp_bits();

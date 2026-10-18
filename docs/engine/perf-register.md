@@ -81,6 +81,7 @@ turns off the periodic report, so it needs its own run (M-5).
 | C-006 | 2026-10-17 23:07 | as C-005, **profiler off** (`timeout 90`) | `perf/cef-upload-sync` | **Debug** | same | ~6 stats lines | Timing from the `[cef-upload]` line only. |
 | C-007 | 2026-10-17 23:08–23:11 | `combat_stress`, paired profiler on (3,600 frames) / off (`timeout 100`), headless | `60b74418` code | **Debug** | same | 5 / 7 stats lines | Frame time from the `[cef-upload]` line, independent of the profiler. |
 | C-008 | 2026-10-17 23:12–23:15 | `rock_fields_inside`, paired profiler on (3,000) / off (`timeout 100`), headless | `60b74418` code | **Debug** | same | 4 / 7 stats lines | GPU frame about 10.5 ms with the profiler on (bridge view). |
+| C-009 | 2026-10-18 08:34 | `rock_fields_inside`, **CPU-only profiler** (the new default), 3,000 frames, headless | `perf/cef-upload-sync` | **Debug** | same | 3,000 | First capture in the CPU-only mode. Frame time from both the report and the `[cef-upload]` line. |
 
 Logs for C-003 to C-008: `~/Documents/dauntless-perf/cef-*.log`, `cef2-*` …
 `cef6-*`.
@@ -100,7 +101,7 @@ the reports given.
 ⚠️ **These loop times are inflated by roughly the GPU frame time.** With its
 GPU timer on, the profiler makes the CPU wait for the GPU every frame
 (SIG-019). Without the profiler the CPU and GPU overlap. Treat these numbers as
-an upper bound until B1 and B2 are re-captured with GPU timing off (M-6).
+an upper bound until B1 and B2 are re-captured with the CPU-only profiler, which is now the default (M-6).
 
 | Capture, stage (reports) | Loop ms | ~fps | GPU ms | Largest GPU pass |
 |---|---|---|---|---|
@@ -122,6 +123,7 @@ bound, not the actual size.
 
 | ID | Capture | What the data shows | Tier | Feeds |
 |---|---|---|---|---|
+| SIG-021 | C-009 vs C-008 | With the CPU-only profiler, `rock_fields_inside` runs at **22.9 ms** per frame: 1.6 ms above profiler-off (21.3 ms) and 6.8 ms below GPU-timed (29.7 ms). `cef.composite` drops to 0.52 ms, the upload alone. The report's python loop total (22.7 ms) matches the profiler-independent frame time (22.9 ms). | Measured | M-6 |
 | SIG-020 | C-003, C-004, C-007 | The overlay rarely repaints in `combat_stress` and `rock_fields_inside`: 3–31 paints in total over 2,400–4,200 frames. With `on_paint`, 96–100% of uploads are skipped. A full-surface upload costs about **0.53 ms CPU** a frame (headless window size). Not measured in a HUD-heavy scene. | Measured | P-10 |
 | SIG-019 | C-007, C-008 | **The profiler's GPU timing adds roughly the GPU frame time to every frame.** Frame time measured without the profiler: `combat_stress` 25.4 ms on vs 22.2 ms off (GPU about 2.7 ms); `rock_fields_inside` 29.7 ms on vs 21.3 ms off (GPU about 10.5 ms). With the profiler on, the overlay draw takes 2.5 ms and 7.7 ms respectively; with it off, 0.005 ms. The wait does not move elsewhere; it disappears. | Measured | A-1, M-6 |
 | SIG-018 | C-006 | With the profiler off, the overlay draw section takes **0.005 ms**, against 2.6 ms with it on in the same scene (C-005). | Measured | A-1, M-6 |
@@ -183,4 +185,4 @@ its own right.
 | M-3 | The log has no event markers (warp arrival, ship death, battle start), and the scene line does not count deaths (SIG-015). | Reports are lined up with game events by inference. | Print a one-line marker to stderr on each such event while the profiler is on. |
 | M-4 | Capture details are not written to the log: window size, build type, commit, quality settings. | C-001 and C-002 lack window size. Build type had to be read from `CMakeCache.txt`. | Print a header line when profiling starts. |
 | M-5 | The periodic report and spike capture cannot run together. | A hitch in a periodic capture gives only a lower bound (the EMA rule above). | Allow both at once, or always pair a periodic run with a spike run. |
-| M-6 | **With its GPU timer on, the profiler adds roughly the GPU frame time to every frame** (SIG-019). It makes the CPU wait for the GPU, and the wait shows up in the overlay's draw call inside `cef.composite`. The earlier `frame-profiler.md` figure (+0.6 to +2.4 ms) came from a light headless bench and understates it. Mechanism not established. | Every loop time in C-001 and C-002 is inflated by about their GPU time. `cef.composite` reads as a big cost when it is really the profiler's wait. | Add a CPU-only profiler mode (no GPU queries) and take frame-time baselines with it. Turn GPU timing on only to attribute GPU cost between passes, and never read frame time from a GPU-timed run. Then re-capture B1 and B2. |
+| M-6 | **Mitigated on `perf/cef-upload-sync`: the profiler is now CPU-only by default; `DAUNTLESS_PROFILE_GPU=1` opts in to GPU timing** (SIG-021). With its GPU timer on, the profiler adds roughly the GPU frame time to every frame (SIG-019). It makes the CPU wait for the GPU, and the wait shows up in the overlay's draw call inside `cef.composite`. The earlier `frame-profiler.md` figure (+0.6 to +2.4 ms) came from a light headless bench and understates it. Mechanism not established. | Every loop time in C-001 and C-002 is inflated by about their GPU time. `cef.composite` reads as a big cost when it is really the profiler's wait. | Done: CPU-only is the default. Remaining: re-capture B1 and B2 in CPU-only mode. The CPU-only profiler still costs about 1.6 ms a frame (SIG-021). |
