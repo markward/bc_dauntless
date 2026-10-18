@@ -239,6 +239,15 @@ def _birdofprey(find):
         p.SetLightEmitterRadius(0, 0.051763776534396094)
         p.SetLightEmitterColor(0, 1.0, 0.45809755461141033, 0.2607827284788081)
         p.SetLightEmitterIntensity(0, 2.0)
+    p = find("Impulse Engines")
+    if p is not None:
+        p.SetPhysicalParent("birdofprey")
+    p = find("Sensor Array")
+    if p is not None:
+        p.SetPhysicalParent("birdofprey")
+    p = find("Warp Engines")
+    if p is not None:
+        p.SetPhysicalParent("birdofprey")
     if hasattr(App, "DAUNTLESS_ENV") and App.DAUNTLESS_ENV >= 1:
         left_wing = App.ArticulatedPartProperty_Create("left wing")
         left_wing.SetAnchor(-0.16, 0.0, 0.05)

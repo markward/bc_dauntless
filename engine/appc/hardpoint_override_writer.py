@@ -144,6 +144,15 @@ def set_setter(models, leaf, subsystem, setter, args) -> None:
     calls.append((setter, tuple(args)))
 
 
+def unset_setter(models, leaf, subsystem, setter) -> None:
+    """Remove every `setter` call from a subsystem's call list (the SPV's
+    "Reset to Auto" for SetPhysicalParent). Other setters are untouched; an
+    emptied list emits no block."""
+    calls = models.get(leaf, {}).get(subsystem)
+    if calls:
+        models[leaf][subsystem] = [(s, a) for (s, a) in calls if s != setter]
+
+
 def set_part(models, leaf, name, calls) -> None:
     """Replace one articulated part's whole call list -- find-or-CREATE, full
     replace like set_region full-replaces one glow-region index. `calls` is
@@ -173,7 +182,7 @@ def set_region(models, leaf, subsystem, index, calls, prefix=_INDEXED_PREFIX) ->
 def apply_edit(models, leaf, edit) -> None:
     """Apply one SPV edit tuple (see HardpointOverridesFileTarget.write):
     (subsystem, setter, args) 3-tuples, (name, "__part__", calls) 3-tuples,
-    and/or (subsystem, "__region__"/"__emitter__", index, calls) 4-tuples."""
+    (subsystem, "__unset__", setter) 3-tuples, and/or (subsystem, "__region__"/"__emitter__", index, calls) 4-tuples."""
     if len(edit) == 4 and edit[1] == "__region__":
         subsystem, _tag, index, calls = edit
         set_region(models, leaf, subsystem, index, calls)
@@ -183,6 +192,8 @@ def apply_edit(models, leaf, edit) -> None:
     elif len(edit) == 3 and edit[1] == "__part__":
         name, _tag, calls = edit
         set_part(models, leaf, name, calls)
+    elif len(edit) == 3 and edit[1] == "__unset__":
+        unset_setter(models, leaf, edit[0], edit[2])
     else:
         subsystem, setter, args = edit
         set_setter(models, leaf, subsystem, setter, args)

@@ -842,3 +842,64 @@
 
 .spv-sys-row--light .spv-sys-row__name { color: #ffd9a0; font-style: italic; }
 .spv-sys-row--light.spv-sys-row--chosen { background: rgba(255, 180, 90, 0.22); }
+
+/* ---- Physical tab (spec 2026-10-17 section 7) ---------------------------
+   Tab strip under the Subsystems header; the Physical list reuses
+   .spv-sys-row / .spv-sys-row--child. No Physical row carries
+   .spv-sys-row--dirty (edits are tallied on the Save bar instead). */
+.spv-tabs {
+    flex: 0 0 auto;
+    display: flex;
+    background: rgba(10, 10, 16, 0.97);
+    border-left: 4px solid rgb(216, 94, 86);
+    border-bottom: 1px solid rgba(255, 230, 160, 0.25);
+}
+
+.spv-tab {
+    flex: 1 1 0;
+    text-align: center;
+    padding: 5px 0 4px;
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(235, 225, 255, 0.5);
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+}
+
+.spv-tab--active {
+    color: #ffd;
+    background: rgba(255, 214, 90, 0.12);
+    border-bottom-color: rgb(255, 200, 60);
+}
+
+.spv-sys-row__part {
+    flex: 1 1 auto;
+    color: #fff;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.spv-sys-row__part--missing {
+    color: rgb(255, 140, 120);
+}
+
+.spv-src {
+    flex: 0 0 auto;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.spv-src--auto { color: rgba(235, 225, 255, 0.38); }
+.spv-src--set { color: rgb(255, 200, 60); }
+
+.spv-ctxmenu__item--inert {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.spv-ctxmenu__item--inert:hover {
+    background: transparent;
+}
