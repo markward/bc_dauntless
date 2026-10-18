@@ -61,10 +61,11 @@ them.
   tiles, so work queued before a span may execute inside it. Confirm a large
   row by switching the feature off in a CPU-only run
   (`DAUNTLESS_DEV_RENDER_OFF`, `engine/dev_render_off.py`).
-- **A span counts GPU idle time too.** Once the GPU is no longer the
-  bottleneck, it waits for the CPU inside the spans, so pass totals do not
-  compare across a fix that removed the bottleneck; the focused span of the
-  pass you changed does (`perf-register.md` SIG-071).
+- **Pass totals depend on the focus list; focused spans do not.** In one 4K
+  scene, 6 focus scopes reported a 70 ms GPU frame and 20 scopes 48 ms (the
+  real, GPU-bound frame was 46 ms), while every scope focused in both agreed
+  within 0.1 ms (`perf-register.md` SIG-074). Compare totals only between
+  runs with the same list; focus every sibling when the total matters.
 
 `renderer::FrameTimer::set_gpu_focus` / `host_io.profiler_set_gpu_focus`;
 tests in `tests/host/test_frame_profiler_gl.py` and `frame_timer_test.cc`.
