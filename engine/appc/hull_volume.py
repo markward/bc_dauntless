@@ -24,8 +24,50 @@ from typing import Callable, List, Optional, Tuple
 
 from engine import renderer as _renderer
 
-__all__ = ["push_resolution", "prewarm_field", "rock_bake_targets",
+__all__ = ["effective_resolution", "push_resolution", "prewarm_field",
+           "rock_bake_targets",
            "discover_bake_targets", "prebake_all"]
+
+
+# How much finer than its holes a hull's lattice is kept, as a CELL-COUNT
+# multiple. A hull's holes scale with BC's DamageRadMod
+# (SetVisibleDamageRadiusModifier; stations 8.0), but SetDamageResolution is
+# authored for ship-sized holes, so at the authored cell a station's lattice
+# resolves holes 8x smaller than any it can receive: FedOutpost /
+# SpaceFacility were 13.4M cells, and each whole-lattice pass at their death
+# cost 130-240 ms in Debug (perf-register P-4). The cell therefore grows with
+# the modifier, keeping this many times the cells a hole-matched lattice would
+# have -- 2 puts the station near 50k (Mark, 2026-10-18), still finer than
+# BC's own station volumes (cell 85 against the authored 15).
+HOLE_DETAIL_CELLS = 2.0
+
+
+def effective_resolution(authored_res: float, radius_mod) -> float:
+    """The resolution to bake at: `authored_res` with the cell scaled by the
+    hull's hole modifier, never finer than authored. A modifier of 1 (every
+    ship), a small one, or a bad one changes nothing."""
+    try:
+        mod = float(radius_mod)
+    except (TypeError, ValueError):
+        return authored_res
+    scale = mod / HOLE_DETAIL_CELLS ** (1.0 / 3.0)
+    return authored_res * scale if scale > 1.0 else authored_res
+
+
+def _ship_resolution(ship) -> Optional[float]:
+    """The ship's effective resolution, or None when it never had a positive
+    authored one (the baker divides by it)."""
+    getter = getattr(ship, "GetDamageResolution", None)
+    if getter is None:
+        return None
+    try:
+        resolution = float(getter())
+    except (TypeError, ValueError):
+        return None
+    if not resolution > 0.0:
+        return None
+    return effective_resolution(
+        resolution, getattr(ship, "_vis_dmg_radius_mod", 1.0))
 
 
 def push_resolution(ship, iid) -> bool:
@@ -45,14 +87,8 @@ def push_resolution(ship, iid) -> bool:
     disable that logging forever, indistinguishable from "no ship authored a
     resolution".
     """
-    getter = getattr(ship, "GetDamageResolution", None)
-    if getter is None:
-        return False
-    try:
-        resolution = float(getter())
-    except (TypeError, ValueError):
-        return False
-    if not resolution > 0.0:
+    resolution = _ship_resolution(ship)
+    if resolution is None:
         return False
     _renderer.hull_volume_set_resolution(iid, resolution)
     return True
@@ -92,14 +128,8 @@ def prewarm_for_model(ship, handle) -> bool:
     GetDamageResolution is swallowed (False); a renderer failure propagates.
     Returns True when a prewarm was issued.
     """
-    getter = getattr(ship, "GetDamageResolution", None)
-    if getter is None:
-        return False
-    try:
-        resolution = float(getter())
-    except (TypeError, ValueError):
-        return False
-    if not resolution > 0.0:
+    resolution = _ship_resolution(ship)
+    if resolution is None:
         return False
     _renderer.hull_volume_prewarm_model(handle, resolution)
     return True
@@ -212,7 +242,7 @@ def _bake_target_for(name: str) -> Optional[Tuple[Path, float]]:
     nif = Path(paths.game_asset(rel))
     if not nif.is_file():
         return None
-    return nif, res
+    return nif, effective_resolution(res, stats.get("DamageRadMod", 1.0))
 
 
 def rock_bake_targets(stock: str, authored_res: float) -> List[Tuple[str, float]]:
