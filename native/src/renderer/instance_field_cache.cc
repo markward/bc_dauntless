@@ -284,7 +284,8 @@ HullCarveDepositResult hull_carve_deposit(
         float floor_radius_model,
         float radius_modifier,
         float inv_scale,
-        const voxel::VoxelVolume* fill) {
+        const voxel::VoxelVolume* fill,
+        bool carve_field) {
     scenegraph::HullCarve& c =
         carve.add(center_body, influ_radius_model, strength, normal_body);
     const float prev_radius = c.radius;
@@ -320,20 +321,23 @@ HullCarveDepositResult hull_carve_deposit(
     // with, so the carve proceeds exactly as it did before this gate
     // existed.
     //
-    // Only a NEW slot or a GROWN one can change the field. A merge keeps the
-    // slot's centre, normal and (monotonic) radius, so a merged deposit that
-    // does not grow it would re-apply the identical carve -- a no-op that
-    // still walks the whole reach box. A fresh slot starts at radius 0, so
-    // `c.radius > prev_radius` is exactly "new or grown". The backing gate
-    // reads the same centre and normal, so it cannot answer differently
-    // either. Measured (perf-register P-4): a dying Sovereign's core breach
-    // merged into its death carve every frame for 1.5 s -- 101 no-op carves
-    // of 5.7 ms each in Debug.
-    if (field_cache != nullptr && !source.empty() && c.radius > prev_radius &&
+    // Only a slot whose radius is past what the field already holds for it
+    // can change the field. A merge keeps the slot's centre, normal and
+    // (monotonic) radius, and a bigger brush at the same centre dominates
+    // every smaller one, so carving at or below field_radius would be a
+    // no-op that still walks the whole reach box. The backing gate reads the
+    // same centre and normal, so it cannot answer differently either.
+    // Measured (perf-register P-4) on a dying Sovereign: its core breach
+    // merging into a death carve re-carved it 92 times at 5.7 ms each; a
+    // breach owning its slot carved ~85 growth steps of ~4 ms each, now
+    // deferred to one (carve_field).
+    if (field_cache != nullptr && !source.empty() && carve_field &&
+        c.radius > c.field_radius &&
         (fill == nullptr || carve_has_backing(*fill, c.center_body,
                                               c.surface_normal))) {
         field_cache->carve(id, source, authored_res, c.center_body,
                            c.surface_normal, c.radius);
+        c.field_radius = c.radius;
     }
 
     return HullCarveDepositResult{prev_radius, c.radius};

@@ -308,6 +308,14 @@ struct HullCarveDepositResult {
 /// moving the gate inside scenegraph::HullCarveField::add) is follow-up
 /// work, not done here.
 ///
+/// The field is carved only when `carve_field` is set AND the slot's radius
+/// is past the one the field already holds for it (HullCarve::field_radius).
+/// A merge keeps a slot's centre, normal and radius, and a bigger brush at
+/// the same centre dominates every smaller one, so that is exactly "the field
+/// would change". `carve_field = false` grows the sphere ring only: a growing
+/// carve (the core breach) asks for the field once, at full size -- the ring
+/// alone draws a tracked carve (opaque.frag gates the field off inside it).
+///
 /// Every radius argument here is already in MODEL UNITS (or a plain
 /// multiplier, for radius_modifier/inv_scale); this function performs no
 /// GU<->model conversion of its own -- the caller does that once, the same
@@ -325,6 +333,7 @@ HullCarveDepositResult hull_carve_deposit(
     float floor_radius_model,
     float radius_modifier,
     float inv_scale,
-    const voxel::VoxelVolume* fill = nullptr);
+    const voxel::VoxelVolume* fill = nullptr,
+    bool carve_field = true);
 
 }  // namespace renderer

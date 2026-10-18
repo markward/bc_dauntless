@@ -7494,7 +7494,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
              std::tuple<float, float, float> world_point,
              std::tuple<float, float, float> world_normal,
              float influ_radius, float strength, float /*time*/,
-             float floor_radius, float radius_modifier) {
+             float floor_radius, float radius_modifier, bool carve_field) {
               auto* inst = g_world.get(id);
               if (inst == nullptr) return;  // stale id — drop silently
               const glm::vec3 pw(std::get<0>(world_point),
@@ -7596,7 +7596,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   renderer::hull_carve_deposit(
                       inst->carve, g_instance_field_cache.get(), id, source,
                       authored_res, pb, nb, influ_model, strength,
-                      floor_model, radius_modifier, inv_s, fill_for_gate);
+                      floor_model, radius_modifier, inv_s, fill_for_gate,
+                      carve_field);
 
               // Breach event (transient VFX: debris, venting, rim) only when the
               // carve newly appears or visibly grows — sub-iso accumulation is
@@ -7622,6 +7623,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
           py::arg("influ_radius"), py::arg("strength"), py::arg("time"),
           py::arg("floor_radius") = 0.0f, py::arg("radius_modifier") = 1.0f,
+          py::arg("carve_field") = true,
           "Deposit hull-damage strength onto a ship instance (BC additive "
           "metaball field). World-space point + normal are transformed to body "
           "frame (model units). influ_radius is the merge proximity; strength "
@@ -7632,7 +7634,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "floor_radius guarantees a size for authored / core-breach carves "
           "(combat hits pass floor 0 and stay invisible until accumulated "
           "strength crosses the iso). time is accepted for call-shape symmetry "
-          "with damage_decal_add but unused.");
+          "with damage_decal_add but unused. carve_field=False grows the "
+          "sphere ring only and leaves the per-instance field for a later "
+          "deposit (a growing carve carves the field once, at full size).");
 
     m.def("hull_split_detached",
           [](scenegraph::InstanceId id, int min_cells) {
