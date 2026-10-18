@@ -165,6 +165,20 @@ shipPropertyViewerPhysChildMenu(ev(), {dataset: {key: "sub:3", source: "auto", p
 out.autoResetInert = els["spv-ctx-reset"].classList.contains("spv-ctxmenu__item--inert");
 shipPropertyViewerPhysReset();
 take("autoResetEvents");
+shipPropertyViewerPhysChildMenu(ev(), {dataset: {key: "sub:1", source: "set", part: "birdofprey"}});
+shipPropertyViewerPhysOpenSub({dataset: {mode: "move"}});
+out.setSub = els["spv-ctxsub"].innerHTML;
+events = [];
+shipPropertyViewerPhysPickPart({dataset: {part: "head"}});
+take("setMoveEvents");
+shipPropertyViewerPhysChildMenu(ev(), {dataset: {key: "sub:1", source: "set", part: "birdofprey"}});
+shipPropertyViewerPhysOpenSub({dataset: {mode: "move"}});
+events = [];
+shipPropertyViewerPhysPickPart({dataset: {part: "birdofprey"}, classList: {contains: function (c) { return c === "spv-ctxmenu__item--inert"; }}});
+take("setCurrentEvents");
+shipPropertyViewerPhysChildMenu(ev(), {dataset: {key: "sub:3", source: "auto", part: "birdofprey"}});
+shipPropertyViewerPhysOpenSub({dataset: {mode: "move"}});
+out.autoSub = els["spv-ctxsub"].innerHTML;
 
 shipPropertyViewerPhysGroupMenu(ev(), {dataset: {part: "old wing", missing: "true"}});
 out.groupMoveAll = els["spv-ctx-moveall"].style.display;
@@ -265,9 +279,9 @@ def test_move_to_dispatches_json(harness):
 
 
 def test_inert_items(harness):
-    assert harness["setMoveToInert"] is True
+    assert harness["setMoveToInert"] is False
     assert harness["setResetInert"] is False
-    assert harness["setSubDisplay"] != "block"
+    assert harness["setSubDisplay"] == "block"
     assert ('ship-property-viewer/physical/reset:{"key":"sub:1"}'
             in harness["resetEvents"])
     assert harness["autoResetInert"] is True
@@ -310,3 +324,23 @@ def test_group_toggle(harness):
     assert harness["toggleEvents"] == []
     # a collapsed missing header still opens Move all to
     assert harness["collapsedMenuMoveAll"] == "block"
+
+
+def test_set_row_can_move_to_another_part(harness):
+    assert harness["setMoveEvents"][0] == (
+        'ship-property-viewer/physical/move:{"key":"sub:1","part":"head"}')
+
+
+def test_set_row_current_part_is_inert(harness):
+    sub = harness["setSub"]
+    cur = re.search(r'<div[^>]*>[^<]*✓ birdofprey</div>', sub).group(0)
+    assert "spv-ctxmenu__item--inert" in cur and "onclick" not in cur
+    other = re.search(r'<div[^>]*>head</div>', sub).group(0)
+    assert "onclick" in other and "inert" not in other
+    assert harness["setCurrentEvents"] == []
+
+
+def test_auto_row_ticked_part_stays_clickable(harness):
+    cur = re.search(r'<div[^>]*>[^<]*✓ birdofprey</div>',
+                    harness["autoSub"]).group(0)
+    assert "onclick" in cur and "inert" not in cur

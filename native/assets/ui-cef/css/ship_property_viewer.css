@@ -430,7 +430,7 @@
    is belt-and-suspenders (the real refusal is the Python-side gate in
    _dispatch_event_inner); this exists so the panel doesn't look interactive
    when it isn't. */
-#spv-syslist.spv-syslist--locked {
+#spv-syslist-body.spv-syslist--locked {
     opacity: 0.45;
     pointer-events: none;
 }

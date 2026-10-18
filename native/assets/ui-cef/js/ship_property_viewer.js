@@ -108,7 +108,7 @@ window.setShipPropertyViewer = function (data) {
         banner.style.display = locked ? 'block' : 'none';
         banner.textContent = locked ? (mp.mount_editing_reason || '') : '';
     }
-    var sysList = document.getElementById('spv-syslist');
+    var sysList = document.getElementById('spv-syslist-body');
     if (sysList) sysList.classList.toggle('spv-syslist--locked', locked);
 
     renderSPVModelParts(mp);
@@ -1606,7 +1606,7 @@ window.shipPropertyViewerPhysChildMenu = function (event, el) {
     spvCtxPhysKey = el.dataset.key; spvCtxPhysSource = el.dataset.source;
     spvCtxPhysPart = el.dataset.part; spvCtxPhysMissing = null;
     spvPhysShowMenu({moveto: true, reset: true, moveall: false, resetall: false});
-    spvPhysInert('spv-ctx-moveto', el.dataset.source === 'set');
+    spvPhysInert('spv-ctx-moveto', false);
     spvPhysInert('spv-ctx-reset', el.dataset.source !== 'set');
     spvOpenMenuAt(event);
     return false;
@@ -1628,14 +1628,17 @@ window.shipPropertyViewerPhysOpenSub = function (el) {
     var sub = document.getElementById('spv-ctxsub');
     if (!sub) return;
     if (el.classList && el.classList.contains('spv-ctxmenu__item--inert')) return;
-    if (el.dataset.mode === 'move' && spvCtxPhysSource === 'set') return;
     spvPhysSubMode = el.dataset.mode;
     var parts = spvPhysical.parts || [];
     var out = [];
     for (var i = 0; i < parts.length; i++) {
         var current = spvPhysSubMode === 'move' && parts[i] === spvCtxPhysPart;
-        out.push('<div class="spv-ctxmenu__item" data-part="' + escapeHtmlSPV(parts[i])
-            + '" onclick="shipPropertyViewerPhysPickPart(this)">'
+        // Only a SET row's own ticked part is inert (already there); an AUTO
+        // row's ticked part is the auto-resolved one and stays clickable.
+        var inert = current && spvCtxPhysSource === 'set';
+        out.push('<div class="spv-ctxmenu__item' + (inert ? ' spv-ctxmenu__item--inert' : '')
+            + '" data-part="' + escapeHtmlSPV(parts[i]) + '"'
+            + (inert ? '>' : ' onclick="shipPropertyViewerPhysPickPart(this)">')
             + (current ? '✓ ' : '') + escapeHtmlSPV(parts[i]) + '</div>');
     }
     sub.innerHTML = out.join('');
@@ -1648,6 +1651,7 @@ window.shipPropertyViewerPhysOpenSub = function (el) {
 };
 
 window.shipPropertyViewerPhysPickPart = function (el) {
+    if (el.classList && el.classList.contains('spv-ctxmenu__item--inert')) return;
     var part = el.dataset.part;
     if (spvPhysSubMode === 'moveall') {
         dauntlessEvent('ship-property-viewer/physical/move_all:'
