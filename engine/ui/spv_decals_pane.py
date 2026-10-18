@@ -25,9 +25,11 @@ is 1 / (0.01 * GetScale()) body units -- NOT 1 / GetScale().
 Articulated parts (spec 2026-10-18-articulated-hull-decals S6.2). While the
 pane is active every part is at the NIF pose, so body points are REST-frame
 points. A placement whose centre lands on a mesh under a part this ship's rig
-articulates gets that mesh's `shape` (so it follows the part); any other mesh
-clears it. Derived on Add, Reposition, Move, Paste and Mirror -- never on a
-Rotate/Scale (same centre) -- and a trace miss keeps the old shape.
+articulates gets that mesh's `shape` (so it follows the part). Any other mesh
+clears a part's shape but keeps a hand-authored one off the parts (the
+committed Ambassador `top`'s "amb saucer:0"). Derived on Add, Reposition,
+Move, Paste and Mirror -- never on a Rotate/Scale (same centre) -- and a
+trace miss keeps the old shape.
 """
 from __future__ import annotations
 
@@ -618,16 +620,27 @@ class DecalsPaneMixin:
         pb, nb = body
         return tuple(float(c) for c in pb), _unit(tuple(float(c) for c in nb))
 
-    def _decal_mesh_entry(self, iid, mesh) -> Optional[dict]:
-        """`model_identity`'s entry for mesh index `mesh`, cached per iid."""
+    def _decal_meshes(self, iid) -> list:
+        """`model_identity(iid)["meshes"]`, cached per iid. A None (an
+        instance not realised yet) is not cached: it would disable shape
+        derivation for the pane's lifetime."""
         from engine import host_io
         if self._decal_identity is None or self._decal_identity[0] != iid:
-            self._decal_identity = (iid, host_io.model_identity(iid))
-        info = self._decal_identity[1]
-        for m in (info or {}).get("meshes", ()):
-            if m.get("mesh") == mesh:
-                return m
-        return None
+            info = host_io.model_identity(iid)
+            if info is None:
+                return []
+            self._decal_identity = (iid, info)
+        return self._decal_identity[1].get("meshes", [])
+
+    @staticmethod
+    def _decal_part_names(ship) -> set:
+        from engine.appc import articulation
+        return {articulation._part_name(q)
+                for q in articulation.parts_for_ship(ship)}
+
+    @staticmethod
+    def _decal_under_part(entry: dict, parts: set) -> bool:
+        return any(node in parts for node in entry.get("node_chain", ()))
 
     def _decal_shape_at(self, body_point: Vec3, body_normal: Vec3,
                         depth: float = 1.0) -> Optional[str]:
@@ -641,7 +654,6 @@ class DecalsPaneMixin:
         if ship is None or iid is None:
             return None
         from engine import host_io
-        from engine.appc import articulation
         from engine.appc.math import TGPoint3
         from engine.systems import frames
         try:
@@ -656,24 +668,44 @@ class DecalsPaneMixin:
                 2.0 * d * instance_scale(ship))
             if hit is None:
                 return None
-            entry = self._decal_mesh_entry(iid, hit[3])
+            entry = next((m for m in self._decal_meshes(iid)
+                          if m.get("mesh") == hit[3]), None)
             if entry is None:
                 return None
-            parts = {articulation._part_name(q)
-                     for q in articulation.parts_for_ship(ship)}
+            parts = self._decal_part_names(ship)
         except Exception as e:
             from engine import dev_mode
             dev_mode.log_swallowed("spv decal shape trace", e)
             return None
-        if any(node in parts for node in entry.get("node_chain", ())):
+        if self._decal_under_part(entry, parts):
             return str(entry.get("name", ""))
         return ""
 
+    def _decal_is_part_shape(self, shape: str) -> bool:
+        """`shape` names a mesh under a part this ship's rig articulates.
+        False when that cannot be told (the caller then keeps the shape)."""
+        ship, iid = self._ship_getter(), self._decal_iid()
+        if ship is None or iid is None:
+            return False
+        try:
+            parts = self._decal_part_names(ship)
+            return any(m.get("name") == shape and self._decal_under_part(m, parts)
+                       for m in self._decal_meshes(iid))
+        except Exception as e:
+            from engine import dev_mode
+            dev_mode.log_swallowed("spv decal part shape", e)
+            return False
+
     def _decal_with_derived_shape(self, p: decal_editor.Placement
                                   ) -> decal_editor.Placement:
-        """`p` with the shape under its centre, or `p` itself on a miss."""
+        """`p` with the shape under its centre, or `p` itself on a miss.
+        Off the parts ("") only a part's shape is cleared: a hand-authored
+        shape there is kept."""
         shape = self._decal_shape_at(decal_editor.centre(p), p.normal, p.depth)
-        return p if shape is None else replace(p, shape=shape)
+        if shape is None or (shape == "" and p.shape
+                             and not self._decal_is_part_shape(p.shape)):
+            return p
+        return replace(p, shape=shape)
 
     def decal_click(self, x, y, viewport) -> bool:
         """A viewport click while the Decals pane is active. Places the

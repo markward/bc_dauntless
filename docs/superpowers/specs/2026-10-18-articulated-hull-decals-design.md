@@ -148,7 +148,9 @@ that draws decals without it would read a stale matrix from the previous ship.
    centre along its −normal. So Mirror of a `wing left:0` decal lands as
    `wing right:0`; a move onto the plain hull clears `shape` to `""`; a move
    whose trace misses keeps the old `shape`. Rotate and Scale do not move the
-   centre and leave `shape` alone.
+   centre and leave `shape` alone. Only a shape on an articulated part is
+   cleared; a hand-authored shape off the parts (the Ambassador's
+   `amb saucer:0`) is kept.
 
 ### 6.3 Docs
 

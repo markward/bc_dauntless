@@ -1423,3 +1423,64 @@ def test_headless_trace_keeps_todays_behaviour(env, monkeypatch):
     _arm_hit(env, _LEFT_WING, _UP_N)
     p.decal_click(1.0, 1.0, (1280, 720))
     assert p._decal_by_name("top").shape == "amb saucer:0"
+
+
+def _hand_shape_bottom(env, shape):
+    """Add `bottom` on the hull, then give it a hand-authored `shape`."""
+    from dataclasses import replace
+    p = env["p"]
+    _add_bottom(env, _HULL)
+    i = p._decal_index("bottom")
+    p._decal_working[i] = replace(p._decal_working[i], shape=shape)
+    return p
+
+
+def test_a_hand_authored_hull_shape_survives_a_move_on_a_ship_without_a_rig(winged):
+    """Only a shape on an articulated part is cleared: a hand-authored one
+    off the parts (the committed Ambassador `top`'s "amb saucer:0") is kept."""
+    winged["rig"]["parts"] = ()
+    p = _hand_shape_bottom(winged, "hull:0")
+    p.dispatch_event("set_tool:transform")
+    n = len(winged["picks"])
+    assert p.dispatch_event('coord_nudge:{"axis":1,"delta":5}')
+    assert len(winged["picks"]) > n, "the move was traced"
+    assert p._decal_by_name("bottom").shape == "hull:0"
+
+
+def test_a_hand_authored_hull_shape_survives_a_gizmo_move_on_a_rigged_ship(winged):
+    p = _hand_shape_bottom(winged, "hull:0")
+    p.dispatch_event("set_tool:transform")
+    p._begin_axis_drag(0, 0.0)
+    p._apply_axis_drag(1.0)
+    assert p._decal_by_name("bottom").shape == "hull:0"
+
+
+def test_the_committed_saucer_shape_survives_a_coord_nudge(winged):
+    p = winged["p"]
+    p.dispatch_event("decal-select:top")
+    p.dispatch_event("set_tool:transform")
+    assert p.dispatch_event('coord_nudge:{"axis":2,"delta":5}')
+    assert p._decal_by_name("top").shape == "amb saucer:0"
+
+
+def test_a_hand_authored_shape_moved_onto_a_part_takes_the_parts_shape(winged):
+    p = _hand_shape_bottom(winged, "hull:0")
+    p.dispatch_event("decal-reposition")
+    _arm_hit(winged, _LEFT_WING, _UP_N)
+    p.decal_click(1.0, 1.0, (1280, 720))
+    assert p._decal_by_name("bottom").shape == "wing left:0"
+
+
+def test_a_model_identity_not_yet_available_is_not_cached(winged, monkeypatch):
+    """A not-yet-realised instance (model_identity None) must not disable
+    derivation for the pane's lifetime."""
+    ident = {"value": None}
+    monkeypatch.setattr(host_io, "model_identity", lambda iid: ident["value"])
+    p = winged["p"]
+    assert _add_bottom(winged, _LEFT_WING).shape == ""
+    ident["value"] = {"source": AMB_MODEL, "content_hash": "",
+                      "meshes": [dict(m) for m in _FAKE_MESHES]}
+    p.dispatch_event("decal-reposition")
+    _arm_hit(winged, _LEFT_WING, _UP_N)
+    p.decal_click(1.0, 1.0, (1280, 720))
+    assert p._decal_by_name("bottom").shape == "wing left:0"
