@@ -194,9 +194,16 @@ def test_running_light_spec_tuple_unchanged():
     assert spec.as_tuple() == (1, 2, 3, 4, 5, 6, 7.0, 8.0, 9.0)
 
 
-def test_emitter_light_ignores_subsystem_parent():
-    ship = _Ship()
-    _Sub("Impulse Engines", IMPULSE, "birdofprey")   # SET, and irrelevant
+def test_emitter_light_ignores_subsystem_parent(monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("emitter light consulted a physical parent")
+
+    # The ship really owns a subsystem SET to the body, while the light's own
+    # position lies on the left wing: the light must follow its own position.
+    sub = _Sub("Impulse Engines", IMPULSE, "birdofprey")
+    ship = _Ship(subs=[sub])
+    assert physical_parents.property_of(sub) is not None
+    monkeypatch.setattr(physical_parents, "part_for_property", boom)
     spec = {"position": IMPULSE}
     d = host_loop._articulate_emitter_light(ship, None, spec, {"position": IMPULSE})
     assert d["position"] == pytest.approx(part_pose.apply(_pose_of(ship, "left wing"), IMPULSE))

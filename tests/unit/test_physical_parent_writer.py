@@ -95,3 +95,17 @@ def test_emitted_text_is_py15_safe():
         for line in text.splitlines():
             if "SetPhysicalParent" in line:
                 assert "True" not in line and "False" not in line and " as " not in line
+
+
+GUARDED = ('import App\n'
+           'PortCannon = App.PhaserProperty_Create("Port Cannon")\n'
+           'if hasattr(App, "DAUNTLESS_ENV") and App.DAUNTLESS_ENV >= 1:\n'
+           '    PortCannon.SetPhysicalParent("left wing")\n'
+           'App.g_kModelPropertyManager.RegisterLocalTemplate(PortCannon)\n')
+
+
+def test_mod_unset_with_guarded_author_call_writes_none():
+    out = mw.rewrite(GUARDED, "bop", [("Port Cannon", "__unset__", "SetPhysicalParent")])
+    assert out.startswith(GUARDED)
+    assert out[:len(GUARDED)] == GUARDED
+    assert "p.SetPhysicalParent(None)" in out[len(GUARDED):]
