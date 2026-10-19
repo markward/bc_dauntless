@@ -44,6 +44,10 @@ Akira.dauntless = {
     'variants': [
         {'name': 'USS Geronimo', 'registry': 'Geronimo'},
         {'name': 'USS Devore', 'registry': 'Devore'},
+        # No stock registry texture: the name comes from Masks/<registry>/.
+        {'name': 'USS Thunderchild', 'registry': 'Thunderchild'},
+        {'name': 'USS Akira', 'registry': 'Akira'},
+        {'name': 'USS Spector', 'registry': 'Spector'},
     ],
 }
 
@@ -83,6 +87,13 @@ Nebula.dauntless = {
         {'name': 'USS Prometheus', 'registry': 'Prometheus'},
         {'name': 'USS Khitomer', 'registry': 'Khitomer'},
         {'name': 'USS Nightingale', 'registry': 'Nightingale'},
+        # No stock registry texture: the name comes from Masks/<registry>/.
+        {'name': 'USS Nebula', 'registry': 'Nebula'},
+        {'name': 'USS Endeavour', 'registry': 'Endeavour'},
+        {'name': 'USS Leeds', 'registry': 'Leeds'},
+        {'name': 'USS Monitor', 'registry': 'Monitor'},
+        {'name': 'USS Sutherland', 'registry': 'Sutherland'},
+        {'name': "USS T'Kumbra", 'registry': 'TKumbra'},
     ],
 }
 
