@@ -5466,10 +5466,12 @@ def _star_godray(player, star_render_pos):
     """The star as a steady god-ray source (system-nebula gate):
     toward the star from the render origin (the camera sits at ~0), at
     profile_fx.star_godray_intensity(godray_gain dial, the profile at the
-    player, the eye->star transmittance), in the map star's colour. None
-    when there is no light to cast (clear space, a fully veiled star) or the
-    star sits on the origin. Never a cloud-lighting flash: the haze already
-    forward-scatters the star."""
+    player, the eye->star transmittance), in the map star's colour, with its
+    render-space distance (hulls nearer than the star occlude its shafts and
+    never streak their own lights along them). None when there is no light to
+    cast (clear space, a fully veiled star) or the star sits on the origin.
+    Never a cloud-lighting flash: the haze already forward-scatters the
+    star."""
     from engine.systems import profile as _profile
     from engine.systems import profile_fx as _profile_fx
     intensity = _profile_fx.star_godray_intensity(
@@ -5484,7 +5486,7 @@ def _star_godray(player, star_render_pos):
     colour = (tuple(star.appearance.color)
               if star is not None and star.appearance.color else (1.0, 1.0, 1.0))
     return {"dir": (x / length, y / length, z / length),
-            "intensity": intensity, "color": colour}
+            "intensity": intensity, "color": colour, "distance": length}
 
 
 def _map_star(player):

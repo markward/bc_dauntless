@@ -413,6 +413,18 @@ def test_the_star_is_a_godray_source_under_the_gate(monkeypatch):
     assert r.flashes == [[_FLASH_DICT]], "the star never lights the cloud as a flash"
 
 
+def test_the_star_godray_carries_its_distance_and_a_flash_none(monkeypatch):
+    """The god-ray pass smears only what lies at or beyond the light; the
+    star's render-space distance is where that cut sits, so a hull in front
+    of it occludes instead of streaking its own lights (2026-10-19)."""
+    _star_feed(monkeypatch)
+    r = _R()
+    host_loop._push_nebula_godrays(r, object(), [{"position": (0.0, 300.0, 400.0)}], False)
+    flash, star = r.godrays[0]
+    assert star["distance"] == pytest.approx(500.0)
+    assert "distance" not in flash, "a lightning flash has no body on screen"
+
+
 def test_the_star_godray_follows_the_gain_dial(monkeypatch):
     _star_feed(monkeypatch)
     monkeypatch.setattr(D, "_dials", dict(D.DEFAULTS, godray_gain=2.0))
