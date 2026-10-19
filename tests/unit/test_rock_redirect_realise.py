@@ -22,6 +22,7 @@ class _LoadCall:
     search: object
     reps: object
     kwargs: dict = field(default_factory=dict)
+    decals: object = None
 
 
 class _FakeRenderer:
@@ -35,7 +36,7 @@ class _FakeRenderer:
         self.load_calls: list[_LoadCall] = []
 
     def load_model(self, path, search, texture_replacements=None, decals=None, **kwargs):
-        self.load_calls.append(_LoadCall(path, search, texture_replacements, dict(kwargs)))
+        self.load_calls.append(_LoadCall(path, search, texture_replacements, dict(kwargs), decals))
         return 100
 
     def model_aabb(self, h):
@@ -202,7 +203,7 @@ class _GltfFailingRenderer(_FakeRenderer):
     committed catalogue must not make the asteroid vanish."""
 
     def load_model(self, path, search, texture_replacements=None, decals=None, **kwargs):
-        self.load_calls.append(_LoadCall(path, search, texture_replacements, dict(kwargs)))
+        self.load_calls.append(_LoadCall(path, search, texture_replacements, dict(kwargs), decals))
         if str(path).endswith(".gltf"):
             raise RuntimeError("simulated glTF load failure")
         return 100
@@ -248,7 +249,9 @@ def test_failed_rock_load_falls_back_to_stock_in_realize_session(monkeypatch):
     assert last.path.lower().endswith("asteroid1.nif")
     assert "scale" not in last.kwargs
     # The stock handle is cached under the legacy key (no rock, no scale).
-    legacy_key = hl._ship_load_key(_stock_asteroid_path(), last.reps)
+    # The QuickBattle player is a Galaxy, whose hull-name decals are part of
+    # its key exactly as host_loop builds it.
+    legacy_key = hl._ship_load_key(_stock_asteroid_path(), last.reps, last.decals)
     assert controller.nif_to_handle.get(legacy_key) == 100
     assert _stock_asteroid_path() in controller.nif_to_extent
 
