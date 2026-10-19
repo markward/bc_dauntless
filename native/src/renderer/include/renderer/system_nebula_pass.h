@@ -24,11 +24,11 @@ struct Lighting;
 /// volumetric-nebula setting alone; with it off, NebulaVolumetricPass /
 /// NebulaPass render exactly as before.
 ///
-/// Started as a copy of NebulaVolumetricPass and keeps its performance
-/// machinery unchanged: quarter-resolution ping-pong target, dither step
-/// offset, conservative temporal reprojection (reset on large eye deltas and
-/// origin discontinuities) and the depth-aware upsample composited
-/// premultiplied OVER the HDR target.
+/// Started as a copy of NebulaVolumetricPass and keeps its quarter-resolution
+/// target, dither step offset and depth-aware upsample composited
+/// premultiplied OVER the HDR target. Its temporal reprojection was REMOVED
+/// (2026-10-19): it smeared the haze on every camera sweep, and without it
+/// the haze showed no shimmer (Mark, live). Each frame is its own march.
 ///
 /// What it marches (system_nebula.frag): a near field of ~64 geometric steps
 /// out to dials().near_range through the radial density texture (density,
@@ -149,18 +149,9 @@ public:
                 float time,
                 const glm::dvec3& render_origin = glm::dvec3(0.0));
 
-    /// Drop the temporal history (and the origin it was in): the next frame
-    /// marches fresh instead of reprojecting across an origin discontinuity.
-    void reset_history() {
-        have_history_ = false;
-        prev_origin_ = glm::dvec3(0.0);
-    }
-    bool has_history() const { return have_history_; }
-
 private:
     void initialize_gl();
-    /// (Re)allocate the low-res ping-pong targets to (w, h). No-op if already
-    /// that size. Invalidates temporal history on a resize.
+    /// (Re)allocate the low-res target to (w, h). No-op if already that size.
     void ensure_half_targets(int w, int h);
     void destroy_half_targets();
     void destroy_profile_textures();
@@ -168,18 +159,11 @@ private:
     bool         initialized_ = false;
     unsigned int vao_ = 0;   // empty VAO; fullscreen triangle uses gl_VertexID
 
-    // ── Low-res ping-pong scratch targets (RGBA16F) ────────────────────────
+    // ── Low-res scratch target (RGBA16F) ───────────────────────────────────
     int          half_w_ = 0;
     int          half_h_ = 0;
-    unsigned int half_fbo_[2] = {0, 0};
-    unsigned int half_tex_[2] = {0, 0};
-    int          cur_ = 0;            // index written this frame
-
-    // ── Temporal reprojection state ────────────────────────────────────────
-    bool         have_history_ = false;
-    glm::mat4    prev_view_proj_ = glm::mat4(1.0f);
-    glm::vec3    prev_eye_ = glm::vec3(0.0f);
-    glm::dvec3   prev_origin_ = glm::dvec3(0.0);
+    unsigned int half_fbo_ = 0;
+    unsigned int half_tex_ = 0;
 
     // ── Profile ────────────────────────────────────────────────────────────
     unsigned int radial_tex_ = 0;     // RG32F: density, tau_star by u = sqrt(r/far)
