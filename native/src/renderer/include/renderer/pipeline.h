@@ -35,6 +35,8 @@ public:
     Shader& nebula_upsample_shader() noexcept { return *nebula_upsample_; }
     Shader& system_nebula_shader() noexcept { return *system_nebula_; }
     Shader& nebula_godray_shader() noexcept { return *nebula_godray_; }
+    Shader& nebula_godray_mask_shader() noexcept { return *nebula_godray_mask_; }
+    Shader& nebula_godray_composite_shader() noexcept { return *nebula_godray_composite_; }
     Shader& shield_shader() noexcept     { return *shield_; }
     Shader& lens_flare_shader() noexcept { return *lens_flare_; }
     Shader& torpedo_shader() noexcept    { return *torpedo_; }
@@ -78,6 +80,8 @@ private:
     std::unique_ptr<Shader> nebula_upsample_;
     std::unique_ptr<Shader> system_nebula_;
     std::unique_ptr<Shader> nebula_godray_;
+    std::unique_ptr<Shader> nebula_godray_mask_;
+    std::unique_ptr<Shader> nebula_godray_composite_;
     std::unique_ptr<Shader> shield_;
     std::unique_ptr<Shader> lens_flare_;
     std::unique_ptr<Shader> torpedo_;

@@ -3231,6 +3231,41 @@ TEST_F(FrameTest, NebulaGodrayStreaksFromAnchor) {
 // (lit windows, nacelle glows) must never be smeared along them. Live bug
 // 2026-10-19: at the Vesuvi dust cloud a Galaxy's nacelles streaked red and
 // blue down its own shadow.
+// The pass marches at half resolution in its own framebuffers; the scene keeps
+// drawing into the caller's HDR target afterwards, so that framebuffer and its
+// viewport must be bound again on return.
+TEST_F(FrameTest, NebulaGodrayRestoresCallersFramebufferAndViewport) {
+    const int kW = 200, kH = 120;
+    renderer::HdrTarget hdr;
+    hdr.resize(kW, kH);
+    scenegraph::Camera cam;
+    cam.eye = glm::vec3(0.0f, 0.0f, -600.0f); cam.target = glm::vec3(0.0f);
+    cam.up = glm::vec3(0.0f, 1.0f, 0.0f); cam.aspect = float(kW) / kH;
+    cam.near = 1.0f; cam.far = 20000.0f;
+    hdr.bind();
+    glViewport(0, 0, kW, kH);
+    glClearDepth(1.0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    GLint fbo_before = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo_before);
+
+    renderer::GodrayFlash star;
+    star.dir = glm::vec3(0.0f, 0.0f, 1.0f);   // dead ahead: anchor on screen
+    star.intensity = 1.0f;
+    star.distance = 10000.0f;
+    renderer::NebulaGodrayPass pass;
+    pass.render(cam, *p, {star}, hdr.color_texture(), hdr.depth_texture());
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+
+    GLint fbo_after = 0, vp[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo_after);
+    glGetIntegerv(GL_VIEWPORT, vp);
+    EXPECT_EQ(fbo_after, fbo_before);
+    EXPECT_EQ(vp[0], 0); EXPECT_EQ(vp[1], 0);
+    EXPECT_EQ(vp[2], kW); EXPECT_EQ(vp[3], kH);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
 TEST_F(FrameTest, NebulaGodrayHullsOccludeButNeverEmit) {
     const int kW = 256, kH = 256;
     renderer::HdrTarget hdr;

@@ -57,10 +57,10 @@ float godray_source_depth(const scenegraph::Camera& camera,
 
 NebulaGodrayPass::NebulaGodrayPass() = default;
 NebulaGodrayPass::~NebulaGodrayPass() {
-    // Safe even if initialize_gl() never ran: glDeleteVertexArrays(1, &0) is a
-    // no-op per the GL spec, so the lazy-init path leaves nothing to leak.
+    // Safe even if initialize_gl() never ran: deleting name 0 is a no-op per
+    // the GL spec, so the lazy-init path leaves nothing to leak.
     if (vao_) glDeleteVertexArrays(1, &vao_);
-    if (scene_copy_tex_) glDeleteTextures(1, &scene_copy_tex_);
+    destroy_half_targets();
 }
 
 void NebulaGodrayPass::initialize_gl() {
@@ -70,17 +70,38 @@ void NebulaGodrayPass::initialize_gl() {
     initialized_ = true;
 }
 
-void NebulaGodrayPass::ensure_scene_copy(int w, int h) {
-    if (scene_copy_tex_ && w == copy_w_ && h == copy_h_) return;
-    if (scene_copy_tex_) glDeleteTextures(1, &scene_copy_tex_);
-    glGenTextures(1, &scene_copy_tex_);
-    glBindTexture(GL_TEXTURE_2D, scene_copy_tex_);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, nullptr);
+void NebulaGodrayPass::destroy_half_targets() {
+    for (unsigned int* t : {&mask_tex_, &rays_tex_})
+        if (*t) { glDeleteTextures(1, t); *t = 0; }
+    for (unsigned int* f : {&mask_fbo_, &rays_fbo_})
+        if (*f) { glDeleteFramebuffers(1, f); *f = 0; }
+    half_w_ = half_h_ = 0;
+}
+
+namespace {
+// One half-res colour target. R11G11B10F: unsigned HDR at half the bandwidth
+// of RGBA16F -- the 48-step march is fetch-bound on the source image.
+void make_half_target(int w, int h, unsigned int& tex, unsigned int& fbo) {
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R11F_G11F_B10F, w, h, 0, GL_RGB, GL_FLOAT, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    copy_w_ = w; copy_h_ = h;
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+}
+}  // namespace
+
+void NebulaGodrayPass::ensure_half_targets(int w, int h) {
+    if (mask_fbo_ && w == half_w_ && h == half_h_) return;
+    destroy_half_targets();
+    make_half_target(w, h, mask_tex_, mask_fbo_);
+    make_half_target(w, h, rays_tex_, rays_fbo_);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    half_w_ = w; half_h_ = h;
 }
 
 void NebulaGodrayPass::render(const scenegraph::Camera& camera,
@@ -90,88 +111,112 @@ void NebulaGodrayPass::render(const scenegraph::Camera& camera,
                               std::uint32_t hdr_depth_tex) {
     // Stock-BC byte-identity: nothing to draw => zero GL work.
     if (!enabled_ || flashes.empty()) return;
-    if (!initialized_) initialize_gl();
 
+    // Lights whose anchor projects usable: an off-screen anchor casts no
+    // shafts (light + audio still happen elsewhere). Intended.
     const glm::mat4 view_proj = camera.proj_matrix() * camera.view_matrix();
-
-    // ── Copy the live HDR colour into a scratch texture. ─────────────────────
-    // The radial march samples the scene colour AND we additively blend the
-    // result back into the same HDR target. Sampling the bound target directly
-    // is a same-FBO feedback loop — undefined per the GL spec, and on some GPUs
-    // it returns tile-aligned stale data (a visible grid). Copying first (the
-    // HDR FBO is the bound draw+read target here) lets the march read the COPY
-    // while writing the HDR — never the same texture.
-    GLint vp[4];
-    glGetIntegerv(GL_VIEWPORT, vp);
-    const int cw = vp[2] > 0 ? vp[2] : 1;
-    const int ch = vp[3] > 0 ? vp[3] : 1;
-    ensure_scene_copy(cw, ch);
-    glBindTexture(GL_TEXTURE_2D, scene_copy_tex_);
-    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, vp[0], vp[1], cw, ch);
-
-    // ── Set up the additive composite into the currently-bound HDR target. ───
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_ONE, GL_ONE);
-    glDisable(GL_DEPTH_TEST);
-    glDepthMask(GL_FALSE);
-    glDisable(GL_CULL_FACE);
-
-    auto& sh = pipeline.nebula_godray_shader();
-    sh.use();
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, scene_copy_tex_);  // sample the COPY, not the bound HDR
-    sh.set_int("u_scene", 0);
-    (void)hdr_color_tex;  // copy is taken from the bound HDR FBO above
-    // Depth decides source vs occluder per sample. Read-only here: depth
-    // writes are off, so sampling the bound FBO's depth is no feedback loop.
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, hdr_depth_tex);
-    sh.set_int("u_depth", 1);
-    sh.set_int("u_samples", kSamples);
-    sh.set_float("u_decay", kDecay);
-    sh.set_float("u_weight", kWeight);
-    sh.set_float("u_exposure", kExposure);
-    sh.set_float("u_jitter", kJitter);
-
-    glBindVertexArray(vao_);
-
+    struct Lit { const GodrayFlash* f; glm::vec2 anchor; float source_depth; };
+    std::vector<Lit> lit;
     for (const auto& f : flashes) {
+        if (f.intensity <= 0.0f) continue;
         // Light comes FROM `dir`; the on-screen anchor is a far point along it.
         const glm::vec3 world = camera.eye + glm::normalize(f.dir) * kAnchorReachGu;
         const glm::vec4 clip = view_proj * glm::vec4(world, 1.0f);
+        if (clip.w <= 0.0f) continue;
+        const glm::vec2 anchor = glm::vec2(clip.x, clip.y) / clip.w * 0.5f + 0.5f;
+        if (anchor.x < -kAnchorPad || anchor.x > 1.0f + kAnchorPad ||
+            anchor.y < -kAnchorPad || anchor.y > 1.0f + kAnchorPad) continue;
+        lit.push_back({&f, anchor, godray_source_depth(camera, f)});
+    }
+    if (lit.empty()) return;
+    if (!initialized_) initialize_gl();
 
-        float on_screen = 0.0f;
-        glm::vec2 anchor(0.5f, 0.5f);
-        if (clip.w > 0.0f) {
-            const glm::vec2 ndc = glm::vec2(clip.x, clip.y) / clip.w;  // [-1,1]
-            anchor = ndc * 0.5f + 0.5f;                                // [0,1]
-            if (anchor.x >= -kAnchorPad && anchor.x <= 1.0f + kAnchorPad &&
-                anchor.y >= -kAnchorPad && anchor.y <= 1.0f + kAnchorPad) {
-                on_screen = 1.0f;
-            }
+    // The caller has the HDR target bound; restore exactly it (and its
+    // viewport) before the full-res composite.
+    GLint prev_fbo = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev_fbo);
+    GLint vp[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_VIEWPORT, vp);
+    if (vp[2] < 1 || vp[3] < 1) return;
+    const int hw = std::max(1, vp[2] / 2);
+    const int hh = std::max(1, vp[3] / 2);
+    ensure_half_targets(hw, hh);
+
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+    glViewport(0, 0, hw, hh);
+    glBindVertexArray(vao_);
+
+    // The march accumulates every light additively into the rays target.
+    glBindFramebuffer(GL_FRAMEBUFFER, rays_fbo_);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    auto& mask = pipeline.nebula_godray_mask_shader();
+    auto& march = pipeline.nebula_godray_shader();
+    float mask_depth = -1.0f;   // the source depth mask_tex_ holds, if any
+    for (const Lit& l : lit) {
+        // ── Source image: the masked scene at half res. Lights sharing a
+        // source depth (every lightning flash: sky only) share one build.
+        if (l.source_depth != mask_depth) {
+            glBindFramebuffer(GL_FRAMEBUFFER, mask_fbo_);
+            glDisable(GL_BLEND);
+            mask.use();
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, hdr_color_tex);
+            mask.set_int("u_scene", 0);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, hdr_depth_tex);
+            mask.set_int("u_depth", 1);
+            mask.set_float("u_source_depth", l.source_depth);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+            mask_depth = l.source_depth;
         }
 
-        sh.set_vec2("u_anchor", anchor);
-        sh.set_float("u_on_screen", on_screen);
-        sh.set_vec3("u_color", f.color);
-        sh.set_float("u_intensity", f.intensity);
-        sh.set_float("u_source_depth", godray_source_depth(camera, f));
-
-        // Off-screen anchor → u_on_screen=0 → shader outputs zero (light + audio
-        // still happen elsewhere; only the shafts are absent). Intended.
+        // ── Radial march from the source image, added into the rays target.
+        glBindFramebuffer(GL_FRAMEBUFFER, rays_fbo_);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE);
+        march.use();
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, mask_tex_);
+        march.set_int("u_scene", 0);
+        march.set_int("u_samples", kSamples);
+        march.set_float("u_decay", kDecay);
+        march.set_float("u_weight", kWeight);
+        march.set_float("u_exposure", kExposure);
+        march.set_float("u_jitter", kJitter);
+        march.set_vec2("u_anchor", l.anchor);
+        march.set_float("u_on_screen", 1.0f);
+        march.set_vec3("u_color", l.f->color);
+        march.set_float("u_intensity", l.f->intensity);
         glDrawArrays(GL_TRIANGLES, 0, 3);
     }
 
+    // ── Blurred upsample, added into the HDR target. ────────────────────────
+    glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prev_fbo));
+    glViewport(vp[0], vp[1], vp[2], vp[3]);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE);
+    auto& comp = pipeline.nebula_godray_composite_shader();
+    comp.use();
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, rays_tex_);
+    comp.set_int("u_rays", 0);
+    comp.set_vec2("u_texel", glm::vec2(1.0f / hw, 1.0f / hh));
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
     glBindVertexArray(0);
-    glBindTexture(GL_TEXTURE_2D, 0);   // unit 1: depth
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, 0);
 
     // ─── RESTORE CANONICAL GL STATE ──────────────────────────────────────────
     // Leave the pipeline as later passes expect: blend disabled (func reset to
     // the common src-alpha default), depth test on, depth writes on, back-face
-    // culling on. Framebuffer/viewport were never changed by this pass.
+    // culling on. Framebuffer and viewport are the caller's again (above).
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDisable(GL_BLEND);
     glEnable(GL_DEPTH_TEST);

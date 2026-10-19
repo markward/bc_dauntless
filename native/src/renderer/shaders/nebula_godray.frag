@@ -3,20 +3,17 @@
 // For each light (a lightning flash or the star) we march from the current
 // fragment back toward the light's projected screen anchor, accumulating the
 // bright HDR cloud colour with exponential decay. The result is additively
-// composited into the HDR target (blend GL_ONE, GL_ONE), so this shader
-// outputs the premultiplied scatter contribution only.
+// accumulated (blend GL_ONE, GL_ONE) into a half-res target, one draw per
+// light, so this shader outputs the premultiplied scatter contribution only.
 //
-// Only the SOURCE is smeared: sky pixels and the light's own body (depth at or
-// beyond u_source_depth). Anything nearer -- a hull in front of the light -- is
-// an occluder that contributes zero: it darkens the shafts behind it, but its
-// own lit windows and nacelle glows are never streaked along them.
+// u_scene is the half-res SOURCE image (nebula_godray_mask.frag): the sky and
+// the light's own body only, hulls in front of the light already zeroed, so a
+// hull shadows the shafts but never streaks its own lights along them. This
+// march runs at half res; nebula_godray_composite.frag blurs it back up.
 in vec2 v_uv;
 out vec4 frag;
 
-uniform sampler2D u_scene;     // HDR colour (read-only; composited additively by blend)
-uniform sampler2D u_depth;     // HDR depth (resolved, single-sample)
-uniform float u_source_depth;  // window depth at/after which a pixel is SOURCE;
-                               // 1.0 = sky only (a light with no body)
+uniform sampler2D u_scene;     // half-res masked source (see above)
 uniform vec2  u_anchor;        // light screen pos in [0,1] (NDC*0.5+0.5)
 uniform float u_on_screen;     // 1 if anchor usable, else 0
 uniform vec3  u_color;         // flash tint
@@ -46,12 +43,7 @@ void main() {
     for (int i = 0; i < u_samples; ++i) {
         uv -= delta;                            // step toward the anchor
         vec3 s = texture(u_scene, uv + jit).rgb; // jittered: bright flash-lit cloud
-        // Source only if EVERY texel of the colour fetch's bilinear 2x2 is:
-        // a single depth tap lets a sky sample beside a hull blend that
-        // hull's glow in (a 1-px rim of it streaked down the shaft).
-        vec4 d4 = textureGather(u_depth, uv + jit);
-        float src = step(u_source_depth, min(min(d4.x, d4.y), min(d4.z, d4.w)));
-        accum += s * (src * illum * u_weight);
+        accum += s * (illum * u_weight);
         illum *= u_decay;
     }
     // Tint by the flash colour, scale by exposure * intensity. Premultiplied
