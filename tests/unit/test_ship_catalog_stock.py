@@ -22,7 +22,8 @@ def _clean():
 T, A, S, U = "tactical", "auxiliary", "station", "automated"
 # ship_id, title, species, role, playable, era, icon, variant names
 APPENDIX = [
-    ("Akira", "Akira", "Federation", T, True, "DS9", "Akira", ["USS Geronimo", "USS Devore"]),
+    ("Akira", "Akira", "Federation", T, True, "DS9", "Akira", ["USS Geronimo", "USS Devore",
+                                                                "USS Thunderchild", "USS Akira", "USS Spector"]),
     ("Ambassador", "Ambassador", "Federation", T, True, "DS9", "Ambassador", ["USS Zhukov", "USS Excalibur"]),
     ("Galaxy", "Galaxy", "Federation", T, True, "DS9", "Galaxy", ["USS Dauntless", "USS San Francisco", "USS Venture",
                                                                   "USS Galaxy", "USS Challenger", "USS Magellan", "USS Syracuse", "USS Trinculo"]),
@@ -95,7 +96,8 @@ def test_fed_variant_registries_and_the_enterprise_script():
         "Berkeley", "Prometheus", "Khitomer", "Nightingale",
         "Nebula", "Endeavour", "Leeds", "Monitor", "Sutherland", "TKumbra"]
     assert [(v.registry, v.script) for v in by_id["Akira"]] == [
-        ("Geronimo", None), ("Devore", None)]
+        ("Geronimo", None), ("Devore", None),
+        ("Thunderchild", None), ("Akira", None), ("Spector", None)]
     assert [v.registry for v in by_id["Ambassador"]] == ["Zhukov", "Excalibur"]
 
 

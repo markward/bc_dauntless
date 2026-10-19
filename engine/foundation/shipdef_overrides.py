@@ -44,6 +44,10 @@ Akira.dauntless = {
     'variants': [
         {'name': 'USS Geronimo', 'registry': 'Geronimo'},
         {'name': 'USS Devore', 'registry': 'Devore'},
+        # No stock registry texture: the name comes from Masks/<registry>/.
+        {'name': 'USS Thunderchild', 'registry': 'Thunderchild'},
+        {'name': 'USS Akira', 'registry': 'Akira'},
+        {'name': 'USS Spector', 'registry': 'Spector'},
     ],
 }
 
