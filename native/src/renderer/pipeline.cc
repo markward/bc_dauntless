@@ -16,6 +16,8 @@
 #include "embedded_rock_speck_fs.h"
 #include "embedded_rock_puff_vs.h"
 #include "embedded_rock_puff_fs.h"
+#include "embedded_rock_puff_hash_vs.h"
+#include "embedded_rock_puff_hash_fs.h"
 #include "embedded_backdrop_vs.h"
 #include "embedded_backdrop_fs.h"
 #include "embedded_sun_vs.h"
@@ -134,6 +136,11 @@ Pipeline::Pipeline() {
     speck_ = std::make_unique<Shader>(shader_src::speck_vs, shader_src::speck_fs);
     rock_speck_ = std::make_unique<Shader>(shader_src::rock_speck_vs, shader_src::rock_speck_fs);
     rock_puff_ = std::make_unique<Shader>(shader_src::rock_puff_vs, shader_src::rock_puff_fs);
+    // The puff noise's hash table lives on its own unit (FarPass binds it).
+    rock_puff_->use();
+    rock_puff_->set_int("u_puff_hash", kRockPuffHashUnit);
+    rock_puff_hash_ = std::make_unique<Shader>(shader_src::rock_puff_hash_vs,
+                                               shader_src::rock_puff_hash_fs);
     backdrop_ = std::make_unique<Shader>(shader_src::backdrop_vs, shader_src::backdrop_fs);
     sun_ = std::make_unique<Shader>(shader_src::sun_vs, shader_src::sun_fs);
     sun_flare_ = std::make_unique<Shader>(shader_src::sun_flare_vs, shader_src::sun_flare_fs);

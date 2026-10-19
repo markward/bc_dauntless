@@ -26,9 +26,16 @@ struct PuffDials {   // defaults MUST equal far_dials.py DEFAULTS puff_* keys
     float near_fade = 1.5f;       // and fade out within near_fade x their radius
     // Belts (disc sources): belt_count puffs per belt, each of radius
     // belt_size_h x the local scale height (a belt has no field radius).
-    int belt_count = 2000;
+    int belt_count = 200;         // Mark, live 2026-10-19 (was 2000; perf-register SIG-076)
     float belt_size_h = 1.2f;
 };
+
+// rock_puff.frag's hash table, baked by FarPass on the GPU: the noise's
+// lattice point i is texel i + kPuffHashOffset of a kPuffHashSize square
+// R32F texture. The shader declares the same two constants
+// (RockPuffHashTable tests pin both and the domain they must cover).
+inline constexpr int kPuffHashOffset = 20;
+inline constexpr int kPuffHashSize = 576;
 
 struct PuffGpu {
     glm::vec3 pos;                // relative to PuffField::origin_sys()

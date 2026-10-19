@@ -16,6 +16,10 @@ death path as the `]` dev key (engine/dev_keybindings.py).
                                           at the start of each cutscene-free
                                           stretch, as a player watching the
                                           destroy would
+    DAUNTLESS_DEV_SCREENSHOT=<path.png>   write one frame as a PNG this long
+    DAUNTLESS_DEV_SCREENSHOT_AFTER_S=<s>  clear of cutscenes (default 5), so
+                                          before/after builds picture the
+                                          same scripted moment
 
 Time is the host loop's player dt, so it stops while paused. Each event is
 printed as a `[dev-scripted]` line, which also marks it in a profiler log.
@@ -28,7 +32,10 @@ DESTROY_ENV = "DAUNTLESS_DEV_DESTROY"
 DELAY_ENV = "DAUNTLESS_DEV_DESTROY_DELAY_S"
 QUIT_ENV = "DAUNTLESS_DEV_QUIT_AFTER_S"
 VIEW_ENV = "DAUNTLESS_DEV_VIEW"
+SCREENSHOT_ENV = "DAUNTLESS_DEV_SCREENSHOT"
+SCREENSHOT_AFTER_ENV = "DAUNTLESS_DEV_SCREENSHOT_AFTER_S"
 DEFAULT_DELAY_S = 10.0
+DEFAULT_SCREENSHOT_AFTER_S = 5.0
 
 
 def _float_or(value, default):
@@ -41,9 +48,14 @@ def _float_or(value, default):
 class ScriptedRun:
     def __init__(self, target: str, delay_s: float = DEFAULT_DELAY_S,
                  quit_after_s: Optional[float] = None,
-                 view: Optional[str] = None) -> None:
+                 view: Optional[str] = None,
+                 screenshot_path: Optional[str] = None,
+                 screenshot_after_s: float = DEFAULT_SCREENSHOT_AFTER_S) -> None:
         self.target = target
         self.view = view
+        self.screenshot_path = screenshot_path
+        self.screenshot_after_s = screenshot_after_s
+        self._shot = False
         self._view_applied = False
         self.delay_s = delay_s
         self.quit_after_s = quit_after_s
@@ -61,15 +73,19 @@ class ScriptedRun:
             return None
         quit_raw = environ.get(QUIT_ENV, "").strip()
         view = environ.get(VIEW_ENV, "").strip() or None
+        shot = environ.get(SCREENSHOT_ENV, "").strip() or None
         return cls(target,
                    delay_s=_float_or(environ.get(DELAY_ENV), DEFAULT_DELAY_S),
                    quit_after_s=_float_or(quit_raw, None) if quit_raw else None,
-                   view=view)
+                   view=view, screenshot_path=shot,
+                   screenshot_after_s=_float_or(environ.get(SCREENSHOT_AFTER_ENV),
+                                                DEFAULT_SCREENSHOT_AFTER_S))
 
     def tick(self, dt: float, cutscene_active: bool,
              destroy: Callable[[str], bool],
              log: Callable[[str], None] = lambda _line: None,
-             force_view: Optional[Callable[[str], None]] = None) -> bool:
+             force_view: Optional[Callable[[str], None]] = None,
+             screenshot: Optional[Callable[[str], None]] = None) -> bool:
         """Advance by `dt` seconds. `destroy(name)` returns True once it found
         and destroyed the object. Returns True on the tick the run should quit."""
         if self._quit:
@@ -102,6 +118,12 @@ class ScriptedRun:
             self._clear_s = 0.0
             return False
         self._clear_s += dt
+        if (self.screenshot_path and not self._shot and screenshot is not None
+                and self._clear_s >= self.screenshot_after_s):
+            self._shot = True
+            screenshot(self.screenshot_path)
+            log("[dev-scripted] screenshot %s after %.1f s clear of cutscenes"
+                % (self.screenshot_path, self._clear_s))
         if self._clear_s >= self.delay_s and destroy(self.target):
             self._destroyed = True
             log("[dev-scripted] destroyed %s after %.1f s clear of cutscenes"

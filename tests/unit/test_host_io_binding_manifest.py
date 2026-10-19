@@ -120,6 +120,7 @@ def test_optional_holds_exactly_the_soft_guarded_bindings():
         "starmap_set_camera", "starmap_set_scene",
         "profiler_set_enabled", "profiler_enabled",
         "profiler_set_gpu_enabled", "profiler_gpu_enabled",
+        "profiler_set_gpu_focus",
         "profiler_scopes", "profiler_frame", "profiler_last_frame_raw",
         "set_swap_interval", "swap_interval",
         "set_cursor_shape",

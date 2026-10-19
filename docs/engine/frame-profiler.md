@@ -37,6 +37,39 @@ GPU frame time (`perf-register.md` M-6, SIG-019). The wait shows up as a large
 Measured in `rock_fields_inside` (`perf-register.md` C-008, C-009): profiler off
 21.3 ms per frame, CPU-only 22.9 ms, GPU-timed 29.7 ms.
 
+### GPU focus — nested passes on Apple's GL — `DAUNTLESS_PROFILE_GPU_FOCUS`
+
+`GL_TIME_ELAPSED` queries cannot nest, so on this Mac only the top-level
+passes get a GPU figure (see "GPU timer selection"). A focus names nested
+scopes to time anyway:
+
+```bash
+DAUNTLESS_PROFILE_GPU_FOCUS=space.opaque,rock.puffs.draw,space.system_nebula ./build/dauntless --developer
+```
+
+While a focus scope runs, its top-level pass's query is ended, a new one
+times the focus scope, and a third resumes the pass when it closes. The
+pass's row is the sum of all its segments, so it reads as it does without a
+focus (16 splits moved `space` by 0.2 ms, `perf-register.md` SIG-065). A
+focus scope inside another open focus scope stays `-`. The report names the
+focus scopes in a line above the table, and the `[profile]` header carries
+them.
+
+- **It turns GPU timing on**, with the M-6 cost: never read frame time from
+  a focused run.
+- **A span can hold other draws' work.** Apple's GPU defers drawing in
+  tiles, so work queued before a span may execute inside it. Confirm a large
+  row by switching the feature off in a CPU-only run
+  (`DAUNTLESS_DEV_RENDER_OFF`, `engine/dev_render_off.py`).
+- **Pass totals depend on the focus list; focused spans do not.** In one 4K
+  scene, 6 focus scopes reported a 70 ms GPU frame and 20 scopes 48 ms (the
+  real, GPU-bound frame was 46 ms), while every scope focused in both agreed
+  within 0.1 ms (`perf-register.md` SIG-074). Compare totals only between
+  runs with the same list; focus every sibling when the total matters.
+
+`renderer::FrameTimer::set_gpu_focus` / `host_io.profiler_set_gpu_focus`;
+tests in `tests/host/test_frame_profiler_gl.py` and `frame_timer_test.cc`.
+
 ### Spike capture — one-off long frames, to a file
 
 The averaged report **cannot see a single slow frame**: a 5 s hitch is blended
@@ -139,8 +172,9 @@ number and reach a wrong conclusion:
   top-level passes: `space`, `bloom`, `post`, `present`, ...) carry a GPU
   figure. Every nested row (`space.opaque`, `space.shield`, ...) keeps its CPU
   time and prints `-` for GPU, and the report says so in a line above the
-  table. To get a nested pass's GPU time you must promote it to top level, or
-  run on a driver with a timestamp counter.
+  table. To get a nested pass's GPU time, name it in
+  `DAUNTLESS_PROFILE_GPU_FOCUS` (above), or run on a driver with a timestamp
+  counter.
 * **`frame`'s GPU under `GL_TIME_ELAPSED` is the SUM of the timed passes**, not
   a span — they run in sequence, so the sum is the frame. GPU work outside
   every top-level scope is not covered (there is essentially none).

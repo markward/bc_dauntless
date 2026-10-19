@@ -143,6 +143,9 @@
 #include <functional>
 #include <vector>
 
+// Pending request_frame_png path; empty = none. Read and cleared in frame().
+static std::string g_frame_png_path;
+
 namespace py = pybind11;
 
 // Toggle for the HDR resolve pass. Defined in frame.cc (librenderer).
@@ -2485,6 +2488,18 @@ void frame() {
         } else {
             std::fprintf(stderr, "[nonfinite] FAILED to write %s\n", path.c_str());
         }
+    }
+
+    // A requested frame PNG (request_frame_png): the finished frame, overlay
+    // included, read from the back buffer before the swap makes it undefined.
+    if (!g_frame_png_path.empty()) {
+        if (dauntless::dump_default_framebuffer_png(g_frame_png_path, fw, fh))
+            std::fprintf(stderr, "[frame-png] wrote %s (%dx%d)\n",
+                         g_frame_png_path.c_str(), fw, fh);
+        else
+            std::fprintf(stderr, "[frame-png] FAILED to write %s\n",
+                         g_frame_png_path.c_str());
+        g_frame_png_path.clear();
     }
 
     {
@@ -6933,6 +6948,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("profiler_gpu_enabled",
           []() { return renderer::frame_timer().gpu_requested(); },
           "True when GPU timing has been requested.");
+    m.def("profiler_set_gpu_focus",
+          [](std::vector<std::string> names) {
+              renderer::frame_timer().set_gpu_focus(std::move(names));
+          },
+          py::arg("names"),
+          "Nested scopes to GPU-time under GL_TIME_ELAPSED, which otherwise "
+          "times only the top-level passes (perf-register.md M-1). The "
+          "enclosing top-level pass's query is split around each one, so its "
+          "own total is unchanged. Empty = top-level only (the default).");
     m.def("profiler_reset",
           []() { renderer::frame_timer().reset(); },
           "Drop all accumulated averages and the scope table.");
@@ -7011,6 +7035,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
               d["gpu_queries"] = t.gpu_queries_active();
               // False = CPU-only by choice (the default), not a dead driver.
               d["gpu_requested"] = t.gpu_requested();
+              // Nested scopes timed by splitting their top-level pass's query.
+              py::list focus;
+              for (const auto& f : t.gpu_focus()) focus.append(f);
+              d["gpu_focus"] = focus;
               // What the driver declared (GL_QUERY_COUNTER_BITS), -1 until the
               // first enabled frame has read it.
               d["timestamp_bits"] = t.timestamp_bits();
@@ -8471,6 +8499,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("x"), py::arg("y"));
 
     // Test/debug helper: return the current framebuffer size.
+    m.def("request_frame_png",
+          [](const std::string& path) { g_frame_png_path = path; },
+          py::arg("path"),
+          "Write the next finished frame (default framebuffer, overlay "
+          "included) to `path` as a PNG, once. Developer diagnostics: the "
+          "unattended runs' before/after screenshots (dev_scripted_run).");
     m.def("framebuffer_size",
           []() {
               if (!g_window) {

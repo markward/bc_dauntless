@@ -106,7 +106,9 @@ DEFAULTS: dict = {
     "puff_near_fade": 1.5,
     # Belts: puff_belt_count per belt, radius puff_belt_size_h x the local
     # scale height (rock_puffs.h belt_count / belt_size_h).
-    "puff_belt_count": 2000, "puff_belt_size_h": 1.2,
+    # puff_belt_count 200: Mark, live 2026-10-19 (was 2000) -- looks the same
+    # at Vesuvi and saves 11.5 ms of GPU at 4K (perf-register.md SIG-076).
+    "puff_belt_count": 200, "puff_belt_size_h": 1.2,
     # rock promotion (spec 2026-10-05 §5); Python-only, read at use
     "promote_min_radius_gu": 4.0, "promote_range_gu": 300.0, "promote_max": 8,
     "demote_range_mult": 1.5, "promote_hz": 4.0, "avoid_query_radius_gu": 150.0,

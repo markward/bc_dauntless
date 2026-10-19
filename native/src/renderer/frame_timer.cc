@@ -2,6 +2,7 @@
 #include "renderer/frame_timer.h"
 
 #include <chrono>
+#include <utility>
 
 #include <glad/glad.h>
 
@@ -52,9 +53,42 @@ void FrameTimer::set_gpu_requested(bool v) {
     if (enabled_) reset();
 }
 
+void FrameTimer::set_gpu_focus(std::vector<std::string> names) {
+    if (names == gpu_focus_) return;
+    gpu_focus_ = std::move(names);
+    // One report must never mix focused and unfocused frames: the top-level
+    // rows read the same either way, but the focus rows would start mid-EMA.
+    if (enabled_) reset();
+}
+
+bool FrameTimer::is_gpu_focus(const std::string& name) const {
+    for (const auto& f : gpu_focus_)
+        if (f == name) return true;
+    return false;
+}
+
+void FrameTimer::begin_segment(int owner, int top) {
+    Segment seg;
+    seg.query = take_query(*current_);
+    seg.owner = owner;
+    seg.top = top;
+    glBeginQuery(GL_TIME_ELAPSED, seg.query);
+    current_->segments.push_back(seg);
+    elapsed_query_ = seg.query;
+    elapsed_open_ = true;
+}
+
+void FrameTimer::end_segment() {
+    glEndQuery(GL_TIME_ELAPSED);
+    current_->last_query = elapsed_query_;
+    elapsed_open_ = false;
+    elapsed_query_ = 0;
+}
+
 void FrameTimer::reset() {
     for (auto& rec : ring_) {
         rec.samples.clear();
+        rec.segments.clear();
         rec.used = 0;
         // Drop the query pool too. These names belong to whatever context was
         // current when they were generated, and reset() is reachable across a
@@ -97,6 +131,9 @@ void FrameTimer::reset() {
     timestamp_bits_ = -1;
     elapsed_bits_ = -1;
     elapsed_open_ = false;
+    elapsed_query_ = 0;
+    focus_open_ = false;
+    focus_sample_ = 0;
     timestamp_queries_ = 0;
 }
 
@@ -144,6 +181,7 @@ void FrameTimer::begin_frame() {
 
     current_ = &next;
     current_->samples.clear();
+    current_->segments.clear();
     current_->used = 0;
     current_->cpu_ns.assign(slots_.size(), 0.0);
     current_->calls.assign(slots_.size(), 0);
@@ -157,6 +195,9 @@ void FrameTimer::begin_frame() {
     open_.clear();
     open_t0_.clear();
     open_sample_.clear();
+    elapsed_open_ = false;
+    elapsed_query_ = 0;
+    focus_open_ = false;
     frame_t0_ = now_ns();
 }
 
@@ -206,21 +247,31 @@ void FrameTimer::push(const char* name) {
 
     Sample s;
     s.slot = slot;
+    const int depth = static_cast<int>(open_.size());
+    const int idx = static_cast<int>(current_->samples.size());
     if (current_->timer == GpuTimer::Timestamp) {
         s.q_begin = take_query(*current_);
         s.q_end = take_query(*current_);
         glQueryCounter(s.q_begin, GL_TIMESTAMP);
         ++timestamp_queries_;
     } else if (current_->timer == GpuTimer::Elapsed &&
-               elapsed_times_depth(static_cast<int>(open_.size())) &&
-               !elapsed_open_) {
+               elapsed_times_depth(depth) && !elapsed_open_) {
         // Depth-1 scopes are strictly sequential, so elapsed_open_ is always
         // false here; the guard turns a broken invariant into an untimed row
         // instead of a GL_INVALID_OPERATION from a nested glBeginQuery.
-        s.q_begin = take_query(*current_);
         s.parent = static_cast<int>(open_sample_.front());
-        glBeginQuery(GL_TIME_ELAPSED, s.q_begin);
-        elapsed_open_ = true;
+        begin_segment(idx, idx);
+        s.q_begin = elapsed_query_;
+    } else if (current_->timer == GpuTimer::Elapsed && elapsed_open_ &&
+               focus_splits(depth, is_gpu_focus(slots_[slot].name),
+                            focus_open_)) {
+        // Suspend the depth-1 ancestor's span; pop() resumes it.
+        const int top = static_cast<int>(open_sample_[kElapsedDepth]);
+        end_segment();
+        begin_segment(idx, top);
+        s.q_begin = elapsed_query_;
+        focus_open_ = true;
+        focus_sample_ = static_cast<std::size_t>(idx);
     }
 
     open_sample_.push_back(current_->samples.size());
@@ -247,10 +298,20 @@ void FrameTimer::pop() {
         glQueryCounter(s.q_end, GL_TIMESTAMP);
         ++timestamp_queries_;
         current_->last_query = s.q_end;
-    } else if (s.q_begin != 0) {
-        glEndQuery(GL_TIME_ELAPSED);
-        elapsed_open_ = false;
-        current_->last_query = s.q_begin;
+    } else if (focus_open_ && sample_idx == focus_sample_) {
+        // A focus scope closes: end its span and resume its depth-1
+        // ancestor's, which is still open (it encloses this scope).
+        if (elapsed_open_) end_segment();
+        focus_open_ = false;
+        if (open_sample_.size() > static_cast<std::size_t>(kElapsedDepth)) {
+            const int top = static_cast<int>(open_sample_[kElapsedDepth]);
+            begin_segment(top, top);
+        }
+    } else if (s.q_begin != 0 && elapsed_open_) {
+        // A depth-1 pass closes; its current segment is the open query. A
+        // focus scope left open inside it (an early return) was force-closed
+        // by its own pop() first, since pops run innermost-first.
+        end_segment();
     }
     current_->cpu_ns[slot] += static_cast<double>(now_ns() - t0);
     current_->calls[slot] += 1;
@@ -310,25 +371,29 @@ void FrameTimer::resolve(Record& rec) {
         if (last_ts >= first_ts)
             frame_gpu_ns = static_cast<double>(last_ts - first_ts);
     } else if (last != 0 && rec.timer == GpuTimer::Elapsed) {
-        // The timed scopes are sequential children of the outermost scope, so
+        // The segments are sequential spans inside the outermost scope, so
         // their sum IS the whole frame and also that outermost row's time. GPU
-        // work outside every child is not covered; there is essentially none,
-        // since `frame` only opens, runs its children, and closes.
-        for (const Sample& s : rec.samples) {
-            if (s.q_begin == 0 || !in_range(s.slot)) continue;
+        // work outside every top-level pass is not covered; there is
+        // essentially none, since `frame` only opens, runs its children, and
+        // closes. Each segment also counts toward its depth-1 pass, and a
+        // focus scope's segment toward the focus scope itself.
+        const int n = static_cast<int>(rec.samples.size());
+        auto credit = [&](int sample, double d) {
+            if (sample < 0 || sample >= n) return;
+            const int slot = rec.samples[static_cast<std::size_t>(sample)].slot;
+            if (!in_range(slot)) return;
+            gpu_ns[slot] += d;
+            measured[slot] = 1;
+        };
+        for (const Segment& seg : rec.segments) {
             GLuint64 ns = 0;
-            glGetQueryObjectui64v(s.q_begin, GL_QUERY_RESULT, &ns);
+            glGetQueryObjectui64v(seg.query, GL_QUERY_RESULT, &ns);
             const double d = static_cast<double>(ns);
-            gpu_ns[s.slot] += d;
-            measured[s.slot] = 1;
             frame_gpu_ns += d;
-            if (s.parent >= 0 && s.parent < static_cast<int>(rec.samples.size())) {
-                const int ps = rec.samples[static_cast<std::size_t>(s.parent)].slot;
-                if (in_range(ps)) {
-                    gpu_ns[ps] += d;
-                    measured[ps] = 1;
-                }
-            }
+            if (seg.owner != seg.top) credit(seg.owner, d);
+            credit(seg.top, d);
+            if (seg.top >= 0 && seg.top < n)
+                credit(rec.samples[static_cast<std::size_t>(seg.top)].parent, d);
         }
     }
 

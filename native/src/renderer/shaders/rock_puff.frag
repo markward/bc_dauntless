@@ -1,19 +1,24 @@
 #version 410 core
 // Rock-field puffs: a soft, noise-broken blob, lit like the speck
-// band (Lambert sphere phase toward the sun). PREMULTIPLIED, blended
-// GL_ONE, GL_ONE_MINUS_SRC_ALPHA, depth-tested, no depth writes.
+// band (Lambert sphere phase toward the sun, per puff in rock_puff.vert).
+// PREMULTIPLIED, blended GL_ONE, GL_ONE_MINUS_SRC_ALPHA, depth-tested, no
+// depth writes.
+//
+// Hash table (2026-10-18, perf-register.md P-1): the value noise's lattice
+// hash is read from u_puff_hash, which FarPass bakes on the GPU with the
+// sine hash this shader used to evaluate 16 times per fragment (the
+// expression is in rock_puff_hash.frag).
+// Lattice point i is texel i + kHashOffset; the table covers every point the
+// noise can read (RockPuffHashTable tests; rockfield::kPuffHash* in C++).
 in vec2 v_corner;
-flat in vec3 v_centre;
-flat in vec3 v_albedo;
+flat in vec3 v_rgb;
 flat in float v_alpha;
 flat in vec3 v_seed;
-uniform vec3 u_camera_pos_ws;
-uniform vec3 u_ambient_light;
-uniform int u_dir_light_count;
-uniform vec3 u_dir_light_dir_ws[4];           // toward each light
-uniform vec3 u_dir_light_color[4];
-uniform float u_brightness;
+uniform sampler2D u_puff_hash;
 out vec4 frag_color;
+
+const int kHashOffset = 20;
+const int kHashSize = 576;
 
 // Fill cut (2026-10-04, see rock_puff.vert): a fragment whose alpha cannot
 // reach kMinAlpha is discarded BEFORE the noise. alpha = v_alpha * body *
@@ -22,15 +27,11 @@ out vec4 frag_color;
 const float kMinAlpha = 1.0 / 2048.0;
 const float kAlphaMax = 1.45;
 
-const float PI = 3.14159265;
-
-float lambert_sphere_phase(float cos_alpha) {
-    float c = clamp(cos_alpha, -1.0, 1.0);
-    float a = acos(c);
-    return (2.0 / (3.0 * PI)) * (sin(a) + (PI - a) * c);
+// p is a lattice point (whole numbers), so the conversion is exact.
+float hash2(vec2 p) {
+    return texelFetch(u_puff_hash,
+                      clamp(ivec2(p) + kHashOffset, ivec2(0), ivec2(kHashSize - 1)), 0).r;
 }
-
-float hash2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vnoise(vec2 p) {
     vec2 i = floor(p), f = fract(p);
     vec2 u = f * f * (3.0 - 2.0 * f);
@@ -52,11 +53,5 @@ void main() {
     float body = exp(-3.0 * rr) * smoothstep(1.0, 0.55, rr + 0.35 * (n - 0.5));
     float a = v_alpha * body * (0.55 + 0.9 * n);
     if (a <= 0.0) discard;
-    vec3 to_eye = normalize(u_camera_pos_ws - v_centre);
-    vec3 light = u_ambient_light;
-    for (int i = 0; i < u_dir_light_count; ++i)
-        light += u_dir_light_color[i]
-               * lambert_sphere_phase(dot(normalize(u_dir_light_dir_ws[i]), to_eye));
-    vec3 c = v_albedo * light * u_brightness;
-    frag_color = vec4(c * a, a);
+    frag_color = vec4(v_rgb * a, a);
 }

@@ -70,3 +70,37 @@ TEST(FrameTimerGpuTimer, RequestingGpuTimingIsRemembered) {
     t.set_gpu_requested(false);
     EXPECT_FALSE(t.gpu_requested());
 }
+
+// M-1 (docs/engine/perf-register.md): GL_TIME_ELAPSED cannot nest, so on
+// Apple's GL only the top-level passes get a GPU figure. A GPU FOCUS names
+// nested scopes to time anyway: while one is open, its depth-1 ancestor's
+// query is suspended and resumed after, so the ancestor still totals every
+// segment, the focus scope included.
+TEST(FrameTimerGpuFocus, NoFocusByDefault) {
+    FrameTimer t;
+    EXPECT_TRUE(t.gpu_focus().empty());
+    EXPECT_FALSE(t.is_gpu_focus("space.opaque"));
+}
+
+TEST(FrameTimerGpuFocus, FocusNamesAreRememberedAndMatchedExactly) {
+    FrameTimer t;
+    t.set_gpu_focus({"space.opaque", "rock.puffs.draw"});
+    EXPECT_EQ(t.gpu_focus().size(), 2u);
+    EXPECT_TRUE(t.is_gpu_focus("space.opaque"));
+    EXPECT_TRUE(t.is_gpu_focus("rock.puffs.draw"));
+    EXPECT_FALSE(t.is_gpu_focus("space"));
+    EXPECT_FALSE(t.is_gpu_focus("space.opaque.x"));
+    t.set_gpu_focus({});
+    EXPECT_FALSE(t.is_gpu_focus("space.opaque"));
+}
+
+TEST(FrameTimerGpuFocus, OnlyANestedFocusScopeWithNoFocusOpenSplitsTheQuery) {
+    // depth 1 is already timed; depth 0 is the frame; a focus scope inside
+    // another open focus scope stays untimed (its time is in the outer one).
+    EXPECT_FALSE(FrameTimer::focus_splits(0, true, false));
+    EXPECT_FALSE(FrameTimer::focus_splits(1, true, false));
+    EXPECT_TRUE(FrameTimer::focus_splits(2, true, false));
+    EXPECT_TRUE(FrameTimer::focus_splits(4, true, false));
+    EXPECT_FALSE(FrameTimer::focus_splits(3, true, true));
+    EXPECT_FALSE(FrameTimer::focus_splits(3, false, false));
+}

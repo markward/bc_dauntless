@@ -602,6 +602,13 @@ def report_lines() -> list[str]:
                      "cannot nest, so only the top-level passes are timed: a "
                      "nested row shows '-' for gpu (not measured), and "
                      "frame's gpu is the sum of the timed passes.")
+        focus = list(native.get("gpu_focus") or [])
+        if focus:
+            lines.append("  GPU focus: %s -- also timed while nested, by "
+                         "splitting the top-level pass's query around each; "
+                         "that pass's gpu still includes them "
+                         "(DAUNTLESS_PROFILE_GPU_FOCUS, perf-register.md M-1)."
+                         % ", ".join(focus))
 
     if scopes:
         lines.append("  %-32s %7s %7s %5s" % ("render passes", "cpu ms",
@@ -673,14 +680,26 @@ def print_report() -> None:
 # Works without --developer. While on, the periodic stderr report is off.
 
 GPU_ENV = "DAUNTLESS_PROFILE_GPU"
+# Nested scopes to GPU-time as well as the top-level passes, comma-separated
+# (renderer::FrameTimer's GPU FOCUS; perf-register.md M-1).
+GPU_FOCUS_ENV = "DAUNTLESS_PROFILE_GPU_FOCUS"
+
+
+def gpu_focus_from_env() -> list:
+    """The DAUNTLESS_PROFILE_GPU_FOCUS scope names, in order, blanks dropped."""
+    import os
+    raw = os.environ.get(GPU_FOCUS_ENV, "")
+    return [name.strip() for name in raw.split(",") if name.strip()]
 
 
 def gpu_timing_requested_from_env() -> bool:
-    """True only for DAUNTLESS_PROFILE_GPU=1. GPU timing is opt-in: its timer
-    queries make the CPU wait for the GPU, adding about the GPU frame time
-    (docs/engine/perf-register.md, M-6)."""
+    """True for DAUNTLESS_PROFILE_GPU=1, or when a GPU focus is set (a focus
+    with no GPU timing would time nothing, silently). GPU timing is opt-in:
+    its timer queries make the CPU wait for the GPU, adding about the GPU
+    frame time (docs/engine/perf-register.md, M-6)."""
     import os
-    return os.environ.get(GPU_ENV, "").strip() == "1"
+    return (os.environ.get(GPU_ENV, "").strip() == "1"
+            or bool(gpu_focus_from_env()))
 
 
 SPIKE_ENV = "DAUNTLESS_PROFILE_SPIKES"

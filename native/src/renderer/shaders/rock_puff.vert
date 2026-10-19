@@ -12,6 +12,11 @@
 // quad shrinks to the radius where that bound reaches kMinAlpha -- every
 // fragment it drops would have been discarded. v_corner scales with it, so a
 // kept fragment shades exactly as before.
+//
+// Per-puff lighting (2026-10-18, perf-register.md P-1): the Lambert sphere
+// phase depends only on the puff centre, the eye and the lights, so it is
+// computed here once per puff instead of once per fragment. Bit-identical
+// output (RockPuffGLTest.TheHashTableKeepsThePictureOfTheInlineHash).
 layout(location = 0) in vec2 a_corner;        // (+-1, +-1)
 layout(location = 7) in vec4 a_pos_r;         // xyz relative to the field origin, w radius (GU)
 layout(location = 8) in vec4 a_albedo_w;      // rgb albedo, a density weight
@@ -20,13 +25,25 @@ uniform mat4 u_proj;
 uniform vec3 u_offset;                        // render-space position of the field origin
 uniform vec3 u_eye;                           // render-space camera position
 uniform float u_opacity, u_start_gu, u_ramp_gu, u_near_fade;
+uniform vec3 u_ambient_light;
+uniform int u_dir_light_count;
+uniform vec3 u_dir_light_dir_ws[4];           // toward each light
+uniform vec3 u_dir_light_color[4];
+uniform float u_brightness;
 out vec2 v_corner;
-flat out vec3 v_centre;
-flat out vec3 v_albedo;
+flat out vec3 v_rgb;                          // albedo x phase-lit light x brightness
 flat out float v_alpha;
 flat out vec3 v_seed;
 const float kMinAlpha = 1.0 / 2048.0;  // rock_puff.frag's discard threshold
 const float kAlphaMax = 1.45;          // rock_puff.frag: body <= exp(-3 rr), 0.55 + 0.9 n <= 1.45
+const float PI = 3.14159265;
+
+float lambert_sphere_phase(float cos_alpha) {
+    float c = clamp(cos_alpha, -1.0, 1.0);
+    float a = acos(c);
+    return (2.0 / (3.0 * PI)) * (sin(a) + (PI - a) * c);
+}
+
 void main() {
     vec3 c = a_pos_r.xyz + u_offset;
     float r = a_pos_r.w;
@@ -39,7 +56,7 @@ void main() {
     vec4 vc = u_view * vec4(c, 1.0);
     if (!(kAlphaMax * alpha >= kMinAlpha) || vc.z > -1.0) {
         gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-        v_corner = vec2(0.0); v_centre = c; v_albedo = vec3(0.0); v_alpha = 0.0; v_seed = vec3(0.0);
+        v_corner = vec2(0.0); v_rgb = vec3(0.0); v_alpha = 0.0; v_seed = vec3(0.0);
         return;
     }
     // The bound reaches kMinAlpha at rr_max = ln(kAlphaMax * alpha / kMinAlpha) / 3
@@ -50,8 +67,12 @@ void main() {
     vc.xy += a_corner * (r * s);
     gl_Position = u_proj * vc;
     v_corner = a_corner * s;
-    v_centre = c;
-    v_albedo = a_albedo_w.rgb;
+    vec3 to_eye = normalize(u_eye - c);
+    vec3 light = u_ambient_light;
+    for (int i = 0; i < u_dir_light_count; ++i)
+        light += u_dir_light_color[i]
+               * lambert_sphere_phase(dot(normalize(u_dir_light_dir_ws[i]), to_eye));
+    v_rgb = a_albedo_w.rgb * light * u_brightness;
     v_alpha = alpha;
     v_seed = fract(sin(a_pos_r.xyz * vec3(12.9898, 78.233, 37.719)) * 43758.5453) * 64.0;
 }

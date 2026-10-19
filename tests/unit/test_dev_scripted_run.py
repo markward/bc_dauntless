@@ -191,3 +191,59 @@ def test_events_are_reported_for_the_log():
     assert "cutscene end" in text
     assert "destroyed Facility" in text
     assert "quit" in text
+
+
+# ── Screenshot (perf-register.md P-1: before/after pictures of one moment) ──
+
+def test_from_env_reads_the_screenshot_path_and_delay():
+    env = {"DAUNTLESS_DEV_DESTROY": "Facility",
+           "DAUNTLESS_DEV_SCREENSHOT": " /tmp/shot.png ",
+           "DAUNTLESS_DEV_SCREENSHOT_AFTER_S": "3"}
+    run = ScriptedRun.from_env(env, developer=True)
+    assert (run.screenshot_path, run.screenshot_after_s) == ("/tmp/shot.png", 3.0)
+
+
+def test_no_screenshot_unless_asked():
+    run = ScriptedRun.from_env({"DAUNTLESS_DEV_DESTROY": "Facility"},
+                               developer=True)
+    assert run.screenshot_path is None
+    shots = []
+    for _ in range(20):
+        run.tick(1.0, cutscene_active=False, destroy=_Destroyer(found=False),
+                 screenshot=shots.append)
+    assert shots == []
+
+
+def test_one_screenshot_after_its_delay_clear_of_cutscenes():
+    shots, lines = [], []
+    run = _run(delay_s=100.0, screenshot_path="/tmp/a.png",
+               screenshot_after_s=5.0)
+    tick = lambda active: run.tick(1.0, cutscene_active=active,
+                                   destroy=_Destroyer(), log=lines.append,
+                                   screenshot=shots.append)
+    tick(True)
+    for _ in range(4):
+        tick(False)
+    assert shots == []
+    tick(False)
+    assert shots == ["/tmp/a.png"]
+    for _ in range(10):
+        tick(False)
+    assert shots == ["/tmp/a.png"]
+    assert any("screenshot" in ln and "/tmp/a.png" in ln for ln in lines)
+
+
+def test_a_cutscene_before_the_shot_restarts_its_wait():
+    shots = []
+    run = _run(delay_s=100.0, screenshot_path="/tmp/a.png",
+               screenshot_after_s=5.0)
+    tick = lambda active: run.tick(1.0, cutscene_active=active,
+                                   destroy=_Destroyer(), screenshot=shots.append)
+    for _ in range(4):
+        tick(False)
+    tick(True)
+    for _ in range(4):
+        tick(False)
+    assert shots == []
+    tick(False)
+    assert shots == ["/tmp/a.png"]

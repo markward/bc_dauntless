@@ -780,3 +780,49 @@ def test_the_report_carries_the_rock_line(monkeypatch):
     fp.begin_frame(); fp.mark("p"); fp.end_frame()
     lines = fp.report_lines()
     assert any(ln.strip().startswith("rocks:") for ln in lines)
+
+
+# ── GPU focus (perf-register.md M-1) ─────────────────────────────────────────
+
+def test_gpu_focus_is_read_from_a_comma_list(monkeypatch):
+    monkeypatch.delenv("DAUNTLESS_PROFILE_GPU_FOCUS", raising=False)
+    assert fp.gpu_focus_from_env() == []
+    monkeypatch.setenv("DAUNTLESS_PROFILE_GPU_FOCUS",
+                       " space.opaque, rock.puffs.draw ,,")
+    assert fp.gpu_focus_from_env() == ["space.opaque", "rock.puffs.draw"]
+
+
+def test_a_gpu_focus_turns_gpu_timing_on(monkeypatch):
+    """A focus without GPU timing would time nothing, silently."""
+    monkeypatch.delenv("DAUNTLESS_PROFILE_GPU", raising=False)
+    monkeypatch.setenv("DAUNTLESS_PROFILE_GPU_FOCUS", "space.opaque")
+    assert fp.gpu_timing_requested_from_env() is True
+
+
+def test_the_report_names_the_focus_scopes(monkeypatch):
+    from engine import host_io
+    monkeypatch.setattr(host_io, "profiler_scopes", lambda: [
+        {"name": "frame", "cpu_ms": 8.0, "gpu_ms": 5.0, "calls": 1, "depth": 0,
+         "gpu_measured": True},
+        {"name": "space", "cpu_ms": 3.0, "gpu_ms": 4.25, "calls": 1, "depth": 1,
+         "gpu_measured": True},
+        {"name": "space.opaque", "cpu_ms": 1.0, "gpu_ms": 2.5, "calls": 1,
+         "depth": 2, "gpu_measured": True},
+        {"name": "space.shield", "cpu_ms": 0.5, "gpu_ms": 0.0, "calls": 1,
+         "depth": 2, "gpu_measured": False},
+    ])
+    monkeypatch.setattr(
+        host_io, "profiler_frame",
+        lambda: {"cpu_ms": 8.0, "gpu_ms": 5.0, "frames": 400, "enabled": True,
+                 "swap_interval": 0, "gpu_timer": "elapsed",
+                 "gpu_requested": True, "gpu_focus": ["space.opaque"]},
+    )
+    fp.set_enabled(True, native=False)
+    fp.begin_frame(); fp.mark("p"); fp.end_frame()
+    lines = fp.report_lines()
+    text = "\n".join(lines)
+    assert "GPU focus: space.opaque" in text
+    assert _row(lines, "space.opaque").split()[:3] == ["space.opaque", "1.000",
+                                                       "2.500"]
+    assert _row(lines, "space.shield").split()[:3] == ["space.shield", "0.500",
+                                                       "-"]
