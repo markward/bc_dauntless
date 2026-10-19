@@ -83,6 +83,13 @@ Nebula.dauntless = {
         {'name': 'USS Prometheus', 'registry': 'Prometheus'},
         {'name': 'USS Khitomer', 'registry': 'Khitomer'},
         {'name': 'USS Nightingale', 'registry': 'Nightingale'},
+        # No stock registry texture: the name comes from Masks/<registry>/.
+        {'name': 'USS Nebula', 'registry': 'Nebula'},
+        {'name': 'USS Endeavour', 'registry': 'Endeavour'},
+        {'name': 'USS Leeds', 'registry': 'Leeds'},
+        {'name': 'USS Monitor', 'registry': 'Monitor'},
+        {'name': 'USS Sutherland', 'registry': 'Sutherland'},
+        {'name': "USS T'Kumbra", 'registry': 'TKumbra'},
     ],
 }
 

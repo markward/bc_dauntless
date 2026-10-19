@@ -26,7 +26,8 @@ APPENDIX = [
     ("Ambassador", "Ambassador", "Federation", T, True, "DS9", "Ambassador", ["USS Zhukov", "USS Excalibur"]),
     ("Galaxy", "Galaxy", "Federation", T, True, "DS9", "Galaxy", ["USS Dauntless", "USS San Francisco", "USS Venture",
                                                                   "USS Galaxy", "USS Challenger", "USS Magellan", "USS Syracuse", "USS Trinculo"]),
-    ("Nebula", "Nebula", "Federation", T, True, "DS9", "Nebula", ["USS Berkeley", "USS Prometheus", "USS Khitomer", "USS Nightingale"]),
+    ("Nebula", "Nebula", "Federation", T, True, "DS9", "Nebula", ["USS Berkeley", "USS Prometheus", "USS Khitomer", "USS Nightingale",
+                                                                  "USS Nebula", "USS Endeavour", "USS Leeds", "USS Monitor", "USS Sutherland", "USS T'Kumbra"]),
     ("Sovereign", "Sovereign", "Federation", T, True, "DS9", "Sovereign", ["USS Sovereign", "USS Enterprise"]),
     ("Shuttle", "Shuttle", "Federation", A, True, "DS9", "FedShuttle", []),
     ("EscapePod", "Escape Pod", "Federation", A, False, "DS9", "LifeBoat", []),
@@ -90,7 +91,9 @@ def test_fed_variant_registries_and_the_enterprise_script():
     assert [v.registry for v in by_id["Galaxy"]] == [
         "Dauntless", "SanFrancisco", "Venture",
         "Galaxy", "Challenger", "Magellan", "Syracuse", "Trinculo"]
-    assert [v.registry for v in by_id["Nebula"]] == ["Berkeley", "Prometheus", "Khitomer", "Nightingale"]
+    assert [v.registry for v in by_id["Nebula"]] == [
+        "Berkeley", "Prometheus", "Khitomer", "Nightingale",
+        "Nebula", "Endeavour", "Leeds", "Monitor", "Sutherland", "TKumbra"]
     assert [(v.registry, v.script) for v in by_id["Akira"]] == [
         ("Geronimo", None), ("Devore", None)]
     assert [v.registry for v in by_id["Ambassador"]] == ["Zhukov", "Excalibur"]
