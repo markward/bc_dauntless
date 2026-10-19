@@ -23,6 +23,7 @@ add_executable(assets_tests
     cpu/raw_image_decode_test.cc
     cpu/skeleton_build_test.cc
     cpu/skin_weights_test.cc
+    cpu/skin_offsets_test.cc
     cpu/tessellate_test.cc
     cpu/geosphere_test.cc
     cpu/geosphere_apply_test.cc
