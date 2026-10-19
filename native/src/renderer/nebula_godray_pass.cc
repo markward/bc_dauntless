@@ -5,6 +5,7 @@
 #include <scenegraph/camera.h>
 #include <glad/glad.h>
 #include <glm/glm.hpp>
+#include <algorithm>
 
 namespace renderer {
 
@@ -28,7 +29,31 @@ constexpr float kExposure = 0.10f;
 constexpr float kJitter   = 0.004f;  // small god-ray sample-uv jitter; insurance
                                       // against residual cloud-grid amplification
                                       // (the upsample fix is the real solution)
+// Geometry nearer than this fraction of the light's body's distance is an
+// occluder, never a source. Generous on purpose: a ship is a few GU from the
+// eye and a star thousands, so anything in between (a planet half-way to the
+// star) keeps scattering as it always did.
+constexpr float kOccluderFraction = 0.5f;
+// solve_virtual_placement's remap of a body beyond the far plane.
+constexpr float kVirtualFarFraction = 0.95f;
 }  // namespace
+
+float godray_source_depth(const scenegraph::Camera& camera,
+                          const GodrayFlash& flash) {
+    if (flash.distance <= 0.0f) return 1.0f;   // no body: sky only
+    // Where the body is DRAWN: where it is inside the far plane, else just
+    // inside it (sun_pass.cc's solve_virtual_placement).
+    const float drawn = flash.distance <= camera.far
+        ? flash.distance : camera.far * kVirtualFarFraction;
+    // View-space depth of the body's centre, so the cut holds off-axis too.
+    const glm::vec3 fwd = glm::normalize(camera.target - camera.eye);
+    const float body_z = drawn * glm::dot(glm::normalize(flash.dir), fwd);
+    if (body_z <= camera.near) return 1.0f;    // behind the eye: sky only
+    const float cut_z = std::max(camera.near, kOccluderFraction * body_z);
+    const glm::vec4 clip =
+        camera.proj_matrix() * glm::vec4(0.0f, 0.0f, -cut_z, 1.0f);
+    return std::min(1.0f, (clip.z / clip.w) * 0.5f + 0.5f);
+}
 
 NebulaGodrayPass::NebulaGodrayPass() = default;
 NebulaGodrayPass::~NebulaGodrayPass() {
@@ -61,7 +86,8 @@ void NebulaGodrayPass::ensure_scene_copy(int w, int h) {
 void NebulaGodrayPass::render(const scenegraph::Camera& camera,
                               Pipeline& pipeline,
                               const std::vector<GodrayFlash>& flashes,
-                              std::uint32_t hdr_color_tex) {
+                              std::uint32_t hdr_color_tex,
+                              std::uint32_t hdr_depth_tex) {
     // Stock-BC byte-identity: nothing to draw => zero GL work.
     if (!enabled_ || flashes.empty()) return;
     if (!initialized_) initialize_gl();
@@ -97,6 +123,11 @@ void NebulaGodrayPass::render(const scenegraph::Camera& camera,
     glBindTexture(GL_TEXTURE_2D, scene_copy_tex_);  // sample the COPY, not the bound HDR
     sh.set_int("u_scene", 0);
     (void)hdr_color_tex;  // copy is taken from the bound HDR FBO above
+    // Depth decides source vs occluder per sample. Read-only here: depth
+    // writes are off, so sampling the bound FBO's depth is no feedback loop.
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, hdr_depth_tex);
+    sh.set_int("u_depth", 1);
     sh.set_int("u_samples", kSamples);
     sh.set_float("u_decay", kDecay);
     sh.set_float("u_weight", kWeight);
@@ -125,6 +156,7 @@ void NebulaGodrayPass::render(const scenegraph::Camera& camera,
         sh.set_float("u_on_screen", on_screen);
         sh.set_vec3("u_color", f.color);
         sh.set_float("u_intensity", f.intensity);
+        sh.set_float("u_source_depth", godray_source_depth(camera, f));
 
         // Off-screen anchor → u_on_screen=0 → shader outputs zero (light + audio
         // still happen elsewhere; only the shafts are absent). Intended.
@@ -132,8 +164,9 @@ void NebulaGodrayPass::render(const scenegraph::Camera& camera,
     }
 
     glBindVertexArray(0);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);   // unit 1: depth
     glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
 
     // ─── RESTORE CANONICAL GL STATE ──────────────────────────────────────────
     // Leave the pipeline as later passes expect: blend disabled (func reset to

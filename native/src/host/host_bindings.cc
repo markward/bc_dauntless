@@ -1877,7 +1877,8 @@ void frame() {
         if (dauntless_nebula_lightning::enabled()
                 && g_nebula_godray_pass && !g_nebula_godrays.empty())
             g_nebula_godray_pass->render(cam, *g_pipeline, g_nebula_godrays,
-                                         target.color_texture());
+                                         target.color_texture(),
+                                         target.depth_texture());
         if (g_lens_flare_pass) {
             DAUNTLESS_FRAME_SCOPE("space.lens_flare");
             g_lens_flare_pass->render(g_lens_flares, cam, *g_pipeline, vw, vh, now);
@@ -5826,10 +5827,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   g.intensity = d["intensity"].cast<float>();
                   auto c = d["color"].cast<std::tuple<float,float,float>>();
                   g.color = glm::vec3(std::get<0>(c), std::get<1>(c), std::get<2>(c));
+                  // Optional: the light's body distance (the star). Absent =
+                  // a lightning flash, whose shafts only the sky casts.
+                  if (d.contains("distance"))
+                      g.distance = d["distance"].cast<float>();
                   g_nebula_godrays.push_back(g);
               }
           },
-          py::arg("flashes"), "Set active lightning flashes for the god-ray pass.");
+          py::arg("flashes"),
+          "Set the god-ray lights: lightning flashes and the star (with its "
+          "render-space \"distance\").");
 
     m.def("set_lens_flares",
           [](const std::vector<py::dict>& descs) {
