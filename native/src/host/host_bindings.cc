@@ -3304,13 +3304,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   g_render_origin.x, g_render_origin.y, g_render_origin.z);
               d["dust_motion_history"] =
                   g_dust_pass ? g_dust_pass->has_motion_history() : false;
-              // Either cloud pass: with Volumetric Nebulae on, the system
-              // pass draws the volumes (production since 2026-10-16).
+              // The legacy volumetric pass only; the system pass (which draws
+              // the volumes with Volumetric Nebulae on) keeps no history
+              // since 2026-10-19.
               d["nebula_history"] =
-                  (g_nebula_volumetric_pass
-                       && g_nebula_volumetric_pass->has_history())
-                  || (g_system_nebula_pass
-                       && g_system_nebula_pass->has_history());
+                  g_nebula_volumetric_pass
+                  && g_nebula_volumetric_pass->has_history();
               d["letterbox_covered"]      = renderer::letterbox::covered();
               d["sky_dirty"]              = g_sky_dirty;
               d["prev_input_edges"]       = g_prev_key_state.size()
@@ -3436,8 +3435,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
               if (g_dust_pass) g_dust_pass->reset_motion_history();
               if (g_nebula_volumetric_pass)
                   g_nebula_volumetric_pass->reset_history();
-              if (g_system_nebula_pass)
-                  g_system_nebula_pass->reset_history();
               g_have_prev_viewproj = false;
           },
           "Reset the floating render origin to (0,0,0) for a new mission, and "

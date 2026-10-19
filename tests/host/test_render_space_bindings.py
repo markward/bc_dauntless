@@ -116,10 +116,12 @@ def _nebula():
 
 
 def test_reset_render_origin_forgets_the_passes_origin_tracking(host):
-    # Run frames at a far origin so the dust smear and the volumetric
-    # nebula's temporal history both remember it. The volumetric toggle is a
-    # process global (default ON) that host_loop reads to decide what to
-    # build, so it is restored exactly -- leaving it off perturbed later tests.
+    # Run frames at a far origin so the dust smear remembers it. The nebula
+    # volumes are drawn by the system pass, which keeps no temporal history
+    # since 2026-10-19 (it smeared on camera sweeps), so there is no nebula
+    # history to forget. The volumetric toggle is a process global (default
+    # ON) that host_loop reads to decide what to build, so it is restored
+    # exactly -- leaving it off perturbed later tests.
     was_volumetric = host.volumetric_nebulae_enabled()
     host.set_game_root(str(bc_assets.GAME_ROOT))     # the dust sprite
     host.set_camera(eye=(0.0, 0.0, 0.0), target=(0.0, 1.0, 0.0),
@@ -132,7 +134,7 @@ def test_reset_render_origin_forgets_the_passes_origin_tracking(host):
         host.frame()
         before = host.frame_state_debug()
         assert before["dust_motion_history"] is True, "premise: dust tracked"
-        assert before["nebula_history"] is True, "premise: nebula history"
+        assert before["nebula_history"] is False, "the system pass keeps none"
         host.reset_render_origin()
         after = host.frame_state_debug()
         assert after["render_origin"] == (0.0, 0.0, 0.0)

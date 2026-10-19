@@ -50,11 +50,7 @@ uniform float u_clump_ext[8];      // 1/visibility per GU per unit clump density
 uniform int   u_flash_count;
 uniform vec3  u_flash_dir[4];
 uniform vec3  u_flash_col[4];
-// temporal (same contract as nebula_volumetric.frag)
-uniform sampler2D u_prev;
-uniform mat4  u_prev_view_proj;
-uniform float u_temporal_weight;
-uniform vec2  u_half_texel;
+// dither (no temporal history since 2026-10-19: system_nebula_pass.cc)
 uniform float u_dither_amount;
 uniform vec2  u_jitter;
 
@@ -278,23 +274,6 @@ void main(){
     vec3 transm = g_transm; vec3 lit = g_lit;
     float alpha = 1.0 - dot(transm, vec3(1.0/3.0));
     vec4 cur = vec4(lit, alpha);   // premultiplied
-
-    // ── Conservative temporal reprojection (nebula_volumetric.frag) ────────
-    // Anchored at the midpoint of the near-field span: a real forward point
-    // that reprojects correctly wherever the camera is.
-    if(u_temporal_weight > 0.0){
-        vec3 cloud_p = u_eye + dir * (0.5 * near_end);
-        vec4 pc = u_prev_view_proj * vec4(cloud_p, 1.0);
-        if(pc.w > 0.0){
-            vec2 prev_uv = (pc.xy / pc.w) * 0.5 + 0.5;
-            // On-screen guard with a one-texel border (bilinear safety).
-            if(all(greaterThanEqual(prev_uv, u_half_texel)) &&
-               all(lessThanEqual(prev_uv, vec2(1.0) - u_half_texel))){
-                vec4 hist = texture(u_prev, prev_uv);
-                cur = mix(cur, hist, u_temporal_weight);
-            }
-        }
-    }
 
     frag = cur;   // premultiplied (lit, alpha)
 }
