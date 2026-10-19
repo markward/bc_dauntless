@@ -26,7 +26,7 @@ struct PuffDials {   // defaults MUST equal far_dials.py DEFAULTS puff_* keys
     float near_fade = 1.5f;       // and fade out within near_fade x their radius
     // Belts (disc sources): belt_count puffs per belt, each of radius
     // belt_size_h x the local scale height (a belt has no field radius).
-    int belt_count = 2000;
+    int belt_count = 200;         // Mark, live 2026-10-19 (was 2000; perf-register SIG-076)
     float belt_size_h = 1.2f;
 };
 
