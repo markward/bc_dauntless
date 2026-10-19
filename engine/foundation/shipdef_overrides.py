@@ -105,6 +105,8 @@ Sovereign.dauntless = {
         {'name': 'USS Sovereign', 'registry': 'Sovereign'},
         # A separate SDK script with its own hardpoints (spec D5).
         {'name': 'USS Enterprise', 'script': 'Enterprise', 'registry': 'Enterprise'},
+        # No stock registry texture: the name comes from Masks/<registry>/.
+        {'name': 'USS Ark Royal', 'registry': 'ArkRoyal'},
     ],
 }
 

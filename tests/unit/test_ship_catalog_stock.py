@@ -29,7 +29,7 @@ APPENDIX = [
                                                                   "USS Galaxy", "USS Challenger", "USS Magellan", "USS Syracuse", "USS Trinculo"]),
     ("Nebula", "Nebula", "Federation", T, True, "DS9", "Nebula", ["USS Berkeley", "USS Prometheus", "USS Khitomer", "USS Nightingale",
                                                                   "USS Nebula", "USS Endeavour", "USS Leeds", "USS Monitor", "USS Sutherland", "USS T'Kumbra"]),
-    ("Sovereign", "Sovereign", "Federation", T, True, "DS9", "Sovereign", ["USS Sovereign", "USS Enterprise"]),
+    ("Sovereign", "Sovereign", "Federation", T, True, "DS9", "Sovereign", ["USS Sovereign", "USS Enterprise", "USS Ark Royal"]),
     ("Shuttle", "Shuttle", "Federation", A, True, "DS9", "FedShuttle", []),
     ("EscapePod", "Escape Pod", "Federation", A, False, "DS9", "LifeBoat", []),
     ("FedStarbase", "Fed Starbase", "Federation", S, False, "DS9", "FedStarbase", []),
@@ -88,7 +88,7 @@ def test_fed_variant_registries_and_the_enterprise_script():
     by_id = {d.shipFile: parse_dauntless(d.dauntless).variants
              for d in shipdef_overrides.stock_definitions()}
     assert [(v.registry, v.script) for v in by_id["Sovereign"]] == [
-        ("Sovereign", None), ("Enterprise", "Enterprise")]
+        ("Sovereign", None), ("Enterprise", "Enterprise"), ("ArkRoyal", None)]
     assert [v.registry for v in by_id["Galaxy"]] == [
         "Dauntless", "SanFrancisco", "Venture",
         "Galaxy", "Challenger", "Magellan", "Syracuse", "Trinculo"]
