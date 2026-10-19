@@ -118,6 +118,7 @@ def test_render_payload_shape(panel):
         {"id": "lighting", "label": "Lighting"},
         {"id": "environments", "label": "Environments"},
         {"id": "diagnostics", "label": "Diagnostics"},
+        {"id": "characters", "label": "Characters"},
     ]
     assert body["selected_tab"] == "combat"
     assert body["focused"] == -1  # nothing keyboard-focused on first paint
@@ -208,6 +209,7 @@ def test_focusables_order(panel):
         ("tab", "lighting"),
         ("tab", "environments"),
         ("tab", "diagnostics"),
+        ("tab", "characters"),
         ("ctrl", "god_mode"),
         ("ctrl", "double_weapons"),
         ("ctrl", "no_npc_shields"),
