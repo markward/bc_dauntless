@@ -3690,6 +3690,10 @@ def _developer_family_entry():
                 module_name="engine.dev_missions.felix_destroy",
                 dir_name="Felix Destroy",
                 display_name="Felix: Destroy (B2 baseline)",
+            ), MissionEntry(
+                module_name="engine.dev_missions.vesuvi_dust_cloud",
+                dir_name="Vesuvi Dust Cloud",
+                display_name="Vesuvi Dust Cloud (B3 baseline)",
             )],
         )],
     )

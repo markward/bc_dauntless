@@ -86,6 +86,26 @@ DAUNTLESS_WINDOW_SIZE=1280x720 DAUNTLESS_MISSION=engine.dev_missions.felix_destr
 The Sovereign dies 10 s in through the same death path as `]`, and the run
 quits 5 s after `ET_OBJECT_DESTROYED`.
 
+### B3 — Vesuvi Dust Cloud, parked, looking into the cloud (unattended)
+
+For the system nebula and dust passes without B1's rock belt:
+
+```bash
+OPEN_STBC_HOST_HEADLESS=1 DAUNTLESS_WINDOW_SIZE=1280x720 DAUNTLESS_MISSION=engine.dev_missions.vesuvi_dust_cloud DAUNTLESS_DEV_AUTOQUIT=1 DAUNTLESS_DEV_VIEW=exterior DAUNTLESS_PROFILE_FRAMES=100000000 ./build/dauntless --developer 2>&1 | tee ~/Documents/dauntless-perf/b3-$(date +%Y%m%d-%H%M).log
+```
+
+`engine/dev_missions/vesuvi_dust_cloud.py`: the player Galaxy parked at
+Vesuvi4's own "Player Start", 335 GU outside the cloud's MetaNebula sphere and
+facing into it. No NPCs, no scripted events; the only rocks are Vesuvi4's 12
+stock asteroids and what the Vesuvi profile adds. The player is made immune
+to damage (`SetInvincible`), because the cloud's radiation and nebula damage
+skip the God Mode check. 5 s in, the run switches to the exterior view and
+prints `[vesuvi_dust_cloud] settled`, the start of the measured window. It
+quits 60 s after that. Read the frame times from the reports after `settled`.
+
+The SDK `Initialize` of Vesuvi4 runs as in any mission, and `system_loader`
+brings up the sibling Vesuvi regions on the first tick, as in real play.
+
 ### To attribute GPU cost
 
 Two tools, both from boot, both used for P-1 (SIG-065, SIG-066):
