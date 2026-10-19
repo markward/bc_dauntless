@@ -65,6 +65,12 @@ Galaxy.dauntless = {
         {'name': 'USS Dauntless', 'registry': 'Dauntless'},
         {'name': 'USS San Francisco', 'registry': 'SanFrancisco'},
         {'name': 'USS Venture', 'registry': 'Venture'},
+        # No stock registry texture: the name comes from Masks/<registry>/.
+        {'name': 'USS Galaxy', 'registry': 'Galaxy'},
+        {'name': 'USS Challenger', 'registry': 'Challenger'},
+        {'name': 'USS Magellan', 'registry': 'Magellan'},
+        {'name': 'USS Syracuse', 'registry': 'Syracuse'},
+        {'name': 'USS Trinculo', 'registry': 'Trinculo'},
     ],
 }
 
