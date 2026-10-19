@@ -38,6 +38,8 @@
 #include "embedded_system_nebula_fs.h"
 #include "embedded_nebula_godray_vs.h"
 #include "embedded_nebula_godray_fs.h"
+#include "embedded_nebula_godray_mask_fs.h"
+#include "embedded_nebula_godray_composite_fs.h"
 #include "embedded_shield_vs.h"
 #include "embedded_shield_fs.h"
 #include "embedded_lens_flare_vs.h"
@@ -154,6 +156,8 @@ Pipeline::Pipeline() {
     // System-scale nebula haze: same fullscreen-triangle vertex shader.
     system_nebula_ = std::make_unique<Shader>(shader_src::nebula_volumetric_vs, shader_src::system_nebula_fs);
     nebula_godray_ = std::make_unique<Shader>(shader_src::nebula_godray_vs, shader_src::nebula_godray_fs);
+    nebula_godray_mask_ = std::make_unique<Shader>(shader_src::nebula_godray_vs, shader_src::nebula_godray_mask_fs);
+    nebula_godray_composite_ = std::make_unique<Shader>(shader_src::nebula_godray_vs, shader_src::nebula_godray_composite_fs);
     shield_ = std::make_unique<Shader>(shader_src::shield_vs, shader_src::shield_fs);
     lens_flare_ = std::make_unique<Shader>(shader_src::lens_flare_vs, shader_src::lens_flare_fs);
     torpedo_    = std::make_unique<Shader>(shader_src::torpedo_vs,    shader_src::torpedo_fs);

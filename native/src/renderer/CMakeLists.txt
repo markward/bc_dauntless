@@ -79,6 +79,8 @@ embed_shader(SHADER_NEBULA_UPSAMPLE_FS shaders/nebula_upsample.frag nebula_upsam
 embed_shader(SHADER_SYSTEM_NEBULA_FS shaders/system_nebula.frag system_nebula_fs)
 embed_shader(SHADER_NEBULA_GODRAY_VS shaders/nebula_godray.vert nebula_godray_vs)
 embed_shader(SHADER_NEBULA_GODRAY_FS shaders/nebula_godray.frag nebula_godray_fs)
+embed_shader(SHADER_NEBULA_GODRAY_MASK_FS shaders/nebula_godray_mask.frag nebula_godray_mask_fs)
+embed_shader(SHADER_NEBULA_GODRAY_COMPOSITE_FS shaders/nebula_godray_composite.frag nebula_godray_composite_fs)
 embed_shader(SHADER_SHIELD_VS shaders/shield.vert shield_vs)
 embed_shader(SHADER_SHIELD_FS shaders/shield.frag shield_fs)
 embed_shader(SHADER_LENS_FLARE_VS shaders/lens_flare.vert lens_flare_vs)

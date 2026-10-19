@@ -815,8 +815,10 @@ def set_nebula_wake(points: list) -> None:
 
 
 def set_nebula_godrays(flashes: list) -> None:
-    """Active lightning flashes for the god-ray pass. Each: {"dir": (x,y,z),
-    "intensity": float, "color": (r,g,b)}. Empty list = no god-rays."""
+    """God-ray lights: lightning flashes and the star. Each: {"dir": (x,y,z),
+    "intensity": float, "color": (r,g,b)}, plus "distance" (render-space GU)
+    for a light with a body on screen -- the star; hulls nearer than it
+    occlude its shafts. Empty list = no god-rays."""
     _h.set_nebula_godrays(flashes)
 
 

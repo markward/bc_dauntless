@@ -3160,7 +3160,8 @@ TEST_F(FrameTest, NebulaGodrayStreaksFromAnchor) {
         // Write a small bright block into the HDR colour around the anchor.
         hdr.bind();
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
+        glClearDepth(1.0);   // the spot is lit SKY (cloud), not a hull
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         // Use a scissored clear to deposit a bright patch into the HDR colour
         // attachment (no shader/mesh needed).
         glEnable(GL_SCISSOR_TEST);
@@ -3180,7 +3181,7 @@ TEST_F(FrameTest, NebulaGodrayStreaksFromAnchor) {
     paint_bright_spot();
     float before_mid[4] = {0};
     glReadPixels(mid_px, mid_py, 1, 1, GL_RGBA, GL_FLOAT, before_mid);
-    pass.render(cam, *p, {}, hdr.color_texture());
+    pass.render(cam, *p, {}, hdr.color_texture(), hdr.depth_texture());
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
     float after_empty[4] = {0};
     glReadPixels(mid_px, mid_py, 1, 1, GL_RGBA, GL_FLOAT, after_empty);
@@ -3206,7 +3207,7 @@ TEST_F(FrameTest, NebulaGodrayStreaksFromAnchor) {
     }
 
     paint_bright_spot();
-    pass.render(cam, *p, {flash}, hdr.color_texture());
+    pass.render(cam, *p, {flash}, hdr.color_texture(), hdr.depth_texture());
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
     float after_flash[4] = {0};
     glReadPixels(mid_px, mid_py, 1, 1, GL_RGBA, GL_FLOAT, after_flash);
@@ -3218,6 +3219,139 @@ TEST_F(FrameTest, NebulaGodrayStreaksFromAnchor) {
               before_mid[0] + before_mid[1] + before_mid[2] + 1e-3f)
         << "god-ray streak did not brighten the centre-ward pixel: "
         << after_flash[0] << "," << after_flash[1] << "," << after_flash[2];
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    EXPECT_EQ(glGetError(), GL_NO_ERROR);
+}
+
+// The radial scatter's SOURCE is only what lies at or beyond the light: the sky
+// (cleared depth) and, for a star, its own disc. A hull in front of the light
+// is an occluder -- it may darken the shafts behind it, but its own pixels
+// (lit windows, nacelle glows) must never be smeared along them. Live bug
+// 2026-10-19: at the Vesuvi dust cloud a Galaxy's nacelles streaked red and
+// blue down its own shadow.
+// The pass marches at half resolution in its own framebuffers; the scene keeps
+// drawing into the caller's HDR target afterwards, so that framebuffer and its
+// viewport must be bound again on return.
+TEST_F(FrameTest, NebulaGodrayRestoresCallersFramebufferAndViewport) {
+    const int kW = 200, kH = 120;
+    renderer::HdrTarget hdr;
+    hdr.resize(kW, kH);
+    scenegraph::Camera cam;
+    cam.eye = glm::vec3(0.0f, 0.0f, -600.0f); cam.target = glm::vec3(0.0f);
+    cam.up = glm::vec3(0.0f, 1.0f, 0.0f); cam.aspect = float(kW) / kH;
+    cam.near = 1.0f; cam.far = 20000.0f;
+    hdr.bind();
+    glViewport(0, 0, kW, kH);
+    glClearDepth(1.0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    GLint fbo_before = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo_before);
+
+    renderer::GodrayFlash star;
+    star.dir = glm::vec3(0.0f, 0.0f, 1.0f);   // dead ahead: anchor on screen
+    star.intensity = 1.0f;
+    star.distance = 10000.0f;
+    renderer::NebulaGodrayPass pass;
+    pass.render(cam, *p, {star}, hdr.color_texture(), hdr.depth_texture());
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+
+    GLint fbo_after = 0, vp[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo_after);
+    glGetIntegerv(GL_VIEWPORT, vp);
+    EXPECT_EQ(fbo_after, fbo_before);
+    EXPECT_EQ(vp[0], 0); EXPECT_EQ(vp[1], 0);
+    EXPECT_EQ(vp[2], kW); EXPECT_EQ(vp[3], kH);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+TEST_F(FrameTest, NebulaGodrayHullsOccludeButNeverEmit) {
+    const int kW = 256, kH = 256;
+    renderer::HdrTarget hdr;
+    hdr.resize(kW, kH);
+
+    scenegraph::Camera cam;
+    cam.eye    = glm::vec3(0.0f, 0.0f, -600.0f);
+    cam.target = glm::vec3(0.0f, 0.0f,    0.0f);
+    cam.up     = glm::vec3(0.0f, 1.0f,    0.0f);
+    cam.aspect = 1.0f;
+    cam.near   = 1.0f;
+    cam.far    = 20000.0f;
+
+    const glm::mat4 proj      = cam.proj_matrix();
+    const glm::mat4 view_proj = proj * cam.view_matrix();
+    const glm::mat4 inv_vp    = glm::inverse(view_proj);
+
+    const glm::vec2 ndc_anchor(-0.6f, 0.0f);
+    glm::vec4 world_h = inv_vp * glm::vec4(ndc_anchor, 0.9f, 1.0f);
+    const glm::vec3 light_dir =
+        glm::normalize(glm::vec3(world_h) / world_h.w - cam.eye);
+    const glm::vec2 anchor01 = ndc_anchor * 0.5f + 0.5f;
+    const int spot_px = static_cast<int>(anchor01.x * kW);
+    const int spot_py = static_cast<int>(anchor01.y * kH);
+    const int mid_px  = (spot_px + kW / 2) / 2;
+    const int mid_py  = kH / 2;
+
+    // Window depth of a point `dist` GU from the eye along the light direction.
+    const float fwd_cos = glm::dot(light_dir, glm::normalize(cam.target - cam.eye));
+    auto depth_at = [&](float dist) {
+        const glm::vec4 c = proj * glm::vec4(0.0f, 0.0f, -dist * fwd_cos, 1.0f);
+        return (c.z / c.w) * 0.5f + 0.5f;
+    };
+
+    // Black scene at sky depth, then a bright 12x12 patch at `patch_depth`
+    // around the anchor (scissored colour + depth clear, no mesh needed).
+    auto paint = [&](float patch_depth) {
+        hdr.bind();
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClearDepth(1.0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(spot_px - 6, spot_py - 6, 12, 12);
+        glClearColor(8.0f, 8.0f, 8.0f, 1.0f);
+        glClearDepth(static_cast<double>(patch_depth));
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glDisable(GL_SCISSOR_TEST);
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClearDepth(1.0);
+    };
+    renderer::NebulaGodrayPass pass;
+    auto mid_after = [&](const renderer::GodrayFlash& f) {
+        pass.render(cam, *p, {f}, hdr.color_texture(), hdr.depth_texture());
+        EXPECT_EQ(glGetError(), GL_NO_ERROR);
+        float px[4] = {0};
+        glReadPixels(mid_px, mid_py, 1, 1, GL_RGBA, GL_FLOAT, px);
+        return px[0] + px[1] + px[2];
+    };
+
+    renderer::GodrayFlash star;
+    star.dir       = light_dir;
+    star.intensity = 1.0f;
+    star.color     = glm::vec3(1.0f);
+    star.distance  = 10000.0f;   // inside the far plane: drawn where it is
+
+    // A hull 100 GU out, in front of the star: occludes, never emits.
+    paint(depth_at(100.0f));
+    EXPECT_FLOAT_EQ(mid_after(star), 0.0f)
+        << "a hull's own pixels were smeared along the star's shafts";
+
+    // The star's own disc (at its distance) is a source.
+    paint(depth_at(star.distance));
+    EXPECT_GT(mid_after(star), 1e-3f) << "the star's disc no longer casts shafts";
+
+    // The sky is a source.
+    paint(1.0f);
+    EXPECT_GT(mid_after(star), 1e-3f) << "the sky no longer casts shafts";
+
+    // A lightning flash has no body: every hull occludes, only sky emits.
+    renderer::GodrayFlash flash = star;
+    flash.distance = 0.0f;
+    paint(depth_at(100.0f));
+    EXPECT_FLOAT_EQ(mid_after(flash), 0.0f)
+        << "a hull's own pixels were smeared along a lightning flash's shafts";
+    paint(1.0f);
+    EXPECT_GT(mid_after(flash), 1e-3f) << "lit sky no longer scatters a flash";
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);

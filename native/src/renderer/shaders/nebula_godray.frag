@@ -1,14 +1,19 @@
 #version 410 core
 // Screen-space radial scatter ("crepuscular rays"), GPU-Gems formulation.
-// For each lightning flash we march from the current fragment back toward the
-// flash's projected screen anchor, accumulating the bright HDR cloud colour
-// with exponential decay. The result is additively composited into the HDR
-// target (blend GL_ONE, GL_ONE), so this shader outputs the premultiplied
-// scatter contribution only.
+// For each light (a lightning flash or the star) we march from the current
+// fragment back toward the light's projected screen anchor, accumulating the
+// bright HDR cloud colour with exponential decay. The result is additively
+// accumulated (blend GL_ONE, GL_ONE) into a half-res target, one draw per
+// light, so this shader outputs the premultiplied scatter contribution only.
+//
+// u_scene is the half-res SOURCE image (nebula_godray_mask.frag): the sky and
+// the light's own body only, hulls in front of the light already zeroed, so a
+// hull shadows the shafts but never streaks its own lights along them. This
+// march runs at half res; nebula_godray_composite.frag blurs it back up.
 in vec2 v_uv;
 out vec4 frag;
 
-uniform sampler2D u_scene;     // HDR colour (read-only; composited additively by blend)
+uniform sampler2D u_scene;     // half-res masked source (see above)
 uniform vec2  u_anchor;        // light screen pos in [0,1] (NDC*0.5+0.5)
 uniform float u_on_screen;     // 1 if anchor usable, else 0
 uniform vec3  u_color;         // flash tint
