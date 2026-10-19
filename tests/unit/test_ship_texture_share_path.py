@@ -16,6 +16,7 @@ The Galor/Keldon NIFs reference ``CardGalor01_glow.tga``, which lives ONLY in
 """
 
 import App
+from engine import paths
 from engine.appc.sets import SetClass_Create
 from tests.helpers.bc_assets import require_game_dir
 
@@ -120,8 +121,12 @@ def test_nif_own_directory_is_in_the_texture_search():
     assert r.searches, "Galaxy was never handed to load_model"
     search = _norm(r.searches[0])
 
+    # The install's own dir, not the replacements overlay's Galaxy/ (its
+    # hull-name masks), which also ends in Ships/Galaxy and comes first.
+    game_root = _norm([str(paths.game_root())])[0]
     model_dir = next((d for d in search
-                      if d.endswith("data/Models/Ships/Galaxy")), None)
+                      if d.endswith("data/Models/Ships/Galaxy")
+                      and d.startswith(game_root)), None)
     assert model_dir is not None, (
         "the NIF's own directory is absent from the texture search list; "
         "a mod keeping its textures beside the .NIF cannot resolve them.\n"
