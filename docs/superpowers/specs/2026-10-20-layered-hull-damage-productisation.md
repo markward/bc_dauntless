@@ -18,7 +18,7 @@ Live-checked by Mark in game, one step at a time:
 | Torn edges | Plating rips across panels, peels and shreds at the edge | "really great" |
 | Part detection | Disc / cylinder / box from the solid voxel shape, never from polygon edges; works on the LC Intrepid | "pretty good" |
 | Internal blasts | A destroyed subsystem blows out only where its blast reaches the hull | approved approach |
-| Holes | Torn-through hull is cut (see-through); the inside wall shows through one sheet, space through two; ribs reach into the hole | "very interesting", `member_survive` 4 |
+| Holes | Torn-through hull is cut (see-through); the inside wall shows through one sheet, space through two; ribs reach into the hole | "very interesting", `member_survive` 4. Step 2c puts rooms in the holes; the look is pending Mark's check |
 | Death cascade | BC's `AddDamage` storm opens these holes across a dying ship | **not yet checked** |
 
 Decisions Mark made along the way:
@@ -176,6 +176,19 @@ store**:
 - Fill: port the decks-and-rooms interior from the breach-interior spike onto
   the inside wall, so a hole looks into rooms rather than at a flat wall.
 
+As built (step 2c): plating is front faces only. Where a plate is cut, a
+per-hull stencil mark is written (never on a skinned model). A separate draw,
+`space.hull_interior`, right after the breach pass, draws decks and rooms from
+the hull's fill volume only under that mark, so rooms show in the cut and
+nowhere else. Plates about to break char; the whole interior does not. The
+mark draw fully shades the cut pixels, because a driver miscompile forced the
+single-discard form. The first cut of a hull loads its fill volume
+synchronously (`CarveFieldCache::get_for_source`). Cost at 4K, default
+distance (`perf-register.md` C-105, SIG-100-SIG-102): 0.054 ms GPU while
+damaged and alive, 0.301 ms dying; `space.opaque` 0.396 ms. All three bars
+hit. The look is pending Mark's check: at 6 and 1.5 GU the holes are too
+small in the 15 s screenshots to judge.
+
 ### 3.5 Internal blasts and AddDamage
 
 - Blast only on destruction by damage, not on scripted setup or the first
@@ -244,6 +257,7 @@ Recommendation: crater-only variant, so the old carve can be retired whole.
 |---|---|---|
 | 1 | ✅ Measured 2026-10-20 (`perf-register.md` P-12, SIG-087–SIG-091): plating +0.61 ms GPU for one damaged hull at ~6% of a 4K frame (~10 ms if it filled the frame, derived); CPU flat; a death ~3 ms GPU cheaper than the carve | numbers in the perf register |
 | 2 | Hull damage store + CPU near-damage list + plating shader variant + fixes 1, 2, 6 | render tests green, perf at or below the spike. **Perf AFTER 2026-10-20 (`perf-register.md` C-101–C-104, SIG-096–SIG-098): improved but acceptance missed.** Damaged-alive Layered `space.opaque` 0.996 to 0.514 ms (default) and 0.980 to 0.439 ms (close-up); gap to Classic 0.348 ms (bar 0.15), close-up 2.32x Classic (bar 2x). Dying stays cheaper than Classic. Open: P-12 |
+| 2c | Front-face-only plating, stencil mark, decks and rooms behind every cut, uneven breach thresholds | **Measured 2026-10-20 (`perf-register.md` C-105, C-106, SIG-100-SIG-102):** `space.hull_interior` 0.054 ms alive / 0.301 ms dying (bars 0.30 / 1.5), `space.opaque` 0.396 ms (bar 0.514): all hit. Interior CPU 0.4-0.5 ms per frame to look at; one unattributed 28 ms report. Look pending Mark's check |
 | 3 | Parts at load, disk cache, size order, articulation frames | Intrepid nacelles keep their damage when they move |
 | 4 | Internal blast fixes (3.5), rocks (3.7) | blast tests green; rock craters back |
 | 5 | Production switch, dials to Developer Options, docs | Classic byte-identical; Mark's live check of Layered |
