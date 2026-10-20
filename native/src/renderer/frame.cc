@@ -195,13 +195,14 @@ namespace dauntless_decals {
 // engine/appc/plating_dials.py (/ L O, group "plating"). Defaults MUST match
 // that module's DEFAULTS; slot meanings are listed there and in opaque.frag's
 // apply_plating. [0] = enabled (0/1).
+#include "renderer/structure_parts_cache.h"
 namespace dauntless_plating {
     float g_params[16] = {
         1.0f,   // 0 enabled
         6.0f,   // 1 panel size (model units, ~1.75 m each)
-        8.0f,   // 2 frame (rib) spacing along body Y
-        5.0f,   // 3 stringer spacing
-        1.2f,   // 4 rib width
+        8.0f,   // 2 primary member spacing (spokes / hoops / frames)
+        5.0f,   // 3 secondary member spacing (rings / stringers)
+        1.2f,   // 4 member width (secondaries 0.6x)
         0.6f,   // 5 plate depth
         1.2f,   // 6 rib depth (below the plate)
         0.40f,  // 7 reach (x scorch decal radius)
@@ -209,7 +210,7 @@ namespace dauntless_plating {
         2.5f,   // 9 wear to break ribs
         0.35f,  // 10 buckle band (wear below strip that buckles)
         0.6f,   // 11 edge noise
-        0.0f,   // 12 debug tint (1 = stripped magenta, buckled yellow)
+        0.0f,   // 12 debug (1 = stripped tint, 2 = colour by structure part)
         0.3f,   // 13 soot (x scorch deposit while plating is on)
         1.0f,   // 14 metal brightness (x rib / edge albedo)
         0.0f,
@@ -622,7 +623,40 @@ void draw_model(const assets::Model& model,
             // tangent frame; the shader normalises after use.
             prog.set_mat3("u_ship_world_rot", glm::mat3(world));
             prog.set_float("u_decal_time", decal_time);
-            prog.set_float_array("u_plating", dauntless_plating::g_params, 16);
+        }
+    }
+
+    // ── SPIKE (damage redesign): plating layer params + structure parts ───
+    // Params ride every draw (debug mode 2 tints undamaged hulls by part).
+    // Parts come from a background detection per hull source; until it lands
+    // u_part_count is 0 and the shader uses a body-axis box chart.
+    {
+        prog.set_float_array("u_plating", dauntless_plating::g_params, 16);
+        const bool part_debug = dauntless_plating::g_params[12] > 1.5f;
+        const bool want = dauntless_plating::g_params[0] > 0.5f
+                          && (decals_present || part_debug);
+        constexpr int kMaxParts = 12;
+        glm::vec4 pa[kMaxParts], pb[kMaxParts], pc[kMaxParts], pd[kMaxParts];
+        int np = 0;
+        if (want) {
+            if (const auto* parts = renderer::structure_parts_for(model.source)) {
+                for (const auto& sp : *parts) {
+                    if (np >= kMaxParts) break;
+                    pa[np] = glm::vec4(sp.centre, static_cast<float>(static_cast<int>(sp.kind)));
+                    pb[np] = glm::vec4(sp.axis[0], sp.half_extent.x);
+                    pc[np] = glm::vec4(sp.axis[1], sp.half_extent.y);
+                    pd[np] = glm::vec4(sp.half_extent.z, 0.0f, 0.0f, 0.0f);
+                    ++np;
+                }
+            }
+            if (part_debug) prog.set_mat4("u_ship_world_inv", glm::inverse(world));
+        }
+        prog.set_int("u_part_count", np);
+        if (np > 0) {
+            prog.set_vec4_array("u_part_a", pa, np);
+            prog.set_vec4_array("u_part_b", pb, np);
+            prog.set_vec4_array("u_part_c", pc, np);
+            prog.set_vec4_array("u_part_d", pd, np);
         }
     }
 

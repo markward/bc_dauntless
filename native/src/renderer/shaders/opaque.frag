@@ -774,16 +774,28 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
 
 // ── SPIKE (damage redesign): hull-plating layer ──────────────────────────
 // Torpedo scorch records carry a running hit total (u_decal_c.w, "wear").
-// Wear strips whole plating PANELS, exposing procedural ribs (frames at
-// constant body Y + stringers) over a dark inner skin; more wear breaks the
-// ribs. Depth is a short parallax march -- nothing is cut in the mesh.
-// u_plating: 0 enabled, 1 panel size, 2 frame spacing, 3 stringer spacing,
-// 4 rib width, 5 plate depth, 6 rib depth, 7 reach (x decal radius),
-// 8 strip wear, 9 rib-break wear, 10 buckle band, 11 edge noise,
-// 12 debug tint, 13 soot, 14 metal brightness.
+// Wear strips plating PANELS, exposing the hull's skeleton; more wear breaks
+// it. The skeleton follows the hull's detected structure PARTS
+// (voxel::detect_structure_parts): a saucer (disc) gets spokes radiating from
+// its centre, branching outward, tied by rings; a nacelle / hull (cylinder)
+// gets hoops along its axis and stringers around it; anything else (box)
+// frames along its own long axis. Panels are cells of that skeleton,
+// subdivided. Depth is a short march along the view ray in the body frame,
+// so it follows curved parts. Nothing is cut in the mesh.
+// u_plating: 0 enabled, 1 panel size, 2 primary spacing, 3 secondary
+// spacing, 4 member width, 5 plate depth, 6 rib depth, 7 reach (x decal
+// radius), 8 strip wear, 9 rib-break wear, 10 buckle band, 11 edge noise,
+// 12 debug (1 stripped tint, 2 colour by part), 13 soot, 14 metal brightness.
 const vec3 PLATE_EDGE   = vec3(0.55, 0.55, 0.56);   // cut plate thickness
 const vec3 RIB_METAL    = vec3(0.40, 0.38, 0.36);   // unpainted structure
-const vec3 INNER_SKIN   = vec3(0.07, 0.065, 0.06);
+const vec3 INNER_SKIN   = vec3(0.11, 0.105, 0.10);
+const int  MAX_PARTS    = 12;
+const float TAU         = 6.2831853;
+uniform int  u_part_count;               // 0 = parts not detected (yet)
+uniform vec4 u_part_a[MAX_PARTS];        // centre.xyz, kind (0 box, 1 disc, 2 cylinder)
+uniform vec4 u_part_b[MAX_PARTS];        // axis0.xyz, half0
+uniform vec4 u_part_c[MAX_PARTS];        // axis1.xyz, half1
+uniform vec4 u_part_d[MAX_PARTS];        // half2, _, _, _
 
 float plating_wear(vec3 q, vec3 nb) {
     float w = 0.0;
@@ -802,57 +814,125 @@ float plating_wear(vec3 q, vec3 nb) {
     return w;
 }
 
-// Body-frame chart on the dominant normal axis. Frames are lines of constant
-// u (body Y wherever the surface allows), stringers lines of constant v.
-void plating_chart(vec3 nb, out vec3 ax_u, out vec3 ax_v, out vec3 ax_n) {
-    vec3 a = abs(nb);
-    if (a.z >= a.x && a.z >= a.y) {
-        ax_u = vec3(0.0, 1.0, 0.0); ax_v = vec3(1.0, 0.0, 0.0);
-        ax_n = vec3(0.0, 0.0, nb.z < 0.0 ? -1.0 : 1.0);
-    } else if (a.x >= a.y) {
-        ax_u = vec3(0.0, 1.0, 0.0); ax_v = vec3(0.0, 0.0, 1.0);
-        ax_n = vec3(nb.x < 0.0 ? -1.0 : 1.0, 0.0, 0.0);
+// The part a body point belongs to: smallest normalised distance to each
+// part's fitted shape (a disc claims its slab out to 1.8x its half-thickness,
+// as the CPU detection does). -1 = no parts: body-axis fallback.
+int plating_part(vec3 p) {
+    int best = -1;
+    float bs = 1e9;
+    for (int i = 0; i < MAX_PARTS; ++i) {
+        if (i >= u_part_count) break;
+        vec3 off = p - u_part_a[i].xyz;
+        vec3 A0 = u_part_b[i].xyz, A1 = u_part_c[i].xyz, A2 = cross(A0, A1);
+        float h0 = max(u_part_b[i].w, 1e-3), h1 = max(u_part_c[i].w, 1e-3), h2 = max(u_part_d[i].x, 1e-3);
+        float k = u_part_a[i].w, sc;
+        if (k > 0.5 && k < 1.5) {
+            float h = dot(off, A0);
+            sc = max(abs(h) / (1.8 * h0), length(off - A0 * h) / max(h1, h2));
+        } else if (k > 1.5) {
+            float a = dot(off, A0);
+            sc = max(abs(a) / h0, length(off - A0 * a) / max(h1, h2));
+        } else {
+            sc = max(max(abs(dot(off, A0)) / h0, abs(dot(off, A1)) / h1), abs(dot(off, A2)) / h2);
+        }
+        if (sc < bs) { bs = sc; best = i; }
+    }
+    return best;
+}
+
+// Skeleton sample at body point p on part `part`:
+//   cell   -- panel id (whole panels go together)
+//   centre -- that panel's centre, body frame (where its wear is judged)
+//   d1, d2 -- distance to the nearest PRIMARY / SECONDARY member
+void plating_sample(int part, vec3 p, vec3 nb,
+                    out vec2 cell, out vec3 centre, out float d1, out float d2) {
+    float F = u_plating[2], S = u_plating[3], P = max(u_plating[1], 0.1);
+    float ku = max(1.0, floor(F / P + 0.5)), kv = max(1.0, floor(S / P + 0.5));
+    vec3 C = vec3(0.0), A0 = vec3(0.0, 1.0, 0.0), A1 = vec3(1.0, 0.0, 0.0);
+    float kind = 0.0, h1 = 1.0, h2 = 1.0;
+    if (part >= 0) {
+        C = u_part_a[part].xyz; kind = u_part_a[part].w;
+        A0 = u_part_b[part].xyz; A1 = u_part_c[part].xyz;
+        h1 = u_part_c[part].w; h2 = u_part_d[part].x;
+    }
+    vec3 A2 = cross(A0, A1);
+    vec3 off = p - C;
+    float pid = float(part + 1) * 4099.0;
+
+    if (kind > 0.5 && kind < 1.5) {
+        // Disc: spokes branch outward (count doubles each band) so their
+        // spacing stays between F and 2F; rings every S; band edges are heavy.
+        float h = dot(off, A0);
+        vec3  q = off - A0 * h;
+        float r = max(length(q), 1e-3);
+        float th = atan(dot(q, A2), dot(q, A1));
+        if (th < 0.0) th += TAU;
+        float r0 = 4.0 * F;
+        float band = max(0.0, floor(log2(r / r0)));
+        float N = floor(TAU * r0 / F + 0.5) * exp2(band);
+        float t = th / TAU * N;
+        float si = floor(t), fu = t - si;
+        d1 = min(fu, 1.0 - fu) * TAU * r / N;
+        float rr = r / S, ri = floor(rr), fv = rr - ri;
+        d2 = min(fv, 1.0 - fv) * S;
+        float rb = r0 * exp2(band);
+        d1 = min(d1, min(abs(r - rb), abs(r - 2.0 * rb)));   // heavy band rings
+        float su = floor(fu * ku), sv = floor(fv * kv);
+        cell = vec2(si * ku + su + band * 65536.0 + pid, ri * kv + sv);
+        float thc = (si + (su + 0.5) / ku) / N * TAU;
+        float rc  = (ri + (sv + 0.5) / kv) * S;
+        centre = C + A0 * h + (A1 * cos(thc) + A2 * sin(thc)) * rc;
+    } else if (kind > 1.5) {
+        // Cylinder: hoops every F along the axis, stringers around it.
+        float a = dot(off, A0);
+        vec3  q = off - A0 * a;
+        float rho = length(q);
+        float th = atan(dot(q, A2), dot(q, A1));
+        if (th < 0.0) th += TAU;
+        float R = max(0.8 * max(h1, h2), 1.0);
+        float N = max(6.0, floor(TAU * R / S + 0.5));
+        float aa = a / F, ai = floor(aa), fa = aa - ai;
+        d1 = min(fa, 1.0 - fa) * F;
+        float t = th / TAU * N, si = floor(t), fu = t - si;
+        d2 = min(fu, 1.0 - fu) * TAU * max(rho, 1.0) / N;
+        float su = floor(fa * ku), sv = floor(fu * kv);
+        cell = vec2(ai * ku + su + pid, si * kv + sv);
+        float ac  = (ai + (su + 0.5) / ku) * F;
+        float thc = (si + (sv + 0.5) / kv) / N * TAU;
+        centre = C + A0 * ac + (A1 * cos(thc) + A2 * sin(thc)) * rho;
     } else {
-        ax_u = vec3(1.0, 0.0, 0.0); ax_v = vec3(0.0, 0.0, 1.0);
-        ax_n = vec3(0.0, nb.y < 0.0 ? -1.0 : 1.0, 0.0);
+        // Box: frames every F along the long axis; stringers every S along
+        // whichever cross axis runs along this surface.
+        vec3 V = abs(dot(nb, A1)) < abs(dot(nb, A2)) ? A1 : A2;
+        float u = dot(off, A0), v = dot(off, V);
+        float uu = u / F, ui = floor(uu), fa = uu - ui;
+        float vv = v / S, vi = floor(vv), fb = vv - vi;
+        d1 = min(fa, 1.0 - fa) * F;
+        d2 = min(fb, 1.0 - fb) * S;
+        float su = floor(fa * ku), sv = floor(fb * kv);
+        cell = vec2(ui * ku + su + pid, vi * kv + sv);
+        float uc = (ui + (su + 0.5) / ku) * F, vc = (vi + (sv + 0.5) / kv) * S;
+        centre = p + A0 * (uc - u) + V * (vc - v);
     }
 }
 
-// Staggered (brick) panel grid: id + centre in chart coordinates.
-vec2 plating_panel(vec2 uv, out vec2 centre) {
-    float P = u_plating[1];
-    float row = floor(uv.y / P);
-    float shift = 0.5 * P * mod(row, 2.0);
-    float col = floor((uv.x + shift) / P);
-    centre = vec2((col + 0.5) * P - shift, (row + 0.5) * P);
-    return vec2(col, row);
-}
-
-// A panel goes whole: judged by the wear at its CENTRE (kept on the
-// fragment's own plane), jittered per panel so the torn edge is ragged.
-float plating_panel_wear(vec2 uv, vec3 p, vec3 ax_u, vec3 ax_v, vec3 nb) {
-    vec2 c;
-    vec2 id = plating_panel(uv, c);
-    vec3 q = p + ax_u * (c.x - dot(p, ax_u)) + ax_v * (c.y - dot(p, ax_v));
-    return plating_wear(q, nb) + (dhash(id + 17.0) - 0.5) * u_plating[11] * 0.5;
-}
-
-// 1 on a rib, 0 between. fw = model units per pixel (0 = hard edge).
-float plating_rib(vec2 q, float fw) {
-    float F = u_plating[2], S = u_plating[3], hw = 0.5 * u_plating[4];
-    float df = abs(fract(q.x / F + 0.5) - 0.5) * F;
-    float ds = abs(fract(q.y / S + 0.5) - 0.5) * S;
-    return 1.0 - smoothstep(hw - fw, hw + fw, min(df, ds));
+float plating_cell_wear(vec2 cell, vec3 centre, vec3 nb) {
+    return plating_wear(centre, nb) + (dhash(cell * 0.013 + 17.0) - 0.5) * u_plating[11] * 0.5;
 }
 
 void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
                    inout vec3 n_shade, inout vec3 base_rgb) {
     if (u_plating[0] < 0.5) return;
-    vec3 ax_u, ax_v, ax_n;
-    plating_chart(n_body, ax_u, ax_v, ax_n);
-    vec2 uv = vec2(dot(p_body, ax_u), dot(p_body, ax_v));
+    int part = plating_part(p_body);
+    if (u_plating[12] > 1.5) {
+        vec3 pc = vec3(dhash(vec2(float(part), 1.7)), dhash(vec2(float(part), 5.3)),
+                       dhash(vec2(float(part), 9.1)));
+        base_rgb = mix(base_rgb, 0.25 + 0.75 * pc, 0.65);
+    }
+    vec2 c0; vec3 ctr0; float d1, d2;
+    plating_sample(part, p_body, n_body, c0, ctr0, d1, d2);
     float strip = u_plating[8];
-    float wear_c = plating_panel_wear(uv, p_body, ax_u, ax_v, n_body);
+    float wear_c = plating_cell_wear(c0, ctr0, n_body);
     mat3 to_ws = transpose(mat3(u_ship_world_inv));   // body -> world, normals
 
     if (wear_c < strip) {
@@ -860,14 +940,15 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
         float b = u_plating[10];
         if (b > 0.0 && wear_c > strip - b) {
             float k = (wear_c - (strip - b)) / b;
-            vec2 c;
-            vec2 id = plating_panel(uv, c);
-            vec3 tilt = ax_u * (dhash(id + 3.1) - 0.5) + ax_v * (dhash(id + 9.7) - 0.5);
+            vec3 tilt = vec3(dhash(c0 * 0.017 + 3.1), dhash(c0 * 0.019 + 9.7),
+                             dhash(c0 * 0.023 + 4.4)) - 0.5;
+            tilt -= n_body * dot(tilt, n_body);
             vec3 tw = to_ws * tilt;
             if (dot(tw, tw) > 1e-8)
                 n_shade = normalize(n_shade + normalize(tw) * 0.6 * k);
             base_rgb *= 1.0 - 0.35 * k;
-            if (u_plating[12] > 0.5) base_rgb = mix(base_rgb, vec3(1.0, 0.85, 0.0), 0.6 * k);
+            if (u_plating[12] > 0.5 && u_plating[12] < 1.5)
+                base_rgb = mix(base_rgb, vec3(1.0, 0.85, 0.0), 0.6 * k);
         }
         return;
     }
@@ -875,63 +956,57 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
     g_plating_exposed = 1.0;
     float Dp = u_plating[5], Dr = u_plating[6];
     vec3  Vb = normalize(mat3(u_ship_world_inv) * V_ws);
-    float vn = max(dot(Vb, ax_n), 0.25);
-    vec2  dir2 = -vec2(dot(Vb, ax_u), dot(Vb, ax_v)) / vn;   // chart shift per unit depth
-    vec2  wd = -dir2;
-    float wl = length(wd);
-    vec3  back_b = wl > 1e-5 ? (ax_u * wd.x + ax_v * wd.y) / wl : ax_n;  // faces the viewer
+    float vn = max(dot(Vb, n_body), 0.25);
+    vec3  ray = -Vb / vn;                                 // per unit depth
+    vec3  tang = Vb - n_body * dot(Vb, n_body);
+    vec3  back_b = dot(tang, tang) > 1e-8 ? normalize(tang) : n_body;   // faces the viewer
+    float hw1 = 0.5 * u_plating[4], hw2 = 0.3 * u_plating[4];
 
-    // Ribs break where the LOCAL wear passes rib_break (noisy edge).
+    // Members break where the LOCAL wear passes rib_break (noisy edge).
     float w_here = plating_wear(p_body, n_body);
     float rib_ok = 1.0 - smoothstep(-0.3, 0.3,
-        w_here + (vnoise(uv * 1.7) - 0.5) * u_plating[11] - u_plating[9]);
+        w_here + (vnoise(ctr0.xy * 0.37 + ctr0.z * 0.21) - 0.5) * u_plating[11] - u_plating[9]);
 
-    vec2 c0;
-    vec2 my_id = plating_panel(uv, c0);
-
-    // 1. The cut plate's own thickness: does the ray meet a neighbouring
-    //    intact panel's wall before reaching the rib layer?
-    const int NP = 4;
-    for (int j = 0; j < NP; ++j) {
-        float t = (float(j) + 0.5) / float(NP) * Dp;
-        vec2 q = uv + dir2 * t;
-        vec2 cc;
-        vec2 id = plating_panel(q, cc);
-        if (id == my_id) continue;
-        if (plating_panel_wear(q, p_body, ax_u, ax_v, n_body) < strip) {
+    // 1. The cut plate's own thickness: a neighbouring intact panel's wall.
+    for (int j = 0; j < 4; ++j) {
+        float t = (float(j) + 0.5) / 4.0 * Dp;
+        vec2 c; vec3 ctr; float e1, e2;
+        plating_sample(part, p_body + ray * t, n_body, c, ctr, e1, e2);
+        if (c == c0) continue;
+        if (plating_cell_wear(c, ctr, n_body) < strip) {
             base_rgb = PLATE_EDGE * u_plating[14] * (1.0 - 0.3 * t / Dp);
             n_shade = normalize(to_ws * back_b);
-            if (u_plating[12] > 0.5) base_rgb = vec3(0.0, 1.0, 1.0);
+            if (u_plating[12] > 0.5 && u_plating[12] < 1.5) base_rgb = vec3(0.0, 1.0, 1.0);
             return;
         }
     }
 
-    // 2. Rib tops, flush with the underside of the plate.
-    vec2 q_top = uv + dir2 * Dp;
-    float top = plating_rib(q_top, fw) * rib_ok;
-    // 3. Rib sides, down to the inner skin.
-    const int NR = 4;
-    float side = 0.0;
-    float t_side = Dp + Dr;
-    for (int j = 0; j < NR; ++j) {
-        float t = Dp + (float(j) + 0.5) / float(NR) * Dr;
-        if (plating_rib(uv + dir2 * t, 0.0) * rib_ok > 0.5) {
-            side = 1.0;
-            t_side = t;
-            break;
-        }
+    // 2. Member tops, flush with the underside of the plate.
+    vec2 ct; vec3 ctrt; float t1, t2;
+    plating_sample(part, p_body + ray * Dp, n_body, ct, ctrt, t1, t2);
+    float top1 = 1.0 - smoothstep(hw1 - fw, hw1 + fw, t1);
+    float top2 = 1.0 - smoothstep(hw2 - fw, hw2 + fw, t2);
+    float top = max(top1, top2) * rib_ok;
+    // 3. Member sides: primaries run the full rib depth, secondaries half.
+    float side = 0.0, prim = 0.0, t_side = Dp + Dr;
+    for (int j = 0; j < 4; ++j) {
+        float t = Dp + (float(j) + 0.5) / 4.0 * Dr;
+        vec2 c; vec3 ctr; float e1, e2;
+        plating_sample(part, p_body + ray * t, n_body, c, ctr, e1, e2);
+        bool p1 = e1 < hw1;
+        bool p2 = e2 < hw2 && t < Dp + 0.5 * Dr;
+        if ((p1 || p2) && rib_ok > 0.5) { side = 1.0; prim = p1 ? 1.0 : 0.0; t_side = t; break; }
     }
     float depth01 = (t_side - Dp) / max(Dr, 1e-4);
-    vec3 skin = INNER_SKIN;
-    vec3 rib_side = RIB_METAL * u_plating[14] * mix(0.75, 0.35, depth01);
+    vec3 skin = INNER_SKIN * (0.75 + 0.5 * vnoise(ctr0.xy * 0.11 + ctr0.z * 0.07));
+    vec3 metal = RIB_METAL * u_plating[14];
+    vec3 rib_side = metal * mix(0.85, 1.0, prim) * mix(0.75, 0.35, depth01);
     vec3 below = mix(skin, rib_side, side);
     vec3 nb_below = mix(n_body, back_b, side);
-    // Broken ribs read charred.
-    vec3 rib_top = RIB_METAL * u_plating[14] * mix(0.45, 1.0, rib_ok);
+    vec3 rib_top = metal * mix(0.85, 1.0, top1) * mix(0.45, 1.0, rib_ok);
     base_rgb = mix(below, rib_top, top);
-    if (u_plating[12] > 0.5) base_rgb = mix(base_rgb, vec3(1.0, 0.0, 1.0), 0.5);
-    vec3 nb_out = normalize(mix(nb_below, n_body, top));
-    n_shade = normalize(to_ws * nb_out);
+    n_shade = normalize(to_ws * normalize(mix(nb_below, n_body, top)));
+    if (u_plating[12] > 0.5 && u_plating[12] < 1.5) base_rgb = mix(base_rgb, vec3(1.0, 0.0, 1.0), 0.5);
 }
 
 // ── Non-finite cause probe (developer diagnostic) ──────────────────────────
@@ -1844,6 +1919,9 @@ void main() {
     // term reads n_shade, since it perturbs n_shade (and, from Task 3, base.rgb).
     if (u_decal_count > 0) {
         apply_scuffs(p_body, n_body, n_shade, base.rgb);
+    }
+    // SPIKE plating layer (damaged hulls; every hull under part debug).
+    if (u_decal_count > 0 || u_plating[12] > 1.5) {
         apply_plating(p_body, n_body, V, plating_fw, n_shade, base.rgb);
     }
 

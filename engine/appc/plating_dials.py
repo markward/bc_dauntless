@@ -2,9 +2,13 @@
 
 Torpedo scorch records carry a running hit total (`wear`); the hull shader
 (opaque.frag apply_plating) strips plating PANELS where wear crosses
-`strip_wear`, exposing procedural ribs (frames along body Y + stringers) over
-a dark inner skin, and breaks the ribs past `rib_break_wear`. Depth is faked
-by a short parallax march, so nothing is cut in the mesh.
+`strip_wear`, exposing the hull's skeleton over a dark inner skin, and breaks
+it past `rib_break_wear`. The skeleton follows the detected structure parts
+(voxel::detect_structure_parts): saucer = spokes (primary, branching outward)
++ rings (secondary); nacelle / hull = hoops (primary) + stringers
+(secondary); box = frames along its long axis + stringers. Panels are
+skeleton cells, subdivided to ~panel_size. Depth is a short march along the
+view ray, so nothing is cut in the mesh.
 
 Lengths are MODEL units (~1.75 m: 1 GU = 175 m ~ 101 model units). Real
 ribs (~1 m) are a pixel at combat range, so the defaults are exaggerated
@@ -16,9 +20,9 @@ frame.cc's dauntless_plating::g_params (slot order = DIAL_ORDER).
 DEFAULTS: dict = {
     "enabled": 1.0,
     "panel_size": 6.0,
-    "frame_spacing": 8.0,
-    "stringer_spacing": 5.0,
-    "rib_width": 1.2,
+    "primary_spacing": 8.0,
+    "secondary_spacing": 5.0,
+    "member_width": 1.2,
     "plate_depth": 0.6,
     "rib_depth": 1.2,
     "reach": 0.40,           # x scorch decal radius (photon: ~51 m radius)
@@ -26,22 +30,22 @@ DEFAULTS: dict = {
     "rib_break_wear": 2.5,
     "buckle_band": 0.35,
     "edge_noise": 0.6,
-    "debug": 0.0,            # 1 = stripped panels magenta, buckled yellow
+    "debug": 0.0,            # 1 = stripped magenta / buckled yellow / edge cyan, 2 = colour by part
     "soot": 0.3,             # x the scorch deposit while plating is on
     "metal_brightness": 1.0,
 }
 DIAL_ORDER: tuple = tuple(DEFAULTS)
 _STEP = {
-    "enabled": 1.0, "panel_size": 0.5, "frame_spacing": 0.5,
-    "stringer_spacing": 0.5, "rib_width": 0.2, "plate_depth": 0.1,
+    "enabled": 1.0, "panel_size": 0.5, "primary_spacing": 0.5,
+    "secondary_spacing": 0.5, "member_width": 0.2, "plate_depth": 0.1,
     "rib_depth": 0.1, "reach": 0.05, "strip_wear": 0.1,
     "rib_break_wear": 0.25, "buckle_band": 0.05, "edge_noise": 0.1,
     "debug": 1.0, "soot": 0.1, "metal_brightness": 0.1,
 }
 _MIN = {k: 0.0 for k in DEFAULTS}
-_MIN.update({"panel_size": 0.25, "frame_spacing": 0.25,
-             "stringer_spacing": 0.25, "rib_width": 0.02})
-_MAX = {"enabled": 1.0, "debug": 1.0}
+_MIN.update({"panel_size": 0.25, "primary_spacing": 0.25,
+             "secondary_spacing": 0.25, "member_width": 0.02})
+_MAX = {"enabled": 1.0, "debug": 2.0}
 
 _dials: dict = dict(DEFAULTS)
 
