@@ -32,7 +32,8 @@ DamageList build_damage_list(const scenegraph::DamageDecal* slots, std::size_t n
         total += d.wear;
         ++out.count;
     }
-    out.torn_possible = out.count > 0 && total >= params[16] - 0.75f * params[19];
+    out.torn_possible = out.count > 0 && total >= params[16] * (1.0f - 0.4f * params[22]) - params[23] -
+                                            0.75f * params[19];
     return out;
 }
 

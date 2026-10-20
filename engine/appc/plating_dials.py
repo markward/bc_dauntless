@@ -15,7 +15,7 @@ ribs (~1 m) are a pixel at combat range, so the defaults are exaggerated
 for readability. Tuned live with the shared
 / L O keys once Developer Options -> "Dial keys" selects "plating"
 (engine/dev_dial_groups.py). Not persisted. DEFAULTS MUST match
-frame.cc's dauntless_plating::g_params[24] (slot order = DIAL_ORDER).
+frame.cc's dauntless_plating::g_params[kParamCount] (slot order = DIAL_ORDER).
 """
 DEFAULTS: dict = {
     "enabled": 1.0,
@@ -40,6 +40,10 @@ DEFAULTS: dict = {
     "tear_noise": 0.9,       # jaggedness of the torn edge (wear units)
     "peel_band": 0.35,       # plate this far short of tearing curls up
     "member_survive": 4.0,   # wear past breach a primary member still spans the hole
+    "toughness_spread": 0.6,  # per-panel breach wear varies by up to 0.4 x this (fraction)
+    "breach_lumps": 1.0,     # wear units of hole-scale breach-threshold variation
+    "deck_break_wear": 6.0,  # (interior pass) wear at which decks break
+    "interior": 1.0,         # (interior pass) 1 = interior behind holes
 }
 DIAL_ORDER: tuple = tuple(DEFAULTS)
 _STEP = {
@@ -50,12 +54,13 @@ _STEP = {
     "debug": 1.0, "soot": 0.1, "metal_brightness": 0.1,
     "member_bend": 0.25, "breach_wear": 0.25, "inner_brightness": 0.1,
     "tear_mix": 0.1, "tear_noise": 0.1, "peel_band": 0.05,
-    "member_survive": 0.25,
+    "member_survive": 0.25, "toughness_spread": 0.1, "breach_lumps": 0.25,
+    "deck_break_wear": 0.25, "interior": 1.0,
 }
 _MIN = {k: 0.0 for k in DEFAULTS}
 _MIN.update({"panel_size": 0.25, "primary_spacing": 0.25,
              "secondary_spacing": 0.25, "member_width": 0.02})
-_MAX = {"enabled": 1.0, "debug": 2.0, "tear_mix": 1.0}
+_MAX = {"enabled": 1.0, "debug": 2.0, "tear_mix": 1.0, "interior": 1.0}
 
 _dials: dict = dict(DEFAULTS)
 

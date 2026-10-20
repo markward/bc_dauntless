@@ -8,7 +8,10 @@ using scenegraph::DamageDecalRing;
 using scenegraph::WeaponClass;
 
 namespace {
-std::array<float, 24> zero_params() { std::array<float, 24> p{}; return p; }
+std::array<float, renderer::plating::kParamCount> zero_params() {
+    std::array<float, renderer::plating::kParamCount> p{};
+    return p;
+}
 }  // namespace
 
 TEST(PlatingDamage, HeatGlowAndScuffNeverEnterTheList) {
@@ -122,4 +125,22 @@ TEST(PlatingDamage, InactiveSlotsNeverEnterTheList) {
                                                             p.data());
     EXPECT_EQ(stale.count, 0);
     EXPECT_FALSE(stale.torn_possible);
+}
+
+// torn_possible's bound is the lowest breach the shader can return:
+// breach * (1 - 0.4 * spread) - lumps, less the largest tear-noise lift.
+TEST(PlatingDamage, TornPossibleUsesTheToughnessAndLumpFloor) {
+    auto p = zero_params();
+    p[7] = 0.4f;
+    p[16] = 4.5f;
+    p[19] = 0.9f;
+    p[22] = 0.6f;
+    p[23] = 1.0f;
+    DamageDecalRing ring;
+    ring.add({0, 0, 0}, {0, 0, 1}, 30.0f, 1.0f, WeaponClass::Internal, 0.0f,
+             glm::vec3(0.0f), 2.0f);
+    EXPECT_TRUE(renderer::plating::build_damage_list(ring, p.data()).torn_possible);
+    p[22] = 0.0f;
+    p[23] = 0.0f;
+    EXPECT_FALSE(renderer::plating::build_damage_list(ring, p.data()).torn_possible);
 }

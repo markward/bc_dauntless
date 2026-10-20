@@ -198,7 +198,7 @@ namespace dauntless_decals {
 #include "renderer/structure_parts_cache.h"
 #include "renderer/plating_damage.h"
 namespace dauntless_plating {
-    float g_params[24] = {
+    float g_params[renderer::plating::kParamCount] = {
         1.0f,   // 0 enabled
         6.0f,   // 1 panel size (model units, ~1.75 m each)
         8.0f,   // 2 primary member spacing (spokes / hoops / frames)
@@ -221,7 +221,11 @@ namespace dauntless_plating {
         0.9f,   // 19 tear noise (wear units)
         0.35f,  // 20 peel band (wear units short of tearing)
         4.0f,   // 21 member survive (wear past breach a primary still spans)
-        0.0f, 0.0f,
+        0.6f,   // 22 toughness spread (breach wear varies per panel by up to this x0.4)
+        1.0f,   // 23 breach lumps (wear units of hole-scale breach-threshold variation)
+        6.0f,   // 24 deck break wear (unread until the interior pass)
+        1.0f,   // 25 interior (unread until the interior pass)
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,   // 26-31 reserved
     };
 }
 
@@ -669,7 +673,7 @@ void draw_model(const assets::Model& model,
             if (loc >= 0) glUniform1i(loc, v);
         };
         if (const int loc = prog.cached_location(kPlating); loc >= 0)
-            glUniform1fv(loc, 24, dauntless_plating::g_params);
+            glUniform1fv(loc, renderer::plating::kParamCount, dauntless_plating::g_params);
         // world->body for p_body / n_body. The decal block above sets it only
         // when decals are enabled and present; a plating draw must never read
         // a previous draw's matrix.

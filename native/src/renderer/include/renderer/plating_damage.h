@@ -13,6 +13,8 @@
 namespace renderer::plating {
 
 constexpr int kMaxDamage = 24;
+// Floats in dauntless_plating::g_params / the u_plating upload / the binding.
+constexpr int kParamCount = 32;
 
 struct DamageList {
     int count = 0;
@@ -22,10 +24,11 @@ struct DamageList {
     bool torn_possible = false;
 };
 
-// params = dauntless_plating::g_params (24 floats). Only ACTIVE Scorch and
+// params = dauntless_plating::g_params (kParamCount floats). Only ACTIVE Scorch and
 // Internal records with wear > 0 enter (an inactive slot keeps stale data).
-// torn_possible: summed wear reaches the breach wear (params[16]) minus the
-// largest tear-noise lift (0.75 * params[19]).
+// torn_possible: summed wear reaches the lowest breach the shader can return,
+// params[16] * (1 - 0.4 * params[22]) - params[23] (toughness spread, lumps),
+// minus the largest tear-noise lift (0.75 * params[19]).
 DamageList build_damage_list(const scenegraph::DamageDecalRing& ring,
                              const float* params);
 

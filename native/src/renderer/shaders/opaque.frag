@@ -135,7 +135,7 @@ uniform vec4  u_decal_d[MAX_DECALS];         // tangent_body.xyz (unit, ⟂ norm
 // SPIKE (damage redesign): hull-plating layer -- the PLATING program variant
 // only (Pipeline::plating_shader); the stock program never sees any of it.
 // Slot meanings: apply_plating below / engine/appc/plating_dials.py.
-uniform float u_plating[24];
+uniform float u_plating[32];
 // SPIKE (damage redesign): the compact damage list (renderer/plating_damage.h,
 // renderer::plating::DamageList): only the records that carry plating wear.
 //   a = centre_body.xyz, reach (model units; Scorch reach multiplier applied)
@@ -806,7 +806,10 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
 // 12 debug (1 stripped tint, 2 colour by part), 13 soot, 14 metal brightness,
 // 15 member bend, 16 breach wear, 17 inner hull brightness, 18 tear mix
 // (0 = whole panels, 1 = torn freely), 19 tear noise, 20 peel band,
-// 21 member survive (wear past breach a primary member still spans).
+// 21 member survive (wear past breach a primary member still spans),
+// 22 toughness spread (per-panel breach wear x (1 + spread*(h-0.4))),
+// 23 breach lumps (hole-scale breach variation, wear units),
+// 24 deck break wear + 25 interior (read by the interior pass; unread yet).
 const vec3 PLATE_EDGE   = vec3(0.68, 0.68, 0.69);   // cut plate thickness
 const vec3 RIB_METAL    = vec3(0.60, 0.58, 0.55);   // unpainted structure
 const vec3 INNER_HULL   = vec3(0.42, 0.41, 0.40);  // pressure hull under the ribs
@@ -983,6 +986,22 @@ float plating_tear_w(vec3 q, float wear_cell, float wear_here) {
     return w + (n - 0.5) * u_plating[19] * smoothstep(0.05, 0.3, w) - u_plating[8];
 }
 
+// Hole-scale lumps in [0,1]: the breach threshold varies over a span of
+// ~2.5 primary spacings, so a breach's outline wanders at the size of the hole.
+float plating_lumps(vec3 p) {
+    float f = 1.0 / max(2.5 * u_plating[2], 1.0);
+    return vnoise(p.xy * f + p.z * 0.61 * f + 13.7) * 0.65
+         + vnoise(p.yz * f * 1.9 + p.x * f * 0.7 + 21.1) * 0.35;
+}
+
+// Wear at which the inner hull tears here: a per-panel toughness (cell) plus
+// the lumps. Lowest value: breach * (1 - 0.4 * spread) - lumps (the
+// early-out floor, shared with plating_damage.cc torn_possible).
+float plating_breach_at(vec3 p, vec2 cell) {
+    return u_plating[16] * (1.0 + u_plating[22] * (dhash(cell * 0.029 + 31.0) - 0.4))
+         + (plating_lumps(p) - 0.5) * 2.0 * u_plating[23];
+}
+
 float plating_tear(vec3 q, float wear_cell, vec3 nb) {
     return plating_tear_w(q, wear_cell, plating_wear(q, nb));
 }
@@ -1138,7 +1157,7 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
 
     // 4. The inner pressure hull: dents, scorches and heats with wear, and
     //    tears open only past breach_wear. Shaded darker beside the members.
-    float breach = u_plating[16];
+    float breach = plating_breach_at(p_body, c0);
     vec3  qi = p_body + ray * (Dp + Dr);
     vec2 ci; vec3 ctri; float i1, i2;
     plating_sample(part, plating_warp(qi, n_body, bend), n_body, ci, ctri, i1, i2);
@@ -1191,9 +1210,14 @@ int plating_hole(vec3 p, vec3 nb, float w) {
     float f = 1.0 / max(u_plating[1] * 0.6, 0.1);
     float n = vnoise(p.xy * f + p.z * 0.6 * f + 2.7) * 0.7
             + vnoise(p.yz * f * 2.1 + p.x * f * 0.8 + 5.3) * 0.3;
-    float over = w + (n - 0.5) * u_plating[19] * 1.5 - u_plating[16];
-    if (over <= 0.0) return 0;
+    float tear_lift = (n - 0.5) * u_plating[19] * 1.5;
+    float floor_b = u_plating[16] * (1.0 - 0.4 * u_plating[22]) - u_plating[23];
+    if (w + tear_lift - floor_b <= 0.0) return 0;
     int part = plating_part(p);
+    vec2 c0; vec3 ctr0; float e1, e2;
+    plating_sample(part, p, nb, c0, ctr0, e1, e2);
+    float over = w + tear_lift - plating_breach_at(p, c0);
+    if (over <= 0.0) return 0;
     vec3 q = plating_warp(p, nb, u_plating[15]);
     vec2 c; vec3 ctr; float d1, d2;
     plating_sample(part, q, nb, c, ctr, d1, d2);

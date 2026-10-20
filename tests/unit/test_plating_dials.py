@@ -12,7 +12,7 @@ def test_python_defaults_match_the_native_defaults():
     block = src.split("namespace dauntless_plating {", 1)[1].split("};", 1)[0]
     native = [float(v) for v in re.findall(r"(-?\d+\.\d+)f", block)]
     assert native[:len(plating_dials.DIAL_ORDER)] == plating_dials.params()
-    assert len(plating_dials.DIAL_ORDER) <= 24
+    assert len(plating_dials.DIAL_ORDER) <= 32
 
 
 def test_step_pushes_and_clamps(monkeypatch):
@@ -37,3 +37,18 @@ def test_env_starts_the_layer_off_for_perf_ab(monkeypatch):
     plating_dials.register()
     assert plating_dials.current()["enabled"] == 0.0
     plating_dials.reset()
+
+
+def test_uneven_breach_dials_sit_in_slots_22_to_25():
+    order = plating_dials.DIAL_ORDER
+    assert order[22:26] == ("toughness_spread", "breach_lumps",
+                            "deck_break_wear", "interior")
+    d = plating_dials.DEFAULTS
+    assert (d["toughness_spread"], d["breach_lumps"],
+            d["deck_break_wear"], d["interior"]) == (0.6, 1.0, 6.0, 1.0)
+    assert len(plating_dials.params()) == 26
+    assert plating_dials._MAX["interior"] == 1.0
+    assert plating_dials._STEP["toughness_spread"] == 0.1
+    assert plating_dials._STEP["breach_lumps"] == 0.25
+    assert plating_dials._STEP["deck_break_wear"] == 0.25
+    assert plating_dials._STEP["interior"] == 1.0

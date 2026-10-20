@@ -24,6 +24,7 @@
 #include <renderer/window.h>
 #include <renderer/text_input.h>
 #include <renderer/pipeline.h>
+#include <renderer/plating_damage.h>
 #include <renderer/bone_palette.h>
 #include <renderer/animation_update.h>
 #include <renderer/channel_binder.h>
@@ -2542,7 +2543,7 @@ namespace dauntless_normal_map {
 }
 // SPIKE (damage redesign): hull-plating layer params. Defined in frame.cc.
 namespace dauntless_plating {
-    extern float g_params[24];
+    extern float g_params[renderer::plating::kParamCount];
 }
 
 // Hull-breach renderer pass — always-on gate. Defined in frame.cc.

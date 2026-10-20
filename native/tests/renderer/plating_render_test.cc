@@ -39,7 +39,7 @@
 
 #include "support/content_root.h"
 
-namespace dauntless_plating { extern float g_params[24]; }
+namespace dauntless_plating { extern float g_params[renderer::plating::kParamCount]; }
 
 namespace fs = std::filesystem;
 
@@ -137,10 +137,10 @@ protected:
     std::unique_ptr<renderer::Window> w;
     std::unique_ptr<renderer::Pipeline> p;
     std::unique_ptr<assets::AssetCache> cache;
-    std::array<float, 24> saved_params{};
+    std::array<float, renderer::plating::kParamCount> saved_params{};
 
     void SetUp() override {
-        std::copy(dauntless_plating::g_params, dauntless_plating::g_params + 24,
+        std::copy(dauntless_plating::g_params, dauntless_plating::g_params + renderer::plating::kParamCount,
                   saved_params.begin());
         try {
             w = std::make_unique<renderer::Window>(kSize, kSize, "plating-test", false);
@@ -262,7 +262,7 @@ protected:
 
 // The selection rule itself: plating enabled AND at least one listed record.
 TEST_F(PlatingRenderTest, WantsPlatingNeedsEnabledAndAListedRecord) {
-    std::array<float, 24> params{};
+    std::array<float, renderer::plating::kParamCount> params{};
     params[0] = 1.0f;
     params[7] = 0.4f;
     params[16] = 4.5f;
@@ -463,4 +463,58 @@ TEST_F(PlatingRenderTest, InsideFaceNearDamageShowsThroughTheTear) {
                  wall[0], wall[1], wall[2]);
     EXPECT_GT(wall[0] + wall[1] + wall[2], 6)
         << "the inside face near the damage was not drawn through the tear";
+}
+
+// ---- Uneven breach (Task 1): toughness per panel + hole-scale lumps. ------
+namespace {
+
+// 32 pixels evenly round a ring of radius 15 mu about the origin, after an
+// Internal record (reach 30) whose wear on that ring is breach_wear + delta.
+// Returns how many are cut (clear colour).
+struct RingCut { int cut = 0; int kept = 0; };
+
+}  // namespace
+
+class UnevenBreach : public PlatingRenderTest {
+protected:
+    RingCut ring_cut(float delta) {
+        dauntless_plating::g_params[0] = 1.0f;
+        dauntless_plating::g_params[4] = 0.0f;    // member_width
+        dauntless_plating::g_params[19] = 0.0f;   // tear_noise
+        const float* g = dauntless_plating::g_params;
+        const float R = 30.0f, r = 15.0f;
+        const float fall = (1.0f - r * r / (R * R));
+        const float W = (g[16] + delta) / (fall * fall);
+        scenegraph::Camera cam;
+        cam.eye = glm::vec3(0.0f, 0.0f, 120.0f);
+        cam.target = glm::vec3(0.0f);
+        cam.up = glm::vec3(0.0f, 1.0f, 0.0f);
+        cam.aspect = 1.0f;
+        auto quad = build_quad(40.0f, /*facing_camera=*/true);
+        const auto px = render(*quad, internal_ring({0, 0, 0}, R, W), cam);
+        RingCut out;
+        for (int i = 0; i < 32; ++i) {
+            const float a = 6.2831853f * static_cast<float>(i) / 32.0f;
+            const glm::ivec2 c = to_pixel(
+                cam, glm::vec3(r * std::cos(a), r * std::sin(a), 0.0f));
+            const std::uint8_t* q = pixel(px, c.x, c.y);
+            if (q[0] + q[1] + q[2] <= 6) ++out.cut; else ++out.kept;
+        }
+        std::fprintf(stderr, "[UnevenBreach] delta %+.2f cut %d kept %d\n",
+                     delta, out.cut, out.kept);
+        return out;
+    }
+};
+
+TEST_F(UnevenBreach, BreachOutlineIsUnevenAtEqualWear) {
+    const RingCut r = ring_cut(+0.2f);
+    EXPECT_GE(r.cut, 4);
+    EXPECT_GE(r.kept, 4);
+}
+
+TEST_F(UnevenBreach, ZeroSpreadAndLumpsKeepTheEvenOutline) {
+    dauntless_plating::g_params[22] = 0.0f;
+    dauntless_plating::g_params[23] = 0.0f;
+    EXPECT_EQ(ring_cut(+0.2f).cut, 32);
+    EXPECT_EQ(ring_cut(-0.2f).cut, 0);
 }
