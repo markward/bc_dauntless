@@ -52,3 +52,16 @@ TEST(StructureParts, FlatSlabIsADiscAndLongBarIsACylinder) {
     EXPECT_GT(std::fabs(cyl->axis[0].y), 0.95f);         // cylinder axis = long axis
     EXPECT_NEAR(cyl->centre.y, -220.0f, 8.0f);
 }
+
+TEST(StructureParts, PartsComeBackLargestFirst) {
+    std::vector<voxel::Tri> tris;
+    add_box(tris, {-100, 150, 40}, {100, 350, 56});      // big slab, scanned late
+    add_box(tris, {-12, -300, -60}, {12, -140, -36});    // small bar, scanned early
+    const auto seg = voxel::detect_structure_parts(tris);
+    ASSERT_GE(seg.parts.size(), 2u);
+    for (size_t i = 1; i < seg.parts.size(); ++i)
+        EXPECT_GE(seg.parts[i - 1].voxels, seg.parts[i].voxels);
+    for (std::int16_t l : seg.label) {
+        if (l >= 0) { EXPECT_LT(l, static_cast<int>(seg.parts.size())); }
+    }
+}

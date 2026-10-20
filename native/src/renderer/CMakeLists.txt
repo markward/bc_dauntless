@@ -229,6 +229,7 @@ add_library(renderer STATIC
     scuff_texture.cc
     carve_field_cache.cc
     structure_parts_cache.cc
+    plating_damage.cc
     instance_field_cache.cc
     subsystem_pin_pass.cc
     debug_volume_pass.cc

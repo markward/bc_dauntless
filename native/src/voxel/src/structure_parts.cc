@@ -530,6 +530,23 @@ StructureSegmentation detect_structure_parts(const std::vector<Tri>& tris,
         remap[l] = static_cast<int>(seg.parts.size());
         seg.parts.push_back(part);
     }
+    // Largest first (stable), so consumers that cap or budget parts keep the
+    // big ones; relabel to the sorted indices.
+    std::vector<int> perm(seg.parts.size());
+    for (size_t i = 0; i < perm.size(); ++i) perm[i] = static_cast<int>(i);
+    std::stable_sort(perm.begin(), perm.end(), [&](int x, int y) {
+        return seg.parts[x].voxels > seg.parts[y].voxels;
+    });
+    std::vector<int> new_index(perm.size());
+    std::vector<StructurePart> sorted;
+    sorted.reserve(perm.size());
+    for (size_t i = 0; i < perm.size(); ++i) {
+        new_index[perm[i]] = static_cast<int>(i);
+        sorted.push_back(seg.parts[perm[i]]);
+    }
+    seg.parts = std::move(sorted);
+    for (int l = 0; l < nlabels; ++l)
+        if (remap[l] >= 0) remap[l] = new_index[remap[l]];
     for (int idx : order) seg.label[idx] = static_cast<std::int16_t>(remap[seg.label[idx]]);
     return seg;
 }
