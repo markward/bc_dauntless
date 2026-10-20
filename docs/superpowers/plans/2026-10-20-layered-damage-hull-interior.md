@@ -77,7 +77,7 @@
 
 - [ ] **Step 1: Write the failing tests.**
   - `plating_damage_test.cc`, `TornPossibleUsesTheToughnessAndLumpFloor`: the bound must be `total >= p[16] * (1 - 0.4 * p[22]) - p[23] - 0.75 * p[19]`.
-    - Defaults with one Internal record of wear 1.5 → `torn_possible` true.
+    - Defaults with one Internal record of wear 2.0 → `torn_possible` true (floor 4.5 × 0.76 − 1.0 − 0.675 = 1.745).
     - The same record with spread 0 and lumps 0 → false (the old bound, 4.5 − 0.675).
   - Shared setup for the two render tests below:
     - One Internal record at the quad centre, reach 30. Its centre wear `W` is chosen so the wear `W(1 − r²/R²)²` on a ring of radius 15 mu equals `breach_wear + δ`.
