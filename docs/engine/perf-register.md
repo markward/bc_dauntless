@@ -131,6 +131,8 @@ the damaged-but-alive window; after `destroyed`, the death. Add
 look in the same build. The `[damage-preview]` prints are buffered to the end
 of the log: use the `[dev-scripted]` lines as the timeline.
 
+**Close-up:** `DAUNTLESS_DAMAGE_PREVIEW_DISTANCE_GU=<gu>` moves the Akira (default 6, minimum 1.5). The exterior camera sits about 14 GU behind the player, so the floor of **1.5 GU is the close-up**: the Akira is about 22% of the frame width, against 17.5% at 6 GU. A frame-filling hull is not reachable with this knob (SIG-093).
+
 ### To attribute GPU cost
 
 Two tools, both from boot, both used for P-1 (SIG-065, SIG-066):
@@ -253,6 +255,10 @@ turns off the periodic report, so it needs its own run (M-5).
 | C-094 | 2026-10-20 18:55 | B2d, Classic, headless, CPU-only | same | **Debug** | 1280x720 | 13 reports | `dmg-b2d720-classic-1-…`. |
 | C-095 | 2026-10-20 18:56 | DP, Layered, **GPU focus** `space.opaque,space.carve_stencil,space.breach` | same | **Debug** | 3840x2160 | 24 reports | `dmg-dp4k-gpu-layered-1-20261020-1856`. GPU-timed: attribution only (M-6). |
 | C-096 | 2026-10-20 18:57 | DP, Classic, GPU focus as C-095 | same | **Debug** | 3840x2160 | 22 reports | `dmg-dp4k-gpu-classic-1-…`. |
+| C-097 | 2026-10-20 19:53 | DP, Layered, **GPU focus** `space.opaque,space.carve_stencil,space.breach`, default distance (6 GU), headless | `f996895ce` + the distance knob | **Debug** | 3840x2160 | 20 windows | `dmg2a-before-layered-default-20261020-1953`. GPU-timed: attribution only (M-6). Command: the DP command with `DAUNTLESS_PROFILE_GPU_FOCUS=...` and `DAUNTLESS_DEV_SCREENSHOT=<png>`. |
+| C-098 | 2026-10-20 19:53 | as C-097, **Classic** (`DAUNTLESS_HULL_CARVING=1 DAUNTLESS_PLATING=0`) | same | **Debug** | 3840x2160 | 18 windows | `dmg2a-before-classic-default-20261020-1953`. |
+| C-099 | 2026-10-20 19:53 | as C-097, **close-up** (`DAUNTLESS_DAMAGE_PREVIEW_DISTANCE_GU=1.5`) | same | **Debug** | 3840x2160 | 18 windows | `dmg2a-before-layered-close-20261020-1953`. Screenshot beside the log: the Akira is about 22% of the frame width. |
+| C-100 | 2026-10-20 19:53 | as C-098, close-up | same | **Debug** | 3840x2160 | 11 windows | `dmg2a-before-classic-close-20261020-1953`. |
 
 Logs for C-003 to C-008: `~/Documents/dauntless-perf/cef-*.log`, `cef2-*` …
 `cef6-*`.
@@ -298,6 +304,10 @@ bound, not the actual size.
 
 | ID | Capture | What the data shows | Tier | Feeds |
 |---|---|---|---|---|
+| SIG-095 | C-099, C-100 | DP **close-up** (`DAUNTLESS_DAMAGE_PREVIEW_DISTANCE_GU=1.5`, Akira about 22% of the frame width vs 17.5% at 6 GU, about 1.7x the pixels), Classic, GPU means: damaged-but-alive `space.opaque` 0.413 ms (n=12); **dying** `space.opaque` 2.015, `space.breach` 6.828, `space.carve_stencil` 0.122, `space` 12.18, `frame` 17.54 ms (n=4). At the default distance (SIG-094): 0.392 / 1.804 / 4.918 / 0.102 / 9.46 / 15.04. | Measured | P-12 |
+| SIG-094 | C-097, C-098 | DP default distance (6 GU), GPU means, 4K. Layered: damaged-alive `space.opaque` **0.996** ms, `frame` 6.79 (n=12); dying `space.opaque` 1.978, `space.breach` 0, `space.carve_stencil` 0, `frame` 8.00 (n=8). Classic: damaged-alive `space.opaque` 0.392, `frame` 6.19 (n=13); dying `space.opaque` 1.804, `space.breach` 4.918, `frame` 15.04 (n=5). Layered adds about 0.60 ms while damaged and alive, the same as SIG-088. These are the BEFORE numbers for the near-damage-cost work. | Measured | P-12 |
+| SIG-093 | C-099, C-100 vs C-097, C-098 | The close-up did **not** raise the Layered cost: damaged-alive `space.opaque` 0.980 ms (close, n=11) vs 0.996 (default); dying 1.720 vs 1.978; `frame` 6.76 vs 6.79 (damaged), 7.83 vs 8.00 (dying). SIG-091's linear-in-pixels extrapolation (about 10 ms for a frame-filling hull) is **not supported at this coverage**: 1.7x the pixels changed nothing measurable. The distance knob cannot reach a frame-filling hull: the exterior camera sits about 14 GU behind the player (apparent width fits 1/(d+c) with c about 14.2 from three screenshots at d = 6, 3, 1.5), so d = 1.5 is the floor and the Akira is only about 22% of the frame width. SIG-091 is neither confirmed nor refuted for a full-frame hull. | Measured (cost), derived (c) | P-12 |
+| SIG-092 | C-097–C-100 | Layered's `space.carve_stencil` and `space.breach` read 0 in every window (damaged and dying); Classic's `space.breach` is 4.9 ms (default) to 6.8 ms (close) in the death. The Layered death is cheaper on the GPU than Classic's (frame 8.0 vs 15.0 ms) even though the damaged-alive window costs 0.6 ms more. | Measured | P-12 |
 | SIG-091 | C-095 vs C-096, SIG-088 | Scaled by area: the plating added 0.61 ms of GPU for a damaged Akira covering about 6% of a 4K frame. If the cost is linear in the damaged hull's pixels, a damaged hull filling the frame would add about **10 ms**. | Derived (linear in pixels, assumed; coverage read off the C-089 screenshot) | P-12 |
 | SIG-090 | C-089–C-094 | CPU `space.opaque` during a death: Layered **0.41–0.44 ms** vs Classic **1.21–1.35 ms** (DP); B2d after the kill 0.58 vs 0.79 ms. The carve's per-carve CPU work is gone. While damaged but alive the two are close: 0.42 vs 0.39 ms (DP), 0.57 vs 0.56 (B2d before the kill). | Measured | P-12 (counter) |
 | SIG-089 | C-095, C-096 | GPU in the DP **death** window: Classic `space.opaque` 1.33 + `space.breach` 3.28 + `space.carve_stencil` 0.08 = **4.7 ms**, GPU frame 12.7 ms; Layered `space.opaque` **1.76 ms**, no breach or stencil work, GPU frame **7.7 ms**. A ship coming apart is about 3 ms of GPU cheaper with the layered damage. | Measured (GPU-timed: attribution, not frame time) | P-12 (counter) |

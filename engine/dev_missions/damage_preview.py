@@ -42,6 +42,17 @@ def _death_delay_s() -> float:
         return 4.0
 
 
+def _wreck_distance_gu() -> float:
+    """DAUNTLESS_DAMAGE_PREVIEW_DISTANCE_GU: how far ahead of the player the
+    Akira sits (default 6, minimum 1.5). Perf captures shorten it for a
+    close-up in which the damaged hull fills the frame."""
+    import os
+    try:
+        return max(1.5, float(os.environ.get("DAUNTLESS_DAMAGE_PREVIEW_DISTANCE_GU", "6")))
+    except ValueError:
+        return 6.0
+
+
 _IMPULSE_STEPS = (
     (3.0, "Impulse Engines"),
     (1.5, "Port Impulse"),
@@ -125,7 +136,7 @@ def Initialize(pMission):
 
     # Pre-wrecked Akira ~6 GU dead-ahead.
     pWreck = loadspacehelper.CreateShip("Akira", pSet, "Wreck", "")
-    pWreck.SetTranslateXYZ(0.0, 6.0, 0.0)
+    pWreck.SetTranslateXYZ(0.0, _wreck_distance_gu(), 0.0)
     pWreck.UpdateNodeOnly()
 
     # SPIKE (damage redesign): the Akira starts clean -- no authored

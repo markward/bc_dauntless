@@ -50,3 +50,14 @@ def test_death_delay_comes_from_the_environment(monkeypatch):
     assert dp._death_delay_s() == 30.0
     monkeypatch.setenv("DAUNTLESS_DAMAGE_PREVIEW_DEATH_S", "junk")
     assert dp._death_delay_s() == 4.0
+
+
+def test_wreck_distance_comes_from_the_environment(monkeypatch):
+    monkeypatch.delenv("DAUNTLESS_DAMAGE_PREVIEW_DISTANCE_GU", raising=False)
+    assert dp._wreck_distance_gu() == 6.0
+    monkeypatch.setenv("DAUNTLESS_DAMAGE_PREVIEW_DISTANCE_GU", "2.5")
+    assert dp._wreck_distance_gu() == 2.5
+    monkeypatch.setenv("DAUNTLESS_DAMAGE_PREVIEW_DISTANCE_GU", "0.2")
+    assert dp._wreck_distance_gu() == 1.5
+    monkeypatch.setenv("DAUNTLESS_DAMAGE_PREVIEW_DISTANCE_GU", "junk")
+    assert dp._wreck_distance_gu() == 6.0
