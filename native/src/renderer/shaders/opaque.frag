@@ -787,7 +787,8 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
 // spacing, 4 member width, 5 plate depth, 6 rib depth, 7 reach (x decal
 // radius), 8 strip wear, 9 rib-break wear, 10 buckle band, 11 edge noise,
 // 12 debug (1 stripped tint, 2 colour by part), 13 soot, 14 metal brightness,
-// 15 member bend, 16 breach wear, 17 inner hull brightness.
+// 15 member bend, 16 breach wear, 17 inner hull brightness, 18 tear mix
+// (0 = whole panels, 1 = torn freely), 19 tear noise, 20 peel band.
 const vec3 PLATE_EDGE   = vec3(0.68, 0.68, 0.69);   // cut plate thickness
 const vec3 RIB_METAL    = vec3(0.60, 0.58, 0.55);   // unpainted structure
 const vec3 INNER_HULL   = vec3(0.42, 0.41, 0.40);  // pressure hull under the ribs
@@ -918,8 +919,39 @@ void plating_sample(int part, vec3 p, vec3 nb,
     }
 }
 
+// Gradient of plating_wear: points toward more damage (the hole).
+vec3 plating_wear_grad(vec3 q, vec3 nb) {
+    vec3 g = vec3(0.0);
+    float reach = u_plating[7];
+    for (int i = 0; i < u_decal_count; ++i) {
+        float cls = u_decal_c[i].y;
+        if (cls < 0.5 || cls > 1.5) continue;
+        float R = u_decal_b[i].w * reach;
+        if (R <= 0.0) continue;
+        vec3 d = q - u_decal_a[i].xyz;
+        float r = length(d) / R;
+        if (r >= 1.0) continue;
+        float wn = smoothstep(NORMAL_MIN, 1.0, dot(nb, u_decal_b[i].xyz));
+        g += -4.0 * u_decal_c[i].w * (1.0 - r * r) * wn * d / (R * R);
+    }
+    return g;
+}
+
+// Torn-plate field: >= 0 where the plating is gone. Mixes the panel's own
+// wear (edges follow seams) with the wear right here (edges rip across
+// panels), plus a jagged tear noise scaled to the panel size.
+float plating_tear(vec3 q, float wear_cell, vec3 nb) {
+    float f = 1.0 / max(u_plating[1] * 0.35, 0.1);
+    float n = vnoise(q.xy * f + q.z * 0.71 * f) * 0.65
+            + vnoise(q.yz * f * 2.3 + q.x * f * 1.3 + 4.2) * 0.35;
+    float w = mix(wear_cell, plating_wear(q, nb), u_plating[18]);
+    // Noise only where there IS wear: an undamaged hull never tears or peels.
+    return w + (n - 0.5) * u_plating[19] * smoothstep(0.05, 0.3, w) - u_plating[8];
+}
+
 float plating_cell_wear(vec2 cell, vec3 centre, vec3 nb) {
-    return plating_wear(centre, nb) + (dhash(cell * 0.013 + 17.0) - 0.5) * u_plating[11] * 0.5;
+    float w = plating_wear(centre, nb);
+    return w + (dhash(cell * 0.013 + 17.0) - 0.5) * u_plating[11] * 0.5 * smoothstep(0.02, 0.15, w);
 }
 
 // Bend the skeleton: low-frequency displacement, mostly along the surface,
@@ -950,7 +982,29 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
     float wear_c = plating_cell_wear(c0, ctr0, n_body);
     mat3 to_ws = transpose(mat3(u_ship_world_inv));   // body -> world, normals
 
-    if (wear_c < strip) {
+    float e0 = plating_tear(p_body, wear_c, n_body);
+    // Shreds: thin slivers of plate still hanging just inside the torn edge.
+    float shred_f = 1.0 / max(u_plating[1] * 0.18, 0.05);
+    float shred_n = vnoise(p_body.xy * shred_f + p_body.z * 0.53 * shred_f + 9.4);
+    bool shred = e0 >= 0.0 && e0 < 0.6 * u_plating[20] && abs(2.0 * shred_n - 1.0) < 0.12;
+    if (e0 < 0.0 || shred) {
+        // Peel: plate just short of tearing curls up toward the hole and
+        // shows scraped bare metal along its lip.
+        float band = max(u_plating[20], 1e-3);
+        float pk = shred ? 1.0 : 1.0 - clamp(-e0 / band, 0.0, 1.0);
+        if (pk > 0.0) {
+            vec3 g = plating_wear_grad(p_body, n_body);
+            g -= n_body * dot(g, n_body);
+            vec3 tw = dot(g, g) > 1e-10 ? to_ws * normalize(g) : vec3(0.0);
+            float curl = pk * pk * (shred ? 1.6 : 1.1);
+            if (dot(tw, tw) > 1e-8)
+                n_shade = normalize(n_shade + normalize(tw) * curl);
+            float lip = smoothstep(0.55, 1.0, pk);
+            base_rgb = mix(base_rgb, PLATE_EDGE * u_plating[14], lip * 0.7);
+            if (shred) base_rgb *= 0.8;
+        }
+    }
+    if (e0 < 0.0 || shred) {
         // Intact panel; inside the buckle band it tilts and darkens.
         float b = u_plating[10];
         if (b > 0.0 && wear_c > strip - b) {
@@ -991,9 +1045,10 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
     for (int j = 0; j < 4; ++j) {
         float t = (float(j) + 0.5) / 4.0 * Dp;
         vec2 c; vec3 ctr; float e1, e2;
-        plating_sample(part, p_body + ray * t, n_body, c, ctr, e1, e2);
-        if (c == c0) continue;
-        if (plating_cell_wear(c, ctr, n_body) < strip) {
+        vec3 qw = p_body + ray * t;
+        plating_sample(part, qw, n_body, c, ctr, e1, e2);
+        float wc = (c == c0) ? wear_c : plating_cell_wear(c, ctr, n_body);
+        if (plating_tear(qw, wc, n_body) < 0.0) {
             base_rgb = PLATE_EDGE * u_plating[14] * (1.0 - 0.3 * t / Dp);
             n_shade = normalize(to_ws * back_b);
             if (u_plating[12] > 0.5 && u_plating[12] < 1.5) base_rgb = vec3(0.0, 1.0, 1.0);

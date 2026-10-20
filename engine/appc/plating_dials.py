@@ -36,6 +36,9 @@ DEFAULTS: dict = {
     "member_bend": 1.5,      # model units of member distortion at full damage
     "breach_wear": 4.5,      # wear at which the inner pressure hull tears open
     "inner_brightness": 1.0,
+    "tear_mix": 0.6,         # 0 = whole panels, 1 = torn freely across them
+    "tear_noise": 0.9,       # jaggedness of the torn edge (wear units)
+    "peel_band": 0.35,       # plate this far short of tearing curls up
 }
 DIAL_ORDER: tuple = tuple(DEFAULTS)
 _STEP = {
@@ -45,11 +48,12 @@ _STEP = {
     "rib_break_wear": 0.25, "buckle_band": 0.05, "edge_noise": 0.1,
     "debug": 1.0, "soot": 0.1, "metal_brightness": 0.1,
     "member_bend": 0.25, "breach_wear": 0.25, "inner_brightness": 0.1,
+    "tear_mix": 0.1, "tear_noise": 0.1, "peel_band": 0.05,
 }
 _MIN = {k: 0.0 for k in DEFAULTS}
 _MIN.update({"panel_size": 0.25, "primary_spacing": 0.25,
              "secondary_spacing": 0.25, "member_width": 0.02})
-_MAX = {"enabled": 1.0, "debug": 2.0}
+_MAX = {"enabled": 1.0, "debug": 2.0, "tear_mix": 1.0}
 
 _dials: dict = dict(DEFAULTS)
 

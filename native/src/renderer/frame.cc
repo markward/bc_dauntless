@@ -216,7 +216,10 @@ namespace dauntless_plating {
         1.5f,   // 15 member bend (model units of distortion at full damage)
         4.5f,   // 16 breach wear (inner pressure hull tears open)
         1.0f,   // 17 inner hull brightness
-        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.6f,   // 18 tear mix (0 = whole panels, 1 = torn freely)
+        0.9f,   // 19 tear noise (wear units)
+        0.35f,  // 20 peel band (wear units short of tearing)
+        0.0f, 0.0f, 0.0f,
     };
 }
 
