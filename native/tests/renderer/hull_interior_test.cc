@@ -96,6 +96,7 @@ protected:
     struct Placed {
         glm::mat4 world;
         scenegraph::DamageDecalRing ring;
+        bool rock = false;
     };
     struct Shot {
         std::vector<std::uint8_t> px;
@@ -115,6 +116,7 @@ protected:
                 reinterpret_cast<scenegraph::ModelHandle>(drawn));
             world.set_world_transform(iid, pl.world);
             world.get(iid)->decals = pl.ring;
+            world.get(iid)->surface_is_rock = pl.rock;
         }
         glViewport(0, 0, kSize, kSize);
         glClearColor(kClearR, kClearG, kClearB, 1.0f);
@@ -354,6 +356,18 @@ TEST_F(HullInteriorTest, IntactPartOfSameHullBehindBlownHoleIsNotRepainted) {
                            pixel(off.px, centre().x, centre().y)), 0)
             << "the intact quad behind the hole was painted as interior (z=" << quad_z << ")";
     }
+}
+
+// I2 of the final review: rocks are not ships. A damaged rock takes no
+// marking and no interior; its hole stays see-through as before step 2c.
+TEST_F(HullInteriorTest, RockGetsNeitherMarkNorInterior) {
+    const auto ring = internal_ring({0.0f, 0.0f, kBoxHalf}, 30.0f, 10.0f);
+    const auto rock = render({Placed{glm::mat4(1.0f), ring, /*rock=*/true}}, filled.get());
+    report("rock", rock, centre());
+    EXPECT_EQ(rock.marks, 0);
+    EXPECT_EQ(rock.interiors, 0);
+    EXPECT_TRUE(is_clear(pixel(rock.px, centre().x, centre().y)))
+        << "a rock's hole must stay see-through";
 }
 
 TEST_F(HullInteriorTest, UndamagedSceneDrawsNoInterior) {

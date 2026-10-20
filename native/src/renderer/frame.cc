@@ -1562,6 +1562,9 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
     world.for_each_visible_in_pass(scenegraph::Pass::Space, [&](const scenegraph::Instance& inst) {
         if (next_value > 255) return;
         if (inst.far_fade >= 1.0f) return;
+        // Rocks have no decks or rooms: no mark, no interior; their holes
+        // stay see-through.
+        if (inst.surface_is_rock) return;
         const assets::Model* m = lookup(inst.model_handle);
         if (!m || inst.decals.count() == 0) return;
         const plating::DamageList list =
