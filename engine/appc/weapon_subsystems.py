@@ -3451,11 +3451,34 @@ class TorpedoTube(Weapon):
         which stock BC calls on an ammo-type switch. TorpedoSystem.SetAmmoType
         calls it for every ready round of every tube when the selected slot
         actually CHANGES — stbc-oracle bible §4 T4 measured the switch
-        unloading the Sovereign's tubes for one full ReloadDelay."""
+        unloading the Sovereign's tubes for one full ReloadDelay.
+
+        Like BC it then posts ET_TORPEDO_FIRED: FUN_0057D9A0 ends in
+        TorpedoTube_PostTorpedoFiredEvent(0) (0x0057DA20) — type 0x800066,
+        source NULL, destination this tube. ConditionTorpsReady re-counts the
+        tubes on that event; without it the gate stayed latched ready through
+        the whole reload and FedAttack flew torpedo runs with every tube empty.
+        The NULL source is what keeps Episode7.TorpedoFired (which destroys the
+        destination tube on a roll) out: it bails when Torpedo_Cast fails."""
         if self._num_ready <= 0:
             return
         self._num_ready -= 1
         self._start_slot_cooldown(_game_time())
+        self._broadcast_unload()
+
+    def _broadcast_unload(self) -> None:
+        """ET_TORPEDO_FIRED with NO source and the TUBE as destination — BC's
+        unload notification (see UnloadTorpedo). Not _broadcast_torpedo_fired:
+        that one carries the projectile and is skipped without one."""
+        import App
+        from engine import dev_mode
+        try:
+            evt = App.TGEvent_Create()
+            evt.SetEventType(App.ET_TORPEDO_FIRED)
+            evt.SetDestination(self)
+            App.g_kEventManager.AddEvent(evt)
+        except Exception as _e:
+            dev_mode.log_swallowed("ET_TORPEDO_FIRED (unload) broadcast", _e)
 
     def IsDumbFire(self) -> int:
         """Torpedo tubes are dumbfire-capable in BC (no guidance).
