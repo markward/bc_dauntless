@@ -329,6 +329,20 @@ def set_tractor_beams(beams: list) -> None:
     _h.set_tractor_beams(beams)
 
 
+# ── SPIKE (damage redesign): hull carving switched OFF ──────────────────────
+#
+# Branch spike/damage-redesign starts from a hull that never gets a hole. The
+# two carve facades below return before reaching the host, so no carve field
+# is ever written: holes, the breach interior, venting/breach debris and the
+# carve-driven breakup (chunks + subsystem kills in hull_breakup) all go dark
+# by construction. Decals, scuffs, gameplay damage, part severance and the
+# death cascade's explosions are untouched. DAUNTLESS_HULL_CARVING=1 turns the
+# old carve back on for an A/B look. Read at use, never captured at import.
+def hull_carving_enabled() -> bool:
+    import os
+    return os.environ.get("DAUNTLESS_HULL_CARVING", "0") == "1"
+
+
 # ── Hit / damage feedback ────────────────────────────────────────────────────
 #
 # The floating render origin: the native mesh queries (shield_hit,
@@ -437,7 +451,7 @@ def hull_carve_add(
 ) -> None:
     """`carve_field=False` grows the sphere ring only; the instance field is
     carved by a later deposit (see renderer::hull_carve_deposit)."""
-    if _h is None:
+    if _h is None or not hull_carving_enabled():
         return
     rel = _instance_relative(instance_id, world_point)
     if rel is None:
@@ -510,7 +524,7 @@ def hull_carve_capsule(
     """Field-only swept cut between two WORLD points at `radius_gu`. Never
     enters the sphere list. No-op when headless. Both endpoints are made
     relative to ONE read of the translation."""
-    if _h is None:
+    if _h is None or not hull_carving_enabled():
         return
     t = _h.instance_translation(instance_id)
     if t is None:

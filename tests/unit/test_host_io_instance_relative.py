@@ -38,6 +38,13 @@ class _FakeHost:
         return self._rec(name)
 
 
+@pytest.fixture(autouse=True)
+def _carving_on(monkeypatch):
+    # Spike branch ships hull carving OFF (host_io.hull_carving_enabled); these
+    # tests pin the carve facades' coordinate contract, so turn it back on.
+    monkeypatch.setenv("DAUNTLESS_HULL_CARVING", "1")
+
+
 @pytest.fixture
 def fake(monkeypatch):
     h = _FakeHost()
@@ -148,3 +155,11 @@ def test_hull_carve_capsule_reads_the_translation_once(monkeypatch):
     (name, args), = h.calls
     assert args[2] == pytest.approx((2.0, 0.0, 0.0), abs=1e-9)
 
+
+
+def test_hull_carving_is_off_by_default_on_the_spike(monkeypatch, fake):
+    monkeypatch.delenv("DAUNTLESS_HULL_CARVING")
+    host_io.hull_carve_add(7, (T[0] + 1.0, T[1], T[2]), (0.0, 0.0, 1.0),
+                           0.5, 1.0, 0.0)
+    host_io.hull_carve_capsule(7, T, (T[0] + 1.0, T[1], T[2]), 0.5)
+    assert fake.calls == []
