@@ -50,6 +50,7 @@ function _doFocusableList(state) {
     }
     if (state.selected_tab === 'diagnostics') {
         out.push({kind: 'ctrl', target: 'profiler'});
+        out.push({kind: 'ctrl', target: 'perf_monitor'});
         out.push({kind: 'ctrl', target: 'dial_group'});
     }
     return out;
@@ -144,6 +145,8 @@ function _doRenderDiagnosticsBody(state, focusables) {
           + 'report to the terminal every 120 frames (~2 s at 60 fps) until '
           + 'switched off. See docs/engine/frame-profiler.md before drawing a '
           + 'conclusion from it.</div>';
+    html += _doToggleRow('Performance Monitor', 'perf_monitor', s.perf_monitor,
+                         isFoc('perf_monitor'));
     html += _doValueRow('Dial keys (/ L O act on)', 'dial_group',
                         String(s.dial_group), isFoc('dial_group'));
     return html;

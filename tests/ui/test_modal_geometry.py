@@ -33,7 +33,10 @@ LARGE_MODALS = {
 
 # Body-level screens that deliberately paint ABOVE a large modal.
 _ABOVE_LAYER = ("#pause-menu", "#mission-picker", "#first-run",
-                "#mods-screen", ".ms-menu")
+                "#mods-screen", ".ms-menu",
+                # Dev-only, non-interactive FPS readout: stays on top of
+                # every modal by design (css/perf_monitor.css).
+                "#perf-monitor")
 
 
 def _strip_comments(css):

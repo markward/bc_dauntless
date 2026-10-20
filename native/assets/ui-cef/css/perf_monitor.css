@@ -1,0 +1,33 @@
+/* Developer-only performance monitor (render resolution + FPS), pinned to the
+   top-right corner above every other UI layer. Driven by js/perf_monitor.js.
+   Non-interactive: clicks pass straight through to the game. */
+#perf-monitor {
+    position: fixed;
+    top: 6px;
+    right: 6px;
+    /* Above everything, the system screens (300-310) included: a readout
+       that vanished whenever a modal opened would hide exactly the frames
+       worth measuring. modal_layer.js occludes by z-index, so this also
+       keeps it out of .ui-occluded. */
+    z-index: 400;
+    display: none;
+    pointer-events: none;
+    padding: 4px 8px 5px;
+    background: rgba(0, 0, 0, 0.6);
+    border-right: 3px solid #d88450;   /* chrome orange, as the reticle name */
+    border-top-left-radius: 8px;
+    font-family: "Antonio", "Antonio-Regular", sans-serif;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.04em;
+    line-height: 1.2;
+    text-align: right;
+    white-space: nowrap;
+    color: #ffd;
+    text-shadow: 0 0 2px #000;
+}
+.perf-monitor__line { font-size: 13px; }
+.perf-monitor__label { color: #9a8f7a; margin-left: 4px; }
+.perf-monitor__fps { font-size: 17px; }
+.perf-monitor__fps--good { color: #9fe39a; }
+.perf-monitor__fps--fair { color: #f2c46d; }
+.perf-monitor__fps--poor { color: #f07a6a; }

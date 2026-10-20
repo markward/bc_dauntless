@@ -130,7 +130,7 @@ def test_render_payload_shape(panel):
         "normal_maps": True, "normal_flip_g": True, "normal_strength": 1.0,
         "bridge_pbr": True,
         "bridge_debug_view": "Off",
-        "profiler": False, "rock_catalogue": True, "dial_group": "nebula",
+        "profiler": False, "perf_monitor": False, "rock_catalogue": True, "dial_group": "nebula",
         "minor_rocks": True, "far_tier": True,
         "rock_specks": True, "rock_puffs": True,
         "planet_geosphere": True,
