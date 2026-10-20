@@ -43,3 +43,10 @@ def test_steps_destroy_controller_then_port_then_starboard(monkeypatch):
     assert order[:3] == [[0.0, 1.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]]
     assert killed == [ship]                  # the last step kills the wreck
     dp.DestroyNextImpulseStep(None)          # past the last step: no-op
+
+
+def test_death_delay_comes_from_the_environment(monkeypatch):
+    monkeypatch.setenv("DAUNTLESS_DAMAGE_PREVIEW_DEATH_S", "30")
+    assert dp._death_delay_s() == 30.0
+    monkeypatch.setenv("DAUNTLESS_DAMAGE_PREVIEW_DEATH_S", "junk")
+    assert dp._death_delay_s() == 4.0

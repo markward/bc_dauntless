@@ -26,3 +26,14 @@ def test_step_pushes_and_clamps(monkeypatch):
     assert plating_dials.current()["enabled"] == 0.0
     assert len(pushed) == 3
     plating_dials.reset()
+
+
+def test_env_starts_the_layer_off_for_perf_ab(monkeypatch):
+    monkeypatch.setattr(plating_dials, "push", lambda: None)
+    import engine.dev_dial_groups as groups
+    monkeypatch.setattr(groups, "register_group", lambda *a, **k: None)
+    plating_dials.reset()
+    monkeypatch.setenv("DAUNTLESS_PLATING", "0")
+    plating_dials.register()
+    assert plating_dials.current()["enabled"] == 0.0
+    plating_dials.reset()

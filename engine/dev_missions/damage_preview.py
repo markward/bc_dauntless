@@ -31,11 +31,22 @@ _DEATH = "<death>"
 # SPIKE (damage redesign): the impulse system dies in stages -- controller,
 # then port, then starboard engine. Delays are seconds after the PREVIOUS
 # step (TGSequence AppendAction semantics).
+def _death_delay_s() -> float:
+    """DAUNTLESS_DAMAGE_PREVIEW_DEATH_S: seconds from the last impulse blast
+    to the kill (default 4). Perf captures lengthen it for a steady
+    damaged-but-alive window before the cascade."""
+    import os
+    try:
+        return max(0.0, float(os.environ.get("DAUNTLESS_DAMAGE_PREVIEW_DEATH_S", "4")))
+    except ValueError:
+        return 4.0
+
+
 _IMPULSE_STEPS = (
     (3.0, "Impulse Engines"),
     (1.5, "Port Impulse"),
     (1.5, "Star Impulse"),
-    (4.0, _DEATH),           # then the ship dies: BC's death cascade
+    (None, _DEATH),          # then the ship dies (_death_delay_s): BC's death cascade
 )
 _step_index = [0]
 
@@ -122,6 +133,8 @@ def Initialize(pMission):
     # first internal-explosion scenario (see _IMPULSE_STEPS).
     pSeq = App.TGSequence_Create()
     for delay, _name in _IMPULSE_STEPS:
+        if delay is None:
+            delay = _death_delay_s()
         pSeq.AppendAction(App.TGScriptAction_Create(__name__, "DestroyNextImpulseStep"), delay)
     pSeq.Play()
     _step_index[0] = 0

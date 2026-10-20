@@ -77,8 +77,9 @@ def push() -> None:
     try:
         from engine import renderer
         renderer.set_plating_params(params())
-    except Exception:
-        pass
+    except Exception as _e:
+        import engine.dev_mode as dev_mode
+        dev_mode.log_swallowed("plating params push", _e)
 
 
 def _step(name: str, direction: int) -> None:
@@ -91,6 +92,11 @@ def _step(name: str, direction: int) -> None:
 
 
 def register() -> None:
+    """Dev boot. DAUNTLESS_PLATING=0 starts with the layer off (perf A/B:
+    with DAUNTLESS_HULL_CARVING=1 it is the pre-spike damage look)."""
+    import os
     from engine import dev_dial_groups
+    if os.environ.get("DAUNTLESS_PLATING", "1").strip() == "0":
+        _dials["enabled"] = 0.0
     dev_dial_groups.register_group("plating", DIAL_ORDER, current, _step)
     push()
