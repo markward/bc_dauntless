@@ -1,6 +1,6 @@
 # Target zoom that fits the target — design
 
-**Date:** 2026-10-20 · **Branch:** `fix/target-zoom-fit` (worktree `.claude/worktrees/target-zoom-fit`) · **Status:** design, approved in conversation, not built
+**Date:** 2026-10-20 · **Branch:** `fix/target-zoom-fit` (worktree `.claude/worktrees/target-zoom-fit`) · **Status:** built on fix/target-zoom-fit, not live-verified
 
 ## 1. Intent
 
