@@ -7500,7 +7500,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
              float radius, float intensity,
              std::uint32_t weapon_class, float time,
              std::tuple<float, float, float> world_tangent, float dent) {
-              if (weapon_class > 2u) return;  // unknown weapon class — drop silently
+              if (weapon_class > 3u) return;  // unknown weapon class — drop silently
               auto* inst = g_world.get(id);
               if (inst == nullptr) return;  // stale id — drop silently
               const glm::vec3 pw(std::get<0>(world_point),

@@ -94,7 +94,9 @@ void DamageDecalRing::add(const glm::vec3& point_body, const glm::vec3& normal_b
     };
     target->tangent_body = tangent;
     target->dent = clamped_dent;
-    target->wear = (weapon_class == WeaponClass::Scorch) ? clamped_in : 0.0f;
+    target->wear = (weapon_class == WeaponClass::Scorch) ? clamped_in
+                 : (weapon_class == WeaponClass::Internal) ? std::max(dent, 0.0f)
+                 : 0.0f;
 }
 
 void DamageDecalRing::tick(float now) {

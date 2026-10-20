@@ -581,7 +581,7 @@ void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_
     vec3 dpdx = dFdx(p_body);
     vec3 dpdy = dFdy(p_body);
     for (int i = 0; i < u_decal_count; ++i) {
-        if (u_decal_c[i].y < 1.5) continue;          // Scuff only (class 2)
+        if (abs(u_decal_c[i].y - 2.0) > 0.5) continue;   // Scuff only (class 2)
         vec3  point  = u_decal_a[i].xyz;
         float inten  = u_decal_a[i].w;
         vec3  dn     = u_decal_b[i].xyz;
@@ -800,8 +800,25 @@ uniform vec4 u_part_b[MAX_PARTS];        // axis0.xyz, half0
 uniform vec4 u_part_c[MAX_PARTS];        // axis1.xyz, half1
 uniform vec4 u_part_d[MAX_PARTS];        // half2, _, _, _
 
-float plating_wear(vec3 q, vec3 nb) {
+// Internal blasts (class 3, a destroyed subsystem): true 3D distance from
+// the blast centre, no facing -- every hull surface inside the sphere fails,
+// top and bottom alike. radius = the blast sphere; wear = strength at centre.
+float plating_internal(vec3 q) {
     float w = 0.0;
+    for (int i = 0; i < u_decal_count; ++i) {
+        if (u_decal_c[i].y < 2.5) continue;
+        float R = u_decal_b[i].w;
+        if (R <= 0.0) continue;
+        float r = length(q - u_decal_a[i].xyz) / R;
+        if (r >= 1.0) continue;
+        float f = 1.0 - r * r;
+        w += u_decal_c[i].w * f * f;
+    }
+    return w;
+}
+
+float plating_wear(vec3 q, vec3 nb) {
+    float w = plating_internal(q);
     float reach = u_plating[7];
     for (int i = 0; i < u_decal_count; ++i) {
         float cls = u_decal_c[i].y;
@@ -925,6 +942,15 @@ vec3 plating_wear_grad(vec3 q, vec3 nb) {
     float reach = u_plating[7];
     for (int i = 0; i < u_decal_count; ++i) {
         float cls = u_decal_c[i].y;
+        if (cls > 2.5) {                                    // internal blast
+            float Ri = u_decal_b[i].w;
+            if (Ri <= 0.0) continue;
+            vec3 di = q - u_decal_a[i].xyz;
+            float ri = length(di) / Ri;
+            if (ri >= 1.0) continue;
+            g += -4.0 * u_decal_c[i].w * (1.0 - ri * ri) * di / (Ri * Ri);
+            continue;
+        }
         if (cls < 0.5 || cls > 1.5) continue;
         float R = u_decal_b[i].w * reach;
         if (R <= 0.0) continue;
@@ -983,6 +1009,10 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
     mat3 to_ws = transpose(mat3(u_ship_world_inv));   // body -> world, normals
 
     float e0 = plating_tear(p_body, wear_c, n_body);
+    // Share of this spot's wear that came from INSIDE (a subsystem blast):
+    // 1 = blown out, 0 = shot in. Flips the peel and the buckle outward.
+    float w_int = plating_internal(p_body);
+    float io = clamp(w_int / max(plating_wear(p_body, n_body), 1e-3), 0.0, 1.0);
     // Shreds: thin slivers of plate still hanging just inside the torn edge.
     float shred_f = 1.0 / max(u_plating[1] * 0.18, 0.05);
     float shred_n = vnoise(p_body.xy * shred_f + p_body.z * 0.53 * shred_f + 9.4);
@@ -995,7 +1025,10 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
         if (pk > 0.0) {
             vec3 g = plating_wear_grad(p_body, n_body);
             g -= n_body * dot(g, n_body);
-            vec3 tw = dot(g, g) > 1e-10 ? to_ws * normalize(g) : vec3(0.0);
+            // Shot in: the lip curls toward the hole. Blown out: away from it,
+            // lifted off the hull.
+            vec3 gdir = dot(g, g) > 1e-10 ? normalize(g) : vec3(0.0);
+            vec3 tw = to_ws * mix(gdir, -gdir, io);
             float curl = pk * pk * (shred ? 1.6 : 1.1);
             if (dot(tw, tw) > 1e-8)
                 n_shade = normalize(n_shade + normalize(tw) * curl);
@@ -1012,6 +1045,10 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
             vec3 tilt = vec3(dhash(c0 * 0.017 + 3.1), dhash(c0 * 0.019 + 9.7),
                              dhash(c0 * 0.023 + 4.4)) - 0.5;
             tilt -= n_body * dot(tilt, n_body);
+            // Blown out: panels bulge away from the blast instead of at random.
+            vec3 gb = plating_wear_grad(p_body, n_body);
+            gb -= n_body * dot(gb, n_body);
+            if (dot(gb, gb) > 1e-10) tilt = mix(tilt, -normalize(gb) * 0.8, io);
             vec3 tw = to_ws * tilt;
             if (dot(tw, tw) > 1e-8)
                 n_shade = normalize(n_shade + normalize(tw) * 0.6 * k);
@@ -1019,6 +1056,9 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
             if (u_plating[12] > 0.5 && u_plating[12] < 1.5)
                 base_rgb = mix(base_rgb, vec3(1.0, 0.85, 0.0), 0.6 * k);
         }
+        // Blast soot: scorch decals never cover an internal blast, so its
+        // ring is drawn here.
+        base_rgb *= 1.0 - 0.6 * u_plating[13] * smoothstep(0.03, strip, w_int);
         return;
     }
 
@@ -1059,7 +1099,7 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
     // 2. Member tops: flush with the plate's underside, sagging inward with
     //    damage; segments snap out where a noise along the member falls under
     //    the damage.
-    float sag = dmg * 0.5 * Dr * vnoise(p_body.xy * 0.09 + p_body.z * 0.05);
+    float sag = dmg * 0.5 * Dr * vnoise(p_body.xy * 0.09 + p_body.z * 0.05) * (1.0 - io);
     vec3  qt = plating_warp(p_body + ray * (Dp + sag), n_body, bend);
     vec2 ct; vec3 ctrt; float t1, t2;
     plating_sample(part, qt, n_body, ct, ctrt, t1, t2);

@@ -719,6 +719,14 @@ class ShipSubsystem(TGEventHandlerObject):
             self._threshold_state = new_state
             if new_state == _THRESHOLD_DESTROYED:
                 self._fire_threshold_event("ET_SUBSYSTEM_DESTROYED")
+                # SPIKE (damage redesign): the blast, drawn only where it
+                # reaches the hull (engine/appc/internal_blast.py).
+                try:
+                    from engine.appc import internal_blast
+                    internal_blast.queue(self)
+                except Exception as _e:
+                    import engine.dev_mode as _dm
+                    _dm.log_swallowed("internal blast queue", _e)
             elif new_state == _THRESHOLD_DISABLED and old_state == _THRESHOLD_OPERATIONAL:
                 self._fire_threshold_event("ET_SUBSYSTEM_DISABLED")
             elif new_state == _THRESHOLD_OPERATIONAL:

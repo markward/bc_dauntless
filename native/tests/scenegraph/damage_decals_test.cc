@@ -320,3 +320,17 @@ TEST(DamageDecalRing, ScuffCarriesNoWear) {
     ring.add({0, 0, 0}, {0, 0, 1}, 1.0f, 1.0f, WeaponClass::Scuff, 1.0f);
     EXPECT_FLOAT_EQ(first_active(ring)->wear, 0.0f);
 }
+
+TEST(DamageDecalRing, InternalBlastCarriesItsStrengthAsWearAndNeverMerges) {
+    DamageDecalRing ring;
+    ring.add({0, 0, 0}, {0, 0, 1}, 1.0f, 1.0f, WeaponClass::Internal, 0.0f,
+             glm::vec3(0.0f), 6.0f);
+    ring.add({0, 0, 0}, {0, 0, 1}, 1.0f, 1.0f, WeaponClass::Internal, 1.0f,
+             glm::vec3(0.0f), 6.0f);
+    EXPECT_EQ(ring.count(), 2u);
+    for (const auto& d : ring.slots()) {
+        if (!d.active) continue;
+        EXPECT_FLOAT_EQ(d.wear, 6.0f);
+        EXPECT_FLOAT_EQ(d.dent, 0.0f);
+    }
+}

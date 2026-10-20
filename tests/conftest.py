@@ -1323,6 +1323,7 @@ def _reset_leakable_engine_globals():
         ("engine.appc.ship_death", "_active"),
         ("engine.appc.object_lifetime", "_timed"),
         ("engine.appc.visible_damage", "_pending"),
+        ("engine.appc.internal_blast", "_pending"),
         ("engine.audio.attached_sources", "_attached"),
         ("engine.audio.hum_allocator", "_humming"),
         # Detached hull chunks + the per-ship breakup throttle: a chunk left

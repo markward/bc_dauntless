@@ -16,6 +16,11 @@ enum class WeaponClass : std::uint32_t {
     HeatGlow = 0,
     Scorch   = 1,
     Scuff    = 2,
+    /// SPIKE (damage redesign): a destroyed subsystem's blast, centred INSIDE
+    /// the hull. radius = blast radius; `wear` = blast strength at the centre
+    /// (passed in the `dent` argument). No facing: the plating shader fails
+    /// every hull surface within the sphere, inside-out. Never merges.
+    Internal = 3,
 };
 
 /// One object-space impact record, stored in the ship's body frame so it

@@ -1095,6 +1095,9 @@ def _advance_combat(ships, dt: float, ship_instances=None,
         from engine.appc import visible_damage
         with frame_profiler.scope("dmg.visible"):
             visible_damage.advance(dt, ship_instances=ship_instances)
+        from engine.appc import internal_blast            # SPIKE (damage redesign)
+        with frame_profiler.scope("dmg.internal_blast"):
+            internal_blast.advance(dt, ship_instances=ship_instances)
         camera_shake.update(dt)
 
     # BC WeaponSystem tick: one update_weapons per armed system per frame.
@@ -7583,6 +7586,8 @@ class HostController:
         core_breach_carve.reset()
         from engine.appc import visible_damage
         visible_damage.reset()
+        from engine.appc import internal_blast            # SPIKE (damage redesign)
+        internal_blast.reset()
         from engine.appc import registry_texture
         registry_texture.reset()
         from engine.appc import shockwaves
