@@ -258,7 +258,7 @@ turns off the periodic report, so it needs its own run (M-5).
 | C-097 | 2026-10-20 19:53 | DP, Layered, **GPU focus** `space.opaque,space.carve_stencil,space.breach`, default distance (6 GU), headless | `f996895ce` + the distance knob | **Debug** | 3840x2160 | 20 windows | `dmg2a-before-layered-default-20261020-1953`. GPU-timed: attribution only (M-6). Command: the DP command with `DAUNTLESS_PROFILE_GPU_FOCUS=...` and `DAUNTLESS_DEV_SCREENSHOT=<png>`. |
 | C-098 | 2026-10-20 19:53 | as C-097, **Classic** (`DAUNTLESS_HULL_CARVING=1 DAUNTLESS_PLATING=0`) | same | **Debug** | 3840x2160 | 18 windows | `dmg2a-before-classic-default-20261020-1953`. |
 | C-099 | 2026-10-20 19:53 | as C-097, **close-up** (`DAUNTLESS_DAMAGE_PREVIEW_DISTANCE_GU=1.5`) | same | **Debug** | 3840x2160 | 18 windows | `dmg2a-before-layered-close-20261020-1953`. Screenshot beside the log: the Akira is about 22% of the frame width. |
-| C-100 | 2026-10-20 19:53 | as C-098, close-up | same | **Debug** | 3840x2160 | 11 windows | `dmg2a-before-classic-close-20261020-1953`. |
+| C-100 | 2026-10-20 19:53 | as C-098, close-up | same | **Debug** | 3840x2160 | 16 windows | `dmg2a-before-classic-close-20261020-1953`. |
 
 Logs for C-003 to C-008: `~/Documents/dauntless-perf/cef-*.log`, `cef2-*` …
 `cef6-*`.
