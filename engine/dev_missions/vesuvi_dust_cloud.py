@@ -14,7 +14,8 @@ SETTLE_S after Initialize the run prints a `settled` line (the start of the
 measured window) and, with DAUNTLESS_DEV_VIEW=exterior, switches to the
 exterior view. With DAUNTLESS_DEV_AUTOQUIT=1 it then quits MEASURE_S later.
 Without it the mission plays on, so it is safe to load from the dev mission
-picker.
+picker. DAUNTLESS_DEV_SCREENSHOT=<path.png> writes one frame SCREENSHOT_AFTER_S
+into the measured window, so before/after builds picture the same moment.
 
     DAUNTLESS_MISSION=engine.dev_missions.vesuvi_dust_cloud DAUNTLESS_DEV_AUTOQUIT=1 \\
         DAUNTLESS_DEV_VIEW=exterior \\
@@ -23,6 +24,8 @@ picker.
 Each step prints a `[vesuvi_dust_cloud]` line, which marks it in a profiler
 log. See docs/engine/perf-register.md (B3).
 """
+import os
+
 import App
 import MissionLib
 
@@ -34,6 +37,7 @@ PLAYER_SHIP = "Galaxy"
 # tick) and the first nebula frames to be up before the measured window.
 SETTLE_S = 5.0
 MEASURE_S = 60.0
+SCREENSHOT_AFTER_S = 5.0
 
 
 def _log(msg: str) -> None:
@@ -75,6 +79,11 @@ def Initialize(pMission):
             "on" if autoquit_enabled() else "off"))
 
 
+def screenshot_path(environ=None):
+    environ = os.environ if environ is None else environ
+    return environ.get(dev_scripted_run.SCREENSHOT_ENV, "").strip() or None
+
+
 def SettledAction(pAction):
     if wants_exterior_view():
         App.TopWindow_GetTopWindow().ForceTacticalVisible()
@@ -83,4 +92,17 @@ def SettledAction(pAction):
     if autoquit_enabled():
         dev_scripted_run.request_quit(MEASURE_S,
                                       "measured %.0f s" % MEASURE_S)
+    if screenshot_path() is not None:
+        pSeq = App.TGSequence_Create()
+        pSeq.AppendAction(App.TGScriptAction_Create(__name__, "ScreenshotAction"),
+                          SCREENSHOT_AFTER_S)
+        pSeq.Play()
+    return 0
+
+
+def ScreenshotAction(pAction):
+    import engine.renderer as r
+    path = screenshot_path()
+    r.request_frame_png(path)
+    _log("screenshot %s, %.0f s after settled" % (path, SCREENSHOT_AFTER_S))
     return 0

@@ -108,6 +108,9 @@ GPU-bound, so frame time is the GPU cost (SIG-083). At 1280x720 the frame is
 CPU-bound (SIG-078) and the GPU-focus spans are too noisy to rank changes
 (SIG-082).
 
+`DAUNTLESS_DEV_SCREENSHOT=<path.png>` writes one frame 5 s after `settled`, so
+before/after builds picture the same moment.
+
 The SDK `Initialize` of Vesuvi4 runs as in any mission, and `system_loader`
 brings up the sibling Vesuvi regions on the first tick, as in real play.
 

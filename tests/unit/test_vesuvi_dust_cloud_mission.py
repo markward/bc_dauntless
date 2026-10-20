@@ -94,3 +94,23 @@ def test_settling_never_quits_without_autoquit(monkeypatch):
     monkeypatch.delenv("DAUNTLESS_DEV_VIEW", raising=False)
     vdc.SettledAction(None)
     assert dsr.pending_quit_s() is None
+
+
+def test_a_screenshot_is_opt_in(monkeypatch):
+    monkeypatch.delenv("DAUNTLESS_DEV_SCREENSHOT", raising=False)
+    assert vdc.screenshot_path() is None
+    monkeypatch.setenv("DAUNTLESS_DEV_SCREENSHOT", "/tmp/b3.png")
+    assert vdc.screenshot_path() == "/tmp/b3.png"
+
+
+def test_the_screenshot_action_writes_the_next_frame(monkeypatch):
+    """Before/after stills of one scripted moment: SCREENSHOT_AFTER_S into
+    the measured window, through the same renderer hook as B1's
+    DAUNTLESS_DEV_SCREENSHOT."""
+    import engine.renderer as r
+    asked = []
+    monkeypatch.setattr(r, "request_frame_png", asked.append)
+    monkeypatch.setenv("DAUNTLESS_DEV_SCREENSHOT", "/tmp/b3.png")
+    assert vdc.SCREENSHOT_AFTER_S == 5.0
+    vdc.ScreenshotAction(None)
+    assert asked == ["/tmp/b3.png"]
