@@ -53,7 +53,21 @@ voxel::VoxelVolume solid_box_fill() {
     return v;
 }
 
-bool is_clear(const std::uint8_t* q) { return q[0] + q[1] + q[2] <= 6; }
+// The framebuffer is cleared to this, deliberately NOT black: the interior's
+// out-of-steps shade is near-black (~1,1,1) and must never pass for a discard.
+constexpr float kClearR = 0.8f, kClearG = 0.2f, kClearB = 0.8f;
+
+bool is_clear(const std::uint8_t* q) {
+    return std::abs(q[0] - 204) <= 1 && std::abs(q[1] - 51) <= 1 &&
+           std::abs(q[2] - 204) <= 1;
+}
+
+int count_not_clear(const std::vector<std::uint8_t>& px) {
+    int n = 0;
+    for (std::size_t i = 0; i + 3 < px.size(); i += 4)
+        if (!is_clear(&px[i])) ++n;
+    return n;
+}
 
 class HullInteriorTest : public PlatingGLFixture {
 protected:
@@ -93,16 +107,17 @@ protected:
     // submit_plating_interior (or submit_opaque alone when `stock`), the
     // interior's fill coming from `fills`.
     Shot render(const std::vector<Placed>& placed, renderer::CarveFieldCache* fills,
-                bool stock = false) {
+                bool stock = false, const assets::Model* use_model = nullptr) {
+        const assets::Model* drawn = use_model != nullptr ? use_model : box.get();
         scenegraph::World world;
         for (const Placed& pl : placed) {
             auto iid = world.create_instance(
-                reinterpret_cast<scenegraph::ModelHandle>(box.get()));
+                reinterpret_cast<scenegraph::ModelHandle>(drawn));
             world.set_world_transform(iid, pl.world);
             world.get(iid)->decals = pl.ring;
         }
         glViewport(0, 0, kSize, kSize);
-        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClearColor(kClearR, kClearG, kClearB, 1.0f);
         glStencilMask(0xFF);
         glClearStencil(0);
         glEnable(GL_CULL_FACE);
@@ -132,8 +147,8 @@ protected:
     }
 
     Shot render_one(const scenegraph::DamageDecalRing& ring, renderer::CarveFieldCache* fills,
-                    bool stock = false) {
-        return render({Placed{glm::mat4(1.0f), ring}}, fills, stock);
+                    bool stock = false, const assets::Model* use_model = nullptr) {
+        return render({Placed{glm::mat4(1.0f), ring}}, fills, stock, use_model);
     }
 
     // The near face's centre, where the camera axis meets the box.
@@ -312,11 +327,40 @@ TEST_F(HullInteriorTest, RearHullInteriorNeverPaintsThroughFrontHole) {
         << "the rear hull shows through the front hole";
 }
 
+// I1 of the final review: an INTACT part of the same hull, seen through a
+// blown-through hole, must stay what the opaque pass drew. Here a
+// front-facing quad sits inside the box, behind the cut face and inside the
+// record's reach; with the hole blown through, the interior draw must not
+// repaint the quad as rooms.
+TEST_F(HullInteriorTest, IntactPartOfSameHullBehindBlownHoleIsNotRepainted) {
+    for (const float quad_z : {-100.0f}) {
+        auto two = build_box(kBoxHalf);
+        two->source = kBoxSource;
+        add_quad(*two, kBoxHalf, quad_z, /*facing_camera=*/true);
+        const auto ring = internal_ring(glm::vec3(0.0f), 60.0f, 10.0f);
+        dauntless_plating::g_params[24] = 0.01f;
+        dauntless_plating::g_params[25] = 1.0f;
+
+        const auto on = render_one(ring, filled.get(), false, two.get());
+        dauntless_plating::g_params[25] = 0.0f;
+        const auto off = render_one(ring, filled.get(), false, two.get());
+        std::fprintf(stderr, "[HullInterior] quad z=%.0f:\n", quad_z);
+        report("  interior on", on, centre());
+        report("  interior off", off, centre());
+        EXPECT_EQ(on.interiors, 1);
+        EXPECT_FALSE(is_clear(pixel(off.px, centre().x, centre().y)))
+            << "the probe's quad must be visible through the hole (z=" << quad_z << ")";
+        EXPECT_EQ(rgb_diff(pixel(on.px, centre().x, centre().y),
+                           pixel(off.px, centre().x, centre().y)), 0)
+            << "the intact quad behind the hole was painted as interior (z=" << quad_z << ")";
+    }
+}
+
 TEST_F(HullInteriorTest, UndamagedSceneDrawsNoInterior) {
     const scenegraph::DamageDecalRing none;
     const auto stock = render_one(none, filled.get(), /*stock=*/true);
     const auto s = render_one(none, filled.get());
-    ASSERT_GT(count_non_black(stock.px), 1000) << "the box does not render";
+    ASSERT_GT(count_not_clear(stock.px), 1000) << "the box does not render";
     EXPECT_EQ(s.marks, 0);
     EXPECT_EQ(s.interiors, 0);
     EXPECT_EQ(s.px, stock.px);

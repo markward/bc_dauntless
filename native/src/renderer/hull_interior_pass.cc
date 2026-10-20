@@ -72,7 +72,16 @@ void HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_x
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
     glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
+    // LESS, not LEQUAL: a cut face wrote no depth in the opaque pass (it was
+    // discarded there), so it is strictly nearer than whatever is behind it.
+    // An INTACT front face of this same mesh (a part seen through a blown-
+    // through hole) wrote exactly this depth and must fail the test, or the
+    // stencil EQUAL above would let it be repainted as rooms. The offset
+    // pushes this draw a hair back so vertex-stage rounding between the
+    // opaque and breach programs cannot make the intact face win by an ulp.
+    glDepthFunc(GL_LESS);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(1.0f, 1.0f);
     glDepthMask(GL_TRUE);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     glDisable(GL_BLEND);
@@ -83,6 +92,7 @@ void HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_x
     // Back to stock. Stencil mask 0xFF, not 0: glClear(GL_STENCIL_BUFFER_BIT)
     // is masked by it.
     glDisable(GL_STENCIL_TEST);
+    glDisable(GL_POLYGON_OFFSET_FILL);
     glStencilMask(0xFF);
     glDepthFunc(GL_LESS);
     glBindTexture(GL_TEXTURE_3D, 0);
