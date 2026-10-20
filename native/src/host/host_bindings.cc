@@ -2542,7 +2542,7 @@ namespace dauntless_normal_map {
 }
 // SPIKE (damage redesign): hull-plating layer params. Defined in frame.cc.
 namespace dauntless_plating {
-    extern float g_params[16];
+    extern float g_params[24];
 }
 
 // Hull-breach renderer pass — always-on gate. Defined in frame.cc.
@@ -6382,7 +6382,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("size_gu_per_radius"), py::arg("min_px"), py::arg("intensity"));
     m.def("set_plating_params",
           [](const std::vector<float>& params) {
-              const std::size_t n = std::min<std::size_t>(params.size(), 16);
+              const std::size_t n = std::min<std::size_t>(params.size(), 24);
               for (std::size_t i = 0; i < n; ++i)
                   dauntless_plating::g_params[i] = params[i];
           },

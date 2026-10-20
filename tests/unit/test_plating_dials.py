@@ -12,7 +12,7 @@ def test_python_defaults_match_the_native_defaults():
     block = src.split("namespace dauntless_plating {", 1)[1].split("};", 1)[0]
     native = [float(v) for v in re.findall(r"(-?\d+\.\d+)f", block)]
     assert native[:len(plating_dials.DIAL_ORDER)] == plating_dials.params()
-    assert len(plating_dials.DIAL_ORDER) <= 16
+    assert len(plating_dials.DIAL_ORDER) <= 24
 
 
 def test_step_pushes_and_clamps(monkeypatch):

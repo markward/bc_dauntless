@@ -197,7 +197,7 @@ namespace dauntless_decals {
 // apply_plating. [0] = enabled (0/1).
 #include "renderer/structure_parts_cache.h"
 namespace dauntless_plating {
-    float g_params[16] = {
+    float g_params[24] = {
         1.0f,   // 0 enabled
         6.0f,   // 1 panel size (model units, ~1.75 m each)
         8.0f,   // 2 primary member spacing (spokes / hoops / frames)
@@ -213,7 +213,10 @@ namespace dauntless_plating {
         0.0f,   // 12 debug (1 = stripped tint, 2 = colour by structure part)
         0.3f,   // 13 soot (x scorch deposit while plating is on)
         1.0f,   // 14 metal brightness (x rib / edge albedo)
-        0.0f,
+        1.5f,   // 15 member bend (model units of distortion at full damage)
+        4.5f,   // 16 breach wear (inner pressure hull tears open)
+        1.0f,   // 17 inner hull brightness
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
     };
 }
 
@@ -631,7 +634,7 @@ void draw_model(const assets::Model& model,
     // Parts come from a background detection per hull source; until it lands
     // u_part_count is 0 and the shader uses a body-axis box chart.
     {
-        prog.set_float_array("u_plating", dauntless_plating::g_params, 16);
+        prog.set_float_array("u_plating", dauntless_plating::g_params, 24);
         const bool part_debug = dauntless_plating::g_params[12] > 1.5f;
         const bool want = dauntless_plating::g_params[0] > 0.5f
                           && (decals_present || part_debug);

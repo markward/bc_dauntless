@@ -15,7 +15,7 @@ ribs (~1 m) are a pixel at combat range, so the defaults are exaggerated
 for readability. Tuned live with the shared
 / L O keys once Developer Options -> "Dial keys" selects "plating"
 (engine/dev_dial_groups.py). Not persisted. DEFAULTS MUST match
-frame.cc's dauntless_plating::g_params (slot order = DIAL_ORDER).
+frame.cc's dauntless_plating::g_params[24] (slot order = DIAL_ORDER).
 """
 DEFAULTS: dict = {
     "enabled": 1.0,
@@ -33,6 +33,9 @@ DEFAULTS: dict = {
     "debug": 0.0,            # 1 = stripped magenta / buckled yellow / edge cyan, 2 = colour by part
     "soot": 0.3,             # x the scorch deposit while plating is on
     "metal_brightness": 1.0,
+    "member_bend": 1.5,      # model units of member distortion at full damage
+    "breach_wear": 4.5,      # wear at which the inner pressure hull tears open
+    "inner_brightness": 1.0,
 }
 DIAL_ORDER: tuple = tuple(DEFAULTS)
 _STEP = {
@@ -41,6 +44,7 @@ _STEP = {
     "rib_depth": 0.1, "reach": 0.05, "strip_wear": 0.1,
     "rib_break_wear": 0.25, "buckle_band": 0.05, "edge_noise": 0.1,
     "debug": 1.0, "soot": 0.1, "metal_brightness": 0.1,
+    "member_bend": 0.25, "breach_wear": 0.25, "inner_brightness": 0.1,
 }
 _MIN = {k: 0.0 for k in DEFAULTS}
 _MIN.update({"panel_size": 0.25, "primary_spacing": 0.25,

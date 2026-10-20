@@ -133,10 +133,11 @@ uniform float u_decal_time;                  // game-time seconds (ember clock)
 uniform vec4  u_decal_d[MAX_DECALS];         // tangent_body.xyz (unit, ⟂ normal; Scuff), _
 // SPIKE (damage redesign): hull-plating layer. Slot meanings: apply_plating
 // below / engine/appc/plating_dials.py. Uploaded with the decal ring.
-uniform float u_plating[16];
+uniform float u_plating[24];
 // Set by apply_plating where a panel is stripped (0..1); read by the scorch
 // deposit (soot must not bury the ribs) and the glow kill (windows die).
 float g_plating_exposed = 0.0;
+vec3  g_plating_emissive = vec3(0.0);   // inner-hull heat / breach rim (SPIKE)
 uniform sampler2D u_scuff_map;               // unit 7: tiling crumpled-metal tangent-space
                                              // normal map (renderer/scuff_texture.h)
 uniform int   u_scuff_map_ok;                // 0 = not loaded: scuffs draw albedo only
@@ -785,10 +786,11 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
 // u_plating: 0 enabled, 1 panel size, 2 primary spacing, 3 secondary
 // spacing, 4 member width, 5 plate depth, 6 rib depth, 7 reach (x decal
 // radius), 8 strip wear, 9 rib-break wear, 10 buckle band, 11 edge noise,
-// 12 debug (1 stripped tint, 2 colour by part), 13 soot, 14 metal brightness.
+// 12 debug (1 stripped tint, 2 colour by part), 13 soot, 14 metal brightness,
+// 15 member bend, 16 breach wear, 17 inner hull brightness.
 const vec3 PLATE_EDGE   = vec3(0.55, 0.55, 0.56);   // cut plate thickness
 const vec3 RIB_METAL    = vec3(0.40, 0.38, 0.36);   // unpainted structure
-const vec3 INNER_SKIN   = vec3(0.11, 0.105, 0.10);
+const vec3 INNER_HULL   = vec3(0.24, 0.235, 0.23);  // pressure hull under the ribs
 const int  MAX_PARTS    = 12;
 const float TAU         = 6.2831853;
 uniform int  u_part_count;               // 0 = parts not detected (yet)
@@ -920,6 +922,19 @@ float plating_cell_wear(vec2 cell, vec3 centre, vec3 nb) {
     return plating_wear(centre, nb) + (dhash(cell * 0.013 + 17.0) - 0.5) * u_plating[11] * 0.5;
 }
 
+// Bend the skeleton: low-frequency displacement, mostly along the surface,
+// a little in and out. amp = model units at full strength.
+vec3 plating_warp(vec3 q, vec3 nb, float amp) {
+    if (amp <= 0.0) return q;
+    float f = 1.0 / max(u_plating[2] * 1.5, 1.0);
+    vec3 w = vec3(vnoise(q.xy * f + q.z * 0.37 * f + 3.1),
+                  vnoise(q.yz * f + q.x * 0.29 * f + 7.7),
+                  vnoise(q.zx * f + q.y * 0.23 * f + 11.3)) - 0.5;
+    float inout_ = dot(w, nb);
+    w -= nb * inout_;
+    return q + w * 2.0 * amp + nb * (inout_ * amp);
+}
+
 void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
                    inout vec3 n_shade, inout vec3 base_rgb) {
     if (u_plating[0] < 0.5) return;
@@ -962,10 +977,15 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
     vec3  back_b = dot(tang, tang) > 1e-8 ? normalize(tang) : n_body;   // faces the viewer
     float hw1 = 0.5 * u_plating[4], hw2 = 0.3 * u_plating[4];
 
-    // Members break where the LOCAL wear passes rib_break (noisy edge).
+    // Damage of the exposed structure: 0 just stripped, 1 at rib-break wear.
     float w_here = plating_wear(p_body, n_body);
+    float dmg = smoothstep(strip, max(u_plating[9], strip + 0.01), w_here);
+    // Members fail where the LOCAL wear passes rib_break (noisy edge).
     float rib_ok = 1.0 - smoothstep(-0.3, 0.3,
         w_here + (vnoise(ctr0.xy * 0.37 + ctr0.z * 0.21) - 0.5) * u_plating[11] - u_plating[9]);
+    // Bent, twisted members: warp where the skeleton is sampled. Even freshly
+    // stripped structure is knocked about a little; full damage, bend dial.
+    float bend = u_plating[15] * (0.3 + 0.7 * dmg);
 
     // 1. The cut plate's own thickness: a neighbouring intact panel's wall.
     for (int j = 0; j < 4; ++j) {
@@ -981,31 +1001,72 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
         }
     }
 
-    // 2. Member tops, flush with the underside of the plate.
+    // 2. Member tops: flush with the plate's underside, sagging inward with
+    //    damage; segments snap out where a noise along the member falls under
+    //    the damage.
+    float sag = dmg * 0.5 * Dr * vnoise(p_body.xy * 0.09 + p_body.z * 0.05);
+    vec3  qt = plating_warp(p_body + ray * (Dp + sag), n_body, bend);
     vec2 ct; vec3 ctrt; float t1, t2;
-    plating_sample(part, p_body + ray * Dp, n_body, ct, ctrt, t1, t2);
+    plating_sample(part, qt, n_body, ct, ctrt, t1, t2);
+    float snapped = step(vnoise(qt.xy * 0.45 + qt.z * 0.31 + 5.0), 0.15 + 0.55 * dmg);
+    float alive = rib_ok * (1.0 - snapped);
     float top1 = 1.0 - smoothstep(hw1 - fw, hw1 + fw, t1);
     float top2 = 1.0 - smoothstep(hw2 - fw, hw2 + fw, t2);
-    float top = max(top1, top2) * rib_ok;
+    float top = max(top1, top2) * alive;
     // 3. Member sides: primaries run the full rib depth, secondaries half.
     float side = 0.0, prim = 0.0, t_side = Dp + Dr;
     for (int j = 0; j < 4; ++j) {
-        float t = Dp + (float(j) + 0.5) / 4.0 * Dr;
+        float t = Dp + sag + (float(j) + 0.5) / 4.0 * (Dr - sag);
+        vec3 q = plating_warp(p_body + ray * t, n_body, bend);
         vec2 c; vec3 ctr; float e1, e2;
-        plating_sample(part, p_body + ray * t, n_body, c, ctr, e1, e2);
+        plating_sample(part, q, n_body, c, ctr, e1, e2);
         bool p1 = e1 < hw1;
         bool p2 = e2 < hw2 && t < Dp + 0.5 * Dr;
-        if ((p1 || p2) && rib_ok > 0.5) { side = 1.0; prim = p1 ? 1.0 : 0.0; t_side = t; break; }
+        float sn = step(vnoise(q.xy * 0.45 + q.z * 0.31 + 5.0), 0.15 + 0.55 * dmg);
+        if ((p1 || p2) && rib_ok * (1.0 - sn) > 0.5) {
+            side = 1.0; prim = p1 ? 1.0 : 0.0; t_side = t; break;
+        }
     }
+
+    // 4. The inner pressure hull: dents, scorches and heats with wear, and
+    //    tears open only past breach_wear. Shaded darker beside the members.
+    float breach = u_plating[16];
+    vec3  qi = p_body + ray * (Dp + Dr);
+    vec2 ci; vec3 ctri; float i1, i2;
+    plating_sample(part, plating_warp(qi, n_body, bend), n_body, ci, ctri, i1, i2);
+    float ao = mix(0.45, 1.0, smoothstep(hw1, hw1 * 3.5, min(i1, i2 + 0.2 * hw1)));
+    float dent = smoothstep(u_plating[9] * 0.6, breach, w_here);
+    float grain = vnoise(qi.xy * 0.13 + qi.z * 0.09);
+    vec3  inner = INNER_HULL * u_plating[17] * (0.8 + 0.4 * grain) * mix(1.0, 0.35, dent) * ao;
+    vec3  dtilt = vec3(vnoise(qi.xy * 0.21 + 1.3), vnoise(qi.yz * 0.21 + 4.1),
+                       vnoise(qi.zx * 0.21 + 8.7)) - 0.5;
+    dtilt -= n_body * dot(dtilt, n_body);
+    vec3  n_inner = normalize(n_body + dtilt * 1.6 * dent);
+    float heat = smoothstep(breach - 0.8, breach, w_here) * (0.5 + 0.5 * grain);
+    bool  torn = w_here > breach + (grain - 0.5) * 0.4;
+    vec3  under_glow = vec3(0.0);
+    if (torn) {
+        inner = vec3(0.004);                               // open to the interior
+        n_inner = n_body;
+        float rim = 1.0 - smoothstep(breach, breach + 0.5, w_here);
+        under_glow = blackbody(0.55 + 0.3 * rim) * rim * 1.5;
+    } else {
+        under_glow = blackbody(0.35 + 0.35 * heat) * heat * 0.8;
+    }
+
     float depth01 = (t_side - Dp) / max(Dr, 1e-4);
-    vec3 skin = INNER_SKIN * (0.75 + 0.5 * vnoise(ctr0.xy * 0.11 + ctr0.z * 0.07));
-    vec3 metal = RIB_METAL * u_plating[14];
+    vec3 metal = RIB_METAL * u_plating[14] * mix(1.0, 0.5, dmg);       // scorched with damage
     vec3 rib_side = metal * mix(0.85, 1.0, prim) * mix(0.75, 0.35, depth01);
-    vec3 below = mix(skin, rib_side, side);
-    vec3 nb_below = mix(n_body, back_b, side);
-    vec3 rib_top = metal * mix(0.85, 1.0, top1) * mix(0.45, 1.0, rib_ok);
+    vec3 below = mix(inner, rib_side, side);
+    vec3 nb_below = side > 0.5 ? back_b : n_inner;
+    vec3 rtilt = vec3(vnoise(qt.xy * 0.3 + 2.2), vnoise(qt.yz * 0.3 + 6.6),
+                      vnoise(qt.zx * 0.3 + 9.9)) - 0.5;
+    rtilt -= n_body * dot(rtilt, n_body);
+    vec3 n_top = normalize(n_body + rtilt * 1.4 * (0.3 + dmg));       // twisted tops
+    vec3 rib_top = metal * mix(0.85, 1.0, top1);
     base_rgb = mix(below, rib_top, top);
-    n_shade = normalize(to_ws * normalize(mix(nb_below, n_body, top)));
+    n_shade = normalize(to_ws * normalize(mix(nb_below, n_top, top)));
+    g_plating_emissive += under_glow * (1.0 - top) * (1.0 - side);
     if (u_plating[12] > 0.5 && u_plating[12] < 1.5) base_rgb = mix(base_rgb, vec3(1.0, 0.0, 1.0), 0.5);
 }
 
@@ -2263,7 +2324,7 @@ void main() {
     float emit_lum  = dot(glow.rgb, vec3(0.2126, 0.7152, 0.0722)) * glow.a * glow_alive;
     float refl_mask = 1.0 - clamp(emit_lum, 0.0, 1.0);
     vec3 final_color = lit * refl_mask + self_illum + spec * refl_mask
-                     + rim + decal_emissive;
+                     + rim + decal_emissive + g_plating_emissive;
 
     // Cause code for the non-finite probe (see u_nan_debug above). Off => the
     // alpha written is the literal 1.0 this shader has always written.
