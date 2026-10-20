@@ -153,6 +153,46 @@ def test_details_draft_update_and_cancel(panel):
     assert _setup(panel)["draft"] is None
 
 
+def test_set_player_closes_the_ship_sheet(panel):
+    panel.dispatch_event("select:Sovereign")
+    assert panel.dispatch_event("set-player:Sovereign")
+    assert _setup(panel)["selected"] is None
+
+
+def test_refused_set_player_keeps_the_ship_sheet(panel):
+    panel.dispatch_event("select:FedStarbase")
+    assert not panel.dispatch_event("set-player:FedStarbase")
+    assert _setup(panel)["selected"] == "FedStarbase"
+
+
+def test_repeated_adds_spread_over_the_named_ships(panel):
+    # The player is the Galaxy class default (USS Dauntless), so the first
+    # added Galaxy takes the unused USS Venture; once every name is in use,
+    # the least-used comes round again, first in catalog order on a tie.
+    assert panel.dispatch_event("add:Galaxy:%s:3" % _enemy(panel).id)
+    assert [e.variant for e in _enemy(panel).entries] == ["USS Venture", None, "USS Venture"]
+    names = [o.display_name for o in panel.current_plan().orders]
+    assert names == ["USS Venture", "USS Dauntless (2)", "USS Venture (2)"]
+
+
+def test_spread_counts_every_group_and_skips_hand_picked_names(panel):
+    pid, eid = panel.scenario.player_group().id, _enemy(panel).id
+    panel.dispatch_event("add:Galaxy:%s:1" % pid)            # escort: USS Venture
+    panel.dispatch_event("add:Galaxy:%s:1" % eid)            # enemy: wraps round
+    assert [e.variant for e in panel.scenario.player_group().entries[1:]] == ["USS Venture"]
+    assert [e.variant for e in _enemy(panel).entries] == [None]
+    e = _enemy(panel).entries[0]
+    panel.dispatch_event("variant:%s:%s" % (e.id, "USS%20Venture"))
+    panel.dispatch_event("add:Galaxy:%s:1" % eid)            # Dauntless 1, Venture 2
+    assert _enemy(panel).entries[1].variant is None
+
+
+def test_spread_leaves_ships_without_names_on_the_class_default(panel):
+    panel.dispatch_event("add:Sovereign:%s:2" % _enemy(panel).id)
+    panel.dispatch_event("add:Warbird:%s:2" % _enemy(panel).id)
+    assert [e.variant for e in _enemy(panel).entries] == [None] * 4
+
+
 def test_rename_variant_move_remove(panel):
     gid = _enemy(panel).id
     panel.dispatch_event("rename:%s:%s" % (gid, "Raiders%20One"))

@@ -133,11 +133,11 @@ class Scenario:
         return True
 
     # ── entry edits ─────────────────────────────────────────────────────
-    def add_ship(self, gid, ship) -> Optional[Entry]:
+    def add_ship(self, gid, ship, variant=None) -> Optional[Entry]:
         g = self.group(gid)
         if g is None or not ship:
             return None
-        e = Entry(id=new_id(), ship=ship)
+        e = Entry(id=new_id(), ship=ship, variant=variant or None)
         g.entries.append(e)
         return e
 
@@ -262,6 +262,26 @@ def resolve_variant(ce, name):
     if name is None:
         return ce.variants[0]
     return next((v for v in ce.variants if v.name == name), None)
+
+
+def next_variant(scenario: "Scenario", ce) -> Optional[str]:
+    """The named ship a new `ce` row takes, so repeats spread over the class's
+    names before any name repeats: the least-used variant across the whole
+    scenario (every group, the player included), first in catalog order on a
+    tie. None = the class default, also when it is the pick; None for a class
+    with no named ships."""
+    if not ce.variants:
+        return None
+    used = {v.name: 0 for v in ce.variants}
+    for g in scenario.groups:
+        for e in g.entries:
+            if e.ship.lower() != ce.ship_id.lower():
+                continue
+            v = resolve_variant(ce, e.variant)
+            if v is not None:
+                used[v.name] += 1
+    pick = min(ce.variants, key=lambda v: used[v.name])   # first on a tie
+    return None if pick is ce.variants[0] else pick.name
 
 
 def can_be_player(ce, variant_name) -> bool:

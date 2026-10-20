@@ -494,7 +494,8 @@ class QuickBattleSetupPanel(Panel):
     def _on_add(self, arg) -> bool:
         """`<ship>` adds one to the target; `<ship>:<gid>:<n>` (the sheet's
         group picker and stepper) adds n, 1..ADD_MAX, to that group, which
-        becomes the target. A successful add closes the ship sheet."""
+        becomes the target. Each new row takes the class's least-used named
+        ship (sc.next_variant). A successful add closes the ship sheet."""
         raw, _, rest = arg.partition(":")
         ce = self._ce(unquote(raw))
         gid, n = self._target, 1
@@ -507,13 +508,15 @@ class QuickBattleSetupPanel(Panel):
         if ce is None or self._scenario.group(gid) is None or not 1 <= n <= self.ADD_MAX:
             return False
         for _ in range(n):
-            self._scenario.add_ship(gid, ce.ship_id)
+            self._scenario.add_ship(gid, ce.ship_id,
+                                    sc.next_variant(self._scenario, ce))
         self._target = gid
         self._selected = None
         self._after_change()
         return True
 
     def _on_set_player(self, arg) -> bool:
+        """Like a successful add, a successful set-player closes the sheet."""
         ce = self._ce(unquote(arg))
         if ce is None or not sc.can_be_player(ce, None):
             return False
@@ -522,6 +525,7 @@ class QuickBattleSetupPanel(Panel):
         except Exception as e:                # never out of dispatch_event
             _log.warning("quickbattle set-player %s failed: %s", ce.ship_id, e)
             return False
+        self._selected = None
         self._after_change()
         return True
 
