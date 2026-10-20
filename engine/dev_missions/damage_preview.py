@@ -26,6 +26,8 @@ import loadspacehelper
 # Unused on the damage-redesign spike (the Akira starts clean).
 _DAMAGE_SCRIPT = "Maelstrom.Episode5.E5M2.DamageAkira"
 
+_DEATH = "<death>"
+
 # SPIKE (damage redesign): the impulse system dies in stages -- controller,
 # then port, then starboard engine. Delays are seconds after the PREVIOUS
 # step (TGSequence AppendAction semantics).
@@ -33,6 +35,7 @@ _IMPULSE_STEPS = (
     (3.0, "Impulse Engines"),
     (1.5, "Port Impulse"),
     (1.5, "Star Impulse"),
+    (4.0, _DEATH),           # then the ship dies: BC's death cascade
 )
 _step_index = [0]
 
@@ -64,6 +67,12 @@ def DestroyNextImpulseStep(pAction):
         return 0
     name = _IMPULSE_STEPS[i][1]
     ship = _wreck()
+    if name == _DEATH:
+        if ship is not None:
+            from engine.appc import ship_death
+            ship_death.begin(ship)
+            print("[damage-preview] wreck killed: death cascade running")
+        return 0
     sub = _find_subsystem(ship, name) if ship is not None else None
     if sub is None:
         print("[damage-preview] no subsystem %r on the wreck" % name)

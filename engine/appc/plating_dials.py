@@ -39,7 +39,7 @@ DEFAULTS: dict = {
     "tear_mix": 0.6,         # 0 = whole panels, 1 = torn freely across them
     "tear_noise": 0.9,       # jaggedness of the torn edge (wear units)
     "peel_band": 0.35,       # plate this far short of tearing curls up
-    "member_survive": 5.0,   # wear past breach a primary member still spans the hole
+    "member_survive": 4.0,   # wear past breach a primary member still spans the hole
 }
 DIAL_ORDER: tuple = tuple(DEFAULTS)
 _STEP = {

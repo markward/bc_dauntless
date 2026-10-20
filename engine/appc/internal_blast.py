@@ -32,6 +32,8 @@ STRENGTH = 10.0           # wear at the hole centre: torn through out to ~0.6 of
 MAX_EXITS = 3
 HOLE_K = 1.1              # hole radius = blast radius x HOLE_K x sqrt(1 - d/R)...
 HOLE_MIN = 0.35           # ...but never below this fraction of the blast radius
+ADD_DAMAGE_MAX_HOLE_GU = 0.35  # AddDamage holes (death cascade, missions) cap here,
+                               # near BC's 0.30 GU kHullCarveRadiusMaxGu
 MAX_PENDING = 64
 MAX_PENDING_AGE = 5.0     # s a blast waits for its ship's render instance
 WEAPON_CLASS_INTERNAL = 3

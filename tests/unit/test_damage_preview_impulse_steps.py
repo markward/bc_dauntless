@@ -34,8 +34,12 @@ def test_steps_destroy_controller_then_port_then_starboard(monkeypatch):
     monkeypatch.setattr(dp, "_wreck", lambda: ship)
     dp._step_index[0] = 0
     order = []
+    killed = []
+    from engine.appc import ship_death
+    monkeypatch.setattr(ship_death, "begin", lambda s: killed.append(s))
     for _ in dp._IMPULSE_STEPS:
         dp.DestroyNextImpulseStep(None)
         order.append([s.condition for s in (ship.ies, ship.port, ship.star)])
-    assert order == [[0.0, 1.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]]
+    assert order[:3] == [[0.0, 1.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]]
+    assert killed == [ship]                  # the last step kills the wreck
     dp.DestroyNextImpulseStep(None)          # past the last step: no-op

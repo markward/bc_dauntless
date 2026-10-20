@@ -44,6 +44,8 @@ def host(monkeypatch):
     (kept named `host` so the existing assertions read `host.carves`)."""
     spy = _CarveSpy()
     monkeypatch.setattr(host_io, "hull_carve_add", spy)
+    # The damage-redesign spike ships carving OFF; these pin the carve path.
+    monkeypatch.setenv("DAUNTLESS_HULL_CARVING", "1")
     return spy
 
 
@@ -345,3 +347,21 @@ def test_body_scuff_carries_its_dent_weight(decal_host):
     visible_damage.queue_body_scuff(ship, -1.0, 0.0, 0.0, radius_gu=1.0)
     visible_damage.advance(0.0, {ship: 1})
     assert [d[8] for d in decal_host.decals] == [1.0, 0.0]
+
+
+# ── SPIKE (damage redesign): carving off -> an Internal hole record ─────────
+
+def test_with_carving_off_add_damage_leaves_an_internal_hole_record(decal_host, monkeypatch):
+    from engine.appc import internal_blast
+    monkeypatch.delenv("DAUNTLESS_HULL_CARVING", raising=False)
+    monkeypatch.setattr(host_io, "ray_trace_mesh", lambda *a, **k: None)
+    ship = _Ship(loc=TGPoint3(10.0, 0.0, 0.0))
+    visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 0.6, 600.0)
+    visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 0.1, 150.0)
+    visible_damage.advance(0.0, {ship: 2})
+    big, small = decal_host.decals
+    assert big[5] == internal_blast.WEAPON_CLASS_INTERNAL
+    assert big[3] == pytest.approx(internal_blast.ADD_DAMAGE_MAX_HOLE_GU)   # capped
+    assert big[8] == pytest.approx(internal_blast.STRENGTH)                 # 600 = full
+    assert small[3] == pytest.approx(max(MIN_CARVE_RADIUS_GU, 0.1))
+    assert small[8] == pytest.approx(internal_blast.STRENGTH * 0.25)        # 150 / 600

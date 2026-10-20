@@ -219,7 +219,7 @@ namespace dauntless_plating {
         0.6f,   // 18 tear mix (0 = whole panels, 1 = torn freely)
         0.9f,   // 19 tear noise (wear units)
         0.35f,  // 20 peel band (wear units short of tearing)
-        5.0f,   // 21 member survive (wear past breach a primary still spans)
+        4.0f,   // 21 member survive (wear past breach a primary still spans)
         0.0f, 0.0f,
     };
 }

@@ -579,6 +579,8 @@ def _small(points):
 
 def test_hit_feedback_hands_every_query_a_relative_point(sibling_target, monkeypatch):
     from engine.appc import damage_decals, damage_eligibility, hit_feedback
+    # The damage-redesign spike ships carving OFF; this pins the carve path.
+    monkeypatch.setenv("DAUNTLESS_HULL_CARVING", "1")
     target, local, native = sibling_target
     monkeypatch.setattr(damage_decals, "current_game_time", lambda: 1.0)
     monkeypatch.setattr(damage_eligibility, "is_eligible", lambda s: True)
@@ -596,8 +598,10 @@ def test_hit_feedback_hands_every_query_a_relative_point(sibling_target, monkeyp
     assert decal == pytest.approx((-3.0, 0.0, 0.0), abs=1e-6)
 
 
-def test_visible_damage_probe_and_carve_are_relative(sibling_target):
+def test_visible_damage_probe_and_carve_are_relative(sibling_target, monkeypatch):
     from engine.appc import visible_damage
+    # The damage-redesign spike ships carving OFF; this pins the carve path.
+    monkeypatch.setenv("DAUNTLESS_HULL_CARVING", "1")
     target, local, native = sibling_target
     visible_damage._pending.clear()
     visible_damage.queue_world_carve(

@@ -219,6 +219,24 @@ def _advance_one(entry, dt, ship_instances) -> bool:
     rad_mod = _radius_mod(ship)
     floor = max(MIN_CARVE_RADIUS_GU, influ) * rad_mod
     now = damage_decals.current_game_time()
+    if not host_io.hull_carving_enabled():
+        # SPIKE (damage redesign): no carve -- the hole is an Internal damage
+        # record on the hull, failing the plating layers inside-out (torn and
+        # cut at the core, members and stripped plating around it). Sized by
+        # the same floor, capped near BC's 0.30 GU max carve; strength
+        # relative to BC's 600 "major hull breach" sets how far through.
+        from engine.appc import internal_blast
+        hole = min(floor, internal_blast.ADD_DAMAGE_MAX_HOLE_GU)
+        wear = internal_blast.STRENGTH * max(0.2, min(1.0, strength / 600.0))
+        mesh_pt, mesh_normal = _mesh_probe(iid, world_pt, normal, ship)
+        if mesh_pt is not None:
+            world_pt = mesh_pt
+        if mesh_normal is not None:
+            normal = mesh_normal
+        host_io.damage_decal_add(iid, _mesh_xyz(ship, world_pt),
+                                 (normal.x, normal.y, normal.z), hole, 1.0,
+                                 internal_blast.WEAPON_CLASS_INTERNAL, now, dent=wear)
+        return False
     # Carve sizes are absolute; the only per-ship scale is BC's DamageRadMod
     # (applied to both the authored `floor` and the strength curve). The authored
     # `floor` still guarantees the wreck's visible size.

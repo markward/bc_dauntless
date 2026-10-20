@@ -44,6 +44,8 @@ def rig(monkeypatch):
         clock.t += cost["ms"] / 1000.0
 
     monkeypatch.setattr(host_io, "hull_carve_add", spy)
+    # The damage-redesign spike ships carving OFF; these pin the carve path.
+    monkeypatch.setenv("DAUNTLESS_HULL_CARVING", "1")
     visible_damage.reset()
     yield clock, carves, cost
     visible_damage.reset()
