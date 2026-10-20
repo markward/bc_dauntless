@@ -131,13 +131,26 @@ uniform float u_atmo_limb;
 uniform vec3  u_atmo_sun_dir_ws;  // unit, toward the sun
 uniform float u_decal_time;                  // game-time seconds (ember clock)
 uniform vec4  u_decal_d[MAX_DECALS];         // tangent_body.xyz (unit, ⟂ normal; Scuff), _
-// SPIKE (damage redesign): hull-plating layer. Slot meanings: apply_plating
-// below / engine/appc/plating_dials.py. Uploaded with the decal ring.
+#ifdef PLATING
+// SPIKE (damage redesign): hull-plating layer -- the PLATING program variant
+// only (Pipeline::plating_shader); the stock program never sees any of it.
+// Slot meanings: apply_plating below / engine/appc/plating_dials.py.
 uniform float u_plating[24];
+// SPIKE (damage redesign): the compact damage list (renderer/plating_damage.h,
+// renderer::plating::DamageList): only the records that carry plating wear.
+//   a = centre_body.xyz, reach (model units; Scorch reach multiplier applied)
+//   b = normal_body.xyz (zero for Internal), wear
+//   c = kind (1 Scorch, 3 Internal), 0, 0, 0
+const int MAX_DMG = 24;
+uniform int  u_dmg_count;
+uniform vec4 u_dmg_a[MAX_DMG];
+uniform vec4 u_dmg_b[MAX_DMG];
+uniform vec4 u_dmg_c[MAX_DMG];
 // Set by apply_plating where a panel is stripped (0..1); read by the scorch
 // deposit (soot must not bury the ribs) and the glow kill (windows die).
 float g_plating_exposed = 0.0;
 vec3  g_plating_emissive = vec3(0.0);   // inner-hull heat / breach rim (SPIKE)
+#endif
 uniform sampler2D u_scuff_map;               // unit 7: tiling crumpled-metal tangent-space
                                              // normal map (renderer/scuff_texture.h)
 uniform int   u_scuff_map_ok;                // 0 = not loaded: scuffs draw albedo only
@@ -750,8 +763,10 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
                        * pow(nval, 1.5)               // gamma: suppress thin/low-noise ejecta
                        * 1.3;                         // peak ejecta scale
         float deposit = clamp(core + ejecta, 0.0, 1.0) * intensity * wn;
+#ifdef PLATING
         if (u_plating[0] > 0.5)                       // SPIKE: plating layer
             deposit *= u_plating[13] * (1.0 - 0.7 * g_plating_exposed);
+#endif
         base_lit = mix(base_lit, SOOT_COLOR, deposit);
 
         // Game-time blackbody ember (Scorch only; weapon_class 1 in c.y).
@@ -772,9 +787,11 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
     }
 }
 
-
+#ifdef PLATING
 // ── SPIKE (damage redesign): hull-plating layer ──────────────────────────
-// Torpedo scorch records carry a running hit total (u_decal_c.w, "wear").
+// PLATING program variant only. Damage comes from the compact list
+// u_dmg_* (renderer/plating_damage.h): Scorch records carry a running hit
+// total ("wear"), Internal records a blast strength.
 // Wear strips plating PANELS, exposing the hull's skeleton; more wear breaks
 // it. The skeleton follows the hull's detected structure PARTS
 // (voxel::detect_structure_parts): a saucer (disc) gets spokes radiating from
@@ -801,36 +818,36 @@ uniform vec4 u_part_b[MAX_PARTS];        // axis0.xyz, half0
 uniform vec4 u_part_c[MAX_PARTS];        // axis1.xyz, half1
 uniform vec4 u_part_d[MAX_PARTS];        // half2, _, _, _
 
-// Internal blasts (class 3, a destroyed subsystem): true 3D distance from
+// Internal blasts (kind 3, a destroyed subsystem): true 3D distance from
 // the blast centre, no facing -- every hull surface inside the sphere fails,
-// top and bottom alike. radius = the blast sphere; wear = strength at centre.
+// top and bottom alike. reach = the blast sphere; wear = strength at centre.
 float plating_internal(vec3 q) {
     float w = 0.0;
-    for (int i = 0; i < u_decal_count; ++i) {
-        if (u_decal_c[i].y < 2.5) continue;
-        float R = u_decal_b[i].w;
+    for (int i = 0; i < u_dmg_count; ++i) {
+        if (u_dmg_c[i].x < 2.0) continue;                  // Internal (3) only
+        float R = u_dmg_a[i].w;
         if (R <= 0.0) continue;
-        float r = length(q - u_decal_a[i].xyz) / R;
+        float r = length(q - u_dmg_a[i].xyz) / R;
         if (r >= 1.0) continue;
         float f = 1.0 - r * r;
-        w += u_decal_c[i].w * f * f;
+        w += u_dmg_b[i].w * f * f;
     }
     return w;
 }
 
+// Total wear at q: Internal blasts (no facing) plus Scorch records weighed
+// by facing. Scorch reach already carries the reach multiplier (list build).
 float plating_wear(vec3 q, vec3 nb) {
-    float w = plating_internal(q);
-    float reach = u_plating[7];
-    for (int i = 0; i < u_decal_count; ++i) {
-        float cls = u_decal_c[i].y;
-        if (cls < 0.5 || cls > 1.5) continue;              // Scorch only
-        float R = u_decal_b[i].w * reach;
+    float w = 0.0;
+    for (int i = 0; i < u_dmg_count; ++i) {
+        float R = u_dmg_a[i].w;
         if (R <= 0.0) continue;
-        float r = length(q - u_decal_a[i].xyz) / R;
+        float r = length(q - u_dmg_a[i].xyz) / R;
         if (r >= 1.0) continue;
-        float wn = smoothstep(NORMAL_MIN, 1.0, dot(nb, u_decal_b[i].xyz));
+        float wn = u_dmg_c[i].x < 2.0                       // Scorch (1)
+                 ? smoothstep(NORMAL_MIN, 1.0, dot(nb, u_dmg_b[i].xyz)) : 1.0;
         float f = 1.0 - r * r;
-        w += u_decal_c[i].w * f * f * wn;
+        w += u_dmg_b[i].w * f * f * wn;
     }
     return w;
 }
@@ -940,26 +957,15 @@ void plating_sample(int part, vec3 p, vec3 nb,
 // Gradient of plating_wear: points toward more damage (the hole).
 vec3 plating_wear_grad(vec3 q, vec3 nb) {
     vec3 g = vec3(0.0);
-    float reach = u_plating[7];
-    for (int i = 0; i < u_decal_count; ++i) {
-        float cls = u_decal_c[i].y;
-        if (cls > 2.5) {                                    // internal blast
-            float Ri = u_decal_b[i].w;
-            if (Ri <= 0.0) continue;
-            vec3 di = q - u_decal_a[i].xyz;
-            float ri = length(di) / Ri;
-            if (ri >= 1.0) continue;
-            g += -4.0 * u_decal_c[i].w * (1.0 - ri * ri) * di / (Ri * Ri);
-            continue;
-        }
-        if (cls < 0.5 || cls > 1.5) continue;
-        float R = u_decal_b[i].w * reach;
+    for (int i = 0; i < u_dmg_count; ++i) {
+        float R = u_dmg_a[i].w;
         if (R <= 0.0) continue;
-        vec3 d = q - u_decal_a[i].xyz;
+        vec3 d = q - u_dmg_a[i].xyz;
         float r = length(d) / R;
         if (r >= 1.0) continue;
-        float wn = smoothstep(NORMAL_MIN, 1.0, dot(nb, u_decal_b[i].xyz));
-        g += -4.0 * u_decal_c[i].w * (1.0 - r * r) * wn * d / (R * R);
+        float wn = u_dmg_c[i].x < 2.0                       // Scorch (1); Internal: 1
+                 ? smoothstep(NORMAL_MIN, 1.0, dot(nb, u_dmg_b[i].xyz)) : 1.0;
+        g += -4.0 * u_dmg_b[i].w * (1.0 - r * r) * wn * d / (R * R);
     }
     return g;
 }
@@ -967,13 +973,18 @@ vec3 plating_wear_grad(vec3 q, vec3 nb) {
 // Torn-plate field: >= 0 where the plating is gone. Mixes the panel's own
 // wear (edges follow seams) with the wear right here (edges rip across
 // panels), plus a jagged tear noise scaled to the panel size.
-float plating_tear(vec3 q, float wear_cell, vec3 nb) {
+// wear_here = plating_wear(q, nb), passed in when the caller already has it.
+float plating_tear_w(vec3 q, float wear_cell, float wear_here) {
     float f = 1.0 / max(u_plating[1] * 0.35, 0.1);
     float n = vnoise(q.xy * f + q.z * 0.71 * f) * 0.65
             + vnoise(q.yz * f * 2.3 + q.x * f * 1.3 + 4.2) * 0.35;
-    float w = mix(wear_cell, plating_wear(q, nb), u_plating[18]);
+    float w = mix(wear_cell, wear_here, u_plating[18]);
     // Noise only where there IS wear: an undamaged hull never tears or peels.
     return w + (n - 0.5) * u_plating[19] * smoothstep(0.05, 0.3, w) - u_plating[8];
+}
+
+float plating_tear(vec3 q, float wear_cell, vec3 nb) {
+    return plating_tear_w(q, wear_cell, plating_wear(q, nb));
 }
 
 float plating_cell_wear(vec2 cell, vec3 centre, vec3 nb) {
@@ -994,7 +1005,10 @@ vec3 plating_warp(vec3 q, vec3 nb, float amp) {
     return q + w * 2.0 * amp + nb * (inout_ * amp);
 }
 
+// w_here = plating_wear(p_body, n_body), w_int = plating_internal(p_body):
+// computed once in main and shared with plating_hole.
 void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
+                   float w_here, float w_int,
                    inout vec3 n_shade, inout vec3 base_rgb) {
     if (u_plating[0] < 0.5) return;
     int part = plating_part(p_body);
@@ -1009,11 +1023,10 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
     float wear_c = plating_cell_wear(c0, ctr0, n_body);
     mat3 to_ws = transpose(mat3(u_ship_world_inv));   // body -> world, normals
 
-    float e0 = plating_tear(p_body, wear_c, n_body);
+    float e0 = plating_tear_w(p_body, wear_c, w_here);
     // Share of this spot's wear that came from INSIDE (a subsystem blast):
     // 1 = blown out, 0 = shot in. Flips the peel and the buckle outward.
-    float w_int = plating_internal(p_body);
-    float io = clamp(w_int / max(plating_wear(p_body, n_body), 1e-3), 0.0, 1.0);
+    float io = clamp(w_int / max(w_here, 1e-3), 0.0, 1.0);
     // Shreds: thin slivers of plate still hanging just inside the torn edge.
     float shred_f = 1.0 / max(u_plating[1] * 0.18, 0.05);
     float shred_n = vnoise(p_body.xy * shred_f + p_body.z * 0.53 * shred_f + 9.4);
@@ -1073,7 +1086,6 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
     float hw1 = 0.5 * u_plating[4], hw2 = 0.3 * u_plating[4];
 
     // Damage of the exposed structure: 0 just stripped, 1 at rib-break wear.
-    float w_here = plating_wear(p_body, n_body);
     float dmg = smoothstep(strip, max(u_plating[9], strip + 0.01), w_here);
     // Members fail where the LOCAL wear passes rib_break (noisy edge).
     float rib_ok = 1.0 - smoothstep(-0.3, 0.3,
@@ -1174,8 +1186,8 @@ uniform int u_plating_two_sided;   // 1 = this draw also rasterises inside faces
 // still spans the hole here (drawn as bare, charred metal). The torn edge is
 // jagged at panel scale; members snap off at random lengths, fewer the
 // deeper the wear runs past breach, secondaries first.
-int plating_hole(vec3 p, vec3 nb) {
-    float w = plating_wear(p, nb);
+// w = plating_wear(p, nb), computed once in main.
+int plating_hole(vec3 p, vec3 nb, float w) {
     float f = 1.0 / max(u_plating[1] * 0.6, 0.1);
     float n = vnoise(p.xy * f + p.z * 0.6 * f + 2.7) * 0.7
             + vnoise(p.yz * f * 2.1 + p.x * f * 0.8 + 5.3) * 0.3;
@@ -1199,7 +1211,7 @@ vec3 plating_inner_wall(vec3 p) {
     float grain = vnoise(p.xy * 0.11 + p.z * 0.07);
     return INNER_HULL * u_plating[17] * (0.45 + 0.25 * grain) * (1.0 - 0.4 * deck);
 }
-
+#endif  // PLATING
 // ── Non-finite cause probe (developer diagnostic) ──────────────────────────
 // When u_nan_debug is on, a fragment whose shading went NaN/Inf reports WHICH
 // intermediate term did it, as an integer code in the ALPHA channel.
@@ -2020,8 +2032,10 @@ void main() {
     // undefined in non-uniform control flow), used by textureGrad below.
     vec3 dpdx_d = dFdx(p_body);
     vec3 dpdy_d = dFdy(p_body);
+#ifdef PLATING
     // SPIKE plating layer: rib AA footprint, taken in uniform control flow.
     float plating_fw = length(fwidth(p_body));
+#endif
 #ifdef IMPOSTOR_VIEWS
     n_shade = g_imp_normal_ws;
     vec4 base = g_imp_base;
@@ -2077,11 +2091,32 @@ void main() {
     // opaque so it never reads as an emissive mask.
     if (u_coverage_cutout != 0) { base.a = 1.0; }
 
+#ifdef PLATING
     // SPIKE (damage redesign): torn-through hull is cut, and its inside face
     // is drawn where the cut reveals it.
+    //
+    // Near-damage early-out: nothing in the plating layer reaches further
+    // from a record than its reach plus this margin (plate depth + rib depth
+    // + member bend + one primary spacing: the deepest march / chart sample).
+    // Far from every record the hull is stock: an inside (back) face is
+    // dropped, and a front face skips plating_hole and apply_plating.
     bool plating_inside = false;
-    if (u_decal_count > 0 && u_plating[0] > 0.5) {
-        int hole = plating_hole(p_body, n_body);
+    bool plating_near = false;
+    float plating_w_here = 0.0, plating_w_int = 0.0;
+    if (u_plating[0] > 0.5) {
+        float plating_margin = u_plating[5] + u_plating[6] + u_plating[15] + u_plating[2];
+        for (int i = 0; i < u_dmg_count; ++i) {
+            if (length(p_body - u_dmg_a[i].xyz) < u_dmg_a[i].w + plating_margin) {
+                plating_near = true;
+                break;
+            }
+        }
+    }
+    if (!plating_near && u_plating_two_sided != 0 && !gl_FrontFacing) discard;
+    if (plating_near) {
+        plating_w_here = plating_wear(p_body, n_body);
+        plating_w_int  = plating_internal(p_body);
+        int hole = plating_hole(p_body, n_body, plating_w_here);
         if (hole == 1) discard;
         if (hole == 2) {
             // A member still spanning the hole: bare, charred metal.
@@ -2097,7 +2132,7 @@ void main() {
             base.rgb = plating_inner_wall(p_body);
         }
     }
-
+#endif
     // Hull-name decals: replace albedo under each mask, in list order
     // (premultiplied RGB). decal_a / decal_premult_rgb are the combined
     // coverage, kept alive for the glow-map composite below (the letters must
@@ -2129,13 +2164,19 @@ void main() {
     // Collision scuffs (class 2): the PRE-LIGHTING half of the decal ring.
     // Must run before the Toksvig spec_ft line below and before any lighting
     // term reads n_shade, since it perturbs n_shade (and, from Task 3, base.rgb).
-    if (u_decal_count > 0 && !plating_inside) {
+    if (u_decal_count > 0) {
+#ifdef PLATING
+        if (!plating_inside)                       // SPIKE: plating layer
+#endif
         apply_scuffs(p_body, n_body, n_shade, base.rgb);
     }
-    // SPIKE plating layer (damaged hulls; every hull under part debug).
-    if ((u_decal_count > 0 || u_plating[12] > 1.5) && !plating_inside) {
-        apply_plating(p_body, n_body, V, plating_fw, n_shade, base.rgb);
+#ifdef PLATING
+    // SPIKE plating layer: only near damage (plating_near above).
+    if (plating_near && !plating_inside) {
+        apply_plating(p_body, n_body, V, plating_fw, plating_w_here, plating_w_int,
+                      n_shade, base.rgb);
     }
+#endif
 
     // Toksvig specular anti-aliasing. ft folds the normal spread under this
     // pixel into a lower exponent; the (1+p')/(1+p) factor keeps the lobe's
@@ -2168,8 +2209,10 @@ void main() {
     // too: with both blocks above skipped (disabled or empty), `marked` is
     // still false here, so this discards exactly as it always did.
     if (u_carve_invert != 0 && !marked) discard;
+#ifdef PLATING
     glow_kill = max(glow_kill, g_plating_exposed);   // SPIKE: stripped panels go dark
     if (plating_inside) glow_kill = 1.0;             // SPIKE: no window glow inside
+#endif
 
     // Shadow attenuates ONLY the sun (directional index 0). When shadows are
     // off, sun_shadow_factor() returns 1.0, so the ×sf below is the identity
@@ -2476,7 +2519,10 @@ void main() {
     float emit_lum  = dot(glow.rgb, vec3(0.2126, 0.7152, 0.0722)) * glow.a * glow_alive;
     float refl_mask = 1.0 - clamp(emit_lum, 0.0, 1.0);
     vec3 final_color = lit * refl_mask + self_illum + spec * refl_mask
-                     + rim + decal_emissive + g_plating_emissive;
+                     + rim + decal_emissive;
+#ifdef PLATING
+    final_color += g_plating_emissive;               // SPIKE: plating layer
+#endif
 
     // Cause code for the non-finite probe (see u_nan_debug above). Off => the
     // alpha written is the literal 1.0 this shader has always written.

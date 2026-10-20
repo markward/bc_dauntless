@@ -113,6 +113,12 @@ Pipeline::Pipeline() {
     // sampling + land shading); every other program keeps the plain source.
     planet_ = std::make_unique<Shader>(shader_src::opaque_vs,
                                        with_define(shader_src::opaque_fs, "PLANET_SURFACE"));
+    // SPIKE (damage redesign): layered hull damage. A hull with plating wear
+    // draws with the SAME opaque.frag compiled with PLATING (the plating
+    // layer, its compact damage list and the near-damage early-out); every
+    // other hull keeps the stock program, which carries none of it.
+    plating_ = std::make_unique<Shader>(shader_src::opaque_vs,
+                                        with_define(shader_src::opaque_fs, "PLATING"));
     // opaque.frag's collision-scuff normal map (renderer/scuff_texture.h)
     // lives on unit 7 for the program's whole life. Assigned HERE, once, not
     // per draw: every path that draws with this program (draw_model, the
@@ -123,7 +129,7 @@ Pipeline::Pipeline() {
     // Same for the hull-decal masks: u_decal_mask0..3 live on units 8..11
     // (draw_model binds the textures there once per model, frame.cc).
     for (Shader* sh : {opaque_.get(), skinned_.get(), minor_.get(), impostor_.get(),
-                       planet_.get()}) {
+                       planet_.get(), plating_.get()}) {
         sh->use();
         sh->set_int("u_scuff_map", 7);
         sh->set_int("u_decal_mask0", 8);

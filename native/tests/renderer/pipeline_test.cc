@@ -25,6 +25,24 @@ TEST_F(PipelineTest, OpaqueShaderCompilesAndLinks) {
     EXPECT_NE(p.opaque_shader().program(), 0u);
 }
 
+// SPIKE (damage redesign): the PLATING variant compiles and links, carries
+// the compact damage list, and the stock program carries none of the
+// plating layer (it is gated out of opaque.frag by #ifdef PLATING).
+TEST_F(PipelineTest, PlatingShaderCompilesAndOnlyItHasThePlatingLayer) {
+    renderer::Pipeline p;
+    const GLuint plating = p.plating_shader().program();
+    ASSERT_NE(plating, 0u);
+    EXPECT_NE(plating, p.opaque_shader().program());
+    EXPECT_GE(glGetUniformLocation(plating, "u_dmg_count"), 0);
+    EXPECT_GE(glGetUniformLocation(plating, "u_dmg_a"), 0);
+    EXPECT_GE(glGetUniformLocation(plating, "u_plating"), 0);
+    const GLuint stock = p.opaque_shader().program();
+    EXPECT_EQ(glGetUniformLocation(stock, "u_dmg_count"), -1);
+    EXPECT_EQ(glGetUniformLocation(stock, "u_plating"), -1);
+    EXPECT_EQ(glGetUniformLocation(stock, "u_plating_two_sided"), -1);
+    EXPECT_EQ(glGetUniformLocation(stock, "u_part_count"), -1);
+}
+
 TEST_F(PipelineTest, SunShaderCompilesAndLinks) {
     renderer::Pipeline p;
     EXPECT_NE(p.sun_shader().program(), 0u);
