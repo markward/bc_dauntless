@@ -32,7 +32,8 @@ struct Lighting;
 ///
 /// What it marches (system_nebula.frag): a near field of ~64 geometric steps
 /// out to dials().near_range through the radial density texture (density,
-/// tau_star by radius from the star) modulated by fbm "lanes", then the far field
+/// tau_star by radius from the star) modulated by fbm "lanes" (value noise
+/// read from a baked hash lattice, renderer/nebula_noise.h), then the far field
 /// from a precomputed table keyed by (radius, cos to the outward radial).
 /// The table's transmittance is uploaded as OPTICAL DEPTH (tau_from_table):
 /// system-scale transmittances reach ~1e-16, so the shader recovers a finite
@@ -158,6 +159,7 @@ private:
 
     bool         initialized_ = false;
     unsigned int vao_ = 0;   // empty VAO; fullscreen triangle uses gl_VertexID
+    unsigned int lattice_tex_ = 0;   // R16F kLatticeN^3 hash lattice (nebula_noise.h)
 
     // ── Low-res scratch target (RGBA16F) ───────────────────────────────────
     int          half_w_ = 0;
