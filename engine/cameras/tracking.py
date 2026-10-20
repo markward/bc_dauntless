@@ -35,17 +35,19 @@ class _TrackingCamera:
                                             # tracking floor sits a bit further
                                             # out than the chase floor.
     ZOOM_MAX_RADII:        float = 30.0    # reuse CAM_MAX_RADII semantics
-    # ZoomTarget (held Z) distance, in multiples of the TARGET's bounding-
-    # sphere radius — BC's CameraModes.ZoomTarget triple (MinimumDistance
-    # 4.0 / Distance 4.0 / MaximumDistance 20.0), read raw by
-    # ZoomTargetCameraMode::GetIdealPosition (0x00423E20: d = Distance ×
-    # r_TARGET) and clamped only in the Zoom slot (FUN_0041F920). The seed
-    # sits ON the floor, so zoom-in from the default is a no-op, as in BC.
-    # Being a BC mode, its zoom step is BC's (ZOOM_IN/OUT_FACTOR), not the
-    # tracking solver's symmetric ZOOM_FACTOR_PER_PRESS.
-    ZOOM_TARGET_DISTANCE_RADII: float = 4.0
-    ZOOM_TARGET_MIN_RADII:      float = 4.0
-    ZOOM_TARGET_MAX_RADII:      float = 20.0
+    # ZoomTarget (held Z): the eye stands at the distance that fits the
+    # target's whole hull box in frame (engine.cameras.zoom_fit), times
+    # ``zoom_target_scale`` (=/- step it), capped at the player. This
+    # DELIBERATELY replaces BC's ``Distance x r_target`` standoff
+    # (0x00423E20; MinimumDistance 4 / Distance 4 / MaximumDistance 20)
+    # and own-hull push-out (FUN_0041FF50). Spec:
+    # docs/superpowers/specs/2026-10-20-target-zoom-fit-design.md. The seed
+    # sits ON the floor, so zoom-in from the default is a no-op. The zoom
+    # step stays BC's (ZOOM_IN/OUT_FACTOR), not the tracking solver's
+    # symmetric ZOOM_FACTOR_PER_PRESS.
+    ZOOM_TARGET_SCALE_DEFAULT: float = 1.0
+    ZOOM_TARGET_SCALE_MIN:     float = 1.0
+    ZOOM_TARGET_SCALE_MAX:     float = 5.0
 
     def __init__(self):
         self.v_fov_rad        = EXTERIOR_FOV_Y_RAD
@@ -54,14 +56,14 @@ class _TrackingCamera:
         self.d_chase_tracking = 1.0   # seeded by set_ship_radius()
         self.zoom_min         = 1.0   # seeded by set_ship_radius()
         self.zoom_max         = 1.0   # seeded by set_ship_radius()
-        # ZoomTarget eye-to-target distance as a multiple of the target's
-        # radius; the radius itself is read live in compute(), so retargeting
-        # re-frames automatically and the player's own size never enters.
-        self.zoom_target_radii = self.ZOOM_TARGET_DISTANCE_RADII
+        # ZoomTarget multiplier on the fit distance; the fit itself is
+        # solved live in compute(), so retargeting re-frames automatically.
+        self.zoom_target_scale = self.ZOOM_TARGET_SCALE_DEFAULT
+        # Viewport aspect (w/h) for the fit; the host sets it each frame.
+        self.aspect = 16.0 / 9.0
         # FOV compensation (engine.cameras.fov_distance_scale); set by
-        # _CameraDirector.set_fov. Scales the ZoomTarget standoff at
-        # placement. The Tracking solver needs none — it frames by screen
-        # fraction and already reads v_fov_rad.
+        # _CameraDirector.set_fov. Not used by ZoomTarget (the fit reads the
+        # real FOV); kept as the Tracking-side attribute the director sets.
         self.fov_scale = 1.0
         # ZoomTarget sub-mode flag — toggled by enter/exit_zoom_target.
         self.zoom_target_active = False
@@ -90,9 +92,9 @@ class _TrackingCamera:
         """Sticky zoom (= key): bring the camera closer to its anchor.
         Modifies whichever distance is active based on zoom_target_active."""
         if self.zoom_target_active:
-            self.zoom_target_radii = max(
-                self.zoom_target_radii * ZOOM_IN_FACTOR,
-                self.ZOOM_TARGET_MIN_RADII,
+            self.zoom_target_scale = max(
+                self.zoom_target_scale * ZOOM_IN_FACTOR,
+                self.ZOOM_TARGET_SCALE_MIN,
             )
         else:
             self.d_chase_tracking = max(
@@ -103,9 +105,9 @@ class _TrackingCamera:
     def zoom_out(self) -> None:
         """Sticky zoom (- key): push the camera farther from its anchor."""
         if self.zoom_target_active:
-            self.zoom_target_radii = min(
-                self.zoom_target_radii * ZOOM_OUT_FACTOR,
-                self.ZOOM_TARGET_MAX_RADII,
+            self.zoom_target_scale = min(
+                self.zoom_target_scale * ZOOM_OUT_FACTOR,
+                self.ZOOM_TARGET_SCALE_MAX,
             )
         else:
             self.d_chase_tracking = min(
@@ -115,7 +117,7 @@ class _TrackingCamera:
 
     def enter_zoom_target(self) -> None:
         """Activate the ZoomTarget sub-mode. Does NOT reset
-        zoom_target_radii — preserves it across press/release."""
+        zoom_target_scale — preserves it across press/release."""
         self.zoom_target_active = True
 
     def exit_zoom_target(self) -> None:
@@ -147,12 +149,13 @@ class _TrackingCamera:
             self.d_chase_tracking = (
             _math.sqrt(CAM_BACK_RADII**2 + CAM_UP_RADII**2) * radius
             / (self.ZOOM_FACTOR_PER_PRESS ** DEFAULT_ZOOM_OUT_CLICKS))
-        self.zoom_target_radii = self.ZOOM_TARGET_DISTANCE_RADII
+        self.zoom_target_scale = self.ZOOM_TARGET_SCALE_DEFAULT
         # Flag reset is unconditional — runs even when zoom_max == 0
         # (i.e. snap() called before set_ship_radius).
         self.zoom_target_active = False
 
-    def compute(self, player, target, dt, aim_point=None, pose_of=None):
+    def compute(self, player, target, dt, aim_point=None, pose_of=None,
+                distance_filter=None):
         """Return (eye, look_at, up) in world space.
 
         Builds a 2D solver plane spanned by (T−S) and ship-body-up,
@@ -161,9 +164,11 @@ class _TrackingCamera:
         camera basis so player projects to y_p and target to y_t.
 
         When zoom_target_active is True, delegates to _compute_zoom_target
-        which places the eye on the player→target axis at
-        zoom_target_radii × r_target behind the target instead of the
-        inscribed-angle solver.
+        which fits the target's hull box in frame (capped at the player,
+        outside the surface) instead of the inscribed-angle solver. There
+        the framed point is the box centre and `aim_point` is ignored;
+        `distance_filter(target, d_fit) -> float` (optional, ZoomTarget
+        only) adjusts the fit distance BEFORE the player cap.
 
         When dt is None, returns the solver output directly (no springs).
         When dt is a float, applies position + rotation springs.
@@ -179,12 +184,21 @@ class _TrackingCamera:
 
         if pose_of is not None:
             S, R = pose_of(player)
-            T = aim_point if aim_point is not None else pose_of(target)[0]
+            t_pose = pose_of(target)
         else:
             S = player.GetWorldLocation()
-            T = aim_point if aim_point is not None else target.GetWorldLocation()
             R = player.GetWorldRotation()
+            t_pose = (target.GetWorldLocation(), target.GetWorldRotation())
         B = R.GetCol(2)  # ship body-up in world space
+
+        if self.zoom_target_active:
+            from engine.cameras.zoom_fit import target_extent
+            ext = target_extent(target, *t_pose)
+            T = TGPoint3(*ext.centre)
+        elif aim_point is not None:
+            T = aim_point
+        else:
+            T = t_pose[0]
 
         # Plane basis (e1, e3): e1 along ship→target, e3 = body-up
         # projected perpendicular to e1, normalised.
@@ -193,8 +207,9 @@ class _TrackingCamera:
         if self.zoom_target_active:
             from engine.appc.camera_modes import _target_radius
             eye_solver, forward_solver, up_solver = self._compute_zoom_target(
-                S=S, T=T, e1=e1, e3=e3,
-                r_target=_target_radius(target), r_player=_target_radius(player),
+                S=S, T=T, e1=e1, e3=e3, target=target, ext=ext,
+                r_player=_target_radius(player),
+                distance_filter=distance_filter,
             )
         else:
             eye_solver, forward_solver, up_solver = self._compute_tracking(
@@ -327,33 +342,27 @@ class _TrackingCamera:
 
         return eye_solver, forward_solver, up_solver
 
-    def _compute_zoom_target(self, *, S, T, e1, e3, r_target=1.0, r_player=0.0):
-        """ZoomTarget framing per ZoomTargetCameraMode::GetIdealPosition
-        (0x00423E20): eye on the ship→target axis, zoom_target_radii ×
-        r_target behind the target, look-at = target.
+    def _compute_zoom_target(self, *, S, T, e1, e3, target, ext,
+                             r_player=0.0, distance_filter=None):
+        """ZoomTarget framing: the fit/cap/surface rule.
 
-        Own-hull push-out (FUN_0041FF50, Source branch): the player's centre
-        must be at least r_player BEHIND the eye along the look axis, else
-        the eye moves forward by the deficit. This replaced a 0.9 × D clamp
-        that kept the eye in front of the target but could leave it inside
-        the player's own hull. Stored zoom_target_radii is never mutated.
+        The eye sits on the player→target-centre axis at
+        ``zoom_target_distance(...)``: the distance at which the target's
+        hull box (or sphere, with no box) fits the frustum with a margin,
+        times ``zoom_target_scale``, spilling to the player's near side,
+        never inside the target's surface (plus the near plane), and never
+        behind the player. Look-at is the box centre ``T``. Spec:
+        docs/superpowers/specs/2026-10-20-target-zoom-fit-design.md
+        (R1-R7). Deliberately replaces BC's ``Distance x r_target``
+        standoff (0x00423E20) and own-hull push-out (FUN_0041FF50).
         """
-        effective = self.zoom_target_radii * r_target * self.fov_scale
-        eye_solver = (T.x - effective * e1.x,
-                      T.y - effective * e1.y,
-                      T.z - effective * e1.z)
-        ahead = ((eye_solver[0] - S.x) * e1.x
-                 + (eye_solver[1] - S.y) * e1.y
-                 + (eye_solver[2] - S.z) * e1.z)
-        if ahead < r_player:
-            k = r_player - ahead
-            eye_solver = (eye_solver[0] + k * e1.x,
-                          eye_solver[1] + k * e1.y,
-                          eye_solver[2] + k * e1.z)
-        # Forward = (T − eye) / |T − eye| = e1 (eye lies on the e1 line).
+        from engine.cameras import SCENE_NEAR_GU
+        from engine.cameras.zoom_fit import (
+            fit_distance, surface_distance, zoom_target_distance)
+
+        # Forward = e1 (the eye lies on the e1 line); up = e3
+        # perpendicularised against it (also the fit's camera basis).
         forward_solver = (e1.x, e1.y, e1.z)
-        # Up = e3 perpendicularised against forward. Identical pattern
-        # to the Tracking solver's up step.
         dot_u_f = e3.x*forward_solver[0] + e3.y*forward_solver[1] + e3.z*forward_solver[2]
         ux = e3.x - dot_u_f * forward_solver[0]
         uy = e3.y - dot_u_f * forward_solver[1]
@@ -361,6 +370,16 @@ class _TrackingCamera:
         ulen = _math.sqrt(ux*ux + uy*uy + uz*uz)
         up_solver = (ux/ulen, uy/ulen, uz/ulen)
 
+        d_fit = fit_distance(ext, forward_solver, up_solver,
+                             self.v_fov_rad, self.aspect) * self.zoom_target_scale
+        if distance_filter is not None:
+            d_fit = distance_filter(target, d_fit)
+        player_dist = _math.sqrt((T.x - S.x)**2 + (T.y - S.y)**2 + (T.z - S.z)**2)
+        d = zoom_target_distance(
+            d_fit=d_fit, zoom=1.0, player_dist=player_dist,
+            r_player=r_player,
+            d_surface=surface_distance(ext, forward_solver) + SCENE_NEAR_GU)
+        eye_solver = (T.x - d * e1.x, T.y - d * e1.y, T.z - d * e1.z)
         return eye_solver, forward_solver, up_solver
 
     # ── solver internals ─────────────────────────────────────────────
@@ -375,7 +394,17 @@ class _TrackingCamera:
         from engine.appc.math import TGPoint3
         dx, dy, dz = T.x - S.x, T.y - S.y, T.z - S.z
         D = _math.sqrt(dx*dx + dy*dy + dz*dz)
-        e1 = TGPoint3(dx/D, dy/D, dz/D)
+        if D < 1e-9:
+            # Player sits on the framed point (ZoomTarget on a box centre):
+            # no bearing, so take one perpendicular to body-up.
+            if abs(B.x) < 0.9:
+                px, py, pz = 0.0, B.z, -B.y
+            else:
+                px, py, pz = -B.z, 0.0, B.x
+            pl = _math.sqrt(px*px + py*py + pz*pz)
+            e1 = TGPoint3(px/pl, py/pl, pz/pl)
+        else:
+            e1 = TGPoint3(dx/D, dy/D, dz/D)
         dot_b_e1 = B.x*e1.x + B.y*e1.y + B.z*e1.z
         ux = B.x - dot_b_e1 * e1.x
         uy = B.y - dot_b_e1 * e1.y

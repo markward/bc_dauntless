@@ -382,6 +382,33 @@ def test_target_lost_in_tracking_with_zoom_target_active_clears_zoom():
     assert d.tracking.zoom_target_active is False
 
 
+def test_zoom_target_on_a_destroyed_target_frames_the_ghost():
+    """Z held, target destroyed: the director yields a finite pose, and the
+    solver frames the ghost (no box, no GetScale) by the sphere fit."""
+    from engine.cameras.director import _CameraDirector, _GhostTarget
+    from engine.cameras.zoom_fit import TargetExtent, fit_distance
+    from engine.appc.math import TGPoint3, TGMatrix3
+    d = _CameraDirector()
+    d.chase.set_ship_radius(1.0); d.tracking.set_ship_radius(1.0)
+
+    p_with = _FakeShipWithTarget(target=_make_target_at())
+    p_without = _FakeShipWithTarget(target=None)
+    d.toggle_mode(player=p_with)
+    d.start_zoom_target(player=p_with)
+    d.compute(player=p_with, dt=1.0/60)
+    eye, look_at, up = d.compute(player=p_without, dt=1.0/60)
+    for v in (*eye, *look_at, *up):
+        assert math.isfinite(v)
+
+    ghost = _GhostTarget(TGPoint3(0.0, 100.0, 0.0), TGMatrix3(), 8.0)
+    tc = d.tracking
+    tc.zoom_target_active = True
+    eye, _, _ = tc.compute(player=p_without, target=ghost, dt=None)
+    fit = fit_distance(TargetExtent((0.0, 100.0, 0.0), None, None, 8.0),
+                       (0, 1, 0), (0, 0, 1), tc.v_fov_rad, tc.aspect)
+    assert eye[1] == pytest.approx(100.0 - fit, abs=1e-6)
+
+
 def test_c_toggle_tracking_to_chase_clears_zoom_target():
     """C-key explicit Tracking → Chase must also clear ZoomTarget."""
     from engine.cameras.director import _CameraDirector, CameraMode
