@@ -8241,6 +8241,12 @@ def _compute_camera(view_mode, director, *, player, dt, pose_of=None) -> tuple:
     # opens on a stale boost after time on the bridge. Forward component
     # only: astern narrows, a lateral shove counts for nothing.
     director.set_speed(_player_forward_speed_gups(player, rot))
+    try:
+        fb_w, fb_h = host_io.framebuffer_size()
+        if fb_h > 0:
+            director.set_aspect(fb_w / fb_h)
+    except Exception:
+        pass   # no host / fake host_io: keep the solver's current aspect
     if view_mode.is_bridge:
         fwd = rot.GetCol(1)
         up  = rot.GetCol(2)
@@ -8275,9 +8281,15 @@ def _player_forward_speed_gups(player, rot) -> float:
 # Lengths in game units.
 VS_NEAR: float = SCENE_NEAR_GU
 VS_FAR: float = SCENE_FAR_GU
+# Viewscreen RTT shape; keep in step with kViewscreenRttW/H in host_bindings.cc.
+VS_ASPECT: float = 640.0 / 360.0
+
+from engine.cameras import zoom_fit as _zoom_fit  # noqa: E402
+# Eased eye distance for the viewscreen target feed, persistent across frames.
+_VS_ZOOM_SMOOTHER = _zoom_fit.DistanceSmoother()
 
 
-def _viewscreen_scene_feed(player, forward_fov):
+def _viewscreen_scene_feed(player, forward_fov, dt=None):
     """Resolve the ViewscreenZoomTarget scene feed: the SAME framing the
     exterior view shows when holding Z (camera_zoom_target), rendered into the
     bridge viewscreen RTT. Returns (eye, target, up, fov_y_rad, near, far) or
@@ -8289,23 +8301,29 @@ def _viewscreen_scene_feed(player, forward_fov):
     lets MissionLib.ViewscreenWatchObject(obj) persist until the player retargets.
 
     Framing reuses engine.cameras.tracking._TrackingCamera in ZoomTarget mode —
-    the identical solver the exterior Z zoom uses (eye close behind the target on
-    the ship->target axis, look-at the subsystem aim point, FOV unchanged at the
-    exterior value). Rigid (dt=None): no spring smoothing, which for an inset
-    reads as a clean lock rather than a swoop.
+    the same fit-to-frame solver the exterior Z zoom uses: the whole target
+    fits the viewscreen's aspect (VS_ASPECT), the eye sits behind it on the
+    ship->target axis, and the look-at is the target's box centre. The eye
+    distance is smoothed across frames by _VS_ZOOM_SMOOTHER (snaps on
+    retarget, held while `dt` is 0 under pause); the pose itself is rigid
+    (compute dt=None).
 
     Pull-model: reads SDK state, never writes bridge_flag()/GetRenderedSet()."""
     if player is None:
+        _VS_ZOOM_SMOOTHER.reset()
         return None
     from engine.appc.camera_modes import _target_alive
     game = Game_GetCurrentGame()
     if game is None:
+        _VS_ZOOM_SMOOTHER.reset()
         return None
     cam = game.GetPlayerCamera()
     if cam is None:
+        _VS_ZOOM_SMOOTHER.reset()
         return None
     mode = cam.GetNamedCameraMode("ViewscreenZoomTarget")   # Target holder only
     if mode is None:
+        _VS_ZOOM_SMOOTHER.reset()
         return None
 
     cur = player.GetTarget()
@@ -8315,22 +8333,21 @@ def _viewscreen_scene_feed(player, forward_fov):
 
     tgt = mode.GetAttrIDObject("Target")            # mission watch persists until then
     if not _target_alive(tgt):
+        _VS_ZOOM_SMOOTHER.reset()
         return None                                  # -> ViewscreenForward
 
     from engine.cameras.tracking import _TrackingCamera
-    from engine.ui.target_reticle import target_aim_point
     tc = _TrackingCamera()
     tc.set_ship_radius(max(player.GetRadius(), 1e-6))
     tc.enter_zoom_target()
     # Solved in the VIEWED set's coordinates, like the exterior camera: the
     # player and the watched object are each moved into them (_view_pose_of).
     pose_of = _view_pose_of(None, _frames.viewing_set())
-    # Subsystem-aware aim only when watching the player's OWN target; a mission
-    # ViewscreenWatchObject on a different object frames that object's centre.
-    aim = (target_aim_point(player, pose_of=pose_of)
-           if tgt is player.GetTarget() else None)
-    eye, look_at, up = tc.compute(player=player, target=tgt, dt=None,
-                                  aim_point=aim, pose_of=pose_of)
+    tc.v_fov_rad = forward_fov
+    tc.aspect = VS_ASPECT
+    eye, look_at, up = tc.compute(
+        player=player, target=tgt, dt=None, pose_of=pose_of,
+        distance_filter=lambda t, d: _VS_ZOOM_SMOOTHER.step(id(t), d, dt))
     return (eye, look_at, up, forward_fov, VS_NEAR, VS_FAR)
 
 
@@ -12958,7 +12975,8 @@ def run(mission_name: Optional[str] = None,
             _feed = _active_comm_feed(controller)
             _scene = None
             if _feed is None:
-                _scene = _viewscreen_scene_feed(player, director.fov_y_rad)
+                _scene = _viewscreen_scene_feed(player, director.fov_y_rad,
+                                                dt=_player_dt)
             _vs_src = _select_viewscreen_source(r, _feed, _scene)
             if _vs_src == "comm":
                 _set_id, _cam = _feed

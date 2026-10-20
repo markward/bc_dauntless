@@ -16,6 +16,7 @@ target that does not move, since the mode places the camera on the
 target→ship line). We keep a ghost of the last target pose and go on
 framing it until a new target is selected or the C key is pressed.
 """
+import math
 from enum import Enum
 
 from engine.cameras          import (
@@ -85,6 +86,12 @@ class _CameraDirector:
         scale = fov_distance_scale(rad)
         self.chase.fov_scale     = scale
         self.tracking.fov_scale  = scale
+
+    def set_aspect(self, aspect: float) -> None:
+        """Per-frame: the real screen shape (w/h) for the Tracking solver's
+        fit-to-frame math. Non-finite or non-positive values are ignored."""
+        if isinstance(aspect, (int, float)) and math.isfinite(aspect) and aspect > 0:
+            self.tracking.aspect = float(aspect)
 
     def set_speed(self, forward_speed_gups: float) -> None:
         """Per-frame: widen the effective FOV with the player's FORWARD

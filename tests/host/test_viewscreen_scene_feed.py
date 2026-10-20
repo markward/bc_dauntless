@@ -133,3 +133,57 @@ def test_changing_player_target_overwrites_mission_watch(wired):
     assert eye[2] > 400.0                           # now framing new_target (+Z)
     assert abs(eye[0]) < 1e-6
     assert abs(eye[1]) < 1e-6
+
+
+def _dist(out, tgt_x):
+    eye = out[0]
+    return abs(tgt_x - eye[0])
+
+
+def test_feed_uses_the_viewscreen_aspect(wired, monkeypatch):
+    from engine.cameras.tracking import _TrackingCamera
+    seen = []
+    orig = _TrackingCamera.compute
+
+    def spy(self, *a, **k):
+        seen.append(self.aspect)
+        return orig(self, *a, **k)
+
+    monkeypatch.setattr(_TrackingCamera, "compute", spy)
+    # 16/9 is the solver's own default, so also prove the feed READS VS_ASPECT.
+    monkeypatch.setattr(host_loop, "VS_ASPECT", 2.5, raising=False)
+    tgt = _Ship(_Pt(500.0, 0.0, 0.0))
+    player = _Ship(_Pt(0.0, 0.0, 0.0), target=tgt)
+    assert host_loop._viewscreen_scene_feed(player, 0.61) is not None
+    assert seen == [pytest.approx(2.5)]
+    assert 640.0 / 360.0 == pytest.approx(16.0 / 9.0)
+
+
+def test_vs_aspect_matches_the_rtt_shape():
+    assert host_loop.VS_ASPECT == pytest.approx(640.0 / 360.0)
+
+
+def test_feed_distance_eases_between_frames_and_snaps_on_retarget(wired):
+    host_loop._VS_ZOOM_SMOOTHER.reset()
+    tgt = _Ship(_Pt(500.0, 0.0, 0.0), radius=2.0)
+    player = _Ship(_Pt(0.0, 0.0, 0.0), target=tgt)
+    d1 = _dist(host_loop._viewscreen_scene_feed(player, 0.61, 0.25), 500.0)
+    tgt._r = 4.0
+    d2 = _dist(host_loop._viewscreen_scene_feed(player, 0.61, 0.25), 500.0)
+    host_loop._VS_ZOOM_SMOOTHER.reset()
+    d_fit = _dist(host_loop._viewscreen_scene_feed(player, 0.61, 0.25), 500.0)
+    assert d1 < d2 < d_fit
+    other = _Ship(_Pt(500.0, 0.0, 0.0), radius=4.0)
+    player._target = other
+    d3 = _dist(host_loop._viewscreen_scene_feed(player, 0.61, 0.25), 500.0)
+    assert d3 == pytest.approx(d_fit)
+
+
+def test_feed_holds_distance_when_paused(wired):
+    host_loop._VS_ZOOM_SMOOTHER.reset()
+    tgt = _Ship(_Pt(500.0, 0.0, 0.0), radius=2.0)
+    player = _Ship(_Pt(0.0, 0.0, 0.0), target=tgt)
+    d1 = _dist(host_loop._viewscreen_scene_feed(player, 0.61, 0.25), 500.0)
+    tgt._r = 4.0
+    d2 = _dist(host_loop._viewscreen_scene_feed(player, 0.61, 0.0), 500.0)
+    assert d2 == pytest.approx(d1)

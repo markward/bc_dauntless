@@ -640,3 +640,13 @@ def test_a_live_target_does_not_re_snap_the_tracking_springs_every_frame():
     for _ in range(10):
         d.compute(player=p, dt=1.0/60)
     assert d.tracking._smoothed_eye is not None
+
+
+def test_set_aspect_reaches_the_tracking_solver_and_rejects_junk():
+    from engine.cameras.director import _CameraDirector
+    d = _CameraDirector()
+    d.set_aspect(2.0)
+    assert d.tracking.aspect == 2.0
+    for bad in (0, -1, float("nan"), float("inf")):
+        d.set_aspect(bad)
+        assert d.tracking.aspect == 2.0
