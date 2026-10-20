@@ -12,6 +12,7 @@ uniform sampler2D u_depth;
 uniform sampler2D u_radial;     // RG: density(r), tau_star(r); u = sqrt(r/far)
 uniform sampler2D u_table_tau;  // far-field OPTICAL DEPTH [u(r), (mu+1)/2]
 uniform sampler2D u_table_S;    // far-field inscatter
+uniform sampler3D u_lattice;    // hash13 of each cell, kLatticeN^3, REPEAT + LINEAR
 uniform mat4  u_inv_view_proj;
 uniform vec3  u_eye;
 uniform vec3  u_star;           // render-space star centre
@@ -73,6 +74,18 @@ float vnoise(vec3 p){
 }
 float fbm(vec3 p){ float a=0.5,s=0.0; for(int k=0;k<5;k++){ s+=a*vnoise(p); p*=2.02; a*=0.5; } return s; }
 
+// --- the same value noise read from the baked lattice (renderer/nebula_noise.h):
+// one trilinear fetch at i + smoothstep(f) instead of 8 hashes. Exactly vnoise
+// inside [0, kLatticeN-1), repeating with period kLatticeN past it. Haze lanes
+// only: the clump noise keeps fbm(), which its gameplay twin mirrors.
+const float kLatticeN = 64.0;   // renderer::nebula_noise::kLatticeN
+float vnoise_lattice(vec3 p){
+    vec3 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+    i=mod(i, kLatticeN);   // small coordinates: no precision loss far out
+    return texture(u_lattice, (i+f+0.5)/kLatticeN).r;
+}
+float fbm_lattice(vec3 p){ float a=0.5,s=0.0; for(int k=0;k<5;k++){ s+=a*vnoise_lattice(p); p*=2.02; a*=0.5; } return s; }
+
 const float PI = 3.14159265;
 float hg(float g, float c){ float g2=g*g; return (1.0-g2)/(4.0*PI*pow(max(1e-6,1.0+g2-2.0*g*c),1.5)); }
 
@@ -131,7 +144,7 @@ bool clump_interval(int i, vec3 o, vec3 dir, out float t0, out float t1){
     return t1 > t0;
 }
 float lanes(vec3 p){
-    float n = fbm((p+u_noise_origin)/u_lane_size);          // ~0.5 mean
+    float n = fbm_lattice((p+u_noise_origin)/u_lane_size);  // ~0.5 mean
     return max(0.0, mix(1.0, 2.0*n, u_lane_contrast));
 }
 float sky_lanes(vec3 dir){ return max(0.0, mix(1.0, 2.0*fbm(dir*6.0+13.0), u_lane_contrast)); }

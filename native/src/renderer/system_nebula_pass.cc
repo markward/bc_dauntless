@@ -1,6 +1,7 @@
 // native/src/renderer/system_nebula_pass.cc
 #include "renderer/system_nebula_pass.h"
 
+#include "renderer/nebula_noise.h"
 #include "renderer/nebula_pass.h"   // NebulaVolume
 #include "renderer/frame.h"          // Lighting
 #include "renderer/pipeline.h"
@@ -48,6 +49,10 @@ SystemNebulaPass::~SystemNebulaPass() {
     if (vao_ != 0) {
         glDeleteVertexArrays(1, &vao_);
         vao_ = 0;
+    }
+    if (lattice_tex_ != 0) {
+        glDeleteTextures(1, &lattice_tex_);
+        lattice_tex_ = 0;
     }
     destroy_half_targets();
     destroy_profile_textures();
@@ -142,6 +147,23 @@ void SystemNebulaPass::initialize_gl() {
     // gl_VertexID in the vertex shader, but core profile still requires a
     // bound VAO for glDrawArrays.
     glGenVertexArrays(1, &vao_);
+
+    // The haze lanes' value-noise lattice (nebula_noise.h): REPEAT so the
+    // shader's wrapped cell blends across the seam, LINEAR so one fetch at
+    // i + smoothstep(f) is the smoothstep blend of the 8 corners. R16F keeps
+    // linear filtering on every GL 4.1 driver (R32F filtering is optional).
+    const int n = nebula_noise::kLatticeN;
+    const std::vector<float> lattice = nebula_noise::bake_hash_lattice(n);
+    glGenTextures(1, &lattice_tex_);
+    glBindTexture(GL_TEXTURE_3D, lattice_tex_);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_R16F, n, n, n, 0, GL_RED, GL_FLOAT, lattice.data());
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_REPEAT);
+    glBindTexture(GL_TEXTURE_3D, 0);
     initialized_ = true;
 }
 
@@ -323,6 +345,10 @@ void SystemNebulaPass::render(const scenegraph::Camera& /*camera*/,
     glActiveTexture(GL_TEXTURE4);
     glBindTexture(GL_TEXTURE_2D, table_S_);
     march.set_int("u_table_S", 4);
+    // 5 = the haze lanes' noise lattice.
+    glActiveTexture(GL_TEXTURE5);
+    glBindTexture(GL_TEXTURE_3D, lattice_tex_);
+    march.set_int("u_lattice", 5);
 
     glBindVertexArray(vao_);
     glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -356,7 +382,9 @@ void SystemNebulaPass::render(const scenegraph::Camera& /*camera*/,
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindVertexArray(0);
 
-    // Unbind the profile units so no later pass inherits them.
+    // Unbind the lattice and the profile units so no later pass inherits them.
+    glActiveTexture(GL_TEXTURE5);
+    glBindTexture(GL_TEXTURE_3D, 0);
     for (GLenum unit : {GL_TEXTURE4, GL_TEXTURE3, GL_TEXTURE2}) {
         glActiveTexture(unit);
         glBindTexture(GL_TEXTURE_2D, 0);

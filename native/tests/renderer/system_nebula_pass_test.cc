@@ -18,6 +18,8 @@
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <memory>
 #include <vector>
 
@@ -391,6 +393,61 @@ void expect_floor_only(const glm::vec4& px, const renderer::NebulaVolume& v, flo
 // A sunless set: the host tells the pass there is no star, so the clump is
 // lit by the emissive floor alone -- never by a star left over from the
 // previous set.
+// The haze lanes are noise read from the baked lattice texture: with the
+// lattice bound and sampled, the lanes vary across the view, so the ratio of
+// a lanes-on frame to a lanes-off frame is not one constant. (An unbound
+// lattice reads 0 everywhere: the ratio would be a single constant.) A depth
+// plane 15,000 GU out, inside the near range, stands in for a hull: the
+// shader then skips the far field, whose sky lanes do not use the lattice,
+// and every pixel is the lanes-modulated near march alone.
+TEST_F(SystemNebulaPassTest, LanesVaryAcrossTheView) {
+    auto render_with_contrast = [&](float contrast) {
+        scenegraph::Camera cam;
+        cam.eye = glm::vec3(0.0f, 130000.0f, 0.0f);   // inside the dense band
+        cam.target = glm::vec3(100000.0f, 130000.0f, 0.0f);
+        cam.up = glm::vec3(0.0f, 0.0f, 1.0f);
+        cam.aspect = 1.0f;
+        cam.near = 1.0f;
+        cam.far = 1.8e6f;
+        const glm::vec4 clip = cam.proj_matrix() * glm::vec4(0.0f, 0.0f, -15000.0f, 1.0f);
+        renderer::HdrTarget target;
+        target.resize(64, 64);
+        target.bind();
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClearDepth(0.5 * clip.z / clip.w + 0.5);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glClearDepth(1.0);
+        const glm::mat4 inv_vp = glm::inverse(cam.proj_matrix() * cam.view_matrix());
+        renderer::SystemNebulaPass pass;
+        pass.set_profile(band_profile(), renderer::atmosphere::LookParams{});
+        pass.set_star(glm::vec3(0.0f));
+        renderer::SystemNebulaPass::Dials d = pass.dials();
+        d.lane_contrast = contrast;
+        d.lane_size = 2000.0f;   // several lane cells across the near field
+        pass.set_dials(d);
+        renderer::Lighting lighting;
+        pass.render(cam, *pipeline, {}, lighting, target.color_texture(),
+                    target.depth_texture(), inv_vp, cam.eye, 0.0f);
+        std::vector<float> px(64 * 64 * 4);
+        glReadPixels(0, 0, 64, 64, GL_RGBA, GL_FLOAT, px.data());
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        return px;
+    };
+    const std::vector<float> flat = render_with_contrast(0.0f);
+    const std::vector<float> lanes = render_with_contrast(1.0f);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    float lo = 1e30f, hi = -1e30f;
+    for (int i = 0; i < 64 * 64; ++i) {
+        const float a = flat[i * 4 + 3], b = lanes[i * 4 + 3];
+        ASSERT_TRUE(std::isfinite(b));
+        if (a < 1e-4f) continue;
+        lo = std::min(lo, b / a);
+        hi = std::max(hi, b / a);
+    }
+    ASSERT_LT(lo, 1e29f) << "premise: the lanes-off frame drew haze";
+    EXPECT_GT(hi - lo, 0.2f) << "the lanes do not vary across the view";
+}
+
 TEST_F(SystemNebulaPassTest, NoStarLightsClumpsByTheFloorOnly) {
     const auto v = test_clump();
     const auto cam = looking_down_y();
