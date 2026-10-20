@@ -460,17 +460,26 @@ StructureSegmentation detect_structure_parts(const std::vector<Tri>& tris,
             const bool elongated = fm.kind != PartKind::Disc && fb.kind != PartKind::Disc
                 && fm.spread.y < p.cyl_long * fm.spread.x;
             if (fm.kind != fb.kind && !elongated) continue;
+            // ...and the two pieces must already BE the same kind of shape. A
+            // flat hull (the LC Intrepid) still fits as one disc once saucer,
+            // engineering hull and nacelles are glued together.
+            const StructurePart fs = fit_part(mom[small], p);
+            const bool both_elongated = fs.kind != PartKind::Disc && fb.kind != PartKind::Disc;
+            if (fs.kind != fb.kind && !both_elongated) continue;
+            // ...pointing the same way (an aft section lying ACROSS the hull
+            // must not join it, then let the fattened hull swallow nacelles).
+            if (std::fabs(glm::dot(fs.axis[0], fb.axis[0])) < cos_merge) continue;
             if (std::fabs(glm::dot(fm.axis[0], fb.axis[0])) < cos_merge) continue;
-            // Same plane (disc) / same axis line (cylinder, box): the smaller
-            // piece's centre must sit inside the larger one's thickness or
-            // cross-section, so a saucer never absorbs the hull below it.
-            const glm::vec3 off = glm::vec3(mom[small].sum / static_cast<double>(mom[small].n))
-                                  - fb.centre;
+            // ...and joining them must not fatten the shape: a nacelle cut in
+            // two keeps its cross-section, a saucer cut in two its thickness,
+            // but a nacelle glued to a hull (or a saucer to the hull below it)
+            // does not.
+            const float g = p.merge_spread_growth;
             if (fb.kind == PartKind::Disc) {
-                if (std::fabs(glm::dot(off, fb.axis[0])) > fb.half_extent.x) continue;
+                if (fm.spread.z > g * std::max(fb.spread.z, fs.spread.z)) continue;
             } else {
-                const glm::vec3 perp = off - fb.axis[0] * glm::dot(off, fb.axis[0]);
-                if (glm::length(perp) > std::max(fb.half_extent.y, fb.half_extent.z)) continue;
+                if (fm.spread.y > g * std::max(fb.spread.y, fs.spread.y)) continue;
+                if (fm.spread.z > g * std::max(fb.spread.z, fs.spread.z)) continue;
             }
             mom[big] = mm;
             mom[small] = Moments{};

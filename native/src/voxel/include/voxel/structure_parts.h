@@ -44,7 +44,8 @@ struct StructureParams {
     float line_ratio  = 0.20f;     // core is a LINE (tube) when l2/l1 < this
     float sheet_ratio = 0.20f;     // core is a SHEET when l3/l2 < this
     float orient_tol_deg = 25.0f;  // neighbouring core voxels join within this angle
-    float merge_axis_tol_deg = 20.0f; // pieces merge if the joined fit keeps kind + axis
+    float merge_axis_tol_deg = 20.0f; // pieces merge if the joined fit keeps kind + axis...
+    float merge_spread_growth = 1.25f; // ...and its cross-section / thickness grows < this
     float disc_claim_k = 1.8f;    // a disc claims voxels within k x its half-thickness
     float min_fraction = 0.005f;  // lobes smaller than this share of the solid merge away
     // Classification on principal std-devs s1 >= s2 >= s3:

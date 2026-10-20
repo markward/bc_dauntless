@@ -1,7 +1,7 @@
 // native/tools/voxel_inspect/parts_view.cc
 //
 // SPIKE (damage redesign): `voxel_inspect --parts <hull.nif> <out.bmp>
-// [cells] [orient_tol_deg]` -- runs voxel::detect_structure_parts, prints the
+// [cells] [orient_tol_deg] [merge_tol_deg] [min_fraction]` -- runs voxel::detect_structure_parts, prints the
 // part table and writes top / side / front views coloured by part, with each
 // part's centre (white) and main axis (black) drawn on.
 #include <algorithm>
@@ -77,12 +77,14 @@ const char* kind_name(voxel::PartKind k) {
 
 int run_parts(int argc, char** argv) {
     if (argc < 4) {
-        std::fprintf(stderr, "--parts needs <hull.nif> <out.bmp> [cells] [orient_tol_deg]\n");
+        std::fprintf(stderr, "--parts needs <hull.nif> <out.bmp> [cells] [orient_tol_deg] [merge_tol_deg] [min_fraction]\n");
         return 2;
     }
     voxel::StructureParams prm;
     if (argc > 4) prm.long_axis_cells = std::atoi(argv[4]);
     if (argc > 5) prm.orient_tol_deg = static_cast<float>(std::atof(argv[5]));
+    if (argc > 6) prm.merge_axis_tol_deg = static_cast<float>(std::atof(argv[6]));
+    if (argc > 7) prm.min_fraction = static_cast<float>(std::atof(argv[7]));
     const auto tris = voxel::collect_hull_triangles_from_source(argv[2]);
     if (tris.empty()) { std::fprintf(stderr, "no triangles in %s\n", argv[2]); return 1; }
     const voxel::StructureSegmentation seg = voxel::detect_structure_parts(tris, prm);
