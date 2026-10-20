@@ -1,6 +1,6 @@
 # Developer performance monitor — design
 
-**Status:** built on `feat/dev-perf-monitor`, not yet live-checked.
+**Status:** built on `feat/dev-perf-monitor`; live-verified by Mark 2026-10-20 ("works great").
 
 ## What
 
