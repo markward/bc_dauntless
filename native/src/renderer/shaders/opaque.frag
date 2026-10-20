@@ -788,7 +788,8 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
 // radius), 8 strip wear, 9 rib-break wear, 10 buckle band, 11 edge noise,
 // 12 debug (1 stripped tint, 2 colour by part), 13 soot, 14 metal brightness,
 // 15 member bend, 16 breach wear, 17 inner hull brightness, 18 tear mix
-// (0 = whole panels, 1 = torn freely), 19 tear noise, 20 peel band.
+// (0 = whole panels, 1 = torn freely), 19 tear noise, 20 peel band,
+// 21 member survive (wear past breach a primary member still spans).
 const vec3 PLATE_EDGE   = vec3(0.68, 0.68, 0.69);   // cut plate thickness
 const vec3 RIB_METAL    = vec3(0.60, 0.58, 0.55);   // unpainted structure
 const vec3 INNER_HULL   = vec3(0.42, 0.41, 0.40);  // pressure hull under the ribs
@@ -1169,9 +1170,26 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
 // inside faces, so a sheet's own back face never plugs its hole: torn through
 // one sheet shows the far wall's inside; torn through both shows space.
 uniform int u_plating_two_sided;   // 1 = this draw also rasterises inside faces
-bool plating_torn(vec3 p, vec3 nb) {
-    float grain = vnoise(p.xy * 0.13 + p.z * 0.09);
-    return plating_wear(p, nb) > u_plating[16] + (grain - 0.5) * 0.4;
+// 0 = hull here; 1 = torn through (cut); 2 = torn, but a structural member
+// still spans the hole here (drawn as bare, charred metal). The torn edge is
+// jagged at panel scale; members snap off at random lengths, fewer the
+// deeper the wear runs past breach, secondaries first.
+int plating_hole(vec3 p, vec3 nb) {
+    float w = plating_wear(p, nb);
+    float f = 1.0 / max(u_plating[1] * 0.6, 0.1);
+    float n = vnoise(p.xy * f + p.z * 0.6 * f + 2.7) * 0.7
+            + vnoise(p.yz * f * 2.1 + p.x * f * 0.8 + 5.3) * 0.3;
+    float over = w + (n - 0.5) * u_plating[19] * 1.5 - u_plating[16];
+    if (over <= 0.0) return 0;
+    int part = plating_part(p);
+    vec3 q = plating_warp(p, nb, u_plating[15]);
+    vec2 c; vec3 ctr; float d1, d2;
+    plating_sample(part, q, nb, c, ctr, d1, d2);
+    float reach1 = max(u_plating[21], 1e-3), reach2 = 0.5 * reach1;
+    float seg = vnoise(q.xy * 0.45 + q.z * 0.31 + 5.0);
+    if (d1 < 0.5 * u_plating[4] && seg > over / reach1) return 2;
+    if (d2 < 0.3 * u_plating[4] && seg > over / reach2) return 2;
+    return 1;
 }
 
 // The hull's inside face, seen through a hole: dark bulkhead metal with a
@@ -2063,8 +2081,16 @@ void main() {
     // is drawn where the cut reveals it.
     bool plating_inside = false;
     if (u_decal_count > 0 && u_plating[0] > 0.5) {
-        if (plating_torn(p_body, n_body)) discard;
-        if (u_plating_two_sided != 0 && !gl_FrontFacing) {
+        int hole = plating_hole(p_body, n_body);
+        if (hole == 1) discard;
+        if (hole == 2) {
+            // A member still spanning the hole: bare, charred metal.
+            plating_inside = true;
+            if (u_plating_two_sided != 0 && !gl_FrontFacing) n = -n;
+            n_shade = n;
+            float g = vnoise(p_body.xy * 0.7 + p_body.z * 0.5);
+            base.rgb = RIB_METAL * u_plating[14] * (0.4 + 0.3 * g);
+        } else if (u_plating_two_sided != 0 && !gl_FrontFacing) {
             plating_inside = true;
             n = -n;
             n_shade = n;
