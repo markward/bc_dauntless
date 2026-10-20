@@ -850,7 +850,10 @@ int run_anchor_corpus(const fs::path& root) {
     return 0;
 }
 
+int run_parts(int argc, char** argv);   // parts_view.cc (SPIKE)
+
 int main(int argc, char** argv) {
+    if (argc >= 2 && std::strcmp(argv[1], "--parts") == 0) return run_parts(argc, argv);
     if (argc < 2) {
         std::fprintf(stderr,
             "usage: %s <X_vox.nif> [X.nif (hull, for AABB compare)]\n"
