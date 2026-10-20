@@ -9240,10 +9240,10 @@ def _comm_camera_params(cam):
 
     CameraObjectClass.orientation is the BC-object convention (col0=right,
     col1=forward, col2=up) for BOTH camera sources: the explicit angle-axis
-    D/E coords cameras (CameraObjectClass_Create) and the embedded NiCamera
-    sets, whose Gamebryo camera frame (-Z view axis) is converted into this
-    convention by CameraObjectClass_CreateFromNiCamera. So world-forward is
-    GetCol(1) and world-up is GetCol(2) here, uniformly.
+    D/E coords cameras and the embedded NiCamera sets. Each constructor
+    (CameraObjectClass_Create / _CreateFromNiCamera) converts its source frame
+    into this convention, so world-forward is GetCol(1) and world-up is
+    GetCol(2) here, uniformly.
 
     fov_y is derived from the _NiFrustum top/bottom + near as
     2*atan(((top-bottom)/2)/near); a degenerate frustum falls back to the bridge

@@ -80,6 +80,49 @@ def test_create_from_coords_builds_real_camera():
     assert cam.orientation.GetCol(0).x != 1.0
 
 
+def _aims_at(cam, point, max_deg):
+    """True when the camera's object-convention forward (col1) points within
+    max_deg of `point`, with a level up (col2 ~ +Z)."""
+    import math
+    R = cam.orientation
+    fwd, up = R.GetCol(1), R.GetCol(2)
+    d = [point[i] - cam.position[i] for i in range(3)]
+    n = math.sqrt(sum(c * c for c in d))
+    cos_a = (fwd.x * d[0] + fwd.y * d[1] + fwd.z * d[2]) / n
+    return up.z > 0.999 and cos_a > math.cos(math.radians(max_deg))
+
+
+def test_fed_comm_cameras_face_the_captains_chair():
+    """MissionLib.SetupBridgeSet's hardcoded D/E bridge comm cameras (their
+    NIFs carry no camera) must look at the captain's chair, where a hailed
+    captain sits (Soto: SovereignSeated on EBridgeSet, E2M0).
+
+    Chair centres measured from the stock set NIFs (nif_shapes): DBridge
+    "cmnd seat" (0.0, 86.3, 17.9); EBridge "chair captain" (-0.9, 141.5, 49.6).
+    Reading the angle-axis forward as col1 aimed both cameras along +X at the
+    side wall instead (the live bug)."""
+    d_cam = CameraObjectClass_Create(0, 50, 47, -1.55, 0, 0, 1, "maincamera")
+    e_cam = CameraObjectClass_Create(0, 95, 64, -1.55, 0, 0, 1, "maincamera")
+    assert _aims_at(d_cam, (0.0, 86.3, 30.0), 45.0)
+    assert _aims_at(e_cam, (-0.9, 141.5, 49.6), 20.0)
+    # The SDK's -1.55 (not -pi/2) is the 1.2 degree trim onto the E chair's
+    # off-centre x; the conversion must keep that sign.
+    assert e_cam.orientation.GetCol(1).x < 0.0
+
+
+def test_create_orientation_is_proper_rotation():
+    import math
+    # the SDK's own tilted unit axis (GalaxyBridge.CreateBridgeModel)
+    cam = CameraObjectClass_Create(0, 0, 0, 0.7, -0.000665, -0.087559, 0.996159, "c")
+    R = cam.orientation
+    c0, c1, c2 = R.GetCol(0), R.GetCol(1), R.GetCol(2)
+    cross = (c1.y * c2.z - c1.z * c2.y, c1.z * c2.x - c1.x * c2.z,
+             c1.x * c2.y - c1.y * c2.x)
+    # object convention: right = forward x up, det +1
+    assert all(abs(cross[i] - (c0.x, c0.y, c0.z)[i]) < 1e-6 for i in range(3))
+    assert abs(math.sqrt(c1.x ** 2 + c1.y ** 2 + c1.z ** 2) - 1.0) < 1e-6
+
+
 def test_setupbridgeset_else_branch_with_embedded_camera(monkeypatch):
     import App
     import MissionLib
