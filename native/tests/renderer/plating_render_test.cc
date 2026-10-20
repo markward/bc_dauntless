@@ -249,6 +249,49 @@ protected:
                                             glm::vec3(0.0f, 0.0f, -1.0f), 1.0e5f);
     }
 
+
+    // submit_opaque_in_pass then submit_plating_interior over one instance;
+    // returns the stencil plane (row 0 = bottom) and the mark count.
+    struct Marked { std::vector<std::uint8_t> stencil; int marks = -1; int cull = 0; };
+    Marked render_marked(const assets::Model& model, const scenegraph::DamageDecalRing& ring,
+                         const scenegraph::Camera& cam) {
+        scenegraph::World world;
+        auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(&model));
+        world.set_world_transform(iid, glm::mat4(1.0f));
+        world.get(iid)->decals = ring;
+        glViewport(0, 0, kSize, kSize);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glStencilMask(0xFF);
+        glClearStencil(0);
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+        glDepthFunc(GL_LESS);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        renderer::reset_model_radius_cache();
+        renderer::FrameSubmitter submitter;
+        const auto lookup = [](scenegraph::ModelHandle h) -> const assets::Model* {
+            return reinterpret_cast<const assets::Model*>(h);
+        };
+        submitter.submit_opaque_in_pass(world, cam, *p, lookup, test_lighting(),
+                                        scenegraph::Pass::Space, kDecalTime);
+        submitter.submit_plating_interior(world, cam, *p, lookup, nullptr, test_lighting(),
+                                          1.0f, kDecalTime);
+        Marked out;
+        out.marks = submitter.plating_marks_last_frame();
+        out.stencil.assign(static_cast<std::size_t>(kSize) * kSize, 0);
+        glReadPixels(0, 0, kSize, kSize, GL_STENCIL_INDEX, GL_UNSIGNED_BYTE, out.stencil.data());
+        return out;
+    }
+
+    static scenegraph::Camera quad_cam() {
+        scenegraph::Camera cam;
+        cam.eye = glm::vec3(0.0f, 0.0f, 120.0f);
+        cam.target = glm::vec3(0.0f);
+        cam.up = glm::vec3(0.0f, 1.0f, 0.0f);
+        cam.aspect = 1.0f;
+        return cam;
+    }
+
     static scenegraph::DamageDecalRing internal_ring(const glm::vec3& at, float radius,
                                                     float wear) {
         scenegraph::DamageDecalRing ring;
@@ -369,30 +412,6 @@ TEST_F(PlatingRenderTest, FarFromDamagePixelMatchesStock) {
     EXPECT_EQ(mismatched, 0);
 }
 
-// A back face far from every listed record is dropped even though the
-// damaged (torn-possible) draw is double-sided; and a front face there still
-// draws. The record sits 500 mu away, so it reaches no quad pixel.
-TEST_F(PlatingRenderTest, FarBackFaceIsDiscarded) {
-    dauntless_plating::g_params[0] = 1.0f;
-    scenegraph::Camera cam;
-    cam.eye = glm::vec3(0.0f, 0.0f, 120.0f);
-    cam.target = glm::vec3(0.0f);
-    cam.up = glm::vec3(0.0f, 1.0f, 0.0f);
-    cam.aspect = 1.0f;
-    const auto ring = internal_ring({500.0f, 0.0f, 0.0f}, 30.0f, 10.0f);
-    ASSERT_TRUE(renderer::plating::build_damage_list(
-                    ring, dauntless_plating::g_params).torn_possible);
-
-    auto front = build_quad(20.0f, /*facing_camera=*/true);
-    const int front_px = count_non_black(render(*front, ring, cam));
-    auto back = build_quad(20.0f, /*facing_camera=*/false);
-    const int back_px = count_non_black(render(*back, ring, cam));
-    std::fprintf(stderr, "[PlatingRender] quad front=%d back=%d lit pixels\n",
-                 front_px, back_px);
-    ASSERT_GT(front_px, 1000) << "the probe quad does not render at all";
-    EXPECT_EQ(back_px, 0) << "a far back face drew in a double-sided draw";
-}
-
 // The program choice itself, read back from GL: an undamaged hull and a
 // HeatGlow-only hull draw through the stock program, a torn hull through
 // plating_shader(). draw_model's use() is the last program bind in the pass
@@ -425,44 +444,79 @@ TEST_F(PlatingRenderTest, ProgramChoiceIsReadBackFromGL) {
     EXPECT_EQ(current(), plating) << "torn hull";
 }
 
-// The positive half of double-sided drawing: a torn draw rasterises the far
-// skin's INSIDE (a back face) where it lies near a record, so the tear in the
-// near skin shows the inside wall, not space. Two sheets: a front-facing
-// skin at z = 0 torn at the record, and a back-facing skin 35 mu below it,
-// outside the blast (no wear, no hole) but within reach + margin (near).
-TEST_F(PlatingRenderTest, InsideFaceNearDamageShowsThroughTheTear) {
+// The plating draw is front faces only: a back-facing far skin is culled, so
+// the torn centre shows the clear colour, not an inside wall.
+TEST_F(PlatingRenderTest, PlatingDrawCullsBackFaces) {
     dauntless_plating::g_params[0] = 1.0f;
-    const float* g = dauntless_plating::g_params;
-    const float reach = 30.0f, depth = 35.0f;
-    ASSERT_GT(depth, reach) << "the far skin must take no wear";
-    ASSERT_LT(depth, reach + g[5] + g[6] + g[15] + g[2]) << "the far skin must be near";
-    scenegraph::Camera cam;
-    cam.eye = glm::vec3(0.0f, 0.0f, 120.0f);
-    cam.target = glm::vec3(0.0f);
-    cam.up = glm::vec3(0.0f, 1.0f, 0.0f);
-    cam.aspect = 1.0f;
-    const auto ring = internal_ring({0.0f, 0.0f, 0.0f}, reach, 10.0f);
+    const auto cam = quad_cam();
+    const auto ring = internal_ring({0.0f, 0.0f, 0.0f}, 30.0f, 10.0f);
     ASSERT_TRUE(renderer::plating::build_damage_list(
                     ring, dauntless_plating::g_params).torn_possible);
     const glm::ivec2 c = to_pixel(cam, glm::vec3(0.0f));
-
-    // The near skin alone: torn at the centre, so the clear colour shows.
-    auto near_only = build_quad(20.0f, /*facing_camera=*/true);
-    const auto near_px = render(*near_only, ring, cam);
-    ASSERT_GT(count_non_black(near_px), 1000) << "the near skin does not render";
-    const std::uint8_t* hole = pixel(near_px, c.x, c.y);
-    ASSERT_LE(hole[0] + hole[1] + hole[2], 6) << "the near skin is not torn at the centre";
-
-    // With the far skin's inside behind it, the same pixel shows that wall.
     auto two = build_quad(20.0f, /*facing_camera=*/true);
-    add_quad(*two, 20.0f, -depth, /*facing_camera=*/false);
-    const auto two_px = render(*two, ring, cam);
-    const std::uint8_t* wall = pixel(two_px, c.x, c.y);
-    std::fprintf(stderr, "[PlatingRender] tear centre (%d,%d) near-only=(%d,%d,%d) "
-                 "with inside wall=(%d,%d,%d)\n", c.x, c.y, hole[0], hole[1], hole[2],
-                 wall[0], wall[1], wall[2]);
-    EXPECT_GT(wall[0] + wall[1] + wall[2], 6)
-        << "the inside face near the damage was not drawn through the tear";
+    add_quad(*two, 20.0f, -35.0f, /*facing_camera=*/false);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    const auto px = render(*two, ring, cam);
+    ASSERT_GT(count_non_black(px), 1000) << "the near skin does not render";
+    const std::uint8_t* q = pixel(px, c.x, c.y);
+    EXPECT_LE(q[0] + q[1] + q[2], 6) << "a back face showed through the tear";
+}
+
+TEST_F(PlatingRenderTest, MarkingStampsOnlyTornPixels) {
+    dauntless_plating::g_params[0] = 1.0f;
+    GLint sbits = 0;
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, GL_STENCIL,
+                                          GL_FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE, &sbits);
+    ASSERT_GE(sbits, 8) << "test window has no stencil buffer";
+    const float* g = dauntless_plating::g_params;
+    const float reach = 30.0f;
+    const float margin = g[5] + g[6] + g[15] + g[2];
+    const auto cam = quad_cam();
+    auto quad = build_quad(150.0f, true);
+    const auto r = render_marked(*quad, internal_ring({0, 0, 0}, reach, 10.0f), cam);
+    EXPECT_EQ(r.marks, 1);
+    auto st = [&](glm::ivec2 c) { return r.stencil[static_cast<std::size_t>(c.y) * kSize + c.x]; };
+    EXPECT_EQ(st(to_pixel(cam, glm::vec3(0.0f))), 2);
+    EXPECT_EQ(st(to_pixel(cam, glm::vec3(reach + margin + 5.0f, 0.0f, 0.0f))), 0);
+    EXPECT_EQ(st(glm::ivec2(1, 1)), 0) << "a pixel off the quad";
+}
+
+TEST_F(PlatingRenderTest, NoMarkWithoutPossibleTear) {
+    dauntless_plating::g_params[0] = 1.0f;
+    GLint sbits = 0;
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, GL_STENCIL,
+                                          GL_FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE, &sbits);
+    ASSERT_GE(sbits, 8) << "test window has no stencil buffer";
+    const auto cam = quad_cam();
+    auto quad = build_quad(150.0f, true);
+    const auto r = render_marked(*quad, internal_ring({0, 0, 0}, 30.0f, 0.3f), cam);
+    EXPECT_EQ(r.marks, 0);
+    EXPECT_EQ(*std::max_element(r.stencil.begin(), r.stencil.end()), 0);
+}
+
+TEST_F(PlatingRenderTest, PlatingDrawsLeaveStockGlState) {
+    dauntless_plating::g_params[0] = 1.0f;
+    const auto cam = quad_cam();
+    auto quad = build_quad(150.0f, true);
+    render_marked(*quad, internal_ring({0, 0, 0}, 30.0f, 10.0f), cam);
+    GLint v = 0;
+    EXPECT_EQ(glIsEnabled(GL_CULL_FACE), GL_TRUE);
+    glGetIntegerv(GL_CULL_FACE_MODE, &v);
+    EXPECT_EQ(v, GL_BACK);
+    EXPECT_EQ(glIsEnabled(GL_STENCIL_TEST), GL_FALSE);
+    glGetIntegerv(GL_STENCIL_WRITEMASK, &v);
+    EXPECT_EQ(v & 0xFF, 0xFF);
+    GLboolean cm[4];
+    glGetBooleanv(GL_COLOR_WRITEMASK, cm);
+    EXPECT_TRUE(cm[0] && cm[1] && cm[2] && cm[3]);
+    GLboolean dm = GL_FALSE;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &dm);
+    EXPECT_TRUE(dm);
+    glGetIntegerv(GL_DEPTH_FUNC, &v);
+    EXPECT_EQ(v, GL_LESS) << "render_marked sets GL_LESS before the calls";
 }
 
 // ---- Uneven breach (Task 1): toughness per panel + hole-scale lumps. ------

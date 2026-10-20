@@ -1200,7 +1200,7 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
 // (the fragment is discarded) instead of painted. Same test for the hull's
 // inside faces, so a sheet's own back face never plugs its hole: torn through
 // one sheet shows the far wall's inside; torn through both shows space.
-uniform int u_plating_two_sided;   // 1 = this draw also rasterises inside faces
+uniform int u_plating_mark;        // 1 = marking draw: stencil only where the hull is cut through
 // 0 = hull here; 1 = torn through (cut); 2 = torn, but a structural member
 // still spans the hole here (drawn as bare, charred metal). The torn edge is
 // jagged at panel scale; members snap off at random lengths, fewer the
@@ -1228,13 +1228,6 @@ int plating_hole(vec3 p, vec3 nb, float w) {
     return 1;
 }
 
-// The hull's inside face, seen through a hole: dark bulkhead metal with a
-// faint deck banding along body Z.
-vec3 plating_inner_wall(vec3 p) {
-    float deck = smoothstep(0.42, 0.5, abs(fract(p.z / 4.0) - 0.5));
-    float grain = vnoise(p.xy * 0.11 + p.z * 0.07);
-    return INNER_HULL * u_plating[17] * (0.45 + 0.25 * grain) * (1.0 - 0.4 * deck);
-}
 #endif  // PLATING
 // ── Non-finite cause probe (developer diagnostic) ──────────────────────────
 // When u_nan_debug is on, a fragment whose shading went NaN/Inf reports WHICH
@@ -2126,8 +2119,8 @@ void main() {
     // wear is sampled at that centre, so a pixel within it of a record's reach
     // can belong to a worn panel. The plate-edge march only runs once the
     // pixel is already stripped, so it never decides nearness.
-    // Far from every record the hull is stock: an inside (back) face is
-    // dropped, and a front face skips plating_hole and apply_plating.
+    // Far from every record the hull is stock: a front face skips
+    // plating_hole and apply_plating.
     bool plating_inside = false;
     bool plating_near = false;
     float plating_w_here = 0.0, plating_w_int = 0.0;
@@ -2140,29 +2133,28 @@ void main() {
             }
         }
     }
-    // This far back-face discard sits AFTER the base texture fetch and the
-    // dFdx / fwidth block on purpose: implicit-derivative texture() and
-    // dFdx need the whole 2x2 quad alive, and an early discard here breaks
-    // them for the neighbouring kept pixels (see the dFdx/discard note at the
-    // top of main). Moving it up to save the fetch is not free.
-    if (!plating_near && u_plating_two_sided != 0 && !gl_FrontFacing) discard;
+    // The marking draw (submit_plating_interior) writes only stencil, and only
+    // where the hull is cut through. This discard sits AFTER the base texture
+    // fetch and the dFdx / fwidth block on purpose: implicit-derivative
+    // texture() and dFdx need the whole 2x2 quad alive, and an early discard
+    // here breaks them for the neighbouring kept pixels (see the dFdx/discard
+    // note at the top of main).
+    if (u_plating_mark != 0 && !plating_near) discard;
     if (plating_near) {
         plating_w_here = plating_wear(p_body, n_body);
         plating_w_int  = plating_internal(p_body);
         int hole = plating_hole(p_body, n_body, plating_w_here);
-        if (hole == 1) discard;
+        // Marking draw: keep ONLY the cut-through pixels (colour is masked
+        // off, so what they shade to is never seen); every other draw
+        // discards exactly those pixels. One discard, no early return: an
+        // early `return` here miscompiled the whole plating draw.
+        if ((hole == 1) != (u_plating_mark != 0)) discard;
         if (hole == 2) {
             // A member still spanning the hole: bare, charred metal.
             plating_inside = true;
-            if (u_plating_two_sided != 0 && !gl_FrontFacing) n = -n;
             n_shade = n;
             float g = vnoise(p_body.xy * 0.7 + p_body.z * 0.5);
             base.rgb = RIB_METAL * u_plating[14] * (0.4 + 0.3 * g);
-        } else if (u_plating_two_sided != 0 && !gl_FrontFacing) {
-            plating_inside = true;
-            n = -n;
-            n_shade = n;
-            base.rgb = plating_inner_wall(p_body);
         }
     }
 #endif

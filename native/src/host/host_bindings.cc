@@ -1710,6 +1710,15 @@ void frame() {
                                   *g_carve_cache, g_instance_field_cache.get(),
                                   g_decal_game_time, g_lighting, ambient_scale);
         }
+        // Hull interior under the plating tear: stencil-marks where the hull is
+        // cut through (and, from Task 3, draws the deck-and-room interior
+        // there). One marking draw per hull that can tear; nothing otherwise.
+        if (g_submitter && g_carve_cache) {
+            DAUNTLESS_FRAME_SCOPE("space.hull_interior");
+            g_submitter->submit_plating_interior(g_world, cam, *g_pipeline, lookup,
+                                                 g_carve_cache.get(), g_lighting,
+                                                 ambient_scale, g_decal_game_time);
+        }
         // Far + minor specks in ONE instanced draw, after every opaque writer
         // (hull, minors, impostors, breach) so they depth-test against all of
         // it. render_specks leaves depth test/writes on, cull on, blend off --

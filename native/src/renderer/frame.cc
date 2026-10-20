@@ -582,7 +582,8 @@ void draw_model(const assets::Model& model,
                 int sphere_level,
                 const scenegraph::Instance::Atmosphere* atmo,
                 glm::vec3 atmo_sun_dir,
-                const plating::DamageList* plating) {
+                const plating::DamageList* plating,
+                bool plating_mark) {
     // Pick the program: skinned only when the model carries a skeleton AND a
     // non-empty palette is supplied. An empty palette forces the static branch,
     // which is byte-identical to the pre-skinning path (used by the plumbing
@@ -642,12 +643,7 @@ void draw_model(const assets::Model& model,
     // SPIKE (damage redesign): plating layer -- ONLY for a draw through the
     // plating program (submit_opaque_in_pass passes the list exactly when
     // plating::wants_plating). A stock draw (plating == nullptr, or a skinned
-    // model, whose program has no plating layer) touches no plating uniform
-    // and never changes culling. Restores culling when draw_model returns.
-    struct CullRestore {
-        bool was = false, active = false;
-        ~CullRestore() { if (active && was) glEnable(GL_CULL_FACE); }
-    } cull_restore;
+    // model, whose program has no plating layer) touches no plating uniform.
     const plating::DamageList* const plating_list = skinned ? nullptr : plating;
 
     // ── SPIKE (damage redesign): plating params, damage list, parts ────────
@@ -661,7 +657,7 @@ void draw_model(const assets::Model& model,
     if (plating_list != nullptr) {
         static const std::string kPlating = "u_plating", kDmgCount = "u_dmg_count",
             kDmgA = "u_dmg_a", kDmgB = "u_dmg_b", kDmgC = "u_dmg_c",
-            kTwoSided = "u_plating_two_sided", kPartCount = "u_part_count",
+            kMark = "u_plating_mark", kPartCount = "u_part_count",
             kPartA = "u_part_a", kPartB = "u_part_b", kPartC = "u_part_c",
             kPartD = "u_part_d";
         auto set_vec4s = [&](const std::string& name, const glm::vec4* v, int n) {
@@ -704,14 +700,7 @@ void draw_model(const assets::Model& model,
         set_vec4s(kPartC, pc, np);
         set_vec4s(kPartD, pd, np);
 
-        // A hull torn through needs its INSIDE faces: drawn double-sided
-        // while the list's summed wear can reach a tear (Task 2's gate).
-        set_int(kTwoSided, dl.torn_possible ? 1 : 0);
-        if (dl.torn_possible) {
-            cull_restore.was = glIsEnabled(GL_CULL_FACE) == GL_TRUE;
-            cull_restore.active = true;
-            glDisable(GL_CULL_FACE);
-        }
+        set_int(kMark, plating_mark ? 1 : 0);
     }
 
     // ── Warp-nacelle glow capsules ─────────────────────────────────────────
@@ -1522,6 +1511,110 @@ void FrameSubmitter::submit_carve_stencil(const scenegraph::World& world,
     shader.set_int("u_carve_invert", 0);
     pipeline.skinned_shader().use();
     pipeline.skinned_shader().set_int("u_carve_invert", 0);
+}
+
+void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
+                                             const scenegraph::Camera& camera,
+                                             Pipeline& pipeline,
+                                             const ModelLookup& lookup,
+                                             CarveFieldCache* carve_cache,
+                                             const Lighting& lighting,
+                                             float ambient_scale,
+                                             float now) {
+    plating_marks_last_frame_ = 0;
+    if (dauntless_plating::g_params[0] <= 0.5f) return;
+
+    // Same per-frame uniforms submit_opaque_in_pass gives the plating_
+    // program; Task 3's interior draw (lit) rides on them too.
+    auto configure_common = [&](Shader& s) {
+        s.use();
+        s.set_mat4("u_view", camera.view_matrix());
+        s.set_mat4("u_proj", camera.proj_matrix());
+        const glm::vec3 cam_pos_ws = glm::vec3(glm::inverse(camera.view_matrix())[3]);
+        s.set_vec3("u_camera_pos_ws", cam_pos_ws);
+        set_ambient_uniforms(s, lighting, ambient_scale);
+        s.set_int("u_dir_light_count", lighting.directional_count);
+        if (lighting.directional_count > 0) {
+            s.set_vec3_array("u_dir_light_dir_ws", lighting.directional_dir_ws,
+                             lighting.directional_count);
+            s.set_vec3_array("u_dir_light_color", lighting.directional_color,
+                             lighting.directional_count);
+        }
+    };
+
+    bool configured = false;
+    bool state_set = false;
+    GLint saved_depth_func = GL_LESS;
+    GLuint white = 0, black = 0;
+    int next_value = 2;
+
+    world.for_each_visible_in_pass(scenegraph::Pass::Space, [&](const scenegraph::Instance& inst) {
+        if (next_value > 255) return;
+        if (inst.far_fade >= 1.0f) return;
+        const assets::Model* m = lookup(inst.model_handle);
+        if (!m || inst.decals.count() == 0) return;
+        const plating::DamageList list =
+            plating::build_damage_list(inst.decals, dauntless_plating::g_params);
+        if (!plating::wants_plating(list, dauntless_plating::g_params) ||
+            !list.torn_possible)
+            return;
+
+        Shader& shader = pipeline.plating_shader();
+        if (!configured) {
+            configure_common(shader);
+            configured = true;
+            white = ensure_white_texture();
+            black = ensure_black_texture();
+        }
+        if (!state_set) {
+            // Stencil only: no colour, no depth write. Depth TEST on with
+            // LEQUAL so the hull's own depth (written by the plating draw
+            // just before) passes.
+            glGetIntegerv(GL_DEPTH_FUNC, &saved_depth_func);
+            glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+            glDepthMask(GL_FALSE);
+            glEnable(GL_DEPTH_TEST);
+            glDepthFunc(GL_LEQUAL);
+            glEnable(GL_STENCIL_TEST);
+            glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+            glStencilMask(0xFF);
+            state_set = true;
+        }
+        glStencilFunc(GL_ALWAYS, next_value, 0xFF);
+        ++next_value;
+        ++plating_marks_last_frame_;
+
+        std::vector<glm::mat4> palette;
+        if (!m->skeleton.bones.empty())
+            palette = build_bone_palette(m->skeleton, /*local_pose=*/nullptr);
+        std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw> lights{};
+        if (inst.far_fade != 0.0f) {
+            shader.use();
+            shader.set_float("u_dither_fade", inst.far_fade);
+        }
+        draw_model(*m, inst.world, shader, pipeline.skinned_shader(), white, black,
+                   /*rim_strength=*/0.0f, inst.decals, inst.glow_regions, now,
+                   inst.emissive_scale, palette, inst.carve, lights,
+                   /*dyn_light_count=*/0, carve_fill_entry(carve_cache, m, inst.carve),
+                   /*carve_invert=*/false, /*hull_field=*/nullptr, &inst.node_overrides,
+                   instance_decal_override(inst.id), /*sphere_level=*/-1,
+                   /*atmo=*/nullptr, glm::vec3(0.0f), &list, /*plating_mark=*/true);
+        if (inst.far_fade != 0.0f) {
+            shader.use();
+            shader.set_float("u_dither_fade", 0.0f);
+        }
+        // Task 3: the deck-and-room interior draw for this hull goes HERE,
+        // under the stencil value just written, before the next hull is marked.
+    });
+
+    if (state_set) {
+        // Back to the GL default (0xFF), NOT 0x00: see submit_carve_stencil.
+        glStencilMask(0xFF);
+        glDisable(GL_STENCIL_TEST);
+        glDepthFunc(static_cast<GLenum>(saved_depth_func));
+        glDepthMask(GL_TRUE);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    }
 }
 
 void FrameSubmitter::submit_opaque_instance(const scenegraph::World& world,

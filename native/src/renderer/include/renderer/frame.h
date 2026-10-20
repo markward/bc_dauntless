@@ -350,7 +350,10 @@ void draw_model(const assets::Model& model,
                 // u_dmg_*; the draw goes double-sided when the list says a
                 // tear is possible. Ignored for a skinned draw (the skinned
                 // program has no plating layer).
-                const plating::DamageList* plating = nullptr);
+                const plating::DamageList* plating = nullptr,
+                // Marking draw (submit_plating_interior): the program writes
+                // nothing but "this pixel is cut through" (u_plating_mark).
+                bool plating_mark = false);
 
 /// Per-camera LOD for a sphere-mapped model, or -1 when the model has none.
 /// world radius = sphere_map.radius * length(world[0]); focal from proj and
@@ -489,6 +492,25 @@ public:
                               CarveFieldCache* carve_cache,
                               InstanceFieldCache* field_cache = nullptr);
 
+    /// Hull interior under the plating tear. For each visible Space instance
+    /// with far_fade < 1, a model, wants_plating and torn_possible (world
+    /// order), stamps stencil value 2 + k (k = ordinal; stops after 255)
+    /// exactly where the hull is cut through. Value 1 is the old carve's.
+    /// Colour and depth writes are off; depth TEST on (GL_LEQUAL). Task 3's
+    /// interior draw slots in right after each instance's marking draw.
+    /// Restores stencil off / mask 0xFF / masks on / depth func GL_LESS.
+    void submit_plating_interior(const scenegraph::World& world,
+                                 const scenegraph::Camera& camera,
+                                 Pipeline& pipeline,
+                                 const ModelLookup& lookup,
+                                 CarveFieldCache* carve_cache,
+                                 const Lighting& lighting,
+                                 float ambient_scale,
+                                 float now);
+
+    /// Marking draws issued by the last submit_plating_interior.
+    int plating_marks_last_frame() const { return plating_marks_last_frame_; }
+
     /// Draw a SINGLE instance (by id) through the full opaque lighting/texture
     /// path, ignoring its visibility flag. Used by the Ship Property Viewer's
     /// hull-texture mode to render just the inspected ship on the isolated
@@ -518,6 +540,8 @@ private:
     /// Sampling it returns (0,0,0,1) so the glow term contributes nothing.
     std::uint32_t black_texture_ = 0;
     std::uint32_t ensure_black_texture();
+
+    int plating_marks_last_frame_ = 0;
 };
 
 /// Render depth-only for every visible `rim_eligible` caster in `Pass::Space`
