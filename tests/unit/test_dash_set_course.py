@@ -186,6 +186,28 @@ def test_set_course_dash_arrives_at_the_placement_in_ten_seconds(world):
     assert warp_state.get_state(w.player) == WarpEngineSubsystem.WES_NOT_WARPING
 
 
+def test_arriving_clears_the_course(world):
+    """The tunnel's rule (tests/unit/test_warp_clears_course_on_arrival.py)
+    holds for the dash: once there, Warp has nowhere left to go."""
+    w = world
+    warp_button.press(w.button)
+    _run_until(w, lambda: not dash.is_dashing(w.player))
+
+    assert w.player.GetContainingSet() is w.ona2
+    assert not w.button.GetDestination()
+    assert w.button.IsEnabled() == 0
+
+
+def test_a_course_replotted_mid_flight_survives_arrival(world):
+    w = world
+    loop = _mid_flight(w)
+    w.button.set_player_destination("Systems.Ona.Ona1")
+    _run_until(w, lambda: not dash.is_dashing(w.player), loop=loop)
+
+    assert w.player.GetContainingSet() is w.ona2
+    assert w.button.GetDestination() == "Systems.Ona.Ona1"
+
+
 # ── 2. state during the flight, restored after ─────────────────────────────
 
 def test_during_the_dash_warp_state_and_helm_entries(world):
@@ -204,6 +226,9 @@ def test_during_the_dash_warp_state_and_helm_entries(world):
 
     _run_until(w, lambda: not dash.is_dashing(w.player))
     assert w.player.IsDoingInSystemWarp() == 0
+    # Arriving spent the course, and Warp is lit only with one plotted
+    # (STWarpButton.IsEnabled): plot the next before reading the entries.
+    w.button.set_player_destination("Systems.Ona.Ona1")
     for key in _ENTRIES:
         assert _entry(w.helm, key).IsEnabled(), key
     assert w.helm.IsEnabled()
@@ -215,6 +240,7 @@ def test_the_helm_restores_only_what_it_disabled(world):
     _entry(w.helm, "Dock").SetDisabled()
     warp_button.press(w.button)
     _run_until(w, lambda: not dash.is_dashing(w.player))
+    w.button.set_player_destination("Systems.Ona.Ona1")  # the course is spent
     assert _entry(w.helm, "Warp").IsEnabled()
     assert not _entry(w.helm, "Dock").IsEnabled()
 
@@ -337,6 +363,8 @@ def test_all_stop_drops_out_and_passes_the_event_on(world):
     # SDK HelmMenuHandlers.AllStop ran after us: Stay AI, Helm in control.
     assert w.player.GetAI() is not None
     assert MissionLib.g_sPlayerShipController == "Helm"
+    # Short of the destination: the course stays, so Warp carries on.
+    assert w.button.GetDestination() == ONA2
 
 
 # ── R10: an AI order that ends the flight still runs the drop-out ──────────

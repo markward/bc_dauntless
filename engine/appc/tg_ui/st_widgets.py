@@ -176,6 +176,20 @@ class STWarpButton(STButton):
     def get_mission_destination(self):
         return self._mission_destination
 
+    # engine-only: the player has arrived at ``dest``. A course still naming
+    # it is spent -- left set, Warp stayed live and jumped to the same place
+    # again (Mark, 2026-10-20). A course plotted since the warp engaged names
+    # somewhere else and is kept; so is a mission latch naming somewhere else.
+    # The SDK never clears this field; BridgeHandlers.HelmUpdateToolTip's
+    # no-destination branch (:1421) says BC's C++ did (where: inferred).
+    def clear_course(self, dest) -> None:
+        if dest and self._destination == dest:
+            self._destination = None
+            self._mission_name = ""
+            self._episode_name = ""
+        if dest and self._mission_destination == dest:
+            self._mission_destination = None
+
     def get_mission_name(self) -> str:
         return self._mission_name
 

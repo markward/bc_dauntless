@@ -66,9 +66,10 @@ class _Dash:
     """One dash in progress."""
 
     def __init__(self, dest_set, placement, waypoint, end, forward, path,
-                 queues, button=None):
+                 queues, button=None, course=None):
         import App
         self.button = button            # takes the queues back if never engaged
+        self.course = course            # the course module, spent on arrival
         self.dest_set = dest_set
         self.placement = placement
         self.waypoint = waypoint
@@ -226,11 +227,13 @@ def is_same_system_dash(player, dest_module, mission, episode) -> bool:
 # ── start ──────────────────────────────────────────────────────────────────
 
 def start_set_course(player, dest_set, placement_name, queues,
-                     button=None) -> bool:
+                     button=None, course=None) -> bool:
     """Plan the dash to ``dest_set``'s placement and begin its align.
 
     ``button`` is the warp button the queues were taken from: a dash
     cancelled before it engages hands them back to it (they never started).
+    ``course`` is the destination module the button named: arriving spends
+    it (``warp.clear_arrived_course``); a drop-out short of it keeps it.
 
     Returns False -- nothing started, the caller takes the tunnel -- when
     there is no placement to arrive at or the planner could only return a
@@ -263,7 +266,7 @@ def start_set_course(player, dest_set, placement_name, queues,
     cancel_arrival_turn(player)
     st = _Dash(dest_set, placement, wp, end, forward, path,
                {k: list((queues or {}).get(k, ())) for k in _QUEUE_KEYS},
-               button)
+               button, course)
     first = path.tangent_at(0.0)
     st.t_align = warp._align_duration(player, first)
     st.pos0 = player.GetTranslate()
@@ -572,6 +575,9 @@ def drop_out(player, reason) -> None:
     src = frames.containing_set(player)
     if st.flight.ended_reason == "arrived":
         dest = st.dest_set
+        # Before the set events below, so their handlers may plot anew.
+        from engine.appc import warp
+        warp.clear_arrived_course(player, st.course)
         # Onto the placement before any set event fires, so handlers read
         # the arrival pose; then exact in the destination's own frame.
         # The rotation is NOT snapped (Mark, live 2026-09-27): the ship keeps
