@@ -198,18 +198,21 @@ namespace dauntless_decals {
 namespace dauntless_plating {
     float g_params[16] = {
         1.0f,   // 0 enabled
-        2.5f,   // 1 panel size (model units)
-        3.0f,   // 2 frame (rib) spacing along body Y
-        2.0f,   // 3 stringer spacing
-        0.30f,  // 4 rib width
-        0.25f,  // 5 plate depth
-        0.35f,  // 6 rib depth (below the plate)
+        6.0f,   // 1 panel size (model units, ~1.75 m each)
+        8.0f,   // 2 frame (rib) spacing along body Y
+        5.0f,   // 3 stringer spacing
+        1.2f,   // 4 rib width
+        0.6f,   // 5 plate depth
+        1.2f,   // 6 rib depth (below the plate)
         0.40f,  // 7 reach (x scorch decal radius)
         0.5f,   // 8 wear to strip a panel
         2.5f,   // 9 wear to break ribs
         0.35f,  // 10 buckle band (wear below strip that buckles)
         0.6f,   // 11 edge noise
-        0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f,   // 12 debug tint (1 = stripped magenta, buckled yellow)
+        0.3f,   // 13 soot (x scorch deposit while plating is on)
+        1.0f,   // 14 metal brightness (x rib / edge albedo)
+        0.0f,
     };
 }
 

@@ -749,7 +749,8 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
                        * pow(nval, 1.5)               // gamma: suppress thin/low-noise ejecta
                        * 1.3;                         // peak ejecta scale
         float deposit = clamp(core + ejecta, 0.0, 1.0) * intensity * wn;
-        deposit *= 1.0 - 0.7 * g_plating_exposed;   // SPIKE: plating layer
+        if (u_plating[0] > 0.5)                       // SPIKE: plating layer
+            deposit *= u_plating[13] * (1.0 - 0.7 * g_plating_exposed);
         base_lit = mix(base_lit, SOOT_COLOR, deposit);
 
         // Game-time blackbody ember (Scorch only; weapon_class 1 in c.y).
@@ -778,10 +779,11 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
 // ribs. Depth is a short parallax march -- nothing is cut in the mesh.
 // u_plating: 0 enabled, 1 panel size, 2 frame spacing, 3 stringer spacing,
 // 4 rib width, 5 plate depth, 6 rib depth, 7 reach (x decal radius),
-// 8 strip wear, 9 rib-break wear, 10 buckle band, 11 edge noise.
-const vec3 PLATE_EDGE   = vec3(0.42, 0.42, 0.43);   // cut plate thickness
-const vec3 RIB_METAL    = vec3(0.26, 0.25, 0.24);   // unpainted structure
-const vec3 INNER_SKIN   = vec3(0.045, 0.043, 0.042);
+// 8 strip wear, 9 rib-break wear, 10 buckle band, 11 edge noise,
+// 12 debug tint, 13 soot, 14 metal brightness.
+const vec3 PLATE_EDGE   = vec3(0.55, 0.55, 0.56);   // cut plate thickness
+const vec3 RIB_METAL    = vec3(0.40, 0.38, 0.36);   // unpainted structure
+const vec3 INNER_SKIN   = vec3(0.07, 0.065, 0.06);
 
 float plating_wear(vec3 q, vec3 nb) {
     float w = 0.0;
@@ -865,6 +867,7 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
             if (dot(tw, tw) > 1e-8)
                 n_shade = normalize(n_shade + normalize(tw) * 0.6 * k);
             base_rgb *= 1.0 - 0.35 * k;
+            if (u_plating[12] > 0.5) base_rgb = mix(base_rgb, vec3(1.0, 0.85, 0.0), 0.6 * k);
         }
         return;
     }
@@ -896,8 +899,9 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
         vec2 id = plating_panel(q, cc);
         if (id == my_id) continue;
         if (plating_panel_wear(q, p_body, ax_u, ax_v, n_body) < strip) {
-            base_rgb = PLATE_EDGE * (1.0 - 0.3 * t / Dp);
+            base_rgb = PLATE_EDGE * u_plating[14] * (1.0 - 0.3 * t / Dp);
             n_shade = normalize(to_ws * back_b);
+            if (u_plating[12] > 0.5) base_rgb = vec3(0.0, 1.0, 1.0);
             return;
         }
     }
@@ -919,12 +923,13 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
     }
     float depth01 = (t_side - Dp) / max(Dr, 1e-4);
     vec3 skin = INNER_SKIN;
-    vec3 rib_side = RIB_METAL * mix(0.75, 0.35, depth01);
+    vec3 rib_side = RIB_METAL * u_plating[14] * mix(0.75, 0.35, depth01);
     vec3 below = mix(skin, rib_side, side);
     vec3 nb_below = mix(n_body, back_b, side);
     // Broken ribs read charred.
-    vec3 rib_top = RIB_METAL * mix(0.45, 1.0, rib_ok);
+    vec3 rib_top = RIB_METAL * u_plating[14] * mix(0.45, 1.0, rib_ok);
     base_rgb = mix(below, rib_top, top);
+    if (u_plating[12] > 0.5) base_rgb = mix(base_rgb, vec3(1.0, 0.0, 1.0), 0.5);
     vec3 nb_out = normalize(mix(nb_below, n_body, top));
     n_shade = normalize(to_ws * nb_out);
 }
