@@ -242,7 +242,7 @@ Recommendation: crater-only variant, so the old carve can be retired whole.
 
 | Step | What | Done when |
 |---|---|---|
-| 1 | Measure the spike as it stands (B2, B2d) | numbers in the perf register |
+| 1 | ✅ Measured 2026-10-20 (`perf-register.md` P-12, SIG-087–SIG-091): plating +0.61 ms GPU for one damaged hull at ~6% of a 4K frame (~10 ms if it filled the frame, derived); CPU flat; a death ~3 ms GPU cheaper than the carve | numbers in the perf register |
 | 2 | Hull damage store + CPU near-damage list + plating shader variant + fixes 1, 2, 6 | render tests green, perf at or below the spike |
 | 3 | Parts at load, disk cache, size order, articulation frames | Intrepid nacelles keep their damage when they move |
 | 4 | Internal blast fixes (3.5), rocks (3.7) | blast tests green; rock craters back |

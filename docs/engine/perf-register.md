@@ -114,6 +114,23 @@ before/after builds picture the same moment.
 The SDK `Initialize` of Vesuvi4 runs as in any mission, and `system_loader`
 brings up the sibling Vesuvi regions on the first tick, as in real play.
 
+### DP — Damage Preview, the Akira's impulse system blown, then its death (unattended)
+
+For damage rendering. Only on `spike/damage-redesign` so far:
+
+```bash
+OPEN_STBC_HOST_HEADLESS=1 DAUNTLESS_WINDOW_SIZE=3840x2160 DAUNTLESS_MISSION=engine.dev_missions.damage_preview DAUNTLESS_DEV_DESTROY=Wreck DAUNTLESS_DEV_DESTROY_DELAY_S=40 DAUNTLESS_DEV_QUIT_AFTER_S=20 DAUNTLESS_DEV_VIEW=exterior DAUNTLESS_DAMAGE_PREVIEW_DEATH_S=34 DAUNTLESS_PROFILE_FRAMES=100000000 ./build/dauntless --developer 2>&1 | tee ~/Documents/dauntless-perf/dp-$(date +%Y%m%d-%H%M).log
+```
+
+A clean Akira 6 GU ahead of the player loses its impulse controller and both
+impulse engines 3, 4.5 and 6 s in (three internal blasts, five holes), then is
+killed 40 s in (BC's death cascade), and the run quits 60 s in. Reports
+between the `[dev-scripted] screenshot` (15 s) and `destroyed` (40 s) lines are
+the damaged-but-alive window; after `destroyed`, the death. Add
+`DAUNTLESS_HULL_CARVING=1 DAUNTLESS_PLATING=0` for the pre-spike ("Classic")
+look in the same build. The `[damage-preview]` prints are buffered to the end
+of the log: use the `[dev-scripted]` lines as the timeline.
+
 ### To attribute GPU cost
 
 Two tools, both from boot, both used for P-1 (SIG-065, SIG-066):
@@ -228,6 +245,14 @@ turns off the periodic report, so it needs its own run (M-5).
 | C-086 | 2026-10-19 22:11–22:18 | B3 **CPU-only at 4K**, probes 0, 35, 1, 8, volumetric nebulae off, 0 again | same | **Debug** | framebuffer **3840x2160** | 18–31 reports each after `settled` | `b3-4k-probe-<n>-*.log`. GPU-bound, so frame time is GPU time. |
 | C-087 | 2026-10-20 06:47–06:50 | B3 CPU-only at 4K ×2 **with a still** (`DAUNTLESS_DEV_SCREENSHOT`, 5 s after `settled`), **before** the lattice noise | `c6f4e5ce3` | **Debug** | framebuffer 3840x2160 | 18 reports each after `settled` | `b3-4k-before-<n>-*.log`; stills `~/Documents/dauntless-perf/shots/b3-noise/before-<n>.png`. |
 | C-088 | 2026-10-20 06:56–06:59 | as C-087, **after**: haze lanes read value noise from a baked hash lattice | `f0279719b` | **Debug** | 3840x2160 | 24 reports each | `b3-4k-after-<n>-*.log`; stills `after-<n>.png`; comparison images in `shots/b3-noise/compare/`. |
+| C-089 | 2026-10-20 18:50 | **DP** (Damage Preview, below), **Layered**, headless, CPU-only | `110c81e7f` (`spike/damage-redesign`) | **Debug** | framebuffer 3840x2160 | 30 reports | `dmg-dp4k-layered-1-20261020-1850`. Akira about 6% of the frame, seen from behind (screenshot alongside). |
+| C-090 | 2026-10-20 18:51 | DP, **Classic** (`DAUNTLESS_HULL_CARVING=1 DAUNTLESS_PLATING=0`), headless, CPU-only | same | **Debug** | 3840x2160 | 30 reports | `dmg-dp4k-classic-1-…`. Same build as C-089: the plating code is compiled in, only switched off. |
+| C-091 | 2026-10-20 18:52 | as C-089 | same | **Debug** | 3840x2160 | 30 reports | `dmg-dp4k-layered-2-…`. |
+| C-092 | 2026-10-20 18:53 | as C-090 | same | **Debug** | 3840x2160 | 30 reports | `dmg-dp4k-classic-2-…`. |
+| C-093 | 2026-10-20 18:54 | **B2d**, Layered, headless, CPU-only | same | **Debug** | 1280x720 | 15 reports | `dmg-b2d720-layered-1-…`. |
+| C-094 | 2026-10-20 18:55 | B2d, Classic, headless, CPU-only | same | **Debug** | 1280x720 | 13 reports | `dmg-b2d720-classic-1-…`. |
+| C-095 | 2026-10-20 18:56 | DP, Layered, **GPU focus** `space.opaque,space.carve_stencil,space.breach` | same | **Debug** | 3840x2160 | 24 reports | `dmg-dp4k-gpu-layered-1-20261020-1856`. GPU-timed: attribution only (M-6). |
+| C-096 | 2026-10-20 18:57 | DP, Classic, GPU focus as C-095 | same | **Debug** | 3840x2160 | 22 reports | `dmg-dp4k-gpu-classic-1-…`. |
 
 Logs for C-003 to C-008: `~/Documents/dauntless-perf/cef-*.log`, `cef2-*` …
 `cef6-*`.
@@ -273,6 +298,11 @@ bound, not the actual size.
 
 | ID | Capture | What the data shows | Tier | Feeds |
 |---|---|---|---|---|
+| SIG-091 | C-095 vs C-096, SIG-088 | Scaled by area: the plating added 0.61 ms of GPU for a damaged Akira covering about 6% of a 4K frame. If the cost is linear in the damaged hull's pixels, a damaged hull filling the frame would add about **10 ms**. | Derived (linear in pixels, assumed; coverage read off the C-089 screenshot) | P-12 |
+| SIG-090 | C-089–C-094 | CPU `space.opaque` during a death: Layered **0.41–0.44 ms** vs Classic **1.21–1.35 ms** (DP); B2d after the kill 0.58 vs 0.79 ms. The carve's per-carve CPU work is gone. While damaged but alive the two are close: 0.42 vs 0.39 ms (DP), 0.57 vs 0.56 (B2d before the kill). | Measured | P-12 (counter) |
+| SIG-089 | C-095, C-096 | GPU in the DP **death** window: Classic `space.opaque` 1.33 + `space.breach` 3.28 + `space.carve_stencil` 0.08 = **4.7 ms**, GPU frame 12.7 ms; Layered `space.opaque` **1.76 ms**, no breach or stencil work, GPU frame **7.7 ms**. A ship coming apart is about 3 ms of GPU cheaper with the layered damage. | Measured (GPU-timed: attribution, not frame time) | P-12 (counter) |
+| SIG-088 | C-095, C-096 | GPU in the DP **damaged-but-alive** window (five blast holes, no carve in either mode): `space.opaque` Layered **1.00 ms** vs Classic **0.39 ms**; GPU frame 6.81 vs 6.19 ms. With one damaged hull at about 6% of the 4K frame, the plating costs 0.61 ms of GPU. | Measured (GPU-timed: attribution, not frame time) | P-12 |
+| SIG-087 | C-089–C-092 | DP at 4K headless never leaves **16.6 ms** in either mode: `cef.pump` (8.1–9.8 ms) fills the slack to the headless UI pump's 60 Hz floor (P-1 step 4, M-7), and `present` stays 0.68–0.76 ms, so the GPU is not the limit at this framing. Frame time cannot separate Layered from Classic here; GPU-focus runs can. | Measured | P-12, M-7 |
 | SIG-085 | C-087, C-088 | **The lattice noise does not change B3's picture.** Scene band (rows 150–1900, columns 300–3540, no HUD): before vs after differs by a mean of 1.16 levels, 6.2–6.5% of pixels off by more than 2, about 0.7% by more than 8; two runs of the same build differ by 1.17 levels, 6.4–6.5% and 0.7%. Mean scene-band RGB identical (16.09, 10.60, 18.21). The ×10 diff shows only hull grain and a spark, no haze structure. Expected: near B3 the coarse octaves fall inside the lattice's first period, where the noise is exactly the old one; elsewhere (other coordinates, e.g. Belaruz) the fine pattern can differ. | Measured / inferred (why) | P-1 |
 | SIG-084 | C-087, C-088 | **Haze lanes from a baked lattice: B3 at 4K 29.8 → 21.9 ms per frame** (29.80 / 29.82 → 21.87 / 21.90, about 34 → 46 fps), `present` 16.8 → 10.0 ms, still GPU-bound. The nebula is now at least 5.3 ms (21.9 − 16.6 floor), down from at least 13.2. Lanes off entirely was 19.8 ms (SIG-083), so the five lattice fetches per step cost about 2 ms. | Measured / derived (the nebula floor) | P-1 |
 | SIG-083 | C-086 | **B3 at 4K: the nebula is at least 13.4 ms of a 30 ms GPU-bound frame, and its noise is about 90% of that.** Frame medians after `settled`: baseline 30.0 and 29.9 ms (two runs, `present` 16.7–16.9 ms of GPU wait); nebula off 16.6 ms (the headless 60 Hz floor, SIG-070; `present` 0.7), so the nebula costs **at least** 13.4 ms. All noise off 17.7 ms (−12.4); haze lanes fbm off 19.8 (−10.2); half the haze steps 23.2 (−6.8). | Measured; the 90% is derived (12.4 / 13.4, a lower-bound denominator) | P-1 |
@@ -385,6 +415,7 @@ bound, not the actual size.
 | P-9 | AI avoidance all-pairs scan | Earlier captures only | — | Needs B3. A spatial broadphase, as the projectile loop got. |
 | P-11 | Lone `space.opaque` spikes of about 575 ms in B2/B2d; then the renderer's other byte-at-a-time and first-use file loads | **Spike fixed** (`e5e2e3b7`, branch `perf/death-hitch`): the first collision scuff loaded the 12.6 MB `scuff_normal.tga` in its draw, about 350 ms of it a byte-at-a-time read (SIG-046); it is now read in one block and loaded at boot, about 158 ms (SIG-047). **Follow-up done** (branch `perf/renderer-file-reads`; both merged to main `5fc58ec8`, live-verified 2026-10-18): no file in `native/src` reads through `istreambuf_iterator` any more (`82ad3dca`; `tests/tools/test_no_bytewise_file_reads.py` guards it). Every loader but the atlases reads under 100 KB, at most 0.4 ms now (SIG-049, SIG-055). The impostor atlases were the one real cost, about 1 s in B1's load frame and about 120 ms a rock on any later first draw (SIG-050–SIG-052): they now decode on self-feeding workers from mission load and upload one a frame (`ec14d2e3`, `b829ce0c`; 1,054 → 53–57 ms, SIG-054), only where the set has rocks (SIG-056, SIG-057). | SIG-034, SIG-046–SIG-057 | (1) The upload is 7.6 ms of GL a rock, one a frame for about 29 frames after a rock mission loads (SIG-054). If that matters, either upload only on first draw (no pump; holds about 2 MB of decoded RAM a rock) or build the mips on the worker so the upload is one `glTexImage2D` per level (changes the mip filter: needs a visual check). (2) First use during play is left only for the reticle and viewscreen static, each under 0.5 ms of read (SIG-049); their decode + upload is not measured, but they are 16 KB or smaller textures. |
 | P-10 | CEF overlay full-surface upload, about 0.53 ms CPU a frame even when nothing repainted | Measured; small | SIG-020 | `DAUNTLESS_CEF_UPLOAD=on_paint` (on main since `a4e8e485`; still opt-in) skips unrepainted frames losslessly. Measure the paint rate in a HUD-heavy scene (B2) before deciding whether to make it the default. |
+| P-12 | Layered hull damage (`spike/damage-redesign`): the plating shader on every pixel of any hull with a damage record | **Measured on the spike, not fixed.** While damaged but alive, the hull pass costs 2.6× the GPU (0.39 → 1.00 ms) for one hull at about 6% of a 4K frame (SIG-088), extrapolating to about 10 ms for a hull filling the frame (SIG-091, derived). CPU barely moves (SIG-090). Counter: during a death it is about 3 ms GPU and 0.8 ms CPU **cheaper** than the carve's breach passes (SIG-089, SIG-090). | SIG-087–SIG-091 | (1) The near-damage early-out and plating shader variant in `docs/superpowers/specs/2026-10-20-layered-hull-damage-productisation.md` §3.2. (2) Then a close-up DP capture (a damaged hull filling the frame) to test SIG-091 directly. (3) A capture against a main build, to see whether the larger shader costs undamaged hulls anything (the Classic runs here share the spike build). |
 
 ---
 
