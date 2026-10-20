@@ -23,12 +23,23 @@
     <link rel="stylesheet" href="css/star_map.css">
     <link rel="stylesheet" href="css/first_run.css">
     <link rel="stylesheet" href="css/mods_screen.css">
+    <link rel="stylesheet" href="css/perf_monitor.css">
 </head>
 <body>
     <!-- Target reticle text labels (name above box, range/speed below),
          positioned by js/reticle_text.js from Python-projected screen coords. -->
     <div id="reticle-name"></div>
     <div id="reticle-dist"></div>
+    <!-- Performance monitor (developer-only): FPS, frame time and render
+         resolution, top right. Shown by js/perf_monitor.js from
+         engine/ui/perf_monitor_panel.py, which is only constructed under
+         --developer, when Developer Options -> Diagnostics -> Performance
+         Monitor is on. -->
+    <div id="perf-monitor">
+        <div class="perf-monitor__line"><span id="perf-monitor-fps" class="perf-monitor__fps">--</span><span class="perf-monitor__label">FPS</span></div>
+        <div class="perf-monitor__line"><span id="perf-monitor-ms">-- ms</span></div>
+        <div class="perf-monitor__line"><span id="perf-monitor-res"></span></div>
+    </div>
     <!-- Pause menu overlay.
          Python toggles visibility via cef_execute_javascript on the
          #pause-menu container, and pushes the row list + focused index
@@ -1119,6 +1130,7 @@
     <script src="js/engineering_power.js"></script>
     <script src="js/first_run.js"></script>
     <script src="js/mods_screen.js"></script>
+    <script src="js/perf_monitor.js"></script>
     <script src="js/modal_layer.js"></script>
 </body>
 </html>

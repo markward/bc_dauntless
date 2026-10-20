@@ -10810,6 +10810,9 @@ def run(mission_name: Optional[str] = None,
         mission_picker = _NULL_PICKER  # noop until we know dev mode is on
         developer_options_panel = _NULL_PICKER  # noop until dev mode confirmed
         ship_property_viewer = _NULL_PICKER  # noop until dev mode confirmed
+        # Top-right FPS/resolution overlay (Developer Options -> Diagnostics).
+        # None outside --developer, so production never builds or ticks it.
+        perf_monitor_panel = None
         if dev_mode.is_enabled():
             # Default stub-observability telemetry ON under --developer so every
             # dev session passively accumulates coverage into stub_hits.jsonl
@@ -10882,6 +10885,8 @@ def run(mission_name: Optional[str] = None,
             dev_mode.register_dev_pause_menu_entry(
                 "Developer Options…", developer_options_panel.open,
             )
+            from engine.ui.perf_monitor_panel import PerfMonitorPanel
+            perf_monitor_panel = PerfMonitorPanel()
 
             # Ship Property Viewer — dev-only orbiting hologram inspector.
             # ship_getter returns the live player ship (same object the
@@ -11109,6 +11114,7 @@ def run(mission_name: Optional[str] = None,
         if dev_mode.is_enabled():
             registry.register(mission_picker)
             registry.register(developer_options_panel)
+            registry.register(perf_monitor_panel)
             registry.register(ship_property_viewer)
 
         # SDK ShipDisplay factories register against this same registry.
@@ -11817,6 +11823,8 @@ def run(mission_name: Optional[str] = None,
             _wall_dt = _now - _previous_real_time
             _frame_dt = _wall_dt
             _previous_real_time = _now
+            if perf_monitor_panel is not None:
+                perf_monitor_panel.tick(_wall_dt)
             if pause.sim_frozen:
                 _frame_dt = 0.0
             _accumulator, _sim_ticks_this_frame = step_accumulator(

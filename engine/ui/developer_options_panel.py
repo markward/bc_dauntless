@@ -5,8 +5,8 @@ subclass pumped by PanelRegistry, rendered as a pause-menu modal that
 reuses the configuration panel's cp-* CSS. Five tabs: "Combat" (cheats
 wired to engine.dev_combat_cheats, plus the Sensor Occlusion switch),
 "Lighting" (forced glow states, normal-map tunables), "Environments"
-(rock toggles), "Diagnostics" (the frame profiler, the dial-group
-picker), and "Characters" (put any SDK character on the viewscreen, via
+(rock toggles), "Diagnostics" (the frame profiler, the performance
+monitor overlay, the dial-group picker), and "Characters" (put any SDK character on the viewscreen, via
 engine.dev_character_viewscreen). Dev-mode only — constructed in host_loop.py inside
 ``if dev_mode.is_enabled():``.
 
@@ -22,6 +22,7 @@ from engine import dev_character_viewscreen as character_viewscreen
 from engine import dev_combat_cheats as cheats
 from engine import dev_dial_groups
 from engine import dev_light_preview as light_preview
+from engine import dev_perf_monitor
 from engine import host_io
 from engine import renderer
 from engine.appc import sensor_occlusion
@@ -150,6 +151,7 @@ class DeveloperOptionsPanel(Panel):
         # profiler at startup, so a hard-coded False would show OFF while it
         # was running.
         self._profiler = _frame_profiler().is_enabled()
+        self._perf_monitor = dev_perf_monitor.enabled()
         # The character the Characters tab last put on the viewscreen, or
         # None. Only what this panel did: a mission can switch the viewscreen
         # behind its back, so this labels the row, it is not a live readout.
@@ -192,6 +194,7 @@ class DeveloperOptionsPanel(Panel):
         # DAUNTLESS_PROFILE_FRAMES at startup, so re-read rather than trust
         # the mirror -- otherwise the row shows OFF while it is reporting.
         self._profiler = _frame_profiler().is_enabled()
+        self._perf_monitor = dev_perf_monitor.enabled()
         self.visible = True
 
     def close(self) -> None:
@@ -213,7 +216,8 @@ class DeveloperOptionsPanel(Panel):
             self._systems_damaged, self._systems_disabled,
             self._normal_maps, self._normal_flip_g, self._normal_strength,
             self._bridge_pbr, self._bridge_debug_view,
-            self._profiler, self._rock_catalogue, self._dial_group,
+            self._profiler, self._perf_monitor,
+            self._rock_catalogue, self._dial_group,
             self._minor_rocks, self._far_tier,
             self._rock_specks, self._rock_puffs, self._running_lights,
             self._planet_geosphere, self._planet_atmosphere,
@@ -249,6 +253,7 @@ class DeveloperOptionsPanel(Panel):
                 "bridge_pbr": self._bridge_pbr,
                 "bridge_debug_view": self._BRIDGE_DEBUG_VIEWS[self._bridge_debug_view],
                 "profiler": self._profiler,
+                "perf_monitor": self._perf_monitor,
                 "rock_catalogue": self._rock_catalogue,
                 "dial_group": self._dial_group,
                 "minor_rocks": self._minor_rocks,
@@ -295,6 +300,11 @@ class DeveloperOptionsPanel(Panel):
             new_val = not self._profiler
             _frame_profiler().set_enabled(new_val)
             self._profiler = new_val
+            return True
+        if action == "toggle:perf_monitor":
+            new_val = not self._perf_monitor
+            dev_perf_monitor.set_enabled(new_val)
+            self._perf_monitor = new_val
             return True
         if action == "toggle:disable_collisions":
             new_val = not self._disable_collisions
@@ -484,7 +494,8 @@ class DeveloperOptionsPanel(Panel):
                     ("ctrl", "planet_surface"), ("ctrl", "surface_debug"),
                     ("ctrl", "reload_surfaces")]
         if self._selected_tab == "diagnostics":
-            out += [("ctrl", "profiler"), ("ctrl", "dial_group")]
+            out += [("ctrl", "profiler"), ("ctrl", "perf_monitor"),
+                    ("ctrl", "dial_group")]
         return out
 
     def handle_input(self, h) -> None:
