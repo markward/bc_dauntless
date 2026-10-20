@@ -6383,7 +6383,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("size_gu_per_radius"), py::arg("min_px"), py::arg("intensity"));
     m.def("set_plating_params",
           [](const std::vector<float>& params) {
-              const std::size_t n = std::min<std::size_t>(params.size(), 24);
+              const std::size_t n = std::min<std::size_t>(params.size(), renderer::plating::kParamCount);
               for (std::size_t i = 0; i < n; ++i)
                   dauntless_plating::g_params[i] = params[i];
           },
