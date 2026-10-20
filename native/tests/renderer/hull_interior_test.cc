@@ -370,6 +370,31 @@ TEST_F(HullInteriorTest, RockGetsNeitherMarkNorInterior) {
         << "a rock's hole must stay see-through";
 }
 
+// I3 of the final review: Review Focus 1 with a DAMAGED rear hull. Its cut
+// (the same ring, so its hole sits right behind the front hole) is marked and
+// shaded too, but must never show through the front hull's hole, whichever
+// hull the world lists first.
+TEST_F(HullInteriorTest, DamagedRearHullInteriorNeverPaintsThroughFrontHole) {
+    const auto ring = internal_ring({0.0f, 0.0f, kBoxHalf}, 30.0f, 10.0f);
+    const auto single = render_one(ring, filled.get());
+    ASSERT_FALSE(is_clear(pixel(single.px, centre().x, centre().y)));
+    const glm::mat4 behind = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -100.0f));
+    const Placed front{glm::mat4(1.0f), ring};
+    const Placed rear{behind, ring};
+    for (const bool front_first : {true, false}) {
+        const auto pair = front_first ? render({front, rear}, filled.get())
+                                      : render({rear, front}, filled.get());
+        report(front_first ? "damaged pair, front first" : "damaged pair, rear first",
+               pair, centre());
+        EXPECT_EQ(pair.marks, 2);
+        EXPECT_EQ(pair.interiors, 2);
+        EXPECT_EQ(rgb_diff(pixel(pair.px, centre().x, centre().y),
+                           pixel(single.px, centre().x, centre().y)), 0)
+            << "the damaged rear hull shows through the front hole (front_first="
+            << front_first << ")";
+    }
+}
+
 TEST_F(HullInteriorTest, UndamagedSceneDrawsNoInterior) {
     const scenegraph::DamageDecalRing none;
     const auto stock = render_one(none, filled.get(), /*stock=*/true);
