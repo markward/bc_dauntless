@@ -672,8 +672,31 @@ def CameraObjectClass_Create(x, y, z, a, ax, ay, az, name):
     overrides near/far via SetNearAndFarDistance; frustum starts default.
 
     The host renders a comm set through this camera when the bridge viewscreen
-    is showing it (host_loop._active_comm_feed / _comm_camera_params)."""
-    orientation = TGMatrix3().MakeRotation(a, TGPoint3(ax, ay, az))
+    is showing it (host_loop._active_comm_feed / _comm_camera_params).
+
+    The angle-axis rotation M is NOT itself the BC-object frame: the camera
+    views down M's local -X with up local +Z. So the object frame
+    (col0=right, col1=forward, col2=up) is M composed with a +90 degree yaw:
+        object right   = +Mcol1
+        object forward = -Mcol0
+        object up      = +Mcol2
+    Evidence, from the SDK's only real callers (MissionLib.SetupBridgeSet's
+    D/E bridge comm cameras, whose NIFs carry no camera): both use -1.55 rad
+    about +Z, from (0,50,47) on DBridge and (0,95,64) on EBridge, and the
+    captain's chair sits straight ahead in +Y on each ("cmnd seat" at y 86,
+    "chair captain" at (-0.9, 141.5) in the stock NIFs). Reading forward as
+    Mcol1 aimed both along +X at the side wall, so a hailed Soto was never in
+    shot (live bug, 2026-10-20). -Mcol0 also lands the -1.55 rad (rather than
+    -pi/2) trim exactly on the E chair's -0.9 x offset; +Mcol0 (a transposed
+    angle convention) would miss it by the same amount the other way. The
+    player's GalaxyBridge camera (+pi/2) reads -Y the same way, which is the
+    live-tuned captain's forward (_BridgeCamera.INITIAL_YAW_RAD)."""
+    m = TGMatrix3().MakeRotation(a, TGPoint3(ax, ay, az))
+    m0, m1, m2 = m.GetCol(0), m.GetCol(1), m.GetCol(2)
+    orientation = TGMatrix3()
+    orientation.SetCol(0, m1)                               # right
+    orientation.SetCol(1, TGPoint3(-m0.x, -m0.y, -m0.z))    # forward
+    orientation.SetCol(2, m2)                               # up
     return CameraObjectClass(name, (x, y, z), orientation,
                              _NiFrustum(), 1.0, 800.0)
 

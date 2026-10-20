@@ -107,6 +107,30 @@ def test_comm_camera_params_from_camera_object():
     assert abs(fov - 2.0 * math.atan(0.75)) < 1e-9
 
 
+def test_sdk_ebridge_comm_feed_looks_at_the_captains_chair(monkeypatch):
+    """E2M0's Soto hail, from the SDK in: MissionLib.SetupBridgeSet builds the
+    EBridge comm camera by hand (the NIF has no camera), and the viewscreen
+    feed must frame the captain's chair at (-0.9, 141.5) — not the starboard
+    wall it faced when the angle-axis forward was read as col1."""
+    import App as _App
+    import MissionLib
+    from engine.appc import bridge_set
+    monkeypatch.setattr(bridge_set.ModelManager, "CloneCamera",
+                        lambda self, path: None)
+    _App.g_kSetManager._sets.clear()
+    pSet = MissionLib.SetupBridgeSet(
+        "EBridgeSet", "data/Models/Sets/EBridge/EBridge.nif", -40, 65, -1.55)
+    eye, target, up, fov, near, far = hl._comm_feed_view(
+        pSet.GetCamera("maincamera"), lambda: None)
+    fwd = [target[i] - eye[i] for i in range(3)]
+    to_chair = (-0.9 - eye[0], 141.5 - eye[1], 49.6 - eye[2])
+    n = math.sqrt(sum(c * c for c in to_chair))
+    cos_a = sum(fwd[i] * to_chair[i] for i in range(3)) / n
+    assert eye == (0, 95, 64)
+    assert cos_a > math.cos(math.radians(20.0))
+    assert up[2] > 0.999
+
+
 def test_comm_camera_params_degenerate_frustum_falls_back():
     from engine.appc.bridge_set import CameraObjectClass, _NiFrustum
     from engine.appc.math import TGMatrix3
