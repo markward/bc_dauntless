@@ -4,6 +4,8 @@
 // actually carry plating wear, so the layered-damage shader only pays for the
 // records that matter. Pure CPU; no GL.
 #pragma once
+#include <cstddef>
+
 #include <glm/glm.hpp>
 
 #include "scenegraph/damage_decals.h"
@@ -20,10 +22,16 @@ struct DamageList {
     bool torn_possible = false;
 };
 
-// params = dauntless_plating::g_params (24 floats). Only active Scorch with
-// wear > 0 and Internal records enter. torn_possible: summed wear reaches the
-// breach wear (params[16]) minus the largest tear-noise lift (0.75 * params[19]).
+// params = dauntless_plating::g_params (24 floats). Only ACTIVE Scorch and
+// Internal records with wear > 0 enter (an inactive slot keeps stale data).
+// torn_possible: summed wear reaches the breach wear (params[16]) minus the
+// largest tear-noise lift (0.75 * params[19]).
 DamageList build_damage_list(const scenegraph::DamageDecalRing& ring,
+                             const float* params);
+
+// The same rule over a raw slot span (the ring overload calls this). Records
+// past kMaxDamage are dropped; a whole ring always fits (static_assert).
+DamageList build_damage_list(const scenegraph::DamageDecal* slots, std::size_t n,
                              const float* params);
 
 // Whether a draw takes the PLATING program: the layer is enabled (params[0])

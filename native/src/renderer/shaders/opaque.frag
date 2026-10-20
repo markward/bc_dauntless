@@ -2116,6 +2116,11 @@ void main() {
             }
         }
     }
+    // This far back-face discard sits AFTER the base texture fetch and the
+    // dFdx / fwidth block on purpose: implicit-derivative texture() and
+    // dFdx need the whole 2x2 quad alive, and an early discard here breaks
+    // them for the neighbouring kept pixels (see the dFdx/discard note at the
+    // top of main). Moving it up to save the fetch is not free.
     if (!plating_near && u_plating_two_sided != 0 && !gl_FrontFacing) discard;
     if (plating_near) {
         plating_w_here = plating_wear(p_body, n_body);

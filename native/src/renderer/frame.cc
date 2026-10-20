@@ -670,6 +670,10 @@ void draw_model(const assets::Model& model,
         };
         if (const int loc = prog.cached_location(kPlating); loc >= 0)
             glUniform1fv(loc, 24, dauntless_plating::g_params);
+        // world->body for p_body / n_body. The decal block above sets it only
+        // when decals are enabled and present; a plating draw must never read
+        // a previous draw's matrix.
+        prog.set_mat4("u_ship_world_inv", glm::inverse(world));
 
         const plating::DamageList& dl = *plating_list;
         set_int(kDmgCount, dl.count);
