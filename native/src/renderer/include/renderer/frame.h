@@ -348,8 +348,9 @@ void draw_model(const assets::Model& model,
                 // draw that touches no plating uniform and never changes
                 // culling. Non-null = `shader` is Pipeline::plating_shader()
                 // and this list (renderer/plating_damage.h) is uploaded as
-                // u_dmg_*; the draw goes double-sided when the list says a
-                // tear is possible. Ignored for a skinned draw (the skinned
+                // u_dmg_*; the draw stays front-faces-only (a cut shows the
+                // interior pass's decks and rooms, not the hull's inside
+                // face). Ignored for a skinned draw (the skinned
                 // program has no plating layer).
                 const plating::DamageList* plating = nullptr,
                 // Marking draw (submit_plating_interior): the program writes

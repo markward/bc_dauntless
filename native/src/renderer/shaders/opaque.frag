@@ -2109,8 +2109,9 @@ void main() {
     if (u_coverage_cutout != 0) { base.a = 1.0; }
 
 #ifdef PLATING
-    // SPIKE (damage redesign): torn-through hull is cut, and its inside face
-    // is drawn where the cut reveals it.
+    // SPIKE (damage redesign): torn-through hull is cut (front faces only;
+    // what the cut reveals is the interior pass's decks and rooms, drawn
+    // after this pass under the cut's stencil mark).
     //
     // Near-damage early-out: nothing in the plating layer reaches further
     // from a record than its reach plus this margin. The margin is bounded by

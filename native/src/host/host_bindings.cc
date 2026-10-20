@@ -1711,8 +1711,10 @@ void frame() {
                                   g_decal_game_time, g_lighting, ambient_scale);
         }
         // Hull interior under the plating tear: stencil-marks where the hull is
-        // cut through (and, from Task 3, draws the deck-and-room interior
-        // there). One marking draw per hull that can tear; nothing otherwise.
+        // cut through and draws the deck-and-room interior there. One marking
+        // draw plus one interior draw per hull that can tear; nothing
+        // otherwise. Both are issued inside this scope, so the marking draw's
+        // cost is part of space.hull_interior, not space.opaque.
         if (g_submitter && g_carve_cache) {
             DAUNTLESS_FRAME_SCOPE("space.hull_interior");
             g_submitter->submit_plating_interior(g_world, cam, *g_pipeline, lookup,
