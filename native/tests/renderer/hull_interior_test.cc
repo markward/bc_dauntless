@@ -28,10 +28,12 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <memory>
 #include <vector>
 
 #include "plating_gl_fixture.h"
+#include "support/content_root.h"
 
 using namespace plating_gl;
 
@@ -209,6 +211,88 @@ TEST_F(HullInteriorTest, LeftTheShipShowsFarWallUnlessBlownThrough) {
     report("blown through", through, centre());
     EXPECT_TRUE(is_clear(pixel(through.px, centre().x, centre().y)))
         << "blown through, yet something painted the hole";
+}
+
+// The char band sits at the tear, not over the whole interior.
+//
+// Setup: two small holes in the near face, both over the SAME room cell
+// (x in [6, 12), y in [0, 8.67), z cell 7, whose floor is the deck plane
+// z = 7 x 2.67 = 18.69, 1.31 mu below the face). Same cell = same room light
+// and floor albedo, so the two deck pixels differ only by their char. The
+// cell is chosen for its room state: a white-lit or dark room, so an
+// uncharred deck is grey (cell x 0 is an emergency-red room, which would
+// tint deck A red without any char).
+//   A at (7, 4): its record hovers 2.7 mu above the face (reach 4), so it
+//     tears the face but the deck under it is out of every record's reach:
+//     wear 0, an undamaged deck, never charred.
+//   B at (11, 4): its record (reach 3.5) still reaches the deck under it.
+//     Deck break is set 0.3 above that deck's wear (tear noise 0, so the
+//     wear the shader sees is exact): the plate holds, inside the char band.
+// Neither record reaches the other hole's deck.
+TEST_F(HullInteriorTest, CharBandFollowsTheTearNotTheWholeInterior) {
+    dauntless_plating::g_params[19] = 0.0f;   // tear noise: exact wear
+    const glm::vec3 rec_a(7.0f, 4.0f, kBoxHalf + 2.7f);
+    const glm::vec3 rec_b(11.0f, 4.0f, kBoxHalf + 1.0f);
+    const float reach_a = 4.0f, wear_a = 30.0f;
+    const float reach_b = 3.5f, wear_b = 40.0f;
+    scenegraph::DamageDecalRing ring;
+    ring.add(rec_a, glm::vec3(0, 0, 1), reach_a, 1.0f, scenegraph::WeaponClass::Internal,
+             0.0f, glm::vec3(0.0f), wear_a);
+    ring.add(rec_b, glm::vec3(0, 0, 1), reach_b, 1.0f, scenegraph::WeaponClass::Internal,
+             0.0f, glm::vec3(0.0f), wear_b);
+
+    const auto cam = quad_cam();
+    const glm::ivec2 pa = to_pixel(cam, glm::vec3(7.0f, 4.0f, kBoxHalf));
+    const glm::ivec2 pb = to_pixel(cam, glm::vec3(11.0f, 4.0f, kBoxHalf));
+    // Where pixel `px`'s centre ray meets the deck plane.
+    const float deck_z = 7.0f * 2.67f;
+    auto deck_point = [&](glm::ivec2 px) {
+        const glm::mat4 inv = glm::inverse(cam.proj_matrix() * cam.view_matrix());
+        const glm::vec2 ndc((px.x + 0.5f) / kSize * 2.0f - 1.0f,
+                            (px.y + 0.5f) / kSize * 2.0f - 1.0f);
+        const glm::vec4 a = inv * glm::vec4(ndc, -1.0f, 1.0f);
+        const glm::vec4 b = inv * glm::vec4(ndc, 1.0f, 1.0f);
+        const glm::vec3 o = glm::vec3(a) / a.w;
+        const glm::vec3 d = glm::vec3(b) / b.w - o;
+        return o + d * ((deck_z - o.z) / d.z);
+    };
+    auto wear_at = [](const glm::vec3& p, const glm::vec3& c, float reach, float wear) {
+        const float r = glm::length(p - c) / reach;
+        if (r >= 1.0f) return 0.0f;
+        const float f = 1.0f - r * r;
+        return wear * f * f;
+    };
+    const glm::vec3 da = deck_point(pa), db = deck_point(pb);
+    ASSERT_EQ(wear_at(da, rec_a, reach_a, wear_a) + wear_at(da, rec_b, reach_b, wear_b), 0.0f)
+        << "deck A must be out of every record's reach";
+    ASSERT_EQ(wear_at(db, rec_a, reach_a, wear_a), 0.0f);
+    const float wear_db = wear_at(db, rec_b, reach_b, wear_b);
+    ASSERT_GT(wear_db, 2.0f);
+    dauntless_plating::g_params[24] = wear_db + 0.3f;
+
+    const auto s = render_one(ring, filled.get());
+    const std::uint8_t* a = pixel(s.px, pa.x, pa.y);
+    const std::uint8_t* b = pixel(s.px, pb.x, pb.y);
+    std::fprintf(stderr, "[HullInterior] deck A (wear 0)=(%d,%d,%d) deck B (wear %.2f, "
+                 "break %.2f)=(%d,%d,%d)\n", a[0], a[1], a[2], wear_db,
+                 dauntless_plating::g_params[24], b[0], b[1], b[2]);
+    ASSERT_EQ(s.interiors, 1);
+    ASSERT_FALSE(is_clear(a)) << "deck A not drawn";
+    ASSERT_FALSE(is_clear(b)) << "deck B not drawn";
+    EXPECT_LT(a[0] - a[2], 12) << "an undamaged deck is orange-tinted (charred)";
+    EXPECT_LT(b[2] + 10, a[2]) << "the deck at the tear is not charred darker";
+    EXPECT_GT(b[0] - b[2], a[0] - a[2] + 10) << "the deck at the tear has no glow";
+}
+
+// An empty volume is never uploaded, and must not leave an entry behind that
+// hides the hull's real fill from get_for_source.
+TEST_F(HullInteriorTest, PutEmptyFillDoesNotShadowTheRealOne) {
+    const auto nif = test_support::game_root() / "data/Models/Ships/Ambassador/Ambassador.nif";
+    if (!std::filesystem::is_regular_file(nif))
+        GTEST_SKIP() << "BC asset not available at " << nif << " -- set DAUNTLESS_GAME_DIR";
+    renderer::CarveFieldCache cache;
+    EXPECT_EQ(cache.put_for_source(nif, voxel::VoxelVolume{}), nullptr);
+    EXPECT_NE(cache.get_for_source(nif), nullptr);
 }
 
 TEST_F(HullInteriorTest, RearHullInteriorNeverPaintsThroughFrontHole) {

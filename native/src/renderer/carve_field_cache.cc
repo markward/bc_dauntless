@@ -198,6 +198,10 @@ const CarveFieldCache::Entry* CarveFieldCache::get_for_source(
 
 const CarveFieldCache::Entry* CarveFieldCache::put_for_source(
         const std::filesystem::path& source, const voxel::VoxelVolume& fill) {
+    // An empty volume is never uploaded: leave no entry, or get_for_source
+    // would report this source as a failed upload forever.
+    if (fill.occ.empty() || fill.dims.x <= 0 || fill.dims.y <= 0 || fill.dims.z <= 0)
+        return nullptr;
     Entry& e = by_source_[source.string()];
     upload_texture(e, fill);
     return (e.tex3d != 0) ? &e : nullptr;

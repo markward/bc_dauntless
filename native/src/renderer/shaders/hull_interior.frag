@@ -20,8 +20,10 @@
 // the constants Mark tuned live on 2026-10-20 (findings:
 // docs/engine/breach-interior-mapping-spike-findings.md). What changed: the
 // blown-plate test and the torn edge read the plating damage list instead of
-// the carve field; the left-the-ship case shows the far wall unless the hull
-// is blown through; there is no fresh-hit heat (records carry no age).
+// the carve field (the char band is the last wear unit short of deck break,
+// on the same noised wear as the blown test, so it follows the ragged tear);
+// the left-the-ship case shows the far wall unless the hull is blown through;
+// there is no fresh-hit heat (records carry no age).
 //
 // Everything is BODY frame, in model units.
 
@@ -199,9 +201,10 @@ bool ih_shade(vec3 ro, vec3 rd, out vec3 c) {
 
         int plane = cell[axis] + (stp[axis] > 0 ? 1 : 0);
         if (ih_wall_exists(axis, plane, cell)) {
-            // (b) Blown plate: keep walking.
-            bool blown = iw + (vnoise3(p * kTornNoiseFreq) - 0.5) * u_plating[19] > deck_break;
-            if (!blown) {
+            // (b) Blown plate: keep walking. `s` is the noised wear, so the
+            // tear is ragged; the char band below reads the same value.
+            float s = iw + (vnoise3(p * kTornNoiseFreq) - 0.5) * u_plating[19];
+            if (s <= deck_break) {
                 // (c) Shade this plate, as seen from inside `cell`.
                 vec3 q   = (p - vec3(cell) * kRoomSize) / kRoomSize;   // 0..1 in room
                 float fire;
@@ -240,8 +243,9 @@ bool ih_shade(vec3 ro, vec3 rd, out vec3 c) {
                 // Room light + a little of the scene ambient.
                 c = albedo * (room * lit + u_ambient_light) + emit;
 
-                // Torn plate edge: charred, with a dull glow.
-                float edge = 1.0 - smoothstep(deck_break - 1.0, deck_break, iw);
+                // Torn plate edge: the last wear unit short of breaking is
+                // charred, with a dull glow. Undamaged plates stay clean.
+                float edge = smoothstep(deck_break - 1.0, deck_break, s);
                 c *= mix(1.0, 0.35, edge);
                 c += blackbody(0.5) * edge * 0.6;
 
