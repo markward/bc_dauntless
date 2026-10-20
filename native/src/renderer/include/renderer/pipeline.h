@@ -51,6 +51,8 @@ public:
     Shader& phaser_shader() noexcept          { return *phaser_; }
     Shader& hologram_shader() noexcept        { return *hologram_; }
     Shader& breach_shader() noexcept          { return *breach_; }
+    // breach.vert + hull_interior.frag: decks and rooms behind a plating cut.
+    Shader& hull_interior_shader() noexcept   { return *hull_interior_; }
     Shader& subsystem_pin_shader() noexcept   { return *subsystem_pin_; }
     Shader& target_reticle_shader() noexcept  { return *target_reticle_; }
     Shader& starmap_shader() noexcept         { return *starmap_; }
@@ -97,6 +99,7 @@ private:
     std::unique_ptr<Shader> phaser_;
     std::unique_ptr<Shader> hologram_;
     std::unique_ptr<Shader> breach_;
+    std::unique_ptr<Shader> hull_interior_;
     std::unique_ptr<Shader> subsystem_pin_;
     std::unique_ptr<Shader> target_reticle_;
     std::unique_ptr<Shader> starmap_;

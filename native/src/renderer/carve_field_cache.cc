@@ -196,4 +196,11 @@ const CarveFieldCache::Entry* CarveFieldCache::get_for_source(
     return (e.tex3d != 0) ? &e : nullptr;
 }
 
+const CarveFieldCache::Entry* CarveFieldCache::put_for_source(
+        const std::filesystem::path& source, const voxel::VoxelVolume& fill) {
+    Entry& e = by_source_[source.string()];
+    upload_texture(e, fill);
+    return (e.tex3d != 0) ? &e : nullptr;
+}
+
 }  // namespace renderer

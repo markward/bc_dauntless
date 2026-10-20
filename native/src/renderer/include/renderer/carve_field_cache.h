@@ -198,6 +198,12 @@ public:
     /// of the cache (source-keyed, never evicted).
     const Entry* get_for_source(const std::filesystem::path& source);
 
+    /// Install `fill` as the fill for `source`, uploaded the same way
+    /// get_for_source uploads a decoded one. For a hull with no fill on disk
+    /// (tests; standalone tools). Returns nullptr when the upload fails.
+    const Entry* put_for_source(const std::filesystem::path& source,
+                                const voxel::VoxelVolume& fill);
+
     /// The CPU-side original fill volume for a hull source — the same data
     /// get_for_source uploads, before it becomes a texture. Used by the
     /// backing-material gate, which runs per carve on the CPU rather than per

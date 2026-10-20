@@ -19,6 +19,7 @@
 // draw_model takes a voxel::VoxelVolume* and CarveFieldCache's nested
 // constants, so the forward declaration below is not enough on its own.
 #include <renderer/carve_field_cache.h>
+#include <renderer/hull_interior_pass.h>
 // draw_model takes a const InstanceFieldCache::Entry* -- a nested type, so
 // (like CarveFieldCache above) the forward declaration below is not enough.
 #include <renderer/instance_field_cache.h>
@@ -496,9 +497,13 @@ public:
     /// with far_fade < 1, a model, wants_plating and torn_possible (world
     /// order), stamps stencil value 2 + k (k = ordinal; stops after 255)
     /// exactly where the hull is cut through. Value 1 is the old carve's.
-    /// Colour and depth writes are off; depth TEST on (GL_LEQUAL). Task 3's
-    /// interior draw slots in right after each instance's marking draw.
-    /// Restores stencil off / mask 0xFF / masks on / depth func GL_LESS.
+    /// Colour and depth writes are off; depth TEST on (GL_LEQUAL). Right
+    /// after each marking draw, while params[25] > 0.5, HullInteriorPass
+    /// draws that hull's decks and rooms under the value just stamped (fill
+    /// from carve_cache->get_for_source; none = rooms without the
+    /// left-the-ship test). params[25] <= 0.5 keeps the marking and leaves
+    /// the holes see-through. Restores stencil off / mask 0xFF / masks on /
+    /// the depth func it found.
     void submit_plating_interior(const scenegraph::World& world,
                                  const scenegraph::Camera& camera,
                                  Pipeline& pipeline,
@@ -510,6 +515,10 @@ public:
 
     /// Marking draws issued by the last submit_plating_interior.
     int plating_marks_last_frame() const { return plating_marks_last_frame_; }
+
+    /// Interior draws (HullInteriorPass::draw) issued by the last
+    /// submit_plating_interior: one per marked hull while params[25] > 0.5.
+    int plating_interiors_last_frame() const { return plating_interiors_last_frame_; }
 
     /// Draw a SINGLE instance (by id) through the full opaque lighting/texture
     /// path, ignoring its visibility flag. Used by the Ship Property Viewer's
@@ -542,6 +551,8 @@ private:
     std::uint32_t ensure_black_texture();
 
     int plating_marks_last_frame_ = 0;
+    int plating_interiors_last_frame_ = 0;
+    HullInteriorPass hull_interior_;
 };
 
 /// Render depth-only for every visible `rim_eligible` caster in `Pass::Space`

@@ -809,7 +809,7 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
 // 21 member survive (wear past breach a primary member still spans),
 // 22 toughness spread (per-panel breach wear x (1 + spread*(h-0.4))),
 // 23 breach lumps (hole-scale breach variation, wear units),
-// 24 deck break wear + 25 interior (read by the interior pass; unread yet).
+// 24 deck break wear + 25 interior (read only by hull_interior.frag / its pass).
 const vec3 PLATE_EDGE   = vec3(0.68, 0.68, 0.69);   // cut plate thickness
 const vec3 RIB_METAL    = vec3(0.60, 0.58, 0.55);   // unpainted structure
 const vec3 INNER_HULL   = vec3(0.42, 0.41, 0.40);  // pressure hull under the ribs

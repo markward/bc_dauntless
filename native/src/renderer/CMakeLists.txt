@@ -105,6 +105,7 @@ embed_shader(SHADER_HOLOGRAM_VS shaders/hologram.vert hologram_vs)
 embed_shader(SHADER_HOLOGRAM_FS shaders/hologram.frag hologram_fs)
 embed_shader(SHADER_BREACH_VS shaders/breach.vert breach_vs)
 embed_shader(SHADER_BREACH_FS shaders/breach.frag breach_fs)
+embed_shader(SHADER_HULL_INTERIOR_FS shaders/hull_interior.frag hull_interior_fs)
 embed_shader(SHADER_SUBSYSTEM_PIN_VS shaders/subsystem_pin.vert subsystem_pin_vs)
 embed_shader(SHADER_SUBSYSTEM_PIN_FS shaders/subsystem_pin.frag subsystem_pin_fs)
 embed_shader(SHADER_TARGET_RETICLE_VS shaders/target_reticle.vert target_reticle_vs)
@@ -225,6 +226,7 @@ add_library(renderer STATIC
     breach_venting.cc
     breach_debris.cc
     breach_pass.cc
+    hull_interior_pass.cc
     model_draw_helpers.cc
     scuff_texture.cc
     carve_field_cache.cc

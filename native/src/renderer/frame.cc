@@ -223,8 +223,8 @@ namespace dauntless_plating {
         4.0f,   // 21 member survive (wear past breach a primary still spans)
         0.6f,   // 22 toughness spread (breach wear varies per panel by up to this x0.4)
         1.0f,   // 23 breach lumps (wear units of hole-scale breach-threshold variation)
-        6.0f,   // 24 deck break wear (unread until the interior pass)
-        1.0f,   // 25 interior (unread until the interior pass)
+        6.0f,   // 24 deck break wear (interior: a plate or far wall breaks past it)
+        1.0f,   // 25 interior (> 0.5 draws decks and rooms behind cuts)
         0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,   // 26-31 reserved
     };
 }
@@ -1531,10 +1531,11 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
                                              float ambient_scale,
                                              float now) {
     plating_marks_last_frame_ = 0;
+    plating_interiors_last_frame_ = 0;
     if (dauntless_plating::g_params[0] <= 0.5f) return;
 
     // Same per-frame uniforms submit_opaque_in_pass gives the plating_
-    // program; Task 3's interior draw (lit) rides on them too.
+    // program (the interior draw sets its own).
     auto configure_common = [&](Shader& s) {
         s.use();
         s.set_mat4("u_view", camera.view_matrix());
@@ -1552,6 +1553,7 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
     };
 
     bool configured = false;
+    bool state_saved = false;
     bool state_set = false;
     GLint saved_depth_func = GL_LESS;
     GLuint white = 0, black = 0;
@@ -1562,15 +1564,15 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
         if (inst.far_fade >= 1.0f) return;
         const assets::Model* m = lookup(inst.model_handle);
         if (!m || inst.decals.count() == 0) return;
-        std::vector<glm::mat4> palette;
-        if (!m->skeleton.bones.empty())
-            palette = build_bone_palette(m->skeleton, /*local_pose=*/nullptr);
-        if (draws_skinned(*m, palette)) return;
         const plating::DamageList list =
             plating::build_damage_list(inst.decals, dauntless_plating::g_params);
         if (!plating::wants_plating(list, dauntless_plating::g_params) ||
             !list.torn_possible)
             return;
+        std::vector<glm::mat4> palette;
+        if (!m->skeleton.bones.empty())
+            palette = build_bone_palette(m->skeleton, /*local_pose=*/nullptr);
+        if (draws_skinned(*m, palette)) return;
 
         Shader& shader = pipeline.plating_shader();
         if (!configured) {
@@ -1579,11 +1581,14 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
             white = ensure_white_texture();
             black = ensure_black_texture();
         }
+        if (!state_saved) {
+            glGetIntegerv(GL_DEPTH_FUNC, &saved_depth_func);
+            state_saved = true;
+        }
         if (!state_set) {
             // Stencil only: no colour, no depth write. Depth TEST on with
             // LEQUAL so the hull's own depth (written by the plating draw
-            // just before) passes.
-            glGetIntegerv(GL_DEPTH_FUNC, &saved_depth_func);
+            // just before) passes. Re-applied after every interior draw.
             glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
             glDepthMask(GL_FALSE);
             glEnable(GL_DEPTH_TEST);
@@ -1613,11 +1618,25 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
             shader.use();
             shader.set_float("u_dither_fade", 0.0f);
         }
-        // Task 3: the deck-and-room interior draw for this hull goes HERE,
-        // under the stencil value just written, before the next hull is marked.
+        // The decks and rooms behind this hull's cuts, under the value just
+        // stamped, before the next hull is marked.
+        if (dauntless_plating::g_params[25] > 0.5f) {
+            const CarveFieldCache::Entry* fill =
+                carve_cache != nullptr ? carve_cache->get_for_source(m->source) : nullptr;
+            hull_interior_.draw(*m, inst.world, camera, pipeline, list,
+                                dauntless_plating::g_params,
+                                fill ? fill->tex3d : 0u,
+                                fill ? fill->origin : glm::vec3(0.0f),
+                                fill ? fill->cell : glm::vec3(1.0f),
+                                fill ? fill->dims : glm::ivec3(0),
+                                lighting, ambient_scale, now, next_value - 1,
+                                &inst.node_overrides);
+            ++plating_interiors_last_frame_;
+            state_set = false;   // the interior draw left stock state
+        }
     });
 
-    if (state_set) {
+    if (state_saved) {
         // Back to the GL default (0xFF), NOT 0x00: see submit_carve_stencil.
         glStencilMask(0xFF);
         glDisable(GL_STENCIL_TEST);

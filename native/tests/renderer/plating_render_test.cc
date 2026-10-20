@@ -37,19 +37,13 @@
 #include <optional>
 #include <vector>
 
+#include "plating_gl_fixture.h"
 #include "support/content_root.h"
 
-namespace dauntless_plating { extern float g_params[renderer::plating::kParamCount]; }
-
 namespace fs = std::filesystem;
+using namespace plating_gl;
 
 namespace {
-
-constexpr int kSize = 256;
-// Past every flicker (FLICKER_DUR_MAX 60 s) and ember (tau ~3.1 s) of a
-// record born at 0, so the stock decal loop adds nothing outside a record's
-// own radius and the far-pixel comparison isolates the plating layer.
-constexpr float kDecalTime = 1000.0f;
 
 fs::path ambassador_dir() {
     return test_support::game_root() / "data/Models/Ships/Ambassador";
@@ -60,94 +54,13 @@ std::vector<fs::path> ambassador_search() {
             test_support::game_root() / "data/Models/SharedTextures/FedShips/High"};
 }
 
-renderer::Lighting test_lighting() {
-    renderer::Lighting l;
-    l.ambient = glm::vec3(0.6f);
-    l.directional_count = 1;
-    l.directional_dir_ws[0] = glm::normalize(glm::vec3(0.3f, 0.2f, -1.0f));
-    l.directional_color[0] = glm::vec3(0.8f);
-    return l;
-}
-
-const std::uint8_t* pixel(const std::vector<std::uint8_t>& px, int x, int y) {
-    return &px[(static_cast<std::size_t>(y) * kSize + x) * 4];
-}
-
-int rgb_diff(const std::uint8_t* a, const std::uint8_t* b) {
-    return std::abs(a[0] - b[0]) + std::abs(a[1] - b[1]) + std::abs(a[2] - b[2]);
-}
-
-int count_non_black(const std::vector<std::uint8_t>& px) {
-    int n = 0;
-    for (std::size_t i = 0; i + 3 < px.size(); i += 4)
-        if (px[i] + px[i + 1] + px[i + 2] > 6) ++n;
-    return n;
-}
-
-// A flat quad in the z = `z` plane, half size `half`, with no textures (the
-// draw binds the white fallback), appended to `model` as one more mesh of
-// node 0. `facing_camera` winds it CCW seen from +z (front-facing for a
-// camera above it); otherwise CW (a back face, as the inside of a hull's far
-// skin is from inside the hull).
-void add_quad(assets::Model& model, float half, float z, bool facing_camera) {
-    assets::MeshCpu cpu;
-    cpu.material_index = 0;
-    cpu.node_index = 0;
-    const glm::vec3 n(0.0f, 0.0f, facing_camera ? 1.0f : -1.0f);
-    auto push = [&](float x, float y, float u, float v) {
-        assets::MeshCpu::Vertex vt;
-        vt.position = glm::vec3(x, y, z);
-        vt.normal = n;
-        vt.uv = glm::vec2(u, v);
-        cpu.vertices.push_back(vt);
-    };
-    push(-half, -half, 0.0f, 0.0f);
-    push( half, -half, 1.0f, 0.0f);
-    push( half,  half, 1.0f, 1.0f);
-    push(-half,  half, 0.0f, 1.0f);
-    if (facing_camera) cpu.indices = {0, 1, 2, 0, 2, 3};
-    else               cpu.indices = {0, 2, 1, 0, 3, 2};
-    assets::Mesh mesh = assets::upload_mesh(cpu);
-    mesh.set_cpu_data(cpu);
-    if (model.materials.empty()) {
-        assets::Material mat;
-        mat.diffuse = glm::vec3(1.0f);
-        mat.specular = glm::vec3(0.0f);
-        mat.emissive = glm::vec3(0.0f);
-        model.materials.push_back(mat);
-    }
-    if (model.nodes.empty()) {
-        assets::Node node;
-        node.name = "plating_probe_quad";
-        model.nodes.push_back(node);
-        model.root_node = 0;
-    }
-    model.nodes[0].meshes.push_back(static_cast<int>(model.meshes.size()));
-    model.meshes.push_back(std::move(mesh));
-}
-
-std::unique_ptr<assets::Model> build_quad(float half, bool facing_camera) {
-    auto model = std::make_unique<assets::Model>();
-    add_quad(*model, half, 0.0f, facing_camera);
-    return model;
-}
-
-class PlatingRenderTest : public ::testing::Test {
+class PlatingRenderTest : public PlatingGLFixture {
 protected:
-    std::unique_ptr<renderer::Window> w;
-    std::unique_ptr<renderer::Pipeline> p;
     std::unique_ptr<assets::AssetCache> cache;
-    std::array<float, renderer::plating::kParamCount> saved_params{};
 
     void SetUp() override {
-        std::copy(dauntless_plating::g_params, dauntless_plating::g_params + renderer::plating::kParamCount,
-                  saved_params.begin());
-        try {
-            w = std::make_unique<renderer::Window>(kSize, kSize, "plating-test", false);
-        } catch (const std::runtime_error& e) {
-            GTEST_SKIP() << "no GL context: " << e.what();
-        }
-        p = std::make_unique<renderer::Pipeline>();
+        PlatingGLFixture::SetUp();
+        if (!w) return;
         assets::AssetCache::Config cfg;
         cfg.keep_cpu_data = true;  // compute_model_aabb + ray_trace read CPU data
         cfg.mesh_fix_dir = [] {
@@ -157,13 +70,8 @@ protected:
     }
 
     void TearDown() override {
-        std::copy(saved_params.begin(), saved_params.end(), dauntless_plating::g_params);
-        if (!w) return;
         cache.reset();
-        renderer::reset_damage_decal_texture();
-        renderer::reset_scuff_normal_texture();
-        renderer::reset_decal_mask_sampler();
-        renderer::reset_model_radius_cache();
+        PlatingGLFixture::TearDown();
     }
 
     assets::ModelHandle ambassador() {
@@ -219,14 +127,6 @@ protected:
         return px;
     }
 
-    // Window pixel (row 0 = bottom) of a world point.
-    static glm::ivec2 to_pixel(const scenegraph::Camera& cam, const glm::vec3& p) {
-        const glm::vec4 c = cam.proj_matrix() * cam.view_matrix() * glm::vec4(p, 1.0f);
-        const glm::vec2 ndc = glm::vec2(c) / c.w;
-        return glm::ivec2(static_cast<int>(std::floor((ndc.x * 0.5f + 0.5f) * kSize)),
-                          static_cast<int>(std::floor((ndc.y * 0.5f + 0.5f) * kSize)));
-    }
-
     // The first surface the pixel centre's view ray meets, or nullopt.
     static std::optional<renderer::RayHit> trace_pixel(const assets::Model& m,
                                                        const scenegraph::Camera& cam,
@@ -248,7 +148,6 @@ protected:
         return renderer::ray_trace_instance(m, glm::mat4(1.0f), o,
                                             glm::vec3(0.0f, 0.0f, -1.0f), 1.0e5f);
     }
-
 
     // submit_opaque_in_pass then submit_plating_interior over one instance;
     // returns the stencil plane (row 0 = bottom) and the mark count.
@@ -281,23 +180,6 @@ protected:
         out.stencil.assign(static_cast<std::size_t>(kSize) * kSize, 0);
         glReadPixels(0, 0, kSize, kSize, GL_STENCIL_INDEX, GL_UNSIGNED_BYTE, out.stencil.data());
         return out;
-    }
-
-    static scenegraph::Camera quad_cam() {
-        scenegraph::Camera cam;
-        cam.eye = glm::vec3(0.0f, 0.0f, 120.0f);
-        cam.target = glm::vec3(0.0f);
-        cam.up = glm::vec3(0.0f, 1.0f, 0.0f);
-        cam.aspect = 1.0f;
-        return cam;
-    }
-
-    static scenegraph::DamageDecalRing internal_ring(const glm::vec3& at, float radius,
-                                                    float wear) {
-        scenegraph::DamageDecalRing ring;
-        ring.add(at, glm::vec3(0.0f, 0.0f, 1.0f), radius, 1.0f,
-                 scenegraph::WeaponClass::Internal, 0.0f, glm::vec3(0.0f), wear);
-        return ring;
     }
 };
 
