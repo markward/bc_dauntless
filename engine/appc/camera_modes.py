@@ -267,15 +267,25 @@ CHASE_DEFAULT_DISTANCE = 4.0
 
 
 def _target_radius(obj, default=1.0):
-    """Target radius in game units, or `default` when the object has no real
-    GetRadius. Asks the MRO — a TGObject's __getattr__ hands back a truthy
-    recursive _Stub, so hasattr/getattr cannot answer this (same reasoning as
+    """Target's DRAWN radius in game units, or `default` when the object has no
+    real GetRadius. GetRadius() is unscaled SDK surface, but a ship draws at
+    GetRadius() x GetScale() (E1M2 scales its asteroids to 3x and more), so a
+    camera standing off the raw radius sits inside the drawn hull. A rock uses
+    its effective radius (hull-radius fallback). That BC's own camera includes
+    the scale is INFERRED, not RE'd (spec 2026-10-20-target-zoom-fit §6).
+    Asks the MRO — a TGObject's __getattr__ hands back a truthy recursive
+    _Stub, so hasattr/getattr cannot answer this (same reasoning as
     _target_alive above)."""
     from engine.core.ids import implements
     if not implements(obj, "GetRadius"):
         return default
     try:
-        r = float(obj.GetRadius())
+        from engine.rocks.rock import is_rock, effective_radius
+        if is_rock(obj):
+            r = float(effective_radius(obj))
+        else:
+            from engine.appc.collisions import world_radius
+            r = float(world_radius(obj))
     except Exception:
         return default
     return r if r > 1e-6 else default

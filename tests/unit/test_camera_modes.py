@@ -1253,3 +1253,51 @@ def test_torp_cam_does_not_probe_stub_surface_on_the_torpedo(
     m.Update()
     m.Update(1.0 / 60.0)
     assert not hits, hits
+
+
+# -- _target_radius: the DRAWN radius (GetRadius x GetScale) -----------------
+
+def _scaled_ship(radius, scale):
+    from engine.appc.ships import ShipClass_Create
+    ship = ShipClass_Create("ZoomShip")
+    ship.SetRadius(radius)
+    ship.SetScale(scale)
+    return ship
+
+
+def test_target_radius_includes_the_objects_scale():
+    from engine.appc.camera_modes import _target_radius
+    assert _target_radius(_scaled_ship(5.0, 3.0)) == pytest.approx(15.0)
+
+
+def test_target_radius_of_a_scaled_rock_uses_the_hull_radius_fallback():
+    import App
+    from engine.appc.camera_modes import _target_radius
+    from tests.helpers.rocks import make_major_rock
+    rock = make_major_rock(App.SetClass_Create(), "ZoomRock", radius_gu=0.8)
+    assert rock.GetRadius() == 0.0
+    rock.SetScale(3.0)
+    assert _target_radius(rock) == pytest.approx(2.4)
+
+
+def test_target_radius_ignores_a_bad_scale():
+    from engine.appc.camera_modes import _target_radius
+    from engine.appc.debris_chunk import DebrisChunk
+    assert _target_radius(_scaled_ship(5.0, 0.0)) == pytest.approx(5.0)
+    chunk = DebrisChunk.__new__(DebrisChunk)
+    chunk.radius = 0.3
+    chunk.scale = 57.0
+    assert _target_radius(chunk) == pytest.approx(0.3)
+
+
+def test_zoom_target_mode_stands_off_the_scaled_radius():
+    src = _FakeTarget((0.0, 0.0, 0.0), radius=1.0)
+    class _Scaled(_FakeTarget):
+        def GetScale(self):
+            return 2.0
+    tgt = _Scaled((0.0, 100.0, 0.0), radius=5.0)
+    m = ZoomTargetMode()
+    m.SetAttrIDObject("Source", src)
+    m.SetAttrIDObject("Target", tgt)
+    eye, _fwd, _up = m.Update()
+    assert eye == (0.0, 60.0, 0.0)      # 100 - Distance(4) * 2 * 5
