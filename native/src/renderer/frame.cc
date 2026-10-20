@@ -632,6 +632,14 @@ void draw_model(const assets::Model& model,
         }
     }
 
+    // SPIKE (damage redesign): a hull torn through needs its INSIDE faces --
+    // drawn double-sided while any record can reach breach wear. Restores
+    // culling when draw_model returns.
+    struct CullRestore {
+        bool was = false, active = false;
+        ~CullRestore() { if (active && was) glEnable(GL_CULL_FACE); }
+    } cull_restore;
+
     // ── SPIKE (damage redesign): plating layer params + structure parts ───
     // Params ride every draw (debug mode 2 tints undamaged hulls by part).
     // Parts come from a background detection per hull source; until it lands
@@ -656,6 +664,25 @@ void draw_model(const assets::Model& model,
                 }
             }
             if (part_debug) prog.set_mat4("u_ship_world_inv", glm::inverse(world));
+        }
+        bool torn_possible = false;
+        if (dauntless_plating::g_params[0] > 0.5f) {
+            const float breach = dauntless_plating::g_params[16];
+            for (const auto& dec : decals.slots()) {
+                if (!dec.active) continue;
+                if ((dec.weapon_class == scenegraph::WeaponClass::Scorch
+                     || dec.weapon_class == scenegraph::WeaponClass::Internal)
+                    && dec.wear >= 0.8f * breach) {
+                    torn_possible = true;
+                    break;
+                }
+            }
+        }
+        prog.set_int("u_plating_two_sided", torn_possible ? 1 : 0);
+        if (torn_possible) {
+            cull_restore.was = glIsEnabled(GL_CULL_FACE) == GL_TRUE;
+            cull_restore.active = true;
+            glDisable(GL_CULL_FACE);
         }
         prog.set_int("u_part_count", np);
         if (np > 0) {

@@ -28,7 +28,7 @@ import engine.dev_mode as dev_mode
 from engine import host_io
 
 RADIUS_SCALE = 1.4        # blast sphere = hardpoint radius x this
-STRENGTH = 6.0            # wear at the centre (inner hull tears at 4.5)
+STRENGTH = 10.0           # wear at the hole centre: torn through out to ~0.6 of it (breach 4.5)
 MAX_EXITS = 3
 HOLE_K = 1.1              # hole radius = blast radius x HOLE_K x sqrt(1 - d/R)...
 HOLE_MIN = 0.35           # ...but never below this fraction of the blast radius

@@ -1164,6 +1164,23 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
     g_plating_emissive += under_glow * (1.0 - top) * (1.0 - side);
     if (u_plating[12] > 0.5 && u_plating[12] < 1.5) base_rgb = mix(base_rgb, vec3(1.0, 0.0, 1.0), 0.5);
 }
+// Torn through: the inner pressure hull has failed here, so the hull is CUT
+// (the fragment is discarded) instead of painted. Same test for the hull's
+// inside faces, so a sheet's own back face never plugs its hole: torn through
+// one sheet shows the far wall's inside; torn through both shows space.
+uniform int u_plating_two_sided;   // 1 = this draw also rasterises inside faces
+bool plating_torn(vec3 p, vec3 nb) {
+    float grain = vnoise(p.xy * 0.13 + p.z * 0.09);
+    return plating_wear(p, nb) > u_plating[16] + (grain - 0.5) * 0.4;
+}
+
+// The hull's inside face, seen through a hole: dark bulkhead metal with a
+// faint deck banding along body Z.
+vec3 plating_inner_wall(vec3 p) {
+    float deck = smoothstep(0.42, 0.5, abs(fract(p.z / 4.0) - 0.5));
+    float grain = vnoise(p.xy * 0.11 + p.z * 0.07);
+    return INNER_HULL * u_plating[17] * (0.45 + 0.25 * grain) * (1.0 - 0.4 * deck);
+}
 
 // ── Non-finite cause probe (developer diagnostic) ──────────────────────────
 // When u_nan_debug is on, a fragment whose shading went NaN/Inf reports WHICH
@@ -2042,6 +2059,19 @@ void main() {
     // opaque so it never reads as an emissive mask.
     if (u_coverage_cutout != 0) { base.a = 1.0; }
 
+    // SPIKE (damage redesign): torn-through hull is cut, and its inside face
+    // is drawn where the cut reveals it.
+    bool plating_inside = false;
+    if (u_decal_count > 0 && u_plating[0] > 0.5) {
+        if (plating_torn(p_body, n_body)) discard;
+        if (u_plating_two_sided != 0 && !gl_FrontFacing) {
+            plating_inside = true;
+            n = -n;
+            n_shade = n;
+            base.rgb = plating_inner_wall(p_body);
+        }
+    }
+
     // Hull-name decals: replace albedo under each mask, in list order
     // (premultiplied RGB). decal_a / decal_premult_rgb are the combined
     // coverage, kept alive for the glow-map composite below (the letters must
@@ -2073,11 +2103,11 @@ void main() {
     // Collision scuffs (class 2): the PRE-LIGHTING half of the decal ring.
     // Must run before the Toksvig spec_ft line below and before any lighting
     // term reads n_shade, since it perturbs n_shade (and, from Task 3, base.rgb).
-    if (u_decal_count > 0) {
+    if (u_decal_count > 0 && !plating_inside) {
         apply_scuffs(p_body, n_body, n_shade, base.rgb);
     }
     // SPIKE plating layer (damaged hulls; every hull under part debug).
-    if (u_decal_count > 0 || u_plating[12] > 1.5) {
+    if ((u_decal_count > 0 || u_plating[12] > 1.5) && !plating_inside) {
         apply_plating(p_body, n_body, V, plating_fw, n_shade, base.rgb);
     }
 
@@ -2113,6 +2143,7 @@ void main() {
     // still false here, so this discards exactly as it always did.
     if (u_carve_invert != 0 && !marked) discard;
     glow_kill = max(glow_kill, g_plating_exposed);   // SPIKE: stripped panels go dark
+    if (plating_inside) glow_kill = 1.0;             // SPIKE: no window glow inside
 
     // Shadow attenuates ONLY the sun (directional index 0). When shadows are
     // off, sun_shadow_factor() returns 1.0, so the ×sf below is the identity
