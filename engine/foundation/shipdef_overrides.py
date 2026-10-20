@@ -44,6 +44,10 @@ Akira.dauntless = {
     'variants': [
         {'name': 'USS Geronimo', 'registry': 'Geronimo'},
         {'name': 'USS Devore', 'registry': 'Devore'},
+        # No stock registry texture: the name comes from Masks/<registry>/.
+        {'name': 'USS Thunderchild', 'registry': 'Thunderchild'},
+        {'name': 'USS Akira', 'registry': 'Akira'},
+        {'name': 'USS Spector', 'registry': 'Spector'},
     ],
 }
 
@@ -65,6 +69,12 @@ Galaxy.dauntless = {
         {'name': 'USS Dauntless', 'registry': 'Dauntless'},
         {'name': 'USS San Francisco', 'registry': 'SanFrancisco'},
         {'name': 'USS Venture', 'registry': 'Venture'},
+        # No stock registry texture: the name comes from Masks/<registry>/.
+        {'name': 'USS Galaxy', 'registry': 'Galaxy'},
+        {'name': 'USS Challenger', 'registry': 'Challenger'},
+        {'name': 'USS Magellan', 'registry': 'Magellan'},
+        {'name': 'USS Syracuse', 'registry': 'Syracuse'},
+        {'name': 'USS Trinculo', 'registry': 'Trinculo'},
     ],
 }
 
@@ -77,6 +87,13 @@ Nebula.dauntless = {
         {'name': 'USS Prometheus', 'registry': 'Prometheus'},
         {'name': 'USS Khitomer', 'registry': 'Khitomer'},
         {'name': 'USS Nightingale', 'registry': 'Nightingale'},
+        # No stock registry texture: the name comes from Masks/<registry>/.
+        {'name': 'USS Nebula', 'registry': 'Nebula'},
+        {'name': 'USS Endeavour', 'registry': 'Endeavour'},
+        {'name': 'USS Leeds', 'registry': 'Leeds'},
+        {'name': 'USS Monitor', 'registry': 'Monitor'},
+        {'name': 'USS Sutherland', 'registry': 'Sutherland'},
+        {'name': "USS T'Kumbra", 'registry': 'TKumbra'},
     ],
 }
 
@@ -88,6 +105,8 @@ Sovereign.dauntless = {
         {'name': 'USS Sovereign', 'registry': 'Sovereign'},
         # A separate SDK script with its own hardpoints (spec D5).
         {'name': 'USS Enterprise', 'script': 'Enterprise', 'registry': 'Enterprise'},
+        # No stock registry texture: the name comes from Masks/<registry>/.
+        {'name': 'USS Ark Royal', 'registry': 'ArkRoyal'},
     ],
 }
 

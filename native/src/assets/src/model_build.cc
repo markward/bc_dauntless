@@ -7,6 +7,7 @@
 #include "mesh_upload.h"
 #include "normal_gen.h"
 #include "skeleton_build.h"
+#include "skin_offsets.h"
 #include "skin_weights.h"
 
 #include <assets/texture.h>
@@ -1132,6 +1133,24 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
                         skin_bone_to_skeleton[b] = it->second;
                 }
                 fill_skin_weights(cpu, *skin, skin_bone_to_skeleton);
+
+                // BC skins from the controller's per-influence offsets, not
+                // the vertex array; where the two disagree (kessok_head.NIF,
+                // stored rotated 90°) seat the shape where BC draws it.
+                std::vector<std::optional<glm::mat4>> skin_bone_bind(
+                    skin->bone_links.size());
+                for (std::size_t b = 0; b < skin->bone_links.size(); ++b) {
+                    auto it = nodes.nif_block_to_node_index.find(
+                        resolver.resolve(skin->bone_links[b]));
+                    if (it != nodes.nif_block_to_node_index.end())
+                        skin_bone_bind[b] = node_bind_world[it->second];
+                }
+                if (seat_from_skin_offsets(cpu, *skin, skin_bone_bind))
+                    std::fprintf(stderr,
+                        "[model_build] skinned shape '%s' (block %u): vertex "
+                        "data disagrees with its skin offsets; seated from the "
+                        "offsets, as BC skins it\n",
+                        shape->av.obj.name.c_str(), static_cast<unsigned>(i));
             } else {
                 // Skinned model, but this shape carries NO skin controller. In
                 // BC, body parts are rigid shapes parented to bone nodes (the

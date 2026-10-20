@@ -2,11 +2,12 @@
 
 Mirrors engine.ui.configuration_panel.ConfigurationPanel: a Panel
 subclass pumped by PanelRegistry, rendered as a pause-menu modal that
-reuses the configuration panel's cp-* CSS. Four tabs: "Combat" (cheats
+reuses the configuration panel's cp-* CSS. Five tabs: "Combat" (cheats
 wired to engine.dev_combat_cheats, plus the Sensor Occlusion switch),
 "Lighting" (forced glow states, normal-map tunables), "Environments"
-(rock toggles), and "Diagnostics" (the frame profiler, the dial-group
-picker). Dev-mode only — constructed in host_loop.py inside
+(rock toggles), "Diagnostics" (the frame profiler, the dial-group
+picker), and "Characters" (put any SDK character on the viewscreen, via
+engine.dev_character_viewscreen). Dev-mode only — constructed in host_loop.py inside
 ``if dev_mode.is_enabled():``.
 
 Spec: docs/superpowers/specs/2026-06-08-developer-options-menu-design.md
@@ -17,6 +18,7 @@ import json
 from typing import List, Optional, Tuple
 
 from engine.ui.panel import Panel
+from engine import dev_character_viewscreen as character_viewscreen
 from engine import dev_combat_cheats as cheats
 from engine import dev_dial_groups
 from engine import dev_light_preview as light_preview
@@ -108,7 +110,8 @@ class DeveloperOptionsPanel(Panel):
         self._tabs: List[Tuple[str, str]] = [("combat", "Combat"),
                                              ("lighting", "Lighting"),
                                              ("environments", "Environments"),
-                                             ("diagnostics", "Diagnostics")]
+                                             ("diagnostics", "Diagnostics"),
+                                             ("characters", "Characters")]
         self._selected_tab = "combat"
         self._god_mode = cheats.god_mode_active()
         self._double_weapons = cheats.double_player_weapons_active()
@@ -147,6 +150,10 @@ class DeveloperOptionsPanel(Panel):
         # profiler at startup, so a hard-coded False would show OFF while it
         # was running.
         self._profiler = _frame_profiler().is_enabled()
+        # The character the Characters tab last put on the viewscreen, or
+        # None. Only what this panel did: a mission can switch the viewscreen
+        # behind its back, so this labels the row, it is not a live readout.
+        self._viewscreen_character: Optional[str] = None
         self._visible = False
         self._focused = -1
         self._last_pushed: Optional[tuple] = None
@@ -211,6 +218,7 @@ class DeveloperOptionsPanel(Panel):
             self._rock_specks, self._rock_puffs, self._running_lights,
             self._planet_geosphere, self._planet_atmosphere,
             self._planet_surface, self._surface_debug,
+            self._viewscreen_character,
         )
         if snapshot == self._last_pushed:
             return None
@@ -222,6 +230,11 @@ class DeveloperOptionsPanel(Panel):
             "tabs": [{"id": tid, "label": label} for tid, label in self._tabs],
             "selected_tab": self._selected_tab,
             "focused": self._focused,
+            # Read only when the tab is showing: building the catalogue walks
+            # the SDK tree (cached after the first time).
+            "characters": ([e.name for e in character_viewscreen.catalogue()]
+                           if self._selected_tab == "characters" else []),
+            "viewscreen_character": self._viewscreen_character,
             "settings": {
                 "god_mode": self._god_mode,
                 "double_weapons": self._double_weapons,
@@ -403,6 +416,27 @@ class DeveloperOptionsPanel(Panel):
             planet_surface_catalogue.reload()
             surface_dials.repush_live()
             print("[surface] catalogue reloaded", file=sys.stderr)
+            return True
+        if action.startswith("action:show_character:"):
+            entry = character_viewscreen.find(action[len("action:show_character:"):])
+            if entry is None:
+                return False
+            try:
+                shown = character_viewscreen.show(entry)
+            except Exception:
+                # A developer tool: say what broke rather than leave the
+                # button silently doing nothing.
+                import sys
+                import traceback
+                print("[dev-character-viewscreen] showing %s failed:" % entry.name,
+                      file=sys.stderr)
+                traceback.print_exc()
+                shown = False
+            self._viewscreen_character = entry.name if shown else None
+            return True
+        if action == "action:viewscreen_off":
+            character_viewscreen.hide()
+            self._viewscreen_character = None
             return True
         if action == "action:quick_repair":
             # One-shot ACTION, not a toggle: nothing to mirror in state, so
