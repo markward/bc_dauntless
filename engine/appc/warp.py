@@ -417,6 +417,32 @@ class _ArrivalExitedWarpAction(TGAction):
             handoff.post_exited_warp(self._ship)
 
 
+def clear_arrived_course(ship, dest_module) -> None:
+    """The player ``ship`` has arrived at ``dest_module``: spend the warp
+    button's course if it still names it (STWarpButton.clear_course). Read
+    live, not captured at engage: a mission change rebuilds the Helm menu,
+    and its button. An NPC's arrival never touches the player's course."""
+    if not _is_current_player(ship):
+        return
+    import App
+    button = App.SortedRegionMenu_GetWarpButton()
+    if button is not None:
+        button.clear_course(dest_module)
+
+
+class _ArrivalClearCourseAction(TGAction):
+    """``clear_arrived_course`` on the player's arrival. Before
+    ET_EXITED_WARP, so a handler of it may plot the next course."""
+
+    def __init__(self, ship, dest_module):
+        super().__init__()
+        self._ship = ship
+        self._dest = dest_module
+
+    def _do_play(self):
+        clear_arrived_course(self._ship, self._dest)
+
+
 class _EnableHelmMenuAction(TGAction):
     """Restore the Helm menu on arrival — the counterpart to the
     `disable_helm_menu()` that `warp_button.engage` performs at engage time.
@@ -1217,6 +1243,7 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         # than at the end of the tail below: the reticle must drop the instant
         # you come out of warp, not _T_EXIT_DECEL seconds later.
         seq.AppendAction(_ArrivalClearTargetsAction(ship))
+        seq.AppendAction(_ArrivalClearCourseAction(ship, dest_module))
         seq.AppendAction(_ArrivalExitedWarpAction(ship))
         seq.AppendAction(_WarpSoundAction("Exit Warp", ship))
         # The manager keeps running for _T_EXIT_DECEL seconds after arrival to
@@ -1255,6 +1282,7 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
         seq.AppendAction(_PlacePlayerAction(ship, dest_name, placement))
         seq.AppendAction(_ArriveFinalizeAction(source, ship))
         seq.AppendAction(_ArrivalClearTargetsAction(ship))
+        seq.AppendAction(_ArrivalClearCourseAction(ship, dest_module))
         seq.AppendAction(_ArrivalExitedWarpAction(ship))
     seq.AppendAction(_EnableHelmMenuAction(ship))
     _append_after_queue(seq)
@@ -1495,7 +1523,7 @@ def execute_warp(button, event=None):
     if dash.is_same_system_dash(player, dest, mission, episode) and \
             dash.start_set_course(
                 player, App.g_kSetManager.GetSet(_set_name_from_module(dest)),
-                placement, queues, button=button):
+                placement, queues, button=button, course=dest):
         return
     WarpSequence_Create(player, dest, button.GetWarpTime(), placement,
                         mission=mission, episode=episode,
