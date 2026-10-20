@@ -23,7 +23,56 @@ import MissionLib
 import loadspacehelper
 
 # Stock DamageTool script: 22 authored volumes, within the 24-slot carve field.
+# Unused on the damage-redesign spike (the Akira starts clean).
 _DAMAGE_SCRIPT = "Maelstrom.Episode5.E5M2.DamageAkira"
+
+# SPIKE (damage redesign): the impulse system dies in stages -- controller,
+# then port, then starboard engine. Delays are seconds after the PREVIOUS
+# step (TGSequence AppendAction semantics).
+_IMPULSE_STEPS = (
+    (3.0, "Impulse Engines"),
+    (1.5, "Port Impulse"),
+    (1.5, "Star Impulse"),
+)
+_step_index = [0]
+
+
+def _wreck():
+    pSet = App.g_kSetManager.GetSet("QuickBattleRegion")
+    ship = App.ShipClass_GetObject(pSet, "Wreck") if pSet is not None else None
+    return None if ship is None or App.IsNull(ship) else ship
+
+
+def _find_subsystem(ship, name):
+    ies = ship.GetImpulseEngineSubsystem()
+    if ies is None:
+        return None
+    if ies.GetName() == name:
+        return ies
+    for i in range(ies.GetNumChildSubsystems()):
+        child = ies.GetChildSubsystem(i)
+        if child is not None and child.GetName() == name:
+            return child
+    return None
+
+
+def DestroyNextImpulseStep(pAction):
+    """Destroy the next impulse subsystem the way gameplay does (condition 0)."""
+    i = _step_index[0]
+    _step_index[0] = i + 1
+    if i >= len(_IMPULSE_STEPS):
+        return 0
+    name = _IMPULSE_STEPS[i][1]
+    ship = _wreck()
+    sub = _find_subsystem(ship, name) if ship is not None else None
+    if sub is None:
+        print("[damage-preview] no subsystem %r on the wreck" % name)
+        return 0
+    sub.SetCondition(0.0)
+    pos = sub.GetPosition() if hasattr(sub, "GetPosition") else None
+    where = "(%.2f, %.2f, %.2f)" % (pos.x, pos.y, pos.z) if pos is not None else "?"
+    print("[damage-preview] destroyed %s at body %s GU" % (name, where))
+    return 0
 
 
 def PreLoadAssets(pMission):
@@ -59,9 +108,14 @@ def Initialize(pMission):
     pWreck.SetTranslateXYZ(0.0, 6.0, 0.0)
     pWreck.UpdateNodeOnly()
 
-    # Authored visible damage via the stock DamageTool output.
-    DamageAkira = importlib.import_module(_DAMAGE_SCRIPT)
-    DamageAkira.AddDamage(pWreck)
+    # SPIKE (damage redesign): the Akira starts clean -- no authored
+    # DamageTool volumes -- and loses its impulse system on a timer, the
+    # first internal-explosion scenario (see _IMPULSE_STEPS).
+    pSeq = App.TGSequence_Create()
+    for delay, _name in _IMPULSE_STEPS:
+        pSeq.AppendAction(App.TGScriptAction_Create(__name__, "DestroyNextImpulseStep"), delay)
+    pSeq.Play()
+    _step_index[0] = 0
 
     # Three collision scuffs for live tuning of the scuff decal (spec
     # 2026-09-20-collision-scuff-normal-decals-design.md §5): small, medium
