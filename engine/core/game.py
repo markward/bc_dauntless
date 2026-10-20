@@ -439,10 +439,15 @@ class Game(TGObject):
         needs GetNamedCameraMode("ViewscreenZoomTarget") + AddModeHierarchy to
         run against a real mode instead of TGObject's truthy _Stub."""
         if self._player_camera is None:
-            from engine.appc.bridge_set import CameraObjectClass_Create
+            from engine.appc.bridge_set import CameraObjectClass, _NiFrustum
             from engine.appc.camera_modes import CameraMode_Create
-            self._player_camera = CameraObjectClass_Create(
-                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, "MainPlayerCamera")
+            from engine.appc.math import TGMatrix3
+            # Identity object frame (forward +Y, up +Z) — the seed pose pushed
+            # modes sweep from. Not CameraObjectClass_Create: that converts an
+            # SDK angle-axis set-camera pose, which this stand-in is not.
+            self._player_camera = CameraObjectClass(
+                "MainPlayerCamera", (0.0, 0.0, 0.0), TGMatrix3(),
+                _NiFrustum(), 1.0, 800.0)
             cam = self._player_camera
             # MakePlayerCamera's four always-invalid markers: bare Chase modes
             # never given a Target (Camera.py:624-628).
