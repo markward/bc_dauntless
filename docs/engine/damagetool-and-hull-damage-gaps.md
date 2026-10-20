@@ -228,6 +228,9 @@ threshold are unchanged, and a hit that does cross the iso still carves as befor
   Textures/Effects/Damage.tga*"). So the cavity-interior look is sourced from the
   **wrong asset** — a concrete renderer follow-up: point it at the real
   `Textures/Effects/Damage.tga` (single image), not the HUD glyph set.
+  A better answer than any single texture was tried on 2026-10-20 and gave
+  decent results in game: procedural decks and rooms via interior mapping
+  ([findings](breach-interior-mapping-spike-findings.md); not merged).
 - **OBB tree vs live mesh raycast:** BC pre-baked OBB trees per NIF (`USE_OBBS` extra
   data); we raycast the live mesh in `hit_feedback`. Modern hardware makes this a
   non-issue, and it explains some otherwise-mysterious NIF extra-data bytes.
