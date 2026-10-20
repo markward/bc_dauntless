@@ -45,7 +45,9 @@ def _death_delay_s() -> float:
 def _wreck_distance_gu() -> float:
     """DAUNTLESS_DAMAGE_PREVIEW_DISTANCE_GU: how far ahead of the player the
     Akira sits (default 6, minimum 1.5). Perf captures shorten it for a
-    close-up in which the damaged hull fills the frame."""
+    close-up. The exterior camera sits about 14 GU behind the player, so
+    even at the 1.5 GU floor the Akira is only about 22% of the frame
+    width (17.5% at 6 GU); a frame-filling hull is out of reach here."""
     import os
     try:
         return max(1.5, float(os.environ.get("DAUNTLESS_DAMAGE_PREVIEW_DISTANCE_GU", "6")))
