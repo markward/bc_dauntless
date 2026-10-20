@@ -89,3 +89,10 @@ def test_find_exits_is_empty_when_the_hull_is_out_of_reach(monkeypatch):
         return p, (0.0, 0.0, 1.0), t
     monkeypatch.setattr(ib.host_io, "ray_trace_mesh", trace)
     assert ib.find_exits(1, (0.0, 0.0, 0.0), 0.35, ib.EXIT_DIRS) == []
+
+
+def test_hole_grows_the_deeper_the_hull_sits_inside_the_blast():
+    R = 0.35
+    grazing, mid, deep = (ib.hole_radius(R, d) for d in (0.99 * R, 0.5 * R, 0.1 * R))
+    assert grazing == ib.HOLE_MIN * R          # floor: a grazing blast still opens
+    assert grazing < mid < deep

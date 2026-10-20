@@ -11,11 +11,15 @@ ship -> render-instance map that only exists there. For each blast:
 2. Exit points: rays cast from OUTSIDE the sphere back toward its centre find
    the hull surface along EXIT_DIRS; hits inside the sphere are where the
    blast breaks out. None -> contained: nothing is drawn at all.
-3. A persistent INTERNAL damage record (weapon class 3) at the centre, whose
-   wear is STRENGTH: the plating shader fails the hull's layers inside-out
-   wherever the sphere reaches (opaque.frag plating_internal).
-4. At up to MAX_EXITS spread-out exit points: a critical hit flash with
-   torpedo sparks, and a breach burst (debris + venting).
+3. At up to MAX_EXITS spread-out exit points: a persistent INTERNAL damage
+   record (weapon class 3) ON THE HULL, whose wear is STRENGTH, so the
+   plating shader fails the layers inside-out around it (opaque.frag
+   plating_internal), plus a critical hit flash with torpedo sparks and a
+   breach burst (debris + venting). The blast breaks out through the nearest
+   hull with full force: the hole is larger the deeper the hull sits inside
+   the sphere (hole_radius), never below HOLE_MIN of the blast. A record at
+   the subsystem's centre was tried first and only ever grazed the hull --
+   the hull sits near the sphere's edge, where its falloff is ~0.
 Gameplay is untouched -- the subsystem is already destroyed.
 """
 import math
@@ -26,6 +30,8 @@ from engine import host_io
 RADIUS_SCALE = 1.4        # blast sphere = hardpoint radius x this
 STRENGTH = 6.0            # wear at the centre (inner hull tears at 4.5)
 MAX_EXITS = 3
+HOLE_K = 1.1              # hole radius = blast radius x HOLE_K x sqrt(1 - d/R)...
+HOLE_MIN = 0.35           # ...but never below this fraction of the blast radius
 MAX_PENDING = 64
 MAX_PENDING_AGE = 5.0     # s a blast waits for its ship's render instance
 WEAPON_CLASS_INTERNAL = 3
@@ -107,6 +113,12 @@ def _world_to_body(ship, v):
             c2.x * v[0] + c2.y * v[1] + c2.z * v[2])
 
 
+def hole_radius(blast_radius: float, dist: float) -> float:
+    """Hole opened at an exit point `dist` from the blast centre (GU)."""
+    depth = max(0.0, 1.0 - dist / blast_radius)
+    return blast_radius * max(HOLE_MIN, HOLE_K * math.sqrt(depth))
+
+
 def find_exits(iid, centre, radius, dirs_world):
     """Hull points inside the blast sphere, nearest first, at most MAX_EXITS,
     at least half a radius apart. `centre` in mesh (view) coordinates.
@@ -154,11 +166,11 @@ def _blast(entry, iid) -> None:
         return
 
     now = damage_decals.current_game_time()
-    host_io.damage_decal_add(iid, centre, (0.0, 0.0, 1.0), radius, 1.0,
-                             WEAPON_CLASS_INTERNAL, now, dent=STRENGTH)
     ship_loc = ship.GetWorldLocation()
     pset = frames.containing_set(ship)
-    for p, n, _ in exits:
+    for p, n, dist in exits:
+        host_io.damage_decal_add(iid, p, n, hole_radius(radius, dist), 1.0,
+                                 WEAPON_CLASS_INTERNAL, now, dent=STRENGTH)
         p_set = TGPoint3(centre_set.x + (p[0] - centre[0]),
                          centre_set.y + (p[1] - centre[1]),
                          centre_set.z + (p[2] - centre[2]))
@@ -172,5 +184,6 @@ def _blast(entry, iid) -> None:
                       weapon_kind=1, spark_count=60 if body_point is not None else 0,
                       pSet=pset)
         host_io.breach_burst(iid, body_gu, radius * 0.5)
-    print("[internal-blast] %s blew out at %d point(s), radius %.2f GU"
-          % (name, len(exits), radius))
+    print("[internal-blast] %s blew out at %d point(s), radius %.2f GU, holes %s GU"
+          % (name, len(exits), radius,
+             ", ".join("%.2f" % hole_radius(radius, d) for _, _, d in exits)))
