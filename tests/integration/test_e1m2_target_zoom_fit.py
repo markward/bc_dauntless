@@ -51,7 +51,7 @@ def test_viewscreen_frames_each_e1m2_debris_rock_from_the_start(monkeypatch):
     assert _target_radius(vesuvi.GetObject("Debris4")) == pytest.approx(15.0, rel=0.05)
 
     tan_v = math.tan(0.61 / 2.0)
-    r_player = player.GetRadius()
+    r_player = _target_radius(player)
     rows = []
     for rock in rocks:
         host_loop._VS_ZOOM_SMOOTHER.reset()
@@ -70,5 +70,4 @@ def test_viewscreen_frames_each_e1m2_debris_rock_from_the_start(monkeypatch):
         fit = r / ((1.0 - FIT_MARGIN) * math.sin(math.atan(tan_v)))
         if d_player - r_player >= fit:                     # (c) whole rock in frame
             ndc = math.tan(math.asin(r / d_eye)) / tan_v
-            assert ndc <= 0.9 + 0.02, rows[-1]
-    print("rock radius player_dist eye_dist", rows)
+            assert ndc <= 0.9 + 1e-6, rows[-1]

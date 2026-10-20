@@ -591,3 +591,78 @@ def test_tracking_compute_reads_player_and_target_through_pose_of():
         assert a == pytest.approx(b + v, abs=1e-6)
     for a, b in zip(up1, up0):
         assert a == pytest.approx(b, abs=1e-6)
+
+
+def _box_world_corners(tgt_loc, rot_cols, centre, half):
+    out = []
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            for sz in (-1, 1):
+                l = (centre[0] + sx * half[0], centre[1] + sy * half[1],
+                     centre[2] + sz * half[2])
+                out.append(tuple(
+                    tgt_loc[i] + sum(rot_cols[j][i] * l[j] for j in range(3))
+                    for i in range(3)))
+    return out
+
+
+def _view(eye, look_at, up):
+    f = tuple(look_at[i] - eye[i] for i in range(3))
+    n = math.sqrt(sum(c * c for c in f))
+    f = tuple(c / n for c in f)
+    r = (f[1]*up[2] - f[2]*up[1], f[2]*up[0] - f[0]*up[2],
+         f[0]*up[1] - f[1]*up[0])
+    return f, r
+
+
+class _ScaledBoxShip(_Scaled):
+    pass
+
+
+def _boxed(loc, scale=3.0):
+    from engine.appc.math import TGMatrix3
+    tgt = _ScaledBoxShip(loc, TGMatrix3(), radius=10.0, scale=scale)
+    tgt._shield_hull_box = ((0.0, 0.0, 5.0), (4.0, 12.0, 3.0))
+    return tgt
+
+
+def test_zoom_target_live_box_path_fits_the_scaled_box_in_frame():
+    from engine.appc.math import TGPoint3, TGMatrix3
+    tc = _zoom_cam()
+    tgt = _boxed(TGPoint3(200.0, 300.0, 60.0))
+    eye, look_at, up = tc.compute(
+        player=_FakeShip(TGPoint3(0.0, 0.0, 0.0), TGMatrix3()), target=tgt,
+        dt=None)
+    f, r = _view(eye, look_at, up)
+    t = math.tan(tc.v_fov_rad / 2.0)
+    worst = 0.0
+    for p in _box_world_corners((200.0, 300.0, 60.0),
+                                [(1, 0, 0), (0, 1, 0), (0, 0, 1)],
+                                (0.0, 0.0, 15.0), (12.0, 36.0, 9.0)):
+        d = tuple(p[i] - eye[i] for i in range(3))
+        z = sum(d[i] * f[i] for i in range(3))
+        nx = sum(d[i] * r[i] for i in range(3)) / z / (t * tc.aspect)
+        ny = sum(d[i] * up[i] for i in range(3)) / z / t
+        assert abs(nx) <= 0.9 + 1e-6 and abs(ny) <= 0.9 + 1e-6
+        worst = max(worst, abs(nx), abs(ny))
+    assert worst == pytest.approx(0.9, abs=1e-6)
+
+
+def test_zoom_target_hugging_a_box_face_keeps_the_eye_outside_the_box():
+    from engine.appc.math import TGPoint3, TGMatrix3
+    from engine.cameras import SCENE_NEAR_GU
+    tc = _zoom_cam()
+    loc = (30.0, 50.0, 10.0)
+    tgt = _boxed(TGPoint3(*loc))
+    player_pos = (0.0, 0.0, 0.0)
+    eye, look_at, up = tc.compute(
+        player=_FakeShip(TGPoint3(*player_pos), TGMatrix3()), target=tgt,
+        dt=None)
+    f, _ = _view(eye, look_at, up)
+    for p in _box_world_corners(loc, [(1, 0, 0), (0, 1, 0), (0, 0, 1)],
+                                (0.0, 0.0, 15.0), (12.0, 36.0, 9.0)):
+        along = sum((p[i] - eye[i]) * f[i] for i in range(3))
+        assert along > SCENE_NEAR_GU - 1e-9
+    centre = (loc[0], loc[1], loc[2] + 15.0)
+    d_player = math.dist(player_pos, centre)
+    assert math.dist(eye, centre) <= d_player + 1e-9

@@ -85,7 +85,6 @@ class _CameraDirector:
         self.tracking.v_fov_rad  = self.effective_fov_y_rad
         scale = fov_distance_scale(rad)
         self.chase.fov_scale     = scale
-        self.tracking.fov_scale  = scale
 
     def set_aspect(self, aspect: float) -> None:
         """Per-frame: the real screen shape (w/h) for the Tracking solver's

@@ -68,7 +68,11 @@ def test_sphere_fit_puts_the_silhouette_at_ninety_percent():
     ext = zf.TargetExtent((0, 0, 0), None, None, 15.0)
     fov = math.radians(35)
     d = zf.fit_distance(ext, (0, 1, 0), (0, 0, 1), fov, 16 / 9)
-    assert d == pytest.approx(15 / (0.9 * math.sin(math.radians(17.5))))
+    # True tangent silhouette: half-angle asin(r/d); its tangent over the
+    # limiting half-FOV tangent is the NDC extent.
+    tan_v = math.tan(fov / 2.0)
+    ndc = math.tan(math.asin(15.0 / d)) / min(tan_v, tan_v * 16 / 9)
+    assert ndc == pytest.approx(0.9, abs=1e-9)
 
 
 AXES = {
@@ -108,6 +112,10 @@ def test_box_fit_frames_a_long_hull_tighter_than_its_sphere():
 def test_surface_distance_box_and_sphere():
     box = zf.TargetExtent((0, 0, 0), tuple(AXES["side"]), (5, 10, 2), 11.0)
     assert zf.surface_distance(box, (0, 1, 0)) == pytest.approx(10)
+    # Oblique: support distance sum h_i |a_i.f| (nearest box reach along view)
+    f = (1 / math.sqrt(2), 1 / math.sqrt(2), 0.0)
+    assert zf.surface_distance(box, f) == pytest.approx(
+        (5 + 10) / math.sqrt(2))
     sph = zf.TargetExtent((0, 0, 0), None, None, 15.0)
     assert zf.surface_distance(sph, (0, 1, 0)) == pytest.approx(15)
 

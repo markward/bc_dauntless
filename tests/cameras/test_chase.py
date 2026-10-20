@@ -625,10 +625,8 @@ def test_director_set_fov_propagates_fov_scale_to_both_cameras():
     d.set_fov(math.radians(45.0))
     want = fov_distance_scale(math.radians(45.0))
     assert d.chase.fov_scale    == pytest.approx(want)
-    assert d.tracking.fov_scale == pytest.approx(want)
     d.set_fov(math.radians(35.0))
     assert d.chase.fov_scale    == pytest.approx(1.0)
-    assert d.tracking.fov_scale == pytest.approx(1.0)
 
 
 # ── BC's Chase dynamics, measured on the exe (stbc-oracle bible §12.1, V2) ──

@@ -8245,8 +8245,9 @@ def _compute_camera(view_mode, director, *, player, dt, pose_of=None) -> tuple:
         fb_w, fb_h = host_io.framebuffer_size()
         if fb_h > 0:
             director.set_aspect(fb_w / fb_h)
-    except Exception:
-        pass   # no host / fake host_io: keep the solver's current aspect
+    except Exception as _e:
+        # no host / fake host_io: keep the solver's current aspect
+        dev_mode.log_swallowed("exterior camera aspect", _e)
     if view_mode.is_bridge:
         fwd = rot.GetCol(1)
         up  = rot.GetCol(2)
@@ -12977,6 +12978,10 @@ def run(mission_name: Optional[str] = None,
             if _feed is None:
                 _scene = _viewscreen_scene_feed(player, director.fov_y_rad,
                                                 dt=_player_dt)
+            else:
+                # Hailing: the scene feed is not called, so drop its smoothed
+                # distance; the next target view re-fits from scratch.
+                _VS_ZOOM_SMOOTHER.reset()
             _vs_src = _select_viewscreen_source(r, _feed, _scene)
             if _vs_src == "comm":
                 _set_id, _cam = _feed

@@ -67,7 +67,7 @@ def fit_distance(ext, forward, up, fov_y_rad, aspect, margin=FIT_MARGIN):
     tan_v = math.tan(fov_y_rad / 2.0)
     tan_h = tan_v * aspect
     if ext.axes is None:
-        return ext.radius / (k * math.sin(math.atan(min(tan_v, tan_h))))
+        return ext.radius / math.sin(math.atan(k * min(tan_v, tan_h)))
     fwd = _unit(forward)
     upv = _unit(up)
     right = _cross(fwd, upv)
@@ -84,17 +84,14 @@ def fit_distance(ext, forward, up, fov_y_rad, aspect, margin=FIT_MARGIN):
 
 
 def surface_distance(ext, forward):
-    """Distance from the centre along -forward to where that ray leaves the
-    box (slab method) or sphere."""
+    """Clearance floor: how far the target reaches toward the camera along
+    the view axis, measured from its centre. For a box this is the support
+    distance sum_i h_i * |a_i . forward|; for a sphere, its radius. An eye at this distance has
+    the whole target ahead of it, so the near plane cannot cut an oblique face or corner."""
     if ext.axes is None:
         return ext.radius
-    back = _unit(tuple(-c for c in forward))
-    t = math.inf
-    for a, h in zip(ext.axes, ext.half):
-        c = abs(_dot(back, a))
-        if c > 1e-12:
-            t = min(t, h / c)
-    return t
+    f = _unit(forward)
+    return sum(h * abs(_dot(f, a)) for a, h in zip(ext.axes, ext.half))
 
 
 def zoom_target_distance(*, d_fit, zoom, player_dist, r_player, d_surface):

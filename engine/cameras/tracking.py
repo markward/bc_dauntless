@@ -61,10 +61,6 @@ class _TrackingCamera:
         self.zoom_target_scale = self.ZOOM_TARGET_SCALE_DEFAULT
         # Viewport aspect (w/h) for the fit; the host sets it each frame.
         self.aspect = 16.0 / 9.0
-        # FOV compensation (engine.cameras.fov_distance_scale); set by
-        # _CameraDirector.set_fov. Not used by ZoomTarget (the fit reads the
-        # real FOV); kept as the Tracking-side attribute the director sets.
-        self.fov_scale = 1.0
         # ZoomTarget sub-mode flag — toggled by enter/exit_zoom_target.
         self.zoom_target_active = False
         # Spring state (unchanged).
