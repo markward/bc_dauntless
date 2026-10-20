@@ -18,6 +18,15 @@ void add_box(std::vector<voxel::Tri>& out, glm::vec3 lo, glm::vec3 hi) {
     for (const auto& t : f) out.push_back({c[t[0]], c[t[1]], c[t[2]]});
 }
 
+// Label of the voxel containing body point `p`, or -1 outside the grid.
+int label_at(const voxel::StructureSegmentation& seg, const glm::vec3& p) {
+    const glm::ivec3 c = glm::ivec3(glm::floor((p - seg.vol.origin) / seg.vol.cell));
+    if (glm::any(glm::lessThan(c, glm::ivec3(0))) ||
+        glm::any(glm::greaterThanEqual(c, seg.vol.dims)))
+        return -1;
+    return seg.label[seg.vol.index(c.x, c.y, c.z)];
+}
+
 }  // namespace
 
 TEST(StructureParts, SolidDepthIsDistanceToTheNearestEmptyCell) {
@@ -54,9 +63,14 @@ TEST(StructureParts, FlatSlabIsADiscAndLongBarIsACylinder) {
 }
 
 TEST(StructureParts, PartsComeBackLargestFirst) {
+    // Built so detection's own order is the WRONG one: regions are numbered
+    // from the deepest core voxels, and the small cube (60 mu, ~6 cells
+    // deep) is far deeper than the big thin slab (12 mu thick). Unsorted, the
+    // cube comes back first (2028 vs 6406 voxels, mutation-checked with the
+    // sort removed), so only the sort makes the slab part 0.
     std::vector<voxel::Tri> tris;
-    add_box(tris, {-100, 150, 40}, {100, 350, 56});      // big slab, scanned late
-    add_box(tris, {-12, -300, -60}, {12, -140, -36});    // small bar, scanned early
+    add_box(tris, {-100, 150, 40}, {100, 350, 52});      // big thin slab
+    add_box(tris, {-30, -300, -60}, {30, -240, 0});      // small deep cube
     const auto seg = voxel::detect_structure_parts(tris);
     ASSERT_GE(seg.parts.size(), 2u);
     for (size_t i = 1; i < seg.parts.size(); ++i)
@@ -64,4 +78,17 @@ TEST(StructureParts, PartsComeBackLargestFirst) {
     for (std::int16_t l : seg.label) {
         if (l >= 0) { EXPECT_LT(l, static_cast<int>(seg.parts.size())); }
     }
+    // Labels follow the sort: the voxel at the slab's centre carries part 0,
+    // the largest, whose fitted centre is the slab's; the voxel at the cube's
+    // centre carries the part whose fitted centre is the cube's.
+    const glm::vec3 slab_centre(0.0f, 250.0f, 46.0f);
+    const glm::vec3 cube_centre(0.0f, -270.0f, -30.0f);
+    const int slab_label = label_at(seg, slab_centre);
+    const int cube_label = label_at(seg, cube_centre);
+    EXPECT_EQ(slab_label, 0);
+    ASSERT_GE(slab_label, 0);
+    ASSERT_GE(cube_label, 0);
+    EXPECT_NE(cube_label, slab_label);
+    EXPECT_LT(glm::length(seg.parts[slab_label].centre - slab_centre), 10.0f);
+    EXPECT_LT(glm::length(seg.parts[cube_label].centre - cube_centre), 10.0f);
 }

@@ -84,18 +84,19 @@ int count_non_black(const std::vector<std::uint8_t>& px) {
     return n;
 }
 
-// A flat quad in the z = 0 plane, half size `half`, with no textures (the
-// draw binds the white fallback). `facing_camera` winds it CCW seen from +z
-// (front-facing for a camera above it); otherwise CW (a back face).
-std::unique_ptr<assets::Model> build_quad(float half, bool facing_camera) {
-    auto model = std::make_unique<assets::Model>();
+// A flat quad in the z = `z` plane, half size `half`, with no textures (the
+// draw binds the white fallback), appended to `model` as one more mesh of
+// node 0. `facing_camera` winds it CCW seen from +z (front-facing for a
+// camera above it); otherwise CW (a back face, as the inside of a hull's far
+// skin is from inside the hull).
+void add_quad(assets::Model& model, float half, float z, bool facing_camera) {
     assets::MeshCpu cpu;
     cpu.material_index = 0;
     cpu.node_index = 0;
     const glm::vec3 n(0.0f, 0.0f, facing_camera ? 1.0f : -1.0f);
     auto push = [&](float x, float y, float u, float v) {
         assets::MeshCpu::Vertex vt;
-        vt.position = glm::vec3(x, y, 0.0f);
+        vt.position = glm::vec3(x, y, z);
         vt.normal = n;
         vt.uv = glm::vec2(u, v);
         cpu.vertices.push_back(vt);
@@ -108,19 +109,26 @@ std::unique_ptr<assets::Model> build_quad(float half, bool facing_camera) {
     else               cpu.indices = {0, 2, 1, 0, 3, 2};
     assets::Mesh mesh = assets::upload_mesh(cpu);
     mesh.set_cpu_data(cpu);
-    model->meshes.push_back(std::move(mesh));
+    if (model.materials.empty()) {
+        assets::Material mat;
+        mat.diffuse = glm::vec3(1.0f);
+        mat.specular = glm::vec3(0.0f);
+        mat.emissive = glm::vec3(0.0f);
+        model.materials.push_back(mat);
+    }
+    if (model.nodes.empty()) {
+        assets::Node node;
+        node.name = "plating_probe_quad";
+        model.nodes.push_back(node);
+        model.root_node = 0;
+    }
+    model.nodes[0].meshes.push_back(static_cast<int>(model.meshes.size()));
+    model.meshes.push_back(std::move(mesh));
+}
 
-    assets::Material mat;
-    mat.diffuse = glm::vec3(1.0f);
-    mat.specular = glm::vec3(0.0f);
-    mat.emissive = glm::vec3(0.0f);
-    model->materials.push_back(mat);
-
-    assets::Node node;
-    node.name = "plating_probe_quad";
-    node.meshes = {0};
-    model->nodes.push_back(node);
-    model->root_node = 0;
+std::unique_ptr<assets::Model> build_quad(float half, bool facing_camera) {
+    auto model = std::make_unique<assets::Model>();
+    add_quad(*model, half, 0.0f, facing_camera);
     return model;
 }
 
@@ -187,6 +195,9 @@ protected:
             reinterpret_cast<scenegraph::ModelHandle>(&model));
         world.set_world_transform(iid, glm::mat4(1.0f));
         world.get(iid)->decals = ring;
+        // far_fade 0: no u_dither_fade use() after draw_model, so the program
+        // bound after a render is the one the draw chose (program-choice test).
+        EXPECT_EQ(world.get(iid)->far_fade, 0.0f);
 
         glViewport(0, 0, kSize, kSize);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -380,4 +391,76 @@ TEST_F(PlatingRenderTest, FarBackFaceIsDiscarded) {
                  front_px, back_px);
     ASSERT_GT(front_px, 1000) << "the probe quad does not render at all";
     EXPECT_EQ(back_px, 0) << "a far back face drew in a double-sided draw";
+}
+
+// The program choice itself, read back from GL: an undamaged hull and a
+// HeatGlow-only hull draw through the stock program, a torn hull through
+// plating_shader(). draw_model's use() is the last program bind in the pass
+// for a far_fade-0 instance, so GL_CURRENT_PROGRAM after the render is the
+// program the draw took.
+TEST_F(PlatingRenderTest, ProgramChoiceIsReadBackFromGL) {
+    auto m = ambassador();
+    ASSERT_TRUE(m) << "BC asset not available at " << ambassador_nif()
+                   << " -- set DAUNTLESS_GAME_DIR";
+    const renderer::Aabb box = renderer::compute_model_aabb(*m);
+    const auto cam = top_down(box);
+    dauntless_plating::g_params[0] = 1.0f;
+    const auto hit = saucer_top_point(*m, box);
+    ASSERT_TRUE(hit);
+    const GLint stock = static_cast<GLint>(p->opaque_shader().program());
+    const GLint plating = static_cast<GLint>(p->plating_shader().program());
+    ASSERT_NE(stock, plating);
+    auto current = [] { GLint prog = 0; glGetIntegerv(GL_CURRENT_PROGRAM, &prog); return prog; };
+
+    render(*m, scenegraph::DamageDecalRing{}, cam);
+    EXPECT_EQ(current(), stock) << "undamaged hull";
+
+    scenegraph::DamageDecalRing glow;
+    glow.add(hit->point, hit->normal, 30.0f, 1.0f,
+             scenegraph::WeaponClass::HeatGlow, 0.0f);
+    render(*m, glow, cam);
+    EXPECT_EQ(current(), stock) << "HeatGlow-only hull";
+
+    render(*m, internal_ring(hit->point, 30.0f, 10.0f), cam);
+    EXPECT_EQ(current(), plating) << "torn hull";
+}
+
+// The positive half of double-sided drawing: a torn draw rasterises the far
+// skin's INSIDE (a back face) where it lies near a record, so the tear in the
+// near skin shows the inside wall, not space. Two sheets: a front-facing
+// skin at z = 0 torn at the record, and a back-facing skin 35 mu below it,
+// outside the blast (no wear, no hole) but within reach + margin (near).
+TEST_F(PlatingRenderTest, InsideFaceNearDamageShowsThroughTheTear) {
+    dauntless_plating::g_params[0] = 1.0f;
+    const float* g = dauntless_plating::g_params;
+    const float reach = 30.0f, depth = 35.0f;
+    ASSERT_GT(depth, reach) << "the far skin must take no wear";
+    ASSERT_LT(depth, reach + g[5] + g[6] + g[15] + g[2]) << "the far skin must be near";
+    scenegraph::Camera cam;
+    cam.eye = glm::vec3(0.0f, 0.0f, 120.0f);
+    cam.target = glm::vec3(0.0f);
+    cam.up = glm::vec3(0.0f, 1.0f, 0.0f);
+    cam.aspect = 1.0f;
+    const auto ring = internal_ring({0.0f, 0.0f, 0.0f}, reach, 10.0f);
+    ASSERT_TRUE(renderer::plating::build_damage_list(
+                    ring, dauntless_plating::g_params).torn_possible);
+    const glm::ivec2 c = to_pixel(cam, glm::vec3(0.0f));
+
+    // The near skin alone: torn at the centre, so the clear colour shows.
+    auto near_only = build_quad(20.0f, /*facing_camera=*/true);
+    const auto near_px = render(*near_only, ring, cam);
+    ASSERT_GT(count_non_black(near_px), 1000) << "the near skin does not render";
+    const std::uint8_t* hole = pixel(near_px, c.x, c.y);
+    ASSERT_LE(hole[0] + hole[1] + hole[2], 6) << "the near skin is not torn at the centre";
+
+    // With the far skin's inside behind it, the same pixel shows that wall.
+    auto two = build_quad(20.0f, /*facing_camera=*/true);
+    add_quad(*two, 20.0f, -depth, /*facing_camera=*/false);
+    const auto two_px = render(*two, ring, cam);
+    const std::uint8_t* wall = pixel(two_px, c.x, c.y);
+    std::fprintf(stderr, "[PlatingRender] tear centre (%d,%d) near-only=(%d,%d,%d) "
+                 "with inside wall=(%d,%d,%d)\n", c.x, c.y, hole[0], hole[1], hole[2],
+                 wall[0], wall[1], wall[2]);
+    EXPECT_GT(wall[0] + wall[1] + wall[2], 6)
+        << "the inside face near the damage was not drawn through the tear";
 }
