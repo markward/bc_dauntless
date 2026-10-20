@@ -26,4 +26,10 @@ struct DamageList {
 DamageList build_damage_list(const scenegraph::DamageDecalRing& ring,
                              const float* params);
 
+// Whether a draw takes the PLATING program: the layer is enabled (params[0])
+// and the list holds at least one record. Everything else draws through the
+// stock program and uploads nothing for plating. frame.cc's
+// submit_opaque_in_pass and the GL tests share this one rule.
+bool wants_plating(const DamageList& list, const float* params);
+
 }  // namespace renderer::plating

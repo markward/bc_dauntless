@@ -6,6 +6,7 @@ add_executable(renderer_tests
     frame_test.cc
     frame_timer_test.cc
     plating_damage_test.cc
+    plating_render_test.cc
     geosphere_draw_test.cc
     atmosphere_pass_test.cc
     atmosphere_surface_test.cc

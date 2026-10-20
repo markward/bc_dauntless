@@ -28,4 +28,8 @@ DamageList build_damage_list(const scenegraph::DamageDecalRing& ring,
     return out;
 }
 
+bool wants_plating(const DamageList& list, const float* params) {
+    return params[0] > 0.5f && list.count > 0;
+}
+
 }  // namespace renderer::plating

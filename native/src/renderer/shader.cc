@@ -6,6 +6,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace renderer {
@@ -66,15 +67,29 @@ Shader::~Shader() {
     if (program_) glDeleteProgram(program_);
 }
 
-Shader::Shader(Shader&& o) noexcept : program_(o.program_) { o.program_ = 0; }
+Shader::Shader(Shader&& o) noexcept
+    : program_(o.program_), locations_(std::move(o.locations_)) {
+    o.program_ = 0;
+    o.locations_.clear();
+}
 
 Shader& Shader::operator=(Shader&& o) noexcept {
     if (this != &o) {
         if (program_) glDeleteProgram(program_);
         program_ = o.program_;
+        locations_ = std::move(o.locations_);
         o.program_ = 0;
+        o.locations_.clear();
     }
     return *this;
+}
+
+int Shader::cached_location(const std::string& name) const {
+    auto it = locations_.find(name);
+    if (it != locations_.end()) return it->second;
+    const GLint loc = glGetUniformLocation(program_, name.c_str());
+    locations_.emplace(name, loc);
+    return loc;
 }
 
 void Shader::use() const noexcept {

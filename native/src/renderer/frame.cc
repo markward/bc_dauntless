@@ -196,6 +196,7 @@ namespace dauntless_decals {
 // that module's DEFAULTS; slot meanings are listed there and in opaque.frag's
 // apply_plating. [0] = enabled (0/1).
 #include "renderer/structure_parts_cache.h"
+#include "renderer/plating_damage.h"
 namespace dauntless_plating {
     float g_params[24] = {
         1.0f,   // 0 enabled
@@ -576,7 +577,8 @@ void draw_model(const assets::Model& model,
                 const assets::DecalOverride* decal_override,
                 int sphere_level,
                 const scenegraph::Instance::Atmosphere* atmo,
-                glm::vec3 atmo_sun_dir) {
+                glm::vec3 atmo_sun_dir,
+                const plating::DamageList* plating) {
     // Pick the program: skinned only when the model carries a skeleton AND a
     // non-empty palette is supplied. An empty palette forces the static branch,
     // which is byte-identical to the pre-skinning path (used by the plumbing
@@ -633,64 +635,74 @@ void draw_model(const assets::Model& model,
         }
     }
 
-    // SPIKE (damage redesign): a hull torn through needs its INSIDE faces --
-    // drawn double-sided while any record can reach breach wear. Restores
-    // culling when draw_model returns.
+    // SPIKE (damage redesign): plating layer -- ONLY for a draw through the
+    // plating program (submit_opaque_in_pass passes the list exactly when
+    // plating::wants_plating). A stock draw (plating == nullptr, or a skinned
+    // model, whose program has no plating layer) touches no plating uniform
+    // and never changes culling. Restores culling when draw_model returns.
     struct CullRestore {
         bool was = false, active = false;
         ~CullRestore() { if (active && was) glEnable(GL_CULL_FACE); }
     } cull_restore;
+    const plating::DamageList* const plating_list = skinned ? nullptr : plating;
 
-    // ── SPIKE (damage redesign): plating layer params + structure parts ───
-    // Params ride every draw (debug mode 2 tints undamaged hulls by part).
-    // Parts come from a background detection per hull source; until it lands
-    // u_part_count is 0 and the shader uses a body-axis box chart.
-    {
-        prog.set_float_array("u_plating", dauntless_plating::g_params, 24);
-        const bool part_debug = dauntless_plating::g_params[12] > 1.5f;
-        const bool want = dauntless_plating::g_params[0] > 0.5f
-                          && (decals_present || part_debug);
+    // ── SPIKE (damage redesign): plating params, damage list, parts ────────
+    // Params, the compact damage list (u_dmg_*, renderer/plating_damage.h)
+    // and the hull's structure parts ride only plating draws. The part-colour
+    // debug view (params[12] == 2) therefore tints only near listed damage on
+    // a hull whose list is non-empty; an undamaged hull draws stock. Parts
+    // come from a background detection per hull source; until it lands
+    // u_part_count is 0 and the shader uses a body-axis box chart. Locations
+    // are cached per program (Shader::cached_location): this runs per draw.
+    if (plating_list != nullptr) {
+        static const std::string kPlating = "u_plating", kDmgCount = "u_dmg_count",
+            kDmgA = "u_dmg_a", kDmgB = "u_dmg_b", kDmgC = "u_dmg_c",
+            kTwoSided = "u_plating_two_sided", kPartCount = "u_part_count",
+            kPartA = "u_part_a", kPartB = "u_part_b", kPartC = "u_part_c",
+            kPartD = "u_part_d";
+        auto set_vec4s = [&](const std::string& name, const glm::vec4* v, int n) {
+            const int loc = prog.cached_location(name);
+            if (loc >= 0 && n > 0) glUniform4fv(loc, n, &v[0].x);
+        };
+        auto set_int = [&](const std::string& name, int v) {
+            const int loc = prog.cached_location(name);
+            if (loc >= 0) glUniform1i(loc, v);
+        };
+        if (const int loc = prog.cached_location(kPlating); loc >= 0)
+            glUniform1fv(loc, 24, dauntless_plating::g_params);
+
+        const plating::DamageList& dl = *plating_list;
+        set_int(kDmgCount, dl.count);
+        set_vec4s(kDmgA, dl.a, dl.count);
+        set_vec4s(kDmgB, dl.b, dl.count);
+        set_vec4s(kDmgC, dl.c, dl.count);
+
         constexpr int kMaxParts = 12;
         glm::vec4 pa[kMaxParts], pb[kMaxParts], pc[kMaxParts], pd[kMaxParts];
         int np = 0;
-        if (want) {
-            if (const auto* parts = renderer::structure_parts_for(model.source)) {
-                for (const auto& sp : *parts) {
-                    if (np >= kMaxParts) break;
-                    pa[np] = glm::vec4(sp.centre, static_cast<float>(static_cast<int>(sp.kind)));
-                    pb[np] = glm::vec4(sp.axis[0], sp.half_extent.x);
-                    pc[np] = glm::vec4(sp.axis[1], sp.half_extent.y);
-                    pd[np] = glm::vec4(sp.half_extent.z, 0.0f, 0.0f, 0.0f);
-                    ++np;
-                }
-            }
-            if (part_debug) prog.set_mat4("u_ship_world_inv", glm::inverse(world));
-        }
-        bool torn_possible = false;
-        if (dauntless_plating::g_params[0] > 0.5f) {
-            const float breach = dauntless_plating::g_params[16];
-            for (const auto& dec : decals.slots()) {
-                if (!dec.active) continue;
-                if ((dec.weapon_class == scenegraph::WeaponClass::Scorch
-                     || dec.weapon_class == scenegraph::WeaponClass::Internal)
-                    && dec.wear >= 0.8f * breach) {
-                    torn_possible = true;
-                    break;
-                }
+        if (const auto* parts = renderer::structure_parts_for(model.source)) {
+            for (const auto& sp : *parts) {
+                if (np >= kMaxParts) break;
+                pa[np] = glm::vec4(sp.centre, static_cast<float>(static_cast<int>(sp.kind)));
+                pb[np] = glm::vec4(sp.axis[0], sp.half_extent.x);
+                pc[np] = glm::vec4(sp.axis[1], sp.half_extent.y);
+                pd[np] = glm::vec4(sp.half_extent.z, 0.0f, 0.0f, 0.0f);
+                ++np;
             }
         }
-        prog.set_int("u_plating_two_sided", torn_possible ? 1 : 0);
-        if (torn_possible) {
+        set_int(kPartCount, np);
+        set_vec4s(kPartA, pa, np);
+        set_vec4s(kPartB, pb, np);
+        set_vec4s(kPartC, pc, np);
+        set_vec4s(kPartD, pd, np);
+
+        // A hull torn through needs its INSIDE faces: drawn double-sided
+        // while the list's summed wear can reach a tear (Task 2's gate).
+        set_int(kTwoSided, dl.torn_possible ? 1 : 0);
+        if (dl.torn_possible) {
             cull_restore.was = glIsEnabled(GL_CULL_FACE) == GL_TRUE;
             cull_restore.active = true;
             glDisable(GL_CULL_FACE);
-        }
-        prog.set_int("u_part_count", np);
-        if (np > 0) {
-            prog.set_vec4_array("u_part_a", pa, np);
-            prog.set_vec4_array("u_part_b", pb, np);
-            prog.set_vec4_array("u_part_c", pc, np);
-            prog.set_vec4_array("u_part_d", pd, np);
         }
     }
 
@@ -1310,6 +1322,10 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
     const std::optional<scenegraph::InstanceId> detail_target =
         detail != nullptr ? detail->target() : std::nullopt;
     if (detail_target) configure_common(pipeline.planet_shader());
+    // Plating layer (SPIKE, damage redesign): the plating_ program is
+    // configured the first time a draw in this pass needs it, so an
+    // undamaged scene never touches it.
+    bool plating_configured = false;
 
     const GLuint white = ensure_white_texture();
     const GLuint black = ensure_black_texture();
@@ -1331,9 +1347,28 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
             select_instance_dynamic_lights(inst, m, dyn_lights, lights);
         const InstanceFieldCache::Entry* field_entry =
             field_cache != nullptr ? field_cache->get(inst.id) : nullptr;
+        const int sphere_level = m ? geosphere_level_for(*m, inst.world, camera) : -1;
+        const bool is_detail_draw = m && detail_target && *detail_target == inst.id &&
+                                    m->sphere_map && sphere_level >= 0;
+        // Plating layer: only a hull with listed damage draws through the
+        // plating_ program (plating::wants_plating); every other draw takes
+        // the stock program and uploads nothing for plating. The planet
+        // detail draw keeps planet_.
+        plating::DamageList plating_list;
+        bool use_plating = false;
+        if (m && !is_detail_draw && dauntless_plating::g_params[0] > 0.5f &&
+            inst.decals.count() > 0) {
+            plating_list = plating::build_damage_list(inst.decals,
+                                                      dauntless_plating::g_params);
+            use_plating = plating::wants_plating(plating_list, dauntless_plating::g_params);
+        }
+        if (use_plating && !plating_configured) {
+            configure_common(pipeline.plating_shader());
+            plating_configured = true;
+        }
         // Far tier: a fading mesh screen-doors against its impostor. Set on
-        // both programs (draw_model picks one); reset only when set, so a
-        // far_fade-0 instance leaves every uniform untouched.
+        // every program that may draw (draw_model picks one); reset only when
+        // set, so a far_fade-0 instance leaves every uniform untouched.
         if (inst.far_fade != 0.0f) {
             shader.use();
             shader.set_float("u_dither_fade", inst.far_fade);
@@ -1342,6 +1377,10 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
             if (detail_target) {
                 pipeline.planet_shader().use();
                 pipeline.planet_shader().set_float("u_dither_fade", inst.far_fade);
+            }
+            if (plating_configured) {
+                pipeline.plating_shader().use();
+                pipeline.plating_shader().set_float("u_dither_fade", inst.far_fade);
             }
         }
         // Planet surface atmosphere (spec 2026-10-07 §6): the sun direction
@@ -1357,14 +1396,15 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                 lighting.directional_count > 0 ? lighting.directional_dir_ws[0]
                                                : glm::vec3(0.0f, 0.0f, 1.0f));
         }
-        const int sphere_level = m ? geosphere_level_for(*m, inst.world, camera) : -1;
-        // The detail target's sphere-LOD draw goes through planet_; every
-        // other draw takes exactly the stock program.
+        // The detail target's sphere-LOD draw goes through planet_, a hull
+        // with listed plating damage through plating_; every other draw
+        // takes exactly the stock program.
         Shader* static_shader = &shader;
-        if (m && detail_target && *detail_target == inst.id && m->sphere_map &&
-            sphere_level >= 0) {
+        if (is_detail_draw) {
             static_shader = &pipeline.planet_shader();
             planet_detail::apply(*static_shader, detail->uniforms_for(inst.id));
+        } else if (use_plating) {
+            static_shader = &pipeline.plating_shader();
         }
         if (m) draw_model(*m, inst.world, *static_shader, pipeline.skinned_shader(),
                           white, black, rim_strength,
@@ -1376,7 +1416,8 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                           &inst.node_overrides,
                           instance_decal_override(inst.id),
                           sphere_level,
-                          atmo, atmo_sun);
+                          atmo, atmo_sun,
+                          use_plating ? &plating_list : nullptr);
         if (inst.far_fade != 0.0f) {
             shader.use();
             shader.set_float("u_dither_fade", 0.0f);
@@ -1385,6 +1426,10 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
             if (detail_target) {
                 pipeline.planet_shader().use();
                 pipeline.planet_shader().set_float("u_dither_fade", 0.0f);
+            }
+            if (plating_configured) {
+                pipeline.plating_shader().use();
+                pipeline.plating_shader().set_float("u_dither_fade", 0.0f);
             }
         }
     });

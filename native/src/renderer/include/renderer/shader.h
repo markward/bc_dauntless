@@ -3,6 +3,7 @@
 
 #include <glm/glm.hpp>
 #include <string>
+#include <unordered_map>
 
 namespace renderer {
 
@@ -52,8 +53,14 @@ public:
                          const float* data,
                          int count) const;
 
+    /// glGetUniformLocation, queried once per name for the life of this
+    /// program and then served from a cache (-1 = not an active uniform).
+    /// For uniforms set on every draw of a hot path (the plating layer).
+    int cached_location(const std::string& name) const;
+
 private:
     unsigned program_ = 0;
+    mutable std::unordered_map<std::string, int> locations_;
 };
 
 }  // namespace renderer

@@ -2096,8 +2096,12 @@ void main() {
     // is drawn where the cut reveals it.
     //
     // Near-damage early-out: nothing in the plating layer reaches further
-    // from a record than its reach plus this margin (plate depth + rib depth
-    // + member bend + one primary spacing: the deepest march / chart sample).
+    // from a record than its reach plus this margin. The margin is bounded by
+    // the distance from the pixel to its own panel centre (about one primary
+    // spacing, plus plate depth + rib depth + member bend of slack): a panel's
+    // wear is sampled at that centre, so a pixel within it of a record's reach
+    // can belong to a worn panel. The plate-edge march only runs once the
+    // pixel is already stripped, so it never decides nearness.
     // Far from every record the hull is stock: an inside (back) face is
     // dropped, and a front face skips plating_hole and apply_plating.
     bool plating_inside = false;

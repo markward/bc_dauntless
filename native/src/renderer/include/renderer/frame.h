@@ -29,6 +29,7 @@ namespace scenegraph { class World; struct Camera; enum class Pass : std::uint8_
 namespace renderer { class Pipeline; class Shader; class CarveFieldCache;
                      class InstanceFieldCache; }
 namespace renderer::planet_detail { class PlanetDetailPass; }
+namespace renderer::plating { struct DamageList; }
 
 namespace renderer {
 
@@ -341,7 +342,15 @@ void draw_model(const assets::Model& model,
                 // other draw sets u_atmo_enabled = 0. atmo_sun_dir is the
                 // world-space unit direction toward the planet's sun.
                 const scenegraph::Instance::Atmosphere* atmo = nullptr,
-                glm::vec3 atmo_sun_dir = glm::vec3(0.0f));
+                glm::vec3 atmo_sun_dir = glm::vec3(0.0f),
+                // SPIKE (damage redesign) plating layer: nullptr = a stock
+                // draw that touches no plating uniform and never changes
+                // culling. Non-null = `shader` is Pipeline::plating_shader()
+                // and this list (renderer/plating_damage.h) is uploaded as
+                // u_dmg_*; the draw goes double-sided when the list says a
+                // tear is possible. Ignored for a skinned draw (the skinned
+                // program has no plating layer).
+                const plating::DamageList* plating = nullptr);
 
 /// Per-camera LOD for a sphere-mapped model, or -1 when the model has none.
 /// world radius = sphere_map.radius * length(world[0]); focal from proj and
