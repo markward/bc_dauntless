@@ -211,7 +211,7 @@ namespace dauntless_plating {
         0.35f,  // 10 buckle band (wear below strip that buckles)
         0.6f,   // 11 edge noise
         0.0f,   // 12 debug (1 = stripped tint, 2 = colour by structure part)
-        0.3f,   // 13 soot (x scorch deposit while plating is on)
+        0.75f,  // 13 soot (x scorch deposit while plating is on)
         1.0f,   // 14 metal brightness (x rib / edge albedo)
         1.5f,   // 15 member bend (model units of distortion at full damage)
         4.5f,   // 16 breach wear (inner pressure hull tears open)

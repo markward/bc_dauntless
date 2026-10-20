@@ -31,7 +31,7 @@ DEFAULTS: dict = {
     "buckle_band": 0.35,
     "edge_noise": 0.6,
     "debug": 0.0,            # 1 = stripped magenta / buckled yellow / edge cyan, 2 = colour by part
-    "soot": 0.3,             # x the scorch deposit while plating is on
+    "soot": 0.75,            # x the scorch deposit while plating is on
     "metal_brightness": 1.0,
     "member_bend": 1.5,      # model units of member distortion at full damage
     "breach_wear": 4.5,      # wear at which the inner pressure hull tears open

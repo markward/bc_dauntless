@@ -788,9 +788,9 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
 // radius), 8 strip wear, 9 rib-break wear, 10 buckle band, 11 edge noise,
 // 12 debug (1 stripped tint, 2 colour by part), 13 soot, 14 metal brightness,
 // 15 member bend, 16 breach wear, 17 inner hull brightness.
-const vec3 PLATE_EDGE   = vec3(0.55, 0.55, 0.56);   // cut plate thickness
-const vec3 RIB_METAL    = vec3(0.40, 0.38, 0.36);   // unpainted structure
-const vec3 INNER_HULL   = vec3(0.24, 0.235, 0.23);  // pressure hull under the ribs
+const vec3 PLATE_EDGE   = vec3(0.68, 0.68, 0.69);   // cut plate thickness
+const vec3 RIB_METAL    = vec3(0.60, 0.58, 0.55);   // unpainted structure
+const vec3 INNER_HULL   = vec3(0.42, 0.41, 0.40);  // pressure hull under the ribs
 const int  MAX_PARTS    = 12;
 const float TAU         = 6.2831853;
 uniform int  u_part_count;               // 0 = parts not detected (yet)
@@ -1034,10 +1034,10 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
     vec3  qi = p_body + ray * (Dp + Dr);
     vec2 ci; vec3 ctri; float i1, i2;
     plating_sample(part, plating_warp(qi, n_body, bend), n_body, ci, ctri, i1, i2);
-    float ao = mix(0.45, 1.0, smoothstep(hw1, hw1 * 3.5, min(i1, i2 + 0.2 * hw1)));
+    float ao = mix(0.62, 1.0, smoothstep(hw1, hw1 * 3.5, min(i1, i2 + 0.2 * hw1)));
     float dent = smoothstep(u_plating[9] * 0.6, breach, w_here);
     float grain = vnoise(qi.xy * 0.13 + qi.z * 0.09);
-    vec3  inner = INNER_HULL * u_plating[17] * (0.8 + 0.4 * grain) * mix(1.0, 0.35, dent) * ao;
+    vec3  inner = INNER_HULL * u_plating[17] * (0.8 + 0.4 * grain) * mix(1.0, 0.6, dent) * ao;
     vec3  dtilt = vec3(vnoise(qi.xy * 0.21 + 1.3), vnoise(qi.yz * 0.21 + 4.1),
                        vnoise(qi.zx * 0.21 + 8.7)) - 0.5;
     dtilt -= n_body * dot(dtilt, n_body);
@@ -1055,8 +1055,8 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
     }
 
     float depth01 = (t_side - Dp) / max(Dr, 1e-4);
-    vec3 metal = RIB_METAL * u_plating[14] * mix(1.0, 0.5, dmg);       // scorched with damage
-    vec3 rib_side = metal * mix(0.85, 1.0, prim) * mix(0.75, 0.35, depth01);
+    vec3 metal = RIB_METAL * u_plating[14] * mix(1.0, 0.7, dmg);       // scorched with damage
+    vec3 rib_side = metal * mix(0.85, 1.0, prim) * mix(0.85, 0.5, depth01);
     vec3 below = mix(inner, rib_side, side);
     vec3 nb_below = side > 0.5 ? back_b : n_inner;
     vec3 rtilt = vec3(vnoise(qt.xy * 0.3 + 2.2), vnoise(qt.yz * 0.3 + 6.6),
