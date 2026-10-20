@@ -1197,9 +1197,9 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
     if (u_plating[12] > 0.5 && u_plating[12] < 1.5) base_rgb = mix(base_rgb, vec3(1.0, 0.0, 1.0), 0.5);
 }
 // Torn through: the inner pressure hull has failed here, so the hull is CUT
-// (the fragment is discarded) instead of painted. Same test for the hull's
-// inside faces, so a sheet's own back face never plugs its hole: torn through
-// one sheet shows the far wall's inside; torn through both shows space.
+// (the fragment is discarded) instead of painted. Only front faces draw (back
+// faces are culled), so a cut shows whatever lies behind the hull; the
+// marking draw (u_plating_mark) stamps the stencil exactly at these pixels.
 uniform int u_plating_mark;        // 1 = marking draw: stencil only where the hull is cut through
 // 0 = hull here; 1 = torn through (cut); 2 = torn, but a structural member
 // still spans the hole here (drawn as bare, charred metal). The torn edge is

@@ -497,6 +497,22 @@ TEST_F(PlatingRenderTest, NoMarkWithoutPossibleTear) {
     EXPECT_EQ(*std::max_element(r.stencil.begin(), r.stencil.end()), 0);
 }
 
+// A skinned model's program has no plating layer, so a marking draw of it
+// would stamp its whole hull. It must be skipped.
+TEST_F(PlatingRenderTest, SkinnedModelIsNeverMarked) {
+    dauntless_plating::g_params[0] = 1.0f;
+    GLint sbits = 0;
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, GL_STENCIL,
+                                          GL_FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE, &sbits);
+    ASSERT_GE(sbits, 8) << "test window has no stencil buffer";
+    auto quad = build_quad(150.0f, true);
+    quad->skeleton.bones.push_back(assets::Bone{});
+    const auto r = render_marked(*quad, internal_ring({0, 0, 0}, 30.0f, 10.0f), quad_cam());
+    EXPECT_EQ(r.marks, 0);
+    EXPECT_EQ(*std::max_element(r.stencil.begin(), r.stencil.end()), 0);
+}
+
 TEST_F(PlatingRenderTest, PlatingDrawsLeaveStockGlState) {
     dauntless_plating::g_params[0] = 1.0f;
     const auto cam = quad_cam();

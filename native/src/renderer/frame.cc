@@ -557,6 +557,15 @@ static const voxel::VoxelVolume* carve_fill_entry(
     return v.occ.empty() ? nullptr : &v;
 }
 
+// draw_model's program choice: skinned only when the model carries a skeleton
+// AND a non-empty palette is supplied. Shared with submit_plating_interior,
+// whose marking draw must skip models that take the skinned program (it has
+// no plating layer, so the whole hull would be stamped).
+static bool draws_skinned(const assets::Model& model,
+                          const std::vector<glm::mat4>& bone_palette) {
+    return !model.skeleton.bones.empty() && !bone_palette.empty();
+}
+
 void draw_model(const assets::Model& model,
                 const glm::mat4& world,
                 Shader& shader,
@@ -588,7 +597,7 @@ void draw_model(const assets::Model& model,
     // non-empty palette is supplied. An empty palette forces the static branch,
     // which is byte-identical to the pre-skinning path (used by the plumbing
     // test to render a skinned model through the static program).
-    const bool skinned = !model.skeleton.bones.empty() && !bone_palette.empty();
+    const bool skinned = draws_skinned(model, bone_palette);
     Shader& prog = skinned ? skinned_shader : shader;
     prog.use();
     if (skinned) {
@@ -1553,6 +1562,10 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
         if (inst.far_fade >= 1.0f) return;
         const assets::Model* m = lookup(inst.model_handle);
         if (!m || inst.decals.count() == 0) return;
+        std::vector<glm::mat4> palette;
+        if (!m->skeleton.bones.empty())
+            palette = build_bone_palette(m->skeleton, /*local_pose=*/nullptr);
+        if (draws_skinned(*m, palette)) return;
         const plating::DamageList list =
             plating::build_damage_list(inst.decals, dauntless_plating::g_params);
         if (!plating::wants_plating(list, dauntless_plating::g_params) ||
@@ -1584,9 +1597,6 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
         ++next_value;
         ++plating_marks_last_frame_;
 
-        std::vector<glm::mat4> palette;
-        if (!m->skeleton.bones.empty())
-            palette = build_bone_palette(m->skeleton, /*local_pose=*/nullptr);
         std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw> lights{};
         if (inst.far_fade != 0.0f) {
             shader.use();
