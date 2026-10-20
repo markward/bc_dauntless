@@ -33,6 +33,7 @@ _REQUIRED_BINDINGS = frozenset({
     "add_box_region", "add_cylinder_region", "add_sphere_region",
     "running_light_count", "running_lights_enabled", "running_lights_set_enabled",
     "set_running_light_dials", "set_running_light_levels", "set_running_lights",
+    "set_plating_params",
     "ambient_gradient_get", "ambient_gradient_set", "ambient_gradient_set_enabled",
     "assemble_officer", "bridge_pass_set_enabled", "bridge_quality",
     "cef_composite", "cef_devtools_open", "cef_initialize", "cef_pump",
@@ -1611,6 +1612,11 @@ def set_running_lights(iid, lights, phase: float) -> None:
 def set_running_light_levels(levels) -> None:
     """Per-frame (instance_id, level) brightness; unlisted ships draw dark."""
     _h.set_running_light_levels([(iid, float(lv)) for iid, lv in levels])
+
+
+def set_plating_params(params) -> None:
+    """SPIKE: hull-plating layer params, slot order per plating_dials."""
+    _h.set_plating_params([float(v) for v in params])
 
 
 def set_running_light_dials(size_gu_per_radius: float, min_px: float,

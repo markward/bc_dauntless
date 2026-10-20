@@ -191,6 +191,28 @@ namespace dauntless_decals {
     bool enabled() { return true; }
 }
 
+// SPIKE (damage redesign): hull-plating layer params, pushed live from
+// engine/appc/plating_dials.py (/ L O, group "plating"). Defaults MUST match
+// that module's DEFAULTS; slot meanings are listed there and in opaque.frag's
+// apply_plating. [0] = enabled (0/1).
+namespace dauntless_plating {
+    float g_params[16] = {
+        1.0f,   // 0 enabled
+        2.5f,   // 1 panel size (model units)
+        3.0f,   // 2 frame (rib) spacing along body Y
+        2.0f,   // 3 stringer spacing
+        0.30f,  // 4 rib width
+        0.25f,  // 5 plate depth
+        0.35f,  // 6 rib depth (below the plate)
+        0.40f,  // 7 reach (x scorch decal radius)
+        0.5f,   // 8 wear to strip a panel
+        2.5f,   // 9 wear to break ribs
+        0.35f,  // 10 buckle band (wear below strip that buckles)
+        0.6f,   // 11 edge noise
+        0.0f, 0.0f, 0.0f, 0.0f,
+    };
+}
+
 // Hull-breach renderer pass (carve emission + shader clip). Always on — the
 // breach VFX is a core effect with no user-facing toggle (as in stock BC, a
 // hull breach was never something you could switch off). enabled() is retained
@@ -578,7 +600,7 @@ void draw_model(const assets::Model& model,
                 c[n] = glm::vec4(dec.birth_time,
                                  static_cast<float>(static_cast<std::uint32_t>(dec.weapon_class)),
                                  dec.dent,     // Scuff: 1 impact crumple, 0 grind scratches
-                                 0.0f);
+                                 dec.wear);    // Scorch: running hit total (plating spike)
                 d[n] = glm::vec4(dec.tangent_body, 0.0f);
                 ++n;
             }
@@ -597,6 +619,7 @@ void draw_model(const assets::Model& model,
             // tangent frame; the shader normalises after use.
             prog.set_mat3("u_ship_world_rot", glm::mat3(world));
             prog.set_float("u_decal_time", decal_time);
+            prog.set_float_array("u_plating", dauntless_plating::g_params, 16);
         }
     }
 

@@ -301,3 +301,22 @@ TEST(DamageDecalRing, MergingAGrindIntoAnImpactKeepsTheDent) {
     ring2.add({1, 0, 0}, {0, 0, 1}, 5.0f, 0.4f, WeaponClass::Scuff, 1.0f, {1, 0, 0}, 1.0f);
     EXPECT_FLOAT_EQ(first_active(ring2)->dent, 1.0f);
 }
+
+// SPIKE (damage redesign, plating layer): intensity saturates at 1, wear
+// keeps counting merged Scorch hits so the shader can strip, then break ribs.
+TEST(DamageDecalRing, ScorchWearCountsMergedHitsPastOne) {
+    DamageDecalRing ring;
+    for (int i = 0; i < 3; ++i)
+        ring.add({0, 0, 0}, {0, 0, 1}, 1.0f, 1.0f, WeaponClass::Scorch, float(i));
+    const DamageDecal* d = first_active(ring);
+    ASSERT_NE(d, nullptr);
+    EXPECT_FLOAT_EQ(d->intensity, 1.0f);
+    EXPECT_FLOAT_EQ(d->wear, 3.0f);
+}
+
+TEST(DamageDecalRing, ScuffCarriesNoWear) {
+    DamageDecalRing ring;
+    ring.add({0, 0, 0}, {0, 0, 1}, 1.0f, 1.0f, WeaponClass::Scuff, 0.0f);
+    ring.add({0, 0, 0}, {0, 0, 1}, 1.0f, 1.0f, WeaponClass::Scuff, 1.0f);
+    EXPECT_FLOAT_EQ(first_active(ring)->wear, 0.0f);
+}

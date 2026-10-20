@@ -2540,6 +2540,11 @@ namespace dauntless_normal_map {
     void set_strength(float v);
     void set_flip_green(bool v);
 }
+// SPIKE (damage redesign): hull-plating layer params. Defined in frame.cc.
+namespace dauntless_plating {
+    extern float g_params[16];
+}
+
 // Hull-breach renderer pass — always-on gate. Defined in frame.cc.
 namespace dauntless_hull_damage {
     bool enabled();            // defined in frame.cc
@@ -6375,6 +6380,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
               g_running_light_dials = {size_gu_per_radius, min_px, intensity};
           },
           py::arg("size_gu_per_radius"), py::arg("min_px"), py::arg("intensity"));
+    m.def("set_plating_params",
+          [](const std::vector<float>& params) {
+              const std::size_t n = std::min<std::size_t>(params.size(), 16);
+              for (std::size_t i = 0; i < n; ++i)
+                  dauntless_plating::g_params[i] = params[i];
+          },
+          py::arg("params"),
+          "SPIKE: hull-plating layer params (engine/appc/plating_dials.py).");
     m.def("running_lights_set_enabled",
           [](bool v) { g_running_lights_enabled = v; }, py::arg("enabled"));
     m.def("running_lights_enabled", []() { return g_running_lights_enabled; });

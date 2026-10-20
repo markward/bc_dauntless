@@ -131,6 +131,12 @@ uniform float u_atmo_limb;
 uniform vec3  u_atmo_sun_dir_ws;  // unit, toward the sun
 uniform float u_decal_time;                  // game-time seconds (ember clock)
 uniform vec4  u_decal_d[MAX_DECALS];         // tangent_body.xyz (unit, ⟂ normal; Scuff), _
+// SPIKE (damage redesign): hull-plating layer. Slot meanings: apply_plating
+// below / engine/appc/plating_dials.py. Uploaded with the decal ring.
+uniform float u_plating[16];
+// Set by apply_plating where a panel is stripped (0..1); read by the scorch
+// deposit (soot must not bury the ribs) and the glow kill (windows die).
+float g_plating_exposed = 0.0;
 uniform sampler2D u_scuff_map;               // unit 7: tiling crumpled-metal tangent-space
                                              // normal map (renderer/scuff_texture.h)
 uniform int   u_scuff_map_ok;                // 0 = not loaded: scuffs draw albedo only
@@ -743,6 +749,7 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
                        * pow(nval, 1.5)               // gamma: suppress thin/low-noise ejecta
                        * 1.3;                         // peak ejecta scale
         float deposit = clamp(core + ejecta, 0.0, 1.0) * intensity * wn;
+        deposit *= 1.0 - 0.7 * g_plating_exposed;   // SPIKE: plating layer
         base_lit = mix(base_lit, SOOT_COLOR, deposit);
 
         // Game-time blackbody ember (Scorch only; weapon_class 1 in c.y).
@@ -761,6 +768,165 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
             }
         }
     }
+}
+
+
+// ── SPIKE (damage redesign): hull-plating layer ──────────────────────────
+// Torpedo scorch records carry a running hit total (u_decal_c.w, "wear").
+// Wear strips whole plating PANELS, exposing procedural ribs (frames at
+// constant body Y + stringers) over a dark inner skin; more wear breaks the
+// ribs. Depth is a short parallax march -- nothing is cut in the mesh.
+// u_plating: 0 enabled, 1 panel size, 2 frame spacing, 3 stringer spacing,
+// 4 rib width, 5 plate depth, 6 rib depth, 7 reach (x decal radius),
+// 8 strip wear, 9 rib-break wear, 10 buckle band, 11 edge noise.
+const vec3 PLATE_EDGE   = vec3(0.42, 0.42, 0.43);   // cut plate thickness
+const vec3 RIB_METAL    = vec3(0.26, 0.25, 0.24);   // unpainted structure
+const vec3 INNER_SKIN   = vec3(0.045, 0.043, 0.042);
+
+float plating_wear(vec3 q, vec3 nb) {
+    float w = 0.0;
+    float reach = u_plating[7];
+    for (int i = 0; i < u_decal_count; ++i) {
+        float cls = u_decal_c[i].y;
+        if (cls < 0.5 || cls > 1.5) continue;              // Scorch only
+        float R = u_decal_b[i].w * reach;
+        if (R <= 0.0) continue;
+        float r = length(q - u_decal_a[i].xyz) / R;
+        if (r >= 1.0) continue;
+        float wn = smoothstep(NORMAL_MIN, 1.0, dot(nb, u_decal_b[i].xyz));
+        float f = 1.0 - r * r;
+        w += u_decal_c[i].w * f * f * wn;
+    }
+    return w;
+}
+
+// Body-frame chart on the dominant normal axis. Frames are lines of constant
+// u (body Y wherever the surface allows), stringers lines of constant v.
+void plating_chart(vec3 nb, out vec3 ax_u, out vec3 ax_v, out vec3 ax_n) {
+    vec3 a = abs(nb);
+    if (a.z >= a.x && a.z >= a.y) {
+        ax_u = vec3(0.0, 1.0, 0.0); ax_v = vec3(1.0, 0.0, 0.0);
+        ax_n = vec3(0.0, 0.0, nb.z < 0.0 ? -1.0 : 1.0);
+    } else if (a.x >= a.y) {
+        ax_u = vec3(0.0, 1.0, 0.0); ax_v = vec3(0.0, 0.0, 1.0);
+        ax_n = vec3(nb.x < 0.0 ? -1.0 : 1.0, 0.0, 0.0);
+    } else {
+        ax_u = vec3(1.0, 0.0, 0.0); ax_v = vec3(0.0, 0.0, 1.0);
+        ax_n = vec3(0.0, nb.y < 0.0 ? -1.0 : 1.0, 0.0);
+    }
+}
+
+// Staggered (brick) panel grid: id + centre in chart coordinates.
+vec2 plating_panel(vec2 uv, out vec2 centre) {
+    float P = u_plating[1];
+    float row = floor(uv.y / P);
+    float shift = 0.5 * P * mod(row, 2.0);
+    float col = floor((uv.x + shift) / P);
+    centre = vec2((col + 0.5) * P - shift, (row + 0.5) * P);
+    return vec2(col, row);
+}
+
+// A panel goes whole: judged by the wear at its CENTRE (kept on the
+// fragment's own plane), jittered per panel so the torn edge is ragged.
+float plating_panel_wear(vec2 uv, vec3 p, vec3 ax_u, vec3 ax_v, vec3 nb) {
+    vec2 c;
+    vec2 id = plating_panel(uv, c);
+    vec3 q = p + ax_u * (c.x - dot(p, ax_u)) + ax_v * (c.y - dot(p, ax_v));
+    return plating_wear(q, nb) + (dhash(id + 17.0) - 0.5) * u_plating[11] * 0.5;
+}
+
+// 1 on a rib, 0 between. fw = model units per pixel (0 = hard edge).
+float plating_rib(vec2 q, float fw) {
+    float F = u_plating[2], S = u_plating[3], hw = 0.5 * u_plating[4];
+    float df = abs(fract(q.x / F + 0.5) - 0.5) * F;
+    float ds = abs(fract(q.y / S + 0.5) - 0.5) * S;
+    return 1.0 - smoothstep(hw - fw, hw + fw, min(df, ds));
+}
+
+void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
+                   inout vec3 n_shade, inout vec3 base_rgb) {
+    if (u_plating[0] < 0.5) return;
+    vec3 ax_u, ax_v, ax_n;
+    plating_chart(n_body, ax_u, ax_v, ax_n);
+    vec2 uv = vec2(dot(p_body, ax_u), dot(p_body, ax_v));
+    float strip = u_plating[8];
+    float wear_c = plating_panel_wear(uv, p_body, ax_u, ax_v, n_body);
+    mat3 to_ws = transpose(mat3(u_ship_world_inv));   // body -> world, normals
+
+    if (wear_c < strip) {
+        // Intact panel; inside the buckle band it tilts and darkens.
+        float b = u_plating[10];
+        if (b > 0.0 && wear_c > strip - b) {
+            float k = (wear_c - (strip - b)) / b;
+            vec2 c;
+            vec2 id = plating_panel(uv, c);
+            vec3 tilt = ax_u * (dhash(id + 3.1) - 0.5) + ax_v * (dhash(id + 9.7) - 0.5);
+            vec3 tw = to_ws * tilt;
+            if (dot(tw, tw) > 1e-8)
+                n_shade = normalize(n_shade + normalize(tw) * 0.6 * k);
+            base_rgb *= 1.0 - 0.35 * k;
+        }
+        return;
+    }
+
+    g_plating_exposed = 1.0;
+    float Dp = u_plating[5], Dr = u_plating[6];
+    vec3  Vb = normalize(mat3(u_ship_world_inv) * V_ws);
+    float vn = max(dot(Vb, ax_n), 0.25);
+    vec2  dir2 = -vec2(dot(Vb, ax_u), dot(Vb, ax_v)) / vn;   // chart shift per unit depth
+    vec2  wd = -dir2;
+    float wl = length(wd);
+    vec3  back_b = wl > 1e-5 ? (ax_u * wd.x + ax_v * wd.y) / wl : ax_n;  // faces the viewer
+
+    // Ribs break where the LOCAL wear passes rib_break (noisy edge).
+    float w_here = plating_wear(p_body, n_body);
+    float rib_ok = 1.0 - smoothstep(-0.3, 0.3,
+        w_here + (vnoise(uv * 1.7) - 0.5) * u_plating[11] - u_plating[9]);
+
+    vec2 c0;
+    vec2 my_id = plating_panel(uv, c0);
+
+    // 1. The cut plate's own thickness: does the ray meet a neighbouring
+    //    intact panel's wall before reaching the rib layer?
+    const int NP = 4;
+    for (int j = 0; j < NP; ++j) {
+        float t = (float(j) + 0.5) / float(NP) * Dp;
+        vec2 q = uv + dir2 * t;
+        vec2 cc;
+        vec2 id = plating_panel(q, cc);
+        if (id == my_id) continue;
+        if (plating_panel_wear(q, p_body, ax_u, ax_v, n_body) < strip) {
+            base_rgb = PLATE_EDGE * (1.0 - 0.3 * t / Dp);
+            n_shade = normalize(to_ws * back_b);
+            return;
+        }
+    }
+
+    // 2. Rib tops, flush with the underside of the plate.
+    vec2 q_top = uv + dir2 * Dp;
+    float top = plating_rib(q_top, fw) * rib_ok;
+    // 3. Rib sides, down to the inner skin.
+    const int NR = 4;
+    float side = 0.0;
+    float t_side = Dp + Dr;
+    for (int j = 0; j < NR; ++j) {
+        float t = Dp + (float(j) + 0.5) / float(NR) * Dr;
+        if (plating_rib(uv + dir2 * t, 0.0) * rib_ok > 0.5) {
+            side = 1.0;
+            t_side = t;
+            break;
+        }
+    }
+    float depth01 = (t_side - Dp) / max(Dr, 1e-4);
+    vec3 skin = INNER_SKIN;
+    vec3 rib_side = RIB_METAL * mix(0.75, 0.35, depth01);
+    vec3 below = mix(skin, rib_side, side);
+    vec3 nb_below = mix(n_body, back_b, side);
+    // Broken ribs read charred.
+    vec3 rib_top = RIB_METAL * mix(0.45, 1.0, rib_ok);
+    base_rgb = mix(below, rib_top, top);
+    vec3 nb_out = normalize(mix(nb_below, n_body, top));
+    n_shade = normalize(to_ws * nb_out);
 }
 
 // ── Non-finite cause probe (developer diagnostic) ──────────────────────────
@@ -1583,6 +1749,8 @@ void main() {
     // undefined in non-uniform control flow), used by textureGrad below.
     vec3 dpdx_d = dFdx(p_body);
     vec3 dpdy_d = dFdy(p_body);
+    // SPIKE plating layer: rib AA footprint, taken in uniform control flow.
+    float plating_fw = length(fwidth(p_body));
 #ifdef IMPOSTOR_VIEWS
     n_shade = g_imp_normal_ws;
     vec4 base = g_imp_base;
@@ -1671,6 +1839,7 @@ void main() {
     // term reads n_shade, since it perturbs n_shade (and, from Task 3, base.rgb).
     if (u_decal_count > 0) {
         apply_scuffs(p_body, n_body, n_shade, base.rgb);
+        apply_plating(p_body, n_body, V, plating_fw, n_shade, base.rgb);
     }
 
     // Toksvig specular anti-aliasing. ft folds the normal spread under this
@@ -1704,6 +1873,7 @@ void main() {
     // too: with both blocks above skipped (disabled or empty), `marked` is
     // still false here, so this discards exactly as it always did.
     if (u_carve_invert != 0 && !marked) discard;
+    glow_kill = max(glow_kill, g_plating_exposed);   // SPIKE: stripped panels go dark
 
     // Shadow attenuates ONLY the sun (directional index 0). When shadows are
     // off, sun_shadow_factor() returns 1.0, so the ×sf below is the identity

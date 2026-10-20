@@ -10835,6 +10835,8 @@ def run(mission_name: Optional[str] = None,
                 _sensor_dials.register()
                 from engine.appc import running_light_dials as _rl_dials
                 _rl_dials.register()
+                from engine.appc import plating_dials as _plating_dials
+                _plating_dials.register()
                 from engine.planets import atmosphere_dials as _atmo_dials
                 _atmo_dials.set_target_fn(
                     lambda: _nearest_live_planet(controller.session)
