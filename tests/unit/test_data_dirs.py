@@ -36,6 +36,7 @@ def test_checkout_layout_is_todays_layout(monkeypatch, tmp_path):
     assert paths.log_dir() == root
     assert paths.log_file_path() == root / "logs" / "dauntless.log"
     assert paths.hull_volume_cache_root() == root / "cache" / "hull_volumes"
+    assert paths.structure_parts_cache_root() == root / "cache" / "structure_parts"
 
 
 def test_override_flag_beats_env_beats_marker(monkeypatch, tmp_path):
@@ -80,6 +81,7 @@ def test_packaged_uses_os_user_dirs(monkeypatch, tmp_path):
     assert paths.log_dir() == fake["logs"]
     assert paths.log_file_path() == fake["logs"] / "dauntless.log"
     assert paths.hull_volume_cache_root() == fake["cache"] / "hull_volumes"
+    assert paths.structure_parts_cache_root() == fake["cache"] / "structure_parts"
 
 
 def test_resolved_at_call_time(monkeypatch, tmp_path):
@@ -94,7 +96,7 @@ def test_accessors_create_nothing(monkeypatch, tmp_path):
     monkeypatch.setenv(paths.DATA_DIR_ENV, str(d))
     for fn in (paths.config_dir, paths.saves_dir, paths.mods_default_dir,
                paths.cache_dir, paths.log_dir, paths.log_file_path,
-               paths.hull_volume_cache_root):
+               paths.hull_volume_cache_root, paths.structure_parts_cache_root):
         fn()
     assert not d.exists()
 

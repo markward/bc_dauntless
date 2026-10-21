@@ -49,6 +49,7 @@ _REQUIRED_BINDINGS = frozenset({
     "get_instance_head_center", "hdr_lens_flare_enabled",
     "hdr_lens_flare_set_enabled", "hdr_set_enabled",
     "prefetch_hull_fill", "prewarm_trace_accel", "hull_source_string",
+    "prefetch_structure_parts", "structure_parts_set_cache_root",
     "set_instance_rigged",
     "init", "letterbox_set",
     "load_animation_clips",
@@ -884,6 +885,25 @@ def prefetch_hull_fill(model: int) -> None:
     set_project_asset_root).
     """
     _h.prefetch_hull_fill(model)
+
+
+def prefetch_structure_parts(model: int) -> None:
+    """Start a hull's structure-part detection (severance's regions) on a
+    native worker now, at realize / warp preload, not at its first damaged
+    draw. Read from the .sps disk cache when it holds the hull. Never blocks;
+    no-op for an unknown handle, an empty source or a glTF rock. No hasattr
+    guard (see set_project_asset_root).
+    """
+    _h.prefetch_structure_parts(model)
+
+
+def structure_parts_set_cache_root(root) -> None:
+    """Where structure-part segmentations are cached on disk
+    (paths.structure_parts_cache_root()). Pushed at boot; the native side
+    does no disk I/O until it is. No hasattr guard (see
+    set_project_asset_root).
+    """
+    _h.structure_parts_set_cache_root(str(root))
 
 
 def prewarm_trace_accel(model: int) -> None:

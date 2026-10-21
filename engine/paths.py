@@ -524,6 +524,14 @@ def hull_volume_cache_root() -> Path:
     return cache_dir() / "hull_volumes"
 
 
+def structure_parts_cache_root() -> Path:
+    """Where hull structure-part segmentations (.sps files, layered damage
+    phase 4 §2.2) are cached: <cache_dir()>/structure_parts. Computed fresh
+    on every call; callers must never capture the result at import.
+    """
+    return cache_dir() / "structure_parts"
+
+
 _reported_write_failures: set[str] = set()
 
 

@@ -6552,6 +6552,23 @@ def _prewarm_trace_accel(r_, handle) -> None:
         dev_mode.log_swallowed("prewarm trace accel", _e)
 
 
+def _prefetch_hull_damage_state(r_, handle) -> None:
+    """Start the hull's damage-side worker loads at spawn: the fill volume
+    decode (the interior's left-the-ship test), so the first cut never loads
+    it synchronously, and the structure-part detection (severance's regions,
+    layered damage phase 4 §2.2), so a hull can sever on its first hit. ONE
+    helper for BOTH realize sites. Each is best-effort on its own: a renderer
+    missing one (a stale .so) never blocks spawn or skips the other."""
+    try:
+        r_.prefetch_hull_fill(handle)
+    except Exception as _e:
+        dev_mode.log_swallowed("prefetch hull fill", _e)
+    try:
+        r_.prefetch_structure_parts(handle)
+    except Exception as _e:
+        dev_mode.log_swallowed("prefetch structure parts", _e)
+
+
 def _mark_rigged(r_, iid, ship) -> None:
     """Flag a rigged ship's instance native-side (layered damage phase 4
     §2.1): at the identity pose its node overrides are empty, and the flag is
@@ -6764,13 +6781,7 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
         _cache_ship_hull_pieces(ship, handle, r_, iid=iid)
         r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
         session.ship_instances[ship] = iid
-        # Fill volume decode (left-the-ship test) on the native worker, so the
-        # first cut never loads it synchronously. Best-effort: never block
-        # spawn.
-        try:
-            r_.prefetch_hull_fill(handle)
-        except Exception as _e:
-            dev_mode.log_swallowed("prefetch hull fill", _e)
+        _prefetch_hull_damage_state(r_, handle)
         _prewarm_trace_accel(r_, handle)
         _mark_rigged(r_, iid, ship)
         render_instances.register(ship, iid)
@@ -8023,6 +8034,7 @@ class _MissionLoader:
             _cache_ship_hull_pieces(ship, handle, r_, iid=iid)
             r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
             sess.ship_instances[ship] = iid
+            _prefetch_hull_damage_state(r_, handle)
             _prewarm_trace_accel(r_, handle)
             _mark_rigged(r_, iid, ship)
             render_instances.register(ship, iid)
@@ -10399,6 +10411,11 @@ def run(mission_name: Optional[str] = None,
     # normal map resolves against this, not the BC install. Bare, like the
     # two pushes around it.
     r.set_project_asset_root(str(_paths.project_asset_root()))
+    # Hull structure-part segmentations (.sps) cache through the per-user
+    # data dirs. The data dir is fixed for the process (the first-run picker
+    # re-roots game/sdk, never the cache), so one push at boot is enough;
+    # resolved here, at the push, never captured at import.
+    r.structure_parts_set_cache_root(str(_paths.structure_parts_cache_root()))
     # The 12.6 MB scuff normal map resolves against that root; load it now,
     # not in the frame of the session's first collision scuff (~0.6 s in
     # Debug, perf-register P-11).

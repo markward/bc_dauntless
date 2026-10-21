@@ -122,6 +122,9 @@ class _PreloadRecorder:
     def prewarm_trace_accel(self, handle):
         self.calls.append(("bvh", handle))
 
+    def prefetch_structure_parts(self, handle):
+        self.calls.append(("parts", handle))
+
 
 def test_warp_preload_prewarms_the_trace_bvh(monkeypatch):
     rec = _PreloadRecorder()

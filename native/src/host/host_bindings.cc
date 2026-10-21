@@ -7886,6 +7886,27 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Queue this model's hull fill volume for background decode. No-op "
           "for an unknown handle or an empty source.");
 
+    // Start this hull's structure-part detection (severance's regions) now,
+    // not at its first damaged draw (layered damage phase 4 §2.2). Never blocks.
+    m.def("prefetch_structure_parts",
+          [](scenegraph::ModelHandle model_handle) {
+              const assets::Model* model = resolve_model(model_handle);
+              if (model == nullptr || model->source.empty()) return;
+              renderer::prefetch_structure_parts(model->source);
+          },
+          pybind11::arg("model"),
+          "Start this model's structure-part detection on a worker (read from "
+          "the .sps disk cache when it holds it). No-op for an unknown handle, "
+          "an empty source or a glTF rock.");
+
+    m.def("structure_parts_set_cache_root",
+          [](const std::string& root) {
+              renderer::set_structure_parts_cache_root(std::filesystem::path(root));
+          },
+          pybind11::arg("root"),
+          "Where structure-part segmentations are cached on disk "
+          "(paths.structure_parts_cache_root()). Empty = no disk I/O.");
+
     m.def("compute_capsule_region",
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> center,

@@ -12,6 +12,7 @@ add_executable(voxel_tests
     distance_field_test.cc
     dvox_test.cc
     structure_parts_test.cc
+    structure_parts_io_test.cc
     catalogue_volume_agreement_test.cc
 )
 target_link_libraries(voxel_tests PRIVATE voxel GTest::gtest_main

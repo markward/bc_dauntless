@@ -8,6 +8,7 @@ add_library(voxel STATIC
     src/distance_field.cc
     src/dvox.cc
     src/structure_parts.cc
+    src/structure_parts_io.cc
 )
 target_include_directories(voxel PUBLIC include)
 target_compile_features(voxel PUBLIC cxx_std_20)
