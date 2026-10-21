@@ -46,6 +46,14 @@ ViewscreenBarsPass::~ViewscreenBarsPass() {
     if (vao_) glDeleteVertexArrays(1, &vao_);
 }
 
+bool ViewscreenBarsPass::ensure_font(const std::string& asset_root) {
+    if (has_font()) return true;
+    if (font_root_tried_ && asset_root == last_font_root_) return false;
+    font_root_tried_ = true;
+    last_font_root_ = asset_root;
+    return load_font(asset_root + "/fonts/viewscreen_antonio.json");
+}
+
 bool ViewscreenBarsPass::load_font(const std::string& json_path) {
     glyphs_.clear();
     atlas_ = assets::Texture{};
@@ -170,7 +178,7 @@ void ViewscreenBarsPass::render(Shader& shader, const ViewscreenBars& bars,
     const float tw = static_cast<float>(target_w);
     const float th = static_cast<float>(target_h);
     const float band_h = std::round(kVsBarsHeightFrac * th);
-    const float radius = std::min(kVsBarsRadiusPx640 * tw / 640.f, band_h);
+    const float radius = std::min(kVsBarsRadiusPx640 * tw / 640.f, 0.5f * band_h);
     const float scale  = th / kFontDesignTargetH;
     const float max_w  = (tw - 2.f * radius) / scale;   // in font pixels
 

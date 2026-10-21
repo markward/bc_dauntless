@@ -186,3 +186,16 @@ TEST_F(ViewscreenBarsPass, BadFontPathFailsSoft) {
     expect_rgb(pixel(4, 357), kFeed, 0.001f, "top band");
     expect_rgb(pixel(4, 2), kFeed, 0.001f, "bottom band");
 }
+
+TEST_F(ViewscreenBarsPass, EnsureFontAttemptsOncePerDistinctRoot) {
+    const std::string good = std::string(OPEN_STBC_PROJECT_ROOT) + "/native/assets";
+    // A bad root fails, and the same bad root is not retried.
+    EXPECT_FALSE(pass.ensure_font("/nonexistent_root"));
+    EXPECT_FALSE(pass.has_font());
+    EXPECT_FALSE(pass.ensure_font("/nonexistent_root"));
+    // A new root (the later set_project_asset_root) gets a fresh attempt.
+    EXPECT_TRUE(pass.ensure_font(good));
+    EXPECT_TRUE(pass.has_font());
+    // Once loaded, a further call is a cheap success.
+    EXPECT_TRUE(pass.ensure_font(good));
+}

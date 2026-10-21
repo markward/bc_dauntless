@@ -1190,8 +1190,6 @@ void init(int width, int height, const std::string& title) {
     g_bridge_probe.capture_pending = false;
     g_viewscreen_static_pass = std::make_unique<renderer::ViewscreenStaticPass>();
     g_viewscreen_bars_pass = std::make_unique<renderer::ViewscreenBarsPass>();
-    g_viewscreen_bars_pass->load_font(
-        renderer::project_asset_root() + "/fonts/viewscreen_antonio.json");
     g_hdr_target      = std::make_unique<renderer::HdrTarget>();
     g_msaa_target     = std::make_unique<renderer::HdrMsaaTarget>();
     g_viewscreen_hdr  = std::make_unique<renderer::HdrTarget>();
@@ -2070,6 +2068,7 @@ void frame() {
                 && g_viewscreen_bars.visible && g_viewscreen_bars_pass) {
             g_viewscreen_hdr->bind();
             glViewport(0, 0, kViewscreenRttW, kViewscreenRttH);
+            g_viewscreen_bars_pass->ensure_font(renderer::project_asset_root());
             g_viewscreen_bars_pass->render(
                 g_pipeline->viewscreen_bars_shader(), g_viewscreen_bars,
                 kViewscreenRttW, kViewscreenRttH);

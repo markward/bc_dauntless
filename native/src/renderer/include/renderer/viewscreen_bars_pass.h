@@ -42,6 +42,10 @@ public:
     /// pass then has no font, so render() is a no-op.
     bool load_font(const std::string& json_path);
     bool has_font() const { return atlas_.id() != 0; }
+    /// Lazy load: loads `<asset_root>/fonts/viewscreen_antonio.json` unless a
+    /// font is already loaded, and attempts at most once per distinct root
+    /// value (a failed root is not retried; a changed root gets one attempt).
+    bool ensure_font(const std::string& asset_root);
 
     /// Draw over the bound framebuffer, alpha-blended. No-op when
     /// !bars.visible or no font. Saves/restores blend, depth, cull, program,
@@ -72,6 +76,8 @@ private:
     float atlas_w_ = 1.f, atlas_h_ = 1.f;
     assets::Texture atlas_;
     bool logged_failure_ = false;
+    std::string last_font_root_;
+    bool font_root_tried_ = false;
     std::uint32_t vao_ = 0;
     std::uint32_t vbo_ = 0;
 };
