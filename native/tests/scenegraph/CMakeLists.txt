@@ -2,6 +2,7 @@ add_executable(scenegraph_tests
     camera_test.cc
     world_test.cc
     damage_decals_test.cc
+    hull_damage_test.cc
     hull_carve_test.cc
     breach_events_test.cc
     render_space_test.cc

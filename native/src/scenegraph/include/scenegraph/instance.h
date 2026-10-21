@@ -10,6 +10,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include "scenegraph/breach_events.h"
 #include "scenegraph/damage_decals.h"
+#include "scenegraph/hull_damage.h"
 #include "scenegraph/hull_carve.h"
 
 namespace scenegraph {
@@ -213,6 +214,10 @@ struct Instance {
     /// Per-instance persistent damage decals (object space, body frame).
     /// Runtime VFX state only — never serialized to saves.
     DamageDecalRing decals;
+
+    /// Per-instance layered hull damage (plating wear + holes, body frame).
+    /// Merge-not-evict; runtime VFX only — never serialized to saves.
+    HullDamageStore hull_damage;
 
     /// Per-instance hull carve spheres (body frame, model units). Drives the
     /// see-through breach holes and the interior voxel splat. Runtime VFX only
