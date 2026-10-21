@@ -1,6 +1,6 @@
 # Viewscreen target bars — design
 
-**Date:** 2026-10-21 · **Branch:** `feat/viewscreen-target-bars` (worktree `.claude/worktrees/viewscreen-target-bars`) · **Status:** built on feat/viewscreen-target-bars, not live-verified
+**Date:** 2026-10-21 · **Branch:** `feat/viewscreen-target-bars` (worktree `.claude/worktrees/viewscreen-target-bars`) · **Status:** built, live-verified by Mark 2026-10-21 (rev 3: name top-left, distance/speed top-right), merged to main
 **Follows:** `2026-10-20-target-zoom-fit-design.md` (the viewscreen now frames the whole target; its §4 deferred this overlay)
 
 ## 1. Intent
