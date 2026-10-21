@@ -104,6 +104,7 @@ protected:
         bool rock = false;
         // With a viewscreen `policy`, this instance is the viewscreen's target.
         bool viewscreen_target = false;
+        scenegraph::BreachEventRing breach{};   // Instance::breach_events
     };
     struct Shot {
         std::vector<std::uint8_t> px;
@@ -135,6 +136,7 @@ protected:
             world.set_world_transform(iid, pl.world);
             world.get(iid)->hull_damage = pl.ring;
             world.get(iid)->surface_is_rock = pl.rock;
+            world.get(iid)->breach_events = pl.breach;
             if (pl.viewscreen_target) drawn_policy.viewscreen_target = iid;
         }
         glViewport(0, 0, kSize, kSize);
@@ -764,4 +766,80 @@ TEST_F(HullInteriorTest, InteriorSubsetMatchesFullWalk) {
     int diff = 0;
     for (std::size_t i = 0; i < on.px.size(); ++i) diff += on.px[i] != off.px[i] ? 1 : 0;
     EXPECT_EQ(diff, 0) << "the deck-break subset changed the interior";
+}
+
+// ── Molten rims on fresh tears (layered damage phase 4 §2.3) ───────────────
+namespace {
+// A breach event at body point `c`, radius `r`, born `age` s before kDecalTime.
+scenegraph::BreachEventRing rim_event(const glm::vec3& c, float r, float age) {
+    scenegraph::BreachEventRing ring;
+    ring.push(c, r, glm::vec3(0.0f, 0.0f, 1.0f), kDecalTime - age, 1u);
+    return ring;
+}
+int redness(const std::uint8_t* q) { return int(q[0]) - int(q[2]); }
+}  // namespace
+
+// The plate char edge at a fresh tear takes the rim's heat: the deck at the
+// tear (CharBandFollowsTheTearNotTheWholeInterior's deck B) is redder with
+// the event just born than kRimLife + 1 s later.
+TEST_F(HullInteriorTest, FreshTearHeatsTheCharEdge) {
+    dauntless_plating::g_params[19] = 0.0f;   // tear noise: exact wear
+    const glm::vec3 rec_b(11.0f, 4.0f, kBoxHalf + 1.0f);
+    const float reach_b = 3.5f, wear_b = 40.0f;
+    scenegraph::HullDamageStore ring;
+    ring.add(rec_b, glm::vec3(0.0f), reach_b, wear_b, scenegraph::HullDamageKind::Internal);
+    // Deck break just past the wear on the deck under B (the char band).
+    const glm::ivec2 pb = to_pixel(cam, glm::vec3(11.0f, 4.0f, kBoxHalf));
+    const float deck_z = 7.0f * 2.67f;
+    const glm::mat4 inv = glm::inverse(cam.proj_matrix() * cam.view_matrix());
+    const glm::vec2 ndc((pb.x + 0.5f) / kSize * 2.0f - 1.0f, (pb.y + 0.5f) / kSize * 2.0f - 1.0f);
+    const glm::vec4 a4 = inv * glm::vec4(ndc, -1.0f, 1.0f), b4 = inv * glm::vec4(ndc, 1.0f, 1.0f);
+    const glm::vec3 o = glm::vec3(a4) / a4.w, d = glm::vec3(b4) / b4.w - o;
+    const glm::vec3 db = o + d * ((deck_z - o.z) / d.z);
+    const float rr = glm::length(db - rec_b) / reach_b;
+    ASSERT_LT(rr, 1.0f);
+    const float wear_db = wear_b * (1.0f - rr * rr) * (1.0f - rr * rr);
+    dauntless_plating::g_params[24] = wear_db + 0.3f;
+
+    Placed pl{glm::mat4(1.0f), ring};
+    pl.breach = rim_event(rec_b, 0.5f * reach_b, 0.0f);
+    const auto fresh = render({pl}, filled.get());
+    pl.breach = rim_event(rec_b, 0.5f * reach_b, scenegraph::kRimLife + 1.0f);
+    const auto old = render({pl}, filled.get());
+    const std::uint8_t* f = pixel(fresh.px, pb.x, pb.y);
+    const std::uint8_t* c = pixel(old.px, pb.x, pb.y);
+    std::fprintf(stderr, "[HullInterior] char edge fresh=(%d,%d,%d) old=(%d,%d,%d)\n",
+                 f[0], f[1], f[2], c[0], c[1], c[2]);
+    ASSERT_EQ(fresh.interiors, 1);
+    ASSERT_FALSE(is_clear(f));
+    EXPECT_GE(redness(f), redness(c) + 30) << "the char edge at a fresh tear is not molten";
+}
+
+// A far hull's wreck-painted hole is molten while its tear is fresh, and
+// exactly the cold wreck once the event is older than kRimLife. Probed at
+// twice the rim radius (heat 0.5: orange, not white-hot saturated).
+TEST_F(HullInteriorTest, FarWreckRimGlowsWhenFresh) {
+    const glm::vec3 hit(0.0f, 0.0f, kBoxHalf);
+    const auto ring = internal_ring(hit, 30.0f, 10.0f);
+    dauntless_plating::g_params[24] = 1000.0f;   // the plates hold: not blown through
+    policy.near_gu = 1.0f;
+    const float r = 5.0f;
+    Placed pl{glm::mat4(1.0f), ring};
+    const auto none = render({pl}, filled.get());
+    pl.breach = rim_event(hit, r, 0.0f);
+    const auto fresh = render({pl}, filled.get());
+    pl.breach = rim_event(hit, r, scenegraph::kRimLife + 1.0f);
+    const auto old = render({pl}, filled.get());
+    ASSERT_EQ(fresh.far_draws, 1);
+    const glm::ivec2 q = to_pixel(cam, hit + glm::vec3(2.0f * r, 0.0f, 0.0f));
+    const std::uint8_t* f = pixel(fresh.px, q.x, q.y);
+    const std::uint8_t* c = pixel(old.px, q.x, q.y);
+    ASSERT_FALSE(is_clear(c)) << "the probe is not on the wreck";
+    std::fprintf(stderr, "[HullInterior] far wreck fresh=(%d,%d,%d) old=(%d,%d,%d)\n",
+                 f[0], f[1], f[2], c[0], c[1], c[2]);
+    EXPECT_GE(redness(f), redness(c) + 40) << "a far wreck's fresh tear is not molten";
+    int worst = 0;
+    for (std::size_t i = 0; i < none.px.size(); ++i)
+        worst = std::max(worst, std::abs(int(none.px[i]) - int(old.px[i])));
+    EXPECT_LE(worst, 1) << "a cold tear still changes the far wreck";
 }

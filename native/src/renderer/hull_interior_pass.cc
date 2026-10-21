@@ -19,6 +19,7 @@
 #include <glad/glad.h>
 
 #include <algorithm>
+#include <string>
 
 namespace renderer {
 
@@ -32,7 +33,8 @@ int HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_xf
                             int stencil_value,
                             const std::unordered_map<int, glm::mat4>* node_overrides,
                             const std::vector<std::uint8_t>* mesh_mask,
-                            bool rock, unsigned int rock_tex, bool cull_deck_break) {
+                            bool rock, unsigned int rock_tex, bool cull_deck_break,
+                            const plating::RimList* rims) {
     // Camera in this instance's body frame: one inverse per draw.
     const glm::vec3 cam_pos_ws = glm::vec3(glm::inverse(camera.view_matrix())[3]);
     const glm::mat4 world_inv = glm::inverse(world_xf);
@@ -71,6 +73,18 @@ int HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_xf
         }
         shader.set_int("u_db_count", db.count);
         shader.set_int_array("u_db_idx", db.idx.data(), db.count);
+    };
+    // Molten rims: set on EVERY draw (the count at least), so one hull's rims
+    // never leak onto the next.
+    auto upload_rims = [&shader](const plating::RimList* r) {
+        static const std::string kRimCount = "u_rim_count", kRimA = "u_rim_a",
+            kRimB = "u_rim_b";
+        const int n = r != nullptr ? r->count : 0;
+        shader.set_int(kRimCount, n);
+        if (n > 0) {
+            shader.set_vec4_array(kRimA, r->a, n);
+            shader.set_vec4_array(kRimB, r->b, n);
+        }
     };
     shader.set_vec3("u_ambient_light", lighting.ambient * ambient_scale);
     shader.set_float("u_time", now);
@@ -122,6 +136,7 @@ int HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_xf
     int meshes = 0;
     if (node_overrides == nullptr || node_overrides->empty()) {
         upload_records(list, deck_break);
+        upload_rims(rims);
         meshes = draw_model_positions_only(model, world_xf, shader, node_overrides, mesh_mask,
                                            /*rest_fix=*/true);
     } else {
@@ -153,6 +168,12 @@ int HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_xf
                 : cull_deck_break       ? plating::deck_break_subset(sub, params)
                                         : plating::full_deck_break_set(sub);
             upload_records(sub, db);
+            if (rims != nullptr && rims->count > 0) {
+                const plating::RimList rims_here = plating::rims_in_frame(*rims, owners, frame);
+                upload_rims(&rims_here);
+            } else {
+                upload_rims(nullptr);
+            }
             meshes += draw_model_positions_only(model, world_xf, shader, node_overrides, &mask,
                                                 /*rest_fix=*/true);
         }

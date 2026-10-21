@@ -297,11 +297,15 @@ struct PhaserBeamDescriptor {
 /// `hidden_parts` / `shown_parts`: the instance's Instance::severed_parts /
 /// shown_parts, uploaded with the parts (u_part_hidden_mask /
 /// u_part_show_mask) so the colour draw and the mark hide the same pixels.
+/// `rims`: the molten rims of this frame (plating::build_rim_list), uploaded
+/// as u_rim_* by the colour draw (each mesh only its own frame's when posed);
+/// nullptr = none. The mark never reads them.
 struct PlatingMeshRecords {
     const std::vector<voxel::StructurePart>* parts = nullptr;
     const std::vector<plating::MeshRecordSubset>* subsets = nullptr;
     std::uint32_t hidden_parts = 0;
     std::uint32_t shown_parts = 0;
+    const plating::RimList* rims = nullptr;
 };
 
 /// Draw a single model instance. Picks the skinned program when the model has

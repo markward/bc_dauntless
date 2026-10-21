@@ -57,6 +57,10 @@ public:
     /// `deck_break` itself when every record is in the frame, else rebuilt
     /// (plating::deck_break_subset when `cull_deck_break`, else the full set),
     /// so no overlap sum mixes frames.
+    ///
+    /// `rims` (plating::build_rim_list; nullptr = none): the molten rims of
+    /// fresh tears, uploaded as u_rim_* (per frame group when posed:
+    /// plating::rims_in_frame). The plate char edge takes their heat.
     int draw(const assets::Model& model, const glm::mat4& world_xf,
               const scenegraph::Camera& camera, Pipeline& pipeline,
               const plating::DamageList& list, const plating::DeckBreakSet& deck_break,
@@ -68,7 +72,8 @@ public:
               const std::unordered_map<int, glm::mat4>* node_overrides,
               const std::vector<std::uint8_t>* mesh_mask = nullptr,
               bool rock = false, unsigned int rock_tex = 0,
-              bool cull_deck_break = true);
+              bool cull_deck_break = true,
+              const plating::RimList* rims = nullptr);
 
     /// draw() calls since construction.
     int draw_calls() const { return draw_calls_; }

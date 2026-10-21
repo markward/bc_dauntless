@@ -6,11 +6,14 @@ namespace scenegraph {
 
 void BreachEventRing::push(const glm::vec3& center_body, float radius,
                             const glm::vec3& surface_normal,
-                            float birth_time, std::uint64_t seed) {
+                            float birth_time, std::uint64_t seed,
+                            int node, std::optional<glm::vec3> center_rest) {
+    const BreachEvent ev{center_body, radius, surface_normal, birth_time, seed, true,
+                         center_rest.value_or(center_body), node};
     // Find a free slot first.
     for (auto& e : slots_) {
         if (!e.active) {
-            e = BreachEvent{center_body, radius, surface_normal, birth_time, seed, true};
+            e = ev;
             return;
         }
     }
@@ -22,7 +25,7 @@ void BreachEventRing::push(const glm::vec3& center_body, float radius,
     for (auto& e : slots_) {
         if (e.birth_time < oldest->birth_time) oldest = &e;
     }
-    *oldest = BreachEvent{center_body, radius, surface_normal, birth_time, seed, true};
+    *oldest = ev;
 }
 
 void BreachEventRing::tick(float now) {

@@ -12,6 +12,7 @@
 #include <glm/glm.hpp>
 
 #include "renderer/aabb.h"
+#include "scenegraph/breach_events.h"
 #include "scenegraph/hull_damage.h"
 #include "voxel/structure_parts.h"
 
@@ -48,6 +49,35 @@ bool record_in_frame(const DamageList& list, int k, const std::vector<int>& owne
 // order, as a list of their own (torn_possible copied).
 DamageList records_in_frame(const DamageList& list, const std::vector<int>& owners,
                             int mesh_owner);
+
+// A node's frame against a mesh's (record_in_frame's rule, for any record or
+// rim carrying a node): `node` maps through `owners` (-1 stays -1) and must
+// equal `mesh_owner`. Empty `owners` (nothing posed): every node fits.
+bool node_in_frame(int node, const std::vector<int>& owners, int mesh_owner);
+
+// Molten rims on fresh tears (layered damage phase 4 §2.3): the freshest
+// breach events still hot, at most kMaxRims, freshest first, uploaded to the
+// PLATING program (u_rim_*) and the interior. Per draw and per frame (their
+// age moves every frame), so never part of the cached DamageList.
+//   a = centre in the REST frame of `node` (BreachEvent::center_rest; the
+//       body frame for -1).xyz, radius (model units, BreachEvent::radius)
+//   b = age (s, `now` - birth_time), life (scenegraph::kRimLife), 0, 0
+// The shaders' heat = (1 - age / life) * (1 - smoothstep(r, 3r, distance)).
+constexpr int kMaxRims = 4;
+struct RimList {
+    int count = 0;
+    glm::vec4 a[kMaxRims];
+    glm::vec4 b[kMaxRims];
+    int node[kMaxRims];   // BreachEvent::node; CPU only (the frame filter)
+};
+
+// The active events of `ring` with a radius and 0 <= age < kRimLife at game
+// time `now` (the clock the events were stamped with, so rims freeze under
+// pause), the kMaxRims freshest, freshest first.
+RimList build_rim_list(const scenegraph::BreachEventRing& ring, float now);
+
+// The rims of `list` in the frame of `mesh_owner` (node_in_frame), in order.
+RimList rims_in_frame(const RimList& list, const std::vector<int>& owners, int mesh_owner);
 
 // params = dauntless_plating::g_params (kParamCount floats). Only ACTIVE records
 // with wear > 0 enter. Surface reach is scaled by params[7]; Internal reach and

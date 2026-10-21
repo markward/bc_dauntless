@@ -23,7 +23,7 @@
 // the carve field (the char band is the last wear unit short of deck break,
 // on the same noised wear as the blown test, so it follows the ragged tear);
 // the left-the-ship case shows the far wall unless the hull is blown through;
-// there is no fresh-hit heat (records carry no age).
+// fresh-tear heat comes from the breach events (u_rim_*), not the records.
 //
 // Look pass 2026-10-21 (Mark: rooms "too uniform", "too many illuminated
 // rooms ... we need rooms to look destroyed"): walls come from ZONES
@@ -72,6 +72,14 @@ uniform vec4 u_dmg_c[MAX_DMG];     // kind, 0, 0, 0
 // read deck_break_wear; shading reads interior_wear (every record).
 uniform int  u_db_count;
 uniform int  u_db_idx[MAX_DMG];
+
+// Molten rims on fresh tears (renderer::plating::RimList, the same upload as
+// opaque.frag's u_rim_*): REST frame of the drawn meshes, model units.
+//   a = centre.xyz, radius      b = age (s), life (kRimLife), 0, 0
+const int MAX_RIMS = 4;
+uniform int  u_rim_count;
+uniform vec4 u_rim_a[MAX_RIMS];
+uniform vec4 u_rim_b[MAX_RIMS];
 
 // Plating params: 17 inner hull brightness, 19 tear noise, 24 deck break wear.
 uniform float u_plating[32];
@@ -303,6 +311,18 @@ bool ih_contents(ivec3 cell, vec3 ro, vec3 rd, float t0, float t1,
     return th >= t0 && th < t1;
 }
 
+// opaque.frag's plating_rim_heat: 0..1, (1 - age / life) x
+// (1 - smoothstep(r, 3r, distance)), the hottest event's; 0 with no rims.
+float rim_heat(vec3 p) {
+    float h = 0.0;
+    for (int i = 0; i < u_rim_count; ++i) {
+        float r = u_rim_a[i].w;
+        float fresh = clamp(1.0 - u_rim_b[i].x / max(u_rim_b[i].y, 1e-3), 0.0, 1.0);
+        h = max(h, fresh * (1.0 - smoothstep(r, 3.0 * r, length(p - u_rim_a[i].xyz))));
+    }
+    return h;
+}
+
 // Walk the room lattice. Returns false = discard (blown through). On true,
 // `c` is the shaded colour. ro/rd body frame, rd unit length.
 bool ih_shade(vec3 ro, vec3 rd, out vec3 c) {
@@ -423,6 +443,9 @@ bool ih_shade(vec3 ro, vec3 rd, out vec3 c) {
                 float edge = smoothstep(deck_break - 1.0, deck_break, s);
                 c *= mix(1.0, 0.3, edge);
                 c += blackbody(0.45) * edge * 0.25;
+                // At a fresh tear the char edge is molten (the rim's heat).
+                float rh = rim_heat(p);
+                c += blackbody(0.55 + 0.35 * rh) * rh * 1.5 * edge;
 
                 // Depth fog toward black.
                 c *= exp(-t / kInteriorFogDist);

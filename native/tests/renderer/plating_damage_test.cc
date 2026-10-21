@@ -149,3 +149,45 @@ TEST(PlatingDamage, DeckBreakSubsetDropsIsolatedLightRecords) {
     EXPECT_EQ(dp.idx[0], 0);
     EXPECT_EQ(dp.idx[1], 1);
 }
+
+// ── Molten rims (layered damage phase 4 §2.3) ──────────────────────────────
+// The kMaxRims freshest events with 0 <= age < kRimLife, freshest first, in
+// the rest frame of their node, with age and life.
+TEST(PlatingDamage, RimListKeepsTheFourFreshestHotEvents) {
+    scenegraph::BreachEventRing ring;
+    const float now = 100.0f;
+    // Ages 0.5, 2.9, 3.0 (cold), 0.1, 1.0, 2.0, -1 (not born yet), 10 (cold).
+    const float ages[] = {0.5f, 2.9f, scenegraph::kRimLife, 0.1f, 1.0f, 2.0f, -1.0f, 10.0f};
+    for (int i = 0; i < 8; ++i)
+        ring.push({float(i), 0, 0}, 1.0f + i, kUp, now - ages[i], 1u + i, i - 1,
+                  glm::vec3(float(i), 50.0f, 0.0f));
+    const auto r = renderer::plating::build_rim_list(ring, now);
+    ASSERT_EQ(r.count, renderer::plating::kMaxRims);
+    const int want[] = {3, 0, 4, 5};   // ages 0.1, 0.5, 1.0, 2.0
+    for (int k = 0; k < r.count; ++k) {
+        const int i = want[k];
+        EXPECT_EQ(r.a[k], glm::vec4(float(i), 50.0f, 0.0f, 1.0f + i)) << k << ": rest centre";
+        EXPECT_NEAR(r.b[k].x, ages[i], 1e-4f) << k;
+        EXPECT_EQ(r.b[k].y, scenegraph::kRimLife) << k;
+        EXPECT_EQ(r.node[k], i - 1) << k;
+    }
+    scenegraph::BreachEventRing cold;
+    cold.push({0, 0, 0}, 1.0f, kUp, now - scenegraph::kRimLife - 1.0f, 1u);
+    EXPECT_EQ(renderer::plating::build_rim_list(cold, now).count, 0);
+}
+
+TEST(PlatingDamage, RimsInFrameKeepOnlyTheMeshOwnersRims) {
+    scenegraph::BreachEventRing ring;
+    ring.push({0, 0, 0}, 1.0f, kUp, 10.0f, 1u, -1);
+    ring.push({1, 0, 0}, 1.0f, kUp, 10.0f, 2u, 2);   // node 2, posed owner 1
+    const auto all = renderer::plating::build_rim_list(ring, 10.0f);
+    ASSERT_EQ(all.count, 2);
+    const std::vector<int> owners{-1, 1, 1};
+    const auto body = renderer::plating::rims_in_frame(all, owners, -1);
+    ASSERT_EQ(body.count, 1);
+    EXPECT_EQ(body.node[0], -1);
+    const auto part = renderer::plating::rims_in_frame(all, owners, 1);
+    ASSERT_EQ(part.count, 1);
+    EXPECT_EQ(part.node[0], 2);
+    EXPECT_EQ(renderer::plating::rims_in_frame(all, {}, -1).count, 2) << "nothing posed";
+}

@@ -81,3 +81,21 @@ TEST(BreachEventRing, SeedIsStoredVerbatim) {
     ring.push({0.f, 0.f, 0.f}, 1.f, {0.f, 0.f, 1.f}, 0.f, 0xDEADBEEFull);
     EXPECT_EQ(first_active(ring)->seed, 0xDEADBEEFull);
 }
+
+// The molten rim's frame (layered damage phase 4 §2.3): a push names the
+// record's node and its rest-frame centre; left out, the body (-1) and
+// center_body.
+TEST(BreachEventRing, PushStoresNodeAndRestCentre) {
+    BreachEventRing ring;
+    ring.push({1.f, 2.f, 3.f}, 1.f, {0.f, 0.f, 1.f}, 0.f, 1u, 4, glm::vec3(7.f, 8.f, 9.f));
+    const BreachEvent* e = first_active(ring);
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(e->node, 4);
+    EXPECT_EQ(e->center_rest, glm::vec3(7.f, 8.f, 9.f));
+    EXPECT_EQ(e->center_body, glm::vec3(1.f, 2.f, 3.f)) << "venting keeps the posed centre";
+
+    BreachEventRing body;
+    body.push({1.f, 2.f, 3.f}, 1.f, {0.f, 0.f, 1.f}, 0.f, 1u);
+    EXPECT_EQ(first_active(body)->node, -1);
+    EXPECT_EQ(first_active(body)->center_rest, glm::vec3(1.f, 2.f, 3.f));
+}

@@ -2531,7 +2531,9 @@ static std::uint64_t next_breach_seed() {
 // The record is in its node's REST frame; `rest_to_posed` (the inverse of
 // that node's rest fix, identity for the body) puts the event back where the
 // part is DRAWN now: venting is placed through the instance world, i.e. in the
-// posed body frame. The event does not follow the part afterwards.
+// posed body frame. The event does not follow the part afterwards. The molten
+// rim does: it is drawn from the record's node and REST centre, which the
+// event carries too (BreachEvent::node / center_rest).
 static void vent_on_breach_crossing(scenegraph::Instance& inst,
                                     const scenegraph::HullDamageAddResult& r,
                                     std::uint32_t kind, const glm::mat4& rest_to_posed) {
@@ -2542,7 +2544,8 @@ static void vent_on_breach_crossing(scenegraph::Instance& inst,
     inst.breach_events.push(glm::vec3(rest_to_posed * glm::vec4(rec.centre_body, 1.0f)),
                             0.5f * rec.reach,
                             glm::mat3(rest_to_posed) * rec.normal_body,
-                            g_decal_game_time, next_breach_seed());
+                            g_decal_game_time, next_breach_seed(),
+                            rec.node, rec.centre_body);
 }
 
 // The node a wear hit is recorded on, and the map from the POSED body frame
@@ -7651,13 +7654,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                                e.surface_normal.z);
                   d["radius"] = e.radius;
                   d["birth_time"] = e.birth_time;
+                  d["center_rest"] = py::make_tuple(e.center_rest.x, e.center_rest.y,
+                                                    e.center_rest.z);
+                  d["node"] = e.node;
                   out.append(d);
               }
               return out;
           },
           py::arg("instance_id"),
-          "Test hook: the instance's active BreachEvents (body frame, model "
-          "units) as dicts center/normal/radius/birth_time.");
+          "Test hook: the instance's active BreachEvents (model units) as dicts "
+          "center/normal (posed body frame), radius, birth_time, node and "
+          "center_rest (the molten rim's frame: node's REST frame, -1 = body).");
 
     m.def("_test_only_hull_damage_records",
           [](scenegraph::InstanceId id) {
@@ -7854,8 +7861,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                  std::get<2>(body_point_gu) * inv_s);
               const glm::vec3 nb = (glm::length(pb) > 1e-4f) ? glm::normalize(pb)
                                                               : glm::vec3(0.f, 0.f, 1.f);
+              // The body (node -1): its rest frame is the body frame.
               inst->breach_events.push(pb, radius_gu * inv_s, nb, g_decal_game_time,
-                                       next_breach_seed());
+                                       next_breach_seed(), /*node=*/-1, pb);
           },
           py::arg("instance_id"), py::arg("body_point_gu"), py::arg("radius_gu"),
           "Transient breach VFX (debris, venting, rim) at a body-frame point, "

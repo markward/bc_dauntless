@@ -246,9 +246,10 @@ struct Instance {
     };
     PartCheckStamp part_check;
 
-    /// Per-instance transient breach-event ring. Drives debris and venting
-    /// (the molten rim, kRimLife, has no reader until it is rebuilt on the
-    /// layered damage path). Runtime VFX only — never serialized to saves.
+    /// Per-instance transient breach-event ring. Drives debris, venting and
+    /// the molten rim on fresh tears (kRimLife; plating::build_rim_list feeds
+    /// the plating draw and the interior). Runtime VFX only — never
+    /// serialized to saves.
     BreachEventRing breach_events;
 
     /// Self-referential id stamped by World::create_instance so particle

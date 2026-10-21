@@ -34,12 +34,53 @@ DamageList build_damage_list(const scenegraph::HullDamageStore& store,
     return out;
 }
 
+bool node_in_frame(int node, const std::vector<int>& owners, int mesh_owner) {
+    const int owner = node < 0 || static_cast<std::size_t>(node) >= owners.size()
+                          ? -1 : owners[static_cast<std::size_t>(node)];
+    return owner == mesh_owner;
+}
+
 bool record_in_frame(const DamageList& list, int k, const std::vector<int>& owners,
                      int mesh_owner) {
-    const int n = list.node[k];
-    const int owner = n < 0 || static_cast<std::size_t>(n) >= owners.size()
-                          ? -1 : owners[static_cast<std::size_t>(n)];
-    return owner == mesh_owner;
+    return node_in_frame(list.node[k], owners, mesh_owner);
+}
+
+RimList build_rim_list(const scenegraph::BreachEventRing& ring, float now) {
+    // Insertion into a kMaxRims-long list kept freshest (youngest) first.
+    const scenegraph::BreachEvent* pick[kMaxRims] = {};
+    int n = 0;
+    for (const auto& e : ring.slots()) {
+        if (!e.active) continue;
+        const float age = now - e.birth_time;
+        // A zero radius has no rim (and smoothstep(0, 0, d) is undefined).
+        if (!(age >= 0.0f && age < scenegraph::kRimLife) || !(e.radius > 0.0f)) continue;
+        int at = n;
+        while (at > 0 && pick[at - 1]->birth_time < e.birth_time) --at;
+        if (at >= kMaxRims) continue;
+        for (int k = std::min(n, kMaxRims - 1); k > at; --k) pick[k] = pick[k - 1];
+        pick[at] = &e;
+        n = std::min(n + 1, kMaxRims);
+    }
+    RimList out;
+    for (int k = 0; k < n; ++k) {
+        out.a[k] = glm::vec4(pick[k]->center_rest, pick[k]->radius);
+        out.b[k] = glm::vec4(now - pick[k]->birth_time, scenegraph::kRimLife, 0.0f, 0.0f);
+        out.node[k] = pick[k]->node;
+    }
+    out.count = n;
+    return out;
+}
+
+RimList rims_in_frame(const RimList& list, const std::vector<int>& owners, int mesh_owner) {
+    RimList out;
+    for (int k = 0; k < list.count; ++k) {
+        if (!node_in_frame(list.node[k], owners, mesh_owner)) continue;
+        out.a[out.count] = list.a[k];
+        out.b[out.count] = list.b[k];
+        out.node[out.count] = list.node[k];
+        ++out.count;
+    }
+    return out;
 }
 
 DamageList records_in_frame(const DamageList& list, const std::vector<int>& owners,

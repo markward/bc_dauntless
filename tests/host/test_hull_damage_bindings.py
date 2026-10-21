@@ -108,8 +108,20 @@ def test_tear_vents_once_when_wear_first_crosses_breach(iid, breach_wear):
     (rec,) = _records(iid)
     assert evs[0]["radius"] == pytest.approx(0.5 * rec["reach"], rel=1e-5)
     assert rec["wear"] > breach
+    assert evs[0]["node"] == -1, "a body tear's rim is in the body frame"
+    assert evs[0]["center_rest"] == pytest.approx(evs[0]["center"], abs=1e-6)
     _h.hull_damage_add_body(iid, (1.0, 2.0, 3.0), (0.0, 0.0, 1.0), 0.3, 1.0, 1)
     assert len(_breach(iid)) == 1, "already past breach: no second event"
+
+
+def test_breach_burst_rim_is_in_the_body_frame(iid):
+    """A sub-floor severed component's burst: node -1, so the molten rim's
+    centre is the body-frame point itself."""
+    _h.breach_burst(iid, (0.01, 0.02, 0.03), 0.1)
+    (ev,) = _breach(iid)
+    assert ev["node"] == -1
+    assert ev["center"] == pytest.approx((1.0, 2.0, 3.0), abs=1e-4)
+    assert ev["center_rest"] == pytest.approx(ev["center"], abs=1e-6)
 
 
 def test_internal_adds_never_vent(iid):
@@ -307,7 +319,9 @@ def test_rest_frame_writer_keeps_its_part_without_conversion(posed_bop):
 
 def test_posed_part_tear_vents_at_the_drawn_hit(posed_bop, breach_wear):
     """Venting is placed through the instance world (posed body frame), so a
-    tear on a posed part vents where the part is DRAWN, not at its rest spot."""
+    tear on a posed part vents where the part is DRAWN, not at its rest spot.
+    The event also carries the record's node and rest centre, which the molten
+    rim is drawn from (it glows on the part)."""
     iid = posed_bop
     _rest, posed, _to_rest = _wing_frames(iid)
     q_posed, n_posed = _posed_wing_hit(iid, posed)
@@ -317,6 +331,9 @@ def test_posed_part_tear_vents_at_the_drawn_hit(posed_bop, breach_wear):
     assert rec["node"] >= 0
     (ev,) = _breach(iid)
     assert ev["center"] == pytest.approx(q_posed, abs=1e-2)
+    # The molten rim is drawn on the part: the record's node and REST centre.
+    assert ev["node"] == rec["node"]
+    assert ev["center_rest"] == pytest.approx(rec["centre"], abs=1e-4)
 
 
 # ── Fix round 3: a rigged ship at the identity pose ─────────────────────────

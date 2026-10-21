@@ -215,6 +215,7 @@ protected:
         std::uint32_t severed_parts = 0;   // Instance::severed_parts
         std::uint32_t shown_parts = 0;     // Instance::shown_parts
         std::unordered_map<int, glm::mat4> overrides{};   // Instance::node_overrides
+        scenegraph::BreachEventRing breach{};             // Instance::breach_events
     };
     Marked render_marked(const assets::Model& model, const scenegraph::HullDamageStore& ring,
                          const scenegraph::Camera& cam,
@@ -237,6 +238,7 @@ protected:
             world.get(iid)->severed_parts = pl.severed_parts;
             world.get(iid)->shown_parts = pl.shown_parts;
             world.get(iid)->node_overrides = pl.overrides;
+            world.get(iid)->breach_events = pl.breach;
         }
         glViewport(0, 0, kSize, kSize);
         glClearColor(clear.r, clear.g, clear.b, 1.0f);
@@ -2144,4 +2146,121 @@ TEST_F(PlatingRenderTest, DamageOnAChildOfAPosedPartStaysOnThePart) {
     };
     EXPECT_NE(stencil_at(hit_a_posed), 0) << "the posed-time record left its part";
     EXPECT_NE(stencil_at(hit_b_posed), 0) << "the identity-pose record left its part";
+}
+
+// ── Molten rims on fresh tears (layered damage phase 4 §2.3) ───────────────
+namespace {
+
+// Redness (red minus blue) gained from `cold` to `hot`, the largest over the
+// square of half size `r` about `c`, and where.
+struct RednessGain { int gain = -1000; glm::ivec2 at{-1}; };
+RednessGain redness_gain(const std::vector<std::uint8_t>& hot,
+                         const std::vector<std::uint8_t>& cold, glm::ivec2 c, int r) {
+    RednessGain g;
+    for (int y = std::max(0, c.y - r); y <= std::min(kSize - 1, c.y + r); ++y)
+        for (int x = std::max(0, c.x - r); x <= std::min(kSize - 1, c.x + r); ++x) {
+            const std::uint8_t* h = pixel(hot, x, y);
+            const std::uint8_t* k = pixel(cold, x, y);
+            const int d = (int(h[0]) - int(h[2])) - (int(k[0]) - int(k[2]));
+            if (d > g.gain) { g.gain = d; g.at = glm::ivec2(x, y); }
+        }
+    return g;
+}
+
+// A breach event at `centre` (rest frame of `node`, posed body `posed`),
+// radius `r`, born `age` seconds before kDecalTime.
+scenegraph::BreachEventRing breach_at(const glm::vec3& centre, float r, float age,
+                                      int node = -1,
+                                      std::optional<glm::vec3> posed = std::nullopt) {
+    scenegraph::BreachEventRing ring;
+    ring.push(posed.value_or(centre), r, glm::vec3(0.0f, 0.0f, 1.0f), kDecalTime - age, 1u,
+              node, centre);
+    return ring;
+}
+
+}  // namespace
+
+// A tear just made glows molten at its rim; the same tear kRimLife + 1 s
+// later does not. Same pixels, same damage: only the event's age differs.
+// The interior is off, so the glow is the plating draw's torn rim
+// (HullInteriorTest.FreshTearHeatsTheCharEdge covers the interior's).
+TEST_F(PlatingRenderTest, FreshTearRimGlows) {
+    dauntless_plating::g_params[0] = 1.0f;
+    dauntless_plating::g_params[25] = 0.0f;   // no interior
+    auto model = build_quad(30.0f, /*facing_camera=*/true);
+    const auto cam = quad_cam();
+    const glm::vec3 hit(0.0f, 0.0f, 0.0f);
+    const float reach = 8.0f, r = 0.5f * reach;
+    Placed pl{glm::mat4(1.0f), internal_ring(hit, reach, 10.0f)};
+    pl.breach = breach_at(hit, r, 0.0f);
+    const Marked fresh = render_marked_many(*model, {pl}, cam);
+    pl.breach = breach_at(hit, r, scenegraph::kRimLife + 1.0f);
+    const Marked old = render_marked_many(*model, {pl}, cam);
+
+    const glm::ivec2 c = to_pixel(cam, hit);
+    // 3r (the heat's outer edge) plus a model unit, in pixels.
+    const int reach_px = to_pixel(cam, hit + glm::vec3(3.0f * r + 1.0f, 0.0f, 0.0f)).x - c.x;
+    const auto g = redness_gain(fresh.color, old.color, c, kSize / 2);
+    std::fprintf(stderr, "[PlatingRender] fresh rim: redness gain %d at (%d,%d), centre (%d,%d), "
+                 "3r = %d px\n", g.gain, g.at.x, g.at.y, c.x, c.y, reach_px);
+    EXPECT_GE(g.gain, 40) << "a fresh tear's rim is not molten";
+    EXPECT_LE(glm::length(glm::vec2(g.at - c)), float(reach_px) * 1.415f)
+        << "the glow is not at the tear";
+}
+
+// A tear older than kRimLife is cold: its frame is the frame with no event.
+TEST_F(PlatingRenderTest, OldTearsStayCold) {
+    dauntless_plating::g_params[0] = 1.0f;
+    auto model = build_quad(30.0f, /*facing_camera=*/true);
+    const auto cam = quad_cam();
+    const glm::vec3 hit(0.0f, 0.0f, 0.0f);
+    Placed pl{glm::mat4(1.0f), internal_ring(hit, 8.0f, 10.0f)};
+    const Marked none = render_marked_many(*model, {pl}, cam);
+    pl.breach = breach_at(hit, 4.0f, scenegraph::kRimLife + 0.01f);
+    const Marked old = render_marked_many(*model, {pl}, cam);
+    int worst = 0;
+    for (std::size_t i = 0; i < none.color.size(); ++i)
+        worst = std::max(worst, std::abs(int(none.color[i]) - int(old.color[i])));
+    EXPECT_LE(worst, 1) << "a cold tear still changes the frame";
+}
+
+// A rim on a POSED part glows on the part where it is drawn: the event is
+// uploaded in the part's rest frame and only to the part's meshes. The part
+// (node 1, rest at x = +40) is moved over the other hull plate (x = -40);
+// the hull also has a tear of its own under the part's rest spot, which the
+// part's rim must not heat. Interior off, as in FreshTearRimGlows.
+TEST_F(PlatingRenderTest, FreshRimOnAPosedPartGlowsOnThePart) {
+    dauntless_plating::g_params[0] = 1.0f;
+    dauntless_plating::g_params[25] = 0.0f;   // no interior: the plating draw's rim
+    auto model = body_and_part_nodes();
+    const glm::vec3 X(1, 0, 0), Y(0, 1, 0);
+    add_mesh_of_quads(*model, 0, {{glm::vec3(40.0f, 0.0f, -1.0f), X, Y, 20.0f}});
+    add_mesh_of_quads(*model, 0, {{glm::vec3(-40.0f, 0.0f, -1.0f), X, Y, 20.0f}});
+    add_mesh_of_quads(*model, 1, {{glm::vec3(40.0f, 0.0f, 0.0f), X, Y, 15.0f}});
+    const glm::mat4 pose = glm::translate(glm::mat4(1.0f), glm::vec3(-80.0f, 0.0f, 1.0f));
+    const glm::vec3 part_rest(40.0f, 0.0f, 0.0f), hull_tear(40.0f, 0.0f, -1.0f);
+    const glm::vec3 part_posed = glm::vec3(pose * glm::vec4(part_rest, 1.0f));
+    const float reach = 8.0f, r = 0.5f * reach;
+
+    Placed pl{glm::mat4(1.0f), scenegraph::HullDamageStore{}};
+    pl.overrides[1] = pose;
+    pl.ring.add(part_rest, glm::vec3(0.0f), reach, 10.0f, scenegraph::HullDamageKind::Internal, 1);
+    pl.ring.add(hull_tear, glm::vec3(0.0f), reach, 10.0f, scenegraph::HullDamageKind::Internal, -1);
+    const auto cam = quad_cam();
+    const glm::vec3 clear(0.8f, 0.2f, 0.8f);
+    pl.breach = breach_at(part_rest, r, 0.0f, /*node=*/1, part_posed);
+    const Marked fresh = render_marked_many(*model, {pl}, cam, clear);
+    pl.breach = breach_at(part_rest, r, scenegraph::kRimLife + 1.0f, 1, part_posed);
+    const Marked old = render_marked_many(*model, {pl}, cam, clear);
+
+    const glm::ivec2 on_part = to_pixel(cam, part_posed);
+    const glm::ivec2 rest_spot = to_pixel(cam, hull_tear);
+    const int win = to_pixel(cam, part_posed + glm::vec3(3.0f * r + 1.0f, 0.0f, 0.0f)).x - on_part.x;
+    const auto part = redness_gain(fresh.color, old.color, on_part, win);
+    const auto hull = redness_gain(fresh.color, old.color, rest_spot, win);
+    std::fprintf(stderr, "[PlatingRender] posed rim: part gain %d, hull (rest spot) gain %d\n",
+                 part.gain, hull.gain);
+    EXPECT_GE(part.gain, 40) << "the posed part's fresh tear does not glow on the part";
+    EXPECT_LE(worst_in_window(fresh.color, old.color, rest_spot, win), 1)
+        << "the part's rim heated the hull under its rest spot";
 }

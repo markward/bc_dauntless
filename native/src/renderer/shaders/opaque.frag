@@ -150,6 +150,14 @@ uniform vec4 u_dmg_c[MAX_DMG];
 // deposit (soot must not bury the ribs) and the glow kill (windows die).
 float g_plating_exposed = 0.0;
 vec3  g_plating_emissive = vec3(0.0);   // inner-hull heat / breach rim (SPIKE)
+// Molten rims on fresh tears (layered damage phase 4 §2.3;
+// renderer::plating::RimList): the freshest breach events still hot, in this
+// mesh's REST frame (the frame p_pl is in), model units.
+//   a = centre.xyz, radius      b = age (s), life (kRimLife), 0, 0
+const int MAX_RIMS = 4;
+uniform int  u_rim_count;
+uniform vec4 u_rim_a[MAX_RIMS];
+uniform vec4 u_rim_b[MAX_RIMS];
 #endif
 uniform sampler2D u_scuff_map;               // unit 7: tiling crumpled-metal tangent-space
                                              // normal map (renderer/scuff_texture.h)
@@ -680,6 +688,23 @@ uniform vec4 u_part_b[MAX_PARTS];        // axis0.xyz, half0
 uniform vec4 u_part_c[MAX_PARTS];        // axis1.xyz, half1
 uniform vec4 u_part_d[MAX_PARTS];        // half2, _, _, _
 
+// Molten rim heat at rest-frame point p, 0..1: (1 - age / life) x
+// (1 - smoothstep(r, 3r, distance)), the hottest event's (u_rim_*). 0 with
+// no rims: the loop never runs.
+float plating_rim_heat(vec3 p) {
+    float h = 0.0;
+    for (int i = 0; i < u_rim_count; ++i) {
+        float r = u_rim_a[i].w;
+        float fresh = clamp(1.0 - u_rim_b[i].x / max(u_rim_b[i].y, 1e-3), 0.0, 1.0);
+        h = max(h, fresh * (1.0 - smoothstep(r, 3.0 * r, length(p - u_rim_a[i].xyz))));
+    }
+    return h;
+}
+// The molten glow a rim adds at heat h.
+vec3 plating_rim_glow(float h) {
+    return blackbody(0.55 + 0.35 * h) * h * 1.5;
+}
+
 // Internal blasts (kind 3, a destroyed subsystem): true 3D distance from
 // the blast centre, no facing -- every hull surface inside the sphere fails,
 // top and bottom alike. reach = the blast sphere; wear = strength at centre.
@@ -1042,6 +1067,9 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
     } else {
         under_glow = blackbody(0.35 + 0.35 * heat) * heat * 0.8;
     }
+    // A fresh tear is molten around its rim (plating_rim_heat: the breach
+    // events, cooling over kRimLife).
+    under_glow += plating_rim_glow(plating_rim_heat(p_body));
 
     float depth01 = (t_side - Dp) / max(Dr, 1e-4);
     vec3 metal = RIB_METAL * u_plating[14] * mix(1.0, 0.7, dmg);       // scorched with damage
@@ -1720,6 +1748,8 @@ void main() {
                     g_plating_emissive += blackbody(0.6) * 0.8;
                 else if (wreck_h < 0.055)
                     g_plating_emissive += vec3(0.8, 0.88, 1.0) * 0.5;
+                // A fresh tear's rim is molten (plating_rim_heat).
+                g_plating_emissive += plating_rim_glow(plating_rim_heat(p_pl));
             }
         }
         if (hole == 2) {

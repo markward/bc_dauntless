@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -576,12 +577,28 @@ static void upload_structure_parts(Shader& prog,
     prog.set_int(kPartShown, static_cast<int>(shown_parts));
 }
 
-// `hidden_parts` / `shown_parts`: as upload_structure_parts.
+// Molten rims (u_rim_count / u_rim_a / u_rim_b, opaque.frag PLATING and
+// hull_interior.frag): `rims` nullptr uploads none. Only the count is set
+// when there are none: the shaders never read past it.
+static void upload_rims(Shader& prog, const plating::RimList* rims) {
+    static const std::string kRimCount = "u_rim_count", kRimA = "u_rim_a", kRimB = "u_rim_b";
+    const int n = rims != nullptr ? rims->count : 0;
+    prog.set_int(kRimCount, n);
+    if (n > 0) {
+        prog.set_vec4_array(kRimA, rims->a, n);
+        prog.set_vec4_array(kRimB, rims->b, n);
+    }
+}
+
+// `hidden_parts` / `shown_parts`: as upload_structure_parts. `rims`: the
+// molten rims for every mesh of the draw (upload_rims); nullptr = none, and
+// a posed draw uploads its rims per mesh instead.
 static void upload_plating(Shader& prog, const plating::DamageList& dl,
                            const std::vector<voxel::StructurePart>* parts,
                            const glm::mat4& world, const float* params, bool mark,
                            bool far, bool upload_list, bool rock,
-                           std::uint32_t hidden_parts, std::uint32_t shown_parts) {
+                           std::uint32_t hidden_parts, std::uint32_t shown_parts,
+                           const plating::RimList* rims = nullptr) {
     static const std::string kPlating = "u_plating", kDmgCount = "u_dmg_count",
         kDmgA = "u_dmg_a", kDmgB = "u_dmg_b", kDmgC = "u_dmg_c",
         kMark = "u_plating_mark", kFar = "u_plating_far", kRock = "u_plating_rock",
@@ -605,6 +622,8 @@ static void upload_plating(Shader& prog, const plating::DamageList& dl,
     prog.set_int(kMark, mark ? 1 : 0);
     prog.set_int(kFar, far ? 1 : 0);
     prog.set_int(kRock, rock ? 1 : 0);
+    // Set on EVERY plating upload, so one hull's rims never leak onto the next.
+    upload_rims(prog, rims);
 }
 
 // Per-mesh u_dmg_* for one draw: each mesh's cached subset
@@ -862,6 +881,16 @@ static void draw_model_pass(const assets::Model& model,
     const bool plating_per_mesh =
         plating_list != nullptr && (plating_subsets != nullptr || articulated);
     std::optional<MeshRecordUploader> plating_records;
+    // Molten rims: rest-frame data like the records. Unposed, one upload for
+    // every mesh; posed, each mesh gets only its own frame's
+    // (plating::rims_in_frame), re-uploaded when the frame changes.
+    const plating::RimList* const plating_rims =
+        plating_list != nullptr && plating_mesh_records != nullptr &&
+                plating_mesh_records->rims != nullptr && plating_mesh_records->rims->count > 0
+            ? plating_mesh_records->rims
+            : nullptr;
+    const bool rims_per_mesh = plating_rims != nullptr && articulated;
+    int rims_owner = std::numeric_limits<int>::min();   // frame of the last per-mesh upload
     if (plating_list != nullptr) {
         const std::vector<voxel::StructurePart>* const plating_parts =
             plating_mesh_records != nullptr ? plating_mesh_records->parts
@@ -870,7 +899,8 @@ static void draw_model_pass(const assets::Model& model,
                        /*mark=*/false, plating_far,
                        /*upload_list=*/!plating_per_mesh, plating_rock,
                        plating_mesh_records != nullptr ? plating_mesh_records->hidden_parts : 0u,
-                       plating_mesh_records != nullptr ? plating_mesh_records->shown_parts : 0u);
+                       plating_mesh_records != nullptr ? plating_mesh_records->shown_parts : 0u,
+                       rims_per_mesh ? nullptr : plating_rims);
         if (plating_per_mesh)
             plating_records.emplace(prog, *plating_list, articulated ? &owners : nullptr);
     }
@@ -1042,6 +1072,12 @@ static void draw_model_pass(const assets::Model& model,
                         ? nullptr
                         : plating_subset_for(*plating_subsets, mesh_idx),
                     articulated ? owners[i] : -1);
+            }
+            if (rims_per_mesh && owners[i] != rims_owner) {
+                const plating::RimList in_frame =
+                    plating::rims_in_frame(*plating_rims, owners, owners[i]);
+                upload_rims(prog, &in_frame);
+                rims_owner = owners[i];
             }
             // Same rule as u_sphere_map: set on EVERY draw so it cannot leak.
             const bool this_atmo = this_sphere && atmo != nullptr && atmo->enabled;
@@ -1550,8 +1586,16 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
         // entry (the mark below reuses them). A skinned draw has no plating
         // layer and needs none.
         PlatingMeshRecords plating_records{};
-        if (use_plating && !draws_skinned(*m, palette))
+        // Molten rims on fresh tears (phase 4 §2.3), aged on the clock the
+        // breach events were stamped with. Not on a rock (no venting either).
+        plating::RimList rims;
+        if (use_plating && !draws_skinned(*m, palette)) {
             plating_records = plating_mesh_records_for(*plating_entry, inst, *m);
+            if (!inst.surface_is_rock) {
+                rims = plating::build_rim_list(inst.breach_events, decal_time);
+                plating_records.rims = &rims;
+            }
+        }
         if (use_plating && !plating_configured) {
             configure_common(pipeline.plating_shader());
             plating_configured = true;
@@ -1800,6 +1844,11 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
             const std::vector<std::uint8_t>* mesh_mask =
                 plating_skip_record_free_ && records.subsets != nullptr
                     ? &entry.mesh_has_records : nullptr;
+            // The plate char edge takes a fresh tear's heat. A rock has no
+            // rooms, so no char edge and no rims.
+            const plating::RimList rims = inst.surface_is_rock
+                ? plating::RimList{}
+                : plating::build_rim_list(inst.breach_events, now);
             plating_interior_mesh_draws_ += hull_interior_.draw(
                 *m, inst.world, camera, pipeline, list,
                 plating_record_culling_ ? entry.deck_break : plating::full_deck_break_set(list),
@@ -1812,7 +1861,7 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
                 &inst.node_overrides, mesh_mask, inst.surface_is_rock,
                 // Looked up only for rocks, so a ship pays nothing.
                 inst.surface_is_rock ? find_base_texture_id(*m) : 0u,
-                /*cull_deck_break=*/plating_record_culling_);
+                /*cull_deck_break=*/plating_record_culling_, &rims);
             ++plating_interiors_last_frame_;
             state_set = false;   // the interior draw left stock state
         }
