@@ -47,7 +47,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_phaser_beams", "set_tractor_beams",
     "cursor_pos",
     "shield_hit", "world_to_body", "damage_decal_add", "hull_carve_add",
-    "hull_damage_add",
+    "hull_damage_add", "hull_damage_add_body",
     "model_nodes", "model_nearest_part", "set_instance_decals",
     "hull_split_detached", "hull_carve_capsule", "breach_burst",
     "ray_trace_mesh", "instance_translation",
@@ -456,6 +456,24 @@ def hull_damage_add(
         return
     _h.hull_damage_add(instance_id, rel, world_normal, float(radius),
                        float(wear), int(kind))
+
+
+def hull_damage_add_body(
+    instance_id: int,
+    body_point: Tuple[float, float, float],
+    body_normal: Tuple[float, float, float],
+    radius: float,
+    wear: float,
+    kind: int,
+) -> None:
+    """hull_damage_add for a point/normal ALREADY in the body frame (model
+    units, as `world_to_body` returns them). `radius` is still game units;
+    the binding converts it with the same scale as hull_damage_add. No
+    translation is involved, so there is no instance-relative step."""
+    if _h is None:
+        return
+    _h.hull_damage_add_body(instance_id, tuple(body_point), tuple(body_normal),
+                            float(radius), float(wear), int(kind))
 
 
 def hull_carve_add(

@@ -163,3 +163,11 @@ def test_hull_carving_is_off_by_default_on_the_spike(monkeypatch, fake):
                            0.5, 1.0, 0.0)
     host_io.hull_carve_capsule(7, T, (T[0] + 1.0, T[1], T[2]), 0.5)
     assert fake.calls == []
+
+
+def test_hull_damage_add_body_sends_the_body_point_untouched(fake):
+    # A body-frame point has no translation in it: no relative step.
+    host_io.hull_damage_add_body(7, (1.0, 2.0, 3.0), (0.0, 0.0, 1.0),
+                                 0.3, 0.5, 1)
+    assert fake.calls == [("hull_damage_add_body",
+                           (7, (1.0, 2.0, 3.0), (0.0, 0.0, 1.0), 0.3, 0.5, 1))]

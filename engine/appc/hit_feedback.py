@@ -376,20 +376,9 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
             wclass = damage_decals.weapon_class_for(weapon_type)
             key = (id(ship), wclass)
             vis_r = float(decal_radius) if decal_radius is not None else float(radius)
-            # Plating wear from the real hull damage dealt, summed across the
-            # scorch throttle below. Light phaser fire stays cosmetic.
-            if allow_hull_carve or weapon_type != "phaser":
-                from engine.appc import hull_wear
-                hull_wear.accumulate(
-                    ship, iid, _mesh_xyz(ship, point),
-                    (normal.x, normal.y, normal.z),
-                    vis_r * damage_decals.decal_radius_scale(wclass),
-                    hull_wear.wear_for_hit(weapon_type, absorbed_hull,
-                                           float(decal_dent)))
-            if now - _last_decal_emit.get(key, -1e9) >= DECAL_EMIT_INTERVAL:
+            emitted = now - _last_decal_emit.get(key, -1e9) >= DECAL_EMIT_INTERVAL
+            if emitted:
                 _last_decal_emit[key] = now
-                from engine.appc import hull_wear
-                hull_wear.flush(ship)
                 host_io.damage_decal_add(
                     iid,
                     _mesh_xyz(ship, point),
@@ -402,6 +391,30 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                                    if tangent is not None else None),
                     dent=float(decal_dent),
                 )
+            # Plating wear from the real hull damage dealt. Light phaser fire
+            # stays cosmetic. AFTER the scorch and isolated: a wear failure
+            # must never cost the hit its scorch or its carve.
+            if allow_hull_carve or weapon_type != "phaser":
+                try:
+                    from engine.appc import hull_wear
+                    wear = hull_wear.wear_for_hit(weapon_type, absorbed_hull,
+                                                  float(decal_dent))
+                    reach = vis_r * damage_decals.decal_radius_scale(wclass)
+                    hit_xyz = _mesh_xyz(ship, point)
+                    n_xyz = (normal.x, normal.y, normal.z)
+                    if weapon_type == "phaser":
+                        # A beam ticks every frame: hold the ticks in the
+                        # body frame, sent with the scorch emit.
+                        hull_wear.accumulate_phaser(ship, iid, hit_xyz, n_xyz,
+                                                    reach, wear)
+                        if emitted:
+                            hull_wear.flush(ship)
+                    else:
+                        # Every hit: the store merges co-located hits.
+                        hull_wear.send(iid, hit_xyz, n_xyz, reach, wear)
+                except Exception as exc:
+                    from engine import dev_mode
+                    dev_mode.log_swallowed("hull wear", exc)
 
     # 5. Hull carve (breach): deposit field strength; eligible ships only;
     # throttled. Same hull-absorbing, mesh-normal, renderer-present, committed-hit
