@@ -295,6 +295,17 @@ struct PhaserBeamDescriptor {
                                        // (1.0 = uniform; tractors funnel out)
 };
 
+/// SPIKE (damage redesign): what a plating draw uploads per mesh. `parts` is
+/// the hull's structure parts exactly as the subsets were computed with them
+/// (structure_parts_for, read ONCE by the caller: they land on a worker at any
+/// moment, and the shader must see the parts the cull margins assumed).
+/// `subsets`: one plating::MeshRecordSubset per model.meshes entry, or nullptr
+/// for the whole list on every mesh.
+struct PlatingMeshRecords {
+    const std::vector<voxel::StructurePart>* parts = nullptr;
+    const std::vector<plating::MeshRecordSubset>* subsets = nullptr;
+};
+
 /// Draw a single model instance. Picks the skinned program when the model has
 /// a skeleton AND a non-empty bone palette is supplied; otherwise draws through
 /// the static `shader` byte-identically to the pre-skinning path. Declared here
@@ -362,14 +373,23 @@ void draw_model(const assets::Model& model,
                 // instead of cutting it, unless it is blown clear through
                 // (u_plating_far). Plating draws only.
                 bool plating_far = false,
-                // Plating draws only: one body-frame rest-pose box per
-                // model.meshes entry (mesh_body_aabbs). Non-null = each mesh
-                // uploads only the records near it (plating::records_near,
-                // margin plating::plating_cull_margin); a mesh with none uploads
-                // u_dmg_count 0. nullptr, node overrides present (the posed
-                // meshes leave their rest boxes) or the geosphere's
-                // substituted mesh: every mesh gets the whole list.
-                const std::vector<Aabb>* plating_mesh_boxes = nullptr);
+                // Plating draws only: the parts and per-mesh record subsets
+                // (PlatingMeshRecords; FrameSubmitter caches them per
+                // instance). With subsets each mesh uploads only its own
+                // records (plating::mesh_record_subsets); a mesh with none
+                // uploads u_dmg_count 0 and still draws. nullptr = the parts
+                // read here and the whole list; null subsets, node overrides
+                // present (the posed meshes leave their rest boxes) or the
+                // geosphere's substituted mesh: every mesh gets the whole list.
+                const PlatingMeshRecords* plating_mesh_records = nullptr);
+
+/// TEST counters, process-wide and monotonic (read deltas). Computations of
+/// a model's per-mesh plating record subsets (plating::mesh_record_subsets),
+/// and uploads of a u_dmg_* list to the plating program by a per-mesh draw
+/// (an upload equal to the previous one of the same draw is skipped and not
+/// counted).
+int plating_mesh_subset_computations();
+int plating_record_uploads();
 
 /// Per-camera LOD for a sphere-mapped model, or -1 when the model has none.
 /// world radius = sphere_map.radius * length(world[0]); focal from proj and
@@ -608,9 +628,24 @@ private:
         plating::DamageList list;
         // plating::deck_break_subset(list), under the same key.
         plating::DeckBreakSet deck_break;
+        // plating::mesh_record_subsets(list, ...), built on first use: valid
+        // for this list (cleared on a rebuild) and the parts pointer and
+        // model it was built with.
+        bool subsets_valid = false;
+        const std::vector<voxel::StructurePart>* subsets_parts = nullptr;
+        scenegraph::ModelHandle subsets_handle{};
+        const assets::Model* subsets_model = nullptr;
+        std::vector<plating::MeshRecordSubset> subsets;
     };
     /// plating_list_for's entry (list + deck-break subset), rebuilt when stale.
     PlatingListCacheEntry& plating_entry_for(const scenegraph::Instance& inst);
+    /// The parts and per-mesh subsets an instance's plating draws upload
+    /// (`entry` = its plating_entry_for). Subsets are null with record
+    /// culling off or node overrides present; else cached on the entry and
+    /// recomputed only when the list, the parts pointer or the model changed.
+    PlatingMeshRecords plating_mesh_records_for(PlatingListCacheEntry& entry,
+                                                const scenegraph::Instance& inst,
+                                                const assets::Model& model);
     std::map<scenegraph::InstanceId, PlatingListCacheEntry, InstanceIdLess> plating_list_cache_;
     int plating_list_builds_ = 0;
     bool plating_record_culling_ = true;

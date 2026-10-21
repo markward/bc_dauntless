@@ -50,13 +50,6 @@ bool wants_plating(const DamageList& list, const float* params);
 // params[5] + params[6] + params[15] + params[2].
 float plating_margin(const float* params);
 
-// The records whose sphere grown by `margin` (a.w + margin) touches
-// `body_box` (body frame), in list order, as indices into `list`. Returns how
-// many. A mesh draw uploads only these: a pixel of the mesh lies in its box,
-// so a record left out is further than reach + margin from every pixel and
-// adds nothing to it (opaque.frag's near test, wear sums and gradients all
-// skip it there). The test is grown by a small slack, so float rounding of
-// p_body can only ever keep an extra record, never drop a needed one.
 // The margin a mesh's record subset is culled with (records_near): it bounds
 // the distance from a pixel to every point where opaque.frag reads a record
 // for it (the plate-edge march and the panel centres of the pixel's part
@@ -68,8 +61,30 @@ float plating_cull_margin(const float* params,
                           const std::vector<voxel::StructurePart>* parts,
                           const Aabb& body_box);
 
+// The records whose sphere grown by `margin` (a.w + margin) touches
+// `body_box` (body frame), in list order, as indices into `list`. Returns how
+// many. A mesh draw uploads only these: a pixel of the mesh lies in its box,
+// so a record left out is further than reach + margin from every pixel and
+// adds nothing to it (opaque.frag's near test, wear sums and gradients all
+// skip it there). The test is grown by a small slack, so float rounding of
+// p_body can only ever keep an extra record, never drop a needed one.
 int records_near(const DamageList& list, const Aabb& body_box, float margin,
                  std::array<std::uint8_t, kMaxDamage>& out);
+
+// One mesh's records (records_near under plating_cull_margin): the indices
+// into the list a draw of that mesh uploads, in list order.
+struct MeshRecordSubset {
+    int count = 0;
+    std::array<std::uint8_t, kMaxDamage> idx{};
+};
+
+// Every mesh's subset, one per `boxes` entry (mesh_body_aabbs, so one per
+// model.meshes entry), each culled with its own plating_cull_margin under
+// `parts`. The renderer caches the result per instance (FrameSubmitter's
+// plating list entry), keyed by the list, the parts and the model.
+std::vector<MeshRecordSubset> mesh_record_subsets(
+    const DamageList& list, const std::vector<Aabb>& boxes, const float* params,
+    const std::vector<voxel::StructurePart>* parts);
 
 // The records that can break an interior plate (hull_interior.frag's blown
 // tests: wear plus at most 1.25 x tear noise past deck break). Record i is

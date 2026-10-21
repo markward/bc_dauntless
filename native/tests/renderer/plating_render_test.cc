@@ -1033,3 +1033,99 @@ TEST_F(PlatingRenderTest, RecordCullingCoversLargePanelOffsets) {
     EXPECT_GT(b_stripped, 0) << "the strong record no longer reaches B's panel: no test";
     EXPECT_EQ(diff, 0);
 }
+
+// ---- Final fix wave I1: per-mesh subsets cached on the list entry. ----------
+
+// The per-mesh record subsets (cull margin + records_near per mesh) are
+// computed once per change of what they depend on -- the list (store revision
+// + params), the hull's structure parts (they land on a worker, so the
+// pointer changes from null to the parts) and the model -- not once per draw:
+// two frames of opaque + mark + interior, and a viewscreen render between
+// them, share one computation.
+TEST_F(PlatingRenderTest, PerMeshSubsetsComputedOncePerChange) {
+    dauntless_plating::g_params[0] = 1.0f;
+    dauntless_plating::g_params[25] = 1.0f;
+    auto model = two_quads(40.0f);
+    // A source of its own, so the parts job is this test's: it fails to find
+    // the file and lands an empty parts list, a pointer change all the same.
+    static int unique = 0;
+    model->source = fs::path("/nonexistent/plating-subset-cache-" +
+                             std::to_string(++unique) + ".nif");
+    auto other = two_quads(40.0f);
+    scenegraph::World world;
+    auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(model.get()));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+    world.get(iid)->hull_damage = left_quad_ring();
+    const auto cam = quad_cam();
+    renderer::reset_model_radius_cache();
+    renderer::FrameSubmitter submitter;
+    const auto lookup = [](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h);
+    };
+    auto frame = [&](const renderer::InteriorPolicy& policy) {
+        submitter.set_interior_policy(policy);
+        glViewport(0, 0, kSize, kSize);
+        glStencilMask(0xFF);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        submitter.submit_opaque_in_pass(world, cam, *p, lookup, test_lighting(),
+                                        scenegraph::Pass::Space, kDecalTime);
+        submitter.submit_plating_interior(world, cam, *p, lookup, nullptr, test_lighting(),
+                                          1.0f, kDecalTime);
+    };
+    renderer::InteriorPolicy viewscreen = all_near_policy();
+    viewscreen.viewscreen = true;
+    viewscreen.viewscreen_target = iid;
+
+    const int c0 = renderer::plating_mesh_subset_computations();
+    frame(all_near_policy());
+    EXPECT_EQ(submitter.plating_marks_last_frame(), 1);
+    EXPECT_EQ(submitter.plating_interiors_last_frame(), 1);
+    // The parts job started on the first read; it may land between draws.
+    const auto t0 = std::chrono::steady_clock::now();
+    while (renderer::structure_parts_for(model->source) == nullptr &&
+           std::chrono::steady_clock::now() - t0 < std::chrono::seconds(20))
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    ASSERT_NE(renderer::structure_parts_for(model->source), nullptr) << "parts never landed";
+    frame(all_near_policy());   // parts pointer changed (or changed in frame 1)
+    const int c1 = renderer::plating_mesh_subset_computations();
+    EXPECT_GE(c1 - c0, 1);
+    EXPECT_LE(c1 - c0, 2) << "one computation per parts pointer, not one per draw";
+
+    frame(all_near_policy());
+    frame(viewscreen);
+    frame(all_near_policy());
+    EXPECT_EQ(renderer::plating_mesh_subset_computations() - c1, 0)
+        << "nothing changed: the subsets must be reused by every draw and pass";
+
+    world.get(iid)->hull_damage.add({40.0f, 0.0f, 0.0f}, glm::vec3(0.0f), 6.0f, 2.0f,
+                                    scenegraph::HullDamageKind::Internal);
+    frame(all_near_policy());
+    frame(all_near_policy());
+    EXPECT_EQ(renderer::plating_mesh_subset_computations() - c1, 1) << "a store change";
+
+    world.get(iid)->model_handle = reinterpret_cast<scenegraph::ModelHandle>(other.get());
+    frame(all_near_policy());
+    frame(all_near_policy());
+    EXPECT_EQ(renderer::plating_mesh_subset_computations() - c1, 2) << "a model change";
+}
+
+// Uploads of u_dmg_* skip a mesh whose subset equals the last one uploaded in
+// the same draw: two quads that both see every record upload the list once
+// per draw (the opaque draw and the mark), not once per mesh.
+TEST_F(PlatingRenderTest, IdenticalMeshSubsetsUploadOncePerDraw) {
+    dauntless_plating::g_params[0] = 1.0f;
+    dauntless_plating::g_params[25] = 0.0f;
+    auto model = std::make_unique<assets::Model>();
+    const glm::vec3 X(1, 0, 0), Y(0, 1, 0);
+    add_face(*model, glm::vec3(-10.0f, 0.0f, 0.0f), X, Y, 10.0f);
+    add_face(*model, glm::vec3(10.0f, 0.0f, 0.0f), X, Y, 10.0f);
+    const auto ring = internal_ring(glm::vec3(0.0f), 12.0f, 10.0f);
+    const auto cam = quad_cam();
+    const int u0 = renderer::plating_record_uploads();
+    render(*model, ring, cam);
+    EXPECT_EQ(renderer::plating_record_uploads() - u0, 1) << "opaque draw";
+    const int u1 = renderer::plating_record_uploads();
+    const auto r = render_marked(*model, ring, cam);
+    EXPECT_EQ(r.marks, 1);
+    EXPECT_EQ(renderer::plating_record_uploads() - u1, 2) << "opaque draw + mark";
+}

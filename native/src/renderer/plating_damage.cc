@@ -133,6 +133,16 @@ int records_near(const DamageList& list, const Aabb& body_box, float margin,
     return n;
 }
 
+std::vector<MeshRecordSubset> mesh_record_subsets(
+        const DamageList& list, const std::vector<Aabb>& boxes, const float* params,
+        const std::vector<voxel::StructurePart>* parts) {
+    std::vector<MeshRecordSubset> out(boxes.size());
+    for (std::size_t k = 0; k < boxes.size(); ++k)
+        out[k].count = records_near(list, boxes[k],
+                                    plating_cull_margin(params, parts, boxes[k]), out[k].idx);
+    return out;
+}
+
 DeckBreakSet deck_break_subset(const DamageList& list, const float* params) {
     const float threshold = params[24] - 1.25f * std::fabs(params[19]);
     // Rounding slack: keeping an extra record is always safe.
