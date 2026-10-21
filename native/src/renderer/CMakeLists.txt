@@ -120,6 +120,8 @@ embed_shader(SHADER_BRDF_LUT_VS shaders/brdf_lut.vert brdf_lut_vs)
 embed_shader(SHADER_BRDF_LUT_FS shaders/brdf_lut.frag brdf_lut_fs)
 embed_shader(SHADER_VS_STATIC_VS shaders/viewscreen_static.vert viewscreen_static_vs)
 embed_shader(SHADER_VS_STATIC_FS shaders/viewscreen_static.frag viewscreen_static_fs)
+embed_shader(SHADER_VS_BARS_VS shaders/viewscreen_bars.vert viewscreen_bars_vs)
+embed_shader(SHADER_VS_BARS_FS shaders/viewscreen_bars.frag viewscreen_bars_fs)
 embed_shader(SHADER_SKINNED_BRIDGE_VS shaders/skinned_bridge.vert skinned_bridge_vs)
 embed_shader(SHADER_RESOLVE_VS shaders/resolve.vert resolve_vs)
 embed_shader(SHADER_RESOLVE_FS shaders/resolve.frag resolve_fs)
@@ -240,6 +242,7 @@ add_library(renderer STATIC
     bridge_probe.cc
     bridge_probe_array.cc
     viewscreen_static_pass.cc
+    viewscreen_bars_pass.cc
     light_matrix.cc
     shadow_map_target.cc
 )
@@ -249,3 +252,5 @@ target_include_directories(renderer
 )
 target_compile_features(renderer PUBLIC cxx_std_20)
 target_link_libraries(renderer PUBLIC assets scenegraph voxel glad glfw glm)
+# nlohmann/json reads the viewscreen bars font metrics (viewscreen_bars_pass.cc).
+target_link_libraries(renderer PRIVATE nlohmann_json::nlohmann_json)

@@ -35,6 +35,32 @@ class _ReticleCam:
         return self._up
 
 
+def readout_values(target, player) -> tuple[float, float]:
+    """(range km, speed kph): the numbers behind the exterior reticle's line and
+    the viewscreen readout's detail line, so the two can never disagree."""
+    # target_menu.surface_gu_to is the ONE place the player-to-contact vector
+    # is derived (surface distance, planets included).
+    dist_gu = surface_gu_to(target, player)
+    # implements(), NOT hasattr(): a targeted planet has no GetVelocity and
+    # hasattr() is vacuously true on any TGObject. Planets don't move.
+    vel = target.GetVelocity() if implements(target, "GetVelocity") else None
+    speed_gu = (vel.x * vel.x + vel.y * vel.y + vel.z * vel.z) ** 0.5 if vel else 0.0
+    return dist_gu * GU_TO_KM, speed_gu * GUPS_TO_KPH
+
+
+def readout_line(target, player) -> str:
+    """The reticle's "<range> km / <speed> kph" line."""
+    return "%.2f km / %.0f kph" % readout_values(target, player)
+
+
+def identity_name(target):
+    """Placeholder name for an unidentified ShipClass target, else None.
+    Planets/placements have no Unknown row and keep their real name."""
+    if isinstance(target, ShipClass) and not sensor_contacts.shows_identity(target):
+        return unknown_labels.placeholder(target)
+    return None
+
+
 def build_reticle_text(player, camera, viewport) -> dict:
     """Return {visible, name, line2, name_xy, line2_xy}.
 
@@ -64,13 +90,7 @@ def build_reticle_text(player, camera, viewport) -> dict:
     # duplication survived the consolidation that was supposed to remove it.
     # `centre` and `radius` stay live because they position the box, which is a
     # projection rather than a readout.
-    dist_gu = surface_gu_to(target, player)
-    # implements(), NOT hasattr(): a targeted planet is an ObjectClass with no
-    # GetVelocity, and hasattr() is vacuously true on any TGObject — so this
-    # read a _Stub and only came out as 0 kph because _Stub arithmetic collapses
-    # to 0. Planets don't move; say so honestly.
-    vel = target.GetVelocity() if implements(target, "GetVelocity") else None
-    speed_gu = (vel.x * vel.x + vel.y * vel.y + vel.z * vel.z) ** 0.5 if vel else 0.0
+    line2 = readout_line(target, player)
 
     sub = _valid_subsystem(player)
     # Roadmap decision 5 (no name leaks): an unidentified ship-level target
@@ -80,11 +100,9 @@ def build_reticle_text(player, camera, viewport) -> dict:
     # is no separate parent-ship lookup to do. Planets/placements/non-ShipClass
     # targets have no Unknown row (target_menu.set_contacts only allocates one
     # for ShipClass contacts) and keep their real name unconditionally.
-    if isinstance(target, ShipClass) and not sensor_contacts.shows_identity(target):
-        name = unknown_labels.placeholder(target)
-    else:
+    name = identity_name(target)
+    if name is None:
         name = sub.GetDisplayName() if sub is not None else target.GetDisplayName()
-    line2 = "%.2f km / %.0f kph" % (dist_gu * GU_TO_KM, speed_gu * GUPS_TO_KPH)
     up = camera.up()
     top    = (centre.x + up[0] * radius, centre.y + up[1] * radius, centre.z + up[2] * radius)
     bottom = (centre.x - up[0] * radius, centre.y - up[1] * radius, centre.z - up[2] * radius)

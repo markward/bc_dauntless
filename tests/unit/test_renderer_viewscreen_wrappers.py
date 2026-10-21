@@ -23,3 +23,19 @@ def test_viewscreen_wrappers_passthrough(monkeypatch):
     assert calls["static"] == (True, 0.7)
     assert calls["brightness"] == 0.5
     assert calls["off_texture"] == "/game/data/Icons/ViewscreenLoading.tga"
+
+
+def test_viewscreen_bars_wrappers_passthrough(monkeypatch):
+    calls = []
+
+    class FakeH:
+        def set_viewscreen_bars(self, name, detail, dot_rgb):
+            calls.append(("set", name, detail, dot_rgb))
+        def clear_viewscreen_bars(self):
+            calls.append(("clear",))
+
+    monkeypatch.setattr(renderer, "_h", FakeH())
+    renderer.set_viewscreen_bars("A", "DST: 1.00 km  SPD: 0 kph", (1, 2, 3))
+    renderer.clear_viewscreen_bars()
+    assert calls == [("set", "A", "DST: 1.00 km  SPD: 0 kph", (1, 2, 3)),
+                     ("clear",)]

@@ -54,6 +54,7 @@ public:
     Shader& bridge_shader() noexcept          { return *bridge_; }
     Shader& skinned_bridge_shader() noexcept  { return *skinned_bridge_; }
     Shader& viewscreen_static_shader() noexcept { return *viewscreen_static_; }
+    Shader& viewscreen_bars_shader() noexcept { return *viewscreen_bars_; }
     Shader& shadow_depth_shader() noexcept    { return *shadow_depth_; }
     Shader& shockwave_shader() noexcept       { return *shockwave_; }
     Shader& skybox_shader() noexcept          { return *skybox_; }
@@ -99,6 +100,7 @@ private:
     std::unique_ptr<Shader> bridge_;
     std::unique_ptr<Shader> skinned_bridge_;
     std::unique_ptr<Shader> viewscreen_static_;
+    std::unique_ptr<Shader> viewscreen_bars_;
     std::unique_ptr<Shader> shadow_depth_;
     std::unique_ptr<Shader> shockwave_;
     std::unique_ptr<Shader> skybox_;
