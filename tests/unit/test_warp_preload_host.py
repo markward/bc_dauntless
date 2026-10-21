@@ -116,11 +116,11 @@ def test_deps_load_ship_prewarms_the_loaded_handle(monkeypatch):
                         lambda ship, r_: (loads.append((ship, r_))
                                           or ("H", "m.nif", "m.nif", 1.0)))
     monkeypatch.setattr(hull_volume, "prewarm_for_model",
-                        lambda ship, handle: prewarms.append((ship, handle)))
+                        lambda handle: prewarms.append(handle))
     ship = object()
     host_loop._warp_preload_deps(_controller(), r)["load_ship"](ship)
     assert loads == [(ship, r)]
-    assert prewarms == [(ship, "H")]
+    assert prewarms == ["H"]
 
 
 def test_deps_load_ship_without_a_model_skips_prewarm(monkeypatch):
@@ -129,7 +129,7 @@ def test_deps_load_ship_without_a_model_skips_prewarm(monkeypatch):
     monkeypatch.setattr(host_loop, "_load_runtime_ship_model",
                         lambda ship, r_: None)
     monkeypatch.setattr(hull_volume, "prewarm_for_model",
-                        lambda ship, handle: prewarms.append(handle))
+                        lambda handle: prewarms.append(handle))
     host_loop._warp_preload_deps(_controller(), _R())["load_ship"](object())
     assert prewarms == []
 

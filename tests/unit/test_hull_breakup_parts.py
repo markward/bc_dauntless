@@ -3,7 +3,7 @@
 host_io.hull_split_parts (native) finds the severed parts, hides each on the
 parent and instances its chunk; hull_breakup.after_wear gives each chunk its
 body (debris_chunk.spawn, mass by voxel fraction) and destroys the subsystems
-inside the part. Throttled like after_carve.
+inside the part. Throttled per ship (kBreakupCheckInterval).
 """
 import pytest
 

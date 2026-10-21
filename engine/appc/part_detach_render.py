@@ -31,7 +31,7 @@ def detach(ship, iid, part_name) -> bool:
     """Hide `part_name` on `ship`'s instance `iid` and spawn it as debris.
 
     `iid` is PASSED IN, never looked up from a module global — the same shape
-    `hull_breakup.after_carve` uses, and for the same reason: the session lives
+    `hull_breakup.after_wear` uses, and for the same reason: the session lives
     in host_loop and appc modules must not reach into it.
 
     Returns True when the ship's own instance was updated — the visible half

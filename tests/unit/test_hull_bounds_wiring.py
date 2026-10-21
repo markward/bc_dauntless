@@ -1,6 +1,6 @@
 """Prove BOTH host_loop instance-registration sites cache the hull PIECES
-(engine.appc.hull_bounds) -- the same two-site trap test_hull_volume_wiring.py
-guards for the hull-volume resolution.
+(engine.appc.hull_bounds) -- the same two-site trap the (since removed)
+hull-volume resolution push had.
 
 Live 2026-09-21 (Collision Sim): every collision line read pieces=a:0/b:0 --
 the shape-aware narrow phase was inert for every ship realized through

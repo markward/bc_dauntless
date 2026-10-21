@@ -57,15 +57,13 @@ class _Pose:
 @pytest.fixture
 def fake(monkeypatch):
     rec = type("Rec", (), {})()
-    rec.wear, rec.body_wear, rec.decals, rec.carves = [], [], [], []
+    rec.wear, rec.body_wear, rec.decals = [], [], []
     rec.pose = _Pose()
     monkeypatch.setattr(hit_feedback, "_play_audio", lambda *a, **k: None)
     monkeypatch.setattr("engine.appc.hull_hit_smoke.maybe_emit",
                         lambda *a, **k: None)
     monkeypatch.setattr(host_io, "shield_hit", lambda *a, **k: None)
     monkeypatch.setattr(host_io, "world_to_body", rec.pose.to_body)
-    monkeypatch.setattr(host_io, "hull_carve_add",
-                        lambda *a, **k: rec.carves.append((a, k)))
     monkeypatch.setattr(host_io, "damage_decal_add",
                         lambda *a, **k: rec.decals.append((a, k)))
     monkeypatch.setattr(host_io, "hull_damage_add",
@@ -74,13 +72,9 @@ def fake(monkeypatch):
                         lambda *a, **k: rec.body_wear.append((a, k)))
     hull_wear.reset()
     hit_feedback._last_decal_emit.clear()
-    hit_feedback._last_carve_time.clear()
-    hit_feedback._pending_carve_strength.clear()
     yield rec
     hull_wear.reset()
     hit_feedback._last_decal_emit.clear()
-    hit_feedback._last_carve_time.clear()
-    hit_feedback._pending_carve_strength.clear()
 
 
 @pytest.fixture
@@ -104,7 +98,7 @@ def _hit(ship, *, absorbed_hull=500.0, weapon_type="torpedo",
 
 def _phaser(ship, point=(1.0, 2.0, 3.0), absorbed_hull=50.0):
     _hit(ship, weapon_type="phaser", absorbed_hull=absorbed_hull,
-         allow_hull_carve=True, point=point)
+         allow_structural_wear=True, point=point)
 
 
 def _phaser_reach_gu():
@@ -228,18 +222,19 @@ def test_pending_entry_pins_its_ship_until_sent(fake, clock):
     assert ref() is None, "sent: the ship is released"
 
 
-def test_a_failing_wear_path_keeps_the_decal_and_carve(fake, monkeypatch):
-    from engine.appc import damage_eligibility, hull_breakup, part_severance
+def test_a_failing_wear_path_keeps_the_decal_and_severance(fake, monkeypatch):
+    from engine.appc import damage_eligibility, part_severance
 
     def _boom(*a, **k):
         raise RuntimeError("wear binding failed")
     monkeypatch.setattr(host_io, "hull_damage_add", _boom)
     monkeypatch.setattr(damage_eligibility, "is_eligible", lambda s: True)
-    monkeypatch.setattr(hull_breakup, "after_carve", lambda *a, **k: None)
-    monkeypatch.setattr(part_severance, "record_hit", lambda *a, **k: None)
+    severance = []
+    monkeypatch.setattr(part_severance, "record_hit",
+                        lambda *a, **k: severance.append(a))
     _hit(_Ship())
     assert len(fake.decals) == 1, "the scorch still lands"
-    assert len(fake.carves) == 1, "the carve still lands"
+    assert len(severance) == 1, "the part attribution still lands"
 
 
 def test_no_wear_when_shields_absorb_everything(fake):
@@ -254,7 +249,7 @@ def test_no_wear_in_god_mode(fake):
 
 def test_light_phaser_fire_leaves_no_wear(fake):
     _hit(_Ship(), weapon_type="phaser", absorbed_hull=5.0,
-         allow_hull_carve=False)
+         allow_structural_wear=False)
     hull_wear.drain(1.0)
     assert fake.wear == [] and fake.body_wear == []
 

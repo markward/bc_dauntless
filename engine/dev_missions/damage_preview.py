@@ -1,13 +1,14 @@
 """Developer-only "Damage Preview" mission.
 
-Spawns the player plus a stock pre-damaged Akira ~6 GU dead-ahead so the
-authored hull-damage path can be eyeballed in a single load:
+Spawns the player plus an Akira ~6 GU dead-ahead so hull damage can be
+eyeballed in a single load. A stock DamageTool script's volumes take the
+authored path:
 
     DamageAkira.AddDamage(pWreck)
         -> ShipClass.AddObjectDamageVolume(...)        (engine/appc/objects.py)
         -> engine.appc.visible_damage.queue_body_volume (deferred queue)
-        -> host.hull_carve_add(...)                     (next host-loop tick)
-        -> breach renderer                              (visible breaches)
+        -> host_io.hull_damage_add(..., kind 3)         (next host-loop tick)
+        -> plating + interior rooms                     (Internal records)
 
 Reuses QuickBattle's region for a known-good, visible space set + backdrop. The
 wreck is a friendly contact so it stays out of the way. Registered into the dev
@@ -22,7 +23,7 @@ import App
 import MissionLib
 import loadspacehelper
 
-# Stock DamageTool script: 22 authored volumes, within the 24-slot carve field.
+# Stock DamageTool script: 22 authored volumes, each an Internal record.
 # Unused on the damage-redesign spike (the Akira starts clean).
 _DAMAGE_SCRIPT = "Maelstrom.Episode5.E5M2.DamageAkira"
 

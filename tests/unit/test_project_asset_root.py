@@ -1,8 +1,8 @@
 """The renderer's PROJECT asset root -- where project-authored (non-BC)
 textures such as the collision-scuff normal map live: <PROJECT_ROOT>/native/
 assets. The binary only knew BC's game root, so a project asset had no way
-to resolve; this push mirrors hull_volume_set_cache_root (same boot site,
-same no-guard contract).
+to resolve; this push sits beside set_game_root (same boot site, same
+no-guard contract).
 """
 import ast
 import inspect
@@ -45,7 +45,7 @@ def test_binding_is_required_and_unguarded():
 
 
 def test_host_loop_pushes_it_beside_the_game_root():
-    """Same boot site as set_game_root / hull_volume_set_cache_root, bare."""
+    """Same boot site as set_game_root, bare."""
     src = Path(inspect.getsourcefile(__import__("engine.host_loop").host_loop)).read_text()
     assert "r.set_project_asset_root(str(_paths.project_asset_root()))" in src
 

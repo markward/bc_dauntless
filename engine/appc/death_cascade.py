@@ -15,11 +15,10 @@ whole of BC's death sequence:
         DeathExplosionDamage(..., fRadius / 4.0, 600.0)     # -> AddDamage
 
 That 30% branch is what makes a BC ship visibly come apart: over a 5-15 s death
-it lands roughly 7-20 `AddDamage` calls at fresh points all over the model, and
-strength 600 saturates our carve curve (kHullCarveStrengthIso 150 +
-450*0.0006 = 0.30 GU, the kHullCarveRadiusMaxGu clamp), so every one of them is
-a maximum-size hole. Our previous death sequence was a fixed 5 s of four sprite
-puffs that carved nothing at all.
+it lands roughly 7-20 `AddDamage` calls at fresh points all over the model,
+each an Internal hull-damage record (engine.appc.visible_damage) sized by the
+blast tier. Our previous death sequence was a fixed 5 s of four sprite puffs
+that damaged nothing at all.
 
 WHY THIS IS REIMPLEMENTED RATHER THAN CALLED. `Effects.ObjectExploding` would be
 the faithful thing to invoke, but it calls `SetLifeTime`, which registers the
@@ -36,7 +35,7 @@ The damage call goes straight to `ship.AddDamage` rather than through BC's
 because BC defers the call inside a TGSequence that may cross a save/load, and
 we fire immediately from a live reference.
 
-See docs/engine/damagetool-and-hull-damage-gaps.md for the carve curve.
+See engine/appc/visible_damage.py (ADD_DAMAGE_*) for the hole size and wear.
 """
 import engine.dev_mode as dev_mode
 from engine.core import frame_profiler
@@ -98,12 +97,6 @@ FINAL_BARRAGE_LEAD = 2.5     # the big finish lands at fTotalLifeLeft - 2.5
 # worst case is unbounded. BC tolerates that; we cap it. The cap is ~3x the
 # expected count for the longest window (15 s / 0.225 s mean ~= 67).
 MAX_BLASTS = 200
-
-# Swept cut radius for the death cascade's damage branch on a BREAKABLE
-# ship. Larger than combat's kHullCarveRadiusMaxGu (0.3) on purpose: no
-# 0.3 GU sphere can sever a 3.5 GU saucer, and a capsule between two random
-# points on the hull is a crack, not a dimple. Field-only (plan 2c).
-kCascadeCapsuleRadiusGu = 0.6
 
 
 def _rand(n: int) -> int:
@@ -203,10 +196,10 @@ def _sound_due(state: dict, blast_time: float) -> bool:
 
 
 def _fire(state: dict, sound_ok: bool) -> None:
-    """One explosion of the cascade: sample a point on the hull, maybe carve
-    there, then play the debris explosion (and maybe a sound) at it.
+    """One explosion of the cascade: sample a point on the hull, maybe damage
+    it there, then play the debris explosion (and maybe a sound) at it.
 
-    The carve is done BEFORE the VFX deliberately: a missing effect backend
+    The damage is done BEFORE the VFX deliberately: a missing effect backend
     must never cost the ship its damage. Raise-safe as a whole -- death logic
     cannot depend on VFX succeeding.
     """
@@ -222,13 +215,6 @@ def _fire(state: dict, sound_ok: bool) -> None:
             from engine.appc import visible_damage
             with frame_profiler.scope("casc.add_damage"), visible_damage.carve_scale(m):
                 ship.AddDamage(point, radius * DAMAGE_RADIUS_FRACTION, DAMAGE_STRENGTH)
-
-            from engine.appc import damage_geometry
-            if damage_geometry.breakables_allowed_for(ship):
-                from engine.appc import visible_damage
-                point2 = ship.GetRandomPointOnModel()
-                visible_damage.queue_world_capsule(ship, point, point2,
-                                                   kCascadeCapsuleRadiusGu)
 
         with frame_profiler.scope("casc.explosion"):
             _debris_explosion(ship, point, radius * BLAST_SIZE_FRACTION * m, rand)

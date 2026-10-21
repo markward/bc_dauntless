@@ -139,11 +139,6 @@ def spark_params(*, weapon_type, severity, absorbed_hull):
 DECAL_EMIT_INTERVAL = 0.2  # game-time seconds between decals per (ship, class)
 _last_decal_emit: dict = {}  # (id(ship), weapon_class) -> last emit game-time
 
-# Hull-carve emission throttle, parallel to _last_decal_emit. Keyed by
-# id(ship) only (a carve is weapon-agnostic geometry, unlike a decal class).
-_last_carve_time: dict = {}  # id(ship) -> last emit game-time
-_pending_carve_strength: dict = {}  # id(ship) -> strength accumulated since last emit
-
 
 def _mesh_xyz(ship, p):
     """`p` (a TGPoint3 in `ship`'s own set coordinates) as the tuple the
@@ -152,17 +147,6 @@ def _mesh_xyz(ship, p):
     from engine.systems import frames
     q = frames.shifted(p, frames.view_offset(frames.containing_set(ship)))
     return (q.x, q.y, q.z)
-
-
-def _vis_dmg_mod(ship, attr: str) -> float:
-    """Per-ship visible-damage multiplier (SetVisibleDamage{Radius,Strength}Modifier,
-    from loadspacehelper hardpoint stats), default 1.0. Guards the TGObject
-    _Stub fallback."""
-    try:
-        m = float(getattr(ship, attr, 1.0))
-    except (TypeError, ValueError):
-        return 1.0
-    return m if m > 0.0 else 1.0
 
 
 def classify(*, absorbed_shields: float, absorbed_subsystem: float,
@@ -222,7 +206,7 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
              ship_instances=None,
              weapon_type: str | None = None, radius: float = 0.0,
              persist_decal: bool = True,
-             allow_hull_carve: bool = True,
+             allow_structural_wear: bool = True,
              tangent=None, decal_radius: float | None = None,
              decal_dent: float = 0.0,
              shield_point=None,
@@ -236,15 +220,15 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
     were mutually exclusive on severity alone, which suppressed the flash the
     moment a facing started leaking — see the comments at each site.
 
-    Severity (from classify) still drives audio tier, camera shake, the scorch
-    decal and the hull carve. Audio fires for every severity. Camera shake fires
+    Severity (from classify) still drives audio tier, camera shake and the
+    scorch decal. Audio fires for every severity. Camera shake fires
     only when ship == Game_GetCurrentGame().GetPlayer().
 
     Native hit/damage touches route through the engine.host_io façade,
     which no-ops when the native module is absent (headless): no `host`
     handle is threaded in. `ship_instances` maps ship→renderer instance id;
     when None or the ship is unmapped, the renderer-anchored effects
-    (shield flash, sparks, decal, carve) are skipped.
+    (shield flash, sparks, decal, plating wear) are skipped.
     App.g_kSoundManager=None silently skips audio.
 
     `weapon_type` is "phaser" / "torpedo" / "collision" / None. Used by
@@ -257,9 +241,14 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
 
     `tangent` is the world-space slip direction (TGPoint3) for a collision
     scuff, or None. `decal_dent` is the scuff's impact weight (1 = crumple,
-    0 = scrape). `decal_radius` overrides `radius` for the DECAL ONLY —
-    the carve and everything else keep `radius` (spec §3: `r_hit` also sets
-    the subsystem catchment, so it must not carry the scuff size).
+    0 = scrape). `decal_radius` overrides `radius` for the scorch/scuff decal
+    and the plating wear that matches its reach; everything else keeps
+    `radius` (spec §3: `r_hit` also sets the subsystem catchment, so it must
+    not carry the scuff size).
+
+    `allow_structural_wear` is False for LIGHT (PP_LOW) phaser fire: the hull
+    is not structurally damaged, so the scorch decal still fires but no
+    plating wear lands and no part-severance share is recorded.
 
     `single_impact` marks a one-push hit (a collision's closing impact) for
     the single-impact shield seed; `shield_radius` overrides `radius` for the
@@ -393,8 +382,8 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                 )
             # Plating wear from the real hull damage dealt. Light phaser fire
             # stays cosmetic. AFTER the scorch and isolated: a wear failure
-            # must never cost the hit its scorch or its carve.
-            if allow_hull_carve or weapon_type != "phaser":
+            # must never cost the hit its scorch or its part attribution.
+            if allow_structural_wear or weapon_type != "phaser":
                 try:
                     from engine.appc import hull_wear
                     wear = hull_wear.wear_for_hit(weapon_type, absorbed_hull,
@@ -417,65 +406,19 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                     from engine import dev_mode
                     dev_mode.log_swallowed("hull wear", exc)
 
-    # 5. Hull carve (breach): deposit field strength; eligible ships only;
-    # throttled. Same hull-absorbing, mesh-normal, renderer-present, committed-hit
-    # gating as the decal, PLUS the target must be damage-eligible (player +
-    # capped nearest/largest; see engine.appc.damage_eligibility). There is NO
-    # per-hit magnitude gate: the C++ field accumulates strength and only shows a
-    # carve once the running total crosses the iso, so sustained light fire
-    # eventually breaches (BC's additive metaball field).
-    # `allow_hull_carve` is False for LIGHT (PP_LOW) phaser fire: the hull is
-    # not structurally damaged, so the scorch decal above still fires but no
-    # voxel breach is carved (and nothing accumulates into the field).
-    if (allow_hull_carve and absorbed_hull > 0.0 and normal is not None
+    # 5. Appendage severance (part_severance): eligible ships only (player +
+    # capped nearest/largest; see engine.appc.damage_eligibility), with the
+    # same hull-absorbing, mesh-normal, renderer-present, committed-hit gating
+    # as the decal. Light phaser fire records nothing.
+    if (allow_structural_wear and absorbed_hull > 0.0 and normal is not None
             and persist_decal and ship_instances is not None):
-        from engine.appc import hull_carve, damage_eligibility, damage_decals
+        from engine.appc import damage_eligibility
         if damage_eligibility.is_eligible(ship):
             iid = ship_instances.get(ship)
-            if iid is not None:
-                now = damage_decals.current_game_time()
-                ship_key = id(ship)
-                # Accumulate strength across the throttle window and flush the
-                # SUM, so the (perf) throttle doesn't discard the ~14 of 15 ticks
-                # between emits. Otherwise sustained light fire (a phaser absorbs
-                # only a few hull/tick) loses almost all its damage and never
-                # reaches the iso. Deposit at the latest hit point; the C++ field
-                # merges it with nearby carves.
-                _pending_carve_strength[ship_key] = (
-                    _pending_carve_strength.get(ship_key, 0.0)
-                    + hull_carve.carve_strength(absorbed_hull)
-                    * _vis_dmg_mod(ship, "_vis_dmg_strength_mod"))
-                if now - _last_carve_time.get(ship_key, -1e9) >= hull_carve.CARVE_EMIT_INTERVAL:
-                    _last_carve_time[ship_key] = now
-                    strength = _pending_carve_strength.pop(ship_key, 0.0)
-                    # Carve size is ABSOLUTE (a weapon makes the same hole on any
-                    # hull — no scaling by ship size). The only per-ship scale is
-                    # BC's authored DamageRadMod (default 1.0; big structures set
-                    # it larger).
-                    host_io.hull_carve_add(
-                        iid,
-                        _mesh_xyz(ship, point),
-                        (normal.x, normal.y, normal.z),
-                        hull_carve.carve_influ_gu(radius),
-                        strength,
-                        now,
-                        0.0,        # floor: combat carves are strength-gated
-                        _vis_dmg_mod(ship, "_vis_dmg_radius_mod"),
-                    )
-                    from engine.appc import hull_breakup
-                    hull_breakup.after_carve(ship, iid, ship_instances)
-
-            # Appendage severance (part_severance): attribute this hit to a
-            # named part and shear the part off once it has absorbed its share.
-            #
-            # Deliberately OUTSIDE the carve throttle above -- that throttle
-            # exists to bound carve emissions and breach VFX, and dropping
-            # 14 ticks in 15 of a sustained beam would make a wing take fifteen
-            # times the fire to come off. Attribution is a float add.
-            #
-            # Also deliberately NOT gated on the carve: severance answers "has
-            # this wing taken enough", which is true whether or not the hull
-            # geometry happened to break at that spot.
+            # Attribute this hit to a named part and shear the part off once
+            # it has absorbed its share. Every tick of a sustained beam counts
+            # (no throttle): dropping 14 ticks in 15 would make a wing take
+            # fifteen times the fire to come off. Attribution is a float add.
             if iid is not None:
                 from engine.appc import part_severance
                 conv = host_io.world_to_body(
@@ -610,7 +553,7 @@ def beam_contact(*, ship, source, point, normal, shield_point, tick_damage,
     So this runs on every contact frame that is NOT a flush frame and does
     only the continuous half: the shield splash, or the hull flash and
     sparks. Everything belonging to a HIT — damage, audio, smoke, the
-    scorch decal, the hull carve, camera shake — stays on the pulse, in
+    scorch decal, the plating wear, camera shake — stays on the pulse, in
     apply_hit -> dispatch.
 
     `tick_damage` is what this frame's slice of the beam would deposit. It

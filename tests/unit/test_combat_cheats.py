@@ -154,7 +154,6 @@ def test_god_mode_player_gets_no_persistent_decal(env, monkeypatch):
     monkeypatch.setattr(host_io, "hull_damage_add", lambda *a, **k: None)
     monkeypatch.setattr(host_io, "hull_damage_add_body", lambda *a, **k: None)
     monkeypatch.setattr(host_io, "world_to_body", lambda *a, **k: None)
-    monkeypatch.setattr(host_io, "hull_carve_add", lambda *a, **k: None)
 
     # Drain a face so the hit would reach the hull (the decal path) absent god mode.
     player.GetShields().SetCurrentShields(0, 0.0)

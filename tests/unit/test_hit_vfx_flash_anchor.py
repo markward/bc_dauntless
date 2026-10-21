@@ -27,8 +27,6 @@ def _clear(monkeypatch):
     # renderer; stub them for every test in this file.
     monkeypatch.setattr(hit_feedback.host_io, "damage_decal_add",
                         lambda *a, **k: None)
-    monkeypatch.setattr(hit_feedback.host_io, "hull_carve_add",
-                        lambda *a, **k: None)
     monkeypatch.setattr(hit_feedback.host_io, "hull_damage_add",
                         lambda *a, **k: None)
     yield

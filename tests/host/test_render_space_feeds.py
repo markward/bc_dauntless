@@ -579,8 +579,6 @@ def _small(points):
 
 def test_hit_feedback_hands_every_query_a_relative_point(sibling_target, monkeypatch):
     from engine.appc import damage_decals, damage_eligibility, hit_feedback
-    # The damage-redesign spike ships carving OFF; this pins the carve path.
-    monkeypatch.setenv("DAUNTLESS_HULL_CARVING", "1")
     target, local, native = sibling_target
     monkeypatch.setattr(damage_decals, "current_game_time", lambda: 1.0)
     monkeypatch.setattr(damage_eligibility, "is_eligible", lambda s: True)
@@ -592,16 +590,14 @@ def test_hit_feedback_hands_every_query_a_relative_point(sibling_target, monkeyp
         ship_instances={target: 3}, weapon_type="torpedo", radius=0.2)
     names = {n for n, _ in native.points}
     assert {"shield_hit", "damage_decal_add", "hull_damage_add",
-            "hull_carve_add", "world_to_body"} <= names, names
+            "world_to_body"} <= names, names
     _small(native.points)
     decal = dict(native.points)["damage_decal_add"]
     assert decal == pytest.approx((-3.0, 0.0, 0.0), abs=1e-6)
 
 
-def test_visible_damage_probe_and_carve_are_relative(sibling_target, monkeypatch):
+def test_visible_damage_probe_and_record_are_relative(sibling_target, monkeypatch):
     from engine.appc import visible_damage
-    # The damage-redesign spike ships carving OFF; this pins the carve path.
-    monkeypatch.setenv("DAUNTLESS_HULL_CARVING", "1")
     target, local, native = sibling_target
     visible_damage._pending.clear()
     visible_damage.queue_world_carve(
@@ -611,7 +607,7 @@ def test_visible_damage_probe_and_carve_are_relative(sibling_target, monkeypatch
     finally:
         visible_damage._pending.clear()
     names = [n for n, _ in native.points]
-    assert "ray_trace_mesh" in names and "hull_carve_add" in names, names
+    assert "ray_trace_mesh" in names and "hull_damage_add" in names, names
     _small(native.points)
 
 

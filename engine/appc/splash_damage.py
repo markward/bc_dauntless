@@ -18,7 +18,7 @@ BC's exact application law lives in the DEFERRED DamageableObject::update()
 and RADIUS are the ship's real authored values.
 
 This replaces the earlier artistic AoE that hung off the warp-core breach; the
-breach now only spawns its VFX (shockwave ring + hull carve).
+breach now only spawns its VFX (shockwave ring + hull wound records).
 
 Plan 2 (system-frames spec §1/§6) moves this off the retired Plan-1 same-set
 stopgap onto FRAMES: the blast centre is expressed in each TARGET's own

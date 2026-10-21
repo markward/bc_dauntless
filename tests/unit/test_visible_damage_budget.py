@@ -1,11 +1,13 @@
-"""Visible-damage carves are emitted under a per-frame time budget.
+"""Visible-damage volumes are emitted under a per-frame time budget.
 
-A dying ship's SDK cascade can land 2-6 carves in one frame, each a whole
-reach-box brush pass (~5.7 ms in Debug for a Sovereign): 34 ms of carving in
-one frame (perf-register P-4, SIG-044). advance() now emits queued carves in
-order until the budget is spent -- always at least one, so the queue drains --
-and leaves the rest for the next frames. Only the visible hole waits: the
-gameplay half of AddDamage is applied when it is called.
+A dying ship's SDK cascade can land 2-6 AddDamage volumes in one frame. When
+each was a voxel carve (a whole reach-box brush pass, ~5.7 ms in Debug for a
+Sovereign) that was 34 ms in one frame (perf-register P-4, SIG-044); each is
+now an Internal record plus a mesh probe, but the budget still bounds the
+frame. advance() emits queued volumes in order until the budget is spent --
+always at least one, so the queue drains -- and leaves the rest for the next
+frames. Only the visible hole waits: the gameplay half of AddDamage is
+applied when it is called.
 """
 import pytest
 
@@ -38,14 +40,14 @@ def rig(monkeypatch):
     carves = []
     cost = {"ms": 5.0}
 
-    def spy(iid, point, normal, influ, strength, time,
-            floor_radius=0.0, radius_modifier=1.0, carve_field=True):
+    def spy(iid, point, normal, radius, wear, kind):
         carves.append(point)
         clock.t += cost["ms"] / 1000.0
 
-    monkeypatch.setattr(host_io, "hull_carve_add", spy)
-    # The damage-redesign spike ships carving OFF; these pin the carve path.
-    monkeypatch.setenv("DAUNTLESS_HULL_CARVING", "1")
+    from engine.appc import hull_breakup
+    monkeypatch.setattr(host_io, "hull_damage_add", spy)
+    monkeypatch.setattr(host_io, "ray_trace_mesh", lambda *a, **k: None)
+    monkeypatch.setattr(hull_breakup, "after_wear", lambda *a, **k: [])
     visible_damage.reset()
     yield clock, carves, cost
     visible_damage.reset()

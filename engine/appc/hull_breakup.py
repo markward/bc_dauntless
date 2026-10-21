@@ -1,31 +1,22 @@
-"""After a carve lands: did it sever anything, and if so, what comes off.
+"""After plating wear lands: did it cut a piece off, and if so, what comes off.
 
-The single hook for every carve emission site (combat in hit_feedback,
-authored / cascade in visible_damage), so weapons, collisions and the death
-cascade all sever the same way. Spec: docs/superpowers/specs/
-2026-09-11-breakable-hull-components-design.md.
+The single hook for every wear site (combat in hull_wear, the AddDamage /
+death-cascade and warp-core records in visible_damage and warp_core_breach,
+internal_blast), so weapons, collisions and deaths all sever the same way.
+Spec: docs/superpowers/specs/2026-09-11-breakable-hull-components-design.md
+(the original carve-driven design) and the layered hull damage specs.
 
-Connectivity is a full-lattice BFS, so it is not free: `after_carve` is
-throttled per ship to `kBreakupCheckInterval`. A carve that lands inside the
-window marks the ship *pending* rather than being dropped -- `drain()`,
+`after_wear` asks the native side (`host_io.hull_split_parts`) to break off
+every PIECE the wear has cut from the main body -- the structure parts that
+leave together, as one chunk (Ruling 4) -- hiding them on the parent and
+instancing a chunk that draws only them. The check is not free, so it is
+throttled per ship to `kBreakupCheckInterval`: wear that lands inside the
+window marks the ship *pending* rather than being dropped, and `drain()`,
 called once per frame from host_loop, runs the deferred check as soon as the
-window has elapsed. A sever detected half a second late is invisible; running
-the BFS on every one of ten carves a second on eight ships is not.
+window has elapsed. A sever detected half a second late is invisible.
 
-The native side (`hull_split_detached`) also asks a cheap local question
-before the BFS: after an instance's first check, a carve that its own
-neighbourhood proves harmless -- see `voxel::hull_severance_local` -- skips
-the full flood, and a check with no carve since the last one returns at
-once. So the throttle here bounds the RATE; the native check bounds the
-COST. Neither replaces the other.
-
-`after_wear` is the plating-wear twin (hull_wear / internal_blast /
-visible_damage call it after wear reaches the store):
-`host_io.hull_split_parts` breaks off every PIECE the wear has cut from the
-main body -- the structure parts that leave together, as one chunk (Ruling 4)
--- hiding them on the parent and instancing a chunk that draws only them. Same throttle and drain,
-on its own clock, so a carve check never delays a wear check. Rocks never
-sever this way (they crumble: engine.rocks.death).
+Rocks never sever this way (they crumble: engine.rocks.death), and an
+articulated ship's parts leave through part_severance instead.
 """
 import weakref
 
@@ -37,8 +28,6 @@ from engine.appc.math import TGPoint3
 
 kBreakupCheckInterval = 0.5   # s; the full BFS is still the worst case
 
-_last_check: dict = {}        # id(ship) -> game time of last split
-_pending: dict = {}           # id(ship) -> (ship, iid, ship_instances)
 _last_wear_check: dict = {}   # id(ship) -> game time of last part check
 _pending_wear: dict = {}      # id(ship) -> (ship, iid, ship_instances)
 _severed: dict = {}           # id(ship) -> (weakref(ship), iid, {part, ...}) spawned
@@ -47,21 +36,6 @@ _severed: dict = {}           # id(ship) -> (weakref(ship), iid, {part, ...}) sp
 def _now():
     from engine.appc import damage_decals
     return damage_decals.current_game_time()
-
-
-def after_carve(ship, iid, ship_instances=None, now=None):
-    """Run after ANY carve on `iid`. No-op unless the ship may shed chunks.
-    Returns the DebrisChunks spawned by this call -- a carve deferred by the
-    throttle returns [] here and is drained (and its spawns realized) later
-    by drain()."""
-    if iid is None or not damage_geometry.breakables_allowed_for(ship):
-        return []
-    now = _now() if now is None else now
-    key = id(ship)
-    if now - _last_check.get(key, -1e9) < kBreakupCheckInterval:
-        _pending[key] = (ship, iid, ship_instances)
-        return []
-    return _check(ship, iid, ship_instances, now)
 
 
 def after_wear(ship, iid, ship_instances=None, now=None):
@@ -90,13 +64,9 @@ def after_wear(ship, iid, ship_instances=None, now=None):
 
 
 def drain(now=None):
-    """Per frame: run the split for every ship that took a carve (or wear)
-    inside its throttle window, once the window has elapsed."""
+    """Per frame: run the split for every ship that took wear inside its
+    throttle window, once the window has elapsed."""
     now = _now() if now is None else now
-    for key, (ship, iid, si) in list(_pending.items()):
-        if now - _last_check.get(key, -1e9) >= kBreakupCheckInterval:
-            del _pending[key]
-            _check(ship, iid, si, now)
     for key, (ship, iid, _si) in list(_pending_wear.items()):
         if now - _last_wear_check.get(key, -1e9) >= kBreakupCheckInterval:
             del _pending_wear[key]
@@ -104,7 +74,6 @@ def drain(now=None):
 
 
 def reset():
-    _last_check.clear(); _pending.clear()
     _last_wear_check.clear(); _pending_wear.clear(); _severed.clear()
 
 
@@ -152,29 +121,6 @@ def _check_parts(ship, iid, now):
     spawned = []
     with frame_profiler.scope("hb.spawn"):
         _spawn_components(ship, iid, comps, parent_mass, total, spawned)
-    return spawned
-
-
-def _check(ship, iid, ship_instances, now):
-    """The actual split: connectivity, chunk spawns, bursts, subsystem kill.
-    Always call with the throttle already cleared for `ship`."""
-    _last_check[id(ship)] = now
-    try:
-        with frame_profiler.scope("hb.split_detached"):
-            comps = host_io.hull_split_detached(iid, debris_chunk.kChunkMinCells)
-    except Exception as _e:
-        dev_mode.log_swallowed("hull_split_detached", _e)
-        return []
-    if not comps:
-        return []
-
-    main_cells = int(comps[0].get("main_body_cells", 0))
-    total_cells = main_cells + sum(int(c["cells"]) for c in comps)
-    parent_mass = float(ship.GetMass()) if hasattr(ship, "GetMass") else 1.0
-
-    spawned = []
-    with frame_profiler.scope("hb.spawn"):
-        _spawn_components(ship, iid, comps, parent_mass, total_cells, spawned)
     return spawned
 
 

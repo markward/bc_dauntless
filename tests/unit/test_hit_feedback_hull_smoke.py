@@ -30,7 +30,6 @@ def _dispatch(monkeypatch, *, absorbed_shields, absorbed_hull, weapon_type):
     monkeypatch.setattr(host_io, "world_to_body", lambda *a, **k: None)
     monkeypatch.setattr(host_io, "damage_decal_add", lambda *a, **k: None)
     monkeypatch.setattr(host_io, "hull_damage_add", lambda *a, **k: None)
-    monkeypatch.setattr(host_io, "hull_carve_add", lambda *a, **k: None)
     ship = _Ship()
     hit_feedback.dispatch(
         ship=ship, source=None,

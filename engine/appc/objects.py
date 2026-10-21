@@ -977,8 +977,8 @@ class DamageableObject(PhysicsObjectClass):
 
     # ── Visible (geometry) damage ───────────────────────────────────────────────
     # BC's DamageTool authored hull wrecks as body-frame damage spheres. These
-    # methods route authored + runtime visible damage into our hull-carve
-    # renderer via engine.appc.visible_damage (deferred until the ship's render
+    # methods route authored + runtime visible damage into Internal hull-damage
+    # records via engine.appc.visible_damage (deferred until the ship's render
     # instance is realized). See
     # docs/engine/damagetool-and-hull-damage-gaps.md.
 
@@ -999,15 +999,15 @@ class DamageableObject(PhysicsObjectClass):
         explosion / collision damage primitive (Effects.DeathExplosionDamage,
         mission ``*.AddDamage(...)``). Two faithful effects:
 
-        1. Deposits the visible world-space hull carve (`pEmitPos` is a
-           world-space point, e.g. GetRandomPointOnModel).
+        1. Leaves the visible hole: an Internal hull-damage record at
+           `pEmitPos` (a world-space point, e.g. GetRandomPointOnModel).
         2. Deals GAMEPLAY damage to hull/subsystems BYPASSING shields —
            verified by dev-console probe q02 (hull dropped, faces untouched),
            unlike normal weapon fire which strict-cascades through shields.
 
         The gameplay half runs only for full ships (``ShipClass`` carries the
         hull/shield/subsystem surface ``apply_hit`` needs); bare damageable
-        props (wrecks, debris) just carve.
+        props (wrecks, debris) just take the visible hole.
         """
         from engine.appc import visible_damage
         visible_damage.queue_world_carve(self, pEmitPos, fRadius, fDamage)
@@ -1019,14 +1019,14 @@ class DamageableObject(PhysicsObjectClass):
                              splash_radius=float(fRadius), bypass_shields=True)
 
     def DamageRefresh(self, *args) -> None:
-        """Re-polygonize authored damage. No-op: our breach renderer is
-        per-frame, so carves are already live."""
+        """Re-polygonize authored damage. No-op: the plating renders its
+        damage records every frame, so they are already live."""
         return None
 
     def RemoveVisibleDamage(self) -> None:
         """Clear visible damage (Actions/ShipScriptActions.py). Drops PENDING
-        volumes only; clearing already-emitted carves needs a native
-        HullCarveField::clear() + binding (Gap-1 follow-up)."""
+        volumes only; clearing already-emitted records needs a native
+        HullDamageStore clear binding (not yet implemented)."""
         from engine.appc import visible_damage
         visible_damage.clear_for(self)
 

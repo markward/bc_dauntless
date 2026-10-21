@@ -170,8 +170,7 @@ def test_ship_load_key_legacy_unchanged():
 # ---- Seam 2: _MissionLoader._realize_session (QuickBattle boot path) ------
 
 def test_realize_session_redirects_stock_asteroid(monkeypatch):
-    """Drives _realize_session the same way test_hull_volume_wiring.py does:
-    via the real QuickBattle boot cascade (load_quickbattle), which realizes
+    """Drives _realize_session via the real QuickBattle boot cascade (load_quickbattle), which realizes
     exactly one ship (the player). _ship_nif_path is monkeypatched so that
     ship resolves to a real game-root stock-asteroid path."""
     from tools import mission_harness

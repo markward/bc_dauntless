@@ -1,7 +1,8 @@
 """Tests for the warp-core breach (engine/appc/warp_core_breach.py).
 
-The breach is now a VFX-only dramatic layer: a shockwave ring + a hull carve at
-the core's world position. It deals NO damage of its own — collateral damage on
+The breach is now a VFX-only dramatic layer: a shockwave ring + Internal hull
+damage records growing at the core's world position (their growth is pinned by
+tests/unit/test_warp_core_breach_visual.py). It deals NO damage of its own — collateral damage on
 death is BC's faithful m_splashDamage, applied by engine.appc.splash_damage from
 ship_death.begin (see tests/unit/test_splash_damage.py). This file guards that
 the breach spawns its VFX and, crucially, that it never re-grows an AoE damage
@@ -60,12 +61,15 @@ def _spy_shockwave(monkeypatch):
     return spawned
 
 
-def _spy_carve(monkeypatch):
-    from engine.appc import core_breach_carve
-    scheduled = []
-    monkeypatch.setattr(core_breach_carve, "schedule",
-                        lambda ship: scheduled.append(ship))
-    return scheduled
+def _spy_records(monkeypatch):
+    """The core's Internal records, as the instance ids they landed on."""
+    from engine import host_io
+    from engine.appc import hull_breakup
+    records = []
+    monkeypatch.setattr(host_io, "hull_damage_add",
+                        lambda iid, *a, **k: records.append(iid))
+    monkeypatch.setattr(hull_breakup, "after_wear", lambda *a, **k: [])
+    return records
 
 
 def test_breach_deals_no_damage(monkeypatch):
@@ -76,7 +80,7 @@ def test_breach_deals_no_damage(monkeypatch):
     monkeypatch.setattr(combat, "apply_hit",
                         lambda *a, **k: hits.append(a))
     _spy_shockwave(monkeypatch)
-    _spy_carve(monkeypatch)
+    _spy_records(monkeypatch)
     src = _Ship("Doomed", TGPoint3(0, 0, 0), core=_Core(5000.0))
     near = _Ship("Near", TGPoint3(0.5, 0, 0), radius=0.5)
     _patch_ships(monkeypatch, [src, near])
@@ -88,19 +92,19 @@ def test_breach_deals_no_damage(monkeypatch):
 
 def test_arm_then_advance_spawns_vfx_once(monkeypatch):
     spawned = _spy_shockwave(monkeypatch)
-    scheduled = _spy_carve(monkeypatch)
+    records = _spy_records(monkeypatch)
     src = _Ship("Doomed", TGPoint3(0, 0, 0), core=_Core(5000.0))
     _patch_ships(monkeypatch, [src])
 
     warp_core_breach.arm(src)
-    warp_core_breach.advance(0.0)
+    warp_core_breach.advance(0.0, ship_instances={src: 5})
     assert len(spawned) == 1
-    assert scheduled == [src]
+    assert records == [5]
 
 
 def test_arm_is_single_fire(monkeypatch):
     spawned = _spy_shockwave(monkeypatch)
-    _spy_carve(monkeypatch)
+    _spy_records(monkeypatch)
     src = _Ship("Doomed", TGPoint3(0, 0, 0), core=_Core(5000.0))
     _patch_ships(monkeypatch, [src])
 
@@ -113,19 +117,19 @@ def test_arm_is_single_fire(monkeypatch):
 
 def test_no_core_ship_never_detonates(monkeypatch):
     spawned = _spy_shockwave(monkeypatch)
-    scheduled = _spy_carve(monkeypatch)
+    records = _spy_records(monkeypatch)
     src = _Ship("Shuttle", TGPoint3(0, 0, 0), core=None)
     _patch_ships(monkeypatch, [src])
 
     warp_core_breach.arm(src)
-    warp_core_breach.advance(0.0)
+    warp_core_breach.advance(0.0, ship_instances={src: 5})
     assert spawned == []
-    assert scheduled == []
+    assert records == []
 
 
 def test_reset_clears_state(monkeypatch):
     spawned = _spy_shockwave(monkeypatch)
-    _spy_carve(monkeypatch)
+    _spy_records(monkeypatch)
     src = _Ship("Doomed", TGPoint3(0, 0, 0), core=_Core(5000.0))
     _patch_ships(monkeypatch, [src])
     warp_core_breach.arm(src)
@@ -142,7 +146,7 @@ def test_breach_radius_is_forty_gu():
 def test_detonate_spawns_one_shockwave_at_core_center(monkeypatch):
     from engine.appc import shockwaves
     spawned = _spy_shockwave(monkeypatch)
-    _spy_carve(monkeypatch)
+    _spy_records(monkeypatch)
     import engine.appc.ship_iter as ship_iter
     src = _Ship("Doomed", TGPoint3(2.0, 0.0, 0.0), core=_Core(5000.0))
     monkeypatch.setattr(ship_iter, "iter_ships", lambda *a, **k: [src])
@@ -161,13 +165,13 @@ def test_detonate_no_longer_has_spawn_fireball():
     assert not hasattr(warp_core_breach, "_spawn_fireball")
 
 
-def test_detonate_schedules_core_breach_carve(monkeypatch):
+def test_detonate_lays_the_first_core_record(monkeypatch):
     _spy_shockwave(monkeypatch)
-    scheduled = _spy_carve(monkeypatch)
+    records = _spy_records(monkeypatch)
     import engine.appc.ship_iter as ship_iter
     src = _Ship("Doomed", TGPoint3(0.0, 0.0, 0.0), core=_Core(5000.0))
     monkeypatch.setattr(ship_iter, "iter_ships", lambda *a, **k: [src])
 
-    warp_core_breach.detonate(src)
+    warp_core_breach.detonate(src, ship_instances={src: 3})
 
-    assert scheduled == [src]
+    assert records == [3]

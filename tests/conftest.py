@@ -1123,7 +1123,7 @@ def _reset_leakable_engine_globals():
         _hl._note_static_backdrops([])
     except Exception:
         pass
-    # Hit-feedback emission throttles. All three are keyed by id(ship) and
+    # Hit-feedback emission throttle. It is keyed by id(ship) and
     # id() is a RECYCLED address, so a dead ship's entry is inherited by a
     # LATER test's ship that happens to land there. Every decal test pins the
     # clock to the same instant, so an inherited entry makes `now - last == 0`
@@ -1134,8 +1134,6 @@ def _reset_leakable_engine_globals():
     try:
         from engine.appc import hit_feedback as _hf
         _hf._last_decal_emit.clear()
-        _hf._last_carve_time.clear()
-        _hf._pending_carve_strength.clear()
         from engine.appc import hull_wear as _hw
         _hw.reset()
     except Exception:
@@ -1326,15 +1324,14 @@ def _reset_leakable_engine_globals():
         ("engine.appc.object_lifetime", "_timed"),
         ("engine.appc.visible_damage", "_pending"),
         ("engine.appc.internal_blast", "_pending"),
+        ("engine.appc.warp_core_breach", "_growing"),
         ("engine.audio.attached_sources", "_attached"),
         ("engine.audio.hum_allocator", "_humming"),
         # Detached hull chunks + the per-ship breakup throttle: a chunk left
         # live by one test is yielded by collisions.iter_collidables() in
-        # every later test, and a stale _pending entry re-runs a split on a
-        # ship that no longer exists.
+        # every later test, and a stale _pending_wear entry re-runs a split
+        # on a ship that no longer exists.
         ("engine.appc.debris_chunk", "_live"),
-        ("engine.appc.hull_breakup", "_pending"),
-        ("engine.appc.hull_breakup", "_last_check"),
         ("engine.appc.hull_breakup", "_pending_wear"),
         ("engine.appc.hull_breakup", "_last_wear_check"),
         ("engine.appc.hull_breakup", "_severed"),

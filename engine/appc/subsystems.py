@@ -2336,7 +2336,7 @@ class PowerSubsystem(ShipSubsystem):
         power plant may breach.  Inert objects (asteroids) carry a hidden,
         non-targetable Power Plant (SetTargetable(0)); when the death cascade
         zeroes it, it must NOT throw a warp-core explosion with its unique VFX
-        (shockwave + carve).  ``_breach_fired`` is still set so we do not
+        (shockwave + wound).  ``_breach_fired`` is still set so we do not
         re-evaluate every tick — the plant is marked "handled" even though
         no breach is emitted.
 
@@ -2344,7 +2344,7 @@ class PowerSubsystem(ShipSubsystem):
         objects.py:695-699 critical-subsystem pattern:
 
         * warp_core_breach.arm(ship) — queues the breach VFX (shockwave ring +
-          hull carve), spawned on the next warp_core_breach.advance() (driven
+          hull wound records), spawned on the next warp_core_breach.advance() (driven
           by the game loop). It deals no damage; the source ship's collateral
           comes from its faithful splash (splash_damage, via ship_death.begin).
         * ship_death.begin(ship) — starts the source ship's own death sequence

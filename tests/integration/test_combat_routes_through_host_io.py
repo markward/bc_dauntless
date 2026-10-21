@@ -60,7 +60,6 @@ def test_apply_hit_shield_hit_routes_through_host_io(monkeypatch):
     monkeypatch.setattr(host_io, "damage_decal_add", lambda *a, **k: None)
     monkeypatch.setattr(host_io, "hull_damage_add", lambda *a, **k: None)
     monkeypatch.setattr(host_io, "hull_damage_add_body", lambda *a, **k: None)
-    monkeypatch.setattr(host_io, "hull_carve_add", lambda *a, **k: None)
 
     ship = _Ship(_Shield(front_charge=1000.0))
     point = TGPoint3(0.0, 1.0, 0.0)  # FRONT face — body +Y.
@@ -91,7 +90,6 @@ def test_apply_hit_shield_flash_skipped_without_instance(monkeypatch):
     monkeypatch.setattr(host_io, "damage_decal_add", lambda *a, **k: None)
     monkeypatch.setattr(host_io, "hull_damage_add", lambda *a, **k: None)
     monkeypatch.setattr(host_io, "hull_damage_add_body", lambda *a, **k: None)
-    monkeypatch.setattr(host_io, "hull_carve_add", lambda *a, **k: None)
 
     ship = _Ship(_Shield(front_charge=1000.0))
     combat.apply_hit(ship, damage=30.0, hit_point=TGPoint3(0.0, 1.0, 0.0),

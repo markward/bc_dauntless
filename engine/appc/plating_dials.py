@@ -100,8 +100,7 @@ def _step(name: str, direction: int) -> None:
 
 
 def register() -> None:
-    """Dev boot. DAUNTLESS_PLATING=0 starts with the layer off (perf A/B:
-    with DAUNTLESS_HULL_CARVING=1 it is the pre-spike damage look)."""
+    """Dev boot. DAUNTLESS_PLATING=0 starts with the layer off (perf A/B)."""
     import os
     from engine import dev_dial_groups
     if os.environ.get("DAUNTLESS_PLATING", "1").strip() == "0":

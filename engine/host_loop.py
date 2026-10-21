@@ -1047,8 +1047,8 @@ def _advance_combat(ships, dt: float, ship_instances=None,
     """
     ships_list = list(ships)
 
-    # Refresh damage-carve eligibility for this tick before any hits are
-    # processed: player always + capped nearest/largest ships.
+    # Refresh damage eligibility (part severance) for this tick before any
+    # hits are processed: player always + capped nearest/largest ships.
     # See engine.appc.damage_eligibility.
     with frame_profiler.scope("cb.eligibility"):
         damage_eligibility.update(ships_list)
@@ -1090,9 +1090,6 @@ def _advance_combat(ships, dt: float, ship_instances=None,
             subsystem_cascade.advance(dt)
         with frame_profiler.scope("dmg.core_breach"):
             warp_core_breach.advance(dt, ship_instances=ship_instances)
-        from engine.appc import core_breach_carve
-        with frame_profiler.scope("dmg.core_carve"):
-            core_breach_carve.advance(dt, ship_instances=ship_instances)
         from engine.appc import visible_damage
         with frame_profiler.scope("dmg.visible"):
             visible_damage.advance(dt, ship_instances=ship_instances)
@@ -1280,7 +1277,7 @@ def _push_combat_render_data(ships_list, *, ship_instances=None,
     # Per-frame VFX descriptor lists route through the host_io façade, which
     # no-ops when the native module is absent (headless). The hit/damage
     # bindings (ray_trace_mesh, shield_hit, world_to_body, …) inside the
-    # _build_* helpers and the combat/carve advances now route through
+    # _build_* helpers and the combat/damage advances now route through
     # host_io too, so nothing below consumes the raw `host` module.
     with frame_profiler.scope("cb.render_data"):
         host_io.set_torpedoes(_build_torpedo_render_data())
@@ -4431,22 +4428,6 @@ def _officer_zoom_factor(officer):
 _tooltip_dispatch_state = {"last": -1e9}
 
 
-def _start_hull_prebake() -> None:
-    """Kick off the boot-time hull-volume pre-bake (a daemon thread).
-
-    Runs after _setup_sdk (discovery imports ships/*.py through the SDK
-    finder) and after Foundation plugins (they add ship scripts). Best
-    effort by contract: the pre-bake only moves WHEN a bake happens, never
-    whether one does -- a hull it never reaches still bakes at spawn
-    exactly as before -- so nothing here may stop boot.
-    """
-    try:
-        from engine.appc import hull_volume
-        hull_volume.prebake_all()
-    except Exception as _e:  # noqa: BLE001 - never block boot
-        dev_mode.log_swallowed("start hull volume prebake", _e)
-
-
 # SDK modules the engine itself imports lazily in combat. The SDK loader
 # parses, transforms and compiles a script on its first import in a process
 # (engine/sdk_code_cache.py is in-memory), and only five SDK missions import
@@ -6641,7 +6622,7 @@ def _warp_preload_deps(controller, r_) -> dict:
         loaded = _load_runtime_ship_model(ship, r_)
         if loaded is not None:
             from engine.appc import hull_volume as _hull_volume
-            _hull_volume.prewarm_for_model(ship, loaded[0])
+            _hull_volume.prewarm_for_model(loaded[0])
 
     def planet_models(name):
         from engine.systems import resolve
@@ -6758,31 +6739,13 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
         _cache_ship_hull_pieces(ship, handle, r_, iid=iid)
         r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
         session.ship_instances[ship] = iid
-        # BC's authored damage-volume RESOLUTION for this hull
-        # (ShipProperty.SetDamageResolution) -- a per-ship ratio, NOT a cell
-        # size; the native baker derives cell = authored_res / quality.
-        # Best-effort: never block spawn.
-        try:
-            from engine.appc.hull_volume import push_resolution
-            push_resolution(ship, iid)
-        except Exception as _e:
-            dev_mode.log_swallowed("push hull volume resolution", _e)
         # Fill volume decode (left-the-ship test) on the native worker, so the
-        # first cut never loads it synchronously.
+        # first cut never loads it synchronously. Best-effort: never block
+        # spawn.
         try:
             r_.prefetch_hull_fill(handle)
         except Exception as _e:
             dev_mode.log_swallowed("prefetch hull fill", _e)
-        # Pre-warm the bake NOW, at spawn, instead of paying it lazily on
-        # this hull's first combat hit (spec §4; up to 192ms measured on a
-        # Warbird). Separate try/except, same "never block spawn" contract
-        # as push_resolution above.
-        try:
-            from engine.appc.hull_volume import prewarm_field
-            with frame_profiler.scope("realize.hull_prewarm"):
-                prewarm_field(iid)
-        except Exception as _e:
-            dev_mode.log_swallowed("prewarm hull volume field", _e)
         render_instances.register(ship, iid)
         # Fresnel rim applies to ship hulls only — planets share the opaque
         # shader and must stay rim-free (default ineligible).
@@ -7589,8 +7552,6 @@ class HostController:
         subsystem_cascade.reset()
         from engine.appc import warp_core_breach
         warp_core_breach.reset()
-        from engine.appc import core_breach_carve
-        core_breach_carve.reset()
         from engine.appc import visible_damage
         visible_damage.reset()
         from engine.appc import internal_blast            # SPIKE (damage redesign)
@@ -7602,13 +7563,10 @@ class HostController:
         from engine.appc import particles
         particles.reset()
         damage_eligibility.reset()
-        # All three emission throttles are keyed by id(ship), and id() is a
+        # The decal emission throttle is keyed by id(ship), and id() is a
         # RECYCLED address: a dead ship's entry is inherited by whatever lands
-        # at that address next, which silently suppresses the new ship's first
-        # decal or carve. Clearing the carve pair and not the decal one was an
-        # omission, not a distinction.
-        hit_feedback._last_carve_time.clear()
-        hit_feedback._pending_carve_strength.clear()
+        # at that address next, which silently suppresses the new ship's
+        # first decal.
         hit_feedback._last_decal_emit.clear()
         from engine.appc import hull_wear
         hull_wear.reset()
@@ -8038,24 +7996,6 @@ class _MissionLoader:
             _cache_ship_hull_pieces(ship, handle, r_, iid=iid)
             r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
             sess.ship_instances[ship] = iid
-            # BC's authored damage-volume RESOLUTION for this hull
-            # (ShipProperty.SetDamageResolution) -- a per-ship ratio, NOT a
-            # cell size; the native baker derives cell = authored_res / quality.
-            # Best-effort: never block spawn.
-            try:
-                from engine.appc.hull_volume import push_resolution
-                push_resolution(ship, iid)
-            except Exception as _e:
-                dev_mode.log_swallowed("push hull volume resolution", _e)
-            # Pre-warm the bake NOW, at spawn, instead of paying it lazily on
-            # this hull's first combat hit (spec §4; up to 192ms measured on
-            # a Warbird). Separate try/except, same "never block spawn"
-            # contract as push_resolution above.
-            try:
-                from engine.appc.hull_volume import prewarm_field
-                prewarm_field(iid)
-            except Exception as _e:
-                dev_mode.log_swallowed("prewarm hull volume field", _e)
             render_instances.register(ship, iid)
             # Fresnel rim applies to ship hulls only — planets share the
             # opaque shader and must stay rim-free (default ineligible).
@@ -10434,12 +10374,6 @@ def run(mission_name: Optional[str] = None,
     # not in the frame of the session's first collision scuff (~0.6 s in
     # Debug, perf-register P-11).
     r.prewarm_scuff_normal_texture()
-    # Where the native HullVolumeCache bakes/reads .dhv files for per-instance
-    # hull damage fields. Pushed here, right alongside set_game_root, for the
-    # same reason: it must land before the first hull volume lookup, and
-    # nothing else at boot touches one yet. No try/except -- a broken binding
-    # here must be as loud as a broken set_game_root, not silently skipped.
-    r.hull_volume_set_cache_root(str(_paths.hull_volume_cache_root()))
     # Pushed alongside set_game_root, not before -- the C++ side resolves a
     # relative asset path onto the game root, so its override map must land
     # no earlier than the root itself. mods.current() is whatever
@@ -10492,7 +10426,6 @@ def run(mission_name: Optional[str] = None,
             r.shutdown()
             return 0
 
-    _start_hull_prebake()
     _prewarm_sdk_modules()
 
     import App

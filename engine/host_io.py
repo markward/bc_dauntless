@@ -46,11 +46,10 @@ _REQUIRED_BINDINGS = frozenset({
     "set_dynamic_lights",
     "set_phaser_beams", "set_tractor_beams",
     "cursor_pos",
-    "shield_hit", "world_to_body", "damage_decal_add", "hull_carve_add",
+    "shield_hit", "world_to_body", "damage_decal_add",
     "hull_damage_add", "hull_damage_add_body",
     "model_nodes", "model_nearest_part", "set_instance_decals",
-    "hull_split_detached", "hull_split_parts", "structure_part_at",
-    "hull_carve_capsule", "breach_burst",
+    "hull_split_parts", "structure_part_at", "breach_burst",
     "ray_trace_mesh", "instance_translation",
     "transform_alloc", "transform_free", "transform_get_position",
     "transform_set_position", "transform_get_rotation", "transform_set_rotation",
@@ -331,26 +330,12 @@ def set_tractor_beams(beams: list) -> None:
     _h.set_tractor_beams(beams)
 
 
-# ── SPIKE (damage redesign): hull carving switched OFF ──────────────────────
-#
-# Branch spike/damage-redesign starts from a hull that never gets a hole. The
-# two carve facades below return before reaching the host, so no carve field
-# is ever written: holes, the breach interior, venting/breach debris and the
-# carve-driven breakup (chunks + subsystem kills in hull_breakup) all go dark
-# by construction. Decals, scuffs, gameplay damage, part severance and the
-# death cascade's explosions are untouched. DAUNTLESS_HULL_CARVING=1 turns the
-# old carve back on for an A/B look. Read at use, never captured at import.
-def hull_carving_enabled() -> bool:
-    import os
-    return os.environ.get("DAUNTLESS_HULL_CARVING", "0") == "1"
-
-
 # ── Hit / damage feedback ────────────────────────────────────────────────────
 #
 # The floating render origin: the native mesh queries (shield_hit,
-# world_to_body, damage_decal_add, hull_carve_add, hull_carve_capsule,
-# ray_trace_mesh) take points RELATIVE TO THE INSTANCE'S TRANSLATION and invert
-# only rotation*scale, so a ship 1e6 GU from the system origin is queried with
+# world_to_body, damage_decal_add, hull_damage_add, ray_trace_mesh) take
+# points RELATIVE TO THE INSTANCE'S TRANSLATION and invert only
+# rotation*scale, so a ship 1e6 GU from the system origin is queried with
 # the precision of one at the origin. Engine code keeps speaking world points;
 # these wrappers form the relative point here, in Python doubles, from
 # `instance_translation(iid)`, and add it back to ray_trace_mesh's hit.
@@ -477,29 +462,6 @@ def hull_damage_add_body(
                             float(radius), float(wear), int(kind))
 
 
-def hull_carve_add(
-    instance_id: int,
-    world_point: Tuple[float, float, float],
-    world_normal: Tuple[float, float, float],
-    influ_radius: float,
-    strength: float,
-    time: float,
-    floor_radius: float = 0.0,
-    radius_modifier: float = 1.0,
-    carve_field: bool = True,
-) -> None:
-    """`carve_field=False` grows the sphere ring only; the instance field is
-    carved by a later deposit (see renderer::hull_carve_deposit)."""
-    if _h is None or not hull_carving_enabled():
-        return
-    rel = _instance_relative(instance_id, world_point)
-    if rel is None:
-        return
-    _h.hull_carve_add(instance_id, rel, world_normal, influ_radius,
-                     strength, time, floor_radius, radius_modifier,
-                     carve_field)
-
-
 def model_nodes(instance_id: int) -> List[dict]:
     """Every named node of this instance's model with geometry somewhere in
     its subtree, for the SPV's part list: [{name, parent, candidate,
@@ -529,20 +491,6 @@ def set_instance_decals(instance_id, decals) -> None:
     if _h is None:
         return
     _h.set_instance_decals(instance_id, decals)
-
-
-def hull_split_detached(instance_id: int, min_cells: int) -> list:
-    """Run hull connectivity on `instance_id`'s damage field and split every
-    detached component out. Components with at least `min_cells` cells get a
-    new renderer instance (a chunk) and their own field; smaller ones are
-    simply removed from the parent. Returns a list of dicts (body-frame GAME
-    UNITS): instance_id (None for sub-floor), cells, centroid, bounds_min,
-    bounds_max, radius_gu, main_body_cells (the parent's remaining occupied
-    cell count, repeated on every dict -- there is no separate call for it).
-    Empty when headless or nothing severed."""
-    if _h is None:
-        return []
-    return list(_h.hull_split_detached(instance_id, int(min_cells)))
 
 
 def hull_split_parts(instance_id: int) -> list:
@@ -575,24 +523,6 @@ def breach_burst(instance_id: int, body_point_gu, radius_gu: float) -> None:
     if _h is None:
         return
     _h.breach_burst(instance_id, tuple(body_point_gu), float(radius_gu))
-
-
-def hull_carve_capsule(
-    instance_id: int,
-    p0_world: Tuple[float, float, float],
-    p1_world: Tuple[float, float, float],
-    radius_gu: float,
-) -> None:
-    """Field-only swept cut between two WORLD points at `radius_gu`. Never
-    enters the sphere list. No-op when headless. Both endpoints are made
-    relative to ONE read of the translation."""
-    if _h is None or not hull_carving_enabled():
-        return
-    t = _h.instance_translation(instance_id)
-    if t is None:
-        return
-    _h.hull_carve_capsule(instance_id, _relative_to(t, p0_world),
-                          _relative_to(t, p1_world), float(radius_gu))
 
 
 def ray_trace_mesh(
