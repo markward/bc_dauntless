@@ -85,7 +85,12 @@ misbehaves: one part's interior texture follows another part's rotation.
 
 ## 3. Performance (Mark's rule)
 
-**A damaged ship costs no more than double the same ship undamaged.**
+**A damaged ship costs no more than double the same ship undamaged.** The
+death throes are judged differently (Mark, 2026-10-21): no costlier than the
+legacy carve's death. Indicative cross-build numbers put Layered's death at
+roughly a quarter of Classic's GPU cost and well under its CPU cost
+(SIG-090, SIG-098 vs SIG-110), and Mark accepted that without a same-build
+re-run.
 - The rule holds on both the GPU and the CPU.
 - It holds at the default DP distance and at the close-up.
 - It holds while alive and during the death.
