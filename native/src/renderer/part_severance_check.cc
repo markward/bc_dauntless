@@ -10,6 +10,36 @@ bool can_structure_sever(const scenegraph::Instance& inst) {
     return inst.node_overrides.empty();
 }
 
+std::vector<float> interior_wear_field(const voxel::VoxelVolume& vol,
+                                       const plating::DamageList& dmg) {
+    const glm::ivec3 d = vol.dims;
+    std::vector<float> wear(vol.occ.size(), 0.f);
+    for (int k = 0; k < dmg.count; ++k) {
+        const float R = dmg.a[k].w;
+        if (R <= 0.f) continue;
+        const glm::vec3 c(dmg.a[k]);
+        const glm::vec3 lo = (c - R - vol.origin) / vol.cell - 0.5f;
+        const glm::vec3 hi = (c + R - vol.origin) / vol.cell - 0.5f;
+        const glm::vec3 fmax = glm::vec3(d - 1);
+        const glm::ivec3 i0 = glm::ivec3(glm::clamp(glm::floor(lo), glm::vec3(0.f), fmax));
+        const glm::ivec3 i1 = glm::ivec3(glm::clamp(glm::ceil(hi), glm::vec3(0.f), fmax));
+        if (hi.x < 0.f || hi.y < 0.f || hi.z < 0.f || lo.x > fmax.x || lo.y > fmax.y ||
+            lo.z > fmax.z)
+            continue;
+        for (int z = i0.z; z <= i1.z; ++z)
+            for (int y = i0.y; y <= i1.y; ++y)
+                for (int x = i0.x; x <= i1.x; ++x) {
+                    const glm::vec3 p = vol.origin + (glm::vec3(x, y, z) + 0.5f) * vol.cell;
+                    const glm::vec3 dv = p - c;
+                    const float r2 = glm::dot(dv, dv) / (R * R);
+                    if (r2 >= 1.f) continue;
+                    const float f = 1.f - r2;
+                    wear[vol.index(x, y, z)] += dmg.b[k].w * f * f;
+                }
+    }
+    return wear;
+}
+
 std::vector<SeveredPart> find_severed_parts(const voxel::StructureSegmentation& seg,
                                             const plating::DamageList& dmg, float deck_break,
                                             std::uint32_t already_severed) {
@@ -19,29 +49,7 @@ std::vector<SeveredPart> find_severed_parts(const voxel::StructureSegmentation& 
     const std::size_t n = seg.vol.occ.size();
     if (np < 2 || d.x <= 0 || seg.label.size() != n) return out;
 
-    // Interior wear per voxel, accumulated record by record over each record's
-    // sphere box only (per-voxel sums stay in record order, as in the shader).
-    std::vector<float> wear(n, 0.f);
-    for (int k = 0; k < dmg.count; ++k) {
-        const float R = dmg.a[k].w;
-        if (R <= 0.f) continue;
-        const glm::vec3 c(dmg.a[k]);
-        const glm::vec3 lo = (c - R - seg.vol.origin) / seg.vol.cell - 0.5f;
-        const glm::vec3 hi = (c + R - seg.vol.origin) / seg.vol.cell - 0.5f;
-        const glm::ivec3 i0 = glm::max(glm::ivec3(glm::floor(lo)), glm::ivec3(0));
-        const glm::ivec3 i1 = glm::min(glm::ivec3(glm::ceil(hi)), d - 1);
-        for (int z = i0.z; z <= i1.z; ++z)
-            for (int y = i0.y; y <= i1.y; ++y)
-                for (int x = i0.x; x <= i1.x; ++x) {
-                    const glm::vec3 p =
-                        seg.vol.origin + (glm::vec3(x, y, z) + 0.5f) * seg.vol.cell;
-                    const glm::vec3 dv = p - c;
-                    const float r2 = glm::dot(dv, dv) / (R * R);
-                    if (r2 >= 1.f) continue;
-                    const float f = 1.f - r2;
-                    wear[seg.vol.index(x, y, z)] += dmg.b[k].w * f * f;
-                }
-    }
+    const std::vector<float> wear = interior_wear_field(seg.vol, dmg);
 
     // Surviving voxels: occupied, labelled, interior wear below deck_break.
     std::vector<std::uint8_t> alive(n, 0);
@@ -55,8 +63,10 @@ std::vector<SeveredPart> find_severed_parts(const voxel::StructureSegmentation& 
         }
     }
 
+    const int mask_parts = std::min(np, 32);
     const int main_part = static_cast<int>(
-        std::max_element(alive_count.begin(), alive_count.end()) - alive_count.begin());
+        std::max_element(alive_count.begin(), alive_count.begin() + mask_parts) -
+        alive_count.begin());
     if (alive_count[static_cast<std::size_t>(main_part)] == 0) return out;
 
     // Flood from every surviving main-body voxel across 6-connected survivors.

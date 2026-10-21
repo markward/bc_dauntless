@@ -32,10 +32,15 @@ constexpr int kMinPartVoxels = 64;
 // voxels. Flood 6-connected surviving voxels from it; a part is severed when
 // fewer than kReachedFraction of its surviving voxels were reached and it has
 // at least kMinPartVoxels surviving. Bit i of already_severed skips part i.
-// Parts with index >= 32 are beyond the mask and never sever.
+// Parts with index >= 32 are beyond the mask and never sever, and the main body is chosen among parts < 32.
 std::vector<SeveredPart> find_severed_parts(const voxel::StructureSegmentation&,
                                             const plating::DamageList&, float deck_break,
                                             std::uint32_t already_severed);
+
+// Per-voxel interior wear (same sum as the shader's interior_wear), each record
+// accumulated over its sphere's voxel box only. Exposed for tests.
+std::vector<float> interior_wear_field(const voxel::VoxelVolume& vol,
+                                       const plating::DamageList& dmg);
 
 // Articulated instances (any node override) are never structure-checked.
 bool can_structure_sever(const scenegraph::Instance& inst);
