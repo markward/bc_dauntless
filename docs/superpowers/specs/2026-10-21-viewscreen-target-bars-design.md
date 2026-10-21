@@ -57,10 +57,10 @@ Mark confirmed these readings of my guesses ("nothing" wrong):
   / `unknown_labels.placeholder`), the surface distance
   (`target_menu.surface_gu_to`) and speed (`implements(target,
   "GetVelocity")`), formatted `"%.2f km / %.0f kph"`.
-- **Affiliation.** `engine/ui/ship_display_panel.py:_affiliation_for(ship,
-  player)` returns `FRIENDLY / ENEMY / NEUTRAL / UNKNOWN / NONE` from the
-  mission's friendly/enemy/neutral groups, and `UNKNOWN` when the player's
-  sensors are offline. The target list colours rows by the same strings.
+- **Affiliation.** The target list colours each row by
+  `target_menu.resolve_affiliation(ship, mission)` (`FRIENDLY / ENEMY /
+  NEUTRAL / UNKNOWN` from the mission's groups), reported as `UNKNOWN` while
+  the contact is unidentified (`STSubsystemMenu.GetAffiliation`).
 - **The font.** `native/assets/ui-cef/fonts/Antonio-Regular.ttf` (OFL, licence
   in `native/assets/ui-cef/THIRD_PARTY/Antonio-OFL.txt`). Pillow 12 is in the
   dev environment (used by `tools/sprites/prep.py`).
@@ -84,8 +84,8 @@ build_viewscreen_bars(player, target) -> dict` — returns
   rather than copying it — the reticle and the viewscreen must never disagree.
   The extraction is a pure refactor: the reticle's existing tests are its
   guard and must pass unchanged.
-- `band_rgb` from the affiliation string via the four colours in §2
-  (`NONE` → grey, *Claude's call*); `text_rgb` white, black for NEUTRAL.
+- `band_rgb` from the affiliation string via the four colours in §2;
+  `text_rgb` white, black for NEUTRAL.
 - The target is the one the scene feed resolved (watched object), not
   `player.GetTarget()`. The feed function hands it on (or exposes it); a
   second resolution in another place would let them drift. That object is
@@ -96,12 +96,12 @@ build_viewscreen_bars(player, target) -> dict` — returns
 - **Non-ship objects** (planets, stations, rocks, waypoints a mission
   watches): name = `GetDisplayName()`; distance via `surface_gu_to`, which
   already handles planets; speed 0 when the object has no `GetVelocity`
-  (`implements`, as the reticle does). Affiliation through the same function
-  the target list uses, so the band matches the list's row for that object;
-  anything it cannot classify → grey (*Claude's call*). `_affiliation_for`
-  only reads `GetName()` and group membership, so it is safe on non-ships;
-  promote it to a shared, public helper rather than importing a private name
-  from a panel module.
+  (`implements`, as the reticle does). Affiliation exactly as the target list
+  colours its row: `UNKNOWN` while a `ShipClass` contact is unidentified
+  (`STSubsystemMenu.GetAffiliation`), else
+  `engine/appc/target_menu.resolve_affiliation(target, mission)` with the
+  current mission (it reads only `GetName()` and the mission's groups, so it
+  is safe on non-ships). Its `UNKNOWN` → grey.
 - **Lifecycle** (*Claude's call*): the bars are set every frame the scene
   feed returns a camera and cleared every frame it does not (hail, forward,
   off, dead target, mission swap, bridge hidden — all of which already route
