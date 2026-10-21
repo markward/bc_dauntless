@@ -572,7 +572,9 @@ public:
     /// mark and the interior draw no mesh whose record subset is empty -- the
     /// mark would discard every fragment of it, and the interior cannot pass
     /// stencil and depth on it. Off = every mesh: the A/B proving the skip
-    /// never changes a pixel.
+    /// never changes a pixel. One dev-only exception to byte-identity:
+    /// DAUNTLESS_HULL_CARVING=1 with plating on (the old carve / hull-field
+    /// discards on a record-free mesh in front of a cut).
     void set_plating_skip_record_free_meshes(bool on) { plating_skip_record_free_ = on; }
 
     /// Marking draws issued by the last submit_plating_interior.

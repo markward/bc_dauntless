@@ -31,9 +31,13 @@ public:
     /// ship" test. `now` = game clock (room flicker and pulse).
     ///
     /// GL state: stencil EQUAL stencil_value (mask 0, test only), cull back,
-    /// depth LEQUAL with writes on, colour writes on, blend off; fill on unit
+    /// depth LESS (+ polygon offset 1,1) with writes on, colour writes on, blend off; fill on unit
     /// 0. Leaves stencil test off, stencil mask 0xFF, depth func GL_LESS and
     /// texture unit 0 active.
+    ///
+    /// `mesh_mask` (optional, one byte per mesh): null = every mesh; else only
+    /// meshes whose byte is non-zero are drawn. Returns the number of meshes
+    /// drawn.
     ///
     /// `deck_break` (plating::deck_break_subset of `list`) is uploaded as
     /// u_db_count / u_db_idx: the walk's blown tests read only those records,

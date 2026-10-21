@@ -101,9 +101,23 @@ def test_seed_from_the_environment_seeds_the_game_rng(monkeypatch):
 def test_seed_makes_the_death_cascade_rolls_repeat(monkeypatch):
     """The cascade rolls through App.g_kSystemWrapper.GetRandomNumber
     (death_cascade._rand): one seed, one sequence."""
+    import App
     from engine.appc import death_cascade
+    monkeypatch.setattr(App, "g_kSystemWrapper", type(App.g_kSystemWrapper)())
     monkeypatch.setenv("DAUNTLESS_DAMAGE_PREVIEW_SEED", "77")
     dp._apply_seed()
     first = [death_cascade._rand(1000) for _ in range(8)]
     dp._apply_seed()
     assert [death_cascade._rand(1000) for _ in range(8)] == first
+
+
+def test_seed_test_does_not_leak_the_seeded_wrapper():
+    """Runs after the seeding test: the global wrapper must be the original
+    object and not left on the seed-77 sequence."""
+    import App
+    from engine.appc import death_cascade
+    wrapper = App.g_kSystemWrapper
+    fresh = type(wrapper)()
+    fresh.SetRandomSeed(77)
+    seeded = [fresh.GetRandomNumber(1000) for _ in range(8)]
+    assert [death_cascade._rand(1000) for _ in range(8)] != seeded
