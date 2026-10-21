@@ -587,9 +587,12 @@ static bool draws_skinned(const assets::Model& model,
 // detection per hull source; until it lands u_part_count is 0 and the shader
 // uses a body-axis box chart.
 // `upload_list` false: the caller uploads u_dmg_* per mesh
-// (upload_mesh_records) instead.
-static void upload_plating(Shader& prog, const assets::Model& model, const glm::mat4& world,
-                           const plating::DamageList& dl, const float* params, bool mark,
+// (MeshRecordUploader) instead. `parts` = structure_parts_for(model.source),
+// read ONCE by the caller so the per-mesh cull margins see the same parts the
+// shader is given (they land on a worker thread at any moment).
+static void upload_plating(Shader& prog, const plating::DamageList& dl,
+                           const std::vector<voxel::StructurePart>* parts,
+                           const glm::mat4& world, const float* params, bool mark,
                            bool far, bool upload_list) {
     static const std::string kPlating = "u_plating", kDmgCount = "u_dmg_count",
         kDmgA = "u_dmg_a", kDmgB = "u_dmg_b", kDmgC = "u_dmg_c",
@@ -613,7 +616,7 @@ static void upload_plating(Shader& prog, const assets::Model& model, const glm::
     constexpr int kMaxParts = 12;
     glm::vec4 pa[kMaxParts], pb[kMaxParts], pc[kMaxParts], pd[kMaxParts];
     int np = 0;
-    if (const auto* parts = renderer::structure_parts_for(model.source)) {
+    if (parts != nullptr) {
         for (const auto& sp : *parts) {
             if (np >= kMaxParts) break;
             pa[np] = glm::vec4(sp.centre, static_cast<float>(static_cast<int>(sp.kind)));
@@ -633,32 +636,65 @@ static void upload_plating(Shader& prog, const assets::Model& model, const glm::
     prog.set_int(kFar, far ? 1 : 0);
 }
 
-// One mesh's u_dmg_*: the records near `box` (plating::records_near), or the
-// whole list when `box` is null. A mesh with none uploads u_dmg_count 0 (the
-// arrays keep stale values the shader never reads past the count).
-static void upload_mesh_records(Shader& prog, const plating::DamageList& dl,
-                                const Aabb* box, float margin) {
-    static const std::string kDmgCount = "u_dmg_count", kDmgA = "u_dmg_a",
-        kDmgB = "u_dmg_b", kDmgC = "u_dmg_c";
-    std::array<std::uint8_t, plating::kMaxDamage> idx;
-    const int n = box != nullptr ? plating::records_near(dl, *box, margin, idx) : dl.count;
-    prog.set_int(kDmgCount, n);
-    if (n == dl.count) {   // every record: no gather
-        prog.set_vec4_array(kDmgA, dl.a, n);
-        prog.set_vec4_array(kDmgB, dl.b, n);
-        prog.set_vec4_array(kDmgC, dl.c, n);
-        return;
+// Per-mesh u_dmg_* for one draw: each mesh's records near its box
+// (plating::records_near, margin plating::plating_cull_margin), or the whole
+// list for a null box. A mesh with none uploads u_dmg_count 0 (the arrays
+// keep stale values the shader never reads past the count). An upload equal
+// to the previous one of this draw (same records, same order) is skipped, so
+// a hull whose meshes all see every record uploads the list once.
+namespace {
+class MeshRecordUploader {
+public:
+    MeshRecordUploader(Shader& prog, const plating::DamageList& dl,
+                       const std::vector<voxel::StructurePart>* parts, const float* params)
+        : prog_(prog), dl_(dl), parts_(parts), params_(params) {}
+
+    void upload(const Aabb* box) {
+        std::array<std::uint8_t, plating::kMaxDamage> idx;
+        int n = dl_.count;
+        if (box != nullptr) {
+            n = plating::records_near(
+                dl_, *box, plating::plating_cull_margin(params_, parts_, *box), idx);
+        } else {
+            for (int k = 0; k < n; ++k) idx[static_cast<std::size_t>(k)] = static_cast<std::uint8_t>(k);
+        }
+        if (have_last_ && n == last_n_ &&
+            std::equal(idx.begin(), idx.begin() + n, last_idx_.begin()))
+            return;
+        have_last_ = true;
+        last_n_ = n;
+        std::copy(idx.begin(), idx.begin() + n, last_idx_.begin());
+
+        static const std::string kDmgCount = "u_dmg_count", kDmgA = "u_dmg_a",
+            kDmgB = "u_dmg_b", kDmgC = "u_dmg_c";
+        prog_.set_int(kDmgCount, n);
+        if (n == dl_.count) {   // every record, in order: no gather
+            prog_.set_vec4_array(kDmgA, dl_.a, n);
+            prog_.set_vec4_array(kDmgB, dl_.b, n);
+            prog_.set_vec4_array(kDmgC, dl_.c, n);
+            return;
+        }
+        glm::vec4 a[plating::kMaxDamage], b[plating::kMaxDamage], c[plating::kMaxDamage];
+        for (int k = 0; k < n; ++k) {
+            a[k] = dl_.a[idx[static_cast<std::size_t>(k)]];
+            b[k] = dl_.b[idx[static_cast<std::size_t>(k)]];
+            c[k] = dl_.c[idx[static_cast<std::size_t>(k)]];
+        }
+        prog_.set_vec4_array(kDmgA, a, n);
+        prog_.set_vec4_array(kDmgB, b, n);
+        prog_.set_vec4_array(kDmgC, c, n);
     }
-    glm::vec4 a[plating::kMaxDamage], b[plating::kMaxDamage], c[plating::kMaxDamage];
-    for (int k = 0; k < n; ++k) {
-        a[k] = dl.a[idx[static_cast<std::size_t>(k)]];
-        b[k] = dl.b[idx[static_cast<std::size_t>(k)]];
-        c[k] = dl.c[idx[static_cast<std::size_t>(k)]];
-    }
-    prog.set_vec4_array(kDmgA, a, n);
-    prog.set_vec4_array(kDmgB, b, n);
-    prog.set_vec4_array(kDmgC, c, n);
-}
+
+private:
+    Shader& prog_;
+    const plating::DamageList& dl_;
+    const std::vector<voxel::StructurePart>* parts_;
+    const float* params_;
+    bool have_last_ = false;
+    int last_n_ = 0;
+    std::array<std::uint8_t, plating::kMaxDamage> last_idx_{};
+};
+}  // namespace
 
 // The box mesh `mesh_idx` culls its records against, or nullptr (the whole
 // list) when there is none for the index. Callers pass no boxes at all with
@@ -791,10 +827,15 @@ void draw_model(const assets::Model& model,
     const bool plating_per_mesh =
         plating_list != nullptr && plating_mesh_boxes != nullptr &&
         !(node_overrides != nullptr && !node_overrides->empty());
-    const float plating_margin = plating::plating_margin(dauntless_plating::g_params);
+    const std::vector<voxel::StructurePart>* const plating_parts =
+        plating_list != nullptr ? renderer::structure_parts_for(model.source) : nullptr;
+    std::optional<MeshRecordUploader> plating_records;
     if (plating_list != nullptr) {
-        upload_plating(prog, model, world, *plating_list, dauntless_plating::g_params,
+        upload_plating(prog, *plating_list, plating_parts, world, dauntless_plating::g_params,
                        /*mark=*/false, plating_far, /*upload_list=*/!plating_per_mesh);
+        if (plating_per_mesh)
+            plating_records.emplace(prog, *plating_list, plating_parts,
+                                    dauntless_plating::g_params);
     }
 
     // ── Warp-nacelle glow capsules ─────────────────────────────────────────
@@ -1074,11 +1115,9 @@ void draw_model(const assets::Model& model,
             prog.set_int("u_sphere_map", this_sphere ? 1 : 0);
             // Plating: this mesh's records. The geosphere's substituted mesh
             // is not the one its box bounds: it gets the whole list.
-            if (plating_per_mesh) {
-                upload_mesh_records(
-                    prog, *plating_list,
-                    this_sphere ? nullptr : plating_box_for(*plating_mesh_boxes, mesh_idx),
-                    plating_margin);
+            if (plating_records) {
+                plating_records->upload(
+                    this_sphere ? nullptr : plating_box_for(*plating_mesh_boxes, mesh_idx));
             }
             // Same rule as u_sphere_map: set on EVERY draw so it cannot leak.
             const bool this_atmo = this_sphere && atmo != nullptr && atmo->enabled;
@@ -1229,8 +1268,8 @@ void draw_model(const assets::Model& model,
 // they would shade is masked off. The audit (one row per uniform) is in the
 // phase 2 Task 2 report.
 // `mesh_boxes`: as draw_model's plating_mesh_boxes -- each mesh uploads only
-// the records near it (the margin keeps every discard the same), the whole
-// list when null or with node overrides.
+// the records near it (plating_cull_margin keeps every discard the same), the
+// whole list when null or with node overrides.
 static void draw_plating_mark(const assets::Model& model, const glm::mat4& world,
                               Shader& prog, const plating::DamageList& dl,
                               const float* params,
@@ -1243,9 +1282,11 @@ static void draw_plating_mark(const assets::Model& model, const glm::mat4& world
     prog.use();
     const bool articulated = node_overrides != nullptr && !node_overrides->empty();
     const bool per_mesh = mesh_boxes != nullptr && !articulated;
-    const float margin = plating::plating_margin(params);
-    upload_plating(prog, model, world, dl, params, /*mark=*/true, /*far=*/false,
+    const std::vector<voxel::StructurePart>* const parts =
+        renderer::structure_parts_for(model.source);
+    upload_plating(prog, dl, parts, world, params, /*mark=*/true, /*far=*/false,
                    /*upload_list=*/!per_mesh);
+    MeshRecordUploader records(prog, dl, parts, params);
     prog.set_int(kCarveEnabled, 0);
     prog.set_int(kCarveCount, 0);
     prog.set_int(kCarveInvert, 0);
@@ -1262,8 +1303,7 @@ static void draw_plating_mark(const assets::Model& model, const glm::mat4& world
     for (std::size_t i = 0; i < model.nodes.size(); ++i) {
         for (int mesh_idx : model.nodes[i].meshes) {
             const auto& mesh = model.meshes[static_cast<std::size_t>(mesh_idx)];
-            if (per_mesh)
-                upload_mesh_records(prog, dl, plating_box_for(*mesh_boxes, mesh_idx), margin);
+            if (per_mesh) records.upload(plating_box_for(*mesh_boxes, mesh_idx));
             prog.set_mat4(kModel, world_per_node[i]);
             prog.set_mat4(kRestFix, articulated ? rest_fix[i] : glm::mat4(1.0f));
             glBindVertexArray(mesh.vao());

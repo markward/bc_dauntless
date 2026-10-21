@@ -365,7 +365,7 @@ void draw_model(const assets::Model& model,
                 // Plating draws only: one body-frame rest-pose box per
                 // model.meshes entry (mesh_body_aabbs). Non-null = each mesh
                 // uploads only the records near it (plating::records_near,
-                // margin plating::plating_margin); a mesh with none uploads
+                // margin plating::plating_cull_margin); a mesh with none uploads
                 // u_dmg_count 0. nullptr, node overrides present (the posed
                 // meshes leave their rest boxes) or the geosphere's
                 // substituted mesh: every mesh gets the whole list.
@@ -538,9 +538,11 @@ public:
     /// Cached lists held (tests). submit_opaque_in_pass drops ids no longer
     /// in its world before it draws.
     std::size_t plating_list_cache_size() const { return plating_list_cache_.size(); }
-    /// Record culling (default on): each plating mesh draw and marking draw
-    /// uploads only the records near that mesh, and the interior walk's blown
-    /// tests read only the deck-break subset. Off = the whole list
+    /// TEST / DIAGNOSTIC SWITCH, not a quality or perf setting: production
+    /// never calls it and nothing should depend on it. Record culling (default
+    /// on): each plating mesh draw and marking draw uploads only the records
+    /// near that mesh (plating::plating_cull_margin), and the interior walk's
+    /// blown tests read only the deck-break subset. Off = the whole list
     /// everywhere: the A/B the tests use to prove culling never changes a
     /// pixel.
     void set_plating_record_culling(bool on) { plating_record_culling_ = on; }

@@ -821,6 +821,22 @@ TEST_F(PlatingRenderTest, RecordCullingNeverChangesAPixel) {
     dauntless_plating::g_params[25] = 0.0f;
     const renderer::Aabb box = renderer::compute_model_aabb(*m);
     const auto cam = top_down(box);
+    // Wait for the structure parts, so the disc and cylinder charts (the
+    // largest panel-centre offsets) are compared, not only the box fallback.
+    const auto t0 = std::chrono::steady_clock::now();
+    while (renderer::structure_parts_for(m->source) == nullptr &&
+           std::chrono::steady_clock::now() - t0 < std::chrono::seconds(20))
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const auto* parts = renderer::structure_parts_for(m->source);
+    ASSERT_NE(parts, nullptr) << "parts never landed";
+    int discs = 0, cylinders = 0;
+    for (const auto& sp : *parts) {
+        discs += sp.kind == voxel::PartKind::Disc ? 1 : 0;
+        cylinders += sp.kind == voxel::PartKind::Cylinder ? 1 : 0;
+    }
+    std::fprintf(stderr, "[PlatingRender] parts %zu (discs %d, cylinders %d)\n", parts->size(),
+                 discs, cylinders);
+    ASSERT_GT(discs + cylinders, 0) << "only box charts: the A/B misses the large offsets";
     // Records where a 5 x 5 grid of downward rays meets the hull.
     scenegraph::HullDamageStore ring;
     const float top = box.center.z + box.half_extents.z + 10.0f;
@@ -841,14 +857,16 @@ TEST_F(PlatingRenderTest, RecordCullingNeverChangesAPixel) {
         const auto list = renderer::plating::build_damage_list(ring, dauntless_plating::g_params);
         const auto boxes = renderer::mesh_body_aabbs(*m);
         std::array<std::uint8_t, renderer::plating::kMaxDamage> idx{};
-        for (std::size_t k = 0; k < boxes.size(); ++k)
-            std::fprintf(stderr, "[PlatingRender] mesh %zu half=(%.0f,%.0f,%.0f) records %d/%d\n",
+        for (std::size_t k = 0; k < boxes.size(); ++k) {
+            const float cull = renderer::plating::plating_cull_margin(
+                dauntless_plating::g_params, parts, boxes[k]);
+            std::fprintf(stderr,
+                         "[PlatingRender] mesh %zu half=(%.0f,%.0f,%.0f) cull margin %.1f "
+                         "records %d/%d\n",
                          k, boxes[k].half_extents.x, boxes[k].half_extents.y,
-                         boxes[k].half_extents.z,
-                         renderer::plating::records_near(
-                             list, boxes[k],
-                             renderer::plating::plating_margin(dauntless_plating::g_params), idx),
-                         list.count);
+                         boxes[k].half_extents.z, cull,
+                         renderer::plating::records_near(list, boxes[k], cull, idx), list.count);
+        }
     }
 
     record_culling = true;
@@ -949,5 +967,69 @@ TEST_F(PlatingRenderTest, RecordCullingKeepsRecordsWithinTheMarginOfAMesh) {
     std::fprintf(stderr, "[PlatingRender] margin sliver: B pixels changed %d, on/off differ %d\n",
                  b_changed, diff);
     EXPECT_GT(b_changed, 0) << "the record no longer reaches B's panels: the test lost its point";
+    EXPECT_EQ(diff, 0);
+}
+
+// Fix round 1: the cull margin must cover every wear sample the shader takes
+// for a pixel (plating::plating_cull_margin), not just the shader's own
+// near-test margin. Big panels (secondary spacing = panel size = 60, member
+// bend 0, both legal dial settings) put a pixel's panel centre up to 30 mu
+// from it along x: B's pixels at x in [55, 60) judge their panel at x = 30.
+// A strong record at x = 22 (reach 20) strips that panel, yet sits 33 mu from
+// B's box, past reach + the shader's margin (29.8). A weak record at x = 57
+// makes those pixels near. B's subset must keep the strong record.
+TEST_F(PlatingRenderTest, RecordCullingCoversLargePanelOffsets) {
+    float* g = dauntless_plating::g_params;
+    g[0] = 1.0f;
+    g[1] = 60.0f;    // panel size
+    g[3] = 60.0f;    // secondary spacing
+    g[15] = 0.0f;    // member bend
+    auto model = std::make_unique<assets::Model>();
+    const glm::vec3 X(1, 0, 0), Y(0, 1, 0);
+    add_face(*model, glm::vec3(10.0f, 0.0f, 0.0f), X, Y, 45.0f);   // A: x in [-35, 55]
+    add_face(*model, glm::vec3(75.0f, 0.0f, 0.0f), X, Y, 20.0f);   // B: x in [55, 95]
+    scenegraph::Camera cam;
+    cam.eye = glm::vec3(57.0f, 0.0f, 40.0f);
+    cam.target = glm::vec3(57.0f, 0.0f, 0.0f);
+    cam.up = glm::vec3(0.0f, 1.0f, 0.0f);
+    cam.aspect = 1.0f;
+    scenegraph::HullDamageStore weak;
+    weak.add({57.0f, 0.0f, 0.0f}, glm::vec3(0.0f), 2.0f, 0.05f,
+             scenegraph::HullDamageKind::Internal);
+    scenegraph::HullDamageStore ring = weak;
+    ring.add({22.0f, 0.0f, 0.0f}, glm::vec3(0.0f), 20.0f, 200.0f,
+             scenegraph::HullDamageKind::Internal);
+    const auto list = renderer::plating::build_damage_list(ring, g);
+    ASSERT_EQ(list.count, 2);
+    const auto boxes = renderer::mesh_body_aabbs(*model);
+    ASSERT_EQ(boxes.size(), 2u);
+    std::array<std::uint8_t, renderer::plating::kMaxDamage> idx{};
+    EXPECT_EQ(renderer::plating::records_near(list, boxes[1],
+                                              renderer::plating::plating_margin(g), idx), 1)
+        << "the shader's own margin already keeps the strong record: no test";
+    EXPECT_EQ(renderer::plating::records_near(
+                  list, boxes[1], renderer::plating::plating_cull_margin(g, nullptr, boxes[1]),
+                  idx), 2) << "B's subset drops the record that strips its panel";
+
+    const auto weak_only = render(*model, weak, cam);
+    record_culling = true;
+    const auto on = render(*model, ring, cam);
+    record_culling = false;
+    const auto off = render(*model, ring, cam);
+    record_culling = true;
+    const int b_from = to_pixel(cam, glm::vec3(55.1f, 0.0f, 0.0f)).x;
+    const int b_to = to_pixel(cam, glm::vec3(59.9f, 0.0f, 0.0f)).x;
+    int b_stripped = 0, diff = 0;
+    for (int y = 0; y < kSize; ++y) {
+        for (int x = 0; x < kSize; ++x) {
+            if (x >= b_from && x <= b_to &&
+                rgb_diff(pixel(off, x, y), pixel(weak_only, x, y)) != 0)
+                ++b_stripped;
+            if (rgb_diff(pixel(on, x, y), pixel(off, x, y)) != 0) ++diff;
+        }
+    }
+    std::fprintf(stderr, "[PlatingRender] large panels: B pixels changed %d, on/off differ %d\n",
+                 b_stripped, diff);
+    EXPECT_GT(b_stripped, 0) << "the strong record no longer reaches B's panel: no test";
     EXPECT_EQ(diff, 0);
 }

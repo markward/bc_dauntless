@@ -7,11 +7,13 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include <glm/glm.hpp>
 
 #include "renderer/aabb.h"
 #include "scenegraph/hull_damage.h"
+#include "voxel/structure_parts.h"
 
 namespace renderer::plating {
 
@@ -55,6 +57,17 @@ float plating_margin(const float* params);
 // adds nothing to it (opaque.frag's near test, wear sums and gradients all
 // skip it there). The test is grown by a small slack, so float rounding of
 // p_body can only ever keep an extra record, never drop a needed one.
+// The margin a mesh's record subset is culled with (records_near): it bounds
+// the distance from a pixel to every point where opaque.frag reads a record
+// for it (the plate-edge march and the panel centres of the pixel's part
+// chart), and is never below plating_margin. `parts` = the hull's structure
+// parts as the draw uploads them (nullptr = not detected yet: the box chart);
+// a cylinder part's bound grows with the distance from its axis, taken over
+// `body_box`. Derivation in plating_damage.cc.
+float plating_cull_margin(const float* params,
+                          const std::vector<voxel::StructurePart>* parts,
+                          const Aabb& body_box);
+
 int records_near(const DamageList& list, const Aabb& body_box, float margin,
                  std::array<std::uint8_t, kMaxDamage>& out);
 
