@@ -87,3 +87,79 @@ TEST(PartSeverance, ArticulatedInstanceNeverStructureSevers) {
     inst.node_overrides[3] = glm::mat4(1.f);
     EXPECT_FALSE(renderer::can_structure_sever(inst));
 }
+
+namespace {
+// The old O(V x R) reference: per-voxel wear summed over all records.
+std::vector<float> reference_wear(const voxel::StructureSegmentation& s, const DamageList& dmg) {
+    std::vector<float> w(s.vol.occ.size(), 0.f);
+    for (int z = 0; z < s.vol.dims.z; ++z)
+        for (int y = 0; y < s.vol.dims.y; ++y)
+            for (int x = 0; x < s.vol.dims.x; ++x) {
+                const glm::vec3 p = s.vol.origin + (glm::vec3(x, y, z) + 0.5f) * s.vol.cell;
+                float acc = 0.f;
+                for (int k = 0; k < dmg.count; ++k) {
+                    const float R = dmg.a[k].w;
+                    if (R <= 0.f) continue;
+                    const glm::vec3 dv = p - glm::vec3(dmg.a[k]);
+                    const float r2 = glm::dot(dv, dv) / (R * R);
+                    if (r2 >= 1.f) continue;
+                    const float f = 1.f - r2;
+                    acc += dmg.b[k].w * f * f;
+                }
+                w[s.vol.index(x, y, z)] = acc;
+            }
+    return w;
+}
+}  // namespace
+
+TEST(PartSeverance, FarRecordContributesNothing) {
+    auto s = make_seg();
+    DamageList l = bridge_hit(100.f);
+    l.a[0] = glm::vec4(500.f, 500.f, 500.f, 1.2f);
+    EXPECT_TRUE(renderer::find_severed_parts(s, l, 6.f, 0).empty());
+    l.a[0] = glm::vec4(-3.f, 2.5f, 2.5f, 1.2f);
+    EXPECT_TRUE(renderer::find_severed_parts(s, l, 6.f, 0).empty());
+}
+
+TEST(PartSeverance, MatchesTheFullReferenceOnSeveralRecordSets) {
+    auto s = make_seg();
+    DamageList l;
+    l.count = 3;
+    l.a[0] = glm::vec4(10.5f, 2.5f, 2.5f, 1.2f);  l.b[0] = glm::vec4(0, 0, 0, 7.f);
+    l.a[1] = glm::vec4(3.f, 1.f, 4.f, 4.f);       l.b[1] = glm::vec4(0, 0, 0, 3.f);
+    l.a[2] = glm::vec4(18.f, 5.f, 5.f, 6.f);      l.b[2] = glm::vec4(0, 0, 0, 5.f);
+    for (float db : {2.f, 6.f, 9.f}) {
+        const auto w = reference_wear(s, l);
+        auto ref = s;
+        for (std::size_t i = 0; i < w.size(); ++i)
+            if (w[i] >= db) { ref.vol.occ[i] = 0; ref.label[i] = -1; }
+        DamageList none;
+        auto expect = renderer::find_severed_parts(ref, none, 1e9f, 0);
+        auto got = renderer::find_severed_parts(s, l, db, 0);
+        ASSERT_EQ(expect.size(), got.size()) << db;
+        for (std::size_t i = 0; i < got.size(); ++i) {
+            EXPECT_EQ(expect[i].part, got[i].part);
+            EXPECT_EQ(expect[i].voxels, got[i].voxels);
+        }
+    }
+}
+
+TEST(PartSeverance, PartiallyCutBridgeDoesNotSever) {
+    auto s = make_seg();
+    for (int y = 1; y <= 3; ++y)
+        for (int z = 1; z <= 3; ++z) {
+            s.vol.set(10, y, z, true);
+            s.label[s.vol.index(10, y, z)] = 0;
+        }
+    DamageList l = bridge_hit(10.f);
+    l.a[0].w = 0.9f;  // blows the centre plug voxel only
+    EXPECT_TRUE(renderer::find_severed_parts(s, l, 6.f, 0).empty());
+}
+
+TEST(PartSeverance, PartsBeyondTheMaskNeverSever) {
+    auto s = make_seg();
+    s.parts.resize(40);
+    for (auto& lab : s.label)
+        if (lab == 1) lab = 35;
+    EXPECT_TRUE(renderer::find_severed_parts(s, bridge_hit(10.f), 6.f, 0).empty());
+}

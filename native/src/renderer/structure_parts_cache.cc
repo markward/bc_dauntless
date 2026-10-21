@@ -48,6 +48,7 @@ const voxel::StructureSegmentation* structure_segmentation_for(
         if (slot->job.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
             return nullptr;
         slot->seg = slot->job.get();
+        std::vector<float>().swap(slot->seg.depth);  // unused by readers
         slot->ready = true;
         std::fprintf(stderr, "[plating] %zu structure parts for %s\n",
                      slot->seg.parts.size(), source.string().c_str());
