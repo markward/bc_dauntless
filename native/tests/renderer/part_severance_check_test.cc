@@ -236,9 +236,21 @@ TEST(PartSeverance, SplitHidesThePartOnTheParentAndInstancesAChunk) {
     EXPECT_EQ(chunk->world, world.get(parent)->world);
     EXPECT_TRUE(chunk->rim_eligible);
     EXPECT_FLOAT_EQ(chunk->rim_strength, 0.4f);
-    EXPECT_FLOAT_EQ(chunk->emissive_scale, 0.5f);
     EXPECT_EQ(chunk->comm_set_id, 3u);
     EXPECT_EQ(chunk->hull_damage.count(), 1) << "the chunk keeps the parent's records";
+}
+
+// Phase 4, Task 5: a severed chunk is dead -- no window glow, whatever the
+// parent's self-illumination was (blown_parent's is 0.5).
+TEST(PartSeverance, SeveredChunkIsDark) {
+    auto s = make_seg();
+    scenegraph::World world;
+    const auto parent = blown_parent(world);
+    const auto r = renderer::split_severed_parts(world, parent, s, bridge_hit(10.f), 6.f);
+    ASSERT_EQ(r.size(), 1u);
+    ASSERT_NE(world.get(r[0].chunk), nullptr);
+    EXPECT_EQ(world.get(r[0].chunk)->emissive_scale, 0.0f) << "the chunk still glows";
+    EXPECT_EQ(world.get(parent)->emissive_scale, 0.5f) << "the parent lost its glow";
 }
 
 TEST(PartSeverance, SplitReportsAPartOnce) {

@@ -537,34 +537,22 @@ static bool draws_skinned(const assets::Model& model,
 // shader is given (they land on a worker thread at any moment).
 // `rock` (Instance::surface_is_rock): u_plating_rock, no panels, ribs or
 // members, only a cut where wear passes breach.
-// `hidden_parts` / `shown_parts` (PlatingMeshRecords): the severed parts this
-// draw hides / the only parts a chunk draws; 0 / 0 for a whole hull.
-static void upload_plating(Shader& prog, const plating::DamageList& dl,
-                           const std::vector<voxel::StructurePart>* parts,
-                           const glm::mat4& world, const float* params, bool mark,
-                           bool far, bool upload_list, bool rock,
-                           std::uint32_t hidden_parts, std::uint32_t shown_parts) {
-    static const std::string kPlating = "u_plating", kDmgCount = "u_dmg_count",
-        kDmgA = "u_dmg_a", kDmgB = "u_dmg_b", kDmgC = "u_dmg_c",
-        kMark = "u_plating_mark", kFar = "u_plating_far", kRock = "u_plating_rock",
-        kPartCount = "u_part_count",
+// The hull's structure parts (u_part_a..d, u_part_count, at most
+// kMaxHideableParts = opaque.frag's MAX_PARTS) and the severed-part masks
+// (u_part_hidden_mask / u_part_show_mask): everything plating_part and the
+// part-hiding rule read. Shared by upload_plating (the plating colour draw and
+// the mark) and the part-mask shadow caster (submit_shadow_depth), so the
+// shadow can never cut a part somewhere the visible hull does not.
+// `hidden_parts` / `shown_parts` (Instance::severed_parts / shown_parts): the
+// severed parts this draw hides / the only parts a chunk draws; 0 / 0 for a
+// whole hull. `parts` nullptr = not detected yet (u_part_count 0).
+static void upload_structure_parts(Shader& prog,
+                                   const std::vector<voxel::StructurePart>* parts,
+                                   std::uint32_t hidden_parts, std::uint32_t shown_parts) {
+    static const std::string kPartCount = "u_part_count",
         kPartA = "u_part_a", kPartB = "u_part_b", kPartC = "u_part_c",
-        kPartD = "u_part_d", kWorldInv = "u_ship_world_inv",
+        kPartD = "u_part_d",
         kPartHidden = "u_part_hidden_mask", kPartShown = "u_part_show_mask";
-    if (const int loc = prog.cached_location(kPlating); loc >= 0)
-        glUniform1fv(loc, renderer::plating::kParamCount, params);
-    // world->body for p_body / n_body. draw_model's decal block sets it only
-    // when decals are enabled and present; a plating draw must never read a
-    // previous draw's matrix.
-    prog.set_mat4(kWorldInv, glm::inverse(world));
-
-    if (upload_list) {
-        prog.set_int(kDmgCount, dl.count);
-        prog.set_vec4_array(kDmgA, dl.a, dl.count);
-        prog.set_vec4_array(kDmgB, dl.b, dl.count);
-        prog.set_vec4_array(kDmgC, dl.c, dl.count);
-    }
-
     // opaque.frag MAX_PARTS; also the parts a severance may hide.
     constexpr int kMaxParts = renderer::kMaxHideableParts;
     glm::vec4 pa[kMaxParts], pb[kMaxParts], pc[kMaxParts], pd[kMaxParts];
@@ -586,6 +574,33 @@ static void upload_plating(Shader& prog, const plating::DamageList& dl,
     prog.set_vec4_array(kPartD, pd, np);
     prog.set_int(kPartHidden, static_cast<int>(hidden_parts));
     prog.set_int(kPartShown, static_cast<int>(shown_parts));
+}
+
+// `hidden_parts` / `shown_parts`: as upload_structure_parts.
+static void upload_plating(Shader& prog, const plating::DamageList& dl,
+                           const std::vector<voxel::StructurePart>* parts,
+                           const glm::mat4& world, const float* params, bool mark,
+                           bool far, bool upload_list, bool rock,
+                           std::uint32_t hidden_parts, std::uint32_t shown_parts) {
+    static const std::string kPlating = "u_plating", kDmgCount = "u_dmg_count",
+        kDmgA = "u_dmg_a", kDmgB = "u_dmg_b", kDmgC = "u_dmg_c",
+        kMark = "u_plating_mark", kFar = "u_plating_far", kRock = "u_plating_rock",
+        kWorldInv = "u_ship_world_inv";
+    if (const int loc = prog.cached_location(kPlating); loc >= 0)
+        glUniform1fv(loc, renderer::plating::kParamCount, params);
+    // world->body for p_body / n_body. draw_model's decal block sets it only
+    // when decals are enabled and present; a plating draw must never read a
+    // previous draw's matrix.
+    prog.set_mat4(kWorldInv, glm::inverse(world));
+
+    if (upload_list) {
+        prog.set_int(kDmgCount, dl.count);
+        prog.set_vec4_array(kDmgA, dl.a, dl.count);
+        prog.set_vec4_array(kDmgB, dl.b, dl.count);
+        prog.set_vec4_array(kDmgC, dl.c, dl.count);
+    }
+
+    upload_structure_parts(prog, parts, hidden_parts, shown_parts);
 
     prog.set_int(kMark, mark ? 1 : 0);
     prog.set_int(kFar, far ? 1 : 0);
@@ -1908,6 +1923,11 @@ void submit_shadow_depth(const scenegraph::World& world,
     Shader& prog = pipeline.shadow_depth_shader();
     prog.use();
     prog.set_mat4("u_light_view_proj", light.view_proj);
+    // The part-mask caster (shadow_parts.vert/.frag), for an instance that has
+    // lost a structure part or is a chunk: bound only when one is drawn, so a
+    // frame without severance issues exactly the calls it always did.
+    Shader& parts_prog = pipeline.shadow_parts_shader();
+    bool parts_ready = false;   // u_light_view_proj set on parts_prog this pass
 
     // draw_model_positions_only (renderer/model_draw_helpers.h) sets only
     // u_model per mesh (u_light_view_proj is set once above) and issues the
@@ -1920,13 +1940,28 @@ void submit_shadow_depth(const scenegraph::World& world,
     world.for_each_visible_in_pass(
         scenegraph::Pass::Space, [&](const scenegraph::Instance& inst) {
             if (!inst.rim_eligible) return;  // ships + stations only
-            // A severed-part chunk is a whole-model instance and this pass
-            // cannot hide parts: it casts nothing (the parent still casts
-            // its lost part too, until this pass learns the part mask).
-            if (inst.shown_parts != 0) return;
             const assets::Model* m = lookup(inst.model_handle);
             if (!m) return;
-            draw_model_positions_only(*m, inst.world, prog, &inst.node_overrides);
+            if (inst.severed_parts == 0 && inst.shown_parts == 0) {
+                draw_model_positions_only(*m, inst.world, prog, &inst.node_overrides);
+                return;
+            }
+            // A hull that has lost a part casts no shadow from it, and a
+            // chunk casts only its own parts: the colour draw's rule
+            // (upload_structure_parts + plating_part), tested on the same
+            // REST-frame position (u_ship_world_inv, then u_node_rest_fix
+            // per mesh), so the shadow and the hull cut at the same place.
+            parts_prog.use();
+            if (!parts_ready) {
+                parts_prog.set_mat4("u_light_view_proj", light.view_proj);
+                parts_ready = true;
+            }
+            upload_structure_parts(parts_prog, renderer::structure_parts_for(m->source),
+                                   inst.severed_parts, inst.shown_parts);
+            parts_prog.set_mat4("u_ship_world_inv", glm::inverse(inst.world));
+            draw_model_positions_only(*m, inst.world, parts_prog, &inst.node_overrides,
+                                      /*mesh_mask=*/nullptr, /*rest_fix=*/true);
+            prog.use();
         });
 
     // Restore opaque-pass defaults so later passes are unaffected.

@@ -237,7 +237,9 @@ std::vector<SeveredSplit> split_severed_parts(scenegraph::World& world,
         ci->comm_set_id = pi->comm_set_id;
         ci->rim_eligible = pi->rim_eligible;
         ci->rim_strength = pi->rim_strength;
-        ci->emissive_scale = pi->emissive_scale;
+        // A severed chunk is dead: no window glow (phase 4 §2.3). Nothing
+        // sets it again -- the host sets emissive only on ship instances.
+        ci->emissive_scale = 0.0f;
         ci->surface_is_rock = pi->surface_is_rock;
         ci->hull_damage = pi->hull_damage;
         ci->decals = pi->decals;   // the piece keeps its scorch marks

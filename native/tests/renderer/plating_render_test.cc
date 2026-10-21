@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 
 #include <renderer/aabb.h>
+#include <renderer/cloak_pass.h>
 #include <renderer/frame.h>
 #include <renderer/pipeline.h>
 #include <renderer/node_anim.h>
@@ -41,10 +42,13 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <vector>
 
+#include "embedded_opaque_fs.h"
+#include "embedded_shadow_parts_fs.h"
 #include "plating_gl_fixture.h"
 #include "support/content_root.h"
 
@@ -1567,35 +1571,136 @@ TEST_F(PlatingRenderTest, MarkSkipsHiddenParts) {
     EXPECT_EQ(stamped_right, 0) << "the hidden part was stamped";
 }
 
-// A chunk (shown_parts) is a whole-model instance: until the shadow pass can
-// hide parts it casts no shadow at all, or a whole-ship shadow would tumble
-// across the player's hull (fix round 1, I2).
-TEST_F(PlatingRenderTest, ShadowDepthSkipsSeveredPartChunks) {
-    const auto cam = quad_cam();
-    auto box = build_box(20.0f);
+// Phase 4, Task 5: the shadow depth pass hides what the colour draw hides. A
+// parent casts no depth from a part it has lost, and a chunk casts depth from
+// its own parts only -- not the whole model, and not nothing. Every kept
+// texel's depth is exactly the whole hull's.
+TEST_F(PlatingRenderTest, ShadowHonoursThePartMask) {
+    // The light looks UP at the plates (+z): the pass culls FRONT faces and
+    // the plates face +z, so seen from below their back faces are the casters.
+    scenegraph::Camera cam;
+    cam.eye = glm::vec3(0.0f, 0.0f, -120.0f);
+    cam.target = glm::vec3(0.0f);
+    cam.up = glm::vec3(0.0f, 1.0f, 0.0f);
+    cam.aspect = 1.0f;
+    auto plate = two_part_plate("shadow");
     renderer::ShadowLight light;
     light.view_proj = cam.proj_matrix() * cam.view_matrix();
-    const glm::ivec2 c = to_pixel(cam, glm::vec3(0.0f));
+    const int mid = to_pixel(cam, glm::vec3(0.0f)).x;
+    // Which window side each part lands on (the view from below mirrors x).
+    const bool part1_right = to_pixel(cam, glm::vec3(32.0f, 0.0f, 0.0f)).x > mid;
     const auto lookup = [](scenegraph::ModelHandle h) -> const assets::Model* {
         return reinterpret_cast<const assets::Model*>(h);
     };
-    auto depth_at_centre = [&](std::uint32_t shown_parts) {
+    auto depth = [&](std::uint32_t severed, std::uint32_t shown) {
         scenegraph::World world;
-        auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(box.get()));
+        auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(plate.get()));
         world.set_world_transform(iid, glm::mat4(1.0f));
         world.get(iid)->rim_eligible = true;
-        world.get(iid)->shown_parts = shown_parts;
+        world.get(iid)->severed_parts = severed;
+        world.get(iid)->shown_parts = shown;
         glViewport(0, 0, kSize, kSize);
         glDepthMask(GL_TRUE);
         glClearDepth(1.0);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         renderer::submit_shadow_depth(world, light, *p, lookup);
-        float d = -1.0f;
-        glReadPixels(c.x, c.y, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &d);
+        std::vector<float> d(static_cast<std::size_t>(kSize) * kSize, -1.0f);
+        glReadPixels(0, 0, kSize, kSize, GL_DEPTH_COMPONENT, GL_FLOAT, d.data());
         return d;
     };
-    ASSERT_LT(depth_at_centre(0u), 1.0f) << "the hull casts no depth";
-    EXPECT_EQ(depth_at_centre(1u << 0), 1.0f) << "a chunk cast a whole-model shadow";
+    // Texels with depth on part `part`'s side of the window.
+    auto cast = [&](const std::vector<float>& d, int part) {
+        const bool right = (part == 1) == part1_right;
+        int n = 0;
+        for (int y = 0; y < kSize; ++y)
+            for (int x = right ? mid + 2 : 0; x < (right ? kSize : mid - 2); ++x)
+                if (d[static_cast<std::size_t>(y) * kSize + x] < 1.0f) ++n;
+        return n;
+    };
+    // Largest depth difference on part `part`'s side.
+    auto worst = [&](const std::vector<float>& a, const std::vector<float>& b, int part) {
+        const bool right = (part == 1) == part1_right;
+        float w = 0.0f;
+        for (int y = 0; y < kSize; ++y)
+            for (int x = right ? mid + 2 : 0; x < (right ? kSize : mid - 2); ++x) {
+                const std::size_t i = static_cast<std::size_t>(y) * kSize + x;
+                w = std::max(w, std::abs(a[i] - b[i]));
+            }
+        return w;
+    };
+
+    const auto whole = depth(0u, 0u);
+    ASSERT_GT(cast(whole, 0), 2000) << "part 0 casts no depth";
+    ASSERT_GT(cast(whole, 1), 2000) << "part 1 casts no depth";
+
+    const auto parent = depth(1u << 1, 0u);
+    EXPECT_EQ(cast(parent, 1), 0) << "the parent still shadows its lost part";
+    EXPECT_EQ(worst(whole, parent, 0), 0.0f) << "the parent's attached part changed";
+
+    const auto chunk = depth(0u, 1u << 1);
+    EXPECT_EQ(cast(chunk, 0), 0) << "the chunk shadows a part it does not have";
+    EXPECT_EQ(worst(whole, chunk, 1), 0.0f) << "the chunk's own part lost its shadow";
+}
+
+// Ruling 8 drift guard: shadow_parts.frag's plating_part is a COPY of
+// opaque.frag's (shader sources are embedded whole), and so is the MAX_PARTS
+// it loops to. Compared on the embedded sources -- the texts the programs are
+// actually built from.
+namespace {
+std::string glsl_function(const std::string& src, const std::string& signature) {
+    const std::size_t at = src.find(signature);
+    if (at == std::string::npos) return {};
+    const std::size_t end = src.find("\n}\n", at);
+    if (end == std::string::npos) return {};
+    return src.substr(at, end + 3 - at);
+}
+std::string glsl_line_with(const std::string& src, const std::string& needle) {
+    const std::size_t at = src.find(needle);
+    if (at == std::string::npos) return {};
+    const std::size_t start = src.rfind('\n', at) + 1;
+    return src.substr(start, src.find('\n', at) - start);
+}
+}  // namespace
+
+TEST(ShadowPartsShader, PlatingPartIsTheTwinOfOpaque) {
+    const std::string opaque = renderer::shader_src::opaque_fs;
+    const std::string shadow = renderer::shader_src::shadow_parts_fs;
+    const std::string sig = "int plating_part(vec3 p) {";
+    const std::string a = glsl_function(opaque, sig), b = glsl_function(shadow, sig);
+    ASSERT_FALSE(a.empty()) << "opaque.frag has no plating_part";
+    ASSERT_FALSE(b.empty()) << "shadow_parts.frag has no plating_part";
+    EXPECT_EQ(a, b) << "shadow_parts.frag's plating_part drifted from opaque.frag's";
+    const std::string ma = glsl_line_with(opaque, "const int  MAX_PARTS");
+    ASSERT_FALSE(ma.empty()) << "opaque.frag has no MAX_PARTS";
+    EXPECT_EQ(ma, glsl_line_with(shadow, "const int  MAX_PARTS"))
+        << "the two MAX_PARTS differ";
+}
+
+// Phase 4, Task 5: a chunk never draws a cloak shell (a cloaking parent's
+// shell is the whole model; a chunk's would be too).
+TEST_F(PlatingRenderTest, CloakSkipsChunks) {
+    const auto cam = quad_cam();
+    auto plate = two_part_plate("cloak");
+    const auto lookup = [](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h);
+    };
+    auto shell = [&](std::uint32_t shown) {
+        scenegraph::World world;
+        auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(plate.get()));
+        world.set_world_transform(iid, glm::mat4(1.0f));
+        world.get(iid)->shown_parts = shown;
+        glViewport(0, 0, kSize, kSize);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        renderer::CloakRefractionPass pass;
+        pass.render({renderer::CloakShipDescriptor{iid, 0.5f}}, world, cam, *p, lookup, 0.0f,
+                    test_lighting(), 1.0f, kDecalTime);
+        std::vector<std::uint8_t> px(static_cast<std::size_t>(kSize) * kSize * 4);
+        glReadPixels(0, 0, kSize, kSize, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+        return count_non_black(px);
+    };
+    ASSERT_GT(shell(0u), 2000) << "a cloaking hull drew no shell";
+    EXPECT_EQ(shell(1u << 1), 0) << "a chunk drew a cloak shell";
 }
 
 // Phase 4, Task 2 (removing the old voxel carve): the carve clip, its

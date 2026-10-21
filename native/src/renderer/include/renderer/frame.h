@@ -630,7 +630,10 @@ private:
 
 /// Render depth-only for every visible `rim_eligible` caster in `Pass::Space`
 /// into the currently-bound depth framebuffer, using the pipeline's
-/// `shadow_depth` program and `light.view_proj` as `u_light_view_proj`. The
+/// `shadow_depth` program and `light.view_proj` as `u_light_view_proj`. An
+/// instance with severed parts or a chunk (Instance::severed_parts /
+/// shown_parts non-zero) draws with `shadow_parts` instead, which discards
+/// the parts the colour draw hides. The
 /// caller must bind the shadow FBO and clear depth first, and restore the
 /// previous framebuffer afterward. GL state changed here (cull face, polygon
 /// offset, color mask) is restored to the opaque-pass defaults on exit.

@@ -77,6 +77,8 @@
 #include "embedded_viewscreen_bars_fs.h"
 #include "embedded_shadow_vs.h"
 #include "embedded_shadow_fs.h"
+#include "embedded_shadow_parts_vs.h"
+#include "embedded_shadow_parts_fs.h"
 #include "embedded_shockwave_vs.h"
 #include "embedded_shockwave_fs.h"
 #include "embedded_skybox_vs.h"
@@ -188,6 +190,9 @@ Pipeline::Pipeline() {
         shader_src::viewscreen_bars_vs, shader_src::viewscreen_bars_fs);
     shadow_depth_ = std::make_unique<Shader>(
         shader_src::shadow_vs, shader_src::shadow_fs);
+    // Part-mask caster: only instances with severed / shown parts.
+    shadow_parts_ = std::make_unique<Shader>(
+        shader_src::shadow_parts_vs, shader_src::shadow_parts_fs);
     shockwave_ = std::make_unique<Shader>(shader_src::shockwave_vs,
                                           shader_src::shockwave_fs);
     skybox_ = std::make_unique<Shader>(shader_src::skybox_vs, shader_src::skybox_fs);

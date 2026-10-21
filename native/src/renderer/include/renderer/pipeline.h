@@ -60,6 +60,9 @@ public:
     Shader& viewscreen_static_shader() noexcept { return *viewscreen_static_; }
     Shader& viewscreen_bars_shader() noexcept { return *viewscreen_bars_; }
     Shader& shadow_depth_shader() noexcept    { return *shadow_depth_; }
+    // The shadow caster for an instance with severed / shown structure parts
+    // (shadow_parts.vert/.frag): discards the hidden parts' fragments.
+    Shader& shadow_parts_shader() noexcept    { return *shadow_parts_; }
     Shader& shockwave_shader() noexcept       { return *shockwave_; }
     Shader& skybox_shader() noexcept          { return *skybox_; }
     Shader& cloak_refraction_shader() noexcept { return *cloak_refraction_; }
@@ -107,6 +110,7 @@ private:
     std::unique_ptr<Shader> viewscreen_static_;
     std::unique_ptr<Shader> viewscreen_bars_;
     std::unique_ptr<Shader> shadow_depth_;
+    std::unique_ptr<Shader> shadow_parts_;
     std::unique_ptr<Shader> shockwave_;
     std::unique_ptr<Shader> skybox_;
     std::unique_ptr<Shader> cloak_refraction_;
