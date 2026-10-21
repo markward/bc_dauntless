@@ -227,6 +227,7 @@ add_library(renderer STATIC
     breach_debris.cc
     breach_pass.cc
     hull_interior_pass.cc
+    hull_interior_policy.cc
     model_draw_helpers.cc
     scuff_texture.cc
     carve_field_cache.cc

@@ -599,6 +599,11 @@ CommSource g_comm_source;
 struct SceneSource { bool active = false; scenegraph::Camera cam; };
 SceneSource g_scene_source;
 
+// The viewscreen feed's target (set_viewscreen_target_instance, pushed every
+// frame by host_loop): on the viewscreen render only this hull gets decks and
+// rooms behind its holes (renderer/hull_interior_policy.h). nullopt = none.
+std::optional<scenegraph::InstanceId> g_viewscreen_target;
+
 // Viewscreen static/"snow" overlay: composited over the viewscreen RTT after
 // the feed (comm or forward) is rendered. on/intensity are pushed per frame by
 // host_loop (intensity = SDK fMin/fMax flicker); textures come from the
@@ -975,6 +980,7 @@ void far_zero_fades(const std::vector<std::uint64_t>& keys) {
 }
 
 void reset_frame_state() {
+    g_viewscreen_target.reset();
     g_lighting = renderer::Lighting{};
     g_bridge_lighting = renderer::Lighting{};
     g_bridge_ambient_scale = 1.0f;
@@ -1546,6 +1552,16 @@ void frame() {
         // The drawn target's framebuffer size: the viewscreen RTT is
         // kViewscreenRtt{W,H}; the main view (plain or MSAA) is fw x fh.
         const bool to_viewscreen = hdr != nullptr && hdr == g_viewscreen_hdr.get();
+        // Which hulls get rooms behind their holes in THIS render: on the
+        // viewscreen only its target; the main view by distance (the default).
+        if (g_submitter) {
+            renderer::InteriorPolicy interior_policy;
+            if (to_viewscreen) {
+                interior_policy.viewscreen = true;
+                interior_policy.viewscreen_target = g_viewscreen_target;
+            }
+            g_submitter->set_interior_policy(interior_policy);
+        }
         const float target_h = to_viewscreen ? static_cast<float>(kViewscreenRttH)
                                              : static_cast<float>(fh);
         const int target_w = to_viewscreen ? kViewscreenRttW : fw;
@@ -4557,6 +4573,21 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("fov_y_rad"), py::arg("near"), py::arg("far"));
     m.def("clear_viewscreen_scene_source",
           []() { g_scene_source.active = false; });
+    m.def("set_viewscreen_target_instance",
+          [](py::object iid) {
+              if (py::isinstance<scenegraph::InstanceId>(iid)) {
+                  g_viewscreen_target = iid.cast<scenegraph::InstanceId>();
+              } else if (py::isinstance<py::int_>(iid) && iid.cast<long long>() == -1) {
+                  g_viewscreen_target.reset();
+              } else {
+                  throw py::type_error(
+                      "set_viewscreen_target_instance: an InstanceId, or -1 for none");
+              }
+          },
+          py::arg("iid"),
+          "The viewscreen feed's target hull (an InstanceId), or -1 for none. On "
+          "the viewscreen render only this hull draws decks and rooms behind its "
+          "holes; every other hull's holes are painted as far wreckage.");
     m.def("set_viewscreen_static_source",
           [](std::vector<std::string> paths) {
               if (g_viewscreen_static_pass)

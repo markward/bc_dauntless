@@ -136,6 +136,15 @@ inline std::unique_ptr<assets::Model> build_box(float half) {
     return model;
 }
 
+// Every hull near (holes cut, marked and filled with rooms). The plating GL
+// tests' cameras sit 85 GU and more from their hulls, past the production
+// InteriorPolicy's 20 GU, and they pin the near (cut) look.
+inline renderer::InteriorPolicy all_near_policy() {
+    renderer::InteriorPolicy p;
+    p.near_gu = 1.0e9f;
+    return p;
+}
+
 // Window + pipeline, and the plating params restored after every test.
 class PlatingGLFixture : public ::testing::Test {
 protected:

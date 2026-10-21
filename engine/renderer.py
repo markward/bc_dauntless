@@ -104,6 +104,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_viewscreen_enabled", "set_viewscreen_model",
     "set_viewscreen_off_texture",
     "set_viewscreen_scene_source", "set_viewscreen_static",
+    "set_viewscreen_target_instance",
     "set_viewscreen_static_source", "set_visible", "set_warp_flash_intensity",
     "set_warp_streak_intensity", "set_warp_travel_dir", "set_world_transform",
     "shadows_set_enabled", "shield_hit", "shield_register", "shield_unregister",
@@ -1500,6 +1501,13 @@ def set_viewscreen_scene_source(eye, target, up, fov_y_rad, near, far) -> None:
 def clear_viewscreen_scene_source() -> None:
     """Disable the scene source, returning the viewscreen to the forward feed."""
     _h.clear_viewscreen_scene_source()
+
+
+def set_viewscreen_target_instance(iid) -> None:
+    """The viewscreen feed's target hull (an InstanceId), or -1 for none. On the
+    viewscreen render only this hull draws decks and rooms behind its holes;
+    every other hull's holes are painted as far wreckage."""
+    _h.set_viewscreen_target_instance(iid)
 
 
 def set_viewscreen_static_source(paths) -> None:

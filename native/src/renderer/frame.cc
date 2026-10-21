@@ -592,7 +592,8 @@ void draw_model(const assets::Model& model,
                 const scenegraph::Instance::Atmosphere* atmo,
                 glm::vec3 atmo_sun_dir,
                 const plating::DamageList* plating,
-                bool plating_mark) {
+                bool plating_mark,
+                bool plating_far) {
     // Pick the program: skinned only when the model carries a skeleton AND a
     // non-empty palette is supplied. An empty palette forces the static branch,
     // which is byte-identical to the pre-skinning path (used by the plumbing
@@ -666,7 +667,7 @@ void draw_model(const assets::Model& model,
     if (plating_list != nullptr) {
         static const std::string kPlating = "u_plating", kDmgCount = "u_dmg_count",
             kDmgA = "u_dmg_a", kDmgB = "u_dmg_b", kDmgC = "u_dmg_c",
-            kMark = "u_plating_mark", kPartCount = "u_part_count",
+            kMark = "u_plating_mark", kFar = "u_plating_far", kPartCount = "u_part_count",
             kPartA = "u_part_a", kPartB = "u_part_b", kPartC = "u_part_c",
             kPartD = "u_part_d";
         auto set_vec4s = [&](const std::string& name, const glm::vec4* v, int n) {
@@ -710,6 +711,7 @@ void draw_model(const assets::Model& model,
         set_vec4s(kPartD, pd, np);
 
         set_int(kMark, plating_mark ? 1 : 0);
+        set_int(kFar, plating_far ? 1 : 0);
     }
 
     // ── Warp-nacelle glow capsules ─────────────────────────────────────────
@@ -1332,6 +1334,7 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
     // configured the first time a draw in this pass needs it, so an
     // undamaged scene never touches it.
     bool plating_configured = false;
+    plating_far_draws_last_frame_ = 0;
 
     const GLuint white = ensure_white_texture();
     const GLuint black = ensure_black_texture();
@@ -1370,6 +1373,18 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
         if (use_plating && !plating_configured) {
             configure_common(pipeline.plating_shader());
             plating_configured = true;
+        }
+        // Near/far (InteriorPolicy): a far hull gets no rooms, so its holes
+        // are painted as wreckage by this draw. submit_plating_interior takes
+        // the same decision for the same instance, so a hull is either marked
+        // or painted far, never both. Rocks have no rooms at any distance:
+        // their holes are always cut. A skinned draw has no plating layer.
+        bool plating_far = false;
+        if (use_plating && !inst.surface_is_rock && !draws_skinned(*m, palette)) {
+            plating_far = !interior_is_near(
+                inst, model_bounding_radius(inst.model_handle, *m), camera,
+                interior_policy_);
+            if (plating_far) ++plating_far_draws_last_frame_;
         }
         // Far tier: a fading mesh screen-doors against its impostor. Set on
         // every program that may draw (draw_model picks one); reset only when
@@ -1422,7 +1437,8 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                           instance_decal_override(inst.id),
                           sphere_level,
                           atmo, atmo_sun,
-                          use_plating ? &plating_list : nullptr);
+                          use_plating ? &plating_list : nullptr,
+                          /*plating_mark=*/false, plating_far);
         if (inst.far_fade != 0.0f) {
             shader.use();
             shader.set_float("u_dither_fade", 0.0f);
@@ -1581,6 +1597,11 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
         if (inst.surface_is_rock) return;
         const assets::Model* m = lookup(inst.model_handle);
         if (!m || inst.hull_damage.count() == 0) return;
+        // Far hulls (InteriorPolicy) take no marking and no rooms: their
+        // holes were painted as wreckage by the plating draw.
+        if (!interior_is_near(inst, model_bounding_radius(inst.model_handle, *m), camera,
+                              interior_policy_))
+            return;
         const plating::DamageList& list = plating_list_for(inst);
         if (!plating::wants_plating(list, dauntless_plating::g_params) ||
             !list.torn_possible)

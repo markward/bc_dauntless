@@ -1201,6 +1201,10 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
 // faces are culled), so a cut shows whatever lies behind the hull; the
 // marking draw (u_plating_mark) stamps the stencil exactly at these pixels.
 uniform int u_plating_mark;        // 1 = marking draw: stencil only where the hull is cut through
+// 1 = far hull (renderer/hull_interior_policy.h): no rooms are drawn behind
+// its holes, so a hole is painted as wreckage instead of cut, unless it is
+// blown clear through (wear past deck break, u_plating[24]).
+uniform int u_plating_far;
 // 0 = hull here; 1 = torn through (cut); 2 = torn, but a structural member
 // still spans the hole here (drawn as bare, charred metal). The torn edge is
 // jagged at panel scale; members snap off at random lengths, fewer the
@@ -2145,11 +2149,29 @@ void main() {
         plating_w_here = plating_wear(p_body, n_body);
         plating_w_int  = plating_internal(p_body);
         int hole = plating_hole(p_body, n_body, plating_w_here);
+        // A hole is cut when this hull is near (rooms are drawn behind it) or
+        // blown clear through; a far hole is painted as wreckage below.
+        bool cut = hole == 1 && (u_plating_far == 0 || plating_w_here > u_plating[24]);
         // Marking draw: keep ONLY the cut-through pixels (colour is masked
         // off, so what they shade to is never seen); every other draw
         // discards exactly those pixels. One discard, no early return: an
         // early `return` here miscompiled the whole plating draw.
-        if ((hole == 1) != (u_plating_mark != 0)) discard;
+        if (cut != (u_plating_mark != 0)) discard;
+        if (hole == 1 && !cut) {
+            // Far wreckage: near-black char, with the odd room cell still
+            // burning or still lit, read from the room lattice the interior
+            // pass walks (6 x 8.67 x 2.67 model units).
+            plating_inside = true;
+            n_shade = n;
+            float g = vnoise(p_body.xy * 0.7 + p_body.z * 0.5);
+            base.rgb = vec3(0.02) * (0.7 + 0.3 * g);
+            vec3 wreck_cell = floor(p_body / vec3(6.0, 8.67, 2.67));
+            float wreck_h = dhash(wreck_cell.xy + wreck_cell.z * vec2(17.0, 31.0));
+            if (wreck_h < 0.03)
+                g_plating_emissive += blackbody(0.6) * 0.8;
+            else if (wreck_h < 0.055)
+                g_plating_emissive += vec3(0.8, 0.88, 1.0) * 0.5;
+        }
         if (hole == 2) {
             // A member still spanning the hole: bare, charred metal.
             plating_inside = true;

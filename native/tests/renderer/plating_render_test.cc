@@ -116,6 +116,8 @@ protected:
         renderer::reset_model_radius_cache();
 
         renderer::FrameSubmitter submitter;
+        // These tests pin the near (cut) look; their cameras are past 20 GU.
+        submitter.set_interior_policy(all_near_policy());
         const auto lookup = [](scenegraph::ModelHandle h) -> const assets::Model* {
             return reinterpret_cast<const assets::Model*>(h);
         };
@@ -171,6 +173,7 @@ protected:
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         renderer::reset_model_radius_cache();
         renderer::FrameSubmitter submitter;
+        submitter.set_interior_policy(all_near_policy());
         const auto lookup = [](scenegraph::ModelHandle h) -> const assets::Model* {
             return reinterpret_cast<const assets::Model*>(h);
         };

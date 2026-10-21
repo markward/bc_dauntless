@@ -98,26 +98,38 @@ protected:
         glm::mat4 world;
         scenegraph::HullDamageStore ring;
         bool rock = false;
+        // With a viewscreen `policy`, this instance is the viewscreen's target.
+        bool viewscreen_target = false;
     };
     struct Shot {
         std::vector<std::uint8_t> px;
         int marks = -1;
         int interiors = -1;
+        int far_draws = -1;
     };
+
+    // What render() draws with: every hull near by default (these tests pin
+    // the near look; quad_cam is ~85 GU from the box surface), quad_cam, and a
+    // fresh FrameSubmitter per render unless `shared` is set.
+    renderer::InteriorPolicy policy = all_near_policy();
+    scenegraph::Camera cam = quad_cam();
+    renderer::FrameSubmitter* shared = nullptr;
 
     // Every `placed` box drawn through submit_opaque_in_pass then
     // submit_plating_interior (or submit_opaque alone when `stock`), the
-    // interior's fill coming from `fills`.
+    // interior's fill coming from `fills`, under `policy` seen from `cam`.
     Shot render(const std::vector<Placed>& placed, renderer::CarveFieldCache* fills,
                 bool stock = false, const assets::Model* use_model = nullptr) {
         const assets::Model* drawn = use_model != nullptr ? use_model : box.get();
         scenegraph::World world;
+        renderer::InteriorPolicy drawn_policy = policy;
         for (const Placed& pl : placed) {
             auto iid = world.create_instance(
                 reinterpret_cast<scenegraph::ModelHandle>(drawn));
             world.set_world_transform(iid, pl.world);
             world.get(iid)->hull_damage = pl.ring;
             world.get(iid)->surface_is_rock = pl.rock;
+            if (pl.viewscreen_target) drawn_policy.viewscreen_target = iid;
         }
         glViewport(0, 0, kSize, kSize);
         glClearColor(kClearR, kClearG, kClearB, 1.0f);
@@ -128,11 +140,12 @@ protected:
         glDepthFunc(GL_LESS);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         renderer::reset_model_radius_cache();
-        renderer::FrameSubmitter submitter;
+        renderer::FrameSubmitter own;
+        renderer::FrameSubmitter& submitter = shared != nullptr ? *shared : own;
+        submitter.set_interior_policy(drawn_policy);
         const auto lookup = [](scenegraph::ModelHandle h) -> const assets::Model* {
             return reinterpret_cast<const assets::Model*>(h);
         };
-        const auto cam = quad_cam();
         Shot out;
         if (stock) {
             submitter.submit_opaque(world, cam, *p, lookup, test_lighting(), kDecalTime);
@@ -143,6 +156,7 @@ protected:
                                               test_lighting(), 1.0f, kDecalTime);
             out.marks = submitter.plating_marks_last_frame();
             out.interiors = submitter.plating_interiors_last_frame();
+            out.far_draws = submitter.plating_far_draws_last_frame();
         }
         out.px.assign(static_cast<std::size_t>(kSize) * kSize * 4, 0);
         glReadPixels(0, 0, kSize, kSize, GL_RGBA, GL_UNSIGNED_BYTE, out.px.data());
@@ -155,12 +169,13 @@ protected:
     }
 
     // The near face's centre, where the camera axis meets the box.
-    glm::ivec2 centre() const { return to_pixel(quad_cam(), glm::vec3(0.0f, 0.0f, kBoxHalf)); }
+    glm::ivec2 centre() const { return to_pixel(cam, glm::vec3(0.0f, 0.0f, kBoxHalf)); }
 
     static void report(const char* what, const Shot& s, glm::ivec2 c) {
         const std::uint8_t* q = pixel(s.px, c.x, c.y);
-        std::fprintf(stderr, "[HullInterior] %s centre=(%d,%d,%d) marks=%d interiors=%d\n",
-                     what, q[0], q[1], q[2], s.marks, s.interiors);
+        std::fprintf(stderr,
+                     "[HullInterior] %s centre=(%d,%d,%d) marks=%d interiors=%d far=%d\n",
+                     what, q[0], q[1], q[2], s.marks, s.interiors, s.far_draws);
     }
 };
 
@@ -402,4 +417,129 @@ TEST_F(HullInteriorTest, UndamagedSceneDrawsNoInterior) {
     EXPECT_EQ(s.marks, 0);
     EXPECT_EQ(s.interiors, 0);
     EXPECT_EQ(s.px, stock.px);
+}
+
+// ---- Phase 2 (near/far): the interior policy (renderer/hull_interior_policy.h).
+// quad_cam's eye is 120 GU from the box centre; the box's bounding sphere
+// (radius 20 x sqrt(3) = 34.6) starts 85.4 GU out.
+namespace {
+int rgb_sum(const std::uint8_t* q) { return q[0] + q[1] + q[2]; }
+}  // namespace
+
+// A far hull takes no marking and no interior: its hole is painted in place
+// as wreckage by the plating draw, never left see-through.
+TEST_F(HullInteriorTest, FarHullPaintsHoleAsWreck) {
+    const auto ring = internal_ring({0.0f, 0.0f, kBoxHalf}, 30.0f, 10.0f);
+    dauntless_plating::g_params[24] = 1000.0f;   // the plates hold: not blown through
+    const auto hull = render_one(scenegraph::HullDamageStore{}, filled.get());
+    policy.near_gu = 1.0f;
+    const auto far = render_one(ring, filled.get());
+    report("far", far, centre());
+    EXPECT_EQ(far.marks, 0);
+    EXPECT_EQ(far.interiors, 0);
+    EXPECT_EQ(far.far_draws, 1);
+    const std::uint8_t* q = pixel(far.px, centre().x, centre().y);
+    EXPECT_FALSE(is_clear(q)) << "a far hole must be painted as wreckage, not see-through";
+    EXPECT_LT(rgb_sum(q) * 2, rgb_sum(pixel(hull.px, centre().x, centre().y)))
+        << "the far hole is not painted as dark wreckage";
+}
+
+// Blown clear through (wear past deck break), the hole is cut at any distance.
+TEST_F(HullInteriorTest, FarBlownThroughStillCuts) {
+    const auto ring = internal_ring(glm::vec3(0.0f), 60.0f, 10.0f);
+    dauntless_plating::g_params[24] = 0.01f;
+    policy.near_gu = 1.0f;
+    const auto s = render_one(ring, filled.get());
+    report("far, deck break 0.01", s, centre());
+    EXPECT_EQ(s.marks, 0);
+    EXPECT_EQ(s.interiors, 0);
+    EXPECT_TRUE(is_clear(pixel(s.px, centre().x, centre().y)))
+        << "a far hull blown through must still show what is behind it";
+}
+
+// The production default (20 GU) with the camera close: rooms, as before.
+TEST_F(HullInteriorTest, NearHullStillDrawsInterior) {
+    policy = renderer::InteriorPolicy{};
+    cam.eye = glm::vec3(0.0f, 0.0f, 50.0f);   // sphere surface 15.4 GU out
+    const auto ring = internal_ring({0.0f, 0.0f, kBoxHalf}, 30.0f, 10.0f);
+    const auto s = render_one(ring, filled.get());
+    report("near (default policy)", s, centre());
+    EXPECT_EQ(s.marks, 1);
+    EXPECT_EQ(s.interiors, 1);
+    EXPECT_EQ(s.far_draws, 0);
+    EXPECT_FALSE(is_clear(pixel(s.px, centre().x, centre().y)))
+        << "the hole shows what is behind the ship, not its interior";
+}
+
+// One near/far decision per instance per render: a hull whose sphere spans
+// near_gu (surface 85.4 GU in, centre 120 GU out) is either marked or painted
+// far, never both.
+TEST_F(HullInteriorTest, OneDecisionPerInstancePerRender) {
+    const auto ring = internal_ring({0.0f, 0.0f, kBoxHalf}, 30.0f, 10.0f);
+    policy.near_gu = 100.0f;
+    const auto s = render_one(ring, filled.get());
+    report("straddling near_gu", s, centre());
+    EXPECT_EQ(s.marks + s.far_draws, 1);
+}
+
+// On the viewscreen only its target gets rooms, whatever the distance.
+TEST_F(HullInteriorTest, ViewscreenOnlyTargetGetsInterior) {
+    const auto ring = internal_ring({0.0f, 0.0f, kBoxHalf}, 30.0f, 10.0f);
+    dauntless_plating::g_params[24] = 1000.0f;   // the plates hold everywhere
+    policy = renderer::InteriorPolicy{};
+    policy.near_gu = 1.0e9f;                     // distance plays no part
+    policy.viewscreen = true;
+    const glm::vec3 at_l(-30.0f, 0.0f, 0.0f), at_r(30.0f, 0.0f, 0.0f);
+    const auto s = render({Placed{glm::translate(glm::mat4(1.0f), at_l), ring, false, true},
+                           Placed{glm::translate(glm::mat4(1.0f), at_r), ring}},
+                          filled.get());
+    report("viewscreen, left targeted", s, centre());
+    EXPECT_EQ(s.marks, 1);
+    EXPECT_EQ(s.interiors, 1);
+    EXPECT_EQ(s.far_draws, 1);
+    const glm::ivec2 l = to_pixel(cam, at_l + glm::vec3(0.0f, 0.0f, kBoxHalf));
+    const glm::ivec2 r = to_pixel(cam, at_r + glm::vec3(0.0f, 0.0f, kBoxHalf));
+    EXPECT_FALSE(is_clear(pixel(s.px, l.x, l.y))) << "target hole: no rooms";
+    EXPECT_FALSE(is_clear(pixel(s.px, r.x, r.y))) << "other hole: not painted";
+}
+
+TEST_F(HullInteriorTest, ViewscreenWithoutTargetDrawsNoInterior) {
+    const auto ring = internal_ring({0.0f, 0.0f, kBoxHalf}, 30.0f, 10.0f);
+    policy = renderer::InteriorPolicy{};
+    policy.near_gu = 1.0e9f;
+    policy.viewscreen = true;
+    const auto s = render_one(ring, filled.get());
+    report("viewscreen, no target", s, centre());
+    EXPECT_EQ(s.marks, 0);
+    EXPECT_EQ(s.interiors, 0);
+}
+
+// The viewscreen's policy must not stick: the next (main view) render on the
+// same submitter, under the default policy with the camera close, has rooms.
+TEST_F(HullInteriorTest, MainViewPolicyRestoredAfterViewscreen) {
+    renderer::FrameSubmitter submitter;
+    shared = &submitter;
+    cam.eye = glm::vec3(0.0f, 0.0f, 50.0f);
+    const auto ring = internal_ring({0.0f, 0.0f, kBoxHalf}, 30.0f, 10.0f);
+    policy = renderer::InteriorPolicy{};
+    policy.viewscreen = true;
+    const auto vs = render_one(ring, filled.get());
+    EXPECT_EQ(vs.interiors, 0);
+    policy = renderer::InteriorPolicy{};
+    const auto main_view = render_one(ring, filled.get());
+    report("main after viewscreen", main_view, centre());
+    EXPECT_EQ(main_view.marks, 1);
+    EXPECT_EQ(main_view.interiors, 1);
+    shared = nullptr;
+}
+
+// Rocks have no rooms: a far rock's hole stays see-through, never wreckage.
+TEST_F(HullInteriorTest, FarRockHoleStaysSeeThrough) {
+    const auto ring = internal_ring({0.0f, 0.0f, kBoxHalf}, 30.0f, 10.0f);
+    dauntless_plating::g_params[24] = 1000.0f;
+    policy.near_gu = 1.0f;
+    const auto s = render({Placed{glm::mat4(1.0f), ring, /*rock=*/true}}, filled.get());
+    report("far rock", s, centre());
+    EXPECT_EQ(s.far_draws, 0);
+    EXPECT_TRUE(is_clear(pixel(s.px, centre().x, centre().y)));
 }

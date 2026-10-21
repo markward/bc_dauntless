@@ -8341,6 +8341,26 @@ def _viewscreen_scene_feed(player, forward_fov):
     return (eye, look_at, up, forward_fov, VS_NEAR, VS_FAR)
 
 
+def _push_viewscreen_target(r, scene_feed, ship_instances) -> None:
+    """Push the render instance id of the ship the viewscreen's scene feed
+    frames (its ViewscreenZoomTarget "Target", resolved by
+    _viewscreen_scene_feed this frame), or -1 when the viewscreen frames no
+    target (`scene_feed` None: forward or comm feed) or that target has no
+    render instance. On the viewscreen render only that hull draws decks and
+    rooms behind its holes (renderer/hull_interior_policy.h). Pushed every
+    frame, so a stale target never lingers."""
+    iid = -1
+    if scene_feed is not None and ship_instances:
+        game = Game_GetCurrentGame()
+        cam = game.GetPlayerCamera() if game is not None else None
+        mode = (cam.GetNamedCameraMode("ViewscreenZoomTarget")
+                if cam is not None else None)
+        tgt = mode.GetAttrIDObject("Target") if mode is not None else None
+        if tgt is not None:
+            iid = ship_instances.get(tgt, -1)
+    r.set_viewscreen_target_instance(iid)
+
+
 def _push_target_reticle(r, player) -> None:
     """Feed the target reticle pass (a SPACE-pass overlay drawn with the
     exterior camera): the payload's target centre and sub-target point in
@@ -12972,6 +12992,8 @@ def run(mission_name: Optional[str] = None,
             if _feed is None:
                 _scene = _viewscreen_scene_feed(player, director.fov_y_rad)
             _vs_src = _select_viewscreen_source(r, _feed, _scene)
+            _push_viewscreen_target(
+                r, _scene, session.ship_instances if session is not None else None)
             if _vs_src == "comm":
                 _set_id, _cam = _feed
                 # Frame the comm set by the camera's AUTHORED orientation (the

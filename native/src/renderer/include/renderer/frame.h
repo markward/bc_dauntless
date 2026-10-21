@@ -22,6 +22,7 @@
 // constants, so the forward declaration below is not enough on its own.
 #include <renderer/carve_field_cache.h>
 #include <renderer/hull_interior_pass.h>
+#include <renderer/hull_interior_policy.h>
 // draw_model takes a const InstanceFieldCache::Entry* -- a nested type, so
 // (like CarveFieldCache above) the forward declaration below is not enough.
 #include <renderer/instance_field_cache.h>
@@ -356,7 +357,12 @@ void draw_model(const assets::Model& model,
                 const plating::DamageList* plating = nullptr,
                 // Marking draw (submit_plating_interior): the program writes
                 // nothing but "this pixel is cut through" (u_plating_mark).
-                bool plating_mark = false);
+                bool plating_mark = false,
+                // Far hull (InteriorPolicy, hull_interior_policy.h): no rooms
+                // behind its holes, so the program paints a hole as wreckage
+                // instead of cutting it, unless it is blown clear through
+                // (u_plating_far). Plating draws only.
+                bool plating_far = false);
 
 /// Per-camera LOD for a sphere-mapped model, or -1 when the model has none.
 /// world radius = sphere_map.radius * length(world[0]); focal from proj and
@@ -530,6 +536,16 @@ public:
     /// submit_plating_interior: one per marked hull while params[25] > 0.5.
     int plating_interiors_last_frame() const { return plating_interiors_last_frame_; }
 
+    /// Which hulls get rooms in the renders that follow (hull_interior_policy.h).
+    /// The host sets it before each render's submits: the viewscreen feed with
+    /// its target, the main view with the default.
+    void set_interior_policy(const InteriorPolicy& policy) { interior_policy_ = policy; }
+    const InteriorPolicy& interior_policy() const { return interior_policy_; }
+
+    /// Plated draws in the last submit_opaque_in_pass whose holes were painted
+    /// as far wreckage (u_plating_far = 1) instead of cut for rooms.
+    int plating_far_draws_last_frame() const { return plating_far_draws_last_frame_; }
+
     /// Draw a SINGLE instance (by id) through the full opaque lighting/texture
     /// path, ignoring its visibility flag. Used by the Ship Property Viewer's
     /// hull-texture mode to render just the inspected ship on the isolated
@@ -578,6 +594,8 @@ private:
 
     int plating_marks_last_frame_ = 0;
     int plating_interiors_last_frame_ = 0;
+    int plating_far_draws_last_frame_ = 0;
+    InteriorPolicy interior_policy_;
     HullInteriorPass hull_interior_;
 };
 
