@@ -311,8 +311,9 @@ bool ih_contents(ivec3 cell, vec3 ro, vec3 rd, float t0, float t1,
     return th >= t0 && th < t1;
 }
 
-// opaque.frag's plating_rim_heat: 0..1, (1 - age / life) x
-// (1 - smoothstep(r, 3r, distance)), the hottest event's; 0 with no rims.
+// TWIN of opaque.frag's plating_rim_heat (same body): 0..1, (1 - age / life)
+// x (1 - smoothstep(r, 3r, distance)), the hottest event's; 0 with no rims.
+// Change both together.
 float rim_heat(vec3 p) {
     float h = 0.0;
     for (int i = 0; i < u_rim_count; ++i) {

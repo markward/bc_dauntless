@@ -7905,7 +7905,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                  std::get<2>(body_point_gu) * inv_s);
               const glm::vec3 nb = (glm::length(pb) > 1e-4f) ? glm::normalize(pb)
                                                               : glm::vec3(0.f, 0.f, 1.f);
-              // The body (node -1): its rest frame is the body frame.
+              // The body (node -1): its rest frame is the body frame. The rim
+              // is therefore drawn in the BODY frame: a burst on a POSED part
+              // glows on body meshes near that point, or nowhere (accepted:
+              // a sub-floor component's transient VFX; venting and debris use
+              // the posed point as given).
               inst->breach_events.push(pb, radius_gu * inv_s, nb, g_decal_game_time,
                                        next_breach_seed(), /*node=*/-1, pb);
           },

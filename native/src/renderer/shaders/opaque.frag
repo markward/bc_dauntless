@@ -690,7 +690,8 @@ uniform vec4 u_part_d[MAX_PARTS];        // half2, _, _, _
 
 // Molten rim heat at rest-frame point p, 0..1: (1 - age / life) x
 // (1 - smoothstep(r, 3r, distance)), the hottest event's (u_rim_*). 0 with
-// no rims: the loop never runs.
+// no rims: the loop never runs. TWIN of hull_interior.frag's rim_heat (same
+// body): change both together.
 float plating_rim_heat(vec3 p) {
     float h = 0.0;
     for (int i = 0; i < u_rim_count; ++i) {

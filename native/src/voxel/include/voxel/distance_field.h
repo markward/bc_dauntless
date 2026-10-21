@@ -39,22 +39,11 @@ inline constexpr float kDefaultBandCells = 4.0f;
 /// this lattice's consumer; both were removed in layered damage phase 4.)
 inline constexpr std::size_t kMaxFieldCells = std::size_t{1} << 22;
 
-/// Signed distance field over a uniform body-frame lattice, model units.
-///
-/// NEGATIVE inside the hull, POSITIVE outside. One signed byte per cell in
-/// units of `scale`, saturating at +-127.
-///
-/// Why signed distance rather than occupancy: every damage threshold becomes a
-/// real LENGTH instead of a cell count. The cavity-depth threshold that made
-/// the Warbird cut breaches into nothing was expressed in cells, and the
-/// Warbird's authored cells are 25 model units against the fleet's 15 -- so
-/// "2 cells" silently meant 50 units on one ship and 30 on every other.
-/// An inclusive box of lattice cells, the unit every incremental consumer of
-/// a DistanceField works in: the brushes return the box they wrote, the atlas
-/// upload re-encodes only that box, and the severance check floods from its
-/// shell. Empty (lo > hi) means "no cell" -- the default, and what a no-op
-/// brush returns -- so a consumer can `include()` boxes blindly and test
-/// `empty()` once at the end.
+/// An inclusive box of lattice cells. Empty (lo > hi) means "no cell" -- the
+/// default -- so a caller can `include()` boxes blindly and test `empty()`
+/// once at the end. (Its incremental consumers -- the old carve's brushes,
+/// field-atlas upload and severance flood -- were removed with the carve in
+/// layered damage phase 4; nothing in production uses it now.)
 struct CellBox {
     glm::ivec3 lo{1, 1, 1};
     glm::ivec3 hi{0, 0, 0};
@@ -81,6 +70,16 @@ struct CellBox {
     }
 };
 
+/// Signed distance field over a uniform body-frame lattice, model units.
+///
+/// NEGATIVE inside the hull, POSITIVE outside. One signed byte per cell in
+/// units of `scale`, saturating at +-127.
+///
+/// Why signed distance rather than occupancy: every damage threshold becomes a
+/// real LENGTH instead of a cell count. The cavity-depth threshold that made
+/// the Warbird cut breaches into nothing was expressed in cells, and the
+/// Warbird's authored cells are 25 model units against the fleet's 15 -- so
+/// "2 cells" silently meant 50 units on one ship and 30 on every other.
 struct DistanceField {
     glm::ivec3 dims{0};
     glm::vec3  origin{0.0f};   // body-frame position of cell (0,0,0)'s min corner
@@ -97,9 +96,8 @@ struct DistanceField {
 
     /// True when this field holds no data -- the documented sentinel
     /// distance_field_from_tris() returns for a hull with no triangles
-    /// (missing source, unparseable NIF, or a genuinely empty mesh), and what
-    /// HullVolumeCache::get serves (and caches) for a hull it cannot read at
-    /// all. Callers MUST check this before calling distance_at(): index()
+    /// (missing source, unparseable NIF, or a genuinely empty mesh). Callers
+    /// MUST check this before calling distance_at(): index()
     /// still resolves to 0 for a default-constructed (dims == {0,0,0})
     /// field, and dist[0] on an empty vector is out of bounds.
     bool empty() const { return dist.empty(); }
