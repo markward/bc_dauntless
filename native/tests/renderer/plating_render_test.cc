@@ -403,6 +403,36 @@ TEST_F(PlatingRenderTest, ProgramChoiceIsReadBackFromGL) {
     EXPECT_EQ(current(), plating) << "torn hull";
 }
 
+// Perf probe (params[26]): an undamaged hull is forced through the plating
+// program with an empty list; its pixels stay the stock draw's.
+TEST_F(PlatingRenderTest, ForceProgramDrawsUndamagedHullWithPlatingProgram) {
+    auto m = ambassador();
+    ASSERT_TRUE(m) << "BC asset not available at " << ambassador_nif()
+                   << " -- set DAUNTLESS_GAME_DIR";
+    const renderer::Aabb box = renderer::compute_model_aabb(*m);
+    const auto cam = top_down(box);
+    dauntless_plating::g_params[0] = 1.0f;
+    const GLint stock = static_cast<GLint>(p->opaque_shader().program());
+    const GLint plating = static_cast<GLint>(p->plating_shader().program());
+    auto current = [] { GLint prog = 0; glGetIntegerv(GL_CURRENT_PROGRAM, &prog); return prog; };
+    const scenegraph::HullDamageStore empty;
+
+    const auto stock_px = render(*m, empty, cam, /*stock_submit=*/true);
+    ASSERT_GT(count_non_black(stock_px), 2000) << "hull not in view";
+    dauntless_plating::g_params[26] = 1.0f;
+    const auto forced_px = render(*m, empty, cam);
+    const GLint used = current();
+    dauntless_plating::g_params[26] = 0.0f;
+    EXPECT_EQ(used, plating) << "forced undamaged hull";
+    ASSERT_EQ(forced_px.size(), stock_px.size());
+    int worst = 0;
+    for (std::size_t i = 0; i < stock_px.size(); ++i)
+        worst = std::max(worst, std::abs(int(forced_px[i]) - int(stock_px[i])));
+    EXPECT_LE(worst, 1);
+    render(*m, empty, cam);
+    EXPECT_EQ(current(), stock) << "force off restores the stock program";
+}
+
 // The plating draw is front faces only: a back-facing far skin is culled, so
 // the torn centre shows the clear colour, not an inside wall.
 TEST_F(PlatingRenderTest, PlatingDrawCullsBackFaces) {

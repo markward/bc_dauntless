@@ -44,6 +44,7 @@ DEFAULTS: dict = {
     "breach_lumps": 1.0,     # wear units of hole-scale breach-threshold variation
     "deck_break_wear": 6.0,  # (interior pass) wear at which decks break
     "interior": 1.0,         # (interior pass) 1 = interior behind holes
+    "force_program": 0.0,    # DEBUG/perf: 1 = undamaged hulls draw through the plating program
 }
 DIAL_ORDER: tuple = tuple(DEFAULTS)
 _STEP = {
@@ -56,11 +57,13 @@ _STEP = {
     "tear_mix": 0.1, "tear_noise": 0.1, "peel_band": 0.05,
     "member_survive": 0.25, "toughness_spread": 0.1, "breach_lumps": 0.25,
     "deck_break_wear": 0.25, "interior": 1.0,
+    "force_program": 1.0,
 }
 _MIN = {k: 0.0 for k in DEFAULTS}
 _MIN.update({"panel_size": 0.25, "primary_spacing": 0.25,
              "secondary_spacing": 0.25, "member_width": 0.02})
-_MAX = {"enabled": 1.0, "debug": 2.0, "tear_mix": 1.0, "interior": 1.0}
+_MAX = {"enabled": 1.0, "debug": 2.0, "tear_mix": 1.0, "interior": 1.0,
+         "force_program": 1.0}
 
 _dials: dict = dict(DEFAULTS)
 
@@ -103,5 +106,7 @@ def register() -> None:
     from engine import dev_dial_groups
     if os.environ.get("DAUNTLESS_PLATING", "1").strip() == "0":
         _dials["enabled"] = 0.0
+    if os.environ.get("DAUNTLESS_PLATING_FORCE_PROGRAM", "0").strip() == "1":
+        _dials["force_program"] = 1.0
     dev_dial_groups.register_group("plating", DIAL_ORDER, current, _step)
     push()

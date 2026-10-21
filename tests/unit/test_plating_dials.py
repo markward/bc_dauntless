@@ -46,9 +46,25 @@ def test_uneven_breach_dials_sit_in_slots_22_to_25():
     d = plating_dials.DEFAULTS
     assert (d["toughness_spread"], d["breach_lumps"],
             d["deck_break_wear"], d["interior"]) == (0.6, 1.0, 6.0, 1.0)
-    assert len(plating_dials.params()) == 26
+    assert len(plating_dials.params()) >= 26
     assert plating_dials._MAX["interior"] == 1.0
     assert plating_dials._STEP["toughness_spread"] == 0.1
     assert plating_dials._STEP["breach_lumps"] == 0.25
     assert plating_dials._STEP["deck_break_wear"] == 0.25
     assert plating_dials._STEP["interior"] == 1.0
+
+
+def test_force_program_dial_is_slot_26_and_env_driven(monkeypatch):
+    d = plating_dials
+    assert d.DIAL_ORDER[26] == "force_program"
+    assert d.DEFAULTS["force_program"] == 0.0
+    assert (d._MAX["force_program"], d._STEP["force_program"]) == (1.0, 1.0)
+    assert len(d.params()) == 27
+    monkeypatch.setattr(d, "push", lambda: None)
+    import engine.dev_dial_groups as groups
+    monkeypatch.setattr(groups, "register_group", lambda *a, **k: None)
+    d.reset()
+    monkeypatch.setenv("DAUNTLESS_PLATING_FORCE_PROGRAM", "1")
+    d.register()
+    assert d.current()["force_program"] == 1.0
+    d.reset()

@@ -225,7 +225,8 @@ namespace dauntless_plating {
         1.0f,   // 23 breach lumps (wear units of hole-scale breach-threshold variation)
         6.0f,   // 24 deck break wear (interior: a plate or far wall breaks past it)
         1.0f,   // 25 interior (> 0.5 draws decks and rooms behind cuts)
-        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,   // 26-31 reserved
+        0.0f,   // 26 force program (perf probe: undamaged hulls take the plating program)
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f,   // 27-31 reserved
     };
 }
 
@@ -1569,11 +1570,16 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
         const plating::DamageList* plating_list = nullptr;
         PlatingListCacheEntry* plating_entry = nullptr;
         bool use_plating = false;
+        // params[26] (perf probe): every non-rock, non-skinned hull takes the
+        // plating program, with an empty list when it has no records.
+        const bool force_plating = dauntless_plating::g_params[26] > 0.5f && m &&
+                                   !inst.surface_is_rock && !draws_skinned(*m, palette);
         if (m && !is_detail_draw && dauntless_plating::g_params[0] > 0.5f &&
-            inst.hull_damage.count() > 0) {
+            (inst.hull_damage.count() > 0 || force_plating)) {
             plating_entry = &plating_entry_for(inst);
             plating_list = &plating_entry->list;
-            use_plating = plating::wants_plating(*plating_list, dauntless_plating::g_params);
+            use_plating = force_plating ||
+                          plating::wants_plating(*plating_list, dauntless_plating::g_params);
         }
         // The parts and per-mesh subsets this draw uploads, cached on the
         // entry (the mark below reuses them). A skinned draw has no plating
