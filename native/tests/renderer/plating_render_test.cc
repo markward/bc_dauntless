@@ -1587,3 +1587,67 @@ TEST_F(PlatingRenderTest, ShadowDepthSkipsSeveredPartChunks) {
     ASSERT_LT(depth_at_centre(0u), 1.0f) << "the hull casts no depth";
     EXPECT_EQ(depth_at_centre(1u << 0), 1.0f) << "a chunk cast a whole-model shadow";
 }
+
+// Phase 4, Task 2 (removing the old voxel carve): the carve clip, its
+// uniforms and its 3D field sampler leave the STOCK program, and the frame
+// stops binding carve state. None of that may change how an undamaged hull
+// looks. The reference bytes were captured from the build BEFORE the removal
+// (native/tests/renderer/data/undamaged_ambassador_ref.bin, raw RGBA8,
+// kSize x kSize, row 0 = bottom): the Ambassador undamaged through
+// submit_opaque_in_pass, a fixed three-quarter camera and test_lighting().
+// The comparison is byte-exact. Re-capture ONLY for a deliberate look change:
+// DAUNTLESS_WRITE_UNDAMAGED_REF=1 writes the file instead of comparing.
+TEST_F(PlatingRenderTest, UndamagedHullUnchangedByCarveRemoval) {
+    auto m = ambassador();
+    ASSERT_TRUE(m) << "BC asset not available at " << ambassador_nif()
+                   << " -- set DAUNTLESS_GAME_DIR";
+    const renderer::Aabb box = renderer::compute_model_aabb(*m);
+    scenegraph::Camera cam;
+    const float radius = glm::length(box.half_extents);
+    const float dist = 1.15f * radius / std::tan(cam.fov_y_rad * 0.5f);
+    cam.target = box.center;
+    cam.eye = box.center + glm::normalize(glm::vec3(0.55f, -0.7f, 0.45f)) * dist;
+    cam.up = glm::vec3(0.0f, 0.0f, 1.0f);
+    cam.aspect = 1.0f;
+
+    const auto px = render(*m, scenegraph::HullDamageStore{}, cam);
+    ASSERT_GT(count_non_black(px), 4000) << "hull not in view";
+
+    const fs::path ref_path =
+        fs::path(OPEN_STBC_PROJECT_ROOT) / "native/tests/renderer/data/undamaged_ambassador_ref.bin";
+    if (std::getenv("DAUNTLESS_WRITE_UNDAMAGED_REF") != nullptr) {
+        fs::create_directories(ref_path.parent_path());
+        std::FILE* f = std::fopen(ref_path.string().c_str(), "wb");
+        ASSERT_NE(f, nullptr) << "cannot write " << ref_path;
+        std::fwrite(px.data(), 1, px.size(), f);
+        std::fclose(f);
+        std::fprintf(stderr, "[PlatingRender] wrote undamaged reference %s\n",
+                     ref_path.string().c_str());
+        return;
+    }
+
+    std::vector<std::uint8_t> ref(px.size());
+    std::FILE* f = std::fopen(ref_path.string().c_str(), "rb");
+    ASSERT_NE(f, nullptr) << "missing reference " << ref_path;
+    const std::size_t got = std::fread(ref.data(), 1, ref.size(), f);
+    const int extra = std::fgetc(f);
+    std::fclose(f);
+    ASSERT_EQ(got, ref.size()) << "reference too short";
+    ASSERT_EQ(extra, EOF) << "reference too long";
+
+    int differing = 0, worst = 0, first_x = -1, first_y = -1;
+    for (int y = 0; y < kSize; ++y) {
+        for (int x = 0; x < kSize; ++x) {
+            const std::uint8_t* a = pixel(px, x, y);
+            const std::uint8_t* b = pixel(ref, x, y);
+            int d = 0;
+            for (int c = 0; c < 4; ++c) d = std::max(d, std::abs(a[c] - b[c]));
+            if (d == 0) continue;
+            if (differing++ == 0) { first_x = x; first_y = y; }
+            worst = std::max(worst, d);
+        }
+    }
+    EXPECT_EQ(differing, 0) << "undamaged hull changed: " << differing
+                            << " pixels differ, worst channel delta " << worst
+                            << ", first at (" << first_x << ", " << first_y << ")";
+}
