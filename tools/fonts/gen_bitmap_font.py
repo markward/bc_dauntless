@@ -19,7 +19,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[2]
 
-PIXEL_SIZE = 28  # cap height ~65% of the 36 px band; the live-tuning knob
+PIXEL_SIZE = 28  # atlas size; on-screen size is PIXEL_SIZE x kVsReadoutLine{1,2}Scale
 PADDING = 2
 MIN_ATLAS_W = 256
 FONT_FILE = "Antonio-Regular.ttf"

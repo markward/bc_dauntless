@@ -64,6 +64,21 @@ Where §2 and §4 below describe bands, band colours, rounded corners and the
 "km / kph" footer, this section wins; the data path (§4.1), font (§4.2) and
 lifecycle are unchanged.
 
+### Revision 3 — the detail line moves to the top right
+
+Mark, after the second live look: "can you move the speed and distance line to
+the top right? keep the font size the same" — then, correcting a
+baseline-aligned proposal: "not the same baseline. put them the same distance
+from the top of the screen".
+
+Rule: the `DST/SPD` line (still 0.7 scale) is **right-aligned** to the picture's
+right inset (24 px @640) and **top-aligned** with the name — its CAP TOP is at
+the same y as the name's (inset 18 px below the top), so the two baselines
+differ. The dot and name are unchanged; the name is ellipsised to stop
+`kVsReadoutNameDetailGapPx` (16 px @640) short of the detail line. At 640x360
+for "DST: 2.45 km  SPD: 1414 kph": name baseline 318, detail baseline 325,
+detail x 416.
+
 ## 3. Existing pieces (verified 2026-10-21 on main `d98aa88cd`)
 
 - **The target feed.** `engine/host_loop.py:_viewscreen_scene_feed(player,

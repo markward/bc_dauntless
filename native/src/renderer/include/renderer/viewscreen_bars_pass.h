@@ -25,8 +25,8 @@ constexpr float kVsReadoutInsetYPx         = 18.f;
 /// Line sizes, as a fraction of the atlas pixel_size (one atlas, scaled).
 constexpr float kVsReadoutLine1Scale       = 1.0f;
 constexpr float kVsReadoutLine2Scale       = 0.7f;
-/// Gap between line 1's descent and line 2's ascent.
-constexpr float kVsReadoutLineGapPx        = 4.f;
+/// Minimum gap between the (ellipsised) name's end and the detail line.
+constexpr float kVsReadoutNameDetailGapPx  = 16.f;
 /// Dot diameter as a fraction of line 1's cap height ('H' bearing_y).
 constexpr float kVsReadoutDotDiameterFrac  = 0.6f;
 /// Dot right edge -> name.
@@ -43,12 +43,16 @@ constexpr float kVsBarsChannelCap          = 0.85f;
 struct ViewscreenReadoutLayout {
     float scale1 = 0.f, scale2 = 0.f;   // atlas pixel -> target pixel, per line
     float cap_height1 = 0.f;            // line 1 cap height, target pixels
-    float baseline1 = 0.f, baseline2 = 0.f;
+    float baseline1 = 0.f;
+    float baseline2 = 0.f;              // detail line: cap top level with line 1's
     float dot_cx = 0.f, dot_cy = 0.f, dot_r = 0.f;
-    float name_x = 0.f;                 // both lines start here
+    float name_x = 0.f;                 // the name starts here
     float max_w = 0.f;                  // widest a line may be before "..."
+    float detail_right_x = 0.f;         // detail line's right edge (top-right)
 };
 
+/// The target readout: dot + name top-left, distance/speed line top-right.
+/// Font atlas: `<project_asset_root>/fonts/viewscreen_antonio.json`.
 class ViewscreenBarsPass {
 public:
     ViewscreenBarsPass() = default;
@@ -74,6 +78,12 @@ public:
     /// The readout's placement on a target_w x target_h RTT. Needs the font
     /// (cap height); without one every field is 0.
     ViewscreenReadoutLayout readout_layout(int target_w, int target_h) const;
+
+    /// Pen x of the detail line (right-aligned, whole pixels). 0 without a font.
+    float detail_origin_x(const std::string& detail, int target_w, int target_h) const;
+    /// Widest the name may be: stops kVsReadoutNameDetailGapPx short of the
+    /// detail line; the old full width when `detail` is empty.
+    float name_max_w(const std::string& detail, int target_w, int target_h) const;
 
     /// Test seams, in TARGET pixels for a line drawn at `scale` (atlas pixel
     /// -> target pixel). layout: one (pen x, advance) per DRAWN glyph (a glyph

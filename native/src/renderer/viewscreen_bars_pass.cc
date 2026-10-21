@@ -161,17 +161,34 @@ ViewscreenReadoutLayout ViewscreenBarsPass::readout_layout(int target_w,
     l.cap_height1 = cap_height_ * l.scale1;
     // Line 1's cap top sits the inset below the top edge (high y).
     l.baseline1 = std::round(th - kVsReadoutInsetYPx * s - l.cap_height1);
-    // Line 2's ascent top sits the gap below line 1's descent.
-    const float descent1 = (line_height_ - ascent_) * l.scale1;
-    l.baseline2 = std::round(l.baseline1 - descent1 - kVsReadoutLineGapPx * s -
-                             ascent_ * l.scale2);
+    // Line 2 is top-aligned with line 1: same cap top, its own cap height.
+    l.baseline2 = std::round(th - kVsReadoutInsetYPx * s - cap_height_ * l.scale2);
     // Dot centred on line 1's caps, its left edge at the inset.
     l.dot_r  = 0.5f * kVsReadoutDotDiameterFrac * l.cap_height1;
     l.dot_cx = kVsReadoutInsetXPx * s + l.dot_r;
     l.dot_cy = l.baseline1 + 0.5f * l.cap_height1;
     l.name_x = std::round(l.dot_cx + l.dot_r + kVsReadoutDotGapPx * s);
     l.max_w  = static_cast<float>(target_w) - l.name_x - kVsReadoutInsetXPx * s;
+    l.detail_right_x = static_cast<float>(target_w) - kVsReadoutInsetXPx * s;
     return l;
+}
+
+float ViewscreenBarsPass::detail_origin_x(const std::string& detail, int target_w,
+                                          int target_h) const {
+    const ViewscreenReadoutLayout l = readout_layout(target_w, target_h);
+    if (!has_font() || l.scale2 <= 0.f) return 0.f;
+    // Ellipsised only if it alone exceeds the old full width.
+    const std::string drawn = fit(detail, l.max_w / l.scale2);
+    return std::round(l.detail_right_x - width_of(drawn) * l.scale2);
+}
+
+float ViewscreenBarsPass::name_max_w(const std::string& detail, int target_w,
+                                     int target_h) const {
+    const ViewscreenReadoutLayout l = readout_layout(target_w, target_h);
+    if (detail.empty()) return l.max_w;
+    const float s = static_cast<float>(target_w) / kReadoutDesignTargetW;
+    return detail_origin_x(detail, target_w, target_h) -
+           kVsReadoutNameDetailGapPx * s - l.name_x;
 }
 
 std::vector<std::pair<float, float>> ViewscreenBarsPass::layout_line_for_test(
@@ -213,13 +230,14 @@ void ViewscreenBarsPass::render(Shader& shader, const ViewscreenBars& bars,
     const float pad = l.dot_r + 1.5f;
     push_quad(verts, l.dot_cx - pad, l.dot_cy - pad, l.dot_cx + pad, l.dot_cy + pad,
               0, 0, 0, 0);
-    auto emit_line = [&](const std::string& s, float baseline, float scale) {
-        const std::string drawn = fit(s, l.max_w / scale);
+    auto emit_line = [&](const std::string& s, float x0, float max_w, float baseline,
+                         float scale) {
+        const std::string drawn = fit(s, max_w / scale);
         float pen = 0.f;
         for (unsigned char c : drawn) {
             const Glyph* g = glyph(c);
             if (g && g->w > 0.f && g->h > 0.f) {
-                const float gx0 = l.name_x + (pen + g->bearing_x) * scale;
+                const float gx0 = x0 + (pen + g->bearing_x) * scale;
                 const float gy1 = baseline + g->bearing_y * scale;   // glyph top
                 // Atlas rows are top-down and upload unflipped, so texture
                 // v = atlas_y / atlas_h: the glyph TOP is v = y / H.
@@ -230,8 +248,10 @@ void ViewscreenBarsPass::render(Shader& shader, const ViewscreenBars& bars,
             pen += g ? g->advance : space_advance_;
         }
     };
-    emit_line(bars.name, l.baseline1, l.scale1);
-    emit_line(bars.detail, l.baseline2, l.scale2);
+    emit_line(bars.name, l.name_x, name_max_w(bars.detail, target_w, target_h),
+              l.baseline1, l.scale1);
+    emit_line(bars.detail, detail_origin_x(bars.detail, target_w, target_h), l.max_w,
+              l.baseline2, l.scale2);
 
     // Save state.
     const GLboolean prev_blend = glIsEnabled(GL_BLEND);

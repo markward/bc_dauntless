@@ -115,26 +115,45 @@ protected:
 //   cap top 1 = 360 - 18 = 342; baseline 1 = 342 - 24 = 318
 //   dot: d = 0.6 * 24 = 14.4, left 24 -> centre x 31.2, centre y 318 + 12 = 330
 //   name x = round(24 + 14.4 + 7) = 45
-//   line 1 descent = 318 - 4 = 314; line 2 ascent top = 314 - 4 = 310;
-//   baseline 2 = round(310 - 0.7 * 33) = round(286.9) = 287
+//   line 2 (top-right): cap top level with line 1's = 342; cap = 0.7 * 24 =
+//   16.8; baseline 2 = round(342 - 16.8) = round(325.2) = 325
+//   detail right edge = 640 - 24 = 616.
 TEST_F(ViewscreenBarsPass, LayoutAt640x360) {
     ASSERT_TRUE(load());
     const auto l = lay();
+    const std::string detail = "DST: 2.45 km  SPD: 1414 kph";
     EXPECT_FLOAT_EQ(l.scale1, 1.0f);
     EXPECT_FLOAT_EQ(l.scale2, 0.7f);
     EXPECT_FLOAT_EQ(l.cap_height1, 24.f);
     EXPECT_FLOAT_EQ(l.baseline1, 318.f);
-    EXPECT_FLOAT_EQ(l.baseline2, 287.f);
+    EXPECT_FLOAT_EQ(l.baseline2, 325.f);
     EXPECT_NEAR(l.dot_cx, 31.2f, 1e-4f);
     EXPECT_NEAR(l.dot_cy, 330.f, 1e-4f);
     EXPECT_NEAR(l.dot_r, 7.2f, 1e-4f);
     EXPECT_FLOAT_EQ(l.name_x, 45.f);
     EXPECT_FLOAT_EQ(l.max_w, 640.f - 45.f - 24.f);
+    // Cap tops are level: baseline + cap height, per line.
+    EXPECT_NEAR(l.baseline2 + 0.7f * 24.f, l.baseline1 + l.cap_height1, 0.5f);
+    // Detail line right-aligned to 640 - 24.
+    const float dx = pass.detail_origin_x(detail, kW, kH);
+    const auto pens = pass.layout_line_for_test(detail, 1e9f, l.scale2);
+    ASSERT_FALSE(pens.empty());
+    EXPECT_NEAR(dx + pens.back().first + pens.back().second, 616.f, 0.5f);
+    EXPECT_FLOAT_EQ(dx, std::round(dx));
+    // The name stops a gap short of the detail line.
+    EXPECT_FLOAT_EQ(pass.name_max_w(detail, kW, kH),
+                    dx - renderer::kVsReadoutNameDetailGapPx - l.name_x);
+    // No detail: the name keeps its old width.
+    EXPECT_FLOAT_EQ(pass.name_max_w("", kW, kH), l.max_w);
     // Every pixel value scales with the width.
     const auto big = pass.readout_layout(2 * kW, 2 * kH);
     EXPECT_FLOAT_EQ(big.scale1, 2.0f);
     EXPECT_NEAR(big.dot_cx, 62.4f, 1e-4f);
     EXPECT_FLOAT_EQ(big.baseline1, 720.f - 36.f - 48.f);
+    EXPECT_FLOAT_EQ(big.baseline2, std::round(720.f - 36.f - 33.6f));
+    const float dx2 = pass.detail_origin_x(detail, 2 * kW, 2 * kH);
+    const auto pens2 = pass.layout_line_for_test(detail, 1e9f, big.scale2);
+    EXPECT_NEAR(dx2 + pens2.back().first + pens2.back().second, 1232.f, 0.5f);
 }
 
 TEST_F(ViewscreenBarsPass, DrawsTheAffiliationDot) {
@@ -173,21 +192,43 @@ TEST_F(ViewscreenBarsPass, DrawsWhiteNameTextTopLeft) {
     EXPECT_GT(white, 20);
 }
 
-TEST_F(ViewscreenBarsPass, DrawsSmallerDetailLineBelow) {
+TEST_F(ViewscreenBarsPass, DrawsSmallerDetailLineTopRight) {
     ASSERT_TRUE(load());
     draw(bars("H", "H", kRed));
     const auto l = lay();
-    const int x0 = static_cast<int>(l.name_x) - 1;
-    const int split = static_cast<int>(l.baseline1) - 2;   // between the lines
-    const auto [a_lo, a_hi] = ink_rows(Region(x0, split, x0 + 40, kH));
-    const auto [b_lo, b_hi] = ink_rows(Region(x0, split - 60, x0 + 40, split));
+    const auto [a_lo, a_hi] = ink_rows(Region(0, 0, kW / 2, kH));
+    const auto [b_lo, b_hi] = ink_rows(Region(kW / 2, 0, kW, kH));
     ASSERT_LE(a_lo, a_hi) << "no line-1 ink";
-    ASSERT_LE(b_lo, b_hi) << "no line-2 ink";
-    EXPECT_LT(b_hi, a_lo) << "line 2 sits below line 1";
+    ASSERT_LE(b_lo, b_hi) << "no line-2 ink in the right half";
+    EXPECT_NEAR(b_hi, a_hi, 1) << "cap tops level";
     EXPECT_LT(b_hi - b_lo, a_hi - a_lo) << "line 2 is smaller";
-    // Line 2 starts at the name's x, not the dot's: no ink left of the name.
-    const auto [d_lo, d_hi] = ink_rows(Region(0, split - 60, x0, split));
-    EXPECT_GT(d_lo, d_hi) << "line 2 must not start under the dot";
+    int right = -1;
+    for (int y = 0; y < kH; ++y)
+        for (int x = kW / 2; x < kW; ++x)
+            if (near_white(pixel(x, y))) right = std::max(right, x);
+    EXPECT_LE(right, 640 - 24);
+    EXPECT_GE(right, 640 - 24 - 20) << "right-aligned, not floating";
+    (void)l;
+}
+
+TEST_F(ViewscreenBarsPass, NameIsCutBeforeTheDetailLine) {
+    ASSERT_TRUE(load());
+    const std::string detail = "DST: 2.45 km  SPD: 1414 kph";
+    const auto l = lay();
+    const float dx = pass.detail_origin_x(detail, kW, kH);
+    const float max_w = pass.name_max_w(detail, kW, kH);
+    const std::string fit = pass.fit_for_test(std::string(200, 'W'), max_w, l.scale1);
+    ASSERT_GE(fit.size(), 3u);
+    EXPECT_EQ(fit.substr(fit.size() - 3), "...");
+    const auto pens = pass.layout_line_for_test(fit, 1e9f, l.scale1);
+    EXPECT_LE(l.name_x + pens.back().first + pens.back().second,
+              dx - renderer::kVsReadoutNameDetailGapPx);
+    // And what is drawn stays out of the detail line's columns.
+    draw(bars(std::string(200, 'W'), detail, kRed));
+    const int y_top = static_cast<int>(l.baseline1 + l.cap_height1) + 1;
+    const Region r(static_cast<int>(dx) - 14, static_cast<int>(l.baseline1) - 2,
+                   static_cast<int>(dx), y_top);
+    EXPECT_GT(ink_rows(r).first, ink_rows(r).second) << "gap before detail is ink-free";
 }
 
 TEST_F(ViewscreenBarsPass, NoBackgroundOrBandAnywhere) {
@@ -198,6 +239,15 @@ TEST_F(ViewscreenBarsPass, NoBackgroundOrBandAnywhere) {
     expect_rgb(pixel(4, 357), kFeed, 0.001f, "old top band, left");
     expect_rgb(pixel(320, 2), kFeed, 0.001f, "old bottom band");
     expect_rgb(pixel(320, 180), kFeed, 0.001f, "picture centre");
+    // Ink-free points inside the readout area: mid-gap on the top row
+    // between the name and the detail line, and just under line 1.
+    const auto l = lay();
+    const float dx = pass.detail_origin_x("DST: 2.45 km  SPD: 1414 kph", kW, kH);
+    const int mid_x = static_cast<int>((l.name_x + 200.f + dx) * 0.5f);
+    expect_rgb(pixel(mid_x, static_cast<int>(l.baseline1 + 12)), kFeed, 0.001f,
+               "between name and detail");
+    expect_rgb(pixel(static_cast<int>(l.name_x) + 20, static_cast<int>(l.baseline1) - 12),
+               kFeed, 0.001f, "just below line 1");
 }
 
 TEST_F(ViewscreenBarsPass, ShadowIsDrawn) {
