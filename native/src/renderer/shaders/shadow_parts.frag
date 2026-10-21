@@ -17,8 +17,9 @@ uniform vec4 u_part_b[MAX_PARTS];        // axis0.xyz, half0
 uniform vec4 u_part_c[MAX_PARTS];        // axis1.xyz, half1
 uniform vec4 u_part_d[MAX_PARTS];        // half2, _, _, _
 
-// TWIN of opaque.frag's plating_part (and its MAX_PARTS): a copy, because the
-// shader sources are embedded whole. Change both together --
+// TWIN of opaque.frag's plating_part (and its MAX_PARTS, and the hide-rule
+// expression in main below = opaque.frag's plating_hidden): a copy, because
+// the shader sources are embedded whole. Change both together --
 // ShadowPartsShader.PlatingPartIsTheTwinOfOpaque (renderer_tests) fails the
 // moment the two texts differ.
 int plating_part(vec3 p) {

@@ -32,6 +32,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -1645,8 +1646,8 @@ TEST_F(PlatingRenderTest, ShadowHonoursThePartMask) {
 }
 
 // Ruling 8 drift guard: shadow_parts.frag's plating_part is a COPY of
-// opaque.frag's (shader sources are embedded whole), and so is the MAX_PARTS
-// it loops to. Compared on the embedded sources -- the texts the programs are
+// opaque.frag's (shader sources are embedded whole), and so are the MAX_PARTS
+// it loops to and the hide rule applied to its answer. Compared on the embedded sources -- the texts the programs are
 // actually built from.
 namespace {
 std::string glsl_function(const std::string& src, const std::string& signature) {
@@ -1662,6 +1663,20 @@ std::string glsl_line_with(const std::string& src, const std::string& needle) {
     const std::size_t start = src.rfind('\n', at) + 1;
     return src.substr(start, src.find('\n', at) - start);
 }
+// The parenthesised right-hand side of the first `<lhs> = (...);` statement,
+// whitespace removed (the two shaders lay the same expression out
+// differently). `= (` skips a plain initialiser such as `= false;`.
+std::string glsl_rhs(const std::string& src, const std::string& lhs) {
+    const std::size_t at = src.find(lhs + " = (");
+    if (at == std::string::npos) return {};
+    const std::size_t from = at + lhs.size() + 3;
+    const std::size_t end = src.find(';', from);
+    if (end == std::string::npos) return {};
+    std::string out;
+    for (std::size_t i = from; i < end; ++i)
+        if (!std::isspace(static_cast<unsigned char>(src[i]))) out.push_back(src[i]);
+    return out;
+}
 }  // namespace
 
 TEST(ShadowPartsShader, PlatingPartIsTheTwinOfOpaque) {
@@ -1676,6 +1691,15 @@ TEST(ShadowPartsShader, PlatingPartIsTheTwinOfOpaque) {
     ASSERT_FALSE(ma.empty()) << "opaque.frag has no MAX_PARTS";
     EXPECT_EQ(ma, glsl_line_with(shadow, "const int  MAX_PARTS"))
         << "the two MAX_PARTS differ";
+    // The hide rule (which part pixels a hull hides: show mask for a chunk,
+    // hidden mask for a parent) is the same expression in both.
+    const std::string ha = glsl_rhs(opaque, "plating_hidden");
+    const std::string hb = glsl_rhs(shadow, "bool hidden");
+    ASSERT_NE(ha.find("u_part_show_mask"), std::string::npos)
+        << "opaque.frag has no plating_hidden hide rule: '" << ha << "'";
+    ASSERT_NE(hb.find("u_part_hidden_mask"), std::string::npos)
+        << "shadow_parts.frag has no hidden hide rule: '" << hb << "'";
+    EXPECT_EQ(ha, hb) << "shadow_parts.frag's hide rule drifted from opaque.frag's";
 }
 
 // Phase 4, Task 5: a chunk never draws a cloak shell (a cloaking parent's
