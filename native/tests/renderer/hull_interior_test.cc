@@ -336,6 +336,22 @@ TEST_F(HullInteriorTest, PutEmptyFillDoesNotShadowTheRealOne) {
     EXPECT_NE(e, nullptr);
 }
 
+// A fill installed with put_for_source after the source's prefetch decoded
+// drops the decoded volume: get_for_source returns the installed entry and
+// never reads it, so it would sit in memory for the cache's lifetime.
+TEST_F(HullInteriorTest, PutAfterPrefetchDropsTheDecodedVolume) {
+    const auto nif = test_support::game_root() / "data/Models/Ships/Ambassador/Ambassador.nif";
+    if (!std::filesystem::is_regular_file(nif))
+        GTEST_SKIP() << "BC asset not available at " << nif << " -- set DAUNTLESS_GAME_DIR";
+    renderer::CarveFieldCache cache;
+    cache.prefetch(nif);
+    for (int i = 0; i < 1000 && cache.decoded_pending() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    ASSERT_EQ(cache.decoded_pending(), 1u) << "decode not done within 10 s";
+    ASSERT_NE(cache.put_for_source(nif, solid_box_fill()), nullptr);
+    EXPECT_EQ(cache.decoded_pending(), 0u) << "the superseded decode is still held";
+}
+
 // get_for_source never blocks on the CPU decode: a fresh cache answers nullptr
 // at once, and the entry shows up once the background worker is done.
 TEST_F(HullInteriorTest, FillPrefetchDoesNotBlockAndBecomesReady) {

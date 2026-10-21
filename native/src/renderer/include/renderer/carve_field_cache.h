@@ -216,6 +216,12 @@ public:
     const Entry* put_for_source(const std::filesystem::path& source,
                                 const voxel::VoxelVolume& fill);
 
+    /// Decoded volumes waiting for get_for_source to upload them (tests).
+    std::size_t decoded_pending() {
+        std::lock_guard<std::mutex> lk(mu_);
+        return decoded_.size();
+    }
+
     /// The CPU-side original fill volume for a hull source — the same data
     /// get_for_source uploads, before it becomes a texture. Used by the
     /// backing-material gate, which runs per carve on the CPU rather than per

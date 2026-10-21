@@ -8,6 +8,7 @@
 
 #include <glad/glad.h>
 
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -20,6 +21,8 @@ int draw_model_positions_only(const assets::Model& model,
                                   node_overrides,
                               const std::vector<std::uint8_t>* mesh_mask) {
     static const std::unordered_map<int, glm::mat4> kEmpty;
+    // One string for every mesh: a literal would build a std::string per call.
+    static const std::string kModel = "u_model";
     const std::vector<glm::mat4> world_per_node = renderer::compose_node_worlds(
         model, world, node_overrides ? *node_overrides : kEmpty);
     int drawn = 0;
@@ -31,7 +34,7 @@ int draw_model_positions_only(const assets::Model& model,
                 (*mesh_mask)[static_cast<std::size_t>(mesh_idx)] == 0)
                 continue;
             const auto& mesh = model.meshes[static_cast<std::size_t>(mesh_idx)];
-            prog.set_mat4("u_model", world_per_node[i]);
+            prog.set_mat4(kModel, world_per_node[i]);
             glBindVertexArray(mesh.vao());
             glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(mesh.index_count()),
                            GL_UNSIGNED_INT, nullptr);

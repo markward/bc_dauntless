@@ -3,6 +3,7 @@
 
 #include <glad/glad.h>
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <string>
@@ -199,7 +200,8 @@ void CarveFieldCache::worker_main() {
             vol = voxel::VoxelVolume{};     // cached as "no fill"
         }
         std::lock_guard<std::mutex> lk(mu_);
-        decoded_[key] = std::move(vol);
+        // Not stored when put_for_source superseded the request meanwhile.
+        if (requested_.count(key) != 0) decoded_[key] = std::move(vol);
     }
 }
 
@@ -255,7 +257,17 @@ const CarveFieldCache::Entry* CarveFieldCache::put_for_source(
     // would report this source as a failed upload forever.
     if (fill.occ.empty() || fill.dims.x <= 0 || fill.dims.y <= 0 || fill.dims.z <= 0)
         return nullptr;
-    Entry& e = by_source_[source.string()];
+    const std::string key = source.string();
+    {
+        // The installed fill supersedes any prefetch of this source: drop a
+        // decoded volume (get_for_source will never read it now), a queued
+        // job, and the request, so an in-flight decode is not stored either.
+        std::lock_guard<std::mutex> lk(mu_);
+        decoded_.erase(key);
+        queue_.erase(std::remove(queue_.begin(), queue_.end(), key), queue_.end());
+        requested_.erase(key);
+    }
+    Entry& e = by_source_[key];
     upload_texture(e, fill);
     return (e.tex3d != 0) ? &e : nullptr;
 }
