@@ -566,6 +566,80 @@ static bool draws_skinned(const assets::Model& model,
     return !model.skeleton.bones.empty() && !bone_palette.empty();
 }
 
+// SPIKE (damage redesign): the plating program's per-draw block -- params,
+// the compact damage list (u_dmg_*, renderer/plating_damage.h), the hull's
+// structure parts, world->body, and the mark / far switches. Shared by
+// draw_model's plating draws and the lean marking draw, so the two can never
+// disagree about what the plating discard reads. Parts come from a background
+// detection per hull source; until it lands u_part_count is 0 and the shader
+// uses a body-axis box chart.
+static void upload_plating(Shader& prog, const assets::Model& model, const glm::mat4& world,
+                           const plating::DamageList& dl, const float* params, bool mark,
+                           bool far) {
+    static const std::string kPlating = "u_plating", kDmgCount = "u_dmg_count",
+        kDmgA = "u_dmg_a", kDmgB = "u_dmg_b", kDmgC = "u_dmg_c",
+        kMark = "u_plating_mark", kFar = "u_plating_far", kPartCount = "u_part_count",
+        kPartA = "u_part_a", kPartB = "u_part_b", kPartC = "u_part_c",
+        kPartD = "u_part_d", kWorldInv = "u_ship_world_inv";
+    if (const int loc = prog.cached_location(kPlating); loc >= 0)
+        glUniform1fv(loc, renderer::plating::kParamCount, params);
+    // world->body for p_body / n_body. draw_model's decal block sets it only
+    // when decals are enabled and present; a plating draw must never read a
+    // previous draw's matrix.
+    prog.set_mat4(kWorldInv, glm::inverse(world));
+
+    prog.set_int(kDmgCount, dl.count);
+    prog.set_vec4_array(kDmgA, dl.a, dl.count);
+    prog.set_vec4_array(kDmgB, dl.b, dl.count);
+    prog.set_vec4_array(kDmgC, dl.c, dl.count);
+
+    constexpr int kMaxParts = 12;
+    glm::vec4 pa[kMaxParts], pb[kMaxParts], pc[kMaxParts], pd[kMaxParts];
+    int np = 0;
+    if (const auto* parts = renderer::structure_parts_for(model.source)) {
+        for (const auto& sp : *parts) {
+            if (np >= kMaxParts) break;
+            pa[np] = glm::vec4(sp.centre, static_cast<float>(static_cast<int>(sp.kind)));
+            pb[np] = glm::vec4(sp.axis[0], sp.half_extent.x);
+            pc[np] = glm::vec4(sp.axis[1], sp.half_extent.y);
+            pd[np] = glm::vec4(sp.half_extent.z, 0.0f, 0.0f, 0.0f);
+            ++np;
+        }
+    }
+    prog.set_int(kPartCount, np);
+    prog.set_vec4_array(kPartA, pa, np);
+    prog.set_vec4_array(kPartB, pb, np);
+    prog.set_vec4_array(kPartC, pc, np);
+    prog.set_vec4_array(kPartD, pd, np);
+
+    prog.set_int(kMark, mark ? 1 : 0);
+    prog.set_int(kFar, far ? 1 : 0);
+}
+
+// World matrix per node: the parent chain composed onto `world`. An
+// articulated instance (BoP wings) supplies replacement node locals;
+// compose_node_worlds runs the identical parent chain with those swapped in,
+// and reproduces the walk below exactly when the map is empty. The empty case
+// takes the inline walk so the common path allocates nothing extra. The asset
+// pipeline orders nodes parents-first, so one linear pass suffices.
+static std::vector<glm::mat4> node_worlds_for(
+        const assets::Model& model, const glm::mat4& world,
+        const std::unordered_map<int, glm::mat4>* node_overrides) {
+    if (node_overrides != nullptr && !node_overrides->empty())
+        return compose_node_worlds(model, world, *node_overrides);
+    std::vector<glm::mat4> world_per_node(model.nodes.size(), glm::mat4(1.0f));
+    if (!model.nodes.empty()) {
+        world_per_node[model.root_node] = world * model.nodes[model.root_node].local_transform;
+    }
+    for (std::size_t i = 0; i < model.nodes.size(); ++i) {
+        const auto& node = model.nodes[i];
+        if (node.parent_index >= 0) {
+            world_per_node[i] = world_per_node[node.parent_index] * node.local_transform;
+        }
+    }
+    return world_per_node;
+}
+
 void draw_model(const assets::Model& model,
                 const glm::mat4& world,
                 Shader& shader,
@@ -592,7 +666,6 @@ void draw_model(const assets::Model& model,
                 const scenegraph::Instance::Atmosphere* atmo,
                 glm::vec3 atmo_sun_dir,
                 const plating::DamageList* plating,
-                bool plating_mark,
                 bool plating_far) {
     // Pick the program: skinned only when the model carries a skeleton AND a
     // non-empty palette is supplied. An empty palette forces the static branch,
@@ -657,61 +730,12 @@ void draw_model(const assets::Model& model,
     const plating::DamageList* const plating_list = skinned ? nullptr : plating;
 
     // ── SPIKE (damage redesign): plating params, damage list, parts ────────
-    // Params, the compact damage list (u_dmg_*, renderer/plating_damage.h)
-    // and the hull's structure parts ride only plating draws. The part-colour
-    // debug view (params[12] == 2) therefore tints only near listed damage on
-    // a hull whose list is non-empty; an undamaged hull draws stock. Parts
-    // come from a background detection per hull source; until it lands
-    // u_part_count is 0 and the shader uses a body-axis box chart. Locations
-    // are cached per program (Shader::cached_location): this runs per draw.
+    // Ride only plating draws (upload_plating). The part-colour debug view
+    // (params[12] == 2) therefore tints only near listed damage on a hull
+    // whose list is non-empty; an undamaged hull draws stock.
     if (plating_list != nullptr) {
-        static const std::string kPlating = "u_plating", kDmgCount = "u_dmg_count",
-            kDmgA = "u_dmg_a", kDmgB = "u_dmg_b", kDmgC = "u_dmg_c",
-            kMark = "u_plating_mark", kFar = "u_plating_far", kPartCount = "u_part_count",
-            kPartA = "u_part_a", kPartB = "u_part_b", kPartC = "u_part_c",
-            kPartD = "u_part_d";
-        auto set_vec4s = [&](const std::string& name, const glm::vec4* v, int n) {
-            const int loc = prog.cached_location(name);
-            if (loc >= 0 && n > 0) glUniform4fv(loc, n, &v[0].x);
-        };
-        auto set_int = [&](const std::string& name, int v) {
-            const int loc = prog.cached_location(name);
-            if (loc >= 0) glUniform1i(loc, v);
-        };
-        if (const int loc = prog.cached_location(kPlating); loc >= 0)
-            glUniform1fv(loc, renderer::plating::kParamCount, dauntless_plating::g_params);
-        // world->body for p_body / n_body. The decal block above sets it only
-        // when decals are enabled and present; a plating draw must never read
-        // a previous draw's matrix.
-        prog.set_mat4("u_ship_world_inv", glm::inverse(world));
-
-        const plating::DamageList& dl = *plating_list;
-        set_int(kDmgCount, dl.count);
-        set_vec4s(kDmgA, dl.a, dl.count);
-        set_vec4s(kDmgB, dl.b, dl.count);
-        set_vec4s(kDmgC, dl.c, dl.count);
-
-        constexpr int kMaxParts = 12;
-        glm::vec4 pa[kMaxParts], pb[kMaxParts], pc[kMaxParts], pd[kMaxParts];
-        int np = 0;
-        if (const auto* parts = renderer::structure_parts_for(model.source)) {
-            for (const auto& sp : *parts) {
-                if (np >= kMaxParts) break;
-                pa[np] = glm::vec4(sp.centre, static_cast<float>(static_cast<int>(sp.kind)));
-                pb[np] = glm::vec4(sp.axis[0], sp.half_extent.x);
-                pc[np] = glm::vec4(sp.axis[1], sp.half_extent.y);
-                pd[np] = glm::vec4(sp.half_extent.z, 0.0f, 0.0f, 0.0f);
-                ++np;
-            }
-        }
-        set_int(kPartCount, np);
-        set_vec4s(kPartA, pa, np);
-        set_vec4s(kPartB, pb, np);
-        set_vec4s(kPartC, pc, np);
-        set_vec4s(kPartD, pd, np);
-
-        set_int(kMark, plating_mark ? 1 : 0);
-        set_int(kFar, plating_far ? 1 : 0);
+        upload_plating(prog, model, world, *plating_list, dauntless_plating::g_params,
+                       /*mark=*/false, plating_far);
     }
 
     // ── Warp-nacelle glow capsules ─────────────────────────────────────────
@@ -926,32 +950,8 @@ void draw_model(const assets::Model& model,
         }
     }
 
-    // Walk nodes; each node may reference one or more meshes by index. The
-    // node's local_transform is composed with parent transforms here. The
-    // asset pipeline already orders nodes such that parents precede children,
-    // so a single linear pass suffices.
-    // An articulated instance (BoP wings) supplies replacement node locals;
-    // compose_node_worlds runs the identical parent chain with those swapped
-    // in, and reproduces the loop below exactly when the map is empty. The
-    // empty case still takes the inline walk so the overwhelmingly common
-    // path allocates nothing extra.
-    std::vector<glm::mat4> world_per_node;
-    if (node_overrides != nullptr && !node_overrides->empty()) {
-        world_per_node = compose_node_worlds(model, world, *node_overrides);
-    } else {
-        world_per_node.assign(model.nodes.size(), glm::mat4(1.0f));
-        if (!model.nodes.empty()) {
-            world_per_node[model.root_node] =
-                world * model.nodes[model.root_node].local_transform;
-        }
-        for (std::size_t i = 0; i < model.nodes.size(); ++i) {
-            const auto& node = model.nodes[i];
-            if (node.parent_index >= 0) {
-                world_per_node[i] =
-                    world_per_node[node.parent_index] * node.local_transform;
-            }
-        }
-    }
+    // Walk nodes; each node may reference one or more meshes by index.
+    const std::vector<glm::mat4> world_per_node = node_worlds_for(model, world, node_overrides);
 
     // Glow regions are authored in the NIF (rest) frame, but opaque.frag
     // rebuilds a POSED body position. C_i = R_i * P_i^-1 maps it back, for
@@ -1141,6 +1141,60 @@ void draw_model(const assets::Model& model,
     // Never leak the decal clamp to a later pass (mask units 8-11 only).
     for (int i = 0; i < assets::kMaxDecalMasks; ++i)
         glBindSampler(kHullDecalUnit0 + i, 0);
+}
+
+// SPIKE (damage redesign): the lean marking draw (submit_plating_interior).
+// Colour and depth writes are off, so only the stencil it stamps matters, and
+// that is decided by which fragments survive opaque.frag's PLATING main. This
+// sets exactly what that survival reads, or neutralises it:
+//   - read up to the plating discard: the plating block (params, damage list,
+//     parts, u_ship_world_inv, u_plating_mark = 1, u_plating_far = 0) and, per
+//     mesh, u_model (+ u_view / u_proj from the caller) and u_node_rest_fix;
+//   - every other discard in main: the dither (u_dither_fade, set by the
+//     caller from the instance; u_impostor_blend 0), the coverage cutout
+//     (u_coverage_cutout 0), and the old carve clip after the plating discard
+//     (u_carve_enabled / u_carve_count / u_carve_invert / u_hull_field_enabled
+//     0 -- the carve ring is empty unless DAUNTLESS_HULL_CARVING=1);
+//   - u_shadow_map's unit (5): a sampler2DShadow left on unit 0 beside the
+//     sampler2Ds is GL_INVALID_OPERATION at draw on a never-drawn program.
+// No texture binds, no decals, glow regions, lights or materials: whatever
+// they would shade is masked off. The audit (one row per uniform) is in the
+// phase 2 Task 2 report.
+static void draw_plating_mark(const assets::Model& model, const glm::mat4& world,
+                              Shader& prog, const plating::DamageList& dl,
+                              const float* params,
+                              const std::unordered_map<int, glm::mat4>* node_overrides) {
+    static const std::string kCarveEnabled = "u_carve_enabled", kCarveCount = "u_carve_count",
+        kCarveInvert = "u_carve_invert", kFieldEnabled = "u_hull_field_enabled",
+        kCutout = "u_coverage_cutout", kImpostorBlend = "u_impostor_blend",
+        kShadowMap = "u_shadow_map", kModel = "u_model", kRestFix = "u_node_rest_fix";
+    prog.use();
+    upload_plating(prog, model, world, dl, params, /*mark=*/true, /*far=*/false);
+    prog.set_int(kCarveEnabled, 0);
+    prog.set_int(kCarveCount, 0);
+    prog.set_int(kCarveInvert, 0);
+    prog.set_int(kFieldEnabled, 0);
+    prog.set_int(kCutout, 0);
+    prog.set_int(kImpostorBlend, 0);
+    prog.set_int(kShadowMap, 5);
+
+    const std::vector<glm::mat4> world_per_node = node_worlds_for(model, world, node_overrides);
+    const bool articulated = node_overrides != nullptr && !node_overrides->empty();
+    const std::vector<glm::mat4> rest_fix =
+        articulated ? rest_corrections(model, *node_overrides) : std::vector<glm::mat4>{};
+
+    // Per mesh: its transform, then the draw. A per-mesh upload (a damage
+    // record subset) slots in here.
+    for (std::size_t i = 0; i < model.nodes.size(); ++i) {
+        for (int mesh_idx : model.nodes[i].meshes) {
+            const auto& mesh = model.meshes[static_cast<std::size_t>(mesh_idx)];
+            prog.set_mat4(kModel, world_per_node[i]);
+            prog.set_mat4(kRestFix, articulated ? rest_fix[i] : glm::mat4(1.0f));
+            glBindVertexArray(mesh.vao());
+            glDrawElements(GL_TRIANGLES, mesh.index_count(), GL_UNSIGNED_INT, nullptr);
+        }
+    }
+    glBindVertexArray(0);
 }
 
 int geosphere_level_for(const assets::Model& m, const glm::mat4& world,
@@ -1437,8 +1491,7 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                           instance_decal_override(inst.id),
                           sphere_level,
                           atmo, atmo_sun,
-                          use_plating ? &plating_list : nullptr,
-                          /*plating_mark=*/false, plating_far);
+                          use_plating ? &plating_list : nullptr, plating_far);
         if (inst.far_fade != 0.0f) {
             shader.use();
             shader.set_float("u_dither_fade", 0.0f);
@@ -1586,7 +1639,6 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
     bool state_saved = false;
     bool state_set = false;
     GLint saved_depth_func = GL_LESS;
-    GLuint white = 0, black = 0;
     int next_value = 2;
 
     world.for_each_visible_in_pass(scenegraph::Pass::Space, [&](const scenegraph::Instance& inst) {
@@ -1615,8 +1667,6 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
         if (!configured) {
             configure_common(shader);
             configured = true;
-            white = ensure_white_texture();
-            black = ensure_black_texture();
         }
         if (!state_saved) {
             glGetIntegerv(GL_DEPTH_FUNC, &saved_depth_func);
@@ -1639,18 +1689,12 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
         ++next_value;
         ++plating_marks_last_frame_;
 
-        std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw> lights{};
         if (inst.far_fade != 0.0f) {
             shader.use();
             shader.set_float("u_dither_fade", inst.far_fade);
         }
-        draw_model(*m, inst.world, shader, pipeline.skinned_shader(), white, black,
-                   /*rim_strength=*/0.0f, inst.decals, inst.glow_regions, now,
-                   inst.emissive_scale, palette, inst.carve, lights,
-                   /*dyn_light_count=*/0, carve_fill_entry(carve_cache, m, inst.carve),
-                   /*carve_invert=*/false, /*hull_field=*/nullptr, &inst.node_overrides,
-                   instance_decal_override(inst.id), /*sphere_level=*/-1,
-                   /*atmo=*/nullptr, glm::vec3(0.0f), &list, /*plating_mark=*/true);
+        draw_plating_mark(*m, inst.world, shader, list, dauntless_plating::g_params,
+                          &inst.node_overrides);
         if (inst.far_fade != 0.0f) {
             shader.use();
             shader.set_float("u_dither_fade", 0.0f);

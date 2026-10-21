@@ -353,11 +353,10 @@ void draw_model(const assets::Model& model,
                 // u_dmg_*; the draw stays front-faces-only (a cut shows the
                 // interior pass's decks and rooms, not the hull's inside
                 // face). Ignored for a skinned draw (the skinned
-                // program has no plating layer).
+                // program has no plating layer). Always a colour draw
+                // (u_plating_mark = 0): submit_plating_interior marks through
+                // frame.cc's lean draw_plating_mark instead.
                 const plating::DamageList* plating = nullptr,
-                // Marking draw (submit_plating_interior): the program writes
-                // nothing but "this pixel is cut through" (u_plating_mark).
-                bool plating_mark = false,
                 // Far hull (InteriorPolicy, hull_interior_policy.h): no rooms
                 // behind its holes, so the program paints a hole as wreckage
                 // instead of cutting it, unless it is blown clear through

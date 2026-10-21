@@ -14,6 +14,7 @@
 #include <renderer/plating_damage.h>
 #include <renderer/ray_trace.h>
 #include <renderer/scuff_texture.h>
+#include <renderer/structure_parts_cache.h>
 #include <renderer/window.h>
 
 #include <scenegraph/camera.h>
@@ -29,6 +30,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -36,6 +38,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <thread>
 #include <vector>
 
 #include "plating_gl_fixture.h"
@@ -155,16 +158,23 @@ protected:
     }
 
     // submit_opaque_in_pass then submit_plating_interior over one instance;
-    // returns the stencil plane (row 0 = bottom) and the mark count.
-    struct Marked { std::vector<std::uint8_t> stencil; int marks = -1; int cull = 0; };
+    // returns the stencil plane (row 0 = bottom), the colour buffer read after
+    // both (RGBA, row 0 = bottom) and the mark count.
+    struct Marked {
+        std::vector<std::uint8_t> stencil;
+        std::vector<std::uint8_t> color;
+        int marks = -1;
+        int cull = 0;
+    };
     Marked render_marked(const assets::Model& model, const scenegraph::HullDamageStore& ring,
-                         const scenegraph::Camera& cam) {
+                         const scenegraph::Camera& cam,
+                         const glm::vec3& clear = glm::vec3(0.0f)) {
         scenegraph::World world;
         auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(&model));
         world.set_world_transform(iid, glm::mat4(1.0f));
         world.get(iid)->hull_damage = ring;
         glViewport(0, 0, kSize, kSize);
-        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClearColor(clear.r, clear.g, clear.b, 1.0f);
         glStencilMask(0xFF);
         glClearStencil(0);
         glEnable(GL_CULL_FACE);
@@ -185,6 +195,9 @@ protected:
         out.marks = submitter.plating_marks_last_frame();
         out.stencil.assign(static_cast<std::size_t>(kSize) * kSize, 0);
         glReadPixels(0, 0, kSize, kSize, GL_STENCIL_INDEX, GL_UNSIGNED_BYTE, out.stencil.data());
+        out.color.assign(static_cast<std::size_t>(kSize) * kSize * 4, 0);
+        glReadPixels(0, 0, kSize, kSize, GL_RGBA, GL_UNSIGNED_BYTE, out.color.data());
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         return out;
     }
 };
@@ -368,6 +381,72 @@ TEST_F(PlatingRenderTest, MarkingStampsOnlyTornPixels) {
     EXPECT_EQ(st(to_pixel(cam, glm::vec3(0.0f))), 2);
     EXPECT_EQ(st(to_pixel(cam, glm::vec3(reach + margin + 5.0f, 0.0f, 0.0f))), 0);
     EXPECT_EQ(st(glm::ivec2(1, 1)), 0) << "a pixel off the quad";
+}
+
+// The lean marking draw (draw_plating_mark) stamps exactly the pixels the
+// plating draw cuts, on the real Ambassador: the cut set is every pixel inside
+// the undamaged hull's silhouette that shows the background after the plating
+// draw, and the stencil equals it pixel for pixel. Interior off (params[25]),
+// so the colour read back is the plating draw's alone.
+TEST_F(PlatingRenderTest, LeanMarkStampsExactlyTheCutPixels) {
+    auto m = ambassador();
+    ASSERT_TRUE(m) << "BC asset not available at " << ambassador_nif()
+                   << " -- set DAUNTLESS_GAME_DIR";
+    GLint sbits = 0;
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, GL_STENCIL,
+                                          GL_FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE, &sbits);
+    ASSERT_GE(sbits, 8) << "test window has no stencil buffer";
+    dauntless_plating::g_params[0] = 1.0f;
+    dauntless_plating::g_params[25] = 0.0f;
+    const renderer::Aabb box = renderer::compute_model_aabb(*m);
+    const auto cam = top_down(box);
+    const auto hit = saucer_top_point(*m, box);
+    ASSERT_TRUE(hit);
+    // Structure parts are detected on a worker; wait for them, so the plating
+    // draw and the mark both see them (and the mark's part upload is pinned)
+    // instead of one landing between the two draws.
+    const auto t0 = std::chrono::steady_clock::now();
+    while (renderer::structure_parts_for(m->source) == nullptr &&
+           std::chrono::steady_clock::now() - t0 < std::chrono::seconds(20))
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    ASSERT_NE(renderer::structure_parts_for(m->source), nullptr) << "parts never landed";
+    ASSERT_FALSE(renderer::structure_parts_for(m->source)->empty());
+    // A background no lit hull pixel lands on exactly.
+    const std::uint8_t bg[3] = {13, 251, 7};
+    const glm::vec3 clear(bg[0] / 255.0f, bg[1] / 255.0f, bg[2] / 255.0f);
+
+    const auto undamaged = render_marked(*m, scenegraph::HullDamageStore{}, cam, clear);
+    EXPECT_EQ(undamaged.marks, 0);
+    const auto torn = render_marked(*m, internal_ring(hit->point, 30.0f, 10.0f), cam, clear);
+    EXPECT_EQ(torn.marks, 1);
+
+    auto is_bg = [&](const std::vector<std::uint8_t>& px, int x, int y) {
+        const std::uint8_t* q = pixel(px, x, y);
+        return q[0] == bg[0] && q[1] == bg[1] && q[2] == bg[2];
+    };
+    int silhouette = 0, cut = 0, stamped = 0, missed = 0, extra = 0, wrong_value = 0;
+    for (int y = 0; y < kSize; ++y) {
+        for (int x = 0; x < kSize; ++x) {
+            const bool in_hull = !is_bg(undamaged.color, x, y);
+            const bool is_cut = in_hull && is_bg(torn.color, x, y);
+            const std::uint8_t s = torn.stencil[static_cast<std::size_t>(y) * kSize + x];
+            silhouette += in_hull ? 1 : 0;
+            cut += is_cut ? 1 : 0;
+            stamped += s != 0 ? 1 : 0;
+            if (is_cut && s == 0) ++missed;
+            if (!is_cut && s != 0) ++extra;
+            if (s != 0 && s != 2) ++wrong_value;
+        }
+    }
+    std::fprintf(stderr,
+                 "[PlatingRender] lean mark: silhouette=%d cut=%d stamped=%d missed=%d "
+                 "extra=%d\n", silhouette, cut, stamped, missed, extra);
+    ASSERT_GT(silhouette, 2000) << "hull not in view";
+    ASSERT_GT(cut, 50) << "the record cut too little to compare";
+    EXPECT_EQ(missed, 0) << "cut pixels the mark did not stamp";
+    EXPECT_EQ(extra, 0) << "stamped pixels the plating draw did not cut";
+    EXPECT_EQ(wrong_value, 0) << "the first marked hull stamps 2";
 }
 
 TEST_F(PlatingRenderTest, NoMarkWithoutPossibleTear) {
