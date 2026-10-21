@@ -105,7 +105,8 @@ _REQUIRED_BINDINGS = frozenset({
     "set_viewscreen_off_texture",
     "set_viewscreen_scene_source", "set_viewscreen_static",
     "set_viewscreen_target_instance",
-    "set_viewscreen_static_source", "set_visible", "set_warp_flash_intensity",
+    "set_viewscreen_static_source", "set_viewscreen_bars",
+    "clear_viewscreen_bars", "set_visible", "set_warp_flash_intensity",
     "set_warp_streak_intensity", "set_warp_travel_dir", "set_world_transform",
     "shadows_set_enabled", "shield_hit", "shield_register", "shield_unregister",
     "should_close", "shutdown", "smaa_set_enabled",
@@ -1522,6 +1523,18 @@ def set_viewscreen_static_source(paths) -> None:
     """Register the noise texture frames (absolute paths) for the viewscreen
     static overlay. Idempotent on the native side (cached by path)."""
     _h.set_viewscreen_static_source(paths)
+
+
+def set_viewscreen_bars(name, detail, dot_rgb) -> None:
+    """Show the top-left target readout (affiliation dot + name, then the
+    detail line) on the viewscreen target feed. `dot_rgb` is 0-255 ints;
+    drawn into the RTT on the scene feed only, text always white."""
+    _h.set_viewscreen_bars(name, detail, dot_rgb)
+
+
+def clear_viewscreen_bars() -> None:
+    """Hide the viewscreen target readout."""
+    _h.clear_viewscreen_bars()
 
 
 def set_viewscreen_static(on, intensity) -> None:

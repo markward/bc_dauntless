@@ -59,7 +59,6 @@ def test_director_speed_boost_reaches_the_tracking_projection_but_not_the_distan
     d.set_speed(_gups(4000.0))
     assert d.tracking.v_fov_rad == pytest.approx(math.radians(49.0))
     assert d.chase.fov_scale    == pytest.approx(fov_distance_scale(math.radians(45.0)))
-    assert d.tracking.fov_scale == pytest.approx(fov_distance_scale(math.radians(45.0)))
 
 
 def test_director_set_fov_keeps_the_current_speed_boost():

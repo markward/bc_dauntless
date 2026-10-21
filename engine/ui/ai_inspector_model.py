@@ -74,6 +74,39 @@ def _condition_label(cond) -> str:
     return _name_of(cond) or type(cond).__name__
 
 
+def _plain_arg(val):
+    """A condition argument as JSON: scalars verbatim, a point as [x, y, z],
+    anything else as its type name (never the object, never a raise)."""
+    if val is None or isinstance(val, (bool, int, float, str)):
+        return val
+    vec = _vec(val)
+    if vec is not None:
+        return vec
+    if isinstance(val, (list, tuple)):
+        return [_plain_arg(v) for v in val[:8]]
+    return type(val).__name__
+
+
+def _condition_entry(cond) -> dict:
+    """One condition's identity, inputs and latched status.
+
+    Every SDK condition is a ConditionScript, so the class says nothing; the
+    script name does. Even that is not enough: RearTorpsReadyRearShieldOk and
+    TorpsReadyAndNotInEnemyFiringArc both hold a ConditionTorpsReady, and only
+    the direction argument says which tubes each one watches.
+    """
+    out = {"name": _condition_label(cond),
+           "class": type(cond).__name__,
+           "status": _condition_status(cond)}
+    script = cond.__dict__.get("_class_name") if hasattr(cond, "__dict__") else None
+    if isinstance(script, str) and script:
+        out["script"] = script
+        args = cond.__dict__.get("_args")
+        if isinstance(args, tuple):
+            out["args"] = [_plain_arg(a) for a in args]
+    return out
+
+
 def _condition_status(cond) -> int:
     getter = getattr(cond, "GetStatus", None)
     if callable(getter):
@@ -134,12 +167,7 @@ def serialize_ai_tree(ai) -> dict:
     # generic _contained_ai branch so its conditions are captured.
     conditions = getattr(ai, "_conditions", None)
     if isinstance(conditions, list) and _has_attr_chain(ai, "_contained_ai"):
-        out["conditions"] = [
-            {"name": _condition_label(c),
-             "class": type(c).__name__,
-             "status": _condition_status(c)}
-            for c in conditions
-        ]
+        out["conditions"] = [_condition_entry(c) for c in conditions]
         contained = getattr(ai, "_contained_ai", None)
         out["contained"] = serialize_ai_tree(contained) if contained is not None else None
         return out
@@ -287,61 +315,245 @@ def _defence_report(ship) -> dict:
     return out
 
 
+def _num(fn) -> Optional[float]:
+    """Call a getter and keep the result only if it is a real number.
+
+    TGObject.__getattr__ hands back a truthy _Stub for any missing method, and
+    int(stub) is 0 -- which is how the first version of this report printed
+    "ammo 0, can_fire True" for every ship. A value that is not a number is
+    reported as None (unknown), never coerced.
+    """
+    if not callable(fn):
+        return None
+    try:
+        v = fn()
+    except Exception:
+        return None
+    if isinstance(v, bool):
+        return float(v)
+    return float(v) if isinstance(v, (int, float)) else None
+
+
+def _vec(p) -> Optional[list]:
+    """A TGPoint3-like as [x, y, z] rounded to 3 places, or None."""
+    try:
+        xyz = (p.x, p.y, p.z)
+    except Exception:
+        return None
+    if not all(isinstance(c, (int, float)) for c in xyz):
+        return None
+    return [round(float(c), 3) for c in xyz]
+
+
+def _flag(fn) -> Optional[bool]:
+    v = _num(fn)
+    return None if v is None else bool(v)
+
+
+def _tube_report(tube) -> dict:
+    from engine.appc.weapon_subsystems import _SLOT_LOADED
+    cooling = [t for t in getattr(tube, "_reload_timers", []) if t != _SLOT_LOADED]
+    ready, most = _num(tube.GetNumReady), _num(tube.GetMaxReady)
+    return {
+        "name": _name_of(tube),
+        "num_ready": None if ready is None else int(ready),
+        "max_ready": None if most is None else int(most),
+        # Seconds of reload banked by the furthest-along cooling slot (power
+        # scales the rate), or None when every slot is loaded.
+        "reload_progress": round(max(cooling), 3) if cooling else None,
+        "reload_delay": _num(tube.GetReloadDelay),
+        "can_fire": _flag(tube.CanFire),
+        "disabled": _flag(tube.IsDisabled),
+        "direction": _vec(tube.GetDirection()),
+    }
+
+
+def _bank_report(bank) -> dict:
+    return {
+        "name": _name_of(bank),
+        "charge": _num(bank.GetChargeLevel),
+        "max_charge": _num(bank.GetMaxCharge),
+        "min_firing_charge": _num(bank.GetMinFiringCharge),
+        "can_fire": _flag(bank.CanFire),
+        "firing": _flag(bank.IsFiring),
+        "disabled": _flag(bank.IsDisabled),
+    }
+
+
 def _weapon_report(ship) -> dict:
     """What the weapon-readiness CONDITIONS are actually reading.
 
-    An exported tree can show every fire gate DORMANT and give no hint why.
-    The gates ask whether a bank is charged and whether a tube has ammo, so
-    report those directly: "the AI will not fire" and "the weapons say they
-    are not ready" are different findings with different fixes, and the tree
-    alone cannot tell them apart.
+    An exported tree can show every fire gate DORMANT, or a torpedo gate
+    latched ready, and give no hint whether that matches the weapons. So
+    report the weapons themselves, per tube and per bank: "the AI will not
+    fire" and "the weapons say they are not ready" are different findings with
+    different fixes, and the tree alone cannot tell them apart.
+
+    Reads the ship's four weapon systems by their own getters and classifies
+    each child by isinstance against the engine classes -- never by probing
+    for a method, which a stub always satisfies. ConditionTorpsReady latches
+    its status from tube events, so a latched 1 beside tubes all at
+    num_ready 0 is a stale gate, not a ready weapon.
     """
-    out = {"banks": [], "tubes": [], "ready_banks": 0, "ready_tubes": 0}
-    try:
-        import App
-        # CT_WEAPON_SYSTEM, not 0. Passing 0 matched nothing at all and the
-        # first capture reported ready_banks=0 for every ship INCLUDING the
-        # player -- which read as "all weapons dead" when it actually meant
-        # "this probe found no weapons". A measurement that fails silently in
-        # the direction of the hypothesis is worse than no measurement.
-        it = ship.StartGetSubsystemMatch(App.CT_WEAPON_SYSTEM)
-        while True:
-            sub = ship.GetNextSubsystemMatch(it)
-            if sub is None:
-                break
-            kind = type(sub).__name__
+    from engine.appc.weapon_subsystems import (
+        TorpedoSystem, TorpedoTube, _EnergyWeaponFireMixin)
+
+    out = {"systems": [], "ready_banks": 0, "ready_tubes": 0}
+    for getter in ("GetTorpedoSystem", "GetPhaserSystem",
+                   "GetPulseWeaponSystem", "GetTractorBeamSystem"):
+        try:
+            system = getattr(ship, getter)()
+        except Exception:
+            continue
+        if system is None or type(system).__name__ == "_Stub":
+            continue
+        entry = {"name": _name_of(system), "type": type(system).__name__,
+                 "on": _flag(system.IsOn),
+                 "disabled": _flag(system.IsDisabled)}
+        children = []
+        try:
+            children = [system.GetChildSubsystem(i)
+                        for i in range(int(system.GetNumChildSubsystems()))]
+        except Exception:
+            pass
+        if isinstance(system, TorpedoSystem):
+            entry["ammo_slot"] = _num(system.GetCurrentAmmoSlot)
+            entry["ammo_slot"] = (None if entry["ammo_slot"] is None
+                                  else int(entry["ammo_slot"]))
+            ammo = []
             try:
-                if hasattr(sub, "_charge_level") and hasattr(sub, "_max_charge"):
-                    lvl = float(getattr(sub, "_charge_level", 0.0) or 0.0)
-                    mx = float(getattr(sub, "_max_charge", 0.0) or 0.0)
-                    can = bool(sub.CanFire()) if callable(getattr(sub, "CanFire", None)) else None
-                    out["banks"].append(
-                        {"name": _name_of(sub), "type": kind, "charge": lvl,
-                         "max_charge": mx, "can_fire": can})
-                    if can:
-                        out["ready_banks"] += 1
-                elif "Torpedo" in kind or hasattr(sub, "GetAmmo"):
-                    ammo = None
-                    for attr in ("GetAmmo", "GetNumTorpedoes", "_ammo"):
-                        g = getattr(sub, attr, None)
-                        try:
-                            ammo = int(g()) if callable(g) else (int(g) if g is not None else None)
-                        except Exception:
-                            ammo = None
-                        if ammo is not None:
-                            break
-                    can = bool(sub.CanFire()) if callable(getattr(sub, "CanFire", None)) else None
-                    out["tubes"].append(
-                        {"name": _name_of(sub), "type": kind,
-                         "ammo": ammo, "can_fire": can})
-                    if can:
-                        out["ready_tubes"] += 1
+                for slot in range(int(system.GetNumAmmoTypes())):
+                    a = system.GetAmmoType(slot)
+                    if a is None:
+                        continue
+                    avail = _num(a.GetAvailable)
+                    ammo.append({"slot": slot, "name": _name_of(a, "_name") or a.GetAmmoName(),
+                                 "available": None if avail is None else int(avail)})
             except Exception:
-                continue
-        ship.EndGetSubsystemMatch(it)
-    except Exception:
-        pass
+                pass
+            entry["ammo"] = ammo
+            entry["tubes"] = []
+            for c in children:
+                if isinstance(c, TorpedoTube):
+                    try:
+                        t = _tube_report(c)
+                    except Exception:
+                        continue
+                    entry["tubes"].append(t)
+                    if t["can_fire"]:
+                        out["ready_tubes"] += 1
+        else:
+            entry["banks"] = []
+            for c in children:
+                if isinstance(c, _EnergyWeaponFireMixin):
+                    try:
+                        b = _bank_report(c)
+                    except Exception:
+                        continue
+                    entry["banks"].append(b)
+                    if b["can_fire"]:
+                        out["ready_banks"] += 1
+        out["systems"].append(entry)
     return out
+
+
+def _bearing_deg(forward: list, delta: list) -> Optional[float]:
+    """Angle in degrees between a unit forward and a world-space offset."""
+    import math
+    d = math.sqrt(sum(c * c for c in delta))
+    if d <= 1e-9:
+        return None
+    dot = sum(f * c for f, c in zip(forward, delta)) / d
+    return round(math.degrees(math.acos(max(-1.0, min(1.0, dot)))), 2)
+
+
+def _motion_report(ship) -> Optional[dict]:
+    """Where the ship is, how fast it is going and what it has been told to do.
+
+    The tree says which maneuver is running; only this says what it is doing
+    to the ship. "Holding" and "a slow tail-first rear torpedo run" have the
+    same tree and very different numbers. All in game units (engine/units.py).
+    """
+    import math
+    pos = _vec(ship.GetWorldLocation())
+    if pos is None:
+        return None
+    out = {"position_gu": pos,
+           "velocity_gups": _vec(ship.GetVelocityTG()),
+           "forward": _vec(ship.GetWorldRotation().GetCol(1)),
+           "angular_velocity": _vec(ship.GetAngularVelocityTG())}
+    v = out["velocity_gups"]
+    out["speed_gups"] = round(math.sqrt(sum(c * c for c in v)), 3) if v else None
+    # The commanded speed (absolute GU/s -- SetImpulse scales the SDK's
+    # fraction by max speed) beside what the ship is actually doing.
+    sp = ship.__dict__.get("_speed_setpoint")
+    out["speed_setpoint_gups"] = (round(float(sp[0]), 3)
+                                  if isinstance(sp, tuple) and sp
+                                  and isinstance(sp[0], (int, float)) else None)
+    out["impulse_fraction"] = _num(getattr(ship, "GetImpulse", None))
+    ies = ship.GetImpulseEngineSubsystem()
+    out["max_speed_gups"] = _num(ies.GetMaxSpeed) if ies is not None else None
+    return out
+
+
+def _target_geometry(ship, target) -> Optional[dict]:
+    """Distance (centre to centre), bearing off the nose and closing speed.
+
+    bearing_deg is 0 dead ahead and 180 dead astern. closing_speed_gups is
+    positive while the gap shrinks.
+    """
+    if target is None:
+        return None
+    a, b = _vec(ship.GetWorldLocation()), _vec(target.GetWorldLocation())
+    if a is None or b is None:
+        return None
+    import math
+    delta = [bb - aa for aa, bb in zip(a, b)]
+    dist = math.sqrt(sum(c * c for c in delta))
+    out = {"distance_gu": round(dist, 3), "bearing_deg": None,
+           "closing_speed_gups": None, "target_speed_gups": None}
+    fwd = _vec(ship.GetWorldRotation().GetCol(1))
+    if fwd is not None:
+        out["bearing_deg"] = _bearing_deg(fwd, delta)
+    va = _vec(ship.GetVelocityTG())
+    vb = _vec(target.GetVelocityTG()) if hasattr(target, "GetVelocityTG") else None
+    if vb is not None:
+        out["target_speed_gups"] = round(math.sqrt(sum(c * c for c in vb)), 3)
+    if va is not None and vb is not None and dist > 1e-9:
+        rel = [x - y for x, y in zip(vb, va)]
+        out["closing_speed_gups"] = round(
+            -sum(r * d for r, d in zip(rel, delta)) / dist, 3)
+    return out
+
+
+def _nearest_ship(ship, others) -> Optional[dict]:
+    """The closest OTHER ship and where it sits relative to this one's nose.
+
+    Avoidance (PhasedAvoidObstacles, fFrontSpeed 0) stops a ship that has
+    another hull in its front cone, so a group that flies in a column can
+    hold each other in place; this is what tells that apart from the AI.
+    """
+    a = _vec(ship.GetWorldLocation())
+    fwd = _vec(ship.GetWorldRotation().GetCol(1))
+    if a is None:
+        return None
+    import math
+    best = None
+    for other in others:
+        if other is ship:
+            continue
+        b = _vec(other.GetWorldLocation())
+        if b is None:
+            continue
+        delta = [bb - aa for aa, bb in zip(a, b)]
+        d = math.sqrt(sum(c * c for c in delta))
+        if best is None or d < best[0]:
+            best = (d, other, delta)
+    if best is None:
+        return None
+    d, other, delta = best
+    return {"name": _name_of(other), "distance_gu": round(d, 3),
+            "bearing_deg": _bearing_deg(fwd, delta) if fwd is not None else None}
 
 
 def collect_all_ship_ai() -> List[dict]:
@@ -358,7 +570,8 @@ def collect_all_ship_ai() -> List[dict]:
         now = None
 
     out: List[dict] = []
-    for ship in iter_ships():
+    ships = list(iter_ships())
+    for ship in ships:
         name = _name_of(ship)
         tree: Optional[dict] = None
         getter = getattr(ship, "GetAI", None)
@@ -378,6 +591,7 @@ def collect_all_ship_ai() -> List[dict]:
         # and nothing recorded whether the ship still had a target, whether its
         # AI tree was still being walked, or what the weapons themselves said.
         row = {"ship_name": name, "tree": tree}
+        tgt = None
         try:
             tgt = ship.GetTarget()
             row["target"] = _name_of(tgt) if tgt is not None else None
@@ -395,6 +609,15 @@ def collect_all_ship_ai() -> List[dict]:
             row["ai_next_walk_due"] = float(due)
             if now is not None:
                 row["ai_walk_due_in"] = float(due) - now
+        # Each section guarded on its own: one unreadable ship must cost only
+        # that section, never the row or the walk.
+        for key, fn in (("motion", lambda: _motion_report(ship)),
+                        ("target_geometry", lambda: _target_geometry(ship, tgt)),
+                        ("nearest_ship", lambda: _nearest_ship(ship, ships))):
+            try:
+                row[key] = fn()
+            except Exception:
+                row[key] = None
         row["weapons"] = _weapon_report(ship)
         row["defence"] = _defence_report(ship)
         out.append(row)

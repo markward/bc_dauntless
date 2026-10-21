@@ -288,31 +288,158 @@ class _FakeShip:
     def GetRadius(self):        return self._radius
 
 
-def test_zoom_target_eye_on_player_target_axis_at_zoom_radii_from_target():
-    """ZoomTarget eye sits zoom_target_radii * r_target behind the target
-    along the ship→target axis (between player and target)."""
-    from engine.cameras.tracking import _TrackingCamera
-    from engine.appc.math         import TGPoint3, TGMatrix3
+class _Scaled(_FakeShip):
+    def __init__(self, loc, rot, radius=1.0, scale=1.0):
+        super().__init__(loc, rot, radius)
+        self._scale = scale
+    def GetScale(self): return self._scale
 
+
+def _sphere_fit(tc, radius):
+    from engine.cameras.zoom_fit import TargetExtent, fit_distance
+    ext = TargetExtent((0.0, 0.0, 0.0), None, None, radius)
+    return fit_distance(ext, (0, 1, 0), (0, 0, 1), tc.v_fov_rad, tc.aspect)
+
+
+def _zoom_cam(scale=None):
+    from engine.cameras.tracking import _TrackingCamera
     tc = _TrackingCamera()
     tc.set_ship_radius(1.0)
-    tc.zoom_target_radii = 5.0
     tc.zoom_target_active = True
+    if scale is not None:
+        tc.zoom_target_scale = scale
+    return tc
 
-    s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
-    t_loc = TGPoint3(0.0, 20.0, 0.0)  # +y forward
 
+def test_zoom_target_fits_a_scaled_rock_from_far():
+    """GetRadius 5 x GetScale 3 = a 15 GU drawn sphere; the eye stands at
+    the sphere fit distance from T on the S->T axis, outside the sphere."""
+    from engine.appc.math import TGPoint3, TGMatrix3
+    tc = _zoom_cam()
+    rock = _Scaled(TGPoint3(0.0, 400.0, 0.0), TGMatrix3(), radius=5.0, scale=3.0)
+    eye, look_at, _ = tc.compute(
+        player=_FakeShip(TGPoint3(0.0, 0.0, 0.0), TGMatrix3()), target=rock,
+        dt=None)
+    d = _sphere_fit(tc, 15.0)
+    assert d > 15.0
+    assert eye[0] == pytest.approx(0.0, abs=1e-9)
+    assert eye[1] == pytest.approx(400.0 - d, abs=1e-6)
+    assert eye[2] == pytest.approx(0.0, abs=1e-9)
+    assert look_at[1] > eye[1]
+
+
+def test_zoom_target_looks_at_the_box_centre_not_the_aim_point():
+    from engine.appc.math import TGPoint3, TGMatrix3
+    tc = _zoom_cam()
+    tgt = _FakeShip(TGPoint3(0.0, 200.0, 0.0), TGMatrix3(), radius=10.0)
+    tgt._shield_hull_box = ((0.0, 0.0, 5.0), (4.0, 12.0, 3.0))   # centre 5 GU above
+    eye, look_at, _ = tc.compute(
+        player=_FakeShip(TGPoint3(0.0, 0.0, 0.0), TGMatrix3()), target=tgt,
+        dt=None, aim_point=TGPoint3(3.0, 200.0, 0.0))
+    f = tuple(look_at[i] - eye[i] for i in range(3))
+    n = math.sqrt(sum(c * c for c in f))
+    centre = (0.0, 200.0, 5.0)
+    to_c = tuple(centre[i] - eye[i] for i in range(3))
+    m = math.sqrt(sum(c * c for c in to_c))
+    assert tuple(c / n for c in f) == pytest.approx(
+        tuple(c / m for c in to_c), abs=1e-9)
+    # and the eye is on the S -> centre axis
+    assert eye[0] == pytest.approx(0.0, abs=1e-9)
+    assert eye[2] / eye[1] == pytest.approx(5.0 / 200.0, abs=1e-9)
+
+
+def test_zoom_target_never_behind_the_player():
+    """Player 30 GU from a r=15 target, r_player 4: the fit is far larger
+    than 26, so the cap holds the eye at player_dist - r_player."""
+    from engine.appc.math import TGPoint3, TGMatrix3
+    tc = _zoom_cam()
+    eye, _, _ = tc.compute(
+        player=_FakeShip(TGPoint3(0.0, 0.0, 0.0), TGMatrix3(), radius=4.0),
+        target=_FakeShip(TGPoint3(0.0, 30.0, 0.0), TGMatrix3(), radius=15.0),
+        dt=None)
+    assert math.dist(eye, (0.0, 30.0, 0.0)) == pytest.approx(26.0, abs=1e-9)
+    assert 0.0 < eye[1] < 30.0
+
+
+def test_zoom_target_ignores_fov_scale():
+    from engine.appc.math import TGPoint3, TGMatrix3
+    def run(fs):
+        tc = _zoom_cam()
+        tc.fov_scale = fs
+        return tc.compute(
+            player=_FakeShip(TGPoint3(0.0, 0.0, 0.0), TGMatrix3()),
+            target=_FakeShip(TGPoint3(0.0, 300.0, 0.0), TGMatrix3(), radius=8.0),
+            dt=None)[0]
+    assert run(2.0) == pytest.approx(run(1.0), abs=1e-12)
+
+
+def test_zoom_target_uses_the_cameras_aspect():
+    from engine.appc.math import TGPoint3, TGMatrix3
+    def run(aspect):
+        tc = _zoom_cam()
+        tc.aspect = aspect
+        eye = tc.compute(
+            player=_FakeShip(TGPoint3(0.0, 0.0, 0.0), TGMatrix3()),
+            target=_FakeShip(TGPoint3(0.0, 300.0, 0.0), TGMatrix3(), radius=8.0),
+            dt=None)[0]
+        return 300.0 - eye[1]
+    assert _zoom_cam().aspect == pytest.approx(16.0 / 9.0)
+    assert run(0.5) > run(16.0 / 9.0)
+
+
+def test_zoom_target_distance_filter_runs_before_the_cap():
+    from engine.appc.math import TGPoint3, TGMatrix3
+    tc = _zoom_cam()
+    seen = []
+    def flt(t, d):
+        seen.append(d)
+        return d * 10.0
+    eye, _, _ = tc.compute(
+        player=_FakeShip(TGPoint3(0.0, 0.0, 0.0), TGMatrix3(), radius=4.0),
+        target=_FakeShip(TGPoint3(0.0, 30.0, 0.0), TGMatrix3(), radius=15.0),
+        dt=None, distance_filter=flt)
+    assert seen and seen[0] > 0.0
+    assert math.dist(eye, (0.0, 30.0, 0.0)) == pytest.approx(26.0, abs=1e-9)
+
+
+def test_zoom_target_distance_filter_receives_fit_times_scale():
+    from engine.appc.math import TGPoint3, TGMatrix3
+    tc = _zoom_cam(scale=2.0)
+    seen = []
+    tc.compute(
+        player=_FakeShip(TGPoint3(0.0, 0.0, 0.0), TGMatrix3()),
+        target=_FakeShip(TGPoint3(0.0, 500.0, 0.0), TGMatrix3(), radius=8.0),
+        dt=None, distance_filter=lambda t, d: seen.append(d) or d)
+    assert seen[0] == pytest.approx(2.0 * _sphere_fit(tc, 8.0), abs=1e-9)
+
+
+def test_zoom_target_player_at_the_target_centre_is_finite():
+    from engine.appc.math import TGPoint3, TGMatrix3
+    tc = _zoom_cam()
     eye, look_at, up = tc.compute(
-        player=_FakeShip(s_loc, s_rot), target=_FakeShip(t_loc, s_rot), dt=None)
+        player=_FakeShip(TGPoint3(5.0, 5.0, 5.0), TGMatrix3()),
+        target=_FakeShip(TGPoint3(5.0, 5.0, 5.0), TGMatrix3(), radius=10.0),
+        dt=None)
+    for v in (*eye, *look_at, *up):
+        assert math.isfinite(v)
 
-    # e1 = +y in this setup. Eye = T - 5 * e1 = (0, 15, 0).
-    assert eye[0] == pytest.approx(0.0,  abs=1e-9)
-    assert eye[1] == pytest.approx(15.0, abs=1e-9)
-    assert eye[2] == pytest.approx(0.0,  abs=1e-9)
-    # Forward should be e1 itself (camera looks straight at target).
-    fx = look_at[0] - eye[0]; fy = look_at[1] - eye[1]; fz = look_at[2] - eye[2]
-    flen = math.sqrt(fx*fx + fy*fy + fz*fz)
-    assert (fx/flen, fy/flen, fz/flen) == pytest.approx((0.0, 1.0, 0.0), abs=1e-9)
+
+def test_zoom_target_hugging_a_hull_clears_the_near_plane():
+    """A tight cap would park the eye on the hull; the surface rule adds
+    SCENE_NEAR_GU so the near clip does not slice it."""
+    from engine.appc.math import TGPoint3, TGMatrix3
+    from engine.cameras import SCENE_NEAR_GU
+    tc = _zoom_cam()
+    # Target r=10 sphere, player 100 GU away but huge fit scale pushes the
+    # fit; use a tiny-radius player so the cap allows eye at surface + near.
+    tc.zoom_target_scale = 1.0
+    tgt = _FakeShip(TGPoint3(0.0, 100.0, 0.0), TGMatrix3(), radius=10.0)
+    # Force a hugging fit via the filter.
+    eye, _, _ = tc.compute(
+        player=_FakeShip(TGPoint3(0.0, 0.0, 0.0), TGMatrix3(), radius=1.0),
+        target=tgt, dt=None, distance_filter=lambda t, d: 0.1)
+    assert math.dist(eye, (0.0, 100.0, 0.0)) == pytest.approx(
+        10.0 + SCENE_NEAR_GU, abs=1e-9)
 
 
 def test_zoom_target_target_projects_to_screen_centre():
@@ -323,7 +450,6 @@ def test_zoom_target_target_projects_to_screen_centre():
 
     tc = _TrackingCamera()
     tc.set_ship_radius(1.0)
-    tc.zoom_target_radii = 5.0
     tc.zoom_target_active = True
 
     s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
@@ -341,28 +467,23 @@ def test_zoom_target_target_projects_to_screen_centre():
 
 
 def test_zoom_target_framing_invariant_across_range():
-    """Across target ranges 6, 50, 500 GU with fixed zoom_target_radii = 5,
-    target stays centred and eye is exactly 5 * r_target from target."""
+    """Across target ranges 6, 50, 500 GU with the target stays centred and the eye is exactly the sphere fit away."""
     from engine.cameras.tracking import _TrackingCamera
     from engine.appc.math         import TGPoint3, TGMatrix3
 
     for d in (6.0, 50.0, 500.0):
         tc = _TrackingCamera()
         tc.set_ship_radius(1.0)
-        tc.zoom_target_radii = 5.0
         tc.zoom_target_active = True
 
         s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
-        # d=6.0 puts the eye exactly r_player (1.0) ahead of the player's
-        # centre — the own-hull push-out boundary, not yet triggered.
         t_loc = TGPoint3(0.0, d, 0.0)
 
         eye, look_at, up = tc.compute(
             player=_FakeShip(s_loc, s_rot), target=_FakeShip(t_loc, s_rot), dt=None)
 
-        # Distance from eye to target should be exactly 5 * r_target(1.0) = 5.
         dx = t_loc.x - eye[0]; dy = t_loc.y - eye[1]; dz = t_loc.z - eye[2]
-        assert math.sqrt(dx*dx + dy*dy + dz*dz) == pytest.approx(5.0, abs=1e-6), \
+        assert math.sqrt(dx*dx + dy*dy + dz*dz) == pytest.approx(_sphere_fit(tc, 1.0), abs=1e-6), \
             f"range {d}: eye→target = {math.sqrt(dx*dx + dy*dy + dz*dz)}"
 
         # Target screen-Y ≈ 0.
@@ -381,7 +502,6 @@ def test_zoom_target_inherits_player_roll_into_up():
 
     tc = _TrackingCamera()
     tc.set_ship_radius(1.0)
-    tc.zoom_target_radii = 5.0
     tc.zoom_target_active = True
 
     s_loc = TGPoint3(0.0, 0.0, 0.0)
@@ -399,57 +519,9 @@ def test_zoom_target_inherits_player_roll_into_up():
     assert up[2] == pytest.approx(math.cos(math.radians(30)), abs=1e-6)
 
 
-def test_zoom_target_distance_scales_with_the_targets_radius_not_the_players():
-    """ZoomTargetCameraMode::GetIdealPosition (0x00423E20): d = Distance *
-    r_TARGET. A shuttle (r=0.3) zooming on a starbase (r=20) must frame the
-    station at 4 station-radii, not land inside its hull."""
-    from engine.cameras.tracking import _TrackingCamera
-    from engine.appc.math         import TGPoint3, TGMatrix3
-
-    tc = _TrackingCamera()
-    tc.set_ship_radius(0.3)
-    tc.zoom_target_active = True                     # zoom_target_radii at default 4.0
-
-    s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
-    t_loc = TGPoint3(0.0, 500.0, 0.0)
-
-    eye, _, _ = tc.compute(
-        player=_FakeShip(s_loc, s_rot, radius=0.3),
-        target=_FakeShip(t_loc, s_rot, radius=20.0), dt=None)
-
-    assert eye[1] == pytest.approx(500.0 - 4.0 * 20.0, abs=1e-6)
-
-
-def test_zoom_target_pushes_the_eye_clear_of_the_players_own_hull():
-    """FUN_0041FF50, Source branch: the player's centre must be at least
-    r_player BEHIND the eye along the look axis, else the eye moves forward
-    by the deficit. Player r=3 at the origin, target r=1 five GU ahead at
-    the default 4 radii: raw eye (0,1,0) is only 1 GU ahead of the player's
-    centre -> pushed to (0,3,0). This replaces the old 0.9 x D clamp, which
-    kept the eye in front of the TARGET but could leave it inside the player.
-    The stored zoom_target_radii is not mutated."""
-    from engine.cameras.tracking import _TrackingCamera
-    from engine.appc.math         import TGPoint3, TGMatrix3
-
-    tc = _TrackingCamera()
-    tc.set_ship_radius(3.0)
-    tc.zoom_target_active = True
-
-    s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
-    t_loc = TGPoint3(0.0, 5.0, 0.0)
-
-    eye, look_at, _ = tc.compute(
-        player=_FakeShip(s_loc, s_rot, radius=3.0),
-        target=_FakeShip(t_loc, s_rot, radius=1.0), dt=None)
-
-    assert eye[1] == pytest.approx(3.0, abs=1e-6)
-    assert look_at[1] > eye[1]                       # still looking at the target
-    assert tc.zoom_target_radii == pytest.approx(4.0, abs=1e-9)
-
-
 def test_zoom_target_target_without_a_radius_surface_is_framed_at_unit_radius():
     """A target with no GetRadius (a waypoint stub) reads as r=1.0 so the
-    eye still stands off by zoom_target_radii GU rather than dividing by
+    eye still stands off by the unit-sphere fit rather than dividing by
     nothing."""
     from engine.cameras.tracking import _TrackingCamera
     from engine.appc.math         import TGPoint3, TGMatrix3
@@ -461,13 +533,12 @@ def test_zoom_target_target_without_a_radius_surface_is_framed_at_unit_radius():
 
     tc = _TrackingCamera()
     tc.set_ship_radius(1.0)
-    tc.zoom_target_radii = 5.0
     tc.zoom_target_active = True
 
     eye, _, _ = tc.compute(
         player=_FakeShip(TGPoint3(0.0, 0.0, 0.0), TGMatrix3()),
         target=_NoRadius(TGPoint3(0.0, 20.0, 0.0)), dt=None)
-    assert eye[1] == pytest.approx(15.0, abs=1e-6)
+    assert eye[1] == pytest.approx(20.0 - _sphere_fit(tc, 1.0), abs=1e-6)
 
 
 # ── pose_of provider: camera reads interpolated poses (smooth-motion fix) ─────
@@ -522,22 +593,76 @@ def test_tracking_compute_reads_player_and_target_through_pose_of():
         assert a == pytest.approx(b, abs=1e-6)
 
 
-def test_zoom_target_eye_distance_is_scaled_by_fov_scale():
-    """ZoomTarget standoff (zoom_target_radii * r_target) is scaled by the
-    FOV-compensation factor at placement time; the stored radii and the
-    own-hull push-out (absolute GU) are untouched."""
-    from engine.cameras.tracking import _TrackingCamera
-    from engine.appc.math         import TGPoint3, TGMatrix3
+def _box_world_corners(tgt_loc, rot_cols, centre, half):
+    out = []
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            for sz in (-1, 1):
+                l = (centre[0] + sx * half[0], centre[1] + sy * half[1],
+                     centre[2] + sz * half[2])
+                out.append(tuple(
+                    tgt_loc[i] + sum(rot_cols[j][i] * l[j] for j in range(3))
+                    for i in range(3)))
+    return out
 
-    tc = _TrackingCamera()
-    tc.set_ship_radius(1.0)
-    tc.zoom_target_radii = 5.0
-    tc.zoom_target_active = True
-    tc.fov_scale = 0.5
 
-    s_loc = TGPoint3(0.0, 0.0, 0.0); s_rot = TGMatrix3()
-    t_loc = TGPoint3(0.0, 20.0, 0.0)
-    eye, _, _ = tc.compute(
-        player=_FakeShip(s_loc, s_rot), target=_FakeShip(t_loc, s_rot), dt=None)
-    assert eye[1] == pytest.approx(20.0 - 2.5, abs=1e-9)
-    assert tc.zoom_target_radii == pytest.approx(5.0)
+def _view(eye, look_at, up):
+    f = tuple(look_at[i] - eye[i] for i in range(3))
+    n = math.sqrt(sum(c * c for c in f))
+    f = tuple(c / n for c in f)
+    r = (f[1]*up[2] - f[2]*up[1], f[2]*up[0] - f[0]*up[2],
+         f[0]*up[1] - f[1]*up[0])
+    return f, r
+
+
+class _ScaledBoxShip(_Scaled):
+    pass
+
+
+def _boxed(loc, scale=3.0):
+    from engine.appc.math import TGMatrix3
+    tgt = _ScaledBoxShip(loc, TGMatrix3(), radius=10.0, scale=scale)
+    tgt._shield_hull_box = ((0.0, 0.0, 5.0), (4.0, 12.0, 3.0))
+    return tgt
+
+
+def test_zoom_target_live_box_path_fits_the_scaled_box_in_frame():
+    from engine.appc.math import TGPoint3, TGMatrix3
+    tc = _zoom_cam()
+    tgt = _boxed(TGPoint3(200.0, 300.0, 60.0))
+    eye, look_at, up = tc.compute(
+        player=_FakeShip(TGPoint3(0.0, 0.0, 0.0), TGMatrix3()), target=tgt,
+        dt=None)
+    f, r = _view(eye, look_at, up)
+    t = math.tan(tc.v_fov_rad / 2.0)
+    worst = 0.0
+    for p in _box_world_corners((200.0, 300.0, 60.0),
+                                [(1, 0, 0), (0, 1, 0), (0, 0, 1)],
+                                (0.0, 0.0, 15.0), (12.0, 36.0, 9.0)):
+        d = tuple(p[i] - eye[i] for i in range(3))
+        z = sum(d[i] * f[i] for i in range(3))
+        nx = sum(d[i] * r[i] for i in range(3)) / z / (t * tc.aspect)
+        ny = sum(d[i] * up[i] for i in range(3)) / z / t
+        assert abs(nx) <= 0.9 + 1e-6 and abs(ny) <= 0.9 + 1e-6
+        worst = max(worst, abs(nx), abs(ny))
+    assert worst == pytest.approx(0.9, abs=1e-6)
+
+
+def test_zoom_target_hugging_a_box_face_keeps_the_eye_outside_the_box():
+    from engine.appc.math import TGPoint3, TGMatrix3
+    from engine.cameras import SCENE_NEAR_GU
+    tc = _zoom_cam()
+    loc = (30.0, 50.0, 10.0)
+    tgt = _boxed(TGPoint3(*loc))
+    player_pos = (0.0, 0.0, 0.0)
+    eye, look_at, up = tc.compute(
+        player=_FakeShip(TGPoint3(*player_pos), TGMatrix3()), target=tgt,
+        dt=None)
+    f, _ = _view(eye, look_at, up)
+    for p in _box_world_corners(loc, [(1, 0, 0), (0, 1, 0), (0, 0, 1)],
+                                (0.0, 0.0, 15.0), (12.0, 36.0, 9.0)):
+        along = sum((p[i] - eye[i]) * f[i] for i in range(3))
+        assert along > SCENE_NEAR_GU - 1e-9
+    centre = (loc[0], loc[1], loc[2] + 15.0)
+    d_player = math.dist(player_pos, centre)
+    assert math.dist(eye, centre) <= d_player + 1e-9

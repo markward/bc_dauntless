@@ -74,6 +74,8 @@
 #include "embedded_skinned_bridge_vs.h"
 #include "embedded_viewscreen_static_vs.h"
 #include "embedded_viewscreen_static_fs.h"
+#include "embedded_viewscreen_bars_vs.h"
+#include "embedded_viewscreen_bars_fs.h"
 #include "embedded_shadow_vs.h"
 #include "embedded_shadow_fs.h"
 #include "embedded_shockwave_vs.h"
@@ -184,6 +186,8 @@ Pipeline::Pipeline() {
     skinned_bridge_ = std::make_unique<Shader>(shader_src::skinned_bridge_vs, shader_src::bridge_fs);
     viewscreen_static_ = std::make_unique<Shader>(
         shader_src::viewscreen_static_vs, shader_src::viewscreen_static_fs);
+    viewscreen_bars_ = std::make_unique<Shader>(
+        shader_src::viewscreen_bars_vs, shader_src::viewscreen_bars_fs);
     shadow_depth_ = std::make_unique<Shader>(
         shader_src::shadow_vs, shader_src::shadow_fs);
     shockwave_ = std::make_unique<Shader>(shader_src::shockwave_vs,
