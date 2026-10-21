@@ -49,7 +49,7 @@ uniform float     u_fill_backing;  // CarveFieldCache::kBackingIsovalue / 255
 uniform int       u_fill_ok;
 
 // The plating damage list (renderer/plating_damage.h).
-const int MAX_DMG = 24;
+const int MAX_DMG = 64;
 uniform int  u_dmg_count;
 uniform vec4 u_dmg_a[MAX_DMG];     // centre.xyz, reach
 uniform vec4 u_dmg_b[MAX_DMG];     // normal.xyz, wear

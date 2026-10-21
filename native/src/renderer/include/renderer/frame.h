@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <map>
 #include <unordered_map>
 #include <vector>
 
@@ -16,6 +17,7 @@
 #include <assets/decal_override.h>
 
 #include <renderer/shadow_light.h>
+#include <renderer/plating_damage.h>
 // draw_model takes a voxel::VoxelVolume* and CarveFieldCache's nested
 // constants, so the forward declaration below is not enough on its own.
 #include <renderer/carve_field_cache.h>
@@ -30,7 +32,6 @@ namespace scenegraph { class World; struct Camera; enum class Pass : std::uint8_
 namespace renderer { class Pipeline; class Shader; class CarveFieldCache;
                      class InstanceFieldCache; }
 namespace renderer::planet_detail { class PlanetDetailPass; }
-namespace renderer::plating { struct DamageList; }
 
 namespace renderer {
 
@@ -514,6 +515,14 @@ public:
                                  float ambient_scale,
                                  float now);
 
+    /// The instance's plating damage list, built from its HullDamageStore.
+    /// Cached per instance id; rebuilt only when the store's revision or any
+    /// of the plating params differ from the cached copy. Valid until the
+    /// next call that can rebuild this instance's entry.
+    const plating::DamageList& plating_list_for(const scenegraph::Instance& inst);
+    /// How many times plating_list_for rebuilt a list (tests).
+    int plating_list_builds() const { return plating_list_builds_; }
+
     /// Marking draws issued by the last submit_plating_interior.
     int plating_marks_last_frame() const { return plating_marks_last_frame_; }
 
@@ -550,6 +559,22 @@ private:
     /// Sampling it returns (0,0,0,1) so the glow term contributes nothing.
     std::uint32_t black_texture_ = 0;
     std::uint32_t ensure_black_texture();
+
+    struct InstanceIdLess {
+        bool operator()(const scenegraph::InstanceId& a,
+                        const scenegraph::InstanceId& b) const {
+            if (a.index != b.index) return a.index < b.index;
+            return a.generation < b.generation;
+        }
+    };
+    struct PlatingListCacheEntry {
+        bool valid = false;
+        std::uint32_t revision = 0;
+        std::array<float, plating::kParamCount> params{};
+        plating::DamageList list;
+    };
+    std::map<scenegraph::InstanceId, PlatingListCacheEntry, InstanceIdLess> plating_list_cache_;
+    int plating_list_builds_ = 0;
 
     int plating_marks_last_frame_ = 0;
     int plating_interiors_last_frame_ = 0;

@@ -98,7 +98,7 @@ std::size_t HullDamageStore::count() const {
 
 void HullDamageStore::clear() {
     slots_ = {};
-    revision_ = 0;
+    ++revision_;   // never reset: a revision-keyed cache must see the clear
 }
 
 }  // namespace scenegraph

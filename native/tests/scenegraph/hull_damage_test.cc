@@ -80,3 +80,12 @@ TEST(HullDamageStore, RevisionCountsChanges) {
     s.add({500, 0, 0}, kUp, 10.0f, 1.0f, HullDamageKind::Surface);
     EXPECT_EQ(s.revision(), 2u);
 }
+
+TEST(HullDamageStore, ClearBumpsRevision) {
+    HullDamageStore s;
+    s.add({0, 0, 0}, kUp, 10.0f, 1.0f, HullDamageKind::Surface);
+    const auto before = s.revision();
+    s.clear();
+    EXPECT_EQ(s.count(), 0u);
+    EXPECT_GT(s.revision(), before);
+}

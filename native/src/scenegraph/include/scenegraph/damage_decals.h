@@ -16,11 +16,6 @@ enum class WeaponClass : std::uint32_t {
     HeatGlow = 0,
     Scorch   = 1,
     Scuff    = 2,
-    /// SPIKE (damage redesign): a destroyed subsystem's blast, centred INSIDE
-    /// the hull. radius = blast radius; `wear` = blast strength at the centre
-    /// (passed in the `dent` argument). No facing: the plating shader fails
-    /// every hull surface within the sphere, inside-out. Never merges.
-    Internal = 3,
 };
 
 /// One object-space impact record, stored in the ship's body frame so it
@@ -44,12 +39,6 @@ struct DamageDecal {
     /// (scratches). Merges keep the max, so a grind over an impact stays a
     /// dent and an impact on a scrape upgrades it. Shader reads u_decal_c.z.
     float         dent = 0.0f;
-    /// SPIKE (damage redesign, plating layer): Scorch only. Unclamped running
-    /// total of the intensity every merged hit deposited -- "how many full
-    /// hits this spot has taken". `intensity` saturates at 1 on the first
-    /// torpedo; this keeps counting so the plating shader can strip panels,
-    /// then ribs. Shader reads u_decal_c.w.
-    float         wear = 0.0f;
 };
 
 /// Transform an INSTANCE-RELATIVE point (world point minus the instance's

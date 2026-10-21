@@ -8,11 +8,13 @@
 
 #include <glm/glm.hpp>
 
-#include "scenegraph/damage_decals.h"
+#include "scenegraph/hull_damage.h"
 
 namespace renderer::plating {
 
-constexpr int kMaxDamage = 24;
+constexpr int kMaxDamage = 64;
+static_assert(kMaxDamage >= static_cast<int>(scenegraph::HullDamageStore::kCapacity),
+              "the plating damage list must hold every store slot");
 // Floats in dauntless_plating::g_params / the u_plating upload / the binding.
 constexpr int kParamCount = 32;
 
@@ -20,21 +22,16 @@ struct DamageList {
     int count = 0;
     glm::vec4 a[kMaxDamage];   // centre_body.xyz, reach (model units)
     glm::vec4 b[kMaxDamage];   // normal_body.xyz (zero for Internal), wear
-    glm::vec4 c[kMaxDamage];   // kind (1 = Scorch, 3 = Internal), 0, 0, 0
+    glm::vec4 c[kMaxDamage];   // kind (1 = Surface, 3 = Internal), 0, 0, 0
     bool torn_possible = false;
 };
 
-// params = dauntless_plating::g_params (kParamCount floats). Only ACTIVE Scorch and
-// Internal records with wear > 0 enter (an inactive slot keeps stale data).
-// torn_possible: summed wear reaches the lowest breach the shader can return,
-// params[16] * (1 - 0.4 * params[22]) - params[23] (toughness spread, lumps),
-// minus the largest tear-noise lift (0.75 * params[19]).
-DamageList build_damage_list(const scenegraph::DamageDecalRing& ring,
-                             const float* params);
-
-// The same rule over a raw slot span (the ring overload calls this). Records
-// past kMaxDamage are dropped; a whole ring always fits (static_assert).
-DamageList build_damage_list(const scenegraph::DamageDecal* slots, std::size_t n,
+// params = dauntless_plating::g_params (kParamCount floats). Only ACTIVE records
+// with wear > 0 enter. Surface reach is scaled by params[7]; Internal reach and
+// facing are kept as stored. torn_possible: summed wear reaches the lowest
+// breach the shader can return, params[16] * (1 - 0.4 * params[22]) - params[23]
+// (toughness spread, lumps), minus the largest tear-noise lift (0.75 * params[19]).
+DamageList build_damage_list(const scenegraph::HullDamageStore& store,
                              const float* params);
 
 // Whether a draw takes the PLATING program: the layer is enabled (params[0])

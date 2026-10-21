@@ -18,6 +18,7 @@
 
 #include <scenegraph/camera.h>
 #include <scenegraph/damage_decals.h>
+#include <scenegraph/hull_damage.h>
 #include <scenegraph/world.h>
 
 #include <assets/cache.h>
@@ -95,14 +96,16 @@ protected:
     // submit_opaque_in_pass (the per-draw program choice under test), or
     // through submit_opaque (always the stock program) when `stock_submit`.
     std::vector<std::uint8_t> render(const assets::Model& model,
-                                     const scenegraph::DamageDecalRing& ring,
+                                     const scenegraph::HullDamageStore& ring,
                                      const scenegraph::Camera& cam,
-                                     bool stock_submit = false) {
+                                     bool stock_submit = false,
+                                     const scenegraph::DamageDecalRing* decals = nullptr) {
         scenegraph::World world;
         auto iid = world.create_instance(
             reinterpret_cast<scenegraph::ModelHandle>(&model));
         world.set_world_transform(iid, glm::mat4(1.0f));
-        world.get(iid)->decals = ring;
+        world.get(iid)->hull_damage = ring;
+        if (decals != nullptr) world.get(iid)->decals = *decals;
         // far_fade 0: no u_dither_fade use() after draw_model, so the program
         // bound after a render is the one the draw chose (program-choice test).
         EXPECT_EQ(world.get(iid)->far_fade, 0.0f);
@@ -152,12 +155,12 @@ protected:
     // submit_opaque_in_pass then submit_plating_interior over one instance;
     // returns the stencil plane (row 0 = bottom) and the mark count.
     struct Marked { std::vector<std::uint8_t> stencil; int marks = -1; int cull = 0; };
-    Marked render_marked(const assets::Model& model, const scenegraph::DamageDecalRing& ring,
+    Marked render_marked(const assets::Model& model, const scenegraph::HullDamageStore& ring,
                          const scenegraph::Camera& cam) {
         scenegraph::World world;
         auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(&model));
         world.set_world_transform(iid, glm::mat4(1.0f));
-        world.get(iid)->decals = ring;
+        world.get(iid)->hull_damage = ring;
         glViewport(0, 0, kSize, kSize);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glStencilMask(0xFF);
@@ -192,10 +195,9 @@ TEST_F(PlatingRenderTest, WantsPlatingNeedsEnabledAndAListedRecord) {
     params[7] = 0.4f;
     params[16] = 4.5f;
     params[19] = 0.9f;
-    scenegraph::DamageDecalRing glow;
-    glow.add({0, 0, 0}, {0, 0, 1}, 10.0f, 1.0f, scenegraph::WeaponClass::HeatGlow, 0.0f);
+    const scenegraph::HullDamageStore none;
     EXPECT_FALSE(renderer::plating::wants_plating(
-        renderer::plating::build_damage_list(glow, params.data()), params.data()));
+        renderer::plating::build_damage_list(none, params.data()), params.data()));
     const auto ring = internal_ring({0, 0, 0}, 30.0f, 10.0f);
     const auto list = renderer::plating::build_damage_list(ring, params.data());
     EXPECT_TRUE(renderer::plating::wants_plating(list, params.data()));
@@ -213,7 +215,7 @@ TEST_F(PlatingRenderTest, UndamagedHullUsesTheStockProgramPixels) {
     const auto cam = top_down(box);
     dauntless_plating::g_params[0] = 1.0f;
 
-    const scenegraph::DamageDecalRing empty;
+    const scenegraph::HullDamageStore empty;
     const auto stock_empty = render(*m, empty, cam, /*stock_submit=*/true);
     const auto in_pass_empty = render(*m, empty, cam);
     ASSERT_GT(count_non_black(stock_empty), 2000) << "hull not in view";
@@ -224,8 +226,8 @@ TEST_F(PlatingRenderTest, UndamagedHullUsesTheStockProgramPixels) {
     scenegraph::DamageDecalRing glow;
     glow.add(hit->point, hit->normal, 30.0f, 1.0f,
              scenegraph::WeaponClass::HeatGlow, 0.0f);
-    const auto stock_glow = render(*m, glow, cam, /*stock_submit=*/true);
-    const auto in_pass_glow = render(*m, glow, cam);
+    const auto stock_glow = render(*m, empty, cam, /*stock_submit=*/true, &glow);
+    const auto in_pass_glow = render(*m, empty, cam, false, &glow);
     EXPECT_EQ(in_pass_glow, stock_glow);
 }
 
@@ -242,7 +244,7 @@ TEST_F(PlatingRenderTest, TornCentreIsDiscarded) {
     ASSERT_TRUE(hit);
     ASSERT_GT(hit->normal.z, 0.8f) << "not the saucer's top skin";
 
-    const auto undamaged = render(*m, scenegraph::DamageDecalRing{}, cam);
+    const auto undamaged = render(*m, scenegraph::HullDamageStore{}, cam);
     const auto torn = render(*m, internal_ring(hit->point, 30.0f, 10.0f), cam);
     const glm::ivec2 c = to_pixel(cam, hit->point);
     ASSERT_TRUE(c.x >= 1 && c.y >= 1 && c.x < kSize - 1 && c.y < kSize - 1);
@@ -269,7 +271,7 @@ TEST_F(PlatingRenderTest, FarFromDamagePixelMatchesStock) {
 
     const float reach = 30.0f;
     const float margin = g[5] + g[6] + g[15] + g[2];
-    const auto undamaged = render(*m, scenegraph::DamageDecalRing{}, cam);
+    const auto undamaged = render(*m, scenegraph::HullDamageStore{}, cam);
     const auto torn = render(*m, internal_ring(hit->point, reach, 10.0f), cam);
 
     int compared = 0, mismatched = 0, near_changed = 0;
@@ -313,13 +315,13 @@ TEST_F(PlatingRenderTest, ProgramChoiceIsReadBackFromGL) {
     ASSERT_NE(stock, plating);
     auto current = [] { GLint prog = 0; glGetIntegerv(GL_CURRENT_PROGRAM, &prog); return prog; };
 
-    render(*m, scenegraph::DamageDecalRing{}, cam);
+    render(*m, scenegraph::HullDamageStore{}, cam);
     EXPECT_EQ(current(), stock) << "undamaged hull";
 
     scenegraph::DamageDecalRing glow;
     glow.add(hit->point, hit->normal, 30.0f, 1.0f,
              scenegraph::WeaponClass::HeatGlow, 0.0f);
-    render(*m, glow, cam);
+    render(*m, scenegraph::HullDamageStore{}, cam, false, &glow);
     EXPECT_EQ(current(), stock) << "HeatGlow-only hull";
 
     render(*m, internal_ring(hit->point, 30.0f, 10.0f), cam);
@@ -469,4 +471,40 @@ TEST_F(UnevenBreach, ZeroSpreadAndLumpsKeepTheEvenOutline) {
     dauntless_plating::g_params[23] = 0.0f;
     EXPECT_EQ(ring_cut(+0.2f).cut, 32);
     EXPECT_EQ(ring_cut(-0.2f).cut, 0);
+}
+
+// The damage list is built once per change (store revision or plating params),
+// not once per draw: two frames of opaque + interior draws share one build.
+TEST_F(PlatingRenderTest, PlatingListIsBuiltOncePerChange) {
+    dauntless_plating::g_params[0] = 1.0f;
+    dauntless_plating::g_params[25] = 1.0f;
+    auto quad = build_quad(150.0f, true);
+    ASSERT_TRUE(quad);
+    scenegraph::World world;
+    auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(quad.get()));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+    world.get(iid)->hull_damage = internal_ring({0, 0, 0}, 30.0f, 10.0f);
+    const auto cam = quad_cam();
+    renderer::reset_model_radius_cache();
+    renderer::FrameSubmitter submitter;
+    const auto lookup = [](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h);
+    };
+    auto frame = [&] {
+        glViewport(0, 0, kSize, kSize);
+        glStencilMask(0xFF);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        submitter.submit_opaque_in_pass(world, cam, *p, lookup, test_lighting(),
+                                        scenegraph::Pass::Space, kDecalTime);
+        submitter.submit_plating_interior(world, cam, *p, lookup, nullptr, test_lighting(),
+                                          1.0f, kDecalTime);
+    };
+    const int b0 = submitter.plating_list_builds();
+    frame();
+    frame();
+    EXPECT_EQ(submitter.plating_list_builds() - b0, 1);
+    world.get(iid)->hull_damage.add({5, 0, 0}, glm::vec3(0.0f), 30.0f, 2.0f,
+                                    scenegraph::HullDamageKind::Internal);
+    frame();
+    EXPECT_EQ(submitter.plating_list_builds() - b0, 2);
 }

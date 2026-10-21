@@ -627,7 +627,7 @@ void draw_model(const assets::Model& model,
                 c[n] = glm::vec4(dec.birth_time,
                                  static_cast<float>(static_cast<std::uint32_t>(dec.weapon_class)),
                                  dec.dent,     // Scuff: 1 impact crumple, 0 grind scratches
-                                 dec.wear);    // Scorch: running hit total (plating spike)
+                                 0.0f);
                 d[n] = glm::vec4(dec.tangent_body, 0.0f);
                 ++n;
             }
@@ -1363,9 +1363,8 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
         plating::DamageList plating_list;
         bool use_plating = false;
         if (m && !is_detail_draw && dauntless_plating::g_params[0] > 0.5f &&
-            inst.decals.count() > 0) {
-            plating_list = plating::build_damage_list(inst.decals,
-                                                      dauntless_plating::g_params);
+            inst.hull_damage.count() > 0) {
+            plating_list = plating_list_for(inst);
             use_plating = plating::wants_plating(plating_list, dauntless_plating::g_params);
         }
         if (use_plating && !plating_configured) {
@@ -1522,6 +1521,21 @@ void FrameSubmitter::submit_carve_stencil(const scenegraph::World& world,
     pipeline.skinned_shader().set_int("u_carve_invert", 0);
 }
 
+const plating::DamageList& FrameSubmitter::plating_list_for(const scenegraph::Instance& inst) {
+    PlatingListCacheEntry& e = plating_list_cache_[inst.id];
+    const float* params = dauntless_plating::g_params;
+    const bool same = e.valid && e.revision == inst.hull_damage.revision() &&
+                      std::equal(e.params.begin(), e.params.end(), params);
+    if (!same) {
+        e.list = plating::build_damage_list(inst.hull_damage, params);
+        e.revision = inst.hull_damage.revision();
+        std::copy(params, params + plating::kParamCount, e.params.begin());
+        e.valid = true;
+        ++plating_list_builds_;
+    }
+    return e.list;
+}
+
 void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
                                              const scenegraph::Camera& camera,
                                              Pipeline& pipeline,
@@ -1566,9 +1580,8 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
         // stay see-through.
         if (inst.surface_is_rock) return;
         const assets::Model* m = lookup(inst.model_handle);
-        if (!m || inst.decals.count() == 0) return;
-        const plating::DamageList list =
-            plating::build_damage_list(inst.decals, dauntless_plating::g_params);
+        if (!m || inst.hull_damage.count() == 0) return;
+        const plating::DamageList& list = plating_list_for(inst);
         if (!plating::wants_plating(list, dauntless_plating::g_params) ||
             !list.torn_possible)
             return;

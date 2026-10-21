@@ -16,6 +16,7 @@
 
 #include <scenegraph/camera.h>
 #include <scenegraph/damage_decals.h>
+#include <scenegraph/hull_damage.h>
 #include <scenegraph/world.h>
 
 #include <assets/model.h>
@@ -95,7 +96,7 @@ protected:
 
     struct Placed {
         glm::mat4 world;
-        scenegraph::DamageDecalRing ring;
+        scenegraph::HullDamageStore ring;
         bool rock = false;
     };
     struct Shot {
@@ -115,7 +116,7 @@ protected:
             auto iid = world.create_instance(
                 reinterpret_cast<scenegraph::ModelHandle>(drawn));
             world.set_world_transform(iid, pl.world);
-            world.get(iid)->decals = pl.ring;
+            world.get(iid)->hull_damage = pl.ring;
             world.get(iid)->surface_is_rock = pl.rock;
         }
         glViewport(0, 0, kSize, kSize);
@@ -148,7 +149,7 @@ protected:
         return out;
     }
 
-    Shot render_one(const scenegraph::DamageDecalRing& ring, renderer::CarveFieldCache* fills,
+    Shot render_one(const scenegraph::HullDamageStore& ring, renderer::CarveFieldCache* fills,
                     bool stock = false, const assets::Model* use_model = nullptr) {
         return render({Placed{glm::mat4(1.0f), ring}}, fills, stock, use_model);
     }
@@ -252,11 +253,9 @@ TEST_F(HullInteriorTest, CharBandFollowsTheTearNotTheWholeInterior) {
     const glm::vec3 rec_b(11.0f, 4.0f, kBoxHalf + 1.0f);
     const float reach_a = 4.0f, wear_a = 30.0f;
     const float reach_b = 3.5f, wear_b = 40.0f;
-    scenegraph::DamageDecalRing ring;
-    ring.add(rec_a, glm::vec3(0, 0, 1), reach_a, 1.0f, scenegraph::WeaponClass::Internal,
-             0.0f, glm::vec3(0.0f), wear_a);
-    ring.add(rec_b, glm::vec3(0, 0, 1), reach_b, 1.0f, scenegraph::WeaponClass::Internal,
-             0.0f, glm::vec3(0.0f), wear_b);
+    scenegraph::HullDamageStore ring;
+    ring.add(rec_a, glm::vec3(0.0f), reach_a, wear_a, scenegraph::HullDamageKind::Internal);
+    ring.add(rec_b, glm::vec3(0.0f), reach_b, wear_b, scenegraph::HullDamageKind::Internal);
 
     const auto cam = quad_cam();
     const glm::ivec2 pa = to_pixel(cam, glm::vec3(7.0f, 4.0f, kBoxHalf));
@@ -317,7 +316,7 @@ TEST_F(HullInteriorTest, RearHullInteriorNeverPaintsThroughFrontHole) {
     const auto single = render_one(ring, filled.get());
     const glm::mat4 behind = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -100.0f));
     const auto pair = render({Placed{glm::mat4(1.0f), ring},
-                              Placed{behind, scenegraph::DamageDecalRing{}}},
+                              Placed{behind, scenegraph::HullDamageStore{}}},
                              filled.get());
     report("single", single, centre());
     report("pair", pair, centre());
@@ -396,7 +395,7 @@ TEST_F(HullInteriorTest, DamagedRearHullInteriorNeverPaintsThroughFrontHole) {
 }
 
 TEST_F(HullInteriorTest, UndamagedSceneDrawsNoInterior) {
-    const scenegraph::DamageDecalRing none;
+    const scenegraph::HullDamageStore none;
     const auto stock = render_one(none, filled.get(), /*stock=*/true);
     const auto s = render_one(none, filled.get());
     ASSERT_GT(count_not_clear(stock.px), 1000) << "the box does not render";

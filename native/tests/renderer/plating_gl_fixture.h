@@ -16,6 +16,7 @@
 
 #include <scenegraph/camera.h>
 #include <scenegraph/damage_decals.h>
+#include <scenegraph/hull_damage.h>
 
 #include <assets/mesh.h>
 #include <assets/model.h>
@@ -180,12 +181,11 @@ protected:
         return cam;
     }
 
-    static scenegraph::DamageDecalRing internal_ring(const glm::vec3& at, float radius,
+    static scenegraph::HullDamageStore internal_ring(const glm::vec3& at, float radius,
                                                     float wear) {
-        scenegraph::DamageDecalRing ring;
-        ring.add(at, glm::vec3(0.0f, 0.0f, 1.0f), radius, 1.0f,
-                 scenegraph::WeaponClass::Internal, 0.0f, glm::vec3(0.0f), wear);
-        return ring;
+        scenegraph::HullDamageStore store;
+        store.add(at, glm::vec3(0.0f), radius, wear, scenegraph::HullDamageKind::Internal);
+        return store;
     }
 };
 

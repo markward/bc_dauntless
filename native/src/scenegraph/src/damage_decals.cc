@@ -59,7 +59,6 @@ void DamageDecalRing::add(const glm::vec3& point_body, const glm::vec3& normal_b
                 d.normal_body = normal_body; // freshest surface normal
                 d.tangent_body = tangent;    // freshest slip direction (Scuff)
                 d.dent = std::max(d.dent, clamped_dent);  // a dent never scrapes back
-                if (weapon_class == WeaponClass::Scorch) d.wear += clamped_in;
                 d.seq = next_seq_++;         // refresh FIFO age (reinforced scar
                                              // survives eviction over older ones)
                 return;
@@ -94,9 +93,6 @@ void DamageDecalRing::add(const glm::vec3& point_body, const glm::vec3& normal_b
     };
     target->tangent_body = tangent;
     target->dent = clamped_dent;
-    target->wear = (weapon_class == WeaponClass::Scorch) ? clamped_in
-                 : (weapon_class == WeaponClass::Internal) ? std::max(dent, 0.0f)
-                 : 0.0f;
 }
 
 void DamageDecalRing::tick(float now) {

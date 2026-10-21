@@ -36,7 +36,6 @@ ADD_DAMAGE_MAX_HOLE_GU = 0.35  # AddDamage holes (death cascade, missions) cap h
                                # near BC's 0.30 GU kHullCarveRadiusMaxGu
 MAX_PENDING = 64
 MAX_PENDING_AGE = 5.0     # s a blast waits for its ship's render instance
-WEAPON_CLASS_INTERNAL = 3
 
 _pending: list = []
 

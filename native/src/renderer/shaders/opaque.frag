@@ -141,7 +141,7 @@ uniform float u_plating[32];
 //   a = centre_body.xyz, reach (model units; Scorch reach multiplier applied)
 //   b = normal_body.xyz (zero for Internal), wear
 //   c = kind (1 Scorch, 3 Internal), 0, 0, 0
-const int MAX_DMG = 24;
+const int MAX_DMG = 64;
 uniform int  u_dmg_count;
 uniform vec4 u_dmg_a[MAX_DMG];
 uniform vec4 u_dmg_b[MAX_DMG];
