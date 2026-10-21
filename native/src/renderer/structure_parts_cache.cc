@@ -15,8 +15,8 @@ namespace renderer {
 namespace {
 
 struct Entry {
-    std::future<std::vector<voxel::StructurePart>> job;
-    std::vector<voxel::StructurePart> parts;
+    std::future<voxel::StructureSegmentation> job;
+    voxel::StructureSegmentation seg;
     bool ready = false;
 };
 
@@ -25,7 +25,7 @@ std::unordered_map<std::string, std::unique_ptr<Entry>> g_cache;
 
 }  // namespace
 
-const std::vector<voxel::StructurePart>* structure_parts_for(
+const voxel::StructureSegmentation* structure_segmentation_for(
     const std::filesystem::path& source) {
     if (source.empty()) return nullptr;
     std::lock_guard<std::mutex> lock(g_mu);
@@ -35,11 +35,11 @@ const std::vector<voxel::StructurePart>* structure_parts_for(
         slot->job = std::async(std::launch::async, [source]() {
             try {
                 const auto tris = voxel::collect_hull_triangles_from_source(source);
-                return voxel::detect_structure_parts(tris).parts;
+                return voxel::detect_structure_parts(tris);
             } catch (...) {
                 std::fprintf(stderr, "[plating] structure detection failed for %s\n",
                              source.string().c_str());
-                return std::vector<voxel::StructurePart>{};
+                return voxel::StructureSegmentation{};
             }
         });
         return nullptr;
@@ -47,12 +47,18 @@ const std::vector<voxel::StructurePart>* structure_parts_for(
     if (!slot->ready) {
         if (slot->job.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
             return nullptr;
-        slot->parts = slot->job.get();
+        slot->seg = slot->job.get();
         slot->ready = true;
         std::fprintf(stderr, "[plating] %zu structure parts for %s\n",
-                     slot->parts.size(), source.string().c_str());
+                     slot->seg.parts.size(), source.string().c_str());
     }
-    return &slot->parts;
+    return &slot->seg;
+}
+
+const std::vector<voxel::StructurePart>* structure_parts_for(
+    const std::filesystem::path& source) {
+    const auto* seg = structure_segmentation_for(source);
+    return seg ? &seg->parts : nullptr;
 }
 
 }  // namespace renderer

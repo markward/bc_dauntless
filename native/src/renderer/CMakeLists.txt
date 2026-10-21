@@ -235,6 +235,7 @@ add_library(renderer STATIC
     carve_field_cache.cc
     structure_parts_cache.cc
     plating_damage.cc
+    part_severance_check.cc
     instance_field_cache.cc
     subsystem_pin_pass.cc
     debug_volume_pass.cc
