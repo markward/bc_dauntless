@@ -259,7 +259,9 @@ uniform vec4 u_glow_region_g[MAX_GLOW_REGIONS];  // box up.xyz (body space); .w 
 // Maps this draw's POSED body-frame position back to its REST position
 // (C_i = R_i * P_i^-1, native frame.cc draw_model). Glow regions are authored
 // in the rest frame; identity for anything not articulated. Used by the glow
-// test ONLY -- decals and scuffs stay posed (4be56165).
+// test, the hull-name decals and (PLATING) every plating evaluation, whose
+// damage records are rest-frame too -- the damage decals and scuffs stay
+// posed (4be56165).
 uniform mat4 u_node_rest_fix;
 const float GLOW_FLICKER_SECS = 0.4;   // blow-out window when a region is destroyed
 const float DISABLED_FLOOR    = 0.0;   // flicker troughs reach dark while disabled
@@ -610,8 +612,9 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
             // stock program's (no seam at the program split, no hard ring).
             float pm = u_plating[5] + u_plating[6] + u_plating[15] + u_plating[2];
             float dmin = 1.0e6;
+            vec3 p_rest = (u_node_rest_fix * vec4(p_body, 1.0)).xyz;   // records: rest frame
             for (int k = 0; k < u_dmg_count; ++k)
-                dmin = min(dmin, length(p_body - u_dmg_a[k].xyz) - u_dmg_a[k].w);
+                dmin = min(dmin, length(p_rest - u_dmg_a[k].xyz) - u_dmg_a[k].w);
             float pw = 1.0 - smoothstep(0.0, 1.0, max(dmin, 0.0) / max(pm, 1.0e-4));
             deposit *= mix(1.0, u_plating[13], pw) * (1.0 - 0.7 * g_plating_exposed);
         }
@@ -896,7 +899,10 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
     plating_sample(part, p_body, n_body, c0, ctr0, d1, d2);
     float strip = u_plating[8];
     float wear_c = plating_cell_wear(c0, ctr0, n_body);
-    mat3 to_ws = transpose(mat3(u_ship_world_inv));   // body -> world, normals
+    // p_body / n_body here are REST frame (main passes p_pl / n_pl): the
+    // rest -> world map folds the node's rest fix back in. Rigid C, so its
+    // transpose is its inverse.
+    mat3 to_ws = transpose(mat3(u_node_rest_fix) * mat3(u_ship_world_inv));   // rest -> world, normals
 
     float e0 = plating_tear_w(p_body, wear_c, w_here);
     // Share of this spot's wear that came from INSIDE (a subsystem blast):
@@ -953,7 +959,7 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
 
     g_plating_exposed = 1.0;
     float Dp = u_plating[5], Dr = u_plating[6];
-    vec3  Vb = normalize(mat3(u_ship_world_inv) * V_ws);
+    vec3  Vb = normalize(mat3(u_node_rest_fix) * mat3(u_ship_world_inv) * V_ws);   // rest frame
     float vn = max(dot(Vb, n_body), 0.25);
     vec3  ray = -Vb / vn;                                 // per unit depth
     vec3  tang = Vb - n_body * dot(Vb, n_body);
@@ -1570,7 +1576,15 @@ void main() {
     vec3 dpdy_d = dFdy(p_body);
 #ifdef PLATING
     // SPIKE plating layer: rib AA footprint, taken in uniform control flow.
+    // (A rigid rest fix keeps lengths, so the posed footprint serves.)
     float plating_fw = length(fwidth(p_body));
+    // Every plating evaluation runs in the REST frame of this mesh's node:
+    // the damage records, structure parts and fill are rest-frame data, so a
+    // hole on an articulated part moves with it (layered damage phase 4
+    // §2.1). Same rigid correction as the hull-name decals; identity for an
+    // unarticulated draw. No normalize(): C is orthonormal.
+    vec3 p_pl = (u_node_rest_fix * vec4(p_body, 1.0)).xyz;
+    vec3 n_pl = mat3(u_node_rest_fix) * n_body;
 #endif
 #ifdef IMPOSTOR_VIEWS
     n_shade = g_imp_normal_ws;
@@ -1647,7 +1661,7 @@ void main() {
     if (u_plating[0] > 0.5) {
         float plating_margin = u_plating[5] + u_plating[6] + u_plating[15] + u_plating[2];
         for (int i = 0; i < u_dmg_count; ++i) {
-            if (length(p_body - u_dmg_a[i].xyz) < u_dmg_a[i].w + plating_margin) {
+            if (length(p_pl - u_dmg_a[i].xyz) < u_dmg_a[i].w + plating_margin) {
                 plating_near = true;
                 break;
             }
@@ -1665,7 +1679,7 @@ void main() {
     // a hidden pixel is never stamped.
     bool plating_hidden = false;
     if (u_part_count > 0 && (u_part_hidden_mask != 0 || u_part_show_mask != 0)) {
-        int hp = plating_part(p_body);
+        int hp = plating_part(p_pl);
         plating_hidden = (u_part_show_mask != 0 &&
                           (hp < 0 || ((u_part_show_mask >> hp) & 1) == 0)) ||
                          (hp >= 0 && hp < 32 && ((u_part_hidden_mask >> hp) & 1) != 0);
@@ -1673,10 +1687,10 @@ void main() {
     int hole = 0;
     bool cut = false;
     if (plating_near) {
-        plating_w_here = plating_wear(p_body, n_body);
-        plating_w_int  = plating_internal(p_body);
-        hole = u_plating_rock != 0 ? plating_rock_hole(p_body, plating_w_here)
-                                   : plating_hole(p_body, n_body, plating_w_here);
+        plating_w_here = plating_wear(p_pl, n_pl);
+        plating_w_int  = plating_internal(p_pl);
+        hole = u_plating_rock != 0 ? plating_rock_hole(p_pl, plating_w_here)
+                                   : plating_hole(p_pl, n_pl, plating_w_here);
         // A hole is cut when this hull is near (rooms are drawn behind it) or
         // blown clear through; a far hole is painted as wreckage below.
         cut = hole == 1 && (u_plating_far == 0 || plating_w_here > u_plating[24]);
@@ -1695,12 +1709,12 @@ void main() {
             // the rock's own albedo, darkened and sooted: no fires, no windows.
             plating_inside = true;
             n_shade = n;
-            float g = vnoise(p_body.xy * 0.7 + p_body.z * 0.5);
+            float g = vnoise(p_pl.xy * 0.7 + p_pl.z * 0.5);
             if (u_plating_rock != 0) {
                 base.rgb *= 0.35 * (0.6 + 0.4 * g);
             } else {
                 base.rgb = vec3(0.02) * (0.7 + 0.3 * g);
-                vec3 wreck_cell = floor(p_body / vec3(6.0, 8.67, 2.67));
+                vec3 wreck_cell = floor(p_pl / vec3(6.0, 8.67, 2.67));
                 float wreck_h = dhash(wreck_cell.xy + wreck_cell.z * vec2(17.0, 31.0));
                 if (wreck_h < 0.03)
                     g_plating_emissive += blackbody(0.6) * 0.8;
@@ -1712,7 +1726,7 @@ void main() {
             // A member still spanning the hole: bare, charred metal.
             plating_inside = true;
             n_shade = n;
-            float g = vnoise(p_body.xy * 0.7 + p_body.z * 0.5);
+            float g = vnoise(p_pl.xy * 0.7 + p_pl.z * 0.5);
             base.rgb = RIB_METAL * u_plating[14] * (0.4 + 0.3 * g);
         }
     }
@@ -1758,7 +1772,7 @@ void main() {
     // SPIKE plating layer: only near damage (plating_near above). A rock
     // has no panels, ribs or members.
     if (plating_near && !plating_inside && u_plating_rock == 0) {
-        apply_plating(p_body, n_body, V, plating_fw, plating_w_here, plating_w_int,
+        apply_plating(p_pl, n_pl, V, plating_fw, plating_w_here, plating_w_int,
                       n_shade, base.rgb);
     }
 #endif

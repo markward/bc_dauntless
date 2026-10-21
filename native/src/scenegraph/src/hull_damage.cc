@@ -43,7 +43,7 @@ HullDamageRecord merged(const HullDamageRecord& a, const HullDamageRecord& b) {
 
 HullDamageAddResult HullDamageStore::add(const glm::vec3& centre_body,
                                          const glm::vec3& normal_body, float reach,
-                                         float wear, HullDamageKind kind) {
+                                         float wear, HullDamageKind kind, int node) {
     if (!(wear > 0.0f) || !(reach > 0.0f)) return {};
     if (!std::isfinite(wear) || !std::isfinite(reach) || !finite(centre_body) ||
         !finite(normal_body))
@@ -56,15 +56,17 @@ HullDamageAddResult HullDamageStore::add(const glm::vec3& centre_body,
     in.wear = wear;
     in.kind = kind;
     in.active = true;
+    in.node = node;
 
     revision_ = next_revision();
 
-    // Voluntary merge into the nearest eligible record of the same kind.
+    // Voluntary merge into the nearest eligible record of the same kind and
+    // node (records on different nodes live in different rest frames).
     HullDamageRecord* best = nullptr;
     HullDamageRecord best_merge;
     float best_d = std::numeric_limits<float>::max();
     for (auto& s : slots_) {
-        if (!s.active || s.kind != kind) continue;
+        if (!s.active || s.kind != kind || s.node != node) continue;
         const float d = glm::length(s.centre_body - centre_body);
         const float larger = std::max(reach, s.reach);
         if (d > kMergeFactor * larger || d >= best_d) continue;
@@ -84,7 +86,7 @@ HullDamageAddResult HullDamageStore::add(const glm::vec3& centre_body,
     for (auto& s : slots_) if (!s.active) { free_slot = &s; break; }
 
     if (!free_slot) {
-        // Forced merge: the same-kind pair whose merge grows reach least
+        // Forced merge: the same-kind, same-node pair whose merge grows reach least
         // (merged reach - the larger input reach), no growth cap. Nearest
         // centres is the wrong measure: a small record beside a big one
         // folds in almost free even when two equal records sit closer.
@@ -93,7 +95,8 @@ HullDamageAddResult HullDamageStore::add(const glm::vec3& centre_body,
         float pg = std::numeric_limits<float>::max();
         for (std::size_t i = 0; i < kCapacity; ++i) {
             for (std::size_t j = i + 1; j < kCapacity; ++j) {
-                if (slots_[i].kind != slots_[j].kind) continue;
+                if (slots_[i].kind != slots_[j].kind || slots_[i].node != slots_[j].node)
+                    continue;
                 const HullDamageRecord m = merged(slots_[i], slots_[j]);
                 const float g = m.reach - std::max(slots_[i].reach, slots_[j].reach);
                 if (g < pg) { pg = g; pa = &slots_[i]; pb = &slots_[j]; pm = m; }
@@ -104,11 +107,23 @@ HullDamageAddResult HullDamageStore::add(const glm::vec3& centre_body,
             *pb = HullDamageRecord{};
             free_slot = pb;
         } else {
-            // Unreachable with two kinds and 64 slots; never drop wear anyway.
-            free_slot = &slots_[0];
-            const float before = free_slot->wear;
-            *free_slot = merged(*free_slot, in);
-            return {0, before, free_slot->wear};
+            // Every slot holds a different (kind, node): fold the input into
+            // the record of its own kind and node that grows least. With no
+            // such record (64 distinct kind/node pairs -- no stock rig comes
+            // near it) the input is dropped: a record never crosses frames.
+            HullDamageRecord* host = nullptr;
+            HullDamageRecord hm;
+            float hg = std::numeric_limits<float>::max();
+            for (auto& s : slots_) {
+                if (s.kind != kind || s.node != node) continue;
+                const HullDamageRecord m = merged(s, in);
+                const float g = m.reach - std::max(s.reach, in.reach);
+                if (g < hg) { hg = g; host = &s; hm = m; }
+            }
+            if (host == nullptr) return {};
+            const float before = host->wear;
+            *host = hm;
+            return {static_cast<int>(host - slots_.data()), before, host->wear};
         }
     }
     *free_slot = in;

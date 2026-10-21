@@ -432,16 +432,20 @@ def hull_damage_add(
     radius: float,
     wear: float,
     kind: int,
+    node_name: str = "",
 ) -> None:
     """Add a record to the instance's HullDamageStore. `kind` 1 = Surface,
-    3 = Internal (others ignored natively). No-op without a host/instance."""
+    3 = Internal (others ignored natively). `node_name`: the articulated
+    part (model node) the hit struck -- the record is stored on it, in its
+    REST frame, so the damage moves with the part; "" = the hull body. No-op
+    without a host/instance."""
     if _h is None:
         return
     rel = _instance_relative(instance_id, world_point)
     if rel is None:
         return
     _h.hull_damage_add(instance_id, rel, world_normal, float(radius),
-                       float(wear), int(kind))
+                       float(wear), int(kind), str(node_name or ""))
 
 
 def hull_damage_add_body(
@@ -451,15 +455,18 @@ def hull_damage_add_body(
     radius: float,
     wear: float,
     kind: int,
+    node_name: str = "",
 ) -> None:
-    """hull_damage_add for a point/normal ALREADY in the body frame (model
-    units, as `world_to_body` returns them). `radius` is still game units;
-    the binding converts it with the same scale as hull_damage_add. No
-    translation is involved, so there is no instance-relative step."""
+    """hull_damage_add for a point/normal ALREADY in the (posed) body frame
+    (model units, as `world_to_body` returns them). `radius` is still game
+    units; the binding converts it with the same scale as hull_damage_add.
+    `node_name` as hull_damage_add. No translation is involved, so there is
+    no instance-relative step."""
     if _h is None:
         return
     _h.hull_damage_add_body(instance_id, tuple(body_point), tuple(body_normal),
-                            float(radius), float(wear), int(kind))
+                            float(radius), float(wear), int(kind),
+                            str(node_name or ""))
 
 
 def model_nodes(instance_id: int) -> List[dict]:

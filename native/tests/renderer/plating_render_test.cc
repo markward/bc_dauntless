@@ -209,6 +209,7 @@ protected:
         scenegraph::HullDamageStore ring;
         std::uint32_t severed_parts = 0;   // Instance::severed_parts
         std::uint32_t shown_parts = 0;     // Instance::shown_parts
+        std::unordered_map<int, glm::mat4> overrides{};   // Instance::node_overrides
     };
     Marked render_marked(const assets::Model& model, const scenegraph::HullDamageStore& ring,
                          const scenegraph::Camera& cam,
@@ -230,6 +231,7 @@ protected:
             world.get(iid)->hull_damage = pl.ring;
             world.get(iid)->severed_parts = pl.severed_parts;
             world.get(iid)->shown_parts = pl.shown_parts;
+            world.get(iid)->node_overrides = pl.overrides;
         }
         glViewport(0, 0, kSize, kSize);
         glClearColor(clear.r, clear.g, clear.b, 1.0f);
@@ -853,15 +855,20 @@ TEST_F(PlatingRenderTest, MeshWithoutNearbyDamageUploadsNothing) {
     EXPECT_EQ(plating_dmg_count(), 2) << "the last mark upload is the damaged quad's";
 }
 
-// With node overrides (an articulated hull) the rest-pose boxes no longer
-// bound the posed meshes: every mesh gets the whole list.
-TEST_F(PlatingRenderTest, ArticulatedDrawUsesFullList) {
+// With node overrides (an articulated hull) records and per-mesh boxes are
+// both REST-frame data, so the per-mesh subsets still hold: the mark skips the
+// quad no record reaches, exactly as for an unposed hull.
+TEST_F(PlatingRenderTest, ArticulatedDrawKeepsPerMeshSubsets) {
     dauntless_plating::g_params[0] = 1.0f;
+    dauntless_plating::g_params[25] = 0.0f;
     const auto cam = quad_cam();
     auto model = two_quads(-40.0f);          // mesh 1 = the far quad
-    const std::unordered_map<int, glm::mat4> overrides{{0, model->nodes[0].local_transform}};
-    render(*model, left_quad_ring(), cam, false, nullptr, &overrides);
-    EXPECT_EQ(plating_dmg_count(), 2);
+    Placed pl{glm::mat4(1.0f), left_quad_ring()};
+    pl.overrides[0] = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 2.0f, 0.0f));
+    const auto r = render_marked_many(*model, {pl}, cam);
+    EXPECT_EQ(r.marks, 1);
+    EXPECT_EQ(r.mark_mesh_draws, 1) << "the far quad has no record: no mark draw";
+    EXPECT_EQ(plating_dmg_count(), 2) << "the last mark upload is the damaged quad's";
 }
 
 // The subsets never change a pixel: the torn Ambassador, damaged all over,
@@ -1385,20 +1392,21 @@ TEST_F(PlatingRenderTest, SootHasNoRingAtTheNearZoneEdge) {
     EXPECT_LE(worst_far, 2) << "far from damage the soot is not the stock draw's";
 }
 
-// With node overrides the rest-pose subsets do not bound the posed meshes
-// (every mesh gets the whole list), so every mesh draws through plating, in
-// one program bind.
-TEST_F(PlatingRenderTest, ArticulatedPlatedDrawKeepsOneProgram) {
+// With node overrides the per-mesh split still applies: the record-free quad
+// draws through the stock program and the damaged one through plating, one
+// switch.
+TEST_F(PlatingRenderTest, ArticulatedPlatedDrawSplitsLikeAnUnposedOne) {
     dauntless_plating::g_params[0] = 1.0f;
     dauntless_plating::g_params[25] = 0.0f;
     const auto cam = quad_cam();
     auto model = two_quads(-40.0f);
-    const std::unordered_map<int, glm::mat4> overrides{{0, model->nodes[0].local_transform}};
+    const std::unordered_map<int, glm::mat4> overrides{
+        {0, glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 2.0f, 0.0f))}};
     const int d0 = renderer::draw_model_plating_mesh_draws();
     const int b0 = renderer::draw_model_program_binds();
     render(*model, left_quad_ring(), cam, false, nullptr, &overrides);
-    EXPECT_EQ(renderer::draw_model_plating_mesh_draws() - d0, 2);
-    EXPECT_EQ(renderer::draw_model_program_binds() - b0, 1);
+    EXPECT_EQ(renderer::draw_model_plating_mesh_draws() - d0, 1) << "only the damaged quad";
+    EXPECT_EQ(renderer::draw_model_program_binds() - b0, 2) << "stock once, plating once";
 }
 
 // Record-free and damaged meshes interleaved in the model's mesh order: the
@@ -1647,4 +1655,97 @@ TEST_F(PlatingRenderTest, UndamagedHullUnchangedByCarveRemoval) {
     EXPECT_EQ(differing, 0) << "undamaged hull changed: " << differing
                             << " pixels differ, worst channel delta " << worst
                             << ", first at (" << first_x << ", " << first_y << ")";
+}
+
+// ── Damage moves with articulated parts (layered damage phase 4 §2.1) ─────
+namespace {
+
+// Two plates facing +z: node 0 (the body, root) at x = -40 and node 1 (a
+// part, child of the root, identity local) at x = +40. Half size 15.
+std::unique_ptr<assets::Model> body_and_part() {
+    auto model = std::make_unique<assets::Model>();
+    const glm::vec3 X(1, 0, 0), Y(0, 1, 0);
+    add_face(*model, glm::vec3(-40.0f, 0.0f, 0.0f), X, Y, 15.0f);
+    add_face(*model, glm::vec3(40.0f, 0.0f, 0.0f), X, Y, 15.0f);
+    model->nodes[0].name = "body";
+    assets::Node part;
+    part.name = "part";
+    part.parent_index = 0;
+    part.meshes.push_back(model->nodes[0].meshes.back());
+    model->nodes[0].meshes.pop_back();
+    model->nodes[0].children.push_back(1);
+    model->nodes.push_back(part);
+    return model;
+}
+
+}  // namespace
+
+// A hit on a part is recorded on that part's node, in its REST frame. When
+// the part is then posed (rotated 30 degrees about its own centre and
+// translated), the cut hole and the interior behind it go with it: the part's
+// pixels -- cut stencil and colour -- match a render of the same record with
+// the WHOLE instance moved by the same transform (the frame the damage was
+// always right in), and the unposed body draws exactly as before.
+TEST_F(PlatingRenderTest, DamageFollowsAnArticulatedNode) {
+    dauntless_plating::g_params[0] = 1.0f;
+    const auto cam = quad_cam();
+    auto model = body_and_part();
+    const glm::vec3 clear(0.8f, 0.2f, 0.8f);
+
+    // Hit node 1 at rest, off its plate's centre so the rotation moves it.
+    const glm::vec3 hit_rest(48.0f, 6.0f, 0.0f);
+    scenegraph::HullDamageStore ring;
+    ASSERT_GE(ring.add(hit_rest, glm::vec3(0.0f), 8.0f, 10.0f,
+                       scenegraph::HullDamageKind::Internal, /*node=*/1).index, 0);
+
+    // The pose: 30 degrees about z through the plate's centre, then up 10.
+    const glm::mat4 pose =
+        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 10.0f, 0.0f)) *
+        glm::translate(glm::mat4(1.0f), glm::vec3(40.0f, 0.0f, 0.0f)) *
+        glm::rotate(glm::mat4(1.0f), glm::radians(30.0f), glm::vec3(0.0f, 0.0f, 1.0f)) *
+        glm::translate(glm::mat4(1.0f), glm::vec3(-40.0f, 0.0f, 0.0f));
+    const glm::vec3 hit_posed = glm::vec3(pose * glm::vec4(hit_rest, 1.0f));
+
+    const Marked rest = render_marked_many(*model, {Placed{glm::mat4(1.0f), ring}}, cam, clear);
+    Placed posed_pl{glm::mat4(1.0f), ring};
+    posed_pl.overrides[1] = pose;
+    const Marked posed = render_marked_many(*model, {posed_pl}, cam, clear);
+    // The reference: no override, the whole instance moved by `pose`.
+    const Marked moved = render_marked_many(*model, {Placed{pose, ring}}, cam, clear);
+
+    const glm::ivec2 at_rest = to_pixel(cam, hit_rest);
+    const glm::ivec2 at_posed = to_pixel(cam, hit_posed);
+    auto stencil_at = [](const Marked& m, glm::ivec2 c) {
+        return m.stencil[static_cast<std::size_t>(c.y) * kSize + c.x];
+    };
+    auto is_clear = [](const std::uint8_t* q) {
+        return std::abs(q[0] - 204) <= 1 && std::abs(q[1] - 51) <= 1 &&
+               std::abs(q[2] - 204) <= 1;
+    };
+    ASSERT_NE(stencil_at(rest, at_rest), 0) << "no cut at the hit at rest";
+    ASSERT_FALSE(is_clear(pixel(rest.color, at_rest.x, at_rest.y))) << "no interior at rest";
+    ASSERT_NE(stencil_at(moved, at_posed), 0) << "the reference has no cut at the posed hit";
+
+    // The hole and its interior moved with the node.
+    EXPECT_NE(stencil_at(posed, at_posed), 0) << "no cut where the posed hit is";
+    EXPECT_FALSE(is_clear(pixel(posed.color, at_posed.x, at_posed.y)))
+        << "no interior behind the posed cut";
+    EXPECT_EQ(stencil_at(posed, at_rest), 0) << "the cut stayed at the rest position";
+
+    // The part's pixels match the rigidly moved instance (x > 0 in view).
+    const int mid_x = to_pixel(cam, glm::vec3(0.0f)).x;
+    int stencil_diff = 0;
+    for (int y = 0; y < kSize; ++y)
+        for (int x = mid_x + 2; x < kSize; ++x)
+            if ((posed.stencil[static_cast<std::size_t>(y) * kSize + x] != 0) !=
+                (moved.stencil[static_cast<std::size_t>(y) * kSize + x] != 0))
+                ++stencil_diff;
+    const int worst_part = worst_on_side(posed.color, moved.color, mid_x, /*right=*/true);
+    std::fprintf(stderr, "[PlatingRender] articulated: stencil diff %d, worst colour %d\n",
+                 stencil_diff, worst_part);
+    EXPECT_LE(stencil_diff, 4) << "the posed cut is not the moved instance's cut";
+    EXPECT_LE(worst_part, 8) << "the posed part's damage differs from the moved instance's";
+
+    // The unposed body is unchanged.
+    EXPECT_EQ(worst_on_side(rest.color, posed.color, mid_x, /*right=*/false), 0);
 }

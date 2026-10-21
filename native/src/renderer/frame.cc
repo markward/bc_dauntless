@@ -808,11 +808,12 @@ static void draw_model_pass(const assets::Model& model,
     // Ride only plating draws (upload_plating). The part-colour debug view
     // (params[12] == 2) therefore tints only near listed damage on a hull
     // whose list is non-empty; an undamaged hull draws stock.
-    // With per-mesh boxes (and no node overrides) the list goes up per mesh
-    // in the loop below, each mesh only the records near it.
+    // With per-mesh boxes the list goes up per mesh in the loop below, each
+    // mesh only the records near it. Records and boxes are both REST-frame
+    // data and the shader tests in the rest frame (u_node_rest_fix), so this
+    // holds for a posed (articulated) hull too.
     const std::vector<plating::MeshRecordSubset>* const plating_subsets =
-        plating_list != nullptr && plating_mesh_records != nullptr &&
-                !(node_overrides != nullptr && !node_overrides->empty())
+        plating_list != nullptr && plating_mesh_records != nullptr
             ? plating_mesh_records->subsets
             : nullptr;
     std::optional<MeshRecordUploader> plating_records;
@@ -932,9 +933,9 @@ static void draw_model_pass(const assets::Model& model,
     // Walk nodes; each node may reference one or more meshes by index.
     const std::vector<glm::mat4> world_per_node = node_worlds_for(model, world, node_overrides);
 
-    // Glow regions are authored in the NIF (rest) frame, but opaque.frag
-    // rebuilds a POSED body position. C_i = R_i * P_i^-1 maps it back, for
-    // the glow test only. Identity for every node of an unarticulated
+    // Glow regions, hull-name decals and plating damage records are all in
+    // the NIF (rest) frame, but opaque.frag rebuilds a POSED body position.
+    // C_i = R_i * P_i^-1 maps it back. Identity for every node of an unarticulated
     // instance -- computed only when there are overrides, so the common path
     // allocates nothing extra.
     const bool articulated = node_overrides != nullptr && !node_overrides->empty();
@@ -1162,12 +1163,11 @@ void draw_model(const assets::Model& model,
     // A plated draw with per-mesh subsets splits its meshes: the record-free
     // ones through the stock program first, then the rest through plating,
     // so the instance switches program at most once. No split for a skinned
-    // draw (no plating layer), without subsets, or with node overrides (the
-    // posed meshes leave their rest boxes: every mesh gets the whole list).
-    const bool articulated = node_overrides != nullptr && !node_overrides->empty();
+    // draw (no plating layer) or without subsets. A posed (articulated) hull
+    // splits too: its records and boxes are both in the rest frame.
     const std::vector<plating::MeshRecordSubset>* const split =
         plating != nullptr && stock_shader != nullptr && plating_mesh_records != nullptr &&
-                !articulated && !draws_skinned(model, bone_palette)
+                !draws_skinned(model, bone_palette)
             ? plating_mesh_records->subsets
             : nullptr;
     auto pass = [&](Shader& prog, const plating::DamageList* list,
@@ -1212,7 +1212,7 @@ void draw_model(const assets::Model& model,
 // phase 2 Task 2 report.
 // `records`: as draw_model's plating_mesh_records -- the parts the plating
 // block uploads, and each mesh's own subset (the whole list when the subsets
-// are null or with node overrides). `skip_record_free`: a mesh whose subset
+// are null). `skip_record_free`: a mesh whose subset
 // is empty is not drawn -- opaque.frag's PLATING main discards every fragment
 // of a mark with no record near it, so it could stamp nothing. Returns the
 // meshes drawn. `rock`: as upload_plating's (the rock hole rule).
@@ -1226,8 +1226,7 @@ static int draw_plating_mark(const assets::Model& model, const glm::mat4& world,
         kShadowMap = "u_shadow_map", kModel = "u_model", kRestFix = "u_node_rest_fix";
     prog.use();
     const bool articulated = node_overrides != nullptr && !node_overrides->empty();
-    const std::vector<plating::MeshRecordSubset>* const subsets =
-        articulated ? nullptr : records.subsets;
+    const std::vector<plating::MeshRecordSubset>* const subsets = records.subsets;
     upload_plating(prog, dl, records.parts, world, params, /*mark=*/true, /*far=*/false,
                    /*upload_list=*/subsets == nullptr, rock, records.hidden_parts,
                    records.shown_parts);
@@ -1622,7 +1621,8 @@ PlatingMeshRecords FrameSubmitter::plating_mesh_records_for(PlatingListCacheEntr
     r.parts = renderer::structure_parts_for(model.source);
     r.hidden_parts = inst.severed_parts;
     r.shown_parts = inst.shown_parts;
-    if (!plating_record_culling_ || !inst.node_overrides.empty()) return r;
+    // Rest-frame boxes against rest-frame records: no articulated exception.
+    if (!plating_record_culling_) return r;
     if (!e.subsets_valid || e.subsets_parts != r.parts || e.subsets_handle != inst.model_handle ||
         e.subsets_model != &model) {
         e.subsets = plating::mesh_record_subsets(e.list, model_mesh_boxes(inst.model_handle, model),

@@ -38,12 +38,19 @@
 // which is shaded with the rock's own base texture, as breach.frag's old
 // rock crater was, under the scene's ambient and directional lights.
 //
-// Everything is BODY frame, in model units.
+// Everything is the REST frame of the drawn mesh's node, in model units: the
+// body frame the model has at rest. The records and the fill are rest-frame
+// data; hull_interior.vert puts v_body_pos there and main() the camera
+// (layered damage phase 4 §2.1). For an unarticulated hull it IS the body
+// frame.
 
 in vec3 v_body_pos;
 in vec3 v_body_normal;   // hull_interior.vert writes it; unused here
 
-uniform vec3 u_camera_pos_body;
+uniform vec3 u_camera_pos_body;   // POSED body frame (one per draw)
+// This mesh's node: posed body -> rest body (set per mesh, identity when not
+// articulated; the same uniform hull_interior.vert reads). Rigid.
+uniform mat4 u_node_rest_fix;
 
 // Original fill (HullFillCache), GL_R8 on unit 0. u_fill_ok 0 = no fill volume:
 // rooms still draw, with no left-the-ship test.
@@ -526,7 +533,8 @@ bool rock_shade(vec3 ro, vec3 rd, out vec3 c) {
 
     // Ambient (opaque.frag's directional-ambient formula) + directional
     // lights. No rooms, no room light, no fire.
-    vec3 n_ws = normalize(mat3(u_ship_world) * n);
+    // n is rest frame: back to the posed body (C^T, C rigid), then world.
+    vec3 n_ws = normalize(mat3(u_ship_world) * (transpose(mat3(u_node_rest_fix)) * n));
     vec3 light = u_ambient_light;
     if (u_ambient_gradient > 0.0) {
         float amb_d = clamp(dot(n_ws, u_ambient_dir_ws), -1.0, 1.0);
@@ -550,7 +558,7 @@ void main() {
     g_dpdx = dFdx(v_body_pos);
     g_dpdy = dFdy(v_body_pos);
     vec3 ro = v_body_pos;
-    vec3 rd = v_body_pos - u_camera_pos_body;
+    vec3 rd = v_body_pos - (u_node_rest_fix * vec4(u_camera_pos_body, 1.0)).xyz;
     float rd_len = length(rd);
     if (rd_len < 1e-6) discard;   // camera on the hull surface: no ray
     rd /= rd_len;

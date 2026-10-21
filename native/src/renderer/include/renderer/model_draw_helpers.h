@@ -42,11 +42,18 @@ class Shader;
 /// `mesh_mask` (nullptr = every mesh): one entry per model.meshes; a mesh
 /// whose entry is 0 is not drawn (an index past the end is drawn). Returns
 /// how many meshes were drawn.
+///
+/// `rest_fix`: also set `u_node_rest_fix` per mesh -- node_anim.h's
+/// rest_corrections for `node_overrides`, identity on every mesh without
+/// overrides -- for a program that works in the REST frame (the hull
+/// interior: its damage records and fill are rest-frame data). Set on every
+/// mesh, identity included, so no value leaks between draws.
 int draw_model_positions_only(const assets::Model& model,
                               const glm::mat4& world,
                               Shader& prog,
                               const std::unordered_map<int, glm::mat4>*
                                   node_overrides = nullptr,
-                              const std::vector<std::uint8_t>* mesh_mask = nullptr);
+                              const std::vector<std::uint8_t>* mesh_mask = nullptr,
+                              bool rest_fix = false);
 
 }  // namespace renderer

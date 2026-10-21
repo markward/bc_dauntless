@@ -2528,15 +2528,47 @@ static std::uint64_t next_breach_seed() {
     static std::uint64_t s_counter = 0;
     return ++s_counter * 6364136223846793005ull;
 }
+// The record is in its node's REST frame; `rest_to_posed` (the inverse of
+// that node's rest fix, identity for the body) puts the event back where the
+// part is DRAWN now: venting is placed through the instance world, i.e. in the
+// posed body frame. The event does not follow the part afterwards.
 static void vent_on_breach_crossing(scenegraph::Instance& inst,
                                     const scenegraph::HullDamageAddResult& r,
-                                    std::uint32_t kind) {
+                                    std::uint32_t kind, const glm::mat4& rest_to_posed) {
     if (kind != 1u || r.index < 0) return;
     const float breach = dauntless_plating::g_params[16];
     if (!(r.wear_before < breach && breach <= r.wear_after)) return;
     const auto& rec = inst.hull_damage.records()[static_cast<std::size_t>(r.index)];
-    inst.breach_events.push(rec.centre_body, 0.5f * rec.reach, rec.normal_body,
+    inst.breach_events.push(glm::vec3(rest_to_posed * glm::vec4(rec.centre_body, 1.0f)),
+                            0.5f * rec.reach,
+                            glm::mat3(rest_to_posed) * rec.normal_body,
                             g_decal_game_time, next_breach_seed());
+}
+
+// The node a wear hit is recorded on, and the map from the POSED body frame
+// into that node's REST frame (layered damage phase 4 §2.1): "" or a name the
+// model does not have is the hull body (-1, identity). Resolved the way
+// set_instance_node_transform resolves it, so the record lands on the node
+// the pose moves; the fix is node_anim.h's rest_corrections (identity while
+// the instance has no overrides, and for a severed node).
+struct WearNode {
+    int       node = -1;
+    glm::mat4 to_rest{1.0f};
+    glm::mat4 to_posed{1.0f};
+};
+static WearNode wear_node_for(const scenegraph::Instance& inst, const std::string& name) {
+    WearNode w;
+    if (name.empty()) return w;
+    const assets::Model* m = resolve_model(inst.model_handle);
+    if (m == nullptr) return w;
+    const int idx = renderer::resolve_overridden_node(*m, name, inst.node_overrides);
+    if (idx < 0) return w;
+    w.node = idx;
+    if (!inst.node_overrides.empty()) {
+        w.to_rest = renderer::rest_corrections(*m, inst.node_overrides)[static_cast<std::size_t>(idx)];
+        w.to_posed = glm::inverse(w.to_rest);
+    }
+    return w;
 }
 
 
@@ -7517,7 +7549,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> world_point,
              std::tuple<float, float, float> world_normal,
-             float radius, float wear, std::uint32_t kind) {
+             float radius, float wear, std::uint32_t kind,
+             const std::string& node_name) {
               if (kind != 1u && kind != 3u) return;  // only Surface/Internal
               auto* inst = g_world.get(id);
               if (inst == nullptr) return;  // stale id -- drop silently
@@ -7528,24 +7561,32 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                  std::get<1>(world_normal),
                                  std::get<2>(world_normal));
               // Same body-frame conversion as damage_decal_add: pw is
-              // INSTANCE-RELATIVE; radius game-units -> model units.
+              // INSTANCE-RELATIVE; radius game-units -> model units. Then
+              // into the struck node's REST frame.
               const auto bf = to_body_frame(*inst, pw, nw, radius);
+              const WearNode wn = wear_node_for(*inst, node_name);
               const auto r = inst->hull_damage.add(
-                  bf.point, bf.normal, bf.radius_model, wear,
-                  static_cast<scenegraph::HullDamageKind>(kind));
-              vent_on_breach_crossing(*inst, r, kind);
+                  glm::vec3(wn.to_rest * glm::vec4(bf.point, 1.0f)),
+                  glm::mat3(wn.to_rest) * bf.normal, bf.radius_model, wear,
+                  static_cast<scenegraph::HullDamageKind>(kind), wn.node);
+              vent_on_breach_crossing(*inst, r, kind, wn.to_posed);
           },
           py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
           py::arg("radius"), py::arg("wear"), py::arg("kind"),
+          py::arg("node_name") = std::string(),
           "Add a record to the instance's HullDamageStore. Point is "
           "INSTANCE-RELATIVE; point/normal/radius are converted to the body "
-          "frame exactly as damage_decal_add does. kind: 1=Surface, 3=Internal.");
+          "frame exactly as damage_decal_add does. kind: 1=Surface, 3=Internal. "
+          "node_name: the model node (articulated part) the hit struck; the "
+          "record is stored on it, in its REST frame, so the damage moves "
+          "with the part. \"\" or an unknown name = the hull body.");
 
     m.def("hull_damage_add_body",
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> body_point,
              std::tuple<float, float, float> body_normal,
-             float radius, float wear, std::uint32_t kind) {
+             float radius, float wear, std::uint32_t kind,
+             const std::string& node_name) {
               if (kind != 1u && kind != 3u) return;  // only Surface/Internal
               auto* inst = g_world.get(id);
               if (inst == nullptr) return;  // stale id -- drop silently
@@ -7553,17 +7594,21 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                  std::get<2>(body_point));
               const glm::vec3 nb(std::get<0>(body_normal), std::get<1>(body_normal),
                                  std::get<2>(body_normal));
+              const WearNode wn = wear_node_for(*inst, node_name);
               const auto r = inst->hull_damage.add(
-                  pb, nb, radius_to_model(*inst, radius), wear,
-                  static_cast<scenegraph::HullDamageKind>(kind));
-              vent_on_breach_crossing(*inst, r, kind);
+                  glm::vec3(wn.to_rest * glm::vec4(pb, 1.0f)), glm::mat3(wn.to_rest) * nb,
+                  radius_to_model(*inst, radius), wear,
+                  static_cast<scenegraph::HullDamageKind>(kind), wn.node);
+              vent_on_breach_crossing(*inst, r, kind, wn.to_posed);
           },
           py::arg("instance_id"), py::arg("body_point"), py::arg("body_normal"),
           py::arg("radius"), py::arg("wear"), py::arg("kind"),
-          "hull_damage_add for a point/normal ALREADY in the body frame (model "
-          "units, e.g. from world_to_body). radius is still game units and is "
-          "converted with the same scale as hull_damage_add. kind: 1=Surface, "
-          "3=Internal.");
+          py::arg("node_name") = std::string(),
+          "hull_damage_add for a point/normal ALREADY in the (POSED) body frame "
+          "(model units, e.g. from world_to_body). radius is still game units "
+          "and is converted with the same scale as hull_damage_add. kind: "
+          "1=Surface, 3=Internal. node_name: as hull_damage_add (stored in that "
+          "node's REST frame).");
 
     m.def("_test_only_breach_events",
           [](scenegraph::InstanceId id) {
@@ -7602,13 +7647,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   d["reach"] = r.reach;
                   d["wear"] = r.wear;
                   d["kind"] = static_cast<int>(r.kind);
+                  d["node"] = r.node;
                   out.append(d);
               }
               return out;
           },
           py::arg("instance_id"),
-          "Test hook: the instance's active HullDamageStore records (body "
-          "frame, model units) as dicts centre/normal/reach/wear/kind.");
+          "Test hook: the instance's active HullDamageStore records (each in "
+          "its node's REST frame, model units) as dicts "
+          "centre/normal/reach/wear/kind/node (-1 = the hull body).");
 
     m.def("_test_only_hull_damage_constants",
           []() {

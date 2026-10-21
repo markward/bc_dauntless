@@ -38,8 +38,10 @@ int HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_xf
     shader.use();
     shader.set_mat4("u_view", camera.view_matrix());
     shader.set_mat4("u_proj", camera.proj_matrix());
-    // hull_interior.vert: v_body_pos = u_ship_world_inv * u_model * a_pos. u_model
-    // is set per mesh by draw_model_positions_only.
+    // hull_interior.vert: v_body_pos = u_node_rest_fix * u_ship_world_inv *
+    // u_model * a_pos, the REST frame the records and fill live in. u_model
+    // and u_node_rest_fix are set per mesh by draw_model_positions_only; the
+    // camera goes into each mesh's rest frame in the shaders.
     shader.set_mat4("u_ship_world_inv", world_inv);
     shader.set_vec3("u_camera_pos_body", cam_pos_body);
 
@@ -111,7 +113,8 @@ int HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_xf
     glDisable(GL_BLEND);
 
     const int meshes =
-        draw_model_positions_only(model, world_xf, shader, node_overrides, mesh_mask);
+        draw_model_positions_only(model, world_xf, shader, node_overrides, mesh_mask,
+                                  /*rest_fix=*/true);
     ++draw_calls_;
 
     // Back to stock. Stencil mask 0xFF, not 0: glClear(GL_STENCIL_BUFFER_BIT)

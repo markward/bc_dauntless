@@ -164,3 +164,41 @@ def test_blast_asks_for_severed_parts_after_its_wear(monkeypatch):
     ship.GetWorldLocation = lambda: _Loc()
     ib._blast({"ship": ship, "sub": _Sub(ship), "radius": 0.25}, 5)
     assert asked == [(ship, 5, 2)]
+
+
+def test_exit_on_a_posed_part_records_its_node(monkeypatch):
+    """Layered damage phase 4 §2.1: each exit hole is recorded on the part it
+    opens in (hull_wear.node_for_hit on the exit's body point), so the hole
+    moves with an articulated part."""
+    from engine import host_io
+    from engine.appc import hit_vfx, hull_wear
+    from engine.appc.math import TGPoint3
+    wear, asked = [], []
+    monkeypatch.setattr(host_io, "hull_damage_add",
+                        lambda *a, **k: wear.append((a, k)))
+    monkeypatch.setattr(host_io, "world_to_body",
+                        lambda iid, p, n: (tuple(v * 100.0 for v in p), n))
+    monkeypatch.setattr(host_io, "breach_burst", lambda *a, **k: None)
+    monkeypatch.setattr(hit_vfx, "spawn", lambda *a, **k: None)
+    monkeypatch.setattr("engine.appc.subsystems.subsystem_world_position",
+                        lambda sub, ship: TGPoint3(0.0, 0.0, 0.0))
+    monkeypatch.setattr("engine.appc.hit_feedback._mesh_xyz",
+                        lambda ship, p: (p.x, p.y, p.z))
+    monkeypatch.setattr(ib, "find_exits",
+                        lambda iid, c, r, d: [((0.0, 0.0, 0.3), (0.0, 0.0, 1.0), 0.1),
+                                              ((0.0, 0.3, 0.0), (0.0, 1.0, 0.0), 0.1)])
+    monkeypatch.setattr(ib, "_world_to_body", lambda ship, v: v)
+
+    def _node(ship, body_point, iid=None):
+        asked.append(tuple(body_point))
+        return "left wing" if body_point[2] > 0.0 else ""
+    monkeypatch.setattr(hull_wear, "node_for_hit", _node)
+
+    class _Loc:
+        x = y = z = 0.0
+
+    ship = _Ship()
+    ship.GetWorldLocation = lambda: _Loc()
+    ib._blast({"ship": ship, "sub": _Sub(ship), "radius": 0.25}, 5)
+    assert asked == [pytest.approx((0.0, 0.0, 30.0)), pytest.approx((0.0, 30.0, 0.0))]
+    assert [k.get("node_name", "") for _a, k in wear] == ["left wing", ""]

@@ -27,9 +27,14 @@ uniform mat4 u_ship_world_inv;  // inverse of the INSTANCE world matrix ALONE (n
                                 // uploaded once per draw by hull_interior_pass.cc
 uniform mat4 u_view;
 uniform mat4 u_proj;
+// This mesh's node: POSED body -> REST body (node_anim.h rest_corrections),
+// set per mesh by draw_model_positions_only; identity when not articulated.
+// The damage records and the fill volume are rest-frame data (layered damage
+// phase 4 §2.1), so the walk runs in the rest frame. Rigid: no normalize.
+uniform mat4 u_node_rest_fix;
 
-out vec3 v_body_pos;    // BODY-frame position of the actual hull surface point
-out vec3 v_body_normal; // BODY-frame surface normal
+out vec3 v_body_pos;    // REST-frame position of the actual hull surface point
+out vec3 v_body_normal; // REST-frame surface normal
 
 void main() {
     // BODY frame, not node-local. `a_pos` is this mesh's NODE-LOCAL vertex
@@ -56,13 +61,15 @@ void main() {
     // Galaxy.nif's chain is a pure translation of (0, +128.447, +38.005)
     // model units, far larger than a typical hole, so every interior fragment
     // would land in the wrong place.
-    v_body_pos  = (u_ship_world_inv * u_model * vec4(a_pos, 1.0)).xyz;
+    // Then into this mesh's node REST frame (u_node_rest_fix; identity for
+    // an unarticulated hull, which keeps the body frame exactly).
+    v_body_pos  = (u_node_rest_fix * u_ship_world_inv * u_model * vec4(a_pos, 1.0)).xyz;
     // Same composition as v_body_pos, as a direction: the node chain alone
     // (u_ship_world_inv * u_model), with the translation dropped by taking
     // mat3. BC hulls carry uniform scale only, so the inverse-transpose a
     // general normal matrix would need collapses to this; normalising is left
     // to the fragment stage, which has to re-normalise after interpolation
     // anyway.
-    v_body_normal = mat3(u_ship_world_inv * u_model) * a_normal;
+    v_body_normal = mat3(u_node_rest_fix * u_ship_world_inv * u_model) * a_normal;
     gl_Position = u_proj * u_view * u_model * vec4(a_pos, 1.0);
 }

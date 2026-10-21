@@ -143,3 +143,121 @@ def test_structure_part_at_is_minus_one_until_parts_are_known(iid):
 def test_structure_part_at_is_a_required_binding():
     from engine import host_io
     assert "structure_part_at" in host_io._REQUIRED_BINDINGS
+
+
+# ── Damage moves with articulated parts (layered damage phase 4 §2.1) ────────
+# A hit on a posed part is recorded on that part's NODE, in the node's REST
+# frame, so the hole moves with the part. Needs a real model with a named,
+# posable node: the stock Bird of Prey's "left wing", loaded under a headless
+# GL context.
+
+_WING = "left wing"
+
+
+@pytest.fixture
+def posed_bop(breach_wear, monkeypatch):
+    from engine import paths
+    from tests.helpers import bc_assets
+    nif = bc_assets.require_game_asset("data/Models/Ships/BirdOfPrey/BirdOfPrey.nif")
+    monkeypatch.setenv("OPEN_STBC_HOST_HEADLESS", "1")
+    try:
+        _h.init(64, 64, "test_hull_damage_bindings_posed")
+    except RuntimeError as e:
+        pytest.skip(f"no GL context: {e}")
+    try:
+        search = [str(p) for p in paths.game_asset_dirs("data/Models/Ships/BirdOfPrey")]
+        model = _h.load_model(str(nif), search)
+        i = _h.create_instance(model)
+        _h.set_world_transform(i, [1.0, 0.0, 0.0, 0.0,
+                                   0.0, 1.0, 0.0, 0.0,
+                                   0.0, 0.0, 1.0, 0.0,
+                                   0.0, 0.0, 0.0, 1.0])
+        # 40 degrees about the node's parent-space x axis, then a lift: a
+        # pose with both rotation and translation.
+        import math
+        c, s = math.cos(math.radians(40.0)), math.sin(math.radians(40.0))
+        pose_col_major = [1.0, 0.0, 0.0, 0.0,
+                          0.0, c, s, 0.0,
+                          0.0, -s, c, 0.0,
+                          0.0, 0.0, 25.0, 1.0]
+        assert _h.set_instance_node_transform(i, _WING, pose_col_major)
+        yield i
+        _h.destroy_instance(i)
+    finally:
+        _h.shutdown()
+
+
+def _mat(rows16):
+    return [rows16[r * 4:(r + 1) * 4] for r in range(4)]
+
+
+def _mul(a, b):
+    return [[sum(a[r][k] * b[k][c] for k in range(4)) for c in range(4)] for r in range(4)]
+
+
+def _apply(m, p, w=1.0):
+    v = (p[0], p[1], p[2], w)
+    return tuple(sum(m[r][k] * v[k] for k in range(4)) for r in range(3))
+
+
+def _inverse_rigid(m):
+    """Inverse of a rotation + translation (row-major 4x4)."""
+    rt = [[m[c][r] for c in range(3)] for r in range(3)]
+    t = [m[r][3] for r in range(3)]
+    ti = [-sum(rt[r][k] * t[k] for k in range(3)) for r in range(3)]
+    return [rt[0] + [ti[0]], rt[1] + [ti[1]], rt[2] + [ti[2]], [0.0, 0.0, 0.0, 1.0]]
+
+
+def test_wear_hit_on_a_posed_part_records_its_node(posed_bop):
+    iid = posed_bop
+    rest = _mat(_h.instance_node_world(iid, _WING, False))
+    posed = _mat(_h.instance_node_world(iid, _WING, True))
+    assert rest != posed, "the wing is not posed"
+    # A point and normal fixed to the wing: given in REST body coordinates,
+    # carried to where the posed wing draws them (P . R^-1).
+    q_rest = _apply(rest, (10.0, -5.0, 3.0))
+    n_rest = (0.0, 0.6, 0.8)
+    to_posed = _mul(posed, _inverse_rigid(rest))
+    q_posed = _apply(to_posed, q_rest)
+    n_posed = _apply(to_posed, n_rest, 0.0)
+    assert max(abs(a - b) for a, b in zip(q_posed, q_rest)) > 5.0, \
+        "the pose barely moves the point: the test could not tell the frames apart"
+
+    _h.hull_damage_add(iid, q_posed, n_posed, 0.3, 1.0, 1, _WING)
+    (rec,) = _records(iid)
+    assert rec["node"] >= 0, "the record lost its node"
+    assert rec["centre"] == pytest.approx(q_rest, abs=1e-2), \
+        "the record must be stored in the node's REST frame"
+    assert rec["normal"] == pytest.approx(n_rest, abs=1e-4)
+
+    # The body-frame binding takes the same posed point to the same record.
+    _h.hull_damage_add_body(iid, q_posed, n_posed, 0.3, 1.0, 1, _WING)
+    (rec2,) = _records(iid)
+    assert rec2["wear"] == pytest.approx(2.0), "same node, same spot: merged"
+    assert rec2["centre"] == pytest.approx(q_rest, abs=1e-2)
+
+    # The same posed point on the hull BODY is a different record (-1).
+    _h.hull_damage_add_body(iid, q_posed, n_posed, 0.3, 1.0, 1)
+    nodes = sorted(r["node"] for r in _records(iid))
+    assert nodes[0] == -1 and nodes[1] == rec["node"]
+
+
+def test_posed_part_tear_vents_at_the_drawn_hit(posed_bop, breach_wear):
+    """Venting is placed through the instance world (posed body frame), so a
+    tear on a posed part vents where the part is DRAWN, not at its rest spot."""
+    iid = posed_bop
+    rest = _mat(_h.instance_node_world(iid, _WING, False))
+    posed = _mat(_h.instance_node_world(iid, _WING, True))
+    q_posed = _apply(_mul(posed, _inverse_rigid(rest)), _apply(rest, (10.0, -5.0, 3.0)))
+    for _ in range(5):
+        _h.hull_damage_add_body(iid, q_posed, (0.0, 0.0, 1.0), 0.3, 1.0, 1, _WING)
+    (ev,) = _breach(iid)
+    assert ev["center"] == pytest.approx(q_posed, abs=1e-2)
+
+
+def test_unknown_node_name_records_on_the_body(iid):
+    _h.hull_damage_add_body(iid, (1.0, 2.0, 3.0), (0.0, 0.0, 1.0), 0.3, 1.0, 1,
+                            "no such node")
+    (rec,) = _records(iid)
+    assert rec["node"] == -1
+    assert rec["centre"] == pytest.approx((1.0, 2.0, 3.0), abs=1e-6)

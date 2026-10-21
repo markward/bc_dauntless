@@ -9,7 +9,15 @@ tick, every tick): the pending entry is kept in the ship's BODY frame,
 converted once when the tick lands, so a ship that moves or turns before the
 flush still gets the wear where the beam touched it. A pending entry is sent
 on the scorch-throttle emit, by `drain` once the window elapses, and early
-when a new tick lands farther from it than the store would merge.
+when a new tick lands farther from it than the store would merge, or on a
+different part.
+
+Each hit names the articulated part it struck (`node_for_hit`, through
+`part_severance.part_for_live_point`): the wear bindings store the record on
+that node, in its REST frame, so damage on a moving part moves with it
+(layered damage phase 4 §2.1). A pending phaser entry holds a POSED body
+point and its node; the binding converts it at the flush, so the pose the
+part has then is the one used (the window is DECAL_EMIT_INTERVAL, 0.2 s).
 Visible damage only: nothing here touches hull, subsystem or shield health.
 
 The constants are plain module values (not wired into a dial group: the
@@ -37,10 +45,10 @@ class _Pending:
     can never be recycled onto a new ship while wear is pending; sending the
     entry releases it."""
     __slots__ = ("ship", "iid", "body_point", "body_normal", "radius",
-                 "model_per_gu", "wear", "since")
+                 "model_per_gu", "wear", "since", "node")
 
     def __init__(self, ship, iid, body_point, body_normal, radius,
-                 model_per_gu, wear, since):
+                 model_per_gu, wear, since, node=""):
         self.ship = ship
         self.iid = iid
         self.body_point = body_point
@@ -49,6 +57,7 @@ class _Pending:
         self.model_per_gu = model_per_gu
         self.wear = wear
         self.since = since
+        self.node = node
 
 
 # id(ship) -> _Pending
@@ -87,13 +96,55 @@ def _after_wear(ship, iid):
         dev_mode.log_swallowed("hull_breakup.after_wear", _e)
 
 
+def node_for_hit(ship, body_point_model, iid=None) -> str:
+    """The articulated part (its model node name) a POSED body-frame point in
+    MODEL units is on, or "" for the hull body.
+
+    Attributed by `part_severance.part_for_live_point` (SHIP units, hence
+    MODEL_TO_SHIP). Only a part the ship may be drawn posed by
+    (`articulation.posed_part_names`) counts: a record on a node that never
+    moves gains nothing and would only stop merging with its neighbours. An
+    unrigged ship, the overwhelming majority, returns "" after one rig
+    lookup. A failure is logged and reads as the body, never costing the
+    hit its wear."""
+    if ship is None or body_point_model is None:
+        return ""
+    try:
+        from engine.appc import articulation, part_severance
+        names = articulation.posed_part_names(ship)
+        if not names:
+            return ""
+        k = part_severance.MODEL_TO_SHIP
+        point = tuple(float(v) * k for v in body_point_model)
+        name = part_severance.part_for_live_point(ship, point, iid)
+    except Exception as _e:
+        from engine import dev_mode
+        dev_mode.log_swallowed("hull_wear.node_for_hit", _e)
+        return ""
+    return name if name in names else ""
+
+
+def _node_for_world_hit(ship, iid, world_point, world_normal) -> str:
+    """`node_for_hit` for a world (view) point; skips the body conversion for
+    an unrigged ship."""
+    if ship is None:
+        return ""
+    from engine.appc import articulation
+    if not articulation.posed_part_names(ship):
+        return ""
+    conv = host_io.world_to_body(iid, world_point, world_normal)
+    return "" if conv is None else node_for_hit(ship, conv[0], iid)
+
+
 def send(iid, world_point, world_normal, radius, wear, ship=None):
-    """One projectile/collision hit's wear, straight to the store, then the
-    part check for `ship` (None: no check)."""
+    """One projectile/collision hit's wear, straight to the store (on the
+    part it struck), then the part check for `ship` (None: no check)."""
     if wear <= 0.0 or radius <= 0.0:
         return
     host_io.hull_damage_add(iid, world_point, world_normal, radius, wear,
-                            _SURFACE)
+                            _SURFACE,
+                            node_name=_node_for_world_hit(ship, iid, world_point,
+                                                          world_normal))
     _after_wear(ship, iid)
 
 
@@ -103,18 +154,20 @@ def _dist(a, b):
 
 def accumulate_phaser(ship, iid, world_point, world_normal, radius, wear):
     """Hold a phaser tick's wear in the ship's body frame. A tick landing
-    farther than MERGE_FACTOR x reach from the pending point sends the
-    pending entry first and starts a new one there."""
+    farther than MERGE_FACTOR x reach from the pending point, or on another
+    part, sends the pending entry first and starts a new one there."""
     if wear <= 0.0 or radius <= 0.0:
         return
     conv = host_io.world_to_body(iid, world_point, world_normal)
     if conv is None:
         return                                  # stale instance
     body_point, body_normal = conv
+    node = node_for_hit(ship, body_point, iid)
     entry = _pending.get(id(ship))
     if entry is not None and entry.ship is ship and entry.iid == iid:
         reach_model = max(entry.radius, radius) * entry.model_per_gu
-        if _dist(body_point, entry.body_point) <= MERGE_FACTOR * reach_model:
+        if (entry.node == node and
+                _dist(body_point, entry.body_point) <= MERGE_FACTOR * reach_model):
             entry.wear += wear
             return
         flush(ship)
@@ -128,13 +181,13 @@ def accumulate_phaser(ship, iid, world_point, world_normal, radius, wear):
     model_per_gu = _dist(conv_off[0], body_point) / radius
     _pending[id(ship)] = _Pending(ship, iid, tuple(body_point),
                                   tuple(body_normal), radius, model_per_gu,
-                                  wear, _now())
+                                  wear, _now(), node)
 
 
 def _send_pending(entry):
     host_io.hull_damage_add_body(entry.iid, entry.body_point,
                                  entry.body_normal, entry.radius, entry.wear,
-                                 _SURFACE)
+                                 _SURFACE, node_name=entry.node)
     _after_wear(entry.ship, entry.iid)
 
 

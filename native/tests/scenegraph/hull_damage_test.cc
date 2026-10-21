@@ -203,3 +203,40 @@ TEST(HullDamageStore, IgnoredAddReportsNoIndex) {
     const auto r = s.add({0, 0, 0}, kUp, 10.0f, 0.0f, HullDamageKind::Surface);
     EXPECT_EQ(r.index, -1);
 }
+
+// Layered damage phase 4 (§2.1): a record lives in its node's REST frame, so
+// two records on different nodes share no frame once either node is posed --
+// they must never merge, voluntarily or forced, however close they sit.
+TEST(HullDamageStore, RecordsOnDifferentNodesNeverMerge) {
+    HullDamageStore s;
+    const auto body = s.add({0, 0, 0}, kUp, 10.0f, 1.0f, HullDamageKind::Surface);
+    const auto part = s.add({0, 0, 0}, kUp, 10.0f, 1.0f, HullDamageKind::Surface, 1);
+    EXPECT_EQ(s.count(), 2u);
+    EXPECT_NE(body.index, part.index);
+    EXPECT_EQ(s.records()[static_cast<std::size_t>(body.index)].node, -1);
+    EXPECT_EQ(s.records()[static_cast<std::size_t>(part.index)].node, 1);
+    // The same node still merges.
+    s.add({1, 0, 0}, kUp, 10.0f, 1.0f, HullDamageKind::Surface, 1);
+    EXPECT_EQ(s.count(), 2u);
+    EXPECT_FLOAT_EQ(s.records()[static_cast<std::size_t>(part.index)].wear, 2.0f);
+}
+
+// A full store's forced merge keeps to one node too: with every same-node
+// pair far apart, the cheap cross-node pair (co-located) must not be chosen.
+TEST(HullDamageStore, ForcedMergeNeverJoinsTwoNodes) {
+    HullDamageStore s;
+    s.add({0, 0, 0}, kUp, 10.0f, 1.0f, HullDamageKind::Surface, 0);
+    s.add({0, 0, 0}, kUp, 10.0f, 1.0f, HullDamageKind::Surface, 1);
+    for (int i = 0; i < 62; ++i)
+        s.add({1.0e3f * (i + 1), 0, 0}, kUp, 10.0f, 1.0f, HullDamageKind::Surface, 0);
+    ASSERT_EQ(s.count(), 64u);
+    s.add({-1.0e6f, 0, 0}, kUp, 10.0f, 1.0f, HullDamageKind::Surface, 0);
+    ASSERT_EQ(s.count(), 64u);
+    int on_node1 = 0;
+    for (const auto& r : s.records())
+        if (r.active && r.node == 1) {
+            ++on_node1;
+            EXPECT_FLOAT_EQ(r.wear, 1.0f) << "node 1's record absorbed another node's wear";
+        }
+    EXPECT_EQ(on_node1, 1);
+}
