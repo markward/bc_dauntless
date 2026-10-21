@@ -1136,6 +1136,8 @@ def _reset_leakable_engine_globals():
         _hf._last_decal_emit.clear()
         _hf._last_carve_time.clear()
         _hf._pending_carve_strength.clear()
+        from engine.appc import hull_wear as _hw
+        _hw.reset()
     except Exception:
         pass
     # Camera shake: the Modern VFX row flips a module global, so a test that

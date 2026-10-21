@@ -136,6 +136,7 @@ def host(monkeypatch):
     spy = _CarveDecalSpy()
     monkeypatch.setattr(host_io, "damage_decal_add", spy.damage_decal_add)
     monkeypatch.setattr(host_io, "hull_carve_add", spy.hull_carve_add)
+    monkeypatch.setattr(host_io, "hull_damage_add", lambda *a, **k: None)
     monkeypatch.setattr(host_io, "world_to_body", lambda *a, **k: None)
     return spy
 

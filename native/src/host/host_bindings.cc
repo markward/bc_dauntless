@@ -7505,6 +7505,35 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "(active, selected_mesh, hover_mesh) of the bridge editor tint "
           "(see set_bridge_highlight); (False, -1, -1) when none.");
 
+    m.def("hull_damage_add",
+          [](scenegraph::InstanceId id,
+             std::tuple<float, float, float> world_point,
+             std::tuple<float, float, float> world_normal,
+             float radius, float wear, std::uint32_t kind) {
+              if (kind != 1u && kind != 3u) return;  // only Surface/Internal
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return;  // stale id -- drop silently
+              const glm::vec3 pw(std::get<0>(world_point),
+                                 std::get<1>(world_point),
+                                 std::get<2>(world_point));
+              const glm::vec3 nw(std::get<0>(world_normal),
+                                 std::get<1>(world_normal),
+                                 std::get<2>(world_normal));
+              // Same body-frame conversion as damage_decal_add: pw is
+              // INSTANCE-RELATIVE; radius game-units -> model units.
+              const glm::vec3 pb = scenegraph::relative_to_body(inst->world_linear, pw);
+              const glm::vec3 nb = scenegraph::dir_to_body(inst->world_linear, nw);
+              const float s = glm::length(glm::vec3(inst->world[0]));
+              const float radius_model = (s > 0.0f) ? radius / s : radius;
+              inst->hull_damage.add(pb, nb, radius_model, wear,
+                                    static_cast<scenegraph::HullDamageKind>(kind));
+          },
+          py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
+          py::arg("radius"), py::arg("wear"), py::arg("kind"),
+          "Add a record to the instance's HullDamageStore. Point is "
+          "INSTANCE-RELATIVE; point/normal/radius are converted to the body "
+          "frame exactly as damage_decal_add does. kind: 1=Surface, 3=Internal.");
+
     m.def("damage_decal_add",
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> world_point,

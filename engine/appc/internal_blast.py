@@ -171,8 +171,8 @@ def _blast(entry, iid) -> None:
     ship_loc = ship.GetWorldLocation()
     pset = frames.containing_set(ship)
     for p, n, dist in exits:
-        host_io.damage_decal_add(iid, p, n, hole_radius(radius, dist), 1.0,
-                                 WEAPON_CLASS_INTERNAL, now, dent=STRENGTH)
+        host_io.hull_damage_add(iid, p, n, hole_radius(radius, dist),
+                                STRENGTH, 3)
         p_set = TGPoint3(centre_set.x + (p[0] - centre[0]),
                          centre_set.y + (p[1] - centre[1]),
                          centre_set.z + (p[2] - centre[2]))

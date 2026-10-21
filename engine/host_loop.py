@@ -7603,6 +7603,8 @@ class HostController:
         hit_feedback._last_carve_time.clear()
         hit_feedback._pending_carve_strength.clear()
         hit_feedback._last_decal_emit.clear()
+        from engine.appc import hull_wear
+        hull_wear.reset()
         from engine.appc import hull_hit_smoke
         hull_hit_smoke.reset()
         from engine.appc import damage_geometry

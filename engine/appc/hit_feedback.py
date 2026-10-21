@@ -375,9 +375,21 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
             now = damage_decals.current_game_time()
             wclass = damage_decals.weapon_class_for(weapon_type)
             key = (id(ship), wclass)
+            vis_r = float(decal_radius) if decal_radius is not None else float(radius)
+            # Plating wear from the real hull damage dealt, summed across the
+            # scorch throttle below. Light phaser fire stays cosmetic.
+            if allow_hull_carve or weapon_type != "phaser":
+                from engine.appc import hull_wear
+                hull_wear.accumulate(
+                    ship, iid, _mesh_xyz(ship, point),
+                    (normal.x, normal.y, normal.z),
+                    vis_r * damage_decals.decal_radius_scale(wclass),
+                    hull_wear.wear_for_hit(weapon_type, absorbed_hull,
+                                           float(decal_dent)))
             if now - _last_decal_emit.get(key, -1e9) >= DECAL_EMIT_INTERVAL:
                 _last_decal_emit[key] = now
-                vis_r = float(decal_radius) if decal_radius is not None else float(radius)
+                from engine.appc import hull_wear
+                hull_wear.flush(ship)
                 host_io.damage_decal_add(
                     iid,
                     _mesh_xyz(ship, point),

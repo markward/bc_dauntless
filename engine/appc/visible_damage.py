@@ -233,9 +233,8 @@ def _advance_one(entry, dt, ship_instances) -> bool:
             world_pt = mesh_pt
         if mesh_normal is not None:
             normal = mesh_normal
-        host_io.damage_decal_add(iid, _mesh_xyz(ship, world_pt),
-                                 (normal.x, normal.y, normal.z), hole, 1.0,
-                                 internal_blast.WEAPON_CLASS_INTERNAL, now, dent=wear)
+        host_io.hull_damage_add(iid, _mesh_xyz(ship, world_pt),
+                                (normal.x, normal.y, normal.z), hole, wear, 3)
         return False
     # Carve sizes are absolute; the only per-ship scale is BC's DamageRadMod
     # (applied to both the authored `floor` and the strength curve). The authored

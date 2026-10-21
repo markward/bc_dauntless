@@ -438,6 +438,25 @@ def damage_decal_add(
                         float(dent))
 
 
+def hull_damage_add(
+    instance_id: int,
+    world_point: Tuple[float, float, float],
+    world_normal: Tuple[float, float, float],
+    radius: float,
+    wear: float,
+    kind: int,
+) -> None:
+    """Add a record to the instance's HullDamageStore. `kind` 1 = Surface,
+    3 = Internal (others ignored natively). No-op without a host/instance."""
+    if _h is None:
+        return
+    rel = _instance_relative(instance_id, world_point)
+    if rel is None:
+        return
+    _h.hull_damage_add(instance_id, rel, world_normal, float(radius),
+                       float(wear), int(kind))
+
+
 def hull_carve_add(
     instance_id: int,
     world_point: Tuple[float, float, float],

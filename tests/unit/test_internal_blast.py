@@ -2,6 +2,8 @@
 only where its blast reaches the hull."""
 import math
 
+import pytest
+
 from engine.appc import internal_blast as ib
 
 
@@ -96,3 +98,37 @@ def test_hole_grows_the_deeper_the_hull_sits_inside_the_blast():
     grazing, mid, deep = (ib.hole_radius(R, d) for d in (0.99 * R, 0.5 * R, 0.1 * R))
     assert grazing == ib.HOLE_MIN * R          # floor: a grazing blast still opens
     assert grazing < mid < deep
+
+
+def test_exit_point_adds_an_internal_wear_record_not_a_decal(monkeypatch):
+    from engine import host_io
+    from engine.appc import hit_vfx
+    from engine.appc.math import TGPoint3
+    wear, decals = [], []
+    monkeypatch.setattr(host_io, "hull_damage_add",
+                        lambda *a, **k: wear.append((a, k)))
+    monkeypatch.setattr(host_io, "damage_decal_add",
+                        lambda *a, **k: decals.append(a))
+    monkeypatch.setattr(host_io, "world_to_body", lambda *a, **k: None)
+    monkeypatch.setattr(host_io, "breach_burst", lambda *a, **k: None)
+    monkeypatch.setattr(hit_vfx, "spawn", lambda *a, **k: None)
+    monkeypatch.setattr("engine.appc.subsystems.subsystem_world_position",
+                        lambda sub, ship: TGPoint3(0.0, 0.0, 0.0))
+    monkeypatch.setattr("engine.appc.hit_feedback._mesh_xyz",
+                        lambda ship, p: (p.x, p.y, p.z))
+    monkeypatch.setattr(ib, "find_exits",
+                        lambda iid, c, r, d: [((0.0, 0.0, 0.3), (0.0, 0.0, 1.0), 0.1)])
+    monkeypatch.setattr(ib, "_world_to_body", lambda ship, v: v)
+
+    class _Loc:
+        x = y = z = 0.0
+
+    ship = _Ship()
+    ship.GetWorldLocation = lambda: _Loc()
+    ib._blast({"ship": ship, "sub": _Sub(ship), "radius": 0.25}, 5)
+    assert decals == []
+    (args, _kw), = wear
+    assert args[0] == 5
+    assert args[3] == pytest.approx(ib.hole_radius(0.25, 0.1))
+    assert args[4] == ib.STRENGTH
+    assert args[5] == 3
