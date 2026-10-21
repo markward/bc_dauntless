@@ -15,7 +15,7 @@
 //   (b) a plate the interior wear has broken -> keep walking;
 //   (c) otherwise shade that floor, ceiling or wall, lit by its room's state.
 //
-// The walk (ih_hash, ih_rand, ih_wall_exists, ih_room_light and the DDA of
+// The walk (ih_hash, ih_rand, the wall chance, ih_room_light and the DDA of
 // ih_shade) is ported from spike/breach-interior-mapping's breach.frag with
 // the constants Mark tuned live on 2026-10-20 (findings:
 // docs/engine/breach-interior-mapping-spike-findings.md). What changed: the
@@ -24,6 +24,13 @@
 // on the same noised wear as the blown test, so it follows the ragged tear);
 // the left-the-ship case shows the far wall unless the hull is blown through;
 // there is no fresh-hit heat (records carry no age).
+//
+// Look pass 2026-10-21 (Mark: rooms "too uniform", "too many illuminated
+// rooms ... we need rooms to look destroyed"): walls come from ZONES
+// (cabins, corridors, machinery, open bays) instead of one global chance,
+// rooms hold a block of contents, a room loses its power with the damage
+// around it, surfaces soot with wear, and room-by-room variety fades out
+// where a room is only a few pixels across.
 //
 // Everything is BODY frame, in model units.
 
@@ -64,13 +71,21 @@ const vec3 INNER_HULL = vec3(0.42, 0.41, 0.40);
 const vec3  kRoomSize          = vec3(6.0, 8.67, 2.67);
 // Smaller rooms need more crossings for the same reach.
 const int   kInteriorMaxSteps  = 24;
-// Probability a WALL segment exists (decks always do). Missing walls merge
-// cells into longer rooms and corridors.
-const float kWallXChance       = 0.55;  // longitudinal walls (planes x = k)
-const float kWallYChance       = 0.45;  // transverse bulkheads (planes y = k)
+// Rooms come in ZONES (blocks of rooms, beam x keel x decks) that share a
+// layout: cramped cabins, fore-aft corridors, machinery spaces, open bays
+// two or three decks tall. Live look feedback 2026-10-21: one uniform grid
+// "doesn't give the impression of a starship".
+const vec3  kZoneRooms         = vec3(3.0, 4.0, 3.0);
 // Distance (model units) over which the interior fades to black.
-const float kInteriorFogDist   = 120.0;
+const float kInteriorFogDist   = 90.0;
 const float kTornNoiseFreq     = 0.6;   // cycles per model unit
+// Unlit (vented, power gone) room: a faint spill so shapes still read.
+const vec3  kDarkRoom          = vec3(0.030, 0.032, 0.036);
+
+// 0..1: how much room-by-room detail this pixel can resolve. Far away a room
+// is a few pixels, and per-room light reads as a mosaic of lit windows; the
+// variety fades to the dark average there (set once in main).
+float g_detail = 1.0;
 
 // Blackbody-ish ramp keyed on heat 0..1. Copied from breach.frag.
 vec3 blackbody(float heat) {
@@ -106,41 +121,31 @@ float ih_rand(ivec3 c, uint salt) {
            / 16777215.0;
 }
 
-// Does the wall on `axis` at plane index `plane` exist for the segment the
-// ray crosses in `cell`? Decks (axis 2) always exist.
-bool ih_wall_exists(int axis, int plane, ivec3 cell) {
-    if (axis == 2) return true;
-    ivec3 key = cell;
-    key[axis] = plane;
-    return ih_rand(key, uint(axis + 1)) < (axis == 0 ? kWallXChance : kWallYChance);
+// Zone of a lattice key: 0 cabins, 1 corridors, 2 machinery, 3 open bay.
+int ih_zone(ivec3 key) {
+    float r = ih_rand(ivec3(floor(vec3(key) / kZoneRooms)), 11u);
+    if (r < 0.40) return 0;
+    if (r < 0.65) return 1;
+    if (r < 0.85) return 2;
+    return 3;
 }
 
-// The room's light: colour x intensity, animated. `fire` (0..1) lets the
-// caller bias the light toward the floor.
-vec3 ih_room_light(ivec3 cell, out float fire) {
-    fire = 0.0;
-    float r     = ih_rand(cell, 3u);
-    float phase = ih_rand(cell, 4u) * 6.2831853;
-    // Mix (live-tuned 2026-10-20): 35% lit, 35% dark, 20% emergency, 10% fire.
-    if (r < 0.35) {
-        // Lit: cool white strips; a quarter of them failing and flickering.
-        vec3 col = vec3(0.80, 0.88, 1.00) * 1.8;
-        if (ih_rand(cell, 5u) < 0.25) {
-            ivec3 tk = ivec3(cell.xy, int(floor(u_time * 9.0 + phase)));
-            col *= step(0.35, ih_rand(tk, 6u));
-        }
-        return col;
+// Does the plane on `axis` at index `plane` exist for the segment the ray
+// crosses in `cell`? Keyed by the plane itself (key[axis] = plane), so a wall
+// looks the same from both sides, zone boundaries included.
+bool ih_plane_exists(int axis, int plane, ivec3 cell) {
+    ivec3 key = cell;
+    key[axis] = plane;
+    int zone = ih_zone(key);
+    if (axis == 2) {                         // decks
+        if (zone == 3) return ((plane % 3) + 3) % 3 == 0;   // bay: 3 decks tall
+        return true;
     }
-    // Dark: power out. A faint spill from neighbouring rooms keeps shape.
-    if (r < 0.70) return vec3(0.10, 0.11, 0.13);
-    if (r < 0.90) {                                        // emergency red
-        float pulse = 0.55 + 0.45 * sin(u_time * 2.4 + phase);
-        return vec3(1.0, 0.10, 0.06) * 1.3 * pulse;
-    }
-    fire = 1.0;                                            // burning
-    float fl = 0.75 + 0.25 * sin(u_time * 13.0 + phase * 7.0)
-                           * sin(u_time * 7.3 + phase * 3.0);
-    return blackbody(0.62) * 2.4 * fl;
+    float chance = zone == 0 ? (axis == 0 ? 0.80 : 0.75)   // cabins: small rooms
+                 : zone == 1 ? (axis == 0 ? 0.95 : 0.12)   // long fore-aft corridors
+                 : zone == 2 ? (axis == 0 ? 0.45 : 0.40)   // machinery spaces
+                 :              0.06;                      // open bay
+    return ih_rand(key, uint(axis + 1)) < chance;
 }
 
 // Interior wear at p: every listed record, no facing weight (inside the
@@ -158,12 +163,87 @@ float interior_wear(vec3 p) {
     return w;
 }
 
+// The room's light: colour x intensity, animated. `fire` (0..1) lets the
+// caller bias the light toward the floor. A room open to space has lost its
+// power: the nearer the damage (room-centre wear / deck break), the fewer
+// lit rooms, and the fires sit in the band short of the destroyed core.
+// Live look feedback 2026-10-21: "too many illuminated rooms ... we need
+// rooms to look destroyed".
+vec3 ih_room_light(ivec3 cell, out float fire) {
+    fire = 0.0;
+    float cw    = interior_wear((vec3(cell) + 0.5) * kRoomSize) / max(u_plating[24], 1e-3);
+    float vent  = smoothstep(0.10, 0.45, cw);
+    float r     = ih_rand(cell, 3u);
+    float phase = ih_rand(cell, 4u) * 6.2831853;
+    float p_lit   = 0.10 * (1.0 - vent);
+    float p_fail  = p_lit  + mix(0.10, 0.04, vent);
+    float p_emerg = p_fail + mix(0.10, 0.06, vent);
+    float p_fire  = p_emerg + 0.12 * smoothstep(0.25, 0.6, cw) * (1.0 - smoothstep(0.85, 1.0, cw));
+    vec3 col;
+    if (r < p_lit) {
+        col = vec3(0.80, 0.88, 1.00);                      // still powered
+    } else if (r < p_fail) {
+        // Failing: mostly off, stuttering on.
+        ivec3 tk = ivec3(cell.xy, int(floor(u_time * 9.0 + phase)));
+        col = vec3(0.80, 0.88, 1.00) * 0.9 * step(0.75, ih_rand(tk, 6u));
+    } else if (r < p_emerg) {
+        float pulse = 0.55 + 0.45 * sin(u_time * 2.4 + phase);
+        col = vec3(1.0, 0.10, 0.06) * 0.8 * pulse;         // emergency red
+    } else if (r < p_fire) {
+        fire = 1.0;                                        // burning
+        float fl = 0.75 + 0.25 * sin(u_time * 13.0 + phase * 7.0)
+                               * sin(u_time * 7.3 + phase * 3.0);
+        return blackbody(0.62) * 2.0 * fl * mix(0.5, 1.0, g_detail);
+    } else {
+        return kDarkRoom * (1.0 - 0.5 * vent);
+    }
+    return mix(kDarkRoom, col, g_detail);
+}
+
+// Soot over a surface, from the interior wear there (0 undamaged).
+float ih_soot(vec3 p, float iw) {
+    return smoothstep(0.15, 0.85, iw / max(u_plating[24], 1e-3))
+         * (0.55 + 0.45 * vnoise3(p * 0.35));
+}
+
 // Has the ray left the ship at p? Never without a fill volume.
 bool left_ship(vec3 p) {
     if (u_fill_ok == 0) return false;
     vec3 tc = (p - u_fill_origin) / (u_fill_cell * vec3(u_fill_dims));
     if (any(lessThan(tc, vec3(0.0))) || any(greaterThan(tc, vec3(1.0)))) return true;
     return texture(u_fill, tc).r < u_fill_backing;
+}
+
+// Ray against an axis-aligned box. tn = entry distance, ax = entry axis.
+bool ih_ray_box(vec3 ro, vec3 rd, vec3 bmin, vec3 bmax, out float tn, out int ax) {
+    vec3 inv = 1.0 / (rd + vec3(equal(rd, vec3(0.0))) * 1e-6);
+    vec3 t0 = (bmin - ro) * inv, t1 = (bmax - ro) * inv;
+    vec3 lo = min(t0, t1), hi = max(t0, t1);
+    tn = max(max(lo.x, lo.y), lo.z);
+    float tf = min(min(hi.x, hi.y), hi.z);
+    ax = (tn == lo.x) ? 0 : (tn == lo.y ? 1 : 2);
+    return tf >= max(tn, 0.0);
+}
+
+// Room contents: one block standing on the room's deck, by zone. Cabins get
+// a console or bunk against a wall, machinery a tall block, bays a crate;
+// corridors stay clear. Returns the hit in [t0, t1) of the walk.
+bool ih_contents(ivec3 cell, vec3 ro, vec3 rd, float t0, float t1,
+                 out float th, out int ax, out int zone) {
+    zone = ih_zone(cell);
+    if (zone == 1) return false;
+    if (ih_rand(cell, 21u) > 0.7) return false;
+    if (!ih_plane_exists(2, cell.z, cell)) return false;      // nothing to stand on
+    vec3 a = vec3(ih_rand(cell, 22u), ih_rand(cell, 23u), ih_rand(cell, 24u));
+    vec3 size = zone == 0 ? vec3(0.30, 0.25, 0.30) + a * vec3(0.20, 0.25, 0.12)
+              : zone == 2 ? vec3(0.25, 0.25, 0.60) + a * vec3(0.20, 0.20, 0.35)
+              :             vec3(0.20, 0.20, 0.15) + a * vec3(0.15, 0.15, 0.15);
+    vec2 at = vec2(ih_rand(cell, 25u), ih_rand(cell, 26u)) * (1.0 - size.xy - 0.1) + 0.05;
+    if (zone == 0) at.x = ih_rand(cell, 27u) < 0.5 ? 0.04 : 0.96 - size.x;   // against a wall
+    vec3 lo = (vec3(cell) + vec3(at, 0.0)) * kRoomSize;
+    vec3 hi = lo + size * kRoomSize;
+    if (!ih_ray_box(ro, rd, lo, hi, th, ax)) return false;
+    return th >= t0 && th < t1;
 }
 
 // Walk the room lattice. Returns false = discard (blown through). On true,
@@ -177,11 +257,33 @@ bool ih_shade(vec3 ro, vec3 rd, out vec3 c) {
     vec3 next  = (vec3(cell) + max(vec3(stp), vec3(0.0))) * kRoomSize;
     vec3 tmax  = abs(next - ro) / ard;
     vec3 tdel  = kRoomSize / ard;
+    float t_in = 0.0;                        // where the ray entered `cell`
 
     for (int i = 0; i < kInteriorMaxSteps; ++i) {
         int axis = (tmax.x < tmax.y) ? (tmax.x < tmax.z ? 0 : 2)
                                      : (tmax.y < tmax.z ? 1 : 2);
         float t  = tmax[axis];
+
+        // Contents of this room, before the ray reaches its far plane.
+        // Skipped where a room is only a few pixels (no detail to show).
+        float tb; int bax, zone;
+        if (g_detail > 0.3 && ih_contents(cell, ro, rd, t_in, t, tb, bax, zone)) {
+            vec3 pb = ro + rd * tb;
+            float iwb = interior_wear(pb);
+            if (iwb <= deck_break) {
+                float fire;
+                vec3 room = ih_room_light(cell, fire);
+                vec3 albedo = zone == 2 ? vec3(0.22, 0.23, 0.25)     // machinery
+                            : zone == 0 ? vec3(0.30, 0.31, 0.34)     // console / bunk
+                            :             vec3(0.33, 0.31, 0.27);    // crate
+                float lit = bax == 2 ? 0.8 : 0.5;                    // tops catch the light
+                albedo *= 1.0 - 0.8 * ih_soot(pb, iwb);
+                c = albedo * (room * lit + u_ambient_light);
+                c *= exp(-tb / kInteriorFogDist);
+                return true;
+            }
+        }
+
         vec3  p  = ro + rd * t;
         float iw = interior_wear(p);
 
@@ -194,60 +296,70 @@ bool ih_shade(vec3 ro, vec3 rd, out vec3 c) {
             vec3 room = ih_room_light(cell, fire);
             float grain = vnoise3(p * 0.13);
             vec3 albedo = INNER_HULL * u_plating[17] * (0.45 + 0.25 * grain);
+            albedo *= 1.0 - 0.8 * ih_soot(p, iw);
             c = albedo * (room + u_ambient_light);
             c *= exp(-t / kInteriorFogDist);
             return true;
         }
 
         int plane = cell[axis] + (stp[axis] > 0 ? 1 : 0);
-        if (ih_wall_exists(axis, plane, cell)) {
-            // (b) Blown plate: keep walking. `s` is the noised wear, so the
-            // tear is ragged; the char band below reads the same value.
-            float s = iw + (vnoise3(p * kTornNoiseFreq) - 0.5) * u_plating[19];
+        if (ih_plane_exists(axis, plane, cell)) {
+            // (b) Blown plate: keep walking. `s` is the noised wear (two
+            // octaves, so decks tear raggedly rather than room by room); the
+            // char band below reads the same value.
+            float s = iw + (vnoise3(p * kTornNoiseFreq) - 0.5) * u_plating[19]
+                         + (vnoise3(p * 0.17) - 0.5) * u_plating[19] * 1.5;
             if (s <= deck_break) {
                 // (c) Shade this plate, as seen from inside `cell`.
                 vec3 q   = (p - vec3(cell) * kRoomSize) / kRoomSize;   // 0..1 in room
                 float fire;
                 vec3 room = ih_room_light(cell, fire);
+                int zone = ih_zone(cell);
 
                 vec3  albedo;
                 vec3  emit = vec3(0.0);
                 float lit;   // share of the room light reaching this point
                 if (axis == 2 && stp.z < 0) {
-                    // FLOOR (looking down): deck plating, panel seams.
-                    vec2 g  = fract(q.xy * vec2(4.0, 6.0));
+                    // FLOOR (looking down): deck plating, panel seams; bays
+                    // and machinery spaces have grating.
+                    vec2 g  = fract(q.xy * (zone >= 2 ? vec2(10.0, 14.0) : vec2(4.0, 6.0)));
                     float seam = min(min(g.x, 1.0 - g.x), min(g.y, 1.0 - g.y));
-                    albedo = vec3(0.36, 0.36, 0.38) * mix(0.55, 1.0, smoothstep(0.02, 0.06, seam));
+                    albedo = vec3(0.34, 0.34, 0.36) * mix(0.55, 1.0, smoothstep(0.02, 0.06, seam));
                     lit    = mix(0.55, 1.0, fire);
                 } else if (axis == 2) {
-                    // CEILING (looking up): the room's light strip along the keel.
-                    albedo = vec3(0.40, 0.41, 0.43);
+                    // CEILING (looking up): conduits along the keel, and the
+                    // room's light strip (dead in an unpowered room).
+                    float pipe = step(0.75, fract(q.x * 3.0 + 0.1 * float(zone)));
+                    albedo = vec3(0.38, 0.39, 0.41) * mix(1.0, 0.45, pipe);
                     float strip = 1.0 - smoothstep(0.04, 0.07, abs(q.x - 0.5));
-                    emit   = room * strip * 1.5;
+                    emit   = room * strip * 1.2 * g_detail;
                     lit    = mix(0.25, 0.4, fire);
                 } else {
-                    // WALL: panels, a dark waist band, and a doorway on bulkheads.
+                    // WALL: panels, a dark waist band, a doorway on bulkheads;
+                    // machinery spaces show ribbed bulkheads instead.
                     float u  = (axis == 0) ? q.y : q.x;
-                    float gu = fract(u * 5.0);
+                    float gu = fract(u * (zone == 2 ? 12.0 : 5.0));
                     float seam = min(gu, 1.0 - gu);
-                    albedo = vec3(0.50, 0.51, 0.55) * mix(0.6, 1.0, smoothstep(0.015, 0.05, seam));
+                    albedo = vec3(0.46, 0.47, 0.51) * mix(0.6, 1.0, smoothstep(0.015, 0.05, seam));
                     float band = step(0.42, q.z) * step(q.z, 0.50);
                     albedo = mix(albedo, vec3(0.10, 0.10, 0.12), band);
-                    if (axis == 1 && abs(u - 0.5) < 0.12 && q.z < 0.72) {
+                    if (axis == 1 && zone != 2 && abs(u - 0.5) < 0.12 && q.z < 0.72) {
                         albedo *= 0.25;   // doorway: dark recess
                     }
                     // Lit from the ceiling: brighter high, fire flips it.
                     lit = mix(mix(0.35, 1.0, q.z), mix(1.0, 0.45, q.z), fire);
                 }
 
+                // Wrecked: soot where the damage reached.
+                albedo *= 1.0 - 0.8 * ih_soot(p, iw);
                 // Room light + a little of the scene ambient.
                 c = albedo * (room * lit + u_ambient_light) + emit;
 
                 // Torn plate edge: the last wear unit short of breaking is
                 // charred, with a dull glow. Undamaged plates stay clean.
                 float edge = smoothstep(deck_break - 1.0, deck_break, s);
-                c *= mix(1.0, 0.35, edge);
-                c += blackbody(0.5) * edge * 0.6;
+                c *= mix(1.0, 0.3, edge);
+                c += blackbody(0.45) * edge * 0.25;
 
                 // Depth fog toward black.
                 c *= exp(-t / kInteriorFogDist);
@@ -256,6 +368,7 @@ bool ih_shade(vec3 ro, vec3 rd, out vec3 c) {
         }
         cell[axis] += stp[axis];
         tmax[axis] += tdel[axis];
+        t_in = t;
     }
     // Ran out of crossings still inside the ship: deep interior, near-black.
     c = vec3(0.004, 0.004, 0.005);
@@ -263,6 +376,9 @@ bool ih_shade(vec3 ro, vec3 rd, out vec3 c) {
 }
 
 void main() {
+    // Footprint first, in uniform control flow (derivatives).
+    float fp = max(length(fwidth(v_body_pos)), 1e-4);
+    g_detail = smoothstep(1.5, 6.0, kRoomSize.z / fp);   // deck pitch in pixels
     vec3 ro = v_body_pos;
     vec3 rd = v_body_pos - u_camera_pos_body;
     float rd_len = length(rd);
