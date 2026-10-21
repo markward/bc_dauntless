@@ -689,13 +689,15 @@ def test_death_explosion_is_explosionA_8x8_sheet():
     particles.reset()
 
 
-def test_death_explosion_tuning_matches_bc():
+def test_death_explosion_tuning_matches_bc(monkeypatch):
     """Each cascade blast is BC's CreateDebrisExplosion(fRadius * 0.25, 1.5,
     ...): life 1.5 s, and size keys scaled by a quarter of the ship radius.
 
     Radius 8 is chosen so fSize is 2.0 -- at radius 4 the scale factor is 1.0
-    and a missing multiply would pass unnoticed.
+    and a missing multiply would pass unnoticed. The blast size tier (Ruling
+    5, test_death_cascade.py) is pinned to 1 so this reads BC's base size.
     """
+    monkeypatch.setattr(death_cascade, "roll_blast_scale", lambda rand=None: 1.0)
     from engine.appc import particles
     particles.reset()
     radius = 8.0
@@ -822,9 +824,11 @@ def test_begin_schedules_explosion_lights():
     assert data[0]["position"] == pytest.approx((1.0, 2.0, 3.0))
 
 
-def test_explosion_light_radius_follows_the_fireball_size():
+def test_explosion_light_radius_follows_the_fireball_size(monkeypatch):
     """The light must be sized off the SAME formula the sprite uses, not a
-    second copy of it — ship_death passes its computed size through."""
+    second copy of it — ship_death passes its computed size through. The
+    blast size tier is pinned to 1 (BC's base size)."""
+    monkeypatch.setattr(death_cascade, "roll_blast_scale", lambda rand=None: 1.0)
     from engine.appc import explosion_lights
     ship = FakeShip(radius=20.0)
     ship.GetWorldLocation = lambda: type("P", (), {"x": 0.0, "y": 0.0, "z": 0.0})()

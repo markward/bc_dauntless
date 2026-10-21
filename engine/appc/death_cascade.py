@@ -54,6 +54,20 @@ DAMAGE_RADIUS_FRACTION = 0.25  # fRadius / 4.0
 DAMAGE_STRENGTH = 600.0        # the "major hull breach" authored tier
 
 BLAST_SIZE_FRACTION = 0.25   # CreateDebrisExplosion(fRadius * 0.25, ...)
+
+# ── Blast size tiers: a DELIBERATE departure from BC (Ruling 5, 2026-10-21) ──
+# BC sizes every blast at fRadius * 0.25 and every hole at 600; Mark found the
+# deaths "all very even in size" and asked for variety, some larger. Each blast
+# rolls a multiplier m from this table -- (probability, lo, hi), uniform within
+# the tier -- applied to the fireball, the light and the VISIBLE hole. The
+# hole gets it through visible_damage.carve_scale, NOT AddDamage's arguments:
+# AddDamage also deals gameplay damage (combat.apply_hit, objects.py), which
+# stays BC's 600 at radius / 4. A dial: retune live if wrong.
+BLAST_SIZE_TIERS = (
+    (0.60, 0.7, 1.0),
+    (0.30, 1.0, 1.6),
+    (0.10, 1.8, 2.6),
+)
 BLAST_LIFE = 1.5             # fLife argument to CreateDebrisExplosion
 
 # ── Fireball timing: OVERRIDES of the SDK helper, tuned by eye ───────────────
@@ -113,6 +127,18 @@ def roll_duration(ship, rand=None) -> float:
     if life > LIFETIME_UNSET:
         return float(rand(100)) / 10.0 + THROES_MIN
     return life
+
+
+def roll_blast_scale(rand=None) -> float:
+    """One blast's size multiplier from BLAST_SIZE_TIERS, on the cascade's RNG."""
+    rand = rand or _rand
+    pick = rand(1000) / 1000.0
+    acc = 0.0
+    for p, lo, hi in BLAST_SIZE_TIERS:
+        acc += p
+        if pick < acc:
+            break
+    return lo + (hi - lo) * (rand(1001) / 1000.0)
 
 
 def plan(duration: float, rand=None) -> list:
@@ -190,9 +216,11 @@ def _fire(state: dict, sound_ok: bool) -> None:
         with frame_profiler.scope("casc.point"):
             point = ship.GetRandomPointOnModel()
         radius = float(ship.GetRadius())
+        m = roll_blast_scale(rand)
 
         if rand(10) < DAMAGE_CHANCE_IN_10:
-            with frame_profiler.scope("casc.add_damage"):
+            from engine.appc import visible_damage
+            with frame_profiler.scope("casc.add_damage"), visible_damage.carve_scale(m):
                 ship.AddDamage(point, radius * DAMAGE_RADIUS_FRACTION, DAMAGE_STRENGTH)
 
             from engine.appc import damage_geometry
@@ -203,9 +231,9 @@ def _fire(state: dict, sound_ok: bool) -> None:
                                                    kCascadeCapsuleRadiusGu)
 
         with frame_profiler.scope("casc.explosion"):
-            _debris_explosion(ship, point, radius * BLAST_SIZE_FRACTION, rand)
+            _debris_explosion(ship, point, radius * BLAST_SIZE_FRACTION * m, rand)
         with frame_profiler.scope("casc.light"):
-            _light(ship, radius * BLAST_SIZE_FRACTION)
+            _light(ship, radius * BLAST_SIZE_FRACTION * m)
         if sound_ok:
             with frame_profiler.scope("casc.sound"):
                 _death_sound(ship)

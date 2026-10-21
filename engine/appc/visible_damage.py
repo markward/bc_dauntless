@@ -49,6 +49,49 @@ CARVE_BUDGET_MS = 3.0
 # nacelle occluding the saucer) rather than the surface actually being carved.
 NORMAL_PROBE_MARGIN_GU = 0.5
 
+# AddDamage holes with carving off (Ruling 5, 2026-10-21) -- a DELIBERATE
+# departure from BC's fixed fRadius x 0.25 / 600, at Mark's request: death
+# explosions read "all very even in size", and every 600 hole wore past deck
+# break, so a dead hull showed straight through to its nacelles. The hole cap
+# scales with strength / 600 inside [MIN, MAX]; below BLOW_THROUGH strength
+# the wear tears into the rooms (ROOM_FRACTION of the way from breach to deck
+# break, read from the live plating dials) and the decks hold; at or above it
+# (the cascade's big tier, m >= 1.8 at 600) it is internal_blast.STRENGTH.
+ADD_DAMAGE_HOLE_SCALE_MIN = 0.5
+ADD_DAMAGE_HOLE_SCALE_MAX = 3.0
+ADD_DAMAGE_ROOM_FRACTION = 0.7
+ADD_DAMAGE_BLOW_THROUGH_STRENGTH = 1080.0
+
+# Size multiplier on the VISIBLE half of AddDamage (queue_world_carve) while
+# a `carve_scale` block is active -- the death cascade's blast size tier.
+# AddDamage's gameplay half (combat.apply_hit) never sees it.
+_carve_scale = 1.0
+
+
+class carve_scale:
+    """`with carve_scale(m): ship.AddDamage(...)` scales the queued visible
+    radius and strength by m; gameplay damage is untouched."""
+
+    def __init__(self, m):
+        self._m = float(m)
+        self._prev = 1.0
+
+    def __enter__(self):
+        global _carve_scale
+        self._prev = _carve_scale
+        _carve_scale = self._m
+        return self
+
+    def __exit__(self, *exc):
+        global _carve_scale
+        _carve_scale = self._prev
+        return False
+
+
+def current_carve_scale() -> float:
+    return _carve_scale
+
+
 # Registry of not-yet-emitted volumes. Each entry:
 #   {"ship", "kind": "body"|"world"|"capsule"|"scuff", "pt": (x, y, z), "radius": float, "age": float}
 _pending: list[dict] = []
@@ -80,7 +123,8 @@ def queue_world_carve(ship, pEmitPos, fRadius, fDamage=0.0) -> None:
         return
     _pending.append({
         "ship": ship, "kind": "world",
-        "pt": wp, "influ": float(fRadius), "strength": float(fDamage), "age": 0.0,
+        "pt": wp, "influ": float(fRadius) * _carve_scale,
+        "strength": float(fDamage) * _carve_scale, "age": 0.0,
     })
 
 
@@ -223,11 +267,19 @@ def _advance_one(entry, dt, ship_instances) -> bool:
         # SPIKE (damage redesign): no carve -- the hole is an Internal damage
         # record on the hull, failing the plating layers inside-out (torn and
         # cut at the core, members and stripped plating around it). Sized by
-        # the same floor, capped near BC's 0.30 GU max carve; strength
-        # relative to BC's 600 "major hull breach" sets how far through.
-        from engine.appc import internal_blast
-        hole = min(floor, internal_blast.ADD_DAMAGE_MAX_HOLE_GU)
-        wear = internal_blast.STRENGTH * max(0.2, min(1.0, strength / 600.0))
+        # the same floor, capped near BC's 0.30 GU max carve times strength
+        # relative to BC's 600 "major hull breach"; see ADD_DAMAGE_* above
+        # for the wear (a deliberate departure, Ruling 5).
+        from engine.appc import internal_blast, plating_dials
+        rel = max(ADD_DAMAGE_HOLE_SCALE_MIN,
+                  min(ADD_DAMAGE_HOLE_SCALE_MAX, strength / 600.0))
+        hole = min(floor, internal_blast.ADD_DAMAGE_MAX_HOLE_GU * rel)
+        if strength < ADD_DAMAGE_BLOW_THROUGH_STRENGTH:
+            dials = plating_dials.current()
+            breach = dials["breach_wear"]
+            wear = breach + ADD_DAMAGE_ROOM_FRACTION * (dials["deck_break_wear"] - breach)
+        else:
+            wear = internal_blast.STRENGTH
         mesh_pt, mesh_normal = _mesh_probe(iid, world_pt, normal, ship)
         if mesh_pt is not None:
             world_pt = mesh_pt

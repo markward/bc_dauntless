@@ -369,9 +369,83 @@ def test_with_carving_off_add_damage_leaves_an_internal_hole_record(monkeypatch)
     big, small = wear_calls
     assert big[5] == 3
     assert big[3] == pytest.approx(internal_blast.ADD_DAMAGE_MAX_HOLE_GU)   # capped
-    assert big[4] == pytest.approx(internal_blast.STRENGTH)                 # 600 = full
-    assert small[3] == pytest.approx(max(MIN_CARVE_RADIUS_GU, 0.1))
-    assert small[4] == pytest.approx(internal_blast.STRENGTH * 0.25)        # 150 / 600
+    assert small[3] == pytest.approx(min(max(MIN_CARVE_RADIUS_GU, 0.1),
+                                         internal_blast.ADD_DAMAGE_MAX_HOLE_GU * 0.5))
+    rooms = 4.5 + 0.7 * (6.0 - 4.5)
+    assert big[4] == pytest.approx(rooms), "600: torn into the rooms, decks hold"
+    assert small[4] == pytest.approx(rooms)
+
+
+# ── Ruling 5: death holes tear into the rooms; only the big tier blows
+#    through. A deliberate departure from BC's fixed fRadius x 0.25. ────────
+
+def _carving_off_adds(monkeypatch):
+    calls = []
+    monkeypatch.setattr(host_io, "hull_damage_add", lambda *a, **k: calls.append(a))
+    monkeypatch.delenv("DAUNTLESS_HULL_CARVING", raising=False)
+    monkeypatch.setattr(host_io, "ray_trace_mesh", lambda *a, **k: None)
+    return calls
+
+
+def test_ordinary_death_holes_stay_below_deck_break(monkeypatch):
+    from engine.appc import plating_dials
+    calls = _carving_off_adds(monkeypatch)
+    ship = _Ship(loc=TGPoint3(10.0, 0.0, 0.0))
+    for strength in (420.0, 600.0, 960.0, 1079.0):   # m 0.7 .. just under 1.8
+        visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 1.0, strength)
+    visible_damage.advance(0.0, {ship: 2})
+    d = plating_dials.current()
+    for c in calls:
+        assert d["breach_wear"] < c[4] < d["deck_break_wear"]
+        assert c[4] == pytest.approx(d["breach_wear"] + 0.7 * (
+            d["deck_break_wear"] - d["breach_wear"]))
+
+
+def test_the_big_tier_blows_through(monkeypatch):
+    from engine.appc import internal_blast
+    calls = _carving_off_adds(monkeypatch)
+    ship = _Ship(loc=TGPoint3(10.0, 0.0, 0.0))
+    for strength in (1080.0, 1560.0):                 # m 1.8, 2.6
+        visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 1.0, strength)
+    visible_damage.advance(0.0, {ship: 2})
+    assert [c[4] for c in calls] == pytest.approx([internal_blast.STRENGTH] * 2)
+
+
+def test_room_wear_follows_the_live_dials(monkeypatch):
+    from engine.appc import plating_dials
+    calls = _carving_off_adds(monkeypatch)
+    monkeypatch.setattr(plating_dials, "_dials", dict(
+        plating_dials.DEFAULTS, breach_wear=3.0, deck_break_wear=8.0))
+    ship = _Ship(loc=TGPoint3(10.0, 0.0, 0.0))
+    visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 1.0, 600.0)
+    visible_damage.advance(0.0, {ship: 2})
+    assert calls[0][4] == pytest.approx(3.0 + 0.7 * 5.0)
+
+
+def test_the_hole_cap_scales_with_strength(monkeypatch):
+    from engine.appc import internal_blast
+    calls = _carving_off_adds(monkeypatch)
+    ship = _Ship(loc=TGPoint3(10.0, 0.0, 0.0))
+    for strength in (150.0, 420.0, 1200.0, 6000.0):
+        visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 5.0, strength)
+    visible_damage.advance(0.0, {ship: 2})
+    cap = internal_blast.ADD_DAMAGE_MAX_HOLE_GU
+    assert [c[3] for c in calls] == pytest.approx(
+        [cap * 0.5, cap * 0.7, cap * 2.0, cap * 3.0]), "clamp(s / 600, 0.5, 3)"
+
+
+def test_carve_scale_sizes_only_the_visible_entry():
+    """visible_damage.carve_scale(m) (the death cascade's blast size) scales
+    the queued visible radius and strength while it is active, never after."""
+    ship = _Ship()
+    with visible_damage.carve_scale(2.0):
+        assert visible_damage.current_carve_scale() == 2.0
+        visible_damage.queue_world_carve(ship, TGPoint3(1.0, 0.0, 0.0), 0.5, 600.0)
+    visible_damage.queue_world_carve(ship, TGPoint3(1.0, 0.0, 0.0), 0.5, 600.0)
+    scaled, plain = visible_damage._pending
+    assert (scaled["influ"], scaled["strength"]) == pytest.approx((1.0, 1200.0))
+    assert (plain["influ"], plain["strength"]) == pytest.approx((0.5, 600.0))
+    assert visible_damage.current_carve_scale() == 1.0
 
 
 def test_with_carving_off_add_damage_asks_for_severed_parts(monkeypatch):
