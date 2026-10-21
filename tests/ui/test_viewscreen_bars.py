@@ -87,14 +87,17 @@ def test_unidentified_contact_shows_its_placeholder_and_grey(scene, monkeypatch)
 
 
 def test_subsystem_lock_still_shows_the_ship_name(scene):
+    from engine.appc.subsystems import ShipSubsystem
     pSet, player, state = scene
     t = _ship(pSet, "Kessok", y=200.0)
     state["mission"] = _mission(enemy=["Kessok"])
-    subs = list(t.GetSubsystems()) if hasattr(t, "GetSubsystems") else []
-    if subs:
-        player.SetTargetSubsystem(subs[0])
+    sub = ShipSubsystem("Phasers")
+    player.SetTargetSubsystem(sub)
+    assert player.GetTargetSubsystem() is sub
+    assert sub.GetDisplayName() == "Phasers"
     d = viewscreen_bars.build_viewscreen_bars(player, t)
     assert d["top_text"] == "Kessok"
+    assert d["top_text"] != sub.GetDisplayName()
 
 
 def test_bottom_text_equals_the_reticle_line(scene):
@@ -124,3 +127,54 @@ def test_no_target_or_dead_target_is_hidden(scene, monkeypatch):
     from engine.appc import camera_modes
     monkeypatch.setattr(camera_modes, "_target_alive", lambda o: False)
     assert viewscreen_bars.build_viewscreen_bars(player, t) == {"visible": False}
+
+
+@pytest.fixture
+def real_game():
+    from engine.core.game import Episode, Game, _set_current_game
+    mission = _mission(enemy=["Kessok"])
+    episode = Episode()
+    episode.SetCurrentMission(mission)
+    game = Game()
+    game.SetCurrentEpisode(episode)
+    _set_current_game(game)
+    yield mission
+    _set_current_game(None)
+
+
+def test_real_current_mission_drives_the_band(real_game, monkeypatch):
+    contact_index.reset()
+    pSet = SetClass()
+    player = _ship(pSet, "player")
+    t = _ship(pSet, "Kessok", y=200.0)
+    monkeypatch.setattr(sensor_contacts, "shows_identity",
+                        lambda *a, **k: True)
+    assert viewscreen_bars._current_mission() is real_game
+    d = viewscreen_bars.build_viewscreen_bars(player, t)
+    assert d["band_rgb"] == (216, 43, 43)
+
+
+def test_no_current_game_means_no_mission_and_a_grey_band(monkeypatch):
+    from engine.core.game import _set_current_game
+    _set_current_game(None)
+    contact_index.reset()
+    pSet = SetClass()
+    player = _ship(pSet, "player")
+    t = _ship(pSet, "Kessok", y=200.0)
+    monkeypatch.setattr(sensor_contacts, "shows_identity",
+                        lambda *a, **k: True)
+    assert viewscreen_bars._current_mission() is None
+    assert viewscreen_bars.build_viewscreen_bars(player, t)["band_rgb"] == (128, 128, 128)
+
+
+def test_real_identity_path_with_no_player_sensors_reads_unknown():
+    from engine.core.game import _set_current_game
+    _set_current_game(None)
+    contact_index.reset()
+    pSet = SetClass()
+    player = _ship(pSet, "player")
+    t = _ship(pSet, "SecretName", y=200.0)
+    d = viewscreen_bars.build_viewscreen_bars(player, t)
+    assert d["top_text"] == unknown_labels.placeholder(t)
+    assert d["band_rgb"] == (128, 128, 128)
+    assert "SecretName" not in repr(d)
