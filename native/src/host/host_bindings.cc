@@ -2563,7 +2563,9 @@ static void vent_on_breach_crossing(scenegraph::Instance& inst,
 // -- a point the writer already holds in the rest frame (authored DamageTool
 // volumes) -- and any point on a RIGGED instance at the identity pose are
 // attributed in REST space (renderer::attribute_rest_point: the nearest rest
-// triangle's own node) and never converted.
+// triangle's own node) and never converted. On a rigged instance in a
+// partial pose, a hit on a chain with no override also takes its triangle's
+// own node (Ruling 7).
 struct WearNode {
     int       node = -1;
     glm::mat4 to_rest{1.0f};
@@ -2586,7 +2588,12 @@ static WearNode wear_node_for(const scenegraph::Instance& inst, const glm::vec3&
     }
     const renderer::RestAttribution a =
         renderer::attribute_to_rest_frame(*m, inst.node_overrides, posed_point);
-    w.node = a.node;
+    // A rigged hull in a PARTIAL pose (Ruling 7): a hit on a part whose chain
+    // has no override right now (owner -1, so posed == rest there and to_rest
+    // is identity) is filed on the struck triangle's own node, exactly as at
+    // the identity pose above, so it stays on the part when the part swings.
+    // An unrigged (SPV-posed) hull keeps the body.
+    w.node = (a.node < 0 && inst.rigged) ? a.own_node : a.node;
     w.to_rest = a.to_rest;
     w.to_posed = glm::inverse(a.to_rest);
     return w;
@@ -7660,6 +7667,22 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "and is converted with the same scale as hull_damage_add. kind: "
           "1=Surface, 3=Internal. Attributed and stored like hull_damage_add; "
           "rest_frame=True as there.");
+
+    m.def("_test_only_posed_owner",
+          [](scenegraph::InstanceId id, int node) -> int {
+              const auto* inst = g_world.get(id);
+              if (inst == nullptr || node < 0) return -1;
+              const assets::Model* m = resolve_model(inst->model_handle);
+              if (m == nullptr) return -1;
+              const std::vector<int> owners = renderer::posed_owners(*m, inst->node_overrides);
+              return static_cast<std::size_t>(node) < owners.size()
+                         ? owners[static_cast<std::size_t>(node)] : -1;
+          },
+          py::arg("instance_id"), py::arg("node"),
+          "TEST ONLY: renderer::posed_owners for `node` under the instance's "
+          "current overrides -- the frame a record on that node is drawn in "
+          "(a mesh draws a record when their posed owners agree). -1: no "
+          "override on its chain, or a bad id/node.");
 
     m.def("_test_only_breach_events",
           [](scenegraph::InstanceId id) {

@@ -373,3 +373,73 @@ def test_set_instance_rigged_on_a_stale_id_is_false():
     stale = _h.create_instance(0)
     _h.destroy_instance(stale)
     assert _h.set_instance_rigged(stale, True) is False
+
+
+# ── Ruling 7: a rigged ship in a PARTIAL pose ───────────────────────────────
+# A rigged instance WITH overrides, hit on a part that has no override entry
+# at that moment (its chain is at rest, so posed == rest there): the hit is
+# filed on the struck triangle's OWN node, not the body, so it stays on that
+# part when the part is posed later.
+
+_OTHER_WING = "left wing01"
+
+
+def test_rigged_partial_pose_hit_on_an_unposed_part_stays_on_it(posed_bop):
+    iid = posed_bop
+    rest, _posed, _to_rest = _wing_frames(iid)
+    import math
+    c, s = math.cos(math.radians(40.0)), math.sin(math.radians(40.0))
+    pose_col_major = [1.0, 0.0, 0.0, 0.0,
+                      0.0, c, s, 0.0,
+                      0.0, -s, c, 0.0,
+                      0.0, 0.0, 25.0, 1.0]
+    # Only the OTHER wing is posed; the struck wing has no override entry.
+    assert _h.clear_instance_node_overrides(iid)
+    assert _h.set_instance_node_transform(iid, _OTHER_WING, pose_col_major)
+    assert _h.set_instance_rigged(iid, True)
+    q, n = _rest_wing_hit(iid, rest)
+    _h.hull_damage_add(iid, q, n, 0.3, 1.0, 1)
+    (rec,) = _records(iid)
+    assert rec["node"] >= 0, "a partial-pose hit on an unposed part fell on the body"
+    assert rec["centre"] == pytest.approx(q, abs=1e-4), "posed == rest there: no conversion"
+
+    # Before the wing swings its record is drawn in the body's frame (no
+    # override on its chain), as the hit was.
+    assert _h._test_only_posed_owner(iid, rec["node"]) == -1
+
+    # Now the struck wing swings. A hit at the same spot on the POSED wing is
+    # filed on the wing's owner node at the SAME rest point, and the first
+    # record is now drawn in exactly that frame (posed owners agree: the
+    # frame filter's test), unchanged: the damage went with the part.
+    assert _h.set_instance_node_transform(iid, _WING, pose_col_major)
+    _rest2, posed, to_rest = _wing_frames(iid)
+    q_posed = _apply(_inverse_rigid(to_rest), q)
+    n_posed = _apply(_inverse_rigid(to_rest), n, 0.0)
+    assert max(abs(a - b) for a, b in zip(q_posed, q)) > 5.0, \
+        "the pose barely moves the point: the test could not tell the frames apart"
+    _h.hull_damage_add_body(iid, q_posed, n_posed, 0.3, 1.0, 1)
+    recs = _records(iid)
+    assert sum(r["wear"] for r in recs) == pytest.approx(2.0)
+    assert rec["node"] in {r["node"] for r in recs}, "the first record lost its node"
+    for r in recs:
+        assert r["centre"] == pytest.approx(q, abs=1e-2), \
+            "the posed wing's rest frame is not the frame the first record is in"
+    owners = {_h._test_only_posed_owner(iid, r["node"]) for r in recs}
+    assert len(owners) == 1 and owners != {-1}, \
+        f"the first record is not drawn on the posed wing (posed owners {owners})"
+
+
+def test_unrigged_partial_pose_hit_on_an_unposed_part_stays_on_the_body(posed_bop):
+    """The own-node rule is for RIGGED ships only: an unrigged hull posed by
+    hand (the SPV) keeps such a hit on the body, as before."""
+    iid = posed_bop
+    rest, _posed, _to_rest = _wing_frames(iid)
+    assert _h.clear_instance_node_overrides(iid)
+    assert _h.set_instance_node_transform(
+        iid, _OTHER_WING, [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+                           0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 25.0, 1.0])
+    assert _h.set_instance_rigged(iid, False)
+    q, n = _rest_wing_hit(iid, rest)
+    _h.hull_damage_add(iid, q, n, 0.3, 1.0, 1)
+    (rec,) = _records(iid)
+    assert rec["node"] == -1

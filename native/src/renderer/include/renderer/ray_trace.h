@@ -97,6 +97,11 @@ struct RestAttribution {
     int       node = -1;            ///< the overridden node it is on; -1 the body
     glm::mat4 to_rest{1.0f};        ///< posed body frame -> that node's rest frame
     float     distance = 0.0f;      ///< to the nearest rest triangle, model units
+    /// The winning triangle's OWN node (-1 when none was found). For a hit
+    /// whose chain carries no override (`node` -1) this is the part it lies
+    /// on at rest == posed: a rigged ship files it there (Ruling 7), so the
+    /// hit stays on the part when the part is posed later.
+    int       own_node = -1;
 };
 
 /// Which posed part a POSED body-frame point (model units) lies on, by
@@ -104,7 +109,8 @@ struct RestAttribution {
 /// (node_anim.h rest_corrections) is applied to the point, and the nearest
 /// REST triangle among the meshes sharing that correction wins. The answer is
 /// that mesh's posed owner -- its nearest overridden ancestor, or -1 when its
-/// chain carries no override -- with that C. Severed (zero-matrix) subtrees
+/// chain carries no override -- with that C, and the triangle's own node in
+/// `own_node`. Severed (zero-matrix) subtrees
 /// are never chosen. Empty `overrides`: {-1, identity} without any work.
 /// Box tests cannot answer this: the LC Intrepid's hull box encloses its
 /// nacelles. Main thread only (the trace accel).

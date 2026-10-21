@@ -1957,6 +1957,8 @@ TEST_F(PlatingRenderTest, PosedHitInsideTheBodyBoxIsAttributedByGeometry) {
     const glm::vec3 on_hull(-30.0f, -40.0f, -20.0f);
     const auto on_body = renderer::attribute_to_rest_frame(*model, overrides, on_hull);
     EXPECT_EQ(on_body.node, -1);
+    EXPECT_EQ(on_body.own_node, 0) << "the struck triangle's own node (the hull's)";
+    EXPECT_EQ(on_part.own_node, 1);
     EXPECT_EQ(on_body.to_rest, glm::mat4(1.0f));
     EXPECT_EQ(renderer::attribute_to_rest_frame(*model, {}, hit_posed).node, -1)
         << "no overrides: the body, no work";

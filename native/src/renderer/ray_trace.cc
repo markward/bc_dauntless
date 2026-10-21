@@ -673,9 +673,11 @@ RestAttribution attribute_to_rest_frame(
             const auto tn = static_cast<std::size_t>(t.node);
             return po.owner[tn] == g && !po.severed[tn];
         };
-        if (nearest_rest_triangle(accel, q, take, best) >= 0) {
+        const int k = nearest_rest_triangle(accel, q, take, best);
+        if (k >= 0) {
             out.node = g;
             out.to_rest = to_rest;
+            out.own_node = accel.tris[static_cast<std::size_t>(k)].node;
         }
     }
     out.distance = best < std::numeric_limits<float>::max() ? std::sqrt(best) : 0.0f;
@@ -701,6 +703,7 @@ RestAttribution attribute_rest_point(
     const int k = nearest_rest_triangle(accel, rest_point, take, best);
     if (k >= 0) {
         out.node = accel.tris[static_cast<std::size_t>(k)].node;
+        out.own_node = out.node;
         out.distance = std::sqrt(best);
     }
     return out;
