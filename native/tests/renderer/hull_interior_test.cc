@@ -716,9 +716,14 @@ TEST_F(HullInteriorTest, FarRockCraterIsPaintedNotCut) {
     EXPECT_EQ(s.marks, 0);
     EXPECT_EQ(s.interiors, 0);
     const std::uint8_t* q = pixel(s.px, centre().x, centre().y);
+    const int lit = rgb_sum(pixel(whole.px, centre().x, centre().y));
+    std::fprintf(stderr, "[HullInterior] far rock crater sum %d, undamaged %d\n", rgb_sum(q), lit);
     EXPECT_FALSE(is_clear(q)) << "a far rock's crater must be painted, not cut";
-    EXPECT_LT(rgb_sum(q) * 2, rgb_sum(pixel(whole.px, centre().x, centre().y)))
-        << "the far rock crater is not painted dark";
+    EXPECT_LT(rgb_sum(q) * 2, lit) << "the far rock crater is not painted dark";
+    // ...but it is the rock's own albedo darkened (x 0.21..0.35), never a
+    // ship's far wreckage paint (near-black char, 0.02): a lower bound well
+    // between the two.
+    EXPECT_GT(rgb_sum(q) * 8, lit) << "the far rock crater is painted as ship wreckage";
 }
 
 // ---- Phase 2 Task 3: the deck-break subset. ---------------------------------

@@ -240,3 +240,49 @@ TEST(HullDamageStore, ForcedMergeNeverJoinsTwoNodes) {
         }
     EXPECT_EQ(on_node1, 1);
 }
+
+// HullDamageAddResult on a FULL store (the breach-crossing reader keys off it):
+// a forced pair merge reports the slot the NEW input went into, fresh (wear
+// before 0); with no same-node pair, the input folds into its own node's
+// record and the result reports that slot's wear either side; with no record
+// of its node at all it is dropped (index -1).
+TEST(HullDamageStore, ForcedMergeReportsWhereTheInputLanded) {
+    HullDamageStore s;
+    s.add({0, 0, 0}, kUp, 10.0f, 1.0f, HullDamageKind::Surface);
+    s.add({12, 0, 0}, kUp, 10.0f, 1.0f, HullDamageKind::Surface);   // > 0.5 x 10 apart
+    for (int i = 0; i < 62; ++i)
+        s.add({1.0e4f * (i + 1), 0, 0}, kUp, 1.0f, 1.0f, HullDamageKind::Surface);
+    ASSERT_EQ(s.count(), 64u);
+    const glm::vec3 far{-1.0e6f, 0, 0};
+    const auto r = s.add(far, kUp, 2.0f, 3.0f, HullDamageKind::Surface);
+    ASSERT_GE(r.index, 0);
+    EXPECT_EQ(s.count(), 64u);
+    const HullDamageRecord& got = s.records()[static_cast<std::size_t>(r.index)];
+    EXPECT_EQ(got.centre_body, far) << "the result names a slot the input did not go into";
+    EXPECT_FLOAT_EQ(got.wear, 3.0f);
+    EXPECT_FLOAT_EQ(r.wear_before, 0.0f);
+    EXPECT_FLOAT_EQ(r.wear_after, 3.0f);
+}
+
+TEST(HullDamageStore, FoldIntoOwnNodeReportsThatSlotsWear) {
+    HullDamageStore s;
+    for (int n = 0; n < 64; ++n)      // 64 records, every one on its own node
+        s.add({1.0e3f * n, 0, 0}, kUp, 10.0f, 1.0f, HullDamageKind::Surface, n);
+    ASSERT_EQ(s.count(), 64u);
+    int slot5 = -1;
+    for (std::size_t i = 0; i < HullDamageStore::kCapacity; ++i)
+        if (s.records()[i].node == 5) slot5 = static_cast<int>(i);
+    ASSERT_GE(slot5, 0);
+    // Far from node 5's record: no voluntary merge, no free slot, no pair.
+    const auto r = s.add({-1.0e6f, 0, 0}, kUp, 10.0f, 2.0f, HullDamageKind::Surface, 5);
+    EXPECT_EQ(r.index, slot5);
+    EXPECT_FLOAT_EQ(r.wear_before, 1.0f);
+    EXPECT_FLOAT_EQ(r.wear_after, 3.0f);
+    EXPECT_FLOAT_EQ(s.records()[static_cast<std::size_t>(slot5)].wear, 3.0f);
+    EXPECT_EQ(s.count(), 64u);
+
+    const float before = total_wear(s);
+    const auto dropped = s.add({0, 0, 0}, kUp, 10.0f, 2.0f, HullDamageKind::Surface, 99);
+    EXPECT_EQ(dropped.index, -1) << "no record of node 99: the input is dropped";
+    EXPECT_FLOAT_EQ(total_wear(s), before);
+}
