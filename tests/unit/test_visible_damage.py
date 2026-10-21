@@ -32,9 +32,11 @@ class _RecordSpy:
 
     def __init__(self):
         self.records = []  # (iid, point, normal, radius, wear, kind)
+        self.rest_frame = []  # the rest_frame flag of each record, in order
 
-    def __call__(self, iid, point, normal, radius, wear, kind):
+    def __call__(self, iid, point, normal, radius, wear, kind, rest_frame=False):
         self.records.append((iid, point, normal, radius, wear, kind))
+        self.rest_frame.append(rest_frame)
 
 
 @pytest.fixture
@@ -151,6 +153,25 @@ def test_unrealized_ship_keeps_pending_and_never_raises():
     visible_damage.advance(0.1, ship_instances={})            # unmapped ship
     visible_damage.advance(0.1, ship_instances=None)          # no map at all
     assert len(visible_damage._pending) == 1  # still waiting, nothing emitted
+
+
+def test_authored_body_volume_is_sent_as_rest_frame(host):
+    """Layered damage phase 4 §2.1: a DamageTool volume is authored in the
+    ship's REST frame (mission init), so it opts out of the binding's posed
+    part attribution (rest_frame=True, recorded on the hull body)."""
+    ship = _Ship()
+    visible_damage.queue_body_volume(ship, 1.0, 0.0, 0.0, 0.5, 300.0)
+    visible_damage.advance(0.0, {ship: 7})
+    assert host.rest_frame == [True]
+
+
+def test_runtime_add_damage_is_attributed_to_the_posed_part(host):
+    """AddDamage (the death cascade) lands at posed-time points: the binding
+    attributes it (rest_frame False)."""
+    ship = _Ship(loc=TGPoint3(10.0, 0.0, 0.0))
+    visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 0.6, 600.0)
+    visible_damage.advance(0.0, {ship: 2})
+    assert host.rest_frame == [False]
 
 
 # ── Runtime world-space volume (AddDamage / DeathExplosionDamage) ──────────

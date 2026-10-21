@@ -282,73 +282,22 @@ def test_wear_reaching_the_store_asks_for_severed_parts(fake, clock, monkeypatch
     assert asked[2] == (ship, 3, 1, 2)
 
 
-# ── Damage moves with articulated parts (layered damage phase 4 §2.1) ────────
-# Each hit is attributed with part_severance.part_for_live_point (SHIP units)
-# and the part's node name rides along to the wear binding, which stores the
-# record on that node in its REST frame.
+def test_combat_wear_is_sent_posed_for_the_binding_to_attribute(fake, clock, monkeypatch):
+    """Layered damage phase 4 §2.1: combat wear names no part and never opts
+    out of attribution -- the binding finds the posed part by geometry at
+    send time, so the per-tick phaser path does no rig lookup at all."""
+    from engine.appc import part_severance
 
-@pytest.fixture
-def rig(monkeypatch):
-    """A rigged ship whose posable parts are `rig.parts`; part_for_live_point
-    answers `rig.answer` and records the (ship-unit) points it was asked."""
-    from engine.appc import articulation, part_severance
-    state = type("Rig", (), {})()
-    state.parts = ("left wing", "right wing")
-    state.answer = "left wing"
-    state.asked = []
-    monkeypatch.setattr(articulation, "posed_part_names", lambda ship: state.parts)
-
-    def _part(ship, point, iid=None):
-        state.asked.append(tuple(point))
-        return state.answer
-    monkeypatch.setattr(part_severance, "part_for_live_point", _part)
-    return state
-
-
-def _node(call):
-    _a, k = call
-    return k.get("node_name", "")
-
-
-def test_projectile_hit_on_a_posed_part_sends_its_node(fake, clock, rig):
-    _hit(_Ship(), point=(1.0, 2.0, 3.0))
-    (call,) = fake.wear
-    assert _node(call) == "left wing"
-    # Body (100, 200, 300) model units -> SHIP units for the rig lookup.
-    assert rig.asked == [pytest.approx((1.0, 2.0, 3.0))]
-
-
-def test_hit_on_the_body_of_a_rigged_ship_sends_no_node(fake, clock, rig):
-    rig.answer = None
-    _hit(_Ship())
-    assert _node(fake.wear[0]) == ""
-
-
-def test_a_part_that_never_poses_is_not_a_node(fake, clock, rig):
-    rig.answer = "saucer"                  # a box, but not a posable part
-    _hit(_Ship())
-    assert _node(fake.wear[0]) == ""
-
-
-def test_unrigged_ship_skips_attribution(fake, clock, rig):
-    rig.parts = ()
-    _hit(_Ship())
-    assert _node(fake.wear[0]) == ""
-    assert rig.asked == [], "no rig lookup for a ship with nothing to pose"
-
-
-def test_pending_phaser_wear_keeps_its_node_and_flushes_per_node(fake, clock, rig):
+    def _no_lookup(*a, **k):
+        raise AssertionError("hull_wear must not attribute parts itself")
+    monkeypatch.setattr(part_severance, "part_for_live_point", _no_lookup)
     ship = _Ship()
-    _phaser(ship)                          # t=0: sent at once
-    assert _node(fake.body_wear[0]) == "left wing"
-    fake.body_wear.clear()
+    _hit(ship)
     clock[0] = 0.05
-    _phaser(ship)                          # held on the left wing
-    assert fake.body_wear == []
-    rig.answer = "right wing"              # same spot, another part now
+    _phaser(ship)
     clock[0] = 0.06
     _phaser(ship)
-    (first,) = fake.body_wear
-    assert _node(first) == "left wing", "the held entry flushed with its own node"
     hull_wear.drain(0.5)
-    assert _node(fake.body_wear[1]) == "right wing"
+    assert fake.wear and fake.body_wear
+    for _a, k in fake.wear + fake.body_wear:
+        assert not k.get("rest_frame", False)

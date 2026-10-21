@@ -208,56 +208,72 @@ def _inverse_rigid(m):
     return [rt[0] + [ti[0]], rt[1] + [ti[1]], rt[2] + [ti[2]], [0.0, 0.0, 0.0, 1.0]]
 
 
-def test_wear_hit_on_a_posed_part_records_its_node(posed_bop):
-    iid = posed_bop
+def _wing_frames(iid):
+    """(rest, posed, posed->rest) for the wing, row-major 4x4."""
     rest = _mat(_h.instance_node_world(iid, _WING, False))
     posed = _mat(_h.instance_node_world(iid, _WING, True))
     assert rest != posed, "the wing is not posed"
-    # A point and normal fixed to the wing: given in REST body coordinates,
-    # carried to where the posed wing draws them (P . R^-1).
-    q_rest = _apply(rest, (10.0, -5.0, 3.0))
-    n_rest = (0.0, 0.6, 0.8)
-    to_posed = _mul(posed, _inverse_rigid(rest))
-    q_posed = _apply(to_posed, q_rest)
-    n_posed = _apply(to_posed, n_rest, 0.0)
+    return rest, posed, _mul(rest, _inverse_rigid(posed))
+
+
+def _posed_wing_hit(iid, posed):
+    """A point on the POSED wing's surface: trace in from far outboard (-x)
+    along the line through the posed wing node's origin."""
+    o = (posed[0][3] - 2000.0, posed[1][3], posed[2][3])
+    hit = _h.ray_trace_mesh(iid, o, (1.0, 0.0, 0.0), 4000.0)
+    assert hit is not None, "no posed wing surface on the probe line"
+    return hit[0], hit[1]
+
+
+def test_wear_hit_on_a_posed_part_records_its_node(posed_bop):
+    """No part is named: the binding attributes the posed hit by GEOMETRY and
+    stores it on the wing's node, in the wing's REST frame."""
+    iid = posed_bop
+    _rest, posed, to_rest = _wing_frames(iid)
+    q_posed, n_posed = _posed_wing_hit(iid, posed)
+    q_rest = _apply(to_rest, q_posed)
+    n_rest = _apply(to_rest, n_posed, 0.0)
     assert max(abs(a - b) for a, b in zip(q_posed, q_rest)) > 5.0, \
         "the pose barely moves the point: the test could not tell the frames apart"
 
-    _h.hull_damage_add(iid, q_posed, n_posed, 0.3, 1.0, 1, _WING)
+    _h.hull_damage_add(iid, q_posed, n_posed, 0.3, 1.0, 1)
     (rec,) = _records(iid)
-    assert rec["node"] >= 0, "the record lost its node"
+    assert rec["node"] >= 0, "the posed wing hit was not attributed to its node"
     assert rec["centre"] == pytest.approx(q_rest, abs=1e-2), \
-        "the record must be stored in the node's REST frame"
-    assert rec["normal"] == pytest.approx(n_rest, abs=1e-4)
+        "the record must be stored in the wing's REST frame"
+    assert rec["normal"] == pytest.approx(n_rest, abs=1e-3)
 
-    # The body-frame binding takes the same posed point to the same record.
-    _h.hull_damage_add_body(iid, q_posed, n_posed, 0.3, 1.0, 1, _WING)
+    # The body-frame binding attributes the same posed point the same way.
+    _h.hull_damage_add_body(iid, q_posed, n_posed, 0.3, 1.0, 1)
     (rec2,) = _records(iid)
     assert rec2["wear"] == pytest.approx(2.0), "same node, same spot: merged"
     assert rec2["centre"] == pytest.approx(q_rest, abs=1e-2)
 
-    # The same posed point on the hull BODY is a different record (-1).
-    _h.hull_damage_add_body(iid, q_posed, n_posed, 0.3, 1.0, 1)
-    nodes = sorted(r["node"] for r in _records(iid))
-    assert nodes[0] == -1 and nodes[1] == rec["node"]
+
+def test_rest_frame_writer_opts_out_of_attribution(posed_bop):
+    """Authored (DamageTool) volumes are already rest-frame: rest_frame=True
+    keeps them on the body (-1), point unconverted, even on a posed part."""
+    iid = posed_bop
+    _rest, posed, _to_rest = _wing_frames(iid)
+    q_posed, n_posed = _posed_wing_hit(iid, posed)
+    _h.hull_damage_add_body(iid, q_posed, n_posed, 0.3, 1.0, 3, rest_frame=True)
+    (rec,) = _records(iid)
+    assert rec["node"] == -1
+    assert rec["centre"] == pytest.approx(q_posed, abs=1e-4)
+    _h.hull_damage_add(iid, (q_posed[0], q_posed[1] + 50.0, q_posed[2]), n_posed,
+                       0.3, 1.0, 3, rest_frame=True)
+    assert [r["node"] for r in _records(iid)] == [-1, -1]
 
 
 def test_posed_part_tear_vents_at_the_drawn_hit(posed_bop, breach_wear):
     """Venting is placed through the instance world (posed body frame), so a
     tear on a posed part vents where the part is DRAWN, not at its rest spot."""
     iid = posed_bop
-    rest = _mat(_h.instance_node_world(iid, _WING, False))
-    posed = _mat(_h.instance_node_world(iid, _WING, True))
-    q_posed = _apply(_mul(posed, _inverse_rigid(rest)), _apply(rest, (10.0, -5.0, 3.0)))
+    _rest, posed, _to_rest = _wing_frames(iid)
+    q_posed, n_posed = _posed_wing_hit(iid, posed)
     for _ in range(5):
-        _h.hull_damage_add_body(iid, q_posed, (0.0, 0.0, 1.0), 0.3, 1.0, 1, _WING)
+        _h.hull_damage_add_body(iid, q_posed, n_posed, 0.3, 1.0, 1)
+    (rec,) = _records(iid)
+    assert rec["node"] >= 0
     (ev,) = _breach(iid)
     assert ev["center"] == pytest.approx(q_posed, abs=1e-2)
-
-
-def test_unknown_node_name_records_on_the_body(iid):
-    _h.hull_damage_add_body(iid, (1.0, 2.0, 3.0), (0.0, 0.0, 1.0), 0.3, 1.0, 1,
-                            "no such node")
-    (rec,) = _records(iid)
-    assert rec["node"] == -1
-    assert rec["centre"] == pytest.approx((1.0, 2.0, 3.0), abs=1e-6)

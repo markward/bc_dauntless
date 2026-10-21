@@ -14,7 +14,11 @@
 #include <scenegraph/camera.h>
 #include <assets/model.h>
 
+#include <renderer/node_anim.h>
+
 #include <glad/glad.h>
+
+#include <algorithm>
 
 namespace renderer {
 
@@ -28,7 +32,7 @@ int HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_xf
                             int stencil_value,
                             const std::unordered_map<int, glm::mat4>* node_overrides,
                             const std::vector<std::uint8_t>* mesh_mask,
-                            bool rock, unsigned int rock_tex) {
+                            bool rock, unsigned int rock_tex, bool cull_deck_break) {
     // Camera in this instance's body frame: one inverse per draw.
     const glm::vec3 cam_pos_ws = glm::vec3(glm::inverse(camera.view_matrix())[3]);
     const glm::mat4 world_inv = glm::inverse(world_xf);
@@ -57,14 +61,17 @@ int HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_xf
                      static_cast<float>(HullFillCache::kBackingIsovalue) / 255.0f);
 
     shader.set_float_array("u_plating", params, plating::kParamCount);
-    shader.set_int("u_dmg_count", list.count);
-    if (list.count > 0) {
-        shader.set_vec4_array("u_dmg_a", list.a, list.count);
-        shader.set_vec4_array("u_dmg_b", list.b, list.count);
-        shader.set_vec4_array("u_dmg_c", list.c, list.count);
-    }
-    shader.set_int("u_db_count", deck_break.count);
-    shader.set_int_array("u_db_idx", deck_break.idx.data(), deck_break.count);
+    auto upload_records = [&shader](const plating::DamageList& l,
+                                    const plating::DeckBreakSet& db) {
+        shader.set_int("u_dmg_count", l.count);
+        if (l.count > 0) {
+            shader.set_vec4_array("u_dmg_a", l.a, l.count);
+            shader.set_vec4_array("u_dmg_b", l.b, l.count);
+            shader.set_vec4_array("u_dmg_c", l.c, l.count);
+        }
+        shader.set_int("u_db_count", db.count);
+        shader.set_int_array("u_db_idx", db.idx.data(), db.count);
+    };
     shader.set_vec3("u_ambient_light", lighting.ambient * ambient_scale);
     shader.set_float("u_time", now);
 
@@ -112,9 +119,44 @@ int HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_xf
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     glDisable(GL_BLEND);
 
-    const int meshes =
-        draw_model_positions_only(model, world_xf, shader, node_overrides, mesh_mask,
-                                  /*rest_fix=*/true);
+    int meshes = 0;
+    if (node_overrides == nullptr || node_overrides->empty()) {
+        upload_records(list, deck_break);
+        meshes = draw_model_positions_only(model, world_xf, shader, node_overrides, mesh_mask,
+                                           /*rest_fix=*/true);
+    } else {
+        // One draw per frame group (meshes sharing a rest correction), each
+        // with only its own frame's records.
+        const std::vector<glm::mat4> fix = rest_corrections(model, *node_overrides);
+        std::vector<glm::mat4> frames;
+        for (std::size_t i = 0; i < model.nodes.size(); ++i)
+            if (!model.nodes[i].meshes.empty() &&
+                std::find(frames.begin(), frames.end(), fix[i]) == frames.end())
+                frames.push_back(fix[i]);
+        std::vector<std::uint8_t> mask(model.meshes.size(), 0);
+        for (const glm::mat4& frame : frames) {
+            const plating::DamageList sub = plating::records_in_frame(list, fix, frame);
+            if (sub.count == 0) continue;   // the mark cut nothing in this frame
+            std::fill(mask.begin(), mask.end(), std::uint8_t{0});
+            for (std::size_t i = 0; i < model.nodes.size(); ++i) {
+                if (fix[i] != frame) continue;
+                for (int mi : model.nodes[i].meshes) {
+                    if (mi < 0 || static_cast<std::size_t>(mi) >= mask.size()) continue;
+                    const bool allowed = mesh_mask == nullptr ||
+                                         static_cast<std::size_t>(mi) >= mesh_mask->size() ||
+                                         (*mesh_mask)[static_cast<std::size_t>(mi)] != 0;
+                    mask[static_cast<std::size_t>(mi)] = allowed ? 1 : 0;
+                }
+            }
+            const plating::DeckBreakSet db =
+                sub.count == list.count ? deck_break
+                : cull_deck_break       ? plating::deck_break_subset(sub, params)
+                                        : plating::full_deck_break_set(sub);
+            upload_records(sub, db);
+            meshes += draw_model_positions_only(model, world_xf, shader, node_overrides, &mask,
+                                                /*rest_fix=*/true);
+        }
+    }
     ++draw_calls_;
 
     // Back to stock. Stencil mask 0xFF, not 0: glClear(GL_STENCIL_BUFFER_BIT)

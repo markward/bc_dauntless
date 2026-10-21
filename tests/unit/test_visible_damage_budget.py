@@ -40,7 +40,7 @@ def rig(monkeypatch):
     carves = []
     cost = {"ms": 5.0}
 
-    def spy(iid, point, normal, radius, wear, kind):
+    def spy(iid, point, normal, radius, wear, kind, rest_frame=False):
         carves.append(point)
         clock.t += cost["ms"] / 1000.0
 

@@ -863,8 +863,10 @@ TEST_F(PlatingRenderTest, ArticulatedDrawKeepsPerMeshSubsets) {
     dauntless_plating::g_params[25] = 0.0f;
     const auto cam = quad_cam();
     auto model = two_quads(-40.0f);          // mesh 1 = the far quad
+    // An override that leaves the node where it was: the body records stay in
+    // frame (ArticulatedRecordsStayInTheirOwnFrame covers a real move).
     Placed pl{glm::mat4(1.0f), left_quad_ring()};
-    pl.overrides[0] = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 2.0f, 0.0f));
+    pl.overrides[0] = model->nodes[0].local_transform;
     const auto r = render_marked_many(*model, {pl}, cam);
     EXPECT_EQ(r.marks, 1);
     EXPECT_EQ(r.mark_mesh_draws, 1) << "the far quad has no record: no mark draw";
@@ -1748,4 +1750,185 @@ TEST_F(PlatingRenderTest, DamageFollowsAnArticulatedNode) {
 
     // The unposed body is unchanged.
     EXPECT_EQ(worst_on_side(rest.color, posed.color, mid_x, /*right=*/false), 0);
+}
+
+// ── Fix round 1: geometric attribution, frame-compatible records ───────────
+namespace {
+
+// One mesh of `quads` (centre, u, v, half), all facing u x v, on `node`.
+struct QuadSpec { glm::vec3 centre, u, v; float half; };
+void add_mesh_of_quads(assets::Model& model, int node, const std::vector<QuadSpec>& quads) {
+    assets::MeshCpu cpu;
+    cpu.material_index = 0;
+    cpu.node_index = node;
+    for (const QuadSpec& q : quads) {
+        const glm::vec3 n = glm::normalize(glm::cross(q.u, q.v));
+        const auto base = static_cast<std::uint32_t>(cpu.vertices.size());
+        for (const auto& ab : {glm::vec2(-1, -1), glm::vec2(1, -1), glm::vec2(1, 1),
+                               glm::vec2(-1, 1)}) {
+            assets::MeshCpu::Vertex vt;
+            vt.position = q.centre + q.u * (ab.x * q.half) + q.v * (ab.y * q.half);
+            vt.normal = n;
+            vt.uv = 0.5f * (ab + 1.0f);
+            cpu.vertices.push_back(vt);
+        }
+        for (std::uint32_t k : {0u, 1u, 2u, 0u, 2u, 3u}) cpu.indices.push_back(base + k);
+    }
+    assets::Mesh mesh = assets::upload_mesh(cpu);
+    mesh.set_cpu_data(cpu);
+    if (model.materials.empty()) {
+        assets::Material mat;
+        mat.diffuse = glm::vec3(1.0f);
+        mat.specular = glm::vec3(0.0f);
+        mat.emissive = glm::vec3(0.0f);
+        model.materials.push_back(mat);
+    }
+    model.nodes[static_cast<std::size_t>(node)].meshes.push_back(
+        static_cast<int>(model.meshes.size()));
+    model.meshes.push_back(std::move(mesh));
+}
+
+// Root "body" (0) and a child "part" (1), no meshes yet.
+std::unique_ptr<assets::Model> body_and_part_nodes() {
+    auto model = std::make_unique<assets::Model>();
+    assets::Node body;
+    body.name = "body";
+    body.children.push_back(1);
+    assets::Node part;
+    part.name = "part";
+    part.parent_index = 0;
+    model->nodes.push_back(body);
+    model->nodes.push_back(part);
+    model->root_node = 0;
+    return model;
+}
+
+// 30 degrees about z through (40, 0, 0), then up 10: the part's pose.
+glm::mat4 part_pose() {
+    return glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 10.0f, 0.0f)) *
+           glm::translate(glm::mat4(1.0f), glm::vec3(40.0f, 0.0f, 0.0f)) *
+           glm::rotate(glm::mat4(1.0f), glm::radians(30.0f), glm::vec3(0.0f, 0.0f, 1.0f)) *
+           glm::translate(glm::mat4(1.0f), glm::vec3(-40.0f, 0.0f, 0.0f));
+}
+
+// Largest channel difference over the square of half size `r` about `c`.
+int worst_in_window(const std::vector<std::uint8_t>& a, const std::vector<std::uint8_t>& b,
+                    glm::ivec2 c, int r) {
+    int worst = 0;
+    for (int y = std::max(0, c.y - r); y <= std::min(kSize - 1, c.y + r); ++y)
+        for (int x = std::max(0, c.x - r); x <= std::min(kSize - 1, c.x + r); ++x)
+            for (int k = 0; k < 3; ++k)
+                worst = std::max(worst, std::abs(int(pixel(a, x, y)[k]) - int(pixel(b, x, y)[k])));
+    return worst;
+}
+
+}  // namespace
+
+// The LC Intrepid shape: the hull mesh's box ENCLOSES the posed part's mesh,
+// so no box rule can find the part. The geometry can: a hit on the posed
+// part's surface is the part's (node 1, rest frame), a hit on the hull is the
+// body's, and the record drawn from that answer cuts the posed part there.
+TEST_F(PlatingRenderTest, PosedHitInsideTheBodyBoxIsAttributedByGeometry) {
+    dauntless_plating::g_params[0] = 1.0f;
+    auto model = body_and_part_nodes();
+    const glm::vec3 X(1, 0, 0), Y(0, 1, 0);
+    add_mesh_of_quads(*model, 0, {{glm::vec3(0.0f, 0.0f, -20.0f), X, Y, 70.0f},
+                                  {glm::vec3(-65.0f, -65.0f, 20.0f), X, Y, 3.0f}});
+    add_mesh_of_quads(*model, 1, {{glm::vec3(40.0f, 0.0f, 0.0f), X, Y, 15.0f}});
+    const auto boxes = renderer::mesh_body_aabbs(*model);
+    ASSERT_EQ(boxes.size(), 2u);
+    for (int a = 0; a < 3; ++a) {
+        ASSERT_LE(boxes[0].center[a] - boxes[0].half_extents[a],
+                  boxes[1].center[a] - boxes[1].half_extents[a]) << "axis " << a;
+        ASSERT_GE(boxes[0].center[a] + boxes[0].half_extents[a],
+                  boxes[1].center[a] + boxes[1].half_extents[a]) << "axis " << a;
+    }
+
+    const std::unordered_map<int, glm::mat4> overrides{{1, part_pose()}};
+    const glm::vec3 hit_rest(48.0f, 6.0f, 0.0f);
+    const glm::vec3 hit_posed = glm::vec3(part_pose() * glm::vec4(hit_rest, 1.0f));
+    const auto on_part = renderer::attribute_to_rest_frame(*model, overrides, hit_posed);
+    EXPECT_EQ(on_part.node, 1);
+    EXPECT_LT(on_part.distance, 1e-3f);
+    const glm::vec3 rest = glm::vec3(on_part.to_rest * glm::vec4(hit_posed, 1.0f));
+    EXPECT_NEAR(glm::length(rest - hit_rest), 0.0f, 1e-3f);
+
+    const glm::vec3 on_hull(-30.0f, -40.0f, -20.0f);
+    const auto on_body = renderer::attribute_to_rest_frame(*model, overrides, on_hull);
+    EXPECT_EQ(on_body.node, -1);
+    EXPECT_EQ(on_body.to_rest, glm::mat4(1.0f));
+    EXPECT_EQ(renderer::attribute_to_rest_frame(*model, {}, hit_posed).node, -1)
+        << "no overrides: the body, no work";
+
+    scenegraph::HullDamageStore ring;
+    ring.add(rest, glm::vec3(0.0f), 8.0f, 10.0f, scenegraph::HullDamageKind::Internal,
+             on_part.node);
+    Placed pl{glm::mat4(1.0f), ring};
+    pl.overrides = overrides;
+    const auto cam = quad_cam();
+    const Marked r = render_marked_many(*model, {pl}, cam, glm::vec3(0.8f, 0.2f, 0.8f));
+    const glm::ivec2 c = to_pixel(cam, hit_posed);
+    EXPECT_NE(r.stencil[static_cast<std::size_t>(c.y) * kSize + c.x], 0)
+        << "the attributed hit does not cut the posed part";
+}
+
+// Once a part is posed, a record is only kept for meshes in its own frame
+// (same rest correction): the part's record leaves no ghost on the hull under
+// the part's rest spot, and a hull record there does not ride on the part.
+TEST_F(PlatingRenderTest, ArticulatedRecordsStayInTheirOwnFrame) {
+    dauntless_plating::g_params[0] = 1.0f;
+    auto model = body_and_part_nodes();
+    const glm::vec3 X(1, 0, 0), Y(0, 1, 0);
+    add_mesh_of_quads(*model, 0, {{glm::vec3(40.0f, 0.0f, -1.0f), X, Y, 20.0f}});
+    add_mesh_of_quads(*model, 0, {{glm::vec3(-40.0f, 0.0f, -1.0f), X, Y, 20.0f}});
+    add_mesh_of_quads(*model, 1, {{glm::vec3(40.0f, 0.0f, 0.0f), X, Y, 15.0f}});
+    // The part moves off its rest spot to sit over the other hull plate.
+    Placed undamaged{glm::mat4(1.0f), scenegraph::HullDamageStore{}};
+    undamaged.overrides[1] = glm::translate(glm::mat4(1.0f), glm::vec3(-80.0f, 0.0f, 1.0f));
+    const auto cam = quad_cam();
+    const glm::vec3 clear(0.8f, 0.2f, 0.8f);
+    const Marked base = render_marked_many(*model, {undamaged}, cam, clear);
+    const glm::ivec2 rest_spot = to_pixel(cam, glm::vec3(40.0f, 0.0f, -1.0f));
+    const glm::ivec2 part_now = to_pixel(cam, glm::vec3(-40.0f, 0.0f, 1.0f));
+    auto stencil_at = [](const Marked& m, glm::ivec2 c) {
+        return m.stencil[static_cast<std::size_t>(c.y) * kSize + c.x];
+    };
+
+    // The part's record: cuts the part where it is, nothing on the hull.
+    Placed part_hit = undamaged;
+    part_hit.ring.add({40.0f, 0.0f, 0.0f}, glm::vec3(0.0f), 8.0f, 10.0f,
+                      scenegraph::HullDamageKind::Internal, 1);
+    const Marked a = render_marked_many(*model, {part_hit}, cam, clear);
+    EXPECT_NE(stencil_at(a, part_now), 0) << "the part's record does not cut the part";
+    EXPECT_EQ(stencil_at(a, rest_spot), 0) << "the part's record cut the hull";
+    EXPECT_LE(worst_in_window(a.color, base.color, rest_spot, 12), 2)
+        << "the part's record damaged the hull under its rest spot";
+
+    // A hull record at the part's rest spot: cuts the hull, not the part.
+    Placed hull_hit = undamaged;
+    hull_hit.ring.add({40.0f, 0.0f, -1.0f}, glm::vec3(0.0f), 8.0f, 10.0f,
+                      scenegraph::HullDamageKind::Internal, -1);
+    const Marked b = render_marked_many(*model, {hull_hit}, cam, clear);
+    EXPECT_NE(stencil_at(b, rest_spot), 0) << "the hull record does not cut the hull";
+    EXPECT_EQ(stencil_at(b, part_now), 0) << "the hull record rides on the posed part";
+    EXPECT_LE(worst_in_window(b.color, base.color, part_now, 12), 2)
+        << "the hull record damaged the posed part";
+
+    // The interior behind the part's hole reads only the part's records: with
+    // a deck break neither record reaches alone, the hull record at the part's
+    // rest spot must not add its wear and blow the part's hole through.
+    dauntless_plating::g_params[24] = 15.0f;
+    Placed both = part_hit;
+    both.ring.add({40.0f, 0.0f, -1.0f}, glm::vec3(0.0f), 8.0f, 10.0f,
+                  scenegraph::HullDamageKind::Internal, -1);
+    const Marked c = render_marked_many(*model, {both}, cam, clear);
+    const std::uint8_t* q = pixel(c.color, part_now.x, part_now.y);
+    std::fprintf(stderr, "[PlatingRender] part hole interior (%d,%d,%d)\n", q[0], q[1], q[2]);
+    ASSERT_NE(stencil_at(c, part_now), 0);
+    EXPECT_FALSE(std::abs(q[0] - 204) <= 1 && std::abs(q[1] - 51) <= 1 &&
+                 std::abs(q[2] - 204) <= 1)
+        << "the hull record's wear blew the part's hole through";
+    const Marked solo = render_marked_many(*model, {part_hit}, cam, clear);
+    EXPECT_LE(worst_in_window(c.color, solo.color, part_now, 6), 2)
+        << "the part's hole interior changed with a hull record in another frame";
 }

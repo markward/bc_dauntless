@@ -259,8 +259,13 @@ def _advance_one(entry, dt, ship_instances) -> bool:
         world_pt = mesh_pt
     if mesh_normal is not None:
         normal = mesh_normal
+    # An authored DamageTool volume (kind "body") is REST-frame content: it
+    # opts out of the binding's posed-part attribution. AddDamage ("world")
+    # lands at posed-time points and is attributed (layered damage phase 4
+    # §2.1).
     host_io.hull_damage_add(iid, _mesh_xyz(ship, world_pt),
-                            (normal.x, normal.y, normal.z), hole, wear, 3)
+                            (normal.x, normal.y, normal.z), hole, wear, 3,
+                            rest_frame=entry["kind"] == "body")
     # A dying ship sheds parts like a fighting one: the cascade's wear asks
     # for the part check as combat wear does.
     from engine.appc import hull_breakup

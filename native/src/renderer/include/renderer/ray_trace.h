@@ -91,6 +91,28 @@ std::optional<RayHit> ray_trace_instance_linear(
 /// note on Model::trace_accel).
 void prewarm_trace_accel(const assets::Model& model);
 
+/// Where a hit on an articulated instance belongs: the node whose REST frame
+/// it is recorded in, and the map into that frame.
+struct RestAttribution {
+    int       node = -1;            ///< the overridden node it is on; -1 the body
+    glm::mat4 to_rest{1.0f};        ///< posed body frame -> that node's rest frame
+    float     distance = 0.0f;      ///< to the nearest rest triangle, model units
+};
+
+/// Which posed part a POSED body-frame point (model units) lies on, by
+/// geometry (layered damage phase 4 §2.1). Every node's rest correction C
+/// (node_anim.h rest_corrections) is applied to the point, and the nearest
+/// REST triangle among the meshes sharing that correction wins. The answer is
+/// that mesh's posed owner -- its nearest overridden ancestor, or -1 when its
+/// chain carries no override -- with that C. Severed (zero-matrix) subtrees
+/// are never chosen. Empty `overrides`: {-1, identity} without any work.
+/// Box tests cannot answer this: the LC Intrepid's hull box encloses its
+/// nacelles. Main thread only (the trace accel).
+RestAttribution attribute_to_rest_frame(
+    const assets::Model& model,
+    const std::unordered_map<int, glm::mat4>& overrides,
+    const glm::vec3& posed_point);
+
 /// One mesh's rest-pose triangles (the trace accel's, so node transforms are
 /// applied and the winding is the mesh's own) through `linear`
 /// (Instance::world_linear): instance-relative, like the hits above. Empty

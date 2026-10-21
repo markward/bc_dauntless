@@ -120,5 +120,6 @@ def test_hull_damage_add_body_sends_the_body_point_untouched(fake):
     # A body-frame point has no translation in it: no relative step.
     host_io.hull_damage_add_body(7, (1.0, 2.0, 3.0), (0.0, 0.0, 1.0),
                                  0.3, 0.5, 1)
+    # The trailing False is rest_frame: a posed point, attributed natively.
     assert fake.calls == [("hull_damage_add_body",
-                           (7, (1.0, 2.0, 3.0), (0.0, 0.0, 1.0), 0.3, 0.5, 1))]
+                           (7, (1.0, 2.0, 3.0), (0.0, 0.0, 1.0), 0.3, 0.5, 1, False))]

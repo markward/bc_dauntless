@@ -169,20 +169,16 @@ def _blast(entry, iid) -> None:
     now = damage_decals.current_game_time()
     ship_loc = ship.GetWorldLocation()
     pset = frames.containing_set(ship)
-    from engine.appc import hull_wear
     for p, n, dist in exits:
-        conv = host_io.world_to_body(iid, p, n)
-        body_point, body_normal = conv if conv is not None else (None, None)
-        # Recorded on the part the exit opens in (its REST frame), so the
-        # hole moves with an articulated part (layered damage phase 4 §2.1).
         host_io.hull_damage_add(iid, p, n, hole_radius(radius, dist),
-                                STRENGTH, 3,
-                                node_name=hull_wear.node_for_hit(ship, body_point, iid))
+                                STRENGTH, 3)
         p_set = TGPoint3(centre_set.x + (p[0] - centre[0]),
                          centre_set.y + (p[1] - centre[1]),
                          centre_set.z + (p[2] - centre[2]))
         body_gu = _world_to_body(ship, (p_set.x - ship_loc.x, p_set.y - ship_loc.y,
                                         p_set.z - ship_loc.z))
+        conv = host_io.world_to_body(iid, p, n)
+        body_point, body_normal = conv if conv is not None else (None, None)
         hit_vfx.spawn(p_set, normal=TGPoint3(n[0], n[1], n[2]), severity=Severity.CRITICAL,
                       instance_id=iid if body_point is not None else None,
                       body_point=body_point, body_normal=body_normal,

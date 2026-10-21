@@ -25,11 +25,35 @@ DamageList build_damage_list(const scenegraph::HullDamageStore& store,
         } else {
             continue;
         }
+        out.node[i] = r.node;
         total += r.wear;
         ++out.count;
     }
     out.torn_possible = out.count > 0 && total >= params[16] * (1.0f - 0.4f * params[22]) - params[23] -
                                             0.75f * params[19];
+    return out;
+}
+
+bool record_in_frame(const DamageList& list, int k, const std::vector<glm::mat4>& node_fix,
+                     const glm::mat4& frame) {
+    const int n = list.node[k];
+    if (n < 0 || static_cast<std::size_t>(n) >= node_fix.size())
+        return frame == glm::mat4(1.0f);
+    return node_fix[static_cast<std::size_t>(n)] == frame;
+}
+
+DamageList records_in_frame(const DamageList& list, const std::vector<glm::mat4>& node_fix,
+                            const glm::mat4& frame) {
+    DamageList out;
+    out.torn_possible = list.torn_possible;
+    for (int k = 0; k < list.count; ++k) {
+        if (!record_in_frame(list, k, node_fix, frame)) continue;
+        out.a[out.count] = list.a[k];
+        out.b[out.count] = list.b[k];
+        out.c[out.count] = list.c[k];
+        out.node[out.count] = list.node[k];
+        ++out.count;
+    }
     return out;
 }
 

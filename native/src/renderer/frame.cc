@@ -597,7 +597,9 @@ static void upload_plating(Shader& prog, const plating::DamageList& dl,
 // with none uploads u_dmg_count 0 (the arrays keep stale values the shader
 // never reads past the count). An upload equal to the previous one of this
 // draw (same records, same order) is skipped, so a hull whose meshes all see
-// every record uploads the list once.
+// every record uploads the list once. With `node_fix` (a posed draw's
+// rest_corrections) each upload also drops the records outside the mesh's
+// frame (plating::record_in_frame).
 namespace {
 int g_plating_mesh_subset_computations = 0;
 int g_plating_record_uploads = 0;
@@ -606,9 +608,13 @@ int g_draw_model_plating_mesh_draws = 0;
 
 class MeshRecordUploader {
 public:
-    MeshRecordUploader(Shader& prog, const plating::DamageList& dl) : prog_(prog), dl_(dl) {}
+    MeshRecordUploader(Shader& prog, const plating::DamageList& dl,
+                       const std::vector<glm::mat4>* node_fix = nullptr)
+        : prog_(prog), dl_(dl), node_fix_(node_fix) {}
 
-    void upload(const plating::MeshRecordSubset* subset) {
+    // `frame`: the mesh's rest correction (used only with node_fix).
+    void upload(const plating::MeshRecordSubset* subset,
+                const glm::mat4& frame = glm::mat4(1.0f)) {
         std::array<std::uint8_t, plating::kMaxDamage> all;
         const std::uint8_t* idx = nullptr;
         int n = dl_.count;
@@ -618,6 +624,15 @@ public:
         } else {
             for (int k = 0; k < n; ++k) all[static_cast<std::size_t>(k)] = static_cast<std::uint8_t>(k);
             idx = all.data();
+        }
+        std::array<std::uint8_t, plating::kMaxDamage> fit;
+        if (node_fix_ != nullptr) {
+            int m = 0;
+            for (int k = 0; k < n; ++k)
+                if (plating::record_in_frame(dl_, idx[k], *node_fix_, frame))
+                    fit[static_cast<std::size_t>(m++)] = idx[k];
+            n = m;
+            idx = fit.data();
         }
         if (have_last_ && n == last_n_ && std::equal(idx, idx + n, last_idx_.begin()))
             return;
@@ -629,7 +644,7 @@ public:
             kDmgB = "u_dmg_b", kDmgC = "u_dmg_c";
         ++g_plating_record_uploads;
         prog_.set_int(kDmgCount, n);
-        if (n == dl_.count) {   // every record, in order: no gather
+        if (n == dl_.count && node_fix_ == nullptr) {   // every record, in order: no gather
             prog_.set_vec4_array(kDmgA, dl_.a, n);
             prog_.set_vec4_array(kDmgB, dl_.b, n);
             prog_.set_vec4_array(kDmgC, dl_.c, n);
@@ -649,6 +664,7 @@ public:
 private:
     Shader& prog_;
     const plating::DamageList& dl_;
+    const std::vector<glm::mat4>* node_fix_ = nullptr;
     bool have_last_ = false;
     int last_n_ = 0;
     std::array<std::uint8_t, plating::kMaxDamage> last_idx_{};
@@ -816,6 +832,19 @@ static void draw_model_pass(const assets::Model& model,
         plating_list != nullptr && plating_mesh_records != nullptr
             ? plating_mesh_records->subsets
             : nullptr;
+    // Glow regions, hull-name decals and plating damage records are all in
+    // the NIF (rest) frame, but opaque.frag rebuilds a POSED body position.
+    // C_i = R_i * P_i^-1 maps it back. Identity for every node of an unarticulated
+    // instance -- computed only when there are overrides, so the common path
+    // allocates nothing extra.
+    const bool articulated = node_overrides != nullptr && !node_overrides->empty();
+    const std::vector<glm::mat4> rest_fix =
+        articulated ? rest_corrections(model, *node_overrides)
+                    : std::vector<glm::mat4>{};
+    // A posed draw uploads per mesh even without subsets: each mesh keeps only
+    // the records in its own frame (plating::record_in_frame).
+    const bool plating_per_mesh =
+        plating_list != nullptr && (plating_subsets != nullptr || articulated);
     std::optional<MeshRecordUploader> plating_records;
     if (plating_list != nullptr) {
         const std::vector<voxel::StructurePart>* const plating_parts =
@@ -823,10 +852,11 @@ static void draw_model_pass(const assets::Model& model,
                                             : renderer::structure_parts_for(model.source);
         upload_plating(prog, *plating_list, plating_parts, world, dauntless_plating::g_params,
                        /*mark=*/false, plating_far,
-                       /*upload_list=*/plating_subsets == nullptr, plating_rock,
+                       /*upload_list=*/!plating_per_mesh, plating_rock,
                        plating_mesh_records != nullptr ? plating_mesh_records->hidden_parts : 0u,
                        plating_mesh_records != nullptr ? plating_mesh_records->shown_parts : 0u);
-        if (plating_subsets != nullptr) plating_records.emplace(prog, *plating_list);
+        if (plating_per_mesh)
+            plating_records.emplace(prog, *plating_list, articulated ? &rest_fix : nullptr);
     }
 
     // ── Warp-nacelle glow capsules ─────────────────────────────────────────
@@ -933,15 +963,6 @@ static void draw_model_pass(const assets::Model& model,
     // Walk nodes; each node may reference one or more meshes by index.
     const std::vector<glm::mat4> world_per_node = node_worlds_for(model, world, node_overrides);
 
-    // Glow regions, hull-name decals and plating damage records are all in
-    // the NIF (rest) frame, but opaque.frag rebuilds a POSED body position.
-    // C_i = R_i * P_i^-1 maps it back. Identity for every node of an unarticulated
-    // instance -- computed only when there are overrides, so the common path
-    // allocates nothing extra.
-    const bool articulated = node_overrides != nullptr && !node_overrides->empty();
-    const std::vector<glm::mat4> rest_fix =
-        articulated ? rest_corrections(model, *node_overrides)
-                    : std::vector<glm::mat4>{};
 
     // Units 8..11 = the hull-name decal list's mask slots: bound once for the
     // whole model (a per-instance override replaces the baked Model::decals
@@ -1001,7 +1022,10 @@ static void draw_model_pass(const assets::Model& model,
             // is not the one its box bounds: it gets the whole list.
             if (plating_records) {
                 plating_records->upload(
-                    this_sphere ? nullptr : plating_subset_for(*plating_subsets, mesh_idx));
+                    this_sphere || plating_subsets == nullptr
+                        ? nullptr
+                        : plating_subset_for(*plating_subsets, mesh_idx),
+                    articulated ? rest_fix[i] : glm::mat4(1.0f));
             }
             // Same rule as u_sphere_map: set on EVERY draw so it cannot leak.
             const bool this_atmo = this_sphere && atmo != nullptr && atmo->enabled;
@@ -1227,18 +1251,20 @@ static int draw_plating_mark(const assets::Model& model, const glm::mat4& world,
     prog.use();
     const bool articulated = node_overrides != nullptr && !node_overrides->empty();
     const std::vector<plating::MeshRecordSubset>* const subsets = records.subsets;
+    const std::vector<glm::mat4> rest_fix =
+        articulated ? rest_corrections(model, *node_overrides) : std::vector<glm::mat4>{};
+    // Per mesh with subsets, and always when posed (records in-frame only).
+    const bool per_mesh = subsets != nullptr || articulated;
     upload_plating(prog, dl, records.parts, world, params, /*mark=*/true, /*far=*/false,
-                   /*upload_list=*/subsets == nullptr, rock, records.hidden_parts,
+                   /*upload_list=*/!per_mesh, rock, records.hidden_parts,
                    records.shown_parts);
     std::optional<MeshRecordUploader> uploader;
-    if (subsets != nullptr) uploader.emplace(prog, dl);
+    if (per_mesh) uploader.emplace(prog, dl, articulated ? &rest_fix : nullptr);
     prog.set_int(kCutout, 0);
     prog.set_int(kImpostorBlend, 0);
     prog.set_int(kShadowMap, 5);
 
     const std::vector<glm::mat4> world_per_node = node_worlds_for(model, world, node_overrides);
-    const std::vector<glm::mat4> rest_fix =
-        articulated ? rest_corrections(model, *node_overrides) : std::vector<glm::mat4>{};
 
     // Per mesh: its records, its transform, then the draw.
     int drawn = 0;
@@ -1246,9 +1272,10 @@ static int draw_plating_mark(const assets::Model& model, const glm::mat4& world,
         for (int mesh_idx : model.nodes[i].meshes) {
             const auto& mesh = model.meshes[static_cast<std::size_t>(mesh_idx)];
             if (uploader) {
-                const plating::MeshRecordSubset* subset = plating_subset_for(*subsets, mesh_idx);
+                const plating::MeshRecordSubset* subset =
+                    subsets != nullptr ? plating_subset_for(*subsets, mesh_idx) : nullptr;
                 if (skip_record_free && subset != nullptr && subset->count == 0) continue;
-                uploader->upload(subset);
+                uploader->upload(subset, articulated ? rest_fix[i] : glm::mat4(1.0f));
             }
             prog.set_mat4(kModel, world_per_node[i]);
             prog.set_mat4(kRestFix, articulated ? rest_fix[i] : glm::mat4(1.0f));
@@ -1766,7 +1793,8 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
                 lighting, ambient_scale, now, next_value - 1,
                 &inst.node_overrides, mesh_mask, inst.surface_is_rock,
                 // Looked up only for rocks, so a ship pays nothing.
-                inst.surface_is_rock ? find_base_texture_id(*m) : 0u);
+                inst.surface_is_rock ? find_base_texture_id(*m) : 0u,
+                /*cull_deck_break=*/plating_record_culling_);
             ++plating_interiors_last_frame_;
             state_set = false;   // the interior draw left stock state
         }

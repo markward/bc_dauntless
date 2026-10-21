@@ -50,6 +50,13 @@ public:
     /// a flat rock colour) under the scene's ambient and directional lights
     /// (u_interior_rock 1 / 2; 0 for a ship). `rock_tex` is bound on unit 1
     /// on every draw, 0 when unused, and unbound after.
+    ///
+    /// A posed instance (non-empty `node_overrides`) draws per FRAME group:
+    /// the meshes sharing one rest correction get only the records in that
+    /// frame (plating::records_in_frame) and that list's deck-break set --
+    /// `deck_break` itself when every record is in the frame, else rebuilt
+    /// (plating::deck_break_subset when `cull_deck_break`, else the full set),
+    /// so no overlap sum mixes frames.
     int draw(const assets::Model& model, const glm::mat4& world_xf,
               const scenegraph::Camera& camera, Pipeline& pipeline,
               const plating::DamageList& list, const plating::DeckBreakSet& deck_break,
@@ -60,7 +67,8 @@ public:
               int stencil_value,
               const std::unordered_map<int, glm::mat4>* node_overrides,
               const std::vector<std::uint8_t>* mesh_mask = nullptr,
-              bool rock = false, unsigned int rock_tex = 0);
+              bool rock = false, unsigned int rock_tex = 0,
+              bool cull_deck_break = true);
 
     /// draw() calls since construction.
     int draw_calls() const { return draw_calls_; }

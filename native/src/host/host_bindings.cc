@@ -2546,28 +2546,28 @@ static void vent_on_breach_crossing(scenegraph::Instance& inst,
 }
 
 // The node a wear hit is recorded on, and the map from the POSED body frame
-// into that node's REST frame (layered damage phase 4 §2.1): "" or a name the
-// model does not have is the hull body (-1, identity). Resolved the way
-// set_instance_node_transform resolves it, so the record lands on the node
-// the pose moves; the fix is node_anim.h's rest_corrections (identity while
-// the instance has no overrides, and for a severed node).
+// into that node's REST frame (layered damage phase 4 §2.1), found by
+// GEOMETRY (renderer::attribute_to_rest_frame: the nearest rest triangle
+// under each part's rest correction). An unposed instance (no node
+// overrides) is the body with no work at all, and so is `rest_frame` -- a
+// point the writer already holds in the rest frame (authored DamageTool
+// volumes).
 struct WearNode {
     int       node = -1;
     glm::mat4 to_rest{1.0f};
     glm::mat4 to_posed{1.0f};
 };
-static WearNode wear_node_for(const scenegraph::Instance& inst, const std::string& name) {
+static WearNode wear_node_for(const scenegraph::Instance& inst, const glm::vec3& posed_point,
+                              bool rest_frame) {
     WearNode w;
-    if (name.empty()) return w;
+    if (rest_frame || inst.node_overrides.empty()) return w;
     const assets::Model* m = resolve_model(inst.model_handle);
     if (m == nullptr) return w;
-    const int idx = renderer::resolve_overridden_node(*m, name, inst.node_overrides);
-    if (idx < 0) return w;
-    w.node = idx;
-    if (!inst.node_overrides.empty()) {
-        w.to_rest = renderer::rest_corrections(*m, inst.node_overrides)[static_cast<std::size_t>(idx)];
-        w.to_posed = glm::inverse(w.to_rest);
-    }
+    const renderer::RestAttribution a =
+        renderer::attribute_to_rest_frame(*m, inst.node_overrides, posed_point);
+    w.node = a.node;
+    w.to_rest = a.to_rest;
+    w.to_posed = glm::inverse(a.to_rest);
     return w;
 }
 
@@ -7549,8 +7549,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> world_point,
              std::tuple<float, float, float> world_normal,
-             float radius, float wear, std::uint32_t kind,
-             const std::string& node_name) {
+             float radius, float wear, std::uint32_t kind, bool rest_frame) {
               if (kind != 1u && kind != 3u) return;  // only Surface/Internal
               auto* inst = g_world.get(id);
               if (inst == nullptr) return;  // stale id -- drop silently
@@ -7562,9 +7561,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                  std::get<2>(world_normal));
               // Same body-frame conversion as damage_decal_add: pw is
               // INSTANCE-RELATIVE; radius game-units -> model units. Then
-              // into the struck node's REST frame.
+              // into the struck part's REST frame.
               const auto bf = to_body_frame(*inst, pw, nw, radius);
-              const WearNode wn = wear_node_for(*inst, node_name);
+              const WearNode wn = wear_node_for(*inst, bf.point, rest_frame);
               const auto r = inst->hull_damage.add(
                   glm::vec3(wn.to_rest * glm::vec4(bf.point, 1.0f)),
                   glm::mat3(wn.to_rest) * bf.normal, bf.radius_model, wear,
@@ -7573,20 +7572,20 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
           py::arg("radius"), py::arg("wear"), py::arg("kind"),
-          py::arg("node_name") = std::string(),
+          py::arg("rest_frame") = false,
           "Add a record to the instance's HullDamageStore. Point is "
           "INSTANCE-RELATIVE; point/normal/radius are converted to the body "
           "frame exactly as damage_decal_add does. kind: 1=Surface, 3=Internal. "
-          "node_name: the model node (articulated part) the hit struck; the "
-          "record is stored on it, in its REST frame, so the damage moves "
-          "with the part. \"\" or an unknown name = the hull body.");
+          "On a posed (articulated) instance the hit is attributed by geometry "
+          "to the part it lies on and stored on that node, in its REST frame, "
+          "so the damage moves with the part. rest_frame=True: the point is "
+          "already rest-frame (authored damage): no attribution, the body.");
 
     m.def("hull_damage_add_body",
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> body_point,
              std::tuple<float, float, float> body_normal,
-             float radius, float wear, std::uint32_t kind,
-             const std::string& node_name) {
+             float radius, float wear, std::uint32_t kind, bool rest_frame) {
               if (kind != 1u && kind != 3u) return;  // only Surface/Internal
               auto* inst = g_world.get(id);
               if (inst == nullptr) return;  // stale id -- drop silently
@@ -7594,7 +7593,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                  std::get<2>(body_point));
               const glm::vec3 nb(std::get<0>(body_normal), std::get<1>(body_normal),
                                  std::get<2>(body_normal));
-              const WearNode wn = wear_node_for(*inst, node_name);
+              const WearNode wn = wear_node_for(*inst, pb, rest_frame);
               const auto r = inst->hull_damage.add(
                   glm::vec3(wn.to_rest * glm::vec4(pb, 1.0f)), glm::mat3(wn.to_rest) * nb,
                   radius_to_model(*inst, radius), wear,
@@ -7603,12 +7602,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("instance_id"), py::arg("body_point"), py::arg("body_normal"),
           py::arg("radius"), py::arg("wear"), py::arg("kind"),
-          py::arg("node_name") = std::string(),
+          py::arg("rest_frame") = false,
           "hull_damage_add for a point/normal ALREADY in the (POSED) body frame "
           "(model units, e.g. from world_to_body). radius is still game units "
           "and is converted with the same scale as hull_damage_add. kind: "
-          "1=Surface, 3=Internal. node_name: as hull_damage_add (stored in that "
-          "node's REST frame).");
+          "1=Surface, 3=Internal. Attributed and stored like hull_damage_add; "
+          "rest_frame=True as there.");
 
     m.def("_test_only_breach_events",
           [](scenegraph::InstanceId id) {
