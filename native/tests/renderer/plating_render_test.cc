@@ -1708,13 +1708,20 @@ TEST_F(PlatingRenderTest, CloakSkipsChunks) {
 // Phase 4, Task 2 (removing the old voxel carve): the carve clip, its
 // uniforms and its 3D field sampler leave the STOCK program, and the frame
 // stops binding carve state. None of that may change how an undamaged hull
-// looks. The reference bytes were captured from the build BEFORE the removal
-// (native/tests/renderer/data/undamaged_ambassador_ref.bin, raw RGBA8,
-// kSize x kSize, row 0 = bottom): the Ambassador undamaged through
-// submit_opaque_in_pass, a fixed three-quarter camera and test_lighting().
-// The comparison is byte-exact. Re-capture ONLY for a deliberate look change:
-// DAUNTLESS_WRITE_UNDAMAGED_REF=1 writes the file instead of comparing.
+// looks. The read-back (raw RGBA8, kSize x kSize, row 0 = bottom: the
+// Ambassador undamaged through submit_opaque_in_pass, a fixed three-quarter
+// camera and test_lighting()) is pinned by its 64-bit FNV-1a hash, taken from
+// the build BEFORE the removal. The pixels themselves are BC-derived, so they
+// are never committed (Ruling 3). The hash is exact to the byte and tied to
+// this machine's GL driver, like the reference bytes it replaces.
+//
+// Re-baseline ONLY for a deliberate look change: the failure message prints
+// the new hash. DAUNTLESS_DUMP_UNDAMAGED_PIXELS=1 additionally writes the
+// raw buffer to the system TEMP directory (never the project tree) so two
+// builds can be diffed by eye.
 TEST_F(PlatingRenderTest, UndamagedHullUnchangedByCarveRemoval) {
+    constexpr std::uint64_t kUndamagedAmbassadorHash = 0xfd47abf2c15863fdull;
+
     auto m = ambassador();
     ASSERT_TRUE(m) << "BC asset not available at " << ambassador_nif()
                    << " -- set DAUNTLESS_GAME_DIR";
@@ -1729,44 +1736,28 @@ TEST_F(PlatingRenderTest, UndamagedHullUnchangedByCarveRemoval) {
 
     const auto px = render(*m, scenegraph::HullDamageStore{}, cam);
     ASSERT_GT(count_non_black(px), 4000) << "hull not in view";
+    ASSERT_EQ(px.size(), static_cast<std::size_t>(kSize) * kSize * 4);
 
-    const fs::path ref_path =
-        fs::path(OPEN_STBC_PROJECT_ROOT) / "native/tests/renderer/data/undamaged_ambassador_ref.bin";
-    if (std::getenv("DAUNTLESS_WRITE_UNDAMAGED_REF") != nullptr) {
-        fs::create_directories(ref_path.parent_path());
-        std::FILE* f = std::fopen(ref_path.string().c_str(), "wb");
-        ASSERT_NE(f, nullptr) << "cannot write " << ref_path;
+    if (std::getenv("DAUNTLESS_DUMP_UNDAMAGED_PIXELS") != nullptr) {
+        const fs::path dump = fs::temp_directory_path() / "dauntless_undamaged_ambassador.rgba";
+        std::FILE* f = std::fopen(dump.string().c_str(), "wb");
+        ASSERT_NE(f, nullptr) << "cannot write " << dump;
         std::fwrite(px.data(), 1, px.size(), f);
         std::fclose(f);
-        std::fprintf(stderr, "[PlatingRender] wrote undamaged reference %s\n",
-                     ref_path.string().c_str());
-        return;
+        std::fprintf(stderr, "[PlatingRender] dumped undamaged pixels to %s\n",
+                     dump.string().c_str());
     }
 
-    std::vector<std::uint8_t> ref(px.size());
-    std::FILE* f = std::fopen(ref_path.string().c_str(), "rb");
-    ASSERT_NE(f, nullptr) << "missing reference " << ref_path;
-    const std::size_t got = std::fread(ref.data(), 1, ref.size(), f);
-    const int extra = std::fgetc(f);
-    std::fclose(f);
-    ASSERT_EQ(got, ref.size()) << "reference too short";
-    ASSERT_EQ(extra, EOF) << "reference too long";
-
-    int differing = 0, worst = 0, first_x = -1, first_y = -1;
-    for (int y = 0; y < kSize; ++y) {
-        for (int x = 0; x < kSize; ++x) {
-            const std::uint8_t* a = pixel(px, x, y);
-            const std::uint8_t* b = pixel(ref, x, y);
-            int d = 0;
-            for (int c = 0; c < 4; ++c) d = std::max(d, std::abs(a[c] - b[c]));
-            if (d == 0) continue;
-            if (differing++ == 0) { first_x = x; first_y = y; }
-            worst = std::max(worst, d);
-        }
+    std::uint64_t h = 0xcbf29ce484222325ull;  // FNV-1a 64 offset basis
+    for (const std::uint8_t b : px) {
+        h ^= b;
+        h *= 0x100000001b3ull;  // FNV-1a 64 prime
     }
-    EXPECT_EQ(differing, 0) << "undamaged hull changed: " << differing
-                            << " pixels differ, worst channel delta " << worst
-                            << ", first at (" << first_x << ", " << first_y << ")";
+    char got[24];
+    std::snprintf(got, sizeof got, "0x%016llx", static_cast<unsigned long long>(h));
+    EXPECT_EQ(h, kUndamagedAmbassadorHash)
+        << "undamaged hull changed: read-back hash " << got
+        << " (set DAUNTLESS_DUMP_UNDAMAGED_PIXELS=1 to dump the pixels to TEMP)";
 }
 
 // ── Damage moves with articulated parts (layered damage phase 4 §2.1) ─────
