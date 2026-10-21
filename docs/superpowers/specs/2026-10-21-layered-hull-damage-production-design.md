@@ -38,8 +38,9 @@ misbehaves: one part's interior texture follows another part's rotation.
    - **Internal blasts** (a destroyed subsystem) and the **death cascade**
      work as on the spike.
 3. **Holes show the interior up close only.**
-   - Within **20 GU of the camera that is drawing** (main view, Z zoom or
-     viewscreen feed), a hole shows the deck-and-room interior. Mark first
+   - Within **20 GU of the camera that is drawing** (main view or Z zoom; the
+     viewscreen feed only for its own target, §3), a hole shows the
+     deck-and-room interior. Mark first
      said 10 GU; he chose 20 on 2026-10-21 once told that the chase camera
      sits about 14 GU behind the player, so 10 would almost never show
      rooms on an enemy.
@@ -119,6 +120,28 @@ Known levers, from the step-2c review (SIG-103, SIG-104):
 - Skip the mark and the interior beyond 20 GU (goal 3).
 - An eligibility cap for the near interior, as the old carve had: the player,
   the target, the nearest few.
+
+Added with Mark on 2026-10-21:
+- **Upload only the records near the drawn hull.** The store grows from 24
+  to 64 records, and every near-damage pixel loops over all of them.
+  - Upload per draw only the records whose reach touches the part of the
+    hull being drawn.
+  - Merge records more eagerly, so the shader loop stays near today's
+    length.
+- **A deck-break subset for the interior walk.** The walk adds up interior
+  wear at every crossing (up to 24) over every record. On the CPU, pick out
+  only the records that could push wear past deck break, alone or summed
+  where they overlap, and give the walk that subset.
+- **Build the damage list once per instance per frame,** and share it
+  between the plating draw and `submit_plating_interior`. Today it is built
+  twice.
+- **Prefetch the fill volume.** It loads synchronously on a hull's first cut
+  (`CarveFieldCache::get_for_source`). Load it at model load and for the warp
+  destination, on the same bounded worker as structure parts.
+- **The bridge viewscreen shows rooms for its own target only.** It renders
+  the space scene a second time, small on screen.
+- **Judge the final result in a Release build** as well. Debug inflates CPU
+  costs and can point optimisation at the wrong place.
 
 ## 4. Non-goals
 
