@@ -88,6 +88,16 @@ TEST(PartSeverance, ArticulatedInstanceNeverStructureSevers) {
     EXPECT_FALSE(renderer::can_structure_sever(inst));
 }
 
+// A rigged hull at REST carries no node overrides (identity poses are erased),
+// so the overrides check alone cannot see the rig: Instance::rigged gates it
+// too (a rigged ship's parts leave through part_severance, never by structure).
+TEST(PartSeverance, RiggedInstanceAtRestNeverStructureSevers) {
+    scenegraph::Instance inst;
+    inst.rigged = true;
+    ASSERT_TRUE(inst.node_overrides.empty());
+    EXPECT_FALSE(renderer::can_structure_sever(inst));
+}
+
 namespace {
 // The old O(V x R) reference: per-voxel wear summed over all records.
 std::vector<float> reference_wear(const voxel::StructureSegmentation& s, const DamageList& dmg) {
@@ -271,6 +281,11 @@ TEST(PartSeverance, SplitNeverSeversRocksOrArticulatedHulls) {
     const auto rigged = blown_parent(world);
     world.get(rigged)->node_overrides[2] = glm::mat4(1.f);
     EXPECT_TRUE(renderer::split_severed_parts(world, rigged, s, bridge_hit(10.f), 6.f).empty());
+    // Rigged and at rest: no overrides, still never by structure.
+    const auto at_rest = blown_parent(world);
+    world.get(at_rest)->rigged = true;
+    EXPECT_TRUE(renderer::split_severed_parts(world, at_rest, s, bridge_hit(10.f), 6.f).empty());
+    EXPECT_EQ(world.get(at_rest)->severed_parts, 0u);
     EXPECT_TRUE(renderer::split_severed_parts(world, scenegraph::InstanceId{}, s,
                                               bridge_hit(10.f), 6.f).empty());
 }
@@ -330,15 +345,30 @@ TEST(PartSeverance, SplitAfterALossNeverSeversTheRemainingHull) {
 }
 
 // A part the draw cannot hide still joins the hull: an intact pylon numbered
-// past kMaxHideableParts keeps the part beyond it attached.
+// past kMaxHideableParts keeps the part beyond it attached. Some voxel must
+// break or find_severed_parts returns before the flood (and the test could
+// never fail): a far, SOLID but unlabelled voxel is blown, which joins no
+// part and cuts nothing.
 TEST(PartSeverance, SplitKeepsAnUnhideablePartInTheConnectivity) {
     auto s = make_seg();
     s.parts.resize(renderer::kMaxHideableParts + 1);
     s.label[s.vol.index(10, 2, 2)] = static_cast<std::int16_t>(renderer::kMaxHideableParts);
+    s.vol.set(19, 5, 5, true);                                // solid, label -1
+    ASSERT_EQ(s.label[s.vol.index(19, 5, 5)], -1);
+    DamageList far;
+    far.count = 1;
+    far.a[0] = glm::vec4(19.5f, 5.5f, 5.5f, 0.6f);
+    far.b[0] = glm::vec4(0, 0, 0, 100.f);
+    far.c[0] = glm::vec4(3, 0, 0, 0);
+    const std::uint32_t unhideable = ~((1u << renderer::kMaxHideableParts) - 1u);
+    renderer::SeveranceStats st;
+    ASSERT_TRUE(renderer::find_severed_parts(s, far, 6.f, unhideable, 0, &st).empty());
+    ASSERT_EQ(st.floods, 1) << "nothing broke: the flood never ran, the test is vacuous";
     scenegraph::World world;
     const auto parent = blown_parent(world);
     world.get(parent)->hull_damage = scenegraph::HullDamageStore{};
-    EXPECT_TRUE(renderer::split_severed_parts(world, parent, s, DamageList{}, 6.f).empty());
+    EXPECT_TRUE(renderer::split_severed_parts(world, parent, s, far, 6.f).empty());
+    EXPECT_EQ(world.get(parent)->severed_parts, 0u);
 }
 
 TEST(PartSeverance, AChunkNeverSevers) {
@@ -411,6 +441,20 @@ TEST(PartSeverance, ACutOffAssemblyLeavesAsOnePiece) {
     EXPECT_FLOAT_EQ(r[0].min_body.x, 11.f);
     EXPECT_FLOAT_EQ(r[0].max_body.x, 23.f);
     EXPECT_NEAR(r[0].centroid_body.x, 17.f, 1e-4);
+}
+
+// A piece's size, centroid and bounds are its MEMBER parts' voxels only: a
+// part riding in the same component that does not leave (here B, already
+// severed -- as an unhideable part is) is not part of what the chunk draws.
+TEST(PartSeverance, PieceExtentCountsOnlyItsMemberParts) {
+    auto s = make_chain();
+    const auto r = renderer::find_severed_parts(s, bridge_hit(10.f), 6.f, 1u << 2);
+    ASSERT_EQ(r.size(), 1u);
+    EXPECT_EQ(r[0].parts, 1u << 1);
+    EXPECT_EQ(r[0].voxels, 216) << "B's voxels counted in A's piece";
+    EXPECT_FLOAT_EQ(r[0].min_body.x, 11.f);
+    EXPECT_FLOAT_EQ(r[0].max_body.x, 17.f);
+    EXPECT_NEAR(r[0].centroid_body.x, 14.f, 1e-4);
 }
 
 TEST(PartSeverance, SplitInstancesOneChunkPerAssembly) {

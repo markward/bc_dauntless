@@ -20,7 +20,10 @@ namespace renderer {
 // One piece cut off the hull: the structure parts that leave together.
 struct SeveredPiece {
     std::uint32_t parts = 0;        // bit i: structure part i leaves with it
-    int voxels = 0;                 // surviving voxels of the piece
+    // Surviving voxels of the member parts (`parts`) in the piece's component,
+    // and their centroid and bounds: what the chunk draws, never a non-member
+    // part's voxels that share the component.
+    int voxels = 0;
     glm::vec3 centroid_body{0};
     glm::vec3 min_body{0}, max_body{0};
 };
@@ -63,7 +66,8 @@ std::vector<float> interior_wear_field(const voxel::VoxelVolume& vol,
 // units); -1 outside the grid, in an empty voxel or with no segmentation.
 int structure_part_at(const voxel::StructureSegmentation&, const glm::vec3& body_point);
 
-// Articulated instances (any node override) are never structure-checked.
+// Articulated instances (any node override) and rigged ones (Instance::rigged,
+// even at rest with no overrides) are never structure-checked.
 bool can_structure_sever(const scenegraph::Instance& inst);
 
 // The plating draw can hide parts 0..kMaxHideableParts-1 only (opaque.frag
@@ -80,12 +84,11 @@ struct SeveredSplit {
 // Break off every part of `parent` that find_severed_parts reports (parts it
 // already lost are `gone`; parts past kMaxHideableParts are never reported):
 // ORs the piece's parts into parent.severed_parts and
-// creates a chunk instance of the same model on a copy of the parent's pose
-// and render state (as hull_split_detached does) and its damage records,
-// drawing only those parts (shown_parts), with its damage decals, and dead
-// (emissive_scale 0: no window glow). Rocks,
-// chunks, articulated hulls, skinned models (`skinned`: the draw cannot hide
-// their parts) and stale ids never sever.
+// creates a chunk instance of the same model on a copy of the parent's pose,
+// render state and damage records, drawing only those parts (shown_parts),
+// with its damage decals, and dead (emissive_scale 0: no window glow). Rocks,
+// chunks, articulated or rigged hulls (can_structure_sever), skinned models
+// (`skinned`: the draw cannot hide their parts) and stale ids never sever.
 std::vector<SeveredSplit> split_severed_parts(scenegraph::World& world,
                                               scenegraph::InstanceId parent,
                                               const voxel::StructureSegmentation& seg,

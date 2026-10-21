@@ -18,7 +18,9 @@ int structure_part_at(const voxel::StructureSegmentation& seg, const glm::vec3& 
 }
 
 bool can_structure_sever(const scenegraph::Instance& inst) {
-    return inst.node_overrides.empty();
+    // `rigged` too: a rigged hull at rest has no overrides (identity poses are
+    // erased), and its parts leave through part_severance, never by structure.
+    return inst.node_overrides.empty() && !inst.rigged;
 }
 
 std::vector<float> interior_wear_field(const voxel::VoxelVolume& vol,
@@ -123,7 +125,7 @@ std::vector<SeveredPiece> find_severed_parts(const voxel::StructureSegmentation&
     // survivors into 6-connected components; a part belongs to a component
     // when the majority of its surviving voxels are unreached and lie in it.
     // A component of at least kMinPartVoxels holding at least one part
-    // becomes one piece: those parts, and the component's voxels.
+    // becomes one piece: those parts, measured by their own voxels in it.
     const std::uint32_t skip = already_severed | gone;
     std::vector<std::uint8_t> seen(n, 0);
     std::vector<std::size_t> comp;
@@ -164,20 +166,27 @@ std::vector<SeveredPiece> find_severed_parts(const voxel::StructureSegmentation&
         }
         if (piece.parts == 0) continue;
 
+        // Size, centroid and bounds: the MEMBER parts' voxels only. A part
+        // riding in the component that does not leave (a minority share, or
+        // one already severed / unhideable) is not what the chunk draws.
         glm::vec3 lo(1e30f), hi(-1e30f);
         glm::dvec3 sum(0.0);
+        int members = 0;
         for (const std::size_t i : comp) {
+            const int lab = seg.label[i];   // alive => 0 <= lab < np
+            if (lab >= 32 || ((piece.parts >> lab) & 1u) == 0) continue;
             const int x = static_cast<int>(i % sy), y = static_cast<int>((i / sy) % d.y),
                       z = static_cast<int>(i / sz);
             const glm::vec3 mn = seg.vol.origin + glm::vec3(x, y, z) * seg.vol.cell;
             lo = glm::min(lo, mn);
             hi = glm::max(hi, mn + seg.vol.cell);
             sum += glm::dvec3(mn + 0.5f * seg.vol.cell);
+            ++members;
         }
-        piece.voxels = static_cast<int>(comp.size());
+        piece.voxels = members;   // > 0: a member holds a majority of its survivors here
         piece.min_body = lo;
         piece.max_body = hi;
-        piece.centroid_body = glm::vec3(sum / static_cast<double>(comp.size()));
+        piece.centroid_body = glm::vec3(sum / static_cast<double>(members));
         out.push_back(piece);
     }
     return out;
