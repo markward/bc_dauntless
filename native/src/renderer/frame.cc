@@ -472,16 +472,26 @@ int bind_hull_decal_list(const Shader& prog,
 // call reset_model_radius_cache() wherever it clears g_loaded_models
 // (mirroring the reset_damage_decal_texture() discipline), or a swapped-in
 // model silently inherits the old model's bounding radius.
-std::unordered_map<scenegraph::ModelHandle, float> g_model_radius_cache;
+// The box centre is cached beside the radius: a sphere of that radius bounds
+// the model only around the centre (interior_is_near), not the origin.
+struct ModelBounds {
+    glm::vec3 centre{0.0f};
+    float radius = 0.0f;
+};
+std::unordered_map<scenegraph::ModelHandle, ModelBounds> g_model_radius_cache;
 
-float model_bounding_radius(scenegraph::ModelHandle handle,
-                            const assets::Model& model) {
+const ModelBounds& model_bounds(scenegraph::ModelHandle handle, const assets::Model& model) {
     auto it = g_model_radius_cache.find(handle);
     if (it != g_model_radius_cache.end()) return it->second;
     const Aabb box = compute_model_aabb(model);
-    const float radius = glm::length(box.half_extents);
-    g_model_radius_cache.emplace(handle, radius);
-    return radius;
+    return g_model_radius_cache
+        .emplace(handle, ModelBounds{box.center, glm::length(box.half_extents)})
+        .first->second;
+}
+
+float model_bounding_radius(scenegraph::ModelHandle handle,
+                            const assets::Model& model) {
+    return model_bounds(handle, model).radius;
 }
 
 // Per-mesh body-frame boxes (mesh_body_aabbs) for the plating record
@@ -1582,9 +1592,9 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
         // their holes are always cut. A skinned draw has no plating layer.
         bool plating_far = false;
         if (use_plating && !inst.surface_is_rock && !draws_skinned(*m, palette)) {
-            plating_far = !interior_is_near(
-                inst, model_bounding_radius(inst.model_handle, *m), camera,
-                interior_policy_);
+            const ModelBounds& bounds = model_bounds(inst.model_handle, *m);
+            plating_far = !interior_is_near(inst, bounds.centre, bounds.radius, camera,
+                                            interior_policy_);
             if (plating_far) ++plating_far_draws_last_frame_;
         }
         // Far tier: a fading mesh screen-doors against its impostor. Set on
@@ -1832,8 +1842,8 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
         if (!m || inst.hull_damage.count() == 0) return;
         // Far hulls (InteriorPolicy) take no marking and no rooms: their
         // holes were painted as wreckage by the plating draw.
-        if (!interior_is_near(inst, model_bounding_radius(inst.model_handle, *m), camera,
-                              interior_policy_))
+        const ModelBounds& bounds = model_bounds(inst.model_handle, *m);
+        if (!interior_is_near(inst, bounds.centre, bounds.radius, camera, interior_policy_))
             return;
         PlatingListCacheEntry& entry = plating_entry_for(inst);
         const plating::DamageList& list = entry.list;

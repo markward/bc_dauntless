@@ -11,6 +11,8 @@
 
 #include <optional>
 
+#include <glm/glm.hpp>
+
 #include <scenegraph/instance.h>
 
 namespace scenegraph { struct Camera; }
@@ -24,9 +26,12 @@ struct InteriorPolicy {
 };
 
 // Near = rooms for this instance in this render. Distance is from the camera
-// eye to the instance's bounding sphere surface (model bounding radius x scale),
-// render space. On the viewscreen only the target can be near, at any distance.
-bool interior_is_near(const scenegraph::Instance& inst, float model_radius,
-                      const scenegraph::Camera& camera, const InteriorPolicy& policy);
+// eye to the instance's bounding sphere surface, render space: the sphere is
+// centred on `model_centre` (the model's box centre, body frame) carried
+// through inst.world, radius `model_radius` (the box half-diagonal) x scale.
+// On the viewscreen only the target can be near, at any distance.
+bool interior_is_near(const scenegraph::Instance& inst, const glm::vec3& model_centre,
+                      float model_radius, const scenegraph::Camera& camera,
+                      const InteriorPolicy& policy);
 
 }  // namespace renderer

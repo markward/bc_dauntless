@@ -522,6 +522,31 @@ TEST_F(HullInteriorTest, FarBlownThroughStillCuts) {
         << "a far hull blown through must still show what is behind it";
 }
 
+// The near test's sphere is centred on the model's box centre carried
+// through the instance world, not the model origin. A quad 300 mu off its
+// origin (box half-diagonal 14.1): with the camera 15 GU above the quad it is
+// near (0.9 GU to the sphere) though the origin is 300 GU away; under a world
+// scale of 2 and a shift putting the origin at the camera it is far (the quad
+// sits 600 GU out) though the origin is right there.
+TEST_F(HullInteriorTest, NearSphereIsCentredOnTheModelBoxNotItsOrigin) {
+    auto off = std::make_unique<assets::Model>();
+    add_face(*off, glm::vec3(300.0f, 0.0f, 0.0f), glm::vec3(1, 0, 0), glm::vec3(0, 1, 0), 10.0f);
+    policy = renderer::InteriorPolicy{};
+    cam.eye = glm::vec3(300.0f, 0.0f, 15.0f);
+    cam.target = glm::vec3(300.0f, 0.0f, 0.0f);
+    const auto ring = internal_ring({300.0f, 0.0f, 0.0f}, 8.0f, 10.0f);
+    const auto near = render({Placed{glm::mat4(1.0f), ring}}, empty.get(), false, off.get());
+    EXPECT_EQ(near.marks, 1) << "a hull 0.9 GU from the camera was judged far";
+    EXPECT_EQ(near.far_draws, 0);
+
+    cam.eye = glm::vec3(0.0f, 0.0f, 15.0f);
+    cam.target = glm::vec3(0.0f);
+    const glm::mat4 world = glm::scale(glm::mat4(1.0f), glm::vec3(2.0f));
+    const auto far = render({Placed{world, ring}}, empty.get(), false, off.get());
+    EXPECT_EQ(far.marks, 0) << "a hull 570 GU from the camera was judged near";
+    EXPECT_EQ(far.far_draws, 1);
+}
+
 // The production default (20 GU) with the camera close: rooms, as before.
 TEST_F(HullInteriorTest, NearHullStillDrawsInterior) {
     policy = renderer::InteriorPolicy{};
