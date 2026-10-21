@@ -726,11 +726,12 @@ def _poll_skip_dialogue(host, input_map) -> None:
     _skip_dialogue_prev = down
 
 
-def _articulated_running_lights(ship, iid, specs) -> tuple:
+def _articulated_running_lights(ship, iid, specs, severed_mask=None) -> tuple:
     """The 9-tuples to send for `specs` (rest positions), each light carried
     by the articulated part it sits on and dropped if that part was severed
-    (`_part_pose_at`). The part is the light's explicit physical parent when
-    set, else the geometric `part_for_mount` rule, via
+    (`_part_pose_at`) -- a rig part, or a structure part in `severed_mask`
+    (read here when None). The part is the light's explicit physical parent
+    when set, else the geometric `part_for_mount` rule, via
     `physical_parents.part_for_property`."""
     from engine.appc import part_pose
     from engine.appc.physical_parents import PropRef
@@ -741,7 +742,8 @@ def _articulated_running_lights(ship, iid, specs) -> tuple:
         # reaches these spawn-time specs without a respawn.
         prop = s.prop if s.prop is not None else PropRef(s.name,
                                                          s.physical_parent)
-        pose = _part_pose_at(ship, iid, s.pos, prop=prop)
+        pose = _part_pose_at(ship, iid, s.pos, prop=prop,
+                             severed_mask=severed_mask)
         if pose is _PART_SEVERED:
             continue
         if pose is not None:
@@ -754,35 +756,38 @@ def _register_running_lights(r, session, ship, iid) -> None:
     """Send a ship's BlinkingLightProperty running lights to native at spawn
     (running-lights spec §4.3). Unlit ships send nothing. The rest specs and
     the sent list are kept so `_push_running_lights` can re-send when an
-    articulated part moves."""
-    from engine.appc import running_lights
+    articulated part moves or a structure part breaks off."""
+    from engine.appc import hull_breakup, running_lights
     specs = running_lights.lights_for(ship)
     if not specs:
         return
     phase = running_lights.phase_for(ship)
     session.ship_running_lights[iid] = phase
-    sent = _articulated_running_lights(ship, iid, specs)
-    session.ship_running_light_specs[iid] = (tuple(specs), sent)
+    mask = hull_breakup.severed_mask(iid)
+    sent = _articulated_running_lights(ship, iid, specs, severed_mask=mask)
+    session.ship_running_light_specs[iid] = (tuple(specs), sent, mask)
     r.set_running_lights(iid, list(sent), phase)
 
 
 def _resend_articulated_running_lights(r, session, ship, iid, phase) -> None:
-    """Re-send `ship`'s lights when an articulated part has moved them since
-    the last send. Native caches positions at send time and places them only
-    through the hull's own matrix, so a part's pose reaches the lights ONLY
-    through here. Unrigged ships cost one rig lookup."""
+    """Re-send `ship`'s lights when an articulated part has moved them, or a
+    structure part has broken off, since the last send. Native caches
+    positions at send time and places them only through the hull's own
+    matrix, so a part's pose -- or its loss -- reaches the lights ONLY
+    through here. An unrigged ship costs one rig lookup and one severed-mask
+    read, and is re-labelled only when that mask has changed."""
     record = session.ship_running_light_specs.get(iid)
     if record is None:
         return
-    from engine.appc import articulation
-    if not articulation.posed_part_names(ship):
+    from engine.appc import articulation, hull_breakup
+    specs, last, last_mask = record
+    mask = hull_breakup.severed_mask(iid)
+    if mask == last_mask and not articulation.posed_part_names(ship):
         return
-    specs, last = record
-    sent = _articulated_running_lights(ship, iid, specs)
-    if sent == last:
-        return
-    session.ship_running_light_specs[iid] = (specs, sent)
-    r.set_running_lights(iid, list(sent), phase)
+    sent = _articulated_running_lights(ship, iid, specs, severed_mask=mask)
+    session.ship_running_light_specs[iid] = (specs, sent, mask)
+    if sent != last:
+        r.set_running_lights(iid, list(sent), phase)
 
 
 def _push_running_lights(r, session, hidden_iids=()) -> None:
@@ -1689,7 +1694,7 @@ def _build_explosion_light_render_data():
 _PART_SEVERED = object()
 
 
-def _part_pose_at(ship, iid, position, prop=None):
+def _part_pose_at(ship, iid, position, prop=None, severed_mask=None):
     """The live pose of the articulated part a hull-attached point sits on.
 
     `position` is the point's authored rest position (body frame, ship
@@ -1702,8 +1707,16 @@ def _part_pose_at(ship, iid, position, prop=None):
     at its identity pose), or `_PART_SEVERED` when its part has been shot
     off. Shared by every per-frame attached effect -- the subsystem emitter
     lights and the running lights -- so they follow exactly the pose
-    `_sync_ship_articulation` pushes to the renderer this frame."""
-    from engine.appc import articulation
+    `_sync_ship_articulation` pushes to the renderer this frame.
+
+    A STRUCTURE part (unrigged hulls, `hull_breakup`) that has broken off
+    also answers `_PART_SEVERED`: the point's `structure_part_at` label has
+    its bit set in the instance's severed mask (`severed_mask`, the caller's
+    once-per-ship read, or read here when None). Checked first, because
+    that is exactly the hull with no rig."""
+    from engine.appc import articulation, hull_breakup
+    if hull_breakup.on_severed_part(ship, iid, position, severed_mask):
+        return _PART_SEVERED
     names = articulation.posed_part_names(ship)
     if not names:
         return None
@@ -1728,7 +1741,7 @@ def _part_pose_at(ship, iid, position, prop=None):
     return pose
 
 
-def _articulate_emitter_light(ship, iid, spec, d):
+def _articulate_emitter_light(ship, iid, spec, d, severed_mask=None):
     """Carry body-frame light dict `d` with the articulated part it sits on,
     or return None when that part has been severed.
 
@@ -1746,9 +1759,11 @@ def _articulate_emitter_light(ship, iid, spec, d):
     tag could run before, silently tagging every light None forever.
 
     Identity -- the same dict, untouched -- for an unrigged ship, a light on
-    no part, or a part at its identity pose.
+    no part, or a part at its identity pose. `severed_mask` is the ship's
+    structure-part severed mask when the caller read it (`_part_pose_at`).
     """
-    pose = _part_pose_at(ship, iid, spec["position"])
+    pose = _part_pose_at(ship, iid, spec["position"],
+                         severed_mask=severed_mask)
     if pose is _PART_SEVERED:
         return None
     if pose is None:
@@ -1788,7 +1803,7 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters,
     if not ship_instances or not ship_emitters:
         return out
     import App
-    from engine.appc import light_emitters
+    from engine.appc import hull_breakup, light_emitters
     if not light_emitters.enabled():
         return out          # Cinematic Lighting off — cast no emitter lights.
     from engine.appc.subsystem_glow import commanded_impulse_frac
@@ -1830,6 +1845,7 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters,
         if fade is None:
             continue
         _wg = warp_glow if ship is player else None
+        severed = hull_breakup.severed_mask(iid)    # once per ship per frame
         for (sub, is_impulse, is_warp, phase, spec, struct) in entries:
             try:
                 inten = light_emitters.resolve_emitter_intensity(
@@ -1843,7 +1859,8 @@ def _build_emitter_light_render_data(ship_instances, ship_emitters,
                 # lights), so the light and the hull share one pose per frame
                 # — interpolated, live or mid-handover alike. Shallow copy is
                 # enough: every value in `struct` is an immutable tuple/float.
-                d = _articulate_emitter_light(ship, iid, spec, dict(struct))
+                d = _articulate_emitter_light(ship, iid, spec, dict(struct),
+                                              severed_mask=severed)
                 if d is None:
                     continue    # its part has been shot off
                 d["intensity"] = inten * fade

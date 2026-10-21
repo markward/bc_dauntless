@@ -145,6 +145,20 @@ def test_structure_part_at_is_a_required_binding():
     assert "structure_part_at" in host_io._REQUIRED_BINDINGS
 
 
+def test_instance_severed_parts_is_zero_for_an_intact_or_stale_hull(iid):
+    """Lights and emitters on a lost structure part read this mask every
+    frame: an intact hull and a stale id both answer 0, never raise."""
+    assert _h.instance_severed_parts(iid) == 0
+    stale = _h.create_instance(0)
+    _h.destroy_instance(stale)
+    assert _h.instance_severed_parts(stale) == 0
+
+
+def test_instance_severed_parts_is_a_required_binding():
+    from engine import host_io
+    assert "instance_severed_parts" in host_io._REQUIRED_BINDINGS
+
+
 # ── Damage moves with articulated parts (layered damage phase 4 §2.1) ────────
 # A hit on a posed part is recorded on that part's NODE, in the node's REST
 # frame, so the hole moves with the part. Needs a real model with a named,

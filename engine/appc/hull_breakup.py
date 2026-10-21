@@ -126,8 +126,10 @@ def _check_parts(ship, iid, now):
 
 def _spawn_components(ship, iid, comps, parent_mass, total_cells, spawned):
     for c in comps:
-        _destroy_subsystems_inside(ship, c["bounds_min"], c["bounds_max"],
-                                   iid, c.get("parts"))
+        inside = _destroy_subsystems_inside(ship, c["bounds_min"],
+                                            c["bounds_max"], iid, c.get("parts"))
+        _silence_emitters_inside(ship, iid, c["bounds_min"], c["bounds_max"],
+                                 c.get("parts"), inside)
         if c.get("instance_id") is None:
             _burst(ship, iid, tuple(c["centroid"]))
             continue
@@ -157,7 +159,9 @@ def _destroy_orphan(chunk_iid):
 def _destroy_subsystems_inside(ship, lo, hi, iid=None, parts=None):
     """A nacelle that has physically left the ship cannot remain a working
     warp engine: destroy every subsystem whose BODY-frame mount lies in the
-    component's bounds (GU, body frame -- GetPosition() is already that).
+    component's bounds (GU, body frame -- GetPosition() is already that), and
+    return every subsystem inside (already-destroyed ones too: their particle
+    emitters must still stop).
 
     A severed PIECE (`parts`, structure part indices) decides by the voxel
     label instead: its bounding box can reach over main-body mounts, so a
@@ -174,31 +178,134 @@ def _destroy_subsystems_inside(ship, lo, hi, iid=None, parts=None):
         subs = it_fn(ship)
     else:
         subs = it()
+    inside = []
     for sub in subs:
         pos = sub.GetPosition() if hasattr(sub, "GetPosition") else None
         if not isinstance(pos, TGPoint3):
             continue
-        label = _part_at(iid, pos) if parts else -1
-        if label >= 0:
-            inside = label in parts
-        else:
-            inside = (lo[0] <= pos.x <= hi[0] and lo[1] <= pos.y <= hi[1]
-                      and lo[2] <= pos.z <= hi[2])
-        if inside:
-            try:
-                if hasattr(sub, "IsDestroyed") and sub.IsDestroyed():
-                    continue
-                sub.SetCondition(0.0)
-            except Exception as _e:
-                dev_mode.log_swallowed("severed subsystem destroy", _e)
+        if not _in_piece(ship, iid, (pos.x, pos.y, pos.z), lo, hi, parts):
+            continue
+        inside.append(sub)
+        try:
+            if hasattr(sub, "IsDestroyed") and sub.IsDestroyed():
+                continue
+            sub.SetCondition(0.0)
+        except Exception as _e:
+            dev_mode.log_swallowed("severed subsystem destroy", _e)
+    return inside
 
 
-def _part_at(iid, pos) -> int:
+def _in_piece(ship, iid, point, lo, hi, parts) -> bool:
+    """Whether an authored body-frame point (SHIP units) left with the piece:
+    its voxel label when it has one, else the piece's bounds (GAME units, so
+    the point is scaled by the hull's `GetScale()` first, as
+    `part_at_rest_point` does)."""
+    label = part_at_rest_point(ship, iid, point) if parts else -1
+    if label >= 0:
+        return label in parts
+    k = _ship_scale(ship)
+    x, y, z = point[0] * k, point[1] * k, point[2] * k
+    return (lo[0] <= x <= hi[0] and lo[1] <= y <= hi[1] and lo[2] <= z <= hi[2])
+
+
+def _silence_emitters_inside(ship, iid, lo, hi, parts, inside_subs):
+    """Stop every particle controller still emitting from the piece that
+    left: from one of `inside_subs`, or from `ship` at a body point inside
+    the piece. The structure-part twin of
+    `part_severance._silence_emitters_on`, with both of its legs (identity on
+    `_emit_from`; position on `_emit_pos`, since every real hull emitter is
+    attached to the SHIP) and the same inside-test as the subsystem kill
+    (`_in_piece`), so a subsystem and its smoke cannot disagree.
+
+    `_emit_pos` is body-frame MODEL units (`host_io.world_to_body`'s
+    output); scaled to SHIP units before the test, as part_severance does.
+    Best-effort: the piece has already gone."""
     try:
-        return int(host_io.structure_part_at(iid, (pos.x, pos.y, pos.z)))
+        from engine.appc import particles
+        live = particles.active()
+    except Exception as _e:
+        dev_mode.log_swallowed("severed piece emitter silence", _e)
+        return
+    if not live:
+        return
+    from engine.appc.part_severance import MODEL_TO_SHIP
+    dead = {id(s) for s in inside_subs}
+    for c in list(live):
+        try:
+            emit_from = getattr(c, "_emit_from", None)
+            if id(emit_from) in dead:
+                c.stop_emitting()
+                continue
+            if emit_from is not ship:
+                continue
+            pos = getattr(c, "_emit_pos", None)
+            if pos is None:
+                continue
+            if hasattr(pos, "x"):
+                point = (pos.x, pos.y, pos.z)
+            elif isinstance(pos, (tuple, list)) and len(pos) == 3:
+                point = tuple(pos)
+            else:
+                continue
+            point = tuple(float(v) * MODEL_TO_SHIP for v in point)
+            if _in_piece(ship, iid, point, lo, hi, parts):
+                c.stop_emitting()
+        except Exception as _e:
+            dev_mode.log_swallowed("severed piece emitter silence", _e)
+
+
+def part_at_rest_point(ship, iid, point) -> int:
+    """The structure part whose voxel holds an AUTHORED body-frame point of
+    `ship` -- a hardpoint mount (`GetPosition()`), a light's rest position --
+    or -1 (off the voxels, parts not detected yet, stale id, headless).
+
+    Authored points are SHIP units: unscaled, model units x BC_MODEL_SCALE.
+    `structure_part_at` takes GAME units and divides by the instance's
+    model->GU scale, which also carries the ship's `GetScale()`; so the point
+    is scaled by it on the way in (identity for an unscaled hull). The one
+    test for "is this point on that part": subsystem kill, emitter silencing
+    and `host_loop._part_pose_at`'s lights all use it, so they agree."""
+    k = _ship_scale(ship)
+    try:
+        return int(host_io.structure_part_at(
+            iid, (point[0] * k, point[1] * k, point[2] * k)))
     except Exception as _e:
         dev_mode.log_swallowed("structure_part_at", _e)
         return -1
+
+
+def _ship_scale(ship) -> float:
+    try:
+        s = float(ship.GetScale())
+    except Exception:
+        return 1.0
+    return s if s > 0.0 else 1.0
+
+
+def severed_mask(iid) -> int:
+    """`iid`'s severed structure parts (`host_io.instance_severed_parts`),
+    0 when none, for a stale id, or a host without the binding -- a
+    per-frame reader must never raise out of the frame."""
+    if iid is None:
+        return 0
+    try:
+        return int(host_io.instance_severed_parts(iid))
+    except Exception as _e:
+        dev_mode.log_swallowed("instance_severed_parts", _e)
+        return 0
+
+
+def on_severed_part(ship, iid, point, mask=None) -> bool:
+    """Whether an authored body-frame point of `ship` (SHIP units, rest
+    pose) sits on a structure part that has broken off. `mask` is
+    `severed_mask(iid)` when the caller already holds it (read once per ship
+    per frame); an intact hull answers without labelling the point."""
+    if mask is None:
+        mask = severed_mask(iid)
+    if not mask:
+        return False
+    label = part_at_rest_point(ship, iid, point)
+    return 0 <= label < 32 and bool((int(mask) >> label) & 1)
 
 
 def _burst(ship, iid, centroid_gu):

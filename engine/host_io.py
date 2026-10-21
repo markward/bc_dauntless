@@ -49,7 +49,8 @@ _REQUIRED_BINDINGS = frozenset({
     "shield_hit", "world_to_body", "damage_decal_add",
     "hull_damage_add", "hull_damage_add_body",
     "model_nodes", "model_nearest_part", "set_instance_decals",
-    "hull_split_parts", "structure_part_at", "breach_burst",
+    "hull_split_parts", "structure_part_at", "instance_severed_parts",
+    "breach_burst",
     "ray_trace_mesh", "instance_translation",
     "transform_alloc", "transform_free", "transform_get_position",
     "transform_set_position", "transform_get_rotation", "transform_set_rotation",
@@ -524,6 +525,15 @@ def structure_part_at(instance_id: int, body_point_gu) -> int:
     if _h is None:
         return -1
     return int(_h.structure_part_at(instance_id, tuple(float(c) for c in body_point_gu)))
+
+
+def instance_severed_parts(instance_id: int) -> int:
+    """The structure parts that have broken off `instance_id` as a bitmask:
+    bit i set = part i (a `structure_part_at` index) has left as a chunk.
+    0 for an intact hull, a stale id, or headless."""
+    if _h is None:
+        return 0
+    return int(_h.instance_severed_parts(instance_id))
 
 
 def breach_burst(instance_id: int, body_point_gu, radius_gu: float) -> None:

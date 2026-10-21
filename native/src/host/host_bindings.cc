@@ -7831,6 +7831,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "GAME UNITS, or -1: outside the hull's voxels, a stale id, or parts "
           "not detected yet. Read-only.");
 
+    m.def("instance_severed_parts",
+          [](scenegraph::InstanceId id) -> std::uint32_t {
+              const auto* inst = g_world.get(id);
+              return inst == nullptr ? 0u : inst->severed_parts;
+          },
+          py::arg("instance_id"),
+          "The structure parts that have broken off this hull "
+          "(Instance::severed_parts): bit i set = part i (structure_part_at's "
+          "index) has left as a chunk. 0 for an intact hull or a stale id. "
+          "Read-only.");
+
     m.def("breach_burst",
           [](scenegraph::InstanceId id, std::tuple<float, float, float> body_point_gu,
              float radius_gu) {
