@@ -42,7 +42,8 @@ std::vector<float> interior_wear_field(const voxel::VoxelVolume& vol,
 
 std::vector<SeveredPart> find_severed_parts(const voxel::StructureSegmentation& seg,
                                             const plating::DamageList& dmg, float deck_break,
-                                            std::uint32_t already_severed) {
+                                            std::uint32_t already_severed,
+                                            std::uint32_t gone) {
     std::vector<SeveredPart> out;
     const int np = static_cast<int>(seg.parts.size());
     const glm::ivec3 d = seg.vol.dims;
@@ -51,12 +52,15 @@ std::vector<SeveredPart> find_severed_parts(const voxel::StructureSegmentation& 
 
     const std::vector<float> wear = interior_wear_field(seg.vol, dmg);
 
-    // Surviving voxels: occupied, labelled, interior wear below deck_break.
+    // Surviving voxels: occupied, labelled, interior wear below deck_break,
+    // and not in a part that has left the hull (`gone`): a lost part is
+    // neither the main body nor a bridge for the flood.
     std::vector<std::uint8_t> alive(n, 0);
     std::vector<int> alive_count(static_cast<std::size_t>(np), 0);
     for (std::size_t i = 0; i < n; ++i) {
         const int lab = seg.label[i];
         if (!seg.vol.occ[i] || lab < 0 || lab >= np) continue;
+        if (lab < 32 && ((gone >> lab) & 1u)) continue;
         if (wear[i] < deck_break) {
             alive[i] = 1;
             ++alive_count[static_cast<std::size_t>(lab)];
@@ -101,7 +105,7 @@ std::vector<SeveredPart> find_severed_parts(const voxel::StructureSegmentation& 
     }
 
     for (int p = 0; p < np; ++p) {
-        if (p == main_part || p >= 32 || ((already_severed >> p) & 1u)) continue;
+        if (p == main_part || p >= 32 || (((already_severed | gone) >> p) & 1u)) continue;
         const int alive_n = alive_count[static_cast<std::size_t>(p)];
         if (alive_n < kMinPartVoxels) continue;
         if (reached_count[static_cast<std::size_t>(p)] >= kReachedFraction * alive_n) continue;
@@ -135,11 +139,15 @@ std::vector<SeveredSplit> split_severed_parts(scenegraph::World& world,
                                               float deck_break) {
     std::vector<SeveredSplit> out;
     const scenegraph::Instance* p = world.get(parent);
-    if (p == nullptr || p->surface_is_rock || !can_structure_sever(*p)) return out;
-    // Parts the draw cannot hide are treated as already gone: never reported.
+    // A chunk (only_part) is debris: it never severs further.
+    if (p == nullptr || p->surface_is_rock || p->only_part >= 0 || !can_structure_sever(*p))
+        return out;
+    // Parts the draw cannot hide are never reported, but they still join the
+    // hull (an intact pylon past the cap keeps its nacelle on). Parts already
+    // lost are gone: out of the main-body choice and the flood.
     const std::uint32_t unhideable = ~((1u << kMaxHideableParts) - 1u);
     const std::vector<SeveredPart> parts =
-        find_severed_parts(seg, dmg, deck_break, p->severed_parts | unhideable);
+        find_severed_parts(seg, dmg, deck_break, unhideable, p->severed_parts);
     if (parts.empty()) return out;
     int total = 0;
     for (const std::int16_t lab : seg.label) total += lab >= 0 ? 1 : 0;

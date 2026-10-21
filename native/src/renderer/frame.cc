@@ -2182,6 +2182,10 @@ void submit_shadow_depth(const scenegraph::World& world,
     world.for_each_visible_in_pass(
         scenegraph::Pass::Space, [&](const scenegraph::Instance& inst) {
             if (!inst.rim_eligible) return;  // ships + stations only
+            // A severed-part chunk is a whole-model instance and this pass
+            // cannot hide parts: it casts nothing (the parent still casts
+            // its lost part too, until this pass learns the part mask).
+            if (inst.only_part >= 0) return;
             const assets::Model* m = lookup(inst.model_handle);
             if (!m) return;
             draw_model_positions_only(*m, inst.world, prog, &inst.node_overrides);

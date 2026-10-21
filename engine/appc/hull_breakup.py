@@ -26,6 +26,8 @@ and instancing a chunk that draws only that part. Same throttle and drain,
 on its own clock, so a carve check never delays a wear check. Rocks never
 sever this way (they crumble: engine.rocks.death).
 """
+import weakref
+
 import engine.dev_mode as dev_mode
 from engine import host_io
 from engine.core import frame_profiler
@@ -38,7 +40,7 @@ _last_check: dict = {}        # id(ship) -> game time of last split
 _pending: dict = {}           # id(ship) -> (ship, iid, ship_instances)
 _last_wear_check: dict = {}   # id(ship) -> game time of last part check
 _pending_wear: dict = {}      # id(ship) -> (ship, iid, ship_instances)
-_severed: dict = {}           # id(ship) -> (ship, iid, {part, ...}) already spawned
+_severed: dict = {}           # id(ship) -> (weakref(ship), iid, {part, ...}) spawned
 
 
 def _now():
@@ -112,13 +114,22 @@ def _check_parts(ship, iid, now):
         return []
     # The native side reports a part once (the parent's severed bit); this
     # guard keeps a part from ever spawning or killing twice on this side.
+    # A weak reference (as debris_chunk keeps its origin ship): the record
+    # must never keep a dead ship alive.
     entry = _severed.get(id(ship))
-    if entry is None or entry[0] is not ship or entry[1] != iid:
-        entry = (ship, iid, set())
+    if entry is None or entry[0]() is not ship or entry[1] != iid:
+        entry = (weakref.ref(ship), iid, set())
         _severed[id(ship)] = entry
     done = entry[2]
-    fresh = [p for p in parts if int(p["part"]) not in done]
-    done.update(int(p["part"]) for p in fresh)
+    fresh = []
+    for p in parts:
+        if int(p["part"]) in done:
+            # Native instanced a chunk for it before we got here: no body
+            # will own it, so it must not stay in the scene.
+            _destroy_orphan(p.get("instance_id"))
+            continue
+        done.add(int(p["part"]))
+        fresh.append(p)
     if not fresh:
         return []
 
@@ -169,16 +180,21 @@ def _spawn_components(ship, iid, comps, parent_mass, total_cells, spawned):
                 float(c["radius_gu"]), parent_mass, total_cells))
         except Exception as _e:
             dev_mode.log_swallowed("debris_chunk.spawn", _e)
-            # The native side created this instance BEFORE we got here.
-            # With no body to own it, it would sit in the scene for the
-            # rest of the mission -- outside the cap, the swap clear and
-            # the collision system. Lazy import: engine.renderer binds the
-            # host extension.
-            try:
-                from engine import renderer
-                renderer.destroy_instance(c["instance_id"])
-            except Exception as _e2:
-                dev_mode.log_swallowed("orphaned chunk instance destroy", _e2)
+            _destroy_orphan(c["instance_id"])
+
+
+def _destroy_orphan(chunk_iid):
+    """The native side created this chunk instance BEFORE we got here. With
+    no body to own it, it would sit in the scene for the rest of the mission
+    -- outside the cap, the swap clear and the collision system. Lazy
+    import: engine.renderer binds the host extension."""
+    if chunk_iid is None:
+        return
+    try:
+        from engine import renderer
+        renderer.destroy_instance(chunk_iid)
+    except Exception as _e2:
+        dev_mode.log_swallowed("orphaned chunk instance destroy", _e2)
 
 
 def _destroy_subsystems_inside(ship, lo, hi):

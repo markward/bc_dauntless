@@ -165,3 +165,35 @@ def test_a_failed_native_check_spawns_nothing(monkeypatch, spawns):
     monkeypatch.setattr(host_io, "hull_split_parts", boom)
     assert hull_breakup.after_wear(_Ship(radius=3.5), 11, now=10.0) == []
     assert spawns == []
+
+
+def test_a_part_reported_again_destroys_its_new_instance(monkeypatch, spawns):
+    """The native side instances a chunk before Python sees the dict: a part
+    the Python guard drops must not leave that instance in the scene."""
+    from engine import renderer
+    from engine.appc import hull_breakup
+    destroyed = []
+    monkeypatch.setattr(renderer, "destroy_instance", destroyed.append)
+    reply = [[_part(1, 21, 600, (1.0, -.5, -.5), (2.0, .5, .5))],
+             [_part(1, 31, 600, (1.0, -.5, -.5), (2.0, .5, .5))]]
+    monkeypatch.setattr(host_io, "hull_split_parts", lambda iid: reply.pop(0))
+    ship = _Ship(radius=3.5)
+    hull_breakup.after_wear(ship, 11, now=10.0)
+    assert hull_breakup.after_wear(ship, 11, now=20.0) == []
+    assert [c["iid"] for c in spawns] == [21]
+    assert destroyed == [31]
+
+
+def test_the_severed_record_does_not_keep_a_ship_alive(monkeypatch):
+    import gc
+    import weakref
+    from engine.appc import debris_chunk, hull_breakup
+    monkeypatch.setattr(debris_chunk, "spawn", lambda *a, **k: object())
+    monkeypatch.setattr(host_io, "hull_split_parts",
+                        lambda iid: [_part(1, 21, 600, (1.0, -.5, -.5), (2.0, .5, .5))])
+    ship = _Ship(radius=3.5)
+    assert len(hull_breakup.after_wear(ship, 11, now=10.0)) == 1
+    ref = weakref.ref(ship)
+    del ship
+    gc.collect()
+    assert ref() is None, "hull_breakup._severed held the ship alive"

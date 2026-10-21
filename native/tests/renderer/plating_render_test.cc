@@ -1534,3 +1534,34 @@ TEST_F(PlatingRenderTest, MarkSkipsHiddenParts) {
             if (severed.stencil[static_cast<std::size_t>(y) * kSize + x] != 0) ++stamped_right;
     EXPECT_EQ(stamped_right, 0) << "the hidden part was stamped";
 }
+
+// A chunk (only_part) is a whole-model instance: until the shadow pass can
+// hide parts it casts no shadow at all, or a whole-ship shadow would tumble
+// across the player's hull (fix round 1, I2).
+TEST_F(PlatingRenderTest, ShadowDepthSkipsSeveredPartChunks) {
+    const auto cam = quad_cam();
+    auto box = build_box(20.0f);
+    renderer::ShadowLight light;
+    light.view_proj = cam.proj_matrix() * cam.view_matrix();
+    const glm::ivec2 c = to_pixel(cam, glm::vec3(0.0f));
+    const auto lookup = [](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h);
+    };
+    auto depth_at_centre = [&](int only_part) {
+        scenegraph::World world;
+        auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(box.get()));
+        world.set_world_transform(iid, glm::mat4(1.0f));
+        world.get(iid)->rim_eligible = true;
+        world.get(iid)->only_part = only_part;
+        glViewport(0, 0, kSize, kSize);
+        glDepthMask(GL_TRUE);
+        glClearDepth(1.0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        renderer::submit_shadow_depth(world, light, *p, lookup);
+        float d = -1.0f;
+        glReadPixels(c.x, c.y, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &d);
+        return d;
+    };
+    ASSERT_LT(depth_at_centre(-1), 1.0f) << "the hull casts no depth";
+    EXPECT_EQ(depth_at_centre(0), 1.0f) << "a chunk cast a whole-model shadow";
+}

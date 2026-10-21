@@ -264,3 +264,63 @@ TEST(PartSeverance, SplitNeverSeversAPartTheDrawCannotHide) {
     const auto parent = blown_parent(world);
     EXPECT_TRUE(renderer::split_severed_parts(world, parent, s, bridge_hit(10.f), 6.f).empty());
 }
+
+// ── A part that has left never carries the flood (fix round 1, I1) ────────
+namespace {
+// bridge_hit plus a blast that kills x 0..5 of part 0 (216 of its 361
+// voxels), leaving part 0 fewer survivors than the lost part 1 (216).
+DamageList bridge_and_saucer_hit() {
+    DamageList l = bridge_hit(10.f);
+    l.count = 2;
+    l.a[1] = glm::vec4(0.f, 3.f, 3.f, 7.f);
+    l.b[1] = glm::vec4(0, 0, 0, 1000.f);
+    l.c[1] = glm::vec4(3, 0, 0, 0);
+    return l;
+}
+int alive_in_part(const voxel::StructureSegmentation& s, const DamageList& l, int part) {
+    const auto w = renderer::interior_wear_field(s.vol, l);
+    int n = 0;
+    for (std::size_t i = 0; i < w.size(); ++i)
+        if (s.vol.occ[i] && s.label[i] == part && w[i] < 6.f) ++n;
+    return n;
+}
+}  // namespace
+
+TEST(PartSeverance, AGonePartIsNeverTheMainBody) {
+    auto s = make_seg();
+    const DamageList l = bridge_and_saucer_hit();
+    ASSERT_LT(alive_in_part(s, l, 0), alive_in_part(s, l, 1))
+        << "precondition: the lost part has more survivors than the hull";
+    EXPECT_TRUE(renderer::find_severed_parts(s, l, 6.f, 1u << 1, 1u << 1).empty());
+}
+
+TEST(PartSeverance, SplitAfterALossNeverSeversTheRemainingHull) {
+    auto s = make_seg();
+    scenegraph::World world;
+    const auto parent = blown_parent(world);
+    ASSERT_EQ(renderer::split_severed_parts(world, parent, s, bridge_hit(10.f), 6.f).size(), 1u);
+    EXPECT_TRUE(
+        renderer::split_severed_parts(world, parent, s, bridge_and_saucer_hit(), 6.f).empty());
+    EXPECT_EQ(world.get(parent)->severed_parts, 1u << 1);
+}
+
+// A part the draw cannot hide still joins the hull: an intact pylon numbered
+// past kMaxHideableParts keeps the part beyond it attached.
+TEST(PartSeverance, SplitKeepsAnUnhideablePartInTheConnectivity) {
+    auto s = make_seg();
+    s.parts.resize(renderer::kMaxHideableParts + 1);
+    s.label[s.vol.index(10, 2, 2)] = static_cast<std::int16_t>(renderer::kMaxHideableParts);
+    scenegraph::World world;
+    const auto parent = blown_parent(world);
+    world.get(parent)->hull_damage = scenegraph::HullDamageStore{};
+    EXPECT_TRUE(renderer::split_severed_parts(world, parent, s, DamageList{}, 6.f).empty());
+}
+
+TEST(PartSeverance, AChunkNeverSevers) {
+    auto s = make_seg();
+    scenegraph::World world;
+    const auto chunk = blown_parent(world);
+    world.get(chunk)->only_part = 0;
+    EXPECT_TRUE(renderer::split_severed_parts(world, chunk, s, bridge_hit(10.f), 6.f).empty());
+    EXPECT_EQ(world.get(chunk)->severed_parts, 0u);
+}
