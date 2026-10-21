@@ -1,6 +1,11 @@
 # Layered hull damage, phase 4: finish and retire the carve — design
 
-**Status:** design, 2026-10-22. It follows phases 1–3 of
+**Status:** implemented on `spike/damage-redesign` (Tasks 1–9, 2026-10-22);
+the final measurement (§2.6) is pending, final verdict: see
+`docs/engine/perf-register.md` P-12. As built and backlog: §10 of the parent
+design. Not merged to main.
+
+Design, 2026-10-22. It follows phases 1–3 of
 `2026-10-21-layered-hull-damage-production-design.md`, the parent design, whose
 goals and rules still bind. Mark asked on 2026-10-21 to "spec and plan phase 4
 and implement it subagent driven". The calls marked *(my call)* are mine and
@@ -54,11 +59,11 @@ is gone.
   called beside `prefetch_hull_fill`.
 - **The cache file.** The segmentation (volume dims/origin/cell, labels,
   parts) goes to `<cache_dir>/structure_parts/<fnv1a64 of the source file
-  bytes>-v<kDetectVersion>.sps`. The format is versioned binary, read on the
+  bytes>-v<kStructurePartsVersion>.sps`. The format is versioned binary, read on the
   worker thread, little-endian. *(my call: binary, not JSON; the label grid
   is ~370k cells)*
 - **Where it goes.** The root is pushed from Python at boot, as
-  `hull_volume_set_cache_root` does. It is written through the per-user data
+  `hull_volume_set_cache_root` did (that root went with the carve). It is written through the per-user data
   dirs.
 - **Failures.** Write failures are reported once per path. A corrupt or
   stale file is ignored and rebuilt.
@@ -113,8 +118,8 @@ Remove every runtime piece the phase-3 final review inventoried (ledger
     `enabled()`.
   - **`allow_hull_carve`,** renamed for light phaser fire (no structural wear).
   - **The warp-core breach visual.** It becomes three Internal records
-    growing at the core over 1.5 s, sized as before: 0.25 × radius, capped
-    at 1.2 GU, wear 10.
+    growing at the core over 1.0 s (records at 0, 0.5 and 1.0 s), sized as
+    before: 0.25 × radius, capped at 1.2 GU, wear 10.
   - **The death capsule** is dropped. Severance and the death blasts cover it
     now.
   - **DamageTool volumes in Damage Preview** become Internal records.

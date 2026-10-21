@@ -129,9 +129,12 @@ between the `[dev-scripted] screenshot` (15 s) and `destroyed` (40 s) lines are
 the damaged-but-alive window; after `destroyed`, the death. The screenshot line
 is printed only when the run passes `DAUNTLESS_DEV_SCREENSHOT=<png>` **and**
 `DAUNTLESS_DEV_SCREENSHOT_AFTER_S=15` explicitly; the default is 5 s, before
-the blasts settle (C-097–C-100 used the 5 s default, C-101–C-104 passed 15). Add
-`DAUNTLESS_HULL_CARVING=1 DAUNTLESS_PLATING=0` for the pre-spike ("Classic")
-look in the same build. The `[damage-preview]` prints are buffered to the end
+the blasts settle (C-097–C-100 used the 5 s default, C-101–C-104 passed 15).
+The pre-spike ("Classic") look, `DAUNTLESS_HULL_CARVING=1 DAUNTLESS_PLATING=0`
+in the captures below, no longer exists: the carve was deleted in layered
+damage phase 4, so a Classic pair cannot be re-run on this branch
+(`DAUNTLESS_PLATING=0` alone still starts with the plating layer off). The
+`[damage-preview]` prints are buffered to the end
 of the log: use the `[dev-scripted]` lines as the timeline.
 
 **Close-up:** `DAUNTLESS_DAMAGE_PREVIEW_DISTANCE_GU=<gu>` moves the Akira (default 6, minimum 1.5). The exterior camera sits about 14 GU behind the player, so the floor of **1.5 GU is the close-up**: the Akira is about 22% of the frame width, against 17.5% at 6 GU. A frame-filling hull is not reachable with this knob (SIG-093).

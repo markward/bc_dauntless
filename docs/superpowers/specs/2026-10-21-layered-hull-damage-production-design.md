@@ -1,6 +1,13 @@
 # Layered hull damage — production design
 
-**Status:** design, 2026-10-21. Builds on the spike on `spike/damage-redesign`
+**Status:** **implemented** on `spike/damage-redesign` (phases 1–4, finished
+2026-10-22; phase 4 is `2026-10-22-layered-damage-p4-finish-design.md`). Not
+merged to main: that waits for Mark's live check and his word. The final
+measurement against the §3 rule is a later task; final verdict: see
+`docs/engine/perf-register.md` P-12. How it was built, where it departs from
+this design and the backlog are in §10.
+
+Design, 2026-10-21. Builds on the spike on `spike/damage-redesign`
 (worktree `.claude/worktrees/damage-redesign`). The spike's review and the
 first product sketch are in `2026-10-20-layered-hull-damage-productisation.md`;
 this document supersedes its §3–§5 where they disagree.
@@ -275,3 +282,69 @@ where each goes.
   - the DamageTool, Rock class and Damage Preview rows corrected;
   - `damagetool-and-hull-damage-gaps.md` updated or retired.
 - **Mark's live check** of rocks, phasers, collisions and severance.
+
+## 10. As built, and backlog
+
+Written 2026-10-22, after phase 4. The sections above are the design and are
+left as written; where the build differs, this section wins.
+
+**As built** (detail in the phase-4 spec and the code named):
+- **Store.** `scenegraph::HullDamageStore` (`hull_damage.h`), `kCapacity` 64,
+  merge never evict. Wear from damage dealt: `hull_wear.wear_for_hit` (phaser
+  ticks × `PHASER_RATE`; a collision wears only when it crumples and deals at
+  least `COLLISION_MIN_HULL_DAMAGE` hull). One predicate,
+  `hit_feedback._structural_hit`, gates both the wear and the part-severance
+  share, so light (PP_LOW) phaser fire records neither.
+- **Articulated parts.** Records live in each part's REST frame with their
+  node (−1 = the body); the wear bindings attribute a hit geometrically, and
+  per-mesh uploads (records and rims) are filtered by the mesh's POSED OWNER.
+  Rigged instances are flagged at realize (`set_instance_rigged`, via
+  `host_loop._mark_rigged`).
+- **Structure parts.** Detected when a model is realised or warp-preloaded
+  (`prefetch_structure_parts`), cached at `<cache_dir>/structure_parts/
+  <fnv1a64 of the NIF bytes>-v<kStructurePartsVersion>.sps`. Bump
+  `kStructurePartsVersion` whenever detection changes. glTF and scaled
+  (`#s=`) loads are detected lazily and never cached.
+- **Severance.** Unrigged hulls only (`hull_breakup.after_wear`'s rig gate and
+  the native `can_structure_sever`). The parent hides the lost part by its
+  `plating_part` label, in the plating draw and in the part-mask shadow
+  program (`shadow_parts.frag`); the chunk draws only that part, dark
+  (emissive 0). Lights and emitters on the lost part go out; each light's
+  part label is cached per (instance, severed mask).
+- **Molten rims.** The four freshest breach events younger than `kRimLife`.
+- **Warp-core breach.** Three Internal records growing at the core over
+  1.0 s.
+- **Dials.** One source of defaults, C++ `g_params`, read through
+  `plating_param_defaults()` (Python `plating_dials.DEFAULTS` is the headless
+  fallback, drift-tested). Developer Options → "Hull damage" tab, and the
+  `/ L O` "plating" dial group.
+- **GLSL twins.** `shadow_parts.frag`'s `plating_part` and hide rule copy
+  `opaque.frag`'s (drift test `ShadowPartsShader.PlatingPartIsTheTwinOfOpaque`);
+  `opaque.frag`'s `plating_rim_heat` and `hull_interior.frag`'s `rim_heat`
+  are the same body with no drift test: change both.
+- **§7's driver-rule tests.** `HullClipTest` is now
+  `OpaqueDegenerateNormalTest` (the clip went with the carve). The
+  undamaged hull is pinned by `PlatingRenderTest.UndamagedHullUnchangedByCarveRemoval`,
+  a 64-bit hash of the read-back pixels.
+
+**Backlog** (none blocks the merge):
+- The `CellBox` / `DistanceField` lattice has no production consumer left.
+- Duplication: the write-to-tmp-then-rename helper exists in both `dvox.cc`
+  and `structure_parts_io.cc`, and `structure_parts_io.cc` spells the raw
+  FNV-1a constants again, as several other `.cc` files already do, instead of
+  sharing one hash helper.
+- `_mark_rigged` reads the rig once, at realize: a rig authored fresh in the
+  Ship Property Viewer leaves the instance unflagged (dev-only).
+- The interior's posed-path rim upload has no pixel test.
+- The shadow program's rest-frame fix is untested. Unreachable today
+  (rigged hulls never structure-sever); it becomes Important if structure
+  severance is ever allowed on rigged hulls.
+- A crash between a cache write and its rename leaves a uniquely named
+  `*.tmp` in the structure-parts cache root, and they accumulate. Sweep stale
+  `.tmp` files when the root is set.
+- Renaming over a cache file that another process has open is untested on
+  Windows.
+- The undamaged-hull hash is tied to this machine's GL driver; another
+  driver needs a new hash (the test says how to take one).
+- The undamaged reference `.bin` was deleted, but it remains in branch
+  history at `d21f0188a`: a squash decision for Mark at merge.

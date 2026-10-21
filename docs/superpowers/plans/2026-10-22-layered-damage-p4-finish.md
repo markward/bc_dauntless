@@ -114,7 +114,7 @@
   - Delete or retarget `HullClipTest`, `HullFieldClip*`, `BreachPass*` and the carve-field tests.
 
 **Interfaces:**
-- `UndamagedHullUnchangedByCarveRemoval`: before any edit, render the Ambassador undamaged through `submit_opaque_in_pass` with a fixed camera and lighting. Write the PNG/bytes to `native/tests/renderer/data/undamaged_ambassador_ref.bin`; this is the only new test asset, and it is committed. After the removal, the same render matches it byte for byte.
+- `UndamagedHullUnchangedByCarveRemoval`: before any edit, render the Ambassador undamaged through `submit_opaque_in_pass` with a fixed camera and lighting. After the removal, the same render matches it byte for byte. *(As built: the reference was first committed as `native/tests/renderer/data/undamaged_ambassador_ref.bin`, then replaced in Task 9a by a 64-bit FNV-1a hash of the read-back buffer held in the test (Ruling 3: the bytes were BC-derived pixels). The `.bin` is deleted, but it remains in branch history at `d21f0188a`: a squash decision for Mark at merge.)*
   - If the PNG cannot be stable across this Mac's driver, use a per-channel tolerance of ±1 and say so.
 - `HullFillCache` keeps `prefetch`, `get_for_source` (non-blocking), `put_for_source` and `volume_for_source`, with the same behaviour.
 
