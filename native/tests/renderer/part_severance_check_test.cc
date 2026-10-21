@@ -465,3 +465,29 @@ TEST(PartSeverance, SplitSkipsAnUnchangedHull) {
     EXPECT_TRUE(renderer::split_severed_parts(world, parent, s, bridge_hit(10.f), 7.f, &st).empty());
     EXPECT_EQ(st.checks, 4);
 }
+
+// ── M2 / M3 ──────────────────────────────────────────────────────────────
+TEST(PartSeverance, AChunkKeepsTheParentsScorchMarks) {
+    auto s = make_seg();
+    scenegraph::World world;
+    const auto parent = blown_parent(world);
+    world.get(parent)->decals.add(glm::vec3(14.f, 3.f, 6.f), glm::vec3(0, 0, 1), 0.5f, 1.f,
+                                  scenegraph::WeaponClass::Scorch, 0.f);
+    world.get(parent)->decals.add(glm::vec3(2.f, 3.f, 6.f), glm::vec3(0, 0, 1), 0.5f, 1.f,
+                                  scenegraph::WeaponClass::Scorch, 0.f);
+    const auto r = renderer::split_severed_parts(world, parent, s, bridge_hit(10.f), 6.f);
+    ASSERT_EQ(r.size(), 1u);
+    EXPECT_EQ(world.get(r[0].chunk)->decals.count(), 2u) << "the piece keeps its scorch";
+}
+
+TEST(PartSeverance, ASkinnedModelNeverSevers) {
+    // The draw cannot hide parts on a skinned model (draws_skinned bypasses
+    // part hiding), so it must never lose one.
+    auto s = make_seg();
+    scenegraph::World world;
+    const auto parent = blown_parent(world);
+    EXPECT_TRUE(renderer::split_severed_parts(world, parent, s, bridge_hit(10.f), 6.f, nullptr,
+                                              /*skinned=*/true)
+                    .empty());
+    EXPECT_EQ(world.get(parent)->severed_parts, 0u);
+}

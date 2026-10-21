@@ -78,13 +78,15 @@ struct SeveredSplit {
 // ORs the piece's parts into parent.severed_parts and
 // creates a chunk instance of the same model on a copy of the parent's pose
 // and render state (as hull_split_detached does) and its damage records,
-// drawing only those parts (shown_parts). Rocks, chunks, articulated hulls
-// and stale ids never sever.
+// drawing only those parts (shown_parts), with its damage decals. Rocks,
+// chunks, articulated hulls, skinned models (`skinned`: the draw cannot hide
+// their parts) and stale ids never sever.
 std::vector<SeveredSplit> split_severed_parts(scenegraph::World& world,
                                               scenegraph::InstanceId parent,
                                               const voxel::StructureSegmentation& seg,
                                               const plating::DamageList& dmg,
                                               float deck_break,
-                                              SeveranceStats* stats = nullptr);
+                                              SeveranceStats* stats = nullptr,
+                                              bool skinned = false);
 
 }  // namespace renderer

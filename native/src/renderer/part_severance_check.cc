@@ -176,11 +176,14 @@ std::vector<SeveredSplit> split_severed_parts(scenegraph::World& world,
                                               scenegraph::InstanceId parent,
                                               const voxel::StructureSegmentation& seg,
                                               const plating::DamageList& dmg,
-                                              float deck_break, SeveranceStats* stats) {
+                                              float deck_break, SeveranceStats* stats,
+                                              bool skinned) {
     std::vector<SeveredSplit> out;
     scenegraph::Instance* p = world.get(parent);
-    // A chunk (shown_parts) is debris: it never severs further.
-    if (p == nullptr || p->surface_is_rock || p->shown_parts != 0 || !can_structure_sever(*p))
+    // A chunk (shown_parts) is debris: it never severs further. A skinned
+    // model draws without part hiding, so it could never lose a part.
+    if (p == nullptr || skinned || p->surface_is_rock || p->shown_parts != 0 ||
+        !can_structure_sever(*p))
         return out;
     // Nothing changed since the last full check (same damage, same lost
     // parts, same deck break): it would find nothing new.
@@ -226,6 +229,7 @@ std::vector<SeveredSplit> split_severed_parts(scenegraph::World& world,
         ci->emissive_scale = pi->emissive_scale;
         ci->surface_is_rock = pi->surface_is_rock;
         ci->hull_damage = pi->hull_damage;
+        ci->decals = pi->decals;   // the piece keeps its scorch marks
         ci->shown_parts = sp.parts;
         pi->severed_parts |= sp.parts;
         out.push_back(SeveredSplit{sp, child, total});

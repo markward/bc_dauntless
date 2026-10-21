@@ -8048,7 +8048,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
               const renderer::plating::DamageList dl = renderer::plating::build_damage_list(
                   inst->hull_damage, dauntless_plating::g_params);
               const std::vector<renderer::SeveredSplit> split = renderer::split_severed_parts(
-                  g_world, id, *seg, dl, dauntless_plating::g_params[24]);
+                  g_world, id, *seg, dl, dauntless_plating::g_params[24], nullptr,
+                  /*skinned=*/!model->skeleton.bones.empty());
               inst = g_world.get(id);   // the chunks may have grown the store
               if (inst == nullptr) return out;
               const float s = glm::length(glm::vec3(inst->world[0]));   // model->GU
