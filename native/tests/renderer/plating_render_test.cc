@@ -1338,6 +1338,48 @@ TEST_F(PlatingRenderTest, SootIsContinuousAcrossTheProgramSplit) {
     EXPECT_LE(worst_stock, 2) << "away from damage the soot is not the undamaged hull's";
 }
 
+// The soot scale fades in over one margin around each record, so a scorch
+// decal much larger than the near zone shows no ring at the zone's edge.
+TEST_F(PlatingRenderTest, SootHasNoRingAtTheNearZoneEdge) {
+    dauntless_plating::g_params[0] = 1.0f;
+    dauntless_plating::g_params[25] = 0.0f;
+    const float* g = dauntless_plating::g_params;
+    ASSERT_LT(g[13], 0.9f) << "soot dial at 1: the test cannot see the scale";
+    auto model = std::make_unique<assets::Model>();
+    add_face(*model, glm::vec3(0.0f), glm::vec3(1, 0, 0), glm::vec3(0, 1, 0), 45.0f);
+    const float reach = 2.0f;
+    const float margin = renderer::plating::plating_margin(g);
+    ASSERT_GT(margin, 4.0f);
+    scenegraph::HullDamageStore ring;
+    ring.add({0.0f, 0.0f, 0.0f}, glm::vec3(0.0f), reach, 1.0f,
+             scenegraph::HullDamageKind::Internal);
+    scenegraph::DamageDecalRing decals;
+    decals.add(glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, 1.0f), 44.0f, 1.0f,
+               scenegraph::WeaponClass::Scorch, 0.0f);
+    const auto cam = quad_cam();
+    const auto damaged = render(*model, ring, cam, false, &decals);
+    const auto undamaged = render(*model, scenegraph::HullDamageStore{}, cam, false, &decals);
+
+    const int y = to_pixel(cam, glm::vec3(0.0f, 0.0f, 0.0f)).y;
+    const int x0 = to_pixel(cam, glm::vec3(reach + 1.0f, 0.0f, 0.0f)).x;
+    const int x1 = to_pixel(cam, glm::vec3(32.0f, 0.0f, 0.0f)).x;
+    const int xe = to_pixel(cam, glm::vec3(reach + margin + 5.0f, 0.0f, 0.0f)).x;
+    int worst_step = 0, worst_far = 0;
+    for (int x = x0; x < x1; ++x) {
+        const std::uint8_t* a = pixel(damaged, x, y);
+        const std::uint8_t* b = pixel(damaged, x + 1, y);
+        for (int c = 0; c < 3; ++c) worst_step = std::max(worst_step, std::abs(a[c] - b[c]));
+        if (x >= xe) {
+            const std::uint8_t* u = pixel(undamaged, x, y);
+            for (int c = 0; c < 3; ++c) worst_far = std::max(worst_far, std::abs(a[c] - u[c]));
+        }
+    }
+    std::fprintf(stderr, "[PlatingRender] soot ring: worst step %d, far vs stock %d\n",
+                 worst_step, worst_far);
+    EXPECT_LE(worst_step, 3) << "soot steps along the line out of the near zone";
+    EXPECT_LE(worst_far, 2) << "far from damage the soot is not the stock draw's";
+}
+
 // With node overrides the rest-pose subsets do not bound the posed meshes
 // (every mesh gets the whole list), so every mesh draws through plating, in
 // one program bind.
