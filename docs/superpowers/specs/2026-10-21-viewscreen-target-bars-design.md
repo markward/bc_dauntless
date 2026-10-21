@@ -38,6 +38,32 @@ Mark confirmed these readings of my guesses ("nothing" wrong):
 - **No bands** during a hail (comm feed) or on the plain forward view.
 - Text is **white on blue, red and grey, black on the pale yellow** band.
 
+## 2a. Revision after the first live look (2026-10-21) — SUPERSEDES the bands
+
+Mark's live look (screenshot, E1M2-style hail of USS Zhukov): the bands work as
+designed, but the design doesn't — from the captain's chair the **bottom of the
+viewscreen is hidden behind the helm/ops consoles**, so the footer showed only a
+clipped sliver ("2.45 km / 1414 kpl"). New layout, Mark's words then his
+correction ("left aligned to the corner"):
+
+| Element | Decision |
+|---|---|
+| Position | A two-line block **anchored to the TOP-LEFT** of the viewscreen picture, inset so the screen's curved bezel can't clip it. Left-aligned. |
+| Background | **None.** No bands. |
+| Line 1 | A small **filled circle in the affiliation colour** (the same four colours), then the **target name**. |
+| Line 2 | **Smaller** text under the name: `DST: <range> km  SPD: <speed> kph` — the reticle's numbers, relabelled. |
+| Text colour | **All white.** |
+
+My calls, accepted ("otherwise good"):
+- Line 2 starts under the name (aligned with the name's left edge, not the circle).
+- Line 2 ≈ 70% of line 1's size, drawn from the **same** atlas scaled down — no second atlas.
+- A **soft dark shadow** under all text (like the HUD reticle's CSS text-shadow) so white stays readable over explosions and pale planets. A shadow, not a background.
+- Everything else unchanged: placeholder name + grey dot for unidentified contacts; nothing on hail/forward/no target; drawn into the RTT; the 0.85 channel cap (the dot and the white text).
+
+Where §2 and §4 below describe bands, band colours, rounded corners and the
+"km / kph" footer, this section wins; the data path (§4.1), font (§4.2) and
+lifecycle are unchanged.
+
 ## 3. Existing pieces (verified 2026-10-21 on main `d98aa88cd`)
 
 - **The target feed.** `engine/host_loop.py:_viewscreen_scene_feed(player,
