@@ -810,11 +810,14 @@ TEST_F(PlatingRenderTest, MeshBodyAabbsAreOnePerMeshInTheBodyFrame) {
     EXPECT_FLOAT_EQ(boxes[1].center.x, 40.0f);
 }
 
-// Per mesh, only the records near that mesh are uploaded: the quad far from
-// every record gets u_dmg_count 0, the damaged one both records. Read back
-// from GL after the draw, so the LAST mesh drawn is the one observed. The
-// marking draw does the same with record-free meshes drawn; by default it
-// skips the far quad altogether (I2), leaving the damaged quad's upload.
+// Per mesh, only the records near that mesh are uploaded: the damaged quad
+// gets both records. Read back from GL after the draw, so the LAST plating
+// mesh drawn is the one observed. The quad far from every record draws
+// through the stock program (phase 2b Task 2), so whichever order the quads
+// come in, the plating program is left with the damaged quad's 2. The marking
+// draw, with record-free meshes drawn, uploads u_dmg_count 0 for the far quad;
+// by default it skips the far quad altogether (I2), leaving the damaged
+// quad's upload.
 TEST_F(PlatingRenderTest, MeshWithoutNearbyDamageUploadsNothing) {
     dauntless_plating::g_params[0] = 1.0f;
     dauntless_plating::g_params[25] = 0.0f;
@@ -828,7 +831,7 @@ TEST_F(PlatingRenderTest, MeshWithoutNearbyDamageUploadsNothing) {
 
     auto undamaged_last = two_quads(-40.0f); // mesh 1 = the far quad
     const auto px = render(*undamaged_last, ring, cam);
-    EXPECT_EQ(plating_dmg_count(), 0) << "the far quad uploaded records it never reaches";
+    EXPECT_EQ(plating_dmg_count(), 2) << "the far quad drew through the plating program";
     const auto stock = render(*undamaged_last, scenegraph::HullDamageStore{}, cam, true);
     const glm::ivec2 far_c = to_pixel(cam, glm::vec3(40.0f, 0.0f, 0.0f));
     EXPECT_EQ(rgb_diff(pixel(px, far_c.x, far_c.y), pixel(stock, far_c.x, far_c.y)), 0);
@@ -1239,4 +1242,136 @@ TEST_F(PlatingRenderTest, SkippingRecordFreeMeshesIsByteIdentical) {
     EXPECT_LT(on.mark_mesh_draws, off.mark_mesh_draws);
     EXPECT_EQ(on.interior_mesh_draws, on.mark_mesh_draws)
         << "the interior draws exactly the meshes the mark drew";
+}
+
+// ---- Phase 2b Task 2: record-free meshes take the stock program. -----------
+
+// Within a plated instance, a mesh whose record subset is empty draws through
+// the stock program: forcing the plating program costs GPU time (C-118/C-119)
+// for a mesh it can change nothing on. Two quads, damage on the one at
+// x = -40: only that quad draws through plating (counted), the plating
+// program is the last one bound (stock first, then plating), and the far
+// quad's pixels are the stock draw's.
+TEST_F(PlatingRenderTest, RecordFreeMeshesDrawWithStockProgram) {
+    dauntless_plating::g_params[0] = 1.0f;
+    dauntless_plating::g_params[25] = 0.0f;
+    const auto cam = quad_cam();
+    auto model = two_quads(40.0f);   // mesh 0 far (x = 40), mesh 1 damaged (x = -40)
+    const GLint plating = static_cast<GLint>(p->plating_shader().program());
+    auto current = [] { GLint prog = 0; glGetIntegerv(GL_CURRENT_PROGRAM, &prog); return prog; };
+
+    const int d0 = renderer::draw_model_plating_mesh_draws();
+    const auto px = render(*model, left_quad_ring(), cam);
+    EXPECT_EQ(renderer::draw_model_plating_mesh_draws() - d0, 1)
+        << "only the damaged quad draws through the plating program";
+    EXPECT_EQ(current(), plating) << "the plating meshes draw last";
+
+    const auto stock = render(*model, scenegraph::HullDamageStore{}, cam, /*stock_submit=*/true);
+    int compared = 0, mismatched = 0;
+    const glm::ivec2 lo = to_pixel(cam, glm::vec3(28.0f, -12.0f, 0.0f));
+    const glm::ivec2 hi = to_pixel(cam, glm::vec3(52.0f, 12.0f, 0.0f));
+    for (int y = lo.y; y <= hi.y; ++y) {
+        for (int x = lo.x; x <= hi.x; ++x) {
+            ++compared;
+            if (rgb_diff(pixel(px, x, y), pixel(stock, x, y)) != 0) ++mismatched;
+        }
+    }
+    ASSERT_GT(compared, 500);
+    EXPECT_EQ(mismatched, 0) << "the far quad is not the stock draw";
+}
+
+// The soot ruling: outside the near-damage zone a scorch deposit is full
+// strength, as on an undamaged hull; the plating soot scale applies only
+// where plating_near. Two quads meet at x = 0; a weak record sits on the left
+// quad at x = -36, far from the seam (beyond reach + margin, and outside the
+// right quad's subset), so the right quad draws stock and the left plating.
+// A scorch decal centred on the seam: the pixels either side match each other
+// and the undamaged hull's soot.
+TEST_F(PlatingRenderTest, SootIsContinuousAcrossTheProgramSplit) {
+    dauntless_plating::g_params[0] = 1.0f;
+    dauntless_plating::g_params[25] = 0.0f;
+    const float* g = dauntless_plating::g_params;
+    ASSERT_LT(g[13], 0.9f) << "soot dial at 1: the test cannot see the scale";
+    auto model = std::make_unique<assets::Model>();
+    const glm::vec3 X(1, 0, 0), Y(0, 1, 0);
+    add_face(*model, glm::vec3(-20.0f, 0.0f, 0.0f), X, Y, 20.0f);   // A: x in [-40, 0]
+    add_face(*model, glm::vec3(20.0f, 0.0f, 0.0f), X, Y, 20.0f);    // B: x in [0, 40]
+    scenegraph::HullDamageStore ring;
+    ring.add({-36.0f, 0.0f, 0.0f}, glm::vec3(0.0f), 2.0f, 1.0f,
+             scenegraph::HullDamageKind::Internal);
+    const auto list = renderer::plating::build_damage_list(ring, g);
+    ASSERT_EQ(list.count, 1);
+    const auto boxes = renderer::mesh_body_aabbs(*model);
+    std::array<std::uint8_t, renderer::plating::kMaxDamage> idx{};
+    ASSERT_EQ(renderer::plating::records_near(
+                  list, boxes[1], renderer::plating::plating_cull_margin(g, nullptr, boxes[1]),
+                  idx), 0) << "the record reaches B: no program split";
+    ASSERT_GT(36.0f - 1.0f, 2.0f + renderer::plating::plating_margin(g))
+        << "the seam is near the record";
+
+    scenegraph::DamageDecalRing decals;
+    decals.add(glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, 1.0f), 12.0f, 1.0f,
+               scenegraph::WeaponClass::Scorch, 0.0f);
+    const auto cam = quad_cam();
+    const auto damaged = render(*model, ring, cam, false, &decals);
+    const auto undamaged = render(*model, scenegraph::HullDamageStore{}, cam, false, &decals);
+    const auto clean = render(*model, scenegraph::HullDamageStore{}, cam);
+
+    const glm::ivec2 seam = to_pixel(cam, glm::vec3(0.0f));
+    int worst_seam = 0, worst_stock = 0, sooted = 0;
+    for (int dy = -12; dy <= 12; ++dy) {
+        const int y = seam.y + dy;
+        const std::uint8_t* left = pixel(damaged, seam.x - 1, y);
+        const std::uint8_t* right = pixel(damaged, seam.x, y);
+        for (int c = 0; c < 3; ++c) worst_seam = std::max(worst_seam, std::abs(left[c] - right[c]));
+        for (int x : {seam.x - 1, seam.x}) {
+            const std::uint8_t* a = pixel(damaged, x, y);
+            const std::uint8_t* b = pixel(undamaged, x, y);
+            for (int c = 0; c < 3; ++c) worst_stock = std::max(worst_stock, std::abs(a[c] - b[c]));
+            if (rgb_diff(pixel(clean, x, y), b) > 30) ++sooted;
+        }
+    }
+    std::fprintf(stderr, "[PlatingRender] soot seam: worst across %d, worst vs undamaged %d, "
+                 "sooted %d\n", worst_seam, worst_stock, sooted);
+    ASSERT_GT(sooted, 20) << "the decal laid too little soot at the seam to compare";
+    EXPECT_LE(worst_seam, 2) << "soot steps at the program split";
+    EXPECT_LE(worst_stock, 2) << "away from damage the soot is not the undamaged hull's";
+}
+
+// With node overrides the rest-pose subsets do not bound the posed meshes
+// (every mesh gets the whole list), so every mesh draws through plating, in
+// one program bind.
+TEST_F(PlatingRenderTest, ArticulatedPlatedDrawKeepsOneProgram) {
+    dauntless_plating::g_params[0] = 1.0f;
+    dauntless_plating::g_params[25] = 0.0f;
+    const auto cam = quad_cam();
+    auto model = two_quads(-40.0f);
+    const std::unordered_map<int, glm::mat4> overrides{{0, model->nodes[0].local_transform}};
+    const int d0 = renderer::draw_model_plating_mesh_draws();
+    const int b0 = renderer::draw_model_program_binds();
+    render(*model, left_quad_ring(), cam, false, nullptr, &overrides);
+    EXPECT_EQ(renderer::draw_model_plating_mesh_draws() - d0, 2);
+    EXPECT_EQ(renderer::draw_model_program_binds() - b0, 1);
+}
+
+// Record-free and damaged meshes interleaved in the model's mesh order: the
+// instance binds the stock program once and the plating program once (one
+// switch), never per mesh.
+TEST_F(PlatingRenderTest, PlatedInstanceSwitchesProgramAtMostOnce) {
+    dauntless_plating::g_params[0] = 1.0f;
+    dauntless_plating::g_params[25] = 0.0f;
+    auto model = std::make_unique<assets::Model>();
+    const glm::vec3 X(1, 0, 0), Y(0, 1, 0);
+    for (float cx : {-60.0f, -20.0f, 20.0f, 60.0f})   // damaged, free, damaged, free
+        add_face(*model, glm::vec3(cx, 0.0f, 0.0f), X, Y, 15.0f);
+    scenegraph::HullDamageStore ring;
+    ring.add({-60.0f, 0.0f, 0.0f}, glm::vec3(0.0f), 2.0f, 1.0f,
+             scenegraph::HullDamageKind::Internal);
+    ring.add({20.0f, 0.0f, 0.0f}, glm::vec3(0.0f), 2.0f, 1.0f,
+             scenegraph::HullDamageKind::Internal);
+    const int d0 = renderer::draw_model_plating_mesh_draws();
+    const int b0 = renderer::draw_model_program_binds();
+    render(*model, ring, quad_cam());
+    EXPECT_EQ(renderer::draw_model_plating_mesh_draws() - d0, 2) << "the two damaged quads";
+    EXPECT_EQ(renderer::draw_model_program_binds() - b0, 2) << "stock once, plating once";
 }

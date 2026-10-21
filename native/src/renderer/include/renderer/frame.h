@@ -381,7 +381,14 @@ void draw_model(const assets::Model& model,
                 // read here and the whole list; null subsets, node overrides
                 // present (the posed meshes leave their rest boxes) or the
                 // geosphere's substituted mesh: every mesh gets the whole list.
-                const PlatingMeshRecords* plating_mesh_records = nullptr);
+                const PlatingMeshRecords* plating_mesh_records = nullptr,
+                // Plating draws only: the stock program. Non-null with
+                // per-mesh subsets (no node overrides, not skinned): a mesh
+                // whose subset is empty draws through it, with exactly a
+                // stock draw's uniforms, before the rest draw through
+                // `shader` (one program switch per instance). nullptr: every
+                // mesh draws through `shader` (the force-program probe).
+                Shader* stock_shader = nullptr);
 
 /// TEST counters, process-wide and monotonic (read deltas). Computations of
 /// a model's per-mesh plating record subsets (plating::mesh_record_subsets),
@@ -390,6 +397,11 @@ void draw_model(const assets::Model& model,
 /// counted).
 int plating_mesh_subset_computations();
 int plating_record_uploads();
+/// TEST counters, process-wide and monotonic (read deltas): program binds
+/// made by draw_model, and the mesh draws it issued through the plating
+/// program (a non-null plating list).
+int draw_model_program_binds();
+int draw_model_plating_mesh_draws();
 
 /// Per-camera LOD for a sphere-mapped model, or -1 when the model has none.
 /// world radius = sphere_map.radius * length(world[0]); focal from proj and

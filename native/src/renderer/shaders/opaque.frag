@@ -149,6 +149,10 @@ uniform vec4 u_dmg_c[MAX_DMG];
 // Set by apply_plating where a panel is stripped (0..1); read by the scorch
 // deposit (soot must not bury the ribs) and the glow kill (windows die).
 float g_plating_exposed = 0.0;
+// main's plating_near, for the scorch deposit (apply_damage_decals): the soot
+// scale applies only near damage, so away from it the deposit is the stock
+// program's and a mesh drawn stock beside a plated one shows no seam.
+bool  g_plating_near = false;
 vec3  g_plating_emissive = vec3(0.0);   // inner-hull heat / breach rim (SPIKE)
 #endif
 uniform sampler2D u_scuff_map;               // unit 7: tiling crumpled-metal tangent-space
@@ -764,7 +768,7 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
                        * 1.3;                         // peak ejecta scale
         float deposit = clamp(core + ejecta, 0.0, 1.0) * intensity * wn;
 #ifdef PLATING
-        if (u_plating[0] > 0.5)                       // SPIKE: plating layer
+        if (u_plating[0] > 0.5 && g_plating_near)     // SPIKE: plating layer, near only
             deposit *= u_plating[13] * (1.0 - 0.7 * g_plating_exposed);
 #endif
         base_lit = mix(base_lit, SOOT_COLOR, deposit);
@@ -2138,6 +2142,7 @@ void main() {
             }
         }
     }
+    g_plating_near = plating_near;
     // The marking draw (submit_plating_interior) writes only stencil, and only
     // where the hull is cut through. This discard sits AFTER the base texture
     // fetch and the dFdx / fwidth block on purpose: implicit-derivative

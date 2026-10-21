@@ -656,6 +656,8 @@ static void upload_plating(Shader& prog, const plating::DamageList& dl,
 namespace {
 int g_plating_mesh_subset_computations = 0;
 int g_plating_record_uploads = 0;
+int g_draw_model_program_binds = 0;
+int g_draw_model_plating_mesh_draws = 0;
 
 class MeshRecordUploader {
 public:
@@ -710,6 +712,8 @@ private:
 
 int plating_mesh_subset_computations() { return g_plating_mesh_subset_computations; }
 int plating_record_uploads() { return g_plating_record_uploads; }
+int draw_model_program_binds() { return g_draw_model_program_binds; }
+int draw_model_plating_mesh_draws() { return g_draw_model_plating_mesh_draws; }
 
 // Mesh `mesh_idx`'s subset, or nullptr (the whole list) when there is none
 // for the index.
@@ -743,7 +747,30 @@ static std::vector<glm::mat4> node_worlds_for(
     return world_per_node;
 }
 
-void draw_model(const assets::Model& model,
+// Which of a model's meshes one draw_model_pass draws. `subsets` null: every
+// mesh. Otherwise the meshes that take the plating program (with_records)
+// or the record-free rest (!with_records); see mesh_takes_plating.
+struct MeshFilter {
+    const std::vector<plating::MeshRecordSubset>* subsets = nullptr;
+    bool with_records = false;
+};
+
+// Whether mesh `mesh_idx` of a plated draw needs the plating program: it has
+// records in its subset, has no subset (the whole list), or is the
+// geosphere's substituted mesh (draw_model_pass gives it the whole list).
+static bool mesh_takes_plating(const assets::Model& model, int sphere_level,
+                               const std::vector<plating::MeshRecordSubset>& subsets,
+                               int mesh_idx) {
+    if (sphere_level >= 0 && model.sphere_map.has_value() &&
+        mesh_idx == model.sphere_map->mesh_index)
+        return true;
+    const plating::MeshRecordSubset* subset = plating_subset_for(subsets, mesh_idx);
+    return subset == nullptr || subset->count > 0;
+}
+
+// One program's half of draw_model: the per-instance uniforms on `shader`
+// (or the skinned program), then the meshes `filter` selects.
+static void draw_model_pass(const assets::Model& model,
                 const glm::mat4& world,
                 Shader& shader,
                 Shader& skinned_shader,
@@ -770,7 +797,8 @@ void draw_model(const assets::Model& model,
                 glm::vec3 atmo_sun_dir,
                 const plating::DamageList* plating,
                 bool plating_far,
-                const PlatingMeshRecords* plating_mesh_records) {
+                const PlatingMeshRecords* plating_mesh_records,
+                MeshFilter filter) {
     // Pick the program: skinned only when the model carries a skeleton AND a
     // non-empty palette is supplied. An empty palette forces the static branch,
     // which is byte-identical to the pre-skinning path (used by the plumbing
@@ -778,6 +806,7 @@ void draw_model(const assets::Model& model,
     const bool skinned = draws_skinned(model, bone_palette);
     Shader& prog = skinned ? skinned_shader : shader;
     prog.use();
+    ++g_draw_model_program_binds;
     if (skinned) {
         prog.set_mat4_array("u_bones", bone_palette.data(),
                             static_cast<int>(bone_palette.size()));
@@ -1119,6 +1148,10 @@ void draw_model(const assets::Model& model,
     for (std::size_t i = 0; i < model.nodes.size(); ++i) {
         const auto& node = model.nodes[i];
         for (int mesh_idx : node.meshes) {
+            if (filter.subsets != nullptr &&
+                mesh_takes_plating(model, sphere_level, *filter.subsets, mesh_idx) !=
+                    filter.with_records)
+                continue;
             const auto& mesh = model.meshes[mesh_idx];
             // Material, textures and decal mask still come from `mesh`; only
             // the geometry is substituted. EVERY draw sets u_sphere_map:
@@ -1258,12 +1291,77 @@ void draw_model(const assets::Model& model,
 
             glBindVertexArray(draw_mesh.vao());
             glDrawElements(GL_TRIANGLES, draw_mesh.index_count(), GL_UNSIGNED_INT, nullptr);
+            if (plating_list != nullptr) ++g_draw_model_plating_mesh_draws;
         }
     }
     glBindVertexArray(0);
     // Never leak the decal clamp to a later pass (mask units 8-11 only).
     for (int i = 0; i < assets::kMaxDecalMasks; ++i)
         glBindSampler(kHullDecalUnit0 + i, 0);
+}
+
+void draw_model(const assets::Model& model,
+                const glm::mat4& world,
+                Shader& shader,
+                Shader& skinned_shader,
+                std::uint32_t white_fallback,
+                std::uint32_t black_fallback,
+                float rim_strength,
+                const scenegraph::DamageDecalRing& decals,
+                const std::array<scenegraph::Instance::GlowRegion,
+                                 scenegraph::Instance::kMaxGlowRegions>& glow_regions,
+                float decal_time,
+                float emissive_scale,
+                const std::vector<glm::mat4>& bone_palette,
+                const scenegraph::HullCarveField& carve,
+                const std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw>&
+                    dyn_lights,
+                int dyn_light_count,
+                const voxel::VoxelVolume* carve_fill,
+                bool carve_invert,
+                const InstanceFieldCache::Entry* hull_field,
+                const std::unordered_map<int, glm::mat4>* node_overrides,
+                const assets::DecalOverride* decal_override,
+                int sphere_level,
+                const scenegraph::Instance::Atmosphere* atmo,
+                glm::vec3 atmo_sun_dir,
+                const plating::DamageList* plating,
+                bool plating_far,
+                const PlatingMeshRecords* plating_mesh_records,
+                Shader* stock_shader) {
+    // A plated draw with per-mesh subsets splits its meshes: the record-free
+    // ones through the stock program first, then the rest through plating,
+    // so the instance switches program at most once. No split for a skinned
+    // draw (no plating layer), without subsets, or with node overrides (the
+    // posed meshes leave their rest boxes: every mesh gets the whole list).
+    const bool articulated = node_overrides != nullptr && !node_overrides->empty();
+    const std::vector<plating::MeshRecordSubset>* const split =
+        plating != nullptr && stock_shader != nullptr && plating_mesh_records != nullptr &&
+                !articulated && !draws_skinned(model, bone_palette)
+            ? plating_mesh_records->subsets
+            : nullptr;
+    auto pass = [&](Shader& prog, const plating::DamageList* list,
+                    const PlatingMeshRecords* records, MeshFilter filter) {
+        draw_model_pass(model, world, prog, skinned_shader, white_fallback, black_fallback,
+                        rim_strength, decals, glow_regions, decal_time, emissive_scale,
+                        bone_palette, carve, dyn_lights, dyn_light_count, carve_fill,
+                        carve_invert, hull_field, node_overrides, decal_override, sphere_level,
+                        atmo, atmo_sun_dir, list, plating_far, records, filter);
+    };
+    if (split == nullptr) {
+        pass(shader, plating, plating_mesh_records, MeshFilter{});
+        return;
+    }
+    bool any_free = false, any_plated = false;
+    for (const auto& node : model.nodes) {
+        for (int mesh_idx : node.meshes) {
+            if (mesh_takes_plating(model, sphere_level, *split, mesh_idx)) any_plated = true;
+            else any_free = true;
+        }
+    }
+    // The stock half gets exactly a stock draw's uniforms: no plating list.
+    if (any_free) pass(*stock_shader, nullptr, nullptr, MeshFilter{split, false});
+    if (any_plated) pass(shader, plating, plating_mesh_records, MeshFilter{split, true});
 }
 
 // SPIKE (damage redesign): the lean marking draw (submit_plating_interior).
@@ -1655,7 +1753,10 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                           sphere_level,
                           atmo, atmo_sun,
                           use_plating ? plating_list : nullptr, plating_far,
-                          use_plating ? &plating_records : nullptr);
+                          use_plating ? &plating_records : nullptr,
+                          // Record-free meshes draw stock, except under the
+                          // force-program probe (params[26]): every mesh plating.
+                          force_plating ? nullptr : &shader);
         if (inst.far_fade != 0.0f) {
             shader.use();
             shader.set_float("u_dither_fade", 0.0f);
