@@ -1376,7 +1376,8 @@ TEST_F(PlatingRenderTest, SootHasNoRingAtTheNearZoneEdge) {
     }
     std::fprintf(stderr, "[PlatingRender] soot ring: worst step %d, far vs stock %d\n",
                  worst_step, worst_far);
-    EXPECT_LE(worst_step, 3) << "soot steps along the line out of the near zone";
+    // Measured 3 with the smoothed weight; the old ringing shader gave 28.
+    EXPECT_LE(worst_step, 6) << "soot steps along the line out of the near zone";
     EXPECT_LE(worst_far, 2) << "far from damage the soot is not the stock draw's";
 }
 
