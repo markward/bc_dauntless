@@ -29,6 +29,8 @@ def _clear(monkeypatch):
                         lambda *a, **k: None)
     monkeypatch.setattr(hit_feedback.host_io, "hull_carve_add",
                         lambda *a, **k: None)
+    monkeypatch.setattr(hit_feedback.host_io, "hull_damage_add",
+                        lambda *a, **k: None)
     yield
     hit_vfx._active.clear()
 

@@ -47,6 +47,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_phaser_beams", "set_tractor_beams",
     "cursor_pos",
     "shield_hit", "world_to_body", "damage_decal_add", "hull_carve_add",
+    "hull_damage_add",
     "model_nodes", "model_nearest_part", "set_instance_decals",
     "hull_split_detached", "hull_carve_capsule", "breach_burst",
     "ray_trace_mesh", "instance_translation",

@@ -68,6 +68,7 @@ def carve_boundary(monkeypatch):
     monkeypatch.setattr(host_io, "world_to_body",
                         lambda iid, p, n: ((0.0, 0.0, 0.0), (0.0, 0.0, 1.0)))
     monkeypatch.setattr(host_io, "damage_decal_add", lambda *a, **k: None)
+    monkeypatch.setattr(host_io, "hull_damage_add", lambda *a, **k: None)
     monkeypatch.setattr(host_io, "shield_hit", lambda *a, **k: None)
     monkeypatch.setattr(host_io, "ray_trace_mesh",
                         lambda iid, o, d, m: ((1.0, 0.0, 0.0),

@@ -59,6 +59,7 @@ def _isolate_host_io(monkeypatch):
     string 'IID' these unit tests use)."""
     monkeypatch.setattr(host_io, "world_to_body", lambda *a, **k: None)
     monkeypatch.setattr(host_io, "shield_hit", lambda *a, **k: None)
+    monkeypatch.setattr(host_io, "hull_damage_add", lambda *a, **k: None)
 
 
 @pytest.fixture
