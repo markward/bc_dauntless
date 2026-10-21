@@ -20,4 +20,9 @@ const voxel::StructureSegmentation* structure_segmentation_for(
 const std::vector<voxel::StructurePart>* structure_parts_for(
     const std::filesystem::path& source);
 
+// Test seam: `seg` becomes `source`'s ready segmentation, replacing any
+// entry (a synthetic hull with known parts, no detection job).
+void set_structure_segmentation_for_test(const std::filesystem::path& source,
+                                         voxel::StructureSegmentation seg);
+
 }  // namespace renderer

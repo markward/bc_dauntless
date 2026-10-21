@@ -132,3 +132,35 @@ def test_exit_point_adds_an_internal_wear_record_not_a_decal(monkeypatch):
     assert args[3] == pytest.approx(ib.hole_radius(0.25, 0.1))
     assert args[4] == ib.STRENGTH
     assert args[5] == 3
+
+
+def test_blast_asks_for_severed_parts_after_its_wear(monkeypatch):
+    """A blow-out's wear can cut a part off: once its records are in the
+    store, the blast hands the ship to hull_breakup.after_wear (once)."""
+    from engine import host_io
+    from engine.appc import hit_vfx, hull_breakup
+    from engine.appc.math import TGPoint3
+    wear, asked = [], []
+    monkeypatch.setattr(host_io, "hull_damage_add",
+                        lambda *a, **k: wear.append((a, k)))
+    monkeypatch.setattr(host_io, "world_to_body", lambda *a, **k: None)
+    monkeypatch.setattr(host_io, "breach_burst", lambda *a, **k: None)
+    monkeypatch.setattr(hit_vfx, "spawn", lambda *a, **k: None)
+    monkeypatch.setattr("engine.appc.subsystems.subsystem_world_position",
+                        lambda sub, ship: TGPoint3(0.0, 0.0, 0.0))
+    monkeypatch.setattr("engine.appc.hit_feedback._mesh_xyz",
+                        lambda ship, p: (p.x, p.y, p.z))
+    monkeypatch.setattr(ib, "find_exits",
+                        lambda iid, c, r, d: [((0.0, 0.0, 0.3), (0.0, 0.0, 1.0), 0.1),
+                                              ((0.0, 0.3, 0.0), (0.0, 1.0, 0.0), 0.1)])
+    monkeypatch.setattr(ib, "_world_to_body", lambda ship, v: v)
+    monkeypatch.setattr(hull_breakup, "after_wear",
+                        lambda ship, iid, *a, **k: asked.append((ship, iid, len(wear))))
+
+    class _Loc:
+        x = y = z = 0.0
+
+    ship = _Ship()
+    ship.GetWorldLocation = lambda: _Loc()
+    ib._blast({"ship": ship, "sub": _Sub(ship), "radius": 0.25}, 5)
+    assert asked == [(ship, 5, 2)]

@@ -219,6 +219,14 @@ struct Instance {
     /// Merge-not-evict; runtime VFX only — never serialized to saves.
     HullDamageStore hull_damage;
 
+    /// Structure parts (renderer::structure_parts_for indices) that have
+    /// broken off this hull: bit i hides part i in the plating draw and its
+    /// mark (hull_split_parts sets it). Runtime state, never serialized.
+    std::uint32_t severed_parts = 0;
+    /// A severed-part chunk draws ONLY this structure part of its model;
+    /// -1 = every part. Runtime state, never serialized.
+    int only_part = -1;
+
     /// Per-instance hull carve spheres (body frame, model units). Drives the
     /// see-through breach holes and the interior voxel splat. Runtime VFX only
     /// — never serialized to saves.

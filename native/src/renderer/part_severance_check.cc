@@ -128,4 +128,45 @@ std::vector<SeveredPart> find_severed_parts(const voxel::StructureSegmentation& 
     return out;
 }
 
+std::vector<SeveredSplit> split_severed_parts(scenegraph::World& world,
+                                              scenegraph::InstanceId parent,
+                                              const voxel::StructureSegmentation& seg,
+                                              const plating::DamageList& dmg,
+                                              float deck_break) {
+    std::vector<SeveredSplit> out;
+    const scenegraph::Instance* p = world.get(parent);
+    if (p == nullptr || p->surface_is_rock || !can_structure_sever(*p)) return out;
+    // Parts the draw cannot hide are treated as already gone: never reported.
+    const std::uint32_t unhideable = ~((1u << kMaxHideableParts) - 1u);
+    const std::vector<SeveredPart> parts =
+        find_severed_parts(seg, dmg, deck_break, p->severed_parts | unhideable);
+    if (parts.empty()) return out;
+    int total = 0;
+    for (const std::int16_t lab : seg.label) total += lab >= 0 ? 1 : 0;
+    for (const SeveredPart& sp : parts) {
+        const scenegraph::InstanceId child = world.create_instance(p->model_handle);
+        // create_instance may grow the store: re-fetch the parent.
+        scenegraph::Instance* pi = world.get(parent);
+        scenegraph::Instance* ci = world.get(child);
+        if (pi == nullptr || ci == nullptr) continue;
+        // All three pose fields: `world` alone would be rebuilt from the
+        // child's default pose by the next resolve_render_space.
+        ci->world = pi->world;
+        ci->world_linear = pi->world_linear;
+        ci->world_translation_d = pi->world_translation_d;
+        ci->visible = pi->visible;
+        ci->pass = pi->pass;
+        ci->comm_set_id = pi->comm_set_id;
+        ci->rim_eligible = pi->rim_eligible;
+        ci->rim_strength = pi->rim_strength;
+        ci->emissive_scale = pi->emissive_scale;
+        ci->surface_is_rock = pi->surface_is_rock;
+        ci->hull_damage = pi->hull_damage;
+        ci->only_part = sp.part;
+        pi->severed_parts |= 1u << sp.part;
+        out.push_back(SeveredSplit{sp, child, total});
+    }
+    return out;
+}
+
 }  // namespace renderer

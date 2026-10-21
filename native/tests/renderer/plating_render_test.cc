@@ -136,7 +136,9 @@ protected:
                                      bool stock_submit = false,
                                      const scenegraph::DamageDecalRing* decals = nullptr,
                                      const std::unordered_map<int, glm::mat4>* overrides =
-                                         nullptr) {
+                                         nullptr,
+                                     const std::function<void(scenegraph::Instance&)>&
+                                         configure = {}) {
         scenegraph::World world;
         auto iid = world.create_instance(
             reinterpret_cast<scenegraph::ModelHandle>(&model));
@@ -144,6 +146,7 @@ protected:
         world.get(iid)->hull_damage = ring;
         if (decals != nullptr) world.get(iid)->decals = *decals;
         if (overrides != nullptr) world.get(iid)->node_overrides = *overrides;
+        if (configure) configure(*world.get(iid));
         // far_fade 0: no u_dither_fade use() after draw_model, so the program
         // bound after a render is the one the draw chose (program-choice test).
         EXPECT_EQ(world.get(iid)->far_fade, 0.0f);
@@ -207,6 +210,8 @@ protected:
     struct Placed {
         glm::mat4 world;
         scenegraph::HullDamageStore ring;
+        std::uint32_t severed_parts = 0;   // Instance::severed_parts
+        int only_part = -1;                // Instance::only_part
     };
     Marked render_marked(const assets::Model& model, const scenegraph::HullDamageStore& ring,
                          const scenegraph::Camera& cam,
@@ -226,6 +231,8 @@ protected:
             auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(&model));
             world.set_world_transform(iid, pl.world);
             world.get(iid)->hull_damage = pl.ring;
+            world.get(iid)->severed_parts = pl.severed_parts;
+            world.get(iid)->only_part = pl.only_part;
         }
         glViewport(0, 0, kSize, kSize);
         glClearColor(clear.r, clear.g, clear.b, 1.0f);
@@ -1417,4 +1424,113 @@ TEST_F(PlatingRenderTest, PlatedInstanceSwitchesProgramAtMostOnce) {
     render(*model, ring, quad_cam());
     EXPECT_EQ(renderer::draw_model_plating_mesh_draws() - d0, 2) << "the two damaged quads";
     EXPECT_EQ(renderer::draw_model_program_binds() - b0, 2) << "stock once, plating once";
+}
+
+// ── Severed structure parts (phase 3 Task 4) ───────────────────────────────
+// Two plates side by side in z = 0, each its own structure part: part 0 on
+// the left (x < 0), part 1 on the right. The segmentation is injected, so the
+// plating draw's plating_part sees exactly these two boxes.
+namespace {
+std::unique_ptr<assets::Model> two_part_plate(const char* tag) {
+    auto model = std::make_unique<assets::Model>();
+    const glm::vec3 X(1, 0, 0), Y(0, 1, 0);
+    add_face(*model, glm::vec3(-32.0f, 0.0f, 0.0f), X, Y, 30.0f);
+    add_face(*model, glm::vec3(32.0f, 0.0f, 0.0f), X, Y, 30.0f);
+    model->source = std::string("test://two-part-plate/") + tag;
+    voxel::StructureSegmentation seg;
+    for (const float cx : {-32.0f, 32.0f}) {
+        voxel::StructurePart part;
+        part.kind = voxel::PartKind::Box;
+        part.centre = glm::vec3(cx, 0.0f, 0.0f);
+        part.half_extent = glm::vec3(30.0f, 30.0f, 5.0f);
+        seg.parts.push_back(part);
+    }
+    renderer::set_structure_segmentation_for_test(model->source, std::move(seg));
+    return model;
+}
+
+// Every pixel of `px` whose window x is on `right` side of `mid_x`.
+int count_lit_on_side(const std::vector<std::uint8_t>& px, int mid_x, bool right) {
+    int n = 0;
+    for (int y = 0; y < kSize; ++y)
+        for (int x = right ? mid_x + 2 : 0; x < (right ? kSize : mid_x - 2); ++x) {
+            const std::uint8_t* q = pixel(px, x, y);
+            if (q[0] + q[1] + q[2] > 6) ++n;
+        }
+    return n;
+}
+
+// Largest channel difference over the pixels on `right` side of `mid_x`.
+int worst_on_side(const std::vector<std::uint8_t>& a, const std::vector<std::uint8_t>& b,
+                  int mid_x, bool right) {
+    int worst = 0;
+    for (int y = 0; y < kSize; ++y)
+        for (int x = right ? mid_x + 2 : 0; x < (right ? kSize : mid_x - 2); ++x)
+            for (int c = 0; c < 3; ++c)
+                worst = std::max(worst, std::abs(int(pixel(a, x, y)[c]) - int(pixel(b, x, y)[c])));
+    return worst;
+}
+}  // namespace
+
+// A part the hull has lost is not drawn on the parent: its pixels show the
+// clear colour, and the part still attached draws exactly as before.
+TEST_F(PlatingRenderTest, SeveredPartIsHiddenOnTheParent) {
+    dauntless_plating::g_params[0] = 1.0f;
+    const auto cam = quad_cam();
+    auto plate = two_part_plate("severed-parent");
+    const int mid = to_pixel(cam, glm::vec3(0.0f)).x;
+    const auto whole = render(*plate, scenegraph::HullDamageStore{}, cam);
+    ASSERT_GT(count_lit_on_side(whole, mid, false), 2000) << "part 0 not in view";
+    ASSERT_GT(count_lit_on_side(whole, mid, true), 2000) << "part 1 not in view";
+
+    const auto severed = render(*plate, scenegraph::HullDamageStore{}, cam, false, nullptr,
+                                nullptr, [](scenegraph::Instance& i) { i.severed_parts = 1u << 1; });
+    EXPECT_EQ(count_lit_on_side(severed, mid, true), 0) << "the severed part still draws";
+    EXPECT_LE(worst_on_side(whole, severed, mid, false), 1) << "the attached part changed";
+}
+
+// A chunk (only_part) draws its own part and nothing else of the model.
+TEST_F(PlatingRenderTest, ChunkDrawsOnlyItsPart) {
+    dauntless_plating::g_params[0] = 1.0f;
+    const auto cam = quad_cam();
+    auto plate = two_part_plate("chunk");
+    const int mid = to_pixel(cam, glm::vec3(0.0f)).x;
+    const auto whole = render(*plate, scenegraph::HullDamageStore{}, cam);
+    const auto chunk = render(*plate, scenegraph::HullDamageStore{}, cam, false, nullptr,
+                              nullptr, [](scenegraph::Instance& i) { i.only_part = 1; });
+    EXPECT_EQ(count_lit_on_side(chunk, mid, false), 0) << "the chunk drew another part";
+    ASSERT_GT(count_lit_on_side(whole, mid, true), 2000) << "part 1 not in view";
+    EXPECT_LE(worst_on_side(whole, chunk, mid, true), 1) << "the chunk's own part changed";
+}
+
+// The mark never stamps a hidden part: a tear spanning both parts stamps
+// only the attached one.
+TEST_F(PlatingRenderTest, MarkSkipsHiddenParts) {
+    dauntless_plating::g_params[0] = 1.0f;
+    GLint sbits = 0;
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, GL_STENCIL,
+                                          GL_FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE, &sbits);
+    ASSERT_GE(sbits, 8) << "test window has no stencil buffer";
+    const auto cam = quad_cam();
+    auto plate = two_part_plate("mark");
+    const auto ring = internal_ring(glm::vec3(0.0f), 30.0f, 10.0f);
+    const glm::ivec2 left = to_pixel(cam, glm::vec3(-12.0f, 0.0f, 0.0f));
+    const glm::ivec2 right = to_pixel(cam, glm::vec3(12.0f, 0.0f, 0.0f));
+    auto st = [](const Marked& r, glm::ivec2 c) {
+        return r.stencil[static_cast<std::size_t>(c.y) * kSize + c.x];
+    };
+    const auto whole = render_marked_many(*plate, {Placed{glm::mat4(1.0f), ring}}, cam);
+    ASSERT_EQ(st(whole, left), 2) << "the tear does not cut part 0";
+    ASSERT_EQ(st(whole, right), 2) << "the tear does not cut part 1";
+
+    const auto severed =
+        render_marked_many(*plate, {Placed{glm::mat4(1.0f), ring, 1u << 1, -1}}, cam);
+    EXPECT_EQ(st(severed, left), 2) << "the attached part lost its mark";
+    int stamped_right = 0;
+    const int mid = to_pixel(cam, glm::vec3(0.0f)).x;
+    for (int y = 0; y < kSize; ++y)
+        for (int x = mid + 2; x < kSize; ++x)
+            if (severed.stencil[static_cast<std::size_t>(y) * kSize + x] != 0) ++stamped_right;
+    EXPECT_EQ(stamped_right, 0) << "the hidden part was stamped";
 }

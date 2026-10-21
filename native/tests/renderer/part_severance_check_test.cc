@@ -191,3 +191,76 @@ TEST(PartSeverance, MainBodyIsChosenAmongPartsBelowTheMask) {
     // Only part 1 (216 voxels) is eligible: it is main, nothing else can sever.
     EXPECT_TRUE(renderer::find_severed_parts(s, bridge_hit(10.f), 6.f, 0).empty());
 }
+
+// ── split_severed_parts: the parent hides the part, a chunk draws only it ──
+namespace {
+// A parent instance whose store blows the bridge (make_seg) through.
+scenegraph::InstanceId blown_parent(scenegraph::World& world) {
+    const auto id = world.create_instance(scenegraph::ModelHandle{0x10});
+    auto* inst = world.get(id);
+    inst->world = glm::mat4(2.0f);
+    inst->world[3] = glm::vec4(5.f, 6.f, 7.f, 1.f);
+    inst->rim_eligible = true;
+    inst->rim_strength = 0.4f;
+    inst->emissive_scale = 0.5f;
+    inst->comm_set_id = 3;
+    inst->hull_damage.add(glm::vec3(10.5f, 2.5f, 2.5f), glm::vec3(0.f), 1.2f, 10.f,
+                          scenegraph::HullDamageKind::Internal);
+    return id;
+}
+}  // namespace
+
+TEST(PartSeverance, SplitHidesThePartOnTheParentAndInstancesAChunk) {
+    auto s = make_seg();
+    scenegraph::World world;
+    const auto parent = blown_parent(world);
+    const auto r = renderer::split_severed_parts(world, parent, s, bridge_hit(10.f), 6.f);
+    ASSERT_EQ(r.size(), 1u);
+    EXPECT_EQ(r[0].part.part, 1);
+    EXPECT_EQ(r[0].total_voxels, 360 + 1 + 216) << "every solid voxel of the hull";
+    EXPECT_EQ(world.get(parent)->severed_parts, 1u << 1);
+    EXPECT_EQ(world.get(parent)->only_part, -1);
+    const auto* chunk = world.get(r[0].chunk);
+    ASSERT_NE(chunk, nullptr);
+    EXPECT_EQ(chunk->only_part, 1);
+    EXPECT_EQ(chunk->severed_parts, 0u);
+    EXPECT_EQ(chunk->model_handle, world.get(parent)->model_handle);
+    EXPECT_EQ(chunk->world, world.get(parent)->world);
+    EXPECT_TRUE(chunk->rim_eligible);
+    EXPECT_FLOAT_EQ(chunk->rim_strength, 0.4f);
+    EXPECT_FLOAT_EQ(chunk->emissive_scale, 0.5f);
+    EXPECT_EQ(chunk->comm_set_id, 3u);
+    EXPECT_EQ(chunk->hull_damage.count(), 1) << "the chunk keeps the parent's records";
+}
+
+TEST(PartSeverance, SplitReportsAPartOnce) {
+    auto s = make_seg();
+    scenegraph::World world;
+    const auto parent = blown_parent(world);
+    ASSERT_EQ(renderer::split_severed_parts(world, parent, s, bridge_hit(10.f), 6.f).size(), 1u);
+    EXPECT_TRUE(renderer::split_severed_parts(world, parent, s, bridge_hit(10.f), 6.f).empty());
+}
+
+TEST(PartSeverance, SplitNeverSeversRocksOrArticulatedHulls) {
+    auto s = make_seg();
+    scenegraph::World world;
+    const auto rock = blown_parent(world);
+    world.get(rock)->surface_is_rock = true;
+    EXPECT_TRUE(renderer::split_severed_parts(world, rock, s, bridge_hit(10.f), 6.f).empty());
+    EXPECT_EQ(world.get(rock)->severed_parts, 0u);
+    const auto rigged = blown_parent(world);
+    world.get(rigged)->node_overrides[2] = glm::mat4(1.f);
+    EXPECT_TRUE(renderer::split_severed_parts(world, rigged, s, bridge_hit(10.f), 6.f).empty());
+    EXPECT_TRUE(renderer::split_severed_parts(world, scenegraph::InstanceId{}, s,
+                                              bridge_hit(10.f), 6.f).empty());
+}
+
+TEST(PartSeverance, SplitNeverSeversAPartTheDrawCannotHide) {
+    auto s = make_seg();
+    s.parts.resize(renderer::kMaxHideableParts + 1);
+    for (auto& lab : s.label)
+        if (lab == 1) lab = static_cast<std::int16_t>(renderer::kMaxHideableParts);
+    scenegraph::World world;
+    const auto parent = blown_parent(world);
+    EXPECT_TRUE(renderer::split_severed_parts(world, parent, s, bridge_hit(10.f), 6.f).empty());
+}

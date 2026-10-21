@@ -301,9 +301,14 @@ struct PhaserBeamDescriptor {
 /// moment, and the shader must see the parts the cull margins assumed).
 /// `subsets`: one plating::MeshRecordSubset per model.meshes entry, or nullptr
 /// for the whole list on every mesh.
+/// `hidden_parts` / `only_part`: the instance's Instance::severed_parts /
+/// only_part, uploaded with the parts (u_part_hidden_mask / u_part_only) so
+/// the colour draw and the mark hide the same pixels.
 struct PlatingMeshRecords {
     const std::vector<voxel::StructurePart>* parts = nullptr;
     const std::vector<plating::MeshRecordSubset>* subsets = nullptr;
+    std::uint32_t hidden_parts = 0;
+    int only_part = -1;
 };
 
 /// Draw a single model instance. Picks the skinned program when the model has

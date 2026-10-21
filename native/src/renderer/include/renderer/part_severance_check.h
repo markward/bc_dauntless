@@ -12,6 +12,7 @@
 
 #include "renderer/plating_damage.h"
 #include "scenegraph/instance.h"
+#include "scenegraph/world.h"
 #include "voxel/structure_parts.h"
 
 namespace renderer {
@@ -44,5 +45,28 @@ std::vector<float> interior_wear_field(const voxel::VoxelVolume& vol,
 
 // Articulated instances (any node override) are never structure-checked.
 bool can_structure_sever(const scenegraph::Instance& inst);
+
+// The plating draw can hide parts 0..kMaxHideableParts-1 only (opaque.frag
+// MAX_PARTS: upload_plating uploads that many). A part past it never
+// severs: it could not leave the parent's draw.
+constexpr int kMaxHideableParts = 12;
+
+struct SeveredSplit {
+    SeveredPart part;               // body frame, model units
+    scenegraph::InstanceId chunk;   // the new instance drawing only the part
+    int total_voxels = 0;           // every solid voxel of the hull
+};
+
+// Break off every part of `parent` that find_severed_parts reports (parts it
+// already lost skipped): ORs the part's bit into parent.severed_parts and
+// creates a chunk instance of the same model on a copy of the parent's pose
+// and render state (as hull_split_detached does) and its damage records,
+// drawing only that part (only_part). Rocks, articulated hulls and stale ids
+// never sever.
+std::vector<SeveredSplit> split_severed_parts(scenegraph::World& world,
+                                              scenegraph::InstanceId parent,
+                                              const voxel::StructureSegmentation& seg,
+                                              const plating::DamageList& dmg,
+                                              float deck_break);
 
 }  // namespace renderer

@@ -62,4 +62,13 @@ const std::vector<voxel::StructurePart>* structure_parts_for(
     return seg ? &seg->parts : nullptr;
 }
 
+void set_structure_segmentation_for_test(const std::filesystem::path& source,
+                                         voxel::StructureSegmentation seg) {
+    std::lock_guard<std::mutex> lock(g_mu);
+    auto slot = std::make_unique<Entry>();
+    slot->seg = std::move(seg);
+    slot->ready = true;
+    g_cache[source.string()] = std::move(slot);
+}
+
 }  // namespace renderer

@@ -411,7 +411,8 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
                             hull_wear.flush(ship)
                     else:
                         # Every hit: the store merges co-located hits.
-                        hull_wear.send(iid, hit_xyz, n_xyz, reach, wear)
+                        hull_wear.send(iid, hit_xyz, n_xyz, reach, wear,
+                                       ship=ship)
                 except Exception as exc:
                     from engine import dev_mode
                     dev_mode.log_swallowed("hull wear", exc)

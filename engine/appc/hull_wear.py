@@ -73,12 +73,28 @@ def wear_for_hit(weapon_type, absorbed_hull, decal_dent=0.0):
     return max(PROJECTILE_MIN, min(base, PROJECTILE_MAX))
 
 
-def send(iid, world_point, world_normal, radius, wear):
-    """One projectile/collision hit's wear, straight to the store."""
+def _after_wear(ship, iid):
+    """Wear is in the store: may it have cut a structure part off?
+    (hull_breakup.after_wear, throttled per ship.) Isolated: a failure there
+    must never cost the hit its wear."""
+    if ship is None:
+        return
+    try:
+        from engine.appc import hull_breakup
+        hull_breakup.after_wear(ship, iid)
+    except Exception as _e:
+        from engine import dev_mode
+        dev_mode.log_swallowed("hull_breakup.after_wear", _e)
+
+
+def send(iid, world_point, world_normal, radius, wear, ship=None):
+    """One projectile/collision hit's wear, straight to the store, then the
+    part check for `ship` (None: no check)."""
     if wear <= 0.0 or radius <= 0.0:
         return
     host_io.hull_damage_add(iid, world_point, world_normal, radius, wear,
                             _SURFACE)
+    _after_wear(ship, iid)
 
 
 def _dist(a, b):
@@ -119,6 +135,7 @@ def _send_pending(entry):
     host_io.hull_damage_add_body(entry.iid, entry.body_point,
                                  entry.body_normal, entry.radius, entry.wear,
                                  _SURFACE)
+    _after_wear(entry.ship, entry.iid)
 
 
 def flush(ship):

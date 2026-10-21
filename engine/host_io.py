@@ -49,7 +49,7 @@ _REQUIRED_BINDINGS = frozenset({
     "shield_hit", "world_to_body", "damage_decal_add", "hull_carve_add",
     "hull_damage_add", "hull_damage_add_body",
     "model_nodes", "model_nearest_part", "set_instance_decals",
-    "hull_split_detached", "hull_carve_capsule", "breach_burst",
+    "hull_split_detached", "hull_split_parts", "hull_carve_capsule", "breach_burst",
     "ray_trace_mesh", "instance_translation",
     "transform_alloc", "transform_free", "transform_get_position",
     "transform_set_position", "transform_get_rotation", "transform_set_rotation",
@@ -542,6 +542,19 @@ def hull_split_detached(instance_id: int, min_cells: int) -> list:
     if _h is None:
         return []
     return list(_h.hull_split_detached(instance_id, int(min_cells)))
+
+
+def hull_split_parts(instance_id: int) -> list:
+    """Break off every structure part the plating wear has cut from the main
+    body of `instance_id` (a ship, never a rock or an articulated hull): the
+    part is hidden on the parent and a new renderer instance (a chunk) draws
+    only that part. Returns one dict per newly severed part (body-frame GAME
+    UNITS): part, instance_id, voxels, total_voxels (the whole hull's),
+    centroid, bounds_min, bounds_max, radius_gu. A part is reported once.
+    Empty when headless, not ready, or nothing severed."""
+    if _h is None:
+        return []
+    return list(_h.hull_split_parts(instance_id))
 
 
 def breach_burst(instance_id: int, body_point_gu, radius_gu: float) -> None:

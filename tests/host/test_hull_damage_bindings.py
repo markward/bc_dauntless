@@ -80,8 +80,21 @@ def _breach(iid):
     return _h._test_only_breach_events(iid)
 
 
-def test_tear_vents_once_when_wear_first_crosses_breach(iid):
+@pytest.fixture
+def breach_wear():
+    """Pin params[16] (breach_wear) for the test, restored after, so the
+    native value another test left behind can never move the crossing."""
+    from engine.appc import plating_dials
     breach = 4.5
+    params = list(plating_dials.params())
+    params[plating_dials.DIAL_ORDER.index("breach_wear")] = breach
+    _h.set_plating_params(params)
+    yield breach
+    _h.set_plating_params(list(plating_dials.params()))
+
+
+def test_tear_vents_once_when_wear_first_crosses_breach(iid, breach_wear):
+    breach = breach_wear
     for i in range(5):
         assert _breach(iid) == [], f"no event before add {i}"
         _h.hull_damage_add_body(iid, (1.0, 2.0, 3.0), (0.0, 0.0, 1.0),
@@ -104,3 +117,17 @@ def test_internal_adds_never_vent(iid):
         _h.hull_damage_add_body(iid, (1.0, 2.0, 3.0), (0.0, 0.0, 0.0),
                                 0.3, 1.0, 3)
     assert _breach(iid) == []
+
+
+def test_hull_split_parts_returns_nothing_for_an_intact_ship(iid):
+    assert _h.hull_split_parts(iid) == []
+    _h.hull_damage_add_body(iid, (1.0, 2.0, 3.0), (0.0, 0.0, 1.0), 0.3, 1.0, 1)
+    assert _h.hull_split_parts(iid) == [], "no model, no parts: nothing severs"
+    stale = _h.create_instance(0)
+    _h.destroy_instance(stale)
+    assert _h.hull_split_parts(stale) == []
+
+
+def test_hull_split_parts_is_a_required_binding():
+    from engine import host_io
+    assert "hull_split_parts" in host_io._REQUIRED_BINDINGS

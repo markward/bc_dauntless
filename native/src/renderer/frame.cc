@@ -196,6 +196,7 @@ namespace dauntless_decals {
 // engine/appc/plating_dials.py (/ L O, group "plating"). Defaults MUST match
 // that module's DEFAULTS; slot meanings are listed there and in opaque.frag's
 // apply_plating. [0] = enabled (0/1).
+#include "renderer/part_severance_check.h"
 #include "renderer/structure_parts_cache.h"
 #include "renderer/plating_damage.h"
 namespace dauntless_plating {
@@ -604,16 +605,20 @@ static bool draws_skinned(const assets::Model& model,
 // shader is given (they land on a worker thread at any moment).
 // `rock` (Instance::surface_is_rock): u_plating_rock, no panels, ribs or
 // members, only a cut where wear passes breach.
+// `hidden_parts` / `only_part` (PlatingMeshRecords): the severed parts this
+// draw hides, 0 / -1 for a hull that has lost none.
 static void upload_plating(Shader& prog, const plating::DamageList& dl,
                            const std::vector<voxel::StructurePart>* parts,
                            const glm::mat4& world, const float* params, bool mark,
-                           bool far, bool upload_list, bool rock) {
+                           bool far, bool upload_list, bool rock,
+                           std::uint32_t hidden_parts, int only_part) {
     static const std::string kPlating = "u_plating", kDmgCount = "u_dmg_count",
         kDmgA = "u_dmg_a", kDmgB = "u_dmg_b", kDmgC = "u_dmg_c",
         kMark = "u_plating_mark", kFar = "u_plating_far", kRock = "u_plating_rock",
         kPartCount = "u_part_count",
         kPartA = "u_part_a", kPartB = "u_part_b", kPartC = "u_part_c",
-        kPartD = "u_part_d", kWorldInv = "u_ship_world_inv";
+        kPartD = "u_part_d", kWorldInv = "u_ship_world_inv",
+        kPartHidden = "u_part_hidden_mask", kPartOnly = "u_part_only";
     if (const int loc = prog.cached_location(kPlating); loc >= 0)
         glUniform1fv(loc, renderer::plating::kParamCount, params);
     // world->body for p_body / n_body. draw_model's decal block sets it only
@@ -628,7 +633,8 @@ static void upload_plating(Shader& prog, const plating::DamageList& dl,
         prog.set_vec4_array(kDmgC, dl.c, dl.count);
     }
 
-    constexpr int kMaxParts = 12;
+    // opaque.frag MAX_PARTS; also the parts a severance may hide.
+    constexpr int kMaxParts = renderer::kMaxHideableParts;
     glm::vec4 pa[kMaxParts], pb[kMaxParts], pc[kMaxParts], pd[kMaxParts];
     int np = 0;
     if (parts != nullptr) {
@@ -646,6 +652,8 @@ static void upload_plating(Shader& prog, const plating::DamageList& dl,
     prog.set_vec4_array(kPartB, pb, np);
     prog.set_vec4_array(kPartC, pc, np);
     prog.set_vec4_array(kPartD, pd, np);
+    prog.set_int(kPartHidden, static_cast<int>(hidden_parts));
+    prog.set_int(kPartOnly, only_part);
 
     prog.set_int(kMark, mark ? 1 : 0);
     prog.set_int(kFar, far ? 1 : 0);
@@ -886,7 +894,9 @@ static void draw_model_pass(const assets::Model& model,
                                             : renderer::structure_parts_for(model.source);
         upload_plating(prog, *plating_list, plating_parts, world, dauntless_plating::g_params,
                        /*mark=*/false, plating_far,
-                       /*upload_list=*/plating_subsets == nullptr, plating_rock);
+                       /*upload_list=*/plating_subsets == nullptr, plating_rock,
+                       plating_mesh_records != nullptr ? plating_mesh_records->hidden_parts : 0u,
+                       plating_mesh_records != nullptr ? plating_mesh_records->only_part : -1);
         if (plating_subsets != nullptr) plating_records.emplace(prog, *plating_list);
     }
 
@@ -1411,7 +1421,8 @@ static int draw_plating_mark(const assets::Model& model, const glm::mat4& world,
     const std::vector<plating::MeshRecordSubset>* const subsets =
         articulated ? nullptr : records.subsets;
     upload_plating(prog, dl, records.parts, world, params, /*mark=*/true, /*far=*/false,
-                   /*upload_list=*/subsets == nullptr, rock);
+                   /*upload_list=*/subsets == nullptr, rock, records.hidden_parts,
+                   records.only_part);
     std::optional<MeshRecordUploader> uploader;
     if (subsets != nullptr) uploader.emplace(prog, dl);
     prog.set_int(kCarveEnabled, 0);
@@ -1681,11 +1692,20 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
         // plating program, with an empty list when it has no records.
         const bool force_plating = dauntless_plating::g_params[26] > 0.5f && m &&
                                    !inst.surface_is_rock && !draws_skinned(*m, palette);
-        if (m && !is_detail_draw && dauntless_plating::g_params[0] > 0.5f &&
-            (inst.hull_damage.count() > 0 || force_plating)) {
+        // A hull that has lost a structure part (or a chunk that is one)
+        // hides it in the plating draw (u_part_hidden_mask / u_part_only):
+        // every mesh takes the plating program, no stock split, with an empty
+        // list when it has no records, whatever params[0] says -- a stock draw
+        // would show the whole model.
+        const bool part_hiding = m && !is_detail_draw && !draws_skinned(*m, palette) &&
+                                 (inst.severed_parts != 0 || inst.only_part >= 0);
+        if (m && !is_detail_draw &&
+            ((dauntless_plating::g_params[0] > 0.5f &&
+              (inst.hull_damage.count() > 0 || force_plating)) ||
+             part_hiding)) {
             plating_entry = &plating_entry_for(inst);
             plating_list = &plating_entry->list;
-            use_plating = force_plating ||
+            use_plating = force_plating || part_hiding ||
                           plating::wants_plating(*plating_list, dauntless_plating::g_params);
         }
         // The parts and per-mesh subsets this draw uploads, cached on the
@@ -1764,8 +1784,9 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                           use_plating ? plating_list : nullptr, plating_far,
                           use_plating ? &plating_records : nullptr,
                           // Record-free meshes draw stock, except under the
-                          // force-program probe (params[26]): every mesh plating.
-                          force_plating ? nullptr : &shader,
+                          // force-program probe (params[26]) or part hiding:
+                          // every mesh plating.
+                          (force_plating || part_hiding) ? nullptr : &shader,
                           inst.surface_is_rock);
         if (inst.far_fade != 0.0f) {
             shader.use();
@@ -1888,6 +1909,8 @@ PlatingMeshRecords FrameSubmitter::plating_mesh_records_for(PlatingListCacheEntr
                                                             const assets::Model& model) {
     PlatingMeshRecords r;
     r.parts = renderer::structure_parts_for(model.source);
+    r.hidden_parts = inst.severed_parts;
+    r.only_part = inst.only_part;
     if (!plating_record_culling_ || !inst.node_overrides.empty()) return r;
     if (!e.subsets_valid || e.subsets_parts != r.parts || e.subsets_handle != inst.model_handle ||
         e.subsets_model != &model) {

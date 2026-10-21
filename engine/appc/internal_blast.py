@@ -185,6 +185,12 @@ def _blast(entry, iid) -> None:
                       weapon_kind=1, spark_count=60 if body_point is not None else 0,
                       pSet=pset)
         host_io.breach_burst(iid, body_gu, radius * 0.5)
+    # The blow-out's wear is in the store: it may have cut a part off.
+    try:
+        from engine.appc import hull_breakup
+        hull_breakup.after_wear(ship, iid)
+    except Exception as _e:
+        dev_mode.log_swallowed("hull_breakup.after_wear", _e)
     print("[internal-blast] %s blew out at %d point(s), radius %.2f GU, holes %s GU"
           % (name, len(exits), radius,
              ", ".join("%.2f" % hole_radius(radius, d) for _, _, d in exits)))

@@ -262,3 +262,26 @@ def test_light_phaser_fire_leaves_no_wear(fake):
 def test_wear_reach_matches_scorch_reach(fake):
     _hit(_Ship())
     assert fake.wear[0][0][3] == pytest.approx(fake.decals[0][0][3])
+
+
+def test_wear_reaching_the_store_asks_for_severed_parts(fake, clock, monkeypatch):
+    """Projectile wear and a flushed phaser entry both hand the ship to
+    hull_breakup.after_wear AFTER the wear is in the store (the native part
+    check reads the store)."""
+    from engine.appc import hull_breakup
+    asked = []
+    monkeypatch.setattr(
+        hull_breakup, "after_wear",
+        lambda ship, iid, *a, **k: asked.append(
+            (ship, iid, len(fake.wear), len(fake.body_wear))))
+    ship = _Ship()
+    _hit(ship)
+    assert asked == [(ship, 3, 1, 0)]
+    clock[0] = 0.05
+    _phaser(ship)                     # opens the phaser window: sent at once
+    assert asked[1] == (ship, 3, 1, 1)
+    clock[0] = 0.06
+    _phaser(ship)                     # held in the body frame
+    assert len(asked) == 2
+    hull_wear.drain(0.5)
+    assert asked[2] == (ship, 3, 1, 2)

@@ -25,6 +25,8 @@
 #include <renderer/text_input.h>
 #include <renderer/pipeline.h>
 #include <renderer/plating_damage.h>
+#include <renderer/part_severance_check.h>
+#include <renderer/structure_parts_cache.h>
 #include <renderer/bone_palette.h>
 #include <renderer/animation_update.h>
 #include <renderer/channel_binder.h>
@@ -8031,6 +8033,51 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "field; smaller ones are removed from the parent. Positions are "
           "body-frame GAME UNITS. Each dict also repeats main_body_cells, "
           "the parent's remaining occupied cell count.");
+
+    m.def("hull_split_parts",
+          [](scenegraph::InstanceId id) {
+              py::list out;
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return out;
+              const assets::Model* model = resolve_model(inst->model_handle);
+              if (model == nullptr || model->source.empty()) return out;
+              // nullptr until the background detection lands: try next check.
+              const voxel::StructureSegmentation* seg =
+                  renderer::structure_segmentation_for(model->source);
+              if (seg == nullptr) return out;
+              const renderer::plating::DamageList dl = renderer::plating::build_damage_list(
+                  inst->hull_damage, dauntless_plating::g_params);
+              const std::vector<renderer::SeveredSplit> split = renderer::split_severed_parts(
+                  g_world, id, *seg, dl, dauntless_plating::g_params[24]);
+              inst = g_world.get(id);   // the chunks may have grown the store
+              if (inst == nullptr) return out;
+              const float s = glm::length(glm::vec3(inst->world[0]));   // model->GU
+              auto gu = [s](const glm::vec3& v) {
+                  return py::make_tuple(v.x * s, v.y * s, v.z * s);
+              };
+              for (const renderer::SeveredSplit& sp : split) {
+                  py::dict d;
+                  d["part"] = sp.part.part;
+                  d["instance_id"] = sp.chunk;
+                  d["voxels"] = sp.part.voxels;
+                  d["total_voxels"] = sp.total_voxels;
+                  d["centroid"] = gu(sp.part.centroid_body);
+                  d["bounds_min"] = gu(sp.part.min_body);
+                  d["bounds_max"] = gu(sp.part.max_body);
+                  d["radius_gu"] =
+                      0.5f * glm::length(sp.part.max_body - sp.part.min_body) * s;
+                  out.append(std::move(d));
+              }
+              return out;
+          },
+          py::arg("instance_id"),
+          "Break off every structure part the plating wear has cut from the "
+          "main body (renderer::split_severed_parts): the part is hidden on "
+          "the parent and a new instance draws only it. Rocks, articulated "
+          "hulls and hulls whose parts are not detected yet never sever. One "
+          "dict per newly severed part, body-frame GAME UNITS: part, "
+          "instance_id, voxels, total_voxels, centroid, bounds_min, "
+          "bounds_max, radius_gu.");
 
     m.def("breach_burst",
           [](scenegraph::InstanceId id, std::tuple<float, float, float> body_point_gu,

@@ -825,6 +825,12 @@ const vec3 INNER_HULL   = vec3(0.42, 0.41, 0.40);  // pressure hull under the ri
 const int  MAX_PARTS    = 12;
 const float TAU         = 6.2831853;
 uniform int  u_part_count;               // 0 = parts not detected (yet)
+// Severed structure parts (Instance::severed_parts / only_part, uploaded by
+// upload_plating for the colour draw and the mark alike): bit i of the mask
+// hides part i; u_part_only >= 0 hides every part but that one. Read only
+// when parts are loaded (u_part_count > 0): with none, nothing is hidden.
+uniform int  u_part_hidden_mask;
+uniform int  u_part_only;
 uniform vec4 u_part_a[MAX_PARTS];        // centre.xyz, kind (0 box, 1 disc, 2 cylinder)
 uniform vec4 u_part_b[MAX_PARTS];        // axis0.xyz, half0
 uniform vec4 u_part_c[MAX_PARTS];        // axis1.xyz, half1
@@ -2168,19 +2174,33 @@ void main() {
     // here breaks them for the neighbouring kept pixels (see the dFdx/discard
     // note at the top of main).
     if (u_plating_mark != 0 && !plating_near) discard;
+    // A severed part is gone from this hull (and a chunk is only its part):
+    // the part's pixels are hidden, in the colour draw and the mark alike, so
+    // a hidden pixel is never stamped.
+    bool plating_hidden = false;
+    if (u_part_count > 0 && (u_part_hidden_mask != 0 || u_part_only >= 0)) {
+        int hp = plating_part(p_body);
+        plating_hidden = (u_part_only >= 0 && hp != u_part_only) ||
+                         (hp >= 0 && hp < 32 && ((u_part_hidden_mask >> hp) & 1) != 0);
+    }
+    int hole = 0;
+    bool cut = false;
     if (plating_near) {
         plating_w_here = plating_wear(p_body, n_body);
         plating_w_int  = plating_internal(p_body);
-        int hole = u_plating_rock != 0 ? plating_rock_hole(p_body, plating_w_here)
-                                       : plating_hole(p_body, n_body, plating_w_here);
+        hole = u_plating_rock != 0 ? plating_rock_hole(p_body, plating_w_here)
+                                   : plating_hole(p_body, n_body, plating_w_here);
         // A hole is cut when this hull is near (rooms are drawn behind it) or
         // blown clear through; a far hole is painted as wreckage below.
-        bool cut = hole == 1 && (u_plating_far == 0 || plating_w_here > u_plating[24]);
-        // Marking draw: keep ONLY the cut-through pixels (colour is masked
-        // off, so what they shade to is never seen); every other draw
-        // discards exactly those pixels. One discard, no early return: an
-        // early `return` here miscompiled the whole plating draw.
-        if (cut != (u_plating_mark != 0)) discard;
+        cut = hole == 1 && (u_plating_far == 0 || plating_w_here > u_plating[24]);
+    }
+    // Marking draw: keep ONLY the cut-through pixels (colour is masked
+    // off, so what they shade to is never seen); every other draw
+    // discards exactly those pixels. Hidden pixels go in both. One discard,
+    // no early return: an early `return` here miscompiled the whole plating
+    // draw. Away from damage, cut is false: only a hidden pixel discards.
+    if (plating_hidden || (cut != (u_plating_mark != 0))) discard;
+    if (plating_near) {
         if (hole == 1 && !cut) {
             // Far wreckage: near-black char, with the odd room cell still
             // burning or still lit, read from the room lattice the interior
