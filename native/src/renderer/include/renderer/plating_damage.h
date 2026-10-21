@@ -4,10 +4,13 @@
 // actually carry plating wear, so the layered-damage shader only pays for the
 // records that matter. Pure CPU; no GL.
 #pragma once
+#include <array>
 #include <cstddef>
+#include <cstdint>
 
 #include <glm/glm.hpp>
 
+#include "renderer/aabb.h"
 #include "scenegraph/hull_damage.h"
 
 namespace renderer::plating {
@@ -39,5 +42,38 @@ DamageList build_damage_list(const scenegraph::HullDamageStore& store,
 // stock program and uploads nothing for plating. frame.cc's
 // submit_opaque_in_pass and the GL tests share this one rule.
 bool wants_plating(const DamageList& list, const float* params);
+
+// opaque.frag's near-damage margin (plating_margin): nothing in the plating
+// layer reaches further from a record than its reach plus this.
+// params[5] + params[6] + params[15] + params[2].
+float plating_margin(const float* params);
+
+// The records whose sphere grown by `margin` (a.w + margin) touches
+// `body_box` (body frame), in list order, as indices into `list`. Returns how
+// many. A mesh draw uploads only these: a pixel of the mesh lies in its box,
+// so a record left out is further than reach + margin from every pixel and
+// adds nothing to it (opaque.frag's near test, wear sums and gradients all
+// skip it there). The test is grown by a small slack, so float rounding of
+// p_body can only ever keep an extra record, never drop a needed one.
+int records_near(const DamageList& list, const Aabb& body_box, float margin,
+                 std::array<std::uint8_t, kMaxDamage>& out);
+
+// The records that can break an interior plate (hull_interior.frag's blown
+// tests: wear plus at most 1.25 x tear noise past deck break). Record i is
+// kept when the summed wear of every record whose sphere overlaps i's (i
+// included) is at least params[24] - 1.25 * |params[19]|. Exact: if a left-out
+// record k covers a point, every record covering that point overlaps k, so the
+// point's wear is at most k's overlap sum, below the threshold, and the point
+// cannot be blown with or without k. Where only kept records cover a point
+// the subset's wear is the full list's, summed in the same order. Indices
+// ascend.
+struct DeckBreakSet {
+    int count = 0;
+    std::array<int, kMaxDamage> idx{};
+};
+DeckBreakSet deck_break_subset(const DamageList& list, const float* params);
+
+// Every record of `list`, in order (record culling off).
+DeckBreakSet full_deck_break_set(const DamageList& list);
 
 }  // namespace renderer::plating

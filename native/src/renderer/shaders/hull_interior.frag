@@ -54,6 +54,11 @@ uniform int  u_dmg_count;
 uniform vec4 u_dmg_a[MAX_DMG];     // centre.xyz, reach
 uniform vec4 u_dmg_b[MAX_DMG];     // normal.xyz, wear
 uniform vec4 u_dmg_c[MAX_DMG];     // kind, 0, 0, 0
+// The deck-break subset (plating::deck_break_subset): indices into u_dmg_*,
+// ascending, of the only records that can break a plate. The blown tests
+// read deck_break_wear; shading reads interior_wear (every record).
+uniform int  u_db_count;
+uniform int  u_db_idx[MAX_DMG];
 
 // Plating params: 17 inner hull brightness, 19 tear noise, 24 deck break wear.
 uniform float u_plating[32];
@@ -153,6 +158,23 @@ bool ih_plane_exists(int axis, int plane, ivec3 cell) {
 float interior_wear(vec3 p) {
     float w = 0.0;
     for (int i = 0; i < u_dmg_count; ++i) {
+        float R = u_dmg_a[i].w;
+        if (R <= 0.0) continue;
+        float r = length(p - u_dmg_a[i].xyz) / R;
+        if (r >= 1.0) continue;
+        float f = 1.0 - r * r;
+        w += u_dmg_b[i].w * f * f;
+    }
+    return w;
+}
+
+// interior_wear over the deck-break subset only. Wherever the point could be
+// blown it equals interior_wear bit for bit (the same records, summed in the
+// same order); elsewhere both stay below the blown threshold.
+float deck_break_wear(vec3 p) {
+    float w = 0.0;
+    for (int k = 0; k < u_db_count; ++k) {
+        int i = u_db_idx[k];
         float R = u_dmg_a[i].w;
         if (R <= 0.0) continue;
         float r = length(p - u_dmg_a[i].xyz) / R;
@@ -273,8 +295,8 @@ bool ih_shade(vec3 ro, vec3 rd, out vec3 c) {
         float tb; int bax, zone;
         if (g_detail > 0.3 && ih_contents(cell, ro, rd, t_in, t, tb, bax, zone)) {
             vec3 pb = ro + rd * tb;
-            float iwb = interior_wear(pb);
-            if (iwb <= deck_break) {
+            if (deck_break_wear(pb) <= deck_break) {
+                float iwb = interior_wear(pb);
                 float fire;
                 vec3 room = ih_room_light(cell, fire);
                 vec3 albedo = zone == 2 ? vec3(0.22, 0.23, 0.25)     // machinery
@@ -288,13 +310,16 @@ bool ih_shade(vec3 ro, vec3 rd, out vec3 c) {
             }
         }
 
-        vec3  p  = ro + rd * t;
-        float iw = interior_wear(p);
+        vec3  p   = ro + rd * t;
+        // The blown tests' wear (deck-break subset); shading below re-reads
+        // the whole list.
+        float iwd = deck_break_wear(p);
 
         // (a) Left the ship (checked on every crossing, wall or not, so a
         // ray through a missing wall cannot wander into a nacelle).
         if (left_ship(p)) {
-            if (iw > deck_break) return false;     // far wall gone too: blown through
+            if (iwd > deck_break) return false;    // far wall gone too: blown through
+            float iw = interior_wear(p);
             // The far wall: the inside of the pressure hull, lit by this room.
             float fire;
             vec3 room = ih_room_light(cell, fire);
@@ -308,12 +333,15 @@ bool ih_shade(vec3 ro, vec3 rd, out vec3 c) {
 
         int plane = cell[axis] + (stp[axis] > 0 ? 1 : 0);
         if (ih_plane_exists(axis, plane, cell)) {
-            // (b) Blown plate: keep walking. `s` is the noised wear (two
-            // octaves, so decks tear raggedly rather than room by room); the
-            // char band below reads the same value.
-            float s = iw + (vnoise3(p * kTornNoiseFreq) - 0.5) * u_plating[19]
-                         + (vnoise3(p * 0.17) - 0.5) * u_plating[19] * 1.5;
-            if (s <= deck_break) {
+            // (b) Blown plate: keep walking. The test is the noised wear (two
+            // octaves, so decks tear raggedly rather than room by room) over
+            // the deck-break subset; the char band below reads the same noise
+            // over the whole list (`s`), equal wherever a plate can break.
+            float n1 = (vnoise3(p * kTornNoiseFreq) - 0.5) * u_plating[19];
+            float n2 = (vnoise3(p * 0.17) - 0.5) * u_plating[19] * 1.5;
+            if (iwd + n1 + n2 <= deck_break) {
+                float iw = interior_wear(p);
+                float s  = iw + n1 + n2;
                 // (c) Shade this plate, as seen from inside `cell`.
                 vec3 q   = (p - vec3(cell) * kRoomSize) / kRoomSize;   // 0..1 in room
                 float fire;

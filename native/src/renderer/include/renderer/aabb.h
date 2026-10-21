@@ -27,6 +27,16 @@ inline Aabb compute_aabb(const std::vector<glm::vec3>& v) {
 /// cpu_data are skipped.
 Aabb compute_model_aabb(const assets::Model& model);
 
+/// One box per entry of `model.meshes`, in the body frame at the rest pose:
+/// each mesh's CPU vertices through the same node chain as
+/// compute_model_aabb, unioned over every node that draws the mesh. A mesh
+/// with no CPU data, no vertices, no drawing node, or drawn by a parentless
+/// non-root node (which draw_model places at identity, outside the instance
+/// world) gets an unbounded box (FLT_MAX half extents) that touches
+/// everything. Walks every vertex: callers cache it per model
+/// (frame.cc keys it by model handle, beside model_bounding_radius).
+std::vector<Aabb> mesh_body_aabbs(const assets::Model& model);
+
 /// One hull piece, in model-local space.
 struct BoundSphere {
     glm::vec3 center{0.0f};

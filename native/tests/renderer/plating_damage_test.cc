@@ -103,3 +103,49 @@ TEST(PlatingDamage, TornPossibleUsesTheToughnessAndLumpFloor) {
     p[23] = 0.0f;
     EXPECT_FALSE(renderer::plating::build_damage_list(s, p.data()).torn_possible);
 }
+
+// ---- Phase 2 Task 3: records near each mesh, the deck-break subset. -------
+
+// A record enters a mesh's subset when its sphere grown by the margin
+// (a.w + margin) touches the mesh's body-frame box.
+TEST(PlatingDamage, RecordsNearSelectsOnlyTouchingSpheres) {
+    HullDamageStore s;
+    s.add({5, 0, 0}, {0, 0, 0}, 3.0f, 1.0f, HullDamageKind::Internal);    // 5 - 1 <= 3 + 1
+    s.add({10, 0, 0}, {0, 0, 0}, 3.0f, 1.0f, HullDamageKind::Internal);   // 10 - 1 > 3 + 1
+    auto p = zero_params();
+    const auto l = renderer::plating::build_damage_list(s, p.data());
+    ASSERT_EQ(l.count, 2);
+    renderer::Aabb box;
+    box.center = glm::vec3(0.0f);
+    box.half_extents = glm::vec3(1.0f);
+    std::array<std::uint8_t, renderer::plating::kMaxDamage> idx{};
+    const int n = renderer::plating::records_near(l, box, 1.0f, idx);
+    ASSERT_EQ(n, 1);
+    EXPECT_EQ(idx[0], 0);
+}
+
+// Kept: record i when the summed wear of every record whose sphere overlaps
+// i's (i included) reaches deck break less the largest tear-noise lift,
+// params[24] - 1.25 * params[19]. Here 6 - 1.125 = 4.875.
+TEST(PlatingDamage, DeckBreakSubsetDropsIsolatedLightRecords) {
+    auto p = zero_params();
+    p[24] = 6.0f;
+    p[19] = 0.9f;
+    HullDamageStore s;
+    s.add({0, 0, 0}, {0, 0, 0}, 5.0f, 10.0f, HullDamageKind::Internal);
+    s.add({100, 0, 0}, {0, 0, 0}, 5.0f, 1.0f, HullDamageKind::Internal);
+    const auto l = renderer::plating::build_damage_list(s, p.data());
+    ASSERT_EQ(l.count, 2);
+    const auto db = renderer::plating::deck_break_subset(l, p.data());
+    ASSERT_EQ(db.count, 1);
+    EXPECT_EQ(db.idx[0], 0);
+
+    HullDamageStore pair;
+    pair.add({0, 0, 0}, {0, 0, 0}, 5.0f, 3.0f, HullDamageKind::Internal);
+    pair.add({6, 0, 0}, {0, 0, 0}, 5.0f, 3.0f, HullDamageKind::Internal);
+    const auto lp = renderer::plating::build_damage_list(pair, p.data());
+    const auto dp = renderer::plating::deck_break_subset(lp, p.data());
+    ASSERT_EQ(dp.count, 2);
+    EXPECT_EQ(dp.idx[0], 0);
+    EXPECT_EQ(dp.idx[1], 1);
+}

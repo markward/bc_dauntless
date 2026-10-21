@@ -114,6 +114,8 @@ protected:
     renderer::InteriorPolicy policy = all_near_policy();
     scenegraph::Camera cam = quad_cam();
     renderer::FrameSubmitter* shared = nullptr;
+    // FrameSubmitter::set_plating_record_culling for every render.
+    bool record_culling = true;
 
     // Every `placed` box drawn through submit_opaque_in_pass then
     // submit_plating_interior (or submit_opaque alone when `stock`), the
@@ -143,6 +145,7 @@ protected:
         renderer::FrameSubmitter own;
         renderer::FrameSubmitter& submitter = shared != nullptr ? *shared : own;
         submitter.set_interior_policy(drawn_policy);
+        submitter.set_plating_record_culling(record_culling);
         const auto lookup = [](scenegraph::ModelHandle h) -> const assets::Model* {
             return reinterpret_cast<const assets::Model*>(h);
         };
@@ -542,4 +545,51 @@ TEST_F(HullInteriorTest, FarRockHoleStaysSeeThrough) {
     report("far rock", s, centre());
     EXPECT_EQ(s.far_draws, 0);
     EXPECT_TRUE(is_clear(pixel(s.px, centre().x, centre().y)));
+}
+
+// ---- Phase 2 Task 3: the deck-break subset. ---------------------------------
+// The walk's blown tests read only the records that can blow a plate
+// (plating::deck_break_subset); shading keeps the whole list. Setup: one
+// heavy record above the near face blows it and the deck at z = 18.69 open;
+// four light records (wear 4.5, below deck break 6 less the 1.125 tear-noise
+// lift, and clear of every other sphere) sit on the next deck down, z = 16.02,
+// which holds. The light records are outside the subset, yet they soot that
+// deck: the walk must shade it from the whole list, so the picture is the
+// same with the subset as without.
+TEST_F(HullInteriorTest, InteriorSubsetMatchesFullWalk) {
+    dauntless_plating::g_params[24] = 6.0f;
+    dauntless_plating::g_params[19] = 0.9f;
+    const float deck = 6.0f * 2.67f;
+    scenegraph::HullDamageStore heavy;
+    heavy.add({0.0f, 0.0f, 26.0f}, glm::vec3(0.0f), 10.0f, 1000.0f,
+              scenegraph::HullDamageKind::Internal);
+    scenegraph::HullDamageStore ring = heavy;
+    const glm::vec2 lights[4] = {{4, 4}, {-4, 4}, {4, -4}, {-4, -4}};
+    for (const auto& xy : lights)
+        ring.add({xy.x, xy.y, deck}, glm::vec3(0.0f), 1.4f, 4.5f,
+                 scenegraph::HullDamageKind::Internal);
+    const auto list = renderer::plating::build_damage_list(ring, dauntless_plating::g_params);
+    ASSERT_EQ(list.count, 5);
+    const auto db = renderer::plating::deck_break_subset(list, dauntless_plating::g_params);
+    ASSERT_EQ(db.count, 1) << "only the heavy record can blow a plate";
+    EXPECT_EQ(db.idx[0], 0);
+
+    record_culling = true;
+    const auto on = render_one(ring, filled.get());
+    record_culling = false;
+    const auto off = render_one(ring, filled.get());
+    record_culling = true;
+    const auto heavy_only = render_one(heavy, filled.get());
+    const glm::ivec2 lp = to_pixel(cam, glm::vec3(4.0f, 4.0f, deck));
+    const std::uint8_t* a = pixel(on.px, lp.x, lp.y);
+    const std::uint8_t* h = pixel(heavy_only.px, lp.x, lp.y);
+    std::fprintf(stderr, "[HullInterior] subset light deck=(%d,%d,%d) heavy only=(%d,%d,%d)\n",
+                 a[0], a[1], a[2], h[0], h[1], h[2]);
+    ASSERT_EQ(on.interiors, 1);
+    ASSERT_FALSE(is_clear(pixel(on.px, centre().x, centre().y)));
+    ASSERT_FALSE(is_clear(a)) << "the light records' deck is not drawn";
+    EXPECT_GT(rgb_diff(a, h), 0) << "the light records do not shade their deck";
+    int diff = 0;
+    for (std::size_t i = 0; i < on.px.size(); ++i) diff += on.px[i] != off.px[i] ? 1 : 0;
+    EXPECT_EQ(diff, 0) << "the deck-break subset changed the interior";
 }

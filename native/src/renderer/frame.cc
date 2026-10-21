@@ -484,6 +484,18 @@ float model_bounding_radius(scenegraph::ModelHandle handle,
     return radius;
 }
 
+// Per-mesh body-frame boxes (mesh_body_aabbs) for the plating record
+// subsets: the same per-ModelHandle cache, under the same reset discipline
+// (reset_model_radius_cache clears both).
+std::unordered_map<scenegraph::ModelHandle, std::vector<Aabb>> g_mesh_boxes_cache;
+
+const std::vector<Aabb>& model_mesh_boxes(scenegraph::ModelHandle handle,
+                                          const assets::Model& model) {
+    auto it = g_mesh_boxes_cache.find(handle);
+    if (it != g_mesh_boxes_cache.end()) return it->second;
+    return g_mesh_boxes_cache.emplace(handle, mesh_body_aabbs(model)).first->second;
+}
+
 // Select up to kMaxDynamicLightsPerDraw lights affecting `inst` from
 // `lights` (nullptr or empty => none, count 0 — the production path until
 // Task 10 wires a real caller). Instance world center = the world matrix's
@@ -514,6 +526,7 @@ void reset_damage_decal_texture() {
 
 void reset_model_radius_cache() {
     g_model_radius_cache.clear();
+    g_mesh_boxes_cache.clear();
 }
 
 void reset_decal_mask_sampler() {
@@ -573,9 +586,11 @@ static bool draws_skinned(const assets::Model& model,
 // disagree about what the plating discard reads. Parts come from a background
 // detection per hull source; until it lands u_part_count is 0 and the shader
 // uses a body-axis box chart.
+// `upload_list` false: the caller uploads u_dmg_* per mesh
+// (upload_mesh_records) instead.
 static void upload_plating(Shader& prog, const assets::Model& model, const glm::mat4& world,
                            const plating::DamageList& dl, const float* params, bool mark,
-                           bool far) {
+                           bool far, bool upload_list) {
     static const std::string kPlating = "u_plating", kDmgCount = "u_dmg_count",
         kDmgA = "u_dmg_a", kDmgB = "u_dmg_b", kDmgC = "u_dmg_c",
         kMark = "u_plating_mark", kFar = "u_plating_far", kPartCount = "u_part_count",
@@ -588,10 +603,12 @@ static void upload_plating(Shader& prog, const assets::Model& model, const glm::
     // previous draw's matrix.
     prog.set_mat4(kWorldInv, glm::inverse(world));
 
-    prog.set_int(kDmgCount, dl.count);
-    prog.set_vec4_array(kDmgA, dl.a, dl.count);
-    prog.set_vec4_array(kDmgB, dl.b, dl.count);
-    prog.set_vec4_array(kDmgC, dl.c, dl.count);
+    if (upload_list) {
+        prog.set_int(kDmgCount, dl.count);
+        prog.set_vec4_array(kDmgA, dl.a, dl.count);
+        prog.set_vec4_array(kDmgB, dl.b, dl.count);
+        prog.set_vec4_array(kDmgC, dl.c, dl.count);
+    }
 
     constexpr int kMaxParts = 12;
     glm::vec4 pa[kMaxParts], pb[kMaxParts], pc[kMaxParts], pd[kMaxParts];
@@ -614,6 +631,41 @@ static void upload_plating(Shader& prog, const assets::Model& model, const glm::
 
     prog.set_int(kMark, mark ? 1 : 0);
     prog.set_int(kFar, far ? 1 : 0);
+}
+
+// One mesh's u_dmg_*: the records near `box` (plating::records_near), or the
+// whole list when `box` is null. A mesh with none uploads u_dmg_count 0 (the
+// arrays keep stale values the shader never reads past the count).
+static void upload_mesh_records(Shader& prog, const plating::DamageList& dl,
+                                const Aabb* box, float margin) {
+    static const std::string kDmgCount = "u_dmg_count", kDmgA = "u_dmg_a",
+        kDmgB = "u_dmg_b", kDmgC = "u_dmg_c";
+    std::array<std::uint8_t, plating::kMaxDamage> idx;
+    const int n = box != nullptr ? plating::records_near(dl, *box, margin, idx) : dl.count;
+    prog.set_int(kDmgCount, n);
+    if (n == dl.count) {   // every record: no gather
+        prog.set_vec4_array(kDmgA, dl.a, n);
+        prog.set_vec4_array(kDmgB, dl.b, n);
+        prog.set_vec4_array(kDmgC, dl.c, n);
+        return;
+    }
+    glm::vec4 a[plating::kMaxDamage], b[plating::kMaxDamage], c[plating::kMaxDamage];
+    for (int k = 0; k < n; ++k) {
+        a[k] = dl.a[idx[static_cast<std::size_t>(k)]];
+        b[k] = dl.b[idx[static_cast<std::size_t>(k)]];
+        c[k] = dl.c[idx[static_cast<std::size_t>(k)]];
+    }
+    prog.set_vec4_array(kDmgA, a, n);
+    prog.set_vec4_array(kDmgB, b, n);
+    prog.set_vec4_array(kDmgC, c, n);
+}
+
+// The box mesh `mesh_idx` culls its records against, or nullptr (the whole
+// list) when there is none for the index. Callers pass no boxes at all with
+// node overrides: the posed meshes have left their rest-pose boxes.
+static const Aabb* plating_box_for(const std::vector<Aabb>& boxes, int mesh_idx) {
+    if (mesh_idx < 0 || mesh_idx >= static_cast<int>(boxes.size())) return nullptr;
+    return &boxes[static_cast<std::size_t>(mesh_idx)];
 }
 
 // World matrix per node: the parent chain composed onto `world`. An
@@ -666,7 +718,8 @@ void draw_model(const assets::Model& model,
                 const scenegraph::Instance::Atmosphere* atmo,
                 glm::vec3 atmo_sun_dir,
                 const plating::DamageList* plating,
-                bool plating_far) {
+                bool plating_far,
+                const std::vector<Aabb>* plating_mesh_boxes) {
     // Pick the program: skinned only when the model carries a skeleton AND a
     // non-empty palette is supplied. An empty palette forces the static branch,
     // which is byte-identical to the pre-skinning path (used by the plumbing
@@ -733,9 +786,15 @@ void draw_model(const assets::Model& model,
     // Ride only plating draws (upload_plating). The part-colour debug view
     // (params[12] == 2) therefore tints only near listed damage on a hull
     // whose list is non-empty; an undamaged hull draws stock.
+    // With per-mesh boxes (and no node overrides) the list goes up per mesh
+    // in the loop below, each mesh only the records near it.
+    const bool plating_per_mesh =
+        plating_list != nullptr && plating_mesh_boxes != nullptr &&
+        !(node_overrides != nullptr && !node_overrides->empty());
+    const float plating_margin = plating::plating_margin(dauntless_plating::g_params);
     if (plating_list != nullptr) {
         upload_plating(prog, model, world, *plating_list, dauntless_plating::g_params,
-                       /*mark=*/false, plating_far);
+                       /*mark=*/false, plating_far, /*upload_list=*/!plating_per_mesh);
     }
 
     // ── Warp-nacelle glow capsules ─────────────────────────────────────────
@@ -1013,6 +1072,14 @@ void draw_model(const assets::Model& model,
                       static_cast<int>(model.sphere_map->lods.size()) - 1))]
                 : mesh;
             prog.set_int("u_sphere_map", this_sphere ? 1 : 0);
+            // Plating: this mesh's records. The geosphere's substituted mesh
+            // is not the one its box bounds: it gets the whole list.
+            if (plating_per_mesh) {
+                upload_mesh_records(
+                    prog, *plating_list,
+                    this_sphere ? nullptr : plating_box_for(*plating_mesh_boxes, mesh_idx),
+                    plating_margin);
+            }
             // Same rule as u_sphere_map: set on EVERY draw so it cannot leak.
             const bool this_atmo = this_sphere && atmo != nullptr && atmo->enabled;
             prog.set_int("u_atmo_enabled", this_atmo ? 1 : 0);
@@ -1154,22 +1221,31 @@ void draw_model(const assets::Model& model,
 //     caller from the instance; u_impostor_blend 0), the coverage cutout
 //     (u_coverage_cutout 0), and the old carve clip after the plating discard
 //     (u_carve_enabled / u_carve_count / u_carve_invert / u_hull_field_enabled
-//     0 -- the carve ring is empty unless DAUNTLESS_HULL_CARVING=1);
+//     0 -- carve is off in the mark, as it was in the full draw_model mark
+//     this replaced, which passed no hull field either);
 //   - u_shadow_map's unit (5): a sampler2DShadow left on unit 0 beside the
 //     sampler2Ds is GL_INVALID_OPERATION at draw on a never-drawn program.
 // No texture binds, no decals, glow regions, lights or materials: whatever
 // they would shade is masked off. The audit (one row per uniform) is in the
 // phase 2 Task 2 report.
+// `mesh_boxes`: as draw_model's plating_mesh_boxes -- each mesh uploads only
+// the records near it (the margin keeps every discard the same), the whole
+// list when null or with node overrides.
 static void draw_plating_mark(const assets::Model& model, const glm::mat4& world,
                               Shader& prog, const plating::DamageList& dl,
                               const float* params,
-                              const std::unordered_map<int, glm::mat4>* node_overrides) {
+                              const std::unordered_map<int, glm::mat4>* node_overrides,
+                              const std::vector<Aabb>* mesh_boxes) {
     static const std::string kCarveEnabled = "u_carve_enabled", kCarveCount = "u_carve_count",
         kCarveInvert = "u_carve_invert", kFieldEnabled = "u_hull_field_enabled",
         kCutout = "u_coverage_cutout", kImpostorBlend = "u_impostor_blend",
         kShadowMap = "u_shadow_map", kModel = "u_model", kRestFix = "u_node_rest_fix";
     prog.use();
-    upload_plating(prog, model, world, dl, params, /*mark=*/true, /*far=*/false);
+    const bool articulated = node_overrides != nullptr && !node_overrides->empty();
+    const bool per_mesh = mesh_boxes != nullptr && !articulated;
+    const float margin = plating::plating_margin(params);
+    upload_plating(prog, model, world, dl, params, /*mark=*/true, /*far=*/false,
+                   /*upload_list=*/!per_mesh);
     prog.set_int(kCarveEnabled, 0);
     prog.set_int(kCarveCount, 0);
     prog.set_int(kCarveInvert, 0);
@@ -1179,15 +1255,15 @@ static void draw_plating_mark(const assets::Model& model, const glm::mat4& world
     prog.set_int(kShadowMap, 5);
 
     const std::vector<glm::mat4> world_per_node = node_worlds_for(model, world, node_overrides);
-    const bool articulated = node_overrides != nullptr && !node_overrides->empty();
     const std::vector<glm::mat4> rest_fix =
         articulated ? rest_corrections(model, *node_overrides) : std::vector<glm::mat4>{};
 
-    // Per mesh: its transform, then the draw. A per-mesh upload (a damage
-    // record subset) slots in here.
+    // Per mesh: its records, its transform, then the draw.
     for (std::size_t i = 0; i < model.nodes.size(); ++i) {
         for (int mesh_idx : model.nodes[i].meshes) {
             const auto& mesh = model.meshes[static_cast<std::size_t>(mesh_idx)];
+            if (per_mesh)
+                upload_mesh_records(prog, dl, plating_box_for(*mesh_boxes, mesh_idx), margin);
             prog.set_mat4(kModel, world_per_node[i]);
             prog.set_mat4(kRestFix, articulated ? rest_fix[i] : glm::mat4(1.0f));
             glBindVertexArray(mesh.vao());
@@ -1389,6 +1465,11 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
     // undamaged scene never touches it.
     bool plating_configured = false;
     plating_far_draws_last_frame_ = 0;
+    // Drop cached lists of instances no longer in the world.
+    for (auto it = plating_list_cache_.begin(); it != plating_list_cache_.end();) {
+        if (world.is_valid(it->first)) ++it;
+        else it = plating_list_cache_.erase(it);
+    }
 
     const GLuint white = ensure_white_texture();
     const GLuint black = ensure_black_texture();
@@ -1417,12 +1498,14 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
         // plating_ program (plating::wants_plating); every other draw takes
         // the stock program and uploads nothing for plating. The planet
         // detail draw keeps planet_.
-        plating::DamageList plating_list;
+        // The cached list itself (no copy): the map's nodes are stable and
+        // nothing below can rebuild this instance's entry.
+        const plating::DamageList* plating_list = nullptr;
         bool use_plating = false;
         if (m && !is_detail_draw && dauntless_plating::g_params[0] > 0.5f &&
             inst.hull_damage.count() > 0) {
-            plating_list = plating_list_for(inst);
-            use_plating = plating::wants_plating(plating_list, dauntless_plating::g_params);
+            plating_list = &plating_list_for(inst);
+            use_plating = plating::wants_plating(*plating_list, dauntless_plating::g_params);
         }
         if (use_plating && !plating_configured) {
             configure_common(pipeline.plating_shader());
@@ -1491,7 +1574,10 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                           instance_decal_override(inst.id),
                           sphere_level,
                           atmo, atmo_sun,
-                          use_plating ? &plating_list : nullptr, plating_far);
+                          use_plating ? plating_list : nullptr, plating_far,
+                          use_plating && plating_record_culling_
+                              ? &model_mesh_boxes(inst.model_handle, *m)
+                              : nullptr);
         if (inst.far_fade != 0.0f) {
             shader.use();
             shader.set_float("u_dither_fade", 0.0f);
@@ -1590,20 +1676,27 @@ void FrameSubmitter::submit_carve_stencil(const scenegraph::World& world,
     pipeline.skinned_shader().set_int("u_carve_invert", 0);
 }
 
-const plating::DamageList& FrameSubmitter::plating_list_for(const scenegraph::Instance& inst) {
+FrameSubmitter::PlatingListCacheEntry& FrameSubmitter::plating_entry_for(
+        const scenegraph::Instance& inst) {
     PlatingListCacheEntry& e = plating_list_cache_[inst.id];
     const float* params = dauntless_plating::g_params;
     const bool same = e.valid && e.revision == inst.hull_damage.revision() &&
                       std::equal(e.params.begin(), e.params.end(), params);
     if (!same) {
         e.list = plating::build_damage_list(inst.hull_damage, params);
+        e.deck_break = plating::deck_break_subset(e.list, params);
         e.revision = inst.hull_damage.revision();
         std::copy(params, params + plating::kParamCount, e.params.begin());
         e.valid = true;
         ++plating_list_builds_;
     }
-    return e.list;
+    return e;
 }
+
+const plating::DamageList& FrameSubmitter::plating_list_for(const scenegraph::Instance& inst) {
+    return plating_entry_for(inst).list;
+}
+
 
 void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
                                              const scenegraph::Camera& camera,
@@ -1654,7 +1747,8 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
         if (!interior_is_near(inst, model_bounding_radius(inst.model_handle, *m), camera,
                               interior_policy_))
             return;
-        const plating::DamageList& list = plating_list_for(inst);
+        const PlatingListCacheEntry& entry = plating_entry_for(inst);
+        const plating::DamageList& list = entry.list;
         if (!plating::wants_plating(list, dauntless_plating::g_params) ||
             !list.torn_possible)
             return;
@@ -1694,7 +1788,9 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
             shader.set_float("u_dither_fade", inst.far_fade);
         }
         draw_plating_mark(*m, inst.world, shader, list, dauntless_plating::g_params,
-                          &inst.node_overrides);
+                          &inst.node_overrides,
+                          plating_record_culling_ ? &model_mesh_boxes(inst.model_handle, *m)
+                                                  : nullptr);
         if (inst.far_fade != 0.0f) {
             shader.use();
             shader.set_float("u_dither_fade", 0.0f);
@@ -1705,6 +1801,8 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
             const CarveFieldCache::Entry* fill =
                 carve_cache != nullptr ? carve_cache->get_for_source(m->source) : nullptr;
             hull_interior_.draw(*m, inst.world, camera, pipeline, list,
+                                plating_record_culling_ ? entry.deck_break
+                                                        : plating::full_deck_break_set(list),
                                 dauntless_plating::g_params,
                                 fill ? fill->tex3d : 0u,
                                 fill ? fill->origin : glm::vec3(0.0f),

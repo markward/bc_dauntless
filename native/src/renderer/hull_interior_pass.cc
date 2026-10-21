@@ -21,7 +21,8 @@ namespace renderer {
 
 void HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_xf,
                             const scenegraph::Camera& camera, Pipeline& pipeline,
-                            const plating::DamageList& list, const float* params,
+                            const plating::DamageList& list,
+                            const plating::DeckBreakSet& deck_break, const float* params,
                             unsigned int fill_tex, const glm::vec3& fill_origin,
                             const glm::vec3& fill_cell, const glm::ivec3& fill_dims,
                             const Lighting& lighting, float ambient_scale, float now,
@@ -59,6 +60,8 @@ void HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_x
         shader.set_vec4_array("u_dmg_b", list.b, list.count);
         shader.set_vec4_array("u_dmg_c", list.c, list.count);
     }
+    shader.set_int("u_db_count", deck_break.count);
+    shader.set_int_array("u_db_idx", deck_break.idx.data(), deck_break.count);
     shader.set_vec3("u_ambient_light", lighting.ambient * ambient_scale);
     shader.set_float("u_time", now);
 

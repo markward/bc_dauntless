@@ -27,6 +27,7 @@
 #include <assets/model.h>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
 #include <array>
@@ -36,9 +37,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "plating_gl_fixture.h"
@@ -61,6 +64,33 @@ std::vector<fs::path> ambassador_search() {
 class PlatingRenderTest : public PlatingGLFixture {
 protected:
     std::unique_ptr<assets::AssetCache> cache;
+    // FrameSubmitter::set_plating_record_culling for every render: off = the
+    // whole list on every mesh and the whole list as the deck-break set.
+    bool record_culling = true;
+
+    // Every uniform the lean mark must set or neutralise, set to a value that
+    // changes which fragments survive (or what p_body is).
+    void poison_plating_program() {
+        renderer::Shader& s = p->plating_shader();
+        s.use();
+        s.set_int("u_coverage_cutout", 1);
+        s.set_int("u_carve_invert", 1);
+        s.set_int("u_carve_enabled", 1);
+        s.set_int("u_carve_count", 3);
+        s.set_int("u_impostor_blend", 1);
+        s.set_int("u_plating_far", 1);
+        s.set_mat4("u_ship_world_inv",
+                   glm::inverse(glm::translate(glm::mat4(1.0f), glm::vec3(500.0f, 0.0f, 0.0f))));
+    }
+
+    // u_dmg_count as the last draw through the plating program left it.
+    int plating_dmg_count() const {
+        const GLuint prog = p->plating_shader().program();
+        const GLint loc = glGetUniformLocation(prog, "u_dmg_count");
+        GLint v = -1;
+        if (loc >= 0) glGetUniformiv(prog, loc, &v);
+        return v;
+    }
 
     void SetUp() override {
         PlatingGLFixture::SetUp();
@@ -102,13 +132,16 @@ protected:
                                      const scenegraph::HullDamageStore& ring,
                                      const scenegraph::Camera& cam,
                                      bool stock_submit = false,
-                                     const scenegraph::DamageDecalRing* decals = nullptr) {
+                                     const scenegraph::DamageDecalRing* decals = nullptr,
+                                     const std::unordered_map<int, glm::mat4>* overrides =
+                                         nullptr) {
         scenegraph::World world;
         auto iid = world.create_instance(
             reinterpret_cast<scenegraph::ModelHandle>(&model));
         world.set_world_transform(iid, glm::mat4(1.0f));
         world.get(iid)->hull_damage = ring;
         if (decals != nullptr) world.get(iid)->decals = *decals;
+        if (overrides != nullptr) world.get(iid)->node_overrides = *overrides;
         // far_fade 0: no u_dither_fade use() after draw_model, so the program
         // bound after a render is the one the draw chose (program-choice test).
         EXPECT_EQ(world.get(iid)->far_fade, 0.0f);
@@ -121,6 +154,7 @@ protected:
         renderer::FrameSubmitter submitter;
         // These tests pin the near (cut) look; their cameras are past 20 GU.
         submitter.set_interior_policy(all_near_policy());
+        submitter.set_plating_record_culling(record_culling);
         const auto lookup = [](scenegraph::ModelHandle h) -> const assets::Model* {
             return reinterpret_cast<const assets::Model*>(h);
         };
@@ -166,13 +200,29 @@ protected:
         int marks = -1;
         int cull = 0;
     };
+    struct Placed {
+        glm::mat4 world;
+        scenegraph::HullDamageStore ring;
+    };
     Marked render_marked(const assets::Model& model, const scenegraph::HullDamageStore& ring,
                          const scenegraph::Camera& cam,
-                         const glm::vec3& clear = glm::vec3(0.0f)) {
+                         const glm::vec3& clear = glm::vec3(0.0f),
+                         const std::function<void()>& before_mark = {}) {
+        return render_marked_many(model, {Placed{glm::mat4(1.0f), ring}}, cam, clear,
+                                  before_mark);
+    }
+    // Every `placed` instance of `model`; `before_mark` runs between the
+    // opaque pass and submit_plating_interior.
+    Marked render_marked_many(const assets::Model& model, const std::vector<Placed>& placed,
+                              const scenegraph::Camera& cam,
+                              const glm::vec3& clear = glm::vec3(0.0f),
+                              const std::function<void()>& before_mark = {}) {
         scenegraph::World world;
-        auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(&model));
-        world.set_world_transform(iid, glm::mat4(1.0f));
-        world.get(iid)->hull_damage = ring;
+        for (const Placed& pl : placed) {
+            auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(&model));
+            world.set_world_transform(iid, pl.world);
+            world.get(iid)->hull_damage = pl.ring;
+        }
         glViewport(0, 0, kSize, kSize);
         glClearColor(clear.r, clear.g, clear.b, 1.0f);
         glStencilMask(0xFF);
@@ -184,11 +234,13 @@ protected:
         renderer::reset_model_radius_cache();
         renderer::FrameSubmitter submitter;
         submitter.set_interior_policy(all_near_policy());
+        submitter.set_plating_record_culling(record_culling);
         const auto lookup = [](scenegraph::ModelHandle h) -> const assets::Model* {
             return reinterpret_cast<const assets::Model*>(h);
         };
         submitter.submit_opaque_in_pass(world, cam, *p, lookup, test_lighting(),
                                         scenegraph::Pass::Space, kDecalTime);
+        if (before_mark) before_mark();
         submitter.submit_plating_interior(world, cam, *p, lookup, nullptr, test_lighting(),
                                           1.0f, kDecalTime);
         Marked out;
@@ -418,7 +470,11 @@ TEST_F(PlatingRenderTest, LeanMarkStampsExactlyTheCutPixels) {
 
     const auto undamaged = render_marked(*m, scenegraph::HullDamageStore{}, cam, clear);
     EXPECT_EQ(undamaged.marks, 0);
-    const auto torn = render_marked(*m, internal_ring(hit->point, 30.0f, 10.0f), cam, clear);
+    // The plating program is poisoned between the opaque pass and the mark
+    // with every switch that would change which fragments survive: the mark
+    // must set (or neutralise) each one itself.
+    const auto torn = render_marked(*m, internal_ring(hit->point, 30.0f, 10.0f), cam, clear,
+                                    [this] { poison_plating_program(); });
     EXPECT_EQ(torn.marks, 1);
 
     auto is_bg = [&](const std::vector<std::uint8_t>& px, int x, int y) {
@@ -626,4 +682,272 @@ TEST_F(PlatingRenderTest, PlatingListRebuildsWhenAParamChanges) {
     frame();
     EXPECT_EQ(submitter.plating_list_builds() - b0, 2) << "and only once";
     dauntless_plating::g_params[7] = saved;
+}
+
+// The lean mark on two hulls (each damaged at its own centre), the program
+// poisoned before the mark: hull 2's mark must use hull 2's world->body, never
+// the matrix hull 1's mark (or the poison) left behind. The stencil equals the
+// cut set pixel for pixel, each hull under its own value.
+TEST_F(PlatingRenderTest, LeanMarkOnTwoHullsStampsEachHullsCut) {
+    GLint sbits = 0;
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, GL_STENCIL,
+                                          GL_FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE, &sbits);
+    ASSERT_GE(sbits, 8) << "test window has no stencil buffer";
+    dauntless_plating::g_params[0] = 1.0f;
+    dauntless_plating::g_params[25] = 0.0f;
+    const auto cam = quad_cam();
+    auto quad = build_quad(25.0f, true);
+    const glm::mat4 left = glm::translate(glm::mat4(1.0f), glm::vec3(-32.0f, 0.0f, 0.0f));
+    const glm::mat4 right = glm::translate(glm::mat4(1.0f), glm::vec3(32.0f, 0.0f, 0.0f));
+    const auto ring = internal_ring(glm::vec3(0.0f), 12.0f, 10.0f);
+    const std::uint8_t bg[3] = {13, 251, 7};
+    const glm::vec3 clear(bg[0] / 255.0f, bg[1] / 255.0f, bg[2] / 255.0f);
+
+    const auto undamaged = render_marked_many(
+        *quad, {Placed{left, {}}, Placed{right, {}}}, cam, clear);
+    const auto torn = render_marked_many(*quad, {Placed{left, ring}, Placed{right, ring}}, cam,
+                                         clear, [this] { poison_plating_program(); });
+    EXPECT_EQ(torn.marks, 2);
+    auto is_bg = [&](const std::vector<std::uint8_t>& px, int x, int y) {
+        const std::uint8_t* q = pixel(px, x, y);
+        return q[0] == bg[0] && q[1] == bg[1] && q[2] == bg[2];
+    };
+    const int mid = to_pixel(cam, glm::vec3(0.0f)).x;
+    int cut[2] = {0, 0}, missed = 0, extra = 0, wrong_value = 0;
+    for (int y = 0; y < kSize; ++y) {
+        for (int x = 0; x < kSize; ++x) {
+            const bool is_cut = !is_bg(undamaged.color, x, y) && is_bg(torn.color, x, y);
+            const std::uint8_t s = torn.stencil[static_cast<std::size_t>(y) * kSize + x];
+            const int side = x < mid ? 0 : 1;
+            if (is_cut) ++cut[side];
+            if (is_cut && s == 0) ++missed;
+            if (!is_cut && s != 0) ++extra;
+            if (s != 0 && s != 2 + side) ++wrong_value;
+        }
+    }
+    std::fprintf(stderr, "[PlatingRender] two hulls: cut=%d,%d missed=%d extra=%d wrong=%d\n",
+                 cut[0], cut[1], missed, extra, wrong_value);
+    ASSERT_GT(cut[0], 50) << "the left hull cut too little to compare";
+    ASSERT_GT(cut[1], 50) << "the right hull cut too little to compare";
+    EXPECT_EQ(missed, 0);
+    EXPECT_EQ(extra, 0);
+    EXPECT_EQ(wrong_value, 0) << "the first hull stamps 2, the second 3";
+}
+
+// ---- Phase 2 Task 3: records near each mesh. --------------------------------
+namespace {
+
+// Two quads of one node: mesh 0 at x = first_x, mesh 1 at x = -first_x.
+std::unique_ptr<assets::Model> two_quads(float first_x) {
+    auto model = std::make_unique<assets::Model>();
+    const glm::vec3 X(1, 0, 0), Y(0, 1, 0);
+    add_face(*model, glm::vec3(first_x, 0.0f, 0.0f), X, Y, 15.0f);
+    add_face(*model, glm::vec3(-first_x, 0.0f, 0.0f), X, Y, 15.0f);
+    return model;
+}
+
+// Two records on the quad at x = -40 (reach 10 and 4, 7 mu apart: not merged).
+scenegraph::HullDamageStore left_quad_ring() {
+    scenegraph::HullDamageStore s;
+    s.add({-40.0f, 0.0f, 0.0f}, glm::vec3(0.0f), 10.0f, 10.0f,
+          scenegraph::HullDamageKind::Internal);
+    s.add({-45.0f, 5.0f, 0.0f}, glm::vec3(0.0f), 4.0f, 2.0f,
+          scenegraph::HullDamageKind::Internal);
+    return s;
+}
+
+}  // namespace
+
+// One body-frame box per mesh, at the rest pose (node transforms composed).
+TEST_F(PlatingRenderTest, MeshBodyAabbsAreOnePerMeshInTheBodyFrame) {
+    auto model = two_quads(-40.0f);
+    model->nodes[0].local_transform =
+        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, 5.0f));
+    const auto boxes = renderer::mesh_body_aabbs(*model);
+    ASSERT_EQ(boxes.size(), 2u);
+    EXPECT_FLOAT_EQ(boxes[0].center.x, -40.0f);
+    EXPECT_FLOAT_EQ(boxes[0].center.z, 5.0f);
+    EXPECT_FLOAT_EQ(boxes[0].half_extents.x, 15.0f);
+    EXPECT_FLOAT_EQ(boxes[0].half_extents.z, 0.0f);
+    EXPECT_FLOAT_EQ(boxes[1].center.x, 40.0f);
+}
+
+// Per mesh, only the records near that mesh are uploaded: the quad far from
+// every record gets u_dmg_count 0, the damaged one both records. Read back
+// from GL after the draw, so the LAST mesh drawn is the one observed. The
+// marking draw does the same.
+TEST_F(PlatingRenderTest, MeshWithoutNearbyDamageUploadsNothing) {
+    dauntless_plating::g_params[0] = 1.0f;
+    dauntless_plating::g_params[25] = 0.0f;
+    const auto cam = quad_cam();
+    const auto ring = left_quad_ring();
+    ASSERT_EQ(renderer::plating::build_damage_list(ring, dauntless_plating::g_params).count, 2);
+
+    auto damaged_last = two_quads(40.0f);    // mesh 1 = the damaged quad
+    render(*damaged_last, ring, cam);
+    EXPECT_EQ(plating_dmg_count(), 2) << "the damaged quad lost a record";
+
+    auto undamaged_last = two_quads(-40.0f); // mesh 1 = the far quad
+    const auto px = render(*undamaged_last, ring, cam);
+    EXPECT_EQ(plating_dmg_count(), 0) << "the far quad uploaded records it never reaches";
+    const auto stock = render(*undamaged_last, scenegraph::HullDamageStore{}, cam, true);
+    const glm::ivec2 far_c = to_pixel(cam, glm::vec3(40.0f, 0.0f, 0.0f));
+    EXPECT_EQ(rgb_diff(pixel(px, far_c.x, far_c.y), pixel(stock, far_c.x, far_c.y)), 0);
+
+    const auto r = render_marked(*undamaged_last, ring, cam);
+    EXPECT_EQ(r.marks, 1);
+    EXPECT_EQ(plating_dmg_count(), 0) << "the mark uploaded records the far quad never reaches";
+}
+
+// With node overrides (an articulated hull) the rest-pose boxes no longer
+// bound the posed meshes: every mesh gets the whole list.
+TEST_F(PlatingRenderTest, ArticulatedDrawUsesFullList) {
+    dauntless_plating::g_params[0] = 1.0f;
+    const auto cam = quad_cam();
+    auto model = two_quads(-40.0f);          // mesh 1 = the far quad
+    const std::unordered_map<int, glm::mat4> overrides{{0, model->nodes[0].local_transform}};
+    render(*model, left_quad_ring(), cam, false, nullptr, &overrides);
+    EXPECT_EQ(plating_dmg_count(), 2);
+}
+
+// The subsets never change a pixel: the torn Ambassador, damaged all over,
+// draws and marks byte-identically with record culling on and off.
+TEST_F(PlatingRenderTest, RecordCullingNeverChangesAPixel) {
+    auto m = ambassador();
+    ASSERT_TRUE(m) << "BC asset not available at " << ambassador_nif()
+                   << " -- set DAUNTLESS_GAME_DIR";
+    dauntless_plating::g_params[0] = 1.0f;
+    dauntless_plating::g_params[25] = 0.0f;
+    const renderer::Aabb box = renderer::compute_model_aabb(*m);
+    const auto cam = top_down(box);
+    // Records where a 5 x 5 grid of downward rays meets the hull.
+    scenegraph::HullDamageStore ring;
+    const float top = box.center.z + box.half_extents.z + 10.0f;
+    for (int i = 0; i < 5; ++i) {
+        for (int j = 0; j < 5; ++j) {
+            const glm::vec3 o(box.center.x + box.half_extents.x * (-0.8f + 0.4f * i),
+                              box.center.y + box.half_extents.y * (-0.8f + 0.4f * j), top);
+            const auto h = renderer::ray_trace_instance(*m, glm::mat4(1.0f), o,
+                                                        glm::vec3(0.0f, 0.0f, -1.0f), 1.0e5f);
+            if (!h) continue;
+            ring.add(h->point, h->normal, 18.0f, ((i + j) % 3 == 0) ? 10.0f : 2.0f,
+                     (i + j) % 2 == 0 ? scenegraph::HullDamageKind::Internal
+                                      : scenegraph::HullDamageKind::Surface);
+        }
+    }
+    ASSERT_GT(ring.count(), 8u);
+    {   // How much the subsets cull on this hull (reported, not asserted).
+        const auto list = renderer::plating::build_damage_list(ring, dauntless_plating::g_params);
+        const auto boxes = renderer::mesh_body_aabbs(*m);
+        std::array<std::uint8_t, renderer::plating::kMaxDamage> idx{};
+        for (std::size_t k = 0; k < boxes.size(); ++k)
+            std::fprintf(stderr, "[PlatingRender] mesh %zu half=(%.0f,%.0f,%.0f) records %d/%d\n",
+                         k, boxes[k].half_extents.x, boxes[k].half_extents.y,
+                         boxes[k].half_extents.z,
+                         renderer::plating::records_near(
+                             list, boxes[k],
+                             renderer::plating::plating_margin(dauntless_plating::g_params), idx),
+                         list.count);
+    }
+
+    record_culling = true;
+    const auto on = render(*m, ring, cam);
+    const auto on_marked = render_marked(*m, ring, cam);
+    record_culling = false;
+    const auto off = render(*m, ring, cam);
+    const auto off_marked = render_marked(*m, ring, cam);
+    record_culling = true;
+    ASSERT_GT(count_non_black(on), 2000) << "hull not in view";
+    int diff = 0;
+    for (std::size_t i = 0; i < on.size(); ++i) diff += on[i] != off[i] ? 1 : 0;
+    int stencil_diff = 0;
+    for (std::size_t i = 0; i < on_marked.stencil.size(); ++i)
+        stencil_diff += on_marked.stencil[i] != off_marked.stencil[i] ? 1 : 0;
+    std::fprintf(stderr, "[PlatingRender] culling on/off: colour bytes differ %d, stencil %d\n",
+                 diff, stencil_diff);
+    EXPECT_EQ(diff, 0);
+    EXPECT_EQ(stencil_diff, 0);
+}
+
+// The cache follows the world: an instance destroyed is dropped by the next
+// submit_opaque_in_pass.
+TEST_F(PlatingRenderTest, ListCachePrunesDestroyedInstances) {
+    dauntless_plating::g_params[0] = 1.0f;
+    auto quad = build_quad(20.0f, true);
+    scenegraph::World world;
+    const auto ring = internal_ring({0, 0, 0}, 10.0f, 10.0f);
+    const auto a = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(quad.get()));
+    const auto b = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(quad.get()));
+    world.set_world_transform(a, glm::mat4(1.0f));
+    world.set_world_transform(b, glm::translate(glm::mat4(1.0f), glm::vec3(45.0f, 0.0f, 0.0f)));
+    world.get(a)->hull_damage = ring;
+    world.get(b)->hull_damage = ring;
+    renderer::reset_model_radius_cache();
+    renderer::FrameSubmitter submitter;
+    const auto lookup = [](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h);
+    };
+    const auto cam = quad_cam();
+    auto frame = [&] {
+        glViewport(0, 0, kSize, kSize);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        submitter.submit_opaque_in_pass(world, cam, *p, lookup, test_lighting(),
+                                        scenegraph::Pass::Space, kDecalTime);
+    };
+    frame();
+    EXPECT_EQ(submitter.plating_list_cache_size(), 2u);
+    world.destroy_instance(b);
+    frame();
+    EXPECT_EQ(submitter.plating_list_cache_size(), 1u);
+}
+
+// Why the subsets take the margin: a pixel further than reach from a record
+// can still belong to a panel whose centre (where its wear is sampled) is
+// inside reach. Two coplanar quads meet at x = 4.5; the body-axis chart's
+// stringer cells run every 5 mu along x, so B's pixels at x in [4.5, 5) sit in
+// the cell [0, 5), centred at x = 2.5 on A's side. A record at x = -4 (reach
+// 8) misses B's box by 0.5 mu, yet strips that sliver of B. B's subset keeps
+// it, and culling on draws what culling off draws.
+TEST_F(PlatingRenderTest, RecordCullingKeepsRecordsWithinTheMarginOfAMesh) {
+    dauntless_plating::g_params[0] = 1.0f;
+    auto model = std::make_unique<assets::Model>();
+    const glm::vec3 X(1, 0, 0), Y(0, 1, 0);
+    add_face(*model, glm::vec3(-15.5f, 0.0f, 0.0f), X, Y, 20.0f);   // A: x in [-35.5, 4.5]
+    add_face(*model, glm::vec3(24.5f, 0.0f, 0.0f), X, Y, 20.0f);    // B: x in [4.5, 44.5]
+    scenegraph::Camera cam;
+    cam.eye = glm::vec3(5.0f, 0.0f, 40.0f);
+    cam.target = glm::vec3(5.0f, 0.0f, 0.0f);
+    cam.up = glm::vec3(0.0f, 1.0f, 0.0f);
+    cam.aspect = 1.0f;
+    const auto ring = internal_ring({-4.0f, 0.0f, 0.0f}, 8.0f, 200.0f);
+    const auto list = renderer::plating::build_damage_list(ring, dauntless_plating::g_params);
+    const auto boxes = renderer::mesh_body_aabbs(*model);
+    ASSERT_EQ(boxes.size(), 2u);
+    std::array<std::uint8_t, renderer::plating::kMaxDamage> idx{};
+    ASSERT_EQ(renderer::plating::records_near(list, boxes[1], 0.0f, idx), 0)
+        << "the record's own sphere must miss B";
+    EXPECT_EQ(renderer::plating::records_near(
+                  list, boxes[1], renderer::plating::plating_margin(dauntless_plating::g_params),
+                  idx), 1) << "B's subset drops a record that reaches its panels";
+
+    const auto undamaged = render(*model, scenegraph::HullDamageStore{}, cam);
+    record_culling = true;
+    const auto on = render(*model, ring, cam);
+    record_culling = false;
+    const auto off = render(*model, ring, cam);
+    record_culling = true;
+    const int b_from = to_pixel(cam, glm::vec3(4.6f, 0.0f, 0.0f)).x;
+    int b_changed = 0, diff = 0;
+    for (int y = 0; y < kSize; ++y) {
+        for (int x = 0; x < kSize; ++x) {
+            if (x >= b_from && rgb_diff(pixel(on, x, y), pixel(undamaged, x, y)) != 0)
+                ++b_changed;
+            if (rgb_diff(pixel(on, x, y), pixel(off, x, y)) != 0) ++diff;
+        }
+    }
+    std::fprintf(stderr, "[PlatingRender] margin sliver: B pixels changed %d, on/off differ %d\n",
+                 b_changed, diff);
+    EXPECT_GT(b_changed, 0) << "the record no longer reaches B's panels: the test lost its point";
+    EXPECT_EQ(diff, 0);
 }

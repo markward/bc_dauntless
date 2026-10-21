@@ -361,7 +361,15 @@ void draw_model(const assets::Model& model,
                 // behind its holes, so the program paints a hole as wreckage
                 // instead of cutting it, unless it is blown clear through
                 // (u_plating_far). Plating draws only.
-                bool plating_far = false);
+                bool plating_far = false,
+                // Plating draws only: one body-frame rest-pose box per
+                // model.meshes entry (mesh_body_aabbs). Non-null = each mesh
+                // uploads only the records near it (plating::records_near,
+                // margin plating::plating_margin); a mesh with none uploads
+                // u_dmg_count 0. nullptr, node overrides present (the posed
+                // meshes leave their rest boxes) or the geosphere's
+                // substituted mesh: every mesh gets the whole list.
+                const std::vector<Aabb>* plating_mesh_boxes = nullptr);
 
 /// Per-camera LOD for a sphere-mapped model, or -1 when the model has none.
 /// world radius = sphere_map.radius * length(world[0]); focal from proj and
@@ -527,6 +535,15 @@ public:
     const plating::DamageList& plating_list_for(const scenegraph::Instance& inst);
     /// How many times plating_list_for rebuilt a list (tests).
     int plating_list_builds() const { return plating_list_builds_; }
+    /// Cached lists held (tests). submit_opaque_in_pass drops ids no longer
+    /// in its world before it draws.
+    std::size_t plating_list_cache_size() const { return plating_list_cache_.size(); }
+    /// Record culling (default on): each plating mesh draw and marking draw
+    /// uploads only the records near that mesh, and the interior walk's blown
+    /// tests read only the deck-break subset. Off = the whole list
+    /// everywhere: the A/B the tests use to prove culling never changes a
+    /// pixel.
+    void set_plating_record_culling(bool on) { plating_record_culling_ = on; }
 
     /// Marking draws issued by the last submit_plating_interior.
     int plating_marks_last_frame() const { return plating_marks_last_frame_; }
@@ -587,9 +604,14 @@ private:
         std::uint32_t revision = 0;
         std::array<float, plating::kParamCount> params{};
         plating::DamageList list;
+        // plating::deck_break_subset(list), under the same key.
+        plating::DeckBreakSet deck_break;
     };
+    /// plating_list_for's entry (list + deck-break subset), rebuilt when stale.
+    PlatingListCacheEntry& plating_entry_for(const scenegraph::Instance& inst);
     std::map<scenegraph::InstanceId, PlatingListCacheEntry, InstanceIdLess> plating_list_cache_;
     int plating_list_builds_ = 0;
+    bool plating_record_culling_ = true;
 
     int plating_marks_last_frame_ = 0;
     int plating_interiors_last_frame_ = 0;
