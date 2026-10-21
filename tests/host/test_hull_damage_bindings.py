@@ -250,19 +250,45 @@ def test_wear_hit_on_a_posed_part_records_its_node(posed_bop):
     assert rec2["centre"] == pytest.approx(q_rest, abs=1e-2)
 
 
-def test_rest_frame_writer_opts_out_of_attribution(posed_bop):
-    """Authored (DamageTool) volumes are already rest-frame: rest_frame=True
-    keeps them on the body (-1), point unconverted, even on a posed part."""
+def _rest_wing_hit(iid, rest):
+    """A point on the wing's REST surface: the same outboard probe as
+    `_posed_wing_hit`, traced against the rest pose (rest_pose=True)."""
+    o = (rest[0][3] - 2000.0, rest[1][3], rest[2][3])
+    hit = _h.ray_trace_mesh(iid, o, (1.0, 0.0, 0.0), 4000.0, rest_pose=True)
+    assert hit is not None, "no rest wing surface on the probe line"
+    return hit[0], hit[1]
+
+
+def test_rest_pose_trace_ignores_the_pose(posed_bop):
     iid = posed_bop
-    _rest, posed, _to_rest = _wing_frames(iid)
-    q_posed, n_posed = _posed_wing_hit(iid, posed)
-    _h.hull_damage_add_body(iid, q_posed, n_posed, 0.3, 1.0, 3, rest_frame=True)
+    rest, posed, _to_rest = _wing_frames(iid)
+    o = (rest[0][3] - 2000.0, rest[1][3], rest[2][3])
+    at_rest = _h.ray_trace_mesh(iid, o, (1.0, 0.0, 0.0), 4000.0, rest_pose=True)
+    as_drawn = _h.ray_trace_mesh(iid, o, (1.0, 0.0, 0.0), 4000.0)
+    assert at_rest is not None
+    assert as_drawn is None or max(
+        abs(a - b) for a, b in zip(at_rest[0], as_drawn[0])) > 1.0, \
+        "the rest-pose trace hit the posed wing"
+
+
+def test_rest_frame_writer_keeps_its_part_without_conversion(posed_bop):
+    """Authored (DamageTool) volumes are already rest-frame: rest_frame=True
+    attributes them in REST space -- the wing's own node -- and stores the
+    point unconverted, so the damage shows on the wing whatever its pose."""
+    iid = posed_bop
+    rest, _posed, _to_rest = _wing_frames(iid)
+    q_rest, n_rest = _rest_wing_hit(iid, rest)
+    _h.hull_damage_add_body(iid, q_rest, n_rest, 0.3, 1.0, 3, rest_frame=True)
     (rec,) = _records(iid)
-    assert rec["node"] == -1
-    assert rec["centre"] == pytest.approx(q_posed, abs=1e-4)
-    _h.hull_damage_add(iid, (q_posed[0], q_posed[1] + 50.0, q_posed[2]), n_posed,
-                       0.3, 1.0, 3, rest_frame=True)
-    assert [r["node"] for r in _records(iid)] == [-1, -1]
+    assert rec["node"] >= 0, "the authored wing volume lost its part"
+    assert rec["centre"] == pytest.approx(q_rest, abs=1e-4), "converted: it must not be"
+    # The same rest point on an UNPOSED instance attributes the same way (as at
+    # mission init, before any pose).
+    assert _h.clear_instance_node_overrides(iid)
+    _h.hull_damage_add(iid, q_rest, n_rest, 0.3, 1.0, 3, rest_frame=True)
+    recs = _records(iid)
+    assert len(recs) == 1 and recs[0]["wear"] == pytest.approx(2.0), \
+        "same node, same spot: merged"
 
 
 def test_posed_part_tear_vents_at_the_drawn_hit(posed_bop, breach_wear):

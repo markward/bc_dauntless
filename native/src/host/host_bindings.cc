@@ -2549,20 +2549,26 @@ static void vent_on_breach_crossing(scenegraph::Instance& inst,
 // into that node's REST frame (layered damage phase 4 §2.1), found by
 // GEOMETRY (renderer::attribute_to_rest_frame: the nearest rest triangle
 // under each part's rest correction). An unposed instance (no node
-// overrides) is the body with no work at all, and so is `rest_frame` -- a
-// point the writer already holds in the rest frame (authored DamageTool
-// volumes).
+// overrides) is the body with no work at all. `rest_frame` -- a point the
+// writer already holds in the rest frame (authored DamageTool volumes) -- is
+// attributed in REST space (renderer::attribute_rest_point: the nearest rest
+// triangle's own node, with or without a pose) and never converted.
 struct WearNode {
     int       node = -1;
     glm::mat4 to_rest{1.0f};
     glm::mat4 to_posed{1.0f};
 };
+// `posed_point`: the body-frame point as given (rest-frame when rest_frame).
 static WearNode wear_node_for(const scenegraph::Instance& inst, const glm::vec3& posed_point,
                               bool rest_frame) {
     WearNode w;
-    if (rest_frame || inst.node_overrides.empty()) return w;
+    if (!rest_frame && inst.node_overrides.empty()) return w;
     const assets::Model* m = resolve_model(inst.model_handle);
     if (m == nullptr) return w;
+    if (rest_frame) {
+        w.node = renderer::attribute_rest_point(*m, inst.node_overrides, posed_point).node;
+        return w;                                // identity both ways
+    }
     const renderer::RestAttribution a =
         renderer::attribute_to_rest_frame(*m, inst.node_overrides, posed_point);
     w.node = a.node;
@@ -7322,7 +7328,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> origin,
              std::tuple<float, float, float> direction,
-             float max_dist) -> py::object {
+             float max_dist, bool rest_pose) -> py::object {
               auto* inst = g_world.get(id);
               if (inst == nullptr) {
                   throw std::runtime_error("ray_trace_mesh: invalid InstanceId");
@@ -7354,9 +7360,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
               // come off.
               // Instance-relative ray, rotation*scale inverted only: a ship
               // 1e6 GU out traces with the precision of one at the origin.
+              // rest_pose: the NIF's rest geometry instead (authored,
+              // rest-frame content such as DamageTool volumes).
               auto hit = renderer::ray_trace_instance_linear(
                   *model, inst->world_linear, o, d, max_dist,
-                  &inst->node_overrides);
+                  rest_pose ? nullptr : &inst->node_overrides);
               if (!hit) return py::none();
               return py::make_tuple(
                   py::make_tuple(hit->point.x, hit->point.y, hit->point.z),
@@ -7367,10 +7375,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("origin"),
           py::arg("direction"),
           py::arg("max_dist"),
+          py::arg("rest_pose") = false,
           "Ray-cast a ray against an instance's loaded mesh, at "
           "the pose it is DRAWN at -- the instance's node overrides "
           "(articulation / severance) are applied, so a moved part is hit "
-          "where it appears and a severed one cannot be hit at all. origin "
+          "where it appears and a severed one cannot be hit at all "
+          "(rest_pose=True: the rest geometry, overrides ignored). origin "
           "is INSTANCE-RELATIVE (world origin minus instance_translation); "
           "direction is a world direction, auto-normalised. Returns "
           "((point), (normal), t) on hit or None on miss; point is "
@@ -7579,7 +7589,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "On a posed (articulated) instance the hit is attributed by geometry "
           "to the part it lies on and stored on that node, in its REST frame, "
           "so the damage moves with the part. rest_frame=True: the point is "
-          "already rest-frame (authored damage): no attribution, the body.");
+          "already rest-frame (authored damage): attributed in rest space to "
+          "the nearest rest triangle's node, never converted.");
 
     m.def("hull_damage_add_body",
           [](scenegraph::InstanceId id,

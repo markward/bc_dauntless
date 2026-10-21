@@ -254,18 +254,20 @@ def _advance_one(entry, dt, ship_instances) -> bool:
         wear = breach + ADD_DAMAGE_ROOM_FRACTION * (dials["deck_break_wear"] - breach)
     else:
         wear = internal_blast.STRENGTH
-    mesh_pt, mesh_normal = _mesh_probe(iid, world_pt, normal, ship)
+    # An authored DamageTool volume (kind "body") is REST-frame content: it
+    # probes the rest skin and is attributed in rest space by the binding
+    # (rest_frame). AddDamage ("world") lands at posed-time points: it probes
+    # the pose as drawn and is attributed to the posed part (layered damage
+    # phase 4 §2.1).
+    authored = entry["kind"] == "body"
+    mesh_pt, mesh_normal = _mesh_probe(iid, world_pt, normal, ship, rest_pose=authored)
     if mesh_pt is not None:
         world_pt = mesh_pt
     if mesh_normal is not None:
         normal = mesh_normal
-    # An authored DamageTool volume (kind "body") is REST-frame content: it
-    # opts out of the binding's posed-part attribution. AddDamage ("world")
-    # lands at posed-time points and is attributed (layered damage phase 4
-    # §2.1).
     host_io.hull_damage_add(iid, _mesh_xyz(ship, world_pt),
                             (normal.x, normal.y, normal.z), hole, wear, 3,
-                            rest_frame=entry["kind"] == "body")
+                            rest_frame=authored)
     # A dying ship sheds parts like a fighting one: the cascade's wear asks
     # for the part check as combat wear does.
     from engine.appc import hull_breakup
@@ -303,7 +305,7 @@ def _resolve(entry, ship, iid=None):
     return world_pt, normal
 
 
-def _mesh_probe(iid, world_pt, radial, ship=None):
+def _mesh_probe(iid, world_pt, radial, ship=None, rest_pose=False):
     """Ray-trace the true hull surface near `world_pt`, along `radial`.
 
     Returns `(surface_point, surface_normal)` as TGPoint3s, or `(None, None)`
@@ -313,6 +315,11 @@ def _mesh_probe(iid, world_pt, radial, ship=None):
     normal, so a scuff decal or a damage record anchors at the visible skin
     rather than the authored point, which sits inside the hull like any other
     AddObjectDamageVolume sphere).
+
+    `rest_pose`: probe the model's REST geometry, not the pose it is drawn at
+    -- an authored DamageTool volume is rest-frame content, so on a ship with
+    a part posed it must anchor on the rest skin and keep rest coordinates
+    (layered damage phase 4 §2.1).
     """
     if iid is None or radial is None:
         return None, None
@@ -325,9 +332,14 @@ def _mesh_probe(iid, world_pt, radial, ship=None):
         origin = (q.x + radial.x * NORMAL_PROBE_MARGIN_GU,
                   q.y + radial.y * NORMAL_PROBE_MARGIN_GU,
                   q.z + radial.z * NORMAL_PROBE_MARGIN_GU)
-        hit = host_io.ray_trace_mesh(
-            iid, origin, (-radial.x, -radial.y, -radial.z),
-            NORMAL_PROBE_MARGIN_GU * 2.0)
+        direction = (-radial.x, -radial.y, -radial.z)
+        if rest_pose:
+            hit = host_io.ray_trace_mesh(iid, origin, direction,
+                                         NORMAL_PROBE_MARGIN_GU * 2.0,
+                                         rest_pose=True)
+        else:
+            hit = host_io.ray_trace_mesh(iid, origin, direction,
+                                         NORMAL_PROBE_MARGIN_GU * 2.0)
     except Exception as _e:
         dev_mode.log_swallowed("probe hull surface point/normal", _e)
         return None, None

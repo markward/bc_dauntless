@@ -1932,3 +1932,47 @@ TEST_F(PlatingRenderTest, ArticulatedRecordsStayInTheirOwnFrame) {
     EXPECT_LE(worst_in_window(c.color, solo.color, part_now, 6), 2)
         << "the part's hole interior changed with a hull record in another frame";
 }
+
+// Fix round 2: an AUTHORED (rest-frame) volume is attributed in REST space
+// -- the nearest rest triangle, no posed correction -- to that triangle's own
+// node. Added at rest (no overrides, as at mission init), it keeps its part:
+// once the part is posed the damage shows on the part where it is drawn and
+// not on the hull under its rest spot.
+TEST_F(PlatingRenderTest, AuthoredRecordOnAPartFollowsItWhenPosed) {
+    dauntless_plating::g_params[0] = 1.0f;
+    auto model = body_and_part_nodes();
+    const glm::vec3 X(1, 0, 0), Y(0, 1, 0);
+    add_mesh_of_quads(*model, 0, {{glm::vec3(40.0f, 0.0f, -1.0f), X, Y, 20.0f}});
+    add_mesh_of_quads(*model, 0, {{glm::vec3(-40.0f, 0.0f, -1.0f), X, Y, 20.0f}});
+    add_mesh_of_quads(*model, 1, {{glm::vec3(40.0f, 0.0f, 0.0f), X, Y, 15.0f}});
+
+    // Authored just above the part (nearer it than the hull plate under it).
+    const glm::vec3 authored(44.0f, 3.0f, 0.2f);
+    const auto at_rest = renderer::attribute_rest_point(*model, {}, authored);
+    EXPECT_EQ(at_rest.node, 1) << "no overrides yet: still the part's own node";
+    EXPECT_EQ(at_rest.to_rest, glm::mat4(1.0f)) << "already rest-frame: no conversion";
+    const std::unordered_map<int, glm::mat4> moved{
+        {1, glm::translate(glm::mat4(1.0f), glm::vec3(-80.0f, 0.0f, 1.0f))}};
+    EXPECT_EQ(renderer::attribute_rest_point(*model, moved, authored).node, 1)
+        << "a posed part does not change a rest-space answer";
+    EXPECT_EQ(renderer::attribute_rest_point(*model, {}, glm::vec3(-40.0f, 5.0f, -1.0f)).node, 0)
+        << "on the hull plate: the hull's node";
+
+    Placed pl{glm::mat4(1.0f), scenegraph::HullDamageStore{}};
+    pl.ring.add(authored, glm::vec3(0.0f), 8.0f, 10.0f, scenegraph::HullDamageKind::Internal,
+                at_rest.node);
+    pl.overrides = moved;
+    Placed undamaged{glm::mat4(1.0f), scenegraph::HullDamageStore{}};
+    undamaged.overrides = moved;
+    const auto cam = quad_cam();
+    const glm::vec3 clear(0.8f, 0.2f, 0.8f);
+    const Marked r = render_marked_many(*model, {pl}, cam, clear);
+    const Marked base = render_marked_many(*model, {undamaged}, cam, clear);
+    const glm::ivec2 part_now = to_pixel(cam, authored + glm::vec3(-80.0f, 0.0f, 1.0f));
+    const glm::ivec2 rest_spot = to_pixel(cam, glm::vec3(44.0f, 3.0f, -1.0f));
+    EXPECT_NE(r.stencil[static_cast<std::size_t>(part_now.y) * kSize + part_now.x], 0)
+        << "the authored damage left the posed part";
+    EXPECT_EQ(r.stencil[static_cast<std::size_t>(rest_spot.y) * kSize + rest_spot.x], 0)
+        << "the authored damage stayed on the hull under the part's rest spot";
+    EXPECT_LE(worst_in_window(r.color, base.color, rest_spot, 12), 2);
+}

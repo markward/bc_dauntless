@@ -591,6 +591,61 @@ float tri_dist2(const glm::vec3& p, const glm::vec3& a, const glm::vec3& b,
     return glm::dot(d, d);
 }
 
+
+// Nearest triangle of `accel` to `q` among those `take` accepts, by branch
+// and bound over the rest-space BVH; only improves on `best` (squared
+// distance, updated). Returns the index into accel.tris of the improvement,
+// or -1.
+template <typename Take>
+int nearest_rest_triangle(const TraceAccel& accel, const glm::vec3& q, Take take,
+                          float& best) {
+    int found = -1;
+    int stack[kTraversalStack];
+    int sp = 0;
+    stack[sp++] = 0;
+    while (sp > 0) {
+        const int self = stack[--sp];
+        const BvhNode& bn = accel.nodes[static_cast<std::size_t>(self)];
+        if (box_dist2(q, bn.lo, bn.hi) >= best) continue;
+        if (bn.count > 0) {
+            for (int k = bn.first; k < bn.first + bn.count; ++k) {
+                const TraceTri& t = accel.tris[static_cast<std::size_t>(k)];
+                if (!take(t)) continue;
+                const float d2 = tri_dist2(q, t.v0, t.v1, t.v2);
+                if (d2 < best) { best = d2; found = k; }
+            }
+            continue;
+        }
+        // Left child at (self + 1): pushed last, so it pops first.
+        stack[sp++] = bn.right;
+        stack[sp++] = self + 1;
+    }
+    return found;
+}
+
+// Per node: its posed owner (nearest overridden ancestor, itself included;
+// -1 when the chain carries none) and whether its subtree is severed (a
+// singular posed world: set_instance_node_hidden's zero matrix). Parents
+// precede children (the asset pipeline's order).
+struct PoseOwners {
+    std::vector<int>  owner;
+    std::vector<char> severed;
+};
+PoseOwners pose_owners(const assets::Model& model,
+                       const std::unordered_map<int, glm::mat4>& overrides) {
+    const std::size_t n = model.nodes.size();
+    PoseOwners po{std::vector<int>(n, -1), std::vector<char>(n, 0)};
+    if (overrides.empty()) return po;
+    const std::vector<glm::mat4> posed = compose_node_worlds(model, glm::mat4(1.0f), overrides);
+    for (std::size_t i = 0; i < n; ++i) {
+        const int parent = model.nodes[i].parent_index;
+        po.owner[i] = overrides.count(static_cast<int>(i)) ? static_cast<int>(i)
+                      : parent >= 0 ? po.owner[static_cast<std::size_t>(parent)] : -1;
+        po.severed[i] = std::fabs(glm::determinant(posed[i])) < 1e-12f ? 1 : 0;
+    }
+    return po;
+}
+
 }  // namespace
 
 RestAttribution attribute_to_rest_frame(
@@ -602,62 +657,56 @@ RestAttribution attribute_to_rest_frame(
     if (overrides.empty() || model.nodes.empty()) return out;
     const TraceAccel& accel = ensure_trace_accel(model);
     if (accel.nodes.empty()) return out;
-
-    // Per node: its posed owner (nearest overridden ancestor, itself
-    // included; -1 when the chain carries none) and whether its subtree is
-    // severed (a singular posed world: set_instance_node_hidden's zero
-    // matrix). Parents precede children (the asset pipeline's order).
     const std::size_t n = model.nodes.size();
-    const std::vector<glm::mat4> posed = compose_node_worlds(model, glm::mat4(1.0f), overrides);
+    const PoseOwners po = pose_owners(model, overrides);
     const std::vector<glm::mat4> fix = rest_corrections(model, overrides);
-    std::vector<int> owner(n, -1);
-    std::vector<char> severed(n, 0);
-    for (std::size_t i = 0; i < n; ++i) {
-        const int parent = model.nodes[i].parent_index;
-        owner[i] = overrides.count(static_cast<int>(i)) ? static_cast<int>(i)
-                   : parent >= 0 ? owner[static_cast<std::size_t>(parent)] : -1;
-        severed[i] = std::fabs(glm::determinant(posed[i])) < 1e-12f ? 1 : 0;
-    }
     // The distinct owners, the body (-1) first so an exact tie stays on it.
     std::vector<int> groups{-1};
     for (std::size_t i = 0; i < n; ++i)
-        if (owner[i] >= 0 && std::find(groups.begin(), groups.end(), owner[i]) == groups.end())
-            groups.push_back(owner[i]);
+        if (po.owner[i] >= 0 &&
+            std::find(groups.begin(), groups.end(), po.owner[i]) == groups.end())
+            groups.push_back(po.owner[i]);
 
     float best = std::numeric_limits<float>::max();
     for (const int g : groups) {
         const glm::mat4 to_rest =
             g >= 0 ? fix[static_cast<std::size_t>(g)] : glm::mat4(1.0f);
         const glm::vec3 q = glm::vec3(to_rest * glm::vec4(posed_point, 1.0f));
-        // Branch and bound over the rest-space BVH, this group's triangles only.
-        int stack[kTraversalStack];
-        int sp = 0;
-        stack[sp++] = 0;
-        while (sp > 0) {
-            const BvhNode& bn = accel.nodes[static_cast<std::size_t>(stack[--sp])];
-            if (box_dist2(q, bn.lo, bn.hi) >= best) continue;
-            if (bn.count > 0) {
-                for (int k = bn.first; k < bn.first + bn.count; ++k) {
-                    const TraceTri& t = accel.tris[static_cast<std::size_t>(k)];
-                    if (t.node < 0 || static_cast<std::size_t>(t.node) >= n) continue;
-                    const auto tn = static_cast<std::size_t>(t.node);
-                    if (owner[tn] != g || severed[tn]) continue;
-                    const float d2 = tri_dist2(q, t.v0, t.v1, t.v2);
-                    if (d2 < best) {
-                        best = d2;
-                        out.node = g;
-                        out.to_rest = to_rest;
-                    }
-                }
-                continue;
-            }
-            // Left child at (this index + 1): pushed last, so it pops first.
-            const int self = static_cast<int>(&bn - accel.nodes.data());
-            stack[sp++] = bn.right;
-            stack[sp++] = self + 1;
+        const auto take = [&](const TraceTri& t) {
+            if (t.node < 0 || static_cast<std::size_t>(t.node) >= n) return false;
+            const auto tn = static_cast<std::size_t>(t.node);
+            return po.owner[tn] == g && !po.severed[tn];
+        };
+        if (nearest_rest_triangle(accel, q, take, best) >= 0) {
+            out.node = g;
+            out.to_rest = to_rest;
         }
     }
     out.distance = best < std::numeric_limits<float>::max() ? std::sqrt(best) : 0.0f;
+    return out;
+}
+
+RestAttribution attribute_rest_point(
+    const assets::Model& model,
+    const std::unordered_map<int, glm::mat4>& overrides,
+    const glm::vec3& rest_point)
+{
+    RestAttribution out;
+    if (model.nodes.empty()) return out;
+    const TraceAccel& accel = ensure_trace_accel(model);
+    if (accel.nodes.empty()) return out;
+    const std::size_t n = model.nodes.size();
+    const PoseOwners po = pose_owners(model, overrides);
+    float best = std::numeric_limits<float>::max();
+    const auto take = [&](const TraceTri& t) {
+        return t.node >= 0 && static_cast<std::size_t>(t.node) < n &&
+               !po.severed[static_cast<std::size_t>(t.node)];
+    };
+    const int k = nearest_rest_triangle(accel, rest_point, take, best);
+    if (k >= 0) {
+        out.node = accel.tris[static_cast<std::size_t>(k)].node;
+        out.distance = std::sqrt(best);
+    }
     return out;
 }
 

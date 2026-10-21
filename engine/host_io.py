@@ -539,9 +539,11 @@ def ray_trace_mesh(
     origin: Tuple[float, float, float],
     direction: Tuple[float, float, float],
     max_dist: float,
+    rest_pose: bool = False,
 ) -> Optional[Tuple[Tuple[float, float, float], Tuple[float, float, float], float]]:
     """World (view-coordinate) ray in, world hit out; the binding in
-    between is instance-relative.
+    between is instance-relative. `rest_pose=True` traces the model's REST
+    geometry (node overrides ignored) -- for authored, rest-frame content.
 
     A stale id still reaches the binding, which raises -- deliberately NOT
     the silent drop the point queries make. Those are fire-and-forget
@@ -551,11 +553,13 @@ def ray_trace_mesh(
     would only hide a stale id behind an ordinary miss."""
     if _h is None:
         return None
+    # The flag rides only when set, so the posed call keeps its shape.
+    kw = {"rest_pose": True} if rest_pose else {}
     t = _h.instance_translation(instance_id)
     if t is None:
-        return _h.ray_trace_mesh(instance_id, origin, direction, max_dist)
+        return _h.ray_trace_mesh(instance_id, origin, direction, max_dist, **kw)
     rel = _relative_to(t, origin)
-    hit = _h.ray_trace_mesh(instance_id, rel, direction, max_dist)
+    hit = _h.ray_trace_mesh(instance_id, rel, direction, max_dist, **kw)
     if hit is None:
         return None
     (px, py, pz), normal, dist = hit

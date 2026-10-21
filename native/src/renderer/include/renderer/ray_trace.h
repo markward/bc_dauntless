@@ -113,6 +113,18 @@ RestAttribution attribute_to_rest_frame(
     const std::unordered_map<int, glm::mat4>& overrides,
     const glm::vec3& posed_point);
 
+/// The REST-frame twin of attribute_to_rest_frame, for a point the writer
+/// already holds in the rest frame (authored DamageTool volumes): the nearest
+/// rest triangle across every mesh, with NO posed correction, answers. The
+/// node is that triangle's OWN node (not its owner), so the record keeps its
+/// part whatever is posed later: the frame filter compares rest corrections,
+/// and a node's equals its owner's. `to_rest` is identity (no conversion).
+/// Severed subtrees are never chosen. Runs with or without overrides.
+RestAttribution attribute_rest_point(
+    const assets::Model& model,
+    const std::unordered_map<int, glm::mat4>& overrides,
+    const glm::vec3& rest_point);
+
 /// One mesh's rest-pose triangles (the trace accel's, so node transforms are
 /// applied and the winding is the mesh's own) through `linear`
 /// (Instance::world_linear): instance-relative, like the hits above. Empty

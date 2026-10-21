@@ -174,6 +174,46 @@ def test_runtime_add_damage_is_attributed_to_the_posed_part(host):
     assert host.rest_frame == [False]
 
 
+def _posed_fake_trace(calls):
+    """A posed ship: the drawn (posed) surface and the REST surface differ, so
+    which one a probe snaps to is visible in the record's point."""
+    def _trace(iid, origin, direction, max_dist, rest_pose=False):
+        calls.append(rest_pose)
+        if rest_pose:
+            return ((1.0, 0.0, 0.0), (1.0, 0.0, 0.0), 0.1)      # rest skin
+        return ((1.0, 0.5, 0.25), (0.0, 1.0, 0.0), 0.1)         # posed part
+    return _trace
+
+
+def test_authored_volume_snaps_to_the_rest_surface_on_a_posed_ship(host, monkeypatch):
+    """A DamageTool volume is rest-frame content: with a part posed, its
+    surface probe must use the REST geometry, so the record stores rest
+    coordinates (rest_frame=True), not the posed part's surface."""
+    calls = []
+    monkeypatch.setattr(host_io, "ray_trace_mesh", _posed_fake_trace(calls))
+    ship = _Ship()
+    visible_damage.queue_body_volume(ship, 1.0, 0.0, 0.0, 0.5, 300.0)
+    visible_damage.advance(0.0, {ship: 7})
+    _iid, point, normal, *_r = host.records[0]
+    assert calls and all(calls), "the authored volume probed the posed pose"
+    assert point == pytest.approx((1.0, 0.0, 0.0))
+    assert normal == pytest.approx((1.0, 0.0, 0.0))
+    assert host.rest_frame == [True]
+
+
+def test_runtime_add_damage_snaps_to_the_drawn_surface(host, monkeypatch):
+    """AddDamage happens at posed time: it probes the pose as drawn."""
+    calls = []
+    monkeypatch.setattr(host_io, "ray_trace_mesh", _posed_fake_trace(calls))
+    ship = _Ship()
+    visible_damage.queue_world_carve(ship, TGPoint3(1.0, 0.4, 0.2), 0.6, 600.0)
+    visible_damage.advance(0.0, {ship: 2})
+    _iid, point, *_r = host.records[0]
+    assert calls and not any(calls)
+    assert point == pytest.approx((1.0, 0.5, 0.25))
+    assert host.rest_frame == [False]
+
+
 # ── Runtime world-space volume (AddDamage / DeathExplosionDamage) ──────────
 
 def test_world_carve_passes_point_through_with_radial_normal(host):
