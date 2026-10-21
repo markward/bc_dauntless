@@ -316,6 +316,11 @@ def _icon_descriptor_for_mount(mount, ship=None, target=None):
     above = bool(mount.IsIconAboveShip()) if hasattr(mount, "IsIconAboveShip") else False
     firing = bool(mount.IsFiring()) if hasattr(mount, "IsFiring") else False
     destroyed = bool(mount.IsDestroyed()) if hasattr(mount, "IsDestroyed") else False
+    # A tube or bank damaged past its DisabledPercentage stops working on its
+    # own (WeaponSystem/TorpedoTube CanFire), but nothing here looked at it,
+    # so a disabled torpedo tube still read "online" and drew green. Disabled
+    # draws in BC's disabled grey (g_kSubsystemDisabledColor), destroyed black.
+    disabled = (not destroyed) and bool(mount.IsDisabled()) if hasattr(mount, "IsDisabled") else False
 
     # Power state for colour theming. A bank is "online" when its
     # parent weapon system has power (PoweredSubsystem.IsOn) and the
@@ -326,7 +331,7 @@ def _icon_descriptor_for_mount(mount, ship=None, target=None):
     parent = mount.GetParentSubsystem() if hasattr(mount, "GetParentSubsystem") else None
     online = (parent is not None
               and hasattr(parent, "IsOn") and bool(parent.IsOn())
-              and not destroyed)
+              and not destroyed and not disabled)
     if online and _has_charge_model(mount):
         try:
             charge_ratio = float(mount.GetChargePercentage())
@@ -358,6 +363,7 @@ def _icon_descriptor_for_mount(mount, ship=None, target=None):
         "above": above,
         "firing": firing,
         "destroyed": destroyed,
+        "disabled": disabled,
         "online": online,
         "charge_ratio": charge_ratio,
         "in_firing_arc": in_firing_arc,
@@ -438,7 +444,7 @@ def _frozen_icon_descriptors(ship) -> tuple:
         charge_bucket = int(round(d["charge_ratio"] * 10))
         frozen.append((
             d["icon_num"], d["x_px"], d["y_px"],
-            d["above"], d["firing"], d["destroyed"],
+            d["above"], d["firing"], d["destroyed"], d["disabled"],
             d["online"], charge_bucket, d["in_firing_arc"],
         ))
     return tuple(frozen)
