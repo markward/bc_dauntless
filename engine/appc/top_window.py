@@ -216,6 +216,14 @@ class _TopWindow:
             # Bridge window GotFocus (BridgeHandlers.py:336) drops Manual Aim.
             from engine import manual_aim
             manual_aim.drop_mode()
+        else:
+            # Leaving the bridge for the outside view closes any crew menu the
+            # player had open (the officer lowers it and turns back), as in the
+            # original -- the menu stayed up over the tactical view (user
+            # report 2026-10-16). The same close Escape uses (it also closes a
+            # menu whose owner can't be resolved); BridgeHandlers.
+            # DropMenusTurnBack itself is a no-op here.
+            _close_crew_menu_for_tactical()
         _refresh_tcw_on_focus()
 
     # ── Main windows ───────────────────────────────────────────
@@ -578,6 +586,22 @@ def _default_toggle_handler(_dispatcher, _event) -> None:
     reads IsBridgeVisible() immediately after CallNextHandler and expects
     the flip to have already happened (E1M1.py:1194-1198)."""
     _the_top_window.ToggleBridgeAndTactical()
+
+
+def _close_crew_menu_for_tactical() -> None:
+    """Close the open crew menu as Escape does (CrewMenuPanel.close_open_menu:
+    the officer's MenuDown -- view hidden, turned back -- or a bare hide when
+    no officer resolves). Best-effort: never blocks the view switch."""
+    try:
+        from engine.ui import crew_menu_hotkeys
+        panel = crew_menu_hotkeys.get_panel()
+        if panel is not None:
+            panel.close_open_menu()
+        else:
+            _drop_open_crew_menu()
+    except Exception as exc:  # noqa: BLE001
+        import engine.dev_mode as dev_mode
+        dev_mode.log_swallowed("close crew menu on bridge -> tactical", exc)
 
 
 def bridge_flag() -> bool:
