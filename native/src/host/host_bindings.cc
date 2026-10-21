@@ -3230,13 +3230,18 @@ struct BodyFramePoint {
     glm::vec3 normal;
     float     radius_model;
 };
+// Game units -> model units; also used by hull_damage_add_body, whose point is
+// already in the body frame but whose radius is still game units.
+float radius_to_model(const scenegraph::Instance& inst, float radius) {
+    const float s = glm::length(glm::vec3(inst.world[0]));
+    return (s > 0.0f) ? radius / s : radius;
+}
 BodyFramePoint to_body_frame(const scenegraph::Instance& inst,
                              const glm::vec3& world_point,
                              const glm::vec3& world_normal, float radius) {
-    const float s = glm::length(glm::vec3(inst.world[0]));
     return {scenegraph::relative_to_body(inst.world_linear, world_point),
             scenegraph::dir_to_body(inst.world_linear, world_normal),
-            (s > 0.0f) ? radius / s : radius};
+            radius_to_model(inst, radius)};
 }
 }  // namespace
 
@@ -7549,6 +7554,71 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Add a record to the instance's HullDamageStore. Point is "
           "INSTANCE-RELATIVE; point/normal/radius are converted to the body "
           "frame exactly as damage_decal_add does. kind: 1=Surface, 3=Internal.");
+
+    m.def("hull_damage_add_body",
+          [](scenegraph::InstanceId id,
+             std::tuple<float, float, float> body_point,
+             std::tuple<float, float, float> body_normal,
+             float radius, float wear, std::uint32_t kind) {
+              if (kind != 1u && kind != 3u) return;  // only Surface/Internal
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return;  // stale id -- drop silently
+              const glm::vec3 pb(std::get<0>(body_point), std::get<1>(body_point),
+                                 std::get<2>(body_point));
+              const glm::vec3 nb(std::get<0>(body_normal), std::get<1>(body_normal),
+                                 std::get<2>(body_normal));
+              inst->hull_damage.add(pb, nb, radius_to_model(*inst, radius), wear,
+                                    static_cast<scenegraph::HullDamageKind>(kind));
+          },
+          py::arg("instance_id"), py::arg("body_point"), py::arg("body_normal"),
+          py::arg("radius"), py::arg("wear"), py::arg("kind"),
+          "hull_damage_add for a point/normal ALREADY in the body frame (model "
+          "units, e.g. from world_to_body). radius is still game units and is "
+          "converted with the same scale as hull_damage_add. kind: 1=Surface, "
+          "3=Internal.");
+
+    m.def("_test_only_hull_damage_records",
+          [](scenegraph::InstanceId id) {
+              py::list out;
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return out;
+              for (const auto& r : inst->hull_damage.records()) {
+                  if (!r.active) continue;
+                  py::dict d;
+                  d["centre"] = py::make_tuple(r.centre_body.x, r.centre_body.y,
+                                               r.centre_body.z);
+                  d["normal"] = py::make_tuple(r.normal_body.x, r.normal_body.y,
+                                               r.normal_body.z);
+                  d["reach"] = r.reach;
+                  d["wear"] = r.wear;
+                  d["kind"] = static_cast<int>(r.kind);
+                  out.append(d);
+              }
+              return out;
+          },
+          py::arg("instance_id"),
+          "Test hook: the instance's active HullDamageStore records (body "
+          "frame, model units) as dicts centre/normal/reach/wear/kind.");
+
+    m.def("_test_only_damage_decals",
+          [](scenegraph::InstanceId id) {
+              py::list out;
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return out;
+              for (const auto& dc : inst->decals.slots()) {
+                  if (!dc.active) continue;
+                  py::dict d;
+                  d["point"] = py::make_tuple(dc.point_body.x, dc.point_body.y,
+                                              dc.point_body.z);
+                  d["radius"] = dc.radius;
+                  d["weapon_class"] = static_cast<int>(dc.weapon_class);
+                  out.append(d);
+              }
+              return out;
+          },
+          py::arg("instance_id"),
+          "Test hook: the instance's active damage decals (body frame, model "
+          "units) as dicts point/radius/weapon_class.");
 
     m.def("damage_decal_add",
           [](scenegraph::InstanceId id,
