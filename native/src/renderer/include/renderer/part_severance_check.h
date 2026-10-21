@@ -27,6 +27,14 @@ struct SeveredPiece {
 
 constexpr int kMinPartVoxels = 64;
 
+// What the severance check actually did (tests): `floods` counts
+// find_severed_parts calls that reached the alive/flood passes, `checks`
+// split_severed_parts calls that ran find_severed_parts at all.
+struct SeveranceStats {
+    int floods = 0;
+    int checks = 0;
+};
+
 // A voxel survives when the interior wear at its centre (all records, no
 // facing; the same sum hull_interior.frag's interior_wear uses, a.w as
 // uploaded) is below deck_break. Main body = the part with the most surviving
@@ -43,7 +51,8 @@ constexpr int kMinPartVoxels = 64;
 std::vector<SeveredPiece> find_severed_parts(const voxel::StructureSegmentation&,
                                             const plating::DamageList&, float deck_break,
                                             std::uint32_t already_severed,
-                                            std::uint32_t gone = 0);
+                                            std::uint32_t gone = 0,
+                                            SeveranceStats* stats = nullptr);
 
 // Per-voxel interior wear (same sum as the shader's interior_wear), each record
 // accumulated over its sphere's voxel box only. Exposed for tests.
@@ -75,6 +84,7 @@ std::vector<SeveredSplit> split_severed_parts(scenegraph::World& world,
                                               scenegraph::InstanceId parent,
                                               const voxel::StructureSegmentation& seg,
                                               const plating::DamageList& dmg,
-                                              float deck_break);
+                                              float deck_break,
+                                              SeveranceStats* stats = nullptr);
 
 }  // namespace renderer

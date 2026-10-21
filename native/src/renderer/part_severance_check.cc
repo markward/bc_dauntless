@@ -43,7 +43,7 @@ std::vector<float> interior_wear_field(const voxel::VoxelVolume& vol,
 std::vector<SeveredPiece> find_severed_parts(const voxel::StructureSegmentation& seg,
                                             const plating::DamageList& dmg, float deck_break,
                                             std::uint32_t already_severed,
-                                            std::uint32_t gone) {
+                                            std::uint32_t gone, SeveranceStats* stats) {
     std::vector<SeveredPiece> out;
     const int np = static_cast<int>(seg.parts.size());
     const glm::ivec3 d = seg.vol.dims;
@@ -51,6 +51,12 @@ std::vector<SeveredPiece> find_severed_parts(const voxel::StructureSegmentation&
     if (np < 2 || d.x <= 0 || seg.label.size() != n) return out;
 
     const std::vector<float> wear = interior_wear_field(seg.vol, dmg);
+    // Nothing is cut until some voxel breaks: skip the alive and flood passes.
+    bool any_broken = false;
+    for (std::size_t i = 0; i < n && !any_broken; ++i)
+        any_broken = seg.vol.occ[i] && wear[i] >= deck_break;
+    if (!any_broken) return out;
+    if (stats != nullptr) ++stats->floods;
 
     // Surviving voxels: occupied, labelled, interior wear below deck_break,
     // and not in a part that has left the hull (`gone`): a lost part is
@@ -170,19 +176,35 @@ std::vector<SeveredSplit> split_severed_parts(scenegraph::World& world,
                                               scenegraph::InstanceId parent,
                                               const voxel::StructureSegmentation& seg,
                                               const plating::DamageList& dmg,
-                                              float deck_break) {
+                                              float deck_break, SeveranceStats* stats) {
     std::vector<SeveredSplit> out;
-    const scenegraph::Instance* p = world.get(parent);
+    scenegraph::Instance* p = world.get(parent);
     // A chunk (shown_parts) is debris: it never severs further.
     if (p == nullptr || p->surface_is_rock || p->shown_parts != 0 || !can_structure_sever(*p))
+        return out;
+    // Nothing changed since the last full check (same damage, same lost
+    // parts, same deck break): it would find nothing new.
+    const scenegraph::Instance::PartCheckStamp& last = p->part_check;
+    if (last.valid && last.revision == p->hull_damage.revision() &&
+        last.severed_parts == p->severed_parts && last.deck_break == deck_break)
         return out;
     // Parts the draw cannot hide are never reported, but they still join the
     // hull (an intact pylon past the cap keeps its nacelle on). Parts already
     // lost are gone: out of the main-body choice and the flood.
     const std::uint32_t unhideable = ~((1u << kMaxHideableParts) - 1u);
+    if (stats != nullptr) ++stats->checks;
     const std::vector<SeveredPiece> pieces =
         find_severed_parts(seg, dmg, deck_break, unhideable, p->severed_parts);
-    if (pieces.empty()) return out;
+    // Stamped AFTER the split, with the parts it just lost: the same damage
+    // re-checked with those parts gone finds nothing new.
+    auto stamp = [&] {
+        if (scenegraph::Instance* pi = world.get(parent))
+            pi->part_check = {true, pi->hull_damage.revision(), pi->severed_parts, deck_break};
+    };
+    if (pieces.empty()) {
+        stamp();
+        return out;
+    }
     int total = 0;
     for (const std::int16_t lab : seg.label) total += lab >= 0 ? 1 : 0;
     for (const SeveredPiece& sp : pieces) {
@@ -208,6 +230,7 @@ std::vector<SeveredSplit> split_severed_parts(scenegraph::World& world,
         pi->severed_parts |= sp.parts;
         out.push_back(SeveredSplit{sp, child, total});
     }
+    stamp();
     return out;
 }
 

@@ -227,6 +227,17 @@ struct Instance {
     /// (the assembly that came off together); 0 = not a chunk, every part
     /// draws. Runtime state, never serialized.
     std::uint32_t shown_parts = 0;
+    /// The last full severance check of this instance
+    /// (renderer::split_severed_parts): a check is skipped while the damage
+    /// store revision, severed_parts and the deck-break wear all match it.
+    /// Runtime state, never serialized.
+    struct PartCheckStamp {
+        bool valid = false;
+        std::uint32_t revision = 0;
+        std::uint32_t severed_parts = 0;
+        float deck_break = 0.0f;
+    };
+    PartCheckStamp part_check;
 
     /// Per-instance hull carve spheres (body frame, model units). Drives the
     /// see-through breach holes and the interior voxel splat. Runtime VFX only

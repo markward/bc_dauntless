@@ -156,7 +156,15 @@ TEST(PartSeverance, SeveranceVerdictMatchesReferenceWhereBridgeTrulySevers) {
     auto ref = s;
     for (std::size_t i = 0; i < w.size(); ++i)
         if (w[i] >= 6.f) { ref.vol.occ[i] = 0; ref.label[i] = -1; }
-    auto expect = renderer::find_severed_parts(ref, DamageList{}, 1e9f, 0);
+    // The reference geometry is already cut, but the check floods only once
+    // some voxel breaks: break one unlabelled voxel far from both parts.
+    ref.vol.set(19, 5, 5, true);
+    DamageList far_break;
+    far_break.count = 1;
+    far_break.a[0] = glm::vec4(19.5f, 5.5f, 5.5f, 0.5f);
+    far_break.b[0] = glm::vec4(0, 0, 0, 2e9f);
+    far_break.c[0] = glm::vec4(3, 0, 0, 0);
+    auto expect = renderer::find_severed_parts(ref, far_break, 1e9f, 0);
     auto got = renderer::find_severed_parts(s, l, 6.f, 0);
     ASSERT_EQ(expect.size(), 1u);
     ASSERT_EQ(got.size(), 1u);
@@ -299,8 +307,13 @@ TEST(PartSeverance, SplitAfterALossNeverSeversTheRemainingHull) {
     scenegraph::World world;
     const auto parent = blown_parent(world);
     ASSERT_EQ(renderer::split_severed_parts(world, parent, s, bridge_hit(10.f), 6.f).size(), 1u);
-    EXPECT_TRUE(
-        renderer::split_severed_parts(world, parent, s, bridge_and_saucer_hit(), 6.f).empty());
+    // The saucer blast lands on the store too, so the second check runs.
+    world.get(parent)->hull_damage.add(glm::vec3(0.f, 3.f, 3.f), glm::vec3(0.f), 7.f, 1000.f,
+                                       scenegraph::HullDamageKind::Internal);
+    renderer::SeveranceStats st;
+    EXPECT_TRUE(renderer::split_severed_parts(world, parent, s, bridge_and_saucer_hit(), 6.f, &st)
+                    .empty());
+    EXPECT_EQ(st.checks, 1) << "the second check was skipped: vacuous";
     EXPECT_EQ(world.get(parent)->severed_parts, 1u << 1);
 }
 
@@ -410,4 +423,45 @@ TEST(PartSeverance, APartCutMidwayGoesWithTheSideHoldingMostOfIt) {
     // Cut at x 16: most of part 1 (x 10..15) stays; the stub x 17..19 holds
     // no part's majority, so nothing leaves.
     EXPECT_TRUE(renderer::find_severed_parts(s, slab_cut(16), 6.f, 0).empty());
+}
+
+// ── I4: the check costs nothing when nothing can have changed ────────────
+TEST(PartSeverance, NoFloodWhenNoVoxelReachesDeckBreak) {
+    auto s = make_seg();
+    renderer::SeveranceStats st;
+    EXPECT_TRUE(renderer::find_severed_parts(s, DamageList{}, 6.f, 0, 0, &st).empty());
+    EXPECT_TRUE(renderer::find_severed_parts(s, bridge_hit(2.f), 6.f, 0, 0, &st).empty());
+    EXPECT_EQ(st.floods, 0) << "no voxel broke: nothing to flood";
+    EXPECT_EQ(renderer::find_severed_parts(s, bridge_hit(10.f), 6.f, 0, 0, &st).size(), 1u);
+    EXPECT_EQ(st.floods, 1);
+}
+
+TEST(PartSeverance, SplitSkipsAnUnchangedHull) {
+    auto s = make_seg();
+    scenegraph::World world;
+    const auto parent = blown_parent(world);
+    renderer::SeveranceStats st;
+    // A store that blows nothing through: checked once, then skipped.
+    world.get(parent)->hull_damage = scenegraph::HullDamageStore{};
+    world.get(parent)->hull_damage.add(glm::vec3(3.f), glm::vec3(0.f), 1.f, 1.f,
+                                       scenegraph::HullDamageKind::Internal);
+    EXPECT_TRUE(renderer::split_severed_parts(world, parent, s, bridge_hit(2.f), 6.f, &st).empty());
+    EXPECT_EQ(st.checks, 1);
+    EXPECT_TRUE(renderer::split_severed_parts(world, parent, s, bridge_hit(2.f), 6.f, &st).empty());
+    EXPECT_EQ(st.checks, 1) << "same revision, same severed parts: skipped";
+    // New damage (the store revision moves): checked again, and it severs.
+    world.get(parent)->hull_damage.add(glm::vec3(10.5f, 2.5f, 2.5f), glm::vec3(0.f), 1.2f, 10.f,
+                                       scenegraph::HullDamageKind::Internal);
+    EXPECT_EQ(renderer::split_severed_parts(world, parent, s, bridge_hit(10.f), 6.f, &st).size(),
+              1u);
+    EXPECT_EQ(st.checks, 2);
+    EXPECT_TRUE(renderer::split_severed_parts(world, parent, s, bridge_hit(10.f), 6.f, &st).empty());
+    EXPECT_EQ(st.checks, 2) << "the split's own severed bits are part of the stamp";
+    // severed_parts changed from outside, or the deck break dial moved: re-check.
+    world.get(parent)->severed_parts = 0;
+    EXPECT_EQ(renderer::split_severed_parts(world, parent, s, bridge_hit(10.f), 6.f, &st).size(),
+              1u);
+    EXPECT_EQ(st.checks, 3);
+    EXPECT_TRUE(renderer::split_severed_parts(world, parent, s, bridge_hit(10.f), 7.f, &st).empty());
+    EXPECT_EQ(st.checks, 4);
 }
