@@ -19,7 +19,9 @@
 #include <scenegraph/hull_damage.h>
 #include <scenegraph/world.h>
 
+#include <assets/material.h>
 #include <assets/model.h>
+#include <assets/texture.h>
 
 #include <voxel/volume.h>
 
@@ -437,16 +439,90 @@ TEST_F(HullInteriorTest, IntactPartOfSameHullBehindBlownHoleIsNotRepainted) {
     }
 }
 
-// I2 of the final review: rocks are not ships. A damaged rock takes no
-// marking and no interior; its hole stays see-through as before step 2c.
-TEST_F(HullInteriorTest, RockGetsNeitherMarkNorInterior) {
+// ---- Phase 3 Task 2: rock craters. Rocks are not ships: no panels, ribs or
+// rooms. A rock's cut is marked and filled by the interior pass in its rock
+// mode, which marches the damage field from the cut to the crater wall and
+// shades it with the rock's own base texture. (Supersedes phase 2's
+// RockGetsNeitherMarkNorInterior: a rock's hole is no longer see-through.)
+namespace {
+// The box with a 1x1 base texture of `rgb` on every face (Material Base
+// stage), as a rock model carries its own rock texture.
+std::unique_ptr<assets::Model> textured_box(const std::uint8_t (&rgb)[3]) {
+    auto m = build_box(kBoxHalf);
+    m->source = kBoxSource;
+    assets::Image img;
+    img.width = 1;
+    img.height = 1;
+    img.format = assets::Image::Format::RGBA8;
+    img.pixels = {rgb[0], rgb[1], rgb[2], 255};
+    m->textures.push_back(assets::upload_image(img, /*generate_mipmaps=*/false));
+    m->materials[0].stages[static_cast<std::size_t>(assets::Material::StageSlot::Base)]
+        .texture_index = 0;
+    return m;
+}
+}  // namespace
+
+TEST_F(HullInteriorTest, RockCraterShowsRockNotRoomsNotSpace) {
+    const std::uint8_t red[3] = {255, 0, 0};
+    const auto red_box = textured_box(red);
     const auto ring = internal_ring({0.0f, 0.0f, kBoxHalf}, 30.0f, 10.0f);
-    const auto rock = render({Placed{glm::mat4(1.0f), ring, /*rock=*/true}}, filled.get());
-    report("rock", rock, centre());
-    EXPECT_EQ(rock.marks, 0);
-    EXPECT_EQ(rock.interiors, 0);
-    EXPECT_TRUE(is_clear(pixel(rock.px, centre().x, centre().y)))
-        << "a rock's hole must stay see-through";
+    const auto rock = render({Placed{glm::mat4(1.0f), ring, /*rock=*/true}}, filled.get(),
+                             false, red_box.get());
+    const auto ship = render({Placed{glm::mat4(1.0f), ring}}, filled.get(), false,
+                             red_box.get());
+    report("rock crater (red texture)", rock, centre());
+    report("same hole, ship", ship, centre());
+    EXPECT_EQ(rock.marks, 1);
+    EXPECT_EQ(rock.interiors, 1);
+    const std::uint8_t* q = pixel(rock.px, centre().x, centre().y);
+    ASSERT_FALSE(is_clear(q)) << "the crater shows space, not rock";
+    EXPECT_GT(rgb_diff(q, pixel(ship.px, centre().x, centre().y)), 10)
+        << "the crater shows the ship's rooms";
+    EXPECT_GT(q[0], 10) << "the crater wall is black";
+    EXPECT_GT(q[0], 2 * q[1]) << "the crater is not shaded with the rock's texture";
+    EXPECT_GT(q[0], 2 * q[2]) << "the crater is not shaded with the rock's texture";
+
+    // No base texture: the flat rock colour, never space.
+    const auto plain = render({Placed{glm::mat4(1.0f), ring, /*rock=*/true}}, filled.get());
+    report("rock crater (no texture)", plain, centre());
+    const std::uint8_t* f = pixel(plain.px, centre().x, centre().y);
+    EXPECT_FALSE(is_clear(f)) << "an untextured rock's crater shows space";
+    EXPECT_GE(f[0], f[2]) << "the flat rock colour is warm grey";
+}
+
+// Just outside the hole a rock looks exactly as it does with the plating
+// layer off: no stripped panels, ribs or members. Ring reach 16, wear 10:
+// 13 mu from its centre the wear is 1.16, past strip wear (0.5, a ship shows
+// ribs there) but short of every breach (floor 2.42 less the 0.675 tear lift).
+TEST_F(HullInteriorTest, RockHasNoPanelsOrRibs) {
+    const auto ring = internal_ring({0.0f, 0.0f, kBoxHalf}, 16.0f, 10.0f);
+    const Placed rock{glm::mat4(1.0f), ring, /*rock=*/true};
+    const auto on = render({rock}, filled.get());
+    dauntless_plating::g_params[0] = 0.0f;
+    const auto off = render({rock}, filled.get());
+    ASSERT_GT(count_not_clear(off.px), 1000) << "the box does not render";
+    for (const glm::vec3 at : {glm::vec3(13.0f, 0.0f, kBoxHalf), glm::vec3(-13.0f, 0.0f, kBoxHalf),
+                               glm::vec3(0.0f, 13.0f, kBoxHalf), glm::vec3(9.0f, 9.5f, kBoxHalf)}) {
+        const glm::ivec2 px = to_pixel(cam, at);
+        const std::uint8_t* a = pixel(on.px, px.x, px.y);
+        const std::uint8_t* b = pixel(off.px, px.x, px.y);
+        std::fprintf(stderr, "[HullInterior] rock near damage (%.0f,%.0f) on=(%d,%d,%d) "
+                     "off=(%d,%d,%d)\n", at.x, at.y, a[0], a[1], a[2], b[0], b[1], b[2]);
+        for (int k = 0; k < 3; ++k)
+            EXPECT_LE(std::abs(a[k] - b[k]), 3)
+                << "a rock shows plating near damage at (" << at.x << "," << at.y << ")";
+    }
+}
+
+// Blown clear through: the march leaves the fill before it finds a wall.
+TEST_F(HullInteriorTest, RockBlownThroughDiscards) {
+    const auto ring = internal_ring(glm::vec3(0.0f), 60.0f, 10.0f);
+    const auto s = render({Placed{glm::mat4(1.0f), ring, /*rock=*/true}}, filled.get());
+    report("rock blown through", s, centre());
+    EXPECT_EQ(s.marks, 1);
+    EXPECT_EQ(s.interiors, 1);
+    EXPECT_TRUE(is_clear(pixel(s.px, centre().x, centre().y)))
+        << "a rock blown through must show what is behind it";
 }
 
 // I3 of the final review: Review Focus 1 with a DAMAGED rear hull. Its cut
@@ -623,15 +699,24 @@ TEST_F(HullInteriorTest, MainViewPolicyRestoredAfterViewscreen) {
     shared = nullptr;
 }
 
-// Rocks have no rooms: a far rock's hole stays see-through, never wreckage.
-TEST_F(HullInteriorTest, FarRockHoleStaysSeeThrough) {
+// Phase 3 Task 2 (supersedes phase 2's FarRockHoleStaysSeeThrough): rocks
+// join the near/far policy. A far rock's crater is painted (darkened,
+// scorched rock), never cut, marked or filled.
+TEST_F(HullInteriorTest, FarRockCraterIsPaintedNotCut) {
     const auto ring = internal_ring({0.0f, 0.0f, kBoxHalf}, 30.0f, 10.0f);
-    dauntless_plating::g_params[24] = 1000.0f;
+    dauntless_plating::g_params[24] = 1000.0f;   // not blown through
+    const auto whole = render({Placed{glm::mat4(1.0f), scenegraph::HullDamageStore{}, true}},
+                              filled.get());
     policy.near_gu = 1.0f;
     const auto s = render({Placed{glm::mat4(1.0f), ring, /*rock=*/true}}, filled.get());
     report("far rock", s, centre());
-    EXPECT_EQ(s.far_draws, 0);
-    EXPECT_TRUE(is_clear(pixel(s.px, centre().x, centre().y)));
+    EXPECT_EQ(s.far_draws, 1);
+    EXPECT_EQ(s.marks, 0);
+    EXPECT_EQ(s.interiors, 0);
+    const std::uint8_t* q = pixel(s.px, centre().x, centre().y);
+    EXPECT_FALSE(is_clear(q)) << "a far rock's crater must be painted, not cut";
+    EXPECT_LT(rgb_sum(q) * 2, rgb_sum(pixel(whole.px, centre().x, centre().y)))
+        << "the far rock crater is not painted dark";
 }
 
 // ---- Phase 2 Task 3: the deck-break subset. ---------------------------------

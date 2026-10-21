@@ -1214,16 +1214,23 @@ uniform int u_plating_mark;        // 1 = marking draw: stencil only where the h
 // its holes, so a hole is painted as wreckage instead of cut, unless it is
 // blown clear through (wear past deck break, u_plating[24]).
 uniform int u_plating_far;
+// 1 = a rock (Instance::surface_is_rock): no panels, ribs or members. Its
+// hole is plating_rock_hole; a far rock's crater is painted as darkened rock.
+uniform int u_plating_rock;
+// The wear lift that makes a torn edge jagged at panel scale.
+float plating_tear_lift(vec3 p) {
+    float f = 1.0 / max(u_plating[1] * 0.6, 0.1);
+    float n = vnoise(p.xy * f + p.z * 0.6 * f + 2.7) * 0.7
+            + vnoise(p.yz * f * 2.1 + p.x * f * 0.8 + 5.3) * 0.3;
+    return (n - 0.5) * u_plating[19] * 1.5;
+}
 // 0 = hull here; 1 = torn through (cut); 2 = torn, but a structural member
 // still spans the hole here (drawn as bare, charred metal). The torn edge is
 // jagged at panel scale; members snap off at random lengths, fewer the
 // deeper the wear runs past breach, secondaries first.
 // w = plating_wear(p, nb), computed once in main.
 int plating_hole(vec3 p, vec3 nb, float w) {
-    float f = 1.0 / max(u_plating[1] * 0.6, 0.1);
-    float n = vnoise(p.xy * f + p.z * 0.6 * f + 2.7) * 0.7
-            + vnoise(p.yz * f * 2.1 + p.x * f * 0.8 + 5.3) * 0.3;
-    float tear_lift = (n - 0.5) * u_plating[19] * 1.5;
+    float tear_lift = plating_tear_lift(p);
     float floor_b = u_plating[16] * (1.0 - 0.4 * u_plating[22]) - u_plating[23];
     if (w + tear_lift - floor_b <= 0.0) return 0;
     int part = plating_part(p);
@@ -1239,6 +1246,13 @@ int plating_hole(vec3 p, vec3 nb, float w) {
     if (d1 < 0.5 * u_plating[4] && seg > over / reach1) return 2;
     if (d2 < 0.3 * u_plating[4] && seg > over / reach2) return 2;
     return 1;
+}
+// A rock's hole: 0 or 1, never 2 (no members survive). Torn where the wear
+// plus the tear lift passes plating_breach_at with the rock-wide cell
+// vec2(0) (no panels: one toughness), the rule hull_interior.frag's crater
+// march copies.
+int plating_rock_hole(vec3 p, float w) {
+    return w + plating_tear_lift(p) > plating_breach_at(p, vec2(0.0)) ? 1 : 0;
 }
 
 #endif  // PLATING
@@ -2157,7 +2171,8 @@ void main() {
     if (plating_near) {
         plating_w_here = plating_wear(p_body, n_body);
         plating_w_int  = plating_internal(p_body);
-        int hole = plating_hole(p_body, n_body, plating_w_here);
+        int hole = u_plating_rock != 0 ? plating_rock_hole(p_body, plating_w_here)
+                                       : plating_hole(p_body, n_body, plating_w_here);
         // A hole is cut when this hull is near (rooms are drawn behind it) or
         // blown clear through; a far hole is painted as wreckage below.
         bool cut = hole == 1 && (u_plating_far == 0 || plating_w_here > u_plating[24]);
@@ -2169,17 +2184,22 @@ void main() {
         if (hole == 1 && !cut) {
             // Far wreckage: near-black char, with the odd room cell still
             // burning or still lit, read from the room lattice the interior
-            // pass walks (6 x 8.67 x 2.67 model units).
+            // pass walks (6 x 8.67 x 2.67 model units). A far rock crater is
+            // the rock's own albedo, darkened and sooted: no fires, no windows.
             plating_inside = true;
             n_shade = n;
             float g = vnoise(p_body.xy * 0.7 + p_body.z * 0.5);
-            base.rgb = vec3(0.02) * (0.7 + 0.3 * g);
-            vec3 wreck_cell = floor(p_body / vec3(6.0, 8.67, 2.67));
-            float wreck_h = dhash(wreck_cell.xy + wreck_cell.z * vec2(17.0, 31.0));
-            if (wreck_h < 0.03)
-                g_plating_emissive += blackbody(0.6) * 0.8;
-            else if (wreck_h < 0.055)
-                g_plating_emissive += vec3(0.8, 0.88, 1.0) * 0.5;
+            if (u_plating_rock != 0) {
+                base.rgb *= 0.35 * (0.6 + 0.4 * g);
+            } else {
+                base.rgb = vec3(0.02) * (0.7 + 0.3 * g);
+                vec3 wreck_cell = floor(p_body / vec3(6.0, 8.67, 2.67));
+                float wreck_h = dhash(wreck_cell.xy + wreck_cell.z * vec2(17.0, 31.0));
+                if (wreck_h < 0.03)
+                    g_plating_emissive += blackbody(0.6) * 0.8;
+                else if (wreck_h < 0.055)
+                    g_plating_emissive += vec3(0.8, 0.88, 1.0) * 0.5;
+            }
         }
         if (hole == 2) {
             // A member still spanning the hole: bare, charred metal.
@@ -2228,8 +2248,9 @@ void main() {
         apply_scuffs(p_body, n_body, n_shade, base.rgb);
     }
 #ifdef PLATING
-    // SPIKE plating layer: only near damage (plating_near above).
-    if (plating_near && !plating_inside) {
+    // SPIKE plating layer: only near damage (plating_near above). A rock
+    // has no panels, ribs or members.
+    if (plating_near && !plating_inside && u_plating_rock == 0) {
         apply_plating(p_body, n_body, V, plating_fw, plating_w_here, plating_w_int,
                       n_shade, base.rgb);
     }

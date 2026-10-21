@@ -31,8 +31,9 @@ public:
     /// ship" test. `now` = game clock (room flicker and pulse).
     ///
     /// GL state: stencil EQUAL stencil_value (mask 0, test only), cull back,
-    /// depth LESS (+ polygon offset 1,1) with writes on, colour writes on, blend off; fill on unit
-    /// 0. Leaves stencil test off, stencil mask 0xFF, depth func GL_LESS and
+    /// depth LESS (+ polygon offset 1,1) with writes on, colour writes on,
+    /// blend off; fill on unit 0, rock texture on unit 1. Leaves stencil test
+    /// off, stencil mask 0xFF, depth func GL_LESS, units 0 and 1 unbound and
     /// texture unit 0 active.
     ///
     /// `mesh_mask` (optional, one byte per mesh): null = every mesh; else only
@@ -42,6 +43,13 @@ public:
     /// `deck_break` (plating::deck_break_subset of `list`) is uploaded as
     /// u_db_count / u_db_idx: the walk's blown tests read only those records,
     /// while its shading (soot, room light, char edge) reads all of `list`.
+    ///
+    /// `rock` (Instance::surface_is_rock): no rooms. The ray marches the
+    /// damage field from the cut to the crater wall and shades it with
+    /// `rock_tex` (the rock's base texture, find_base_texture_id; 0 = none,
+    /// a flat rock colour) under the scene's ambient and directional lights
+    /// (u_interior_rock 1 / 2; 0 for a ship). `rock_tex` is bound on unit 1
+    /// on every draw, 0 when unused, and unbound after.
     int draw(const assets::Model& model, const glm::mat4& world_xf,
               const scenegraph::Camera& camera, Pipeline& pipeline,
               const plating::DamageList& list, const plating::DeckBreakSet& deck_break,
@@ -51,7 +59,8 @@ public:
               const Lighting& lighting, float ambient_scale, float now,
               int stencil_value,
               const std::unordered_map<int, glm::mat4>* node_overrides,
-              const std::vector<std::uint8_t>* mesh_mask = nullptr);
+              const std::vector<std::uint8_t>* mesh_mask = nullptr,
+              bool rock = false, unsigned int rock_tex = 0);
 
     /// draw() calls since construction.
     int draw_calls() const { return draw_calls_; }

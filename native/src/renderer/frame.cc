@@ -10,6 +10,7 @@
 #include "renderer/aabb.h"
 #include <renderer/atmosphere_math.h>
 #include <renderer/asset_path.h>
+#include <renderer/breach_pass.h>   // find_base_texture_id
 #include <renderer/model_draw_helpers.h>
 #include <renderer/node_anim.h>
 #include <renderer/planet_detail_pass.h>
@@ -592,7 +593,7 @@ static bool draws_skinned(const assets::Model& model,
 
 // SPIKE (damage redesign): the plating program's per-draw block -- params,
 // the compact damage list (u_dmg_*, renderer/plating_damage.h), the hull's
-// structure parts, world->body, and the mark / far switches. Shared by
+// structure parts, world->body, and the mark / far / rock switches. Shared by
 // draw_model's plating draws and the lean marking draw, so the two can never
 // disagree about what the plating discard reads. Parts come from a background
 // detection per hull source; until it lands u_part_count is 0 and the shader
@@ -601,13 +602,16 @@ static bool draws_skinned(const assets::Model& model,
 // (MeshRecordUploader) instead. `parts` = structure_parts_for(model.source),
 // read ONCE by the caller so the per-mesh cull margins see the same parts the
 // shader is given (they land on a worker thread at any moment).
+// `rock` (Instance::surface_is_rock): u_plating_rock, no panels, ribs or
+// members, only a cut where wear passes breach.
 static void upload_plating(Shader& prog, const plating::DamageList& dl,
                            const std::vector<voxel::StructurePart>* parts,
                            const glm::mat4& world, const float* params, bool mark,
-                           bool far, bool upload_list) {
+                           bool far, bool upload_list, bool rock) {
     static const std::string kPlating = "u_plating", kDmgCount = "u_dmg_count",
         kDmgA = "u_dmg_a", kDmgB = "u_dmg_b", kDmgC = "u_dmg_c",
-        kMark = "u_plating_mark", kFar = "u_plating_far", kPartCount = "u_part_count",
+        kMark = "u_plating_mark", kFar = "u_plating_far", kRock = "u_plating_rock",
+        kPartCount = "u_part_count",
         kPartA = "u_part_a", kPartB = "u_part_b", kPartC = "u_part_c",
         kPartD = "u_part_d", kWorldInv = "u_ship_world_inv";
     if (const int loc = prog.cached_location(kPlating); loc >= 0)
@@ -645,6 +649,7 @@ static void upload_plating(Shader& prog, const plating::DamageList& dl,
 
     prog.set_int(kMark, mark ? 1 : 0);
     prog.set_int(kFar, far ? 1 : 0);
+    prog.set_int(kRock, rock ? 1 : 0);
 }
 
 // Per-mesh u_dmg_* for one draw: each mesh's cached subset
@@ -798,7 +803,8 @@ static void draw_model_pass(const assets::Model& model,
                 const plating::DamageList* plating,
                 bool plating_far,
                 const PlatingMeshRecords* plating_mesh_records,
-                MeshFilter filter) {
+                MeshFilter filter,
+                bool plating_rock) {
     // Pick the program: skinned only when the model carries a skeleton AND a
     // non-empty palette is supplied. An empty palette forces the static branch,
     // which is byte-identical to the pre-skinning path (used by the plumbing
@@ -880,7 +886,7 @@ static void draw_model_pass(const assets::Model& model,
                                             : renderer::structure_parts_for(model.source);
         upload_plating(prog, *plating_list, plating_parts, world, dauntless_plating::g_params,
                        /*mark=*/false, plating_far,
-                       /*upload_list=*/plating_subsets == nullptr);
+                       /*upload_list=*/plating_subsets == nullptr, plating_rock);
         if (plating_subsets != nullptr) plating_records.emplace(prog, *plating_list);
     }
 
@@ -1328,7 +1334,8 @@ void draw_model(const assets::Model& model,
                 const plating::DamageList* plating,
                 bool plating_far,
                 const PlatingMeshRecords* plating_mesh_records,
-                Shader* stock_shader) {
+                Shader* stock_shader,
+                bool plating_rock) {
     // A plated draw with per-mesh subsets splits its meshes: the record-free
     // ones through the stock program first, then the rest through plating,
     // so the instance switches program at most once. No split for a skinned
@@ -1346,7 +1353,8 @@ void draw_model(const assets::Model& model,
                         rim_strength, decals, glow_regions, decal_time, emissive_scale,
                         bone_palette, carve, dyn_lights, dyn_light_count, carve_fill,
                         carve_invert, hull_field, node_overrides, decal_override, sphere_level,
-                        atmo, atmo_sun_dir, list, plating_far, records, filter);
+                        atmo, atmo_sun_dir, list, plating_far, records, filter,
+                        plating_rock);
     };
     if (split == nullptr) {
         pass(shader, plating, plating_mesh_records, MeshFilter{});
@@ -1387,12 +1395,13 @@ void draw_model(const assets::Model& model,
 // are null or with node overrides). `skip_record_free`: a mesh whose subset
 // is empty is not drawn -- opaque.frag's PLATING main discards every fragment
 // of a mark with no record near it, so it could stamp nothing. Returns the
-// meshes drawn.
+// meshes drawn. `rock`: as upload_plating's (the rock hole rule).
 static int draw_plating_mark(const assets::Model& model, const glm::mat4& world,
                              Shader& prog, const plating::DamageList& dl,
                              const float* params,
                              const std::unordered_map<int, glm::mat4>* node_overrides,
-                             const PlatingMeshRecords& records, bool skip_record_free) {
+                             const PlatingMeshRecords& records, bool skip_record_free,
+                             bool rock) {
     static const std::string kCarveEnabled = "u_carve_enabled", kCarveCount = "u_carve_count",
         kCarveInvert = "u_carve_invert", kFieldEnabled = "u_hull_field_enabled",
         kCutout = "u_coverage_cutout", kImpostorBlend = "u_impostor_blend",
@@ -1402,7 +1411,7 @@ static int draw_plating_mark(const assets::Model& model, const glm::mat4& world,
     const std::vector<plating::MeshRecordSubset>* const subsets =
         articulated ? nullptr : records.subsets;
     upload_plating(prog, dl, records.parts, world, params, /*mark=*/true, /*far=*/false,
-                   /*upload_list=*/subsets == nullptr);
+                   /*upload_list=*/subsets == nullptr, rock);
     std::optional<MeshRecordUploader> uploader;
     if (subsets != nullptr) uploader.emplace(prog, dl);
     prog.set_int(kCarveEnabled, 0);
@@ -1689,13 +1698,13 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
             configure_common(pipeline.plating_shader());
             plating_configured = true;
         }
-        // Near/far (InteriorPolicy): a far hull gets no rooms, so its holes
-        // are painted as wreckage by this draw. submit_plating_interior takes
-        // the same decision for the same instance, so a hull is either marked
-        // or painted far, never both. Rocks have no rooms at any distance:
-        // their holes are always cut. A skinned draw has no plating layer.
+        // Near/far (InteriorPolicy): a far hull gets no interior, so its holes
+        // are painted by this draw (a ship's as wreckage, a rock's crater as
+        // darkened rock). submit_plating_interior takes the same decision for
+        // the same instance, so a hull is either marked or painted far, never
+        // both. A skinned draw has no plating layer.
         bool plating_far = false;
-        if (use_plating && !inst.surface_is_rock && !draws_skinned(*m, palette)) {
+        if (use_plating && !draws_skinned(*m, palette)) {
             const ModelBounds& bounds = model_bounds(inst.model_handle, *m);
             plating_far = !interior_is_near(inst, bounds.centre, bounds.radius, camera,
                                             interior_policy_);
@@ -1756,7 +1765,8 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
                           use_plating ? &plating_records : nullptr,
                           // Record-free meshes draw stock, except under the
                           // force-program probe (params[26]): every mesh plating.
-                          force_plating ? nullptr : &shader);
+                          force_plating ? nullptr : &shader,
+                          inst.surface_is_rock);
         if (inst.far_fade != 0.0f) {
             shader.use();
             shader.set_float("u_dither_fade", 0.0f);
@@ -1942,13 +1952,12 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
     world.for_each_visible_in_pass(scenegraph::Pass::Space, [&](const scenegraph::Instance& inst) {
         if (next_value > 255) return;
         if (inst.far_fade >= 1.0f) return;
-        // Rocks have no decks or rooms: no mark, no interior; their holes
-        // stay see-through.
-        if (inst.surface_is_rock) return;
+        // Rocks are marked too: their interior draw is the crater (the
+        // interior pass's rock mode), not decks and rooms.
         const assets::Model* m = lookup(inst.model_handle);
         if (!m || inst.hull_damage.count() == 0) return;
-        // Far hulls (InteriorPolicy) take no marking and no rooms: their
-        // holes were painted as wreckage by the plating draw.
+        // Far hulls (InteriorPolicy) take no marking and no interior: their
+        // holes were painted by the plating draw (wreckage, or rock).
         const ModelBounds& bounds = model_bounds(inst.model_handle, *m);
         if (!interior_is_near(inst, bounds.centre, bounds.radius, camera, interior_policy_))
             return;
@@ -1995,12 +2004,14 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
         const PlatingMeshRecords records = plating_mesh_records_for(entry, inst, *m);
         plating_mark_mesh_draws_ +=
             draw_plating_mark(*m, inst.world, shader, list, dauntless_plating::g_params,
-                              &inst.node_overrides, records, plating_skip_record_free_);
+                              &inst.node_overrides, records, plating_skip_record_free_,
+                              inst.surface_is_rock);
         if (inst.far_fade != 0.0f) {
             shader.use();
             shader.set_float("u_dither_fade", 0.0f);
         }
-        // The decks and rooms behind this hull's cuts, under the value just
+        // The decks and rooms behind this hull's cuts (a rock's crater, shaded
+        // with its own base texture, as breach_pass did), under the value just
         // stamped, before the next hull is marked.
         if (dauntless_plating::g_params[25] > 0.5f) {
             const CarveFieldCache::Entry* fill =
@@ -2019,7 +2030,9 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
                 fill ? fill->cell : glm::vec3(1.0f),
                 fill ? fill->dims : glm::ivec3(0),
                 lighting, ambient_scale, now, next_value - 1,
-                &inst.node_overrides, mesh_mask);
+                &inst.node_overrides, mesh_mask, inst.surface_is_rock,
+                // Looked up only for rocks, so a ship pays nothing.
+                inst.surface_is_rock ? find_base_texture_id(*m) : 0u);
             ++plating_interiors_last_frame_;
             state_set = false;   // the interior draw left stock state
         }

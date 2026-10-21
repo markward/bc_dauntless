@@ -32,6 +32,12 @@
 // around it, surfaces soot with wear, and room-by-room variety fades out
 // where a room is only a few pixels across.
 //
+// Rock mode (phase 3, Task 2; u_interior_rock != 0): a rock has no rooms.
+// The ray marches the damage field from the cut to the crater wall (where
+// the wear falls back under breach, the rule opaque.frag's rock cut uses),
+// which is shaded with the rock's own base texture, as breach.frag's old
+// rock crater was, under the scene's ambient and directional lights.
+//
 // Everything is BODY frame, in model units.
 
 in vec3 v_body_pos;
@@ -65,6 +71,20 @@ uniform float u_plating[32];
 uniform vec3  u_ambient_light;     // lighting.ambient x ambient_scale
 uniform float u_time;              // game clock, seconds (flicker / pulse)
 
+// Rock mode: 0 ship (rooms), 1 rock with its base texture u_rock_tex (unit
+// 1, always bound, 0 when unused), 2 rock with no texture (flat colour).
+uniform int       u_interior_rock;
+uniform sampler2D u_rock_tex;
+// Scene lighting for the crater wall, uploaded as BreachPass uploads it.
+// u_ship_world is used only to put the wall normal in the lights' frame.
+const int MAX_DIR_LIGHTS = 4;
+uniform mat4  u_ship_world;        // instance body -> world
+uniform vec3  u_ambient_dir_ws;
+uniform float u_ambient_gradient;
+uniform int   u_dir_light_count;
+uniform vec3  u_dir_light_dir_ws[MAX_DIR_LIGHTS];   // toward the light
+uniform vec3  u_dir_light_color[MAX_DIR_LIGHTS];
+
 out vec4 frag_color;
 
 // Copied from opaque.frag (its plating layer's pressure hull).
@@ -91,6 +111,10 @@ const vec3  kDarkRoom          = vec3(0.030, 0.032, 0.036);
 // is a few pixels, and per-room light reads as a mosaic of lit windows; the
 // variety fades to the dark average there (set once in main).
 float g_detail = 1.0;
+// Screen derivatives of the cut point, taken in main in uniform control flow:
+// the crater's texture fetches (inside the march's non-uniform flow) pass
+// them as explicit gradients.
+vec3 g_dpdx = vec3(0.0), g_dpdy = vec3(0.0);
 
 // Blackbody-ish ramp keyed on heat 0..1. Copied from breach.frag.
 vec3 blackbody(float heat) {
@@ -407,16 +431,131 @@ bool ih_shade(vec3 ro, vec3 rd, out vec3 c) {
     return true;
 }
 
+// ---- Rock crater (u_interior_rock != 0) ----------------------------------
+// The old breach.frag rock constants (kRockInteriorDarken, kRockFlatColour).
+const float kRockInteriorDarken = 0.55;
+const vec3  kRockFlatColour     = vec3(0.30, 0.28, 0.25);
+const int   kCraterSteps        = 20;     // march steps of max(reach_max, 1) / 10
+const int   kCraterRefine       = 4;      // bisection steps at the wall
+const float kCraterGradH        = 0.5;    // central-difference step, model units
+const float kRockTexScale       = 0.02;   // triplanar UV per model unit
+const float kCraterFadeDist     = 40.0;   // depth fade exp(-t / 40)
+
+// opaque.frag's dhash / vnoise / plating_lumps / plating_breach_at, copied
+// (renamed rk_*) so the crater wall sits on the rule the rock's cut uses.
+// Rocks take the cell vec2(0): one rock-wide toughness, no panels.
+float rk_dhash(vec2 v) { return fract(sin(dot(v, vec2(127.1, 311.7))) * 43758.5453); }
+float rk_vnoise(vec2 v) {
+    vec2 i = floor(v), f = fract(v);
+    float a = rk_dhash(i), b = rk_dhash(i + vec2(1,0));
+    float c = rk_dhash(i + vec2(0,1)), d = rk_dhash(i + vec2(1,1));
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+float rk_lumps(vec3 p) {
+    float f = 1.0 / max(2.5 * u_plating[2], 1.0);
+    return rk_vnoise(p.xy * f + p.z * 0.61 * f + 13.7) * 0.65
+         + rk_vnoise(p.yz * f * 1.9 + p.x * f * 0.7 + 21.1) * 0.35;
+}
+float rk_breach_at(vec3 p) {
+    return u_plating[16] * (1.0 + u_plating[22] * (rk_dhash(vec2(0.0) * 0.029 + 31.0) - 0.4))
+         + (rk_lumps(p) - 0.5) * 2.0 * u_plating[23];
+}
+// opaque.frag's plating_rock_hole tear lift, copied: the same noise at the
+// same frequency, so the wall meets the cut's ragged edge.
+float rk_tear_lift(vec3 p) {
+    float f = 1.0 / max(u_plating[1] * 0.6, 0.1);
+    float n = rk_vnoise(p.xy * f + p.z * 0.6 * f + 2.7) * 0.7
+            + rk_vnoise(p.yz * f * 2.1 + p.x * f * 0.8 + 5.3) * 0.3;
+    return (n - 0.5) * u_plating[19] * 1.5;
+}
+// Rock still standing at p (the crater wall and beyond).
+bool rk_solid(vec3 p) {
+    return interior_wear(p) + rk_tear_lift(p) < rk_breach_at(p);
+}
+
+// March from the cut (ro) along rd to the crater wall. Returns false =
+// discard (left the fill first: blown through). On true, `c` is the wall.
+bool rock_shade(vec3 ro, vec3 rd, out vec3 c) {
+    c = vec3(0.0);
+    float reach_max = 0.0;
+    for (int i = 0; i < u_dmg_count; ++i) reach_max = max(reach_max, u_dmg_a[i].w);
+    float dt = max(reach_max, 1.0) / 10.0;
+    float t0 = 0.0, t1 = float(kCraterSteps) * dt;
+    for (int i = 1; i <= kCraterSteps; ++i) {
+        float t = float(i) * dt;
+        vec3 p = ro + rd * t;
+        if (left_ship(p)) return false;          // blown through
+        if (rk_solid(p)) { t1 = t; break; }
+        t0 = t;
+    }
+    // Ran out of steps still in the crater: shade the last point as the wall
+    // (never space where rock should be). Otherwise refine to the wall.
+    if (t0 < t1) {
+        for (int k = 0; k < kCraterRefine; ++k) {
+            float tm = 0.5 * (t0 + t1);
+            if (rk_solid(ro + rd * tm)) t1 = tm; else t0 = tm;
+        }
+    }
+    float t = t1;
+    vec3 p = ro + rd * t;
+
+    // Wall normal: the negative wear gradient (central differences),
+    // turned toward the viewer (the side of the wall the ray sees).
+    vec3 hx = vec3(kCraterGradH, 0.0, 0.0), hy = hx.yxz, hz = hx.zyx;
+    vec3 g = vec3(interior_wear(p + hx) - interior_wear(p - hx),
+                  interior_wear(p + hy) - interior_wear(p - hy),
+                  interior_wear(p + hz) - interior_wear(p - hz));
+    vec3 n = dot(g, g) > 1e-12 ? -normalize(g) : -rd;
+    n = faceforward(n, rd, n);
+
+    // Triplanar rock texture, weights |n|^4.
+    vec3 w = pow(abs(n), vec3(4.0));
+    w /= max(w.x + w.y + w.z, 1e-6);
+    vec3 uvw = p * kRockTexScale;
+    vec3 ddx = g_dpdx * kRockTexScale, ddy = g_dpdy * kRockTexScale;
+    vec3 tex;
+    if (u_interior_rock == 1) {
+        tex = textureGrad(u_rock_tex, uvw.yz, ddx.yz, ddy.yz).rgb * w.x
+            + textureGrad(u_rock_tex, uvw.zx, ddx.zx, ddy.zx).rgb * w.y
+            + textureGrad(u_rock_tex, uvw.xy, ddx.xy, ddy.xy).rgb * w.z;
+    } else {
+        tex = kRockFlatColour;
+    }
+    tex *= kRockInteriorDarken * exp(-t / kCraterFadeDist);
+
+    // Ambient (opaque.frag's directional-ambient formula) + directional
+    // lights. No rooms, no room light, no fire.
+    vec3 n_ws = normalize(mat3(u_ship_world) * n);
+    vec3 light = u_ambient_light;
+    if (u_ambient_gradient > 0.0) {
+        float amb_d = clamp(dot(n_ws, u_ambient_dir_ws), -1.0, 1.0);
+        light = u_ambient_light * (1.0 + u_ambient_gradient * amb_d);
+    }
+    int dir_count = min(u_dir_light_count, MAX_DIR_LIGHTS);
+    for (int i = 0; i < dir_count; ++i)
+        light += max(dot(n_ws, normalize(u_dir_light_dir_ws[i])), 0.0) * u_dir_light_color[i];
+
+    // Scorched at the wall: the nearer breach, the darker.
+    float breach = rk_breach_at(p);
+    float scorch = smoothstep(breach - 1.0, breach + 1.0, interior_wear(p));
+    c = tex * light * (1.0 - 0.5 * scorch);
+    return true;
+}
+
 void main() {
     // Footprint first, in uniform control flow (derivatives).
     float fp = max(length(fwidth(v_body_pos)), 1e-4);
     g_detail = smoothstep(1.5, 6.0, kRoomSize.z / fp);   // deck pitch in pixels
+    g_dpdx = dFdx(v_body_pos);
+    g_dpdy = dFdy(v_body_pos);
     vec3 ro = v_body_pos;
     vec3 rd = v_body_pos - u_camera_pos_body;
     float rd_len = length(rd);
     if (rd_len < 1e-6) discard;   // camera on the hull surface: no ray
     rd /= rd_len;
     vec3 c;
-    if (!ih_shade(ro, rd, c)) discard;
+    bool kept = u_interior_rock != 0 ? rock_shade(ro, rd, c) : ih_shade(ro, rd, c);
+    if (!kept) discard;
     frag_color = vec4(c, 1.0);
 }

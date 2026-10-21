@@ -28,7 +28,8 @@ int HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_xf
                             const Lighting& lighting, float ambient_scale, float now,
                             int stencil_value,
                             const std::unordered_map<int, glm::mat4>* node_overrides,
-                            const std::vector<std::uint8_t>* mesh_mask) {
+                            const std::vector<std::uint8_t>* mesh_mask,
+                            bool rock, unsigned int rock_tex) {
     // Camera in this instance's body frame: one inverse per draw.
     const glm::vec3 cam_pos_ws = glm::vec3(glm::inverse(camera.view_matrix())[3]);
     const glm::mat4 world_inv = glm::inverse(world_xf);
@@ -66,6 +67,27 @@ int HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_xf
     shader.set_vec3("u_ambient_light", lighting.ambient * ambient_scale);
     shader.set_float("u_time", now);
 
+    // Rock mode (the crater): 0 ship, 1 rock with its base texture, 2 rock
+    // with none. Its lighting is the scene's, uploaded exactly as BreachPass
+    // uploads it (ambient, directional-ambient pair, directional lights,
+    // body -> world for the normal).
+    shader.set_int("u_interior_rock", rock ? (rock_tex != 0 ? 1 : 2) : 0);
+    shader.set_int("u_rock_tex", 1);
+    shader.set_mat4("u_ship_world", world_xf);
+    shader.set_vec3("u_ambient_dir_ws", lighting.ambient_dir_ws);
+    shader.set_float("u_ambient_gradient", lighting.ambient_gradient);
+    shader.set_int("u_dir_light_count", lighting.directional_count);
+    if (lighting.directional_count > 0) {
+        shader.set_vec3_array("u_dir_light_dir_ws", lighting.directional_dir_ws,
+                              lighting.directional_count);
+        shader.set_vec3_array("u_dir_light_color", lighting.directional_color,
+                              lighting.directional_count);
+    }
+
+    // Rock texture on unit 1, bound on EVERY draw (0 when unused) so no
+    // previous draw's texture leaks into this one.
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, rock ? rock_tex : 0u);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_3D, fill_tex);
 
@@ -100,6 +122,9 @@ int HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_xf
     glDisable(GL_POLYGON_OFFSET_FILL);
     glStencilMask(0xFF);
     glDepthFunc(GL_LESS);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_3D, 0);
     return meshes;
 }

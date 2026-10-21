@@ -388,7 +388,11 @@ void draw_model(const assets::Model& model,
                 // stock draw's uniforms, before the rest draw through
                 // `shader` (one program switch per instance). nullptr: every
                 // mesh draws through `shader` (the force-program probe).
-                Shader* stock_shader = nullptr);
+                Shader* stock_shader = nullptr,
+                // Plating draws only: a rock (Instance::surface_is_rock), as
+                // u_plating_rock. No panels, ribs or members; a cut where wear
+                // passes breach, and a far crater painted as darkened rock.
+                bool plating_rock = false);
 
 /// TEST counters, process-wide and monotonic (read deltas). Computations of
 /// a model's per-mesh plating record subsets (plating::mesh_record_subsets),
