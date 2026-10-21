@@ -6,9 +6,10 @@ reuses the configuration panel's cp-* CSS. Six tabs: "Combat" (cheats
 wired to engine.dev_combat_cheats, plus the Sensor Occlusion switch),
 "Lighting" (forced glow states, normal-map tunables), "Environments"
 (rock toggles), "Hull damage" (layered hull damage tuning rows, via
-engine.dev_hull_damage_tuning), "Diagnostics" (the frame profiler, the performance
-monitor overlay, the dial-group picker), and "Characters" (put any SDK character on the viewscreen, via
-engine.dev_character_viewscreen). Dev-mode only — constructed in host_loop.py inside
+engine.dev_hull_damage_tuning), "Diagnostics" (the frame profiler, the
+performance monitor overlay, the dial-group picker), and "Characters" (put
+any SDK character on the viewscreen, via engine.dev_character_viewscreen).
+Dev-mode only — constructed in host_loop.py inside
 ``if dev_mode.is_enabled():``.
 
 Spec: docs/superpowers/specs/2026-06-08-developer-options-menu-design.md

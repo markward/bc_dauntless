@@ -94,6 +94,8 @@ def set_big_tier_chance(chance: float) -> None:
 def reset_blast_size_tiers() -> None:
     global BLAST_SIZE_TIERS
     BLAST_SIZE_TIERS = DEFAULT_BLAST_SIZE_TIERS
+
+
 BLAST_LIFE = 1.5             # fLife argument to CreateDebrisExplosion
 
 # ── Fireball timing: OVERRIDES of the SDK helper, tuned by eye ───────────────

@@ -188,3 +188,4 @@ def test_nothing_outside_developer_mode(monkeypatch):
     assert tuning.rows() == []
     assert tuning.dispatch("action:hull_soot") is False
     assert plating_dials.current()["soot"] == 0.75
+

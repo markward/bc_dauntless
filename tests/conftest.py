@@ -1138,6 +1138,16 @@ def _reset_leakable_engine_globals():
         _hw.reset()
     except Exception:
         pass
+    # Developer Options -> "Hull damage" rows mutate module globals
+    # (hull_wear.PHASER_RATE / COLLISION_MIN_HULL_DAMAGE, death_cascade's
+    # BLAST_SIZE_TIERS, plating_dials' _defaults / _dials, the tuning
+    # module's near mirror), and plating_dials.register() swaps in native
+    # defaults. Pure-Python reset: never pushes to the native host.
+    try:
+        from engine import dev_hull_damage_tuning as _hdt
+        _hdt.reset_python_state()
+    except Exception:
+        pass
     # Camera shake: the Modern VFX row flips a module global, so a test that
     # turns it off would silently kill every later test's shake.
     try:

@@ -112,6 +112,14 @@ def reset() -> None:
     _dials = dict(_defaults)
 
 
+def reset_state() -> None:
+    """Back to import state (DEFAULTS, no native defaults), with NO push:
+    tests/conftest.py's autouse reset, headless-safe."""
+    global _defaults, _dials
+    _defaults = dict(DEFAULTS)
+    _dials = dict(DEFAULTS)
+
+
 def current() -> dict:
     return dict(_dials)
 

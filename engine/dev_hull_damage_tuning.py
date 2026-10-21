@@ -200,6 +200,20 @@ def reset() -> None:
     _set_near(near_default)
 
 
+def reset_python_state() -> None:
+    """The Python-side half of `reset`, touching nothing native: the
+    hull_wear knobs, the blast tier table and the near-distance mirror,
+    plus plating_dials back to import state (no push). For
+    tests/conftest.py's autouse reset, which must stay headless-safe."""
+    global _near_gu
+    hw = _hull_wear()
+    hw.PHASER_RATE = hw.DEFAULT_PHASER_RATE
+    hw.COLLISION_MIN_HULL_DAMAGE = hw.DEFAULT_COLLISION_MIN_HULL_DAMAGE
+    _death_cascade().reset_blast_size_tiers()
+    _near_gu = DEFAULT_NEAR_GU
+    _plating().reset_state()
+
+
 def _num(v: float) -> str:
     return ("%.4f" % v).rstrip("0").rstrip(".")
 
