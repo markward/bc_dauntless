@@ -303,3 +303,42 @@ def test_posed_part_tear_vents_at_the_drawn_hit(posed_bop, breach_wear):
     assert rec["node"] >= 0
     (ev,) = _breach(iid)
     assert ev["center"] == pytest.approx(q_posed, abs=1e-2)
+
+
+# ── Fix round 3: a rigged ship at the identity pose ─────────────────────────
+# The identity pose clears the override map (a BoP at red alert), so without
+# a native `rigged` flag every hit there was filed on the body and left the
+# wing when it swung. A rigged instance with no overrides attributes in REST
+# space (posed == rest): the hit keeps the wing's own node.
+
+@pytest.fixture
+def bop_at_identity(posed_bop):
+    iid = posed_bop
+    rest, _posed, _to_rest = _wing_frames(iid)
+    assert _h.clear_instance_node_overrides(iid)
+    return iid, rest
+
+
+def test_rigged_instance_at_identity_files_the_hit_on_its_part(bop_at_identity):
+    iid, rest = bop_at_identity
+    q, n = _rest_wing_hit(iid, rest)
+    assert _h.set_instance_rigged(iid, True)
+    _h.hull_damage_add(iid, q, n, 0.3, 1.0, 1)
+    (rec,) = _records(iid)
+    assert rec["node"] >= 0, "a rigged ship's identity-pose hit fell on the body"
+    assert rec["centre"] == pytest.approx(q, abs=1e-4), "posed == rest: no conversion"
+
+
+def test_unrigged_instance_at_identity_stays_on_the_free_body_path(bop_at_identity):
+    iid, rest = bop_at_identity
+    q, n = _rest_wing_hit(iid, rest)
+    assert _h.set_instance_rigged(iid, False)
+    _h.hull_damage_add(iid, q, n, 0.3, 1.0, 1)
+    (rec,) = _records(iid)
+    assert rec["node"] == -1
+
+
+def test_set_instance_rigged_on_a_stale_id_is_false():
+    stale = _h.create_instance(0)
+    _h.destroy_instance(stale)
+    assert _h.set_instance_rigged(stale, True) is False

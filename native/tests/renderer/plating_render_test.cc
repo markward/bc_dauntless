@@ -11,6 +11,7 @@
 #include <renderer/aabb.h>
 #include <renderer/frame.h>
 #include <renderer/pipeline.h>
+#include <renderer/node_anim.h>
 #include <renderer/plating_damage.h>
 #include <renderer/ray_trace.h>
 #include <renderer/scuff_texture.h>
@@ -790,13 +791,14 @@ std::unique_ptr<assets::Model> two_quads(float first_x) {
     return model;
 }
 
-// Two records on the quad at x = -40 (reach 10 and 4, 7 mu apart: not merged).
-scenegraph::HullDamageStore left_quad_ring() {
+// Two records on the quad at x = -40 (reach 10 and 4, 7 mu apart: not merged),
+// on `node` (-1 the body).
+scenegraph::HullDamageStore left_quad_ring(int node = -1) {
     scenegraph::HullDamageStore s;
     s.add({-40.0f, 0.0f, 0.0f}, glm::vec3(0.0f), 10.0f, 10.0f,
-          scenegraph::HullDamageKind::Internal);
+          scenegraph::HullDamageKind::Internal, node);
     s.add({-45.0f, 5.0f, 0.0f}, glm::vec3(0.0f), 4.0f, 2.0f,
-          scenegraph::HullDamageKind::Internal);
+          scenegraph::HullDamageKind::Internal, node);
     return s;
 }
 
@@ -863,9 +865,10 @@ TEST_F(PlatingRenderTest, ArticulatedDrawKeepsPerMeshSubsets) {
     dauntless_plating::g_params[25] = 0.0f;
     const auto cam = quad_cam();
     auto model = two_quads(-40.0f);          // mesh 1 = the far quad
-    // An override that leaves the node where it was: the body records stay in
-    // frame (ArticulatedRecordsStayInTheirOwnFrame covers a real move).
-    Placed pl{glm::mat4(1.0f), left_quad_ring()};
+    // An override that leaves the node where it was; the records are on that
+    // node, so they stay in its frame (ArticulatedRecordsStayInTheirOwnFrame
+    // covers a real move and the body's records).
+    Placed pl{glm::mat4(1.0f), left_quad_ring(/*node=*/0)};
     pl.overrides[0] = model->nodes[0].local_transform;
     const auto r = render_marked_many(*model, {pl}, cam);
     EXPECT_EQ(r.marks, 1);
@@ -1975,4 +1978,65 @@ TEST_F(PlatingRenderTest, AuthoredRecordOnAPartFollowsItWhenPosed) {
     EXPECT_EQ(r.stencil[static_cast<std::size_t>(rest_spot.y) * kSize + rest_spot.x], 0)
         << "the authored damage stayed on the hull under the part's rest spot";
     EXPECT_LE(worst_in_window(r.color, base.color, rest_spot, 12), 2);
+}
+
+// Fix round 3: the frame filter compares POSED OWNERS, not correction
+// matrices. The part's mesh hangs under a CHILD node with a non-identity
+// local, whose rest correction is computed separately from its posed owner's
+// and differs from it in the low bits. A record attributed while posed (on
+// the owner, node 1) and one attributed at the identity pose of a rigged
+// ship (on the triangle's own node, 2) both stay on the part once it is
+// posed.
+TEST_F(PlatingRenderTest, DamageOnAChildOfAPosedPartStaysOnThePart) {
+    dauntless_plating::g_params[0] = 1.0f;
+    auto model = body_and_part_nodes();
+    assets::Node child;
+    child.name = "part mesh";
+    child.parent_index = 1;
+    child.local_transform =
+        glm::translate(glm::mat4(1.0f), glm::vec3(40.0f, 0.0f, 0.0f)) *
+        glm::rotate(glm::mat4(1.0f), glm::radians(23.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    model->nodes[1].children.push_back(2);
+    model->nodes.push_back(child);
+    const glm::vec3 X(1, 0, 0), Y(0, 1, 0);
+    add_mesh_of_quads(*model, 0, {{glm::vec3(-40.0f, 0.0f, -1.0f), X, Y, 20.0f}});
+    add_mesh_of_quads(*model, 2, {{glm::vec3(0.0f), X, Y, 15.0f}});
+
+    const glm::mat4 pose =
+        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 10.0f, 0.0f)) *
+        glm::translate(glm::mat4(1.0f), glm::vec3(40.0f, 0.0f, 0.0f)) *
+        glm::rotate(glm::mat4(1.0f), glm::radians(37.0f), glm::vec3(0.0f, 0.0f, 1.0f)) *
+        glm::translate(glm::mat4(1.0f), glm::vec3(-40.0f, 0.0f, 0.0f));
+    const std::unordered_map<int, glm::mat4> overrides{{1, pose}};
+    const auto fix = renderer::rest_corrections(*model, overrides);
+    std::fprintf(stderr, "[PlatingRender] child fix == owner fix: %d\n", fix[2] == fix[1] ? 1 : 0);
+
+    const glm::mat4 child_rest = child.local_transform;
+    const glm::vec3 hit_a_rest = glm::vec3(child_rest * glm::vec4(6.0f, 5.0f, 0.0f, 1.0f));
+    const glm::vec3 hit_b_rest = glm::vec3(child_rest * glm::vec4(-7.0f, -6.0f, 0.0f, 1.0f));
+    const glm::vec3 hit_a_posed = glm::vec3(pose * glm::vec4(hit_a_rest, 1.0f));
+    const glm::vec3 hit_b_posed = glm::vec3(pose * glm::vec4(hit_b_rest, 1.0f));
+
+    // (a) hit while posed: the owner (1), converted to rest.
+    const auto a = renderer::attribute_to_rest_frame(*model, overrides, hit_a_posed);
+    ASSERT_EQ(a.node, 1);
+    // (b) hit at the identity pose of a rigged ship: the triangle's node (2).
+    const auto b = renderer::attribute_rest_point(*model, {}, hit_b_rest);
+    ASSERT_EQ(b.node, 2);
+
+    scenegraph::HullDamageStore ring;
+    ring.add(glm::vec3(a.to_rest * glm::vec4(hit_a_posed, 1.0f)), glm::vec3(0.0f), 4.0f, 10.0f,
+             scenegraph::HullDamageKind::Internal, a.node);
+    ring.add(hit_b_rest, glm::vec3(0.0f), 4.0f, 10.0f, scenegraph::HullDamageKind::Internal,
+             b.node);
+    Placed pl{glm::mat4(1.0f), ring};
+    pl.overrides = overrides;
+    const auto cam = quad_cam();
+    const Marked r = render_marked_many(*model, {pl}, cam, glm::vec3(0.8f, 0.2f, 0.8f));
+    auto stencil_at = [&](const glm::vec3& p) {
+        const glm::ivec2 c = to_pixel(cam, p);
+        return r.stencil[static_cast<std::size_t>(c.y) * kSize + c.x];
+    };
+    EXPECT_NE(stencil_at(hit_a_posed), 0) << "the posed-time record left its part";
+    EXPECT_NE(stencil_at(hit_b_posed), 0) << "the identity-pose record left its part";
 }

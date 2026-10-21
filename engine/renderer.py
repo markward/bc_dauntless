@@ -49,6 +49,7 @@ _REQUIRED_BINDINGS = frozenset({
     "get_instance_head_center", "hdr_lens_flare_enabled",
     "hdr_lens_flare_set_enabled", "hdr_set_enabled",
     "prefetch_hull_fill", "prewarm_trace_accel", "hull_source_string",
+    "set_instance_rigged",
     "init", "letterbox_set",
     "load_animation_clips",
     "load_instance_clip", "load_model", "model_aabb", "model_bounds",
@@ -1041,6 +1042,14 @@ def set_rim_strength(instance_id: InstanceId, strength: float) -> None:
     hardpoint stats' optional 'SpecularCoef' key (via ShipClass.SetSpecularKs);
     ships without one use DEFAULT_RIM_STRENGTH."""
     _h.set_rim_strength(instance_id, float(strength))
+
+
+def set_instance_rigged(instance_id: InstanceId, rigged: bool) -> None:
+    """Flag an instance as carrying an articulation rig: at the identity pose
+    (no node overrides) its wear hits are still filed on the part they struck,
+    so the damage follows the part when it swings (layered damage phase 4).
+    """
+    _h.set_instance_rigged(instance_id, bool(rigged))
 
 
 def set_surface_rock(instance_id: InstanceId, rock: bool) -> None:

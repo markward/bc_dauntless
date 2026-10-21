@@ -125,21 +125,21 @@ int HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_xf
         meshes = draw_model_positions_only(model, world_xf, shader, node_overrides, mesh_mask,
                                            /*rest_fix=*/true);
     } else {
-        // One draw per frame group (meshes sharing a rest correction), each
-        // with only its own frame's records.
-        const std::vector<glm::mat4> fix = rest_corrections(model, *node_overrides);
-        std::vector<glm::mat4> frames;
+        // One draw per frame group (meshes sharing a posed owner), each with
+        // only its own frame's records.
+        const std::vector<int> owners = posed_owners(model, *node_overrides);
+        std::vector<int> frames;
         for (std::size_t i = 0; i < model.nodes.size(); ++i)
             if (!model.nodes[i].meshes.empty() &&
-                std::find(frames.begin(), frames.end(), fix[i]) == frames.end())
-                frames.push_back(fix[i]);
+                std::find(frames.begin(), frames.end(), owners[i]) == frames.end())
+                frames.push_back(owners[i]);
         std::vector<std::uint8_t> mask(model.meshes.size(), 0);
-        for (const glm::mat4& frame : frames) {
-            const plating::DamageList sub = plating::records_in_frame(list, fix, frame);
+        for (const int frame : frames) {
+            const plating::DamageList sub = plating::records_in_frame(list, owners, frame);
             if (sub.count == 0) continue;   // the mark cut nothing in this frame
             std::fill(mask.begin(), mask.end(), std::uint8_t{0});
             for (std::size_t i = 0; i < model.nodes.size(); ++i) {
-                if (fix[i] != frame) continue;
+                if (owners[i] != frame) continue;
                 for (int mi : model.nodes[i].meshes) {
                     if (mi < 0 || static_cast<std::size_t>(mi) >= mask.size()) continue;
                     const bool allowed = mesh_mask == nullptr ||

@@ -2549,10 +2549,11 @@ static void vent_on_breach_crossing(scenegraph::Instance& inst,
 // into that node's REST frame (layered damage phase 4 §2.1), found by
 // GEOMETRY (renderer::attribute_to_rest_frame: the nearest rest triangle
 // under each part's rest correction). An unposed instance (no node
-// overrides) is the body with no work at all. `rest_frame` -- a point the
-// writer already holds in the rest frame (authored DamageTool volumes) -- is
+// overrides) that is not rigged is the body with no work at all. `rest_frame`
+// -- a point the writer already holds in the rest frame (authored DamageTool
+// volumes) -- and any point on a RIGGED instance at the identity pose are
 // attributed in REST space (renderer::attribute_rest_point: the nearest rest
-// triangle's own node, with or without a pose) and never converted.
+// triangle's own node) and never converted.
 struct WearNode {
     int       node = -1;
     glm::mat4 to_rest{1.0f};
@@ -2562,10 +2563,14 @@ struct WearNode {
 static WearNode wear_node_for(const scenegraph::Instance& inst, const glm::vec3& posed_point,
                               bool rest_frame) {
     WearNode w;
-    if (!rest_frame && inst.node_overrides.empty()) return w;
+    // Unposed and unrigged: the body, with no work at all.
+    if (!rest_frame && inst.node_overrides.empty() && !inst.rigged) return w;
     const assets::Model* m = resolve_model(inst.model_handle);
     if (m == nullptr) return w;
-    if (rest_frame) {
+    // A rigged hull at the identity pose (no overrides): posed == rest, so
+    // the rest-space answer is exact -- and it keeps the hit on its part's
+    // own node for when the part swings later.
+    if (rest_frame || inst.node_overrides.empty()) {
         w.node = renderer::attribute_rest_point(*m, inst.node_overrides, posed_point).node;
         return w;                                // identity both ways
     }
@@ -4147,6 +4152,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Fresnel rim intensity for a rim-eligible instance. Authored by "
           "the hardpoint stats' 'SpecularCoef'; defaults to 0.1 when the "
           "ship does not define one.");
+    m.def("set_instance_rigged",
+          [](scenegraph::InstanceId id, bool rigged) -> bool {
+              auto* in = g_world.get(id);
+              if (in == nullptr) return false;
+              in->rigged = rigged;
+              return true;
+          },
+          py::arg("iid"), py::arg("rigged"),
+          "Flag an instance as carrying an articulation rig. A rigged hull at "
+          "the identity pose (no node overrides) still files each wear hit on "
+          "the part it struck, so the damage follows the part when it swings "
+          "(layered damage phase 4). False for a stale id.");
     m.def("set_surface_rock",
           [](scenegraph::InstanceId id, bool rock) {
               g_world.set_surface_rock(id, rock);

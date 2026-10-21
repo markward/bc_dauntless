@@ -34,20 +34,20 @@ DamageList build_damage_list(const scenegraph::HullDamageStore& store,
     return out;
 }
 
-bool record_in_frame(const DamageList& list, int k, const std::vector<glm::mat4>& node_fix,
-                     const glm::mat4& frame) {
+bool record_in_frame(const DamageList& list, int k, const std::vector<int>& owners,
+                     int mesh_owner) {
     const int n = list.node[k];
-    if (n < 0 || static_cast<std::size_t>(n) >= node_fix.size())
-        return frame == glm::mat4(1.0f);
-    return node_fix[static_cast<std::size_t>(n)] == frame;
+    const int owner = n < 0 || static_cast<std::size_t>(n) >= owners.size()
+                          ? -1 : owners[static_cast<std::size_t>(n)];
+    return owner == mesh_owner;
 }
 
-DamageList records_in_frame(const DamageList& list, const std::vector<glm::mat4>& node_fix,
-                            const glm::mat4& frame) {
+DamageList records_in_frame(const DamageList& list, const std::vector<int>& owners,
+                            int mesh_owner) {
     DamageList out;
     out.torn_possible = list.torn_possible;
     for (int k = 0; k < list.count; ++k) {
-        if (!record_in_frame(list, k, node_fix, frame)) continue;
+        if (!record_in_frame(list, k, owners, mesh_owner)) continue;
         out.a[out.count] = list.a[k];
         out.b[out.count] = list.b[k];
         out.c[out.count] = list.c[k];

@@ -52,7 +52,7 @@ public:
     /// on every draw, 0 when unused, and unbound after.
     ///
     /// A posed instance (non-empty `node_overrides`) draws per FRAME group:
-    /// the meshes sharing one rest correction get only the records in that
+    /// the meshes sharing one posed owner get only the records in that
     /// frame (plating::records_in_frame) and that list's deck-break set --
     /// `deck_break` itself when every record is in the frame, else rebuilt
     /// (plating::deck_break_subset when `cull_deck_break`, else the full set),

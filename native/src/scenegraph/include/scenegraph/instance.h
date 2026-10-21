@@ -178,6 +178,14 @@ struct Instance {
     /// never serialized.
     std::unordered_map<int, glm::mat4> node_overrides;
 
+    /// The ship has an articulation rig (set_instance_rigged, from both
+    /// realize sites in host_loop). The identity pose CLEARS node_overrides,
+    /// so a rigged hull at rest has no overrides and still needs its hits
+    /// filed on the part they struck (layered damage phase 4 §2.1: the wear
+    /// bindings attribute in rest space then). Runtime state, never
+    /// serialized.
+    bool rigged = false;
+
     /// ── Per-channel skeletal animation (BC TGAnimBlender-faithful) ──────────
     /// One channel per skeleton bone. clip_index < 0 = unbound: the bone shows
     /// its rest local (SkeletalAnim::rest_locals) or, without a rest pose, the

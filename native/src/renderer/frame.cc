@@ -597,9 +597,9 @@ static void upload_plating(Shader& prog, const plating::DamageList& dl,
 // with none uploads u_dmg_count 0 (the arrays keep stale values the shader
 // never reads past the count). An upload equal to the previous one of this
 // draw (same records, same order) is skipped, so a hull whose meshes all see
-// every record uploads the list once. With `node_fix` (a posed draw's
-// rest_corrections) each upload also drops the records outside the mesh's
-// frame (plating::record_in_frame).
+// every record uploads the list once. With `owners` (a posed draw's
+// posed_owners) each upload also drops the records outside the mesh's frame
+// (plating::record_in_frame).
 namespace {
 int g_plating_mesh_subset_computations = 0;
 int g_plating_record_uploads = 0;
@@ -609,12 +609,11 @@ int g_draw_model_plating_mesh_draws = 0;
 class MeshRecordUploader {
 public:
     MeshRecordUploader(Shader& prog, const plating::DamageList& dl,
-                       const std::vector<glm::mat4>* node_fix = nullptr)
-        : prog_(prog), dl_(dl), node_fix_(node_fix) {}
+                       const std::vector<int>* owners = nullptr)
+        : prog_(prog), dl_(dl), owners_(owners) {}
 
-    // `frame`: the mesh's rest correction (used only with node_fix).
-    void upload(const plating::MeshRecordSubset* subset,
-                const glm::mat4& frame = glm::mat4(1.0f)) {
+    // `mesh_owner`: the mesh's node's posed owner (used only with owners).
+    void upload(const plating::MeshRecordSubset* subset, int mesh_owner = -1) {
         std::array<std::uint8_t, plating::kMaxDamage> all;
         const std::uint8_t* idx = nullptr;
         int n = dl_.count;
@@ -626,10 +625,10 @@ public:
             idx = all.data();
         }
         std::array<std::uint8_t, plating::kMaxDamage> fit;
-        if (node_fix_ != nullptr) {
+        if (owners_ != nullptr) {
             int m = 0;
             for (int k = 0; k < n; ++k)
-                if (plating::record_in_frame(dl_, idx[k], *node_fix_, frame))
+                if (plating::record_in_frame(dl_, idx[k], *owners_, mesh_owner))
                     fit[static_cast<std::size_t>(m++)] = idx[k];
             n = m;
             idx = fit.data();
@@ -644,7 +643,7 @@ public:
             kDmgB = "u_dmg_b", kDmgC = "u_dmg_c";
         ++g_plating_record_uploads;
         prog_.set_int(kDmgCount, n);
-        if (n == dl_.count && node_fix_ == nullptr) {   // every record, in order: no gather
+        if (n == dl_.count && owners_ == nullptr) {   // every record, in order: no gather
             prog_.set_vec4_array(kDmgA, dl_.a, n);
             prog_.set_vec4_array(kDmgB, dl_.b, n);
             prog_.set_vec4_array(kDmgC, dl_.c, n);
@@ -664,7 +663,7 @@ public:
 private:
     Shader& prog_;
     const plating::DamageList& dl_;
-    const std::vector<glm::mat4>* node_fix_ = nullptr;
+    const std::vector<int>* owners_ = nullptr;
     bool have_last_ = false;
     int last_n_ = 0;
     std::array<std::uint8_t, plating::kMaxDamage> last_idx_{};
@@ -841,6 +840,8 @@ static void draw_model_pass(const assets::Model& model,
     const std::vector<glm::mat4> rest_fix =
         articulated ? rest_corrections(model, *node_overrides)
                     : std::vector<glm::mat4>{};
+    const std::vector<int> owners =
+        articulated ? posed_owners(model, *node_overrides) : std::vector<int>{};
     // A posed draw uploads per mesh even without subsets: each mesh keeps only
     // the records in its own frame (plating::record_in_frame).
     const bool plating_per_mesh =
@@ -856,7 +857,7 @@ static void draw_model_pass(const assets::Model& model,
                        plating_mesh_records != nullptr ? plating_mesh_records->hidden_parts : 0u,
                        plating_mesh_records != nullptr ? plating_mesh_records->shown_parts : 0u);
         if (plating_per_mesh)
-            plating_records.emplace(prog, *plating_list, articulated ? &rest_fix : nullptr);
+            plating_records.emplace(prog, *plating_list, articulated ? &owners : nullptr);
     }
 
     // ── Warp-nacelle glow capsules ─────────────────────────────────────────
@@ -1025,7 +1026,7 @@ static void draw_model_pass(const assets::Model& model,
                     this_sphere || plating_subsets == nullptr
                         ? nullptr
                         : plating_subset_for(*plating_subsets, mesh_idx),
-                    articulated ? rest_fix[i] : glm::mat4(1.0f));
+                    articulated ? owners[i] : -1);
             }
             // Same rule as u_sphere_map: set on EVERY draw so it cannot leak.
             const bool this_atmo = this_sphere && atmo != nullptr && atmo->enabled;
@@ -1253,13 +1254,15 @@ static int draw_plating_mark(const assets::Model& model, const glm::mat4& world,
     const std::vector<plating::MeshRecordSubset>* const subsets = records.subsets;
     const std::vector<glm::mat4> rest_fix =
         articulated ? rest_corrections(model, *node_overrides) : std::vector<glm::mat4>{};
+    const std::vector<int> owners =
+        articulated ? posed_owners(model, *node_overrides) : std::vector<int>{};
     // Per mesh with subsets, and always when posed (records in-frame only).
     const bool per_mesh = subsets != nullptr || articulated;
     upload_plating(prog, dl, records.parts, world, params, /*mark=*/true, /*far=*/false,
                    /*upload_list=*/!per_mesh, rock, records.hidden_parts,
                    records.shown_parts);
     std::optional<MeshRecordUploader> uploader;
-    if (per_mesh) uploader.emplace(prog, dl, articulated ? &rest_fix : nullptr);
+    if (per_mesh) uploader.emplace(prog, dl, articulated ? &owners : nullptr);
     prog.set_int(kCutout, 0);
     prog.set_int(kImpostorBlend, 0);
     prog.set_int(kShadowMap, 5);
@@ -1275,7 +1278,7 @@ static int draw_plating_mark(const assets::Model& model, const glm::mat4& world,
                 const plating::MeshRecordSubset* subset =
                     subsets != nullptr ? plating_subset_for(*subsets, mesh_idx) : nullptr;
                 if (skip_record_free && subset != nullptr && subset->count == 0) continue;
-                uploader->upload(subset, articulated ? rest_fix[i] : glm::mat4(1.0f));
+                uploader->upload(subset, articulated ? owners[i] : -1);
             }
             prog.set_mat4(kModel, world_per_node[i]);
             prog.set_mat4(kRestFix, articulated ? rest_fix[i] : glm::mat4(1.0f));

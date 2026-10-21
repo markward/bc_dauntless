@@ -33,19 +33,21 @@ struct DamageList {
 };
 
 // Frame compatibility (layered damage phase 4 §2.1): a record lives in its
-// node's REST frame, so once a part is posed it may only shade a mesh whose
-// rest correction is the record's own -- `node_fix` is rest_corrections for
-// the draw (empty = nothing posed: every record fits), `frame` the mesh's
-// correction. At rest every correction is identity and nothing is dropped;
+// node's REST frame, so once a part is posed it may only shade a mesh in the
+// same frame -- the same POSED OWNER (node_anim.h posed_owners; never a
+// matrix compare: two nodes of one owner may differ in the low bits).
+// `owners` is posed_owners for the draw (empty = nothing posed: every record
+// fits), `mesh_owner` the mesh's node's owner. A record's node maps through
+// `owners` (-1 stays -1). At rest every owner is -1 and nothing is dropped;
 // posed, a part's record leaves no ghost on the hull under its rest spot and
 // a hull record does not ride on the part.
-bool record_in_frame(const DamageList& list, int k, const std::vector<glm::mat4>& node_fix,
-                     const glm::mat4& frame);
+bool record_in_frame(const DamageList& list, int k, const std::vector<int>& owners,
+                     int mesh_owner);
 
-// The records of `list` in `frame` (record_in_frame), in order, as a list of
-// their own (torn_possible copied).
-DamageList records_in_frame(const DamageList& list, const std::vector<glm::mat4>& node_fix,
-                            const glm::mat4& frame);
+// The records of `list` in the frame of `mesh_owner` (record_in_frame), in
+// order, as a list of their own (torn_possible copied).
+DamageList records_in_frame(const DamageList& list, const std::vector<int>& owners,
+                            int mesh_owner);
 
 // params = dauntless_plating::g_params (kParamCount floats). Only ACTIVE records
 // with wear > 0 enter. Surface reach is scaled by params[7]; Internal reach and

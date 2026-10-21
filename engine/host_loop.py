@@ -6552,6 +6552,19 @@ def _prewarm_trace_accel(r_, handle) -> None:
         dev_mode.log_swallowed("prewarm trace accel", _e)
 
 
+def _mark_rigged(r_, iid, ship) -> None:
+    """Flag a rigged ship's instance native-side (layered damage phase 4
+    §2.1): at the identity pose its node overrides are empty, and the flag is
+    what keeps a hit there on the part it struck. ONE helper for BOTH realize
+    sites. Unrigged ships are never flagged. Best-effort: never block spawn."""
+    try:
+        from engine.appc import articulation
+        if articulation.parts_for_ship(ship):
+            r_.set_instance_rigged(iid, True)
+    except Exception as _e:
+        dev_mode.log_swallowed("flag rigged instance", _e)
+
+
 def _runtime_ship_model_source(ship, *, verbose: bool = False):
     """(model_path, nif_path, model_scale) for `ship`, or None when it has no
     NIF. A rock-catalogue redirect's model_path differs from nif_path."""
@@ -6759,6 +6772,7 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
         except Exception as _e:
             dev_mode.log_swallowed("prefetch hull fill", _e)
         _prewarm_trace_accel(r_, handle)
+        _mark_rigged(r_, iid, ship)
         render_instances.register(ship, iid)
         # Fresnel rim applies to ship hulls only — planets share the opaque
         # shader and must stay rim-free (default ineligible).
@@ -8010,6 +8024,7 @@ class _MissionLoader:
             r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
             sess.ship_instances[ship] = iid
             _prewarm_trace_accel(r_, handle)
+            _mark_rigged(r_, iid, ship)
             render_instances.register(ship, iid)
             # Fresnel rim applies to ship hulls only — planets share the
             # opaque shader and must stay rim-free (default ineligible).

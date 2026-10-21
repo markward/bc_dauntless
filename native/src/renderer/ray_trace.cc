@@ -634,15 +634,11 @@ struct PoseOwners {
 PoseOwners pose_owners(const assets::Model& model,
                        const std::unordered_map<int, glm::mat4>& overrides) {
     const std::size_t n = model.nodes.size();
-    PoseOwners po{std::vector<int>(n, -1), std::vector<char>(n, 0)};
+    PoseOwners po{posed_owners(model, overrides), std::vector<char>(n, 0)};
     if (overrides.empty()) return po;
     const std::vector<glm::mat4> posed = compose_node_worlds(model, glm::mat4(1.0f), overrides);
-    for (std::size_t i = 0; i < n; ++i) {
-        const int parent = model.nodes[i].parent_index;
-        po.owner[i] = overrides.count(static_cast<int>(i)) ? static_cast<int>(i)
-                      : parent >= 0 ? po.owner[static_cast<std::size_t>(parent)] : -1;
+    for (std::size_t i = 0; i < n; ++i)
         po.severed[i] = std::fabs(glm::determinant(posed[i])) < 1e-12f ? 1 : 0;
-    }
     return po;
 }
 

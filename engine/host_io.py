@@ -437,10 +437,11 @@ def hull_damage_add(
     """Add a record to the instance's HullDamageStore. `kind` 1 = Surface,
     3 = Internal (others ignored natively). On a posed (articulated) ship the
     binding attributes the point to the part it lies on, by geometry, and
-    stores it in that part's REST frame, so the damage moves with the part.
-    `rest_frame=True`: the point is already rest-frame (authored DamageTool
-    volumes), so no attribution: the hull body. No-op without a
-    host/instance."""
+    stores it in that part's REST frame, so the damage moves with the part;
+    a rigged ship at the identity pose (no overrides) is attributed in rest
+    space. `rest_frame=True`: the point is already rest-frame (authored
+    DamageTool volumes): attributed in REST space to the nearest rest
+    triangle's node and never converted. No-op without a host/instance."""
     if _h is None:
         return
     rel = _instance_relative(instance_id, world_point)
