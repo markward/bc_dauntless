@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -207,4 +208,58 @@ TEST(StructurePartsIo, EmptySegmentationIsNotWrittenOrReported) {
     EXPECT_FALSE(voxel::write_structure_parts(p, voxel::StructureSegmentation{}));
     EXPECT_EQ(testing::internal::GetCapturedStderr(), "");
     EXPECT_FALSE(fs::exists(p));
+}
+
+// Two writers of one path (same-bytes NIF copies hash to one cache file, and
+// two hull loads can race) must never share a temp file: a shared
+// `<path>.tmp` made one writer's rename fail with a spurious "could not
+// write" line, which also burned the once-per-path report. A temp name
+// another writer already holds -- here a DIRECTORY squatting `<path>.tmp` --
+// cannot block a write.
+TEST(StructurePartsIo, AnotherWritersTempFileNeverBlocksAWrite) {
+    const fs::path p = scratch("squatted.sps");
+    fs::path squat = p;
+    squat += ".tmp";
+    std::error_code ec;
+    fs::remove_all(squat, ec);
+    fs::create_directories(squat);
+    testing::internal::CaptureStderr();
+    const bool ok = voxel::write_structure_parts(p, sample());
+    const std::string err = testing::internal::GetCapturedStderr();
+    fs::remove_all(squat, ec);
+    EXPECT_TRUE(ok);
+    EXPECT_EQ(err, "");
+    const auto back = voxel::read_structure_parts(p);
+    ASSERT_TRUE(back.has_value());
+    expect_equal(*back, sample());
+}
+
+TEST(StructurePartsIo, ConcurrentWritesOfOnePathBothSucceedSilently) {
+    const fs::path dir = fs::temp_directory_path() / "dauntless_sps_test" / "concurrent";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir);
+    const auto seg = sample();
+    int failures = 0;
+    testing::internal::CaptureStderr();
+    for (int round = 0; round < 200; ++round) {
+        // A fresh path per round: the once-per-path report cannot hide a race.
+        const fs::path p = dir / ("hull-" + std::to_string(round) + ".sps");
+        bool a = false, b = false;
+        std::thread ta([&] { a = voxel::write_structure_parts(p, seg); });
+        std::thread tb([&] { b = voxel::write_structure_parts(p, seg); });
+        ta.join();
+        tb.join();
+        failures += (a ? 0 : 1) + (b ? 0 : 1);
+    }
+    const std::string err = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(failures, 0);
+    EXPECT_EQ(err, "");
+    int files = 0;
+    for (const auto& e : fs::directory_iterator(dir)) {
+        ++files;
+        EXPECT_EQ(e.path().extension(), ".sps") << "left behind: " << e.path();
+    }
+    EXPECT_EQ(files, 200);
+    fs::remove_all(dir, ec);
 }

@@ -2,6 +2,7 @@
 #include <voxel/structure_parts_io.h>
 
 #include <algorithm>
+#include <atomic>
 #include <bit>
 #include <cerrno>
 #include <cstdio>
@@ -12,6 +13,12 @@
 #include <set>
 #include <string>
 #include <system_error>
+
+#if defined(_WIN32)
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace voxel {
 
@@ -110,6 +117,22 @@ void report_write_failure(const std::filesystem::path& path, const std::string& 
     std::fprintf(stderr, "[dauntless] could not write %s: %s\n", key.c_str(), why.c_str());
 }
 
+// A temp-file suffix no other writer holds: this process's id and a
+// process-wide counter. Two writers of one path (same-bytes NIF copies hash to
+// one cache file; two hull loads can race) each write their own temp file and
+// rename it over the target -- the last rename wins with a whole file. A
+// shared `<path>.tmp` made one of them fail its rename with a spurious "could
+// not write", which also burned the once-per-path report.
+std::string unique_tmp_suffix() {
+    static std::atomic<std::uint64_t> counter{0};
+#if defined(_WIN32)
+    const long long pid = static_cast<long long>(_getpid());
+#else
+    const long long pid = static_cast<long long>(getpid());
+#endif
+    return "." + std::to_string(pid) + "-" + std::to_string(counter.fetch_add(1)) + ".tmp";
+}
+
 std::string encode(const StructureSegmentation& seg) {
     std::string b;
     b.append(kMagic, 4);
@@ -164,9 +187,9 @@ bool write_structure_parts(const std::filesystem::path& path,
         if (ec) { report_write_failure(path, ec.message()); return false; }
     }
     // Appended on the path itself, never through path.string() (ANSI on MSVC;
-    // see dvox.cc).
+    // see dvox.cc). Unique per write (unique_tmp_suffix).
     std::filesystem::path tmp = path;
-    tmp += ".tmp";
+    tmp += unique_tmp_suffix();
     {
         std::ofstream s(tmp, std::ios::binary | std::ios::trunc);
         if (!s) {

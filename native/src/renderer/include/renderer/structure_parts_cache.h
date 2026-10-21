@@ -9,10 +9,13 @@
 // realised or warp-preloaded (prefetch_structure_parts), and -- once a cache
 // root is pushed -- reads the segmentation from
 // <root>/<fnv1a64 hex of the NIF's bytes>-v<kStructurePartsVersion>.sps
-// instead of detecting, writing that file after a detection. A missing or
-// corrupt file is detected and rewritten. With no root, nothing touches disk.
+// instead of detecting, writing that file after a detection (a hull with no
+// parts included; a failed detection or one with no grid is never written). A
+// missing or corrupt file is detected and rewritten. With no root, nothing
+// touches disk.
 #pragma once
 #include <filesystem>
+#include <functional>
 #include <vector>
 
 #include <voxel/structure_parts.h>
@@ -45,5 +48,13 @@ const std::vector<voxel::StructurePart>* structure_parts_for(
 // entry (a synthetic hull with known parts, no detection job).
 void set_structure_segmentation_for_test(const std::filesystem::path& source,
                                          voxel::StructureSegmentation seg);
+
+// Test seam: jobs started from now on detect with `detect` (it may throw, as
+// a real detection can) instead of reading the hull's triangles. Empty = the
+// real detector. The cache-file read before it and the write after it are
+// unchanged, so a test drives what gets cached.
+using StructureDetector =
+    std::function<voxel::StructureSegmentation(const std::filesystem::path& source)>;
+void set_structure_detector_for_test(StructureDetector detect);
 
 }  // namespace renderer

@@ -40,8 +40,11 @@ namespace voxel {
 /// so every older cache file simply stops matching and is rebuilt.
 inline constexpr std::uint32_t kStructurePartsVersion = 1;
 
-/// Write `seg` to `path` through `<path>.tmp` + rename, so a crash mid-write
-/// never leaves a half file where a whole one is expected. False for an
+/// Write `seg` to `path` through a temp file of its own (`<path>.<pid>-<n>.tmp`)
+/// + rename, so a crash mid-write never leaves a half file where a whole one
+/// is expected and two concurrent writers of one path both succeed (the last
+/// rename wins; the bytes are the same). A segmentation with a grid but no
+/// parts is written like any other (nparts 0). False for an
 /// empty path or a segmentation with no grid (nothing to cache; not
 /// reported), or for any I/O failure, which prints
 /// `[dauntless] could not write <path>: <why>` to stderr once per path per
