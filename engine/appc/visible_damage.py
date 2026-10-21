@@ -235,6 +235,11 @@ def _advance_one(entry, dt, ship_instances) -> bool:
             normal = mesh_normal
         host_io.hull_damage_add(iid, _mesh_xyz(ship, world_pt),
                                 (normal.x, normal.y, normal.z), hole, wear, 3)
+        # A dying ship sheds parts like a fighting one: the cascade's wear
+        # asks for the part check as combat wear does.
+        from engine.appc import hull_breakup
+        with frame_profiler.scope("vd.after_wear"):
+            hull_breakup.after_wear(ship, iid, ship_instances)
         return False
     # Carve sizes are absolute; the only per-ship scale is BC's DamageRadMod
     # (applied to both the authored `floor` and the strength curve). The authored

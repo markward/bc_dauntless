@@ -372,3 +372,21 @@ def test_with_carving_off_add_damage_leaves_an_internal_hole_record(monkeypatch)
     assert big[4] == pytest.approx(internal_blast.STRENGTH)                 # 600 = full
     assert small[3] == pytest.approx(max(MIN_CARVE_RADIUS_GU, 0.1))
     assert small[4] == pytest.approx(internal_blast.STRENGTH * 0.25)        # 150 / 600
+
+
+def test_with_carving_off_add_damage_asks_for_severed_parts(monkeypatch):
+    """The death cascade / scripted AddDamage wears the hull too: once its
+    Internal record is in the store, the part check must run (a dying ship
+    sheds parts like a fighting one)."""
+    from engine.appc import hull_breakup
+    order = []
+    monkeypatch.setattr(host_io, "hull_damage_add",
+                        lambda *a, **k: order.append(("add", a[0])))
+    monkeypatch.setattr(hull_breakup, "after_wear",
+                        lambda ship, iid, *a, **k: order.append(("wear", ship, iid)))
+    monkeypatch.delenv("DAUNTLESS_HULL_CARVING", raising=False)
+    monkeypatch.setattr(host_io, "ray_trace_mesh", lambda *a, **k: None)
+    ship = _Ship(loc=TGPoint3(10.0, 0.0, 0.0))
+    visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 0.6, 600.0)
+    visible_damage.advance(0.0, {ship: 2})
+    assert order == [("add", 2), ("wear", ship, 2)], "after the add, once"
