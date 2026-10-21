@@ -109,8 +109,10 @@ How it is measured *(my call)*: at the PASS level.
 Measure with the DP scenario in `docs/engine/perf-register.md`:
 - GPU-focus runs give attribution only.
 - CPU-only runs give CPU cost.
-- Record a Debug build like the existing baselines, plus one Release pair for
-  the final verdict.
+- Record a Debug build like the existing baselines. **No Release capture**
+  (Mark, 2026-10-21): Release can only be lower than Debug, so a Debug pass
+  that meets the rule is enough, and a second build folder would break the
+  one-build-tree rule.
 
 Known levers, from the step-2c review (SIG-103, SIG-104):
 - The marking draw runs the whole `draw_model`, an estimated 65–80% of the
@@ -140,8 +142,8 @@ Added with Mark on 2026-10-21:
   destination, on the same bounded worker as structure parts.
 - **The bridge viewscreen shows rooms for its own target only.** It renders
   the space scene a second time, small on screen.
-- **Judge the final result in a Release build** as well. Debug inflates CPU
-  costs and can point optimisation at the wrong place.
+- ~~Judge the final result in a Release build~~: dropped by Mark on
+  2026-10-21 (see above).
 
 ## 4. Non-goals
 
