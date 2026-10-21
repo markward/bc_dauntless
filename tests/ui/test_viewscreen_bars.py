@@ -45,15 +45,16 @@ def scene(monkeypatch):
     return pSet, player, state
 
 
-def test_enemy_target_gets_the_red_band_and_white_text(scene):
+def test_enemy_target_gets_the_red_dot_and_its_name(scene):
     pSet, player, state = scene
     t = _ship(pSet, "Kessok", y=200.0)
     state["mission"] = _mission(enemy=["Kessok"])
     d = viewscreen_bars.build_viewscreen_bars(player, t)
     assert d["visible"] is True
-    assert d["band_rgb"] == (216, 43, 43)
-    assert d["text_rgb"] == (255, 255, 255)
-    assert d["top_text"] == "Kessok"
+    assert d["dot_rgb"] == (216, 43, 43)
+    assert d["name"] == "Kessok"
+    # Text is always white on the native side: no per-affiliation text colour.
+    assert set(d) == {"visible", "name", "detail", "dot_rgb"}
 
 
 def test_friendly_and_neutral_colours(scene):
@@ -63,15 +64,15 @@ def test_friendly_and_neutral_colours(scene):
     state["mission"] = _mission(friendly=["Ally"], neutral=["Bystander"])
     df = viewscreen_bars.build_viewscreen_bars(player, f)
     dn = viewscreen_bars.build_viewscreen_bars(player, n)
-    assert (df["band_rgb"], df["text_rgb"]) == ((80, 112, 230), (255, 255, 255))
-    assert (dn["band_rgb"], dn["text_rgb"]) == ((255, 255, 175), (0, 0, 0))
+    assert df["dot_rgb"] == (80, 112, 230)
+    assert dn["dot_rgb"] == (255, 255, 175)
 
 
 def test_ungrouped_object_is_grey(scene):
     pSet, player, _ = scene
     t = _ship(pSet, "Loner", y=200.0)
     d = viewscreen_bars.build_viewscreen_bars(player, t)
-    assert d["band_rgb"] == (128, 128, 128)
+    assert d["dot_rgb"] == (128, 128, 128)
 
 
 def test_unidentified_contact_shows_its_placeholder_and_grey(scene, monkeypatch):
@@ -81,8 +82,8 @@ def test_unidentified_contact_shows_its_placeholder_and_grey(scene, monkeypatch)
     monkeypatch.setattr(sensor_contacts, "shows_identity",
                         lambda *a, **k: False)
     d = viewscreen_bars.build_viewscreen_bars(player, t)
-    assert d["top_text"] == unknown_labels.placeholder(t)
-    assert d["band_rgb"] == (128, 128, 128)
+    assert d["name"] == unknown_labels.placeholder(t)
+    assert d["dot_rgb"] == (128, 128, 128)
     assert "SecretName" not in repr(d)
 
 
@@ -96,16 +97,20 @@ def test_subsystem_lock_still_shows_the_ship_name(scene):
     assert player.GetTargetSubsystem() is sub
     assert sub.GetDisplayName() == "Phasers"
     d = viewscreen_bars.build_viewscreen_bars(player, t)
-    assert d["top_text"] == "Kessok"
-    assert d["top_text"] != sub.GetDisplayName()
+    assert d["name"] == "Kessok"
+    assert d["name"] != sub.GetDisplayName()
 
 
-def test_bottom_text_equals_the_reticle_line(scene):
+def test_detail_uses_the_reticle_numbers(scene):
     pSet, player, _ = scene
     t = _ship(pSet, "Kessok", y=200.0)
+    t.SetVelocity(TGPoint3(0.0, 2.0, 0.0))
     d = viewscreen_bars.build_viewscreen_bars(player, t)
-    assert d["bottom_text"] == reticle_text.readout_line(t, player)
-    assert re.match(r"^\d+\.\d\d km / \d+ kph$", d["bottom_text"])
+    km, kph = reticle_text.readout_values(t, player)
+    assert kph > 0.0
+    assert d["detail"] == "DST: %.2f km  SPD: %.0f kph" % (km, kph)
+    assert reticle_text.readout_line(t, player) == "%.2f km / %.0f kph" % (km, kph)
+    assert re.match(r"^DST: \d+\.\d\d km  SPD: \d+ kph$", d["detail"])
 
 
 def test_planet_reads_zero_speed_and_grey(scene):
@@ -116,8 +121,8 @@ def test_planet_reads_zero_speed_and_grey(scene):
     p.SetWorldLocation(TGPoint3(0.0, 500.0, 0.0))
     pSet.AddObjectToSet(p, "Haven")
     d = viewscreen_bars.build_viewscreen_bars(player, p)
-    assert d["bottom_text"].endswith(" 0 kph")
-    assert d["band_rgb"] == (128, 128, 128)
+    assert d["detail"].endswith("SPD: 0 kph")
+    assert d["dot_rgb"] == (128, 128, 128)
 
 
 def test_no_target_or_dead_target_is_hidden(scene, monkeypatch):
@@ -142,7 +147,7 @@ def real_game():
     _set_current_game(None)
 
 
-def test_real_current_mission_drives_the_band(real_game, monkeypatch):
+def test_real_current_mission_drives_the_dot(real_game, monkeypatch):
     contact_index.reset()
     pSet = SetClass()
     player = _ship(pSet, "player")
@@ -151,10 +156,10 @@ def test_real_current_mission_drives_the_band(real_game, monkeypatch):
                         lambda *a, **k: True)
     assert viewscreen_bars._current_mission() is real_game
     d = viewscreen_bars.build_viewscreen_bars(player, t)
-    assert d["band_rgb"] == (216, 43, 43)
+    assert d["dot_rgb"] == (216, 43, 43)
 
 
-def test_no_current_game_means_no_mission_and_a_grey_band(monkeypatch):
+def test_no_current_game_means_no_mission_and_a_grey_dot(monkeypatch):
     from engine.core.game import _set_current_game
     _set_current_game(None)
     contact_index.reset()
@@ -164,7 +169,7 @@ def test_no_current_game_means_no_mission_and_a_grey_band(monkeypatch):
     monkeypatch.setattr(sensor_contacts, "shows_identity",
                         lambda *a, **k: True)
     assert viewscreen_bars._current_mission() is None
-    assert viewscreen_bars.build_viewscreen_bars(player, t)["band_rgb"] == (128, 128, 128)
+    assert viewscreen_bars.build_viewscreen_bars(player, t)["dot_rgb"] == (128, 128, 128)
 
 
 def test_real_identity_path_with_no_player_sensors_reads_unknown():
@@ -175,6 +180,6 @@ def test_real_identity_path_with_no_player_sensors_reads_unknown():
     player = _ship(pSet, "player")
     t = _ship(pSet, "SecretName", y=200.0)
     d = viewscreen_bars.build_viewscreen_bars(player, t)
-    assert d["top_text"] == unknown_labels.placeholder(t)
-    assert d["band_rgb"] == (128, 128, 128)
+    assert d["name"] == unknown_labels.placeholder(t)
+    assert d["dot_rgb"] == (128, 128, 128)
     assert "SecretName" not in repr(d)

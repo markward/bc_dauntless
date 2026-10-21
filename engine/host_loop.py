@@ -8318,12 +8318,11 @@ def _viewscreen_feed_target(player):
 
 
 def drive_viewscreen_bars(r, player, target) -> None:
-    """Push this frame's target-feed bands, or clear them (no target, dead
+    """Push this frame's target-feed readout, or clear it (no target, dead
     target, hail, forward view, bridge off all pass target=None)."""
     bars = build_viewscreen_bars(player, target)
     if bars.get("visible"):
-        r.set_viewscreen_bars(bars["top_text"], bars["bottom_text"],
-                              bars["band_rgb"], bars["text_rgb"])
+        r.set_viewscreen_bars(bars["name"], bars["detail"], bars["dot_rgb"])
     else:
         r.clear_viewscreen_bars()
 

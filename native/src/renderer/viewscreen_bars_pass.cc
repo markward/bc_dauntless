@@ -14,9 +14,8 @@ namespace renderer {
 
 namespace {
 
-// The font's pixel size was chosen for a 360-tall viewscreen RTT (spec §4.2):
-// at that height one atlas pixel is one target pixel. Other heights scale.
-constexpr float kFontDesignTargetH = 360.0f;
+// Every readout pixel value is authored at a 640-wide RTT (spec §2a).
+constexpr float kReadoutDesignTargetW = 640.0f;
 
 constexpr std::string_view kEllipsis = "...";
 
@@ -91,6 +90,8 @@ bool ViewscreenBarsPass::load_font(const std::string& json_path) {
     const auto space = glyphs_.find(' ');
     if (space == glyphs_.end()) return fail("no space glyph");
     space_advance_ = space->second.advance;
+    const auto cap = glyphs_.find('H');
+    cap_height_ = cap != glyphs_.end() ? cap->second.bearing_y : ascent_;
 
     const auto atlas_path = std::filesystem::path(json_path).parent_path() / atlas_name;
     const auto bytes = assets::read_binary_file(atlas_path);
@@ -149,13 +150,40 @@ std::vector<std::pair<float, float>> ViewscreenBarsPass::layout(const std::strin
     return pens;
 }
 
-std::vector<std::pair<float, float>> ViewscreenBarsPass::layout_line_for_test(
-    const std::string& s, float max_w) const {
-    return layout(fit(s, max_w));
+ViewscreenReadoutLayout ViewscreenBarsPass::readout_layout(int target_w,
+                                                           int target_h) const {
+    ViewscreenReadoutLayout l;
+    if (!has_font() || target_w <= 0 || target_h <= 0) return l;
+    const float s  = static_cast<float>(target_w) / kReadoutDesignTargetW;
+    const float th = static_cast<float>(target_h);
+    l.scale1 = kVsReadoutLine1Scale * s;
+    l.scale2 = kVsReadoutLine2Scale * s;
+    l.cap_height1 = cap_height_ * l.scale1;
+    // Line 1's cap top sits the inset below the top edge (high y).
+    l.baseline1 = std::round(th - kVsReadoutInsetYPx * s - l.cap_height1);
+    // Line 2's ascent top sits the gap below line 1's descent.
+    const float descent1 = (line_height_ - ascent_) * l.scale1;
+    l.baseline2 = std::round(l.baseline1 - descent1 - kVsReadoutLineGapPx * s -
+                             ascent_ * l.scale2);
+    // Dot centred on line 1's caps, its left edge at the inset.
+    l.dot_r  = 0.5f * kVsReadoutDotDiameterFrac * l.cap_height1;
+    l.dot_cx = kVsReadoutInsetXPx * s + l.dot_r;
+    l.dot_cy = l.baseline1 + 0.5f * l.cap_height1;
+    l.name_x = std::round(l.dot_cx + l.dot_r + kVsReadoutDotGapPx * s);
+    l.max_w  = static_cast<float>(target_w) - l.name_x - kVsReadoutInsetXPx * s;
+    return l;
 }
 
-std::string ViewscreenBarsPass::fit_for_test(const std::string& s, float max_w) const {
-    return fit(s, max_w);
+std::vector<std::pair<float, float>> ViewscreenBarsPass::layout_line_for_test(
+    const std::string& s, float max_w, float scale) const {
+    auto pens = layout(fit(s, max_w / scale));
+    for (auto& [pen, adv] : pens) { pen *= scale; adv *= scale; }
+    return pens;
+}
+
+std::string ViewscreenBarsPass::fit_for_test(const std::string& s, float max_w,
+                                             float scale) const {
+    return fit(s, max_w / scale);
 }
 
 void ViewscreenBarsPass::ensure_buffers() {
@@ -177,27 +205,21 @@ void ViewscreenBarsPass::render(Shader& shader, const ViewscreenBars& bars,
 
     const float tw = static_cast<float>(target_w);
     const float th = static_cast<float>(target_h);
-    const float band_h = std::round(kVsBarsHeightFrac * th);
-    const float radius = std::min(kVsBarsRadiusPx640 * tw / 640.f, 0.5f * band_h);
-    const float scale  = th / kFontDesignTargetH;
-    const float max_w  = (tw - 2.f * radius) / scale;   // in font pixels
+    const ViewscreenReadoutLayout l = readout_layout(target_w, target_h);
 
-    // Geometry: [0,6) top band, [6,12) bottom band, then the glyph quads.
+    // Geometry: [0,6) the dot's quad (padded for the antialiased edge), then
+    // the glyph quads of both lines.
     std::vector<Vertex> verts;
-    push_quad(verts, 0.f, th - band_h, tw, th, 0, 0, 0, 0);
-    push_quad(verts, 0.f, 0.f, tw, band_h, 0, 0, 0, 0);
-    auto emit_line = [&](const std::string& s, float band_top_y) {
-        const std::string drawn = fit(s, max_w);
-        const float x0 = std::round(0.5f * (tw - width_of(drawn) * scale));
-        // The line box (line_height tall) centred on the band; baseline at
-        // its top + ascent (GL y is up, so subtract going down).
-        const float baseline = std::round(
-            band_top_y - 0.5f * (band_h - line_height_ * scale) - ascent_ * scale);
+    const float pad = l.dot_r + 1.5f;
+    push_quad(verts, l.dot_cx - pad, l.dot_cy - pad, l.dot_cx + pad, l.dot_cy + pad,
+              0, 0, 0, 0);
+    auto emit_line = [&](const std::string& s, float baseline, float scale) {
+        const std::string drawn = fit(s, l.max_w / scale);
         float pen = 0.f;
         for (unsigned char c : drawn) {
             const Glyph* g = glyph(c);
             if (g && g->w > 0.f && g->h > 0.f) {
-                const float gx0 = x0 + (pen + g->bearing_x) * scale;
+                const float gx0 = l.name_x + (pen + g->bearing_x) * scale;
                 const float gy1 = baseline + g->bearing_y * scale;   // glyph top
                 // Atlas rows are top-down and upload unflipped, so texture
                 // v = atlas_y / atlas_h: the glyph TOP is v = y / H.
@@ -208,8 +230,8 @@ void ViewscreenBarsPass::render(Shader& shader, const ViewscreenBars& bars,
             pen += g ? g->advance : space_advance_;
         }
     };
-    emit_line(bars.top, th);
-    emit_line(bars.bottom, band_h);
+    emit_line(bars.name, l.baseline1, l.scale1);
+    emit_line(bars.detail, l.baseline2, l.scale2);
 
     // Save state.
     const GLboolean prev_blend = glIsEnabled(GL_BLEND);
@@ -245,26 +267,28 @@ void ViewscreenBarsPass::render(Shader& shader, const ViewscreenBars& bars,
     shader.set_vec2("u_target", glm::vec2(tw, th));
     glBindTexture(GL_TEXTURE_2D, atlas_.id());
     shader.set_int("u_atlas", 0);
+    shader.set_vec3("u_dot", glm::vec3(l.dot_cx, l.dot_cy, l.dot_r));
 
-    // Bands: top rounds its bottom corners, bottom rounds its top corners.
-    shader.set_int("u_mode", 0);
-    shader.set_vec3("u_color", capped(bars.band_rgb));
-    shader.set_vec4("u_rect", glm::vec4(0.f, th - band_h, tw, th));
-    shader.set_float("u_radius_top", 0.f);
-    shader.set_float("u_radius_bottom", radius);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-    shader.set_vec4("u_rect", glm::vec4(0.f, 0.f, tw, band_h));
-    shader.set_float("u_radius_top", radius);
-    shader.set_float("u_radius_bottom", 0.f);
-    glDrawArrays(GL_TRIANGLES, 6, 6);
-
-    // Text.
-    const GLsizei glyph_verts = static_cast<GLsizei>(verts.size()) - 12;
-    if (glyph_verts > 0) {
-        shader.set_int("u_mode", 1);
-        shader.set_vec3("u_color", capped(bars.text_rgb));
-        glDrawArrays(GL_TRIANGLES, 12, glyph_verts);
-    }
+    const GLsizei glyph_verts = static_cast<GLsizei>(verts.size()) - 6;
+    auto draw_all = [&](const glm::vec3& dot_rgb, const glm::vec3& text_rgb) {
+        shader.set_int("u_mode", 0);
+        shader.set_vec3("u_color", dot_rgb);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        if (glyph_verts > 0) {
+            shader.set_int("u_mode", 1);
+            shader.set_vec3("u_color", text_rgb);
+            glDrawArrays(GL_TRIANGLES, 6, glyph_verts);
+        }
+    };
+    // Shadow first: the same geometry in black, offset down-right (GL y up).
+    const float off = kVsReadoutShadowOffsetPx * tw / kReadoutDesignTargetW;
+    shader.set_vec2("u_offset", glm::vec2(off, -off));
+    shader.set_float("u_alpha", kVsReadoutShadowAlpha);
+    draw_all(glm::vec3(0.f), glm::vec3(0.f));
+    // Then the dot in the affiliation colour and the text in white, capped.
+    shader.set_vec2("u_offset", glm::vec2(0.f));
+    shader.set_float("u_alpha", 1.f);
+    draw_all(capped(bars.dot_rgb), capped({1.f, 1.f, 1.f}));
 
     // Restore state.
     glBindVertexArray(static_cast<GLuint>(prev_vao));

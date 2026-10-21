@@ -112,8 +112,8 @@ def test_drive_viewscreen_bars_sets_when_visible_and_clears_otherwise(monkeypatc
     calls = []
 
     class R:
-        def set_viewscreen_bars(self, top, bottom, band, text):
-            calls.append(("set", top, bottom, band, text))
+        def set_viewscreen_bars(self, name, detail, dot_rgb):
+            calls.append(("set", name, detail, dot_rgb))
         def clear_viewscreen_bars(self):
             calls.append(("clear",))
 
@@ -123,13 +123,13 @@ def test_drive_viewscreen_bars_sets_when_visible_and_clears_otherwise(monkeypatc
         seen.append(target)
         if target is None:
             return {"visible": False}
-        return {"visible": True, "top_text": "T", "bottom_text": "B",
-                "band_rgb": (1, 2, 3), "text_rgb": (4, 5, 6)}
+        return {"visible": True, "name": "T", "detail": "D",
+                "dot_rgb": (1, 2, 3)}
 
     monkeypatch.setattr(host_loop, "build_viewscreen_bars", fake_build)
     r = R()
     host_loop.drive_viewscreen_bars(r, object(), object())
-    assert calls == [("set", "T", "B", (1, 2, 3), (4, 5, 6))]
+    assert calls == [("set", "T", "D", (1, 2, 3))]
     host_loop.drive_viewscreen_bars(r, object(), None)
     assert calls[-1] == ("clear",)
     assert len(calls) == 2

@@ -1508,14 +1508,15 @@ def set_viewscreen_static_source(paths) -> None:
     _h.set_viewscreen_static_source(paths)
 
 
-def set_viewscreen_bars(top, bottom, band_rgb, text_rgb) -> None:
-    """Show the target name / range bands on the viewscreen target feed.
-    Colours are 0-255 ints; drawn into the RTT on the scene feed only."""
-    _h.set_viewscreen_bars(top, bottom, band_rgb, text_rgb)
+def set_viewscreen_bars(name, detail, dot_rgb) -> None:
+    """Show the top-left target readout (affiliation dot + name, then the
+    detail line) on the viewscreen target feed. `dot_rgb` is 0-255 ints;
+    drawn into the RTT on the scene feed only, text always white."""
+    _h.set_viewscreen_bars(name, detail, dot_rgb)
 
 
 def clear_viewscreen_bars() -> None:
-    """Hide the viewscreen target bands."""
+    """Hide the viewscreen target readout."""
     _h.clear_viewscreen_bars()
 
 

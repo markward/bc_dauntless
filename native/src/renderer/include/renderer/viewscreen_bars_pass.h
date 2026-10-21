@@ -10,26 +10,45 @@ namespace renderer { class Shader; }
 
 namespace renderer {
 
-/// What the viewscreen bars show this frame (pushed from Python).
+/// What the viewscreen target readout shows this frame (pushed from Python).
 struct ViewscreenBars {
     bool visible = false;
-    std::string top, bottom;
-    std::array<float, 3> band_rgb{};   // 0..1, sRGB as sent by Python /255
-    std::array<float, 3> text_rgb{};
+    std::string name, detail;          // line 1 (after the dot), line 2
+    std::array<float, 3> dot_rgb{};    // 0..1, sRGB as sent by Python /255
 };
 
-/// Band height as a fraction of the target height (top and bottom band each).
-constexpr float kVsBarsHeightFrac  = 0.10f;
-/// Inner-corner radius in pixels at a 640-wide target; scales with the width.
-constexpr float kVsBarsRadiusPx640 = 18.0f;
-/// No band or text channel exceeds this: the viewscreen picture reaches the
+// Readout geometry (spec §2a). Pixel values are at a 640-wide RTT; every one
+// scales by target_w / 640, the font too (scale 1.0 = the atlas pixel_size).
+/// Inset from the picture's left and top edges, so the bezel can't clip it.
+constexpr float kVsReadoutInsetXPx         = 24.f;
+constexpr float kVsReadoutInsetYPx         = 18.f;
+/// Line sizes, as a fraction of the atlas pixel_size (one atlas, scaled).
+constexpr float kVsReadoutLine1Scale       = 1.0f;
+constexpr float kVsReadoutLine2Scale       = 0.7f;
+/// Gap between line 1's descent and line 2's ascent.
+constexpr float kVsReadoutLineGapPx        = 4.f;
+/// Dot diameter as a fraction of line 1's cap height ('H' bearing_y).
+constexpr float kVsReadoutDotDiameterFrac  = 0.6f;
+/// Dot right edge -> name.
+constexpr float kVsReadoutDotGapPx         = 7.f;
+/// Black shadow under the dot and both lines, offset down-right.
+constexpr float kVsReadoutShadowOffsetPx   = 1.5f;
+constexpr float kVsReadoutShadowAlpha      = 0.6f;
+/// No dot or text channel exceeds this: the viewscreen picture reaches the
 /// main post chain unlit, and its bloom threshold is ~0.9 (spec §4.3).
-constexpr float kVsBarsChannelCap  = 0.85f;
+constexpr float kVsBarsChannelCap          = 0.85f;
 
-/// Draws the target name / range bands over the viewscreen RTT: two solid
-/// bands edge to edge (top band rounds its bottom corners, bottom band its
-/// top corners) with bitmap-font text centred in each. Text comes from a
-/// generated atlas (native/assets/fonts/viewscreen_antonio.{json,png}).
+/// Where the readout goes on a target, in GL pixels (origin bottom-left,
+/// y up: the top of the picture is high y).
+struct ViewscreenReadoutLayout {
+    float scale1 = 0.f, scale2 = 0.f;   // atlas pixel -> target pixel, per line
+    float cap_height1 = 0.f;            // line 1 cap height, target pixels
+    float baseline1 = 0.f, baseline2 = 0.f;
+    float dot_cx = 0.f, dot_cy = 0.f, dot_r = 0.f;
+    float name_x = 0.f;                 // both lines start here
+    float max_w = 0.f;                  // widest a line may be before "..."
+};
+
 class ViewscreenBarsPass {
 public:
     ViewscreenBarsPass() = default;
@@ -52,13 +71,19 @@ public:
     /// active texture + its 2D binding, VAO and array buffer.
     void render(Shader& shader, const ViewscreenBars& bars, int target_w, int target_h);
 
-    /// Test seams, in font pixels. layout: one (pen x, advance) per DRAWN
-    /// glyph (a glyph with an empty box, such as space, or a byte missing
-    /// from the atlas advances the pen but is not listed). fit: the string
-    /// actually drawn for a band `max_w` wide (ellipsis-truncated).
+    /// The readout's placement on a target_w x target_h RTT. Needs the font
+    /// (cap height); without one every field is 0.
+    ViewscreenReadoutLayout readout_layout(int target_w, int target_h) const;
+
+    /// Test seams, in TARGET pixels for a line drawn at `scale` (atlas pixel
+    /// -> target pixel). layout: one (pen x, advance) per DRAWN glyph (a glyph
+    /// with an empty box, such as space, or a byte missing from the atlas
+    /// advances the pen but is not listed). fit: the string actually drawn in
+    /// `max_w` (ellipsis-truncated).
     std::vector<std::pair<float, float>> layout_line_for_test(const std::string& s,
-                                                              float max_w) const;
-    std::string fit_for_test(const std::string& s, float max_w) const;
+                                                              float max_w,
+                                                              float scale) const;
+    std::string fit_for_test(const std::string& s, float max_w, float scale) const;
 
 private:
     struct Glyph { float x, y, w, h, bearing_x, bearing_y, advance; };
@@ -73,6 +98,7 @@ private:
     float space_advance_ = 0.f;
     float line_height_ = 0.f;
     float ascent_ = 0.f;
+    float cap_height_ = 0.f;   // 'H' bearing_y, else ascent
     float atlas_w_ = 1.f, atlas_h_ = 1.f;
     assets::Texture atlas_;
     bool logged_failure_ = false;

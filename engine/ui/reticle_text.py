@@ -35,9 +35,9 @@ class _ReticleCam:
         return self._up
 
 
-def readout_line(target, player) -> str:
-    """The "<range> km / <speed> kph" line, shared by the exterior reticle and
-    the viewscreen bars so the two can never disagree."""
+def readout_values(target, player) -> tuple[float, float]:
+    """(range km, speed kph): the numbers behind the exterior reticle's line and
+    the viewscreen readout's detail line, so the two can never disagree."""
     # target_menu.surface_gu_to is the ONE place the player-to-contact vector
     # is derived (surface distance, planets included).
     dist_gu = surface_gu_to(target, player)
@@ -45,7 +45,12 @@ def readout_line(target, player) -> str:
     # hasattr() is vacuously true on any TGObject. Planets don't move.
     vel = target.GetVelocity() if implements(target, "GetVelocity") else None
     speed_gu = (vel.x * vel.x + vel.y * vel.y + vel.z * vel.z) ** 0.5 if vel else 0.0
-    return "%.2f km / %.0f kph" % (dist_gu * GU_TO_KM, speed_gu * GUPS_TO_KPH)
+    return dist_gu * GU_TO_KM, speed_gu * GUPS_TO_KPH
+
+
+def readout_line(target, player) -> str:
+    """The reticle's "<range> km / <speed> kph" line."""
+    return "%.2f km / %.0f kph" % readout_values(target, player)
 
 
 def identity_name(target):

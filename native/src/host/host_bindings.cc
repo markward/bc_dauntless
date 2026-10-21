@@ -2062,7 +2062,8 @@ void frame() {
                 g_pipeline->viewscreen_static_shader(),
                 g_viewscreen_static.intensity, now);
         }
-        // Target name / range bands: scene (target) feed only, over the static.
+        // Target readout (dot + name, detail line): scene (target) feed only,
+        // over the static.
         // The space passes above may have changed the viewport; restore the RTT's.
         if (!g_comm_source.active && g_scene_source.active
                 && g_viewscreen_bars.visible && g_viewscreen_bars_pass) {
@@ -4541,19 +4542,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   g_viewscreen_static_pass->set_textures(paths);
           }, py::arg("paths"));
     m.def("set_viewscreen_bars",
-          [](const std::string& top, const std::string& bottom,
-             std::tuple<int,int,int> band, std::tuple<int,int,int> text) {
+          [](const std::string& name, const std::string& detail,
+             std::tuple<int,int,int> dot) {
               g_viewscreen_bars.visible = true;
-              g_viewscreen_bars.top = top;
-              g_viewscreen_bars.bottom = bottom;
-              g_viewscreen_bars.band_rgb = {std::get<0>(band) / 255.0f,
-                                            std::get<1>(band) / 255.0f,
-                                            std::get<2>(band) / 255.0f};
-              g_viewscreen_bars.text_rgb = {std::get<0>(text) / 255.0f,
-                                            std::get<1>(text) / 255.0f,
-                                            std::get<2>(text) / 255.0f};
-          }, py::arg("top"), py::arg("bottom"),
-             py::arg("band_rgb"), py::arg("text_rgb"));
+              g_viewscreen_bars.name = name;
+              g_viewscreen_bars.detail = detail;
+              g_viewscreen_bars.dot_rgb = {std::get<0>(dot) / 255.0f,
+                                           std::get<1>(dot) / 255.0f,
+                                           std::get<2>(dot) / 255.0f};
+          }, py::arg("name"), py::arg("detail"), py::arg("dot_rgb"));
     m.def("clear_viewscreen_bars",
           []() { g_viewscreen_bars.visible = false; });
     m.def("set_viewscreen_static",

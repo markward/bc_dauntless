@@ -1,7 +1,9 @@
-"""Viewscreen target bars: data builder (name + range/speed + affiliation).
+"""Viewscreen target readout: data builder (name + range/speed + affiliation).
 
-Shares the reticle's readout code (reticle_text.readout_line / identity_name)
-so the bars and the exterior reticle can never disagree.
+A top-left two-line readout on the viewscreen target feed: an affiliation dot
+and the target name, then "DST: <km> km  SPD: <kph> kph". Shares the reticle's
+numbers (reticle_text.readout_values / identity_name) so the readout and the
+exterior reticle can never disagree. Text is always white (native side).
 See docs/superpowers/specs/2026-10-21-viewscreen-target-bars-design.md
 """
 from __future__ import annotations
@@ -14,12 +16,6 @@ AFFILIATION_RGB = {
     "FRIENDLY": (80, 112, 230),
     "NEUTRAL": (255, 255, 175),
     "UNKNOWN": (128, 128, 128),
-}
-TEXT_RGB_ON = {
-    "ENEMY": (255, 255, 255),
-    "FRIENDLY": (255, 255, 255),
-    "NEUTRAL": (0, 0, 0),
-    "UNKNOWN": (255, 255, 255),
 }
 
 
@@ -36,16 +32,16 @@ def build_viewscreen_bars(player, target) -> dict:
     placeholder = reticle_text.identity_name(target)
     if placeholder is not None:
         affiliation = "UNKNOWN"
-        top = placeholder
+        name = placeholder
     else:
         affiliation = target_menu.resolve_affiliation(target, _current_mission())
         if affiliation not in AFFILIATION_RGB:
             affiliation = "UNKNOWN"
-        top = target.GetDisplayName()
+        name = target.GetDisplayName()
     return {
         "visible": True,
-        "top_text": top,
-        "bottom_text": reticle_text.readout_line(target, player),
-        "band_rgb": AFFILIATION_RGB[affiliation],
-        "text_rgb": TEXT_RGB_ON[affiliation],
+        "name": name,
+        "detail": "DST: %.2f km  SPD: %.0f kph"
+                  % reticle_text.readout_values(target, player),
+        "dot_rgb": AFFILIATION_RGB[affiliation],
     }

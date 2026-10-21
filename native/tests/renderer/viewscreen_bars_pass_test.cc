@@ -12,16 +12,19 @@
 #include <renderer/viewscreen_bars_pass.h>
 
 // All pixel coordinates are GL framebuffer coordinates (origin bottom-left,
-// y up) -- how the scene is stored in the viewscreen RTT. On a 640x360 target
-// the top band is y in [324, 360), the bottom band y in [0, 36).
+// y up) -- how the scene is stored in the viewscreen RTT. The readout sits at
+// the TOP-LEFT, i.e. small x and HIGH y. Positions come from readout_layout();
+// LayoutAt640x360 pins that arithmetic against hand-derived numbers.
 
 namespace {
 
 constexpr int kW = 640;
 constexpr int kH = 360;
-constexpr std::array<float, 3> kFeed{0.1f, 0.3f, 0.5f};
+// Mid grey: white text reads ABOVE it and the black shadow BELOW it.
+constexpr float kGrey = 0.4f;
+constexpr std::array<float, 3> kFeed{kGrey, kGrey, kGrey};
 constexpr std::array<float, 3> kRed{216.f / 255.f, 43.f / 255.f, 43.f / 255.f};
-constexpr std::array<float, 3> kWhite{1.f, 1.f, 1.f};
+constexpr std::array<float, 3> kNeutral{1.f, 1.f, 0.686f};
 
 std::string font_path() {
     return std::string(OPEN_STBC_PROJECT_ROOT) +
@@ -40,15 +43,42 @@ void expect_rgb(const std::array<float, 3>& got, const std::array<float, 3>& wan
         EXPECT_NEAR(got[c], want[c], tol) << what << " channel " << c;
 }
 
-renderer::ViewscreenBars bars(const std::string& top, const std::string& bottom,
-                              std::array<float, 3> band, std::array<float, 3> text) {
+renderer::ViewscreenBars bars(const std::string& name, const std::string& detail,
+                              std::array<float, 3> dot) {
     renderer::ViewscreenBars b;
     b.visible = true;
-    b.top = top;
-    b.bottom = bottom;
-    b.band_rgb = band;
-    b.text_rgb = text;
+    b.name = name;
+    b.detail = detail;
+    b.dot_rgb = dot;
     return b;
+}
+
+/// A read-back rectangle [x0,x1) x [y0,y1) in GL pixels.
+struct Region {
+    int x0, y0, x1, y1;
+    std::vector<float> px;
+    Region(int ax0, int ay0, int ax1, int ay1) : x0(ax0), y0(ay0), x1(ax1), y1(ay1) {
+        px.resize(static_cast<size_t>(x1 - x0) * (y1 - y0) * 4);
+        glReadPixels(x0, y0, x1 - x0, y1 - y0, GL_RGBA, GL_FLOAT, px.data());
+    }
+    std::array<float, 3> at(int x, int y) const {
+        const size_t i = (static_cast<size_t>(y - y0) * (x1 - x0) + (x - x0)) * 4;
+        return {px[i], px[i + 1], px[i + 2]};
+    }
+};
+
+bool near_white(const std::array<float, 3>& p) {
+    return std::min({p[0], p[1], p[2]}) > kGrey + 0.25f;
+}
+
+/// Rows [lo, hi] holding near-white ink in the region, or {1, 0} when none.
+std::pair<int, int> ink_rows(const Region& r) {
+    int lo = r.y1, hi = r.y0 - 1;
+    for (int y = r.y0; y < r.y1; ++y)
+        for (int x = r.x0; x < r.x1; ++x)
+            if (near_white(r.at(x, y))) { lo = std::min(lo, y); hi = std::max(hi, y); }
+    if (hi < lo) return {1, 0};
+    return {lo, hi};
 }
 
 class ViewscreenBarsPass : public ::testing::Test {
@@ -70,6 +100,7 @@ protected:
         pass.render(pipe->viewscreen_bars_shader(), b, kW, kH);
     }
     bool load() { return pass.load_font(font_path()); }
+    renderer::ViewscreenReadoutLayout lay() const { return pass.readout_layout(kW, kH); }
 
     std::unique_ptr<renderer::Window> win;
     std::unique_ptr<renderer::Pipeline> pipe;
@@ -79,86 +110,152 @@ protected:
 
 }  // namespace
 
-TEST_F(ViewscreenBarsPass, DrawsTheBandColourInBothBands) {
+// Font facts (native/assets/fonts/viewscreen_antonio.json): 'H' bearing_y 24
+// (cap height), ascent 33, line_height 37 (descent 4). At 640 wide, s = 1:
+//   cap top 1 = 360 - 18 = 342; baseline 1 = 342 - 24 = 318
+//   dot: d = 0.6 * 24 = 14.4, left 24 -> centre x 31.2, centre y 318 + 12 = 330
+//   name x = round(24 + 14.4 + 7) = 45
+//   line 1 descent = 318 - 4 = 314; line 2 ascent top = 314 - 4 = 310;
+//   baseline 2 = round(310 - 0.7 * 33) = round(286.9) = 287
+TEST_F(ViewscreenBarsPass, LayoutAt640x360) {
     ASSERT_TRUE(load());
-    draw(bars("", "", kRed, kWhite));
-    expect_rgb(pixel(4, 357), kRed, 0.02f, "top band");
-    expect_rgb(pixel(4, 2), kRed, 0.02f, "bottom band");
-    expect_rgb(pixel(320, 180), kFeed, 0.001f, "mid-picture");
+    const auto l = lay();
+    EXPECT_FLOAT_EQ(l.scale1, 1.0f);
+    EXPECT_FLOAT_EQ(l.scale2, 0.7f);
+    EXPECT_FLOAT_EQ(l.cap_height1, 24.f);
+    EXPECT_FLOAT_EQ(l.baseline1, 318.f);
+    EXPECT_FLOAT_EQ(l.baseline2, 287.f);
+    EXPECT_NEAR(l.dot_cx, 31.2f, 1e-4f);
+    EXPECT_NEAR(l.dot_cy, 330.f, 1e-4f);
+    EXPECT_NEAR(l.dot_r, 7.2f, 1e-4f);
+    EXPECT_FLOAT_EQ(l.name_x, 45.f);
+    EXPECT_FLOAT_EQ(l.max_w, 640.f - 45.f - 24.f);
+    // Every pixel value scales with the width.
+    const auto big = pass.readout_layout(2 * kW, 2 * kH);
+    EXPECT_FLOAT_EQ(big.scale1, 2.0f);
+    EXPECT_NEAR(big.dot_cx, 62.4f, 1e-4f);
+    EXPECT_FLOAT_EQ(big.baseline1, 720.f - 36.f - 48.f);
 }
 
-TEST_F(ViewscreenBarsPass, CapsBrightChannels) {
+TEST_F(ViewscreenBarsPass, DrawsTheAffiliationDot) {
     ASSERT_TRUE(load());
-    draw(bars("", "", {1.f, 1.f, 0.686f}, {0.f, 0.f, 0.f}));
-    for (const auto& p : {pixel(4, 357), pixel(4, 2)}) {
-        const float mx = std::max({p[0], p[1], p[2]});
-        EXPECT_LE(mx, renderer::kVsBarsChannelCap + 0.01f);
-        EXPECT_GT(mx, renderer::kVsBarsChannelCap - 0.02f);   // drawn, not skipped
-    }
+    draw(bars("KESSOK", "DST: 2.45 km  SPD: 1414 kph", kRed));
+    const auto l = lay();
+    expect_rgb(pixel(static_cast<int>(l.dot_cx), static_cast<int>(l.dot_cy)),
+               kRed, 0.03f, "dot centre");
 }
 
-TEST_F(ViewscreenBarsPass, RoundsOnlyTheInnerCorners) {
+TEST_F(ViewscreenBarsPass, CapsTheDotColour) {
     ASSERT_TRUE(load());
-    draw(bars("", "", kRed, kWhite));
-    expect_rgb(pixel(1, 325), kFeed, 0.02f, "top band inner corner");
-    expect_rgb(pixel(1, 358), kRed, 0.02f, "top band outer corner");
-    expect_rgb(pixel(1, 34), kFeed, 0.02f, "bottom band inner corner");
-    expect_rgb(pixel(1, 1), kRed, 0.02f, "bottom band outer corner");
+    draw(bars("KESSOK", "", kNeutral));
+    const auto l = lay();
+    const auto p = pixel(static_cast<int>(l.dot_cx), static_cast<int>(l.dot_cy));
+    const float mx = std::max({p[0], p[1], p[2]});
+    EXPECT_LE(mx, renderer::kVsBarsChannelCap + 0.01f);
+    EXPECT_GT(mx, renderer::kVsBarsChannelCap - 0.02f);   // drawn, not skipped
 }
 
-TEST_F(ViewscreenBarsPass, DrawsTextInsideTheBand) {
+TEST_F(ViewscreenBarsPass, DrawsWhiteNameTextTopLeft) {
     ASSERT_TRUE(load());
-    draw(bars("KESSOK", "", kRed, kWhite));
-    std::vector<float> buf(static_cast<size_t>(kW / 3) * 36 * 4);
-    glReadPixels(kW / 3, 324, kW / 3, 36, GL_RGBA, GL_FLOAT, buf.data());
-    int differing = 0;
-    for (size_t i = 0; i < buf.size(); i += 4)
-        if (std::fabs(buf[i + 1] - kRed[1]) > 0.1f) ++differing;
-    EXPECT_GT(differing, 20);
+    draw(bars("KESSOK", "", kRed));
+    const auto l = lay();
+    const int y_top = static_cast<int>(l.baseline1 + l.cap_height1) + 1;
+    const Region r(static_cast<int>(l.name_x), static_cast<int>(l.baseline1), 320, y_top);
+    int white = 0;
+    for (int y = r.y0; y < r.y1; ++y)
+        for (int x = r.x0; x < r.x1; ++x) {
+            const auto p = r.at(x, y);
+            if (near_white(p)) {
+                ++white;
+                EXPECT_LE(std::max({p[0], p[1], p[2]}), renderer::kVsBarsChannelCap + 0.01f);
+            }
+        }
+    EXPECT_GT(white, 20);
+}
+
+TEST_F(ViewscreenBarsPass, DrawsSmallerDetailLineBelow) {
+    ASSERT_TRUE(load());
+    draw(bars("H", "H", kRed));
+    const auto l = lay();
+    const int x0 = static_cast<int>(l.name_x) - 1;
+    const int split = static_cast<int>(l.baseline1) - 2;   // between the lines
+    const auto [a_lo, a_hi] = ink_rows(Region(x0, split, x0 + 40, kH));
+    const auto [b_lo, b_hi] = ink_rows(Region(x0, split - 60, x0 + 40, split));
+    ASSERT_LE(a_lo, a_hi) << "no line-1 ink";
+    ASSERT_LE(b_lo, b_hi) << "no line-2 ink";
+    EXPECT_LT(b_hi, a_lo) << "line 2 sits below line 1";
+    EXPECT_LT(b_hi - b_lo, a_hi - a_lo) << "line 2 is smaller";
+    // Line 2 starts at the name's x, not the dot's: no ink left of the name.
+    const auto [d_lo, d_hi] = ink_rows(Region(0, split - 60, x0, split));
+    EXPECT_GT(d_lo, d_hi) << "line 2 must not start under the dot";
+}
+
+TEST_F(ViewscreenBarsPass, NoBackgroundOrBandAnywhere) {
+    ASSERT_TRUE(load());
+    draw(bars("KESSOK", "DST: 2.45 km  SPD: 1414 kph", kRed));
+    expect_rgb(pixel(320, 357), kFeed, 0.001f, "old top band, middle");
+    expect_rgb(pixel(600, 357), kFeed, 0.001f, "old top band, right");
+    expect_rgb(pixel(4, 357), kFeed, 0.001f, "old top band, left");
+    expect_rgb(pixel(320, 2), kFeed, 0.001f, "old bottom band");
+    expect_rgb(pixel(320, 180), kFeed, 0.001f, "picture centre");
+}
+
+TEST_F(ViewscreenBarsPass, ShadowIsDrawn) {
+    ASSERT_TRUE(load());
+    draw(bars("KESSOK", "", kRed));
+    const auto l = lay();
+    const Region r(static_cast<int>(l.name_x), static_cast<int>(l.baseline1) - 4, 200,
+                   static_cast<int>(l.baseline1 + l.cap_height1) + 2);
+    int dark = 0;
+    for (int y = r.y0; y < r.y1; ++y)
+        for (int x = r.x0; x < r.x1; ++x) {
+            const auto p = r.at(x, y);
+            if (std::max({p[0], p[1], p[2]}) < kGrey - 0.1f) ++dark;
+        }
+    EXPECT_GT(dark, 5);
 }
 
 TEST_F(ViewscreenBarsPass, TextIsRightWayUp) {
     ASSERT_TRUE(load());
-    draw(bars("T", "", kRed, kWhite));
-    std::vector<float> buf(static_cast<size_t>(kW) * 36 * 4);
-    glReadPixels(0, 324, kW, 36, GL_RGBA, GL_FLOAT, buf.data());
-    // Coverage = how far green moved off the band toward the (capped) white.
-    auto cov = [&](int x, int y) {
-        return std::max(0.0f, buf[(static_cast<size_t>(y) * kW + x) * 4 + 1] - kRed[1]);
-    };
-    // Scan the middle third only: the rounded inner corners at the band's
-    // ends show the feed, which would read as "coverage" in the lower rows.
-    const int xa = kW / 3, xb = 2 * kW / 3;
-    int y0 = 36, y1 = -1;
-    for (int y = 0; y < 36; ++y)
-        for (int x = xa; x < xb; ++x)
+    draw(bars("T", "", kRed));
+    const auto l = lay();
+    // Name only (right of the dot), line 1's rows.
+    const Region r(static_cast<int>(l.name_x) - 1, static_cast<int>(l.baseline1) - 4,
+                   static_cast<int>(l.name_x) + 40, kH);
+    auto cov = [&](int x, int y) { return std::max(0.0f, r.at(x, y)[1] - kGrey); };
+    int y0 = r.y1, y1 = r.y0 - 1;
+    for (int y = r.y0; y < r.y1; ++y)
+        for (int x = r.x0; x < r.x1; ++x)
             if (cov(x, y) > 0.05f) { y0 = std::min(y0, y); y1 = std::max(y1, y); }
-    ASSERT_LT(y0, y1) << "no glyph pixels in the top band";
+    ASSERT_LT(y0, y1) << "no glyph pixels on line 1";
     const float mid = 0.5f * (y0 + y1);
     float upper = 0.f, lower = 0.f;
     for (int y = y0; y <= y1; ++y)
-        for (int x = xa; x < xb; ++x)
+        for (int x = r.x0; x < r.x1; ++x)
             (y > mid ? upper : lower) += (y == mid ? 0.f : cov(x, y));
     EXPECT_GT(upper, lower * 1.1f) << "a T is wide at the top (higher y)";
 }
 
 TEST_F(ViewscreenBarsPass, InvisibleDrawsNothing) {
     ASSERT_TRUE(load());
-    auto b = bars("KESSOK", "1.0 km / 0 kph", kRed, kWhite);
+    auto b = bars("KESSOK", "DST: 1.00 km  SPD: 0 kph", kRed);
     b.visible = false;
     draw(b);
-    expect_rgb(pixel(4, 357), kFeed, 0.001f, "top band");
-    expect_rgb(pixel(4, 2), kFeed, 0.001f, "bottom band");
+    const auto l = lay();
+    expect_rgb(pixel(static_cast<int>(l.dot_cx), static_cast<int>(l.dot_cy)), kFeed,
+               0.001f, "dot");
+    const auto [lo, hi] = ink_rows(Region(0, 200, 320, kH));
+    EXPECT_GT(lo, hi) << "no text drawn";
 }
 
 TEST_F(ViewscreenBarsPass, MissingGlyphAdvancesWithoutDrawing) {
     ASSERT_TRUE(load());
-    const auto space = pass.layout_line_for_test(" ", 1e9f);   // drawn glyphs only
+    const auto space = pass.layout_line_for_test(" ", 1e9f, 1.f);   // drawn glyphs only
     EXPECT_TRUE(space.empty());
-    const auto pens = pass.layout_line_for_test("A\xc3\xa9" "B", 1e9f);
+    const auto pens = pass.layout_line_for_test("A\xc3\xa9" "B", 1e9f, 1.f);
     ASSERT_EQ(pens.size(), 2u) << "only A and B are drawn";
     const float a_adv = pens[0].second;
-    const auto sp = pass.layout_line_for_test("A A", 1e9f);
+    const auto sp = pass.layout_line_for_test("A A", 1e9f, 1.f);
     ASSERT_EQ(sp.size(), 2u);
     const float space_adv = sp[1].first - sp[0].first - a_adv;
     EXPECT_GT(space_adv, 0.f);
@@ -168,23 +265,30 @@ TEST_F(ViewscreenBarsPass, MissingGlyphAdvancesWithoutDrawing) {
 
 TEST_F(ViewscreenBarsPass, LongNameIsEllipsised) {
     ASSERT_TRUE(load());
-    const std::string fit = pass.fit_for_test(std::string(200, 'W'), 604.f);
-    ASSERT_GE(fit.size(), 3u);
-    EXPECT_EQ(fit.substr(fit.size() - 3), "...");
-    EXPECT_LT(fit.size(), 200u);
-    const auto pens = pass.layout_line_for_test(fit, 1e9f);
-    ASSERT_FALSE(pens.empty());
-    EXPECT_LE(pens.back().first + pens.back().second, 604.f);
-    // A string that fits is drawn whole.
-    EXPECT_EQ(pass.fit_for_test("KESSOK", 604.f), "KESSOK");
+    const auto l = lay();
+    for (const float scale : {l.scale1, l.scale2}) {
+        const std::string fit = pass.fit_for_test(std::string(200, 'W'), l.max_w, scale);
+        ASSERT_GE(fit.size(), 3u);
+        EXPECT_EQ(fit.substr(fit.size() - 3), "...");
+        EXPECT_LT(fit.size(), 200u);
+        const auto pens = pass.layout_line_for_test(fit, 1e9f, scale);
+        ASSERT_FALSE(pens.empty());
+        EXPECT_LE(pens.back().first + pens.back().second, l.max_w);
+        // A string that fits is drawn whole.
+        EXPECT_EQ(pass.fit_for_test("KESSOK", l.max_w, scale), "KESSOK");
+    }
+    // The smaller line fits more of the same glyphs.
+    EXPECT_GT(pass.fit_for_test(std::string(200, 'W'), l.max_w, l.scale2).size(),
+              pass.fit_for_test(std::string(200, 'W'), l.max_w, l.scale1).size());
 }
 
 TEST_F(ViewscreenBarsPass, BadFontPathFailsSoft) {
     EXPECT_FALSE(pass.load_font("/nonexistent.json"));
     EXPECT_FALSE(pass.has_font());
-    draw(bars("KESSOK", "1.0 km / 0 kph", kRed, kWhite));
-    expect_rgb(pixel(4, 357), kFeed, 0.001f, "top band");
-    expect_rgb(pixel(4, 2), kFeed, 0.001f, "bottom band");
+    draw(bars("KESSOK", "DST: 1.00 km  SPD: 0 kph", kRed));
+    const auto [lo, hi] = ink_rows(Region(0, 200, 320, kH));
+    EXPECT_GT(lo, hi) << "no text drawn";
+    expect_rgb(pixel(31, 330), kFeed, 0.001f, "where the dot would be");
 }
 
 TEST_F(ViewscreenBarsPass, EnsureFontAttemptsOncePerDistinctRoot) {
