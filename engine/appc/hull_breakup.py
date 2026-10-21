@@ -19,10 +19,11 @@ the full flood, and a check with no carve since the last one returns at
 once. So the throttle here bounds the RATE; the native check bounds the
 COST. Neither replaces the other.
 
-`after_wear` is the plating-wear twin (hull_wear / internal_blast call it
-after wear reaches the store): `host_io.hull_split_parts` breaks off every
-STRUCTURE PART the wear has cut from the main body, hiding it on the parent
-and instancing a chunk that draws only that part. Same throttle and drain,
+`after_wear` is the plating-wear twin (hull_wear / internal_blast /
+visible_damage call it after wear reaches the store):
+`host_io.hull_split_parts` breaks off every PIECE the wear has cut from the
+main body -- the structure parts that leave together, as one chunk (Ruling 4)
+-- hiding them on the parent and instancing a chunk that draws only them. Same throttle and drain,
 on its own clock, so a carve check never delays a wear check. Rocks never
 sever this way (they crumble: engine.rocks.death).
 """
@@ -119,7 +120,7 @@ def _check_parts(ship, iid, now):
         return []
     if not parts:
         return []
-    # The native side reports a part once (the parent's severed bit); this
+    # The native side reports a part once (the parent's severed bits); this
     # guard keeps a part from ever spawning or killing twice on this side.
     # A weak reference (as debris_chunk keeps its origin ship): the record
     # must never keep a dead ship alive.
@@ -130,12 +131,13 @@ def _check_parts(ship, iid, now):
     done = entry[2]
     fresh = []
     for p in parts:
-        if int(p["part"]) in done:
+        members = {int(i) for i in p.get("parts", ())}
+        if not members or members & done:
             # Native instanced a chunk for it before we got here: no body
             # will own it, so it must not stay in the scene.
             _destroy_orphan(p.get("instance_id"))
             continue
-        done.add(int(p["part"]))
+        done |= members
         fresh.append(p)
     if not fresh:
         return []

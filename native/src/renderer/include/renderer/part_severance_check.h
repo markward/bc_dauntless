@@ -17,27 +17,30 @@
 
 namespace renderer {
 
-struct SeveredPart {
-    int part = -1;
-    int voxels = 0;                 // surviving voxels of the part
+// One piece cut off the hull: the structure parts that leave together.
+struct SeveredPiece {
+    std::uint32_t parts = 0;        // bit i: structure part i leaves with it
+    int voxels = 0;                 // surviving voxels of the piece
     glm::vec3 centroid_body{0};
     glm::vec3 min_body{0}, max_body{0};
 };
 
-constexpr float kReachedFraction = 0.05f;
 constexpr int kMinPartVoxels = 64;
 
 // A voxel survives when the interior wear at its centre (all records, no
 // facing; the same sum hull_interior.frag's interior_wear uses, a.w as
 // uploaded) is below deck_break. Main body = the part with the most surviving
-// voxels. Flood 6-connected surviving voxels from it; a part is severed when
-// fewer than kReachedFraction of its surviving voxels were reached and it has
-// at least kMinPartVoxels surviving. Bit i of already_severed skips part i.
+// voxels. Flood 6-connected surviving voxels from it. What the flood did not
+// reach falls into 6-connected components; a part belongs to a component when
+// the MAJORITY of its surviving voxels lie in it (unreached), and a component
+// of at least kMinPartVoxels voxels holding at least one part is one piece
+// (Ruling 4: a cut-off assembly leaves in one piece). Bit i of
+// already_severed keeps part i out of every piece.
 // Parts with index >= 32 are beyond the mask and never sever, and the main body is chosen among parts < 32.
 // Bit i of `gone` marks part i as already LEFT the hull: its voxels are not
 // survivors (never the main body, never a bridge for the flood) and it is
 // not reported. `already_severed` only stops a part being reported.
-std::vector<SeveredPart> find_severed_parts(const voxel::StructureSegmentation&,
+std::vector<SeveredPiece> find_severed_parts(const voxel::StructureSegmentation&,
                                             const plating::DamageList&, float deck_break,
                                             std::uint32_t already_severed,
                                             std::uint32_t gone = 0);
@@ -56,18 +59,18 @@ bool can_structure_sever(const scenegraph::Instance& inst);
 constexpr int kMaxHideableParts = 12;
 
 struct SeveredSplit {
-    SeveredPart part;               // body frame, model units
-    scenegraph::InstanceId chunk;   // the new instance drawing only the part
+    SeveredPiece piece;             // body frame, model units
+    scenegraph::InstanceId chunk;   // the new instance drawing only its parts
     int total_voxels = 0;           // every solid voxel of the hull
 };
 
 // Break off every part of `parent` that find_severed_parts reports (parts it
 // already lost are `gone`; parts past kMaxHideableParts are never reported):
-// ORs the part's bit into parent.severed_parts and
+// ORs the piece's parts into parent.severed_parts and
 // creates a chunk instance of the same model on a copy of the parent's pose
 // and render state (as hull_split_detached does) and its damage records,
-// drawing only that part (only_part). Rocks, chunks, articulated hulls and
-// stale ids never sever.
+// drawing only those parts (shown_parts). Rocks, chunks, articulated hulls
+// and stale ids never sever.
 std::vector<SeveredSplit> split_severed_parts(scenegraph::World& world,
                                               scenegraph::InstanceId parent,
                                               const voxel::StructureSegmentation& seg,

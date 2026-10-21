@@ -211,7 +211,7 @@ protected:
         glm::mat4 world;
         scenegraph::HullDamageStore ring;
         std::uint32_t severed_parts = 0;   // Instance::severed_parts
-        int only_part = -1;                // Instance::only_part
+        std::uint32_t shown_parts = 0;     // Instance::shown_parts
     };
     Marked render_marked(const assets::Model& model, const scenegraph::HullDamageStore& ring,
                          const scenegraph::Camera& cam,
@@ -232,7 +232,7 @@ protected:
             world.set_world_transform(iid, pl.world);
             world.get(iid)->hull_damage = pl.ring;
             world.get(iid)->severed_parts = pl.severed_parts;
-            world.get(iid)->only_part = pl.only_part;
+            world.get(iid)->shown_parts = pl.shown_parts;
         }
         glViewport(0, 0, kSize, kSize);
         glClearColor(clear.r, clear.g, clear.b, 1.0f);
@@ -1489,7 +1489,7 @@ TEST_F(PlatingRenderTest, SeveredPartIsHiddenOnTheParent) {
     EXPECT_LE(worst_on_side(whole, severed, mid, false), 1) << "the attached part changed";
 }
 
-// A chunk (only_part) draws its own part and nothing else of the model.
+// A chunk (shown_parts) draws its own parts and nothing else of the model.
 TEST_F(PlatingRenderTest, ChunkDrawsOnlyItsPart) {
     dauntless_plating::g_params[0] = 1.0f;
     const auto cam = quad_cam();
@@ -1497,10 +1497,32 @@ TEST_F(PlatingRenderTest, ChunkDrawsOnlyItsPart) {
     const int mid = to_pixel(cam, glm::vec3(0.0f)).x;
     const auto whole = render(*plate, scenegraph::HullDamageStore{}, cam);
     const auto chunk = render(*plate, scenegraph::HullDamageStore{}, cam, false, nullptr,
-                              nullptr, [](scenegraph::Instance& i) { i.only_part = 1; });
+                              nullptr, [](scenegraph::Instance& i) { i.shown_parts = 1u << 1; });
     EXPECT_EQ(count_lit_on_side(chunk, mid, false), 0) << "the chunk drew another part";
     ASSERT_GT(count_lit_on_side(whole, mid, true), 2000) << "part 1 not in view";
     EXPECT_LE(worst_on_side(whole, chunk, mid, true), 1) << "the chunk's own part changed";
+}
+
+// A chunk that is a whole assembly (Ruling 4) draws every part in its mask,
+// exactly as the whole hull draws them.
+TEST_F(PlatingRenderTest, ChunkDrawsEveryPartInItsMask) {
+    dauntless_plating::g_params[0] = 1.0f;
+    const auto cam = quad_cam();
+    auto plate = two_part_plate("chunk-mask");
+    const int mid = to_pixel(cam, glm::vec3(0.0f)).x;
+    const auto whole = render(*plate, scenegraph::HullDamageStore{}, cam);
+    const auto chunk =
+        render(*plate, scenegraph::HullDamageStore{}, cam, false, nullptr, nullptr,
+               [](scenegraph::Instance& i) { i.shown_parts = (1u << 0) | (1u << 1); });
+    ASSERT_GT(count_lit_on_side(whole, mid, false), 2000) << "part 0 not in view";
+    ASSERT_GT(count_lit_on_side(whole, mid, true), 2000) << "part 1 not in view";
+    EXPECT_LE(worst_on_side(whole, chunk, mid, false), 1) << "part 0 of the assembly changed";
+    EXPECT_LE(worst_on_side(whole, chunk, mid, true), 1) << "part 1 of the assembly changed";
+    const auto other =
+        render(*plate, scenegraph::HullDamageStore{}, cam, false, nullptr, nullptr,
+               [](scenegraph::Instance& i) { i.shown_parts = 1u << 0; });
+    EXPECT_EQ(count_lit_on_side(other, mid, true), 0) << "a part outside the mask drew";
+    EXPECT_LE(worst_on_side(whole, other, mid, false), 1) << "the chunk's own part changed";
 }
 
 // The mark never stamps a hidden part: a tear spanning both parts stamps
@@ -1525,7 +1547,7 @@ TEST_F(PlatingRenderTest, MarkSkipsHiddenParts) {
     ASSERT_EQ(st(whole, right), 2) << "the tear does not cut part 1";
 
     const auto severed =
-        render_marked_many(*plate, {Placed{glm::mat4(1.0f), ring, 1u << 1, -1}}, cam);
+        render_marked_many(*plate, {Placed{glm::mat4(1.0f), ring, 1u << 1, 0u}}, cam);
     EXPECT_EQ(st(severed, left), 2) << "the attached part lost its mark";
     int stamped_right = 0;
     const int mid = to_pixel(cam, glm::vec3(0.0f)).x;
@@ -1535,7 +1557,7 @@ TEST_F(PlatingRenderTest, MarkSkipsHiddenParts) {
     EXPECT_EQ(stamped_right, 0) << "the hidden part was stamped";
 }
 
-// A chunk (only_part) is a whole-model instance: until the shadow pass can
+// A chunk (shown_parts) is a whole-model instance: until the shadow pass can
 // hide parts it casts no shadow at all, or a whole-ship shadow would tumble
 // across the player's hull (fix round 1, I2).
 TEST_F(PlatingRenderTest, ShadowDepthSkipsSeveredPartChunks) {
@@ -1547,12 +1569,12 @@ TEST_F(PlatingRenderTest, ShadowDepthSkipsSeveredPartChunks) {
     const auto lookup = [](scenegraph::ModelHandle h) -> const assets::Model* {
         return reinterpret_cast<const assets::Model*>(h);
     };
-    auto depth_at_centre = [&](int only_part) {
+    auto depth_at_centre = [&](std::uint32_t shown_parts) {
         scenegraph::World world;
         auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(box.get()));
         world.set_world_transform(iid, glm::mat4(1.0f));
         world.get(iid)->rim_eligible = true;
-        world.get(iid)->only_part = only_part;
+        world.get(iid)->shown_parts = shown_parts;
         glViewport(0, 0, kSize, kSize);
         glDepthMask(GL_TRUE);
         glClearDepth(1.0);
@@ -1562,6 +1584,6 @@ TEST_F(PlatingRenderTest, ShadowDepthSkipsSeveredPartChunks) {
         glReadPixels(c.x, c.y, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &d);
         return d;
     };
-    ASSERT_LT(depth_at_centre(-1), 1.0f) << "the hull casts no depth";
-    EXPECT_EQ(depth_at_centre(0), 1.0f) << "a chunk cast a whole-model shadow";
+    ASSERT_LT(depth_at_centre(0u), 1.0f) << "the hull casts no depth";
+    EXPECT_EQ(depth_at_centre(1u << 0), 1.0f) << "a chunk cast a whole-model shadow";
 }

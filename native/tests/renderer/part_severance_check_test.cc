@@ -53,7 +53,7 @@ TEST(PartSeverance, BlownBridgeSeversTheSmallerPart) {
     auto s = make_seg();
     auto r = renderer::find_severed_parts(s, bridge_hit(10.f), 6.f, 0);
     ASSERT_EQ(r.size(), 1u);
-    EXPECT_EQ(r[0].part, 1);
+    EXPECT_EQ(r[0].parts, 1u << 1);
     EXPECT_EQ(r[0].voxels, 216);
     EXPECT_FLOAT_EQ(r[0].min_body.x, 11.f);
     EXPECT_FLOAT_EQ(r[0].max_body.x, 17.f);
@@ -192,7 +192,7 @@ TEST(PartSeverance, MainBodyIsChosenAmongPartsBelowTheMask) {
     EXPECT_TRUE(renderer::find_severed_parts(s, bridge_hit(10.f), 6.f, 0).empty());
 }
 
-// ── split_severed_parts: the parent hides the part, a chunk draws only it ──
+// ── split_severed_parts: the parent hides the parts, a chunk draws only them ──
 namespace {
 // A parent instance whose store blows the bridge (make_seg) through.
 scenegraph::InstanceId blown_parent(scenegraph::World& world) {
@@ -216,13 +216,13 @@ TEST(PartSeverance, SplitHidesThePartOnTheParentAndInstancesAChunk) {
     const auto parent = blown_parent(world);
     const auto r = renderer::split_severed_parts(world, parent, s, bridge_hit(10.f), 6.f);
     ASSERT_EQ(r.size(), 1u);
-    EXPECT_EQ(r[0].part.part, 1);
+    EXPECT_EQ(r[0].piece.parts, 1u << 1);
     EXPECT_EQ(r[0].total_voxels, 360 + 1 + 216) << "every solid voxel of the hull";
     EXPECT_EQ(world.get(parent)->severed_parts, 1u << 1);
-    EXPECT_EQ(world.get(parent)->only_part, -1);
+    EXPECT_EQ(world.get(parent)->shown_parts, 0u);
     const auto* chunk = world.get(r[0].chunk);
     ASSERT_NE(chunk, nullptr);
-    EXPECT_EQ(chunk->only_part, 1);
+    EXPECT_EQ(chunk->shown_parts, 1u << 1);
     EXPECT_EQ(chunk->severed_parts, 0u);
     EXPECT_EQ(chunk->model_handle, world.get(parent)->model_handle);
     EXPECT_EQ(chunk->world, world.get(parent)->world);
@@ -320,7 +320,94 @@ TEST(PartSeverance, AChunkNeverSevers) {
     auto s = make_seg();
     scenegraph::World world;
     const auto chunk = blown_parent(world);
-    world.get(chunk)->only_part = 0;
+    world.get(chunk)->shown_parts = 1u << 0;
     EXPECT_TRUE(renderer::split_severed_parts(world, chunk, s, bridge_hit(10.f), 6.f).empty());
     EXPECT_EQ(world.get(chunk)->severed_parts, 0u);
+}
+
+// ── Ruling 4: a cut-off assembly leaves as ONE piece ─────────────────────
+namespace {
+// Body (part 0, x 0..9) -- bridge (x 10, one voxel) -- A (part 1, x 11..16)
+// -- B (part 2, x 17..22): A and B touch face to face.
+voxel::StructureSegmentation make_chain() {
+    voxel::StructureSegmentation s;
+    s.vol.dims = {30, 6, 6};
+    s.vol.origin = {0, 0, 0};
+    s.vol.cell = {1, 1, 1};
+    const std::size_t n = 30u * 6u * 6u;
+    s.vol.occ.assign(n, 0);
+    s.label.assign(n, -1);
+    s.depth.assign(n, 0.f);
+    s.parts.resize(3);
+    for (int z = 0; z < 6; ++z)
+        for (int y = 0; y < 6; ++y)
+            for (int x = 0; x < 30; ++x) {
+                int lab = -1;
+                if (x <= 9) lab = 0;
+                else if (x == 10 && y == 2 && z == 2) lab = 0;
+                else if (x >= 11 && x <= 16) lab = 1;
+                else if (x >= 17 && x <= 22) lab = 2;
+                if (lab < 0) continue;
+                s.vol.set(x, y, z, true);
+                s.label[s.vol.index(x, y, z)] = static_cast<std::int16_t>(lab);
+            }
+    return s;
+}
+// Body (part 0, x 0..9) welded face to face to part 1 (x 10..19).
+voxel::StructureSegmentation make_welded() {
+    voxel::StructureSegmentation s = make_seg(19);
+    for (int z = 0; z < 6; ++z)
+        for (int y = 0; y < 6; ++y) {
+            s.vol.set(10, y, z, true);
+            s.label[s.vol.index(10, y, z)] = 1;
+        }
+    return s;
+}
+// Blows exactly the 6x6 slab at x (one record per voxel, reach 0.6 < 1 cell).
+DamageList slab_cut(int x) {
+    DamageList l;
+    for (int z = 0; z < 6; ++z)
+        for (int y = 0; y < 6; ++y) {
+            const int k = l.count++;
+            l.a[k] = glm::vec4(x + 0.5f, y + 0.5f, z + 0.5f, 0.6f);
+            l.b[k] = glm::vec4(0, 0, 0, 100.f);
+            l.c[k] = glm::vec4(3, 0, 0, 0);
+        }
+    return l;
+}
+}  // namespace
+
+TEST(PartSeverance, ACutOffAssemblyLeavesAsOnePiece) {
+    auto s = make_chain();
+    const auto r = renderer::find_severed_parts(s, bridge_hit(10.f), 6.f, 0);
+    ASSERT_EQ(r.size(), 1u) << "A and B came off together: one piece";
+    EXPECT_EQ(r[0].parts, (1u << 1) | (1u << 2));
+    EXPECT_EQ(r[0].voxels, 432);
+    EXPECT_FLOAT_EQ(r[0].min_body.x, 11.f);
+    EXPECT_FLOAT_EQ(r[0].max_body.x, 23.f);
+    EXPECT_NEAR(r[0].centroid_body.x, 17.f, 1e-4);
+}
+
+TEST(PartSeverance, SplitInstancesOneChunkPerAssembly) {
+    auto s = make_chain();
+    scenegraph::World world;
+    const auto parent = blown_parent(world);
+    const auto r = renderer::split_severed_parts(world, parent, s, bridge_hit(10.f), 6.f);
+    ASSERT_EQ(r.size(), 1u);
+    EXPECT_EQ(r[0].piece.parts, (1u << 1) | (1u << 2));
+    EXPECT_EQ(world.get(parent)->severed_parts, (1u << 1) | (1u << 2));
+    EXPECT_EQ(world.get(r[0].chunk)->shown_parts, (1u << 1) | (1u << 2));
+}
+
+TEST(PartSeverance, APartCutMidwayGoesWithTheSideHoldingMostOfIt) {
+    auto s = make_welded();
+    // Cut at x 13: part 1 keeps x 10..12 (108) on the body, x 14..19 (216) off.
+    auto r = renderer::find_severed_parts(s, slab_cut(13), 6.f, 0);
+    ASSERT_EQ(r.size(), 1u);
+    EXPECT_EQ(r[0].parts, 1u << 1);
+    EXPECT_EQ(r[0].voxels, 216) << "the piece is the cut-off side";
+    EXPECT_FLOAT_EQ(r[0].min_body.x, 14.f);
+    // Cut at x 16: most of part 1 (x 10..15) stays; the stub x 17..19 holds
+    // no part's majority, so nothing leaves.
+    EXPECT_TRUE(renderer::find_severed_parts(s, slab_cut(16), 6.f, 0).empty());
 }

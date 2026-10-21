@@ -223,9 +223,10 @@ struct Instance {
     /// broken off this hull: bit i hides part i in the plating draw and its
     /// mark (hull_split_parts sets it). Runtime state, never serialized.
     std::uint32_t severed_parts = 0;
-    /// A severed-part chunk draws ONLY this structure part of its model;
-    /// -1 = every part. Runtime state, never serialized.
-    int only_part = -1;
+    /// A severed-part chunk draws ONLY the structure parts whose bits are set
+    /// (the assembly that came off together); 0 = not a chunk, every part
+    /// draws. Runtime state, never serialized.
+    std::uint32_t shown_parts = 0;
 
     /// Per-instance hull carve spheres (body frame, model units). Drives the
     /// see-through breach holes and the interior voxel splat. Runtime VFX only

@@ -51,7 +51,7 @@ def _clean():
 
 def _part(part, chunk_iid, voxels, lo, hi, total=4000):
     c = tuple(0.5 * (a + b) for a, b in zip(lo, hi))
-    return {"part": part, "instance_id": chunk_iid, "voxels": voxels,
+    return {"parts": [part], "instance_id": chunk_iid, "voxels": voxels,
             "total_voxels": total, "centroid": c, "bounds_min": lo,
             "bounds_max": hi, "radius_gu": 0.75}
 
@@ -216,3 +216,23 @@ def test_an_articulated_ship_at_rest_never_structure_severs(monkeypatch, spawns)
     assert hull_breakup.after_wear(ship, 11, now=10.0) == []
     hull_breakup.drain(now=20.0)
     assert asked == [] and spawns == []
+
+
+def test_an_assembly_leaves_as_one_chunk(monkeypatch, spawns):
+    """Ruling 4: the native side reports a cut-off assembly once, with every
+    part in it -- one chunk, one body; a later report naming any of its parts
+    again is an orphan."""
+    from engine import renderer
+    from engine.appc import hull_breakup
+    destroyed = []
+    monkeypatch.setattr(renderer, "destroy_instance", destroyed.append)
+    piece = _part(1, 21, 900, (1.0, -.5, -.5), (3.0, .5, .5))
+    piece["parts"] = [1, 2]
+    again = _part(2, 31, 300, (2.0, -.5, -.5), (3.0, .5, .5))
+    reply = [[piece], [again]]
+    monkeypatch.setattr(host_io, "hull_split_parts", lambda iid: reply.pop(0))
+    ship = _Ship(radius=3.5)
+    assert len(hull_breakup.after_wear(ship, 11, now=10.0)) == 1
+    assert [c["iid"] for c in spawns] == [21] and spawns[0]["cells"] == 900
+    assert hull_breakup.after_wear(ship, 11, now=20.0) == []
+    assert destroyed == [31]

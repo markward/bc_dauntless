@@ -825,12 +825,13 @@ const vec3 INNER_HULL   = vec3(0.42, 0.41, 0.40);  // pressure hull under the ri
 const int  MAX_PARTS    = 12;
 const float TAU         = 6.2831853;
 uniform int  u_part_count;               // 0 = parts not detected (yet)
-// Severed structure parts (Instance::severed_parts / only_part, uploaded by
-// upload_plating for the colour draw and the mark alike): bit i of the mask
-// hides part i; u_part_only >= 0 hides every part but that one. Read only
-// when parts are loaded (u_part_count > 0): with none, nothing is hidden.
+// Severed structure parts (Instance::severed_parts / shown_parts, uploaded by
+// upload_plating for the colour draw and the mark alike): bit i of the hidden
+// mask hides part i; a non-zero show mask (a chunk) hides every pixel whose
+// part's bit is not set. Read only when parts are loaded (u_part_count > 0):
+// with none, nothing is hidden.
 uniform int  u_part_hidden_mask;
-uniform int  u_part_only;
+uniform int  u_part_show_mask;
 uniform vec4 u_part_a[MAX_PARTS];        // centre.xyz, kind (0 box, 1 disc, 2 cylinder)
 uniform vec4 u_part_b[MAX_PARTS];        // axis0.xyz, half0
 uniform vec4 u_part_c[MAX_PARTS];        // axis1.xyz, half1
@@ -2174,13 +2175,14 @@ void main() {
     // here breaks them for the neighbouring kept pixels (see the dFdx/discard
     // note at the top of main).
     if (u_plating_mark != 0 && !plating_near) discard;
-    // A severed part is gone from this hull (and a chunk is only its part):
+    // A severed part is gone from this hull (and a chunk is only its parts):
     // the part's pixels are hidden, in the colour draw and the mark alike, so
     // a hidden pixel is never stamped.
     bool plating_hidden = false;
-    if (u_part_count > 0 && (u_part_hidden_mask != 0 || u_part_only >= 0)) {
+    if (u_part_count > 0 && (u_part_hidden_mask != 0 || u_part_show_mask != 0)) {
         int hp = plating_part(p_body);
-        plating_hidden = (u_part_only >= 0 && hp != u_part_only) ||
+        plating_hidden = (u_part_show_mask != 0 &&
+                          (hp < 0 || ((u_part_show_mask >> hp) & 1) == 0)) ||
                          (hp >= 0 && hp < 32 && ((u_part_hidden_mask >> hp) & 1) != 0);
     }
     int hole = 0;

@@ -40,11 +40,11 @@ std::vector<float> interior_wear_field(const voxel::VoxelVolume& vol,
     return wear;
 }
 
-std::vector<SeveredPart> find_severed_parts(const voxel::StructureSegmentation& seg,
+std::vector<SeveredPiece> find_severed_parts(const voxel::StructureSegmentation& seg,
                                             const plating::DamageList& dmg, float deck_break,
                                             std::uint32_t already_severed,
                                             std::uint32_t gone) {
-    std::vector<SeveredPart> out;
+    std::vector<SeveredPiece> out;
     const int np = static_cast<int>(seg.parts.size());
     const glm::ivec3 d = seg.vol.dims;
     const std::size_t n = seg.vol.occ.size();
@@ -75,7 +75,6 @@ std::vector<SeveredPart> find_severed_parts(const voxel::StructureSegmentation& 
 
     // Flood from every surviving main-body voxel across 6-connected survivors.
     std::vector<std::uint8_t> reached(n, 0);
-    std::vector<int> reached_count(static_cast<std::size_t>(np), 0);
     std::vector<std::size_t> stack;
     for (std::size_t i = 0; i < n; ++i)
         if (alive[i] && seg.label[i] == main_part) {
@@ -87,7 +86,6 @@ std::vector<SeveredPart> find_severed_parts(const voxel::StructureSegmentation& 
     while (!stack.empty()) {
         const std::size_t i = stack.back();
         stack.pop_back();
-        ++reached_count[static_cast<std::size_t>(seg.label[i])];
         const int x = static_cast<int>(i % sy), y = static_cast<int>((i / sy) % d.y),
                   z = static_cast<int>(i / sz);
         auto visit = [&](bool ok, std::size_t j) {
@@ -104,30 +102,66 @@ std::vector<SeveredPart> find_severed_parts(const voxel::StructureSegmentation& 
         visit(z + 1 < d.z, i + sz);
     }
 
-    for (int p = 0; p < np; ++p) {
-        if (p == main_part || p >= 32 || (((already_severed | gone) >> p) & 1u)) continue;
-        const int alive_n = alive_count[static_cast<std::size_t>(p)];
-        if (alive_n < kMinPartVoxels) continue;
-        if (reached_count[static_cast<std::size_t>(p)] >= kReachedFraction * alive_n) continue;
-        SeveredPart s;
-        s.part = p;
-        s.voxels = alive_n;
+    // Ruling 4: what is cut off leaves in ONE piece. Group the unreached
+    // survivors into 6-connected components; a part belongs to a component
+    // when the majority of its surviving voxels are unreached and lie in it.
+    // A component of at least kMinPartVoxels holding at least one part
+    // becomes one piece: those parts, and the component's voxels.
+    const std::uint32_t skip = already_severed | gone;
+    std::vector<std::uint8_t> seen(n, 0);
+    std::vector<std::size_t> comp;
+    std::vector<int> comp_count(static_cast<std::size_t>(np), 0);
+    for (std::size_t seed = 0; seed < n; ++seed) {
+        if (!alive[seed] || reached[seed] || seen[seed]) continue;
+        comp.clear();
+        seen[seed] = 1;
+        stack.push_back(seed);
+        while (!stack.empty()) {
+            const std::size_t i = stack.back();
+            stack.pop_back();
+            comp.push_back(i);
+            const int x = static_cast<int>(i % sy), y = static_cast<int>((i / sy) % d.y),
+                      z = static_cast<int>(i / sz);
+            auto visit = [&](bool ok, std::size_t j) {
+                if (ok && alive[j] && !reached[j] && !seen[j]) {
+                    seen[j] = 1;
+                    stack.push_back(j);
+                }
+            };
+            visit(x > 0, i - sx);
+            visit(x + 1 < d.x, i + sx);
+            visit(y > 0, i - sy);
+            visit(y + 1 < d.y, i + sy);
+            visit(z > 0, i - sz);
+            visit(z + 1 < d.z, i + sz);
+        }
+        if (static_cast<int>(comp.size()) < kMinPartVoxels) continue;
+
+        for (const std::size_t i : comp) ++comp_count[static_cast<std::size_t>(seg.label[i])];
+        SeveredPiece piece;
+        for (int p = 0; p < np; ++p) {
+            const int in_comp = comp_count[static_cast<std::size_t>(p)];
+            comp_count[static_cast<std::size_t>(p)] = 0;
+            if (p == main_part || p >= 32 || ((skip >> p) & 1u)) continue;
+            if (2 * in_comp > alive_count[static_cast<std::size_t>(p)]) piece.parts |= 1u << p;
+        }
+        if (piece.parts == 0) continue;
+
         glm::vec3 lo(1e30f), hi(-1e30f);
         glm::dvec3 sum(0.0);
-        for (int z = 0; z < d.z; ++z)
-            for (int y = 0; y < d.y; ++y)
-                for (int x = 0; x < d.x; ++x) {
-                    const std::size_t i = seg.vol.index(x, y, z);
-                    if (!alive[i] || seg.label[i] != p) continue;
-                    const glm::vec3 mn = seg.vol.origin + glm::vec3(x, y, z) * seg.vol.cell;
-                    lo = glm::min(lo, mn);
-                    hi = glm::max(hi, mn + seg.vol.cell);
-                    sum += glm::dvec3(mn + 0.5f * seg.vol.cell);
-                }
-        s.min_body = lo;
-        s.max_body = hi;
-        s.centroid_body = glm::vec3(sum / static_cast<double>(alive_n));
-        out.push_back(s);
+        for (const std::size_t i : comp) {
+            const int x = static_cast<int>(i % sy), y = static_cast<int>((i / sy) % d.y),
+                      z = static_cast<int>(i / sz);
+            const glm::vec3 mn = seg.vol.origin + glm::vec3(x, y, z) * seg.vol.cell;
+            lo = glm::min(lo, mn);
+            hi = glm::max(hi, mn + seg.vol.cell);
+            sum += glm::dvec3(mn + 0.5f * seg.vol.cell);
+        }
+        piece.voxels = static_cast<int>(comp.size());
+        piece.min_body = lo;
+        piece.max_body = hi;
+        piece.centroid_body = glm::vec3(sum / static_cast<double>(comp.size()));
+        out.push_back(piece);
     }
     return out;
 }
@@ -139,19 +173,19 @@ std::vector<SeveredSplit> split_severed_parts(scenegraph::World& world,
                                               float deck_break) {
     std::vector<SeveredSplit> out;
     const scenegraph::Instance* p = world.get(parent);
-    // A chunk (only_part) is debris: it never severs further.
-    if (p == nullptr || p->surface_is_rock || p->only_part >= 0 || !can_structure_sever(*p))
+    // A chunk (shown_parts) is debris: it never severs further.
+    if (p == nullptr || p->surface_is_rock || p->shown_parts != 0 || !can_structure_sever(*p))
         return out;
     // Parts the draw cannot hide are never reported, but they still join the
     // hull (an intact pylon past the cap keeps its nacelle on). Parts already
     // lost are gone: out of the main-body choice and the flood.
     const std::uint32_t unhideable = ~((1u << kMaxHideableParts) - 1u);
-    const std::vector<SeveredPart> parts =
+    const std::vector<SeveredPiece> pieces =
         find_severed_parts(seg, dmg, deck_break, unhideable, p->severed_parts);
-    if (parts.empty()) return out;
+    if (pieces.empty()) return out;
     int total = 0;
     for (const std::int16_t lab : seg.label) total += lab >= 0 ? 1 : 0;
-    for (const SeveredPart& sp : parts) {
+    for (const SeveredPiece& sp : pieces) {
         const scenegraph::InstanceId child = world.create_instance(p->model_handle);
         // create_instance may grow the store: re-fetch the parent.
         scenegraph::Instance* pi = world.get(parent);
@@ -170,8 +204,8 @@ std::vector<SeveredSplit> split_severed_parts(scenegraph::World& world,
         ci->emissive_scale = pi->emissive_scale;
         ci->surface_is_rock = pi->surface_is_rock;
         ci->hull_damage = pi->hull_damage;
-        ci->only_part = sp.part;
-        pi->severed_parts |= 1u << sp.part;
+        ci->shown_parts = sp.parts;
+        pi->severed_parts |= sp.parts;
         out.push_back(SeveredSplit{sp, child, total});
     }
     return out;

@@ -8057,27 +8057,30 @@ PYBIND11_MODULE(_dauntless_host, m) {
               };
               for (const renderer::SeveredSplit& sp : split) {
                   py::dict d;
-                  d["part"] = sp.part.part;
+                  py::list parts;
+                  for (int i = 0; i < 32; ++i)
+                      if ((sp.piece.parts >> i) & 1u) parts.append(i);
+                  d["parts"] = parts;
                   d["instance_id"] = sp.chunk;
-                  d["voxels"] = sp.part.voxels;
+                  d["voxels"] = sp.piece.voxels;
                   d["total_voxels"] = sp.total_voxels;
-                  d["centroid"] = gu(sp.part.centroid_body);
-                  d["bounds_min"] = gu(sp.part.min_body);
-                  d["bounds_max"] = gu(sp.part.max_body);
+                  d["centroid"] = gu(sp.piece.centroid_body);
+                  d["bounds_min"] = gu(sp.piece.min_body);
+                  d["bounds_max"] = gu(sp.piece.max_body);
                   d["radius_gu"] =
-                      0.5f * glm::length(sp.part.max_body - sp.part.min_body) * s;
+                      0.5f * glm::length(sp.piece.max_body - sp.piece.min_body) * s;
                   out.append(std::move(d));
               }
               return out;
           },
           py::arg("instance_id"),
-          "Break off every structure part the plating wear has cut from the "
-          "main body (renderer::split_severed_parts): the part is hidden on "
-          "the parent and a new instance draws only it. Rocks, articulated "
-          "hulls and hulls whose parts are not detected yet never sever. One "
-          "dict per newly severed part, body-frame GAME UNITS: part, "
-          "instance_id, voxels, total_voxels, centroid, bounds_min, "
-          "bounds_max, radius_gu.");
+          "Break off every piece the plating wear has cut from the main body "
+          "(renderer::split_severed_parts): a piece's structure parts are "
+          "hidden on the parent and a new instance draws only them. Rocks, "
+          "articulated hulls and hulls whose parts are not detected yet never "
+          "sever. One dict per newly severed piece, body-frame GAME UNITS: "
+          "parts (list of part indices), instance_id, voxels, total_voxels, "
+          "centroid, bounds_min, bounds_max, radius_gu.");
 
     m.def("breach_burst",
           [](scenegraph::InstanceId id, std::tuple<float, float, float> body_point_gu,

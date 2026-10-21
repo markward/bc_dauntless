@@ -8,6 +8,7 @@
 #include "renderer/instance_field_cache.h"
 #include "renderer/dynamic_lights.h"
 #include "renderer/aabb.h"
+#include "renderer/part_severance_check.h"
 #include <renderer/atmosphere_math.h>
 #include <renderer/asset_path.h>
 #include <renderer/breach_pass.h>   // find_base_texture_id
@@ -196,7 +197,6 @@ namespace dauntless_decals {
 // engine/appc/plating_dials.py (/ L O, group "plating"). Defaults MUST match
 // that module's DEFAULTS; slot meanings are listed there and in opaque.frag's
 // apply_plating. [0] = enabled (0/1).
-#include "renderer/part_severance_check.h"
 #include "renderer/structure_parts_cache.h"
 #include "renderer/plating_damage.h"
 namespace dauntless_plating {
@@ -605,20 +605,20 @@ static bool draws_skinned(const assets::Model& model,
 // shader is given (they land on a worker thread at any moment).
 // `rock` (Instance::surface_is_rock): u_plating_rock, no panels, ribs or
 // members, only a cut where wear passes breach.
-// `hidden_parts` / `only_part` (PlatingMeshRecords): the severed parts this
-// draw hides, 0 / -1 for a hull that has lost none.
+// `hidden_parts` / `shown_parts` (PlatingMeshRecords): the severed parts this
+// draw hides / the only parts a chunk draws; 0 / 0 for a whole hull.
 static void upload_plating(Shader& prog, const plating::DamageList& dl,
                            const std::vector<voxel::StructurePart>* parts,
                            const glm::mat4& world, const float* params, bool mark,
                            bool far, bool upload_list, bool rock,
-                           std::uint32_t hidden_parts, int only_part) {
+                           std::uint32_t hidden_parts, std::uint32_t shown_parts) {
     static const std::string kPlating = "u_plating", kDmgCount = "u_dmg_count",
         kDmgA = "u_dmg_a", kDmgB = "u_dmg_b", kDmgC = "u_dmg_c",
         kMark = "u_plating_mark", kFar = "u_plating_far", kRock = "u_plating_rock",
         kPartCount = "u_part_count",
         kPartA = "u_part_a", kPartB = "u_part_b", kPartC = "u_part_c",
         kPartD = "u_part_d", kWorldInv = "u_ship_world_inv",
-        kPartHidden = "u_part_hidden_mask", kPartOnly = "u_part_only";
+        kPartHidden = "u_part_hidden_mask", kPartShown = "u_part_show_mask";
     if (const int loc = prog.cached_location(kPlating); loc >= 0)
         glUniform1fv(loc, renderer::plating::kParamCount, params);
     // world->body for p_body / n_body. draw_model's decal block sets it only
@@ -653,7 +653,7 @@ static void upload_plating(Shader& prog, const plating::DamageList& dl,
     prog.set_vec4_array(kPartC, pc, np);
     prog.set_vec4_array(kPartD, pd, np);
     prog.set_int(kPartHidden, static_cast<int>(hidden_parts));
-    prog.set_int(kPartOnly, only_part);
+    prog.set_int(kPartShown, static_cast<int>(shown_parts));
 
     prog.set_int(kMark, mark ? 1 : 0);
     prog.set_int(kFar, far ? 1 : 0);
@@ -896,7 +896,7 @@ static void draw_model_pass(const assets::Model& model,
                        /*mark=*/false, plating_far,
                        /*upload_list=*/plating_subsets == nullptr, plating_rock,
                        plating_mesh_records != nullptr ? plating_mesh_records->hidden_parts : 0u,
-                       plating_mesh_records != nullptr ? plating_mesh_records->only_part : -1);
+                       plating_mesh_records != nullptr ? plating_mesh_records->shown_parts : 0u);
         if (plating_subsets != nullptr) plating_records.emplace(prog, *plating_list);
     }
 
@@ -1422,7 +1422,7 @@ static int draw_plating_mark(const assets::Model& model, const glm::mat4& world,
         articulated ? nullptr : records.subsets;
     upload_plating(prog, dl, records.parts, world, params, /*mark=*/true, /*far=*/false,
                    /*upload_list=*/subsets == nullptr, rock, records.hidden_parts,
-                   records.only_part);
+                   records.shown_parts);
     std::optional<MeshRecordUploader> uploader;
     if (subsets != nullptr) uploader.emplace(prog, dl);
     prog.set_int(kCarveEnabled, 0);
@@ -1693,12 +1693,12 @@ void FrameSubmitter::submit_opaque_in_pass(const scenegraph::World& world,
         const bool force_plating = dauntless_plating::g_params[26] > 0.5f && m &&
                                    !inst.surface_is_rock && !draws_skinned(*m, palette);
         // A hull that has lost a structure part (or a chunk that is one)
-        // hides it in the plating draw (u_part_hidden_mask / u_part_only):
+        // hides it in the plating draw (u_part_hidden_mask / u_part_show_mask):
         // every mesh takes the plating program, no stock split, with an empty
         // list when it has no records, whatever params[0] says -- a stock draw
         // would show the whole model.
         const bool part_hiding = m && !is_detail_draw && !draws_skinned(*m, palette) &&
-                                 (inst.severed_parts != 0 || inst.only_part >= 0);
+                                 (inst.severed_parts != 0 || inst.shown_parts != 0);
         if (m && !is_detail_draw &&
             ((dauntless_plating::g_params[0] > 0.5f &&
               (inst.hull_damage.count() > 0 || force_plating)) ||
@@ -1910,7 +1910,7 @@ PlatingMeshRecords FrameSubmitter::plating_mesh_records_for(PlatingListCacheEntr
     PlatingMeshRecords r;
     r.parts = renderer::structure_parts_for(model.source);
     r.hidden_parts = inst.severed_parts;
-    r.only_part = inst.only_part;
+    r.shown_parts = inst.shown_parts;
     if (!plating_record_culling_ || !inst.node_overrides.empty()) return r;
     if (!e.subsets_valid || e.subsets_parts != r.parts || e.subsets_handle != inst.model_handle ||
         e.subsets_model != &model) {
@@ -2185,7 +2185,7 @@ void submit_shadow_depth(const scenegraph::World& world,
             // A severed-part chunk is a whole-model instance and this pass
             // cannot hide parts: it casts nothing (the parent still casts
             // its lost part too, until this pass learns the part mask).
-            if (inst.only_part >= 0) return;
+            if (inst.shown_parts != 0) return;
             const assets::Model* m = lookup(inst.model_handle);
             if (!m) return;
             draw_model_positions_only(*m, inst.world, prog, &inst.node_overrides);
