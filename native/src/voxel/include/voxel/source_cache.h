@@ -11,6 +11,11 @@ namespace voxel {
 /// "<stem>_vox<ext>" sibling of a hull nif path (preserves extension case).
 std::filesystem::path vox_sibling_path(const std::filesystem::path& hull_nif);
 
+/// Decode one hull's intact source volume (the work get_for_hull caches):
+/// `_vox.nif` when present, else a voxelized mesh. Pure and reentrant -- touches
+/// no cache -- so a background worker may call it. Empty on failure.
+VoxelVolume decode_hull_volume(const std::filesystem::path& hull_nif);
+
 /// Caches one intact source VoxelVolume per hull nif path. Decodes the ship's
 /// *_vox.nif when present (exact BC volume); else voxelizes the hull mesh
 /// (mod-ship fallback). Lazy, shared across instances.

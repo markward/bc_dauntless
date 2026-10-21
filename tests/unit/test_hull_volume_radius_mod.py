@@ -51,6 +51,9 @@ class Recorder:
     def hull_volume_prewarm_model(self, handle, resolution):
         self.calls.append(("model", handle, resolution))
 
+    def prefetch_hull_fill(self, handle):
+        pass
+
 
 @pytest.fixture
 def recorder(monkeypatch):

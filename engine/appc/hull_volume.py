@@ -128,6 +128,8 @@ def prewarm_for_model(ship, handle) -> bool:
     GetDamageResolution is swallowed (False); a renderer failure propagates.
     Returns True when a prewarm was issued.
     """
+    # The fill decode does not depend on the authored resolution.
+    _renderer.prefetch_hull_fill(handle)
     resolution = _ship_resolution(ship)
     if resolution is None:
         return False

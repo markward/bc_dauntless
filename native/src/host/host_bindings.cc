@@ -8126,6 +8126,19 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "ray-trace BVH, without creating an instance. No-op for an unknown "
           "handle or resolution <= 0.");
 
+    // Start the background decode of this hull's fill volume (the left-the-ship
+    // test's 3D texture) so the first cut does not hitch. Never blocks.
+    m.def("prefetch_hull_fill",
+          [](scenegraph::ModelHandle model_handle) {
+              if (!g_carve_cache) return;
+              const assets::Model* model = resolve_model(model_handle);
+              if (model == nullptr || model->source.empty()) return;
+              g_carve_cache->prefetch(model->source);
+          },
+          pybind11::arg("model"),
+          "Queue this model's hull fill volume for background decode. No-op "
+          "for an unknown handle or an empty source.");
+
     m.def("compute_capsule_region",
           [](scenegraph::InstanceId id,
              std::tuple<float, float, float> center,

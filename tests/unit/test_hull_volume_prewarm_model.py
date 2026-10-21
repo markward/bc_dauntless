@@ -16,6 +16,10 @@ class FakeShip:
 class Recorder:
     def __init__(self):
         self.calls = []
+        self.fill_prefetches = []
+
+    def prefetch_hull_fill(self, handle):
+        self.fill_prefetches.append(handle)
 
     def hull_volume_prewarm_model(self, handle, resolution):
         self.calls.append((handle, resolution))
@@ -50,3 +54,13 @@ def test_binding_error_propagates(recorder, monkeypatch):
     monkeypatch.setattr(recorder, "hull_volume_prewarm_model", boom)
     with pytest.raises(RuntimeError):
         hull_volume.prewarm_for_model(FakeShip(8.0), 5)
+
+
+def test_prewarm_prefetches_the_fill_volume(recorder):
+    hull_volume.prewarm_for_model(FakeShip(8.0), 5)
+    assert recorder.fill_prefetches == [5]
+
+
+def test_prefetch_happens_even_without_a_resolution(recorder):
+    hull_volume.prewarm_for_model(FakeShip(None), 5)
+    assert recorder.fill_prefetches == [5]

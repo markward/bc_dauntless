@@ -49,7 +49,7 @@ _REQUIRED_BINDINGS = frozenset({
     "get_instance_head_center", "hdr_lens_flare_enabled",
     "hdr_lens_flare_set_enabled", "hdr_set_enabled",
     "hull_volume_bake_to_disk", "hull_volume_prewarm",
-    "hull_volume_prewarm_model",
+    "hull_volume_prewarm_model", "prefetch_hull_fill",
     "hull_volume_set_cache_root", "hull_volume_set_resolution",
     "hull_source_string",
     "init", "letterbox_set",
@@ -942,6 +942,14 @@ def hull_volume_prewarm_model(model: int, resolution: float) -> None:
     No hasattr guard, deliberately (see hull_volume_prewarm).
     """
     _h.hull_volume_prewarm_model(model, float(resolution))
+
+
+def prefetch_hull_fill(model: int) -> None:
+    """Start decoding a hull's fill volume on the native background worker so
+    the first cut never loads it synchronously. Never blocks; no-op for an
+    unknown handle or empty source. No hasattr guard (see hull_volume_prewarm).
+    """
+    _h.prefetch_hull_fill(model)
 
 
 def hull_volume_bake_to_disk(hull_path: str, authored_res: float) -> bool:

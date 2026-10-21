@@ -30,7 +30,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <chrono>
 #include <memory>
+#include <thread>
 #include <vector>
 
 #include "plating_gl_fixture.h"
@@ -326,7 +328,51 @@ TEST_F(HullInteriorTest, PutEmptyFillDoesNotShadowTheRealOne) {
         GTEST_SKIP() << "BC asset not available at " << nif << " -- set DAUNTLESS_GAME_DIR";
     renderer::CarveFieldCache cache;
     EXPECT_EQ(cache.put_for_source(nif, voxel::VoxelVolume{}), nullptr);
-    EXPECT_NE(cache.get_for_source(nif), nullptr);
+    const renderer::CarveFieldCache::Entry* e = nullptr;
+    for (int i = 0; i < 1000 && e == nullptr; ++i) {
+        e = cache.get_for_source(nif);
+        if (e == nullptr) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_NE(e, nullptr);
+}
+
+// get_for_source never blocks on the CPU decode: a fresh cache answers nullptr
+// at once, and the entry shows up once the background worker is done.
+TEST_F(HullInteriorTest, FillPrefetchDoesNotBlockAndBecomesReady) {
+    const auto nif = test_support::game_root() / "data/Models/Ships/Ambassador/Ambassador.nif";
+    if (!std::filesystem::is_regular_file(nif))
+        GTEST_SKIP() << "BC asset not available at " << nif << " -- set DAUNTLESS_GAME_DIR";
+    renderer::CarveFieldCache cache;
+    const auto t0 = std::chrono::steady_clock::now();
+    EXPECT_EQ(cache.get_for_source(nif), nullptr);
+    const auto first_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+    EXPECT_LT(first_ms, 50) << "get_for_source blocked on the decode";
+
+    const renderer::CarveFieldCache::Entry* e = nullptr;
+    for (int i = 0; i < 1000 && e == nullptr; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        e = cache.get_for_source(nif);
+    }
+    ASSERT_NE(e, nullptr) << "fill not ready within 10 s";
+    EXPECT_NE(e->tex3d, 0u);
+}
+
+// While the fill is still loading the cache hands back nullptr, which the
+// interior draw treats as "no fill": rooms with no left-the-ship test.
+TEST_F(HullInteriorTest, InteriorDrawsWhileFillIsLoading) {
+    const auto nif = test_support::game_root() / "data/Models/Ships/Ambassador/Ambassador.nif";
+    if (!std::filesystem::is_regular_file(nif))
+        GTEST_SKIP() << "BC asset not available at " << nif << " -- set DAUNTLESS_GAME_DIR";
+    renderer::CarveFieldCache loading;
+    EXPECT_EQ(loading.get_for_source(nif), nullptr);     // starts the decode
+    EXPECT_EQ(loading.get_for_source(kBoxSource), nullptr);  // box hull: still loading
+    const auto ring = internal_ring({0.0f, 0.0f, kBoxHalf}, 30.0f, 10.0f);
+    const auto s = render_one(ring, &loading);
+    report("fill loading", s, centre());
+    EXPECT_EQ(s.interiors, 1);
+    EXPECT_FALSE(is_clear(pixel(s.px, centre().x, centre().y)))
+        << "a hole drawn while the fill loads shows the clear colour";
 }
 
 TEST_F(HullInteriorTest, RearHullInteriorNeverPaintsThroughFrontHole) {

@@ -6766,6 +6766,12 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
             push_resolution(ship, iid)
         except Exception as _e:
             dev_mode.log_swallowed("push hull volume resolution", _e)
+        # Fill volume decode (left-the-ship test) on the native worker, so the
+        # first cut never loads it synchronously.
+        try:
+            r_.prefetch_hull_fill(handle)
+        except Exception as _e:
+            dev_mode.log_swallowed("prefetch hull fill", _e)
         # Pre-warm the bake NOW, at spawn, instead of paying it lazily on
         # this hull's first combat hit (spec §4; up to 192ms measured on a
         # Warbird). Separate try/except, same "never block spawn" contract

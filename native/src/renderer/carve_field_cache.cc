@@ -125,6 +125,12 @@ voxel::HullVolumeCache& hull_volume_cache() {
 }
 
 CarveFieldCache::~CarveFieldCache() {
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        stop_ = true;
+    }
+    cv_.notify_all();
+    if (worker_.joinable()) worker_.join();
     for (auto& kv : by_source_) {
         if (kv.second.tex3d) {
             GLuint t = kv.second.tex3d;
@@ -176,6 +182,40 @@ void CarveFieldCache::upload_texture(Entry& e, const voxel::VoxelVolume& vol) {
     e.cell   = vol.cell;
 }
 
+void CarveFieldCache::worker_main() {
+    for (;;) {
+        std::string key;
+        {
+            std::unique_lock<std::mutex> lk(mu_);
+            cv_.wait(lk, [&] { return stop_ || !queue_.empty(); });
+            if (stop_) return;
+            key = std::move(queue_.front());
+            queue_.pop_front();
+        }
+        voxel::VoxelVolume vol;
+        try {
+            vol = voxel::decode_hull_volume(std::filesystem::path(key));
+        } catch (...) {
+            vol = voxel::VoxelVolume{};     // cached as "no fill"
+        }
+        std::lock_guard<std::mutex> lk(mu_);
+        decoded_[key] = std::move(vol);
+    }
+}
+
+void CarveFieldCache::prefetch(const std::filesystem::path& source) {
+    if (source.empty()) return;
+    const std::string key = source.string();
+    if (by_source_.count(key) != 0) return;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (!requested_.insert(key).second) return;
+        queue_.push_back(key);
+    }
+    if (!worker_.joinable()) worker_ = std::thread([this] { worker_main(); });
+    cv_.notify_one();
+}
+
 const CarveFieldCache::Entry* CarveFieldCache::get_for_source(
         const std::filesystem::path& source) {
     if (source.empty()) return nullptr;
@@ -187,11 +227,24 @@ const CarveFieldCache::Entry* CarveFieldCache::get_for_source(
         return (it->second.tex3d != 0) ? &it->second : nullptr;
     }
 
-    // First time for this source: decode the original (uncarved) fill.
-    Entry& e = by_source_[key];
-    const voxel::VoxelVolume& fill = source_cache_.get_for_hull(source);
-    if (fill.occ.empty()) return nullptr;
+    voxel::VoxelVolume fill;
+    bool ready = false;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto d = decoded_.find(key);
+        if (d != decoded_.end()) {
+            fill = std::move(d->second);
+            decoded_.erase(d);
+            ready = true;
+        }
+    }
+    if (!ready) {
+        prefetch(source);
+        return nullptr;
+    }
 
+    Entry& e = by_source_[key];
+    if (fill.occ.empty()) return nullptr;
     upload_texture(e, fill);
     return (e.tex3d != 0) ? &e : nullptr;
 }

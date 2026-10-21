@@ -1,7 +1,12 @@
 // native/src/renderer/include/renderer/carve_field_cache.h
 #pragma once
 
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
+#include <mutex>
+#include <thread>
+#include <unordered_set>
 #include <filesystem>
 #include <string>
 #include <unordered_map>
@@ -192,10 +197,17 @@ public:
         glm::vec3  cell{1.0f};
     };
 
-    /// Get (build if not yet cached) the static original fill texture for the
-    /// given hull source path. Returns nullptr when the source fill is missing
-    /// or the GL upload fails. The returned pointer is stable for the lifetime
-    /// of the cache (source-keyed, never evicted).
+    /// Start decoding `source`'s fill on the single background worker (one job
+    /// at a time, later sources queued). Idempotent; no-op for an empty path or
+    /// a source already cached, queued or decoded.
+    void prefetch(const std::filesystem::path& source);
+
+    /// Get the static original fill texture for the given hull source path.
+    /// NEVER BLOCKS: returns nullptr while the CPU volume is still decoding
+    /// (starting the prefetch if none is running); once ready, uploads the GL
+    /// texture on the calling (render) thread and returns the entry. A failed
+    /// decode/upload is cached as "no fill" (nullptr forever). The returned
+    /// pointer is stable for the lifetime of the cache (never evicted).
     const Entry* get_for_source(const std::filesystem::path& source);
 
     /// Install `fill` as the fill for `source`, uploaded the same way
@@ -215,9 +227,21 @@ public:
 
 private:
     void upload_texture(Entry& e, const voxel::VoxelVolume& vol);
+    void worker_main();
 
     std::unordered_map<std::string, Entry> by_source_;
+    // Render thread only. The worker never touches it (it calls
+    // voxel::decode_hull_volume, which is cache-free).
     voxel::SourceVolumeCache source_cache_;
+
+    // Worker state, all guarded by mu_.
+    std::mutex mu_;
+    std::condition_variable cv_;
+    std::deque<std::string> queue_;
+    std::unordered_set<std::string> requested_;
+    std::unordered_map<std::string, voxel::VoxelVolume> decoded_;
+    bool stop_ = false;
+    std::thread worker_;
 };
 
 }  // namespace renderer
