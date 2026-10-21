@@ -146,7 +146,8 @@ def _check_parts(ship, iid, now):
     parent_mass = float(ship.GetMass()) if hasattr(ship, "GetMass") else 1.0
     comps = [{"instance_id": p.get("instance_id"), "cells": int(p["voxels"]),
               "centroid": p["centroid"], "bounds_min": p["bounds_min"],
-              "bounds_max": p["bounds_max"], "radius_gu": p["radius_gu"]}
+              "bounds_max": p["bounds_max"], "radius_gu": p["radius_gu"],
+              "parts": {int(i) for i in p["parts"]}}
              for p in fresh]
     spawned = []
     with frame_profiler.scope("hb.spawn"):
@@ -179,7 +180,8 @@ def _check(ship, iid, ship_instances, now):
 
 def _spawn_components(ship, iid, comps, parent_mass, total_cells, spawned):
     for c in comps:
-        _destroy_subsystems_inside(ship, c["bounds_min"], c["bounds_max"])
+        _destroy_subsystems_inside(ship, c["bounds_min"], c["bounds_max"],
+                                   iid, c.get("parts"))
         if c.get("instance_id") is None:
             _burst(ship, iid, tuple(c["centroid"]))
             continue
@@ -206,10 +208,16 @@ def _destroy_orphan(chunk_iid):
         dev_mode.log_swallowed("orphaned chunk instance destroy", _e2)
 
 
-def _destroy_subsystems_inside(ship, lo, hi):
+def _destroy_subsystems_inside(ship, lo, hi, iid=None, parts=None):
     """A nacelle that has physically left the ship cannot remain a working
     warp engine: destroy every subsystem whose BODY-frame mount lies in the
     component's bounds (GU, body frame -- GetPosition() is already that).
+
+    A severed PIECE (`parts`, structure part indices) decides by the voxel
+    label instead: its bounding box can reach over main-body mounts, so a
+    mount whose voxel is labelled dies only when its part left with the
+    piece. An unlabelled mount (-1: off the voxels, parts not ready) falls
+    back to the bounds.
 
     Destruction goes straight through SetCondition(0.0) (subsystems.py:571),
     the single state-change hook that fires _condition_changed() -- the
@@ -224,14 +232,27 @@ def _destroy_subsystems_inside(ship, lo, hi):
         pos = sub.GetPosition() if hasattr(sub, "GetPosition") else None
         if not isinstance(pos, TGPoint3):
             continue
-        if (lo[0] <= pos.x <= hi[0] and lo[1] <= pos.y <= hi[1]
-                and lo[2] <= pos.z <= hi[2]):
+        label = _part_at(iid, pos) if parts else -1
+        if label >= 0:
+            inside = label in parts
+        else:
+            inside = (lo[0] <= pos.x <= hi[0] and lo[1] <= pos.y <= hi[1]
+                      and lo[2] <= pos.z <= hi[2])
+        if inside:
             try:
                 if hasattr(sub, "IsDestroyed") and sub.IsDestroyed():
                     continue
                 sub.SetCondition(0.0)
             except Exception as _e:
                 dev_mode.log_swallowed("severed subsystem destroy", _e)
+
+
+def _part_at(iid, pos) -> int:
+    try:
+        return int(host_io.structure_part_at(iid, (pos.x, pos.y, pos.z)))
+    except Exception as _e:
+        dev_mode.log_swallowed("structure_part_at", _e)
+        return -1
 
 
 def _burst(ship, iid, centroid_gu):

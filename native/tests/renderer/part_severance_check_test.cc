@@ -491,3 +491,14 @@ TEST(PartSeverance, ASkinnedModelNeverSevers) {
                     .empty());
     EXPECT_EQ(world.get(parent)->severed_parts, 0u);
 }
+
+// ── M1: the structure part at a body point (subsystem kill by label) ─────
+TEST(PartSeverance, StructurePartAtReadsTheVoxelLabel) {
+    const auto s = make_seg();
+    EXPECT_EQ(renderer::structure_part_at(s, glm::vec3(5.5f, 3.f, 3.f)), 0);
+    EXPECT_EQ(renderer::structure_part_at(s, glm::vec3(14.f, 3.f, 3.f)), 1);
+    EXPECT_EQ(renderer::structure_part_at(s, glm::vec3(18.5f, 3.f, 3.f)), -1) << "empty voxel";
+    EXPECT_EQ(renderer::structure_part_at(s, glm::vec3(25.f, 3.f, 3.f)), -1) << "past the grid";
+    EXPECT_EQ(renderer::structure_part_at(s, glm::vec3(-0.5f, 3.f, 3.f)), -1) << "before it";
+    EXPECT_EQ(renderer::structure_part_at(voxel::StructureSegmentation{}, glm::vec3(0.f)), -1);
+}

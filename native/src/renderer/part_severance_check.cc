@@ -6,6 +6,17 @@
 
 namespace renderer {
 
+int structure_part_at(const voxel::StructureSegmentation& seg, const glm::vec3& body_point) {
+    const glm::ivec3 d = seg.vol.dims;
+    if (d.x <= 0 || d.y <= 0 || d.z <= 0 || seg.label.size() != seg.vol.occ.size()) return -1;
+    const glm::vec3 f = glm::floor((body_point - seg.vol.origin) / seg.vol.cell);
+    if (!(f.x >= 0.f && f.y >= 0.f && f.z >= 0.f && f.x < d.x && f.y < d.y && f.z < d.z))
+        return -1;   // also rejects NaN
+    const std::size_t i =
+        seg.vol.index(static_cast<int>(f.x), static_cast<int>(f.y), static_cast<int>(f.z));
+    return seg.vol.occ[i] ? seg.label[i] : -1;
+}
+
 bool can_structure_sever(const scenegraph::Instance& inst) {
     return inst.node_overrides.empty();
 }

@@ -8083,6 +8083,27 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "parts (list of part indices), instance_id, voxels, total_voxels, "
           "centroid, bounds_min, bounds_max, radius_gu.");
 
+    m.def("structure_part_at",
+          [](scenegraph::InstanceId id, std::tuple<float, float, float> body_point_gu) {
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return -1;
+              const assets::Model* model = resolve_model(inst->model_handle);
+              if (model == nullptr || model->source.empty()) return -1;
+              const voxel::StructureSegmentation* seg =
+                  renderer::structure_segmentation_for(model->source);
+              if (seg == nullptr) return -1;
+              const float s = glm::length(glm::vec3(inst->world[0]));
+              const float inv_s = (s > 0.0f) ? 1.0f / s : 1.0f;
+              const glm::vec3 pb(std::get<0>(body_point_gu) * inv_s,
+                                 std::get<1>(body_point_gu) * inv_s,
+                                 std::get<2>(body_point_gu) * inv_s);
+              return renderer::structure_part_at(*seg, pb);
+          },
+          py::arg("instance_id"), py::arg("body_point_gu"),
+          "The structure part (index) whose voxel holds a BODY-frame point in "
+          "GAME UNITS, or -1: outside the hull's voxels, a stale id, or parts "
+          "not detected yet. Read-only.");
+
     m.def("breach_burst",
           [](scenegraph::InstanceId id, std::tuple<float, float, float> body_point_gu,
              float radius_gu) {

@@ -59,6 +59,10 @@ std::vector<SeveredPiece> find_severed_parts(const voxel::StructureSegmentation&
 std::vector<float> interior_wear_field(const voxel::VoxelVolume& vol,
                                        const plating::DamageList& dmg);
 
+// The structure part whose voxel holds `body_point` (body frame, model
+// units); -1 outside the grid, in an empty voxel or with no segmentation.
+int structure_part_at(const voxel::StructureSegmentation&, const glm::vec3& body_point);
+
 // Articulated instances (any node override) are never structure-checked.
 bool can_structure_sever(const scenegraph::Instance& inst);
 

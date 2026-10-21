@@ -131,3 +131,15 @@ def test_hull_split_parts_returns_nothing_for_an_intact_ship(iid):
 def test_hull_split_parts_is_a_required_binding():
     from engine import host_io
     assert "hull_split_parts" in host_io._REQUIRED_BINDINGS
+
+
+def test_structure_part_at_is_minus_one_until_parts_are_known(iid):
+    assert _h.structure_part_at(iid, (0.0, 0.0, 0.0)) == -1, "no model, no parts"
+    stale = _h.create_instance(0)
+    _h.destroy_instance(stale)
+    assert _h.structure_part_at(stale, (0.0, 0.0, 0.0)) == -1
+
+
+def test_structure_part_at_is_a_required_binding():
+    from engine import host_io
+    assert "structure_part_at" in host_io._REQUIRED_BINDINGS

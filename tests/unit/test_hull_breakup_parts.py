@@ -236,3 +236,30 @@ def test_an_assembly_leaves_as_one_chunk(monkeypatch, spawns):
     assert [c["iid"] for c in spawns] == [21] and spawns[0]["cells"] == 900
     assert hull_breakup.after_wear(ship, 11, now=20.0) == []
     assert destroyed == [31]
+
+
+def test_subsystems_die_by_structure_part_not_by_box(monkeypatch, spawns):
+    """M1: a chunk's bounding box can reach over main-body mounts. A mount
+    whose voxel is labelled dies only when its part left with the chunk;
+    an unlabelled mount (-1) falls back to the box."""
+    from engine.appc import hull_breakup
+    labels = {(1.5, 0.0, 0.0): 1,     # in the box, on a part that left
+              (1.2, 0.2, 0.0): 0,     # in the box, but the main body's
+              (1.8, 0.0, 0.0): -1,    # in the box, unlabelled -> box
+              (-3.0, 0.0, 0.0): -1,   # outside the box, unlabelled
+              (5.0, 0.0, 0.0): 2}     # outside the box, on a part that left
+    asked = []
+
+    def part_at(iid, p):
+        asked.append(iid)
+        return labels[tuple(round(c, 3) for c in p)]
+    monkeypatch.setattr(host_io, "structure_part_at", part_at)
+    subs = {p: _Sub(TGPoint3(*p), str(p)) for p in labels}
+    ship = _Ship(radius=3.5, subs=list(subs.values()))
+    piece = _part(1, 21, 600, (1.0, -.5, -.5), (2.0, .5, .5))
+    piece["parts"] = [1, 2]
+    monkeypatch.setattr(host_io, "hull_split_parts", lambda iid: [piece])
+    hull_breakup.after_wear(ship, 11, now=10.0)
+    dead = {p for p, s in subs.items() if s.IsDestroyed()}
+    assert dead == {(1.5, 0.0, 0.0), (1.8, 0.0, 0.0), (5.0, 0.0, 0.0)}
+    assert set(asked) == {11}, "labels are read on the parent instance"
