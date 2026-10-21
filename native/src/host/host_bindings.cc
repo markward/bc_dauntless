@@ -3221,6 +3221,25 @@ void apply_type_params_from_dict(renderer::planet_detail::TypeParams& p, const p
 
 }  // namespace
 
+namespace {
+// Body-frame conversion shared by damage_decal_add and hull_damage_add so the
+// two cannot drift: point is INSTANCE-RELATIVE, radius game units -> model
+// units (s = |world's X column|, the uniform NIF->world scale).
+struct BodyFramePoint {
+    glm::vec3 point;
+    glm::vec3 normal;
+    float     radius_model;
+};
+BodyFramePoint to_body_frame(const scenegraph::Instance& inst,
+                             const glm::vec3& world_point,
+                             const glm::vec3& world_normal, float radius) {
+    const float s = glm::length(glm::vec3(inst.world[0]));
+    return {scenegraph::relative_to_body(inst.world_linear, world_point),
+            scenegraph::dir_to_body(inst.world_linear, world_normal),
+            (s > 0.0f) ? radius / s : radius};
+}
+}  // namespace
+
 PYBIND11_MODULE(_dauntless_host, m) {
     m.doc() = "dauntless renderer + sim host bindings";
 
@@ -7521,11 +7540,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                  std::get<2>(world_normal));
               // Same body-frame conversion as damage_decal_add: pw is
               // INSTANCE-RELATIVE; radius game-units -> model units.
-              const glm::vec3 pb = scenegraph::relative_to_body(inst->world_linear, pw);
-              const glm::vec3 nb = scenegraph::dir_to_body(inst->world_linear, nw);
-              const float s = glm::length(glm::vec3(inst->world[0]));
-              const float radius_model = (s > 0.0f) ? radius / s : radius;
-              inst->hull_damage.add(pb, nb, radius_model, wear,
+              const auto bf = to_body_frame(*inst, pw, nw, radius);
+              inst->hull_damage.add(bf.point, bf.normal, bf.radius_model, wear,
                                     static_cast<scenegraph::HullDamageKind>(kind));
           },
           py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
@@ -7551,8 +7567,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                  std::get<1>(world_normal),
                                  std::get<2>(world_normal));
               // pw is INSTANCE-RELATIVE (floating render origin).
-              const glm::vec3 pb = scenegraph::relative_to_body(inst->world_linear, pw);
-              const glm::vec3 nb = scenegraph::dir_to_body(inst->world_linear, nw);
+              const auto bf = to_body_frame(*inst, pw, nw, radius);
+              const glm::vec3 pb = bf.point;
+              const glm::vec3 nb = bf.normal;
               const glm::vec3 tw(std::get<0>(world_tangent),
                                  std::get<1>(world_tangent),
                                  std::get<2>(world_tangent));
@@ -7563,8 +7580,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               // space as pb), so the ring's merge test and the shader both work
               // in model units. s = |world's X column| = the uniform NIF->world
               // scale baked into inst->world.
-              const float s = glm::length(glm::vec3(inst->world[0]));
-              const float radius_model = (s > 0.0f) ? radius / s : radius;
+              const float radius_model = bf.radius_model;
               inst->decals.add(pb, nb, radius_model, intensity,
                                static_cast<scenegraph::WeaponClass>(weapon_class),
                                time, tb, dent);

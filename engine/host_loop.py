@@ -12302,6 +12302,9 @@ def run(mission_name: Optional[str] = None,
                     from engine.appc import hull_breakup as _hull_breakup
                     with frame_profiler.scope("dc.breakup_drain"):
                         _hull_breakup.drain()
+                    from engine.appc import hull_wear as _hull_wear
+                    with frame_profiler.scope("dc.wear_drain"):
+                        _hull_wear.drain()
 
                 with frame_profiler.scope("sim.collisions"):
                     collisions.tick_collisions(

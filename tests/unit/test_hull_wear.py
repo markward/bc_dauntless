@@ -80,6 +80,26 @@ def test_throttled_hits_still_accumulate_wear(fake, monkeypatch):
     assert args[5] == 1
 
 
+def test_pending_wear_flushes_when_the_window_elapses_without_another_hit(
+        fake, monkeypatch):
+    from engine.appc import damage_decals
+    clock = [0.0]
+    monkeypatch.setattr(damage_decals, "current_game_time", lambda: clock[0])
+    ship = _Ship()
+    _hit(ship)
+    fake.wear.clear()
+    clock[0] = 0.05
+    _hit(ship)
+    assert fake.wear == []
+    hull_wear.drain(0.1)
+    assert fake.wear == [], "window not yet elapsed"
+    hull_wear.drain(0.3)
+    (args, _kw), = fake.wear
+    assert args[4] == pytest.approx(1.0)
+    hull_wear.drain(1.0)
+    assert len(fake.wear) == 1, "sent once"
+
+
 def test_no_wear_when_shields_absorb_everything(fake):
     _hit(_Ship(), absorbed_hull=0.0)
     assert fake.wear == []

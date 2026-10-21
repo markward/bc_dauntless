@@ -20,8 +20,15 @@ COLLISION_MAX = 1.5
 
 _SURFACE = 1
 
-# id(ship) -> [iid, point, normal, radius, total_wear]
+# id(ship) -> [iid, point, normal, radius, total_wear, since, ship]. The entry
+# holds a strong ship reference for its (short) life, so a recycled id() can
+# never be inherited by a new ship; drain() releases it.
 _pending: dict = {}
+
+
+def _now():
+    from engine.appc import damage_decals
+    return damage_decals.current_game_time()
 
 
 def wear_for_hit(weapon_type, absorbed_hull, decal_dent=0.0):
@@ -41,16 +48,34 @@ def accumulate(ship, iid, world_point, world_normal, radius, wear):
     if wear <= 0.0:
         return
     entry = _pending.get(id(ship))
-    total = wear + (entry[4] if entry is not None else 0.0)
-    _pending[id(ship)] = [iid, world_point, world_normal, radius, total]
+    if entry is not None and entry[6] is ship:
+        since, total = entry[5], entry[4] + wear
+    else:
+        since, total = _now(), wear
+    _pending[id(ship)] = [iid, world_point, world_normal, radius, total,
+                          since, ship]
+
+
+def _send(entry):
+    iid, point, normal, radius, wear = entry[:5]
+    host_io.hull_damage_add(iid, point, normal, radius, wear, _SURFACE)
 
 
 def flush(ship):
     entry = _pending.pop(id(ship), None)
-    if entry is None:
-        return
-    iid, point, normal, radius, wear = entry
-    host_io.hull_damage_add(iid, point, normal, radius, wear, _SURFACE)
+    if entry is not None and entry[6] is ship:
+        _send(entry)
+
+
+def drain(now=None):
+    """Per tick: send every pending entry whose throttle window has elapsed,
+    so wear held after a volley ends is never stranded."""
+    from engine.appc import hit_feedback
+    now = _now() if now is None else now
+    for key, entry in list(_pending.items()):
+        if now - entry[5] >= hit_feedback.DECAL_EMIT_INTERVAL:
+            del _pending[key]
+            _send(entry)
 
 
 def reset():
