@@ -26,21 +26,30 @@ struct HullDamageRecord {
 };
 
 /// Fixed-capacity per-instance damage store. Merge, never evict: a full store
-/// merges its two nearest records instead of dropping the oldest, so wear and
-/// holes are never lost. Runtime VFX state only -- never serialized to saves.
+/// merges the same-kind pair whose merge grows reach least instead of dropping
+/// the oldest, so wear and holes are never lost. Runtime VFX state only --
+/// never serialized to saves.
 class HullDamageStore {
 public:
     static constexpr std::size_t kCapacity = 64;
     static constexpr float kMergeFactor = 0.5f;    // centre distance <= 0.5 x the larger reach
     static constexpr float kMaxMergeGrowth = 1.5f; // a voluntary merge never grows reach past 1.5x the larger input
+    // kMaxMergeGrowth is INERT while kMergeFactor is 0.5: a voluntary merge
+    // needs d <= 0.5 * max r, and the merged reach is at most d + max r <=
+    // 1.5 * max r, so the cap can never refuse one. It is kept for when the
+    // merge factor becomes a dial.
 
-    /// Wear <= 0 or reach <= 0 is ignored (revision unchanged).
+    /// Wear <= 0 or reach <= 0 is ignored (revision unchanged), as is any
+    /// non-finite centre, normal, reach or wear.
     void add(const glm::vec3& centre_body, const glm::vec3& normal_body,
              float reach, float wear, HullDamageKind kind);
 
     std::span<const HullDamageRecord> records() const { return slots_; }  // all kCapacity slots
     std::size_t count() const;
-    std::uint32_t revision() const { return revision_; }  // +1 on every add that changed the store
+    /// Changes on every add that changed the store and on clear(). Drawn from
+    /// one process-wide monotonic counter, so a value never repeats across
+    /// stores; 0 only for a store nothing has changed yet.
+    std::uint32_t revision() const { return revision_; }
     void clear();
 
 private:

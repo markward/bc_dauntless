@@ -2,11 +2,23 @@
 #include "scenegraph/hull_damage.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 namespace scenegraph {
 
 namespace {
+
+// One process-wide counter: a revision is never reused, not even by a fresh
+// store that inherits an old instance's cache key.
+std::uint32_t next_revision() {
+    static std::uint32_t counter = 0;
+    return ++counter;
+}
+
+bool finite(const glm::vec3& v) {
+    return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+}
 
 // Fold `b` into `a`: summed wear, wear-weighted centroid and normal, and the
 // smallest sphere about that centroid enclosing both inputs.
@@ -32,6 +44,9 @@ HullDamageRecord merged(const HullDamageRecord& a, const HullDamageRecord& b) {
 void HullDamageStore::add(const glm::vec3& centre_body, const glm::vec3& normal_body,
                           float reach, float wear, HullDamageKind kind) {
     if (!(wear > 0.0f) || !(reach > 0.0f)) return;
+    if (!std::isfinite(wear) || !std::isfinite(reach) || !finite(centre_body) ||
+        !finite(normal_body))
+        return;
 
     HullDamageRecord in;
     in.centre_body = centre_body;
@@ -41,7 +56,7 @@ void HullDamageStore::add(const glm::vec3& centre_body, const glm::vec3& normal_
     in.kind = kind;
     in.active = true;
 
-    ++revision_;
+    revision_ = next_revision();
 
     // Voluntary merge into the nearest eligible record of the same kind.
     HullDamageRecord* best = nullptr;
@@ -67,18 +82,23 @@ void HullDamageStore::add(const glm::vec3& centre_body, const glm::vec3& normal_
     for (auto& s : slots_) if (!s.active) { free_slot = &s; break; }
 
     if (!free_slot) {
-        // Forced merge: the two nearest records of one kind, no growth cap.
+        // Forced merge: the same-kind pair whose merge grows reach least
+        // (merged reach - the larger input reach), no growth cap. Nearest
+        // centres is the wrong measure: a small record beside a big one
+        // folds in almost free even when two equal records sit closer.
         HullDamageRecord *pa = nullptr, *pb = nullptr;
-        float pd = std::numeric_limits<float>::max();
+        HullDamageRecord pm;
+        float pg = std::numeric_limits<float>::max();
         for (std::size_t i = 0; i < kCapacity; ++i) {
             for (std::size_t j = i + 1; j < kCapacity; ++j) {
                 if (slots_[i].kind != slots_[j].kind) continue;
-                const float d = glm::length(slots_[i].centre_body - slots_[j].centre_body);
-                if (d < pd) { pd = d; pa = &slots_[i]; pb = &slots_[j]; }
+                const HullDamageRecord m = merged(slots_[i], slots_[j]);
+                const float g = m.reach - std::max(slots_[i].reach, slots_[j].reach);
+                if (g < pg) { pg = g; pa = &slots_[i]; pb = &slots_[j]; pm = m; }
             }
         }
         if (pa) {
-            *pa = merged(*pa, *pb);
+            *pa = pm;
             *pb = HullDamageRecord{};
             free_slot = pb;
         } else {
@@ -98,7 +118,7 @@ std::size_t HullDamageStore::count() const {
 
 void HullDamageStore::clear() {
     slots_ = {};
-    ++revision_;   // never reset: a revision-keyed cache must see the clear
+    revision_ = next_revision();   // never reset: a revision-keyed cache must see the clear
 }
 
 }  // namespace scenegraph
