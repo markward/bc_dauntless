@@ -11,7 +11,6 @@
 #include "scenegraph/breach_events.h"
 #include "scenegraph/damage_decals.h"
 #include "scenegraph/hull_damage.h"
-#include "scenegraph/hull_carve.h"
 
 namespace scenegraph {
 
@@ -170,9 +169,9 @@ struct Instance {
     ///     clip playback (chairs, doors, lifts).
     ///
     /// Consulted by every pass that draws a hull mesh, not just the bridge
-    /// walk: the opaque hull draw and carve-stencil pass (`draw_model`,
-    /// frame.cc), the shadow depth pre-pass, cloak, hologram and breach
-    /// passes (each via `draw_model_positions_only` /
+    /// walk: the opaque hull draw and the plating mark (`draw_model`,
+    /// frame.cc), the shadow depth pre-pass, cloak, hologram and hull
+    /// interior passes (each via `draw_model_positions_only` /
     /// `compose_node_worlds`), and `walk_bridge_meshes` (bridge_pass.cc). A
     /// pass that draws a hull and skips this map draws an articulated or
     /// severed part at its REST pose instead of its live one. Runtime state,
@@ -239,13 +238,9 @@ struct Instance {
     };
     PartCheckStamp part_check;
 
-    /// Per-instance hull carve spheres (body frame, model units). Drives the
-    /// see-through breach holes and the interior voxel splat. Runtime VFX only
-    /// — never serialized to saves.
-    HullCarveField carve;
-
-    /// Per-instance transient breach-event ring. Drives debris, venting, and
-    /// molten-rim emissive. Runtime VFX only — never serialized to saves.
+    /// Per-instance transient breach-event ring. Drives debris and venting
+    /// (the molten rim, kRimLife, has no reader until it is rebuilt on the
+    /// layered damage path). Runtime VFX only — never serialized to saves.
     BreachEventRing breach_events;
 
     /// Self-referential id stamped by World::create_instance so particle

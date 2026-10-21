@@ -84,10 +84,10 @@ std::optional<RayHit> ray_trace_instance_linear(
 
 /// Build `model`'s trace acceleration structure now, if no trace has yet.
 /// The traces build it lazily on first use, which charged the frame of a
-/// hull's first trace -- a station's death carve probing its surface normal
+/// hull's first trace -- a station's first surface-normal probe at death
 /// paid 7.7 ms (perf-register P-4). It is valid for the model's whole life
-/// (Model::trace_accel), so the hull-volume prewarm builds it at spawn and in
-/// the warp preload. Main thread only, like every trace (see the threading
+/// (Model::trace_accel), so the prewarm_trace_accel binding builds it at
+/// spawn and in the warp preload. Main thread only, like every trace (see the threading
 /// note on Model::trace_accel).
 void prewarm_trace_accel(const assets::Model& model);
 

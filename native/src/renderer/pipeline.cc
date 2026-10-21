@@ -60,8 +60,7 @@
 #include "embedded_phaser_fs.h"
 #include "embedded_hologram_vs.h"
 #include "embedded_hologram_fs.h"
-#include "embedded_breach_vs.h"
-#include "embedded_breach_fs.h"
+#include "embedded_hull_interior_vs.h"
 #include "embedded_hull_interior_fs.h"
 #include "embedded_subsystem_pin_vs.h"
 #include "embedded_subsystem_pin_fs.h"
@@ -125,7 +124,7 @@ Pipeline::Pipeline() {
     // opaque.frag's collision-scuff normal map (renderer/scuff_texture.h)
     // lives on unit 7 for the program's whole life. Assigned HERE, once, not
     // per draw: every path that draws with this program (draw_model, the
-    // carve-stencil pass, the hull-clip / cloak parity test rigs) would
+    // plating mark, the cloak parity test rig) would
     // otherwise leave it at unit 0 with the base texture. Harmless for two
     // sampler2Ds, but the predecessor was a samplerBuffer and two sampler
     // TYPES on one unit is GL_INVALID_OPERATION at draw -- keep the habit.
@@ -177,8 +176,7 @@ Pipeline::Pipeline() {
     nebula_wake_ = std::make_unique<Shader>(shader_src::nebula_wake_vs, shader_src::nebula_wake_fs);
     phaser_        = std::make_unique<Shader>(shader_src::phaser_vs,        shader_src::phaser_fs);
     hologram_      = std::make_unique<Shader>(shader_src::hologram_vs,      shader_src::hologram_fs);
-    breach_        = std::make_unique<Shader>(shader_src::breach_vs,        shader_src::breach_fs);
-    hull_interior_ = std::make_unique<Shader>(shader_src::breach_vs,        shader_src::hull_interior_fs);
+    hull_interior_ = std::make_unique<Shader>(shader_src::hull_interior_vs, shader_src::hull_interior_fs);
     subsystem_pin_ = std::make_unique<Shader>(shader_src::subsystem_pin_vs, shader_src::subsystem_pin_fs);
     target_reticle_ = std::make_unique<Shader>(shader_src::target_reticle_vs, shader_src::target_reticle_fs);
     starmap_       = std::make_unique<Shader>(shader_src::starmap_vs,        shader_src::starmap_fs);

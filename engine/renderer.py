@@ -48,7 +48,7 @@ _REQUIRED_BINDINGS = frozenset({
     "filmic_set_enabled", "frame", "get_instance_bounds",
     "get_instance_head_center", "hdr_lens_flare_enabled",
     "hdr_lens_flare_set_enabled", "hdr_set_enabled",
-    "prefetch_hull_fill", "hull_source_string",
+    "prefetch_hull_fill", "prewarm_trace_accel", "hull_source_string",
     "init", "letterbox_set",
     "load_animation_clips",
     "load_instance_clip", "load_model", "model_aabb", "model_bounds",
@@ -883,6 +883,15 @@ def prefetch_hull_fill(model: int) -> None:
     set_project_asset_root).
     """
     _h.prefetch_hull_fill(model)
+
+
+def prewarm_trace_accel(model: int) -> None:
+    """Build a loaded model's ray-trace BVH now, so its first trace (a hit
+    point, a manual-aim pick, a damage probe) does not pay for it in combat
+    (perf-register SIG-039/040: 7.7 ms on a station). No-op for an unknown
+    handle. No hasattr guard (see set_project_asset_root).
+    """
+    _h.prewarm_trace_accel(model)
 
 
 def hull_source_string(path: str, scale: float) -> str:

@@ -34,7 +34,7 @@ GALAXY_NIF = bc_assets.GAME_ROOT / "data" / "Models" / "Ships" / "Galaxy" / "Gal
 GALAXY_TEX = (bc_assets.GAME_ROOT / "data" / "Models" / "SharedTextures"
               / "FedShips" / "High")
 IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
-WATCH = ("space.shield", "space.weapons", "space.breach", "space.carve_stencil",
+WATCH = ("space.shield", "space.weapons", "space.hull_interior",
          "space.lens_flare", "space.opaque", "space.particles", "space.dust")
 
 

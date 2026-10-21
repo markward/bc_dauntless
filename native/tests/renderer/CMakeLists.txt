@@ -65,10 +65,6 @@ add_executable(renderer_tests
     glow_region_test.cc
     ray_trace_test.cc
     shield_state_test.cc
-    carve_backing_test.cc
-    carve_cavity_test.cc
-    hull_volume_cache_root_test.cc
-    instance_field_cache_test.cc
     skin_shield_test.cc
     lens_flare_pass_test.cc
     bridge_pass_test.cc
@@ -99,15 +95,11 @@ add_executable(renderer_tests
     particle_math_test.cc
     particle_pass_test.cc
     asset_path_test.cc
-    hull_clip_test.cc
-    hull_field_clip_test.cc
+    model_textures_test.cc
+    opaque_degenerate_normal_test.cc
     cloak_pass_test.cc
-    breach_pass_test.cc
     breach_venting_test.cc
     breach_debris_test.cc
-    breach_field_sampling_test.cc
-    hull_cut_decision_sync_test.cc
-    breach_raymarch_test.cc
     comm_pass_test.cc
     viewscreen_brightness_test.cc
     viewscreen_static_pass_test.cc
@@ -131,9 +123,9 @@ target_link_libraries(renderer_tests
         GTest::gtest_main
 )
 
-# breach_field_sampling_test.cc reads the .frag sources straight off disk (it
-# is a text-level drift guard, not a GL test) and needs the project root to
-# find them from wherever the test binary runs.
+# Tests that read project files off disk (the mesh fixes, the undamaged-hull
+# reference in data/, shader sources) need the project root to find them from
+# wherever the test binary runs.
 target_compile_definitions(renderer_tests PRIVATE
     OPEN_STBC_PROJECT_ROOT="${CMAKE_SOURCE_DIR}")
 

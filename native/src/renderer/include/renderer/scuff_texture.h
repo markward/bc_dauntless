@@ -15,9 +15,9 @@ namespace renderer {
 unsigned int ensure_scuff_normal_texture();
 
 /// Release the texture while its GL context is still current (host shutdown)
-/// and forget the load attempt, so the next session reloads. Same contract as
-/// reset_damage_decal_texture(): a stale id leaking into a fresh context binds
-/// something else entirely.
+/// and forget the load attempt, so the next session reloads. A fresh context
+/// reuses GL ids from 1, so a stale id leaking into it binds something else
+/// entirely.
 void reset_scuff_normal_texture();
 
 /// Test seam: serve `id` from ensure_scuff_normal_texture() instead of the

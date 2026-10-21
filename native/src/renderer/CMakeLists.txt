@@ -103,8 +103,7 @@ embed_shader(SHADER_PHASER_VS shaders/phaser.vert phaser_vs)
 embed_shader(SHADER_PHASER_FS shaders/phaser.frag phaser_fs)
 embed_shader(SHADER_HOLOGRAM_VS shaders/hologram.vert hologram_vs)
 embed_shader(SHADER_HOLOGRAM_FS shaders/hologram.frag hologram_fs)
-embed_shader(SHADER_BREACH_VS shaders/breach.vert breach_vs)
-embed_shader(SHADER_BREACH_FS shaders/breach.frag breach_fs)
+embed_shader(SHADER_HULL_INTERIOR_VS shaders/hull_interior.vert hull_interior_vs)
 embed_shader(SHADER_HULL_INTERIOR_FS shaders/hull_interior.frag hull_interior_fs)
 embed_shader(SHADER_SUBSYSTEM_PIN_VS shaders/subsystem_pin.vert subsystem_pin_vs)
 embed_shader(SHADER_SUBSYSTEM_PIN_FS shaders/subsystem_pin.frag subsystem_pin_fs)
@@ -227,16 +226,15 @@ add_library(renderer STATIC
     cloak_pass.cc
     breach_venting.cc
     breach_debris.cc
-    breach_pass.cc
     hull_interior_pass.cc
     hull_interior_policy.cc
     model_draw_helpers.cc
     scuff_texture.cc
-    carve_field_cache.cc
+    hull_fill_cache.cc
+    model_textures.cc
     structure_parts_cache.cc
     plating_damage.cc
     part_severance_check.cc
-    instance_field_cache.cc
     subsystem_pin_pass.cc
     debug_volume_pass.cc
     gizmo_pass.cc

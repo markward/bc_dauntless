@@ -1,9 +1,9 @@
 """hull_volume.prewarm_for_model: warm a hull from a MODEL handle, before any
 render instance exists (warp-tunnel preload).
 
-Since the carve's per-instance field pipeline was removed, the only thing
-warmed is the hull's fill volume (the interior's left-the-ship test), which
-does not depend on BC's authored damage resolution."""
+Since the carve's per-instance field pipeline was removed, what is warmed is
+the hull's fill volume (the interior's left-the-ship test), which does not
+depend on BC's authored damage resolution, and the hull's ray-trace BVH."""
 import pytest
 
 from engine.appc import hull_volume
@@ -12,9 +12,13 @@ from engine.appc import hull_volume
 class Recorder:
     def __init__(self):
         self.fill_prefetches = []
+        self.trace_prewarms = []
 
     def prefetch_hull_fill(self, handle):
         self.fill_prefetches.append(handle)
+
+    def prewarm_trace_accel(self, handle):
+        self.trace_prewarms.append(handle)
 
 
 @pytest.fixture
@@ -24,9 +28,10 @@ def recorder(monkeypatch):
     return r
 
 
-def test_prewarm_prefetches_the_fill_volume(recorder):
+def test_prewarm_prefetches_the_fill_volume_and_builds_the_bvh(recorder):
     hull_volume.prewarm_for_model(5)
     assert recorder.fill_prefetches == [5]
+    assert recorder.trace_prewarms == [5]
 
 
 def test_a_binding_error_propagates(recorder, monkeypatch):

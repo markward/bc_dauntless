@@ -10,12 +10,7 @@ add_executable(voxel_tests
     plane_index_test.cc
     dual_contour_test.cc
     distance_field_test.cc
-    dhv_test.cc
     dvox_test.cc
-    hull_volume_cache_test.cc
-    field_brush_test.cc
-    field_atlas_test.cc
-    hull_connectivity_test.cc
     structure_parts_test.cc
     catalogue_volume_agreement_test.cc
 )

@@ -1,12 +1,11 @@
 // native/src/renderer/hull_interior_pass.cc
 //
-// SPIKE (damage redesign): see hull_interior_pass.h. The draw follows
-// BreachPass::draw_hull_proxy: the same vertex stage (breach.vert, body-frame
-// v_body_pos), the same geometry submission (draw_model_positions_only), the
-// fill as a sampler3D on unit 0.
+// SPIKE (damage redesign): see hull_interior_pass.h. The vertex stage is
+// hull_interior.vert (body-frame v_body_pos), the geometry submission is
+// draw_model_positions_only, and the fill is a sampler3D on unit 0.
 #include <renderer/hull_interior_pass.h>
 
-#include <renderer/carve_field_cache.h>
+#include <renderer/hull_fill_cache.h>
 #include <renderer/frame.h>   // Lighting
 #include <renderer/model_draw_helpers.h>
 #include <renderer/pipeline.h>
@@ -39,7 +38,7 @@ int HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_xf
     shader.use();
     shader.set_mat4("u_view", camera.view_matrix());
     shader.set_mat4("u_proj", camera.proj_matrix());
-    // breach.vert: v_body_pos = u_ship_world_inv * u_model * a_pos. u_model
+    // hull_interior.vert: v_body_pos = u_ship_world_inv * u_model * a_pos. u_model
     // is set per mesh by draw_model_positions_only.
     shader.set_mat4("u_ship_world_inv", world_inv);
     shader.set_vec3("u_camera_pos_body", cam_pos_body);
@@ -53,7 +52,7 @@ int HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_xf
     shader.set_vec3("u_fill_cell", fill_cell);
     shader.set_ivec3("u_fill_dims", fill_dims);
     shader.set_float("u_fill_backing",
-                     static_cast<float>(CarveFieldCache::kBackingIsovalue) / 255.0f);
+                     static_cast<float>(HullFillCache::kBackingIsovalue) / 255.0f);
 
     shader.set_float_array("u_plating", params, plating::kParamCount);
     shader.set_int("u_dmg_count", list.count);
@@ -68,8 +67,7 @@ int HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_xf
     shader.set_float("u_time", now);
 
     // Rock mode (the crater): 0 ship, 1 rock with its base texture, 2 rock
-    // with none. Its lighting is the scene's, uploaded exactly as BreachPass
-    // uploads it (ambient, directional-ambient pair, directional lights,
+    // with none. Its lighting is the scene's (ambient, directional-ambient pair, directional lights,
     // body -> world for the normal).
     shader.set_int("u_interior_rock", rock ? (rock_tex != 0 ? 1 : 2) : 0);
     shader.set_int("u_rock_tex", 1);
@@ -104,7 +102,7 @@ int HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_xf
     // through hole) wrote exactly this depth and must fail the test, or the
     // stencil EQUAL above would let it be repainted as rooms. The offset
     // pushes this draw a hair back so vertex-stage rounding between the
-    // opaque and breach programs cannot make the intact face win by an ulp.
+    // opaque and interior programs cannot make the intact face win by an ulp.
     glDepthFunc(GL_LESS);
     glEnable(GL_POLYGON_OFFSET_FILL);
     glPolygonOffset(1.0f, 1.0f);

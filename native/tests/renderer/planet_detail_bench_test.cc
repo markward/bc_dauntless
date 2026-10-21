@@ -168,7 +168,6 @@ protected:
     void TearDown() override {
         pd::reset_live_params();
         if (!w) return;
-        renderer::reset_damage_decal_texture();
         renderer::reset_scuff_normal_texture();
         renderer::reset_decal_mask_sampler();
         renderer::reset_model_radius_cache();
@@ -214,7 +213,7 @@ TEST_F(PlanetDetailBenchTest, FullScreenBakeAndSamplingBudget) {
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         submitter.submit_opaque_in_pass(world, cam, *p, lookup, lighting, scenegraph::Pass::Space,
-                                        0.0f, nullptr, 1.0f, nullptr, nullptr, nullptr, detail);
+                                        0.0f, 1.0f, nullptr, nullptr, detail);
     };
 
     GLuint q_bake = 0, q_draw = 0;

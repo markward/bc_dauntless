@@ -143,11 +143,10 @@ protected:
                          scenegraph::Instance::kMaxGlowRegions> no_glow{};
         scenegraph::DamageDecalRing no_decals;
 
-        scenegraph::HullCarveField no_carve;
         renderer::draw_model(*model_h, glm::mat4(1.0f), opaque, skinned,
                              white, black, /*rim_strength=*/0.0f,
                              no_decals, no_glow, /*decal_time=*/0.0f,
-                             /*emissive_scale=*/1.0f, palette, no_carve);
+                             /*emissive_scale=*/1.0f, palette);
 
         glDeleteTextures(1, &white);
         glDeleteTextures(1, &black);

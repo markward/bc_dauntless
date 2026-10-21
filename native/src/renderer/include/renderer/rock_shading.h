@@ -15,7 +15,7 @@ class Shader;
 struct Lighting;
 
 // Leaves `s` in use and texture unit 0 active. `white` / `black` are 1x1
-// textures owned by the caller (`black` is bound to unit 3, the damage decal).
+// textures owned by the caller (neither is read by the shared block today).
 // `rim_strength` is the FINAL u_rim_strength (see MinorPass::render).
 void configure_rock_program(Shader& s, const scenegraph::Camera& cam, const Lighting& lighting,
                             float ambient_scale, float rim_strength, unsigned white,

@@ -3,7 +3,7 @@
 // Hull interior behind a plating cut (SPIKE, damage redesign; plan
 // 2026-10-20-layered-damage-hull-interior, Task 3).
 //
-// HullInteriorPass draws the hull mesh through breach.vert under the stencil
+// HullInteriorPass draws the hull mesh through hull_interior.vert under the stencil
 // value FrameSubmitter::submit_plating_interior stamped where THIS hull's
 // plating is cut, so every fragment here sits on a cut front face. The view
 // ray continues from it into the hull and walks a body-frame lattice of decks
@@ -41,17 +41,17 @@
 // Everything is BODY frame, in model units.
 
 in vec3 v_body_pos;
-in vec3 v_body_normal;   // breach.vert writes it; unused here
+in vec3 v_body_normal;   // hull_interior.vert writes it; unused here
 
 uniform vec3 u_camera_pos_body;
 
-// Original (uncarved) fill, GL_R8 on unit 0. u_fill_ok 0 = no fill volume:
+// Original fill (HullFillCache), GL_R8 on unit 0. u_fill_ok 0 = no fill volume:
 // rooms still draw, with no left-the-ship test.
 uniform sampler3D u_fill;
 uniform vec3      u_fill_origin;   // body-frame min corner
 uniform vec3      u_fill_cell;     // cell size per axis
 uniform ivec3     u_fill_dims;     // nx, ny, nz
-uniform float     u_fill_backing;  // CarveFieldCache::kBackingIsovalue / 255
+uniform float     u_fill_backing;  // HullFillCache::kBackingIsovalue / 255
 uniform int       u_fill_ok;
 
 // The plating damage list (renderer/plating_damage.h).
@@ -75,7 +75,7 @@ uniform float u_time;              // game clock, seconds (flicker / pulse)
 // 1, always bound, 0 when unused), 2 rock with no texture (flat colour).
 uniform int       u_interior_rock;
 uniform sampler2D u_rock_tex;
-// Scene lighting for the crater wall, uploaded as BreachPass uploads it.
+// Scene lighting for the crater wall (HullInteriorPass uploads it).
 // u_ship_world is used only to put the wall normal in the lights' frame.
 const int MAX_DIR_LIGHTS = 4;
 uniform mat4  u_ship_world;        // instance body -> world
@@ -116,7 +116,7 @@ float g_detail = 1.0;
 // them as explicit gradients.
 vec3 g_dpdx = vec3(0.0), g_dpdy = vec3(0.0);
 
-// Blackbody-ish ramp keyed on heat 0..1. Copied from breach.frag.
+// Blackbody-ish ramp keyed on heat 0..1. Copied from the old breach.frag.
 vec3 blackbody(float heat) {
     vec3 cold  = vec3(0.0);
     vec3 red   = vec3(0.59, 0.10, 0.02);
@@ -127,7 +127,7 @@ vec3 blackbody(float heat) {
     return     mix(mid,  white, smoothstep(0.7,  1.0,  heat));
 }
 
-// Value noise, [0,1]. Copied from breach.frag.
+// Value noise, [0,1]. Copied from the old breach.frag.
 float vh3(vec3 p){ return fract(sin(dot(p, vec3(127.1,311.7,74.7))) * 43758.5453123); }
 float vnoise3(vec3 p){
     vec3 i = floor(p), f = fract(p);

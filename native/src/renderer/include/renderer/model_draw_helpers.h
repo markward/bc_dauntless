@@ -24,16 +24,15 @@ class Shader;
 /// Sets ONLY `u_model` per mesh; `prog` must already have every other
 /// uniform it needs (view/proj, and whatever else its own vertex/fragment
 /// stages read) set by the caller before this runs. No material, texture,
-/// skinning, decal, glow, or carve-sphere state is touched -- callers that
-/// need any of that want `draw_model` (frame.cc) instead.
+/// skinning, decal or glow state is touched -- callers that need any of
+/// that want `draw_model` (frame.cc) instead.
 ///
 /// Shared between `submit_shadow_depth` (frame.cc, depth-only shadow-map
-/// pass) and `BreachPass` (breach_pass.cc, raymarched-breach-interior Task 3
-/// round 3: draws the REAL hull mesh under the carve stencil so each
-/// fragment starts exactly at the surface point the carve actually touched,
-/// rather than searching a proxy box for one) -- previously duplicated as
-/// frame.cc's file-local `draw_model_depth_only`; promoted here specifically
-/// so a second caller does not silently drift from the first.
+/// pass) and `HullInteriorPass` (hull_interior_pass.cc: draws the REAL hull
+/// mesh under the plating mark's stencil, so each fragment starts exactly at
+/// the cut surface point) -- previously duplicated as frame.cc's file-local
+/// `draw_model_depth_only`; promoted here specifically so a second caller
+/// does not silently drift from the first.
 ///
 /// `node_overrides` (nullptr or empty = none) replaces individual nodes' local
 /// transforms, so an articulated or severed part casts the shadow it actually

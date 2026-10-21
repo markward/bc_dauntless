@@ -143,7 +143,6 @@ protected:
     void TearDown() override {
         pd::reset_live_params();
         if (!w) return;
-        renderer::reset_damage_decal_texture();
         renderer::reset_scuff_normal_texture();
         renderer::reset_decal_mask_sampler();
         renderer::reset_model_radius_cache();
@@ -415,8 +414,8 @@ TEST_F(PlanetDetailPassTest, OnlyTheTargetDrawsThroughPlanetProgram) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         renderer::FrameSubmitter submitter;
         submitter.submit_opaque_in_pass(wld, cam, *p, handle_lookup(), l,
-                                        scenegraph::Pass::Space, 0.0f, nullptr, 1.0f,
-                                        nullptr, nullptr, nullptr, d);
+                                        scenegraph::Pass::Space, 0.0f, 1.0f,
+                                        nullptr, nullptr, d);
         std::vector<float> px(static_cast<std::size_t>(kSize * kSize * 4), 0.0f);
         glBindFramebuffer(GL_READ_FRAMEBUFFER, hdr.fbo());
         glReadPixels(0, 0, kSize, kSize, GL_RGBA, GL_FLOAT, px.data());

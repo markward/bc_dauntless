@@ -6540,6 +6540,18 @@ def _cache_ship_hull_pieces(ship, handle, r_, iid=None) -> None:
         dev_mode.log_swallowed("realize hull bound spheres", _e)
 
 
+def _prewarm_trace_accel(r_, handle) -> None:
+    """Build the hull's ray-trace BVH at spawn rather than on its first trace
+    in combat (perf-register SIG-039/040: 7.7 ms on a station). ONE helper for
+    BOTH realize sites (realize_set_objects and _MissionLoader._realize_session).
+    Best-effort: never block spawn."""
+    try:
+        with frame_profiler.scope("realize.trace_prewarm"):
+            r_.prewarm_trace_accel(handle)
+    except Exception as _e:
+        dev_mode.log_swallowed("prewarm trace accel", _e)
+
+
 def _runtime_ship_model_source(ship, *, verbose: bool = False):
     """(model_path, nif_path, model_scale) for `ship`, or None when it has no
     NIF. A rock-catalogue redirect's model_path differs from nif_path."""
@@ -6746,6 +6758,7 @@ def realize_set_objects(session, pSet, renderer, *, verbose: bool = False,
             r_.prefetch_hull_fill(handle)
         except Exception as _e:
             dev_mode.log_swallowed("prefetch hull fill", _e)
+        _prewarm_trace_accel(r_, handle)
         render_instances.register(ship, iid)
         # Fresnel rim applies to ship hulls only — planets share the opaque
         # shader and must stay rim-free (default ineligible).
@@ -7996,6 +8009,7 @@ class _MissionLoader:
             _cache_ship_hull_pieces(ship, handle, r_, iid=iid)
             r_.set_world_transform(iid, _ship_world_matrix(ship, BC_MODEL_SCALE))
             sess.ship_instances[ship] = iid
+            _prewarm_trace_accel(r_, handle)
             render_instances.register(ship, iid)
             # Fresnel rim applies to ship hulls only — planets share the
             # opaque shader and must stay rim-free (default ineligible).

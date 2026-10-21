@@ -19,6 +19,7 @@ void configure_rock_program(Shader& s, const scenegraph::Camera& cam, const Ligh
                             float ambient_scale, float rim_strength, unsigned white,
                             unsigned black) {
     (void)white;   // no shared uniform reads it today; callers bind it per draw
+    (void)black;   // was the old carve lattice's unit-3 fallback; nothing reads it now
 
     // Per-frame uniforms, exactly as submit_opaque_in_pass's configure_common.
     s.use();
@@ -38,15 +39,6 @@ void configure_rock_program(Shader& s, const scenegraph::Camera& cam, const Ligh
     s.set_int("u_decal_count", 0);
     s.set_int("u_glow_region_count", 0);
     s.set_int("u_dyn_light_count", 0);
-    s.set_int("u_carve_enabled", 0);
-    s.set_int("u_carve_count", 0);
-    s.set_int("u_carve_invert", 0);
-    s.set_int("u_hull_field", 6);
-    s.set_int("u_hull_field_enabled", 0);
-    s.set_int("u_frame_enabled", 0);
-    s.set_int("u_damage_decal", 3);
-    glActiveTexture(GL_TEXTURE3);
-    glBindTexture(GL_TEXTURE_2D, black);
     s.set_int("u_hull_decal_count", 0);
     s.set_int("u_decal_enabled_mask", 0);
     s.set_mat4("u_node_rest_fix", glm::mat4(1.0f));

@@ -74,7 +74,6 @@ protected:
         }
         p = std::make_unique<renderer::Pipeline>();
         renderer::reset_model_radius_cache();
-        renderer::reset_damage_decal_texture();
     }
 
     /// Render a hull plane and return the centre pixel's summed brightness.
@@ -115,7 +114,7 @@ protected:
         submitter.submit_opaque(world, cam, *p,
             [](scenegraph::ModelHandle h) -> const assets::Model* {
                 return reinterpret_cast<const assets::Model*>(h);
-            }, lighting, /*decal_time=*/0.0f, /*carve_cache=*/nullptr, &lights);
+            }, lighting, /*decal_time=*/0.0f, &lights);
         EXPECT_EQ(glGetError(), GL_NO_ERROR);
         return read_center_total(kSize);
     }

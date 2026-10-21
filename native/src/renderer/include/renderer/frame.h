@@ -18,20 +18,13 @@
 
 #include <renderer/shadow_light.h>
 #include <renderer/plating_damage.h>
-// draw_model takes a voxel::VoxelVolume* and CarveFieldCache's nested
-// constants, so the forward declaration below is not enough on its own.
-#include <renderer/carve_field_cache.h>
 #include <renderer/hull_interior_pass.h>
 #include <renderer/hull_interior_policy.h>
-// draw_model takes a const InstanceFieldCache::Entry* -- a nested type, so
-// (like CarveFieldCache above) the forward declaration below is not enough.
-#include <renderer/instance_field_cache.h>
 
 namespace assets { struct Model; }
 namespace scenegraph { class World; struct Camera; enum class Pass : std::uint8_t;
                        class DamageDecalRing; }
-namespace renderer { class Pipeline; class Shader; class CarveFieldCache;
-                     class InstanceFieldCache; }
+namespace renderer { class Pipeline; class Shader; class HullFillCache; }
 namespace renderer::planet_detail { class PlanetDetailPass; }
 
 namespace renderer {
@@ -328,19 +321,9 @@ void draw_model(const assets::Model& model,
                 float decal_time,
                 float emissive_scale,
                 const std::vector<glm::mat4>& bone_palette,
-                const scenegraph::HullCarveField& carve,
                 const std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw>&
                     dyn_lights = {},
                 int dyn_light_count = 0,
-                const voxel::VoxelVolume* carve_fill = nullptr,
-                bool carve_invert = false,
-                // Per-instance hull distance field (hull-volume-field-
-                // transport, Task 5): nullptr is BOTH an undamaged instance
-                // (InstanceFieldCache has no entry for it) and the default
-                // for every call site below until a resolved Entry is
-                // threaded in -- either way u_hull_field_enabled stays 0 and
-                // opaque.frag takes its documented zero-cost stock path.
-                const InstanceFieldCache::Entry* hull_field = nullptr,
                 // Per-instance ARTICULATED node locals (BoP wings): node index
                 // -> replacement local transform, exactly the map the bridge
                 // pass already consumes. nullptr or an empty map takes the
@@ -418,24 +401,6 @@ int draw_model_plating_mesh_draws();
 int geosphere_level_for(const assets::Model& m, const glm::mat4& world,
                         const scenegraph::Camera& cam);
 
-/// Release the process-lifetime damage-decal texture (game/data/Textures/
-/// Effects/Damage.tga) lazily loaded by draw_model, and clear its "tried" flag.
-/// MUST be called by shutdown() while the creating GL context is still current:
-/// init()/shutdown() destroy and recreate the context per session, and a fresh
-/// context reuses GL ids from 1. Without this reset the cached id leaks into the
-/// next context, where binding it to GL_TEXTURE_2D collides with a texture that
-/// context created as GL_TEXTURE_3D (carve/breach fill) — GL_INVALID_OPERATION
-/// (0x502), surfacing later at the next check_gl (e.g. in upload_mesh).
-void reset_damage_decal_texture();
-
-/// The framework-lattice stencil (game/data/Textures/Effects/Damage.tga), lazily
-/// loaded once per GL session; 0 when game/ is not installed. Exported so the
-/// breach pass binds the SAME texture the opaque pass cuts the lattice with --
-/// both now run the one shared hull_cut_at(), and that function reads this
-/// texture, so a second independently-loaded copy would be a way for the cut
-/// and the interior to disagree again.
-unsigned int damage_decal_texture();
-
 /// Clear the lazy per-ModelHandle bounding-radius cache used by dynamic-light
 /// selection. MUST be called wherever the host clears g_loaded_models (both
 /// init() and shutdown() in host_bindings.cc): handle values are recycled —
@@ -443,16 +408,16 @@ unsigned int damage_decal_texture();
 /// clear — so without this reset a different model assigned a previously-
 /// cached handle silently inherits the OLD model's bounding radius after a
 /// mission swap / GL-context recreate. Pure CPU state (no GL objects), so
-/// unlike reset_damage_decal_texture() it has no context-currency requirement.
+/// unlike reset_decal_mask_sampler() it has no context-currency requirement.
 void reset_model_radius_cache();
 
 /// Release the lazily-created GL sampler object the opaque pass binds on
 /// texture units 8-11 (one shared sampler, up to 4 distinct decal masks per
 /// model, shared by up to 16 placements;
-/// clamp-to-edge; the mask texture itself uploads with GL_REPEAT). Same
-/// contract as
-/// reset_damage_decal_texture(): call while the creating context is current,
-/// or the stale sampler id leaks into the next context.
+/// clamp-to-edge; the mask texture itself uploads with GL_REPEAT). MUST be
+/// called while the creating context is current: init()/shutdown() destroy
+/// and recreate the context per session and a fresh context reuses GL ids
+/// from 1, so a stale sampler id would leak into the next context.
 void reset_decal_mask_sampler();
 
 /// Per-instance hull-decal override (set_instance_decals, spec 2026-09-28-
@@ -492,14 +457,7 @@ public:
                        const ModelLookup& lookup,
                        const Lighting& lighting,
                        float decal_time = 0.0f,
-                       CarveFieldCache* carve_cache = nullptr,
-                       const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr,
-                       // Per-instance hull field cache (Task 5 plumbing; the
-                       // owning cache is constructed and threaded in by
-                       // Task 6). nullptr (the default, and every call site
-                       // today) keeps every instance on draw_model's stock
-                       // hull_field==nullptr path.
-                       InstanceFieldCache* field_cache = nullptr);
+                       const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr);
 
     /// Like submit_opaque but only iterates instances tagged with `pass`.
     /// Used by the space pass to exclude bridge-tagged geometry, which
@@ -511,10 +469,8 @@ public:
                                const Lighting& lighting,
                                scenegraph::Pass pass,
                                float decal_time = 0.0f,
-                               CarveFieldCache* carve_cache = nullptr,
                                float ambient_scale = 1.0f,
                                const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr,
-                               InstanceFieldCache* field_cache = nullptr,
                                // The system's suns (spec 2026-10-07 §6): a planet with
                                // an enabled atmosphere takes its surface terminator
                                // and limb sun direction from these, falling back to
@@ -526,37 +482,15 @@ public:
                                // other draw (and nullptr) is exactly today's.
                                const planet_detail::PlanetDetailPass* detail = nullptr);
 
-    /// Stamp the stencil buffer with "hull was cut away here", for every
-    /// visible instance in `pass` that has active carves.
-    ///
-    /// Run BETWEEN the opaque hull and the breach scoop. The scoop must appear
-    /// only through real holes, never in open space — `discard` writes no
-    /// depth, so a hole and empty space look identical from the scoop's side,
-    /// and BC's fill mask balloons up to ~3 cells past the hull (39-55% of mask
-    /// volume lies outside the hull mesh, measured), which is exactly where the
-    /// scoop was left floating free of the ship.
-    ///
-    /// Draws each carved hull again through opaque.frag with u_carve_invert=1
-    /// (keep only what the hull draw discarded) with colour and depth writes
-    /// masked off, so the draw contributes nothing but stencil value 1. Depth
-    /// TEST stays on, so a cut hidden behind nearer geometry does not stamp.
-    /// Restores all GL state it touches. No-op when nothing is carved.
-    void submit_carve_stencil(const scenegraph::World& world,
-                              const scenegraph::Camera& camera,
-                              Pipeline& pipeline,
-                              const ModelLookup& lookup,
-                              scenegraph::Pass pass,
-                              CarveFieldCache* carve_cache,
-                              InstanceFieldCache* field_cache = nullptr);
-
     /// Hull interior under the plating tear. For each visible Space instance
     /// with far_fade < 1, a model, wants_plating and torn_possible (world
     /// order), stamps stencil value 2 + k (k = ordinal; stops after 255)
-    /// exactly where the hull is cut through. Value 1 is the old carve's.
+    /// exactly where the hull is cut through (value 1 is unused; it was the
+    /// old voxel carve's).
     /// Colour and depth writes are off; depth TEST on (GL_LEQUAL). Right
     /// after each marking draw, while params[25] > 0.5, HullInteriorPass
     /// draws that hull's decks and rooms under the value just stamped (fill
-    /// from carve_cache->get_for_source; none = rooms without the
+    /// from fill_cache->get_for_source; none = rooms without the
     /// left-the-ship test). params[25] <= 0.5 keeps the marking and leaves
     /// the holes see-through. Restores stencil off / mask 0xFF / masks on /
     /// the depth func it found.
@@ -564,7 +498,7 @@ public:
                                  const scenegraph::Camera& camera,
                                  Pipeline& pipeline,
                                  const ModelLookup& lookup,
-                                 CarveFieldCache* carve_cache,
+                                 HullFillCache* fill_cache,
                                  const Lighting& lighting,
                                  float ambient_scale,
                                  float now);
@@ -593,9 +527,7 @@ public:
     /// mark and the interior draw no mesh whose record subset is empty -- the
     /// mark would discard every fragment of it, and the interior cannot pass
     /// stencil and depth on it. Off = every mesh: the A/B proving the skip
-    /// never changes a pixel. One dev-only exception to byte-identity:
-    /// DAUNTLESS_HULL_CARVING=1 with plating on (the old carve / hull-field
-    /// discards on a record-free mesh in front of a cut).
+    /// never changes a pixel.
     void set_plating_skip_record_free_meshes(bool on) { plating_skip_record_free_ = on; }
 
     /// Marking draws issued by the last submit_plating_interior.
@@ -631,9 +563,7 @@ public:
                                 const ModelLookup& lookup,
                                 const Lighting& lighting,
                                 float decal_time = 0.0f,
-                                CarveFieldCache* carve_cache = nullptr,
-                                const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr,
-                                InstanceFieldCache* field_cache = nullptr);
+                                const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr);
 
 private:
     /// Lazily-allocated 1x1 white texture used as a fallback when a material

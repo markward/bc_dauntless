@@ -156,7 +156,6 @@ protected:
     // cached radius. ctest hides this by running each case in its own process.
     void TearDown() override {
         if (!w) return;
-        renderer::reset_damage_decal_texture();
         renderer::reset_scuff_normal_texture();
         renderer::reset_decal_mask_sampler();
         renderer::reset_model_radius_cache();
@@ -311,8 +310,7 @@ TEST_F(FrameTest, OpaquePassWithNullDynamicLightListRunsWithoutGLError) {
     submitter.submit_opaque(world, cam, *p,
         [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
             return reinterpret_cast<const assets::Model*>(h);
-        }, lighting, /*decal_time=*/0.0f, /*carve_cache=*/nullptr,
-        /*dyn_lights=*/nullptr);
+        }, lighting, /*decal_time=*/0.0f, /*dyn_lights=*/nullptr);
 
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
@@ -339,8 +337,7 @@ TEST_F(FrameTest, OpaquePassWithExplicitEmptyDynamicLightListRunsWithoutGLError)
     submitter.submit_opaque(world, cam, *p,
         [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
             return reinterpret_cast<const assets::Model*>(h);
-        }, lighting, /*decal_time=*/0.0f, /*carve_cache=*/nullptr,
-        &empty_lights);
+        }, lighting, /*decal_time=*/0.0f, &empty_lights);
 
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
@@ -379,7 +376,7 @@ TEST_F(FrameTest, OpaquePassWithPopulatedDynamicLightListRunsWithoutGLError) {
     submitter.submit_opaque(world, cam, *p,
         [model_h](scenegraph::ModelHandle h) -> const assets::Model* {
             return reinterpret_cast<const assets::Model*>(h);
-        }, lighting, /*decal_time=*/0.0f, /*carve_cache=*/nullptr, &lights);
+        }, lighting, /*decal_time=*/0.0f, &lights);
 
     EXPECT_EQ(glGetError(), GL_NO_ERROR);
 }
@@ -605,7 +602,6 @@ void render_ship(scenegraph::World& world, renderer::Pipeline& pipeline,
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     submitter.submit_opaque_in_pass(world, cam, pipeline, lut, lighting,
                                     scenegraph::Pass::Space, 0.0f,
-                                    /*carve_cache=*/nullptr,
                                     /*ambient_scale=*/1.0f, dyn_lights);
 }
 
@@ -771,7 +767,6 @@ TEST_F(FrameTest, DynamicLightNormalMapChangesShadingOnDynamicLightPath) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         submitter.submit_opaque_in_pass(world, cam, *p, lut, dark,
                                         scenegraph::Pass::Space, 0.0f,
-                                        /*carve_cache=*/nullptr,
                                         /*ambient_scale=*/1.0f, &lights);
         std::vector<float> buf(256 * 256 * 4);
         glReadPixels(0, 0, 256, 256, GL_RGBA, GL_FLOAT, buf.data());
@@ -979,7 +974,7 @@ void render(const assets::Model& model, renderer::Pipeline& pipeline,
     submitter.submit_opaque(world, cam, pipeline,
         [](scenegraph::ModelHandle h) -> const assets::Model* {
             return reinterpret_cast<const assets::Model*>(h);
-        }, lighting, /*decal_time=*/0.0f, /*carve_cache=*/nullptr, dyn);
+        }, lighting, /*decal_time=*/0.0f, dyn);
 }
 
 // Mean channel-sum over a 64x64 block at the centre of the quad.
@@ -1549,7 +1544,7 @@ void render_seeds(const assets::Model& model, renderer::Pipeline& pipeline,
     submitter.submit_opaque(world, cam, pipeline,
         [](scenegraph::ModelHandle h) -> const assets::Model* {
             return reinterpret_cast<const assets::Model*>(h);
-        }, lighting, /*decal_time=*/1.0f, /*carve_cache=*/nullptr, nullptr);
+        }, lighting, /*decal_time=*/1.0f, nullptr);
 }
 
 void render(const assets::Model& model, renderer::Pipeline& pipeline,
@@ -3637,7 +3632,7 @@ void render_at(const assets::Model& model, renderer::Pipeline& pipeline,
         [](scenegraph::ModelHandle h) -> const assets::Model* {
             return reinterpret_cast<const assets::Model*>(h);
         }, tangent_probe::dir_light(glm::vec3(0.0f, 0.0f, 1.0f)),
-        /*decal_time=*/game_time, /*carve_cache=*/nullptr, nullptr);
+        /*decal_time=*/game_time, nullptr);
 }
 
 // Centre pixel as (r, g).

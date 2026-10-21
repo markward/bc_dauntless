@@ -9,7 +9,7 @@
 // synthetic closed box hull with a synthetic fill, so no BC assets are needed.
 #include <gtest/gtest.h>
 
-#include <renderer/carve_field_cache.h>
+#include <renderer/hull_fill_cache.h>
 #include <renderer/frame.h>
 #include <renderer/pipeline.h>
 #include <renderer/plating_damage.h>
@@ -77,8 +77,8 @@ int count_not_clear(const std::vector<std::uint8_t>& px) {
 class HullInteriorTest : public PlatingGLFixture {
 protected:
     std::unique_ptr<assets::Model> box;
-    std::unique_ptr<renderer::CarveFieldCache> filled;   // holds the box's fill
-    std::unique_ptr<renderer::CarveFieldCache> empty;    // has no fill for it
+    std::unique_ptr<renderer::HullFillCache> filled;   // holds the box's fill
+    std::unique_ptr<renderer::HullFillCache> empty;    // has no fill for it
 
     void SetUp() override {
         PlatingGLFixture::SetUp();
@@ -86,9 +86,9 @@ protected:
         dauntless_plating::g_params[0] = 1.0f;
         box = build_box(kBoxHalf);
         box->source = kBoxSource;
-        filled = std::make_unique<renderer::CarveFieldCache>();
+        filled = std::make_unique<renderer::HullFillCache>();
         ASSERT_NE(filled->put_for_source(kBoxSource, solid_box_fill()), nullptr);
-        empty = std::make_unique<renderer::CarveFieldCache>();
+        empty = std::make_unique<renderer::HullFillCache>();
     }
 
     void TearDown() override {
@@ -124,7 +124,7 @@ protected:
     // Every `placed` box drawn through submit_opaque_in_pass then
     // submit_plating_interior (or submit_opaque alone when `stock`), the
     // interior's fill coming from `fills`, under `policy` seen from `cam`.
-    Shot render(const std::vector<Placed>& placed, renderer::CarveFieldCache* fills,
+    Shot render(const std::vector<Placed>& placed, renderer::HullFillCache* fills,
                 bool stock = false, const assets::Model* use_model = nullptr) {
         const assets::Model* drawn = use_model != nullptr ? use_model : box.get();
         scenegraph::World world;
@@ -170,7 +170,7 @@ protected:
         return out;
     }
 
-    Shot render_one(const scenegraph::HullDamageStore& ring, renderer::CarveFieldCache* fills,
+    Shot render_one(const scenegraph::HullDamageStore& ring, renderer::HullFillCache* fills,
                     bool stock = false, const assets::Model* use_model = nullptr) {
         return render({Placed{glm::mat4(1.0f), ring}}, fills, stock, use_model);
     }
@@ -236,7 +236,7 @@ TEST_F(HullInteriorTest, NoFillStillDrawsRooms) {
 TEST_F(HullInteriorTest, LeftTheShipShowsFarWallUnlessBlownThrough) {
     voxel::VoxelVolume hollow = solid_box_fill();
     std::fill(hollow.occ.begin(), hollow.occ.end(), std::uint8_t{0});
-    renderer::CarveFieldCache hollow_cache;
+    renderer::HullFillCache hollow_cache;
     ASSERT_NE(hollow_cache.put_for_source(kBoxSource, hollow), nullptr);
     const auto ring = internal_ring({0.0f, 0.0f, kBoxHalf}, 30.0f, 10.0f);
 
@@ -328,9 +328,9 @@ TEST_F(HullInteriorTest, PutEmptyFillDoesNotShadowTheRealOne) {
     const auto nif = test_support::game_root() / "data/Models/Ships/Ambassador/Ambassador.nif";
     if (!std::filesystem::is_regular_file(nif))
         GTEST_SKIP() << "BC asset not available at " << nif << " -- set DAUNTLESS_GAME_DIR";
-    renderer::CarveFieldCache cache;
+    renderer::HullFillCache cache;
     EXPECT_EQ(cache.put_for_source(nif, voxel::VoxelVolume{}), nullptr);
-    const renderer::CarveFieldCache::Entry* e = nullptr;
+    const renderer::HullFillCache::Entry* e = nullptr;
     for (int i = 0; i < 1000 && e == nullptr; ++i) {
         e = cache.get_for_source(nif);
         if (e == nullptr) std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -345,7 +345,7 @@ TEST_F(HullInteriorTest, PutAfterPrefetchDropsTheDecodedVolume) {
     const auto nif = test_support::game_root() / "data/Models/Ships/Ambassador/Ambassador.nif";
     if (!std::filesystem::is_regular_file(nif))
         GTEST_SKIP() << "BC asset not available at " << nif << " -- set DAUNTLESS_GAME_DIR";
-    renderer::CarveFieldCache cache;
+    renderer::HullFillCache cache;
     cache.prefetch(nif);
     for (int i = 0; i < 1000 && cache.decoded_pending() == 0; ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -360,14 +360,14 @@ TEST_F(HullInteriorTest, FillPrefetchDoesNotBlockAndBecomesReady) {
     const auto nif = test_support::game_root() / "data/Models/Ships/Ambassador/Ambassador.nif";
     if (!std::filesystem::is_regular_file(nif))
         GTEST_SKIP() << "BC asset not available at " << nif << " -- set DAUNTLESS_GAME_DIR";
-    renderer::CarveFieldCache cache;
+    renderer::HullFillCache cache;
     const auto t0 = std::chrono::steady_clock::now();
     EXPECT_EQ(cache.get_for_source(nif), nullptr);
     const auto first_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - t0).count();
     EXPECT_LT(first_ms, 50) << "get_for_source blocked on the decode";
 
-    const renderer::CarveFieldCache::Entry* e = nullptr;
+    const renderer::HullFillCache::Entry* e = nullptr;
     for (int i = 0; i < 1000 && e == nullptr; ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
         e = cache.get_for_source(nif);
@@ -382,7 +382,7 @@ TEST_F(HullInteriorTest, InteriorDrawsWhileFillIsLoading) {
     const auto nif = test_support::game_root() / "data/Models/Ships/Ambassador/Ambassador.nif";
     if (!std::filesystem::is_regular_file(nif))
         GTEST_SKIP() << "BC asset not available at " << nif << " -- set DAUNTLESS_GAME_DIR";
-    renderer::CarveFieldCache loading;
+    renderer::HullFillCache loading;
     EXPECT_EQ(loading.get_for_source(nif), nullptr);     // starts the decode
     EXPECT_EQ(loading.get_for_source(kBoxSource), nullptr);  // box hull: still loading
     const auto ring = internal_ring({0.0f, 0.0f, kBoxHalf}, 30.0f, 10.0f);

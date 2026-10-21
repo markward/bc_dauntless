@@ -145,17 +145,6 @@ protected:
         // address another test happened to reuse (documented caveat on
         // g_model_radius_cache in frame.cc).
         renderer::reset_model_radius_cache();
-        // Avoid inheriting a GL texture id from a PREVIOUS test's (already
-        // destroyed) GL context: ensure_damage_decal_texture() in frame.cc
-        // lazily loads game/data/Textures/Effects/Damage.tga once per
-        // process and caches its id in a process-global, then binds it
-        // UNCONDITIONALLY every draw_model() call (regardless of carve
-        // count). Each ConeLightFrameTest gets its own fresh GL context
-        // (see SetUp above), so a texture id minted in a prior context is
-        // not a valid name in this one -- binding it is GL_INVALID_OPERATION
-        // under a 3.3 core profile. reset_damage_decal_texture() forces a
-        // reload against the now-current context.
-        renderer::reset_damage_decal_texture();
     }
 };
 
@@ -201,7 +190,7 @@ TEST_F(ConeLightFrameTest, ConeBoundsToHalfAngle) {
     submitter.submit_opaque(world, cam, *p,
         [](scenegraph::ModelHandle h) -> const assets::Model* {
             return reinterpret_cast<const assets::Model*>(h);
-        }, lighting, /*decal_time=*/0.0f, /*carve_cache=*/nullptr, &lights);
+        }, lighting, /*decal_time=*/0.0f, &lights);
 
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
 
@@ -277,7 +266,7 @@ TEST_F(ConeLightFrameTest, ZeroWidthConeDoesNotBecomeAPointLight) {
     submitter.submit_opaque(world, cam, *p,
         [](scenegraph::ModelHandle h) -> const assets::Model* {
             return reinterpret_cast<const assets::Model*>(h);
-        }, lighting, /*decal_time=*/0.0f, /*carve_cache=*/nullptr, &lights);
+        }, lighting, /*decal_time=*/0.0f, &lights);
 
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
 
@@ -362,7 +351,7 @@ TEST_F(ConeLightFrameTest, ZeroWidthConeDoesNotLeakLightOnItsAxisPlane) {
     submitter.submit_opaque(world, cam, *p,
         [](scenegraph::ModelHandle h) -> const assets::Model* {
             return reinterpret_cast<const assets::Model*>(h);
-        }, lighting, /*decal_time=*/0.0f, /*carve_cache=*/nullptr, &lights);
+        }, lighting, /*decal_time=*/0.0f, &lights);
 
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
 
@@ -434,7 +423,7 @@ TEST_F(ConeLightFrameTest, NegativeSpotTanActsAsNonConeIdentity) {
     submitter.submit_opaque(world, cam, *p,
         [](scenegraph::ModelHandle h) -> const assets::Model* {
             return reinterpret_cast<const assets::Model*>(h);
-        }, lighting, /*decal_time=*/0.0f, /*carve_cache=*/nullptr, &lights);
+        }, lighting, /*decal_time=*/0.0f, &lights);
 
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
 
@@ -488,7 +477,7 @@ TEST_F(ConeLightFrameTest, EllipticalConeBoundsToEllipse) {
     submitter.submit_opaque(world, cam, *p,
         [](scenegraph::ModelHandle h) -> const assets::Model* {
             return reinterpret_cast<const assets::Model*>(h);
-        }, lighting, /*decal_time=*/0.0f, /*carve_cache=*/nullptr, &lights);
+        }, lighting, /*decal_time=*/0.0f, &lights);
 
     ASSERT_EQ(glGetError(), GL_NO_ERROR);
 

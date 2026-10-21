@@ -76,9 +76,6 @@ protected:
         renderer::Shader& s = p->plating_shader();
         s.use();
         s.set_int("u_coverage_cutout", 1);
-        s.set_int("u_carve_invert", 1);
-        s.set_int("u_carve_enabled", 1);
-        s.set_int("u_carve_count", 3);
         s.set_int("u_impostor_blend", 1);
         s.set_int("u_plating_far", 1);
         s.set_mat4("u_ship_world_inv",

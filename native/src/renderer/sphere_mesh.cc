@@ -55,11 +55,9 @@ assets::MeshCpu build_uv_sphere(int target_tris) {
     // (standard: cull(FRONT) removes CCW-facing triangles, i.e. the near/
     // outward side, leaving the far/inward side visible) after the
     // 2026-06-18 right-handed un-mirror (docs/superpowers/plans/). The
-    // stale "clockwise" claim here was faithfully reproduced by a Task 3
-    // hand-derivation for a NEW box mesh in breach_pass.cc, and had to be
-    // corrected against a real GL render. (That box is gone -- the breach
-    // pass draws the real hull mesh now -- but the correction to THIS
-    // comment stands on its own hand-derivation above, not on the box.)
+    // stale "clockwise" claim here was once faithfully reproduced by a
+    // hand-derivation for another mesh, and had to be corrected against a
+    // real GL render; the correction stands on the hand-derivation above.
     for (int i = 0; i < lat_segs; ++i) {
         for (int j = 0; j < lon_segs; ++j) {
             std::uint32_t a = static_cast<std::uint32_t>( i      * (lon_segs + 1) + j     );

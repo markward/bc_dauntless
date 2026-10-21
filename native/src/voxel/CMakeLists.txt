@@ -6,12 +6,7 @@ add_library(voxel STATIC
     src/source_cache.cc
     src/dual_contour.cc
     src/distance_field.cc
-    src/dhv.cc
     src/dvox.cc
-    src/hull_volume_cache.cc
-    src/field_brush.cc
-    src/field_atlas.cc
-    src/hull_connectivity.cc
     src/structure_parts.cc
 )
 target_include_directories(voxel PUBLIC include)

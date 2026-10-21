@@ -30,18 +30,13 @@ inline constexpr float kDefaultBandCells = 4.0f;
 /// do: every shipped station _vox.nif uses cell 85 against the authored 15,
 /// and the largest volume in the whole corpus is 206k cells.
 ///
-/// A BACKSTOP, not the sizing rule. Stations are sized by their hole
-/// modifier before they get here (engine/appc/hull_volume.py
-/// effective_resolution: FedOutpost 13.4M -> about 50k cells). 2^22 sits
-/// just above the largest ship lattice (the Defiant-class mod hulls,
-/// 218 x 306 x 56 = 3.7M), so no ship is coarsened; it catches what the
-/// modifier cannot -- a mod missile authored at resolution 2 (13.4M) and
-/// catalogue rocks scaled up 8x (up to 5.8M). Every whole-lattice pass (the
-/// first severance BFS, a full atlas upload) scales with this count: at
-/// 13.4M each cost 130-240 ms in Debug (perf-register P-4).
+/// A BACKSTOP, not the sizing rule: 2^22 sits just above the largest ship
+/// lattice (the Defiant-class mod hulls, 218 x 306 x 56 = 3.7M), so no ship
+/// is coarsened. Every whole-lattice pass scales with this count (at 13.4M a
+/// pass cost 130-240 ms in Debug, perf-register P-4).
 ///
-/// This is a bake INPUT: changing it changes the output for hulls above the
-/// old or new value, so bump dhv.h's kBakerVersion in the same change.
+/// (The old voxel carve's per-instance damage field and its .dhv bake were
+/// this lattice's consumer; both were removed in layered damage phase 4.)
 inline constexpr std::size_t kMaxFieldCells = std::size_t{1} << 22;
 
 /// Signed distance field over a uniform body-frame lattice, model units.

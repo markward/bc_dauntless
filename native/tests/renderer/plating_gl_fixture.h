@@ -167,7 +167,6 @@ protected:
     void TearDown() override {
         std::copy(saved_params.begin(), saved_params.end(), dauntless_plating::g_params);
         if (!w) return;
-        renderer::reset_damage_decal_texture();
         renderer::reset_scuff_normal_texture();
         renderer::reset_decal_mask_sampler();
         renderer::reset_model_radius_cache();
