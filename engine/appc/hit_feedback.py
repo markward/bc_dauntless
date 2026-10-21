@@ -200,6 +200,16 @@ def _audio_should_play(ship, severity: Severity) -> bool:
     return (now - last) >= _AUDIO_CONTACT_GAP_S
 
 
+def _structural_hit(weapon_type, allow_structural_wear: bool) -> bool:
+    """Whether a hit is STRUCTURAL: eligible both to land plating wear and to
+    record a part-severance share. Only LIGHT (PP_LOW) phaser fire is
+    cosmetic -- `allow_structural_wear` False on a phaser; every other hit is
+    structural. The one predicate for both gates in `dispatch`, so the two
+    can never disagree on a hit (how MUCH wear a structural hit lands, zero
+    for a small collision bump, is `hull_wear.wear_for_hit`'s business)."""
+    return bool(allow_structural_wear) or weapon_type != "phaser"
+
+
 def dispatch(*, ship, source, point, normal, damage, subsystem,
              absorbed_shields: float, absorbed_subsystem: float,
              absorbed_hull: float, sub_transition,
@@ -383,7 +393,7 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
             # Plating wear from the real hull damage dealt. Light phaser fire
             # stays cosmetic. AFTER the scorch and isolated: a wear failure
             # must never cost the hit its scorch or its part attribution.
-            if allow_structural_wear or weapon_type != "phaser":
+            if _structural_hit(weapon_type, allow_structural_wear):
                 try:
                     from engine.appc import hull_wear
                     wear = hull_wear.wear_for_hit(weapon_type, absorbed_hull,
@@ -409,8 +419,10 @@ def dispatch(*, ship, source, point, normal, damage, subsystem,
     # 5. Appendage severance (part_severance): eligible ships only (player +
     # capped nearest/largest; see engine.appc.damage_eligibility), with the
     # same hull-absorbing, mesh-normal, renderer-present, committed-hit gating
-    # as the decal. Light phaser fire records nothing.
-    if (allow_structural_wear and absorbed_hull > 0.0 and normal is not None
+    # as the decal. Light phaser fire records nothing: the same structural
+    # gate as the plating wear above (`_structural_hit`).
+    if (_structural_hit(weapon_type, allow_structural_wear)
+            and absorbed_hull > 0.0 and normal is not None
             and persist_decal and ship_instances is not None):
         from engine.appc import damage_eligibility
         if damage_eligibility.is_eligible(ship):

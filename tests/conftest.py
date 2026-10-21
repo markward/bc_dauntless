@@ -1335,6 +1335,10 @@ def _reset_leakable_engine_globals():
         ("engine.appc.visible_damage", "_pending"),
         ("engine.appc.internal_blast", "_pending"),
         ("engine.appc.warp_core_breach", "_growing"),
+        # The single-fire guarantee's queue + set: a ship armed or breached
+        # by one test would never detonate (or detonate) in a later one.
+        ("engine.appc.warp_core_breach", "_armed"),
+        ("engine.appc.warp_core_breach", "_breached"),
         ("engine.audio.attached_sources", "_attached"),
         ("engine.audio.hum_allocator", "_humming"),
         # Detached hull chunks + the per-ship breakup throttle: a chunk left
@@ -1345,6 +1349,7 @@ def _reset_leakable_engine_globals():
         ("engine.appc.hull_breakup", "_pending_wear"),
         ("engine.appc.hull_breakup", "_last_wear_check"),
         ("engine.appc.hull_breakup", "_severed"),
+        ("engine.appc.hull_breakup", "_part_labels"),
     ):
         try:
             _m = sys.modules.get(_mod)

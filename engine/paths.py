@@ -516,14 +516,6 @@ def log_file_path() -> Path:
     return os_user_dirs()["logs"] / "dauntless.log"
 
 
-def hull_volume_cache_root() -> Path:
-    """Where the per-instance hull-volume SDF bake cache (.dhv files) lives:
-    <cache_dir()>/hull_volumes. Computed fresh on every call; callers must
-    never capture the result at import.
-    """
-    return cache_dir() / "hull_volumes"
-
-
 def structure_parts_cache_root() -> Path:
     """Where hull structure-part segmentations (.sps files, layered damage
     phase 4 §2.2) are cached: <cache_dir()>/structure_parts. Computed fresh
@@ -561,7 +553,7 @@ def project_asset_root() -> Path:
     """Where PROJECT-authored renderer assets live -- <PROJECT_ROOT>/native/
     assets (the collision-scuff normal map under textures/, the CEF UI under
     ui-cef/). Distinct from game_root(): BC content is the player's install,
-    this is ours. Computed fresh on every call, like hull_volume_cache_root().
+    this is ours. Computed fresh on every call, like structure_parts_cache_root().
     """
     return PROJECT_ROOT / "native" / "assets"
 

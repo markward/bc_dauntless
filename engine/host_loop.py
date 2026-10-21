@@ -1246,7 +1246,8 @@ def _advance_combat(ships, dt: float, ship_instances=None,
                 if damage > 0:
                     # LIGHT (PP_LOW) phaser power is "disable, don't destroy":
                     # damage routes to subsystems only, the hull takes no condition
-                    # damage and is not voxel-carved (verified by dev-console probe).
+                    # damage (verified by dev-console probe) and no plating wear
+                    # or severance share (hit_feedback._structural_hit).
                     # `sys_` is the firing PhaserSystem; read PP_LOW off it directly.
                     damage_hull = (sys_.GetPowerLevel() != sys_.PP_LOW
                                    if hasattr(sys_, "GetPowerLevel") else True)
@@ -1692,6 +1693,13 @@ def _build_explosion_light_render_data():
 
 
 _PART_SEVERED = object()
+
+
+def _forget_part_labels(iid) -> None:
+    """Drop a destroyed instance's cached structure-part light labels
+    (`hull_breakup.forget_instance`) so a recycled iid starts clean."""
+    from engine.appc import hull_breakup
+    hull_breakup.forget_instance(iid)
 
 
 def _part_pose_at(ship, iid, position, prop=None, severed_mask=None):
@@ -6431,8 +6439,10 @@ class MissionSession:
     # Running lights registered at spawn: render InstanceId -> blink phase (s).
     # Fed per frame by _push_running_lights (running-lights spec §4.3).
     ship_running_lights: dict[object, float] = field(default_factory=dict)
-    # Running lights' rest specs + the list last sent, per render InstanceId,
-    # so a moving articulated part re-sends them (_resend_articulated_running_lights).
+    # Running lights per render InstanceId: (rest specs, the list last sent,
+    # the structure-part severed mask it was sent under), so a moving
+    # articulated part -- or a structure severance changing the mask --
+    # re-sends them (_resend_articulated_running_lights).
     ship_running_light_specs: dict[object, tuple] = field(default_factory=dict)
     ship_emitters: dict[object, list] = field(default_factory=dict)  # keyed by the renderer InstanceId (not int): the value is passed straight through as each light's instance_id
     planet_instances: dict[Any, int] = field(default_factory=dict)
@@ -6478,6 +6488,7 @@ class MissionSession:
         from engine.planets import surface as _surface
         for iid in list(self.ship_instances.values()):
             renderer.destroy_instance(iid)
+            _forget_part_labels(iid)
         for iid in list(self.planet_instances.values()):
             renderer.destroy_instance(iid)
         for iid in list(self.celestial_instances.values()):
@@ -6900,6 +6911,7 @@ def teardown_set_objects(session, pSet, renderer) -> None:
             session.ship_emitters.pop(iid, None)
             session.ship_running_lights.pop(iid, None)
             session.ship_running_light_specs.pop(iid, None)
+            _forget_part_labels(iid)
             # The transform-slot binding died with the instance; drop the
             # re-bind guard so a re-realized object binds afresh.
             session.slot_bindings.pop(ship, None)
@@ -7139,6 +7151,7 @@ def _reconcile_runtime_instances(session, renderer, *,
                 session.ship_emitters.pop(iid, None)
                 session.ship_running_lights.pop(iid, None)
                 session.ship_running_light_specs.pop(iid, None)
+                _forget_part_labels(iid)
                 session.scope_hidden.discard(iid)
                 # The transform-slot binding died with the instance.
                 session.slot_bindings.pop(ship, None)

@@ -31,6 +31,12 @@ kBreakupCheckInterval = 0.5   # s; the full BFS is still the worst case
 _last_wear_check: dict = {}   # id(ship) -> game time of last part check
 _pending_wear: dict = {}      # id(ship) -> (ship, iid, ship_instances)
 _severed: dict = {}           # id(ship) -> (weakref(ship), iid, {part, ...}) spawned
+# iid -> (severed mask, {(x, y, z, scale): structure part label}): the
+# per-frame `on_severed_part` labels. A label depends only on the instance and
+# the authored rest point, so after a severance each light is labelled once
+# per mask rather than every frame; a new severance (mask change) relabels.
+# Dropped with the instance (`forget_instance`) and on mission swap (`reset`).
+_part_labels: dict = {}
 
 
 def _now():
@@ -75,6 +81,13 @@ def drain(now=None):
 
 def reset():
     _last_wear_check.clear(); _pending_wear.clear(); _severed.clear()
+    _part_labels.clear()
+
+
+def forget_instance(iid) -> None:
+    """Drop `iid`'s cached part labels when its render instance is destroyed:
+    a recycled id must not inherit a destroyed hull's labels."""
+    _part_labels.pop(iid, None)
 
 
 def _check_parts(ship, iid, now):
@@ -299,13 +312,25 @@ def on_severed_part(ship, iid, point, mask=None) -> bool:
     """Whether an authored body-frame point of `ship` (SHIP units, rest
     pose) sits on a structure part that has broken off. `mask` is
     `severed_mask(iid)` when the caller already holds it (read once per ship
-    per frame); an intact hull answers without labelling the point."""
+    per frame); an intact hull answers without labelling the point, and a
+    severed one labels each point once per mask (`_part_labels`)."""
     if mask is None:
         mask = severed_mask(iid)
     if not mask:
         return False
-    label = part_at_rest_point(ship, iid, point)
-    return 0 <= label < 32 and bool((int(mask) >> label) & 1)
+    mask = int(mask)
+    cached = _part_labels.get(iid)
+    if cached is None or cached[0] != mask:
+        cached = (mask, {})
+        _part_labels[iid] = cached
+    labels = cached[1]
+    key = (float(point[0]), float(point[1]), float(point[2]),
+           _ship_scale(ship))
+    label = labels.get(key)
+    if label is None:
+        label = part_at_rest_point(ship, iid, point)
+        labels[key] = label
+    return 0 <= label < 32 and bool((mask >> label) & 1)
 
 
 def _burst(ship, iid, centroid_gu):

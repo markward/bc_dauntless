@@ -36,3 +36,32 @@ def test_e_quickbattle_player_type_resolver_leaks():
 def test_f_the_quickbattle_player_type_resolver_did_not_leak():
     from engine import bridge_selection
     assert bridge_selection._player_type_resolver is None
+
+
+class _Ship:
+    pass
+
+
+def test_g_a_warp_core_breach_leaves_armed_and_breached_ships():
+    from engine.appc import warp_core_breach
+    warp_core_breach.arm(_Ship())
+    warp_core_breach._breached.add(_Ship())
+    warp_core_breach._growing.append({"ship": _Ship(), "age": 0.0, "next": 0})
+    assert warp_core_breach._armed and warp_core_breach._breached
+
+
+def test_h_the_warp_core_breach_state_did_not_leak():
+    from engine.appc import warp_core_breach
+    assert warp_core_breach._armed == []
+    assert warp_core_breach._breached == set()
+    assert warp_core_breach._growing == []
+
+
+def test_i_cached_structure_part_labels_leak():
+    from engine.appc import hull_breakup
+    hull_breakup._part_labels[77] = (1, {(0.0, 0.0, 0.0, 1.0): 0})
+
+
+def test_j_the_structure_part_labels_did_not_leak():
+    from engine.appc import hull_breakup
+    assert hull_breakup._part_labels == {}

@@ -325,3 +325,58 @@ def test_particle_emitters_inside_a_lost_part_stop(native, _breakup,
     assert not smoke_on_nacelle.is_emitting()
     assert from_bridge.is_emitting()
     assert smoke_on_body.is_emitting()
+
+
+# ── label cache (per-frame cost after a severance) ───────────────────────────
+
+def test_emitter_lights_are_labelled_once_per_severed_mask(native, _viewed):
+    """After a severance every frame asks which part each emitter light sits
+    on. The label depends only on (instance, rest position), so it is cached
+    per (iid, severed mask): N frames cost one `structure_part_at` per light,
+    and a NEW severance (the mask changes) relabels once more."""
+    n = native(43)
+    ship = _EmitterShip()
+    n.mask = 1 << NACELLE_PART
+    for _ in range(5):
+        (d,) = _emitter_lights(ship, 43, NACELLE_PT, BODY_PT)
+        assert d["position"] == pytest.approx(BODY_PT)
+    assert len(n.asked) == 2, n.asked
+
+    n.mask = (1 << NACELLE_PART) | (1 << 5)
+    for _ in range(5):
+        _emitter_lights(ship, 43, NACELLE_PT, BODY_PT)
+    assert len(n.asked) == 4, n.asked
+
+
+def test_label_cache_is_dropped_with_the_instance(native, _viewed):
+    """A recycled iid must not inherit a destroyed hull's labels: forgetting
+    the instance (teardown) and `reset()` (mission swap) both empty it."""
+    from engine.appc import hull_breakup
+    n = native(44)
+    ship = _EmitterShip()
+    n.mask = 1 << NACELLE_PART
+    _emitter_lights(ship, 44, NACELLE_PT)
+    hull_breakup.forget_instance(44)
+    _emitter_lights(ship, 44, NACELLE_PT)
+    assert len(n.asked) == 2
+    hull_breakup.reset()
+    _emitter_lights(ship, 44, NACELLE_PT)
+    assert len(n.asked) == 3
+
+
+def test_mission_session_teardown_forgets_part_labels(native, _viewed):
+    """`MissionSession.teardown` destroys every ship instance; their cached
+    labels go with them."""
+    from engine.appc import hull_breakup
+    n = native(45)
+    ship = _EmitterShip()
+    n.mask = 1 << NACELLE_PART
+    _emitter_lights(ship, 45, NACELLE_PT)
+    assert 45 in hull_breakup._part_labels
+
+    class _R:
+        def destroy_instance(self, iid): pass
+    sess = host_loop.MissionSession(mission_name="t")
+    sess.ship_instances[ship] = 45
+    sess.teardown(_R())
+    assert 45 not in hull_breakup._part_labels

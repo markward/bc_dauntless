@@ -254,6 +254,44 @@ def test_light_phaser_fire_leaves_no_wear(fake):
     assert fake.wear == [] and fake.body_wear == []
 
 
+@pytest.fixture
+def severance(monkeypatch):
+    """Every part-severance share `dispatch` records, on an eligible ship."""
+    from engine.appc import damage_eligibility, part_severance
+    monkeypatch.setattr(damage_eligibility, "is_eligible", lambda s: True)
+    got = []
+    monkeypatch.setattr(part_severance, "record_hit",
+                        lambda *a, **k: got.append(a))
+    return got
+
+
+def test_light_phaser_fire_records_no_severance_share(fake, severance):
+    """LIGHT (PP_LOW) phaser fire is cosmetic: the scorch lands, but no part
+    is attributed a share of the hit, so it can never shear one off."""
+    _hit(_Ship(), weapon_type="phaser", absorbed_hull=5.0,
+         allow_structural_wear=False)
+    assert len(fake.decals) == 1, "the scorch still lands"
+    assert severance == []
+
+
+@pytest.mark.parametrize("weapon_type,allow", [
+    ("phaser", True), ("phaser", False),
+    ("torpedo", True), ("torpedo", False),
+    ("collision", True), ("collision", False),
+])
+def test_wear_and_severance_share_one_gate(fake, severance, weapon_type,
+                                           allow):
+    """Plating wear and the part-severance share are both STRUCTURAL: one
+    predicate (`hit_feedback._structural_hit`) gates both, so for a hit big
+    enough to wear (a crumpling collision here) the two always agree."""
+    _hit(_Ship(), weapon_type=weapon_type, absorbed_hull=500.0,
+         allow_structural_wear=allow, decal_dent=1.0)
+    hull_wear.drain(1.0)
+    wore = bool(fake.wear or fake.body_wear)
+    assert wore == bool(severance), (wore, severance)
+    assert wore == hit_feedback._structural_hit(weapon_type, allow)
+
+
 def test_wear_reach_matches_scorch_reach(fake):
     _hit(_Ship())
     assert fake.wear[0][0][3] == pytest.approx(fake.decals[0][0][3])

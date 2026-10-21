@@ -465,7 +465,7 @@ def test_reconcile_removal_drops_running_lights(monkeypatch):
     hl.realize_set_objects(sess, s, r)
     drop_iid = sess.ship_instances[drop]
     sess.ship_running_lights[drop_iid] = 12.5      # as if it had lights
-    sess.ship_running_light_specs[drop_iid] = ((), ())
+    sess.ship_running_light_specs[drop_iid] = ((), (), 0)
     s.RemoveObjectFromSet("drop")
     hl._reconcile_runtime_instances(sess, r)
     assert drop_iid not in sess.ship_running_lights
