@@ -55,13 +55,53 @@ def _wreck_distance_gu() -> float:
         return 6.0
 
 
+def _first_step_delay_s() -> float:
+    """DAUNTLESS_DAMAGE_PREVIEW_FIRST_S: seconds from mission start to the
+    first impulse blast (default 3, minimum 0). Perf captures lengthen it for
+    a steady UNDAMAGED window, the baseline the damaged windows are compared
+    against."""
+    import os
+    try:
+        return max(0.0, float(os.environ.get("DAUNTLESS_DAMAGE_PREVIEW_FIRST_S", "3")))
+    except ValueError:
+        return 3.0
+
+
+def _apply_seed():
+    """DAUNTLESS_DAMAGE_PREVIEW_SEED: when set to an integer, seed the game
+    RNG (App.g_kSystemWrapper, whose GetRandomNumber the death cascade rolls
+    through) at mission start, so two captures see the same blasts. Returns
+    the seed, or None when unset or not an integer (the RNG is left alone)."""
+    import os
+    raw = os.environ.get("DAUNTLESS_DAMAGE_PREVIEW_SEED")
+    if raw is None:
+        return None
+    try:
+        seed = int(raw)
+    except ValueError:
+        print("[damage-preview] DAUNTLESS_DAMAGE_PREVIEW_SEED=%r is not an integer: "
+              "not seeded" % raw)
+        return None
+    App.g_kSystemWrapper.SetRandomSeed(seed)
+    print("[damage-preview] game RNG seeded with %d" % seed)
+    return seed
+
+
 _IMPULSE_STEPS = (
-    (3.0, "Impulse Engines"),
+    (None, "Impulse Engines"),   # after _first_step_delay_s (default 3)
     (1.5, "Port Impulse"),
     (1.5, "Star Impulse"),
     (None, _DEATH),          # then the ship dies (_death_delay_s): BC's death cascade
 )
 _step_index = [0]
+
+
+def _step_delays():
+    """Each step's delay after the previous one, the env knobs resolved."""
+    delays = [d for d, _name in _IMPULSE_STEPS]
+    delays[0] = _first_step_delay_s()
+    delays[-1] = _death_delay_s()
+    return delays
 
 
 def _wreck():
@@ -120,6 +160,8 @@ def PreLoadAssets(pMission):
 
 
 def Initialize(pMission):
+    # First, so every roll from here on (ship setup included) repeats.
+    _apply_seed()
     App.Game_SetDifficultyMultipliers(1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
 
     # Player bridge — CreatePlayerShip expects a loaded bridge.
@@ -145,9 +187,7 @@ def Initialize(pMission):
     # DamageTool volumes -- and loses its impulse system on a timer, the
     # first internal-explosion scenario (see _IMPULSE_STEPS).
     pSeq = App.TGSequence_Create()
-    for delay, _name in _IMPULSE_STEPS:
-        if delay is None:
-            delay = _death_delay_s()
+    for delay in _step_delays():
         pSeq.AppendAction(App.TGScriptAction_Create(__name__, "DestroyNextImpulseStep"), delay)
     pSeq.Play()
     _step_index[0] = 0
