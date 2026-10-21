@@ -175,13 +175,17 @@ vec3 ih_room_light(ivec3 cell, out float fire) {
     float vent  = smoothstep(0.10, 0.45, cw);
     float r     = ih_rand(cell, 3u);
     float phase = ih_rand(cell, 4u) * 6.2831853;
-    float p_lit   = 0.10 * (1.0 - vent);
+    // A few rooms keep their power even at the hole (Mark 2026-10-21: "2-3%
+    // of rooms lit").
+    float p_lit   = mix(0.10, 0.025, vent);
     float p_fail  = p_lit  + mix(0.10, 0.04, vent);
     float p_emerg = p_fail + mix(0.10, 0.06, vent);
     float p_fire  = p_emerg + 0.12 * smoothstep(0.25, 0.6, cw) * (1.0 - smoothstep(0.85, 1.0, cw));
     vec3 col;
     if (r < p_lit) {
-        col = vec3(0.80, 0.88, 1.00);                      // still powered
+        // Still powered. So rare it never reads as a mosaic, so it stays
+        // visible from range, like a fire: a lit window in the wreck.
+        return vec3(0.80, 0.88, 1.00) * mix(0.6, 1.0, g_detail);
     } else if (r < p_fail) {
         // Failing: mostly off, stuttering on.
         ivec3 tk = ivec3(cell.xy, int(floor(u_time * 9.0 + phase)));
