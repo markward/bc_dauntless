@@ -74,3 +74,33 @@ def test_python_merge_factor_matches_native():
     consts = _h._test_only_hull_damage_constants()
     assert hull_wear.MERGE_FACTOR == consts["merge_factor"]
     assert consts["capacity"] > 0
+
+
+def _breach(iid):
+    return _h._test_only_breach_events(iid)
+
+
+def test_tear_vents_once_when_wear_first_crosses_breach(iid):
+    breach = 4.5
+    for i in range(5):
+        assert _breach(iid) == [], f"no event before add {i}"
+        _h.hull_damage_add_body(iid, (1.0, 2.0, 3.0), (0.0, 0.0, 1.0),
+                                0.3, 1.0, 1)
+        if i < 4:
+            assert _breach(iid) == []
+    evs = _breach(iid)
+    assert len(evs) == 1
+    assert evs[0]["center"] == pytest.approx((1.0, 2.0, 3.0), abs=1e-4)
+    assert evs[0]["normal"] == pytest.approx((0.0, 0.0, 1.0), abs=1e-4)
+    (rec,) = _records(iid)
+    assert evs[0]["radius"] == pytest.approx(0.5 * rec["reach"], rel=1e-5)
+    assert rec["wear"] > breach
+    _h.hull_damage_add_body(iid, (1.0, 2.0, 3.0), (0.0, 0.0, 1.0), 0.3, 1.0, 1)
+    assert len(_breach(iid)) == 1, "already past breach: no second event"
+
+
+def test_internal_adds_never_vent(iid):
+    for _ in range(8):
+        _h.hull_damage_add_body(iid, (1.0, 2.0, 3.0), (0.0, 0.0, 0.0),
+                                0.3, 1.0, 3)
+    assert _breach(iid) == []

@@ -41,12 +41,13 @@ HullDamageRecord merged(const HullDamageRecord& a, const HullDamageRecord& b) {
 
 }  // namespace
 
-void HullDamageStore::add(const glm::vec3& centre_body, const glm::vec3& normal_body,
-                          float reach, float wear, HullDamageKind kind) {
-    if (!(wear > 0.0f) || !(reach > 0.0f)) return;
+HullDamageAddResult HullDamageStore::add(const glm::vec3& centre_body,
+                                         const glm::vec3& normal_body, float reach,
+                                         float wear, HullDamageKind kind) {
+    if (!(wear > 0.0f) || !(reach > 0.0f)) return {};
     if (!std::isfinite(wear) || !std::isfinite(reach) || !finite(centre_body) ||
         !finite(normal_body))
-        return;
+        return {};
 
     HullDamageRecord in;
     in.centre_body = centre_body;
@@ -74,8 +75,9 @@ void HullDamageStore::add(const glm::vec3& centre_body, const glm::vec3& normal_
         best_d = d;
     }
     if (best) {
+        const float before = best->wear;
         *best = best_merge;
-        return;
+        return {static_cast<int>(best - slots_.data()), before, best->wear};
     }
 
     HullDamageRecord* free_slot = nullptr;
@@ -104,11 +106,13 @@ void HullDamageStore::add(const glm::vec3& centre_body, const glm::vec3& normal_
         } else {
             // Unreachable with two kinds and 64 slots; never drop wear anyway.
             free_slot = &slots_[0];
+            const float before = free_slot->wear;
             *free_slot = merged(*free_slot, in);
-            return;
+            return {0, before, free_slot->wear};
         }
     }
     *free_slot = in;
+    return {static_cast<int>(free_slot - slots_.data()), 0.0f, in.wear};
 }
 
 std::size_t HullDamageStore::count() const {

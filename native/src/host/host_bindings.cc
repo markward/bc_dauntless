@@ -2593,6 +2593,24 @@ namespace dauntless_plating {
     extern float g_params[renderer::plating::kParamCount];
 }
 
+// Surface tear that first crosses the breach wear pushes ONE BreachEvent
+// (venting + debris readers); Internal blasts already call breach_burst.
+static std::uint64_t next_breach_seed() {
+    static std::uint64_t s_counter = 0;
+    return ++s_counter * 6364136223846793005ull;
+}
+static void vent_on_breach_crossing(scenegraph::Instance& inst,
+                                    const scenegraph::HullDamageAddResult& r,
+                                    std::uint32_t kind) {
+    if (kind != 1u || r.index < 0) return;
+    const float breach = dauntless_plating::g_params[16];
+    if (!(r.wear_before < breach && breach <= r.wear_after)) return;
+    const auto& rec = inst.hull_damage.records()[static_cast<std::size_t>(r.index)];
+    inst.breach_events.push(rec.centre_body, 0.5f * rec.reach, rec.normal_body,
+                            g_decal_game_time, next_breach_seed());
+}
+
+
 // Hull-breach renderer pass — always-on gate. Defined in frame.cc.
 namespace dauntless_hull_damage {
     bool enabled();            // defined in frame.cc
@@ -7609,8 +7627,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
               // Same body-frame conversion as damage_decal_add: pw is
               // INSTANCE-RELATIVE; radius game-units -> model units.
               const auto bf = to_body_frame(*inst, pw, nw, radius);
-              inst->hull_damage.add(bf.point, bf.normal, bf.radius_model, wear,
-                                    static_cast<scenegraph::HullDamageKind>(kind));
+              const auto r = inst->hull_damage.add(
+                  bf.point, bf.normal, bf.radius_model, wear,
+                  static_cast<scenegraph::HullDamageKind>(kind));
+              vent_on_breach_crossing(*inst, r, kind);
           },
           py::arg("instance_id"), py::arg("world_point"), py::arg("world_normal"),
           py::arg("radius"), py::arg("wear"), py::arg("kind"),
@@ -7630,8 +7650,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                  std::get<2>(body_point));
               const glm::vec3 nb(std::get<0>(body_normal), std::get<1>(body_normal),
                                  std::get<2>(body_normal));
-              inst->hull_damage.add(pb, nb, radius_to_model(*inst, radius), wear,
-                                    static_cast<scenegraph::HullDamageKind>(kind));
+              const auto r = inst->hull_damage.add(
+                  pb, nb, radius_to_model(*inst, radius), wear,
+                  static_cast<scenegraph::HullDamageKind>(kind));
+              vent_on_breach_crossing(*inst, r, kind);
           },
           py::arg("instance_id"), py::arg("body_point"), py::arg("body_normal"),
           py::arg("radius"), py::arg("wear"), py::arg("kind"),
@@ -7639,6 +7661,28 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "units, e.g. from world_to_body). radius is still game units and is "
           "converted with the same scale as hull_damage_add. kind: 1=Surface, "
           "3=Internal.");
+
+    m.def("_test_only_breach_events",
+          [](scenegraph::InstanceId id) {
+              py::list out;
+              auto* inst = g_world.get(id);
+              if (inst == nullptr) return out;
+              for (const auto& e : inst->breach_events.slots()) {
+                  if (!e.active) continue;
+                  py::dict d;
+                  d["center"] = py::make_tuple(e.center_body.x, e.center_body.y,
+                                               e.center_body.z);
+                  d["normal"] = py::make_tuple(e.surface_normal.x, e.surface_normal.y,
+                                               e.surface_normal.z);
+                  d["radius"] = e.radius;
+                  d["birth_time"] = e.birth_time;
+                  out.append(d);
+              }
+              return out;
+          },
+          py::arg("instance_id"),
+          "Test hook: the instance's active BreachEvents (body frame, model "
+          "units) as dicts center/normal/radius/birth_time.");
 
     m.def("_test_only_hull_damage_records",
           [](scenegraph::InstanceId id) {
@@ -8000,9 +8044,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                  std::get<2>(body_point_gu) * inv_s);
               const glm::vec3 nb = (glm::length(pb) > 1e-4f) ? glm::normalize(pb)
                                                               : glm::vec3(0.f, 0.f, 1.f);
-              static std::uint64_t s_counter = 0;
               inst->breach_events.push(pb, radius_gu * inv_s, nb, g_decal_game_time,
-                                       ++s_counter * 6364136223846793005ull);
+                                       next_breach_seed());
           },
           py::arg("instance_id"), py::arg("body_point_gu"), py::arg("radius_gu"),
           "Transient breach VFX (debris, venting, rim) at a body-frame point, "

@@ -25,6 +25,13 @@ struct HullDamageRecord {
     bool           active = false;
 };
 
+/// Where an add landed and that record's wear either side of it.
+struct HullDamageAddResult {
+    int   index = -1;          // -1: the input was ignored
+    float wear_before = 0.0f;  // the slot's wear before the input (0 for a fresh slot)
+    float wear_after  = 0.0f;
+};
+
 /// Fixed-capacity per-instance damage store. Merge, never evict: a full store
 /// merges the same-kind pair whose merge grows reach least instead of dropping
 /// the oldest, so wear and holes are never lost. Runtime VFX state only --
@@ -41,8 +48,10 @@ public:
 
     /// Wear <= 0 or reach <= 0 is ignored (revision unchanged), as is any
     /// non-finite centre, normal, reach or wear.
-    void add(const glm::vec3& centre_body, const glm::vec3& normal_body,
-             float reach, float wear, HullDamageKind kind);
+    /// Returns the slot the input landed in (merged or new; a forced merge
+    /// reports the slot the NEW input went into) with its wear before/after.
+    HullDamageAddResult add(const glm::vec3& centre_body, const glm::vec3& normal_body,
+                            float reach, float wear, HullDamageKind kind);
 
     std::span<const HullDamageRecord> records() const { return slots_; }  // all kCapacity slots
     std::size_t count() const;

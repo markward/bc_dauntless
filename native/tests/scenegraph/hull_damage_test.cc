@@ -184,3 +184,22 @@ TEST(HullDamageStore, ClearBumpsRevision) {
     EXPECT_EQ(s.count(), 0u);
     EXPECT_GT(s.revision(), before);
 }
+
+TEST(HullDamageStore, AddReportsWearBeforeAndAfter) {
+    HullDamageStore s;
+    const auto a = s.add({0, 0, 0}, kUp, 10.0f, 1.5f, HullDamageKind::Surface);
+    EXPECT_GE(a.index, 0);
+    EXPECT_FLOAT_EQ(a.wear_before, 0.0f);
+    EXPECT_FLOAT_EQ(a.wear_after, 1.5f);
+    const auto b = s.add({1, 0, 0}, kUp, 10.0f, 1.0f, HullDamageKind::Surface);
+    EXPECT_EQ(b.index, a.index);
+    EXPECT_FLOAT_EQ(b.wear_before, 1.5f);
+    EXPECT_FLOAT_EQ(b.wear_after, 2.5f);
+    EXPECT_FLOAT_EQ(s.records()[static_cast<std::size_t>(b.index)].wear, 2.5f);
+}
+
+TEST(HullDamageStore, IgnoredAddReportsNoIndex) {
+    HullDamageStore s;
+    const auto r = s.add({0, 0, 0}, kUp, 10.0f, 0.0f, HullDamageKind::Surface);
+    EXPECT_EQ(r.index, -1);
+}
