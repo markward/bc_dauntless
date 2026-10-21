@@ -105,3 +105,31 @@ def test_screen_off_signature_is_off():
         r, _controller(vs), ramp, ViewscreenBrightnessRamp.DURATION_S,
         intensity_fn=lambda a, b: 0.5)
     assert r.brightness == 1.0
+
+
+def test_drive_viewscreen_bars_sets_when_visible_and_clears_otherwise(monkeypatch):
+    from engine import host_loop
+    calls = []
+
+    class R:
+        def set_viewscreen_bars(self, top, bottom, band, text):
+            calls.append(("set", top, bottom, band, text))
+        def clear_viewscreen_bars(self):
+            calls.append(("clear",))
+
+    seen = []
+
+    def fake_build(player, target):
+        seen.append(target)
+        if target is None:
+            return {"visible": False}
+        return {"visible": True, "top_text": "T", "bottom_text": "B",
+                "band_rgb": (1, 2, 3), "text_rgb": (4, 5, 6)}
+
+    monkeypatch.setattr(host_loop, "build_viewscreen_bars", fake_build)
+    r = R()
+    host_loop.drive_viewscreen_bars(r, object(), object())
+    assert calls == [("set", "T", "B", (1, 2, 3), (4, 5, 6))]
+    host_loop.drive_viewscreen_bars(r, object(), None)
+    assert calls[-1] == ("clear",)
+    assert len(calls) == 2

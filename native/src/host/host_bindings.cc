@@ -75,6 +75,7 @@
 #include <renderer/letterbox_pass.h>
 #include <renderer/bridge_pass.h>
 #include <renderer/bridge_quality.h>
+#include <renderer/viewscreen_bars_pass.h>
 #include <renderer/viewscreen_static_pass.h>
 #include <renderer/hdr_target.h>
 #include <renderer/hdr_msaa_target.h>
@@ -605,6 +606,11 @@ SceneSource g_scene_source;
 struct ViewscreenStatic { bool on = false; float intensity = 0.0f; };
 ViewscreenStatic g_viewscreen_static;
 std::unique_ptr<renderer::ViewscreenStaticPass> g_viewscreen_static_pass;
+
+// Target name / range bands drawn INTO the viewscreen RTT on the scene (target)
+// feed only. Pushed per frame by host_loop; font loaded once at init.
+renderer::ViewscreenBars g_viewscreen_bars;
+std::unique_ptr<renderer::ViewscreenBarsPass> g_viewscreen_bars_pass;
 
 struct LoadedModel {
     std::filesystem::path nif_path;
@@ -1183,6 +1189,9 @@ void init(int width, int height, const std::string& title) {
     if (g_bridge_probe.capture_pending) g_bridge_pass->request_probe_capture();
     g_bridge_probe.capture_pending = false;
     g_viewscreen_static_pass = std::make_unique<renderer::ViewscreenStaticPass>();
+    g_viewscreen_bars_pass = std::make_unique<renderer::ViewscreenBarsPass>();
+    g_viewscreen_bars_pass->load_font(
+        renderer::project_asset_root() + "/fonts/viewscreen_antonio.json");
     g_hdr_target      = std::make_unique<renderer::HdrTarget>();
     g_msaa_target     = std::make_unique<renderer::HdrMsaaTarget>();
     g_viewscreen_hdr  = std::make_unique<renderer::HdrTarget>();
@@ -1265,6 +1274,7 @@ void shutdown() {
     g_starmap_pass.reset();
     g_bridge_pass.reset();
     g_viewscreen_static_pass.reset();
+    g_viewscreen_bars_pass.reset();
     g_bloom_pass.reset();
     g_nonfinite_probe.reset();
     g_lens_flare_hdr_pass.reset();
@@ -2053,6 +2063,16 @@ void frame() {
             g_viewscreen_static_pass->render(
                 g_pipeline->viewscreen_static_shader(),
                 g_viewscreen_static.intensity, now);
+        }
+        // Target name / range bands: scene (target) feed only, over the static.
+        // The space passes above may have changed the viewport; restore the RTT's.
+        if (!g_comm_source.active && g_scene_source.active
+                && g_viewscreen_bars.visible && g_viewscreen_bars_pass) {
+            g_viewscreen_hdr->bind();
+            glViewport(0, 0, kViewscreenRttW, kViewscreenRttH);
+            g_viewscreen_bars_pass->render(
+                g_pipeline->viewscreen_bars_shader(), g_viewscreen_bars,
+                kViewscreenRttW, kViewscreenRttH);
         }
         g_bridge_pass->set_viewscreen_texture(g_viewscreen_hdr->color_texture());
     } else if (g_bridge_pass) {
@@ -4521,6 +4541,22 @@ PYBIND11_MODULE(_dauntless_host, m) {
               if (g_viewscreen_static_pass)
                   g_viewscreen_static_pass->set_textures(paths);
           }, py::arg("paths"));
+    m.def("set_viewscreen_bars",
+          [](const std::string& top, const std::string& bottom,
+             std::tuple<int,int,int> band, std::tuple<int,int,int> text) {
+              g_viewscreen_bars.visible = true;
+              g_viewscreen_bars.top = top;
+              g_viewscreen_bars.bottom = bottom;
+              g_viewscreen_bars.band_rgb = {std::get<0>(band) / 255.0f,
+                                            std::get<1>(band) / 255.0f,
+                                            std::get<2>(band) / 255.0f};
+              g_viewscreen_bars.text_rgb = {std::get<0>(text) / 255.0f,
+                                            std::get<1>(text) / 255.0f,
+                                            std::get<2>(text) / 255.0f};
+          }, py::arg("top"), py::arg("bottom"),
+             py::arg("band_rgb"), py::arg("text_rgb"));
+    m.def("clear_viewscreen_bars",
+          []() { g_viewscreen_bars.visible = false; });
     m.def("set_viewscreen_static",
           [](bool on, float intensity) {
               g_viewscreen_static.on = on;

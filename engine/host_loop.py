@@ -30,6 +30,7 @@ from engine.core import frame_profiler
 from engine.dev_mission_picker import MissionPicker
 import engine.missions as _missions
 from engine.ui.target_reticle import build_target_reticle
+from engine.ui.viewscreen_bars import build_viewscreen_bars
 from engine.ui.reticle_text import build_reticle_text, _ReticleCam
 from engine import manual_aim
 from engine import bridge_lighting as _bridge_lighting
@@ -8290,6 +8291,43 @@ from engine.cameras import zoom_fit as _zoom_fit  # noqa: E402
 _VS_ZOOM_SMOOTHER = _zoom_fit.DistanceSmoother()
 
 
+def _viewscreen_feed_target(player):
+    """The object the viewscreen target feed is watching, or None.
+
+    The frame-to-frame `_vs_last_player_target` compare stands in for
+    Camera.PlayerTargetChanged (we never dispatch ET_TARGET_WAS_CHANGED), so a
+    mission's ViewscreenWatchObject persists until the player retargets.
+    Idempotent within a frame: a second call finds the memory already current.
+    Liveness is the caller's concern."""
+    if player is None:
+        return None
+    game = Game_GetCurrentGame()
+    if game is None:
+        return None
+    cam = game.GetPlayerCamera()
+    if cam is None:
+        return None
+    mode = cam.GetNamedCameraMode("ViewscreenZoomTarget")   # Target holder only
+    if mode is None:
+        return None
+    cur = player.GetTarget()
+    if cur is not cam._vs_last_player_target:      # stands in for PlayerTargetChanged
+        mode.SetAttrIDObject("Target", cur)
+        cam._vs_last_player_target = cur
+    return mode.GetAttrIDObject("Target")
+
+
+def drive_viewscreen_bars(r, player, target) -> None:
+    """Push this frame's target-feed bands, or clear them (no target, dead
+    target, hail, forward view, bridge off all pass target=None)."""
+    bars = build_viewscreen_bars(player, target)
+    if bars.get("visible"):
+        r.set_viewscreen_bars(bars["top_text"], bars["bottom_text"],
+                              bars["band_rgb"], bars["text_rgb"])
+    else:
+        r.clear_viewscreen_bars()
+
+
 def _viewscreen_scene_feed(player, forward_fov, dt=None):
     """Resolve the ViewscreenZoomTarget scene feed: the SAME framing the
     exterior view shows when holding Z (camera_zoom_target), rendered into the
@@ -8314,25 +8352,7 @@ def _viewscreen_scene_feed(player, forward_fov, dt=None):
         _VS_ZOOM_SMOOTHER.reset()
         return None
     from engine.appc.camera_modes import _target_alive
-    game = Game_GetCurrentGame()
-    if game is None:
-        _VS_ZOOM_SMOOTHER.reset()
-        return None
-    cam = game.GetPlayerCamera()
-    if cam is None:
-        _VS_ZOOM_SMOOTHER.reset()
-        return None
-    mode = cam.GetNamedCameraMode("ViewscreenZoomTarget")   # Target holder only
-    if mode is None:
-        _VS_ZOOM_SMOOTHER.reset()
-        return None
-
-    cur = player.GetTarget()
-    if cur is not cam._vs_last_player_target:      # stands in for PlayerTargetChanged
-        mode.SetAttrIDObject("Target", cur)
-        cam._vs_last_player_target = cur
-
-    tgt = mode.GetAttrIDObject("Target")            # mission watch persists until then
+    tgt = _viewscreen_feed_target(player)
     if not _target_alive(tgt):
         _VS_ZOOM_SMOOTHER.reset()
         return None                                  # -> ViewscreenForward
@@ -12983,6 +13003,9 @@ def run(mission_name: Optional[str] = None,
                 # distance; the next target view re-fits from scratch.
                 _VS_ZOOM_SMOOTHER.reset()
             _vs_src = _select_viewscreen_source(r, _feed, _scene)
+            drive_viewscreen_bars(
+                r, player,
+                _viewscreen_feed_target(player) if _vs_src == "scene" else None)
             if _vs_src == "comm":
                 _set_id, _cam = _feed
                 # Frame the comm set by the camera's AUTHORED orientation (the

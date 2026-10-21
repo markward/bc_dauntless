@@ -187,3 +187,19 @@ def test_feed_holds_distance_when_paused(wired):
     tgt._r = 4.0
     d2 = _dist(host_loop._viewscreen_scene_feed(player, 0.61, 0.0), 500.0)
     assert d2 == pytest.approx(d1)
+
+
+def test_feed_target_matches_the_feed(wired):
+    combat = _Ship(_Pt(500.0, 0.0, 0.0), radius=2.0)
+    watched = _Ship(_Pt(0.0, 800.0, 0.0), radius=2.0)
+    new_target = _Ship(_Pt(0.0, 0.0, 900.0), radius=2.0)
+    player = _Ship(_Pt(0.0, 0.0, 0.0), target=combat)
+    assert host_loop._viewscreen_feed_target(player) is combat
+    assert host_loop._viewscreen_feed_target(player) is combat   # idempotent
+    wired.GetNamedCameraMode("ViewscreenZoomTarget").SetAttrIDObject("Target", watched)
+    assert host_loop._viewscreen_feed_target(player) is watched  # watch persists
+    out = host_loop._viewscreen_scene_feed(player, 0.61)
+    assert out[0][1] > 400.0
+    assert host_loop._viewscreen_feed_target(player) is watched
+    player._target = new_target
+    assert host_loop._viewscreen_feed_target(player) is new_target
