@@ -151,6 +151,8 @@ def test_god_mode_player_gets_no_persistent_decal(env, monkeypatch):
     decals = []
     monkeypatch.setattr(host_io, "damage_decal_add",
                         lambda *a, **k: decals.append((a, k)))
+    monkeypatch.setattr(host_io, "hull_damage_add", lambda *a, **k: None)
+    monkeypatch.setattr(host_io, "hull_damage_add_body", lambda *a, **k: None)
     monkeypatch.setattr(host_io, "world_to_body", lambda *a, **k: None)
     monkeypatch.setattr(host_io, "hull_carve_add", lambda *a, **k: None)
 

@@ -7631,6 +7631,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Test hook: the instance's active HullDamageStore records (body "
           "frame, model units) as dicts centre/normal/reach/wear/kind.");
 
+    m.def("_test_only_hull_damage_constants",
+          []() {
+              py::dict d;
+              d["merge_factor"] = scenegraph::HullDamageStore::kMergeFactor;
+              d["capacity"] = scenegraph::HullDamageStore::kCapacity;
+              return d;
+          },
+          "Test hook: HullDamageStore::kMergeFactor / kCapacity, so the Python "
+          "hull_wear twin can be pinned against the native values.");
+
     m.def("_test_only_damage_decals",
           [](scenegraph::InstanceId id) {
               py::list out;

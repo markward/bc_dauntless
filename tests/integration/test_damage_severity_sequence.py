@@ -101,6 +101,8 @@ def setup(monkeypatch):
     monkeypatch.setattr(host_io, "shield_hit", host)
     monkeypatch.setattr(host_io, "world_to_body", lambda *a, **k: None)
     monkeypatch.setattr(host_io, "damage_decal_add", lambda *a, **k: None)
+    monkeypatch.setattr(host_io, "hull_damage_add", lambda *a, **k: None)
+    monkeypatch.setattr(host_io, "hull_damage_add_body", lambda *a, **k: None)
     monkeypatch.setattr(host_io, "hull_carve_add", lambda *a, **k: None)
     ship_instances = {ship: 42}
 

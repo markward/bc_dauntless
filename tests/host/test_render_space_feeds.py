@@ -591,8 +591,8 @@ def test_hit_feedback_hands_every_query_a_relative_point(sibling_target, monkeyp
         absorbed_subsystem=0.0, absorbed_hull=5.0, sub_transition=None,
         ship_instances={target: 3}, weapon_type="torpedo", radius=0.2)
     names = {n for n, _ in native.points}
-    assert {"shield_hit", "damage_decal_add", "hull_carve_add",
-            "world_to_body"} <= names, names
+    assert {"shield_hit", "damage_decal_add", "hull_damage_add",
+            "hull_carve_add", "world_to_body"} <= names, names
     _small(native.points)
     decal = dict(native.points)["damage_decal_add"]
     assert decal == pytest.approx((-3.0, 0.0, 0.0), abs=1e-6)

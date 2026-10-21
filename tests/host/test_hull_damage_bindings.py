@@ -67,3 +67,10 @@ def test_body_frame_add_ignores_unknown_kinds_and_stale_ids(iid):
     _h.destroy_instance(stale)
     _h.hull_damage_add_body(stale, (1.0, 2.0, 3.0), (0.0, 0.0, 1.0),
                             0.3, 1.0, 1)        # dropped, no raise
+
+
+def test_python_merge_factor_matches_native():
+    from engine.appc import hull_wear
+    consts = _h._test_only_hull_damage_constants()
+    assert hull_wear.MERGE_FACTOR == consts["merge_factor"]
+    assert consts["capacity"] > 0
