@@ -508,3 +508,40 @@ TEST_F(PlatingRenderTest, PlatingListIsBuiltOncePerChange) {
     frame();
     EXPECT_EQ(submitter.plating_list_builds() - b0, 2);
 }
+
+// A plating param change alone (no store change) rebuilds the cached list:
+// params[7] scales Surface reach inside build_damage_list, so a stale list
+// would draw the old reach.
+TEST_F(PlatingRenderTest, PlatingListRebuildsWhenAParamChanges) {
+    dauntless_plating::g_params[0] = 1.0f;
+    dauntless_plating::g_params[25] = 1.0f;
+    auto quad = build_quad(150.0f, true);
+    ASSERT_TRUE(quad);
+    scenegraph::World world;
+    auto iid = world.create_instance(reinterpret_cast<scenegraph::ModelHandle>(quad.get()));
+    world.set_world_transform(iid, glm::mat4(1.0f));
+    world.get(iid)->hull_damage = internal_ring({0, 0, 0}, 30.0f, 10.0f);
+    const auto cam = quad_cam();
+    renderer::reset_model_radius_cache();
+    renderer::FrameSubmitter submitter;
+    const auto lookup = [](scenegraph::ModelHandle h) -> const assets::Model* {
+        return reinterpret_cast<const assets::Model*>(h);
+    };
+    auto frame = [&] {
+        glViewport(0, 0, kSize, kSize);
+        glStencilMask(0xFF);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        submitter.submit_opaque_in_pass(world, cam, *p, lookup, test_lighting(),
+                                        scenegraph::Pass::Space, kDecalTime);
+    };
+    const int b0 = submitter.plating_list_builds();
+    frame();
+    EXPECT_EQ(submitter.plating_list_builds() - b0, 1);
+    const float saved = dauntless_plating::g_params[7];
+    dauntless_plating::g_params[7] = saved + 0.25f;
+    frame();
+    EXPECT_EQ(submitter.plating_list_builds() - b0, 2) << "a param change must rebuild";
+    frame();
+    EXPECT_EQ(submitter.plating_list_builds() - b0, 2) << "and only once";
+    dauntless_plating::g_params[7] = saved;
+}
