@@ -567,8 +567,20 @@ public:
     /// pixel.
     void set_plating_record_culling(bool on) { plating_record_culling_ = on; }
 
+    /// TEST / DIAGNOSTIC SWITCH, like set_plating_record_culling: production
+    /// never calls it. Skipping (default on, only with record culling): the
+    /// mark and the interior draw no mesh whose record subset is empty -- the
+    /// mark would discard every fragment of it, and the interior cannot pass
+    /// stencil and depth on it. Off = every mesh: the A/B proving the skip
+    /// never changes a pixel.
+    void set_plating_skip_record_free_meshes(bool on) { plating_skip_record_free_ = on; }
+
     /// Marking draws issued by the last submit_plating_interior.
     int plating_marks_last_frame() const { return plating_marks_last_frame_; }
+    /// Mesh draws (glDrawElements) of those marking draws, and of the
+    /// interior draws that followed them.
+    int plating_mark_mesh_draws_last_frame() const { return plating_mark_mesh_draws_; }
+    int plating_interior_mesh_draws_last_frame() const { return plating_interior_mesh_draws_; }
 
     /// Interior draws (HullInteriorPass::draw) issued by the last
     /// submit_plating_interior: one per marked hull while params[25] > 0.5.
@@ -636,6 +648,9 @@ private:
         scenegraph::ModelHandle subsets_handle{};
         const assets::Model* subsets_model = nullptr;
         std::vector<plating::MeshRecordSubset> subsets;
+        // Per mesh: 1 when its subset holds a record (the interior's mesh
+        // mask when record-free meshes are skipped).
+        std::vector<std::uint8_t> mesh_has_records;
     };
     /// plating_list_for's entry (list + deck-break subset), rebuilt when stale.
     PlatingListCacheEntry& plating_entry_for(const scenegraph::Instance& inst);
@@ -650,7 +665,10 @@ private:
     int plating_list_builds_ = 0;
     bool plating_record_culling_ = true;
 
+    bool plating_skip_record_free_ = true;
     int plating_marks_last_frame_ = 0;
+    int plating_mark_mesh_draws_ = 0;
+    int plating_interior_mesh_draws_ = 0;
     int plating_interiors_last_frame_ = 0;
     int plating_far_draws_last_frame_ = 0;
     InteriorPolicy interior_policy_;

@@ -19,7 +19,7 @@
 
 namespace renderer {
 
-void HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_xf,
+int HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_xf,
                             const scenegraph::Camera& camera, Pipeline& pipeline,
                             const plating::DamageList& list,
                             const plating::DeckBreakSet& deck_break, const float* params,
@@ -27,7 +27,8 @@ void HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_x
                             const glm::vec3& fill_cell, const glm::ivec3& fill_dims,
                             const Lighting& lighting, float ambient_scale, float now,
                             int stencil_value,
-                            const std::unordered_map<int, glm::mat4>* node_overrides) {
+                            const std::unordered_map<int, glm::mat4>* node_overrides,
+                            const std::vector<std::uint8_t>* mesh_mask) {
     // Camera in this instance's body frame: one inverse per draw.
     const glm::vec3 cam_pos_ws = glm::vec3(glm::inverse(camera.view_matrix())[3]);
     const glm::mat4 world_inv = glm::inverse(world_xf);
@@ -89,7 +90,8 @@ void HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_x
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     glDisable(GL_BLEND);
 
-    draw_model_positions_only(model, world_xf, shader, node_overrides);
+    const int meshes =
+        draw_model_positions_only(model, world_xf, shader, node_overrides, mesh_mask);
     ++draw_calls_;
 
     // Back to stock. Stencil mask 0xFF, not 0: glClear(GL_STENCIL_BUFFER_BIT)
@@ -99,6 +101,7 @@ void HullInteriorPass::draw(const assets::Model& model, const glm::mat4& world_x
     glStencilMask(0xFF);
     glDepthFunc(GL_LESS);
     glBindTexture(GL_TEXTURE_3D, 0);
+    return meshes;
 }
 
 }  // namespace renderer

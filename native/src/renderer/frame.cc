@@ -1275,12 +1275,15 @@ void draw_model(const assets::Model& model,
 // phase 2 Task 2 report.
 // `records`: as draw_model's plating_mesh_records -- the parts the plating
 // block uploads, and each mesh's own subset (the whole list when the subsets
-// are null or with node overrides).
-static void draw_plating_mark(const assets::Model& model, const glm::mat4& world,
-                              Shader& prog, const plating::DamageList& dl,
-                              const float* params,
-                              const std::unordered_map<int, glm::mat4>* node_overrides,
-                              const PlatingMeshRecords& records) {
+// are null or with node overrides). `skip_record_free`: a mesh whose subset
+// is empty is not drawn -- opaque.frag's PLATING main discards every fragment
+// of a mark with no record near it, so it could stamp nothing. Returns the
+// meshes drawn.
+static int draw_plating_mark(const assets::Model& model, const glm::mat4& world,
+                             Shader& prog, const plating::DamageList& dl,
+                             const float* params,
+                             const std::unordered_map<int, glm::mat4>* node_overrides,
+                             const PlatingMeshRecords& records, bool skip_record_free) {
     static const std::string kCarveEnabled = "u_carve_enabled", kCarveCount = "u_carve_count",
         kCarveInvert = "u_carve_invert", kFieldEnabled = "u_hull_field_enabled",
         kCutout = "u_coverage_cutout", kImpostorBlend = "u_impostor_blend",
@@ -1306,17 +1309,24 @@ static void draw_plating_mark(const assets::Model& model, const glm::mat4& world
         articulated ? rest_corrections(model, *node_overrides) : std::vector<glm::mat4>{};
 
     // Per mesh: its records, its transform, then the draw.
+    int drawn = 0;
     for (std::size_t i = 0; i < model.nodes.size(); ++i) {
         for (int mesh_idx : model.nodes[i].meshes) {
             const auto& mesh = model.meshes[static_cast<std::size_t>(mesh_idx)];
-            if (uploader) uploader->upload(plating_subset_for(*subsets, mesh_idx));
+            if (uploader) {
+                const plating::MeshRecordSubset* subset = plating_subset_for(*subsets, mesh_idx);
+                if (skip_record_free && subset != nullptr && subset->count == 0) continue;
+                uploader->upload(subset);
+            }
             prog.set_mat4(kModel, world_per_node[i]);
             prog.set_mat4(kRestFix, articulated ? rest_fix[i] : glm::mat4(1.0f));
             glBindVertexArray(mesh.vao());
             glDrawElements(GL_TRIANGLES, mesh.index_count(), GL_UNSIGNED_INT, nullptr);
+            ++drawn;
         }
     }
     glBindVertexArray(0);
+    return drawn;
 }
 
 int geosphere_level_for(const assets::Model& m, const glm::mat4& world,
@@ -1756,6 +1766,9 @@ PlatingMeshRecords FrameSubmitter::plating_mesh_records_for(PlatingListCacheEntr
         e.subsets_model != &model) {
         e.subsets = plating::mesh_record_subsets(e.list, model_mesh_boxes(inst.model_handle, model),
                                                  e.params.data(), r.parts);
+        e.mesh_has_records.resize(e.subsets.size());
+        for (std::size_t k = 0; k < e.subsets.size(); ++k)
+            e.mesh_has_records[k] = e.subsets[k].count > 0 ? 1 : 0;
         e.subsets_valid = true;
         e.subsets_parts = r.parts;
         e.subsets_handle = inst.model_handle;
@@ -1781,6 +1794,8 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
                                              float now) {
     plating_marks_last_frame_ = 0;
     plating_interiors_last_frame_ = 0;
+    plating_mark_mesh_draws_ = 0;
+    plating_interior_mesh_draws_ = 0;
     if (dauntless_plating::g_params[0] <= 0.5f) return;
 
     // Same per-frame uniforms submit_opaque_in_pass gives the plating_
@@ -1861,8 +1876,9 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
             shader.set_float("u_dither_fade", inst.far_fade);
         }
         const PlatingMeshRecords records = plating_mesh_records_for(entry, inst, *m);
-        draw_plating_mark(*m, inst.world, shader, list, dauntless_plating::g_params,
-                          &inst.node_overrides, records);
+        plating_mark_mesh_draws_ +=
+            draw_plating_mark(*m, inst.world, shader, list, dauntless_plating::g_params,
+                              &inst.node_overrides, records, plating_skip_record_free_);
         if (inst.far_fade != 0.0f) {
             shader.use();
             shader.set_float("u_dither_fade", 0.0f);
@@ -1872,16 +1888,21 @@ void FrameSubmitter::submit_plating_interior(const scenegraph::World& world,
         if (dauntless_plating::g_params[25] > 0.5f) {
             const CarveFieldCache::Entry* fill =
                 carve_cache != nullptr ? carve_cache->get_for_source(m->source) : nullptr;
-            hull_interior_.draw(*m, inst.world, camera, pipeline, list,
-                                plating_record_culling_ ? entry.deck_break
-                                                        : plating::full_deck_break_set(list),
-                                dauntless_plating::g_params,
-                                fill ? fill->tex3d : 0u,
-                                fill ? fill->origin : glm::vec3(0.0f),
-                                fill ? fill->cell : glm::vec3(1.0f),
-                                fill ? fill->dims : glm::ivec3(0),
-                                lighting, ambient_scale, now, next_value - 1,
-                                &inst.node_overrides);
+            // The mark drew no record-free mesh, so none holds this value
+            // where it could pass the interior's depth test: skip them too.
+            const std::vector<std::uint8_t>* mesh_mask =
+                plating_skip_record_free_ && records.subsets != nullptr
+                    ? &entry.mesh_has_records : nullptr;
+            plating_interior_mesh_draws_ += hull_interior_.draw(
+                *m, inst.world, camera, pipeline, list,
+                plating_record_culling_ ? entry.deck_break : plating::full_deck_break_set(list),
+                dauntless_plating::g_params,
+                fill ? fill->tex3d : 0u,
+                fill ? fill->origin : glm::vec3(0.0f),
+                fill ? fill->cell : glm::vec3(1.0f),
+                fill ? fill->dims : glm::ivec3(0),
+                lighting, ambient_scale, now, next_value - 1,
+                &inst.node_overrides, mesh_mask);
             ++plating_interiors_last_frame_;
             state_set = false;   // the interior draw left stock state
         }

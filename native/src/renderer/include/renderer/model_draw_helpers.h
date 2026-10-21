@@ -3,7 +3,9 @@
 
 #include <glm/glm.hpp>
 
+#include <cstdint>
 #include <unordered_map>
+#include <vector>
 
 namespace assets { struct Model; }
 
@@ -37,10 +39,15 @@ class Shader;
 /// transforms, so an articulated or severed part casts the shadow it actually
 /// has rather than its rest-pose one. Empty takes a walk byte-identical to the
 /// static one.
-void draw_model_positions_only(const assets::Model& model,
-                               const glm::mat4& world,
-                               Shader& prog,
-                               const std::unordered_map<int, glm::mat4>*
-                                   node_overrides = nullptr);
+///
+/// `mesh_mask` (nullptr = every mesh): one entry per model.meshes; a mesh
+/// whose entry is 0 is not drawn (an index past the end is drawn). Returns
+/// how many meshes were drawn.
+int draw_model_positions_only(const assets::Model& model,
+                              const glm::mat4& world,
+                              Shader& prog,
+                              const std::unordered_map<int, glm::mat4>*
+                                  node_overrides = nullptr,
+                              const std::vector<std::uint8_t>* mesh_mask = nullptr);
 
 }  // namespace renderer

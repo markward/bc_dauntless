@@ -67,6 +67,8 @@ protected:
     // FrameSubmitter::set_plating_record_culling for every render: off = the
     // whole list on every mesh and the whole list as the deck-break set.
     bool record_culling = true;
+    // FrameSubmitter::set_plating_skip_record_free_meshes for every render.
+    bool skip_record_free = true;
 
     // Every uniform the lean mark must set or neutralise, set to a value that
     // changes which fragments survive (or what p_body is).
@@ -199,6 +201,8 @@ protected:
         std::vector<std::uint8_t> color;
         int marks = -1;
         int cull = 0;
+        int mark_mesh_draws = -1;
+        int interior_mesh_draws = -1;
     };
     struct Placed {
         glm::mat4 world;
@@ -235,6 +239,7 @@ protected:
         renderer::FrameSubmitter submitter;
         submitter.set_interior_policy(all_near_policy());
         submitter.set_plating_record_culling(record_culling);
+        submitter.set_plating_skip_record_free_meshes(skip_record_free);
         const auto lookup = [](scenegraph::ModelHandle h) -> const assets::Model* {
             return reinterpret_cast<const assets::Model*>(h);
         };
@@ -245,6 +250,8 @@ protected:
                                           1.0f, kDecalTime);
         Marked out;
         out.marks = submitter.plating_marks_last_frame();
+        out.mark_mesh_draws = submitter.plating_mark_mesh_draws_last_frame();
+        out.interior_mesh_draws = submitter.plating_interior_mesh_draws_last_frame();
         out.stencil.assign(static_cast<std::size_t>(kSize) * kSize, 0);
         glReadPixels(0, 0, kSize, kSize, GL_STENCIL_INDEX, GL_UNSIGNED_BYTE, out.stencil.data());
         out.color.assign(static_cast<std::size_t>(kSize) * kSize * 4, 0);
@@ -776,7 +783,8 @@ TEST_F(PlatingRenderTest, MeshBodyAabbsAreOnePerMeshInTheBodyFrame) {
 // Per mesh, only the records near that mesh are uploaded: the quad far from
 // every record gets u_dmg_count 0, the damaged one both records. Read back
 // from GL after the draw, so the LAST mesh drawn is the one observed. The
-// marking draw does the same.
+// marking draw does the same with record-free meshes drawn; by default it
+// skips the far quad altogether (I2), leaving the damaged quad's upload.
 TEST_F(PlatingRenderTest, MeshWithoutNearbyDamageUploadsNothing) {
     dauntless_plating::g_params[0] = 1.0f;
     dauntless_plating::g_params[25] = 0.0f;
@@ -795,9 +803,17 @@ TEST_F(PlatingRenderTest, MeshWithoutNearbyDamageUploadsNothing) {
     const glm::ivec2 far_c = to_pixel(cam, glm::vec3(40.0f, 0.0f, 0.0f));
     EXPECT_EQ(rgb_diff(pixel(px, far_c.x, far_c.y), pixel(stock, far_c.x, far_c.y)), 0);
 
+    skip_record_free = false;
     const auto r = render_marked(*undamaged_last, ring, cam);
+    skip_record_free = true;
     EXPECT_EQ(r.marks, 1);
+    EXPECT_EQ(r.mark_mesh_draws, 2);
     EXPECT_EQ(plating_dmg_count(), 0) << "the mark uploaded records the far quad never reaches";
+
+    const auto skipped = render_marked(*undamaged_last, ring, cam);
+    EXPECT_EQ(skipped.marks, 1);
+    EXPECT_EQ(skipped.mark_mesh_draws, 1) << "the far quad has no record: no mark draw";
+    EXPECT_EQ(plating_dmg_count(), 2) << "the last mark upload is the damaged quad's";
 }
 
 // With node overrides (an articulated hull) the rest-pose boxes no longer
@@ -1128,4 +1144,69 @@ TEST_F(PlatingRenderTest, IdenticalMeshSubsetsUploadOncePerDraw) {
     const auto r = render_marked(*model, ring, cam);
     EXPECT_EQ(r.marks, 1);
     EXPECT_EQ(renderer::plating_record_uploads() - u1, 2) << "opaque draw + mark";
+}
+
+// ---- Final fix wave I2: record-free meshes skipped in the mark + interior. --
+
+// A mesh whose record subset is empty is not drawn by the mark (every one of
+// its fragments would be discarded) nor by the interior (it cannot pass the
+// stencil and depth there). The torn Ambassador, its structure parts loaded,
+// rooms on: colour and stencil byte-identical with the skip on and off, and
+// both passes issue fewer mesh draws with it on.
+TEST_F(PlatingRenderTest, SkippingRecordFreeMeshesIsByteIdentical) {
+    auto m = ambassador();
+    ASSERT_TRUE(m) << "BC asset not available at " << ambassador_nif()
+                   << " -- set DAUNTLESS_GAME_DIR";
+    dauntless_plating::g_params[0] = 1.0f;
+    dauntless_plating::g_params[25] = 1.0f;
+    const renderer::Aabb box = renderer::compute_model_aabb(*m);
+    const auto cam = top_down(box);
+    const auto t0 = std::chrono::steady_clock::now();
+    while (renderer::structure_parts_for(m->source) == nullptr &&
+           std::chrono::steady_clock::now() - t0 < std::chrono::seconds(20))
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    ASSERT_NE(renderer::structure_parts_for(m->source), nullptr) << "parts never landed";
+    ASSERT_FALSE(renderer::structure_parts_for(m->source)->empty());
+    // Holes on the saucer: one torn, one blown clear through.
+    scenegraph::HullDamageStore ring;
+    const float top = box.center.z + box.half_extents.z + 10.0f;
+    const glm::vec2 at[3] = {{0.0f, 170.0f}, {35.0f, 140.0f}, {-35.0f, 140.0f}};
+    for (int k = 0; k < 3; ++k) {
+        const auto h = renderer::ray_trace_instance(*m, glm::mat4(1.0f),
+                                                    glm::vec3(at[k], top),
+                                                    glm::vec3(0.0f, 0.0f, -1.0f), 1.0e5f);
+        ASSERT_TRUE(h) << "no hull under saucer point " << k;
+        ring.add(h->point, h->normal, 25.0f, k == 0 ? 60.0f : 10.0f,
+                 scenegraph::HullDamageKind::Internal);
+    }
+    const std::uint8_t bg[3] = {13, 251, 7};
+    const glm::vec3 clear(bg[0] / 255.0f, bg[1] / 255.0f, bg[2] / 255.0f);
+
+    skip_record_free = true;
+    const auto on = render_marked(*m, ring, cam, clear);
+    skip_record_free = false;
+    const auto off = render_marked(*m, ring, cam, clear);
+    skip_record_free = true;
+
+    int stamped = 0;
+    for (std::uint8_t v : on.stencil) stamped += v != 0 ? 1 : 0;
+    int colour_diff = 0, stencil_diff = 0;
+    for (std::size_t i = 0; i < on.color.size(); ++i) colour_diff += on.color[i] != off.color[i];
+    for (std::size_t i = 0; i < on.stencil.size(); ++i)
+        stencil_diff += on.stencil[i] != off.stencil[i];
+    std::fprintf(stderr,
+                 "[PlatingRender] skip record-free meshes: meshes=%zu stamped=%d mark draws "
+                 "%d->%d interior draws %d->%d colour diff %d stencil diff %d\n",
+                 m->meshes.size(), stamped, off.mark_mesh_draws, on.mark_mesh_draws,
+                 off.interior_mesh_draws, on.interior_mesh_draws, colour_diff, stencil_diff);
+    ASSERT_EQ(on.marks, 1);
+    ASSERT_GT(stamped, 200) << "the holes cut too little to compare";
+    EXPECT_EQ(colour_diff, 0);
+    EXPECT_EQ(stencil_diff, 0);
+    EXPECT_EQ(off.mark_mesh_draws, static_cast<int>(m->meshes.size()));
+    EXPECT_EQ(off.interior_mesh_draws, static_cast<int>(m->meshes.size()));
+    EXPECT_GT(on.mark_mesh_draws, 0);
+    EXPECT_LT(on.mark_mesh_draws, off.mark_mesh_draws);
+    EXPECT_EQ(on.interior_mesh_draws, on.mark_mesh_draws)
+        << "the interior draws exactly the meshes the mark drew";
 }

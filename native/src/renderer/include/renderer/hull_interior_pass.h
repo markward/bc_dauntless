@@ -38,7 +38,7 @@ public:
     /// `deck_break` (plating::deck_break_subset of `list`) is uploaded as
     /// u_db_count / u_db_idx: the walk's blown tests read only those records,
     /// while its shading (soot, room light, char edge) reads all of `list`.
-    void draw(const assets::Model& model, const glm::mat4& world_xf,
+    int draw(const assets::Model& model, const glm::mat4& world_xf,
               const scenegraph::Camera& camera, Pipeline& pipeline,
               const plating::DamageList& list, const plating::DeckBreakSet& deck_break,
               const float* params,
@@ -46,7 +46,8 @@ public:
               const glm::vec3& fill_cell, const glm::ivec3& fill_dims,
               const Lighting& lighting, float ambient_scale, float now,
               int stencil_value,
-              const std::unordered_map<int, glm::mat4>* node_overrides);
+              const std::unordered_map<int, glm::mat4>* node_overrides,
+              const std::vector<std::uint8_t>* mesh_mask = nullptr);
 
     /// draw() calls since construction.
     int draw_calls() const { return draw_calls_; }
