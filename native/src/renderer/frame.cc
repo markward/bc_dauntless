@@ -18,6 +18,7 @@
 #include <renderer/scuff_texture.h>
 
 #include <algorithm>
+#include <iterator>
 #include <cstdint>
 #include <cstdio>
 #include <limits>
@@ -192,9 +193,12 @@ namespace dauntless_decals {
 }
 
 // SPIKE (damage redesign): hull-plating layer params, pushed live from
-// engine/appc/plating_dials.py (/ L O, group "plating"). Defaults MUST match
-// that module's DEFAULTS; slot meanings are listed there and in opaque.frag's
-// apply_plating. [0] = enabled (0/1).
+// engine/appc/plating_dials.py (/ L O, group "plating"; Developer Options ->
+// "Hull damage"). THIS initializer is the one source of the defaults: the
+// binding plating_param_defaults() reports them (param_defaults() below) and
+// plating_dials.DEFAULTS, the headless fallback, is pinned equal by
+// tests/host/test_plating_defaults_drift.py. Slot meanings are listed there
+// and in opaque.frag's apply_plating. [0] = enabled (0/1).
 #include "renderer/structure_parts_cache.h"
 #include "renderer/plating_damage.h"
 namespace dauntless_plating {
@@ -228,6 +232,19 @@ namespace dauntless_plating {
         0.0f,   // 26 force program (perf probe: undamaged hulls take the plating program)
         0.0f, 0.0f, 0.0f, 0.0f, 0.0f,   // 27-31 reserved
     };
+
+    // The shipped defaults, copied before anything can write g_params:
+    // g_params is constant-initialized (a literal aggregate), so this
+    // same-TU dynamic initializer always reads the literal values, and no
+    // binding call can run before the module's static initialization.
+    namespace {
+    const std::array<float, renderer::plating::kParamCount> s_param_defaults = [] {
+        std::array<float, renderer::plating::kParamCount> d{};
+        std::copy(std::begin(g_params), std::end(g_params), d.begin());
+        return d;
+    }();
+    }  // namespace
+    const float* param_defaults() { return s_param_defaults.data(); }
 }
 
 // Toggle for the procedural sky (Modern VFX). Default on; off = stock BC.

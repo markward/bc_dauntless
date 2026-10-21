@@ -19,17 +19,21 @@ when it is sent, with the pose the part has then (the window is
 DECAL_EMIT_INTERVAL, 0.2 s), so the per-tick path pays nothing for it.
 Visible damage only: nothing here touches hull, subsystem or shield health.
 
-The constants are plain module values (not wired into a dial group: the
-plating dial group is mirrored by native param slots, which is more than this
-task warrants).
+The constants are plain module values, read at use (not wired into a dial
+group: the plating dial group is mirrored by native param slots, which is
+more than this task warrants). PHASER_RATE and COLLISION_MIN_HULL_DAMAGE are
+cycled by Developer Options -> "Hull damage" (engine/dev_hull_damage_tuning);
+its reset restores the DEFAULT_* constants, never a re-read of the live value.
 """
 from engine import host_io
 
 REFERENCE_DAMAGE = 500.0       # stock photon hull damage == 1 wear
 PROJECTILE_MIN = 0.25
 PROJECTILE_MAX = 1.5
-PHASER_RATE = 1.0              # x hull damage / REFERENCE_DAMAGE, per tick
-COLLISION_MIN_HULL_DAMAGE = 100.0
+DEFAULT_PHASER_RATE = 1.0      # x hull damage / REFERENCE_DAMAGE, per tick
+PHASER_RATE = DEFAULT_PHASER_RATE
+DEFAULT_COLLISION_MIN_HULL_DAMAGE = 100.0
+COLLISION_MIN_HULL_DAMAGE = DEFAULT_COLLISION_MIN_HULL_DAMAGE
 COLLISION_MAX = 1.5
 # Mirrors HullDamageStore::kMergeFactor: a tick farther than this x reach from
 # the pending point would not merge in the store, so it flushes the pending.

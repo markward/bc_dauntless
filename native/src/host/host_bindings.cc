@@ -573,6 +573,11 @@ SceneSource g_scene_source;
 // rooms behind its holes (renderer/hull_interior_policy.h). nullopt = none.
 std::optional<scenegraph::InstanceId> g_viewscreen_target;
 
+// Rooms near distance (InteriorPolicy::near_gu) for the main view: the
+// policy is rebuilt per render from this. Only Developer Options -> "Hull
+// damage" writes it (set_interior_near_gu); production keeps the default.
+float g_interior_near_gu = renderer::InteriorPolicy{}.near_gu;
+
 // Viewscreen static/"snow" overlay: composited over the viewscreen RTT after
 // the feed (comm or forward) is rendered. on/intensity are pushed per frame by
 // host_loop (intensity = SDK fMin/fMax flicker); textures come from the
@@ -1524,6 +1529,7 @@ void frame() {
         // viewscreen only its target; the main view by distance (the default).
         if (g_submitter) {
             renderer::InteriorPolicy interior_policy;
+            interior_policy.near_gu = g_interior_near_gu;
             if (to_viewscreen) {
                 interior_policy.viewscreen = true;
                 interior_policy.viewscreen_target = g_viewscreen_target;
@@ -2520,6 +2526,7 @@ namespace dauntless_normal_map {
 // SPIKE (damage redesign): hull-plating layer params. Defined in frame.cc.
 namespace dauntless_plating {
     extern float g_params[renderer::plating::kParamCount];
+    const float* param_defaults();  // kParamCount shipped values, never written
 }
 
 // Surface tear that first crosses the breach wear pushes ONE BreachEvent
@@ -6479,6 +6486,20 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("params"),
           "SPIKE: hull-plating layer params (engine/appc/plating_dials.py).");
+    m.def("plating_param_defaults",
+          []() {
+              const float* d = dauntless_plating::param_defaults();
+              return std::vector<float>(d, d + renderer::plating::kParamCount);
+          },
+          "The kParamCount shipped plating params (frame.cc's g_params "
+          "initializer), unaffected by set_plating_params.");
+    m.def("set_interior_near_gu",
+          [](float gu) { g_interior_near_gu = gu; }, py::arg("gu"),
+          "Rooms near distance (InteriorPolicy::near_gu) for the main view. "
+          "Developer Options -> Hull damage only.");
+    m.def("interior_near_gu", []() { return g_interior_near_gu; });
+    m.def("interior_near_gu_default",
+          []() { return renderer::InteriorPolicy{}.near_gu; });
     m.def("running_lights_set_enabled",
           [](bool v) { g_running_lights_enabled = v; }, py::arg("enabled"));
     m.def("running_lights_enabled", []() { return g_running_lights_enabled; });

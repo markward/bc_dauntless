@@ -33,7 +33,8 @@ _REQUIRED_BINDINGS = frozenset({
     "add_box_region", "add_cylinder_region", "add_sphere_region",
     "running_light_count", "running_lights_enabled", "running_lights_set_enabled",
     "set_running_light_dials", "set_running_light_levels", "set_running_lights",
-    "set_plating_params",
+    "set_plating_params", "plating_param_defaults",
+    "set_interior_near_gu", "interior_near_gu", "interior_near_gu_default",
     "ambient_gradient_get", "ambient_gradient_set", "ambient_gradient_set_enabled",
     "assemble_officer", "bridge_pass_set_enabled", "bridge_quality",
     "cef_composite", "cef_devtools_open", "cef_initialize", "cef_pump",
@@ -1600,6 +1601,26 @@ def set_running_light_levels(levels) -> None:
 def set_plating_params(params) -> None:
     """SPIKE: hull-plating layer params, slot order per plating_dials."""
     _h.set_plating_params([float(v) for v in params])
+
+
+def plating_param_defaults() -> List[float]:
+    """The kParamCount shipped plating params (frame.cc's g_params
+    initializer), never the live ones."""
+    return [float(v) for v in _h.plating_param_defaults()]
+
+
+def set_interior_near_gu(gu: float) -> None:
+    """Rooms near distance for the main view (InteriorPolicy::near_gu).
+    Developer Options -> "Hull damage" only."""
+    _h.set_interior_near_gu(float(gu))
+
+
+def interior_near_gu() -> float:
+    return float(_h.interior_near_gu())
+
+
+def interior_near_gu_default() -> float:
+    return float(_h.interior_near_gu_default())
 
 
 def set_running_light_dials(size_gu_per_radius: float, min_px: float,

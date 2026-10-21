@@ -14,9 +14,18 @@ Lengths are MODEL units (~1.75 m: 1 GU = 175 m ~ 101 model units). Real
 ribs (~1 m) are a pixel at combat range, so the defaults are exaggerated
 for readability. Tuned live with the shared
 / L O keys once Developer Options -> "Dial keys" selects "plating"
-(engine/dev_dial_groups.py). Not persisted. DEFAULTS MUST match
-frame.cc's dauntless_plating::g_params[kParamCount] (slot order = DIAL_ORDER).
+(engine/dev_dial_groups.py), and in coarse presets from Developer Options ->
+"Hull damage" (engine/dev_hull_damage_tuning.py), which writes through
+`set_value` here so the two stay in sync. Not persisted.
+
+The defaults' one source is frame.cc's dauntless_plating::g_params
+initializer (slot order = DIAL_ORDER), reported by the binding
+`plating_param_defaults()`; `register` prefers it. DEFAULTS is the headless
+fallback, pinned equal by tests/host/test_plating_defaults_drift.py.
 """
+import struct
+from typing import Optional
+
 DEFAULTS: dict = {
     "enabled": 1.0,
     "panel_size": 6.0,
@@ -65,12 +74,42 @@ _MIN.update({"panel_size": 0.25, "primary_spacing": 0.25,
 _MAX = {"enabled": 1.0, "debug": 2.0, "tear_mix": 1.0, "interior": 1.0,
          "force_program": 1.0}
 
+# The defaults in force: DEFAULTS until `register` reads the native ones.
+_defaults: dict = dict(DEFAULTS)
 _dials: dict = dict(DEFAULTS)
+
+
+def _f32_shortest(v: float) -> float:
+    """The shortest decimal that round-trips float32 `v` (0.4f -> 0.4), so
+    native defaults compare equal to the Python literals they mirror."""
+    packed = struct.pack("<f", v)
+    for digits in range(6, 10):
+        cand = float("%.*g" % (digits, v))
+        if struct.pack("<f", cand) == packed:
+            return cand
+    return float(v)
+
+
+def native_defaults() -> Optional[dict]:
+    """The C++ defaults keyed by DIAL_ORDER, or None when the binding (or
+    the renderer) is unavailable -- headless, or a stale module."""
+    try:
+        from engine import renderer
+        native = list(renderer.plating_param_defaults())
+    except Exception:
+        return None
+    if len(native) < len(DIAL_ORDER):
+        return None
+    return {k: _f32_shortest(float(native[i])) for i, k in enumerate(DIAL_ORDER)}
+
+
+def defaults() -> dict:
+    return dict(_defaults)
 
 
 def reset() -> None:
     global _dials
-    _dials = dict(DEFAULTS)
+    _dials = dict(_defaults)
 
 
 def current() -> dict:
@@ -90,19 +129,43 @@ def push() -> None:
         dev_mode.log_swallowed("plating params push", _e)
 
 
-def _step(name: str, direction: int) -> None:
-    v = _dials[name] + (_STEP[name] if direction > 0 else -_STEP[name])
-    v = max(_MIN[name], round(v, 4))
+def _clamp(name: str, v: float) -> float:
+    v = max(_MIN[name], round(float(v), 4))
     if name in _MAX:
         v = min(_MAX[name], v)
-    _dials[name] = v
+    return v
+
+
+def _step(name: str, direction: int) -> None:
+    _dials[name] = _clamp(name, _dials[name] + (
+        _STEP[name] if direction > 0 else -_STEP[name]))
+    push()
+
+
+def set_value(name: str, value: float) -> None:
+    """Set one dial (clamped like a dial step) and push: the Developer
+    Options rows write through here, the same path as / L O."""
+    _dials[name] = _clamp(name, value)
+    push()
+
+
+def set_values(values: dict) -> None:
+    """Several dials, one push."""
+    for name, value in values.items():
+        _dials[name] = _clamp(name, value)
     push()
 
 
 def register() -> None:
-    """Dev boot. DAUNTLESS_PLATING=0 starts with the layer off (perf A/B)."""
+    """Dev boot. Prefers the native defaults (DEFAULTS when the binding is
+    absent). DAUNTLESS_PLATING=0 starts with the layer off (perf A/B)."""
     import os
     from engine import dev_dial_groups
+    global _defaults, _dials
+    native = native_defaults()
+    if native is not None:
+        _defaults = native
+        _dials = dict(native)
     if os.environ.get("DAUNTLESS_PLATING", "1").strip() == "0":
         _dials["enabled"] = 0.0
     if os.environ.get("DAUNTLESS_PLATING_FORCE_PROGRAM", "0").strip() == "1":

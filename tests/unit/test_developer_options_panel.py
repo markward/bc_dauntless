@@ -117,6 +117,7 @@ def test_render_payload_shape(panel):
         {"id": "combat", "label": "Combat"},
         {"id": "lighting", "label": "Lighting"},
         {"id": "environments", "label": "Environments"},
+        {"id": "hull_damage", "label": "Hull damage"},
         {"id": "diagnostics", "label": "Diagnostics"},
         {"id": "characters", "label": "Characters"},
     ]
@@ -208,6 +209,7 @@ def test_focusables_order(panel):
         ("tab", "combat"),
         ("tab", "lighting"),
         ("tab", "environments"),
+        ("tab", "hull_damage"),
         ("tab", "diagnostics"),
         ("tab", "characters"),
         ("ctrl", "god_mode"),

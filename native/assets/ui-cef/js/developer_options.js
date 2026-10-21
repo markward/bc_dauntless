@@ -1,6 +1,7 @@
 // Developer Options panel render fn. Driven by Python via
 // cef_execute_javascript:
-//   setDeveloperOptions({visible:true, tabs, selected_tab, focused, settings});
+//   setDeveloperOptions({visible:true, tabs, selected_tab, focused, settings,
+//                        hull_damage});
 //   setDeveloperOptions({visible:false});
 // Click events fire dauntlessEvent('developer-options/<verb>:<arg>').
 // Reuses the cp-* classes from css/configuration_panel.css so the look
@@ -47,6 +48,11 @@ function _doFocusableList(state) {
         out.push({kind: 'ctrl', target: 'planet_surface'});
         out.push({kind: 'ctrl', target: 'surface_debug'});
         out.push({kind: 'ctrl', target: 'reload_surfaces'});
+    }
+    if (state.selected_tab === 'hull_damage') {
+        for (const r of (state.hull_damage || [])) {
+            out.push({kind: 'ctrl', target: r.key});
+        }
     }
     if (state.selected_tab === 'diagnostics') {
         out.push({kind: 'ctrl', target: 'profiler'});
@@ -203,6 +209,30 @@ function _doRenderEnvironmentsBody(state, focusables) {
     return html;
 }
 
+// Hull damage tab: the rows come from Python (engine/dev_hull_damage_tuning.py)
+// in display order, {key, label, kind, value}. A value row shows its current
+// value and cycles it on click; the interior row is a toggle; the reset row is
+// a one-shot action. The / L O dial keys ("plating" group) fine-step the same
+// values.
+function _doRenderHullDamageBody(state, focusables) {
+    const focused = focusables[state.focused] || {};
+    const isFoc = (target) => focused.kind === 'ctrl' && focused.target === target;
+    let html = '';
+    html += '<div class="cp-row cp-capture-hint">Each value steps through five presets '
+          + 'around its default. Session only; the / L O dial keys (group '
+          + '"plating") fine-step the same values.</div>';
+    for (const r of (state.hull_damage || [])) {
+        if (r.kind === 'toggle') {
+            html += _doToggleRow(r.label, r.key, r.value, isFoc(r.key));
+        } else if (r.kind === 'action') {
+            html += _doActionRow(r.label, r.key, 'Reset', isFoc(r.key));
+        } else {
+            html += _doValueRow(r.label, r.key, String(r.value), isFoc(r.key));
+        }
+    }
+    return html;
+}
+
 // Characters tab: one Show row per SDK character, mouse only (none of these
 // rows are in the keyboard focus list, here or in the Python panel).
 // Each row stages the character on its comm set and turns the viewscreen to it.
@@ -236,6 +266,7 @@ function setDeveloperOptions(state) {
             (state.selected_tab === 'combat')       ? _doRenderCombatBody(state, focusables)
           : (state.selected_tab === 'lighting')     ? _doRenderLightingBody(state, focusables)
           : (state.selected_tab === 'environments') ? _doRenderEnvironmentsBody(state, focusables)
+          : (state.selected_tab === 'hull_damage')  ? _doRenderHullDamageBody(state, focusables)
           : (state.selected_tab === 'diagnostics')  ? _doRenderDiagnosticsBody(state, focusables)
           : (state.selected_tab === 'characters')   ? _doRenderCharactersBody(state)
           : '';

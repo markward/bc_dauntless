@@ -68,3 +68,60 @@ def test_force_program_dial_is_slot_26_and_env_driven(monkeypatch):
     d.register()
     assert d.current()["force_program"] == 1.0
     d.reset()
+
+
+# ---- Developer Options "Hull damage" (phase 4 §2.5) -------------------------
+
+def _no_register(monkeypatch):
+    monkeypatch.setattr(plating_dials, "push", lambda: None)
+    import engine.dev_dial_groups as groups
+    monkeypatch.setattr(groups, "register_group", lambda *a, **k: None)
+
+
+def test_register_prefers_the_native_defaults(monkeypatch):
+    from engine import renderer
+    _no_register(monkeypatch)
+    native = [plating_dials.DEFAULTS[k] for k in plating_dials.DIAL_ORDER]
+    native[plating_dials.DIAL_ORDER.index("soot")] = 0.4000000059604645  # 0.4f
+    native += [0.0] * (32 - len(native))
+    monkeypatch.setattr(renderer, "plating_param_defaults", lambda: native,
+                        raising=False)
+    try:
+        plating_dials.register()
+        # float32 comes back as the shortest decimal that round-trips it
+        assert plating_dials.defaults()["soot"] == 0.4
+        assert plating_dials.current()["soot"] == 0.4
+        plating_dials.reset()
+        assert plating_dials.current()["soot"] == 0.4
+    finally:
+        plating_dials._defaults = dict(plating_dials.DEFAULTS)
+        plating_dials.reset()
+
+
+def test_register_falls_back_to_DEFAULTS_without_the_binding(monkeypatch):
+    from engine import renderer
+    _no_register(monkeypatch)
+
+    def _missing():
+        raise AttributeError("plating_param_defaults")
+    monkeypatch.setattr(renderer, "plating_param_defaults", _missing,
+                        raising=False)
+    assert plating_dials.native_defaults() is None
+    plating_dials.register()
+    assert plating_dials.defaults() == plating_dials.DEFAULTS
+    plating_dials.reset()
+
+
+def test_set_value_clamps_and_pushes(monkeypatch):
+    pushed = []
+    monkeypatch.setattr(plating_dials, "push", lambda: pushed.append(plating_dials.params()))
+    plating_dials.reset()
+    plating_dials.set_value("interior", 5.0)
+    assert plating_dials.current()["interior"] == 1.0
+    plating_dials.set_value("breach_wear", -3.0)
+    assert plating_dials.current()["breach_wear"] == 0.0
+    assert len(pushed) == 2
+    plating_dials.set_values({"breach_wear": 4.5, "soot": 0.5})
+    assert len(pushed) == 3
+    assert plating_dials.current()["soot"] == 0.5
+    plating_dials.reset()

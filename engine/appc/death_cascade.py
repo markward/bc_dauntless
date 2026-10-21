@@ -61,12 +61,39 @@ BLAST_SIZE_FRACTION = 0.25   # CreateDebrisExplosion(fRadius * 0.25, ...)
 # the tier -- applied to the fireball, the light and the VISIBLE hole. The
 # hole gets it through visible_damage.carve_scale, NOT AddDamage's arguments:
 # AddDamage also deals gameplay damage (combat.apply_hit, objects.py), which
-# stays BC's 600 at radius / 4. A dial: retune live if wrong.
-BLAST_SIZE_TIERS = (
+# stays BC's 600 at radius / 4. A dial: retune live if wrong -- Developer
+# Options -> "Hull damage" cycles the big tier's chance (set_big_tier_chance);
+# its reset restores DEFAULT_BLAST_SIZE_TIERS. Read at use by roll_blast_scale.
+DEFAULT_BLAST_SIZE_TIERS = (
     (0.60, 0.7, 1.0),
     (0.30, 1.0, 1.6),
     (0.10, 1.8, 2.6),
 )
+BLAST_SIZE_TIERS = DEFAULT_BLAST_SIZE_TIERS
+
+
+def big_tier_chance() -> float:
+    """The live chance of the big (blow-through) blast tier."""
+    return BLAST_SIZE_TIERS[-1][0]
+
+
+def set_big_tier_chance(chance: float) -> None:
+    """Retune the big tier's chance. The middle tier keeps its default
+    chance and the small tier takes up the rest, so the table still sums
+    to 1; every tier keeps its default size range."""
+    global BLAST_SIZE_TIERS
+    small, mid, big = DEFAULT_BLAST_SIZE_TIERS
+    chance = min(max(float(chance), 0.0), 1.0 - mid[0])
+    BLAST_SIZE_TIERS = (
+        (round(1.0 - mid[0] - chance, 6), small[1], small[2]),
+        mid,
+        (chance, big[1], big[2]),
+    )
+
+
+def reset_blast_size_tiers() -> None:
+    global BLAST_SIZE_TIERS
+    BLAST_SIZE_TIERS = DEFAULT_BLAST_SIZE_TIERS
 BLAST_LIFE = 1.5             # fLife argument to CreateDebrisExplosion
 
 # ── Fireball timing: OVERRIDES of the SDK helper, tuned by eye ───────────────

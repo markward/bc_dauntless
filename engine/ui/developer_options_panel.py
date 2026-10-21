@@ -2,10 +2,11 @@
 
 Mirrors engine.ui.configuration_panel.ConfigurationPanel: a Panel
 subclass pumped by PanelRegistry, rendered as a pause-menu modal that
-reuses the configuration panel's cp-* CSS. Five tabs: "Combat" (cheats
+reuses the configuration panel's cp-* CSS. Six tabs: "Combat" (cheats
 wired to engine.dev_combat_cheats, plus the Sensor Occlusion switch),
 "Lighting" (forced glow states, normal-map tunables), "Environments"
-(rock toggles), "Diagnostics" (the frame profiler, the performance
+(rock toggles), "Hull damage" (layered hull damage tuning rows, via
+engine.dev_hull_damage_tuning), "Diagnostics" (the frame profiler, the performance
 monitor overlay, the dial-group picker), and "Characters" (put any SDK character on the viewscreen, via
 engine.dev_character_viewscreen). Dev-mode only — constructed in host_loop.py inside
 ``if dev_mode.is_enabled():``.
@@ -21,6 +22,7 @@ from engine.ui.panel import Panel
 from engine import dev_character_viewscreen as character_viewscreen
 from engine import dev_combat_cheats as cheats
 from engine import dev_dial_groups
+from engine import dev_hull_damage_tuning as hull_damage_tuning
 from engine import dev_light_preview as light_preview
 from engine import dev_perf_monitor
 from engine import host_io
@@ -90,9 +92,10 @@ def _frame_profiler():
 class DeveloperOptionsPanel(Panel):
     # Controls that fire once instead of flipping a flag. They have no entry in
     # `settings` and dispatch under "action:" rather than "toggle:".
+    # The "Hull damage" rows are all actions except the interior toggle.
     _ACTION_CONTROLS = frozenset({"quick_repair", "normal_strength",
                                  "dial_group", "reload_atmospheres", "reload_surfaces",
-                                 "bridge_debug_view"})
+                                 "bridge_debug_view"}) | hull_damage_tuning.ACTION_KEYS
 
     # Presets cycled through by the "normal_strength" action row: 0 = flat
     # (identical to disabled), 1 = as authored, 2/4 exaggerate for tuning.
@@ -111,6 +114,7 @@ class DeveloperOptionsPanel(Panel):
         self._tabs: List[Tuple[str, str]] = [("combat", "Combat"),
                                              ("lighting", "Lighting"),
                                              ("environments", "Environments"),
+                                             ("hull_damage", "Hull damage"),
                                              ("diagnostics", "Diagnostics"),
                                              ("characters", "Characters")]
         self._selected_tab = "combat"
@@ -208,6 +212,11 @@ class DeveloperOptionsPanel(Panel):
         # returns None, and the button keeps showing its old state forever.
         # _profiler shipped missing from this tuple and did exactly that.
         # test_every_setting_is_in_the_render_snapshot now guards the whole set.
+        # The "Hull damage" rows are read LIVE (the / L O dial keys change
+        # the same values behind the panel's back), so their values are part
+        # of the snapshot too. Read only while visible; nothing is mutated.
+        hull_rows = hull_damage_tuning.rows() if self._visible else []
+        hull_snapshot = tuple((r["key"], r["value"]) for r in hull_rows)
         snapshot = (
             self._visible, tuple(self._tabs), self._selected_tab,
             self._focused, self._god_mode, self._double_weapons,
@@ -222,7 +231,7 @@ class DeveloperOptionsPanel(Panel):
             self._rock_specks, self._rock_puffs, self._running_lights,
             self._planet_geosphere, self._planet_atmosphere,
             self._planet_surface, self._surface_debug,
-            self._viewscreen_character,
+            self._viewscreen_character, hull_snapshot,
         )
         if snapshot == self._last_pushed:
             return None
@@ -239,6 +248,7 @@ class DeveloperOptionsPanel(Panel):
             "characters": ([e.name for e in character_viewscreen.catalogue()]
                            if self._selected_tab == "characters" else []),
             "viewscreen_character": self._viewscreen_character,
+            "hull_damage": hull_rows,
             "settings": {
                 "god_mode": self._god_mode,
                 "double_weapons": self._double_weapons,
@@ -395,6 +405,9 @@ class DeveloperOptionsPanel(Panel):
             renderer.rock_puffs_set_enabled(not self._rock_puffs)
             self._rock_puffs = not self._rock_puffs
             return True
+        if action.startswith(("action:hull_", "toggle:hull_")):
+            # Developer Options -> "Hull damage" (dev-only; refuses otherwise).
+            return hull_damage_tuning.dispatch(action)
         if action == "action:dial_group":
             self._dial_group = dev_dial_groups.cycle_active() or "nebula"
             return True
@@ -493,6 +506,8 @@ class DeveloperOptionsPanel(Panel):
                     ("ctrl", "reload_atmospheres"),
                     ("ctrl", "planet_surface"), ("ctrl", "surface_debug"),
                     ("ctrl", "reload_surfaces")]
+        if self._selected_tab == "hull_damage":
+            out += [("ctrl", r["key"]) for r in hull_damage_tuning.rows()]
         if self._selected_tab == "diagnostics":
             out += [("ctrl", "profiler"), ("ctrl", "perf_monitor"),
                     ("ctrl", "dial_group")]
