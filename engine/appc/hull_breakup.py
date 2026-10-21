@@ -73,6 +73,13 @@ def after_wear(ship, iid, ship_instances=None, now=None):
     from engine.rocks import rock as _rock
     if _rock.is_rock(ship):
         return []
+    # An articulated ship's parts leave through part_severance. At rest it
+    # carries no node overrides (identity ones are erased), so the native
+    # articulation gate cannot see the rig: gate on it here, or the same
+    # nacelle would sever twice.
+    from engine.appc import articulation
+    if articulation.parts_for_ship(ship):
+        return []
     now = _now() if now is None else now
     key = id(ship)
     if now - _last_wear_check.get(key, -1e9) < kBreakupCheckInterval:

@@ -197,3 +197,22 @@ def test_the_severed_record_does_not_keep_a_ship_alive(monkeypatch):
     del ship
     gc.collect()
     assert ref() is None, "hull_breakup._severed held the ship alive"
+
+
+def test_an_articulated_ship_at_rest_never_structure_severs(monkeypatch, spawns):
+    """A rigged ship at rest has NO node overrides (set_instance_node_transform
+    erases identity ones), so the native articulation gate cannot see it --
+    yet its parts already leave through part_severance. A structure sever
+    there would detach the same nacelle twice (two chunks, two kills)."""
+    from engine.appc import articulation, hull_breakup
+    asked = []
+    monkeypatch.setattr(host_io, "hull_split_parts",
+                        lambda iid: asked.append(iid) or
+                        [_part(1, 21, 600, (1.0, -.5, -.5), (2.0, .5, .5))])
+    ship = _Ship(radius=3.5)
+    ship._articulation_leaf = "birdofprey"   # resolvable rig, poses at rest
+    assert articulation.parts_for_ship(ship), "fixture: the ship is rigged"
+    assert ship._articulation_poses == {}, "fixture: no pose overrides"
+    assert hull_breakup.after_wear(ship, 11, now=10.0) == []
+    hull_breakup.drain(now=20.0)
+    assert asked == [] and spawns == []
