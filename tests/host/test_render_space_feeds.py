@@ -600,7 +600,7 @@ def test_visible_damage_probe_and_record_are_relative(sibling_target, monkeypatc
     from engine.appc import visible_damage
     target, local, native = sibling_target
     visible_damage._pending.clear()
-    visible_damage.queue_world_carve(
+    visible_damage.queue_world_hole(
         target, TGPoint3(*_plus(local, (-2.0, 0.0, 0.0))), 0.5)
     try:
         visible_damage.advance(0.0, {target: 3})

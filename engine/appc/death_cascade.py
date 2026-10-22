@@ -59,7 +59,7 @@ BLAST_SIZE_FRACTION = 0.25   # CreateDebrisExplosion(fRadius * 0.25, ...)
 # deaths "all very even in size" and asked for variety, some larger. Each blast
 # rolls a multiplier m from this table -- (probability, lo, hi), uniform within
 # the tier -- applied to the fireball, the light and the VISIBLE hole. The
-# hole gets it through visible_damage.carve_scale, NOT AddDamage's arguments:
+# hole gets it through visible_damage.hole_scale, NOT AddDamage's arguments:
 # AddDamage also deals gameplay damage (combat.apply_hit, objects.py), which
 # stays BC's 600 at radius / 4. A dial: retune live if wrong -- Developer
 # Options -> "Hull damage" cycles the big tier's chance (set_big_tier_chance);
@@ -242,7 +242,7 @@ def _fire(state: dict, sound_ok: bool) -> None:
 
         if rand(10) < DAMAGE_CHANCE_IN_10:
             from engine.appc import visible_damage
-            with frame_profiler.scope("casc.add_damage"), visible_damage.carve_scale(m):
+            with frame_profiler.scope("casc.add_damage"), visible_damage.hole_scale(m):
                 ship.AddDamage(point, radius * DAMAGE_RADIUS_FRACTION, DAMAGE_STRENGTH)
 
         with frame_profiler.scope("casc.explosion"):

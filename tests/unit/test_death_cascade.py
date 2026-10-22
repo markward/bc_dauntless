@@ -238,7 +238,7 @@ def test_the_tier_table_is_a_dial():
 
 def test_blast_scale_sizes_the_fireball_the_light_and_the_hole(monkeypatch):
     """m scales the debris explosion and the light, and reaches the VISIBLE
-    hole through visible_damage.carve_scale. AddDamage also deals gameplay
+    hole through visible_damage.hole_scale. AddDamage also deals gameplay
     damage (combat.apply_hit), so its own arguments stay BC's."""
     from engine.appc import visible_damage
     seen = {}
@@ -251,7 +251,7 @@ def test_blast_scale_sizes_the_fireball_the_light_and_the_hole(monkeypatch):
     class Ship(FakeShip):
         def AddDamage(self, pEmitPos, fRadius, fDamage):
             super().AddDamage(pEmitPos, fRadius, fDamage)
-            seen["scale"] = visible_damage.current_carve_scale()
+            seen["scale"] = visible_damage.current_hole_scale()
 
     ship = Ship(radius=4.0)
     state = death_cascade.begin(ship, duration=1.0, rand=lambda n: 0)
@@ -263,4 +263,4 @@ def test_blast_scale_sizes_the_fireball_the_light_and_the_hole(monkeypatch):
     (_pt, r, s), = ship.damage_calls
     assert r == pytest.approx(4.0 * death_cascade.DAMAGE_RADIUS_FRACTION)
     assert s == pytest.approx(death_cascade.DAMAGE_STRENGTH)
-    assert visible_damage.current_carve_scale() == 1.0, "scale ends with the call"
+    assert visible_damage.current_hole_scale() == 1.0, "scale ends with the call"

@@ -67,14 +67,14 @@ ADD_DAMAGE_HOLE_SCALE_MAX = 3.0
 ADD_DAMAGE_ROOM_FRACTION = 0.7
 ADD_DAMAGE_BLOW_THROUGH_STRENGTH = 1080.0
 
-# Size multiplier on the VISIBLE half of AddDamage (queue_world_carve) while
-# a `carve_scale` block is active -- the death cascade's blast size tier.
+# Size multiplier on the VISIBLE half of AddDamage (queue_world_hole) while
+# a `hole_scale` block is active -- the death cascade's blast size tier.
 # AddDamage's gameplay half (combat.apply_hit) never sees it.
-_carve_scale = 1.0
+_hole_scale = 1.0
 
 
-class carve_scale:
-    """`with carve_scale(m): ship.AddDamage(...)` scales the queued visible
+class hole_scale:
+    """`with hole_scale(m): ship.AddDamage(...)` scales the queued visible
     radius and strength by m; gameplay damage is untouched."""
 
     def __init__(self, m):
@@ -82,19 +82,19 @@ class carve_scale:
         self._prev = 1.0
 
     def __enter__(self):
-        global _carve_scale
-        self._prev = _carve_scale
-        _carve_scale = self._m
+        global _hole_scale
+        self._prev = _hole_scale
+        _hole_scale = self._m
         return self
 
     def __exit__(self, *exc):
-        global _carve_scale
-        _carve_scale = self._prev
+        global _hole_scale
+        _hole_scale = self._prev
         return False
 
 
-def current_carve_scale() -> float:
-    return _carve_scale
+def current_hole_scale() -> float:
+    return _hole_scale
 
 
 # Registry of not-yet-emitted volumes. Each entry:
@@ -116,10 +116,13 @@ def queue_body_volume(ship, x, y, z, influRad, strength=0.0) -> None:
     })
 
 
-def queue_world_carve(ship, pEmitPos, fRadius, fDamage=0.0) -> None:
-    """Queue a runtime world-space volume (DamageableObject.AddDamage, e.g.
-    Effects.DeathExplosionDamage). `pEmitPos` is a world-space point object
-    (NiPoint3/TGPoint3 with .x/.y/.z); `fDamage` is the BC field strength."""
+def queue_world_hole(ship, pEmitPos, fRadius, fDamage=0.0) -> None:
+    """Queue AddDamage's visible hole (DamageableObject.AddDamage, e.g.
+    Effects.DeathExplosionDamage): once the ship's render instance exists it
+    becomes ONE Internal hull-damage record at the world-space point, sized
+    and worn by `_advance_one` (ADD_DAMAGE_*), posed-frame. `pEmitPos` is a point
+    object (NiPoint3/TGPoint3 with .x/.y/.z); `fRadius` and `fDamage` are
+    BC's radius and field strength, both scaled by an active `hole_scale`."""
     if ship is None or pEmitPos is None:
         return
     try:
@@ -128,8 +131,8 @@ def queue_world_carve(ship, pEmitPos, fRadius, fDamage=0.0) -> None:
         return
     _pending.append({
         "ship": ship, "kind": "world",
-        "pt": wp, "influ": float(fRadius) * _carve_scale,
-        "strength": float(fDamage) * _carve_scale, "age": 0.0,
+        "pt": wp, "influ": float(fRadius) * _hole_scale,
+        "strength": float(fDamage) * _hole_scale, "age": 0.0,
     })
 
 

@@ -1010,7 +1010,7 @@ class DamageableObject(PhysicsObjectClass):
         props (wrecks, debris) just take the visible hole.
         """
         from engine.appc import visible_damage
-        visible_damage.queue_world_carve(self, pEmitPos, fRadius, fDamage)
+        visible_damage.queue_world_hole(self, pEmitPos, fRadius, fDamage)
         from engine.appc.ships import ShipClass
         if isinstance(self, ShipClass) and all(
                 hasattr(pEmitPos, ax) for ax in ("x", "y", "z")):
@@ -1038,7 +1038,11 @@ class DamageableObject(PhysicsObjectClass):
             pass
 
     def SetVisibleDamageStrengthModifier(self, value) -> None:
-        """Per-ship visible-damage strength scale. Stored-only until Gap 2."""
+        """Per-ship visible-damage strength scale (loadspacehelper hardpoint
+        stats). Stored only: nothing reads it since the voxel carve was
+        deleted (layered hull damage phase 4) -- a hole's wear comes from the
+        layered damage dials, and only the RADIUS modifier is applied
+        (visible_damage._radius_mod)."""
         try:
             self._vis_dmg_strength_mod = float(value)
         except (TypeError, ValueError):

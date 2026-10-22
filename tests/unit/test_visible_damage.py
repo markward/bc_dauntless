@@ -169,7 +169,7 @@ def test_runtime_add_damage_is_attributed_to_the_posed_part(host):
     """AddDamage (the death cascade) lands at posed-time points: the binding
     attributes it (rest_frame False)."""
     ship = _Ship(loc=TGPoint3(10.0, 0.0, 0.0))
-    visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 0.6, 600.0)
+    visible_damage.queue_world_hole(ship, TGPoint3(13.0, 4.0, 0.0), 0.6, 600.0)
     visible_damage.advance(0.0, {ship: 2})
     assert host.rest_frame == [False]
 
@@ -206,7 +206,7 @@ def test_runtime_add_damage_snaps_to_the_drawn_surface(host, monkeypatch):
     calls = []
     monkeypatch.setattr(host_io, "ray_trace_mesh", _posed_fake_trace(calls))
     ship = _Ship()
-    visible_damage.queue_world_carve(ship, TGPoint3(1.0, 0.4, 0.2), 0.6, 600.0)
+    visible_damage.queue_world_hole(ship, TGPoint3(1.0, 0.4, 0.2), 0.6, 600.0)
     visible_damage.advance(0.0, {ship: 2})
     _iid, point, *_r = host.records[0]
     assert calls and not any(calls)
@@ -218,7 +218,7 @@ def test_runtime_add_damage_snaps_to_the_drawn_surface(host, monkeypatch):
 
 def test_world_carve_passes_point_through_with_radial_normal(host):
     ship = _Ship(loc=TGPoint3(10.0, 0.0, 0.0))
-    visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 0.6, 600.0)
+    visible_damage.queue_world_hole(ship, TGPoint3(13.0, 4.0, 0.0), 0.6, 600.0)
     visible_damage.advance(0.0, {ship: 2})
 
     _iid, point, normal, radius, _wear, kind = host.records[0]
@@ -241,7 +241,7 @@ def test_clear_for_drops_only_that_ships_pending():
 
 def test_none_ship_is_ignored():
     visible_damage.queue_body_volume(None, 1, 0, 0, 0.5, 1)
-    visible_damage.queue_world_carve(None, TGPoint3(0, 0, 0), 0.5, 1)
+    visible_damage.queue_world_hole(None, TGPoint3(0, 0, 0), 0.5, 1)
     assert visible_damage._pending == []
 
 
@@ -283,7 +283,7 @@ def test_world_carve_prefers_the_mesh_surface_normal(host, monkeypatch):
                         lambda iid, o, d, m: ((13.0, 4.0, 0.3), hit_normal, 0.1))
 
     ship = _Ship(loc=TGPoint3(10.0, 0.0, 0.0))
-    visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.3), 0.6, 600.0)
+    visible_damage.queue_world_hole(ship, TGPoint3(13.0, 4.0, 0.3), 0.6, 600.0)
     visible_damage.advance(0.0, {ship: 2})
 
     _iid, _point, normal, *_rest = host.records[0]
@@ -305,7 +305,7 @@ def test_world_carve_probes_along_the_radial_toward_the_hull(host, monkeypatch):
 
     monkeypatch.setattr(host_io, "ray_trace_mesh", _trace)
     ship = _Ship(loc=TGPoint3(10.0, 0.0, 0.0))
-    visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 0.6, 600.0)
+    visible_damage.queue_world_hole(ship, TGPoint3(13.0, 4.0, 0.0), 0.6, 600.0)
     visible_damage.advance(0.0, {ship: 2})
 
     # Radial at that point is (0.6, 0.8, 0); origin sits outward along it and
@@ -321,7 +321,7 @@ def test_world_carve_falls_back_to_radial_when_the_trace_misses(host, monkeypatc
     monkeypatch.setattr(host_io, "ray_trace_mesh", lambda *a, **k: None)
 
     ship = _Ship(loc=TGPoint3(10.0, 0.0, 0.0))
-    visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 0.6, 600.0)
+    visible_damage.queue_world_hole(ship, TGPoint3(13.0, 4.0, 0.0), 0.6, 600.0)
     visible_damage.advance(0.0, {ship: 2})
 
     _iid, _point, normal, *_rest = host.records[0]
@@ -334,7 +334,7 @@ def test_world_carve_survives_a_raising_trace(host, monkeypatch):
     monkeypatch.setattr(host_io, "ray_trace_mesh", _boom)
 
     ship = _Ship(loc=TGPoint3(10.0, 0.0, 0.0))
-    visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 0.6, 600.0)
+    visible_damage.queue_world_hole(ship, TGPoint3(13.0, 4.0, 0.0), 0.6, 600.0)
     visible_damage.advance(0.0, {ship: 2})
 
     assert host.records, "a failing normal probe must not lose the record"
@@ -435,8 +435,8 @@ def test_add_damage_leaves_an_internal_hole_record(monkeypatch):
                         lambda *a, **k: decals.append(a))
     monkeypatch.setattr(host_io, "ray_trace_mesh", lambda *a, **k: None)
     ship = _Ship(loc=TGPoint3(10.0, 0.0, 0.0))
-    visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 0.6, 600.0)
-    visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 0.1, 150.0)
+    visible_damage.queue_world_hole(ship, TGPoint3(13.0, 4.0, 0.0), 0.6, 600.0)
+    visible_damage.queue_world_hole(ship, TGPoint3(13.0, 4.0, 0.0), 0.1, 150.0)
     visible_damage.advance(0.0, {ship: 2})
     assert decals == [], "no Internal decal any more"
     big, small = wear_calls
@@ -464,7 +464,7 @@ def test_ordinary_death_holes_stay_below_deck_break(monkeypatch):
     calls = _record_adds(monkeypatch)
     ship = _Ship(loc=TGPoint3(10.0, 0.0, 0.0))
     for strength in (420.0, 600.0, 960.0, 1079.0):   # m 0.7 .. just under 1.8
-        visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 1.0, strength)
+        visible_damage.queue_world_hole(ship, TGPoint3(13.0, 4.0, 0.0), 1.0, strength)
     visible_damage.advance(0.0, {ship: 2})
     d = plating_dials.current()
     for c in calls:
@@ -478,7 +478,7 @@ def test_the_big_tier_blows_through(monkeypatch):
     calls = _record_adds(monkeypatch)
     ship = _Ship(loc=TGPoint3(10.0, 0.0, 0.0))
     for strength in (1080.0, 1560.0):                 # m 1.8, 2.6
-        visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 1.0, strength)
+        visible_damage.queue_world_hole(ship, TGPoint3(13.0, 4.0, 0.0), 1.0, strength)
     visible_damage.advance(0.0, {ship: 2})
     assert [c[4] for c in calls] == pytest.approx([internal_blast.STRENGTH] * 2)
 
@@ -489,7 +489,7 @@ def test_room_wear_follows_the_live_dials(monkeypatch):
     monkeypatch.setattr(plating_dials, "_dials", dict(
         plating_dials.DEFAULTS, breach_wear=3.0, deck_break_wear=8.0))
     ship = _Ship(loc=TGPoint3(10.0, 0.0, 0.0))
-    visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 1.0, 600.0)
+    visible_damage.queue_world_hole(ship, TGPoint3(13.0, 4.0, 0.0), 1.0, 600.0)
     visible_damage.advance(0.0, {ship: 2})
     assert calls[0][4] == pytest.approx(3.0 + 0.7 * 5.0)
 
@@ -499,25 +499,25 @@ def test_the_hole_cap_scales_with_strength(monkeypatch):
     calls = _record_adds(monkeypatch)
     ship = _Ship(loc=TGPoint3(10.0, 0.0, 0.0))
     for strength in (150.0, 420.0, 1200.0, 6000.0):
-        visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 5.0, strength)
+        visible_damage.queue_world_hole(ship, TGPoint3(13.0, 4.0, 0.0), 5.0, strength)
     visible_damage.advance(0.0, {ship: 2})
     cap = internal_blast.ADD_DAMAGE_MAX_HOLE_GU
     assert [c[3] for c in calls] == pytest.approx(
         [cap * 0.5, cap * 0.7, cap * 2.0, cap * 3.0]), "clamp(s / 600, 0.5, 3)"
 
 
-def test_carve_scale_sizes_only_the_visible_entry():
-    """visible_damage.carve_scale(m) (the death cascade's blast size) scales
+def test_hole_scale_sizes_only_the_visible_entry():
+    """visible_damage.hole_scale(m) (the death cascade's blast size) scales
     the queued visible radius and strength while it is active, never after."""
     ship = _Ship()
-    with visible_damage.carve_scale(2.0):
-        assert visible_damage.current_carve_scale() == 2.0
-        visible_damage.queue_world_carve(ship, TGPoint3(1.0, 0.0, 0.0), 0.5, 600.0)
-    visible_damage.queue_world_carve(ship, TGPoint3(1.0, 0.0, 0.0), 0.5, 600.0)
+    with visible_damage.hole_scale(2.0):
+        assert visible_damage.current_hole_scale() == 2.0
+        visible_damage.queue_world_hole(ship, TGPoint3(1.0, 0.0, 0.0), 0.5, 600.0)
+    visible_damage.queue_world_hole(ship, TGPoint3(1.0, 0.0, 0.0), 0.5, 600.0)
     scaled, plain = visible_damage._pending
     assert (scaled["influ"], scaled["strength"]) == pytest.approx((1.0, 1200.0))
     assert (plain["influ"], plain["strength"]) == pytest.approx((0.5, 600.0))
-    assert visible_damage.current_carve_scale() == 1.0
+    assert visible_damage.current_hole_scale() == 1.0
 
 
 def test_add_damage_asks_for_severed_parts(monkeypatch):
@@ -532,6 +532,6 @@ def test_add_damage_asks_for_severed_parts(monkeypatch):
                         lambda ship, iid, *a, **k: order.append(("wear", ship, iid)))
     monkeypatch.setattr(host_io, "ray_trace_mesh", lambda *a, **k: None)
     ship = _Ship(loc=TGPoint3(10.0, 0.0, 0.0))
-    visible_damage.queue_world_carve(ship, TGPoint3(13.0, 4.0, 0.0), 0.6, 600.0)
+    visible_damage.queue_world_hole(ship, TGPoint3(13.0, 4.0, 0.0), 0.6, 600.0)
     visible_damage.advance(0.0, {ship: 2})
     assert order == [("add", 2), ("wear", ship, 2)], "after the add, once"
