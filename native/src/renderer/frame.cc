@@ -230,7 +230,8 @@ namespace dauntless_plating {
         6.0f,   // 24 deck break wear (interior: a plate or far wall breaks past it)
         1.0f,   // 25 interior (> 0.5 draws decks and rooms behind cuts)
         0.0f,   // 26 force program (perf probe: undamaged hulls take the plating program)
-        0.0f, 0.0f, 0.0f, 0.0f, 0.0f,   // 27-31 reserved
+        1.0f,   // 27 LOD footprint (short path where the pixel footprint > this x member width; <= 0 off)
+        0.0f, 0.0f, 0.0f, 0.0f,   // 28-31 reserved
     };
 
     // The shipped defaults, copied before anything can write g_params:

@@ -361,8 +361,8 @@ void draw_model(const assets::Model& model,
                 // frame.cc's lean draw_plating_mark instead.
                 const plating::DamageList* plating = nullptr,
                 // Far hull (InteriorPolicy, hull_interior_policy.h): no rooms
-                // behind its holes, so the program paints a hole as wreckage
-                // instead of cutting it, unless it is blown clear through
+                // behind its holes, so the program paints every hole (even
+                // one blown clear through) as wreckage instead of cutting it
                 // (u_plating_far). Plating draws only.
                 bool plating_far = false,
                 // Plating draws only: the parts and per-mesh record subsets
