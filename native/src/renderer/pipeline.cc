@@ -81,6 +81,8 @@
 #include "embedded_shadow_parts_fs.h"
 #include "embedded_shockwave_vs.h"
 #include "embedded_shockwave_fs.h"
+#include "embedded_warp_in_flash_vs.h"
+#include "embedded_warp_in_flash_fs.h"
 #include "embedded_skybox_vs.h"
 #include "embedded_skybox_fs.h"
 #include "embedded_cloak_refraction_vs.h"
@@ -195,6 +197,8 @@ Pipeline::Pipeline() {
         shader_src::shadow_parts_vs, shader_src::shadow_parts_fs);
     shockwave_ = std::make_unique<Shader>(shader_src::shockwave_vs,
                                           shader_src::shockwave_fs);
+    warp_in_flash_ = std::make_unique<Shader>(shader_src::warp_in_flash_vs,
+                                              shader_src::warp_in_flash_fs);
     skybox_ = std::make_unique<Shader>(shader_src::skybox_vs, shader_src::skybox_fs);
     cloak_refraction_ = std::make_unique<Shader>(
         shader_src::cloak_refraction_vs, shader_src::cloak_refraction_fs);

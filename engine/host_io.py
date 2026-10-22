@@ -43,6 +43,7 @@ _REQUIRED_BINDINGS = frozenset({
     "key_state", "key_pressed", "mouse_button_pressed", "mouse_button_released",
     "consume_mouse_delta", "set_cursor_locked", "framebuffer_size", "window_size",
     "set_torpedoes", "set_shockwaves", "set_hit_vfx", "set_particle_emitters",
+    "set_warp_in_flashes", "set_warp_in_flash_params",
     "set_dynamic_lights",
     "set_phaser_beams", "set_tractor_beams",
     "cursor_pos",
@@ -299,6 +300,22 @@ def set_shockwaves(shockwaves: list) -> None:
     if _h is None:
         return
     _h.set_shockwaves(shockwaves)
+
+
+def set_warp_in_flashes(items: list) -> None:
+    """Warp-in flashes (warp-in spec 6.3), full replace. Not the screen-space
+    set_warp_flash_intensity."""
+    if _h is None:
+        return
+    _h.set_warp_in_flashes(items)
+
+
+def set_warp_in_flash_params(params: dict) -> None:
+    """The "warp in" dial look: core_radii, streak_radii, ring_radii,
+    intensity, streak_end, ring_rise, tint (r, g, b)."""
+    if _h is None:
+        return
+    _h.set_warp_in_flash_params(params)
 
 
 def set_dynamic_lights(lights: list) -> None:

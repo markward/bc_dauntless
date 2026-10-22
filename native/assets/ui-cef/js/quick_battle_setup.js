@@ -23,6 +23,7 @@ var QBS = {
     ships: {},           // lower-cased ship id -> catalog ship
     eras: {},            // era id -> {id, name, tag, start, end}
     renaming: null,      // group id whose name is being edited (page-owned)
+    delayEditing: false, // the Warp-in value is a typed field (page-owned)
     qty: {},             // lower-cased ship id -> the sheet's add quantity
                          // (page-owned; unset reads 1; cleared on close)
     presetAsk: null,     // {kind: 'save'|'load', name} awaiting its toast
@@ -155,6 +156,13 @@ function renderGroups() {
         inp.focus();
         inp.select();
     }
+    var dl = document.querySelector('#quick-battle-setup .qbs-delay');
+    if (dl) {
+        dl.addEventListener('change', qbsDelayChange);
+        dl.addEventListener('blur', qbsDelayBlur);
+        dl.focus();
+        dl.select();
+    }
 }
 
 function renderGroup(g) {
@@ -193,15 +201,55 @@ function renderDetails(g, draft) {
     var h = '<div class="qbs-group__controls">';
     if (!g.player) {
         h += '<div class="qbs-ctl-label">Allegiance</div>' + qbsSeg('allegiance', c.allegiances, draft.allegiance);
-        h += '<div class="qbs-ctl-label">Direction</div>' + qbsSeg('direction', c.directions, draft.direction);
+        h += '<div class="qbs-ctl-label">Direction</div>';
+        // A delayed group arrives from a random bearing; its stored direction
+        // is kept, so turning the delay off restores it.
+        if (draft.warp_in > 0) {
+            h += '<div class="cp-segmented"><button class="cp-toggle cp-toggle--on" disabled>Random</button></div>';
+        } else {
+            h += qbsSeg('direction', c.directions, draft.direction);
+        }
         h += '<div class="qbs-ctl-label">Distance</div>' + qbsSeg('distance', c.distances, draft.distance,
             function (d) { return d.label + ' ' + d.km + ' km'; });
+        h += '<div class="qbs-ctl-label">Warp-in</div>' + qbsDelayStepper(draft.warp_in || 0);
     }
     h += '<div class="qbs-ctl-label">Difficulty</div>' + qbsSeg('difficulty', c.difficulties, draft.difficulty);
     h += '<div class="qbs-form-actions">' +
          '<button class="cp-done-button" data-action="draft-cancel">Cancel</button>' +
          '<button class="cp-done-button qbs-add" data-action="draft-update">Update</button></div>';
     return h + '</div>';
+}
+
+// - value + stepper in the quantity stepper's look. The value is a button;
+// clicking it swaps in a number field (page-owned, committed on `change`).
+function qbsDelayStepper(n) {
+    var h = '<span class="qbs-qty qbs-delay-stepper">' +
+        '<button class="qbs-qty__btn" data-action="draft" data-arg="warp_in:' + Math.max(0, n - 1) + '"' +
+        (n <= 0 ? ' disabled' : '') + '>−</button>';
+    if (QBS.delayEditing) {
+        h += '<input class="qbs-delay" inputmode="numeric" value="' + n + '">';
+    } else {
+        h += '<button class="qbs-qty__n qbs-delay-value" data-action="delay-edit">' +
+             (n > 0 ? n + ' min' : 'Start') + '</button>';
+    }
+    return h + '<button class="qbs-qty__btn" data-action="draft" data-arg="warp_in:' + (n + 1) + '">+</button></span>';
+}
+
+// Whole minutes only; anything else restores the previous value. The field
+// then leaves, and its blur re-renders from Python's draft.
+function qbsDelayChange(ev) {
+    var inp = ev.target, v = inp.value.trim();
+    if (/^\d+$/.test(v)) {
+        dauntlessEvent('quick-battle-setup/draft:warp_in:' + parseInt(v, 10));
+    }
+    inp.blur();
+}
+
+// Every exit (commit, Esc, click away, forced release) ends the edit.
+function qbsDelayBlur() {
+    if (!QBS.delayEditing) return;
+    QBS.delayEditing = false;
+    setTimeout(function () { if (QBS.setup && !QBS.delayEditing) renderGroups(); }, 0);
 }
 
 function qbsSeg(field, rows, current, label) {
@@ -600,7 +648,7 @@ function qbsClick(ev) {
     var action = el ? el.getAttribute('data-action') : null;
     var arg = el ? (el.getAttribute('data-arg') || '') : '';
     if (!menu.contains(ev.target) && !(action && /-menu$/.test(action))) qbsCloseMenu();
-    if (ev.target.closest('.qbs-rename')) return;
+    if (ev.target.closest('.qbs-rename') || ev.target.closest('.qbs-delay')) return;
     if (!el || el.disabled) return;
     var gid = el.getAttribute('data-group'), done = true;
     switch (action) {
@@ -616,6 +664,11 @@ function qbsClick(ev) {
     // groups
     case 'group-new': dauntlessEvent('quick-battle-setup/group-new'); break;
     case 'details': dauntlessEvent('quick-battle-setup/details:' + arg); break;
+    case 'delay-edit':
+        // Page-owned: no verb until a value is committed.
+        QBS.delayEditing = true;
+        renderGroups();
+        break;
     case 'draft': dauntlessEvent('quick-battle-setup/draft:' + arg); break;
     case 'draft-update': dauntlessEvent('quick-battle-setup/draft-update'); break;
     case 'draft-cancel': dauntlessEvent('quick-battle-setup/draft-cancel'); break;
@@ -706,6 +759,7 @@ function setQuickBattleSetup(payload) {
         qbsCloseMenu();
         QBS.setup = null;
         QBS.renaming = null;
+        QBS.delayEditing = false;
         QBS.presetAsk = null;
         QBS.qty = {};
         root.style.display = 'none';
@@ -717,6 +771,7 @@ function setQuickBattleSetup(payload) {
     var menu = qbsEl('qbs-menu');
     if (!(menu && menu.contains(document.activeElement))) qbsCloseMenu();
     if (QBS.renaming != null && !qbsGroup(QBS.renaming)) QBS.renaming = null;
+    if (!payload.draft) QBS.delayEditing = false;
     qbsRender();
     qbsPresetToast(prev, payload);
     // A confirmation that went away without the preset change it guarded
@@ -728,8 +783,9 @@ function setQuickBattleSetup(payload) {
 function qbsRender() {
     // A rename in progress keeps its field: re-rendering the column would
     // destroy it (and abandon the edit) under the player's cursor.
-    var editing = QBS.renaming != null && document.activeElement &&
-                  document.activeElement.classList.contains('qbs-rename');
+    var ae = document.activeElement;
+    var editing = !!ae && ((QBS.renaming != null && ae.classList.contains('qbs-rename')) ||
+                           (QBS.delayEditing && ae.classList.contains('qbs-delay')));
     if (!editing) renderGroups();
     renderEras();
     renderSpecies();

@@ -76,6 +76,24 @@ def test_non_ship_with_a_real_warping_subsystem_is_never_warping():
     assert warp_state.is_ship_warping(_NotAShip()) is False
 
 
+def test_is_arriving_is_false_for_non_ships_and_idle_ships():
+    # Same stub trap as is_ship_warping: a Planet's GetWarpEngineSubsystem is
+    # a truthy _Stub, and a duck-typed non-ship must not read as arriving even
+    # if it hands back a real, driving subsystem (only the outer
+    # isinstance(ShipClass) guard can catch that one).
+    assert warp_state.is_arriving(Planet_Create(170.0, "")) is False
+    assert warp_state.is_arriving(_ship_with_warp()) is False
+    sub = WarpEngineSubsystem("Warp Engines")
+    sub._dewarp_drive = object()              # "driving"
+    assert sub.is_dewarp_driving() is True
+
+    class _NotAShip:
+        def GetWarpEngineSubsystem(self):
+            return sub
+
+    assert warp_state.is_arriving(_NotAShip()) is False
+
+
 def test_tick_warp_states_completes_a_dewarp_across_the_sets():
     from engine.appc.sets import SetClass_Create
     pSet = SetClass_Create()

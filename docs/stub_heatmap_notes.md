@@ -100,3 +100,10 @@ shared controller (guard both projected lengths) rather than worked around.
    dispatched). Live-verify against `QuickBattleAI` or `NoSensorsEvasive`, which
    reach `ManeuverLoop` directly.
 3. Not yet live-verified in-game as of 2026-08-06.
+
+## Warp-in names implemented (2026-10-22)
+
+The six warp-in names (`WarpFlash_Create`, `WarpFlash_CreateWithoutShip`, the
+dewarp exit location/rotation and placement surface on `WarpEngineSubsystem`)
+are real now; proven end to end by `tests/integration/test_campaign_warp_in.py`.
+Their heatmap rows clear on the next telemetry regeneration.

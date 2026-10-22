@@ -145,6 +145,8 @@ embed_shader(SHADER_BLOOM_DOWN_FS shaders/bloom_down.frag bloom_down_fs)
 embed_shader(SHADER_BLOOM_UP_FS shaders/bloom_up.frag bloom_up_fs)
 embed_shader(SHADER_SHOCKWAVE_VS shaders/shockwave.vert shockwave_vs)
 embed_shader(SHADER_SHOCKWAVE_FS shaders/shockwave.frag shockwave_fs)
+embed_shader(SHADER_WARP_IN_FLASH_VS shaders/warp_in_flash.vert warp_in_flash_vs)
+embed_shader(SHADER_WARP_IN_FLASH_FS shaders/warp_in_flash.frag warp_in_flash_fs)
 embed_shader(SHADER_SKYBOX_VS shaders/skybox.vert skybox_vs)
 embed_shader(SHADER_SKYBOX_FS shaders/skybox.frag skybox_fs)
 embed_shader(SHADER_CLOAK_REFRACTION_VS shaders/cloak_refraction.vert cloak_refraction_vs)
@@ -205,6 +207,8 @@ add_library(renderer STATIC
     system_nebula_cache.cc
     nebula_godray_pass.cc
     shockwave_pass.cc
+    warp_in_flash_shape.cc
+    warp_in_flash_pass.cc
     aabb.cc
     model_parts.cc
     glow_region.cc

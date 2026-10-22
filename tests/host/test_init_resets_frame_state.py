@@ -76,6 +76,13 @@ def _dirty_every_reachable_global(h):
     h.far_set_rocks([{"instance": iid, "index": -1, "radius_mu": 1.0}])
     h.far_set_enabled(False)
     h.far_set_dials({"p_min": 0.5})
+    h.set_warp_in_flashes([{"world_center": (0.0, 0.0, 0.0),
+                            "forward": (0.0, 1.0, 0.0), "radius": 2.0,
+                            "age": 0.1, "lifetime": 1.0}])
+    h.set_warp_in_flash_params({"core_radii": 2.0, "streak_radii": 9.0,
+                                "ring_radii": 4.0, "intensity": 9.0,
+                                "streak_end": 0.5, "ring_rise": 0.2,
+                                "tint": (1.0, 0.0, 0.0)})
 
 
 def _far_source():
@@ -104,6 +111,9 @@ CLEAN = {
     "torpedoes": 0,
     "hit_vfx": 0,
     "shockwaves": 0,
+    # Warp-in flashes and their look (one param standing for all of them).
+    "warp_in_flashes": 0,
+    "warp_in_flash_intensity": 4.0,
     "particle_emitters": 0,
     "dynamic_lights": 0,
     "lens_flares": 0,

@@ -174,7 +174,10 @@ class SetClass(TGEventHandlerObject):
         return self._effect_root
 
     def SetRegionModule(self, module_name: str) -> None:
-        pass
+        self._region_module = module_name
+
+    def GetRegionModule(self):
+        return getattr(self, "_region_module", None)
 
     def SetProximityManagerActive(self, active: int) -> None:
         pass
