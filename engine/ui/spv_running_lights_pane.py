@@ -44,6 +44,9 @@ class RunningLightsPaneMixin:
         """Session state: reset every open/close. The saved overlay is not
         session state (see `_rl_clear_saved`)."""
         self._rl_baked: dict = {}
+        # Every non-light template name in the ship's property set (ship
+        # property, object emitters, positions, ...), snapshotted at open.
+        self._rl_template_names: set = set()
         self._pending_running_light: dict = {}
         self._rl_selected: Optional[str] = None
         self._rl_group_expanded: bool = False
@@ -56,8 +59,10 @@ class RunningLightsPaneMixin:
         self._saved_running_light: dict = {}
 
     def _rl_load(self, ship) -> None:
-        """Snapshot `ship`'s placed lights as the baked layer."""
+        """Snapshot `ship`'s placed lights as the baked layer, and the names
+        of every other template in its property set."""
         self._rl_baked = {}
+        self._rl_template_names = set()
         if ship is None:
             return
         from engine.appc import running_lights
@@ -69,6 +74,16 @@ class RunningLightsPaneMixin:
             from engine import dev_mode
             dev_mode.log_swallowed("spv running lights load", e)
             self._rl_baked = {}
+        try:
+            names = {prop.GetName()
+                     for prop in ship.GetPropertySet().GetPropertyList()}
+        except Exception as e:
+            from engine import dev_mode
+            dev_mode.log_swallowed("spv running lights template names", e)
+            names = set()
+        # A baked light's name is the effective layer's to answer: a light
+        # staged for removal frees its name.
+        self._rl_template_names = names - set(self._rl_baked)
 
     # ------------------------------------------------------------------
     # Staging
@@ -88,12 +103,15 @@ class RunningLightsPaneMixin:
 
     def _rl_taken_names(self) -> set:
         """Every name a new light may not take: the effective lights, every
-        descriptor and every model part. All templates share one
-        `FindByName` namespace, so a light named "Hull" would shadow the
-        hull."""
+        descriptor, every model part and every other template in the ship's
+        property set (the ship property, object emitters, positions). All
+        templates share one `FindByName` namespace, so a light named "Hull"
+        would shadow the hull, and one named "Shuttle Bay" would replace the
+        Galaxy's shuttle launcher on Save."""
         names = self._rl_names()
         names |= {d.get("name") for d in self._descriptors}
         names |= self._model_part_names()
+        names |= self._rl_template_names
         names.discard(None)
         return names
 

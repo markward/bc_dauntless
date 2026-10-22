@@ -1342,7 +1342,8 @@ class RunningLightTarget(EditTarget):
         spec = self._spec()
         if spec is None:
             return
-        name = running_light_editor.mirror_name(spec["name"], pane._rl_names())
+        name = running_light_editor.mirror_name(spec["name"],
+                                                pane._rl_taken_names())
         x, y, z = spec["position"]
         twin = dict(spec, name=name, position=(-float(x), float(y), float(z)))
         src_entry = pane._physical_entry("light:" + spec["name"])

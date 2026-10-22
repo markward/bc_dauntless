@@ -51,7 +51,7 @@ def validate_spec(spec, taken):
     if not name:
         raise ValueError("Name must not be empty")
     if name in taken:
-        raise ValueError("A light or subsystem named '%s' already exists" % name)
+        raise ValueError("A light or other ship property named '%s' already exists" % name)
     position = tuple(_num(v, "Position") for v in spec["position"])
     color = tuple(_num(v, "Colour") for v in spec["color"])
     if len(position) != 3 or len(color) != 3:

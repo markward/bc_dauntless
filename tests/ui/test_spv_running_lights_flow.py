@@ -350,3 +350,38 @@ def test_payload_repushes_on_placing_change(make_panel):
     assert p.render_payload() is None
     assert _begin(p) is True
     assert p.render_payload() is not None
+
+
+def _with_templates(p, *props):
+    """Attach non-subsystem templates to the viewed ship's property set and
+    reopen, as a real ship carries them from `LoadPropertySet`."""
+    pset = p._ship_getter().GetPropertySet()
+    for prop in props:
+        pset.AddToSet("Scene Root", prop)
+    p.open()
+    return p
+
+
+def test_place_begin_refuses_non_subsystem_template_names(make_panel):
+    """Every template shares one `FindByName` namespace: a light named
+    after the Galaxy's "Shuttle Bay" object emitter (or its ship property,
+    or a position/orientation) would replace that template on Save."""
+    import App
+    p = _with_templates(make_panel(),
+                        App.ObjectEmitterProperty_Create("Shuttle Bay"),
+                        App.ShipProperty_Create("Galaxy"),
+                        App.PositionOrientationProperty_Create(
+                            "ViewscreenForward"))
+    for taken in ("Shuttle Bay", "Galaxy", "ViewscreenForward"):
+        assert _begin(p, dict(_NEW, name=taken)) is False, taken
+        assert p._rl_placing is None
+        assert taken in p._rl_error
+    assert _begin(p) is True
+
+
+def test_removed_light_name_is_free_again(make_panel):
+    """A baked light staged for removal is still in the property set, but
+    its name is free: the property-set names never shadow the lights."""
+    p = make_panel()
+    assert p.dispatch_event('rl/remove:{"name": "Port Nav"}') is True
+    assert _begin(p, dict(_NEW, name="Port Nav")) is True

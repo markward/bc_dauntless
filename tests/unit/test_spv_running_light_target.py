@@ -262,3 +262,22 @@ def test_selected_light_shows_selection_sphere(make_panel):
     # A subsystem keeps its own sphere.
     assert p.dispatch_event("select_pin:0") is True
     assert p.selected_subsystem_sphere()["radius"] == 0.3
+
+
+def test_mirror_never_takes_a_non_light_template_name(make_panel):
+    """"Port Bay" mirrors to "Star Bay" -- unless a non-light template (an
+    object emitter here) already holds that name."""
+    import App
+    p = make_panel(lights=(dict(_PORT, name="Port Bay"),))
+    p._ship_getter().GetPropertySet().AddToSet(
+        "Scene Root", App.ObjectEmitterProperty_Create("Star Bay"))
+    p.open()
+    _select(p, "Port Bay")
+    assert p.dispatch_event("mirror_element") is True
+    assert p._rl_selected == "Star Bay 2"
+    assert p._rl_spec("Star Bay") is None
+    # ...nor a subsystem's.
+    p = make_panel(lights=(dict(_PORT, name="Sub Light"),))
+    _select(p, "Sub Light")
+    assert p.dispatch_event("mirror_element") is True
+    assert p._rl_selected not in ("Sub Light", "Sub")
