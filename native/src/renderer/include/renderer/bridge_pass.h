@@ -18,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -601,6 +602,10 @@ private:
     glm::vec3 box_min_{-1.0f};
     glm::vec3 box_max_{1.0f};
     const Aabb& model_box(unsigned long long handle, const assets::Model& m);
+    // One mesh's box in its own space (its vertices), for per-draw light
+    // culling (renderer::bridge_cull); keyed by model handle + mesh index.
+    std::map<std::pair<unsigned long long, int>, Aabb> mesh_boxes_;
+    const Aabb& mesh_box(unsigned long long handle, const assets::Model& m, int mesh_idx);
     /// False when no static main-bridge instance is drawn (box unchanged).
     bool update_box(const scenegraph::World& world, const ModelLookup& lookup);
 };

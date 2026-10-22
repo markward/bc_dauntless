@@ -73,6 +73,7 @@ add_executable(renderer_tests
     bridge_probe_schedule_test.cc
     bridge_lighting_test.cc
     bridge_pbr_test.cc
+    bridge_light_cull_test.cc
     bridge_ao_test.cc
     bridge_highlight_test.cc
     bridge_pbr_frame_test.cc

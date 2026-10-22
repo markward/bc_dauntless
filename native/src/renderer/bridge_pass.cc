@@ -1,5 +1,6 @@
 // native/src/renderer/bridge_pass.cc
 #include "renderer/bridge_pass.h"
+#include "renderer/bridge_light_cull.h"
 #include "renderer/bridge_lighting_tuning.h"
 #include "renderer/bridge_probe_schedule.h"
 #include "renderer/frame_timer.h"
@@ -271,7 +272,8 @@ namespace {
 // main bridge view only. 1 AO filter off, 2 PBR off, 4 probes off,
 // 8 spots + area lights off, 16 depth pre-fill then LEQUAL / no depth write,
 // 32 spots off, 64 area lights off; in bridge.frag (u_bridge_exp) 128 area
-// diffuse off, 256 area specular off, 512 the old exact acos edge integral.
+// diffuse off, 256 area specular off, 512 the old exact acos edge integral;
+// 1024 per-draw light culling off, 4096 print the culling count once.
 int bridge_exp() {
     static const int v = [] {
         const char* e = std::getenv("DAUNTLESS_BRIDGE_EXP");
@@ -456,6 +458,10 @@ void BridgePass::render(const scenegraph::World& world,
                                             static_cast<float>(view_vp[3])));
         s.set_int("u_ao_on", (ao_on && !(exp_main & 1)) ? 1 : 0);
         s.set_int("u_bridge_exp", exp_main);
+        // Per-draw culling masks: set per mesh by sub-pass A; the officers
+        // (sub-pass B) skip nothing.
+        s.set_int("u_spot_skip", 0);
+        s.set_int("u_area_skip", 0);
         s.set_int("u_output_normal", normal_pass_ ? 1 : 0);
         s.set_int("u_debug_view", static_cast<int>(debug_view_));
         // Selection pulse phase: a real clock, once per sub-pass.
@@ -552,10 +558,36 @@ void BridgePass::render(const scenegraph::World& world,
     std::unordered_map<int, const BridgeGlowCapture*> capture_glow;
     if (capture_pass_ && glow_capture_model_ != 0)
         for (const auto& g : glow_captures_) capture_glow[g.mesh] = &g;
+    // Per-draw light culling (renderer::bridge_cull): each mesh's world box
+    // against every light, so the shader skips lights that light none of it.
+    const bool cull_lights = !normal_pass_ && (spot_count > 0 || area_count > 0)
+                             && !(bridge_exp() & 1024);
+    long cull_pairs = 0, cull_skipped = 0;
     auto draw_shell = [&](const assets::Model& m, const assets::Mesh& mesh,
             const assets::Material& mat, const glm::mat4& w,
             unsigned long long mh) {
             const auto [ov, flip] = viewscreen_override(mh);
+            if (cull_lights) {
+                int spot_skip = 0, area_skip = 0;
+                const Aabb& box = mesh_box(mh, m, static_cast<int>(&mesh - m.meshes.data()));
+                if (box.valid) {
+                    glm::vec3 lo, hi;
+                    bridge_cull::transform_box(w, box.min, box.max, lo, hi);
+                    for (int i = 0; i < spot_count; ++i)
+                        if (!bridge_cull::spot_can_reach(lo, hi, spot_pos[i], spot_params[i].z))
+                            spot_skip |= static_cast<int>(1u << i);
+                    for (int i = 0; i < area_count; ++i)
+                        if (!bridge_cull::area_can_reach(lo, hi, glm::vec3(area_cr[i]), area_u[i],
+                                                         area_v[i], area_cr[i].w))
+                            area_skip |= static_cast<int>(1u << i);
+                }
+                base_shader.set_int("u_spot_skip", spot_skip);
+                base_shader.set_int("u_area_skip", area_skip);
+                cull_pairs += spot_count + area_count;
+                for (int i = 0; i < 32; ++i)
+                    cull_skipped += ((static_cast<unsigned>(spot_skip) >> i) & 1u)
+                                  + ((static_cast<unsigned>(area_skip) >> i) & 1u);
+            }
             int hl = 0;
             if (highlight_model_ != 0 && mh == highlight_model_) {
                 const int mi = static_cast<int>(&mesh - m.meshes.data());
@@ -622,6 +654,16 @@ void BridgePass::render(const scenegraph::World& world,
     if (exp_main & 16) {
         glDepthFunc(GL_LESS);
         glDepthMask(GL_TRUE);
+    }
+    base_shader.set_int("u_spot_skip", 0);
+    base_shader.set_int("u_area_skip", 0);
+    if ((exp_main & 4096) && cull_pairs > 0) {
+        static bool cull_printed = false;
+        if (!cull_printed) {
+            cull_printed = true;
+            std::fprintf(stderr, "[bridge-exp] cull: %ld of %ld light-mesh pairs skipped\n",
+                         cull_skipped, cull_pairs);
+        }
     }
 
     // ── Sub-pass B: skinned bridge characters ──────────────────────────────
@@ -1147,6 +1189,25 @@ const BridgePass::Aabb& BridgePass::model_box(unsigned long long handle,
         }
     }
     return model_boxes_.emplace(handle, box).first->second;
+}
+
+const BridgePass::Aabb& BridgePass::mesh_box(unsigned long long handle,
+                                             const assets::Model& m, int mesh_idx) {
+    const auto key = std::make_pair(handle, mesh_idx);
+    if (auto it = mesh_boxes_.find(key); it != mesh_boxes_.end()) return it->second;
+    Aabb box;
+    box.min = glm::vec3(std::numeric_limits<float>::max());
+    box.max = glm::vec3(std::numeric_limits<float>::lowest());
+    if (mesh_idx >= 0 && mesh_idx < static_cast<int>(m.meshes.size())) {
+        if (const auto& cpu = m.meshes[static_cast<std::size_t>(mesh_idx)].cpu_data()) {
+            for (const auto& v : cpu->vertices) {
+                box.min = glm::min(box.min, v.position);
+                box.max = glm::max(box.max, v.position);
+                box.valid = true;
+            }
+        }
+    }
+    return mesh_boxes_.emplace(key, box).first->second;
 }
 
 bool BridgePass::update_box(const scenegraph::World& world,
