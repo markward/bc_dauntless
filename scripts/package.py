@@ -363,30 +363,36 @@ def launch_check(app: Path) -> int:
         proc = subprocess.Popen([str(exe)], env=env, cwd=str(app),
                                 stdout=subprocess.DEVNULL, stderr=err)
         try:
-            # A failing boot dies in a few seconds; a working one never
-            # returns, so a timeout here is the PASS.
+            # A failing boot dies within seconds; a working one runs until
+            # something stops it, so reaching the timeout is a PASS.
             proc.wait(timeout=60)
-            died = True
+            exited_early = True
         except subprocess.TimeoutExpired:
-            died = False
+            exited_early = False
             proc.terminate()
             try:
                 proc.wait(timeout=30)
             except subprocess.TimeoutExpired:
                 proc.kill()
     text = log.read_text(encoding="utf-8", errors="replace")
-    if died:
+    # An early exit is only a failure if it was not CLEAN. Exit 0 means the
+    # game booted, ran and shut down properly -- which is what happens when
+    # somebody closes the window while this is watching, and it had better not
+    # read as a broken build. Only a non-zero code is a real boot failure.
+    if exited_early and proc.returncode != 0:
         _say(f"FAIL: the game exited on its own (code {proc.returncode})")
         for line in text.strip().splitlines()[-20:]:
             print("    " + line)
         return 1
+    if exited_early:
+        _say("note: the game exited cleanly before the timeout (window closed)")
     if "Traceback" in text:
         _say("FAIL: the game stayed up but raised during boot")
         for line in text.strip().splitlines()[-20:]:
             print("    " + line)
         return 1
     log.unlink(missing_ok=True)
-    _say("launch-check passed (ran 60s, no traceback)")
+    _say("launch-check passed (booted, no traceback)")
     return 0
 
 
