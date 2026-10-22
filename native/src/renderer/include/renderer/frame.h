@@ -181,6 +181,17 @@ struct ShockwaveDescriptor {
     glm::vec3 tint{1.0f};   // ring colour multiplier; white = default look (spec 2026-10-16 §7.5)
 };
 
+// One warp-in flash (warp-in spec 6.3): procedural core + ring billboard at
+// world_center and a streak along `forward` (unit), sized in multiples of
+// `radius` (GU). age/lifetime drive the shape (renderer/warp_in_flash_shape.h).
+struct WarpInFlashDescriptor {
+    glm::vec3 world_center;
+    glm::vec3 forward;
+    float radius;
+    float age;
+    float lifetime;
+};
+
 /// Hit-VFX render descriptor.  Engine ages each entry; renderer dispatches
 /// per-tier constants (HULL / CRITICAL) based on `severity`.  `surface_normal`
 /// is (0,0,0) when no mesh trace was available (sentinel = no normal).

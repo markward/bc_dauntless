@@ -1293,6 +1293,8 @@ def _push_combat_render_data(ships_list, *, ship_instances=None,
             _build_emitter_light_render_data(ship_instances, ship_emitters,
                                              player=player)))
         host_io.set_shockwaves(_build_shockwave_render_data())
+        host_io.set_warp_in_flashes(_build_warp_in_flash_render_data())
+        host_io.set_warp_in_flash_params(_warp_in_flash_params())
         host_io.set_hit_vfx(_build_hit_vfx_render_data())
         host_io.set_particle_emitters(_build_particle_render_data(ship_instances))
         host_io.set_phaser_beams(_build_phaser_beam_render_data(
@@ -1897,6 +1899,46 @@ def _build_shockwave_render_data():
         d["world_center"] = pos
         out.append(d)
     return out
+
+
+def _build_warp_in_flash_render_data():
+    """Warp-in flashes (warp-in spec 6.3) in the viewed frame: the centre in
+    RENDER space, the forward axis unshifted (a direction). A flash whose set
+    is outside the viewed frame (or gone) stays out of the scene."""
+    import App  # deferred, as elsewhere in this module
+    from engine.appc import warp_in_flash as _warp_in_flash
+    out = []
+    view = _frames.viewing_set()
+    if view is None:
+        return out
+    for f in _warp_in_flash.active():
+        pSet = App.g_kSetManager.GetSet(f.set_name)
+        if pSet is None:
+            continue
+        pos = _frames.to_render(view, pSet, *f.center)
+        if pos is None:
+            continue
+        out.append({
+            "world_center": pos,
+            "forward": f.forward,
+            "radius": f.radius,
+            "age": f.age,
+            "lifetime": f.lifetime,
+        })
+    return out
+
+
+def _warp_in_flash_params() -> dict:
+    """The "warp in" dials as the native set_warp_in_flash_params dict."""
+    from engine.appc import warp_in_dials
+    d = warp_in_dials.current()
+    return {
+        "core_radii": d["core_radii"],
+        "streak_radii": d["streak_radii"],
+        "ring_radii": d["ring_radii"],
+        "intensity": d["intensity"],
+        "tint": (d["tint_r"], d["tint_g"], d["tint_b"]),
+    }
 
 
 def _build_hit_vfx_render_data():
@@ -10521,6 +10563,12 @@ def run(mission_name: Optional[str] = None,
         controller = HostController()
         controller.renderer = r
         controller.loader = _MissionLoader(controller, verbose=verbose)
+        # Warp-in Ruling 2: the loader's radius seed (the one Quick Battle
+        # placement uses) also sizes warp-in slides and flashes, for every
+        # mission -- ships report GetRadius() == 0 until realised. Cleared on
+        # teardown beside spawn.set_radius_fn(None).
+        from engine.appc import warp_state as _warp_state
+        _warp_state.set_radius_seeder(controller.loader._seed_quickbattle_ship_radius)
 
         # Warp spine render hooks (Stage 1 hard cut): the warp sequence loads
         # the destination set then calls realize; on arrival it tears down the
@@ -10916,6 +10964,8 @@ def run(mission_name: Optional[str] = None,
                 _sensor_dials.register()
                 from engine.appc import running_light_dials as _rl_dials
                 _rl_dials.register()
+                from engine.appc import warp_in_dials as _warp_in_dials
+                _warp_in_dials.register()
                 from engine.appc import plating_dials as _plating_dials
                 _plating_dials.register()
                 from engine.planets import atmosphere_dials as _atmo_dials
@@ -13356,6 +13406,8 @@ def run(mission_name: Optional[str] = None,
         from engine.quickbattle import spawn as _qb_spawn
         _qb_spawn.set_provider(None)
         _qb_spawn.set_radius_fn(None)
+        from engine.appc import warp_state as _warp_state
+        _warp_state.set_radius_seeder(None)
         from engine import bridge_selection as _bs
         _bs.set_player_type_resolver(None)
         shutdown_audio()
