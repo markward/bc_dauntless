@@ -65,11 +65,12 @@ protected:
 
     // Summed RGB over the frame after drawing `flashes` over a black clear
     // whose depth is `clear_depth`.
-    double render_sum(const std::vector<renderer::WarpInFlashDescriptor>& flashes,
-                      double clear_depth,
-                      const renderer::WarpInFlashParams& params = {}) {
+    std::vector<unsigned char> render_pixels(
+            const std::vector<renderer::WarpInFlashDescriptor>& flashes,
+            double clear_depth, const renderer::WarpInFlashParams& params,
+            const glm::vec3& clear_rgb) {
         glViewport(0, 0, kSize, kSize);
-        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClearColor(clear_rgb.r, clear_rgb.g, clear_rgb.b, 1.0f);
         glClearDepth(clear_depth);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glClearDepth(1.0);
@@ -77,6 +78,14 @@ protected:
         pass.render(camera(), flashes, params, *pipeline);
         std::vector<unsigned char> px(kSize * kSize * 4);
         glReadPixels(0, 0, kSize, kSize, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+        return px;
+    }
+
+    double render_sum(const std::vector<renderer::WarpInFlashDescriptor>& flashes,
+                      double clear_depth,
+                      const renderer::WarpInFlashParams& params = {}) {
+        const std::vector<unsigned char> px =
+            render_pixels(flashes, clear_depth, params, {0.0f, 0.0f, 0.0f});
         double sum = 0.0;
         for (std::size_t i = 0; i < px.size(); i += 4) {
             sum += px[i] + px[i + 1] + px[i + 2];
@@ -90,6 +99,21 @@ protected:
 TEST_F(WarpInFlashPassTest, DrawsAdditively) {
     glEnable(GL_DEPTH_TEST);
     EXPECT_GT(render_sum({flash_at_origin()}, 1.0), 0.0);
+    // Over a non-black clear every channel must be >= the clear (replace
+    // blending would darken the covered pixels), and some pixel brighter.
+    const glm::vec3 clear{0.5f, 0.6f, 0.7f};
+    const std::vector<unsigned char> px =
+        render_pixels({flash_at_origin()}, 1.0, {}, clear);
+    const std::vector<unsigned char> base = render_pixels({}, 1.0, {}, clear);
+    const int cr = base[0], cg = base[1], cb = base[2];
+    bool brighter = false;
+    for (std::size_t i = 0; i < px.size(); i += 4) {
+        EXPECT_GE(px[i], cr);
+        EXPECT_GE(px[i + 1], cg);
+        EXPECT_GE(px[i + 2], cb);
+        if (px[i] > cr || px[i + 1] > cg || px[i + 2] > cb) brighter = true;
+    }
+    EXPECT_TRUE(brighter);
     EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
 }
 
@@ -165,6 +189,7 @@ TEST_F(WarpInFlashPassTest, RestoresGlState) {
     glEnable(GL_CULL_FACE);
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_LESS);
+    glBlendFuncSeparate(GL_SRC_COLOR, GL_ONE_MINUS_DST_ALPHA, GL_DST_COLOR, GL_ZERO);
     render_sum({flash_at_origin()}, 1.0);
     EXPECT_FALSE(glIsEnabled(GL_DEPTH_TEST));
     EXPECT_FALSE(glIsEnabled(GL_BLEND));
@@ -175,4 +200,13 @@ TEST_F(WarpInFlashPassTest, RestoresGlState) {
     GLint func = 0;
     glGetIntegerv(GL_DEPTH_FUNC, &func);
     EXPECT_EQ(func, GL_LESS);
+    GLint src_rgb = 0, dst_rgb = 0, src_a = 0, dst_a = 0;
+    glGetIntegerv(GL_BLEND_SRC_RGB, &src_rgb);
+    glGetIntegerv(GL_BLEND_DST_RGB, &dst_rgb);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &src_a);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &dst_a);
+    EXPECT_EQ(src_rgb, GL_SRC_COLOR);
+    EXPECT_EQ(dst_rgb, GL_ONE_MINUS_DST_ALPHA);
+    EXPECT_EQ(src_a, GL_DST_COLOR);
+    EXPECT_EQ(dst_a, GL_ZERO);
 }

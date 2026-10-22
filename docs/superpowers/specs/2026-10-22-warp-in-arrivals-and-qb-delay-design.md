@@ -406,6 +406,8 @@ and **late** orders.
   friendlies to `g_iNumFriends`. `ShipDestroyed` (`QuickBattle.py:3345-3356`)
   then cannot reach 0 until they have arrived and died.
 - **Warm their models** (§6.6).
+- *Accepted:* late friendly/neutral groups still arrive after the battle is
+  won, until End.
 - **Schedule one game-time timer per delayed group,** at the battle's
   `GetGameTime()` plus the delay. Use the timer manager the way BC's own
   `g_idTimer` is used (`QuickBattle.py:3307-3315`), or `MissionLib.CreateTimer`.
@@ -480,7 +482,11 @@ too, but Quick Battle can do better because it knows the roster at start.
   - Radii for placement come from the same source.
 - **Measure** one late group of 5 arriving in `combat_stress` with the
   frame profiler. Spike log: `DAUNTLESS_PROFILE_SPIKES`, `docs/engine/frame-profiler.md`.
-  Record the result as a signal in `docs/engine/perf-register.md`.
+  Record the result as a signal in `docs/engine/perf-register.md`. The
+  capture also includes one first-of-class campaign warp-in (e.g. E2M0's
+  Zhukov), because the radius seeder now loads a model inside `CreateShip`
+  before the mission's own `ReplaceTexture`, and a look at `StartFiring`
+  volume for the fire-gate cost.
 - **Campaign warp-ins are not preloaded** in this design. If the measurement
   shows a hitch for them too, it goes in the register as a follow-up.
 

@@ -14,7 +14,7 @@ uniform mat4  u_proj;
 uniform vec3  u_center;        // render-space exit point
 uniform vec3  u_forward;       // unit forward axis (streak direction)
 uniform float u_radius;        // flash radius (GU)
-uniform int   u_mode;          // 0 = billboard, 1 = ribbon
+uniform int   u_mode;          // 0 = billboard, 1 = ribbon, 2 = ring quad perpendicular to forward
 uniform float u_core_radii;
 uniform float u_streak_radii;
 uniform float u_ring_radii;

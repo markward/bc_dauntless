@@ -12,6 +12,7 @@ import functools
 import math
 
 from engine.appc.actions import TGAction, TGSequence
+from engine.core.ids import implements
 
 # Name of the set the player occupies WHILE in warp transit. At burst the
 # player is pulled out of the source set into this one (no lights, no
@@ -1327,7 +1328,7 @@ def _begin_npc_arrival(ship, dest, placement_name):
         import App
         from engine.appc.subsystems import WarpEngineSubsystem
         placement = App.PlacementObject_GetObject(dest, placement_name)
-        sub = ship.GetWarpEngineSubsystem() if hasattr(ship, "GetWarpEngineSubsystem") else None
+        sub = ship.GetWarpEngineSubsystem() if implements(ship, "GetWarpEngineSubsystem") else None
         if placement is None or sub is None:
             return
         sub.SetPlacement(placement)
