@@ -43,11 +43,14 @@ found at runtime through engine/paths.py, and it is not ours to ship.
 from __future__ import annotations
 
 import argparse
+import datetime
+import json
 import os
 import shutil
 import struct
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -57,6 +60,10 @@ APP_NAME = "BC Dauntless"
 
 # Mirrors engine.paths.PACKAGED_MARKER and host_main.cc's kPackagedMarker.
 PACKAGED_MARKER = "dauntless-packaged.json"
+
+# Published artefacts are named for the build, so a downloaded zip identifies
+# itself before anyone unpacks it.
+PLATFORM = "windows-x64"
 
 _IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo")
 
@@ -82,6 +89,60 @@ _STDLIB_SKIP = {
 # Extension modules in DLLs/ that nothing in engine/ imports. tcl/tk alone is
 # several megabytes and pulls in a GUI toolkit we already have a renderer for.
 _DLL_SKIP_PREFIXES = ("_tkinter", "tcl", "tk", "_test", "_ctypes_test")
+
+
+def git_commit() -> str:
+    """The commit this build was staged from, or a plain admission of ignorance.
+
+    A DIRTY tree reports "<sha>-dirty", never the bare sha. A build that
+    quietly claims a commit whose code it does not contain is worse than one
+    with no version at all: it sends whoever reads the bug report to the wrong
+    source and costs them the time the version was supposed to save.
+    """
+    def _git(*args: str) -> str:
+        return subprocess.run(["git", *args], cwd=str(PROJECT_ROOT),
+                              capture_output=True, text=True,
+                              timeout=30).stdout.strip()
+    try:
+        sha = _git("rev-parse", "--short", "HEAD")
+        if not sha:
+            return "unknown"
+        # --porcelain reports anything uncommitted, staged or not, plus
+        # untracked files. dist/ is gitignored, so whatever shows up is real.
+        return f"{sha}-dirty" if _git("status", "--porcelain") else sha
+    except Exception:
+        return "unknown"
+
+
+def build_info() -> dict:
+    """What the marker records, and so what every log of this build reports."""
+    from engine.version import VERSION
+    return {
+        "version": VERSION,
+        "commit": git_commit(),
+        "built": datetime.datetime.now(datetime.timezone.utc)
+                 .replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "platform": PLATFORM,
+    }
+
+
+def make_zip(app: Path) -> Path:
+    """Zip the staged install for publishing.
+
+    Every entry is nested under the install folder, so unpacking cannot
+    scatter twenty-odd DLLs across someone's Downloads.
+    """
+    from engine.version import VERSION
+    target = DIST / f"BC-Dauntless-{VERSION}-{PLATFORM}.zip"
+    if target.exists():
+        target.unlink()
+    _say(f"zipping -> {target.name} (a few minutes; it is mostly libcef)")
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED,
+                         compresslevel=6) as zf:
+        for item in sorted(app.rglob("*")):
+            if item.is_file():
+                zf.write(item, str(Path(APP_NAME) / item.relative_to(app)))
+    return target
 
 
 def _say(msg: str) -> None:
@@ -233,8 +294,12 @@ def stage(dest: Path) -> Path:
 
     # 5. The marker. Its presence is the whole switch: engine/paths.py sends
     #    writes to the player's folders, and host_main.cc binds Python to the
-    #    bundled runtime instead of a developer venv.
-    (app / PACKAGED_MARKER).write_text("{}\n", encoding="utf-8")
+    #    bundled runtime instead of a developer venv. Its CONTENTS are this
+    #    build's identity -- engine/version.py reads them back and puts them in
+    #    the log, which is the only way a bug report against a published zip
+    #    can be traced to the commit that produced it.
+    (app / PACKAGED_MARKER).write_text(
+        json.dumps(build_info(), indent=2) + "\n", encoding="utf-8")
     return app
 
 
@@ -329,6 +394,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--no-check", action="store_true",
                     help="stage only; skip the launch smoke-check")
+    ap.add_argument("--zip", action="store_true",
+                    help="also write the publishable zip into dist/")
     args = ap.parse_args()
 
     if sys.platform != "win32":
@@ -336,13 +403,27 @@ def main() -> int:
                          "build only")
 
     app = stage(DIST)
+    info = json.loads((app / PACKAGED_MARKER).read_text(encoding="utf-8"))
     _say(f"staged {app.relative_to(PROJECT_ROOT)} ({tree_size_mb(app)} MB)")
-    if args.no_check:
-        return 0
-    rc = smoke_check(app)
-    if rc != 0:
-        return rc
-    return launch_check(app)
+    _say(f"identity: {info['version']}  {info['commit']}  {info['built']}")
+    if str(info["commit"]).endswith("-dirty"):
+        # Loud, because the whole point of stamping a commit is that someone
+        # can get back to the code, and a dirty build defeats that.
+        _say("NOTE: staged from a DIRTY tree -- fine for testing, do not "
+             "publish it")
+
+    if not args.no_check:
+        rc = smoke_check(app)
+        if rc != 0:
+            return rc
+        rc = launch_check(app)
+        if rc != 0:
+            return rc
+    if args.zip:
+        target = make_zip(app)
+        _say(f"wrote {target.relative_to(PROJECT_ROOT)} "
+             f"({round(target.stat().st_size / (1024 * 1024))} MB)")
+    return 0
 
 
 if __name__ == "__main__":

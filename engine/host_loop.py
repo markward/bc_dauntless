@@ -10408,6 +10408,19 @@ def run(mission_name: Optional[str] = None,
 
     boot_quickbattle = mission_name is None
 
+    # Build identity first: whatever happens after this, the log says which
+    # build produced it. A bug report against an unidentifiable zip is one
+    # nobody can act on, and main moves fast enough that "last week's build"
+    # names nothing. Stderr, not stdout -- a packaged build merges the console
+    # mirror onto stderr, and anything parsing stdout must not see this
+    # (per-user-dirs spec section 9).
+    try:
+        from engine.version import banner as _build_banner
+        sys.stderr.write(_build_banner() + "\n")
+        sys.stderr.flush()
+    except Exception:
+        pass   # a diagnostic line must never cost a launch
+
     _init_w, _init_h = _initial_window_size(_os.environ)
     r.init(_init_w, _init_h, "BC Dauntless")
     # Verify the native module exposes every binding the renderer façade calls.
