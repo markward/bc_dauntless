@@ -197,6 +197,7 @@ From the clean-room reference (all `reviewed-not-tested`):
 | Where a late group arrives | "It doesn't matter where they arrive from, make it random." |
 | During the slide | The ship holds its heading and holds fire until it has fully arrived, but can be targeted throughout. |
 | Delay control | A − and + button either side of the value; click the value to type a number; any whole number is accepted. |
+| Flash look | Generated in a shader (core, streak along the line of travel, ring), not BC's 64×64 flipbook. |
 
 ## 6. Design
 
@@ -265,28 +266,82 @@ Arrivals into sets the player is not in stay instant, with no flash.
 The reference has nothing on the look, so the look is ours. Mark calibrates it
 live; see `feedback_vfx_calibrate_up_then_down`.
 
-**First version**, every value *our call* and tunable:
+**Procedural, drawn in a shader** (Mark, 2026-10-22). There are no texture
+assets; BC's 64×64 `warpflash1..8.tga` flipbook is **not** used.
 
-- **Image:** BC's own 8-frame warp-flash flipbook,
-  `data/Textures/warpflash1..8.tga` (64×64, under the game root), loaded
-  **directly**. Played once over the flash's life as a camera-facing additive
-  billboard.
-  - ⛔ **Not through the sprite library.** Mark compared it on stock effects on
-    2026-10-16 and rejected it; it is for NanoFX mod calls only. (Its
-    `stock_warpflash` entry is also a single frame.) Stock particle output must
-    stay byte-identical (`tests/unit/test_stock_particle_output_unchanged.py`).
-- **Placement and size:** at the exit point, sized from the ship's radius
-  (initially 3× radius).
-- **Slide distance:** initially 10× radius.
-- **Sound:** "Exit Warp" is already played by the SDK sequence. Do not add
-  "Warp Flash" on top unless the live check wants it.
-- **Renderer:** reuse an existing billboard pass (`particle_pass` with
-  `life_sequence` playback, or `hit_vfx_pass`) rather than a new pass if one
-  fits. The builder decides; a new pass needs a reason.
-- **Tuning:** put the tunables (size × radius, slide × radius, flash duration,
-  brightness capped below the bloom threshold unless calibration says
-  otherwise) on a developer dial group, `"warp in"` on `/ L O`, the way other
-  VFX are tuned.
+- **Why procedural:**
+  - it stays sharp at any size on a 4K display;
+  - it is bright enough to feed the HDR bloom;
+  - it can show the ship's direction of travel, which a round flipbook
+    cannot.
+
+  This follows the shield splash, which went from a texture to a procedural
+  effect (`project_procedural_shield_splash`).
+- ⛔ **Not the sprite library** either. Mark rejected it for stock effects on
+  2026-10-16. Stock particle output must stay byte-identical
+  (`tests/unit/test_stock_particle_output_unchanged.py`).
+
+**The look**, after the on-screen Trek warp-in: a bright point stretches into a
+streak along the line of travel, then collapses as the ship appears. Three
+terms, each a function of the flash's age over its life:
+
+1. **Core:** a hot point at the exit point. It flares fast and fades over the
+   life.
+2. **Streak:** a thin bright line along the flash's **forward axis**. That is
+   the exit rotation's `GetCol(1)`, which is why
+   `WarpFlash_CreateWithoutShip` takes a rotation; `WarpFlash_Create(ship)`
+   uses the ship's own rotation.
+   - It stretches out early, then retracts toward the core as the ship lands.
+   - It is drawn as a camera-facing ribbon about that world axis, so it
+     still reads when seen nose-on or side-on.
+3. **Ring:** a brief expanding ring, perpendicular to the forward axis, that
+   fades as it grows.
+
+**Scale and timing**, every value *our call*, a tunable, and a starting point
+for calibration:
+
+- Sizes are in multiples of the radius passed to the create call, so a
+  shuttle's flash is small and a station's is large:
+  - core: initially 1.5× radius;
+  - streak: initially 8× radius;
+  - ring: up to 3× radius.
+- The slide distance is initially 10× radius. Line the streak up with the
+  slide, so the ship travels down the streak and lands as it collapses.
+- The life defaults to `GetWarpEffectTime()/2` when the create call gives no
+  time.
+- Colour is a cool blue-white.
+- Start **bright**: the core and streak go well past the bloom threshold.
+  Mark tunes up and then down (`feedback_vfx_calibrate_up_then_down`).
+
+**Implementation:**
+
+- **One scalar shape function of** (offset from the core in the flash's own
+  frame, age, radius). Write it **once in a C++ header** as the CPU twin, and
+  mirror it in the shader, the way `shield_splash_shape` lives in
+  `renderer/shield_state.h` and `shaders/shield.frag`. A unit test pins the
+  twin, so shader and CPU can't drift.
+- **Additive and depth-tested,** so a hull or planet in front hides it. It
+  draws in the HDR target before bloom, in the transparent-VFX phase.
+- **The pass:** a small dedicated pass, or a mode of an existing additive pass
+  (`shockwave_pass` already draws an animated ring and core flash). The
+  builder decides; reuse if it fits without bending the existing pass's look.
+- **New GLSL** must follow the project's GLSL 410 rules. Shader errors only
+  show at runtime (`project_shaders_glsl_410`, `feedback_shader_errors_are_runtime`).
+
+**Sound:** "Exit Warp" is already played by the SDK sequence. Do not add
+"Warp Flash" on top unless the live check wants it.
+
+**Tuning:** a developer dial group, `"warp in"` on `/ L O`, the way other VFX
+are tuned. It covers:
+
+- core, streak and ring size × radius;
+- streak and ring timing;
+- slide × radius;
+- default life;
+- brightness;
+- colour.
+
+Settled values are then baked as consts.
 
 ### 6.4 Quick Battle: the setting
 
@@ -441,6 +496,11 @@ Focused tests only; never the whole suite or the gate (CLAUDE.md).
     - `SetRegionModule`/`GetRegionModule` round-trip.
   - **Flash:** a flash record retires after its end time, under game time
     only.
+  - **Flash shape (ctest):** the CPU twin of the shape function. The core
+    peaks early, the streak lies along the forward axis and retracts by the
+    end of life, the ring grows and fades, and everything is zero at the end
+    of life. Plus a GL render test that the pass draws additively and is
+    occluded by depth.
   - **Scenario:** the `warp_in_min` round-trip, an old preset without the key
     loads as 0, a bad value is rejected (negative, fraction, text, boolean),
     a large value such as 600 is accepted, and the player group can never get
@@ -485,7 +545,7 @@ From the worktree: `./build/dauntless --developer`.
    - kill it: victory.
 2. **Campaign:** a mission with warp-in reinforcements, through the Developer
    mission picker. E5M4's pursuers or E6M1's Artrus waves.
-3. **Calibrate** the flash size, brightness and slide distance on the
+3. **Calibrate** the flash's core, streak and ring, its brightness, colour and timing, and the slide distance on the
    `"warp in"` dials.
 
 ## 9. Left to the builder
@@ -495,7 +555,7 @@ From the worktree: `./build/dauntless --developer`.
   - or a list on the set, ticked alongside it.
 
   Either way, it is not a `ShipClass` and not targetable.
-- Which existing billboard pass draws it, and how the per-frame feed carries
+- Whether the flash is its own pass or a mode of an existing additive pass, and how the per-frame feed carries
   it.
 - The slide easing.
 - The exact `g_kShips` and AI-module lookups, reused from `generate_ships` and
