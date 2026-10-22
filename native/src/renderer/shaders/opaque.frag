@@ -1479,8 +1479,9 @@ void main() {
     // Far tier: impostor coverage (outside the silhouette: see u_coverage_cutout).
     // Tested HERE, beside the dither, not after the main base sample: a discard
     // placed after the dFdx/dFdy block MEASURED to break the amb_d NaN guard on
-    // this driver even with the cutout off (HullClipTest /
-    // HullFieldClipTest.DegenerateNormalWithGradientOnStaysFinite).
+    // this driver even with the cutout off (measured under HullClipTest,
+    // deleted with the carve; now
+    // OpaqueDegenerateNormalTest.DegenerateNormalWithGradientOnStaysFinite).
 
     // Planet geosphere: normal + UV from the sphere direction. Derivatives
     // are taken here, unconditionally and never inside a branch: after the
@@ -1954,8 +1955,8 @@ void main() {
         // dot product already lands in [-1, 1] -- clamp() here is a
         // mathematical no-op on any legitimate input and cannot change a
         // correct result. What it buys is the degenerate case: a fully
-        // zeroed vertex normal (see the a_normal comment on this fixture's
-        // HullClipTest counterpart) makes n_shade itself NaN, and
+        // zeroed vertex normal (see the a_normal comment in
+        // OpaqueDegenerateNormalTest's fixture) makes n_shade itself NaN, and
         // clamp(NaN, -1, 1) resolves to -1 ON THIS DRIVER -- MEASURED, the
         // same IEEE-maxNum framing already used above for the spot-cone
         // clamp (clamp(NaN, 0, 1) == 0), not a GLSL language guarantee.
@@ -1963,7 +1964,8 @@ void main() {
         // this whole branch's ambient term, NaN instead; 0/0-style results
         // are undefined behaviour either way. A `v == v` self-compare and a
         // bare isnan() were both tried here first and both still left
-        // HullClipTest.DegenerateNormalWithGradientOnStaysFinite non-finite
+        // DegenerateNormalWithGradientOnStaysFinite (then HullClipTest's, now
+        // OpaqueDegenerateNormalTest's) non-finite
         // (measured, not inferred -- the probe still flagged 64 cells with
         // isnan() in place). clamp() also catches +-Inf, which isnan() does
         // not: an infinite u_ambient_dir_ws would otherwise give

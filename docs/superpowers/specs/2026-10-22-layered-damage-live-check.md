@@ -6,7 +6,9 @@ Written 2026-10-22 at the end of phase 4 (plan
 and every "for Mark" / live-check item from the phase-4 ledger
 (`.superpowers/sdd/2026-10-22-layered-damage-p4-finish/progress.md`) into one
 list. Nothing on it has been seen in game yet. The perf verdict is in
-`docs/engine/perf-register.md` (P-12, SIG-111 to SIG-114).
+`docs/engine/perf-register.md` (P-12, SIG-111 to SIG-115). Updated after the
+final review's fix wave (the break check moved off the main thread; rig-part
+chunks go dark).
 
 Every launch runs from the worktree root, Debug build.
 
@@ -167,15 +169,21 @@ Useful in-game tools:
   - Systems inside the lost part are destroyed.
 - **Wrong:** the part shows both on the ship and as a chunk; a chunk with
   nothing visible; two chunks for one part; the game stutters badly when it
-  happens. The timed runs found that one break check on a dying Akira can
-  take 8 to 11 ms, so a short stutter while a big ship comes apart is worth
-  reporting.
+  happens. The timed runs found that one break check on a dying Akira took
+  at least 8 to 11 ms, all in one frame. That check now runs in the
+  background: in the same timed run the game's own share of it fell to well
+  under a millisecond (perf register SIG-115). So **any** stutter while a
+  big ship comes apart is now worth reporting. Also report a part that
+  leaves visibly late after the hit that cut it: the break now lands a
+  frame or more after its check.
 
 ## 10. Lost parts go dark
 
-- **Where:** as item 9.
+- **Where:** as item 9, and also a part shot off a RIGGED ship: an LC
+  Intrepid nacelle or a Bird of Prey wing. Both kinds of chunk now go dark
+  the moment they leave.
 - **Look for:** the chunk has no window lights and no glow.
-- **Wrong:** windows still lit on the drifting chunk.
+- **Wrong:** windows still lit on the drifting chunk, of either kind.
 
 ## 11. Shadows of lost parts
 
@@ -187,9 +195,13 @@ Useful in-game tools:
 
 ## 12. Lights on lost parts go out
 
-- **Where:** as item 9: a part with lights on it, such as a nacelle with its
-  glow lights. Mod ships with running lights (the LC Intrepid, the DCMPv2
-  ships) show it most clearly.
+- **Where:** as item 9: a part with lights on it on an UNRIGGED ship, such
+  as an Akira, Galaxy or Sovereign nacelle with its glow lights. That is the
+  path this item checks (the structure break). A mod ship with running
+  lights shows it most clearly only if it has no rig. The LC Intrepid is
+  RIGGED: its nacelle leaves through the rig's own part break, a different
+  path, and its lights go out by that rule; worth a look, but it does not
+  test this one.
 - **Look for:** running lights, glow lights and sparks or smoke on the lost
   part go out when it leaves. Lights on the rest of the ship stay on.
 - **Known gap:** a light placed slightly off the hull's skin may stay lit.

@@ -242,7 +242,8 @@ where each goes.
 - Driver rules:
   - Never add a sampler to `opaque.frag`.
   - Never `return` early from its PLATING main; a single discard works.
-  - Run `HullClipTest` and `ScuffTest` after any `opaque.frag` edit.
+  - Run `OpaqueDegenerateNormalTest` and `ScuffTest` after any `opaque.frag`
+    edit (`HullClipTest` went with the carve; see §10).
 - The work happens in this worktree's branch. Merge to main only when Mark
   says so; the gate runs then and only then.
 
@@ -303,14 +304,20 @@ left as written; where the build differs, this section wins.
 - **Structure parts.** Detected when a model is realised or warp-preloaded
   (`prefetch_structure_parts`), cached at `<cache_dir>/structure_parts/
   <fnv1a64 of the NIF bytes>-v<kStructurePartsVersion>.sps`. Bump
-  `kStructurePartsVersion` whenever detection changes. glTF and scaled
-  (`#s=`) loads are detected lazily and never cached.
+  `kStructurePartsVersion` whenever detection changes. Scaled (`#s=`) NIF
+  loads are prefetched eagerly like any NIF but never disk-cached; only glTF
+  (catalogue rocks, which never sever) is skipped by the prefetch and
+  detected lazily, also never cached.
 - **Severance.** Unrigged hulls only (`hull_breakup.after_wear`'s rig gate and
   the native `can_structure_sever`). The parent hides the lost part by its
   `plating_part` label, in the plating draw and in the part-mask shadow
   program (`shadow_parts.frag`); the chunk draws only that part, dark
   (emissive 0). Lights and emitters on the lost part go out; each light's
-  part label is cached per (instance, severed mask).
+  part label is cached per (instance, severed mask). The check
+  (`find_severed_parts`) runs on a worker (`part_severance_jobs.h`, final
+  review Ruling 10): `hull_split_parts` answers None while it runs, and a
+  result whose damage or severed mask moved meanwhile is dropped and
+  re-queued.
 - **Molten rims.** The four freshest breach events younger than `kRimLife`.
 - **Warp-core breach.** Three Internal records growing at the core over
   1.0 s.
