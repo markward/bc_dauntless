@@ -1768,7 +1768,8 @@ void main() {
         if (hole == 1 && !cut) {
             // Far wreckage: near-black char, with the odd room cell still
             // burning or still lit, read from the room lattice the interior
-            // pass walks (6 x 8.67 x 2.67 model units). A far rock crater is
+            // pass walks (7.2 x 10.4 x 3.2 model units: TWIN of
+            // hull_interior.frag's kRoomSize -- retune both). A far rock crater is
             // the rock's own albedo, darkened and sooted: no fires, no windows.
             plating_inside = true;
             n_shade = n;
@@ -1777,7 +1778,7 @@ void main() {
                 base.rgb *= 0.35 * (0.6 + 0.4 * g);
             } else {
                 base.rgb = vec3(0.02) * (0.7 + 0.3 * g);
-                vec3 wreck_cell = floor(p_pl / vec3(6.0, 8.67, 2.67));
+                vec3 wreck_cell = floor(p_pl / vec3(7.2, 10.4, 3.2));
                 float wreck_h = dhash(wreck_cell.xy + wreck_cell.z * vec2(17.0, 31.0));
                 if (wreck_h < 0.03)
                     g_plating_emissive += blackbody(0.6) * 0.8;
