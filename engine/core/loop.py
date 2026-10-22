@@ -78,6 +78,14 @@ class GameLoop:
         # install AvoidObstacles now does not avoid. That matches BC, where the
         # behaviour is a node you opt into rather than a property of having an
         # AI at all. BasicAttack is one such doctrine.
+        # Warp-in slides and dewarp transitions advance on game time, before
+        # motion: an arriving ship's pose is the drive's, and ship motion
+        # skips it (warp_state.is_arriving). Warp-in spec 6.1 "Timing".
+        from engine.appc import warp_state
+        with _prof.scope("gl.warp_states"):
+            warp_state.tick_warp_states(TICK_DELTA)
+        from engine.appc import warp_in_flash
+        warp_in_flash.advance(TICK_DELTA)
         with _prof.scope("gl.motion"):
             tick_all_ship_motion(TICK_DELTA)
 

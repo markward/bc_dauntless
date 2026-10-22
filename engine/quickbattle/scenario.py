@@ -50,6 +50,11 @@ class Group:
     player: bool = False
     custom_name: bool = False
     entries: list = field(default_factory=list)
+    warp_in_min: int = 0  # whole minutes before the group arrives; player group 0
+
+
+def valid_warp_in(v) -> bool:
+    return type(v) is int and v >= 0
 
 
 @dataclass
@@ -115,11 +120,15 @@ class Scenario:
         g.name, g.custom_name = name, True
         return True
 
-    def update_details(self, gid, allegiance, direction, distance, difficulty) -> bool:
+    def update_details(self, gid, allegiance, direction, distance, difficulty,
+                       warp_in_min=0) -> bool:
         g = self.group(gid)
-        if g is None or difficulty not in DIFFICULTY_LEVEL:
+        if (g is None or difficulty not in DIFFICULTY_LEVEL
+                or not valid_warp_in(warp_in_min)):
             return False
         if g.player:
+            if warp_in_min != 0:
+                return False
             g.difficulty = difficulty
             return True
         if (allegiance not in ALLEGIANCES or direction not in DIRECTIONS
@@ -128,6 +137,7 @@ class Scenario:
         changed = allegiance != g.allegiance
         g.allegiance, g.direction, g.distance, g.difficulty = \
             allegiance, direction, distance, difficulty
+        g.warp_in_min = warp_in_min
         if changed and not g.custom_name:
             g.name = self.auto_name(allegiance, exclude_gid=g.id)
         return True
@@ -174,7 +184,7 @@ class Scenario:
             "id": g.id, "name": g.name, "custom_name": g.custom_name,
             "player": g.player, "allegiance": g.allegiance,
             "direction": g.direction, "distance": g.distance,
-            "difficulty": g.difficulty,
+            "difficulty": g.difficulty, "warp_in_min": g.warp_in_min,
             "entries": [{"id": e.id, "ship": e.ship, "variant": e.variant,
                          "player": e.player} for e in g.entries],
         } for g in self.groups]}
@@ -204,6 +214,9 @@ def from_json(d) -> Scenario:
         allegiance = gd.get("allegiance")
         _req(allegiance in ALLEGIANCES, "bad allegiance")
         _req(gd.get("difficulty", "medium") in DIFFICULTY_LEVEL, "bad difficulty")
+        warp_in = gd.get("warp_in_min", 0)
+        _req(valid_warp_in(warp_in), "bad warp-in")
+        _req(not (player and warp_in), "player group delayed")
         if player:
             _req(allegiance == "friendly", "player group not friendly")
             direction = distance = None
@@ -224,7 +237,7 @@ def from_json(d) -> Scenario:
                             allegiance=allegiance, direction=direction,
                             distance=distance, difficulty=gd.get("difficulty", "medium"),
                             player=player, custom_name=bool(gd.get("custom_name")),
-                            entries=entries))
+                            entries=entries, warp_in_min=warp_in))
     pgs = [g for g in groups if g.player]
     _req(len(pgs) == 1, "need exactly one player group")
     pes = [e for g in groups for e in g.entries if e.player]
@@ -352,6 +365,7 @@ class SpawnOrder:
     direction: Optional[str]
     distance_gu: Optional[float]
     ai_level: float
+    warp_in_s: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -403,6 +417,7 @@ def battle_plan(scenario: "Scenario", index) -> BattlePlan:
             title=ce.title or ce.ship_id, registry=reg, display_name=disp,
             allegiance=g.allegiance, direction=g.direction,
             distance_gu=(DISTANCE_KM[g.distance] / GU_TO_KM) if g.distance else None,
-            ai_level=DIFFICULTY_LEVEL[g.difficulty]))
+            ai_level=DIFFICULTY_LEVEL[g.difficulty],
+            warp_in_s=g.warp_in_min * 60.0))
     return BattlePlan(player=PlayerOrder(p_file, pce.ship_id, p_reg, names[0]),
                       orders=tuple(orders))

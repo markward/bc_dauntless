@@ -87,3 +87,29 @@ def test_run_leaves_no_quickbattle_hooks_registered_after_qb_boot(monkeypatch):
     assert bridge_selection._player_type_resolver is None
     assert qb_spawn._radius_fn is None
     assert qb_spawn._provider is None
+
+
+def test_run_registers_and_clears_the_warp_in_radius_seeder(monkeypatch):
+    """Warp-in Ruling 2: run() hands warp_state the loader's radius seeder
+    (the one Quick Battle placement uses) for EVERY mission, so a campaign
+    warp-in sizes its flash and slide by the ship's real radius, not the
+    fallback dial -- and clears it on teardown like spawn's radius_fn."""
+    GALAXY_NIF = (bc_assets.GAME_ROOT / "data" / "Models" / "Ships"
+                  / "Galaxy" / "Galaxy.nif")
+    if not GALAXY_NIF.is_file():
+        pytest.skip("BC assets not available")
+    monkeypatch.setenv("OPEN_STBC_HOST_HEADLESS", "1")
+    from engine import host_loop
+    from engine.appc import warp_state
+    seen = []
+    real = warp_state.set_radius_seeder
+    monkeypatch.setattr(warp_state, "set_radius_seeder",
+                        lambda fn: (seen.append(fn), real(fn)))
+    assert host_loop.run("Custom.Tutorial.Episode.M1Basic.M1Basic",
+                         max_ticks=2) == 0
+    assert seen, "run() never registered a warp-in radius seeder"
+    first = seen[0]
+    assert getattr(first, "__func__", None) is \
+        host_loop._MissionLoader._seed_quickbattle_ship_radius
+    assert seen[-1] is None
+    assert warp_state._radius_seeder is None

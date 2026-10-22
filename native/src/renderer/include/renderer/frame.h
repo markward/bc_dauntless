@@ -181,6 +181,17 @@ struct ShockwaveDescriptor {
     glm::vec3 tint{1.0f};   // ring colour multiplier; white = default look (spec 2026-10-16 §7.5)
 };
 
+// One warp-in flash (warp-in spec 6.3): procedural core + ring billboard at
+// world_center and a streak along `forward` (unit), sized in multiples of
+// `radius` (GU). age/lifetime drive the shape (renderer/warp_in_flash_shape.h).
+struct WarpInFlashDescriptor {
+    glm::vec3 world_center;
+    glm::vec3 forward;
+    float radius;
+    float age;
+    float lifetime;
+};
+
 /// Hit-VFX render descriptor.  Engine ages each entry; renderer dispatches
 /// per-tier constants (HULL / CRITICAL) based on `severity`.  `surface_normal`
 /// is (0,0,0) when no mesh trace was available (sentinel = no normal).
@@ -361,8 +372,8 @@ void draw_model(const assets::Model& model,
                 // frame.cc's lean draw_plating_mark instead.
                 const plating::DamageList* plating = nullptr,
                 // Far hull (InteriorPolicy, hull_interior_policy.h): no rooms
-                // behind its holes, so the program paints a hole as wreckage
-                // instead of cutting it, unless it is blown clear through
+                // behind its holes, so the program paints every hole (even
+                // one blown clear through) as wreckage instead of cutting it
                 // (u_plating_far). Plating draws only.
                 bool plating_far = false,
                 // Plating draws only: the parts and per-mesh record subsets

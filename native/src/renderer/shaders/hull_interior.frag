@@ -108,7 +108,8 @@ const vec3 INNER_HULL = vec3(0.42, 0.41, 0.40);
 // Room lattice pitch, MODEL units (1 mu = 1.75 m): beam-wise room width,
 // keel-wise room length, deck pitch. Live-tuned 2026-10-20 (first cut
 // 9 x 13 x 4 read ~1.5x too big), then 6 x 8.67 x 2.67 nudged up 20% after
-// Mark's 2026-10-22 live check.
+// Mark's 2026-10-22 live check. TWIN: opaque.frag's far-wreck `wreck_cell`
+// lattice uses the same size -- retune both.
 const vec3  kRoomSize          = vec3(7.2, 10.4, 3.2);
 // Smaller rooms need more crossings for the same reach.
 const int   kInteriorMaxSteps  = 24;

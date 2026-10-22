@@ -120,3 +120,33 @@ def test_end_combat_reverts_to_home_ship_but_keeps_the_setup(world):
     player = App.Game_GetCurrentGame().GetPlayer()
     assert player is not None
     assert str(player.GetScript()).rsplit(".", 1)[-1] == "Galaxy"
+
+
+def test_late_enemy_group_e2e(world):
+    """Panel -> a second enemy group set to warp in at 1 min -> start: it is
+    absent, counted, arrives with a flash on its minute, and only killing
+    both groups wins (warp-in spec §6.5)."""
+    hl, _c, panel, QB = world
+    import App
+    from engine.appc import warp_in_flash
+    _do(panel, "add:Warbird", "group-new")
+    g = panel.scenario.groups[-1]
+    _do(panel, "details:" + g.id, "draft:allegiance:enemy", "draft:warp_in:1",
+        "draft-update", "add:Galor")
+    assert panel.scenario.group(g.id).warp_in_min == 1
+    _go(hl, panel)
+    t0 = App.g_kUtopiaModule.GetGameTime()
+    ships = _ships(QB)
+    assert "Warbird-1" in ships and "Galor-2" not in ships
+    assert QB.g_iNumEnemies == 2 and QB.bWonOrLost == 0
+    _destroy(QB, ships["Warbird-1"])
+    assert QB.bWonOrLost == 0                         # the late Galor still counts
+    flashes = warp_in_flash.spawned_count()
+    App.g_kTimerManager.tick(t0 + 61.0 - App.g_kTimerManager.get_time())
+    galor = _ships(QB).get("Galor-2")
+    assert galor is not None
+    assert warp_in_flash.spawned_count() == flashes + 1
+    assert QB.pEnemies.IsNameInGroup("Galor-2")
+    assert galor.GetAI() is not None
+    _destroy(QB, galor)
+    assert QB.g_iNumEnemies == 0 and QB.bWonOrLost == 1

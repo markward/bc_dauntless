@@ -117,3 +117,14 @@ def test_reconcile_with_no_playable_entry_leaves_player_and_plan_raises():
     assert msgs and s.player_entry().ship == "Galaxy"
     with pytest.raises(ValueError, match="Galaxy"):
         sc.battle_plan(s, index)
+
+
+def test_battle_plan_warp_in_seconds():
+    s = sc.default_scenario()
+    g1 = s.groups[1]
+    g2 = s.add_group()
+    s.add_ship(g1.id, "Warbird")
+    s.add_ship(g2.id, "Warbird")
+    assert s.update_details(g2.id, "enemy", "fore", "standard", "medium", warp_in_min=2)
+    orders = {o.group_id: o.warp_in_s for o in sc.battle_plan(s, INDEX).orders}
+    assert orders == {g1.id: 0.0, g2.id: 120.0}

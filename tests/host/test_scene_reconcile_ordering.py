@@ -44,7 +44,7 @@ _SIM_CALLS = (
     "_poll_raw_keyboard(",
     "_advance_weapons(",
     "_advance_combat(",
-    "_warp_state.tick_warp_states(",
+    "_warp_state.sync_flythrough(",
     "collisions.tick_collisions(",
     "dash.tick(",
     "handoff.tick(",

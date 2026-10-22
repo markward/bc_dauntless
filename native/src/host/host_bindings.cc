@@ -63,6 +63,7 @@
 #include <renderer/running_light_store.h>
 #include <renderer/nebula_wake_pass.h>
 #include <renderer/shockwave_pass.h>
+#include <renderer/warp_in_flash_pass.h>
 #include <renderer/particle_pass.h>
 #include <renderer/phaser_pass.h>
 #include <renderer/hologram_pass.h>
@@ -413,6 +414,11 @@ std::unique_ptr<renderer::TorpedoPass>     g_torpedo_pass;
 std::vector<renderer::DynamicLightDescriptor> g_dynamic_lights;
 std::vector<renderer::ShockwaveDescriptor> g_shockwaves;
 std::unique_ptr<renderer::ShockwavePass>   g_shockwave_pass;
+// Warp-in flashes (warp-in spec 6.3): full-replace per-frame list and the
+// "warp in" dial look, both pushed by host_loop every frame.
+std::vector<renderer::WarpInFlashDescriptor> g_warp_in_flashes;
+renderer::WarpInFlashParams                  g_warp_in_flash_params;
+std::unique_ptr<renderer::WarpInFlashPass>   g_warp_in_flash_pass;
 std::vector<renderer::HitVfxDescriptor>    g_hit_vfx;
 std::unique_ptr<renderer::HitVfxPass>      g_hit_vfx_pass;
 std::vector<renderer::HullDischarge>       g_hull_discharges;
@@ -982,12 +988,14 @@ void reset_frame_state() {
     g_nebulae.clear();
     g_nebula_wake.clear();
 
-    // Fifteen per-frame descriptor lists: eleven VFX + four debug volumes.
+    // Sixteen per-frame descriptor lists: twelve VFX + four debug volumes.
     g_torpedoes.clear();
     g_phaser_beams.clear();
     g_tractor_beams.clear();
     g_hit_vfx.clear();
     g_shockwaves.clear();
+    g_warp_in_flashes.clear();
+    g_warp_in_flash_params = renderer::WarpInFlashParams{};
     g_particle_emitters.clear();
     g_dynamic_lights.clear();
     g_lens_flares.clear();
@@ -1143,6 +1151,7 @@ void init(int width, int height, const std::string& title) {
     g_system_nebula_pass = std::make_unique<renderer::SystemNebulaPass>();
     g_nebula_godray_pass = std::make_unique<renderer::NebulaGodrayPass>();
     g_shockwave_pass = std::make_unique<renderer::ShockwavePass>();
+    g_warp_in_flash_pass = std::make_unique<renderer::WarpInFlashPass>();
     g_shield_pass = std::make_unique<renderer::ShieldPass>();
     g_lens_flare_pass = std::make_unique<renderer::LensFlarePass>();
     g_torpedo_pass = std::make_unique<renderer::TorpedoPass>();
@@ -1236,6 +1245,7 @@ void shutdown() {
     g_lens_flare_pass.reset();
     g_torpedo_pass.reset();
     g_shockwave_pass.reset();
+    g_warp_in_flash_pass.reset();
     g_hit_vfx_pass.reset();
     g_hull_discharge_pass.reset();
     g_running_light_pass.reset();
@@ -1885,6 +1895,9 @@ void frame() {
             g_hull_discharge_pass->render(cam, *g_pipeline, g_hull_discharges);
         if (g_shockwave_pass)
             g_shockwave_pass->render(cam, g_shockwaves, *g_pipeline);
+        if (g_warp_in_flash_pass)
+            g_warp_in_flash_pass->render(cam, g_warp_in_flashes,
+                                         g_warp_in_flash_params, *g_pipeline);
         // Venting jets: build per-frame descriptors from active breach events
         // and append to a combined emitter list for the particle pass.
         // Never mutate g_particle_emitters in place (Python-owned).
@@ -3363,6 +3376,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
               d["torpedoes"]          = g_torpedoes.size();
               d["hit_vfx"]            = g_hit_vfx.size();
               d["shockwaves"]         = g_shockwaves.size();
+              d["warp_in_flashes"]    = g_warp_in_flashes.size();
+              d["warp_in_flash_intensity"] = py_float(g_warp_in_flash_params.intensity);
               d["particle_emitters"]  = g_particle_emitters.size();
               d["dynamic_lights"]     = g_dynamic_lights.size();
               d["lens_flares"]        = g_lens_flares.size();
@@ -6138,6 +6153,48 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("shockwaves"),
           "Replace the active warp-core breach shockwaves: a list of dicts with "
           "keys world_center (a (cx,cy,cz) tuple), max_radius, age, lifetime.");
+
+    m.def("set_warp_in_flashes",
+          [](const std::vector<py::dict>& descs) {
+              g_warp_in_flashes.clear();
+              g_warp_in_flashes.reserve(descs.size());
+              for (const auto& d : descs) {
+                  renderer::WarpInFlashDescriptor f;
+                  auto c = d["world_center"].cast<std::tuple<float, float, float>>();
+                  f.world_center = {std::get<0>(c), std::get<1>(c), std::get<2>(c)};
+                  auto fw = d["forward"].cast<std::tuple<float, float, float>>();
+                  f.forward  = {std::get<0>(fw), std::get<1>(fw), std::get<2>(fw)};
+                  f.radius   = d["radius"].cast<float>();
+                  f.age      = d["age"].cast<float>();
+                  f.lifetime = d["lifetime"].cast<float>();
+                  g_warp_in_flashes.push_back(f);
+              }
+          },
+          py::arg("flashes"),
+          "Replace the active warp-in flashes (warp-in spec 6.3; NOT the "
+          "screen-space set_warp_flash_intensity): a list of dicts with keys "
+          "world_center (render-space (x,y,z)), forward (unit (x,y,z)), "
+          "radius (GU), age, lifetime.");
+
+    m.def("set_warp_in_flash_params",
+          [](const py::dict& d) {
+              auto& p = g_warp_in_flash_params;
+              if (d.contains("core_radii"))   p.core_radii   = d["core_radii"].cast<float>();
+              if (d.contains("streak_radii")) p.streak_radii = d["streak_radii"].cast<float>();
+              if (d.contains("ring_radii"))   p.ring_radii   = d["ring_radii"].cast<float>();
+              if (d.contains("intensity"))    p.intensity    = d["intensity"].cast<float>();
+              if (d.contains("streak_end"))   p.streak_end   = d["streak_end"].cast<float>();
+              if (d.contains("ring_rise"))    p.ring_rise    = d["ring_rise"].cast<float>();
+              if (d.contains("tint")) {
+                  auto t = d["tint"].cast<std::tuple<float, float, float>>();
+                  p.tint = {std::get<0>(t), std::get<1>(t), std::get<2>(t)};
+              }
+          },
+          py::arg("params"),
+          "Warp-in flash look (the \"warp in\" dials): dict with any of "
+          "core_radii, streak_radii, ring_radii, intensity, streak_end, "
+          "ring_rise (fractions of the life), tint ((r,g,b)). "
+          "Absent keys keep their value.");
 
     m.def("set_hit_vfx",
           [](const std::vector<py::dict>& descs) {

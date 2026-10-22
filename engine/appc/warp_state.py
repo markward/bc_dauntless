@@ -33,6 +33,34 @@ from engine.appc.ships import ShipClass
 _flythrough_ships = []
 
 
+# Warp-in slide distance is scaled by ship radius, but ships report
+# GetRadius() == 0 until realised. The host installs a seeder that loads the
+# model; tests/headless fall back to the "fallback_radius_gu" dial.
+_radius_seeder = None
+
+
+def set_radius_seeder(fn) -> None:
+    global _radius_seeder
+    _radius_seeder = fn
+
+
+def warp_in_radius(ship) -> float:
+    r = ship.GetRadius()
+    if r > 0.0:
+        return r
+    if _radius_seeder is not None:
+        try:
+            _radius_seeder(ship)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("warp-in radius seeder failed")
+        r = ship.GetRadius()
+        if r > 0.0:
+            return r
+    from engine.appc import warp_in_dials
+    return warp_in_dials.get("fallback_radius_gu")
+
+
 def _warp_subsystem(ship):
     """The ship's WarpEngineSubsystem, or None. Ships can legitimately be built
     without one, and GetWarpEngineSubsystem() then returns a real None."""
@@ -66,15 +94,28 @@ def is_ship_warping(obj) -> bool:
     return False if sub is None else sub.IsWarping()
 
 
+def is_arriving(ship) -> bool:
+    """True while `ship`'s warp engine is sliding it onto its warp-in
+    placement (WarpEngineSubsystem.is_dewarp_driving). isinstance-guarded for
+    the same reason as is_ship_warping."""
+    if not isinstance(ship, ShipClass):
+        return False
+    sub = _warp_subsystem(ship)
+    return False if sub is None else sub.is_dewarp_driving()
+
+
 def tick_warp_states(dt: float) -> None:
-    """Advance every ship's pending dewarp transition (see
-    WarpEngineSubsystem.TransitionToState). Call once per frame BEFORE
-    collisions.tick_collisions, so a dewarp that completes this frame is
+    """Advance every ship's warp-in slide, then its pending dewarp transition
+    (see WarpEngineSubsystem.TransitionToState). Runs on GAME time inside
+    GameLoop.tick, before ship motion -- so it is frozen under pause, the
+    headless harness drives it too, and (the host runs the sim ticks before
+    collisions.tick_collisions) a dewarp that completes this frame is
     collidable this frame rather than next."""
     from engine.appc.ship_iter import iter_ships
     for ship in iter_ships():
         sub = _warp_subsystem(ship)
         if sub is not None:
+            sub.step_dewarp_drive(dt)
             sub.tick_transition(dt)
 
 

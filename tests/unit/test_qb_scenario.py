@@ -146,3 +146,53 @@ def test_first_non_player_group():
     assert s.first_non_player_group() is s.groups[1]
     s.delete_group(s.groups[1].id)
     assert s.first_non_player_group() is None
+
+
+def _delayed(minutes):
+    s = sc.default_scenario()
+    g = s.groups[1]
+    assert s.update_details(g.id, "enemy", "fore", "standard", "medium", warp_in_min=minutes)
+    return s
+
+
+def test_warp_in_round_trip():
+    s = _delayed(5)
+    assert s.groups[1].warp_in_min == 5
+    assert sc.from_json(s.to_json()).groups[1].warp_in_min == 5
+
+
+def test_old_preset_without_key_loads_as_zero():
+    d = sc.default_scenario().to_json()
+    for g in d["groups"]:
+        g.pop("warp_in_min", None)
+    assert all(g.warp_in_min == 0 for g in sc.from_json(d).groups)
+
+
+@pytest.mark.parametrize("bad", [-1, 2.5, True, "3"])
+def test_warp_in_validation_rejects(bad):
+    d = _delayed(1).to_json()
+    d["groups"][1]["warp_in_min"] = bad
+    with pytest.raises(ValueError):
+        sc.from_json(d)
+
+
+@pytest.mark.parametrize("ok", [0, 600])
+def test_warp_in_validation_accepts(ok):
+    d = _delayed(1).to_json()
+    d["groups"][1]["warp_in_min"] = ok
+    assert sc.from_json(d).groups[1].warp_in_min == ok
+
+
+def test_player_group_cannot_be_delayed():
+    s = sc.default_scenario()
+    pg = s.player_group()
+    assert not s.update_details(pg.id, "friendly", None, None, "hard", warp_in_min=3)
+    assert pg.warp_in_min == 0 and pg.difficulty == "medium"
+    d = s.to_json()
+    d["groups"][0]["warp_in_min"] = 3
+    with pytest.raises(ValueError):
+        sc.from_json(d)
+
+
+def test_same_setup_sees_delay():
+    assert not sc.same_setup(_delayed(0), _delayed(2))

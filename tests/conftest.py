@@ -937,6 +937,16 @@ def _reset_leakable_engine_globals():
         _mods.configure(None)
     except Exception:
         pass
+    # Warp-in: radius seeder hook + live dial values are module globals.
+    try:
+        from engine.appc import warp_in_dials as _warp_in_dials
+        from engine.appc import warp_state as _warp_state_mod
+        _warp_in_dials.reset()
+        from engine.appc import warp_in_flash as _warp_in_flash
+        _warp_in_flash.reset()
+        _warp_state_mod.set_radius_seeder(None)
+    except Exception:
+        pass
     # Warp preload: begin/active/end hold one module-global Preload.
     try:
         from engine import warp_preload as _warp_preload
@@ -1035,6 +1045,14 @@ def _reset_leakable_engine_globals():
         from engine.quickbattle import spawn as _qb_spawn
         _qb_spawn.set_provider(None)
         _qb_spawn.set_radius_fn(None)
+    except Exception:
+        pass
+    # Quick Battle late arrivals: pending orders, the scheduling module and
+    # the injected RNG are module-global; a leaked entry skews the next
+    # battle's pending_enemy_count (and a stale key could spawn into it).
+    try:
+        from engine.quickbattle import late_arrivals as _qb_late
+        _qb_late.reset()
     except Exception:
         pass
     # Same leak hazard, the home-ship RecreatePlayer resolver: a process

@@ -66,6 +66,8 @@ add_executable(renderer_tests
     glow_region_test.cc
     ray_trace_test.cc
     shield_state_test.cc
+    warp_in_flash_shape_test.cc
+    warp_in_flash_pass_test.cc
     skin_shield_test.cc
     lens_flare_pass_test.cc
     bridge_pass_test.cc

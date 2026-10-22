@@ -65,3 +65,21 @@ def test_i_cached_structure_part_labels_leak():
 def test_j_the_structure_part_labels_did_not_leak():
     from engine.appc import hull_breakup
     assert hull_breakup._part_labels == {}
+
+
+def test_k_quickbattle_late_arrivals_leak():
+    from engine.quickbattle import late_arrivals
+    from engine.quickbattle.scenario import SpawnOrder
+    order = SpawnOrder("g", "e", "Galor", "Galor", "Galor", None, None, "enemy",
+                       "fore", 100.0, 0.5, warp_in_s=60.0)
+    late_arrivals._pending[1] = {"orders": [(1, order)], "timer": -1}
+    late_arrivals._qb = object()
+    late_arrivals.set_rng(None)
+    assert late_arrivals.pending_enemy_count() == 1
+
+
+def test_l_the_quickbattle_late_arrivals_did_not_leak():
+    from engine.quickbattle import late_arrivals
+    assert late_arrivals.pending_enemy_count() == 0
+    assert late_arrivals._qb is None
+    assert late_arrivals._rng is not None

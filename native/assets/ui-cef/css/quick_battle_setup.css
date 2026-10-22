@@ -274,6 +274,25 @@
 #quick-battle-setup .qbs-qty__btn:hover:not([disabled]) { background: rgba(173, 132, 255, 0.15); color: #fff; }
 #quick-battle-setup .qbs-qty__btn[disabled] { color: var(--qbs-steel-dim); cursor: default; }
 #quick-battle-setup .qbs-qty__n { min-width: 22px; align-self: center; text-align: center; font-size: 14px; color: #fff; }
+#quick-battle-setup .qbs-delay-stepper { width: fit-content; }
+#quick-battle-setup .qbs-delay-value {
+    min-width: 64px;
+    border: 0;
+    background: transparent;
+    font-family: inherit;
+    cursor: text;
+}
+#quick-battle-setup .qbs-delay {
+    width: 64px;
+    font: inherit;
+    font-size: 14px;
+    text-align: center;
+    color: #fff;
+    background: rgb(40, 44, 52);
+    border: 1px solid var(--qbs-gold);
+    padding: 0 2px;
+    min-width: 0;
+}
 #quick-battle-setup .qbs-grouppick { display: flex; align-items: center; gap: 6px; }
 #quick-battle-setup .qbs-grouppick .qbs-menu__dot { display: inline-block; }
 
