@@ -160,3 +160,20 @@ def test_placing_click_pushes_the_new_light(monkeypatch, make_panel, pushes):
     assert len(pushes) == 1
     assert [l[3:] for l in pushes[0][1]] == [
         _tuple(s)[3:] for s in (_PORT, _STAR, _BOW)]
+
+
+def test_preview_iids_while_previewing(make_panel):
+    p = make_panel()
+    assert p.running_light_preview_iids() == (_IID,)
+    p.close()
+    assert p.running_light_preview_iids() == ()
+
+
+def test_mission_swap_forgets_preview_without_callback(make_panel, pushes):
+    """The swap destroys the instance: never restore onto a dead (or reused)
+    iid at the later close."""
+    p = make_panel()
+    p.on_mission_swap()
+    assert p.running_light_preview_iids() == ()
+    p.close()
+    assert p.closed == []

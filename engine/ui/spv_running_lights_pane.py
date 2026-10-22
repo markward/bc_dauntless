@@ -182,6 +182,21 @@ class RunningLightsPaneMixin:
         self._rl_last_preview = key
         self._rl_preview_target = (ship, iid)
 
+    def running_light_preview_iids(self) -> tuple:
+        """The instance(s) this SPV is previewing running lights on: the
+        host skips their articulated re-send while the preview owns them."""
+        if self._rl_preview_target is None:
+            return ()
+        return (self._rl_preview_target[1],)
+
+    def on_mission_swap(self) -> None:
+        """The swap destroys the previewed instance: forget the preview
+        WITHOUT the restore callback (its iid is dead, or reused by a new
+        ship), then the Decals pane's own swap handling."""
+        self._rl_last_preview = None
+        self._rl_preview_target = None
+        super().on_mission_swap()
+
     def _rl_restore_preview(self) -> None:
         """Hand (ship, iid) of a preview pushed this session to the injected
         `on_running_lights_closed` callback, then forget the preview."""
