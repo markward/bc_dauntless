@@ -1,0 +1,24 @@
+// Windows resource script for the host binary. GENERATED into the build tree
+// by native/src/host/CMakeLists.txt (configure_file), so the icon path is
+// absolute and does not depend on the working directory of rc.exe.
+//
+// Two entries, deliberately, both pointing at the same .ico:
+//
+//   1          Explorer, the taskbar and Alt-Tab take the icon group with the
+//              lowest ordinal ID.
+//   GLFW_ICON  the window's own icon. GLFW looks up this exact name on the
+//              running module (native/third_party/glfw/src/win32_window.c:
+//              LoadImageW(GetModuleHandleW(NULL), L"GLFW_ICON", ...)) and
+//              falls back to IDI_APPLICATION -- the generic blank page -- if
+//              it is missing. Without this line the title bar keeps that
+//              placeholder even when Explorer shows the right icon.
+//
+// The data is embedded twice (about 50 KB each, against a multi-megabyte
+// binary). That buys independence: neither consumer's lookup rule depends on
+// the other's, and no code has to run to set the window icon.
+//
+// No #include <windows.h> here on purpose: nothing below needs a macro from
+// it, and leaving it out means rc.exe needs no INCLUDE path to succeed.
+
+1 ICON "@DAUNTLESS_ICON_PATH@"
+GLFW_ICON ICON "@DAUNTLESS_ICON_PATH@"

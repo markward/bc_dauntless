@@ -6,6 +6,12 @@
 using namespace renderer::atmosphere;
 
 namespace {
+// MSVC only defines M_PI under _USE_MATH_DEFINES; keep our own so this file
+// never depends on that, as the renderer sources under test already do
+// (nebula_atmosphere.cc, atmosphere_math.cc). double, not float: the
+// integration below accumulates in double, so this keeps it bit-identical.
+inline constexpr double kPi = 3.14159265358979323846;
+
 RadialProfile constant(float n, float k) {
     RadialProfile p;
     p.r = {0.0f, 1.0e7f};
@@ -57,7 +63,7 @@ TEST(NebulaAtmosphere, HgIsNormalised) {
     const int n = 20000;
     for (int i = 0; i < n; ++i) {
         const float c = -1.0f + 2.0f * (i + 0.5f) / n;
-        sum += hg(0.6f, c) * (2.0f / n) * 2.0 * M_PI;
+        sum += hg(0.6f, c) * (2.0f / n) * 2.0 * kPi;
     }
     EXPECT_NEAR(sum, 1.0, 1e-3);
 }
