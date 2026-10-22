@@ -1,7 +1,7 @@
 # SPV Running Lights: add, place and edit — design
 
 **Date:** 2026-10-22
-**Status:** design agreed with Mark (flow approved from mockups), spec written
+**Status:** built, awaiting live verification (⚠️ **Not live-verified.**)
 **Branch:** `feat/spv-running-lights` (worktree `.claude/worktrees/spv-running-lights`, from local `main` at 11744546f)
 **Builds on:** `2026-10-14-ship-running-lights-design.md` (the renderer + `RunningLightSpec`),
 `2026-07-25-spv-hardpoint-value-override-editing-design.md` (staged edits + Save),
@@ -454,3 +454,26 @@ These are left to the builder:
   In hologram mode the hull is hidden, so the lights may need the hologram's depth or
   none. Verify they are neither buried nor floating in front of the far side of the
   hull.
+
+## Build
+
+Branch `feat/spv-running-lights`, commits in order:
+
+- `146e85377` docs(spv): running lights add/place/edit design
+- `5d5ba6602` docs(spv): running lights implementation plan (12 tasks)
+- `c8c4a901c` feat(appc): attach queue for Dauntless-created hardpoint templates (DAUNTLESS_ENV 2)
+- `e8d8c71ff` feat(spv): hardpoint override writer emits running-light create/edit/remove blocks
+- `0411f44bb` fix(spv): stable light emit order and Python 1.5 keyword-safe identifiers
+- `122c3adb7` fix(spv): reject partial running-light specs; make stability test non-vacuous
+- `849bae536` feat(spv): mod hardpoint writer routes running-light edits to the managed block
+- `43b2e0d3e` feat(spv): stock hardpoint saves take effect on the next mission load
+- `fb9f84ee9` feat(spv): draw the hologram ship's running lights in viewer mode
+- `60a35fdd2` feat(spv): pure running-light editor helpers
+- `b3f5a5af5` feat(spv): running-lights pane mixin - staging, rows, select, save, Physical tab
+- `143278ed3` fix(spv): any other selection takes the gizmo off a running light
+- `045058ddd` feat(spv): RunningLightTarget edit adapter - move, coords, mirror, pipette, lock
+- `9744f8207` feat(spv): running-light add / place / edit / remove flow
+- `2daa345da` feat(spv): live running-light preview + restore on close
+- `7713e28f3` fix(spv): articulated re-send no longer overwrites the running-light preview
+- `683c0bef0` feat(spv): running-light rows, Add modal with Type dropdown, light form and menu
+- `9283e09d1` fix(spv): menu close keeps a just-opened modal's overlay; edit keeps colour
