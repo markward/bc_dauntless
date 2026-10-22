@@ -269,7 +269,8 @@ void draw_mesh(const assets::Model& model,
 namespace {
 // TEMPORARY perf experiment (perf/bridge-4k): DAUNTLESS_BRIDGE_EXP bitmask,
 // main bridge view only. 1 AO filter off, 2 PBR off, 4 probes off,
-// 8 spots + area lights off, 16 depth pre-fill then LEQUAL / no depth write.
+// 8 spots + area lights off, 16 depth pre-fill then LEQUAL / no depth write,
+// 32 spots off, 64 area lights off.
 int bridge_exp() {
     static const int v = [] {
         const char* e = std::getenv("DAUNTLESS_BRIDGE_EXP");
@@ -392,7 +393,15 @@ void BridgePass::render(const scenegraph::World& world,
     };
 
     // Static spot lights, packed once per render() (both sub-passes share them).
-    const int spot_count = (main_bridge && !(exp_main & 8)) ? static_cast<int>(spots_.size()) : 0;
+    const int spot_count = (main_bridge && !(exp_main & (8 | 32))) ? static_cast<int>(spots_.size()) : 0;
+    if (exp_main != 0) {
+        static bool printed = false;
+        if (!printed && (!spots_.empty() || !area_lights_.empty())) {
+            printed = true;
+            std::fprintf(stderr, "[bridge-exp] spots %zu, area rects %zu\n",
+                         spots_.size(), area_lights_.size());
+        }
+    }
     glm::vec3 spot_pos[kBridgeMaxSpots];
     glm::vec3 spot_dir[kBridgeMaxSpots];
     glm::vec3 spot_rad[kBridgeMaxSpots];
@@ -406,7 +415,7 @@ void BridgePass::render(const scenegraph::World& world,
     }
 
     // Static area lights (spec §16.3), packed like the spots.
-    const int area_count = (main_bridge && !(exp_main & 8)) ? static_cast<int>(area_lights_.size()) : 0;
+    const int area_count = (main_bridge && !(exp_main & (8 | 64))) ? static_cast<int>(area_lights_.size()) : 0;
     glm::vec4 area_cr[kBridgeMaxAreaLights];   // xyz centre, w range
     glm::vec3 area_u[kBridgeMaxAreaLights];
     glm::vec3 area_v[kBridgeMaxAreaLights];
