@@ -68,6 +68,11 @@ def on_sdk_module_exec(module, qualname: str) -> None:
             # just finished executing. One snapshot point covers both homes.
             from engine.appc import articulated_part
             _dispatch(articulated_part.snapshot_for_leaf, leaf)
+            from engine.appc import attach_templates
+            queued = attach_templates.drain()
+            if queued:
+                _dispatch(attach_templates.wrap_load_property_set,
+                          module, queued)
     elif len(parts) == 2:
         from engine.appc import ship_overrides
         _dispatch(ship_overrides.apply, module)
