@@ -1,6 +1,6 @@
 # Warp-in arrivals (campaign + Quick Battle warp-in delay) — design
 
-Date: 2026-10-22 · Branch: `feat/qb-warp-in-delay` · Status: design, awaiting Mark's approval
+Date: 2026-10-22 · Branch: `feat/qb-warp-in-delay` · Status: built on feat/qb-warp-in-delay, awaiting Mark's live check (§8) and the §6.6 measurement
 
 ## 1. Intent
 
