@@ -213,6 +213,11 @@ number and reach a wrong conclusion:
   `-` for GPU and the step's GPU cost lands in `bridge`. To measure a step,
   compare `bridge` during a fill with `bridge` once settled (or with no
   reflections dirty).
+* **The `bridge` pass's parts:** `bridge.ao_prepass` (the normal + depth
+  pre-pass), `bridge.ao_kernel` (the AO itself), `bridge.shell` (the room,
+  main view only) and `bridge.crew` (the officers). Nested, so they need
+  `DAUNTLESS_PROFILE_GPU_FOCUS=bridge.probe_capture,bridge.ao_prepass,bridge.ao_kernel,bridge.shell,bridge.crew`
+  for GPU times (perf-register SIG-133).
 
 `calls` is the raw count from the last resolved frame, not an average, so a pass
 that ran twice (the exterior view **and** the bridge viewscreen RTT both call

@@ -95,7 +95,7 @@ inline void rect_corners(glm::vec3 c, glm::vec3 u, glm::vec3 v, glm::vec3 out[4]
 // theta / sin(theta) for cos(theta) = x, from Heitz's fitted IntegrateEdge
 // (LTC reference code) in place of acos + sin: within 1e-5 of the exact value
 // (bridge_pbr_test), and the area lights' diffuse runs it 4-5 times per light
-// per pixel (perf-register SIG-134). Below x = 0 it is exact by the identity
+// per pixel (perf-register SIG-134, SIG-138). Below x = 0 it is exact by the identity
 // theta / sin(theta) = pi / sin(theta) - (pi - theta) / sin(theta).
 inline float area_theta_over_sin(float x) {
     const float y = std::fabs(x);

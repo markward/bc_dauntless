@@ -12571,29 +12571,25 @@ def run(mission_name: Optional[str] = None,
             # but sees the exterior; get_explicit_rendered_set() is the
             # render-target authority; bridge_flag()/GetRenderedSet() are
             # untouched). Reverts when CutsceneCameraEnd pops the mode.
-            with frame_profiler.scope("rp.bridge_state"):
-                _cc = None if pause.sim_frozen else _active_cutscene_camera()
-                _apply_bridge_pass_state(
-                    view_mode.is_bridge and _cc is None, _h, view_mode)
+            _cc = None if pause.sim_frozen else _active_cutscene_camera()
+            _apply_bridge_pass_state(
+                view_mode.is_bridge and _cc is None, _h, view_mode)
             # AT_MOVE walk completion advances the mission TGSequence (E1M1
             # UndockCutscene -> Inspection enables the crew menus), so it must be
             # pumped every unpaused frame regardless of view — NOT inside the
             # is_bridge render block below (that block is purely visual). See
             # _pump_walk_controller.
-            with frame_profiler.scope("rp.walk"):
-                _pump_walk_controller(walk_ctrl, r, _player_dt, paused=pause.sim_frozen)
+            _pump_walk_controller(walk_ctrl, r, _player_dt, paused=pause.sim_frozen)
             # The door half of the bridge cutscene pump is likewise
             # view-independent — see _pump_bridge_doors.
-            with frame_profiler.scope("rp.doors"):
-                _pump_bridge_doors(cutscene, r, paused=pause.sim_frozen)
+            _pump_bridge_doors(cutscene, r, paused=pause.sim_frozen)
             # ...and so is the character anim controller: it drains the pending
             # turn/glance/default queues and fires the settled actions'
             # on_complete, which advances the mission TGSequence (an AT_SAY_LINE
             # with a turn target defers the LINE ITSELF behind its turn). Gating
             # it on bridge view left every such line unspoken and its sequence
             # hung whenever the player was in tactical view. See _pump_char_anim.
-            with frame_profiler.scope("rp.char_anim"):
-                _pump_char_anim(char_anim, r, _player_dt, paused=pause.sim_frozen)
+            _pump_char_anim(char_anim, r, _player_dt, paused=pause.sim_frozen)
             if fixed_camera:
                 fixed_radius = player.GetRadius() if player is not None else 1.0
                 eye = (0.0, 0.0, CAM_MAX_RADII * fixed_radius)
@@ -12604,11 +12600,10 @@ def run(mission_name: Optional[str] = None,
                 # the scene: a subject in another set of the viewed frame (the
                 # player through a sibling-region cutscene) is moved into them
                 # first (_view_pose_of). Same set: _pose_of's own poses.
-                with frame_profiler.scope("rp.camera"):
-                    _cam_pose_of = _view_pose_of(_pose_of, _frames.viewing_set())
-                    eye, target, up_vec = _compute_camera(
-                        view_mode, director,
-                        player=player, dt=_player_dt, pose_of=_cam_pose_of)
+                _cam_pose_of = _view_pose_of(_pose_of, _frames.viewing_set())
+                eye, target, up_vec = _compute_camera(
+                    view_mode, director,
+                    player=player, dt=_player_dt, pose_of=_cam_pose_of)
                 # Cutscene camera (computed above) drives the main-scene pose,
                 # converting the mode's forward DIRECTION to a look-at POINT.
                 if _cc is not None:
@@ -12626,42 +12621,37 @@ def run(mission_name: Optional[str] = None,
                     import App as _App
                     # Bridge cutscene SHOT (PlacementWatch "bridge"): drive the
                     # bridge camera from it -- see _bridge_cutscene_camera.
-                    with frame_profiler.scope("rp.bridge_pose"):
-                        _sync_bridge_mode_pose(bridge_camera, _player_dt,
-                                               exterior_active=_cc is not None,
-                                               paused=pause.sim_frozen)
+                    _sync_bridge_mode_pose(bridge_camera, _player_dt,
+                                           exterior_active=_cc is not None,
+                                           paused=pause.sim_frozen)
                     if not pause.sim_frozen:
                         # CAMERA half only — the door half (_update_doors) is
                         # pumped view-independently above (_pump_bridge_doors).
-                        with frame_profiler.scope("rp.cutscene"):
-                            cutscene.update(
-                                _player_dt,
-                                bridge_camera=bridge_camera,
-                                view_mode=view_mode,
-                                renderer=r,
-                                anim_mgr=_App.g_kAnimationManager,
-                            )
+                        cutscene.update(
+                            _player_dt,
+                            bridge_camera=bridge_camera,
+                            view_mode=view_mode,
+                            renderer=r,
+                            anim_mgr=_App.g_kAnimationManager,
+                        )
                         # Idle fidgets ARE purely visual — they stay view-gated.
                         # They submit into char_anim, which is pumped
                         # view-independently above (_pump_char_anim); do NOT
                         # call char_anim.update() here as well, or every clip
                         # steps twice per frame in bridge view.
-                        with frame_profiler.scope("rp.idle"):
-                            idle_gestures.update(
-                                _player_dt, _live_bridge_characters(),
-                                renderer=r, anim_mgr=_App.g_kAnimationManager,
-                                controller=char_anim)
+                        idle_gestures.update(
+                            _player_dt, _live_bridge_characters(),
+                            renderer=r, anim_mgr=_App.g_kAnimationManager,
+                            controller=char_anim)
                         # walk_ctrl is pumped view-independently above
                         # (_pump_walk_controller) — its completion drives the
                         # mission sequence and must not be gated on bridge view.
-                        with frame_profiler.scope("rp.lip"):
-                            try:
-                                lip_runtime.update()
-                            except Exception as _e:
-                                dev_mode.log_swallowed("lip-sync update", _e)
+                        try:
+                            lip_runtime.update()
+                        except Exception as _e:
+                            dev_mode.log_swallowed("lip-sync update", _e)
                         # node_anim reads node_overrides written by r.frame() above; intentionally one frame behind — do NOT reorder.
-                        with frame_profiler.scope("rp.node_anim"):
-                            node_anim.update(r)
+                        node_anim.update(r)
                     mouse_dx, mouse_dy = host_io.consume_mouse_delta()
                     # While paused we still drain the accumulated mouse
                     # delta (so it doesn't snap the look on resume) but
@@ -12690,64 +12680,61 @@ def run(mission_name: Optional[str] = None,
                         # look-at + FOV factor; MenuEventHandler reconciles the
                         # maincamera zoom; advance() eases it on _player_dt so it
                         # freezes under pause.
-                        with frame_profiler.scope("rp.engagement"):
-                            _w = (watch_ctrl.resolve_target_world(r)
-                                  if watch_ctrl is not None else None)
-                            _wc, _zoom_off = _active_zoom_officer(crew_menu_panel, r)
-                            _menu_zoom = _officer_zoom_factor(_zoom_off)
-                            if _menu_zoom == POSITION_ZOOM_SENTINEL:
-                                _menu_zoom = _BRIDGE_ZOOM_MIN
-                            _engaged, _look_at, _zoom_factor, _engaged_char = \
-                                _pick_bridge_engagement(
-                                    watch_world=_w,
-                                    watch_holds=(watch_ctrl is not None
-                                                 and watch_ctrl.is_holding()),
-                                    watch_char=(watch_ctrl.watched_character()
-                                                if watch_ctrl is not None else None),
-                                    menu_world=_wc, menu_char=_zoom_off,
-                                    menu_zoom=_menu_zoom,
-                                    hail=_viewscreen_hail_engagement(controller))
-                            _drv = _engaged_char or _last_engaged_char[0]
-                            if _drv is not None:
-                                _drv.MenuEventHandler(_engaged, _look_at, _zoom_factor,
-                                                      now=_App.g_kUtopiaModule.GetGameTime())
-                            if _engaged_char is not None:
-                                _last_engaged_char[0] = _engaged_char
-                            if _BRIDGE_ZOOM_CAM is not None:
-                                _BRIDGE_ZOOM_CAM.advance(_player_dt)
-                            if _BRIDGE_ZOOM_CAM is not None and watch_ctrl is not None \
-                                    and watch_ctrl.consume_snap():
-                                _BRIDGE_ZOOM_CAM.advance(1e9)   # AT_LOOK_AT_ME_NOW
+                        _w = (watch_ctrl.resolve_target_world(r)
+                              if watch_ctrl is not None else None)
+                        _wc, _zoom_off = _active_zoom_officer(crew_menu_panel, r)
+                        _menu_zoom = _officer_zoom_factor(_zoom_off)
+                        if _menu_zoom == POSITION_ZOOM_SENTINEL:
+                            _menu_zoom = _BRIDGE_ZOOM_MIN
+                        _engaged, _look_at, _zoom_factor, _engaged_char = \
+                            _pick_bridge_engagement(
+                                watch_world=_w,
+                                watch_holds=(watch_ctrl is not None
+                                             and watch_ctrl.is_holding()),
+                                watch_char=(watch_ctrl.watched_character()
+                                            if watch_ctrl is not None else None),
+                                menu_world=_wc, menu_char=_zoom_off,
+                                menu_zoom=_menu_zoom,
+                                hail=_viewscreen_hail_engagement(controller))
+                        _drv = _engaged_char or _last_engaged_char[0]
+                        if _drv is not None:
+                            _drv.MenuEventHandler(_engaged, _look_at, _zoom_factor,
+                                                  now=_App.g_kUtopiaModule.GetGameTime())
+                        if _engaged_char is not None:
+                            _last_engaged_char[0] = _engaged_char
+                        if _BRIDGE_ZOOM_CAM is not None:
+                            _BRIDGE_ZOOM_CAM.advance(_player_dt)
+                        if _BRIDGE_ZOOM_CAM is not None and watch_ctrl is not None \
+                                and watch_ctrl.consume_snap():
+                            _BRIDGE_ZOOM_CAM.advance(1e9)   # AT_LOOK_AT_ME_NOW
                         # SP4: tooltip owner = focused officer (open menu wins
                         # over hover), then run the real SDK UpdateToolTip
                         # handler on a throttle so its status rows populate.
-                        with frame_profiler.scope("rp.tooltip"):
-                            from engine.appc.characters import (
-                                CharacterClass_SetCurrentToolTipOwner)
-                            from engine.ui import tooltip_dispatch
-                            if tooltip_dispatch.tooltip_suppressed(
-                                    cutscene_active=_tw.IsCutsceneMode(),
-                                    bridge_cutscene_pending=cutscene.has_pending_camera()):
-                                # No tooltip box during a cutscene -- it would float
-                                # over the letterbox bars. Drop any owner and skip.
-                                CharacterClass_SetCurrentToolTipOwner(None)
-                            else:
-                                # pick() hands back the CHARACTER, and the open
-                                # menu resolves its owner off the menu itself, so
-                                # both work for a guest -- who has no station label
-                                # for resolve_character to match.
-                                _hover = None
-                                with frame_profiler.scope("rp.tooltip_pick"):
-                                    _aimed = bridge_officer_picking.pick(_h, r, bridge_camera)
-                                if _aimed is not None:
-                                    _hover = _aimed["officer"]
-                                _menu_off = crew_menu_panel.open_officer()
-                                _owner = tooltip_dispatch.select_owner(hover=_hover,
-                                                                       open_menu=_menu_off)
-                                CharacterClass_SetCurrentToolTipOwner(_owner)
-                                tooltip_dispatch.run_update_tooltip(
-                                    _owner, now=_App.g_kUtopiaModule.GetGameTime(),
-                                    state=_tooltip_dispatch_state)
+                        from engine.appc.characters import (
+                            CharacterClass_SetCurrentToolTipOwner)
+                        from engine.ui import tooltip_dispatch
+                        if tooltip_dispatch.tooltip_suppressed(
+                                cutscene_active=_tw.IsCutsceneMode(),
+                                bridge_cutscene_pending=cutscene.has_pending_camera()):
+                            # No tooltip box during a cutscene -- it would float
+                            # over the letterbox bars. Drop any owner and skip.
+                            CharacterClass_SetCurrentToolTipOwner(None)
+                        else:
+                            # pick() hands back the CHARACTER, and the open
+                            # menu resolves its owner off the menu itself, so
+                            # both work for a guest -- who has no station label
+                            # for resolve_character to match.
+                            _hover = None
+                            _aimed = bridge_officer_picking.pick(_h, r, bridge_camera)
+                            if _aimed is not None:
+                                _hover = _aimed["officer"]
+                            _menu_off = crew_menu_panel.open_officer()
+                            _owner = tooltip_dispatch.select_owner(hover=_hover,
+                                                                   open_menu=_menu_off)
+                            CharacterClass_SetCurrentToolTipOwner(_owner)
+                            tooltip_dispatch.run_update_tooltip(
+                                _owner, now=_App.g_kUtopiaModule.GetGameTime(),
+                                state=_tooltip_dispatch_state)
                         bridge_camera.apply(mouse_dx, mouse_dy)
                     # Bridge first-person camera uses separate (eye, target,
                     # up) vectors from the exterior view, so it needs its own
@@ -12757,15 +12744,14 @@ def run(mission_name: Optional[str] = None,
                     # editor has a fly pose, it takes over the bridge camera
                     # unshaken -- you are aiming at shapes, not flying the
                     # ship.
-                    with frame_profiler.scope("rp.bridge_cam"):
-                        b_eye, b_target, b_up, b_fov = _bridge_camera_pose(
-                            bridge_emitters, bridge_camera, camera_shake.perturb)
-                        r.set_bridge_camera(
-                            eye=b_eye, target=b_target, up=b_up,
-                            fov_y_rad=b_fov,
-                            near=_BridgeCamera.NEAR,
-                            far=_BridgeCamera.FAR,
-                        )
+                    b_eye, b_target, b_up, b_fov = _bridge_camera_pose(
+                        bridge_emitters, bridge_camera, camera_shake.perturb)
+                    r.set_bridge_camera(
+                        eye=b_eye, target=b_target, up=b_up,
+                        fov_y_rad=b_fov,
+                        near=_BridgeCamera.NEAR,
+                        far=_BridgeCamera.FAR,
+                    )
             else:
                 eye = (0.0, 30.0, 200.0)
                 target = (0.0, 0.0, 0.0)
@@ -12777,14 +12763,13 @@ def run(mission_name: Optional[str] = None,
             # Space-pass feed is built; the combat feeds the sim produced
             # above are built here for that reason. A frozen frame keeps the
             # last origin and pushes no new combat feeds (as before).
-            with frame_profiler.scope("rp.combat_feed"):
-                if _ships_this_tick is not None:
-                    _apply_render_origin(r, eye)
-                    _push_combat_render_data(
-                        _ships_this_tick,
-                        ship_instances=(session.ship_instances if session is not None else None),
-                        ship_emitters=(session.ship_emitters if session is not None else None),
-                        player=player)
+            if _ships_this_tick is not None:
+                _apply_render_origin(r, eye)
+                _push_combat_render_data(
+                    _ships_this_tick,
+                    ship_instances=(session.ship_instances if session is not None else None),
+                    ship_emitters=(session.ship_emitters if session is not None else None),
+                    player=player)
 
             frame_profiler.mark("spv")
             # --- Ship Property Viewer override (dev-only) ---

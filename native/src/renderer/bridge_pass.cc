@@ -29,7 +29,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <optional>
@@ -267,24 +266,6 @@ void draw_mesh(const assets::Model& model,
 
 }  // namespace
 
-namespace {
-// TEMPORARY perf experiment (perf/bridge-4k): DAUNTLESS_BRIDGE_EXP bitmask,
-// main bridge view only. 1 AO filter off, 2 PBR off, 4 probes off,
-// 8 spots + area lights off, 16 depth pre-fill then LEQUAL / no depth write,
-// 32 spots off, 64 area lights off; in bridge.frag (u_bridge_exp) 128 area
-// diffuse off, 256 area specular off, 512 the old exact acos edge integral;
-// 1024 per-draw light culling off, 4096 print the culling count once.
-int bridge_exp() {
-    static const int v = [] {
-        const char* e = std::getenv("DAUNTLESS_BRIDGE_EXP");
-        const int x = e ? std::atoi(e) : 0;
-        if (x != 0) std::fprintf(stderr, "[bridge-exp] mask %d\n", x);
-        return x;
-    }();
-    return v;
-}
-}  // namespace
-
 void BridgePass::render(const scenegraph::World& world,
                         const scenegraph::Camera& camera,
                         Pipeline& pipeline,
@@ -293,7 +274,6 @@ void BridgePass::render(const scenegraph::World& world,
                         scenegraph::Pass pass,
                         std::uint32_t comm_set_id) {
     const bool main_bridge = pass == scenegraph::Pass::Bridge && comm_set_id == 0;
-    const int exp_main = (main_bridge && !normal_pass_ && !capture_pass_) ? bridge_exp() : 0;
     // A probe face (spec 2026-10-17 §4.1): which state it shows and which of
     // that state's layers it holds (-1 = the state's base).
     const int cap_layer = (capture_pass_ && capture_probe_ >= kBridgeStates)
@@ -349,7 +329,7 @@ void BridgePass::render(const scenegraph::World& world,
     // PBR on the main bridge view only: a comm set (another ship's room on
     // the viewscreen) keeps the legacy shading -- the probes would hold the
     // PLAYER's bridge, the wrong room to reflect.
-    const int pbr = (pbr_enabled_ && main_bridge && !(exp_main & 2)) ? 1 : 0;
+    const int pbr = (pbr_enabled_ && main_bridge) ? 1 : 0;
     // Emissive variant by the player's alert level on the main bridge view
     // only; a comm set shows the default. A probe face shows its own state's.
     // (The AO pre-pass returns before the shader reads any emissive.)
@@ -366,7 +346,7 @@ void BridgePass::render(const scenegraph::World& world,
     int probe_layer[kBridgeMaxProbeEntries] = {};
     float probe_weight[kBridgeMaxProbeEntries] = {};
     if (pbr != 0 && !capture_pass_ && !normal_pass_ && probes_.texture() != 0 &&
-        brdf_lut_.texture() != 0 && !(exp_main & 4)) {
+        brdf_lut_.texture() != 0) {
         for (const ProbeEntry& e : probe_entries(fade_.w, layer_states_, layer_values_,
                                                  [this](int p) { return probe_valid(p); })) {
             if (debug_view_ == BridgeDebugView::ReflectionLayers && e.probe < kBridgeStates)
@@ -396,15 +376,7 @@ void BridgePass::render(const scenegraph::World& world,
     };
 
     // Static spot lights, packed once per render() (both sub-passes share them).
-    const int spot_count = (main_bridge && !(exp_main & (8 | 32))) ? static_cast<int>(spots_.size()) : 0;
-    if (exp_main != 0) {
-        static bool printed = false;
-        if (!printed && (!spots_.empty() || !area_lights_.empty())) {
-            printed = true;
-            std::fprintf(stderr, "[bridge-exp] spots %zu, area rects %zu\n",
-                         spots_.size(), area_lights_.size());
-        }
-    }
+    const int spot_count = main_bridge ? static_cast<int>(spots_.size()) : 0;
     glm::vec3 spot_pos[kBridgeMaxSpots];
     glm::vec3 spot_dir[kBridgeMaxSpots];
     glm::vec3 spot_rad[kBridgeMaxSpots];
@@ -418,7 +390,7 @@ void BridgePass::render(const scenegraph::World& world,
     }
 
     // Static area lights (spec §16.3), packed like the spots.
-    const int area_count = (main_bridge && !(exp_main & (8 | 64))) ? static_cast<int>(area_lights_.size()) : 0;
+    const int area_count = main_bridge ? static_cast<int>(area_lights_.size()) : 0;
     glm::vec4 area_cr[kBridgeMaxAreaLights];   // xyz centre, w range
     glm::vec3 area_u[kBridgeMaxAreaLights];
     glm::vec3 area_v[kBridgeMaxAreaLights];
@@ -456,8 +428,7 @@ void BridgePass::render(const scenegraph::World& world,
         s.set_mat4("u_ao_inv_proj", inv_proj);
         s.set_vec2("u_ao_screen", glm::vec2(static_cast<float>(view_vp[2]),
                                             static_cast<float>(view_vp[3])));
-        s.set_int("u_ao_on", (ao_on && !(exp_main & 1)) ? 1 : 0);
-        s.set_int("u_bridge_exp", exp_main);
+        s.set_int("u_ao_on", ao_on ? 1 : 0);
         // Per-draw culling masks: set per mesh by sub-pass A; the officers
         // (sub-pass B) skip nothing.
         s.set_int("u_spot_skip", 0);
@@ -560,9 +531,7 @@ void BridgePass::render(const scenegraph::World& world,
         for (const auto& g : glow_captures_) capture_glow[g.mesh] = &g;
     // Per-draw light culling (renderer::bridge_cull): each mesh's world box
     // against every light, so the shader skips lights that light none of it.
-    const bool cull_lights = !normal_pass_ && (spot_count > 0 || area_count > 0)
-                             && !(bridge_exp() & 1024);
-    long cull_pairs = 0, cull_skipped = 0;
+    const bool cull_lights = !normal_pass_ && (spot_count > 0 || area_count > 0);
     auto draw_shell = [&](const assets::Model& m, const assets::Mesh& mesh,
             const assets::Material& mat, const glm::mat4& w,
             unsigned long long mh) {
@@ -583,10 +552,6 @@ void BridgePass::render(const scenegraph::World& world,
                 }
                 base_shader.set_int("u_spot_skip", spot_skip);
                 base_shader.set_int("u_area_skip", area_skip);
-                cull_pairs += spot_count + area_count;
-                for (int i = 0; i < 32; ++i)
-                    cull_skipped += ((static_cast<unsigned>(spot_skip) >> i) & 1u)
-                                  + ((static_cast<unsigned>(area_skip) >> i) & 1u);
             }
             int hl = 0;
             if (highlight_model_ != 0 && mh == highlight_model_) {
@@ -639,32 +604,9 @@ void BridgePass::render(const scenegraph::World& world,
                       pbr, rough_ov, metal_ov, emissive_alert,
                       glow_src, glow_rgb, glow_level, cap_glow_src, cap_glow_rgb);
         };
-    if (exp_main & 16) {
-        // Depth only, through the same program (the normal-output early
-        // return), so the shading draw below matches its depth exactly.
-        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-        base_shader.set_int("u_output_normal", 1);
-        walk_bridge_meshes(world, lookup, pass, comm_set_id, draw_shell);
-        base_shader.set_int("u_output_normal", 0);
-        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-        glDepthFunc(GL_LEQUAL);
-        glDepthMask(GL_FALSE);
-    }
     walk_bridge_meshes(world, lookup, pass, comm_set_id, draw_shell);
-    if (exp_main & 16) {
-        glDepthFunc(GL_LESS);
-        glDepthMask(GL_TRUE);
-    }
     base_shader.set_int("u_spot_skip", 0);
     base_shader.set_int("u_area_skip", 0);
-    if ((exp_main & 4096) && cull_pairs > 0) {
-        static bool cull_printed = false;
-        if (!cull_printed) {
-            cull_printed = true;
-            std::fprintf(stderr, "[bridge-exp] cull: %ld of %ld light-mesh pairs skipped\n",
-                         cull_skipped, cull_pairs);
-        }
-    }
 
     // ── Sub-pass B: skinned bridge characters ──────────────────────────────
     sub_scope.reset();
