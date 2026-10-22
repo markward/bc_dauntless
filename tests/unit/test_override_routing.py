@@ -144,3 +144,79 @@ def test_write_applies_mixed_setter_and_region(tmp_path):
     calls = w.read_models(m)["galaxy"]["Center Impulse"]
     assert ("SetRadius", (0.9,)) in calls
     assert ("SetGlowRegionShape", (0, "Sphere")) in calls
+
+
+def _fake_live_module(src):
+    import types
+    fake = types.ModuleType("_fake_live_overrides")
+    exec(src, fake.__dict__)  # noqa: S102
+
+    class _Rec:
+        def __init__(self):
+            self.calls = []
+
+        def __getattr__(self, name):
+            return lambda *a: self.calls.append((name, a))
+
+    def apply(leaf, rec):
+        fn = fake.OVERRIDES.get(leaf)
+        if fn is not None:
+            fn(lambda name: rec)
+
+    fake.apply = apply
+    fake.Rec = _Rec
+    return fake
+
+
+def _galaxy_file(tmp_path, radius):
+    f = tmp_path / "hardpoint_overrides.py"
+    src = w.emit({"galaxy": {"Center Impulse": [("SetRadius", (radius,))]}})
+    f.write_text(src, encoding="utf-8")
+    return f, src
+
+
+def test_write_refreshes_live_overrides(tmp_path):
+    f, src = _galaxy_file(tmp_path, 0.25)
+    fake = _fake_live_module(src)
+    old = fake.OVERRIDES
+    target = r.HardpointOverridesFileTarget(str(f), live_module=fake)
+    target.write("galaxy", [("Center Impulse", "SetRadius", (0.5,))])
+    assert fake.OVERRIDES is not old
+    rec = fake.Rec()
+    fake.apply("galaxy", rec)
+    assert ("SetRadius", (0.5,)) in rec.calls
+
+
+def test_failed_write_leaves_live_overrides(tmp_path, monkeypatch):
+    f, src = _galaxy_file(tmp_path, 0.25)
+    fake = _fake_live_module(src)
+    old = fake.OVERRIDES
+    target = r.HardpointOverridesFileTarget(str(f), live_module=fake)
+
+    def _bad_emit(models):
+        raise ValueError("bad emit")
+
+    monkeypatch.setattr(r._writer, "emit", _bad_emit)
+    with pytest.raises(ValueError):
+        target.write("galaxy", [("Center Impulse", "SetRadius", (0.5,))])
+    assert fake.OVERRIDES is old
+
+
+def test_failed_refresh_raises_and_leaves_live_overrides(tmp_path, monkeypatch):
+    f, src = _galaxy_file(tmp_path, 0.25)
+    fake = _fake_live_module(src)
+    old = fake.OVERRIDES
+    target = r.HardpointOverridesFileTarget(str(f), live_module=fake)
+    monkeypatch.setattr(r._writer, "emit", lambda models: "def broken(:\n")
+    with pytest.raises(RuntimeError, match="saved, but reload failed"):
+        target.write("galaxy", [("Center Impulse", "SetRadius", (0.5,))])
+    assert fake.OVERRIDES is old
+
+
+def test_other_path_does_not_touch_real_module(tmp_path):
+    from engine.appc import hardpoint_overrides as real
+    before = real.OVERRIDES
+    f, _src = _galaxy_file(tmp_path, 0.25)
+    r.HardpointOverridesFileTarget(str(f)).write(
+        "galaxy", [("Center Impulse", "SetRadius", (0.5,))])
+    assert real.OVERRIDES is before
