@@ -196,6 +196,7 @@ From the clean-room reference (all `reviewed-not-tested`):
 | AI | Follow the missions: AI assigned on arrival. |
 | Where a late group arrives | "It doesn't matter where they arrive from, make it random." |
 | During the slide | The ship holds its heading and holds fire until it has fully arrived, but can be targeted throughout. |
+| Delay control | A − and + button either side of the value; click the value to type a number; any whole number is accepted. |
 
 ## 6. Design
 
@@ -290,14 +291,18 @@ live; see `feedback_vfx_calibrate_up_then_down`.
 ### 6.4 Quick Battle: the setting
 
 - **`Group` gains `warp_in_min: int = 0`.** 0 means present at the start.
-  - **Allowed values:** 0, 1, 2, 3, 5 and 10 minutes. *Our call;* the panel's
-    `_DRAFT_FIELDS` already validates against fixed id lists.
+  - **Allowed values:** **any whole number of minutes, 0 or more** (Mark,
+    2026-10-22). There is no upper limit.
+  - `_DRAFT_FIELDS` validates against fixed id lists today, so this field
+    needs an integer path. That path must reject non-integers, negatives,
+    booleans and floats such as `2.5`.
   - **The player group** never has a delay: it is always present.
 - **Round trip:**
   - `to_json` writes the field.
   - `from_json` reads it, **defaulting to 0 when the key is missing**, so every
     existing preset still loads unchanged.
-  - An unknown value is rejected like the other fields.
+  - A value that isn't a whole number ≥ 0 is rejected like the other fields'
+    bad values.
   - `update_details` gains the argument; it is positional today, so update
     every caller and test.
 - **Panel** (`engine/ui/quick_battle_setup_panel.py`):
@@ -307,8 +312,20 @@ live; see `feedback_vfx_calibrate_up_then_down`.
   - the group summary line. A delayed group reads e.g. "Enemy · warps in at
     5 min".
 - **JS** (`native/assets/ui-cef/js/quick_battle_setup.js` `renderDetails`):
-  - one more segmented row, **Warp-in: Start / 1 / 2 / 3 / 5 / 10 min**,
-    through the existing `draft:<field>:<value>` verb;
+  - one more row, **Warp-in**: a **− value +** stepper (Mark, 2026-10-22).
+    - **The buttons:** − and + step by 1 minute. − is disabled at 0.
+    - **The value:** reads "Start" at 0, otherwise "N min".
+    - **Typing a value:** clicking the value turns it into a number field.
+      - The player types any whole number, committed on `change`.
+      - Anything else (blank, negative, a fraction, text) reverts to the
+        previous value.
+      - Esc cancels, and Enter or blur commits.
+    - **Reuse:**
+      - the sheet's quantity stepper look (`qbs-qty`);
+      - the CEF text-capture panel contract, so the game reads no keys while
+        typing (`data-panel` on the root, commit on `change`; CLAUDE.md
+        "Keyboard capture for CEF text fields");
+      - the existing `draft:<field>:<value>` verb with an integer value;
   - while a delay is set, the **Direction** row shows as "Random" and can't be
     used. The group keeps its stored direction, so turning the delay off
     restores it. *Our call* on the presentation.
@@ -425,8 +442,12 @@ Focused tests only; never the whole suite or the gate (CLAUDE.md).
   - **Flash:** a flash record retires after its end time, under game time
     only.
   - **Scenario:** the `warp_in_min` round-trip, an old preset without the key
-    loads as 0, a bad value is rejected, and the player group can never get a
-    delay.
+    loads as 0, a bad value is rejected (negative, fraction, text, boolean),
+    a large value such as 600 is accepted, and the player group can never get
+    a delay.
+  - **Panel:** the integer draft path, with the same accept/reject cases.
+  - **UI suite:** the stepper's − and + (with − disabled at 0), and typing a
+    value that commits or reverts.
   - **Plan:** `warp_in_s`.
 - **Headless integration:**
   - **E5M4 pursuers** (or another `CreateShip(...,1)` site):
