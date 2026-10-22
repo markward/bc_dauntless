@@ -53,9 +53,10 @@ misbehaves: one part's interior texture follows another part's rotation.
      rooms on an enemy.
    - Further out, the hull paints the hole as dark, burnt wreckage, with the
      odd fire or lit window. No marking or interior draw runs for that ship.
-   - **Blown through** (past deck-break wear) is cut at any distance, so the
-     ship shows what is behind it there, near or far. The look does not jump
-     at the 20 GU switch. *(My call.)*
+   - **Blown through** (past deck-break wear) is cut only when near. Far, it
+     is painted as flat wreckage like any other hole: a far hull is never
+     see-through. *(Was "cut at any distance"; changed after Mark's live check
+     on 2026-10-22: zoomed out, he could see through the damage.)*
 4. **Asteroids keep craters** "much as we had it" (Mark). They are rebuilt on
    the new system: the cut comes from the damage records, and a short march
    into the damage finds the crater wall. That wall is shaded with the rock's
@@ -269,7 +270,7 @@ where each goes.
   - a big collision wears and a small one does not;
   - a rock crater shows rock, not rooms and not space;
   - beyond 20 GU a hole paints as wreckage, with no mark or interior draw;
-  - blown through, the hole is cut at any distance.
+  - blown through, the hole is cut only when near; far, it is painted too.
 - **Store tests:**
   - merge-not-evict;
   - wear from damage dealt;

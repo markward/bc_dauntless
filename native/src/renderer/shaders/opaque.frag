@@ -1119,8 +1119,8 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
 // marking draw (u_plating_mark) stamps the stencil exactly at these pixels.
 uniform int u_plating_mark;        // 1 = marking draw: stencil only where the hull is cut through
 // 1 = far hull (renderer/hull_interior_policy.h): no rooms are drawn behind
-// its holes, so a hole is painted as wreckage instead of cut, unless it is
-// blown clear through (wear past deck break, u_plating[24]).
+// its holes, so every hole, even one blown clear through, is painted as flat
+// wreckage instead of cut: a far hull is never see-through.
 uniform int u_plating_far;
 // 1 = a rock (Instance::surface_is_rock): no panels, ribs or members. Its
 // hole is plating_rock_hole; a far rock's crater is painted as darkened rock.
@@ -1753,9 +1753,10 @@ void main() {
         plating_w_int  = plating_internal(p_pl);
         hole = u_plating_rock != 0 ? plating_rock_hole(p_pl, plating_w_here)
                                    : plating_hole(p_pl, n_pl, plating_w_here, plating_fw);
-        // A hole is cut when this hull is near (rooms are drawn behind it) or
-        // blown clear through; a far hole is painted as wreckage below.
-        cut = hole == 1 && (u_plating_far == 0 || plating_w_here > u_plating[24]);
+        // A hole is cut only when this hull is near (rooms are drawn behind
+        // it). A far hole, blown clear through or not, is painted as flat
+        // wreckage below: a far hull is never see-through.
+        cut = hole == 1 && u_plating_far == 0;
     }
     // Marking draw: keep ONLY the cut-through pixels (colour is masked
     // off, so what they shade to is never seen); every other draw
