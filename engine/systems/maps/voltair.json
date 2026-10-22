@@ -68,7 +68,7 @@
         -17265.31754,
         0.0
       ],
-      "radius_gu": 24290.79241492395,
+      "radius_gu": 24290.7924149,
       "body_names": [
         "Voltair 1"
       ],
@@ -81,7 +81,7 @@
         -17265.31754,
         0.0
       ],
-      "radius_gu": 27290.79241492395,
+      "radius_gu": 27290.7924149,
       "body_names": [
         "Voltair 2"
       ],
@@ -120,6 +120,6 @@
       }
     ],
     "color": null,
-    "full_concealment": 0.39264259190842216
+    "full_concealment": 0.392642591908
   }
 }

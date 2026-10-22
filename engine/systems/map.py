@@ -77,6 +77,43 @@ class SystemMap:
         return None
 
 
+# Significant digits every float is rounded to before it reaches the JSON.
+#
+# A double carries 15-17, and the platforms disagree in the last one or two:
+# MSVC's libm and Apple's differ by an ULP on the transcendentals, so a map
+# generated on macOS and regenerated on Windows produced
+# "radius_gu": 13811.50342574356 against 13811.503425743558 -- identical
+# numbers, different text. test_system_maps_valid compares the committed
+# BYTES on purpose (its docstring explains that normalising both sides once
+# hid 30 stale files), so that divergence failed the gate on Windows for
+# every map.
+#
+# 12 significant digits sits clear of the disagreement and far beyond anything
+# the data means: a radius_gu of 13811.5034257 is exact to a nanometre, since
+# 1 GU is 175 m. Significant digits rather than decimal places, so the same
+# rule holds for a 0-1 colour component and a six-figure distance alike --
+# rounding to N decimals would quantise the small ones into uselessness.
+_JSON_SIG_DIGITS = 12
+
+
+def _platform_stable(value):
+    """Round every float in a nested structure to _JSON_SIG_DIGITS.
+
+    Non-finite values pass through untouched: json.dumps renders them as
+    Infinity/NaN, which is its own problem, and silently turning one into a
+    finite number here would hide it.
+    """
+    if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            return value
+        return float(f"{value:.{_JSON_SIG_DIGITS}g}")
+    if isinstance(value, dict):
+        return {k: _platform_stable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_platform_stable(v) for v in value]
+    return value
+
+
 def to_json(m: SystemMap) -> str:
     raw = asdict(m)
     for region in raw["regions"]:
@@ -84,7 +121,7 @@ def to_json(m: SystemMap) -> str:
             del region["bc_scale"]
     if raw["profile"] is None:
         del raw["profile"]
-    return json.dumps(raw, indent=2, sort_keys=False) + "\n"
+    return json.dumps(_platform_stable(raw), indent=2, sort_keys=False) + "\n"
 
 
 def _appearance_from_json(raw: dict) -> Appearance:

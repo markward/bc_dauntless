@@ -100,8 +100,8 @@
       "display_name": "Omega Draconis 5",
       "radius_gu": 600.0,
       "position_gu": [
-        -201008.3358822348,
-        -507653.07928333763,
+        -201008.335882,
+        -507653.079283,
         0.0
       ],
       "orbits": "OmegaDraconis",
@@ -118,11 +118,11 @@
     {
       "set_name": "OmegaDraconis1",
       "anchor_gu": [
-        -1405.296105045888,
-        -122973.51947477055,
-        702.648052522944
+        -1405.29610505,
+        -122973.519475,
+        702.648052523
       ],
-      "radius_gu": 9300.000000000007,
+      "radius_gu": 9300.0,
       "body_names": [
         "Omega Draconis 1"
       ],
@@ -158,10 +158,10 @@
       "set_name": "OmegaDraconis4",
       "anchor_gu": [
         441500.0,
-        -7999.999999999998,
-        -999.9999999999998
+        -8000.0,
+        -1000.0
       ],
-      "radius_gu": 13577.747210701753,
+      "radius_gu": 13577.7472107,
       "body_names": [
         "Omega Draconis 4"
       ],
@@ -170,11 +170,11 @@
     {
       "set_name": "OmegaDraconis5",
       "anchor_gu": [
-        -200958.3358822348,
-        -510653.07928333763,
+        -200958.335882,
+        -510653.079283,
         150.0
       ],
-      "radius_gu": 5104.16377715996,
+      "radius_gu": 5104.16377716,
       "body_names": [
         "Omega Draconis 5"
       ],
@@ -217,6 +217,6 @@
       }
     ],
     "color": null,
-    "full_concealment": 0.39264259190842216
+    "full_concealment": 0.392642591908
   }
 }
