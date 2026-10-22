@@ -26,6 +26,7 @@ import json
 from typing import List, Optional
 
 from engine.ui import running_light_editor
+from engine.ui.spv_decals_pane import MISS_HINT, instance_scale
 
 RL_GROUP_NAME = "Running Lights"
 RL_ADD_NAME = "+ Add"
@@ -46,6 +47,10 @@ class RunningLightsPaneMixin:
         self._pending_running_light: dict = {}
         self._rl_selected: Optional[str] = None
         self._rl_group_expanded: bool = False
+        # A validated spec awaiting its hull click (rl/place_begin), and the
+        # last refusal's readable reason.
+        self._rl_placing: Optional[dict] = None
+        self._rl_error: Optional[str] = None
 
     def _rl_clear_saved(self) -> None:
         self._saved_running_light: dict = {}
@@ -80,6 +85,17 @@ class RunningLightsPaneMixin:
 
     def _rl_names(self) -> set:
         return {spec["name"] for spec in self._rl_effective()}
+
+    def _rl_taken_names(self) -> set:
+        """Every name a new light may not take: the effective lights, every
+        descriptor and every model part. All templates share one
+        `FindByName` namespace, so a light named "Hull" would shadow the
+        hull."""
+        names = self._rl_names()
+        names |= {d.get("name") for d in self._descriptors}
+        names |= self._model_part_names()
+        names.discard(None)
+        return names
 
     def _rl_spec(self, name) -> Optional[dict]:
         for spec in self._rl_effective():
@@ -145,6 +161,19 @@ class RunningLightsPaneMixin:
     def _rl_clear_selection(self) -> None:
         self._rl_selected = None
 
+    def _rl_select(self, name) -> None:
+        """Select light `name`, dropping every other selection."""
+        self._rl_selected = name
+        self.selected_index = None
+        self._selected_light_index = None
+        self._selected_emitter = None
+        self._decal_selected = None
+        self._decal_reposition = False
+        from engine.ui import ship_property_viewer as _spv
+        _spv.select_model_part(None, self._model_part_nodes)
+        _spv.select_part_node(None, None)
+        self._last_pushed = None
+
     def _rl_yield_to_other_selection(self) -> None:
         """Drop the light selection when anything else is selected. Decided
         by STATE, not by which action ran: many actions select as a side
@@ -193,13 +222,37 @@ class RunningLightsPaneMixin:
     def _rl_state_key(self) -> tuple:
         return (tuple(tuple(sorted(s.items())) for s in self._rl_effective()),
                 tuple(self._pending_running_light),
-                self._rl_selected, self._rl_group_expanded)
+                self._rl_selected, self._rl_group_expanded,
+                None if self._rl_placing is None else self._rl_placing["name"],
+                self._rl_error)
+
+    def _rl_payload(self) -> dict:
+        """The payload's "running_lights" block: placing state, the last
+        refusal, and the Add form's next name, defaults and ranges."""
+        rle = running_light_editor
+        placing = (None if self._rl_placing is None
+                   else self._rl_placing["name"])
+        return {
+            "placing": placing,
+            "error": self._rl_error,
+            "hint": (None if placing is None else
+                     "Click the hull to place %s · Esc cancels" % placing),
+            "next_name": rle.default_name(self._rl_taken_names()),
+            "defaults": {"color": list(rle.DEFAULT_COLOR),
+                         "radius": rle.DEFAULT_RADIUS,
+                         "period": rle.DEFAULT_PERIOD,
+                         "duration": rle.DEFAULT_DURATION},
+            "ranges": {"radius": list(rle.RADIUS_RANGE),
+                       "period": list(rle.PERIOD_RANGE),
+                       "duration_min": rle.DURATION_MIN},
+        }
 
     # ------------------------------------------------------------------
     # Actions
     # ------------------------------------------------------------------
     def _dispatch_rl_action(self, action: str) -> bool:
-        """`rl/select:{"name": ...}` and `rl/toggle_group`."""
+        """`rl/select`, `rl/toggle_group`, `rl/place_begin`, `rl/place_cancel`,
+        `rl/edit` and `rl/remove` (JSON arguments after the colon)."""
         verb = action[len("rl/"):].partition(":")[0]
         if verb == "toggle_group":
             self._rl_group_expanded = not self._rl_group_expanded
@@ -209,25 +262,165 @@ class RunningLightsPaneMixin:
             name = _select_name(action)
             if name is None or self._rl_spec(name) is None:
                 return False
-            self._rl_selected = name
-            self.selected_index = None
-            self._selected_light_index = None
-            self._selected_emitter = None
-            self._decal_selected = None
-            self._decal_reposition = False
-            from engine.ui import ship_property_viewer as _spv
-            _spv.select_model_part(None, self._model_part_nodes)
-            _spv.select_part_node(None, None)
-            self._last_pushed = None
+            self._rl_select(name)
+            return True
+        if verb == "place_begin":
+            return self._rl_place_begin(action)
+        if verb == "place_cancel":
+            self._rl_cancel_placing()
+            self._rl_error = None
+            return True
+        if verb == "edit":
+            return self._rl_edit(action)
+        if verb == "remove":
+            name = _select_name(action)
+            if name is None or self._rl_spec(name) is None:
+                return False
+            self._rl_stage(name, None)
+            # A staged parent for a removed light would be written onto a
+            # template that no longer exists.
+            self._pending_physical.pop(name, None)
+            if self._rl_selected == name:
+                self._rl_selected = None
             return True
         return False
 
+    def _rl_refuse(self, message: str) -> bool:
+        self._rl_error = message
+        self._last_pushed = None
+        return False
 
-def _select_name(action: str) -> Optional[str]:
-    """The light name in `rl/select:{"name": ...}`, or None."""
+    def _rl_validate(self, spec, taken) -> Optional[dict]:
+        """`validate_spec`, with every refusal -- a bad value, or a malformed
+        CEF payload (missing key, wrong shape) -- as a readable `_rl_error`
+        and None: a payload must never raise out of dispatch."""
+        if not isinstance(spec, dict):
+            self._rl_refuse("Malformed light spec")
+            return None
+        try:
+            return running_light_editor.validate_spec(spec, taken)
+        except ValueError as e:
+            self._rl_refuse(str(e))
+        except KeyError as e:
+            self._rl_refuse("Malformed light spec: missing %s" % e)
+        except TypeError:
+            self._rl_refuse("Malformed light spec")
+        return None
+
+    def _rl_place_begin(self, action: str) -> bool:
+        """Arm placing with a validated spec. Not an edit: no undo entry.
+        The click decides the position, so the spec need not carry one."""
+        spec = _json_arg(action)
+        if isinstance(spec, dict):
+            spec = dict({"position": (0.0, 0.0, 0.0)}, **spec)
+        valid = self._rl_validate(spec, self._rl_taken_names())
+        if valid is None:
+            return False
+        self._rl_placing = valid
+        self._rl_error = None
+        self._last_pushed = None
+        return True
+
+    def _rl_edit(self, action: str) -> bool:
+        """Restage light `name` from `spec`; the name is fixed."""
+        arg = _json_arg(action)
+        name = arg.get("name") if isinstance(arg, dict) else None
+        if not isinstance(name, str) or self._rl_spec(name) is None:
+            return self._rl_refuse("No running light to edit")
+        spec = arg.get("spec")
+        if isinstance(spec, dict):
+            spec = dict(spec, name=name)
+        valid = self._rl_validate(spec, self._rl_taken_names() - {name})
+        if valid is None:
+            return False
+        self._rl_stage(name, valid)
+        self._rl_error = None
+        return True
+
+    # ------------------------------------------------------------------
+    # Placing (a viewport click while armed)
+    # ------------------------------------------------------------------
+    def _rl_cancel_placing(self) -> bool:
+        """Esc while placing cancels it. True when it was placing."""
+        if self._rl_placing is None:
+            return False
+        self._rl_placing = None
+        self._rl_error = None
+        self._last_pushed = None
+        return True
+
+    def _rl_click(self, x, y, viewport) -> bool:
+        """A viewport click. False when not placing (the click falls
+        through); otherwise it is consumed. A miss keeps placing with the
+        hint. A hit stages the light at the hit -- the NIF-unit body point
+        scaled to unscaled GU, lifted off the hull along the normal by the
+        light's drawn size -- selects it and, on a rigged part's mesh,
+        stages that part as its physical parent. Refused while mount
+        editing is locked: a posed rig would record the position wrong."""
+        if self._rl_placing is None:
+            return False
+        self._last_pushed = None
+        if not self._mount_editing_enabled():
+            self._rl_error = (self._mount_lock_state_and_reason()[1]
+                              or "Mount editing is locked")
+            return True
+        before = self._snapshot_pending()
+        hit = self._decal_hull_hit(x, y, viewport)
+        if hit is None:
+            self._rl_error = MISS_HINT
+            return True
+        pb, nb, mesh = hit
+        from engine.appc import running_light_dials
+        spec = dict(self._rl_placing)
+        scale = instance_scale(self._ship_getter())
+        lift = running_light_dials.current()["size_gu_per_radius"] * spec["radius"]
+        spec["position"] = tuple(pb[k] * scale + nb[k] * lift for k in range(3))
+        name = spec["name"]
+        self._rl_stage(name, spec)
+        part = self._rl_part_of_mesh(mesh)
+        if part is not None:
+            self._pending_physical[name] = part
+        self._rl_placing = None
+        self._rl_error = None
+        self._rl_select(name)
+        if before != self._snapshot_pending():
+            self._undo_stack.append(before)
+        self._physical_sync_preview()
+        return True
+
+    def _rl_part_of_mesh(self, mesh) -> Optional[str]:
+        """The articulated part mesh `mesh` hangs under (the nearest one in
+        its root-to-leaf node chain), or None off the parts / unknown."""
+        if not self._decal_shape_of_mesh(mesh):
+            return None
+        try:
+            entry = next((m for m in self._decal_meshes(self._decal_iid())
+                          if m.get("mesh") == mesh), None)
+            parts = self._decal_part_names(self._ship_getter())
+        except Exception as e:
+            from engine import dev_mode
+            dev_mode.log_swallowed("spv running light part", e)
+            return None
+        if entry is None:
+            return None
+        for node in reversed(entry.get("node_chain", ())):
+            if node in parts:
+                return node
+        return None
+
+
+def _json_arg(action: str):
+    """The JSON argument after the action's colon, or None when bad."""
     try:
-        arg = json.loads(action.partition(":")[2])
+        return json.loads(action.partition(":")[2])
     except ValueError:
         return None
-    name = arg.get("name") if isinstance(arg, dict) else None
+
+
+def _select_name(action: str) -> Optional[str]:
+    """The light name in `rl/<verb>:{"name": ...}`, or None."""
+    arg = _json_arg(action)
+    if not isinstance(arg, dict):
+        return None
+    name = arg.get("name")
     return name if isinstance(name, str) else None

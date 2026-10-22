@@ -2173,6 +2173,7 @@ class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
             "physical": self._physical_payload(),
             "model_parts": self._model_parts_payload(),
             "decals": self._decals_payload(),
+            "running_lights": self._rl_payload(),
             "close_overlays": self._close_overlays,
             "can_undo": bool(self._undo_stack),
             "pipette_armed": self._pipette_armed,
@@ -2382,6 +2383,8 @@ class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
             self._pipette_armed = False
             self._last_pushed = None
             return
+        if self._rl_cancel_placing():
+            return
         if self._viewport_input_blocked():
             self._overlay_open = False
             self._add_state_picker = None
@@ -2429,6 +2432,9 @@ class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
         empty-space path, which clears the part selection (Mark,
         2026-09-26)."""
         if self.camera is None:
+            return
+        if self._rl_click(x, y, viewport):
+            # Placing a running light owns the click (rl/place_begin).
             return
         if self.decal_click(x, y, viewport):
             # The Decals pane owns hull clicks (Add / Reposition); no pin is
