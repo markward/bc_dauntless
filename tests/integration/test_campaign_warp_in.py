@@ -71,7 +71,13 @@ def test_sdk_createship_with_flash_warps_in(world):
     assert flashes[0].set_name == pSet.GetName()
     assert _dist(App.TGPoint3(*flashes[0].center), exit_pt) < 1e-3
 
+    from engine.appc.weapon_subsystems import _dewarp_blocks_fire
+    phasers = ship.GetPhaserSystem()
+    assert phasers is not None
+
     hm.tick(1.0)
+    assert warp_state.is_arriving(ship)
+    assert _dewarp_blocks_fire(phasers)
     d_exit = _dist(ship.GetWorldLocation(), exit_pt)
     d_place = _dist(ship.GetWorldLocation(), p_loc)
     assert d_exit > 1e-3 and d_place > 1e-3
@@ -88,9 +94,10 @@ def test_sdk_createship_with_flash_warps_in(world):
     assert not warp_state.is_arriving(ship)
     max_speed = ship.GetImpulseEngineSubsystem().GetAuthoredMaxSpeed()
     assert ship.GetSpeedSetpoint()[0] == pytest.approx(0.2 * max_speed, rel=1e-3)
-    from engine.appc.weapon_subsystems import _dewarp_blocks_fire
-    assert not _dewarp_blocks_fire(ship.GetPhaserSystem() or warp)
-    assert [s for s, _ in sounds].count("Exit Warp") == 1
+    assert not _dewarp_blocks_fire(phasers)
+    exit_sounds = [node for name, node in sounds if name == "Exit Warp"]
+    assert len(exit_sounds) == 1
+    assert exit_sounds[0]._owner() is ship
 
 
 def test_sdk_createship_flash_without_placement(world):
