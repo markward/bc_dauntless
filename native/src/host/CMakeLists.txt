@@ -64,6 +64,30 @@ set_target_properties(dauntless PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
 
+# Application icon. Compiled into the binary as a Windows resource, so both
+# the dev build and the packaged copy carry it -- scripts/package.py copies
+# the exe and flips its subsystem, and a resource survives that untouched
+# where a post-hoc icon injection would be one more thing to get right.
+#
+# The .ico is GENERATED from native/assets/icons/dauntless_icon.svg by
+# tools/gen_app_icon.py; never hand-edit it.
+if(WIN32)
+    set(DAUNTLESS_ICON_PATH
+        "${CMAKE_SOURCE_DIR}/native/assets/icons/dauntless.ico")
+    if(EXISTS "${DAUNTLESS_ICON_PATH}")
+        # Forward slashes are fine inside an RC string literal; backslashes
+        # would need escaping and silently break the path if they were not.
+        configure_file(dauntless.rc.in
+                       "${CMAKE_CURRENT_BINARY_DIR}/dauntless.rc" @ONLY)
+        target_sources(dauntless PRIVATE
+                       "${CMAKE_CURRENT_BINARY_DIR}/dauntless.rc")
+    else()
+        message(WARNING
+            "dauntless: no icon at ${DAUNTLESS_ICON_PATH} -- building without "
+            "one. Regenerate it with tools/gen_app_icon.py --write.")
+    endif()
+endif()
+
 # Block parsers in libnif.a self-register via static initializers. Without
 # force-load, the linker drops object files that aren't otherwise referenced
 # and the registrations never run — the NIF parser then walks files and fails

@@ -11,19 +11,26 @@ it is regenerated wholesale, never incrementally stale.
 THE SHIPPED LAYOUT, and why it is shaped this way:
 
     dist/BC Dauntless/
+        BC Dauntless.exe            GUI subsystem -- no terminal window
         dauntless-packaged.json     marker: engine/paths.py puts saves, config
                                     and logs under the player's own folders
-        bin/BC Dauntless.exe        GUI subsystem -- no terminal window
-        bin/python312.dll, Lib/, DLLs/   the bundled interpreter
-        bin/libcef.dll, *.pak, locales/  the CEF runtime
-        bin/_dauntless_host*.pyd
-        engine/, *.py               the game's Python
+        python312.dll               linked by the exe, so it must sit beside it
+        libcef.dll, *.pak, locales/ the CEF runtime, likewise
+        _dauntless_host*.pyd
+        python/Lib, python/DLLs     the bundled stdlib (PYTHONHOME)
+        engine/, *.py, tools/       the game's Python
         native/assets/              project-authored assets
 
-The binary sits one level down because the host resolves its root as TWO
-parents up from the executable (host_main.cc discover_project_root), so
-bin/x.exe puts the root at the install folder. Moving the exe up a level
-would silently make the root the parent of the install.
+The exe sits at the install ROOT, which is what a player expects to click.
+That works because host_main.cc's discover_project_root searches upward from
+the binary for the marker; only when there is none (a checkout) does it fall
+back to "two parents up" for build/dauntless. Change one without the other
+and the root silently resolves to the folder CONTAINING the install.
+
+Everything the exe LINKS -- python312.dll, the CEF libraries, the extension
+module -- has to be in the exe's own directory for the loader to find it, so
+those stay flat at the root. Only the stdlib moves into python/, because a
+whole Lib/ tree at the root would bury the handful of entries that matter.
 
 NOT SHIPPED, deliberately: anything the player's machine writes --
 settings.json, Options.cfg, Keybindings.cfg, saves/, cache/, mods/. The
@@ -102,6 +109,8 @@ def stage_python(bin_dir: Path) -> None:
     """
     home = python_home()
     ver = f"python{sys.version_info.major}{sys.version_info.minor}"
+    # The DLLs the exe links go beside the exe; the stdlib goes under python/.
+    stdlib_dir = bin_dir / "python"
 
     dll = home / f"{ver}.dll"
     if not dll.is_file():
@@ -115,7 +124,7 @@ def stage_python(bin_dir: Path) -> None:
             shutil.copy2(src, bin_dir / extra)
 
     lib_src = home / "Lib"
-    lib_dest = bin_dir / "Lib"
+    lib_dest = stdlib_dir / "Lib"
     if not lib_src.is_dir():
         raise SystemExit(f"[package] no stdlib at {lib_src}")
     _copytree(lib_src, lib_dest,
@@ -123,7 +132,7 @@ def stage_python(bin_dir: Path) -> None:
 
     dlls_src = home / "DLLs"
     if dlls_src.is_dir():
-        dlls_dest = bin_dir / "DLLs"
+        dlls_dest = stdlib_dir / "DLLs"
         dlls_dest.mkdir(parents=True, exist_ok=True)
         for item in dlls_src.iterdir():
             if item.is_file() and not item.name.lower().startswith(
@@ -168,7 +177,9 @@ def stage(dest: Path) -> Path:
     if app.exists():
         _say(f"removing previous {app.relative_to(PROJECT_ROOT)}")
         shutil.rmtree(app)
-    bin_dir = app / "bin"
+    # The exe lives at the install root, so "bin_dir" and the app root are the
+    # same directory; the name is kept for the staging helpers below.
+    bin_dir = app
     bin_dir.mkdir(parents=True)
 
     exe_src = BUILD / "dauntless.exe"
@@ -181,7 +192,7 @@ def stage(dest: Path) -> Path:
     exe_dest = bin_dir / f"{APP_NAME}.exe"
     shutil.copy2(exe_src, exe_dest)
     make_gui_subsystem(exe_dest)
-    _say(f"binary -> bin/{exe_dest.name} (GUI subsystem)")
+    _say(f"binary -> {exe_dest.name} (GUI subsystem, install root)")
 
     # 2. The CEF runtime and the extension module. The build already places
     #    these beside dauntless.exe, which is the layout CEF needs, so copy
@@ -200,11 +211,11 @@ def stage(dest: Path) -> Path:
     if not pyd:
         raise SystemExit("[package] no _dauntless_host*.pyd in build/python")
     shutil.copy2(pyd[0], bin_dir / pyd[0].name)
-    _say(f"runtime -> bin/ ({runtime} libraries, {pyd[0].name})")
+    _say(f"runtime -> {runtime} libraries + {pyd[0].name}")
 
     # 3. The bundled interpreter.
     stage_python(bin_dir)
-    _say(f"python  -> bin/ (stdlib from {python_home()})")
+    _say(f"python  -> python/ (stdlib from {python_home()})")
 
     # 4. The game's Python and the project-authored assets.
     _copytree(PROJECT_ROOT / "engine", app / "engine")
@@ -240,7 +251,7 @@ def smoke_check(app: Path) -> int:
     Python: if the bundle were incomplete the interpreter would have nothing
     to fall back to.
     """
-    exe = app / "bin" / f"{APP_NAME}.exe"
+    exe = app / f"{APP_NAME}.exe"
     env = dict(os.environ)
     for var in ("VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP",
                 "DAUNTLESS_GAME_DIR", "DAUNTLESS_SDK_DIR"):
@@ -277,7 +288,7 @@ def launch_check(app: Path) -> int:
     double-launch (which has no handles at all), and the no-console path is
     proven separately; what this checks is that the BUNDLE is complete.
     """
-    exe = app / "bin" / f"{APP_NAME}.exe"
+    exe = app / f"{APP_NAME}.exe"
     env = dict(os.environ)
     for var in ("VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP"):
         env.pop(var, None)

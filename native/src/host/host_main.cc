@@ -22,10 +22,30 @@
 
 namespace {
 
-// Locate the project root from the running binary's path. The binary lives at
-// <root>/build/dauntless, so root is two parents up from the binary's own
-// path. This is a build-tree assumption — the binary is not yet meant to be
-// installed system-wide.
+// engine/paths.py's PACKAGED_MARKER. A packaged install drops this file at
+// its root; a checkout never has one. Keep the two spellings in step.
+constexpr const char* kPackagedMarker = "dauntless-packaged.json";
+
+// How far above the binary to look for the marker. Two is enough for both
+// shipped shapes -- the exe at the install root, or one level down in a bin/
+// -- and a bound matters: unbounded, a stray marker anywhere above the
+// install (a parent folder, or a drive root) would silently capture the root.
+constexpr int kMarkerSearchDepth = 2;
+
+// Locate the project root from the running binary's path.
+//
+// Two layouts, distinguished by the marker rather than by guessing:
+//
+//  - A PACKAGED install carries kPackagedMarker at its root, so search upward
+//    from the binary for it. That is what lets the packaging job put the exe
+//    wherever it likes -- at the install root, or under a bin/ -- without
+//    this rule and that layout having to be changed together. Getting it
+//    wrong is silent and confusing: a top-level exe under the old
+//    "two parents up" rule resolves the root to the folder CONTAINING the
+//    install, where there is no engine/ and no marker.
+//
+//  - A CHECKOUT has no marker. The binary is at <root>/build/dauntless, so
+//    the root is two parents up. Unchanged, and still the fallback.
 //
 // Returns an empty path and fills `error` on failure. It used to call
 // std::filesystem::canonical(argv0) directly, which THROWS when argv[0] is a
@@ -36,6 +56,17 @@ std::filesystem::path discover_project_root(const char* argv0,
     const std::filesystem::path bin_path =
         dauntless::platform::executable_path(argv0, error);
     if (bin_path.empty()) return {};
+
+    std::filesystem::path dir = bin_path.parent_path();
+    for (int depth = 0; depth <= kMarkerSearchDepth; ++depth) {
+        std::error_code ec;  // exists() must not throw on an odd path
+        if (std::filesystem::exists(dir / kPackagedMarker, ec) && !ec) {
+            return dir;
+        }
+        const std::filesystem::path up = dir.parent_path();
+        if (up == dir) break;   // filesystem root: parent_path() is a fixpoint
+        dir = up;
+    }
     return bin_path.parent_path().parent_path();
 }
 
@@ -58,10 +89,6 @@ void set_env_var(const char* name, const char* value) {
 #endif
 }
 
-// engine/paths.py's PACKAGED_MARKER. A packaged install drops this file at
-// its root; a checkout never has one. Keep the two spellings in step.
-constexpr const char* kPackagedMarker = "dauntless-packaged.json";
-
 // Point the embedded interpreter at the Python runtime bundled beside the
 // binary, so a packaged build needs no Python installed and no venv.
 //
@@ -71,8 +98,14 @@ constexpr const char* kPackagedMarker = "dauntless-packaged.json";
 // bin/. Without it a packaged build would fall back to the landmark search
 // and then the registry, and so would silently bind to whatever Python the
 // player happens to have installed -- or fail on a machine with none.
-void configure_bundled_python(const std::filesystem::path& bin_dir) {
-    set_env_var("PYTHONHOME", bin_dir.string().c_str());
+void configure_bundled_python(const std::filesystem::path& project_root) {
+    // <root>/python, not the binary's own directory: the exe sits at the
+    // install root beside the CEF and Python DLLs it links, and dropping a
+    // whole stdlib Lib/ next to it would bury the install's few real entries.
+    // PYTHONHOME governs module search only, so python312.dll stays beside
+    // the exe where the loader needs it while Lib/ and DLLs/ live here.
+    const std::filesystem::path home = project_root / "python";
+    set_env_var("PYTHONHOME", home.string().c_str());
     // A stray PYTHONPATH in the player's environment must not reach a
     // packaged run: configure_python_path overwrites it below, and these two
     // would otherwise let a developer's checkout leak into a shipped build.
@@ -191,12 +224,7 @@ int main(int argc, char* argv[]) {
     const bool packaged =
         std::filesystem::exists(project_root / kPackagedMarker);
     if (packaged) {
-        std::string bin_error;
-        const std::filesystem::path bin_path =
-            dauntless::platform::executable_path(argv[0], bin_error);
-        if (!bin_path.empty()) {
-            configure_bundled_python(bin_path.parent_path());
-        }
+        configure_bundled_python(project_root);
     }
     configure_python_path(project_root, packaged);
 
