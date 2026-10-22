@@ -412,6 +412,17 @@ class RunningLightsPaneMixin:
         self._last_pushed = None
         return False
 
+    def _rl_lock_reason(self) -> str:
+        return (self._mount_lock_state_and_reason()[1]
+                or "Mount editing is locked")
+
+    def _rl_note_lock_refusal(self, action: str) -> None:
+        """The panel's mount-lock gate refused `action` before any verb ran.
+        An `rl/` action shows the lock's reason: the Add modal has already
+        closed, so a silent refusal would look like nothing happened."""
+        if action.startswith("rl/"):
+            self._rl_refuse(self._rl_lock_reason())
+
     def _rl_validate(self, spec, taken) -> Optional[dict]:
         """`validate_spec`, with every refusal -- a bad value, or a malformed
         CEF payload (missing key, wrong shape) -- as a readable `_rl_error`
@@ -483,8 +494,7 @@ class RunningLightsPaneMixin:
             return False
         self._last_pushed = None
         if not self._mount_editing_enabled():
-            self._rl_error = (self._mount_lock_state_and_reason()[1]
-                              or "Mount editing is locked")
+            self._rl_error = self._rl_lock_reason()
             return True
         before = self._snapshot_pending()
         hit = self._decal_hull_hit(x, y, viewport)

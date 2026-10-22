@@ -2856,6 +2856,7 @@ class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
             _spv.select_part_node(None, None)
             self._last_pushed = None
         if not self._mount_editing_enabled() and self._is_locked_mount_action(action):
+            self._rl_note_lock_refusal(action)
             return False
         if action == "pipette":
             if self._pipette_armed:

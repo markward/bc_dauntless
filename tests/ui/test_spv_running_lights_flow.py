@@ -320,6 +320,31 @@ def test_locked_refuses_place_edit_remove(make_panel):
     assert p._rl_placing is None
 
 
+@pytest.mark.parametrize("action", [
+    "rl/place_begin:" + json.dumps(_NEW),
+    "rl/edit:" + json.dumps({"name": "Port Nav", "spec": _PORT}),
+    'rl/remove:{"name": "Port Nav"}',
+])
+def test_lock_refusal_says_why(make_panel, action):
+    """The lock refuses at the dispatch gate, before the rl/ verb runs: the
+    Add modal has already closed, so without a reason nothing visible
+    happens."""
+    p = make_panel()
+    reason = "A posed rig locks mount editing"
+    p._mount_lock_state_and_reason = lambda: (True, reason)
+    assert p.dispatch_event(action) is False
+    assert p._rl_error == reason
+    assert _payload(p)["running_lights"]["error"] == reason
+    assert p._pending_running_light == {}
+
+
+def test_lock_refusal_without_reason_still_says_locked(make_panel):
+    p = make_panel()
+    p._mount_editing_enabled = lambda: False
+    assert p.dispatch_event('rl/remove:{"name": "Port Nav"}') is False
+    assert p._rl_error
+
+
 def test_payload_running_lights_block(make_panel):
     p = make_panel()
     block = _payload(p)["running_lights"]
