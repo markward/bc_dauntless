@@ -282,6 +282,26 @@ class RunningLightsPaneMixin:
                 or self._decal_selected is not None):
             self._rl_selected = None
 
+    def _rl_placing_context(self) -> tuple:
+        """Every selection and tool a viewport click answers to. Placing
+        survives an action only while this is unchanged."""
+        from engine.ui import ship_property_viewer as _spv
+        return (self.selected_index, self._selected_light_index,
+                self._selected_emitter, self._rl_selected,
+                self._decal_selected, self._decals_active, self._decal_adding,
+                _spv.selected_model_part(), _spv.selected_part_node(),
+                self.active_tool, self._systems_tab, self._pipette_armed)
+
+    def _rl_yield_placing(self, before: tuple) -> None:
+        """Leave placing when an action changed the selection or the tool
+        (`before` = `_rl_placing_context()` ahead of it): the next viewport
+        click must not place a light behind the user's back. By STATE, like
+        `_rl_yield_to_other_selection`, so chrome (`overlay:` -- the Add
+        modal closes right after `rl/place_begin`) and view toggles keep
+        placing."""
+        if before != self._rl_placing_context():
+            self._rl_cancel_placing()
+
     # ------------------------------------------------------------------
     # Rows / payload
     # ------------------------------------------------------------------
@@ -354,6 +374,8 @@ class RunningLightsPaneMixin:
             if name is None or self._rl_spec(name) is None:
                 return False
             self._rl_select(name)
+            # Even the row already selected: a row click ends placing.
+            self._rl_cancel_placing()
             return True
         if verb == "place_begin":
             return self._rl_place_begin(action)

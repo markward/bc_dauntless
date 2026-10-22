@@ -385,3 +385,36 @@ def test_removed_light_name_is_free_again(make_panel):
     p = make_panel()
     assert p.dispatch_event('rl/remove:{"name": "Port Nav"}') is True
     assert _begin(p, dict(_NEW, name="Port Nav")) is True
+
+
+@pytest.mark.parametrize("action", [
+    "select_pin:0",                       # another row
+    'rl/select:{"name": "Star Nav"}',     # a light row
+    'rl/select:{"name": "Port Nav"}',     # the row already selected
+    "set_tool:transform",                 # a tool switch
+    "deselect",                           # an empty-space click
+])
+def test_other_selection_or_tool_cancels_placing(make_panel, hull, action):
+    """Placing must not stay armed behind another selection or tool: the
+    next viewport click would place a light nobody asked for."""
+    p = hull.attach(make_panel())
+    p.dispatch_event('rl/select:{"name": "Port Nav"}')
+    assert _begin(p) is True
+    assert p.dispatch_event(action) is True
+    assert p._rl_placing is None
+    assert _payload(p)["running_lights"]["placing"] is None
+    # The next viewport click falls through to the pin pick.
+    assert p._rl_click(100.0, 100.0, _VIEWPORT) is False
+    assert "Dorsal Nav" not in p._pending_running_light
+
+
+def test_overlay_and_view_toggles_keep_placing(make_panel, hull):
+    """The Add modal closes (overlay:0) right after rl/place_begin, and a
+    view toggle selects nothing: placing survives both."""
+    p = hull.attach(make_panel())
+    assert _begin(p) is True
+    assert p.dispatch_event("overlay:0") is True
+    assert p.dispatch_event("toggle_glow_regions") is True
+    assert p._rl_placing is not None
+    _click(p)
+    assert "Dorsal Nav" in p._pending_running_light

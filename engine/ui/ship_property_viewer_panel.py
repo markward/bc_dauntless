@@ -2750,6 +2750,7 @@ class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
         """Public dispatch entry point: wraps `_dispatch_event_inner` with the
         undo snapshot/record bracket, skipping "undo"/"save"/"cancel" (which
         themselves clear/discard state) and "overlay:" chrome toggles."""
+        placing_context = self._rl_placing_context()
         if action in self._NO_UNDO_ACTIONS or action.startswith("overlay:"):
             result = self._dispatch_event_inner(action)
         else:
@@ -2767,6 +2768,9 @@ class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
         # (by state: many actions select as a side effect).
         if result and not action.startswith("rl/"):
             self._rl_yield_to_other_selection()
+        # ...and a changed selection or tool ends running-light placing.
+        if result:
+            self._rl_yield_placing(placing_context)
         # Any action may have changed the decal working list or registry...
         self._decal_sync_override()
         # ...or the running lights the hologram previews.
