@@ -430,3 +430,49 @@ def test_placed_light_opens_a_collapsed_group(make_panel, hull):
     group = [r for r in _payload(p)["subsystems"]
              if r.get("kind") == "rl_group"][0]
     assert group["expanded"] is True
+
+
+def _remove(p, name):
+    return p.dispatch_event("rl/remove:" + json.dumps({"name": name}))
+
+
+def test_remove_light_with_baked_parent_unsets_it(make_panel):
+    """A light saved earlier with an explicit parent keeps its
+    SetPhysicalParent find-block unless the removal resets it: a later
+    light of the same name would inherit the parent."""
+    p = make_panel()
+    p._physical_lights[0]["physical_parent"] = "left wing"     # baked
+    p._undo_stack.clear()
+    assert _remove(p, "Port Nav") is True
+    assert p._pending_physical == {"Port Nav": None}
+    assert p._pending_running_light == {"Port Nav": None}
+    # One action, one undo step, restoring both.
+    assert len(p._undo_stack) == 1
+    assert p.dispatch_event("undo") is True
+    assert p._pending_physical == {}
+    assert p._pending_running_light == {}
+    # Save emits the reset alongside the removal.
+    assert _remove(p, "Port Nav") is True
+    assert p.dispatch_event("save") is True
+    _leaf, edits = make_panel.target.calls[-1]
+    assert ("Port Nav", "__unset__", "SetPhysicalParent") in edits
+    assert ("Port Nav", "__running_light__",
+            {"spec": None, "new": False}) in edits
+
+
+def test_remove_light_with_saved_parent_unsets_it(make_panel):
+    p = make_panel()
+    p._saved_physical["Star Nav"] = "right wing"     # saved this session
+    assert _remove(p, "Star Nav") is True
+    assert p._pending_physical == {"Star Nav": None}
+
+
+def test_remove_light_without_committed_parent_stages_no_reset(make_panel):
+    """Auto (no saved or baked parent): nothing in the file to reset; a
+    merely staged parent is dropped."""
+    p = make_panel()
+    p._pending_physical["Port Nav"] = "left wing"    # staged, never saved
+    assert _remove(p, "Port Nav") is True
+    assert "Port Nav" not in p._pending_physical
+    assert _remove(p, "Star Nav") is True
+    assert "Star Nav" not in p._pending_physical

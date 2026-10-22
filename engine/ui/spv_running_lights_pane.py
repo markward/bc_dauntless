@@ -389,10 +389,19 @@ class RunningLightsPaneMixin:
             name = _select_name(action)
             if name is None or self._rl_spec(name) is None:
                 return False
+            entry = self._physical_entry("light:" + name)
+            committed = (self._physical_committed(entry)
+                         if entry is not None else None)
             self._rl_stage(name, None)
-            # A staged parent for a removed light would be written onto a
-            # template that no longer exists.
-            self._pending_physical.pop(name, None)
+            if committed is not None:
+                # A SAVED or BAKED parent lives in the file as its own
+                # find-block: reset it, or a later light of this name
+                # inherits it.
+                self._pending_physical[name] = None
+            else:
+                # A merely staged parent would be written onto a template
+                # that no longer exists.
+                self._pending_physical.pop(name, None)
             if self._rl_selected == name:
                 self._rl_selected = None
             return True
