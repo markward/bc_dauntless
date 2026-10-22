@@ -418,3 +418,15 @@ def test_overlay_and_view_toggles_keep_placing(make_panel, hull):
     assert p._rl_placing is not None
     _click(p)
     assert "Dorsal Nav" in p._pending_running_light
+
+
+def test_placed_light_opens_a_collapsed_group(make_panel, hull):
+    """The new light is selected: it must not hide in a collapsed group."""
+    p = hull.attach(make_panel())
+    assert p._rl_group_expanded is False
+    assert _begin(p) is True
+    _click(p)
+    assert p._rl_group_expanded is True
+    group = [r for r in _payload(p)["subsystems"]
+             if r.get("kind") == "rl_group"][0]
+    assert group["expanded"] is True

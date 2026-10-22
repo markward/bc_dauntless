@@ -1351,6 +1351,7 @@ class RunningLightTarget(EditTarget):
                     if src_entry is not None else None)
         pane._rl_stage(name, twin)
         pane._rl_selected = name
+        pane._rl_group_expanded = True      # selected: never hidden
         if explicit is not None:
             part = pane._physical_auto_part(twin["position"])
             entry = pane._physical_entry("light:" + name)

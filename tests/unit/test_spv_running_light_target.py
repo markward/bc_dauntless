@@ -281,3 +281,12 @@ def test_mirror_never_takes_a_non_light_template_name(make_panel):
     _select(p, "Sub Light")
     assert p.dispatch_event("mirror_element") is True
     assert p._rl_selected not in ("Sub Light", "Sub")
+
+
+def test_mirror_opens_a_collapsed_group(make_panel):
+    p = make_panel(lights=(_PORT,))
+    _select(p, "Port Nav")
+    assert p._rl_group_expanded is False
+    assert p.dispatch_event("mirror_element") is True
+    assert p._rl_selected == "Star Nav"
+    assert p._rl_group_expanded is True

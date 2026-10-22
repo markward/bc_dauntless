@@ -496,6 +496,8 @@ class RunningLightsPaneMixin:
         self._rl_placing = None
         self._rl_error = None
         self._rl_select(name)
+        # The new light is selected: never inside a collapsed group.
+        self._rl_group_expanded = True
         if before != self._snapshot_pending():
             self._undo_stack.append(before)
         self._physical_sync_preview()
