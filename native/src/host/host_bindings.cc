@@ -59,6 +59,7 @@
 #include <renderer/torpedo_pass.h>
 #include <renderer/hit_vfx_pass.h>
 #include <renderer/hull_discharge_pass.h>
+#include <chrono>
 #include <renderer/running_light_pass.h>
 #include <renderer/running_light_store.h>
 #include <renderer/nebula_wake_pass.h>
@@ -2132,6 +2133,21 @@ void frame() {
             g_hologram_pass->render(g_hologram_ship, g_world, g_camera,
                                     *g_pipeline, lookup);
         }
+    }
+    if (viewer_mode && g_hologram_ship.active && g_running_lights_enabled
+            && g_running_light_pass) {
+        // The viewer freezes the sim, so blink on wall-clock time. Lights are
+        // forced fully on (no power-plant state in the viewer). The hologram
+        // pass writes no depth: in hull mode the opaque hull did, so keep the
+        // pass's depth test; otherwise test nothing (like the pins).
+        static const auto t0 = std::chrono::steady_clock::now();
+        const float t = std::chrono::duration<float>(
+            std::chrono::steady_clock::now() - t0).count();
+        const auto sprites = g_running_lights.build_sprites_for(
+            g_hologram_ship.instance, g_world, t, g_running_light_dials,
+            g_camera.eye, g_camera.proj_matrix()[1][1], fh, 1.0f);
+        g_running_light_pass->render(g_camera, *g_pipeline, sprites,
+                                     /*depth_test=*/g_spv_hull_mode);
     }
     if (viewer_mode && g_phaser_pass && !g_spv_overlay_beams.empty())
         g_phaser_pass->render(g_spv_overlay_beams, g_camera, *g_pipeline,

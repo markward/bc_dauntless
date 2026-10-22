@@ -253,3 +253,41 @@ TEST(RunningLightStore, FlooredSpritesConserveEnergySoDistantLightsDim) {
     ASSERT_EQ(far10.size(), 1u);
     EXPECT_NEAR(far10[0].color.r, 4.0f / 100.0f, 1e-4f);      // (1/10)^2
 }
+
+TEST(RunningLightStore, BuildSpritesForOnlyThatInstance) {
+    scenegraph::World world;
+    const auto a = world.create_instance(1);
+    const auto b = world.create_instance(1);
+    world.set_world_transform(a, glm::translate(glm::mat4(1.0f), glm::vec3(10, 0, 0)));
+    world.set_world_transform(b, glm::translate(glm::mat4(1.0f), glm::vec3(-50, 0, 0)));
+    RunningLightStore s;
+    s.set(a, {static_light({0, 0, 0}, {1, 1, 1})}, 0.0f);
+    s.set(b, {static_light({0, 0, 0}, {1, 1, 1})}, 0.0f);
+    const auto sprites = s.build_sprites_for(a, world, 0.0f, RunningLightDials{},
+                                             {0, 0, -1}, 0.0f, 0, 1.0f);
+    ASSERT_EQ(sprites.size(), 1u);
+    EXPECT_NEAR(sprites[0].world_pos.x, 10.0f, 1e-4f);
+}
+
+TEST(RunningLightStore, BuildSpritesForUsesLevelOverride) {
+    scenegraph::World world;
+    const auto a = world.create_instance(1);
+    world.set_world_transform(a, glm::mat4(1.0f));
+    RunningLightStore s;
+    s.set(a, {static_light({0, 0, 0}, {1, 1, 1})}, 0.0f);   // stored level stays 0
+    ASSERT_FLOAT_EQ(s.level(a), 0.0f);
+    const auto sprites = s.build_sprites_for(a, world, 0.0f, RunningLightDials{},
+                                             {0, 0, -1}, 0.0f, 0, 1.0f);
+    ASSERT_EQ(sprites.size(), 1u);
+    EXPECT_GT(sprites[0].color.r, 0.0f);
+}
+
+TEST(RunningLightStore, BuildSpritesForUnknownInstanceIsEmpty) {
+    scenegraph::World world;
+    const auto a = world.create_instance(1);
+    const auto b = world.create_instance(1);
+    RunningLightStore s;
+    s.set(a, {static_light({0, 0, 0}, {1, 1, 1})}, 0.0f);
+    EXPECT_TRUE(s.build_sprites_for(b, world, 0.0f, RunningLightDials{},
+                                    {0, 0, -1}, 0.0f, 0, 1.0f).empty());
+}

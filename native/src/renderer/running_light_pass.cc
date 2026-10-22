@@ -35,7 +35,8 @@ void RunningLightPass::ensure_quad_mesh() {
 }
 
 void RunningLightPass::render(const scenegraph::Camera& camera, Pipeline& pipeline,
-                              const std::vector<RunningLightSprite>& sprites) {
+                              const std::vector<RunningLightSprite>& sprites,
+                              bool depth_test) {
     if (sprites.empty()) return;
     ensure_quad_mesh();
     auto& shader = pipeline.running_light_shader();
@@ -45,7 +46,7 @@ void RunningLightPass::render(const scenegraph::Camera& camera, Pipeline& pipeli
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE);
-    glEnable(GL_DEPTH_TEST);
+    if (depth_test) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
     glDisable(GL_CULL_FACE);
     glBindVertexArray(quad_vao_);
