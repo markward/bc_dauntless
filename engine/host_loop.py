@@ -769,6 +769,17 @@ def _register_running_lights(r, session, ship, iid) -> None:
     r.set_running_lights(iid, list(sent), phase)
 
 
+def _restore_running_lights(r, session, ship, iid) -> None:
+    """The SPV closed over `iid` (SPV running-lights spec §3.5): put back
+    what spawn sent -- the last sent list with its phase -- or, for a ship
+    unlit at spawn, remove the preview so no orphan lights stay in native."""
+    if session is not None and iid in session.ship_running_lights:
+        sent = session.ship_running_light_specs[iid][1]
+        r.set_running_lights(iid, list(sent), session.ship_running_lights[iid])
+    else:
+        r.set_running_lights(iid, [], 0.0)
+
+
 def _resend_articulated_running_lights(r, session, ship, iid, phase) -> None:
     """Re-send `ship`'s lights when an articulated part has moved them, or a
     structure part has broken off, since the last send. Native caches
@@ -11069,6 +11080,10 @@ def run(mission_name: Optional[str] = None,
                 iid_getter=_spv_player_iid,
                 # Decals pane: where the class's Masks/ lives and a Save routes.
                 model_rel_getter=declared_model_rel,
+                # Running lights: closing gives the SPV's live preview back
+                # to the spawn lights (or none, for an unlit ship).
+                on_running_lights_closed=lambda ship, iid: (
+                    _restore_running_lights(r, controller.session, ship, iid)),
             )
             # The Decals pane's live override is keyed on the player's
             # instance; drop it before a swap destroys that instance.

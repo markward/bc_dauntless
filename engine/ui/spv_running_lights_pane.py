@@ -142,6 +142,61 @@ class RunningLightsPaneMixin:
             self._rl_selected = None
 
     # ------------------------------------------------------------------
+    # Live preview (spec S3.5)
+    # ------------------------------------------------------------------
+    # The last pushed (iid, tuple list) and the (ship, iid) it went to. Not
+    # in `_rl_reset_state`: close() must still see them to restore.
+    _rl_last_preview = None
+    _rl_preview_target = None
+
+    def _rl_sync_preview(self) -> None:
+        """Push the effective lights to native for the SPV instance when
+        visible, the iid resolves and the list changed since the last push.
+        An empty effective list sends [] (native drops the ship)."""
+        if not self._visible:
+            return
+        iid = self._decal_iid()
+        if iid is None:
+            return
+        lights = [tuple(s["position"]) + tuple(s["color"])
+                  + (s["radius"], s["period"], s["duration"])
+                  for s in self._rl_effective()]
+        key = (iid, lights)
+        if key == self._rl_last_preview:
+            return
+        if (self._rl_preview_target is not None
+                and self._rl_preview_target[1] != iid):
+            # The instance changed under a live preview (a respawn): give
+            # the old one its spawn lights back first.
+            self._rl_restore_preview()
+        ship = self._ship_getter()
+        from engine import renderer
+        from engine.appc import running_lights
+        try:
+            renderer.set_running_lights(iid, lights,
+                                         running_lights.phase_for(ship))
+        except Exception as e:
+            from engine import dev_mode
+            dev_mode.log_swallowed("spv running light preview", e)
+            return
+        self._rl_last_preview = key
+        self._rl_preview_target = (ship, iid)
+
+    def _rl_restore_preview(self) -> None:
+        """Hand (ship, iid) of a preview pushed this session to the injected
+        `on_running_lights_closed` callback, then forget the preview."""
+        target = self._rl_preview_target
+        self._rl_last_preview = None
+        self._rl_preview_target = None
+        if target is None or self._on_running_lights_closed is None:
+            return
+        try:
+            self._on_running_lights_closed(*target)
+        except Exception as e:
+            from engine import dev_mode
+            dev_mode.log_swallowed("spv running light restore", e)
+
+    # ------------------------------------------------------------------
     # Selection
     # ------------------------------------------------------------------
     def _rl_target_key(self):
@@ -386,6 +441,7 @@ class RunningLightsPaneMixin:
         if before != self._snapshot_pending():
             self._undo_stack.append(before)
         self._physical_sync_preview()
+        self._rl_sync_preview()
         return True
 
     def _rl_part_of_mesh(self, mesh) -> Optional[str]:

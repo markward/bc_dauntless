@@ -351,3 +351,30 @@ def test_teardown_and_removal_drop_the_articulation_record():
     sess.ship_running_light_specs[9] = ((), (), 0)
     sess.teardown(_R())
     assert sess.ship_running_light_specs == {}
+
+
+# ── SPV close: the preview gives way to the spawn lights (SPV spec §3.5) ────
+
+def test_close_clears_preview_for_unlit_ship():
+    """A ship with no lights at spawn, previewed with lights in the SPV,
+    must leave native with none for it: no orphan preview."""
+    r = _FakeRenderer()
+    ship = _Ship(n_lights=0)
+    s = _Session({ship: 7})
+    host_loop._register_running_lights(r, s, ship, 7)
+    r.set_running_lights(7, [(0.0,) * 9], 1.0)      # the SPV's preview
+    host_loop._restore_running_lights(r, s, ship, 7)
+    assert r.lights[7] == ([], 0.0)
+
+
+def test_close_resends_spawn_lights_for_lit_ship():
+    r = _FakeRenderer()
+    ship = _Ship(n_lights=2)
+    s = _Session({ship: 7})
+    host_loop._register_running_lights(r, s, ship, 7)
+    spawn = r.lights[7]
+    r.set_running_lights(7, [], 0.0)                # the SPV's preview
+    host_loop._restore_running_lights(r, s, ship, 7)
+    assert r.lights[7] == spawn
+    assert spawn[0] == list(s.ship_running_light_specs[7][1])
+    assert spawn[1] == s.ship_running_lights[7]

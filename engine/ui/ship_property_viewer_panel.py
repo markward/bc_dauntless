@@ -129,9 +129,16 @@ class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
                  iid_getter: Optional[Callable[[], Optional[int]]] = None,
                  on_regions_saved: Optional[Callable[[object, dict], None]] = None,
                  model_rel_getter: Optional[Callable[[object], Optional[str]]] = None,
+                 on_running_lights_closed: Optional[
+                     Callable[[object, int], None]] = None,
                  ) -> None:
         super().__init__()
         self._ship_getter = ship_getter
+        # Running lights: called with (ship, iid) on close when the SPV
+        # previewed lights on that instance, so the host can put the spawn
+        # lights back (host_loop._restore_running_lights). Construction-time
+        # config, like on_saved.
+        self._on_running_lights_closed = on_running_lights_closed
         # Decals pane: ship -> its DECLARED High model path, posix and
         # game-root-relative (GetShipStats()["FilenameHigh"], wired to
         # host_loop.declared_model_rel). Where the class's Masks/ lives and
@@ -449,6 +456,7 @@ class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
         target = self._fit_target()
         self.camera = OrbitCamera(target=target, distance=self._fit_distance(target))
         self.visible = True
+        self._rl_sync_preview()
 
     def _clear_saved_edits(self) -> None:
         """Drop the persisted-edit overlay. Called from open() when the authored
@@ -489,6 +497,7 @@ class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
         self._pending_physical = {}
         self._physical_lights = []
         self._mount_points = {}
+        self._rl_restore_preview()
         self._rl_reset_state()
         self._physical_sync_preview()
         from engine.appc import articulation as _articulation
@@ -1562,6 +1571,7 @@ class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
     def undo(self) -> None:
         if self._undo_stack:
             self._restore_pending(self._undo_stack.pop())
+            self._rl_sync_preview()
 
     # ------------------------------------------------------------------
     # Transform gizmo (part anchor/pose, emitter, light or subsystem target)
@@ -2757,8 +2767,10 @@ class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
         # (by state: many actions select as a side effect).
         if result and not action.startswith("rl/"):
             self._rl_yield_to_other_selection()
-        # Any action may have changed the decal working list or registry.
+        # Any action may have changed the decal working list or registry...
         self._decal_sync_override()
+        # ...or the running lights the hologram previews.
+        self._rl_sync_preview()
         # ...or the physical parents (an edit, an undo, Cancel, Save).
         self._physical_sync_preview()
         # Every action -- a node select, an undo, a node removed from under
