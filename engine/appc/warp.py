@@ -801,6 +801,7 @@ class _PlacePlayerAction(TGAction):
                 s.RemoveObjectFromSet(ship.GetName())
         dest.AddObjectToSet(ship, ship.GetName())
         ship.PlaceObjectByName(self._placement)
+        _begin_npc_arrival(ship, dest, self._placement)
 
         # Warp arrival velocity: EXACTLY ZERO. The ship arrives at rest.
         #
@@ -907,6 +908,9 @@ class _WarpDepartAction(TGAction):
         # player's own warp does, on either branch -- an NPC's (every AI warp
         # takes this spine) moves the NPC alone.
         scene = _is_current_player(ship)
+        # An NPC leaving the player's set flashes where it stands.
+        if not scene and ship is not None:
+            _flash_npc_departure(ship)
         # Burst: the ship is now at warp.
         if not self._hard_cut:
             try:
@@ -1287,6 +1291,55 @@ def WarpSequence_Create(ship, dest_module, warp_time=0.0, placement="Player Star
     seq.AppendAction(_EnableHelmMenuAction(ship))
     _append_after_queue(seq)
     return seq
+
+
+def _player_set():
+    """The set the player is in now (read at use), or None."""
+    import App
+    try:
+        player = App.Game_GetCurrentPlayer()
+        if player is None and _player_hook is not None:
+            player = _player_hook()
+        return player.GetContainingSet() if player is not None else None
+    except Exception:
+        return None
+
+
+def _flash_npc_departure(ship):
+    """Warp-in flash for an NPC leaving the player's set (before it leaves)."""
+    try:
+        pset = _player_set()
+        if pset is None or ship.GetContainingSet() is not pset:
+            return
+        import App
+        App.WarpFlash_Create(ship)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("warp-in departure flash failed")
+
+
+def _begin_npc_arrival(ship, dest, placement_name):
+    """An NPC arriving in the player's set slides in from its warp exit point
+    and flashes there. Elsewhere it is placed instantly (unchanged)."""
+    if _is_current_player(ship) or dest is not _player_set():
+        return
+    try:
+        import App
+        from engine.appc.subsystems import WarpEngineSubsystem
+        placement = App.PlacementObject_GetObject(dest, placement_name)
+        sub = ship.GetWarpEngineSubsystem() if hasattr(ship, "GetWarpEngineSubsystem") else None
+        if placement is None or sub is None:
+            return
+        sub.SetPlacement(placement)
+        sub.SetWarpState(WarpEngineSubsystem.WES_WARPING)
+        sub.TransitionToState(WarpEngineSubsystem.WES_DEWARP_INITIATED)
+        from engine.appc import warp_state
+        App.WarpFlash_CreateWithoutShip(
+            dest, sub.GetWarpExitLocation(), sub.GetWarpExitRotation(),
+            warp_state.warp_in_radius(ship))
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("warp-in arrival failed")
 
 
 def _is_current_player(ship):
