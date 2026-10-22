@@ -134,9 +134,55 @@ def check_win(qb) -> None:
         qb.g_pXO.MenuUp()
 
 
+OTHER_CALLOUT_KEY = "gs025"
+_callout_warned: set = set()
+
+
+def enemy_callout_key(n_arrived: int, enemies_already: bool):
+    """Spec §6.7: the tactical officer's Incoming line, or None for no enemies."""
+    if n_arrived <= 0:
+        return None
+    if enemies_already:
+        return "Incoming6"
+    return "Incoming%d" % min(n_arrived, 5)
+
+
+def _warn_once(what: str) -> None:
+    if what not in _callout_warned:
+        _callout_warned.add(what)
+        _log.warning("quickbattle: arrival callout skipped: %s", what)
+
+
+def _say(qb, char_attr: str, key: str) -> None:
+    import App
+    char = getattr(qb, char_attr, None)
+    if char is None:
+        _warn_once("no %s" % char_attr)
+        return
+    db = None if char.GetDatabase() is not None else getattr(qb, "g_pGeneralDatabase", None)
+    if db is None and char.GetDatabase() is None:
+        _warn_once("no database for %s" % char_attr)
+        return
+    line = App.CharacterAction_Create(char, App.CharacterAction.AT_SAY_LINE,
+                                      key, "Captain", 1, db)
+    seq = App.TGSequence_Create()
+    seq.AddAction(line)
+    seq.Play()
+
+
 def callout(qb, arrived: dict, enemies_already: bool) -> None:
-    """Crew callout for one arrival tick (Task 10)."""
-    return None
+    """Crew callout for one arrival tick: one line per side (spec §6.7)."""
+    key = enemy_callout_key(arrived.get("enemy", 0), enemies_already)
+    if key is not None:
+        try:
+            _say(qb, "g_pTact", key)
+        except Exception as e:
+            _log.error("quickbattle: enemy callout failed: %s", e)
+    if arrived.get("other", 0) > 0:
+        try:
+            _say(qb, "g_pSci", OTHER_CALLOUT_KEY)
+        except Exception as e:
+            _log.error("quickbattle: friendly callout failed: %s", e)
 
 
 def on_timer(pObject, pEvent) -> None:

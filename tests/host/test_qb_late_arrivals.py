@@ -559,3 +559,87 @@ def test_mission_swap_resets_late_arrivals():
     hc.pending_swap = "SomeMission"
     hc._drain_pending_swap()
     assert late_arrivals._ET is None and late_arrivals._qb is None
+
+
+def _spoken(monkeypatch):
+    import App
+    said = []
+    real = App.CharacterAction_Create
+
+    def fake(char, kind, key="", *rest):
+        said.append((char, key, rest))
+        return real(char, kind, key, *rest)
+    monkeypatch.setattr(App, "CharacterAction_Create", fake)
+    return said
+
+
+def _late_enemies(qb, monkeypatch, n, kill_now):
+    hl, controller, QB = qb
+    from engine.quickbattle import spawn
+    said = _spoken(monkeypatch)
+    ships = ["Galor", "Keldon", "Warbird"][:n]
+    plan = _plan([_ENEMY_A, ("enemy", "aft", "standard", "high", ships, 1)])
+    spawn.set_provider(lambda: plan)
+    _start(hl, controller)
+    t0 = _now()
+    if kill_now:
+        _destroy(QB, _ships(QB)["Warbird-1"])
+    _jump_to(t0 + 61.0)
+    return QB, said
+
+
+def test_late_enemies_into_quiet_battle_say_count_line(qb, monkeypatch):
+    QB, said = _late_enemies(qb, monkeypatch, 2, True)
+    lines = [(c, k) for c, k, _ in said if k.startswith("Incoming")]
+    assert lines == [(QB.g_pTact, "Incoming2")]
+
+
+def test_late_enemies_while_fighting_say_incoming6(qb, monkeypatch):
+    QB, said = _late_enemies(qb, monkeypatch, 2, False)
+    lines = [(c, k) for c, k, _ in said if k.startswith("Incoming")]
+    assert lines == [(QB.g_pTact, "Incoming6")]
+
+
+def test_late_friendly_says_gs025_by_science(qb, monkeypatch):
+    hl, controller, QB = qb
+    from engine.quickbattle import spawn
+    said = _spoken(monkeypatch)
+    plan = _plan([_ENEMY_A, ("friendly", "port", "close", "medium", ["Akira"], 1)])
+    spawn.set_provider(lambda: plan)
+    _start(hl, controller)
+    _jump_to(_now() + 61.0)
+    lines = [(c, k) for c, k, _ in said if k.startswith("gs025") or k.startswith("Incoming")]
+    assert lines == [(QB.g_pSci, "gs025")]
+
+
+def test_mixed_arrival_one_line_per_side(qb, monkeypatch):
+    hl, controller, QB = qb
+    from engine.quickbattle import spawn
+    said = _spoken(monkeypatch)
+    plan = _plan([_ENEMY_A, ("enemy", "aft", "standard", "high", ["Galor"], 1),
+                  ("friendly", "port", "close", "medium", ["Akira", "Akira"], 1)])
+    spawn.set_provider(lambda: plan)
+    _start(hl, controller)
+    _jump_to(_now() + 61.0)
+    lines = [(c, k) for c, k, _ in said if k.startswith("gs025") or k.startswith("Incoming")]
+    assert lines == [(QB.g_pTact, "Incoming6"), (QB.g_pSci, "gs025")]
+
+
+def test_missing_character_skips_quietly(qb, monkeypatch):
+    hl, controller, QB = qb
+    from engine.quickbattle import spawn
+    said = _spoken(monkeypatch)
+    plan = _plan([_ENEMY_A, ("enemy", "aft", "standard", "high", ["Galor"], 1)])
+    spawn.set_provider(lambda: plan)
+    _start(hl, controller)
+    monkeypatch.setattr(QB, "g_pTact", None)
+    _jump_to(_now() + 61.0)
+    assert "Galor-2" in _ships(QB)
+    assert not [1 for _, k, _ in said if k.startswith("Incoming")]
+
+
+def test_character_with_own_database_speaks_from_it(qb, monkeypatch):
+    QB, said = _late_enemies(qb, monkeypatch, 1, True)
+    (char, key, rest), = [s for s in said if s[1].startswith("Incoming")]
+    own = char.GetDatabase()
+    assert rest[-1] is (None if own is not None else QB.g_pGeneralDatabase)
