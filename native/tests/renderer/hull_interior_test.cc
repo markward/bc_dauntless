@@ -45,6 +45,12 @@ using namespace plating_gl;
 namespace {
 
 constexpr float kBoxHalf = 20.0f;
+// Twin of hull_interior.frag's kRoomSize = (7.2, 10.4, 3.2) model units
+// (beam, keel, deck pitch). The tests below place pixels in a chosen room
+// cell and on deck planes from it: retune both together.
+constexpr float kDeckPitch = 3.2f;
+// The deck plane just under the near face (z = 6 x 3.2 = 19.2, 0.8 mu below).
+constexpr float kDeckUnderFace = 6.0f * kDeckPitch;
 // Never on disk: the fill reaches the cache through put_for_source only.
 constexpr const char* kBoxSource = "hull_interior_test/box.nif";
 
@@ -258,34 +264,34 @@ TEST_F(HullInteriorTest, LeftTheShipShowsFarWallUnlessBlownThrough) {
 // The char band sits at the tear, not over the whole interior.
 //
 // Setup: two small holes in the near face, both over the SAME room cell
-// (x in [6, 12), y in [0, 8.67), z cell 7, whose floor is the deck plane
-// z = 7 x 2.67 = 18.69, 1.31 mu below the face). Same cell = same room light
+// (x cell 1 = [7.2, 14.4), y cell 0 = [0, 10.4), z cell 6, whose floor is the deck
+// plane kDeckUnderFace, 0.8 mu below the face). Same cell = same room light
 // and floor albedo, so the two deck pixels differ only by their char. The
 // cell is chosen for its room state: a white-lit or dark room, so an
 // uncharred deck is grey (cell x 0 is an emergency-red room, which would
 // tint deck A red without any char).
-//   A at (7, 4): its record hovers 2.7 mu above the face (reach 4), so it
+//   A at (8.5, 4): its record hovers 3.6 mu above the face (reach 4), so it
 //     tears the face but the deck under it is out of every record's reach:
 //     wear 0, an undamaged deck, never charred.
-//   B at (11, 4): its record (reach 3.5) still reaches the deck under it.
+//   B at (12.5, 4): its record (reach 3.5) still reaches the deck under it.
 //     Deck break is set 0.3 above that deck's wear (tear noise 0, so the
 //     wear the shader sees is exact): the plate holds, inside the char band.
 // Neither record reaches the other hole's deck.
 TEST_F(HullInteriorTest, CharBandFollowsTheTearNotTheWholeInterior) {
     dauntless_plating::g_params[19] = 0.0f;   // tear noise: exact wear
-    const glm::vec3 rec_a(7.0f, 4.0f, kBoxHalf + 2.7f);
-    const glm::vec3 rec_b(11.0f, 4.0f, kBoxHalf + 1.0f);
-    const float reach_a = 4.0f, wear_a = 30.0f;
+    const glm::vec3 rec_a(8.5f, 4.0f, kBoxHalf + 3.6f);
+    const glm::vec3 rec_b(12.5f, 4.0f, kBoxHalf + 1.0f);
+    const float reach_a = 4.0f, wear_a = 250.0f;
     const float reach_b = 3.5f, wear_b = 40.0f;
     scenegraph::HullDamageStore ring;
     ring.add(rec_a, glm::vec3(0.0f), reach_a, wear_a, scenegraph::HullDamageKind::Internal);
     ring.add(rec_b, glm::vec3(0.0f), reach_b, wear_b, scenegraph::HullDamageKind::Internal);
 
     const auto cam = quad_cam();
-    const glm::ivec2 pa = to_pixel(cam, glm::vec3(7.0f, 4.0f, kBoxHalf));
-    const glm::ivec2 pb = to_pixel(cam, glm::vec3(11.0f, 4.0f, kBoxHalf));
+    const glm::ivec2 pa = to_pixel(cam, glm::vec3(8.5f, 4.0f, kBoxHalf));
+    const glm::ivec2 pb = to_pixel(cam, glm::vec3(12.5f, 4.0f, kBoxHalf));
     // Where pixel `px`'s centre ray meets the deck plane.
-    const float deck_z = 7.0f * 2.67f;
+    const float deck_z = kDeckUnderFace;
     auto deck_point = [&](glm::ivec2 px) {
         const glm::mat4 inv = glm::inverse(cam.proj_matrix() * cam.view_matrix());
         const glm::vec2 ndc((px.x + 0.5f) / kSize * 2.0f - 1.0f,
@@ -729,21 +735,23 @@ TEST_F(HullInteriorTest, FarRockCraterIsPaintedNotCut) {
 // ---- Phase 2 Task 3: the deck-break subset. ---------------------------------
 // The walk's blown tests read only the records that can blow a plate
 // (plating::deck_break_subset); shading keeps the whole list. Setup: one
-// heavy record above the near face blows it and the deck at z = 18.69 open;
-// four light records (wear 4.5, below deck break 6 less the 1.125 tear-noise
-// lift, and clear of every other sphere) sit on the next deck down, z = 16.02,
+// heavy record above the near face blows it and the deck at kDeckUnderFace
+// open; four light records (wear 4.5, below deck break 6 less the 1.125
+// tear-noise lift, at (+-2, +-2) so the probe ray lands on their deck rather
+// than a wall, and clear of every other sphere) sit on the next deck down,
 // which holds. The light records are outside the subset, yet they soot that
 // deck: the walk must shade it from the whole list, so the picture is the
 // same with the subset as without.
 TEST_F(HullInteriorTest, InteriorSubsetMatchesFullWalk) {
     dauntless_plating::g_params[24] = 6.0f;
     dauntless_plating::g_params[19] = 0.9f;
-    const float deck = 6.0f * 2.67f;
+    const float deck = kDeckUnderFace - kDeckPitch;
     scenegraph::HullDamageStore heavy;
-    heavy.add({0.0f, 0.0f, 26.0f}, glm::vec3(0.0f), 10.0f, 1000.0f,
+    // Reach 8 from z = 25: clear of the light spheres (9.43 > 8 + 1.4).
+    heavy.add({0.0f, 0.0f, 25.0f}, glm::vec3(0.0f), 8.0f, 1000.0f,
               scenegraph::HullDamageKind::Internal);
     scenegraph::HullDamageStore ring = heavy;
-    const glm::vec2 lights[4] = {{4, 4}, {-4, 4}, {4, -4}, {-4, -4}};
+    const glm::vec2 lights[4] = {{2, 2}, {-2, 2}, {2, -2}, {-2, -2}};
     for (const auto& xy : lights)
         ring.add({xy.x, xy.y, deck}, glm::vec3(0.0f), 1.4f, 4.5f,
                  scenegraph::HullDamageKind::Internal);
@@ -759,7 +767,7 @@ TEST_F(HullInteriorTest, InteriorSubsetMatchesFullWalk) {
     const auto off = render_one(ring, filled.get());
     record_culling = true;
     const auto heavy_only = render_one(heavy, filled.get());
-    const glm::ivec2 lp = to_pixel(cam, glm::vec3(4.0f, 4.0f, deck));
+    const glm::ivec2 lp = to_pixel(cam, glm::vec3(2.0f, 2.0f, deck));
     const std::uint8_t* a = pixel(on.px, lp.x, lp.y);
     const std::uint8_t* h = pixel(heavy_only.px, lp.x, lp.y);
     std::fprintf(stderr, "[HullInterior] subset light deck=(%d,%d,%d) heavy only=(%d,%d,%d)\n",
@@ -789,13 +797,13 @@ int redness(const std::uint8_t* q) { return int(q[0]) - int(q[2]); }
 // the event just born than kRimLife + 1 s later.
 TEST_F(HullInteriorTest, FreshTearHeatsTheCharEdge) {
     dauntless_plating::g_params[19] = 0.0f;   // tear noise: exact wear
-    const glm::vec3 rec_b(11.0f, 4.0f, kBoxHalf + 1.0f);
+    const glm::vec3 rec_b(12.5f, 4.0f, kBoxHalf + 1.0f);
     const float reach_b = 3.5f, wear_b = 40.0f;
     scenegraph::HullDamageStore ring;
     ring.add(rec_b, glm::vec3(0.0f), reach_b, wear_b, scenegraph::HullDamageKind::Internal);
     // Deck break just past the wear on the deck under B (the char band).
-    const glm::ivec2 pb = to_pixel(cam, glm::vec3(11.0f, 4.0f, kBoxHalf));
-    const float deck_z = 7.0f * 2.67f;
+    const glm::ivec2 pb = to_pixel(cam, glm::vec3(12.5f, 4.0f, kBoxHalf));
+    const float deck_z = kDeckUnderFace;
     const glm::mat4 inv = glm::inverse(cam.proj_matrix() * cam.view_matrix());
     const glm::vec2 ndc((pb.x + 0.5f) / kSize * 2.0f - 1.0f, (pb.y + 0.5f) / kSize * 2.0f - 1.0f);
     const glm::vec4 a4 = inv * glm::vec4(ndc, -1.0f, 1.0f), b4 = inv * glm::vec4(ndc, 1.0f, 1.0f);
