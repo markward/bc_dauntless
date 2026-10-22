@@ -90,7 +90,7 @@ def build_sector_model(map_data):
 
 def main(in_path=DEFAULT_IN, out_path=DEFAULT_OUT):
     model = build_sector_model(json.loads(Path(in_path).read_text(encoding="utf-8")))
-    Path(out_path).write_text(json.dumps(model, indent=2) + "\n")
+    Path(out_path).write_text(json.dumps(model, indent=2) + "\n", encoding="utf-8", newline="\n")
     print("[bake] %d systems, %d nebulae, %d star-clouds -> %s" % (
         len(model["systems"]), len(model["nebulae"]), len(model["starclouds"]), out_path))
     return model

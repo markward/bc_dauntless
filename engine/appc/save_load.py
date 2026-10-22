@@ -112,7 +112,7 @@ class SaveLoadManager:
             path = _normalize(filename)
             target = path
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(state, indent=2, default=str))
+            path.write_text(json.dumps(state, indent=2, default=str), encoding="utf-8", newline="\n")
             self._save_filename = str(filename)
             return 1
         except Exception as exc:
@@ -151,7 +151,7 @@ class SaveLoadManager:
             path = _contained("missions/%s.json" % module_name)
             target = path
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(state, indent=2, default=str))
+            path.write_text(json.dumps(state, indent=2, default=str), encoding="utf-8", newline="\n")
             return 1
         except Exception as exc:
             _report(target, exc)

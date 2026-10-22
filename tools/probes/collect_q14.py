@@ -63,7 +63,7 @@ def collect_stream(stream: str) -> bool:
 
     RESULTS.mkdir(exist_ok=True)
     out = RESULTS / out_name
-    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     rel = out.relative_to(PROBES.parent.parent)
     print(f"  {stream}: wrote {rel}  ({len(lines)} lines, {len(files)} file(s))")
 

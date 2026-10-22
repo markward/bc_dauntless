@@ -108,7 +108,7 @@ def write_answers(mod_name: str, ship_id: str, attr, answers: dict) -> Path:
     tmp = directory / (name + ".tmp")
     try:
         directory.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(render(attr, answers), encoding="utf-8")
+        tmp.write_text(render(attr, answers), encoding="utf-8", newline="\n")
         os.replace(tmp, path)
     except OSError as exc:
         try:

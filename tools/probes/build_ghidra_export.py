@@ -199,9 +199,9 @@ def main() -> None:
         # lean, Ghidra-relevant views (unique symbols + classes + constants).
         "symbols": symbols, "classes": class_rows, "constants": constants,
     }
-    (OUT / "stbc_abi.json").write_text(json.dumps(bundle, indent=1), encoding="utf-8")
+    (OUT / "stbc_abi.json").write_text(json.dumps(bundle, indent=1), encoding="utf-8", newline="\n")
 
-    (OUT / "README.md").write_text(_README, encoding="utf-8")
+    (OUT / "README.md").write_text(_README, encoding="utf-8", newline="\n")
 
     print("wrote to", OUT)
     for k, v in bundle["meta"]["counts"].items():

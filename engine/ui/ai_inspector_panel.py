@@ -115,7 +115,7 @@ class AIInspectorPanel(Panel):
             export_path = _export_path()
             export_path.parent.mkdir(parents=True, exist_ok=True)
             export_path.write_text(
-                json.dumps(payload, indent=2, default=str), encoding="utf-8")
+                json.dumps(payload, indent=2, default=str), encoding="utf-8", newline="\n")
             n = len(payload["ships"])
             sys.stderr.write(
                 f"[ai-inspector] exported {n} ship(s) to {export_path}\n")

@@ -64,7 +64,7 @@ def collect_one(probe_file: pathlib.Path) -> bool:
         return False
     RESULTS.mkdir(exist_ok=True)
     out = RESULTS / f"{probe_file.stem}.txt"
-    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     print(f"  {qid}: wrote {out.relative_to(PROBES.parent.parent)}  ({len(lines)} lines)")
     return True
 

@@ -142,7 +142,7 @@ def fold_into_model(catalog, out_path=OUT):
         if entry is not None:
             s["warp_points"] = entry["warp_points"]
             s["module"] = entry["module"]
-    Path(out_path).write_text(json.dumps(model, indent=2) + "\n")
+    Path(out_path).write_text(json.dumps(model, indent=2) + "\n", encoding="utf-8", newline="\n")
     return model
 
 

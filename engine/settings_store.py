@@ -190,7 +190,7 @@ class SettingsStore:
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             tmp.write_text(json.dumps(self._doc, indent=2) + "\n",
-                           encoding="utf-8")
+                           encoding="utf-8", newline="\n")
             os.replace(tmp, self._path)
         except (OSError, TypeError, ValueError) as exc:
             # TypeError/ValueError: json.dumps on a non-serialisable value

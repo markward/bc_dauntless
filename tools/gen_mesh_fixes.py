@@ -1017,7 +1017,7 @@ def _run_decals() -> None:
             # once (spec S3.3) -- overwriting silently would throw away any
             # manual tweak, so this must be loud every time it happens.
             print(f"overwriting hand-editable {out_path}")
-        out_path.write_text(decals_json(entries))
+        out_path.write_text(decals_json(entries), encoding="utf-8", newline="\n")
         scores_str = " ".join(f"{o}={s:.3f}" for o, s in diagnostics["scores"].items())
         print(f"{cls_name}  {cfg['placement']}  orientation={diagnostics['orientation']} "
               f"scores=[{scores_str}]  -> {out_path}")
@@ -1092,7 +1092,7 @@ def main(argv=None) -> None:
         _render_review_png(rel, review, review_dir / (Path(rel).stem + ".png"))
 
         if args.write:
-            (out_dir / f"{file_hash}.json").write_text(dumps(fix))
+            (out_dir / f"{file_hash}.json").write_text(dumps(fix), encoding="utf-8", newline="\n")
 
 
 if __name__ == "__main__":

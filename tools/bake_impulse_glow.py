@@ -172,7 +172,7 @@ def main() -> int:
     # Append the new keys just before the dict's closing brace.
     m = re.search(r"OVERRIDES = \{.*?\n\}", text, re.DOTALL)
     text = text[: m.end() - 1] + entries + text[m.end() - 1:]
-    OVERRIDES_PATH.write_text(text)
+    OVERRIDES_PATH.write_text(text, encoding="utf-8", newline="\n")
     print(f"\nwrote {len(new_keys)} section(s) to {OVERRIDES_PATH}")
     return 1 if failed else 0
 

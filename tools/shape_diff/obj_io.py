@@ -69,7 +69,7 @@ def write_obj(shapes, obj_path: Path, mtl_path: Path, texture_path_for) -> None:
                                          for j in range(3)))
         v_base += len(order)
         vt_base += len(s["uvs"])
-    obj_path.write_text("\n".join(lines) + "\n")
+    obj_path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
     mtl = []
     for mat, tex in mats.items():
@@ -77,7 +77,7 @@ def write_obj(shapes, obj_path: Path, mtl_path: Path, texture_path_for) -> None:
         path = texture_path_for(tex) if tex else None
         if path is not None:
             mtl.append(f"map_Kd {path}")
-    mtl_path.write_text("\n".join(mtl) + "\n")
+    mtl_path.write_text("\n".join(mtl) + "\n", encoding="utf-8", newline="\n")
 
 
 @dataclass

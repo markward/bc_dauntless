@@ -181,7 +181,7 @@ def write_decals(path: Path, placements: List["decal_editor.Placement"],
 
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
+    tmp.write_text(text, encoding="utf-8", newline="\n")
     try:
         os.replace(tmp, path)
     finally:

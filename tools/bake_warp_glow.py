@@ -172,7 +172,7 @@ def main() -> int:
     if not args.write:
         print("\ndry run — pass --write to apply")
         return 1 if failed else 0
-    OVERRIDES_PATH.write_text(text)
+    OVERRIDES_PATH.write_text(text, encoding="utf-8", newline="\n")
     print(f"\nwrote {len(merged) + len(created)} section change(s) to {OVERRIDES_PATH}")
     return 1 if failed else 0
 

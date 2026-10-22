@@ -91,7 +91,7 @@ def generate(out_dir: Path) -> None:
     }
     out_dir.mkdir(parents=True, exist_ok=True)
     atlas.save(out_dir / ATLAS_NAME, optimize=False)
-    (out_dir / JSON_NAME).write_text(json.dumps(meta, indent=1) + "\n")
+    (out_dir / JSON_NAME).write_text(json.dumps(meta, indent=1) + "\n", encoding="utf-8", newline="\n")
 
 
 def _pixels(p: Path):

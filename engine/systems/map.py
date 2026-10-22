@@ -200,7 +200,7 @@ def save(m: SystemMap) -> Path:
     d = map_dir()
     d.mkdir(parents=True, exist_ok=True)
     path = d / f"{m.system.lower()}.json"
-    path.write_text(to_json(m), encoding="utf-8")
+    path.write_text(to_json(m), encoding="utf-8", newline="\n")
     return path
 
 

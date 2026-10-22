@@ -122,7 +122,7 @@ class TGConfigMapping:
                 for key, value in kv.items():
                     lines.append(f"{key}={value}")
                 lines.append("")
-            path.write_text("\n".join(lines))
+            path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
             return 1
         except Exception as exc:
             from engine import paths

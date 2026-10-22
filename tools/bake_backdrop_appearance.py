@@ -57,7 +57,7 @@ def main(game_root=None, out_path=DEFAULT_OUT):
             except Exception as e:  # corrupt/unsupported - skip, don't fail bake
                 print(f"[bake] skip {fn}: {e}", file=sys.stderr)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(table, indent=2, sort_keys=True) + "\n")
+    out_path.write_text(json.dumps(table, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     print(f"[bake] wrote {len(table)} entries -> {out_path}")
     return table
 

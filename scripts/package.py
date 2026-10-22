@@ -299,7 +299,7 @@ def stage(dest: Path) -> Path:
     #    the log, which is the only way a bug report against a published zip
     #    can be traced to the commit that produced it.
     (app / PACKAGED_MARKER).write_text(
-        json.dumps(build_info(), indent=2) + "\n", encoding="utf-8")
+        json.dumps(build_info(), indent=2) + "\n", encoding="utf-8", newline="\n")
     return app
 
 

@@ -211,7 +211,7 @@ def main(argv=None) -> int:
         if target.exists() and json.loads(target.read_text(encoding="utf-8")).get("generator") != GENERATOR:
             raise ShapeDiffError(f"{target.name} is owned by another generator; refusing to overwrite")
         if a.write:
-            target.write_text(fix_text(fix))
+            target.write_text(fix_text(fix), encoding="utf-8", newline="\n")
             print(f"wrote {target}")
         else:
             print(f"dry run; --write to write {target}")

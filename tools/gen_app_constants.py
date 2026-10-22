@@ -55,5 +55,5 @@ def render():
 
 
 if __name__ == "__main__":
-    OUT.write_text(render())
+    OUT.write_text(render(), encoding="utf-8", newline="\n")
     print("wrote %s" % OUT)

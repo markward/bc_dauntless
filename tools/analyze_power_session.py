@@ -311,7 +311,7 @@ def _write_synthetic_fixture(path: pathlib.Path) -> None:
     lines.append("pcount=%d" % len(samples))
     lines.append("[NextSection]")
     lines.append("Ignored=1")
-    path.write_text("\n".join(lines) + "\n")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
 def _selftest() -> None:

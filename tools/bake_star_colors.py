@@ -132,7 +132,7 @@ def main(argv=None) -> int:
     if args.check:
         return 1 if changed else 0
     if changed:
-        OUT.write_text(json.dumps(model, indent=2) + "\n", encoding="utf-8")
+        OUT.write_text(json.dumps(model, indent=2) + "\n", encoding="utf-8", newline="\n")
         print("wrote " + str(OUT.relative_to(ROOT)))
     return 0
 
