@@ -28,8 +28,10 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -264,6 +266,21 @@ void draw_mesh(const assets::Model& model,
 
 }  // namespace
 
+namespace {
+// TEMPORARY perf experiment (perf/bridge-4k): DAUNTLESS_BRIDGE_EXP bitmask,
+// main bridge view only. 1 AO filter off, 2 PBR off, 4 probes off,
+// 8 spots + area lights off, 16 depth pre-fill then LEQUAL / no depth write.
+int bridge_exp() {
+    static const int v = [] {
+        const char* e = std::getenv("DAUNTLESS_BRIDGE_EXP");
+        const int x = e ? std::atoi(e) : 0;
+        if (x != 0) std::fprintf(stderr, "[bridge-exp] mask %d\n", x);
+        return x;
+    }();
+    return v;
+}
+}  // namespace
+
 void BridgePass::render(const scenegraph::World& world,
                         const scenegraph::Camera& camera,
                         Pipeline& pipeline,
@@ -272,6 +289,7 @@ void BridgePass::render(const scenegraph::World& world,
                         scenegraph::Pass pass,
                         std::uint32_t comm_set_id) {
     const bool main_bridge = pass == scenegraph::Pass::Bridge && comm_set_id == 0;
+    const int exp_main = (main_bridge && !normal_pass_ && !capture_pass_) ? bridge_exp() : 0;
     // A probe face (spec 2026-10-17 §4.1): which state it shows and which of
     // that state's layers it holds (-1 = the state's base).
     const int cap_layer = (capture_pass_ && capture_probe_ >= kBridgeStates)
@@ -327,7 +345,7 @@ void BridgePass::render(const scenegraph::World& world,
     // PBR on the main bridge view only: a comm set (another ship's room on
     // the viewscreen) keeps the legacy shading -- the probes would hold the
     // PLAYER's bridge, the wrong room to reflect.
-    const int pbr = (pbr_enabled_ && main_bridge) ? 1 : 0;
+    const int pbr = (pbr_enabled_ && main_bridge && !(exp_main & 2)) ? 1 : 0;
     // Emissive variant by the player's alert level on the main bridge view
     // only; a comm set shows the default. A probe face shows its own state's.
     // (The AO pre-pass returns before the shader reads any emissive.)
@@ -344,7 +362,7 @@ void BridgePass::render(const scenegraph::World& world,
     int probe_layer[kBridgeMaxProbeEntries] = {};
     float probe_weight[kBridgeMaxProbeEntries] = {};
     if (pbr != 0 && !capture_pass_ && !normal_pass_ && probes_.texture() != 0 &&
-        brdf_lut_.texture() != 0) {
+        brdf_lut_.texture() != 0 && !(exp_main & 4)) {
         for (const ProbeEntry& e : probe_entries(fade_.w, layer_states_, layer_values_,
                                                  [this](int p) { return probe_valid(p); })) {
             if (debug_view_ == BridgeDebugView::ReflectionLayers && e.probe < kBridgeStates)
@@ -374,7 +392,7 @@ void BridgePass::render(const scenegraph::World& world,
     };
 
     // Static spot lights, packed once per render() (both sub-passes share them).
-    const int spot_count = main_bridge ? static_cast<int>(spots_.size()) : 0;
+    const int spot_count = (main_bridge && !(exp_main & 8)) ? static_cast<int>(spots_.size()) : 0;
     glm::vec3 spot_pos[kBridgeMaxSpots];
     glm::vec3 spot_dir[kBridgeMaxSpots];
     glm::vec3 spot_rad[kBridgeMaxSpots];
@@ -388,7 +406,7 @@ void BridgePass::render(const scenegraph::World& world,
     }
 
     // Static area lights (spec §16.3), packed like the spots.
-    const int area_count = main_bridge ? static_cast<int>(area_lights_.size()) : 0;
+    const int area_count = (main_bridge && !(exp_main & 8)) ? static_cast<int>(area_lights_.size()) : 0;
     glm::vec4 area_cr[kBridgeMaxAreaLights];   // xyz centre, w range
     glm::vec3 area_u[kBridgeMaxAreaLights];
     glm::vec3 area_v[kBridgeMaxAreaLights];
@@ -426,7 +444,7 @@ void BridgePass::render(const scenegraph::World& world,
         s.set_mat4("u_ao_inv_proj", inv_proj);
         s.set_vec2("u_ao_screen", glm::vec2(static_cast<float>(view_vp[2]),
                                             static_cast<float>(view_vp[3])));
-        s.set_int("u_ao_on", ao_on ? 1 : 0);
+        s.set_int("u_ao_on", (ao_on && !(exp_main & 1)) ? 1 : 0);
         s.set_int("u_output_normal", normal_pass_ ? 1 : 0);
         s.set_int("u_debug_view", static_cast<int>(debug_view_));
         // Selection pulse phase: a real clock, once per sub-pass.
@@ -479,6 +497,12 @@ void BridgePass::render(const scenegraph::World& world,
     // every render() call so numbering is stable within a frame.
     int mesh_id_counter = 0;
 
+    // The main view's two sub-passes are timed apart; the AO pre-pass and the
+    // probe faces re-enter here inside their own scopes.
+    const bool time_main = main_bridge && !normal_pass_ && !capture_pass_;
+    std::optional<ScopedFrameTimer> sub_scope;
+    if (time_main) sub_scope.emplace(frame_timer(), "bridge.shell");
+
     // ── Sub-pass A: base geometry, opaque, downlit, alpha-test ─────────────
     auto& base_shader = pipeline.bridge_shader();
     base_shader.use();
@@ -517,8 +541,7 @@ void BridgePass::render(const scenegraph::World& world,
     std::unordered_map<int, const BridgeGlowCapture*> capture_glow;
     if (capture_pass_ && glow_capture_model_ != 0)
         for (const auto& g : glow_captures_) capture_glow[g.mesh] = &g;
-    walk_bridge_meshes(world, lookup, pass, comm_set_id,
-        [&](const assets::Model& m, const assets::Mesh& mesh,
+    auto draw_shell = [&](const assets::Model& m, const assets::Mesh& mesh,
             const assets::Material& mat, const glm::mat4& w,
             unsigned long long mh) {
             const auto [ov, flip] = viewscreen_override(mh);
@@ -572,9 +595,27 @@ void BridgePass::render(const scenegraph::World& world,
                       /*face_mix=*/0.0f, mesh_id_counter++, hl,
                       pbr, rough_ov, metal_ov, emissive_alert,
                       glow_src, glow_rgb, glow_level, cap_glow_src, cap_glow_rgb);
-        });
+        };
+    if (exp_main & 16) {
+        // Depth only, through the same program (the normal-output early
+        // return), so the shading draw below matches its depth exactly.
+        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+        base_shader.set_int("u_output_normal", 1);
+        walk_bridge_meshes(world, lookup, pass, comm_set_id, draw_shell);
+        base_shader.set_int("u_output_normal", 0);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glDepthFunc(GL_LEQUAL);
+        glDepthMask(GL_FALSE);
+    }
+    walk_bridge_meshes(world, lookup, pass, comm_set_id, draw_shell);
+    if (exp_main & 16) {
+        glDepthFunc(GL_LESS);
+        glDepthMask(GL_TRUE);
+    }
 
     // ── Sub-pass B: skinned bridge characters ──────────────────────────────
+    sub_scope.reset();
+    if (time_main) sub_scope.emplace(frame_timer(), "bridge.crew");
     // A probe capture is sub-pass A only: officers are never in the probes.
     if (!capture_pass_) {
         // Any Pass::Bridge instance carrying a skeleton is drawn here, lit by the
@@ -631,6 +672,7 @@ void BridgePass::render(const scenegraph::World& world,
                 }
             });
     }
+    sub_scope.reset();
 
     glBindVertexArray(0);
     // The PBR map units (bound per draw) never leak to the next pass.

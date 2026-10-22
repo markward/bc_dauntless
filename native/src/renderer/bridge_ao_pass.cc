@@ -1,6 +1,7 @@
 // native/src/renderer/bridge_ao_pass.cc
 #include "renderer/bridge_ao_pass.h"
 #include "renderer/bridge_lighting_tuning.h"
+#include "renderer/frame_timer.h"
 #include "renderer/shader.h"
 
 #include "embedded_resolve_vs.h"
@@ -83,13 +84,17 @@ bool BridgeAoPass::render(const scenegraph::Camera& camera, int w, int h,
     //    shaders in normal-output mode, so the AO sees the same smooth normals
     //    the lighting uses (a derivative normal is flat per triangle and shows
     //    every facet of a low-poly face).
-    pre_.bind();
-    glViewport(0, 0, w, h);
-    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    draw_normals();
+    {
+        DAUNTLESS_FRAME_SCOPE("bridge.ao_prepass");
+        pre_.bind();
+        glViewport(0, 0, w, h);
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        draw_normals();
+    }
 
     // 2. Full-screen AO from that depth + normal.
+    DAUNTLESS_FRAME_SCOPE("bridge.ao_kernel");
     const glm::mat4 view = camera.view_matrix();
     const glm::mat4 proj = camera.proj_matrix();
     ao_.bind();
