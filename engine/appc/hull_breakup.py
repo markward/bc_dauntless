@@ -57,7 +57,10 @@ def after_wear(ship, iid, ship_instances=None, now=None):
     """Run after plating wear reaches `iid`'s store. No-op unless the ship may
     shed parts (a rock never does). Returns the DebrisChunks spawned by this
     call -- wear inside the throttle window returns [] here and is drained
-    (and its spawns realized) later by drain()."""
+    (and its spawns realized) later by drain(), and so does a check the
+    native side has only queued on its worker (None back: `_awaiting`).
+    In the running game the first answer is that None, so spawns arrive
+    through drain()."""
     if iid is None or not damage_geometry.breakables_allowed_for(ship):
         return []
     from engine.rocks import rock as _rock
