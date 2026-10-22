@@ -203,7 +203,7 @@ def test_move_sets_and_regroups(make_panel):
     assert p._pending_physical == {"Impulse Engines": "birdofprey"}
     assert _baked(p, "Impulse Engines") == "birdofprey"   # preview overlay
     # A physical edit never marks the Functional row dirty.
-    assert not any(r["dirty"] for r in _payload(p)["subsystems"])
+    assert not any(r.get("dirty") for r in _payload(p)["subsystems"])
 
 
 def test_move_to_current_auto_part_confirms(make_panel):

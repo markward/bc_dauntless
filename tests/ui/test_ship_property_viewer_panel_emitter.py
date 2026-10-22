@@ -264,7 +264,7 @@ def test_select_emitter_missing_returns_false():
 def test_subsystem_rows_emit_emitter_child_row_per_emitter():
     p = _panel_with_subsystem(
         emitters=[_emitter_spec("point"), _emitter_spec("cone")])
-    rows = p._subsystem_rows()
+    rows = [r for r in p._subsystem_rows() if "index" in r]
     assert len(rows) == 1
     emitter_children = [c for c in rows[0]["children"] if c["kind"] == "emitter"]
     assert len(emitter_children) == 2

@@ -368,7 +368,9 @@ def test_payload_lists_subsystems_with_targetable_and_condition(monkeypatch):
     p = ShipPropertyViewerPanel(ship_getter=lambda: object())
     p.open()
     data = _payload_data(p.render_payload())
-    subs = data["subsystems"]
+    # Descriptor rows carry `index`; the running-light rows that follow
+    # them (rl_group / rl_add) do not.
+    subs = [s for s in data["subsystems"] if "index" in s]
     assert [s["name"] for s in subs] == ["Phaser 1", "Shuttle Bay"]
     assert subs[0]["targetable"] is True and subs[0]["condition_pct"] == 88
     assert subs[1]["targetable"] is False and subs[1]["condition_pct"] is None
@@ -527,7 +529,8 @@ def _open_grouped(monkeypatch):
 
 def test_payload_nests_children_under_parent_collapsed_by_default(monkeypatch):
     p = _open_grouped(monkeypatch)
-    subs = _payload_data(p.render_payload())["subsystems"]
+    subs = [s for s in _payload_data(p.render_payload())["subsystems"]
+            if "index" in s]
     assert [s["name"] for s in subs] == ["Warp Engines", "Sensor Array"]
     warp = subs[0]
     assert warp["index"] == 0
