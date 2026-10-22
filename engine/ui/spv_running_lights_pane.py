@@ -137,6 +137,23 @@ class RunningLightsPaneMixin:
     def _rl_clear_selection(self) -> None:
         self._rl_selected = None
 
+    def _rl_yield_to_other_selection(self) -> None:
+        """Drop the light selection when anything else is selected. Decided
+        by STATE, not by which action ran: many actions select as a side
+        effect (`add_light:` selects the new volume, `add_emitter:` the new
+        emitter, every part add its new node), and `rl/select` clears all
+        of these, so any one being set means it was selected later."""
+        if self._rl_selected is None:
+            return
+        from engine.ui import ship_property_viewer as _spv
+        if (self.selected_index is not None
+                or self._selected_light_index is not None
+                or self._selected_emitter is not None
+                or _spv.selected_part_node() is not None
+                or _spv.selected_model_part() is not None
+                or self._decal_selected is not None):
+            self._rl_selected = None
+
     # ------------------------------------------------------------------
     # Rows / payload
     # ------------------------------------------------------------------

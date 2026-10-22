@@ -2744,14 +2744,10 @@ class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
                                          "model_parts/select:")):
             self._decal_selected = None
             self._decal_reposition = False
-        # ...and every select other than a light's own takes it off a
-        # running light.
-        if result and action.startswith(("select_pin:", "select_light:",
-                                         "select_emitter:",
-                                         "model_parts/select:",
-                                         "part/select_node:",
-                                         "decal-select:", "deselect")):
-            self._rl_clear_selection()
+        # ...and anything else now selected takes it off a running light
+        # (by state: many actions select as a side effect).
+        if result and not action.startswith("rl/"):
+            self._rl_yield_to_other_selection()
         # Any action may have changed the decal working list or registry.
         self._decal_sync_override()
         # ...or the physical parents (an edit, an undo, Cancel, Save).
@@ -3096,6 +3092,7 @@ class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
             self.selected_index = None
             self._selected_light_index = None
             self._selected_emitter = None
+            self._rl_clear_selection()
             _spv.select_model_part(None, self._model_part_nodes)
             self._last_pushed = None
             return True

@@ -282,6 +282,39 @@ def test_payload_carries_running_light_rows(make_panel):
     assert data["subsystems"][-1] == {"kind": "rl_add", "name": "+ Add"}
 
 
+def test_add_light_volume_clears_running_light_selection(make_panel):
+    """`add_light:` selects the new light volume; the running light must
+    yield, or a gizmo edit would land on it instead."""
+    p = make_panel()
+    assert p.dispatch_event('rl/select:{"name": "Port Nav"}') is True
+    assert p.dispatch_event(
+        'add_light:' + json.dumps({"i": 0, "shape": "Sphere"})) is True
+    assert p._selected_light_index == 0
+    assert p._rl_selected is None
+    assert p._active_transform_target() == ("light", 0)
+    g = _group(p._subsystem_rows())
+    assert not any(c["chosen"] for c in g["children"])
+
+
+def test_part_node_select_path_clears_running_light_selection(make_panel):
+    """`part/add_anchor` selects the anchor node it made (`_select_part_node`)
+    -- a select path outside any select_* action string."""
+    p = make_panel()
+    p._model_part_nodes = [dict(n) for n in fx._PART_NODES]
+    assert p.dispatch_event('rl/select:{"name": "Port Nav"}') is True
+    assert p.dispatch_event("part/add_anchor:wing") is True
+    assert p._rl_selected is None
+    assert p._active_transform_target() == ("part_anchor", "wing")
+
+
+def test_rl_select_still_takes_selection_off_a_decal(make_panel):
+    p = make_panel()
+    p._decal_selected = "top"
+    assert p.dispatch_event('rl/select:{"name": "Port Nav"}') is True
+    assert p._decal_selected is None
+    assert p._rl_selected == "Port Nav"
+
+
 def test_payload_repushes_after_stage(make_panel):
     p = make_panel()
     _payload(p)
