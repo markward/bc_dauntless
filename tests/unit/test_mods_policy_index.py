@@ -22,7 +22,7 @@ def _touch(p: Path, body: str = "x = 1\n") -> None:
 
 
 def _install_nanofx(mod_dir: Path) -> None:
-    for line in _LAYOUT.read_text().splitlines():
+    for line in _LAYOUT.read_text(encoding="utf-8").splitlines():
         if line.strip():
             _touch(mod_dir / line)
 

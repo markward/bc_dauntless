@@ -246,7 +246,7 @@ def test_write_decals_default_registry_omitted_when_none(tmp_path):
     path = tmp_path / "decals.json"
     decals_writer.write_decals(path, [_placement()], None)
 
-    doc = json.loads(path.read_text())
+    doc = json.loads(path.read_text(encoding="utf-8"))
     assert "default_registry" not in doc
     assert list(doc.keys()) == ["format", "decals"]
     assert doc["format"] == 1
@@ -256,7 +256,7 @@ def test_write_decals_default_registry_included_when_set(tmp_path):
     path = tmp_path / "decals.json"
     decals_writer.write_decals(path, [_placement()], "Klingon")
 
-    doc = json.loads(path.read_text())
+    doc = json.loads(path.read_text(encoding="utf-8"))
     assert list(doc.keys()) == ["format", "default_registry", "decals"]
     assert doc["default_registry"] == "Klingon"
 
@@ -266,7 +266,7 @@ def test_write_decals_entry_matches_decal_editor_to_json_entry(tmp_path):
     p = _placement(name="bottom", shape="hull:0")
     decals_writer.write_decals(path, [p], None)
 
-    doc = json.loads(path.read_text())
+    doc = json.loads(path.read_text(encoding="utf-8"))
     assert doc["decals"] == {"bottom": decal_editor.to_json_entry(p)}
 
 
@@ -276,7 +276,7 @@ def test_write_decals_multiple_placements_keyed_by_name_in_order(tmp_path):
     bottom = _placement(name="bottom")
     decals_writer.write_decals(path, [top, bottom], None)
 
-    doc = json.loads(path.read_text())
+    doc = json.loads(path.read_text(encoding="utf-8"))
     assert list(doc["decals"].keys()) == ["top", "bottom"]
 
 
@@ -289,7 +289,7 @@ def test_write_decals_writes_passthrough_entries_after_the_placements(tmp_path):
     path = tmp_path / "decals.json"
     decals_writer.write_decals(path, [_placement("top")], None,
                                passthrough={"broken": _MALFORMED, "odd": 7})
-    doc = json.loads(path.read_text())
+    doc = json.loads(path.read_text(encoding="utf-8"))
     assert list(doc["decals"]) == ["top", "broken", "odd"]
     assert doc["decals"]["broken"] == _MALFORMED
     assert doc["decals"]["odd"] == 7
@@ -311,7 +311,7 @@ def test_write_decals_refuses_a_passthrough_name_clash(tmp_path):
     with pytest.raises(ValueError):
         decals_writer.write_decals(path, [_placement("top")], None,
                                    passthrough={"top": _MALFORMED})
-    assert path.read_text() == '{"format": 1, "decals": {}}'
+    assert path.read_text(encoding="utf-8") == '{"format": 1, "decals": {}}'
 
 
 def test_save_decals_forwards_passthrough(tmp_path, monkeypatch):
@@ -321,7 +321,7 @@ def test_save_decals_forwards_passthrough(tmp_path, monkeypatch):
     mods.invalidate_replacements()
     written = decals_writer.save_decals(BOP_MODEL_REL, [_placement("top")], None,
                                         passthrough={"broken": _MALFORMED})
-    assert json.loads(written.read_text())["decals"]["broken"] == _MALFORMED
+    assert json.loads(written.read_text(encoding="utf-8"))["decals"]["broken"] == _MALFORMED
     mods.invalidate_replacements()
 
 
@@ -337,7 +337,7 @@ def test_write_decals_preserves_unknown_top_level_keys(tmp_path):
 
     decals_writer.write_decals(path, [_placement()], None)
 
-    doc = json.loads(path.read_text())
+    doc = json.loads(path.read_text(encoding="utf-8"))
     assert doc["comment"] == "hand-authored note"
     assert doc["decals"] == {"top": decal_editor.to_json_entry(_placement())}
 
@@ -475,5 +475,5 @@ def test_save_decals_failure_raises_and_leaves_the_file(tmp_path, monkeypatch):
     mods.invalidate_replacements()
     with pytest.raises(ValueError):
         decals_writer.save_decals(BOP_MODEL_REL, [_placement("top")], None)
-    assert target.read_text() == "{not json"
+    assert target.read_text(encoding="utf-8") == "{not json"
     mods.invalidate_replacements()

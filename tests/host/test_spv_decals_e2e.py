@@ -241,7 +241,7 @@ def test_spv_decal_authoring_end_to_end(tmp_path, monkeypatch):
 
         assert COMMITTED_DECALS_JSON.read_bytes() == committed_before, (
             "the committed Ambassador decals.json must never be written")
-        saved = json.loads(target.read_text())
+        saved = json.loads(target.read_text(encoding="utf-8"))
         assert sorted(saved["decals"].keys()) == ["bottom", "top"]
 
         # ── 4. Re-resolve with decals_for: two placements, load_model accepts.

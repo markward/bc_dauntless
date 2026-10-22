@@ -49,14 +49,14 @@ def test_hs_rgb_conversions():
 
 
 def test_the_page_loads_the_wheel_before_its_users():
-    html = HTML.read_text()
+    html = HTML.read_text(encoding="utf-8")
     w = html.index('src="js/colour_wheel.js"')
     assert w < html.index('src="js/ship_property_viewer.js"')
     assert w < html.index('src="js/bridge_emitters.js"')
 
 
 def test_the_spv_no_longer_carries_its_own_wheel():
-    src = SPV.read_text()
+    src = SPV.read_text(encoding="utf-8")
     for gone in ("function spvHsToRgb", "function spvRgbToHs", "_spvWheelBase",
                  "_spvSetHueSatFromEvent"):
         assert gone not in src

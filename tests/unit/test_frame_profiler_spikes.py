@@ -53,7 +53,7 @@ def test_a_fast_frame_writes_nothing(tmp_path):
     fp.configure_spike_log(log, threshold_ms=50.0, native=False)
     _frame(0.001)
     assert fp.maybe_log_spike() is False
-    assert not log.exists() or "spike #" not in log.read_text()
+    assert not log.exists() or "spike #" not in log.read_text(encoding="utf-8")
 
 
 def test_a_slow_frame_is_written_with_its_raw_breakdown(tmp_path):
@@ -65,7 +65,7 @@ def test_a_slow_frame_is_written_with_its_raw_breakdown(tmp_path):
         _frame(0.0005)
     _frame(0.005, scope_s=0.020)
     assert fp.maybe_log_spike() is True
-    text = log.read_text()
+    text = log.read_text(encoding="utf-8")
     assert "spike #1" in text
     lines = {ln.split()[0]: ln for ln in text.splitlines()
              if ln.strip() and ln.split()[0] in ("sim", "scene.celestial")}
@@ -79,7 +79,7 @@ def test_the_child_is_indented_under_its_parent(tmp_path):
     fp.configure_spike_log(log, threshold_ms=5.0, native=False)
     _frame(0.0, scope_s=0.010)
     fp.maybe_log_spike()
-    rows = [ln for ln in log.read_text().splitlines()
+    rows = [ln for ln in log.read_text(encoding="utf-8").splitlines()
             if "scene.celestial" in ln]
     assert rows and rows[0].startswith("      scene.celestial")
 
@@ -91,7 +91,7 @@ def test_spikes_are_numbered_and_appended(tmp_path):
     fp.maybe_log_spike()
     _frame(0.010)
     fp.maybe_log_spike()
-    text = log.read_text()
+    text = log.read_text(encoding="utf-8")
     assert "spike #1" in text and "spike #2" in text
 
 
@@ -100,7 +100,7 @@ def test_context_is_recorded(tmp_path):
     fp.configure_spike_log(log, threshold_ms=5.0, native=False)
     _frame(0.010)
     fp.maybe_log_spike(context="view=Vesuvi6 warp=arriving")
-    assert "view=Vesuvi6 warp=arriving" in log.read_text()
+    assert "view=Vesuvi6 warp=arriving" in log.read_text(encoding="utf-8")
 
 
 def test_native_raw_scopes_are_written(tmp_path, monkeypatch):
@@ -116,7 +116,7 @@ def test_native_raw_scopes_are_written(tmp_path, monkeypatch):
     fp.configure_spike_log(log, threshold_ms=5.0, native=False)
     _frame(0.010)
     fp.maybe_log_spike()
-    text = log.read_text()
+    text = log.read_text(encoding="utf-8")
     assert "rock.near.stream" in text and "790.5" in text
 
 
@@ -137,7 +137,7 @@ def test_a_missing_parent_directory_is_created(tmp_path):
     fp.configure_spike_log(log, threshold_ms=5.0, native=False)
     _frame(0.010)
     assert fp.maybe_log_spike() is True
-    assert "spike #1" in log.read_text()
+    assert "spike #1" in log.read_text(encoding="utf-8")
 
 
 def test_an_unwritable_path_never_raises(tmp_path):
@@ -178,7 +178,7 @@ def test_context_callable_runs_only_for_a_spike(tmp_path):
     _frame(0.060)
     fp.maybe_log_spike(context=ctx)
     assert calls == [1]
-    assert "view=Starbase12" in (tmp_path / "s.log").read_text()
+    assert "view=Starbase12" in (tmp_path / "s.log").read_text(encoding="utf-8")
 
 
 def test_warp_arrival_actions_are_scoped():

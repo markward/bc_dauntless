@@ -165,7 +165,7 @@ def load() -> dict:
     if key in _memo:
         return _memo[key]
     try:
-        raw = json.loads(path.read_text())
+        raw = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(raw, dict):
             raise ValueError("top level must be an object")
     except (OSError, ValueError) as e:
@@ -291,7 +291,7 @@ def class_preset(name: str):
     """The planet-class preset entry for `name` ("Class-M", ...), else the
     file's "default" class, else None. Resolved at use."""
     try:
-        presets = json.loads(class_presets_path().read_text())
+        presets = json.loads(class_presets_path().read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         _warn(str(class_presets_path()), "atmosphere_classes.json", f"unreadable ({e})")
         return None

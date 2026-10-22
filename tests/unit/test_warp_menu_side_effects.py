@@ -87,7 +87,7 @@ def test_the_re_enable_is_scheduled_on_both_warp_paths():
     path out must re-enable it -- including the degraded one."""
     import pathlib
     src = (pathlib.Path(__file__).resolve().parents[2]
-           / "engine/appc/warp.py").read_text()
+           / "engine/appc/warp.py").read_text(encoding="utf-8")
     body = src[src.index("def WarpSequence_Create"):src.index("def find_set_course_menu")]
     assert body.count("_EnableHelmMenuAction") == 2, (
         "expected one scheduling per branch (flythrough + hard-cut); found %d"

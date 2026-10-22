@@ -197,7 +197,7 @@ def build(sprite_id: str, prep: dict, src_dir: Path) -> Image.Image:
 
 
 def _manifest() -> dict:
-    return json.loads((sprites_dir() / "manifest.json").read_text())
+    return json.loads((sprites_dir() / "manifest.json").read_text(encoding="utf-8"))
 
 
 def main(argv=None) -> int:

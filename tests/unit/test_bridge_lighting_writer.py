@@ -28,9 +28,9 @@ def test_dumps_is_sorted_rounded_and_newline_terminated():
 def test_round_trip_is_byte_identical(tmp_path):
     p = tmp_path / "x.json"
     lw.save(doc(), p)
-    first = p.read_text()
+    first = p.read_text(encoding="utf-8")
     lw.save(ld.validate(json.loads(first)), p)
-    assert p.read_text() == first
+    assert p.read_text(encoding="utf-8") == first
 
 
 def test_save_is_atomic_and_leaves_no_tmp(tmp_path):
@@ -47,7 +47,7 @@ def test_save_refuses_an_invalid_doc_without_touching_the_file(tmp_path):
     bad["materials"]["matte"]["roughness"] = 7
     with pytest.raises(ld.BridgeLightingError):
         lw.save(bad, p)
-    assert p.read_text() == "original"
+    assert p.read_text(encoding="utf-8") == "original"
 
 
 def test_target_path_keeps_where_it_was_found(tmp_path, monkeypatch):
@@ -69,5 +69,5 @@ def test_save_removes_tmp_on_replace_failure(tmp_path, monkeypatch):
     with pytest.raises(OSError, match="replace failed"):
         lw.save(doc(), p)
 
-    assert p.read_text() == "original"
+    assert p.read_text(encoding="utf-8") == "original"
     assert [f.name for f in p.parent.iterdir()] == ["x.json"]

@@ -208,7 +208,7 @@ def test_reload_file_refreshes_the_memo_but_keeps_overrides(tmp_path, monkeypatc
     # set above must still win for the key it targets (proving reload_file
     # -- unlike the full reload() -- never touches `_overrides`).
     path = atmo.catalogue_path()
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     data["moon"] = {"atmosphere": False}
     path.write_text(json.dumps(data))
     atmo.reload_file()

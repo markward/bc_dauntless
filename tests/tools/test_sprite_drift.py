@@ -8,7 +8,7 @@ from PIL import Image, ImageChops
 
 from tools.sprites import prep
 
-ENTRIES = {k: v for k, v in json.loads((prep.sprites_dir() / "manifest.json").read_text())["sprites"].items()
+ENTRIES = {k: v for k, v in json.loads((prep.sprites_dir() / "manifest.json").read_text(encoding="utf-8"))["sprites"].items()
            if isinstance(v, dict) and "prep" in v}
 
 

@@ -27,7 +27,7 @@ def saved(tmp_path):
     f = tmp_path / "refit.py"
     f.write_text(SRC)
     r.ModHardpointFileTarget(str(f)).write("refit", EDITS)
-    return f.read_text()
+    return f.read_text(encoding="utf-8")
 
 
 @pytest.fixture

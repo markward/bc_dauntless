@@ -57,7 +57,7 @@ def test_tee_captures_python_and_fd_level_writes(tmp_path):
         log_tee.stop()
     """, log, tmp_path)
     assert proc.returncode == 0, proc.stderr
-    text = log.read_text()
+    text = log.read_text(encoding="utf-8")
     for line in ("py-out", "py-err", "fd-err"):
         assert text.count(line) == 1, (line, text)
     assert not log.with_name("dauntless.prev.log").exists()   # no re-rotate
@@ -78,7 +78,7 @@ def test_tee_flushes_buffered_c_stdout_into_the_log(tmp_path):
         log_tee.stop()
     """, log, tmp_path)
     assert proc.returncode == 0, proc.stderr
-    assert "c-out" in log.read_text()
+    assert "c-out" in log.read_text(encoding="utf-8")
     assert b"c-out" in _console(proc)
 
 
@@ -90,7 +90,7 @@ def test_stop_runs_at_exit_without_an_explicit_call(tmp_path):
         os.write(2, b"fd-last\\n")
     """, log, tmp_path)
     assert proc.returncode == 0, proc.stderr
-    text = log.read_text()
+    text = log.read_text(encoding="utf-8")
     assert "last-words" in text and "fd-last" in text
     assert b"last-words" in _console(proc) and b"fd-last" in _console(proc)
 
@@ -104,10 +104,10 @@ def test_rotation_keeps_one_previous(tmp_path):
         """ % run, log, tmp_path)
         assert proc.returncode == 0, proc.stderr
     prev = log.with_name("dauntless.prev.log")
-    assert "third-run" in log.read_text()
-    assert "second-run" not in log.read_text()
-    assert "second-run" in prev.read_text()
-    assert "first-run" not in prev.read_text()
+    assert "third-run" in log.read_text(encoding="utf-8")
+    assert "second-run" not in log.read_text(encoding="utf-8")
+    assert "second-run" in prev.read_text(encoding="utf-8")
+    assert "first-run" not in prev.read_text(encoding="utf-8")
 
 
 def test_rotate_returns_an_error_string_instead_of_raising(tmp_path):
@@ -119,7 +119,7 @@ def test_rotate_returns_an_error_string_instead_of_raising(tmp_path):
     (tmp_path / "dauntless.prev.log").mkdir()
     err = log_tee.rotate(log)
     assert isinstance(err, str) and "dauntless.prev.log" in err
-    assert log.read_text() == "old"
+    assert log.read_text(encoding="utf-8") == "old"
 
 
 def test_rotation_failure_does_not_block_start(tmp_path):
@@ -132,7 +132,7 @@ def test_rotation_failure_does_not_block_start(tmp_path):
         print("new-run")
     """, log, tmp_path)
     assert proc.returncode == 0, proc.stderr
-    text = log.read_text()
+    text = log.read_text(encoding="utf-8")
     assert "new-run" in text
     assert "old-run" in text          # rotation failed: appended, not lost
     console = _console(proc)
@@ -392,7 +392,7 @@ def test_closed_stdout_keeps_the_mirror_and_the_log(tmp_path):
             raise AssertionError("fd 1 was closed before start; stop left it open")
     """, log, tmp_path)
     assert proc.returncode == 0, proc.stderr
-    text = log.read_text()
+    text = log.read_text(encoding="utf-8")
     assert text.count("half-out") == 1 and text.count("half-err") == 1
     assert b"half-out" in proc.stderr and b"half-err" in proc.stderr
 
@@ -417,7 +417,7 @@ def test_closed_stderr_mirrors_to_stdout(tmp_path):
             os.write(1, b"fd 2 left open\\n")
     """, log, tmp_path)
     assert proc.returncode == 0
-    text = log.read_text()
+    text = log.read_text(encoding="utf-8")
     assert text.count("solo-out") == 1
     assert "after-stop" not in text
     assert b"solo-out" in proc.stdout and b"after-stop" in proc.stdout

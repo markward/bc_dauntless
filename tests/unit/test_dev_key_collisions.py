@@ -43,7 +43,7 @@ def _registered_dev_keys_in(paths):
     `register_dev_keybinding(...)` call, across the given files."""
     names = []
     for path in paths:
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -190,7 +190,7 @@ def _bc_bound_wc_names():
         import pytest
         pytest.skip("DefaultKeyboardBinding.py not present")
 
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     names = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):

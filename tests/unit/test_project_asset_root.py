@@ -46,7 +46,7 @@ def test_binding_is_required_and_unguarded():
 
 def test_host_loop_pushes_it_beside_the_game_root():
     """Same boot site as set_game_root, bare."""
-    src = Path(inspect.getsourcefile(__import__("engine.host_loop").host_loop)).read_text()
+    src = Path(inspect.getsourcefile(__import__("engine.host_loop").host_loop)).read_text(encoding="utf-8")
     assert "r.set_project_asset_root(str(_paths.project_asset_root()))" in src
 
 
@@ -62,7 +62,7 @@ def test_scuff_texture_prewarm_reaches_the_renderer(monkeypatch):
 
 
 def test_host_loop_prewarms_the_scuff_texture_after_the_root():
-    src = Path(inspect.getsourcefile(__import__("engine.host_loop").host_loop)).read_text()
+    src = Path(inspect.getsourcefile(__import__("engine.host_loop").host_loop)).read_text(encoding="utf-8")
     root = src.index("r.set_project_asset_root(str(_paths.project_asset_root()))")
     warm = src.index("r.prewarm_scuff_normal_texture()")
     assert warm > root

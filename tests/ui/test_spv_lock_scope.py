@@ -4,9 +4,9 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2] / "native" / "assets" / "ui-cef"
-CSS = re.sub(r"/\*.*?\*/", "", (ROOT / "css" / "ship_property_viewer.css").read_text(), flags=re.S)
-JS = (ROOT / "js" / "ship_property_viewer.js").read_text()
-HTML = (ROOT / "index.html").read_text()
+CSS = re.sub(r"/\*.*?\*/", "", (ROOT / "css" / "ship_property_viewer.css").read_text(encoding="utf-8"), flags=re.S)
+JS = (ROOT / "js" / "ship_property_viewer.js").read_text(encoding="utf-8")
+HTML = (ROOT / "index.html").read_text(encoding="utf-8")
 
 
 def _lock_selectors():

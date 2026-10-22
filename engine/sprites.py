@@ -64,7 +64,7 @@ def _load(name: str) -> dict:
     key = str(path)
     if key not in _memo:
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(data, dict):
                 raise ValueError("top level must be an object")
         except (OSError, ValueError) as e:

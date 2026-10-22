@@ -14,6 +14,6 @@ def _block(text):
 
 
 def test_system_nebula_fbm_matches_the_volumetric_fbm():
-    a = _block((SHADERS / "nebula_volumetric.frag").read_text())
-    b = _block((SHADERS / "system_nebula.frag").read_text())
+    a = _block((SHADERS / "nebula_volumetric.frag").read_text(encoding="utf-8"))
+    b = _block((SHADERS / "system_nebula.frag").read_text(encoding="utf-8"))
     assert a == b

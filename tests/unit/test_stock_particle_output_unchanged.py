@@ -66,7 +66,7 @@ def test_stock_particle_descriptors_unchanged(monkeypatch):
         GOLDEN.parent.mkdir(parents=True, exist_ok=True)
         GOLDEN.write_text(json.dumps(got, indent=1, sort_keys=True) + "\n")
         pytest.skip("golden regenerated")
-    want = json.loads(GOLDEN.read_text())
+    want = json.loads(GOLDEN.read_text(encoding="utf-8"))
     assert set(got) == set(want)
     for case, descs in want.items():
         assert len(got[case]) == len(descs), case

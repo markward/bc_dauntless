@@ -6,8 +6,8 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2] / "native" / "assets" / "ui-cef"
-JS = (ROOT / "js" / "mods_screen.js").read_text()
-HTML = (ROOT / "index.html").read_text()
+JS = (ROOT / "js" / "mods_screen.js").read_text(encoding="utf-8")
+HTML = (ROOT / "index.html").read_text(encoding="utf-8")
 
 ACCEPTED = {"tick", "tick-mod", "clear-ticks", "set", "star",
             "continue", "skip", "play", "quit"}

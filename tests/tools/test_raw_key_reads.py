@@ -96,7 +96,7 @@ def test_the_guard_ignores_comments_strings_and_key_name():
 
 
 def test_window_cc_reads_raw_keys_only_inside_the_gate():
-    found = enclosing_functions(WINDOW_CC.read_text())
+    found = enclosing_functions(WINDOW_CC.read_text(encoding="utf-8"))
     assert found, "window.cc has no glfwGetKey at all -- the guard is vacuous"
     assert set(found) == ALLOWED, found
 

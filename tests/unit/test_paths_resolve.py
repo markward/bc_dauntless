@@ -213,7 +213,7 @@ def test_persist_writes_only_cli_sourced_roots(fake_bc_install, tmp_path):
     store = _store_with(tmp_path, sdk=sdk)
     res = paths.resolve(argv=["--game-dir", str(game)], env={}, store=store)
     paths.persist(res, store)
-    doc = json.loads((tmp_path / "settings.json").read_text())
+    doc = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
     assert doc["paths"]["game"] == str(game)
     # Symmetric check: sdk came from settings, not cli, so persist() must
     # leave the pre-existing value alone rather than re-writing it.
@@ -230,7 +230,7 @@ def test_persist_never_writes_an_env_sourced_root(fake_bc_install, tmp_path):
     # The store is write-through: with nothing to persist the file is never
     # created at all, which is itself the assertion.
     settings = tmp_path / "settings.json"
-    doc = json.loads(settings.read_text()) if settings.exists() else {}
+    doc = json.loads(settings.read_text(encoding="utf-8")) if settings.exists() else {}
     assert doc.get("paths", {}) == {}
 
 
@@ -239,7 +239,7 @@ def test_persist_never_writes_an_invalid_path(tmp_path):
     res = paths.resolve(argv=["--game-dir", "/typo"], env={}, store=store)
     paths.persist(res, store)
     settings = tmp_path / "settings.json"
-    doc = json.loads(settings.read_text()) if settings.exists() else {}
+    doc = json.loads(settings.read_text(encoding="utf-8")) if settings.exists() else {}
     assert "game" not in doc.get("paths", {})
 
 
@@ -247,9 +247,9 @@ def test_resolve_itself_writes_nothing(fake_bc_install, tmp_path):
     game, _sdk = fake_bc_install
     settings = tmp_path / "settings.json"
     store = _store_with(tmp_path)
-    before = settings.read_text() if settings.exists() else None
+    before = settings.read_text(encoding="utf-8") if settings.exists() else None
     paths.resolve(argv=["--game-dir", str(game)], env={}, store=store)
-    after = settings.read_text() if settings.exists() else None
+    after = settings.read_text(encoding="utf-8") if settings.exists() else None
     assert after == before
 
 

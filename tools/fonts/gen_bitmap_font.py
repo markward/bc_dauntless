@@ -103,7 +103,7 @@ def check(committed: Path) -> bool:
     with tempfile.TemporaryDirectory() as td:
         generate(Path(td))
         same_png = _pixels(Path(td) / ATLAS_NAME) == _pixels(committed / ATLAS_NAME)
-        same_json = json.loads((Path(td) / JSON_NAME).read_text()) == json.loads((committed / JSON_NAME).read_text())
+        same_json = json.loads((Path(td) / JSON_NAME).read_text(encoding="utf-8")) == json.loads((committed / JSON_NAME).read_text(encoding="utf-8"))
     return same_png and same_json
 
 

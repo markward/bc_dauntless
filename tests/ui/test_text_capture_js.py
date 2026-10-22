@@ -12,7 +12,7 @@ HTML = (ROOT / "native/assets/ui-cef/index.html")
 
 
 def _src():
-    return JS.read_text()
+    return JS.read_text(encoding="utf-8")
 
 
 def _fn(src, name):
@@ -29,7 +29,7 @@ def _fn(src, name):
 
 
 def test_loaded_after_pause_menu_and_before_the_panels():
-    html = HTML.read_text()
+    html = HTML.read_text(encoding="utf-8")
     pm = html.index('src="js/pause_menu.js"')
     tc = html.index('src="js/text_capture.js"')
     spv = html.index('src="js/ship_property_viewer.js"')

@@ -44,7 +44,7 @@ def test_autoload_runs_before_ships(tmp_path):
     mods.configure(mods.build_index(tmp_path))
     loader.load_plugins()
 
-    assert order.read_text().split() == ["autoload", "ship"]
+    assert order.read_text(encoding="utf-8").split() == ["autoload", "ship"]
 
 
 def test_filename_order_is_honoured_within_a_directory(tmp_path):
@@ -58,7 +58,7 @@ def test_filename_order_is_honoured_within_a_directory(tmp_path):
     mods.configure(mods.build_index(tmp_path))
     loader.load_plugins()
 
-    assert order.read_text().split() == ["000-a.py", "100-b.py", "300-c.py"]
+    assert order.read_text(encoding="utf-8").split() == ["000-a.py", "100-b.py", "300-c.py"]
 
 
 def test_one_raising_script_does_not_stop_the_others(tmp_path):
@@ -70,7 +70,7 @@ def test_one_raising_script_does_not_stop_the_others(tmp_path):
     mods.configure(mods.build_index(tmp_path))
     report = loader.load_plugins()
 
-    assert ok.read_text().strip() == "ran"
+    assert ok.read_text(encoding="utf-8").strip() == "ran"
     assert any("a_bad" in name and "ValueError" in err
                for name, err in report.failures)
 

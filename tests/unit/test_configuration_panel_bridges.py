@@ -396,7 +396,7 @@ def test_closed_panel_does_not_compute_the_bridges_block(pins, monkeypatch):
 def _js_source():
     from pathlib import Path
     root = Path(__file__).resolve().parents[2]
-    return (root / "native/assets/ui-cef/js/configuration_panel.js").read_text()
+    return (root / "native/assets/ui-cef/js/configuration_panel.js").read_text(encoding="utf-8")
 
 
 def _js_bridges_renderers():
@@ -516,7 +516,7 @@ def test_js_row_actions_are_icon_buttons_with_css_hover_text():
     for const in ("CP_ICON_PENCIL", "CP_ICON_CROSS"):
         assert re.search(r"const %s =\s*'<svg" % const, src), const
     root = Path(__file__).resolve().parents[2]
-    css = (root / "native/assets/ui-cef/css/configuration_panel.css").read_text()
+    css = (root / "native/assets/ui-cef/css/configuration_panel.css").read_text(encoding="utf-8")
     assert re.search(r"\[data-tip\][^{]*:hover::after", css)
     assert re.search(r"\.cp-focused\[data-tip\]::after|\[data-tip\]\.cp-focused::after", css)
     assert "content: attr(data-tip)" in css

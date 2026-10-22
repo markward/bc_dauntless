@@ -27,20 +27,20 @@ def _body(src, signature_regex):
 
 
 def test_load_start_fires_the_reset_for_the_main_frame():
-    body = _body(CLIENT_CC.read_text(), r"DauntlessCefClient::OnLoadStart\s*\(")
+    body = _body(CLIENT_CC.read_text(encoding="utf-8"), r"DauntlessCefClient::OnLoadStart\s*\(")
     main = body[body.index("IsMain()"):]
     assert "fire_capture_reset()" in main
 
 
 def test_renderer_crash_fires_the_reset():
-    assert "CefRequestHandler" in CLIENT_H.read_text()
-    body = _body(CLIENT_CC.read_text(),
+    assert "CefRequestHandler" in CLIENT_H.read_text(encoding="utf-8")
+    body = _body(CLIENT_CC.read_text(encoding="utf-8"),
                  r"DauntlessCefClient::OnRenderProcessTerminated\s*\(")
     assert "fire_capture_reset()" in body
 
 
 def test_bindings_wire_the_reset_to_the_window_gate():
-    src = BINDINGS.read_text()
+    src = BINDINGS.read_text(encoding="utf-8")
     m = re.search(r"set_capture_reset_handler\s*\(", src)
     assert m, "host_bindings never installs the capture-reset handler"
     tail = src[m.end():m.end() + 400]

@@ -139,7 +139,7 @@ def test_write_then_read_welds_by_position_and_keeps_uvs(tmp_path):
     assert len(m.faces) == 2                     # (4,2,1) is degenerate after welding
     uvs = sorted(uv for f in m.faces for _, uv in f)
     assert (0.5, 1.0) in [tuple(round(c, 6) for c in uv) for uv in uvs]
-    assert "usemtl Map_1.tga" in obj.read_text()
+    assert "usemtl Map_1.tga" in obj.read_text(encoding="utf-8")
 
 
 def test_read_objects_ignores_colours_normals_and_groups(tmp_path):
@@ -554,7 +554,7 @@ def test_real_dbridge_export_mtl_has_textures_on_disk(tmp_path):
         pytest.skip("BC content not configured")
     from tools import bridge_shape_diff as cli
     cli.export(DBRIDGE, tmp_path)
-    mtl_text = (tmp_path / "Dbridge.mtl").read_text()
+    mtl_text = (tmp_path / "Dbridge.mtl").read_text(encoding="utf-8")
     map_kd_lines = [line for line in mtl_text.splitlines() if line.startswith("map_Kd ")]
     assert len(map_kd_lines) >= 1
     for line in map_kd_lines:
@@ -571,7 +571,7 @@ def test_real_dbridge_move_lands_in_local_frame(tmp_path):
     cli.export(DBRIDGE, tmp_path)
     base = tmp_path / "Dbridge.obj"
     edit = tmp_path / "edit.obj"
-    lines = base.read_text().splitlines()
+    lines = base.read_text(encoding="utf-8").splitlines()
     i = lines.index("o b0468_Material_D_walls_1") + 1
     x, y, z = map(float, lines[i].split()[1:4])
     lines[i] = f"v {x:.6f} {y + 0.5:.6f} {z:.6f}" + "".join(
@@ -609,10 +609,10 @@ def _patched_cli(monkeypatch, tmp_path):
 def test_main_write_refuses_fix_owned_by_another_generator(monkeypatch, tmp_path):
     cli, target = _patched_cli(monkeypatch, tmp_path)
     target.write_text('{"generator": "tools/gen_mesh_fixes.py"}')
-    before = target.read_text()
+    before = target.read_text(encoding="utf-8")
     rc = cli.main(["diff", "b.obj", "e.obj", "--write"])
     assert rc == 2
-    assert target.read_text() == before
+    assert target.read_text(encoding="utf-8") == before
 
 
 def test_main_write_creates_new_fix_when_none_exists(monkeypatch, tmp_path):
@@ -620,7 +620,7 @@ def test_main_write_creates_new_fix_when_none_exists(monkeypatch, tmp_path):
     assert not target.exists()
     rc = cli.main(["diff", "b.obj", "e.obj", "--write"])
     assert rc == 0
-    assert target.read_text() == cli.fix_text(cli.make_fix_dict(cli.DEFAULT_NIF, [GOLDEN_EDIT]))
+    assert target.read_text(encoding="utf-8") == cli.fix_text(cli.make_fix_dict(cli.DEFAULT_NIF, [GOLDEN_EDIT]))
 
 
 def test_main_write_overwrites_fix_owned_by_this_generator(monkeypatch, tmp_path):
@@ -628,7 +628,7 @@ def test_main_write_overwrites_fix_owned_by_this_generator(monkeypatch, tmp_path
     target.write_text('{"generator": "tools/bridge_shape_diff.py"}')
     rc = cli.main(["diff", "b.obj", "e.obj", "--write"])
     assert rc == 0
-    assert target.read_text() == cli.fix_text(cli.make_fix_dict(cli.DEFAULT_NIF, [GOLDEN_EDIT]))
+    assert target.read_text(encoding="utf-8") == cli.fix_text(cli.make_fix_dict(cli.DEFAULT_NIF, [GOLDEN_EDIT]))
 
 
 def test_main_without_write_flag_writes_nothing(monkeypatch, tmp_path):
@@ -662,7 +662,7 @@ def test_main_partial_write_writes_only_supported_edit_and_lists_skipped(monkeyp
     rc = cli.main(["diff", "b.obj", "e.obj", "--partial", "--write"])
     out = capsys.readouterr().out
     assert rc == 0
-    assert target.read_text() == cli.fix_text(cli.make_fix_dict(cli.DEFAULT_NIF, [GOLDEN_EDIT]))
+    assert target.read_text(encoding="utf-8") == cli.fix_text(cli.make_fix_dict(cli.DEFAULT_NIF, [GOLDEN_EDIT]))
     assert "skipped (not yet supported):" in out
     assert "b0099_broken_part" in out
     assert "faces changed" in out
@@ -1036,7 +1036,7 @@ def _tex_pair(tmp_path, shapes, edit_mtl_text, edit_obj_text=None):
     Blender re-exports a material it renamed ('.001')."""
     base_obj, base_mtl = tmp_path / "base.obj", tmp_path / "base.mtl"
     obj_io.write_obj(shapes, base_obj, base_mtl, lambda n: Path("/stock/High") / n)
-    text = edit_obj_text if edit_obj_text is not None else base_obj.read_text()
+    text = edit_obj_text if edit_obj_text is not None else base_obj.read_text(encoding="utf-8")
     first = edit_mtl_text.split("newmtl ", 1)[1].splitlines()[0]
     text = text.replace("usemtl Map_1.tga\n", f"usemtl {first}\n")
     edit_obj = tmp_path / "edit.obj"
@@ -1073,7 +1073,7 @@ def test_two_albedos_on_one_object_is_refused(tmp_path):
     s = _seam_shape()
     base_obj = tmp_path / "base.obj"
     obj_io.write_obj([s], base_obj, tmp_path / "base.mtl", lambda n: Path("/s") / n)
-    lines = base_obj.read_text().splitlines()
+    lines = base_obj.read_text(encoding="utf-8").splitlines()
     f_at = [i for i, line in enumerate(lines) if line.startswith("f ")]
     lines.insert(f_at[2], "usemtl second")      # quad B's faces take another texture
     mtl = "newmtl Map_1.tga\nmap_Kd /s/a.tga\nnewmtl second\nmap_Kd /s/b.tga\n"
@@ -1112,7 +1112,7 @@ def test_texture_op_coexists_with_a_move_on_the_same_object(tmp_path):
     s = _shape()
     base_obj = tmp_path / "base.obj"
     obj_io.write_obj([s], base_obj, tmp_path / "base.mtl", lambda n: Path("/s") / n)
-    lines = base_obj.read_text().splitlines()
+    lines = base_obj.read_text(encoding="utf-8").splitlines()
     i = next(k for k, line in enumerate(lines) if line.startswith("v "))
     lines[i] = "v 0.000000 0.500000 0.000000 1.000000 1.000000 1.000000"
     base, edit = _tex_pair(tmp_path, [s], "newmtl m\nmap_Kd /b/new.tga\n",
@@ -1126,7 +1126,7 @@ def test_partial_skips_an_object_with_a_refused_texture_entirely(tmp_path):
     a, b = _shape(block=11), _shape(block=12, parent="console top", offset=(5, 0, 0))
     base_obj = tmp_path / "base.obj"
     obj_io.write_obj([a, b], base_obj, tmp_path / "base.mtl", lambda n: Path("/s") / n)
-    lines = base_obj.read_text().splitlines()
+    lines = base_obj.read_text(encoding="utf-8").splitlines()
     o12 = lines.index("o b0012_console_top")
     i = next(k for k in range(o12, len(lines)) if lines[k].startswith("v "))
     lines[i] = "v 5.000000 0.500000 0.000000 1.000000 1.000000 1.000000"   # a move...
@@ -1191,14 +1191,14 @@ def test_real_dbridge_texture_op_resolves_against_the_stock_dir(tmp_path):
     from tools import bridge_shape_diff as cli
     cli.export(DBRIDGE, tmp_path)
     base = tmp_path / "Dbridge.obj"
-    lines = base.read_text().splitlines()
+    lines = base.read_text(encoding="utf-8").splitlines()
     o = lines.index(next(line for line in lines if line.startswith("o b0029")))
     u = next(k for k in range(o, len(lines)) if lines[k].startswith("usemtl"))
     lines[u] = "usemtl swapped"
     edit = tmp_path / "edit.obj"
     edit.write_text("\n".join(lines).replace("mtllib Dbridge.mtl", "mtllib edit.mtl") + "\n")
     (tmp_path / "edit.mtl").write_text(
-        (tmp_path / "Dbridge.mtl").read_text() + "newmtl swapped\nmap_Kd /elsewhere/Map 7.tga\n")
+        (tmp_path / "Dbridge.mtl").read_text(encoding="utf-8") + "newmtl swapped\nmap_Kd /elsewhere/Map 7.tga\n")
     fix, edits = cli.build_fix(DBRIDGE, base, edit)
     assert fix["textures"] == [{"block": 29, "albedo": "Map 7.tga"}]
     assert "shape_edits" not in fix
@@ -1234,14 +1234,14 @@ def test_base_object_spanning_two_albedos_is_refused(tmp_path):
     s = _seam_shape()
     base_obj = tmp_path / "base.obj"
     obj_io.write_obj([s], base_obj, tmp_path / "base.mtl", lambda n: Path("/s") / n)
-    lines = base_obj.read_text().splitlines()
+    lines = base_obj.read_text(encoding="utf-8").splitlines()
     f_at = [i for i, line in enumerate(lines) if line.startswith("f ")]
     lines.insert(f_at[2], "usemtl second")
     base_obj.write_text("\n".join(lines) + "\n")
     (tmp_path / "base.mtl").write_text(
         "newmtl Map_1.tga\nmap_Kd /s/a.tga\nnewmtl second\nmap_Kd /s/b.tga\n")
     edit_obj = tmp_path / "edit.obj"
-    edit_obj.write_text(base_obj.read_text().replace("mtllib base.mtl", "mtllib edit.mtl")
+    edit_obj.write_text(base_obj.read_text(encoding="utf-8").replace("mtllib base.mtl", "mtllib edit.mtl")
                         .replace("usemtl second\n", "usemtl Map_1.tga\n"))
     (tmp_path / "edit.mtl").write_text("newmtl Map_1.tga\nmap_Kd /s/a.tga\n")
     base, edit = obj_io.read_objects(base_obj), obj_io.read_objects(edit_obj)
@@ -1716,7 +1716,7 @@ def test_real_dbridge_new_vertex_snapped_onto_another_shape_is_a_reference(tmp_p
     shapes = {s["block"]: s for s in host.nif_shapes(str(nif))}
     target = shapes[24]["vertices"][0]                      # block 24: a rotated frame
     assert match.NifIndex([shapes[468]]).position_ref(target, 468) is None
-    text = base.read_text()
+    text = base.read_text(encoding="utf-8")
     lines = text.splitlines()
     o = lines.index("o b0468_Material_D_walls_1")
     first_face = next(line for line in lines[o:] if line.startswith("f "))
@@ -1881,7 +1881,7 @@ def test_real_dbridge_build_fix_verifies_and_catches_a_corrupted_edit(tmp_path, 
     from tools import bridge_shape_diff as cli
     cli.export(DBRIDGE, tmp_path)
     base = tmp_path / "Dbridge.obj"
-    lines = base.read_text().splitlines()
+    lines = base.read_text(encoding="utf-8").splitlines()
     i = lines.index("o b0468_Material_D_walls_1") + 1
     x, y, z = map(float, lines[i].split()[1:4])
     lines[i] = f"v {x:.6f} {y + 0.5:.6f} {z:.6f}" + "".join(" " + c for c in lines[i].split()[4:])
@@ -2055,14 +2055,14 @@ def test_real_dbridge_flipbook_verifies(tmp_path, monkeypatch, capsys):
     from tools import bridge_shape_diff as cli
     cli.export(DBRIDGE, tmp_path / "export")
     base = tmp_path / "export" / "Dbridge.obj"
-    lines = base.read_text().splitlines()
+    lines = base.read_text(encoding="utf-8").splitlines()
     o = lines.index(next(line for line in lines if line.startswith("o b0688")))
     u = next(k for k in range(o, len(lines)) if lines[k].startswith("usemtl"))
     lines[u] = "usemtl strip"
     edit = tmp_path / "export" / "edit.obj"
     edit.write_text("\n".join(lines).replace("mtllib Dbridge.mtl", "mtllib edit.mtl") + "\n")
     (tmp_path / "export" / "edit.mtl").write_text(
-        (tmp_path / "export" / "Dbridge.mtl").read_text()
+        (tmp_path / "export" / "Dbridge.mtl").read_text(encoding="utf-8")
         + "newmtl strip\nmap_Kd /elsewhere/strip_0.tga\n")
     dirs = _tex_dirs(tmp_path, overlay_files=["strip_0.tga", "strip_1.tga", "strip_2.tga"])
     monkeypatch.setattr(cli, "_texture_dirs", lambda rel: dirs)
@@ -2191,7 +2191,7 @@ def test_real_dbridge_deleted_object_verifies(tmp_path, capsys):
     from tools import bridge_shape_diff as cli
     cli.export(DBRIDGE, tmp_path)
     base = tmp_path / "Dbridge.obj"
-    lines = base.read_text().splitlines()
+    lines = base.read_text(encoding="utf-8").splitlines()
     o = lines.index(next(line for line in lines if line.startswith("o b0084")))
     end = next(k for k in range(o + 1, len(lines)) if lines[k].startswith("o "))
     # Drop the object's header and faces; its v/vt lines stay as loose

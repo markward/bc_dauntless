@@ -31,18 +31,18 @@ def _pixels(p):
 def test_committed_font_matches_the_generator(tmp_path):
     _gen(tmp_path)
     assert _pixels(tmp_path / PNG) == _pixels(FONTS / PNG)
-    assert json.loads((tmp_path / JSN).read_text()) == json.loads((FONTS / JSN).read_text())
+    assert json.loads((tmp_path / JSN).read_text(encoding="utf-8")) == json.loads((FONTS / JSN).read_text(encoding="utf-8"))
 
 
 def test_every_printable_ascii_glyph_is_present():
-    d = json.loads((FONTS / JSN).read_text())
+    d = json.loads((FONTS / JSN).read_text(encoding="utf-8"))
     assert set(d["glyphs"]) == {str(c) for c in range(32, 127)}
     sp = d["glyphs"]["32"]
     assert (sp["w"] == 0 or sp["h"] == 0) and sp["advance"] > 0
 
 
 def test_glyph_rects_lie_inside_the_atlas_and_do_not_overlap():
-    d = json.loads((FONTS / JSN).read_text())
+    d = json.loads((FONTS / JSN).read_text(encoding="utf-8"))
     rects = []
     for g in d["glyphs"].values():
         if g["w"] == 0 or g["h"] == 0:

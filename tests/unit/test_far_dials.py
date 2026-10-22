@@ -55,7 +55,7 @@ _PUFF_CPP_FIELDS = {
 
 def test_puff_defaults_match_rock_puffs_h():
     text = (Path(__file__).parents[2]
-            / "native/src/renderer/include/renderer/rock_puffs.h").read_text()
+            / "native/src/renderer/include/renderer/rock_puffs.h").read_text(encoding="utf-8")
     for key, field in _PUFF_CPP_FIELDS.items():
         m = re.search(r"\b%s\s*=\s*([0-9.e+-]+)f?" % field, text)
         assert m, key
@@ -64,7 +64,7 @@ def test_puff_defaults_match_rock_puffs_h():
 
 def test_speck_band_defaults_match_rock_speck_h():
     hdr = (Path(__file__).parents[2] / "native/src/renderer/include/renderer/rock_speck.h")
-    text = hdr.read_text()
+    text = hdr.read_text(encoding="utf-8")
     for key, field in _SPECK_CPP_FIELDS.items():
         m = re.search(r"\b%s\s*=\s*([0-9.e+-]+)f?" % field, text)
         assert m, key
@@ -74,7 +74,7 @@ def test_speck_band_defaults_match_rock_speck_h():
 def test_native_defaults_match_the_cpp_header():
     """FarDials / TierDials defaults MUST equal DEFAULTS."""
     hdr = (Path(__file__).parents[2] / "native/src/renderer/include/renderer").resolve()
-    text = (hdr / "far_math.h").read_text() + (hdr / "far_field.h").read_text()
+    text = (hdr / "far_math.h").read_text(encoding="utf-8") + (hdr / "far_field.h").read_text(encoding="utf-8")
     for key in far_dials.NATIVE_KEYS - set(_NEAR_CPP_DEFAULTS) - set(_SPECK_CPP_FIELDS) - set(_PUFF_CPP_FIELDS):
         m = re.search(r"\b%s\s*=\s*([0-9.e+-]+)f?" % key, text)
         assert m, key

@@ -62,7 +62,7 @@ def test_reads_are_not_recorded(tmp_path):
         with open(f, "rb"):
             pass
         os.close(os.open(f, os.O_RDONLY))
-        f.read_text()
+        f.read_text(encoding="utf-8")
         os.listdir(tmp_path)
     assert _recorded(go) == []
 

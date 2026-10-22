@@ -76,7 +76,7 @@ def load() -> tuple[Rock, ...]:
         return _memo[key]
     rocks: tuple[Rock, ...] = ()
     try:
-        man = json.loads((root / "catalogue.json").read_text())
+        man = json.loads((root / "catalogue.json").read_text(encoding="utf-8"))
         rocks = tuple(
             Rock(id=r["id"], kind=r["kind"], family=r["family"],
                  lod_paths=tuple(str(root / p) for p in r["lods"]),
@@ -106,7 +106,7 @@ def impostor_view_dirs() -> tuple:
         return _memo_view_dirs[key]
     dirs: tuple = ()
     try:
-        man = json.loads((root / "catalogue.json").read_text())
+        man = json.loads((root / "catalogue.json").read_text(encoding="utf-8"))
         dirs = tuple(tuple(float(c) for c in d) for d in man.get("impostor_view_dirs", []))
     except (OSError, ValueError, KeyError, TypeError):
         pass

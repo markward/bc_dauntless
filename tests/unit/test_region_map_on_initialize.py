@@ -177,7 +177,7 @@ def test_both_sdk_loaders_route_region_modules():
     or fails asymmetrically."""
     gate = '_qual.startswith(("ships.", "Systems."))'
     for rel in ("tools/mission_harness.py", "tests/conftest.py"):
-        assert gate in (PROJECT_ROOT / rel).read_text(), f"{rel} does not route Systems.*"
+        assert gate in (PROJECT_ROOT / rel).read_text(encoding="utf-8"), f"{rel} does not route Systems.*"
 
 
 def test_realizing_an_unmapped_region_set_raises_the_alarm():

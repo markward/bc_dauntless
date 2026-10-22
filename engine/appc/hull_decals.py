@@ -152,7 +152,7 @@ def load_decals_doc(nif_rel_dir: str) -> Optional[dict]:
         return None
 
     try:
-        data = json.loads(json_path.read_text())
+        data = json.loads(json_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         _warn_once((str(json_path), "parse"),
                     f"{json_path}: could not read/parse decals.json")

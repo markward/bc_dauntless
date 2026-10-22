@@ -116,7 +116,7 @@ def test_dict_literals_are_python_15_safe():
     still load in the original BC's Python 1.5: no True/False, no f-strings
     inside any `<X>.dauntless = {...}` literal. (The module's own plumbing,
     e.g. `_listed=False`, is engine code and is not checked.)"""
-    tree = ast.parse(Path(shipdef_overrides.__file__).read_text())
+    tree = ast.parse(Path(shipdef_overrides.__file__).read_text(encoding="utf-8"))
     literals = [n.value for n in ast.walk(tree)
                 if isinstance(n, ast.Assign)
                 and any(isinstance(t, ast.Attribute) and t.attr == "dauntless"

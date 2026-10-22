@@ -25,8 +25,8 @@ def test_exact_beats_prefix():
 
 
 def test_missing_png_uses_fallback_runtime_fields(tmp_path, monkeypatch):
-    (tmp_path / "manifest.json").write_text((sprites.sprites_root() / "manifest.json").read_text())
-    (tmp_path / "legacy_aliases.json").write_text((sprites.sprites_root() / "legacy_aliases.json").read_text())
+    (tmp_path / "manifest.json").write_text((sprites.sprites_root() / "manifest.json").read_text(encoding="utf-8"))
+    (tmp_path / "legacy_aliases.json").write_text((sprites.sprites_root() / "legacy_aliases.json").read_text(encoding="utf-8"))
     monkeypatch.setattr(sprites, "sprites_root", lambda: tmp_path)
     ref = sprites.resolve(NANO + "ExplosionFX/Gfx/Explosions/Exp_Nano1.tga")
     assert ref.sprite_id == "fireball"
@@ -35,8 +35,8 @@ def test_missing_png_uses_fallback_runtime_fields(tmp_path, monkeypatch):
 
 
 def test_present_png_is_used(tmp_path, monkeypatch):
-    (tmp_path / "manifest.json").write_text((sprites.sprites_root() / "manifest.json").read_text())
-    (tmp_path / "legacy_aliases.json").write_text((sprites.sprites_root() / "legacy_aliases.json").read_text())
+    (tmp_path / "manifest.json").write_text((sprites.sprites_root() / "manifest.json").read_text(encoding="utf-8"))
+    (tmp_path / "legacy_aliases.json").write_text((sprites.sprites_root() / "legacy_aliases.json").read_text(encoding="utf-8"))
     (tmp_path / "fireball.png").write_bytes(b"png")
     monkeypatch.setattr(sprites, "sprites_root", lambda: tmp_path)
     ref = sprites.resolve(NANO + "ExplosionFX/Gfx/Explosions/Exp_Nano1.tga")

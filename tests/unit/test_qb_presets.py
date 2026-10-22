@@ -21,7 +21,7 @@ def test_save_load_round_trip_and_sorted_names(tmp_path):
     assert p.names() == ["Alpha", "zeta"]
     again = _store(tmp_path)                      # re-read from disk
     assert sc.same_setup(again.load("zeta"), s)
-    raw = json.loads((tmp_path / "quickbattle_presets.json").read_text())
+    raw = json.loads((tmp_path / "quickbattle_presets.json").read_text(encoding="utf-8"))
     assert raw["presets"]["zeta"]["saved_at"]
 
 

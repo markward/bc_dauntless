@@ -216,7 +216,7 @@ def test_js_focus_list_matches_python():
     the wrong row if the two drift."""
     from engine import paths
     js = (paths.PROJECT_ROOT / "native" / "assets" / "ui-cef" / "js"
-          / "developer_options.js").read_text()
+          / "developer_options.js").read_text(encoding="utf-8")
     assert "target: 'perf_monitor'" in js
     assert "'perf_monitor', s.perf_monitor" in js
 
@@ -224,8 +224,8 @@ def test_js_focus_list_matches_python():
 def test_index_html_hosts_the_overlay():
     from engine import paths
     root = paths.PROJECT_ROOT / "native" / "assets" / "ui-cef"
-    html = (root / "index.html").read_text()
+    html = (root / "index.html").read_text(encoding="utf-8")
     assert 'id="perf-monitor"' in html
     assert 'src="js/perf_monitor.js"' in html
     assert 'href="css/perf_monitor.css"' in html
-    assert "function setPerfMonitor(" in (root / "js" / "perf_monitor.js").read_text()
+    assert "function setPerfMonitor(" in (root / "js" / "perf_monitor.js").read_text(encoding="utf-8")

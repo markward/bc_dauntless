@@ -170,7 +170,7 @@ def test_missing_bridge_falls_back_keeps_the_pin_and_logs_once(pins, capsys):
 def test_add_writes_the_whole_map_so_defaults_persist(pins, tmp_path):
     import json
     pins.add("BirdOfPrey", "SovereignBridge")
-    doc = json.loads((tmp_path / "bridges.json").read_text())
+    doc = json.loads((tmp_path / "bridges.json").read_text(encoding="utf-8"))
     assert doc["pins"] == {"Galaxy": "GalaxyBridge",
                            "Sovereign": "SovereignBridge",
                            "Akira": "SovereignBridge",

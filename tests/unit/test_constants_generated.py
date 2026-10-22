@@ -36,4 +36,4 @@ def test_generator_output_is_byte_identical_to_the_checked_in_file():
     from tools.gen_app_constants import render
     path = (pathlib.Path(__file__).resolve().parents[2]
             / "engine/appc/constants_generated.py")
-    assert path.read_text() == render()
+    assert path.read_text(encoding="utf-8") == render()

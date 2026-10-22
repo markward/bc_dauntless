@@ -186,7 +186,7 @@ def test_run_decals_warns_when_overwriting_hand_edited_json(tmp_path, monkeypatc
 
     out = capsys.readouterr().out
     assert f"overwriting hand-editable {out_path}" in out
-    assert out_path.read_text() != "HAND EDITED"
+    assert out_path.read_text(encoding="utf-8") != "HAND EDITED"
 
 
 # --- Chirality guard (Controller Ruling G item 6) -----------------------

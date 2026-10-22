@@ -315,7 +315,7 @@ def test_the_host_loop_actually_drives_both_halves():
     running it before the push would decide on last frame's answer."""
     import pathlib
     src = (pathlib.Path(__file__).resolve().parents[2]
-           / "engine/host_loop.py").read_text()
+           / "engine/host_loop.py").read_text(encoding="utf-8")
 
     assert "remember_player_target(_player)" in src
     assert "attempt_persistent_restore(_player)" in src

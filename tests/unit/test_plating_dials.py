@@ -8,7 +8,7 @@ FRAME_CC = Path(__file__).resolve().parents[2] / "native/src/renderer/frame.cc"
 
 
 def test_python_defaults_match_the_native_defaults():
-    src = FRAME_CC.read_text()
+    src = FRAME_CC.read_text(encoding="utf-8")
     block = src.split("namespace dauntless_plating {", 1)[1].split("};", 1)[0]
     native = [float(v) for v in re.findall(r"(-?\d+\.\d+)f", block)]
     assert native[:len(plating_dials.DIAL_ORDER)] == plating_dials.params()

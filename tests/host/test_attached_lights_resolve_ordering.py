@@ -16,7 +16,7 @@ _SRC = Path(__file__).resolve().parents[2] / "native" / "src" / "host" / "host_b
 
 
 def _frame_body() -> str:
-    src = _SRC.read_text()
+    src = _SRC.read_text(encoding="utf-8")
     # The sweep call inside frame() is the one preceded by the xform_sync scope.
     m = re.search(r'DAUNTLESS_FRAME_SCOPE\("xform_sync"\);(.*?)DAUNTLESS_FRAME_SCOPE\("anim"\)',
                   src, re.S)
@@ -47,7 +47,7 @@ def test_render_origin_resolves_after_the_sweep_and_before_the_lights():
 
 
 def test_resolve_is_not_called_from_the_set_dynamic_lights_binding():
-    src = _SRC.read_text()
+    src = _SRC.read_text(encoding="utf-8")
     start = src.find('m.def("set_dynamic_lights"')
     assert start >= 0
     end = src.find("m.def(", start + 1)

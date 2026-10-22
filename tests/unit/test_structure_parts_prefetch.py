@@ -154,7 +154,7 @@ def test_facades_forward_to_the_bindings(monkeypatch):
 
 def test_host_loop_pushes_the_cache_root_at_boot():
     """Beside set_project_asset_root, resolved at the push, never captured."""
-    src = Path(inspect.getsourcefile(__import__("engine.host_loop").host_loop)).read_text()
+    src = Path(inspect.getsourcefile(__import__("engine.host_loop").host_loop)).read_text(encoding="utf-8")
     push = "r.structure_parts_set_cache_root(str(_paths.structure_parts_cache_root()))"
     assert push in src
     assert src.index(push) > src.index(

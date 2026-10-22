@@ -208,7 +208,7 @@ def main(argv=None) -> int:
             print("no changes")
             return 0
         target = _fix_dir() / (fnv1a64_hex(_nif_path(a.nif).read_bytes()) + ".json")
-        if target.exists() and json.loads(target.read_text()).get("generator") != GENERATOR:
+        if target.exists() and json.loads(target.read_text(encoding="utf-8")).get("generator") != GENERATOR:
             raise ShapeDiffError(f"{target.name} is owned by another generator; refusing to overwrite")
         if a.write:
             target.write_text(fix_text(fix))

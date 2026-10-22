@@ -783,7 +783,7 @@ def test_warp_flythrough_is_no_longer_a_setting():
 def _js_source():
     import pathlib
     return (pathlib.Path(__file__).resolve().parents[2]
-            / "native/assets/ui-cef/js/configuration_panel.js").read_text()
+            / "native/assets/ui-cef/js/configuration_panel.js").read_text(encoding="utf-8")
 
 
 def _js_master_keys():

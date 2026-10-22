@@ -33,7 +33,7 @@ console.log(JSON.stringify(out));
 
 
 def _run(states):
-    js = (_PANEL / "ship_display.js").read_text()
+    js = (_PANEL / "ship_display.js").read_text(encoding="utf-8")
     src = _HARNESS % (js, json.dumps(states))
     result = subprocess.run([_NODE, "-e", src], capture_output=True,
                             text=True, timeout=30)
@@ -73,7 +73,7 @@ def _hidden_classes(css, attr):
 
 
 def test_css_hides_bcs_pane_contents_and_never_the_silhouette():
-    css = (_PANEL / "ship_display.css").read_text()
+    css = (_PANEL / "ship_display.css").read_text(encoding="utf-8")
     assert _hidden_classes(css, "top") == {
         "shield--top", "shield--front", "shield--rear",
         "shield--left", "shield--right"}

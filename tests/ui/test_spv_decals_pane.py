@@ -118,7 +118,7 @@ def _close(a, b, tol=1e-6):
 
 
 # The COMMITTED Ambassador placement (NIF units), not a hand-sized stand-in.
-_TOP = json.loads(AMB_COMMITTED.read_text())["decals"]["top"]
+_TOP = json.loads(AMB_COMMITTED.read_text(encoding="utf-8"))["decals"]["top"]
 
 
 @pytest.fixture
@@ -916,7 +916,7 @@ def test_a_malformed_placement_survives_a_save_unchanged(env):
     p.dispatch_event('scale_nudge:{"index":1,"delta":0.5}')
     p.dispatch_event("save")
     assert "Saved" in (p._current_toast() or "")
-    doc = json.loads((env["masks"] / "decals.json").read_text())
+    doc = json.loads((env["masks"] / "decals.json").read_text(encoding="utf-8"))
     assert json.dumps(doc["decals"]["broken"]) == json.dumps(_BROKEN)
     assert json.dumps(doc["decals"]["nonormal"]) == json.dumps(_NO_NORMAL)
     assert doc["decals"]["top"]["depth"] == pytest.approx(_TOP["depth"] + 0.5)
@@ -935,7 +935,7 @@ def test_an_unreadable_placement_can_be_deleted_and_undone(env):
     assert _payload(p)["decals"]["dirty"] is False
     p.dispatch_event("decal-delete:broken")
     p.dispatch_event("save")
-    doc = json.loads((env["masks"] / "decals.json").read_text())
+    doc = json.loads((env["masks"] / "decals.json").read_text(encoding="utf-8"))
     assert list(doc["decals"]) == ["top", "nonormal"]
 
 
@@ -1015,7 +1015,7 @@ def test_clearing_the_class_default_brings_the_hint_back_and_saves(env):
     assert d["default_registry"] is None and d["hint"] == NOT_SHOWN
     assert d["dirty"] is True
     p.dispatch_event("save")
-    doc = json.loads((env["masks"] / "decals.json").read_text())
+    doc = json.loads((env["masks"] / "decals.json").read_text(encoding="utf-8"))
     assert "default_registry" not in doc
 
 
@@ -1206,7 +1206,7 @@ def test_save_writes_the_mask_key_only_where_it_differs(env):
     _add(env, "pylon")
     p.dispatch_event("save")
     assert "Saved" in (p._current_toast() or "")
-    doc = json.loads((env["masks"] / "decals.json").read_text())
+    doc = json.loads((env["masks"] / "decals.json").read_text(encoding="utf-8"))
     assert "mask" not in doc["decals"]["pylon"]
     assert doc["decals"]["pylon_2"]["mask"] == "pylon"
     assert "mask" not in doc["decals"]["top"]

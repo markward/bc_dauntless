@@ -5,9 +5,9 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2] / "native" / "assets" / "ui-cef"
-JS = (ROOT / "js" / "quick_battle_setup.js").read_text()
-CSS = (ROOT / "css" / "quick_battle_setup.css").read_text()
-HTML = (ROOT / "index.html").read_text()
+JS = (ROOT / "js" / "quick_battle_setup.js").read_text(encoding="utf-8")
+CSS = (ROOT / "css" / "quick_battle_setup.css").read_text(encoding="utf-8")
+HTML = (ROOT / "index.html").read_text(encoding="utf-8")
 SECTION = HTML.split('<section id="quick-battle-setup"', 1)[1].split("</section>", 1)[0]
 
 

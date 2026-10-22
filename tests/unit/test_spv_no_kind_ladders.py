@@ -106,6 +106,6 @@ def test_detector_passes_non_ladders(src):
 
 def test_no_per_kind_ladders_outside_edit_targets():
     root = pathlib.Path(__file__).resolve().parents[2]
-    hits = {f: list(_ladder_hits(ast.parse((root / f).read_text())))
+    hits = {f: list(_ladder_hits(ast.parse((root / f).read_text(encoding="utf-8"))))
             for f in FILES}
     assert all(not v for v in hits.values()), hits

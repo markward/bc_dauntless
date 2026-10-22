@@ -34,14 +34,14 @@ def test_binary_exists():
 
 def test_layout_and_manifest(tmp_path):
     out = _run(tmp_path)
-    man = json.loads((out / "catalogue.json").read_text())
+    man = json.loads((out / "catalogue.json").read_text(encoding="utf-8"))
     ids = [r["id"] for r in man["rocks"]]
     assert ids == ["majors/silicate_01", "fragments/silicate_01"]
     assert len(man["impostor_view_dirs"]) == 64
     for rock in man["rocks"]:
         for rel in rock["lods"] + [rock["volume"], rock["impostor"]["albedo"], rock["impostor"]["normal"]]:
             assert (out / rel).is_file(), rel
-        g = json.loads((out / rock["lods"][0]).read_text())
+        g = json.loads((out / rock["lods"][0]).read_text(encoding="utf-8"))
         assert g["asset"]["extras"]["dauntless_volume"] == "volume.dvox"
         pos = g["accessors"][g["meshes"][0]["primitives"][0]["attributes"]["POSITION"]]
         radius = max(max(abs(v) for v in pos["max"]), max(abs(v) for v in pos["min"]))

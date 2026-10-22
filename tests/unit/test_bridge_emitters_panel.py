@@ -229,7 +229,7 @@ def test_saved_lights_validate(env_rt):
     click(p, h, (400.0, 300.0))
     p.dispatch_event("light-add")
     p.dispatch_event("save")
-    saved = json.loads((tmp / "bridge_lighting" / f"{HASH}.json").read_text())
+    saved = json.loads((tmp / "bridge_lighting" / f"{HASH}.json").read_text(encoding="utf-8"))
     assert saved["objects"]["7:redalertpanel"]["lights"][0]["range"] == 200
 
 
@@ -460,7 +460,7 @@ def test_an_unnamed_shape_round_trips_through_save_and_revert(env):
     p.dispatch_event("material-new")
     p.dispatch_event("finish:metalness:0.75")
     p.dispatch_event("save")
-    saved = json.loads((tmp / "bridge_lighting" / f"{HASH}.json").read_text())
+    saved = json.loads((tmp / "bridge_lighting" / f"{HASH}.json").read_text(encoding="utf-8"))
     assert saved["objects"]["11:"] == {"block": 11, "name": "", "material": "Map 20 2"}
     assert saved["materials"]["Map 20 2"] == {"metalness": 0.75, "texture": "map 20.tga"}
     p.dispatch_event("finish:metalness:0.1")
@@ -534,7 +534,7 @@ def test_save_writes_the_project_file_and_revert_reloads(env):
     p.dispatch_event("finish:metalness:0.25")
     p.dispatch_event("save")
     path = tmp / "bridge_lighting" / f"{HASH}.json"
-    saved = json.loads(path.read_text())
+    saved = json.loads(path.read_text(encoding="utf-8"))
     assert saved["materials"][saved["objects"]["7:redalertpanel"]["material"]] == {
         "metalness": 0.25, "texture": "redalertpanel.tga"}
     assert payload(p)["dirty"] is False
@@ -556,7 +556,7 @@ def test_save_is_refused_when_the_file_failed_to_load(env):
     assert st["status"]
     p.dispatch_event("finish:roughness:0.5")
     p.dispatch_event("save")
-    assert bad.read_text() == "{broken"
+    assert bad.read_text(encoding="utf-8") == "{broken"
 
 
 def test_close_while_flying_unlocks_cursor_and_clears_highlight(env):

@@ -36,7 +36,7 @@ def _calls_named(tree, name):
 
 
 def test_host_loop_builds_explosion_lights():
-    tree = ast.parse(_HOST_LOOP.read_text())
+    tree = ast.parse(_HOST_LOOP.read_text(encoding="utf-8"))
     assert _calls_named(tree, "_build_explosion_light_render_data"), (
         "host_loop never calls _build_explosion_light_render_data -- death "
         "fireballs would cast no light"
@@ -45,7 +45,7 @@ def test_host_loop_builds_explosion_lights():
 
 def test_explosion_lights_are_concatenated_into_set_dynamic_lights():
     """The builder existing is not enough; its result must reach the binding."""
-    tree = ast.parse(_HOST_LOOP.read_text())
+    tree = ast.parse(_HOST_LOOP.read_text(encoding="utf-8"))
     calls = _calls_named(tree, "set_dynamic_lights")
     assert calls, "host_loop never calls set_dynamic_lights"
 
@@ -65,7 +65,7 @@ def test_explosion_lights_are_concatenated_into_set_dynamic_lights():
 def test_explosion_lights_are_advanced_and_reset():
     """Without the advance no blast is ever borne; without the reset a ship
     that died in the previous mission keeps lighting the next one."""
-    src = _HOST_LOOP.read_text()
+    src = _HOST_LOOP.read_text(encoding="utf-8")
     assert "_explosion_lights.advance(" in src, "registry is never ticked"
     assert "_explosion_lights.reset()" in src, "registry survives a mission swap"
 
@@ -91,7 +91,7 @@ def _render_space_geometry_calls(src):
 def test_every_geometry_call_states_its_light_list():
     """`dyn_lights` is a required parameter precisely so no call site can
     inherit the global by accident."""
-    calls = _render_space_geometry_calls(_HOST_BINDINGS.read_text())
+    calls = _render_space_geometry_calls(_HOST_BINDINGS.read_text(encoding="utf-8"))
     # The lambda's own definition reads `auto render_space_geometry = [&](`,
     # which this pattern deliberately does not match -- so these are the call
     # sites only.
@@ -106,7 +106,7 @@ def test_viewscreen_renders_pass_no_dynamic_lights():
     """Emitter, torpedo and explosion lights are all suppressed on the
     viewscreen feed; only the sun remains (a separate pass plus the
     directionals, neither of which is a dynamic light)."""
-    calls = _render_space_geometry_calls(_HOST_BINDINGS.read_text())
+    calls = _render_space_geometry_calls(_HOST_BINDINGS.read_text(encoding="utf-8"))
     viewscreen = [a for a in calls if "g_viewscreen_hdr" in a]
     assert len(viewscreen) == 2, (
         f"expected 2 viewscreen render calls, found {len(viewscreen)}"
@@ -123,7 +123,7 @@ def test_viewscreen_renders_pass_no_dynamic_lights():
 def test_main_view_renders_keep_their_dynamic_lights():
     """The suppression must be scoped to the viewscreen — the exterior view
     still gets every emitter."""
-    calls = _render_space_geometry_calls(_HOST_BINDINGS.read_text())
+    calls = _render_space_geometry_calls(_HOST_BINDINGS.read_text(encoding="utf-8"))
     main = [a for a in calls if "g_viewscreen_hdr" not in a]
     assert len(main) == 2, f"expected 2 main-view render calls, found {len(main)}"
     for args in main:
@@ -139,7 +139,7 @@ def test_the_light_list_goes_through_the_category_budget():
     cap truncates rather than prioritising. The budget helper is what stops a
     busy scene dropping every explosion light, so the binding must be fed from
     it and not from a raw `a + b + c`."""
-    tree = ast.parse(_HOST_LOOP.read_text())
+    tree = ast.parse(_HOST_LOOP.read_text(encoding="utf-8"))
     calls = _calls_named(tree, "set_dynamic_lights")
     assert calls, "host_loop never calls set_dynamic_lights"
 

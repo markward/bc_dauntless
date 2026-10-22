@@ -25,10 +25,10 @@ def test_committed_fixes_match_generator_output():
                              g.UV_CLAMP_OVERRIDES.get(rel))
         produced[g.fnv1a64_hex(data) + ".json"] = g.dumps(fix)
     committed = {
-        p.name: p.read_text() for p in FIX_DIR.glob("*.json")
+        p.name: p.read_text(encoding="utf-8") for p in FIX_DIR.glob("*.json")
         # Only gen_mesh_fixes' own files can be regenerated here; shape-edit
         # fixes (tools/bridge_shape_diff.py) come from OBJs that are never
         # committed, and are guarded by AssetCacheMeshFix.EveryCommittedFixApplies.
-        if json.loads(p.read_text()).get("generator") == "tools/gen_mesh_fixes.py"
+        if json.loads(p.read_text(encoding="utf-8")).get("generator") == "tools/gen_mesh_fixes.py"
     }
     assert committed == produced

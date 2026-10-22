@@ -18,7 +18,7 @@ def _pf(raw: str) -> P.PolicyFile:
 
 
 def _nanofx_files():
-    return [_pf(line) for line in _LAYOUT.read_text().splitlines() if line.strip()]
+    return [_pf(line) for line in _LAYOUT.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def test_standalone_nanofx_is_blocked_whole():

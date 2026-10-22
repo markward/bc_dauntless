@@ -48,7 +48,7 @@ SPACE_CAMERA = "_push_space_camera"
 
 
 def test_host_loop_pushes_dof_params():
-    tree = ast.parse(HOST_LOOP.read_text())
+    tree = ast.parse(HOST_LOOP.read_text(encoding="utf-8"))
     assert _calls_named(tree, "set_dof_params"), (
         "host_loop never calls r.set_dof_params -- DOF would be inert"
     )
@@ -67,7 +67,7 @@ def test_dof_push_sits_in_the_same_block_as_the_exterior_set_camera():
     tell them apart by construction, and no amount of prose between the calls
     can break it.
     """
-    tree = ast.parse(HOST_LOOP.read_text())
+    tree = ast.parse(HOST_LOOP.read_text(encoding="utf-8"))
     blocks = _block_of_each_call(tree, {})
     cam_blocks = {blocks[id(c)] for c in _calls_named(tree, SPACE_CAMERA)}
     dof_blocks = {blocks[id(c)] for c in _calls_named(tree, "set_dof_params")}
@@ -82,7 +82,7 @@ def test_the_bridge_camera_solve_is_a_different_block():
     more than one set_camera; if they all shared one block, the check would
     pass no matter where the DOF push sat. The bridge solve is deliberately
     elsewhere, so the set intersection above is load-bearing."""
-    tree = ast.parse(HOST_LOOP.read_text())
+    tree = ast.parse(HOST_LOOP.read_text(encoding="utf-8"))
     blocks = _block_of_each_call(tree, {})
     cam_blocks = {blocks[id(c)] for c in _calls_named(tree, SPACE_CAMERA)}
     assert len(cam_blocks) > 1, (
@@ -92,7 +92,7 @@ def test_the_bridge_camera_solve_is_a_different_block():
 
 
 def test_host_loop_constructs_a_focus_solver():
-    src = HOST_LOOP.read_text()
+    src = HOST_LOOP.read_text(encoding="utf-8")
     assert "FocusSolver()" in src, "no FocusSolver constructed"
 
 
@@ -109,7 +109,7 @@ def test_focus_solver_assignment_is_module_level_not_local():
     an assignment nested arbitrarily deep, which is exactly what this test
     must reject.
     """
-    tree = ast.parse(HOST_LOOP.read_text())
+    tree = ast.parse(HOST_LOOP.read_text(encoding="utf-8"))
     top_level_assigned_names = set()
     for node in tree.body:
         if isinstance(node, ast.Assign):

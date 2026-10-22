@@ -42,7 +42,7 @@ def test_corrupt_file_is_quarantined_and_load_does_not_raise(tmp_path):
 
     assert s.has("graphics", "smaa") is False
     assert (tmp_path / "settings.json.corrupt").exists()
-    assert (tmp_path / "settings.json.corrupt").read_text() == "{not json at all"
+    assert (tmp_path / "settings.json.corrupt").read_text(encoding="utf-8") == "{not json at all"
 
 
 def test_non_object_json_is_also_treated_as_corrupt(tmp_path):
@@ -67,7 +67,7 @@ def test_unknown_sections_and_keys_survive_a_save(tmp_path):
     s.load()
     s.set("graphics", "smaa", False)
 
-    on_disk = json.loads(path.read_text())
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
     assert on_disk["graphics"]["future_knob"] == 7
     assert on_disk["paths"] == {"game_dir": "/somewhere"}
     assert on_disk["graphics"]["smaa"] is False
@@ -82,7 +82,7 @@ def test_a_newer_schema_version_is_not_downgraded(tmp_path):
     assert s.get("graphics", "smaa") is True     # known keys still read
     s.set("graphics", "dust", False)
 
-    assert json.loads(path.read_text())["version"] == SCHEMA_VERSION + 5
+    assert json.loads(path.read_text(encoding="utf-8"))["version"] == SCHEMA_VERSION + 5
 
 
 def test_reset_section_deletes_it(tmp_path):
@@ -95,7 +95,7 @@ def test_reset_section_deletes_it(tmp_path):
 
     assert s.has("graphics", "smaa") is False
     assert s.has("gameplay", "subtitles") is True
-    assert "graphics" not in json.loads((tmp_path / "settings.json").read_text())
+    assert "graphics" not in json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
 
 
 def test_set_leaves_no_temp_file_behind(tmp_path):
@@ -605,7 +605,7 @@ def test_set_section_replaces_the_whole_section_and_saves(tmp_path):
     store = SettingsStore(p); store.load()
     store.set("pins", "Galaxy", "GalaxyBridge")
     store.set_section("pins", {"Akira": "SovereignBridge"})
-    assert json.loads(p.read_text())["pins"] == {"Akira": "SovereignBridge"}
+    assert json.loads(p.read_text(encoding="utf-8"))["pins"] == {"Akira": "SovereignBridge"}
     store.set_section("pins", {})
-    assert json.loads(p.read_text())["pins"] == {}
+    assert json.loads(p.read_text(encoding="utf-8"))["pins"] == {}
     assert store.has_section("pins") is True

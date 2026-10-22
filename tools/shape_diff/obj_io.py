@@ -113,7 +113,7 @@ def read_mtl(path: Path) -> dict:
     ('.001') and the directory differs between source trees."""
     out = {}
     current = None
-    for line in Path(path).read_text().splitlines():
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
         parts = line.strip().split(None, 1)
         if not parts:
             continue
@@ -132,7 +132,7 @@ def read_objects(path: Path) -> dict:
     current = None
     mtl = {}            # material name -> map_Kd basename, from mtllib
     material = None     # usemtl in effect
-    for line_no, line in enumerate(Path(path).read_text().splitlines(), start=1):
+    for line_no, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), start=1):
         parts = line.split()
         if not parts:
             continue
