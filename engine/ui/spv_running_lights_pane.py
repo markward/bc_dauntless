@@ -116,6 +116,9 @@ class RunningLightsPaneMixin:
         if self._rl_selected is not None and self._rl_spec(self._rl_selected) is None:
             self._rl_selected = None
         self._last_pushed = None
+        # Not only dispatch_event syncs: a gizmo drag stages from
+        # `_handle_gizmo_input`. Cheap -- it pushes only on a change.
+        self._rl_sync_preview()
 
     def _rl_dirty_names(self) -> List[str]:
         return list(self._pending_running_light)

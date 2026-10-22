@@ -177,3 +177,18 @@ def test_mission_swap_forgets_preview_without_callback(make_panel, pushes):
     assert p.running_light_preview_iids() == ()
     p.close()
     assert p.closed == []
+
+
+def test_gizmo_drag_pushes_the_moved_light(make_panel, pushes):
+    """A gizmo axis drag runs from `_handle_gizmo_input`, outside
+    dispatch_event: the drawn light must still follow the gizmo."""
+    p = make_panel()
+    p.dispatch_event('rl/select:{"name": "Port Nav"}')
+    del pushes[:]
+    p._begin_axis_drag(0, 0.0)
+    p._apply_axis_drag(1.0)
+    moved = p._rl_spec("Port Nav")["position"]
+    assert moved == (0.0, 0.5, 0.0)
+    assert pushes and pushes[-1][1][0][:3] == moved
+    p._end_axis_drag()
+    assert pushes[-1][1][0][:3] == moved
