@@ -8,7 +8,7 @@
 // through MinorPass -- and requires every pixel to match. Same fragment
 // shader, same inputs: there is no tolerance to give.
 //
-// The fixture follows breach_pass_test.cc: a hidden renderer::Window,
+// The fixture is the usual GL test shape: a hidden renderer::Window,
 // GTEST_SKIP only when no GL context exists, a hand-built one-node one-mesh
 // assets::Model uploaded through assets::upload_mesh, and pixel readback.
 
@@ -135,7 +135,6 @@ protected:
     // current, exactly as frame_test.cc does.
     void TearDown() override {
         if (!w) return;
-        renderer::reset_damage_decal_texture();
         renderer::reset_scuff_normal_texture();
         renderer::reset_decal_mask_sampler();
         renderer::reset_model_radius_cache();

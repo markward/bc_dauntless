@@ -31,7 +31,7 @@ def detach(ship, iid, part_name) -> bool:
     """Hide `part_name` on `ship`'s instance `iid` and spawn it as debris.
 
     `iid` is PASSED IN, never looked up from a module global — the same shape
-    `hull_breakup.after_carve` uses, and for the same reason: the session lives
+    `hull_breakup.after_wear` uses, and for the same reason: the session lives
     in host_loop and appc modules must not reach into it.
 
     Returns True when the ship's own instance was updated — the visible half
@@ -111,10 +111,11 @@ def _spawn_chunk(ship, ship_iid, part_name) -> None:
 def _copy_render_state(ship, chunk_iid) -> None:
     """Copy the parent ship's render-cosmetic state onto its new debris chunk.
 
-    Mirrors the native voxel-chunk path (`host_bindings.cc`'s hull-split
-    binding, ~line 4470), which copies world/visible/pass/comm_set_id/
-    rim_eligible/rim_strength/emissive_scale from parent `Instance` to child
-    so a severed chunk keeps the hull's look. Python has no GETTER for a live
+    Mirrors the native structure-chunk path (`renderer::apply_severed_pieces`
+    in part_severance_check.cc), which copies world/visible/pass/comm_set_id/
+    rim_eligible/rim_strength from parent `Instance` to child so a severed
+    chunk keeps the hull's look, and sets emissive_scale 0 (dead). Python has
+    no GETTER for a live
     instance's current pass / comm_set_id / rim_eligible / rim_strength /
     visible (only setters exist on this boundary), so this cannot literally
     copy those values the way the C++ side does. It recomputes the ones that
@@ -134,10 +135,12 @@ def _copy_render_state(ship, chunk_iid) -> None:
         (host_loop sets this at ship-instance creation, never at the
         model-default false); the chunk must match or it reads as a
         different material the instant it splits off.
-      * visible / emissive_scale -- already match create_instance's defaults
-        for a live, undestroyed ship, but set explicitly so this function
-        states the whole contract rather than leaning on defaults that could
-        change under it.
+      * visible -- already matches create_instance's default, but set
+        explicitly so this function states the whole contract rather than
+        leaning on a default that could change under it.
+      * emissive_scale -- 0.0: a severed part is dead, no window glow (Ruling
+        12, parity with the structure chunk, whose native split sets 0).
+        Nothing sets it again: the host lights ship instances only.
 
     pass and comm_set_id are left at create_instance's defaults (Space, 0):
     appendage severance only ever fires on a ship rendered in the space pass,
@@ -167,7 +170,7 @@ def _copy_render_state(ship, chunk_iid) -> None:
         shown = True
     renderer.set_rim_eligible(chunk_iid, True)
     renderer.set_rim_strength(chunk_iid, _rim_strength_for(ship))
-    renderer.set_emissive_scale(chunk_iid, 1.0)
+    renderer.set_emissive_scale(chunk_iid, 0.0)   # dead: no window glow
     from engine.rocks.rock import is_rock
     if is_rock(ship):
         renderer.set_surface_rock(chunk_iid, True)

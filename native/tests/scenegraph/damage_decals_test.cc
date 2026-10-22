@@ -301,3 +301,12 @@ TEST(DamageDecalRing, MergingAGrindIntoAnImpactKeepsTheDent) {
     ring2.add({1, 0, 0}, {0, 0, 1}, 5.0f, 0.4f, WeaponClass::Scuff, 1.0f, {1, 0, 0}, 1.0f);
     EXPECT_FLOAT_EQ(first_active(ring2)->dent, 1.0f);
 }
+
+// A co-located Scorch merge deepens the one deposit (intensity adds, capped at 1).
+TEST(DamageDecalRing, ScorchMergeAddsIntensity) {
+    DamageDecalRing ring;
+    ring.add({0, 0, 0}, {0, 0, 1}, 1.0f, 0.25f, WeaponClass::Scorch, 0.0f);
+    ring.add({0, 0, 0}, {0, 0, 1}, 1.0f, 0.25f, WeaponClass::Scorch, 1.0f);
+    ASSERT_EQ(ring.count(), 1u);
+    EXPECT_FLOAT_EQ(first_active(ring)->intensity, 0.5f);
+}

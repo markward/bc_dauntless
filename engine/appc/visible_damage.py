@@ -1,25 +1,25 @@
 # engine/appc/visible_damage.py
-"""BC visible-damage API -> hull-carve renderer.
+"""BC visible-damage API -> Internal hull-damage records.
 
 The SDK's pre-wreck `Damage*.py` scripts (authored by the original DamageTool)
 call `pShip.AddObjectDamageVolume(x, y, z, influRad, strength)` — a body-frame
 damage sphere — and `Effects.DeathExplosionDamage` calls the runtime sibling
 `pShip.AddDamage(pEmitPos, fRadius, fDamage)`. `DamageableObject` routes both
-here.
+here, and each becomes ONE Internal record in the hull's HullDamageStore
+(`host_io.hull_damage_add`, kind 3): the plating fails inside-out around it,
+torn through at the core with members and stripped plating around.
 
-The carve emitter (`host_io.hull_carve_add`) needs the ship->instance-id map,
-which only exists in the host-loop tick. But the authored
-calls arrive during a mission's `Initialize`, BEFORE the set's render instances
-are realized (the ship has no `iid` yet). So we QUEUE each request and DRAIN it
-per-tick from `advance()` once the ship's instance is realized — the same
-deferred pattern as `engine/appc/core_breach_carve.py`. Authored damage bypasses
-the combat path's eligibility gate and emit throttle (it is content, not beam
-clutter) and emits all of a ship's volumes at once.
+The record needs the ship->instance-id map, which only exists in the
+host-loop tick. But the authored calls arrive during a mission's
+`Initialize`, BEFORE the set's render instances are realized (the ship has no
+`iid` yet). So we QUEUE each request and DRAIN it per-tick from `advance()`
+once the ship's instance is realized — the same deferred pattern as the
+warp-core breach's records (`engine/appc/warp_core_breach.py`). Authored
+damage bypasses the combat path's eligibility gate (it is content, not beam
+clutter) and emits all of a ship's volumes at once, within the frame budget.
 
-`strength` (Gap 2) is accepted for call-shape fidelity but unused here; only the
-sphere position + radius drive a Gap-1 carve.
-
-See docs/engine/damagetool-and-hull-damage-gaps.md.
+The hole is sized by the volume's radius (floored at MIN_HOLE_RADIUS_GU, times
+BC's DamageRadMod) under a cap that scales with `strength`; see ADD_DAMAGE_*.
 """
 import time
 
@@ -34,23 +34,71 @@ from engine.appc.hit_feedback import _mesh_xyz
 # ship, or a failed spawn never leaks an un-emittable entry.
 MAX_PENDING_AGE = 5.0
 
-# Per-frame time budget for emitting queued carves (ms). Each carve is a
-# whole reach-box brush pass; a dying ship's SDK cascade can land 2-6 in one
-# frame, ~5.7 ms each in Debug for a Sovereign (perf-register P-4, SIG-044).
-# advance() always emits at least one, so the queue drains; the rest wait a
-# frame or two, which the cascade's ~0.2 s blast spacing hides. Only the
-# visible hole waits -- AddDamage's gameplay damage is applied when called.
+# Per-frame time budget for emitting queued volumes (ms). A dying ship's SDK
+# cascade can land 2-6 in one frame (when each was a voxel carve brush pass,
+# ~5.7 ms each in Debug for a Sovereign: perf-register P-4, SIG-044; each is
+# now a mesh probe plus a record). advance() always emits at least one, so the
+# queue drains; the rest wait a frame or two, which the cascade's ~0.2 s blast
+# spacing hides. Only the visible hole waits -- AddDamage's gameplay damage is
+# applied when called.
 CARVE_BUDGET_MS = 3.0
 
 # Standoff (GU) for the surface-normal probe in `_mesh_normal`: the ray starts
 # this far outside the sample point along the radial and casts twice as far
 # back inward. Small and local on purpose -- a long cast from outside the
 # bounding sphere would hit whatever hull piece happens to be in front (a
-# nacelle occluding the saucer) rather than the surface actually being carved.
+# nacelle occluding the saucer) rather than the surface actually being damaged.
 NORMAL_PROBE_MARGIN_GU = 0.5
 
+# Hole-radius floor (GU) for a volume: authored wrecks carry their own size,
+# so a tiny influRad still leaves a visible hole (before DamageRadMod).
+MIN_HOLE_RADIUS_GU = 0.25
+
+# AddDamage hole size and wear (Ruling 5, 2026-10-21) -- a DELIBERATE
+# departure from BC's fixed fRadius x 0.25 / 600, at Mark's request: death
+# explosions read "all very even in size", and every 600 hole wore past deck
+# break, so a dead hull showed straight through to its nacelles. The hole cap
+# scales with strength / 600 inside [MIN, MAX]; below BLOW_THROUGH strength
+# the wear tears into the rooms (ROOM_FRACTION of the way from breach to deck
+# break, read from the live plating dials) and the decks hold; at or above it
+# (the cascade's big tier, m >= 1.8 at 600) it is internal_blast.STRENGTH.
+ADD_DAMAGE_HOLE_SCALE_MIN = 0.5
+ADD_DAMAGE_HOLE_SCALE_MAX = 3.0
+ADD_DAMAGE_ROOM_FRACTION = 0.7
+ADD_DAMAGE_BLOW_THROUGH_STRENGTH = 1080.0
+
+# Size multiplier on the VISIBLE half of AddDamage (queue_world_hole) while
+# a `hole_scale` block is active -- the death cascade's blast size tier.
+# AddDamage's gameplay half (combat.apply_hit) never sees it.
+_hole_scale = 1.0
+
+
+class hole_scale:
+    """`with hole_scale(m): ship.AddDamage(...)` scales the queued visible
+    radius and strength by m; gameplay damage is untouched."""
+
+    def __init__(self, m):
+        self._m = float(m)
+        self._prev = 1.0
+
+    def __enter__(self):
+        global _hole_scale
+        self._prev = _hole_scale
+        _hole_scale = self._m
+        return self
+
+    def __exit__(self, *exc):
+        global _hole_scale
+        _hole_scale = self._prev
+        return False
+
+
+def current_hole_scale() -> float:
+    return _hole_scale
+
+
 # Registry of not-yet-emitted volumes. Each entry:
-#   {"ship", "kind": "body"|"world"|"capsule"|"scuff", "pt": (x, y, z), "radius": float, "age": float}
+#   {"ship", "kind": "body"|"world"|"scuff", "pt": (x, y, z), ..., "age": float}
 _pending: list[dict] = []
 
 
@@ -68,10 +116,13 @@ def queue_body_volume(ship, x, y, z, influRad, strength=0.0) -> None:
     })
 
 
-def queue_world_carve(ship, pEmitPos, fRadius, fDamage=0.0) -> None:
-    """Queue a runtime world-space carve (DamageableObject.AddDamage, e.g.
-    Effects.DeathExplosionDamage). `pEmitPos` is a world-space point object
-    (NiPoint3/TGPoint3 with .x/.y/.z); `fDamage` is the BC field strength."""
+def queue_world_hole(ship, pEmitPos, fRadius, fDamage=0.0) -> None:
+    """Queue AddDamage's visible hole (DamageableObject.AddDamage, e.g.
+    Effects.DeathExplosionDamage): once the ship's render instance exists it
+    becomes ONE Internal hull-damage record at the world-space point, sized
+    and worn by `_advance_one` (ADD_DAMAGE_*), posed-frame. `pEmitPos` is a point
+    object (NiPoint3/TGPoint3 with .x/.y/.z); `fRadius` and `fDamage` are
+    BC's radius and field strength, both scaled by an active `hole_scale`."""
     if ship is None or pEmitPos is None:
         return
     try:
@@ -80,22 +131,14 @@ def queue_world_carve(ship, pEmitPos, fRadius, fDamage=0.0) -> None:
         return
     _pending.append({
         "ship": ship, "kind": "world",
-        "pt": wp, "influ": float(fRadius), "strength": float(fDamage), "age": 0.0,
+        "pt": wp, "influ": float(fRadius) * _hole_scale,
+        "strength": float(fDamage) * _hole_scale, "age": 0.0,
     })
-
-
-def queue_world_capsule(ship, p0_world, p1_world, radius_gu) -> None:
-    """Queue a swept capsule cut between two WORLD points, emitted when the
-    ship is realised. Field-only: never enters the sphere list."""
-    _pending.append({"kind": "capsule", "ship": ship,
-                     "p0": TGPoint3(p0_world.x, p0_world.y, p0_world.z),
-                     "p1": TGPoint3(p1_world.x, p1_world.y, p1_world.z),
-                     "radius": float(radius_gu), "age": 0.0})
 
 
 def queue_body_scuff(ship, x, y, z, radius_gu, tangent_body=(1.0, 0.0, 0.0),
                      intensity=1.0, dent=0.0) -> None:
-    """Queue a collision-scuff DECAL (no carve) at a body-frame point. Used by
+    """Queue a collision-scuff DECAL (no damage record) at a body-frame point. Used by
     the developer Damage Preview mission to seed known scuffs for live tuning.
     `tangent_body` is the slip direction in the body frame; `dent` is the
     impact weight (1 crumples, 0 scrapes); realised through
@@ -114,9 +157,8 @@ def queue_body_scuff(ship, x, y, z, radius_gu, tangent_body=(1.0, 0.0, 0.0),
 def clear_for(ship) -> None:
     """Drop a ship's not-yet-emitted volumes (DamageableObject.RemoveVisibleDamage).
 
-    NOTE: clears only PENDING volumes. Clearing already-emitted carves needs a
-    native HullCarveField::clear() + a `hull_carve_clear` binding (not yet
-    implemented — Gap-1 follow-up)."""
+    NOTE: clears only PENDING volumes. Clearing already-emitted records needs
+    a native HullDamageStore clear binding (not yet implemented)."""
     _pending[:] = [e for e in _pending if e["ship"] is not ship]
 
 
@@ -163,16 +205,6 @@ def _advance_one(entry, dt, ship_instances) -> bool:
         entry["age"] += dt
         return entry["age"] < MAX_PENDING_AGE
 
-    if entry.get("kind") == "capsule":
-        p0, p1 = entry["p0"], entry["p1"]
-        with frame_profiler.scope("vd.carve"):
-            host_io.hull_carve_capsule(iid, _mesh_xyz(ship, p0), _mesh_xyz(ship, p1),
-                                       entry["radius"])
-        from engine.appc import hull_breakup
-        with frame_profiler.scope("vd.after_carve"):
-            hull_breakup.after_carve(ship, iid, ship_instances)
-        return False
-
     if entry.get("kind") == "scuff":
         world_pt, normal = _resolve(dict(entry, kind="body"), ship, iid)
         if world_pt is None:
@@ -209,33 +241,41 @@ def _advance_one(entry, dt, ship_instances) -> bool:
     if world_pt is None:
         return False
 
-    from engine.appc.hull_carve import MIN_CARVE_RADIUS_GU
-    from engine.appc import damage_decals
-    influ = entry["influ"]
+    from engine.appc import internal_blast, plating_dials
     strength = entry["strength"]
-    # Authored / runtime carves carry their own size: a floor (so the wreck is
-    # visible at spawn regardless of the strength curve) plus the strength, which
-    # also accumulates with nearby combat damage in the C++ field.
-    rad_mod = _radius_mod(ship)
-    floor = max(MIN_CARVE_RADIUS_GU, influ) * rad_mod
-    now = damage_decals.current_game_time()
-    # Carve sizes are absolute; the only per-ship scale is BC's DamageRadMod
-    # (applied to both the authored `floor` and the strength curve). The authored
-    # `floor` still guarantees the wreck's visible size.
-    with frame_profiler.scope("vd.carve"):
-        host_io.hull_carve_add(
-            iid,
-            _mesh_xyz(ship, world_pt),
-            (normal.x, normal.y, normal.z),
-            influ,
-            strength,
-            now,
-            floor,
-            rad_mod,
-        )
+    # The volume's own size, floored and scaled by BC's DamageRadMod, capped
+    # near BC's 0.30 GU largest hole times strength relative to BC's 600
+    # "major hull breach"; see ADD_DAMAGE_* above for the wear (a deliberate
+    # departure, Ruling 5).
+    floor = max(MIN_HOLE_RADIUS_GU, entry["influ"]) * _radius_mod(ship)
+    rel = max(ADD_DAMAGE_HOLE_SCALE_MIN,
+              min(ADD_DAMAGE_HOLE_SCALE_MAX, strength / 600.0))
+    hole = min(floor, internal_blast.ADD_DAMAGE_MAX_HOLE_GU * rel)
+    if strength < ADD_DAMAGE_BLOW_THROUGH_STRENGTH:
+        dials = plating_dials.current()
+        breach = dials["breach_wear"]
+        wear = breach + ADD_DAMAGE_ROOM_FRACTION * (dials["deck_break_wear"] - breach)
+    else:
+        wear = internal_blast.STRENGTH
+    # An authored DamageTool volume (kind "body") is REST-frame content: it
+    # probes the rest skin and is attributed in rest space by the binding
+    # (rest_frame). AddDamage ("world") lands at posed-time points: it probes
+    # the pose as drawn and is attributed to the posed part (layered damage
+    # phase 4 §2.1).
+    authored = entry["kind"] == "body"
+    mesh_pt, mesh_normal = _mesh_probe(iid, world_pt, normal, ship, rest_pose=authored)
+    if mesh_pt is not None:
+        world_pt = mesh_pt
+    if mesh_normal is not None:
+        normal = mesh_normal
+    host_io.hull_damage_add(iid, _mesh_xyz(ship, world_pt),
+                            (normal.x, normal.y, normal.z), hole, wear, 3,
+                            rest_frame=authored)
+    # A dying ship sheds parts like a fighting one: the cascade's wear asks
+    # for the part check as combat wear does.
     from engine.appc import hull_breakup
-    with frame_profiler.scope("vd.after_carve"):
-        hull_breakup.after_carve(ship, iid, ship_instances)
+    with frame_profiler.scope("vd.after_wear"):
+        hull_breakup.after_wear(ship, iid, ship_instances)
     return False   # emitted once -> drop
 
 
@@ -268,16 +308,21 @@ def _resolve(entry, ship, iid=None):
     return world_pt, normal
 
 
-def _mesh_probe(iid, world_pt, radial, ship=None):
+def _mesh_probe(iid, world_pt, radial, ship=None, rest_pose=False):
     """Ray-trace the true hull surface near `world_pt`, along `radial`.
 
     Returns `(surface_point, surface_normal)` as TGPoint3s, or `(None, None)`
     if unobtainable (no instance, no radial, miss, or a raised trace). Holds
-    the trace logic shared by `_mesh_normal` (normal only, for carves -- see
-    its docstring for why the normal matters) and the scuff branch of
-    `_advance_one` (point AND normal, so a scuff decal anchors at the visible
-    skin rather than the authored point, which sits inside the hull like any
-    other AddObjectDamageVolume sphere).
+    the trace logic shared by `_mesh_normal` (normal only -- see its
+    docstring for why the normal matters) and `_advance_one` (point AND
+    normal, so a scuff decal or a damage record anchors at the visible skin
+    rather than the authored point, which sits inside the hull like any other
+    AddObjectDamageVolume sphere).
+
+    `rest_pose`: probe the model's REST geometry, not the pose it is drawn at
+    -- an authored DamageTool volume is rest-frame content, so on a ship with
+    a part posed it must anchor on the rest skin and keep rest coordinates
+    (layered damage phase 4 §2.1).
     """
     if iid is None or radial is None:
         return None, None
@@ -290,11 +335,16 @@ def _mesh_probe(iid, world_pt, radial, ship=None):
         origin = (q.x + radial.x * NORMAL_PROBE_MARGIN_GU,
                   q.y + radial.y * NORMAL_PROBE_MARGIN_GU,
                   q.z + radial.z * NORMAL_PROBE_MARGIN_GU)
-        hit = host_io.ray_trace_mesh(
-            iid, origin, (-radial.x, -radial.y, -radial.z),
-            NORMAL_PROBE_MARGIN_GU * 2.0)
+        direction = (-radial.x, -radial.y, -radial.z)
+        if rest_pose:
+            hit = host_io.ray_trace_mesh(iid, origin, direction,
+                                         NORMAL_PROBE_MARGIN_GU * 2.0,
+                                         rest_pose=True)
+        else:
+            hit = host_io.ray_trace_mesh(iid, origin, direction,
+                                         NORMAL_PROBE_MARGIN_GU * 2.0)
     except Exception as _e:
-        dev_mode.log_swallowed("probe carve surface point/normal", _e)
+        dev_mode.log_swallowed("probe hull surface point/normal", _e)
         return None, None
     if not hit:
         return None, None
@@ -309,33 +359,23 @@ def _mesh_probe(iid, world_pt, radial, ship=None):
 def _mesh_normal(iid, world_pt, radial, ship=None):
     """The TRUE hull surface normal at `world_pt`, or None if unobtainable.
 
-    WHY THIS MATTERS MORE THAN IT LOOKS. The shader's carve is an OBLATE built
-    around this normal (opaque.frag): the full lateral radius `r`, but only
-    `kDepthFactor * r` (0.45) along the normal itself. So the normal decides
-    which way the hole is squashed and how deep it cuts.
-
     `_outward_normal`'s radial-from-centre guess is nearly TANGENTIAL on a wide
     flat structure -- a Galaxy saucer sits ~2 GU off the axis but only ~0.3 GU
     above centre, so the radial direction is almost horizontal where the real
-    surface normal is almost vertical. That lays the oblate's shallow axis ALONG
-    the hull, cutting a narrow slot across the plate instead of a broad shallow
-    crater through it, and leaves the hole up to 55% narrower in that direction.
-    The same normal also aims `carve_has_backing`'s inward probe (frame.cc), so a
-    wrong one can drop the carve outright.
+    surface normal is almost vertical, and the record is oriented by it.
 
-    The combat path never had this problem -- it passes ray_trace's mesh normal
-    and skips the carve entirely when it only has a sphere-entry fallback
-    (hit_feedback.py). This gives the AddDamage path the same quality of normal:
-    stand off along the radial and cast back inward, taking the first hit.
-    ray_trace flips its normal against the incoming ray, so the result is
-    outward-facing, matching the convention decals and carves already use.
+    The combat path never had this problem -- it passes ray_trace's mesh
+    normal (hit_feedback.py). This gives the AddDamage path the same quality
+    of normal: stand off along the radial and cast back inward, taking the
+    first hit. ray_trace flips its normal against the incoming ray, so the
+    result is outward-facing, matching the convention decals and records use.
 
     Raise-safe and miss-safe: the caller keeps the radial guess, because an
-    approximate carve beats no carve (authored wrecks must still appear
-    headless, where there is no instance to trace against).
+    approximate hole beats none (authored wrecks must still appear headless,
+    where there is no instance to trace against).
 
-    Thin wrapper over `_mesh_probe` -- kept so existing carve callers and
-    tests need no change; the point half of the probe is unused here.
+    Thin wrapper over `_mesh_probe`; the point half of the probe is unused
+    here.
     """
     return _mesh_probe(iid, world_pt, radial, ship)[1]
 
@@ -343,7 +383,7 @@ def _mesh_normal(iid, world_pt, radial, ship=None):
 def _outward_normal(world_pt, loc, ship):
     """Unit vector from the ship centre toward `world_pt`; ship-up at the centre.
 
-    Fallback only for world carves -- see `_mesh_normal` for why a real surface
+    Fallback only for world volumes -- see `_mesh_normal` for why a real surface
     normal is worth the ray cast. Still the primary path for BODY-frame authored
     volumes, whose points sit inside the hull rather than on its surface, so
     there is no surface to probe."""

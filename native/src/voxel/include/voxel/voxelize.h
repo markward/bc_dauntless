@@ -85,11 +85,4 @@ std::vector<Tri> collect_hull_triangles_from_source(
 /// tris is empty.
 VoxelVolume voxelize_tris(const std::vector<Tri>& tris, glm::ivec3 dims);
 
-/// Carve a smooth spherical breach into a 0-127 scalar fill VoxelVolume.
-/// For each voxel within `radius` of `center_body` (voxel-center body frame),
-/// multiply its fill by a smoothstep ramp: 0 at the sphere center (fully carved)
-/// rising to 1 at the radius (unchanged) — giving a smooth crater surface.
-/// Voxels outside the sphere are untouched.
-void carve_sphere(VoxelVolume& v, glm::vec3 center_body, float radius);
-
 }  // namespace voxel

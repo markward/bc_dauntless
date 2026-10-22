@@ -296,7 +296,7 @@ def record_hit(ship, iid, body_point_model, absorbed_hull: float):
     knowledge in the one module that owns the boxes.
 
     `iid` is the ship's render instance, passed in rather than looked up — the
-    same shape `hull_breakup.after_carve` uses. None is fine (headless): the
+    same shape `hull_breakup.after_wear` uses. None is fine (headless): the
     sim-side detach still happens, only the visuals are skipped.
 
     Returns the part name that just SHEARED OFF, or None. Callers that do not

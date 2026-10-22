@@ -6,6 +6,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace renderer {
@@ -66,15 +67,29 @@ Shader::~Shader() {
     if (program_) glDeleteProgram(program_);
 }
 
-Shader::Shader(Shader&& o) noexcept : program_(o.program_) { o.program_ = 0; }
+Shader::Shader(Shader&& o) noexcept
+    : program_(o.program_), locations_(std::move(o.locations_)) {
+    o.program_ = 0;
+    o.locations_.clear();
+}
 
 Shader& Shader::operator=(Shader&& o) noexcept {
     if (this != &o) {
         if (program_) glDeleteProgram(program_);
         program_ = o.program_;
+        locations_ = std::move(o.locations_);
         o.program_ = 0;
+        o.locations_.clear();
     }
     return *this;
+}
+
+int Shader::cached_location(const std::string& name) const {
+    auto it = locations_.find(name);
+    if (it != locations_.end()) return it->second;
+    const GLint loc = glGetUniformLocation(program_, name.c_str());
+    locations_.emplace(name, loc);
+    return loc;
 }
 
 void Shader::use() const noexcept {
@@ -82,47 +97,47 @@ void Shader::use() const noexcept {
 }
 
 void Shader::set_mat4(const std::string& name, const glm::mat4& v) const {
-    GLint loc = glGetUniformLocation(program_, name.c_str());
+    const GLint loc = cached_location(name);
     if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, glm::value_ptr(v));
 }
 
 void Shader::set_vec3(const std::string& name, const glm::vec3& v) const {
-    GLint loc = glGetUniformLocation(program_, name.c_str());
+    const GLint loc = cached_location(name);
     if (loc >= 0) glUniform3fv(loc, 1, glm::value_ptr(v));
 }
 
 void Shader::set_vec4(const std::string& name, const glm::vec4& v) const {
-    GLint loc = glGetUniformLocation(program_, name.c_str());
+    const GLint loc = cached_location(name);
     if (loc >= 0) glUniform4fv(loc, 1, glm::value_ptr(v));
 }
 
 void Shader::set_int(const std::string& name, int v) const {
-    GLint loc = glGetUniformLocation(program_, name.c_str());
+    const GLint loc = cached_location(name);
     if (loc >= 0) glUniform1i(loc, v);
 }
 
 void Shader::set_ivec3(const std::string& name, const glm::ivec3& v) const {
-    GLint loc = glGetUniformLocation(program_, name.c_str());
+    const GLint loc = cached_location(name);
     if (loc >= 0) glUniform3i(loc, v.x, v.y, v.z);
 }
 
 void Shader::set_ivec2(const std::string& name, const glm::ivec2& v) const {
-    GLint loc = glGetUniformLocation(program_, name.c_str());
+    const GLint loc = cached_location(name);
     if (loc >= 0) glUniform2i(loc, v.x, v.y);
 }
 
 void Shader::set_float(const std::string& name, float v) const {
-    GLint loc = glGetUniformLocation(program_, name.c_str());
+    const GLint loc = cached_location(name);
     if (loc >= 0) glUniform1f(loc, v);
 }
 
 void Shader::set_vec2(const std::string& name, const glm::vec2& v) const {
-    GLint loc = glGetUniformLocation(program_, name.c_str());
+    const GLint loc = cached_location(name);
     if (loc >= 0) glUniform2fv(loc, 1, glm::value_ptr(v));
 }
 
 void Shader::set_mat3(const std::string& name, const glm::mat3& v) const {
-    GLint loc = glGetUniformLocation(program_, name.c_str());
+    const GLint loc = cached_location(name);
     if (loc >= 0) glUniformMatrix3fv(loc, 1, GL_FALSE, glm::value_ptr(v));
 }
 
@@ -130,7 +145,7 @@ void Shader::set_vec3_array(const std::string& name,
                             const glm::vec3* data,
                             int count) const {
     if (count <= 0) return;
-    GLint loc = glGetUniformLocation(program_, name.c_str());
+    const GLint loc = cached_location(name);
     if (loc >= 0) {
         glUniform3fv(loc, count, glm::value_ptr(*data));
     }
@@ -140,7 +155,7 @@ void Shader::set_vec4_array(const std::string& name,
                             const glm::vec4* data,
                             int count) const {
     if (count <= 0) return;
-    GLint loc = glGetUniformLocation(program_, name.c_str());
+    const GLint loc = cached_location(name);
     if (loc >= 0) {
         glUniform4fv(loc, count, glm::value_ptr(*data));
     }
@@ -150,7 +165,7 @@ void Shader::set_mat4_array(const std::string& name,
                             const glm::mat4* data,
                             int count) const {
     if (count <= 0) return;
-    GLint loc = glGetUniformLocation(program_, name.c_str());
+    const GLint loc = cached_location(name);
     if (loc >= 0) {
         glUniformMatrix4fv(loc, count, GL_FALSE, glm::value_ptr(*data));
     }
@@ -160,7 +175,7 @@ void Shader::set_int_array(const std::string& name,
                             const int* data,
                             int count) const {
     if (count <= 0) return;
-    GLint loc = glGetUniformLocation(program_, name.c_str());
+    const GLint loc = cached_location(name);
     if (loc >= 0) {
         glUniform1iv(loc, count, data);
     }
@@ -170,7 +185,7 @@ void Shader::set_float_array(const std::string& name,
                               const float* data,
                               int count) const {
     if (count <= 0) return;
-    GLint loc = glGetUniformLocation(program_, name.c_str());
+    const GLint loc = cached_location(name);
     if (loc >= 0) {
         glUniform1fv(loc, count, data);
     }

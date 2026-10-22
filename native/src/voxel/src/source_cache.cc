@@ -16,12 +16,7 @@ std::filesystem::path vox_sibling_path(const std::filesystem::path& hull_nif) {
     return p;
 }
 
-const VoxelVolume& SourceVolumeCache::get_for_hull(
-        const std::filesystem::path& hull_nif) {
-    const std::string key = hull_nif.string();
-    auto it = by_path_.find(key);
-    if (it != by_path_.end()) return it->second;
-
+VoxelVolume decode_hull_volume(const std::filesystem::path& hull_nif) {
     const assets::HullSource h = assets::split_hull_source(hull_nif);
     VoxelVolume vol;
 
@@ -55,7 +50,15 @@ const VoxelVolume& SourceVolumeCache::get_for_hull(
         }
     }
 
-    auto [ins, _] = by_path_.emplace(key, std::move(vol));
+    return vol;
+}
+
+const VoxelVolume& SourceVolumeCache::get_for_hull(
+        const std::filesystem::path& hull_nif) {
+    const std::string key = hull_nif.string();
+    auto it = by_path_.find(key);
+    if (it != by_path_.end()) return it->second;
+    auto [ins, _] = by_path_.emplace(key, decode_hull_volume(hull_nif));
     return ins->second;
 }
 

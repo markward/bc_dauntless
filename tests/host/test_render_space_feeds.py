@@ -589,25 +589,25 @@ def test_hit_feedback_hands_every_query_a_relative_point(sibling_target, monkeyp
         absorbed_subsystem=0.0, absorbed_hull=5.0, sub_transition=None,
         ship_instances={target: 3}, weapon_type="torpedo", radius=0.2)
     names = {n for n, _ in native.points}
-    assert {"shield_hit", "damage_decal_add", "hull_carve_add",
+    assert {"shield_hit", "damage_decal_add", "hull_damage_add",
             "world_to_body"} <= names, names
     _small(native.points)
     decal = dict(native.points)["damage_decal_add"]
     assert decal == pytest.approx((-3.0, 0.0, 0.0), abs=1e-6)
 
 
-def test_visible_damage_probe_and_carve_are_relative(sibling_target):
+def test_visible_damage_probe_and_record_are_relative(sibling_target, monkeypatch):
     from engine.appc import visible_damage
     target, local, native = sibling_target
     visible_damage._pending.clear()
-    visible_damage.queue_world_carve(
+    visible_damage.queue_world_hole(
         target, TGPoint3(*_plus(local, (-2.0, 0.0, 0.0))), 0.5)
     try:
         visible_damage.advance(0.0, {target: 3})
     finally:
         visible_damage._pending.clear()
     names = [n for n, _ in native.points]
-    assert "ray_trace_mesh" in names and "hull_carve_add" in names, names
+    assert "ray_trace_mesh" in names and "hull_damage_add" in names, names
     _small(native.points)
 
 

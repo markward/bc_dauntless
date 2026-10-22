@@ -60,8 +60,8 @@
 #include "embedded_phaser_fs.h"
 #include "embedded_hologram_vs.h"
 #include "embedded_hologram_fs.h"
-#include "embedded_breach_vs.h"
-#include "embedded_breach_fs.h"
+#include "embedded_hull_interior_vs.h"
+#include "embedded_hull_interior_fs.h"
 #include "embedded_subsystem_pin_vs.h"
 #include "embedded_subsystem_pin_fs.h"
 #include "embedded_target_reticle_vs.h"
@@ -77,6 +77,8 @@
 #include "embedded_viewscreen_bars_fs.h"
 #include "embedded_shadow_vs.h"
 #include "embedded_shadow_fs.h"
+#include "embedded_shadow_parts_vs.h"
+#include "embedded_shadow_parts_fs.h"
 #include "embedded_shockwave_vs.h"
 #include "embedded_shockwave_fs.h"
 #include "embedded_skybox_vs.h"
@@ -115,17 +117,23 @@ Pipeline::Pipeline() {
     // sampling + land shading); every other program keeps the plain source.
     planet_ = std::make_unique<Shader>(shader_src::opaque_vs,
                                        with_define(shader_src::opaque_fs, "PLANET_SURFACE"));
+    // SPIKE (damage redesign): layered hull damage. A hull with plating wear
+    // draws with the SAME opaque.frag compiled with PLATING (the plating
+    // layer, its compact damage list and the near-damage early-out); every
+    // other hull keeps the stock program, which carries none of it.
+    plating_ = std::make_unique<Shader>(shader_src::opaque_vs,
+                                        with_define(shader_src::opaque_fs, "PLATING"));
     // opaque.frag's collision-scuff normal map (renderer/scuff_texture.h)
     // lives on unit 7 for the program's whole life. Assigned HERE, once, not
     // per draw: every path that draws with this program (draw_model, the
-    // carve-stencil pass, the hull-clip / cloak parity test rigs) would
+    // plating mark, the cloak parity test rig) would
     // otherwise leave it at unit 0 with the base texture. Harmless for two
     // sampler2Ds, but the predecessor was a samplerBuffer and two sampler
     // TYPES on one unit is GL_INVALID_OPERATION at draw -- keep the habit.
     // Same for the hull-decal masks: u_decal_mask0..3 live on units 8..11
     // (draw_model binds the textures there once per model, frame.cc).
     for (Shader* sh : {opaque_.get(), skinned_.get(), minor_.get(), impostor_.get(),
-                       planet_.get()}) {
+                       planet_.get(), plating_.get()}) {
         sh->use();
         sh->set_int("u_scuff_map", 7);
         sh->set_int("u_decal_mask0", 8);
@@ -170,7 +178,7 @@ Pipeline::Pipeline() {
     nebula_wake_ = std::make_unique<Shader>(shader_src::nebula_wake_vs, shader_src::nebula_wake_fs);
     phaser_        = std::make_unique<Shader>(shader_src::phaser_vs,        shader_src::phaser_fs);
     hologram_      = std::make_unique<Shader>(shader_src::hologram_vs,      shader_src::hologram_fs);
-    breach_        = std::make_unique<Shader>(shader_src::breach_vs,        shader_src::breach_fs);
+    hull_interior_ = std::make_unique<Shader>(shader_src::hull_interior_vs, shader_src::hull_interior_fs);
     subsystem_pin_ = std::make_unique<Shader>(shader_src::subsystem_pin_vs, shader_src::subsystem_pin_fs);
     target_reticle_ = std::make_unique<Shader>(shader_src::target_reticle_vs, shader_src::target_reticle_fs);
     starmap_       = std::make_unique<Shader>(shader_src::starmap_vs,        shader_src::starmap_fs);
@@ -182,6 +190,9 @@ Pipeline::Pipeline() {
         shader_src::viewscreen_bars_vs, shader_src::viewscreen_bars_fs);
     shadow_depth_ = std::make_unique<Shader>(
         shader_src::shadow_vs, shader_src::shadow_fs);
+    // Part-mask caster: only instances with severed / shown parts.
+    shadow_parts_ = std::make_unique<Shader>(
+        shader_src::shadow_parts_vs, shader_src::shadow_parts_fs);
     shockwave_ = std::make_unique<Shader>(shader_src::shockwave_vs,
                                           shader_src::shockwave_fs);
     skybox_ = std::make_unique<Shader>(shader_src::skybox_vs, shader_src::skybox_fs);

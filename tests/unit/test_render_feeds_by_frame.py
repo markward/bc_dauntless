@@ -447,9 +447,8 @@ def test_shockwaves_by_frame(world):
 
 
 def test_a_breach_shockwave_records_the_ships_set(world, monkeypatch):
-    from engine.appc import shockwaves, warp_core_breach, core_breach_carve
+    from engine.appc import shockwaves, warp_core_breach
     ona1, ona2, *_ = world
-    monkeypatch.setattr(core_breach_carve, "schedule", lambda ship: None)
     ship = App.ShipClass_Create()
     ship.SetName("Doomed")
     ona2.AddObjectToSet(ship, "Doomed")

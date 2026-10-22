@@ -93,7 +93,7 @@ for mod, sub in ((weapon_icons, "weapons"), (damage_icons, "damage")):
 from engine.core import stub_telemetry
 stub_telemetry.persist_run()
 
-result["hull_cache_root"] = str(paths.hull_volume_cache_root())
+result["structure_parts_cache_root"] = str(paths.structure_parts_cache_root())
 result["mods_root"] = str(mods.mods_root())
 sys.stderr.write("E2E-STDERR-MARKER-LINE\n")
 with open(result_path, "w", encoding="utf-8") as fh:
@@ -172,7 +172,8 @@ def test_packaged_build_writes_only_to_user_folders(tmp_path):
     log = (dirs["logs"] / "dauntless.log").read_text(encoding="utf-8")
     assert "E2E-STDERR-MARKER-LINE" in log
 
-    assert Path(result["hull_cache_root"]) == dirs["cache"] / "hull_volumes"
+    assert (Path(result["structure_parts_cache_root"])
+            == dirs["cache"] / "structure_parts")
     assert Path(result["mods_root"]) == dirs["mods"]
 
     for sub in ("weapons", "damage"):

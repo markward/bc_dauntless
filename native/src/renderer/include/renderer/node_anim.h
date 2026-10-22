@@ -54,6 +54,16 @@ std::vector<glm::mat4> rest_corrections(
     const assets::Model& model,
     const std::unordered_map<int, glm::mat4>& overrides);
 
+/// Per node, its POSED OWNER: the nearest node at or above it (itself
+/// included) that carries an entry in `overrides`, or -1 when its chain
+/// carries none. Every node under one owner shares that owner's rest
+/// correction (exactly in maths; rest_corrections computes each node's
+/// separately, so the matrices may differ in the low bits -- compare owners,
+/// never matrices). A severed node (zero-matrix override) is its own owner.
+/// All -1 for empty `overrides`.
+std::vector<int> posed_owners(const assets::Model& model,
+                              const std::unordered_map<int, glm::mat4>& overrides);
+
 /// Sample a clip's node tracks against a model at time `t`, returning a
 /// node_index -> local_transform override for every track whose
 /// target_node_name matches a model node. Tracks with no matching node (e.g. a

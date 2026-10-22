@@ -13,9 +13,9 @@ false. Left uncopied, that meant two live bugs:
     from inside `collisions.tick_collisions` happens AFTER this frame's
     `debris_chunk.tick` already ran.
 
-The native voxel-chunk path (`host_bindings.cc`'s hull-split binding, ~line
-4470) already copies world/visible/pass/comm_set_id/rim_eligible/
-rim_strength/emissive_scale from parent to child for exactly this reason;
+The native structure-chunk path (`renderer::apply_severed_pieces`) already
+copies world/visible/pass/comm_set_id/rim_eligible/rim_strength from parent
+to child for exactly this reason, and sets emissive_scale 0 (a dead chunk);
 this mirrors it for the appendage-severance chunk, using what Python can
 actually reach (there is no getter for a live instance's current pass /
 comm_set_id / rim_eligible / rim_strength / visible -- see the fix report).
@@ -134,13 +134,16 @@ def test_the_chunk_is_rim_eligible(fr):
     assert fr.rim_eligible.get(chunk_iid) is True
 
 
-def test_the_chunk_is_visible_and_normally_lit(fr):
+def test_the_chunk_is_visible_and_dark(fr):
+    """Ruling 12: a rig-part chunk is dead like a structure chunk (whose
+    native split sets emissive_scale 0): no window glow from the moment it
+    leaves. Nothing sets it again -- the host lights ship instances only."""
     ship = _Ship(fr.set)
     part_detach_render._spawn_chunk(ship, ship_iid=1, part_name="left wing01")
 
     chunk_iid = 900
     assert fr.visible.get(chunk_iid) is True
-    assert fr.emissive.get(chunk_iid) == pytest.approx(1.0)
+    assert fr.emissive.get(chunk_iid) == 0.0
 
 
 def test_a_chunk_spawned_hidden_is_marked_frame_hidden(fr, monkeypatch):

@@ -78,6 +78,7 @@ def make_host(monkeypatch):
         h = _Host(normal=normal)
         monkeypatch.setattr(host_io, "ray_trace_mesh", h.ray_trace_mesh)
         monkeypatch.setattr(host_io, "damage_decal_add", h.damage_decal_add)
+        monkeypatch.setattr(host_io, "hull_damage_add", lambda *a, **k: None)
         monkeypatch.setattr(host_io, "world_to_body", lambda *a, **k: None)
         return h
     return _factory

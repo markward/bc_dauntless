@@ -203,3 +203,64 @@ def test_advance_survives_a_ship_that_raises():
     state = death_cascade.begin(Exploding(), duration=5.0)
     for _ in range(int(5.0 * 60)):
         death_cascade.advance(state, 1.0 / 60.0)   # must not raise
+
+
+# ── blast size tiers (Ruling 5: a deliberate departure from BC's fixed
+#    fRadius x 0.25, at Mark's request -- "all very even in size") ─────────
+
+def _seeded(seed=7):
+    import random
+    rng = random.Random(seed)
+    return lambda n: rng.randrange(n)
+
+
+def test_blast_scale_follows_the_tier_table():
+    """60% small (0.7-1.0), 30% larger (1.0-1.6), 10% big (1.8-2.6)."""
+    rand = _seeded()
+    ms = [death_cascade.roll_blast_scale(rand) for _ in range(20000)]
+    small = sum(1 for m in ms if 0.7 <= m < 1.0) / len(ms)
+    mid = sum(1 for m in ms if 1.0 <= m <= 1.6) / len(ms)
+    big = sum(1 for m in ms if 1.8 <= m <= 2.6) / len(ms)
+    assert small == pytest.approx(0.60, abs=0.02)
+    assert mid == pytest.approx(0.30, abs=0.02)
+    assert big == pytest.approx(0.10, abs=0.02)
+    assert small + mid + big == pytest.approx(1.0), "every roll lands in a tier"
+    assert min(ms) >= 0.7 and max(ms) <= 2.6
+    assert max(m for m in ms if m < 1.8) > 1.5, "the middle tier spans its range"
+
+
+def test_the_tier_table_is_a_dial():
+    total = sum(p for p, _lo, _hi in death_cascade.BLAST_SIZE_TIERS)
+    assert total == pytest.approx(1.0)
+    assert death_cascade.BLAST_SIZE_TIERS == (
+        (0.60, 0.7, 1.0), (0.30, 1.0, 1.6), (0.10, 1.8, 2.6))
+
+
+def test_blast_scale_sizes_the_fireball_the_light_and_the_hole(monkeypatch):
+    """m scales the debris explosion and the light, and reaches the VISIBLE
+    hole through visible_damage.hole_scale. AddDamage also deals gameplay
+    damage (combat.apply_hit), so its own arguments stay BC's."""
+    from engine.appc import visible_damage
+    seen = {}
+    monkeypatch.setattr(death_cascade, "roll_blast_scale", lambda rand: 2.2)
+    monkeypatch.setattr(death_cascade, "_debris_explosion",
+                        lambda ship, pt, size, rand=None: seen.setdefault("fire", size))
+    monkeypatch.setattr(death_cascade, "_light",
+                        lambda ship, size: seen.setdefault("light", size))
+
+    class Ship(FakeShip):
+        def AddDamage(self, pEmitPos, fRadius, fDamage):
+            super().AddDamage(pEmitPos, fRadius, fDamage)
+            seen["scale"] = visible_damage.current_hole_scale()
+
+    ship = Ship(radius=4.0)
+    state = death_cascade.begin(ship, duration=1.0, rand=lambda n: 0)
+    death_cascade._fire(state, sound_ok=False)
+    base = 4.0 * death_cascade.BLAST_SIZE_FRACTION
+    assert seen["fire"] == pytest.approx(base * 2.2)
+    assert seen["light"] == pytest.approx(base * 2.2)
+    assert seen["scale"] == pytest.approx(2.2)
+    (_pt, r, s), = ship.damage_calls
+    assert r == pytest.approx(4.0 * death_cascade.DAMAGE_RADIUS_FRACTION)
+    assert s == pytest.approx(death_cascade.DAMAGE_STRENGTH)
+    assert visible_damage.current_hole_scale() == 1.0, "scale ends with the call"

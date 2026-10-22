@@ -3,6 +3,7 @@
 
 #include <glm/glm.hpp>
 #include <string>
+#include <unordered_map>
 
 namespace renderer {
 
@@ -52,8 +53,19 @@ public:
                          const float* data,
                          int count) const;
 
+    /// glGetUniformLocation, queried once per name for the life of this
+    /// program and then served from a cache (-1 = not an active uniform; a
+    /// missing name is cached too and every set_* stays silent for it). Every
+    /// set_* above goes through it, so a per-draw uniform costs a hash lookup,
+    /// not a driver name query.
+    int cached_location(const std::string& name) const;
+
+    /// Names looked up so far on this program (test probe for the cache).
+    std::size_t cached_location_count() const noexcept { return locations_.size(); }
+
 private:
     unsigned program_ = 0;
+    mutable std::unordered_map<std::string, int> locations_;
 };
 
 }  // namespace renderer

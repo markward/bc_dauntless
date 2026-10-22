@@ -1,10 +1,9 @@
-"""Icon and hull caches follow paths.cache_dir() (plan Task 7).
+"""Icon caches follow paths.cache_dir() (plan Task 7).
 
 The old constants were repo-relative ("<project>/cache/icons/..."), which in an
 installed build is read-only. Each cache now resolves at USE from the data dir.
 """
 import struct
-from pathlib import Path
 
 import pytest
 
@@ -116,22 +115,3 @@ def test_unwritable_cache_dir_is_reported(monkeypatch, tmp_path, capsys, mod, ca
     err = capsys.readouterr().err
     lines = [l for l in err.splitlines() if "blocker" in l]
     assert len(lines) == 1
-
-
-def _smallest_hull() -> Path | None:
-    root = paths.game_root()
-    ships = Path(root) / "data" / "Models" / "Ships"
-    cands = [p for p in ships.glob("*/*.nif")
-             if not p.stem.endswith(("Low", "Med", "_vox"))] if ships.is_dir() else []
-    return min(cands, key=lambda p: p.stat().st_size) if cands else None
-
-
-def test_hull_cache_root_round_trips_non_ascii(tmp_path):
-    host = pytest.importorskip("_dauntless_host")
-    hull = _smallest_hull()
-    if hull is None:
-        pytest.skip("no BC content to bake a hull from")
-    root = tmp_path / "José" / "cache"
-    host.hull_volume_set_cache_root(str(root))
-    assert host.hull_volume_bake_to_disk(str(hull), 10.0)
-    assert list(root.rglob("*.dhv")), "bake must land under the exact UTF-8 root"

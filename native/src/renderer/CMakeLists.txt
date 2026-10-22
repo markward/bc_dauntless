@@ -103,8 +103,8 @@ embed_shader(SHADER_PHASER_VS shaders/phaser.vert phaser_vs)
 embed_shader(SHADER_PHASER_FS shaders/phaser.frag phaser_fs)
 embed_shader(SHADER_HOLOGRAM_VS shaders/hologram.vert hologram_vs)
 embed_shader(SHADER_HOLOGRAM_FS shaders/hologram.frag hologram_fs)
-embed_shader(SHADER_BREACH_VS shaders/breach.vert breach_vs)
-embed_shader(SHADER_BREACH_FS shaders/breach.frag breach_fs)
+embed_shader(SHADER_HULL_INTERIOR_VS shaders/hull_interior.vert hull_interior_vs)
+embed_shader(SHADER_HULL_INTERIOR_FS shaders/hull_interior.frag hull_interior_fs)
 embed_shader(SHADER_SUBSYSTEM_PIN_VS shaders/subsystem_pin.vert subsystem_pin_vs)
 embed_shader(SHADER_SUBSYSTEM_PIN_FS shaders/subsystem_pin.frag subsystem_pin_fs)
 embed_shader(SHADER_TARGET_RETICLE_VS shaders/target_reticle.vert target_reticle_vs)
@@ -137,6 +137,8 @@ embed_shader(SHADER_SMAA_BLEND_VS  shaders/smaa_blend.vert  smaa_blend_vs)
 embed_shader(SHADER_SMAA_BLEND_FS  shaders/smaa_blend.frag  smaa_blend_fs)
 embed_shader(SHADER_SHADOW_VS shaders/shadow.vert shadow_vs)
 embed_shader(SHADER_SHADOW_FS shaders/shadow.frag shadow_fs)
+embed_shader(SHADER_SHADOW_PARTS_VS shaders/shadow_parts.vert shadow_parts_vs)
+embed_shader(SHADER_SHADOW_PARTS_FS shaders/shadow_parts.frag shadow_parts_fs)
 embed_shader(SHADER_NONFINITE_PROBE_FS shaders/nonfinite_probe.frag nonfinite_probe_fs)
 embed_shader(SHADER_BLOOM_PREFILTER_FS shaders/bloom_prefilter.frag bloom_prefilter_fs)
 embed_shader(SHADER_BLOOM_DOWN_FS shaders/bloom_down.frag bloom_down_fs)
@@ -226,11 +228,16 @@ add_library(renderer STATIC
     cloak_pass.cc
     breach_venting.cc
     breach_debris.cc
-    breach_pass.cc
+    hull_interior_pass.cc
+    hull_interior_policy.cc
     model_draw_helpers.cc
     scuff_texture.cc
-    carve_field_cache.cc
-    instance_field_cache.cc
+    hull_fill_cache.cc
+    model_textures.cc
+    structure_parts_cache.cc
+    plating_damage.cc
+    part_severance_check.cc
+    part_severance_jobs.cc
     subsystem_pin_pass.cc
     debug_volume_pass.cc
     gizmo_pass.cc

@@ -1,4 +1,4 @@
-add_executable(voxel_inspect main.cc)
+add_executable(voxel_inspect main.cc parts_view.cc)
 
 target_link_libraries(voxel_inspect PRIVATE voxel nif)
 

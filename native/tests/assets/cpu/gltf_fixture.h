@@ -42,8 +42,8 @@ template <class T> void put(std::vector<unsigned char>& b, const T& v) {
 // identical to what write_fixture's with_texture branch writes via
 // stbi_write_png. Hand-encoded (not generated with stb_image_write) so this
 // header never needs the STB_IMAGE_WRITE_IMPLEMENTATION TU to build or link
-// -- native/tests/voxel links no such TU, and its two tests that include this
-// header (source_cache_test.cc, hull_volume_cache_test.cc) must keep linking.
+// -- native/tests/voxel links no such TU, and its test that includes this
+// header (source_cache_test.cc) must keep linking.
 inline constexpr unsigned char kFixturePng[] = {
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
     0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02,

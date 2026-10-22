@@ -84,12 +84,52 @@ std::optional<RayHit> ray_trace_instance_linear(
 
 /// Build `model`'s trace acceleration structure now, if no trace has yet.
 /// The traces build it lazily on first use, which charged the frame of a
-/// hull's first trace -- a station's death carve probing its surface normal
+/// hull's first trace -- a station's first surface-normal probe at death
 /// paid 7.7 ms (perf-register P-4). It is valid for the model's whole life
-/// (Model::trace_accel), so the hull-volume prewarm builds it at spawn and in
-/// the warp preload. Main thread only, like every trace (see the threading
+/// (Model::trace_accel), so the prewarm_trace_accel binding builds it at
+/// spawn and in the warp preload. Main thread only, like every trace (see the threading
 /// note on Model::trace_accel).
 void prewarm_trace_accel(const assets::Model& model);
+
+/// Where a hit on an articulated instance belongs: the node whose REST frame
+/// it is recorded in, and the map into that frame.
+struct RestAttribution {
+    int       node = -1;            ///< the overridden node it is on; -1 the body
+    glm::mat4 to_rest{1.0f};        ///< posed body frame -> that node's rest frame
+    float     distance = 0.0f;      ///< to the nearest rest triangle, model units
+    /// The winning triangle's OWN node (-1 when none was found). For a hit
+    /// whose chain carries no override (`node` -1) this is the part it lies
+    /// on at rest == posed: a rigged ship files it there (Ruling 7), so the
+    /// hit stays on the part when the part is posed later.
+    int       own_node = -1;
+};
+
+/// Which posed part a POSED body-frame point (model units) lies on, by
+/// geometry (layered damage phase 4 §2.1). Every node's rest correction C
+/// (node_anim.h rest_corrections) is applied to the point, and the nearest
+/// REST triangle among the meshes sharing that correction wins. The answer is
+/// that mesh's posed owner -- its nearest overridden ancestor, or -1 when its
+/// chain carries no override -- with that C, and the triangle's own node in
+/// `own_node`. Severed (zero-matrix) subtrees
+/// are never chosen. Empty `overrides`: {-1, identity} without any work.
+/// Box tests cannot answer this: the LC Intrepid's hull box encloses its
+/// nacelles. Main thread only (the trace accel).
+RestAttribution attribute_to_rest_frame(
+    const assets::Model& model,
+    const std::unordered_map<int, glm::mat4>& overrides,
+    const glm::vec3& posed_point);
+
+/// The REST-frame twin of attribute_to_rest_frame, for a point the writer
+/// already holds in the rest frame (authored DamageTool volumes): the nearest
+/// rest triangle across every mesh, with NO posed correction, answers. The
+/// node is that triangle's OWN node (not its owner), so the record keeps its
+/// part whatever is posed later: the frame filter compares rest corrections,
+/// and a node's equals its owner's. `to_rest` is identity (no conversion).
+/// Severed subtrees are never chosen. Runs with or without overrides.
+RestAttribution attribute_rest_point(
+    const assets::Model& model,
+    const std::unordered_map<int, glm::mat4>& overrides,
+    const glm::vec3& rest_point);
 
 /// One mesh's rest-pose triangles (the trace accel's, so node transforms are
 /// applied and the winding is the mesh's own) through `linear`

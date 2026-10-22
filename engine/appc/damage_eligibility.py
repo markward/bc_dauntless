@@ -1,10 +1,10 @@
 """Per-frame hull-damage eligibility.
 
-Tessellated carving is expensive, so only a bounded set of ships may
-accumulate damage: the player (always) plus the N highest-scoring others,
-where score combines proximity to the player and ship size (spec §4). The
-selection result is stored as a module-level set of object ids that
-engine.appc.hit_feedback reads before emitting a carve.
+Only a bounded set of ships records part-severance damage: the player
+(always) plus the N highest-scoring others, where score combines proximity
+to the player and ship size (spec §4). The selection result is stored as a
+module-level set of object ids that engine.appc.hit_feedback reads before
+attributing a hit to a part (part_severance).
 
 Pure selection lives in select_eligible(); update() is the impure glue that
 resolves the current player via App and refreshes the stored set once per
@@ -33,7 +33,7 @@ def _radius(ship) -> float:
 
 
 def select_eligible(player, ships, *, max_count: int = DEFAULT_MAX_ELIGIBLE):
-    """Return a frozenset of id()s eligible for hull damage/carve.
+    """Return a frozenset of id()s eligible for part-severance damage.
 
     The player (if not None) always claims a slot. Remaining slots go to the
     highest-scoring other ships. With a player, score = PROX_WEIGHT * prox +

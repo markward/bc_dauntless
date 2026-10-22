@@ -2,6 +2,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <glm/glm.hpp>
 
 namespace scenegraph {
@@ -16,12 +17,20 @@ inline constexpr float kRimLife    = 3.0f;  // seconds: molten rim cooling
 inline constexpr float kEventLife  = 10.0f; // max(kDebrisLife, kVentLife, kRimLife)
 
 struct BreachEvent {
-    glm::vec3     center_body   {0.0f};         // breach center in body frame (model units)
-    float         radius        = 0.0f;          // carve sphere radius (model units)
-    glm::vec3     surface_normal{0.0f, 0.0f, 1.0f};  // body frame, outward
+    glm::vec3     center_body   {0.0f};         // breach center in the POSED body frame
+                                                 // (model units): where venting and
+                                                 // debris are placed
+    float         radius        = 0.0f;          // breach radius (model units)
+    glm::vec3     surface_normal{0.0f, 0.0f, 1.0f};  // posed body frame, outward
     float         birth_time    = 0.0f;          // game-clock seconds at push time
     std::uint64_t seed          = 0;             // deterministic per-event hash seed
     bool          active        = false;
+    // The molten rim's frame (layered damage phase 4 §2.3): the breach centre
+    // in the REST frame of `node` (HullDamageRecord::node; -1 = the body,
+    // where it equals center_body). The plating evaluates in each mesh's
+    // rest frame, so a rim on a posed part glows on the part.
+    glm::vec3     center_rest   {0.0f};
+    int           node          = -1;
 };
 
 /// Fixed-capacity per-instance breach event store. Overwrites the oldest slot
@@ -32,10 +41,13 @@ public:
     static constexpr std::size_t kMaxEvents = 24;
 
     /// Record a new breach event. Overwrites the slot with the smallest
-    /// birth_time when all slots are occupied.
+    /// birth_time when all slots are occupied. `node` / `center_rest`: the
+    /// record's node and its rest-frame centre (BreachEvent::center_rest);
+    /// omitted, the body (-1) and center_body.
     void push(const glm::vec3& center_body, float radius,
               const glm::vec3& surface_normal,
-              float birth_time, std::uint64_t seed);
+              float birth_time, std::uint64_t seed,
+              int node = -1, std::optional<glm::vec3> center_rest = std::nullopt);
 
     /// Deactivate events whose age exceeds kEventLife.
     void tick(float now);

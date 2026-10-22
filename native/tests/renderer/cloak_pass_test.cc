@@ -11,9 +11,9 @@
 // the ambient direction, but the cloak shell stayed flat -- a real
 // brightness step at hand-over that nothing pinned.
 //
-// Strategy mirrors HullClipTest: draw a single oversized fullscreen triangle
+// Strategy mirrors OpaqueDegenerateNormalTest: draw a single oversized fullscreen triangle
 // through each shader in turn with an explicit, controlled vertex normal (a
-// disabled vertex attribute's "current value", like HullClipTest's a_normal)
+// disabled vertex attribute's "current value", like OpaqueDegenerateNormalTest's a_normal)
 // and read back the centre texel. u_frac is set to a small-but-nonzero value
 // so CloakRefractionPass's `if (s.frac <= 0.0f) continue;` production gate
 // isn't exercised here (this test drives the shader program directly, not
@@ -60,7 +60,7 @@ protected:
         pipeline = std::make_unique<renderer::Pipeline>();
 
         // Oversized CCW triangle covering the whole viewport in clip space
-        // (identity view/proj), matching HullClipTest's fixture.
+        // (identity view/proj), matching OpaqueDegenerateNormalTest's fixture.
         const float verts[9] = {
             -1.0f, -1.0f, 0.0f,
              3.0f, -1.0f, 0.0f,
@@ -136,14 +136,6 @@ protected:
         s.set_int("u_decal_count",       0);
         s.set_float("u_decal_time",      0.0f);
         s.set_int("u_glow_region_count", 0);
-        s.set_int("u_carve_enabled", 0);
-        s.set_int("u_carve_count", 0);
-        {
-            std::array<glm::vec3, 24> normals;
-            normals.fill(glm::vec3(0.0f, 0.0f, 1.0f));
-            s.set_vec3_array("u_carve_normals", normals.data(),
-                             static_cast<int>(normals.size()));
-        }
         glActiveTexture(GL_TEXTURE0);
         glBindVertexArray(vao_);
         glVertexAttrib3f(1, normal.x, normal.y, normal.z);

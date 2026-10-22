@@ -54,6 +54,56 @@ Aabb compute_model_aabb(const assets::Model& model) {
     return compute_aabb(pts);
 }
 
+std::vector<Aabb> mesh_body_aabbs(const assets::Model& model) {
+    // Unbounded: touches every record, so the mesh gets the whole list.
+    constexpr float kHuge = std::numeric_limits<float>::max();
+    const Aabb unbounded{.center = glm::vec3(0.0f), .half_extents = glm::vec3(kHuge)};
+    std::vector<Aabb> out(model.meshes.size(), unbounded);
+    if (model.nodes.empty()) return out;
+    // The same node-world chain as compute_model_aabb (and draw_model's walk
+    // with the instance world divided out).
+    std::vector<glm::mat4> node_world(model.nodes.size(), glm::mat4(1.0f));
+    node_world[model.root_node] = model.nodes[model.root_node].local_transform;
+    for (std::size_t i = 0; i < model.nodes.size(); ++i) {
+        const auto& node = model.nodes[i];
+        if (node.parent_index >= 0) {
+            node_world[i] = node_world[node.parent_index] * node.local_transform;
+        }
+    }
+    std::vector<glm::vec3> lo(model.meshes.size(), glm::vec3(kHuge));
+    std::vector<glm::vec3> hi(model.meshes.size(), glm::vec3(-kHuge));
+    std::vector<bool> bounded(model.meshes.size(), false);
+    std::vector<bool> open(model.meshes.size(), false);   // some draw is unbounded
+    for (std::size_t i = 0; i < model.nodes.size(); ++i) {
+        const auto& node = model.nodes[i];
+        // A parentless node other than the root draws at identity, not
+        // under the instance world: no body-frame box describes it.
+        const bool body_frame =
+            node.parent_index >= 0 || static_cast<int>(i) == model.root_node;
+        for (int mesh_idx : node.meshes) {
+            if (mesh_idx < 0 ||
+                mesh_idx >= static_cast<int>(model.meshes.size())) continue;
+            const auto m = static_cast<std::size_t>(mesh_idx);
+            const auto& cpu = model.meshes[m].cpu_data();
+            if (!cpu || cpu->vertices.empty() || !body_frame) {
+                open[m] = true;
+                continue;
+            }
+            for (const auto& v : cpu->vertices) {
+                const glm::vec3 p = glm::vec3(node_world[i] * glm::vec4(v.position, 1.0f));
+                lo[m] = glm::min(lo[m], p);
+                hi[m] = glm::max(hi[m], p);
+            }
+            bounded[m] = true;
+        }
+    }
+    for (std::size_t m = 0; m < out.size(); ++m) {
+        if (!bounded[m] || open[m]) continue;
+        out[m] = Aabb{.center = 0.5f * (lo[m] + hi[m]), .half_extents = 0.5f * (hi[m] - lo[m])};
+    }
+    return out;
+}
+
 namespace {
 
 /// One triangle in model-local space, plus the centroid the split sorts on.

@@ -63,6 +63,19 @@ std::vector<glm::mat4> rest_corrections(
     return out;
 }
 
+std::vector<int> posed_owners(const assets::Model& model,
+                              const std::unordered_map<int, glm::mat4>& overrides) {
+    std::vector<int> owner(model.nodes.size(), -1);
+    if (overrides.empty()) return owner;
+    // Parents precede children (the asset pipeline's order).
+    for (std::size_t i = 0; i < model.nodes.size(); ++i) {
+        const int parent = model.nodes[i].parent_index;
+        owner[i] = overrides.count(static_cast<int>(i)) ? static_cast<int>(i)
+                   : parent >= 0 ? owner[static_cast<std::size_t>(parent)] : -1;
+    }
+    return owner;
+}
+
 namespace {
 
 // Find the model node a clip track should DRIVE, given every node with that

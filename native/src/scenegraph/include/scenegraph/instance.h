@@ -10,7 +10,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include "scenegraph/breach_events.h"
 #include "scenegraph/damage_decals.h"
-#include "scenegraph/hull_carve.h"
+#include "scenegraph/hull_damage.h"
 
 namespace scenegraph {
 
@@ -169,14 +169,22 @@ struct Instance {
     ///     clip playback (chairs, doors, lifts).
     ///
     /// Consulted by every pass that draws a hull mesh, not just the bridge
-    /// walk: the opaque hull draw and carve-stencil pass (`draw_model`,
-    /// frame.cc), the shadow depth pre-pass, cloak, hologram and breach
-    /// passes (each via `draw_model_positions_only` /
+    /// walk: the opaque hull draw and the plating mark (`draw_model`,
+    /// frame.cc), the shadow depth pre-pass, cloak, hologram and hull
+    /// interior passes (each via `draw_model_positions_only` /
     /// `compose_node_worlds`), and `walk_bridge_meshes` (bridge_pass.cc). A
     /// pass that draws a hull and skips this map draws an articulated or
     /// severed part at its REST pose instead of its live one. Runtime state,
     /// never serialized.
     std::unordered_map<int, glm::mat4> node_overrides;
+
+    /// The ship has an articulation rig (set_instance_rigged, from both
+    /// realize sites in host_loop). The identity pose CLEARS node_overrides,
+    /// so a rigged hull at rest has no overrides and still needs its hits
+    /// filed on the part they struck (layered damage phase 4 §2.1: the wear
+    /// bindings attribute in rest space then). Runtime state, never
+    /// serialized.
+    bool rigged = false;
 
     /// ── Per-channel skeletal animation (BC TGAnimBlender-faithful) ──────────
     /// One channel per skeleton bone. clip_index < 0 = unbound: the bone shows
@@ -214,13 +222,34 @@ struct Instance {
     /// Runtime VFX state only — never serialized to saves.
     DamageDecalRing decals;
 
-    /// Per-instance hull carve spheres (body frame, model units). Drives the
-    /// see-through breach holes and the interior voxel splat. Runtime VFX only
-    /// — never serialized to saves.
-    HullCarveField carve;
+    /// Per-instance layered hull damage (plating wear + holes, body frame).
+    /// Merge-not-evict; runtime VFX only — never serialized to saves.
+    HullDamageStore hull_damage;
 
-    /// Per-instance transient breach-event ring. Drives debris, venting, and
-    /// molten-rim emissive. Runtime VFX only — never serialized to saves.
+    /// Structure parts (renderer::structure_parts_for indices) that have
+    /// broken off this hull: bit i hides part i in the plating draw and its
+    /// mark (hull_split_parts sets it). Runtime state, never serialized.
+    std::uint32_t severed_parts = 0;
+    /// A severed-part chunk draws ONLY the structure parts whose bits are set
+    /// (the assembly that came off together); 0 = not a chunk, every part
+    /// draws. Runtime state, never serialized.
+    std::uint32_t shown_parts = 0;
+    /// The last full severance check of this instance
+    /// (renderer::split_severed_parts): a check is skipped while the damage
+    /// store revision, severed_parts and the deck-break wear all match it.
+    /// Runtime state, never serialized.
+    struct PartCheckStamp {
+        bool valid = false;
+        std::uint32_t revision = 0;
+        std::uint32_t severed_parts = 0;
+        float deck_break = 0.0f;
+    };
+    PartCheckStamp part_check;
+
+    /// Per-instance transient breach-event ring. Drives debris, venting and
+    /// the molten rim on fresh tears (kRimLife; plating::build_rim_list feeds
+    /// the plating draw and the interior). Runtime VFX only — never
+    /// serialized to saves.
     BreachEventRing breach_events;
 
     /// Self-referential id stamped by World::create_instance so particle

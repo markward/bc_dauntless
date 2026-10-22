@@ -59,6 +59,7 @@ def _isolate_host_io(monkeypatch):
     string 'IID' these unit tests use)."""
     monkeypatch.setattr(host_io, "world_to_body", lambda *a, **k: None)
     monkeypatch.setattr(host_io, "shield_hit", lambda *a, **k: None)
+    monkeypatch.setattr(host_io, "hull_damage_add", lambda *a, **k: None)
 
 
 @pytest.fixture
@@ -156,30 +157,6 @@ def test_weapon_callers_pass_no_tangent_and_keep_the_weapon_radius(patched, deca
 def test_decal_radius_none_falls_back_to_the_hit_radius_for_a_collision(patched, decal):
     _dispatch(absorbed_hull=5.0, weapon_type="collision")
     assert decal.decal_calls[0]["radius"] == pytest.approx(0.2)
-
-
-def test_decal_radius_never_reaches_the_carve(patched, decal, monkeypatch):
-    # Spec §6: a collision apply_hit leaves r_hit, the subsystem catchment,
-    # the carve influence radius and WeaponHitEvent.GetRadius() exactly as
-    # before -- decal_radius is a DECAL-ONLY override. Pin that the carve's
-    # influence radius is derived from `radius` (0.2), never from
-    # `decal_radius` (2.5), even though this dispatch sets both.
-    from engine.appc import damage_eligibility, hull_carve
-
-    monkeypatch.setattr(damage_eligibility, "is_eligible", lambda ship: True)
-    carve_calls = []
-    monkeypatch.setattr(host_io, "hull_carve_add",
-                        lambda *a, **k: carve_calls.append(a))
-
-    _dispatch(absorbed_hull=5.0, weapon_type="collision",
-              tangent=_Pt(0, 1, 0), decal_radius=2.5)
-
-    assert decal.decal_calls[0]["radius"] == pytest.approx(2.5)
-    assert len(carve_calls) == 1
-    # positional signature: (iid, point, normal, influ, strength, time, ...)
-    influ = carve_calls[0][3]
-    assert influ == pytest.approx(hull_carve.carve_influ_gu(0.2))
-    assert influ != pytest.approx(hull_carve.carve_influ_gu(2.5))
 
 
 def test_dent_weight_reaches_the_decal(patched, decal):

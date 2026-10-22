@@ -1,14 +1,14 @@
 """Detached hull chunks: persistent, tumbling, COLLIDING debris.
 
-When a carve severs a component of a breakable hull (spec: docs/superpowers/
-specs/2026-09-11-breakable-hull-components-design.md), the native side has
-already made a renderer instance for it and split its damage field out
-(host_io.hull_split_detached). This module is the BODY: position,
-orientation, velocity, tumble, mass and radius, integrated in Python each
+When plating wear cuts a piece off a breakable hull (spec: docs/superpowers/
+specs/2026-09-11-breakable-hull-components-design.md and the layered hull
+damage specs), the native side has already made a renderer instance that
+draws only that piece (host_io.hull_split_parts). This module is the BODY:
+position, orientation, velocity, tumble, mass and radius, integrated in Python each
 frame and registered with the collision system so a chunk can be struck and
 can strike. Deliberately NOT a ShipClass -- it carries exactly the surface
 collisions._resolve_body reads, and GetHull() returns None so combat.apply_hit
-on a chunk is a no-op: it never carves and never dies.
+on a chunk is a no-op: it never takes damage and never dies.
 
 Chunks are persistent (no timer despawn -- that was the complaint against the
 old death sequence), bounded instead by kMaxLiveChunks with oldest-first
@@ -22,7 +22,6 @@ import engine.dev_mode as dev_mode
 from engine.appc.math import TGPoint3, TGMatrix3
 
 # -- Tuning (Python: turnable live without a rebuild) ------------------------
-kChunkMinCells = 8            # smaller components vanish as particles instead
 kMaxLiveChunks = 32
 kChunkSeparationSpeed = 0.15  # GU/s, along parent-centre -> component-centroid
 kChunkTumbleRate = 0.4        # rad/s about a random body axis

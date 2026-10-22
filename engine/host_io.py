@@ -46,9 +46,11 @@ _REQUIRED_BINDINGS = frozenset({
     "set_dynamic_lights",
     "set_phaser_beams", "set_tractor_beams",
     "cursor_pos",
-    "shield_hit", "world_to_body", "damage_decal_add", "hull_carve_add",
+    "shield_hit", "world_to_body", "damage_decal_add",
+    "hull_damage_add", "hull_damage_add_body",
     "model_nodes", "model_nearest_part", "set_instance_decals",
-    "hull_split_detached", "hull_carve_capsule", "breach_burst",
+    "hull_split_parts", "structure_part_at", "instance_severed_parts",
+    "breach_burst",
     "ray_trace_mesh", "instance_translation",
     "transform_alloc", "transform_free", "transform_get_position",
     "transform_set_position", "transform_get_rotation", "transform_set_rotation",
@@ -332,9 +334,9 @@ def set_tractor_beams(beams: list) -> None:
 # ── Hit / damage feedback ────────────────────────────────────────────────────
 #
 # The floating render origin: the native mesh queries (shield_hit,
-# world_to_body, damage_decal_add, hull_carve_add, hull_carve_capsule,
-# ray_trace_mesh) take points RELATIVE TO THE INSTANCE'S TRANSLATION and invert
-# only rotation*scale, so a ship 1e6 GU from the system origin is queried with
+# world_to_body, damage_decal_add, hull_damage_add, ray_trace_mesh) take
+# points RELATIVE TO THE INSTANCE'S TRANSLATION and invert only
+# rotation*scale, so a ship 1e6 GU from the system origin is queried with
 # the precision of one at the origin. Engine code keeps speaking world points;
 # these wrappers form the relative point here, in Python doubles, from
 # `instance_translation(iid)`, and add it back to ray_trace_mesh's hit.
@@ -424,27 +426,51 @@ def damage_decal_add(
                         float(dent))
 
 
-def hull_carve_add(
+def hull_damage_add(
     instance_id: int,
     world_point: Tuple[float, float, float],
     world_normal: Tuple[float, float, float],
-    influ_radius: float,
-    strength: float,
-    time: float,
-    floor_radius: float = 0.0,
-    radius_modifier: float = 1.0,
-    carve_field: bool = True,
+    radius: float,
+    wear: float,
+    kind: int,
+    rest_frame: bool = False,
 ) -> None:
-    """`carve_field=False` grows the sphere ring only; the instance field is
-    carved by a later deposit (see renderer::hull_carve_deposit)."""
+    """Add a record to the instance's HullDamageStore. `kind` 1 = Surface,
+    3 = Internal (others ignored natively). On a posed (articulated) ship the
+    binding attributes the point to the part it lies on, by geometry, and
+    stores it in that part's REST frame, so the damage moves with the part;
+    a rigged ship at the identity pose (no overrides) is attributed in rest
+    space. `rest_frame=True`: the point is already rest-frame (authored
+    DamageTool volumes): attributed in REST space to the nearest rest
+    triangle's node and never converted. No-op without a host/instance."""
     if _h is None:
         return
     rel = _instance_relative(instance_id, world_point)
     if rel is None:
         return
-    _h.hull_carve_add(instance_id, rel, world_normal, influ_radius,
-                     strength, time, floor_radius, radius_modifier,
-                     carve_field)
+    _h.hull_damage_add(instance_id, rel, world_normal, float(radius),
+                       float(wear), int(kind), bool(rest_frame))
+
+
+def hull_damage_add_body(
+    instance_id: int,
+    body_point: Tuple[float, float, float],
+    body_normal: Tuple[float, float, float],
+    radius: float,
+    wear: float,
+    kind: int,
+    rest_frame: bool = False,
+) -> None:
+    """hull_damage_add for a point/normal ALREADY in the (posed) body frame
+    (model units, as `world_to_body` returns them). `radius` is still game
+    units; the binding converts it with the same scale as hull_damage_add.
+    Attribution and `rest_frame` as hull_damage_add. No translation is
+    involved, so there is no instance-relative step."""
+    if _h is None:
+        return
+    _h.hull_damage_add_body(instance_id, tuple(body_point), tuple(body_normal),
+                            float(radius), float(wear), int(kind),
+                            bool(rest_frame))
 
 
 def model_nodes(instance_id: int) -> List[dict]:
@@ -478,18 +504,41 @@ def set_instance_decals(instance_id, decals) -> None:
     _h.set_instance_decals(instance_id, decals)
 
 
-def hull_split_detached(instance_id: int, min_cells: int) -> list:
-    """Run hull connectivity on `instance_id`'s damage field and split every
-    detached component out. Components with at least `min_cells` cells get a
-    new renderer instance (a chunk) and their own field; smaller ones are
-    simply removed from the parent. Returns a list of dicts (body-frame GAME
-    UNITS): instance_id (None for sub-floor), cells, centroid, bounds_min,
-    bounds_max, radius_gu, main_body_cells (the parent's remaining occupied
-    cell count, repeated on every dict -- there is no separate call for it).
-    Empty when headless or nothing severed."""
+def hull_split_parts(instance_id: int):
+    """Break off every piece the plating wear has cut from the main body of
+    `instance_id` (a ship, never a rock or an articulated hull): the structure
+    parts that leave together are hidden on the parent and a new renderer
+    instance (a chunk) draws only them. Returns one dict per newly severed
+    piece (body-frame GAME UNITS): parts (list of part indices), instance_id,
+    voxels, total_voxels (the whole hull's), centroid, bounds_min,
+    bounds_max, radius_gu. A part is reported once. Empty when headless, not
+    ready, or nothing severed.
+
+    None = the check is running on a native worker (or was just re-queued
+    because the damage moved): call again later to collect it
+    (hull_breakup's `_awaiting`)."""
     if _h is None:
         return []
-    return list(_h.hull_split_detached(instance_id, int(min_cells)))
+    parts = _h.hull_split_parts(instance_id)
+    return None if parts is None else list(parts)
+
+
+def structure_part_at(instance_id: int, body_point_gu) -> int:
+    """The structure part whose voxel holds a BODY-frame point (game units)
+    on `instance_id`, or -1 (outside the hull's voxels, parts not detected
+    yet, stale id, headless)."""
+    if _h is None:
+        return -1
+    return int(_h.structure_part_at(instance_id, tuple(float(c) for c in body_point_gu)))
+
+
+def instance_severed_parts(instance_id: int) -> int:
+    """The structure parts that have broken off `instance_id` as a bitmask:
+    bit i set = part i (a `structure_part_at` index) has left as a chunk.
+    0 for an intact hull, a stale id, or headless."""
+    if _h is None:
+        return 0
+    return int(_h.instance_severed_parts(instance_id))
 
 
 def breach_burst(instance_id: int, body_point_gu, radius_gu: float) -> None:
@@ -501,32 +550,16 @@ def breach_burst(instance_id: int, body_point_gu, radius_gu: float) -> None:
     _h.breach_burst(instance_id, tuple(body_point_gu), float(radius_gu))
 
 
-def hull_carve_capsule(
-    instance_id: int,
-    p0_world: Tuple[float, float, float],
-    p1_world: Tuple[float, float, float],
-    radius_gu: float,
-) -> None:
-    """Field-only swept cut between two WORLD points at `radius_gu`. Never
-    enters the sphere list. No-op when headless. Both endpoints are made
-    relative to ONE read of the translation."""
-    if _h is None:
-        return
-    t = _h.instance_translation(instance_id)
-    if t is None:
-        return
-    _h.hull_carve_capsule(instance_id, _relative_to(t, p0_world),
-                          _relative_to(t, p1_world), float(radius_gu))
-
-
 def ray_trace_mesh(
     instance_id: int,
     origin: Tuple[float, float, float],
     direction: Tuple[float, float, float],
     max_dist: float,
+    rest_pose: bool = False,
 ) -> Optional[Tuple[Tuple[float, float, float], Tuple[float, float, float], float]]:
     """World (view-coordinate) ray in, world hit out; the binding in
-    between is instance-relative.
+    between is instance-relative. `rest_pose=True` traces the model's REST
+    geometry (node overrides ignored) -- for authored, rest-frame content.
 
     A stale id still reaches the binding, which raises -- deliberately NOT
     the silent drop the point queries make. Those are fire-and-forget
@@ -536,11 +569,13 @@ def ray_trace_mesh(
     would only hide a stale id behind an ordinary miss."""
     if _h is None:
         return None
+    # The flag rides only when set, so the posed call keeps its shape.
+    kw = {"rest_pose": True} if rest_pose else {}
     t = _h.instance_translation(instance_id)
     if t is None:
-        return _h.ray_trace_mesh(instance_id, origin, direction, max_dist)
+        return _h.ray_trace_mesh(instance_id, origin, direction, max_dist, **kw)
     rel = _relative_to(t, origin)
-    hit = _h.ray_trace_mesh(instance_id, rel, direction, max_dist)
+    hit = _h.ray_trace_mesh(instance_id, rel, direction, max_dist, **kw)
     if hit is None:
         return None
     (px, py, pz), normal, dist = hit

@@ -1,13 +1,14 @@
 """Developer-only "Damage Preview" mission.
 
-Spawns the player plus a stock pre-damaged Akira ~6 GU dead-ahead so the
-authored hull-damage path can be eyeballed in a single load:
+Spawns the player plus an Akira ~6 GU dead-ahead so hull damage can be
+eyeballed in a single load. A stock DamageTool script's volumes take the
+authored path:
 
     DamageAkira.AddDamage(pWreck)
         -> ShipClass.AddObjectDamageVolume(...)        (engine/appc/objects.py)
         -> engine.appc.visible_damage.queue_body_volume (deferred queue)
-        -> host.hull_carve_add(...)                     (next host-loop tick)
-        -> breach renderer                              (visible breaches)
+        -> host_io.hull_damage_add(..., kind 3)         (next host-loop tick)
+        -> plating + interior rooms                     (Internal records)
 
 Reuses QuickBattle's region for a known-good, visible space set + backdrop. The
 wreck is a friendly contact so it stays out of the way. Registered into the dev
@@ -22,8 +23,132 @@ import App
 import MissionLib
 import loadspacehelper
 
-# Stock DamageTool script: 22 authored volumes, within the 24-slot carve field.
+# Stock DamageTool script: 22 authored volumes, each an Internal record.
+# Unused on the damage-redesign spike (the Akira starts clean).
 _DAMAGE_SCRIPT = "Maelstrom.Episode5.E5M2.DamageAkira"
+
+_DEATH = "<death>"
+
+# SPIKE (damage redesign): the impulse system dies in stages -- controller,
+# then port, then starboard engine. Delays are seconds after the PREVIOUS
+# step (TGSequence AppendAction semantics).
+def _death_delay_s() -> float:
+    """DAUNTLESS_DAMAGE_PREVIEW_DEATH_S: seconds from the last impulse blast
+    to the kill (default 4). Perf captures lengthen it for a steady
+    damaged-but-alive window before the cascade."""
+    import os
+    try:
+        return max(0.0, float(os.environ.get("DAUNTLESS_DAMAGE_PREVIEW_DEATH_S", "4")))
+    except ValueError:
+        return 4.0
+
+
+def _wreck_distance_gu() -> float:
+    """DAUNTLESS_DAMAGE_PREVIEW_DISTANCE_GU: how far ahead of the player the
+    Akira sits (default 6, minimum 1.5). Perf captures shorten it for a
+    close-up. The exterior camera sits about 14 GU behind the player, so
+    even at the 1.5 GU floor the Akira is only about 22% of the frame
+    width (17.5% at 6 GU); a frame-filling hull is out of reach here."""
+    import os
+    try:
+        return max(1.5, float(os.environ.get("DAUNTLESS_DAMAGE_PREVIEW_DISTANCE_GU", "6")))
+    except ValueError:
+        return 6.0
+
+
+def _first_step_delay_s() -> float:
+    """DAUNTLESS_DAMAGE_PREVIEW_FIRST_S: seconds from mission start to the
+    first impulse blast (default 3, minimum 0). Perf captures lengthen it for
+    a steady UNDAMAGED window, the baseline the damaged windows are compared
+    against."""
+    import os
+    try:
+        return max(0.0, float(os.environ.get("DAUNTLESS_DAMAGE_PREVIEW_FIRST_S", "3")))
+    except ValueError:
+        return 3.0
+
+
+def _apply_seed():
+    """DAUNTLESS_DAMAGE_PREVIEW_SEED: when set to an integer, seed the game
+    RNG (App.g_kSystemWrapper, whose GetRandomNumber the death cascade rolls
+    through) at mission start, so the death-cascade rolls repeat between captures.
+    Only those wrapper-driven rolls repeat: Python's module random (debris,
+    particles) stays unseeded, so captures are not identical. Returns
+    the seed, or None when unset or not an integer (the RNG is left alone)."""
+    import os
+    raw = os.environ.get("DAUNTLESS_DAMAGE_PREVIEW_SEED")
+    if raw is None:
+        return None
+    try:
+        seed = int(raw)
+    except ValueError:
+        print("[damage-preview] DAUNTLESS_DAMAGE_PREVIEW_SEED=%r is not an integer: "
+              "not seeded" % raw)
+        return None
+    App.g_kSystemWrapper.SetRandomSeed(seed)
+    print("[damage-preview] game RNG seeded with %d" % seed)
+    return seed
+
+
+_IMPULSE_STEPS = (
+    (None, "Impulse Engines"),   # after _first_step_delay_s (default 3)
+    (1.5, "Port Impulse"),
+    (1.5, "Star Impulse"),
+    (None, _DEATH),          # then the ship dies (_death_delay_s): BC's death cascade
+)
+_step_index = [0]
+
+
+def _step_delays():
+    """Each step's delay after the previous one, the env knobs resolved."""
+    delays = [d for d, _name in _IMPULSE_STEPS]
+    delays[0] = _first_step_delay_s()
+    delays[-1] = _death_delay_s()
+    return delays
+
+
+def _wreck():
+    pSet = App.g_kSetManager.GetSet("QuickBattleRegion")
+    ship = App.ShipClass_GetObject(pSet, "Wreck") if pSet is not None else None
+    return None if ship is None or App.IsNull(ship) else ship
+
+
+def _find_subsystem(ship, name):
+    ies = ship.GetImpulseEngineSubsystem()
+    if ies is None:
+        return None
+    if ies.GetName() == name:
+        return ies
+    for i in range(ies.GetNumChildSubsystems()):
+        child = ies.GetChildSubsystem(i)
+        if child is not None and child.GetName() == name:
+            return child
+    return None
+
+
+def DestroyNextImpulseStep(pAction):
+    """Destroy the next impulse subsystem the way gameplay does (condition 0)."""
+    i = _step_index[0]
+    _step_index[0] = i + 1
+    if i >= len(_IMPULSE_STEPS):
+        return 0
+    name = _IMPULSE_STEPS[i][1]
+    ship = _wreck()
+    if name == _DEATH:
+        if ship is not None:
+            from engine.appc import ship_death
+            ship_death.begin(ship)
+            print("[damage-preview] wreck killed: death cascade running")
+        return 0
+    sub = _find_subsystem(ship, name) if ship is not None else None
+    if sub is None:
+        print("[damage-preview] no subsystem %r on the wreck" % name)
+        return 0
+    sub.SetCondition(0.0)
+    pos = sub.GetPosition() if hasattr(sub, "GetPosition") else None
+    where = "(%.2f, %.2f, %.2f)" % (pos.x, pos.y, pos.z) if pos is not None else "?"
+    print("[damage-preview] destroyed %s at body %s GU" % (name, where))
+    return 0
 
 
 def PreLoadAssets(pMission):
@@ -38,6 +163,8 @@ def PreLoadAssets(pMission):
 
 
 def Initialize(pMission):
+    # First, so every roll from here on (ship setup included) repeats.
+    _apply_seed()
     App.Game_SetDifficultyMultipliers(1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
 
     # Player bridge — CreatePlayerShip expects a loaded bridge.
@@ -56,12 +183,17 @@ def Initialize(pMission):
 
     # Pre-wrecked Akira ~6 GU dead-ahead.
     pWreck = loadspacehelper.CreateShip("Akira", pSet, "Wreck", "")
-    pWreck.SetTranslateXYZ(0.0, 6.0, 0.0)
+    pWreck.SetTranslateXYZ(0.0, _wreck_distance_gu(), 0.0)
     pWreck.UpdateNodeOnly()
 
-    # Authored visible damage via the stock DamageTool output.
-    DamageAkira = importlib.import_module(_DAMAGE_SCRIPT)
-    DamageAkira.AddDamage(pWreck)
+    # SPIKE (damage redesign): the Akira starts clean -- no authored
+    # DamageTool volumes -- and loses its impulse system on a timer, the
+    # first internal-explosion scenario (see _IMPULSE_STEPS).
+    pSeq = App.TGSequence_Create()
+    for delay in _step_delays():
+        pSeq.AppendAction(App.TGScriptAction_Create(__name__, "DestroyNextImpulseStep"), delay)
+    pSeq.Play()
+    _step_index[0] = 0
 
     # Three collision scuffs for live tuning of the scuff decal (spec
     # 2026-09-20-collision-scuff-normal-decals-design.md §5): small, medium

@@ -719,6 +719,14 @@ class ShipSubsystem(TGEventHandlerObject):
             self._threshold_state = new_state
             if new_state == _THRESHOLD_DESTROYED:
                 self._fire_threshold_event("ET_SUBSYSTEM_DESTROYED")
+                # SPIKE (damage redesign): the blast, drawn only where it
+                # reaches the hull (engine/appc/internal_blast.py).
+                try:
+                    from engine.appc import internal_blast
+                    internal_blast.queue(self)
+                except Exception as _e:
+                    import engine.dev_mode as _dm
+                    _dm.log_swallowed("internal blast queue", _e)
             elif new_state == _THRESHOLD_DISABLED and old_state == _THRESHOLD_OPERATIONAL:
                 self._fire_threshold_event("ET_SUBSYSTEM_DISABLED")
             elif new_state == _THRESHOLD_OPERATIONAL:
@@ -2328,7 +2336,7 @@ class PowerSubsystem(ShipSubsystem):
         power plant may breach.  Inert objects (asteroids) carry a hidden,
         non-targetable Power Plant (SetTargetable(0)); when the death cascade
         zeroes it, it must NOT throw a warp-core explosion with its unique VFX
-        (shockwave + carve).  ``_breach_fired`` is still set so we do not
+        (shockwave + wound).  ``_breach_fired`` is still set so we do not
         re-evaluate every tick — the plant is marked "handled" even though
         no breach is emitted.
 
@@ -2336,7 +2344,7 @@ class PowerSubsystem(ShipSubsystem):
         objects.py:695-699 critical-subsystem pattern:
 
         * warp_core_breach.arm(ship) — queues the breach VFX (shockwave ring +
-          hull carve), spawned on the next warp_core_breach.advance() (driven
+          hull wound records), spawned on the next warp_core_breach.advance() (driven
           by the game loop). It deals no damage; the source ship's collateral
           comes from its faithful splash (splash_damage, via ship_death.begin).
         * ship_death.begin(ship) — starts the source ship's own death sequence

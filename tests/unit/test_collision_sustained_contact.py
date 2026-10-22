@@ -50,8 +50,8 @@ def _ship(x, mass=GALAXY_MASS, vx=0.0, radius=1.0):
 @pytest.fixture
 def damage_calls(monkeypatch):
     """Capture combat.apply_hit -- the collision module's own output boundary.
-    The chain onward to host_io.hull_carve_add is pinned by
-    test_collision_hull_carve.py; this file is about what collisions DECIDE."""
+    The chain onward to host_io.hull_damage_add is pinned by
+    test_collision_hull_wear.py; this file is about what collisions DECIDE."""
     import engine.appc.combat as combat
     calls = []
     monkeypatch.setattr(combat, "apply_hit",

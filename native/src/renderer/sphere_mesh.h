@@ -22,11 +22,7 @@ namespace renderer {
 /// faces are "front" by GL's definition, so users call
 /// `glCullFace(GL_FRONT)` to draw only the inner wall (back faces from
 /// outside = the face seen from inside the sphere): backdrop_pass.cc for
-/// the skybox, sun_pass.cc, shield_pass.cc, nebula_pass.cc. (breach_pass.cc
-/// used this sphere pre-Task-3 for the per-carve scoop; it draws no proxy
-/// geometry of its own any more -- it re-draws the REAL hull mesh via
-/// renderer::draw_model_positions_only, so it neither calls this function nor
-/// builds a substitute.)
+/// the skybox, sun_pass.cc, shield_pass.cc, nebula_pass.cc.
 ///
 /// UV layout: u = lon / (2π) ∈ [0,1], v = (lat + π/2) / π ∈ [0,1].
 /// Texture stretching at the poles is acceptable for BC's stars.tga.

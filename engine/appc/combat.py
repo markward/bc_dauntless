@@ -656,7 +656,7 @@ def apply_hit(ship, damage: float, hit_point, source, *,
                               destroy" mode verified by dev-console probe. The
                               hull is still flagged as struck for cosmetic
                               feedback (scorch decal, severity, audio), but the
-                              persistent hull carve is suppressed. Defaults True
+                              structural plating wear is suppressed. Defaults True
                               (FULL / torpedo / collision / explosion).
         bypass_shields      — when True, skip the shield cascade entirely and
                               route full damage to hull/subsystems. This is the
@@ -685,8 +685,9 @@ def apply_hit(ship, damage: float, hit_point, source, *,
         hit_tangent          — world-space slip direction for a collision
                               scuff, or None.
         decal_radius         — visual decal radius in GU; overrides `r_hit`
-                              for the decal ONLY, never for the subsystem
-                              catchment / carve / WeaponHitEvent.
+                              for the decal (and the plating wear matching
+                              its reach), never for the subsystem catchment /
+                              WeaponHitEvent.
         decal_dent           — collision scuff impact weight: 1 crumples
                               (facets + dish), 0 scrapes (scratches).
         single_impact        — a one-push hit (a collision's closing impact):
@@ -789,8 +790,8 @@ def apply_hit(ship, damage: float, hit_point, source, *,
         #    (LIGHT phaser: subsystems only, hull HP untouched). `absorbed_hull`
         #    is still set so the hull reads as struck for cosmetic feedback
         #    (scorch decal, severity, audio); only the condition mutation and
-        #    the hull carve (gated separately below via allow_hull_carve) are
-        #    suppressed.
+        #    the structural plating wear (gated separately below via
+        #    allow_structural_wear) are suppressed.
         if hull is not None and hasattr(ship, "DamageSystem"):
             if _commit and damage_hull:
                 ship.DamageSystem(hull, post_shield, source)
@@ -871,7 +872,7 @@ def apply_hit(ship, damage: float, hit_point, source, *,
             weapon_type=weapon_type,
             radius=r_hit,
             persist_decal=_commit,
-            allow_hull_carve=damage_hull,
+            allow_structural_wear=damage_hull,
             shield_point=shield_point,
             tangent=hit_tangent, decal_radius=decal_radius,
             decal_dent=decal_dent,

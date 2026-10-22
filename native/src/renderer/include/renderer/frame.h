@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <map>
 #include <unordered_map>
 #include <vector>
 
@@ -16,18 +17,14 @@
 #include <assets/decal_override.h>
 
 #include <renderer/shadow_light.h>
-// draw_model takes a voxel::VoxelVolume* and CarveFieldCache's nested
-// constants, so the forward declaration below is not enough on its own.
-#include <renderer/carve_field_cache.h>
-// draw_model takes a const InstanceFieldCache::Entry* -- a nested type, so
-// (like CarveFieldCache above) the forward declaration below is not enough.
-#include <renderer/instance_field_cache.h>
+#include <renderer/plating_damage.h>
+#include <renderer/hull_interior_pass.h>
+#include <renderer/hull_interior_policy.h>
 
 namespace assets { struct Model; }
 namespace scenegraph { class World; struct Camera; enum class Pass : std::uint8_t;
                        class DamageDecalRing; }
-namespace renderer { class Pipeline; class Shader; class CarveFieldCache;
-                     class InstanceFieldCache; }
+namespace renderer { class Pipeline; class Shader; class HullFillCache; }
 namespace renderer::planet_detail { class PlanetDetailPass; }
 
 namespace renderer {
@@ -291,6 +288,26 @@ struct PhaserBeamDescriptor {
                                        // (1.0 = uniform; tractors funnel out)
 };
 
+/// SPIKE (damage redesign): what a plating draw uploads per mesh. `parts` is
+/// the hull's structure parts exactly as the subsets were computed with them
+/// (structure_parts_for, read ONCE by the caller: they land on a worker at any
+/// moment, and the shader must see the parts the cull margins assumed).
+/// `subsets`: one plating::MeshRecordSubset per model.meshes entry, or nullptr
+/// for the whole list on every mesh.
+/// `hidden_parts` / `shown_parts`: the instance's Instance::severed_parts /
+/// shown_parts, uploaded with the parts (u_part_hidden_mask /
+/// u_part_show_mask) so the colour draw and the mark hide the same pixels.
+/// `rims`: the molten rims of this frame (plating::build_rim_list), uploaded
+/// as u_rim_* by the colour draw (each mesh only its own frame's when posed);
+/// nullptr = none. The mark never reads them.
+struct PlatingMeshRecords {
+    const std::vector<voxel::StructurePart>* parts = nullptr;
+    const std::vector<plating::MeshRecordSubset>* subsets = nullptr;
+    std::uint32_t hidden_parts = 0;
+    std::uint32_t shown_parts = 0;
+    const plating::RimList* rims = nullptr;
+};
+
 /// Draw a single model instance. Picks the skinned program when the model has
 /// a skeleton AND a non-empty bone palette is supplied; otherwise draws through
 /// the static `shader` byte-identically to the pre-skinning path. Declared here
@@ -308,19 +325,9 @@ void draw_model(const assets::Model& model,
                 float decal_time,
                 float emissive_scale,
                 const std::vector<glm::mat4>& bone_palette,
-                const scenegraph::HullCarveField& carve,
                 const std::array<DynamicLightDescriptor, kMaxDynamicLightsPerDraw>&
                     dyn_lights = {},
                 int dyn_light_count = 0,
-                const voxel::VoxelVolume* carve_fill = nullptr,
-                bool carve_invert = false,
-                // Per-instance hull distance field (hull-volume-field-
-                // transport, Task 5): nullptr is BOTH an undamaged instance
-                // (InstanceFieldCache has no entry for it) and the default
-                // for every call site below until a resolved Entry is
-                // threaded in -- either way u_hull_field_enabled stays 0 and
-                // opaque.frag takes its documented zero-cost stock path.
-                const InstanceFieldCache::Entry* hull_field = nullptr,
                 // Per-instance ARTICULATED node locals (BoP wings): node index
                 // -> replacement local transform, exactly the map the bridge
                 // pass already consumes. nullptr or an empty map takes the
@@ -341,31 +348,62 @@ void draw_model(const assets::Model& model,
                 // other draw sets u_atmo_enabled = 0. atmo_sun_dir is the
                 // world-space unit direction toward the planet's sun.
                 const scenegraph::Instance::Atmosphere* atmo = nullptr,
-                glm::vec3 atmo_sun_dir = glm::vec3(0.0f));
+                glm::vec3 atmo_sun_dir = glm::vec3(0.0f),
+                // SPIKE (damage redesign) plating layer: nullptr = a stock
+                // draw that touches no plating uniform and never changes
+                // culling. Non-null = `shader` is Pipeline::plating_shader()
+                // and this list (renderer/plating_damage.h) is uploaded as
+                // u_dmg_*; the draw stays front-faces-only (a cut shows the
+                // interior pass's decks and rooms, not the hull's inside
+                // face). Ignored for a skinned draw (the skinned
+                // program has no plating layer). Always a colour draw
+                // (u_plating_mark = 0): submit_plating_interior marks through
+                // frame.cc's lean draw_plating_mark instead.
+                const plating::DamageList* plating = nullptr,
+                // Far hull (InteriorPolicy, hull_interior_policy.h): no rooms
+                // behind its holes, so the program paints a hole as wreckage
+                // instead of cutting it, unless it is blown clear through
+                // (u_plating_far). Plating draws only.
+                bool plating_far = false,
+                // Plating draws only: the parts and per-mesh record subsets
+                // (PlatingMeshRecords; FrameSubmitter caches them per
+                // instance). With subsets each mesh uploads only its own
+                // records (plating::mesh_record_subsets); a mesh with none
+                // uploads u_dmg_count 0 and still draws. nullptr = the parts
+                // read here and the whole list; null subsets, node overrides
+                // present (the posed meshes leave their rest boxes) or the
+                // geosphere's substituted mesh: every mesh gets the whole list.
+                const PlatingMeshRecords* plating_mesh_records = nullptr,
+                // Plating draws only: the stock program. Non-null with
+                // per-mesh subsets (no node overrides, not skinned): a mesh
+                // whose subset is empty draws through it, with exactly a
+                // stock draw's uniforms, before the rest draw through
+                // `shader` (one program switch per instance). nullptr: every
+                // mesh draws through `shader` (the force-program probe).
+                Shader* stock_shader = nullptr,
+                // Plating draws only: a rock (Instance::surface_is_rock), as
+                // u_plating_rock. No panels, ribs or members; a cut where wear
+                // passes breach, and a far crater painted as darkened rock.
+                bool plating_rock = false);
+
+/// TEST counters, process-wide and monotonic (read deltas). Computations of
+/// a model's per-mesh plating record subsets (plating::mesh_record_subsets),
+/// and uploads of a u_dmg_* list to the plating program by a per-mesh draw
+/// (an upload equal to the previous one of the same draw is skipped and not
+/// counted).
+int plating_mesh_subset_computations();
+int plating_record_uploads();
+/// TEST counters, process-wide and monotonic (read deltas): program binds
+/// made by draw_model, and the mesh draws it issued through the plating
+/// program (a non-null plating list).
+int draw_model_program_binds();
+int draw_model_plating_mesh_draws();
 
 /// Per-camera LOD for a sphere-mapped model, or -1 when the model has none.
 /// world radius = sphere_map.radius * length(world[0]); focal from proj and
 /// the CURRENTLY BOUND viewport height (glGetIntegerv(GL_VIEWPORT)).
 int geosphere_level_for(const assets::Model& m, const glm::mat4& world,
                         const scenegraph::Camera& cam);
-
-/// Release the process-lifetime damage-decal texture (game/data/Textures/
-/// Effects/Damage.tga) lazily loaded by draw_model, and clear its "tried" flag.
-/// MUST be called by shutdown() while the creating GL context is still current:
-/// init()/shutdown() destroy and recreate the context per session, and a fresh
-/// context reuses GL ids from 1. Without this reset the cached id leaks into the
-/// next context, where binding it to GL_TEXTURE_2D collides with a texture that
-/// context created as GL_TEXTURE_3D (carve/breach fill) — GL_INVALID_OPERATION
-/// (0x502), surfacing later at the next check_gl (e.g. in upload_mesh).
-void reset_damage_decal_texture();
-
-/// The framework-lattice stencil (game/data/Textures/Effects/Damage.tga), lazily
-/// loaded once per GL session; 0 when game/ is not installed. Exported so the
-/// breach pass binds the SAME texture the opaque pass cuts the lattice with --
-/// both now run the one shared hull_cut_at(), and that function reads this
-/// texture, so a second independently-loaded copy would be a way for the cut
-/// and the interior to disagree again.
-unsigned int damage_decal_texture();
 
 /// Clear the lazy per-ModelHandle bounding-radius cache used by dynamic-light
 /// selection. MUST be called wherever the host clears g_loaded_models (both
@@ -374,16 +412,16 @@ unsigned int damage_decal_texture();
 /// clear — so without this reset a different model assigned a previously-
 /// cached handle silently inherits the OLD model's bounding radius after a
 /// mission swap / GL-context recreate. Pure CPU state (no GL objects), so
-/// unlike reset_damage_decal_texture() it has no context-currency requirement.
+/// unlike reset_decal_mask_sampler() it has no context-currency requirement.
 void reset_model_radius_cache();
 
 /// Release the lazily-created GL sampler object the opaque pass binds on
 /// texture units 8-11 (one shared sampler, up to 4 distinct decal masks per
 /// model, shared by up to 16 placements;
-/// clamp-to-edge; the mask texture itself uploads with GL_REPEAT). Same
-/// contract as
-/// reset_damage_decal_texture(): call while the creating context is current,
-/// or the stale sampler id leaks into the next context.
+/// clamp-to-edge; the mask texture itself uploads with GL_REPEAT). MUST be
+/// called while the creating context is current: init()/shutdown() destroy
+/// and recreate the context per session and a fresh context reuses GL ids
+/// from 1, so a stale sampler id would leak into the next context.
 void reset_decal_mask_sampler();
 
 /// Per-instance hull-decal override (set_instance_decals, spec 2026-09-28-
@@ -423,14 +461,7 @@ public:
                        const ModelLookup& lookup,
                        const Lighting& lighting,
                        float decal_time = 0.0f,
-                       CarveFieldCache* carve_cache = nullptr,
-                       const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr,
-                       // Per-instance hull field cache (Task 5 plumbing; the
-                       // owning cache is constructed and threaded in by
-                       // Task 6). nullptr (the default, and every call site
-                       // today) keeps every instance on draw_model's stock
-                       // hull_field==nullptr path.
-                       InstanceFieldCache* field_cache = nullptr);
+                       const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr);
 
     /// Like submit_opaque but only iterates instances tagged with `pass`.
     /// Used by the space pass to exclude bridge-tagged geometry, which
@@ -442,10 +473,8 @@ public:
                                const Lighting& lighting,
                                scenegraph::Pass pass,
                                float decal_time = 0.0f,
-                               CarveFieldCache* carve_cache = nullptr,
                                float ambient_scale = 1.0f,
                                const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr,
-                               InstanceFieldCache* field_cache = nullptr,
                                // The system's suns (spec 2026-10-07 §6): a planet with
                                // an enabled atmosphere takes its surface terminator
                                // and limb sun direction from these, falling back to
@@ -457,28 +486,74 @@ public:
                                // other draw (and nullptr) is exactly today's.
                                const planet_detail::PlanetDetailPass* detail = nullptr);
 
-    /// Stamp the stencil buffer with "hull was cut away here", for every
-    /// visible instance in `pass` that has active carves.
-    ///
-    /// Run BETWEEN the opaque hull and the breach scoop. The scoop must appear
-    /// only through real holes, never in open space — `discard` writes no
-    /// depth, so a hole and empty space look identical from the scoop's side,
-    /// and BC's fill mask balloons up to ~3 cells past the hull (39-55% of mask
-    /// volume lies outside the hull mesh, measured), which is exactly where the
-    /// scoop was left floating free of the ship.
-    ///
-    /// Draws each carved hull again through opaque.frag with u_carve_invert=1
-    /// (keep only what the hull draw discarded) with colour and depth writes
-    /// masked off, so the draw contributes nothing but stencil value 1. Depth
-    /// TEST stays on, so a cut hidden behind nearer geometry does not stamp.
-    /// Restores all GL state it touches. No-op when nothing is carved.
-    void submit_carve_stencil(const scenegraph::World& world,
-                              const scenegraph::Camera& camera,
-                              Pipeline& pipeline,
-                              const ModelLookup& lookup,
-                              scenegraph::Pass pass,
-                              CarveFieldCache* carve_cache,
-                              InstanceFieldCache* field_cache = nullptr);
+    /// Hull interior under the plating tear. For each visible Space instance
+    /// with far_fade < 1, a model, wants_plating and torn_possible (world
+    /// order), stamps stencil value 2 + k (k = ordinal; stops after 255)
+    /// exactly where the hull is cut through (value 1 is unused; it was the
+    /// old voxel carve's).
+    /// Colour and depth writes are off; depth TEST on (GL_LEQUAL). Right
+    /// after each marking draw, while params[25] > 0.5, HullInteriorPass
+    /// draws that hull's decks and rooms under the value just stamped (fill
+    /// from fill_cache->get_for_source; none = rooms without the
+    /// left-the-ship test). params[25] <= 0.5 keeps the marking and leaves
+    /// the holes see-through. Restores stencil off / mask 0xFF / masks on /
+    /// the depth func it found.
+    void submit_plating_interior(const scenegraph::World& world,
+                                 const scenegraph::Camera& camera,
+                                 Pipeline& pipeline,
+                                 const ModelLookup& lookup,
+                                 HullFillCache* fill_cache,
+                                 const Lighting& lighting,
+                                 float ambient_scale,
+                                 float now);
+
+    /// The instance's plating damage list, built from its HullDamageStore.
+    /// Cached per instance id; rebuilt only when the store's revision or any
+    /// of the plating params differ from the cached copy. Valid until the
+    /// next call that can rebuild this instance's entry.
+    const plating::DamageList& plating_list_for(const scenegraph::Instance& inst);
+    /// How many times plating_list_for rebuilt a list (tests).
+    int plating_list_builds() const { return plating_list_builds_; }
+    /// Cached lists held (tests). submit_opaque_in_pass drops ids no longer
+    /// in its world before it draws.
+    std::size_t plating_list_cache_size() const { return plating_list_cache_.size(); }
+    /// TEST / DIAGNOSTIC SWITCH, not a quality or perf setting: production
+    /// never calls it and nothing should depend on it. Record culling (default
+    /// on): each plating mesh draw and marking draw uploads only the records
+    /// near that mesh (plating::plating_cull_margin), and the interior walk's
+    /// blown tests read only the deck-break subset. Off = the whole list
+    /// everywhere: the A/B the tests use to prove culling never changes a
+    /// pixel.
+    void set_plating_record_culling(bool on) { plating_record_culling_ = on; }
+
+    /// TEST / DIAGNOSTIC SWITCH, like set_plating_record_culling: production
+    /// never calls it. Skipping (default on, only with record culling): the
+    /// mark and the interior draw no mesh whose record subset is empty -- the
+    /// mark would discard every fragment of it, and the interior cannot pass
+    /// stencil and depth on it. Off = every mesh: the A/B proving the skip
+    /// never changes a pixel.
+    void set_plating_skip_record_free_meshes(bool on) { plating_skip_record_free_ = on; }
+
+    /// Marking draws issued by the last submit_plating_interior.
+    int plating_marks_last_frame() const { return plating_marks_last_frame_; }
+    /// Mesh draws (glDrawElements) of those marking draws, and of the
+    /// interior draws that followed them.
+    int plating_mark_mesh_draws_last_frame() const { return plating_mark_mesh_draws_; }
+    int plating_interior_mesh_draws_last_frame() const { return plating_interior_mesh_draws_; }
+
+    /// Interior draws (HullInteriorPass::draw) issued by the last
+    /// submit_plating_interior: one per marked hull while params[25] > 0.5.
+    int plating_interiors_last_frame() const { return plating_interiors_last_frame_; }
+
+    /// Which hulls get rooms in the renders that follow (hull_interior_policy.h).
+    /// The host sets it before each render's submits: the viewscreen feed with
+    /// its target, the main view with the default.
+    void set_interior_policy(const InteriorPolicy& policy) { interior_policy_ = policy; }
+    const InteriorPolicy& interior_policy() const { return interior_policy_; }
+
+    /// Plated draws in the last submit_opaque_in_pass whose holes were painted
+    /// as far wreckage (u_plating_far = 1) instead of cut for rooms.
+    int plating_far_draws_last_frame() const { return plating_far_draws_last_frame_; }
 
     /// Draw a SINGLE instance (by id) through the full opaque lighting/texture
     /// path, ignoring its visibility flag. Used by the Ship Property Viewer's
@@ -492,9 +567,7 @@ public:
                                 const ModelLookup& lookup,
                                 const Lighting& lighting,
                                 float decal_time = 0.0f,
-                                CarveFieldCache* carve_cache = nullptr,
-                                const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr,
-                                InstanceFieldCache* field_cache = nullptr);
+                                const std::vector<DynamicLightDescriptor>* dyn_lights = nullptr);
 
 private:
     /// Lazily-allocated 1x1 white texture used as a fallback when a material
@@ -509,11 +582,62 @@ private:
     /// Sampling it returns (0,0,0,1) so the glow term contributes nothing.
     std::uint32_t black_texture_ = 0;
     std::uint32_t ensure_black_texture();
+
+    struct InstanceIdLess {
+        bool operator()(const scenegraph::InstanceId& a,
+                        const scenegraph::InstanceId& b) const {
+            if (a.index != b.index) return a.index < b.index;
+            return a.generation < b.generation;
+        }
+    };
+    struct PlatingListCacheEntry {
+        bool valid = false;
+        std::uint32_t revision = 0;
+        std::array<float, plating::kParamCount> params{};
+        plating::DamageList list;
+        // plating::deck_break_subset(list), under the same key.
+        plating::DeckBreakSet deck_break;
+        // plating::mesh_record_subsets(list, ...), built on first use: valid
+        // for this list (cleared on a rebuild) and the parts pointer and
+        // model it was built with.
+        bool subsets_valid = false;
+        const std::vector<voxel::StructurePart>* subsets_parts = nullptr;
+        scenegraph::ModelHandle subsets_handle{};
+        const assets::Model* subsets_model = nullptr;
+        std::vector<plating::MeshRecordSubset> subsets;
+        // Per mesh: 1 when its subset holds a record (the interior's mesh
+        // mask when record-free meshes are skipped).
+        std::vector<std::uint8_t> mesh_has_records;
+    };
+    /// plating_list_for's entry (list + deck-break subset), rebuilt when stale.
+    PlatingListCacheEntry& plating_entry_for(const scenegraph::Instance& inst);
+    /// The parts and per-mesh subsets an instance's plating draws upload
+    /// (`entry` = its plating_entry_for). Subsets are null with record
+    /// culling off or node overrides present; else cached on the entry and
+    /// recomputed only when the list, the parts pointer or the model changed.
+    PlatingMeshRecords plating_mesh_records_for(PlatingListCacheEntry& entry,
+                                                const scenegraph::Instance& inst,
+                                                const assets::Model& model);
+    std::map<scenegraph::InstanceId, PlatingListCacheEntry, InstanceIdLess> plating_list_cache_;
+    int plating_list_builds_ = 0;
+    bool plating_record_culling_ = true;
+
+    bool plating_skip_record_free_ = true;
+    int plating_marks_last_frame_ = 0;
+    int plating_mark_mesh_draws_ = 0;
+    int plating_interior_mesh_draws_ = 0;
+    int plating_interiors_last_frame_ = 0;
+    int plating_far_draws_last_frame_ = 0;
+    InteriorPolicy interior_policy_;
+    HullInteriorPass hull_interior_;
 };
 
 /// Render depth-only for every visible `rim_eligible` caster in `Pass::Space`
 /// into the currently-bound depth framebuffer, using the pipeline's
-/// `shadow_depth` program and `light.view_proj` as `u_light_view_proj`. The
+/// `shadow_depth` program and `light.view_proj` as `u_light_view_proj`. An
+/// instance with severed parts or a chunk (Instance::severed_parts /
+/// shown_parts non-zero) draws with `shadow_parts` instead, which discards
+/// the parts the colour draw hides. The
 /// caller must bind the shadow FBO and clear depth first, and restore the
 /// previous framebuffer afterward. GL state changed here (cull face, polygon
 /// offset, color mask) is restored to the opaque-pass defaults on exit.

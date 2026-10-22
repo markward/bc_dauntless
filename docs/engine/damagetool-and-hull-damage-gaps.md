@@ -1,5 +1,19 @@
 # DamageTool & Hull-Damage Gaps
 
+> **Superseded (2026-10-22).** The voxel carve this document's gaps are measured
+> against is **deleted** (layered hull damage, phase 4): `hull_carve.py`,
+> `HullCarveField`, the breach pass and `Damage1-4.tga` are gone, so every
+> "our carve" claim and code reference below describes code that no longer
+> exists. Visible hull damage is now the layered system — see
+> [`2026-10-21-layered-hull-damage-production-design.md`](../superpowers/specs/2026-10-21-layered-hull-damage-production-design.md)
+> (§10, as built) and
+> [`2026-10-22-layered-damage-p4-finish-design.md`](../superpowers/specs/2026-10-22-layered-damage-p4-finish-design.md),
+> and the "Layered hull damage" row in `CLAUDE.md`. Authored DamageTool volumes
+> (`AddObjectDamageVolume`) and `AddDamage` each become one Internal record in
+> the layered store (`engine/appc/visible_damage.py`). The analysis of BC's own
+> `DamageTool.exe` (its metaball field and `BinaryVoxel` mask) is still
+> accurate as a description of BC; keep it for that.
+
 > **Gap claims re-verified against code 2026-08-09** — all accurate, no corrections
 > needed. Checked: Gap 1 (`engine/appc/visible_damage.py` exists),
 > Gap 2 (`engine/appc/hull_carve.py` carries `strength` / `influ_radius` /

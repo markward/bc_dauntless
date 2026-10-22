@@ -81,7 +81,6 @@ protected:
 
     void TearDown() override {
         if (!w) return;
-        renderer::reset_damage_decal_texture();
         renderer::reset_scuff_normal_texture();
         renderer::reset_decal_mask_sampler();
         renderer::reset_model_radius_cache();
@@ -129,8 +128,8 @@ protected:
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         renderer::FrameSubmitter submitter;
         submitter.submit_opaque_in_pass(world, cam, *p, handle_lookup(), lighting,
-                                        scenegraph::Pass::Space, 0.0f, nullptr, 1.0f,
-                                        nullptr, nullptr, suns);
+                                        scenegraph::Pass::Space, 0.0f, 1.0f,
+                                        nullptr, suns);
     }
 
     static std::vector<float> read_rgba(const renderer::HdrTarget& hdr) {

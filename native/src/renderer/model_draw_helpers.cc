@@ -8,30 +8,48 @@
 
 #include <glad/glad.h>
 
+#include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace renderer {
 
-void draw_model_positions_only(const assets::Model& model,
-                               const glm::mat4& world,
-                               Shader& prog,
-                               const std::unordered_map<int, glm::mat4>*
-                                   node_overrides) {
+int draw_model_positions_only(const assets::Model& model,
+                              const glm::mat4& world,
+                              Shader& prog,
+                              const std::unordered_map<int, glm::mat4>*
+                                  node_overrides,
+                              const std::vector<std::uint8_t>* mesh_mask,
+                              bool rest_fix) {
     static const std::unordered_map<int, glm::mat4> kEmpty;
-    const std::vector<glm::mat4> world_per_node = renderer::compose_node_worlds(
-        model, world, node_overrides ? *node_overrides : kEmpty);
+    // One string for every mesh: a literal would build a std::string per call.
+    static const std::string kModel = "u_model", kRestFix = "u_node_rest_fix";
+    const auto& overrides = node_overrides ? *node_overrides : kEmpty;
+    const std::vector<glm::mat4> world_per_node =
+        renderer::compose_node_worlds(model, world, overrides);
+    // Identity for every node when there are no overrides (no allocation of
+    // anything but the identity vector).
+    const std::vector<glm::mat4> fix =
+        rest_fix ? renderer::rest_corrections(model, overrides) : std::vector<glm::mat4>{};
+    int drawn = 0;
     for (std::size_t i = 0; i < model.nodes.size(); ++i) {
         const auto& node = model.nodes[i];
         for (int mesh_idx : node.meshes) {
+            if (mesh_mask != nullptr && mesh_idx >= 0 &&
+                mesh_idx < static_cast<int>(mesh_mask->size()) &&
+                (*mesh_mask)[static_cast<std::size_t>(mesh_idx)] == 0)
+                continue;
             const auto& mesh = model.meshes[static_cast<std::size_t>(mesh_idx)];
-            prog.set_mat4("u_model", world_per_node[i]);
+            prog.set_mat4(kModel, world_per_node[i]);
+            if (rest_fix) prog.set_mat4(kRestFix, fix[i]);
             glBindVertexArray(mesh.vao());
             glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(mesh.index_count()),
                            GL_UNSIGNED_INT, nullptr);
+            ++drawn;
         }
     }
     glBindVertexArray(0);
+    return drawn;
 }
 
 }  // namespace renderer

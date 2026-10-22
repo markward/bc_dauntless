@@ -148,6 +148,10 @@ void CloakRefractionPass::render(const std::vector<CloakShipDescriptor>& ships,
         if (s.frac <= 0.0f) continue;
         const scenegraph::Instance* inst = world.get(s.instance);
         if (!inst) continue;
+        // A severed chunk (shown_parts) never cloaks: this shell draws the
+        // whole model, which would show every part the chunk does not have.
+        // (A cloaking parent still shows its lost part here -- rare, accepted.)
+        if (inst->shown_parts != 0) continue;
         const assets::Model* model = lookup(inst->model_handle);
         if (!model) continue;
 

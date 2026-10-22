@@ -131,6 +131,34 @@ uniform float u_atmo_limb;
 uniform vec3  u_atmo_sun_dir_ws;  // unit, toward the sun
 uniform float u_decal_time;                  // game-time seconds (ember clock)
 uniform vec4  u_decal_d[MAX_DECALS];         // tangent_body.xyz (unit, ⟂ normal; Scuff), _
+#ifdef PLATING
+// SPIKE (damage redesign): hull-plating layer -- the PLATING program variant
+// only (Pipeline::plating_shader); the stock program never sees any of it.
+// Slot meanings: apply_plating below / engine/appc/plating_dials.py.
+uniform float u_plating[32];
+// SPIKE (damage redesign): the compact damage list (renderer/plating_damage.h,
+// renderer::plating::DamageList): only the records that carry plating wear.
+//   a = centre_body.xyz, reach (model units; Scorch reach multiplier applied)
+//   b = normal_body.xyz (zero for Internal), wear
+//   c = kind (1 Scorch, 3 Internal), 0, 0, 0
+const int MAX_DMG = 64;
+uniform int  u_dmg_count;
+uniform vec4 u_dmg_a[MAX_DMG];
+uniform vec4 u_dmg_b[MAX_DMG];
+uniform vec4 u_dmg_c[MAX_DMG];
+// Set by apply_plating where a panel is stripped (0..1); read by the scorch
+// deposit (soot must not bury the ribs) and the glow kill (windows die).
+float g_plating_exposed = 0.0;
+vec3  g_plating_emissive = vec3(0.0);   // inner-hull heat / breach rim (SPIKE)
+// Molten rims on fresh tears (layered damage phase 4 §2.3;
+// renderer::plating::RimList): the freshest breach events still hot, in this
+// mesh's REST frame (the frame p_pl is in), model units.
+//   a = centre.xyz, radius      b = age (s), life (kRimLife), 0, 0
+const int MAX_RIMS = 4;
+uniform int  u_rim_count;
+uniform vec4 u_rim_a[MAX_RIMS];
+uniform vec4 u_rim_b[MAX_RIMS];
+#endif
 uniform sampler2D u_scuff_map;               // unit 7: tiling crumpled-metal tangent-space
                                              // normal map (renderer/scuff_texture.h)
 uniform int   u_scuff_map_ok;                // 0 = not loaded: scuffs draw albedo only
@@ -226,166 +254,6 @@ const float kScuffEdgeNoise   = 0.6;                  // fraction the edge is pu
                                                        // shrinks, so the r >= 1 cull stays exact.
 const float kScuffEdgeFreq    = 1.0 / 6.0;            // edge-noise cycles per model unit
 
-// Stencil-marking pass. The breach scoop must draw only where hull was CUT
-// AWAY, never in open space — `discard` writes no depth, so from the scoop's
-// side a hole in the hull and empty space are indistinguishable, and BC's fill
-// mask balloons up to ~3 cells past the hull (measured: 39-55% of mask volume
-// lies outside the hull mesh), which is where the scoop was left floating.
-//
-// Stencil cannot be written by the discarding draw itself — a discarded
-// fragment performs no stencil op. So the region is marked by a second draw of
-// the same hull through THIS shader with u_carve_invert = 1, which flips the
-// test: keep exactly the fragments the normal pass discards, discard the rest.
-// Colour and depth writes are masked off by the caller, so only stencil lands.
-//
-// Reusing this shader rather than writing a marking shader is deliberate: the
-// oblate + noise + strut maths stays in ONE place, so the cut region and the
-// marked region cannot drift apart. That drift is what caused the original
-// see-through bug.
-uniform int u_carve_invert;   // 0 = normal hull draw; 1 = stencil-marking draw
-
-// ── Per-instance hull distance field (hull-volume-field-transport, Task 5) ──
-// Replaces the 24-sphere ceiling for the hull-clip DISCARD decision: the
-// field carries the UNION of every carve ever made (voxel::field_carve_oblate
-// is monotonic -- see field_brush.h), not just the 24 most recently active
-// spheres above. u_hull_field_enabled == 0 is the stock path -- zero
-// per-fragment cost, byte-identical to today. Everything ELSE (the breach
-// scoop, the framework lattice below, the decal ring) still derives from the
-// sphere list untouched; this block only ever ADDS a discard, it never keeps
-// a fragment the sphere block would otherwise cut.
-//
-// u_hull_field is a 2D R8 slice atlas, NOT a sampler3D: measured on this
-// machine, a sampler3D in this shader corrupts shading across four unrelated
-// test suites even on a branch that never executes (renderer/field_atlas.h).
-// Every Z-slice of the instance's DistanceField is tiled into one 2D texture
-// with a replicated 1-texel border per tile, so hardware bilinear filtering
-// INSIDE a slice cannot bleed into a neighbouring tile's data.
-// === HULL_FIELD_SAMPLING BEGIN === KEEP IN SYNC with breach.frag's copy between its own matching markers -- enforced by native/tests/renderer/breach_field_sampling_test.cc
-uniform sampler2D u_hull_field;      // R8 slice atlas; DAMAGE field (not hull
-                                      // shape -- renderer/instance_field_cache.h);
-                                      // 128 = a carve's zero crossing, 1 = the
-                                      // most-negative byte ("no damage")
-uniform int   u_hull_field_enabled;  // 0 = stock path, zero per-fragment cost
-uniform vec3  u_hull_field_origin;   // body frame, model units
-uniform vec3  u_hull_field_cell;     // model units per cell
-uniform vec3  u_hull_field_dims;     // float (dims.x, dims.y, dims.z) -- avoids int division below
-uniform vec2  u_hull_field_tiles;    // tiles_x, tiles_y (voxel::AtlasLayout)
-uniform vec2  u_hull_field_texel;    // 1 / atlas size, i.e. (1/width, 1/height)
-
-// Fetch one Z-slice's raw (normalised [0,1]) texel at continuous in-slice
-// coordinate `sxy` (sample-space: an integer component lands exactly on that
-// index's stored sample; -1 and dims are the replicated border). `slice` is
-// a float holding an already-clamped integer index into [0, dims.z - 1].
-float hull_field_slice(float slice, vec2 sxy, float tile_w, float tile_h) {
-    float tile_ox = mod(slice, u_hull_field_tiles.x) * tile_w;
-    float tile_oy = floor(slice / u_hull_field_tiles.x) * tile_h;
-    // +1 skips the tile's own border column/row; +0.5 lands on the texel
-    // CENTRE so texture() samples exactly the stored value at sxy == integer,
-    // matching voxel::pack_field_to_atlas's interior-texel placement.
-    vec2 atlas_texel = vec2(tile_ox, tile_oy) + 1.0 + sxy + 0.5;
-    return texture(u_hull_field, atlas_texel * u_hull_field_texel).r;
-}
-
-// Sample the per-instance DAMAGE field at a body-frame point, returning a
-// value whose SIGN matches voxel::DistanceField's convention rescaled from
-// the packed encoding: negative = no damage at this point (the untouched
-// default, -127, everywhere field_carve_oblate's brushes have never reached
-// -- this is NOT "inside solid hull" in the hull-SDF sense; it is simply
-// "not carved"), positive = carved (a discard). ONE function -- every
-// consumer of the field (today's clip, anything added later) must sample
-// through here so they cannot drift apart.
-//
-// Encoding: pack_field_to_atlas stores byte = round(d / scale) + 128, so
-// texture() (GL_R8, normalised) returns byte / 255 = (round(d/scale) + 128)
-// / 255. Subtracting 128/255 EXACTLY (not 0.5 -- 128/255 = 0.50196..., a
-// half-quantisation-step bias toward "outside" at exactly the boundary
-// Critical 1's kHullFieldIsoMargin exists to guard) leaves
-// round(d/scale) / 255 -- i.e. this function's return value is
-// d / (scale * 255), plus at most +-0.5/255 of rounding error. That last
-// fact is what makes kHullFieldIsoMargin below scale-independent: see its
-// derivation.
-//
-// Z has no atlas border (slices are whole tiles, not filtered together by
-// hardware) -- the two bracketing slices are fetched by hand and lerped,
-// which is exactly what the atlas border on X/Y exists to make safe to do
-// per-slice via hardware bilinear.
-float sample_hull_field(vec3 p_body) {
-    // DistanceField cell (x,y,z)'s stored sample sits at body-frame position
-    // origin + (idx + 0.5) * cell (voxel/field_brush.cc, distance_field.h),
-    // so subtracting 0.5 after dividing by cell converts a corner-relative
-    // coordinate into "sample space", where an exact integer lands on a
-    // stored sample and hardware bilinear does the rest between them.
-    vec3 g = (p_body - u_hull_field_origin) / u_hull_field_cell - 0.5;
-
-    // Clamp X/Y into the atlas' own padded range [-1, dims]: precisely the
-    // border pack_field_to_atlas replicated, so this can never read a
-    // neighbouring tile no matter how far outside the field's box p_body is.
-    vec2 sxy = clamp(g.xy, vec2(-1.0), u_hull_field_dims.xy);
-
-    // Z: clamp into the valid slice range FIRST (there is no border to fall
-    // back on), then bracket with the next slice up, clamped at the top edge
-    // so s1 never reaches an out-of-range (or unused/kOutside) tile.
-    float sz = clamp(g.z, 0.0, u_hull_field_dims.z - 1.0);
-    float s0 = floor(sz);
-    float s1 = min(s0 + 1.0, u_hull_field_dims.z - 1.0);
-    float wz = sz - s0;
-
-    float tile_w = u_hull_field_dims.x + 2.0;   // voxel::AtlasLayout::tile_w
-    float tile_h = u_hull_field_dims.y + 2.0;   // voxel::AtlasLayout::tile_h
-
-    float v0 = hull_field_slice(s0, sxy, tile_w, tile_h);
-    float v1 = hull_field_slice(s1, sxy, tile_w, tile_h);
-    return mix(v0, v1, wz) - (128.0 / 255.0);   // > 0 carved (discard), < 0 no damage
-}
-// === HULL_FIELD_SAMPLING END ===
-
-// Discard margin, in sample_hull_field's own return units. MUST be > 0, not
-// 0.
-//
-// NOTE on what this guards, post hull-volume-field-transport's damage-field
-// fix: the per-instance field carries DAMAGE, not hull geometry
-// (renderer/instance_field_cache.h) -- every untouched cell is -127 ("no
-// damage"), nowhere near the zero crossing, so an UNDAMAGED fragment's
-// sampled value is never close enough to 0 for quantisation rounding to flip
-// its sign. This margin is therefore no longer guarding "every fragment on
-// the hull sits at d~0" (that framing described the OLD design, where this
-// field was a copy of the hull's own SDF, and rounding noise at that
-// everywhere-zero crossing produced hard-edged holes across the whole hull
-// the instant a ship took any damage at all -- see the fix's report). What
-// remains is the CARVE BOUNDARY: field_carve_oblate writes a real, brush-
-// shaped zero crossing at the rim of every cavity it cuts, and a fragment
-// right at that rim is exactly as exposed to quantisation rounding as any
-// fragment was under the old design -- just now confined to carved regions
-// instead of the whole hull. Comparing against a bare 0.0 there would
-// speckle that rim in a dithered pattern rather than cutting a clean edge.
-//
-// Derivation: sample_hull_field's return value is d / (scale * 255) plus at
-// most +-0.5/255 of rounding error (see its own derivation above) -- i.e.
-// exactly HALF A QUANTISATION STEP of margin, expressed in encoded byte
-// units, cancels the per-instance `scale` entirely: half a step in model
-// units is 0.5 * scale, and (0.5 * scale) / (scale * 255) == 0.5 / 255
-// regardless of what `scale` (cell size, hull, quality) actually is. This
-// is therefore the SMALLEST margin that fully absorbs quantisation
-// rounding, for any instance -- not an arbitrary safety pad.
-//
-// SCOPE, and what this constant does NOT cover: the derivation above bounds
-// QUANTISATION error only (~0.5*scale, ~0.24 model units at BC's authored
-// 15-unit resolution and quality 1). TRILINEAR RECONSTRUCTION error against
-// the true continuous carve boundary grows large at sub-cell-thick features
-// near a cavity's rim -- the same shape of error that, under the old
-// whole-hull-SDF design, discarded thin plating everywhere; here it is
-// confined to the immediate vicinity of an actual carve, where a wrong
-// discard reads as a slightly wrong hole edge rather than a vanished panel.
-// Enlarging kHullFieldIsoMargin to cover that residual is NOT the fix (a
-// cell-scaled margin would be ~32x larger here and would start eating small
-// carves). That residual is not observable headlessly (every test in
-// hull_field_clip_test.cc probes flat, locally-planar synthetic fields) and
-// needs the live check: if speckle shows up localised to a carve's own rim
-// on a thin-plated ship, that is this residual, not a driver bug or a
-// regression of the damage-field fix.
-const float kHullFieldIsoMargin = 0.5 / 255.0;
-
-
 // ── Warp-nacelle glow dimming ───────────────────────────────────────────
 const int MAX_GLOW_REGIONS = 12;
 uniform int  u_glow_region_count;            // 0 disables the loop entirely
@@ -399,7 +267,9 @@ uniform vec4 u_glow_region_g[MAX_GLOW_REGIONS];  // box up.xyz (body space); .w 
 // Maps this draw's POSED body-frame position back to its REST position
 // (C_i = R_i * P_i^-1, native frame.cc draw_model). Glow regions are authored
 // in the rest frame; identity for anything not articulated. Used by the glow
-// test ONLY -- decals, scuffs and the hull carve stay posed (4be56165).
+// test, the hull-name decals and (PLATING) every plating evaluation, whose
+// damage records are rest-frame too -- the damage decals and scuffs stay
+// posed (4be56165).
 uniform mat4 u_node_rest_fix;
 const float GLOW_FLICKER_SECS = 0.4;   // blow-out window when a region is destroyed
 const float DISABLED_FLOOR    = 0.0;   // flicker troughs reach dark while disabled
@@ -554,7 +424,7 @@ float scuff_bandlimit(float fw, float k) {
 // Collision scuffs — the PRE-LIGHTING half of the decal ring. Perturbs the
 // shading normal (from the splatted map) and the base albedo inside each
 // Scuff decal. Writes ONLY n_shade and base_rgb: never the shadow-bias
-// normal, the Fresnel rim, n_body, the carve loop, decal_emissive or
+// normal, the Fresnel rim, n_body, decal_emissive or
 // glow_flicker.
 void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_rgb) {
     vec3 dn_ws = vec3(0.0);
@@ -574,7 +444,7 @@ void apply_scuffs(vec3 p_body, vec3 n_body, inout vec3 n_shade, inout vec3 base_
     vec3 dpdx = dFdx(p_body);
     vec3 dpdy = dFdy(p_body);
     for (int i = 0; i < u_decal_count; ++i) {
-        if (u_decal_c[i].y < 1.5) continue;          // Scuff only (class 2)
+        if (abs(u_decal_c[i].y - 2.0) > 0.5) continue;   // Scuff only (class 2)
         vec3  point  = u_decal_a[i].xyz;
         float inten  = u_decal_a[i].w;
         vec3  dn     = u_decal_b[i].xyz;
@@ -743,6 +613,20 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
                        * pow(nval, 1.5)               // gamma: suppress thin/low-noise ejecta
                        * 1.3;                         // peak ejecta scale
         float deposit = clamp(core + ejecta, 0.0, 1.0) * intensity * wn;
+#ifdef PLATING
+        if (u_plating[0] > 0.5) {                     // SPIKE: plating layer
+            // Smooth near weight: 1 at/inside any record's reach, 0 one
+            // margin outside it, so away from damage the deposit is the
+            // stock program's (no seam at the program split, no hard ring).
+            float pm = u_plating[5] + u_plating[6] + u_plating[15] + u_plating[2];
+            float dmin = 1.0e6;
+            vec3 p_rest = (u_node_rest_fix * vec4(p_body, 1.0)).xyz;   // records: rest frame
+            for (int k = 0; k < u_dmg_count; ++k)
+                dmin = min(dmin, length(p_rest - u_dmg_a[k].xyz) - u_dmg_a[k].w);
+            float pw = 1.0 - smoothstep(0.0, 1.0, max(dmin, 0.0) / max(pm, 1.0e-4));
+            deposit *= mix(1.0, u_plating[13], pw) * (1.0 - 0.7 * g_plating_exposed);
+        }
+#endif
         base_lit = mix(base_lit, SOOT_COLOR, deposit);
 
         // Game-time blackbody ember (Scorch only; weapon_class 1 in c.y).
@@ -763,6 +647,497 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
     }
 }
 
+#ifdef PLATING
+// ── SPIKE (damage redesign): hull-plating layer ──────────────────────────
+// PLATING program variant only. Damage comes from the compact list
+// u_dmg_* (renderer/plating_damage.h): Scorch records carry a running hit
+// total ("wear"), Internal records a blast strength.
+// Wear strips plating PANELS, exposing the hull's skeleton; more wear breaks
+// it. The skeleton follows the hull's detected structure PARTS
+// (voxel::detect_structure_parts): a saucer (disc) gets spokes radiating from
+// its centre, branching outward, tied by rings; a nacelle / hull (cylinder)
+// gets hoops along its axis and stringers around it; anything else (box)
+// frames along its own long axis. Panels are cells of that skeleton,
+// subdivided. Depth is a short march along the view ray in the body frame,
+// so it follows curved parts. Nothing is cut in the mesh.
+// u_plating: 0 enabled, 1 panel size, 2 primary spacing, 3 secondary
+// spacing, 4 member width, 5 plate depth, 6 rib depth, 7 reach (x decal
+// radius), 8 strip wear, 9 rib-break wear, 10 buckle band, 11 edge noise,
+// 12 debug (1 stripped tint, 2 colour by part), 13 soot, 14 metal brightness,
+// 15 member bend, 16 breach wear, 17 inner hull brightness, 18 tear mix
+// (0 = whole panels, 1 = torn freely), 19 tear noise, 20 peel band,
+// 21 member survive (wear past breach a primary member still spans),
+// 22 toughness spread (per-panel breach wear x (1 + spread*(h-0.4))),
+// 23 breach lumps (hole-scale breach variation, wear units),
+// 24 deck break wear + 25 interior (read only by hull_interior.frag / its pass).
+const vec3 PLATE_EDGE   = vec3(0.68, 0.68, 0.69);   // cut plate thickness
+const vec3 RIB_METAL    = vec3(0.60, 0.58, 0.55);   // unpainted structure
+const vec3 INNER_HULL   = vec3(0.42, 0.41, 0.40);  // pressure hull under the ribs
+const int  MAX_PARTS    = 12;
+const float TAU         = 6.2831853;
+uniform int  u_part_count;               // 0 = parts not detected (yet)
+// Severed structure parts (Instance::severed_parts / shown_parts, uploaded by
+// upload_plating for the colour draw and the mark alike): bit i of the hidden
+// mask hides part i; a non-zero show mask (a chunk) hides every pixel whose
+// part's bit is not set. Read only when parts are loaded (u_part_count > 0):
+// with none, nothing is hidden.
+uniform int  u_part_hidden_mask;
+uniform int  u_part_show_mask;
+uniform vec4 u_part_a[MAX_PARTS];        // centre.xyz, kind (0 box, 1 disc, 2 cylinder)
+uniform vec4 u_part_b[MAX_PARTS];        // axis0.xyz, half0
+uniform vec4 u_part_c[MAX_PARTS];        // axis1.xyz, half1
+uniform vec4 u_part_d[MAX_PARTS];        // half2, _, _, _
+
+// Molten rim heat at rest-frame point p, 0..1: (1 - age / life) x
+// (1 - smoothstep(r, 3r, distance)), the hottest event's (u_rim_*). 0 with
+// no rims: the loop never runs. TWIN of hull_interior.frag's rim_heat (same
+// body): change both together.
+float plating_rim_heat(vec3 p) {
+    float h = 0.0;
+    for (int i = 0; i < u_rim_count; ++i) {
+        float r = u_rim_a[i].w;
+        float fresh = clamp(1.0 - u_rim_b[i].x / max(u_rim_b[i].y, 1e-3), 0.0, 1.0);
+        h = max(h, fresh * (1.0 - smoothstep(r, 3.0 * r, length(p - u_rim_a[i].xyz))));
+    }
+    return h;
+}
+// The molten glow a rim adds at heat h.
+vec3 plating_rim_glow(float h) {
+    return blackbody(0.55 + 0.35 * h) * h * 1.5;
+}
+
+// Internal blasts (kind 3, a destroyed subsystem): true 3D distance from
+// the blast centre, no facing -- every hull surface inside the sphere fails,
+// top and bottom alike. reach = the blast sphere; wear = strength at centre.
+float plating_internal(vec3 q) {
+    float w = 0.0;
+    for (int i = 0; i < u_dmg_count; ++i) {
+        if (u_dmg_c[i].x < 2.0) continue;                  // Internal (3) only
+        float R = u_dmg_a[i].w;
+        if (R <= 0.0) continue;
+        float r = length(q - u_dmg_a[i].xyz) / R;
+        if (r >= 1.0) continue;
+        float f = 1.0 - r * r;
+        w += u_dmg_b[i].w * f * f;
+    }
+    return w;
+}
+
+// Total wear at q: Internal blasts (no facing) plus Scorch records weighed
+// by facing. Scorch reach already carries the reach multiplier (list build).
+float plating_wear(vec3 q, vec3 nb) {
+    float w = 0.0;
+    for (int i = 0; i < u_dmg_count; ++i) {
+        float R = u_dmg_a[i].w;
+        if (R <= 0.0) continue;
+        float r = length(q - u_dmg_a[i].xyz) / R;
+        if (r >= 1.0) continue;
+        float wn = u_dmg_c[i].x < 2.0                       // Scorch (1)
+                 ? smoothstep(NORMAL_MIN, 1.0, dot(nb, u_dmg_b[i].xyz)) : 1.0;
+        float f = 1.0 - r * r;
+        w += u_dmg_b[i].w * f * f * wn;
+    }
+    return w;
+}
+
+// The part a body point belongs to: smallest normalised distance to each
+// part's fitted shape (a disc claims its slab out to 1.8x its half-thickness,
+// as the CPU detection does). -1 = no parts: body-axis fallback.
+int plating_part(vec3 p) {
+    int best = -1;
+    float bs = 1e9;
+    for (int i = 0; i < MAX_PARTS; ++i) {
+        if (i >= u_part_count) break;
+        vec3 off = p - u_part_a[i].xyz;
+        vec3 A0 = u_part_b[i].xyz, A1 = u_part_c[i].xyz, A2 = cross(A0, A1);
+        float h0 = max(u_part_b[i].w, 1e-3), h1 = max(u_part_c[i].w, 1e-3), h2 = max(u_part_d[i].x, 1e-3);
+        float k = u_part_a[i].w, sc;
+        if (k > 0.5 && k < 1.5) {
+            float h = dot(off, A0);
+            sc = max(abs(h) / (1.8 * h0), length(off - A0 * h) / max(h1, h2));
+        } else if (k > 1.5) {
+            float a = dot(off, A0);
+            sc = max(abs(a) / h0, length(off - A0 * a) / max(h1, h2));
+        } else {
+            sc = max(max(abs(dot(off, A0)) / h0, abs(dot(off, A1)) / h1), abs(dot(off, A2)) / h2);
+        }
+        if (sc < bs) { bs = sc; best = i; }
+    }
+    return best;
+}
+
+// Skeleton sample at body point p on part `part`:
+//   cell   -- panel id (whole panels go together)
+//   centre -- that panel's centre, body frame (where its wear is judged)
+//   d1, d2 -- distance to the nearest PRIMARY / SECONDARY member
+void plating_sample(int part, vec3 p, vec3 nb,
+                    out vec2 cell, out vec3 centre, out float d1, out float d2) {
+    float F = u_plating[2], S = u_plating[3], P = max(u_plating[1], 0.1);
+    float ku = max(1.0, floor(F / P + 0.5)), kv = max(1.0, floor(S / P + 0.5));
+    vec3 C = vec3(0.0), A0 = vec3(0.0, 1.0, 0.0), A1 = vec3(1.0, 0.0, 0.0);
+    float kind = 0.0, h1 = 1.0, h2 = 1.0;
+    if (part >= 0) {
+        C = u_part_a[part].xyz; kind = u_part_a[part].w;
+        A0 = u_part_b[part].xyz; A1 = u_part_c[part].xyz;
+        h1 = u_part_c[part].w; h2 = u_part_d[part].x;
+    }
+    vec3 A2 = cross(A0, A1);
+    vec3 off = p - C;
+    float pid = float(part + 1) * 4099.0;
+
+    if (kind > 0.5 && kind < 1.5) {
+        // Disc: spokes branch outward (count doubles each band) so their
+        // spacing stays between F and 2F; rings every S; band edges are heavy.
+        float h = dot(off, A0);
+        vec3  q = off - A0 * h;
+        float r = max(length(q), 1e-3);
+        float th = atan(dot(q, A2), dot(q, A1));
+        if (th < 0.0) th += TAU;
+        float r0 = 4.0 * F;
+        float band = max(0.0, floor(log2(r / r0)));
+        float N = floor(TAU * r0 / F + 0.5) * exp2(band);
+        float t = th / TAU * N;
+        float si = floor(t), fu = t - si;
+        d1 = min(fu, 1.0 - fu) * TAU * r / N;
+        float rr = r / S, ri = floor(rr), fv = rr - ri;
+        d2 = min(fv, 1.0 - fv) * S;
+        float rb = r0 * exp2(band);
+        d1 = min(d1, min(abs(r - rb), abs(r - 2.0 * rb)));   // heavy band rings
+        float su = floor(fu * ku), sv = floor(fv * kv);
+        cell = vec2(si * ku + su + band * 65536.0 + pid, ri * kv + sv);
+        float thc = (si + (su + 0.5) / ku) / N * TAU;
+        float rc  = (ri + (sv + 0.5) / kv) * S;
+        centre = C + A0 * h + (A1 * cos(thc) + A2 * sin(thc)) * rc;
+    } else if (kind > 1.5) {
+        // Cylinder: hoops every F along the axis, stringers around it.
+        float a = dot(off, A0);
+        vec3  q = off - A0 * a;
+        float rho = length(q);
+        float th = atan(dot(q, A2), dot(q, A1));
+        if (th < 0.0) th += TAU;
+        float R = max(0.8 * max(h1, h2), 1.0);
+        float N = max(6.0, floor(TAU * R / S + 0.5));
+        float aa = a / F, ai = floor(aa), fa = aa - ai;
+        d1 = min(fa, 1.0 - fa) * F;
+        float t = th / TAU * N, si = floor(t), fu = t - si;
+        d2 = min(fu, 1.0 - fu) * TAU * max(rho, 1.0) / N;
+        float su = floor(fa * ku), sv = floor(fu * kv);
+        cell = vec2(ai * ku + su + pid, si * kv + sv);
+        float ac  = (ai + (su + 0.5) / ku) * F;
+        float thc = (si + (sv + 0.5) / kv) / N * TAU;
+        centre = C + A0 * ac + (A1 * cos(thc) + A2 * sin(thc)) * rho;
+    } else {
+        // Box: frames every F along the long axis; stringers every S along
+        // whichever cross axis runs along this surface.
+        vec3 V = abs(dot(nb, A1)) < abs(dot(nb, A2)) ? A1 : A2;
+        float u = dot(off, A0), v = dot(off, V);
+        float uu = u / F, ui = floor(uu), fa = uu - ui;
+        float vv = v / S, vi = floor(vv), fb = vv - vi;
+        d1 = min(fa, 1.0 - fa) * F;
+        d2 = min(fb, 1.0 - fb) * S;
+        float su = floor(fa * ku), sv = floor(fb * kv);
+        cell = vec2(ui * ku + su + pid, vi * kv + sv);
+        float uc = (ui + (su + 0.5) / ku) * F, vc = (vi + (sv + 0.5) / kv) * S;
+        centre = p + A0 * (uc - u) + V * (vc - v);
+    }
+}
+
+// Gradient of plating_wear: points toward more damage (the hole).
+vec3 plating_wear_grad(vec3 q, vec3 nb) {
+    vec3 g = vec3(0.0);
+    for (int i = 0; i < u_dmg_count; ++i) {
+        float R = u_dmg_a[i].w;
+        if (R <= 0.0) continue;
+        vec3 d = q - u_dmg_a[i].xyz;
+        float r = length(d) / R;
+        if (r >= 1.0) continue;
+        float wn = u_dmg_c[i].x < 2.0                       // Scorch (1); Internal: 1
+                 ? smoothstep(NORMAL_MIN, 1.0, dot(nb, u_dmg_b[i].xyz)) : 1.0;
+        g += -4.0 * u_dmg_b[i].w * (1.0 - r * r) * wn * d / (R * R);
+    }
+    return g;
+}
+
+// Torn-plate field: >= 0 where the plating is gone. Mixes the panel's own
+// wear (edges follow seams) with the wear right here (edges rip across
+// panels), plus a jagged tear noise scaled to the panel size.
+// wear_here = plating_wear(q, nb), passed in when the caller already has it.
+float plating_tear_w(vec3 q, float wear_cell, float wear_here) {
+    float f = 1.0 / max(u_plating[1] * 0.35, 0.1);
+    float n = vnoise(q.xy * f + q.z * 0.71 * f) * 0.65
+            + vnoise(q.yz * f * 2.3 + q.x * f * 1.3 + 4.2) * 0.35;
+    float w = mix(wear_cell, wear_here, u_plating[18]);
+    // Noise only where there IS wear: an undamaged hull never tears or peels.
+    return w + (n - 0.5) * u_plating[19] * smoothstep(0.05, 0.3, w) - u_plating[8];
+}
+
+// Hole-scale lumps in [0,1]: the breach threshold varies over a span of
+// ~2.5 primary spacings, so a breach's outline wanders at the size of the hole.
+float plating_lumps(vec3 p) {
+    float f = 1.0 / max(2.5 * u_plating[2], 1.0);
+    return vnoise(p.xy * f + p.z * 0.61 * f + 13.7) * 0.65
+         + vnoise(p.yz * f * 1.9 + p.x * f * 0.7 + 21.1) * 0.35;
+}
+
+// Wear at which the inner hull tears here: a per-panel toughness (cell) plus
+// the lumps. Lowest value: breach * (1 - 0.4 * spread) - lumps (the
+// early-out floor, shared with plating_damage.cc torn_possible).
+float plating_breach_at(vec3 p, vec2 cell) {
+    return u_plating[16] * (1.0 + u_plating[22] * (dhash(cell * 0.029 + 31.0) - 0.4))
+         + (plating_lumps(p) - 0.5) * 2.0 * u_plating[23];
+}
+
+float plating_tear(vec3 q, float wear_cell, vec3 nb) {
+    return plating_tear_w(q, wear_cell, plating_wear(q, nb));
+}
+
+float plating_cell_wear(vec2 cell, vec3 centre, vec3 nb) {
+    float w = plating_wear(centre, nb);
+    return w + (dhash(cell * 0.013 + 17.0) - 0.5) * u_plating[11] * 0.5 * smoothstep(0.02, 0.15, w);
+}
+
+// Bend the skeleton: low-frequency displacement, mostly along the surface,
+// a little in and out. amp = model units at full strength.
+vec3 plating_warp(vec3 q, vec3 nb, float amp) {
+    if (amp <= 0.0) return q;
+    float f = 1.0 / max(u_plating[2] * 1.5, 1.0);
+    vec3 w = vec3(vnoise(q.xy * f + q.z * 0.37 * f + 3.1),
+                  vnoise(q.yz * f + q.x * 0.29 * f + 7.7),
+                  vnoise(q.zx * f + q.y * 0.23 * f + 11.3)) - 0.5;
+    float inout_ = dot(w, nb);
+    w -= nb * inout_;
+    return q + w * 2.0 * amp + nb * (inout_ * amp);
+}
+
+// w_here = plating_wear(p_body, n_body), w_int = plating_internal(p_body):
+// computed once in main and shared with plating_hole.
+void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
+                   float w_here, float w_int,
+                   inout vec3 n_shade, inout vec3 base_rgb) {
+    if (u_plating[0] < 0.5) return;
+    int part = plating_part(p_body);
+    if (u_plating[12] > 1.5) {
+        vec3 pc = vec3(dhash(vec2(float(part), 1.7)), dhash(vec2(float(part), 5.3)),
+                       dhash(vec2(float(part), 9.1)));
+        base_rgb = mix(base_rgb, 0.25 + 0.75 * pc, 0.65);
+    }
+    vec2 c0; vec3 ctr0; float d1, d2;
+    plating_sample(part, p_body, n_body, c0, ctr0, d1, d2);
+    float strip = u_plating[8];
+    float wear_c = plating_cell_wear(c0, ctr0, n_body);
+    // p_body / n_body here are REST frame (main passes p_pl / n_pl): the
+    // rest -> world map folds the node's rest fix back in. Rigid C, so its
+    // transpose is its inverse.
+    mat3 to_ws = transpose(mat3(u_node_rest_fix) * mat3(u_ship_world_inv));   // rest -> world, normals
+
+    float e0 = plating_tear_w(p_body, wear_c, w_here);
+    // Share of this spot's wear that came from INSIDE (a subsystem blast):
+    // 1 = blown out, 0 = shot in. Flips the peel and the buckle outward.
+    float io = clamp(w_int / max(w_here, 1e-3), 0.0, 1.0);
+    // Shreds: thin slivers of plate still hanging just inside the torn edge.
+    float shred_f = 1.0 / max(u_plating[1] * 0.18, 0.05);
+    float shred_n = vnoise(p_body.xy * shred_f + p_body.z * 0.53 * shred_f + 9.4);
+    bool shred = e0 >= 0.0 && e0 < 0.6 * u_plating[20] && abs(2.0 * shred_n - 1.0) < 0.12;
+    if (e0 < 0.0 || shred) {
+        // Peel: plate just short of tearing curls up toward the hole and
+        // shows scraped bare metal along its lip.
+        float band = max(u_plating[20], 1e-3);
+        float pk = shred ? 1.0 : 1.0 - clamp(-e0 / band, 0.0, 1.0);
+        if (pk > 0.0) {
+            vec3 g = plating_wear_grad(p_body, n_body);
+            g -= n_body * dot(g, n_body);
+            // Shot in: the lip curls toward the hole. Blown out: away from it,
+            // lifted off the hull.
+            vec3 gdir = dot(g, g) > 1e-10 ? normalize(g) : vec3(0.0);
+            vec3 tw = to_ws * mix(gdir, -gdir, io);
+            float curl = pk * pk * (shred ? 1.6 : 1.1);
+            if (dot(tw, tw) > 1e-8)
+                n_shade = normalize(n_shade + normalize(tw) * curl);
+            float lip = smoothstep(0.55, 1.0, pk);
+            base_rgb = mix(base_rgb, PLATE_EDGE * u_plating[14], lip * 0.7);
+            if (shred) base_rgb *= 0.8;
+        }
+    }
+    if (e0 < 0.0 || shred) {
+        // Intact panel; inside the buckle band it tilts and darkens.
+        float b = u_plating[10];
+        if (b > 0.0 && wear_c > strip - b) {
+            float k = (wear_c - (strip - b)) / b;
+            vec3 tilt = vec3(dhash(c0 * 0.017 + 3.1), dhash(c0 * 0.019 + 9.7),
+                             dhash(c0 * 0.023 + 4.4)) - 0.5;
+            tilt -= n_body * dot(tilt, n_body);
+            // Blown out: panels bulge away from the blast instead of at random.
+            vec3 gb = plating_wear_grad(p_body, n_body);
+            gb -= n_body * dot(gb, n_body);
+            if (dot(gb, gb) > 1e-10) tilt = mix(tilt, -normalize(gb) * 0.8, io);
+            vec3 tw = to_ws * tilt;
+            if (dot(tw, tw) > 1e-8)
+                n_shade = normalize(n_shade + normalize(tw) * 0.6 * k);
+            base_rgb *= 1.0 - 0.35 * k;
+            if (u_plating[12] > 0.5 && u_plating[12] < 1.5)
+                base_rgb = mix(base_rgb, vec3(1.0, 0.85, 0.0), 0.6 * k);
+        }
+        // Blast soot: scorch decals never cover an internal blast, so its
+        // ring is drawn here.
+        base_rgb *= 1.0 - 0.6 * u_plating[13] * smoothstep(0.03, strip, w_int);
+        return;
+    }
+
+    g_plating_exposed = 1.0;
+    float Dp = u_plating[5], Dr = u_plating[6];
+    vec3  Vb = normalize(mat3(u_node_rest_fix) * mat3(u_ship_world_inv) * V_ws);   // rest frame
+    float vn = max(dot(Vb, n_body), 0.25);
+    vec3  ray = -Vb / vn;                                 // per unit depth
+    vec3  tang = Vb - n_body * dot(Vb, n_body);
+    vec3  back_b = dot(tang, tang) > 1e-8 ? normalize(tang) : n_body;   // faces the viewer
+    float hw1 = 0.5 * u_plating[4], hw2 = 0.3 * u_plating[4];
+
+    // Damage of the exposed structure: 0 just stripped, 1 at rib-break wear.
+    float dmg = smoothstep(strip, max(u_plating[9], strip + 0.01), w_here);
+    // Members fail where the LOCAL wear passes rib_break (noisy edge).
+    float rib_ok = 1.0 - smoothstep(-0.3, 0.3,
+        w_here + (vnoise(ctr0.xy * 0.37 + ctr0.z * 0.21) - 0.5) * u_plating[11] - u_plating[9]);
+    // Bent, twisted members: warp where the skeleton is sampled. Even freshly
+    // stripped structure is knocked about a little; full damage, bend dial.
+    float bend = u_plating[15] * (0.3 + 0.7 * dmg);
+
+    // 1. The cut plate's own thickness: a neighbouring intact panel's wall.
+    for (int j = 0; j < 4; ++j) {
+        float t = (float(j) + 0.5) / 4.0 * Dp;
+        vec2 c; vec3 ctr; float e1, e2;
+        vec3 qw = p_body + ray * t;
+        plating_sample(part, qw, n_body, c, ctr, e1, e2);
+        float wc = (c == c0) ? wear_c : plating_cell_wear(c, ctr, n_body);
+        if (plating_tear(qw, wc, n_body) < 0.0) {
+            base_rgb = PLATE_EDGE * u_plating[14] * (1.0 - 0.3 * t / Dp);
+            n_shade = normalize(to_ws * back_b);
+            if (u_plating[12] > 0.5 && u_plating[12] < 1.5) base_rgb = vec3(0.0, 1.0, 1.0);
+            return;
+        }
+    }
+
+    // 2. Member tops: flush with the plate's underside, sagging inward with
+    //    damage; segments snap out where a noise along the member falls under
+    //    the damage.
+    float sag = dmg * 0.5 * Dr * vnoise(p_body.xy * 0.09 + p_body.z * 0.05) * (1.0 - io);
+    vec3  qt = plating_warp(p_body + ray * (Dp + sag), n_body, bend);
+    vec2 ct; vec3 ctrt; float t1, t2;
+    plating_sample(part, qt, n_body, ct, ctrt, t1, t2);
+    float snapped = step(vnoise(qt.xy * 0.45 + qt.z * 0.31 + 5.0), 0.15 + 0.55 * dmg);
+    float alive = rib_ok * (1.0 - snapped);
+    float top1 = 1.0 - smoothstep(hw1 - fw, hw1 + fw, t1);
+    float top2 = 1.0 - smoothstep(hw2 - fw, hw2 + fw, t2);
+    float top = max(top1, top2) * alive;
+    // 3. Member sides: primaries run the full rib depth, secondaries half.
+    float side = 0.0, prim = 0.0, t_side = Dp + Dr;
+    for (int j = 0; j < 4; ++j) {
+        float t = Dp + sag + (float(j) + 0.5) / 4.0 * (Dr - sag);
+        vec3 q = plating_warp(p_body + ray * t, n_body, bend);
+        vec2 c; vec3 ctr; float e1, e2;
+        plating_sample(part, q, n_body, c, ctr, e1, e2);
+        bool p1 = e1 < hw1;
+        bool p2 = e2 < hw2 && t < Dp + 0.5 * Dr;
+        float sn = step(vnoise(q.xy * 0.45 + q.z * 0.31 + 5.0), 0.15 + 0.55 * dmg);
+        if ((p1 || p2) && rib_ok * (1.0 - sn) > 0.5) {
+            side = 1.0; prim = p1 ? 1.0 : 0.0; t_side = t; break;
+        }
+    }
+
+    // 4. The inner pressure hull: dents, scorches and heats with wear, and
+    //    tears open only past breach_wear. Shaded darker beside the members.
+    float breach = plating_breach_at(p_body, c0);
+    vec3  qi = p_body + ray * (Dp + Dr);
+    vec2 ci; vec3 ctri; float i1, i2;
+    plating_sample(part, plating_warp(qi, n_body, bend), n_body, ci, ctri, i1, i2);
+    float ao = mix(0.62, 1.0, smoothstep(hw1, hw1 * 3.5, min(i1, i2 + 0.2 * hw1)));
+    float dent = smoothstep(u_plating[9] * 0.6, breach, w_here);
+    float grain = vnoise(qi.xy * 0.13 + qi.z * 0.09);
+    vec3  inner = INNER_HULL * u_plating[17] * (0.8 + 0.4 * grain) * mix(1.0, 0.6, dent) * ao;
+    vec3  dtilt = vec3(vnoise(qi.xy * 0.21 + 1.3), vnoise(qi.yz * 0.21 + 4.1),
+                       vnoise(qi.zx * 0.21 + 8.7)) - 0.5;
+    dtilt -= n_body * dot(dtilt, n_body);
+    vec3  n_inner = normalize(n_body + dtilt * 1.6 * dent);
+    float heat = smoothstep(breach - 0.8, breach, w_here) * (0.5 + 0.5 * grain);
+    bool  torn = w_here > breach + (grain - 0.5) * 0.4;
+    vec3  under_glow = vec3(0.0);
+    if (torn) {
+        inner = vec3(0.004);                               // open to the interior
+        n_inner = n_body;
+        float rim = 1.0 - smoothstep(breach, breach + 0.5, w_here);
+        under_glow = blackbody(0.55 + 0.3 * rim) * rim * 1.5;
+    } else {
+        under_glow = blackbody(0.35 + 0.35 * heat) * heat * 0.8;
+    }
+    // A fresh tear is molten around its rim (plating_rim_heat: the breach
+    // events, cooling over kRimLife).
+    under_glow += plating_rim_glow(plating_rim_heat(p_body));
+
+    float depth01 = (t_side - Dp) / max(Dr, 1e-4);
+    vec3 metal = RIB_METAL * u_plating[14] * mix(1.0, 0.7, dmg);       // scorched with damage
+    vec3 rib_side = metal * mix(0.85, 1.0, prim) * mix(0.85, 0.5, depth01);
+    vec3 below = mix(inner, rib_side, side);
+    vec3 nb_below = side > 0.5 ? back_b : n_inner;
+    vec3 rtilt = vec3(vnoise(qt.xy * 0.3 + 2.2), vnoise(qt.yz * 0.3 + 6.6),
+                      vnoise(qt.zx * 0.3 + 9.9)) - 0.5;
+    rtilt -= n_body * dot(rtilt, n_body);
+    vec3 n_top = normalize(n_body + rtilt * 1.4 * (0.3 + dmg));       // twisted tops
+    vec3 rib_top = metal * mix(0.85, 1.0, top1);
+    base_rgb = mix(below, rib_top, top);
+    n_shade = normalize(to_ws * normalize(mix(nb_below, n_top, top)));
+    g_plating_emissive += under_glow * (1.0 - top) * (1.0 - side);
+    if (u_plating[12] > 0.5 && u_plating[12] < 1.5) base_rgb = mix(base_rgb, vec3(1.0, 0.0, 1.0), 0.5);
+}
+// Torn through: the inner pressure hull has failed here, so the hull is CUT
+// (the fragment is discarded) instead of painted. Only front faces draw (back
+// faces are culled), so a cut shows whatever lies behind the hull; the
+// marking draw (u_plating_mark) stamps the stencil exactly at these pixels.
+uniform int u_plating_mark;        // 1 = marking draw: stencil only where the hull is cut through
+// 1 = far hull (renderer/hull_interior_policy.h): no rooms are drawn behind
+// its holes, so a hole is painted as wreckage instead of cut, unless it is
+// blown clear through (wear past deck break, u_plating[24]).
+uniform int u_plating_far;
+// 1 = a rock (Instance::surface_is_rock): no panels, ribs or members. Its
+// hole is plating_rock_hole; a far rock's crater is painted as darkened rock.
+uniform int u_plating_rock;
+// The wear lift that makes a torn edge jagged at panel scale.
+float plating_tear_lift(vec3 p) {
+    float f = 1.0 / max(u_plating[1] * 0.6, 0.1);
+    float n = vnoise(p.xy * f + p.z * 0.6 * f + 2.7) * 0.7
+            + vnoise(p.yz * f * 2.1 + p.x * f * 0.8 + 5.3) * 0.3;
+    return (n - 0.5) * u_plating[19] * 1.5;
+}
+// 0 = hull here; 1 = torn through (cut); 2 = torn, but a structural member
+// still spans the hole here (drawn as bare, charred metal). The torn edge is
+// jagged at panel scale; members snap off at random lengths, fewer the
+// deeper the wear runs past breach, secondaries first.
+// w = plating_wear(p, nb), computed once in main.
+int plating_hole(vec3 p, vec3 nb, float w) {
+    float tear_lift = plating_tear_lift(p);
+    float floor_b = u_plating[16] * (1.0 - 0.4 * u_plating[22]) - u_plating[23];
+    if (w + tear_lift - floor_b <= 0.0) return 0;
+    int part = plating_part(p);
+    vec2 c0; vec3 ctr0; float e1, e2;
+    plating_sample(part, p, nb, c0, ctr0, e1, e2);
+    float over = w + tear_lift - plating_breach_at(p, c0);
+    if (over <= 0.0) return 0;
+    vec3 q = plating_warp(p, nb, u_plating[15]);
+    vec2 c; vec3 ctr; float d1, d2;
+    plating_sample(part, q, nb, c, ctr, d1, d2);
+    float reach1 = max(u_plating[21], 1e-3), reach2 = 0.5 * reach1;
+    float seg = vnoise(q.xy * 0.45 + q.z * 0.31 + 5.0);
+    if (d1 < 0.5 * u_plating[4] && seg > over / reach1) return 2;
+    if (d2 < 0.3 * u_plating[4] && seg > over / reach2) return 2;
+    return 1;
+}
+// A rock's hole: 0 or 1, never 2 (no members survive). Torn where the wear
+// plus the tear lift passes plating_breach_at with the rock-wide cell
+// vec2(0) (no panels: one toughness), the rule hull_interior.frag's crater
+// march copies.
+int plating_rock_hole(vec3 p, float w) {
+    return w + plating_tear_lift(p) > plating_breach_at(p, vec2(0.0)) ? 1 : 0;
+}
+
+#endif  // PLATING
 // ── Non-finite cause probe (developer diagnostic) ──────────────────────────
 // When u_nan_debug is on, a fragment whose shading went NaN/Inf reports WHICH
 // intermediate term did it, as an integer code in the ALPHA channel.
@@ -839,361 +1214,6 @@ vec3 perturb_normal(vec3 N, vec3 p, vec2 uv, out float sigma) {
     if (!(len2 > 1e-20)) return N;   // sample/strength collapsed the vector (also catches NaN)
     return n * inversesqrt(len2);
 }
-
-// === HULL_CUT_DECISION BEGIN === KEEP IN SYNC with breach.frag's copy between its own matching markers -- enforced by native/tests/renderer/hull_cut_decision_sync_test.cc
-// ── Hull-breach hole: pure damage-sphere clip ─────────────────────────────
-// Discard hull fragments inside any active carve sphere. The breach pass
-// renders the exposed interior (scoop) within the same spheres, so hole and
-// interior align by construction. u_carve_count == 0 (or disabled) = stock path.
-//
-// u_carve_enabled == 0 is the stock path (zero per-fragment cost).
-uniform int  u_carve_enabled;
-
-const int MAX_CARVES = 24;
-uniform int  u_carve_count;                    // 0 = no clip
-uniform vec4 u_carve_spheres[MAX_CARVES];      // xyz=center_body, w=radius
-uniform vec3 u_carve_normals[MAX_CARVES];      // body-frame outward hit normal
-
-// ── Skeletal framework lattice (Damage.tga alpha stencil) ────────────────────
-// Projects Damage.tga's alpha channel onto the hull in an annular band around
-// each breach. High alpha = structural strut (kept); low alpha = gap (discarded).
-// u_frame_enabled == 0 (no GL context / no texture / no carves) = stock path.
-uniform sampler2D u_damage_decal;   // Damage.tga: RGB=scar colour, A=lattice stencil
-uniform int       u_frame_enabled;  // 0 = framework skipped (stock path)
-
-// Framework lattice constants (eyeball-tunable). The stencil applies INSIDE the
-// breach: hull struts remain where Damage.tga's alpha is opaque, gaps reveal the
-// interior behind. The surrounding hull is never touched.
-const float kFrameUvScale = 0.6;  // breach radius → texture span (lower = bigger lattice cells)
-const float kStrutAlpha   = 0.5;  // keep a hull strut where stencil alpha exceeds this.
-                                  // A WEAK lever: Damage.tga's alpha is close to
-                                  // binary, so 42.1% of the stencil is opaque at
-                                  // 0.5 and still 38.4% at 0.9. Raising it barely
-                                  // opens the breach; kOpenCore is the real knob.
-const float kOpenCore     = 0.75; // inner fraction of the breach RADIUS always fully
-                                  // open (no struts). Area goes as the square, so
-                                  // this is 56% of the breach open by area, with the
-                                  // struts confined to a torn outer rim.
-                                  //
-                                  // Was 0.35 -- only 12% of the area, leaving ~37% of
-                                  // every breach bridged by a lattice spread across
-                                  // the whole opening. That reads as a crust on the
-                                  // hull rather than a hole through it: you perceive
-                                  // the grille, not the gap.
-
-// breach shape — KEEP IN SYNC with breach.vert.
-// OBLATE spheroid centred on the hull surface: FULL lateral radius (original
-// hole width), compressed to kDepthFactor along the normal (shallow). Noise
-// perturbs the lateral radius by azimuth (jagged rim).
-const float kDepthFactor = 0.45;  // depth = kDepthFactor * radius (shallow)
-const float kShapeAmp    = 0.25;
-const float kShapeFreq   = 4.0;
-const float kPhase       = 0.13;
-
-// Field-brush dilation, in CELLS. GLSL const has no linkage across the
-// C++/GLSL boundary, so these are this shader's own copies of
-// voxel::kCarveDepthFloorCells and voxel::kCarveFieldOffsetCells --
-// NOT independently chosen values. HullFieldClip.GlslBrushConstantsMatchCxx
-// fails if they drift. See field_brush.h for the derivation and the measured
-// coverage they buy.
-const float kFieldDepthFloor = 1.25;
-const float kFieldSdfOffset  = 1.25;
-
-// Body-space erosion of the FIELD's hole edge, so a hole cut beyond the
-// 24-carve ring gets a broken rim instead of the brush's smooth ellipsoid.
-// Tracked carves do not use this -- they have a real per-carve azimuth and
-// their own noise (kShapeAmp above); beyond the ring there is no per-carve
-// frame to build an azimuth from, which is the whole point of being out
-// there, so the perturbation has to come from a body-space field instead.
-//
-// ONE-SIDED BY CONSTRUCTION: vnoise3 returns [0,1] and the term is ADDED to
-// the iso margin, so it can only ever RAISE the threshold and SHRINK the
-// hole. A signed version (the *2-1 remap the sphere block's own rim noise
-// uses) would grow the hole past the region field_brush.cc guarantees
-// damage in, putting un-backed hull at the rim -- the see-through defect
-// this plan removes. HullFieldClip.FieldRimNoiseOnlyShrinksTheHole guards
-// the source text; FieldRimNoiseNeverCutsBelowThePlainMargin guards the
-// behaviour. breach.frag gets this term too, and must: it runs THIS function,
-// verbatim, so that its interior shell keeps exactly what the hull did not
-// cut. It used to be deliberately excluded here, on the reasoning that a
-// LOWER threshold in breach.frag kept hole (subset of) interior -- true of the
-// scoop's raymarch ENTRY, but backwards for the shell, which DISCARDS above
-// the threshold and so threw away more hull than the hull itself cut. That
-// asymmetry was the one-way hole.
-//
-// 0.06 in sample_hull_field's return units is about half a cell: scale is
-// 4*cell/127 model units per step, so 0.5*cell is 15.875 steps = 0.0623
-// after the /255 normalisation. Because scale is proportional to cell, this
-// is the same half cell on every ship without needing a uniform.
-// Glow suppression around a breach. A breached compartment is open to space,
-// so its windows should not still be lit right up to the torn edge -- that
-// reads as a decal pasted over a working deck. Fully dark at the hole rim,
-// back to normal glow by kGlowKillReach * the carve radius. 1.5 is tight on
-// purpose: enough to clear the lit windows off the tear without darkening a
-// visible patch of surrounding hull.
-// Kill radius, as a multiple of the carve radius. The reach varies per
-// AZIMUTH between these two, so the dead zone is lobed rather than a clean
-// disc -- a perfect circle of dark windows reads as a stencil stamped on the
-// hull, the same failure the procedural scuff relief hit repeatedly. Same
-// tool the hole's own rim uses: an azimuthal vnoise3 seeded from the carve
-// centre, so it is stable across frames and cannot crawl.
-// Raised from 1.5/3.0 after a live look -- the dead zone read as too tight
-// around the tear. The 2:1 ratio between them is kept deliberately: widening
-// only the max would stretch the lobes until the edge read as blotchy rather
-// than torn.
-//
-// NOTE these are multiples of the CARVE radius, so a big breach gets a
-// proportionally big dark section. That is the intent (a heavy hit takes out
-// more of the deck), but it has only been eyeballed on small-to-mid carves --
-// if a large breach over-darkens, the fix is an absolute cap in model units,
-// not a smaller multiplier, which would under-do the common case.
-const float kGlowKillReachMin = 3.0;
-const float kGlowKillReachMax = 6.0;
-const float kGlowLobeFreq     = 2.5;   // lobes around the breach (rim uses 4.0)
-
-// Back-face cutoff for the glow suppression. Deliberately its OWN constant
-// rather than a reference to NORMAL_MIN: that one is declared above
-// apply_scuffs, which runs long before this block, so it cannot be moved in
-// here -- and the two are separate visual decisions anyway (how far a scorch
-// decal wraps a curve vs how far a dead compartment reaches around one). The
-// value matches today because the same curvature tolerance suits both.
-const float kGlowNormalMin = 0.15;
-
-const float kFieldRimNoise = 0.06;
-const float kFieldRimFreq  = 0.35;   // cycles per model unit
-
-float vh3(vec3 p){ return fract(sin(dot(p, vec3(127.1,311.7,74.7))) * 43758.5453123); }
-float vnoise3(vec3 p){
-    vec3 i = floor(p), f = fract(p);
-    vec3 u = f*f*(3.0-2.0*f);
-    float n000=vh3(i), n100=vh3(i+vec3(1,0,0)), n010=vh3(i+vec3(0,1,0)), n110=vh3(i+vec3(1,1,0));
-    float n001=vh3(i+vec3(0,0,1)), n101=vh3(i+vec3(1,0,1)), n011=vh3(i+vec3(0,1,1)), n111=vh3(i+vec3(1,1,1));
-    float nx00=mix(n000,n100,u.x), nx10=mix(n010,n110,u.x), nx01=mix(n001,n101,u.x), nx11=mix(n011,n111,u.x);
-    return mix(mix(nx00,nx10,u.y), mix(nx01,nx11,u.y), u.z);
-}
-
-// Was the hull cut away at this body-frame point?
-//
-// THE one place that answers it. It used to live inline in this file's main(),
-// which meant anything else needing the same answer had to approximate it --
-// and the breach pass's interior shell did exactly that, testing the RAW field
-// where this tests the field only outside a tracked carve's dilated region and
-// at a threshold raised by rim noise. The shell therefore threw away plating
-// the hull itself keeps, and you saw stars through a hole whose far side
-// showed intact hull: a ONE-WAY hole, live-reported on the Galaxy's forward
-// saucer. "The cut and the interior are two different shapes" is the same root
-// cause as the original see-through bug; this function exists so there is only
-// one shape.
-//
-// Returns true = cut away here. The CALLER decides what to do with that.
-// `n_body` is used ONLY by the glow term, never by the cut decision -- a
-// fragment is cut or not according to where it is, not which way it faces.
-//
-// `glow_kill` (out): 0 = glow untouched, 1 = fully suppressed. Returned from
-// HERE rather than computed in a second loop of its own, because this loop is
-// hot -- it runs for every fragment of every damaged hull, up to 24 times --
-// and the per-carve distance it needs has already been computed. Consumers
-// that do not want it pass a dummy; the compiler drops the term.
-bool hull_cut_at(vec3 p_body, vec3 n_body, out float glow_kill) {
-    glow_kill = 0.0;
-    bool field_suppressed = false;
-    // Loop-invariant: the field lattice is per-instance, not per-carve. Hoisted
-    // out of the carve loop below, where it was recomputed for every one of up
-    // to 24 active carves on every fragment.
-    float cellmin = min(u_hull_field_cell.x,
-                        min(u_hull_field_cell.y, u_hull_field_cell.z));
-    if (u_carve_enabled != 0 && u_carve_count > 0) {
-        for (int i = 0; i < u_carve_count; i++) {
-            vec3 c  = u_carve_spheres[i].xyz;
-            float r = u_carve_spheres[i].w;
-            vec3 n  = u_carve_normals[i];
-            // Oblate breach centred on the hull surface: full lateral radius,
-            // shallow along the normal.
-            vec3 v       = p_body - c;
-            float along  = dot(v, n);
-            vec3 lateral = v - along * n;
-            float ld     = length(lateral);
-
-            // Glow suppression around this breach.
-            //
-            // The normal gate is what keeps the dark patch on the struck FACE.
-            // 3D distance alone does not: it only limits the bleed to sections
-            // thinner than the kill radius, which on a saucer is most of them,
-            // and the dark spot showed through to an undamaged underside. This
-            // is the same shape of weight apply_damage_decals uses, for
-            // exactly the same reason -- see kGlowNormalMin.
-            //
-            // The cheap distance test comes FIRST and guards the vnoise3: this
-            // loop runs for every fragment of every damaged hull, up to 24
-            // times, and the noise is eight sins. Almost every fragment is far
-            // from any given carve, so the short-circuit is what keeps this
-            // affordable -- the same reasoning as the field clip's own
-            // margin-before-noise ordering below.
-            float gd = length(v);
-            if (gd < r * kGlowKillReachMax) {
-                float gwn = smoothstep(kGlowNormalMin, 1.0, dot(n_body, n));
-                if (gwn > 0.0) {
-                    vec3 gaz = ld > 1e-4 ? lateral / ld : vec3(1.0, 0.0, 0.0);
-                    float reach = mix(kGlowKillReachMin, kGlowKillReachMax,
-                                      vnoise3(gaz * kGlowLobeFreq + c * kPhase));
-                    glow_kill = max(glow_kill,
-                                    gwn * (1.0 - smoothstep(r, r * reach, gd)));
-                }
-            }
-
-            // Region the FIELD BRUSH dilated this carve to (field_brush.cc).
-            // The field is deliberately generous -- a carve is rounded up to
-            // what the lattice can hold -- so suppressing the field only
-            // inside the nominal oblate would let it cut a smooth ring
-            // around every tracked hole, erasing the noise rim and the
-            // struts. This bound is a strict superset of the `e < 1.0` hole
-            // test below (its lateral extent is r*(1+kShapeAmp) >= r_eff),
-            // which is why no union with the unperturbed test is needed.
-            // Computed OUTSIDE the guard below on purpose: the dilated
-            // region reaches past that guard's box whenever the cell is
-            // coarse relative to the carve.
-            // `cellmin` is loop-INVARIANT -- hoisted above the loop, where it
-            // is computed once per fragment instead of once per active carve.
-            //
-            // Compared SQUARED: `unit < dil` with both sides non-negative is
-            // exactly `unit^2 < dil^2`, so this drops a sqrt from every
-            // fragment-carve pair (up to 24 per fragment) with no change of
-            // result whatsoever.
-            float lat = r * (1.0 + kShapeAmp);
-            float dep = max(kDepthFactor * r, kFieldDepthFloor * cellmin);
-            float dil = 1.0 + (kFieldSdfOffset * cellmin) / min(lat, dep);
-            float unit2 = (ld * ld) / (lat * lat) + (along * along) / (dep * dep);
-            if (unit2 < dil * dil) field_suppressed = true;
-            if (ld < r * (1.0 + kShapeAmp) && abs(along) < kDepthFactor * r * (1.0 + kShapeAmp)) {
-                // Azimuthal noise on the lateral radius (jagged rim); same
-                // azimuth term the scoop uses, so the hole edge aligns.
-                vec3 az = ld > 1e-4 ? lateral / ld : vec3(1.0, 0.0, 0.0);
-                float r_eff = r * (1.0 + kShapeAmp * (vnoise3(az * kShapeFreq + c * kPhase) * 2.0 - 1.0));
-                float dz = along / (kDepthFactor * r);
-                float e  = (ld * ld) / (r_eff * r_eff) + dz * dz;   // <1 inside the oblate
-                // No suppression bookkeeping here: `field_suppressed` was set
-                // above from the dilated bound, which contains BOTH this
-                // perturbed test and the unperturbed oblate the brush carves.
-                // The band r_eff < ld < r (where the noise dips the rim
-                // inward) is inside what the field cut but outside `e < 1.0`;
-                // before the dilated bound existed that band had to be unioned
-                // in by hand, or the field cut a smooth-edged ring there with
-                // no scoop behind it (breach.vert builds the scoop from r_eff
-                // too) -- a see-through gap around roughly half of every
-                // tracked breach's rim.
-                if (e < 1.0) {
-                    // ── Skeletal framework lattice (INSIDE the breach) ──────────
-                    // Don't cut a clean hole: leave torn HULL STRUTS bridging the
-                    // breach where Damage.tga's stencil is opaque; the gaps between
-                    // struts reveal the recessed interior behind. Struts cluster
-                    // toward the rim (open core) so it still reads as a hole. The
-                    // surrounding hull (outside the oblate) is left untouched.
-                    bool cut = true;
-                    if (u_frame_enabled != 0) {
-                        // tangent-plane UV around the breach axis (basis from n)
-                        vec3 up = abs(n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
-                        vec3 t  = normalize(cross(up, n));
-                        vec3 b  = cross(n, t);
-                        // Per-carve stencil ORIENTATION. Without this, `t`/`b`
-                        // depend only on the breach normal, so every breach on
-                        // a similarly-facing surface -- the whole top of a
-                        // saucer -- gets Damage.tga stamped with the same basis
-                        // AND the same centred crop. Adjacent hits then read as
-                        // one stamp repeated rather than as separate damage.
-                        //
-                        // Seeded from the carve centre: stable across frames
-                        // (so the lattice does not crawl), different per carve,
-                        // and identical in the u_carve_invert marking pass
-                        // because that derives it from the same `c`. If the two
-                        // ever disagreed the stencil would stop matching the
-                        // hole it is cut from.
-                        float ang = vh3(c * 0.37) * 6.28318530718;
-                        float cs  = cos(ang), sn = sin(ang);
-                        vec2  luv = vec2(dot(lateral, t), dot(lateral, b));
-                        luv = vec2(cs * luv.x - sn * luv.y,
-                                   sn * luv.x + cs * luv.y);
-                        vec2 uv = luv / (r * kFrameUvScale) * 0.5 + 0.5;
-                        float a    = texture(u_damage_decal, uv).a;
-                        float frac = sqrt(e);                   // 0 center .. 1 rim
-                        // Keep a hull strut where the stencil is opaque (the lattice)
-                        // AND we're outside the open core; everything else is cut.
-                        if (a > kStrutAlpha && frac > kOpenCore) cut = false;
-                    }
-                    // The CALLER decides what a cut means (the opaque pass
-                    // discards, or stamps the stencil in its marking draw; the
-                    // breach pass's interior shell keeps only what was NOT
-                    // cut). This function only answers the question.
-                    if (cut) return true;
-                }
-            }
-        }
-    }
-
-    // ── Hull-field clip (hull-volume-field-transport, Task 5) ──────────────
-    // Evaluated AFTER the sphere block, and only where `!field_suppressed`:
-    // a TRACKED carve's shape, jagged noise rim, and framework-lattice strut
-    // decision above are computed from real geometry (the sphere, its
-    // normal, Damage.tga's stencil); the field has none of that -- it only
-    // knows "carved or not" at a point. If the field discarded unconditionally
-    // it would OVERRIDE the sphere block's own decision inside every tracked
-    // oblate: every strut the lattice just decided to keep would still be cut
-    // (field_carve_oblate carved that exact region unconditionally), and the
-    // jagged noise rim would be replaced by the field's smooth, un-perturbed
-    // edge.
-    //
-    // The gate is the region the brush DILATED a tracked carve to, not the
-    // nominal oblate: field_brush.cc rounds every carve up to the smallest
-    // shape the lattice can hold (kCarveDepthFloorCells,
-    // kCarveFieldOffsetCells), so a ring outside the nominal oblate is still
-    // damaged in the field. Suppressing only inside the nominal oblate would
-    // let the field cut that ring with a smooth edge, visibly enlarging every
-    // tracked hole and erasing the rim.
-    //
-    // Gating on `!field_suppressed` means the field can only ever ADD a
-    // discard where the sphere block does not already govern -- i.e. damage
-    // beyond the 24-sphere ceiling, which is the plan's actual win. Inside a
-    // tracked carve's dilated region, the sphere block's decision (struts,
-    // noise rim, hole shape) is authoritative and untouched.
-    if (u_hull_field_enabled != 0 && !field_suppressed) {
-        // kHullFieldIsoMargin, not 0.0: see its derivation above this
-        // function. An UNDAMAGED fragment here reads -127 ("no damage"),
-        // nowhere near zero, so the margin is not guarding it -- it guards
-        // fragments right at a carve's own rim, where field_carve_oblate's
-        // brush actually crosses zero and quantisation rounding could
-        // otherwise decide the sign in a dithered speckle pattern instead
-        // of real geometry.
-        //
-        // The threshold is raised (never lowered) by body-space noise, so
-        // the field's own hole edge breaks up instead of reading as the
-        // brush's smooth ellipsoid. See kFieldRimNoise for why the term is
-        // strictly one-sided.
-        // SHORT-CIRCUIT, and it is load-bearing for frame rate, not tidiness.
-        // vnoise3 is EIGHT sin-based hashes, and this block runs on every
-        // fragment of every damaged hull that no tracked carve suppresses --
-        // i.e. essentially the whole visible surface of every ship that has
-        // ever been hit. Evaluating the noise there unconditionally cost
-        // eight transcendentals per fragment across the entire fleet.
-        //
-        // kFieldRimNoise * vnoise3(...) is >= 0 by construction (vnoise3
-        // returns [0,1] and the term is added, never subtracted -- see the
-        // constant's comment and FieldRimNoiseNeverCutsBelowThePlainMargin).
-        // So `fv > kHullFieldIsoMargin` is a NECESSARY condition for a cut,
-        // and testing it first is EXACTLY equivalent, not an approximation:
-        // any fragment it rejects would have been rejected by the full test
-        // too, whatever the noise happened to be. Undamaged fragments -- the
-        // overwhelming majority -- now pay two texture fetches instead of
-        // two fetches plus eight sins.
-        float fv = sample_hull_field(p_body);
-        bool field_cut = false;
-        if (fv > kHullFieldIsoMargin) {
-            field_cut = fv
-                      > kHullFieldIsoMargin + kFieldRimNoise * vnoise3(p_body * kFieldRimFreq);
-        }
-        if (field_cut) return true;
-    }
-    return false;
-}
-// === HULL_CUT_DECISION END ===
 
 // Far tier (far-tier spec §1, §3): screen-door crossfade between a rock's mesh
 // and its impostor. v_dither > 0 keeps the UPPER (1 - d) of the Bayer range
@@ -1459,8 +1479,9 @@ void main() {
     // Far tier: impostor coverage (outside the silhouette: see u_coverage_cutout).
     // Tested HERE, beside the dither, not after the main base sample: a discard
     // placed after the dFdx/dFdy block MEASURED to break the amb_d NaN guard on
-    // this driver even with the cutout off (HullClipTest /
-    // HullFieldClipTest.DegenerateNormalWithGradientOnStaysFinite).
+    // this driver even with the cutout off (measured under HullClipTest,
+    // deleted with the carve; now
+    // OpaqueDegenerateNormalTest.DegenerateNormalWithGradientOnStaysFinite).
 
     // Planet geosphere: normal + UV from the sphere direction. Derivatives
     // are taken here, unconditionally and never inside a branch: after the
@@ -1575,7 +1596,7 @@ void main() {
         ? perturb_normal(n, v_position_ws, g_uv, n_sigma)
         : n;
 
-    // Body-frame fragment position (object-space carve + decals).
+    // Body-frame fragment position (object-space decals).
     vec3 p_body = (u_ship_world_inv * vec4(v_position_ws, 1.0)).xyz;
     // Body-frame normal for object-space decals.
     vec3 n_body = normalize(mat3(u_ship_world_inv) * v_normal_ws);
@@ -1583,6 +1604,18 @@ void main() {
     // undefined in non-uniform control flow), used by textureGrad below.
     vec3 dpdx_d = dFdx(p_body);
     vec3 dpdy_d = dFdy(p_body);
+#ifdef PLATING
+    // SPIKE plating layer: rib AA footprint, taken in uniform control flow.
+    // (A rigid rest fix keeps lengths, so the posed footprint serves.)
+    float plating_fw = length(fwidth(p_body));
+    // Every plating evaluation runs in the REST frame of this mesh's node:
+    // the damage records, structure parts and fill are rest-frame data, so a
+    // hole on an articulated part moves with it (layered damage phase 4
+    // §2.1). Same rigid correction as the hull-name decals; identity for an
+    // unarticulated draw. No normalize(): C is orthonormal.
+    vec3 p_pl = (u_node_rest_fix * vec4(p_body, 1.0)).xyz;
+    vec3 n_pl = mat3(u_node_rest_fix) * n_body;
+#endif
 #ifdef IMPOSTOR_VIEWS
     n_shade = g_imp_normal_ws;
     vec4 base = g_imp_base;
@@ -1638,6 +1671,98 @@ void main() {
     // opaque so it never reads as an emissive mask.
     if (u_coverage_cutout != 0) { base.a = 1.0; }
 
+#ifdef PLATING
+    // SPIKE (damage redesign): torn-through hull is cut (front faces only;
+    // what the cut reveals is the interior pass's decks and rooms, drawn
+    // after this pass under the cut's stencil mark).
+    //
+    // Near-damage early-out: nothing in the plating layer reaches further
+    // from a record than its reach plus this margin. The margin is bounded by
+    // the distance from the pixel to its own panel centre (about one primary
+    // spacing, plus plate depth + rib depth + member bend of slack): a panel's
+    // wear is sampled at that centre, so a pixel within it of a record's reach
+    // can belong to a worn panel. The plate-edge march only runs once the
+    // pixel is already stripped, so it never decides nearness.
+    // Far from every record the hull is stock: a front face skips
+    // plating_hole and apply_plating.
+    bool plating_inside = false;
+    bool plating_near = false;
+    float plating_w_here = 0.0, plating_w_int = 0.0;
+    if (u_plating[0] > 0.5) {
+        float plating_margin = u_plating[5] + u_plating[6] + u_plating[15] + u_plating[2];
+        for (int i = 0; i < u_dmg_count; ++i) {
+            if (length(p_pl - u_dmg_a[i].xyz) < u_dmg_a[i].w + plating_margin) {
+                plating_near = true;
+                break;
+            }
+        }
+    }
+    // The marking draw (submit_plating_interior) writes only stencil, and only
+    // where the hull is cut through. This discard sits AFTER the base texture
+    // fetch and the dFdx / fwidth block on purpose: implicit-derivative
+    // texture() and dFdx need the whole 2x2 quad alive, and an early discard
+    // here breaks them for the neighbouring kept pixels (see the dFdx/discard
+    // note at the top of main).
+    if (u_plating_mark != 0 && !plating_near) discard;
+    // A severed part is gone from this hull (and a chunk is only its parts):
+    // the part's pixels are hidden, in the colour draw and the mark alike, so
+    // a hidden pixel is never stamped.
+    bool plating_hidden = false;
+    if (u_part_count > 0 && (u_part_hidden_mask != 0 || u_part_show_mask != 0)) {
+        int hp = plating_part(p_pl);
+        plating_hidden = (u_part_show_mask != 0 &&
+                          (hp < 0 || ((u_part_show_mask >> hp) & 1) == 0)) ||
+                         (hp >= 0 && hp < 32 && ((u_part_hidden_mask >> hp) & 1) != 0);
+    }
+    int hole = 0;
+    bool cut = false;
+    if (plating_near) {
+        plating_w_here = plating_wear(p_pl, n_pl);
+        plating_w_int  = plating_internal(p_pl);
+        hole = u_plating_rock != 0 ? plating_rock_hole(p_pl, plating_w_here)
+                                   : plating_hole(p_pl, n_pl, plating_w_here);
+        // A hole is cut when this hull is near (rooms are drawn behind it) or
+        // blown clear through; a far hole is painted as wreckage below.
+        cut = hole == 1 && (u_plating_far == 0 || plating_w_here > u_plating[24]);
+    }
+    // Marking draw: keep ONLY the cut-through pixels (colour is masked
+    // off, so what they shade to is never seen); every other draw
+    // discards exactly those pixels. Hidden pixels go in both. One discard,
+    // no early return: an early `return` here miscompiled the whole plating
+    // draw. Away from damage, cut is false: only a hidden pixel discards.
+    if (plating_hidden || (cut != (u_plating_mark != 0))) discard;
+    if (plating_near) {
+        if (hole == 1 && !cut) {
+            // Far wreckage: near-black char, with the odd room cell still
+            // burning or still lit, read from the room lattice the interior
+            // pass walks (6 x 8.67 x 2.67 model units). A far rock crater is
+            // the rock's own albedo, darkened and sooted: no fires, no windows.
+            plating_inside = true;
+            n_shade = n;
+            float g = vnoise(p_pl.xy * 0.7 + p_pl.z * 0.5);
+            if (u_plating_rock != 0) {
+                base.rgb *= 0.35 * (0.6 + 0.4 * g);
+            } else {
+                base.rgb = vec3(0.02) * (0.7 + 0.3 * g);
+                vec3 wreck_cell = floor(p_pl / vec3(6.0, 8.67, 2.67));
+                float wreck_h = dhash(wreck_cell.xy + wreck_cell.z * vec2(17.0, 31.0));
+                if (wreck_h < 0.03)
+                    g_plating_emissive += blackbody(0.6) * 0.8;
+                else if (wreck_h < 0.055)
+                    g_plating_emissive += vec3(0.8, 0.88, 1.0) * 0.5;
+                // A fresh tear's rim is molten (plating_rim_heat).
+                g_plating_emissive += plating_rim_glow(plating_rim_heat(p_pl));
+            }
+        }
+        if (hole == 2) {
+            // A member still spanning the hole: bare, charred metal.
+            plating_inside = true;
+            n_shade = n;
+            float g = vnoise(p_pl.xy * 0.7 + p_pl.z * 0.5);
+            base.rgb = RIB_METAL * u_plating[14] * (0.4 + 0.3 * g);
+        }
+    }
+#endif
     // Hull-name decals: replace albedo under each mask, in list order
     // (premultiplied RGB). decal_a / decal_premult_rgb are the combined
     // coverage, kept alive for the glow-map composite below (the letters must
@@ -1670,8 +1795,19 @@ void main() {
     // Must run before the Toksvig spec_ft line below and before any lighting
     // term reads n_shade, since it perturbs n_shade (and, from Task 3, base.rgb).
     if (u_decal_count > 0) {
+#ifdef PLATING
+        if (!plating_inside)                       // SPIKE: plating layer
+#endif
         apply_scuffs(p_body, n_body, n_shade, base.rgb);
     }
+#ifdef PLATING
+    // SPIKE plating layer: only near damage (plating_near above). A rock
+    // has no panels, ribs or members.
+    if (plating_near && !plating_inside && u_plating_rock == 0) {
+        apply_plating(p_pl, n_pl, V, plating_fw, plating_w_here, plating_w_int,
+                      n_shade, base.rgb);
+    }
+#endif
 
     // Toksvig specular anti-aliasing. ft folds the normal spread under this
     // pixel into a lower exponent; the (1+p')/(1+p) factor keeps the lobe's
@@ -1682,28 +1818,13 @@ void main() {
     float spec_power = u_specular_power * spec_ft;
     float spec_norm  = (1.0 + spec_power) / (1.0 + u_specular_power);
 
-    // ── Hull-breach hole: pure damage-sphere clip ──────────────────────────
-    // Discard hull fragments inside any active carve sphere. The breach pass
-    // renders the exposed interior (scoop) within the same spheres, so hole and
-    // interior align by construction. u_carve_count == 0 (or disabled) = stock path.
-    //
-    // UNCHANGED from before the hull-field clip existed, with one addition:
-    // `field_suppressed` records whether this fragment fell inside the region
-    // the FIELD BRUSH dilated any TRACKED carve to (field_brush.cc), so the
-    // field block below can defer to this block wherever it applies. See that
-    // block's comment for why.
+    // Window glow killed around damage: 0 = glow untouched, 1 = fully dark.
+    // Only the plating layer sets it.
     float glow_kill = 0.0;
-    bool marked = false;
-    if (hull_cut_at(p_body, n_body, glow_kill)) {
-        if (u_carve_invert != 0) marked = true;
-        else                     discard;
-    }
-
-    // Marking pass: anything NOT marked by EITHER mechanism (field or sphere)
-    // must not stamp the stencil. Covers the old "no carves at all" fallback
-    // too: with both blocks above skipped (disabled or empty), `marked` is
-    // still false here, so this discards exactly as it always did.
-    if (u_carve_invert != 0 && !marked) discard;
+#ifdef PLATING
+    glow_kill = max(glow_kill, g_plating_exposed);   // SPIKE: stripped panels go dark
+    if (plating_inside) glow_kill = 1.0;             // SPIKE: no window glow inside
+#endif
 
     // Shadow attenuates ONLY the sun (directional index 0). When shadows are
     // off, sun_shadow_factor() returns 1.0, so the ×sf below is the identity
@@ -1834,8 +1955,8 @@ void main() {
         // dot product already lands in [-1, 1] -- clamp() here is a
         // mathematical no-op on any legitimate input and cannot change a
         // correct result. What it buys is the degenerate case: a fully
-        // zeroed vertex normal (see the a_normal comment on this fixture's
-        // HullClipTest counterpart) makes n_shade itself NaN, and
+        // zeroed vertex normal (see the a_normal comment in
+        // OpaqueDegenerateNormalTest's fixture) makes n_shade itself NaN, and
         // clamp(NaN, -1, 1) resolves to -1 ON THIS DRIVER -- MEASURED, the
         // same IEEE-maxNum framing already used above for the spot-cone
         // clamp (clamp(NaN, 0, 1) == 0), not a GLSL language guarantee.
@@ -1843,7 +1964,8 @@ void main() {
         // this whole branch's ambient term, NaN instead; 0/0-style results
         // are undefined behaviour either way. A `v == v` self-compare and a
         // bare isnan() were both tried here first and both still left
-        // HullClipTest.DegenerateNormalWithGradientOnStaysFinite non-finite
+        // DegenerateNormalWithGradientOnStaysFinite (then HullClipTest's, now
+        // OpaqueDegenerateNormalTest's) non-finite
         // (measured, not inferred -- the probe still flagged 64 cells with
         // isnan() in place). clamp() also catches +-Inf, which isnan() does
         // not: an infinite u_ambient_dir_ws would otherwise give
@@ -1983,11 +2105,11 @@ void main() {
     // The glow-map term is already textured (glow_rgb is a texture sample), so
     // only the material term needs the base multiply. A material emissive of
     // 0.0 leaves this byte-identical to before.
-    // glow_alive: windows go dark around a breach (hull_cut_at's out param).
+    // glow_alive: windows go dark around damage (glow_kill above).
     // It multiplies the GLOW-MAP term only -- the material emissive is a
     // property of the surface, not of a lit compartment behind it.
     // Steady. A failing-power FLICKER was built here (stutter for 60 s from
-    // the carve's birth, then settle dark) and REMOVED after a live look: it
+    // the breach's birth, then settle dark) and REMOVED after a live look: it
     // read as wrong rather than as damage. Deliberately gone rather than
     // switched off, so no dead knob is left implying it is still an option --
     // git history carries it if it is ever wanted back.
@@ -2011,6 +2133,9 @@ void main() {
     float refl_mask = 1.0 - clamp(emit_lum, 0.0, 1.0);
     vec3 final_color = lit * refl_mask + self_illum + spec * refl_mask
                      + rim + decal_emissive;
+#ifdef PLATING
+    final_color += g_plating_emissive;               // SPIKE: plating layer
+#endif
 
     // Cause code for the non-finite probe (see u_nan_debug above). Off => the
     // alpha written is the literal 1.0 this shader has always written.

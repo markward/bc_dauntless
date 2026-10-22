@@ -93,7 +93,6 @@ protected:
         if (!w) return;
         glDeleteTextures(1, &white_);
         glDeleteTextures(1, &black_);
-        renderer::reset_damage_decal_texture();
         renderer::reset_scuff_normal_texture();
         renderer::reset_decal_mask_sampler();
         renderer::reset_model_radius_cache();
@@ -210,10 +209,9 @@ protected:
         if (pd_u) pd::apply(prog, *pd_u);
         scenegraph::DamageDecalRing decals;
         std::array<scenegraph::Instance::GlowRegion, scenegraph::Instance::kMaxGlowRegions> glow{};
-        scenegraph::HullCarveField carve;
         renderer::draw_model(*geo, world(), prog, p->skinned_shader(), white_, black_,
-                             0.0f, decals, glow, time, 1.0f, {}, carve, {}, 0,
-                             nullptr, false, nullptr, nullptr, nullptr,
+                             0.0f, decals, glow, time, 1.0f, {}, {}, 0,
+                             nullptr, nullptr,
                              renderer::geosphere_level_for(*geo, world(), cam));
         std::vector<float> px(static_cast<std::size_t>(kSize * kSize * 4), 0.0f);
         glBindFramebuffer(GL_READ_FRAMEBUFFER, hdr.fbo());

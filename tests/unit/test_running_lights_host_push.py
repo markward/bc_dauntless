@@ -348,6 +348,6 @@ def test_teardown_and_removal_drop_the_articulation_record():
         def destroy_instance(self, iid):
             pass
     sess = host_loop.MissionSession(mission_name="t")
-    sess.ship_running_light_specs[9] = ((), ())
+    sess.ship_running_light_specs[9] = ((), (), 0)
     sess.teardown(_R())
     assert sess.ship_running_light_specs == {}
