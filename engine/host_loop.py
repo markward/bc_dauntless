@@ -10409,7 +10409,7 @@ def run(mission_name: Optional[str] = None,
     boot_quickbattle = mission_name is None
 
     _init_w, _init_h = _initial_window_size(_os.environ)
-    r.init(_init_w, _init_h, "open_stbc")
+    r.init(_init_w, _init_h, "BC Dauntless")
     # Verify the native module exposes every binding the renderer façade calls.
     # Catches a stale/incomplete .so at boot (a recurring hazard — host_bindings
     # compiles into both this module and build/dauntless) instead of as a
