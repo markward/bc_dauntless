@@ -398,3 +398,164 @@ def test_probe_warms_each_late_model_outside_every_set(qb):
     ships = _ships(QB)
     d = _dist(ships["Galor-1"].GetWorldLocation(), ships["Keldon-2"].GetWorldLocation())
     assert d >= 5.0 + 5.0 + placement.MARGIN_GU - 1e-6
+
+
+# ── fix round 1: no failure path may leave a pre-counted ship counted ──────
+
+_ENEMY_C = ("enemy", "port", "standard", "medium", ["Ambassador"], 1)
+
+
+def test_group_setup_failure_uncounts_that_group_and_others_still_arrive(qb, monkeypatch):
+    """A group whose setup raises (here group_positions) before its per-ship
+    loop is un-counted; a later group in the same tick still arrives, and the
+    tick's callout and win check still run."""
+    hl, controller, QB = qb
+    from engine.quickbattle import late_arrivals, placement, spawn
+    plan = _plan([_ENEMY_A, _ENEMY_B, _ENEMY_C])
+    spawn.set_provider(lambda: plan)
+    _start(hl, controller)
+    t0 = _now()
+    assert QB.g_iNumEnemies == 4
+    real = placement.group_positions
+    calls = []
+
+    def first_raises(*a, **k):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("placement exploded")
+        return real(*a, **k)
+
+    monkeypatch.setattr(placement, "group_positions", first_raises)
+    callouts = []
+    monkeypatch.setattr(late_arrivals, "callout",
+                        lambda qb_, arrived, already: callouts.append(arrived))
+    _jump_to(t0 + 61.0)
+    assert sorted(_ships(QB)) == ["Ambassador-4", "Warbird-1"]
+    assert QB.g_iNumEnemies == 2
+    assert callouts == [{"enemy": 1, "other": 0}]
+    ships = _ships(QB)
+    _destroy(QB, ships["Warbird-1"])
+    assert QB.bWonOrLost == 0
+    _destroy(QB, ships["Ambassador-4"])
+    assert QB.bWonOrLost == 1
+
+
+def test_whole_tick_setup_failure_still_wins(qb, monkeypatch):
+    """Every group of the tick fails in setup and no live enemy is left: the
+    win check still runs for the tick."""
+    hl, controller, QB = qb
+    from engine.quickbattle import placement, spawn
+    plan = _plan([_ENEMY_A, _ENEMY_B])
+    spawn.set_provider(lambda: plan)
+    _start(hl, controller)
+    t0 = _now()
+    _destroy(QB, _ships(QB)["Warbird-1"])
+
+    def boom(*_a, **_k):
+        raise RuntimeError("placement exploded")
+
+    monkeypatch.setattr(placement, "group_positions", boom)
+    _jump_to(t0 + 61.0)
+    assert QB.g_iNumEnemies == 0 and QB.bWonOrLost == 1
+
+
+def test_schedule_failure_leaves_late_ships_uncounted(qb, monkeypatch):
+    hl, controller, QB = qb
+    from engine.quickbattle import late_arrivals, spawn
+    real = late_arrivals.schedule
+
+    def half_then_raise(qb_, late, radii):
+        real(qb_, late, radii)                       # timers created...
+        raise RuntimeError("schedule exploded")      # ...then it fails
+
+    monkeypatch.setattr(late_arrivals, "schedule", half_then_raise)
+    plan = _plan([_ENEMY_A, _ENEMY_B])
+    spawn.set_provider(lambda: plan)
+    _start(hl, controller)
+    t0 = _now()
+    assert QB.g_iNumEnemies == 1
+    assert _our_timers() == [] and late_arrivals.pending_enemy_count() == 0
+    _jump_to(t0 + 61.0)
+    assert sorted(_ships(QB)) == ["Warbird-1"]
+    _destroy(QB, _ships(QB)["Warbird-1"])
+    assert QB.bWonOrLost == 1
+
+
+def test_member_without_a_position_is_uncounted(qb, monkeypatch):
+    hl, controller, QB = qb
+    from engine.quickbattle import placement, spawn
+    plan = _plan([_ENEMY_A, _ENEMY_B])
+    spawn.set_provider(lambda: plan)
+    _start(hl, controller)
+    t0 = _now()
+    real = placement.group_positions
+    monkeypatch.setattr(placement, "group_positions",
+                        lambda *a, **k: real(*a, **k)[:1])
+    _jump_to(t0 + 61.0)
+    ships = _ships(QB)
+    assert sorted(ships) == ["Galor-2", "Warbird-1"]
+    assert QB.g_iNumEnemies == 2
+    _destroy(QB, ships["Warbird-1"])
+    _destroy(QB, ships["Galor-2"])
+    assert QB.bWonOrLost == 1
+
+
+def test_details_failure_still_records_the_arrived_ship(qb, monkeypatch):
+    """A ship that exists stays counted: if the AI/message lookup raises, the
+    g_kShips row still goes in (BC's fallback AI), so its death un-counts it."""
+    hl, controller, QB = qb
+    from engine.quickbattle import spawn
+    plan = _plan([("enemy", "aft", "standard", "high", ["Galor"], 1)])
+    spawn.set_provider(lambda: plan)
+    _start(hl, controller)
+    t0 = _now()
+
+    def boom(*_a, **_k):
+        raise RuntimeError("details table broken")
+
+    monkeypatch.setattr(spawn, "_details", boom)
+    _jump_to(t0 + 61.0)
+    galor = _ships(QB)["Galor-1"]
+    assert QB.g_kShips[galor.GetObjID()][0] == spawn._FALLBACK["Enemy"][0]
+    _destroy(QB, galor)
+    assert QB.bWonOrLost == 1
+
+
+def test_reset_drops_the_event_type_and_the_next_schedule_allocates_afresh(qb):
+    """App._next_event_type_id restarts at 1200 on every mission swap, so a
+    cached type could collide with an SDK one: reset() forgets it, and the
+    next battle allocates a new one (and registers it on the XO) at schedule
+    time -- and that battle's arrival still fires."""
+    hl, controller, QB = qb
+    from engine.quickbattle import late_arrivals, spawn
+    plan = _plan([_ENEMY_B])
+    spawn.set_provider(lambda: plan)
+    _start(hl, controller)
+    first = late_arrivals._ET
+    assert first is not None
+    QB.EndSimulation()
+    hl._process_object_deletions()
+    late_arrivals.reset()
+    assert late_arrivals._ET is None
+    _start(hl, controller)
+    t1 = _now()
+    assert late_arrivals._ET is not None and late_arrivals._ET != first
+    _jump_to(t1 + 61.0)
+    assert sorted(_ships(QB)) == ["Galor-1", "Keldon-2"]
+
+
+def test_mission_swap_resets_late_arrivals():
+    import engine.host_loop as hl
+    from engine.quickbattle import late_arrivals
+    late_arrivals._ET = 4321
+    late_arrivals._qb = object()
+
+    class _StubLoader:
+        def load(self, name):
+            return None
+
+    hc = hl.HostController()
+    hc.loader = _StubLoader()
+    hc.pending_swap = "SomeMission"
+    hc._drain_pending_swap()
+    assert late_arrivals._ET is None and late_arrivals._qb is None

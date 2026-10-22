@@ -282,23 +282,33 @@ def _apply_identity(ship, order, name) -> None:
 def _prepare_late(qb, late) -> None:
     """Late orders (spec §6.5/§6.6): warm each model through a probe ship
     created OUTSIDE every set, take its radius for placement, release it;
-    pre-count the ship for the win (enemy) or the friend tally; then
-    schedule the arrivals. Never raises: GenerateShips' hook would fall back
-    to BC's original and spawn a second roster."""
+    schedule the arrivals and, only once that succeeded, pre-count each ship
+    for the win (enemy) or the friend tally -- a ship counted with no timer
+    to bring it would leave a battle that cannot be won. A failed schedule
+    cancels whatever timers it had already made. Never raises: GenerateShips'
+    hook would fall back to BC's original and spawn a second roster."""
     from engine.quickbattle import late_arrivals, naming
     try:
         late_arrivals.cancel_all()
+        if not late:
+            return
         radii = {}
         for n, order in late:
             radii[order.entry_id] = _probe_radius(order, naming.object_name(order.title, n))
-            if order.allegiance == "enemy":
-                qb.g_iNumEnemies = qb.g_iNumEnemies + 1
-            elif order.allegiance == "friendly":
-                qb.g_iNumFriends = qb.g_iNumFriends + 1
-        if late:
-            late_arrivals.schedule(qb, late, radii)
+        late_arrivals.schedule(qb, late, radii)
     except Exception as e:
-        _log.error("quickbattle: late groups could not be scheduled: %s", e)
+        _log.error("quickbattle: late groups could not be scheduled; they will "
+                   "not arrive and do not count: %s", e)
+        try:
+            late_arrivals.cancel_all()
+        except Exception as e2:
+            _log.error("quickbattle: cancelling half-scheduled arrivals failed: %s", e2)
+        return
+    for _n, order in late:
+        if order.allegiance == "enemy":
+            qb.g_iNumEnemies = qb.g_iNumEnemies + 1
+        elif order.allegiance == "friendly":
+            qb.g_iNumFriends = qb.g_iNumFriends + 1
 
 
 def _probe_radius(order, name) -> float:

@@ -7674,6 +7674,10 @@ class HostController:
         shockwaves.reset()
         from engine.appc import warp_in_flash as _warp_in_flash
         _warp_in_flash.reset()
+        # Quick Battle late arrivals: pending orders and the cached event
+        # type (the event-type counter restarts at 1200 on a swap).
+        from engine.quickbattle import late_arrivals as _qb_late
+        _qb_late.reset()
         from engine.appc import particles
         particles.reset()
         damage_eligibility.reset()

@@ -25,10 +25,14 @@ _log = logging.getLogger(__name__)
 
 _HANDLER = __name__ + ".on_timer"
 
-_ET = None             # event type, allocated once per module load
+# Event type, allocated lazily at schedule time and forgotten by reset():
+# App._next_event_type_id restarts at 1200 on every mission swap
+# (host_loop.reset_sdk_globals), so a type cached across a swap could collide
+# with one the next mission's SDK scripts allocate.
+_ET = None
 _rng = random.Random()
 _qb = None             # the QuickBattle module that scheduled the pending keys
-_xo_registered = None  # the XO object our handler is registered on
+_xo_registered = None  # (XO object, event type) our handler is registered for
 _next_key = 0
 # key -> {"orders": [(n, SpawnOrder)], "timer": timer id}
 _pending: dict = {}
@@ -57,10 +61,12 @@ def pending_enemy_count() -> int:
 
 def _register_handler(xo) -> None:
     global _xo_registered
-    if xo is _xo_registered:
+    et = _event_type()
+    if _xo_registered is not None and _xo_registered[0] is xo \
+            and _xo_registered[1] == et:
         return
-    xo.AddPythonFuncHandlerForInstance(_event_type(), _HANDLER)
-    _xo_registered = xo
+    xo.AddPythonFuncHandlerForInstance(et, _HANDLER)
+    _xo_registered = (xo, et)
 
 
 def schedule(qb, late_orders, radii) -> None:
@@ -105,7 +111,7 @@ def cancel_all() -> None:
 
 def reset() -> None:
     """Mission swap / host teardown / test isolation."""
-    global _qb, _xo_registered, _rng
+    global _qb, _xo_registered, _rng, _ET
     try:
         cancel_all()
     except Exception as e:
@@ -114,6 +120,7 @@ def reset() -> None:
         _radii.clear()
     _qb = None
     _xo_registered = None
+    _ET = None
     _rng = random.Random()
 
 
@@ -167,14 +174,28 @@ def _arrive(key) -> None:
         check_win(qb)
         return
     arrived = {"enemy": 0, "other": 0}
-    for members in _by_group(orders):
-        for order, ok in _arrive_group(qb, pSet, player, members):
-            if ok:
-                arrived["enemy" if order.allegiance == "enemy" else "other"] += 1
-            else:
-                _uncount(qb, order)
-    callout(qb, arrived, enemies_before > 0)
-    check_win(qb)
+    try:
+        for members in _by_group(orders):
+            results: list = []                  # (order, spawned), member order
+            try:
+                _arrive_group(qb, pSet, player, members, results)
+            except Exception as e:
+                # Group setup (or bookkeeping) raised: every member it had not
+                # reached yet is un-counted, so the battle stays winnable.
+                _log.error("quickbattle: late group %s failed: %s",
+                           members[0][1].group_id, e)
+                results.extend((order, False) for _n, order in members[len(results):])
+            for order, ok in results:
+                if ok:
+                    arrived["enemy" if order.allegiance == "enemy" else "other"] += 1
+                else:
+                    _uncount(qb, order)
+    finally:
+        try:
+            callout(qb, arrived, enemies_before > 0)
+        except Exception as e:
+            _log.error("quickbattle: late arrival callout failed: %s", e)
+        check_win(qb)
 
 
 def _by_group(orders) -> list:
@@ -184,8 +205,9 @@ def _by_group(orders) -> list:
     return list(groups.values())
 
 
-def _arrive_group(qb, pSet, player, members) -> list:
-    """Create one group's ships on warp-in placements. [(order, spawned)]."""
+def _arrive_group(qb, pSet, player, members, out) -> None:
+    """Create one group's ships on warp-in placements, appending
+    (order, spawned) to `out` in member order as each one is decided."""
     import App
     from engine.quickbattle import placement, scenario, spawn
     ppos = spawn._vec(player.GetWorldLocation())
@@ -199,7 +221,6 @@ def _arrive_group(qb, pSet, player, members) -> list:
     for obj in pSet.GetClassObjectList(App.CT_DAMAGEABLE_OBJECT):
         if obj is not player:
             placed.append((spawn._vec(obj.GetWorldLocation()), obj.GetRadius()))
-    out = []
     for (n, order), pos, r in zip(members, positions, radii):
         ok = False
         try:
@@ -211,7 +232,10 @@ def _arrive_group(qb, pSet, player, members) -> list:
             _log.error("quickbattle: late ship %s (%s) failed: %s",
                        order.title, order.ship_file, e)
         out.append((order, ok))
-    return out
+    for _n, order in members[len(out):]:
+        _log.error("quickbattle: no arrival position for late ship %s (%s)",
+                   order.title, order.ship_file)
+        out.append((order, False))
 
 
 def _spawn_one(qb, pSet, player, ppos, cols, n, order, pos) -> bool:
@@ -234,7 +258,12 @@ def _spawn_one(qb, pSet, player, ppos, cols, n, order, pos) -> bool:
     side = spawn._SIDE.get(order.allegiance)
     ai = None
     if side is not None:
-        ai, msg = spawn._details(qb, order.class_id, side)
+        try:
+            ai, msg = spawn._details(qb, order.class_id, side)
+        except Exception as e:
+            _log.error("quickbattle: no AI details for %s, using BC's fallback: %s",
+                       name, e)
+            ai, msg = spawn._FALLBACK[side]
         qb.g_kShips[ship.GetObjID()] = (ai, msg, side, order.ai_level)
     try:
         spawn._apply_identity(ship, order, name)
