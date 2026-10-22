@@ -930,3 +930,4 @@
 
 .spv-dd .spv-ctxmenu { position: static; margin-top: 2px; }
 #spv-add .spv-modal__row { margin-top: 8px; }
+#spv-add-rl-wheel { cursor: crosshair; }

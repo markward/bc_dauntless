@@ -131,9 +131,20 @@ const IDS = ["spv-ctxmenu", "spv-ctxsub", "spv-ctx-radius", "spv-ctx-addlight",
   "spv-add-rl-onfor", "spv-add-rl-steady", "spv-add-rl-blinking"];
 const els = {};
 IDS.forEach(function (id) { els[id] = makeEl(); });
+// The modal backdrops start hidden, as their inline style does in the page.
+const BACKDROPS = ["spv-radius", "spv-confirm", "spv-light", "spv-emitter", "spv-add"];
+BACKDROPS.forEach(function (id) {
+  els[id].className = "spv-modal-backdrop"; els[id].style.display = "none";
+});
+const listeners = {};
 global.document = {
   getElementById: function (id) { return els[id] || null; },
-  addEventListener: function () {},
+  querySelectorAll: function (sel) {
+    const cls = sel.split(".").pop();
+    return Object.keys(els).map(function (k) { return els[k]; })
+      .filter(function (e) { return (e.className || "").split(" ").indexOf(cls) >= 0; });
+  },
+  addEventListener: function (type, fn) { listeners[type] = fn; },
 };
 let events = [];
 global.dauntlessEvent = function (s) { events.push(s); };
@@ -304,6 +315,64 @@ renderSPVModelParts({});
 out.noHintShown = shown("spv-toast");
 renderSPVSubsystemList(ROWS, null, null, null);
 out.noErrorRows = els["spv-syslist-body"].innerHTML;
+
+// Overlay race: with the right-click menu open, a click on "+ Add" opens
+// the modal, then bubbles to the document listener that closes the menu.
+// That must not announce overlay:0 while the modal is up.
+shipPropertyViewerRlMenu(ev(), {dataset: {name: "Keel"}});
+events = [];
+shipPropertyViewerAddOpen();
+listeners.click({target: makeEl()});
+out.raceEvents = events.slice();
+out.raceAddShown = shown("spv-add");
+out.raceMenuShown = shown("spv-ctxmenu");
+shipPropertyViewerAddCancel();
+// Control: menu open, click elsewhere with no modal up -> overlay:0.
+shipPropertyViewerRlMenu(ev(), {dataset: {name: "Keel"}});
+events = [];
+listeners.click({target: makeEl()});
+take("plainCloseEvents");
+
+// Edit keeps a colour the V=1 wheel cannot show, unless the wheel moves.
+const OLIVE = {name: "Olive", position: [4, 5, 6], color: [0.5, 0.5, 0], radius: 1.0,
+               period: 3.0, duration: 0.5};
+const CONS = {name: "constructor", position: [7, 8, 9], color: [1, 1, 1], radius: 2.5,
+              period: 3.0, duration: 0.5};
+const PROTO = {name: "__proto__", position: [1, 1, 1], color: [1, 1, 1], radius: 3.5,
+               period: 3.0, duration: 0.0};
+renderSPVSubsystemList([
+  {kind: "rl_group", name: "Running Lights", expanded: true, children: [
+    {kind: "running_light", name: "Olive", spec: OLIVE},
+    {kind: "running_light", name: "constructor", spec: CONS},
+    {kind: "running_light", name: "__proto__", spec: PROTO}]},
+  {kind: "rl_add", name: "+ Add"}], null, null, null);
+shipPropertyViewerRlMenu(ev(), {dataset: {name: "Olive"}});
+shipPropertyViewerCtxRlEdit();
+shipPropertyViewerRlStep("radius", 1);
+events = [];
+shipPropertyViewerAddSubmit();
+take("oliveUntouched");
+shipPropertyViewerRlMenu(ev(), {dataset: {name: "Olive"}});
+shipPropertyViewerCtxRlEdit();
+wheels[wheels.length - 1].onChange({hue: 0, sat: 1}, true);
+events = [];
+shipPropertyViewerAddSubmit();
+take("oliveTouched");
+
+// Names that collide with Object.prototype keys.
+shipPropertyViewerRlMenu(ev(), {dataset: {name: "constructor"}});
+shipPropertyViewerCtxRlEdit();
+out.consRadius = els["spv-add-rl-radius"].textContent;
+events = [];
+shipPropertyViewerAddSubmit();
+take("consEvents");
+shipPropertyViewerRlMenu(ev(), {dataset: {name: "__proto__"}});
+shipPropertyViewerCtxRlEdit();
+out.protoRadius = els["spv-add-rl-radius"].textContent;
+out.protoEvery = shown("spv-add-rl-every");
+events = [];
+shipPropertyViewerAddSubmit();
+take("protoEvents");
 console.log(JSON.stringify(out));
 """
 
@@ -513,3 +582,46 @@ def test_placing_hint_and_error(harness):
     assert harness["partToast"] == "Add an anchor first"   # a part toast wins
     assert harness["noHintShown"] == "none"
     assert "spv-decal-error" not in harness["noErrorRows"]
+
+
+# --- review fix round 1 ----------------------------------------------------------
+
+def test_menu_close_does_not_drop_the_add_modals_overlay(harness):
+    # Menu open -> click "+ Add": the document listener closes the menu but
+    # must not send overlay:0 while a modal backdrop is up.
+    ev = harness["raceEvents"]
+    assert ev[-1] == "ship-property-viewer/overlay:1", ev
+    assert "ship-property-viewer/overlay:0" not in ev
+    assert harness["raceAddShown"] == "flex"
+    assert harness["raceMenuShown"] == "none"
+    assert harness["plainCloseEvents"] == ["ship-property-viewer/overlay:0"]
+
+
+def test_edit_keeps_the_colour_unless_the_wheel_moves(harness):
+    arg = _prefix(harness["oliveUntouched"][0], "rl/edit")
+    assert arg["spec"]["color"] == [0.5, 0.5, 0]
+    assert arg["spec"]["radius"] == pytest.approx(1.1)
+    arg = _prefix(harness["oliveTouched"][0], "rl/edit")
+    assert arg["spec"]["color"] == [1, 0, 0]
+
+
+def test_names_colliding_with_object_keys(harness):
+    assert harness["consRadius"] == "2.50"
+    arg = _prefix(harness["consEvents"][0], "rl/edit")
+    assert arg["name"] == "constructor"
+    assert arg["spec"]["position"] == [7, 8, 9]
+    assert harness["protoRadius"] == "3.50"
+    assert harness["protoEvery"] == "none"
+    arg = _prefix(harness["protoEvents"][0], "rl/edit")
+    assert arg["name"] == "__proto__"
+    assert arg["spec"]["position"] == [1, 1, 1]
+
+
+def test_name_keyed_caches_have_no_prototype():
+    js = _read(JS_PATH)
+    assert "var spvRowRunningLight = Object.create(null);" in js
+
+
+def test_light_wheel_has_the_crosshair_cursor():
+    _, block = _css_block()
+    assert re.search(r"#spv-add-rl-wheel\s*\{\s*cursor:\s*crosshair;\s*\}", block)

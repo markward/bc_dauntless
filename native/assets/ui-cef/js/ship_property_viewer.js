@@ -405,12 +405,25 @@ document.addEventListener('click', function (e) {
         && !(subMenu && subMenu.contains(e.target))) {
         menu.style.display = 'none';
         if (subMenu) subMenu.style.display = 'none';
-        if (document.getElementById('spv-radius').style.display === 'none'
-            && document.getElementById('spv-confirm').style.display === 'none') {
+        // The click that closed the menu may itself have opened a modal (a
+        // row's "+ Add" runs before this bubbles here); that modal holds the
+        // overlay, so only announce overlay:0 when no backdrop is up.
+        if (!spvAnyModalOpen()) {
             dauntlessEvent('ship-property-viewer/overlay:0');
         }
     }
 });
+
+// True while any SPV modal backdrop is shown. Each starts with an inline
+// display:none in index.html, so style.display is a sound test.
+function spvAnyModalOpen() {
+    var list = document.querySelectorAll
+        ? document.querySelectorAll('#spv-root .spv-modal-backdrop') : [];
+    for (var i = 0; i < list.length; i++) {
+        if (list[i].style.display !== 'none') return true;
+    }
+    return false;
+}
 
 // Light node row click: select this light (or deselect if already selected).
 window.shipPropertyViewerLightRow = function (lightOf, chosen) {
@@ -879,7 +892,7 @@ function spvSeedRow(row) {
         if (row.spec) spvRowRunningLight[row.name] = row.spec;
         return;
     }
-    if (SPV_RL_ROWS[row.kind]) return;      // rl_group / rl_add: nothing to seed
+    if (spvOwn(SPV_RL_ROWS, row.kind)) return;   // rl_group / rl_add: nothing to seed
     if (row.kind === 'light') {
         if (row.light_region) spvRowLight[row.light_of] = row.light_region;
         return;
@@ -1445,7 +1458,7 @@ window.shipPropertyViewerAddStateCancel = function () {
 
 function spvRowHtml(row, selectedIndex, selectedLight, selectedEmitterKey, depth) {
     // Running-light rows are not descriptors: no index, never a pin.
-    var rlRow = SPV_RL_ROWS[row.kind];
+    var rlRow = spvOwn(SPV_RL_ROWS, row.kind);
     if (rlRow) return rlRow(row, depth);
     var isLight = (row.kind === 'light');
     var isEmitter = (row.kind === 'emitter');
@@ -1698,8 +1711,16 @@ window.shipPropertyViewerPhysResetAll = function () {
 // group and the lights show the shut eye and no condition bar. Names travel
 // in data-* attributes only (see the spvPartRowHtml comment for why).
 var spvRunningLights = {};          // payload.running_lights, latest
-var spvRowRunningLight = {};        // light name -> spec, from the rows
+// Keyed by light name, so no prototype: "constructor" / "__proto__" are names.
+var spvRowRunningLight = Object.create(null);   // light name -> spec, from the rows
 var spvCtxRlName = null;            // the right-clicked light's name
+
+// table[key] only when it is the table's own entry (never an inherited
+// Object.prototype member such as "constructor"); else null.
+function spvOwn(table, key) {
+    return (typeof key === 'string' && Object.prototype.hasOwnProperty.call(table, key))
+        ? table[key] : null;
+}
 
 window.renderSPVRunningLights = function (rl) {
     spvRunningLights = rl || {};
@@ -1809,7 +1830,7 @@ function spvAddOpen(mode, editName) {
 
 // Show `type`'s form (null: nothing chosen yet, the bare dropdown).
 function spvAddShowType(type, seed) {
-    var t = (type && SPV_ADD_TYPES[type]) || null;
+    var t = spvOwn(SPV_ADD_TYPES, type);
     var editing = spvAdd.mode === 'edit';
     spvAdd.type = t ? type : null;
     document.getElementById('spv-add-title').textContent =
@@ -1850,7 +1871,7 @@ window.shipPropertyViewerAddPick = function (el) {
     spvAddShowType(el.dataset.type, null);
 };
 window.shipPropertyViewerAddSubmit = function () {
-    var t = SPV_ADD_TYPES[spvAdd.type];
+    var t = spvOwn(SPV_ADD_TYPES, spvAdd.type);
     if (!t) return;
     var spec = t.collect();
     if (spvAdd.mode === 'edit') {
@@ -1899,6 +1920,9 @@ function spvRlFormRender(form, seed, fixedName) {
         name: fixedName,
         position: Array.isArray(s.position) ? s.position.slice() : null,
         hue: hs.hue, sat: hs.sat,
+        // The wheel is V = 1, so it cannot show e.g. (0.5, 0.5, 0): the
+        // starting colour goes out unchanged unless the wheel is moved.
+        color: color.slice(), colorTouched: false,
         radius: spvRlNum(s.radius, spvRlNum(d.radius, 1.0)),
         period: spvRlNum(s.period, spvRlNum(d.period, 3.0)),
         duration: (seed && seededBlink) ? s.duration : spvRlNum(d.duration, 0.5),
@@ -1927,6 +1951,7 @@ function spvRlFormRender(form, seed, fixedName) {
             if (!spvRlForm) return;
             spvRlForm.hue = v.hue;
             spvRlForm.sat = v.sat;
+            spvRlForm.colorTouched = true;
         });
     }
     spvRlFormRefresh();
@@ -1937,7 +1962,7 @@ function spvRlFormCollect() {
     var input = document.getElementById('spv-add-rl-name');
     var spec = {name: f.name !== null ? f.name : String(input ? input.value : '').trim()};
     if (f.position) spec.position = f.position;     // Edit keeps the light's own
-    spec.color = colourHsToRgb(f.hue, f.sat);
+    spec.color = f.colorTouched ? colourHsToRgb(f.hue, f.sat) : f.color.slice();
     spec.radius = f.radius;
     spec.period = f.period;
     spec.duration = f.blinking ? f.duration : 0;
@@ -1986,7 +2011,7 @@ function spvRlFormRefresh() {
 }
 
 window.shipPropertyViewerRlStep = function (field, dir) {
-    if (!spvRlForm || !SPV_RL_STEPS[field]) return;
+    if (!spvRlForm || !spvOwn(SPV_RL_STEPS, field)) return;
     spvRlForm[field] += dir * SPV_RL_STEPS[field];
     spvRlClamp(field);
     if (field === 'period') spvRlClamp('duration');
