@@ -51,7 +51,7 @@ from dataclasses import dataclass
 # applied to subsystems._is_offline, which was costing 115,279 importlib
 # lookups over 150 ticks at 100 ships.
 import App
-from engine.appc import drift, warp_flight
+from engine.appc import drift, warp_flight, warp_state
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.objects import PhysicsObjectClass
 from engine.appc.subsystems import impulse_fractions, impulse_output_fraction
@@ -205,6 +205,12 @@ def _step_ship_motion(ship, dt: float) -> None:
     if getattr(ship, "_insystem_warp_transit", None) is not None:
         if warp_flight.step(ship, dt):
             return
+
+    # A warp-in arrival is flown by its warp engine's dewarp drive
+    # (WarpEngineSubsystem.step_dewarp_drive): it holds its heading and
+    # slides onto its placement whatever setpoint its AI writes meanwhile.
+    if warp_state.is_arriving(ship):
+        return
 
     sp = getattr(ship, "_speed_setpoint", None)
     av = getattr(ship, "_target_angular_velocity_setpoint", None)

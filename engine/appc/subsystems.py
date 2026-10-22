@@ -1677,6 +1677,17 @@ class ImpulseEngineSubsystem(PoweredSubsystem):
     def GetCurMaxAngularAccel(self) -> float:    return self.GetMaxAngularAccel()
 
 
+class _DewarpDrive:
+    """One warp-in slide: exit point -> placement, held at `rotation`."""
+    __slots__ = ("start", "end", "rotation", "elapsed")
+
+    def __init__(self, start, end, rotation):
+        self.start = start
+        self.end = end
+        self.rotation = rotation
+        self.elapsed = 0.0
+
+
 class WarpEngineSubsystem(PoweredSubsystem):
     # Warp-state constants from sdk/.../App.py:6700-6707.
     # SDK consumers: WarpSequence.py, mission scripts checking warp transitions.
@@ -1700,6 +1711,16 @@ class WarpEngineSubsystem(PoweredSubsystem):
     # warp effect time (GetWarpEffectTime() == 0.0).
     DEFAULT_DEWARP_SECONDS = 2.0
 
+    # Warp-in slide length (warp-in spec 6.1, "Timing"): 2.0 s from
+    # TransitionToState(WES_DEWARP_INITIATED) -- BC's fixed stage length,
+    # independent of any warp effect time set on the engine.
+    DEWARP_DRIVE_SECONDS = DEFAULT_DEWARP_SECONDS
+
+    # 120 ticks of 1/60 sum to 2.0 - 2e-15: without this slack a 2.0 s span
+    # would land one tick late. Shared by the drive and the state transition
+    # so a ship stops warping on the same tick it lands.
+    _LAND_EPSILON = 1e-9
+
     def __init__(self, name: str = ""):
         super().__init__(name)
         # Powered from spawn, like ImpulseEngineSubsystem — see the comment
@@ -1712,6 +1733,8 @@ class WarpEngineSubsystem(PoweredSubsystem):
         # Seconds left on an engine-driven dewarp transition; None when no
         # transition is pending. See TransitionToState / tick_transition.
         self._transition_remaining = None
+        # Active warp-in slide, or None. See _begin_dewarp_drive.
+        self._dewarp_drive = None
 
     def SetPlacement(self, placement) -> None:
         """The PlacementObject this ship arrives at (warp-in spec 6.1)."""
@@ -1788,6 +1811,90 @@ class WarpEngineSubsystem(PoweredSubsystem):
             self._transition_remaining = t if t > 0.0 else self.DEFAULT_DEWARP_SECONDS
         else:
             self._transition_remaining = None
+        # Warp-in slide (spec 6.1): only DEWARP_INITIATED starts it, and only
+        # with a placement. The SDK sequence's later SetWarpStage calls
+        # (DEWARP_ENDING at +1.5 s, NOT_WARPING at +3.0 s) leave it alone.
+        if (self._warp_state == self.WES_DEWARP_INITIATED
+                and self._dewarp_drive is None
+                and self.GetPlacement() is not None):
+            self._begin_dewarp_drive()
+
+    # -- Warp-in dewarp drive (warp-in spec 6.1) ----------------------------
+    #
+    # While driving, the ship's position is lerped (smoothstep) from its warp
+    # exit point onto the placement over DEWARP_DRIVE_SECONDS of game time,
+    # velocity and spin held at zero and heading held at the placement's. Its
+    # motion integrator skips it (warp_state.is_arriving) and its weapons are
+    # held silent (weapon_subsystems._dewarp_blocks_fire). Our rule, not
+    # recovered BC behaviour: the reference is silent on the slide.
+
+    def is_dewarp_driving(self) -> bool:
+        return self._dewarp_drive is not None
+
+    def _begin_dewarp_drive(self) -> None:
+        ship = self.GetParentShip()
+        if ship is None:
+            return
+        placement = self.GetPlacement()
+        self._dewarp_drive = _DewarpDrive(
+            self.GetWarpExitLocation(), placement.GetWorldLocation(),
+            placement.GetWorldRotation())
+        self._hold_ship(ship, self._dewarp_drive.start)
+        self._stop_ship_weapons(ship)
+
+    def _hold_ship(self, ship, pos) -> None:
+        ship.SetTranslate(pos)
+        ship.SetMatrixRotation(self._dewarp_drive.rotation)
+        zero = TGPoint3(0.0, 0.0, 0.0)
+        ship.SetVelocity(zero)
+        ship.SetAngularVelocity(zero)
+        ship._current_speed = 0.0
+        ship._current_angular_velocity = TGPoint3(0.0, 0.0, 0.0)
+
+    @staticmethod
+    def _stop_ship_weapons(ship) -> None:
+        """Stop every weapon system already firing when the slide starts --
+        the fire gate only blocks NEW fire, and update_weapons keeps firing a
+        latched target (same reasoning as CloakingSubsystem._stop_weapons).
+        StopFiring on the system clears the latch and stops each bank."""
+        for getter in ("GetPhaserSystem", "GetPulseWeaponSystem",
+                       "GetTorpedoSystem", "GetTractorBeamSystem"):
+            try:
+                fn = getattr(ship, getter, None)
+                system = fn() if callable(fn) else None
+                if system is not None and implements(system, "StopFiring"):
+                    system.StopFiring()
+            except Exception as _e:
+                dev_mode.log_swallowed("dewarp weapons stop", _e)
+
+    def _end_dewarp_drive(self) -> None:
+        self._dewarp_drive = None
+        self._placement = None
+
+    def step_dewarp_drive(self, dt: float) -> None:
+        """Advance the warp-in slide by `dt` seconds of game time; on landing
+        snap exactly onto the placement and clear it. A dead / dying / setless
+        ship is released without being moved. Driven by
+        engine.appc.warp_state.tick_warp_states."""
+        drive = self._dewarp_drive
+        if drive is None:
+            return
+        ship = self.GetParentShip()
+        if (ship is None or ship.IsDead() or ship.IsDying()
+                or ship.GetContainingSet() is None):
+            self._end_dewarp_drive()
+            return
+        drive.elapsed += float(dt)
+        t = drive.elapsed / self.DEWARP_DRIVE_SECONDS
+        if drive.elapsed >= self.DEWARP_DRIVE_SECONDS - self._LAND_EPSILON:
+            self._hold_ship(ship, drive.end)
+            self._end_dewarp_drive()
+            return
+        k = t * t * (3.0 - 2.0 * t)
+        a, b = drive.start, drive.end
+        self._hold_ship(ship, TGPoint3(a.x + (b.x - a.x) * k,
+                                       a.y + (b.y - a.y) * k,
+                                       a.z + (b.z - a.z) * k))
 
     def tick_transition(self, dt: float) -> None:
         """Advance a pending dewarp transition; land on WES_NOT_WARPING when it
@@ -1796,7 +1903,7 @@ class WarpEngineSubsystem(PoweredSubsystem):
         if remaining is None:
             return
         remaining -= float(dt)
-        if remaining <= 0.0:
+        if remaining <= self._LAND_EPSILON:
             self._warp_state = self.WES_NOT_WARPING
             self._transition_remaining = None
         else:

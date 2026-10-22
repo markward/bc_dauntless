@@ -12356,15 +12356,16 @@ def run(mission_name: Optional[str] = None,
                 # the player integrator — the collision-velocity overlay is
                 # real-time motion, so it advances/decays on real elapsed time,
                 # not the fixed sim TICK_DT.
-                # Advance BC's warp FSM before collisions: a ship in warp is
+                # BC's warp FSM (dewarp transitions + warp-in slides) advances
+                # on game time inside GameLoop.tick (warp_state.tick_warp_states),
+                # which runs above, before collisions: a ship in warp is
                 # non-collidable (collisions._collisions_enabled), so a dewarp
-                # that completes this frame must be collidable THIS frame, not
-                # next. sync_flythrough is the leak guard — once the warp
-                # animator is inactive the flythrough ship cannot still read as
-                # warping, however the sequence ended.
+                # that completes this frame is collidable THIS frame, not next.
+                # sync_flythrough is the leak guard — once the warp animator is
+                # inactive the flythrough ship cannot still read as warping,
+                # however the sequence ended.
                 from engine.appc import warp_state as _warp_state
                 from engine import warp_vfx as _wv_state
-                _warp_state.tick_warp_states(_player_dt)
                 _warp_state.sync_flythrough(_wv_state.get().is_active())
 
                 with frame_profiler.scope("sim.debris_chunks"):

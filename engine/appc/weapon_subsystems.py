@@ -977,6 +977,19 @@ def _cloak_blocks_fire(weapon_system) -> bool:
     return cloak is not None and bool(cloak.IsTryingToCloak())
 
 
+def _dewarp_blocks_fire(weapon_system) -> bool:
+    """True while the owning ship is sliding onto its warp-in placement
+    (warp-in spec 6.1, "During the slide": it holds fire until it has fully
+    arrived). Accepts any subsystem in the chain -- GetParentShip climbs.
+    Our rule, not recovered BC behaviour."""
+    ship = (weapon_system.GetParentShip()
+            if hasattr(weapon_system, "GetParentShip") else None)
+    if ship is None:
+        return False
+    from engine.appc import warp_state
+    return warp_state.is_arriving(ship)
+
+
 def _target_undetectable(weapon_system, target) -> bool:
     """True when the firing ship cannot detect *target* (fully cloaked, nebula
     lock-break, or degraded/offline sensors).
@@ -1071,7 +1084,12 @@ class Weapon(ShipSubsystem):
         runtime state and must no-op; "not implemented" is a bug and must shout.
 
         iReserved/iForce are kept for SDK signature compatibility and unused.
+
+        Bypasses WeaponSystem.StartFiring, so the warp-in hold-fire gate is
+        checked here too.
         """
+        if _dewarp_blocks_fire(self):
+            return
         self.Fire(target=None, offset=None)
 
     def CalculateRoughDirection(self) -> TGPoint3:
@@ -1344,6 +1362,9 @@ class WeaponSystem(PoweredSubsystem):
             return
         # Cloak gate: a cloaked / cloaking ship cannot fire (BC rule).
         if _cloak_blocks_fire(self):
+            return
+        # Warp-in gate: an arriving ship holds fire until it has landed.
+        if _dewarp_blocks_fire(self):
             return
         # Detectability gate: never fire (nor play warm-up SFX) at a target the
         # ship can't detect — cloaked, nebula-hidden, or out of sensor range.
@@ -2288,6 +2309,8 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
         if _is_offline(self):
             return
         if _cloak_blocks_fire(self):
+            return
+        if _dewarp_blocks_fire(self):
             return
         self._add_target(target)
         self._fire_held = True

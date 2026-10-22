@@ -19,15 +19,33 @@ def _isolate():
     warp_state.reset()
 
 
+def test_warp_state_is_ticked_in_the_sim_tick_before_ship_motion():
+    # Warp-in spec 6.1 "Timing": the warp FSM and the warp-in slide advance on
+    # GAME time inside GameLoop.tick, so the headless harness runs them too
+    # and they freeze under pause. Before motion: an arriving ship's pose is
+    # the drive's, and motion skips it.
+    from engine.core import loop
+    body = inspect.getsource(loop.GameLoop.tick)
+    i_warp = body.index("warp_state.tick_warp_states(TICK_DELTA)")
+    i_motion = body.index("tick_all_ship_motion(TICK_DELTA)")
+    assert i_warp < i_motion
+
+
 def test_warp_state_is_ticked_before_collisions_in_the_host_loop():
+    # The host reaches tick_warp_states only through its sim ticks
+    # (advance_ticks -> _tick_gameloop -> loop.tick()), which must run before
+    # collision resolution, or a ship that leaves warp this frame stays
+    # non-collidable for one extra frame. It must not tick warp states a
+    # second time on its own (that was the old wall-clock _player_dt call).
     import engine.host_loop as hl
-    src = inspect.getsource(hl)
-    i_sync = src.index("warp_state.tick_warp_states")
-    i_coll = src.index("collisions.tick_collisions")
-    assert i_sync < i_coll, (
+    src = inspect.getsource(hl.run)
+    assert "tick_warp_states(" not in src
+    i_ticks = src.index("_tick_gameloop, _interp_live_poses)")
+    i_coll = src.index("collisions.tick_collisions(")
+    assert i_ticks < i_coll, (
         "warp state must be advanced before collision resolution, or a ship "
         "that leaves warp this frame stays non-collidable for one extra frame")
-    assert "warp_state.sync_flythrough" in src
+    assert "warp_state.sync_flythrough(" in src
 
 
 def test_mission_swap_clears_a_mid_warp_ship():
