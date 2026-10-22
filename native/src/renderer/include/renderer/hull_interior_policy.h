@@ -5,8 +5,8 @@
 // hull's holes are cut, stencil-marked and filled with decks and rooms by
 // FrameSubmitter::submit_plating_interior; a far hull's holes are painted in
 // place as wreckage by the plating shader (u_plating_far), with no marking
-// and no interior draw. A hole blown clear through (deck break) is cut at
-// any distance.
+// and no interior draw. A far hull is never see-through: even a hole blown
+// clear through (deck break) is painted, not cut (Mark, 2026-10-22).
 #pragma once
 
 #include <optional>

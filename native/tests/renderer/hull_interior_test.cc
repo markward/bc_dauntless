@@ -593,8 +593,11 @@ TEST_F(HullInteriorTest, FarHullPaintsHoleAsWreck) {
         << "the far hole is not painted as dark wreckage";
 }
 
-// Blown clear through (wear past deck break), the hole is cut at any distance.
-TEST_F(HullInteriorTest, FarBlownThroughStillCuts) {
+// A far hull is never see-through: even a hole blown clear through (wear past
+// deck break) is painted as flat wreckage, since no rooms are drawn behind
+// it (Mark's live check 2026-10-22: zoomed out, he could see through the
+// damage; "it needs a flat replacement at this distance").
+TEST_F(HullInteriorTest, FarBlownThroughIsPaintedNotCut) {
     const auto ring = internal_ring(glm::vec3(0.0f), 60.0f, 10.0f);
     dauntless_plating::g_params[24] = 0.01f;
     policy.near_gu = 1.0f;
@@ -602,8 +605,8 @@ TEST_F(HullInteriorTest, FarBlownThroughStillCuts) {
     report("far, deck break 0.01", s, centre());
     EXPECT_EQ(s.marks, 0);
     EXPECT_EQ(s.interiors, 0);
-    EXPECT_TRUE(is_clear(pixel(s.px, centre().x, centre().y)))
-        << "a far hull blown through must still show what is behind it";
+    const std::uint8_t* q = pixel(s.px, centre().x, centre().y);
+    EXPECT_FALSE(is_clear(q)) << "a far hull blown through must not be see-through";
 }
 
 // The near test's sphere is centred on the model's box centre carried

@@ -2281,3 +2281,155 @@ TEST_F(PlatingRenderTest, FreshRimOnAPosedPartGlowsOnThePart) {
     EXPECT_LE(worst_in_window(fresh.color, old.color, rest_spot, win), 1)
         << "the part's rim heated the hull under its rest spot";
 }
+
+// ── Pixel-footprint LOD (params[27], lod_footprint; perf P-12 / SIG-116) ──
+// Where a pixel's footprint (plating_fw = length(fwidth(p_body))) is more
+// than lod_footprint x member width, apply_plating skips the plate-edge and
+// member-side marches and reuses its first skeleton sample unwarped, and
+// plating_hole decides member survival from its first sample. The near
+// test, the wear sums and the torn test are unchanged, so the hole OUTLINE
+// does not move; only which sub-pixel members span it may.
+namespace {
+
+constexpr int kLodSlot = 27;
+
+// A 200-unit plate facing a camera `dist` straight above it, and an Internal
+// blast (wear 10) of `reach` at its centre: torn inside r ~ 0.57 reach, bare
+// structure out to r ~ 0.88 reach.
+struct LodScene {
+    std::unique_ptr<assets::Model> quad = build_quad(200.0f, /*facing_camera=*/true);
+    scenegraph::HullDamageStore ring;
+    scenegraph::Camera cam;
+    LodScene(float dist, float reach) {
+        ring.add(glm::vec3(0.0f), glm::vec3(0.0f), reach, 10.0f,
+                 scenegraph::HullDamageKind::Internal);
+        cam.eye = glm::vec3(0.0f, 0.0f, dist);
+        cam.target = glm::vec3(0.0f);
+        cam.up = glm::vec3(0.0f, 1.0f, 0.0f);
+        cam.aspect = 1.0f;
+    }
+    // The plate is parallel to the image plane, so the projection onto it is
+    // affine: every pixel spans s = 2 d tan(fov/2) / kSize along both body
+    // axes, and fwidth(p_body)'s length is sqrt(2) s everywhere on it.
+    float footprint() const {
+        return std::sqrt(2.0f) * 2.0f * cam.eye.z * std::tan(cam.fov_y_rad * 0.5f) /
+               float(kSize);
+    }
+};
+
+}  // namespace
+
+// Far: every pixel's footprint is past the threshold, so the whole damaged
+// region takes the short path. The cut mask's OUTLINE (every torn pixel cut:
+// member_survive 0) is identical with the LOD on and off; with the default
+// member_survive, both cut masks lie inside that outline and differ only at
+// the few pixels a sub-pixel member spans. The shading differs (the LOD does
+// something), but by little once averaged over 8x8-pixel blocks: at this
+// footprint every pixel covers about one member width, so per-pixel member
+// placement is aliasing either way; what reads is the region's tone.
+TEST_F(PlatingRenderTest, PlatingLodSkipsDetailWhenSubPixel) {
+    dauntless_plating::g_params[0] = 1.0f;
+    dauntless_plating::g_params[25] = 0.0f;   // no interior: the plating draw alone
+    const float lod = dauntless_plating::g_params[kLodSlot];
+    ASSERT_GT(lod, 0.0f) << "lod_footprint default must enable the LOD";
+    const float member = dauntless_plating::g_params[4];
+    const LodScene scene(260.0f, 80.0f);
+    ASSERT_GT(scene.footprint(), lod * member * 1.1f) << "not far enough for the LOD";
+
+    auto render_lod = [&](float lod_v, float survive) {
+        dauntless_plating::g_params[kLodSlot] = lod_v;
+        dauntless_plating::g_params[21] = survive;
+        const glm::vec3 clear(0.8f, 0.2f, 0.8f);
+        Marked m = render_marked(*scene.quad, scene.ring, scene.cam, clear);
+        dauntless_plating::g_params[kLodSlot] = lod;
+        return m;
+    };
+    const float survive = dauntless_plating::g_params[21];
+    const Marked outline_on = render_lod(lod, 0.0f);
+    const Marked outline_off = render_lod(0.0f, 0.0f);
+    const Marked on = render_lod(lod, survive);
+    const Marked off = render_lod(0.0f, survive);
+    dauntless_plating::g_params[21] = survive;
+
+    auto cut = [](const Marked& m, std::size_t i) { return m.stencil[i] != 0; };
+    // Inside the outline a torn pixel that is not cut is a member span.
+    int torn = 0, outline_diff = 0, outside_on = 0, outside_off = 0;
+    int members_on = 0, members_off = 0;
+    for (std::size_t i = 0; i < on.stencil.size(); ++i) {
+        const bool t = cut(outline_off, i);
+        torn += t;
+        outline_diff += t != cut(outline_on, i);
+        outside_on += cut(on, i) && !t;
+        outside_off += cut(off, i) && !t;
+        members_on += t && !cut(on, i);
+        members_off += t && !cut(off, i);
+    }
+    // Shading: pixels drawn (not cut) in both; per-pixel and 8x8 block means.
+    int changed = 0, worst_block = 0, blocks = 0;
+    for (int by = 0; by < kSize; by += 8) {
+        for (int bx = 0; bx < kSize; bx += 8) {
+            int sum_on[3] = {0, 0, 0}, sum_off[3] = {0, 0, 0}, n = 0;
+            for (int y = by; y < by + 8; ++y) {
+                for (int x = bx; x < bx + 8; ++x) {
+                    const std::size_t i = static_cast<std::size_t>(y) * kSize + x;
+                    if (cut(on, i) || cut(off, i)) continue;
+                    const std::uint8_t* a = pixel(on.color, x, y);
+                    const std::uint8_t* b = pixel(off.color, x, y);
+                    if (rgb_diff(a, b) != 0) ++changed;
+                    for (int c = 0; c < 3; ++c) { sum_on[c] += a[c]; sum_off[c] += b[c]; }
+                    ++n;
+                }
+            }
+            if (n < 32) continue;   // mostly cut: no tone to compare
+            ++blocks;
+            for (int c = 0; c < 3; ++c)
+                worst_block = std::max(worst_block, std::abs(sum_on[c] - sum_off[c]) / n);
+        }
+    }
+    std::fprintf(stderr, "[PlatingRender] LOD far: footprint %.2f (threshold %.2f); "
+                 "torn %d, outline diff %d, cut outside outline on/off %d/%d, "
+                 "member spans on/off %d/%d; shaded pixels changed %d, worst 8x8 block %d "
+                 "of %d blocks\n",
+                 scene.footprint(), lod * member, torn, outline_diff, outside_on,
+                 outside_off, members_on, members_off, changed, worst_block, blocks);
+    ASSERT_GT(torn, 500) << "the blast tore too little to compare";
+    EXPECT_EQ(outline_diff, 0) << "the LOD moved the hole outline";
+    EXPECT_EQ(outside_on, 0) << "LOD on cut outside the torn outline";
+    EXPECT_EQ(outside_off, 0) << "LOD off cut outside the torn outline";
+    // Member spans sit on a different (unwarped) line with the LOD, so WHICH
+    // pixels they cover changes; how much of the hole they span must not.
+    ASSERT_GT(members_off, 50) << "no member spans the hole: nothing to compare";
+    EXPECT_LE(std::abs(members_on - members_off), members_off / 4)
+        << "the LOD changed how much structure spans the hole";
+    EXPECT_GT(changed, 200) << "the LOD changed nothing: the short path never ran";
+    // Measured 8 levels (of 255) on the worst block; 16 is 2x that: about a 6%
+    // tone step over an 8x8 patch, below what reads at this size, while a
+    // short path that lost the inner hull or the rib tops (dark 0.004 vs
+    // metal ~0.6 albedo) moves whole blocks by far more.
+    EXPECT_LE(worst_block, 16) << "the short path changes the region's tone";
+}
+
+// Close: every footprint is under the threshold, so the LOD on draws exactly
+// the LOD-off frame (colour and cut stencil).
+TEST_F(PlatingRenderTest, PlatingLodKeepsFullDetailUpClose) {
+    dauntless_plating::g_params[0] = 1.0f;
+    dauntless_plating::g_params[25] = 0.0f;
+    const float lod = dauntless_plating::g_params[kLodSlot];
+    ASSERT_GT(lod, 0.0f) << "lod_footprint default must enable the LOD";
+    const float member = dauntless_plating::g_params[4];
+    const LodScene scene(80.0f, 30.0f);
+    ASSERT_LT(scene.footprint(), lod * member * 0.9f) << "too far: the LOD would engage";
+
+    const glm::vec3 clear(0.8f, 0.2f, 0.8f);
+    const Marked on = render_marked(*scene.quad, scene.ring, scene.cam, clear);
+    dauntless_plating::g_params[kLodSlot] = 0.0f;
+    const Marked off = render_marked(*scene.quad, scene.ring, scene.cam, clear);
+    dauntless_plating::g_params[kLodSlot] = lod;
+    int torn = 0;
+    for (std::uint8_t s : off.stencil) torn += s != 0;
+    std::fprintf(stderr, "[PlatingRender] LOD close: footprint %.2f (threshold %.2f), torn %d\n",
+                 scene.footprint(), lod * member, torn);
+    ASSERT_GT(torn, 500) << "the blast tore too little to compare";
+    EXPECT_TRUE(on.stencil == off.stencil) << "the cut mask changed up close";
+    EXPECT_TRUE(on.color == off.color) << "the shading changed up close";
+}

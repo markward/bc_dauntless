@@ -59,7 +59,7 @@ def test_force_program_dial_is_slot_26_and_env_driven(monkeypatch):
     assert d.DIAL_ORDER[26] == "force_program"
     assert d.DEFAULTS["force_program"] == 0.0
     assert (d._MAX["force_program"], d._STEP["force_program"]) == (1.0, 1.0)
-    assert len(d.params()) == 27
+    assert len(d.params()) >= 27
     monkeypatch.setattr(d, "push", lambda: None)
     import engine.dev_dial_groups as groups
     monkeypatch.setattr(groups, "register_group", lambda *a, **k: None)
@@ -67,6 +67,32 @@ def test_force_program_dial_is_slot_26_and_env_driven(monkeypatch):
     monkeypatch.setenv("DAUNTLESS_PLATING_FORCE_PROGRAM", "1")
     d.register()
     assert d.current()["force_program"] == 1.0
+    d.reset()
+
+
+
+def test_lod_footprint_dial_is_slot_27_and_env_driven(monkeypatch):
+    """Pixel-footprint LOD (perf P-12): the plating short path runs where a
+    pixel's footprint exceeds lod_footprint x member width; <= 0 disables
+    it. DAUNTLESS_PLATING_LOD sets it at dev boot for a perf A/B."""
+    d = plating_dials
+    assert d.DIAL_ORDER[27] == "lod_footprint"
+    assert d.DEFAULTS["lod_footprint"] == 1.0
+    assert d._STEP["lod_footprint"] == 0.25
+    assert len(d.params()) == 28
+    monkeypatch.setattr(d, "push", lambda: None)
+    import engine.dev_dial_groups as groups
+    monkeypatch.setattr(groups, "register_group", lambda *a, **k: None)
+    d.reset()
+    monkeypatch.setenv("DAUNTLESS_PLATING_LOD", "0")
+    d.register()
+    assert d.current()["lod_footprint"] == 0.0
+    monkeypatch.setenv("DAUNTLESS_PLATING_LOD", "2.5")
+    d.register()
+    assert d.current()["lod_footprint"] == 2.5
+    monkeypatch.setenv("DAUNTLESS_PLATING_LOD", "junk")
+    d.register()
+    assert d.current()["lod_footprint"] == d.defaults()["lod_footprint"]
     d.reset()
 
 
