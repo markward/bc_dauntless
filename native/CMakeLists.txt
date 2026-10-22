@@ -182,6 +182,44 @@ if(DAUNTLESS_ENABLE_CEF)
     message(STATUS "CEF version: ${CEF_VERSION}")
 endif()
 
+# Restore the MSVC defaults that CEF blanks out.
+#
+# cef_variables.cmake does `set(CMAKE_CXX_FLAGS "")` (plus _DEBUG and _RELEASE)
+# for Ninja-on-Windows -- its issue #2120, to quieten console warnings -- at
+# find_package(CEF) time. Every target configured BELOW this line therefore
+# lost CMake's MSVC defaults. macOS and Linux never see it: the clearing sits
+# inside CEF's own if(OS_WINDOWS).
+#
+# Two of the lost flags matter:
+#
+#   /EHsc  Without it MSVC compiles with no unwind semantics, so every C4530
+#          warning in a Windows build is this. Worse than warnings:
+#          nlohmann/json sees __cpp_exceptions undefined, switches itself to
+#          JSON_NOEXCEPTION, and calls std::abort() where it would throw. That
+#          is why test_nif_shapes_raises_the_loaders_refusal did not fail but
+#          ABORTED the interpreter, taking the whole pytest run down with it.
+#          Any throw meant to be caught was unreliable, and destructors were
+#          not guaranteed to run while unwinding.
+#
+#   /O2 /Ob2  CMAKE_CXX_FLAGS_RELEASE carried the optimiser settings, so a
+#          Windows "Release" build was compiling UNOPTIMISED.
+#
+# Appended rather than assigned, and only when absent, so this is a no-op on a
+# toolchain that still has them (a non-Ninja generator, or CEF disabled) and
+# cannot fight a future CEF that stops clearing them. Deliberately placed after
+# libcef_dll_wrapper is added above: CEF's own wrapper keeps CEF's flags.
+if(MSVC)
+    if(NOT CMAKE_CXX_FLAGS MATCHES "/EHsc")
+        string(APPEND CMAKE_CXX_FLAGS " /EHsc")
+    endif()
+    if(NOT CMAKE_CXX_FLAGS_RELEASE MATCHES "/O[12d]")
+        string(APPEND CMAKE_CXX_FLAGS_RELEASE " /O2 /Ob2 /DNDEBUG")
+    endif()
+    if(NOT CMAKE_CXX_FLAGS_DEBUG MATCHES "/Od")
+        string(APPEND CMAKE_CXX_FLAGS_DEBUG " /Zi /Ob0 /Od /RTC1")
+    endif()
+endif()
+
 # Public libraries.
 add_subdirectory(src/platform)
 add_subdirectory(src/nif)
