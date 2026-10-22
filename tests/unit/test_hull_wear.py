@@ -292,6 +292,15 @@ def test_wear_and_severance_share_one_gate(fake, severance, weapon_type,
     assert wore == hit_feedback._structural_hit(weapon_type, allow)
 
 
+@pytest.mark.parametrize("weapon_type", ["torpedo", "pulse", "collision"])
+def test_a_non_phaser_hit_sparing_the_hull_is_still_structural(weapon_type):
+    """The recorded decision (`_structural_hit` docstring): the flag means
+    LIGHT phaser only; a non-phaser hit with damage_hull=False (no caller
+    today) still wears and may sever."""
+    assert hit_feedback._structural_hit(weapon_type, False) is True
+    assert hit_feedback._structural_hit("phaser", False) is False
+
+
 def test_wear_reach_matches_scorch_reach(fake):
     _hit(_Ship())
     assert fake.wear[0][0][3] == pytest.approx(fake.decals[0][0][3])

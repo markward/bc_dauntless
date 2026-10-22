@@ -206,7 +206,15 @@ def _structural_hit(weapon_type, allow_structural_wear: bool) -> bool:
     cosmetic -- `allow_structural_wear` False on a phaser; every other hit is
     structural. The one predicate for both gates in `dispatch`, so the two
     can never disagree on a hit (how MUCH wear a structural hit lands, zero
-    for a small collision bump, is `hull_wear.wear_for_hit`'s business)."""
+    for a small collision bump, is `hull_wear.wear_for_hit`'s business).
+
+    Decided (layered damage phase 4 final review): a NON-phaser hit with
+    `allow_structural_wear` False -- `combat.apply_hit(damage_hull=False)`
+    on a torpedo, pulse or collision -- still counts as structural. The
+    flag means "LIGHT phaser" and nothing else; only the PP_LOW phaser in
+    host_loop passes `damage_hull=False` today, so no caller reaches this
+    case. A future non-phaser "spare the hull" caller that also wants no
+    wear must change this predicate deliberately, not rely on the flag."""
     return bool(allow_structural_wear) or weapon_type != "phaser"
 
 
