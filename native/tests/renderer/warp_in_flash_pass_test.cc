@@ -66,14 +66,15 @@ protected:
     // Summed RGB over the frame after drawing `flashes` over a black clear
     // whose depth is `clear_depth`.
     double render_sum(const std::vector<renderer::WarpInFlashDescriptor>& flashes,
-                      double clear_depth) {
+                      double clear_depth,
+                      const renderer::WarpInFlashParams& params = {}) {
         glViewport(0, 0, kSize, kSize);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClearDepth(clear_depth);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glClearDepth(1.0);
         renderer::WarpInFlashPass pass;
-        pass.render(camera(), flashes, renderer::WarpInFlashParams{}, *pipeline);
+        pass.render(camera(), flashes, params, *pipeline);
         std::vector<unsigned char> px(kSize * kSize * 4);
         glReadPixels(0, 0, kSize, kSize, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
         double sum = 0.0;
@@ -98,6 +99,64 @@ TEST_F(WarpInFlashPassTest, HiddenByNearerDepth) {
     glDisable(GL_DEPTH_TEST);
     EXPECT_EQ(render_sum({flash_at_origin()}, window_depth_at(camera(), 1.0f)), 0.0);
     EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+// Ring only: core_radii 0 zeroes the core and the streak (both guard it).
+static renderer::WarpInFlashParams ring_only() {
+    renderer::WarpInFlashParams p;
+    p.core_radii = 0.0f;
+    return p;
+}
+
+static renderer::WarpInFlashDescriptor ring_flash(const glm::vec3& forward) {
+    renderer::WarpInFlashDescriptor f;
+    f.world_center = {0.0f, 0.0f, 0.0f};
+    f.forward      = forward;
+    f.radius       = 0.2f;
+    f.age          = 0.3f;   // ring at 0.9 radii, well faded in
+    f.lifetime     = 1.0f;
+    return f;
+}
+
+// Spec 6.3: the ring lies in the plane PERPENDICULAR to forward. Viewed along
+// forward it is a full circle; edge-on (forward across the view) the plane
+// contains the view direction and the quad has no area.
+TEST_F(WarpInFlashPassTest, RingLiesPerpendicularToForward) {
+    const double face_on = render_sum({ring_flash({0.0f, 0.0f, 1.0f})}, 1.0, ring_only());
+    const double edge_on = render_sum({ring_flash({1.0f, 0.0f, 0.0f})}, 1.0, ring_only());
+    EXPECT_GT(face_on, 0.0);
+    EXPECT_LT(edge_on, 0.05 * face_on);
+    EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+}
+
+// A degenerate forward has no ring plane and no streak axis: both are
+// skipped, never drawn about a camera axis.
+TEST_F(WarpInFlashPassTest, DegenerateForwardSkipsRingAndStreak) {
+    EXPECT_EQ(render_sum({ring_flash({0.0f, 0.0f, 0.0f})}, 1.0, ring_only()), 0.0);
+    renderer::WarpInFlashDescriptor f = flash_at_origin();
+    f.forward = {0.0f, 0.0f, 0.0f};
+    EXPECT_GT(render_sum({f}, 1.0), 0.0);   // the core still draws
+}
+
+// The timing params reach the shader as uniforms (not its default consts).
+TEST_F(WarpInFlashPassTest, TimingParamsReachTheShader) {
+    // Streak: at t = 0.6 the default streak (end 0.9) is still out; with
+    // streak_end 0.5 it is gone. Ring off, so only the core is common.
+    renderer::WarpInFlashParams with_streak;
+    with_streak.ring_radii = 0.0f;
+    renderer::WarpInFlashParams retracted = with_streak;
+    retracted.streak_end = 0.5f;
+    renderer::WarpInFlashDescriptor f = flash_at_origin();
+    f.forward = {0.0f, 1.0f, 0.0f};   // across the view, so the ribbon shows
+    f.age = 0.6f;
+    EXPECT_GT(render_sum({f}, 1.0, with_streak), render_sum({f}, 1.0, retracted));
+
+    // Ring: just after birth a slow ring_rise has barely faded in.
+    renderer::WarpInFlashParams slow = ring_only();
+    slow.ring_rise = 0.3f;
+    renderer::WarpInFlashDescriptor r = ring_flash({0.0f, 0.0f, 1.0f});
+    r.age = 0.05f;
+    EXPECT_LT(render_sum({r}, 1.0, slow), render_sum({r}, 1.0, ring_only()));
 }
 
 TEST_F(WarpInFlashPassTest, RestoresGlState) {

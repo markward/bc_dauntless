@@ -6,14 +6,16 @@
 #include <scenegraph/camera.h>
 
 #include <glad/glad.h>
+#include <glm/glm.hpp>
 
 namespace renderer {
 
 namespace {
 
-// Ribbon half-width in streak sigmas: exp(-3^2) ~ 1e-4, below the shader's
-// discard floor, so the streak's gaussian is wholly inside the ribbon.
-constexpr float kRibbonHalfWidthSigmas = 3.0f;
+// Ribbon half-width in streak sigmas: exp(-3.1^2) ~ 6.7e-5, below the
+// shader's 1e-4 discard floor, so the streak's gaussian ends inside the
+// ribbon instead of being cut at its edge.
+constexpr float kRibbonHalfWidthSigmas = 3.1f;
 
 }  // namespace
 
@@ -78,6 +80,8 @@ void WarpInFlashPass::render(const scenegraph::Camera& cam,
     sh.set_float("u_ribbon_half_w",
                  kRibbonHalfWidthSigmas * kStreakThickness * params.core_radii);
     sh.set_float("u_intensity", params.intensity);
+    sh.set_float("u_streak_end", params.streak_end);
+    sh.set_float("u_ring_rise", params.ring_rise);
     sh.set_vec3("u_tint", params.tint);
 
     glBindVertexArray(vao_);
@@ -88,9 +92,14 @@ void WarpInFlashPass::render(const scenegraph::Camera& cam,
         sh.set_vec3("u_forward", f.forward);
         sh.set_float("u_radius", f.radius);
         sh.set_float("u_t", t);
-        sh.set_int("u_mode", 0);   // billboard: core + ring
+        sh.set_int("u_mode", 0);   // camera-facing billboard: core
         glDrawArrays(GL_TRIANGLES, 0, 6);
-        sh.set_int("u_mode", 1);   // ribbon: streak
+        // The streak and ring hang off the forward axis; with none (a zero
+        // forward) they are skipped, never drawn about a camera axis.
+        if (glm::length(f.forward) < 1e-6f) continue;
+        sh.set_int("u_mode", 1);   // ribbon along forward: streak
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        sh.set_int("u_mode", 2);   // plane perpendicular to forward: ring
         glDrawArrays(GL_TRIANGLES, 0, 6);
     }
     glBindVertexArray(0);

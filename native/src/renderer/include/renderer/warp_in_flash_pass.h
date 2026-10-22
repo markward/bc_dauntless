@@ -13,8 +13,9 @@ namespace renderer {
 class Pipeline;
 
 // Draws warp-in flashes (warp-in spec 6.3): per flash a camera-facing
-// billboard (core + ring) and a ribbon along the flash's forward axis
-// (streak). Procedural (shaders/warp_in_flash.*), additive (ONE, ONE),
+// billboard (core), a ribbon along the flash's forward axis (streak) and a
+// quad in the plane perpendicular to it (ring); the last two are skipped for
+// a zero forward. Procedural (shaders/warp_in_flash.*), additive (ONE, ONE),
 // depth-tested without depth writes, so a nearer hull or planet hides it.
 // Restores the GL state it changes.
 class WarpInFlashPass {

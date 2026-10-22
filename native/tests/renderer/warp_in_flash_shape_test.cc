@@ -69,9 +69,35 @@ TEST(WarpInFlashShape, AllZeroAtEndOfLife) {
 TEST(WarpInFlashShape, ShaderMirrorsConstants) {
     const std::string frag = read_shader("warp_in_flash.frag");
     ASSERT_FALSE(frag.empty());
-    for (const char* decl : {"kCoreRise = 0.08", "kCoreFalloff = 3.0",
-                             "kRingRise = 0.05", "kRingBand = 0.12",
-                             "kStreakEnd = 0.9", "kStreakThickness = 0.08"}) {
+    // Anchored on ';' so a drifted 0.95 cannot pass as 0.9. kRingRise and
+    // kStreakEnd are the DEFAULTS of the timing params (the shader's own
+    // copies document them; the live values arrive as uniforms).
+    for (const char* decl : {"kCoreRise = 0.08;", "kCoreFalloff = 3.0;",
+                             "kRingRise = 0.05;", "kRingBand = 0.12;",
+                             "kStreakEnd = 0.9;", "kStreakThickness = 0.08;"}) {
         EXPECT_NE(frag.find(decl), std::string::npos) << decl;
     }
+}
+
+TEST(WarpInFlashShape, TimingParamsDefaultToTheConstants) {
+    const WarpInFlashParams p;
+    EXPECT_EQ(p.streak_end, kStreakEnd);
+    EXPECT_EQ(p.ring_rise, kRingRise);
+}
+
+TEST(WarpInFlashShape, StreakEndParamMovesTheRetraction) {
+    WarpInFlashParams early;
+    early.streak_end = 0.5f;
+    const WarpInFlashParams dflt;
+    EXPECT_GT(warp_in_streak(0.5f, 0.0f, 0.6f, dflt), 0.0f);
+    EXPECT_EQ(warp_in_streak(0.5f, 0.0f, 0.6f, early), 0.0f);
+}
+
+TEST(WarpInFlashShape, RingRiseParamSlowsTheFadeIn) {
+    WarpInFlashParams slow;
+    slow.ring_rise = 0.3f;
+    const WarpInFlashParams dflt;
+    const float t = 0.05f;
+    const float r = dflt.ring_radii * t;   // on the ring's current radius
+    EXPECT_LT(warp_in_ring(r, t, slow), warp_in_ring(r, t, dflt));
 }

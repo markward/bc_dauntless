@@ -81,6 +81,7 @@ def _dirty_every_reachable_global(h):
                             "age": 0.1, "lifetime": 1.0}])
     h.set_warp_in_flash_params({"core_radii": 2.0, "streak_radii": 9.0,
                                 "ring_radii": 4.0, "intensity": 9.0,
+                                "streak_end": 0.5, "ring_rise": 0.2,
                                 "tint": (1.0, 0.0, 0.0)})
 
 

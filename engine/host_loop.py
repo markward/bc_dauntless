@@ -1937,6 +1937,8 @@ def _warp_in_flash_params() -> dict:
         "streak_radii": d["streak_radii"],
         "ring_radii": d["ring_radii"],
         "intensity": d["intensity"],
+        "streak_end": d["streak_end"],
+        "ring_rise": d["ring_rise"],
         "tint": (d["tint_r"], d["tint_g"], d["tint_b"]),
     }
 

@@ -6183,6 +6183,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
               if (d.contains("streak_radii")) p.streak_radii = d["streak_radii"].cast<float>();
               if (d.contains("ring_radii"))   p.ring_radii   = d["ring_radii"].cast<float>();
               if (d.contains("intensity"))    p.intensity    = d["intensity"].cast<float>();
+              if (d.contains("streak_end"))   p.streak_end   = d["streak_end"].cast<float>();
+              if (d.contains("ring_rise"))    p.ring_rise    = d["ring_rise"].cast<float>();
               if (d.contains("tint")) {
                   auto t = d["tint"].cast<std::tuple<float, float, float>>();
                   p.tint = {std::get<0>(t), std::get<1>(t), std::get<2>(t)};
@@ -6190,7 +6192,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           py::arg("params"),
           "Warp-in flash look (the \"warp in\" dials): dict with any of "
-          "core_radii, streak_radii, ring_radii, intensity, tint ((r,g,b)). "
+          "core_radii, streak_radii, ring_radii, intensity, streak_end, "
+          "ring_rise (fractions of the life), tint ((r,g,b)). "
           "Absent keys keep their value.");
 
     m.def("set_hit_vfx",

@@ -15,13 +15,19 @@ DEFAULTS: dict = {
     "tint_g": 0.85,
     "tint_b": 1.0,
     "fallback_radius_gu": 2.0,
+    # Timing (fractions of the flash life). Defaults = kStreakEnd / kRingRise
+    # in native renderer/warp_in_flash_shape.h.
+    "streak_end": 0.9,
+    "ring_rise": 0.05,
 }
 DIAL_ORDER: tuple = tuple(DEFAULTS)
 _STEP = {"slide_radii": 0.5, "core_radii": 0.5, "streak_radii": 0.5,
          "ring_radii": 0.5, "intensity": 0.5, "life_frac": 0.05,
          "tint_r": 0.05, "tint_g": 0.05, "tint_b": 0.05,
-         "fallback_radius_gu": 0.25}
-_MAX = {"tint_r": 1.0, "tint_g": 1.0, "tint_b": 1.0}
+         "fallback_radius_gu": 0.25, "streak_end": 0.05, "ring_rise": 0.01}
+_MAX = {"tint_r": 1.0, "tint_g": 1.0, "tint_b": 1.0, "streak_end": 1.0}
+# Floors above 0: both are divisors / smoothstep edges in the shape.
+_MIN = {"streak_end": 0.05, "ring_rise": 0.01}
 
 _dials: dict = dict(DEFAULTS)
 
@@ -41,7 +47,8 @@ def current() -> dict:
 
 def _step(name: str, direction: int) -> None:
     v = _dials[name] + (_STEP[name] if direction > 0 else -_STEP[name])
-    _dials[name] = min(_MAX.get(name, float("inf")), max(0.0, round(v, 4)))
+    _dials[name] = min(_MAX.get(name, float("inf")),
+                       max(_MIN.get(name, 0.0), round(v, 4)))
 
 
 def register() -> None:

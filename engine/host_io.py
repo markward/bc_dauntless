@@ -312,7 +312,7 @@ def set_warp_in_flashes(items: list) -> None:
 
 def set_warp_in_flash_params(params: dict) -> None:
     """The "warp in" dial look: core_radii, streak_radii, ring_radii,
-    intensity, tint (r, g, b)."""
+    intensity, streak_end, ring_rise, tint (r, g, b)."""
     if _h is None:
         return
     _h.set_warp_in_flash_params(params)

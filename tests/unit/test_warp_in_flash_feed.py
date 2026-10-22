@@ -79,6 +79,8 @@ def test_params_are_the_warp_in_dials():
         "streak_radii": warp_in_dials.DEFAULTS["streak_radii"],
         "ring_radii": warp_in_dials.DEFAULTS["ring_radii"],
         "intensity": warp_in_dials.DEFAULTS["intensity"],
+        "streak_end": warp_in_dials.DEFAULTS["streak_end"],
+        "ring_rise": warp_in_dials.DEFAULTS["ring_rise"],
         "tint": (warp_in_dials.DEFAULTS["tint_r"], 0.5,
                  warp_in_dials.DEFAULTS["tint_b"]),
     }
