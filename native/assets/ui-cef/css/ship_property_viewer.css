@@ -903,3 +903,30 @@
 .spv-ctxmenu__item--inert:hover {
     background: transparent;
 }
+
+/* ---- Running lights (spec 2026-10-22 section 2) --------------------------
+   The "+ Add" row at the foot of the Functional list, and the Add modal's
+   page-drawn Type dropdown (CEF OSR draws no native <select>): a modal
+   button over a static .spv-ctxmenu list. Everything else in the modal is
+   the existing spv-modal / spv-stepper / spv-shape / spv-wheel-row idiom. */
+.spv-add-row {
+    border-top: 1px solid rgba(255, 230, 160, 0.25);
+    margin-top: 4px;
+    padding-top: 5px;
+}
+
+.spv-add-row .spv-sys-row__name { color: rgb(255, 200, 60); }
+
+.spv-dd { margin: 12px 14px 4px; }
+.spv-dd__label { color: #cdd3dc; font-size: 12px; margin-bottom: 4px; }
+
+.spv-dd__btn {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+    box-sizing: border-box;
+    text-align: left;
+}
+
+.spv-dd .spv-ctxmenu { position: static; margin-top: 2px; }
+#spv-add .spv-modal__row { margin-top: 8px; }

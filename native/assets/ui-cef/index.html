@@ -542,8 +542,10 @@
       <!-- Toast (Task 7, spec section 7.4): a transient message at the
            top-centre of the SPV -- e.g. the "add an anchor first" refusal
            when Add State Transformation is used with no anchor yet. Shown
-           only while payload.model_parts.toast is a non-empty string;
-           renderSPVModelParts is the sole writer. -->
+           only while payload.model_parts.toast is a non-empty string or,
+           failing that, while a running light is being placed
+           (payload.running_lights.hint); renderSPVModelParts is the sole
+           writer. -->
       <div id="spv-toast" class="spv-toast" style="display:none;"></div>
       <!-- Right-click context menu on a subsystem row → "Set Radius…" opens
            the radius modal below. The Save bar surfaces staged edits
@@ -582,6 +584,10 @@
         <div id="spv-ctx-reset" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerPhysReset()">Reset to Auto</div>
         <div id="spv-ctx-moveall" class="spv-ctxmenu__item" style="display:none;" data-mode="moveall" onclick="shipPropertyViewerPhysOpenSub(this)">Move all to &#9656;</div>
         <div id="spv-ctx-resetall" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerPhysResetAll()">Reset all to Auto</div>
+        <!-- Running-light row (spec 2026-10-22 section 2): Edit… reopens
+             #spv-add as "Edit Running Light"; Remove stages a removal. -->
+        <div id="spv-ctx-rledit" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxRlEdit()">Edit…</div>
+        <div id="spv-ctx-rlremove" class="spv-ctxmenu__item" style="display:none;" onclick="shipPropertyViewerCtxRlRemove()">Remove</div>
       </div>
       <!-- Physical tab "Move to" / "Move all to" submenu: a second ctxmenu
            positioned at the parent menu's right edge; items are built by JS. -->
@@ -706,6 +712,28 @@
           <div class="spv-modal__row">
             <button class="spv-modal__btn" onclick="shipPropertyViewerEmitterCancel()">Cancel</button>
             <button class="spv-modal__btn spv-modal__btn--primary" onclick="shipPropertyViewerEmitterApply()">Apply</button>
+          </div>
+        </div>
+      </div>
+      <!-- Add modal (spec 2026-10-22 section 2), opened by the "+ Add" row.
+           CEF OSR draws no native <select>, so the Type dropdown is drawn
+           in the page: a modal button plus a static .spv-ctxmenu list (the
+           Bridge Editor's Add Modifier menu is the precedent). Picking a
+           type renders that type's form into #spv-add-form (SPV_ADD_TYPES
+           in ship_property_viewer.js); there is no Next button. Edit reuses
+           the modal with the dropdown hidden and Apply as the primary. -->
+      <div id="spv-add" class="spv-modal-backdrop" style="display:none;">
+        <div class="spv-modal">
+          <div id="spv-add-title" class="spv-modal__title">Add</div>
+          <div id="spv-add-dd" class="spv-dd">
+            <div id="spv-add-dd-label" class="spv-dd__label">Type</div>
+            <button class="spv-modal__btn spv-dd__btn" onclick="shipPropertyViewerAddDdToggle()"><span id="spv-add-dd-text">Choose…</span><span>&#9662;</span></button>
+            <div id="spv-add-dd-menu" class="spv-ctxmenu" style="display:none;"></div>
+          </div>
+          <div id="spv-add-form"></div>
+          <div class="spv-modal__row">
+            <button class="spv-modal__btn" onclick="shipPropertyViewerAddCancel()">Cancel</button>
+            <button id="spv-add-ok" class="spv-modal__btn spv-modal__btn--primary" style="display:none;" onclick="shipPropertyViewerAddSubmit()">Place on hull</button>
           </div>
         </div>
       </div>
