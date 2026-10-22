@@ -159,6 +159,9 @@ From the clean-room reference (all `reviewed-not-tested`):
 6. **Late ships get their AI on arrival,** the way the missions do: straight
    after `CreateShip`, using the group's difficulty, the same AI module
    `generate_ships` would have chosen, and the same `g_kShips` record.
+7. **The crew calls out Quick Battle arrivals** with BC's own existing voice
+   lines (§6.7). Campaign missions already script their own callouts, so
+   nothing is added there.
 
 ## 3. Non-goals
 
@@ -198,6 +201,7 @@ From the clean-room reference (all `reviewed-not-tested`):
 | During the slide | The ship holds its heading and holds fire until it has fully arrived, but can be targeted throughout. |
 | Delay control | A − and + button either side of the value; click the value to type a number; any whole number is accepted. |
 | Flash look | Generated in a shader (core, streak along the line of travel, ring), not BC's 64×64 flipbook. |
+| Crew callouts | Quick Battle arrivals use BC's existing voice lines (§6.7); no new recordings. |
 
 ## 6. Design
 
@@ -430,6 +434,7 @@ and **late** orders.
      `__import__(ai).CreateAI(ship)` and `SetAI(..., 0, 0)`, exactly as
      `StartSimulation2` does (`QuickBattle.py:3112-3124`).
    - Do **not** count the ship again; it was counted at the start.
+   - Once the whole group is in, the crew calls it out (§6.7).
 4. **If a ship fails to spawn,** log it and **un-count it**: decrement the
    count it was pre-added to. If that brings `g_iNumEnemies` to 0 while the
    battle is running, run the same win path `ShipDestroyed` uses. A broken
@@ -478,6 +483,59 @@ too, but Quick Battle can do better because it knows the roster at start.
   Record the result as a signal in `docs/engine/perf-register.md`.
 - **Campaign warp-ins are not preloaded** in this design. If the measurement
   shows a hitch for them too, it goes in the register as a follow-up.
+
+### 6.7 Quick Battle: crew callouts (Mark, 2026-10-22)
+
+When a late group arrives, the crew calls it out with **BC's existing voice
+lines** from `data/TGL/Bridge Crew General.TGL`. All the voice files and their
+lip-sync files are present. No new lines are recorded or authored.
+
+**Enemies: the tactical officer** (Felix; Korbus on a bridge whose tactical
+officer uses `Korbus Bridge General.tgl`, through that character's own
+database). These are the lines E6M1, E6M4 and E6M5 use for warp-in
+reinforcements. N is the number of enemy ships that actually spawned:
+
+| Condition | Key | Line |
+|---|---|---|
+| Enemies are already in play (any live enemy in the battle) | `Incoming6` | "More enemy vessels have entered the area Captain." |
+| Otherwise, N = 1 | `Incoming1` | "One hostile entering the system, sir." |
+| N = 2 | `Incoming2` | "Two enemies warping in, Captain." |
+| N = 3 | `Incoming3` | "Three hostile ships entering the system." |
+| N = 4 | `Incoming4` | "I'm reading four enemy ships entering the system." |
+| N ≥ 5 | `Incoming5` | "Several enemy ships have entered the system." |
+
+The "already in play" rule is E6M1's choice for its second wave.
+
+**Friendlies and neutrals: the science officer.**
+
+- The line is `gs025`, "Sensors are detecting a vessel in this system." It is
+  the only generic arrival line BC has that isn't about enemies. Every
+  friendly-arrival line in the game is tied to a mission.
+- *Our call*, as Mark's "plug in those existing lines": one line per arrival,
+  whatever the count, even though the line says "a vessel".
+
+**How:**
+
+- Exactly as QuickBattle speaks its own lines:
+  `App.CharacterAction_Create(<character>, App.CharacterAction.AT_SAY_LINE,
+  key, "Captain", 1, <general database>)`, played in a sequence
+  (`QuickBattle.py:3348, 3433`).
+- The characters come from the bridge: `CharacterClass_GetObject(bridge,
+  "Tactical")` / `"Science"`.
+- The general database is QuickBattle's `g_pGeneralDatabase`
+  (`QuickBattle.py:709`), or the speaking character's own database where it
+  has one, as Korbus does.
+
+**When:**
+
+- Once the group's ships are created, as the missions do; they speak right
+  after `CreateShip`.
+- One line per side per arrival tick: two enemy groups landing together give
+  one enemy line with their combined count.
+- If no ship of that side spawned, there is no line.
+- If the character or database is missing, skip quietly and log it.
+- The "Exit Warp" sound and the line can overlap; that is how the campaign
+  plays.
 
 ## 7. Testing
 
@@ -530,6 +588,13 @@ Focused tests only; never the whole suite or the gate (CLAUDE.md).
     un-counted, so the battle stays winnable.
   - **Quick Battle, no delays:** today's spawn and placement output is
     byte-identical.
+  - **Quick Battle, callouts:**
+    - each enemy row of the §6.7 table picks the right key;
+    - an arrival while enemies are already in play picks `Incoming6`;
+    - a friendly or neutral arrival picks `gs025`;
+    - a mixed arrival in the same tick gives one line per side;
+    - no ships spawned means no line;
+    - a missing character skips quietly.
 - **Stub heatmap:** the stubbed names above should leave
   `docs/stub_heatmap.md` once it is regenerated.
 
@@ -541,7 +606,8 @@ From the worktree: `./build/dauntless --developer`.
    - one enemy group at Start and one at 1 min;
    - kill the first group: no victory;
    - the second group flashes in near you about a minute in, from a random
-     side;
+     side, and Felix calls it out ("More enemy vessels have entered the
+     area");
    - kill it: victory.
 2. **Campaign:** a mission with warp-in reinforcements, through the Developer
    mission picker. E5M4's pursuers or E6M1's Artrus waves.
