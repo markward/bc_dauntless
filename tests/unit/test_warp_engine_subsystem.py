@@ -71,3 +71,77 @@ def test_set_warp_state_not_warping_cancels_a_pending_transition():
     w.tick_transition(0.0)
     assert w.GetWarpState() == WarpEngineSubsystem.WES_NOT_WARPING
     assert w.__dict__.get("_transition_remaining") is None
+
+
+# --- warp-in placement + exit point -------------------------------------
+
+def _ship_with_radius(radius):
+    from engine.appc.ships import ShipClass
+    s = ShipClass()
+    sub = WarpEngineSubsystem("Warp Engines")
+    s.SetWarpEngineSubsystem(sub)
+    s.SetRadius(radius)
+    return s, sub
+
+
+def _placement(x, y, z):
+    from engine.appc.placement import PlacementObject
+    p = PlacementObject()
+    p.SetTranslateXYZ(x, y, z)
+    return p
+
+
+def test_placement_round_trip():
+    w = _warp()
+    assert w.GetPlacement() is None
+    p = _placement(1, 2, 3)
+    w.SetPlacement(p)
+    assert w.GetPlacement() is p
+    w.SetPlacement(None)
+    assert w.GetPlacement() is None
+
+
+def test_exit_point_is_behind_the_placement():
+    s, sub = _ship_with_radius(2.0)
+    p = _placement(100, 0, 0)
+    sub.SetPlacement(p)
+    loc = sub.GetWarpExitLocation()
+    assert (loc.x, loc.y, loc.z) == pytest.approx((100.0, -20.0, 0.0), abs=1e-5)
+    rot, prot = sub.GetWarpExitRotation(), p.GetWorldRotation()
+    for i in range(3):
+        c, pc = rot.GetCol(i), prot.GetCol(i)
+        assert (c.x, c.y, c.z) == pytest.approx((pc.x, pc.y, pc.z), abs=1e-5)
+
+
+def test_exit_point_without_placement_is_the_ship():
+    s, sub = _ship_with_radius(2.0)
+    s.SetTranslateXYZ(5, 6, 7)
+    loc = sub.GetWarpExitLocation()
+    assert (loc.x, loc.y, loc.z) == pytest.approx((5.0, 6.0, 7.0), abs=1e-5)
+    rot, srot = sub.GetWarpExitRotation(), s.GetWorldRotation()
+    for i in range(3):
+        c, sc = rot.GetCol(i), srot.GetCol(i)
+        assert (c.x, c.y, c.z) == pytest.approx((sc.x, sc.y, sc.z), abs=1e-5)
+
+
+def test_exit_methods_are_real_surface():
+    from engine.core.ids import implements
+    w = _warp()
+    for n in ("SetPlacement", "GetPlacement", "GetWarpExitLocation",
+              "GetWarpExitRotation"):
+        assert implements(w, n)
+
+
+def test_warp_in_radius_uses_seeder_when_zero():
+    from engine.appc import warp_state
+    s, _ = _ship_with_radius(0.0)
+    warp_state.set_radius_seeder(lambda ship: ship.SetRadius(3.5))
+    assert warp_state.warp_in_radius(s) == 3.5
+
+
+def test_warp_in_radius_falls_back_to_dial():
+    from engine.appc import warp_state
+    s, _ = _ship_with_radius(0.0)
+    assert warp_state.warp_in_radius(s) == 2.0
+    warp_state.set_radius_seeder(lambda ship: 1 / 0)   # logged, not raised
+    assert warp_state.warp_in_radius(s) == 2.0

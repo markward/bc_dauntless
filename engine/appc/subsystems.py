@@ -1713,6 +1713,34 @@ class WarpEngineSubsystem(PoweredSubsystem):
         # transition is pending. See TransitionToState / tick_transition.
         self._transition_remaining = None
 
+    def SetPlacement(self, placement) -> None:
+        """The PlacementObject this ship arrives at (warp-in spec 6.1)."""
+        self._placement = placement
+
+    def GetPlacement(self):
+        return getattr(self, "_placement", None)
+
+    def GetWarpExitLocation(self):
+        """Where an arriving ship starts its slide: the placement's location,
+        pulled back along the placement's forward (GetCol(1)) by
+        slide_radii x the ship's radius. With no placement, the ship itself."""
+        from engine.appc import warp_in_dials, warp_state
+        ship = self.GetParentShip()
+        placement = self.GetPlacement()
+        if placement is None:
+            return ship.GetWorldLocation()
+        loc = placement.GetWorldLocation()
+        fwd = placement.GetWorldRotation().GetCol(1)
+        d = warp_in_dials.get("slide_radii") * warp_state.warp_in_radius(ship)
+        from engine.appc.math import TGPoint3
+        return TGPoint3(loc.x - fwd.x * d, loc.y - fwd.y * d, loc.z - fwd.z * d)
+
+    def GetWarpExitRotation(self):
+        placement = self.GetPlacement()
+        if placement is None:
+            return self.GetParentShip().GetWorldRotation()
+        return placement.GetWorldRotation()
+
     def GetWarpSequence(self):
         return self._warp_sequence
 

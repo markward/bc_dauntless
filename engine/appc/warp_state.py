@@ -33,6 +33,34 @@ from engine.appc.ships import ShipClass
 _flythrough_ships = []
 
 
+# Warp-in slide distance is scaled by ship radius, but ships report
+# GetRadius() == 0 until realised. The host installs a seeder that loads the
+# model; tests/headless fall back to the "fallback_radius_gu" dial.
+_radius_seeder = None
+
+
+def set_radius_seeder(fn) -> None:
+    global _radius_seeder
+    _radius_seeder = fn
+
+
+def warp_in_radius(ship) -> float:
+    r = ship.GetRadius()
+    if r > 0.0:
+        return r
+    if _radius_seeder is not None:
+        try:
+            _radius_seeder(ship)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("warp-in radius seeder failed")
+        r = ship.GetRadius()
+        if r > 0.0:
+            return r
+    from engine.appc import warp_in_dials
+    return warp_in_dials.get("fallback_radius_gu")
+
+
 def _warp_subsystem(ship):
     """The ship's WarpEngineSubsystem, or None. Ships can legitimately be built
     without one, and GetWarpEngineSubsystem() then returns a real None."""

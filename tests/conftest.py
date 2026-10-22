@@ -937,6 +937,14 @@ def _reset_leakable_engine_globals():
         _mods.configure(None)
     except Exception:
         pass
+    # Warp-in: radius seeder hook + live dial values are module globals.
+    try:
+        from engine.appc import warp_in_dials as _warp_in_dials
+        from engine.appc import warp_state as _warp_state_mod
+        _warp_in_dials.reset()
+        _warp_state_mod.set_radius_seeder(None)
+    except Exception:
+        pass
     # Warp preload: begin/active/end hold one module-global Preload.
     try:
         from engine import warp_preload as _warp_preload
