@@ -163,6 +163,12 @@ uniform vec3 u_area_v[MAX_AREA_LIGHTS];
 uniform vec3 u_area_radiance[MAX_AREA_LIGHTS];
 uniform int  u_area_joins[MAX_AREA_LIGHTS];   // spec §16.8: pbr::area_join_weight's bits
 
+// Per-draw culling (renderer::bridge_cull): bit i set = light i cannot reach
+// any point of this mesh, so it is skipped before its per-pixel setup.
+// 0 (the default) skips nothing.
+uniform int u_spot_skip;
+uniform int u_area_skip;
+
 out vec4 FragColor;
 
 // Integer hash (Squirrel3-style, as used by the bridge-lighting debug-view
@@ -348,6 +354,7 @@ float spot_cone(float cos_angle, float cos_outer, float cos_inner) {
 void accumulate_spots(vec3 N, vec3 V, float NdotV, vec3 albedo, float metal,
                       float rough, vec3 F0, inout vec3 diffuse, inout vec3 spec) {
     for (int i = 0; i < u_spot_count; ++i) {
+        if (((u_spot_skip >> i) & 1) != 0) continue;
         vec3 Lv = u_spot_pos[i] - v_world;
         float d = length(Lv);
         vec3 L = Lv / max(d, 1e-4);
@@ -378,10 +385,20 @@ float range_window(float d, float range) {
     return w * w;
 }
 
+// theta / sin(theta) for cos(theta) = x: Heitz's fitted IntegrateEdge, no
+// acos / sin (pbr::area_theta_over_sin; perf-register SIG-138).
+float area_theta_over_sin(float x) {
+    float y = abs(x);
+    float a = 0.8543985 + (0.4965155 + 0.0145206 * y) * y;
+    float b = 3.4175940 + (4.1616724 + y) * y;
+    float v = a / b;
+    float t = (x > 0.0) ? v : 0.5 * inversesqrt(max(1.0 - x * x, 1e-7)) - v;
+    return 2.0 * kPi * t;
+}
+
 float area_integrate_edge(vec3 v1, vec3 v2) {
     float cos_t = clamp(dot(v1, v2), -1.0, 1.0);
-    float theta = acos(cos_t);
-    return cross(v1, v2).z * ((theta > 0.001) ? theta / sin(theta) : 1.0);
+    return cross(v1, v2).z * area_theta_over_sin(cos_t);
 }
 
 // Heitz's ClipQuadToHorizon (tangent space, z up). Returns the vertex count.
@@ -476,6 +493,7 @@ float area_join_weight(vec3 p, vec3 r, vec3 c, vec3 u, vec3 nl, int joins, float
 void accumulate_area_lights(vec3 N, vec3 V, float NdotV, vec3 albedo, float metal,
                             float rough, vec3 F0, inout vec3 diffuse, inout vec3 spec) {
     for (int i = 0; i < u_area_count; ++i) {
+        if (((u_area_skip >> i) & 1) != 0) continue;
         vec3 c = u_area_center_range[i].xyz;
         vec3 u = u_area_u[i], v = u_area_v[i];
         // Zero-area early-out, before normalising (pbr::area_light's NaN guard).

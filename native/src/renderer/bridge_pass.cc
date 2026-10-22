@@ -1,5 +1,6 @@
 // native/src/renderer/bridge_pass.cc
 #include "renderer/bridge_pass.h"
+#include "renderer/bridge_light_cull.h"
 #include "renderer/bridge_lighting_tuning.h"
 #include "renderer/bridge_probe_schedule.h"
 #include "renderer/frame_timer.h"
@@ -30,6 +31,7 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -427,6 +429,10 @@ void BridgePass::render(const scenegraph::World& world,
         s.set_vec2("u_ao_screen", glm::vec2(static_cast<float>(view_vp[2]),
                                             static_cast<float>(view_vp[3])));
         s.set_int("u_ao_on", ao_on ? 1 : 0);
+        // Per-draw culling masks: set per mesh by sub-pass A; the officers
+        // (sub-pass B) skip nothing.
+        s.set_int("u_spot_skip", 0);
+        s.set_int("u_area_skip", 0);
         s.set_int("u_output_normal", normal_pass_ ? 1 : 0);
         s.set_int("u_debug_view", static_cast<int>(debug_view_));
         // Selection pulse phase: a real clock, once per sub-pass.
@@ -479,6 +485,12 @@ void BridgePass::render(const scenegraph::World& world,
     // every render() call so numbering is stable within a frame.
     int mesh_id_counter = 0;
 
+    // The main view's two sub-passes are timed apart; the AO pre-pass and the
+    // probe faces re-enter here inside their own scopes.
+    const bool time_main = main_bridge && !normal_pass_ && !capture_pass_;
+    std::optional<ScopedFrameTimer> sub_scope;
+    if (time_main) sub_scope.emplace(frame_timer(), "bridge.shell");
+
     // ── Sub-pass A: base geometry, opaque, downlit, alpha-test ─────────────
     auto& base_shader = pipeline.bridge_shader();
     base_shader.use();
@@ -517,11 +529,30 @@ void BridgePass::render(const scenegraph::World& world,
     std::unordered_map<int, const BridgeGlowCapture*> capture_glow;
     if (capture_pass_ && glow_capture_model_ != 0)
         for (const auto& g : glow_captures_) capture_glow[g.mesh] = &g;
-    walk_bridge_meshes(world, lookup, pass, comm_set_id,
-        [&](const assets::Model& m, const assets::Mesh& mesh,
+    // Per-draw light culling (renderer::bridge_cull): each mesh's world box
+    // against every light, so the shader skips lights that light none of it.
+    const bool cull_lights = !normal_pass_ && (spot_count > 0 || area_count > 0);
+    auto draw_shell = [&](const assets::Model& m, const assets::Mesh& mesh,
             const assets::Material& mat, const glm::mat4& w,
             unsigned long long mh) {
             const auto [ov, flip] = viewscreen_override(mh);
+            if (cull_lights) {
+                int spot_skip = 0, area_skip = 0;
+                const Aabb& box = mesh_box(mh, m, static_cast<int>(&mesh - m.meshes.data()));
+                if (box.valid) {
+                    glm::vec3 lo, hi;
+                    bridge_cull::transform_box(w, box.min, box.max, lo, hi);
+                    for (int i = 0; i < spot_count; ++i)
+                        if (!bridge_cull::spot_can_reach(lo, hi, spot_pos[i], spot_params[i].z))
+                            spot_skip |= static_cast<int>(1u << i);
+                    for (int i = 0; i < area_count; ++i)
+                        if (!bridge_cull::area_can_reach(lo, hi, glm::vec3(area_cr[i]), area_u[i],
+                                                         area_v[i], area_cr[i].w))
+                            area_skip |= static_cast<int>(1u << i);
+                }
+                base_shader.set_int("u_spot_skip", spot_skip);
+                base_shader.set_int("u_area_skip", area_skip);
+            }
             int hl = 0;
             if (highlight_model_ != 0 && mh == highlight_model_) {
                 const int mi = static_cast<int>(&mesh - m.meshes.data());
@@ -572,9 +603,14 @@ void BridgePass::render(const scenegraph::World& world,
                       /*face_mix=*/0.0f, mesh_id_counter++, hl,
                       pbr, rough_ov, metal_ov, emissive_alert,
                       glow_src, glow_rgb, glow_level, cap_glow_src, cap_glow_rgb);
-        });
+        };
+    walk_bridge_meshes(world, lookup, pass, comm_set_id, draw_shell);
+    base_shader.set_int("u_spot_skip", 0);
+    base_shader.set_int("u_area_skip", 0);
 
     // ── Sub-pass B: skinned bridge characters ──────────────────────────────
+    sub_scope.reset();
+    if (time_main) sub_scope.emplace(frame_timer(), "bridge.crew");
     // A probe capture is sub-pass A only: officers are never in the probes.
     if (!capture_pass_) {
         // Any Pass::Bridge instance carrying a skeleton is drawn here, lit by the
@@ -631,6 +667,7 @@ void BridgePass::render(const scenegraph::World& world,
                 }
             });
     }
+    sub_scope.reset();
 
     glBindVertexArray(0);
     // The PBR map units (bound per draw) never leak to the next pass.
@@ -1094,6 +1131,25 @@ const BridgePass::Aabb& BridgePass::model_box(unsigned long long handle,
         }
     }
     return model_boxes_.emplace(handle, box).first->second;
+}
+
+const BridgePass::Aabb& BridgePass::mesh_box(unsigned long long handle,
+                                             const assets::Model& m, int mesh_idx) {
+    const auto key = std::make_pair(handle, mesh_idx);
+    if (auto it = mesh_boxes_.find(key); it != mesh_boxes_.end()) return it->second;
+    Aabb box;
+    box.min = glm::vec3(std::numeric_limits<float>::max());
+    box.max = glm::vec3(std::numeric_limits<float>::lowest());
+    if (mesh_idx >= 0 && mesh_idx < static_cast<int>(m.meshes.size())) {
+        if (const auto& cpu = m.meshes[static_cast<std::size_t>(mesh_idx)].cpu_data()) {
+            for (const auto& v : cpu->vertices) {
+                box.min = glm::min(box.min, v.position);
+                box.max = glm::max(box.max, v.position);
+                box.valid = true;
+            }
+        }
+    }
+    return mesh_boxes_.emplace(key, box).first->second;
 }
 
 bool BridgePass::update_box(const scenegraph::World& world,

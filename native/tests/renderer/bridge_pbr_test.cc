@@ -198,6 +198,19 @@ TEST(BridgePbrArea, RangeWindowIsTheSpotFalloffWindow) {
                         renderer::pbr::spot_falloff(d, 120.0f));
 }
 
+// The edge integral's theta / sin(theta) is a fitted rational (Heitz's LTC
+// reference IntegrateEdge), not acos + sin: it must agree with the exact
+// value everywhere an edge of a horizon-clipped quad can reach.
+TEST(BridgePbrArea, ThetaOverSinFitMatchesTheExactValue) {
+    for (int i = 0; i <= 4000; ++i) {
+        const float x = -0.999f + 1.998f * static_cast<float>(i) / 4000.0f;
+        const double t = std::acos(static_cast<double>(x));
+        const double exact = t > 1e-6 ? t / std::sin(t) : 1.0;
+        EXPECT_NEAR(renderer::pbr::area_theta_over_sin(x) / exact, 1.0, 1e-5) << x;
+    }
+    EXPECT_NEAR(renderer::pbr::area_theta_over_sin(1.0f), 1.0f, 1e-5f);
+}
+
 TEST(BridgePbrArea, FormFactorMatchesTheAnalyticCornerRectangle) {
     const glm::vec3 c[4] = {{0, 0, 0}, {3, 0, 0}, {3, 2, 0}, {0, 2, 0}};   // emits +z
     EXPECT_NEAR(renderer::pbr::rect_form_factor({0, 0, 1.5f}, {0, 0, -1}, c),
