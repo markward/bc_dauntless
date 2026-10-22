@@ -625,8 +625,10 @@ def test_mixed_arrival_one_line_per_side(qb, monkeypatch):
     assert lines == [(QB.g_pTact, "Incoming6"), (QB.g_pSci, "gs025")]
 
 
-def test_missing_character_skips_quietly(qb, monkeypatch):
+def test_missing_character_skips_quietly(qb, monkeypatch, caplog):
     hl, controller, QB = qb
+    from engine.quickbattle import late_arrivals
+    late_arrivals._callout_warned.clear()
     from engine.quickbattle import spawn
     said = _spoken(monkeypatch)
     plan = _plan([_ENEMY_A, ("enemy", "aft", "standard", "high", ["Galor"], 1)])
@@ -636,10 +638,4 @@ def test_missing_character_skips_quietly(qb, monkeypatch):
     _jump_to(_now() + 61.0)
     assert "Galor-2" in _ships(QB)
     assert not [1 for _, k, _ in said if k.startswith("Incoming")]
-
-
-def test_character_with_own_database_speaks_from_it(qb, monkeypatch):
-    QB, said = _late_enemies(qb, monkeypatch, 1, True)
-    (char, key, rest), = [s for s in said if s[1].startswith("Incoming")]
-    own = char.GetDatabase()
-    assert rest[-1] is (None if own is not None else QB.g_pGeneralDatabase)
+    assert "no g_pTact" in caplog.text

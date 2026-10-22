@@ -122,6 +122,7 @@ def reset() -> None:
     _xo_registered = None
     _ET = None
     _rng = random.Random()
+    _callout_warned.clear()
 
 
 def check_win(qb) -> None:
@@ -159,10 +160,13 @@ def _say(qb, char_attr: str, key: str) -> None:
     if char is None:
         _warn_once("no %s" % char_attr)
         return
-    db = None if char.GetDatabase() is not None else getattr(qb, "g_pGeneralDatabase", None)
-    if db is None and char.GetDatabase() is None:
-        _warn_once("no database for %s" % char_attr)
-        return
+    if char.GetDatabase() is not None:
+        db = None
+    else:
+        db = getattr(qb, "g_pGeneralDatabase", None)
+        if db is None:
+            _warn_once("no database for %s" % char_attr)
+            return
     line = App.CharacterAction_Create(char, App.CharacterAction.AT_SAY_LINE,
                                       key, "Captain", 1, db)
     seq = App.TGSequence_Create()
