@@ -270,7 +270,8 @@ namespace {
 // TEMPORARY perf experiment (perf/bridge-4k): DAUNTLESS_BRIDGE_EXP bitmask,
 // main bridge view only. 1 AO filter off, 2 PBR off, 4 probes off,
 // 8 spots + area lights off, 16 depth pre-fill then LEQUAL / no depth write,
-// 32 spots off, 64 area lights off.
+// 32 spots off, 64 area lights off; in bridge.frag (u_bridge_exp) 128 area
+// diffuse off, 256 area specular off, 512 the old exact acos edge integral.
 int bridge_exp() {
     static const int v = [] {
         const char* e = std::getenv("DAUNTLESS_BRIDGE_EXP");
@@ -454,6 +455,7 @@ void BridgePass::render(const scenegraph::World& world,
         s.set_vec2("u_ao_screen", glm::vec2(static_cast<float>(view_vp[2]),
                                             static_cast<float>(view_vp[3])));
         s.set_int("u_ao_on", (ao_on && !(exp_main & 1)) ? 1 : 0);
+        s.set_int("u_bridge_exp", exp_main);
         s.set_int("u_output_normal", normal_pass_ ? 1 : 0);
         s.set_int("u_debug_view", static_cast<int>(debug_view_));
         // Selection pulse phase: a real clock, once per sub-pass.

@@ -92,10 +92,23 @@ inline void rect_corners(glm::vec3 c, glm::vec3 u, glm::vec3 v, glm::vec3 out[4]
     out[0] = c - u - v; out[1] = c + u - v; out[2] = c + u + v; out[3] = c - u + v;
 }
 
+// theta / sin(theta) for cos(theta) = x, from Heitz's fitted IntegrateEdge
+// (LTC reference code) in place of acos + sin: within 1e-5 of the exact value
+// (bridge_pbr_test), and the area lights' diffuse runs it 4-5 times per light
+// per pixel (perf-register SIG-134). Below x = 0 it is exact by the identity
+// theta / sin(theta) = pi / sin(theta) - (pi - theta) / sin(theta).
+inline float area_theta_over_sin(float x) {
+    const float y = std::fabs(x);
+    const float a = 0.8543985f + (0.4965155f + 0.0145206f * y) * y;
+    const float b = 3.4175940f + (4.1616724f + y) * y;
+    const float v = a / b;   // (theta / sin(theta)) / 2pi at |x|
+    const float t = (x > 0.0f) ? v : 0.5f / std::sqrt(std::max(1.0f - x * x, 1e-7f)) - v;
+    return 2.0f * kPi * t;
+}
+
 inline float area_integrate_edge(glm::vec3 v1, glm::vec3 v2) {
     const float cos_t = std::clamp(glm::dot(v1, v2), -1.0f, 1.0f);
-    const float theta = std::acos(cos_t);
-    return glm::cross(v1, v2).z * ((theta > 0.001f) ? theta / std::sin(theta) : 1.0f);
+    return glm::cross(v1, v2).z * area_theta_over_sin(cos_t);
 }
 
 // Heitz's ClipQuadToHorizon: clip L[0..3] (tangent space, z up) against

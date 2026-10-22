@@ -62,6 +62,9 @@ uniform int       u_output_normal;
 // (u_unlit short-circuits before this is read). u_mesh_id is a per-draw
 // counter set by BridgePass::render, stable within a frame.
 uniform int u_debug_view;
+// TEMPORARY perf experiment (perf/bridge-4k, DAUNTLESS_BRIDGE_EXP): 128 area
+// diffuse off, 256 area specular off, 512 exact acos edge integral.
+uniform int u_bridge_exp;
 uniform int u_mesh_id;
 
 // Developer-only bridge editor selection tint (spec
@@ -378,10 +381,24 @@ float range_window(float d, float range) {
     return w * w;
 }
 
+// theta / sin(theta) for cos(theta) = x: Heitz's fitted IntegrateEdge, no
+// acos / sin (pbr::area_theta_over_sin; perf-register SIG-134).
+float area_theta_over_sin(float x) {
+    float y = abs(x);
+    float a = 0.8543985 + (0.4965155 + 0.0145206 * y) * y;
+    float b = 3.4175940 + (4.1616724 + y) * y;
+    float v = a / b;
+    float t = (x > 0.0) ? v : 0.5 * inversesqrt(max(1.0 - x * x, 1e-7)) - v;
+    return 2.0 * kPi * t;
+}
+
 float area_integrate_edge(vec3 v1, vec3 v2) {
     float cos_t = clamp(dot(v1, v2), -1.0, 1.0);
-    float theta = acos(cos_t);
-    return cross(v1, v2).z * ((theta > 0.001) ? theta / sin(theta) : 1.0);
+    if ((u_bridge_exp & 512) != 0) {
+        float theta = acos(cos_t);
+        return cross(v1, v2).z * ((theta > 0.001) ? theta / sin(theta) : 1.0);
+    }
+    return cross(v1, v2).z * area_theta_over_sin(cos_t);
 }
 
 // Heitz's ClipQuadToHorizon (tangent space, z up). Returns the vertex count.
@@ -487,7 +504,8 @@ void accumulate_area_lights(vec3 N, vec3 V, float NdotV, vec3 albedo, float meta
         float dn = length(near_p - v_world);
         float win = range_window(dn, u_area_center_range[i].w);
         if (win <= 0.0) continue;
-        float ff = rect_form_factor(v_world, N, c - u - v, c + u - v, c + u + v, c - u + v);
+        float ff = (u_bridge_exp & 128) != 0 ? 0.0
+                 : rect_form_factor(v_world, N, c - u - v, c + u - v, c + u + v, c - u + v);
         vec3 Ln = (near_p - v_world) / max(dn, 1e-4);
         // Guarded half-vector: Ln == -V on the degenerate on-plane case would
         // otherwise normalize a zero vector (pbr::area_light's other NaN guard).
@@ -497,6 +515,7 @@ void accumulate_area_lights(vec3 N, vec3 V, float NdotV, vec3 albedo, float meta
         vec3 Fd = F_schlick(max(dot(V, Hd), 0.0), F0) * u_reflectance;
         vec3 rad = u_area_radiance[i] * win;
         diffuse += (vec3(1.0) - Fd) * (1.0 - metal) * albedo * rad * ff;
+        if ((u_bridge_exp & 256) != 0) continue;
         vec3 rep = rect_representative(v_world, reflect(-V, N), c, u, v);
         float d = max(length(rep - v_world), 1e-4);
         vec3 L = (rep - v_world) / d;
