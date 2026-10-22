@@ -97,4 +97,18 @@ std::vector<SeveredSplit> split_severed_parts(scenegraph::World& world,
                                               SeveranceStats* stats = nullptr,
                                               bool skinned = false);
 
+// Every solid (labelled) voxel of the hull: SeveredSplit::total_voxels.
+int solid_voxels(const voxel::StructureSegmentation& seg);
+
+// The main-thread half of a split: instance a chunk per piece (exactly as
+// split_severed_parts does), OR its parts into parent.severed_parts, and
+// stamp parent.part_check with `deck_break` and the store's current revision.
+// `pieces` must come from find_severed_parts on the parent's CURRENT damage
+// and severed parts (the caller checks; part_severance_jobs.h drops a stale
+// result instead). A stale parent id does nothing.
+std::vector<SeveredSplit> apply_severed_pieces(scenegraph::World& world,
+                                               scenegraph::InstanceId parent,
+                                               const std::vector<SeveredPiece>& pieces,
+                                               int total_voxels, float deck_break);
+
 }  // namespace renderer

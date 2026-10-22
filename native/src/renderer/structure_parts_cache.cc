@@ -21,7 +21,9 @@ namespace {
 
 struct Entry {
     std::future<voxel::StructureSegmentation> job;
-    voxel::StructureSegmentation seg;
+    // Shared: a severance job (part_severance_jobs) holds its own reference,
+    // so replacing an entry (the test seam) never frees a running job's input.
+    std::shared_ptr<const voxel::StructureSegmentation> seg;
     bool ready = false;
 };
 
@@ -110,7 +112,7 @@ void prefetch_structure_parts(const std::filesystem::path& source) {
     start_locked(source);
 }
 
-const voxel::StructureSegmentation* structure_segmentation_for(
+std::shared_ptr<const voxel::StructureSegmentation> structure_segmentation_shared(
     const std::filesystem::path& source) {
     if (source.empty()) return nullptr;
     std::lock_guard<std::mutex> lock(g_mu);
@@ -118,12 +120,19 @@ const voxel::StructureSegmentation* structure_segmentation_for(
     if (!slot.ready) {
         if (slot.job.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
             return nullptr;
-        slot.seg = slot.job.get();
+        slot.seg = std::make_shared<const voxel::StructureSegmentation>(slot.job.get());
         slot.ready = true;
         std::fprintf(stderr, "[plating] %zu structure parts for %s\n",
-                     slot.seg.parts.size(), source.string().c_str());
+                     slot.seg->parts.size(), source.string().c_str());
     }
-    return &slot.seg;
+    return slot.seg;
+}
+
+const voxel::StructureSegmentation* structure_segmentation_for(
+    const std::filesystem::path& source) {
+    // The entry keeps its own reference: the pointer stays valid as long as
+    // the entry does (it is never replaced outside the test seam).
+    return structure_segmentation_shared(source).get();
 }
 
 const std::vector<voxel::StructurePart>* structure_parts_for(
@@ -141,7 +150,7 @@ void set_structure_segmentation_for_test(const std::filesystem::path& source,
                                          voxel::StructureSegmentation seg) {
     std::lock_guard<std::mutex> lock(g_mu);
     auto slot = std::make_unique<Entry>();
-    slot->seg = std::move(seg);
+    slot->seg = std::make_shared<const voxel::StructureSegmentation>(std::move(seg));
     slot->ready = true;
     g_cache[source.string()] = std::move(slot);
 }

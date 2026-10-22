@@ -237,6 +237,7 @@ add_library(renderer STATIC
     structure_parts_cache.cc
     plating_damage.cc
     part_severance_check.cc
+    part_severance_jobs.cc
     subsystem_pin_pass.cc
     debug_volume_pass.cc
     gizmo_pass.cc

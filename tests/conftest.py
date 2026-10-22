@@ -1350,6 +1350,7 @@ def _reset_leakable_engine_globals():
         ("engine.appc.hull_breakup", "_last_wear_check"),
         ("engine.appc.hull_breakup", "_severed"),
         ("engine.appc.hull_breakup", "_part_labels"),
+        ("engine.appc.hull_breakup", "_awaiting"),
     ):
         try:
             _m = sys.modules.get(_mod)

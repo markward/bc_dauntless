@@ -16,6 +16,7 @@
 #pragma once
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <vector>
 
 #include <voxel/structure_parts.h>
@@ -39,6 +40,12 @@ void prefetch_structure_parts(const std::filesystem::path& source);
 // The whole segmentation (volume + labels + parts); same async job and entry
 // as structure_parts_for. nullptr until ready.
 const voxel::StructureSegmentation* structure_segmentation_for(
+    const std::filesystem::path& source);
+
+// The same segmentation as a shared reference: what a worker that outlives
+// the call holds (the severance check, part_severance_jobs.h). nullptr until
+// ready. Immutable once ready.
+std::shared_ptr<const voxel::StructureSegmentation> structure_segmentation_shared(
     const std::filesystem::path& source);
 
 const std::vector<voxel::StructurePart>* structure_parts_for(

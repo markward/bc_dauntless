@@ -218,20 +218,31 @@ std::vector<SeveredSplit> split_severed_parts(scenegraph::World& world,
     if (stats != nullptr) ++stats->checks;
     const std::vector<SeveredPiece> pieces =
         find_severed_parts(seg, dmg, deck_break, unhideable, p->severed_parts);
+    return apply_severed_pieces(world, parent, pieces, pieces.empty() ? 0 : solid_voxels(seg),
+                                deck_break);
+}
+
+int solid_voxels(const voxel::StructureSegmentation& seg) {
+    int total = 0;
+    for (const std::int16_t lab : seg.label) total += lab >= 0 ? 1 : 0;
+    return total;
+}
+
+std::vector<SeveredSplit> apply_severed_pieces(scenegraph::World& world,
+                                               scenegraph::InstanceId parent,
+                                               const std::vector<SeveredPiece>& pieces,
+                                               int total_voxels, float deck_break) {
+    std::vector<SeveredSplit> out;
     // Stamped AFTER the split, with the parts it just lost: the same damage
     // re-checked with those parts gone finds nothing new.
     auto stamp = [&] {
         if (scenegraph::Instance* pi = world.get(parent))
             pi->part_check = {true, pi->hull_damage.revision(), pi->severed_parts, deck_break};
     };
-    if (pieces.empty()) {
-        stamp();
-        return out;
-    }
-    int total = 0;
-    for (const std::int16_t lab : seg.label) total += lab >= 0 ? 1 : 0;
+    if (world.get(parent) == nullptr) return out;
     for (const SeveredPiece& sp : pieces) {
-        const scenegraph::InstanceId child = world.create_instance(p->model_handle);
+        const scenegraph::InstanceId child =
+            world.create_instance(world.get(parent)->model_handle);
         // create_instance may grow the store: re-fetch the parent.
         scenegraph::Instance* pi = world.get(parent);
         scenegraph::Instance* ci = world.get(child);
@@ -254,7 +265,7 @@ std::vector<SeveredSplit> split_severed_parts(scenegraph::World& world,
         ci->decals = pi->decals;   // the piece keeps its scorch marks
         ci->shown_parts = sp.parts;
         pi->severed_parts |= sp.parts;
-        out.push_back(SeveredSplit{sp, child, total});
+        out.push_back(SeveredSplit{sp, child, total_voxels});
     }
     stamp();
     return out;

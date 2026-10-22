@@ -26,6 +26,7 @@
 #include <renderer/pipeline.h>
 #include <renderer/plating_damage.h>
 #include <renderer/part_severance_check.h>
+#include <renderer/part_severance_jobs.h>
 #include <renderer/structure_parts_cache.h>
 #include <renderer/bone_palette.h>
 #include <renderer/animation_update.h>
@@ -233,6 +234,11 @@ namespace {
 
 std::unique_ptr<renderer::Window> g_window;
 scenegraph::World g_world;
+// The structure-severance checks running off the main thread
+// (hull_split_parts; part_severance_jobs.h). Keyed by g_world's ids: cleared
+// (without waiting) wherever g_world is reset, and an instance's job is
+// forgotten when it is destroyed.
+renderer::SeveranceJobs g_severance_jobs;
 // The floating render origin (VIEW-space, double). frame() subtracts it from
 // every Space-pass instance's double translation before narrowing to the
 // float matrix the passes read (World::resolve_render_space). Pushed from
@@ -1112,6 +1118,7 @@ void init(int width, int height, const std::string& title) {
     g_pipeline = std::make_unique<renderer::Pipeline>();
     g_submitter = std::make_unique<renderer::FrameSubmitter>();
     g_world = scenegraph::World{};
+    g_severance_jobs.clear();
     g_loaded_models.clear();
     // ModelHandles are reissued from 1 after every g_loaded_models.clear();
     // drop the renderer's per-handle bounding-radius cache in lockstep or a
@@ -1212,6 +1219,7 @@ void shutdown() {
     g_bridge_node_ids.clear();
     g_cache.reset();
     g_world = scenegraph::World{};
+    g_severance_jobs.clear();
     g_backdrop_pass.reset();  // releases sphere + texture caches while the
                               // GL context is still alive.
     g_sun_pass.reset();
@@ -3455,6 +3463,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               g_world.destroy_instance(id);
               if (was_valid) {
                   g_running_lights.erase(id);
+                  g_severance_jobs.forget(id);   // its result is never applied
                   // Purge any bridge node-anim state keyed on this index BEFORE
                   // it can be recycled by a new instance in the same Python step
                   // (the lazy per-frame sweep in update_bridge_node_anims runs
@@ -7813,28 +7822,39 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "dent 1 = impact crumple, 0 = grind scratches).");
 
     m.def("hull_split_parts",
-          [](scenegraph::InstanceId id) {
+          [](scenegraph::InstanceId id) -> py::object {
               py::list out;
               auto* inst = g_world.get(id);
-              if (inst == nullptr) return out;
+              if (inst == nullptr) {
+                  g_severance_jobs.forget(id);
+                  return std::move(out);
+              }
               const assets::Model* model = resolve_model(inst->model_handle);
-              if (model == nullptr || model->source.empty()) return out;
+              if (model == nullptr || model->source.empty()) return std::move(out);
               // nullptr until the background detection lands: try next check.
-              const voxel::StructureSegmentation* seg =
-                  renderer::structure_segmentation_for(model->source);
-              if (seg == nullptr) return out;
-              const renderer::plating::DamageList dl = renderer::plating::build_damage_list(
-                  inst->hull_damage, dauntless_plating::g_params);
-              const std::vector<renderer::SeveredSplit> split = renderer::split_severed_parts(
-                  g_world, id, *seg, dl, dauntless_plating::g_params[24], nullptr,
+              std::shared_ptr<const voxel::StructureSegmentation> seg =
+                  renderer::structure_segmentation_shared(model->source);
+              if (seg == nullptr) return std::move(out);
+              // The check itself runs on a worker (Ruling 10): the first call
+              // queues it, later calls answer None until it lands, then apply it
+              // here on the main thread -- or drop it and re-queue if the
+              // damage or the severed mask moved meanwhile.
+              const renderer::SplitPoll poll = g_severance_jobs.poll(
+                  g_world, id, std::move(seg),
+                  [](const scenegraph::Instance& i) {
+                      return renderer::plating::build_damage_list(i.hull_damage,
+                                                                  dauntless_plating::g_params);
+                  },
+                  dauntless_plating::g_params[24],
                   /*skinned=*/!model->skeleton.bones.empty());
+              if (poll.pending) return py::none();
               inst = g_world.get(id);   // the chunks may have grown the store
-              if (inst == nullptr) return out;
+              if (inst == nullptr) return std::move(out);
               const float s = glm::length(glm::vec3(inst->world[0]));   // model->GU
               auto gu = [s](const glm::vec3& v) {
                   return py::make_tuple(v.x * s, v.y * s, v.z * s);
               };
-              for (const renderer::SeveredSplit& sp : split) {
+              for (const renderer::SeveredSplit& sp : poll.split) {
                   py::dict d;
                   py::list parts;
                   for (int i = 0; i < 32; ++i)
@@ -7850,16 +7870,19 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       0.5f * glm::length(sp.piece.max_body - sp.piece.min_body) * s;
                   out.append(std::move(d));
               }
-              return out;
+              return std::move(out);
           },
           py::arg("instance_id"),
           "Break off every piece the plating wear has cut from the main body "
-          "(renderer::split_severed_parts): a piece's structure parts are "
-          "hidden on the parent and a new instance draws only them. Rocks, "
-          "articulated hulls and hulls whose parts are not detected yet never "
-          "sever. One dict per newly severed piece, body-frame GAME UNITS: "
-          "parts (list of part indices), instance_id, voxels, total_voxels, "
-          "centroid, bounds_min, bounds_max, radius_gu.");
+          "(renderer::find_severed_parts, run on a WORKER: "
+          "renderer/part_severance_jobs.h): a piece's structure parts are "
+          "hidden on the parent and a new instance draws only them. None = the "
+          "check is running (or was just re-queued because the damage moved): "
+          "call again to collect it. Rocks, articulated hulls and hulls whose "
+          "parts are not detected yet never sever. Otherwise one dict per newly "
+          "severed piece, body-frame GAME UNITS: parts (list of part indices), "
+          "instance_id, voxels, total_voxels, centroid, bounds_min, bounds_max, "
+          "radius_gu.");
 
     m.def("structure_part_at",
           [](scenegraph::InstanceId id, std::tuple<float, float, float> body_point_gu) {

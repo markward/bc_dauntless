@@ -263,3 +263,66 @@ def test_subsystems_die_by_structure_part_not_by_box(monkeypatch, spawns):
     dead = {p for p, s in subs.items() if s.IsDestroyed()}
     assert dead == {(1.5, 0.0, 0.0), (1.8, 0.0, 0.0), (5.0, 0.0, 0.0)}
     assert set(asked) == {11}, "labels are read on the parent instance"
+
+
+# ── Ruling 10: the native check runs on a worker ──────────────────────────
+def test_a_running_native_check_is_polled_until_it_lands(monkeypatch, spawns):
+    """hull_split_parts answers None while its worker job runs. The ship must
+    stay awaiting and be polled again -- every frame, not only when more wear
+    lands -- until the job's pieces come back; nothing else polls it."""
+    from engine.appc import hull_breakup
+    replies = [None, None, [_part(1, 21, 600, (1.0, -.5, -.5), (2.0, .5, .5))], []]
+    asked = []
+
+    def fake_split(iid):
+        asked.append(iid)
+        return replies.pop(0)
+    monkeypatch.setattr(host_io, "hull_split_parts", fake_split)
+    ship = _Ship(radius=3.5)
+    assert hull_breakup.after_wear(ship, 11, now=10.0) == []
+    assert asked == [11] and spawns == []
+    # No new wear at all: drain alone must keep polling the running job.
+    hull_breakup.drain(now=10.016)
+    assert asked == [11, 11], "the running job was not re-polled"
+    assert spawns == []
+    hull_breakup.drain(now=10.033)
+    assert asked == [11, 11, 11]
+    assert [c["iid"] for c in spawns] == [21], "the landed job's piece spawned"
+    hull_breakup.drain(now=10.05)
+    hull_breakup.drain(now=20.0)
+    assert asked == [11, 11, 11], "polled again after the job landed"
+
+
+def test_a_running_check_does_not_restart_the_wear_throttle(monkeypatch, spawns):
+    """Polling a running job is not a new check: wear that lands meanwhile is
+    still checked once the window from the ORIGINAL check elapses."""
+    from engine.appc import hull_breakup
+    replies = [None, [], []]
+    asked = []
+    monkeypatch.setattr(host_io, "hull_split_parts",
+                        lambda iid: asked.append(iid) or replies.pop(0))
+    ship = _Ship(radius=3.5)
+    hull_breakup.after_wear(ship, 11, now=10.0)
+    hull_breakup.after_wear(ship, 11, now=10.2)      # inside the window
+    hull_breakup.drain(now=10.3)                     # the job lands: []
+    assert asked == [11, 11]
+    hull_breakup.drain(now=10.0 + hull_breakup.kBreakupCheckInterval)
+    assert asked == [11, 11, 11], "the pending wear check ran on the original window"
+
+
+def test_a_failing_poll_stops_awaiting(monkeypatch, spawns):
+    from engine.appc import hull_breakup
+    replies = [None]
+
+    def fake_split(iid):
+        if replies:
+            return replies.pop(0)
+        raise RuntimeError("stale")
+    monkeypatch.setattr(host_io, "hull_split_parts", fake_split)
+    ship = _Ship(radius=3.5)
+    hull_breakup.after_wear(ship, 11, now=10.0)
+    assert hull_breakup._awaiting
+    hull_breakup.drain(now=10.016)
+    assert hull_breakup._awaiting == {}
+    hull_breakup.reset()
+    assert hull_breakup._awaiting == {}

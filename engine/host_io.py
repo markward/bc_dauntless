@@ -504,7 +504,7 @@ def set_instance_decals(instance_id, decals) -> None:
     _h.set_instance_decals(instance_id, decals)
 
 
-def hull_split_parts(instance_id: int) -> list:
+def hull_split_parts(instance_id: int):
     """Break off every piece the plating wear has cut from the main body of
     `instance_id` (a ship, never a rock or an articulated hull): the structure
     parts that leave together are hidden on the parent and a new renderer
@@ -512,10 +512,15 @@ def hull_split_parts(instance_id: int) -> list:
     piece (body-frame GAME UNITS): parts (list of part indices), instance_id,
     voxels, total_voxels (the whole hull's), centroid, bounds_min,
     bounds_max, radius_gu. A part is reported once. Empty when headless, not
-    ready, or nothing severed."""
+    ready, or nothing severed.
+
+    None = the check is running on a native worker (or was just re-queued
+    because the damage moved): call again later to collect it
+    (hull_breakup's `_awaiting`)."""
     if _h is None:
         return []
-    return list(_h.hull_split_parts(instance_id))
+    parts = _h.hull_split_parts(instance_id)
+    return None if parts is None else list(parts)
 
 
 def structure_part_at(instance_id: int, body_point_gu) -> int:

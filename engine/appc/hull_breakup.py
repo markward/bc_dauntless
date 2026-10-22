@@ -15,6 +15,14 @@ window marks the ship *pending* rather than being dropped, and `drain()`,
 called once per frame from host_loop, runs the deferred check as soon as the
 window has elapsed. A sever detected half a second late is invisible.
 
+The native check itself runs on a worker (final review Ruling 10): the first
+call queues it and answers None, and the ship is then *awaiting*. `drain()`
+polls an awaiting ship EVERY frame -- a poll of an unfinished job is one
+future check, and the job is applied only if the ship's damage has not moved
+since it was queued, so a poll held back to the 0.5 s window would find the
+damage moved under steady fire and never apply. The window still spaces the
+checks the WEAR asks for.
+
 Rocks never sever this way (they crumble: engine.rocks.death), and an
 articulated ship's parts leave through part_severance instead.
 """
@@ -30,6 +38,7 @@ kBreakupCheckInterval = 0.5   # s; the full BFS is still the worst case
 
 _last_wear_check: dict = {}   # id(ship) -> game time of last part check
 _pending_wear: dict = {}      # id(ship) -> (ship, iid, ship_instances)
+_awaiting: dict = {}          # id(ship) -> (ship, iid): a native check is running
 _severed: dict = {}           # id(ship) -> (weakref(ship), iid, {part, ...}) spawned
 # iid -> (severed mask, {(x, y, z, scale): structure part label}): the
 # per-frame `on_severed_part` labels. A label depends only on the instance and
@@ -70,9 +79,12 @@ def after_wear(ship, iid, ship_instances=None, now=None):
 
 
 def drain(now=None):
-    """Per frame: run the split for every ship that took wear inside its
-    throttle window, once the window has elapsed."""
+    """Per frame: collect every running native check (`_awaiting`), then run
+    the split for every ship that took wear inside its throttle window, once
+    the window has elapsed."""
     now = _now() if now is None else now
+    for ship, iid in list(_awaiting.values()):
+        _split(ship, iid)
     for key, (ship, iid, _si) in list(_pending_wear.items()):
         if now - _last_wear_check.get(key, -1e9) >= kBreakupCheckInterval:
             del _pending_wear[key]
@@ -81,7 +93,7 @@ def drain(now=None):
 
 def reset():
     _last_wear_check.clear(); _pending_wear.clear(); _severed.clear()
-    _part_labels.clear()
+    _part_labels.clear(); _awaiting.clear()
 
 
 def forget_instance(iid) -> None:
@@ -94,12 +106,24 @@ def _check_parts(ship, iid, now):
     """The structure-part split: native check, chunk spawns, subsystem kill.
     Always call with the wear throttle already cleared for `ship`."""
     _last_wear_check[id(ship)] = now
+    return _split(ship, iid)
+
+
+def _split(ship, iid):
+    """Ask (or re-ask) the native check. None back = it is running on a
+    worker: the ship stays in `_awaiting` and drain() polls it next frame."""
+    key = id(ship)
     try:
         with frame_profiler.scope("hb.split_parts"):
             parts = host_io.hull_split_parts(iid)
     except Exception as _e:
+        _awaiting.pop(key, None)
         dev_mode.log_swallowed("hull_split_parts", _e)
         return []
+    if parts is None:
+        _awaiting[key] = (ship, iid)
+        return []
+    _awaiting.pop(key, None)
     if not parts:
         return []
     # The native side reports a part once (the parent's severed bits); this

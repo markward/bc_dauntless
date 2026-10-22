@@ -1,7 +1,13 @@
 #include <gtest/gtest.h>
 #include <glm/glm.hpp>
 
+#include <atomic>
+#include <chrono>
+#include <future>
+#include <memory>
+
 #include "renderer/part_severance_check.h"
+#include "renderer/part_severance_jobs.h"
 #include "renderer/plating_damage.h"
 #include "scenegraph/instance.h"
 
@@ -557,4 +563,199 @@ TEST(PartSeverance, StructurePartAtReadsTheVoxelLabel) {
     EXPECT_EQ(renderer::structure_part_at(s, glm::vec3(25.f, 3.f, 3.f)), -1) << "past the grid";
     EXPECT_EQ(renderer::structure_part_at(s, glm::vec3(-0.5f, 3.f, 3.f)), -1) << "before it";
     EXPECT_EQ(renderer::structure_part_at(voxel::StructureSegmentation{}, glm::vec3(0.f)), -1);
+}
+
+// ── Ruling 10: the check runs on a worker (part_severance_jobs.h) ─────────
+namespace {
+int live_instances(const scenegraph::World& world) {
+    int n = 0;
+    world.for_each_visible([&](const scenegraph::Instance&) { ++n; });
+    return n;
+}
+renderer::SeveranceJobs::DamageFn fixed_damage(DamageList l) {
+    return [l](const scenegraph::Instance&) { return l; };
+}
+}  // namespace
+
+// (1) The first poll queues the job and answers pending, touching nothing; a
+// later poll applies EXACTLY what the synchronous split does on the same input.
+TEST(PartSeveranceAsync, FirstPollIsPendingThenMatchesTheSynchronousSplit) {
+    const auto seg = std::make_shared<const voxel::StructureSegmentation>(make_seg());
+    scenegraph::World ref_world;
+    const auto ref_parent = blown_parent(ref_world);
+    const auto ref = renderer::split_severed_parts(ref_world, ref_parent, *seg,
+                                                   bridge_hit(10.f), 6.f);
+    ASSERT_EQ(ref.size(), 1u);
+
+    scenegraph::World world;
+    const auto parent = blown_parent(world);
+    renderer::SeveranceJobs jobs;
+    renderer::SeveranceStats st;
+    const auto first = jobs.poll(world, parent, seg, fixed_damage(bridge_hit(10.f)), 6.f,
+                                 false, &st);
+    EXPECT_TRUE(first.pending) << "the check ran on the calling thread";
+    EXPECT_TRUE(first.split.empty());
+    EXPECT_EQ(world.get(parent)->severed_parts, 0u) << "applied before the job landed";
+    EXPECT_FALSE(world.get(parent)->part_check.valid);
+    EXPECT_EQ(live_instances(world), 1) << "a chunk was made before the job landed";
+    EXPECT_TRUE(jobs.has_job(parent));
+    EXPECT_EQ(st.checks, 1);
+
+    jobs.wait_for_test(parent);
+    const auto got = jobs.poll(world, parent, seg, fixed_damage(bridge_hit(10.f)), 6.f,
+                               false, &st);
+    EXPECT_FALSE(got.pending);
+    EXPECT_FALSE(jobs.has_job(parent));
+    ASSERT_EQ(got.split.size(), ref.size());
+    const auto& a = got.split[0];
+    const auto& b = ref[0];
+    EXPECT_EQ(a.piece.parts, b.piece.parts);
+    EXPECT_EQ(a.piece.voxels, b.piece.voxels);
+    EXPECT_EQ(a.total_voxels, b.total_voxels);
+    EXPECT_EQ(a.piece.centroid_body, b.piece.centroid_body);
+    EXPECT_EQ(a.piece.min_body, b.piece.min_body);
+    EXPECT_EQ(a.piece.max_body, b.piece.max_body);
+    EXPECT_EQ(world.get(parent)->severed_parts, ref_world.get(ref_parent)->severed_parts);
+    const auto* chunk = world.get(a.chunk);
+    const auto* ref_chunk = ref_world.get(b.chunk);
+    ASSERT_NE(chunk, nullptr);
+    ASSERT_NE(ref_chunk, nullptr);
+    EXPECT_EQ(chunk->shown_parts, ref_chunk->shown_parts);
+    EXPECT_EQ(chunk->world, ref_chunk->world);
+    EXPECT_EQ(chunk->emissive_scale, 0.0f);
+    EXPECT_EQ(chunk->hull_damage.count(), ref_chunk->hull_damage.count());
+    EXPECT_TRUE(world.get(parent)->part_check.valid);
+
+    // Nothing changed since: no new job (the stamp), and nothing re-reported.
+    const auto again = jobs.poll(world, parent, seg, fixed_damage(bridge_hit(10.f)), 6.f,
+                                 false, &st);
+    EXPECT_FALSE(again.pending);
+    EXPECT_TRUE(again.split.empty());
+    EXPECT_EQ(st.checks, 1);
+}
+
+// (2) A result computed on damage that has since moved is dropped -- nothing
+// applied -- and the check re-queued on the current inputs.
+TEST(PartSeveranceAsync, AResultIsDroppedWhenTheRevisionMovedMeanwhile) {
+    const auto seg = std::make_shared<const voxel::StructureSegmentation>(make_seg());
+    scenegraph::World world;
+    const auto parent = blown_parent(world);
+    renderer::SeveranceJobs jobs;
+    renderer::SeveranceStats st;
+    ASSERT_TRUE(jobs.poll(world, parent, seg, fixed_damage(bridge_hit(10.f)), 6.f, false, &st)
+                    .pending);
+    jobs.wait_for_test(parent);
+    world.get(parent)->hull_damage.add(glm::vec3(3.f), glm::vec3(0.f), 1.f, 1.f,
+                                       scenegraph::HullDamageKind::Internal);
+    const auto stale = jobs.poll(world, parent, seg, fixed_damage(bridge_hit(10.f)), 6.f,
+                                 false, &st);
+    EXPECT_TRUE(stale.split.empty()) << "a stale result was applied";
+    EXPECT_EQ(world.get(parent)->severed_parts, 0u);
+    EXPECT_EQ(live_instances(world), 1);
+    EXPECT_TRUE(stale.pending) << "the dropped check was not re-queued";
+    EXPECT_EQ(st.checks, 2);
+    jobs.wait_for_test(parent);
+    const auto fresh = jobs.poll(world, parent, seg, fixed_damage(bridge_hit(10.f)), 6.f,
+                                 false, &st);
+    ASSERT_EQ(fresh.split.size(), 1u) << "the re-queued check on current damage applies";
+    EXPECT_EQ(world.get(parent)->severed_parts, 1u << 1);
+}
+
+// The severed mask moving meanwhile (another split, or a reset) drops it too.
+TEST(PartSeveranceAsync, AResultIsDroppedWhenTheSeveredMaskMovedMeanwhile) {
+    const auto seg = std::make_shared<const voxel::StructureSegmentation>(make_chain());
+    scenegraph::World world;
+    const auto parent = blown_parent(world);
+    renderer::SeveranceJobs jobs;
+    ASSERT_TRUE(jobs.poll(world, parent, seg, fixed_damage(bridge_hit(10.f)), 6.f).pending);
+    jobs.wait_for_test(parent);
+    world.get(parent)->severed_parts = 1u << 2;
+    const auto stale = jobs.poll(world, parent, seg, fixed_damage(bridge_hit(10.f)), 6.f);
+    EXPECT_TRUE(stale.split.empty()) << "a result on the old mask was applied";
+    EXPECT_TRUE(stale.pending);
+    jobs.wait_for_test(parent);
+    const auto fresh = jobs.poll(world, parent, seg, fixed_damage(bridge_hit(10.f)), 6.f);
+    ASSERT_EQ(fresh.split.size(), 1u);
+    EXPECT_EQ(fresh.split[0].piece.parts, 1u << 1) << "part 2 already left: A goes alone";
+}
+
+// (3) A destroyed instance's job never applies and never crashes: polled for
+// the dead id, forgotten while still running, or outliving the queue itself.
+TEST(PartSeveranceAsync, ADestroyedInstancesJobNeverApplies) {
+    const auto seg = std::make_shared<const voxel::StructureSegmentation>(make_seg());
+    scenegraph::World world;
+    const auto parent = blown_parent(world);
+    renderer::SeveranceJobs jobs;
+    ASSERT_TRUE(jobs.poll(world, parent, seg, fixed_damage(bridge_hit(10.f)), 6.f).pending);
+    jobs.wait_for_test(parent);
+    world.destroy_instance(parent);
+    const auto dead = jobs.poll(world, parent, seg, fixed_damage(bridge_hit(10.f)), 6.f);
+    EXPECT_FALSE(dead.pending);
+    EXPECT_TRUE(dead.split.empty());
+    EXPECT_FALSE(jobs.has_job(parent));
+    EXPECT_EQ(live_instances(world), 0) << "a chunk was made for a dead hull";
+    // A recycled slot (same index, new generation) is another instance.
+    const auto next = blown_parent(world);
+    EXPECT_FALSE(jobs.has_job(next));
+}
+
+TEST(PartSeveranceAsync, AForgottenRunningJobFinishesOnItsOwnInputs) {
+    std::promise<void> gate;
+    std::shared_future<void> open = gate.get_future().share();
+    std::atomic<int> ran{0};
+    scenegraph::World world;
+    const auto parent = blown_parent(world);
+    {
+        renderer::SeveranceJobs jobs;
+        jobs.set_before_run_for_test([open, &ran] {
+            open.wait_for(std::chrono::seconds(10));   // never hangs the suite
+            ++ran;
+        });
+        {
+            auto seg = std::make_shared<const voxel::StructureSegmentation>(make_seg());
+            ASSERT_TRUE(
+                jobs.poll(world, parent, seg, fixed_damage(bridge_hit(10.f)), 6.f).pending);
+        }   // the caller's segmentation reference is gone; the job holds its own
+        world.destroy_instance(parent);
+        jobs.forget(parent);   // must not wait for the running job
+        EXPECT_EQ(ran.load(), 0) << "forget waited for the job";
+        EXPECT_FALSE(jobs.has_job(parent));
+        EXPECT_EQ(jobs.outstanding(), 1u) << "the running job is still owned";
+        // A second, still-running job dropped by clear() (a world reset).
+        const auto other = blown_parent(world);
+        ASSERT_TRUE(jobs.poll(world, other, std::make_shared<const voxel::StructureSegmentation>(
+                                                     make_seg()),
+                              fixed_damage(bridge_hit(10.f)), 6.f)
+                        .pending);
+        jobs.clear();
+        EXPECT_EQ(ran.load(), 0) << "clear waited for the job";
+        EXPECT_FALSE(jobs.has_job(other));
+        gate.set_value();
+    }   // the queue waits for both to finish
+    EXPECT_EQ(ran.load(), 2);
+    EXPECT_EQ(live_instances(world), 1) << "a forgotten job applied";
+}
+
+// The same gates as the synchronous split: these never queue a job.
+TEST(PartSeveranceAsync, NeverQueuesForHullsThatCannotSever) {
+    const auto seg = std::make_shared<const voxel::StructureSegmentation>(make_seg());
+    scenegraph::World world;
+    renderer::SeveranceJobs jobs;
+    const auto rock = blown_parent(world);
+    world.get(rock)->surface_is_rock = true;
+    const auto rigged = blown_parent(world);
+    world.get(rigged)->rigged = true;
+    const auto chunk = blown_parent(world);
+    world.get(chunk)->shown_parts = 1u;
+    const auto skinned = blown_parent(world);
+    for (const auto id : {rock, rigged, chunk}) {
+        const auto r = jobs.poll(world, id, seg, fixed_damage(bridge_hit(10.f)), 6.f);
+        EXPECT_FALSE(r.pending);
+        EXPECT_FALSE(jobs.has_job(id));
+    }
+    EXPECT_FALSE(
+        jobs.poll(world, skinned, seg, fixed_damage(bridge_hit(10.f)), 6.f, true).pending);
+    EXPECT_FALSE(jobs.poll(world, skinned, nullptr, fixed_damage(bridge_hit(10.f)), 6.f).pending)
+        << "no segmentation yet: nothing to run";
+    EXPECT_EQ(jobs.outstanding(), 0u);
 }
