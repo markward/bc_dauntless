@@ -84,6 +84,8 @@ class GameLoop:
         from engine.appc import warp_state
         with _prof.scope("gl.warp_states"):
             warp_state.tick_warp_states(TICK_DELTA)
+        from engine.appc import warp_in_flash
+        warp_in_flash.advance(TICK_DELTA)
         with _prof.scope("gl.motion"):
             tick_all_ship_motion(TICK_DELTA)
 

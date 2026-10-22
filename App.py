@@ -285,6 +285,7 @@ from engine.appc.subsystems import (
     ShieldSubsystem,
     CloakingSubsystem,
 )
+from engine.appc.warp_in_flash import WarpFlash_Create, WarpFlash_CreateWithoutShip
 from engine.appc.float_range_watcher import FloatRangeWatcher
 from engine.appc.properties import (
     TGModelProperty,

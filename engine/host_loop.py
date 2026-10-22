@@ -7628,6 +7628,8 @@ class HostController:
         registry_texture.reset()
         from engine.appc import shockwaves
         shockwaves.reset()
+        from engine.appc import warp_in_flash as _warp_in_flash
+        _warp_in_flash.reset()
         from engine.appc import particles
         particles.reset()
         damage_eligibility.reset()

@@ -942,6 +942,8 @@ def _reset_leakable_engine_globals():
         from engine.appc import warp_in_dials as _warp_in_dials
         from engine.appc import warp_state as _warp_state_mod
         _warp_in_dials.reset()
+        from engine.appc import warp_in_flash as _warp_in_flash
+        _warp_in_flash.reset()
         _warp_state_mod.set_radius_seeder(None)
     except Exception:
         pass
