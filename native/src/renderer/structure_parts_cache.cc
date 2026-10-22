@@ -3,14 +3,14 @@
 
 #include <chrono>
 #include <cstdio>
-#include <fstream>
 #include <future>
-#include <iterator>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
+#include <assets/file_bytes.h>
 #include <assets/hull_source.h>
 #include <assets/mesh_fix.h>
 #include <voxel/structure_parts_io.h>
@@ -37,11 +37,10 @@ std::filesystem::path cache_file_under(const std::filesystem::path& root,
     if (root.empty() || source.empty()) return {};
     const assets::HullSource h = assets::split_hull_source(source);
     if (h.scale != 1.0f || assets::is_gltf_path(h.path)) return {};
-    std::ifstream s(h.path, std::ios::binary);
-    if (!s) return {};
-    const std::string bytes(std::istreambuf_iterator<char>(s), {});
-    if (s.bad()) return {};
-    return root / (assets::fnv1a64_hex(bytes) + "-v" +
+    const auto bytes = assets::read_binary_file(h.path);
+    if (!bytes) return {};
+    const std::string_view view(reinterpret_cast<const char*>(bytes->data()), bytes->size());
+    return root / (assets::fnv1a64_hex(view) + "-v" +
                    std::to_string(voxel::kStructurePartsVersion) + ".sps");
 }
 

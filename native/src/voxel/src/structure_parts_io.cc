@@ -8,11 +8,12 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
-#include <iterator>
 #include <mutex>
 #include <set>
 #include <string>
 #include <system_error>
+
+#include <assets/file_bytes.h>
 
 #if defined(_WIN32)
 #include <process.h>
@@ -218,9 +219,9 @@ bool write_structure_parts(const std::filesystem::path& path,
 
 std::optional<StructureSegmentation> read_structure_parts(
     const std::filesystem::path& path) {
-    std::ifstream s(path, std::ios::binary);
-    if (!s) return std::nullopt;
-    const std::string b(std::istreambuf_iterator<char>(s), {});
+    const auto bytes = assets::read_binary_file(path);
+    if (!bytes) return std::nullopt;
+    const std::string b(bytes->begin(), bytes->end());
     if (b.size() < 4 + 8) return std::nullopt;
     const std::size_t payload = b.size() - 8;
     if (fnv1a64(b.data(), payload) != read_u64_le(b, payload)) return std::nullopt;
