@@ -131,10 +131,24 @@ def _stable(m):
 
 def test_emit_is_stable_with_mixed_edit_and_remove():
     m = {}
-    w.apply_edit(m, "galaxy", ("B", "__running_light__", {"spec": None, "new": False}))
     w.apply_edit(m, "galaxy", ("A", "__running_light__",
                                {"spec": dict(SPEC), "new": False}))
+    w.apply_edit(m, "galaxy", ("B", "__running_light__", {"spec": None, "new": False}))
     assert _stable(m)
+
+
+def test_partial_spec_is_rejected():
+    import pytest
+    for new in (True, False):
+        for drop in w._LIGHT_FIELDS:
+            spec = dict(SPEC)
+            del spec[drop]
+            with pytest.raises(ValueError):
+                w.apply_edit({}, "galaxy", ("X", "__running_light__",
+                                            {"spec": spec, "new": new}))
+    with pytest.raises(ValueError):
+        w.apply_edit({}, "galaxy", ("X", "__running_light__",
+                                    {"spec": dict(SPEC, radius=None), "new": True}))
 
 
 def test_emit_is_stable_with_physical_parent_on_edited_light():

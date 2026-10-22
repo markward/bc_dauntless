@@ -282,6 +282,11 @@ def set_running_light(models, leaf, name, spec, new) -> None:
     (never a RemoveTemplate for a template the file itself makes); any other
     light gets a "remove" entry. A spec on a created light replaces its fields;
     `new` creates; otherwise an "edit" carrying every field."""
+    if spec is not None:
+        missing = [k for k in _LIGHT_FIELDS if spec.get(k) is None]
+        if missing:
+            raise ValueError("running light %r: partial spec, missing %s"
+                             % (name, ", ".join(missing)))
     per_sub = models.setdefault(leaf, {})
     lights = per_sub.get(_LIGHTS_KEY, {})
     existing = lights.get(name)
