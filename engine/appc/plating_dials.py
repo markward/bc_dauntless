@@ -54,6 +54,7 @@ DEFAULTS: dict = {
     "deck_break_wear": 6.0,  # (interior pass) wear at which decks break
     "interior": 1.0,         # (interior pass) 1 = interior behind holes
     "force_program": 0.0,    # DEBUG/perf: 1 = undamaged hulls draw through the plating program
+    "lod_footprint": 1.0,    # perf: short path where pixel footprint > this x member_width; <= 0 off
 }
 DIAL_ORDER: tuple = tuple(DEFAULTS)
 _STEP = {
@@ -66,7 +67,7 @@ _STEP = {
     "tear_mix": 0.1, "tear_noise": 0.1, "peel_band": 0.05,
     "member_survive": 0.25, "toughness_spread": 0.1, "breach_lumps": 0.25,
     "deck_break_wear": 0.25, "interior": 1.0,
-    "force_program": 1.0,
+    "force_program": 1.0, "lod_footprint": 0.25,
 }
 _MIN = {k: 0.0 for k in DEFAULTS}
 _MIN.update({"panel_size": 0.25, "primary_spacing": 0.25,
@@ -166,7 +167,9 @@ def set_values(values: dict) -> None:
 
 def register() -> None:
     """Dev boot. Prefers the native defaults (DEFAULTS when the binding is
-    absent). DAUNTLESS_PLATING=0 starts with the layer off (perf A/B)."""
+    absent). DAUNTLESS_PLATING=0 starts with the layer off (perf A/B);
+    DAUNTLESS_PLATING_LOD=<x> sets lod_footprint (0 = full detail
+    everywhere, the pixel-footprint LOD's A/B)."""
     import os
     from engine import dev_dial_groups
     global _defaults, _dials
@@ -178,5 +181,11 @@ def register() -> None:
         _dials["enabled"] = 0.0
     if os.environ.get("DAUNTLESS_PLATING_FORCE_PROGRAM", "0").strip() == "1":
         _dials["force_program"] = 1.0
+    lod = os.environ.get("DAUNTLESS_PLATING_LOD", "").strip()
+    if lod:
+        try:
+            _dials["lod_footprint"] = _clamp("lod_footprint", float(lod))
+        except ValueError:
+            pass
     dev_dial_groups.register_group("plating", DIAL_ORDER, current, _step)
     push()

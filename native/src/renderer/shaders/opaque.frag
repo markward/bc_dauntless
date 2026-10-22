@@ -669,7 +669,8 @@ void apply_damage_decals(vec3 p_body, vec3 n_body,
 // 21 member survive (wear past breach a primary member still spans),
 // 22 toughness spread (per-panel breach wear x (1 + spread*(h-0.4))),
 // 23 breach lumps (hole-scale breach variation, wear units),
-// 24 deck break wear + 25 interior (read only by hull_interior.frag / its pass).
+// 24 deck break wear + 25 interior (read only by hull_interior.frag / its pass),
+// 26 force program (C++ only), 27 LOD footprint (plating_lod).
 const vec3 PLATE_EDGE   = vec3(0.68, 0.68, 0.69);   // cut plate thickness
 const vec3 RIB_METAL    = vec3(0.60, 0.58, 0.55);   // unpainted structure
 const vec3 INNER_HULL   = vec3(0.42, 0.41, 0.40);  // pressure hull under the ribs
@@ -909,6 +910,17 @@ vec3 plating_warp(vec3 q, vec3 nb, float amp) {
     return q + w * 2.0 * amp + nb * (inout_ * amp);
 }
 
+// Pixel-footprint LOD (perf P-12, SIG-116): true where this pixel's
+// footprint fw (main's plating_fw = length(fwidth(p_body))) is more than
+// u_plating[27] x the member width, i.e. members and plate edges are about a
+// pixel or less. There apply_plating and plating_hole take a short path:
+// no marches, no warped re-samples (the first skeleton sample is reused).
+// The near test, the wear sums and the torn test never read it, so holes
+// stay where they are. u_plating[27] <= 0: full detail everywhere (A/B).
+bool plating_lod(float fw) {
+    return u_plating[27] > 0.0 && fw > u_plating[27] * u_plating[4];
+}
+
 // w_here = plating_wear(p_body, n_body), w_int = plating_internal(p_body):
 // computed once in main and shared with plating_hole.
 void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
@@ -1000,19 +1012,24 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
     // Bent, twisted members: warp where the skeleton is sampled. Even freshly
     // stripped structure is knocked about a little; full damage, bend dial.
     float bend = u_plating[15] * (0.3 + 0.7 * dmg);
+    // Short path (plating_lod): steps 1 and 3 are skipped and steps 2 and 4
+    // reuse the first sample (c0 / d1 / d2) unwarped.
+    bool lod = plating_lod(fw);
 
     // 1. The cut plate's own thickness: a neighbouring intact panel's wall.
-    for (int j = 0; j < 4; ++j) {
-        float t = (float(j) + 0.5) / 4.0 * Dp;
-        vec2 c; vec3 ctr; float e1, e2;
-        vec3 qw = p_body + ray * t;
-        plating_sample(part, qw, n_body, c, ctr, e1, e2);
-        float wc = (c == c0) ? wear_c : plating_cell_wear(c, ctr, n_body);
-        if (plating_tear(qw, wc, n_body) < 0.0) {
-            base_rgb = PLATE_EDGE * u_plating[14] * (1.0 - 0.3 * t / Dp);
-            n_shade = normalize(to_ws * back_b);
-            if (u_plating[12] > 0.5 && u_plating[12] < 1.5) base_rgb = vec3(0.0, 1.0, 1.0);
-            return;
+    if (!lod) {
+        for (int j = 0; j < 4; ++j) {
+            float t = (float(j) + 0.5) / 4.0 * Dp;
+            vec2 c; vec3 ctr; float e1, e2;
+            vec3 qw = p_body + ray * t;
+            plating_sample(part, qw, n_body, c, ctr, e1, e2);
+            float wc = (c == c0) ? wear_c : plating_cell_wear(c, ctr, n_body);
+            if (plating_tear(qw, wc, n_body) < 0.0) {
+                base_rgb = PLATE_EDGE * u_plating[14] * (1.0 - 0.3 * t / Dp);
+                n_shade = normalize(to_ws * back_b);
+                if (u_plating[12] > 0.5 && u_plating[12] < 1.5) base_rgb = vec3(0.0, 1.0, 1.0);
+                return;
+            }
         }
     }
 
@@ -1020,9 +1037,13 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
     //    damage; segments snap out where a noise along the member falls under
     //    the damage.
     float sag = dmg * 0.5 * Dr * vnoise(p_body.xy * 0.09 + p_body.z * 0.05) * (1.0 - io);
-    vec3  qt = plating_warp(p_body + ray * (Dp + sag), n_body, bend);
-    vec2 ct; vec3 ctrt; float t1, t2;
-    plating_sample(part, qt, n_body, ct, ctrt, t1, t2);
+    vec3  qt = p_body;
+    float t1 = d1, t2 = d2;
+    if (!lod) {
+        qt = plating_warp(p_body + ray * (Dp + sag), n_body, bend);
+        vec2 ct; vec3 ctrt;
+        plating_sample(part, qt, n_body, ct, ctrt, t1, t2);
+    }
     float snapped = step(vnoise(qt.xy * 0.45 + qt.z * 0.31 + 5.0), 0.15 + 0.55 * dmg);
     float alive = rib_ok * (1.0 - snapped);
     float top1 = 1.0 - smoothstep(hw1 - fw, hw1 + fw, t1);
@@ -1030,16 +1051,18 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
     float top = max(top1, top2) * alive;
     // 3. Member sides: primaries run the full rib depth, secondaries half.
     float side = 0.0, prim = 0.0, t_side = Dp + Dr;
-    for (int j = 0; j < 4; ++j) {
-        float t = Dp + sag + (float(j) + 0.5) / 4.0 * (Dr - sag);
-        vec3 q = plating_warp(p_body + ray * t, n_body, bend);
-        vec2 c; vec3 ctr; float e1, e2;
-        plating_sample(part, q, n_body, c, ctr, e1, e2);
-        bool p1 = e1 < hw1;
-        bool p2 = e2 < hw2 && t < Dp + 0.5 * Dr;
-        float sn = step(vnoise(q.xy * 0.45 + q.z * 0.31 + 5.0), 0.15 + 0.55 * dmg);
-        if ((p1 || p2) && rib_ok * (1.0 - sn) > 0.5) {
-            side = 1.0; prim = p1 ? 1.0 : 0.0; t_side = t; break;
+    if (!lod) {
+        for (int j = 0; j < 4; ++j) {
+            float t = Dp + sag + (float(j) + 0.5) / 4.0 * (Dr - sag);
+            vec3 q = plating_warp(p_body + ray * t, n_body, bend);
+            vec2 c; vec3 ctr; float e1, e2;
+            plating_sample(part, q, n_body, c, ctr, e1, e2);
+            bool p1 = e1 < hw1;
+            bool p2 = e2 < hw2 && t < Dp + 0.5 * Dr;
+            float sn = step(vnoise(q.xy * 0.45 + q.z * 0.31 + 5.0), 0.15 + 0.55 * dmg);
+            if ((p1 || p2) && rib_ok * (1.0 - sn) > 0.5) {
+                side = 1.0; prim = p1 ? 1.0 : 0.0; t_side = t; break;
+            }
         }
     }
 
@@ -1047,8 +1070,11 @@ void apply_plating(vec3 p_body, vec3 n_body, vec3 V_ws, float fw,
     //    tears open only past breach_wear. Shaded darker beside the members.
     float breach = plating_breach_at(p_body, c0);
     vec3  qi = p_body + ray * (Dp + Dr);
-    vec2 ci; vec3 ctri; float i1, i2;
-    plating_sample(part, plating_warp(qi, n_body, bend), n_body, ci, ctri, i1, i2);
+    float i1 = d1, i2 = d2;
+    if (!lod) {
+        vec2 ci; vec3 ctri;
+        plating_sample(part, plating_warp(qi, n_body, bend), n_body, ci, ctri, i1, i2);
+    }
     float ao = mix(0.62, 1.0, smoothstep(hw1, hw1 * 3.5, min(i1, i2 + 0.2 * hw1)));
     float dent = smoothstep(u_plating[9] * 0.6, breach, w_here);
     float grain = vnoise(qi.xy * 0.13 + qi.z * 0.09);
@@ -1110,8 +1136,10 @@ float plating_tear_lift(vec3 p) {
 // still spans the hole here (drawn as bare, charred metal). The torn edge is
 // jagged at panel scale; members snap off at random lengths, fewer the
 // deeper the wear runs past breach, secondaries first.
-// w = plating_wear(p, nb), computed once in main.
-int plating_hole(vec3 p, vec3 nb, float w) {
+// w = plating_wear(p, nb), computed once in main; fw = main's plating_fw.
+// Short path (plating_lod): member survival is read from the first,
+// unwarped sample; the torn test above it is the same either way.
+int plating_hole(vec3 p, vec3 nb, float w, float fw) {
     float tear_lift = plating_tear_lift(p);
     float floor_b = u_plating[16] * (1.0 - 0.4 * u_plating[22]) - u_plating[23];
     if (w + tear_lift - floor_b <= 0.0) return 0;
@@ -1120,9 +1148,13 @@ int plating_hole(vec3 p, vec3 nb, float w) {
     plating_sample(part, p, nb, c0, ctr0, e1, e2);
     float over = w + tear_lift - plating_breach_at(p, c0);
     if (over <= 0.0) return 0;
-    vec3 q = plating_warp(p, nb, u_plating[15]);
-    vec2 c; vec3 ctr; float d1, d2;
-    plating_sample(part, q, nb, c, ctr, d1, d2);
+    vec3 q = p;
+    float d1 = e1, d2 = e2;
+    if (!plating_lod(fw)) {
+        q = plating_warp(p, nb, u_plating[15]);
+        vec2 c; vec3 ctr;
+        plating_sample(part, q, nb, c, ctr, d1, d2);
+    }
     float reach1 = max(u_plating[21], 1e-3), reach2 = 0.5 * reach1;
     float seg = vnoise(q.xy * 0.45 + q.z * 0.31 + 5.0);
     if (d1 < 0.5 * u_plating[4] && seg > over / reach1) return 2;
@@ -1720,7 +1752,7 @@ void main() {
         plating_w_here = plating_wear(p_pl, n_pl);
         plating_w_int  = plating_internal(p_pl);
         hole = u_plating_rock != 0 ? plating_rock_hole(p_pl, plating_w_here)
-                                   : plating_hole(p_pl, n_pl, plating_w_here);
+                                   : plating_hole(p_pl, n_pl, plating_w_here, plating_fw);
         // A hole is cut when this hull is near (rooms are drawn behind it) or
         // blown clear through; a far hole is painted as wreckage below.
         cut = hole == 1 && (u_plating_far == 0 || plating_w_here > u_plating[24]);
