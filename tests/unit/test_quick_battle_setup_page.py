@@ -124,3 +124,9 @@ def test_confirm_bolds_the_name_between_python_before_and_after():
 
 def test_no_noop_stop_propagation():
     assert "stopPropagation" not in JS
+
+
+def test_warp_in_stepper_present():
+    assert "draft:warp_in:" in JS
+    assert "qbs-delay" in JS
+    assert ".qbs-delay" in CSS

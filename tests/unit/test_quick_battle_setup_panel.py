@@ -785,3 +785,58 @@ def test_a_catalog_change_after_prewarm_still_resets_the_stats(tmp_path):
     p.open()
     p.render_payload()
     assert stats.resets == 1
+
+
+def _open_enemy_draft(p):
+    p.dispatch_event("details:" + _enemy(p).id)
+
+
+def test_draft_warp_in_values(panel):
+    _open_enemy_draft(panel)
+    for v in (0, 5, 600):
+        assert panel.dispatch_event("draft:warp_in:%d" % v)
+        assert panel._draft["warp_in"] == v and type(panel._draft["warp_in"]) is int
+    for bad in ("-1", "2.5", "", "abc", "True"):
+        assert not panel.dispatch_event("draft:warp_in:" + bad), bad
+        assert panel._draft["warp_in"] == 600
+
+
+def test_draft_update_applies_warp_in(panel):
+    _open_enemy_draft(panel)
+    assert panel.dispatch_event("draft:warp_in:3")
+    assert panel.dispatch_event("draft-update")
+    assert _enemy(panel).warp_in_min == 3
+
+
+def test_editing_other_field_keeps_delay(panel):
+    _enemy(panel).warp_in_min = 4
+    _open_enemy_draft(panel)
+    assert panel._draft["warp_in"] == 4
+    assert panel.dispatch_event("draft:difficulty:low")
+    assert panel.dispatch_event("draft-update")
+    assert _enemy(panel).warp_in_min == 4
+
+
+def test_player_group_warp_in_refused(panel):
+    panel.dispatch_event("details:" + panel.scenario.player_group().id)
+    assert not panel.dispatch_event("draft:warp_in:2")
+
+
+def test_summary_shows_random_and_delay(panel):
+    g = _enemy(panel)
+    g.allegiance, g.direction, g.distance = "enemy", "fore", "standard"
+    g.warp_in_min = 0
+    base = _setup(panel)["groups"][1]["summary"]
+    assert "Random" not in base and "warps in" not in base
+    g.warp_in_min = 5
+    panel.invalidate()
+    s = _setup(panel)["groups"][1]["summary"]
+    assert s == "Enemy · Random · Standard (35 km) · warps in at 5 min"
+
+
+def test_payload_carries_warp_in_min(panel):
+    _enemy(panel).warp_in_min = 7
+    panel.invalidate()
+    assert _setup(panel)["groups"][1]["warp_in_min"] == 7
+    _open_enemy_draft(panel)
+    assert _setup(panel)["draft"]["warp_in"] == 7
