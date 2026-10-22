@@ -44,6 +44,14 @@ _LIGHT_FIELDS = ("position", "color", "radius", "period", "duration")
 # Setters only a running light has -- how a find(name) block that edits a
 # light is told apart from a subsystem block.
 _LIGHT_ONLY_SETTERS = ("SetPeriod", "SetDuration", "SetColor")
+# Python 1.5 reserved words (stock BC compiles emitted hardpoint text with it).
+# `print`/`exec` are keywords there but not in Python 3, so keyword.iskeyword
+# misses them; `access` was a 1.5 keyword too.
+_PY15_KEYWORDS = frozenset((
+    "access", "and", "assert", "break", "class", "continue", "def", "del",
+    "elif", "else", "except", "exec", "finally", "for", "from", "global",
+    "if", "import", "in", "is", "lambda", "not", "or", "pass", "print",
+    "raise", "return", "try", "while"))
 _RESERVED_IDENTS = ("p", "c", "find", "App", "leaf")
 
 _NOT_SET = object()   # sentinel: distinguishes "no prior sys.modules['App']" from None
@@ -377,7 +385,7 @@ def _ident_for(name) -> str:
     if not ident or ident[0].isdigit():
         ident = "_" + ident
     ident = ident.lower()
-    if keyword.iskeyword(ident):
+    if keyword.iskeyword(ident) or ident in _PY15_KEYWORDS:
         ident += "_"
     return ident
 
@@ -498,7 +506,10 @@ def _emit_function(leaf, per_sub, fn_name=None) -> str:
         out.append("    if p is not None:")
         for setter, args in calls:
             out.append("        p.%s(%s)" % (setter, _fmt_args(args)))
-    for name, entry in lights.items():
+    # Edits/removes in name order: read-back rebuilds them in find order, which
+    # a SetPhysicalParent block can shift, so only a sorted order is stable.
+    for name in sorted(lights):
+        entry = lights[name]
         if entry["op"] == "edit":
             _emit_light_edit(out, name, entry)
         elif entry["op"] == "remove":

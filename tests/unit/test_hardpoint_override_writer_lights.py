@@ -81,10 +81,13 @@ def test_create_blocks_precede_find_blocks():
 
 def test_light_name_is_quoted_and_identifier_safe():
     m = {}
-    for n in ('Port "Nav"', "class", "Ünïcode", "a b", "a-b"):
+    for n in ('Port "Nav"', "class", "Ünïcode", "a b", "a-b",
+              "print", "exec"):
         _create(m, name=n)
     text = w.emit(m)
     ast.parse(text)
+    for kw in ("print", "exec"):
+        assert not re.search(r"^\s+%s = " % kw, text, re.M)
     assert w.read_models_from_source(text) == m
     assert "a_b_2" in text
 
@@ -119,3 +122,25 @@ def test_executing_emit_attaches_light():
         assert (p.GetRadius(), p.GetPeriod(), p.GetDuration()) == (1.0, 3.0, 0.5)
     finally:
         App.g_kModelPropertyManager.RemoveTemplate(q[0])
+
+
+def _stable(m):
+    first = w.emit(m)
+    return w.emit(w.read_models_from_source(first)) == first
+
+
+def test_emit_is_stable_with_mixed_edit_and_remove():
+    m = {}
+    w.apply_edit(m, "galaxy", ("B", "__running_light__", {"spec": None, "new": False}))
+    w.apply_edit(m, "galaxy", ("A", "__running_light__",
+                               {"spec": dict(SPEC), "new": False}))
+    assert _stable(m)
+
+
+def test_emit_is_stable_with_physical_parent_on_edited_light():
+    m = {}
+    for n in ("A", "B"):
+        w.apply_edit(m, "galaxy", (n, "__running_light__",
+                                   {"spec": dict(SPEC), "new": False}))
+    w.apply_edit(m, "galaxy", ("B", "SetPhysicalParent", ("hull",)))
+    assert _stable(m)
