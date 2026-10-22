@@ -18,6 +18,7 @@ START_MARKER = "# >>> dauntless SPV edits -- machine-owned, regenerated on save;
 END_MARKER = "# <<< dauntless SPV edits <<<"
 BLOCK_FN = "_dauntless_spv"
 _PARTS_KEY = "__parts__"
+_LIGHTS_KEY = _w._LIGHTS_KEY
 
 
 class ManagedBlockError(ValueError):
@@ -64,9 +65,10 @@ def read_block(block_text):
 
 
 def _non_empty(per_sub):
-    subs = any(c for s, c in per_sub.items() if s != _PARTS_KEY)
+    subs = any(c for s, c in per_sub.items() if s not in (_PARTS_KEY, _LIGHTS_KEY))
+    lights = bool(per_sub.get(_LIGHTS_KEY))
     parts = any(c for c in per_sub.get(_PARTS_KEY, {}).values())
-    return subs or parts
+    return subs or parts or lights
 
 
 def emit_block(per_sub, newline="\n"):
@@ -278,6 +280,13 @@ def _check_finite(edits):
     for edit in edits:
         subsystem, kind = edit[0], edit[1]
         payload = edit[2] if len(edit) == 3 else edit[3]
+        if kind == "__running_light__":
+            spec = payload.get("spec") or {}
+            for x in _numbers_in(list(spec.values())):
+                if not math.isfinite(x):
+                    raise ValueError("non-finite value %r for light %s"
+                                     % (x, subsystem))
+            continue
         if len(edit) == 3 and kind not in ("__part__",):
             calls = [(kind, payload)]
         else:
