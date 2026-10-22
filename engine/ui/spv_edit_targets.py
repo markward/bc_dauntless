@@ -24,7 +24,7 @@ import math
 class EditTarget:
     """Thin per-kind view over ShipPropertyViewerPanel's staged state
     (spec 2026-09-29-spv-edit-target-refactor §3). Owns no state."""
-    kind: str = ""                      # "subsystem"|"light"|"emitter"|"part_anchor"|"part_pose"|"decal"
+    kind: str = ""                      # "subsystem"|"light"|"emitter"|"part_anchor"|"part_pose"|"decal"|"running_light"
     def __init__(self, panel, key: tuple): self.panel, self.key = panel, key
     @property
     def locked(self) -> bool: return False
@@ -108,6 +108,11 @@ class EditTarget:
     def pipette_arms(self) -> bool:
         """Whether the Pipette arms with this target selected."""
         return True
+    # Selection marker
+    def selection_sphere(self):
+        """A {center, radius, color} selection sphere for kinds whose own
+        marker may not show (a blinking running light), else None."""
+        return None
 
 def _ship_with_rotation(panel):
     """The panel's ship if it can be resolved with a world rotation, else
@@ -147,8 +152,9 @@ class _HardpointMount(EditTarget):
         """Every aspect this target can take from pipette source `src`, in
         the order the Pipette applies them. Position always (when the source
         has one); rotation only when both share a rotate kind; scale only
-        when both share a scale kind; colour + intensity only when both
-        carry a colour (`colour` / `set_colour`: an emitter). Incompatible
+        when both share a scale kind; colour + intensity only when both are
+        the same kind and carry a colour (`colour` / `set_colour`: an
+        emitter; a running-light source never has a scale kind). Incompatible
         aspects are silently skipped."""
         fields = []
         if src.position() is not None:
@@ -156,9 +162,13 @@ class _HardpointMount(EditTarget):
         rkind = self.rotate_kind()
         if rkind is not None and src.rotate_kind() == rkind:
             fields.append("rotation")
-        if src.scale_kind()[0] == self.scale_kind()[0]:
+        skind = src.scale_kind()
+        if skind is not None and skind[0] == self.scale_kind()[0]:
             fields.append("scale")
-        if hasattr(src, "colour") and hasattr(self, "set_colour"):
+        # Same kind only: a running light's "colour" is its whole look,
+        # not an emitter's (color, intensity).
+        if (src.kind == self.kind and hasattr(src, "colour")
+                and hasattr(self, "set_colour")):
             fields.append("colour")
         return tuple(fields)
 
@@ -1236,6 +1246,133 @@ class DecalTarget(EditTarget):
         pane._decal_sync_override()
 
 
+class RunningLightTarget(EditTarget):
+    """A placed running light (`BlinkingLightProperty`): key
+    ("running_light", name). Body frame, unscaled GU, like an emitter
+    (spec 2026-10-22-spv-running-lights S3.2). Move only -- no rotate, no
+    scale -- under the mount lock and on the "mount" coord clipboard. Its
+    "colour" aspect is the whole look (colour, radius, period, duration),
+    so a light-to-light pipette copies all of it. Mirror creates a NEW
+    light, like a decal's, so the in-place coord Mirror is hidden."""
+    kind = "running_light"
+
+    _LOOK_FIELDS = ("color", "radius", "period", "duration")
+
+    def _spec(self):
+        return self.panel._rl_spec(self.key[1])
+
+    @property
+    def locked(self) -> bool:
+        return not self.panel._mount_editing_enabled()
+
+    def payload_extras(self, tool: str) -> dict:
+        return {"can_mirror": False}
+
+    # -- Move ----------------------------------------------------------
+    def coord_kind(self) -> str:
+        return "mount"
+
+    def position(self):
+        spec = self._spec()
+        return tuple(float(c) for c in spec["position"]) if spec else None
+
+    def set_position(self, xyz) -> None:
+        spec = self._spec()
+        if spec is None:
+            return
+        spec = dict(spec)
+        spec["position"] = tuple(float(c) for c in xyz)
+        self.panel._rl_stage(self.key[1], spec)
+
+    def gizmo_frame(self):
+        ship = _ship_with_rotation(self.panel)
+        pos = self.position()
+        if ship is None or pos is None:
+            return None
+        from engine.ui.ship_property_viewer import gizmo_axes, world_from_body
+        return world_from_body(ship, pos), gizmo_axes(ship.GetWorldRotation())
+
+    def axis_drag_begin(self, axis: int, grab_param: float) -> None:
+        pos = self.position()
+        if pos is None:
+            return
+        p = self.panel
+        p._axis_drag = axis
+        p._axis_grab_param = grab_param
+        p._axis_grab_pos = pos
+        _set_grab_origin_from_body(p, pos)
+
+    # -- Look (Pipette, light -> light) --------------------------------
+    def colour(self):
+        """The effective spec (its look fields are what `set_colour`
+        copies), or None when the light is gone."""
+        spec = self._spec()
+        return dict(spec) if spec is not None else None
+
+    def set_colour(self, value) -> None:
+        """Copy `value`'s look fields onto this light, never its name or
+        position. None (a vanished source) is a no-op."""
+        spec = self._spec()
+        if value is None or spec is None:
+            return
+        spec = dict(spec)
+        for field in self._LOOK_FIELDS:
+            spec[field] = value[field]
+        self.panel._rl_stage(self.key[1], spec)
+
+    def pipette_fields_from(self, src) -> tuple:
+        if src.position() is None:
+            return ()
+        if src.kind == self.kind:
+            return ("position", "colour")
+        return ("position",)
+
+    # -- Mirror --------------------------------------------------------
+    def mirror_position(self) -> None:
+        pass            # the per-panel coord Mirror: hidden for a light
+
+    def mirror(self) -> None:
+        """Mirror Element: a NEW light `mirror_name(...)` at (-x, y, z) with
+        this one's look, which becomes the selection. A light has no stored
+        normal to re-trace (the decal case), so when this light has an
+        EXPLICIT physical parent the twin's is re-derived by nearest mesh
+        at the mirrored point; Auto (or no part found) stays Auto."""
+        from engine.ui import running_light_editor
+        pane = self.panel
+        spec = self._spec()
+        if spec is None:
+            return
+        name = running_light_editor.mirror_name(spec["name"], pane._rl_names())
+        x, y, z = spec["position"]
+        twin = dict(spec, name=name, position=(-float(x), float(y), float(z)))
+        src_entry = pane._physical_entry("light:" + spec["name"])
+        explicit = (pane._physical_explicit(src_entry)
+                    if src_entry is not None else None)
+        pane._rl_stage(name, twin)
+        pane._rl_selected = name
+        if explicit is not None:
+            part = pane._physical_auto_part(twin["position"])
+            entry = pane._physical_entry("light:" + name)
+            if part is not None and entry is not None:
+                pane._stage_physical(entry, part)
+
+    # -- Selection marker ----------------------------------------------
+    def selection_sphere(self):
+        """The translucent selection sphere: a 2.5 px dot may be in its
+        off phase, so the selected light needs a steady marker."""
+        ship = self.panel._ship_getter()
+        spec = self._spec()
+        if ship is None or spec is None:
+            return None
+        from engine.appc import running_light_dials
+        from engine.ui.ship_property_viewer import world_from_body
+        from engine.ui.ship_property_viewer_panel import SUBSYS_SPHERE_COLOR
+        size = running_light_dials.current()["size_gu_per_radius"]
+        return {"center": world_from_body(ship, spec["position"]),
+                "radius": max(3.0 * size * float(spec["radius"]), 0.05),
+                "color": SUBSYS_SPHERE_COLOR}
+
+
 _ADAPTERS = {
     "subsystem": MountTarget,
     "light": LightTarget,
@@ -1243,6 +1380,7 @@ _ADAPTERS = {
     "part_anchor": PartAnchorTarget,
     "part_pose": PartPoseTarget,
     "decal": DecalTarget,
+    "running_light": RunningLightTarget,
 }
 
 

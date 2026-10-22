@@ -2003,7 +2003,10 @@ class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
         this already returns None while a light node is selected."""
         sel = self.selected_index
         if sel is None or not (0 <= sel < len(self._descriptors)):
-            return None
+            # Another kind's own marker (a selected running light's dot may
+            # be in its off phase): `EditTarget.selection_sphere`.
+            t = self._edit_target()
+            return t.selection_sphere() if t is not None else None
         d = self._descriptors[sel]
         r = self._effective_radius(sel, d.get("properties", {}).get("radius"))
         try:
@@ -2766,6 +2769,7 @@ class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
         "select_pin:", "select_light:", "select_emitter:",
         "add_light:", "remove_light:", "add_emitter:", "remove_emitter:",
         "set_radius:", "set_light:", "set_emitter:",
+        "rl/select:", "rl/place_begin:", "rl/edit:", "rl/remove:",
     )
     # Shared gizmo verbs: these edit whatever the CURRENT transform target is,
     # so they are refused only when that target is a subsystem/light/emitter
@@ -2865,9 +2869,12 @@ class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
                     i = j = -1
                 if 0 <= i < len(self._descriptors) and self._effective_emitter(i, j) is not None:
                     src = ("emitter", i, j)
+            elif action.startswith("rl/select:"):
+                src = self._rl_pipette_source(action)
             # Any select_* while armed consumes the pick (valid → apply); any other
             # action, or an invalid pick, cancels the arm and falls through.
-            if action.startswith(("select_pin:", "select_light:", "select_emitter:")):
+            if action.startswith(("select_pin:", "select_light:", "select_emitter:",
+                                  "rl/select:")):
                 self._pipette_armed = False
                 self._last_pushed = None
                 if src is not None:

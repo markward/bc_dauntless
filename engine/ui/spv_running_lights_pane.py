@@ -134,6 +134,14 @@ class RunningLightsPaneMixin:
             return None
         return (RL_TARGET_KIND, self._rl_selected)
 
+    def _rl_pipette_source(self, action: str):
+        """The pipette source key an armed `rl/select:{"name"}` picks, or
+        None for bad JSON / an unknown light (the pick is still consumed)."""
+        name = _select_name(action)
+        if name is None or self._rl_spec(name) is None:
+            return None
+        return (RL_TARGET_KIND, name)
+
     def _rl_clear_selection(self) -> None:
         self._rl_selected = None
 
@@ -192,18 +200,14 @@ class RunningLightsPaneMixin:
     # ------------------------------------------------------------------
     def _dispatch_rl_action(self, action: str) -> bool:
         """`rl/select:{"name": ...}` and `rl/toggle_group`."""
-        verb, _, raw = action[len("rl/"):].partition(":")
+        verb = action[len("rl/"):].partition(":")[0]
         if verb == "toggle_group":
             self._rl_group_expanded = not self._rl_group_expanded
             self._last_pushed = None
             return True
         if verb == "select":
-            try:
-                arg = json.loads(raw)
-            except ValueError:
-                return False
-            name = arg.get("name") if isinstance(arg, dict) else None
-            if not isinstance(name, str) or self._rl_spec(name) is None:
+            name = _select_name(action)
+            if name is None or self._rl_spec(name) is None:
                 return False
             self._rl_selected = name
             self.selected_index = None
@@ -217,3 +221,13 @@ class RunningLightsPaneMixin:
             self._last_pushed = None
             return True
         return False
+
+
+def _select_name(action: str) -> Optional[str]:
+    """The light name in `rl/select:{"name": ...}`, or None."""
+    try:
+        arg = json.loads(action.partition(":")[2])
+    except ValueError:
+        return None
+    name = arg.get("name") if isinstance(arg, dict) else None
+    return name if isinstance(name, str) else None
