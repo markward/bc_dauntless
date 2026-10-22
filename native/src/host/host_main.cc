@@ -58,13 +58,41 @@ void set_env_var(const char* name, const char* value) {
 #endif
 }
 
+// engine/paths.py's PACKAGED_MARKER. A packaged install drops this file at
+// its root; a checkout never has one. Keep the two spellings in step.
+constexpr const char* kPackagedMarker = "dauntless-packaged.json";
+
+// Point the embedded interpreter at the Python runtime bundled beside the
+// binary, so a packaged build needs no Python installed and no venv.
+//
+// PYTHONHOME is what getpathp.c consults first on Windows; with it set, the
+// default search path becomes <home>/pythonNNN.zip, <home>/Lib and
+// <home>/DLLs, which is exactly the layout the packaging script stages into
+// bin/. Without it a packaged build would fall back to the landmark search
+// and then the registry, and so would silently bind to whatever Python the
+// player happens to have installed -- or fail on a machine with none.
+void configure_bundled_python(const std::filesystem::path& bin_dir) {
+    set_env_var("PYTHONHOME", bin_dir.string().c_str());
+    // A stray PYTHONPATH in the player's environment must not reach a
+    // packaged run: configure_python_path overwrites it below, and these two
+    // would otherwise let a developer's checkout leak into a shipped build.
+    set_env_var("PYTHONSTARTUP", "");
+}
+
 // Set PYTHONPATH so the embedded interpreter can find engine/ (and the SDK
 // scripts via the project's existing sys.path-based finder). Honors an active
 // uv venv's site-packages via VIRTUAL_ENV when set.
-void configure_python_path(const std::filesystem::path& project_root) {
+//
+// `packaged` suppresses the venv lookup entirely: a shipped build carries
+// every module it needs under its own root, and inheriting the site-packages
+// of whatever venv the player happened to have active would make the run
+// depend on a machine we never tested.
+void configure_python_path(const std::filesystem::path& project_root,
+                           bool packaged) {
     std::string pythonpath = project_root.string();
 
-    if (const char* venv = std::getenv("VIRTUAL_ENV")) {
+    const char* venv = packaged ? nullptr : std::getenv("VIRTUAL_ENV");
+    if (venv != nullptr) {
         // Best-effort glob — site-packages lives under .venv/lib/pythonX.Y/site-packages.
         // We don't pin the minor version; the embedded interpreter's own version
         // controls what site-packages directory exists. Add the parent lib/ dir
@@ -158,7 +186,19 @@ int main(int argc, char* argv[]) {
                      root_error.c_str(), argv[0]);
         return 1;
     }
-    configure_python_path(project_root);
+    // A packaged install is identified by its marker file, exactly as
+    // engine/paths.py does it, so C++ and Python always agree on the mode.
+    const bool packaged =
+        std::filesystem::exists(project_root / kPackagedMarker);
+    if (packaged) {
+        std::string bin_error;
+        const std::filesystem::path bin_path =
+            dauntless::platform::executable_path(argv[0], bin_error);
+        if (!bin_path.empty()) {
+            configure_bundled_python(bin_path.parent_path());
+        }
+    }
+    configure_python_path(project_root, packaged);
 
     // Enter the project root. Every renderer asset path is relative to it --
     // 26 load sites across 11 files compose theirs through
