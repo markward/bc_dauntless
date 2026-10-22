@@ -302,13 +302,21 @@ def part_at_rest_point(ship, iid, point) -> int:
     is scaled by it on the way in (identity for an unscaled hull). The one
     test for "is this point on that part": subsystem kill, emitter silencing
     and `host_loop._part_pose_at`'s lights all use it, so they agree."""
+    label = _lookup_part(ship, iid, point)
+    return -1 if label is None else label
+
+
+def _lookup_part(ship, iid, point):
+    """`part_at_rest_point`'s lookup, but None when the native call FAILED
+    (swallowed and logged) rather than answered: a cache must never keep that
+    -1 as if it were a label."""
     k = _ship_scale(ship)
     try:
         return int(host_io.structure_part_at(
             iid, (point[0] * k, point[1] * k, point[2] * k)))
     except Exception as _e:
         dev_mode.log_swallowed("structure_part_at", _e)
-        return -1
+        return None
 
 
 def _ship_scale(ship) -> float:
@@ -337,7 +345,9 @@ def on_severed_part(ship, iid, point, mask=None) -> bool:
     pose) sits on a structure part that has broken off. `mask` is
     `severed_mask(iid)` when the caller already holds it (read once per ship
     per frame); an intact hull answers without labelling the point, and a
-    severed one labels each point once per mask (`_part_labels`)."""
+    severed one labels each point once per mask (`_part_labels`). Only a
+    real lookup is cached: one whose native call failed answers False now
+    and is asked again next time."""
     if mask is None:
         mask = severed_mask(iid)
     if not mask:
@@ -352,7 +362,9 @@ def on_severed_part(ship, iid, point, mask=None) -> bool:
            _ship_scale(ship))
     label = labels.get(key)
     if label is None:
-        label = part_at_rest_point(ship, iid, point)
+        label = _lookup_part(ship, iid, point)
+        if label is None:
+            return False     # failed, not answered: ask again next frame
         labels[key] = label
     return 0 <= label < 32 and bool((mask >> label) & 1)
 

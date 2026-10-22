@@ -380,3 +380,26 @@ def test_mission_session_teardown_forgets_part_labels(native, _viewed):
     sess.ship_instances[ship] = 45
     sess.teardown(_R())
     assert 45 not in hull_breakup._part_labels
+
+
+def test_a_failed_label_lookup_is_not_cached(native, monkeypatch):
+    """`part_at_rest_point` swallows a failing `structure_part_at` and answers
+    -1. That -1 is not a label: caching it would keep a light on a lost part
+    lit for as long as the mask holds. Only real lookups are cached; a failed
+    one is asked again next frame."""
+    from engine.appc import hull_breakup
+    n = native(45)
+    n.mask = 1 << NACELLE_PART
+    failures = [RuntimeError("binding hiccup")]
+
+    def flaky(iid, p):
+        if failures:
+            raise failures.pop()
+        return n.part_at(iid, p)
+    monkeypatch.setattr(host_io, "structure_part_at", flaky)
+    ship = _EmitterShip()
+    assert hull_breakup.on_severed_part(ship, 45, NACELLE_PT) is False
+    assert hull_breakup.on_severed_part(ship, 45, NACELLE_PT) is True, \
+        "the failed lookup's -1 was cached"
+    assert hull_breakup.on_severed_part(ship, 45, NACELLE_PT) is True
+    assert len(n.asked) == 1, "a real label is still looked up once"
