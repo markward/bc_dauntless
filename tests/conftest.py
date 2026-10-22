@@ -1047,6 +1047,14 @@ def _reset_leakable_engine_globals():
         _qb_spawn.set_radius_fn(None)
     except Exception:
         pass
+    # Quick Battle late arrivals: pending orders, the scheduling module and
+    # the injected RNG are module-global; a leaked entry skews the next
+    # battle's pending_enemy_count (and a stale key could spawn into it).
+    try:
+        from engine.quickbattle import late_arrivals as _qb_late
+        _qb_late.reset()
+    except Exception:
+        pass
     # Same leak hazard, the home-ship RecreatePlayer resolver: a process
     # global a test wires via bridge_selection.set_player_type_resolver(),
     # which would otherwise make a later pure-unit bridge-hook test see a

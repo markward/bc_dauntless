@@ -7,6 +7,11 @@ g_iNumEnemies BC's own GenerateShips writes. Neutrals get no g_kShips entry, so
 they run no AI and never count (spec D6). With no provider -- or a provider that
 returns None -- BC's original runs, which keeps headless tests that fill
 g_kEnemyList working. Spec §4.
+
+Late groups (warp-in delay, spec 2026-10-22 §6.5): orders with `warp_in_s`
+are not created at the start; they are pre-counted here and handed to
+`late_arrivals`, and `EndSimulation` is wrapped only to cancel their
+pending arrivals before BC's own cleanup runs.
 """
 from __future__ import annotations
 
@@ -214,25 +219,39 @@ def _place(qb, ship, pos, lateral, placed) -> tuple:
     of radius.
     """
     import App
-    pt = App.TGPoint3()
     r = ship.GetRadius()
-    step = 2.0 * r + placement.MARGIN_GU
+    candidate = _resolve_position(qb, pos, r, lateral, placed, label=ship.GetName())
+    pt = App.TGPoint3()
+    pt.SetXYZ(*candidate)
+    ship.SetTranslate(pt)
+    placed.append((candidate, r))
+    return candidate
+
+
+def _resolve_position(qb, pos, radius, lateral, placed, label="") -> tuple:
+    """The nudge search `_place` runs, without touching any object: the first
+    candidate along `lateral` (0, +1, -1, ...) clear of every `placed`
+    (position, radius) and of `qb.g_pSet.IsLocationEmptyTG`; the last
+    candidate, with a warning, when none is. Shared by the start-of-battle
+    placement and the late arrivals, which must know the spot BEFORE the
+    ship exists (it is created on a warp-in placement)."""
+    import App
+    pt = App.TGPoint3()
+    step = 2.0 * radius + placement.MARGIN_GU
     candidate = pos
     for k in _nudge_offsets(_MAX_NUDGES):
         off = step * k
         candidate = (pos[0] + lateral[0] * off, pos[1] + lateral[1] * off,
                      pos[2] + lateral[2] * off)
         pt.SetXYZ(*candidate)
-        if (not _overlaps(candidate, r, placed, placement.MARGIN_GU)
-                and qb.g_pSet.IsLocationEmptyTG(pt, 2.0 * r, 1)):
+        if (not _overlaps(candidate, radius, placed, placement.MARGIN_GU)
+                and qb.g_pSet.IsLocationEmptyTG(pt, 2.0 * radius, 1)):
             break
     else:
         # Every candidate collided: the ship goes on the last one, overlapping.
         # Say so, rather than silently stacking hulls.
         _log.warning("quickbattle: no clear spot for %s within %d lateral steps "
-                     "either side; it overlaps another ship", ship.GetName(), _MAX_NUDGES)
-    ship.SetTranslate(pt)
-    placed.append((candidate, r))
+                     "either side; it overlaps another ship", label, _MAX_NUDGES)
     return candidate
 
 
@@ -245,10 +264,76 @@ def _face(ship, ship_pos, player, player_pos, cols, allegiance) -> None:
         ship.SetMatrixRotation(player.GetWorldRotation())
 
 
+def _apply_identity(ship, order, name) -> None:
+    """Display name (the plan's, else the object name) and registry texture
+    for a freshly created battle ship -- the now path and the late arrivals
+    (and the late model-warm probe, whose load must match) alike."""
+    import App
+    from engine.appc.registry_texture import REGISTRY_OLD_NAME
+    if order.display_name:
+        ship.SetDisplayName(App.TGString(order.display_name))
+    else:
+        ship.SetDisplayName(App.TGString(name))
+    if order.registry:
+        ship.ReplaceTexture(registry_path(order.class_id, order.registry),
+                            REGISTRY_OLD_NAME)
+
+
+def _prepare_late(qb, late) -> None:
+    """Late orders (spec §6.5/§6.6): warm each model through a probe ship
+    created OUTSIDE every set, take its radius for placement, release it;
+    pre-count the ship for the win (enemy) or the friend tally; then
+    schedule the arrivals. Never raises: GenerateShips' hook would fall back
+    to BC's original and spawn a second roster."""
+    from engine.quickbattle import late_arrivals, naming
+    try:
+        late_arrivals.cancel_all()
+        radii = {}
+        for n, order in late:
+            radii[order.entry_id] = _probe_radius(order, naming.object_name(order.title, n))
+            if order.allegiance == "enemy":
+                qb.g_iNumEnemies = qb.g_iNumEnemies + 1
+            elif order.allegiance == "friendly":
+                qb.g_iNumFriends = qb.g_iNumFriends + 1
+        if late:
+            late_arrivals.schedule(qb, late, radii)
+    except Exception as e:
+        _log.error("quickbattle: late groups could not be scheduled: %s", e)
+
+
+def _probe_radius(order, name) -> float:
+    """Create `order`'s ship with no set (loadspacehelper skips
+    AddObjectToSet when pSet is None, so nothing iterates it), give it the
+    battle ship's identity so the model load matches, seed its radius --
+    which loads and caches the model -- read it, then release the probe the
+    way loadspacehelper.py:109-113 releases a ship it could not place.
+    0.0 on any failure: the arrival still happens, only unwarmed."""
+    import App
+    import loadspacehelper
+    from engine.appc import registry_texture
+    probe = None
+    try:
+        probe = loadspacehelper.CreateShip(order.ship_file, None, name + " probe", "")
+        if probe is None or App.IsNull(probe):
+            return 0.0
+        _apply_identity(probe, order, name)
+        _seed_radius(probe)
+        return float(probe.GetRadius())
+    except Exception as e:
+        _log.warning("quickbattle: model warm for %s (%s) failed: %s", name, order.ship_file, e)
+        return 0.0
+    finally:
+        if probe is not None and not App.IsNull(probe):
+            registry_texture.clear_for(probe)
+            evt = App.TGEvent_Create()
+            evt.SetEventType(App.ET_DELETE_OBJECT_PUBLIC)
+            evt.SetDestination(probe)
+            App.g_kEventManager.AddEvent(evt)
+
+
 def generate_ships(qb, plan) -> None:
     import App
     import loadspacehelper
-    from engine.appc.registry_texture import REGISTRY_OLD_NAME
     from engine.quickbattle import naming
 
     qb.g_iNumFriends = qb.g_iNumEnemies = 0
@@ -262,26 +347,28 @@ def generate_ships(qb, plan) -> None:
     qb.pFriendlies.AddName(player.GetName())
 
     created = []                               # (order, ship)
+    late = []                                  # (n, order): warp in later
     for n, order in enumerate(plan.orders, start=1):
+        if order.warp_in_s > 0:
+            late.append((n, order))
+            continue
         name = naming.object_name(order.title, n)
         try:
             ship = loadspacehelper.CreateShip(order.ship_file, qb.g_pSet, name, "")
             if ship is None or App.IsNull(ship):
                 raise RuntimeError("CreateShip returned null")
-            if order.display_name:
-                ship.SetDisplayName(App.TGString(order.display_name))
-            else:
-                ship.SetDisplayName(App.TGString(name))
-            if order.registry:
-                ship.ReplaceTexture(registry_path(order.class_id, order.registry),
-                                    REGISTRY_OLD_NAME)
+            _apply_identity(ship, order, name)
             created.append((order, ship))
         except Exception as e:
             _log.error("quickbattle: could not spawn %s (%s): %s", name, order.ship_file, e)
 
-    if not created:
-        return
+    if created:
+        _place_created(qb, plan, player, neutrals, created)
+    _prepare_late(qb, late)
 
+
+def _place_created(qb, plan, player, neutrals, created) -> None:
+    """Place, face, group and count the now-ships `generate_ships` created."""
     # From here on, every ship below already exists in the set. A failure
     # must NOT propagate out of generate_ships: install_generate_ships_hook's
     # wrapper falls back to BC's original GenerateShips on any exception, and
@@ -371,6 +458,29 @@ def install_generate_ships_hook(qb) -> bool:
     qb.GenerateShips = GenerateShips
     return True
 
+
+def install_end_simulation_hook(qb) -> bool:
+    """Wrap `qb.EndSimulation` so every pending late arrival is cancelled
+    first (spec §6.5 "Cleanup"). The SDK reaches EndSimulation through its
+    module global from RestartSimulation, EndSimulationEvent (the end-of-
+    battle timer) and End Combat alike, so replacing the module attribute
+    covers all three without editing the SDK. Idempotent."""
+    current = getattr(qb, "EndSimulation", None)
+    if current is None or getattr(current, "_dauntless_qb_spawn_orig", None) is not None:
+        return False
+    orig = current
+
+    def EndSimulation(*args):
+        from engine.quickbattle import late_arrivals
+        try:
+            late_arrivals.cancel_all()
+        except Exception as e:
+            _log.error("quickbattle: cancelling late arrivals failed: %s", e)
+        return orig(*args)
+
+    EndSimulation._dauntless_qb_spawn_orig = orig
+    qb.EndSimulation = EndSimulation
+    return True
 
 def _in_battle() -> bool:
     """`QuickBattle.QuickBattle.bInSimulation`, read live (never cached):

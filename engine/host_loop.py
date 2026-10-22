@@ -7877,6 +7877,9 @@ class _MissionLoader:
         # seeder it runs before placement: nothing is realised at
         # GenerateShips time, so every ship would otherwise report radius 0.
         _qb_spawn.install_generate_ships_hook(_QB)
+        # Late groups (warp-in delay): EndSimulation cancels their pending
+        # arrivals -- End Combat, Restart and the end-of-battle timer alike.
+        _qb_spawn.install_end_simulation_hook(_QB)
         _qb_spawn.set_radius_fn(self._seed_quickbattle_ship_radius)
 
         import QuickBattle.QuickBattleGame as _QBGame
@@ -13408,6 +13411,8 @@ def run(mission_name: Optional[str] = None,
         from engine.quickbattle import spawn as _qb_spawn
         _qb_spawn.set_provider(None)
         _qb_spawn.set_radius_fn(None)
+        from engine.quickbattle import late_arrivals as _qb_late
+        _qb_late.reset()
         from engine.appc import warp_state as _warp_state
         _warp_state.set_radius_seeder(None)
         from engine import bridge_selection as _bs
