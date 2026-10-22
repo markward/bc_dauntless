@@ -51,6 +51,23 @@ def _reset_app_state():
     App.g_kSetManager._sets.clear()
     if hasattr(App.g_kEventManager, "_method_handlers"):
         App.g_kEventManager._method_handlers.clear()
+    # Pin the shared SDK RNG. AI/PlainAI/Intercept.py re-rolls its update
+    # interval (0.4 s +/- 0.2) from g_kSystemWrapper on every update, so
+    # without this the attacker's trajectory depends on where earlier tests
+    # left the stream.
+    App.g_kSystemWrapper.SetRandomSeed(1)
+
+
+@pytest.fixture(autouse=True)
+def _production_sensor_gate():
+    # Production always runs NPC targeting through the AI sensor gate
+    # (host_loop installs it at boot), but in the suite it is present only if
+    # an earlier test happened to boot the host -- it is installed once and
+    # never removed. So this file ran UNGATED alone and GATED in the gate run,
+    # and only the gated run exposed the fixed-spawn bug above. Install it
+    # here so both runs test the same, production, rules.
+    from engine.appc.ai_sensor_gate import install_ai_sensor_gate
+    install_ai_sensor_gate()
 
 
 @pytest.fixture(autouse=True)
@@ -152,8 +169,12 @@ def test_npc_re_engages_reinforcements_after_its_target_dies(game_context):
         "setup is not exercising the bug: SelectTarget never went dormant"
     )
 
-    # Reinforcements warp in.
-    reinforcement = _build_ship(400)
+    # Reinforcements warp in, 400 GU from where the attacker now is -- inside
+    # its 2000 GU sensor range. A fixed spawn point is NOT enough: with no
+    # target the attacker keeps its last 120 GU/s setpoint and can be thousands
+    # of GU away by now, and under the AI sensor gate it cannot see a
+    # reinforcement that far off.
+    reinforcement = _build_ship(ours.GetWorldLocation().y + 400)
     pSet.AddObjectToSet(reinforcement, "Reinforcement")
 
     t = _run(builder, ours, seconds=15.0, t0=t)
