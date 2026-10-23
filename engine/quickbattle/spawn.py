@@ -507,11 +507,32 @@ def install_end_simulation_hook(qb) -> bool:
             battle_end.reset()
         except Exception:
             _log.exception("quickbattle: resetting the battle end failed")
+        try:
+            _delete_pending_end_timer(qb)
+        except Exception:
+            _log.exception("quickbattle: deleting the pending end timer failed")
         return orig(*args)
 
     EndSimulation._dauntless_qb_spawn_orig = orig
     qb.EndSimulation = EndSimulation
     return True
+
+
+def _delete_pending_end_timer(qb) -> None:
+    """Delete BC's pending ET_END_SIMULATION timer (qb.g_idTimer), the one
+    ShipDestroyed posts one second after the player's death
+    (QuickBattle.py:3300-3316). Only EndSimulationEvent deletes it, and only
+    AFTER its own EndSimulation (QuickBattle.py:3175-3181), so an XO Restart
+    inside that second (RestartSimulation -> EndSimulation, :3153) left it to
+    fire into the restarted battle's load and play BC's lose sequence there.
+    Kept out of battle_end.reset(), which also runs from begin and on a
+    mission swap. When EndSimulationEvent itself is the caller its timer has
+    already fired, and clearing g_idTimer here only skips its own delete."""
+    import App
+    tid = getattr(qb, "g_idTimer", App.NULL_ID)
+    if tid != App.NULL_ID:
+        App.g_kTimerManager.DeleteTimer(tid)
+        qb.g_idTimer = App.NULL_ID
 
 def _in_battle() -> bool:
     """`QuickBattle.QuickBattle.bInSimulation`, read live (never cached):

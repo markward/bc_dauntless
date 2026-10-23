@@ -365,3 +365,34 @@ def test_countdown_says_only_the_generic_minutes(world, monkeypatch):
         _jump_to(t0 + (10 - m) * 60.0 + 0.5)
     keys = [k for _who, k in lines if k.startswith("E8M2Countdown")]
     assert keys == ["E8M2Countdown%d" % m for m in (9, 7, 5, 3, 1)]
+
+
+class _Handler:
+    """The pObject an SDK event handler is called with."""
+    def CallNextHandler(self, _evt):
+        pass
+
+
+def test_restart_right_after_player_death_plays_no_lose_sequence(world, monkeypatch):
+    """Final review, Review Focus 4: XO Restart inside the second between the
+    player's death and BC's own loss timer. RestartSimulation reaches
+    EndSimulation directly (only EndSimulationEvent deletes qb.g_idTimer), so
+    the EndSimulation hook must delete BC's pending loss timer, or it fires
+    into the restarted battle's load and plays the lose cutscene there."""
+    hl, _c, panel, QB = world
+    import App
+    from engine.quickbattle import battle_end
+    said = _spoken(monkeypatch)
+    _do(panel, "add:Warbird")
+    _go(hl, panel)
+    _destroy(QB, _player())
+    assert battle_end.state().reason == battle_end.REASON_PLAYER
+    assert _end_timers(QB) == [(QB.g_idTimer, 1)]
+    QB.RestartSimulation(_Handler(), None)
+    App.g_kTimerManager.tick(3.0)
+    hl._fire_pending_preload_done()
+    assert "QBComputerLose" not in [k for _c2, k in said]
+    assert _end_timers(QB) == []
+    assert QB.g_idTimer == App.NULL_ID
+    st = battle_end.state()
+    assert QB.bInSimulation == 1 and st is not None and not st.ended
