@@ -451,7 +451,7 @@ function renderVictory() {
         v.candidates.forEach(function (c) {
             b += '<div class="qbs-group qbs-group--' + qbsEsc(c.allegiance) + '"><div class="qbs-rows">';
             c.entries.forEach(function (e) {
-                b += '<div class="qbs-row"><div class="qbs-noart">No art</div><div class="qbs-row__text">' +
+                b += '<div class="qbs-row">' + qbsArt(e.icon) + '<div class="qbs-row__text">' +
                     '<div class="qbs-row__title">' + qbsEsc(e.title) + '</div>' +
                     '<div class="qbs-row__sub">' + qbsEsc(c.group_name) + '</div></div>' +
                     '<button class="cp-toggle vc-pick' + (e.id === v.protect ? ' cp-toggle--on' : '') +

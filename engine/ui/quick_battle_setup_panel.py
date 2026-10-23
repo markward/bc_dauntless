@@ -399,7 +399,11 @@ class QuickBattleSetupPanel(Panel):
         for g, e in vic.protect_candidates(s):
             c = groups.setdefault(g.id, {"group": g.id, "group_name": g.name,
                                          "allegiance": g.allegiance, "entries": []})
-            c["entries"].append({"id": e.id, "title": self._entry_title(e)})
+            ce = self._ce(e.ship)
+            # The ships view's art (renderRow), so a protect row looks like
+            # a group row; None when the ship is not in the catalog.
+            c["entries"].append({"id": e.id, "title": self._entry_title(e),
+                                 "icon": self._icon(ce.icon) if ce is not None else None})
         return {
             "type": v.type, "protect": v.protect,
             "time_limit_min": v.time_limit_min, "rule": vic.rule_text(s),

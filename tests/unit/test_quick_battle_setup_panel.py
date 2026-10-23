@@ -884,7 +884,8 @@ def test_choose_km_then_protect_and_time(panel):
     assert v["types"][1]["available"]
     assert v["candidates"] == [{"group": pg.id, "group_name": pg.name,
                                 "allegiance": "friendly",
-                                "entries": [{"id": e.id, "title": "Warbird"}]}]
+                                "entries": [{"id": e.id, "title": "Warbird",
+                                             "icon": QuickBattleSetupPanel._icon("Warbird")}]}]
     assert panel.dispatch_event("victory-type:kobayashi_maru")
     assert panel.dispatch_event("victory-protect:" + e.id)
     assert panel.dispatch_event("victory-time:15")
@@ -903,6 +904,23 @@ def test_victory_title_prefers_variant_then_catalog_title(panel):
     titles = {x["id"]: x["title"] for c in _setup(panel)["victory"]["candidates"]
               for x in c["entries"]}
     assert titles[e.id] == "USS Venture"
+
+
+def test_victory_candidate_carries_the_ships_view_icon(panel, monkeypatch):
+    """A protect row draws the same art as the ships view: the candidate's
+    `icon` is `_icon(<catalog entry>.icon)`, None for a ship not in the
+    catalog."""
+    monkeypatch.setattr(QuickBattleSetupPanel, "_icon",
+                        staticmethod(lambda stem: "file:///cache/%s.png" % stem))
+    e = _friend(panel)
+    pg = panel.scenario.player_group()
+    assert panel.dispatch_event("add:Galaxy:%s:1" % pg.id)
+    gone = pg.entries[-1]
+    gone.ship = "NotInTheCatalog"
+    entries = {x["id"]: x for c in _setup(panel)["victory"]["candidates"]
+               for x in c["entries"]}
+    assert entries[e.id].get("icon") == "file:///cache/Warbird.png"
+    assert "icon" in entries[gone.id] and entries[gone.id]["icon"] is None
 
 
 def test_victory_type_refused_when_unavailable(panel):

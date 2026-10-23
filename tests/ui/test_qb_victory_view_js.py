@@ -78,7 +78,7 @@ function payload(o) {
     summary: "", victory: {type: o.type || "elimination", protect: o.protect || null,
       time_limit_min: o.time || 0, rule: "Rule line.", types: types(o.km !== false),
       candidates: [{group: "g2", group_name: "Civilians", allegiance: "neutral",
-        entries: [{id: "e7", title: "SS Kobayashi Maru"}]}]}};
+        entries: [{id: "e7", title: "SS Kobayashi Maru", icon: o.icon || null}]}]}};
 }
 function buttons(id) {
   const out = [];
@@ -185,6 +185,19 @@ def test_protect_toggle_sends_verb():
     assert s["events"] == ["quick-battle-setup/victory-protect:e7"]
     assert "SS Kobayashi Maru" in s["body"]
     assert "qbs-group--neutral" in s["body"]
+
+
+def test_protect_row_draws_the_ships_icon():
+    """A protect row looks like a group row: the same qbsArt image."""
+    (s,) = _run([{"push": {"view": "victory", "type": "kobayashi_maru",
+                           "icon": "file:///cache/Transport.png"}, "snap": 1}])
+    assert '<img src="file:///cache/Transport.png"' in s["body"]
+    assert 'class="qbs-noart' not in s["body"]
+
+
+def test_protect_row_without_an_icon_says_no_art():
+    (s,) = _run([{"push": {"view": "victory", "type": "kobayashi_maru"}, "snap": 1}])
+    assert 'class="qbs-noart' in s["body"] and "<img" not in s["body"]
 
 
 def test_chosen_protect_is_lit():
