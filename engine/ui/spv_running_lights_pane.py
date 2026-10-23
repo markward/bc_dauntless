@@ -164,12 +164,17 @@ class RunningLightsPaneMixin:
 
     def _rl_renameable(self, name) -> bool:
         """Added since the ship was built, created by Dauntless (attach-
-        queued), or any light of a mod's own file."""
+        queued), or any light of a mod's own file. The attach record is the
+        leaf's LAST build: after a saved rename another ship of the class may
+        have re-recorded it under the committed (new) name. It only ever
+        holds names the overrides file creates, so neither name can unlock a
+        game template."""
         committed = self._rl_committed_identity(name)
         baked = (None if committed is None
                  else self._rl_baked_identity(committed))
         return (baked is None or self._rl_renames_any
-                or baked in self._rl_attached)
+                or baked in self._rl_attached
+                or committed in self._rl_attached)
 
     def _rl_committed_parent(self, committed, baked_parents=None):
         """The explicit physical parent the file holds for committed light

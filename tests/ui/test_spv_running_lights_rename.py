@@ -141,6 +141,13 @@ def test_rename_onto_a_taken_name_is_refused(make_panel, attached):
     assert p._pending_rl_renames == {}
 
 
+def test_rename_to_a_non_ascii_name_is_refused(make_panel, attached):
+    p = make_panel()
+    assert _rename(p, "Port Nav", "Bug Ünïcode") is False
+    assert "plain letters, numbers and punctuation" in p._rl_error
+    assert p._pending_rl_renames == {} and p._pending_running_light == {}
+
+
 def test_rename_onto_a_name_the_file_still_holds_is_refused(make_panel,
                                                             attached):
     """A name staged for removal, or renamed away, is still in the file
@@ -244,6 +251,24 @@ def test_save_emits_the_rename_before_the_spec_edit(make_panel, attached):
     edits = _save(p, make_panel)
     assert edits[0] == ("Bow Light", "__rename_light__", "Fourth")
     assert _light_names(p) == ["Fourth", "Star Nav"]
+
+
+def test_renamed_light_stays_renameable_when_the_leaf_rerecords(make_panel,
+                                                                attached):
+    """Another build of the leaf after the saved rename (an NPC of the same
+    class) re-records the attach queue under the NEW name only; the viewed
+    ship still has the old name baked."""
+    p = make_panel()
+    assert _rename(p, "Port Nav", "Bow Light") is True
+    _save(p, make_panel)
+    attach_templates._attached[fx.UNRIGGED_LEAF] = {"Bow Light"}
+    p.close()
+    p.open()
+    row = _rows(p)["Bow Light"]
+    assert row["renameable"] is True
+    assert "rename_lock_reason" not in row
+    # The game's own template stays locked.
+    assert _rows(p)["Star Nav"]["renameable"] is False
 
 
 def test_save_pure_rename_has_no_spec_edit(make_panel, attached):
