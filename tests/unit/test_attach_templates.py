@@ -101,6 +101,18 @@ def test_record_remembers_the_attached_names_per_leaf():
         attach_templates.record("zzother", [])
 
 
+def test_leak_probe_1_records_without_cleanup():
+    """Leaves a record behind on purpose: the conftest autouse reset must
+    clear it before the next test (probe 2)."""
+    attach_templates.record("zzleakleaf", [App.BlinkingLightProperty_Create("Port")])
+    assert attach_templates.attached_names("zzleakleaf") == {"Port"}
+
+
+def test_leak_probe_2_starts_with_no_records():
+    assert attach_templates.attached_names("zzleakleaf") == set()
+    assert attach_templates._attached == {}
+
+
 def test_sdk_hook_records_the_queued_names_for_the_leaf():
     from engine.appc import sdk_overrides
 

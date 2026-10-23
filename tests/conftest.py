@@ -970,6 +970,15 @@ def _reset_leakable_engine_globals():
         del _ships._pending_alert_levels[:]
     except Exception:
         pass
+    # Attach queue (engine/appc/attach_templates.py): a test that queues
+    # without draining would attach its template to a later test's ship, and
+    # the per-leaf attach record decides which SPV lights are renameable.
+    try:
+        from engine.appc import attach_templates as _attach_templates
+        del _attach_templates._queue[:]
+        _attach_templates._attached.clear()
+    except Exception:
+        pass
     # Swapped-module split: fixtures that re-import an SDK module
     # (sys.modules.pop -> import -> restore the saved entry; e.g.
     # Bridge.HelmMenuHandlers in tests/unit/test_dash_set_course.py) put the
