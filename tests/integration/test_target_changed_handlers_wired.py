@@ -46,10 +46,11 @@ def test_real_target_changed_handlers_registered_on_player():
     assert player is not None
 
     names = _target_changed_handler_names(player)
+    assert names.count("Bridge.ScienceCharacterHandlers.TargetChanged") == 1
     assert names.count("Bridge.HelmMenuHandlers.TargetChanged") == 2
     assert names.count("Bridge.ScienceMenuHandlers.TargetChanged") == 2
     assert names.count("Maelstrom.Episode1.E1M2.E1M2.TargetChanged") == 1
-    assert len(names) == 5
+    assert len(names) == 6
 
 
 def test_set_target_runs_every_real_handler_body_without_raising():
@@ -85,3 +86,32 @@ def test_set_target_runs_every_real_handler_body_without_raising():
 
     assert intercept_button.IsEnabled() == 1, "HelmMenuHandlers.TargetChanged did not run"
     assert scan_target_button.IsEnabled() == 1, "ScienceMenuHandlers.TargetChanged did not run"
+
+
+def test_set_target_reaches_helm_after_the_live_officer_wiring():
+    """The host runs bridge_officers.wire_after_mission_load after every load
+    (host_loop's realize step); the tests above never did, so they missed the
+    live bug. ScienceCharacterHandlers.TargetChanged (attached by Miguel's
+    ConfigureForShip) never calls CallNextHandler, so in the LIFO chain it
+    must sit OLDEST -- where attaching the officers at player assignment, as
+    Appc did, puts it. Attached after load it ran first and swallowed the
+    event: Intercept and Scan Target stayed grey and E1M2's own handler
+    never ran."""
+    import Bridge.BridgeUtils as BridgeUtils
+    from engine.bridge_officers import wire_after_mission_load
+
+    _fresh_world()
+    host_loop._init_mission(E1M2_MODULE)
+    wire_after_mission_load()
+
+    import MissionLib
+    player = MissionLib.GetPlayer()
+    names = _target_changed_handler_names(player)
+    assert names[0] == "Bridge.ScienceCharacterHandlers.TargetChanged", names
+    assert names.count("Bridge.ScienceCharacterHandlers.TargetChanged") == 1
+
+    haven = App.g_kSetManager.GetSet("Vesuvi6").GetObject("Haven")
+    player.SetTarget(haven)
+
+    assert BridgeUtils.GetBridgeMenu("Helm").GetButtonW("Intercept").IsEnabled() == 1
+    assert BridgeUtils.GetBridgeMenu("Science").GetButtonW("Scan Target").IsEnabled() == 1

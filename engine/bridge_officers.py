@@ -31,6 +31,22 @@ _STATIONS = (
 
 _COMMUNICATE_HANDLER = __name__ + ".CommunicateToReport"
 
+# _officer_key of the last configure_bridge_officers call. Identities, not
+# objects, so a stale pairing never keeps a dead player or bridge alive.
+_configured_key = None
+
+
+def _officer_key(bridge_set, player):
+    """Which player and which officer/menu objects a configure attached.
+    Characters and menus are rebuilt per load, so a new load never matches."""
+    import App
+    key = [id(player)]
+    for _char_name, object_name in _STATIONS:
+        char = App.CharacterClass_Cast(bridge_set.GetObject(object_name))
+        key.append(id(char) if char is not None else None)
+        key.append(id(char.GetMenu()) if char is not None else None)
+    return tuple(key)
+
 
 def configure_bridge_officers(bridge_set, player):
     """Run each Bridge.Characters.<name>.ConfigureForShip, individually guarded.
@@ -40,6 +56,8 @@ def configure_bridge_officers(bridge_set, player):
     load: menus and characters are recreated per load, and AttachMenuTo*
     self-detaches before re-registering.
     """
+    global _configured_key
+    _configured_key = _officer_key(bridge_set, player)
     results = {}
     for char_name, object_name in _STATIONS:
         try:
@@ -98,41 +116,54 @@ def CommunicateToReport(pMenu, pEvent):
     pMenu.CallNextHandler(pEvent)
 
 
+def configure_for_player(player) -> None:
+    """Attach the bridge officers to a newly assigned player.
+
+    Called by Game.SetPlayer BEFORE it posts ET_SET_PLAYER — where Appc ran
+    LoadBridge.ConfigureForShip (no SDK Python calls it). The ORDER is
+    load-bearing: Miguel's AttachMenuToScience registers
+    ScienceCharacterHandlers.TargetChanged on the player, and that handler
+    never calls CallNextHandler. Attached here it is the OLDEST handler in the
+    player's LIFO ET_TARGET_WAS_CHANGED chain, below the ones the ET_SET_PLAYER
+    listeners (HelmMenuHandlers.SetPlayer, ScienceMenuHandlers.SetPlayer) and
+    the mission add afterwards, so it ends the chain harmlessly. Attached
+    after them it ran first and swallowed every target change: Helm's
+    Intercept and Science's Scan Target never enabled, and E1M2's own
+    TargetChanged never ran.
+
+    No-op before a bridge exists. Every SDK mission loads its bridge before
+    creating the player; wire_after_mission_load covers anything else. Also a
+    no-op when this player is already attached to these officers: one
+    CreatePlayerShip assigns the player twice here (sets.AddObjectToSet's
+    early identity broadcast, then MissionLib's own SetPlayer), and a second
+    attach would lift Science's handler above the first round's listeners.
+    """
+    import App
+    bridge = App.g_kSetManager.GetSet("bridge")
+    if bridge is not None and player is not None \
+            and _configured_key != _officer_key(bridge, player):
+        configure_bridge_officers(bridge, player)
+
+
 def wire_after_mission_load() -> None:
     """The post-load officer wiring — called by host_loop's
     _after_mission_loaded (and by the host-level tests, so the tested path IS
-    the live path). Two triggers: configure now when the player already
-    exists (story missions create it during loader.load()), and on
-    ET_SET_PLAYER for players created later (the boot QuickBattle spawns the
-    ship at battle start and on every restart). Broadcast registration must
-    re-run per load: reset_sdk_globals wipes it.
+    the live path).
+
+    Normally a no-op: the player was assigned during loader.load() and
+    Game.SetPlayer already attached the officers (configure_for_player).
+    Players created later (the boot QuickBattle spawns the ship at battle
+    start and on every restart) are attached by their own SetPlayer. This
+    only configures a player/officer pairing that was never attached;
+    re-attaching one that was would put Science's TargetChanged back on top
+    of the chain (see configure_for_player).
     """
     import App
     import MissionLib
     bridge = App.g_kSetManager.GetSet("bridge")
     player = MissionLib.GetPlayer()
-    if bridge is not None and player is not None:
-        configure_bridge_officers(bridge, player)
-    App.g_kEventManager.AddBroadcastPythonFuncHandler(
-        App.ET_SET_PLAYER, None, __name__ + ".OnSetPlayer")
-
-
-def OnSetPlayer(pObject, pEvent):
-    """ET_SET_PLAYER broadcast handler — (re)configure officers for the player.
-
-    Registered per mission load by host_loop's post-load hook. This, not the
-    load-time call, is the path the boot QuickBattle actually takes: QB creates
-    the player LATE (StartSimulation2 -> RecreatePlayer -> CreatePlayerShip ->
-    SetPlayer, after ET_PRELOAD_DONE) and recreates it on every battle restart,
-    so the officers must re-wire to the new ship each time — which is also
-    stock-BC behaviour (ConfigureForShip takes pShip; Appc re-ran it on player
-    assignment).
-    """
-    import App
-    game = App.Game_GetCurrentGame()
-    player = game.GetPlayer() if game is not None else None
-    bridge = App.g_kSetManager.GetSet("bridge")
-    if bridge is not None and player is not None:
+    if bridge is not None and player is not None \
+            and _configured_key != _officer_key(bridge, player):
         configure_bridge_officers(bridge, player)
 
 

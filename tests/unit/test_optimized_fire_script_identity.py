@@ -13,7 +13,7 @@ from engine.appc.sets import SetClass_Create
 from engine.appc.ships import ShipClass
 from engine.appc.subsystems import (
     HullSubsystem, ImpulseEngineSubsystem, PhaserSystem, SensorSubsystem,
-    TorpedoAmmoType, TorpedoSystem,
+    ShieldSubsystem, TorpedoAmmoType, TorpedoSystem,
 )
 from engine.appc.target_menu import _reset_target_menu_singleton
 from engine.appc.tg_ui import st_widgets
@@ -74,6 +74,9 @@ def _mk_ship(name):
     impulse.SetMaxSpeed(120.0)
     s.SetImpulseEngineSubsystem(impulse)
     s.SetSensorSubsystem(SensorSubsystem("Sensors"))
+    # Every real ship has one: the Science officer's TargetChanged (attached
+    # with the officers on SetPlayer) watches the new target's shields.
+    s.SetShieldSubsystem(ShieldSubsystem("Shields"))
     s.SetPhaserSystem(PhaserSystem("P"))
     torps = TorpedoSystem("T")
     torps.AddAmmoType(TorpedoAmmoType("Photon", launch_speed=19.0))
