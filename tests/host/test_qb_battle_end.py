@@ -130,10 +130,15 @@ def test_elimination_win_ends_the_battle(world, monkeypatch):
     assert QB.g_idTimer and _end_timers(QB) == [(QB.g_idTimer, 2)]
     # BC's own instant win lines are suppressed until the battle ends.
     assert (QB.g_pTact, "QBFelixWin") not in said
+    import App
+    top = App.TopWindow_GetTopWindow()
+    top.ForceTacticalVisible()              # flying the battle in tactical
     _tick(battle_end.END_DELAY_S + 0.1)
     assert QB.bInSimulation == 0
     assert (QB.g_pTact, "QBFelixWin") in said
     assert QB.g_pXO.IsMenuUp() == 1
+    # Ruling 5: a win returns to the bridge, like GenerateLoseSequence.
+    assert top.IsBridgeVisible() and not top.IsTacticalVisible()
     assert battle_end.state() is None
 
 

@@ -27,8 +27,9 @@ Three SDK functions are wrapped (`install`), never edited:
   and destroyed callouts still run.
 - GenerateLoseSequence: BC's sequence with the XO's line swapped for ours when
   the protected ship died or time ran out.
-- GenerateWinSequence: BC's Felix line, then BC's own win tail (menus turned
-  back, Saffi's menu up) when this module ended the battle as a win.
+- GenerateWinSequence: BC's Felix line, then, when this module ended the
+  battle as a win, back to the bridge and BC's own win tail (menus turned
+  back, Saffi's menu up).
 
 EndSimulation runs `reset()` BEFORE EndSimulationEvent builds the win or lose
 sequence, so `reset()` hands the ending (won, reason) to the two sequence
@@ -417,8 +418,12 @@ def _generate_lose_sequence(qb, orig):
 
 
 def _win_tail(qb) -> None:
-    """BC's win tail (QuickBattle.py:3365-3368)."""
+    """Back to the bridge (ruling 5, GenerateLoseSequence's first step,
+    QuickBattle.py:3381-3383), then BC's win tail (QuickBattle.py:3365-3368)."""
+    import App
     import BridgeHandlers
+    _guard("force bridge visible",
+           lambda: App.TopWindow_GetTopWindow().ForceBridgeVisible())
     BridgeHandlers.DropMenusTurnBack()
     qb.g_pXO.MenuUp()
 
