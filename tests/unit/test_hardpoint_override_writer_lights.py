@@ -185,6 +185,20 @@ def test_rename_of_created_light_rekeys_it_and_its_physical_parent():
     assert w.emit(w.read_models_from_source(text)) == text
 
 
+def test_rename_onto_an_emptied_setter_list_keeps_the_moved_parent():
+    """An unset earlier in the same write leaves `[]` under the new name,
+    AFTER the old name in the dict: it must not overwrite the moved list."""
+    m = {}
+    _create(m, name="A")
+    w.apply_edit(m, "galaxy", ("A", "SetPhysicalParent", ("saucer",)))
+    w.apply_edit(m, "galaxy", ("B", "SetPhysicalParent", ("hull",)))
+    w.apply_edit(m, "galaxy", ("B", "__unset__", "SetPhysicalParent"))
+    assert m["galaxy"]["B"] == []
+    _rename(m, "A", "B")
+    assert m["galaxy"]["B"] == [("SetPhysicalParent", ("saucer",))]
+    assert 'find("B")' in w.emit(m)
+
+
 def test_rename_onto_an_existing_name_is_refused():
     import pytest
     for setup in (lambda m: _create(m, name="B"),

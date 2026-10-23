@@ -329,6 +329,9 @@ def rename_running_light(models, leaf, old, new, require_created=True) -> None:
     if require_created and (entry is None or entry.get("op") != "create"):
         raise ValueError("cannot rename light %r: it is not a light Dauntless "
                          "created" % (old,))
+    # An emptied list under `new` (an unset earlier in the same write) would
+    # otherwise overwrite the moved one in the re-key below.
+    per_sub.pop(new, None)
     if entry is not None:
         per_sub[_LIGHTS_KEY] = _rekey(lights, old, new)
     if old in per_sub:
