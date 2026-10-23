@@ -373,6 +373,39 @@ out.protoEvery = shown("spv-add-rl-every");
 events = [];
 shipPropertyViewerAddSubmit();
 take("protoEvents");
+
+// Renaming: a renameable row edits its name; a locked one shows it
+// read-only with the lock reason.
+const REN = {name: 'Ren "1"', position: [1, 0, 0], color: [1, 1, 1], radius: 1.0,
+             period: 3.0, duration: 0.5};
+const LOCK = {name: "Strobe", position: [0, 1, 0], color: [1, 1, 1], radius: 1.0,
+              period: 3.0, duration: 0.5};
+renderSPVSubsystemList([
+  {kind: "rl_group", name: "Running Lights", expanded: true, children: [
+    {kind: "running_light", name: REN.name, spec: REN, renameable: true},
+    {kind: "running_light", name: "Strobe", spec: LOCK, renameable: false,
+     rename_lock_reason: "Named in the game's <hardpoint> file"}]},
+  {kind: "rl_add", name: "+ Add"}], null, null, null);
+shipPropertyViewerRlMenu(ev(), {dataset: {name: REN.name}});
+shipPropertyViewerCtxRlEdit();
+out.renForm = els["spv-add-form"].innerHTML;
+out.renValue = els["spv-add-rl-name"].value;
+els["spv-add-rl-name"].value = "  Bow Light ";
+events = [];
+shipPropertyViewerAddSubmit();
+take("renEvents");
+shipPropertyViewerRlMenu(ev(), {dataset: {name: REN.name}});
+shipPropertyViewerCtxRlEdit();
+events = [];
+shipPropertyViewerAddSubmit();
+take("renSameEvents");
+els["spv-add-rl-name"].value = "";
+shipPropertyViewerRlMenu(ev(), {dataset: {name: "Strobe"}});
+shipPropertyViewerCtxRlEdit();
+out.lockForm = els["spv-add-form"].innerHTML;
+events = [];
+shipPropertyViewerAddSubmit();
+take("lockEvents");
 console.log(JSON.stringify(out));
 """
 
@@ -625,3 +658,33 @@ def test_name_keyed_caches_have_no_prototype():
 def test_light_wheel_has_the_crosshair_cursor():
     _, block = _css_block()
     assert re.search(r"#spv-add-rl-wheel\s*\{\s*cursor:\s*crosshair;\s*\}", block)
+
+
+# --- rename (follow-up 2026-10-23) ------------------------------------------------
+
+def test_renameable_light_edits_its_name(harness):
+    form = harness["renForm"]
+    assert '<input type="text" id="spv-add-rl-name" class="spv-modal__input">' in form
+    # The current name is set as the input's value, never in the markup.
+    assert "Ren" not in form
+    assert harness["renValue"] == 'Ren "1"'
+
+
+def test_apply_sends_the_new_name(harness):
+    arg = _prefix(harness["renEvents"][0], "rl/edit")
+    assert arg["name"] == 'Ren "1"'
+    assert arg["spec"]["name"] == "Bow Light"
+    assert arg["spec"]["position"] == [1, 0, 0]
+    # Untouched, the name goes back unchanged.
+    arg = _prefix(harness["renSameEvents"][0], "rl/edit")
+    assert arg["spec"]["name"] == 'Ren "1"'
+
+
+def test_locked_light_shows_its_name_and_the_reason(harness):
+    form = harness["lockForm"]
+    assert 'id="spv-add-rl-name"' not in form
+    bodies = re.findall(r'<div class="spv-modal__body">([^<]*)</div>', form)
+    assert bodies[:2] == ["Strobe",
+                          "Named in the game&#39;s &lt;hardpoint&gt; file"]
+    arg = _prefix(harness["lockEvents"][0], "rl/edit")
+    assert arg["name"] == "Strobe" and arg["spec"]["name"] == "Strobe"

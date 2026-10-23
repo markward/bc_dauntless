@@ -890,6 +890,10 @@ window.shipPropertyViewerGroupToggle = function (index) {
 function spvSeedRow(row) {
     if (row.kind === 'running_light') {
         if (row.spec) spvRowRunningLight[row.name] = row.spec;
+        spvRowRunningLightRename[row.name] = {
+            renameable: row.renameable === true,
+            reason: typeof row.rename_lock_reason === 'string' ? row.rename_lock_reason : ''
+        };
         return;
     }
     if (spvOwn(SPV_RL_ROWS, row.kind)) return;   // rl_group / rl_add: nothing to seed
@@ -1713,6 +1717,9 @@ window.shipPropertyViewerPhysResetAll = function () {
 var spvRunningLights = {};          // payload.running_lights, latest
 // Keyed by light name, so no prototype: "constructor" / "__proto__" are names.
 var spvRowRunningLight = Object.create(null);   // light name -> spec, from the rows
+// light name -> {renameable, reason}: whether Edit may change the name, and
+// why not (a stock light named in the game's own hardpoint file).
+var spvRowRunningLightRename = Object.create(null);
 var spvCtxRlName = null;            // the right-clicked light's name
 
 // table[key] only when it is the table's own entry (never an inherited
@@ -1797,7 +1804,7 @@ window.shipPropertyViewerRlMenu = function (event, el) {
 window.shipPropertyViewerCtxRlEdit = function () {
     // The menu already announced overlay:1; the modal keeps it.
     document.getElementById('spv-ctxmenu').style.display = 'none';
-    spvAddOpen('edit', spvCtxRlName);
+    spvAddOpen('edit', spvCtxRlName, spvOwn(spvRowRunningLightRename, spvCtxRlName));
     spvAddShowType('running_light', spvRowRunningLight[spvCtxRlName] || null);
 };
 window.shipPropertyViewerCtxRlRemove = function () {
@@ -1809,21 +1816,25 @@ window.shipPropertyViewerCtxRlRemove = function () {
 };
 
 // ── Add modal (#spv-add) ────────────────────────────────────────────────────
-// One entry per type the Add dropdown offers. `render(form, seed, fixedName)`
-// fills #spv-add-form (seed = an existing spec on Edit, else null; fixedName
-// = the read-only name on Edit, else null); `collect()` returns the spec to
-// dispatch. Add fires `submitAction:<spec>`, Edit `editAction:{name, spec}`.
-// The next type adds an entry here, not a branch.
+// One entry per type the Add dropdown offers. `render(form, seed, fixedName,
+// editInfo)` fills #spv-add-form (seed = an existing spec on Edit, else null;
+// fixedName = the edited element's name on Edit, else null; editInfo = what
+// the row said about editing it, e.g. a running light's {renameable,
+// reason}, else null); `collect()` returns the spec to dispatch. Add fires
+// `submitAction:<spec>`, Edit `editAction:{name, spec}` (spec.name may be a
+// new name). The next type adds an entry here, not a branch.
 var SPV_ADD_TYPES = {
     running_light: {label: 'Running Light', submitLabel: 'Place on hull',
                     render: spvRlFormRender, collect: spvRlFormCollect,
                     submitAction: 'rl/place_begin', editAction: 'rl/edit'}
 };
-var spvAdd = {mode: 'add', type: null, editName: null};
+var spvAdd = {mode: 'add', type: null, editName: null, editInfo: null};
 var spvAddDdOpen = false;           // JS-local: the dropdown list is open
 
-function spvAddOpen(mode, editName) {
-    spvAdd = {mode: mode, type: null, editName: (mode === 'edit') ? editName : null};
+function spvAddOpen(mode, editName, editInfo) {
+    var editing = mode === 'edit';
+    spvAdd = {mode: mode, type: null, editName: editing ? editName : null,
+              editInfo: (editing && editInfo) ? editInfo : null};
     spvAddDdShow(false);
     document.getElementById('spv-add').style.display = 'flex';
 }
@@ -1840,7 +1851,8 @@ function spvAddShowType(type, seed) {
     document.getElementById('spv-add-dd-text').textContent = t ? t.label : 'Choose…';
     var form = document.getElementById('spv-add-form');
     form.innerHTML = '';
-    if (t) t.render(form, seed, editing ? spvAdd.editName : null);
+    if (t) t.render(form, seed, editing ? spvAdd.editName : null,
+                    editing ? spvAdd.editInfo : null);
     var ok = document.getElementById('spv-add-ok');
     ok.textContent = editing ? 'Apply' : (t ? t.submitLabel : '');
     ok.style.display = t ? '' : 'none';
@@ -1885,8 +1897,9 @@ window.shipPropertyViewerAddSubmit = function () {
 window.shipPropertyViewerAddCancel = function () { spvHideOverlays(); };
 
 // ── Running Light form ──────────────────────────────────────────────────────
-// Name (Add only: an input under the text-capture contract, #spv-root's
-// data-panel), the shared ColourWheel, a Size stepper, Steady | Blinking
+// Name (an input under the text-capture contract, #spv-root's data-panel, on
+// Add and on Edit of a renameable light; else the read-only name and why it
+// is locked), the shared ColourWheel, a Size stepper, Steady | Blinking
 // and, when Blinking, Every / On for. Defaults and ranges come from
 // running_lights.defaults / .ranges; the steps are the spec's table (3.4).
 // Steady keeps a period and sends duration 0.
@@ -1908,16 +1921,19 @@ function spvRlStepperHtml(label, field, rowId) {
          + '</div>';
 }
 
-function spvRlFormRender(form, seed, fixedName) {
+function spvRlFormRender(form, seed, fixedName, editInfo) {
     var rl = spvRunningLights || {};
     var d = rl.defaults || {};
     var s = seed || {};
+    var info = editInfo || {};
+    var nameEditable = fixedName === null || info.renameable === true;
+    var lockReason = (!nameEditable && typeof info.reason === 'string') ? info.reason : '';
     var color = Array.isArray(s.color) ? s.color
               : (Array.isArray(d.color) ? d.color : [1, 1, 1]);
     var hs = colourRgbToHs(color);
     var seededBlink = seed ? spvRlNum(s.duration, 0) > 0 : true;
     spvRlForm = {
-        name: fixedName,
+        name: nameEditable ? null : fixedName,     // null: read the input
         position: Array.isArray(s.position) ? s.position.slice() : null,
         hue: hs.hue, sat: hs.sat,
         // The wheel is V = 1, so it cannot show e.g. (0.5, 0.5, 0): the
@@ -1928,9 +1944,11 @@ function spvRlFormRender(form, seed, fixedName) {
         duration: (seed && seededBlink) ? s.duration : spvRlNum(d.duration, 0.5),
         blinking: seededBlink
     };
-    form.innerHTML = (fixedName === null
+    form.innerHTML = (nameEditable
             ? '<input type="text" id="spv-add-rl-name" class="spv-modal__input">'
-            : '<div class="spv-modal__body">' + escapeHtmlSPV(fixedName) + '</div>')
+            : '<div class="spv-modal__body">' + escapeHtmlSPV(fixedName) + '</div>'
+              + (lockReason ? '<div class="spv-modal__body">' + escapeHtmlSPV(lockReason)
+                              + '</div>' : ''))
         + '<div class="spv-wheel-row">'
         +   '<canvas id="spv-add-rl-wheel" width="140" height="140"></canvas></div>'
         + spvRlStepperHtml('Size', 'radius')
@@ -1944,7 +1962,9 @@ function spvRlFormRender(form, seed, fixedName) {
         + spvRlStepperHtml('On for', 'duration', 'spv-add-rl-onfor');
     // Set as a property, never interpolated into the markup.
     var input = document.getElementById('spv-add-rl-name');
-    if (fixedName === null && input) input.value = String(rl.next_name || '');
+    if (nameEditable && input) {
+        input.value = fixedName !== null ? fixedName : String(rl.next_name || '');
+    }
     var canvas = document.getElementById('spv-add-rl-wheel');
     if (canvas && typeof ColourWheel !== 'undefined') {
         new ColourWheel(canvas, {hue: spvRlForm.hue, sat: spvRlForm.sat}, function (v) {
