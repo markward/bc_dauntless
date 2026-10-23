@@ -21,7 +21,7 @@ def test_generated_tgl_reads_back_every_line():
     got = tgl_reader._parse(g.build(), source="test")
     for key, text, sound in g.entries():
         assert got.strings[key] == text
-        assert got.sounds[key] == sound
+        assert got.sounds.get(key, "") == sound
 
 
 def _listed_wavs() -> set:
@@ -77,4 +77,4 @@ def test_subtitle_only_lines_are_allowed():
     for key, text in _SUBTITLE_ONLY.items():
         assert by_key[key] == (text, "")
         assert got.strings[key] == text
-        assert got.sounds[key] == ""
+        assert key not in got.sounds
