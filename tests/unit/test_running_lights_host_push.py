@@ -245,7 +245,7 @@ def test_run_feeds_both_hull_hides_to_the_running_light_push():
     import inspect
     src = inspect.getsource(host_loop.run)
     push = src.find("_push_running_lights(r, session, "
-                    "hidden_iids=_bridge_hidden_iids)")
+                    "hidden_iids=_bridge_hidden_iids,")
     bridge = src.find("_bridge_hidden_iids = _apply_bridge_player_visibility(")
     warp = src.find("_sync_instance_transforms(")
     assert push >= 0, "run() must pass the bridge-view hide to the push"
@@ -351,3 +351,67 @@ def test_teardown_and_removal_drop_the_articulation_record():
     sess.ship_running_light_specs[9] = ((), (), 0)
     sess.teardown(_R())
     assert sess.ship_running_light_specs == {}
+
+
+# ── SPV close: the preview gives way to the spawn lights (SPV spec §3.5) ────
+
+def test_close_clears_preview_for_unlit_ship():
+    """A ship with no lights at spawn, previewed with lights in the SPV,
+    must leave native with none for it: no orphan preview."""
+    r = _FakeRenderer()
+    ship = _Ship(n_lights=0)
+    s = _Session({ship: 7})
+    host_loop._register_running_lights(r, s, ship, 7)
+    r.set_running_lights(7, [(0.0,) * 9], 1.0)      # the SPV's preview
+    host_loop._restore_running_lights(r, s, ship, 7)
+    assert r.lights[7] == ([], 0.0)
+
+
+def test_close_resends_spawn_lights_for_lit_ship():
+    r = _FakeRenderer()
+    ship = _Ship(n_lights=2)
+    s = _Session({ship: 7})
+    host_loop._register_running_lights(r, s, ship, 7)
+    spawn = r.lights[7]
+    r.set_running_lights(7, [], 0.0)                # the SPV's preview
+    host_loop._restore_running_lights(r, s, ship, 7)
+    assert r.lights[7] == spawn
+    assert spawn[0] == list(s.ship_running_light_specs[7][1])
+    assert spawn[1] == s.ship_running_lights[7]
+
+
+# ── SPV preview owns its instance's lights while open (SPV spec §3.5) ───────
+# The SPV forces poses itself (open() and part-pose selection), so the
+# per-frame articulated re-send would overwrite the preview with the spawn
+# lights. It is skipped for the previewed iid; the close-restore re-sends.
+
+def test_previewed_iid_is_not_resent_when_its_pose_changes():
+    from engine.appc import articulation
+    r = _FakeRenderer()
+    ship = _RiggedShip([_WING_LIGHT])
+    s = _Session({ship: 16})
+    host_loop._register_running_lights(r, s, ship, 16)
+    articulation.force_part_pose(ship, "left wing", _wing_pose())
+    host_loop._push_running_lights(r, s, preview_iids=(16,))
+    assert r.calls == [16]                          # the spawn send only
+    assert r.levels == [(16, 1.0)]                  # still lit
+
+
+def test_without_a_preview_a_pose_change_still_resends():
+    from engine.appc import articulation
+    r = _FakeRenderer()
+    ship = _RiggedShip([_WING_LIGHT])
+    s = _Session({ship: 17})
+    host_loop._register_running_lights(r, s, ship, 17)
+    articulation.force_part_pose(ship, "left wing", _wing_pose())
+    host_loop._push_running_lights(r, s, preview_iids=())
+    assert r.calls == [17, 17]
+
+
+def test_run_feeds_the_spv_preview_iid_only_while_open():
+    """Source guard: run() passes the SPV's previewed iid(s), gated on the
+    dev-only `_spv_open`, so production sends ()."""
+    import inspect
+    src = inspect.getsource(host_loop.run)
+    assert ("preview_iids=(ship_property_viewer.running_light_preview_iids()"
+            "\n                          if _spv_open else ())") in src

@@ -36,8 +36,14 @@ def hardpoint_leaf_for_ship(ship) -> "str | None":
 
 
 class HardpointOverridesFileTarget:
-    def __init__(self, path: str = _PATH) -> None:
+    # A stock ship's lights other than the ones this file creates are
+    # templates from the game's own hardpoint file, keyed by name: only a
+    # created light may be renamed (writer.rename_running_light).
+    renames_any_light = False
+
+    def __init__(self, path: str = _PATH, live_module=None) -> None:
         self.path = path
+        self._live_module = live_module
 
     def write(self, leaf, edits) -> None:
         """edits: list of (subsystem, setter, args) 3-tuples, (name,
@@ -59,6 +65,24 @@ class HardpointOverridesFileTarget:
         with open(tmp, "w", encoding="utf-8") as fh:
             fh.write(text)
         os.replace(tmp, self.path)
+        self._refresh_live(text)
+
+    def _refresh_live(self, text: str) -> None:
+        """Make the saved edit take effect on the next CreateShip: swap the
+        live module's OVERRIDES for the freshly executed one. Only the real
+        file refreshes by default; the live module is untouched on failure."""
+        live = self._live_module
+        if live is None:
+            if self.path != _PATH:
+                return
+            from engine.appc import hardpoint_overrides as live
+        try:
+            ns: dict = {}
+            exec(compile(text, self.path, "exec"), ns)  # noqa: S102
+            new_overrides = ns["OVERRIDES"]
+        except Exception as exc:
+            raise RuntimeError("saved, but reload failed: %s" % (exc,)) from exc
+        live.OVERRIDES = new_overrides
 
     def describe(self) -> str:
         return "hardpoint_overrides.py"
@@ -69,6 +93,9 @@ class ModHardpointFileTarget:
     (spec 2026-09-26). Encoding and line endings are preserved: the file is
     read as UTF-8, falling back to Latin-1 (which round-trips any byte), and
     written back in the same encoding with newline translation off."""
+
+    # The mod file is fully rewritable: any light in it may be renamed.
+    renames_any_light = True
 
     def __init__(self, path: str) -> None:
         # Resolve symlinks so .orig/.tmp/os.replace all act on the real file:

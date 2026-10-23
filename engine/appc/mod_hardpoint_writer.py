@@ -2,7 +2,8 @@
 edits (spec docs/superpowers/specs/2026-09-26-spv-save-to-mod-hardpoint-design.md).
 
 Pure text in, text out -- file I/O lives in override_routing.ModHardpointFileTarget.
-SetPosition/SetRadius are rewritten in place on the author's own call; every
+SetPosition/SetRadius are rewritten in place on the author's own call, and a
+renamed author light has its name literals rewritten in place; every
 other edit lives in ONE machine-owned block at the end of the file, between
 START_MARKER and END_MARKER, guarded on App.DAUNTLESS_ENV so stock stbc.exe
 skips it. Emitted code must stay Python 1.5 safe.
@@ -18,6 +19,7 @@ START_MARKER = "# >>> dauntless SPV edits -- machine-owned, regenerated on save;
 END_MARKER = "# <<< dauntless SPV edits <<<"
 BLOCK_FN = "_dauntless_spv"
 _PARTS_KEY = "__parts__"
+_LIGHTS_KEY = _w._LIGHTS_KEY
 
 
 class ManagedBlockError(ValueError):
@@ -64,9 +66,10 @@ def read_block(block_text):
 
 
 def _non_empty(per_sub):
-    subs = any(c for s, c in per_sub.items() if s != _PARTS_KEY)
+    subs = any(c for s, c in per_sub.items() if s not in (_PARTS_KEY, _LIGHTS_KEY))
+    lights = bool(per_sub.get(_LIGHTS_KEY))
     parts = any(c for c in per_sub.get(_PARTS_KEY, {}).values())
-    return subs or parts
+    return subs or parts or lights
 
 
 def emit_block(per_sub, newline="\n"):
@@ -230,10 +233,11 @@ def _dedupe_last_wins(edits):
     last-issued edit per key, in its original position."""
     last_index = {}
     for i, edit in enumerate(edits):
-        if len(edit) == 3:
+        if len(edit) == 3 and edit[1] != RENAME_VERB:
             last_index[(edit[0], edit[1])] = i
     keep = set(last_index.values())
-    return [edit for i, edit in enumerate(edits) if len(edit) != 3 or i in keep]
+    return [edit for i, edit in enumerate(edits)
+            if len(edit) != 3 or edit[1] == RENAME_VERB or i in keep]
 
 
 def _check_span_is_the_call(author, start, end, var, setter):
@@ -278,6 +282,15 @@ def _check_finite(edits):
     for edit in edits:
         subsystem, kind = edit[0], edit[1]
         payload = edit[2] if len(edit) == 3 else edit[3]
+        if kind == RENAME_VERB:
+            continue
+        if kind == "__running_light__":
+            spec = payload.get("spec") or {}
+            for x in _numbers_in(list(spec.values())):
+                if not math.isfinite(x):
+                    raise ValueError("non-finite value %r for light %s"
+                                     % (x, subsystem))
+            continue
         if len(edit) == 3 and kind not in ("__part__",):
             calls = [(kind, payload)]
         else:
@@ -304,6 +317,96 @@ def _author_calls_setter(tree, subsystem, setter):
     return False
 
 
+# ── Renaming a light (the mod file is the author's to rewrite) ─────────────
+
+RENAME_VERB = "__rename_light__"
+
+
+def _is_name_literal(node, name):
+    return (isinstance(node, ast.Constant) and isinstance(node.value, str)
+            and node.value == name)
+
+
+def _find_literals(tree, name):
+    """Every `<x>.FindByName("<name>", ...)` name literal in `tree`."""
+    return [n.args[0] for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+            and n.func.attr == "FindByName" and n.args
+            and _is_name_literal(n.args[0], name)]
+
+
+def _author_light_literals(tree, name):
+    """The string literals a rename of the author's light `name` rewrites:
+    its one `App.BlinkingLightProperty_Create("<name>")` and every
+    `FindByName("<name>", ...)`. Raises unless those are exactly every
+    `"<name>"` literal in the file, so a rename never leaves a reference
+    behind (a computed or stored name cannot be vouched for)."""
+    creates = [n for n in ast.walk(tree) if _is_create_of(n, name)]
+    if (len(creates) != 1
+            or creates[0].func.attr != "BlinkingLightProperty_Create"):
+        raise ManagedBlockError(
+            "cannot rename light %r: no single BlinkingLightProperty_Create"
+            "(%s) in the file" % (name, _w._lit(name)))
+    finds = _find_literals(tree, name)
+    if not finds:
+        raise ManagedBlockError(
+            "cannot rename light %r: no FindByName(%s, ...) in the file"
+            % (name, _w._lit(name)))
+    nodes = [creates[0].args[0]] + finds
+    ids = {id(n) for n in nodes}
+    stray = [n for n in ast.walk(tree)
+             if _is_name_literal(n, name) and id(n) not in ids]
+    if stray:
+        raise ManagedBlockError(
+            "cannot rename light %r: line %d uses the name outside a Create "
+            "or FindByName" % (name, stray[0].lineno))
+    return nodes
+
+
+def _check_name_free_in_author(tree, name):
+    if tree is not None and (_create_count(tree, name) or _find_literals(tree, name)):
+        raise ManagedBlockError("cannot rename to %r: the file already has a "
+                                "property of that name" % (name,))
+
+
+def _rename_light(author, tree, models, leaf, old, new):
+    """Rename light `old` to `new`: a light the managed block creates is
+    re-keyed there; an author light has its Create and FindByName literals
+    rewritten in place (quoted like every emitted name) and any managed-block
+    entry for it re-keyed. Returns the new (author, tree)."""
+    _check_name_free_in_author(tree, new)
+    created = (models[leaf].get(_LIGHTS_KEY, {}).get(old) or {}).get("op") == "create"
+    if created:
+        _w.rename_running_light(models, leaf, old, new)
+        return author, tree
+    if tree is None:
+        raise ManagedBlockError("cannot rename light %r: the file does not "
+                                "parse" % (old,))
+    replacements = []
+    for node in _author_light_literals(tree, old):
+        start, end = _char_span(author, node)
+        try:
+            ok = ast.literal_eval(author[start:end]) == old
+        except (ValueError, SyntaxError):
+            ok = False
+        if not ok:
+            raise ManagedBlockError("rename span %r is not %s"
+                                    % (author[start:end], _w._lit(old)))
+        replacements.append((start, end, _w._lit(new)))
+    _check_no_overlapping_spans(replacements)
+    _w.rename_running_light(models, leaf, old, new, require_created=False)
+    for start, end, text in sorted(replacements, reverse=True):
+        author = author[:start] + text + author[end:]
+    return author, ast.parse(author)
+
+
+def _apply_replacements(author, replacements):
+    _check_no_overlapping_spans(replacements)
+    for start, end, new in sorted(replacements, reverse=True):
+        author = author[:start] + new + author[end:]
+    return author
+
+
 def rewrite(text, leaf, edits):
     _check_finite(edits)
     newline = _newline_of(text)
@@ -317,6 +420,16 @@ def rewrite(text, leaf, edits):
 
     replacements = []                         # (start, end, new_text)
     for edit in edits:
+        if len(edit) == 3 and edit[1] == RENAME_VERB:
+            # In order: the in-place spans so far are applied first, then
+            # every later edit sees the renamed text.
+            if replacements:
+                author = _apply_replacements(author, replacements)
+                replacements = []
+                tree = ast.parse(author)
+            author, tree = _rename_light(author, tree, models, leaf,
+                                         edit[0], edit[2])
+            continue
         if tree is not None and len(edit) == 3 and edit[1] in INPLACE_SETTERS:
             subsystem, setter, args = edit
             call = find_setter_call(tree, subsystem, setter, arity=len(args))
@@ -337,11 +450,7 @@ def rewrite(text, leaf, edits):
             continue
         _w.apply_edit(models, leaf, edit)
 
-    _check_no_overlapping_spans(replacements)
-
-    new_author = author
-    for start, end, new in sorted(replacements, reverse=True):
-        new_author = new_author[:start] + new + new_author[end:]
+    new_author = _apply_replacements(author, replacements)
 
     block_text = emit_block(models[leaf], newline)
     if block_text:

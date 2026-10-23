@@ -28,6 +28,11 @@ public:
     float level(scenegraph::InstanceId id) const noexcept;   // 0 when absent or unlisted
     std::vector<RunningLightSprite> build_sprites(const scenegraph::World& world, float game_time,
         const RunningLightDials& dials, const glm::vec3& cam_eye, float proj11, int viewport_h) const;
+    // One instance only, with `level_override` in place of the stored level
+    // (the Ship Property Viewer's frozen sim never pushes levels).
+    std::vector<RunningLightSprite> build_sprites_for(scenegraph::InstanceId id,
+        const scenegraph::World& world, float time, const RunningLightDials& dials,
+        const glm::vec3& cam_eye, float proj11, int viewport_h, float level_override) const;
 
 private:
     struct Entry {
@@ -36,6 +41,10 @@ private:
         float phase = 0.0f;
         float level = 0.0f;
     };
+    static bool append_sprites(std::vector<RunningLightSprite>& out, const Entry& e,
+        float level, const scenegraph::World& world, float game_time,
+        const RunningLightDials& dials, const glm::vec3& cam_eye, float proj11,
+        int viewport_h);
     std::vector<Entry> entries_;
 };
 

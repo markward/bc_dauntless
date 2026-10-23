@@ -21,6 +21,7 @@ from engine.ui.ship_property_viewer import (
 )
 from engine.ui import ship_property_viewer as _spv
 from engine.ui.spv_decals_pane import DecalsPaneMixin
+from engine.ui.spv_running_lights_pane import RunningLightsPaneMixin
 
 
 def _parse_set(action: str, key: str):
@@ -116,7 +117,7 @@ TOAST_ANCHOR_IN_USE = ("Remove the transformations first — they swing around "
                        "the anchor")
 
 
-class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
+class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
     # Actions the dispatch_event undo wrapper does not snapshot around:
     # "undo" itself, "save"/"cancel" (which clear/discard state wholesale
     # rather than mutate it), any "overlay:" chrome toggle, and "decal-pane"
@@ -128,9 +129,16 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                  iid_getter: Optional[Callable[[], Optional[int]]] = None,
                  on_regions_saved: Optional[Callable[[object, dict], None]] = None,
                  model_rel_getter: Optional[Callable[[object], Optional[str]]] = None,
+                 on_running_lights_closed: Optional[
+                     Callable[[object, int], None]] = None,
                  ) -> None:
         super().__init__()
         self._ship_getter = ship_getter
+        # Running lights: called with (ship, iid) on close when the SPV
+        # previewed lights on that instance, so the host can put the spawn
+        # lights back (host_loop._restore_running_lights). Construction-time
+        # config, like on_saved.
+        self._on_running_lights_closed = on_running_lights_closed
         # Decals pane: ship -> its DECLARED High model path, posix and
         # game-root-relative (GetShipStats()["FilenameHigh"], wired to
         # host_loop.declared_model_rel). Where the class's Masks/ lives and
@@ -341,6 +349,11 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         # Decals pane (engine/ui/spv_decals_pane.py). Session state: reset
         # every open/close, like the staged-edit dicts above.
         self._decal_reset_state()
+        # Running lights (engine/ui/spv_running_lights_pane.py): session
+        # state reset every open/close; the saved overlay persists like the
+        # _saved_* dicts above.
+        self._rl_reset_state()
+        self._rl_clear_saved()
 
     @property
     def name(self) -> str:
@@ -405,6 +418,8 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         self._systems_tab = "functional"
         self._physical_lights, self._mount_points = (
             self._fetch_physical_sources(ship))
+        self._rl_reset_state()
+        self._rl_load(ship)
         # Persist the saved-edit overlay across open/close of the SAME ship so a
         # re-opened SPV reflects edits saved this session (build_descriptors
         # reads the still-original property until the next ship build). Drop it
@@ -441,6 +456,7 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         target = self._fit_target()
         self.camera = OrbitCamera(target=target, distance=self._fit_distance(target))
         self.visible = True
+        self._rl_sync_preview()
 
     def _clear_saved_edits(self) -> None:
         """Drop the persisted-edit overlay. Called from open() when the authored
@@ -452,6 +468,7 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         self._saved_pos = {}
         self._saved_part = {}
         self._saved_physical = {}
+        self._rl_clear_saved()
 
     def close(self) -> None:
         self.visible = False
@@ -480,6 +497,8 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         self._pending_physical = {}
         self._physical_lights = []
         self._mount_points = {}
+        self._rl_restore_preview()
+        self._rl_reset_state()
         self._physical_sync_preview()
         from engine.appc import articulation as _articulation
         # Closing returns every part to the NIF pose (spec section 7.3) -- the
@@ -1310,15 +1329,20 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             out.append({"key": "sub:%d" % i, "name": name,
                         "kind": "subsystem", "index": i,
                         "baked": d.get("physical_parent"), "point": point})
-        for light in self._physical_lights:
-            out.append({"key": "light:" + light["name"],
-                        "name": light["name"], "kind": "running_light",
-                        "index": None, "baked": light["physical_parent"],
-                        "point": light["position"]})
+        # Running lights from the EFFECTIVE list (pending adds appear,
+        # pending removals vanish); the open-time snapshot only supplies
+        # each baked light's physical parent.
+        out += self._rl_physical_entries(
+            {light["name"]: light["physical_parent"]
+             for light in self._physical_lights})
         return out
 
     def _physical_committed(self, entry):
-        """Saved this session, else baked."""
+        """Saved this session, else baked -- or the entry's own `committed`
+        value when its pane resolves that itself (a renamed running light's
+        parent is saved under its old name)."""
+        if "committed" in entry:
+            return entry["committed"]
         name = entry["name"]
         if name in self._saved_physical:
             return self._saved_physical[name]
@@ -1495,8 +1519,9 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
     # ------------------------------------------------------------------
     def _snapshot_pending(self):
         """Deep copy of the six staged-edit dicts plus the decal working
-        list and staged default registry — one undo unit. (Placements are
-        frozen dataclasses, so a tuple of them is already a copy.)"""
+        list and staged default registry, then the staged running lights —
+        one undo unit. (Placements are frozen dataclasses, so a tuple of them
+        is already a copy.)"""
         import copy
         decals = (tuple(self._decal_working)
                   if self._decal_working is not None else None)
@@ -1506,14 +1531,16 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                 copy.deepcopy(self._pending_pos),
                 copy.deepcopy(self._pending_part),
                 dict(self._pending_physical),
-                (decals, self._decal_default, dict(self._decal_passthrough)))
+                (decals, self._decal_default, dict(self._decal_passthrough)),
+                self._rl_snapshot())
 
     def _restore_pending(self, snap) -> None:
-        """Replace the six staged-edit dicts and the decal list from a
-        snapshot, drop a now-stale emitter/decal selection, re-push the decal
+        """Replace the six staged-edit dicts, the decal list and the staged
+        running lights from a snapshot, drop a now-stale emitter/decal/light
+        selection, re-push the decal
         override and the physical-parent preview, and force a CEF re-push."""
         import copy
-        r, l, e, p, pt, phys, (decals, decal_default, passthrough) = snap
+        r, l, e, p, pt, phys, (decals, decal_default, passthrough), rl = snap
         if decals is not None:
             self._decal_working = list(decals)
             self._decal_default = decal_default
@@ -1536,6 +1563,7 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         self._pending_pos = copy.deepcopy(p)
         self._pending_part = copy.deepcopy(pt)
         self._pending_physical = dict(phys)
+        self._rl_restore(rl)
         self._physical_sync_preview()
         if self._selected_emitter is not None:
             i, j = self._selected_emitter
@@ -1547,6 +1575,7 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
     def undo(self) -> None:
         if self._undo_stack:
             self._restore_pending(self._undo_stack.pop())
+            self._rl_sync_preview()
 
     # ------------------------------------------------------------------
     # Transform gizmo (part anchor/pose, emitter, light or subsystem target)
@@ -1577,6 +1606,9 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             return None          # Breakage: no gizmo
         if self._selected_emitter is not None:
             return ("emitter",) + self._selected_emitter   # ("emitter", i, j)
+        rl_key = self._rl_target_key()
+        if rl_key is not None:
+            return rl_key                         # ("running_light", name)
         if self._selected_light_index is not None:
             return ("light", self._selected_light_index)
         if self.selected_index is not None:
@@ -1985,7 +2017,10 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         this already returns None while a light node is selected."""
         sel = self.selected_index
         if sel is None or not (0 <= sel < len(self._descriptors)):
-            return None
+            # Another kind's own marker (a selected running light's dot may
+            # be in its off phase): `EditTarget.selection_sphere`.
+            t = self._edit_target()
+            return t.selection_sphere() if t is not None else None
         d = self._descriptors[sel]
         r = self._effective_radius(sel, d.get("properties", {}).get("radius"))
         try:
@@ -2104,7 +2139,8 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                     len(self._undo_stack),
                     self._pipette_armed,
                     self._edit_target() is not None,
-                    self._decal_state_key())
+                    self._decal_state_key(),
+                    self._rl_state_key())
         if snapshot == self._last_pushed:
             return None
         self._last_pushed = snapshot
@@ -2144,12 +2180,14 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                                   | set(self._pending_pos) | set(self._pending_emitter))
                               + len(self._pending_part)
                               + len(self._pending_physical)
+                              + self._rl_pending_count()
                               + (1 if self._decal_dirty() else 0)),
             "pending": self._pending_edits(),
             "subsystems": self._subsystem_rows(),
             "physical": self._physical_payload(),
             "model_parts": self._model_parts_payload(),
             "decals": self._decals_payload(),
+            "running_lights": self._rl_payload(),
             "close_overlays": self._close_overlays,
             "can_undo": bool(self._undo_stack),
             "pipette_armed": self._pipette_armed,
@@ -2187,6 +2225,11 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                 counts[name] = 0
                 order.append(name)
             counts[name] += 1
+        for name, n in self._rl_dirty_counts():
+            if name not in counts:
+                counts[name] = 0
+                order.append(name)
+            counts[name] += n
         if self._decal_dirty():
             counts["Decals"] = counts.get("Decals", 0) + self._decal_change_count()
             if "Decals" not in order:
@@ -2252,6 +2295,8 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         for row in by_index.values():
             if row["children"]:
                 row["expanded"] = row["name"] in self._expanded_groups
+        # The Running Lights group (when the ship has any) and "+ Add".
+        rows += self._rl_rows()
         return rows
 
     def _model_parts_payload(self) -> dict:
@@ -2352,6 +2397,8 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             self._pipette_armed = False
             self._last_pushed = None
             return
+        if self._rl_cancel_placing():
+            return
         if self._viewport_input_blocked():
             self._overlay_open = False
             self._add_state_picker = None
@@ -2399,6 +2446,9 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         empty-space path, which clears the part selection (Mark,
         2026-09-26)."""
         if self.camera is None:
+            return
+        if self._rl_click(x, y, viewport):
+            # Placing a running light owns the click (rl/place_begin).
             return
         if self.decal_click(x, y, viewport):
             # The Decals pane owns hull clicks (Add / Reposition); no pin is
@@ -2704,6 +2754,7 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         """Public dispatch entry point: wraps `_dispatch_event_inner` with the
         undo snapshot/record bracket, skipping "undo"/"save"/"cancel" (which
         themselves clear/discard state) and "overlay:" chrome toggles."""
+        placing_context = self._rl_placing_context()
         if action in self._NO_UNDO_ACTIONS or action.startswith("overlay:"):
             result = self._dispatch_event_inner(action)
         else:
@@ -2717,8 +2768,17 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                                          "model_parts/select:")):
             self._decal_selected = None
             self._decal_reposition = False
-        # Any action may have changed the decal working list or registry.
+        # ...and anything else now selected takes it off a running light
+        # (by state: many actions select as a side effect).
+        if result and not action.startswith("rl/"):
+            self._rl_yield_to_other_selection()
+        # ...and a changed selection or tool ends running-light placing.
+        if result:
+            self._rl_yield_placing(placing_context)
+        # Any action may have changed the decal working list or registry...
         self._decal_sync_override()
+        # ...or the running lights the hologram previews.
+        self._rl_sync_preview()
         # ...or the physical parents (an edit, an undo, Cancel, Save).
         self._physical_sync_preview()
         # Every action -- a node select, an undo, a node removed from under
@@ -2735,6 +2795,7 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
         "select_pin:", "select_light:", "select_emitter:",
         "add_light:", "remove_light:", "add_emitter:", "remove_emitter:",
         "set_radius:", "set_light:", "set_emitter:",
+        "rl/select:", "rl/place_begin:", "rl/edit:", "rl/remove:",
     )
     # Shared gizmo verbs: these edit whatever the CURRENT transform target is,
     # so they are refused only when that target is a subsystem/light/emitter
@@ -2799,6 +2860,7 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             _spv.select_part_node(None, None)
             self._last_pushed = None
         if not self._mount_editing_enabled() and self._is_locked_mount_action(action):
+            self._rl_note_lock_refusal(action)
             return False
         if action == "pipette":
             if self._pipette_armed:
@@ -2834,9 +2896,12 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                     i = j = -1
                 if 0 <= i < len(self._descriptors) and self._effective_emitter(i, j) is not None:
                     src = ("emitter", i, j)
+            elif action.startswith("rl/select:"):
+                src = self._rl_pipette_source(action)
             # Any select_* while armed consumes the pick (valid → apply); any other
             # action, or an invalid pick, cancels the arm and falls through.
-            if action.startswith(("select_pin:", "select_light:", "select_emitter:")):
+            if action.startswith(("select_pin:", "select_light:", "select_emitter:",
+                                  "rl/select:")):
                 self._pipette_armed = False
                 self._last_pushed = None
                 if src is not None:
@@ -2891,6 +2956,8 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             return self._dispatch_part_action(action)
         if action.startswith("decal-"):
             return self._dispatch_decal_action(action)
+        if action.startswith("rl/"):
+            return self._dispatch_rl_action(action)
         if action.startswith("select_pin:"):
             try:
                 idx = int(action.split(":", 1)[1])
@@ -3053,11 +3120,13 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             # `selected_model_part()` is cleared.
             if (self.selected_index is None and self._selected_light_index is None
                     and self._selected_emitter is None
+                    and self._rl_selected is None
                     and _spv.selected_model_part() is None):
                 return False
             self.selected_index = None
             self._selected_light_index = None
             self._selected_emitter = None
+            self._rl_clear_selection()
             _spv.select_model_part(None, self._model_part_nodes)
             self._last_pushed = None
             return True
@@ -3301,7 +3370,8 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             hardpoints_pending = bool(
                 self._pending_radius or self._pending_light
                 or self._pending_pos or self._pending_emitter
-                or self._pending_part or self._pending_physical)
+                or self._pending_part or self._pending_physical
+                or self._rl_has_pending())
             if self._decal_dirty():
                 # decals.json first; a failure keeps EVERY staged edit (and
                 # its toast) so nothing is half-saved behind the player.
@@ -3322,8 +3392,11 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
                 # edits so the user can retry (e.g. after fixing the ship).
                 self._last_pushed = None
                 return True
-            edits = [(self._descriptors[i]["name"], "SetRadius", (v,))
-                     for i, v in sorted(self._pending_radius.items())]
+            # Running lights first: a rename must free/take its names before
+            # any edit (a physical parent) names the light by its new name.
+            edits = self._rl_save_edits()
+            edits += [(self._descriptors[i]["name"], "SetRadius", (v,))
+                      for i, v in sorted(self._pending_radius.items())]
             edits += [(self._descriptors[i]["name"], "__region__", 0,
                        region_spec_to_calls(0, spec) if spec is not None else [])
                       for i, spec in sorted(self._pending_light.items())]
@@ -3366,7 +3439,10 @@ class ShipPropertyViewerPanel(DecalsPaneMixin, Panel):
             # Physical parents go straight onto the LIVE properties (the
             # in-game consumers read them every frame), so the preview
             # overlay is left holding pending edits only and nothing that
-            # clears it can undo a save.
+            # clears it can undo a save. The lights commit first: a rename
+            # moves its parent in `_saved_physical`, which a parent staged
+            # for the new name then overrides.
+            self._rl_commit_saved()
             self._apply_saved_physical(ship, self._pending_physical)
             self._saved_physical.update(self._pending_physical)
             self._pending_physical = {}

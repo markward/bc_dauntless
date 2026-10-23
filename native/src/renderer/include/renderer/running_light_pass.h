@@ -22,7 +22,8 @@ public:
     RunningLightPass& operator=(const RunningLightPass&) = delete;
 
     void render(const scenegraph::Camera& camera, Pipeline& pipeline,
-                const std::vector<RunningLightSprite>& sprites);
+                const std::vector<RunningLightSprite>& sprites,
+                bool depth_test = true);
 
 private:
     unsigned int quad_vao_ = 0;

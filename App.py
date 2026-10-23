@@ -344,7 +344,11 @@ from engine.appc.particles import (
 # new level. Must stay a real definition: this module's __getattr__ answers
 # any undefined name with a stub. Not a measured BC constant -- never add it
 # to constants_generated.py.
-DAUNTLESS_ENV = 1
+# Level 2 = running-light blocks (Dauntless-created BlinkingLightProperty
+# templates attached via DauntlessAttachTemplate; spec 2026-10-22 4.1).
+DAUNTLESS_ENV = 2
+
+from engine.appc.attach_templates import queue as DauntlessAttachTemplate
 
 # ── App.CT_* object type-tag constants ────────────────────────────────────────
 # In the original BC engine these are integer enum tags, and since the q13

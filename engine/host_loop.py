@@ -769,6 +769,17 @@ def _register_running_lights(r, session, ship, iid) -> None:
     r.set_running_lights(iid, list(sent), phase)
 
 
+def _restore_running_lights(r, session, ship, iid) -> None:
+    """The SPV closed over `iid` (SPV running-lights spec §3.5): put back
+    what spawn sent -- the last sent list with its phase -- or, for a ship
+    unlit at spawn, remove the preview so no orphan lights stay in native."""
+    if session is not None and iid in session.ship_running_lights:
+        sent = session.ship_running_light_specs[iid][1]
+        r.set_running_lights(iid, list(sent), session.ship_running_lights[iid])
+    else:
+        r.set_running_lights(iid, [], 0.0)
+
+
 def _resend_articulated_running_lights(r, session, ship, iid, phase) -> None:
     """Re-send `ship`'s lights when an articulated part has moved them, or a
     structure part has broken off, since the last send. Native caches
@@ -790,7 +801,7 @@ def _resend_articulated_running_lights(r, session, ship, iid, phase) -> None:
         r.set_running_lights(iid, list(sent), phase)
 
 
-def _push_running_lights(r, session, hidden_iids=()) -> None:
+def _push_running_lights(r, session, hidden_iids=(), preview_iids=()) -> None:
     """Per-frame running-light brightness + dials (spec §4.3). Level folds in
     death, power-plant state and the live cloak fraction; a vanished ship, or
     one whose hull the host loop hides, is sent 0. No lit ships => no calls.
@@ -801,6 +812,12 @@ def _push_running_lights(r, session, hidden_iids=()) -> None:
     the warp-transit hide (`session.warp_hidden_iids`, recorded by
     `_sync_instance_transforms` where it hides them) and `hidden_iids` — the
     bridge-view player hide, as returned by `_apply_bridge_player_visibility`.
+
+    `preview_iids` are the instances the open Ship Property Viewer is
+    previewing lights on (SPV running-lights spec §3.5): their articulated
+    re-send is skipped, or the SPV's own pose forcing would overwrite the
+    preview with the spawn lights. Closing the SPV restores them
+    (`_restore_running_lights`). Empty outside the SPV.
     """
     lit = getattr(session, "ship_running_lights", None)
     if not lit:
@@ -818,10 +835,11 @@ def _push_running_lights(r, session, hidden_iids=()) -> None:
         if ship is None or iid in hidden:
             levels.append((iid, 0.0))
             continue
-        try:
-            _resend_articulated_running_lights(r, session, ship, iid, phase)
-        except Exception as _e:
-            dev_mode.log_swallowed("running light articulation", _e)
+        if iid not in preview_iids:
+            try:
+                _resend_articulated_running_lights(r, session, ship, iid, phase)
+            except Exception as _e:
+                dev_mode.log_swallowed("running light articulation", _e)
         frac = 0.0
         get_cloak = getattr(ship, "GetCloakingSubsystem", None)
         cloak = get_cloak() if get_cloak is not None else None
@@ -11069,6 +11087,10 @@ def run(mission_name: Optional[str] = None,
                 iid_getter=_spv_player_iid,
                 # Decals pane: where the class's Masks/ lives and a Save routes.
                 model_rel_getter=declared_model_rel,
+                # Running lights: closing gives the SPV's live preview back
+                # to the spawn lights (or none, for an unlit ship).
+                on_running_lights_closed=lambda ship, iid: (
+                    _restore_running_lights(r, controller.session, ship, iid)),
             )
             # The Decals pane's live override is keyed on the player's
             # instance; drop it before a swap destroys that instance.
@@ -13332,7 +13354,9 @@ def run(mission_name: Optional[str] = None,
                 r, active_set, _warp_streaking, player=player)
 
             _push_cloak_refraction(r, session, player)
-            _push_running_lights(r, session, hidden_iids=_bridge_hidden_iids)
+            _push_running_lights(r, session, hidden_iids=_bridge_hidden_iids,
+                preview_iids=(ship_property_viewer.running_light_preview_iids()
+                          if _spv_open else ()))
 
             _pump_letterbox(r, _letterbox_anim, _player_dt)
 
