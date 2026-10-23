@@ -158,3 +158,65 @@ def test_emit_is_stable_with_physical_parent_on_edited_light():
                                    {"spec": dict(SPEC), "new": False}))
     w.apply_edit(m, "galaxy", ("B", "SetPhysicalParent", ("hull",)))
     assert _stable(m)
+
+
+# --- renames (follow-up 2026-10-23) -----------------------------------------
+
+def _rename(models, old, new, leaf="galaxy"):
+    w.apply_edit(models, leaf, (old, "__rename_light__", new))
+
+
+def test_rename_of_created_light_rekeys_it_and_its_physical_parent():
+    m = {}
+    _create(m, name="A")
+    _create(m, name="B")
+    w.apply_edit(m, "galaxy", ("A", "SetPhysicalParent", ("saucer",)))
+    _rename(m, "A", "Renamed")
+    lights = m["galaxy"][w._LIGHTS_KEY]
+    assert list(lights) == ["Renamed", "B"]           # stable order
+    assert lights["Renamed"]["op"] == "create"
+    assert "A" not in m["galaxy"]
+    assert m["galaxy"]["Renamed"] == [("SetPhysicalParent", ("saucer",))]
+    text = w.emit(m)
+    assert 'BlinkingLightProperty_Create("Renamed")' in text
+    assert 'find("Renamed")' in text
+    assert '"A"' not in text
+    assert w.read_models_from_source(text) == m
+    assert w.emit(w.read_models_from_source(text)) == text
+
+
+def test_rename_onto_an_existing_name_is_refused():
+    import pytest
+    for setup in (lambda m: _create(m, name="B"),
+                  lambda m: w.apply_edit(m, "galaxy", ("B", "SetPhysicalParent", ("hull",))),
+                  lambda m: w.apply_edit(m, "galaxy", ("B", "__running_light__",
+                                                       {"spec": None, "new": False}))):
+        m = {}
+        _create(m, name="A")
+        setup(m)
+        before = w.emit(m)
+        with pytest.raises(ValueError):
+            _rename(m, "A", "B")
+        assert w.emit(m) == before
+
+
+def test_rename_of_a_non_created_light_is_refused():
+    import pytest
+    m = {}
+    w.apply_edit(m, "galaxy", ("Strobe", "__running_light__",
+                               {"spec": dict(SPEC), "new": False}))
+    with pytest.raises(ValueError):
+        _rename(m, "Strobe", "Renamed")
+    with pytest.raises(ValueError):
+        _rename(m, "Nowhere", "Renamed")
+    assert "Renamed" not in m["galaxy"].get(w._LIGHTS_KEY, {})
+
+
+def test_rename_then_edit_under_the_new_name_stays_a_create():
+    m = {}
+    _create(m, name="A")
+    _rename(m, "A", "B")
+    w.apply_edit(m, "galaxy", ("B", "__running_light__",
+                               {"spec": dict(SPEC, radius=2.0), "new": False}))
+    assert m["galaxy"][w._LIGHTS_KEY]["B"]["op"] == "create"
+    assert m["galaxy"][w._LIGHTS_KEY]["B"]["radius"] == 2.0

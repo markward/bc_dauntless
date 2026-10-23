@@ -304,6 +304,37 @@ def set_running_light(models, leaf, name, spec, new) -> None:
     per_sub.setdefault(_LIGHTS_KEY, {})[name] = entry
 
 
+def _rekey(d, old, new) -> dict:
+    """`d` with key `old` renamed `new`, in the same position."""
+    return dict(((new if k == old else k), v) for k, v in d.items())
+
+
+def rename_running_light(models, leaf, old, new, require_created=True) -> None:
+    """Rename light `old` to `new` in the ship's model: its __lights__ entry
+    and any setter list stored under `old` (SetPhysicalParent) are re-keyed
+    in place, so the emitted order is stable.
+
+    Refused (ValueError, the model untouched) when `new` already names a
+    light entry or a non-empty setter list, or -- with `require_created`, the
+    stock file's rule -- when `old` is not a light this file creates: any
+    other light is a template from the game's own hardpoint file, which is
+    keyed by name and cannot be renamed. A mod file passes False after it has
+    renamed the author's own Create (mod_hardpoint_writer)."""
+    per_sub = models.setdefault(leaf, {})
+    lights = per_sub.get(_LIGHTS_KEY, {})
+    if new in lights or per_sub.get(new):
+        raise ValueError("cannot rename light %r to %r: %r already exists"
+                         % (old, new, new))
+    entry = lights.get(old)
+    if require_created and (entry is None or entry.get("op") != "create"):
+        raise ValueError("cannot rename light %r: it is not a light Dauntless "
+                         "created" % (old,))
+    if entry is not None:
+        per_sub[_LIGHTS_KEY] = _rekey(lights, old, new)
+    if old in per_sub:
+        models[leaf] = per_sub = _rekey(per_sub, old, new)
+
+
 def set_region(models, leaf, subsystem, index, calls, prefix=_INDEXED_PREFIX) -> None:
     """Replace all <prefix>*(index, ...) calls for a subsystem with `calls`
     (ordered [(setter, args), ...], each args starting with `index`). Other
@@ -320,7 +351,8 @@ def set_region(models, leaf, subsystem, index, calls, prefix=_INDEXED_PREFIX) ->
 def apply_edit(models, leaf, edit) -> None:
     """Apply one SPV edit tuple (see HardpointOverridesFileTarget.write):
     (subsystem, setter, args) 3-tuples, (name, "__part__", calls) 3-tuples,
-    (subsystem, "__unset__", setter) 3-tuples, and/or (subsystem, "__region__"/"__emitter__", index, calls) 4-tuples."""
+    (subsystem, "__unset__", setter) 3-tuples, (old, "__rename_light__", new)
+    3-tuples, and/or (subsystem, "__region__"/"__emitter__", index, calls) 4-tuples."""
     if len(edit) == 4 and edit[1] == "__region__":
         subsystem, _tag, index, calls = edit
         set_region(models, leaf, subsystem, index, calls)
@@ -333,6 +365,8 @@ def apply_edit(models, leaf, edit) -> None:
     elif len(edit) == 3 and edit[1] == "__running_light__":
         name, _tag, payload = edit
         set_running_light(models, leaf, name, payload["spec"], payload["new"])
+    elif len(edit) == 3 and edit[1] == "__rename_light__":
+        rename_running_light(models, leaf, edit[0], edit[2])
     elif len(edit) == 3 and edit[1] == "__unset__":
         unset_setter(models, leaf, edit[0], edit[2])
     else:
