@@ -80,3 +80,40 @@ def test_kessoklight_build_unchanged():
     mod.LoadPropertySet(pset)
     assert _names(pset) == []
     assert len(list(pset.GetPropertyList())) > 0
+
+
+def test_record_remembers_the_attached_names_per_leaf():
+    attach_templates.record("zzleaf", [App.BlinkingLightProperty_Create("Port"),
+                                       App.BlinkingLightProperty_Create("Star")])
+    attach_templates.record("zzother", [])
+    try:
+        assert attach_templates.attached_names("zzleaf") == {"Port", "Star"}
+        assert attach_templates.attached_names("zzother") == set()
+        assert attach_templates.attached_names("zznever") == set()
+        # The next exec of the leaf replaces, never accumulates.
+        attach_templates.record("zzleaf", [App.BlinkingLightProperty_Create("Keel")])
+        assert attach_templates.attached_names("zzleaf") == {"Keel"}
+        # A copy: the caller cannot edit the record.
+        attach_templates.attached_names("zzleaf").add("X")
+        assert attach_templates.attached_names("zzleaf") == {"Keel"}
+    finally:
+        attach_templates.record("zzleaf", [])
+        attach_templates.record("zzother", [])
+
+
+def test_sdk_hook_records_the_queued_names_for_the_leaf():
+    from engine.appc import sdk_overrides
+
+    class M:
+        @staticmethod
+        def LoadPropertySet(pObj):
+            pass
+    attach_templates.queue(App.BlinkingLightProperty_Create("Port"))
+    sdk_overrides.on_sdk_module_exec(M, "ships.Hardpoints.zzhookleaf")
+    try:
+        assert attach_templates.attached_names("zzhookleaf") == {"Port"}
+        # A later exec that queues nothing clears the leaf's record.
+        sdk_overrides.on_sdk_module_exec(M, "ships.Hardpoints.zzhookleaf")
+        assert attach_templates.attached_names("zzhookleaf") == set()
+    finally:
+        attach_templates.record("zzhookleaf", [])
