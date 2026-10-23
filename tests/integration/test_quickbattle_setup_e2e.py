@@ -150,3 +150,80 @@ def test_late_enemy_group_e2e(world):
     assert galor.GetAI() is not None
     _destroy(QB, galor)
     assert QB.g_iNumEnemies == 0 and QB.bWonOrLost == 1
+
+
+def _km_group(panel, ship, allegiance, warp_in=0):
+    """A second group holding `ship`; returns its entry id."""
+    _do(panel, "group-new")
+    g = panel.scenario.groups[-1]
+    _do(panel, "details:" + g.id, "draft:allegiance:" + allegiance)
+    if warp_in:
+        _do(panel, "draft:warp_in:%d" % warp_in)
+    _do(panel, "draft-update", "add:" + ship)
+    return panel.scenario.group(g.id).entries[-1].id
+
+
+def test_km_e2e_from_the_victory_view(world):
+    hl, _c, panel, QB = world
+    from engine.quickbattle import battle_end
+    from engine.ui import target_markers
+    _do(panel, "add:Warbird")
+    entry = _km_group(panel, "Transport", "neutral")
+    _do(panel, "victory-view", "victory-type:kobayashi_maru", "victory-protect:" + entry)
+    _go(hl, panel)
+    name = battle_end.state().protected_name
+    assert name == "Transport-2"
+    assert target_markers.marker_for(name) == "protect"
+    _destroy(QB, _ships(QB)[name])
+    st = battle_end.state()
+    assert st.ended and st.won is False and st.reason == battle_end.REASON_PROTECTED
+
+
+def test_xo_restart_rearms_from_current_plan(world):
+    hl, _c, panel, QB = world
+    import App
+    from engine.quickbattle import battle_end
+    _do(panel, "add:Warbird")
+    entry = _km_group(panel, "Akira", "friendly", warp_in=1)
+    _do(panel, "victory-type:kobayashi_maru", "victory-protect:" + entry)
+    _go(hl, panel)
+    assert "Akira-2" not in _ships(QB)
+
+    class _Stub:
+        def CallNextHandler(self, evt):
+            pass
+
+    QB.RestartSimulation(_Stub(), None)
+    App.g_kTimerManager.tick(3.0)
+    hl._fire_pending_preload_done()
+    st = battle_end.state()
+    assert st is not None and st.type == "kobayashi_maru" and not st.ended
+    assert st.protected_name == "Akira-2"
+    App.g_kTimerManager.tick(61.0)
+    akira = _ships(QB).get("Akira-2")
+    assert akira is not None
+    _destroy(QB, akira)
+    st = battle_end.state()
+    assert st.ended and st.won is False and st.reason == battle_end.REASON_PROTECTED
+
+
+def test_preset_km_round_trip_e2e(world, tmp_path):
+    hl, controller, panel, QB = world
+    from engine.quickbattle import battle_end, presets
+    from engine.ui import target_markers
+    from engine.ui.quick_battle_setup_panel import QuickBattleSetupPanel
+    _do(panel, "add:Warbird")
+    entry = _km_group(panel, "Transport", "neutral")
+    _do(panel, "victory-type:kobayashi_maru", "victory-protect:" + entry,
+        "preset-save:km")
+    fresh = QuickBattleSetupPanel(on_start=lambda: controller.loader.start_quickbattle(),
+                                  presets=presets.load_presets(tmp_path / "p.json"))
+    fresh.open()
+    fresh.render_payload()
+    _do(fresh, "preset-load:km")
+    assert fresh.scenario.victory.type == "kobayashi_maru"
+    assert fresh.scenario.victory.protect == entry
+    _go(hl, fresh)
+    name = battle_end.state().protected_name
+    assert name == "Transport-2"
+    assert target_markers.marker_for(name) == "protect"

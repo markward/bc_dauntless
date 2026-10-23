@@ -1,7 +1,7 @@
 # Quick Battle victory conditions
 
 **Date:** 2026-10-23
-**Status:** design, awaiting Mark's approval
+**Status:** approved; phase 1 built, not live-verified
 **Roadmap:** sub-project 2c of `2026-10-01-quickbattle-redesign-roadmap.md`.
 This design replaces that row's "free condition builder" idea: Mark compared
 a rule builder against named battle types (mockups in
