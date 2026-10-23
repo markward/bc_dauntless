@@ -126,13 +126,10 @@ def reset() -> None:
 
 
 def check_win(qb) -> None:
-    """QuickBattle.ShipDestroyed's win branch (QuickBattle.py:3356-3367)."""
-    if qb.g_iNumEnemies == 0 and qb.bInSimulation and qb.bWonOrLost == 0:
-        qb.bWonOrLost = 1
-        qb.GenerateWinSequence()
-        import BridgeHandlers
-        BridgeHandlers.DropMenusTurnBack()
-        qb.g_pXO.MenuUp()
+    """The win check QuickBattle.ShipDestroyed runs, repeated after an
+    arrival tick: `battle_end` owns it (a win now ends the battle)."""
+    from engine.quickbattle import battle_end
+    battle_end.check_win(qb)
 
 
 OTHER_CALLOUT_KEY = "gs025"
