@@ -176,7 +176,17 @@ def _record_xo_alert(pMenu, pEvent):
 def _bridge_xo_and_player():
     """A bridge set whose XO holds a menu wired like XOMenuHandlers.CreateMenus
     (plus a recorder, newest, standing in for XOCharacterHandlers), and the
-    current game's player."""
+    current game's player.
+
+    The player is assigned BEFORE the bridge exists: Game.SetPlayer attaches
+    the real bridge officers (bridge_officers.configure_for_player), and
+    Saffi's AttachMenuToXO would stack XOCharacterHandlers above the
+    recorder that stands in for it here."""
+    player = _FakeShip()
+    game = Game()
+    game.SetPlayer(player)
+    _set_current_game(game)
+
     menu = App.STTopLevelMenu_CreateW("Commander")
     menu.AddPythonFuncHandlerForInstance(App.ET_SET_ALERT_LEVEL,
                                          "Bridge.XOMenuHandlers.SetAlertLevel")
@@ -188,10 +198,6 @@ def _bridge_xo_and_player():
     bridge.AddObjectToSet(xo, "XO")
     App.g_kSetManager.AddSet(bridge, "bridge")
 
-    player = _FakeShip()
-    game = Game()
-    game.SetPlayer(player)
-    _set_current_game(game)
     player.SetAlertLevel(ShipClass.GREEN_ALERT)
     return player
 

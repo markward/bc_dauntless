@@ -11,12 +11,14 @@ Harness notes (Task 4, Step 1):
 - `engine/appc/emission.py`'s recording LaunchObject hook is harness-only
   (`tools/mission_harness.install_emission_recorder`); the fixture asserts the
   SDK's own `LaunchObject` is the one that runs, as production leaves it.
-- Headless, the Science menu's only ET_LAUNCH_PROBE handler is
-  `Bridge.ScienceMenuHandlers.LaunchProbe` (Miguel's
-  `ScienceCharacterHandlers.LaunchProbe` replaces it only in the live bridge,
-  via `AttachMenuToScience`). The button path is reproduced by sending
-  ET_LAUNCH_PROBE to that menu through the event manager, which also runs the
-  broadcast handlers (E6M4's `ProbeLaunched`) exactly as a click does.
+- The Science menu's ET_LAUNCH_PROBE handler is Miguel's
+  `ScienceCharacterHandlers.LaunchProbe`, as live: `AttachMenuToScience`
+  swaps it in for `Bridge.ScienceMenuHandlers.LaunchProbe` when Game.SetPlayer
+  attaches the officers. Miguel acknowledges and works his console first, so
+  the probe leaves a few seconds after the press (`_wait_for_probe`). The
+  button path is reproduced by sending ET_LAUNCH_PROBE to that menu through
+  the event manager, which also runs the broadcast handlers (E6M4's
+  `ProbeLaunched`) exactly as a click does.
 """
 import App
 import MissionLib
@@ -48,6 +50,12 @@ def _press_launch_probe():
     evt.SetEventType(App.ET_LAUNCH_PROBE)
     evt.SetDestination(menu)
     App.g_kEventManager.AddEvent(evt)
+
+
+def _wait_for_probe(sensors):
+    """Tick until Miguel's launch sequence (Yes1, PushingButtons, gs030, then
+    MakeLaunchProbeAction) has put the probe out."""
+    headless_mission.tick_until(lambda: len(sensors.probes()) >= 1, bound_s=30.0)
 
 
 @pytest.fixture
@@ -96,7 +104,7 @@ def test_launch_probe_handler_decrements_the_count(e6m4_player):
     sensors = player.GetSensorSubsystem()
     before = sensors.GetNumProbes()
     _press_launch_probe()
-    headless_mission.tick(1.0)
+    _wait_for_probe(sensors)
     assert sensors.GetNumProbes() == before - 1
     assert len(sensors.probes()) == 1
 
@@ -160,7 +168,7 @@ def _launch_in_tezle1(mod):
     player = _warp_to_tezle1(mod)
     sensors = player.GetSensorSubsystem()
     _press_launch_probe()
-    headless_mission.tick(1.0)
+    _wait_for_probe(sensors)
     probes = sensors.probes()
     assert len(probes) == 1
     return player, probes[0]
