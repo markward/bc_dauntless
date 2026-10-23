@@ -127,7 +127,13 @@ def _create_ai(orig, pShip, args, kw):
     if group is None or qb is None or pShip is None or not _is_enemy(pShip):
         return orig(pShip, *args, **kw)
     import App
-    sync(qb)
+    try:
+        sync(qb)
+    except Exception:
+        # StartSimulation2's AI loop runs this: one failure must not abort AI
+        # assignment for the ships after it. The group stays as it is.
+        _log.exception("quickbattle: Kobayashi Maru targets not synced for %s",
+                       pShip.GetName())
     real = App.ObjectGroup_FromModule
 
     def FromModule(module_name, attr_name):
@@ -153,15 +159,29 @@ def sync(qb) -> None:
             group[name] = {"Priority": OTHER_TARGET_PRIORITY}
 
 
+def _put_first(group, name, info) -> None:
+    """Make `name` the group's FIRST name, with `info`; every other name
+    keeps its info, in order. Through the group's own API: a group-level
+    event flag (SetEventFlag(flag), the form SelectTarget's setup uses) is
+    re-applied to each re-added name by AddName."""
+    others = [(n, group[n]) for n in group.GetNameTuple() if n != name]
+    for n, _info in others:
+        group.RemoveName(n)
+    group[name] = info
+    for n, n_info in others:
+        group[n] = n_info
+
+
 def ship_arrived(qb, name) -> None:
     """A late ship is in the battle and its side's group: friendlies join the
-    targets, and the protected ship joins at PROTECTED_TARGET_PRIORITY.
-    Never raises."""
+    targets, and the protected ship joins at PROTECTED_TARGET_PRIORITY as the
+    FIRST name, so enemies built from now on start on it (see the module
+    docstring). Never raises."""
     if _group is None:
         return
     try:
         if name == _protected:
-            _group[name] = {"Priority": PROTECTED_TARGET_PRIORITY}
+            _put_first(_group, name, {"Priority": PROTECTED_TARGET_PRIORITY})
         sync(qb)
     except Exception:
         _log.exception("quickbattle: Kobayashi Maru targets not updated for %s", name)

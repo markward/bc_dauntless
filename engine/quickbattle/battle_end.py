@@ -481,9 +481,9 @@ def _hide_objectives() -> None:
 def reset() -> None:
     """Cancel every timer this module made, empty and hide the Objectives it
     showed, clear its markers, restore BC's enemy targeting and forget the
-    battle. An ending already decided
-    is kept only as the one-shot `_outcome` for the sequence wrappers that
-    EndSimulationEvent runs right after EndSimulation."""
+    battle. An ending already decided is kept only as the one-shot
+    `_outcome` for the sequence wrappers that EndSimulationEvent runs right
+    after EndSimulation."""
     global _state, _qb, _protected_id, _objectives_shown, _outcome, _ET, \
         _xo_registered
     st, qb = _state, _qb

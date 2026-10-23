@@ -194,6 +194,10 @@ def test_late_protected_joins_km_targets_on_arrival(world):
     _arrive_late(QB, t0)
     assert "Transport-2" in _ships(QB)
     assert group["Transport-2"] == {"Priority": 2.0}
+    # First, like a start-of-battle protected ship: enemies built from now on
+    # start on it (NonFedAttack.py:11), and nobody else lost their info.
+    assert group.GetNameTuple()[0] == "Transport-2"
+    assert group[_player().GetName()] == {"Priority": 1.0}
     assert not QB.pFriendlies.IsNameInGroup("Transport-2")
     assert _neutrals().IsNameInGroup("Transport-2")
 
@@ -209,8 +213,31 @@ def test_restart_into_elimination_is_stock(world):
     QB.EndSimulation()                         # End Combat
     from engine.quickbattle import km_targeting
     assert km_targeting.target_group() is None
+    for module in ("QuickBattleAI", "StarbaseAI"):
+        assert not hasattr(__import__(module).CreateAI, km_targeting._ORIG_ATTR)
     _do(panel, "victory-type:elimination")
     _go(hl, panel)
     assert _target_group(_ships(QB)["Warbird-1"]) is QB.pFriendlies
     assert App.ObjectGroup_FromModule("QuickBattle.QuickBattle", "pFriendlies") \
         is QB.pFriendlies
+
+
+def test_sync_failure_does_not_abort_ai_assignment(world, monkeypatch):
+    """StartSimulation2's AI loop runs the wrapped CreateAI: a sync failing
+    there is logged and the ship still gets its AI and the weighted group."""
+    hl, _c, panel, QB = world
+    from engine.quickbattle import km_targeting
+    real, calls = km_targeting.sync, []
+
+    def flaky(qb):
+        calls.append(1)
+        if len(calls) > 1:                 # arm's own sync succeeds
+            raise RuntimeError("sync failed")
+        return real(qb)
+    name = _km(panel, allegiance="neutral", ship="Transport")
+    monkeypatch.setattr(km_targeting, "sync", flaky)
+    _go(hl, panel)
+    assert len(calls) > 1                  # the CreateAI wrapper's sync ran
+    warbird = _ships(QB)["Warbird-1"]
+    assert warbird.GetAI() is not None
+    assert _target_group(warbird)[name] == {"Priority": 2.0}
