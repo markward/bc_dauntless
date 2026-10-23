@@ -1153,7 +1153,7 @@ class ShipClass(DamageableObject):
         return 1 if (cloak is not None and cloak.IsTryingToCloak()) else 0
     def SetCloakingSubsystem(self, s) -> None: self._cloaking_subsystem = self._attach_subsystem(s)
     def GetHull(self):                            return self._hull
-    def SetHull(self, h) -> None:                 self._hull = h
+    def SetHull(self, h) -> None:                 self._hull = self._attach_subsystem(h)
 
     def GetSubsystems(self) -> list:
         """Return every populated top-level subsystem on this ship.
@@ -1282,7 +1282,9 @@ class ShipClass(DamageableObject):
                 else:
                     receiver = None
                     if self._hull is None:
-                        self._hull = HullSubsystem(prop.GetName() or "Hull")
+                        # Attached, so its damage finds the ship's repair
+                        # queue; children reach the ship through it.
+                        self.SetHull(HullSubsystem(prop.GetName() or "Hull"))
                         self._hull.SetProperty(prop)
                         receiver = self._hull
                     elif self._hull.GetChildSubsystem(prop.GetName()) is None:

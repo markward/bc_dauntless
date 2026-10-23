@@ -653,15 +653,17 @@ class ShipSubsystem(TGEventHandlerObject):
 
     def SetCondition(self, value: float) -> None:
         """Floor at zero. Combat damage routes through here (see
-        engine/appc/objects.py). A decrease below max auto-enqueues this
-        subsystem on the owning ship's repair bay — the synchronous
+        engine/appc/objects.py). Any condition left below max auto-enqueues
+        this subsystem on the owning ship's repair bay — the synchronous
         equivalent of stock's ET_SUBSYSTEM_HIT -> RepairSubsystem::
-        HandleHitEvent chain. AddToRepairList owns all validation
-        (duplicate / destroyed / undamaged reject)."""
-        old = self._condition
+        HandleHitEvent chain. Below max is damaged however it got there, so a
+        raise that stays short of max queues too: a subsystem a script brings
+        back from destroyed is repaired the rest of the way (Mark, 2026-10-23).
+        AddToRepairList owns all validation (duplicate / destroyed / undamaged
+        reject)."""
         self._condition = max(0.0, float(value))
         self._condition_changed()
-        if self._condition < old:
+        if self._condition < self.GetMaxCondition():
             self._auto_enqueue_for_repair()
 
     def _auto_enqueue_for_repair(self) -> None:
@@ -2676,7 +2678,8 @@ class RepairSubsystem(PoweredSubsystem):
     methods. Queue semantics + tick formula are RE-verified
     (docs/gameplay/ship-subsystems.md §Repair):
     duplicates rejected, destroyed (condition<=0) rejected, undamaged
-    rejected; first NumRepairTeams entries are "being repaired".
+    rejected; the first NumRepairTeams entries that are not destroyed are
+    "being repaired".
     """
 
     def __init__(self, name: str = ""):
@@ -2744,25 +2747,33 @@ class RepairSubsystem(PoweredSubsystem):
     # SDK exposes both spellings for the same insert (App.py:6660-6661).
     AddSubsystem = AddToRepairList
 
+    def _worked(self) -> list:
+        """The items holding a team: the first NumRepairTeams queued items
+        that are not destroyed. A destroyed item holds no team and does not
+        slow the others (Mark, 2026-10-23); it stays queued, skipped. The
+        repair pane draws its REPAIR list the same way."""
+        live = [s for s in self._queue if s.GetCondition() > 0.0]
+        return live[:self.GetNumRepairTeams()]
+
     def IsBeingRepaired(self, sub) -> int:
-        """True iff sub is within the first NumRepairTeams queue entries —
-        stock walks exactly that many nodes (FUN_00565890)."""
-        n = self.GetNumRepairTeams()
-        return 1 if any(s is sub for s in self._queue[:n]) else 0
+        """True iff sub holds a repair team (see _worked)."""
+        return 1 if any(s is sub for s in self._worked()) else 0
 
     def Update(self, dt) -> None:
-        """The RE-verified repair tick (ship-subsystems.md §Repair):
+        """The repair tick (ship-subsystems.md §Repair):
 
             raw     = MaxRepairPoints * bayConditionPct * dt
-            perItem = raw / min(queueCount, NumRepairTeams)
+            perItem = raw / min(liveQueueCount, NumRepairTeams)
             gain_i  = perItem / target_i.RepairComplexity
 
-        Walks from the head assigning up to NumRepairTeams teams to
-        non-destroyed entries. Destroyed entries are skipped (stay queued,
-        per stock), fire ET_REPAIR_CANNOT_BE_COMPLETED once, and consume
-        no team. Completion removes the entry and fires
-        ET_REPAIR_COMPLETED. NO power-efficiency term — output scales
-        only by the bay's own health (spec + power spec agree)."""
+        Measured on the original (stbc-oracle bible §16, R1-R5: within 3 %
+        in every run). The items worked are the ones _worked() names
+        (inlined here for the notifications): destroyed entries
+        stay queued, fire ET_REPAIR_CANNOT_BE_COMPLETED once, hold no team
+        and are left out of the divisor. Completion removes the entry and
+        fires ET_REPAIR_COMPLETED. NO power-efficiency term — the player has
+        no power setting for repair (Mark, 2026-10-23); whether a starved
+        reactor slows it is unmeasured (bible R6)."""
         if dt is None or dt <= 0.0 or not self._queue:
             return
         if self.GetCondition() <= 0.0:
@@ -2771,12 +2782,9 @@ class RepairSubsystem(PoweredSubsystem):
         points = self.GetMaxRepairPoints()
         if teams <= 0 or points <= 0.0:
             return
-        raw = points * self.GetConditionPercentage() * float(dt)
-        per_item = raw / min(len(self._queue), teams)
-        assigned = 0
-        completed = []
-        for sub in list(self._queue):
-            if assigned >= teams:
+        worked = []
+        for sub in self._queue:
+            if len(worked) >= teams:
                 break
             if sub.GetCondition() <= 0.0:
                 if id(sub) not in self._cannot_complete_notified:
@@ -2785,7 +2793,13 @@ class RepairSubsystem(PoweredSubsystem):
                         "ET_REPAIR_CANNOT_BE_COMPLETED", sub)
                 continue
             self._cannot_complete_notified.discard(id(sub))
-            assigned += 1
+            worked.append(sub)
+        if not worked:
+            return
+        raw = points * self.GetConditionPercentage() * float(dt)
+        per_item = raw / len(worked)
+        completed = []
+        for sub in worked:
             complexity = sub.GetRepairComplexity()
             if complexity <= 0.0:
                 complexity = 1.0
@@ -2823,7 +2837,7 @@ class RepairSubsystem(PoweredSubsystem):
         idx = next((i for i, s in enumerate(self._queue) if s is sub), None)
         if idx is None:
             return
-        active = idx < self.GetNumRepairTeams()
+        active = self.IsBeingRepaired(sub)
         del self._queue[idx]
         if active:
             self._queue.append(sub)

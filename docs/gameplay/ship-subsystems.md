@@ -496,7 +496,17 @@ Properties of the algorithm:
    repair.
 5. **Destroyed subsystems** (condition `<= 0`) are *skipped*, not
    removed; they get an `ET_REPAIR_CANNOT_BE_COMPLETED` event but
-   don't consume a repair team.
+   don't consume a repair team, and `queueCount` above counts only the
+   ones that are not destroyed, so they don't slow the others (Mark,
+   2026-10-23; not yet measured on the original).
+6. **The hull is a queue item like any other** — there is no passive
+   hull regeneration. Measured on the original (stbc-oracle bible §16,
+   rows R1–R5): the formula holds within 3 % in nine runs, stock Galaxy
+   hull 16.7 points/s; replayed by
+   `tests/integration/test_repair_oracle_galaxy.py`. BC applies it in
+   ~0.33 s steps; we apply it every tick (same mean rate).
+7. **Any condition below max queues** the subsystem, however it got
+   there — a raise from destroyed included (Mark, 2026-10-23).
 
 Worked example — Sovereign, healthy repair bay, 2 items in queue,
 30 fps:

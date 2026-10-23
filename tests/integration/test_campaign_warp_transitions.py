@@ -76,11 +76,17 @@ def _move(ship, set_name):
 def _assert_carried(player, pid, condition, changes):
     """The same ship all the way through -- including to the next mission's
     Initialize, whose CreatePlayerShip must find it rather than build a
-    second "player" that the warp's arrival then silently displaces."""
+    second "player" that the warp's arrival then silently displaces.
+
+    The marked hull damage is carried too: a rebuilt ship would be back at
+    full. Engineering repairs the hull during a timed warp (16.7 points/s on
+    a Galaxy-class hull, bible §16), so the marker may have risen, never
+    fallen."""
     now = App.Game_GetCurrentPlayer()
     assert id(now) == pid and now is player
     assert [p for _, _, p in changes] == [player]
-    assert now.GetHull().GetCondition() == pytest.approx(condition)
+    hull = now.GetHull()
+    assert condition - 1e-6 <= hull.GetCondition() < hull.GetMaxCondition()
 
 
 @pytest.fixture(params=["hard_cut", "flythrough"])

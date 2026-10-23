@@ -2,7 +2,8 @@
 DEFENSIVE (cloaks); with a healthy reactor + repair progress it heals and
 re-engages; with a weak reactor it is flushed out by reserve exhaustion before
 healing. Repair is simulated by an external per-tick hull bump (repair proxy);
-the real RepairSubsystem heal path is covered by test_gameloop_repair_tick.py."""
+the real hull repair path, at the original's measured rates, is covered by
+test_repair_oracle_galaxy.py."""
 import App
 import pytest
 from engine.core.game import Game, Episode, Mission, _set_current_game
