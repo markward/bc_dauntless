@@ -448,4 +448,7 @@ def battle_plan(scenario: "Scenario", index) -> BattlePlan:
                       orders=tuple(orders),
                       victory=VictoryOrder(v.type, v.protect if km else None,
                                            v.time_limit_min * 60.0 if km else 0.0),
-                      startable=scenario.can_start())
+                      # An enemy entry whose ship is not in the catalog spawns
+                      # nothing: count the enemy ORDERS, not the entries.
+                      startable=scenario.can_start()
+                      and any(o.allegiance == "enemy" for o in orders))

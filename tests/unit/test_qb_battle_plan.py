@@ -128,3 +128,15 @@ def test_battle_plan_warp_in_seconds():
     assert s.update_details(g2.id, "enemy", "fore", "standard", "medium", warp_in_min=2)
     orders = {o.group_id: o.warp_in_s for o in sc.battle_plan(s, INDEX).orders}
     assert orders == {g1.id: 0.0, g2.id: 120.0}
+
+
+def test_startable_needs_a_resolved_enemy_order():
+    """An enemy entry whose ship is not in the index spawns nothing, so the
+    plan cannot start even though the scenario has an enemy entry."""
+    s = sc.default_scenario()
+    s.add_ship(s.groups[1].id, "ModShipRemoved")
+    assert s.can_start() is True
+    plan = sc.battle_plan(s, INDEX)
+    assert plan.orders == () and plan.startable is False
+    s.add_ship(s.groups[1].id, "Warbird")
+    assert sc.battle_plan(s, INDEX).startable is True
