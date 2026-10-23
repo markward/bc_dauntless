@@ -130,3 +130,15 @@ def test_warp_in_stepper_present():
     assert "draft:warp_in:" in JS
     assert "qbs-delay" in JS
     assert ".qbs-delay" in CSS
+
+
+def test_victory_cog_sits_left_of_close():
+    footer = SECTION.split('class="cp-footer', 1)[1]
+    assert 'id="qbs-victory-btn"' in footer
+    assert footer.index('id="qbs-victory-btn"') < footer.index('id="qbs-close"')
+    assert 'data-action="victory-view"' in footer
+
+
+def test_victory_containers_exist():
+    assert re.search(r'<aside id="qbs-vtypes" class="qbs-groups" hidden>', SECTION)
+    assert re.search(r'<main id="qbs-vbody" class="cp-body qbs-catalog" hidden>', SECTION)

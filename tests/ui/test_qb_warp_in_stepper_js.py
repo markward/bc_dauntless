@@ -80,7 +80,7 @@ global.setTimeout = f => { timers.push(f); return 0; };
 global.dauntlessEvent = e => events.push(e);
 
 (0, eval)(fs.readFileSync(process.argv[1], "utf8"));
-["renderEras", "renderSpecies", "renderCatalog", "renderFooter", "renderSheet",
+["renderEras", "renderSpecies", "renderCatalog", "renderVictory", "renderFooter", "renderSheet",
  "renderConfirm", "qbsPresetToast"].forEach(n => { global[n] = () => {}; });
 QBS.catalog = {
   allegiances: [{id: "enemy", label: "Enemy"}],

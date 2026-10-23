@@ -419,6 +419,57 @@ function renderSheet() {
     }
 }
 
+// ── render: the victory view ──────────────────────────────────────────────
+// The cog swaps the groups column and the ship catalog for the battle-type
+// cards and the chosen type's settings (Python's `view` and `victory`).
+function renderVictory() {
+    var s = QBS.setup, v = s.victory, on = s.view === 'victory' && !!v;
+    qbsEl('qbs-groups').hidden = on;
+    qbsEl('qbs-main').hidden = on;
+    qbsEl('qbs-vtypes').hidden = !on;
+    qbsEl('qbs-vbody').hidden = !on;
+    qbsEl('qbs-victory-btn').classList.toggle('qbs-victory-btn--on', on);
+    if (!on) return;
+
+    var label = v.type;
+    var t = '<div class="qbs-section">Battle type</div>';
+    v.types.forEach(function (ty) {
+        if (ty.id === v.type) label = ty.label;
+        var cls = 'qbs-group vc-type' + (ty.id === v.type ? ' vc-type--on' : '') +
+                  (ty.available ? '' : ' vc-type--off');
+        t += '<div class="' + cls + '"' + (ty.available
+            ? ' data-action="victory-type" data-arg="' + qbsEsc(ty.id) + '"' : '') + '>' +
+            '<div class="qbs-group__head"><span class="qbs-group__name">' + qbsEsc(ty.label) + '</span></div>' +
+            '<div class="qbs-group__summary">' + qbsEsc(ty.available ? ty.description : ty.reason) + '</div></div>';
+    });
+    qbsEl('qbs-vtypes').innerHTML = t;
+
+    var b = '<div class="qbs-section">' + qbsEsc(label) + '</div>' +
+            '<div class="vc-blurb">' + qbsEsc(v.rule) + '</div>';
+    if (v.type === 'kobayashi_maru') {
+        b += '<div class="qbs-section">Ship to protect</div>';
+        v.candidates.forEach(function (c) {
+            b += '<div class="qbs-group qbs-group--' + qbsEsc(c.allegiance) + '"><div class="qbs-rows">';
+            c.entries.forEach(function (e) {
+                b += '<div class="qbs-row"><div class="qbs-noart">No art</div><div class="qbs-row__text">' +
+                    '<div class="qbs-row__title">' + qbsEsc(e.title) + '</div>' +
+                    '<div class="qbs-row__sub">' + qbsEsc(c.group_name) + '</div></div>' +
+                    '<button class="cp-toggle vc-pick' + (e.id === v.protect ? ' cp-toggle--on' : '') +
+                    '" data-action="victory-protect" data-arg="' + qbsEsc(e.id) + '">Protect</button></div>';
+            });
+            b += '</div></div>';
+        });
+        var n = v.time_limit_min || 0;
+        b += '<div class="qbs-ctl-label">Time limit</div>' +
+            '<span class="qbs-qty qbs-qty--inline">' +
+            '<button class="qbs-qty__btn" data-action="victory-time" data-arg="' + Math.max(0, n - 1) + '"' +
+            (n <= 0 ? ' disabled' : '') + '>−</button>' +
+            '<span class="qbs-qty__n">' + (n > 0 ? n + ' min' : 'None') + '</span>' +
+            '<button class="qbs-qty__btn" data-action="victory-time" data-arg="' + (n + 1) + '">+</button></span>';
+    }
+    qbsEl('qbs-vbody').innerHTML = b;
+}
+
 // ── render: footer ────────────────────────────────────────────────────────
 function renderFooter() {
     var s = QBS.setup;
@@ -669,6 +720,11 @@ function qbsClick(ev) {
         QBS.delayEditing = true;
         renderGroups();
         break;
+    // victory view (the verbs are Python's; the page keeps no state of its own)
+    case 'victory-view': dauntlessEvent('quick-battle-setup/victory-view'); break;
+    case 'victory-type': dauntlessEvent('quick-battle-setup/victory-type:' + arg); break;
+    case 'victory-protect': dauntlessEvent('quick-battle-setup/victory-protect:' + arg); break;
+    case 'victory-time': dauntlessEvent('quick-battle-setup/victory-time:' + arg); break;
     case 'draft': dauntlessEvent('quick-battle-setup/draft:' + arg); break;
     case 'draft-update': dauntlessEvent('quick-battle-setup/draft-update'); break;
     case 'draft-cancel': dauntlessEvent('quick-battle-setup/draft-cancel'); break;
@@ -790,6 +846,7 @@ function qbsRender() {
     renderEras();
     renderSpecies();
     renderCatalog();
+    renderVictory();
     renderFooter();
     renderSheet();
     renderConfirm();

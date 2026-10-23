@@ -401,3 +401,16 @@
 #quick-battle-setup .qbs-menu__label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #quick-battle-setup .qbs-menu__del { width: 18px; height: 18px; font-family: Arial, sans-serif; font-size: 14px; line-height: 16px; margin-left: 8px; }
 #quick-battle-setup .qbs-menu__del:hover { background: rgba(216, 43, 43, 0.35); }
+
+/* Victory view: the groups column and catalog are swapped for the battle-type
+   cards and the chosen type's settings. [hidden] must beat the display rules
+   above. Spec 2026-10-23-quickbattle-victory-conditions-design. */
+#quick-battle-setup .qbs-groups[hidden],
+#quick-battle-setup .qbs-catalog[hidden] { display: none; }
+#quick-battle-setup .vc-type { cursor: pointer; }
+#quick-battle-setup .vc-type--on { border-color: var(--qbs-purple); border-left-color: var(--qbs-purple); background: var(--qbs-purple-bg); }
+#quick-battle-setup .vc-type--off { cursor: default; opacity: 0.55; }
+#quick-battle-setup .vc-pick { margin-left: auto; }
+#quick-battle-setup .qbs-victory-btn--on { background: var(--qbs-purple); border-color: var(--qbs-purple); color: #fff; }
+#quick-battle-setup .vc-blurb { font-size: 13px; color: var(--qbs-dim); margin: 0 0 14px 2px; }
+#quick-battle-setup .qbs-qty--inline { display: inline-flex; }
