@@ -422,6 +422,9 @@ Each phase is shippable and live-checkable on its own:
 
 ## 12. Not live-verified
 
-Everything here is unbuilt. Game feel needs Mark's live check per phase,
+Phase 1 (§11: the victory view, battle endings, Elimination and Kobayashi
+Maru) is built and headless-tested but not live-verified; phases 2-4
+(beam transport, Capture the Flag, Starbase Assault) are unbuilt. Game
+feel needs Mark's live check per phase,
 above all: beam success against recharging shields, the 2-minute hold, the
 5-minute match length, and the enemy beaming behaviour.
