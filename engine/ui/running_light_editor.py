@@ -50,6 +50,12 @@ def validate_spec(spec, taken):
     name = str(spec.get("name", "")).strip()
     if not name:
         raise ValueError("Name must not be empty")
+    # Printable ASCII only: the writers quote names with json.dumps, whose
+    # \uXXXX escapes Python 1.5 (stock BC) reads literally -- the game would
+    # see a different name than ours.
+    if not all(" " <= c <= "~" for c in name):
+        raise ValueError("Light names must use plain letters, numbers and "
+                         "punctuation")
     if name in taken:
         raise ValueError("A light or other ship property named '%s' already exists" % name)
     position = tuple(_num(v, "Position") for v in spec["position"])

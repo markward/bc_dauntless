@@ -27,6 +27,19 @@ def test_validate_rejects_empty_name():
         rle.validate_spec(_spec(name="   "), set())
 
 
+@pytest.mark.parametrize("name", ["Ünïcode", "Nav – Port", "Nav\tA", "Nav\x7f"])
+def test_validate_rejects_non_ascii_name(name):
+    """Emitted names go through json.dumps; Python 1.5 (stock BC) does not
+    read its \\uXXXX escapes, so it would see a different name."""
+    with pytest.raises(ValueError, match="plain letters, numbers and punctuation"):
+        rle.validate_spec(_spec(name=name), set())
+
+
+def test_validate_accepts_ascii_punctuation():
+    name = 'Port "Nav" (1) - it\'s #2 \\ a/b'
+    assert rle.validate_spec(_spec(name=name), set())["name"] == name
+
+
 def test_validate_rejects_duration_over_period():
     with pytest.raises(ValueError):
         rle.validate_spec(_spec(period=2.0, duration=2.5), set())
