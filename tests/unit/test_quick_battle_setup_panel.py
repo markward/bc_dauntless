@@ -65,7 +65,7 @@ def test_initial_state(panel):
     assert s["open"] and s["target"] == _enemy(panel).id
     assert s["eras"] == ["DS9"] and s["species"] == ["Federation"]
     assert not s["can_start"] and s["preset"] is None
-    assert s["summary"] == "2 groups · 1 ship"
+    assert s["summary"] == "Add an enemy ship to start"
 
 
 def test_catalog_push_has_stats_bios_and_tables(panel):
@@ -315,7 +315,8 @@ def test_group_summaries_and_footer_pluralise(panel):
     assert s["summary"] == "2 groups · 3 ships"
     panel.dispatch_event("group-delete:" + gid)
     panel.dispatch_event("confirm")
-    assert _setup(panel)["summary"] == "1 group · 1 ship"
+    # No enemy left: the summary now says why Start is blocked.
+    assert _setup(panel)["summary"] == "Add an enemy ship to start"
 
 
 def test_group_delete_confirm_copy(panel):
@@ -840,3 +841,104 @@ def test_payload_carries_warp_in_min(panel):
     assert _setup(panel)["groups"][1]["warp_in_min"] == 7
     _open_enemy_draft(panel)
     assert _setup(panel)["draft"]["warp_in"] == 7
+
+
+# ── Victory view (sub-project 2c, phase 1) ──────────────────────────────
+
+def _friend(p):
+    """Add a Warbird escort to the player's group; return its entry."""
+    pg = p.scenario.player_group()
+    assert p.dispatch_event("add:Warbird:%s:1" % pg.id)
+    return pg.entries[-1]
+
+
+def test_victory_view_toggles_and_resets_on_open(panel):
+    assert _setup(panel)["view"] == "ships"
+    assert panel.dispatch_event("victory-view")
+    assert _setup(panel)["view"] == "victory"
+    assert panel.dispatch_event("victory-view")
+    assert _setup(panel)["view"] == "ships"
+    panel.dispatch_event("victory-view")
+    panel.close()
+    panel.open()
+    assert _setup(panel)["view"] == "ships"
+
+
+def test_victory_payload_lists_two_types_with_km_greyed(panel):
+    v = _setup(panel)["victory"]
+    assert (v["type"], v["protect"], v["time_limit_min"]) == ("elimination", None, 0)
+    assert v["rule"].startswith("You win when every enemy is destroyed")
+    assert [t["id"] for t in v["types"]] == ["elimination", "kobayashi_maru"]
+    elim, km = v["types"]
+    assert elim["available"] and elim["reason"] is None
+    assert not km["available"] and km["reason"] == "Add a friendly or neutral ship first"
+    assert km["label"] == "Kobayashi Maru" and km["description"]
+    assert v["candidates"] == []
+
+
+def test_choose_km_then_protect_and_time(panel):
+    e = _friend(panel)
+    panel.dispatch_event("add:Sovereign:%s:1" % _enemy(panel).id)
+    pg = panel.scenario.player_group()
+    v = _setup(panel)["victory"]
+    assert v["types"][1]["available"]
+    assert v["candidates"] == [{"group": pg.id, "group_name": pg.name,
+                                "allegiance": "friendly",
+                                "entries": [{"id": e.id, "title": "Warbird"}]}]
+    assert panel.dispatch_event("victory-type:kobayashi_maru")
+    assert panel.dispatch_event("victory-protect:" + e.id)
+    assert panel.dispatch_event("victory-time:15")
+    s = _setup(panel)
+    assert s["victory"]["type"] == "kobayashi_maru"
+    assert s["victory"]["protect"] == e.id and s["victory"]["time_limit_min"] == 15
+    assert "lose if time runs out" in s["victory"]["rule"]
+    assert s["summary"].endswith(" · Kobayashi Maru · protect Warbird")
+
+
+def test_victory_title_prefers_variant_then_catalog_title(panel):
+    pg = panel.scenario.player_group()
+    panel.dispatch_event("add:Galaxy:%s:1" % pg.id)
+    e = pg.entries[-1]
+    e.variant = "USS Venture"
+    titles = {x["id"]: x["title"] for c in _setup(panel)["victory"]["candidates"]
+              for x in c["entries"]}
+    assert titles[e.id] == "USS Venture"
+
+
+def test_victory_type_refused_when_unavailable(panel):
+    assert not panel.dispatch_event("victory-type:kobayashi_maru")
+    assert not panel.dispatch_event("victory-type:nope")
+    assert not panel.dispatch_event("victory-protect:nope")
+    assert not panel.dispatch_event("victory-time:-1")
+    assert not panel.dispatch_event("victory-time:x")
+    assert _setup(panel)["victory"]["type"] == "elimination"
+
+
+def test_removing_protected_ship_shows_notice_once(panel):
+    e = _friend(panel)
+    panel.dispatch_event("add:Sovereign:%s:1" % _enemy(panel).id)
+    panel.dispatch_event("victory-type:kobayashi_maru")
+    assert _setup(panel)["victory"]["protect"] == e.id
+    panel.dispatch_event("remove:" + e.id)
+    s = _setup(panel)
+    assert s["victory"]["type"] == "elimination"
+    assert s["summary"] == "Kobayashi Maru needs a ship to protect; switched to Elimination"
+    assert _setup(panel)["summary"] == s["summary"]           # still pending until a verb
+    panel.dispatch_event("victory-view")
+    assert _setup(panel)["summary"] == "2 groups · 2 ships"
+
+
+def test_start_blocked_without_enemy_says_why(panel):
+    started.clear()
+    s = _setup(panel)
+    assert not s["can_start"] and s["summary"] == "Add an enemy ship to start"
+    panel.dispatch_event("start")
+    assert started == [] and panel.is_open()
+
+
+def test_victory_change_marks_dirty(panel):
+    panel.dispatch_event("add:Warbird")
+    panel.dispatch_event("preset-save:Alpha")
+    assert not _setup(panel)["dirty"]
+    panel.dispatch_event("victory-time:5")
+    assert _setup(panel)["dirty"]
