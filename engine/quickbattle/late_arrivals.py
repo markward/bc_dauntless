@@ -288,7 +288,7 @@ def _arrive_group(qb, pSet, player, members, out) -> None:
 def _spawn_one(qb, pSet, player, ppos, cols, n, order, pos) -> bool:
     import App
     import loadspacehelper
-    from engine.quickbattle import naming, spawn
+    from engine.quickbattle import km_targeting, naming, spawn
     name = naming.object_name(order.title, n)
     pname = "QB warp in %s %d" % (order.group_id, n)
     plc = App.PlacementObject_Create(pname, pSet.GetName(), None)
@@ -319,6 +319,9 @@ def _spawn_one(qb, pSet, player, ppos, cols, n, order, pos) -> bool:
                 .GetNeutralGroup().AddName(ship.GetName())
         else:
             (qb.pEnemies if side == "Enemy" else qb.pFriendlies).AddName(ship.GetName())
+        # A Kobayashi Maru battle's enemy targets (never raises).
+        km_targeting.ship_arrived(qb, ship.GetName())
+        if side is not None:
             # StartSimulation2's AI loop (QuickBattle.py:3113-3124), one ship.
             qb.g_iCurrentAILevel = order.ai_level
             ship.SetAI(__import__(ai).CreateAI(ship), 0, 0)

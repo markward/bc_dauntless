@@ -186,6 +186,14 @@ per type are in §5. A beam in progress also shows its progress there.
   - the time limit runs out before the win.
 - The E8M2 countdown lines call out the remaining minutes.
 - **Markers:** the shield icon (§4.5) and an Objectives entry.
+- **Enemy targeting** (live-check fix, Mark's ruling: BC's E6M1 approach,
+  `E6M1.py:595-598`): every enemy's attack AI targets an
+  `ObjectGroupWithInfo` holding the protected ship at `{"Priority": 2.0}`,
+  listed first, and every `pFriendlies` member at `{"Priority": 1.0}`; late
+  friendlies, late enemies and a late protected ship join on arrival. A
+  neutral protected ship stays neutral: it is a target candidate only, never
+  in `pFriendlies`. Elimination keeps BC's stock `pFriendlies`. See
+  `engine/quickbattle/km_targeting.py`.
 
 ### 5.3 Starbase Assault
 One type with two sides. The **station's allegiance** in the setup decides the

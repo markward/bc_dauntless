@@ -175,6 +175,11 @@ def begin(qb, plan) -> None:
             _protected_id = ship.GetObjID()
     if protected is not None:
         _guard("protect marker", _set_marker, protected)
+        # Enemies weight the protected ship, E6M1's way (km_targeting). Before
+        # StartSimulation2's AI loop, which runs right after GenerateShips.
+        from engine.quickbattle import km_targeting
+        _guard("Kobayashi Maru targeting", km_targeting.arm, qb, plan, protected,
+               _protected_id is not None)
     limit_s = float(victory.time_limit_s) if victory is not None else 0.0
     _guard("objectives", _show_objectives, shown, limit_s)
     if limit_s > 0:
@@ -475,7 +480,8 @@ def _hide_objectives() -> None:
 
 def reset() -> None:
     """Cancel every timer this module made, empty and hide the Objectives it
-    showed, clear its markers and forget the battle. An ending already decided
+    showed, clear its markers, restore BC's enemy targeting and forget the
+    battle. An ending already decided
     is kept only as the one-shot `_outcome` for the sequence wrappers that
     EndSimulationEvent runs right after EndSimulation."""
     global _state, _qb, _protected_id, _objectives_shown, _outcome, _ET, \
@@ -506,6 +512,11 @@ def reset() -> None:
         except Exception:
             _log.exception("quickbattle battle end: could not unload databases")
         _dbs.clear()
+    try:
+        from engine.quickbattle import km_targeting
+        km_targeting.reset()
+    except Exception:
+        _log.exception("quickbattle battle end: could not reset enemy targeting")
     _state = None
     _qb = None
     _protected_id = None
