@@ -36,6 +36,11 @@ def hardpoint_leaf_for_ship(ship) -> "str | None":
 
 
 class HardpointOverridesFileTarget:
+    # A stock ship's lights other than the ones this file creates are
+    # templates from the game's own hardpoint file, keyed by name: only a
+    # created light may be renamed (writer.rename_running_light).
+    renames_any_light = False
+
     def __init__(self, path: str = _PATH, live_module=None) -> None:
         self.path = path
         self._live_module = live_module
@@ -88,6 +93,9 @@ class ModHardpointFileTarget:
     (spec 2026-09-26). Encoding and line endings are preserved: the file is
     read as UTF-8, falling back to Latin-1 (which round-trips any byte), and
     written back in the same encoding with newline translation off."""
+
+    # The mod file is fully rewritable: any light in it may be renamed.
+    renames_any_light = True
 
     def __init__(self, path: str) -> None:
         # Resolve symlinks so .orig/.tmp/os.replace all act on the real file:

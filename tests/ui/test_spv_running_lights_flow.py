@@ -190,8 +190,12 @@ def test_place_begin_position_is_optional(make_panel):
 
 def test_edit_keeps_name_and_restages(make_panel):
     p = make_panel()
-    new = dict(_PORT, name="Renamed", color=(0.0, 0.0, 1.0),
-               position=(-2.0, 0.5, 0.0))
+    new = dict(_PORT, color=(0.0, 0.0, 1.0), position=(-2.0, 0.5, 0.0))
+    # The fixture's stock lights are the game's own templates: a rename is
+    # refused outright (renames: tests/ui/test_spv_running_lights_rename.py).
+    assert p.dispatch_event("rl/edit:" + json.dumps(
+        {"name": "Port Nav", "spec": dict(new, name="Renamed")})) is False
+    assert p._pending_running_light == {}
     assert p.dispatch_event("rl/edit:" + json.dumps(
         {"name": "Port Nav", "spec": new})) is True
     staged = p._pending_running_light["Port Nav"]

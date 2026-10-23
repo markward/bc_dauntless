@@ -1338,7 +1338,11 @@ class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
         return out
 
     def _physical_committed(self, entry):
-        """Saved this session, else baked."""
+        """Saved this session, else baked -- or the entry's own `committed`
+        value when its pane resolves that itself (a renamed running light's
+        parent is saved under its old name)."""
+        if "committed" in entry:
+            return entry["committed"]
         name = entry["name"]
         if name in self._saved_physical:
             return self._saved_physical[name]
@@ -2176,7 +2180,7 @@ class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
                                   | set(self._pending_pos) | set(self._pending_emitter))
                               + len(self._pending_part)
                               + len(self._pending_physical)
-                              + len(self._pending_running_light)
+                              + self._rl_pending_count()
                               + (1 if self._decal_dirty() else 0)),
             "pending": self._pending_edits(),
             "subsystems": self._subsystem_rows(),
@@ -2221,11 +2225,11 @@ class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
                 counts[name] = 0
                 order.append(name)
             counts[name] += 1
-        for name in self._rl_dirty_names():
+        for name, n in self._rl_dirty_counts():
             if name not in counts:
                 counts[name] = 0
                 order.append(name)
-            counts[name] += 1
+            counts[name] += n
         if self._decal_dirty():
             counts["Decals"] = counts.get("Decals", 0) + self._decal_change_count()
             if "Decals" not in order:
@@ -3367,7 +3371,7 @@ class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
                 self._pending_radius or self._pending_light
                 or self._pending_pos or self._pending_emitter
                 or self._pending_part or self._pending_physical
-                or self._pending_running_light)
+                or self._rl_has_pending())
             if self._decal_dirty():
                 # decals.json first; a failure keeps EVERY staged edit (and
                 # its toast) so nothing is half-saved behind the player.
@@ -3388,8 +3392,11 @@ class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
                 # edits so the user can retry (e.g. after fixing the ship).
                 self._last_pushed = None
                 return True
-            edits = [(self._descriptors[i]["name"], "SetRadius", (v,))
-                     for i, v in sorted(self._pending_radius.items())]
+            # Running lights first: a rename must free/take its names before
+            # any edit (a physical parent) names the light by its new name.
+            edits = self._rl_save_edits()
+            edits += [(self._descriptors[i]["name"], "SetRadius", (v,))
+                      for i, v in sorted(self._pending_radius.items())]
             edits += [(self._descriptors[i]["name"], "__region__", 0,
                        region_spec_to_calls(0, spec) if spec is not None else [])
                       for i, spec in sorted(self._pending_light.items())]
@@ -3401,7 +3408,6 @@ class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
                       else (name, "__unset__", "SetPhysicalParent")
                       for name, part in sorted(self._pending_physical.items(),
                                                key=lambda kv: kv[0])]
-            edits += self._rl_save_edits()
             try:
                 target = resolve_override_target(ship)
                 target.write(leaf, edits)
@@ -3433,11 +3439,13 @@ class ShipPropertyViewerPanel(RunningLightsPaneMixin, DecalsPaneMixin, Panel):
             # Physical parents go straight onto the LIVE properties (the
             # in-game consumers read them every frame), so the preview
             # overlay is left holding pending edits only and nothing that
-            # clears it can undo a save.
+            # clears it can undo a save. The lights commit first: a rename
+            # moves its parent in `_saved_physical`, which a parent staged
+            # for the new name then overrides.
+            self._rl_commit_saved()
             self._apply_saved_physical(ship, self._pending_physical)
             self._saved_physical.update(self._pending_physical)
             self._pending_physical = {}
-            self._rl_commit_saved()
             self._undo_stack.clear()
             self._drag_undo_before = None
             self._last_pushed = None

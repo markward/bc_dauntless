@@ -79,3 +79,38 @@ def test_saved_light_reaches_the_next_galaxy_only(tmp_path):
     assert hardpoint_overrides.OVERRIDES is saved_overrides
     with open(real, "rb") as fh:
         assert fh.read() == real_bytes
+
+
+def test_created_light_is_renameable_and_renames_through_the_loader(tmp_path):
+    """The attach queue records the created light for the leaf (what makes
+    it renameable in the SPV); a saved rename reaches the next build under
+    the new name, its physical parent with it."""
+    from engine.appc import attach_templates
+    real = override_routing._PATH
+    with open(real, "rb") as fh:
+        real_bytes = fh.read()
+    copy = tmp_path / "hardpoint_overrides.py"
+    shutil.copy(real, copy)
+    saved_overrides = hardpoint_overrides.OVERRIDES
+    try:
+        target = override_routing.HardpointOverridesFileTarget(
+            str(copy), live_module=hardpoint_overrides)
+        target.write("galaxy", [
+            ("Zz Rename Nav", "__running_light__", {"spec": _SPEC, "new": True}),
+            ("Zz Rename Nav", "SetPhysicalParent", ("saucer",)),
+        ])
+        _create("Galaxy", "Before")
+        assert "Zz Rename Nav" in attach_templates.attached_names("galaxy")
+        target.write("galaxy", [
+            ("Zz Rename Nav", "__rename_light__", "Zz Renamed Nav")])
+        galaxy = _create("Galaxy", "After")
+        lights = {s.name: s for s in running_lights.lights_for(galaxy)}
+        assert "Zz Rename Nav" not in lights
+        assert lights["Zz Renamed Nav"].physical_parent == "saucer"
+        assert lights["Zz Renamed Nav"].pos == pytest.approx(_SPEC["position"])
+        assert "Zz Renamed Nav" in attach_templates.attached_names("galaxy")
+        assert "Zz Rename Nav" not in attach_templates.attached_names("galaxy")
+    finally:
+        hardpoint_overrides.OVERRIDES = saved_overrides
+    with open(real, "rb") as fh:
+        assert fh.read() == real_bytes

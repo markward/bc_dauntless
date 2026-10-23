@@ -19,6 +19,14 @@ Three layers, each `name -> canonical spec` (see
 A `None` spec in saved/pending removes the light. The effective list is
 baked, then saved, then pending, in insertion order (an added light goes
 last). Lights are never descriptors, never pins and never targetable.
+
+Renames (follow-up 2026-10-23) ride beside the saved and pending layers as
+`{new name: the name it had in the layer below}` maps, applied to the layer
+below before that layer's specs; a renamed light keeps its place. Only a
+light Dauntless created (added this session, or attach-queued by a stock
+leaf's overrides) or any light of a mod's own hardpoint file may be renamed:
+a stock ship's other lights are templates from the game's own hardpoint
+file, which is keyed by name.
 """
 from __future__ import annotations
 
@@ -31,7 +39,9 @@ from engine.ui.spv_decals_pane import MISS_HINT, instance_scale
 RL_GROUP_NAME = "Running Lights"
 RL_ADD_NAME = "+ Add"
 RL_TARGET_KIND = "running_light"
+RL_RENAME_LOCK_REASON = "Named in the game's hardpoint file"
 _EDIT_VERB = "__running_light__"
+_RENAME_VERB = "__rename_light__"
 
 
 class RunningLightsPaneMixin:
@@ -54,9 +64,18 @@ class RunningLightsPaneMixin:
         # last refusal's readable reason.
         self._rl_placing: Optional[dict] = None
         self._rl_error: Optional[str] = None
+        # Staged renames, {new name: committed name}. A pending add needs
+        # none: it is simply re-keyed.
+        self._pending_rl_renames: dict = {}
+        # Who may be renamed: every light of a mod file, else the names the
+        # stock leaf's hardpoint exec attach-queued (`_rl_rename_sources`).
+        self._rl_renames_any: bool = False
+        self._rl_attached: set = set()
 
     def _rl_clear_saved(self) -> None:
         self._saved_running_light: dict = {}
+        # Renames saved this session, {committed name: baked name}.
+        self._saved_rl_renames: dict = {}
 
     def _rl_load(self, ship) -> None:
         """Snapshot `ship`'s placed lights as the baked layer, and the names
@@ -65,6 +84,7 @@ class RunningLightsPaneMixin:
         self._rl_template_names = set()
         if ship is None:
             return
+        self._rl_renames_any, self._rl_attached = self._rl_rename_sources(ship)
         from engine.appc import running_lights
         try:
             for prop in running_lights.light_properties(ship):
@@ -85,18 +105,86 @@ class RunningLightsPaneMixin:
         # staged for removal frees its name.
         self._rl_template_names = names - set(self._rl_baked)
 
+    def _rl_rename_sources(self, ship) -> tuple:
+        """(every light renameable, attach-queued names) for `ship`: a mod
+        file's target renames any light; a stock leaf only the lights its
+        overrides created, which are exactly the names the attach queue
+        attached when the leaf's hardpoint module last executed."""
+        # Through the panel module: Save resolves the target the same way.
+        from engine.ui import ship_property_viewer_panel as _panel
+        from engine.appc import attach_templates
+        try:
+            target = _panel.resolve_override_target(ship)
+            if getattr(target, "renames_any_light", False):
+                return True, set()
+            leaf = _panel.hardpoint_leaf_for_ship(ship)
+            return False, (attach_templates.attached_names(leaf) if leaf
+                           else set())
+        except Exception as e:
+            from engine import dev_mode
+            dev_mode.log_swallowed("spv running light rename sources", e)
+            return False, set()
+
     # ------------------------------------------------------------------
     # Staging
     # ------------------------------------------------------------------
+    def _rl_committed_map(self) -> dict:
+        """name -> spec as the file holds it: baked, then this session's
+        saved renames and saved specs."""
+        merged = _apply_renames(dict(self._rl_baked), self._saved_rl_renames)
+        return _apply_layer(merged, self._saved_running_light)
+
+    def _rl_effective_map(self) -> dict:
+        merged = _apply_renames(self._rl_committed_map(),
+                                self._pending_rl_renames)
+        return _apply_layer(merged, self._pending_running_light)
+
     def _rl_effective(self) -> List[dict]:
-        merged = dict(self._rl_baked)
-        for layer in (self._saved_running_light, self._pending_running_light):
-            for name, spec in layer.items():
-                if spec is None:
-                    merged.pop(name, None)
-                else:
-                    merged[name] = spec
-        return list(merged.values())
+        return list(self._rl_effective_map().values())
+
+    def _rl_committed_identity(self, name) -> Optional[str]:
+        """The committed name effective light `name` has in the file, or
+        None for a light added since the last Save."""
+        if name in self._pending_rl_renames:
+            return self._pending_rl_renames[name]
+        if (name in self._rl_committed_map()
+                and name not in self._pending_rl_renames.values()):
+            return name
+        return None
+
+    def _rl_baked_identity(self, committed) -> Optional[str]:
+        """The open-time (baked) name of committed light `committed`, or
+        None for a light a Save created this session."""
+        if committed in self._saved_rl_renames:
+            return self._saved_rl_renames[committed]
+        if (committed in self._rl_baked
+                and committed not in self._saved_rl_renames.values()):
+            return committed
+        return None
+
+    def _rl_renameable(self, name) -> bool:
+        """Added since the ship was built, created by Dauntless (attach-
+        queued), or any light of a mod's own file."""
+        committed = self._rl_committed_identity(name)
+        baked = (None if committed is None
+                 else self._rl_baked_identity(committed))
+        return (baked is None or self._rl_renames_any
+                or baked in self._rl_attached)
+
+    def _rl_committed_parent(self, committed, baked_parents=None):
+        """The explicit physical parent the file holds for committed light
+        `committed`: saved this session, else the open-time value of its
+        baked light (`baked_parents`, default the panel's open-time light
+        snapshot). None = Auto."""
+        if committed in self._saved_physical:
+            return self._saved_physical[committed]
+        baked = self._rl_baked_identity(committed)
+        if baked is None:
+            return None
+        if baked_parents is None:
+            baked_parents = {light["name"]: light["physical_parent"]
+                             for light in self._physical_lights}
+        return baked_parents.get(baked)
 
     def _rl_names(self) -> set:
         return {spec["name"] for spec in self._rl_effective()}
@@ -124,13 +212,20 @@ class RunningLightsPaneMixin:
     def _rl_stage(self, name, spec) -> None:
         """Stage `spec` (a FULL canonical spec) for light `name`, or None to
         remove it. Removing a light that exists only as a pending add drops
-        the add instead: there is nothing in the file to remove."""
-        if (spec is None and name not in self._rl_baked
-                and name not in self._saved_running_light):
+        the add instead: there is nothing in the file to remove. Removing a
+        renamed light drops the rename and removes it under its committed
+        name (unless a new light has since taken that name: that one stays,
+        as an edit of the committed light)."""
+        if spec is None:
+            committed = self._rl_committed_identity(name)
+            renamed = self._pending_rl_renames.pop(name, None) is not None
             self._pending_running_light.pop(name, None)
+            if committed is not None and not (
+                    renamed
+                    and self._pending_running_light.get(committed) is not None):
+                self._pending_running_light[committed] = None
         else:
-            self._pending_running_light[name] = (
-                None if spec is None else dict(spec))
+            self._pending_running_light[name] = dict(spec)
         if self._rl_selected is not None and self._rl_spec(self._rl_selected) is None:
             self._rl_selected = None
         self._last_pushed = None
@@ -138,27 +233,147 @@ class RunningLightsPaneMixin:
         # `_handle_gizmo_input`. Cheap -- it pushes only on a change.
         self._rl_sync_preview()
 
+    def _rl_rename(self, old, valid) -> None:
+        """Rename effective light `old` to `valid["name"]`, restaging it
+        from `valid`. A committed light gets a rename-map entry (a chain
+        collapses to its committed name; renaming back drops it) and a
+        pending spec only when more than the name changed; a pending spec
+        and a pending physical parent are re-keyed in place; the selection
+        follows."""
+        new = valid["name"]
+        committed = self._rl_committed_identity(old)
+        current = self._rl_spec(old)
+        self._pending_rl_renames.pop(old, None)
+        pending = self._pending_running_light
+        if old in pending:
+            pending = _rekey(pending, old, new)
+            pending[new] = dict(valid)
+        elif dict(valid, name=old) != current:
+            pending[new] = dict(valid)
+        self._pending_running_light = pending
+        if committed is not None and committed != new:
+            self._pending_rl_renames[new] = committed
+        if old in self._pending_physical:
+            self._pending_physical = _rekey(self._pending_physical, old, new)
+        if self._rl_selected == old:
+            self._rl_selected = new
+        self._last_pushed = None
+        self._rl_sync_preview()
+
+    def _rl_file_name_refusal(self, old, new) -> Optional[str]:
+        """Refuse renaming `old` onto a name the hardpoint file may still
+        hold for another light -- one staged or saved for removal, or
+        renamed away this session: Save would have to free and reuse it in
+        one go, which neither writer can. Renaming back to the light's own
+        original name is fine."""
+        committed = self._rl_committed_identity(old)
+        baked = (None if committed is None
+                 else self._rl_baked_identity(committed))
+        held = (set(self._rl_baked) | set(self._saved_running_light)
+                | set(self._saved_rl_renames)
+                | set(self._saved_rl_renames.values())
+                | set(self._pending_running_light)) - {old, committed}
+        if new not in held:
+            return None
+        if new == baked and new not in self._saved_running_light:
+            return None
+        return ("A light named '%s' was removed or renamed this session; "
+                "choose another name" % new)
+
     def _rl_dirty_names(self) -> List[str]:
-        return list(self._pending_running_light)
+        return list(self._pending_running_light) + [
+            n for n in self._pending_rl_renames
+            if n not in self._pending_running_light]
+
+    def _rl_dirty_counts(self) -> List[tuple]:
+        """(light name, staged changes): a spec edit and a rename count one
+        each."""
+        return [(n, (n in self._pending_running_light)
+                 + (n in self._pending_rl_renames))
+                for n in self._rl_dirty_names()]
+
+    def _rl_pending_count(self) -> int:
+        return len(self._pending_running_light) + len(self._pending_rl_renames)
+
+    def _rl_has_pending(self) -> bool:
+        return bool(self._pending_running_light or self._pending_rl_renames)
+
+    def _rl_parent_moves(self) -> List[tuple]:
+        """(committed name, new name, explicit parent) per staged rename of
+        a light whose committed parent is set."""
+        moves = []
+        for new, committed in self._pending_rl_renames.items():
+            parent = self._rl_committed_parent(committed)
+            if parent is not None:
+                moves.append((committed, new, parent))
+        return moves
 
     def _rl_save_edits(self) -> list:
-        return [(name, _EDIT_VERB, {"spec": spec,
-                                    "new": name not in self._rl_baked})
-                for name, spec in self._pending_running_light.items()]
+        """The Save edits, in the order the writers need: removals, then
+        renames (so a name a rename takes is free), then specs under their
+        final names, then each renamed light's explicit parent moved to its
+        new name. The panel puts these before every other edit, so a
+        physical parent staged for a new name lands after its rename."""
+        committed = self._rl_committed_map()
+        renamed_from = set(self._pending_rl_renames.values())
+        pending = self._pending_running_light
+        edits = [(name, _EDIT_VERB, {"spec": None, "new": False})
+                 for name, spec in pending.items() if spec is None]
+        edits += [(old, _RENAME_VERB, new)
+                  for new, old in self._pending_rl_renames.items()]
+        for name, spec in pending.items():
+            if spec is None:
+                continue
+            new = (name not in self._pending_rl_renames
+                   and not (name in committed and name not in renamed_from))
+            edits.append((name, _EDIT_VERB, {"spec": spec, "new": new}))
+        for old, new, parent in self._rl_parent_moves():
+            # A parent staged for either name is the panel's to write.
+            if old not in self._pending_physical:
+                edits.append((old, "__unset__", "SetPhysicalParent"))
+            if new not in self._pending_physical:
+                edits.append((new, "SetPhysicalParent", (parent,)))
+        return edits
 
     def _rl_commit_saved(self) -> None:
-        """A successful Save: the pending edits become the saved overlay."""
+        """A successful Save: the pending edits become the saved overlay.
+        Called BEFORE the panel folds the pending physical parents into
+        `_saved_physical`, so a parent staged for a renamed light wins over
+        the one its rename moved."""
+        renames = self._pending_rl_renames
+        parents = [(old, new, self._rl_committed_parent(old))
+                   for new, old in renames.items()]
+        bakeds = {new: self._rl_baked_identity(old)
+                  for new, old in renames.items()}
+        for old, _new, _parent in parents:
+            self._saved_physical[old] = None
+        for _old, new, parent in parents:
+            self._saved_physical[new] = parent
+        inverse = {old: new for new, old in renames.items()}
+        self._saved_running_light = {
+            inverse.get(k, k): (dict(v, name=inverse[k])
+                                if k in inverse and v is not None else v)
+            for k, v in self._saved_running_light.items()}
+        for old in inverse:
+            self._saved_rl_renames.pop(old, None)
+        for new, baked in bakeds.items():
+            if baked is not None and baked != new:
+                self._saved_rl_renames[new] = baked
         self._saved_running_light.update(self._pending_running_light)
         self._pending_running_light = {}
+        self._pending_rl_renames = {}
 
-    def _rl_snapshot(self) -> dict:
-        return {name: (None if spec is None else dict(spec))
-                for name, spec in self._pending_running_light.items()}
+    def _rl_snapshot(self) -> tuple:
+        return ({name: (None if spec is None else dict(spec))
+                 for name, spec in self._pending_running_light.items()},
+                dict(self._pending_rl_renames))
 
-    def _rl_restore(self, pending: dict) -> None:
+    def _rl_restore(self, snap: tuple) -> None:
+        pending, renames = snap
         self._pending_running_light = {
             name: (None if spec is None else dict(spec))
             for name, spec in pending.items()}
+        self._pending_rl_renames = dict(renames)
         if self._rl_selected is not None and self._rl_spec(self._rl_selected) is None:
             self._rl_selected = None
 
@@ -309,30 +524,44 @@ class RunningLightsPaneMixin:
         rows: List[dict] = []
         lights = self._rl_effective()
         if lights:
+            dirty = set(self._rl_dirty_names())
             rows.append({
                 "kind": "rl_group", "name": RL_GROUP_NAME,
                 "expanded": self._rl_group_expanded,
-                "children": [{
-                    "kind": RL_TARGET_KIND, "name": spec["name"],
-                    "spec": dict(spec),
-                    "dirty": spec["name"] in self._pending_running_light,
-                    "chosen": spec["name"] == self._rl_selected,
-                } for spec in lights]})
+                "children": [self._rl_row(spec, dirty) for spec in lights]})
         rows.append({"kind": "rl_add", "name": RL_ADD_NAME})
         return rows
 
+    def _rl_row(self, spec, dirty) -> dict:
+        name = spec["name"]
+        row = {"kind": RL_TARGET_KIND, "name": name, "spec": dict(spec),
+               "dirty": name in dirty, "chosen": name == self._rl_selected,
+               "renameable": self._rl_renameable(name)}
+        if not row["renameable"]:
+            row["rename_lock_reason"] = RL_RENAME_LOCK_REASON
+        return row
+
     def _rl_physical_entries(self, baked_parents: dict) -> List[dict]:
         """Physical-tab entries for every effective light; `baked_parents`
-        maps a light name to its open-time `GetPhysicalParent()`."""
-        return [{"key": "light:" + spec["name"], "name": spec["name"],
-                 "kind": RL_TARGET_KIND, "index": None,
-                 "baked": baked_parents.get(spec["name"]),
-                 "point": tuple(spec["position"])}
-                for spec in self._rl_effective()]
+        maps a baked light's name to its open-time `GetPhysicalParent()`.
+        Each entry carries its `committed` parent -- what the file holds for
+        the light, following renames -- which the panel reads in place of
+        its own name-keyed saved/baked lookup."""
+        out = []
+        for spec in self._rl_effective():
+            committed = self._rl_committed_identity(spec["name"])
+            parent = (None if committed is None
+                      else self._rl_committed_parent(committed, baked_parents))
+            out.append({"key": "light:" + spec["name"], "name": spec["name"],
+                        "kind": RL_TARGET_KIND, "index": None,
+                        "baked": parent, "committed": parent,
+                        "point": tuple(spec["position"])})
+        return out
 
     def _rl_state_key(self) -> tuple:
         return (tuple(tuple(sorted(s.items())) for s in self._rl_effective()),
                 tuple(self._pending_running_light),
+                tuple(self._pending_rl_renames.items()),
                 self._rl_selected, self._rl_group_expanded,
                 None if self._rl_placing is None else self._rl_placing["name"],
                 self._rl_error)
@@ -392,16 +621,17 @@ class RunningLightsPaneMixin:
             entry = self._physical_entry("light:" + name)
             committed = (self._physical_committed(entry)
                          if entry is not None else None)
+            # A renamed light is removed under its committed name.
+            file_name = self._rl_committed_identity(name)
             self._rl_stage(name, None)
-            if committed is not None:
+            # A merely staged parent would be written onto a template that
+            # no longer exists.
+            self._pending_physical.pop(name, None)
+            if committed is not None and file_name is not None:
                 # A SAVED or BAKED parent lives in the file as its own
                 # find-block: reset it, or a later light of this name
                 # inherits it.
-                self._pending_physical[name] = None
-            else:
-                # A merely staged parent would be written onto a template
-                # that no longer exists.
-                self._pending_physical.pop(name, None)
+                self._pending_physical[file_name] = None
             if self._rl_selected == name:
                 self._rl_selected = None
             return True
@@ -455,18 +685,37 @@ class RunningLightsPaneMixin:
         return True
 
     def _rl_edit(self, action: str) -> bool:
-        """Restage light `name` from `spec`; the name is fixed."""
+        """Restage light `name` from `spec`. A different `spec.name` renames
+        it -- refused for a light the game's own hardpoint file names."""
         arg = _json_arg(action)
         name = arg.get("name") if isinstance(arg, dict) else None
         if not isinstance(name, str) or self._rl_spec(name) is None:
             return self._rl_refuse("No running light to edit")
         spec = arg.get("spec")
         if isinstance(spec, dict):
+            new = spec.get("name", name)
+            if not isinstance(new, str):
+                return self._rl_refuse("Malformed light spec")
+            if new.strip() != name:
+                return self._rl_edit_rename(name, spec)
             spec = dict(spec, name=name)
         valid = self._rl_validate(spec, self._rl_taken_names() - {name})
         if valid is None:
             return False
         self._rl_stage(name, valid)
+        self._rl_error = None
+        return True
+
+    def _rl_edit_rename(self, name, spec) -> bool:
+        if not self._rl_renameable(name):
+            return self._rl_refuse(RL_RENAME_LOCK_REASON)
+        valid = self._rl_validate(spec, self._rl_taken_names() - {name})
+        if valid is None:
+            return False
+        refusal = self._rl_file_name_refusal(name, valid["name"])
+        if refusal is not None:
+            return self._rl_refuse(refusal)
+        self._rl_rename(name, valid)
         self._rl_error = None
         return True
 
@@ -542,6 +791,30 @@ class RunningLightsPaneMixin:
             if node in parts:
                 return node
         return None
+
+
+def _rekey(d: dict, old, new) -> dict:
+    """`d` with key `old` renamed `new`, in the same position."""
+    return {(new if k == old else k): v for k, v in d.items()}
+
+
+def _apply_renames(merged: dict, renames: dict) -> dict:
+    """`merged` (name -> spec) with every `renames` entry (new -> old)
+    applied at once: each light keeps its place and its spec takes the new
+    name."""
+    inverse = {old: new for new, old in renames.items() if old in merged}
+    return {inverse.get(k, k): (dict(v, name=inverse[k]) if k in inverse else v)
+            for k, v in merged.items()}
+
+
+def _apply_layer(merged: dict, layer: dict) -> dict:
+    """`merged` with a saved/pending layer's specs on top (None removes)."""
+    for name, spec in layer.items():
+        if spec is None:
+            merged.pop(name, None)
+        else:
+            merged[name] = spec
+    return merged
 
 
 def _json_arg(action: str):
