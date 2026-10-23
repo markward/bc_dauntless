@@ -162,3 +162,49 @@ def test_battle_plan_carries_victory():
     assert plan.startable is False
     s.add_ship(_enemy(s).id, "Warbird")
     assert sc.battle_plan(s, index).startable is True
+
+
+def _index():
+    from types import SimpleNamespace as NS
+    ce = lambda sid: NS(ship_id=sid, variants=[], title=sid, playable=True)
+    return {k.lower(): ce(k) for k in ("Galaxy", "Akira", "Warbird")}
+
+
+def test_elimination_clears_km_time_limit_and_protect():
+    """Final review: KM 2 min, then Elimination, must not carry a hidden
+    time limit (or protect) into the battle."""
+    s, _g, _e1 = _with_escort()
+    s.add_ship(_enemy(s).id, "Warbird")
+    assert vc.set_type(s, "kobayashi_maru")
+    assert vc.set_time_limit(s, 2)
+    assert vc.set_type(s, "elimination")
+    assert s.victory == Victory()
+    v = sc.battle_plan(s, _index()).victory
+    assert v.time_limit_s == 0 and v.protect_entry_id is None
+
+
+def test_time_limit_refused_for_elimination():
+    s, _g, _e1 = _with_escort()
+    assert vc.set_time_limit(s, 3) is False
+    assert s.victory == Victory()
+    vc.set_type(s, "kobayashi_maru")
+    assert vc.set_time_limit(s, 3) is True
+
+
+def test_reconcile_fallback_clears_time_limit():
+    s, _g, e1 = _with_escort()
+    vc.set_type(s, "kobayashi_maru")
+    vc.set_time_limit(s, 4)
+    assert s.remove_entry(e1.id)
+    assert vc.reconcile(s) is not None
+    assert s.victory == Victory()
+
+
+def test_battle_plan_drops_km_fields_for_other_types():
+    """Defence in depth: whatever the scenario holds, only Kobayashi Maru
+    gets a time limit and a ship to protect."""
+    s, _g, e1 = _with_escort()
+    s.add_ship(_enemy(s).id, "Warbird")
+    s.victory = Victory("elimination", e1.id, 3)
+    assert sc.battle_plan(s, _index()).victory == \
+        VictoryOrder("elimination", None, 0.0)

@@ -431,6 +431,9 @@ def battle_plan(scenario: "Scenario", index) -> BattlePlan:
                 continue
             rows.append((g, e, ce) + _resolve(ce, e.variant))
     v = scenario.victory
+    # Defence in depth: only Kobayashi Maru has a ship to protect and a time
+    # limit, whatever the scenario's victory settings still hold.
+    km = v.type == _victory.KOBAYASHI_MARU
     names = naming.with_ordinals([p_name] + [r[5] for r in rows])
     orders = []
     for (g, e, ce, f, reg, _n), disp in zip(rows, names[1:]):
@@ -443,6 +446,6 @@ def battle_plan(scenario: "Scenario", index) -> BattlePlan:
             warp_in_s=g.warp_in_min * 60.0))
     return BattlePlan(player=PlayerOrder(p_file, pce.ship_id, p_reg, names[0]),
                       orders=tuple(orders),
-                      victory=VictoryOrder(v.type, v.protect,
-                                           v.time_limit_min * 60.0),
+                      victory=VictoryOrder(v.type, v.protect if km else None,
+                                           v.time_limit_min * 60.0 if km else 0.0),
                       startable=scenario.can_start())

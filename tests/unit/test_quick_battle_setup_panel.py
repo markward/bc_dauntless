@@ -937,8 +937,16 @@ def test_start_blocked_without_enemy_says_why(panel):
 
 
 def test_victory_change_marks_dirty(panel):
+    _friend(panel)
     panel.dispatch_event("add:Warbird")
+    assert panel.dispatch_event("victory-type:kobayashi_maru")
     panel.dispatch_event("preset-save:Alpha")
     assert not _setup(panel)["dirty"]
-    panel.dispatch_event("victory-time:5")
+    assert panel.dispatch_event("victory-time:5")
     assert _setup(panel)["dirty"]
+
+
+def test_victory_time_refused_for_elimination(panel):
+    panel.dispatch_event("add:Warbird")
+    assert not panel.dispatch_event("victory-time:5")
+    assert _setup(panel)["victory"]["time_limit_min"] == 0

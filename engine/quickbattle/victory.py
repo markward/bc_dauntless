@@ -73,9 +73,14 @@ def start_problem(scenario) -> Optional[str]:
 def set_type(scenario, type_id) -> bool:
     if type_id not in _IDS or unavailable_reason(scenario, type_id) is not None:
         return False
+    if type_id == ELIMINATION:
+        # Elimination has no ship to protect and no time limit: forget any
+        # Kobayashi Maru blanks rather than carry them hidden into a battle.
+        scenario.victory = Victory()
+        return True
     v = scenario.victory
     v.type = type_id
-    if type_id == KOBAYASHI_MARU and v.protect not in _candidate_ids(scenario):
+    if v.protect not in _candidate_ids(scenario):
         v.protect = protect_candidates(scenario)[0][1].id
     return True
 
@@ -88,6 +93,9 @@ def set_protect(scenario, entry_id) -> bool:
 
 
 def set_time_limit(scenario, minutes) -> bool:
+    """Only Kobayashi Maru has a time limit."""
+    if scenario.victory.type != KOBAYASHI_MARU:
+        return False
     if type(minutes) is not int or minutes < 0:
         return False
     scenario.victory.time_limit_min = minutes
@@ -99,7 +107,7 @@ def reconcile(scenario) -> Optional[str]:
     Returns the notice to show, else None."""
     v = scenario.victory
     if v.type == KOBAYASHI_MARU and v.protect not in _candidate_ids(scenario):
-        v.type, v.protect = ELIMINATION, None
+        scenario.victory = Victory()          # its time limit goes too
         return FALLBACK_NOTICE
     return None
 
