@@ -131,9 +131,18 @@ function setTargetList(state) {
             ? '<span class="target-list__caret"'
               + ' onclick="event.stopPropagation();' + toggleAttr + '">' + caretGlyph + '</span>'
             : '<span class="target-list__caret target-list__caret--empty"></span>';
+        // Marker (e.g. "protect"): inline shield in the row's text colour.
+        // Only known kinds are emitted, so the class name is never raw input.
+        const markerHtml = (row.marker === 'protect')
+            ? '<span class="target-list__marker target-list__marker--' + row.marker + '">'
+              + '<svg viewBox="0 0 10 12" width="1em" height="1.2em" fill="currentColor"'
+              + ' aria-hidden="true"><path d="M5 0.5 L9.5 2 V6 C9.5 8.8 7.5 10.8 5 11.5'
+              + ' C2.5 10.8 0.5 8.8 0.5 6 V2 Z"/></svg></span>'
+            : '';
         html += '<div class="target-list__row target-list__row--' + aff + chosen + expandedCls + '"'
               +   ' onclick="' + targetAttr + '">'
               +   caretHtml
+              +   markerHtml
               +   '<span class="target-list__name">' + nameHtml + '</span>'
               +   '<span class="target-list__bars">'
               +     '<span class="target-list__bar target-list__bar--hull"'

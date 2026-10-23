@@ -1064,6 +1064,8 @@ def _reset_leakable_engine_globals():
     try:
         from engine.quickbattle import late_arrivals as _qb_late
         _qb_late.reset()
+        from engine.ui import target_markers as _target_markers
+        _target_markers.clear()
     except Exception:
         pass
     # Quick Battle's real-object snapshot (sim_restore) holds live objects of

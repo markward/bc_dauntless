@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 from typing import Optional
 
+from engine.ui import target_markers as _markers
 from engine.ui.panel import Panel
 
 
@@ -357,6 +358,7 @@ class TargetListView(Panel):
                         subsystems,
                         row_expanded,
                         has_subsystems,
+                        _markers.marker_for(name),
                     ))
             child = target_menu.GetNextChild(child)
 
@@ -402,9 +404,10 @@ class TargetListView(Panel):
                     # Collapsed rows ship an empty `subsystems`, so the caret
                     # cannot be derived from its length any more.
                     "has_subsystems": has_subs,
+                    "marker": marker,
                 }
                 for (name, caption, aff, hull, shields, has_shields, subs,
-                     expanded, has_subs) in rows
+                     expanded, has_subs, marker) in rows
             ],
         }
         return "setTargetList(" + json.dumps(payload) + ");"

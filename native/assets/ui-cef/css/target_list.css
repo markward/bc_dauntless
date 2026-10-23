@@ -139,6 +139,19 @@
     cursor: default;
 }
 
+.target-list__marker {
+    display: inline-flex;
+    align-items: center;
+    flex: none;
+    margin-right: 4px;
+    font-size: 13px;
+    color: inherit;
+}
+
+.target-list__marker svg {
+    display: block;
+}
+
 .target-list__name {
     font-size: 13px;
     letter-spacing: 0.04em;

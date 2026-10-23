@@ -7717,6 +7717,8 @@ class HostController:
         # region set, so a later EndSimulation must not rebuild them.
         from engine.quickbattle import sim_restore as _qb_sim_restore
         _qb_sim_restore.reset()
+        from engine.ui import target_markers as _target_markers
+        _target_markers.clear()
         from engine.appc import particles
         particles.reset()
         damage_eligibility.reset()
@@ -13617,6 +13619,8 @@ def run(mission_name: Optional[str] = None,
         _qb_spawn.set_radius_fn(None)
         from engine.quickbattle import late_arrivals as _qb_late
         _qb_late.reset()
+        from engine.ui import target_markers as _target_markers
+        _target_markers.clear()
         from engine.appc import warp_state as _warp_state
         _warp_state.set_radius_seeder(None)
         from engine import bridge_selection as _bs

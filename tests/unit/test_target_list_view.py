@@ -1158,3 +1158,32 @@ def test_the_host_loop_drives_the_rule_every_frame():
                   and n.func.id == "clear_undetectable_player_lock"]
     assert any(abs(c.lineno - nb) < 30 for c in calls for nb in neighbours), (
         "reconcile_subsystem_lock drifted away from the per-frame lock block")
+
+
+def test_row_carries_marker():
+    from engine.ui import target_markers
+    from engine.ui.target_list_view import TargetListView
+    App._reset_target_menu_singleton()
+    target_menu = App.STTargetMenu_CreateW("Targets")
+    _setup_game_with_player()
+    target_markers.clear()
+    try:
+        a = ShipClass(); a.SetName("Alpha")
+        b = ShipClass(); b.SetName("Beta")
+        target_menu.set_contacts(_listed(a, b))
+        view = TargetListView()
+        view.render_payload()
+        target_markers.set_marker("Alpha", "protect")
+        script = view.render_payload()
+        assert script is not None, "marker-only change must re-render"
+        state = json.loads(script[len("setTargetList("):-2])
+        by_name = {r["name"]: r for r in state["rows"]}
+        assert by_name["Alpha"]["marker"] == "protect"
+        assert by_name["Beta"]["marker"] is None
+        assert view.render_payload() is None
+        target_markers.clear_marker("Alpha")
+        assert view.render_payload() is not None
+    finally:
+        target_markers.clear()
+        from engine.core.game import _set_current_game
+        _set_current_game(None)
