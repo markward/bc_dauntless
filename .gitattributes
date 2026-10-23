@@ -1,0 +1,65 @@
+# Line endings: LF everywhere, including in the Windows working tree.
+#
+# WHY THIS FILE EXISTS. Without it, git falls back to each machine's
+# core.autocrlf. On Windows that is typically `true`, which hands the working
+# tree CRLF while every blob in the repo is LF. Three things then disagree:
+#
+#   - our generators, which write LF explicitly (decals_writer, gen_mesh_fixes,
+#     the system maps, the rock catalogue, ...);
+#   - the files on disk, which git converted to CRLF on checkout;
+#   - `git show HEAD:<path>`, which the drift tests use as their reference and
+#     which is converted the same way.
+#
+# Every byte-compared drift test fails on Windows as a result, with a diff of
+# nothing but invisible characters. `eol=lf` makes the working tree match the
+# repository on all platforms, so there is one answer rather than three.
+#
+# This is also what keeps a Windows contributor from committing a whole file
+# as changed because their editor rewrote the endings.
+
+# Default: let git detect text, and check text out as LF on every platform.
+* text=auto eol=lf
+
+# Binary assets. `text=auto` detects most of these correctly, but naming them
+# removes any chance of a heuristic deciding a .nif or a .tga is text and
+# corrupting it by rewriting bytes that happen to look like line endings.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.tga   binary
+*.dds   binary
+*.bmp   binary
+*.nif   binary
+*.pyc   binary
+*.pyd   binary
+*.so    binary
+*.dll   binary
+*.exe   binary
+*.lib   binary
+*.zip   binary
+*.bz2   binary
+*.gz    binary
+*.pak   binary
+*.dat   binary
+*.bin   binary
+*.wav   binary
+*.mp3   binary
+*.ogg   binary
+*.ttf   binary
+*.otf   binary
+*.glb   binary
+*.bcs   binary
+*.dhv   binary
+*.sps   binary
+*.tgl   binary
+
+# Shell scripts must keep LF even if someone forces CRLF globally: a CRLF
+# shebang line leaves /bin/sh looking for an interpreter named "bash\r".
+*.sh    text eol=lf
+
+# Windows-only scripts are the one place CRLF is correct -- cmd.exe is the
+# consumer, and scripts/win_env.bat is run by hand from a Windows shell.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
