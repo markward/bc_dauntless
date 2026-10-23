@@ -11,6 +11,7 @@ import pytest
 from engine import paths
 from engine.settings_store import SettingsStore
 from tests.helpers.source_guards import code_only as _code_only
+from tests.helpers.symlinks import requires_symlinks
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -99,7 +100,13 @@ def test_a_set_but_invalid_source_is_an_error_not_a_fallthrough(fake_bc_install,
     assert res.game_source == "cli"
     assert res.game_validation is not None
     assert not res.game_validation.ok
-    assert str(res.game_validation.root) == "/definitely/not/here"
+    # Compared through Path().absolute(), not against the literal string:
+    # resolve() stores an absolutised Path, and on Windows a rooted POSIX
+    # string is DRIVE-RELATIVE, so it comes back as "C:\definitely\not\here".
+    # The assertion is that the rejected root is carried through as given,
+    # not that it is spelled with forward slashes.
+    assert (Path(res.game_validation.root)
+            == Path("/definitely/not/here").absolute())
 
 
 @pytest.mark.parametrize("argv", [["--game-dir", ""], ["--game-dir="]])
@@ -192,11 +199,18 @@ def test_the_project_default_is_used_when_present(tmp_path, monkeypatch):
 
 def test_stored_paths_expand_user_and_normalise(fake_bc_install, tmp_path, monkeypatch):
     game, _sdk = fake_bc_install
+    # HOME is what expanduser() reads on POSIX; ntpath.expanduser never looks
+    # at it and takes USERPROFILE (then HOMEDRIVE+HOMEPATH). Set all of them
+    # so the fake home is found whichever platform is running.
     monkeypatch.setenv("HOME", str(game.parent))
+    monkeypatch.setenv("USERPROFILE", str(game.parent))
+    monkeypatch.setenv("HOMEDRIVE", "")
+    monkeypatch.setenv("HOMEPATH", str(game.parent))
     res = paths.resolve(argv=["--game-dir", "~/game/../game"], env={}, store=None)
     assert res.game == game
 
 
+@requires_symlinks
 def test_symlinks_are_not_followed(fake_bc_install, tmp_path):
     game, _sdk = fake_bc_install
     link = tmp_path / "via-link"

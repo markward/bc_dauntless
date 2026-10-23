@@ -106,9 +106,18 @@ def icon_env(tmp_path, monkeypatch):
 
 
 def _file_of(url):
-    from urllib.parse import unquote, urlparse
+    """The local path a file:// URL names, on any platform.
+
+    url2pathname rather than Path(urlparse(url).path): in the URL grammar an
+    absolute path always starts with a slash, so a Windows URL is
+    file:///C:/... and the naive reading hands back "/C:/..." -- a path with a
+    bogus leading separator that then fails to open. url2pathname is the
+    inverse of the as_uri() ship_icons used to build it.
+    """
+    from urllib.parse import urlparse
+    from urllib.request import url2pathname
     assert url.startswith("file://")
-    return Path(unquote(urlparse(url).path))
+    return Path(url2pathname(urlparse(url).path))
 
 
 def test_file_url_points_at_a_png_in_the_user_cache(icon_env):

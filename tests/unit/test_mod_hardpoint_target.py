@@ -6,6 +6,7 @@ import pytest
 from engine import mods
 import engine.appc.override_routing as r
 from engine.appc import mod_hardpoint_writer as mw
+from tests.helpers.symlinks import requires_symlinks
 
 SRC = ('import App\n'
        'PortWarp = App.EngineProperty_Create("Port Warp")\n'
@@ -112,6 +113,7 @@ def test_non_finite_edit_leaves_the_file_untouched(tmp_path):
     assert not (f.parent / "refit.py.tmp").exists()
 
 
+@requires_symlinks
 def test_write_through_a_symlink_keeps_the_link(tmp_path):
     real = _mod_tree(tmp_path)
     link = tmp_path / "link_refit.py"

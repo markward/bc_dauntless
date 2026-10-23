@@ -13,6 +13,7 @@ from engine.bridge_editor import lighting_doc as ld
 from engine.bridge_editor import lighting_writer
 from engine.core import stub_telemetry
 from engine.ui import decal_editor
+from tests.helpers.symlinks import requires_symlinks
 
 
 @pytest.fixture(autouse=True)
@@ -152,6 +153,7 @@ def test_repo_writers_unaffected_in_checkout(tmp_path, monkeypatch):
         assert write().is_file()
 
 
+@requires_symlinks
 def test_refuse_compares_resolved_paths(tmp_path, monkeypatch):
     root = _packaged_root(tmp_path, monkeypatch)
     link = tmp_path / "link"
