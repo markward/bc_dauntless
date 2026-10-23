@@ -20,6 +20,14 @@
       "key": "BrexRadiationShields2",
       "text": "Radiation levels are rising. We need to raise shields sir.",
       "sound": "sfx/Bridge/Crew/Engineering/BrexRadiationShields2.wav"
+    },
+    {
+      "key": "SaffiQBProtectedLost1",
+      "text": "The ship we were assigned to protect has been destroyed. Ending simulation."
+    },
+    {
+      "key": "SaffiQBTimeUp1",
+      "text": "We have run out of time. Ending simulation."
     }
   ]
 }
