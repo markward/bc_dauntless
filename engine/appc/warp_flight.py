@@ -88,7 +88,7 @@ class WarpFlight:
     # Heading drop-out standoff from a body's centre (R1). Task 5 supplies the
     # player's region-arrival standoff.
     standoff_of: Callable[[Obstacle], float] = _default_standoff
-    drop_distance: float = 0.0             # AI: stop this far from the target
+    drop_distance: float = 0.0             # AI: stop this far from the target's centre
     # None | "arrived" | "body" | "stopped" | "aborted"
     ended_reason: str | None = None
     drop_point: tuple | None = None        # where it ended, system coordinates
