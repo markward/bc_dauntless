@@ -142,7 +142,7 @@ def sync_sdk(qb, plan) -> None:
         return
     _write_manifests(qb, plan)
     if not getattr(qb, "bInSimulation", 0):
-        _set_xo_start(qb, bool(plan.orders))
+        _set_xo_start(qb, plan.startable)
 
 
 def _vec(p):

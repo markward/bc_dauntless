@@ -15,6 +15,9 @@ import secrets
 from dataclasses import dataclass, field
 from typing import Optional
 
+from engine.quickbattle import victory as _victory
+from engine.quickbattle.victory import Victory
+
 _log = logging.getLogger(__name__)
 
 ALLEGIANCES = ("friendly", "enemy", "neutral")
@@ -60,6 +63,7 @@ def valid_warp_in(v) -> bool:
 @dataclass
 class Scenario:
     groups: list
+    victory: Victory = field(default_factory=Victory)
 
     # ── lookup ──────────────────────────────────────────────────────────
     def group(self, gid) -> Optional[Group]:
@@ -85,7 +89,7 @@ class Scenario:
         return next((g for g in self.groups if not g.player), None)
 
     def can_start(self) -> bool:
-        return any(not e.player for g in self.groups for e in g.entries)
+        return _victory.start_problem(self) is None
 
     # ── naming ──────────────────────────────────────────────────────────
     def auto_name(self, allegiance: str, exclude_gid=None) -> str:
@@ -180,7 +184,7 @@ class Scenario:
 
     # ── JSON ────────────────────────────────────────────────────────────
     def to_json(self) -> dict:
-        return {"groups": [{
+        return {"victory": _victory.to_json(self.victory), "groups": [{
             "id": g.id, "name": g.name, "custom_name": g.custom_name,
             "player": g.player, "allegiance": g.allegiance,
             "direction": g.direction, "distance": g.distance,
@@ -242,12 +246,20 @@ def from_json(d) -> Scenario:
     _req(len(pgs) == 1, "need exactly one player group")
     pes = [e for g in groups for e in g.entries if e.player]
     _req(len(pes) == 1 and pes[0] in pgs[0].entries, "need exactly one player entry")
-    return Scenario(groups=groups)
+    s = Scenario(groups=groups, victory=_victory.from_json(d.get("victory")))
+    _victory.reconcile(s)
+    return s
 
 
 def _strip_ids(s: Scenario) -> list:
     out = []
-    for g in s.to_json()["groups"]:
+    pos = {}
+    for gi, g in enumerate(s.groups):
+        for ei, e in enumerate(g.entries):
+            pos[e.id] = (gi, ei)
+    j = s.to_json()
+    out.append({"victory": dict(j["victory"], protect=pos.get(j["victory"]["protect"]))})
+    for g in j["groups"]:
         g = dict(g)
         g.pop("id")
         g["entries"] = [{k: v for k, v in e.items() if k != "id"} for e in g["entries"]]
@@ -369,9 +381,18 @@ class SpawnOrder:
 
 
 @dataclass(frozen=True)
+class VictoryOrder:
+    type: str
+    protect_entry_id: Optional[str]
+    time_limit_s: float
+
+
+@dataclass(frozen=True)
 class BattlePlan:
     player: PlayerOrder
     orders: tuple
+    victory: VictoryOrder = VictoryOrder(_victory.ELIMINATION, None, 0.0)
+    startable: bool = True
 
 
 def _bc_default_stem(class_id):
@@ -409,6 +430,7 @@ def battle_plan(scenario: "Scenario", index) -> BattlePlan:
             if ce is None:
                 continue
             rows.append((g, e, ce) + _resolve(ce, e.variant))
+    v = scenario.victory
     names = naming.with_ordinals([p_name] + [r[5] for r in rows])
     orders = []
     for (g, e, ce, f, reg, _n), disp in zip(rows, names[1:]):
@@ -420,4 +442,7 @@ def battle_plan(scenario: "Scenario", index) -> BattlePlan:
             ai_level=DIFFICULTY_LEVEL[g.difficulty],
             warp_in_s=g.warp_in_min * 60.0))
     return BattlePlan(player=PlayerOrder(p_file, pce.ship_id, p_reg, names[0]),
-                      orders=tuple(orders))
+                      orders=tuple(orders),
+                      victory=VictoryOrder(v.type, v.protect,
+                                           v.time_limit_min * 60.0),
+                      startable=scenario.can_start())
