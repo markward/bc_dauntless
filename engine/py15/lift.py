@@ -15,6 +15,7 @@ source. Spec: docs/superpowers/specs/2026-10-15-pyc-only-mod-modules-design.md
 from __future__ import annotations
 
 import ast
+import sys
 
 from . import opcodes15 as op
 from .marshal15 import Code15, Py15FormatError, load_pyc
@@ -204,9 +205,18 @@ class _Lifter:
         args = ast.arguments(posonlyargs=[], args=[ast.arg(p) for p in params],
                              vararg=None, kwonlyargs=[], kw_defaults=[],
                              kwarg=None, defaults=func.defaults)
+        # type_params is a 3.12 field (PEP 695). Omitting it leaves the node
+        # structurally different from one ast.parse() produces on 3.12 -- the
+        # two unparse identically, so the only thing that notices is an
+        # ast.dump() comparison, which is exactly what the lifter's tests do.
+        # Nothing in 1.5 bytecode can carry type parameters, so it is always
+        # empty; passing it keeps a lifted tree indistinguishable from a
+        # parsed one. Guarded rather than assumed, so a 3.11 interpreter --
+        # which rejects the keyword -- still works.
+        extra = {"type_params": []} if sys.version_info >= (3, 12) else {}
         node = ast.FunctionDef(name=name, args=args, body=body,
                                decorator_list=[], returns=None,
-                               type_comment=None)
+                               type_comment=None, **extra)
         _place(node, co.firstlineno)
         node.end_lineno = max(co.firstlineno, max(s.end_lineno for s in body))
         return node
