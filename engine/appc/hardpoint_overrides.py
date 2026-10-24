@@ -1382,7 +1382,21 @@ def _drydock(find):
 
 def _fedstarbase(find):
     """fedstarbase."""
-    return
+    p = find("Shield Generator")
+    if p is not None:
+        p.SetMaxShields(0, 6000.0)
+        p.SetMaxShields(1, 6000.0)
+        p.SetMaxShields(2, 6000.0)
+        p.SetMaxShields(3, 6000.0)
+        p.SetMaxShields(4, 6000.0)
+        p.SetMaxShields(5, 6000.0)
+        p.SetShieldChargePerSecond(0, 5.0)
+        p.SetShieldChargePerSecond(1, 5.0)
+        p.SetShieldChargePerSecond(2, 5.0)
+        p.SetShieldChargePerSecond(3, 5.0)
+        p.SetShieldChargePerSecond(4, 5.0)
+        p.SetShieldChargePerSecond(5, 5.0)
+        p.SetNormalPowerPerSecond(600.0)
 
 
 OVERRIDES = {
