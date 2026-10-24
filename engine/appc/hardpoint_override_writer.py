@@ -30,6 +30,10 @@ import types
 _INDEXED_PREFIX = "SetGlowRegion"
 _EMITTER_PREFIX = "SetLightEmitter"
 _INDEXED_PREFIXES = (_INDEXED_PREFIX, _EMITTER_PREFIX)
+# ShieldProperty setters whose first argument is a shield face (0..5), so an
+# edit targets one face. Exact names: they are not region setters, and
+# set_region's prefix full-replace must never treat them as one.
+_FACE_SETTERS = ("SetMaxShields", "SetShieldChargePerSecond")
 
 # Key under which a ship's articulated parts live in its model dict, alongside
 # (never inside) its subsystem blocks -- see set_part / _emit_part.
@@ -237,8 +241,8 @@ def read_models_from_source(text) -> dict:
 
 
 def _replace_key(setter, args):
-    if setter.startswith(_INDEXED_PREFIXES) and args:
-        return (setter, args[0])      # same setter AND same index
+    if (setter.startswith(_INDEXED_PREFIXES) or setter in _FACE_SETTERS) and args:
+        return (setter, args[0])      # same setter AND same index / face
     return (setter,)
 
 
