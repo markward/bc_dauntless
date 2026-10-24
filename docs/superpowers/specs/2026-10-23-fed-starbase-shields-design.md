@@ -1,8 +1,8 @@
 # Fed Starbase shields — a deliberate departure from BC
 
 **Status:** built on `feat/fed-starbase-shields`, unmerged, not live-verified.
-Merge together with `fix/reversed-weapon-arcs` (independent, but both are about
-the Fed Starbase fighting in Quick Battle).
+Companion to `fix/reversed-weapon-arcs` (the starbase's phasers fire at all),
+which reached main first in a050c72d9; the two are independent.
 
 ## Decision
 
