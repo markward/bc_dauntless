@@ -1,6 +1,6 @@
 # Home stations — stations live in their regions, not in the missions
 
-Status: design, 2026-10-25. Not built.
+Status: built on feat/home-stations, not live-verified
 
 ## 1. Intent
 
