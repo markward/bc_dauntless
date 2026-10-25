@@ -723,14 +723,15 @@ class ShipClass(DamageableObject):
         """Begin (or report) a sub-light warp toward `target`.
 
         Multi-frame transit model: when the ship is beyond `distance` of the
-        target AND its nose is on the target (IN_SYSTEM_WARP_FACING_COS),
+        target's surface (its GetRadius() + `distance` from its centre, as
+        BC) AND its nose is on the target (IN_SYSTEM_WARP_FACING_COS),
         begin a WarpFlight (engine/appc/warp_flight.py) toward it and return
         1. Each tick warp_flight.step cruises the ship at
         IN_SYSTEM_WARP_SPEED_GUPS -- straight while the
         line keeps every body's clearance, routed around bodies otherwise
         (BC's contract: AI/Preprocessors.py:1690 skips AvoidObstacles during
         the warp "because the in-system warp check already does that") --
-        until it is `distance` from the target, where the flight ends and
+        until it is `distance` from the target's surface, where the flight ends and
         `_warp_consumed` latches. Positions are compared through the frames
         (a target in another region of the system is reachable). While a transit is active this returns
         1 without re-engaging (SDK bWarping semantics — Intercept skips its
@@ -765,6 +766,14 @@ class ShipClass(DamageableObject):
         target_loc = warp_flight.target_local(self, target)
         if target_loc is None:
             return 0                    # another frame: never interacts
+        # BC measures the standoff from the target's SURFACE: it warps while
+        # distance > target radius + standoff (RE ShipClass::InSystemWarp,
+        # STBC-Reverse-Engineering-1 ship-navigation.md 5.1; the stbc-oracle
+        # warp_* captures, asked 50 GU at a 4.37 GU Galaxy, drop out 52-54 GU
+        # from its centre). From the centre, Intercept's 295 GU put the ship
+        # deep inside our map-rescaled planets (E1M2's Haven: 90 GU in BC's
+        # script, 1800 on the map).
+        stop = float(distance) + max(0.0, float(target.GetRadius()))
         ship_loc = self.GetWorldLocation()
         diff = TGPoint3(
             target_loc[0] - ship_loc.x,
@@ -772,7 +781,7 @@ class ShipClass(DamageableObject):
             target_loc[2] - ship_loc.z,
         )
         d = diff.Length()
-        if d <= distance:
+        if d <= stop:
             # Already inside the threshold — record convergence so future
             # boundary drifts don't bounce the ship back to the surface.
             self._warp_consumed = True
@@ -784,7 +793,7 @@ class ShipClass(DamageableObject):
             return 0
         flight = warp_flight.WarpFlight(
             target=target, speed_policy="ai", exit_policy="keep_pre_warp",
-            drop_distance=float(distance))
+            drop_distance=stop)
         # Warp state first (WES_WARP_INITIATED + a parts hold for a rigged
         # ship, else WES_WARPING), then the ET_IN_SYSTEM_WARP announcement.
         warp_flight.begin_ai_warp(self, flight)

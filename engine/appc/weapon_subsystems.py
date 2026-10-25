@@ -231,12 +231,17 @@ def _emitter_in_arc(emitter, ship, aim_world):
     yaw   = _math.atan2(right_dot, fwd_dot)
     pitch = _math.asin(max(-1.0, min(1.0, up_dot)))
 
-    yaw_lo, yaw_hi = arc_w
+    # Bounds are an unordered pair. Stock hardpoints author some larger-first
+    # -- every Fed Starbase phaser, the Ambassador/Akira/Cardassian-station
+    # belly phasers (cardstarbase.py: SetArcHeightAngles(1.745329, -0.087266))
+    # -- and read literally that range is empty, so the bank never fires.
+    # The getters keep the authored order; only the gate sorts.
+    yaw_lo, yaw_hi = sorted(arc_w)
     arc_h = emitter.GetArcHeightAngles() if hasattr(emitter, "GetArcHeightAngles") else None
     if not (isinstance(arc_h, tuple) and len(arc_h) == 2):
         # Arc width set but height missing — allow any pitch.
         return yaw_lo <= yaw <= yaw_hi
-    pitch_lo, pitch_hi = arc_h
+    pitch_lo, pitch_hi = sorted(arc_h)
     return (yaw_lo <= yaw <= yaw_hi) and (pitch_lo <= pitch <= pitch_hi)
 
 
