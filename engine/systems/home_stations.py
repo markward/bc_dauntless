@@ -236,6 +236,29 @@ def install_create_ship_hook(module) -> bool:
     return True
 
 
+# ── Free roam: Starbase 12 docking at BC's defaults ─────────────────────────
+
+_SB12_STATIC = "Systems.Starbase12.Starbase12_S"
+
+
+def free_roam_docking_defaults() -> None:
+    """Put Starbase12_S's docking globals back to BC's defaults: repairs on,
+    no special Graff action, fade at the end of his cutscene.
+
+    A campaign mission sets them (E7M1: StarbaseRepairsEnabled(0),
+    SetGraffDockingAction(...)) and the module stays cached, so without this a
+    free-roam dock would inherit them. Only a module already imported is
+    touched; a fresh import starts at the defaults anyway."""
+    import sys
+    module = sys.modules.get(_SB12_STATIC)
+    if module is None:
+        return
+    import App
+    module.g_bRepairsEnabled = 1
+    module.g_idGraffAction = App.NULL_ID
+    module.g_bFadeGraffEnd = 1
+
+
 class _HomeStationsOwner:
     name = OWNER_NAME
 

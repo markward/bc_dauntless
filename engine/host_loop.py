@@ -7910,6 +7910,10 @@ class _MissionLoader:
         # hooks so spawn's idempotency marker stays on the outermost wrapper.
         from engine.quickbattle import sim_restore as _qb_sim_restore
         _qb_sim_restore.install(_QB)
+        # Free roam docks at Starbase 12 with BC's defaults (repairs on), not
+        # whatever the last campaign mission left in the cached Starbase12_S.
+        from engine.systems import home_stations as _home_stations
+        _home_stations.free_roam_docking_defaults()
         # Our GenerateShips (the setup screen's BattlePlan), plus the radius
         # seeder it runs before placement: nothing is realised at
         # GenerateShips time, so every ship would otherwise report radius 0.
