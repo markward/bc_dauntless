@@ -1,6 +1,7 @@
 # Fed Starbase shields — a deliberate departure from BC
 
-**Status:** built on `feat/fed-starbase-shields`, unmerged, not live-verified.
+**Status:** merged into main 2026-10-25 after a green full gate. Mark checked it
+in game through E1M1 (2026-10-25, "all works fine").
 Companion to `fix/reversed-weapon-arcs` (the starbase's phasers fire at all),
 which reached main first in a050c72d9; the two are independent.
 
