@@ -6,10 +6,14 @@ from engine.appc import ship_lifecycle
 
 @pytest.fixture(autouse=True)
 def _reset_hub():
+    # Clean slate for the test, then put back the import-time subscribers
+    # (home_stations, engine_rumble, ...): nothing re-subscribes them, so a
+    # bare clear() would leak into every later test in the process.
+    saved = list(ship_lifecycle._subscribers)
     ship_lifecycle._subscribers.clear()
     ship_lifecycle._live.clear()
     yield
-    ship_lifecycle._subscribers.clear()
+    ship_lifecycle._subscribers[:] = saved
     ship_lifecycle._live.clear()
 
 
