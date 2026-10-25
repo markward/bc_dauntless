@@ -232,30 +232,72 @@ def test_end_combat_and_restart_keep_the_station(world):
     import App
     pSet = _into_region("TauCeti", "Starbase12")
     _do(panel, "add:Warbird")
+    station = pSet.GetObject("Starbase 12")
     _go(hl, panel)
     assert _scripted("Warbird")
     _end(hl, QB)
-    assert pSet.GetObject("Starbase 12") is not None
+    # Untouched by the battle: the SAME object is kept, not rebuilt.
+    assert pSet.GetObject("Starbase 12") is station
     assert _scripted("Warbird") == []
     _go(hl, panel)
     QB.RestartSimulation(QB.g_pXO, App.TGEvent_Create())
     App.g_kTimerManager.tick(3.0)
     hl._fire_pending_preload_done()
     hl._process_object_deletions()
-    assert pSet.GetObject("Starbase 12") is not None
+    assert pSet.GetObject("Starbase 12") is station
+
+
+def test_a_region_built_object_is_real(world):
+    """Belaruz4's own Initialize builds seven unowned asteroids when a battle
+    changes region into it: they are the region's, not the battle's, so they
+    survive EndSimulation untouched."""
+    hl, _c, panel, QB = world
+    import App
+    _into_region("TauCeti", "Starbase12")
+    _start_region_change(hl, panel, QB, "Belaruz4")
+    battle = App.g_kSetManager.GetSet("Belaruz4")
+    assert QB.g_pSet is battle
+    rocks = {n: battle.GetObject(n) for n in
+             ("Asteroid %d" % i for i in range(1, 8))}
+    assert all(r is not None for r in rocks.values())
+    _end(hl, QB)
+    for name, rock in rocks.items():
+        assert battle.GetObject(name) is rock, name
+    assert _scripted("Warbird") == []
+
+
+def test_an_unswept_leftover_is_not_real(world):
+    """An object still flagged for deletion when the next battle starts (BC's
+    sweep has not run yet) is not part of the world: it must not be recorded
+    as real and kept, but swept after that battle ends."""
+    hl, _c, panel, QB = world
+    import loadspacehelper
+    pSet = _into_region("TauCeti", "Starbase12")
+    _do(panel, "add:Warbird")
+    _go(hl, panel)
+    QB.EndSimulation()
+    leftover = loadspacehelper.CreateShip("Galor", pSet, "Leftover", "")
+    leftover.SetDeleteMe(1)
+    _go(hl, panel)
+    _end(hl, QB)
+    assert pSet.GetObject("Leftover") is None
 
 
 def test_damage_from_the_battle_is_undone(world):
     hl, _c, panel, QB = world
     import loadspacehelper
     from engine.appc import combat
-    from engine.appc.math import TGPoint3
+    from engine.appc.math import TGMatrix3, TGPoint3
     from engine.quickbattle.sim_restore import condition_of
     pSet = _into_region("TauCeti", "Starbase12")
     p = _player().GetWorldLocation()
     rock = loadspacehelper.CreateShip("Asteroidh1", pSet, "Test Rock", "")
     rock.SetTranslate(TGPoint3(p.x + 100.0, p.y, p.z))
+    rock.SetMatrixRotation(TGMatrix3().MakeZRotation(1.0))
+    rock.SetScale(2.0)
     rock.UpdateNodeOnly()
+    rock_loc, rock_rot = _loc(rock), _rot(rock)
+    assert rock_rot != pytest.approx(TGMatrix3().as_tuple(), abs=1e-3)
     station = pSet.GetObject("Starbase 12")
     before_station, before_rock = condition_of(station), condition_of(rock)
     _do(panel, "add:Warbird")
@@ -269,7 +311,12 @@ def test_damage_from_the_battle_is_undone(world):
     assert condition_of(rock)["subsystems"][0] < before_rock["subsystems"][0]
     _end(hl, QB)
     _same_condition(pSet.GetObject("Starbase 12"), before_station)
-    _same_condition(pSet.GetObject("Test Rock"), before_rock)
+    new_rock = pSet.GetObject("Test Rock")
+    assert new_rock is not rock
+    _same_condition(new_rock, before_rock)
+    assert _loc(new_rock) == pytest.approx(rock_loc, abs=1e-6)
+    assert _rot(new_rock) == pytest.approx(rock_rot, abs=1e-6)
+    assert new_rock.GetScale() == pytest.approx(2.0)
 
 
 def test_a_station_destroyed_in_battle_comes_back(world):

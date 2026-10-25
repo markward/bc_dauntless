@@ -193,12 +193,16 @@ def _put_back(records) -> None:
 
 # ── The snapshot ─────────────────────────────────────────────────────────────
 
-def _every_object() -> dict:
-    """{id: object} for every object in every set."""
+def _every_object(skip_flagged: bool = False) -> dict:
+    """{id: object} for every object in every set. `skip_flagged` leaves out
+    objects still flagged SetDeleteMe(1) (a previous battle's, not yet swept):
+    they are not part of the world the battle started from."""
     import App
     out = {}
     for pSet in list(App.g_kSetManager._sets.values()):
         for obj in list(pSet._objects.values()):
+            if skip_flagged and obj.__dict__.get("_delete_me"):
+                continue
             out[id(obj)] = obj
     return out
 
@@ -355,7 +359,9 @@ def _wrap(qb, name, make) -> bool:
 def _make_start_simulation2(orig):
     def StartSimulation2(*args):
         try:
-            _pre_sim.update(_every_object())
+            # pre_change keeps flagged objects (absent there means "built by
+            # Initialize", i.e. real); only pre_sim leaves them out.
+            _pre_sim.update(_every_object(skip_flagged=True))
         except Exception:  # noqa: BLE001 - never stop BC's start
             _log.exception("quickbattle: listing pre-battle objects failed")
         try:
