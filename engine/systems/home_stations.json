@@ -1,0 +1,18 @@
+{
+  "format": 1,
+  "stations": [
+    {"set": "Starbase12", "name": "Starbase 12", "script": "FedStarbase", "point": "Starbase12 Location", "point_module": "Systems.Starbase12.Starbase12"},
+    {"set": "DryDock", "name": "Dry Dock", "script": "DryDock", "point": "DryDock Start", "point_module": "Systems.DryDock.DryDock"},
+    {"set": "DryDock", "name": "Dry Dock2", "script": "DryDock", "point": "DryDock2", "point_module": "Maelstrom.Episode1.E1M1.Dock_P"},
+    {"set": "DryDock", "name": "Dry Dock3", "script": "DryDock", "point": "DryDock3", "point_module": "Maelstrom.Episode1.E1M1.Dock_P"},
+    {"set": "Chambana1", "name": "Cardassian Shipyard", "script": "CardStation", "point": "Hybrid Shipyard", "point_module": "Maelstrom.Episode4.E4M5.E4M5_Chambana1_P"},
+    {"set": "Cebalrai2", "name": "Outpost", "script": "CardOutpost", "point": "Cardassian Outpost Start", "point_module": "Maelstrom.Episode4.E4M6.E4M6_Cebalrai2_P"},
+    {"set": "Ascella3", "name": "Resupply Station", "script": "CardStation", "point": "Station Start", "point_module": "Maelstrom.Episode7.E7M3.Ascella3_P"},
+    {"set": "Alioth6", "name": "Litvok Nor", "script": "CardStarbase", "point": "DS9 Start", "point_module": "Maelstrom.Episode7.E7M6.E7M6_P"},
+    {"set": "DryDock", "name": "Station", "script": "SpaceFacility", "point": "StationPlacement", "point_module": "Maelstrom.Episode1.E1M1.Dock_P"},
+    {"set": "Prendel3", "name": "Outpost", "script": "CardOutpost", "point": "Base Location", "point_module": "Maelstrom.Episode5.E5M2.Prendel3_P"},
+    {"set": "Biranu2", "name": "Biranu Station", "script": "BiranuStation", "point": "Facility Location", "point_module": "Systems.Biranu.Biranu2"},
+    {"set": "Savoy1", "name": "Savoy Station", "script": "SpaceFacility", "point": "Station Location", "point_module": "Systems.Savoy.Savoy1"},
+    {"set": "Albirea3", "name": "Lyra Station", "script": "SpaceFacility", "point": "Station Start", "point_module": "Maelstrom.Episode7.E7M2.E7M2_Albirea_P"}
+  ]
+}
