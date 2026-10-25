@@ -2,7 +2,8 @@
 
 Both SDK loaders (`_SDKLoader.exec_module` in tools/mission_harness.py and its
 twin in tests/conftest.py) call `on_sdk_module_exec` after executing any module
-whose qualified name starts with "ships." or "Systems.". This is the second
+whose qualified name starts with "ships." or "Systems.", and after executing
+"loadspacehelper". This is the second
 pass of the "pre-load then override" scheme: the SDK file runs untouched, then
 we extend or tweak what it produced. sdk/Build/scripts/ stays byte-identical.
 
@@ -36,6 +37,8 @@ def on_sdk_module_exec(module, qualname: str) -> None:
     ships.<Leaf>             -> ship_overrides.apply(module)
     Systems.<System>.<Region> -> region_hooks.on_region_module_exec(module, qualname)
         (applies the system map after the region's Initialize())
+    loadspacehelper          -> home_stations.install_create_ship_hook(module)
+        (a mission's CreateShip for a placed home station reuses it)
     Anything else (including the "ships" and "ships.Hardpoints" packages, the
     "Systems" and "Systems.<System>" packages, "Systems.Utils", and any
     "Systems.<System>.<Region>_S" static module) is a no-op.
@@ -46,6 +49,10 @@ def on_sdk_module_exec(module, qualname: str) -> None:
     module body would clobber those saved edits on every rebuild (spec
     2026-09-26, docs/superpowers/specs/2026-09-26-spv-save-to-mod-hardpoint-design.md).
     """
+    if qualname == "loadspacehelper":
+        from engine.systems import home_stations
+        _dispatch(home_stations.install_create_ship_hook, module)
+        return
     parts = qualname.split(".")
     if parts[0] == "Systems":
         if len(parts) == 3 and not parts[2].endswith("_S"):

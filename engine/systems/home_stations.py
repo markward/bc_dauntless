@@ -180,6 +180,56 @@ def place_for_set(pSet, set_name: str) -> list:
     return placed
 
 
+# ── A mission's own CreateShip for a placed station ──────────────────────────
+
+def reusable(pcScript: str, pSet, name: str):
+    """The placed home station a mission's CreateShip(pcScript, pSet, name)
+    asks for, or None: `pSet` holds an object named `name` that home_stations
+    placed, built from the same ship script, and not dying or dead."""
+    if pSet is None:
+        return None
+    obj = pSet.GetObject(name)
+    if obj is None or home_station_of(obj) is None:
+        return None
+    if obj.GetScript() != "ships." + pcScript:
+        return None
+    from engine.appc import ship_death
+    if ship_death._out_of_action(obj):
+        return None
+    return obj
+
+
+def install_create_ship_hook(module) -> bool:
+    """Wrap `module.CreateShip` (SDK loadspacehelper) so a mission's call for a
+    placed home station returns that station, moved to the mission's point,
+    instead of building a second one. BC's AddObjectToSet refuses a duplicate
+    name; ours overwrites it, which would orphan the region's station.
+
+    Anything else, including _build's own call (place_for_set skips a name the
+    set already holds, so reusable finds nothing), goes to BC's CreateShip.
+    Idempotent: True only when it installs the wrapper."""
+    orig = module.__dict__.get("CreateShip")
+    if orig is None or "_dauntless_home_station_orig" in getattr(
+            orig, "__dict__", {}):
+        return False
+
+    def CreateShip(pcScript, pSet, pcIdentifier, pcLocationName,
+                   iWarpFlash=0, bGrabPreloaded=1):
+        station = reusable(pcScript, pSet, pcIdentifier)
+        if station is None:
+            return orig(pcScript, pSet, pcIdentifier, pcLocationName,
+                        iWarpFlash, bGrabPreloaded)
+        # The station is already in place: no warp flash for it.
+        if pcLocationName:
+            station.PlaceObjectByName(pcLocationName)
+        station.UpdateNodeOnly()
+        return station
+
+    CreateShip._dauntless_home_station_orig = orig
+    module.CreateShip = CreateShip
+    return True
+
+
 class _HomeStationsOwner:
     name = OWNER_NAME
 

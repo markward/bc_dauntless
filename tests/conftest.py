@@ -549,13 +549,15 @@ class _SDKLoader(importlib.abc.Loader):
                     setattr(sys.modules[parent], attr, module)
                 except (AttributeError, TypeError):
                     pass
-        # Second pass: engine-owned overrides -- ship data, and the system map
-        # on region modules -- applied after the SDK module registers its own
+        # Second pass: engine-owned overrides -- ship data, the system map
+        # on region modules, and the home-station CreateShip wrap on
+        # loadspacehelper -- applied after the SDK module registers its own
         # data. Fires on reload too, so loadspacehelper's ClearLocalTemplates()
         # -> reload() window is covered. Keep in sync with the twin in
         # tools/mission_harness.py.
         _qual = self.also_register_as or module.__name__
-        if _qual.startswith(("ships.", "Systems.")):
+        if (_qual.startswith(("ships.", "Systems."))
+                or _qual == "loadspacehelper"):
             try:
                 from engine.appc import sdk_overrides
                 sdk_overrides.on_sdk_module_exec(module, _qual)
