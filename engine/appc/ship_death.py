@@ -235,11 +235,22 @@ def _remove(ship) -> None:
     try:
         pSet = ship.GetContainingSet() if hasattr(ship, "GetContainingSet") else None
         if pSet is not None and hasattr(ship, "GetName"):
-            pSet.RemoveObjectFromSet(ship.GetName())
+            name = ship.GetName()
+            # By NAME, but only if the entry is this ship: a rebuilt namesake
+            # (a station recreated after a Quick Battle) must survive.
+            if not hasattr(pSet, "GetObject") or pSet.GetObject(name) is ship:
+                pSet.RemoveObjectFromSet(name)
     except Exception as _e:
         dev_mode.log_swallowed("remove dead ship from set", _e)
     from engine.appc.objects import broadcast_object_deleted
     broadcast_object_deleted(ship)
+
+
+def forget(ship) -> None:
+    """Drop every death-sequence entry for `ship` without touching the ship or
+    its set, so a ship being rebuilt or replaced is never killed or evicted
+    later."""
+    _active[:] = [e for e in _active if e["ship"] is not ship]
 
 
 def retire(ship) -> None:
