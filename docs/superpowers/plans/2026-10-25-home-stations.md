@@ -4,7 +4,17 @@
 
 **Goal:** Every station in the design's table is present whenever its home region's set is built. A mission asking for one gets the existing station back. A Quick Battle puts every real object back as it was when the battle ends.
 
-**Architecture:** One module, `engine/systems/home_stations.py`, owns the station table (a checked-in JSON beside it), reads each placement point from the SDK at run time, places stations from the existing region hook, answers `is_standing`, and wraps `loadspacehelper.CreateShip` for reuse. A second module, `engine/quickbattle/sim_restore.py`, wraps three Quick Battle SDK functions. It records which objects are real when a battle starts, keeps home stations in their own set, and rebuilds anything the battle changed when it ends.
+**Architecture:** `engine/systems/owners.py` is a small registry. A world system that places objects into a region registers as an owner and tags each object it places (spec §4a). Home stations are the first owner; patrols come later. `engine/systems/home_stations.py` covers the station side:
+- the station table, a checked-in JSON beside it;
+- reading each placement point from the SDK at run time;
+- placing stations from the existing region hook;
+- answering `is_standing`;
+- wrapping `loadspacehelper.CreateShip` so a mission reuses the station.
+
+`engine/quickbattle/sim_restore.py` wraps three Quick Battle SDK functions:
+- it records which objects are real when a battle starts (owned objects always are);
+- it keeps owned objects in their own set;
+- when the battle ends, it rebuilds anything the battle changed. An owned object is rebuilt by its owner.
 
 **Tech Stack:** Python 3.11 engine over the SDK's Python scripts; pytest, headless.
 
@@ -131,9 +141,11 @@ git commit -m "feat(stations): home station table and SDK placement-point reader
 
 ---
 
-### Task 2: Place stations when their region is built; `is_standing`
+### Task 2: Owners; place stations when their region is built; `is_standing`
 
 **Files:**
+- Create: `engine/systems/owners.py`
+- Test: `tests/unit/test_owners.py`
 - Modify: `engine/systems/home_stations.py`
 - Modify: `engine/systems/region_hooks.py` (the `Initialize` wrapper in `on_region_module_exec`)
 - Modify: `engine/host_loop.py:4838` (`_reset_system_loader_state`)
@@ -142,15 +154,29 @@ git commit -m "feat(stations): home station table and SDK placement-point reader
 
 **Interfaces:**
 - Consumes: Task 1's `Station`, `stations_for_set`, `read_point`.
-- Produces:
+- Produces, in `owners.py`:
+  - `Owner`: a Protocol with `name: str`, `rebuild(old, record) -> object | None` and `after_rebuild(new, record) -> None`. `record` is Task 6's `sim_restore.Record`; until Task 6, an owner receives it opaquely.
+  - `register(owner) -> None`: keyed by `owner.name`. Registering the same name again replaces the entry, so a module reload is safe.
+  - `get(name: str) -> Owner | None`.
+  - `tag(obj, owner_name: str, key) -> None`: the only writer of `obj.__dict__["_dauntless_owner"] = (owner_name, key)`.
+  - `owner_of(obj) -> tuple[Owner, object] | None`: reads `obj.__dict__.get("_dauntless_owner")`. Returns None when the object is untagged or its owner name is not registered.
+- Produces, in `home_stations.py`:
+  - `OWNER_NAME = "home_stations"`, plus a registered owner instance. Its `rebuild` is Step 3's single-station placement, given the record's set and the transform the record holds. Its `after_rebuild` calls `forget_destroyed`.
   - `place_for_set(pSet, set_name: str) -> list`: the station objects it created.
-  - `home_station_of(obj) -> Station | None`: reads `obj.__dict__.get("_dauntless_home_station")`.
-  - `mark_home(obj, station: Station) -> None`: the only writer of that attribute.
+  - `home_station_of(obj) -> Station | None`: the key when `owner_of(obj)` is the home-stations owner.
+  - `mark_home(obj, station: Station) -> None`: calls `owners.tag(obj, OWNER_NAME, station)`.
   - `is_standing(station: Station) -> bool`.
   - `forget_destroyed(station: Station) -> None`.
-  - `reset() -> None`: clears the destroyed record and the point cache.
+  - `reset() -> None`: clears the destroyed record and the point cache. It never unregisters the owner.
 
 - [ ] **Step 1: Write the failing tests**
+
+`tests/unit/test_owners.py`:
+- `test_tag_and_owner_of`: register a test `Owner`, tag a plain `App.ShipClass_Create("X")` with it under key `7`. `owner_of` returns `(that owner, 7)`.
+- `test_untagged_and_unregistered_are_none`: an untagged object, and an object tagged with an unregistered owner name, both give `owner_of(...) is None`.
+- `test_a_stub_attribute_never_reads_as_owned`: on a `TGObject` whose `__getattr__` returns a stub, `owner_of` is None. This proves the read goes through `__dict__`.
+
+Region tests:
 
 All tests build sets with `tests.helpers.mapped_regions.load_region(system, region)`. The (system, region) pairs: `("TauCeti","Starbase12")`, `("TauCeti","DryDock")`, `("Chambana","Chambana1")`, `("Cebalrai","Cebalrai2")`, `("Ascella","Ascella3")`, `("Alioth","Alioth6")`, `("Prendel","Prendel3")`, `("Biranu","Biranu2")`, `("Savoy","Savoy1")`, `("Albirea","Albirea3")`. The tests:
 
@@ -169,8 +195,8 @@ All tests build sets with `tests.helpers.mapped_regions.load_region(system, regi
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `uv run pytest tests/integration/test_home_stations_regions.py -q`
-Expected: FAIL. The stations are absent, and `place_for_set`/`is_standing` don't exist yet.
+Run: `uv run pytest tests/unit/test_owners.py tests/integration/test_home_stations_regions.py -q`
+Expected: FAIL. `owners` doesn't exist, the stations are absent, and `place_for_set`/`is_standing` don't exist yet.
 
 - [ ] **Step 3: Implement**
 
@@ -183,6 +209,8 @@ Expected: FAIL. The stations are absent, and `place_for_set`/`is_standing` don't
 
 Any failure prints one `[home-stations] <set>/<name> not placed: <Type>: <msg>` line and moves on.
 
+Steps 4-5 are one private function, `_build(row, pSet, loc, rot)`. Both `place_for_set` and the owner's `rebuild` use it, so a battle rebuild and a region build make the same object. Register the owner at module import.
+
 `is_standing` is False only when `(set_name, name)` is in the module's destroyed record. The record is filled by an `engine.appc.ship_lifecycle` subscriber, registered once at module import. On `"destroyed"`, it records the ship's station when `home_station_of(ship)` is set **and** the ship is still in a set (`GetContainingSet()` is not None).
 
 In `region_hooks`, the wrapper calls `home_stations.place_for_set(pSet, set_name)` right after `apply_map.apply_to_set`. Its own exceptions are caught there and printed as one line: placing a station must never break a region. Update the module docstring's ordering paragraph.
@@ -191,7 +219,7 @@ Add `home_stations.reset()` to `host_loop._reset_system_loader_state` (both the 
 
 - [ ] **Step 4: Run to verify they pass**
 
-Run: `uv run pytest tests/integration/test_home_stations_regions.py tests/unit/test_home_stations_table.py -q`
+Run: `uv run pytest tests/unit/test_owners.py tests/integration/test_home_stations_regions.py tests/unit/test_home_stations_table.py -q`
 Expected: PASS.
 
 - [ ] **Step 5: Run the region hook's own tests**
@@ -202,8 +230,8 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add engine/systems/home_stations.py engine/systems/region_hooks.py engine/host_loop.py tests/conftest.py tests/integration/test_home_stations_regions.py
-git commit -m "feat(stations): place home stations when their region is built"
+git add engine/systems/owners.py engine/systems/home_stations.py engine/systems/region_hooks.py engine/host_loop.py tests/conftest.py tests/unit/test_owners.py tests/integration/test_home_stations_regions.py
+git commit -m "feat(stations): owner tags; place home stations when their region is built"
 ```
 
 ---
@@ -336,7 +364,7 @@ git commit -m "fix(death): dead-hull removal never removes a namesake"
 
 ---
 
-### Task 5: Quick Battle keeps home stations in their own set
+### Task 5: Quick Battle keeps owned objects in their own set
 
 **Files:**
 - Create: `engine/quickbattle/sim_restore.py`
@@ -344,7 +372,7 @@ git commit -m "fix(death): dead-hull removal never removes a namesake"
 - Test: `tests/integration/test_home_stations_quickbattle.py`
 
 **Interfaces:**
-- Consumes: `home_stations.home_station_of`.
+- Consumes: `owners.owner_of`, `owners.tag`, `owners.register`.
 - Produces: `sim_restore.install(qb) -> bool`. It wraps `qb.ChangeRegion`, `qb.StartSimulation2` and `qb.EndSimulation`, each idempotent through a `_dauntless_sim_restore_orig` attribute. This task fills in only the `ChangeRegion` half; Task 6 adds the other two.
 
 - [ ] **Step 1: Write the failing tests**
@@ -361,6 +389,7 @@ The tests:
 - `test_a_battle_at_starbase_12_includes_the_station`: `_into_region("TauCeti","Starbase12")`, add `"add:Warbird"`, then `_go`. `QB.g_pSet.GetName() == "Starbase12"`, and `"Starbase 12"` is in it and marked.
 - `test_a_region_change_leaves_the_station_home`: `_into_region("TauCeti","Starbase12")`, save the station's location, set `QB.g_sSelectedRegion = "Belaruz1"`, add `"add:Warbird"`, then `_go`. The player is in `Belaruz1`. `"Starbase 12"` is in the `Starbase12` set at its saved location, and `Belaruz1` holds no `"Starbase 12"`.
 - `test_a_dupe_region_change_keeps_the_station_in_its_set` (Review Focus 5): as above with `"Belaruz4"`. Save `old = starbase12 set object`. Afterwards the station's `GetContainingSet() is old`, and no exception was logged (`no_logged_failures`).
+- `test_any_owned_object_stays_home`: register a test owner `"test_patrol"`. In Starbase12, create a ship with `loadspacehelper.CreateShip("Galor", pSet, "Patrol 1", "")` and `owners.tag` it with `"test_patrol"`. After a region change to `"Belaruz1"`, `"Patrol 1"` is still in `Starbase12`. This proves the rule reads the owner tag, not station-ness.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -369,8 +398,8 @@ Expected: the first test passes already (Tasks 2-3), and the region-change tests
 
 - [ ] **Step 3: Implement the `ChangeRegion` wrapper**
 
-1. Before calling the original, record `(station, its set object, location copy, rotation copy)` for every home station in the player's containing set.
-2. After the original, for each record whose station's containing set is not its saved set object:
+1. Before calling the original, record `(object, its set object, location copy, rotation copy)` for every object in the player's containing set that has an owner (`owners.owner_of` is not None).
+2. After the original, for each record whose object's containing set is not its saved set object:
    - remove the station from where it now is, only if that set's entry under its name is that station;
    - add it back to the saved set;
    - restore its location and rotation;
@@ -385,7 +414,7 @@ Expected: PASS.
 
 ```bash
 git add engine/quickbattle/sim_restore.py engine/host_loop.py tests/integration/test_home_stations_quickbattle.py
-git commit -m "feat(quickbattle): home stations stay in their region on a region change"
+git commit -m "feat(quickbattle): owned objects stay in their region on a region change"
 ```
 
 ---
@@ -399,7 +428,7 @@ git commit -m "feat(quickbattle): home stations stay in their region on a region
 
 **Interfaces:**
 - Consumes:
-  - `home_stations.home_station_of`, `mark_home` and `forget_destroyed`;
+  - `owners.owner_of` and the `Owner` protocol (Task 2). The home-stations owner's `rebuild`/`after_rebuild` already re-tag the station and forget a battle-time destruction;
   - `ship_death.forget` (Task 4).
 - Produces:
   - `subsystems.iter_subsystems(ship)`: yields the hull, every top-level subsystem `repair_ship_fully` reaches, and each one's children, in that order. `repair_ship_fully` is rewritten over it, with unchanged behaviour.
@@ -408,6 +437,13 @@ git commit -m "feat(quickbattle): home stations stay in their region on a region
     - `"shields"`: a list of `GetCurShields(face)` for faces 0-5, or `[]` when there is no shield subsystem;
     - `"ammo"`: a list of `GetAmmoType(slot).GetAvailable()` for each slot, or `[]`.
   - `sim_restore.apply_condition(ship, cond) -> None`: writes the same three back with `SetCondition`, `SetCurShields` and `SetAvailable`.
+  - `sim_restore.Record`: a frozen dataclass with these fields:
+    - `obj`, `pset`, `name: str`, `script: str` (leaf);
+    - `location: TGPoint3`, `rotation: TGMatrix3` (copies);
+    - `scale: float`, `condition: dict`;
+    - `owner: str | None`, `key: object`.
+
+    This is what an owner's `rebuild(old, record)` receives.
 
 - [ ] **Step 1: Write the failing unit test.** Use a ship from `loadspacehelper.CreateShip("Galaxy", pSet, "G", "")`:
   1. Record `condition_of`.
@@ -433,6 +469,10 @@ git commit -m "feat(quickbattle): home stations stay in their region on a region
   2. Call `QB.EndSimulation()` and `hl._process_object_deletions()`.
   3. The set holds exactly one live, marked `"Starbase 12"` at its placement point, and `is_standing(row)` is True.
   4. Advance `ship_death` past enough new hulks to evict the old one: the new station survives.
+- `test_owned_objects_follow_their_owner`: register a test owner `"test_patrol"` whose `rebuild` records each call and builds through `loadspacehelper.CreateShip(record.script, record.pset, record.name, "", 0, 0)`, and whose `after_rebuild` records each call. In a battle at Starbase12:
+  - **(a)** After `_go`, create and tag `"Late Patrol"`. It appeared mid-battle, yet survives `EndSimulation` + `_process_object_deletions` untouched, and `rebuild` was not called for it.
+  - **(b)** Create and tag `"Patrol 1"` before `_go`, then damage it during the battle. After `EndSimulation`, `rebuild` was called once with a `Record` whose `name == "Patrol 1"`, and `after_rebuild` once. The `"Patrol 1"` in the set is the object `rebuild` returned, with its pre-battle `condition_of`.
+  - **(c)** The Warbird (unowned, created by the battle) is gone.
 
 - [ ] **Step 3: Run to verify they fail**
 
@@ -444,16 +484,17 @@ Expected: FAIL. BC's `EndSimulation` deletes the station, and the functions are 
 - **`StartSimulation2` wrapper.** Before calling the original, store `pre_sim`: the ids (`id(obj)`) of every object in every set. Walk `App.g_kSetManager._sets` → `_objects`, as `host_loop._process_object_deletions` does.
 - **`ChangeRegion` wrapper (Task 5's).** Also store `pre_change` (same walk) before calling the original. After it, when `qb.bInSimulation`, take the snapshot. Its target is `qb.g_pSet`. It covers every `CT_DAMAGEABLE_OBJECT` there that:
   - is not the player;
-  - **and** either was in `pre_sim` or is absent from `pre_change` (it was built by the region's own `Initialize`).
+  - **and** is owned (`owners.owner_of` is not None), or was in `pre_sim`, or is absent from `pre_change` (it was built by the region's own `Initialize`).
 
-  What it leaves out are the battle's ships, which were created after `pre_sim` and before `pre_change`. Each record holds the object, the set object, its name, its script leaf, copies of its location and rotation, `GetScale()`, `condition_of(obj)`, and `home_station_of(obj)`.
-- **`EndSimulation` wrapper.** Call the original first: BC's sweep flags everything except the player, and `RecreatePlayer` runs. Then, for each record:
-  - **Alive, still in its set, `condition_of` unchanged:** `SetDeleteMe(0)`.
-  - **Otherwise (changed or destroyed):** rebuild it.
+  What it leaves out are the battle's own unowned ships, which were created after `pre_sim` and before `pre_change`. Each object becomes one `Record`.
+- **`EndSimulation` wrapper.** Call the original first: BC's sweep flags everything except the player, and `RecreatePlayer` runs. Then:
+  - **Owned objects not in the snapshot** (they appeared mid-battle): `SetDeleteMe(0)`, nothing else.
+  - **Each record, alive, still in its set, `condition_of` unchanged:** `SetDeleteMe(0)`.
+  - **Each record otherwise (changed or destroyed):** rebuild it.
     1. Call `ship_death.forget(old)`. If the set's entry under its name is the old object, call `RemoveObjectFromSet(name)` and then `engine.appc.objects.broadcast_object_deleted(old)`.
-    2. Create the new object with `loadspacehelper.CreateShip(script, set, name, "", 0, 0)`.
-    3. Restore its location and rotation; call `SetScale` when the scale is not 1.0; call `UpdateNodeOnly()`; call `apply_condition`.
-    4. If the record had a station, call `mark_home` and `forget_destroyed`.
+    2. **Owned:** `new = owner.rebuild(old, record)`. **Unowned:** `new = loadspacehelper.CreateShip(script, set, name, "", 0, 0)`, then restore its location and rotation, call `SetScale` when the scale is not 1.0, and call `UpdateNodeOnly()`.
+    3. If `new` is None, print one `[sim-restore]` line and go to the next record.
+    4. Call `apply_condition(new, record.condition)`. For an owned record, then call `owner.after_rebuild(new, record)`.
 
   Clear the snapshot after restoring it. `reset()` clears it too; call `sim_restore.reset()` from `host_loop`'s swap drain beside `_qb_late.reset()`.
 
@@ -509,6 +550,7 @@ git commit -m "test(stations): free roam warps to Starbase 12, docks and repairs
 **Files:**
 - Modify: `CLAUDE.md`. Add a "Home stations" row to the Key reference table, beside the Quick Battle rows. It names `engine/systems/home_stations.{py,json}`, `engine/quickbattle/sim_restore.py` and the spec, and covers these points:
   - stations are placed by the region hook and gated by `is_standing`;
+  - `engine/systems/owners.py`: anything a world system places carries an owner tag. Quick Battle never treats an owned object as a battle object, keeps it in its set, and lets its owner rebuild it. Patrols are meant to be the next owner;
   - a mission's `CreateShip` reuses the station (marked, same script, alive);
   - ⚠️ a battle restores real objects by **rebuilding** what changed, so pre-battle scars are lost on a rebuilt object;
   - ⚠️ the Prendel outpost reappears in E6M4 until world state lands;
@@ -528,6 +570,7 @@ git commit -m "docs(stations): home stations reference row and status"
 ## Decisions this plan makes (not in the spec)
 
 - **Rebuild, not repaint.** The renderer has no way to clear one ship's hull wear, so the battle restore rebuilds any real object whose condition changed. The rebuild applies the pre-battle condition numbers. Visible scars from before the battle are lost on a rebuilt object, and a rebuilt rock starts at rest.
-- **Real versus simulated objects.** This is decided by when an object appeared: before `StartSimulation2`, or during the region's `Initialize`. There is no list of what the simulation created. Late arrivals and break-up pieces are new, so BC's own sweep still deletes them.
+- **Real versus simulated objects.** An owned object is always real (spec §4a). For an unowned object, timing decides: it is real if it appeared before `StartSimulation2` or during the region's `Initialize`. There is no list of what the simulation created. Late arrivals and break-up pieces are new and unowned, so BC's own sweep still deletes them.
+- **Owners live in `engine/systems/owners.py`,** keyed by name. Registering the same name again replaces the entry, so the registry survives a module reload.
 - **Mission placement points never become waypoints in the home set.** The station is placed from the read point directly, so a mission that later loads the same placement file never collides with a leftover point.
 - **A failure to place a station prints one line and never breaks the region.**

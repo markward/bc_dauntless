@@ -111,8 +111,34 @@ hook places each station whose home set this is:
    placement point)`, so it gets exactly the hardpoints, overrides (including
    the Fed Starbase shields override) and splash damage that a mission-built
    station gets.
-4. Mark it as a home station (an attribute on the object) so §5 can recognise
-   it.
+4. Tag it with its owner, the home-stations owner (§4a), so §5 and §7 can
+   recognise it.
+
+## 4a. Owners: objects a world system places
+
+Mark plans to extend this system to patrol ships and other ship activity
+(2026-10-25, §11). So the tag on a placed station is not station-specific: it
+is an **owner tag**. Any world system that places objects into a region (home
+stations now, patrols later) registers as an owner and tags each object it
+places with itself plus a key of its own (for stations, the table row).
+
+An owner provides:
+
+- **rebuild(old object, record)**: build a fresh replacement after a Quick
+  Battle changed or destroyed the original (§7). The owner rebuilds, not a
+  generic path, so a later patrol owner can re-attach its orders and AI.
+  Stations rebuild through the same placement as §4.
+- **after_rebuild(record)**: clean-up once the replacement exists. For
+  stations, forget a destruction that happened inside the battle (§6).
+
+What holds for every owned object, by being owned:
+
+- It is never part of a Quick Battle, whenever it appeared (§7).
+- Quick Battle's `ChangeRegion` leaves it in its own set (§7).
+
+What stays station-only: the "still standing?" check (§6) and the mission
+reuse rule (§5). Patrols will bring their own rules (allegiance, campaign
+behaviour) in their own design.
 
 **Placement points.** Four rows use a point defined in the region file, which
 `Initialize` has already loaded. Nine use a point that only a mission
@@ -145,7 +171,8 @@ Ours (`engine/appc/sets.py`, `AddObjectToSet`) silently replaces the entry
 and orphans the first station.
 
 **Rule:** when `loadspacehelper.CreateShip(script, set, name, point, ...)` is
-called and the set holds a **home station** with that name and that ship
+called and the set holds a **home station** (an object owned by the
+home-stations owner, §4a) with that name and that ship
 script that has not been destroyed, it returns that station instead of
 building a new one. Before returning, it places the station at the point the
 mission asked for (`PlaceObjectByName` + `UpdateNodeOnly`, as `CreateShip`
@@ -233,8 +260,9 @@ station of that name, it gets BC's normal new one.
 - **`ChangeRegion` moves every ship.** It loops over
   `pOldSet.GetClassObjectList(App.CT_SHIP)` and moves each one into the new
   region (`QuickBattle.py`, `ChangeRegion`). A home station is a ship, so
-  without handling Starbase 12 would follow the player to Belaruz. **Home
-  stations must stay in their own set.** This is an anti-goal.
+  without handling Starbase 12 would follow the player to Belaruz. **Owned
+  objects (§4a), home stations included, must stay in their own set.** This
+  is an anti-goal.
 - **A Quick Battle is a simulation on the player's ship's computer** (Mark,
   2026-10-25). What the simulation created is tracked. When it ends (End
   Combat, Restart, or a swap), everything the simulation damaged that is
@@ -253,6 +281,16 @@ station of that name, it gets BC's normal new one.
     own ship does, and asteroids. A home station the simulation destroyed is
     placed again as it was at the start, and its destruction does not count
     for `is_standing`.
+  - **Which objects are real.** An owned object (§4a) is always real, even
+    one that appeared during the battle. For an unowned object, timing
+    decides: it is real if it existed before the battle started or was built
+    by the region's own `Initialize`. Everything else belongs to the battle.
+  - **Restoring.** An object whose condition the battle changed is rebuilt,
+    because the renderer cannot wipe one ship's scars. An owned object is
+    rebuilt by its owner (§4a). An unowned one (an asteroid) is rebuilt from
+    its ship script, name, position, rotation and scale. Either way the
+    pre-battle condition is then applied. Scars from before the battle are
+    lost on a rebuilt object.
 - Quick Battle setup may also spawn a `FedStarbase` as a combatant. It gets a
   Quick Battle name, so it never matches a home station and §5 never applies.
 - Free-roam stations are neutral (§4), so Quick Battle's enemy count and
@@ -299,6 +337,9 @@ Headless, focused files only (the gate runs only on a merge into main).
   End Combat, both are back to their pre-battle condition. A station destroyed
   during the battle is placed again afterwards, and `is_standing` still
   answers yes.
+- Owners: an object tagged by a test-only owner that appears mid-battle
+  survives End Combat, stays in its set on a region change, and when damaged
+  is rebuilt through that owner's `rebuild`, not the generic path.
 - Destroyed mid-mission: destroy a home station, rebuild its set, and the
   station is not placed again until the next mission change.
 - Every test above must fail before the change.
@@ -308,8 +349,8 @@ Headless, focused files only (the gate runs only on a merge into main).
 - How to read one placement point from a mission placement file without
   side effects (§4).
 - The exact hook point for the `CreateShip` reuse rule (§5).
-- How `ChangeRegion` skips home stations (§7): wrap it, or filter what it
-  moves.
+- How `ChangeRegion` keeps owned objects home (§7): wrap it, or filter what
+  it moves.
 - The data file's name and schema details (§3).
 - What the Quick Battle snapshot captures and how it restores it (§7), within
   the rule: hull, subsystems, shields and ammunition of every real object in
@@ -324,3 +365,11 @@ Headless, focused files only (the gate runs only on a merge into main).
 2. **World state for an open-world campaign.** Remember stations the story
    destroyed (and other story flags) across missions and saves. It answers
    §6's `is_standing`.
+3. **Patrols and other ship activity** (Mark, 2026-10-25). The same region
+   system later spawns patrol ships and other traffic. Two points from Mark:
+   - **Campaign patrols** are to be tried, then tested to see whether the
+     campaign survives them. They may turn out to be incompatible: extra
+     armed ships can trip mission checks that count every ship in a set.
+     For another day.
+   - **Allegiance** comes from a table of who attacks whom, not from
+     stations' "no side". Quick Battle's win check must leave patrols out.
