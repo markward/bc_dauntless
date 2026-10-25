@@ -18,9 +18,10 @@ applied after, a body is DRAWN at BC's radius and TARGETED at the map's.
 check_realized() is the alarm for that: a set whose name resolves to a system
 but which apply_to_set never marked.
 
-Home stations come AFTER the map and still before realize: a station sits on
-a point read from the set's own waypoint, which must already be mapped, and
-the set must hold it by the time it is first drawn. Unlike apply_to_set, a
+Home stations are placed after the map, but what matters is that they are
+placed before realize: the set must hold a station by the time it is first
+drawn. The map does not constrain them -- apply_to_set moves bodies, never the
+waypoint a station's point is read from. Unlike apply_to_set, a
 failure there is caught and printed as one line -- placing a station must
 never break a region.
 
