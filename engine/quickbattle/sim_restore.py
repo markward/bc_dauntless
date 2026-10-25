@@ -13,7 +13,13 @@ made) belongs to the battle.
 - `EndSimulation` deletes every damageable object except the player. After
   BC's own, the wrapper un-flags each real object the battle left untouched,
   and rebuilds each one it changed or destroyed (an owned object through its
-  owner), then puts back its pre-battle condition.
+  owner), then puts back its pre-battle condition. An unowned object with no
+  ship script (a promoted field rock, a breakup remnant) cannot be re-created,
+  so it is never removed: its condition is put back in place.
+- BC's XO Start button runs RestartSimulation, which calls EndSimulation
+  first, also when no battle is running (idle free roam, or a Restart after
+  End Combat). With no battle to end, every damageable object BC's sweep
+  newly flagged is un-flagged.
 
 `install(qb)` replaces module attributes, so every SDK caller that reaches the
 function through its module global (StartSimulation2 calls ChangeRegion,
@@ -270,13 +276,33 @@ def _untouched(record: Record) -> bool:
             and _same(condition_of(old), record.condition))
 
 
+def _restore_in_place(record: Record) -> None:
+    """An unowned object with no ship script (a promoted field rock, a
+    breakup remnant) can never be re-created, so it is never removed: alive
+    and in its set, it gets its pre-battle condition back and is kept."""
+    from engine.appc import ship_death
+    old, pSet = record.obj, record.pset
+    if (ship_death._out_of_action(old) or old.GetContainingSet() is not pSet
+            or pSet.GetObject(record.name) is not old):
+        print(f"[sim-restore] {record.name} has no ship script and was "
+              f"destroyed: it cannot be rebuilt", flush=True)
+        return
+    apply_condition(old, record.condition)
+    old.SetDeleteMe(0)
+
+
 def _rebuild(record: Record) -> None:
     """Replace a changed or destroyed real object with a fresh one in its
     pre-battle condition; the owner builds an owned one."""
     from engine.appc import ship_death
     from engine.appc.objects import broadcast_object_deleted
+    if record.owner is None and not record.script:
+        _restore_in_place(record)
+        return
     old, pSet = record.obj, record.pset
     ship_death.forget(old)
+    # As ship_death and rocks.promotion do on every removal.
+    ship_death._clear_target_locks(old)
     if pSet.GetObject(record.name) is old:
         pSet.RemoveObjectFromSet(record.name)
         broadcast_object_deleted(old)
@@ -400,14 +426,47 @@ def _make_change_region(qb):
     return make
 
 
+def _unflagged_damageables(qb) -> list:
+    """Every damageable object in the set BC's EndSimulation sweeps that is
+    not already flagged SetDeleteMe(1)."""
+    import App
+    pSet = qb.__dict__.get("g_pSet")
+    if pSet is None:
+        return []
+    return [obj for obj in pSet.GetClassObjectList(App.CT_DAMAGEABLE_OBJECT)
+            if not obj.__dict__.get("_delete_me")]
+
+
+def _keep_after_idle_end(objects) -> None:
+    """No battle was running, so BC's sweep had nothing to end: un-flag each
+    object it newly flagged. Torpedoes are not damageable and stay swept."""
+    reset()
+    for obj in objects:
+        if obj.__dict__.get("_delete_me"):
+            obj.SetDeleteMe(0)
+
+
 def _make_end_simulation(qb):
     def make(orig):
         def EndSimulation(*args):
+            # BC's XO Start button runs RestartSimulation, which calls
+            # EndSimulation first -- also from idle free roam, and after End
+            # Combat already spent the snapshot.
+            running = bool(qb.__dict__.get("bInSimulation"))
+            idle = []
+            if not running:
+                try:
+                    idle = _unflagged_damageables(qb)
+                except Exception:  # noqa: BLE001 - never stop BC's end
+                    _log.exception("quickbattle: listing idle objects failed")
             try:
                 return orig(*args)
             finally:
                 try:
-                    _restore_after_end(qb)
+                    if running:
+                        _restore_after_end(qb)
+                    else:
+                        _keep_after_idle_end(idle)
                 except Exception:  # noqa: BLE001 - never mask BC's end
                     _log.exception("quickbattle: restore failed")
         return EndSimulation

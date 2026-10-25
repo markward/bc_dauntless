@@ -415,6 +415,9 @@ def test_a_second_load_wraps_once(world, monkeypatch):
     assert again is QB
     for name in ("StartSimulation2", "ChangeRegion", "EndSimulation"):
         assert sim_restore._wrapper_count(getattr(QB, name)) == 1, name
+    # The restore runs only when a battle is running to end.
+    _do(panel, "add:Warbird")
+    _go(hl, panel)
     calls = []
     real = sim_restore._restore_after_end
     monkeypatch.setattr(sim_restore, "_restore_after_end",
@@ -468,3 +471,133 @@ def test_one_failing_rebuild_never_stops_the_rest(world, caplog):
     finally:
         owners._owners.pop("test_broken", None)
         owners._owners.pop("test_patrol", None)
+
+
+# ── Ending a simulation that is not running (XO Start/Restart) ──────────────
+
+def _real_rock(pSet, name="Idle Rock"):
+    """An unowned real rock beside the player, made by its ship script."""
+    import loadspacehelper
+    from engine.appc.math import TGPoint3
+    p = _player().GetWorldLocation()
+    rock = loadspacehelper.CreateShip("Asteroidh1", pSet, name, "")
+    rock.SetTranslate(TGPoint3(p.x + 100.0, p.y, p.z))
+    rock.UpdateNodeOnly()
+    return rock
+
+
+def _restart(hl, QB):
+    """BC's XO "Start Simulation" button: ET_RESTART_SIMULATION, whose
+    handler RestartSimulation runs EndSimulation() first."""
+    import App
+    QB.RestartSimulation(QB.g_pXO, App.TGEvent_Create())
+    hl._process_object_deletions()
+
+
+def test_an_xo_start_from_free_roam_keeps_real_objects(world):
+    """No battle is running, so EndSimulation has nothing to end: BC's sweep
+    must not delete the player's set. An object already flagged before the
+    call is still swept (BC's own pending deletion)."""
+    hl, _c, _panel, QB = world
+    import loadspacehelper
+    pSet = _into_region("TauCeti", "Starbase12")
+    # Free roam: the set BC's EndSimulation sweeps is the player's.
+    QB.g_pSet = pSet
+    rock = _real_rock(pSet)
+    station = pSet.GetObject("Starbase 12")
+    leftover = loadspacehelper.CreateShip("Galor", pSet, "Leftover", "")
+    leftover.SetDeleteMe(1)
+    assert not QB.bInSimulation
+    _restart(hl, QB)
+    assert pSet.GetObject("Idle Rock") is rock
+    assert pSet.GetObject("Starbase 12") is station
+    assert pSet.GetObject("Leftover") is None
+
+
+def test_a_restart_after_end_combat_keeps_real_objects(world):
+    """End Combat spends the battle's snapshot; the Restart that follows runs
+    a second, battle-less EndSimulation, which must not sweep real objects."""
+    hl, _c, panel, QB = world
+    pSet = _into_region("TauCeti", "Starbase12")
+    rock = _real_rock(pSet)
+    _do(panel, "add:Warbird")
+    _go(hl, panel)
+    _end(hl, QB)
+    assert pSet.GetObject("Idle Rock") is rock
+    assert not QB.bInSimulation
+    _restart(hl, QB)
+    assert pSet.GetObject("Idle Rock") is rock
+
+
+# ── A real object with no ship script (field rock, breakup remnant) ─────────
+
+def _scriptless_rock(pSet, name="Field Rock 0001"):
+    """Built the way rocks.promotion and rocks.death build theirs:
+    RockClass_Create, no ship script, so it can never be re-created."""
+    from engine.appc.math import TGPoint3
+    from engine.rocks.rock import RockClass_Create
+    rock = RockClass_Create(4.0, name=name, kind="major", seed=name)
+    p = _player().GetWorldLocation()
+    rock.SetTranslate(TGPoint3(p.x + 150.0, p.y, p.z))
+    rock.UpdateNodeOnly()
+    pSet.AddObjectToSet(rock, name)
+    assert str(rock.GetScript()) == ""
+    return rock
+
+
+def test_a_damaged_scriptless_rock_is_restored_in_place(
+        world, no_logged_failures):  # noqa: F811
+    hl, _c, panel, QB = world
+    from engine.quickbattle.sim_restore import condition_of
+    pSet = _into_region("TauCeti", "Starbase12")
+    rock = _scriptless_rock(pSet)
+    before = condition_of(rock)
+    _do(panel, "add:Warbird")
+    _go(hl, panel)
+    hull = rock.GetHull()
+    hull.SetCondition(hull.GetCondition() * 0.5)
+    _end(hl, QB)
+    assert pSet.GetObject("Field Rock 0001") is rock
+    _same_condition(rock, before)
+
+
+def test_a_destroyed_scriptless_rock_is_reported_once(world, capsys):
+    hl, _c, panel, QB = world
+    from engine.appc import ship_death
+    pSet = _into_region("TauCeti", "Starbase12")
+    rock = _scriptless_rock(pSet)
+    _do(panel, "add:Warbird")
+    _go(hl, panel)
+    capsys.readouterr()
+    ship_death.retire(rock)
+    _end(hl, QB)
+    assert pSet.GetObject("Field Rock 0001") is None
+    out = capsys.readouterr().out
+    lines = [ln for ln in out.splitlines()
+             if ln.startswith("[sim-restore]") and "Field Rock 0001" in ln]
+    assert len(lines) == 1, out
+    assert "Traceback" not in out
+
+
+def test_a_rebuilt_station_takes_no_target_lock_with_it(world):
+    """The damaged station is removed and rebuilt: no ship may keep the
+    removed object as its target (ship_death and rocks.promotion clear locks
+    on every removal too). BC's RecreatePlayer gives End Combat a new player,
+    so the lock that would outlive the station is a kept real ship's."""
+    hl, _c, panel, QB = world
+    import loadspacehelper
+    pSet = _into_region("TauCeti", "Starbase12")
+    station = pSet.GetObject("Starbase 12")
+    escort = loadspacehelper.CreateShip("Galor", pSet, "Escort", "")
+    _do(panel, "add:Warbird")
+    _go(hl, panel)
+    _player().SetTarget(station)
+    escort.SetTarget(station)
+    assert escort.GetTarget() is station
+    hull = station.GetHull()
+    hull.SetCondition(hull.GetCondition() * 0.5)
+    _end(hl, QB)
+    assert pSet.GetObject("Starbase 12") is not station
+    assert pSet.GetObject("Escort") is escort
+    assert _player().GetTarget() is not station
+    assert escort.GetTarget() is not station
