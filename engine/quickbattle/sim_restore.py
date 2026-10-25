@@ -43,18 +43,56 @@ def _owned_in_player_set() -> list:
     return out
 
 
+def _proximity(pSet):
+    get = getattr(type(pSet), "GetProximityManager", None)
+    return get(pSet) if get is not None else None
+
+
+def _leave(obj, now, name) -> None:
+    """Take `obj` out of `now` and out of its proximity index: BC's loop
+    UpdateObject'ed it into the battle set's manager, and leaving the set
+    does not drop that entry."""
+    if now.GetObject(name) is obj:
+        now.RemoveObjectFromSet(name)
+    pm = _proximity(now)
+    if pm is not None:
+        pm.RemoveObject(obj)
+
+
+def _return_home(obj, home, name, loc, rot) -> None:
+    home.AddObjectToSet(obj, name)
+    obj.SetTranslate(loc)
+    obj.SetMatrixRotation(rot)
+    obj.UpdateNodeOnly()
+    pm = _proximity(home)
+    if pm is not None:
+        pm.UpdateObject(obj)
+
+
 def _put_back(records) -> None:
+    """Every record gets its own try, and leaving the wrong set is tried
+    apart from going home: one bad record, or a failure while leaving, can
+    never strand an object in no set."""
     for obj, home, loc, rot in records:
-        now = obj.GetContainingSet()
-        if now is home:
+        try:
+            now = obj.GetContainingSet()
+            if now is home:
+                continue
+            name = obj.GetName()
+        except Exception:  # noqa: BLE001 - the other records still go home
+            _log.exception("quickbattle: reading an owned object failed")
             continue
-        name = obj.GetName()
-        if now is not None and now.GetObject(name) is obj:
-            now.RemoveObjectFromSet(name)
-        home.AddObjectToSet(obj, name)
-        obj.SetTranslate(loc)
-        obj.SetMatrixRotation(rot)
-        obj.UpdateNodeOnly()
+        if now is not None:
+            try:
+                _leave(obj, now, name)
+            except Exception:  # noqa: BLE001 - still send it home
+                _log.exception("quickbattle: %s did not leave %s", name,
+                               now.GetName())
+        try:
+            _return_home(obj, home, name, loc, rot)
+        except Exception:  # noqa: BLE001 - the other records still go home
+            _log.exception("quickbattle: %s did not go back to %s", name,
+                           home.GetName())
 
 
 def _wrap_change_region(qb) -> bool:
@@ -66,15 +104,15 @@ def _wrap_change_region(qb) -> bool:
     def ChangeRegion(*args):
         try:
             records = _owned_in_player_set()
-        except Exception as e:  # noqa: BLE001 - never stop BC's region change
-            _log.error("quickbattle: recording owned objects failed: %s", e)
+        except Exception:  # noqa: BLE001 - never stop BC's region change
+            _log.exception("quickbattle: recording owned objects failed")
             records = []
-        result = orig(*args)
         try:
+            return orig(*args)
+        finally:
+            # Also when BC's ChangeRegion raises partway: whatever it already
+            # moved still goes home, and the exception still propagates.
             _put_back(records)
-        except Exception as e:  # noqa: BLE001
-            _log.error("quickbattle: returning owned objects failed: %s", e)
-        return result
 
     setattr(ChangeRegion, _MARK, orig)
     qb.ChangeRegion = ChangeRegion

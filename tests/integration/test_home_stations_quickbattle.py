@@ -42,6 +42,33 @@ def _loc(obj):
     return (w.x, w.y, w.z)
 
 
+def _rot(obj):
+    return obj.GetWorldRotation().as_tuple()
+
+
+def _proximity_holds(pSet, obj):
+    """`obj` is in the set's proximity index: the set-member read-through or a
+    registered (AddObject/UpdateObject) entry."""
+    return any(o is obj for o in pSet.GetProximityManager()._candidates())
+
+
+def _crowd_every_spot_once(monkeypatch):
+    """Make BC's ChangeRegion find each ship's first spot occupied, so its
+    ChooseNewLocation loop really moves every ship (our IsLocationEmptyTG is a
+    stub that always answers 1). `seen` holds the points so an id is never
+    reused for a new one."""
+    from engine.appc.sets import SetClass
+    seen = []
+
+    def IsLocationEmptyTG(self, point, radius, flag=1):
+        if any(p is point for p in seen):
+            return 1
+        seen.append(point)
+        return 0
+
+    monkeypatch.setattr(SetClass, "IsLocationEmptyTG", IsLocationEmptyTG)
+
+
 def _start_region_change(hl, panel, QB, region):
     QB.g_sSelectedRegion = region
     _do(panel, "add:Warbird")
@@ -60,19 +87,27 @@ def test_a_battle_at_starbase_12_includes_the_station(world):
     assert hs.home_station_of(station) is not None
 
 
-def test_a_region_change_leaves_the_station_home(world):
+def test_a_region_change_leaves_the_station_home(world, monkeypatch):
     hl, _c, panel, QB = world
     import App
     pSet = _into_region("TauCeti", "Starbase12")
     station = pSet.GetObject("Starbase 12")
-    saved = _loc(station)
+    saved, saved_rot = _loc(station), _rot(station)
+    _crowd_every_spot_once(monkeypatch)
     _start_region_change(hl, panel, QB, "Belaruz1")
     assert _player().GetContainingSet().GetName() == "Belaruz1"
     home = App.g_kSetManager.GetSet("Starbase12")
+    battle = App.g_kSetManager.GetSet("Belaruz1")
     assert home.GetObject("Starbase 12") is station
     assert station.GetContainingSet() is home
     assert _loc(station) == pytest.approx(saved, abs=1e-6)
-    assert App.g_kSetManager.GetSet("Belaruz1").GetObject("Starbase 12") is None
+    assert _rot(station) == pytest.approx(saved_rot, abs=1e-6)
+    assert battle.GetObject("Starbase 12") is None
+    # BC's loop UpdateObject'ed the station into the battle set's proximity
+    # manager; it must not linger there, and its home set's must know it.
+    assert not _proximity_holds(battle, station)
+    assert station not in battle.GetProximityManager()._objects
+    assert _proximity_holds(home, station)
 
 
 def test_a_dupe_region_change_keeps_the_station_in_its_set(
@@ -88,6 +123,44 @@ def test_a_dupe_region_change_keeps_the_station_in_its_set(
     assert old.GetObject("Starbase 12") is station
     assert _loc(station) == pytest.approx(saved, abs=1e-6)
     assert App.g_kSetManager.GetSet("Belaruz4").GetObject("Starbase 12") is None
+
+
+def test_a_failing_region_change_still_returns_the_station(world, monkeypatch):
+    """The original moves and turns the station into the battle set, then
+    raises: the station still goes home at its pose, and the exception still
+    reaches the caller."""
+    _hl, _c, _panel, QB = world
+    import App
+    from engine.appc.math import TGMatrix3, TGPoint3
+    from engine.quickbattle import sim_restore
+    from tests.helpers.mapped_regions import load_region
+    home = _into_region("TauCeti", "Starbase12")
+    station = home.GetObject("Starbase 12")
+    saved, saved_rot = _loc(station), _rot(station)
+    turned = TGMatrix3().MakeZRotation(1.0)
+    assert turned.as_tuple() != pytest.approx(saved_rot, abs=1e-3)
+    battle = load_region("Belaruz", "Belaruz1")
+
+    def failing_change_region():
+        home.RemoveObjectFromSet("Starbase 12")
+        battle.AddObjectToSet(station, "Starbase 12")
+        station.SetTranslate(TGPoint3(saved[0] + 50.0, saved[1], saved[2]))
+        station.SetMatrixRotation(turned)
+        station.UpdateNodeOnly()
+        battle.GetProximityManager().UpdateObject(station)
+        raise RuntimeError("region module blew up")
+
+    monkeypatch.setattr(QB, "ChangeRegion", failing_change_region)
+    assert sim_restore.install(QB) is True
+    with pytest.raises(RuntimeError, match="region module blew up"):
+        QB.ChangeRegion()
+    assert station.GetContainingSet() is home
+    assert home.GetObject("Starbase 12") is station
+    assert battle.GetObject("Starbase 12") is None
+    assert _loc(station) == pytest.approx(saved, abs=1e-6)
+    assert _rot(station) == pytest.approx(saved_rot, abs=1e-6)
+    assert station not in battle.GetProximityManager()._objects
+    assert App.g_kSetManager.GetSet("Starbase12") is home
 
 
 class _TestPatrolOwner:
