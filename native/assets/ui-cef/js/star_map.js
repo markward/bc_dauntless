@@ -33,6 +33,36 @@ function _smLabelClass(id, state) {
     return '';
 }
 
+// The system names, as markup. A system this mission offers no course to
+// loses its NAME, not its star: the map then reads as "where this mission
+// will take you" at a glance, while every dot stays pickable.
+// `show_all_labels` restores the rest, dimmed, for a player navigating on
+// their own.
+//
+// Each faction with a station in the system puts its emblem between the star
+// and the name (`icons`: file URLs, Federation first). The emblems live INSIDE
+// the label, so a hidden name hides them and a dimmed one dims them.
+function starMapSystemLabelsHtml(state) {
+    const showAll = state.show_all_labels === true;
+    return (state.labels || []).filter(function (l) {
+        return l.visible && (showAll || l.offered !== false);
+    }).map(function (l) {
+        // Python already exempts here/course/mission systems from the
+        // offer test (star_map.build_scene), so `offered === false` here
+        // never collides with a state class — the dot and its name dim
+        // together or not at all.
+        const cls = _smLabelClass(l.id, state);
+        const inert = (l.offered === false) ? ' sm-label--inert' : '';
+        const icons = (l.icons || []).map(function (src) {
+            return '<img class="sm-label__icon" src="' + escapeHtmlSM(src)
+                + '" alt="">';
+        }).join('');
+        return '<div class="sm-label' + cls + inert
+            + '" style="left:' + l.x + 'px;top:' + l.y + 'px">'
+            + icons + escapeHtmlSM(l.label) + '</div>';
+    }).join('');
+}
+
 function setStarMapPanel(state) {
     const root = document.getElementById('star-map-panel');
     if (!root) return;
@@ -58,23 +88,7 @@ function setStarMapPanel(state) {
                 + ' style="left:' + d.x + 'px;top:' + d.y + 'px">'
                 + escapeHtmlSM(d.label) + '</div>';
         }).join('');
-        // A system this mission offers no course to loses its NAME, not its
-        // star: the map then reads as "where this mission will take you" at a
-        // glance, while every dot stays pickable. `show_all_labels` restores
-        // the rest, dimmed, for a player navigating on their own.
-        labelEl.innerHTML = discs + (state.labels || []).filter(function (l) {
-            return l.visible && (showAll || l.offered !== false);
-        }).map(function (l) {
-            // Python already exempts here/course/mission systems from the
-            // offer test (star_map.build_scene), so `offered === false` here
-            // never collides with a state class — the dot and its name dim
-            // together or not at all.
-            const cls = _smLabelClass(l.id, state);
-            const inert = (l.offered === false) ? ' sm-label--inert' : '';
-            return '<div class="sm-label' + cls + inert
-                + '" style="left:' + l.x + 'px;top:' + l.y + 'px">'
-                + escapeHtmlSM(l.label) + '</div>';
-        }).join('');
+        labelEl.innerHTML = discs + starMapSystemLabelsHtml(state);
 
         // You are here: a hovering arrow over the star, appended INSIDE the
         // label layer so it shares the labels' coordinate space — the payload

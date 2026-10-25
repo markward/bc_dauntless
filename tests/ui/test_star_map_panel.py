@@ -1035,3 +1035,63 @@ def test_reopening_the_map_clears_the_search():
     p.invalidate()
     data = _payload(p.render_payload())
     assert data["search_query"] == "" and data["search_results"] == []
+
+
+# --- faction icons (Mark, 2026-10-25) --------------------------------------
+# A faction's emblem sits between the star and its name for every system
+# holding one of its standing home stations. Presence is stations only.
+
+def _insignia_uri(name):
+    from engine.ship_catalog import insignia_path
+    return insignia_path(name).resolve().as_uri()
+
+
+def _labels(p):
+    p.invalidate()                    # render_payload is diff-gated
+    return {l["id"]: l for l in _payload(p.render_payload())["labels"]}
+
+
+def test_labels_carry_the_emblem_of_each_faction_with_a_station():
+    from engine.systems import home_stations
+    home_stations.reset()
+    p = StarMapPanel()
+    p.open(set_name="Starbase12")
+    labels = _labels(p)
+    assert labels["tauceti"]["icons"] == [_insignia_uri("Federation")]
+    assert labels["prendel"]["icons"] == [_insignia_uri("Cardassian")]
+    assert labels["biranu"]["icons"] == []
+    assert labels["vesuvi"]["icons"] == []
+
+
+def test_a_faction_without_an_emblem_gets_no_icon(monkeypatch):
+    from engine.systems import station_factions
+    monkeypatch.setattr(station_factions, "factions_by_system",
+                        lambda: {"tauceti": ("Federation", "Kessok")})
+    p = StarMapPanel()
+    p.open(set_name="Starbase12")
+    assert _labels(p)["tauceti"]["icons"] == [_insignia_uri("Federation")]
+
+
+def test_icons_are_read_again_each_time_the_map_opens(monkeypatch):
+    """A station destroyed since the last opening loses its icon next time."""
+    from engine.systems import station_factions
+    p = StarMapPanel()
+    monkeypatch.setattr(station_factions, "factions_by_system",
+                        lambda: {"prendel": ("Cardassian",)})
+    p.open(set_name="Starbase12")
+    assert _labels(p)["prendel"]["icons"] == [_insignia_uri("Cardassian")]
+    p.close()
+    monkeypatch.setattr(station_factions, "factions_by_system", lambda: {})
+    p.open(set_name="Starbase12")
+    assert _labels(p)["prendel"]["icons"] == []
+
+
+def test_a_broken_faction_lookup_leaves_the_map_working(monkeypatch):
+    from engine.systems import station_factions
+    def boom():
+        raise RuntimeError("no catalog")
+    monkeypatch.setattr(station_factions, "factions_by_system", boom)
+    p = StarMapPanel()
+    p.open(set_name="Starbase12")
+    labels = _labels(p)
+    assert labels and all(l["icons"] == [] for l in labels.values())

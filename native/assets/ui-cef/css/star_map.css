@@ -146,6 +146,16 @@
        under a piece of scenery. */
     z-index: 2;
 }
+/* A faction emblem between the star and its name, one per faction with a
+   station in the system (Mark, 2026-10-25). The name's own height, so a row
+   of emblems reads as part of the label rather than a second marker. */
+.sm-label__icon {
+    height: 1em;
+    width: auto;
+    margin-right: 4px;
+    vertical-align: -0.12em;
+    filter: drop-shadow(0 0 2px #000);
+}
 /* Nebula names. SCENERY — deliberately subordinate to the system labels:
    smaller, dimmer, letter-spaced and non-bold, so the eye reads them as a
    backdrop annotation and never mistakes one for a star it can select

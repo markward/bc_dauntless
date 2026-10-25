@@ -16,6 +16,9 @@ Spec: `docs/superpowers/specs/2026-10-25-home-stations-design.md`. Status: built
 ## Quick Battle restore
 `engine/quickbattle/sim_restore.py` wraps `ChangeRegion`, `StartSimulation2` and `EndSimulation`. The snapshot covers real objects (owned, present before the battle, or built by the region's `Initialize`). Restore keeps an unchanged object and rebuilds a changed or destroyed one (an owner rebuilds its own, the rest from their script), then applies its condition. `engine/appc/ship_death.py`: `_remove` is identity-safe; `forget` is new.
 
+## Star map faction icons
+`engine/systems/station_factions.py` lists, per charted system, the factions with a standing home station there: the station script's species in the ship catalog, `Neutral` or uncatalogued (Biranu) adds nothing, Federation first then alphabetical. The star map reads it at every opening (`star_map_panel._faction_icons`) and puts each emblem (`ship_catalog.insignia_path`) between the star and its name, inside the label, so a name a mission hides takes its emblems with it. A faction with no emblem shows nothing. Presence is stations only (Mark, 2026-10-25).
+
 ## Gotchas
 - A rebuild loses pre-battle scars (the renderer cannot clear one hull's wear); a rebuilt rock starts at rest.
 - The Prendel outpost reappears in E6M4 until world state lands.

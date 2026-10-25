@@ -91,6 +91,26 @@ def rect_for_view(view_w, view_h) -> tuple:
 MAP_RECT = rect_for_view(1280, 720)
 
 
+def _faction_icons() -> dict:
+    """{system id: [emblem file URL]} for every faction with a standing home
+    station in that system, Federation first (Mark, 2026-10-25). A faction
+    with no emblem gets no icon rather than a guess. Decoration: any failure
+    costs only the icons, never the map."""
+    try:
+        from engine.ship_catalog import insignia_path
+        from engine.systems import station_factions
+        out = {}
+        for sid, factions in station_factions.factions_by_system().items():
+            paths = [insignia_path(f) for f in factions]
+            urls = [p.resolve().as_uri() for p in paths if p is not None]
+            if urls:
+                out[sid] = urls
+        return out
+    except Exception as e:
+        dev_mode.log_swallowed("star map faction icons", e)
+        return {}
+
+
 class StarMapPanel(Panel):
     def __init__(self, on_course_set=None, on_warp_engage=None) -> None:
         super().__init__()
@@ -117,6 +137,9 @@ class StarMapPanel(Panel):
         # Results are recomputed from it on render.
         self._search_query = ""
         self.rect = MAP_RECT
+        # {system id: [emblem file URL]} for the factions with a standing
+        # home station there (see _faction_icons). Refreshed by open().
+        self._icons: dict = {}
         self.cam = star_map.StarMapCamera(anchor=(0.0, 0.0, 0.0))
         self.scene = star_map.build_scene(model={"systems": [], "nebulae": [],
                                                  "starclouds": []})
@@ -190,6 +213,9 @@ class StarMapPanel(Panel):
         self._here_set = set_name
         self._info_system = here
         self.cam = star_map.StarMapCamera(anchor=star_map.cluster_centre())
+        # Read at every opening, so a station destroyed since the last one
+        # has already taken its faction's emblem off the map.
+        self._icons = _faction_icons()
         self._rebuild_scene()
 
     def close(self) -> None:
@@ -612,7 +638,9 @@ class StarMapPanel(Panel):
             "labels": [{"id": l["id"], "label": l["label"],
                         "x": round(l["x"], 1), "y": round(l["y"], 1),
                         "visible": l["visible"],
-                        "offered": l["offered"]} for l in labels],
+                        "offered": l["offered"],
+                        "icons": self._icons.get(l["id"], [])}
+                       for l in labels],
             "disc_labels": [{"label": d["label"],
                              "x": round(d["x"], 1), "y": round(d["y"], 1),
                              "visible": d["visible"]} for d in disc_labels],
