@@ -3281,29 +3281,46 @@ def HandleRepairPriorityEvent(pObject, pEvent):
     pObject.CallNextHandler(pEvent)
 
 
+_SUBSYSTEM_GETTERS = (
+    "GetHull", "GetShieldSubsystem", "GetSensorSubsystem",
+    "GetImpulseEngineSubsystem", "GetWarpEngineSubsystem",
+    "GetPowerSubsystem", "GetRepairSubsystem", "GetTorpedoSystem",
+    "GetPhaserSystem", "GetPulseWeaponSystem", "GetTractorBeamSystem",
+    "GetCloakingSubsystem",
+)
+
+
+def iter_subsystems(ship):
+    """The hull, then every top-level subsystem, each followed by its
+    children, in a fixed order. Safe on None/partial ships: a getter that
+    raises is skipped (and logged)."""
+    if ship is None:
+        return
+    for name in _SUBSYSTEM_GETTERS:
+        try:
+            sub = getattr(ship, name, lambda: None)()
+            if sub is None:
+                continue
+            children = [sub.GetChildSubsystem(i)
+                        for i in range(sub.GetNumChildSubsystems())]
+        except Exception as _e:
+            dev_mode.log_swallowed("iter_subsystems", _e)
+            continue
+        yield sub
+        for child in children:
+            if child is not None:
+                yield child
+
+
 def repair_ship_fully(ship) -> None:
     """Dev/debug full repair — mirrors sdk Actions/ShipScriptActions.py
     RepairShipFully: every subsystem back to max condition. Also clears
     the repair queue (nothing left to fix). Safe on None/partial ships."""
     if ship is None:
         return
-    getters = (
-        "GetHull", "GetShieldSubsystem", "GetSensorSubsystem",
-        "GetImpulseEngineSubsystem", "GetWarpEngineSubsystem",
-        "GetPowerSubsystem", "GetRepairSubsystem", "GetTorpedoSystem",
-        "GetPhaserSystem", "GetPulseWeaponSystem", "GetTractorBeamSystem",
-        "GetCloakingSubsystem",
-    )
-    for name in getters:
+    for sub in iter_subsystems(ship):
         try:
-            sub = getattr(ship, name, lambda: None)()
-            if sub is None:
-                continue
             sub.SetCondition(sub.GetMaxCondition())
-            for i in range(sub.GetNumChildSubsystems()):
-                child = sub.GetChildSubsystem(i)
-                if child is not None:
-                    child.SetCondition(child.GetMaxCondition())
         except Exception as _e:
             dev_mode.log_swallowed("repair_ship_fully", _e)
     bay = getattr(ship, "GetRepairSubsystem", lambda: None)()

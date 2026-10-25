@@ -1066,6 +1066,14 @@ def _reset_leakable_engine_globals():
         _qb_late.reset()
     except Exception:
         pass
+    # Quick Battle's real-object snapshot (sim_restore) holds live objects of
+    # the battle that set it; a leaked one would be "restored" into a later
+    # test's EndSimulation.
+    try:
+        from engine.quickbattle import sim_restore as _qb_sim_restore
+        _qb_sim_restore.reset()
+    except Exception:
+        pass
     # Same leak hazard, the home-ship RecreatePlayer resolver: a process
     # global a test wires via bridge_selection.set_player_type_resolver(),
     # which would otherwise make a later pure-unit bridge-hook test see a

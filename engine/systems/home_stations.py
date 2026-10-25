@@ -150,9 +150,15 @@ def _build(row: Station, pSet, loc, rot):
 
     No placement name and bGrabPreloaded=0: a station never takes a mission's
     precreated ship. Shared by place_for_set and the owner's rebuild, so a
-    region build and a battle rebuild make the same object."""
+    region build and a battle rebuild make the same object.
+
+    BC's CreateShip, never the reuse wrapper: a battle rebuild runs while the
+    old (scarred) station may still hold the name, and the wrapper would
+    hand that one back."""
     import loadspacehelper
-    obj = loadspacehelper.CreateShip(row.script, pSet, row.name, "", 0, 0)
+    create = getattr(loadspacehelper.CreateShip,
+                     "_dauntless_home_station_orig", loadspacehelper.CreateShip)
+    obj = create(row.script, pSet, row.name, "", 0, 0)
     obj.SetTranslate(loc)
     obj.SetMatrixRotation(rot)
     obj.UpdateNodeOnly()

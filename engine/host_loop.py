@@ -7702,6 +7702,10 @@ class HostController:
         # type (the event-type counter restarts at 1200 on a swap).
         from engine.quickbattle import late_arrivals as _qb_late
         _qb_late.reset()
+        # The running battle's real-object snapshot: the swap deletes every
+        # region set, so a later EndSimulation must not rebuild them.
+        from engine.quickbattle import sim_restore as _qb_sim_restore
+        _qb_sim_restore.reset()
         from engine.appc import particles
         particles.reset()
         damage_eligibility.reset()
