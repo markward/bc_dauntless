@@ -1088,6 +1088,11 @@ def _reset_leakable_engine_globals():
     except Exception:
         pass
     try:
+        from engine.systems import home_stations as _home_stations
+        _home_stations.reset()
+    except Exception:
+        pass
+    try:
         from engine.systems import frames as _frames
         _frames.reset_render_origin()
     except Exception:

@@ -14,7 +14,9 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from engine.appc import ship_lifecycle
 from engine.appc.math import TGMatrix3, TGPoint3
+from engine.systems import owners
 
 _FORMAT = 1
 _KEYS = ("set", "name", "script", "point", "point_module")
@@ -106,3 +108,97 @@ def read_point(station: Station, pSet):
     finally:
         placement._waypoint_registry.clear()
         placement._waypoint_registry.update(saved)
+
+
+# ── Placement, the owner, and "is this station still standing?" ──────────────
+
+OWNER_NAME = "home_stations"
+
+# (set_name, name) of every home station destroyed since the last reset().
+_destroyed: set = set()
+
+
+def is_standing(station: Station) -> bool:
+    """The only gate on placing a station: False once it was destroyed since
+    the current mission started (reset() runs on every mission change)."""
+    return (station.set_name, station.name) not in _destroyed
+
+
+def forget_destroyed(station: Station) -> None:
+    _destroyed.discard((station.set_name, station.name))
+
+
+def reset() -> None:
+    """Clear the destroyed record. The owner stays registered."""
+    _destroyed.clear()
+
+
+def mark_home(obj, station: Station) -> None:
+    owners.tag(obj, OWNER_NAME, station)
+
+
+def home_station_of(obj):
+    """The table row `obj` was placed for, or None."""
+    owned = owners.owner_of(obj)
+    if owned is None or owned[0].name != OWNER_NAME:
+        return None
+    return owned[1]
+
+
+def _build(row: Station, pSet, loc, rot):
+    """Create one station with BC's own CreateShip and set it on its point.
+
+    No placement name and bGrabPreloaded=0: a station never takes a mission's
+    precreated ship. Shared by place_for_set and the owner's rebuild, so a
+    region build and a battle rebuild make the same object."""
+    import loadspacehelper
+    obj = loadspacehelper.CreateShip(row.script, pSet, row.name, "", 0, 0)
+    obj.SetTranslate(loc)
+    obj.SetMatrixRotation(rot)
+    obj.UpdateNodeOnly()
+    mark_home(obj, row)
+    return obj
+
+
+def place_for_set(pSet, set_name: str) -> list:
+    """Place every standing home station of `set_name` that the set does not
+    already hold. One bad row prints one line and never stops the others."""
+    placed = []
+    for row in stations_for_set(set_name):
+        try:
+            if not is_standing(row):
+                continue
+            if pSet.GetObject(row.name) is not None:
+                continue
+            pose = read_point(row, pSet)
+            if pose is None:
+                continue
+            placed.append(_build(row, pSet, *pose))
+        except Exception as exc:  # noqa: BLE001 - one row must not stop the rest
+            print(f"[home-stations] {set_name}/{row.name} not placed: "
+                  f"{type(exc).__name__}: {exc}", flush=True)
+    return placed
+
+
+class _HomeStationsOwner:
+    name = OWNER_NAME
+
+    def rebuild(self, old, record):
+        return _build(record.key, record.pset, record.location, record.rotation)
+
+    def after_rebuild(self, new, record) -> None:
+        forget_destroyed(record.key)
+
+
+def _on_lifecycle(event: str, ship) -> None:
+    """Record a home station's destruction while it is still in a set."""
+    if event != "destroyed":
+        return
+    station = home_station_of(ship)
+    if station is None or ship.GetContainingSet() is None:
+        return
+    _destroyed.add((station.set_name, station.name))
+
+
+owners.register(_HomeStationsOwner())
+ship_lifecycle.subscribe(_on_lifecycle)

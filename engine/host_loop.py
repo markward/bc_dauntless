@@ -4842,6 +4842,12 @@ def _reset_system_loader_state() -> None:
         system_loader.reset()
     except Exception as _e:
         dev_mode.log_swallowed("system_loader.reset on swap", _e)
+    # A home station destroyed in the old mission stands again in the new one.
+    try:
+        from engine.systems import home_stations
+        home_stations.reset()
+    except Exception as _e:
+        dev_mode.log_swallowed("home_stations.reset on swap", _e)
     _mapped_body_warned.clear()
 
 
