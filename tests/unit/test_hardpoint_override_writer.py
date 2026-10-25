@@ -243,3 +243,24 @@ def test_apply_edit_dispatches_every_shape():
     assert ("SetGlowRegionShape", (0, "Box")) in m["g"]["A"]
     assert ("SetLightEmitterKind", (0, "point")) in m["g"]["A"]
     assert m["g"]["__parts__"]["wing"] == [("SetTransitionSeconds", (2.0,))]
+
+
+def test_shield_face_setters_are_keyed_by_face():
+    # SetMaxShields(face, v) / SetShieldChargePerSecond(face, v) take the
+    # shield face as their first argument, so one edit targets one face; the
+    # six faces must not collapse into a single call.
+    models = {}
+    for setter in ("SetMaxShields", "SetShieldChargePerSecond"):
+        for face in range(6):
+            w.set_setter(models, "fedstarbase", "Shield Generator", setter,
+                         (face, 100.0 + face))
+    w.set_setter(models, "fedstarbase", "Shield Generator", "SetMaxShields",
+                 (2, 9.0))                                   # re-edit face 2 only
+    calls = models["fedstarbase"]["Shield Generator"]
+    maxima = [a for (s, a) in calls if s == "SetMaxShields"]
+    rates = [a for (s, a) in calls if s == "SetShieldChargePerSecond"]
+    assert maxima == [(0, 100.0), (1, 101.0), (2, 9.0),
+                      (3, 103.0), (4, 104.0), (5, 105.0)]
+    assert rates == [(f, 100.0 + f) for f in range(6)]
+    text = w.emit(models)
+    assert w.read_models(_module(text)) == models            # round-trips
