@@ -7901,6 +7901,11 @@ class _MissionLoader:
         from engine.quickbattle import spawn as _qb_spawn
         _bs.set_player_type_resolver(_qb_spawn.player_type_for_recreate)
         _bs.install_quickbattle_hook(_QB, self._c.bridge_pins)
+        # Owned objects (home stations) stay in their own set when BC's
+        # ChangeRegion moves the player's ships. Installed BEFORE spawn's
+        # hooks so spawn's idempotency marker stays on the outermost wrapper.
+        from engine.quickbattle import sim_restore as _qb_sim_restore
+        _qb_sim_restore.install(_QB)
         # Our GenerateShips (the setup screen's BattlePlan), plus the radius
         # seeder it runs before placement: nothing is realised at
         # GenerateShips time, so every ship would otherwise report radius 0.
