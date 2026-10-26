@@ -108,6 +108,7 @@ add_executable(renderer_tests
     viewscreen_brightness_test.cc
     viewscreen_static_pass_test.cc
     viewscreen_bars_pass_test.cc
+    viewscreen_rtt_size_test.cc
     light_matrix_test.cc
     shadow_map_target_test.cc
     torpedo_anim_test.cc

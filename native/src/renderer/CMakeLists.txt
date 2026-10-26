@@ -254,6 +254,7 @@ add_library(renderer STATIC
     bridge_probe_array.cc
     viewscreen_static_pass.cc
     viewscreen_bars_pass.cc
+    viewscreen_rtt_size.cc
     light_matrix.cc
     shadow_map_target.cc
 )
