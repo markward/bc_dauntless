@@ -1,10 +1,13 @@
-"""Tau Ceti shuttle service, task 1: roster, lanes, staggered start, and
-docking out of the world (a docked shuttle is in no set)."""
+"""Tau Ceti shuttle service: roster, lanes, staggered start, docking out of
+the world (a docked shuttle is in no set), and the Starbase 12 legs (undock,
+depart, warp out; approach, enter the bay, dock)."""
 import math
 
 import pytest
 
 import App
+from engine.appc import collisions, warp_state
+from engine.core.loop import GameLoop
 from engine.systems import owners, shuttle_service as ss
 from tests.helpers.fresh_world import _fresh_world
 
@@ -167,19 +170,20 @@ def test_in_no_mission_group(world):
         assert not g.IsNameInGroup("TC Shuttle 1")
 
 
-def test_a_launched_shuttle_does_not_stay_in_the_world(world):
+def test_a_launched_shuttle_is_given_the_undock_leg(world):
     ss.tick(DT)
-    assert ss.roster()[0].phase is ss.Phase.UNDOCKING
-    ss.tick(DT)
-    assert ss.roster()[0].phase is ss.Phase.DOCKED
-    assert _sets_holding_shuttles() == []
-    assert ss.roster()[0].timer == ss.DOCK_S
+    s = ss.roster()[0]
+    assert s.phase is ss.Phase.UNDOCKING
+    assert s.ship.GetAI() is not None
+    sb = _home().GetObject("Starbase 12")
+    assert sb.GetObjID() in collisions._collision_disabled_ids(s.ship)
 
 
 def test_no_two_shuttles_ever_share_a_pose(world):
     seen = {}
+    loop = GameLoop()
     for _ in range(int(600 / DT)):
-        ss.tick(DT)
+        loop.tick()
         poses = []
         for pSet in App.g_kSetManager._sets.values():
             for n in _names():
@@ -245,3 +249,195 @@ def test_no_player_neither_pauses_nor_restarts(world):
     ss.tick(DT)
     assert [(s.phase, s.ship) for s in ss.roster()] == before
     assert [s.timer for s in ss.roster()] == timers
+
+
+# ── The Starbase 12 legs ─────────────────────────────────────────────────────
+# Time runs through the real GameLoop.tick (AI, warp states, the service,
+# motion) plus collisions.tick_collisions, which the host runs per frame.
+
+# Headless ships load with GetRadius() == 0, so nothing could ever collide.
+# The collision test gives Starbase 12 its model-wide bound (~150 GU,
+# tests/unit/test_hull_bounds.py) and the shuttle a small one; the bay points
+# (68-108 GU from the centre) then sit inside the station's sphere.
+SB_RADIUS = 150.0
+SHUTTLE_RADIUS = 0.5
+
+
+def _home():
+    return App.g_kSetManager.GetSet("Starbase12")
+
+
+def _starbase():
+    return _home().GetObject("Starbase 12")
+
+
+def _dist(a, b):
+    a, b = a.GetWorldLocation(), b.GetWorldLocation()
+    return math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2)
+
+
+def _sim(seconds, until=None, each=None):
+    """Tick the real loop; returns the game seconds `until` took, or None."""
+    loop = GameLoop()
+    for i in range(int(round(seconds / DT))):
+        loop.tick()
+        hits = collisions.tick_collisions(DT)
+        if each is not None:
+            each(hits)
+        if until is not None and until():
+            return (i + 1) * DT
+    return None
+
+
+def _arrive_home(s):
+    """Put shuttle `s` at the Starbase 12 lane point the way a warp back
+    from the Dry Docks leaves it (Task 3's hand-over): in Starbase12, at the
+    lane, no AI, collisions on, phase APPROACHING."""
+    if s.ship is None:
+        ss._launch(s)
+    ship = s.ship
+    ss._release_bay(s)
+    ship.ClearAI()
+    home = _home()
+    held = ship.GetContainingSet()
+    if held is not home:
+        held.RemoveObjectFromSet(s.name)
+        home.AddObjectToSet(ship, s.name)
+    lane = home.GetObject(ss.LANE_NAME)
+    rot = lane.GetWorldRotation()
+    ship.SetTranslate(lane.GetWorldLocation())
+    ship.AlignToVectors(rot.GetCol(1), rot.GetCol(2))
+    ship.SetVelocity(App.TGPoint3(0.0, 0.0, 0.0))
+    ship.UpdateNodeOnly()
+    ss._enter(s, ss.Phase.APPROACHING)
+
+
+def test_a_shuttle_undocks_and_reaches_the_lane(world):
+    s = ss.roster()[0]
+    lane = _home().GetObject(ss.LANE_NAME)
+    seen, closest = set(), [1e9]
+
+    def watch(_hits):
+        seen.add(s.phase)
+        if s.ship is not None and s.ship.GetContainingSet() is _home():
+            closest[0] = min(closest[0], _dist(s.ship, lane))
+    took = _sim(120.0, until=lambda: s.phase is ss.Phase.WARPING_OUT,
+                each=watch)
+    assert took is not None, sorted(p.name for p in seen)
+    assert {ss.Phase.UNDOCKING, ss.Phase.DEPARTING} <= seen
+    assert closest[0] < 150.0
+
+
+def test_the_bay_legs_never_collide_with_the_starbase(world, monkeypatch):
+    sb = _starbase()
+    sb.SetRadius(SB_RADIUS)
+    real_launch = ss._launch
+
+    def sized_launch(shuttle):
+        real_launch(shuttle)
+        if shuttle.ship is not None:
+            shuttle.ship.SetRadius(SHUTTLE_RADIUS)
+    monkeypatch.setattr(ss, "_launch", sized_launch)
+    s = ss.roster()[0]
+    sb_hull = sb.GetHull().GetCondition()
+    bad, mask = [], []
+
+    def watch(hits):
+        ship = s.ship
+        if ship is None:
+            return
+        for a, b, *_rest in hits:
+            if {a, b} == {ship, sb}:
+                bad.append((s.phase.name, a.GetName(), b.GetName()))
+        off = sb.GetObjID() in collisions._collision_disabled_ids(ship)
+        mask.append((s.phase, off))
+    # Leaving: launch -> undock -> depart, up to the warp.
+    assert _sim(120.0, until=lambda: s.phase is ss.Phase.WARPING_OUT,
+                each=watch) is not None
+    shuttle_hull = s.ship.GetHull().GetCondition()
+    # Entering: back at the lane, approach -> enter -> docked.
+    _arrive_home(s)
+    assert _sim(300.0, until=lambda: s.phase is ss.Phase.DOCKED,
+                each=watch) is not None
+    assert bad == []
+    assert sb.GetHull().GetCondition() == sb_hull
+    assert s.ship.GetHull().GetCondition() == shuttle_hull
+    # Off on the bay legs, on everywhere else.
+    assert {off for p, off in mask if p in (ss.Phase.UNDOCKING,
+                                             ss.Phase.ENTERING)} == {True}
+    assert {off for p, off in mask if p in (ss.Phase.DEPARTING,
+                                             ss.Phase.APPROACHING)} == {False}
+    assert sb.GetObjID() not in collisions._collision_disabled_ids(s.ship)
+
+
+def test_a_shuttle_warps_to_the_dry_docks_lane(world):
+    s = ss.roster()[0]
+    assert _sim(180.0, until=lambda: s.phase is ss.Phase.TO_DOCK) is not None
+    far = App.g_kSetManager.GetSet("DryDock")
+    assert s.ship.GetContainingSet() is far
+    assert not warp_state.is_ship_warping(s.ship)
+    assert _dist(s.ship, far.GetObject(ss.LANE_NAME)) < 300.0
+
+
+def test_an_arriving_shuttle_enters_the_bay_and_docks(world):
+    s = ss.roster()[0]
+    _arrive_home(s)
+    seen = set()
+    took = _sim(300.0, until=lambda: s.phase is ss.Phase.DOCKED,
+                each=lambda _h: seen.add(s.phase))
+    assert took is not None, sorted(p.name for p in seen)
+    assert ss.Phase.ENTERING in seen
+    assert s.ship.GetContainingSet() is None
+    assert all(n != s.name for _set, n in _sets_holding_shuttles())
+    assert s.timer == ss.DOCK_S
+
+
+def test_starbase_destroyed_shuttles_wait(world, capsys):
+    s = ss.roster()[0]
+    _arrive_home(s)
+    assert _sim(300.0, until=lambda: s.phase is ss.Phase.ENTERING) is not None
+    _sim(5.0)
+    _starbase().SetDead(1)
+    _sim(120.0)
+    lane = _home().GetObject(ss.LANE_NAME)
+    assert s.phase is ss.Phase.WAITING
+    assert s.ship.GetContainingSet() is _home()
+    assert _dist(s.ship, lane) < 150.0
+    assert ss.roster()[1].timer <= 0.0     # due, but nowhere to launch from
+    assert all(o.phase is ss.Phase.DOCKED for o in ss.roster()[1:])
+    assert [n for _set, n in _sets_holding_shuttles()] == [s.name]
+    # Gone outright (removed from the set) is the same: still waiting.
+    _home().RemoveObjectFromSet("Starbase 12")
+    _sim(10.0)
+    assert s.phase is ss.Phase.WAITING
+    assert "[shuttles]" not in capsys.readouterr().out
+
+
+def test_player_docking_pushes_a_shuttle_and_it_recovers(world, capsys):
+    s = ss.roster()[0]
+    _arrive_home(s)
+
+    def near_the_bay():
+        wp = _home().GetObject("Docking Entry")
+        return (s.phase is ss.Phase.ENTERING and wp is not None
+                and _dist(s.ship, wp) < 60.0)
+    assert _sim(300.0, until=near_the_bay) is not None
+    # BC's player docking (DockWithStarbase.SetupDockPositions) clears
+    # everything within 300 GU of "Docking Entry" -- run the real thing.
+    import AI.Compound.DockWithStarbase as dock
+    dock.SetupDockPositions(world, "Starbase 12")
+    assert _dist(s.ship, _home().GetObject("Docking Entry")) >= 299.0
+    seen = []
+    took = _sim(300.0, until=lambda: s.phase is ss.Phase.DOCKED,
+                each=lambda _h: seen.append(s.phase))
+    assert took is not None, sorted({p.name for p in seen})
+    assert ss.Phase.APPROACHING in seen
+    assert "[shuttles]" not in capsys.readouterr().out
+
+
+def test_a_persistent_tick_failure_prints_once(world, monkeypatch, capsys):
+    def boom():
+        raise RuntimeError("no presence")
+    monkeypatch.setattr(ss, "_player_presence", boom)
+    _run(1.0)
+    assert capsys.readouterr().out.count("[shuttles] tick failed") == 1
