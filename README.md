@@ -1,4 +1,4 @@
-# dauntless
+# BC Dauntless
 
 Open reimplementation of the Bridge Commander engine.
 
@@ -105,13 +105,13 @@ uv run python tools/tgl_harness.py
 
 ### Additional ship conventions
 
-Dauntless reads extra, optional conventions from standard BC hardpoint files. When
+BC Dauntless reads extra, optional conventions from standard BC hardpoint files. When
 guarded as shown below, the same file also runs unmodified in original Bridge
 Commander — the guard is false there, the block is skipped, and the file behaves
 exactly like the stock version. This has been verified against a real STBC install.
 
 **Baked glow regions.** Subsystem properties (engines, sensors) can declare the
-volumes Dauntless uses for hull-glow effects (nacelle glow, impulse exhaust,
+volumes BC Dauntless uses for hull-glow effects (nacelle glow, impulse exhaust,
 sensor spot), replacing the engine's automatic geometry fit with hand-tuned shapes:
 
 ```python
@@ -127,13 +127,13 @@ if hasattr(PortWarp, "SetGlowRegionShape"):
 - Positions/axes are in the ship's body frame, in game units — the same frame and
   units as the property's own `SetPosition(...)`. If `SetGlowRegionPosition` is
   omitted, the region defaults to the subsystem's hardpoint position.
-- A subsystem may declare several regions, indexed `0..N`; Dauntless stops reading
+- A subsystem may declare several regions, indexed `0..N`; BC Dauntless stops reading
   at the first index with no `SetGlowRegionShape(i, ...)`.
 - Any block that must also run in original BC is limited to Python 1.5 syntax: no
   `True`/`False` literals (use `1`/`0`), no f-strings, no `import X as Y`. The
   `hasattr(...)` guard itself is always safe — it is an interpreter builtin.
 
-For stock ships, Dauntless applies the same kind of data from engine-owned override
+For stock ships, BC Dauntless applies the same kind of data from engine-owned override
 files (`engine/appc/hardpoint_overrides.py`, `engine/appc/ship_overrides.py`) after
 the stock hardpoint/ship files load, so the SDK tree is never modified. Modded ships
 ship their conventions inside their own hardpoint files using the guarded blocks
