@@ -204,6 +204,7 @@ public:
     void set_viewscreen_model(unsigned long long model_handle) {
         viewscreen_model_handle_ = model_handle;
     }
+    unsigned long long viewscreen_model() const { return viewscreen_model_handle_; }
     void set_viewscreen_texture(unsigned int tex) { viewscreen_tex_ = tex; }
 
     /// Texture drawn on the viewscreen while the RTT feed is off (BC's

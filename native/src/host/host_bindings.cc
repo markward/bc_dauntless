@@ -97,6 +97,7 @@
 #include <renderer/render_origin.h>
 #include <renderer/dof_pass.h>
 #include <renderer/aabb.h>
+#include <renderer/viewscreen_rtt_size.h>
 #include <renderer/shadow_light.h>
 #include <renderer/shadow_map_target.h>
 #include <renderer/asset_path.h>
@@ -564,10 +565,13 @@ scenegraph::Camera g_bridge_camera;
 bool g_bridge_pass_enabled = false;
 bool g_viewscreen_enabled = false;
 
-// Fixed resolution of the viewscreen render-to-texture feed (16:9). The screen
-// quad is small, so this is plenty and keeps the second scene render cheap.
-constexpr int kViewscreenRttW = 640;
-constexpr int kViewscreenRttH = 360;
+// The viewscreen render-to-texture feed (16:9) is sized each frame to the
+// viewscreen mesh's on-screen pixel height (renderer/viewscreen_rtt_size.h),
+// so it sharpens with the window instead of staying 640x360. The model box is
+// cached for the one viewscreen handle; cleared in reset_frame_state because
+// handles are reissued.
+renderer::viewscreen_rtt::Sizer g_viewscreen_rtt_sizer;
+std::optional<std::pair<unsigned long long, renderer::Aabb>> g_viewscreen_aabb;
 
 // Active comm source: when set, frame() renders this comm set from the given
 // camera into the viewscreen RTT instead of the forward space feed.
@@ -973,6 +977,7 @@ void far_zero_fades(const std::vector<std::uint64_t>& keys) {
 
 void reset_frame_state() {
     g_viewscreen_target.reset();
+    g_viewscreen_aabb.reset();
     g_lighting = renderer::Lighting{};
     g_bridge_lighting = renderer::Lighting{};
     g_bridge_ambient_scale = 1.0f;
@@ -1357,6 +1362,39 @@ std::optional<renderer::minors::PlayerBox> player_box_of(
                                        it->second.half_extents};
 }
 
+// The viewscreen feed height wanted this frame: the viewscreen mesh's
+// on-screen footprint through the bridge camera at fw x fh. nullopt when no
+// viewscreen mesh is drawn or none of it is on screen, so the sizer keeps
+// the size it has.
+std::optional<int> viewscreen_wanted_height(int fw, int fh) {
+    if (!g_bridge_pass || fw <= 0 || fh <= 0) return std::nullopt;
+    const unsigned long long handle = g_bridge_pass->viewscreen_model();
+    if (handle == 0) return std::nullopt;
+    if (!g_viewscreen_aabb || g_viewscreen_aabb->first != handle) {
+        const assets::Model* m = resolve_model(handle);
+        if (m == nullptr) return std::nullopt;
+        g_viewscreen_aabb.emplace(handle, renderer::compute_model_aabb(*m));
+    }
+    const renderer::Aabb& box = g_viewscreen_aabb->second;
+    scenegraph::Camera cam = g_bridge_camera;
+    cam.aspect = static_cast<float>(fw) / static_cast<float>(fh);
+    const glm::mat4 view_proj = cam.proj_matrix() * cam.view_matrix();
+    std::optional<renderer::viewscreen_rtt::PixelExtent> px;
+    g_world.for_each_visible_in_pass(scenegraph::Pass::Bridge,
+        [&](const scenegraph::Instance& inst) {
+            if (inst.model_handle != handle) return;
+            const auto e = renderer::viewscreen_rtt::projected_extent_px(
+                view_proj, inst.world, box.center - box.half_extents,
+                box.center + box.half_extents, fw, fh);
+            if (!e) return;
+            if (!px) px = e;
+            else px = renderer::viewscreen_rtt::PixelExtent{
+                std::max(px->w, e->w), std::max(px->h, e->h)};
+        });
+    if (!px) return std::nullopt;
+    return renderer::viewscreen_rtt::height_for_extent(*px);
+}
+
 // One MinorField step for frame(). Instance anchors are keyed
 // (index<<32)|generation and resolve to the instance's RENDER-space origin.
 void step_minor_field(float viewport_h) {
@@ -1530,7 +1568,7 @@ void frame() {
     // that feed, leaving only the sun (a separate pass plus the directionals
     // in g_lighting, neither of which is a dynamic light).
     //
-    // This is a CPU saving, not a fill saving. The RTT is only 640x360, but
+    // This is a CPU saving, not a fill saving. The RTT is small (footprint-sized), but
     // select_instance_dynamic_lights runs PER INSTANCE and scores EVERY light
     // in the list, which costs the same at any resolution — and with the
     // bridge up that whole selection currently runs twice per frame.
@@ -1542,7 +1580,8 @@ void frame() {
                                          dyn_lights) {
         if (msaa != nullptr) msaa->bind(); else hdr->bind();
         // The drawn target's framebuffer size: the viewscreen RTT is
-        // kViewscreenRtt{W,H}; the main view (plain or MSAA) is fw x fh.
+        // sized this frame (g_viewscreen_rtt_sizer); the main view (plain or
+        // MSAA) is fw x fh.
         const bool to_viewscreen = hdr != nullptr && hdr == g_viewscreen_hdr.get();
         // Which hulls get rooms behind their holes in THIS render: on the
         // viewscreen only its target; the main view by distance (the default).
@@ -1555,9 +1594,9 @@ void frame() {
             }
             g_submitter->set_interior_policy(interior_policy);
         }
-        const float target_h = to_viewscreen ? static_cast<float>(kViewscreenRttH)
+        const float target_h = to_viewscreen ? static_cast<float>(hdr->height())
                                              : static_cast<float>(fh);
-        const int target_w = to_viewscreen ? kViewscreenRttW : fw;
+        const int target_w = to_viewscreen ? hdr->width() : fw;
         // Instance::rim_strength's 0.1 default, gated + scaled as
         // FrameSubmitter does for every opaque instance (minors + impostors).
         const float rim = dauntless_rim::enabled()
@@ -1626,7 +1665,7 @@ void frame() {
                 ambient_scale, dyn_lights, &g_suns, g_planet_detail.get());
         }
         // Minor rocks. The step culled against g_camera; this target may be
-        // the bridge viewscreen RTT (its own camera, kViewscreenRttH tall) --
+        // the bridge viewscreen RTT (its own camera and size) --
         // in bridge view, the ONLY space render -- so re-bin the stepped poses
         // against the camera and height actually drawn with.
         g_minor_specks.clear();
@@ -2009,37 +2048,42 @@ void frame() {
         // offscreen target. Its children appear in the report with calls=2
         // whenever the exterior view is also drawing them.
         DAUNTLESS_FRAME_SCOPE("viewscreen.rtt");
-        g_viewscreen_hdr->resize(kViewscreenRttW, kViewscreenRttH);
+        // Sized to the viewscreen's on-screen footprint (see
+        // viewscreen_wanted_height); held while it is off screen.
+        const int vs_h = g_viewscreen_rtt_sizer.update(
+            viewscreen_wanted_height(fw, fh), now);
+        const int vs_w = renderer::viewscreen_rtt::width_for_height(vs_h);
+        g_viewscreen_hdr->resize(vs_w, vs_h);
         g_viewscreen_hdr->bind();
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         if (g_comm_source.active && g_bridge_pass) {
             scenegraph::Camera ccam = g_comm_source.cam;
-            ccam.aspect = static_cast<float>(kViewscreenRttW)
-                        / static_cast<float>(kViewscreenRttH);
+            ccam.aspect = static_cast<float>(vs_w)
+                        / static_cast<float>(vs_h);
             g_bridge_pass->render(g_world, ccam, *g_pipeline, lookup,
                                   g_bridge_lighting, scenegraph::Pass::Comm,
                                   g_comm_source.set_id);
         } else if (g_scene_source.active) {
             scenegraph::Camera scam = g_scene_source.cam;
-            scam.aspect = static_cast<float>(kViewscreenRttW)
-                        / static_cast<float>(kViewscreenRttH);
+            scam.aspect = static_cast<float>(vs_w)
+                        / static_cast<float>(vs_h);
             // The viewscreen RTT is deliberately never multisampled: it is a
             // small in-world surface where edge quality barely reads.
             const float vs_ambient = dauntless_filmic::ambient_scale();
             render_space_geometry(scam, g_viewscreen_hdr.get(), nullptr,
                                   vs_ambient, /*dyn_lights=*/nullptr);
             render_space_vfx(scam, /*for_viewscreen=*/true, *g_viewscreen_hdr,
-                        kViewscreenRttW, kViewscreenRttH, vs_ambient);
+                        vs_w, vs_h, vs_ambient);
         } else {
             scenegraph::Camera vcam = g_camera;
-            vcam.aspect = static_cast<float>(kViewscreenRttW)
-                        / static_cast<float>(kViewscreenRttH);
+            vcam.aspect = static_cast<float>(vs_w)
+                        / static_cast<float>(vs_h);
             const float vs_ambient = dauntless_filmic::ambient_scale();
             render_space_geometry(vcam, g_viewscreen_hdr.get(), nullptr,
                                   vs_ambient, /*dyn_lights=*/nullptr);
             render_space_vfx(vcam, /*for_viewscreen=*/true, *g_viewscreen_hdr,
-                        kViewscreenRttW, kViewscreenRttH, vs_ambient);
+                        vs_w, vs_h, vs_ambient);
         }
         // Static/"snow" overlay over the feed (degraded-signal hail look).
         if (g_viewscreen_static.on && g_viewscreen_static_pass
@@ -2054,11 +2098,11 @@ void frame() {
         if (!g_comm_source.active && g_scene_source.active
                 && g_viewscreen_bars.visible && g_viewscreen_bars_pass) {
             g_viewscreen_hdr->bind();
-            glViewport(0, 0, kViewscreenRttW, kViewscreenRttH);
+            glViewport(0, 0, vs_w, vs_h);
             g_viewscreen_bars_pass->ensure_font(renderer::project_asset_root());
             g_viewscreen_bars_pass->render(
                 g_pipeline->viewscreen_bars_shader(), g_viewscreen_bars,
-                kViewscreenRttW, kViewscreenRttH);
+                vs_w, vs_h);
         }
         g_bridge_pass->set_viewscreen_texture(g_viewscreen_hdr->color_texture());
     } else if (g_bridge_pass) {

@@ -8412,7 +8412,8 @@ def _player_forward_speed_gups(player, rot) -> float:
 # Lengths in game units.
 VS_NEAR: float = SCENE_NEAR_GU
 VS_FAR: float = SCENE_FAR_GU
-# Viewscreen RTT shape; keep in step with kViewscreenRttW/H in host_bindings.cc.
+# Viewscreen RTT shape: always 16:9 (renderer/viewscreen_rtt_size.h
+# width_for_height); only its size follows the screen footprint.
 VS_ASPECT: float = 640.0 / 360.0
 
 from engine.cameras import zoom_fit as _zoom_fit  # noqa: E402
