@@ -109,7 +109,7 @@ COUNT = 10
 DOCK_S = 600.0
 CIRCLES = 2
 LANE_GU = 2000.0
-LANE_NAME = "TC Shuttle Lane"
+LANE_NAME = "SB12 Shuttle Lane"
 OWNER_NAME = "tau_ceti_shuttles"
 SCRIPT = "Shuttle"
 SYSTEM_ID = "tauceti"
@@ -128,13 +128,12 @@ _IN_SYSTEM_WARP_GU = 150.0
 # apart, so two shuttles never share an arrival, departure or holding spot.
 _RING_GU = 50.0
 # Clearance points, this far out along the bay axis from the bay mouth. The
-# bay is a radial slot 68-108 GU from Starbase 12's centre and the hull's
-# bound is ~150 GU, while the lane point lies along the station's forward,
-# not the bay's: a straight line between the bay and the lane would cut
-# through the hull. So a shuttle leaves and arrives on the bay axis.
+# bay is a radial slot 68-108 GU from Starbase 12's centre; a shuttle leaves
+# and arrives on the bay axis, and Starbase 12's lane lies on it too
+# (_lane_axis).
 _CLEAR_GU = 150.0
-_EXIT_POINT = "TC Shuttle Exit"
-_APPROACH_POINT = "TC Shuttle Approach"
+_EXIT_POINT = "SB12 Shuttle Exit"
+_APPROACH_POINT = "SB12 Shuttle Approach"
 _ENTRY = "Docking Entry"
 _ENTRY_END = "Docking Entry End"
 # An ENTERING shuttle farther than this from "Docking Entry" was moved off the
@@ -145,6 +144,15 @@ _PUSHED_GU = 275.0
 # collisions with Starbase 12 off until this far from its centre: clear of
 # its ~150 GU hull bound.
 _STATION_CLEAR_GU = 200.0
+# A departing shuttle with Starbase 12 between it and its lane (pushed out
+# of the bay through to the far side) first flies at impulse to this point,
+# abreast of the station on the shuttle's side, square to the bay axis, this
+# far beyond the station's radius (no less than _STATION_CLEAR_GU, so the
+# station's collisions are back on by the time it gets there). From there
+# the line to its lane misses the station, so BC's Intercept never detours
+# round it (_lane_axis).
+_ROUND_POINT = "SB12 Shuttle Round"
+_ROUND_MARGIN_GU = 50.0
 # FollowWaypoints is done within 8 GU of its last waypoint.
 _DOCKED_GU = 20.0
 # The player this close to the bay mouth ("Docking Entry Start") owns the bay
@@ -368,22 +376,54 @@ def _anchor_pose(pSet, anchor_name: str):
     return None
 
 
-def _add_lane(pSet, set_name: str) -> None:
-    """A waypoint LANE_GU out from the region's home station along its world
-    forward, facing away from it, and round it one point per shuttle (its
-    arrival, departure and holding point). Never "Player Start"."""
+def _lane_axis(pSet, set_name: str):
+    """(origin, forward, side, up) the region's lane is laid along.
+
+    Starbase 12: straight out of the bay, from "Docking Exit End" along the
+    exit axis, so its centre is BEHIND a departing shuttle all the way out
+    and BEYOND an arriving one's approach point. BC's Intercept steers round
+    any ship over 150 GU in the way (AdjustDestinationForLargeObstacles,
+    Intercept.py:286) and the station's radius is 296 GU live: a lane off
+    the bay axis put the station ahead of the fly-out, Intercept moved its
+    detour point every update, and the in-system warp chased it round the
+    station forever (live 2026-10-26). Any other region, or a Starbase 12
+    without its hardpoints (not standing): the home station's own forward.
+    None when neither is known."""
     anchor_name = _ANCHORS.get(set_name)
-    if anchor_name is None or pSet.GetObject(LANE_NAME) is not None:
-        return
+    if set_name == HOME_SET:
+        station = pSet.GetObject(anchor_name)
+        if station is not None:
+            try:
+                pos, fwd, up = _hardpoint_world(station, "Docking Exit End")
+            except AttributeError:
+                pos = None
+            if pos is not None:
+                f, u = _xyz(fwd), _xyz(up)
+                side = (f[1] * u[2] - f[2] * u[1], f[2] * u[0] - f[0] * u[2],
+                        f[0] * u[1] - f[1] * u[0])
+                return pos, fwd, side, up
     pose = _anchor_pose(pSet, anchor_name)
     if pose is None:
-        return
+        return None
     loc, rot = pose
-    fwd, up = rot.GetCol(1), rot.GetCol(2)
+    return loc, rot.GetCol(1), _xyz(rot.GetCol(0)), rot.GetCol(2)
+
+
+def _add_lane(pSet, set_name: str) -> None:
+    """A waypoint LANE_GU out along the region's lane axis (_lane_axis),
+    facing away from the station, and round it one point per shuttle (its
+    arrival, departure and holding point). Never "Player Start"."""
+    if _ANCHORS.get(set_name) is None or \
+            pSet.GetObject(LANE_NAME) is not None:
+        return
+    axis = _lane_axis(pSet, set_name)
+    if axis is None:
+        return
+    loc, fwd, side, up = axis
     centre = (loc.x + LANE_GU * fwd.x, loc.y + LANE_GU * fwd.y,
               loc.z + LANE_GU * fwd.z)
     for i in range(1, COUNT + 1):
-        off = _ring(i, _xyz(rot.GetCol(0)), _xyz(up))
+        off = _ring(i, side, _xyz(up))
         _put_waypoint(pSet, set_name, "%s %d" % (LANE_NAME, i),
                       tuple(c + o for c, o in zip(centre, off)), fwd, up)
     _put_waypoint(pSet, set_name, LANE_NAME, centre, fwd, up)
@@ -426,7 +466,7 @@ def _restart() -> None:
     """Every shuttle docked, staggered one a minute from the first."""
     if not _roster:
         for i in range(1, COUNT + 1):
-            _roster.append(Shuttle(index=i, name="TC Shuttle %d" % i))
+            _roster.append(Shuttle(index=i, name="SB12 Shuttle %d" % i))
     for s in _roster:
         if s.phase is Phase.LOST:
             continue
@@ -889,7 +929,7 @@ def _avoiding(ship, ai):
     when `ai` does."""
     import App
     import AI.Preprocessors
-    pre = App.PreprocessingAI_Create(ship, "TCShuttleAvoid")
+    pre = App.PreprocessingAI_Create(ship, "SB12ShuttleAvoid")
     pre.SetInterruptable(1)
     pre.SetPreprocessingMethod(AI.Preprocessors.AvoidObstacles(), "Update")
     pre.SetContainedAI(ai)
@@ -921,7 +961,7 @@ def _plain(ship, name: str, module: str):
 
 
 def _intercept(ship, target: str, distance: float = _POINT_GU):
-    ai = _plain(ship, "TCShuttleIntercept", "Intercept")
+    ai = _plain(ship, "SB12ShuttleIntercept", "Intercept")
     script = ai.GetScriptInstance()
     script.SetTargetObjectName(target)
     script.SetInterceptDistance(distance)
@@ -930,7 +970,7 @@ def _intercept(ship, target: str, distance: float = _POINT_GU):
 
 
 def _follow(ship, waypoint: str):
-    ai = _plain(ship, "TCShuttleWaypoints", "FollowWaypoints")
+    ai = _plain(ship, "SB12ShuttleWaypoints", "FollowWaypoints")
     ai.GetScriptInstance().SetTargetWaypointName(waypoint)
     return ai
 
@@ -945,7 +985,7 @@ def _start_undocking(s: Shuttle) -> None:
     if undock_ai is None:
         raise RuntimeError("Starbase 12 has no docking exit")
     _exit_point(station)
-    seq = App.SequenceAI_Create(s.ship, "TCShuttleUndock")
+    seq = App.SequenceAI_Create(s.ship, "SB12ShuttleUndock")
     seq.SetInterruptable(1)
     seq.SetLoopCount(1)
     seq.SetResetIfInterrupted(1)
@@ -957,13 +997,58 @@ def _start_undocking(s: Shuttle) -> None:
     _give_ai(s, seq)
 
 
+def _round_point(s: Shuttle):
+    """The name of the waypoint a departing shuttle flies round Starbase 12
+    by, or None when the station is not between it and its lane (the usual
+    case: it leaves the bay along the bay axis, the station behind it)."""
+    import App
+    station = _home_station()
+    pSet = App.g_kSetManager.GetSet(HOME_SET)
+    lane = None if pSet is None else pSet.GetObject(_lane_name(s))
+    if station is None or lane is None or \
+            s.ship.GetContainingSet() is not pSet:
+        return None
+    p = _xyz(s.ship.GetWorldLocation())
+    c = _xyz(station.GetWorldLocation())
+    q = _xyz(lane.GetWorldLocation())
+    ahead = sum((ci - pi) * (qi - pi) for ci, pi, qi in zip(c, p, q))
+    if ahead <= 0.0:
+        return None
+    axis = _lane_axis(pSet, HOME_SET)
+    if axis is None:
+        return None
+    _origin, fwd, side, up = axis
+    sign = 1.0 if sum((pi - ci) * bi
+                      for pi, ci, bi in zip(p, c, side)) >= 0.0 else -1.0
+    r = max(station.GetRadius(), _STATION_CLEAR_GU) + _ROUND_MARGIN_GU
+    wp = _placement(pSet, _ROUND_POINT, 4.0)
+    wp.SetTranslateXYZ(*(ci + sign * r * bi for ci, bi in zip(c, side)))
+    wp.AlignToVectors(fwd, up)
+    wp.UpdateNodeOnly()
+    return _ROUND_POINT
+
+
 def _start_departing(s: Shuttle) -> None:
-    _give_ai(s, _avoiding(s.ship, _intercept(s.ship, _lane_name(s))))
+    import App
+    out = _avoiding(s.ship, _intercept(s.ship, _lane_name(s)))
+    round_point = _round_point(s)
+    if round_point is None:
+        _give_ai(s, out)
+        return
+    seq = App.SequenceAI_Create(s.ship, "SB12ShuttleRound")
+    seq.SetInterruptable(1)
+    seq.SetLoopCount(1)
+    seq.SetResetIfInterrupted(1)
+    seq.SetDoubleCheckAllDone(0)
+    seq.SetSkipDormant(0)
+    seq.AddAI(_follow(s.ship, round_point))
+    seq.AddAI(out)
+    _give_ai(s, seq)
 
 
 def _warp_to(s: Shuttle, module: str) -> None:
     """BC's Warp to the shuttle's own lane point in region `module`."""
-    ai = _plain(s.ship, "TCShuttleWarp", "Warp")
+    ai = _plain(s.ship, "SB12ShuttleWarp", "Warp")
     script = ai.GetScriptInstance()
     script.SetDestinationSetName(module)
     script.SetDestinationPlacementName(_lane_name(s))
@@ -1109,7 +1194,7 @@ def _start_circling(s: Shuttle) -> None:
         _enter(s, Phase.TO_DOCK)            # choose again
         return
     near, far = _bands(s.dock_name)[s.orbit_slot]
-    ai = _plain(s.ship, "TCShuttleCircle", "CircleObject")
+    ai = _plain(s.ship, "SB12ShuttleCircle", "CircleObject")
     script = ai.GetScriptInstance()
     script.SetFollowObjectName(s.dock_name)
     # E1M1's shuttles circle with their left side to the station.
@@ -1145,7 +1230,7 @@ def _start_entering(s: Shuttle) -> None:
         _enter(s, Phase.WAITING)
         return
     _entry_points(station)
-    seq = App.SequenceAI_Create(s.ship, "TCShuttleEnter")
+    seq = App.SequenceAI_Create(s.ship, "SB12ShuttleEnter")
     seq.SetInterruptable(1)
     seq.SetLoopCount(1)
     seq.SetResetIfInterrupted(1)
@@ -1254,7 +1339,7 @@ def _check_to_dock(s: Shuttle) -> None:
             _enter(s, Phase.TO_DOCK)        # choose (or leave: none standing)
         elif _leg_done(s):
             _give_ai(s, _avoiding(s.ship,
-                                  _plain(s.ship, "TCShuttleHold", "Stay")))
+                                  _plain(s.ship, "SB12ShuttleHold", "Stay")))
             s.held = True
     elif _dry_dock(s.dock_name) is None:
         _enter(s, Phase.TO_DOCK)            # destroyed or gone: choose again
@@ -1315,7 +1400,7 @@ def _hold(s: Shuttle) -> None:
     """Wait at the shuttle's own point outside the bay while the bay is the
     player's or another shuttle's, collisions with the station back on."""
     _release_bay(s)
-    _give_ai(s, _avoiding(s.ship, _plain(s.ship, "TCShuttleHold", "Stay")))
+    _give_ai(s, _avoiding(s.ship, _plain(s.ship, "SB12ShuttleHold", "Stay")))
     s.held = True
 
 
@@ -1372,7 +1457,7 @@ def _check_waiting(s: Shuttle) -> None:
     if _home_station() is not None:
         _enter(s, Phase.APPROACHING)
     elif _leg_done(s):
-        _give_ai(s, _avoiding(s.ship, _plain(s.ship, "TCShuttleWait", "Stay")))
+        _give_ai(s, _avoiding(s.ship, _plain(s.ship, "SB12ShuttleWait", "Stay")))
 
 
 _CHECKS = {

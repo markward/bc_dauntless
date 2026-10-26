@@ -15,7 +15,7 @@ from tests.integration.test_home_stations_quickbattle import (  # noqa: E402
 from tests.integration.test_quickbattle_setup_e2e import (  # noqa: E402,F401
     _do, _go, world)
 
-_NAMES = ["TC Shuttle %d" % i for i in range(1, 11)]
+_NAMES = ["SB12 Shuttle %d" % i for i in range(1, 11)]
 
 
 def _ss():

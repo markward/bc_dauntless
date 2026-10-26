@@ -55,7 +55,7 @@ def _run(seconds):
 
 
 def _names():
-    return ["TC Shuttle %d" % i for i in range(1, 11)]
+    return ["SB12 Shuttle %d" % i for i in range(1, 11)]
 
 
 def _sets_holding_shuttles():
@@ -68,20 +68,41 @@ def _sets_holding_shuttles():
 
 
 def test_both_regions_get_a_lane_point(world):
+    """2,000 GU out, facing away. The Dry Docks' along Dry Dock's forward;
+    Starbase 12's straight out of the bay, from "Docking Exit End" along the
+    exit axis, so the station is behind a departing shuttle (_lane_axis)."""
     for set_name, station in (("Starbase12", "Starbase 12"),
                               ("DryDock", "Dry Dock")):
         pSet = App.g_kSetManager.GetSet(set_name)
         lane = pSet.GetObject(ss.LANE_NAME)
         st = pSet.GetObject(station)
         assert lane is not None and st is not None
-        a, b = lane.GetWorldLocation(), st.GetWorldLocation()
+        if set_name == "Starbase12":
+            b, fwd, _up = ss._hardpoint_world(st, "Docking Exit End")
+        else:
+            b, fwd = st.GetWorldLocation(), st.GetWorldRotation().GetCol(1)
+        a = lane.GetWorldLocation()
         d = math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2)
         assert d == pytest.approx(2000.0, abs=1e-3)
-        fwd = st.GetWorldRotation().GetCol(1)
         lf = lane.GetWorldRotation().GetCol(1)
         assert (a.x - b.x) * fwd.x + (a.y - b.y) * fwd.y + (a.z - b.z) * fwd.z \
             == pytest.approx(2000.0, abs=1e-3)
         assert lf.x * fwd.x + lf.y * fwd.y + lf.z * fwd.z == pytest.approx(1.0, abs=1e-4)
+
+
+def test_starbase_12_is_behind_a_shuttle_leaving_for_its_lane(world):
+    """From the bay's clearance point, every shuttle's own lane point lies
+    away from the station's centre: BC's Intercept only detours round a ship
+    ahead of it (Intercept.py:275)."""
+    st = ss._home_station()
+    ss._exit_point(st)
+    pSet = App.g_kSetManager.GetSet("Starbase12")
+    p = pSet.GetObject("SB12 Shuttle Exit").GetWorldLocation()
+    c = st.GetWorldLocation()
+    for s in ss.roster():
+        q = pSet.GetObject(ss._lane_name(s)).GetWorldLocation()
+        assert ((c.x - p.x) * (q.x - p.x) + (c.y - p.y) * (q.y - p.y)
+                + (c.z - p.z) * (q.z - p.z)) < 0.0, s.name
 
 
 def _gap(p, q):
@@ -124,7 +145,7 @@ def test_the_first_launches_on_the_first_tick(world):
     r = ss.roster()
     assert r[0].phase is ss.Phase.UNDOCKING
     assert all(s.phase is ss.Phase.DOCKED for s in r[1:])
-    ship = App.g_kSetManager.GetSet("Starbase12").GetObject("TC Shuttle 1")
+    ship = App.g_kSetManager.GetSet("Starbase12").GetObject("SB12 Shuttle 1")
     assert ship is not None and ship is r[0].ship
     owner, key = owners.owner_of(ship)
     assert (owner.name, key) == ("tau_ceti_shuttles", 1)
@@ -202,7 +223,7 @@ def test_in_no_mission_group(world):
     import MissionLib
     m = MissionLib.GetMission()
     for g in (m.GetFriendlyGroup(), m.GetEnemyGroup(), m.GetNeutralGroup()):
-        assert not g.IsNameInGroup("TC Shuttle 1")
+        assert not g.IsNameInGroup("SB12 Shuttle 1")
 
 
 def test_a_launched_shuttle_is_given_the_undock_leg(world):
@@ -640,7 +661,7 @@ def test_each_shuttle_holds_at_its_own_point_outside_the_bay(world):
     """R6: the hold points round the bay's outside clearance point are one
     per shuttle, at least 30 GU apart, all well clear of Starbase 12."""
     ss._entry_points(_starbase())
-    centre = _home().GetObject("TC Shuttle Approach").GetWorldLocation()
+    centre = _home().GetObject("SB12 Shuttle Approach").GetWorldLocation()
     sb = _starbase().GetWorldLocation()
     points = [_home().GetObject(ss._approach_name(s)).GetWorldLocation()
               for s in ss.roster()]
@@ -1121,7 +1142,7 @@ def test_a_destroyed_shuttle_is_lost_and_recorded(world):
     _kill(s, killer=world)
     assert s.phase is ss.Phase.LOST
     assert s.ship is None
-    assert ss.losses() == [ss.Loss(index=1, name="TC Shuttle 1",
+    assert ss.losses() == [ss.Loss(index=1, name="SB12 Shuttle 1",
                                    set_name="Starbase12",
                                    game_time=pytest.approx(when),
                                    killer="player")]
@@ -1446,7 +1467,8 @@ def _player_docks(world):
 def test_a_shuttle_pushed_while_undocking_goes_on_its_way(world):
     """BC's player docking pushes an undocking shuttle 300 GU out of the bay.
     It must not follow the bay waypoints back in through the docking player:
-    it departs from where it was pushed to."""
+    it departs from where it was pushed to (round the station first when the
+    push left the station in its way, so it is clear of it later)."""
     s = _only_the_first()
     world.SetRadius(SHUTTLE_RADIUS)
     assert _sim(10.0, until=lambda: s.phase is ss.Phase.UNDOCKING
@@ -1463,7 +1485,7 @@ def test_a_shuttle_pushed_while_undocking_goes_on_its_way(world):
         seen.append(s.phase)
         if s.ship.GetContainingSet() is _home():
             closest[0] = min(closest[0], _dist(s.ship, world))
-    _sim(60.0, each=watch)
+    _sim(120.0, each=watch)
     assert seen[0] is ss.Phase.DEPARTING, seen[:3]
     assert ss.Phase.UNDOCKING not in seen
     assert closest[0] > 100.0, closest[0]
@@ -1472,6 +1494,43 @@ def test_a_shuttle_pushed_while_undocking_goes_on_its_way(world):
     assert _starbase().GetObjID() not in \
         collisions._collision_disabled_ids(s.ship)
     print("pushed undock: closest to the player %.1f GU" % closest[0])
+
+
+# Starbase 12's radius live, as host_loop._seed_ship_radius computes it from
+# FedStarbase.nif's box: over BC Intercept's 150 GU "very large ship" line.
+SB_LIVE_RADIUS = 296.4
+
+
+def test_a_shuttle_pushed_behind_the_station_goes_round_it(world):
+    """Pushed out of the bay through to the far side of Starbase 12, the
+    station stands between the shuttle and its lane. A straight fly-out
+    would pass the docking player, and with the station at its live radius
+    BC's Intercept steers round it with a detour point the in-system warp
+    chased round the station for ever (live 2026-10-26). It goes round the
+    station at impulse first, then on to its lane and the warp."""
+    s = _only_the_first()
+    world.SetRadius(SHUTTLE_RADIUS)
+    _starbase().SetRadius(SB_LIVE_RADIUS)
+    assert _sim(10.0, until=lambda: s.phase is ss.Phase.UNDOCKING
+                and _dist(s.ship, _starbase()) < 100.0) is not None
+    _sim(5.0)
+    _player_docks(world)
+    p, c = s.ship.GetWorldLocation(), _starbase().GetWorldLocation()
+    lane = _home().GetObject(ss._lane_name(s)).GetWorldLocation()
+    behind = ((c.x - p.x) * (lane.x - p.x) + (c.y - p.y) * (lane.y - p.y)
+              + (c.z - p.z) * (lane.z - p.z))
+    assert behind > 0.0, "the push left the station behind the shuttle"
+    closest = [1e9]
+
+    def watch(_h):
+        if s.ship.GetContainingSet() is _home():
+            closest[0] = min(closest[0], _dist(s.ship, world))
+    took = _sim(300.0, until=lambda: s.phase is ss.Phase.WARPING_OUT,
+                each=watch)
+    assert took is not None, (s.phase, s.ship.GetWorldLocation())
+    assert closest[0] > 100.0, closest[0]
+    print("pushed behind the station: lane in %.0f s, closest to the player "
+          "%.1f GU" % (took, closest[0]))
 
 
 def test_bc_never_teleports_a_shuttle_back_after_the_player_undocks(world):

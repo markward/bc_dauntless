@@ -62,7 +62,7 @@ record), not as a one-off.
 
 ### 5.1 Shuttles
 - BC's stock Federation shuttle (SDK `ships/Shuttle.py`).
-- Names **"TC Shuttle 1" … "TC Shuttle 10"** (my call). Distinct from E1M1's
+- Names **"SB12 Shuttle 1" … "SB12 Shuttle 10"** (Mark, 2026-10-26; first draft "TC Shuttle"). Distinct from E1M1's
   own "Shuttle1"–"Shuttle3" in the DryDock set, and unique (sets are
   name-keyed).
 - Each carries an owner tag (`owners.tag(obj, "tau_ceti_shuttles", <index>)`),
@@ -171,7 +171,6 @@ does (my call).
 
 ## 7. My calls (Mark to check)
 
-- Names "TC Shuttle 1"–"10".
 - In no mission group (neutral/unknown in the target list).
 - Departure point ~2,000 GU out; warp transit = the engine's NPC timing.
 - Quick Battle: everything a battle touched comes back docked; battle losses
