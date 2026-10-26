@@ -9,6 +9,8 @@ target group, QuickBattle's pFriendlies itself.
 
 Headless against the real SDK QuickBattle, driven from the setup panel like
 tests/host/test_qb_battle_end.py."""
+import sys
+
 import pytest
 
 pytest.importorskip("_dauntless_host")
@@ -213,8 +215,13 @@ def test_restart_into_elimination_is_stock(world):
     QB.EndSimulation()                         # End Combat
     from engine.quickbattle import km_targeting
     assert km_targeting.target_group() is None
-    for module in ("QuickBattleAI", "StarbaseAI"):
-        assert not hasattr(__import__(module).CreateAI, km_targeting._ORIG_ATTR)
+    assert km_targeting._wrapped == []
+    # The module QuickBattle itself loaded. Never __import__ an AI module by
+    # its bare name here: in a battle that did not load it, that leaves a
+    # stray top-level module the next test's fresh SDK inherits (it stopped
+    # test_quickbattle_station_defends' starbase from firing).
+    qbai = sys.modules["QuickBattle.QuickBattleAI"]
+    assert not hasattr(qbai.CreateAI, km_targeting._ORIG_ATTR)
     _do(panel, "victory-type:elimination")
     _go(hl, panel)
     assert _target_group(_ships(QB)["Warbird-1"]) is QB.pFriendlies
