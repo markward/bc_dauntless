@@ -27,6 +27,11 @@ def _planet(module_name: str) -> Callable:
     return _off
 
 
+def _shuttle_service_off() -> None:
+    from engine.systems import shuttle_service
+    shuttle_service.set_enabled(False)
+
+
 # name -> how to turn it off, given engine.renderer (or a stand-in).
 _FEATURES: Dict[str, Callable] = {
     # Improved Space's two halves. The nebula flag also gates the system
@@ -50,6 +55,9 @@ _FEATURES: Dict[str, Callable] = {
     "running_lights": lambda r: r.running_lights_set_enabled(False),
     # The space pass's multisampled phase 1; SMAA is left as the setting has it.
     "msaa": lambda r: r.set_msaa_samples(0),
+    # Python state, not a pass: the Tau Ceti shuttle service, for its
+    # with/without cost capture (docs/engine/home-stations.md).
+    "shuttle_service": lambda _r: _shuttle_service_off(),
 }
 
 

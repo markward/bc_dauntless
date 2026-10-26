@@ -1695,3 +1695,54 @@ def test_the_target_dock_is_out_of_avoidance_on_the_docks_legs(world):
     ss._enter(s, ss.Phase.LEAVING_DOCKS)
     assert dock.GetObjID() not in collisions._collision_disabled_ids(s.ship)
     assert s.dock_mask is None
+
+
+# ── The dev-only off switch (DAUNTLESS_DEV_RENDER_OFF=shuttle_service) ───────
+
+def test_switched_off_the_service_docks_its_shuttles_and_does_nothing(world):
+    """For a with/without cost capture: off, every flying shuttle docks and
+    tick does nothing (no launch, no timer runs); on again, it carries on."""
+    s = _only_the_first()
+    _sim(5.0)
+    assert s.phase is ss.Phase.UNDOCKING
+    try:
+        ss.set_enabled(False)
+        assert ss.enabled() is False
+        assert s.phase is ss.Phase.DOCKED
+        assert _sets_holding_shuttles() == []
+        timers = [o.timer for o in ss.roster()]
+        ss.roster()[1].timer = 0.0
+        timers[1] = 0.0
+        _sim(30.0)
+        assert [o.timer for o in ss.roster()] == timers
+        assert all(o.phase is ss.Phase.DOCKED for o in ss.roster())
+        assert _sets_holding_shuttles() == []
+    finally:
+        ss.set_enabled(True)
+    _sim(DT)
+    assert ss.roster()[1].phase is ss.Phase.UNDOCKING
+
+
+def test_a_second_battle_start_without_an_end_keeps_the_first(world):
+    """Quick Battle can start again without ending (StartSimulation2 twice):
+    what the first start recorded, and what the battle has destroyed so
+    far, must survive into the one battle the End restores."""
+    qb, _calls = _fake_qb()
+    ss.install(qb)
+    _sim(DT)
+    s = _only_the_first()
+    qb.StartSimulation2()
+    old = s.ship
+    _halve_hull(old)                    # damaged under the first start
+    qb.StartSimulation2()               # again, no End between
+    qb.EndSimulation()
+    assert s.phase is ss.Phase.DOCKED and s.ship is None
+    assert old.GetContainingSet() is None
+    # A loss under the first start stays a battle loss too.
+    ss._launch(s)
+    qb.StartSimulation2()
+    _kill(s)
+    qb.StartSimulation2()
+    qb.EndSimulation()
+    assert ss.losses() == []
+    assert s.phase is ss.Phase.DOCKED

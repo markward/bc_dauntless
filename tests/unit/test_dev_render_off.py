@@ -4,6 +4,7 @@ import pytest
 
 from engine import dev_render_off as dro
 from engine import planet_atmosphere, planet_geosphere, planet_surface
+from engine.systems import shuttle_service
 
 
 class _FakeRenderer:
@@ -26,6 +27,13 @@ def _restore_planet_flags():
     planet_geosphere.set_enabled(saved[0])
     planet_atmosphere.set_enabled(saved[1])
     planet_surface.set_enabled(saved[2])
+
+
+@pytest.fixture(autouse=True)
+def _restore_shuttle_service():
+    saved = shuttle_service.enabled()
+    yield
+    shuttle_service.set_enabled(saved)
 
 
 def test_nothing_is_off_without_the_variable():
@@ -85,6 +93,16 @@ def test_each_planet_feature_clears_its_flag(name, module):
     assert r.calls == []
 
 
+def test_shuttle_service_is_switched_off_with_no_renderer_call():
+    """Python state, not a render pass: the Tau Ceti shuttle service, for a
+    with/without cost capture (docs/engine/home-stations.md)."""
+    shuttle_service.set_enabled(True)
+    r = _FakeRenderer()
+    dro.apply(["shuttle_service"], r)
+    assert shuttle_service.enabled() is False
+    assert r.calls == []
+
+
 def test_applying_twice_is_harmless():
     """Applied before the mission loads (planets read their flags at
     realisation) and again after the saved settings (which would otherwise
@@ -100,3 +118,4 @@ def test_every_known_feature_is_listed_once():
     names = dro.known()
     assert len(names) == len(set(names))
     assert "rock_puffs" in names and "msaa" in names
+    assert "shuttle_service" in names

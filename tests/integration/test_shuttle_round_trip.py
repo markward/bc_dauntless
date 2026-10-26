@@ -3,7 +3,7 @@ Starbase 12 bay, through warp to the Dry Docks, twice round a dry dock, back
 through warp and into the bay. Pins the service's legs together.
 
 Measured 2026-10-26 (headless, 1 s steps): see the printed line; shuttle 1's
-first cycle is about 455 s. Holds (a bay taken, an orbit band full) can
+first cycle is 505 s. Holds (a bay taken, an orbit band full) can
 stretch a cycle to ~1,600 s with ten shuttles queueing, so the bound is
 1,800 s: the worst case plus margin.
 """
@@ -23,7 +23,7 @@ _ORDER = ["UNDOCKING", "DEPARTING", "WARPING_OUT", "TO_DOCK", "CIRCLING",
 _HOLDS = {"WAITING"}
 
 
-def test_a_shuttle_completes_a_round_trip(world):
+def test_a_shuttle_completes_a_round_trip(world, capsys):
     from engine.systems import shuttle_service as ss
     from engine.systems import system_loader
     player = _warp_to_starbase_12()
@@ -55,3 +55,9 @@ def test_a_shuttle_completes_a_round_trip(world):
     assert steps == _ORDER, seen
     assert len(docks) == 1 and docks <= {"Dry Dock", "Dry Dock2", "Dry Dock3"}
     assert ss.losses() == []
+    # Docked again: out of the world, in no set at all.
+    import App
+    assert first.ship.GetContainingSet() is None
+    assert not [pSet.GetName() for pSet in App.g_kSetManager.GetAllSets()
+                if pSet.GetObject(first.name) is not None]
+    assert "[shuttles]" not in capsys.readouterr().out

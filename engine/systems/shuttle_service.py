@@ -254,6 +254,7 @@ _away = False
 _bay_busy = False
 _rng = random.Random()
 _tick_errors: set = set()
+_enabled = True   # the dev-only off switch (dev_render_off "shuttle_service")
 
 
 def roster() -> list:
@@ -264,6 +265,27 @@ def losses() -> list:
     """Every shuttle lost since the last reset() (mission change), oldest
     first. A loss during a Quick Battle is never recorded."""
     return list(_losses)
+
+
+def enabled() -> bool:
+    return _enabled
+
+
+def set_enabled(flag: bool) -> None:
+    """The dev-only off switch, for a with/without cost capture
+    (DAUNTLESS_DEV_RENDER_OFF=shuttle_service, engine/dev_render_off.py).
+    Off: every flying shuttle docks and tick does nothing. Kept across
+    reset() (a mission change); never persisted."""
+    global _enabled
+    _enabled = bool(flag)
+    if _enabled:
+        return
+    for s in _roster:
+        if s.phase not in (Phase.DOCKED, Phase.LOST):
+            try:
+                _dock(s)
+            except Exception as exc:  # noqa: BLE001 - dock the rest anyway
+                _park(s, exc)
 
 
 def set_rng(rng: random.Random) -> None:
@@ -665,11 +687,15 @@ def _discard(ship, name: str) -> None:
 
 
 def _battle_started() -> None:
+    """A start with a battle already running (StartSimulation2 again, no End
+    between) merges into it: the first start's conditions and the battle's
+    losses so far are kept; only a shuttle not yet recorded is added."""
     global _battle
-    _battle = _Battle()
+    if _battle is None:
+        _battle = _Battle()
     for s in _roster:
         if s.ship is not None and s.phase is not Phase.LOST:
-            _battle.start[s.index] = _conditions(s.ship)
+            _battle.start.setdefault(s.index, _conditions(s.ship))
 
 
 def _battle_ended() -> None:
@@ -722,6 +748,7 @@ def _wrap(qb, name, make) -> bool:
 def _make_start(orig):
     def StartSimulation2(*args):
         global _battle
+        fresh = _battle is None
         try:
             _battle_started()
         except Exception:  # noqa: BLE001 - never stop BC's start
@@ -729,7 +756,8 @@ def _make_start(orig):
         try:
             return orig(*args)
         except Exception:
-            _battle = None     # no battle started
+            if fresh:
+                _battle = None     # no battle started
             raise
     return StartSimulation2
 
@@ -1513,6 +1541,8 @@ def tick(dt: float) -> None:
     excluded mission (_EXCLUDED_MISSIONS), pauses the service; no live
     player, or the warp transit set, leaves it as it is."""
     global _away, _bay_busy
+    if not _enabled:
+        return
     try:
         if not _started:
             _start_if_ready()
