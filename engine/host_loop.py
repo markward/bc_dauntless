@@ -4848,6 +4848,12 @@ def _reset_system_loader_state() -> None:
         home_stations.reset()
     except Exception as _e:
         dev_mode.log_swallowed("home_stations.reset on swap", _e)
+    # Hostility (and the hit counts behind it) belongs to the old mission.
+    try:
+        from engine.systems import station_hostility
+        station_hostility.reset()
+    except Exception as _e:
+        dev_mode.log_swallowed("station_hostility.reset on swap", _e)
     _mapped_body_warned.clear()
 
 
@@ -7910,6 +7916,11 @@ class _MissionLoader:
         # hooks so spawn's idempotency marker stays on the outermost wrapper.
         from engine.quickbattle import sim_restore as _qb_sim_restore
         _qb_sim_restore.install(_QB)
+        # Stations the player turned hostile go home when a battle starts or
+        # ends. Also after sim_restore and before spawn's hooks, so spawn's
+        # idempotency marker stays on the outermost wrapper.
+        from engine.systems import station_hostility as _station_hostility
+        _station_hostility.install(_QB)
         # Free roam docks at Starbase 12 with BC's defaults (repairs on), not
         # whatever the last campaign mission left in the cached Starbase12_S.
         from engine.systems import home_stations as _home_stations

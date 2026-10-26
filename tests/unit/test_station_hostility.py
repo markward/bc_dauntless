@@ -267,3 +267,173 @@ def test_reset_forgets_and_deactivates(world):
     sh.reset()
     assert sh.hostile_stations() == []
     assert enemies(world).IsNameInGroup("Starbase 12")
+
+
+# ── ending hostility ─────────────────────────────────────────────────────────
+
+def go_to(w, set_name, t=None):
+    """Move the player into a (new or existing) set, as BC's AddObjectToSet."""
+    if t is not None:
+        w.clock.t = t
+    target = App.g_kSetManager.GetSet(set_name)
+    if target is None:
+        target = App.SetClass_Create()
+        App.g_kSetManager.AddSet(target, set_name)
+    w.player.GetContainingSet().RemoveObjectFromSet(w.player.GetName())
+    target.AddObjectToSet(w.player, w.player.GetName())
+    return target
+
+
+def turn(w, station, t=0.0):
+    hit(w, station, t)
+    hit(w, station, t + 5.0)
+    assert sh.is_hostile(station)
+
+
+def test_entering_a_set_in_another_system_restores(world):
+    world.mission.GetFriendlyGroup().AddName("Starbase 12")
+    turn(world, world.starbase)
+    go_to(world, "Savoy1")
+    assert not sh.is_hostile(world.starbase)
+    assert not enemies(world).IsNameInGroup("Starbase 12")
+    assert world.mission.GetFriendlyGroup().IsNameInGroup("Starbase 12")
+    assert world.starbase.GetAI() is None
+
+
+def test_entering_another_region_of_the_system_keeps_it(world):
+    turn(world, world.starbase)
+    go_to(world, "DryDock")
+    assert sh.is_hostile(world.starbase)
+    assert enemies(world).IsNameInGroup("Starbase 12")
+
+
+def test_entering_the_warp_set_keeps_it(world):
+    turn(world, world.starbase)
+    go_to(world, "warp")
+    assert sh.is_hostile(world.starbase)
+
+
+def qb_level():
+    import QuickBattle.QuickBattle as qb
+    return qb.g_iCurrentAILevel
+
+
+def test_restoring_brings_back_a_quick_battle_ai(world):
+    import QuickBattle.QuickBattle as qb
+    qb.g_kShips[world.starbase.GetObjID()] = (
+        "StarbaseFriendlyAI", "gs", "Friendly", 2)
+    try:
+        turn(world, world.starbase)
+        hostile_ai = world.starbase.GetAI()
+        assert "StarbaseAttack" in ai_modules(hostile_ai)
+        go_to(world, "Savoy1")
+    finally:
+        qb.g_kShips.pop(world.starbase.GetObjID(), None)
+    restored = world.starbase.GetAI()
+    # StarbaseFriendlyAI builds its own StarbaseAttack (aimed at pEnemies):
+    # what proves it is the QB one is a fresh tree, built at the recorded level.
+    assert restored is not None and restored is not hostile_ai
+    assert qb_level() == 2
+
+
+def test_a_destroyed_hostile_station_is_dropped(world):
+    turn(world, world.starbase)
+    world.starbase._dead = True
+    go_to(world, "Savoy1")
+    assert sh.hostile_stations() == []
+
+
+def test_a_dead_station_is_pruned_on_read(world):
+    turn(world, world.starbase)
+    world.starbase._dead = True
+    assert sh.hostile_stations() == []
+
+
+def test_reset_forgets_without_restoring(world):
+    turn(world, world.starbase)
+    sh.reset()
+    assert enemies(world).IsNameInGroup("Starbase 12")
+    assert sh.hostile_stations() == []
+    assert sh._active is False
+
+
+def test_leaving_clears_part_counts(world):
+    hit(world, world.starbase, 0.0)
+    go_to(world, "Savoy1")
+    go_to(world, "Starbase12")
+    hit(world, world.starbase, 6.0)
+    assert not sh.is_hostile(world.starbase)
+
+
+def test_counts_are_trimmed_to_the_window(world):
+    for i in range(4):
+        hit(world, world.starbase, i * 0.0 + 100.0 * i)
+    assert len(next(iter(sh._counts.values()))) <= 2
+
+
+def test_an_old_ship_hit_after_a_rebuild_still_counts(world):
+    import loadspacehelper
+    old = world.player
+    hit(world, world.starbase, 0.0)
+    new = loadspacehelper.CreateShip("Galaxy", world.sb_set, "Player2", "")
+    new.SetName("Other")
+    old.SetName("Other2")
+    new.SetName("Player")
+    old.SetName("Player")
+    world.game.SetPlayer(new)
+    hit(world, world.starbase, 6.0, source=old)
+    assert sh.is_hostile(world.starbase)
+
+
+def test_a_hit_with_no_damage_does_not_count(world):
+    world.clock.t = 0.0
+    from engine.appc.events import WeaponHitEvent
+    for t in (0.0, 6.0):
+        world.clock.t = t
+        ev = WeaponHitEvent()
+        ev.SetEventType(App.ET_WEAPON_HIT)
+        ev.SetTarget(world.starbase)
+        ev.SetSource(world.player)
+        ev.SetWeaponType(WeaponHitEvent.PHASER)
+        ev.SetDamage(0.0)
+        sh.on_weapon_hit(None, ev)
+    assert not sh.is_hostile(world.starbase)
+
+
+def test_neutral_membership_is_restored(world):
+    world.mission.GetNeutralGroup().AddName("Starbase 12")
+    turn(world, world.starbase)
+    rec, = sh.hostile_stations()
+    assert rec.prior_groups == ("neutral",)
+    go_to(world, "Savoy1")
+    assert world.mission.GetNeutralGroup().IsNameInGroup("Starbase 12")
+    assert not enemies(world).IsNameInGroup("Starbase 12")
+
+
+def test_no_mission_does_not_raise(world, monkeypatch):
+    monkeypatch.setattr(sh, "_mission", lambda: None)
+    sh._turn_hostile(world.starbase, 1.0)
+    assert sh.hostile_stations() == []
+
+
+def test_install_wraps_once_and_clears_on_end_and_start(world):
+    import types
+    calls = []
+    qb = types.ModuleType("fakeqb")
+    qb.StartSimulation2 = lambda *a: calls.append("start")
+    qb.EndSimulation = lambda *a: calls.append("end")
+    sh.reset()
+    assert sh.install(qb) is True
+    assert sh._active is True
+    assert sh.install(qb) is False
+    for name in ("StartSimulation2", "EndSimulation"):
+        assert hasattr(getattr(qb, name), "_dauntless_station_hostility_orig")
+    turn(world, world.starbase)
+    qb.EndSimulation()
+    assert calls == ["end"]
+    assert not sh.is_hostile(world.starbase)
+    assert not enemies(world).IsNameInGroup("Starbase 12")
+    turn(world, world.starbase, 100.0)
+    qb.StartSimulation2()
+    assert calls == ["end", "start"]
+    assert not sh.is_hostile(world.starbase)

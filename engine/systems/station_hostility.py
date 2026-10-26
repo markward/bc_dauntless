@@ -19,7 +19,8 @@ mission's friendly group by NAME. An unarmed station's AI is never touched.
 Stations are never put in QuickBattle.g_kShips: they neither count towards nor
 block a battle's win.
 
-This module only turns stations hostile; ending hostility is a later step.
+Hostility ends when the player enters a set in another system (a station's
+counted hits are forgotten then too), and when a battle starts or ends.
 """
 from __future__ import annotations
 
@@ -49,6 +50,7 @@ class Hostility:
 _active: bool = False
 _counts: dict = {}      # station obj id -> counted hit times (game time)
 _register: dict = {}    # station obj id -> Hostility
+_count_system: dict = {}  # station obj id -> system key its hits were made in
 
 
 def _game_time() -> float:
@@ -93,6 +95,7 @@ def reset() -> None:
     """Forget every hit and the register, and deactivate. Restores nothing."""
     deactivate()
     _counts.clear()
+    _count_system.clear()
     _register.clear()
 
 
@@ -114,9 +117,13 @@ def _is_player(source) -> bool:
     return source is player or source.GetName() == player.GetName()
 
 
-def _system_of(station) -> str:
+def _system_key(set_name: str) -> str:
     from engine.appc import sector_model
-    return sector_model.system_id_for_set(station.GetContainingSetName())
+    return sector_model.system_id_for_set(set_name) or set_name
+
+
+def _system_of(station) -> str:
+    return _system_key(station.GetContainingSetName())
 
 
 def _armed(station) -> bool:
@@ -139,6 +146,8 @@ def _prior_quick_battle_ai(station):
 def _turn_hostile(station, now) -> None:
     import App
     mission = _mission()
+    if mission is None:
+        return
     name = station.GetName()
     prior_groups = []
     for label, group in (("friendly", mission.GetFriendlyGroup()),
@@ -153,19 +162,21 @@ def _turn_hostile(station, now) -> None:
     if _armed(station):
         import AI.Compound.StarbaseAttack
         record.prior_ai = _prior_quick_battle_ai(station)
-        record.replaced_ai = True
         station.SetAI(AI.Compound.StarbaseAttack.CreateAI(
             station,
             App.ObjectGroup_FromModule("QuickBattle.QuickBattle", "pFriendlies")))
+        record.replaced_ai = True
 
 
 def _count(station, now) -> None:
     oid = station.GetObjID()
     times = _counts.setdefault(oid, [])
+    _count_system[oid] = _system_of(station)
     if times and now - times[-1] < HIT_GAP_S:
         return
     times.append(now)
-    if len([t for t in times if now - t <= WINDOW_S]) >= 2:
+    times[:] = [t for t in times if now - t <= WINDOW_S]
+    if len(times) >= 2:
         _turn_hostile(station, now)
 
 
@@ -198,8 +209,112 @@ def _in_enemy_group(station) -> bool:
 
 
 def on_entered_set(pObject, pEvent) -> None:
-    """Broadcast handler for ET_ENTERED_SET (body added by a later step)."""
+    """Broadcast handler for ET_ENTERED_SET: the player entering a set in
+    another system ends hostility there (the warp transit set is no
+    destination)."""
+    from engine.appc import warp
+    if _active:
+        ship = pEvent.GetDestination()
+        if ship is not None and _is_player(ship):
+            where = ship.GetContainingSet()
+            name = where.GetName() if where is not None else None
+            if name and name != warp._WARP_TRANSIT_SET_NAME:
+                _left_for(_system_key(name))
     _pass_on(pObject, pEvent)
+
+
+def _left_for(system: str) -> None:
+    for oid, record in list(_register.items()):
+        if record.system != system:
+            end_in_system(record.system)
+    for oid in list(_counts):
+        if oid not in _register and _count_system.get(oid) != system:
+            del _counts[oid]
+            _count_system.pop(oid, None)
+
+
+def _restore_ai(record) -> None:
+    station = record.station
+    if not record.replaced_ai:
+        return
+    if record.prior_ai is None:
+        station.SetAI(None)
+        return
+    import importlib
+    import QuickBattle.QuickBattle as qb
+    leaf, level = record.prior_ai
+    qb.g_iCurrentAILevel = level
+    station.SetAI(importlib.import_module("QuickBattle." + leaf).CreateAI(station))
+
+
+def _restore(record) -> None:
+    mission = _mission()
+    if mission is None or record.station.IsDead() or record.station.IsDying():
+        return
+    name = record.name
+    mission.GetEnemyGroup().RemoveName(name)
+    for label in record.prior_groups:
+        group = (mission.GetFriendlyGroup() if label == "friendly"
+                 else mission.GetNeutralGroup())
+        group.AddName(name)
+    _restore_ai(record)
+
+
+def end_in_system(system: str) -> None:
+    """Restore every hostile station of `system`: groups, then AI."""
+    for oid, record in list(_register.items()):
+        if record.system != system:
+            continue
+        del _register[oid]
+        _counts.pop(oid, None)
+        _restore(record)
+
+
+def end_all() -> None:
+    for system in {r.system for r in _register.values()}:
+        end_in_system(system)
+
+
+_MARK = "_dauntless_station_hostility_orig"
+
+
+def _chain(fn):
+    seen = set()
+    while fn is not None and id(fn) not in seen:
+        seen.add(id(fn))
+        yield fn
+        links = getattr(fn, "__dict__", {})
+        fn = next((v for k, v in links.items()
+                   if k.startswith("_dauntless_") and k.endswith("_orig")),
+                  None)
+
+
+def _wrap(qb, name) -> bool:
+    current = qb.__dict__.get(name)
+    if current is None or any(_MARK in getattr(f, "__dict__", {})
+                              for f in _chain(current)):
+        return False
+
+    def wrapper(*args):
+        try:
+            end_all()
+        except Exception:  # noqa: BLE001 - never stop BC's start/end
+            import logging
+            logging.getLogger(__name__).exception(
+                "station hostility: restoring stations failed")
+        return current(*args)
+    wrapper.__name__ = name
+    setattr(wrapper, _MARK, current)
+    setattr(qb, name, wrapper)
+    return True
+
+
+def install(qb) -> bool:
+    """Turn the rule on and clear hostility whenever a battle starts or ends.
+    Returns True when a wrapper was added (never installed twice)."""
+    activate()
+    added = _wrap(qb, "StartSimulation2")
+    return _wrap(qb, "EndSimulation") or added
 
 
 def is_hostile(station) -> bool:
@@ -215,6 +330,6 @@ def hostile_stations(system: str | None = None) -> list:
 
 def _prune() -> None:
     for oid, record in list(_register.items()):
-        if record.station.IsDying():
+        if record.station.IsDying() or record.station.IsDead():
             del _register[oid]
             _counts.pop(oid, None)
