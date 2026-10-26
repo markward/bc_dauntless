@@ -128,6 +128,7 @@ NearRun run_near(bool fast, bool caps, bool resend = false,
     f.set_catalogue(rock_scenario::near_catalogue());
     f.set_sources({rock_scenario::beol4_field()});
     rockfield::NearStepInput sin;
+    sin.minor_dials.shove_lateral = 0.0f;   // pinned: recorded before the bow slide
     if (caps) sin.minor_dials.max_shoves_per_frame = 3;
     rockfield::NearBuildInput bin;
     bin.viewport_h = 1080.0f;

@@ -28,6 +28,7 @@ instead of 8 short-lived chunks. Minors are **scenery**:
 |---|---|
 | M1 | **Approach A.** C++ owns the instances: generation, animation, culling, LOD, shove state, the contact test and the instanced draw. Python owns which clouds exist, the dials and the fly-through responses. |
 | M2 | **Shoved minors stay shoved.** A touched minor takes a damped outward velocity, and the offset it builds up stays, so a cloud keeps a visible wake. They do not spring back. |
+| M2a | **Ploughed minors slide off the bow** (added 2026-10-26). The outward shove alone is slower than the ship, so a rock on the bow was caught again every frame and ridden for 30-40 s. Each touch now also gives `shove_lateral` (0.5) x the closing speed along the face, away from the ship's centre line; a rock dead on the centre line takes a side hashed per rock. A parked ship slides nothing. Shared with the rock-fields near band's small rocks (`rock_near.cc`). |
 | M3 | **Breakup frees the halo as a debris cloud.** The dying rock's halo detaches and drifts on at the parent's velocity. Debris (pieces under 1 GU, plus gravel) joins it. Rock chunks are retired. |
 | M4 | **The dials share the nebula's dev keys.** A dial-group registry: `/`, `L` and `O` act on the active group, chosen in Developer Options. |
 | — | Design sections 1–5 approved as presented. |
