@@ -64,6 +64,7 @@ behaviour.
 ## Related work
 
 - [`docs/superpowers/specs/2026-05-14-phaser-combat-design.md`](../specs/2026-05-14-phaser-combat-design.md) — PR 2c spec.
-- [`docs/instrumented_experiments/2026-05-15-damage-routing-investigation.md`](../../instrumented_experiments/2026-05-15-damage-routing-investigation.md)
-  — once the routing instrumentation captures BC's actual range behaviour
-  we'll know whether option (1) or (2) is correct.
+- stbc-oracle behaviour bible §2.1 (`../stbc-oracle/docs/bc-behaviour-bible.md`)
+  — measured: damage falls off as `min(1, MaxDamageDistance / range)` and is
+  still non-zero at 600 GU (3× MaxDamageDistance), so BC applies no hard
+  range cut-off on the damage side.

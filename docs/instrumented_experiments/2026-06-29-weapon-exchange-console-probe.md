@@ -1,6 +1,6 @@
 # The #1 question: what BC's C++ actually does to a target when a weapon hits
 
-Status: IN-PROGRESS  (Q1, Q3, Q4, Q5, Q6, Q7 closed via q02..q08; Q2 deferred; **Q8-Q10 since closed by the 2026-07-15 RE audit — see their bullet**)
+Status: CLOSED  (Q1, Q3, Q4, Q5, Q6, Q7 closed via q02..q08; **Q8-Q10 closed by the 2026-07-15 RE audit — see their bullet**; **Q2 closed 2026-10-26 by measurement** — the stbc-oracle behaviour bible §2.1 (`../stbc-oracle/docs/bc-behaviour-bible.md`) measures the falloff as `min(1, MaxDamageDistance / range)`, not linear)
 Author: 2026-06-29 session (instrumentation approach 2)
 Created: 2026-06-29
 Closed:  —
@@ -22,7 +22,7 @@ SDK analysis recovers it. And right now our reimplementation **guesses** it:
 - [`engine/host_loop.py`](../../engine/host_loop.py) `_advance_combat` /
   `_phaser_damage_for_tick` carry the same assumed curve.
 - The original spec is explicit:
-  [`2026-05-15-damage-routing-investigation.md:22`](2026-05-15-damage-routing-investigation.md)
+  the 2026-05-15 damage-routing runbook (deleted 2026-10-26; in git history)
   — *"Both choices are guesses inherited from PR 2b… Appc.dll holds the real
   formula."*
 
@@ -37,12 +37,13 @@ priority.
 
 This experiment **subsumes** the two predecessor PENDING runbooks, which were
 designed for the weaker App.py-snippet path:
-- [`2026-05-15-damage-routing-investigation.md`](2026-05-15-damage-routing-investigation.md)
-  (questions Q-D1…Q-D7)
-- [`2026-05-15-phaser-charge-dynamics.md`](2026-05-15-phaser-charge-dynamics.md)
-  (questions Q-C1…Q-C8)
+- `2026-05-15-damage-routing-investigation.md` (questions Q-D1…Q-D7)
+- `2026-05-15-phaser-charge-dynamics.md` (questions Q-C1…Q-C8)
 
-Keep those for their question lists and the SDK-side context; this doc replaces
+Both were deleted 2026-10-26 (git history keeps them): their questions are
+answered here and by the stbc-oracle behaviour bible §2, §5.2 and §6.1.
+
+This doc replaced
 their *method*.
 
 ## Why now — instrumentation approach 2 (the dev console)
@@ -282,9 +283,8 @@ If `AddDamage` turns out **not** to be the weapon routing path (Q3), fall back
 to the controlled-fire diff: park at a fixed range, snapshot, fire exactly one
 bank for a known number of frames, snapshot. Still far better than approach 1
 because the console reads state synchronously and you control the setup. The
-predecessor doc's fly-and-fire passes
-([damage-routing §How to run](2026-05-15-damage-routing-investigation.md)) become
-the slow last resort, not the primary method.
+predecessor runbook's fly-and-fire passes became the slow last resort, and
+are now superseded by the stbc-oracle harness.
 
 ## Expected output / how to read it
 
@@ -359,7 +359,7 @@ This explains why `engine/appc/combat.py:apply_hit`'s strict-cascade model is co
 ### Per-question status
 
 - **Q1 ✓** — AddDamage at the centre node delivers exactly the requested damage (ratio 1.0, verified at radii 0.1, 1, 5, 30, 60, 120 — all delivered 1000.0 hull damage). Radius does not affect delivered damage when the hit node is the ship centre.
-- **Q2 — DEFERRED.** `AddDamage` takes a scene NODE, not a TGPoint3 (`Effects.py:691` literally comments *"INVALID NiAVObject wrapper"*). Position can't be varied by mutating coordinates; would need to iterate sub-nodes or use `target.GetRandomPointOnModel()` for statistical sampling. Low priority — AddDamage is the explosion path, not the weapon path.
+- **Q2 — CLOSED 2026-10-26 by the stbc-oracle bible §2.1** (`rate = MaxDamage × intensity_scale × min(1, MaxDamageDistance / range)`, measured at 57/150/250/400/600 GU). The console route stayed blocked: `AddDamage` takes a scene NODE, not a TGPoint3 (`Effects.py:691` literally comments *"INVALID NiAVObject wrapper"*). Position can't be varied by mutating coordinates; would need to iterate sub-nodes or use `target.GetRandomPointOnModel()` for statistical sampling. Low priority — AddDamage is the explosion path, not the weapon path.
 - **Q3 ✓** — AddDamage bypasses shields (q02: 1000 hull / 0 shield across 6 radii). Weapon-fire path routes through shields (q03: 715 shield / 180 hull over a 35 sec fire window).
 - **Q4 ✓** — **STRICT CASCADE, no bleed-through fraction.** With every face reset to max and weapons fired for ~9 sec, hull damage was exactly **0.0**; all 136.6 of delivered damage stayed on the faces. q03's 80/20 split was therefore a face briefly depleting mid-window, not a constant bleed-through.
 - **Q5 ✓** — **The phaser intensity setting is load-bearing for routing.** With all shield faces at 0 and *no* deliberate subsystem lock (just targeting the ship body), routing depends entirely on `PhaserSystem.GetPowerLevel()`:

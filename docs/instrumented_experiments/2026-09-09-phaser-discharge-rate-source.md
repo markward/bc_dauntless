@@ -97,14 +97,14 @@ reliably, bare `behaviour` questions land below the relevance floor):
 
 ## Snippet
 
-`tools/charge_logger.py` (the per-tick charge sampler drafted for
-`2026-05-15-phaser-charge-dynamics.md`; that runbook's snippet and analysis
-sections still apply verbatim — only the *ship choice* changes, per Q-D5).
+Superseded: run it as a stbc-oracle case (`../stbc-oracle`), whose samples
+already carry every bank's charge level, with a hand-edited emitter per Q-D5.
+The old `charge_logger.py` snippet lived in the 2026-05-15 phaser-charge
+runbook, deleted 2026-10-26 (git history keeps it).
 
 ## How to run
 
-Follow `2026-05-15-phaser-charge-dynamics.md` for snippet install and capture,
-with one mandatory change: **the ship under test must have a non-1.0
+Run a stbc-oracle phaser case, with one mandatory change: **the ship under test must have a non-1.0
 `NormalDischargeRate`.** Install the CGSovereign pack into the real BC
 installation, or edit one emitter in a stock hardpoint and note the edit in
 Cleanup.
@@ -181,7 +181,13 @@ only):
   ~0.35 s windup + ~1.0 s of table drain, and even the old 5 ms bug would
   have shown ≥0.35 s of beam under a correct windup model. **The windup is
   NOT ported** — separate design; it touches beam FX and damage start.
-- **Q-D5/6/7** — _TBD_ (live). Now a confirmation run, not a discriminator:
+- **Q-D7 — partly measured** (stbc-oracle bible §2.2, stock Kessok Heavy
+  forward beams): discharge while firing is **1.0 charge/s at HIGH and MED,
+  0.35/s at LOW**, so the rate depends on the power level, consistent with
+  the ported power-indexed table. The emitter's authored rate is the stock
+  value, so an authored-rate-times-power-scale variant is not yet ruled out;
+  that is what Q-D5 tests.
+- **Q-D5/6** — _TBD_ (live). Now a confirmation run, not a discriminator:
   the prediction for a CGSovereign phaser at MED is a ~1.35 s visible beam
   with the charge slope at −1.0/s starting ~0.35 s after the fire press.
 

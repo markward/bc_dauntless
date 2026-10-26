@@ -2,8 +2,10 @@
 
 ## Status
 
-**Probe written, NOT YET RUN.** Awaiting an operator run on the original game.
-Findings section is empty by design — do not fill it from reasoning.
+**Q1 CLOSED 2026-10-26 by measurement; Q2 still OPEN.** The stbc-oracle
+behaviour bible §5.1 (`../stbc-oracle/docs/bc-behaviour-bible.md`) measured all
+six faces. Q2 (a beam swept off target landing on the hull) was not measured
+there. Do not fill Q2 from reasoning.
 
 ## Goal
 
@@ -137,4 +139,8 @@ stays clean. No game files are modified; no `tools/setup.py` install is needed
 
 ## Findings
 
-*(empty — probe not yet run)*
+- **Q1 — CLOSED (stbc-oracle bible §5.1, all six aspects).** Index map:
+  **0 front, 1 rear, 2 top, 3 bottom, 4 port, 5 starboard**, chosen by the
+  geometry the shot arrives through. Files `phaser_high_{front,aft,stbd,port,bottom,elev45..75}_57`.
+- **Q2 — OPEN.** Not covered by the oracle matrix; this probe, or an oracle
+  case that sweeps the attacker's aim off target mid-pulse, would answer it.
