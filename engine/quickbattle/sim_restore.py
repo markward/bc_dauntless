@@ -10,6 +10,9 @@ made) belongs to the battle.
   region; the wrapper puts each owned object back into the set it was in, at
   the pose it had. After the change it snapshots every real damageable object
   in the battle set as a `Record`.
+- An owner may restore its objects itself (`restores_after_battle`, the Tau
+  Ceti shuttles): they are never recorded, so never rebuilt here; they are
+  only kept out of BC's sweep, like any owned object the battle did not record.
 - `EndSimulation` deletes every damageable object except the player. After
   BC's own, the wrapper un-flags each real object the battle left untouched,
   and rebuilds each one it changed or destroyed (an owned object through its
@@ -240,6 +243,8 @@ def _take_snapshot(qb, pre_change: dict) -> None:
     for obj in pSet.GetClassObjectList(App.CT_DAMAGEABLE_OBJECT):
         if obj is player:
             continue
+        if owners.restores_after_battle(obj):
+            continue            # its owner restores it (EndSimulation hook)
         real = (owners.owner_of(obj) is not None
                 or _pre_sim.get(id(obj)) is obj
                 or pre_change.get(id(obj)) is not obj)

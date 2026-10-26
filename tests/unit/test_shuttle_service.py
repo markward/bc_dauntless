@@ -1083,3 +1083,273 @@ def test_a_destroyed_dock_mid_circle(world, capsys):
     _arrive_far(s)
     assert s.phase is ss.Phase.LEAVING_DOCKS
     assert "[shuttles]" not in capsys.readouterr().out
+
+
+# ── Losses ───────────────────────────────────────────────────────────────────
+
+def _kill(s, killer=None):
+    """`s` takes a fatal hit through the real combat path (from `killer`, if
+    any) and its death throes run out: ShipClass.SetDead fires ship_lifecycle
+    "destroyed"."""
+    from engine.appc import combat, ship_death
+    ship = s.ship
+    if killer is not None:
+        combat.apply_hit(ship, 1.0e6, ship.GetWorldLocation(), killer,
+                         weapon_type="phaser")
+    else:
+        ship_death.begin(ship)
+    assert ship.IsDying() or ship.IsDead()
+    ship_death.advance(ship_death.MAX_THROES_DURATION + 0.1)
+    assert ship.IsDead()
+    return ship
+
+
+def test_a_destroyed_shuttle_is_lost_and_recorded(world):
+    _sim(5.0)
+    s = ss.roster()[0]
+    assert s.phase is ss.Phase.UNDOCKING
+    when = App.g_kUtopiaModule.GetGameTime()
+    assert when > 0.0
+    _kill(s, killer=world)
+    assert s.phase is ss.Phase.LOST
+    assert s.ship is None
+    assert ss.losses() == [ss.Loss(index=1, name="TC Shuttle 1",
+                                   set_name="Starbase12",
+                                   game_time=pytest.approx(when),
+                                   killer="player")]
+    # An unattributed death records no killer.
+    _sim(70.0, until=lambda: ss.roster()[1].ship is not None)
+    _kill(ss.roster()[1])
+    assert [(x.index, x.killer) for x in ss.losses()] == [(1, "player"),
+                                                         (2, None)]
+
+
+def test_a_lost_shuttle_never_relaunches(world):
+    _sim(DT)
+    s = ss.roster()[0]
+    _kill(s)
+    s.timer = 0.0
+    _run(1.0)
+    assert s.phase is ss.Phase.LOST and s.ship is None
+    # Away and back (the restart), and its region built again: still lost.
+    App.g_kSetManager.AddSet(App.SetClass_Create(), "Vesuvi6")
+    _move_player_to(world, "Vesuvi6")
+    ss.tick(DT)
+    _move_player_to(world, "Starbase12")
+    ss.tick(DT)
+    import Systems.Starbase12.Starbase12 as sb
+    sb.Initialize()
+    _run(1.0)
+    assert s.phase is ss.Phase.LOST and s.ship is None
+    assert all(o.phase is not ss.Phase.LOST for o in ss.roster()[1:])
+
+
+def test_reset_on_mission_change_brings_all_ten_back(world):
+    _sim(DT)
+    _kill(ss.roster()[0])
+    assert ss.losses()
+    # A mission change: reset, then the regions are built again.
+    ss.reset()
+    assert ss.losses() == []
+    import Systems.Starbase12.Starbase12 as sb
+    import Systems.DryDock.DryDock as dd
+    sb.Initialize()
+    dd.Initialize()
+    r = ss.roster()
+    assert [s.name for s in r] == _names()
+    assert all(s.phase is ss.Phase.DOCKED and s.ship is None for s in r)
+    assert [s.timer for s in r] == [i * 60.0 for i in range(10)]
+
+
+# ── Quick Battle: a battle is a simulation ───────────────────────────────────
+
+def _fake_qb():
+    """A stand-in for the QuickBattle module: the two functions install()
+    wraps, recording their calls."""
+    import types
+    qb = types.ModuleType("FakeQuickBattle")
+    calls = []
+    qb.StartSimulation2 = lambda *a: calls.append("start")
+    qb.EndSimulation = lambda *a: calls.append("end")
+    return qb, calls
+
+
+def _halve_hull(ship):
+    hull = ship.GetHull()
+    hull.SetCondition(hull.GetCondition() * 0.5)
+
+
+def test_install_wraps_start_and_end_once(world):
+    qb, calls = _fake_qb()
+    assert ss.install(qb) is True
+    assert ss.install(qb) is False
+    for name in ("StartSimulation2", "EndSimulation"):
+        assert "_dauntless_shuttle_service_orig" in qb.__dict__[name].__dict__
+    qb.StartSimulation2()
+    qb.EndSimulation()
+    assert calls == ["start", "end"]
+    # Under another module's wrapper (spawn's): still found, never twice.
+    inner = qb.EndSimulation
+
+    def outer(*a):
+        return inner(*a)
+    outer._dauntless_spawn_orig = inner
+    qb.EndSimulation = outer
+    assert ss.install(qb) is False
+
+
+def test_a_battle_docks_what_it_damaged_or_destroyed_and_records_nothing(world):
+    qb, _calls = _fake_qb()
+    ss.install(qb)
+    _sim(130.0)
+    a, b, c, d = ss.roster()[:4]
+    assert all(x.ship is not None and x.phase is not ss.Phase.DOCKED
+               for x in (a, b, c))
+    # Damaged before the battle and not touched in it: carries on.
+    _halve_hull(c.ship)
+    c_ship = c.ship
+    qb.StartSimulation2()
+    old_a = a.ship
+    _halve_hull(old_a)
+    old_b = _kill(b, killer=world)
+    assert b.phase is ss.Phase.LOST
+    assert ss.losses() == []                  # never during a battle
+    # Launched during the battle, then damaged: docked too.
+    ss._launch(d)
+    old_d = d.ship
+    _halve_hull(old_d)
+    qb.EndSimulation()
+    for x, old in ((a, old_a), (b, old_b), (d, old_d)):
+        assert x.phase is ss.Phase.DOCKED and x.ship is None, x.name
+        assert x.timer == ss.DOCK_S
+        assert old.GetContainingSet() is None, x.name
+    assert c.ship is c_ship and c.phase is not ss.Phase.DOCKED
+    assert ss.losses() == []
+    flying = sorted(x.name for x in ss.roster() if x.ship is not None
+                    and x.ship.GetContainingSet() is not None)
+    assert sorted(n for _set, n in _sets_holding_shuttles()) == flying
+    # The battle is over: a loss is recorded again.
+    _kill(c)
+    assert [x.index for x in ss.losses()] == [3]
+
+
+def test_an_end_with_no_battle_docks_nothing(world):
+    qb, _calls = _fake_qb()
+    ss.install(qb)
+    _sim(DT)
+    s = ss.roster()[0]
+    ship = s.ship
+    _halve_hull(ship)
+    qb.EndSimulation()
+    assert s.ship is ship and s.phase is ss.Phase.UNDOCKING
+
+
+# ── Rebuilt and deleted regions, stations coming back ────────────────────────
+
+def test_shrunk_orbit_bands_choose_again_instead_of_raising(world, capsys):
+    """A neighbour coming back to standing (a battle rebuild) shrinks a
+    dock's bands under a circling shuttle: its orbit no longer exists, so it
+    chooses again rather than fail."""
+    from engine.systems import home_stations as hs
+    s = _only_the_first()
+    _far().GetObject("Dry Dock3").SetDead(1)
+    wide = len(ss._bands("Dry Dock"))
+    assert wide > 2
+    _occupy(s, "Dry Dock", wide - 1)
+    assert s.phase is ss.Phase.CIRCLING
+    # Dry Dock3 rebuilt, as the battle restore rebuilds a home station.
+    row = next(r for r in hs.stations_for_set("DryDock")
+               if r.name == "Dry Dock3")
+    _far().RemoveObjectFromSet("Dry Dock3")
+    hs.forget_destroyed(row)
+    hs.place_for_set(_far(), "DryDock")
+    assert len(ss._bands("Dry Dock")) == 2
+    _sim(DT)
+    assert s.phase is ss.Phase.TO_DOCK
+    assert s.dock_name is None or s.orbit_slot < len(ss._bands(s.dock_name))
+    # Started on a slot that no longer exists (a hand-over): the same.
+    s.dock_name, s.orbit_slot = "Dry Dock", wide - 1
+    ss._enter(s, ss.Phase.CIRCLING)
+    assert s.phase is ss.Phase.TO_DOCK
+    assert s.ship.GetContainingSet() is _far()
+    assert "[shuttles]" not in capsys.readouterr().out
+
+
+def test_lane_points_without_the_anchor_station():
+    """A region built while its anchor station is not standing (destroyed
+    earlier this mission) still gets its lane points, from the station's own
+    placement point: the pose a rebuilt station gets."""
+    from engine.systems import home_stations as hs
+    _fresh_world()
+    ss.reset()
+    hs._destroyed.add(("Starbase12", "Starbase 12"))
+    try:
+        import Systems.Starbase12.Starbase12 as sb
+        sb.Initialize()
+        pSet = _home()
+        assert pSet.GetObject("Starbase 12") is None
+        row = next(r for r in hs.stations_for_set("Starbase12")
+                   if r.name == "Starbase 12")
+        loc, rot = hs.read_point(row, pSet)
+        fwd = rot.GetCol(1)
+        lane = pSet.GetObject(ss.LANE_NAME)
+        assert lane is not None
+        a = lane.GetWorldLocation()
+        assert (a.x, a.y, a.z) == pytest.approx(
+            (loc.x + 2000.0 * fwd.x, loc.y + 2000.0 * fwd.y,
+             loc.z + 2000.0 * fwd.z), abs=1e-3)
+        for i in range(1, 11):
+            assert pSet.GetObject("%s %d" % (ss.LANE_NAME, i)) is not None
+    finally:
+        hs.reset()
+        ss.reset()
+
+
+def _entering(s):
+    _arrive_home(s)
+    assert _sim(300.0, until=lambda: s.phase is ss.Phase.ENTERING) \
+        is not None
+    station = _starbase()
+    assert station.GetObjID() in collisions._collision_disabled_ids(s.ship)
+    return station
+
+
+def test_a_region_rebuilt_mid_entering_docks_and_releases_the_mask(world):
+    s = _only_the_first()
+    old = _entering(s)
+    import Systems.Starbase12.Starbase12 as sb
+    sb.Initialize()
+    assert _starbase() is not old
+    assert s.phase is ss.Phase.DOCKED
+    assert s.bay_station is None
+    assert old.GetObjID() not in collisions._collision_disabled_ids(s.ship)
+
+
+def test_a_station_rebuilt_mid_entering_moves_the_mask(world):
+    """The battle restore rebuilds Starbase 12 in its set (a new object, a
+    new ObjID): the entering shuttle's collisions go off with the new one and
+    back on with the old."""
+    from engine.systems import home_stations as hs
+    s = _only_the_first()
+    old = _entering(s)
+    row = hs.home_station_of(old)
+    _home().RemoveObjectFromSet("Starbase 12")
+    new = hs._build(row, _home(), *hs.read_point(row, _home()))
+    assert new.GetObjID() != old.GetObjID()
+    _sim(DT)
+    assert s.phase is ss.Phase.ENTERING
+    mask = collisions._collision_disabled_ids(s.ship)
+    assert new.GetObjID() in mask and old.GetObjID() not in mask
+    assert s.bay_station is new
+
+
+def test_a_deleted_set_docks_its_shuttles(world):
+    """E8M2 deletes Starbase12 outright: the shuttles in it are docked."""
+    _sim(DT)
+    s = ss.roster()[0]
+    pSet = _home()
+    assert s.ship.GetContainingSet() is pSet
+    App.g_kSetManager.DeleteSet("Starbase12")
+    ss.tick(DT)
+    assert s.phase is ss.Phase.DOCKED
+    assert pSet.GetObject(s.name) is None

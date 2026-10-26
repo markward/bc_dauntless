@@ -7930,6 +7930,10 @@ class _MissionLoader:
         # spawn's hooks too.
         from engine.quickbattle import free_roam_death as _free_roam_death
         _free_roam_death.install(_QB)
+        # A battle is a simulation for the Tau Ceti shuttles too: what it
+        # damaged or destroyed comes back docked. Before spawn's hooks.
+        from engine.systems import shuttle_service as _shuttle_service
+        _shuttle_service.install(_QB)
         # Free roam docks at Starbase 12 with BC's defaults (repairs on), not
         # whatever the last campaign mission left in the cached Starbase12_S.
         from engine.systems import home_stations as _home_stations

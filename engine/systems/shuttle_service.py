@@ -64,15 +64,27 @@ avoidance never pushes a shuttle off its circle. The docks and the Station
 are cleared by route geometry alone, measured against today's layout
 (home_stations.json): a change to where the Dry Docks stations stand must be
 re-measured.
+
+Losses: a shuttle whose ship dies (ship_lifecycle "destroyed") is LOST until
+reset() (a mission change) and recorded as a `Loss` (`losses()`), with the
+name of whoever fired the blow that started its death. A Quick Battle is a
+simulation (`install(qb)`): a loss during it is never recorded, and when it
+ends every shuttle it damaged or destroyed is DOCKED again, wherever it was,
+with a fresh ship at its next launch. A set rebuilt (`on_region_built`) or
+deleted outright docks only the shuttles that were in it.
 """
 from __future__ import annotations
 
 import enum
+import logging
 import math
 import random
 from dataclasses import dataclass
 
+from engine.appc import ship_lifecycle
 from engine.systems import owners
+
+_log = logging.getLogger(__name__)
 
 COUNT = 10
 DOCK_S = 600.0
@@ -175,9 +187,35 @@ class Shuttle:
     leg: Phase | None = None     # the phase `ai` was given for
     bay_station: object = None   # collisions with it are off (a bay leg)
     held: bool = False           # holding: outside the bay, or for a dock
+    killer: str | None = None    # who fired the blow that started its death
+
+
+@dataclass
+class Loss:
+    """One shuttle destroyed outside a Quick Battle: which, in which set, at
+    what game time, and who fired the blow that started its death (None when
+    unattributed)."""
+    index: int
+    name: str
+    set_name: str
+    game_time: float
+    killer: str | None
+
+
+class _Battle:
+    """The running Quick Battle, as far as the shuttles go."""
+
+    def __init__(self):
+        # index -> subsystem conditions when the battle started, or when the
+        # shuttle launched during it.
+        self.start: dict = {}
+        # index -> the dead ship of a shuttle lost during the battle.
+        self.lost: dict = {}
 
 
 _roster: list = []
+_losses: list = []
+_battle = None   # a _Battle while a Quick Battle runs
 _started = False
 _away = False
 _bay_busy = False
@@ -189,6 +227,12 @@ def roster() -> list:
     return _roster
 
 
+def losses() -> list:
+    """Every shuttle lost since the last reset() (mission change), oldest
+    first. A loss during a Quick Battle is never recorded."""
+    return list(_losses)
+
+
 def set_rng(rng: random.Random) -> None:
     global _rng
     _rng = rng
@@ -196,8 +240,10 @@ def set_rng(rng: random.Random) -> None:
 
 def reset() -> None:
     """Forget the roster and everything running. The owner stays registered."""
-    global _started, _away, _bay_busy
+    global _started, _away, _bay_busy, _battle
     _roster.clear()
+    _losses.clear()
+    _battle = None
     _started = False
     _away = False
     _bay_busy = False
@@ -240,6 +286,21 @@ def _put_waypoint(pSet, set_name: str, name: str, at: tuple, fwd, up) -> None:
     wp.Update(0)
 
 
+def _anchor_pose(pSet, anchor_name: str):
+    """World (location, rotation) of the region's home station: the station
+    itself when the set holds it, else its placement point (the pose a
+    rebuilt station gets), so a region built while the station is not
+    standing still has lanes. None when neither is known."""
+    station = pSet.GetObject(anchor_name)
+    if station is not None:
+        return station.GetWorldLocation(), station.GetWorldRotation()
+    from engine.systems import home_stations
+    for row in home_stations.stations_for_set(pSet.GetName()):
+        if row.name == anchor_name:
+            return home_stations.read_point(row, pSet)
+    return None
+
+
 def _add_lane(pSet, set_name: str) -> None:
     """A waypoint LANE_GU out from the region's home station along its world
     forward, facing away from it, and round it one point per shuttle (its
@@ -247,11 +308,10 @@ def _add_lane(pSet, set_name: str) -> None:
     anchor_name = _ANCHORS.get(set_name)
     if anchor_name is None or pSet.GetObject(LANE_NAME) is not None:
         return
-    station = pSet.GetObject(anchor_name)
-    if station is None:
+    pose = _anchor_pose(pSet, anchor_name)
+    if pose is None:
         return
-    loc = station.GetWorldLocation()
-    rot = station.GetWorldRotation()
+    loc, rot = pose
     fwd, up = rot.GetCol(1), rot.GetCol(2)
     centre = (loc.x + LANE_GU * fwd.x, loc.y + LANE_GU * fwd.y,
               loc.z + LANE_GU * fwd.z)
@@ -301,6 +361,8 @@ def _restart() -> None:
         for i in range(1, COUNT + 1):
             _roster.append(Shuttle(index=i, name="TC Shuttle %d" % i))
     for s in _roster:
+        if s.phase is Phase.LOST:
+            continue
         if s.phase is not Phase.DOCKED:
             _dock(s)
         s.timer = (s.index - 1) * _STAGGER_S
@@ -381,20 +443,28 @@ def _launch(shuttle: Shuttle) -> None:
         shuttle.ship = ship
         if ship is None:
             raise RuntimeError("CreateShip returned no ship")
+        import App
+        ship.AddPythonFuncHandlerForInstance(
+            App.ET_OBJECT_EXPLODING, __name__ + ".ObjectExploding")
     elif pSet.GetObject(shuttle.name) is not ship:
         pSet.AddObjectToSet(ship, shuttle.name)
     ship.SetTranslate(pos)
     ship.AlignToVectors(fwd, up)
     ship.UpdateNodeOnly()
     owners.tag(ship, OWNER_NAME, shuttle.index)
+    if _battle is not None:
+        _battle.start.setdefault(shuttle.index, _conditions(ship))
     shuttle.bearing_accum = 0.0
     _enter(shuttle, Phase.UNDOCKING)
 
 
 class _ShuttleOwner:
     """Registered so a battle restore knows these ships are the service's, not
-    battle objects; the service rebuilds them itself."""
+    battle objects. The service restores them itself after a battle (install,
+    controller ruling R1 option b): sim_restore never records them, so never
+    asks for a rebuild."""
     name = OWNER_NAME
+    restores_after_battle = True
 
     def rebuild(self, old, record):
         return None
@@ -404,6 +474,194 @@ class _ShuttleOwner:
 
 
 owners.register(_ShuttleOwner())
+
+
+# ── Losses ───────────────────────────────────────────────────────────────────
+
+def ObjectExploding(pObject, pEvent):
+    """ET_OBJECT_EXPLODING on a shuttle (an instance handler, registered when
+    the ship is built): remember who fired the blow that started its death.
+    The death itself is ship_lifecycle's "destroyed", at the end of the
+    throes, which carries no killer."""
+    try:
+        import App
+        get = getattr(type(pEvent), "GetFiringPlayerID", None)
+        fid = get(pEvent) if get is not None else App.NULL_ID
+        killer = App.TGObject_GetTGObjectPtr(fid) if fid else None
+        for s in _roster:
+            if s.ship is pObject:
+                s.killer = None if killer is None else killer.GetName()
+    finally:
+        pObject.CallNextHandler(pEvent)
+
+
+def _game_time() -> float:
+    import App
+    return App.g_kUtopiaModule.GetGameTime()
+
+
+def _lose(s: Shuttle) -> None:
+    """The shuttle's ship died: LOST until reset(), the loss recorded."""
+    ship = s.ship
+    pSet = ship.GetContainingSet()
+    _release_bay(s)
+    s.phase = Phase.LOST
+    s.ship = None
+    s.ai = None
+    s.leg = None
+    s.held = False
+    s.dock_name = None
+    killer, s.killer = s.killer, None
+    if _battle is not None:
+        _battle.lost[s.index] = ship      # a battle loss is never recorded
+        return
+    _losses.append(Loss(index=s.index, name=s.name,
+                        set_name="" if pSet is None else pSet.GetName(),
+                        game_time=_game_time(), killer=killer))
+
+
+def _on_lifecycle(event: str, ship) -> None:
+    if event != "destroyed":
+        return
+    for s in _roster:
+        if s.ship is ship and s.phase is not Phase.LOST:
+            _lose(s)
+            return
+
+
+ship_lifecycle.subscribe(_on_lifecycle)
+
+
+# ── Quick Battle ─────────────────────────────────────────────────────────────
+# A battle is a simulation (spec §6): when it ends, every shuttle it damaged
+# or destroyed comes back docked, wherever it was, and its losses are never
+# recorded. The service does this itself; sim_restore leaves the shuttles out
+# of its snapshot (the owner's `restores_after_battle`), which would rebuild a
+# shuttle that merely moved on and leave two objects for one index.
+
+# A subsystem this much below its battle-start condition was damaged.
+_DAMAGE_TOLERANCE = 1e-6
+
+_MARK = "_dauntless_shuttle_service_orig"
+
+
+def _conditions(ship) -> list:
+    from engine.appc.subsystems import iter_subsystems
+    return [sub.GetCondition() for sub in iter_subsystems(ship)]
+
+
+def _damaged(s: Shuttle, battle: _Battle) -> bool:
+    """Any subsystem below its condition when the battle started (or when
+    the shuttle launched during it). Shields are not damage: they recharge."""
+    before = battle.start.get(s.index)
+    if before is None or s.ship is None:
+        return False
+    now = _conditions(s.ship)
+    return len(now) != len(before) or any(
+        n < b - _DAMAGE_TOLERANCE for n, b in zip(now, before))
+
+
+def _discard(ship, name: str) -> None:
+    """Take a shuttle's old ship out of the world for good, as sim_restore
+    does with an object it replaces: a fresh one is built at the next
+    launch."""
+    from engine.appc import ship_death
+    from engine.appc.objects import broadcast_object_deleted
+    ship_death.forget(ship)
+    ship_death._clear_target_locks(ship)
+    pSet = ship.GetContainingSet()
+    if pSet is not None and pSet.GetObject(name) is ship:
+        pSet.RemoveObjectFromSet(name)
+    broadcast_object_deleted(ship)
+
+
+def _battle_started() -> None:
+    global _battle
+    _battle = _Battle()
+    for s in _roster:
+        if s.ship is not None and s.phase is not Phase.LOST:
+            _battle.start[s.index] = _conditions(s.ship)
+
+
+def _battle_ended() -> None:
+    """Every shuttle the battle destroyed or damaged goes docked, its old ship
+    discarded; the rest carry on. Each shuttle has its own try."""
+    global _battle
+    battle, _battle = _battle, None
+    if battle is None:
+        return
+    for s in _roster:
+        try:
+            if s.index in battle.lost:
+                _discard(battle.lost[s.index], s.name)
+                _dock(s)
+            elif _damaged(s, battle):
+                ship = s.ship
+                _dock(s)
+                _discard(ship, s.name)
+                s.ship = None
+        except Exception as exc:  # noqa: BLE001 - the others still come back
+            _park(s, exc)
+
+
+def _chain(fn):
+    """`fn`, then each function it wraps, following any `_dauntless_*_orig`
+    link (ours or another module's)."""
+    seen = set()
+    while fn is not None and id(fn) not in seen:
+        seen.add(id(fn))
+        yield fn
+        links = getattr(fn, "__dict__", {})
+        fn = next((v for k, v in links.items()
+                   if k.startswith("_dauntless_") and k.endswith("_orig")),
+                  None)
+
+
+def _wrap(qb, name, make) -> bool:
+    current = qb.__dict__.get(name)
+    if current is None or any(_MARK in getattr(f, "__dict__", {})
+                              for f in _chain(current)):
+        return False
+    wrapper = make(current)
+    wrapper.__name__ = name
+    setattr(wrapper, _MARK, current)
+    setattr(qb, name, wrapper)
+    return True
+
+
+def _make_start(orig):
+    def StartSimulation2(*args):
+        global _battle
+        try:
+            _battle_started()
+        except Exception:  # noqa: BLE001 - never stop BC's start
+            _log.exception("shuttles: noting the battle start failed")
+        try:
+            return orig(*args)
+        except Exception:
+            _battle = None     # no battle started
+            raise
+    return StartSimulation2
+
+
+def _make_end(orig):
+    def EndSimulation(*args):
+        try:
+            return orig(*args)
+        finally:
+            try:
+                _battle_ended()
+            except Exception:  # noqa: BLE001 - never mask BC's end
+                _log.exception("shuttles: restoring after the battle failed")
+    return EndSimulation
+
+
+def install(qb) -> bool:
+    """Wrap the Quick Battle module's StartSimulation2 and EndSimulation (as
+    sim_restore does: SDK callers reach them through the module global); True
+    when this call added a wrapper. Never installs twice."""
+    added = _wrap(qb, "StartSimulation2", _make_start)
+    return _wrap(qb, "EndSimulation", _make_end) or added
 
 
 # ── Bay points ───────────────────────────────────────────────────────────────
@@ -685,8 +943,17 @@ def _start_to_dock(s: Shuttle) -> None:
     _give_ai(s, _intercept(s.ship, s.dock_name, far))
 
 
+def _orbit_gone(s: Shuttle) -> bool:
+    """The shuttle's orbit no longer exists: the dock's bands shrank (a
+    neighbouring station came back to standing)."""
+    return s.orbit_slot >= len(_bands(s.dock_name))
+
+
 def _start_circling(s: Shuttle) -> None:
     import App
+    if _orbit_gone(s):
+        _enter(s, Phase.TO_DOCK)            # choose again
+        return
     near, far = _bands(s.dock_name)[s.orbit_slot]
     ai = _plain(s.ship, "TCShuttleCircle", "CircleObject")
     script = ai.GetScriptInstance()
@@ -841,8 +1108,8 @@ def _turned(a, b) -> float:
 
 def _check_circling(s: Shuttle) -> None:
     dock = _dry_dock(s.dock_name)
-    if dock is None:
-        _enter(s, Phase.TO_DOCK)            # destroyed or gone: choose again
+    if dock is None or _orbit_gone(s):
+        _enter(s, Phase.TO_DOCK)            # destroyed, gone or no orbit
         return
     # The bearing change is the angle the dock -> shuttle direction turned
     # this tick, not a planar atan2: CircleObject's orbit plane follows the
@@ -1003,6 +1270,14 @@ def _player_owns_bay() -> bool:
             <= _BAY_NEAR_GU * _BAY_NEAR_GU)
 
 
+def _in_the_world(ship) -> bool:
+    """The ship is in a set the set manager still holds."""
+    import App
+    pSet = ship.GetContainingSet()
+    return pSet is not None and any(
+        x is pSet for x in App.g_kSetManager.GetAllSets())
+
+
 def _step(s: Shuttle, dt: float) -> None:
     if s.phase is Phase.DOCKED:
         s.timer -= dt
@@ -1014,6 +1289,16 @@ def _step(s: Shuttle, dt: float) -> None:
     check = _CHECKS.get(s.phase)
     if check is None:
         return
+    from engine.appc import ship_death
+    if ship_death._out_of_action(s.ship):
+        return                  # dying: ship_lifecycle's "destroyed" ends it
+    if not _in_the_world(s.ship):
+        _dock(s)                # its set was deleted (E8M2 deletes Starbase12)
+        return
+    if s.bay_station is not None:
+        station = _home_station()
+        if station is not None and station is not s.bay_station:
+            _hold_bay(s, station)       # Starbase 12 rebuilt: a new ObjID
     if s.leg is not s.phase:
         # Put into this phase from outside (a hand-over): start its leg.
         _enter(s, s.phase)
@@ -1051,7 +1336,7 @@ def tick(dt: float) -> None:
             if not _away:
                 _away = True
                 for s in _roster:
-                    if s.phase is not Phase.DOCKED:
+                    if s.phase not in (Phase.DOCKED, Phase.LOST):
                         _dock(s)
             return
         if _away:

@@ -6,6 +6,11 @@ registers an `Owner` here and tags each object it builds with
 restore -- asks `owner_of(obj)` and hands the object back to its maker instead
 of guessing how it was made.
 
+An owner that restores its own objects after a battle (the Tau Ceti
+shuttles: a battle-damaged shuttle goes back DOCKED, out of the world) sets
+`restores_after_battle = True`; the battle restore then neither records nor
+rebuilds those objects, it only keeps them out of BC's end-of-battle sweep.
+
 The tag lives in the object's `__dict__` and is only ever read from there:
 `TGObject.__getattr__` answers unknown names with a truthy stub, so a getattr
 read could make an untagged object look owned.
@@ -43,6 +48,13 @@ def get(name: str):
 def tag(obj, owner_name: str, key) -> None:
     """The only writer of the tag."""
     obj.__dict__[_TAG_ATTR] = (owner_name, key)
+
+
+def restores_after_battle(obj) -> bool:
+    """`obj` is owned, and its owner restores it after a battle itself."""
+    owned = owner_of(obj)
+    return owned is not None and \
+        getattr(owned[0], "restores_after_battle", False) is True
 
 
 def owner_of(obj):
