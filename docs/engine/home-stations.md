@@ -33,6 +33,21 @@ Spec: `docs/superpowers/specs/2026-10-26-station-self-defence-design.md`. `engin
 ## Free-roam death is final
 `engine/quickbattle/free_roam_death.py` wraps `QuickBattle.ShipDestroyed`: the player killed outside a battle is not recreated (BC's `RecreatePlayer` respawn is skipped), the death sequence still plays and the pause menu still works. A death in a battle still ends the battle. Mark's reason: once a save game exists the player will reload a recent save.
 
+## Tau Ceti shuttle service
+Spec: `docs/superpowers/specs/2026-10-26-tau-ceti-shuttles-design.md`. `engine/systems/shuttle_service.py` (module docstring is the authority), ticked as `gl.shuttles` in `GameLoop.tick`.
+- Ten `Shuttle` ships ("TC Shuttle 1..10") between Starbase 12 and the Dry Docks, in every mode, joined to no mission group, owner `tau_ceti_shuttles`. Docked = a record in no set (free). Launch one a minute (`_STAGGER_S`), docked `DOCK_S` = 600 s between trips.
+- Phases: DOCKED, UNDOCKING, DEPARTING, WARPING_OUT, TO_DOCK, CIRCLING, LEAVING_DOCKS, WARPING_BACK, APPROACHING, ENTERING, DOCKED; plus WAITING (Starbase 12 missing) and LOST. Holds may interleave (bay taken, no free orbit). Headless round trip for shuttle 1 ≈ 505 s measured (`tests/integration/test_shuttle_round_trip.py`); with ten shuttles queueing a cycle can reach ≈ 1,600 s.
+- Lanes: rings of per-shuttle points ("TC Shuttle Lane N", 50 GU ring, 31 GU apart) round the centre lane point `LANE_GU` = 2,000 GU out, in each region; a second ring (own holding point) round a clearance point 150 GU outside the bay mouth.
+- Bay: one shuttle at a time (none launches or enters while another is UNDOCKING/ENTERING). Collisions with Starbase 12 are off on bay legs, on after. The player owns the bay while docking, docked or undocking (a Dock/Undock AI tree on the player, or the player within 200 GU of the bay mouth, e.g. parked there): the service holds.
+- Dock choice: random (the service's own `Random`) among standing docks with a free orbit, fewest other shuttles bound for it first. Circle `CIRCLES` = 2 turns, left side in.
+- Orbit bands come from the dock layout: no orbit inside max(2 x hull radius, 20 GU), none beyond half the gap to the nearest other station minus 5 GU; ~7 GU bands, 3 GU apart, filling outwards, emptying inwards. This supersedes the plan's 40/60 GU floors (Dry Dock and Dry Dock3 are 89 GU apart). Re-measure if `home_stations.json` moves the docks.
+- Pause: only when the player is in another star system (every shuttle docks, timers freeze). No live player or the warp transit set leaves it as is.
+- Quick Battle: the owner opts out of `sim_restore` (`restores_after_battle`); the service itself docks the shuttles a battle damaged or destroyed, and battle losses are not recorded.
+- Losses: `losses()` lists (index, name, set, game time, killer), cleared on mission change; a lost shuttle stays lost until then.
+- E1M1: SDK E1M1 ends the mission on any non-player death in DryDock, so a shuttle dying there ends the tutorial (accepted by Mark).
+- Live-check: circle sizes against the docks; a player parked at the bay mouth holds the service; live dock radii above ~15 GU would make Dry Dock/Dry Dock3 ineligible (no orbit fits); a queue of up to five shuttles outside Starbase 12.
+- Not live-verified. Cost capture not yet taken (`gl.shuttles` scope).
+
 ## Gotchas
 - A rebuild loses pre-battle scars (the renderer cannot clear one hull's wear); a rebuilt rock starts at rest.
 - The Prendel outpost reappears in E6M4 until world state lands.
