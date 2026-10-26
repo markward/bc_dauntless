@@ -1353,3 +1353,42 @@ def test_a_deleted_set_docks_its_shuttles(world):
     ss.tick(DT)
     assert s.phase is ss.Phase.DOCKED
     assert pSet.GetObject(s.name) is None
+
+
+def test_a_stale_killer_never_carries_into_the_next_life(world):
+    """A shuttle hit fatally in a battle that ends mid-throes comes back
+    docked with a fresh ship: its next, unattributed death names no killer."""
+    qb, _calls = _fake_qb()
+    ss.install(qb)
+    _sim(DT)
+    s = ss.roster()[0]
+    qb.StartSimulation2()
+    from engine.appc import combat
+    combat.apply_hit(s.ship, 1.0e6, s.ship.GetWorldLocation(), world,
+                     weapon_type="phaser")
+    assert s.ship.IsDying() and s.killer == "player"
+    qb.EndSimulation()
+    assert s.phase is ss.Phase.DOCKED and s.ship is None
+    assert s.killer is None
+    ss._launch(s)
+    _kill(s)
+    assert [(x.index, x.killer) for x in ss.losses()] == [(1, None)]
+
+
+def test_the_owner_rebuild_docks_the_record_and_never_re_adds_old(world):
+    """Insurance: should any restore path call the owner's rebuild, the
+    roster record goes DOCKED and drops the old ship; nothing is built."""
+    import types
+    _sim(DT)
+    s = ss.roster()[0]
+    old = s.ship
+    owner = owners.get(ss.OWNER_NAME)
+    # Not this shuttle's current ship: nothing happens.
+    assert owner.rebuild(App.ShipClass_Create("Other"),
+                         types.SimpleNamespace(key=1)) is None
+    assert s.ship is old and s.phase is ss.Phase.UNDOCKING
+    old.GetContainingSet().RemoveObjectFromSet(s.name)   # as sim_restore does
+    assert owner.rebuild(old, types.SimpleNamespace(key=1)) is None
+    assert s.phase is ss.Phase.DOCKED and s.ship is None
+    assert s.name not in [n for _set, n in _sets_holding_shuttles()]
+    owner.after_rebuild(None, types.SimpleNamespace(key=1))

@@ -143,10 +143,11 @@ def test_free_roam_warp_to_starbase_12_finds_the_service_running(world):
     assert (owner.name, key) == ("tau_ceti_shuttles", 1)
 
 
-def test_e1m1_loads_and_runs_60s_with_the_service(monkeypatch, capsys):
+def test_e1m1_runs_with_shuttles_circling_the_dry_docks(monkeypatch, capsys):
     """E1M1 ends the mission on any non-player death in DryDock (SDK
-    E1M1.py:993-1000; accepted, spec §6). With the service running it must
-    load and run a minute without an exception and without GameOver."""
+    E1M1.py:993-1000; accepted, spec §6). With the service running, shuttles
+    reach the Dry Docks and circle there (first arrival ~105 s, circling
+    ~145 s) for the run, with no exception and no GameOver."""
     hm.load("Maelstrom.Episode1.E1M1.E1M1")
     import MissionLib
     over = []
@@ -154,9 +155,18 @@ def test_e1m1_loads_and_runs_60s_with_the_service(monkeypatch, capsys):
     monkeypatch.setattr(MissionLib, "GameOver",
                         lambda *a: over.append(a) or real(*a))
     ss = _ss()
-    hm.tick(60.0)
+    in_dry_dock, circling = set(), set()
+    for _ in range(210):
+        hm.tick(1.0)
+        for s in ss.roster():
+            pSet = None if s.ship is None else s.ship.GetContainingSet()
+            if pSet is not None and pSet.GetName() == "DryDock":
+                in_dry_dock.add(s.name)
+                if s.phase is ss.Phase.CIRCLING:
+                    circling.add(s.name)
     assert len(ss.roster()) == 10
-    assert ss.roster()[0].phase is not ss.Phase.DOCKED
+    assert in_dry_dock, "no shuttle reached the Dry Docks in 210 s"
+    assert circling, "no shuttle circled a dry dock in 210 s"
     assert ss.losses() == []
     assert over == []
     assert not MissionLib.g_bFFGameOver

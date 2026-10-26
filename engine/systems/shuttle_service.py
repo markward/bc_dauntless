@@ -467,6 +467,14 @@ class _ShuttleOwner:
     restores_after_battle = True
 
     def rebuild(self, old, record):
+        """Insurance, should a restore path ever ask: the shuttle whose
+        current ship is `old` goes DOCKED and drops it (a fresh ship at its
+        next launch). `old` is never re-added and nothing is built."""
+        for s in _roster:
+            if s.index == record.key and s.ship is old:
+                _dock(s)
+                s.ship = None
+                s.killer = None
         return None
 
     def after_rebuild(self, new, record) -> None:
@@ -600,6 +608,7 @@ def _battle_ended() -> None:
                 _dock(s)
                 _discard(ship, s.name)
                 s.ship = None
+                s.killer = None     # the discarded ship's, not the next one's
         except Exception as exc:  # noqa: BLE001 - the others still come back
             _park(s, exc)
 
