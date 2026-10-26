@@ -37,15 +37,21 @@ TEST(ViewscreenRttSize, HeightCoversASmallScreenWithTheFloor) {
     EXPECT_EQ(height_for_extent({100.0f, 50.0f}), kMinHeight);
 }
 
+TEST(ViewscreenRttSize, HeightIsTheFootprintScaledDown) {
+    EXPECT_FLOAT_EQ(kFootprintScale, 0.9f);
+    EXPECT_EQ(height_for_extent({0.0f, 1000.0f}), 900);
+}
+
 TEST(ViewscreenRttSize, HeightRoundsUpToTheStep) {
-    EXPECT_EQ(height_for_extent({500.0f, 500.0f}), 540);
-    EXPECT_EQ(height_for_extent({100.0f, 720.0f}), 720);
-    EXPECT_EQ(height_for_extent({100.0f, 720.5f}), 810);
+    // Scaled first, then rounded: 500 -> 450, 800 -> 720, 800.5 -> 720.45.
+    EXPECT_EQ(height_for_extent({500.0f, 500.0f}), 450);
+    EXPECT_EQ(height_for_extent({100.0f, 800.0f}), 720);
+    EXPECT_EQ(height_for_extent({100.0f, 800.5f}), 810);
 }
 
 TEST(ViewscreenRttSize, AWideScreenTakesItsHeightFromItsWidth) {
-    // 1600 wide at 16:9 needs 900 tall, more than the 400 it spans.
-    EXPECT_EQ(height_for_extent({1600.0f, 400.0f}), 900);
+    // 1600 wide at 16:9 needs 900 tall, more than the 400 it spans; scaled 810.
+    EXPECT_EQ(height_for_extent({1600.0f, 400.0f}), 810);
 }
 
 TEST(ViewscreenRttSize, HeightIsCapped) {

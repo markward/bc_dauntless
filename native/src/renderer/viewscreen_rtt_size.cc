@@ -35,7 +35,7 @@ std::optional<PixelExtent> projected_extent_px(const glm::mat4& view_proj,
 }
 
 int height_for_extent(PixelExtent px) {
-    const float need = std::max(px.h, px.w * 9.0f / 16.0f);
+    const float need = std::max(px.h, px.w * 9.0f / 16.0f) * kFootprintScale;
     const int steps = static_cast<int>(std::ceil(need / static_cast<float>(kHeightStep)));
     return std::clamp(steps * kHeightStep, kMinHeight, kMaxHeight);
 }

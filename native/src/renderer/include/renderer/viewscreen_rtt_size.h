@@ -20,6 +20,9 @@ constexpr int kMaxHeight = 1080;
 /// Heights are multiples of this (widths then multiples of 160), so a small
 /// camera move does not change the size.
 constexpr int kHeightStep = 90;
+/// The feed is this fraction of the measured footprint (before rounding):
+/// full one-to-one was a bit more than the screen needs (Mark, 2026-10-26).
+constexpr float kFootprintScale = 0.9f;
 /// How long a smaller size must be wanted before the feed shrinks to it.
 constexpr double kShrinkDelayS = 0.5;
 
@@ -34,8 +37,9 @@ std::optional<PixelExtent> projected_extent_px(const glm::mat4& view_proj,
                                                glm::vec3 lo, glm::vec3 hi,
                                                int fw, int fh);
 
-/// The 16:9 feed height that covers `px` in both directions, rounded up to
-/// kHeightStep and clamped to [kMinHeight, kMaxHeight].
+/// The 16:9 feed height that covers `px` in both directions, scaled by
+/// kFootprintScale, rounded up to kHeightStep and clamped to
+/// [kMinHeight, kMaxHeight].
 int height_for_extent(PixelExtent px);
 
 constexpr int width_for_height(int h) { return h * 16 / 9; }
