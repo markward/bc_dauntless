@@ -19,6 +19,9 @@ Spec: `docs/superpowers/specs/2026-10-25-home-stations-design.md`. Status: built
 ## Star map faction icons
 `engine/systems/station_factions.py` lists, per charted system, the factions with a standing home station there: the station script's species in the ship catalog, `Neutral` or uncatalogued (Biranu) adds nothing, Federation first then alphabetical. The star map reads it at every opening (`star_map_panel._faction_icons`) and puts each emblem (`ship_catalog.insignia_path`) between the star and its name, inside the label, so a name a mission hides takes its emblems with it. A faction with no emblem shows nothing. Presence is stations only (Mark, 2026-10-25).
 
+## Warp arrival beside the Dry Dock
+DryDock's "Player Start" (BC's default warp arrival) is one unit from the Dry Dock station, so a default warp arrived inside the dock (Mark, live 2026-10-26). `engine/systems/arrival_points.py` adds a "Dauntless Arrival" waypoint to the region from the region hook, 20 GU forward and 30 GU left of "Player Start" in its own frame and facing the same way. The player's tunnel arrival (`warp._PlacePlayerAction`) and in-system dash (`dash.start_set_course`) take it in place of the default. A placement a mission linked is kept. A ship in a WarpSequence also uses `_PlacePlayerAction`, so an NPC that warps in to the default point arrives there too.
+
 ## Gotchas
 - A rebuild loses pre-battle scars (the renderer cannot clear one hull's wear); a rebuilt rock starts at rest.
 - The Prendel outpost reappears in E6M4 until world state lands.

@@ -243,7 +243,9 @@ def start_set_course(player, dest_set, placement_name, queues,
     from engine.systems.warp_path import plan_path
     if dest_set is None:
         return False
-    placement = placement_name or _FALLBACK_PLACEMENT
+    from engine.systems import arrival_points
+    placement = arrival_points.placement_in(
+        dest_set, placement_name or _FALLBACK_PLACEMENT)
     wp = dest_set.GetObject(placement)
     if wp is None:
         placement = _FALLBACK_PLACEMENT

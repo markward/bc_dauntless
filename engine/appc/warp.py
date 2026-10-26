@@ -801,8 +801,12 @@ class _PlacePlayerAction(TGAction):
             if s.GetObject(ship.GetName()) is ship:
                 s.RemoveObjectFromSet(ship.GetName())
         dest.AddObjectToSet(ship, ship.GetName())
-        ship.PlaceObjectByName(self._placement)
-        _begin_npc_arrival(ship, dest, self._placement)
+        # A region whose default arrival sits on a station (DryDock) has its
+        # own point; a placement a mission linked is kept (arrival_points).
+        from engine.systems import arrival_points
+        placement = arrival_points.placement_in(dest, self._placement)
+        ship.PlaceObjectByName(placement)
+        _begin_npc_arrival(ship, dest, placement)
 
         # Warp arrival velocity: EXACTLY ZERO. The ship arrives at rest.
         #

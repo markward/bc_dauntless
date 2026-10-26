@@ -5,7 +5,7 @@ Every path that creates a mapped region set -- warp arrival
 Systems.X.Y.Initialize() directly (E7M3 does eight), and system loading --
 ends in that region module's Initialize(). So that call is wrapped: BC's body
 runs unchanged, then apply_map.apply_to_set, then
-home_stations.place_for_set. Installed from the SDK loaders'
+home_stations.place_for_set, then arrival_points.add_for_set. Installed from the SDK loaders'
 post-exec hook (engine/appc/sdk_overrides.py), the same place ship-data
 overrides are installed.
 
@@ -91,6 +91,7 @@ def on_region_module_exec(module, qualname: str) -> None:
         if pSet is not None:
             apply_map.apply_to_set(pSet, set_name)
             _place_home_stations(pSet, set_name)
+            _add_arrival_points(pSet, set_name)
         return result
 
     setattr(Initialize, _WRAPPED_ATTR, True)
@@ -105,6 +106,17 @@ def _place_home_stations(pSet, set_name: str) -> None:
         home_stations.place_for_set(pSet, set_name)
     except Exception as exc:  # noqa: BLE001 - a station must not break a region
         print(f"[home-stations] {set_name}: placement failed: "
+              f"{type(exc).__name__}: {exc}", flush=True)
+
+
+def _add_arrival_points(pSet, set_name: str) -> None:
+    """Add the set's moved warp arrival point (engine/systems/arrival_points).
+    Never raises, for the same reason as the stations."""
+    try:
+        from engine.systems import arrival_points
+        arrival_points.add_for_set(pSet, set_name)
+    except Exception as exc:  # noqa: BLE001 - an arrival point must not break a region
+        print(f"[arrival-points] {set_name}: failed: "
               f"{type(exc).__name__}: {exc}", flush=True)
 
 
