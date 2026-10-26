@@ -62,6 +62,7 @@ struct Dials {   // defaults MUST equal engine/rocks/minor_dials.py DEFAULTS
     float cloud_fade_in_seconds = 1.5f;
     float contact_margin_gu = 0.1f, shove_transfer = 0.6f, shove_min_gups = 0.3f;
     float shove_damp_seconds = 4.0f, shove_tumble = 1.5f;
+    float shove_lateral = 0.5f;          // slide speed along the face, x closing speed
     int   max_shoves_per_frame = 64;
     float teleport_gu = 20000.0f, contact_cooldown_s = 0.5f;
     float debris_damp_seconds = 6.0f;
@@ -111,11 +112,19 @@ float sweep_min_distance(const SweepBox& b, const glm::vec3& seg0, const glm::ve
 struct ShoveState { glm::vec3 offset{0.0f}, vel{0.0f}; float spin = 0.0f, spin_rate = 0.0f;
                     double last_contact = -1e9; };
 // One touch: velocity along unit `push_dir` from the closing speed
-// `rel_speed` (= v_player . push_dir; receding clamps to the floor), spin
+// `rel_speed` (= v_player . push_dir; receding clamps to the floor), plus
+// shove_lateral x the closing speed along unit `slide` (slide_dir), spin
 // raised to at least shove_tumble, and the contact clock restarted when the
 // cooldown has run out. The caller moves `offset` (the positional push).
-void apply_shove(ShoveState&, const glm::vec3& push_dir, float rel_speed, double now,
-                 const Dials&);
+// shove_lateral 0 is the forward-only shove, bit for bit.
+void apply_shove(ShoveState&, const glm::vec3& push_dir, const glm::vec3& slide,
+                 float rel_speed, double now, const Dials&);
+// Which way a touched rock slides along the face it hit (unit, normal to
+// `nrm`): away from the box centre `centre`, so a rock on the bow slips off
+// the nearest edge instead of riding it. A rock dead on the centre line
+// takes a side hashed from `seed` (stable per rock, so it never jitters).
+glm::vec3 slide_dir(const SweepBox& b, const glm::vec3& centre, const glm::vec3& p,
+                    const glm::vec3& nrm, std::uint64_t seed);
 // Integrate one step: the offset persists, velocity and spin decay.
 void advance_shove(ShoveState&, float dt, const Dials&);
 

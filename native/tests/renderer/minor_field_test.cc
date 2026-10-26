@@ -740,18 +740,110 @@ TEST(MinorSweep, ZeroSegmentAndTiesPreferTheCurrentPose) {
 TEST(MinorShove, ApplyShoveSetsVelocitySpinAndCooldown) {
     Dials dl;
     minors::ShoveState sh;
-    const glm::vec3 n(0, 0, 1);
-    minors::apply_shove(sh, n, 2.0f, 10.0, dl);
-    EXPECT_EQ(sh.vel, n * (2.0f * dl.shove_transfer + dl.shove_min_gups));
+    const glm::vec3 n(0, 0, 1), side(1, 0, 0);
+    minors::apply_shove(sh, n, side, 2.0f, 10.0, dl);
+    EXPECT_EQ(sh.vel, n * (2.0f * dl.shove_transfer + dl.shove_min_gups)
+                      + side * (2.0f * dl.shove_lateral));
     EXPECT_EQ(sh.spin_rate, dl.shove_tumble);
     EXPECT_EQ(sh.last_contact, 10.0);
-    // A receding touch keeps only the floor; within the cooldown the contact
-    // clock does not move; spin never ramps down.
+    // A receding touch keeps only the floor, and no slide; within the
+    // cooldown the contact clock does not move; spin never ramps down.
     sh.spin_rate = 9.0f;
-    minors::apply_shove(sh, n, -5.0f, 10.0 + 0.5 * dl.contact_cooldown_s, dl);
+    minors::apply_shove(sh, n, side, -5.0f, 10.0 + 0.5 * dl.contact_cooldown_s, dl);
     EXPECT_EQ(sh.vel, n * dl.shove_min_gups);
     EXPECT_EQ(sh.spin_rate, 9.0f);
     EXPECT_EQ(sh.last_contact, 10.0);
+}
+
+TEST(MinorShove, ZeroLateralIsTheOldShoveBitForBit) {
+    // shove_lateral 0 must reproduce the pre-slide velocity exactly (the
+    // RockPerfEquivalence digests pin it there).
+    Dials dl;
+    dl.shove_lateral = 0.0f;
+    minors::ShoveState a, b;
+    const glm::vec3 n = glm::normalize(glm::vec3(0.3f, -0.2f, 0.9f));
+    minors::apply_shove(a, n, glm::vec3(0, 1, 0), 3.7f, 1.0, dl);
+    EXPECT_EQ(a.vel, n * (3.7f * dl.shove_transfer + dl.shove_min_gups));
+    minors::apply_shove(b, n, glm::vec3(0), 3.7f, 1.0, dl);
+    EXPECT_EQ(a.vel, b.vel);
+}
+
+TEST(MinorShove, SlideDirRunsAlongTheFaceAwayFromTheCentre) {
+    minors::PlayerBox pb; pb.half_mu = glm::vec3(1.0f);
+    const auto b = minors::sweep_box_of(pb, 0.0f);
+    const glm::vec3 c(0), front(0, 1, 0);
+    EXPECT_EQ(minors::slide_dir(b, c, {0.3f, 1.2f, 0}, front, 7), glm::vec3(1, 0, 0));
+    const glm::vec3 s = minors::slide_dir(b, c, {-0.3f, 1.2f, 0.4f}, front, 7);
+    EXPECT_NEAR(s.x, -0.6f, 1e-6f);
+    EXPECT_NEAR(s.y, 0.0f, 1e-6f);
+    EXPECT_NEAR(s.z, 0.8f, 1e-6f);
+}
+
+TEST(MinorShove, SlideDirDeadCentrePicksAStableSideInTheFace) {
+    minors::PlayerBox pb; pb.half_mu = glm::vec3(1.0f);
+    const auto b = minors::sweep_box_of(pb, 0.0f);
+    const glm::vec3 front(0, 1, 0), p(0, 1.2f, 0);
+    bool differs = false;
+    const glm::vec3 s0 = minors::slide_dir(b, glm::vec3(0), p, front, 0);
+    for (std::uint64_t seed = 0; seed < 16; ++seed) {
+        const glm::vec3 s = minors::slide_dir(b, glm::vec3(0), p, front, seed);
+        EXPECT_NEAR(glm::length(s), 1.0f, 1e-5f);
+        EXPECT_NEAR(glm::dot(s, front), 0.0f, 1e-6f);
+        EXPECT_EQ(s, minors::slide_dir(b, glm::vec3(0), p, front, seed));   // stable
+        differs = differs || glm::length(s - s0) > 0.1f;
+    }
+    EXPECT_TRUE(differs);                       // the side is per rock, not global
+}
+
+namespace {
+// A ship (box_at: 0.5 x 1.0 x 0.3 GU half extents) cruising +y at 6 GU/s for
+// `seconds` into a minor ahead of it at x = `x`. Returns the minor's final
+// position relative to the ship's centre.
+glm::vec3 plough(float x, float lateral, float seconds = 3.0f) {
+    auto f = field_with_fragments();
+    auto dl = f.dials(); dl.shove_lateral = lateral; f.set_dials(dl);
+    f.add_cloud(single_minor_at({x, 3.0, -20}), 0.0);
+    auto in = looking_down_minus_z(0.0);
+    const int frames = int(seconds * 60.0f);
+    glm::vec3 ship{0, 0, -20};
+    for (int i = 0; i <= frames; ++i) {
+        in.game_time = i / 60.0;
+        ship.y = 6.0f * float(in.game_time);
+        in.player = box_at(ship);
+        f.step(in);
+    }
+    glm::vec3 p; f.minor_position(5, 0, p);
+    return p - ship;
+}
+}  // namespace
+
+TEST(MinorContact, WithoutTheSlideAMinorRidesTheBow) {
+    // The bug: a forward-only shove slower than the ship never separates.
+    const glm::vec3 rel = plough(0.1f, 0.0f);
+    EXPECT_GT(rel.y, 1.0f);                     // still ahead of the bow face
+    EXPECT_LT(std::fabs(rel.x), 0.5f);          // ... and in front of it
+}
+
+TEST(MinorContact, AnOffCentreMinorSlidesOffTheBowToItsOwnSide) {
+    const glm::vec3 rel = plough(0.1f, Dials{}.shove_lateral);
+    EXPECT_LT(rel.y, 0.0f);                     // the ship has passed it
+    EXPECT_GT(rel.x, 0.5f);                     // out to +x, beside the hull
+}
+
+TEST(MinorContact, ADeadCentreMinorSlidesOffTheBowToo) {
+    const glm::vec3 rel = plough(0.0f, Dials{}.shove_lateral);
+    EXPECT_LT(rel.y, 0.0f);
+    EXPECT_GT(std::max(std::fabs(rel.x) - 0.5f, std::fabs(rel.z) - 0.3f), 0.0f);
+}
+
+TEST(MinorContact, AParkedShipSlidesNothing) {
+    auto f = field_with_fragments();
+    f.add_cloud(single_minor_at({0.1, 1.05, -20}), 0.0);   // just touching the bow
+    auto in = looking_down_minus_z(0.0);
+    in.player = box_at({0, 0, -20});
+    for (int i = 0; i <= 120; ++i) { in.game_time = i / 60.0; f.step(in); }
+    glm::vec3 p; f.minor_position(5, 0, p);
+    EXPECT_NEAR(p.x, 0.1f, 1e-4f);              // pushed out along +y only
 }
 
 TEST(MinorShove, AdvanceShoveHalvesOverTheDampTime) {

@@ -1302,7 +1302,8 @@ void NearField::step(const NearStepInput& in) {
             minors::ShoveState& sh = st.s;
             sh.offset += push;                   // sit on the surface
             const bool report = t - sh.last_contact >= md.contact_cooldown_s;
-            minors::apply_shove(sh, nrm, glm::dot(v_player, nrm), t, md);
+            minors::apply_shove(sh, nrm, minors::slide_dir(sb, ck, p, nrm, key),
+                                glm::dot(v_player, nrm), t, md);
             if (report) small_contacts_.push_back({glm::dvec3(q) + in.render_origin, radius, rel_speed});
             ++touches;
         }

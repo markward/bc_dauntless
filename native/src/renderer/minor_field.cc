@@ -95,11 +95,35 @@ float sweep_min_distance(const SweepBox& b, const glm::vec3& seg0, const glm::ve
     return f(s);
 }
 
-void apply_shove(ShoveState& sh, const glm::vec3& push_dir, float rel_speed, double now,
-                 const Dials& d) {
-    sh.vel = push_dir * (std::max(rel_speed, 0.0f) * d.shove_transfer + d.shove_min_gups);
+void apply_shove(ShoveState& sh, const glm::vec3& push_dir, const glm::vec3& slide,
+                 float rel_speed, double now, const Dials& d) {
+    const float closing = std::max(rel_speed, 0.0f);
+    sh.vel = push_dir * (closing * d.shove_transfer + d.shove_min_gups);
+    // The forward shove alone is slower than the ship, so the ship catches
+    // the rock again next frame and ploughs it along for as long as it flies
+    // straight: the slide walks it off the face. Skipped at 0 so the old
+    // shove stays bit-exact.
+    if (d.shove_lateral > 0.0f && closing > 0.0f) sh.vel += slide * (closing * d.shove_lateral);
     sh.spin_rate = std::max(sh.spin_rate, d.shove_tumble);   // re-touches do not ramp
     if (now - sh.last_contact >= d.contact_cooldown_s) sh.last_contact = now;
+}
+
+glm::vec3 slide_dir(const SweepBox& b, const glm::vec3& centre, const glm::vec3& p,
+                    const glm::vec3& nrm, std::uint64_t seed) {
+    const glm::vec3 off = p - centre;
+    const glm::vec3 along = off - nrm * glm::dot(off, nrm);
+    const float len = glm::length(along);
+    if (len > 1e-4f) return along / len;
+    // Dead centre: a hashed angle in the face's plane, measured from the box
+    // axis least aligned with the normal (fixed in the ship's frame).
+    int k = 0;
+    for (int ax = 1; ax < 3; ++ax)
+        if (std::fabs(glm::dot(b.axes[ax], nrm)) < std::fabs(glm::dot(b.axes[k], nrm))) k = ax;
+    const glm::vec3 t1 = glm::normalize(b.axes[k] - nrm * glm::dot(b.axes[k], nrm));
+    const glm::vec3 t2 = glm::cross(nrm, t1);
+    Rng r{seed ^ 0x51D3D1E5ULL};
+    const float a = r.unit() * 6.28318530718f;
+    return t1 * std::cos(a) + t2 * std::sin(a);
 }
 
 void advance_shove(ShoveState& sh, float dt, const Dials& d) {
@@ -440,7 +464,9 @@ void MinorField::step_contact(const PlayerBox& box, const glm::dvec3& render_ori
                 sh.offset += push;                             // sit on the surface
                 cl.pos[i] += push;
                 const bool report = t - sh.last_contact >= dials_.contact_cooldown_s;
-                apply_shove(sh, nrm, glm::dot(v_player, nrm), t, dials_);
+                const std::uint64_t seed = (static_cast<std::uint64_t>(id) << 32) | i;
+                apply_shove(sh, nrm, slide_dir(sb, ck, p, nrm, seed),
+                            glm::dot(v_player, nrm), t, dials_);
                 if (report) contacts_.push_back({glm::dvec3(q) + render_origin, radius, rel_speed});
                 ++touches;
             }

@@ -3076,6 +3076,7 @@ mr::Dials dials_of(const py::dict& d) {
     f("shove_min_gups", o.shove_min_gups);
     f("shove_damp_seconds", o.shove_damp_seconds);
     f("shove_tumble", o.shove_tumble);
+    f("shove_lateral", o.shove_lateral);
     i("max_shoves_per_frame", o.max_shoves_per_frame);
     f("teleport_gu", o.teleport_gu);
     f("contact_cooldown_s", o.contact_cooldown_s);
@@ -3095,6 +3096,7 @@ py::dict dials_dict(const mr::Dials& o) {
     d["shove_min_gups"] = py_float(o.shove_min_gups);
     d["shove_damp_seconds"] = py_float(o.shove_damp_seconds);
     d["shove_tumble"] = py_float(o.shove_tumble);
+    d["shove_lateral"] = py_float(o.shove_lateral);
     d["max_shoves_per_frame"] = o.max_shoves_per_frame;
     d["teleport_gu"] = py_float(o.teleport_gu);
     d["contact_cooldown_s"] = py_float(o.contact_cooldown_s);
