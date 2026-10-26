@@ -181,7 +181,7 @@ _DOCK_CLEAR_GU = 200.0
 # name or group in Starbase12 or DryDock. E8M2: EnterSet (E8M2.py:1533-1537)
 # targets, for the player, every ship but the Chairo entering Starbase12
 # before Omega Draconis 5. Audit of the other missions using the two sets:
-# .superpowers/sdd/2026-10-26-tau-ceti-shuttles/final-fix-report.md.
+# docs/engine/home-stations.md, "Mission exclusions".
 _EXCLUDED_MISSIONS = frozenset({"Maelstrom.Episode8.E8M2.E8M2"})
 # Distinct tick-failure lines printed at most (type + first 120 characters).
 _TICK_ERRORS_MAX = 16
