@@ -16,14 +16,23 @@ clears a finished tree) or the leg's own completion test holds. The Starbase
 
 - UNDOCKING: BC's AI.Compound.UndockFromStarbase, then out along the bay axis
   to a clearance point beyond "Docking Exit End".
-- DEPARTING: intercept to the region's lane point.
-- WARPING_OUT: BC's Warp to the Dry Docks lane point; done once in DryDock
-  and out of warp.
-- APPROACHING: intercept to a clearance point outside the bay mouth.
-- ENTERING: FollowWaypoints "Docking Entry" -> "Docking Entry End" (built the
-  way DockWithStarbase.MakeWaypoints builds them), then docked.
-- WAITING: Starbase 12 missing or dead; hold at the lane point until it is
+- DEPARTING: intercept to the shuttle's own lane point.
+- WARPING_OUT: BC's Warp to its own Dry Docks lane point; done once in
+  DryDock and out of warp.
+- APPROACHING: intercept to its own point round a clearance point outside
+  the bay mouth; it holds there while the bay is taken.
+- ENTERING: FollowWaypoints to that clearance point on the bay axis, then
+  "Docking Entry" -> "Docking Entry End" (built the way
+  DockWithStarbase.MakeWaypoints builds them), then docked.
+- WAITING: Starbase 12 missing or dead; hold at its lane point until it is
   back.
+
+One shuttle in the bay at a time: none launches or enters while another is
+UNDOCKING or ENTERING, or while the player docks, is docked or undocks.
+Every shuttle has its own point (a 50 GU ring, ten points 31 GU apart) round
+each region's lane point, where it arrives, departs and holds, and its own
+holding point round the bay's clearance point, so two shuttles never share a
+spot even once the one-a-minute stagger has drifted.
 
 Collisions with Starbase 12 are off on the bay legs (UNDOCKING, ENTERING) and
 back on after. AI.Compound.DockWithStarbase itself is never used: it takes
@@ -32,20 +41,29 @@ the player's camera and starts a cutscene.
 The Dry Docks legs:
 
 - TO_DOCK: intercept to a random standing dry dock ("Dry Dock", "Dry Dock2",
-  "Dry Dock3"; the service's own Random) among those the fewest other
-  shuttles are bound for, ending 2x its radius out.
-- CIRCLING: BC's CircleObject round it, left side in, until the dock ->
-  shuttle direction has turned CIRCLES full turns (real motion only). A
-  shuttle sharing a dock circles on its own orbit (_ORBIT_STEP_GU further
-  out per slot): on one orbit two shuttles can ride together.
-- LEAVING_DOCKS: intercept to the DryDock lane point.
-- WARPING_BACK: BC's Warp to the Starbase 12 lane point; done once in
+  "Dry Dock3"; the service's own Random) with a free orbit, among those the
+  fewest other shuttles are bound for, stopping at the orbit's outer edge.
+  No dock with a free orbit: hold at its own Dry Docks lane point.
+- CIRCLING: BC's CircleObject round it, left side in, on its own orbit band,
+  until the dock -> shuttle direction has turned CIRCLES full turns (real
+  motion only) and it is the outermost shuttle there; else whole turns more.
+- LEAVING_DOCKS: intercept to its own Dry Docks lane point.
+- WARPING_BACK: BC's Warp to its own Starbase 12 lane point; done once in
   Starbase12 and out of warp, then APPROACHING.
+
+Orbit bands come from the dock layout (controller ruling R7), not from the
+plan's 40 / 60 GU floors, which it supersedes: Dry Dock and Dry Dock3 are 89
+GU apart, so orbits that wide would cross. See _ORBIT_FLOOR_GU. Orbits fill
+outwards and empty inwards, one shuttle flying in or out per dock at a time,
+so no shuttle crosses another's orbit.
 
 The chosen dock destroyed or gone on TO_DOCK or CIRCLING: choose again;
 none standing: LEAVING_DOCKS. None of these legs is wrapped in BC's
 AvoidObstacles preprocessor (the engine has no other avoidance), so obstacle
-avoidance never pushes a shuttle off its circle.
+avoidance never pushes a shuttle off its circle. The docks and the Station
+are cleared by route geometry alone, measured against today's layout
+(home_stations.json): a change to where the Dry Docks stations stand must be
+re-measured.
 """
 from __future__ import annotations
 
@@ -70,9 +88,14 @@ FAR_SET = "DryDock"
 _ANCHORS = {HOME_SET: "Starbase 12", FAR_SET: "Dry Dock"}
 _BAY_EXIT = "Docking Exit Start"
 _STAGGER_S = 60.0
-# Intercepts to a lane or the approach point.
-_INTERCEPT_GU = 100.0
+# Intercepts to a shuttle's own point (lane, hold, approach) end this close:
+# that point is where it arrives, departs and holds.
+_POINT_GU = 10.0
 _IN_SYSTEM_WARP_GU = 150.0
+# Each shuttle's own point is on a ring of this radius round the region's
+# lane point (and round the bay's outside clearance point): ten points 31 GU
+# apart, so two shuttles never share an arrival, departure or holding spot.
+_RING_GU = 50.0
 # Clearance points, this far out along the bay axis from the bay mouth. The
 # bay is a radial slot 68-108 GU from Starbase 12's centre and the hull's
 # bound is ~150 GU, while the lane point lies along the station's forward,
@@ -85,8 +108,8 @@ _ENTRY = "Docking Entry"
 _ENTRY_END = "Docking Entry End"
 # An ENTERING shuttle farther than this from "Docking Entry" was moved off the
 # bay path (BC's player docking clears 300 GU round it): it approaches again.
-# The approach always ends within _INTERCEPT_GU + _CLEAR_GU of it.
-_PUSHED_GU = _INTERCEPT_GU + _CLEAR_GU + 25.0
+# The approach ends within _POINT_GU of a ring point ~158 GU from it.
+_PUSHED_GU = 275.0
 # FollowWaypoints is done within 8 GU of its last waypoint.
 _DOCKED_GU = 20.0
 # The player this close to the bay mouth ("Docking Entry Start") owns the bay
@@ -99,17 +122,24 @@ _BAY_NEAR_GU = 200.0
 _BAY_AI_MODULES = ("DockWithStarbase", "UndockFromStarbase")
 # The dry docks a shuttle circles (home stations in DryDock).
 _DRY_DOCKS = ("Dry Dock", "Dry Dock2", "Dry Dock3")
-# Intercept to a dock ends 2x its radius out, at least this far; the circle
-# band is 1.5x / 2.0x its radius, at least these.
-_DOCK_INTERCEPT_MIN_GU = 60.0
-_CIRCLE_NEAR_MIN_GU = 40.0
-_CIRCLE_FAR_MIN_GU = 60.0
-# Every shuttle circles at the same speed in the same plane (it comes from
-# the same lane), so two on one orbit keep whatever gap they joined with --
-# and with a launch every 60 s and ~124 s a turn, that gap can be ~0 (two
-# shuttles measured 0.06 GU apart). A shuttle sharing a dock circles on its
-# own orbit, this much further out per slot.
-_ORBIT_STEP_GU = 10.0
+# Orbit bands round a dry dock, from the layout (controller ruling R7; the
+# plan's 40 / 60 GU floors are superseded -- Dry Dock and Dry Dock3 are 89 GU
+# apart, so orbits that wide would cross). No orbit inside max(2 x the dock's
+# hull radius, _ORBIT_FLOOR_GU); none beyond half the distance to the nearest
+# other standing station in DryDock minus _ORBIT_CAP_MARGIN_GU, so orbits
+# round two docks never meet. Bands are _BAND_GU wide, _BAND_GAP_GU apart,
+# the first _BAND_INSET_GU outside the floor: CircleObject dips up to ~1.7
+# GU inside a band's near edge while it spirals in from the far edge (then
+# holds near + 1.0), and an intercept stopping at the far edge stops ~0.5 GU
+# inside it (measured).
+_ORBIT_FLOOR_GU = 20.0
+_ORBIT_CAP_MARGIN_GU = 5.0
+_BAND_GU = 7.0
+_BAND_GAP_GU = 3.0
+_BAND_INSET_GU = 2.0
+# A shuttle that left a dock is still on its way out (in the corridor towards
+# the lane) this close to it.
+_DOCK_CLEAR_GU = 200.0
 # Distinct tick-failure lines printed at most (type + first 120 characters).
 _TICK_ERRORS_MAX = 16
 
@@ -140,10 +170,11 @@ class Shuttle:
     bearing_accum: float = 0.0
     bearing_prev: tuple | None = None   # dock -> shuttle last tick (dock frame)
     orbit_slot: int = 0          # which of the dock's orbits it circles on
+    leave_at: float = 0.0        # bearing_accum at which it may next leave
     ai: object = None            # the AI the current leg gave the ship
     leg: Phase | None = None     # the phase `ai` was given for
     bay_station: object = None   # collisions with it are off (a bay leg)
-    held: bool = False           # holding outside the bay for the player
+    held: bool = False           # holding: outside the bay, or for a dock
 
 
 _roster: list = []
@@ -175,28 +206,60 @@ def reset() -> None:
 
 # ── Lanes ────────────────────────────────────────────────────────────────────
 
+def _lane_name(s: Shuttle) -> str:
+    return "%s %d" % (LANE_NAME, s.index)
+
+
+def _approach_name(s: Shuttle) -> str:
+    return "%s %d" % (_APPROACH_POINT, s.index)
+
+
+def _ring(index: int, a, b) -> tuple:
+    """Shuttle `index`'s offset on a _RING_GU ring spanned by unit vectors
+    `a` and `b`: ten points 31 GU apart."""
+    t = 2.0 * math.pi * (index - 1) / COUNT
+    c, s = _RING_GU * math.cos(t), _RING_GU * math.sin(t)
+    return (c * a[0] + s * b[0], c * a[1] + s * b[1], c * a[2] + s * b[2])
+
+
+def _xyz(p) -> tuple:
+    return (p.x, p.y, p.z)
+
+
+def _put_waypoint(pSet, set_name: str, name: str, at: tuple, fwd, up) -> None:
+    import App
+    wp = pSet.GetObject(name)
+    if wp is None:
+        wp = App.Waypoint_Create(name, set_name, None)
+        if pSet.GetObject(name) is not wp:
+            pSet.AddObjectToSet(wp, name)
+        wp.SetStatic(1)
+        wp.SetNavPoint(0)
+    wp.SetTranslateXYZ(*at)
+    wp.AlignToVectors(fwd, up)
+    wp.Update(0)
+
+
 def _add_lane(pSet, set_name: str) -> None:
     """A waypoint LANE_GU out from the region's home station along its world
-    forward, facing away from it. Never "Player Start"."""
+    forward, facing away from it, and round it one point per shuttle (its
+    arrival, departure and holding point). Never "Player Start"."""
     anchor_name = _ANCHORS.get(set_name)
     if anchor_name is None or pSet.GetObject(LANE_NAME) is not None:
         return
     station = pSet.GetObject(anchor_name)
     if station is None:
         return
-    import App
     loc = station.GetWorldLocation()
     rot = station.GetWorldRotation()
     fwd, up = rot.GetCol(1), rot.GetCol(2)
-    wp = App.Waypoint_Create(LANE_NAME, set_name, None)
-    if pSet.GetObject(LANE_NAME) is not wp:
-        pSet.AddObjectToSet(wp, LANE_NAME)
-    wp.SetStatic(1)
-    wp.SetNavPoint(0)
-    wp.SetTranslateXYZ(loc.x + LANE_GU * fwd.x, loc.y + LANE_GU * fwd.y,
-                       loc.z + LANE_GU * fwd.z)
-    wp.AlignToVectors(fwd, up)
-    wp.Update(0)
+    centre = (loc.x + LANE_GU * fwd.x, loc.y + LANE_GU * fwd.y,
+              loc.z + LANE_GU * fwd.z)
+    for i in range(1, COUNT + 1):
+        off = _ring(i, _xyz(rot.GetCol(0)), _xyz(up))
+        _put_waypoint(pSet, set_name, "%s %d" % (LANE_NAME, i),
+                      tuple(c + o for c, o in zip(centre, off)), fwd, up)
+    _put_waypoint(pSet, set_name, LANE_NAME, centre, fwd, up)
 
 
 def _both_regions():
@@ -374,7 +437,8 @@ def _place_from_hardpoint(wp, station, hardpoint: str,
 
 def _entry_points(station) -> None:
     """"Docking Entry" -> "Docking Entry End", built as MakeWaypoints builds
-    them, and the approach point _CLEAR_GU outside the bay mouth."""
+    them, the approach point _CLEAR_GU outside the bay mouth, and round it
+    (square to the bay axis) one approach / holding point per shuttle."""
     pSet = station.GetContainingSet()
     start = _placement(pSet, _ENTRY, 5.0)
     end = _placement(pSet, _ENTRY_END, 2.0)
@@ -383,8 +447,19 @@ def _entry_points(station) -> None:
         start.InsertAfterObj(end)
     _place_from_hardpoint(start, station, "Docking Entry Start")
     _place_from_hardpoint(end, station, "Docking Entry End")
-    _place_from_hardpoint(_placement(pSet, _APPROACH_POINT, 4.0), station,
-                          "Docking Entry Start", _CLEAR_GU)
+    centre = _placement(pSet, _APPROACH_POINT, 4.0)
+    _place_from_hardpoint(centre, station, "Docking Entry Start", _CLEAR_GU)
+    _pos, fwd, up = _hardpoint_world(station, "Docking Entry Start")
+    f, u = _xyz(fwd), _xyz(up)
+    side = (f[1] * u[2] - f[2] * u[1], f[2] * u[0] - f[0] * u[2],
+            f[0] * u[1] - f[1] * u[0])
+    c = _xyz(centre.GetWorldLocation())
+    for i in range(1, COUNT + 1):
+        wp = _placement(pSet, "%s %d" % (_APPROACH_POINT, i), 4.0)
+        off = _ring(i, u, side)
+        wp.SetTranslateXYZ(c[0] + off[0], c[1] + off[1], c[2] + off[2])
+        wp.AlignToVectors(fwd, up)
+        wp.UpdateNodeOnly()
 
 
 def _exit_point(station) -> None:
@@ -435,11 +510,11 @@ def _plain(ship, name: str, module: str):
     return ai
 
 
-def _intercept(ship, target: str):
+def _intercept(ship, target: str, distance: float = _POINT_GU):
     ai = _plain(ship, "TCShuttleIntercept", "Intercept")
     script = ai.GetScriptInstance()
     script.SetTargetObjectName(target)
-    script.SetInterceptDistance(_INTERCEPT_GU)
+    script.SetInterceptDistance(distance)
     script.SetInSystemWarpDistance(_IN_SYSTEM_WARP_GU)
     return ai
 
@@ -473,74 +548,146 @@ def _start_undocking(s: Shuttle) -> None:
 
 
 def _start_departing(s: Shuttle) -> None:
-    _give_ai(s, _intercept(s.ship, LANE_NAME))
+    _give_ai(s, _intercept(s.ship, _lane_name(s)))
+
+
+def _warp_to(s: Shuttle, module: str) -> None:
+    """BC's Warp to the shuttle's own lane point in region `module`."""
+    ai = _plain(s.ship, "TCShuttleWarp", "Warp")
+    script = ai.GetScriptInstance()
+    script.SetDestinationSetName(module)
+    script.SetDestinationPlacementName(_lane_name(s))
+    _give_ai(s, ai)
 
 
 def _start_warping_out(s: Shuttle) -> None:
-    ai = _plain(s.ship, "TCShuttleWarp", "Warp")
-    script = ai.GetScriptInstance()
-    script.SetDestinationSetName("Systems.DryDock.DryDock")
-    script.SetDestinationPlacementName(LANE_NAME)
-    _give_ai(s, ai)
+    _warp_to(s, "Systems.DryDock.DryDock")
+
+
+def _standing_stations() -> dict:
+    """Name -> object for every home station in DryDock that is standing,
+    in the set and alive (the dry docks and the Station)."""
+    import App
+    from engine.systems import home_stations
+    pSet = App.g_kSetManager.GetSet(FAR_SET)
+    found = {}
+    if pSet is None:
+        return found
+    for row in home_stations.stations_for_set(FAR_SET):
+        if not home_stations.is_standing(row):
+            continue
+        obj = pSet.GetObject(row.name)
+        if obj is not None and not obj.IsDead() and not obj.IsDying():
+            found[row.name] = obj
+    return found
 
 
 def _dry_dock(name):
     """The named dry dock if it is a standing home station, in DryDock and
     alive, else None."""
-    import App
-    from engine.systems import home_stations
-    row = next((r for r in home_stations.stations_for_set(FAR_SET)
-                if r.name == name), None)
-    if row is None or not home_stations.is_standing(row):
-        return None
-    pSet = App.g_kSetManager.GetSet(FAR_SET)
-    dock = None if pSet is None else pSet.GetObject(name)
-    if dock is None or dock.IsDead() or dock.IsDying():
-        return None
-    return dock
+    return _standing_stations().get(name) if name in _DRY_DOCKS else None
 
 
-def _dock_radii(dock, slot: int = 0):
-    """(intercept distance, near, far) for circling `dock` on orbit `slot`.
-    Headless ships report GetRadius() == 0, and a dry dock's own bound is
-    small (its hardpoint hull is 8 GU), so the floors usually decide."""
-    r = dock.GetRadius()
-    out = slot * _ORBIT_STEP_GU
-    return (max(2.0 * r, _DOCK_INTERCEPT_MIN_GU),
-            max(1.5 * r, _CIRCLE_NEAR_MIN_GU) + out,
-            max(2.0 * r, _CIRCLE_FAR_MIN_GU) + out)
+def _hull_radius(obj) -> float:
+    """The larger of the object's bound (0 headless) and its hardpoint hull
+    radius."""
+    hull = obj.GetHull()
+    return max(obj.GetRadius(), 0.0 if hull is None else hull.GetRadius())
 
 
-def _at_dock(s: Shuttle) -> list:
-    """The other shuttles flying to or circling a dock."""
-    return [o for o in _roster if o is not s and o.dock_name is not None
+def _bands(dock_name) -> list:
+    """The dock's orbit bands, (near, far) innermost first (see
+    _ORBIT_FLOOR_GU): disjoint, and none reaching half way to another
+    standing station. Empty for a dock that is not standing."""
+    stations = _standing_stations()
+    dock = stations.get(dock_name)
+    if dock is None or dock_name not in _DRY_DOCKS:
+        return []
+    at = _xyz(dock.GetWorldLocation())
+    gaps = [math.dist(at, _xyz(o.GetWorldLocation()))
+            for n, o in stations.items() if n != dock_name]
+    cap = min(gaps) / 2.0 - _ORBIT_CAP_MARGIN_GU if gaps else math.inf
+    near = max(2.0 * _hull_radius(dock), _ORBIT_FLOOR_GU) + _BAND_INSET_GU
+    bands = []
+    while len(bands) < COUNT and near + _BAND_GU <= cap:
+        bands.append((near, near + _BAND_GU))
+        near += _BAND_GU + _BAND_GAP_GU
+    return bands
+
+
+def _bound_for(name, s: Shuttle) -> list:
+    """The other shuttles flying to or circling dock `name`."""
+    return [o for o in _roster if o is not s and o.dock_name == name
             and o.phase in (Phase.TO_DOCK, Phase.CIRCLING)]
 
 
+def _leaving_near(name, s: Shuttle) -> bool:
+    """Another shuttle that left dock `name` is still near it, on its way
+    out along the corridor towards the lane."""
+    dock = _dry_dock(name)
+    return dock is not None and any(
+        o is not s and o.phase is Phase.LEAVING_DOCKS and o.dock_name == name
+        and o.ship is not None and _distance(o.ship, dock) < _DOCK_CLEAR_GU
+        for o in _roster)
+
+
+def _done_circling(o: Shuttle) -> bool:
+    return o.phase is Phase.CIRCLING and \
+        o.bearing_accum >= CIRCLES * 2.0 * math.pi
+
+
+def _free_orbit(name, s: Shuttle):
+    """The orbit `s` may take at dock `name`, or None. Orbits fill outwards
+    and empty inwards, so no shuttle ever crosses another's orbit: a newcomer
+    takes the orbit outside every occupied one, if the dock has it, and only
+    while nobody is flying in to or out from that dock (they share the
+    corridor towards the lane) or waiting there to leave."""
+    others = _bound_for(name, s)
+    if (any(o.phase is Phase.TO_DOCK or _done_circling(o) for o in others)
+            or _leaving_near(name, s)):
+        return None
+    k = 1 + max((o.orbit_slot for o in others), default=-1)
+    return k if k < len(_bands(name)) else None
+
+
+def _may_leave(s: Shuttle) -> bool:
+    """Only the outermost shuttle at a dock leaves, and only while nobody is
+    flying in to or out from it."""
+    return (all(o.phase is Phase.CIRCLING and o.orbit_slot < s.orbit_slot
+                for o in _bound_for(s.dock_name, s))
+            and not _leaving_near(s.dock_name, s))
+
+
 def _start_to_dock(s: Shuttle) -> None:
-    """Fly to a random standing dry dock, one of those the fewest other
-    shuttles are bound for, on the lowest orbit free there; none standing:
-    leave."""
+    """Fly to a random standing dry dock with a free orbit, one of those the
+    fewest other shuttles are bound for; the intercept stops at the orbit's
+    outer edge. None standing: leave. None with a free orbit: hold at the
+    shuttle's own lane point until one frees."""
     s.dock_name = None
     standing = [n for n in _DRY_DOCKS if _dry_dock(n) is not None]
     if not standing:
         _enter(s, Phase.LEAVING_DOCKS)
         return
-    others = _at_dock(s)
-    count = {n: sum(o.dock_name == n for o in others) for n in standing}
+    free = {}
+    for n in standing:
+        k = _free_orbit(n, s)
+        if k is not None:
+            free[n] = k
+    if not free:
+        _give_ai(s, _intercept(s.ship, _lane_name(s)))
+        s.held = True
+        return
+    count = {n: len(_bound_for(n, s)) for n in free}
     fewest = min(count.values())
-    s.dock_name = _rng.choice([n for n in standing if count[n] == fewest])
-    taken = {o.orbit_slot for o in others if o.dock_name == s.dock_name}
-    s.orbit_slot = next(k for k in range(len(_roster) + 1) if k not in taken)
-    ai = _intercept(s.ship, s.dock_name)
-    ai.GetScriptInstance().SetInterceptDistance(
-        _dock_radii(_dry_dock(s.dock_name))[0])
-    _give_ai(s, ai)
+    s.dock_name = _rng.choice([n for n in free if count[n] == fewest])
+    s.orbit_slot = free[s.dock_name]
+    far = _bands(s.dock_name)[s.orbit_slot][1]
+    _give_ai(s, _intercept(s.ship, s.dock_name, far))
 
 
 def _start_circling(s: Shuttle) -> None:
     import App
-    _near, near, far = _dock_radii(_dry_dock(s.dock_name), s.orbit_slot)
+    near, far = _bands(s.dock_name)[s.orbit_slot]
     ai = _plain(s.ship, "TCShuttleCircle", "CircleObject")
     script = ai.GetScriptInstance()
     script.SetFollowObjectName(s.dock_name)
@@ -551,15 +698,11 @@ def _start_circling(s: Shuttle) -> None:
 
 
 def _start_leaving_docks(s: Shuttle) -> None:
-    _give_ai(s, _intercept(s.ship, LANE_NAME))
+    _give_ai(s, _intercept(s.ship, _lane_name(s)))
 
 
 def _start_warping_back(s: Shuttle) -> None:
-    ai = _plain(s.ship, "TCShuttleWarp", "Warp")
-    script = ai.GetScriptInstance()
-    script.SetDestinationSetName("Systems.Starbase12.Starbase12")
-    script.SetDestinationPlacementName(LANE_NAME)
-    _give_ai(s, ai)
+    _warp_to(s, "Systems.Starbase12.Starbase12")
 
 
 def _start_approaching(s: Shuttle) -> None:
@@ -568,22 +711,33 @@ def _start_approaching(s: Shuttle) -> None:
         _enter(s, Phase.WAITING)
         return
     _entry_points(station)
-    _give_ai(s, _intercept(s.ship, _APPROACH_POINT))
+    _give_ai(s, _intercept(s.ship, _approach_name(s)))
 
 
 def _start_entering(s: Shuttle) -> None:
+    """From the shuttle's own approach point to the shared one on the bay
+    axis, then the bay waypoints (one shuttle in the bay at a time)."""
+    import App
     station = _home_station()
     if station is None:
         _enter(s, Phase.WAITING)
         return
     _entry_points(station)
+    seq = App.SequenceAI_Create(s.ship, "TCShuttleEnter")
+    seq.SetInterruptable(1)
+    seq.SetLoopCount(1)
+    seq.SetResetIfInterrupted(1)
+    seq.SetDoubleCheckAllDone(0)
+    seq.SetSkipDormant(0)
+    seq.AddAI(_follow(s.ship, _APPROACH_POINT))
+    seq.AddAI(_follow(s.ship, _ENTRY))
     _hold_bay(s, station)
-    _give_ai(s, _follow(s.ship, _ENTRY))
+    _give_ai(s, seq)
 
 
 def _start_waiting(s: Shuttle) -> None:
     _release_bay(s)
-    _give_ai(s, _intercept(s.ship, LANE_NAME))
+    _give_ai(s, _intercept(s.ship, _lane_name(s)))
 
 
 _STARTS = {
@@ -650,11 +804,21 @@ def _check_warping_back(s: Shuttle) -> None:
 
 
 def _check_to_dock(s: Shuttle) -> None:
-    if _dry_dock(s.dock_name) is None:
+    if s.dock_name is None:
+        # Holding at its lane point for a free orbit.
+        standing = [n for n in _DRY_DOCKS if _dry_dock(n) is not None]
+        if not standing or any(_free_orbit(n, s) is not None
+                               for n in standing):
+            _enter(s, Phase.TO_DOCK)        # choose (or leave: none standing)
+        elif _leg_done(s):
+            _give_ai(s, _plain(s.ship, "TCShuttleHold", "Stay"))
+            s.held = True
+    elif _dry_dock(s.dock_name) is None:
         _enter(s, Phase.TO_DOCK)            # destroyed or gone: choose again
     elif _leg_done(s):
         s.bearing_accum = 0.0
         s.bearing_prev = None
+        s.leave_at = CIRCLES * 2.0 * math.pi
         _enter(s, Phase.CIRCLING)
 
 
@@ -688,8 +852,13 @@ def _check_circling(s: Shuttle) -> None:
     if s.bearing_prev is not None:
         s.bearing_accum += _turned(s.bearing_prev, radial)
     s.bearing_prev = radial
-    if s.bearing_accum >= CIRCLES * 2.0 * math.pi:
-        _enter(s, Phase.LEAVING_DOCKS)
+    if s.bearing_accum >= s.leave_at:
+        # Back where it started circling (on the lane side) after whole
+        # turns. Not the outermost, or the corridor is in use: one more turn.
+        if _may_leave(s):
+            _enter(s, Phase.LEAVING_DOCKS)
+        else:
+            s.leave_at += 2.0 * math.pi
     elif _leg_done(s):
         _enter(s, Phase.CIRCLING)           # AI dropped: circle on, count kept
 
@@ -700,24 +869,32 @@ def _check_leaving_docks(s: Shuttle) -> None:
 
 
 def _hold(s: Shuttle) -> None:
-    """Wait at the outside clearance point while the bay is the player's,
-    collisions with the station back on."""
+    """Wait at the shuttle's own point outside the bay while the bay is the
+    player's or another shuttle's, collisions with the station back on."""
     _release_bay(s)
     _give_ai(s, _plain(s.ship, "TCShuttleHold", "Stay"))
     s.held = True
+
+
+def _bay_free(s: Shuttle) -> bool:
+    """The bay is neither the player's nor another shuttle's (ENTERING or
+    UNDOCKING): one shuttle in the bay at a time."""
+    return not _bay_busy and not any(
+        o is not s and o.phase in (Phase.ENTERING, Phase.UNDOCKING)
+        for o in _roster)
 
 
 def _check_approaching(s: Shuttle) -> None:
     if _home_station() is None:
         _enter(s, Phase.WAITING)
     elif s.held:
-        if not _bay_busy:
+        if _bay_free(s):
             _enter(s, Phase.ENTERING)
     elif _leg_done(s):
-        if _bay_busy:
-            _hold(s)
-        else:
+        if _bay_free(s):
             _enter(s, Phase.ENTERING)
+        else:
+            _hold(s)
 
 
 def _check_entering(s: Shuttle) -> None:
@@ -829,8 +1006,9 @@ def _player_owns_bay() -> bool:
 def _step(s: Shuttle, dt: float) -> None:
     if s.phase is Phase.DOCKED:
         s.timer -= dt
-        if s.timer <= 0.0 and not _bay_busy:
-            # A due shuttle waits docked while the bay is the player's.
+        if s.timer <= 0.0 and _bay_free(s):
+            # A due shuttle waits docked while the bay is the player's or
+            # another shuttle's.
             _launch(s)
         return
     check = _CHECKS.get(s.phase)
