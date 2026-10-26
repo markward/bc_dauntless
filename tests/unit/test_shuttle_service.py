@@ -1620,3 +1620,78 @@ def test_flying_shuttles_dock_when_an_excluded_mission_is_current(world):
     _sim(DT)
     assert s.phase is ss.Phase.DOCKED
     assert _sets_holding_shuttles() == []
+
+
+# ── Obstacle avoidance on the open-space legs (controller ruling R10) ────────
+
+OBSTACLE_RADIUS = 20.0
+# BC's AvoidObstacles keeps a ship at an obstacle's bound, not a margin
+# outside it: with a 0.25 s re-decision and the shuttle's own momentum it
+# grazes the bound while it slides round (measured, seeds 1-3, obstacle 60 or
+# 100 GU short of the lane point: closest centre 0.91-1.05 x the radius, no
+# contact). Without the preprocessor the shuttle rams the obstacle and stays
+# stuck on it (879 contact ticks, never reaches its lane point in 240 s).
+OBSTACLE_CLEARANCE = 0.85 * OBSTACLE_RADIUS
+
+
+def test_a_departing_shuttle_avoids_a_ship_on_its_line(world):
+    """R10: the open-space legs run inside BC's AvoidObstacles preprocessor.
+    A stationary ship parked on a departing shuttle's line, 60 GU short of
+    its lane point (past where the in-system warp drops it, so flown at
+    impulse), is flown round: no contact, never deeper than
+    OBSTACLE_CLEARANCE into its bound, and the shuttle reaches its lane."""
+    from engine.appc import collision_avoidance
+    App.g_kSystemWrapper.SetRandomSeed(1)       # AI update jitter
+    collision_avoidance.reset_avoidance_state()  # its flee-direction draws
+    s = _only_the_first()
+    assert _sim(120.0, until=lambda: s.phase is ss.Phase.DEPARTING) \
+        is not None
+    s.ship.SetRadius(SHUTTLE_RADIUS)
+    a = s.ship.GetWorldLocation()
+    b = _home().GetObject(ss._lane_name(s)).GetWorldLocation()
+    d = _gap(a, b)
+    k = (d - 60.0) / d
+    obstacle = App.ShipClass_Create("Freighter")
+    _home().AddObjectToSet(obstacle, "Obstacle")
+    obstacle.SetTranslate(App.TGPoint3(a.x + k * (b.x - a.x),
+                                       a.y + k * (b.y - a.y),
+                                       a.z + k * (b.z - a.z)))
+    obstacle.SetRadius(OBSTACLE_RADIUS)
+    obstacle.UpdateNodeOnly()
+    closest, hits = [1e9], []
+
+    def watch(collided):
+        closest[0] = min(closest[0], _dist(s.ship, obstacle))
+        hits.extend(1 for x, y, *_r in collided if obstacle in (x, y))
+    took = _sim(240.0, until=lambda: s.phase is ss.Phase.WARPING_OUT,
+                each=watch)
+    print("departing past an obstacle: closest centre %.1f GU, %d contact "
+          "ticks, took %s s" % (closest[0], len(hits), took))
+    assert hits == []
+    assert took is not None
+    assert closest[0] > OBSTACLE_CLEARANCE, closest[0]
+
+
+def test_the_target_dock_is_out_of_avoidance_on_the_docks_legs(world):
+    """R10: TO_DOCK flies straight at its dock inside AvoidObstacles, which
+    would steer it away from a dock with a real bound; the per-pair collision
+    mask (which the preprocessor reads) keeps that dock out of the scan on
+    TO_DOCK and CIRCLING, and is lifted for LEAVING_DOCKS."""
+    _size_the_dry_docks()
+    s = _only_the_first()
+    _arrive_far(s)
+    s.ship.SetRadius(SHUTTLE_RADIUS)
+    dock = _far().GetObject(s.dock_name)
+    masked = []
+
+    def watch(_h):
+        masked.append((s.phase, dock.GetObjID() in
+                       collisions._collision_disabled_ids(s.ship)))
+    assert _sim(120.0, until=lambda: s.phase is ss.Phase.CIRCLING,
+                each=watch) is not None
+    _sim(10.0, each=watch)
+    assert {m for p, m in masked if p in (ss.Phase.TO_DOCK,
+                                           ss.Phase.CIRCLING)} == {True}
+    ss._enter(s, ss.Phase.LEAVING_DOCKS)
+    assert dock.GetObjID() not in collisions._collision_disabled_ids(s.ship)
+    assert s.dock_mask is None

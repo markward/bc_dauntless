@@ -68,10 +68,19 @@ outwards and empty inwards, one shuttle flying in or out per dock at a time,
 so no shuttle crosses another's orbit.
 
 The chosen dock destroyed or gone on TO_DOCK or CIRCLING: choose again;
-none standing: LEAVING_DOCKS. None of these legs is wrapped in BC's
-AvoidObstacles preprocessor (the engine has no other avoidance), so obstacle
-avoidance never pushes a shuttle off its circle. The docks and the Station
-are cleared by route geometry alone, measured against today's layout
+none standing: LEAVING_DOCKS.
+
+Obstacle avoidance (controller ruling R10): the open-space legs and holds
+(DEPARTING, TO_DOCK, LEAVING_DOCKS, APPROACHING, WAITING, the lane and
+approach holds) run inside BC's AvoidObstacles preprocessor (`_avoiding`),
+as the SDK's own compound AIs do; the engine has no other avoidance. The bay
+legs (UNDOCKING, ENTERING) and CIRCLING are not wrapped, so avoidance never
+pushes a shuttle off its circle or out of the bay. Where a wrapped leg flies
+at its own target station, that station is out of the scan through the
+per-pair collision mask the preprocessor reads: the dry dock on TO_DOCK (kept
+through CIRCLING, lifted for LEAVING_DOCKS). Avoidance runs nowhere during an
+in-system warp (BC skips it there). The docks and the Station are otherwise
+cleared by route geometry, measured against today's layout
 (home_stations.json): a change to where the Dry Docks stations stand must be
 re-measured.
 
@@ -208,6 +217,8 @@ class Shuttle:
     ai: object = None            # the AI the current leg gave the ship
     leg: Phase | None = None     # the phase `ai` was given for
     bay_station: object = None   # collisions with it are off (a bay leg)
+    dock_mask: object = None     # the dry dock it is bound for or circles:
+                                 # collisions (and so avoidance) with it off
     held: bool = False           # holding: outside the bay, or for a dock
     killer: str | None = None    # who fired the blow that started its death
 
@@ -440,6 +451,7 @@ def _dock(shuttle: Shuttle) -> None:
     """Take the shuttle out of its set, drop its AI and stop any warp it is
     flying; it waits DOCK_S."""
     _release_bay(shuttle)
+    _release_dock(shuttle)
     ship = shuttle.ship
     if ship is not None:
         _stop_warp(ship)
@@ -580,6 +592,7 @@ def _lose(s: Shuttle) -> None:
     ship = s.ship
     pSet = ship.GetContainingSet()
     _release_bay(s)
+    _release_dock(s)
     s.phase = Phase.LOST
     s.ship = None
     s.ai = None
@@ -821,6 +834,40 @@ def _release_bay(shuttle: Shuttle) -> None:
         shuttle.ship.EnableCollisionsWith(station, 1)
 
 
+def _mask_dock(shuttle: Shuttle, dock) -> None:
+    """Collisions between the shuttle and the dry dock it flies to and
+    circles off, so the AvoidObstacles preprocessor (which reads the same
+    per-pair mask) never steers it away from its own dock."""
+    if shuttle.dock_mask is not dock:
+        _release_dock(shuttle)
+    shuttle.ship.EnableCollisionsWith(dock, 0)
+    shuttle.dock_mask = dock
+
+
+def _release_dock(shuttle: Shuttle) -> None:
+    """Collisions with the dry dock back on."""
+    dock, shuttle.dock_mask = shuttle.dock_mask, None
+    if dock is not None and shuttle.ship is not None:
+        shuttle.ship.EnableCollisionsWith(dock, 1)
+
+
+def _avoiding(ship, ai):
+    """`ai` inside BC's AvoidObstacles preprocessor, built as the SDK's own
+    compound AIs build it (E1M1_AI_Shuttle1.py; the engine binds its port,
+    engine/appc/collision_avoidance.py, in place of the Python class).
+    Controller ruling R10: every open-space leg and hold avoids obstacles;
+    the bay and circling legs do not (the target station's collision mask
+    keeps it out of the scan where a wrapped leg flies at it). Finishes
+    when `ai` does."""
+    import App
+    import AI.Preprocessors
+    pre = App.PreprocessingAI_Create(ship, "TCShuttleAvoid")
+    pre.SetInterruptable(1)
+    pre.SetPreprocessingMethod(AI.Preprocessors.AvoidObstacles(), "Update")
+    pre.SetContainedAI(ai)
+    return pre
+
+
 def _give_ai(shuttle: Shuttle, ai) -> None:
     """Hand the ship this leg's AI (None: no AI) and remember the leg."""
     if ai is None:
@@ -883,7 +930,7 @@ def _start_undocking(s: Shuttle) -> None:
 
 
 def _start_departing(s: Shuttle) -> None:
-    _give_ai(s, _intercept(s.ship, _lane_name(s)))
+    _give_ai(s, _avoiding(s.ship, _intercept(s.ship, _lane_name(s))))
 
 
 def _warp_to(s: Shuttle, module: str) -> None:
@@ -999,6 +1046,7 @@ def _start_to_dock(s: Shuttle) -> None:
     outer edge. None standing: leave. None with a free orbit: hold at the
     shuttle's own lane point until one frees."""
     s.dock_name = None
+    _release_dock(s)
     standing = [n for n in _DRY_DOCKS if _dry_dock(n) is not None]
     if not standing:
         _enter(s, Phase.LEAVING_DOCKS)
@@ -1009,7 +1057,7 @@ def _start_to_dock(s: Shuttle) -> None:
         if k is not None:
             free[n] = k
     if not free:
-        _give_ai(s, _intercept(s.ship, _lane_name(s)))
+        _give_ai(s, _avoiding(s.ship, _intercept(s.ship, _lane_name(s))))
         s.held = True
         return
     count = {n: len(_bound_for(n, s)) for n in free}
@@ -1017,7 +1065,8 @@ def _start_to_dock(s: Shuttle) -> None:
     s.dock_name = _rng.choice([n for n in free if count[n] == fewest])
     s.orbit_slot = free[s.dock_name]
     far = _bands(s.dock_name)[s.orbit_slot][1]
-    _give_ai(s, _intercept(s.ship, s.dock_name, far))
+    _mask_dock(s, _dry_dock(s.dock_name))
+    _give_ai(s, _avoiding(s.ship, _intercept(s.ship, s.dock_name, far)))
 
 
 def _orbit_gone(s: Shuttle) -> bool:
@@ -1042,7 +1091,8 @@ def _start_circling(s: Shuttle) -> None:
 
 
 def _start_leaving_docks(s: Shuttle) -> None:
-    _give_ai(s, _intercept(s.ship, _lane_name(s)))
+    _release_dock(s)
+    _give_ai(s, _avoiding(s.ship, _intercept(s.ship, _lane_name(s))))
 
 
 def _start_warping_back(s: Shuttle) -> None:
@@ -1055,7 +1105,7 @@ def _start_approaching(s: Shuttle) -> None:
         _enter(s, Phase.WAITING)
         return
     _entry_points(station)
-    _give_ai(s, _intercept(s.ship, _approach_name(s)))
+    _give_ai(s, _avoiding(s.ship, _intercept(s.ship, _approach_name(s))))
 
 
 def _start_entering(s: Shuttle) -> None:
@@ -1081,7 +1131,7 @@ def _start_entering(s: Shuttle) -> None:
 
 def _start_waiting(s: Shuttle) -> None:
     _release_bay(s)
-    _give_ai(s, _intercept(s.ship, _lane_name(s)))
+    _give_ai(s, _avoiding(s.ship, _intercept(s.ship, _lane_name(s))))
 
 
 _STARTS = {
@@ -1175,7 +1225,8 @@ def _check_to_dock(s: Shuttle) -> None:
                                for n in standing):
             _enter(s, Phase.TO_DOCK)        # choose (or leave: none standing)
         elif _leg_done(s):
-            _give_ai(s, _plain(s.ship, "TCShuttleHold", "Stay"))
+            _give_ai(s, _avoiding(s.ship,
+                                  _plain(s.ship, "TCShuttleHold", "Stay")))
             s.held = True
     elif _dry_dock(s.dock_name) is None:
         _enter(s, Phase.TO_DOCK)            # destroyed or gone: choose again
@@ -1236,7 +1287,7 @@ def _hold(s: Shuttle) -> None:
     """Wait at the shuttle's own point outside the bay while the bay is the
     player's or another shuttle's, collisions with the station back on."""
     _release_bay(s)
-    _give_ai(s, _plain(s.ship, "TCShuttleHold", "Stay"))
+    _give_ai(s, _avoiding(s.ship, _plain(s.ship, "TCShuttleHold", "Stay")))
     s.held = True
 
 
@@ -1293,7 +1344,7 @@ def _check_waiting(s: Shuttle) -> None:
     if _home_station() is not None:
         _enter(s, Phase.APPROACHING)
     elif _leg_done(s):
-        _give_ai(s, _plain(s.ship, "TCShuttleWait", "Stay"))
+        _give_ai(s, _avoiding(s.ship, _plain(s.ship, "TCShuttleWait", "Stay")))
 
 
 _CHECKS = {
