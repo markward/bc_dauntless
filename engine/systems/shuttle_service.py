@@ -5,9 +5,13 @@ A shuttle is a record, not a world object, while it is docked: it is in no set
 and costs nothing. `_launch` puts it into the Starbase 12 set at the bay's
 "Docking Exit Start"; `_dock` takes it out again. The service runs in every
 game mode, belongs to no mission group, and pauses (every shuttle docked,
-timers frozen) while the player is in another system. Away rule: only a player
-in a system other than Tau Ceti pauses it; no live player, or the player in the
-warp transit set, leaves it exactly as it is.
+timers frozen) while the player is in another system or an excluded mission
+is current (_EXCLUDED_MISSIONS, controller ruling R9: E8M2). Away rule: only
+a player in a system other than Tau Ceti pauses it; no live player, or the
+player in the warp transit set, leaves it exactly as it is. Docking a shuttle
+stops any NPC warp it is flying (a flythrough would otherwise drop it into
+its destination later), and reset() takes every ship it still has out of the
+world.
 
 Each flying phase is one leg: `_enter` sets the phase and hands the ship the
 leg's AI (`_give_ai`); a leg ends when that AI reports done (the AI driver
@@ -15,7 +19,9 @@ clears a finished tree) or the leg's own completion test holds. The Starbase
 12 legs:
 
 - UNDOCKING: BC's AI.Compound.UndockFromStarbase, then out along the bay axis
-  to a clearance point beyond "Docking Exit End".
+  to a clearance point beyond "Docking Exit End". Pushed out of the bay by
+  BC's player docking, or the bay taken by the player: DEPARTING at once,
+  collisions with the station off until clear of it.
 - DEPARTING: intercept to the shuttle's own lane point.
 - WARPING_OUT: BC's Warp to its own Dry Docks lane point; done once in
   DryDock and out of warp.
@@ -29,6 +35,10 @@ clears a finished tree) or the leg's own completion test holds. The Starbase
 
 One shuttle in the bay at a time: none launches or enters while another is
 UNDOCKING or ENTERING, or while the player docks, is docked or undocks.
+Arrivals first: a due shuttle stays docked while another holds outside the
+bay. While the bay is the player's, the service's shuttles are kept out of
+BC's docking restore record (DockWithStarbase.g_kRestoreTranslateDict), which
+would otherwise teleport them back into the bay when the player undocks.
 Every shuttle has its own point (a 50 GU ring, ten points 31 GU apart) round
 each region's lane point, where it arrives, departs and holds, and its own
 holding point round the bay's clearance point, so two shuttles never share a
@@ -122,6 +132,10 @@ _ENTRY_END = "Docking Entry End"
 # bay path (BC's player docking clears 300 GU round it): it approaches again.
 # The approach ends within _POINT_GU of a ring point ~158 GU from it.
 _PUSHED_GU = 275.0
+# A shuttle leaving the bay early (pushed, or the player took the bay) keeps
+# collisions with Starbase 12 off until this far from its centre: clear of
+# its ~150 GU hull bound.
+_STATION_CLEAR_GU = 200.0
 # FollowWaypoints is done within 8 GU of its last waypoint.
 _DOCKED_GU = 20.0
 # The player this close to the bay mouth ("Docking Entry Start") owns the bay
@@ -152,6 +166,14 @@ _BAND_INSET_GU = 2.0
 # A shuttle that left a dock is still on its way out (in the corridor towards
 # the lane) this close to it.
 _DOCK_CLEAR_GU = 200.0
+# Missions the service stays out of (controller ruling R9): while one is
+# current every shuttle stays docked, as when the player is away. A mission
+# is listed when its own set handlers act on ships they do not filter by
+# name or group in Starbase12 or DryDock. E8M2: EnterSet (E8M2.py:1533-1537)
+# targets, for the player, every ship but the Chairo entering Starbase12
+# before Omega Draconis 5. Audit of the other missions using the two sets:
+# .superpowers/sdd/2026-10-26-tau-ceti-shuttles/final-fix-report.md.
+_EXCLUDED_MISSIONS = frozenset({"Maelstrom.Episode8.E8M2.E8M2"})
 # Distinct tick-failure lines printed at most (type + first 120 characters).
 _TICK_ERRORS_MAX = 16
 
@@ -239,8 +261,20 @@ def set_rng(rng: random.Random) -> None:
 
 
 def reset() -> None:
-    """Forget the roster and everything running. The owner stays registered."""
+    """Forget the roster and everything running. The owner stays registered.
+    A ship still in the world (a mission change keeps BC's "warp" set, so a
+    shuttle mid warp would be orphaned there) has its warp stopped, its AI
+    dropped and is taken out of every set."""
     global _started, _away, _bay_busy, _battle
+    for s in _roster:
+        if s.ship is None:
+            continue
+        try:
+            _stop_warp(s.ship)
+            s.ship.ClearAI()
+            _remove_from_sets(s.ship)
+        except Exception:  # noqa: BLE001 - reset must forget the rest anyway
+            _log.exception("shuttles: taking %s out on reset failed", s.name)
     _roster.clear()
     _losses.clear()
     _battle = None
@@ -372,11 +406,43 @@ def _restart() -> None:
 
 # ── Docking in and out of the world ──────────────────────────────────────────
 
+def _stop_warp(ship) -> None:
+    """Stop the NPC warp `ship` is flying, if any. With the renderer on, a
+    warp is a flythrough: the ship waits in BC's "warp" set for the transit
+    and a later step of its WarpSequence (_PlacePlayerAction) drops it into
+    the destination set, whatever the AI or the service did meanwhile. The
+    playing sequence is the one the ship's warp engine holds
+    (WarpSequence.Play attaches it); Abort cancels its pending steps. The
+    warp state goes back to not warping and any warp-in slide ends."""
+    from engine.appc import warp, warp_state
+    sub = ship.GetWarpEngineSubsystem()
+    if not isinstance(sub, warp_state.WarpEngineSubsystem):
+        return
+    seq = sub.GetWarpSequence()
+    if isinstance(seq, warp.WarpSequence) and seq.IsPlaying():
+        seq.Abort()
+    if sub.is_dewarp_driving():
+        sub._end_dewarp_drive()
+    warp_state.end_flythrough(ship)
+
+
+def _remove_from_sets(ship) -> None:
+    """Take `ship` out of every set that holds it (as _PlacePlayerAction
+    does before it places a ship)."""
+    import App
+    for pSet in list(App.g_kSetManager.GetAllSets()):
+        name = ship.GetName()
+        if pSet.GetObject(name) is ship:
+            pSet.RemoveObjectFromSet(name)
+
+
 def _dock(shuttle: Shuttle) -> None:
-    """Take the shuttle out of its set, drop its AI; it waits DOCK_S."""
+    """Take the shuttle out of its set, drop its AI and stop any warp it is
+    flying; it waits DOCK_S."""
     _release_bay(shuttle)
     ship = shuttle.ship
     if ship is not None:
+        _stop_warp(ship)
         pSet = ship.GetContainingSet()
         if pSet is not None:
             try:
@@ -447,6 +513,7 @@ def _launch(shuttle: Shuttle) -> None:
         ship.AddPythonFuncHandlerForInstance(
             App.ET_OBJECT_EXPLODING, __name__ + ".ObjectExploding")
     elif pSet.GetObject(shuttle.name) is not ship:
+        _remove_from_sets(ship)
         pSet.AddObjectToSet(ship, shuttle.name)
     ship.SetTranslate(pos)
     ship.AlignToVectors(fwd, up)
@@ -577,6 +644,7 @@ def _discard(ship, name: str) -> None:
     from engine.appc.objects import broadcast_object_deleted
     ship_death.forget(ship)
     ship_death._clear_target_locks(ship)
+    _stop_warp(ship)
     pSet = ship.GetContainingSet()
     if pSet is not None and pSet.GetObject(name) is ship:
         pSet.RemoveObjectFromSet(name)
@@ -1044,14 +1112,34 @@ def _distance(a, b) -> float:
             + (pa.z - pb.z) ** 2) ** 0.5
 
 
+def _pushed_from_bay(s: Shuttle) -> bool:
+    """The undocking shuttle is farther than _PUSHED_GU from the bay mouth
+    ("Docking Exit End", 2.3 GU from "Docking Entry"): BC's player docking
+    moved it (it clears 300 GU round "Docking Entry"). Its own leg never
+    takes it past ~160 GU (the exit point is _CLEAR_GU beyond the mouth)."""
+    pSet = s.ship.GetContainingSet()
+    mouth = None if pSet is None else pSet.GetObject("Docking Exit End")
+    return mouth is not None and _distance(s.ship, mouth) > _PUSHED_GU
+
+
 def _check_undocking(s: Shuttle) -> None:
     if _leg_done(s):
         _release_bay(s)
         _enter(s, Phase.DEPARTING)
+    elif _bay_busy or _pushed_from_bay(s):
+        # The player has taken the bay, or pushed the shuttle out of it:
+        # following the bay waypoints would fly it back in through the
+        # docking player. It departs from where it is; collisions with the
+        # station stay off until it is clear of it (_check_departing).
+        _enter(s, Phase.DEPARTING)
 
 
 def _check_departing(s: Shuttle) -> None:
+    if s.bay_station is not None and \
+            _distance(s.ship, s.bay_station) > _STATION_CLEAR_GU:
+        _release_bay(s)
     if _leg_done(s):
+        _release_bay(s)
         _enter(s, Phase.WARPING_OUT)
 
 
@@ -1160,6 +1248,11 @@ def _bay_free(s: Shuttle) -> bool:
         for o in _roster)
 
 
+def _arrival_held() -> bool:
+    """A shuttle holds outside the bay, waiting to enter."""
+    return any(o.phase is Phase.APPROACHING and o.held for o in _roster)
+
+
 def _check_approaching(s: Shuttle) -> None:
     if _home_station() is None:
         _enter(s, Phase.WAITING)
@@ -1233,6 +1326,18 @@ def _player_presence():
     return system_id_for_set(pSet.GetName()) == SYSTEM_ID
 
 
+def _excluded_mission() -> bool:
+    """The current mission is one the service stays out of: the module the
+    mission was loaded from (Mission._module_name, as mission_change reads
+    it) is in _EXCLUDED_MISSIONS."""
+    import App
+    game = App.Game_GetCurrentGame()
+    episode = None if game is None else game.GetCurrentEpisode()
+    mission = None if episode is None else episode.GetCurrentMission()
+    name = None if mission is None else mission.__dict__.get("_module_name")
+    return name in _EXCLUDED_MISSIONS
+
+
 def _docking_tree(ai) -> bool:
     """`ai`'s tree was built by AI.Compound.DockWithStarbase or
     UndockFromStarbase: both run their steps as RunScript PlainAIs whose
@@ -1279,6 +1384,27 @@ def _player_owns_bay() -> bool:
             <= _BAY_NEAR_GU * _BAY_NEAR_GU)
 
 
+def _forget_restore_records() -> None:
+    """Take every shuttle out of BC's docking restore record.
+    DockWithStarbase.SetupDockPositions records, by ObjID, each object it
+    pushes from inside the starbase in g_kRestoreTranslateDict, and
+    FinishedUndocking teleports it back there minutes later: a shuttle long
+    gone on its way (or docked, or in another set) would jump into the bay.
+    Only a module BC has loaded is touched; the scale record holds only the
+    docking ship itself."""
+    import sys
+    dock = sys.modules.get("AI.Compound.DockWithStarbase")
+    record = None if dock is None else getattr(dock, "g_kRestoreTranslateDict",
+                                               None)
+    if not record:
+        return
+    ids = {s.ship.GetObjID() for s in _roster if s.ship is not None}
+    for pushed in record.values():
+        if isinstance(pushed, dict):
+            for obj_id in ids.intersection(pushed):
+                del pushed[obj_id]
+
+
 def _in_the_world(ship) -> bool:
     """The ship is in a set the set manager still holds."""
     import App
@@ -1290,9 +1416,11 @@ def _in_the_world(ship) -> bool:
 def _step(s: Shuttle, dt: float) -> None:
     if s.phase is Phase.DOCKED:
         s.timer -= dt
-        if s.timer <= 0.0 and _bay_free(s):
+        if s.timer <= 0.0 and _bay_free(s) and not _arrival_held():
             # A due shuttle waits docked while the bay is the player's or
-            # another shuttle's.
+            # another shuttle's, and while an arrival holds outside it
+            # (arrivals first: else a launch can take the bay the tick it
+            # frees, before the arrival checked earlier in the tick sees it).
             _launch(s)
         return
     check = _CHECKS.get(s.phase)
@@ -1330,15 +1458,16 @@ def _park(s: Shuttle, exc) -> None:
 def tick(dt: float) -> None:
     """Never raises: it runs inside the unguarded GameLoop.tick.
 
-    Pause rule: only a player in a system other than Tau Ceti pauses the
-    service; no live player, or the warp transit set, leaves it as it is."""
+    Pause rule: only a player in a system other than Tau Ceti, or an
+    excluded mission (_EXCLUDED_MISSIONS), pauses the service; no live
+    player, or the warp transit set, leaves it as it is."""
     global _away, _bay_busy
     try:
         if not _started:
             _start_if_ready()
             if not _started:
                 return
-        present = _player_presence()
+        present = False if _excluded_mission() else _player_presence()
         if present is None:
             return
         if not present:
@@ -1352,6 +1481,8 @@ def tick(dt: float) -> None:
             _away = False
             _restart()
         _bay_busy = _player_owns_bay()
+        if _bay_busy:
+            _forget_restore_records()
     except Exception as exc:  # noqa: BLE001 - the loop must keep running
         # A persistent failure prints once; varying ones at most
         # _TICK_ERRORS_MAX times in all.

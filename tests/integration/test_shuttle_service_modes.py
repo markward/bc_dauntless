@@ -171,3 +171,31 @@ def test_e1m1_runs_with_shuttles_circling_the_dry_docks(monkeypatch, capsys):
     assert over == []
     assert not MissionLib.g_bFFGameOver
     assert "[shuttles]" not in capsys.readouterr().out
+
+
+def test_e8m2_runs_with_every_shuttle_docked(capsys):
+    """R9: E8M2's EnterSet targets, for the player, every ship but the Chairo
+    that enters Starbase12 before Omega Draconis 5 (SDK E8M2.py:1533-1537),
+    so the service stays out of E8M2: with Tau Ceti built, no shuttle ever
+    launches and the player's target is never a shuttle."""
+    import App
+    hm.load("Maelstrom.Episode8.E8M2.E8M2")
+    from engine.systems import system_loader
+    ss = _ss()
+    player = App.Game_GetCurrentPlayer()
+    assert player.GetContainingSet().GetName() == "Starbase12"
+    system_loader.ensure_loaded(player)
+    assert App.g_kSetManager.GetSet("DryDock") is not None
+    targets = set()
+    for _ in range(90):
+        hm.tick(1.0)
+        target = player.GetTarget()
+        if target is not None:
+            targets.add(target.GetName())
+    assert not targets & set(_NAMES), targets
+    assert len(ss.roster()) == 10
+    assert all(s.phase is ss.Phase.DOCKED and s.ship is None
+               for s in ss.roster())
+    for name in _NAMES:
+        assert _objects_named(name) == [], name
+    assert "[shuttles]" not in capsys.readouterr().out

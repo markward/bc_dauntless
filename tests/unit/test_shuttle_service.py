@@ -683,13 +683,21 @@ def test_one_shuttle_in_the_bay_at_a_time(world):
     assert _sim(300.0, until=lambda: a.phase is ss.Phase.DOCKED) is not None
 
 
-def test_an_undocking_shuttle_carries_on_out(world, bay_flag):
+def test_an_undocking_shuttle_departs_when_the_player_takes_the_bay(
+        world, bay_flag):
+    """It leaves the bay legs at once (the bay waypoints would take it
+    through the docking player), collisions with the station still off
+    until it is clear of it."""
     s = ss.roster()[0]
     ss.tick(DT)
     assert s.phase is ss.Phase.UNDOCKING
     bay_flag[0] = True
+    _sim(DT)
+    assert s.phase is ss.Phase.DEPARTING
+    assert s.bay_station is _starbase()
     assert _sim(120.0, until=lambda: s.phase is ss.Phase.WARPING_OUT) \
         is not None
+    assert s.bay_station is None
 
 
 def test_a_refused_warp_departs_again(world):
@@ -1392,3 +1400,223 @@ def test_the_owner_rebuild_docks_the_record_and_never_re_adds_old(world):
     assert s.phase is ss.Phase.DOCKED and s.ship is None
     assert s.name not in [n for _set, n in _sets_holding_shuttles()]
     owner.after_rebuild(None, types.SimpleNamespace(key=1))
+
+
+def test_a_held_arrival_enters_before_a_due_launch(world):
+    """Arrivals first: a shuttle held outside the bay goes in before a due
+    docked shuttle launches, even when the one undocking frees the bay
+    between the arrival's check and the launcher's in the same tick."""
+    for o in ss.roster():
+        o.timer = 1e9
+    arrival, undocking, due = ss.roster()[0], ss.roster()[1], ss.roster()[2]
+    ss._launch(undocking)
+    assert undocking.phase is ss.Phase.UNDOCKING
+    _arrive_home(arrival)
+    assert _sim(120.0, until=lambda: arrival.held) is not None
+    assert arrival.phase is ss.Phase.APPROACHING
+    due.timer = 0.0
+    order = []
+
+    def watch(_h):
+        for s in (arrival, due):
+            step = (s.name, s.phase)
+            if s.phase in (ss.Phase.ENTERING, ss.Phase.UNDOCKING) \
+                    and step not in order:
+                order.append(step)
+    assert _sim(300.0, until=lambda: arrival.phase is ss.Phase.DOCKED,
+                each=watch) is not None
+    assert order[0] == (arrival.name, ss.Phase.ENTERING), order
+    _sim(DT)
+    assert due.phase is ss.Phase.UNDOCKING
+
+
+def _player_docks(world):
+    """BC's player docking: its waypoints, then SetupDockPositions -- the
+    player at "Docking Entry", everything else within 300 GU of it pushed
+    away (DockWithStarbase.py:52-103), run for real. The waypoints are put
+    in this set the way MakeWaypoints builds them (_entry_points): the SDK's
+    own MakeWaypoints reuses a same-named waypoint from the global registry,
+    which an earlier test's set may have left there."""
+    import AI.Compound.DockWithStarbase as dock
+    ss._entry_points(_starbase())
+    dock.MakeWaypoints(_starbase())
+    dock.SetupDockPositions(world, "Starbase 12")
+
+
+def test_a_shuttle_pushed_while_undocking_goes_on_its_way(world):
+    """BC's player docking pushes an undocking shuttle 300 GU out of the bay.
+    It must not follow the bay waypoints back in through the docking player:
+    it departs from where it was pushed to."""
+    s = _only_the_first()
+    world.SetRadius(SHUTTLE_RADIUS)
+    assert _sim(10.0, until=lambda: s.phase is ss.Phase.UNDOCKING
+                and _dist(s.ship, _starbase()) < 100.0) is not None
+    _sim(5.0)
+    assert s.phase is ss.Phase.UNDOCKING
+    _player_docks(world)
+    entry = _home().GetObject("Docking Entry")
+    assert _dist(s.ship, entry) >= 299.0
+    assert _dist(world, entry) < 1.0
+    closest, seen = [1e9], []
+
+    def watch(_h):
+        seen.append(s.phase)
+        if s.ship.GetContainingSet() is _home():
+            closest[0] = min(closest[0], _dist(s.ship, world))
+    _sim(60.0, each=watch)
+    assert seen[0] is ss.Phase.DEPARTING, seen[:3]
+    assert ss.Phase.UNDOCKING not in seen
+    assert closest[0] > 100.0, closest[0]
+    # Clear of the station: collisions with it are back on.
+    assert s.bay_station is None
+    assert _starbase().GetObjID() not in \
+        collisions._collision_disabled_ids(s.ship)
+    print("pushed undock: closest to the player %.1f GU" % closest[0])
+
+
+def test_bc_never_teleports_a_shuttle_back_after_the_player_undocks(world):
+    """DockWithStarbase records objects it pushed from inside the starbase in
+    g_kRestoreTranslateDict (by ObjID) and FinishedUndocking teleports them
+    back minutes later. While the bay is the player's, the service takes its
+    shuttles out of that record; anything else stays."""
+    import AI.Compound.DockWithStarbase as dock
+    s = _only_the_first()
+    _sim(5.0)
+    assert s.phase is ss.Phase.UNDOCKING
+    _player_docks(world)
+    other = App.ShipClass_Create("Visitor")
+    _home().AddObjectToSet(other, "Visitor")
+    there = App.TGPoint3(1.0, 2.0, 3.0)
+    record = {s.ship.GetObjID(): there, other.GetObjID(): there}
+    dock.g_kRestoreTranslateDict[world.GetObjID()] = record
+    try:
+        ss.tick(DT)
+        assert ss._player_owns_bay()
+        assert dock.g_kRestoreTranslateDict[world.GetObjID()] == {
+            other.GetObjID(): there}
+    finally:
+        dock.g_kRestoreTranslateDict.pop(world.GetObjID(), None)
+
+
+# ── A shuttle in BC's warp set, mid NPC warp ─────────────────────────────────
+# With the renderer on, an NPC warp is a flythrough: the ship is parked in
+# BC's persistent "warp" set for the transit and a later step of its
+# WarpSequence drops it into the destination (engine/appc/warp.py).
+
+@pytest.fixture
+def flythrough(monkeypatch):
+    from engine.appc import warp
+    monkeypatch.setattr(warp, "_vfx_enabled", lambda: True)
+
+
+def _in_transit(s):
+    """Run until shuttle `s` is in the warp set on its way to the Dry Docks;
+    returns its playing WarpSequence."""
+    from engine.appc import warp
+    assert _sim(240.0, until=lambda: s.ship is not None
+                and s.ship.GetContainingSet() is not None
+                and s.ship.GetContainingSet().GetName() == "warp") is not None
+    seq = s.ship.GetWarpEngineSubsystem().GetWarpSequence()
+    assert isinstance(seq, warp.WarpSequence) and seq.IsPlaying()
+    return seq
+
+
+def _sets_holding(ship):
+    return [pSet.GetName() for pSet in App.g_kSetManager._sets.values()
+            if any(o is ship for o in pSet._objects.values())]
+
+
+def test_docked_away_mid_transit_is_never_dropped_into_the_dry_docks(
+        world, flythrough):
+    s = _only_the_first()
+    seq = _in_transit(s)
+    ship = s.ship
+    App.g_kSetManager.AddSet(App.SetClass_Create(), "Vesuvi6")
+    _move_player_to(world, "Vesuvi6")
+    _sim(DT)
+    assert s.phase is ss.Phase.DOCKED
+    _sim(30.0)
+    assert not seq.IsPlaying()
+    assert _sets_holding(ship) == []
+    assert not warp_state.is_ship_warping(ship)
+    # Back in Tau Ceti: launched into Starbase 12 alone.
+    _move_player_to(world, "Starbase12")
+    _sim(DT)
+    assert s.phase is ss.Phase.UNDOCKING
+    assert _sets_holding(ship) == ["Starbase12"]
+
+
+def test_a_battle_discarding_a_ship_mid_transit_stops_its_warp(
+        world, flythrough):
+    qb, _calls = _fake_qb()
+    ss.install(qb)
+    s = _only_the_first()
+    qb.StartSimulation2()
+    seq = _in_transit(s)
+    old = s.ship
+    _halve_hull(old)
+    qb.EndSimulation()
+    assert s.phase is ss.Phase.DOCKED and s.ship is None
+    _sim(30.0)
+    assert not seq.IsPlaying()
+    assert _sets_holding(old) == []
+
+
+def test_a_mission_change_mid_transit_leaves_no_orphan(world, flythrough):
+    s = _only_the_first()
+    seq = _in_transit(s)
+    ship = s.ship
+    ss.reset()
+    assert _sets_holding(ship) == []
+    assert ship.GetAI() is None
+    _sim(30.0)
+    assert not seq.IsPlaying()
+    assert _sets_holding(ship) == []
+
+
+def test_a_launch_takes_the_ship_out_of_any_set_still_holding_it(world):
+    """However a docked shuttle's ship came to be in a set (the warp set's
+    hand-off, a mission's script), launching it leaves it in Starbase 12
+    alone: never two sets, ticked twice."""
+    from engine.appc import warp
+    s = _only_the_first()
+    _sim(DT)
+    ship = s.ship
+    ss._dock(s)
+    warp.WarpSequence_GetWarpSet().AddObjectToSet(ship, s.name)
+    s.timer = 0.0
+    _sim(DT)
+    assert s.phase is ss.Phase.UNDOCKING
+    assert _sets_holding(ship) == ["Starbase12"]
+
+
+# ── Missions the service stays out of ────────────────────────────────────────
+
+def _set_mission(name):
+    App.Game_GetCurrentGame().GetCurrentEpisode().GetCurrentMission() \
+        ._module_name = name
+
+
+def test_the_service_stays_docked_through_e8m2(world):
+    """R9: E8M2 targets every ship but the Chairo that enters Starbase12 before
+    Omega Draconis 5 (E8M2.py:1533-1537), so the service does not run there:
+    every shuttle stays docked, as when the player is away."""
+    _set_mission("Maelstrom.Episode8.E8M2.E8M2")
+    _sim(130.0)
+    assert all(s.phase is ss.Phase.DOCKED and s.ship is None
+               for s in ss.roster())
+    assert _sets_holding_shuttles() == []
+    # Any other mission: it runs.
+    _set_mission("Maelstrom.Episode8.E8M1.E8M1")
+    _sim(DT)
+    assert ss.roster()[0].phase is ss.Phase.UNDOCKING
+
+
+def test_flying_shuttles_dock_when_an_excluded_mission_is_current(world):
+    s = _only_the_first()
+    _sim(5.0)
+    assert s.phase is ss.Phase.UNDOCKING
+    _set_mission("Maelstrom.Episode8.E8M2.E8M2")
+    _sim(DT)
+    assert s.phase is ss.Phase.DOCKED
+    assert _sets_holding_shuttles() == []
