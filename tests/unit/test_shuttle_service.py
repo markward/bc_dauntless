@@ -1,7 +1,9 @@
 """Tau Ceti shuttle service: roster, lanes, staggered start, docking out of
 the world (a docked shuttle is in no set), and the Starbase 12 legs (undock,
-depart, warp out; approach, enter the bay, dock)."""
+depart, warp out; approach, enter the bay, dock) and the Dry Docks legs
+(to a random dock, two circles, out to the lane, warp back)."""
 import math
+import random
 
 import pytest
 
@@ -40,6 +42,8 @@ def _place_player(set_name):
 @pytest.fixture
 def world():
     _build_world()
+    # The dock choice is random: a fixed seed keeps every run the same.
+    ss.set_rng(random.Random(1701))
     player = _place_player("Starbase12")
     yield player
     ss.reset()
@@ -185,21 +189,44 @@ def test_a_launched_shuttle_is_given_the_undock_leg(world):
     assert sb.GetObjID() in collisions._collision_disabled_ids(s.ship)
 
 
+# Two shuttles in one set never come closer than this (a shuttle's hull
+# radius is 0.12 GU, ships/Hardpoints/shuttle.py).
+MIN_SEPARATION_GU = 2.0
+
+
 def test_no_two_shuttles_ever_share_a_pose(world):
+    """Over the first 900 s (every shuttle launched, several at the Dry Docks
+    together, more of them than docks), no two shuttles in one set are ever
+    within MIN_SEPARATION_GU of each other."""
     seen = {}
+    closest = (1e9, None)
+    shared = 0
     loop = GameLoop()
-    for _ in range(int(600 / DT)):
+    for i in range(int(900 / DT)):
         loop.tick()
         poses = []
         for pSet in App.g_kSetManager._sets.values():
+            here = []
             for n in _names():
                 o = pSet.GetObject(n)
                 if o is not None:
+                    here.append(o)
                     l = o.GetWorldLocation()
                     poses.append((round(l.x, 3), round(l.y, 3), round(l.z, 3)))
+            for a in range(len(here)):
+                for b in range(a + 1, len(here)):
+                    d = _dist(here[a], here[b])
+                    if d < closest[0]:
+                        closest = (d, (i * DT, here[a].GetName(),
+                                       here[b].GetName()))
         assert len(poses) == len(set(poses))
         seen[len(poses)] = True
+        circling = [s.dock_name for s in ss.roster()
+                    if s.phase is ss.Phase.CIRCLING]
+        shared = max([shared] + [circling.count(n) for n in circling])
     assert 1 in seen
+    assert shared >= 2           # docks were shared: the case is exercised
+    assert closest[0] >= MIN_SEPARATION_GU, closest
 
 
 def test_a_failing_launch_parks_the_shuttle_and_never_raises(world, monkeypatch, capsys):
@@ -591,3 +618,249 @@ def test_a_refused_warp_departs_again(world):
     assert s.phase is ss.Phase.DEPARTING
     assert s.ship.GetAI() is not None
     assert _sim(120.0, until=lambda: s.phase is ss.Phase.TO_DOCK) is not None
+
+
+# ── The Dry Docks legs ───────────────────────────────────────────────────────
+
+DOCKS = ("Dry Dock", "Dry Dock2", "Dry Dock3")
+# Headless ships load with GetRadius() == 0. The dry dock's hardpoint hull is
+# 8 GU (ships/Hardpoints/drydock.py); the collision check gives each dock a
+# 10 GU sphere and the shuttle a small one.
+DOCK_RADIUS = 10.0
+# The circle band's floors: 1.5x / 2.0x the dock's radius, at least 40 / 60.
+NEAR, FAR = 40.0, 60.0
+
+
+def _far():
+    return App.g_kSetManager.GetSet("DryDock")
+
+
+def _only_the_first():
+    """Keep every shuttle but the first docked for the whole test."""
+    for o in ss.roster()[1:]:
+        o.timer = 1e9
+    return ss.roster()[0]
+
+
+def _arrive_far(s):
+    """Put shuttle `s` at the Dry Docks lane point the way the warp out
+    leaves it (Task 2's hand-over): in DryDock, at the lane, no AI,
+    collisions on, phase TO_DOCK."""
+    if s.ship is None:
+        ss._launch(s)
+    ship = s.ship
+    ss._release_bay(s)
+    ship.ClearAI()
+    far = _far()
+    held = ship.GetContainingSet()
+    if held is not far:
+        held.RemoveObjectFromSet(s.name)
+        far.AddObjectToSet(ship, s.name)
+    lane = far.GetObject(ss.LANE_NAME)
+    rot = lane.GetWorldRotation()
+    ship.SetTranslate(lane.GetWorldLocation())
+    ship.AlignToVectors(rot.GetCol(1), rot.GetCol(2))
+    ship.SetVelocity(App.TGPoint3(0.0, 0.0, 0.0))
+    ship.UpdateNodeOnly()
+    ss._enter(s, ss.Phase.TO_DOCK)
+
+
+def _swept(prev, ship, dock):
+    """The angle (radians) the dock->ship direction turned since `prev`,
+    measured independently of the service; returns (angle, new direction)."""
+    a, b = ship.GetWorldLocation(), dock.GetWorldLocation()
+    v = (a.x - b.x, a.y - b.y, a.z - b.z)
+    if prev is None:
+        return 0.0, v
+    cross = (prev[1] * v[2] - prev[2] * v[1], prev[2] * v[0] - prev[0] * v[2],
+             prev[0] * v[1] - prev[1] * v[0])
+    dot = sum(x * y for x, y in zip(prev, v))
+    return math.atan2(math.sqrt(sum(c * c for c in cross)), dot), v
+
+
+def test_the_dock_is_chosen_at_random(world):
+    s = _only_the_first()
+    chosen = []
+    for _ in range(30):
+        _arrive_far(s)
+        assert s.phase is ss.Phase.TO_DOCK
+        chosen.append(s.dock_name)
+    assert set(chosen) == set(DOCKS)
+    _far().GetObject("Dry Dock2").SetDead(1)
+    chosen.clear()
+    for _ in range(30):
+        _arrive_far(s)
+        chosen.append(s.dock_name)
+    assert set(chosen) == {"Dry Dock", "Dry Dock3"}
+    # The service's own Random: the same seed, the same choices.
+    ss.set_rng(random.Random(7))
+    first = []
+    for _ in range(10):
+        _arrive_far(s)
+        first.append(s.dock_name)
+    ss.set_rng(random.Random(7))
+    again = []
+    for _ in range(10):
+        _arrive_far(s)
+        again.append(s.dock_name)
+    assert first == again
+
+
+def test_shuttles_spread_over_the_docks_and_a_shared_dock_has_two_orbits(
+        world):
+    a, b, c, d = ss.roster()[:4]
+    for o in ss.roster():
+        o.timer = 1e9
+    for s in (a, b, c):
+        _arrive_far(s)
+    # Three shuttles, three docks: one each, all on the first orbit.
+    assert sorted(s.dock_name for s in (a, b, c)) == sorted(DOCKS)
+    assert [s.orbit_slot for s in (a, b, c)] == [0, 0, 0]
+    # A fourth shares a dock, on the next orbit out.
+    _arrive_far(d)
+    shared = next(s for s in (a, b, c) if s.dock_name == d.dock_name)
+    assert d.orbit_slot == 1 and shared.orbit_slot == 0
+    _, near0, far0 = ss._dock_radii(_far().GetObject(d.dock_name), 0)
+    _, near1, far1 = ss._dock_radii(_far().GetObject(d.dock_name), 1)
+    assert (near1 - near0, far1 - far0) == (ss._ORBIT_STEP_GU,) * 2
+    assert (near0, far0) == (NEAR, FAR)
+
+
+def test_circles_twice_then_leaves(world):
+    for name in DOCKS:
+        _far().GetObject(name).SetRadius(DOCK_RADIUS)
+    s = _only_the_first()
+    _arrive_far(s)
+    s.ship.SetRadius(SHUTTLE_RADIUS)
+    dock = _far().GetObject(s.dock_name)
+    took_to = _sim(120.0, until=lambda: s.phase is ss.Phase.CIRCLING)
+    assert took_to is not None
+    assert s.bearing_accum == 0.0
+    assert s.ship.GetAI() is not None
+    state = {"prev": None, "swept": 0.0, "dmin": 1e9, "dmax": 0.0,
+             "at_leave": None, "hits": []}
+
+    def watch(hits):
+        for a, b, *_rest in hits:
+            if s.ship in (a, b):
+                state["hits"].append((s.phase.name, a.GetName(), b.GetName()))
+        if state["at_leave"] is not None:
+            return
+        ang, state["prev"] = _swept(state["prev"], s.ship, dock)
+        state["swept"] += ang
+        if s.phase is ss.Phase.CIRCLING:
+            d = _dist(s.ship, dock)
+            state["dmin"] = min(state["dmin"], d)
+            state["dmax"] = max(state["dmax"], d)
+            # Never leaves early: below two turns of real motion it circles.
+            assert s.bearing_accum < 4 * math.pi
+            assert s.bearing_accum == pytest.approx(state["swept"], abs=0.05)
+        else:
+            state["at_leave"] = state["swept"]
+    took = _sim(600.0, until=lambda: s.phase is ss.Phase.LEAVING_DOCKS,
+                each=watch)
+    assert took is not None, (s.phase, s.bearing_accum)
+    # It left on the tick its real motion completed two turns.
+    assert 4 * math.pi <= state["at_leave"] < 4 * math.pi + 0.1
+    assert 0.8 * NEAR <= state["dmin"] and state["dmax"] <= 1.2 * FAR
+    assert state["hits"] == []
+    assert s.ship.GetAI() is not None          # flying out to the lane
+
+
+def test_a_shuttle_held_still_counts_no_turns(world):
+    s = _only_the_first()
+    _arrive_far(s)
+    assert _sim(120.0, until=lambda: s.phase is ss.Phase.CIRCLING) is not None
+    _sim(10.0)
+    turned = s.bearing_accum
+    assert turned > 0.0
+    # Held still (an AI that keeps it in place, at rest): no motion, no turns.
+    s.ship.SetVelocity(App.TGPoint3(0.0, 0.0, 0.0))
+    s.ai = ss._plain(s.ship, "Hold", "Stay")
+    s.ship.SetAI(s.ai)
+    dock = _far().GetObject(s.dock_name)
+    state = {"prev": None, "swept": 0.0}
+
+    def watch(_h):
+        ang, state["prev"] = _swept(state["prev"], s.ship, dock)
+        state["swept"] += ang
+    _sim(30.0, each=watch)
+    assert s.phase is ss.Phase.CIRCLING
+    # It coasts to a stop (~0.05 rad); 30 s of circling would be ~1.5 rad.
+    assert s.bearing_accum - turned < 0.1
+    assert s.bearing_accum - turned == pytest.approx(state["swept"], abs=0.01)
+
+
+def test_warps_back_to_starbase_12(world):
+    s = _only_the_first()
+    _arrive_far(s)
+    assert _sim(120.0, until=lambda: s.phase is ss.Phase.CIRCLING) is not None
+    ss._enter(s, ss.Phase.LEAVING_DOCKS)
+    far_lane = _far().GetObject(ss.LANE_NAME)
+    seen, closest = set(), [1e9]
+
+    def watch(_h):
+        seen.add(s.phase)
+        if s.ship.GetContainingSet() is _far():
+            closest[0] = min(closest[0], _dist(s.ship, far_lane))
+    took = _sim(180.0, until=lambda: s.phase is ss.Phase.APPROACHING,
+                each=watch)
+    assert took is not None, sorted(p.name for p in seen)
+    assert ss.Phase.WARPING_BACK in seen
+    assert closest[0] < 150.0
+    assert s.ship.GetContainingSet() is _home()
+    assert not warp_state.is_ship_warping(s.ship)
+    assert _dist(s.ship, _home().GetObject(ss.LANE_NAME)) < 300.0
+    # Then Task 2's legs take it into the bay.
+    assert _sim(300.0, until=lambda: s.phase is ss.Phase.DOCKED) is not None
+
+
+def test_a_refused_warp_back_leaves_the_docks_again(world):
+    s = _only_the_first()
+    _arrive_far(s)
+    ss._enter(s, ss.Phase.LEAVING_DOCKS)
+    assert _sim(120.0, until=lambda: s.phase is ss.Phase.WARPING_BACK) \
+        is not None
+    s.ship.ClearAI()                  # the Warp AI dropped, still in DryDock
+    _sim(DT)
+    assert s.phase is ss.Phase.LEAVING_DOCKS
+    assert s.ship.GetAI() is not None
+    assert _sim(180.0, until=lambda: s.phase is ss.Phase.APPROACHING) \
+        is not None
+
+
+def test_a_destroyed_dock_mid_circle(world, capsys):
+    s = _only_the_first()
+    _arrive_far(s)
+    assert _sim(120.0, until=lambda: s.phase is ss.Phase.CIRCLING) is not None
+    _sim(10.0)
+    first = s.dock_name
+    _far().GetObject(first).SetDead(1)
+    _sim(DT)
+    # Another standing dock, flown to afresh.
+    assert s.phase is ss.Phase.TO_DOCK
+    assert s.dock_name in DOCKS and s.dock_name != first
+    second = s.dock_name
+    assert _sim(120.0, until=lambda: s.phase is ss.Phase.CIRCLING) is not None
+    assert s.dock_name == second
+    assert s.bearing_accum < 0.5
+    # On the way to `second` again (re-entered until the RNG picks it), it is
+    # removed from the set outright: the last one is chosen.
+    third = next(n for n in DOCKS if n not in (first, second))
+    ss._enter(s, ss.Phase.TO_DOCK)
+    while s.dock_name != second:
+        ss._enter(s, ss.Phase.TO_DOCK)
+    _far().RemoveObjectFromSet(second)
+    _sim(DT)
+    assert s.phase is ss.Phase.TO_DOCK and s.dock_name == third
+    # None left: out to the lane and home.
+    _far().GetObject(third).SetDead(1)
+    _sim(DT)
+    assert s.phase is ss.Phase.LEAVING_DOCKS
+    assert s.dock_name is None
+    assert _sim(180.0, until=lambda: s.phase is ss.Phase.APPROACHING) \
+        is not None
+    # An arrival with no dock standing goes straight back out.
+    _arrive_far(s)
+    assert s.phase is ss.Phase.LEAVING_DOCKS
+    assert "[shuttles]" not in capsys.readouterr().out

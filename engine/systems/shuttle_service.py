@@ -29,12 +29,28 @@ Collisions with Starbase 12 are off on the bay legs (UNDOCKING, ENTERING) and
 back on after. AI.Compound.DockWithStarbase itself is never used: it takes
 the player's camera and starts a cutscene.
 
-The Dry Docks legs (TO_DOCK onward) are not driven yet: a shuttle reaching
-TO_DOCK docks on its next tick.
+The Dry Docks legs:
+
+- TO_DOCK: intercept to a random standing dry dock ("Dry Dock", "Dry Dock2",
+  "Dry Dock3"; the service's own Random) among those the fewest other
+  shuttles are bound for, ending 2x its radius out.
+- CIRCLING: BC's CircleObject round it, left side in, until the dock ->
+  shuttle direction has turned CIRCLES full turns (real motion only). A
+  shuttle sharing a dock circles on its own orbit (_ORBIT_STEP_GU further
+  out per slot): on one orbit two shuttles can ride together.
+- LEAVING_DOCKS: intercept to the DryDock lane point.
+- WARPING_BACK: BC's Warp to the Starbase 12 lane point; done once in
+  Starbase12 and out of warp, then APPROACHING.
+
+The chosen dock destroyed or gone on TO_DOCK or CIRCLING: choose again;
+none standing: LEAVING_DOCKS. None of these legs is wrapped in BC's
+AvoidObstacles preprocessor (the engine has no other avoidance), so obstacle
+avoidance never pushes a shuttle off its circle.
 """
 from __future__ import annotations
 
 import enum
+import math
 import random
 from dataclasses import dataclass
 
@@ -81,6 +97,19 @@ _DOCKED_GU = 20.0
 _BAY_NEAR_GU = 200.0
 # The AI.Compound modules whose tree on the player means the bay is in use.
 _BAY_AI_MODULES = ("DockWithStarbase", "UndockFromStarbase")
+# The dry docks a shuttle circles (home stations in DryDock).
+_DRY_DOCKS = ("Dry Dock", "Dry Dock2", "Dry Dock3")
+# Intercept to a dock ends 2x its radius out, at least this far; the circle
+# band is 1.5x / 2.0x its radius, at least these.
+_DOCK_INTERCEPT_MIN_GU = 60.0
+_CIRCLE_NEAR_MIN_GU = 40.0
+_CIRCLE_FAR_MIN_GU = 60.0
+# Every shuttle circles at the same speed in the same plane (it comes from
+# the same lane), so two on one orbit keep whatever gap they joined with --
+# and with a launch every 60 s and ~124 s a turn, that gap can be ~0 (two
+# shuttles measured 0.06 GU apart). A shuttle sharing a dock circles on its
+# own orbit, this much further out per slot.
+_ORBIT_STEP_GU = 10.0
 # Distinct tick-failure lines printed at most (type + first 120 characters).
 _TICK_ERRORS_MAX = 16
 
@@ -109,6 +138,8 @@ class Shuttle:
     timer: float = 0.0
     dock_name: str | None = None
     bearing_accum: float = 0.0
+    bearing_prev: tuple | None = None   # dock -> shuttle last tick (dock frame)
+    orbit_slot: int = 0          # which of the dock's orbits it circles on
     ai: object = None            # the AI the current leg gave the ship
     leg: Phase | None = None     # the phase `ai` was given for
     bay_station: object = None   # collisions with it are off (a bay leg)
@@ -232,6 +263,7 @@ def _dock(shuttle: Shuttle) -> None:
     shuttle.timer = DOCK_S
     shuttle.dock_name = None
     shuttle.bearing_accum = 0.0
+    shuttle.bearing_prev = None
     shuttle.ai = None
     shuttle.leg = None
 
@@ -452,9 +484,82 @@ def _start_warping_out(s: Shuttle) -> None:
     _give_ai(s, ai)
 
 
+def _dry_dock(name):
+    """The named dry dock if it is a standing home station, in DryDock and
+    alive, else None."""
+    import App
+    from engine.systems import home_stations
+    row = next((r for r in home_stations.stations_for_set(FAR_SET)
+                if r.name == name), None)
+    if row is None or not home_stations.is_standing(row):
+        return None
+    pSet = App.g_kSetManager.GetSet(FAR_SET)
+    dock = None if pSet is None else pSet.GetObject(name)
+    if dock is None or dock.IsDead() or dock.IsDying():
+        return None
+    return dock
+
+
+def _dock_radii(dock, slot: int = 0):
+    """(intercept distance, near, far) for circling `dock` on orbit `slot`.
+    Headless ships report GetRadius() == 0, and a dry dock's own bound is
+    small (its hardpoint hull is 8 GU), so the floors usually decide."""
+    r = dock.GetRadius()
+    out = slot * _ORBIT_STEP_GU
+    return (max(2.0 * r, _DOCK_INTERCEPT_MIN_GU),
+            max(1.5 * r, _CIRCLE_NEAR_MIN_GU) + out,
+            max(2.0 * r, _CIRCLE_FAR_MIN_GU) + out)
+
+
+def _at_dock(s: Shuttle) -> list:
+    """The other shuttles flying to or circling a dock."""
+    return [o for o in _roster if o is not s and o.dock_name is not None
+            and o.phase in (Phase.TO_DOCK, Phase.CIRCLING)]
+
+
 def _start_to_dock(s: Shuttle) -> None:
-    # Placeholder until the Dry Docks legs exist: docks on the next tick.
-    _give_ai(s, None)
+    """Fly to a random standing dry dock, one of those the fewest other
+    shuttles are bound for, on the lowest orbit free there; none standing:
+    leave."""
+    s.dock_name = None
+    standing = [n for n in _DRY_DOCKS if _dry_dock(n) is not None]
+    if not standing:
+        _enter(s, Phase.LEAVING_DOCKS)
+        return
+    others = _at_dock(s)
+    count = {n: sum(o.dock_name == n for o in others) for n in standing}
+    fewest = min(count.values())
+    s.dock_name = _rng.choice([n for n in standing if count[n] == fewest])
+    taken = {o.orbit_slot for o in others if o.dock_name == s.dock_name}
+    s.orbit_slot = next(k for k in range(len(_roster) + 1) if k not in taken)
+    ai = _intercept(s.ship, s.dock_name)
+    ai.GetScriptInstance().SetInterceptDistance(
+        _dock_radii(_dry_dock(s.dock_name))[0])
+    _give_ai(s, ai)
+
+
+def _start_circling(s: Shuttle) -> None:
+    import App
+    _near, near, far = _dock_radii(_dry_dock(s.dock_name), s.orbit_slot)
+    ai = _plain(s.ship, "TCShuttleCircle", "CircleObject")
+    script = ai.GetScriptInstance()
+    script.SetFollowObjectName(s.dock_name)
+    # E1M1's shuttles circle with their left side to the station.
+    script.SetNearFacingVector(App.TGPoint3_GetModelLeft())
+    script.SetRoughDistances(near, far)
+    _give_ai(s, ai)
+
+
+def _start_leaving_docks(s: Shuttle) -> None:
+    _give_ai(s, _intercept(s.ship, LANE_NAME))
+
+
+def _start_warping_back(s: Shuttle) -> None:
+    ai = _plain(s.ship, "TCShuttleWarp", "Warp")
+    script = ai.GetScriptInstance()
+    script.SetDestinationSetName("Systems.Starbase12.Starbase12")
+    script.SetDestinationPlacementName(LANE_NAME)
+    _give_ai(s, ai)
 
 
 def _start_approaching(s: Shuttle) -> None:
@@ -486,6 +591,9 @@ _STARTS = {
     Phase.DEPARTING: _start_departing,
     Phase.WARPING_OUT: _start_warping_out,
     Phase.TO_DOCK: _start_to_dock,
+    Phase.CIRCLING: _start_circling,
+    Phase.LEAVING_DOCKS: _start_leaving_docks,
+    Phase.WARPING_BACK: _start_warping_back,
     Phase.APPROACHING: _start_approaching,
     Phase.ENTERING: _start_entering,
     Phase.WAITING: _start_waiting,
@@ -517,22 +625,78 @@ def _check_departing(s: Shuttle) -> None:
         _enter(s, Phase.WARPING_OUT)
 
 
-def _check_warping_out(s: Shuttle) -> None:
+def _check_warp(s: Shuttle, src: str, dest: str, arrived: Phase,
+                retry: Phase) -> None:
+    """A warp leg from region `src` to `dest`: done once in `dest` and out of
+    warp. The Warp AI finished or dropped while still in `src` (a refused
+    warp): fly back to the lane (`retry`) and try again."""
     from engine.appc import warp_state
     pSet = s.ship.GetContainingSet()
     if (pSet is None or warp_state.is_ship_warping(s.ship)
             or warp_state.is_arriving(s.ship)):
         return
-    if pSet.GetName() == FAR_SET:
-        _enter(s, Phase.TO_DOCK)
-    elif pSet.GetName() == HOME_SET and _leg_done(s):
-        # The Warp AI finished or was dropped and the shuttle never left (a
-        # refused warp): fly back to the lane and try again.
-        _enter(s, Phase.DEPARTING)
+    if pSet.GetName() == dest:
+        _enter(s, arrived)
+    elif pSet.GetName() == src and _leg_done(s):
+        _enter(s, retry)
+
+
+def _check_warping_out(s: Shuttle) -> None:
+    _check_warp(s, HOME_SET, FAR_SET, Phase.TO_DOCK, Phase.DEPARTING)
+
+
+def _check_warping_back(s: Shuttle) -> None:
+    _check_warp(s, FAR_SET, HOME_SET, Phase.APPROACHING, Phase.LEAVING_DOCKS)
 
 
 def _check_to_dock(s: Shuttle) -> None:
-    _dock(s)
+    if _dry_dock(s.dock_name) is None:
+        _enter(s, Phase.TO_DOCK)            # destroyed or gone: choose again
+    elif _leg_done(s):
+        s.bearing_accum = 0.0
+        s.bearing_prev = None
+        _enter(s, Phase.CIRCLING)
+
+
+def _radial(ship, dock):
+    """Dock -> ship, in the dock's frame."""
+    a, b, rot = ship.GetWorldLocation(), dock.GetWorldLocation(), \
+        dock.GetWorldRotation()
+    d = (a.x - b.x, a.y - b.y, a.z - b.z)
+    return tuple(d[0] * c.x + d[1] * c.y + d[2] * c.z
+                 for c in (rot.GetCol(0), rot.GetCol(1), rot.GetCol(2)))
+
+
+def _turned(a, b) -> float:
+    """The angle between directions `a` and `b`, 0..pi."""
+    cross = (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2],
+             a[0] * b[1] - a[1] * b[0])
+    return math.atan2(math.sqrt(sum(c * c for c in cross)),
+                      sum(x * y for x, y in zip(a, b)))
+
+
+def _check_circling(s: Shuttle) -> None:
+    dock = _dry_dock(s.dock_name)
+    if dock is None:
+        _enter(s, Phase.TO_DOCK)            # destroyed or gone: choose again
+        return
+    # The bearing change is the angle the dock -> shuttle direction turned
+    # this tick, not a planar atan2: CircleObject's orbit plane follows the
+    # shuttle's approach and can stand nearly on edge to the dock's XY plane
+    # (measured round Dry Dock2), where a planar bearing degenerates.
+    radial = _radial(s.ship, dock)
+    if s.bearing_prev is not None:
+        s.bearing_accum += _turned(s.bearing_prev, radial)
+    s.bearing_prev = radial
+    if s.bearing_accum >= CIRCLES * 2.0 * math.pi:
+        _enter(s, Phase.LEAVING_DOCKS)
+    elif _leg_done(s):
+        _enter(s, Phase.CIRCLING)           # AI dropped: circle on, count kept
+
+
+def _check_leaving_docks(s: Shuttle) -> None:
+    if _leg_done(s):
+        _enter(s, Phase.WARPING_BACK)
 
 
 def _hold(s: Shuttle) -> None:
@@ -591,6 +755,9 @@ _CHECKS = {
     Phase.DEPARTING: _check_departing,
     Phase.WARPING_OUT: _check_warping_out,
     Phase.TO_DOCK: _check_to_dock,
+    Phase.CIRCLING: _check_circling,
+    Phase.LEAVING_DOCKS: _check_leaving_docks,
+    Phase.WARPING_BACK: _check_warping_back,
     Phase.APPROACHING: _check_approaching,
     Phase.ENTERING: _check_entering,
     Phase.WAITING: _check_waiting,
