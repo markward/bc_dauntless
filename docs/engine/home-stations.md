@@ -25,9 +25,9 @@ DryDock's "Player Start" (BC's default warp arrival) is one unit from the Dry Do
 ## Stations defend themselves
 Spec: `docs/superpowers/specs/2026-10-26-station-self-defence-design.md`. `engine/systems/station_hostility.py`, active while Quick Battle (free roam included) runs.
 - A station is a ship whose property is stationary, or a home station (never genus: that takes in comm arrays and lights).
-- A hit is the player's `ET_WEAPON_HIT` on a station: phaser or torpedo, damage above 0, shield hits count. Counted hits are at least `HIT_GAP_S` = 5 s apart in game time; two within `WINDOW_S` = 60 s turn the station hostile.
+- A hit is the player's `ET_WEAPON_HIT` on a station: phaser or torpedo, damage above 0, shield hits count, and the station must be the player's current target (a stray shot never counts). Counted hits are at least `HIT_GAP_S` = 5 s apart in game time; two within `WINDOW_S` = 60 s turn the station hostile.
 - Hostile: the name moves from the friendly/neutral groups into the real enemy group. An armed station (phaser, torpedo or pulse system) gets BC's `AI.Compound.StarbaseAttack` aimed at Quick Battle's friendly group by name, so wingmen join in and the station fires at them. An unarmed station only changes side, its AI untouched. Stations never enter `g_kShips`: they neither count towards nor block a win.
-- Ends when the player enters a set in another star system (moving between regions of one system keeps it; the warp transit set is no destination), when a battle starts or ends (`StartSimulation2`/`EndSimulation` wrappers), and on mission change. The station's prior groups and, if replaced, its prior AI come back; damage stays. Counted hits in another system are forgotten too.
+- Ends when the player enters a set in another star system (moving between regions of one system keeps it; the warp transit set is no destination), when a battle starts or ends (`StartSimulation2`/`EndSimulation` wrappers). The station's prior groups and, if replaced, its prior AI come back; damage stays. Counted hits in another system are forgotten too. A mission change only forgets (`reset()`): the old sets are torn down, nothing is restored.
 - `is_hostile` / `hostile_stations` are the readable register for other systems.
 
 ## Free-roam death is final

@@ -52,8 +52,13 @@ def world(monkeypatch):
     hs.reset()
 
 
-def hit(w, station, t, source=None, weapon="phaser"):
+def hit(w, station, t, source=None, weapon="phaser", aim=True):
+    """One hit through combat.apply_hit. `aim` makes the current player target
+    the station first (a hit only counts on the player's current target)."""
     w.clock.t = t
+    current = App.Game_GetCurrentGame().GetPlayer()
+    if aim and current is not None:
+        current.SetTarget(station)
     combat.apply_hit(station, 50.0, station.GetWorldLocation(),
                      source if source is not None else w.player,
                      weapon_type=weapon)
@@ -333,6 +338,7 @@ def test_restoring_brings_back_a_quick_battle_ai(world):
     # StarbaseFriendlyAI builds its own StarbaseAttack (aimed at pEnemies):
     # what proves it is the QB one is a fresh tree, built at the recorded level.
     assert restored is not None and restored is not hostile_ai
+    assert restored.GetName() == "Wait"   # StarbaseFriendlyAI root, not StarbaseAttack
     assert qb_level() == 2
 
 
@@ -367,7 +373,7 @@ def test_leaving_clears_part_counts(world):
 
 def test_counts_are_trimmed_to_the_window(world):
     for i in range(4):
-        hit(world, world.starbase, i * 0.0 + 100.0 * i)
+        hit(world, world.starbase, 100.0 * i)
     assert len(next(iter(sh._counts.values()))) <= 2
 
 
@@ -376,6 +382,8 @@ def test_an_old_ship_hit_after_a_rebuild_still_counts(world):
     old = world.player
     hit(world, world.starbase, 0.0)
     new = loadspacehelper.CreateShip("Galaxy", world.sb_set, "Player2", "")
+    # Both ships end up named "Player": rename around the name clash, so the
+    # OLD ship (not the current player object) is matched by name alone.
     new.SetName("Other")
     old.SetName("Other2")
     new.SetName("Player")
@@ -437,3 +445,65 @@ def test_install_wraps_once_and_clears_on_end_and_start(world):
     qb.StartSimulation2()
     assert calls == ["end", "start"]
     assert not sh.is_hostile(world.starbase)
+
+
+# ── final-review fixes ───────────────────────────────────────────────────────
+
+def test_a_hit_counts_only_on_the_players_target(world):
+    hit(world, world.starbase, 0.0, aim=False)
+    hit(world, world.starbase, 6.0, aim=False)
+    assert not sh.is_hostile(world.starbase)
+    world.player.SetTarget(world.drydock)
+    hit(world, world.starbase, 12.0, aim=False)
+    hit(world, world.starbase, 20.0, aim=False)
+    assert not sh.is_hostile(world.starbase)
+    assert sh._counts == {}
+    hit(world, world.starbase, 30.0)
+    hit(world, world.starbase, 40.0)
+    assert sh.is_hostile(world.starbase)
+
+
+def test_a_dead_hostile_station_leaves_the_enemy_group_on_end(world):
+    world.mission.GetFriendlyGroup().AddName("Starbase 12")
+    turn(world, world.starbase)
+    world.starbase._dead = True
+    sh.end_all()
+    assert not enemies(world).IsNameInGroup("Starbase 12")
+    assert world.mission.GetFriendlyGroup().IsNameInGroup("Starbase 12")
+
+
+def test_a_dying_hostile_station_leaves_the_enemy_group_on_end(world):
+    world.mission.GetNeutralGroup().AddName("Starbase 12")
+    turn(world, world.starbase)
+    world.starbase._dying = True
+    sh.end_all()
+    assert not enemies(world).IsNameInGroup("Starbase 12")
+    assert world.mission.GetNeutralGroup().IsNameInGroup("Starbase 12")
+
+
+def test_a_dead_hostile_station_leaves_the_enemy_group_on_prune(world):
+    world.mission.GetFriendlyGroup().AddName("Starbase 12")
+    turn(world, world.starbase)
+    world.starbase._dead = True
+    assert sh.hostile_stations() == []
+    assert not enemies(world).IsNameInGroup("Starbase 12")
+    assert world.mission.GetFriendlyGroup().IsNameInGroup("Starbase 12")
+
+
+def test_end_all_clears_every_hit_count(world):
+    hit(world, world.starbase, 0.0)
+    assert sh._counts and sh._count_system
+    sh.end_all()
+    assert sh._counts == {} and sh._count_system == {}
+    hit(world, world.starbase, 6.0)
+    assert not sh.is_hostile(world.starbase)
+
+
+def test_count_system_goes_with_counts(world):
+    turn(world, world.starbase)
+    sh.end_in_system("tauceti")
+    assert sh._count_system == {}
+    turn(world, world.starbase, 100.0)
+    world.starbase._dead = True
+    sh.hostile_stations()
+    assert sh._counts == {} and sh._count_system == {}

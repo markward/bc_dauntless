@@ -7,8 +7,9 @@ The rule, active only while Quick Battle (free roam included) is running:
 
 * a STATION is a ship whose ship property is stationary, or a home station
   (never genus: that takes in comm arrays and lights);
-* a HIT is an ET_WEAPON_HIT fired by the current player at a station, with a
-  phaser or torpedo weapon type and damage above 0 (shield hits count);
+* a HIT is an ET_WEAPON_HIT fired by the current player at a station that is
+  the player's current target, with a phaser or torpedo weapon type and damage
+  above 0 (shield hits count);
 * counted hits are at least HIT_GAP_S apart, in game time; two counted hits
   within WINDOW_S turn the station hostile.
 
@@ -196,10 +197,21 @@ def on_weapon_hit(pObject, pEvent) -> None:
                                                WeaponHitEvent.TORPEDO)
                 and pEvent.GetDamage() > 0
                 and _is_player(pEvent.GetSource())
+                and _is_players_target(station)
                 and not _in_enemy_group(station)
                 and station.GetObjID() not in _register):
             _count(station, _game_time())
     _pass_on(pObject, pEvent)
+
+
+def _is_players_target(station) -> bool:
+    """A stray shot at a station the player is not aiming at is no intent."""
+    import App
+    game = App.Game_GetCurrentGame()
+    player = game.GetPlayer() if game else None
+    target = player.GetTarget() if player is not None else None
+    return target is not None and (
+        target is station or target.GetName() == station.GetName())
 
 
 def _in_enemy_group(station) -> bool:
@@ -229,8 +241,7 @@ def _left_for(system: str) -> None:
             end_in_system(record.system)
     for oid in list(_counts):
         if oid not in _register and _count_system.get(oid) != system:
-            del _counts[oid]
-            _count_system.pop(oid, None)
+            _forget_counts(oid)
 
 
 def _restore_ai(record) -> None:
@@ -247,9 +258,11 @@ def _restore_ai(record) -> None:
     station.SetAI(importlib.import_module("QuickBattle." + leaf).CreateAI(station))
 
 
-def _restore(record) -> None:
+def _restore_groups(record) -> None:
+    """Group membership is by NAME, so it is undone even for a dead station: a
+    rebuilt station of the same name must not inherit the enemy flag."""
     mission = _mission()
-    if mission is None or record.station.IsDead() or record.station.IsDying():
+    if mission is None:
         return
     name = record.name
     mission.GetEnemyGroup().RemoveName(name)
@@ -257,7 +270,17 @@ def _restore(record) -> None:
         group = (mission.GetFriendlyGroup() if label == "friendly"
                  else mission.GetNeutralGroup())
         group.AddName(name)
-    _restore_ai(record)
+
+
+def _restore(record) -> None:
+    _restore_groups(record)
+    if not (record.station.IsDead() or record.station.IsDying()):
+        _restore_ai(record)
+
+
+def _forget_counts(oid) -> None:
+    _counts.pop(oid, None)
+    _count_system.pop(oid, None)
 
 
 def end_in_system(system: str) -> None:
@@ -266,13 +289,15 @@ def end_in_system(system: str) -> None:
         if record.system != system:
             continue
         del _register[oid]
-        _counts.pop(oid, None)
+        _forget_counts(oid)
         _restore(record)
 
 
 def end_all() -> None:
     for system in {r.system for r in _register.values()}:
         end_in_system(system)
+    _counts.clear()
+    _count_system.clear()
 
 
 _MARK = "_dauntless_station_hostility_orig"
@@ -332,4 +357,5 @@ def _prune() -> None:
     for oid, record in list(_register.items()):
         if record.station.IsDying() or record.station.IsDead():
             del _register[oid]
-            _counts.pop(oid, None)
+            _forget_counts(oid)
+            _restore_groups(record)

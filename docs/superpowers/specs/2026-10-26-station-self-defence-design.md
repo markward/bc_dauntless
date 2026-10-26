@@ -1,6 +1,6 @@
 # Stations defend themselves — design
 
-Status: draft for Mark's review, 2026-10-26. Follows home stations
+Status: built on feat/station-self-defence, not live-verified (2026-10-26). Follows home stations
 (`docs/engine/home-stations.md`, merged 7d83e5c3e).
 
 ## 1. Intent
@@ -68,7 +68,9 @@ lights.
 ### 5.2 What counts as an attack, and "twice"
 - A hit is one `ET_WEAPON_HIT` whose firing object is the player, whose target
   is a station, whose weapon type is a weapon (phaser/beam, torpedo, pulse —
-  never a collision or environmental damage), and whose damage is above 0.
+  never a collision or environmental damage), whose damage is above 0, and
+  the station is the player's current target (ruling 2026-10-26: a stray shot
+  must not count as intent).
   Shield hits count: shooting a station's shields is still attacking it.
 - Beams deliver damage in 0.5 s pulses (`BEAM_DWELL_FLUSH_S`), so a single
   sweep is several hits. **Counted hits must be at least 5 seconds apart**

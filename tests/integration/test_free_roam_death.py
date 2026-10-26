@@ -98,3 +98,19 @@ def test_install_twice_wraps_once(world):
     assert QB.ShipDestroyed is first
     assert sum(1 for f in free_roam_death._chain(first)
                if free_roam_death._MARK in f.__dict__) == 1
+
+
+def test_a_battle_can_start_after_a_free_roam_death(world):
+    """Regression: the dead player stays in free roam, and starting a battle
+    afterwards must still run and leave a new, live player."""
+    hl, _c, panel, QB = world
+    dead = _player()
+    _kill(dead)
+    _run(30.0)
+    _do(panel, "add:Warbird")
+    _go(hl, panel)
+    assert QB.bInSimulation
+    new = _player()
+    assert new is not None and new is not dead
+    assert not new.IsDead() and not new.IsDying()
+    assert new.GetHull().GetCondition() > 0

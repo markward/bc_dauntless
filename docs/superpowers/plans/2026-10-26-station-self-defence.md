@@ -14,7 +14,7 @@
 
 - Active only in Quick Battle (which includes free roam). Any other mission: the handlers do nothing, not even count (spec §5.6).
 - A station = `ship.IsStationary()` true, OR `home_stations.home_station_of(ship) is not None` (spec §5.1). Never genus.
-- A hit = `ET_WEAPON_HIT` whose firing object is the current player, target a station, `GetWeaponType()` in `{WeaponHitEvent.PHASER, WeaponHitEvent.TORPEDO}`, `GetDamage() > 0`. Shield-only hits count (spec §5.2).
+- A hit = `ET_WEAPON_HIT` whose firing object is the current player, target a station, `GetWeaponType()` in `{WeaponHitEvent.PHASER, WeaponHitEvent.TORPEDO}`, `GetDamage() > 0`, and the station is the player's current target (ruling 2026-10-26: a stray shot must not count as intent). Shield-only hits count (spec §5.2).
 - `HIT_GAP_S = 5.0`, `WINDOW_S = 60.0`, game time (`App.g_kUtopiaModule.GetGameTime()`).
 - A station already in the mission's enemy group is never touched.
 - The enemy group is the REAL mission enemy group (wingmen join in). The station's attack AI targets `App.ObjectGroup_FromModule("QuickBattle.QuickBattle", "pFriendlies")` — names, not objects.

@@ -18,7 +18,6 @@ from tests.integration.test_home_stations_free_roam import (  # noqa: E402
 def _close_to(player, station, gu=25.0):
     """Arrival is ~300 GU out, beyond phaser range; a player who is hitting a
     station is next to it."""
-    from engine.appc.math import TGPoint3
     at = station.GetWorldLocation()
     player.SetTranslateXYZ(at.x + gu, at.y, at.z)
 
@@ -43,6 +42,7 @@ def _station(player):
 
 def _hit(station, player):
     from engine.appc import combat
+    player.SetTarget(station)   # a hit only counts on the player's target
     combat.apply_hit(station, 50.0, station.GetWorldLocation(), player,
                      weapon_type="phaser")
 
@@ -112,15 +112,16 @@ def test_a_campaign_mission_never_counts(world):
     assert station_hostility._active
     hm.load("Maelstrom.Episode1.E1M1.E1M1")
     player = App.Game_GetCurrentPlayer()
-    import loadspacehelper
     from tests.helpers.mapped_regions import load_region
     sb = load_region("TauCeti", "Starbase12")
     station = App.ShipClass_GetObject(sb, "Starbase 12")
     assert station is not None
     assert not station_hostility._active
     from engine.appc import combat
+    player.SetTarget(station)
     for _ in range(2):
         combat.apply_hit(station, 50.0, station.GetWorldLocation(), player,
                          weapon_type="phaser")
         hm.tick(6.0)
     assert not station_hostility.is_hostile(station)
+    assert station_hostility._counts == {}   # spec 5.6: not even a count
