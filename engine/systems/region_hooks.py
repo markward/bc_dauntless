@@ -92,6 +92,7 @@ def on_region_module_exec(module, qualname: str) -> None:
             apply_map.apply_to_set(pSet, set_name)
             _place_home_stations(pSet, set_name)
             _add_arrival_points(pSet, set_name)
+            _build_shuttle_lane(pSet, set_name)
         return result
 
     setattr(Initialize, _WRAPPED_ATTR, True)
@@ -117,6 +118,17 @@ def _add_arrival_points(pSet, set_name: str) -> None:
         arrival_points.add_for_set(pSet, set_name)
     except Exception as exc:  # noqa: BLE001 - an arrival point must not break a region
         print(f"[arrival-points] {set_name}: failed: "
+              f"{type(exc).__name__}: {exc}", flush=True)
+
+
+def _build_shuttle_lane(pSet, set_name: str) -> None:
+    """Tell the Tau Ceti shuttle service a region was built (lane waypoint,
+    roster start). Never raises, for the same reason as the stations."""
+    try:
+        from engine.systems import shuttle_service
+        shuttle_service.on_region_built(pSet, set_name)
+    except Exception as exc:  # noqa: BLE001 - the shuttles must not break a region
+        print(f"[shuttles] {set_name}: failed: "
               f"{type(exc).__name__}: {exc}", flush=True)
 
 

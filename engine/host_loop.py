@@ -4848,6 +4848,11 @@ def _reset_system_loader_state() -> None:
         home_stations.reset()
     except Exception as _e:
         dev_mode.log_swallowed("home_stations.reset on swap", _e)
+    try:
+        from engine.systems import shuttle_service
+        shuttle_service.reset()
+    except Exception as _e:
+        dev_mode.log_swallowed("shuttle_service.reset on swap", _e)
     # Hostility (and the hit counts behind it) belongs to the old mission.
     try:
         from engine.systems import station_hostility

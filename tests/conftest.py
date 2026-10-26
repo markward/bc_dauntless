@@ -1103,6 +1103,11 @@ def _reset_leakable_engine_globals():
     except Exception:
         pass
     try:
+        from engine.systems import shuttle_service as _shuttle_service
+        _shuttle_service.reset()
+    except Exception:
+        pass
+    try:
         from engine.systems import station_hostility as _station_hostility
         _station_hostility.reset()
     except Exception:
