@@ -42,8 +42,12 @@ def _place_player(set_name):
 @pytest.fixture
 def world():
     _build_world()
-    # The dock choice is random: a fixed seed keeps every run the same.
+    # The dock choice is random: a fixed seed keeps every run the same. So
+    # are the AI's own draws (update cadences, avoidance and warp-direction
+    # searches), from the shim's unseeded system wrapper: seed it too, or
+    # the run depends on what every earlier test drew.
     ss.set_rng(random.Random(1701))
+    App.g_kSystemWrapper.SetRandomSeed(1701)
     player = _place_player("Starbase12")
     yield player
     ss.reset()
@@ -741,8 +745,13 @@ DOCKS = ("Dry Dock", "Dry Dock2", "Dry Dock3")
 DOCK_RADIUS = 8.0
 STATION_RADIUS = 11.0
 # CircleObject dips this far inside a band's near edge while it settles
-# (measured up to 1.63 GU) and goes this far outside the far edge at most.
-BAND_SLACK_IN, BAND_SLACK_OUT = 2.0, 0.5
+# and goes this far outside the far edge at most. The dip depends on the
+# AI's random draws (App.g_kSystemWrapper): 1.63 GU with one draw, up to
+# 2.03 GU over 60 seeds (2026-10-26), so the bound is that plus a margin.
+# It must fit in the service's inset above the floor (_BAND_INSET_GU) and,
+# with the outward slack, in the gap between bands (_BAND_GAP_GU):
+# test_orbit_bands_come_from_the_dock_layout checks both.
+BAND_SLACK_IN, BAND_SLACK_OUT = 2.25, 0.5
 
 
 def _size_the_dry_docks():

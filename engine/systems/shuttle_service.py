@@ -171,15 +171,16 @@ _DRY_DOCKS = ("Dry Dock", "Dry Dock2", "Dry Dock3")
 # hull radius, _ORBIT_FLOOR_GU); none beyond half the distance to the nearest
 # other standing station in DryDock minus _ORBIT_CAP_MARGIN_GU, so orbits
 # round two docks never meet. Bands are _BAND_GU wide, _BAND_GAP_GU apart,
-# the first _BAND_INSET_GU outside the floor: CircleObject dips up to ~1.7
-# GU inside a band's near edge while it spirals in from the far edge (then
-# holds near + 1.0), and an intercept stopping at the far edge stops ~0.5 GU
-# inside it (measured).
+# the first _BAND_INSET_GU outside the floor: CircleObject dips inside a
+# band's near edge while it spirals in from the far edge (then holds near +
+# 1.0) -- 1.7 GU with one run of the AI's random draws, up to 2.03 GU over
+# 60 seeds (2026-10-26) -- and an intercept stopping at the far edge stops
+# ~0.5 GU inside it (measured).
 _ORBIT_FLOOR_GU = 20.0
 _ORBIT_CAP_MARGIN_GU = 5.0
 _BAND_GU = 7.0
 _BAND_GAP_GU = 3.0
-_BAND_INSET_GU = 2.0
+_BAND_INSET_GU = 2.5
 # A shuttle that left a dock is still on its way out (in the corridor towards
 # the lane) this close to it.
 _DOCK_CLEAR_GU = 200.0
