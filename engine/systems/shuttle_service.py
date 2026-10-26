@@ -73,6 +73,16 @@ _ENTRY_END = "Docking Entry End"
 _PUSHED_GU = _INTERCEPT_GU + _CLEAR_GU + 25.0
 # FollowWaypoints is done within 8 GU of its last waypoint.
 _DOCKED_GU = 20.0
+# The player this close to the bay mouth ("Docking Entry Start") owns the bay
+# even with no docking AI: just undocked and coasting out along the bay axis
+# (BC's FinishedUndocking hands the player FlyForward), or parked there.
+# Below BC's 300 GU docking clear on purpose: Starbase12's "Player Start" is
+# ~225 GU from the mouth, and a free-roam start must not stop the service.
+_BAY_NEAR_GU = 200.0
+# The AI.Compound modules whose tree on the player means the bay is in use.
+_BAY_AI_MODULES = ("DockWithStarbase", "UndockFromStarbase")
+# Distinct tick-failure lines printed at most (type + first 120 characters).
+_TICK_ERRORS_MAX = 16
 
 
 class Phase(enum.Enum):
@@ -102,11 +112,13 @@ class Shuttle:
     ai: object = None            # the AI the current leg gave the ship
     leg: Phase | None = None     # the phase `ai` was given for
     bay_station: object = None   # collisions with it are off (a bay leg)
+    held: bool = False           # holding outside the bay for the player
 
 
 _roster: list = []
 _started = False
 _away = False
+_bay_busy = False
 _rng = random.Random()
 _tick_errors: set = set()
 
@@ -122,10 +134,11 @@ def set_rng(rng: random.Random) -> None:
 
 def reset() -> None:
     """Forget the roster and everything running. The owner stays registered."""
-    global _started, _away
+    global _started, _away, _bay_busy
     _roster.clear()
     _started = False
     _away = False
+    _bay_busy = False
     _tick_errors.clear()
 
 
@@ -233,21 +246,27 @@ def _home_station():
     return station
 
 
-def _bay_pose(station):
-    """World (location, forward, up) of the station's "Docking Exit Start",
-    the way DockWithStarbase.MakeWaypoints turns a bay point into a pose."""
+def _hardpoint_world(station, hardpoint: str):
+    """World (location, forward, up) of one of the station's position /
+    orientation hardpoints, the way DockWithStarbase.MakeWaypoints turns a
+    bay point into a pose."""
     import MissionLib
     pos, fwd, up = MissionLib.GetPositionOrientationFromProperty(
-        station, _BAY_EXIT)
+        station, hardpoint)
     if None in (pos, fwd, up):
         raise AttributeError("%s has no position/orientation property (%s)"
-                             % (station.GetName(), _BAY_EXIT))
+                             % (station.GetName(), hardpoint))
     rot = station.GetWorldRotation()
     pos.MultMatrixLeft(rot)
     pos.Add(station.GetWorldLocation())
     fwd.MultMatrixLeft(rot)
     up.MultMatrixLeft(rot)
     return pos, fwd, up
+
+
+def _bay_pose(station):
+    """World (location, forward, up) of the station's "Docking Exit Start"."""
+    return _hardpoint_world(station, _BAY_EXIT)
 
 
 def _launch(shuttle: Shuttle) -> None:
@@ -312,17 +331,7 @@ def _place_from_hardpoint(wp, station, hardpoint: str,
     """Pose `wp` at the station's hardpoint in world space, as
     DockWithStarbase.PositionObjectFromLocalInfo does, then `back_gu` back
     along the hardpoint's forward (negative: ahead of it)."""
-    import MissionLib
-    pos, fwd, up = MissionLib.GetPositionOrientationFromProperty(
-        station, hardpoint)
-    if None in (pos, fwd, up):
-        raise AttributeError("%s has no position/orientation property (%s)"
-                             % (station.GetName(), hardpoint))
-    rot = station.GetWorldRotation()
-    pos.MultMatrixLeft(rot)
-    pos.Add(station.GetWorldLocation())
-    fwd.MultMatrixLeft(rot)
-    up.MultMatrixLeft(rot)
+    pos, fwd, up = _hardpoint_world(station, hardpoint)
     if back_gu:
         pos.SetXYZ(pos.x - back_gu * fwd.x, pos.y - back_gu * fwd.y,
                    pos.z - back_gu * fwd.z)
@@ -378,6 +387,7 @@ def _give_ai(shuttle: Shuttle, ai) -> None:
         shuttle.ship.SetAI(ai)
     shuttle.ai = ai
     shuttle.leg = shuttle.phase
+    shuttle.held = False
 
 
 def _leg_done(shuttle: Shuttle) -> bool:
@@ -510,26 +520,50 @@ def _check_departing(s: Shuttle) -> None:
 def _check_warping_out(s: Shuttle) -> None:
     from engine.appc import warp_state
     pSet = s.ship.GetContainingSet()
-    if (pSet is not None and pSet.GetName() == FAR_SET
-            and not warp_state.is_ship_warping(s.ship)
-            and not warp_state.is_arriving(s.ship)):
+    if (pSet is None or warp_state.is_ship_warping(s.ship)
+            or warp_state.is_arriving(s.ship)):
+        return
+    if pSet.GetName() == FAR_SET:
         _enter(s, Phase.TO_DOCK)
+    elif pSet.GetName() == HOME_SET and _leg_done(s):
+        # The Warp AI finished or was dropped and the shuttle never left (a
+        # refused warp): fly back to the lane and try again.
+        _enter(s, Phase.DEPARTING)
 
 
 def _check_to_dock(s: Shuttle) -> None:
     _dock(s)
 
 
+def _hold(s: Shuttle) -> None:
+    """Wait at the outside clearance point while the bay is the player's,
+    collisions with the station back on."""
+    _release_bay(s)
+    _give_ai(s, _plain(s.ship, "TCShuttleHold", "Stay"))
+    s.held = True
+
+
 def _check_approaching(s: Shuttle) -> None:
     if _home_station() is None:
         _enter(s, Phase.WAITING)
+    elif s.held:
+        if not _bay_busy:
+            _enter(s, Phase.ENTERING)
     elif _leg_done(s):
-        _enter(s, Phase.ENTERING)
+        if _bay_busy:
+            _hold(s)
+        else:
+            _enter(s, Phase.ENTERING)
 
 
 def _check_entering(s: Shuttle) -> None:
     if _home_station() is None:
         _enter(s, Phase.WAITING)
+        return
+    if _bay_busy:
+        # The player has taken the bay: back out to the clearance point and
+        # hold there (collisions stay off until the shuttle is clear).
+        _enter(s, Phase.APPROACHING)
         return
     pSet = s.ship.GetContainingSet()
     entry = None if pSet is None else pSet.GetObject(_ENTRY)
@@ -579,10 +613,57 @@ def _player_presence():
     return system_id_for_set(pSet.GetName()) == SYSTEM_ID
 
 
+def _docking_tree(ai) -> bool:
+    """`ai`'s tree was built by AI.Compound.DockWithStarbase or
+    UndockFromStarbase: both run their steps as RunScript PlainAIs whose
+    script module is the compound module itself (`SetScriptModule(__name__)`),
+    the only thing a tree records about who built it. DockWithStarbase's one
+    tree spans the approach, the docked wait and the undock; it is replaced
+    (FlyForward) only once the ship is out."""
+    from engine.appc.ai import PlainAI
+    if ai is None:
+        return False
+    for node in ai.GetAllAIsInTree():
+        if not isinstance(node, PlainAI) or node.GetScriptModule() != "RunScript":
+            continue
+        script = node.__dict__.get("_script_instance")
+        module = None if script is None else script.__dict__.get("sModuleName")
+        if isinstance(module, str) and \
+                module.rsplit(".", 1)[-1] in _BAY_AI_MODULES:
+            return True
+    return False
+
+
+def _player_owns_bay() -> bool:
+    """Whether the player is docking at, docked in or undocking from Starbase
+    12: in its set and either flying a docking/undocking tree or within
+    _BAY_NEAR_GU of the bay mouth."""
+    import App
+    game = App.Game_GetCurrentGame()
+    player = None if game is None else game.GetPlayer()
+    pSet = None if player is None else player.GetContainingSet()
+    if pSet is None or pSet.GetName() != HOME_SET:
+        return False
+    if _docking_tree(player.GetAI()):
+        return True
+    mouth = pSet.GetObject(_ENTRY)
+    if mouth is not None:
+        loc = mouth.GetWorldLocation()
+    else:
+        station = pSet.GetObject(_ANCHORS[HOME_SET])
+        if station is None:
+            return False
+        loc = _hardpoint_world(station, "Docking Entry Start")[0]
+    p = player.GetWorldLocation()
+    return ((p.x - loc.x) ** 2 + (p.y - loc.y) ** 2 + (p.z - loc.z) ** 2
+            <= _BAY_NEAR_GU * _BAY_NEAR_GU)
+
+
 def _step(s: Shuttle, dt: float) -> None:
     if s.phase is Phase.DOCKED:
         s.timer -= dt
-        if s.timer <= 0.0:
+        if s.timer <= 0.0 and not _bay_busy:
+            # A due shuttle waits docked while the bay is the player's.
             _launch(s)
         return
     check = _CHECKS.get(s.phase)
@@ -612,7 +693,7 @@ def tick(dt: float) -> None:
 
     Pause rule: only a player in a system other than Tau Ceti pauses the
     service; no live player, or the warp transit set, leaves it as it is."""
-    global _away
+    global _away, _bay_busy
     try:
         if not _started:
             _start_if_ready()
@@ -631,9 +712,12 @@ def tick(dt: float) -> None:
         if _away:
             _away = False
             _restart()
+        _bay_busy = _player_owns_bay()
     except Exception as exc:  # noqa: BLE001 - the loop must keep running
-        msg = f"[shuttles] tick failed: {type(exc).__name__}: {exc}"
-        if msg not in _tick_errors:   # a persistent failure prints once
+        # A persistent failure prints once; varying ones at most
+        # _TICK_ERRORS_MAX times in all.
+        msg = f"[shuttles] tick failed: {type(exc).__name__}: {str(exc)[:120]}"
+        if msg not in _tick_errors and len(_tick_errors) < _TICK_ERRORS_MAX:
             _tick_errors.add(msg)
             print(msg, flush=True)
         return

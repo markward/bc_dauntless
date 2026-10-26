@@ -28,6 +28,12 @@ def _place_player(set_name):
     player = App.ShipClass_Create()
     pSet.AddObjectToSet(player, "player")
     App.Game_GetCurrentGame().SetPlayer(player)
+    # Where a free-roam player starts (~225 GU from the bay mouth), not the
+    # origin, which is next to Starbase 12's bay.
+    start = pSet.GetObject("Player Start")
+    if start is not None:
+        player.SetTranslate(start.GetWorldLocation())
+        player.UpdateNodeOnly()
     return player
 
 
@@ -427,11 +433,21 @@ def test_player_docking_pushes_a_shuttle_and_it_recovers(world, capsys):
     import AI.Compound.DockWithStarbase as dock
     dock.SetupDockPositions(world, "Starbase 12")
     assert _dist(s.ship, _home().GetObject("Docking Entry")) >= 299.0
+    # The player now sits at the bay mouth: the bay is the player's, so the
+    # pushed shuttle goes back out to its clearance point and holds there.
+    assert ss._player_owns_bay()
     seen = []
+    _sim(90.0, each=lambda _h: seen.append(s.phase))
+    assert ss.Phase.APPROACHING in seen
+    assert ss.Phase.ENTERING not in seen
+    _assert_holding(s)
+    # The player leaves: the shuttle enters and docks.
+    _to_player_start(world)
+    seen.clear()
     took = _sim(300.0, until=lambda: s.phase is ss.Phase.DOCKED,
                 each=lambda _h: seen.append(s.phase))
     assert took is not None, sorted({p.name for p in seen})
-    assert ss.Phase.APPROACHING in seen
+    assert ss.Phase.ENTERING in seen
     assert "[shuttles]" not in capsys.readouterr().out
 
 
@@ -441,3 +457,137 @@ def test_a_persistent_tick_failure_prints_once(world, monkeypatch, capsys):
     monkeypatch.setattr(ss, "_player_presence", boom)
     _run(1.0)
     assert capsys.readouterr().out.count("[shuttles] tick failed") == 1
+
+
+def test_varying_tick_failures_are_bounded(world, monkeypatch, capsys):
+    n = [0]
+
+    def boom():
+        n[0] += 1
+        raise RuntimeError("failure %d" % n[0])
+    monkeypatch.setattr(ss, "_player_presence", boom)
+    _run(10.0)
+    printed = capsys.readouterr().out.count("[shuttles] tick failed")
+    assert n[0] == 600
+    assert 1 <= printed <= ss._TICK_ERRORS_MAX
+    assert len(ss._tick_errors) <= ss._TICK_ERRORS_MAX
+
+
+# ── The bay is the player's while the player docks, is docked or undocks ────
+
+def _to_player_start(player):
+    player.SetTranslate(_home().GetObject("Player Start").GetWorldLocation())
+    player.UpdateNodeOnly()
+
+
+def _assert_holding(s):
+    """At the outside clearance point, stopped, collisions with the station
+    back on."""
+    assert s.phase is ss.Phase.APPROACHING
+    approach = _home().GetObject("TC Shuttle Approach")
+    assert _dist(s.ship, approach) <= 110.0
+    assert s.ship.GetVelocityTG().Length() < 0.5
+    assert _starbase().GetObjID() not in \
+        collisions._collision_disabled_ids(s.ship)
+
+
+@pytest.fixture
+def bay_flag(monkeypatch):
+    flag = [False]
+    monkeypatch.setattr(ss, "_player_owns_bay", lambda: flag[0])
+    return flag
+
+
+def test_the_bay_is_the_players_while_docking_docked_or_undocking(
+        world, monkeypatch):
+    assert not ss._player_owns_bay()          # free roam at Player Start
+    sb = _starbase()
+    import AI.Compound.UndockFromStarbase as undock
+    world.SetAI(undock.CreateAI(world, sb))
+    assert ss._player_owns_bay()
+    import AI.Compound.DockWithStarbase as dock
+    # Graff's docked scene needs the bridge set, which a headless world lacks;
+    # the rest of the tree is BC's own.
+    monkeypatch.setattr(dock, "CreatePlayerDockAction", lambda *_a:
+                        App.TGScriptAction_Create("MissionLib", "FadeIn"))
+    world.SetAI(dock.CreateAI(world, sb))
+    assert ss._player_owns_bay()
+    intercept = App.PlainAI_Create(world, "Elsewhere")
+    intercept.SetScriptModule("Intercept")
+    intercept.GetScriptInstance().SetTargetObjectName(ss.LANE_NAME)
+    world.SetAI(intercept)
+    assert not ss._player_owns_bay()
+    world.ClearAI()
+    # At the bay mouth with no docking AI (just undocked and coasting out,
+    # or parked there): still the player's.
+    import MissionLib
+    pos = MissionLib.GetPositionOrientationFromProperty(
+        sb, "Docking Entry Start")[0]
+    pos.MultMatrixLeft(sb.GetWorldRotation())
+    pos.Add(sb.GetWorldLocation())
+    world.SetTranslate(pos)
+    world.UpdateNodeOnly()
+    assert ss._player_owns_bay()
+    _to_player_start(world)
+    assert not ss._player_owns_bay()
+
+
+def test_a_due_shuttle_waits_docked_while_the_player_owns_the_bay(
+        world, bay_flag):
+    bay_flag[0] = True
+    _run(5.0)
+    s = ss.roster()[0]
+    assert s.phase is ss.Phase.DOCKED and s.ship is None
+    assert s.timer <= 0.0
+    bay_flag[0] = False
+    ss.tick(DT)
+    assert s.phase is ss.Phase.UNDOCKING
+    assert s.ship.GetContainingSet() is _home()
+
+
+def test_an_approaching_shuttle_holds_until_the_bay_is_free(world, bay_flag):
+    bay_flag[0] = True
+    s = ss.roster()[0]
+    _arrive_home(s)
+    seen = set()
+    _sim(120.0, each=lambda _h: seen.add(s.phase))
+    assert ss.Phase.ENTERING not in seen
+    _assert_holding(s)
+    bay_flag[0] = False
+    took = _sim(300.0, until=lambda: s.phase is ss.Phase.DOCKED,
+                each=lambda _h: seen.add(s.phase))
+    assert took is not None
+    assert ss.Phase.ENTERING in seen
+
+
+def test_an_entering_shuttle_backs_out_when_the_player_takes_the_bay(
+        world, bay_flag):
+    s = ss.roster()[0]
+    _arrive_home(s)
+    assert _sim(300.0, until=lambda: s.phase is ss.Phase.ENTERING) is not None
+    _sim(5.0)
+    bay_flag[0] = True
+    _sim(150.0)
+    _assert_holding(s)
+    bay_flag[0] = False
+    assert _sim(300.0, until=lambda: s.phase is ss.Phase.DOCKED) is not None
+
+
+def test_an_undocking_shuttle_carries_on_out(world, bay_flag):
+    s = ss.roster()[0]
+    ss.tick(DT)
+    assert s.phase is ss.Phase.UNDOCKING
+    bay_flag[0] = True
+    assert _sim(120.0, until=lambda: s.phase is ss.Phase.WARPING_OUT) \
+        is not None
+
+
+def test_a_refused_warp_departs_again(world):
+    s = ss.roster()[0]
+    assert _sim(120.0, until=lambda: s.phase is ss.Phase.WARPING_OUT) \
+        is not None
+    s.ship.ClearAI()                  # the Warp AI dropped, still at home
+    _sim(DT)
+    assert s.phase is ss.Phase.DEPARTING
+    assert s.ship.GetAI() is not None
+    assert _sim(120.0, until=lambda: s.phase is ss.Phase.TO_DOCK) is not None
