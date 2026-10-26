@@ -5,7 +5,9 @@ A shuttle is a record, not a world object, while it is docked: it is in no set
 and costs nothing. `_launch` puts it into the Starbase 12 set at the bay's
 "Docking Exit Start"; `_dock` takes it out again. The service runs in every
 game mode, belongs to no mission group, and pauses (every shuttle docked,
-timers frozen) while the player is outside Tau Ceti.
+timers frozen) while the player is in another system. Away rule: only a player
+in a system other than Tau Ceti pauses it; no live player, or the player in the
+warp transit set, leaves it exactly as it is.
 
 This is the first task of the service: the roster, the lane waypoints, the
 staggered start and docking out of the world. Phases after UNDOCKING are
@@ -207,6 +209,8 @@ def _launch(shuttle: Shuttle) -> None:
                          "_dauntless_home_station_orig", loadspacehelper.CreateShip)
         ship = create(SCRIPT, pSet, shuttle.name, "", 0, 0)
         shuttle.ship = ship
+        if ship is None:
+            raise RuntimeError("CreateShip returned no ship")
     elif pSet.GetObject(shuttle.name) is not ship:
         pSet.AddObjectToSet(ship, shuttle.name)
     ship.SetTranslate(pos)
@@ -234,35 +238,72 @@ owners.register(_ShuttleOwner())
 
 # ── The tick ─────────────────────────────────────────────────────────────────
 
-def _player_in_tau_ceti() -> bool:
+def _player_presence():
+    """True in Tau Ceti, False in any other system, None when it cannot be
+    told: no live player, or the player in the warp transit set."""
     import App
+    from engine.appc.warp import _WARP_TRANSIT_SET_NAME
     game = App.Game_GetCurrentGame()
     player = None if game is None else game.GetPlayer()
     pSet = None if player is None else player.GetContainingSet()
-    if pSet is None:
-        return False
+    if pSet is None or pSet.GetName() == _WARP_TRANSIT_SET_NAME:
+        return None
     from engine.appc.sector_model import system_id_for_set
     return system_id_for_set(pSet.GetName()) == SYSTEM_ID
 
 
+def _step(s: Shuttle, dt: float) -> None:
+    if s.phase is Phase.UNDOCKING:
+        # Placeholder until the flying legs exist: a launched shuttle must not
+        # sit motionless on the bay pose, so it docks again on the next tick.
+        _dock(s)
+    elif s.phase is Phase.DOCKED:
+        s.timer -= dt
+        if s.timer <= 0.0:
+            _launch(s)
+
+
+def _park(s: Shuttle, exc) -> None:
+    """One line, then the shuttle waits a full dock period instead of failing
+    again every tick."""
+    print(f"[shuttles] {s.name} not launched: {type(exc).__name__}: {exc}",
+          flush=True)
+    try:
+        _dock(s)
+    except Exception:  # noqa: BLE001 - parking must not raise either
+        s.phase = Phase.DOCKED
+        s.timer = DOCK_S
+
+
 def tick(dt: float) -> None:
+    """Never raises: it runs inside the unguarded GameLoop.tick.
+
+    Pause rule: only a player in a system other than Tau Ceti pauses the
+    service; no live player, or the warp transit set, leaves it as it is."""
     global _away
-    if not _started:
-        _start_if_ready()
+    try:
         if not _started:
+            _start_if_ready()
+            if not _started:
+                return
+        present = _player_presence()
+        if present is None:
             return
-    if not _player_in_tau_ceti():
-        if not _away:
-            _away = True
-            for s in _roster:
-                if s.phase is not Phase.DOCKED:
-                    _dock(s)
+        if not present:
+            if not _away:
+                _away = True
+                for s in _roster:
+                    if s.phase is not Phase.DOCKED:
+                        _dock(s)
+            return
+        if _away:
+            _away = False
+            _restart()
+    except Exception as exc:  # noqa: BLE001 - the loop must keep running
+        print(f"[shuttles] tick failed: {type(exc).__name__}: {exc}", flush=True)
         return
-    if _away:
-        _away = False
-        _restart()
     for s in _roster:
-        if s.phase is Phase.DOCKED:
-            s.timer -= dt
-            if s.timer <= 0.0:
-                _launch(s)
+        try:
+            _step(s, dt)
+        except Exception as exc:  # noqa: BLE001 - one shuttle must not stop the rest
+            _park(s, exc)
