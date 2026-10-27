@@ -12,7 +12,7 @@ share is the range — the disc clips to RadarDisplay.GetRange(), a display
 scale, while perception uses the player's actual sensor range. The target
 list legitimately lists contacts the disc does not draw.
 
-Spec: docs/ui_designs/05-sensors-radar.md
+Spec: docs/superpowers/ui_designs/05-sensors-radar.md
 """
 from __future__ import annotations
 

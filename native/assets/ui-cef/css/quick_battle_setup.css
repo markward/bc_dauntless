@@ -8,7 +8,7 @@
    banner and the MOCK tag. The chrome (header, box, toggles, buttons, footer)
    is the game's own cp-* family from configuration_panel.css; this file adds
    only the pieces cp-* lacks. Allegiance colours are BC's radar palette
-   (docs/ui_designs/SDK_UI_API.md §1.4). */
+   (docs/superpowers/ui_designs/SDK_UI_API.md §1.4). */
 
 #quick-battle-setup {
     --qbs-friendly: rgb(80, 112, 230);

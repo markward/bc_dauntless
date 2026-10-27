@@ -17,7 +17,7 @@
 //   target/<ship>/__toggle__        — toggle accordion expansion
 //   target/<ship>/<subsystem>/__toggle__ — toggle subsystem (aggregator) accordion
 //
-// Spec: docs/ui_designs/02-tactical-cluster.md
+// Spec: docs/superpowers/ui_designs/02-tactical-cluster.md
 
 // ── Escape helpers ───────────────────────────────────────────────────────────
 // Ship and subsystem names land here unsanitised — stock BC names are

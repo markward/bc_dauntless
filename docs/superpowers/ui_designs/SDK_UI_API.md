@@ -313,7 +313,7 @@ Given the SDK API above, the engine layer must:
 
 ### 4.1 Render
 
-For every panel the SDK constructs, emit per-tick state matching the shape documented in the panel's MD (under `docs/ui_designs/`). The render path is:
+For every panel the SDK constructs, emit per-tick state matching the shape documented in the panel's MD (under `docs/superpowers/ui_designs/`). The render path is:
 
 ```
 SDK script → App.<factory>() → engine.sdk_ui Python widget →

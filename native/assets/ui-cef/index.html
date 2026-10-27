@@ -46,7 +46,7 @@
          via setPauseMenu({items:[...], focused:N}). Row clicks call
          dauntlessEvent(action), which navigates to dauntless://event/<a>;
          OnBeforeBrowse on the C++ side intercepts and dispatches.
-         Spec: docs/ui_designs/10-pause-menu.md -->
+         Spec: docs/superpowers/ui_designs/10-pause-menu.md -->
     <div id="pause-menu">
         <div class="pause-panel">
             <div class="pause-header">Game Paused</div>
@@ -960,7 +960,7 @@
              bottom: sensors / radar disc (pinned via flex split)
            #tactical-bottom-row — bottom-right cluster:
              player ship-display today; weapons / speed / alerts join later
-         See docs/ui_designs/tactical_ui_state.md "Layout gap". -->
+         See docs/superpowers/ui_designs/tactical_ui_state.md "Layout gap". -->
     <div id="tactical-left-column">
         <div id="tactical-target-stack">
             <!-- Crew-menu panel — officer/tactical menus summoned by F1-F5
@@ -1004,7 +1004,7 @@
                  State pushed via setTargetList({visible, selected, rows});
                  row clicks fire dauntlessEvent('target/<ship>'); PanelRegistry
                  routes to TargetListView.dispatch_event in Python.
-                 Spec: docs/ui_designs/02-tactical-cluster.md -->
+                 Spec: docs/superpowers/ui_designs/02-tactical-cluster.md -->
             <div id="target-list-panel" class="target-list--hidden">
                 <div class="target-list__header">Targets</div>
                 <div class="target-list__body" id="target-list-body"></div>
@@ -1016,7 +1016,7 @@
              radar is flex: 0 0 auto).
              State pushed via setRadar({visible, minimizable, minimized,
              range_gu, contacts:[...]}). Header caret toggles collapse.
-             Spec: docs/ui_designs/05-sensors-radar.md -->
+             Spec: docs/superpowers/ui_designs/05-sensors-radar.md -->
         <div id="tactical-radar">
             <div id="sensors-panel" class="sensors--hidden">
                 <div class="sensors__header">
@@ -1044,7 +1044,7 @@
     <!-- Bottom-row cluster: player ShipDisplay + WeaponsDisplay.
          WeaponsDisplay folds the speed readout into its header in
          BC's "Speed {imp} : {vel} kph" format — see the spec at
-         docs/ui_designs/04-weapons-and-speed.md and BridgeHandlers
+         docs/superpowers/ui_designs/04-weapons-and-speed.md and BridgeHandlers
          HelmUpdateToolTip (sdk/.../BridgeHandlers.py:1389-1396). -->
     <div id="tactical-bottom-row">
         <section class="bc-panel ship-display" id="ship-display-player" data-role="player" hidden>

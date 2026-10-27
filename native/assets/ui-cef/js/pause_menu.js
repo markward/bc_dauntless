@@ -1,7 +1,7 @@
 // Pause-menu render fn. Driven by Python via cef_execute_javascript:
 //   setPauseMenu({items:[{label, action}, ...], focused: 0});
 // Rebuilds the row list inside #pause-menu-list from the payload.
-// See docs/ui_designs/10-pause-menu.md for the spec.
+// See docs/superpowers/ui_designs/10-pause-menu.md for the spec.
 
 // JS→Python event channel. Each call emits a console message with a
 // known prefix; C++ side OnConsoleMessage parses it, calls the

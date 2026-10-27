@@ -750,7 +750,7 @@ def resolve_affiliation(ship, mission) -> str:
 
     Returns one of "FRIENDLY", "ENEMY", "NEUTRAL", "UNKNOWN" — the
     engine layer maps these to the radar colour palette from
-    docs/ui_designs/SDK_UI_API.md §1.4.
+    docs/superpowers/ui_designs/SDK_UI_API.md §1.4.
     """
     if mission is None or ship is None:
         return "UNKNOWN"

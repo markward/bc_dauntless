@@ -124,7 +124,7 @@ The spike is the reference for every point below.
   the player's "Variant of" answers, which is why the old panel's nested
   "Defiant Class" menu doesn't rename.
 - **Style:** the runtime **cp-\*** modal family (`configuration_panel.css`), not
-  `docs/ui_designs/08` — Mark confirmed cp-\* is current.
+  `docs/superpowers/ui_designs/08` — Mark confirmed cp-\* is current.
 - **Off-screen CEF rules out three things**, verified in code: no HTML5
   drag-and-drop (the host implements no `StartDragging`), no native `<select>`
   popup (no `PET_POPUP` handling), and no native tooltips. Menus, dropdowns and

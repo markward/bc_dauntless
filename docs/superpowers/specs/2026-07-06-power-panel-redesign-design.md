@@ -2,7 +2,7 @@
 
 **Date**: 2026-07-06
 **Status**: Approved (visual design locked interactively — 28 previz iterations)
-**Canonical mockup**: `docs/ui_designs/06-engineer-panel.html` (v28 from the
+**Canonical mockup**: `docs/superpowers/ui_designs/06-engineer-panel.html` (v28 from the
 previz session; supersedes `06-engineer-panel.html` + `07-power-transmission-grid.html`)
 **Scope**: presentation + panel payload only. The EPS simulation
 (`feat/power-management` branch) is untouched.
@@ -13,7 +13,7 @@ Rebuild the Engineering power panel (`engpower`) to the dauntless design
 system (LCARS-inspired: Antonio, palette tokens, translucent body) with a
 redesigned information layout validated interactively with Mark. The old
 `06`/`07` design-system canon is superseded; this spec + the v2 mockup are
-the new canon (per `docs/ui_designs/README.md`: runtime divergence from the
+the new canon (per `docs/superpowers/ui_designs/README.md`: runtime divergence from the
 canonical mockup is a fidelity bug).
 
 ## Visual structure (locked, top to bottom)
@@ -124,7 +124,7 @@ threshold to 0.8571 (was visually undetectable at ~42% on the old axis).
 - Modify: `engine/ui/engineering_power_panel.py` (`_snapshot` payload:
   damage/available/used/pillars/presence per the table; dispatch gains the
   two toggle actions)
-- Design-system canon: replace `docs/ui_designs/06-engineer-panel.html`
+- Design-system canon: replace `docs/superpowers/ui_designs/06-engineer-panel.html`
   with `06-engineer-panel-v2.html` content, rewrite `06-engineer-panel.md`
   to this spec, retire `07-power-transmission-grid.{html,md}` (folded into
   06; leave a pointer stub). Update the README index.

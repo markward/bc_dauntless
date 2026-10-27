@@ -1,7 +1,7 @@
 /* native/assets/ui-cef/css/info_box.css
    Centred modal stack for SDK info boxes (MissionLib.SetupInfoBox*).
 
-   Chrome follows docs/ui_designs/08-modal-dialog.md — the same vocabulary
+   Chrome follows docs/superpowers/ui_designs/08-modal-dialog.md — the same vocabulary
    as every other dauntless panel: Antonio, the salmon Menu1 gradient header
    with the locked top-right radius, near-opaque dark body, and a 3-sided
    red U-frame that marks a MODAL (persistent panels use a left bar only).

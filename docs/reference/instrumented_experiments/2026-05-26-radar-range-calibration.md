@@ -20,7 +20,7 @@ Observational bounds from screenshots reviewed in conversation on 2026-05-26:
 So the original disc radius is somewhere in `[5, 38]` km, with the lower bound being soft.
 
 Related context:
-- The Dauntless redesign spec at [`docs/ui_designs/05-sensors-radar.md`](../../ui_designs/05-sensors-radar.md) shows an example `pRadar.SetRange(8000)` — that was an *aspirational* API the redesign would add, not a measurement.
+- The Dauntless redesign spec at [`docs/superpowers/ui_designs/05-sensors-radar.md`](../../superpowers/ui_designs/05-sensors-radar.md) shows an example `pRadar.SetRange(8000)` — that was an *aspirational* API the redesign would add, not a measurement.
 - The radar implementation plan [`docs/superpowers/plans/2026-05-26-radar-sensors-panel.md`](../../superpowers/plans/2026-05-26-radar-sensors-panel.md) defers this calibration to a follow-up (this doc).
 
 ## Specific questions
@@ -29,7 +29,7 @@ Each must end up with a numeric answer in **Findings**.
 
 - **Q-R1** What world-space radius (in metres) does the original disc's outer ring correspond to? I.e. what distance does a contact need to be at, along the player's forward axis, to sit *exactly* on the outer ring?
 - **Q-R2** Is the disc range fixed, or does it scale with ship class / sensor subsystem health / `g_kRadarRange` global / mission flag?
-- **Q-R3** Are the two inner range rings at fixed fractions of the outer ring (the redesign assumes 0.65 and 0.35 — `docs/ui_designs/05-sensors-radar.html:32-34`)? Or are they at specific distances?
+- **Q-R3** Are the two inner range rings at fixed fractions of the outer ring (the redesign assumes 0.65 and 0.35 — `docs/superpowers/ui_designs/05-sensors-radar.html:32-34`)? Or are they at specific distances?
 - **Q-R4** Does the disc range respond to a UI control we haven't found? (The LCARS icon atlas at [`sdk/Build/scripts/Icons/LCARS_1024.py:236-243`](../../../sdk/Build/scripts/Icons/LCARS_1024.py) defines zoom-in / zoom-out icon slots 90-102 that appear unused by stock BC — but might be bound by C++.)
 
 ## Snippet

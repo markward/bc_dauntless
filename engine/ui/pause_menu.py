@@ -11,7 +11,7 @@ plus the matching handler. Mouse clicks would need a JS→Python
 back-channel (e.g. CefMessageRouter) which is not wired yet; today
 input is keyboard-only.
 
-See docs/ui_designs/10-pause-menu.md for the visual / palette spec.
+See docs/superpowers/ui_designs/10-pause-menu.md for the visual / palette spec.
 """
 
 from __future__ import annotations

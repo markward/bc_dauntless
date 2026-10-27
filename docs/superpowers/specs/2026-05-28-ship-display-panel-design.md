@@ -4,8 +4,8 @@
 **Date:** 2026-05-28
 **Author:** Mark Ward (with Claude)
 **Prior art:** [`2026-05-24-cef-integration-design.md`](./2026-05-24-cef-integration-design.md) (CEF host loop + composite pass), [`2026-05-19-sdk-ui-shim-design.md`](./2026-05-19-sdk-ui-shim-design.md) (SDK widget shim layer).
-**Visual reference:** [`docs/ui_designs/03-shields-readout.md`](../../ui_designs/03-shields-readout.md) (palette + states). Layout in that mockup is superseded by the placement decision in §3 — player anchored to the bottom-right tactical cluster, target as a top-left overlay (the original BC layout, matching the canonical screenshot).
-**SDK contract:** [`docs/ui_designs/SDK_UI_API.md`](../../ui_designs/SDK_UI_API.md) (palette tokens, widget factory API, event dispatch).
+**Visual reference:** [`docs/superpowers/ui_designs/03-shields-readout.md`](../ui_designs/03-shields-readout.md) (palette + states). Layout in that mockup is superseded by the placement decision in §3 — player anchored to the bottom-right tactical cluster, target as a top-left overlay (the original BC layout, matching the canonical screenshot).
+**SDK contract:** [`docs/superpowers/ui_designs/SDK_UI_API.md`](../ui_designs/SDK_UI_API.md) (palette tokens, widget factory API, event dispatch).
 
 ## 1. Goal
 
@@ -245,7 +245,7 @@ silhouettes/           per-species SVGs (Galaxy, Warbird, Akira, …)
 
 The target container is identical markup with `data-role="target"`, anchored top-left. The minimize chevron is `hidden` on the player container.
 
-**Palette mapping** — the only place SDK semantics map to colour tokens. Tokens come from [SDK_UI_API.md §1](../../ui_designs/SDK_UI_API.md); literal RGB values are never written into this CSS.
+**Palette mapping** — the only place SDK semantics map to colour tokens. Tokens come from [SDK_UI_API.md §1](../ui_designs/SDK_UI_API.md); literal RGB values are never written into this CSS.
 
 ```css
 .ship-display {
@@ -444,4 +444,4 @@ The visual smoke isn't automatable (CEF render path isn't in the test harness), 
 
 **Updated docs:**
 
-- `docs/ui_designs/03-shields-readout.md` — annotate that the side-by-side mockup is superseded by the original BC layout (player in cluster, target top-left). Update the diagram to reflect that.
+- `docs/superpowers/ui_designs/03-shields-readout.md` — annotate that the side-by-side mockup is superseded by the original BC layout (player in cluster, target top-left). Update the diagram to reflect that.

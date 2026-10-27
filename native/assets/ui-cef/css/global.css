@@ -30,7 +30,7 @@ html, body {
 }
 
 /* ============================================================
-   Tactical-view layout zones — see docs/ui_designs/tactical_ui_state.md.
+   Tactical-view layout zones — see docs/superpowers/ui_designs/tactical_ui_state.md.
    Two top-level containers host every tactical-view panel. Panels
    themselves render as flex children with `width: 100%` and no
    position/top/left of their own; the zones own placement.
@@ -84,7 +84,7 @@ html, body {
 #tactical-bottom-row > * { pointer-events: auto; }
 
 /* ============================================================
-   Pause menu — see docs/ui_designs/10-pause-menu.md
+   Pause menu — see docs/superpowers/ui_designs/10-pause-menu.md
    Composes the shared panel chrome (00) + officer-menu row
    primitive (01). Tokens kept local until chrome.css / row.css
    are extracted alongside the other panel migrations.

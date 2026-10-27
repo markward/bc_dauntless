@@ -8,7 +8,7 @@
 
 1. **SDK shim** (`engine/appc/target_menu.py`) — provides `STTargetMenu`, `STSubsystemMenu`, `STComponentMenu`, the module-level singleton, factory and cast helpers, and the affiliation resolver. Sized exactly to the SDK call surface (5 mutators + child traversal + `GetObjectEntry`), nothing speculative.
 2. **Panel framework** (`engine/ui/panel.py`, `engine/ui/panel_registry.py`) — a `Panel` base class with `render_payload()`/`dispatch_event()`/`visible` and a `PanelRegistry` that pumps registered panels each tick and routes slash-prefixed JS events (`target/<ship>`) to the right panel, falling back to the legacy pause-menu handler for unprefixed events. **Pause menu is not refactored** — it stays as the existing reference implementation; the registry just wraps its dispatch as the legacy fallback.
-3. **Target list panel** — Python view `engine/ui/target_list_view.py` reads `STTargetMenu_GetTargetMenu()` each tick and builds a JSON state payload; JS file `native/assets/ui-cef/js/target_list.js` consumes it and rebuilds the DOM; HTML markup added to `hello.html`; CSS in `native/assets/ui-cef/css/target_list.css` matching `docs/ui_designs/02-tactical-cluster.html`.
+3. **Target list panel** — Python view `engine/ui/target_list_view.py` reads `STTargetMenu_GetTargetMenu()` each tick and builds a JSON state payload; JS file `native/assets/ui-cef/js/target_list.js` consumes it and rebuilds the DOM; HTML markup added to `hello.html`; CSS in `native/assets/ui-cef/css/target_list.css` matching `docs/superpowers/ui_designs/02-tactical-cluster.html`.
 4. **Host integration** — `engine/host_loop.py` constructs the panel registry, wires it as the single CEF event handler, pumps `render_payload` on every tick (not just while paused), forwards mouse to CEF whenever any non-pause panel needs interaction, and injects three demo ships at startup so the panel is non-empty until engine auto-population lands.
 
 **What's visible at the end:** Launch `./build/dauntless`. The target list panel is drawn in the upper-left corner of the screen, showing three demo ship names tinted by affiliation (friendly = blue, enemy = red, neutral = yellow). Clicking a row fires `pPlayer.SetTarget(ship_name)` and the row is visibly marked as selected (chosen styling).
@@ -29,7 +29,7 @@
   `sdk/Build/scripts/Bridge/TacticalMenuHandlers.py:489-502`,
   `sdk/Build/scripts/TacticalInterfaceHandlers.py:683-733`,
   `sdk/Build/scripts/MissionLib.py:2186-2225`.
-- Visual reference: `docs/ui_designs/02-tactical-cluster.md` and `.html` (palette, chrome).
+- Visual reference: `docs/superpowers/ui_designs/02-tactical-cluster.md` and `.html` (palette, chrome).
 - Existing patterns: `engine/ui/pause_menu.py` (Python view), `native/assets/ui-cef/js/pause_menu.js` (JS render fn), `native/assets/ui-cef/hello.html` (host page).
 
 ---
@@ -54,7 +54,7 @@
 - `App.py` — re-export the new symbols (lines 95-103 area).
 - `native/assets/ui-cef/hello.html` — add the target list panel container element + `<script src="js/target_list.js">` + `<link rel="stylesheet" href="css/target_list.css">`.
 - `engine/host_loop.py` — construct the panel registry at startup; replace the direct `_cef_set_event_handler(pause_menu.dispatch_event)` call with `_cef_set_event_handler(registry.dispatch)`; pump registry render on every tick.
-- `docs/ui_designs/SDK_UI_API.md` — fix the §3 events table (remove fictional `ET_TARGET_SELECTED`).
+- `docs/superpowers/ui_designs/SDK_UI_API.md` — fix the §3 events table (remove fictional `ET_TARGET_SELECTED`).
 
 ---
 
@@ -586,7 +586,7 @@ def resolve_affiliation(ship, mission) -> str:
 
     Returns one of "FRIENDLY", "ENEMY", "NEUTRAL", "UNKNOWN" — the
     engine layer maps these to the radar colour palette from
-    docs/ui_designs/SDK_UI_API.md §1.4.
+    docs/superpowers/ui_designs/SDK_UI_API.md §1.4.
     """
     if mission is None or ship is None:
         return "UNKNOWN"
@@ -1421,8 +1421,8 @@ EOF
 **Files:**
 - Create: `native/assets/ui-cef/css/target_list.css`
 
-LCARS-inspired styling matching `docs/ui_designs/02-tactical-cluster.html`.
-Uses the palette tokens from `docs/ui_designs/SDK_UI_API.md §1`. Panel
+LCARS-inspired styling matching `docs/superpowers/ui_designs/02-tactical-cluster.html`.
+Uses the palette tokens from `docs/superpowers/ui_designs/SDK_UI_API.md §1`. Panel
 positioned upper-left, anchored to screen edge with 24 px inset.
 
 - [ ] **Step 1: Create the CSS file**
@@ -1431,7 +1431,7 @@ positioned upper-left, anchored to screen edge with 24 px inset.
 /* native/assets/ui-cef/css/target_list.css
  *
  * LCARS chrome for the target list panel.
- * Spec: docs/ui_designs/02-tactical-cluster.html + SDK_UI_API.md §1.
+ * Spec: docs/superpowers/ui_designs/02-tactical-cluster.html + SDK_UI_API.md §1.
  */
 
 :root {
@@ -1547,7 +1547,7 @@ function that consumes the state payload and rebuilds the DOM.
 //
 // Click on a row emits `dauntlessEvent('target/<ship name>')`; the
 // PanelRegistry routes it to TargetListView.dispatch_event(ship name).
-// Spec: docs/ui_designs/02-tactical-cluster.md
+// Spec: docs/superpowers/ui_designs/02-tactical-cluster.md
 
 function setTargetList(state) {
     const panel = document.getElementById('target-list-panel');
@@ -1622,7 +1622,7 @@ In the `<body>` block, after the closing `</div>` of `#pause-menu` and BEFORE th
          State pushed via setTargetList({visible, selected, rows});
          row clicks fire dauntlessEvent('target/<ship>'); PanelRegistry
          routes to TargetListView.dispatch_event in Python.
-         Spec: docs/ui_designs/02-tactical-cluster.md -->
+         Spec: docs/superpowers/ui_designs/02-tactical-cluster.md -->
     <div id="target-list-panel" class="target-list--hidden">
         <div class="target-list__header">Targets</div>
         <div class="target-list__body" id="target-list-body"></div>
@@ -1872,10 +1872,10 @@ EOF
 
 ---
 
-## Task 15: Update docs/ui_designs/SDK_UI_API.md events table
+## Task 15: Update docs/superpowers/ui_designs/SDK_UI_API.md events table
 
 **Files:**
-- Modify: `docs/ui_designs/SDK_UI_API.md` (§3 events table)
+- Modify: `docs/superpowers/ui_designs/SDK_UI_API.md` (§3 events table)
 
 The current table lists a fictional `ET_TARGET_SELECTED = 5`. The SDK
 actually uses `ET_SET_TARGET` (player-directed) and
@@ -1883,7 +1883,7 @@ actually uses `ET_SET_TARGET` (player-directed) and
 
 - [ ] **Step 1: Find the table**
 
-Run: `grep -n "ET_TARGET_SELECTED\|## 3\." docs/ui_designs/SDK_UI_API.md`
+Run: `grep -n "ET_TARGET_SELECTED\|## 3\." docs/superpowers/ui_designs/SDK_UI_API.md`
 
 - [ ] **Step 2: Look up the actual integer values**
 
@@ -1901,7 +1901,7 @@ value matters less than naming the constants correctly — use
 
 - [ ] **Step 3: Edit the file**
 
-In `docs/ui_designs/SDK_UI_API.md`, replace this row in §3:
+In `docs/superpowers/ui_designs/SDK_UI_API.md`, replace this row in §3:
 
 ```markdown
 | `ET_TARGET_SELECTED` | 5 | Target list selection change |
@@ -1926,7 +1926,7 @@ Immediately after the table, add this note:
 - [ ] **Step 4: Commit**
 
 ```bash
-git add docs/ui_designs/SDK_UI_API.md
+git add docs/superpowers/ui_designs/SDK_UI_API.md
 git commit -m "$(cat <<'EOF'
 ui_designs: correct target-list event names
 

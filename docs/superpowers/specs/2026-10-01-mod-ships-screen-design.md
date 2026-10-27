@@ -57,7 +57,7 @@ DCMPv2's twelve ships are one Defiant class with Defiant as default.
 ### 1.1 Layout
 
 The screen uses the cp-* modal family: the runtime `configuration_panel.css`,
-not `docs/ui_designs/08`. It has the header "New mod ships need details" in gate
+not `docs/superpowers/ui_designs/08`. It has the header "New mod ships need details" in gate
 mode and "Mod Ships" in home mode, one sentence of explanation, a table, and a
 footer.
 

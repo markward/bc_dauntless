@@ -69,7 +69,7 @@ The chosen+hover treatment intentionally diverges from the officer menu's near-i
 
 ## SDK runtime contract
 
-There is none — the pause menu is dauntless-native. The model lives in [`engine/ui/pause_menu.py`](../../engine/ui/pause_menu.py) and is driven from the host loop.
+There is none — the pause menu is dauntless-native. The model lives in [`engine/ui/pause_menu.py`](../../../engine/ui/pause_menu.py) and is driven from the host loop.
 
 ```python
 from engine.ui.pause_menu import PauseMenuModel

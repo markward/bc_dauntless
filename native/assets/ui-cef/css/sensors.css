@@ -1,7 +1,7 @@
 /* native/assets/ui-cef/css/sensors.css
  *
  * Sensors / radar panel — bottom-left corner of the tactical view.
- * Spec: docs/ui_designs/05-sensors-radar.html
+ * Spec: docs/superpowers/ui_designs/05-sensors-radar.html
  *
  * Static elements (panel chrome, disc background, range rings, cardinal
  * cross, player triangle) are pure CSS. The contacts overlay

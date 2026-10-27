@@ -1,7 +1,7 @@
 # Tactical UI — implementation state
 
 Snapshot as of 2026-06-02 (post-merge of layout-zones + SpeedDisplay). Maps each tactical-view panel to:
-- Its mockup under `docs/ui_designs/`
+- Its mockup under `docs/superpowers/ui_designs/`
 - Its SDK factory function
 - The engine implementation (or "stub" if NamedStub-absorbed)
 - Per-tick refresh source

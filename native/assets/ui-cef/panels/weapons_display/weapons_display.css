@@ -237,7 +237,7 @@
 }
 
 /* ── Weapon-settings view (hamburger flip) ─────────────────────────────
-   Ported from docs/ui_designs/04b-weapons-combined-config.html. The body
+   Ported from docs/superpowers/ui_designs/04b-weapons-combined-config.html. The body
    default-shows the status view; the hamburger flips to a settings view
    (Torpedoes type/spread, Phasers intensity, Tractor|Cloak toggles). All
    scoped under .weapons-display so nothing leaks to other panels. */

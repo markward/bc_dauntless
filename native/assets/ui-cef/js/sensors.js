@@ -6,7 +6,7 @@
 //   ]});
 //
 // No interaction — the radar is read-only in v1.
-// Spec: docs/ui_designs/05-sensors-radar.md
+// Spec: docs/superpowers/ui_designs/05-sensors-radar.md
 
 const _SENSORS_HTML_ESCAPES = {
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'

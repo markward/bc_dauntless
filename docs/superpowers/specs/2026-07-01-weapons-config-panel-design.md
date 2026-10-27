@@ -1,7 +1,7 @@
 # Weapons configuration — panel settings view + tactical-menu commands
 
 **Date:** 2026-07-01
-**Mockup (canonical):** [../../ui_designs/04b-weapons-combined-config.html](../../ui_designs/04b-weapons-combined-config.html)
+**Mockup (canonical):** [../ui_designs/04b-weapons-combined-config.html](../ui_designs/04b-weapons-combined-config.html)
 **Plan:** `~/.claude/plans/we-are-currently-missing-zany-fog.md`
 
 ## Purpose
