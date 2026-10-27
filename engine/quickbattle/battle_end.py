@@ -263,13 +263,13 @@ def begin(qb, plan) -> None:
         _guard("protect marker", _set_marker, name, "protect")
     for name in targets:
         _guard("target marker", _set_marker, name, "target")
-    if protected:
-        # Enemies weight the first protected ship, E6M1's way (km_targeting).
-        # Before StartSimulation2's AI loop, which runs right after
-        # GenerateShips.
+    if protected or targets:
+        # Enemies weight every protected ship and friendlies every hunt
+        # target, E6M1's way (km_targeting). Before StartSimulation2's AI
+        # loop, which runs right after GenerateShips.
         from engine.quickbattle import km_targeting
-        _guard("protected ship targeting", km_targeting.arm, qb, plan, protected[0],
-               protected[0] in _ship_ids)
+        _guard("listed ship targeting", km_targeting.arm, qb, plan, protected,
+               targets, set(_ship_ids))
     _guard("objectives", _show_objectives, conds)
     _guard("timers", _schedule_timers, qb, conds)
 
