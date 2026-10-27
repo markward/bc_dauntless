@@ -344,7 +344,7 @@ def _with_flat_normals(lines, names):
     objs, pos = _objects(lines)
     out = list(lines)
     vn, insert_at = [], {}
-    for name in names:
+    for name in sorted(names, key=lambda n: objs[n][0]):   # vn index order = file order
         o_line, faces = objs[name]
         insert_at[o_line] = []
         for fi in faces:
@@ -471,3 +471,96 @@ def test_export_without_normals_writes_no_smoothing(tmp_path):
     fix, edits = cli.build_fix(DBRIDGE, base, base)
     assert edits == []
     assert "smoothing" not in fix
+
+
+# --- fix round 1 (Ruling 8): collect every mismatch, --partial drops blocks
+
+def test_check_smoothing_lists_every_failing_block_and_caps_edges():
+    many = {"block": 9, "vertex_count": 20, "hard": [(0, i) for i in range(1, 8)],
+            "soft": [], "ends": {(0, i): (False, False) for i in range(1, 8)}}
+    rows = [_row(0, 2, True, True), _row(1, 3, True, True)]
+    rows += [_row(0, i, True, False, block=9) for i in range(1, 8)]
+    with pytest.raises(ShapeDiffError) as exc:
+        verify.check_smoothing([REC, many], rows, names={5: "b0005_x", 9: "b0009_y"})
+    msg = str(exc.value)
+    assert "2 blocks" in msg
+    assert "block 5 (b0005_x): edge 0-2 renders soft at vertex 0 where Blender shows hard" in msg
+    assert "block 9 (b0009_y): edge 0-5 renders soft at vertex 0" in msg
+    assert "edge 0-6" not in msg
+    assert "block 9 (b0009_y): +2 more" in msg
+
+
+def test_smoothing_failures_groups_reasons_by_block():
+    rows = [_row(0, 2, True, False), _row(1, 3, True, True)]
+    fails = verify.smoothing_failures([REC], rows)
+    assert list(fails) == [5]
+    assert fails[5] == ["edge 0-2 renders soft at vertex 0 where Blender shows hard, "
+                        "hard at vertex 2 where Blender shows soft"]
+
+
+def test_build_fix_skips_the_loader_pass_without_authored_normals(tmp_path, monkeypatch):
+    cli, base = _real_cli(tmp_path)
+    calls = []
+    real_apply = verify.apply
+    monkeypatch.setattr(verify, "apply", lambda *a: calls.append(a) or real_apply(*a))
+    fix, edits = cli.build_fix(DBRIDGE, base, base)
+    assert "smoothing" not in fix
+    assert len(calls) == 1          # the geometry verification only
+
+
+@pytest.fixture(scope="module")
+def dbridge_split(tmp_path_factory):
+    """(cli, base export, a candidate that verifies, two candidates the
+    loader shades differently), found at runtime with one flat-normal object
+    per build."""
+    tmp = tmp_path_factory.mktemp("split")
+    cli, base = _real_cli(tmp)
+    lines = base.read_text(encoding="utf-8").splitlines()
+    edit = tmp / "probe.obj"
+    passing, failing = [], []
+    for name in _candidates(lines):
+        if passing and len(failing) == 2:
+            break
+        edit.write_text("\n".join(_with_flat_normals(lines, [name])) + "\n", encoding="utf-8")
+        try:
+            cli.build_fix(DBRIDGE, base, edit)
+            passing.append(name)
+        except ShapeDiffError as exc:
+            if "renders" in str(exc) or "between two surfaces" in str(exc):
+                failing.append(name)
+    if not passing or not failing:
+        pytest.skip(f"needs a verifying and a refused candidate ({len(passing)}, {len(failing)})")
+    return cli, base, passing[0], failing
+
+
+def _edit_with(base, names):
+    lines = base.read_text(encoding="utf-8").splitlines()
+    edit = base.parent / "edit.obj"       # beside the export's .mtl
+    edit.write_text("\n".join(_with_flat_normals(lines, names)) + "\n", encoding="utf-8")
+    return edit
+
+
+def test_partial_drops_a_failing_smoothing_block_and_keeps_a_passing_one(
+        dbridge_split, capsys):
+    cli, base, good, failing = dbridge_split
+    bad = failing[0]
+    edit = _edit_with(base, [good, bad])
+    fix, edits, skipped = cli.build_fix(DBRIDGE, base, edit, partial=True)
+    assert skipped == []
+    assert [r["block"] for r in _decoded(fix)] == [obj_io.block_of(good)]
+    out = capsys.readouterr().out
+    section = out.split("smoothing skipped:\n", 1)[1]
+    assert section.startswith(f"  {bad} (block {obj_io.block_of(bad)}): ")
+    assert "failing edge" in section.splitlines()[0]
+    assert "verified smoothing on " in out
+
+
+def test_without_partial_every_failing_smoothing_block_is_listed(dbridge_split):
+    cli, base, good, failing = dbridge_split
+    edit = _edit_with(base, [good] + failing)
+    with pytest.raises(ShapeDiffError) as exc:
+        cli.build_fix(DBRIDGE, base, edit)
+    msg = str(exc.value)
+    for name in failing:
+        assert f"block {obj_io.block_of(name)} ({name}): " in msg
+    assert f"block {obj_io.block_of(good)} " not in msg

@@ -170,33 +170,55 @@ def _shading(same):
     return "soft" if same else "hard"
 
 
-def check_smoothing(records, report_rows):
-    """Every authored edge in `records` (smoothing.records) must have a
-    loader report row that found it as one two-surface edge and joins its
-    sides at each end exactly where Blender's normals agree. Raises
-    ShapeDiffError on the first difference; returns the edges checked."""
+def smoothing_failures(records, report_rows):
+    """{block: [reason per failing edge, in record order]} for every authored
+    edge in `records` (smoothing.records) that has no loader report row
+    finding it as one edge between two surfaces, or whose sides the loader
+    joins at an end where Blender's normals split (or the reverse)."""
     rows = {(r["block"], r["a"], r["b"]): r for r in report_rows}
-    n = 0
+    out = {}
     for rec in records:
         block = rec["block"]
         for a, b in rec["hard"] + rec["soft"]:
             row = rows.get((block, a, b))
             if row is None or not row["found"]:
-                raise ShapeDiffError(
-                    f"verify: block {block}: edge {a}-{b} is not one edge between two "
-                    "surfaces of the built shape")
-            for end, joined, same in ((a, row["joined_a"], rec["ends"][(a, b)][0]),
-                                      (b, row["joined_b"], rec["ends"][(a, b)][1])):
-                if joined != same:
-                    raise ShapeDiffError(
-                        f"verify: block {block}: edge {a}-{b} renders {_shading(joined)} "
-                        f"at vertex {end} where Blender shows {_shading(same)}")
-            n += 1
-    return n
+                out.setdefault(block, []).append(
+                    f"edge {a}-{b} is not one edge between two surfaces of the built shape")
+                continue
+            ends = [f"{_shading(joined)} at vertex {end} where Blender shows {_shading(same)}"
+                    for end, joined, same in ((a, row["joined_a"], rec["ends"][(a, b)][0]),
+                                              (b, row["joined_b"], rec["ends"][(a, b)][1]))
+                    if joined != same]
+            if ends:
+                out.setdefault(block, []).append(f"edge {a}-{b} renders " + ", ".join(ends))
+    return out
 
 
-def run_smoothing(nif_path, fix_json, records):
+_SHOWN_PER_BLOCK = 5
+
+
+def check_smoothing(records, report_rows, names=None):
+    """Raise one ShapeDiffError listing every block whose authored edges the
+    loader shades differently (up to _SHOWN_PER_BLOCK edges each); else
+    return the number of edges checked. `names`: block -> object name."""
+    failures = smoothing_failures(records, report_rows)
+    if failures:
+        lines = [f"verify: authored smoothing differs from Blender on {len(failures)} blocks:"]
+        for block, reasons in failures.items():
+            label = f"block {block}" + (f" ({names[block]})" if names and block in names else "")
+            lines += [f"  {label}: {r}" for r in reasons[:_SHOWN_PER_BLOCK]]
+            if len(reasons) > _SHOWN_PER_BLOCK:
+                lines.append(f"  {label}: +{len(reasons) - _SHOWN_PER_BLOCK} more")
+        raise ShapeDiffError("\n".join(lines))
+    return sum(len(r["hard"]) + len(r["soft"]) for r in records)
+
+
+def smoothing_report(nif_path, fix_json):
+    """The loader's smoothing report rows for `nif_path` built with `fix_json`."""
+    return _loader(_require_host().set_smoothing_report, nif_path, fix_json)
+
+
+def run_smoothing(nif_path, fix_json, records, names=None):
     """Build `nif_path` with `fix_json` through the loader's normal generation
     and `check_smoothing` its report."""
-    host = _require_host()
-    return check_smoothing(records, _loader(host.set_smoothing_report, nif_path, fix_json))
+    return check_smoothing(records, smoothing_report(nif_path, fix_json), names)

@@ -136,6 +136,26 @@ def fix_text(fix: dict) -> str:
     return json.dumps(fix, indent=2) + "\n"
 
 
+def _verify_smoothing(rel, fix, edits, recs, names, partial):
+    """Check the loader shades `recs` as Blender does. With `partial`, a
+    block it shades differently loses its record (printed under "smoothing
+    skipped:") and the rest are re-encoded and re-verified. Returns (fix,
+    edges verified)."""
+    rows = _verify.smoothing_report(_nif_path(rel), fix_text(fix))
+    failures = _verify.smoothing_failures(recs, rows)
+    if not (partial and failures):
+        return fix, _verify.check_smoothing(recs, rows, names)
+    print("smoothing skipped:")
+    for block, reasons in failures.items():
+        print(f"  {names[block]} (block {block}): {len(reasons)} failing edge"
+              f"{'s' if len(reasons) != 1 else ''}; first: {reasons[0]}")
+    recs = [r for r in recs if r["block"] not in failures]
+    if not recs:
+        return make_fix_dict(rel, edits), 0
+    fix = make_fix_dict(rel, edits, payload.encode_smoothing_b64(recs))
+    return fix, _verify.run_smoothing(_nif_path(rel), fix_text(fix), recs, names)
+
+
 def build_fix(rel: str, base_path: Path, edit_path: Path, partial: bool = False,
               exclude=(), verify: bool = True, flipbook_fps: float = 5.0, delete=(),
               smoothing=None):
@@ -145,7 +165,10 @@ def build_fix(rel: str, base_path: Path, edit_path: Path, partial: bool = False,
     `smoothing` (None: same as `verify`): record the hard/soft edges of every
     edit object exported with normals, against the shapes the geometry fix
     builds, and (when verifying) check the loader shades them that way.
-    Skipped, excluded and deleted blocks never get a record.
+    Skipped, excluded and deleted blocks never get a record. A block the
+    loader shades differently raises, naming every such block and edge;
+    with `partial` its record is dropped instead and listed under
+    "smoothing skipped:", and the rest re-verified.
     `exclude`: block numbers left out of the fix entirely (as if unedited).
     `flipbook_fps`: playback rate of every numbered frame run (spec §5.3).
     `delete`: block numbers whose objects were deleted in Blender -- every
@@ -163,22 +186,23 @@ def build_fix(rel: str, base_path: Path, edit_path: Path, partial: bool = False,
     recs = []
     if smoothing is None:
         smoothing = verify
+    names = {obj_io.block_of(n): n for n in edit_objs}
     if smoothing:
         left_out = set(exclude) | set(delete) | {obj_io.block_of(n) for n, _ in skipped}
-        authored = {obj_io.block_of(n): m for n, m in edit_objs.items()
-                    if obj_io.block_of(n) not in left_out}
-        recs = _smoothing.records(_verify.apply(_nif_path(rel), fix_text(fix)), authored)
+        authored = {b: edit_objs[n] for b, n in names.items() if b not in left_out
+                    and _smoothing.edge_flags(edit_objs[n]) is not None}
+        if authored:
+            recs = _smoothing.records(_verify.apply(_nif_path(rel), fix_text(fix)), authored)
         if recs:
             fix = make_fix_dict(rel, edits, payload.encode_smoothing_b64(recs))
     if verify:
-        names = {obj_io.block_of(n): n for n in edit_objs}
         edited = {e["block"]: (names[e["block"]], edit_objs[names[e["block"]]]) for e in edits}
         albedos = {e["block"]: e["albedo"] for e in edits if e.get("albedo")}
         added = {e["block"]: len(e.get("add_triangles", ())) for e in edits}
         n = _verify.run(_nif_path(rel), fix_text(fix), shapes, edited, albedos, added)
         print(f"verified {n} objects")
         if recs:
-            n = _verify.run_smoothing(_nif_path(rel), fix_text(fix), recs)
+            fix, n = _verify_smoothing(rel, fix, edits, recs, names, partial)
             print(f"verified smoothing on {n} edges")
     for e in edits:
         pairs = e.get("moved_survivors")
