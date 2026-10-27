@@ -1,7 +1,7 @@
 # Quick Battle victory and defeat conditions
 
 **Date:** 2026-10-27
-**Status:** design, not built
+**Status:** built, not live-verified
 **Replaces:** the named battle types of
 `2026-10-23-quickbattle-victory-conditions-design.md` (its §3, §5.1, §5.2 and
 the "named types" rulings in §8). Its battle-end machinery (§4), and the
@@ -299,6 +299,6 @@ rewrites its section in these terms when it is designed.
 
 ## 10. Not live-verified
 
-Nothing here is built. Mark's live check, above all: the screen at real
+Built (Tasks 1-7, headless-tested end to end); nothing here is live-verified yet. Mark's live check, above all: the screen at real
 size, the hunt (friendly escorts actually helping), several protected ships
 spreading the enemy, and the survival timer.

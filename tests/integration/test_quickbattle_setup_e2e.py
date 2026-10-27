@@ -152,8 +152,8 @@ def test_late_enemy_group_e2e(world):
     assert QB.g_iNumEnemies == 0 and QB.bWonOrLost == 1
 
 
-def _km_group(panel, ship, allegiance, warp_in=0):
-    """A second group holding `ship`; returns its entry id."""
+def _group_of(panel, ship, allegiance, warp_in=0):
+    """A new group holding `ship`; returns its entry id."""
     _do(panel, "group-new")
     g = panel.scenario.groups[-1]
     _do(panel, "details:" + g.id, "draft:allegiance:" + allegiance)
@@ -163,20 +163,97 @@ def _km_group(panel, ship, allegiance, warp_in=0):
     return panel.scenario.group(g.id).entries[-1].id
 
 
-def test_km_e2e_from_the_victory_view(world):
+def _cond(panel, side, kind, entries=(), mode=None, minutes=None):
+    """One condition built through the panel verbs; its id."""
+    _do(panel, "cond-add:%s:%s" % (side, kind))
+    cid = panel.scenario.victory.conditions[-1].id
+    if mode is not None:
+        _do(panel, "cond-mode:%s:%s" % (cid, mode))
+    for eid in entries:
+        _do(panel, "cond-ship-add:%s:%s" % (cid, eid))
+    if minutes is not None:
+        _do(panel, "cond-minutes:%s:%d" % (cid, minutes))
+    return cid
+
+
+def _end_ints(QB):
+    """Pending ET_END_SIMULATION timers' ints."""
+    import App
+    return [t.GetEvent().GetInt()
+            for t in App.g_kTimerManager._timers.values()
+            if t.GetEvent() is not None
+            and t.GetEvent().GetEventType() == QB.ET_END_SIMULATION]
+
+
+def _said(monkeypatch):
+    import App
+    said = []
+    real = App.CharacterAction_Create
+
+    def fake(char, kind, key="", *rest):
+        said.append((char, key))
+        return real(char, kind, key, *rest)
+    monkeypatch.setattr(App, "CharacterAction_Create", fake)
+    return said
+
+
+def _hunt_setup(panel):
+    """Enemy Galor + Keldon (the default enemy group), Victory Ships ANY
+    [Galor]; returns (galor entry id, keldon entry id)."""
+    g = panel.scenario.groups[1]
+    _do(panel, "add:Galor:%s:1" % g.id, "add:Keldon:%s:1" % g.id)
+    galor, keldon = [e.id for e in panel.scenario.group(g.id).entries]
+    _cond(panel, "victory", "ships", [galor], mode="any")
+    return galor, keldon
+
+
+def test_hunt_scenario_end_to_end(world, monkeypatch):
     hl, _c, panel, QB = world
+    from engine.appc import mission_goals
     from engine.quickbattle import battle_end
     from engine.ui import target_markers
-    _do(panel, "add:Warbird")
-    entry = _km_group(panel, "Transport", "neutral")
-    _do(panel, "victory-view", "victory-type:kobayashi_maru", "victory-protect:" + entry)
+    said = _said(monkeypatch)
+    _hunt_setup(panel)
     _go(hl, panel)
-    name = battle_end.state().protected_name
-    assert name == "Transport-2"
-    assert target_markers.marker_for(name) == "protect"
-    _destroy(QB, _ships(QB)[name])
+    ships = _ships(QB)
+    galor = next(n for n in ships if n.startswith("Galor"))
+    assert target_markers.marker_for(galor) == "target"
+    labels = mission_goals.objectives_submenu()
+    assert labels.GetNumChildren() == 2          # the default + Destroy <Galor>
+    _destroy(QB, ships[galor])
+    st = battle_end.state()
+    assert st.ended and st.won is True and st.reason == battle_end.REASON_TARGETS
+    assert QB.g_iNumEnemies == 1                 # the Keldon is still alive
+    assert _end_ints(QB) == [2]                  # ET_END_SIMULATION, a win
+    import App
+    App.g_kTimerManager.tick(battle_end.END_DELAY_S + 0.1)
+    assert (QB.g_pTact, "QBFelixWin") in said
+    QB.EndSimulation()
+    hl._process_object_deletions()
+    assert target_markers.marker_for(galor) is None
+    menu = mission_goals.objectives_submenu()
+    assert menu.GetNumChildren() == 0 and menu.IsVisible() == 0
+    assert battle_end.state() is None
+
+
+def test_three_protected_end_to_end(world, monkeypatch):
+    hl, _c, panel, QB = world
+    from engine.quickbattle import battle_end
+    said = _said(monkeypatch)
+    _do(panel, "add:Warbird")
+    ids = [_group_of(panel, "Transport", "neutral") for _ in range(3)]
+    _cond(panel, "defeat", "ships", ids, mode="any")
+    _cond(panel, "defeat", "timer", minutes=2)
+    _go(hl, panel)
+    protected = battle_end.protected_names()
+    assert len(protected) == 3
+    _destroy(QB, _ships(QB)[protected[1]])
     st = battle_end.state()
     assert st.ended and st.won is False and st.reason == battle_end.REASON_PROTECTED
+    assert _end_ints(QB) == [1]
+    import App
+    App.g_kTimerManager.tick(battle_end.END_DELAY_S + 0.1)
+    assert (QB.g_pXO, "SaffiQBProtectedLost1") in said
 
 
 def test_xo_restart_rearms_from_current_plan(world):
@@ -184,8 +261,8 @@ def test_xo_restart_rearms_from_current_plan(world):
     import App
     from engine.quickbattle import battle_end
     _do(panel, "add:Warbird")
-    entry = _km_group(panel, "Akira", "friendly", warp_in=1)
-    _do(panel, "victory-type:kobayashi_maru", "victory-protect:" + entry)
+    entry = _group_of(panel, "Akira", "friendly", warp_in=1)
+    _cond(panel, "defeat", "ships", [entry])
     _go(hl, panel)
     assert "Akira-2" not in _ships(QB)
 
@@ -197,8 +274,8 @@ def test_xo_restart_rearms_from_current_plan(world):
     App.g_kTimerManager.tick(3.0)
     hl._fire_pending_preload_done()
     st = battle_end.state()
-    assert st is not None and st.type == "kobayashi_maru" and not st.ended
-    assert st.protected_name == "Akira-2"
+    assert st is not None and not st.ended
+    assert battle_end.protected_names() == ["Akira-2"]
     App.g_kTimerManager.tick(61.0)
     akira = _ships(QB).get("Akira-2")
     assert akira is not None
@@ -207,23 +284,24 @@ def test_xo_restart_rearms_from_current_plan(world):
     assert st.ended and st.won is False and st.reason == battle_end.REASON_PROTECTED
 
 
-def test_preset_km_round_trip_e2e(world, tmp_path):
+def test_preset_round_trip_end_to_end(world, tmp_path):
     hl, controller, panel, QB = world
-    from engine.quickbattle import battle_end, presets
-    from engine.ui import target_markers
+    from engine.quickbattle import battle_end, presets, spawn
     from engine.ui.quick_battle_setup_panel import QuickBattleSetupPanel
-    _do(panel, "add:Warbird")
-    entry = _km_group(panel, "Transport", "neutral")
-    _do(panel, "victory-type:kobayashi_maru", "victory-protect:" + entry,
-        "preset-save:km")
+    _hunt_setup(panel)
+    _do(panel, "preset-save:hunt")
+    saved = [(c.side, c.kind, c.mode, list(c.ships)) for c in panel.scenario.victory.conditions]
     fresh = QuickBattleSetupPanel(on_start=lambda: controller.loader.start_quickbattle(),
                                   presets=presets.load_presets(tmp_path / "p.json"))
     fresh.open()
     fresh.render_payload()
-    _do(fresh, "preset-load:km")
-    assert fresh.scenario.victory.type == "kobayashi_maru"
-    assert fresh.scenario.victory.protect == entry
+    _do(fresh, "preset-load:hunt")
+    loaded = [(c.side, c.kind, c.mode, list(c.ships)) for c in fresh.scenario.victory.conditions]
+    assert loaded and len(loaded) == len(saved)
+    assert [x[:3] for x in loaded] == [x[:3] for x in saved]
     _go(hl, fresh)
-    name = battle_end.state().protected_name
-    assert name == "Transport-2"
-    assert target_markers.marker_for(name) == "protect"
+    plan = spawn.current_plan()
+    assert [(c.side, c.kind, c.mode) for c in plan.victory.conditions] == \
+        [x[:3] for x in saved]
+    assert len(plan.victory.conditions[0].entry_ids) == 1
+    assert len(battle_end.target_names()) == 1
