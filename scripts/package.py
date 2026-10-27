@@ -14,6 +14,10 @@ THE SHIPPED LAYOUT, and why it is shaped this way:
         BC Dauntless.exe            GUI subsystem -- no terminal window
         dauntless-packaged.json     marker: engine/paths.py puts saves, config
                                     and logs under the player's own folders
+        README.txt, MODDING.txt     player docs, from docs/packaging/
+        LICENSE.txt,                the repo's LICENSE and notices, verbatim
+        THIRD_PARTY_NOTICES.txt
+        licenses/                   each bundled component's license text
         python312.dll               linked by the exe, so it must sit beside it
         libcef.dll, *.pak, locales/ the CEF runtime, likewise
         _dauntless_host*.pyd
@@ -89,6 +93,65 @@ _STDLIB_SKIP = {
 # Extension modules in DLLs/ that nothing in engine/ imports. tcl/tk alone is
 # several megabytes and pulls in a GUI toolkit we already have a renderer for.
 _DLL_SKIP_PREFIXES = ("_tkinter", "tcl", "tk", "_test", "_ctypes_test")
+
+# The player-facing documents, shipped at the install root as plain .txt so
+# a double-click opens them in Notepad. Published name -> source. LICENSE and
+# THIRD_PARTY_NOTICES are the repo's own files, copied byte for byte: the GPL
+# text may not be edited, and one notices file cannot drift from another.
+DIST_DOCS = {
+    "README.txt": PROJECT_ROOT / "docs" / "packaging" / "README.txt",
+    "MODDING.txt": PROJECT_ROOT / "docs" / "packaging" / "MODDING.txt",
+    "LICENSE.txt": PROJECT_ROOT / "LICENSE",
+    "THIRD_PARTY_NOTICES.txt": PROJECT_ROOT / "THIRD_PARTY_NOTICES.md",
+}
+
+# An unfilled blank in a player document. Staging refuses to ship one.
+DOC_PLACEHOLDER = "[[TODO"
+
+# Where the shipped license texts go. THIRD_PARTY_NOTICES names each file by
+# this folder, and tests/unit/test_package_docs.py holds the two in step.
+LICENSES_DIR = "licenses"
+
+
+def python_license() -> Path:
+    """The license file of the Python whose stdlib we bundle.
+
+    Searched the way CPython's own license() builtin searches (site.py): the
+    stdlib's parent, then the stdlib itself. On Windows that is
+    <base_prefix>/LICENSE.txt, which also covers the libraries Python bundles.
+    """
+    stdlib = Path(os.__file__).resolve().parent
+    for folder in (stdlib.parent, stdlib):
+        for name in ("LICENSE.txt", "LICENSE"):
+            if (folder / name).is_file():
+                return folder / name
+    raise SystemExit(f"[package] no Python license file beside {stdlib}")
+
+
+def third_party_licenses() -> dict:
+    """Published name (under licenses/) -> source, for everything we bundle.
+
+    A function, not a constant: the Python entry depends on the interpreter
+    running this script, and build/_deps exists only after a configure.
+    """
+    third = PROJECT_ROOT / "native" / "third_party"
+    deps = BUILD / "_deps"
+    return {
+        "Python-LICENSE.txt": python_license(),
+        "CEF-LICENSE.txt": deps / "cef-src" / "LICENSE.txt",
+        "Chromium-CREDITS.html": deps / "cef-src" / "CREDITS.html",
+        "OpenAL-Soft-COPYING.txt": deps / "openal_soft-src" / "COPYING",
+        "pybind11-LICENSE.txt": deps / "pybind11-src" / "LICENSE",
+        "nlohmann-json-LICENSE.txt": deps / "nlohmann_json-src" / "LICENSE.MIT",
+        "GLFW-LICENSE.txt": third / "glfw" / "LICENSE.md",
+        "GLAD-LICENSE.txt": third / "glad" / "LICENSE",
+        "glm-LICENSE.txt": third / "glm" / "LICENSE",
+        "stb-LICENSE.txt": third / "stb" / "LICENSE",
+        "cgltf-LICENSE.txt": third / "cgltf" / "LICENSE",
+        "dr_libs-LICENSE.txt": third / "dr_libs" / "LICENSE",
+        "Antonio-OFL.txt": (PROJECT_ROOT / "native" / "assets" / "ui-cef"
+                            / "THIRD_PARTY" / "Antonio-OFL.txt"),
+    }
 
 
 def git_commit() -> str:
@@ -233,6 +296,30 @@ def make_gui_subsystem(exe: Path) -> None:
     exe.write_bytes(bytes(data))
 
 
+def unfinished_docs() -> list:
+    """Published names of the player documents that still hold a placeholder."""
+    return [name for name, src in DIST_DOCS.items()
+            if DOC_PLACEHOLDER in src.read_text(encoding="utf-8")]
+
+
+def stage_docs(app: Path) -> None:
+    for name, src in DIST_DOCS.items():
+        if not src.is_file():
+            raise SystemExit(f"[package] missing player document {src}")
+        shutil.copy2(src, app / name)
+    _say(f"docs    -> {', '.join(DIST_DOCS)}")
+
+    # Every bundled component's license text. MIT, BSD and zlib all require
+    # it in a binary distribution; a missing one is a release we may not ship.
+    licenses = app / LICENSES_DIR
+    licenses.mkdir(exist_ok=True)
+    for name, src in third_party_licenses().items():
+        if not src.is_file():
+            raise SystemExit(f"[package] missing license text {src}")
+        shutil.copy2(src, licenses / name)
+    _say(f"licenses -> {LICENSES_DIR}/ ({len(third_party_licenses())} files)")
+
+
 def stage(dest: Path) -> Path:
     app = dest / APP_NAME
     if app.exists():
@@ -292,7 +379,10 @@ def stage(dest: Path) -> Path:
         shutil.copy2(src, tools_dest / name)
     _say("engine/, root shims, native/assets and runtime tools staged")
 
-    # 5. The marker. Its presence is the whole switch: engine/paths.py sends
+    # 5. What the player reads first: README, modding guide, license, notices.
+    stage_docs(app)
+
+    # 6. The marker. Its presence is the whole switch: engine/paths.py sends
     #    writes to the player's folders, and host_main.cc binds Python to the
     #    bundled runtime instead of a developer venv. Its CONTENTS are this
     #    build's identity -- engine/version.py reads them back and puts them in
@@ -408,6 +498,12 @@ def main() -> int:
         raise SystemExit("[package] this script currently stages a Windows "
                          "build only")
 
+    # Like a dirty tree: fine to stage for testing, never fine to publish.
+    unfinished = unfinished_docs()
+    if unfinished and args.zip:
+        raise SystemExit(f"[package] refusing --zip: {', '.join(unfinished)} "
+                         f"still hold {DOC_PLACEHOLDER} placeholders")
+
     app = stage(DIST)
     info = json.loads((app / PACKAGED_MARKER).read_text(encoding="utf-8"))
     _say(f"staged {app.relative_to(PROJECT_ROOT)} ({tree_size_mb(app)} MB)")
@@ -417,6 +513,9 @@ def main() -> int:
         # can get back to the code, and a dirty build defeats that.
         _say("NOTE: staged from a DIRTY tree -- fine for testing, do not "
              "publish it")
+    if unfinished:
+        _say(f"NOTE: {', '.join(unfinished)} still hold {DOC_PLACEHOLDER} "
+             "placeholders -- fine for testing, do not publish it")
 
     if not args.no_check:
         rc = smoke_check(app)

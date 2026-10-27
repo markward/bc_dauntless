@@ -1,0 +1,70 @@
+BC DAUNTLESS - MODDING GUIDE
+============================
+
+Proper mod support is coming. It isn't finished yet.
+
+For now you can try existing Bridge Commander mods, ship packs especially,
+but please keep it light. Add one or two at a time, and expect some mods not
+to work yet. If a ship mod installs cleanly, it should show up in Quick
+Battle and be flyable. Bigger mods that change missions, menus or the game's
+scripts are much less likely to work at this stage.
+
+
+WHERE MODS GO
+-------------
+
+Never install mods into your Bridge Commander folder. Keep that install
+clean (see README.txt). BC Dauntless has its own mods folder instead:
+
+    %APPDATA%\Dauntless\mods
+
+(Paste that into the File Explorer address bar. If the "mods" folder isn't
+there yet, create it.)
+
+Give each mod its own folder inside it, and put the mod's files in that
+folder exactly as they came in the download: the "Data", "Scripts" and
+"sfx" folders you would normally have copied into Bridge Commander. For
+example:
+
+    mods\
+        Galaxy Refit\
+            Data\
+                Models\...
+            Scripts\
+                Ships\...
+        Klingon Pack\
+            Data\...
+            Scripts\...
+
+If the download unpacks with an extra folder around everything, that's fine.
+BC Dauntless looks a few levels down for the Data and Scripts folders.
+Readme files and other documents inside a mod are ignored.
+
+
+WHY A SEPARATE FOLDER
+---------------------
+
+It makes mods easy to manage:
+
+  - Remove a mod by deleting its folder. Nothing else was changed, so
+    nothing needs undoing.
+  - Your Bridge Commander install stays untouched, so it always works as a
+    clean base.
+  - If something breaks, move mod folders out one at a time to find the
+    culprit.
+
+If two mods include the same file, the copy in the mod whose folder name
+comes later in alphabetical order is the one used.
+
+
+A FEW MORE THINGS
+-----------------
+
+  - Don't install Foundation or NanoFX. BC Dauntless has its own built-in
+    versions and will ignore those.
+  - Special weapons and effects that rely on FoundationTech aren't
+    supported yet. Ships that use them still load, without those extras.
+  - To see which mods were loaded, open the pause menu and choose "Quit and
+    Manage Mods". The game restarts into the Mods screen.
+  - Found a mod that doesn't work? Report it on GitHub like any other
+    problem (see README.txt), and say which mod and where you got it.
