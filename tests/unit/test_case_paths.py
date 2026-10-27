@@ -2,9 +2,18 @@
 
 The live case is GalaxyBridge.py's `import DBridgeProperties` against a file
 named dbridgeproperties.py, which only fails on a case-sensitive filesystem.
+
+The tests compare file IDENTITY, not spelling. An exact-case match is always
+tried first, so on a case-insensitive filesystem (macOS by default) the path
+comes back as spelled, which is the same file; on Linux it must come back as
+the on-disk spelling, because the spelled path does not exist there.
 """
 
 from engine.core import case_paths
+
+
+def _same_file(found, expected):
+    return found is not None and found.exists() and found.samefile(expected)
 
 
 def _tree(tmp_path):
@@ -22,14 +31,14 @@ def test_resolve_prefers_the_exact_spelling(tmp_path):
 
 def test_resolve_matches_a_differently_cased_file(tmp_path):
     root = _tree(tmp_path)
-    assert (case_paths.resolve(root, "Bridge/DBridgeProperties.py")
-            == root / "Bridge" / "dbridgeproperties.py")
+    assert _same_file(case_paths.resolve(root, "Bridge/DBridgeProperties.py"),
+                      root / "Bridge" / "dbridgeproperties.py")
 
 
 def test_resolve_folds_directory_components_too(tmp_path):
     root = _tree(tmp_path)
-    assert (case_paths.resolve(root, "bridge/characters/__init__.py")
-            == root / "Bridge" / "Characters" / "__init__.py")
+    assert _same_file(case_paths.resolve(root, "bridge/characters/__init__.py"),
+                      root / "Bridge" / "Characters" / "__init__.py")
 
 
 def test_resolve_returns_none_when_nothing_matches(tmp_path):
@@ -52,7 +61,7 @@ def test_game_asset_finds_a_differently_cased_stock_file(tmp_path, monkeypatch):
     nif.write_text("")
     monkeypatch.setattr(paths, "game_root", lambda: tmp_path)
     monkeypatch.setattr(mods, "game_override", lambda rel: None)
-    assert paths.game_asset("data/Models/Sets/DBridge/DBridge.nif") == nif
+    assert _same_file(paths.game_asset("data/Models/Sets/DBridge/DBridge.nif"), nif)
     # A path that exists in no case comes back exactly as spelled.
     assert (paths.game_asset("data/Models/Missing.nif")
             == tmp_path / "data/Models/Missing.nif")

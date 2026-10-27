@@ -207,11 +207,21 @@ TEST(AssetPath, OverrideFoldStripsATrailingSeparatorLikePythonFold) {
 // "data/Models/Sets/DBridge/DBridge.nif" from a folder holding Dbridge.NIF.
 // On a case-sensitive filesystem resolve_asset_path must find the real file;
 // a path that exists in no case comes back as spelled.
+//
+// The found path is compared by file IDENTITY, not spelling: the exact
+// spelling is tried first, so on a case-insensitive filesystem (macOS by
+// default) it comes back as spelled, which is the same file. On Linux the
+// spelled path does not exist, so only the on-disk spelling passes.
 
 #include <filesystem>
 #include <fstream>
 
 namespace {
+
+bool same_file(const std::string& found, const std::filesystem::path& expected) {
+    std::error_code ec;
+    return std::filesystem::equivalent(found, expected, ec) && !ec;
+}
 
 struct CaseTree {
     std::filesystem::path root;
@@ -230,16 +240,16 @@ struct CaseTree {
 TEST(AssetPath, ResolvesADifferentlyCasedFileUnderTheRoot) {
     CaseTree t;
     renderer::set_game_root(t.root.string());
-    EXPECT_EQ(resolve_asset_path("data/models/sets/dbridge/DBridge.nif"),
-              (t.root / "data/Models/Sets/DBridge/Dbridge.NIF").string());
+    EXPECT_TRUE(same_file(resolve_asset_path("data/models/sets/dbridge/DBridge.nif"),
+                          t.root / "data/Models/Sets/DBridge/Dbridge.NIF"));
     renderer::set_game_root("game");
 }
 
 TEST(AssetPath, ResolvesADifferentlyCasedAbsolutePath) {
     CaseTree t;
     const auto spelled = t.root / "DATA/Models/Sets/DBridge/DBridge.nif";
-    EXPECT_EQ(resolve_asset_path(spelled.string()),
-              (t.root / "data/Models/Sets/DBridge/Dbridge.NIF").string());
+    EXPECT_TRUE(same_file(resolve_asset_path(spelled.string()),
+                          t.root / "data/Models/Sets/DBridge/Dbridge.NIF"));
 }
 
 TEST(AssetPath, AMissingFileComesBackAsSpelled) {
