@@ -14,7 +14,8 @@ vertex MOVES, UV0 EDITS, deleted faces/vertices, NEW vertices, added faces
 (n-gons are ear-clipped), and a new ALBEDO texture per object (map_Kd; the
 .tga must be in the replacements overlay or stock texture dir; a map_Kd of
 `<stem>_0.tga` with `<stem>_1.tga`, ... beside it becomes a looping flipbook
-at `--flipbook-fps`, default 5). A value equal
+at `--flipbook-fps`, default 5). Corner normals (`vn`, Blender's default)
+carry each object's hard/soft edges into the fix. A value equal
 to an original's (a snapped vertex, a shared UV) is stored as a reference.
 `--exclude BLOCK` (repeatable) leaves a block out of the fix; `--delete BLOCK`
 (repeatable) removes every triangle of a shape whose object was deleted."""
@@ -27,7 +28,7 @@ from pathlib import Path
 
 from engine import mods, paths
 from tools.gen_mesh_fixes import fnv1a64_hex
-from tools.shape_diff import ShapeDiffError, match, obj_io, payload
+from tools.shape_diff import ShapeDiffError, match, obj_io, payload, smoothing as _smoothing
 from tools.shape_diff import verify as _verify
 
 GENERATOR = "tools/bridge_shape_diff.py"
@@ -85,15 +86,18 @@ def _texture_entry(e: dict) -> dict:
     return t
 
 
-def make_fix_dict(rel: str, edits: list) -> dict:
+def make_fix_dict(rel: str, edits: list, smoothing: str = None) -> dict:
+    """`smoothing`: the BSM1 payload (base64) of the authored edges, if any."""
     geometry = [e for e in edits if _has_geometry(e)]
     textures = sorted((_texture_entry(e) for e in edits if e.get("albedo")),
                       key=lambda t: t["block"])
     fix = {"format": 1, "source": rel, "generator": GENERATOR}
-    if geometry or not textures:
+    if geometry or not (textures or smoothing):
         fix["shape_edits"] = payload.encode_b64(geometry)
     if textures:
         fix["textures"] = textures
+    if smoothing:
+        fix["smoothing"] = smoothing
     return fix
 
 
@@ -120,15 +124,28 @@ def _summary(e: dict) -> str:
     return f"block {e['block']}: " + ", ".join(parts)
 
 
+def _smoothing_summary(fix: dict):
+    if not fix.get("smoothing"):
+        return None
+    recs = payload.decode_smoothing_b64(fix["smoothing"])
+    return (f"smoothing: {len(recs)} shapes, {sum(len(r['hard']) for r in recs)} hard / "
+            f"{sum(len(r['soft']) for r in recs)} soft edges")
+
+
 def fix_text(fix: dict) -> str:
     return json.dumps(fix, indent=2) + "\n"
 
 
 def build_fix(rel: str, base_path: Path, edit_path: Path, partial: bool = False,
-              exclude=(), verify: bool = True, flipbook_fps: float = 5.0, delete=()):
+              exclude=(), verify: bool = True, flipbook_fps: float = 5.0, delete=(),
+              smoothing=None):
     """Diff, then (unless verify=False -- unit tests only) apply the fix with
     the loader and check it reproduces edit.obj and leaves every other block
     stock (spec §5.4); a mismatch raises, so nothing unverified is written.
+    `smoothing` (None: same as `verify`): record the hard/soft edges of every
+    edit object exported with normals, against the shapes the geometry fix
+    builds, and (when verifying) check the loader shades them that way.
+    Skipped, excluded and deleted blocks never get a record.
     `exclude`: block numbers left out of the fix entirely (as if unedited).
     `flipbook_fps`: playback rate of every numbered frame run (spec §5.3).
     `delete`: block numbers whose objects were deleted in Blender -- every
@@ -143,6 +160,16 @@ def build_fix(rel: str, base_path: Path, edit_path: Path, partial: bool = False,
                         texture_dirs=dirs, exclude=exclude, flipbook_fps=flipbook_fps)
     edits, skipped = result if partial else (result, [])
     fix = make_fix_dict(rel, edits)
+    recs = []
+    if smoothing is None:
+        smoothing = verify
+    if smoothing:
+        left_out = set(exclude) | set(delete) | {obj_io.block_of(n) for n, _ in skipped}
+        authored = {obj_io.block_of(n): m for n, m in edit_objs.items()
+                    if obj_io.block_of(n) not in left_out}
+        recs = _smoothing.records(_verify.apply(_nif_path(rel), fix_text(fix)), authored)
+        if recs:
+            fix = make_fix_dict(rel, edits, payload.encode_smoothing_b64(recs))
     if verify:
         names = {obj_io.block_of(n): n for n in edit_objs}
         edited = {e["block"]: (names[e["block"]], edit_objs[names[e["block"]]]) for e in edits}
@@ -150,6 +177,9 @@ def build_fix(rel: str, base_path: Path, edit_path: Path, partial: bool = False,
         added = {e["block"]: len(e.get("add_triangles", ())) for e in edits}
         n = _verify.run(_nif_path(rel), fix_text(fix), shapes, edited, albedos, added)
         print(f"verified {n} objects")
+        if recs:
+            n = _verify.run_smoothing(_nif_path(rel), fix_text(fix), recs)
+            print(f"verified smoothing on {n} edges")
     for e in edits:
         pairs = e.get("moved_survivors")
         if pairs:
@@ -204,7 +234,10 @@ def main(argv=None) -> int:
             print("skipped (not yet supported):")
             for name, reason in skipped:
                 print(f"  {name}: {reason}")
-        if not edits:
+        smoothing = _smoothing_summary(fix)
+        if smoothing:
+            print(smoothing)
+        if not edits and not smoothing:
             print("no changes")
             return 0
         target = _fix_dir() / (fnv1a64_hex(_nif_path(a.nif).read_bytes()) + ".json")

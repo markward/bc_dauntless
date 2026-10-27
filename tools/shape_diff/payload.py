@@ -136,3 +136,21 @@ def encode_smoothing(records: list) -> bytes:
 
 def encode_smoothing_b64(records: list) -> str:
     return base64.b64encode(encode_smoothing(records)).decode("ascii")
+
+
+def decode_smoothing_b64(text: str) -> list:
+    """Inverse of encode_smoothing_b64 (records without `ends`)."""
+    raw = base64.b64decode(text)
+    if raw[:4] != b"BSM1":
+        raise ShapeDiffError("smoothing payload is not BSM1")
+    (count,), at = struct.unpack_from("<H", raw, 4), 6
+    out = []
+    for _ in range(count):
+        block, n, n_hard, n_soft = struct.unpack_from("<IHHH", raw, at)
+        at += 10
+        pairs = struct.unpack_from(f"<{2 * (n_hard + n_soft)}H", raw, at)
+        at += 4 * (n_hard + n_soft)
+        edges = list(zip(pairs[0::2], pairs[1::2]))
+        out.append({"block": block, "vertex_count": n,
+                    "hard": edges[:n_hard], "soft": edges[n_hard:]})
+    return out

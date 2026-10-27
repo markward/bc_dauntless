@@ -137,17 +137,66 @@ def check(stock_shapes, applied_shapes, edited, albedos=None, added=None):
     return len(edited)
 
 
-def run(nif_path, fix_json, stock_shapes, edited, albedos=None, added=None):
-    """Apply `fix_json` to `nif_path` with the loader and `check` it."""
+def _require_host():
     host = _host()
     if host is None:
         raise ShapeDiffError(
             "can't verify the fix: _dauntless_host is not importable -- build it "
             "(cmake --build build -j); verification is never skipped on the CLI")
+    return host
+
+
+def _loader(call, nif_path, fix_json):
     try:
-        applied = host.nif_shapes(str(nif_path), fix_json)
+        out = call(str(nif_path), fix_json)
     except RuntimeError as exc:
         raise ShapeDiffError(f"verify: the loader refuses this fix: {exc}") from None
-    if applied is None:
+    if out is None:
         raise ShapeDiffError(f"verify: cannot read {nif_path}")
-    return check(stock_shapes, applied, edited, albedos, added)
+    return out
+
+
+def apply(nif_path, fix_json):
+    """The shapes the loader builds from `nif_path` with `fix_json` applied."""
+    return _loader(_require_host().nif_shapes, nif_path, fix_json)
+
+
+def run(nif_path, fix_json, stock_shapes, edited, albedos=None, added=None):
+    """Apply `fix_json` to `nif_path` with the loader and `check` it."""
+    return check(stock_shapes, apply(nif_path, fix_json), edited, albedos, added)
+
+
+def _shading(same):
+    return "soft" if same else "hard"
+
+
+def check_smoothing(records, report_rows):
+    """Every authored edge in `records` (smoothing.records) must have a
+    loader report row that found it as one two-surface edge and joins its
+    sides at each end exactly where Blender's normals agree. Raises
+    ShapeDiffError on the first difference; returns the edges checked."""
+    rows = {(r["block"], r["a"], r["b"]): r for r in report_rows}
+    n = 0
+    for rec in records:
+        block = rec["block"]
+        for a, b in rec["hard"] + rec["soft"]:
+            row = rows.get((block, a, b))
+            if row is None or not row["found"]:
+                raise ShapeDiffError(
+                    f"verify: block {block}: edge {a}-{b} is not one edge between two "
+                    "surfaces of the built shape")
+            for end, joined, same in ((a, row["joined_a"], rec["ends"][(a, b)][0]),
+                                      (b, row["joined_b"], rec["ends"][(a, b)][1])):
+                if joined != same:
+                    raise ShapeDiffError(
+                        f"verify: block {block}: edge {a}-{b} renders {_shading(joined)} "
+                        f"at vertex {end} where Blender shows {_shading(same)}")
+            n += 1
+    return n
+
+
+def run_smoothing(nif_path, fix_json, records):
+    """Build `nif_path` with `fix_json` through the loader's normal generation
+    and `check_smoothing` its report."""
+    host = _require_host()
+    return check_smoothing(records, _loader(host.set_smoothing_report, nif_path, fix_json))
