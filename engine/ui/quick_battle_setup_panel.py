@@ -200,9 +200,7 @@ class QuickBattleSetupPanel(Panel):
 
     def _after_change(self) -> None:
         self._last_pushed = None
-        notice = vic.reconcile(self._scenario)
-        if notice is not None:
-            self._notice = notice
+        vic.reconcile(self._scenario)
         qb = self._qb()
         if qb is not None and not getattr(qb, "bInSimulation", 0):
             from engine.quickbattle import spawn
@@ -393,26 +391,31 @@ class QuickBattleSetupPanel(Panel):
         ce = self._ce(e.ship)
         return (ce.title or ce.ship_id) if ce is not None else e.ship
 
+    def _ship_row(self, g, e) -> dict:
+        ce = self._ce(e.ship)
+        # The ships view's art (renderRow), so a condition row looks like a
+        # group row; None when the ship is not in the catalog.
+        return {"id": e.id, "title": self._entry_title(e), "group_name": g.name,
+                "allegiance": g.allegiance,
+                "icon": self._icon(ce.icon) if ce is not None else None}
+
     def _victory_payload(self) -> dict:
-        s, v = self._scenario, self._scenario.victory
-        groups = {}
-        for g, e in vic.protect_candidates(s):
-            c = groups.setdefault(g.id, {"group": g.id, "group_name": g.name,
-                                         "allegiance": g.allegiance, "entries": []})
-            ce = self._ce(e.ship)
-            # The ships view's art (renderRow), so a protect row looks like
-            # a group row; None when the ship is not in the catalog.
-            c["entries"].append({"id": e.id, "title": self._entry_title(e),
-                                 "icon": self._icon(ce.icon) if ce is not None else None})
-        return {
-            "type": v.type, "protect": v.protect,
-            "time_limit_min": v.time_limit_min, "rule": vic.rule_text(s),
-            "types": [{"id": t.id, "label": t.label, "description": t.description,
-                       "available": vic.unavailable_reason(s, t.id) is None,
-                       "reason": vic.unavailable_reason(s, t.id)}
-                      for t in vic.TYPES],
-            "candidates": list(groups.values()),
-        }
+        s = self._scenario
+        stacks = []
+        for side in vic.SIDES:
+            rows = {e.id: self._ship_row(g, e) for g, e in vic.eligible(s, side)}
+            conds = []
+            for c in vic.conditions(s, side):
+                listed = [rows[eid] for eid in c.ships if eid in rows]
+                conds.append({
+                    "id": c.id, "kind": c.kind, "mode": c.mode,
+                    "minutes": c.minutes, "ships": listed,
+                    "addable": [r for eid, r in rows.items() if eid not in c.ships]
+                               if c.kind == vic.SHIPS else []})
+            stacks.append({"side": side,
+                           "can_add_timer": not vic.has_timer(s, side),
+                           "conditions": conds})
+        return {"stacks": stacks}
 
     def _summary(self) -> str:
         s = self._scenario
@@ -424,7 +427,7 @@ class QuickBattleSetupPanel(Panel):
         n_ships = sum(len(g.entries) for g in s.groups)
         return "%s · %s%s" % (_plural(len(s.groups), "group"),
                               _plural(n_ships, "ship"),
-                              vic.summary_suffix(s, self._entry_title))
+                              vic.summary_suffix(s))
 
     def _setup_payload(self) -> dict:
         from engine.ship_catalog import ERA_IDS
@@ -753,24 +756,37 @@ class QuickBattleSetupPanel(Panel):
         self._view = "victory" if self._view == "ships" else "ships"
         return True
 
-    def _victory_set(self, setter, value) -> bool:
-        if not setter(self._scenario, value):
-            return False
-        self._after_change()
-        return True
+    def _victory_done(self, ok) -> bool:
+        if ok:
+            self._after_change()
+        return bool(ok)
 
-    def _on_victory_type(self, arg) -> bool:
-        return self._victory_set(vic.set_type, arg)
+    def _on_cond_add(self, arg) -> bool:
+        side, _, kind = arg.partition(":")
+        return self._victory_done(vic.add_condition(self._scenario, side, kind))
 
-    def _on_victory_protect(self, arg) -> bool:
-        return self._victory_set(vic.set_protect, arg)
+    def _on_cond_remove(self, arg) -> bool:
+        return self._victory_done(vic.remove_condition(self._scenario, arg))
 
-    def _on_victory_time(self, arg) -> bool:
+    def _on_cond_mode(self, arg) -> bool:
+        cid, _, mode = arg.partition(":")
+        return self._victory_done(vic.set_mode(self._scenario, cid, mode))
+
+    def _on_cond_ship_add(self, arg) -> bool:
+        cid, _, eid = arg.partition(":")
+        return self._victory_done(vic.add_ship(self._scenario, cid, eid))
+
+    def _on_cond_ship_remove(self, arg) -> bool:
+        cid, _, eid = arg.partition(":")
+        return self._victory_done(vic.remove_ship(self._scenario, cid, eid))
+
+    def _on_cond_minutes(self, arg) -> bool:
+        cid, _, text = arg.partition(":")
         try:
-            minutes = int(arg)
+            minutes = int(text)
         except ValueError:
             return False
-        return self._victory_set(vic.set_time_limit, minutes)
+        return self._victory_done(vic.set_minutes(self._scenario, cid, minutes))
 
     # dialogs
     def _on_confirm(self, _arg) -> bool:
@@ -822,7 +838,10 @@ class QuickBattleSetupPanel(Panel):
         "preset-save": _on_preset_save, "preset-load": _on_preset_load,
         "preset-delete": _on_preset_delete,
         "confirm": _on_confirm, "cancel": _on_cancel,
-        "victory-view": _on_victory_view, "victory-type": _on_victory_type,
-        "victory-protect": _on_victory_protect, "victory-time": _on_victory_time,
+        "victory-view": _on_victory_view,
+        "cond-add": _on_cond_add, "cond-remove": _on_cond_remove,
+        "cond-mode": _on_cond_mode, "cond-ship-add": _on_cond_ship_add,
+        "cond-ship-remove": _on_cond_ship_remove,
+        "cond-minutes": _on_cond_minutes,
         "start": _on_start, "close": _on_close, "esc": _on_esc,
     }

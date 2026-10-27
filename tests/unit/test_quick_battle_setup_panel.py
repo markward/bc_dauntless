@@ -864,86 +864,111 @@ def test_victory_view_toggles_and_resets_on_open(panel):
     assert _setup(panel)["view"] == "ships"
 
 
-def test_victory_payload_lists_two_types_with_km_greyed(panel):
-    v = _setup(panel)["victory"]
-    assert (v["type"], v["protect"], v["time_limit_min"]) == ("elimination", None, 0)
-    assert v["rule"].startswith("You win when every enemy is destroyed")
-    assert [t["id"] for t in v["types"]] == ["elimination", "kobayashi_maru"]
-    elim, km = v["types"]
-    assert elim["available"] and elim["reason"] is None
-    assert not km["available"] and km["reason"] == "Add a friendly or neutral ship first"
-    assert km["label"] == "Kobayashi Maru" and km["description"]
-    assert v["candidates"] == []
+def _stack(p, side):
+    return next(st for st in _setup(p)["victory"]["stacks"] if st["side"] == side)
 
 
-def test_choose_km_then_protect_and_time(panel):
-    e = _friend(panel)
-    panel.dispatch_event("add:Sovereign:%s:1" % _enemy(panel).id)
-    pg = panel.scenario.player_group()
-    v = _setup(panel)["victory"]
-    assert v["types"][1]["available"]
-    assert v["candidates"] == [{"group": pg.id, "group_name": pg.name,
-                                "allegiance": "friendly",
-                                "entries": [{"id": e.id, "title": "Warbird",
-                                             "icon": QuickBattleSetupPanel._icon("Warbird")}]}]
-    assert panel.dispatch_event("victory-type:kobayashi_maru")
-    assert panel.dispatch_event("victory-protect:" + e.id)
-    assert panel.dispatch_event("victory-time:15")
-    s = _setup(panel)
-    assert s["victory"]["type"] == "kobayashi_maru"
-    assert s["victory"]["protect"] == e.id and s["victory"]["time_limit_min"] == 15
-    assert "lose if time runs out" in s["victory"]["rule"]
-    assert s["summary"].endswith(" · Kobayashi Maru · protect Warbird")
+def _neutral_and_enemy(p):
+    """A neutral Warbird and an enemy Sovereign; return (neutral, enemy) entries."""
+    g = p.scenario.add_group()
+    g.allegiance = "neutral"
+    assert p.dispatch_event("add:Warbird:%s:1" % g.id)
+    assert p.dispatch_event("add:Sovereign:%s:1" % _enemy(p).id)
+    return g.entries[-1], _enemy(p).entries[-1]
 
 
-def test_victory_title_prefers_variant_then_catalog_title(panel):
-    pg = panel.scenario.player_group()
-    panel.dispatch_event("add:Galaxy:%s:1" % pg.id)
-    e = pg.entries[-1]
-    e.variant = "USS Venture"
-    titles = {x["id"]: x["title"] for c in _setup(panel)["victory"]["candidates"]
-              for x in c["entries"]}
-    assert titles[e.id] == "USS Venture"
+def test_cond_add_and_remove(panel):
+    assert panel.dispatch_event("cond-add:defeat:ships")
+    (c,) = _stack(panel, "defeat")["conditions"]
+    assert c["kind"] == "ships" and c["ships"] == [] and c["mode"] == "any"
+    assert _stack(panel, "victory")["conditions"] == []
+    assert panel.dispatch_event("cond-remove:" + c["id"])
+    assert _stack(panel, "defeat")["conditions"] == []
+    assert not panel.dispatch_event("cond-add:middle:ships")
+    assert not panel.dispatch_event("cond-add:victory:laser")
+    assert not panel.dispatch_event("cond-remove:nope")
 
 
-def test_victory_candidate_carries_the_ships_view_icon(panel, monkeypatch):
-    """A protect row draws the same art as the ships view: the candidate's
-    `icon` is `_icon(<catalog entry>.icon)`, None for a ship not in the
-    catalog."""
+def test_cond_timer_once_per_side(panel):
+    assert panel.dispatch_event("cond-add:victory:timer")
+    assert _stack(panel, "victory")["can_add_timer"] is False
+    assert _stack(panel, "defeat")["can_add_timer"] is True
+    assert not panel.dispatch_event("cond-add:victory:timer")
+    assert panel.dispatch_event("cond-add:defeat:timer")
+
+
+def test_cond_ship_add_remove_and_addable(panel):
+    neutral, enemy = _neutral_and_enemy(panel)
+    assert panel.dispatch_event("cond-add:defeat:ships")
+    (c,) = _stack(panel, "defeat")["conditions"]
+    (r,) = c["addable"]
+    assert r["id"] == neutral.id and r["title"] == "Warbird"
+    assert r["allegiance"] == "neutral" and "icon" in r and r["group_name"]
+    assert not panel.dispatch_event("cond-ship-add:%s:%s" % (c["id"], enemy.id))
+    assert panel.dispatch_event("cond-ship-add:%s:%s" % (c["id"], neutral.id))
+    (c,) = _stack(panel, "defeat")["conditions"]
+    assert [x["id"] for x in c["ships"]] == [neutral.id] and c["addable"] == []
+    assert panel.dispatch_event("cond-ship-remove:%s:%s" % (c["id"], neutral.id))
+    (c,) = _stack(panel, "defeat")["conditions"]
+    assert c["ships"] == [] and [x["id"] for x in c["addable"]] == [neutral.id]
+
+
+def test_victory_addable_lists_enemies_with_the_ships_view_icon(panel, monkeypatch):
     monkeypatch.setattr(QuickBattleSetupPanel, "_icon",
                         staticmethod(lambda stem: "file:///cache/%s.png" % stem))
-    e = _friend(panel)
-    pg = panel.scenario.player_group()
-    assert panel.dispatch_event("add:Galaxy:%s:1" % pg.id)
-    gone = pg.entries[-1]
-    gone.ship = "NotInTheCatalog"
-    entries = {x["id"]: x for c in _setup(panel)["victory"]["candidates"]
-               for x in c["entries"]}
-    assert entries[e.id].get("icon") == "file:///cache/Warbird.png"
-    assert "icon" in entries[gone.id] and entries[gone.id]["icon"] is None
+    _neutral_and_enemy(panel)
+    panel.dispatch_event("cond-add:victory:ships")
+    (c,) = _stack(panel, "victory")["conditions"]
+    (r,) = c["addable"]
+    assert r["title"] == "Sovereign" and r["allegiance"] == "enemy"
+    assert r["icon"] == "file:///cache/Sovereign.png"
+    _enemy(panel).entries[-1].ship = "NotInTheCatalog"
+    panel.invalidate()
+    (r,) = _stack(panel, "victory")["conditions"][0]["addable"]
+    assert "icon" in r and r["icon"] is None
 
 
-def test_victory_type_refused_when_unavailable(panel):
-    assert not panel.dispatch_event("victory-type:kobayashi_maru")
-    assert not panel.dispatch_event("victory-type:nope")
-    assert not panel.dispatch_event("victory-protect:nope")
-    assert not panel.dispatch_event("victory-time:-1")
-    assert not panel.dispatch_event("victory-time:x")
-    assert _setup(panel)["victory"]["type"] == "elimination"
+def test_cond_mode_and_minutes_verbs(panel):
+    panel.dispatch_event("cond-add:defeat:ships")
+    panel.dispatch_event("cond-add:defeat:timer")
+    ships, timer = _stack(panel, "defeat")["conditions"]
+    assert panel.dispatch_event("cond-mode:%s:all" % ships["id"])
+    assert panel.dispatch_event("cond-minutes:%s:7" % timer["id"])
+    ships, timer = _stack(panel, "defeat")["conditions"]
+    assert ships["mode"] == "all" and timer["minutes"] == 7
+    assert not panel.dispatch_event("cond-mode:%s:some" % ships["id"])
+    assert not panel.dispatch_event("cond-minutes:%s:x" % timer["id"])
+    assert not panel.dispatch_event("cond-minutes:%s:0" % timer["id"])
+    assert _stack(panel, "defeat")["conditions"][1]["minutes"] == 7
 
 
-def test_removing_protected_ship_shows_notice_once(panel):
-    e = _friend(panel)
-    panel.dispatch_event("add:Sovereign:%s:1" % _enemy(panel).id)
-    panel.dispatch_event("victory-type:kobayashi_maru")
-    assert _setup(panel)["victory"]["protect"] == e.id
-    panel.dispatch_event("remove:" + e.id)
+def test_summary_reports_conditions_and_problems(panel):
+    neutral, _enemy_entry = _neutral_and_enemy(panel)
+    base = _setup(panel)["summary"]
+    assert " condition" not in base
+    panel.dispatch_event("cond-add:defeat:ships")
     s = _setup(panel)
-    assert s["victory"]["type"] == "elimination"
-    assert s["summary"] == "Kobayashi Maru needs a ship to protect; switched to Elimination"
-    assert _setup(panel)["summary"] == s["summary"]           # still pending until a verb
-    panel.dispatch_event("victory-view")
-    assert _setup(panel)["summary"] == "2 groups · 2 ships"
+    assert s["summary"] == "A Ships Destroyed condition has no ships"
+    assert not s["can_start"]
+    (c,) = _stack(panel, "defeat")["conditions"]
+    panel.dispatch_event("cond-ship-add:%s:%s" % (c["id"], neutral.id))
+    s = _setup(panel)
+    assert s["can_start"] and s["summary"].endswith(" · 1 defeat condition")
+
+
+def test_removing_a_listed_ship_drops_it(panel):
+    neutral, _e = _neutral_and_enemy(panel)
+    panel.dispatch_event("cond-add:defeat:ships")
+    (c,) = _stack(panel, "defeat")["conditions"]
+    panel.dispatch_event("cond-ship-add:%s:%s" % (c["id"], neutral.id))
+    assert panel.dispatch_event("remove:" + neutral.id)
+    (c,) = _stack(panel, "defeat")["conditions"]
+    assert c["ships"] == []
+
+
+def test_old_victory_verbs_gone(panel):
+    for v in ("victory-type:kobayashi_maru", "victory-protect:x", "victory-time:5"):
+        assert not panel.dispatch_event(v)
 
 
 def test_start_blocked_without_enemy_says_why(panel):
@@ -954,17 +979,9 @@ def test_start_blocked_without_enemy_says_why(panel):
     assert started == [] and panel.is_open()
 
 
-def test_victory_change_marks_dirty(panel):
-    _friend(panel)
+def test_condition_change_marks_dirty(panel):
     panel.dispatch_event("add:Warbird")
-    assert panel.dispatch_event("victory-type:kobayashi_maru")
     panel.dispatch_event("preset-save:Alpha")
     assert not _setup(panel)["dirty"]
-    assert panel.dispatch_event("victory-time:5")
+    assert panel.dispatch_event("cond-add:victory:timer")
     assert _setup(panel)["dirty"]
-
-
-def test_victory_time_refused_for_elimination(panel):
-    panel.dispatch_event("add:Warbird")
-    assert not panel.dispatch_event("victory-time:5")
-    assert _setup(panel)["victory"]["time_limit_min"] == 0
