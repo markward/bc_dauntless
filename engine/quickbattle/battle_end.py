@@ -282,11 +282,11 @@ def _set_marker(name, kind) -> None:
 
 def _join(labels, word) -> str:
     """"A", "A <word> B", "A, B <word> C"; more than _OBJ_LIST_MAX names:
-    "A, B, C and N more"."""
+    "A, B, C <word> N more" (the list's own join word)."""
     labels = list(labels)
     if len(labels) > _OBJ_LIST_MAX:
-        return "%s and %d more" % (", ".join(labels[:_OBJ_LIST_MAX]),
-                                   len(labels) - _OBJ_LIST_MAX)
+        return "%s %s %d more" % (", ".join(labels[:_OBJ_LIST_MAX]), word,
+                                  len(labels) - _OBJ_LIST_MAX)
     if len(labels) == 1:
         return labels[0]
     return "%s %s %s" % (", ".join(labels[:-1]), word, labels[-1])
@@ -307,6 +307,14 @@ def _objective(c) -> str:
     return OBJ_PROTECT % _join(c.labels, "and")
 
 
+def _scheduled_victory_timer(conds) -> bool:
+    """Whether `_schedule_timers` will post the Victory Timer: only when it
+    is earlier than the Defeat Timer (a tie is a loss, spec §4.2)."""
+    from engine.quickbattle import victory as vic
+    win_s, lose_s = _timer_s(conds, vic.VICTORY), _timer_s(conds, vic.DEFEAT)
+    return win_s > 0 and not (lose_s > 0 and win_s >= lose_s)
+
+
 def _show_objectives(conds) -> None:
     """Quick Battle hides the Objectives submenu (QuickBattle.py:735-739):
     show it, empty it, and list this battle's goals -- the Victory stack (its
@@ -325,8 +333,12 @@ def _show_objectives(conds) -> None:
     mission_goals.add_goal_button(OBJ_DESTROY)
     for side in (vic.VICTORY, vic.DEFEAT):
         for c in conds:
-            if c.side == side:
-                mission_goals.add_goal_button(_objective(c))
+            if c.side != side:
+                continue
+            if c.kind == vic.TIMER and side == vic.VICTORY \
+                    and c.time_s > 0 and not _scheduled_victory_timer(conds):
+                continue                   # dropped by _schedule_timers
+            mission_goals.add_goal_button(_objective(c))
 
 
 def _register_handler(xo) -> None:
@@ -491,8 +503,17 @@ def _lose(qb, reason) -> bool:
     if st.ended:
         if not st.won or _end_timer is None:
             return False
-        _cancel_end_timer(qb)
+        old, prev = _end_timer, (st.ended, st.won, st.reason)
         st.ended, st.won, st.reason = False, None, None
+        try:
+            posted = end_battle(qb, False, reason)   # the loss first ...
+        except Exception:
+            st.ended, st.won, st.reason = prev       # the win stays pending
+            raise
+        if posted and old is not None:               # ... then drop the win
+            import App
+            App.g_kTimerManager.DeleteTimer(old)
+        return posted
     return end_battle(qb, False, reason)
 
 

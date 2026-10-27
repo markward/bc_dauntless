@@ -94,7 +94,6 @@ class QuickBattleSetupPanel(Panel):
         self._baseline: Optional[sc.Scenario] = None
         self._pending_js = ""
         self._view = "ships"                  # "ships" | "victory"
-        self._notice: Optional[str] = None    # shown once, cleared by the next verb
 
         # Catalog: read lazily on first use (open, render or plan).
         self._generation = None
@@ -419,8 +418,6 @@ class QuickBattleSetupPanel(Panel):
 
     def _summary(self) -> str:
         s = self._scenario
-        if self._notice:
-            return self._notice
         problem = vic.start_problem(s)
         if problem is not None:
             return problem
@@ -493,13 +490,10 @@ class QuickBattleSetupPanel(Panel):
             _log.warning("quick-battle-setup: %r refused, a confirmation is pending",
                          action)
             return False
-        prev_notice, self._notice = self._notice, None
         self._refresh_catalog()
         ok = bool(handler(self, arg))
         if not ok:
             _log.warning("quick-battle-setup: refused %r", action)
-            if self._notice is None:
-                self._notice = prev_notice    # a refusal does not clear it
         return ok
 
     def _retarget(self) -> None:

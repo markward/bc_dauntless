@@ -7950,7 +7950,7 @@ class _MissionLoader:
         # arrivals -- End Combat, Restart and the end-of-battle timer alike.
         _qb_spawn.install_end_simulation_hook(_QB)
         # Battle end (victory spec §4.1): ShipDestroyed and the win/lose
-        # sequences, so a win ends the battle and Kobayashi Maru can lose.
+        # sequences, so the Victory and Defeat condition stacks can end the battle.
         from engine.quickbattle import battle_end as _qb_end
         _qb_end.install(_QB)
         _qb_spawn.set_radius_fn(self._seed_quickbattle_ship_radius)

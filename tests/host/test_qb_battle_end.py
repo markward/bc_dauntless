@@ -555,6 +555,46 @@ def test_defeat_timer_overturns_pending_win(world):
     assert _end_timers(QB) == [(QB.g_idTimer, 1)]
 
 
+def test_loss_is_posted_before_the_pending_win_is_cancelled(world, monkeypatch):
+    """If posting the loss fails, the pending win must still be live (the
+    battle can always end)."""
+    hl, _c, panel, QB = world
+    import App
+    from engine.quickbattle import battle_end
+    _enemies(panel, "Warbird")
+    _cond(panel, "defeat", "timer", minutes=1)
+    _go(hl, panel)
+    t0 = _now()
+    _jump_to(t0 + 59.7)
+    _destroy(QB, _ships(QB)["Warbird-1"])
+    win_timer = QB.g_idTimer
+    real = battle_end.end_battle
+
+    def boom(*a, **k):
+        raise RuntimeError("post failed")
+    monkeypatch.setattr(battle_end, "end_battle", boom)
+    try:
+        battle_end._lose(QB, battle_end.REASON_TIME)
+    except RuntimeError:
+        pass
+    assert win_timer in App.g_kTimerManager._timers
+    assert _won(battle_end.state(), battle_end.REASON_ELIMINATION)
+    monkeypatch.setattr(battle_end, "end_battle", real)
+
+
+def test_dropped_victory_timer_gets_no_objective(world):
+    """Equal Victory and Defeat timers: the Victory one is not scheduled, so
+    "Survive for N min" is not listed."""
+    hl, _c, panel, QB = world
+    _enemies(panel, "Warbird")
+    _cond(panel, "victory", "timer", minutes=5)
+    _cond(panel, "defeat", "timer", minutes=5)
+    _go(hl, panel)
+    labels = _objective_labels()
+    assert "Win within 5 min" in labels
+    assert "Survive for 5 min" not in labels
+
+
 def test_countdown_follows_earlier_timer(world, monkeypatch):
     hl, _c, panel, QB = world
     import App
@@ -646,16 +686,22 @@ def test_objective_wording_for_lists(world):
     _cond(panel, "victory", "ships", ve, mode="all")
     _cond(panel, "defeat", "ships", fe, mode="any")
     _cond(panel, "defeat", "ships", fe, mode="all")
+    fe4 = _group(panel, "neutral", "Freighter", "Transport", "Akira", "Sovereign")
+    _cond(panel, "victory", "ships", ve[1:], mode="any")
+    _cond(panel, "defeat", "ships", fe4, mode="all")
     names = _names()
     v = [names[e][1] for e in ve]
     f = [names[e][1] for e in fe]
+    f4 = [names[e][1] for e in fe4]
     _go(hl, panel)
     assert _objective_labels() == [
         "Destroy all enemy ships",
         "Destroy %s or %s" % (v[0], v[1]),
         "Destroy %s, %s, %s and 2 more" % (v[0], v[1], v[2]),
+        "Destroy %s, %s, %s or 1 more" % (v[1], v[2], v[3]),
         "Protect %s and %s" % (f[0], f[1]),
         "Keep %s or %s alive" % (f[0], f[1]),
+        "Keep %s, %s, %s or 1 more alive" % (f4[0], f4[1], f4[2]),
     ]
 
 

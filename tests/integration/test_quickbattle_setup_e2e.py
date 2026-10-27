@@ -305,3 +305,4 @@ def test_preset_round_trip_end_to_end(world, tmp_path):
         [x[:3] for x in saved]
     assert len(plan.victory.conditions[0].entry_ids) == 1
     assert len(battle_end.target_names()) == 1
+    assert battle_end.target_names()[0].startswith("Galor")

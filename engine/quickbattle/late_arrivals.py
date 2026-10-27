@@ -319,7 +319,7 @@ def _spawn_one(qb, pSet, player, ppos, cols, n, order, pos) -> bool:
                 .GetNeutralGroup().AddName(ship.GetName())
         else:
             (qb.pEnemies if side == "Enemy" else qb.pFriendlies).AddName(ship.GetName())
-        # A Kobayashi Maru battle's enemy targets (never raises).
+        # Condition-stack targeting for a late arrival (never raises).
         km_targeting.ship_arrived(qb, ship.GetName())
         if side is not None:
             # StartSimulation2's AI loop (QuickBattle.py:3113-3124), one ship.
