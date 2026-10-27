@@ -34,6 +34,8 @@ LARGE_MODALS = {
 # Body-level screens that deliberately paint ABOVE a large modal.
 _ABOVE_LAYER = ("#pause-menu", "#mission-picker", "#first-run",
                 "#mods-screen", ".ms-menu",
+                # Activision's required notice, before the game loop exists.
+                "#boot-notice",
                 # Dev-only, non-interactive FPS readout: stays on top of
                 # every modal by design (css/perf_monitor.css).
                 "#perf-monitor")

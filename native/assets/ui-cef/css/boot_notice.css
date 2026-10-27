@@ -1,0 +1,38 @@
+/* Boot notice splash -- Activision's required notice (SDK licence,
+ * "New Game Materials"). engine/ui/boot_notice_panel.py drives it.
+ *
+ * Plain white Antonio on black, centred. Only the text fades; the black
+ * stays opaque for the screen's whole life. Like #first-run it owns the
+ * whole frame, so it sits above every other tier and supplies the Antonio
+ * family itself (global.css declares the @font-face but applies it per
+ * component). Sized in vh so it holds its proportions at any window size.
+ */
+
+#boot-notice {
+    /* Hidden by default; setBootNotice sets style.display both ways. */
+    display: none;
+    position: fixed;
+    inset: 0;
+    align-items: center;
+    justify-content: center;
+    z-index: 400;  /* above #first-run (300) */
+    background: #000;
+    font-family: "Antonio", sans-serif;
+    color: #fff;
+}
+
+#boot-notice .bn-text {
+    opacity: 0;
+    text-align: center;
+}
+
+#boot-notice .bn-notice {
+    font-size: 4.4vh;
+    letter-spacing: 0.06em;
+}
+
+#boot-notice .bn-credit {
+    margin-top: 1.6vh;
+    font-size: 2.6vh;
+    letter-spacing: 0.04em;
+}

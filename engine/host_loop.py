@@ -10332,6 +10332,45 @@ def _run_first_run_screen(resolution, resolver=None, view_w=1280, view_h=720):
     return panel.resolution
 
 
+def _boot_notice_wanted(environ, max_ticks, cef_ready, modules=None) -> bool:
+    """Whether run() shows the boot notice splash.
+
+    Every interactive launch, the first included. Never headless
+    (OPEN_STBC_HOST_HEADLESS), never for a caller bounding the run with
+    max_ticks (tests, harnesses), never under pytest, and never without a
+    live CEF page to draw it into -- that loop could only ever time out.
+    --smoke-check returns before run() is reached.
+    """
+    if modules is None:
+        modules = sys.modules
+    if not cef_ready:
+        return False
+    if environ.get("OPEN_STBC_HOST_HEADLESS"):
+        return False
+    if max_ticks is not None:
+        return False
+    return "pytest" not in modules
+
+
+def _run_boot_notice(view_w=1280, view_h=720, clock=None):
+    """Draw Activision's required notice (engine/ui/boot_notice_panel.py)
+    until it has played out. Returns the panel's outcome: "shown",
+    "unshown" (the page never acknowledged it), or None (window closed).
+
+    The loop itself is `_run_preboot_panel`.
+    """
+    import time as _time
+    from engine.ui.boot_notice_panel import ACK_TIMEOUT_S, BootNoticePanel
+
+    panel = BootNoticePanel(clock=clock if clock is not None else _time.monotonic)
+    _run_preboot_panel(panel, view_w, view_h)
+    outcome = panel.outcome
+    if outcome == "unshown":
+        print("[boot-notice] the page never showed the notice within "
+              "%.0f s -- booting without it" % ACK_TIMEOUT_S, file=sys.stderr)
+    return outcome
+
+
 def _resolve_paths_or_report(view_w=1280, view_h=720, *, cef_ready=True):
     """Resolve the BC roots, asking the player if they are not configured.
 
@@ -10629,6 +10668,21 @@ def run(mission_name: Optional[str] = None,
             r.cef_shutdown()
             r.shutdown()
             return 0
+
+    # Activision's required notice (SDK licence, "New Game Materials"):
+    # after the first-run and Mods screens, so it shows on every launch,
+    # and before the mission, so it is up before the first bridge frame.
+    # _notice_ended_at times the gap from its fade-out to the first game
+    # frame (logged once, below r.frame()).
+    _notice_ended_at = None
+    if _boot_notice_wanted(_os.environ, max_ticks, _cef_ready):
+        _run_boot_notice(_CEF_VIEW_W, _CEF_VIEW_H)
+        if r.should_close():
+            r.cef_shutdown()
+            r.shutdown()
+            return 0
+        import time as _time
+        _notice_ended_at = _time.monotonic()
 
     _prewarm_sdk_modules()
 
@@ -13418,6 +13472,12 @@ def run(mission_name: Optional[str] = None,
 
             frame_profiler.mark("r.frame")
             r.frame()
+            if _notice_ended_at is not None:
+                import time as _time
+                print("[boot-notice] first game frame %.2f s after the notice "
+                      "ended" % (_time.monotonic() - _notice_ended_at),
+                      file=sys.stderr, flush=True)
+                _notice_ended_at = None
             if motion_trace.enabled():
                 _mt_interp = locals().get("_interp_player")
                 motion_trace.record(
