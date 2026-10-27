@@ -4,7 +4,8 @@
 // docs/superpowers/specs/2026-10-09-bridge-shape-diff-design.md).
 //
 // A "mesh fix" file carries any non-empty combination of "merges",
-// "shape_edits", "textures" and "smoothing" (per-shape albedo swaps). A merge
+// "shape_edits", "textures" (per-shape albedo swaps) and "smoothing"
+// (authored hard/soft edges per shape). A merge
 // describes how to merge a small patch of geometry (an ID cut left over from
 // BC's Federation saucer sections) back into its parent target shape at NIF
 // load time. A shape edit is an opaque "BSD1"/"BSD2" binary payload (base64

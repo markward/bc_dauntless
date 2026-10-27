@@ -143,25 +143,49 @@ TEST(MeshFixSmoothing, RefusalsLeaveFileUntouched) {
     }
 }
 
-TEST(MeshFixSmoothing, RefusesAShapeWhoseDataAMergeUses) {
+TEST(MeshFixSmoothing, ParseRefusesBadBase64AndNonStringSmoothing) {
+    std::string err;
+    EXPECT_FALSE(assets::parse_mesh_fix("{\"format\": 1, \"smoothing\": \"!!!!\"}", &err));
+    EXPECT_FALSE(err.empty());
+    err.clear();
+    EXPECT_FALSE(assets::parse_mesh_fix("{\"format\": 1, \"smoothing\": 5}", &err));
+    EXPECT_FALSE(err.empty());
+}
+
+namespace {
+// Two normal-bearing shapes: block 1 (merge target "t"), block 3 (patch "p").
+nif::File make_merge_file() {
     auto f = make();
-    // Second shape (block 3, data block 4) as a merge patch onto block 1.
-    nif::NiTriShape patch; patch.data_link = 5;
+    std::get<nif::NiTriShapeData>(f.blocks[2]).has_normals = true;
+    std::get<nif::NiTriShapeData>(f.blocks[2]).normals = {{0,0,1},{0,0,1},{0,0,1},{0,0,1}};
+    std::get<nif::NiTriShape>(f.blocks[1]).av.obj.name = "t";
+    nif::NiTriShape patch; patch.data_link = 5; patch.av.obj.name = "p";
     nif::NiTriShapeData pd;
-    pd.num_vertices = 3; pd.has_vertices = pd.has_uv = true;
+    pd.num_vertices = 3; pd.has_vertices = pd.has_uv = true; pd.has_normals = true;
     pd.vertices = {{0,0,0},{1,0,0},{1,1,0}};
+    pd.normals = {{0,0,1},{0,0,1},{0,0,1}};
     pd.uv_sets = {{{0,0},{1,0},{1,1}}};
     pd.num_triangles = 1; pd.num_triangle_points = 3; pd.triangles = {{0,1,2}};
     std::get<nif::NiNode>(f.blocks[0]).child_links = {2, 4};
     f.blocks.push_back(patch); f.blocks.push_back(pd);
     f.block_ids.push_back(4); f.block_ids.push_back(5);
     f.root = nif::BlockHandle{&f.blocks.front()};
+    return f;
+}
+}  // namespace
+
+TEST(MeshFixSmoothing, RefusesAShapeWhoseDataAMergeUses) {
+    auto f = make_merge_file();
     assets::MeshFixMerge m;
     m.patch = {3, "p"}; m.target = {1, "t"};
     m.uvs = {{0,0},{1,0},{1,1}};
     m.weld = {{0, 0}};
-    assets::MeshFix fix; fix.merges = {m}; fix.smoothing = {rec()};
+    assets::MeshFix fix; fix.merges = {m};
+    auto control = make_merge_file();
+    ASSERT_EQ(assets::apply_mesh_fix(control, fix), "");   // merge is valid alone
+
+    fix.smoothing = {rec()};
     const std::string err = assets::apply_mesh_fix(f, fix);
-    EXPECT_NE(err, "");
+    EXPECT_NE(err.find("used by merge"), std::string::npos) << err;
     EXPECT_FALSE(data(f).authored_edges.has_value());
 }

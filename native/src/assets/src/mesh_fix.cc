@@ -927,6 +927,7 @@ namespace {
 /// block index in *data_idx. Returns "", else the refusal reason.
 std::string validate_smoothing(const nif::File& file, const MeshFixSmoothing& m,
                                std::size_t idx, const MeshFix& fix,
+                               const std::vector<MergePlan>& plans,
                                std::size_t* data_idx) {
     const std::string prefix = "smoothing " + std::to_string(idx) + ": ";
     if (m.block >= file.blocks.size()) return prefix + "block out of range";
@@ -937,6 +938,11 @@ std::string validate_smoothing(const nif::File& file, const MeshFixSmoothing& m,
         return prefix + "data_link unresolved";
     const auto* d = std::get_if<nif::NiTriShapeData>(&file.blocks[*data_idx]);
     if (!d) return prefix + "data_link does not point at NiTriShapeData";
+    for (std::size_t mi = 0; mi < plans.size(); ++mi) {
+        if (*data_idx == plans[mi].target_data_idx || *data_idx == plans[mi].patch_data_idx)
+            return prefix + "data block " + std::to_string(*data_idx) +
+                   " is used by merge " + std::to_string(mi);
+    }
     if (d->has_normals) return prefix + "shape has authored normals (unsupported)";
     std::size_t final_v = d->num_vertices;
     for (const auto& e : fix.shape_edits)
@@ -1013,15 +1019,8 @@ std::string apply_mesh_fix(nif::File& file, const MeshFix& fix) {
     std::vector<std::size_t> smoothing_data(fix.smoothing.size(), 0);
     std::unordered_map<std::uint32_t, std::size_t> smoothing_owner;  // block -> first record
     for (std::size_t i = 0; i < fix.smoothing.size(); ++i) {
-        std::string err = validate_smoothing(file, fix.smoothing[i], i, fix, &smoothing_data[i]);
+        std::string err = validate_smoothing(file, fix.smoothing[i], i, fix, plans, &smoothing_data[i]);
         if (!err.empty()) return err;
-        for (std::size_t mi = 0; mi < plans.size(); ++mi) {
-            if (smoothing_data[i] == plans[mi].target_data_idx ||
-                smoothing_data[i] == plans[mi].patch_data_idx)
-                return "smoothing " + std::to_string(i) + ": data block " +
-                       std::to_string(smoothing_data[i]) + " is used by merge " +
-                       std::to_string(mi);
-        }
         auto [it, inserted] = smoothing_owner.try_emplace(fix.smoothing[i].block, i);
         if (!inserted)
             return "smoothing " + std::to_string(i) + ": block " +
