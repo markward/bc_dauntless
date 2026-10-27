@@ -2,10 +2,10 @@
 //
 // Native "choose a folder" panel for the first-run path picker.
 //
-// std::nullopt means BOTH "the player cancelled" AND "this platform has
-// no implementation". Callers must treat them identically -- that is what
-// lets Windows and Linux ship with no picker and no special case: boot
-// falls through to the same describe_failure() + exit 1 either way.
+// std::nullopt means BOTH "the player cancelled" AND "no chooser is
+// available" (a Linux desktop with neither zenity nor kdialog). Callers must
+// treat them identically -- boot falls through to the same
+// describe_failure() + exit 1 either way.
 //
 // Deliberately in `platform` rather than `ui_cef`: src/ui_cef/CMakeLists.txt
 // returns early when DAUNTLESS_ENABLE_CEF is off, so anything living there

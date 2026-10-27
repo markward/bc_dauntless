@@ -37,6 +37,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from engine.core import case_paths
+
 # The markers are the paths the engine actually loads. stbc.exe and scripts/
 # are deliberately absent: neither is read at runtime (scripts/ is only
 # tools/setup.py's instrumentation target), so requiring them would reject a
@@ -415,12 +417,23 @@ def game_asset(rel) -> Path:
 
     An installed mod that provides this path wins. Imported lazily, like
     settings_store in resolve(), so engine.mods can import engine.paths.
+
+    The stock path is matched case-insensitively (engine.core.case_paths):
+    BC content spells paths with whatever case it likes. A path that does
+    not exist in any case comes back exactly as spelled, so callers that
+    probe for optional files with .exists() still see it missing.
     """
     from engine import mods
     override = mods.game_override(rel)
     if override is not None:
         return override
-    return game_root() / rel
+    return _stock_game_path(rel)
+
+
+def _stock_game_path(rel) -> Path:
+    """`game_root() / rel`, with the on-disk spelling where only case differs."""
+    root = game_root()
+    return case_paths.resolve(root, str(rel)) or root / rel
 
 
 PACKAGED_MARKER = "dauntless-packaged.json"
@@ -664,7 +677,7 @@ def game_asset_dirs(rel) -> list:
     """
     from engine import mods
     return [*mods.replacements().dirs_for(rel), *mods.current().dirs_for(rel),
-            game_root() / rel]
+            _stock_game_path(rel)]
 
 
 # --- the failure message ----------------------------------------------------

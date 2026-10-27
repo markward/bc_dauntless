@@ -200,3 +200,52 @@ TEST(AssetPath, OverrideFoldStripsATrailingSeparatorLikePythonFold) {
     renderer::set_asset_overrides({{"data/x.tga", "/mods/x.tga"}});
     EXPECT_EQ(resolve_asset_path("data/x.tga/"), "/mods/x.tga");
 }
+
+// --- case-insensitive resolution ---------------------------------------------
+//
+// BC content spells paths with whatever case it likes: GalaxyBridge.py loads
+// "data/Models/Sets/DBridge/DBridge.nif" from a folder holding Dbridge.NIF.
+// On a case-sensitive filesystem resolve_asset_path must find the real file;
+// a path that exists in no case comes back as spelled.
+
+#include <filesystem>
+#include <fstream>
+
+namespace {
+
+struct CaseTree {
+    std::filesystem::path root;
+    CaseTree() {
+        root = std::filesystem::temp_directory_path() /
+               ("dauntless_case_" + std::to_string(::testing::UnitTest::GetInstance()
+                                                       ->random_seed()));
+        std::filesystem::create_directories(root / "data/Models/Sets/DBridge");
+        std::ofstream(root / "data/Models/Sets/DBridge/Dbridge.NIF") << "x";
+    }
+    ~CaseTree() { std::filesystem::remove_all(root); }
+};
+
+}  // namespace
+
+TEST(AssetPath, ResolvesADifferentlyCasedFileUnderTheRoot) {
+    CaseTree t;
+    renderer::set_game_root(t.root.string());
+    EXPECT_EQ(resolve_asset_path("data/models/sets/dbridge/DBridge.nif"),
+              (t.root / "data/Models/Sets/DBridge/Dbridge.NIF").string());
+    renderer::set_game_root("game");
+}
+
+TEST(AssetPath, ResolvesADifferentlyCasedAbsolutePath) {
+    CaseTree t;
+    const auto spelled = t.root / "DATA/Models/Sets/DBridge/DBridge.nif";
+    EXPECT_EQ(resolve_asset_path(spelled.string()),
+              (t.root / "data/Models/Sets/DBridge/Dbridge.NIF").string());
+}
+
+TEST(AssetPath, AMissingFileComesBackAsSpelled) {
+    CaseTree t;
+    renderer::set_game_root(t.root.string());
+    EXPECT_EQ(resolve_asset_path("data/Models/Sets/DBridge/Missing.nif"),
+              t.root.string() + "/data/Models/Sets/DBridge/Missing.nif");
+    renderer::set_game_root("game");
+}
