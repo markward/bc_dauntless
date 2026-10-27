@@ -29,6 +29,11 @@ namespace assets::detail {
 
 namespace {
 
+// Spec 2026-10-27-bridge-authored-smoothing-design.md §3.4: true makes every
+// edge between a recorded shape and another shape hard (set beside
+// kSetNormalCreaseDeg's use below). Off: cross-shape edges follow the crease.
+constexpr bool kAuthoredShapeJoinsHard = false;
+
 std::vector<std::uint8_t> read_file(const fs::path& p) {
     std::ifstream in(p, std::ios::binary);
     if (!in) {
@@ -1034,6 +1039,7 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         glm::mat4 to_model{1.0f};
         bool has_authored_normals = true;
         std::vector<glm::vec4> source_colours;  // NIF float colours; only for normal-less shapes
+        const nif::AuthoredEdges* authored = nullptr;  // a mesh fix's smoothing record
     };
     std::vector<PendingMesh> pending;
 
@@ -1216,6 +1222,7 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         pm.block = static_cast<int>(i);
         pm.to_model = shape_verts_for_sampling.back().to_model;
         pm.has_authored_normals = data->has_normals;
+        if (data->authored_edges) pm.authored = &*data->authored_edges;
         if (!data->has_normals && data->has_vertex_colors) {
             pm.source_colours.reserve(data->vertex_colors.size());
             for (const auto& c : data->vertex_colors)
@@ -1231,10 +1238,17 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
     // normals are not handed over and stay bit-for-bit as loaded.
     if (ctx.generate_missing_normals) {
         std::vector<NormalGenShape> shapes;
+        std::vector<int> shape_blocks;  // NormalGen index -> NIF block
         for (auto& pm : pending)
-            if (!pm.has_authored_normals)
-                shapes.push_back({&pm.cpu, pm.to_model, std::move(pm.source_colours)});
-        generate_normals_across_shapes(shapes, kSetNormalCreaseDeg);
+            if (!pm.has_authored_normals) {
+                shapes.push_back({&pm.cpu, pm.to_model, std::move(pm.source_colours), pm.authored});
+                shape_blocks.push_back(pm.block);
+            }
+        generate_normals_across_shapes(shapes, kSetNormalCreaseDeg, ctx.smoothing_report,
+                                       kAuthoredShapeJoinsHard);
+        if (ctx.smoothing_report)
+            for (auto& e : ctx.smoothing_report->edges)
+                e.shape = static_cast<std::uint32_t>(shape_blocks[e.shape]);
     }
 
     // Avoid copying the CPU vertex data unless retention is requested.

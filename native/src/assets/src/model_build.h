@@ -14,6 +14,8 @@
 
 namespace assets::detail {
 
+struct SmoothingReport;  // normal_gen.h
+
 using TextureUploaderFn = std::function<Texture(const Image&, bool)>;
 using MeshUploaderFn    = std::function<Mesh(MeshCpu)>;
 
@@ -35,6 +37,11 @@ struct ModelBuildContext {
     /// (spec 2026-10-08-bridge-lighting-baseline-design.md §3). Set only for
     /// interior-set models; false keeps build_model byte-identical.
     bool                                generate_missing_normals = false;
+    /// Optional sink for what normal generation made of each authored smoothing
+    /// edge (the shape-diff verifier). `SmoothingReport::Edge::shape` is
+    /// rewritten to the shape's NIF block. nullptr -> not recorded; only
+    /// filled when generate_missing_normals is set.
+    SmoothingReport*                    smoothing_report = nullptr;
     /// Interior sibling-map lookup policy (spec 2026-10-08-bridge-emitters
     /// §9.2/§9.3): when true, a sibling `_rough`/`_metal`/`_normal` probe is
     /// restricted to EITHER `sibling_overlay_dirs` (when the resolved albedo

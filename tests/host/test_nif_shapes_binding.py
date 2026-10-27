@@ -108,3 +108,50 @@ def test_nif_shapes_reports_a_flipbooks_frame_0_as_the_shapes_texture():
         "flipbook": {"frames": ["Map 7.tga", "Map 8.tga"], "fps": 5.0}}]})
     fixed = {d["block"]: d for d in _host().nif_shapes(str(nif), fix)}
     assert fixed[688]["textures"] == ["Map 7.tga"]
+
+
+def _two_triangle_edge(shape):
+    # An edge of this block shared by EXACTLY two triangles (welded by
+    # position), as vertex indices a < b -- derived from the file, not hard-coded.
+    verts = shape["vertices"]
+    key = lambda i: tuple(round(c, 4) for c in verts[i])
+    seen = {}
+    for tri in shape["triangles"]:
+        for u, v in ((tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])):
+            if key(u) == key(v):
+                continue
+            e = tuple(sorted((key(u), key(v))))
+            seen.setdefault(e, []).append((min(u, v), max(u, v)))
+    for pairs in seen.values():
+        if len(pairs) == 2 and pairs[0][0] != pairs[0][1]:
+            return pairs[0]
+    pytest.skip("no two-triangle edge in the chosen block")
+
+
+def _smoothing_fix(block, vertex_count, hard):
+    import json
+    from tools.shape_diff.payload import encode_smoothing_b64
+    rec = {"block": block, "vertex_count": vertex_count, "hard": hard, "soft": []}
+    return json.dumps({"format": 1, "smoothing": encode_smoothing_b64([rec])})
+
+
+def test_set_smoothing_report_on_dbridge():
+    nif = _dbridge()
+    shape = {s["block"]: s for s in _host().nif_shapes(str(nif))}[468]
+    a, b = _two_triangle_edge(shape)
+    fix = _smoothing_fix(468, len(shape["vertices"]), [(a, b)])
+    rows = _host().set_smoothing_report(str(nif), fix)
+    assert rows == [{"block": 468, "a": a, "b": b, "found": True,
+                     "joined_a": False, "joined_b": False}]
+
+
+def test_set_smoothing_report_refused_fix_raises():
+    nif = _dbridge()
+    shape = {s["block"]: s for s in _host().nif_shapes(str(nif))}[468]
+    fix = _smoothing_fix(468, len(shape["vertices"]) + 1, [(0, 1)])
+    with pytest.raises(RuntimeError, match="refused"):
+        _host().set_smoothing_report(str(nif), fix)
+
+
+def test_set_smoothing_report_missing_file_returns_none():
+    assert _host().set_smoothing_report("/nonexistent/x.nif", "{}") is None
