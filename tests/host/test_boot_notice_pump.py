@@ -1,12 +1,12 @@
 """The boot notice splash through the real pre-boot pump loop, headless.
 
 engine/ui/boot_notice_panel.py's schedule is covered in
-tests/unit/test_boot_notice_panel.py. This drives host_loop._run_boot_notice
+tests/unit/test_boot_notice_panel.py. This drives host_loop._begin_boot_notice
 end to end with a fake 60 Hz wall clock, a fake renderer and a fake CEF
 that drops every push until its page loads (the gate
 tests/host/test_first_run_pump_loop.py models) and answers the arm payload
 one frame later, the way the page's dauntlessEvent does. Then the wiring
-into run(): when the splash shows, and that it comes before the mission.
+into run(): when the splash shows, and that the game loads behind it.
 """
 import json
 import re
@@ -94,61 +94,93 @@ def _opacity_trace(page):
     return out
 
 
-def test_the_splash_runs_five_seconds_from_page_load_then_boot_continues(rig):
+def _play(clock, load_s):
+    """Fade in, load for `load_s` seconds of wall clock with nothing pumped
+    (as run() does), then finish. Returns (held panel, release time, end)."""
+    panel = host_loop._begin_boot_notice(clock=clock)
+    assert panel is not None
+    clock.t += load_s
+    released_at = clock.t
+    outcome = host_loop._finish_boot_notice(panel)
+    assert outcome == "shown"
+    return panel, released_at, clock.t
+
+
+def test_the_fade_in_is_timed_from_page_load_not_from_the_loop(rig):
     page, clock, state = rig
     start = clock.t
-
-    outcome = host_loop._run_boot_notice(clock=clock)
-
-    assert outcome == "shown"
-    assert state["ack_at"] is not None
-    # Measured from the acknowledgement, not from the start of the loop:
-    # the ~20 frames before the page loaded did not eat the fade-in.
+    host_loop._begin_boot_notice(clock=clock)
+    # The ~20 frames before the page loaded did not eat the fade-in.
     assert state["ack_at"] - start == pytest.approx(20 * FRAME_S, abs=2 * FRAME_S)
-    assert clock.t - state["ack_at"] == pytest.approx(5.0, abs=2 * FRAME_S)
+    assert clock.t - state["ack_at"] == pytest.approx(
+        1.0 + 0.15, abs=2 * FRAME_S)
+
+
+def test_the_begin_hands_back_with_the_notice_at_full_opacity_and_up(rig):
+    page, clock, state = rig
+    host_loop._begin_boot_notice(clock=clock)
+    trace = _opacity_trace(page)
+    assert trace[-1] == 1.0
+    assert "setBootNotice(null);" not in page.pushed
+    # Pumping stops here: the window holds this frame through the load.
+    assert state["hologram"] == [(True, (0.0, 0.0, 0.0)), (False, (0.0, 0.0, 0.0))]
+
+
+def test_a_quick_load_keeps_the_five_second_schedule(rig):
+    page, clock, state = rig
+    _, released_at, end = _play(clock, load_s=0.5)
+    assert end - state["ack_at"] == pytest.approx(5.0, abs=2 * FRAME_S)
+    assert page.pushed[-1] == "setBootNotice(null);"
+
+
+def test_a_long_load_holds_the_notice_then_fades_for_two_seconds(rig):
+    page, clock, state = rig
+    _, released_at, end = _play(clock, load_s=6.0)
+    assert end - released_at == pytest.approx(2.0, abs=2 * FRAME_S)
     assert page.pushed[-1] == "setBootNotice(null);"
 
 
 def test_pushes_before_the_page_loads_are_dropped_and_harmless(rig):
     page, clock, state = rig
-    host_loop._run_boot_notice(clock=clock)
+    _play(clock, load_s=0.5)
     assert page.dropped and all('"ack": true' in s for s in page.dropped)
 
 
 def test_the_fade_in_hold_and_fade_out_reach_the_page(rig):
     page, clock, state = rig
-    host_loop._run_boot_notice(clock=clock)
+    _play(clock, load_s=3.0)
     trace = _opacity_trace(page)
 
     peak = trace.index(1.0)
     rise = trace[:peak + 1]
-    fall = trace[peak + 1:]
+    fall = [o for o in trace[peak + 1:] if o != 1.0]
     assert rise[0] == 0.0
     assert rise == sorted(rise)
-    # ~60 pushes to climb in 1 s at 60 Hz; the 2 s hold pushes nothing new.
+    # ~60 pushes to climb in 1 s at 60 Hz; the hold pushes nothing new.
     assert 55 <= len([o for o in rise if 0.0 < o < 1.0]) <= 62
     assert fall == sorted(fall, reverse=True)
     assert 110 <= len(fall) <= 122
     assert fall[-1] < 0.05
 
 
-def test_the_scene_pass_is_off_and_black_for_the_whole_splash(rig):
+def test_the_scene_pass_is_off_and_black_while_the_notice_pumps(rig):
     page, clock, state = rig
-    host_loop._run_boot_notice(clock=clock)
-    assert state["hologram"] == [(True, (0.0, 0.0, 0.0)), (False, (0.0, 0.0, 0.0))]
+    _play(clock, load_s=1.0)
+    black = (0.0, 0.0, 0.0)
+    assert state["hologram"] == [(True, black), (False, black)] * 2
 
 
 def test_closing_the_window_ends_the_splash(rig):
     page, clock, state = rig
-    state["close_at_frame"] = 60
-    assert host_loop._run_boot_notice(clock=clock) is None
-    assert state["frames"] == 60
+    state["close_at_frame"] = 30
+    assert host_loop._begin_boot_notice(clock=clock) is None
+    assert state["frames"] == 30
 
 
 def test_a_page_that_never_loads_gives_up_rather_than_hang(rig, capsys):
     page, clock, state = rig
     state["load_at_frame"] = None
-    assert host_loop._run_boot_notice(clock=clock) == "unshown"
+    assert host_loop._begin_boot_notice(clock=clock) is None
     assert "[boot-notice]" in capsys.readouterr().err
 
 
@@ -174,11 +206,20 @@ def test_the_suite_itself_never_shows_it():
     assert not host_loop._boot_notice_wanted({}, None, True)
 
 
-def test_run_shows_it_after_the_preboot_screens_and_before_the_mission():
+def test_run_loads_the_game_behind_the_notice():
+    """Fade in after the pre-boot screens, load the SDK and the mission
+    behind it, fade out before run() installs its own CEF handlers (the
+    pump loop would replace them) and before the game loop."""
     import inspect
     source = code_only(inspect.getsource(host_loop.run))
     resolve_at = source.index("_resolve_paths_or_report(")
     mods_at = source.index("run_mods_screen(")
-    notice_at = source.index("_run_boot_notice(")
+    begin_at = source.index("_begin_boot_notice(")
+    prewarm_at = source.index("_prewarm_sdk_modules()")
     mission_at = source.index("controller.loader.load")
-    assert resolve_at < mods_at < notice_at < mission_at
+    finish_at = source.index("_finish_boot_notice(")
+    handlers_at = source.index("_cef_set_event_handler(registry.dispatch)")
+    load_end_at = source.index("_cef_set_load_end(_on_cef_load_end)")
+    loop_at = source.index("while not r.should_close():")
+    assert (resolve_at < mods_at < begin_at < prewarm_at < mission_at
+            < finish_at < handlers_at < load_end_at < loop_at)

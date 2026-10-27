@@ -160,4 +160,65 @@ def test_no_acknowledgement_gives_up_after_the_timeout():
 
 
 def test_the_teardown_hides_the_notice():
-    assert bn.BootNoticePanel.teardown_script == "setBootNotice(null);"
+    clock = FakeClock()
+    panel = _acked(clock)
+    clock.t += 5.0
+    assert panel.teardown_script == "setBootNotice(null);"
+
+
+# ── held: the game loads behind the notice ──────────────────────────────
+
+def _held(clock):
+    panel = bn.BootNoticePanel(clock=clock, hold=True)
+    panel.render_payload()
+    panel.dispatch_event("shown")
+    return panel
+
+
+def test_a_held_notice_hands_back_at_full_opacity_and_stays_up():
+    clock = FakeClock()
+    panel = _held(clock)
+    clock.t += bn.FADE_IN_S
+    assert panel.outcome is None          # still settling at full opacity
+    assert _payload(panel.render_payload())["opacity"] == 1.0
+    clock.t += bn.HOLD_SETTLE_S
+    assert panel.outcome == "holding"
+    assert panel.teardown_script is None  # the notice is not hidden
+
+
+def test_an_unreleased_notice_never_fades():
+    clock = FakeClock()
+    panel = _held(clock)
+    clock.t += 60.0
+    assert panel.outcome == "holding"
+    assert _payload(panel.render_payload())["opacity"] == 1.0
+
+
+def test_a_quick_load_still_gets_the_full_two_second_hold():
+    clock = FakeClock()
+    panel = _held(clock)
+    clock.t += 1.5
+    panel.release()                       # loaded in half a second
+    clock.t = 100.0 + 2.9
+    assert panel.outcome is None
+    assert _payload(panel.render_payload())["opacity"] == 1.0
+    clock.t = 100.0 + 4.0
+    assert _payload(panel.render_payload())["opacity"] == pytest.approx(0.5)
+    clock.t = 100.0 + 5.0
+    assert panel.outcome == "shown"
+
+
+def test_a_long_load_lengthens_the_hold_then_fades_for_two_seconds():
+    clock = FakeClock()
+    panel = _held(clock)
+    clock.t = 100.0 + 7.0
+    panel.release()                       # the load took six seconds
+    assert panel.outcome is None
+    assert _payload(panel.render_payload())["opacity"] == 1.0
+    clock.t = 100.0 + 8.0
+    assert _payload(panel.render_payload())["opacity"] == pytest.approx(0.5)
+    clock.t = 100.0 + 8.99
+    assert panel.outcome is None
+    clock.t = 100.0 + 9.0
+    assert panel.outcome == "shown"
+    assert panel.teardown_script == "setBootNotice(null);"

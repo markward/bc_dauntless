@@ -10286,7 +10286,8 @@ def _run_preboot_panel(panel, view_w=1280, view_h=720):
             # here means there is no window -- however unlikely -- where a
             # reload could call back into a panel whose screen has ended.
             _set_load_end(lambda: None)
-        if _h is not None:
+        # None = the panel stays up past this loop (a held boot notice).
+        if _h is not None and panel.teardown_script is not None:
             try:
                 _h.cef_execute_javascript(panel.teardown_script)
             except Exception as _e:
@@ -10352,23 +10353,42 @@ def _boot_notice_wanted(environ, max_ticks, cef_ready, modules=None) -> bool:
     return "pytest" not in modules
 
 
-def _run_boot_notice(view_w=1280, view_h=720, clock=None):
-    """Draw Activision's required notice (engine/ui/boot_notice_panel.py)
-    until it has played out. Returns the panel's outcome: "shown",
-    "unshown" (the page never acknowledged it), or None (window closed).
+def _begin_boot_notice(view_w=1280, view_h=720, clock=None):
+    """Fade Activision's required notice in (engine/ui/boot_notice_panel.py)
+    and hand back with it held at full opacity, so boot can load the game
+    behind it. Returns the held panel for _finish_boot_notice, or None when
+    there is nothing to finish: the page never acknowledged it (logged), or
+    the window closed.
 
-    The loop itself is `_run_preboot_panel`.
+    Between the two calls nothing pumps the window: it keeps presenting the
+    last frame, which is the finished fade-in. The loop itself is
+    `_run_preboot_panel`.
     """
     import time as _time
     from engine.ui.boot_notice_panel import ACK_TIMEOUT_S, BootNoticePanel
 
-    panel = BootNoticePanel(clock=clock if clock is not None else _time.monotonic)
+    panel = BootNoticePanel(
+        clock=clock if clock is not None else _time.monotonic, hold=True)
     _run_preboot_panel(panel, view_w, view_h)
     outcome = panel.outcome
     if outcome == "unshown":
         print("[boot-notice] the page never showed the notice within "
               "%.0f s -- booting without it" % ACK_TIMEOUT_S, file=sys.stderr)
-    return outcome
+    return panel if outcome == "holding" else None
+
+
+def _finish_boot_notice(panel, view_w=1280, view_h=720):
+    """The load behind the notice is done: play the rest of the 2 s hold (if
+    the load was shorter) and the fade-out. Returns the panel's outcome:
+    "shown", or None if the window closed.
+
+    Must run BEFORE run() registers its own CEF event and load-end handlers:
+    `_run_preboot_panel` installs its own and leaves a no-op load-end
+    handler behind.
+    """
+    panel.release()
+    _run_preboot_panel(panel, view_w, view_h)
+    return panel.outcome
 
 
 def _resolve_paths_or_report(view_w=1280, view_h=720, *, cef_ready=True):
@@ -10670,19 +10690,20 @@ def run(mission_name: Optional[str] = None,
             return 0
 
     # Activision's required notice (SDK licence, "New Game Materials"):
-    # after the first-run and Mods screens, so it shows on every launch,
-    # and before the mission, so it is up before the first bridge frame.
+    # after the first-run and Mods screens, so it shows on every launch. It
+    # fades in here and HOLDS while the SDK and the mission load behind it;
+    # _finish_boot_notice fades it out just before run() takes over the CEF
+    # handlers, so the bridge follows the fade-out instead of a black hang.
     # _notice_ended_at times the gap from its fade-out to the first game
     # frame (logged once, below r.frame()).
+    _boot_notice = None
     _notice_ended_at = None
     if _boot_notice_wanted(_os.environ, max_ticks, _cef_ready):
-        _run_boot_notice(_CEF_VIEW_W, _CEF_VIEW_H)
+        _boot_notice = _begin_boot_notice(_CEF_VIEW_W, _CEF_VIEW_H)
         if r.should_close():
             r.cef_shutdown()
             r.shutdown()
             return 0
-        import time as _time
-        _notice_ended_at = _time.monotonic()
 
     _prewarm_sdk_modules()
 
@@ -11483,6 +11504,13 @@ def run(mission_name: Optional[str] = None,
         # window changes size (older builds lack it -> overlay stays at its
         # init size and stretches, the prior behaviour).
         _cef_resize = getattr(_h, "cef_resize", None) if _h else None
+        # The game is loaded: fade the boot notice out. Here, before the two
+        # registrations below, because its pump loop installs handlers of its
+        # own (see _finish_boot_notice).
+        if _boot_notice is not None:
+            _finish_boot_notice(_boot_notice, _CEF_VIEW_W, _CEF_VIEW_H)
+            import time as _time
+            _notice_ended_at = _time.monotonic()
         _cef_set_event_handler = getattr(_h, "cef_set_event_handler", None) if _h else None
         if _cef_set_event_handler is not None:
             _cef_set_event_handler(registry.dispatch)

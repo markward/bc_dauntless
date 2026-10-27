@@ -19,6 +19,13 @@ is measured from that acknowledgement. Opacity is pushed from here each
 frame rather than left to a CSS animation, so the schedule is the one this
 module computes and tests.
 
+Boot loads the game BEHIND the notice (hold=True): the pump loop runs the
+fade-in, then hands back with the notice at full opacity, the window holding
+that frame while the SDK and the mission load; release() then plays the rest
+of the hold and the fade-out. A load longer than the hold simply lengthens
+it -- the fade-out starts at whichever comes later, the end of the 2 s hold
+or the release.
+
 No skip, on purpose: it is a licence requirement in the shipped game.
 """
 from __future__ import annotations
@@ -40,6 +47,11 @@ TOTAL_S = FADE_IN_S + HOLD_S + FADE_OUT_S
 # A page that never loads must not hang boot on a black window.
 ACK_TIMEOUT_S = 10.0
 
+# How long full opacity is pushed before a held notice hands back. CEF paints
+# asynchronously, and the window shows whichever frame it last presented for
+# as long as the load runs -- that frame must be the finished fade-in.
+HOLD_SETTLE_S = 0.15
+
 
 def opacity_at(t: float) -> float:
     """Text opacity `t` seconds after the page first showed the notice."""
@@ -58,16 +70,17 @@ class BootNoticePanel(Panel):
     """Pumped by host_loop._run_preboot_panel; `outcome` ends the loop.
 
     `clock` is injected so tests drive the schedule without sleeping.
+    `hold` keeps the notice up after the fade-in until release().
     """
 
-    # Pushed by host_loop._run_preboot_panel when the screen ends.
-    teardown_script = "setBootNotice(null);"
-
-    def __init__(self, clock: Callable[[], float] = time.monotonic):
+    def __init__(self, clock: Callable[[], float] = time.monotonic,
+                 hold: bool = False):
         super().__init__()
         self._clock = clock
+        self._hold = hold
         self._created_at = clock()
         self._shown_at: Optional[float] = None
+        self._released_at: Optional[float] = None
         self._last_pushed: Optional[str] = None
 
     @property
@@ -75,15 +88,53 @@ class BootNoticePanel(Panel):
         return "boot-notice"
 
     @property
+    def teardown_script(self) -> Optional[str]:
+        """Pushed by host_loop._run_preboot_panel when the screen ends --
+        except when it ends on "holding": the notice stays up through the
+        load."""
+        if self.outcome == "holding":
+            return None
+        return "setBootNotice(null);"
+
+    def release(self) -> None:
+        """The load behind a held notice is done: finish the schedule."""
+        if self._released_at is None:
+            self._released_at = self._clock()
+
+    def _fade_out_start(self) -> Optional[float]:
+        """When the fade-out begins; None while a held notice is unreleased."""
+        end_of_hold = self._shown_at + FADE_IN_S + HOLD_S
+        if not self._hold:
+            return end_of_hold
+        if self._released_at is None:
+            return None
+        return max(end_of_hold, self._released_at)
+
+    def _opacity(self, now: float) -> float:
+        t = now - self._shown_at
+        if t < FADE_IN_S:
+            return opacity_at(t)
+        start = self._fade_out_start()
+        if start is None or now < start:
+            return 1.0
+        return max(0.0, 1.0 - (now - start) / FADE_OUT_S)
+
+    @property
     def outcome(self) -> Optional[str]:
-        """None while running; "shown" once the schedule has played out,
+        """None while running; "holding" when a held notice has faded in and
+        waits for release(); "shown" once the schedule has played out;
         "unshown" if the page never acknowledged within ACK_TIMEOUT_S."""
         now = self._clock()
         if self._shown_at is None:
             if now - self._created_at >= ACK_TIMEOUT_S:
                 return "unshown"
             return None
-        if now - self._shown_at >= TOTAL_S:
+        start = self._fade_out_start()
+        if start is None:
+            if now - self._shown_at >= FADE_IN_S + HOLD_SETTLE_S:
+                return "holding"
+            return None
+        if now >= start + FADE_OUT_S:
             return "shown"
         return None
 
@@ -96,7 +147,7 @@ class BootNoticePanel(Panel):
                 "opacity": 0.0,
                 "ack": True,
             }) + ");"
-        opacity = round(opacity_at(self._clock() - self._shown_at), 3)
+        opacity = round(self._opacity(self._clock()), 3)
         script = "setBootNotice(" + json.dumps({"opacity": opacity}) + ");"
         if script == self._last_pushed:
             return None
