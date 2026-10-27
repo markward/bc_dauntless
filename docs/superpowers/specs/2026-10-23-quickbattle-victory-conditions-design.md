@@ -1,7 +1,7 @@
 # Quick Battle victory conditions
 
 **Date:** 2026-10-23
-**Status:** approved; phase 1 built, not live-verified
+**Status:** approved; phase 1 built, not live-verified. **Its named battle types (§3, §5.1, §5.2, the "named types" rulings in §8) are replaced by `2026-10-27-quickbattle-victory-defeat-conditions-design.md`.**
 **Roadmap:** sub-project 2c of `2026-10-01-quickbattle-redesign-roadmap.md`.
 This design replaces that row's "free condition builder" idea: Mark compared
 a rule builder against named battle types (mockups in
