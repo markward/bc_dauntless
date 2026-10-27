@@ -10377,6 +10377,24 @@ def _begin_boot_notice(view_w=1280, view_h=720, clock=None):
     return panel if outcome == "holding" else None
 
 
+def _set_boot_audio_muted(muted: bool) -> None:
+    """Silence every sound category while the game loads behind the boot
+    notice. The SDK starts sounds during the load (LoadBridge.py:213 plays
+    AmbBridge) and the screen is showing the logo meanwhile. The backend
+    re-applies a category gain to sounds already playing, so a loop started
+    under the mute is heard at its own gain once unmuted. Restores 1.0: no
+    volume setting drives these gains (test_nothing_else_owns_the_category_gains).
+    Music only plays from the game loop, so it needs nothing here."""
+    if _audio_mod is None:
+        return
+    gain = 0.0 if muted else 1.0
+    for category in ("SFX", "Voice", "Interface"):
+        try:
+            _audio_mod.set_category_gain(category, gain)
+        except Exception as _e:
+            dev_mode.log_swallowed("boot notice audio mute", _e)
+
+
 def _finish_boot_notice(panel, view_w=1280, view_h=720):
     """The load behind the notice is done: play the rest of the 2 s hold (if
     the load was shorter) and the fade-out. Returns the panel's outcome:
@@ -10704,6 +10722,8 @@ def run(mission_name: Optional[str] = None,
             r.cef_shutdown()
             r.shutdown()
             return 0
+        if _boot_notice is not None:
+            _set_boot_audio_muted(True)
 
     _prewarm_sdk_modules()
 
@@ -11712,6 +11732,7 @@ def run(mission_name: Optional[str] = None,
         # frame clock restarts so the fade is not replayed as sim time.
         if _boot_notice is not None:
             _finish_boot_notice(_boot_notice, _CEF_VIEW_W, _CEF_VIEW_H)
+            _set_boot_audio_muted(False)
             if _cef_set_event_handler is not None:
                 _cef_set_event_handler(registry.dispatch)
             if _cef_set_load_end is not None:

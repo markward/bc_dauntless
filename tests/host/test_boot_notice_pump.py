@@ -230,3 +230,55 @@ def test_run_loads_the_game_behind_the_notice():
     assert "_cef_set_event_handler(registry.dispatch)" in after
     assert "_cef_set_load_end(_on_cef_load_end)" in after
     assert "_previous_real_time = time.monotonic()" in after
+
+
+# ── silence while the game loads behind the notice ──────────────────────
+
+class _FakeAudio:
+    def __init__(self):
+        self.gains = []
+
+    def set_category_gain(self, cat, g):
+        self.gains.append((cat, g))
+
+
+def test_boot_audio_mute_silences_and_restores_every_category(monkeypatch):
+    """The SDK starts sounds during the load (AmbBridge at LoadBridge.py:213)
+    and the window holds the notice meanwhile: Mark heard a blast of bridge
+    noise over the logo (2026-10-27)."""
+    audio = _FakeAudio()
+    monkeypatch.setattr(host_loop, "_audio_mod", audio)
+    host_loop._set_boot_audio_muted(True)
+    assert sorted(audio.gains) == [("Interface", 0.0), ("SFX", 0.0), ("Voice", 0.0)]
+    audio.gains.clear()
+    host_loop._set_boot_audio_muted(False)
+    assert sorted(audio.gains) == [("Interface", 1.0), ("SFX", 1.0), ("Voice", 1.0)]
+
+
+def test_boot_audio_mute_without_audio_is_a_no_op(monkeypatch):
+    monkeypatch.setattr(host_loop, "_audio_mod", None)
+    host_loop._set_boot_audio_muted(True)
+
+
+def test_run_mutes_the_load_and_unmutes_at_the_fade_out():
+    import inspect
+    source = code_only(inspect.getsource(host_loop.run))
+    begin_at = source.index("_begin_boot_notice(")
+    mute_at = source.index("_set_boot_audio_muted(True)")
+    mission_at = source.index("controller.loader.load")
+    finish_at = source.index("_finish_boot_notice(")
+    unmute_at = source.index("_set_boot_audio_muted(False)")
+    loop_at = source.index("while not r.should_close():")
+    assert begin_at < mute_at < mission_at < finish_at < unmute_at < loop_at
+
+
+def test_nothing_else_owns_the_category_gains():
+    """Unmuting restores 1.0, which is only right while no volume setting
+    drives these gains. A second owner must make the mute save and restore."""
+    import re
+    from pathlib import Path
+    root = Path(host_loop.__file__).resolve().parent
+    owners = [str(p.relative_to(root)) for p in root.rglob("*.py")
+              if "__pycache__" not in p.parts
+              and re.search(r"set_category_gain\(", p.read_text(encoding="utf-8"))]
+    assert owners == ["host_loop.py"]
