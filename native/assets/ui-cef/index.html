@@ -239,10 +239,16 @@
         <div class="cp-header">Quick Battle Setup</div>
         <div class="cp-content">
           <aside id="qbs-groups" class="qbs-groups"></aside>
-          <main class="cp-body qbs-catalog">
+          <main id="qbs-main" class="cp-body qbs-catalog">
             <div id="qbs-eras" class="cp-segmented qbs-strip"></div>
             <div id="qbs-species" class="cp-segmented qbs-strip qbs-species-strip"></div>
             <div id="qbs-catalog" class="qbs-catalog-body"></div>
+          </main>
+          <!-- Victory view (the footer cog): the Victory and Defeat condition
+               stacks side by side (spec 2026-10-27-quickbattle-condition-stacks). -->
+          <main id="qbs-vcond" class="vc-cols" hidden>
+            <div id="qbs-vc-victory" class="vc-col"></div>
+            <div id="qbs-vc-defeat" class="vc-col"></div>
           </main>
         </div>
         <div class="cp-footer qbs-footer">
@@ -251,6 +257,7 @@
             <button class="cp-done-button qbs-preset-add" id="qbs-save-btn" data-action="preset-save-menu" aria-label="Save current scenario as a preset">+</button>
           </div>
           <span id="qbs-summary" class="qbs-summary"></span>
+          <button class="cp-done-button qbs-victory-btn" id="qbs-victory-btn" data-action="victory-view" aria-label="Victory conditions">⚙</button>
           <button class="cp-done-button" id="qbs-close" data-action="close">Close</button>
           <button class="cp-done-button" id="qbs-start" data-action="start">Start Battle</button>
         </div>

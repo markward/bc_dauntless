@@ -57,10 +57,10 @@ def test_add_move_remove_entries_and_can_start():
     assert s.add_ship("nope", "Warbird") is None
 
 
-def test_escort_counts_for_can_start():
+def test_escort_alone_is_no_enemy_for_can_start():
     s = sc.default_scenario()
     s.add_ship(s.player_group().id, "Akira")
-    assert s.can_start()
+    assert not s.can_start()
 
 
 def test_update_details_follows_allegiance_when_name_unedited():

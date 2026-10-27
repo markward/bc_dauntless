@@ -25,6 +25,7 @@ from typing import Callable, Optional
 from urllib.parse import unquote
 
 from engine.quickbattle import scenario as sc
+from engine.quickbattle import victory as vic
 from engine.ui.panel import Panel
 
 _log = logging.getLogger(__name__)
@@ -92,6 +93,7 @@ class QuickBattleSetupPanel(Panel):
         # the presets file per frame. None with no current preset.
         self._baseline: Optional[sc.Scenario] = None
         self._pending_js = ""
+        self._view = "ships"                  # "ships" | "victory"
 
         # Catalog: read lazily on first use (open, render or plan).
         self._generation = None
@@ -137,6 +139,7 @@ class QuickBattleSetupPanel(Panel):
         return self._visible
 
     def open(self) -> None:
+        self._view = "ships"
         self._catalog_push_due = True
         self.visible = True
 
@@ -196,6 +199,7 @@ class QuickBattleSetupPanel(Panel):
 
     def _after_change(self) -> None:
         self._last_pushed = None
+        vic.reconcile(self._scenario)
         qb = self._qb()
         if qb is not None and not getattr(qb, "bInSimulation", 0):
             from engine.quickbattle import spawn
@@ -380,6 +384,48 @@ class QuickBattleSetupPanel(Panel):
                 "out_of_era": ce is None or not ce.in_eras(self._eras),
                 "has_menu": bool(variants) or not e.player}
 
+    def _entry_title(self, e) -> str:
+        if e.variant:
+            return e.variant
+        ce = self._ce(e.ship)
+        return (ce.title or ce.ship_id) if ce is not None else e.ship
+
+    def _ship_row(self, g, e) -> dict:
+        ce = self._ce(e.ship)
+        # The ships view's art (renderRow), so a condition row looks like a
+        # group row; None when the ship is not in the catalog.
+        return {"id": e.id, "title": self._entry_title(e), "group_name": g.name,
+                "allegiance": g.allegiance,
+                "icon": self._icon(ce.icon) if ce is not None else None}
+
+    def _victory_payload(self) -> dict:
+        s = self._scenario
+        stacks = []
+        for side in vic.SIDES:
+            rows = {e.id: self._ship_row(g, e) for g, e in vic.eligible(s, side)}
+            conds = []
+            for c in vic.conditions(s, side):
+                listed = [rows[eid] for eid in c.ships if eid in rows]
+                conds.append({
+                    "id": c.id, "kind": c.kind, "mode": c.mode,
+                    "minutes": c.minutes, "ships": listed,
+                    "addable": [r for eid, r in rows.items() if eid not in c.ships]
+                               if c.kind == vic.SHIPS else []})
+            stacks.append({"side": side,
+                           "can_add_timer": not vic.has_timer(s, side),
+                           "conditions": conds})
+        return {"stacks": stacks}
+
+    def _summary(self) -> str:
+        s = self._scenario
+        problem = vic.start_problem(s)
+        if problem is not None:
+            return problem
+        n_ships = sum(len(g.entries) for g in s.groups)
+        return "%s · %s%s" % (_plural(len(s.groups), "group"),
+                              _plural(n_ships, "ship"),
+                              vic.summary_suffix(s))
+
     def _setup_payload(self) -> dict:
         from engine.ship_catalog import ERA_IDS
         s = self._scenario
@@ -387,9 +433,9 @@ class QuickBattleSetupPanel(Panel):
         for ce in self._entries:
             if ce.in_eras(self._eras) and ce.species:
                 counts[ce.species] = counts.get(ce.species, 0) + 1
-        n_ships = sum(len(g.entries) for g in s.groups)
         return {
             "open": True,
+            "view": self._view, "victory": self._victory_payload(),
             "groups": [{"id": g.id, "name": g.name, "player": g.player,
                         "allegiance": g.allegiance, "direction": g.direction,
                         "distance": g.distance, "difficulty": g.difficulty,
@@ -407,8 +453,7 @@ class QuickBattleSetupPanel(Panel):
             "presets": self._presets.names(), "preset": self._preset,
             "dirty": self._dirty(), "can_start": s.can_start(),
             "counts": counts,
-            "summary": "%s · %s" % (_plural(len(s.groups), "group"),
-                                    _plural(n_ships, "ship")),
+            "summary": self._summary(),
         }
 
     def render_payload(self) -> Optional[str]:
@@ -700,6 +745,43 @@ class QuickBattleSetupPanel(Panel):
 
         return self._ask("Delete preset?", "Delete preset ", name, "?", "Delete", delete)
 
+    # victory
+    def _on_victory_view(self, _arg) -> bool:
+        self._view = "victory" if self._view == "ships" else "ships"
+        return True
+
+    def _victory_done(self, ok) -> bool:
+        if ok:
+            self._after_change()
+        return bool(ok)
+
+    def _on_cond_add(self, arg) -> bool:
+        side, _, kind = arg.partition(":")
+        return self._victory_done(vic.add_condition(self._scenario, side, kind))
+
+    def _on_cond_remove(self, arg) -> bool:
+        return self._victory_done(vic.remove_condition(self._scenario, arg))
+
+    def _on_cond_mode(self, arg) -> bool:
+        cid, _, mode = arg.partition(":")
+        return self._victory_done(vic.set_mode(self._scenario, cid, mode))
+
+    def _on_cond_ship_add(self, arg) -> bool:
+        cid, _, eid = arg.partition(":")
+        return self._victory_done(vic.add_ship(self._scenario, cid, eid))
+
+    def _on_cond_ship_remove(self, arg) -> bool:
+        cid, _, eid = arg.partition(":")
+        return self._victory_done(vic.remove_ship(self._scenario, cid, eid))
+
+    def _on_cond_minutes(self, arg) -> bool:
+        cid, _, text = arg.partition(":")
+        try:
+            minutes = int(text)
+        except ValueError:
+            return False
+        return self._victory_done(vic.set_minutes(self._scenario, cid, minutes))
+
     # dialogs
     def _on_confirm(self, _arg) -> bool:
         pending, self._confirm = self._confirm, None
@@ -750,5 +832,10 @@ class QuickBattleSetupPanel(Panel):
         "preset-save": _on_preset_save, "preset-load": _on_preset_load,
         "preset-delete": _on_preset_delete,
         "confirm": _on_confirm, "cancel": _on_cancel,
+        "victory-view": _on_victory_view,
+        "cond-add": _on_cond_add, "cond-remove": _on_cond_remove,
+        "cond-mode": _on_cond_mode, "cond-ship-add": _on_cond_ship_add,
+        "cond-ship-remove": _on_cond_ship_remove,
+        "cond-minutes": _on_cond_minutes,
         "start": _on_start, "close": _on_close, "esc": _on_esc,
     }

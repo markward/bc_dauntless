@@ -1066,6 +1066,19 @@ def _reset_leakable_engine_globals():
         _qb_late.reset()
     except Exception:
         pass
+    # Quick Battle battle end: the armed battle, its timers, Objectives and
+    # protect marker are module-global; a leaked end timer or countdown would
+    # fire into the next test's battle.
+    try:
+        from engine.quickbattle import battle_end as _qb_end
+        _qb_end.reset()
+    except Exception:
+        pass
+    try:
+        from engine.ui import target_markers as _target_markers
+        _target_markers.clear()
+    except Exception:
+        pass
     # Quick Battle's real-object snapshot (sim_restore) holds live objects of
     # the battle that set it; a leaked one would be "restored" into a later
     # test's EndSimulation.

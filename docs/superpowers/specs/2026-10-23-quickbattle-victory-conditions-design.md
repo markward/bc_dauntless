@@ -1,7 +1,7 @@
 # Quick Battle victory conditions
 
 **Date:** 2026-10-23
-**Status:** design, awaiting Mark's approval
+**Status:** approved; phase 1 built, not live-verified. **Its named battle types (§3, §5.1, §5.2, the "named types" rulings in §8) are replaced by `2026-10-27-quickbattle-victory-defeat-conditions-design.md`.**
 **Roadmap:** sub-project 2c of `2026-10-01-quickbattle-redesign-roadmap.md`.
 This design replaces that row's "free condition builder" idea: Mark compared
 a rule builder against named battle types (mockups in
@@ -186,6 +186,14 @@ per type are in §5. A beam in progress also shows its progress there.
   - the time limit runs out before the win.
 - The E8M2 countdown lines call out the remaining minutes.
 - **Markers:** the shield icon (§4.5) and an Objectives entry.
+- **Enemy targeting** (live-check fix, Mark's ruling: BC's E6M1 approach,
+  `E6M1.py:595-598`): every enemy's attack AI targets an
+  `ObjectGroupWithInfo` holding the protected ship at `{"Priority": 2.0}`,
+  listed first, and every `pFriendlies` member at `{"Priority": 1.0}`; late
+  friendlies, late enemies and a late protected ship join on arrival. A
+  neutral protected ship stays neutral: it is a target candidate only, never
+  in `pFriendlies`. Elimination keeps BC's stock `pFriendlies`. See
+  `engine/quickbattle/km_targeting.py`.
 
 ### 5.3 Starbase Assault
 One type with two sides. The **station's allegiance** in the setup decides the
@@ -422,6 +430,9 @@ Each phase is shippable and live-checkable on its own:
 
 ## 12. Not live-verified
 
-Everything here is unbuilt. Game feel needs Mark's live check per phase,
+Phase 1 (§11: the victory view, battle endings, Elimination and Kobayashi
+Maru) is built and headless-tested but not live-verified; phases 2-4
+(beam transport, Capture the Flag, Starbase Assault) are unbuilt. Game
+feel needs Mark's live check per phase,
 above all: beam success against recharging shields, the 2-minute hold, the
 5-minute match length, and the enemy beaming behaviour.

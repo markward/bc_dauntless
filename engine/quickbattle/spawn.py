@@ -142,7 +142,7 @@ def sync_sdk(qb, plan) -> None:
         return
     _write_manifests(qb, plan)
     if not getattr(qb, "bInSimulation", 0):
-        _set_xo_start(qb, bool(plan.orders))
+        _set_xo_start(qb, plan.startable)
 
 
 def _vec(p):
@@ -448,6 +448,16 @@ def _place_created(qb, plan, player, neutrals, created) -> None:
         return
 
 
+def _begin_battle(qb, plan) -> None:
+    """Arm the battle-end evaluator for the ships just spawned (victory spec
+    §4.1). Never raises into the SDK: a failure is logged."""
+    from engine.quickbattle import battle_end
+    try:
+        battle_end.begin(qb, plan)
+    except Exception:
+        _log.exception("quickbattle: arming the battle end failed")
+
+
 def install_generate_ships_hook(qb) -> bool:
     current = getattr(qb, "GenerateShips", None)
     if current is None or getattr(current, "_dauntless_qb_spawn_orig", None) is not None:
@@ -457,12 +467,18 @@ def install_generate_ships_hook(qb) -> bool:
     def GenerateShips():
         plan = current_plan()
         if plan is None:
-            return orig()
+            result = orig()
+            _begin_battle(qb, None)
+            return result
         try:
-            return generate_ships(qb, plan)
+            result = generate_ships(qb, plan)
         except Exception as e:
             _log.error("quickbattle: GenerateShips hook failed, falling back to BC: %s", e)
-            return orig()
+            result = orig()
+            _begin_battle(qb, None)        # BC's ships, not the plan's
+            return result
+        _begin_battle(qb, plan)
+        return result
 
     GenerateShips._dauntless_qb_spawn_orig = orig
     qb.GenerateShips = GenerateShips
@@ -486,11 +502,37 @@ def install_end_simulation_hook(qb) -> bool:
             late_arrivals.cancel_all()
         except Exception as e:
             _log.error("quickbattle: cancelling late arrivals failed: %s", e)
+        from engine.quickbattle import battle_end
+        try:
+            battle_end.reset()
+        except Exception:
+            _log.exception("quickbattle: resetting the battle end failed")
+        try:
+            _delete_pending_end_timer(qb)
+        except Exception:
+            _log.exception("quickbattle: deleting the pending end timer failed")
         return orig(*args)
 
     EndSimulation._dauntless_qb_spawn_orig = orig
     qb.EndSimulation = EndSimulation
     return True
+
+
+def _delete_pending_end_timer(qb) -> None:
+    """Delete BC's pending ET_END_SIMULATION timer (qb.g_idTimer), the one
+    ShipDestroyed posts one second after the player's death
+    (QuickBattle.py:3300-3316). Only EndSimulationEvent deletes it, and only
+    AFTER its own EndSimulation (QuickBattle.py:3175-3181), so an XO Restart
+    inside that second (RestartSimulation -> EndSimulation, :3153) left it to
+    fire into the restarted battle's load and play BC's lose sequence there.
+    Kept out of battle_end.reset(), which also runs from begin and on a
+    mission swap. When EndSimulationEvent itself is the caller its timer has
+    already fired, and clearing g_idTimer here only skips its own delete."""
+    import App
+    tid = getattr(qb, "g_idTimer", App.NULL_ID)
+    if tid != App.NULL_ID:
+        App.g_kTimerManager.DeleteTimer(tid)
+        qb.g_idTimer = App.NULL_ID
 
 def _in_battle() -> bool:
     """`QuickBattle.QuickBattle.bInSimulation`, read live (never cached):

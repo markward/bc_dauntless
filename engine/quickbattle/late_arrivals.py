@@ -126,13 +126,10 @@ def reset() -> None:
 
 
 def check_win(qb) -> None:
-    """QuickBattle.ShipDestroyed's win branch (QuickBattle.py:3356-3367)."""
-    if qb.g_iNumEnemies == 0 and qb.bInSimulation and qb.bWonOrLost == 0:
-        qb.bWonOrLost = 1
-        qb.GenerateWinSequence()
-        import BridgeHandlers
-        BridgeHandlers.DropMenusTurnBack()
-        qb.g_pXO.MenuUp()
+    """The win check QuickBattle.ShipDestroyed runs, repeated after an
+    arrival tick: `battle_end` owns it (a win now ends the battle)."""
+    from engine.quickbattle import battle_end
+    battle_end.check_win(qb)
 
 
 OTHER_CALLOUT_KEY = "gs025"
@@ -291,7 +288,7 @@ def _arrive_group(qb, pSet, player, members, out) -> None:
 def _spawn_one(qb, pSet, player, ppos, cols, n, order, pos) -> bool:
     import App
     import loadspacehelper
-    from engine.quickbattle import naming, spawn
+    from engine.quickbattle import km_targeting, naming, spawn
     name = naming.object_name(order.title, n)
     pname = "QB warp in %s %d" % (order.group_id, n)
     plc = App.PlacementObject_Create(pname, pSet.GetName(), None)
@@ -322,6 +319,9 @@ def _spawn_one(qb, pSet, player, ppos, cols, n, order, pos) -> bool:
                 .GetNeutralGroup().AddName(ship.GetName())
         else:
             (qb.pEnemies if side == "Enemy" else qb.pFriendlies).AddName(ship.GetName())
+        # Condition-stack targeting for a late arrival (never raises).
+        km_targeting.ship_arrived(qb, ship.GetName())
+        if side is not None:
             # StartSimulation2's AI loop (QuickBattle.py:3113-3124), one ship.
             qb.g_iCurrentAILevel = order.ai_level
             ship.SetAI(__import__(ai).CreateAI(ship), 0, 0)

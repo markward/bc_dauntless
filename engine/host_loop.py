@@ -7717,6 +7717,10 @@ class HostController:
         # region set, so a later EndSimulation must not rebuild them.
         from engine.quickbattle import sim_restore as _qb_sim_restore
         _qb_sim_restore.reset()
+        from engine.quickbattle import battle_end as _qb_end
+        _qb_end.reset()
+        from engine.ui import target_markers as _target_markers
+        _target_markers.clear()
         from engine.appc import particles
         particles.reset()
         damage_eligibility.reset()
@@ -7945,6 +7949,10 @@ class _MissionLoader:
         # Late groups (warp-in delay): EndSimulation cancels their pending
         # arrivals -- End Combat, Restart and the end-of-battle timer alike.
         _qb_spawn.install_end_simulation_hook(_QB)
+        # Battle end (victory spec §4.1): ShipDestroyed and the win/lose
+        # sequences, so the Victory and Defeat condition stacks can end the battle.
+        from engine.quickbattle import battle_end as _qb_end
+        _qb_end.install(_QB)
         _qb_spawn.set_radius_fn(self._seed_quickbattle_ship_radius)
 
         import QuickBattle.QuickBattleGame as _QBGame
@@ -13617,6 +13625,10 @@ def run(mission_name: Optional[str] = None,
         _qb_spawn.set_radius_fn(None)
         from engine.quickbattle import late_arrivals as _qb_late
         _qb_late.reset()
+        from engine.quickbattle import battle_end as _qb_end
+        _qb_end.reset()
+        from engine.ui import target_markers as _target_markers
+        _target_markers.clear()
         from engine.appc import warp_state as _warp_state
         _warp_state.set_radius_seeder(None)
         from engine import bridge_selection as _bs

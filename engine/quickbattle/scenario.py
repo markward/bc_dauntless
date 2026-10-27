@@ -15,6 +15,9 @@ import secrets
 from dataclasses import dataclass, field
 from typing import Optional
 
+from engine.quickbattle import victory as _victory
+from engine.quickbattle.victory import Victory
+
 _log = logging.getLogger(__name__)
 
 ALLEGIANCES = ("friendly", "enemy", "neutral")
@@ -60,6 +63,7 @@ def valid_warp_in(v) -> bool:
 @dataclass
 class Scenario:
     groups: list
+    victory: Victory = field(default_factory=Victory)
 
     # ── lookup ──────────────────────────────────────────────────────────
     def group(self, gid) -> Optional[Group]:
@@ -85,7 +89,7 @@ class Scenario:
         return next((g for g in self.groups if not g.player), None)
 
     def can_start(self) -> bool:
-        return any(not e.player for g in self.groups for e in g.entries)
+        return _victory.start_problem(self) is None
 
     # ── naming ──────────────────────────────────────────────────────────
     def auto_name(self, allegiance: str, exclude_gid=None) -> str:
@@ -180,7 +184,7 @@ class Scenario:
 
     # ── JSON ────────────────────────────────────────────────────────────
     def to_json(self) -> dict:
-        return {"groups": [{
+        return {"victory": _victory.to_json(self.victory), "groups": [{
             "id": g.id, "name": g.name, "custom_name": g.custom_name,
             "player": g.player, "allegiance": g.allegiance,
             "direction": g.direction, "distance": g.distance,
@@ -242,12 +246,25 @@ def from_json(d) -> Scenario:
     _req(len(pgs) == 1, "need exactly one player group")
     pes = [e for g in groups for e in g.entries if e.player]
     _req(len(pes) == 1 and pes[0] in pgs[0].entries, "need exactly one player entry")
-    return Scenario(groups=groups)
+    s = Scenario(groups=groups, victory=_victory.from_json(d.get("victory")))
+    _victory.reconcile(s)
+    return s
 
 
 def _strip_ids(s: Scenario) -> list:
     out = []
-    for g in s.to_json()["groups"]:
+    pos = {}
+    for gi, g in enumerate(s.groups):
+        for ei, e in enumerate(g.entries):
+            pos[e.id] = (gi, ei)
+    j = s.to_json()
+    # A condition's id and its ships' ids are fresh on every load: compare
+    # each ship by its (group index, entry index) position instead.
+    out.append({"victory": {"conditions": [
+        dict({k: v for k, v in c.items() if k != "id"},
+             ships=[pos.get(eid) for eid in c["ships"]])
+        for c in j["victory"]["conditions"]]}})
+    for g in j["groups"]:
         g = dict(g)
         g.pop("id")
         g["entries"] = [{k: v for k, v in e.items() if k != "id"} for e in g["entries"]]
@@ -369,9 +386,29 @@ class SpawnOrder:
 
 
 @dataclass(frozen=True)
+class ConditionOrder:
+    """One added victory/defeat condition as the battle sees it. Ships:
+    `entry_ids` are the listed ships that spawn, `time_s` 0. Timer:
+    `entry_ids` (), `time_s` its game-time length."""
+    side: str          # victory.VICTORY / DEFEAT
+    kind: str          # victory.SHIPS / TIMER
+    mode: str          # victory.ANY / ALL (a Timer keeps ANY)
+    entry_ids: tuple
+    time_s: float
+
+
+@dataclass(frozen=True)
+class VictoryOrder:
+    """The added conditions in stored order; the two defaults are implicit."""
+    conditions: tuple = ()
+
+
+@dataclass(frozen=True)
 class BattlePlan:
     player: PlayerOrder
     orders: tuple
+    victory: VictoryOrder = VictoryOrder()
+    startable: bool = True
 
 
 def _bc_default_stem(class_id):
@@ -420,4 +457,27 @@ def battle_plan(scenario: "Scenario", index) -> BattlePlan:
             ai_level=DIFFICULTY_LEVEL[g.difficulty],
             warp_in_s=g.warp_in_min * 60.0))
     return BattlePlan(player=PlayerOrder(p_file, pce.ship_id, p_reg, names[0]),
-                      orders=tuple(orders))
+                      orders=tuple(orders),
+                      victory=_victory_order(scenario, {o.entry_id for o in orders}),
+                      # An enemy entry whose ship is not in the catalog spawns
+                      # nothing: count the enemy ORDERS, not the entries.
+                      startable=scenario.can_start()
+                      and any(o.allegiance == "enemy" for o in orders))
+
+
+def _victory_order(scenario: "Scenario", spawned) -> VictoryOrder:
+    """One ConditionOrder per added condition, in stored order. A Ships
+    condition keeps only the listed ships that produced a SpawnOrder, and is
+    dropped when none remain (its ships are not in the catalog)."""
+    out = []
+    for c in scenario.victory.conditions:
+        if c.kind == _victory.TIMER:
+            out.append(ConditionOrder(c.side, c.kind, c.mode, (), c.minutes * 60.0))
+            continue
+        ids = tuple(eid for eid in c.ships if eid in spawned)
+        if not ids:
+            _log.warning("quickbattle: %s Ships Destroyed condition %s has no "
+                         "ship that spawns; dropped from the battle", c.side, c.id)
+            continue
+        out.append(ConditionOrder(c.side, c.kind, c.mode, ids, 0.0))
+    return VictoryOrder(tuple(out))

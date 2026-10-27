@@ -7,6 +7,7 @@ and the first feature that speaks them.
 
 1. Add an entry to `tools/dialogue/dauntless_crew.json`: `key`, `text`
    (the subtitle), `sound` (game-root-relative voice file).
+   A line may omit `sound`; it is then subtitle-only (no voice, text-length duration).
 2. Put the voice file at `native/assets/replacements/<sound>`.
 3. Run `uv run python tools/gen_dauntless_tgl.py --write`.
 

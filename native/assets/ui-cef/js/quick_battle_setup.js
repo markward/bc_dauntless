@@ -419,6 +419,109 @@ function renderSheet() {
     }
 }
 
+// ── render: the victory view ──────────────────────────────────────────────
+// The cog swaps the groups column and the ship catalog for two columns, the
+// Victory and Defeat condition stacks (Python's `view` and `victory`; spec
+// 2026-10-27-quickbattle-condition-stacks, look: its layout B mockup). Each
+// column: the fixed default (dashed, no ×), the added conditions as cards, and
+// "+ Add condition". The page keeps no state of its own; every control sends
+// a Python verb.
+var QBS_VC = {
+    victory: { heading: 'Victory', hint: 'Any one of these wins',
+               fixed: 'Destroy All Ships', when: 'Win when' },
+    defeat:  { heading: 'Defeat', hint: 'Any one of these loses',
+               fixed: 'Player Ship Destroyed', when: 'Lose when' },
+};
+var QBS_VC_MIN = 1, QBS_VC_MAX = 60;   // victory.MIN_MINUTES / MAX_MINUTES
+
+function qbsVcX(action, arg) {
+    return '<button class="vc-x" data-action="' + action + '" data-arg="' + qbsEsc(arg) +
+           '" aria-label="Remove"><svg viewBox="0 0 10 10"><path d="M1 1L9 9M9 1L1 9" ' +
+           'stroke="currentColor" stroke-width="1.5"/></svg></button>';
+}
+
+function qbsVcShip(c, r) {
+    return '<div class="vc-ship" style="--a: ' + qbsAllegianceColour(r.allegiance) + '">' +
+        '<div class="vc-art">' + qbsArt(r.icon) + '</div>' +
+        '<div class="vc-ship__text"><div class="vc-ship__name">' + qbsEsc(r.title) + '</div>' +
+        '<div class="vc-ship__sub">' + qbsEsc(r.group_name) + '</div></div>' +
+        qbsVcX('cond-ship-remove', c.id + ':' + r.id) + '</div>';
+}
+
+function qbsVcBody(side, c) {
+    var when = QBS_VC[side].when, h = '<div class="vc-cond__body">';
+    if (c.kind === 'timer') {
+        var n = c.minutes || QBS_VC_MIN;
+        h += '<div class="vc-timer">' + when +
+            '<span class="qbs-qty">' +
+            '<button class="qbs-qty__btn" data-action="cond-minutes" data-arg="' +
+            qbsEsc(c.id + ':' + Math.max(QBS_VC_MIN, n - 1)) + '"' + (n <= QBS_VC_MIN ? ' disabled' : '') + '>−</button>' +
+            '<span class="qbs-qty__n">' + n + ' min</span>' +
+            '<button class="qbs-qty__btn" data-action="cond-minutes" data-arg="' +
+            qbsEsc(c.id + ':' + Math.min(QBS_VC_MAX, n + 1)) + '"' + (n >= QBS_VC_MAX ? ' disabled' : '') + '>+</button>' +
+            '</span>run out</div>';
+        return h + '</div>';
+    }
+    var all = c.mode === 'all';
+    h += '<div class="vc-line">' + when + '<div class="cp-segmented">' +
+        '<button class="cp-toggle' + (all ? '' : ' cp-toggle--on') + '" data-action="cond-mode" data-arg="' +
+        qbsEsc(c.id + ':any') + '">ANY</button>' +
+        '<button class="cp-toggle' + (all ? ' cp-toggle--on' : '') + '" data-action="cond-mode" data-arg="' +
+        qbsEsc(c.id + ':all') + '">ALL</button></div>' +
+        (all ? 'of these are destroyed' : 'of these is destroyed') + '</div>';
+    if (c.ships.length) {
+        h += '<div class="vc-ships">';
+        c.ships.forEach(function (r) { h += qbsVcShip(c, r); });
+        h += '</div>';
+    }
+    h += '<button class="vc-addship" data-action="cond-ship-menu" data-cond="' + qbsEsc(c.id) + '">+ Add ship</button>';
+    return h + '</div>';
+}
+
+function qbsVcColumn(stack) {
+    var t = QBS_VC[stack.side];
+    var h = '<div class="vc-colhead"><div class="qbs-section">' + t.heading + '</div>' +
+            '<span class="vc-colhint">' + t.hint + '</span></div>' +
+            '<div class="vc-cond vc-cond--fixed"><div class="vc-cond__head">' +
+            '<span class="vc-cond__name">' + t.fixed + '</span><span class="vc-fixed">Default</span></div></div>';
+    stack.conditions.forEach(function (c) {
+        h += '<div class="vc-cond" data-cond="' + qbsEsc(c.id) + '"><div class="vc-cond__head">' +
+             '<span class="vc-cond__name">' + (c.kind === 'timer' ? 'Timer' : 'Ships Destroyed') + '</span>' +
+             qbsVcX('cond-remove', c.id) + '</div>' + qbsVcBody(stack.side, c) + '</div>';
+    });
+    return h + '<button class="vc-addcond" data-action="cond-add-menu" data-side="' +
+           qbsEsc(stack.side) + '">+ Add condition</button>';
+}
+
+function renderVictory() {
+    var s = QBS.setup, v = s.victory, on = s.view === 'victory' && !!v;
+    qbsEl('qbs-groups').hidden = on;
+    qbsEl('qbs-main').hidden = on;
+    qbsEl('qbs-vcond').hidden = !on;
+    qbsEl('qbs-victory-btn').classList.toggle('qbs-victory-btn--on', on);
+    if (!on) return;
+    v.stacks.forEach(function (stack) {
+        if (!QBS_VC[stack.side]) return;
+        qbsEl('qbs-vc-' + stack.side).innerHTML = qbsVcColumn(stack);
+    });
+}
+
+function qbsVcStack(side) {
+    var stacks = (QBS.setup && QBS.setup.victory && QBS.setup.victory.stacks) || [];
+    for (var i = 0; i < stacks.length; i++) if (stacks[i].side === side) return stacks[i];
+    return null;
+}
+
+function qbsVcCond(cid) {
+    var stacks = (QBS.setup && QBS.setup.victory && QBS.setup.victory.stacks) || [];
+    for (var i = 0; i < stacks.length; i++) {
+        for (var j = 0; j < stacks[i].conditions.length; j++) {
+            if (stacks[i].conditions[j].id === cid) return stacks[i].conditions[j];
+        }
+    }
+    return null;
+}
+
 // ── render: footer ────────────────────────────────────────────────────────
 function renderFooter() {
     var s = QBS.setup;
@@ -569,6 +672,31 @@ function qbsAddGroupMenu(anchor) {
     qbsOpenMenu(anchor, h, true);
 }
 
+// "+ Add condition": the kinds this stack may still take (one Timer each).
+function qbsCondAddMenu(anchor, side) {
+    var st = qbsVcStack(side);
+    if (!st) return;
+    var h = qbsItem('Ships Destroyed', 'cond-add', side + ':ships');
+    if (st.can_add_timer) h += qbsItem('Timer', 'cond-add', side + ':timer');
+    qbsOpenMenu(anchor, h);
+}
+
+// "+ Add ship": the ships this side may name that the condition lacks
+// (Python's `addable`), each with its group's colour and name.
+function qbsCondShipMenu(anchor, cid) {
+    var c = qbsVcCond(cid);
+    if (!c) return;
+    var h = '';
+    if (!c.addable.length) h = '<div class="qbs-menu__empty">No ships to add</div>';
+    c.addable.forEach(function (r) {
+        h += qbsItem('<span class="qbs-menu__dot" style="background:' + qbsAllegianceColour(r.allegiance) + '"></span>' +
+                     '<span class="qbs-menu__label">' + qbsEsc(r.title) + '</span>' +
+                     '<span class="vc-menu__sub">' + qbsEsc(r.group_name) + '</span>',
+                     'cond-ship-add', cid + ':' + r.id);
+    });
+    qbsOpenMenu(anchor, h);
+}
+
 // Each ship type remembers its own quantity while the screen is open.
 function qbsQty(id) { return QBS.qty[String(id || '').toLowerCase()] || 1; }
 
@@ -669,6 +797,15 @@ function qbsClick(ev) {
         QBS.delayEditing = true;
         renderGroups();
         break;
+    // victory view (the verbs are Python's; the page keeps no state of its own)
+    case 'victory-view': dauntlessEvent('quick-battle-setup/victory-view'); break;
+    // conditions ("<side>:<kind>", "<cid>", "<cid>:<mode>", "<cid>:<eid>", "<cid>:<n>")
+    case 'cond-add': dauntlessEvent('quick-battle-setup/cond-add:' + arg); break;
+    case 'cond-remove': dauntlessEvent('quick-battle-setup/cond-remove:' + arg); break;
+    case 'cond-mode': dauntlessEvent('quick-battle-setup/cond-mode:' + arg); break;
+    case 'cond-ship-add': dauntlessEvent('quick-battle-setup/cond-ship-add:' + arg); break;
+    case 'cond-ship-remove': dauntlessEvent('quick-battle-setup/cond-ship-remove:' + arg); break;
+    case 'cond-minutes': dauntlessEvent('quick-battle-setup/cond-minutes:' + arg); break;
     case 'draft': dauntlessEvent('quick-battle-setup/draft:' + arg); break;
     case 'draft-update': dauntlessEvent('quick-battle-setup/draft-update'); break;
     case 'draft-cancel': dauntlessEvent('quick-battle-setup/draft-cancel'); break;
@@ -689,6 +826,8 @@ function qbsClick(ev) {
     case 'add-group-menu': qbsAddGroupMenu(el); done = false; break;
     case 'preset-menu': qbsPresetMenu(el); done = false; break;
     case 'preset-save-menu': qbsSaveMenu(el); done = false; break;
+    case 'cond-add-menu': qbsCondAddMenu(el, el.getAttribute('data-side')); done = false; break;
+    case 'cond-ship-menu': qbsCondShipMenu(el, el.getAttribute('data-cond')); done = false; break;
     // presets
     case 'preset-load':
         QBS.presetAsk = { kind: 'load', name: arg };
@@ -790,6 +929,7 @@ function qbsRender() {
     renderEras();
     renderSpecies();
     renderCatalog();
+    renderVictory();
     renderFooter();
     renderSheet();
     renderConfirm();
@@ -820,4 +960,6 @@ function qbEscape() {
     window.addEventListener('resize', qbsCloseMenu);
     document.getElementById('qbs-catalog').addEventListener('scroll', qbsCloseMenu);
     document.getElementById('qbs-groups').addEventListener('scroll', qbsCloseMenu);
+    document.getElementById('qbs-vc-victory').addEventListener('scroll', qbsCloseMenu);
+    document.getElementById('qbs-vc-defeat').addEventListener('scroll', qbsCloseMenu);
 })();

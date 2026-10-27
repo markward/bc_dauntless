@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Victory pane</title>
+<link rel="stylesheet" href="/files/configuration_panel.css">
+<link rel="stylesheet" href="/files/quick_battle_setup.css">
+<style>
+  @font-face { font-family: "Antonio"; src: url("/files/Antonio-Regular.ttf") format("truetype"); }
+  body { margin: 0; background: #05060a; color: #cdd3dc; font-family: "Antonio", sans-serif; padding: 24px; }
+  .note { max-width: 1000px; margin: 0 auto 10px; font-size: 15px; color: #cdd3dc; }
+  .note b { color: rgb(255, 210, 90); font-weight: normal; letter-spacing: .08em; }
+  .note p { margin: 4px 0; color: #8a93a3; font-size: 13px; }
+  /* Show the real modal inline at a fixed size instead of as a fixed overlay. */
+  .cp-modal-layer.mock { display: flex; position: static; margin: 0 auto 36px; }
+  .cp-modal-layer.mock .cp-modal--large { width: 1000px; height: 560px; min-width: 0; min-height: 0; }
+  /* New pieces, built only from existing tokens. */
+  #quick-battle-setup .vc-type { cursor: pointer; }
+  #quick-battle-setup .vc-type--on { border-color: var(--qbs-purple); border-left-color: var(--qbs-purple); background: var(--qbs-purple-bg); }
+  #quick-battle-setup .vc-pick { margin-left: auto; }
+  #quick-battle-setup .vc-cog--on { background: rgb(147, 103, 255); border-color: rgb(147, 103, 255); color: #fff; }
+  #quick-battle-setup .vc-rule { display: flex; align-items: center; gap: 6px; padding: 6px 8px; }
+  #quick-battle-setup .vc-rule .cp-done-button { padding: 3px 10px; font-size: 13px; }
+  #quick-battle-setup .vc-blurb { font-size: 13px; color: var(--qbs-dim); margin: 0 0 14px 2px; }
+  #quick-battle-setup .qbs-row .qbs-noart { font-size: 9px; }
+</style>
+</head>
+<body>
+
+<div class="note"><b>Victory view · chosen design</b>
+  <p>The cog beside Close swaps the groups column and the ship catalog for this. The footer stays. Click the cog again to go back to the ships.</p></div>
+
+<section id="quick-battle-setup" class="cp-modal-layer mock">
+  <div class="cp-modal cp-modal--large qbs-modal">
+    <div class="cp-header">Quick Battle Setup</div>
+    <div class="cp-content">
+      <aside class="qbs-groups">
+        <div class="qbs-section">Battle type</div>
+        <div class="qbs-group vc-type"><div class="qbs-group__head"><span class="qbs-group__name">Elimination</span></div><div class="qbs-group__summary">Destroy every enemy to win.</div></div>
+        <div class="qbs-group vc-type vc-type--on"><div class="qbs-group__head"><span class="qbs-group__name">Kobayashi Maru</span></div><div class="qbs-group__summary">Destroy every enemy and keep one ship alive</div></div>
+        <div class="qbs-group vc-type"><div class="qbs-group__head"><span class="qbs-group__name">Hold the Line</span></div><div class="qbs-group__summary">Survive until the clock runs out</div></div>
+        <div class="qbs-group vc-type"><div class="qbs-group__head"><span class="qbs-group__name">Starbase Assault</span></div><div class="qbs-group__summary">Attack or defend a starbase</div></div>
+        <div class="qbs-group vc-type"><div class="qbs-group__head"><span class="qbs-group__name">Capture the Flag</span></div><div class="qbs-group__summary">Take the flag and hold it</div></div>
+        <div class="qbs-group vc-type"><div class="qbs-group__head"><span class="qbs-group__name">Capture the Starbase</span></div><div class="qbs-group__summary">Board it with tactical teams</div></div>
+      </aside>
+      <main class="cp-body qbs-catalog">
+        <div class="qbs-section">Kobayashi Maru</div>
+        <div class="vc-blurb">You win when every enemy is destroyed. You lose if the ship you protect is destroyed, or you are.</div>
+
+        <div class="qbs-section">Ship to protect</div>
+        <div class="qbs-group"><div class="qbs-rows">
+          <div class="qbs-row"><div class="qbs-noart">No art</div><div class="qbs-row__text"><div class="qbs-row__title">USS Zhukov (Ambassador)</div><div class="qbs-row__sub">Federation group</div></div><button class="cp-toggle vc-pick">Protect</button></div>
+        </div></div>
+        <div class="qbs-group qbs-group--neutral"><div class="qbs-rows">
+          <div class="qbs-row"><div class="qbs-noart">No art</div><div class="qbs-row__text"><div class="qbs-row__title">SS Kobayashi Maru (Transport)</div><div class="qbs-row__sub">Civilians group</div></div><button class="cp-toggle cp-toggle--on vc-pick">Protect</button></div>
+          <div class="qbs-row"><div class="qbs-noart">No art</div><div class="qbs-row__text"><div class="qbs-row__title">Freighter (2)</div><div class="qbs-row__sub">Civilians group</div></div><button class="cp-toggle vc-pick">Protect</button></div>
+        </div></div>
+
+        <div class="qbs-ctl-label">Time limit</div>
+        <span class="qbs-qty" style="display:inline-flex"><button class="qbs-qty__btn" disabled>−</button><button class="qbs-qty__n">None</button><button class="qbs-qty__btn">+</button></span>
+      </main>
+    </div>
+    <div class="cp-footer qbs-footer">
+      <div class="qbs-presets"><button class="cp-done-button qbs-preset-pick">Load preset ▾</button><button class="cp-done-button qbs-preset-add">+</button></div>
+      <span class="qbs-summary">Kobayashi Maru · protect SS Kobayashi Maru</span>
+      <button class="cp-done-button vc-cog--on" aria-label="Victory conditions">⚙</button>
+      <button class="cp-done-button">Close</button>
+      <button class="cp-done-button">Start Battle</button>
+    </div>
+  </div>
+</section>
+
+</body>
+</html>
