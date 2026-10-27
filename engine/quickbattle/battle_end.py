@@ -1,6 +1,9 @@
-"""Quick Battle battle end: one place that wins or loses a battle.
+"""Quick Battle battle end: one place that wins or loses a battle, from the
+Victory and Defeat condition stacks.
 
-Spec 2026-10-23-quickbattle-victory-conditions-design §4.1-4.5, §5.1-5.2.
+Spec 2026-10-27-quickbattle-victory-defeat-conditions-design §4 (the rules)
+and §5 (markers, lines, objectives); phase 1's ending path (spec
+2026-10-23-quickbattle-victory-conditions-design §4.1-4.5) is kept.
 
 A battle is ARMED by `begin` (called from the GenerateShips hook, after our
 plan or BC's original spawns the ships) and ENDED by `end_battle`, which posts
@@ -9,12 +12,25 @@ second of game time later, the way QuickBattle.ShipDestroyed does for the
 player's death (QuickBattle.py:3300-3316). EndSimulationEvent then runs
 EndSimulation, the win or lose sequence and the fanfare.
 
-- A win ENDS the battle for every type, Elimination included: a deliberate
-  departure from BC, where a win leaves you flying.
-- Only one ending per battle. The player's death beats everything: it deletes
-  any end timer of ours and leaves BC's own loss timer in place. Otherwise the
-  first ending evaluated wins.
-- Every clock (the end delay, the time limit, the countdown) is a game-time
+- Each stack has an implicit default (Victory: every enemy destroyed;
+  Defeat: the player destroyed) plus the plan's added conditions
+  (`plan.victory.conditions`): Ships Destroyed (ANY / ALL of a list) and at
+  most one Timer per side. Any one condition met settles its stack.
+- A win ENDS the battle: a deliberate departure from BC, where a win leaves
+  you flying.
+- Only one ending, and a loss can overturn a pending win (spec §4.3): any
+  defeat condition met inside the END_DELAY_S before a win is posted cancels
+  that win's timer and ends the battle lost instead. A pending loss is never
+  overturned. The player's death beats everything: it deletes any end timer
+  of ours and leaves BC's own loss timer in place.
+- A ship counts as destroyed in every condition listing it, whoever destroys
+  it. Ships are matched by object name AND, for a ship that existed at begin,
+  object id, so a same-named stranger never counts; a late (warp-in) ship is
+  matched by name only.
+- Timers: one per side; the Victory timer is not scheduled when it is not
+  earlier than the Defeat timer (a tie is a loss), and the countdown follows
+  the earlier scheduled timer.
+- Every clock (the end delay, the timers, the countdown) is a game-time
   TGTimer on App.g_kTimerManager, so it freezes under pause. `reset()` deletes
   them all; the EndSimulation hook calls it, which covers End Combat, XO
   Restart and the end timer itself, and the host calls it on a mission swap.
@@ -26,10 +42,11 @@ Three SDK functions are wrapped (`install`), never edited:
   is suppressed by holding bWonOrLost at 1 across the call; its enemy count
   and destroyed callouts still run.
 - GenerateLoseSequence: BC's sequence with the XO's line swapped for ours when
-  the protected ship died or time ran out.
-- GenerateWinSequence: BC's Felix line, then, when this module ended the
-  battle as a win, back to the bridge and BC's own win tail (menus turned
-  back, Saffi's menu up).
+  a protected ship (or every one) died or the Defeat timer ran out.
+- GenerateWinSequence: BC's Felix line -- or, for a Victory timer win, the
+  XO's survived line in its place -- then, when this module ended the battle
+  as a win, back to the bridge and BC's own win tail (menus turned back,
+  Saffi's menu up).
 
 EndSimulation runs `reset()` BEFORE EndSimulationEvent builds the win or lose
 sequence, so `reset()` hands the ending (won, reason) to the two sequence
@@ -38,15 +55,18 @@ wrappers as a one-shot `_outcome`, separate from the forgotten state.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Optional
 
 _log = logging.getLogger(__name__)
 
-REASON_ELIMINATION = "elimination"
-REASON_PLAYER = "player"
-REASON_PROTECTED = "protected"
-REASON_TIME = "time"
+REASON_ELIMINATION = "elimination"     # Victory default: every enemy destroyed
+REASON_TARGETS = "targets"             # a Victory Ships Destroyed met
+REASON_SURVIVED = "survived"           # the Victory timer ran out
+REASON_PLAYER = "player"               # Defeat default: the player destroyed
+REASON_PROTECTED = "protected"         # a Defeat Ships Destroyed met (ANY, or one ship)
+REASON_PROTECTED_ALL = "protected_all"  # a Defeat Ships Destroyed ALL of several
+REASON_TIME = "time"                   # the Defeat timer ran out
 
 END_DELAY_S = 1.0          # QuickBattle.py:3310 -- GetGameTime() + 1.0
 
@@ -55,26 +75,56 @@ END_DELAY_S = 1.0          # QuickBattle.py:3310 -- GetGameTime() + 1.0
 # distance!", "...until the sun destroys the solar system..."); only the odd
 # ones are a plain "<N> minute(s) remaining" (spec §4.3 lists exactly these).
 COUNTDOWN_MINUTES = (9, 7, 5, 3, 1)
-_TIME_UP_KEY = 0           # our timer event int: 0 = time up, N = N min left
+# Our timer event ints: N > 0 = N minutes left on the countdown.
+_DEFEAT_TIME_UP = 0
+_VICTORY_TIME_UP = -1
 
 CREW_TGL = "data/TGL/Dauntless Crew.tgl"
 COUNTDOWN_TGL = "data/TGL/Maelstrom/Episode 8/E8M2.TGL"
 PROTECTED_LOST_KEY = "SaffiQBProtectedLost1"
+PROTECTED_LOST_ALL_KEY = "SaffiQBProtectedLostAll1"
 TIME_UP_KEY = "SaffiQBTimeUp1"
+SURVIVED_KEY = "SaffiQBSurvived1"
 COUNTDOWN_KEY = "E8M2Countdown%d"
 
+# Objectives (spec §5.4; wording rulings in the plan's constraints: no
+# articles, lists "A", "A and B", "A, B and C", "A, B, C and N more").
 OBJ_DESTROY = "Destroy all enemy ships"
+OBJ_DESTROY_SHIPS = "Destroy %s"
+OBJ_SURVIVE = "Survive for %d min"
 OBJ_PROTECT = "Protect %s"
+OBJ_KEEP_ALIVE = "Keep %s alive"
 OBJ_TIME = "Win within %d min"
+_OBJ_LIST_MAX = 3
 
 _HANDLER = __name__ + ".on_timer"
 _ORIG_ATTR = "_dauntless_battle_end_orig"
 
 
 @dataclass
+class ArmedCondition:
+    """One added condition as the armed battle tracks it."""
+    side: str                  # victory.VICTORY / DEFEAT
+    kind: str                  # victory.SHIPS / TIMER
+    mode: str                  # victory.ANY / ALL
+    names: tuple = ()          # Ships: object names, in plan order
+    labels: tuple = ()         # Ships: objective labels, parallel to names
+    time_s: float = 0.0        # Timer: its game-time length
+    destroyed: set = field(default_factory=set)   # Ships: names destroyed
+
+    def met(self) -> bool:
+        """A Ships Destroyed condition is met (a Timer is met by its timer)."""
+        from engine.quickbattle import victory as vic
+        if self.kind != vic.SHIPS or not self.names:
+            return False
+        if self.mode == vic.ALL:
+            return all(n in self.destroyed for n in self.names)
+        return bool(self.destroyed)
+
+
+@dataclass
 class BattleState:
-    type: str
-    protected_name: Optional[str]
+    conditions: tuple = ()     # ArmedCondition, in the plan's stored order
     ended: bool = False
     won: Optional[bool] = None
     reason: Optional[str] = None
@@ -82,9 +132,9 @@ class BattleState:
 
 _state: Optional[BattleState] = None
 _qb = None                   # the QuickBattle module the armed battle runs in
-_protected_id = None         # its object id, when it existed at begin()
+_ship_ids: dict = {}         # listed object name -> its object id, at begin()
 _end_timer = None            # our pending ET_END_SIMULATION timer id
-_timers: list = []           # our time-limit / countdown timer ids
+_timers: list = []           # our Timer / countdown timer ids
 _markers: list = []          # ship names we put a marker on
 _objectives_shown = False    # we made the Objectives submenu visible
 _outcome = None              # (won, reason) handed to the sequence wrappers
@@ -105,7 +155,34 @@ def _event_type() -> int:
 
 def state() -> Optional[BattleState]:
     """A copy of the armed battle's state, or None when no battle is armed."""
-    return None if _state is None else replace(_state)
+    if _state is None:
+        return None
+    return replace(_state, conditions=tuple(
+        replace(c, destroyed=set(c.destroyed)) for c in _state.conditions))
+
+
+def _names_on(side) -> list:
+    from engine.quickbattle import victory as vic
+    out = []
+    if _state is not None:
+        for c in _state.conditions:
+            if c.side == side and c.kind == vic.SHIPS:
+                out.extend(n for n in c.names if n not in out)
+    return out
+
+
+def protected_names() -> list:
+    """Object names of every ship in the armed battle's Defeat Ships
+    Destroyed conditions, first listing order; [] when none or unarmed."""
+    from engine.quickbattle import victory as vic
+    return _names_on(vic.DEFEAT)
+
+
+def target_names() -> list:
+    """Object names of every ship in the armed battle's Victory Ships
+    Destroyed conditions, first listing order; [] when none or unarmed."""
+    from engine.quickbattle import victory as vic
+    return _names_on(vic.VICTORY)
 
 
 def _db(filename):
@@ -128,75 +205,116 @@ def _guard(what, fn, *args):
 
 # ── arming ──────────────────────────────────────────────────────────────────
 
-def _protected_order(plan):
-    """(1-based plan index, SpawnOrder) of the ship to protect, or None."""
-    v = plan.victory
-    if v.protect_entry_id is None:
+def _arm_condition(order_of, c) -> Optional[ArmedCondition]:
+    """The ArmedCondition for one ConditionOrder, or None when a Ships
+    condition names no ship of the plan. `order_of`: entry id -> (1-based
+    plan index, SpawnOrder); the object name is naming.object_name(title, n)
+    as the spawner names it, the label `display_name or <object name>`."""
+    from engine.quickbattle import naming
+    from engine.quickbattle import victory as vic
+    if c.kind == vic.TIMER:
+        return ArmedCondition(c.side, c.kind, c.mode, time_s=float(c.time_s))
+    names, labels = [], []
+    for eid in c.entry_ids:
+        found = order_of.get(eid)
+        if found is None:
+            _log.warning("quickbattle: %s condition ship %r is not in the plan; "
+                         "ignored", c.side, eid)
+            continue
+        n, order = found
+        name = naming.object_name(order.title, n)
+        names.append(name)
+        labels.append(order.display_name or name)
+    if not names:
+        _log.warning("quickbattle: %s Ships Destroyed condition has no ship "
+                     "in the plan; ignored", c.side)
         return None
-    for n, order in enumerate(plan.orders, start=1):
-        if order.entry_id == v.protect_entry_id:
-            return n, order
-    return None
+    return ArmedCondition(c.side, c.kind, c.mode, tuple(names), tuple(labels))
 
 
 def begin(qb, plan) -> None:
     """Arm one battle. `plan` is the BattlePlan the ships came from, or None
-    when BC's own GenerateShips ran (Elimination)."""
-    global _state, _qb, _protected_id, _outcome
+    when BC's own GenerateShips ran (the two defaults only)."""
+    global _state, _qb, _outcome
     import App
-    from engine.quickbattle import naming
-    from engine.quickbattle import victory as vic
     reset()
     _outcome = None
-    victory = plan.victory if plan is not None else None
-    vtype = victory.type if victory is not None else vic.ELIMINATION
-    protected = shown = None
-    late = False
-    if plan is not None and vtype == vic.KOBAYASHI_MARU:
-        found = _protected_order(plan)
-        if found is None:
-            _log.warning("quickbattle: Kobayashi Maru has no ship to protect "
-                         "(entry %r is not in the plan); nothing to protect",
-                         victory.protect_entry_id)
-        else:
-            n, order = found
-            protected = naming.object_name(order.title, n)
-            shown = order.display_name or protected
-            late = order.warp_in_s > 0
-    _state = BattleState(vtype, protected)
+    conds, late = (), set()
+    if plan is not None:
+        order_of = {o.entry_id: (n, o) for n, o in enumerate(plan.orders, start=1)}
+        conds = tuple(a for a in (_arm_condition(order_of, c)
+                                  for c in plan.victory.conditions) if a is not None)
+        from engine.quickbattle import naming
+        late = {naming.object_name(o.title, n) for n, o in enumerate(plan.orders, start=1)
+                if o.warp_in_s > 0}
+    _state = BattleState(conds)
     _qb = qb
-    _protected_id = None
-    if protected is not None and not late:
-        ship = _guard("protected ship lookup", App.ShipClass_GetObject, qb.g_pSet, protected)
+    protected, targets = protected_names(), target_names()
+    for name in protected + targets:
+        if name in late:
+            continue                       # arrives later: matched by name
+        ship = _guard("listed ship lookup", App.ShipClass_GetObject, qb.g_pSet, name)
         if ship is None:
-            _log.warning("quickbattle: the protected ship %s did not spawn; "
-                         "the battle carries on without it", protected)
+            _log.warning("quickbattle: the listed ship %s did not spawn; "
+                         "the battle carries on without it", name)
         else:
-            _protected_id = ship.GetObjID()
-    if protected is not None:
-        _guard("protect marker", _set_marker, protected)
-        # Enemies weight the protected ship, E6M1's way (km_targeting). Before
-        # StartSimulation2's AI loop, which runs right after GenerateShips.
+            _ship_ids[name] = ship.GetObjID()
+    for name in protected:
+        _guard("protect marker", _set_marker, name, "protect")
+    for name in targets:
+        _guard("target marker", _set_marker, name, "target")
+    if protected:
+        # Enemies weight the first protected ship, E6M1's way (km_targeting).
+        # Before StartSimulation2's AI loop, which runs right after
+        # GenerateShips.
         from engine.quickbattle import km_targeting
-        _guard("Kobayashi Maru targeting", km_targeting.arm, qb, plan, protected,
-               _protected_id is not None)
-    limit_s = float(victory.time_limit_s) if victory is not None else 0.0
-    _guard("objectives", _show_objectives, shown, limit_s)
-    if limit_s > 0:
-        _guard("time limit", _schedule_time_limit, qb, limit_s)
+        _guard("protected ship targeting", km_targeting.arm, qb, plan, protected[0],
+               protected[0] in _ship_ids)
+    _guard("objectives", _show_objectives, conds)
+    _guard("timers", _schedule_timers, qb, conds)
 
 
-def _set_marker(name) -> None:
+def _set_marker(name, kind) -> None:
     from engine.ui import target_markers
-    target_markers.set_marker(name, "protect")
+    target_markers.set_marker(name, kind)
     _markers.append(name)
 
 
-def _show_objectives(protect_label, limit_s) -> None:
+def _join(labels, word) -> str:
+    """"A", "A <word> B", "A, B <word> C"; more than _OBJ_LIST_MAX names:
+    "A, B, C and N more"."""
+    labels = list(labels)
+    if len(labels) > _OBJ_LIST_MAX:
+        return "%s and %d more" % (", ".join(labels[:_OBJ_LIST_MAX]),
+                                   len(labels) - _OBJ_LIST_MAX)
+    if len(labels) == 1:
+        return labels[0]
+    return "%s %s %s" % (", ".join(labels[:-1]), word, labels[-1])
+
+
+def _objective(c) -> str:
+    """The Objectives entry for one condition (spec §5.4). ANY joins with
+    "or" on Victory and "and" on Defeat, ALL the reverse; a Defeat ALL of
+    several reads "Keep ... alive"."""
+    from engine.quickbattle import victory as vic
+    if c.kind == vic.TIMER:
+        minutes = int(round(c.time_s / 60.0))
+        return (OBJ_SURVIVE if c.side == vic.VICTORY else OBJ_TIME) % minutes
+    if c.side == vic.VICTORY:
+        return OBJ_DESTROY_SHIPS % _join(c.labels, "or" if c.mode == vic.ANY else "and")
+    if c.mode == vic.ALL and len(c.labels) > 1:
+        return OBJ_KEEP_ALIVE % _join(c.labels, "or")
+    return OBJ_PROTECT % _join(c.labels, "and")
+
+
+def _show_objectives(conds) -> None:
     """Quick Battle hides the Objectives submenu (QuickBattle.py:735-739):
-    show it, empty it, and list this battle's goals."""
+    show it, empty it, and list this battle's goals -- the Victory stack (its
+    default, then its conditions in stored order), then the Defeat stack's
+    conditions. The player's death gets no entry (it is implied)."""
     global _objectives_shown
     from engine.appc import mission_goals
+    from engine.quickbattle import victory as vic
     menu = mission_goals.objectives_submenu()
     if menu is None:
         _log.warning("quickbattle: no XO Objectives menu; goals not shown")
@@ -205,10 +323,10 @@ def _show_objectives(protect_label, limit_s) -> None:
     _objectives_shown = True
     menu.KillChildren()
     mission_goals.add_goal_button(OBJ_DESTROY)
-    if protect_label is not None:
-        mission_goals.add_goal_button(OBJ_PROTECT % protect_label)
-    if limit_s > 0:
-        mission_goals.add_goal_button(OBJ_TIME % int(round(limit_s / 60.0)))
+    for side in (vic.VICTORY, vic.DEFEAT):
+        for c in conds:
+            if c.side == side:
+                mission_goals.add_goal_button(_objective(c))
 
 
 def _register_handler(xo) -> None:
@@ -237,25 +355,46 @@ def _add_timer(at, event_type, dest, value) -> int:
     return tid
 
 
-def _schedule_time_limit(qb, limit_s) -> None:
-    """The time-up timer, then E8M2's countdown (E8M2.py:2984-3020) at each
-    of COUNTDOWN_MINUTES that fits inside the limit."""
+def _timer_s(conds, side) -> float:
+    from engine.quickbattle import victory as vic
+    return next((c.time_s for c in conds
+                 if c.side == side and c.kind == vic.TIMER and c.time_s > 0), 0.0)
+
+
+def _schedule_timers(qb, conds) -> None:
+    """The Defeat and Victory time-up timers -- the Victory one only when it
+    is earlier than the Defeat one, so a tie is a loss (spec §4.2) -- then
+    E8M2's countdown (E8M2.py:2984-3020) against the earlier scheduled timer,
+    at each of COUNTDOWN_MINUTES that fits inside it."""
     import App
+    from engine.quickbattle import victory as vic
+    win_s, lose_s = _timer_s(conds, vic.VICTORY), _timer_s(conds, vic.DEFEAT)
+    if win_s > 0 and lose_s > 0 and win_s >= lose_s:
+        _log.info("quickbattle: the victory timer (%.0f s) is not earlier than "
+                  "the defeat timer (%.0f s); the defeat timer settles it",
+                  win_s, lose_s)
+        win_s = 0.0
+    if win_s <= 0 and lose_s <= 0:
+        return
     _register_handler(qb.g_pXO)
     start = App.g_kUtopiaModule.GetGameTime()
     et = _event_type()
-    _timers.append(_add_timer(start + limit_s, et, qb.g_pXO, _TIME_UP_KEY))
+    if lose_s > 0:
+        _timers.append(_add_timer(start + lose_s, et, qb.g_pXO, _DEFEAT_TIME_UP))
+    if win_s > 0:
+        _timers.append(_add_timer(start + win_s, et, qb.g_pXO, _VICTORY_TIME_UP))
+    first = min(s for s in (win_s, lose_s) if s > 0)
     for minutes in COUNTDOWN_MINUTES:
-        if minutes * 60.0 > limit_s:
+        if minutes * 60.0 > first:
             continue
-        _timers.append(_add_timer(start + limit_s - minutes * 60.0, et,
+        _timers.append(_add_timer(start + first - minutes * 60.0, et,
                                   qb.g_pXO, minutes))
 
 
 def on_timer(pObject, pEvent) -> None:
-    """XO instance handler for our time-limit and countdown timers. Each
-    battle allocates a fresh event type, so an event of an older type (a
-    previous battle's timer that somehow survived reset) is ignored."""
+    """XO instance handler for our Timer and countdown timers. Each battle
+    allocates a fresh event type, so an event of an older type (a previous
+    battle's timer that somehow survived reset) is ignored."""
     if _ET is not None and pEvent.GetEventType() == _ET:
         _guard("timer", _on_timer, pEvent.GetInt())
     pObject.CallNextHandler(pEvent)
@@ -263,10 +402,14 @@ def on_timer(pObject, pEvent) -> None:
 
 def _on_timer(key) -> None:
     qb, st = _qb, _state
-    if qb is None or st is None or st.ended or not getattr(qb, "bInSimulation", 0):
+    if qb is None or st is None or not getattr(qb, "bInSimulation", 0):
         return
-    if key == _TIME_UP_KEY:
-        end_battle(qb, False, REASON_TIME)
+    if key == _DEFEAT_TIME_UP:
+        _lose(qb, REASON_TIME)             # may overturn a pending win
+    elif st.ended:
+        return
+    elif key == _VICTORY_TIME_UP:
+        end_battle(qb, True, REASON_SURVIVED)
     else:
         _countdown(key)
 
@@ -337,11 +480,60 @@ def check_win(qb) -> None:
     end_battle(qb, True, REASON_ELIMINATION)
 
 
-def _is_protected(ship) -> bool:
+def _lose(qb, reason) -> bool:
+    """End the armed battle lost. A pending win (ended, won, its end timer
+    not yet fired) is overturned: its timer is deleted and the loss posted
+    in its place (spec §4.3). A loss already decided stands. False when
+    nothing changed."""
     st = _state
-    if st is None or st.protected_name is None or ship.GetName() != st.protected_name:
+    if st is None:
         return False
-    return _protected_id is None or ship.GetObjID() == _protected_id
+    if st.ended:
+        if not st.won or _end_timer is None:
+            return False
+        _cancel_end_timer(qb)
+        st.ended, st.won, st.reason = False, None, None
+    return end_battle(qb, False, reason)
+
+
+def _defeat_reason(c) -> str:
+    from engine.quickbattle import victory as vic
+    if c.mode == vic.ALL and len(c.names) > 1:
+        return REASON_PROTECTED_ALL
+    return REASON_PROTECTED
+
+
+def _mark_destroyed(ship) -> bool:
+    """Mark `ship` destroyed in every Ships condition listing it. A listed
+    ship that existed at begin matches by object id too, so a same-named
+    stranger never counts. True when any condition lists it."""
+    st = _state
+    name = ship.GetName()
+    known = _ship_ids.get(name)
+    if known is not None and ship.GetObjID() != known:
+        return False
+    hit = False
+    for c in st.conditions:
+        if name in c.names:
+            c.destroyed.add(name)
+            hit = True
+    return hit
+
+
+def _settle(qb) -> None:
+    """Defeat conditions first, then Victory (spec §4.3). A met Defeat
+    condition ends the battle lost, overturning a pending win; a met Victory
+    condition ends it won only if nothing has ended yet."""
+    from engine.quickbattle import victory as vic
+    st = _state
+    for c in st.conditions:
+        if c.side == vic.DEFEAT and c.met():
+            _lose(qb, _defeat_reason(c))
+            return
+    if st.ended:
+        return
+    if any(c.side == vic.VICTORY and c.met() for c in st.conditions):
+        end_battle(qb, True, REASON_TARGETS)
 
 
 def _before_bc(qb, ship) -> None:
@@ -356,8 +548,8 @@ def _before_bc(qb, ship) -> None:
             # posts its own loss timer next, so ours must go.
             _cancel_end_timer(qb)
             st.ended, st.won, st.reason = True, False, REASON_PLAYER
-    elif _is_protected(ship) and not st.ended and qb.bInSimulation:
-        end_battle(qb, False, REASON_PROTECTED)
+    elif qb.bInSimulation and _mark_destroyed(ship):
+        _settle(qb)
 
 
 def _ship_destroyed(qb, orig, pObject, pEvent):
@@ -408,7 +600,9 @@ def _lose_sequence(qb, line_key) -> None:
     seq.Play()
 
 
-_LOSE_LINES = {REASON_PROTECTED: PROTECTED_LOST_KEY, REASON_TIME: TIME_UP_KEY}
+_LOSE_LINES = {REASON_PROTECTED: PROTECTED_LOST_KEY,
+               REASON_PROTECTED_ALL: PROTECTED_LOST_ALL_KEY,
+               REASON_TIME: TIME_UP_KEY}
 
 
 def _generate_lose_sequence(qb, orig):
@@ -433,9 +627,29 @@ def _win_tail(qb) -> None:
     qb.g_pXO.MenuUp()
 
 
+def _survived_sequence(qb, pSequence=None) -> None:
+    """BC's GenerateWinSequence (QuickBattle.py:3429-3436) with the XO's
+    survived line, spoken as _lose_sequence speaks, in place of Felix's."""
+    import App
+    if pSequence is None:
+        pSequence = App.TGSequence_Create()
+    pSequence.AppendAction(App.CharacterAction_Create(
+        qb.g_pXO, App.CharacterAction.AT_SPEAK_LINE, SURVIVED_KEY, "Captain", 0,
+        _db(CREW_TGL)))
+    pSequence.Play()
+
+
 def _generate_win_sequence(qb, orig, pSequence=None):
     out = _take_outcome()
-    result = orig(pSequence)
+    result = None
+    if out is not None and out[0] and out[1] == REASON_SURVIVED:
+        try:
+            _survived_sequence(qb, pSequence)
+        except Exception:
+            _log.exception("quickbattle: our win sequence failed; playing BC's")
+            result = orig(pSequence)
+    else:
+        result = orig(pSequence)
     if out is not None and out[0]:
         _guard("win tail", _win_tail, qb)
     return result
@@ -484,8 +698,7 @@ def reset() -> None:
     battle. An ending already decided is kept only as the one-shot
     `_outcome` for the sequence wrappers that EndSimulationEvent runs right
     after EndSimulation."""
-    global _state, _qb, _protected_id, _objectives_shown, _outcome, _ET, \
-        _xo_registered
+    global _state, _qb, _objectives_shown, _outcome, _ET, _xo_registered
     st, qb = _state, _qb
     _outcome = (st.won, st.reason) if st is not None and st.ended else None
     try:
@@ -519,6 +732,6 @@ def reset() -> None:
         _log.exception("quickbattle battle end: could not reset enemy targeting")
     _state = None
     _qb = None
-    _protected_id = None
+    _ship_ids.clear()
     _ET = None
     _xo_registered = None
