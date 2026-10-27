@@ -273,7 +273,27 @@ void smooth_normals_impl(VertexChannels& ch, float crease_deg,
             return -1;
         };
 
-        // Phase 1: edges between two faces of one recorded shape. The record
+        // Faces of a recorded shape grouped by their three welded positions.
+        // Stock shapes repeat many faces (seam twins, reversed twins, UV
+        // duplicates); Blender shows one face per set, so faces of one set
+        // are one surface and the record only speaks between sets.
+        constexpr std::uint32_t kNoSet = UINT32_MAX;
+        std::vector<std::uint32_t> face_set(tri_count, kNoSet);
+        {
+            std::map<std::array<std::uint32_t, 4>, std::uint32_t> sets;
+            for (std::uint32_t t = 0; t < tri_count; ++t) {
+                if (glm::length(face_n[t]) < 0.5f || !au.recorded[tri_shape(t)]) continue;
+                std::array<std::uint32_t, 3> w = {corner_w[t * 3], corner_w[t * 3 + 1],
+                                                  corner_w[t * 3 + 2]};
+                std::sort(w.begin(), w.end());
+                const auto id = static_cast<std::uint32_t>(sets.size());
+                face_set[t] = sets.try_emplace({tri_shape(t), w[0], w[1], w[2]}, id).first->second;
+            }
+        }
+
+        // Phase 1: edges between two faces of one recorded shape. Faces of one
+        // set always join, oriented by their normals (they lie on top of each
+        // other, so the edge direction says nothing). Between sets the record
         // decides; an unlisted edge keeps the crease rule.
         std::vector<std::vector<EdgeKey>> pieces(au.segments.size());  // matched edges per segment
         std::vector<std::pair<std::uint32_t, std::uint32_t>> hard_corners;
@@ -294,6 +314,12 @@ void smooth_normals_impl(VertexChannels& ch, float crease_deg,
                 for (std::size_t j = i + 1; j < uses.size(); ++j) {
                     const std::uint32_t shape = tri_shape(uses[i].tri);
                     if (shape != tri_shape(uses[j].tri) || !au.recorded[shape]) continue;
+                    if (face_set[uses[i].tri] == face_set[uses[j].tri]) {
+                        const int s = glm::dot(face_n[uses[i].tri], face_n[uses[j].tri]) < 0.0f ? -1 : 1;
+                        unite(uses[i].ca, uses[j].ca, s);
+                        unite(uses[i].cb, uses[j].cb, s);
+                        continue;
+                    }
                     auto it = std::find_if(lookups.begin(), lookups.end(),
                                            [&](const Lookup& l) { return l.shape == shape; });
                     if (it == lookups.end()) {
@@ -340,8 +366,9 @@ void smooth_normals_impl(VertexChannels& ch, float crease_deg,
         }
 
         // Outcome per authored edge: at each end, the matched edge touching
-        // it must have exactly two faces of the segment's shape; joined = their
-        // corners there share a group.
+        // it must carry exactly two position sets of the segment's shape;
+        // joined = the two sets' corners there share a group (each set is one
+        // group by phase 1).
         if (au.report) {
             for (std::uint32_t k = 0; k < au.segments.size(); ++k) {
                 const AuthoredSegment& seg = au.segments[k];
@@ -355,12 +382,16 @@ void smooth_normals_impl(VertexChannels& ch, float crease_deg,
                     const auto piece = std::find_if(pieces[k].begin(), pieces[k].end(),
                         [&](const EdgeKey& e) { return e.first == w || e.second == w; });
                     if (w < 0 || piece == pieces[k].end()) { found = false; break; }
-                    std::vector<std::uint32_t> corners;
-                    for (const EdgeUse& use : edges.at(*piece))
-                        if (tri_shape(use.tri) == seg.shape)
-                            corners.push_back(piece->first == w ? use.ca : use.cb);
-                    if (corners.size() != 2) { found = false; break; }
-                    joined[x] = find(corners[0]).first == find(corners[1]).first;
+                    std::vector<std::pair<std::uint32_t, std::uint32_t>> sets;  // set -> a corner at w
+                    for (const EdgeUse& use : edges.at(*piece)) {
+                        if (tri_shape(use.tri) != seg.shape) continue;
+                        const std::uint32_t set = face_set[use.tri];
+                        if (std::none_of(sets.begin(), sets.end(),
+                                         [&](const auto& sc) { return sc.first == set; }))
+                            sets.push_back({set, piece->first == w ? use.ca : use.cb});
+                    }
+                    if (sets.size() != 2) { found = false; break; }
+                    joined[x] = find(sets[0].second).first == find(sets[1].second).first;
                 }
                 row.found = found;
                 row.joined_a = found && joined[0];

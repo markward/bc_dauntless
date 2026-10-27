@@ -915,3 +915,90 @@ TEST(NormalGenAuthored, ReportHasARowPerAuthoredEdgeWithoutGeometry) {
         EXPECT_FALSE(report.edges[i].found) << i;
     }
 }
+
+// ── Duplicate faces in a recorded shape ────────────────────────────────────
+// Stock BC shapes carry many faces that repeat another face's three welded
+// positions (seam twins, reversed twins, UV duplicates: 3838 of DBridge's
+// 8580 triangles). Blender shows ONE face per position set, so inside a
+// recorded shape faces of one set are one surface: always joined, oriented by
+// their normals, and an authored edge decides only between DIFFERENT sets.
+namespace {
+// fold() plus a duplicate of A with its own vertices (UVs differ: not twins)
+// in the same winding, and a REVERSED duplicate of B on B's own vertices.
+// Triangles: 0 = A, 1 = B, 2 = A' (same winding), 3 = B' (reversed).
+MeshCpu duplicated_fold(float fold_deg) {
+    MeshCpu m = fold(fold_deg, /*shared=*/true);
+    for (int i : {0, 2, 1}) {
+        MeshCpu::Vertex v = m.vertices[i];
+        v.uv = {0.25f, 0.75f};
+        m.vertices.push_back(v);
+    }
+    m.indices.insert(m.indices.end(), {4, 5, 6, 0, 3, 1});
+    return m;
+}
+}  // namespace
+
+TEST(NormalGenAuthored, HardEdgeBetweenDuplicatedFacesFindsTwoSurfaces) {
+    MeshCpu m = duplicated_fold(10.0f);
+    const nif::AuthoredEdges rec{{{0, 1}}, {}};
+    std::vector<NormalGenShape> shapes{{&m, glm::mat4(1.0f), {}, &rec}};
+    SmoothingReport report;
+    generate_normals_across_shapes(shapes, kSetNormalCreaseDeg, &report);
+    ASSERT_EQ(report.edges.size(), 1u);
+    EXPECT_TRUE(report.edges[0].found);
+    EXPECT_FALSE(report.edges[0].joined_a);
+    EXPECT_FALSE(report.edges[0].joined_b);
+    // Hard: A and B stay flat. Each duplicate matches its twin, the reversed
+    // one with the sign of its own winding.
+    for (int k = 0; k < 3; ++k) {
+        EXPECT_GT(corner_dot_to_face(m, 0, k), 0.9999f) << k;
+        EXPECT_GT(corner_dot_to_face(m, 1, k), 0.9999f) << k;
+        EXPECT_GT(glm::dot(corner_normal(m, 2, k), corner_normal(m, 0, k)), 0.9999f) << k;
+    }
+    // B = {0, 1, 3}, B' = {0, 3, 1}: corners 0 match, B's 1 is B''s 2.
+    EXPECT_LT(glm::dot(corner_normal(m, 3, 0), corner_normal(m, 1, 0)), -0.9999f);
+    EXPECT_LT(glm::dot(corner_normal(m, 3, 2), corner_normal(m, 1, 1)), -0.9999f);
+    EXPECT_LT(glm::dot(corner_normal(m, 3, 1), corner_normal(m, 1, 2)), -0.9999f);
+}
+
+TEST(NormalGenAuthored, SoftEdgeBetweenDuplicatedFacesIsOneSurface) {
+    MeshCpu m = duplicated_fold(90.0f);
+    const nif::AuthoredEdges rec{{}, {{0, 1}}};
+    std::vector<NormalGenShape> shapes{{&m, glm::mat4(1.0f), {}, &rec}};
+    SmoothingReport report;
+    generate_normals_across_shapes(shapes, kSetNormalCreaseDeg, &report);
+    ASSERT_EQ(report.edges.size(), 1u);
+    EXPECT_TRUE(report.edges[0].found);
+    EXPECT_TRUE(report.edges[0].joined_a);
+    EXPECT_TRUE(report.edges[0].joined_b);
+    // Faces +Z and -Y: A, A' and B take the bisector at h0; reversed B' its
+    // opposite.
+    const glm::vec3 bisector = glm::normalize(glm::vec3(0, -1, 1));
+    for (int t : {0, 1, 2})
+        EXPECT_GT(glm::dot(glm::normalize(corner_normal(m, t, 0)), bisector), 0.9999f) << t;
+    EXPECT_LT(glm::dot(glm::normalize(corner_normal(m, 3, 0)), bisector), -0.9999f);
+}
+
+// An UNRECORDED shape with duplicate faces, beside a recorded one, gets
+// exactly the normals it got before duplicate handling existed: the values
+// below were printed from the pre-change code (bits via %a).
+TEST(NormalGenAuthored, UnrecordedDuplicatesMatchThePreChangeOutput) {
+    MeshCpu dup = fold(20.0f, /*shared=*/true);
+    dup.indices.insert(dup.indices.end(), {0, 2, 1, 0, 3, 1});  // A again, B reversed
+    MeshCpu far = fold(10.0f, /*shared=*/true);
+    for (auto& v : far.vertices) v.position += glm::vec3(0, 0, 50);
+    const nif::AuthoredEdges rec{{{0, 1}}, {}};
+    std::vector<NormalGenShape> shapes{{&dup, glm::mat4(1.0f), {}},
+                                       {&far, glm::mat4(1.0f), {}, &rec}};
+    generate_normals_across_shapes(shapes, kSetNormalCreaseDeg);
+    const std::vector<std::uint32_t> want_indices = {0, 1, 2, 0, 2, 3, 0, 1, 2, 4, 5, 6};
+    const glm::vec3 want[7] = {
+        {0x0p+0f, -0x1.6372e8p-3f, 0x1.f83ac8p-1f}, {0x0p+0f, 0x0p+0f, 0x1p+0f},
+        {0x0p+0f, -0x1.6372e8p-3f, 0x1.f83ac8p-1f}, {0x0p+0f, -0x1.5e1b04p-2f, 0x1.e1252p-1f},
+        {0x0p+0f, 0x1.6372e8p-3f, -0x1.f83ac8p-1f}, {0x0p+0f, 0x1.5e1b04p-2f, -0x1.e1252p-1f},
+        {0x0p+0f, 0x1.6372e8p-3f, -0x1.f83ac8p-1f}};
+    ASSERT_EQ(dup.indices, want_indices);
+    ASSERT_EQ(dup.vertices.size(), 7u);
+    for (std::size_t i = 0; i < 7; ++i)
+        EXPECT_EQ(std::memcmp(&dup.vertices[i].normal, &want[i], sizeof(glm::vec3)), 0) << i;
+}

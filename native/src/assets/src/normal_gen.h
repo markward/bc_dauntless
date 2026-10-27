@@ -35,8 +35,10 @@ struct SmoothingReport {
     struct Edge {
         std::uint32_t shape;
         std::uint16_t a, b;
-        bool found;     // the edge (or the piece of it at each end) has exactly two faces of its shape
-        bool joined_a;  // those two faces' corners at a share one normal
+        bool found;     // the edge (or the piece of it at each end) carries exactly two
+                        // position sets of its shape (faces on the same three welded
+                        // positions are one set: stock duplicate / reversed faces)
+        bool joined_a;  // those two sets' corners at a share one normal
         bool joined_b;  // ... at b
     };
     std::vector<Edge> edges;
@@ -89,7 +91,10 @@ void generate_smooth_normals(MeshCpu& mesh, float crease_deg,
 /// between two faces of one shape that has a record, a listed hard edge never
 /// joins and a listed soft edge always joins (whatever the fold, despite a
 /// twin split); pieces the T-junction repair cut from a listed edge inherit
-/// its flag; unlisted edges keep the crease rule. Corners an authored hard
+/// its flag; unlisted edges keep the crease rule. Faces of a recorded shape on
+/// the same three welded positions (stock duplicates, reversed twins) are one
+/// surface: always joined, and the record decides only between different
+/// position sets. Unrecorded shapes are unaffected. Corners an authored hard
 /// edge separates never end up in one group, whatever chain of other joins
 /// reaches them. `authored_joins_hard` (§3.4) makes every edge between two
 /// different shapes, at least one recorded, a hard edge. `report`, when
