@@ -207,9 +207,11 @@ def test_the_suite_itself_never_shows_it():
 
 
 def test_run_loads_the_game_behind_the_notice():
-    """Fade in after the pre-boot screens, load the SDK and the mission
-    behind it, fade out before run() installs its own CEF handlers (the
-    pump loop would replace them) and before the game loop."""
+    """Fade in after the pre-boot screens; load the SDK, the mission and
+    every bit of loop setup behind it; fade out right before the game loop.
+    The pump loop replaces run()'s CEF handlers, so both are put back after
+    the fade-out, and the frame clock restarts so the fade is not replayed
+    as up to MAX_FRAME_DT of sim time on the first frame."""
     import inspect
     source = code_only(inspect.getsource(host_loop.run))
     resolve_at = source.index("_resolve_paths_or_report(")
@@ -217,9 +219,13 @@ def test_run_loads_the_game_behind_the_notice():
     begin_at = source.index("_begin_boot_notice(")
     prewarm_at = source.index("_prewarm_sdk_modules()")
     mission_at = source.index("controller.loader.load")
+    clock_at = source.index("_previous_real_time = time.monotonic()")
     finish_at = source.index("_finish_boot_notice(")
-    handlers_at = source.index("_cef_set_event_handler(registry.dispatch)")
-    load_end_at = source.index("_cef_set_load_end(_on_cef_load_end)")
     loop_at = source.index("while not r.should_close():")
     assert (resolve_at < mods_at < begin_at < prewarm_at < mission_at
-            < finish_at < handlers_at < load_end_at < loop_at)
+            < clock_at < finish_at < loop_at)
+
+    after = source[finish_at:loop_at]
+    assert "_cef_set_event_handler(registry.dispatch)" in after
+    assert "_cef_set_load_end(_on_cef_load_end)" in after
+    assert "_previous_real_time = time.monotonic()" in after

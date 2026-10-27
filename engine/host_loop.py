@@ -11504,13 +11504,6 @@ def run(mission_name: Optional[str] = None,
         # window changes size (older builds lack it -> overlay stays at its
         # init size and stretches, the prior behaviour).
         _cef_resize = getattr(_h, "cef_resize", None) if _h else None
-        # The game is loaded: fade the boot notice out. Here, before the two
-        # registrations below, because its pump loop installs handlers of its
-        # own (see _finish_boot_notice).
-        if _boot_notice is not None:
-            _finish_boot_notice(_boot_notice, _CEF_VIEW_W, _CEF_VIEW_H)
-            import time as _time
-            _notice_ended_at = _time.monotonic()
         _cef_set_event_handler = getattr(_h, "cef_set_event_handler", None) if _h else None
         if _cef_set_event_handler is not None:
             _cef_set_event_handler(registry.dispatch)
@@ -11708,6 +11701,19 @@ def run(mission_name: Optional[str] = None,
             if view == "exterior":
                 from engine.appc.top_window import TopWindow_GetTopWindow
                 TopWindow_GetTopWindow().ForceTacticalVisible()
+
+        # Everything up to here loaded behind the boot notice: fade it out.
+        # Its pump loop installs CEF handlers of its own (see
+        # _finish_boot_notice), so run()'s are put back after it, and the
+        # frame clock restarts so the fade is not replayed as sim time.
+        if _boot_notice is not None:
+            _finish_boot_notice(_boot_notice, _CEF_VIEW_W, _CEF_VIEW_H)
+            if _cef_set_event_handler is not None:
+                _cef_set_event_handler(registry.dispatch)
+            if _cef_set_load_end is not None:
+                _cef_set_load_end(_on_cef_load_end)
+            _previous_real_time = time.monotonic()
+            _notice_ended_at = _previous_real_time
 
         while not r.should_close():
             # Frame profiler: phase timeline for the Python half of the frame.
