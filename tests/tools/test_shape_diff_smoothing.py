@@ -132,12 +132,13 @@ def test_records_swap_ends_when_final_order_flips():
         (9, 9, 9), (1, 1, 0), (8, 8, 8), (0, 0, 0), (1, 0, 0), (0, 1, 0)]}]
     mesh2 = _mesh([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)],
                   [(0, 1, 2), (0, 2, 3)],
-                  [[N1, N1, N2], [N1, N2, N1]])
+                  [[N1, N1, N2], [N1, N1, N1]])
     r = smoothing.records(applied, {3: mesh2})[0]
     a, b = 1, 3
     assert (a, b) in r["ends"]
     flag = smoothing.edge_flags(mesh2)[(0, 2)]
-    assert r["ends"][(a, b)] == (flag.same_b, flag.same_a)
+    assert (flag.same_a, flag.same_b) == (True, False)
+    assert r["ends"][(a, b)] == (False, True)
 
 
 def test_records_refuse_an_unmatched_vertex():
