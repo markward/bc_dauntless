@@ -88,6 +88,9 @@ class ObjMesh:
     # each face (None: no material, no map_Kd, or no readable .mtl). Empty
     # for a mesh built by hand -- callers treat that as "no texture info".
     face_albedos: list = field(default_factory=list)
+    # Parallel to `faces`: per face, the per-corner normal as a BC-frame tuple,
+    # or None where the corner has no `vn`. Empty for a mesh built by hand.
+    face_normals: list = field(default_factory=list)
 
 
 def _map_kd_basename(rest: str):
@@ -129,6 +132,7 @@ def read_objects(path: Path) -> dict:
     objs = {}
     owner = []          # global v index -> (mesh, local index)
     uvs = []
+    normals = []        # global vn list, BC frame
     current = None
     mtl = {}            # material name -> map_Kd basename, from mtllib
     material = None     # usemtl in effect
@@ -160,8 +164,11 @@ def read_objects(path: Path) -> dict:
         elif tag == "vt":
             u, v = float(parts[1]), float(parts[2])
             uvs.append((u, 1.0 - v))
+        elif tag == "vn":
+            normals.append(frames.obj_to_bc(tuple(float(c) for c in parts[1:4])))
         elif tag == "f":
             face = []
+            face_n = []
             for tok in parts[1:]:
                 fields = tok.split("/")
                 vi = int(fields[0])
@@ -179,6 +186,15 @@ def read_objects(path: Path) -> dict:
                         raise ShapeDiffError(f"line {line_no}: uv index out of range")
                     uv = uvs[ti]
                 face.append((local, uv))
+                n = None
+                if len(fields) > 2 and fields[2]:
+                    ni = int(fields[2])
+                    ni = ni - 1 if ni > 0 else len(normals) + ni
+                    if not 0 <= ni < len(normals):
+                        raise ShapeDiffError(f"line {line_no}: normal index out of range")
+                    n = normals[ni]
+                face_n.append(n)
             current.faces.append(face)
+            current.face_normals.append(face_n)
             current.face_albedos.append(mtl.get(material))
     return objs
