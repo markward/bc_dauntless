@@ -1,12 +1,23 @@
 /* Boot notice splash -- Activision's required notice (SDK licence,
  * "New Game Materials"). engine/ui/boot_notice_panel.py drives it.
  *
- * Plain white Antonio on black, centred. Only the text fades; the black
- * stays opaque for the screen's whole life. Like #first-run it owns the
- * whole frame, so it sits above every other tier and supplies the Antonio
- * family itself (global.css declares the @font-face but applies it per
- * component). Sized in vh so it holds its proportions at any window size.
+ * The title lockup, then the notice, then the credit, centred on black.
+ * Only the text fades; the black stays opaque for the screen's whole life.
+ * Like #first-run it owns the whole frame, so it sits above every other
+ * tier and supplies its font itself. Sized in vh so it holds its
+ * proportions at any window size.
  */
+
+/* fonts/Antonio-Regular.ttf is the variable build (wght 100-700), but
+   global.css declares it for normal weight only, so a bold request there is
+   synthesised. This face spans the real range, so the wordmark gets the
+   true Bold. Its own family name keeps every other screen as it was. */
+@font-face {
+    font-family: "Antonio Variable";
+    src: url("../fonts/Antonio-Regular.ttf") format("truetype");
+    font-weight: 100 700;
+    font-style: normal;
+}
 
 #boot-notice {
     /* Hidden by default; setBootNotice sets style.display both ways. */
@@ -17,22 +28,66 @@
     justify-content: center;
     z-index: 400;  /* above #first-run (300) */
     background: #000;
-    font-family: "Antonio", sans-serif;
+    font-family: "Antonio Variable", "Antonio", sans-serif;
     color: #fff;
 }
 
 #boot-notice .bn-text {
     opacity: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     text-align: center;
 }
 
+/* Title lockup, after the website's (dauntless_web, .hero .lockup):
+   "BRIDGE COMMANDER" in peach Antonio Regular, its letters spread to exactly
+   the width of the bold "DAUNTLESS" -- the lockup shrink-wraps to the
+   wordmark and the eyebrow's flex row distributes the letters across it --
+   over an orange-to-pink rule. */
+#boot-notice .bn-lockup {
+    display: inline-block;
+    font-size: 15vh;
+    text-align: left;
+}
+
+#boot-notice .bn-eyebrow {
+    font-weight: 400;
+    font-size: 0.48em;
+    line-height: 1;
+    color: #ffcc66;
+    margin-bottom: 0.14em;
+}
+
+#boot-notice .bn-spread { display: flex; justify-content: space-between; }
+#boot-notice .bn-gap { width: 0.3em; }
+
+#boot-notice .bn-wordmark {
+    font-weight: 700;
+    font-size: 1em;
+    line-height: 0.86;
+    letter-spacing: -0.032em;
+    margin-left: -0.03em;  /* Bold D's wider side bearing, flush with the B */
+    color: #fff;
+    text-shadow: 0 0 60px rgba(255, 153, 51, 0.28);
+}
+
+#boot-notice .bn-rule {
+    display: block;
+    height: 3px;
+    width: 100%;
+    margin-top: 0.12em;
+    background: linear-gradient(to right, #ff9933, #cc4f8a 45%, transparent);
+}
+
 #boot-notice .bn-notice {
-    font-size: 4.4vh;
+    margin-top: 7vh;
+    font-size: 3.6vh;
     letter-spacing: 0.06em;
 }
 
 #boot-notice .bn-credit {
-    margin-top: 1.6vh;
-    font-size: 2.6vh;
+    margin-top: 1.4vh;
+    font-size: 1.8vh;
     letter-spacing: 0.04em;
 }

@@ -27,12 +27,36 @@ def test_only_emits_the_acknowledgement():
 
 
 def test_nothing_on_the_notice_is_clickable():
-    section = HTML[HTML.index('<section id="boot-notice">'):]
-    section = section[:section.index("</section>")]
+    section = _section()
     assert "onclick" not in section and "<button" not in section
 
 
+def _section():
+    section = HTML[HTML.index('<section id="boot-notice">'):]
+    return section[:section.index("</section>")]
+
+
 def test_white_antonio_on_black():
-    assert 'font-family: "Antonio"' in CSS
+    assert 'font-family: "Antonio Variable", "Antonio"' in CSS
     assert "background: #000;" in CSS
     assert "color: #fff;" in CSS
+
+
+def test_the_title_lockup_reads_bridge_commander_dauntless():
+    section = _section()
+    spread = section[section.index('class="bn-spread"'):]
+    spread = spread[:spread.index("</div>")]
+    letters = re.findall(r"<span>([A-Z])</span>", spread)
+    assert "".join(letters) == "BRIDGECOMMANDER"
+    assert 'class="bn-gap"' in spread
+    assert re.search(r'class="bn-wordmark">DAUNTLESS<', section)
+
+
+def test_the_wordmark_gets_the_real_bold_not_a_synthesised_one():
+    """The bundled Antonio is the variable build; a face declared for normal
+    weight only (global.css) makes the browser fake the bold."""
+    face = CSS[CSS.index("@font-face"):]
+    face = face[:face.index("}")]
+    assert 'font-family: "Antonio Variable"' in face
+    assert "font-weight: 100 700;" in face
+    assert "font-weight: 700;" in CSS
