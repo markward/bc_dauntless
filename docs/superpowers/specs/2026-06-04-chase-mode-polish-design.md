@@ -354,7 +354,7 @@ renderer, no host loop, no PyBullet.
   (`Chase` and `ReverseChase` mode constructors — Reverse Chase is Chase
   with camera position flipped from `(0, −1, 0.1)` to `(0, +1, 0.1)`);
   manual:
-  [`docs/ui/keyboard-mouse-reference.md`](../../docs/ui/keyboard-mouse-reference.md)
+  [`docs/reference/ui/keyboard-mouse-reference.md`](../../docs/ui/keyboard-mouse-reference.md)
   § Camera Commands — Tactical Mode.
 - Rotation-matrix convention: [`CLAUDE.md`](../../../CLAUDE.md)
   § "Rotation matrix convention — column-vector, always".

@@ -1,7 +1,7 @@
 ###############################################################################
 # q13h_inheritance -- VEIN 6: the real class hierarchy (cls.__bases__)
 #
-# Question(s): docs/instrumented_experiments/2026-07-13-abi-surface-probe.md
+# Question(s): docs/reference/instrumented_experiments/2026-07-13-abi-surface-probe.md
 #              For every App class, dump its direct base classes. Confirms from
 #              the engine the object hierarchy CLAUDE.md documents by inference
 #              (ObjectClass -> PhysicsObjectClass -> DamageableObject -> ShipClass).

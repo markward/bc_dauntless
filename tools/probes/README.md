@@ -2,7 +2,7 @@
 
 Probe files for instrumentation approach 2 (the BC `-TestMode` Python REPL).
 
-**Full workflow:** see [`docs/instrumented_experiments/console-probe-workflow.md`](../../docs/instrumented_experiments/console-probe-workflow.md).
+**Full workflow:** see [`docs/reference/instrumented_experiments/console-probe-workflow.md`](../../docs/instrumented_experiments/console-probe-workflow.md).
 
 ## Quick reference
 

@@ -12,7 +12,7 @@ measured on a scene where every ship had `GetRadius() == 0` (the headless
 harness has no realize step, so `SetRadius` never ran) — which zeroes
 `personal_space`, trips `_test_course_override`'s `ob_r <= 0.0` reject, and
 asks the swept test whether dimensionless points collide. See
-docs/engine/avoidance-duplication.md.
+docs/reference/engine/avoidance-duplication.md.
 
 It is a SAFETY system, so the property under test is soundness, not speed: the
 gate may only drop obstacles the per-piece scan would have ignored anyway.

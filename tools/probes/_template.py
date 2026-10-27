@@ -1,7 +1,7 @@
 ###############################################################################
 # TEMPLATE -- copy to tools/probes/q0N_<short_name>.py and edit
 #
-# Question(s): <which Q from which runbook in docs/instrumented_experiments/>
+# Question(s): <which Q from which runbook in docs/reference/instrumented_experiments/>
 # Needs combat state? <yes | no -- if yes, operator must start Quick Battle
 #                     and acquire a target (Tab) BEFORE running this probe>
 # Output:      game/BCProbe_q0N.cfg, section [BCProbe_q0N]
@@ -9,7 +9,7 @@
 # Run in the -TestMode REPL with:  execfile('q0N_<short_name>.py')
 ###############################################################################
 #
-# PYTHON 1.5 CONSTRAINTS -- read docs/instrumented_experiments/console-probe-workflow.md
+# PYTHON 1.5 CONSTRAINTS -- read docs/reference/instrumented_experiments/console-probe-workflow.md
 #
 # - No "import X as Y"          -> import X; Y = X
 # - No f-strings                -> "%s %d" % (s, n)

@@ -590,7 +590,7 @@ def _grind_contact(a: "_Body", b: "_Body", cx, cy, cz, nx, ny, nz,
     # does: trace from just outside this ship's contact boundary back into it
     # (_trace_own_hull) and carve at the mesh surface with the MESH normal;
     # a miss anchors at the boundary. BC bounding spheres are 5-22x too loose
-    # (docs/engine and hull_bounds.py), so anything deposited at a sphere
+    # (docs/reference/engine and hull_bounds.py), so anything deposited at a sphere
     # surface sits off the hull entirely, and the centre-to-centre line is
     # not the local surface normal -- the scoop would be both mis-placed and
     # mis-oriented, which reads live as a hole with nothing behind it.

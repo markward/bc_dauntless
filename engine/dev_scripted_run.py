@@ -2,7 +2,7 @@
 then optionally quit. Developer mode only.
 
 Exists so a perf baseline that needs one keypress can run with nobody at the
-keyboard: B1 (docs/engine/perf-register.md) is E1M2 with the Haven
+keyboard: B1 (docs/reference/engine/perf-register.md) is E1M2 with the Haven
 "Facility" destroyed after the opening cutscene. The destroy uses the same
 death path as the `]` dev key (engine/dev_keybindings.py).
 

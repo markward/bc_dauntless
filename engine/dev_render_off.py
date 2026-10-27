@@ -56,7 +56,7 @@ _FEATURES: Dict[str, Callable] = {
     # The space pass's multisampled phase 1; SMAA is left as the setting has it.
     "msaa": lambda r: r.set_msaa_samples(0),
     # Python state, not a pass: the Tau Ceti shuttle service, for its
-    # with/without cost capture (docs/engine/home-stations.md).
+    # with/without cost capture (docs/reference/engine/home-stations.md).
     "shuttle_service": lambda _r: _shuttle_service_off(),
 }
 

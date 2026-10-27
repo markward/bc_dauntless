@@ -110,7 +110,7 @@ preprocessing node, skipping `:1861`.
 **Fix:** define `OptimizedFireScript` as a real class and relate our fire-preprocess script
 instance to it so (a) `isinstance` returns a proper bool and (b) the `:1861` branch (which feeds
 `CheckFiring`, `:1867`) engages weapons. The fire-preprocess surface is already wired
-(`docs/engine/aieditor-ai-surface-and-gaps.md`: Fire Preprocess ✅, Select Target ✅), so this is
+(`docs/reference/engine/aieditor-ai-surface-and-gaps.md`: Fire Preprocess ✅, Select Target ✅), so this is
 about giving that instance the right type identity.
 
 **DoD:** a headless test issues each order (Attack/Destroy, Disable, Defend, Stop, a tactic, a

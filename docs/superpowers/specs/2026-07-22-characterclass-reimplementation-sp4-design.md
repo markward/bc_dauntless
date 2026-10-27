@@ -2,7 +2,7 @@
 
 > **Sub-project 4 of 4** of the faithful `CharacterClass` reimplementation (SP1 state model,
 > SP2 AnimationQueue, SP3 SpeakQueue+PhonemeMap+jaw — all merged to local `main`). Driven by the
-> tier-0 `docs/engine/characterclass-reference.md` (§4.4 position-zoom, §4.6 status, §4.12 context
+> tier-0 `docs/reference/engine/characterclass-reference.md` (§4.4 position-zoom, §4.6 status, §4.12 context
 > menu; struct offsets `+0xd4`/`+0xd8` status, `+0xa8`/`+0xac` position-zoom, `+0x14c` menu-state).
 > Architecture is unchanged from SP2/SP3: **own + consolidate** — `CharacterClass` owns small
 > sub-objects mirroring BC's struct; existing live-verified infra stays as the execution backends.

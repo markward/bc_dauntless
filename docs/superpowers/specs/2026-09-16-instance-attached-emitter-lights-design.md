@@ -58,7 +58,7 @@ C++ once per frame in `frame()`.** Rejected alternatives:
 - *Register emitter geometry natively at spawn, push only intensities* —
   lowest per-frame cost but adds a native cache that must be invalidated on
   SPV live edits, despawn and mission swap. Deferred; revisit only if the
-  frame profiler (`docs/engine/frame-profiler.md`) says `cb.render_data` is
+  frame profiler (`docs/reference/engine/frame-profiler.md`) says `cb.render_data` is
   still significant after this change.
 
 ## Section 1 — renderer

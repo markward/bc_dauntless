@@ -398,5 +398,5 @@ precedent (its tracker lives at `native/src/assets/docs/deferred_work.md`):
 
 When a deferred-work item is added, removed, or moves on/off the list, update
 both this spec's "Deferred / future work" section and the matching
-`docs/architecture/sub_project_status.md` row for this sub-project. When the
+`docs/reference/architecture/sub_project_status.md` row for this sub-project. When the
 v1 ship gate is met, update the status doc's headline status and date.

@@ -95,7 +95,7 @@ def test_each_planet_feature_clears_its_flag(name, module):
 
 def test_shuttle_service_is_switched_off_with_no_renderer_call():
     """Python state, not a render pass: the Tau Ceti shuttle service, for a
-    with/without cost capture (docs/engine/home-stations.md)."""
+    with/without cost capture (docs/reference/engine/home-stations.md)."""
     shuttle_service.set_enabled(True)
     r = _FakeRenderer()
     dro.apply(["shuttle_service"], r)

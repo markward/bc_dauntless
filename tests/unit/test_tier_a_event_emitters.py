@@ -1,4 +1,4 @@
-"""Engine emitters for three of the twelve gaps in docs/engine/event-emitter-gaps.md.
+"""Engine emitters for three of the twelve gaps in docs/reference/engine/event-emitter-gaps.md.
 
 The q13 constant sweep made every one of these event types a real int, but
 nothing in the engine POSTED them, so their SDK handlers stayed unreachable.

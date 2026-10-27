@@ -10,7 +10,7 @@ calibration that happened to be close to the truth because Galaxy's
 MPE-authored GetRadius coincidentally landed near 0.01 × the NIF
 extent.
 
-See ``docs/instrumented_experiments/hardpoint_handling_research.md``
+See ``docs/reference/instrumented_experiments/hardpoint_handling_research.md``
 section "Bug E" for the full investigation.
 """
 import importlib

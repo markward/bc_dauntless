@@ -9,7 +9,7 @@ Direction = (0, 1, 0) -- i.e. every phaser arc was centred on the
 ship's nose. Same bug class for ``PositionOrientationProperty``'s
 three-arg form used by Viewscreen* / FirstPersonCamera mounts.
 
-See ``docs/instrumented_experiments/hardpoint_handling_research.md``
+See ``docs/reference/instrumented_experiments/hardpoint_handling_research.md``
 section "Bug B" for the full investigation.
 """
 from engine.appc.math import TGPoint3

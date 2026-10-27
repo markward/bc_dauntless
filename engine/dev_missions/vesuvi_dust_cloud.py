@@ -22,7 +22,7 @@ into the measured window, so before/after builds picture the same moment.
         DAUNTLESS_PROFILE_FRAMES=100000000 ./build/dauntless --developer
 
 Each step prints a `[vesuvi_dust_cloud]` line, which marks it in a profiler
-log. See docs/engine/perf-register.md (B3).
+log. See docs/reference/engine/perf-register.md (B3).
 """
 import os
 

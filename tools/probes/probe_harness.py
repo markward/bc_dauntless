@@ -13,7 +13,7 @@
 #     ... _h.record(label, value) / _h.emit(line) ...
 #     _h.flush()                         # or _h.flush_chunked() for big dumps
 #
-# Ships with q14 (docs/instrumented_experiments/2026-07-13-env-and-harness-probe.md)
+# Ships with q14 (docs/reference/instrumented_experiments/2026-07-13-env-and-harness-probe.md)
 # and is consumed by q15 (firehose), q16 (object graph), q17 (bridge graph).
 #
 # PYTHON 1.5 CONSTRAINTS -- see console-probe-workflow.md

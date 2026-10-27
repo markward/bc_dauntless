@@ -11,7 +11,7 @@
 > **Do not restart from this document.** Any future attempt should begin from
 > a fresh live baseline of current behaviour, not from this plan's task list.
 >
-> See `docs/engine/shield-redesign-postmortem.md` for what went wrong, and for
+> See `docs/reference/engine/shield-redesign-postmortem.md` for what went wrong, and for
 > the handful of findings that ARE worth keeping.
 
 
@@ -124,7 +124,7 @@ kept verbatim because it is free fidelity.
 ⚠️ The mapping from index to the *words* front/rear/top/bottom/left/right is **not
 established anywhere in the binary** — no string table, no enum. Our
 `ShieldSubsystem` constants encode an unsourced convention. Probe q19
-(`docs/instrumented_experiments/2026-08-16-shield-facing-and-beam-falsifiers.md`)
+(`docs/reference/instrumented_experiments/2026-08-16-shield-facing-and-beam-falsifiers.md`)
 tests it. Nothing in this spec depends on the names being right; if q19 refutes
 them, only the constants move.
 

@@ -812,7 +812,7 @@ class ShipClass(DamageableObject):
         Bridge/ScienceMenuHandlers.py:515 (InSystemWarp) reads GetBool() and
         disables/enables the Launch Probe button for the duration of the
         transit; it casts GetDestination() to ShipClass.
-        See docs/engine/event-emitter-gaps.md #11.
+        See docs/reference/engine/event-emitter-gaps.md #11.
         """
         import App
         evt = App.TGBoolEvent_Create()

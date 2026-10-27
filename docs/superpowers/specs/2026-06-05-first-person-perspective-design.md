@@ -473,5 +473,5 @@ Inject a fake clock into the C-key handler. Tests verify tap-vs-long-press dispa
 - Rotation-matrix convention: [`CLAUDE.md`](../../../CLAUDE.md)
   § "Rotation matrix convention — column-vector, always".
 - BC keyboard reference (C-key entry):
-  [`docs/ui/keyboard-mouse-reference.md`](../../docs/ui/keyboard-mouse-reference.md)
+  [`docs/reference/ui/keyboard-mouse-reference.md`](../../docs/ui/keyboard-mouse-reference.md)
   § Camera Commands — Tactical Mode.

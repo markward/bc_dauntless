@@ -235,7 +235,7 @@ def build_strip_beams(banks, ship) -> List[dict]:
 
     We deliberately do NOT draw an inner rim at Length−Width or end-caps: the
     SDK `Width` is unused by the emit math and its meaning is unvalidated
-    (docs/instrumented_experiments/hardpoint_handling_research.md flags it
+    (docs/reference/instrumented_experiments/hardpoint_handling_research.md flags it
     "Unvalidated"). Drawing it produced spurious pie-wedges reaching into the
     saucer centre that do not correspond to any real emitter geometry."""
     beams: List[dict] = []

@@ -4,7 +4,7 @@ A SetClass holds waypoints, planets and light placements alongside ships.
 `TGObject.__getattr__` hands back a truthy `_Stub` for any unknown engine
 method, so a ship-only loop that walks a whole set silently "works" on those
 objects — it just calls no-ops (and, worse, reads stub *values* into real
-arithmetic). See docs/plans/2026-07-13-vacuous-hasattr-sweep.md.
+arithmetic). See docs/superpowers/deferred/2026-07-13-vacuous-hasattr-sweep.md.
 
 Covered here:
   * collision_avoidance._world_velocity — a Planet has no GetVelocity, so the

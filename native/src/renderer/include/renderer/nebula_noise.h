@@ -9,7 +9,7 @@ namespace renderer::nebula_noise {
 
 /// The system nebula's haze lanes read their value noise from a baked hash
 /// lattice instead of hashing 8 corners per octave (B3: the fbm noise was
-/// ~90% of the nebula's cost at 4K, docs/engine/perf-register.md SIG-083).
+/// ~90% of the nebula's cost at 4K, docs/reference/engine/perf-register.md SIG-083).
 /// The lattice is kLatticeN^3 cells of hash13(cell); system_nebula.frag reads
 /// it with hardware trilinear filtering at i + smoothstep(f), which is exactly
 /// the procedural vnoise inside the first period [0, kLatticeN - 1) and

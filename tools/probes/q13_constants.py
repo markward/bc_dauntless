@@ -1,7 +1,7 @@
 ###############################################################################
 # q13_constants -- ground-truth values for EVERY App constant (both scopes)
 #
-# Question(s): docs/instrumented_experiments/2026-07-13-constant-dump-probe.md
+# Question(s): docs/reference/instrumented_experiments/2026-07-13-constant-dump-probe.md
 #              Q13-1 (module-scope scalars), Q13-2 (class-scope scalars),
 #              Q13-3 (dir(App) type inventory), Q13-4 (state-invariance: run
 #              once at the boot menu, once in a battle, then diff the two files).
@@ -16,7 +16,7 @@
 # Run in the -TestMode REPL with:  execfile('q13_constants.py')
 ###############################################################################
 #
-# PYTHON 1.5 CONSTRAINTS -- read docs/instrumented_experiments/console-probe-workflow.md
+# PYTHON 1.5 CONSTRAINTS -- read docs/reference/instrumented_experiments/console-probe-workflow.md
 #   No "import X as Y" / no f-strings / no True/False (use 1/0) /
 #   "except E, e:" (comma) / print is a STATEMENT / only App.g_kConfigMapping
 #   writes to disk (open() is blocked). dict.has_key() not "in". repr() exists.

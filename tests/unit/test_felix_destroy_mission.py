@@ -1,5 +1,5 @@
 """The "Felix: Destroy" dev mission -- baseline B2 run with nobody at the
-keyboard (docs/engine/perf-register.md). Five Birds of Prey (the player and
+keyboard (docs/reference/engine/perf-register.md). Five Birds of Prey (the player and
 four AI wingmen) against one Sovereign, Felix ordered to Destroy through the
 real tactical button, and the run ends a few seconds after the first ship is
 destroyed, or at a three-minute cap."""

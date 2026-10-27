@@ -1,7 +1,7 @@
 ###############################################################################
 # q12 -- Torpedo event surface: who posts ET_TORPEDO_FIRED, and what does it carry?
 #
-# Question(s): docs/instrumented_experiments/2026-07-12-torpedo-event-probe.md
+# Question(s): docs/reference/instrumented_experiments/2026-07-12-torpedo-event-probe.md
 # Needs combat state? YES -- operator must start Quick Battle, acquire a target
 #                     (Tab), and FIRE TORPEDOES while this probe is installed.
 # Output:      game/BCProbe_q12.cfg, section [BCProbe_q12]
@@ -17,7 +17,7 @@
 #
 ###############################################################################
 #
-# PYTHON 1.5 CONSTRAINTS -- read docs/instrumented_experiments/console-probe-workflow.md
+# PYTHON 1.5 CONSTRAINTS -- read docs/reference/instrumented_experiments/console-probe-workflow.md
 #
 # - No "import X as Y"          -> import X; Y = X
 # - No f-strings                -> "%s %d" % (s, n)

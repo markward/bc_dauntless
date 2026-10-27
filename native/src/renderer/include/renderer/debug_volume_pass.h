@@ -61,7 +61,7 @@ struct DebugCone {
 /// test is OFF, so the cages are always visible over the scene.
 ///
 /// This is a reusable diagnostic tool, not wired into the frame by default.
-/// See docs/architecture/debug-volume-overlay.md for how to build cylinders
+/// See docs/reference/architecture/debug-volume-overlay.md for how to build cylinders
 /// (e.g. from per-instance GlowRegion data) and how to wire it into
 /// host_bindings.cc's frame draw in a handful of lines.
 class DebugVolumePass {

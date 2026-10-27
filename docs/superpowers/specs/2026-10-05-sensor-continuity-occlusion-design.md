@@ -129,7 +129,7 @@ torpedo per frame, plus the AI candidate filters. The occlusion term must theref
 cached per tick and cheap per rock. Verified two ways:
 1. a headless benchmark test (`can_detect` with 54 major rocks — the Multi1 count — and
    a combat-sized roster) with a recorded budget;
-2. a frame-profiler run (`docs/engine/frame-profiler.md`), CPU only, with
+2. a frame-profiler run (`docs/reference/engine/frame-profiler.md`), CPU only, with
    `DAUNTLESS_MISSION=engine.dev_missions.combat_stress` and a rock-heavy mission,
    comparing occlusion on/off. **Mark approves each game launch first.**
 

@@ -114,7 +114,7 @@ player death.
   is cancelled by End Combat, Restart and mission swap, through the existing
   `EndSimulation` hook.
 - No evaluator state change may live in `render_payload` (see
-  `docs/engine/perf-cadences-and-latency.md`).
+  `docs/reference/engine/perf-cadences-and-latency.md`).
 
 ### 4.2 Ending lines
 - **Win:** Felix's existing "That's it! We got 'em." (`QBFelixWin`), win

@@ -2519,7 +2519,7 @@ void frame() {
         // frame — no dirty-rect, no PBO. At 2560x1440 BGRA that is ~14.7 MB
         // of glTexSubImage2D per frame. Upload and draw are timed separately
         // because the upload is where the CPU appears to wait for the GPU
-        // (docs/engine/perf-register.md, A-1); DAUNTLESS_CEF_UPLOAD switches
+        // (docs/reference/engine/perf-register.md, A-1); DAUNTLESS_CEF_UPLOAD switches
         // the upload policy for that experiment.
         DAUNTLESS_FRAME_SCOPE("cef.composite");
         {
@@ -7210,7 +7210,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Opt in to GPU timer queries. Off by default: on Apple's GL they "
           "make the CPU wait for the GPU, adding about the GPU frame time, "
           "so a GPU-timed capture is not a frame-time measurement "
-          "(docs/engine/perf-register.md, M-6).");
+          "(docs/reference/engine/perf-register.md, M-6).");
     m.def("profiler_gpu_enabled",
           []() { return renderer::frame_timer().gpu_requested(); },
           "True when GPU timing has been requested.");

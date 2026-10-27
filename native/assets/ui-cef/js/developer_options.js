@@ -149,7 +149,7 @@ function _doRenderDiagnosticsBody(state, focusables) {
     // the repetition is what made the old backtick binding so noisy.
     html += '<div class="cp-row cp-capture-hint">Times both halves of the frame and prints a '
           + 'report to the terminal every 120 frames (~2 s at 60 fps) until '
-          + 'switched off. See docs/engine/frame-profiler.md before drawing a '
+          + 'switched off. See docs/reference/engine/frame-profiler.md before drawing a '
           + 'conclusion from it.</div>';
     html += _doToggleRow('Performance Monitor', 'perf_monitor', s.perf_monitor,
                          isFoc('perf_monitor'));

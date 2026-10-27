@@ -37,7 +37,7 @@ Per `project-evidence-tiers-sdk-swig-re`:
    `ReleaseCurrentAnimation`, `OnAnimRelease`, `UpdateAnimationQueue`, `Special4/6`, `ShouldPlayNow`,
    `PreparePlay`), §4.9 (predicates), §4.10 (the high-level action methods + the `PlayAnimation`
    mode table).
-1. **Sibling RE repo** — `docs/gameplay/bridge-character-system.md` for the surrounding TG animation
+1. **Sibling RE repo** — `docs/reference/gameplay/bridge-character-system.md` for the surrounding TG animation
    layer (§4 name→Python-function mechanism, §4.3 interruptability/UI interlock, §4.4 the
    `<location>+action` key grammar, §5 `TGAnimBlender`/exclusivity, §6.2b `TGSequence` scheduling,
    §6.4 `DoCrewReactions` engine-driven hit reactions), and `stbc_constants.csv` for `CAT_*` values.

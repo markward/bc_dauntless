@@ -1,6 +1,6 @@
 """Two small correctness/cost properties of the avoidance scan.
 
-1. In the NO-PIECES case — which `docs/engine/avoidance-duplication.md` measures
+1. In the NO-PIECES case — which `docs/reference/engine/avoidance-duplication.md` measures
    as 100% of live ships, since the mission loader never caches hull bounds —
    the whole-body convergence gate and the per-piece loop were evaluating
    `_need_to_avoid` with *identical* arguments: `gate_r` is only raised above

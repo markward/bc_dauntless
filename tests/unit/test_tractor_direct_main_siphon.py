@@ -1,7 +1,7 @@
 """Tractor beam is a DIRECT main-battery siphon (q10 ground truth).
 
 Instrumented experiment q10 (tools/probes/results/q10_battery_drain.txt,
-docs/instrumented_experiments/2026-07-06-battery-drain-order.md) measured the
+docs/reference/instrumented_experiments/2026-07-06-battery-drain-order.md) measured the
 original BC engine draining a Galaxy at RED alert with all sliders 1.25 while a
 tractor was held: main -800/s, backup -113.75/s, concurrently, sliders never
 throttled.

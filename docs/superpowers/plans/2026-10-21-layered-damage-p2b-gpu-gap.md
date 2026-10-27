@@ -13,7 +13,7 @@
 
 **Tech Stack:** C++20, GLSL 410 core, Python 3, GoogleTest, pytest, CMake (Debug tree `build/`).
 
-**Spec:** `docs/superpowers/specs/2026-10-21-layered-hull-damage-production-design.md` §3 (the perf rule, and no Release capture per Mark on 2026-10-21). Evidence: `docs/engine/perf-register.md` SIG-106–SIG-108, P-12.
+**Spec:** `docs/superpowers/specs/2026-10-21-layered-hull-damage-production-design.md` §3 (the perf rule, and no Release capture per Mark on 2026-10-21). Evidence: `docs/reference/engine/perf-register.md` SIG-106–SIG-108, P-12.
 
 ## Global Constraints
 
@@ -47,7 +47,7 @@
 - Modify:
   - `engine/appc/plating_dials.py`: a new dial `force_program`, slot 26, default 0.0, max 1.0, step 1.0, debug only. Also an env `DAUNTLESS_PLATING_FORCE_PROGRAM=1` read at dev boot, as `DAUNTLESS_PLATING=0` is.
   - `native/src/renderer/frame.cc`: with `params[26] > 0.5`, `submit_opaque_in_pass` draws every non-rock, non-skinned hull through the PLATING program, uploading an empty list when it has no records.
-  - `docs/engine/perf-register.md`.
+  - `docs/reference/engine/perf-register.md`.
 - Test: `tests/unit/test_plating_dials.py`, `native/tests/renderer/plating_render_test.cc` (`ForceProgramDrawsUndamagedHullWithPlatingProgram`: the program read back from GL is the plating program, and the pixels are unchanged)
 
 - [ ] **Step 1: Write the failing tests.** The dial key and slot 26. `ForceProgramDrawsUndamagedHullWithPlatingProgram`: with `params[26] = 1`, an undamaged hull's draw uses `pipeline.plating_shader()` (read back as `ProgramChoiceIsReadBackFromGL` does), and its pixels equal the stock draw within ±1 per channel.
@@ -70,7 +70,7 @@ Run this only if Task 1 confirms the program weight.
 - Modify:
   - `native/src/renderer/frame.cc`: `draw_model` splits a plated instance's meshes by their cached per-mesh subset. Empty-subset meshes draw with the stock program first, then the rest with PLATING. Each program's per-instance uniforms are set once.
   - `native/src/renderer/shaders/opaque.frag`, PLATING only: the `deposit *= u_plating[13] * ...` soot scale applies only where `plating_near`. Elsewhere the deposit is unscaled, which is exactly what the stock program does.
-  - `docs/engine/perf-register.md`.
+  - `docs/reference/engine/perf-register.md`.
 - Test: `native/tests/renderer/plating_render_test.cc`
 
 **Ruling (made by the controller, recorded for Mark's live check):**

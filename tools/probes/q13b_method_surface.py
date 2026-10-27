@@ -1,7 +1,7 @@
 ###############################################################################
 # q13b_method_surface -- method (callable) surface of every App class
 #
-# Question(s): docs/instrumented_experiments/2026-07-13-constant-dump-probe.md
+# Question(s): docs/reference/instrumented_experiments/2026-07-13-constant-dump-probe.md
 #              Q13-5 (stretch) -- for every App class, the non-scalar attribute
 #              names (methods) it exposes, so we can diff our shim's METHOD
 #              coverage the same way q13 diffs its CONSTANT coverage.
@@ -13,7 +13,7 @@
 # Run in the -TestMode REPL with:  execfile('q13b_method_surface.py')
 ###############################################################################
 #
-# PYTHON 1.5 CONSTRAINTS -- read docs/instrumented_experiments/console-probe-workflow.md
+# PYTHON 1.5 CONSTRAINTS -- read docs/reference/instrumented_experiments/console-probe-workflow.md
 #   No "import X as Y" / no f-strings / no True/False (use 1/0) /
 #   "except E, e:" (comma) / print is a STATEMENT / only App.g_kConfigMapping
 #   writes to disk (open() is blocked). dict.has_key() not "in".

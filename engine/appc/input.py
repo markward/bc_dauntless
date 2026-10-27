@@ -205,7 +205,7 @@ def _raw_keyboard_destination():
     an ET_INPUT_* action, which needs a real bubbling chain with veto. Handlers
     SDK scripts register on panes/buttons/movie panes (E1M2.py:4243-4247/5199,
     E8M2.py:6495, MainMenu, Multiplayer) are unreachable here. See
-    docs/engine/e1m1-skip-intro.md § "Still open".
+    docs/reference/engine/e1m1-skip-intro.md § "Still open".
 
     Returns None when nothing registered, which is the common case; callers
     must treat that as "post nothing".

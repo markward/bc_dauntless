@@ -259,7 +259,7 @@ def _engine_avoidance_class(base: type) -> type:
     against the real ``AI.Preprocessors.AvoidObstacles`` defaults -- but it is a
     real divergence, and a mod that varied any of them per-doctrine would be
     silently ignored. Closing it means threading the four off the node in
-    ``course_override_for``; see docs/engine/avoidance-duplication.md.
+    ``course_override_for``; see docs/reference/engine/avoidance-duplication.md.
     """
     cached = _ENGINE_AVOIDANCE_CLASSES.get(base)
     if cached is not None:

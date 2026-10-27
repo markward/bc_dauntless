@@ -8,7 +8,7 @@
 
 **Tech Stack:** C++20, GLSL 410 core, GoogleTest, pytest, CMake (Debug tree at `build/`).
 
-**Spec:** `docs/superpowers/specs/2026-10-20-layered-hull-damage-productisation.md` (§2 review items 1, 2, 6; §3.2; §5 step 2). Perf context: `docs/engine/perf-register.md` P-12, SIG-087–SIG-091, scenario DP.
+**Spec:** `docs/superpowers/specs/2026-10-20-layered-hull-damage-productisation.md` (§2 review items 1, 2, 6; §3.2; §5 step 2). Perf context: `docs/reference/engine/perf-register.md` P-12, SIG-087–SIG-091, scenario DP.
 
 **Not in this plan (step 2b and later):** the permanent damage store (merge-not-evict), the per-ship eligibility cap, and the plating program on paths other than `submit_opaque_in_pass` (those keep the stock program, so they show no plating or holes until then).
 
@@ -37,7 +37,7 @@
 **Files:**
 - Modify: `engine/dev_missions/damage_preview.py` (the `pWreck.SetTranslateXYZ(0.0, 6.0, 0.0)` line)
 - Test: `tests/unit/test_damage_preview_impulse_steps.py`
-- Modify: `docs/engine/perf-register.md` (DP scenario text, captures, signals)
+- Modify: `docs/reference/engine/perf-register.md` (DP scenario text, captures, signals)
 
 **Interfaces:**
 - Produces: `damage_preview._wreck_distance_gu() -> float`, read from `DAUNTLESS_DAMAGE_PREVIEW_DISTANCE_GU` (default 6.0, minimum 1.5; junk → 6.0).
@@ -49,7 +49,7 @@
 - [ ] **Step 5: Find the close-up distance offline.** No game launch: pick the distance where the Akira spans about 60–80% of a 4K frame's height, from its bounding radius (`build/native/tools/dump_bounds -gu` on `Akira.nif`, as `damage_preview.py`'s scuff comment does) and the exterior camera's FOV (`settings.json` `fov_deg`). Record the chosen value in the DP scenario text.
 - [ ] **Step 6: "Before" captures (machine idle).** Four runs, the DP command from `perf-register.md` with `DAUNTLESS_PROFILE_GPU_FOCUS=space.opaque,space.carve_stencil,space.breach`: Layered and Classic (`DAUNTLESS_HULL_CARVING=1 DAUNTLESS_PLATING=0`), each at the default distance and at the close-up distance. Add `DAUNTLESS_DEV_SCREENSHOT` for the close-up runs and check that the Akira fills the frame.
 - [ ] **Step 7: Record** C- rows and one signal per window (damaged-alive, dying) with `space.opaque`/`space.breach` GPU means. This tests SIG-091 (the ~10 ms close-up extrapolation) directly.
-- [ ] **Step 8: Commit** `engine/dev_missions/damage_preview.py`, the test, `docs/engine/perf-register.md`.
+- [ ] **Step 8: Commit** `engine/dev_missions/damage_preview.py`, the test, `docs/reference/engine/perf-register.md`.
 
 ### Task 2: CPU damage list, summed tear gate, parts largest first
 
@@ -132,7 +132,7 @@
 ### Task 5: "After" captures and the verdict
 
 **Files:**
-- Modify: `docs/engine/perf-register.md`, `docs/superpowers/specs/2026-10-20-layered-hull-damage-productisation.md` (§5 step 2 row)
+- Modify: `docs/reference/engine/perf-register.md`, `docs/superpowers/specs/2026-10-20-layered-hull-damage-productisation.md` (§5 step 2 row)
 
 - [ ] **Step 1: Repeat Task 1 Step 6** on the new build (same four runs, same commands). Also check the close-up Layered screenshot against Task 1's: the damage must look the same.
 - [ ] **Step 2: Record** C- rows and signals: damaged-alive and dying `space.opaque` GPU, before vs after, at both distances. Update P-12's status and next step.

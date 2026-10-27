@@ -23,7 +23,7 @@ chromatic aberration in `filmic.frag`. This design takes the first.
    is the case MSAA was built for — it shades once per pixel and multi-samples
    only coverage. Hull-against-black is *purely geometric* aliasing, so MSAA
    addresses the actual artifact at a fraction of SSAA's shading cost.
-2. **GPU pixels are our cheap resource.** `docs/engine/frame-profiler.md`
+2. **GPU pixels are our cheap resource.** `docs/reference/engine/frame-profiler.md`
    records the combat frame as `sim` ~70 ms against `r.frame` ~15-24 ms. The
    bottleneck is Python and CPU-side throughout, so spending GPU bandwidth on
    coverage samples is close to free in wall-clock terms.

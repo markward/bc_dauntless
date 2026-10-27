@@ -19,7 +19,7 @@ which this driver answers with zeros, added +1.9 ms/frame idle and +6 ms/frame
 under load, landing in whichever cheap scope issued them. The profiler now
 never issues those on a 0-bit driver and times the top-level passes with
 GL_TIME_ELAPSED instead; this bench is how that overhead is checked. See
-docs/engine/frame-profiler.md.
+docs/reference/engine/frame-profiler.md.
 """
 import os
 import sys

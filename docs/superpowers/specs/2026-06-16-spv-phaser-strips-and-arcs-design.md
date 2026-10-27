@@ -2,7 +2,7 @@
 
 **Status:** design approved 2026-06-16
 **Related:** `docs/superpowers/specs/2026-06-08-ship-property-viewer-design.md`,
-`docs/instrumented_experiments/hardpoint_handling_research.md`,
+`docs/reference/instrumented_experiments/hardpoint_handling_research.md`,
 `docs/superpowers/specs/2026-05-14-phaser-combat-design.md`
 
 ## Goal
@@ -106,7 +106,7 @@ Public functions:
   **No inner rim / end-caps.** An earlier revision drew an inner rim at
   `Length − Width` plus radial end-caps when `Width > 0`. That was removed: the
   SDK `Width` is unused by the emit math and its meaning is unvalidated
-  (`docs/instrumented_experiments/hardpoint_handling_research.md`), and on the
+  (`docs/reference/instrumented_experiments/hardpoint_handling_research.md`), and on the
   Galaxy (`Width 1.35` vs `Length 1.69`) it drew spurious pie-wedges reaching
   into the saucer centre that correspond to no real emitter geometry.
 

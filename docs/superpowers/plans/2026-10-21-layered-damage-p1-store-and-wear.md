@@ -219,7 +219,7 @@ The store's shape comes from `2026-10-20-layered-hull-damage-productisation.md` 
 ### Task 4: Measure, and confirm the look held
 
 **Files:**
-- Modify: `docs/engine/perf-register.md`, and the design spec's goal 6 status line only if something is found.
+- Modify: `docs/reference/engine/perf-register.md`, and the design spec's goal 6 status line only if something is found.
 
 - [ ] **Step 1: Captures (machine idle).**
   - Run the DP command from `perf-register.md` twice:

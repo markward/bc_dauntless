@@ -5,7 +5,7 @@ g_kVarManager's global PlayedTutorial == 1.0, which BC sets at the END of the
 opening (E1M1.SaveTheGame:2659) and persists. Our TGVarManager is in-memory and
 only round-trips through savegames, so a cold launch always reads 0.0.
 
-Stopgap until persistent saves land -- see docs/engine/e1m1-skip-intro.md.
+Stopgap until persistent saves land -- see docs/reference/engine/e1m1-skip-intro.md.
 """
 import App
 from engine import dev_mode, dev_tutorial_flag

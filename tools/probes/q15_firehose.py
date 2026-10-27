@@ -1,7 +1,7 @@
 ###############################################################################
 # q15_firehose -- a census of every event the engine actually fires.
 #
-# Question(s): docs/instrumented_experiments/2026-07-13-event-firehose-probe.md
+# Question(s): docs/reference/instrumented_experiments/2026-07-13-event-firehose-probe.md
 #              Q15-1 which ET_* fire in Scenario A, Q15-2 which fire in B (E1M1)
 #              that don't in A, Q15-3 first source->destination per type,
 #              Q15-4 which declared types never fire, Q15-5 ordering (focus mode).

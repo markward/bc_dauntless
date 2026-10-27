@@ -532,7 +532,7 @@ arrival range with ET_EXITED_WARP alone. ⚠️ Not live-verified.
 The reference spec's dash design (speed from distance, slow final approach,
 steering locked, `WarpFlash`) is the starting point for that pass. Known blocker,
 recorded: `AI/PlainAI/FollowThroughWarp.py` cannot run in this engine (Python 1.5
-string exceptions; see `docs/engine/cross-region-ship-handoff.md` on the
+string exceptions; see `docs/reference/engine/cross-region-ship-handoff.md` on the
 reference branch).
 
 ## The ten categories, mapped

@@ -8,7 +8,7 @@ savegames (engine/appc/save_load.py:181), so a cold-launched E1M1 always reads
 0.0 and the skip path is unreachable.
 
 STOPGAP. The correct fix is to persist the "global" scope across launches; that
-belongs with persistent-save support. See docs/engine/e1m1-skip-intro.md for
+belongs with persistent-save support. See docs/reference/engine/e1m1-skip-intro.md for
 the follow-up.
 
 Gating lives inside the function, mirroring dev_combat_cheats: even if this were

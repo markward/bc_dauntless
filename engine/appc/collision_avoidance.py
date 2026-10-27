@@ -575,7 +575,7 @@ def _test_course_override(ship, previous_heading=None):
             continue
         # Past the gate. Only obstacles that could actually collide reach here.
         if not has_hull_bounds(other):
-            # NO PIECES -- which docs/engine/avoidance-duplication.md measures
+            # NO PIECES -- which docs/reference/engine/avoidance-duplication.md measures
             # as 100% of live ships, because the mission loader path never
             # caches hull bounds. The gate immediately above just ran
             # _need_to_avoid with EXACTLY these arguments and returned True:
@@ -640,7 +640,7 @@ def tick_collision_avoidance(dt: float = 1.0 / 60.0) -> None:
 
     ⚠️ NO LONGER WIRED INTO THE ENGINE. GameLoop.tick does not call this.
     Avoidance is the AvoidObstacles preprocessor, dispatched inside tick_all_ai
-    as part of each ship's AI tree; see docs/engine/avoidance-duplication.md.
+    as part of each ship's AI tree; see docs/reference/engine/avoidance-duplication.md.
 
     Retained because tests/integration/test_collision_avoidance.py drives the
     steering behaviour through it, and it remains an honest way to exercise

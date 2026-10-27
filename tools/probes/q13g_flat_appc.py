@@ -1,7 +1,7 @@
 ###############################################################################
 # q13g_flat_appc -- VEIN 5: the flat dir(Appc) C-function/name table
 #
-# Question(s): docs/instrumented_experiments/2026-07-13-abi-surface-probe.md
+# Question(s): docs/reference/instrumented_experiments/2026-07-13-abi-surface-probe.md
 #              dir(Appc) is the raw SWIG export -- a superset of dir(App). Dump
 #              every name, tagged whether it is also visible on App ("shared") or
 #              only on Appc ("only"), so we see the raw engine functions the

@@ -1,4 +1,4 @@
-"""Engine emitters for the Tier B/C gaps in docs/engine/event-emitter-gaps.md.
+"""Engine emitters for the Tier B/C gaps in docs/reference/engine/event-emitter-gaps.md.
 
 Companion to test_tier_a_event_emitters.py. Tier A was "the post is the only
 missing piece"; these needed a piece of state or an accessor built first, or

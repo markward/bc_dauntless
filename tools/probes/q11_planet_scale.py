@@ -1,7 +1,7 @@
 ###############################################################################
 # q11_planet_scale -- what visual size does BC render planets at?
 #
-# Question(s): docs/instrumented_experiments/2026-07-07-planet-render-scale.md
+# Question(s): docs/reference/instrumented_experiments/2026-07-07-planet-render-scale.md
 #              Q-P1..Q-P5 (planet GetRadius/GetScale, active tactical-view FOV,
 #              player<->planet distance, predicted on-screen angular size).
 # Needs combat state? NO -- but the operator MUST be flying the tactical view
@@ -12,7 +12,7 @@
 # Run in the -TestMode REPL with:  execfile('q11_planet_scale.py')
 ###############################################################################
 #
-# PYTHON 1.5 CONSTRAINTS -- read docs/instrumented_experiments/console-probe-workflow.md
+# PYTHON 1.5 CONSTRAINTS -- read docs/reference/instrumented_experiments/console-probe-workflow.md
 #   No "import X as Y" / no f-strings / no True/False / "except E, e:" /
 #   print is a statement / only App.g_kConfigMapping writes to disk.
 #

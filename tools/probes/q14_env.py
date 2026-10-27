@@ -1,7 +1,7 @@
 ###############################################################################
 # q14_env -- engine environment census + shared-harness validation.
 #
-# Question(s): docs/instrumented_experiments/2026-07-13-env-and-harness-probe.md
+# Question(s): docs/reference/instrumented_experiments/2026-07-13-env-and-harness-probe.md
 #              Q14-1 sys.builtin_module_names, Q14-2 stdlib availability table,
 #              Q14-3 sys.modules (menu vs battle diff), Q14-4 interpreter vitals,
 #              Q14-5 probe_harness sanity (provenance() + persistent_owner()).

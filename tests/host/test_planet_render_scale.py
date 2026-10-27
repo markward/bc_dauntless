@@ -10,7 +10,7 @@ too large — shrinking the planet to GetRadius()/√3 (≈52 GU for Haven's 90)
 Suns are unaffected: they render via the procedural sun pass at GetRadius()
 directly, not through the NIF divisor path.
 
-See docs/instrumented_experiments/2026-07-07-planet-render-scale.md.
+See docs/reference/instrumented_experiments/2026-07-07-planet-render-scale.md.
 """
 import math
 

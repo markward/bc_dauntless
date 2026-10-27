@@ -19,7 +19,7 @@ surfaced only because a ✅-ticked closure turned out to be inaccurate.
 | Item | Status | Evidence | Phase 3? |
 |---|---|---|---|
 | OQ-3.1 NIF/OpenMW | **superseded** | BC ships NIF v3.1; OpenMW cannot parse v3.x. Oracle dropped in `2026-05-08-nif-loader-design.md:60-63`; own parser at `native/src/nif/`. Zero OpenMW code in tree | no |
-| OQ-3.2 damage geometry tagging | **resolved** | Not node-tagged — paired `*_vox.nif` with `NiBinaryVoxelData`. `docs/engine/nibinaryvoxeldata-format-v3.1.md` (84-file corpus), `native/src/voxel/`. ctest `VoxelDataHeader.*`, `VoxelVolume.*`, `SurfaceVoxelize.*` | no |
+| OQ-3.2 damage geometry tagging | **resolved** | Not node-tagged — paired `*_vox.nif` with `NiBinaryVoxelData`. `docs/reference/engine/nibinaryvoxeldata-format-v3.1.md` (84-file corpus), `native/src/voxel/`. ctest `VoxelDataHeader.*`, `VoxelVolume.*`, `SurfaceVoxelize.*` | no |
 | OQ-3.3 body/head assembly | **resolved** | `graft_head_cpu()` `native/src/assets/src/model_compose.cc:206`. ctest `GraftHeadCpu.*` incl. `GraftsHeadMeshNotParentedUnderAttachNode` | no |
 | OQ-8.3 `MorphBody` | **dead surface** | One occurrence outside comments: SWIG binding `App.py:4736`. Zero call sites in 1,228 SDK scripts | no |
 | OQ-8.4 animation catalogue | **superseded** | Assets come from the BC install. A static manifest would be *wrong*: BC re-registers `DBCameraSitDown` to correct a typo path for a non-existent file (`GalaxyBridge.py:193`), and some paths lack extensions. `engine/appc/animation_manager.py:19`, `engine/host_loop.py:1475` | no |

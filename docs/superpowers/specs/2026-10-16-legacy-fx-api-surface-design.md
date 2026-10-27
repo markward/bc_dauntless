@@ -208,7 +208,7 @@ Reason strings name the rule, for example
   `mode.bBase = 1`).
 - `{'modes': [...]}` arguments continue to be accepted and ignored by every
   `*Def`.
-- `docs/engine/foundation-api-surface.md` gains these rows.
+- `docs/reference/engine/foundation-api-surface.md` gains these rows.
 - **No Foundation code is copied.** The names come from call sites and from
   the interface facts of Foundation's own file.
 

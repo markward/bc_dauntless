@@ -69,7 +69,7 @@ class GameLoop:
             evaluate_proximity_checks()
         # NO avoidance phase here, deliberately. Avoidance is BC's
         # AvoidObstacles PREPROCESSOR, dispatched inside tick_all_ai above as
-        # part of each ship's AI tree -- see docs/engine/avoidance-duplication.md.
+        # part of each ship's AI tree -- see docs/reference/engine/avoidance-duplication.md.
         # A second pass here ran a full duplicate controller over every AI ship
         # and overwrote whatever the preprocessor had just decided, so real
         # missions paid for avoidance twice and discarded the first answer.

@@ -6,7 +6,7 @@ Before the fix every ``DorsalPhaserN.SetPosition(0, 1.27, 0.5)`` call in
 ``("Position", (0, 1.27)) → 0.5``; ``GetPosition()`` then returned None
 and ``ShipSubsystem.SetProperty`` kept the default ``(0, 0, 0)`` mount.
 
-See ``docs/instrumented_experiments/hardpoint_handling_research.md``
+See ``docs/reference/instrumented_experiments/hardpoint_handling_research.md``
 section "Bug A" for the full investigation.
 """
 from engine.appc.math import TGPoint3

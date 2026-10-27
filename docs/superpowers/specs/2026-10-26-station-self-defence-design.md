@@ -1,7 +1,7 @@
 # Stations defend themselves — design
 
 Status: built on feat/station-self-defence, not live-verified (2026-10-26). Follows home stations
-(`docs/engine/home-stations.md`, merged 7d83e5c3e).
+(`docs/reference/engine/home-stations.md`, merged 7d83e5c3e).
 
 ## 1. Intent
 

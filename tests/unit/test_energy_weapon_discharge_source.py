@@ -1,5 +1,5 @@
 """Where a firing energy weapon's drain comes from — RE'd from stbc.exe
-(docs/instrumented_experiments/2026-09-09-phaser-discharge-rate-source.md,
+(docs/reference/instrumented_experiments/2026-09-09-phaser-discharge-rate-source.md,
 Findings Q-D1..Q-D5).
 
 Three subclasses, three consumption models; the two we port here:

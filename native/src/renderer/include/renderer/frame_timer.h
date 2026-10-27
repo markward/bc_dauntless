@@ -85,7 +85,7 @@ public:
     /// The GPU timer to use: none unless GPU timing was requested, else the
     /// driver's choice. GPU timing is OPT-IN: on Apple's GL the queries make
     /// the CPU wait for the GPU every frame, adding about the GPU frame time
-    /// (docs/engine/perf-register.md, M-6), so a capture that times the GPU
+    /// (docs/reference/engine/perf-register.md, M-6), so a capture that times the GPU
     /// cannot also be read for frame time.
     static constexpr GpuTimer select_gpu_timer(bool requested,
                                                int timestamp_bits,

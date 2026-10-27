@@ -1,6 +1,6 @@
 ###############################################################################
 # Question(s): Q1, Q2 from
-#              docs/instrumented_experiments/2026-08-16-shield-facing-and-beam-falsifiers.md
+#              docs/reference/instrumented_experiments/2026-08-16-shield-facing-and-beam-falsifiers.md
 # Needs combat state? YES -- operator must start Quick Battle, be in a ship with
 #                     phasers, and have a TARGET ACQUIRED (Tab) before running.
 #                     The target must start with FULL SHIELDS.
@@ -9,7 +9,7 @@
 # Run in the -TestMode REPL with:  execfile('q19_shield_facing_and_beam.py')
 ###############################################################################
 #
-# PYTHON 1.5 CONSTRAINTS -- read docs/instrumented_experiments/console-probe-workflow.md
+# PYTHON 1.5 CONSTRAINTS -- read docs/reference/instrumented_experiments/console-probe-workflow.md
 #
 # - No "import X as Y"          -> import X; Y = X
 # - No f-strings                -> "%s %d" % (s, n)

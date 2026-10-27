@@ -1,7 +1,7 @@
 """Phaser damage falloff: plateau within MaxDamageDistance, then R/d decay.
 
 Verified against the real BC engine via dev-console instrumentation
-(docs/instrumented_experiments/2026-06-29-weapon-exchange-console-probe.md,
+(docs/reference/instrumented_experiments/2026-06-29-weapon-exchange-console-probe.md,
 probe q09): damage is FULL while dist <= MaxDamageDistance (R), then decays
 ~inverse-linearly as `R/dist` beyond R — weapons still deal ~30% at ~2.9*R.
 This replaced the earlier inverse-square `MaxDamage/(1+(dist/R)**2)` guess,

@@ -1,7 +1,7 @@
 """Foundation's ship-definition objects.
 
 Surface recovered from the call sites of real mods, not from Foundation's
-source -- see docs/engine/foundation-api-surface.md for why, and
+source -- see docs/reference/engine/foundation-api-surface.md for why, and
 docs/superpowers/specs/2026-09-09-foundation-compatibility-design.md for
 which names and how they were measured.
 """

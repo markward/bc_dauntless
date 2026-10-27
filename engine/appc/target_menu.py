@@ -243,7 +243,7 @@ class STTargetMenu(STTopLevelMenu):
         """Post ET_TARGET_LIST_OBJECT_ADDED / _REMOVED for this push's
         crossings, then remember the new membership.
 
-        Gaps #4/#5 in docs/engine/event-emitter-gaps.md. Membership is the
+        Gaps #4/#5 in docs/reference/engine/event-emitter-gaps.md. Membership is the
         TARGETABLE subset because that is what this list shows -- a contact
         that is perceivable but not targetable has no row (`_rows`), so it is
         not "on the target list" in the sense the SDK handlers mean.
@@ -788,7 +788,7 @@ def resolve_affiliation(ship, mission) -> str:
 #     ShipSubsystem*, and the restore is the only one of eight call sites that
 #     passes it non-null.
 #
-# TWO DEFAULTS ARE OURS, not recovered (see docs/engine/event-emitter-gaps.md):
+# TWO DEFAULTS ARE OURS, not recovered (see docs/reference/engine/event-emitter-gaps.md):
 # we restore only when the player has no current target, and we resolve only
 # within the player's current set.
 

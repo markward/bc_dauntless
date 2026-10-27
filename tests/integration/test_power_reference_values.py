@@ -1,5 +1,5 @@
 """Task 9: pins the whole pipeline to BC's deficit table
-(docs/gameplay/ship-subsystems.md:370-386).
+(docs/reference/gameplay/ship-subsystems.md:370-386).
 
 Galaxy authored values
   output 1000 / main 250,000 / backup 80,000 / conduits 1200+200

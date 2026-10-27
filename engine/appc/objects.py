@@ -182,7 +182,7 @@ class ObjectClass(TGEventHandlerObject):
         bookkeeping before the object is necessarily in a set.  In BC the
         initial name is set inside Appc at construction rather than through a
         broadcasting script call, so rename-only is the faithful reading as
-        well as the quiet one.  See docs/engine/event-emitter-gaps.md #3.
+        well as the quiet one.  See docs/reference/engine/event-emitter-gaps.md #3.
         """
         old = self._name
         self._name = name
@@ -980,7 +980,7 @@ class DamageableObject(PhysicsObjectClass):
     # methods route authored + runtime visible damage into Internal hull-damage
     # records via engine.appc.visible_damage (deferred until the ship's render
     # instance is realized). See
-    # docs/engine/damagetool-and-hull-damage-gaps.md.
+    # docs/reference/engine/damagetool-and-hull-damage-gaps.md.
 
     def AddObjectDamageVolume(self, x, y, z, influRad, strength) -> None:
         """Authored body-frame damage sphere (SDK pre-wreck Damage*.py scripts)."""

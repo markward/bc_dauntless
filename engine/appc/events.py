@@ -34,7 +34,7 @@ ET_WARP_BUTTON_PRESSED: int = 0x8000C7
 # ── Torpedo events — REAL BC values, measured, not invented ────────────────
 # Both were read out of the ORIGINAL GAME by probe q12
 # (tools/probes/results/q12_torpedo_events.txt; runbook
-# docs/instrumented_experiments/2026-07-12-torpedo-event-probe.md).  ET_TORPEDO_RELOAD
+# docs/reference/instrumented_experiments/2026-07-12-torpedo-event-probe.md).  ET_TORPEDO_RELOAD
 # previously held an invented 0x1322 because we could not measure the real one.
 #
 #   ET_TORPEDO_RELOAD  Source = None (BC posts NO source).  Destination = the TUBE.

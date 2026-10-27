@@ -1,5 +1,5 @@
 """The "Vesuvi Dust Cloud" dev mission -- baseline B3 run with nobody at the
-keyboard (docs/engine/perf-register.md). The player Galaxy parked at
+keyboard (docs/reference/engine/perf-register.md). The player Galaxy parked at
 Vesuvi4's own "Player Start", facing into the cloud, immune to the cloud's
 damage, no NPCs; with autoquit the run ends a fixed time after it settles.
 

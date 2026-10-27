@@ -1,7 +1,7 @@
 ###############################################################################
 # q18a_abi_recon -- reconnaissance of the STATIC engine ABI surface
 #
-# Question(s): docs/instrumented_experiments/2026-07-13-abi-surface-probe.md
+# Question(s): docs/reference/instrumented_experiments/2026-07-13-abi-surface-probe.md
 #              (companion to q13/q13b -- the static API surface, NOT live state).
 #              Settles, on a few representative targets, which deeper
 #              introspection veins actually yield data in BC's SWIG build:
@@ -17,7 +17,7 @@
 # Run in the -TestMode REPL with:  execfile('q18a_abi_recon.py')
 ###############################################################################
 #
-# PYTHON 1.5 CONSTRAINTS -- read docs/instrumented_experiments/console-probe-workflow.md
+# PYTHON 1.5 CONSTRAINTS -- read docs/reference/instrumented_experiments/console-probe-workflow.md
 #   No "import X as Y" / no f-strings / no True/False (use 1/0) /
 #   "except E, e:" (comma) / print is a STATEMENT / only App.g_kConfigMapping
 #   writes to disk. This recon output is small, so per-line print is FINE here.

@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Close the 15 ranked behaviour gaps in `docs/engine/npc-ai-contract-review-2026-09-19.md` so every SDK AI doctrine, leaf behaviour and condition that BC runs behaves the same way under Dauntless.
+**Goal:** Close the 15 ranked behaviour gaps in `docs/reference/engine/npc-ai-contract-review-2026-09-19.md` so every SDK AI doctrine, leaf behaviour and condition that BC runs behaves the same way under Dauntless.
 
 **Architecture:** Three seams. (1) The `App` shim gains the six undefined names the SDK scripts call (`TGPoint3_GetRandomUnitVector`, three `*_Cast` functions, one geometry helper, `TGCondition_Cast`), each a pure function over classes that already exist. (2) Two event families gain engine producers (ObjectGroup membership, object deletion) and one existing producer gains its missing state attach (`SetWarpSequence`), all posted through `App.g_kEventManager` to the SDK's own handlers. (3) The AI tick gains a per-node exception guard, and the FireScript wrapper gains the two things BC's native node had that its Python body assumes (`GetChildTargets`, `OptimizedFireScript` identity). No renderer or C++ changes; Python only.
 
 **Tech Stack:** Python 3.11, pytest, the real SDK scripts loaded through `tests/conftest.py`'s `_SDKFinder`.
 
-**Spec:** `docs/engine/npc-ai-contract-review-2026-09-19.md` (§2 ranked table is the requirement list; §4 is the test-writing rule).
+**Spec:** `docs/reference/engine/npc-ai-contract-review-2026-09-19.md` (§2 ranked table is the requirement list; §4 is the test-writing rule).
 
 ## Global Constraints
 
@@ -41,7 +41,7 @@
 | `engine/appc/ship_death.py` | deletion broadcast + AI teardown on death |
 | `engine/host_loop.py` | deletion broadcast in the `_delete_me` sweep |
 | `engine/appc/warp.py` | `WarpSequence.Play/Completed` attach/detach on the warp engine |
-| `docs/engine/aieditor-ai-surface-and-gaps.md`, `docs/stub_heatmap.md`, `docs/engine/event-emitter-gaps.md`, `docs/engine/npc-ai-contract-review-2026-09-19.md` | close-out edits |
+| `docs/reference/engine/aieditor-ai-surface-and-gaps.md`, `docs/stub_heatmap.md`, `docs/reference/engine/event-emitter-gaps.md`, `docs/reference/engine/npc-ai-contract-review-2026-09-19.md` | close-out edits |
 
 Shared test scaffolding used by several tasks (copy it into each test file; do not create a shared helper module — the existing tests all inline it):
 
@@ -2208,7 +2208,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ### Task 16: Close-out — docs, heatmap marks, gate
 
 **Files:**
-- Modify: `docs/engine/npc-ai-contract-review-2026-09-19.md` (§2 table: mark each row ✅ with the commit), `docs/engine/aieditor-ai-surface-and-gaps.md` (§3 row citing `_ensure_fire_script_initialized`; §4 "34" → 33; add a pointer to the review), `docs/engine/event-emitter-gaps.md` (#12: note the attach landed in Task 13), `docs/stub_heatmap.md` (`markedResolvedOn` cells only — the file is regenerated, add no prose), `engine/appc/collision_avoidance.py:19-30` (docstring: `tick_collision_avoidance` has no engine caller; the AI-side path is `course_override_for`).
+- Modify: `docs/reference/engine/npc-ai-contract-review-2026-09-19.md` (§2 table: mark each row ✅ with the commit), `docs/reference/engine/aieditor-ai-surface-and-gaps.md` (§3 row citing `_ensure_fire_script_initialized`; §4 "34" → 33; add a pointer to the review), `docs/reference/engine/event-emitter-gaps.md` (#12: note the attach landed in Task 13), `docs/stub_heatmap.md` (`markedResolvedOn` cells only — the file is regenerated, add no prose), `engine/appc/collision_avoidance.py:19-30` (docstring: `tick_collision_avoidance` has no engine caller; the AI-side path is `course_override_for`).
 - Test: the gate.
 
 - [ ] **Step 1: Mark the heatmap rows resolved**
@@ -2232,7 +2232,7 @@ Expected: pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add docs/engine/npc-ai-contract-review-2026-09-19.md docs/engine/aieditor-ai-surface-and-gaps.md docs/engine/event-emitter-gaps.md docs/stub_heatmap.md engine/appc/collision_avoidance.py
+git add docs/reference/engine/npc-ai-contract-review-2026-09-19.md docs/reference/engine/aieditor-ai-surface-and-gaps.md docs/reference/engine/event-emitter-gaps.md docs/stub_heatmap.md engine/appc/collision_avoidance.py
 git commit -m "docs(ai): close out the 2026-09-19 NPC AI contract review
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"

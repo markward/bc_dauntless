@@ -4,7 +4,7 @@
 **Date:** 2026-09-09
 **Builds on:** `docs/superpowers/specs/2026-09-08-mod-overlay-design.md`
 (Spec 3 in that document's "Followed by" line)
-**Surface register:** `docs/engine/foundation-api-surface.md`
+**Surface register:** `docs/reference/engine/foundation-api-surface.md`
 
 ## Problem
 

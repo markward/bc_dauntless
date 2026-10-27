@@ -1776,7 +1776,7 @@ class WarpEngineSubsystem(PoweredSubsystem):
         # GetWarpSequence() off it — the event carries no payload, it is a
         # "something changed, go re-check" ping, so it is posted unguarded.
         # Without this the condition only ever evaluated at construction:
-        # correct, but never timely.  See docs/engine/event-emitter-gaps.md #12.
+        # correct, but never timely.  See docs/reference/engine/event-emitter-gaps.md #12.
         import App
         evt = App.TGEvent_Create()
         evt.SetEventType(App.ET_SET_WARP_SEQUENCE)
@@ -2535,7 +2535,7 @@ class PowerSubsystem(ShipSubsystem):
                 self._add_power_to_batteries(self.GetPowerOutput() * elapsed)
             # Deliberate asymmetry: recharge is gated on reactor-offline, but
             # conduit budgets (capacity*elapsed) are computed UNCONDITIONALLY.
-            # BC-faithful per docs/gameplay/ship-subsystems.md:122-127
+            # BC-faithful per docs/reference/gameplay/ship-subsystems.md:122-127
             # (ComputeAvailablePower is an unconditional sibling step; batteries
             # still deliver through conduits even when the reactor is down).
             # Per-interval budget = min(battery, rated*condPct*elapsed). Use the
@@ -2676,7 +2676,7 @@ class RepairSubsystem(PoweredSubsystem):
     SDK surface (App.py:6639-6662): AddSubsystem, AddToRepairList,
     IsBeingRepaired, plus the inherited ShipSubsystem/PoweredSubsystem
     methods. Queue semantics + tick formula are RE-verified
-    (docs/gameplay/ship-subsystems.md §Repair):
+    (docs/reference/gameplay/ship-subsystems.md §Repair):
     duplicates rejected, destroyed (condition<=0) rejected, undamaged
     rejected; the first NumRepairTeams entries that are not destroyed are
     "being repaired".
@@ -2896,7 +2896,7 @@ class CloakingSubsystem(PoweredSubsystem):
 
     # Cloak runs off the backup grid only — it is locked off the main conduit
     # so cloaking never starves the ship's other systems of main-battery power
-    # (docs/gameplay/ship-subsystems.md:185).
+    # (docs/reference/gameplay/ship-subsystems.md:185).
     POWER_MODE = PSM_BACKUP_ONLY
 
     # Power starvation: the cloak runs off the BACKUP battery; when that reserve

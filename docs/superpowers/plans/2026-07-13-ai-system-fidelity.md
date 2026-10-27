@@ -2829,7 +2829,7 @@ Two further items belong in that plan:
 
 ## Docs to update when Phase 1 + 2 land
 
-`docs/engine/aieditor-ai-surface-and-gaps.md` is stale and should be corrected in the final commit:
+`docs/reference/engine/aieditor-ai-surface-and-gaps.md` is stale and should be corrected in the final commit:
 
 - Gap A1 ("`RandomAI` is never ticked") is **closed** — `ai_driver._tick_random` exists.
 - "`GetCloakingSubsystem` stubbed `None`" is **closed** — `engine/appc/ships.py:770` implements it.

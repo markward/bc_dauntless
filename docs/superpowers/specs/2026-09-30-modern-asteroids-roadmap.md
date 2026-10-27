@@ -172,7 +172,7 @@ part of this roadmap.
 ## Performance
 
 - GPU timing is dead on this Mac. Measure CPU only, with the frame profiler
-  (`docs/engine/frame-profiler.md`), using combat-stress-style runs.
+  (`docs/reference/engine/frame-profiler.md`), using combat-stress-style runs.
 - For reference, a headless sim tick costs about 0.35 ms per ship. Every rock
   that is a `ShipClass` pays that cost today.
 

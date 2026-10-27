@@ -1,7 +1,7 @@
 ###############################################################################
 # q13c_symbol_map -- VEIN 1: method -> C symbol name, for the whole surface
 #
-# Question(s): docs/instrumented_experiments/2026-07-13-abi-surface-probe.md
+# Question(s): docs/reference/instrumented_experiments/2026-07-13-abi-surface-probe.md
 #              For every method on every App class, recover the backing C symbol
 #              via im_func.__name__ (e.g. App.ShipClass.GetHull -> ShipClass_GetHull).
 #              Bridges the Python API to the RE'd binary (FUN_* <-> named symbols).

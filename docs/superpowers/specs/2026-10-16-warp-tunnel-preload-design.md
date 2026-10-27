@@ -129,7 +129,7 @@ lands on every player's first visit unless the preload hides it.
 - A loading bar, spinner or text.
 - Gameplay state moved or mutated early: preloading must not run SDK scripts
   out of order, fire events, or change which set the player is in before BC
-  would. (See `docs/engine/perf-cadences-and-latency.md` for how a moved cost
+  would. (See `docs/reference/engine/perf-cadences-and-latency.md` for how a moved cost
   became a gameplay change before.)
 - Production render output changing for a frame because of the preload. The
   arrival frame must look the same as today, minus the freeze.

@@ -18,7 +18,7 @@
 // The walk (ih_hash, ih_rand, the wall chance, ih_room_light and the DDA of
 // ih_shade) is ported from spike/breach-interior-mapping's breach.frag with
 // the constants Mark tuned live on 2026-10-20 (findings:
-// docs/engine/breach-interior-mapping-spike-findings.md). What changed: the
+// docs/reference/engine/breach-interior-mapping-spike-findings.md). What changed: the
 // blown-plate test and the torn edge read the plating damage list instead of
 // the carve field (the char band is the last wear unit short of deck break,
 // on the same noised wear as the blown test, so it follows the ragged tear);

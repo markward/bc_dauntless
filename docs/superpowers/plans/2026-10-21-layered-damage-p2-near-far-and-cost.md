@@ -227,7 +227,7 @@ Carry-overs from phase 1's reviews (memory `project_layered_hull_damage`) are fo
 ### Task 6: Measure against the rule
 
 **Files:**
-- Modify: `docs/engine/perf-register.md` (new C-/SIG- rows, the P-12 verdict); the design spec §3 only if the rule is met or knowingly missed.
+- Modify: `docs/reference/engine/perf-register.md` (new C-/SIG- rows, the P-12 verdict); the design spec §3 only if the rule is met or knowingly missed.
 
 - [ ] **Step 1: Captures (machine idle; `uptime` in each row).** The DP command, four runs:
   - GPU-focus `space.opaque,space.carve_stencil,space.breach,space.hull_interior` and CPU-only.

@@ -21,7 +21,7 @@
 - **Run only the focused test files named in each task.** Never `tests/`, `tests/unit` or `tests/ui` whole, and never `scripts/check_tests.sh` (the gate runs only on the main merge, when Mark says so). Never pass pytest an empty file list.
 - **Never run destructive git:** `checkout -- <path>`, `restore`, `stash`, `clean`, `reset --hard`, `add -A`/`add .`. Stage explicit paths only.
 - All battle clocks run on **game time** through `App.g_kTimerManager`, so they freeze under pause.
-- No game-state mutation inside any `render_payload` (`docs/engine/perf-cadences-and-latency.md`).
+- No game-state mutation inside any `render_payload` (`docs/reference/engine/perf-cadences-and-latency.md`).
 - **Phase 1 lists only two cards**, Elimination and Kobayashi Maru (my call: unbuilt types don't appear until their phase lands).
 - **Exact copy** (Mark's words are marked; the rest are my calls and must be used verbatim):
   - Elimination card: `Destroy every enemy to win.` (Mark)
@@ -199,7 +199,7 @@
 - Modify: `tools/gen_dauntless_tgl.py`, only if needed so a line without a sound writes an empty sound
 - Regenerate: `native/assets/replacements/data/TGL/Dauntless Crew.tgl` via `uv run python tools/gen_dauntless_tgl.py --write` (never hand-edit)
 - Modify: `tests/tools/test_dauntless_dialogue_drift.py`
-- Modify: `docs/engine/dauntless-crew-dialogue.md`, one line: a line may omit `sound`, and it is then subtitle-only
+- Modify: `docs/reference/engine/dauntless-crew-dialogue.md`, one line: a line may omit `sound`, and it is then subtitle-only
 - Test: `tests/unit/test_crew_speech_text_only.py` (new)
 
 **Interfaces:**

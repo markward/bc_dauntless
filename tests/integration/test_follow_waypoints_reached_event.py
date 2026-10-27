@@ -1,6 +1,6 @@
 """FollowWaypoints must broadcast a real ET_AI_REACHED_WAYPOINT event.
 
-Gap C1 (docs/engine/aieditor-ai-surface-and-gaps.md §4). BC's arrival
+Gap C1 (docs/reference/engine/aieditor-ai-surface-and-gaps.md §4). BC's arrival
 notification is emitted by SDK script, not by the engine:
 ``AI/PlainAI/FollowWaypoints.py:278-284`` builds an ``App.WaypointEvent_Create()``,
 sets destination/type/placement on it, and hands it to

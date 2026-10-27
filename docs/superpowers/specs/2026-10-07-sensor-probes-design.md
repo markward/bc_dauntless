@@ -17,7 +17,7 @@ Launch Probe path and E6M4's probe goal are proven end to end.
 | Fact | Tier | Source |
 |---|---|---|
 | `IsObjectVisible` walks the probe list AFTER `IsObjectFar` and BEFORE the nebula-jam fallback; for each probe ID it resolves the object (garbage-collecting dead ones) and recursively calls `IsObjectVisible` on the probe's own SensorSubsystem | RE'd (decompile) | `decompiled_fresh/05_game_mission.c:23259` (`0x005671D0`); `sensor-subsystem.md` §IsObjectVisible step 7 |
-| The power gate (disabled/off ⇒ not visible) is step 1, before the probe walk: with the player's sensors dead, probes do not help | RE'd | same, step 1. (`docs/ui/bridge-mode.md:311-321` and the lore doc say otherwise; RE outranks them.) |
+| The power gate (disabled/off ⇒ not visible) is step 1, before the probe walk: with the player's sensors dead, probes do not help | RE'd | same, step 1. (`docs/reference/ui/bridge-mode.md:311-321` and the lore doc say otherwise; RE outranks them.) |
 | `IsObjectNear` / `IsObjectFar` also walk the probe list — a probe can put a target in the owner's near band (so it identifies) and far band | RE'd | `sensor-subsystem.md` §IsObjectNear/IsObjectFar |
 | Probe list holds object IDs (`AddProbe`, PyArg `Ol`); dead probes are garbage-collected at walk time | RE'd | `sensor-subsystem.md` (`0x00567010`, `+0xAC..+0xBC`) |
 | `NumProbes` (`+0xC8`) is a live counter seeded from `SensorProperty.MaxProbes` (`property+0x50`) by `SetProperty` | RE'd | same (`0x0061A280` / `0x0061A2E0`) |

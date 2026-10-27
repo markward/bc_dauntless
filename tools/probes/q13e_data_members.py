@@ -1,7 +1,7 @@
 ###############################################################################
 # q13e_data_members -- VEIN 3: data-member schema of SWIG struct classes
 #
-# Question(s): docs/instrumented_experiments/2026-07-13-abi-surface-probe.md
+# Question(s): docs/reference/instrumented_experiments/2026-07-13-abi-surface-probe.md
 #              ~20 classes expose fields through __getmethods__/__setmethods__
 #              dicts (e.g. TorpedoAmmoType.m_fLaunchSpeed). Dump every readable /
 #              writable member name per class. (Values need a live instance; the

@@ -641,4 +641,4 @@ m.def("set_backdrops",
 
 Mirror the same change in
 `docs/superpowers/specs/2026-05-09-renderer-host-design.md` deferred-work
-list and `docs/architecture/sub_project_status.md` index.
+list and `docs/reference/architecture/sub_project_status.md` index.

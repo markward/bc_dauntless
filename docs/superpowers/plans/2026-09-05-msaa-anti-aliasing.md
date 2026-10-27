@@ -1322,5 +1322,5 @@ None of the above establishes whether MSAA looks better than SMAA. Green tests c
 1. **Nebula clipping first.** Load a mission with a nebula, set 4×, and look at where the cloud meets a hull. Clipping or a hard seam means the depth resolve is picking a wrong sample — the spec's risk #1. Everything else is cosmetic next to this.
 2. **A/B the modes** on hull-against-black, the case SMAA was found underwhelming on. QuickBattle is fine for a static look.
 3. **Fleet-scale motion**, where SMAA crawls worst: `DAUNTLESS_MISSION=engine.dev_missions.combat_stress DAUNTLESS_COMBAT_SHIPS=16`. Judge edge stability in motion, not a still frame.
-4. **Frame cost at 8×** via the profiler (backtick under `--developer`). Read `docs/engine/frame-profiler.md` first — the GPU column is dead on this Mac, so `r.frame` CPU is the only number that will move.
+4. **Frame cost at 8×** via the profiler (backtick under `--developer`). Read `docs/reference/engine/frame-profiler.md` first — the GPU column is dead on this Mac, so `r.frame` CPU is the only number that will move.
 5. **Confirm persistence** across a relaunch, and that an existing `settings.json` carrying `smaa_on` migrates to the matching `aa_mode` rather than resetting.

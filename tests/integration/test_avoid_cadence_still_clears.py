@@ -187,7 +187,7 @@ def test_the_cadence_costs_a_head_on_dodge_no_worst_case_separation(
     * shipped SDK scan: 0/32 overlap with the cadence (min 57.36 stream
       rewound, 42.03 stream running); 4/32 at 0.0 (min 37.66 / 36.95). The
       cadence does not cost the dodge -- here it widens it. See
-      docs/engine/perf-cadences-and-latency.md.
+      docs/reference/engine/perf-cadences-and-latency.md.
 
     The claim here is the file's: the cadence must not cost the dodge. Per
     phase the pair is chaotic (the sweep's per-base differences span -9..+13

@@ -10,7 +10,7 @@ data-bag round-trips for single-arg setters happen to recover the
 value, but the typed setters lock the contract in so future authors
 can't accidentally regress (Bug C / D / F class).
 
-See ``docs/instrumented_experiments/weapons_panel_icons_prompt.md``
+See ``docs/reference/instrumented_experiments/weapons_panel_icons_prompt.md``
 for the full investigation that motivates this hoist.
 """
 from engine.appc.properties import (

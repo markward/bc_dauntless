@@ -69,7 +69,7 @@ missing, and one thing is wrong:
 - **Collision avoidance** (`engine/appc/collision_avoidance.py`) gathers obstacles
   from the set's objects (`_build_obstacle_snapshot`, `:808-845`) and reads unscaled
   `GetRadius()` at `:387`, `:485` and `:827`. It re-decides at 4 Hz per evading ship
-  (`docs/engine/perf-cadences-and-latency.md` §3).
+  (`docs/reference/engine/perf-cadences-and-latency.md` §3).
 - **SDK names in Beol 4:** E2M1 creates `"Asteroid 0"`…`"Asteroid 15"` and its
   collision handler matches `sName[:8] == "Asteroid"` (`E2M1.py:655`). No SDK code
   selects objects by asteroid genus.

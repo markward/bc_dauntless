@@ -18,7 +18,7 @@ table, so the surface cannot drift again.
 **Tech Stack:** Python 3 (repo shim + engine), pytest, the existing
 `stub_telemetry` / `_NamedStub` machinery in `App.py`.
 
-**Spec:** `docs/instrumented_experiments/2026-07-13-constant-dump-probe.md` —
+**Spec:** `docs/reference/instrumented_experiments/2026-07-13-constant-dump-probe.md` —
 the q13 probe that captured this data and explicitly deferred this sweep
 ("Shim fix pass (226 wrong + ~1600 unique missing) is the remaining follow-up
 work, tracked separately"). The measured numbers in that doc are superseded by
@@ -346,7 +346,7 @@ HEADER = '''"""App constant values measured from the ORIGINAL GAME.  GENERATED -
 
 Regenerate with:  uv run python tools/gen_app_constants.py
 Source:           tools/probes/results/ghidra_export/stbc_constants.csv
-Provenance:       docs/instrumented_experiments/2026-07-13-constant-dump-probe.md
+Provenance:       docs/reference/instrumented_experiments/2026-07-13-constant-dump-probe.md
 
 Every value here was read out of a running stbc.exe by probe q13.  None is
 inferred from the SDK and none is invented.  `App.py` applies this table via
@@ -1015,7 +1015,7 @@ Expected: PASS. Lower `REMAINING_WRONG` to `88` and `REMAINING_MISSING` to `0`.
 ```
 Confirm in-game: WASD flight, `F1`–`F9`, `` ` `` (profiler), `s` (E1M1 skip
 intro), and one modifier chord still work. A green suite cannot see a dead key
-— see `docs/engine/e1m1-skip-intro.md` for how `WC_*` collapse presented last
+— see `docs/reference/engine/e1m1-skip-intro.md` for how `WC_*` collapse presented last
 time.
 
 - [ ] **Step 6: Commit**
@@ -1283,7 +1283,7 @@ this task records which, so the win is not mistaken for completeness.
 
 **Files:**
 - Modify: `engine/appc/events.py` (the undefined-event summary)
-- Create: `docs/engine/event-emitter-gaps.md`
+- Create: `docs/reference/engine/event-emitter-gaps.md`
 - Test: `tests/integration/test_bridge_menu_events_live.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -1324,7 +1324,7 @@ module-level `def record(evt): fired.append(evt)` bound to a module list.
 
 - [ ] **Step 3: Implement**
 
-Write `docs/engine/event-emitter-gaps.md` listing the twelve event types that
+Write `docs/reference/engine/event-emitter-gaps.md` listing the twelve event types that
 now have real constants but still no engine emitter — `ET_CANT_FIRE`,
 `ET_SET_TARGET`, `ET_NAME_CHANGE`, `ET_TARGET_LIST_OBJECT_ADDED`,
 `ET_TARGET_LIST_OBJECT_REMOVED`, `ET_TORPEDO_ENTERED_SET`,
@@ -1355,7 +1355,7 @@ Probe, Tactical → Fire.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add engine/appc/events.py docs/engine/event-emitter-gaps.md tests/integration/test_bridge_menu_events_live.py
+git add engine/appc/events.py docs/reference/engine/event-emitter-gaps.md tests/integration/test_bridge_menu_events_live.py
 git commit -m "feat(events): revive five bridge menu items; record the 12 emitter gaps"
 ```
 
@@ -1364,7 +1364,7 @@ git commit -m "feat(events): revive five bridge menu items; record the 12 emitte
 ### Task 11: Update the project docs
 
 **Files:**
-- Modify: `docs/instrumented_experiments/2026-07-13-constant-dump-probe.md`
+- Modify: `docs/reference/instrumented_experiments/2026-07-13-constant-dump-probe.md`
 - Modify: `docs/stub_heatmap.md`
 - Modify: `CLAUDE.md`
 
@@ -1400,7 +1400,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add docs/instrumented_experiments/2026-07-13-constant-dump-probe.md docs/stub_heatmap.md CLAUDE.md
+git add docs/reference/instrumented_experiments/2026-07-13-constant-dump-probe.md docs/stub_heatmap.md CLAUDE.md
 git commit -m "docs(constants): close the q13 shim fix pass"
 ```
 

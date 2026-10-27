@@ -583,7 +583,7 @@ def report_lines() -> list[str]:
                      "DAUNTLESS_PROFILE_GPU=1 times the top-level passes on "
                      "the GPU, but makes the CPU wait for the GPU, adding "
                      "about the GPU frame time: never read frame time from "
-                     "such a run (docs/engine/perf-register.md, M-6).")
+                     "such a run (docs/reference/engine/perf-register.md, M-6).")
     elif no_counter:
         lines.append("  GPU TIMING UNAVAILABLE: the driver declares no GPU "
                      "timer counter (0 bits for both GL_TIMESTAMP and "
@@ -696,7 +696,7 @@ def gpu_timing_requested_from_env() -> bool:
     """True for DAUNTLESS_PROFILE_GPU=1, or when a GPU focus is set (a focus
     with no GPU timing would time nothing, silently). GPU timing is opt-in:
     its timer queries make the CPU wait for the GPU, adding about the GPU
-    frame time (docs/engine/perf-register.md, M-6)."""
+    frame time (docs/reference/engine/perf-register.md, M-6)."""
     import os
     return (os.environ.get(GPU_ENV, "").strip() == "1"
             or bool(gpu_focus_from_env()))

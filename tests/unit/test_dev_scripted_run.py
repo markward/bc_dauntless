@@ -1,6 +1,6 @@
 """The unattended dev run: destroy a named object once the opening cutscene
 has been over for a while, then quit. Exists so baseline B1
-(docs/engine/perf-register.md) needs no keypress."""
+(docs/reference/engine/perf-register.md) needs no keypress."""
 from engine.dev_scripted_run import ScriptedRun
 
 

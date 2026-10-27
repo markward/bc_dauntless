@@ -16,7 +16,7 @@ target-info panels that gate on ``IsObjectKnown``.
 Without this the SDK's ``ObjectEnteredSet`` only ever identifies *commandable
 fleet* ships (``IsObjectKnown`` was always 0), so planets, stations and neutral
 contacts never received a hail button — clicking the empty "Hail" menu did
-nothing. See docs/plans and the E1M2 hail investigation.
+nothing.
 
 Identification is one-shot per contact: ``AddKnownObject`` de-dupes so each
 contact fires the identify event once, and a contact stays known once seen

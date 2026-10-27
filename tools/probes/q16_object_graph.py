@@ -1,7 +1,7 @@
 ###############################################################################
 # q16_object_graph -- the live space-side object + subsystem graph.
 #
-# Question(s): docs/instrumented_experiments/2026-07-13-object-graph-probe.md
+# Question(s): docs/reference/instrumented_experiments/2026-07-13-object-graph-probe.md
 #              Q16-1 rendered-set object roster, Q16-2 per-ship subsystem tree,
 #              Q16-3 Galaxy-vs-Galaxy symmetry oracle, Q16-4 GetAllSets,
 #              Q16-5 cast-ladder coverage (UNKNOWN objects).

@@ -1,7 +1,7 @@
 ###############################################################################
 # q17_bridge_graph -- the live interior (bridge + character) graph.
 #
-# Question(s): docs/instrumented_experiments/2026-07-13-bridge-graph-probe.md
+# Question(s): docs/reference/instrumented_experiments/2026-07-13-bridge-graph-probe.md
 #              Q17-1 bridge-set object roster, Q17-2 officer roster by station,
 #              Q17-3 viewscreen (BridgeWindow), Q17-4 what state Character node
 #              handles (GetAnimNode/GetRootNode) expose, Q17-5 lift/door objects.

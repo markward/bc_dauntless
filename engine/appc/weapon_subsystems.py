@@ -41,7 +41,7 @@ CO_FIRED_PRIORITY_STEP = 0.01
 
 # ── Torpedo reload slots ───────────────────────────────────────────────────
 # BC stores one float per MaxReady at TorpedoTube+0xAC
-# (docs/gameplay/combat-and-damage.md:748).  We store the
+# (docs/reference/gameplay/combat-and-damage.md:748).  We store the
 # GAME TIME at which each slot began cooling; _SLOT_LOADED means "ready".
 _SLOT_LOADED = -1.0
 
@@ -1736,7 +1736,7 @@ class TorpedoSystem(WeaponSystem):
     def _post_cant_fire(self) -> None:
         """Announce a torpedo fire attempt that cannot produce a launch.
 
-        Gap #1 in docs/engine/event-emitter-gaps.md. The event carries no
+        Gap #1 in docs/reference/engine/event-emitter-gaps.md. The event carries no
         reason: both SDK handlers (Bridge/TacticalMenuHandlers.py:1990,
         Bridge/TacticalCharacterHandlers.py:198) re-derive it from this
         system's own state via GetNumReady() / GetNumAvailableTorpsToType(),
@@ -2348,7 +2348,7 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
     def _sync_firing_event(self) -> None:
         """Post ET_TRACTOR_BEAM_STARTED_/STOPPED_FIRING on a beam transition.
 
-        Gaps #8/#9 in docs/engine/event-emitter-gaps.md. Call after any
+        Gaps #8/#9 in docs/reference/engine/event-emitter-gaps.md. Call after any
         operation that could change IsFiring(); it is a no-op unless the
         state actually crossed, so it is safe on the per-tick path.
 
@@ -2920,7 +2920,7 @@ class TorpedoTube(Weapon):
     lives on the parent's slot table; this class owns per-tube reload state.
 
     Reload model recovered from stbc.exe
-    (docs/gameplay/combat-and-damage.md:740-830):
+    (docs/reference/gameplay/combat-and-damage.md:740-830):
     reload state is a per-slot timer array, one slot per MaxReady, driven by
     the GAME clock (not wall time, so a paused sim makes no reload progress).
     ImmediateDelay is a CanFire refire gate (gameTime - last_fire_time >=

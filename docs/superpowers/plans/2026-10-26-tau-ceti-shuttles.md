@@ -162,7 +162,7 @@ def test_a_destroyed_dock_mid_circle(...)       # Review Focus 2
 
 **Files:**
 - Test: `tests/integration/test_shuttle_round_trip.py` (new)
-- Modify: `docs/engine/home-stations.md` (new section "Tau Ceti shuttle service"), `CLAUDE.md` (Home stations row: one clause)
+- Modify: `docs/reference/engine/home-stations.md` (new section "Tau Ceti shuttle service"), `CLAUDE.md` (Home stations row: one clause)
 
 - [ ] **Step 1: Write the test** `test_a_shuttle_completes_a_round_trip`: free-roam world at Starbase 12; follow shuttle 1 through every phase in order DOCKED → UNDOCKING → … → ENTERING → DOCKED within 20 minutes of game time, recording the phase sequence; assert the sequence and that it circled one of the three docks.
 - [ ] **Step 2: Run** it — expected: PASS (it pins Tasks 1–4 together); if it fails, fix the cause in `shuttle_service.py`.

@@ -6,7 +6,7 @@ Written 2026-10-22 at the end of phase 4 (plan
 and every "for Mark" / live-check item from the phase-4 ledger
 (`.superpowers/sdd/2026-10-22-layered-damage-p4-finish/progress.md`) into one
 list. Nothing on it has been seen in game yet. The perf verdict is in
-`docs/engine/perf-register.md` (P-12, SIG-111 to SIG-115). Updated after the
+`docs/reference/engine/perf-register.md` (P-12, SIG-111 to SIG-115). Updated after the
 final review's fix wave (the break check moved off the main thread; rig-part
 chunks go dark).
 

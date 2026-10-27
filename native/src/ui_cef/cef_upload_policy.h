@@ -4,7 +4,7 @@
 // Header-only with no CEF or GL dependency, so it is unit-tested on its own
 // (native/tests/ui_cef/cef_upload_policy_test.cc).
 //
-// Exists for perf-register A-1 (docs/engine/perf-register.md): the CPU time
+// Exists for perf-register A-1 (docs/reference/engine/perf-register.md): the CPU time
 // in `cef.composite` tracks the GPU frame time almost exactly, which points
 // at the full-surface glTexSubImage2D as the place the CPU waits for the GPU.
 // The modes, chosen by DAUNTLESS_CEF_UPLOAD:

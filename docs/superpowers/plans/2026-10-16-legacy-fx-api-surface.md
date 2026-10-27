@@ -150,7 +150,7 @@ before any task; every task argues from it.
 | `native/src/renderer/shockwave_pass.cc`, `shaders/shockwave.frag` | `u_tint` |
 | `native/src/host/host_bindings.cc` | New particle + shockwave dict keys |
 | `native/tests/renderer/particle_math_test.cc`, `particle_pass_test.cc` | New tests |
-| `docs/engine/foundation-api-surface.md`, `CLAUDE.md`, spec §8.3 | Docs |
+| `docs/reference/engine/foundation-api-surface.md`, `CLAUDE.md`, spec §8.3 | Docs |
 
 ---
 
@@ -828,7 +828,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 - Modify: `engine/foundation/__init__.py` (imports at top, after the
   `from engine.foundation.shipdef import ...` line)
 - Modify: `engine/foundation/shipdef.py` (`self.race = race` ~L96)
-- Modify: `docs/engine/foundation-api-surface.md` (the `*Def` table's
+- Modify: `docs/reference/engine/foundation-api-surface.md` (the `*Def` table's
   `MutatorDef` row + a new "Implemented in Dauntless" note)
 - Test: `tests/unit/test_foundation_mutatordef.py`
 
@@ -984,7 +984,7 @@ from engine.foundation.mutator import MutatorDef  # noqa: F401  (spec 2026-10-16
         self.race = Race(race) if race is not None else None
 ```
 
-`docs/engine/foundation-api-surface.md`: change the `MutatorDef` table row's
+`docs/reference/engine/foundation-api-surface.md`: change the `MutatorDef` table row's
 tier cell from `A, C` to `A, C — **implemented** (inert, always on;
 engine/foundation/mutator.py)`. After the `*Def` table, add this line:
 
@@ -1002,7 +1002,7 @@ Expected: all PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add engine/foundation/mutator.py engine/foundation/race.py engine/foundation/__init__.py engine/foundation/shipdef.py docs/engine/foundation-api-surface.md tests/unit/test_foundation_mutatordef.py
+git add engine/foundation/mutator.py engine/foundation/race.py engine/foundation/__init__.py engine/foundation/shipdef.py docs/reference/engine/foundation-api-surface.md tests/unit/test_foundation_mutatordef.py
 git commit -m "feat(foundation): inert always-on MutatorDef; ShipDef.race.name
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"

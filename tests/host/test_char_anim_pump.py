@@ -15,7 +15,7 @@ and _pump_bridge_doors) that runs every unpaused frame regardless of view. These
 tests drive a say-line to completion through that seam alone — with no bridge
 view anywhere.
 
-NOTE the verbs differ (Ghidra ground truth, docs/gameplay/
+NOTE the verbs differ (Ghidra ground truth, docs/reference/gameplay/
 bridge-character-system.md §8.3): AT_SAY_LINE_AFTER_TURN awaits its opening turn
 (so its speech is what the pump releases), while AT_SAY_LINE overlaps the turn
 with the line and speaks immediately — its turn still has to reach the renderer

@@ -27,7 +27,7 @@ Monitor**. It is off by default and is not saved between launches.
 - **Cheap.** The panel is polled at 4 Hz and its payload is snapshot-diffed,
   so a steady frame rate pushes nothing to CEF. The meter costs two adds per
   frame.
-- **It is not the frame profiler.** The profiler (`docs/engine/frame-profiler.md`)
+- **It is not the frame profiler.** The profiler (`docs/reference/engine/frame-profiler.md`)
   breaks a frame down per pass and prints to the terminal. This readout only
   answers "how fast, at what size" on screen. For a perf claim, use the
   profiler and the perf register. A Debug build's FPS is not a baseline.

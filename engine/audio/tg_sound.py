@@ -110,7 +110,7 @@ class TGSound:
     SS_UNKNOWN = 3
 
     # BC's TGSound::SetupFromFile shipped defaults (0x0070B360), recovered in
-    # docs/architecture/sound-system-openal-guide.md §5. SetMinMaxDistance has
+    # docs/reference/architecture/sound-system-openal-guide.md §5. SetMinMaxDistance has
     # exactly three xrefs in the original binary and no weapon code touches it,
     # so this one pair sets the loudness balance of essentially all BC combat
     # audio. The ship engine hum is the sole exception (see hum_allocator).

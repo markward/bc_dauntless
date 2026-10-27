@@ -4,7 +4,7 @@
 **Status:** Draft for review
 **Motivation:** The SPV Rotate tool only works on Cylinder light volumes, because a BC Box glow region is defined by **position + scale only** — it is always body-axis-aligned, with no orientation to rotate, store, or render. This feature gives Box glow regions an **orientation** (a Dauntless extension to the glow schema) so the Rotate tool can tilt them, persisted to the machine-owned override and rendered tilted by the glow shader.
 
-**Builds on:** the real Box glow (`docs/engine/damagetool-and-hull-damage-gaps.md` Gap-2 lineage, `native/src/renderer/glow_region.cc` + `opaque.frag`'s `u_glow_region_e`), the SPV Rotate tool (`docs/superpowers/specs/2026-07-27-spv-rotate-tool-design.md`), and the light-volume override path (`region_spec_to_calls` → `set_region` → `hardpoint_overrides.py`).
+**Builds on:** the real Box glow (`docs/reference/engine/damagetool-and-hull-damage-gaps.md` Gap-2 lineage, `native/src/renderer/glow_region.cc` + `opaque.frag`'s `u_glow_region_e`), the SPV Rotate tool (`docs/superpowers/specs/2026-07-27-spv-rotate-tool-design.md`), and the light-volume override path (`region_spec_to_calls` → `set_region` → `hardpoint_overrides.py`).
 
 ## Goal
 

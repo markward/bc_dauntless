@@ -10,7 +10,7 @@ On 2026-08-09 the `stbc-reference` MCP server came online, giving us direct
 clean-room query access to the original engine's behavioural specification. The
 first substantive use of it produced a **false confirmed gap**:
 
-`docs/engine/aieditor-ai-surface-and-gaps.md` asserts that
+`docs/reference/engine/aieditor-ai-surface-and-gaps.md` asserts that
 `GetCloakingSubsystem` is "stubbed `None`", disabling cloak doctrines. The MCP
 confirmed the entry is real (`ShipClass_GetCloakingSubsystem` @ `0x0060a4b0`),
 and that was reported as settling a design question and warranting
@@ -42,7 +42,7 @@ Settled with Mark, 2026-08-09:
 
 1. **Deliverable** — reconcile first, then build what survives. Not docs-only.
 2. **Audit breadth** — all gap-analysis OQs and `open_questions.md`; the
-   `docs/engine/*.md` files that assert gaps; heatmap rows selected by a
+   `docs/reference/engine/*.md` files that assert gaps; heatmap rows selected by a
    mechanical triage rule. *Not* a hand-audit of all open heatmap rows.
 3. **Build gate** — build **every** survivor in this branch. Sprawl risk was
    raised and accepted; mitigated by an aggressive audit and one commit per
@@ -77,7 +77,7 @@ For each item, determine current reality from code. Inventory:
   2 are partial — OQ-2.2 (warp physics), OQ-2.3 (tractor beam physics).
 - **4 questions** in `docs/open_questions.md` — all four already closed;
   verify the closures still hold and that the file agrees with `gap_analysis.md`.
-- **6 gap-claim docs** in `docs/engine/`: `aieditor-ai-surface-and-gaps.md`,
+- **6 gap-claim docs** in `docs/reference/engine/`: `aieditor-ai-surface-and-gaps.md`,
   `bcs-save-format.md`, `characterclass-reference.md`,
   `damagetool-and-hull-damage-gaps.md`, `nibinaryvoxeldata-format-v3.1.md`,
   `nif-voxel-format.md`. Only their **gap assertions** are in scope — the
@@ -130,7 +130,7 @@ and a wrongly-dated row silently disarms that detector for that stub.
 One commit per gap area, not one commit for the whole phase — a reviewer can
 reject the renderer audit while accepting the audio one, and a bad conclusion can
 be reverted without unwinding the rest. Corrects `docs/gap_analysis.md`,
-`docs/open_questions.md`, the gap assertions in `docs/engine/*.md`, and
+`docs/open_questions.md`, the gap assertions in `docs/reference/engine/*.md`, and
 `docs/stub_heatmap.md` markers. Reconciles the self-reported counts against
 actual contents: `CLAUDE.md`'s "21 open questions" (26 present) and
 `gap_analysis.md:723`'s "(5)" (six listed).
@@ -193,7 +193,7 @@ game, and will be reported as needing live verification — never as done.
 
 ## Out of scope
 
-- Re-deriving the format/RE content of the `docs/engine/` reference docs — only
+- Re-deriving the format/RE content of the `docs/reference/engine/` reference docs — only
   their gap assertions are audited.
 - Hand-auditing all open heatmap rows (only triage-rule candidates).
 - Implementing dead surface with zero SDK call sites.

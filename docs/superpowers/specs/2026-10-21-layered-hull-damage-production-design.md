@@ -4,7 +4,7 @@
 2026-10-22; phase 4 is `2026-10-22-layered-damage-p4-finish-design.md`). Not
 merged to main: that waits for Mark's live check and his word. The final
 measurement against the §3 rule is a later task; final verdict: see
-`docs/engine/perf-register.md` P-12. How it was built, where it departs from
+`docs/reference/engine/perf-register.md` P-12. How it was built, where it departs from
 this design and the backlog are in §10.
 
 Design, 2026-10-21. Builds on the spike on `spike/damage-redesign`
@@ -119,7 +119,7 @@ How it is measured *(my call)*: at the PASS level.
 - At pass level the spike is about 2.4x today, so optimisation is real work
   in this plan.
 
-Measure with the DP scenario in `docs/engine/perf-register.md`:
+Measure with the DP scenario in `docs/reference/engine/perf-register.md`:
 - GPU-focus runs give attribution only.
 - CPU-only runs give CPU cost.
 - Record a Debug build like the existing baselines. **No Release capture**

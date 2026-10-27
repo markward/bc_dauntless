@@ -105,7 +105,7 @@ That uniformity also has a sharp corollary: because stock is 1.0 everywhere,
 no stock-only measurement can distinguish reading the property from a flat
 1.0 — which is exactly what the frozen entry's own justification was built
 on. Resolving it needs the flat table's real values, tracked in
-[`../../instrumented_experiments/2026-09-09-phaser-discharge-rate-source.md`](../../instrumented_experiments/2026-09-09-phaser-discharge-rate-source.md).
+[`../../instrumented_experiments/2026-09-09-phaser-discharge-rate-source.md`](../../reference/instrumented_experiments/2026-09-09-phaser-discharge-rate-source.md).
 Until that lands the behaviour stays as shipped — and a boot-report line
 naming any mod that authors a non-1.0 rate would at least make the divergence
 visible instead of leaving it to be felt.

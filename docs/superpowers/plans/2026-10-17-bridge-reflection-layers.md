@@ -329,13 +329,13 @@ git commit -m "feat(bridge-reflections): per-frame probe state and layer values;
 ### Task 9: Measure, document, gate, hand over
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-10-17-bridge-reflection-layers-design.md` (add §8 As built: step size chosen, measured per-step cost, storage format actually used, deviations), `CLAUDE.md` (the "Bridge PBR" row: probes = 5 per-state bases + (state, wave) layers capped 2/4/8, 384² R11G11B10F array, time-sliced, glow in reflections), `docs/engine/frame-profiler.md` (the `bridge.probe_capture` scope)
+- Modify: `docs/superpowers/specs/2026-10-17-bridge-reflection-layers-design.md` (add §8 As built: step size chosen, measured per-step cost, storage format actually used, deviations), `CLAUDE.md` (the "Bridge PBR" row: probes = 5 per-state bases + (state, wave) layers capped 2/4/8, 384² R11G11B10F array, time-sliced, glow in reflections), `docs/reference/engine/frame-profiler.md` (the `bridge.probe_capture` scope)
 
 - [ ] **Step 1:** Ask Mark before launching. With a yes: `OPEN_STBC_HOST_HEADLESS=1 DAUNTLESS_PROFILE_FRAMES=600 ./build/dauntless --developer` from the worktree, read `bridge` (GPU) and `bridge.probe_capture` (CPU) during the fill and once settled; tune `kBridgeProbeStepsPerFrame` (and the step definition) so a fill frame stays within a few ms of GPU over the settled `bridge` cost; record the numbers in §8.
 - [ ] **Step 2:** Run `scripts/check_tests.sh` — Expected: exit 0, no new ledger lines.
 - [ ] **Step 3:** Commit the docs:
 ```bash
-git add docs/superpowers/specs/2026-10-17-bridge-reflection-layers-design.md CLAUDE.md docs/engine/frame-profiler.md
+git add docs/superpowers/specs/2026-10-17-bridge-reflection-layers-design.md CLAUDE.md docs/reference/engine/frame-profiler.md
 git commit -m "docs(bridge-reflections): as built, CLAUDE.md row, profiler scope"
 ```
 - [ ] **Step 4:** Hand Mark the live recipe: `cd .claude/worktrees/bridge-reflections && ./build/dauntless --developer` → Quick Battle (Galaxy → DBridge) → pause → Bridge Editor… → preview squares ⬛🟩🟨🟥🟦: each state reflects its own lighting; at 🟥 the red bars, Map 22a/27 and the alcove pulse in the glossy surfaces in step with the objects (floor 20%); no hitch on load or on a state click; Developer Options → Lighting → Bridge Debug View "Reflection layers" shows only the pulse.

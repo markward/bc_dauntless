@@ -1,7 +1,7 @@
 ###############################################################################
 # q13d_signatures -- VEIN 2 (THE PRIZE): method signatures via docstrings
 #
-# Question(s): docs/instrumented_experiments/2026-07-13-abi-surface-probe.md
+# Question(s): docs/reference/instrumented_experiments/2026-07-13-abi-surface-probe.md
 #              For every method on every App class, dump im_func.__doc__. If BC's
 #              SWIG build embedded C prototypes, this turns the whole method
 #              surface into a TYPED api reference. If docstrings are empty/None,

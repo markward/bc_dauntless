@@ -1,5 +1,5 @@
 """DAUNTLESS_WINDOW_SIZE pins the starting window size, so a perf baseline is
-taken at a known resolution (docs/engine/perf-register.md, M-4): GPU cost
+taken at a known resolution (docs/reference/engine/perf-register.md, M-4): GPU cost
 scales with the pixels drawn, and a 1280x720 capture cannot be compared with
 one maximised on a 4K laptop screen."""
 from engine.host_loop import _initial_window_size

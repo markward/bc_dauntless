@@ -958,7 +958,7 @@ def _phaser_damage_for_tick(max_damage: float,
     """Phaser damage: plateau within MaxDamageDistance, then R/d decay.
 
     Verified against the real BC engine via dev-console instrumentation
-    (docs/instrumented_experiments/2026-06-29-weapon-exchange-console-probe.md,
+    (docs/reference/instrumented_experiments/2026-06-29-weapon-exchange-console-probe.md,
     probe q09). Damage is FULL while `dist <= MaxDamageDistance` (R), then
     decays inverse-linearly as `MaxDamage * (R / dist)` beyond R — so a shot
     still deals ~30% at ~2.9*R. The curve is continuous at dist=R (both
@@ -6329,7 +6329,7 @@ def _model_sphere_radius_from_aabb(center: tuple, half_extents: tuple) -> float:
     exactly GetRadius() game units. `_model_extent_from_aabb` returns the AABB
     *corner* distance instead (|half| = R·√3 for a sphere), which is ~1.73×
     too large and shrinks the planet to GetRadius()/√3. See
-    docs/instrumented_experiments/2026-07-07-planet-render-scale.md.
+    docs/reference/instrumented_experiments/2026-07-07-planet-render-scale.md.
 
     All stock planet/moon NIFs are origin-centred spheres, so max-half-extent
     is exact here; it is not a general model radius."""
@@ -10420,7 +10420,7 @@ def _initial_window_size(environ) -> tuple:
     """Starting window size: DAUNTLESS_WINDOW_SIZE=WxH, else 1280x720.
 
     A perf baseline must be taken at a known size -- GPU cost scales with the
-    pixels drawn (docs/engine/perf-register.md, M-4). A bad value falls back
+    pixels drawn (docs/reference/engine/perf-register.md, M-4). A bad value falls back
     to the default rather than stopping the game.
     """
     raw = str(environ.get("DAUNTLESS_WINDOW_SIZE", "")).strip().lower()
@@ -11554,7 +11554,7 @@ def run(mission_name: Optional[str] = None,
         # GPU timing is opt-in (DAUNTLESS_PROFILE_GPU=1). Its timer queries
         # make the CPU wait for the GPU, adding about the GPU frame time, so
         # by default every capture below is CPU-only and its frame time real
-        # (docs/engine/perf-register.md, M-6).
+        # (docs/reference/engine/perf-register.md, M-6).
         host_io.profiler_set_gpu_enabled(
             frame_profiler.gpu_timing_requested_from_env())
         # DAUNTLESS_PROFILE_GPU_FOCUS=a,b: GPU-time these nested scopes too
@@ -11582,7 +11582,7 @@ def run(mission_name: Optional[str] = None,
         motion_trace.configure_from_env()
         # Record what was captured: the drawn size drives GPU cost, and two
         # captures at different sizes are not comparable
-        # (docs/engine/perf-register.md, M-4).
+        # (docs/reference/engine/perf-register.md, M-4).
         if frame_profiler.is_enabled():
             try:
                 _fbw0, _fbh0 = host_io.framebuffer_size()

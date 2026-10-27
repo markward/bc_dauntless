@@ -1830,7 +1830,7 @@ class CharacterAction(TGAction):
         chair clip as parallel siblings of one sequence. (None, 0) speaks with no
         turn at all.
 
-        GROUND TRUTH (Ghidra, retail stbc.exe 1.1 — docs/gameplay/
+        GROUND TRUTH (Ghidra, retail stbc.exe 1.1 — docs/reference/gameplay/
         bridge-character-system.md §8.3). Both verbs route CharacterAction::Play
         -> CharacterClass::SayLine -> a builder that assembles an inner
         TGSequence of prerequisite-chained sub-actions, EVERY DELAY 0:

@@ -130,7 +130,7 @@ def avoidance_enabled() -> bool:
     (sdk/Build/scripts/QuickBattle/QuickBattleAI.py:83-92). Every QuickBattle
     enemy therefore runs avoidance, and a default capture that ran none
     understated real-mission cost, which is exactly the complaint
-    docs/engine/avoidance-duplication.md records against this mission.
+    docs/reference/engine/avoidance-duplication.md records against this mission.
 
     combat_stress attaches BasicAttack directly (QuickBattleAI itself cannot be
     used from here -- see _ATTACK_AI_MODULE), so the wrapper has to be added

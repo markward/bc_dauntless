@@ -301,7 +301,7 @@ files in NifSkope, identify damage-related node naming conventions.
 Each hull has a paired `*_vox.nif` containing `NiBinaryVoxelExtraData` /
 `NiBinaryVoxelData` — a binary occupancy mask of the hull interior. The on-disk
 format is reverse-engineered and validated against the full 84-file `*_vox.nif`
-corpus (`docs/engine/nibinaryvoxeldata-format-v3.1.md`) and implemented in
+corpus (`docs/reference/engine/nibinaryvoxeldata-format-v3.1.md`) and implemented in
 `native/src/voxel/` (`decode.cc`, `plane_index.cc`, `volume.h`, `voxelize.h`)
 with the block parsed at `native/src/nif/src/blocks/extra_data.cc`. Covered by
 ctest `VoxelDataHeader.GalaxyHeaderDecodesToConfirmedValues`,
@@ -666,7 +666,7 @@ above the adapter works.
 
 **2026-08-10, second live run: still silent.** The `LoadSound` fix did not do it
 either. Deferred to a dedicated session — see
-`docs/engine/music-not-playing-handoff.md`, which records what is proven working,
+`docs/reference/engine/music-not-playing-handoff.md`, which records what is proven working,
 the five hypotheses already ruled out (assets, MP3 support, DynamicMusic reach,
 and two wrong adapter forms), and the ordered diagnostic steps. The failure is
 silent at every layer, which is why three static fixes have missed it; it needs a

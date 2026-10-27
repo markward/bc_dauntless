@@ -270,7 +270,7 @@ This keeps unimplemented panels honest and debuggable as the HUD is converted.
 ### Instrumentation against the running original game (mandated)
 
 Per the project's instrumentation convention, capture ground truth via the
-`docs/instrumented_experiments/` runbook + in-game console probes (**not** an
+`docs/reference/instrumented_experiments/` runbook + in-game console probes (**not** an
 `App.py` snippet). Experiment: open Picard's menu in a running mission, then probe
 the live widgets at a known resolution:
 - `pMenu.GetContainingWindow().GetScreenOffset(kOffset)` → window top-left
@@ -338,7 +338,7 @@ Course" button in the CEF officer menu and tracking it on the 0.125 s refresh.
 - `native/assets/ui-cef/js/*`, `native/assets/ui-cef/css/*` — officer-menu
   SDK-driven inline position; `#pointer-arrows` overlay layer; remove officer-menu
   CSS-flow placement.
-- `docs/instrumented_experiments/` — the officer-menu geometry probe runbook.
+- `docs/reference/instrumented_experiments/` — the officer-menu geometry probe runbook.
 - E1M1 tutorial trigger: engine-side gaps surfaced by the task-1 spike (mission
   progression to the SettingCourse beat, any broken `ExplainWarp` sequence
   action). Specific files unknown until the spike; **no SDK edits** — fixes land

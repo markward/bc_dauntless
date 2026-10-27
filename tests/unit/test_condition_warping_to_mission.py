@@ -1,6 +1,6 @@
 """ConditionWarpingToMission must not fire for an ordinary in-set warp.
 
-Gap C2 (docs/engine/aieditor-ai-surface-and-gaps.md §4). The condition reads::
+Gap C2 (docs/reference/engine/aieditor-ai-surface-and-gaps.md §4). The condition reads::
 
     if pWarpSequence and (pWarpSequence.GetDestinationMission()
                           or pWarpSequence.GetDestinationEpisode()):

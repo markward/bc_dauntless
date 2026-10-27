@@ -312,7 +312,7 @@ In scope — all in `_EnergyWeaponFireMixin` / `PhaserSystem`:
   never held: all 208 stock emitters declare `1.0`, so a stock-only probe
   could not tell the two apart. The RE project then read the binary
   (recorded in
-  [`../../instrumented_experiments/2026-09-09-phaser-discharge-rate-source.md`](../../instrumented_experiments/2026-09-09-phaser-discharge-rate-source.md)
+  [`../../instrumented_experiments/2026-09-09-phaser-discharge-rate-source.md`](../../reference/instrumented_experiments/2026-09-09-phaser-discharge-rate-source.md)
   § Findings): **phasers** drain from a power-level table (LOW 0.35 / MED
   1.0 / HIGH 1.0 per second, indexed by the owning `PhaserSystem`'s level)
   and never read the property; **pulse weapons** DO read it, as a per-shot

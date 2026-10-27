@@ -246,7 +246,7 @@ App module surface:
   - The flash is drawn only when its set is the rendered set.
 - **Rendering feed.** Flashes reach the renderer through the normal per-frame
   feed, never from `render_payload` game-state mutation (see
-  `docs/engine/perf-cadences-and-latency.md`).
+  `docs/reference/engine/perf-cadences-and-latency.md`).
 - **`SetClass.SetRegionModule(name)` / `GetRegionModule()`:** store and return
   the module name, so `WarpFlashEnterSet`'s `__import__(...).GetSet()` resolves.
 - **Timing.** Everything above advances on **game time**: no wall-clock, and
@@ -481,8 +481,8 @@ too, but Quick Battle can do better because it knows the roster at start.
     destroyed-path.
   - Radii for placement come from the same source.
 - **Measure** one late group of 5 arriving in `combat_stress` with the
-  frame profiler. Spike log: `DAUNTLESS_PROFILE_SPIKES`, `docs/engine/frame-profiler.md`.
-  Record the result as a signal in `docs/engine/perf-register.md`. The
+  frame profiler. Spike log: `DAUNTLESS_PROFILE_SPIKES`, `docs/reference/engine/frame-profiler.md`.
+  Record the result as a signal in `docs/reference/engine/perf-register.md`. The
   capture also includes one first-of-class campaign warp-in (e.g. E2M0's
   Zhukov), because the radius seeder now loads a model inside `CreateShip`
   before the mission's own `ReplaceTexture`, and a look at `StartFiring`

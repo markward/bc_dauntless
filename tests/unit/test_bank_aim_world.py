@@ -13,7 +13,7 @@ StartFiring then immediately fail the per-tick re-check, or its
 visible beam could fire in the wrong direction because the emit
 point sat past the target on the strip.
 
-See ``docs/instrumented_experiments/hardpoint_handling_research.md``
+See ``docs/reference/instrumented_experiments/hardpoint_handling_research.md``
 section "Bug F" for the full investigation.
 """
 import math

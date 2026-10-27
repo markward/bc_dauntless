@@ -13,7 +13,7 @@
 
 **Tech Stack:** C++20, GLSL 410 core, GoogleTest, pytest, CMake (Debug tree at `build/` in the worktree).
 
-**Spec:** `docs/superpowers/specs/2026-10-20-layered-hull-damage-productisation.md`. This plan covers §3.4 ("Fill: port the decks-and-rooms interior … onto the inside wall") and decision 5 (interior fill now), which Mark took on 2026-10-20 ("yes continue" to the combined step). Look reference: `docs/engine/breach-interior-mapping-spike-findings.md` and branch `spike/breach-interior-mapping`, `breach.frag` (`ih_hash`, `ih_rand`, `ih_wall_exists`, `ih_room_light`, `ih_shade`). Perf context: `docs/engine/perf-register.md` P-12, scenario DP, C-101–C-104.
+**Spec:** `docs/superpowers/specs/2026-10-20-layered-hull-damage-productisation.md`. This plan covers §3.4 ("Fill: port the decks-and-rooms interior … onto the inside wall") and decision 5 (interior fill now), which Mark took on 2026-10-20 ("yes continue" to the combined step). Look reference: `docs/reference/engine/breach-interior-mapping-spike-findings.md` and branch `spike/breach-interior-mapping`, `breach.frag` (`ih_hash`, `ih_rand`, `ih_wall_exists`, `ih_room_light`, `ih_shade`). Perf context: `docs/reference/engine/perf-register.md` P-12, scenario DP, C-101–C-104.
 
 **Mark's words this answers:**
 - Sovereign after torpedo volleys: "whats not uneven is the wear THROUGH the ribs. theres also nothing behind that hole".
@@ -243,7 +243,7 @@
 ### Task 4: Measure, and record the verdict
 
 **Files:**
-- Modify: `docs/engine/perf-register.md`, `docs/superpowers/specs/2026-10-20-layered-hull-damage-productisation.md` (§1 Holes row, §3.4, §5)
+- Modify: `docs/reference/engine/perf-register.md`, `docs/superpowers/specs/2026-10-20-layered-hull-damage-productisation.md` (§1 Holes row, §3.4, §5)
 
 - [ ] **Step 1: Captures (machine idle).** Run the DP command from `perf-register.md` with `DAUNTLESS_PROFILE_GPU_FOCUS=space.opaque,space.carve_stencil,space.breach,space.hull_interior` twice, at the default distance and at 1.5 GU (`DAUNTLESS_DAMAGE_PREVIEW_DISTANCE_GU=1.5`). Pass `DAUNTLESS_DEV_SCREENSHOT=<png> DAUNTLESS_DEV_SCREENSHOT_AFTER_S=15` on both. Look at the screenshots: the impulse holes must show rooms, not space.
 - [ ] **Step 2: Record** C- rows and one signal per window (damaged-alive, dying), with `space.opaque` and `space.hull_interior` GPU means, against C-101 / C-102. Update P-12.

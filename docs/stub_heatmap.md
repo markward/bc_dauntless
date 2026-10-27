@@ -8,9 +8,9 @@ _Regression check: a resolved stub hit again (lastSeenOn > markedResolvedOn) is 
 
 _Implemented one? Type the date (`YYYY-MM-DD`) into its `markedResolvedOn` cell and commit — it moves to Resolved on the next regeneration, and is flagged again if it is ever hit after that date._
 
-> **Scouting notes:** `docs/engine/stub-scouting-2026-08-10.md` — what it would take to plug these, why the two risk tables below are currently hard to action, and one confirmed live bug. **Do not add prose to this file: regeneration deletes it.**
+> **Scouting notes:** `docs/reference/engine/stub-scouting-2026-08-10.md` — what it would take to plug these, why the two risk tables below are currently hard to action, and one confirmed live bug. **Do not add prose to this file: regeneration deletes it.**
 
-> **Constant-surface sweep closed 2026-08-31:** every `App.<NAME>` / `App.<CLASS>.<CONST>` row the q13 sweep covers was applied and moved to Resolved that day (marked `2026-08-31`, filter the Resolved table below on that date to see the set). What is left below is a DIFFERENT bug class — missing **methods**, missing module-level **instances** (`g_k*` colours), and missing **constructor/cast functions** — none of it is a constant-value lookup, so this sweep cannot close any more of it. See `docs/instrumented_experiments/2026-07-13-constant-dump-probe.md`.
+> **Constant-surface sweep closed 2026-08-31:** every `App.<NAME>` / `App.<CLASS>.<CONST>` row the q13 sweep covers was applied and moved to Resolved that day (marked `2026-08-31`, filter the Resolved table below on that date to see the set). What is left below is a DIFFERENT bug class — missing **methods**, missing module-level **instances** (`g_k*` colours), and missing **constructor/cast functions** — none of it is a constant-value lookup, so this sweep cannot close any more of it. See `docs/reference/instrumented_experiments/2026-07-13-constant-dump-probe.md`.
 
 | rank | owner | attr | total hits | coverage | lastSeenOn | markedResolvedOn |
 |---|---|---|---|---|---|---|

@@ -45,7 +45,7 @@ TEST(FrameTimerGpuTimer, ADisabledTimerHasNoGpuTimer) {
 
 // GPU timing is opt-in. With it on, the timer queries make the CPU wait for
 // the GPU every frame on Apple's GL, adding about the GPU frame time
-// (docs/engine/perf-register.md, M-6 / SIG-019), so a default capture must
+// (docs/reference/engine/perf-register.md, M-6 / SIG-019), so a default capture must
 // not issue them.
 TEST(FrameTimerGpuTimer, GpuTimingIsOffByDefault) {
     FrameTimer t;
@@ -71,7 +71,7 @@ TEST(FrameTimerGpuTimer, RequestingGpuTimingIsRemembered) {
     EXPECT_FALSE(t.gpu_requested());
 }
 
-// M-1 (docs/engine/perf-register.md): GL_TIME_ELAPSED cannot nest, so on
+// M-1 (docs/reference/engine/perf-register.md): GL_TIME_ELAPSED cannot nest, so on
 // Apple's GL only the top-level passes get a GPU figure. A GPU FOCUS names
 // nested scopes to time anyway: while one is open, its depth-1 ancestor's
 // query is suspended and resumed after, so the ancestor still totals every

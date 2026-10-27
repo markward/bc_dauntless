@@ -215,5 +215,5 @@ def test_no_reference_table_row_exceeds_its_budget():
         f"{REFERENCE_TABLE_ROW_BUDGET}-char budget:\n"
         + "\n".join(f"  line {n}: {c} chars -- {label}" for n, label, c in over)
         + "\n\nDo not raise the budget. Move the detail into a topic doc under "
-          "docs/engine/ (or a well-commented code site) and leave the row "
+          "docs/reference/engine/ (or a well-commented code site) and leave the row "
           "stating what is true now, plus the pointer.")

@@ -266,7 +266,7 @@ def render(attr_rows: "list", bool_rows: "list", meta: dict,
     # hand-added to the heatmap is destroyed on the next run. Scouting notes
     # therefore live in their own document, and this pointer has to be printed
     # here to survive.
-    L += ["> **Scouting notes:** `docs/engine/stub-scouting-2026-08-10.md` —"
+    L += ["> **Scouting notes:** `docs/reference/engine/stub-scouting-2026-08-10.md` —"
           " what it would take to plug these, why the two risk tables below are"
           " currently hard to action, and one confirmed live bug."
           " **Do not add prose to this file: regeneration deletes it.**", ""]
@@ -280,7 +280,7 @@ def render(attr_rows: "list", bool_rows: "list", meta: dict,
           " module-level **instances** (`g_k*` colours), and missing"
           " **constructor/cast functions** — none of it is a constant-value"
           " lookup, so this sweep cannot close any more of it. See"
-          " `docs/instrumented_experiments/2026-07-13-constant-dump-probe.md`.", ""]
+          " `docs/reference/instrumented_experiments/2026-07-13-constant-dump-probe.md`.", ""]
     L += ["| rank | owner | attr | total hits | coverage | lastSeenOn | markedResolvedOn |",
           "|---|---|---|---|---|---|---|"]
     for i, r in enumerate(openr, 1):

@@ -30,7 +30,7 @@ import engine.dev_mode as dev_mode
 # the SDK (sdk/Build/scripts/App.py:8513-8533 — RadarDisplay has no
 # SetRange method). 1000 was chosen by feel after a first-pass smoke
 # test at 8000 felt too tight; tracked for measurement in
-# docs/instrumented_experiments/2026-05-26-radar-range-calibration.md.
+# docs/reference/instrumented_experiments/2026-05-26-radar-range-calibration.md.
 DEFAULT_RANGE_GU = 1000.0
 
 _AFFILIATION_TO_KIND = {

@@ -17,7 +17,7 @@ load from the dev mission picker.
         DAUNTLESS_PROFILE_FRAMES=100000000 ./build/dauntless --developer
 
 Each step prints a `[felix_destroy]` line, which marks it in a profiler log.
-See docs/engine/perf-register.md (B2).
+See docs/reference/engine/perf-register.md (B2).
 """
 import math
 import os

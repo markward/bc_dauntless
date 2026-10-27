@@ -1,7 +1,7 @@
 """E1M1's skip prompt, end to end.
 
 Five independent breaks had to be fixed for this to work (see
-docs/engine/e1m1-skip-intro.md). This test drives the SDK's OWN
+docs/reference/engine/e1m1-skip-intro.md). This test drives the SDK's OWN
 SkipOpeningSequence through the real input pipeline: nothing in E1M1.py is
 stubbed or reimplemented, so it fails if any one of the five regresses.
 """

@@ -123,7 +123,7 @@ def record_bool(owner_type: str) -> None:
     `stub_hits.jsonl` records carry the narrow key — the generator must tolerate
     both shapes rather than assuming the wide one.
 
-    See docs/engine/stub-scouting-2026-08-10.md for the rows this blocks.
+    See docs/reference/engine/stub-scouting-2026-08-10.md for the rows this blocks.
     """
     if not ENABLED:
         return
@@ -154,7 +154,7 @@ def record_coercion(kind: str) -> None:
     (`engine/core/ids.py`) have `self._stub_owner`/`self._stub_name` in scope —
     pass them through and key on `(kind, owner, attr, site)`.
 
-    See docs/engine/stub-scouting-2026-08-10.md."""
+    See docs/reference/engine/stub-scouting-2026-08-10.md."""
     if not ENABLED:
         return
     try:

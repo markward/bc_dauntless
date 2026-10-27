@@ -22,7 +22,7 @@ weak and the measured numbers say so.
 
 ### What the profiler actually says
 
-From `docs/engine/frame-profiler.md`, 17-ship combat (`combat_stress`,
+From `docs/reference/engine/frame-profiler.md`, 17-ship combat (`combat_stress`,
 `DAUNTLESS_COMBAT_AVOID=0`):
 
 ```

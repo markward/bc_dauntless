@@ -20,7 +20,7 @@ Same "own + consolidate" architecture as the rest of the reimplementation:
 `engine/appc/lip_visemes.py`, `engine/appc/lip_data.py`) stay as the execution
 **backends** the sub-objects call — NOT dissolved or rewritten.
 
-Tier-0 authority: `docs/engine/characterclass-reference.md` §4.11 (Speaking &
+Tier-0 authority: `docs/reference/engine/characterclass-reference.md` §4.11 (Speaking &
 sound). Jaw mechanism: reverse-engineered and cross-validated
 (`project_lipsync_re_findings`, the ✅ SOLVED jaw block).
 

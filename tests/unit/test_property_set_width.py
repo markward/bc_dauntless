@@ -11,7 +11,7 @@ returned None.  The deferred TODO in
 ``docs/superpowers/deferred/2026-05-18-phaser-hardpoint-coverage.md``
 had noted this without realising it was being eaten by the data-bag.
 
-See ``docs/instrumented_experiments/hardpoint_handling_research.md``
+See ``docs/reference/instrumented_experiments/hardpoint_handling_research.md``
 section "Bug C" for the full investigation.
 """
 from engine.appc.properties import (

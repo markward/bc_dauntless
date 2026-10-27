@@ -11,7 +11,7 @@ Prior behaviour treated the strip as a 1D line along Right, so emit
 points landed inside the saucer body when Right pointed away from the
 hull rim.
 
-See ``docs/instrumented_experiments/hardpoint_handling_research.md``
+See ``docs/reference/instrumented_experiments/hardpoint_handling_research.md``
 section "Bug D" for the full investigation.
 """
 import math

@@ -268,7 +268,7 @@
     - "no merge to main without Mark".
 
     Also correct the "DamageTool & hull-damage gaps", "Rock class" and "Collision scuff decals" rows. Keep the CLAUDE.md style: one dense row.
-  - `docs/engine/damagetool-and-hull-damage-gaps.md`: a "Superseded" header pointing at the layered docs.
+  - `docs/reference/engine/damagetool-and-hull-damage-gaps.md`: a "Superseded" header pointing at the layered docs.
   - `docs/superpowers/specs/2026-10-21-layered-hull-damage-production-design.md`: a status line marking it implemented.
 - Carry-overs, each with its test:
   - the far-rock test pins rock albedo vs wreck paint (lower brightness bound);
@@ -282,7 +282,7 @@
 ### Task 10: Final measurement and the live-check list
 
 **Files:**
-- Modify: `docs/engine/perf-register.md` (new C-/SIG- rows; the P-12 verdict).
+- Modify: `docs/reference/engine/perf-register.md` (new C-/SIG- rows; the P-12 verdict).
 - Create: `docs/superpowers/specs/2026-10-22-layered-damage-live-check.md` (the list for Mark).
 
 - [ ] **Step 1: Captures (machine idle).**

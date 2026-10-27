@@ -2,7 +2,7 @@
 
 Status: draft for Mark's review (his answers folded in), 2026-10-26. Phase 1 of the living galaxy
 (memory: living-galaxy vision). Builds on home stations
-(`docs/engine/home-stations.md`) and its owner tags (`engine/systems/owners.py`).
+(`docs/reference/engine/home-stations.md`) and its owner tags (`engine/systems/owners.py`).
 
 ## 1. Intent
 
@@ -184,7 +184,7 @@ does (my call).
 
 ## 8. Cost
 
-Measured, not assumed: a frame-profiler capture (`docs/engine/frame-profiler.md`)
+Measured, not assumed: a frame-profiler capture (`docs/reference/engine/frame-profiler.md`)
 of free roam at Starbase 12 with the service running versus not, reported
 with the scene line. Docked shuttles cost nothing by construction (§5.2).
 The capture needs a live launch: **ask Mark before launching** (Mark,

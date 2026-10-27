@@ -23,7 +23,7 @@ it inferred engine internals from tier 1 when tier 3 already had the answer.
 |---|---|---|
 | 1 | `sdk/Build/scripts/**` (game scripts) | what the engine is *asked* to do |
 | 2 | `sdk/Build/scripts/App.py` (SWIG) | what methods *exist* |
-| 3 | `docs/gameplay/combat-and-damage.md` (RE'd from `stbc.exe`) | what the engine *actually does inside* |
+| 3 | `docs/reference/gameplay/combat-and-damage.md` (RE'd from `stbc.exe`) | what the engine *actually does inside* |
 
 Tier 3 outranks tier 1 for behaviour. Where tier 3 is silent or marks a field
 `(?)`, this spec says so rather than inventing a mechanism.
@@ -283,7 +283,7 @@ hazard we would be creating. It is also our **sign-off gate**: once wired, firin
 phased plasma in E7M1 should occasionally destroy a tube with the correct dialogue.
 
 Probe: `tools/probes/q12_torpedo_events.py` /
-`docs/instrumented_experiments/2026-07-12-torpedo-event-probe.md`.
+`docs/reference/instrumented_experiments/2026-07-12-torpedo-event-probe.md`.
 
 ### `events.py` hardening — record and warn, never refuse
 

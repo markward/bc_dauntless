@@ -139,4 +139,4 @@ every listed WAV must pass the native-decoder format check. The
   `patches.json` replacement voices).
 - `engine/appc/ai.py` (`CharacterAction.Completed` hook).
 - `engine/appc/localization.py` (`replace` merge in `_build_database`).
-- `docs/engine/dauntless-crew-dialogue.md` (section on patches).
+- `docs/reference/engine/dauntless-crew-dialogue.md` (section on patches).

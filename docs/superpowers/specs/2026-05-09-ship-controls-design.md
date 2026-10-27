@@ -344,5 +344,5 @@ Add to `native/src/host/docs/deferred_work.md` and the renderer-host spec:
 
 When a deferred-work item is added, removed, or moves on/off the list,
 update both this spec's "Deferred / future work" section and the
-matching `docs/architecture/sub_project_status.md` row if a headline
+matching `docs/reference/architecture/sub_project_status.md` row if a headline
 status changes.

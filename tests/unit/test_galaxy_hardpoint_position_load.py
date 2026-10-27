@@ -7,7 +7,7 @@ This is the "the bug class is gone" integration check.  If any
 data-bag for any property the hardpoint touches, ``GetPosition``
 returns None for that template and this test fails.
 
-See ``docs/instrumented_experiments/hardpoint_handling_research.md``
+See ``docs/reference/instrumented_experiments/hardpoint_handling_research.md``
 sections "Bug A" and "Bug G".
 """
 import importlib

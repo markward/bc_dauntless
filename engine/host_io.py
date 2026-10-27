@@ -963,7 +963,7 @@ def profiler_set_gpu_enabled(enabled: bool) -> None:
 
     On Apple's GL the queries make the CPU wait for the GPU every frame, which
     adds about the GPU frame time, so a GPU-timed capture is not a frame-time
-    measurement (docs/engine/perf-register.md, M-6). Turn it on only to split
+    measurement (docs/reference/engine/perf-register.md, M-6). Turn it on only to split
     GPU cost between passes.
     """
     fn = getattr(_h, "profiler_set_gpu_enabled", None)

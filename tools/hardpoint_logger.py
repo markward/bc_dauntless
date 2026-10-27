@@ -3,7 +3,7 @@
 #
 # Appended to game/scripts/App.py by tools/setup.py - captures per-phaser-
 # bank hardpoint geometry for the hardpoint-scale investigation (see
-# docs/instrumented_experiments/2026-05-15-hardpoint-scale-investigation.md).
+# docs/reference/instrumented_experiments/2026-05-15-hardpoint-scale-investigation.md).
 #
 # Hooks UtopiaModule.GetGameTime (per-tick heartbeat). Once per ship-spawn
 # we walk the player ship's PhaserSystem subsystems and dump:

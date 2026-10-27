@@ -1,7 +1,7 @@
 ###############################################################################
 # q10_battery_drain.py
 #
-# Question(s): Q1-Q4 from docs/instrumented_experiments/2026-07-06-battery-drain-order.md
+# Question(s): Q1-Q4 from docs/reference/instrumented_experiments/2026-07-06-battery-drain-order.md
 #   Q1 Does the backup battery drain while main > 0?
 #   Q2 Measured drain rates (main / backup) pre-tractor vs tractor-held.
 #   Q3 Do the sliders move during the run? (AdjustPower throttling)

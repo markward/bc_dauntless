@@ -115,7 +115,7 @@ stbc-reference MCP was unreachable 2026-10-03).
   never re-checks, so a track lost inside that second still gets a button.
 - **Live risk:** E2M1's Karoon drifts into the asteroids; it must keep its Hail button and
   remain scannable (decision 11).
-- **Cost:** measure with the frame profiler (`docs/engine/frame-profiler.md`,
+- **Cost:** measure with the frame profiler (`docs/reference/engine/frame-profiler.md`,
   `engine.dev_missions.combat_stress`), CPU only — GPU timing is dead on this Mac.
 - **The asteroids roadmap** (`2026-09-30-modern-asteroids-roadmap.md`) already marks its
   sub-project 5 as promoted to this project (merged 2026-10-04). Rock fields now consist of
@@ -127,7 +127,7 @@ stbc-reference MCP was unreachable 2026-10-03).
 
 - **Oracle measurements — parked until after first release** (Mark, 2026-10-07: "playing well"; measure only if players report a mismatch with BC). They would close: does a known contact stay listed out
   of range; the Unknown caption; the dwell and half-range band; radar disc range
-  (`docs/instrumented_experiments/2026-05-26-radar-range-calibration.md`, still pending).
+  (`docs/reference/instrumented_experiments/2026-05-26-radar-range-calibration.md`, still pending).
 - **Tuning debts already recorded:** ~~`FALLBACK_RANGE_GU = 30000` (18 of 52 hardpoints
   author no sensor range)~~ and ~~station cloak bubbles~~ — paid by sub-project 5 (only 10
   stock hardpoints author no sensors: 8 rocks plus commarray and commlight; 7 more author

@@ -14,7 +14,7 @@ HEADER = '''"""App constant values measured from the ORIGINAL GAME.  GENERATED -
 
 Regenerate with:  uv run python tools/gen_app_constants.py
 Source:           tools/probes/results/ghidra_export/stbc_constants.csv
-Provenance:       docs/instrumented_experiments/2026-07-13-constant-dump-probe.md
+Provenance:       docs/reference/instrumented_experiments/2026-07-13-constant-dump-probe.md
 
 Every value here was read out of a running stbc.exe by probe q13.  None is
 inferred from the SDK and none is invented.  `App.py` applies this table via

@@ -2,7 +2,7 @@
 
 **Status:** implemented on `spike/damage-redesign` (Tasks 1–9, 2026-10-22);
 the final measurement (§2.6) is pending, final verdict: see
-`docs/engine/perf-register.md` P-12. As built and backlog: §10 of the parent
+`docs/reference/engine/perf-register.md` P-12. As built and backlog: §10 of the parent
 design. Not merged to main.
 
 Design, 2026-10-22. It follows phases 1–3 of

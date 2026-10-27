@@ -102,7 +102,7 @@ class _RadarDisplay:
         self._minimizable: bool = True
         self._visible: bool = True
         # Range chosen by feel; original BC value is opaque (closed
-        # Appc.dll). See docs/instrumented_experiments/2026-05-26-radar-range-calibration.md
+        # Appc.dll). See docs/reference/instrumented_experiments/2026-05-26-radar-range-calibration.md
         # for the planned measurement experiment.
         self._range_gu: float = 1000.0
 

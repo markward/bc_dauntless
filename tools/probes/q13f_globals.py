@@ -1,7 +1,7 @@
 ###############################################################################
 # q13f_globals -- VEIN 4: the Appc.globals namespace (engine globals/sentinels)
 #
-# Question(s): docs/instrumented_experiments/2026-07-13-abi-surface-probe.md
+# Question(s): docs/reference/instrumented_experiments/2026-07-13-abi-surface-probe.md
 #              dir(Appc.globals) enumerates every engine global -- the g_k*
 #              singletons plus sentinels like ANY_TARGET / INVALID_DESTINATION
 #              that our shim must match. Dump each name, its type, and its scalar
