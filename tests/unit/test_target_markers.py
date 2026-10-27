@@ -31,3 +31,22 @@ def test_js_emits_marker_span():
     js = (root / "native/assets/ui-cef/js/target_list.js").read_text()
     assert "target-list__marker--" in js
     assert "row.marker" in js
+
+
+def test_target_kind_accepted():
+    target_markers.clear()
+    target_markers.set_marker("Galor-1", "target")
+    assert target_markers.marker_for("Galor-1") == "target"
+    with pytest.raises(ValueError):
+        target_markers.set_marker("Galor-1", "bogus")
+    target_markers.clear()
+
+
+def test_js_renders_target_crosshair_and_keeps_shield():
+    root = pathlib.Path(__file__).resolve().parents[2]
+    js = (root / "native/assets/ui-cef/js/target_list.js").read_text()
+    assert "row.marker === 'target'" in js
+    assert "target-list__marker--target" in js
+    assert "row.marker === 'protect'" in js
+    i = js.index("row.marker === 'target'")
+    assert "<svg" in js[i:i + 900]

@@ -28,6 +28,14 @@
     {
       "key": "SaffiQBTimeUp1",
       "text": "We have run out of time. Ending simulation."
+    },
+    {
+      "key": "SaffiQBProtectedLostAll1",
+      "text": "The ships we were assigned to protect have been destroyed. Ending simulation."
+    },
+    {
+      "key": "SaffiQBSurvived1",
+      "text": "Time is up. We held them off. Ending simulation."
     }
   ]
 }

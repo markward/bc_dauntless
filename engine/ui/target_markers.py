@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Dict, Optional
 
-KINDS = frozenset({"protect"})
+KINDS = frozenset({"protect", "target"})
 
 _markers: Dict[str, str] = {}
 

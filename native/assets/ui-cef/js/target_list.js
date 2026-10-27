@@ -133,11 +133,18 @@ function setTargetList(state) {
             : '<span class="target-list__caret target-list__caret--empty"></span>';
         // Marker (e.g. "protect"): inline shield in the row's text colour.
         // Only known kinds are emitted, so the class name is never raw input.
+        // "target": a crosshair (ring + four ticks), same box and colour.
         const markerHtml = (row.marker === 'protect')
             ? '<span class="target-list__marker target-list__marker--' + row.marker + '">'
               + '<svg viewBox="0 0 10 12" width="1em" height="1.2em" fill="currentColor"'
               + ' aria-hidden="true"><path d="M5 0.5 L9.5 2 V6 C9.5 8.8 7.5 10.8 5 11.5'
               + ' C2.5 10.8 0.5 8.8 0.5 6 V2 Z"/></svg></span>'
+            : (row.marker === 'target')
+            ? '<span class="target-list__marker target-list__marker--target">'
+              + '<svg viewBox="0 0 10 12" width="1em" height="1.2em" fill="none"'
+              + ' stroke="currentColor" stroke-width="1" aria-hidden="true">'
+              + '<circle cx="5" cy="6" r="3"/>'
+              + '<path d="M5 0.5 V3 M5 9 V11.5 M0 6 H2 M8 6 H10"/></svg></span>'
             : '';
         html += '<div class="target-list__row target-list__row--' + aff + chosen + expandedCls + '"'
               +   ' onclick="' + targetAttr + '">'

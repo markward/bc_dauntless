@@ -24,3 +24,12 @@ def test_text_only_line_shows_subtitle_and_has_duration():
     sub = App.TopWindow_GetTopWindow().FindMainWindow(App.MWT_SUBTITLE)
     snap = sub._snapshot(now=0.0)
     assert snap["speech"] == _TEXT
+
+
+def test_new_saffi_lines_present():
+    strings = tgl_reader._parse(g.build(), source="test").strings
+    assert strings["SaffiQBProtectedLostAll1"] == (
+        "The ships we were assigned to protect have been destroyed. "
+        "Ending simulation.")
+    assert strings["SaffiQBSurvived1"] == (
+        "Time is up. We held them off. Ending simulation.")
