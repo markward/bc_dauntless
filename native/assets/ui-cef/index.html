@@ -23,6 +23,7 @@
     <link rel="stylesheet" href="css/star_map.css">
     <link rel="stylesheet" href="css/first_run.css">
     <link rel="stylesheet" href="css/mods_screen.css">
+    <link rel="stylesheet" href="css/boot_notice.css">
     <link rel="stylesheet" href="css/perf_monitor.css">
 </head>
 <body>
@@ -94,6 +95,24 @@
                 <button type="button" class="cp-done-button" id="fr-continue"
                         onclick="dauntlessEvent('first-run/continue')">Continue</button>
             </div>
+        </div>
+    </section>
+
+    <!-- Boot notice splash: Activision's required notice (SDK licence,
+         "New Game Materials"), shown before the bridge on every launch.
+         setBootNotice(payload|null) drives it; engine/ui/boot_notice_panel.py
+         is the state machine and owns the fade. Event:
+         dauntlessEvent('boot-notice/shown'). -->
+    <section id="boot-notice">
+        <div class="bn-text" id="bn-text">
+            <div class="bn-lockup">
+                <div class="bn-eyebrow">
+                    <span class="bn-spread"><span>B</span><span>R</span><span>I</span><span>D</span><span>G</span><span>E</span><span class="bn-gap"></span><span>C</span><span>O</span><span>M</span><span>M</span><span>A</span><span>N</span><span>D</span><span>E</span><span>R</span></span>
+                </div>
+                <div class="bn-wordmark">DAUNTLESS</div>
+            </div>
+            <div class="bn-notice" id="bn-notice"></div>
+            <div class="bn-credit" id="bn-credit"></div>
         </div>
     </section>
 
@@ -1158,6 +1177,7 @@
     <script src="js/engineering_power.js"></script>
     <script src="js/first_run.js"></script>
     <script src="js/mods_screen.js"></script>
+    <script src="js/boot_notice.js"></script>
     <script src="js/perf_monitor.js"></script>
     <script src="js/modal_layer.js"></script>
 </body>

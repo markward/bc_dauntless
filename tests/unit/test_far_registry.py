@@ -561,3 +561,26 @@ def test_reset_prefetches_again_on_the_next_push():
     far_tier.reset(None)
     far_tier.reconcile_with(r, None, _flagged())
     assert _names(r).count("far_prefetch_atlases") == 2
+
+
+def test_prewarm_pushes_the_catalogue_so_the_first_reconcile_does_not():
+    """The catalogue push (every near rock's two LOD models) cost 1.08 s of
+    the first game frame on Quick Battle boot (spike capture 2026-10-27);
+    prewarm does it during the load, behind the boot notice."""
+    far_tier.reset(None)
+    r = _R()
+    far_tier.prewarm(r)
+    assert _names(r).count("far_set_catalogue") == 1
+    loads = _names(r).count("load_model")
+    far_tier.reconcile_with(r, None, {})
+    assert _names(r).count("far_set_catalogue") == 1
+    assert _names(r).count("load_model") == loads
+
+
+def test_prewarm_never_raises():
+    far_tier.reset(None)
+
+    class _Boom:
+        def __getattr__(self, name):
+            raise RuntimeError("renderer down")
+    far_tier.prewarm(_Boom())

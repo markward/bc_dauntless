@@ -10286,7 +10286,8 @@ def _run_preboot_panel(panel, view_w=1280, view_h=720):
             # here means there is no window -- however unlikely -- where a
             # reload could call back into a panel whose screen has ended.
             _set_load_end(lambda: None)
-        if _h is not None:
+        # None = the panel stays up past this loop (a held boot notice).
+        if _h is not None and panel.teardown_script is not None:
             try:
                 _h.cef_execute_javascript(panel.teardown_script)
             except Exception as _e:
@@ -10330,6 +10331,82 @@ def _run_first_run_screen(resolution, resolver=None, view_w=1280, view_h=720):
     panel = FirstRunPanel(resolution, resolver=resolver)
     _run_preboot_panel(panel, view_w, view_h)
     return panel.resolution
+
+
+def _boot_notice_wanted(environ, max_ticks, cef_ready, modules=None) -> bool:
+    """Whether run() shows the boot notice splash.
+
+    Every interactive launch, the first included. Never headless
+    (OPEN_STBC_HOST_HEADLESS), never for a caller bounding the run with
+    max_ticks (tests, harnesses), never under pytest, and never without a
+    live CEF page to draw it into -- that loop could only ever time out.
+    --smoke-check returns before run() is reached.
+    """
+    if modules is None:
+        modules = sys.modules
+    if not cef_ready:
+        return False
+    if environ.get("OPEN_STBC_HOST_HEADLESS"):
+        return False
+    if max_ticks is not None:
+        return False
+    return "pytest" not in modules
+
+
+def _begin_boot_notice(view_w=1280, view_h=720, clock=None):
+    """Fade Activision's required notice in (engine/ui/boot_notice_panel.py)
+    and hand back with it held at full opacity, so boot can load the game
+    behind it. Returns the held panel for _finish_boot_notice, or None when
+    there is nothing to finish: the page never acknowledged it (logged), or
+    the window closed.
+
+    Between the two calls nothing pumps the window: it keeps presenting the
+    last frame, which is the finished fade-in. The loop itself is
+    `_run_preboot_panel`.
+    """
+    import time as _time
+    from engine.ui.boot_notice_panel import ACK_TIMEOUT_S, BootNoticePanel
+
+    panel = BootNoticePanel(
+        clock=clock if clock is not None else _time.monotonic, hold=True)
+    _run_preboot_panel(panel, view_w, view_h)
+    outcome = panel.outcome
+    if outcome == "unshown":
+        print("[boot-notice] the page never showed the notice within "
+              "%.0f s -- booting without it" % ACK_TIMEOUT_S, file=sys.stderr)
+    return panel if outcome == "holding" else None
+
+
+def _set_boot_audio_muted(muted: bool) -> None:
+    """Silence every sound category while the game loads behind the boot
+    notice. The SDK starts sounds during the load (LoadBridge.py:213 plays
+    AmbBridge) and the screen is showing the logo meanwhile. The backend
+    re-applies a category gain to sounds already playing, so a loop started
+    under the mute is heard at its own gain once unmuted. Restores 1.0: no
+    volume setting drives these gains (test_nothing_else_owns_the_category_gains).
+    Music only plays from the game loop, so it needs nothing here."""
+    if _audio_mod is None:
+        return
+    gain = 0.0 if muted else 1.0
+    for category in ("SFX", "Voice", "Interface"):
+        try:
+            _audio_mod.set_category_gain(category, gain)
+        except Exception as _e:
+            dev_mode.log_swallowed("boot notice audio mute", _e)
+
+
+def _finish_boot_notice(panel, view_w=1280, view_h=720):
+    """The load behind the notice is done: play the rest of the 2 s hold (if
+    the load was shorter) and the fade-out. Returns the panel's outcome:
+    "shown", or None if the window closed.
+
+    Must run BEFORE run() registers its own CEF event and load-end handlers:
+    `_run_preboot_panel` installs its own and leaves a no-op load-end
+    handler behind.
+    """
+    panel.release()
+    _run_preboot_panel(panel, view_w, view_h)
+    return panel.outcome
 
 
 def _resolve_paths_or_report(view_w=1280, view_h=720, *, cef_ready=True):
@@ -10630,6 +10707,24 @@ def run(mission_name: Optional[str] = None,
             r.shutdown()
             return 0
 
+    # Activision's required notice (SDK licence, "New Game Materials"):
+    # after the first-run and Mods screens, so it shows on every launch. It
+    # fades in here and HOLDS while the SDK and the mission load behind it;
+    # _finish_boot_notice fades it out just before run() takes over the CEF
+    # handlers, so the bridge follows the fade-out instead of a black hang.
+    # _notice_ended_at times the gap from its fade-out to the first game
+    # frame (logged once, below r.frame()).
+    _boot_notice = None
+    _notice_ended_at = None
+    if _boot_notice_wanted(_os.environ, max_ticks, _cef_ready):
+        _boot_notice = _begin_boot_notice(_CEF_VIEW_W, _CEF_VIEW_H)
+        if r.should_close():
+            r.cef_shutdown()
+            r.shutdown()
+            return 0
+        if _boot_notice is not None:
+            _set_boot_audio_muted(True)
+
     _prewarm_sdk_modules()
 
     import App
@@ -10897,6 +10992,10 @@ def run(mission_name: Optional[str] = None,
             controller.session = controller.loader.load_quickbattle()
         else:
             controller.session = controller.loader.load(mission_name)
+        # The far tier's catalogue push (every near rock's LOD models) is a
+        # once-per-session cost the first frame used to pay: do it now, while
+        # the boot notice covers the load.
+        _far_tier.prewarm(r)
         # The SDK's CreateAndPopulateBridgeSet plays AmbBridge at load
         # (LoadBridge.py:213); silence it now since the initial view is space.
         # bridge_ambient remains the sole authority on when the hum plays.
@@ -11626,6 +11725,20 @@ def run(mission_name: Optional[str] = None,
             if view == "exterior":
                 from engine.appc.top_window import TopWindow_GetTopWindow
                 TopWindow_GetTopWindow().ForceTacticalVisible()
+
+        # Everything up to here loaded behind the boot notice: fade it out.
+        # Its pump loop installs CEF handlers of its own (see
+        # _finish_boot_notice), so run()'s are put back after it, and the
+        # frame clock restarts so the fade is not replayed as sim time.
+        if _boot_notice is not None:
+            _finish_boot_notice(_boot_notice, _CEF_VIEW_W, _CEF_VIEW_H)
+            _set_boot_audio_muted(False)
+            if _cef_set_event_handler is not None:
+                _cef_set_event_handler(registry.dispatch)
+            if _cef_set_load_end is not None:
+                _cef_set_load_end(_on_cef_load_end)
+            _previous_real_time = time.monotonic()
+            _notice_ended_at = _previous_real_time
 
         while not r.should_close():
             # Frame profiler: phase timeline for the Python half of the frame.
@@ -13418,6 +13531,12 @@ def run(mission_name: Optional[str] = None,
 
             frame_profiler.mark("r.frame")
             r.frame()
+            if _notice_ended_at is not None:
+                import time as _time
+                print("[boot-notice] first game frame %.2f s after the notice "
+                      "ended" % (_time.monotonic() - _notice_ended_at),
+                      file=sys.stderr, flush=True)
+                _notice_ended_at = None
             if motion_trace.enabled():
                 _mt_interp = locals().get("_interp_player")
                 motion_trace.record(
