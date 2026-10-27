@@ -9,6 +9,8 @@ comes back as spelled, which is the same file; on Linux it must come back as
 the on-disk spelling, because the spelled path does not exist there.
 """
 
+from pathlib import Path
+
 from engine.core import case_paths
 
 
@@ -65,3 +67,29 @@ def test_game_asset_finds_a_differently_cased_stock_file(tmp_path, monkeypatch):
     # A path that exists in no case comes back exactly as spelled.
     assert (paths.game_asset("data/Models/Missing.nif")
             == tmp_path / "data/Models/Missing.nif")
+
+
+def test_bare_sdk_import_registers_under_the_on_disk_spelling(tmp_path,
+                                                              monkeypatch):
+    """`import DBridgeProperties` from Bridge/ reaches the Python 1.5
+    implicit-relative fallback, which also registers the module under its
+    dotted name. That name must follow the file on disk
+    (`Bridge.dbridgeproperties`), not the import's spelling: on macOS the old
+    rglob echoed the spelling back, so one file could become two modules
+    under two names; on Linux it found nothing at all.
+
+    Driven through tools/mission_harness.py's finder (the game's copy, which
+    resolves its SDK root at use); test_sdk_finder_twins_stay_in_sync keeps
+    tests/conftest.py's copy identical to it.
+    """
+    import tools.mission_harness as harness
+    from engine import mods
+    on_disk = tmp_path / "Bridge" / "zzcaseprobeprops.py"
+    on_disk.parent.mkdir()
+    on_disk.write_text("")
+    monkeypatch.setattr(harness, "_sdk_scripts", lambda: tmp_path)
+    monkeypatch.setattr(mods, "_INDEX", None)      # stock only, no mods
+    spec = harness._SDKFinder().find_spec("ZZCaseProbeProps", None)
+    assert spec is not None
+    assert _same_file(Path(spec.origin), on_disk)
+    assert spec.loader.also_register_as == "Bridge.zzcaseprobeprops"
