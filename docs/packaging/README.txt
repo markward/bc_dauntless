@@ -114,6 +114,7 @@ WHAT'S IN THIS BUILD
 STILL TO COME
 -------------
 
+  - Optimisations to improve performance
   - An overhaul of the Sovereign bridge.
   - A universe that feels more alive in free roam.
   - More victory conditions in Quick Battle.
