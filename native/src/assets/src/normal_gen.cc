@@ -109,6 +109,7 @@ struct AuthoredSmoothing {
     std::vector<AuthoredSegment>            segments;
     std::vector<std::vector<std::uint32_t>> by_shape;  // usable segment ids per shape
     std::vector<bool>                       recorded;  // per shape: has a record
+    std::uint32_t                           original_vertices = 0;  // before the repair; later ones it inserted
     bool                                    joins_hard = false;
     SmoothingReport*                        report = nullptr;  // rows parallel to `segments`
 };
@@ -189,6 +190,7 @@ void smooth_normals_impl(VertexChannels& ch, float crease_deg,
                 std::vector<std::uint32_t> moved = std::move(fb->second);
                 forbid.erase(fb);
                 auto& into = forbid[ra];
+                if (into.size() < moved.size()) std::swap(into, moved);  // append the shorter
                 into.insert(into.end(), moved.begin(), moved.end());
             }
         }
@@ -244,8 +246,10 @@ void smooth_normals_impl(VertexChannels& ch, float crease_deg,
         };
 
         // An edge matches a segment of its shape when its ends ARE the
-        // segment's ends, else when both lie on it (a T-junction piece). The
-        // collinear test only runs for edges the exact lookup misses.
+        // segment's ends, else when it is a T-junction piece: both ends lie on
+        // the segment and the faces' corners include a vertex the repair
+        // inserted (every piece it cuts has one). An edge between original
+        // vertices that misses the exact lookup is game-only: crease rule.
         std::map<std::array<std::uint32_t, 3>, std::uint32_t> exact;
         for (std::uint32_t k = 0; k < au.segments.size(); ++k) {
             const AuthoredSegment& seg = au.segments[k];
@@ -256,9 +260,11 @@ void smooth_normals_impl(VertexChannels& ch, float crease_deg,
                                static_cast<std::uint32_t>(std::max(wa, wb))}, k);
         }
         using EdgeKey = std::pair<std::uint32_t, std::uint32_t>;
-        auto match = [&](const EdgeKey& key, std::uint32_t shape) -> std::int64_t {
+        auto exact_match = [&](const EdgeKey& key, std::uint32_t shape) -> std::int64_t {
             const auto it = exact.find({shape, key.first, key.second});
-            if (it != exact.end()) return it->second;
+            return it == exact.end() ? -1 : static_cast<std::int64_t>(it->second);
+        };
+        auto piece_match = [&](const EdgeKey& key, std::uint32_t shape) -> std::int64_t {
             for (std::uint32_t k : au.by_shape[shape]) {
                 const AuthoredSegment& seg = au.segments[k];
                 if (on_segment(seg, weld_pos[key.first]) && on_segment(seg, weld_pos[key.second]))
@@ -271,21 +277,41 @@ void smooth_normals_impl(VertexChannels& ch, float crease_deg,
         // decides; an unlisted edge keeps the crease rule.
         std::vector<std::vector<EdgeKey>> pieces(au.segments.size());  // matched edges per segment
         std::vector<std::pair<std::uint32_t, std::uint32_t>> hard_corners;
+        auto inserted = [&](const EdgeUse& u) {
+            return m.indices[u.ca] >= au.original_vertices || m.indices[u.cb] >= au.original_vertices;
+        };
+        // This edge's lookups per shape, each worked out once: the exact
+        // segment, and (only if some pair needs it) the piece segment.
+        struct Lookup { std::uint32_t shape; std::int64_t exact, piece; bool piece_done; };
+        auto record_piece = [&](std::int64_t k, const EdgeKey& key) {
+            if (k < 0) return;
+            auto& list = pieces[k];
+            if (std::find(list.begin(), list.end(), key) == list.end()) list.push_back(key);
+        };
         for (const auto& [key, uses] : edges) {
-            std::vector<std::pair<std::uint32_t, std::int64_t>> matched;  // shape -> segment, this edge
+            std::vector<Lookup> lookups;
             for (std::size_t i = 0; i < uses.size(); ++i) {
                 for (std::size_t j = i + 1; j < uses.size(); ++j) {
                     const std::uint32_t shape = tri_shape(uses[i].tri);
                     if (shape != tri_shape(uses[j].tri) || !au.recorded[shape]) continue;
-                    auto it = std::find_if(matched.begin(), matched.end(),
-                                           [&](const auto& sk) { return sk.first == shape; });
-                    if (it == matched.end()) {
-                        it = matched.insert(matched.end(), {shape, match(key, shape)});
-                        if (it->second >= 0) pieces[it->second].push_back(key);
+                    auto it = std::find_if(lookups.begin(), lookups.end(),
+                                           [&](const Lookup& l) { return l.shape == shape; });
+                    if (it == lookups.end()) {
+                        it = lookups.insert(lookups.end(), {shape, exact_match(key, shape), -1, false});
+                        record_piece(it->exact, key);
                     }
-                    if (it->second < 0) {
+                    std::int64_t seg = it->exact;
+                    if (seg < 0 && (inserted(uses[i]) || inserted(uses[j]))) {
+                        if (!it->piece_done) {
+                            it->piece = piece_match(key, shape);
+                            it->piece_done = true;
+                            record_piece(it->piece, key);
+                        }
+                        seg = it->piece;
+                    }
+                    if (seg < 0) {
                         join(uses[i], uses[j], false);
-                    } else if (au.segments[it->second].hard) {
+                    } else if (au.segments[seg].hard) {
                         hard_corners.push_back({uses[i].ca, uses[j].ca});
                         hard_corners.push_back({uses[i].cb, uses[j].cb});
                     } else {
@@ -596,28 +622,29 @@ void generate_normals_across_shapes(std::vector<NormalGenShape>& shapes, float c
         }
         for (std::uint32_t idx : m.indices) all.indices.push_back(base + idx);
     }
-    if (report) report->edges.clear();
-    if (all.vertices.empty()) return;
-
     // Authored segments, taken to the shared space BEFORE the repair splits
-    // any of them. One report row per segment, in the same order.
+    // any of them. One report row per authored edge, in the same order, even
+    // for a shape with no mesh or a pass with no geometry (found = false).
     AuthoredSmoothing authored;
     authored.by_shape.resize(shapes.size());
     authored.recorded.assign(shapes.size(), false);
+    authored.original_vertices = static_cast<std::uint32_t>(all.vertices.size());
     authored.joins_hard = authored_joins_hard;
     authored.report = report;
+    if (report) report->edges.clear();
     for (std::size_t s = 0; s < shapes.size(); ++s) {
-        if (!shapes[s].mesh || !shapes[s].authored) continue;
-        authored.recorded[s] = true;
-        const auto& verts = shapes[s].mesh->vertices;
+        if (!shapes[s].authored) continue;
+        const MeshCpu* mesh = shapes[s].mesh;
+        authored.recorded[s] = mesh != nullptr;
         const glm::mat4& xf = shapes[s].to_model;
         const auto shape = static_cast<std::uint32_t>(s);
         auto add = [&](const std::vector<std::array<std::uint16_t, 2>>& pairs, bool hard) {
             for (const auto& [a, b] : pairs) {
-                AuthoredSegment seg{shape, {}, {}, hard, a < verts.size() && b < verts.size()};
+                AuthoredSegment seg{shape, {}, {}, hard,
+                                    mesh && a < mesh->vertices.size() && b < mesh->vertices.size()};
                 if (seg.usable) {
-                    seg.a = to_shared(xf, verts[a].position);
-                    seg.b = to_shared(xf, verts[b].position);
+                    seg.a = to_shared(xf, mesh->vertices[a].position);
+                    seg.b = to_shared(xf, mesh->vertices[b].position);
                     seg.usable = seg.a != seg.b;
                 }
                 if (seg.usable)
@@ -629,6 +656,7 @@ void generate_normals_across_shapes(std::vector<NormalGenShape>& shapes, float c
         add(shapes[s].authored->hard, true);
         add(shapes[s].authored->soft, false);
     }
+    if (all.vertices.empty()) return;
     const bool any_recorded =
         std::find(authored.recorded.begin(), authored.recorded.end(), true) != authored.recorded.end();
 
