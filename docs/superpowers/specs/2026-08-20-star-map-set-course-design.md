@@ -5,7 +5,7 @@ live in-game interface: a 3D sector map, rendered in a windowed panel, that
 replaces the two-column list in the Helm → Set Course modal.
 
 Background and the data-model findings behind the map live in
-[`docs/sector-cartography.md`](../../sector-cartography.md). This spec covers
+[`docs/reference/gameplay/sector-cartography.md`](../../reference/gameplay/sector-cartography.md). This spec covers
 only the in-game interface.
 
 ---
@@ -37,7 +37,7 @@ set-module, call `on_course_set`, close.
 
 ## 2. Rendering: native GL, not WebGL
 
-`docs/sector-cartography.md` §6 recommended CEF + three.js and explicitly
+`docs/reference/gameplay/sector-cartography.md` §6 recommended CEF + three.js and explicitly
 argued against native GL. **That recommendation is superseded**, because a
 constraint landed after it was written.
 

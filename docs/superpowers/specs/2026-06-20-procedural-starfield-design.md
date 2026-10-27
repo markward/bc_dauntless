@@ -2,7 +2,7 @@
 
 **Status:** design approved, pending implementation plan
 **Branch:** `feat/procedural-starfield`
-**Related:** [`docs/sector-cartography.md`](../../sector-cartography.md) (findings + the PoC that
+**Related:** [`docs/reference/gameplay/sector-cartography.md`](../../reference/gameplay/sector-cartography.md) (findings + the PoC that
 extracted the appearance metadata this feature consumes)
 
 ## 1. Summary
@@ -30,7 +30,7 @@ It is a **Modern VFX** toggle (default **on**); off is byte-identical stock BC.
 - The **MetaNebula hazard volumes** (Vesuvi/Belaruz fly-through gameplay) — separate
   system, not this pass.
 - Realistic inter/intra-system scale and dynamic warping (a later phase; see
-  `docs/sector-cartography.md` §7).
+  `docs/reference/gameplay/sector-cartography.md` §7).
 - Volumetric raymarched nebulae (considered, rejected as overkill/perf risk for
   non-fly-through background).
 

@@ -3,7 +3,7 @@
 **Status:** design approved, pending implementation plan
 **Branch:** continues from `feat/procedural-starfield` (reuses its shader/pass)
 **Related:**
-- [`docs/sector-cartography.md`](../../sector-cartography.md) — the sector model this consumes
+- [`docs/reference/gameplay/sector-cartography.md`](../../reference/gameplay/sector-cartography.md) — the sector model this consumes
 - [`2026-06-20-procedural-starfield-design.md`](2026-06-20-procedural-starfield-design.md) — the procedural shader/pass this reuses
 
 ## 1. Summary
@@ -33,7 +33,7 @@ built in the procedural-starfield phase.
 - **Ship-position parallax / realistic-scale space** — the sky is per-system
   **camera-anchored** (rotates with view, does not translate as the ship moves
   within the local combat scene). Continuous ship-parallax is the deferred
-  Phase 3 (`docs/sector-cartography.md` §7).
+  Phase 3 (`docs/reference/gameplay/sector-cartography.md` §7).
 - Gameplay, mission behaviour, object placement, local combat scenes — untouched.
 - A third "authored-procedural" sky mode — retired (see §3).
 

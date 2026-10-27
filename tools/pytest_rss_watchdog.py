@@ -3,7 +3,7 @@ crosses a memory ceiling.
 
 Motivation: the bc_dauntless full test suite historically OOM'd the host
 (>100 GB RAM, freezing macOS). The leak that caused it has been fixed and the
-suite now plateaus around ~290 MB (see docs/test-suite-memory.md), but macOS
+suite now plateaus around ~290 MB (see docs/reference/architecture/test-suite-memory.md), but macOS
 does not reliably enforce `ulimit -v` / RLIMIT_AS, so this watchdog is the
 durable safety net for running the full suite or any large batch: it polls the
 child process tree's RSS via `ps` and SIGKILLs the whole process group the

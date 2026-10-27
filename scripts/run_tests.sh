@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run the bc_dauntless test suite under an RSS watchdog so a memory regression
 # can never re-freeze the host (the suite once OOM'd at >100 GB; it now
-# plateaus near ~290 MB — see docs/test-suite-memory.md).
+# plateaus near ~290 MB — see docs/reference/architecture/test-suite-memory.md).
 #
 # The watchdog SIGKILLs the run if RSS crosses the ceiling, so this is always
 # safe to run, including the full suite in one process.

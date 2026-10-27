@@ -769,7 +769,7 @@ testable — preferable for a TDD approach.
 ### Open questions requiring investigation
 
 *(All four questions below are formally tracked and prioritised in*
-*`open_questions.md`)*
+*`reference/instrumented_experiments/open_questions.md`)*
 
 **OQ-7.1 — Tick rate** ✅  
 **60 Hz fixed.** Measured at 59.61 Hz (16.78 ms/tick) over 86.3s / 5145
@@ -799,7 +799,7 @@ appears in exactly two scripts (`ConditionIncomingTorps`, `FriendliesInPlayerSet
 `CRITICAL` and `UNSTOPPABLE` have zero Python call sites — they are C++
 internal priorities for rendering and physics. Reliable polling intervals
 are safe to assume for all Python-visible processes. No instrumentation needed.
-*(Also tracked as Q4 in `open_questions.md` — closed there too.)*
+*(Also tracked as Q4 in `reference/instrumented_experiments/open_questions.md` — closed there too.)*
 
 ---
 

@@ -23,7 +23,7 @@ dev = ["pytest>=8.0"]
 # under `.claude/worktrees/`). A git worktree created without a dot prefix at
 # the project root would otherwise make pytest collect the suite twice-over
 # in one process — the historical trigger behind the >100 GB full-suite OOM
-# (see docs/test-suite-memory.md). testpaths makes the scope deterministic
+# (see docs/reference/architecture/test-suite-memory.md). testpaths makes the scope deterministic
 # and rootdir-independent.
 testpaths = ["tests"]
 # norecursedirs REPLACES pytest's defaults, so re-list them and add the

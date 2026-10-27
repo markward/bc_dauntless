@@ -4,7 +4,7 @@ Captures the investigation into inferring and rendering a 3D map of BC's
 "Maelstrom" sector, the data-model findings it surfaced, and the architectural
 implications for a future procedural-starfield / dynamic-warp overhaul.
 
-The working proof-of-concept lives in [`poc/`](../poc/) (throwaway spike;
+The working proof-of-concept lives in [`poc/`](../../../poc/) (throwaway spike;
 `poc/README.md` has run instructions). This doc is the durable record.
 
 ---

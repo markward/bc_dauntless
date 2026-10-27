@@ -75,7 +75,7 @@ For each item, determine current reality from code. Inventory:
 - **26 OQs** in `docs/gap_analysis.md` (the doc's own summary says 21).
   6 carry no status marker — OQ-3.1, 3.2, 3.3, 6.1, 8.3, 8.4.
   2 are partial — OQ-2.2 (warp physics), OQ-2.3 (tractor beam physics).
-- **4 questions** in `docs/open_questions.md` — all four already closed;
+- **4 questions** in `docs/reference/instrumented_experiments/open_questions.md` — all four already closed;
   verify the closures still hold and that the file agrees with `gap_analysis.md`.
 - **6 gap-claim docs** in `docs/reference/engine/`: `aieditor-ai-surface-and-gaps.md`,
   `bcs-save-format.md`, `characterclass-reference.md`,
@@ -130,7 +130,7 @@ and a wrongly-dated row silently disarms that detector for that stub.
 One commit per gap area, not one commit for the whole phase — a reviewer can
 reject the renderer audit while accepting the audio one, and a bad conclusion can
 be reverted without unwinding the rest. Corrects `docs/gap_analysis.md`,
-`docs/open_questions.md`, the gap assertions in `docs/reference/engine/*.md`, and
+`docs/reference/instrumented_experiments/open_questions.md`, the gap assertions in `docs/reference/engine/*.md`, and
 `docs/stub_heatmap.md` markers. Reconciles the self-reported counts against
 actual contents: `CLAUDE.md`'s "21 open questions" (26 present) and
 `gap_analysis.md:723`'s "(5)" (six listed).

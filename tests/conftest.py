@@ -917,7 +917,7 @@ def pytest_configure(config):
 # left stale broadcast handlers that swallowed the next test's fire event ->
 # "0 torpedoes"; a leaked ShipDisplay registry -> "duplicate panel name").
 # These only surfaced once the full suite became runnable (see
-# docs/test-suite-memory.md); focused subsets hid them.
+# docs/reference/architecture/test-suite-memory.md); focused subsets hid them.
 #
 # This autouse fixture gives every test a clean slate for exactly that
 # forward-leakable state. It deliberately does NOT clear g_kSetManager._sets or
