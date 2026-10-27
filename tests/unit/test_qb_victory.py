@@ -1,210 +1,196 @@
-import pytest
+"""Quick Battle victory and defeat condition stacks: the pure model.
+
+Spec: docs/superpowers/specs/2026-10-27-quickbattle-victory-defeat-conditions-design.md
+§3 (eligible ships, Start Battle, keeping conditions valid, presets), §4.1-4.2.
+"""
+from types import SimpleNamespace as NS
 
 from engine.quickbattle import scenario as sc, victory as vc
-from engine.quickbattle.scenario import VictoryOrder
-from engine.quickbattle.victory import Victory
+from engine.quickbattle.scenario import ConditionOrder
+from engine.quickbattle.victory import (ALL, ANY, DEFEAT, EMPTY_SHIPS_PROBLEM,
+                                        NO_ENEMY_PROBLEM, SHIPS, TIMER, VICTORY,
+                                        Condition, Victory)
 
 
-def _enemy(s):
-    return s.groups[1]
-
-
-def _with_escort():
+def _setup():
+    """Player group, an enemy Galor, a friendly Akira, then a neutral Freighter."""
     s = sc.default_scenario()
-    g = s.add_group()
-    s.update_details(g.id, "friendly", "port", "close", "medium")
-    e1 = s.add_ship(g.id, "Akira")
-    return s, g, e1
+    galor = s.add_ship(s.groups[1].id, "Galor")
+    fg = s.add_group()
+    assert s.update_details(fg.id, "friendly", "port", "close", "medium")
+    akira = s.add_ship(fg.id, "Akira")
+    ng = s.add_group()
+    assert s.update_details(ng.id, "neutral", "aft", "close", "medium")
+    freighter = s.add_ship(ng.id, "Freighter")
+    return NS(s=s, galor=galor, akira=akira, freighter=freighter, fg=fg, ng=ng)
 
 
-def test_default_is_elimination():
-    assert sc.default_scenario().victory == Victory()
+def _ids(pairs):
+    return [e.id for _g, e in pairs]
 
 
-def test_can_start_needs_an_enemy():
+def _index(*ships):
+    ce = lambda sid: NS(ship_id=sid, variants=[], title=sid, playable=True)
+    return {k.lower(): ce(k) for k in ships}
+
+
+def test_new_scenario_has_no_conditions():
     s = sc.default_scenario()
-    s.add_ship(s.player_group().id, "Akira")
-    assert s.can_start() is False
-    assert vc.start_problem(s) == "Add an enemy ship to start"
-    s.add_ship(_enemy(s).id, "Warbird")
-    assert s.can_start() is True
+    assert s.victory.conditions == []
+    assert vc.start_problem(s) == NO_ENEMY_PROBLEM
+    s.add_ship(s.groups[1].id, "Galor")
     assert vc.start_problem(s) is None
 
 
-def test_late_enemy_group_counts():
-    s = sc.default_scenario()
-    s.add_ship(_enemy(s).id, "Warbird")
-    assert s.update_details(_enemy(s).id, "enemy", "fore", "standard", "medium",
-                            warp_in_min=2)
-    assert s.can_start() is True
+def test_eligible_ships_by_side():
+    t = _setup()
+    assert _ids(vc.eligible(t.s, VICTORY)) == [t.galor.id]
+    assert _ids(vc.eligible(t.s, DEFEAT)) == [t.akira.id, t.freighter.id]
+    pid = t.s.player_entry().id
+    assert pid not in _ids(vc.eligible(t.s, VICTORY)) + _ids(vc.eligible(t.s, DEFEAT))
 
 
-def test_km_unavailable_without_candidate():
-    s = sc.default_scenario()
-    s.add_ship(_enemy(s).id, "Warbird")
-    assert vc.unavailable_reason(s, "kobayashi_maru") == \
-        "Add a friendly or neutral ship first"
-    assert vc.set_type(s, "kobayashi_maru") is False
-    assert s.victory.type == "elimination"
-    assert vc.set_type(s, "nonsense") is False
+def test_add_ships_condition_defaults():
+    t = _setup()
+    c = vc.add_condition(t.s, DEFEAT, SHIPS)
+    assert isinstance(c, Condition)
+    assert c.mode == ANY and c.ships == []
+    assert vc.start_problem(t.s) == EMPTY_SHIPS_PROBLEM
+    assert vc.add_ship(t.s, c.id, t.freighter.id) is True
+    assert vc.start_problem(t.s) is None
 
 
-def test_km_preselects_first_candidate():
-    s, _g, e1 = _with_escort()
-    n = s.add_group()
-    s.update_details(n.id, "neutral", "aft", "close", "medium")
-    n1 = s.add_ship(n.id, "Freighter")
-    en = s.add_ship(_enemy(s).id, "Warbird")
-    assert [e.id for _g2, e in vc.protect_candidates(s)] == [e1.id, n1.id]
-    assert vc.set_type(s, "kobayashi_maru") is True
-    assert s.victory.protect == e1.id
-    assert vc.set_protect(s, n1.id) is True
-    assert s.victory.protect == n1.id
-    assert vc.set_protect(s, s.player_entry().id) is False
-    assert vc.set_protect(s, en.id) is False
-    assert s.victory.protect == n1.id
+def test_one_timer_per_side():
+    t = _setup()
+    first = vc.add_condition(t.s, VICTORY, TIMER)
+    assert first is not None and first.minutes == 5
+    assert vc.add_condition(t.s, VICTORY, TIMER) is None
+    assert vc.add_condition(t.s, DEFEAT, TIMER) is not None
+    assert vc.has_timer(t.s, VICTORY) and vc.has_timer(t.s, DEFEAT)
 
 
-@pytest.mark.parametrize("edit", ["remove", "to_enemy"])
-def test_km_falls_back_when_protected_ship_goes(edit):
-    s, _g, e1 = _with_escort()
-    vc.set_type(s, "kobayashi_maru")
-    assert vc.reconcile(s) is None
-    if edit == "remove":
-        assert s.remove_entry(e1.id)
-    else:
-        assert s.move_entry(e1.id, _enemy(s).id)
-    assert vc.reconcile(s) == \
-        "Kobayashi Maru needs a ship to protect; switched to Elimination"
-    assert s.victory.type == "elimination"
-    assert vc.reconcile(s) is None
+def test_add_ship_refuses_ineligible_and_duplicates():
+    t = _setup()
+    d = vc.add_condition(t.s, DEFEAT, SHIPS)
+    v = vc.add_condition(t.s, VICTORY, SHIPS)
+    assert vc.add_ship(t.s, d.id, t.galor.id) is False
+    assert vc.add_ship(t.s, v.id, t.freighter.id) is False
+    assert d.ships == [] and v.ships == []
+    assert vc.add_ship(t.s, d.id, t.akira.id) is True
+    assert vc.add_ship(t.s, d.id, t.akira.id) is False
+    assert d.ships == [t.akira.id]
 
 
-def test_json_round_trip_keeps_protect_id():
-    s, _g, e1 = _with_escort()
-    vc.set_type(s, "kobayashi_maru")
-    vc.set_time_limit(s, 4)
-    loaded = sc.from_json(s.to_json())
-    assert loaded.victory == Victory("kobayashi_maru", e1.id, 4)
-    assert sc.same_setup(s, loaded) is True
+def test_set_minutes_bounds():
+    t = _setup()
+    c = vc.add_condition(t.s, DEFEAT, TIMER)
+    for bad in (0, 61, "5", 5.0):
+        assert vc.set_minutes(t.s, c.id, bad) is False
+        assert c.minutes == 5
+    assert vc.set_minutes(t.s, c.id, 1) is True and c.minutes == 1
+    assert vc.set_minutes(t.s, c.id, 60) is True and c.minutes == 60
 
 
-def test_same_setup_sees_victory_changes():
-    s, g, e1 = _with_escort()
-    e2 = s.add_ship(g.id, "Akira")
-    vc.set_type(s, "kobayashi_maru")
-    base = sc.from_json(s.to_json())
-    assert sc.same_setup(s, base)
-    other = sc.from_json(s.to_json())
-    vc.set_protect(other, e2.id)
-    assert not sc.same_setup(s, other)
-    other = sc.from_json(s.to_json())
-    vc.set_time_limit(other, 3)
-    assert not sc.same_setup(s, other)
-    other = sc.from_json(s.to_json())
-    other.victory.type, other.victory.protect = "elimination", None
-    assert not sc.same_setup(s, other)
+def test_set_mode_only_on_ships():
+    t = _setup()
+    timer = vc.add_condition(t.s, DEFEAT, TIMER)
+    ships = vc.add_condition(t.s, DEFEAT, SHIPS)
+    assert vc.set_mode(t.s, timer.id, "all") is False
+    assert timer.mode == ANY
+    assert vc.set_mode(t.s, ships.id, "all") is True and ships.mode == ALL
+    assert vc.set_mode(t.s, ships.id, "both") is False and ships.mode == ALL
 
 
-def test_same_setup_ignores_entry_ids():
-    s, _g, _e1 = _with_escort()
-    vc.set_type(s, "kobayashi_maru")
-    d = s.to_json()
-    # a clone with fresh ids and protect re-pointed at the same position
-    t = sc.from_json(d)
-    old = {e.id: sc.new_id() for g in t.groups for e in g.entries}
-    for g in t.groups:
-        for e in g.entries:
-            e.id = old[e.id]
-    t.victory.protect = old[t.victory.protect]
-    assert sc.same_setup(s, t)
-
-
-def test_old_preset_without_victory_loads_as_elimination():
-    d = sc.default_scenario().to_json()
-    d.pop("victory")
-    assert sc.from_json(d).victory == Victory()
-
-
-def test_unknown_type_loads_as_elimination():
-    d = sc.default_scenario().to_json()
-    d["victory"] = {"type": "capture_the_flag", "protect": "x", "time_limit_min": 3}
-    assert sc.from_json(d).victory == Victory()
-
-
-def test_rule_text():
-    s, _g, _e1 = _with_escort()
-    vc.set_type(s, "kobayashi_maru")
-    rule = ("You win when every enemy is destroyed. You lose if the ship you "
-            "protect is destroyed, or you are.")
-    assert vc.rule_text(s) == rule
-    vc.set_time_limit(s, 5)
-    assert vc.rule_text(s) == rule + " You also lose if time runs out."
+def test_reconcile_drops_removed_and_ineligible_ships():
+    t = _setup()
+    c = vc.add_condition(t.s, DEFEAT, SHIPS)
+    assert vc.add_ship(t.s, c.id, t.freighter.id)
+    assert vc.add_ship(t.s, c.id, t.akira.id)
+    assert t.s.remove_entry(t.akira.id)
+    assert t.s.update_details(t.ng.id, "enemy", "aft", "close", "medium")
+    vc.reconcile(t.s)
+    assert vc.find(t.s, c.id) is c
+    assert c.ships == []
+    assert vc.start_problem(t.s) == EMPTY_SHIPS_PROBLEM
 
 
 def test_summary_suffix():
-    s, _g, e1 = _with_escort()
-    assert vc.summary_suffix(s, lambda e: "x") == ""
-    vc.set_type(s, "kobayashi_maru")
-    assert vc.summary_suffix(s, lambda e: "SS " + e.ship) == \
-        " · Kobayashi Maru · protect SS Akira"
+    t = _setup()
+    assert vc.summary_suffix(t.s) == ""
+    vc.add_condition(t.s, VICTORY, SHIPS)
+    vc.add_condition(t.s, DEFEAT, SHIPS)
+    vc.add_condition(t.s, DEFEAT, TIMER)
+    assert vc.summary_suffix(t.s) == " · 1 victory · 2 defeat conditions"
+    u = _setup()
+    vc.add_condition(u.s, DEFEAT, TIMER)
+    assert vc.summary_suffix(u.s) == " · 1 defeat condition"
 
 
-def test_battle_plan_carries_victory():
-    from types import SimpleNamespace as NS
-    s, _g, e1 = _with_escort()
-    vc.set_type(s, "kobayashi_maru")
-    vc.set_time_limit(s, 3)
-    ce = lambda sid: NS(ship_id=sid, variants=[], title=sid, playable=True)
-    index = {k.lower(): ce(k) for k in ("Galaxy", "Akira", "Warbird")}
-    plan = sc.battle_plan(s, index)
-    assert plan.victory == VictoryOrder("kobayashi_maru", e1.id, 180.0)
-    assert plan.startable is False
-    s.add_ship(_enemy(s).id, "Warbird")
-    assert sc.battle_plan(s, index).startable is True
+def test_json_round_trip():
+    t = _setup()
+    a = vc.add_condition(t.s, VICTORY, SHIPS)
+    vc.add_ship(t.s, a.id, t.galor.id)
+    vc.set_mode(t.s, a.id, ALL)
+    b = vc.add_condition(t.s, DEFEAT, TIMER)
+    vc.set_minutes(t.s, b.id, 7)
+    v = t.s.victory
+    back = vc.from_json(vc.to_json(v))
+    assert back == v
+    assert [c.id for c in back.conditions] == [a.id, b.id]
 
 
-def _index():
-    from types import SimpleNamespace as NS
-    ce = lambda sid: NS(ship_id=sid, variants=[], title=sid, playable=True)
-    return {k.lower(): ce(k) for k in ("Galaxy", "Akira", "Warbird")}
+def _fields(c):
+    return (c.side, c.kind, c.mode, c.ships, c.minutes)
 
 
-def test_elimination_clears_km_time_limit_and_protect():
-    """Final review: KM 2 min, then Elimination, must not carry a hidden
-    time limit (or protect) into the battle."""
-    s, _g, _e1 = _with_escort()
-    s.add_ship(_enemy(s).id, "Warbird")
-    assert vc.set_type(s, "kobayashi_maru")
-    assert vc.set_time_limit(s, 2)
-    assert vc.set_type(s, "elimination")
-    assert s.victory == Victory()
-    v = sc.battle_plan(s, _index()).victory
-    assert v.time_limit_s == 0 and v.protect_entry_id is None
+def test_phase1_kobayashi_maru_converts():
+    v = vc.from_json({"type": "kobayashi_maru", "protect": "e1",
+                      "time_limit_min": 3})
+    assert [_fields(c) for c in v.conditions] == [
+        (DEFEAT, SHIPS, ANY, ["e1"], 5),
+        (DEFEAT, TIMER, ANY, [], 3),
+    ]
+    assert vc.from_json({"type": "elimination", "protect": None,
+                         "time_limit_min": 0}).conditions == []
 
 
-def test_time_limit_refused_for_elimination():
-    s, _g, _e1 = _with_escort()
-    assert vc.set_time_limit(s, 3) is False
-    assert s.victory == Victory()
-    vc.set_type(s, "kobayashi_maru")
-    assert vc.set_time_limit(s, 3) is True
+def test_malformed_condition_dropped_others_kept():
+    good = {"id": "t1", "side": "victory", "kind": "timer", "mode": "any",
+            "ships": [], "minutes": 4}
+    v = vc.from_json({"conditions": [
+        good,
+        {"id": "x1", "side": "middle", "kind": "timer", "mode": "any",
+         "ships": [], "minutes": 4},
+        {"id": "x2", "side": "defeat", "kind": "ships", "mode": "any",
+         "ships": "e1", "minutes": 5},
+        {"id": "x3", "side": "defeat", "kind": "timer", "mode": "any",
+         "ships": [], "minutes": 0},
+        {"id": "x4", "side": "victory", "kind": "timer", "mode": "any",
+         "ships": [], "minutes": 9},
+    ]})
+    assert [c.id for c in v.conditions] == ["t1"]
+    assert v.conditions[0].minutes == 4
 
 
-def test_reconcile_fallback_clears_time_limit():
-    s, _g, e1 = _with_escort()
-    vc.set_type(s, "kobayashi_maru")
-    vc.set_time_limit(s, 4)
-    assert s.remove_entry(e1.id)
-    assert vc.reconcile(s) is not None
-    assert s.victory == Victory()
+def test_battle_plan_carries_conditions():
+    t = _setup()
+    a = vc.add_condition(t.s, VICTORY, SHIPS)
+    vc.set_mode(t.s, a.id, ALL)
+    vc.add_ship(t.s, a.id, t.galor.id)
+    b = vc.add_condition(t.s, DEFEAT, TIMER)
+    vc.set_minutes(t.s, b.id, 2)
+    plan = sc.battle_plan(t.s, _index("Galaxy", "Galor", "Akira", "Freighter"))
+    assert plan.victory.conditions == (
+        ConditionOrder("victory", "ships", "all", (t.galor.id,), 0.0),
+        ConditionOrder("defeat", "timer", "any", (), 120.0),
+    )
 
 
-def test_battle_plan_drops_km_fields_for_other_types():
-    """Defence in depth: whatever the scenario holds, only Kobayashi Maru
-    gets a time limit and a ship to protect."""
-    s, _g, e1 = _with_escort()
-    s.add_ship(_enemy(s).id, "Warbird")
-    s.victory = Victory("elimination", e1.id, 3)
-    assert sc.battle_plan(s, _index()).victory == \
-        VictoryOrder("elimination", None, 0.0)
+def test_battle_plan_drops_uncatalogued_ship_condition():
+    t = _setup()
+    c = vc.add_condition(t.s, DEFEAT, SHIPS)
+    vc.add_ship(t.s, c.id, t.freighter.id)
+    plan = sc.battle_plan(t.s, _index("Galaxy", "Galor", "Akira"))
+    assert not any(o.side == DEFEAT and o.kind == SHIPS
+                   for o in plan.victory.conditions)
+    assert plan.victory.conditions == ()

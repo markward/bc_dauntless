@@ -258,7 +258,12 @@ def _strip_ids(s: Scenario) -> list:
         for ei, e in enumerate(g.entries):
             pos[e.id] = (gi, ei)
     j = s.to_json()
-    out.append({"victory": dict(j["victory"], protect=pos.get(j["victory"]["protect"]))})
+    # A condition's id and its ships' ids are fresh on every load: compare
+    # each ship by its (group index, entry index) position instead.
+    out.append({"victory": {"conditions": [
+        dict({k: v for k, v in c.items() if k != "id"},
+             ships=[pos.get(eid) for eid in c["ships"]])
+        for c in j["victory"]["conditions"]]}})
     for g in j["groups"]:
         g = dict(g)
         g.pop("id")
@@ -381,17 +386,28 @@ class SpawnOrder:
 
 
 @dataclass(frozen=True)
+class ConditionOrder:
+    """One added victory/defeat condition as the battle sees it. Ships:
+    `entry_ids` are the listed ships that spawn, `time_s` 0. Timer:
+    `entry_ids` (), `time_s` its game-time length."""
+    side: str          # victory.VICTORY / DEFEAT
+    kind: str          # victory.SHIPS / TIMER
+    mode: str          # victory.ANY / ALL (a Timer keeps ANY)
+    entry_ids: tuple
+    time_s: float
+
+
+@dataclass(frozen=True)
 class VictoryOrder:
-    type: str
-    protect_entry_id: Optional[str]
-    time_limit_s: float
+    """The added conditions in stored order; the two defaults are implicit."""
+    conditions: tuple = ()
 
 
 @dataclass(frozen=True)
 class BattlePlan:
     player: PlayerOrder
     orders: tuple
-    victory: VictoryOrder = VictoryOrder(_victory.ELIMINATION, None, 0.0)
+    victory: VictoryOrder = VictoryOrder()
     startable: bool = True
 
 
@@ -430,10 +446,6 @@ def battle_plan(scenario: "Scenario", index) -> BattlePlan:
             if ce is None:
                 continue
             rows.append((g, e, ce) + _resolve(ce, e.variant))
-    v = scenario.victory
-    # Defence in depth: only Kobayashi Maru has a ship to protect and a time
-    # limit, whatever the scenario's victory settings still hold.
-    km = v.type == _victory.KOBAYASHI_MARU
     names = naming.with_ordinals([p_name] + [r[5] for r in rows])
     orders = []
     for (g, e, ce, f, reg, _n), disp in zip(rows, names[1:]):
@@ -446,9 +458,26 @@ def battle_plan(scenario: "Scenario", index) -> BattlePlan:
             warp_in_s=g.warp_in_min * 60.0))
     return BattlePlan(player=PlayerOrder(p_file, pce.ship_id, p_reg, names[0]),
                       orders=tuple(orders),
-                      victory=VictoryOrder(v.type, v.protect if km else None,
-                                           v.time_limit_min * 60.0 if km else 0.0),
+                      victory=_victory_order(scenario, {o.entry_id for o in orders}),
                       # An enemy entry whose ship is not in the catalog spawns
                       # nothing: count the enemy ORDERS, not the entries.
                       startable=scenario.can_start()
                       and any(o.allegiance == "enemy" for o in orders))
+
+
+def _victory_order(scenario: "Scenario", spawned) -> VictoryOrder:
+    """One ConditionOrder per added condition, in stored order. A Ships
+    condition keeps only the listed ships that produced a SpawnOrder, and is
+    dropped when none remain (its ships are not in the catalog)."""
+    out = []
+    for c in scenario.victory.conditions:
+        if c.kind == _victory.TIMER:
+            out.append(ConditionOrder(c.side, c.kind, c.mode, (), c.minutes * 60.0))
+            continue
+        ids = tuple(eid for eid in c.ships if eid in spawned)
+        if not ids:
+            _log.warning("quickbattle: %s Ships Destroyed condition %s has no "
+                         "ship that spawns; dropped from the battle", c.side, c.id)
+            continue
+        out.append(ConditionOrder(c.side, c.kind, c.mode, ids, 0.0))
+    return VictoryOrder(tuple(out))

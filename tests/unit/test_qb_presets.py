@@ -63,17 +63,19 @@ def test_preset_keeps_warp_in_delay(tmp_path):
     assert _store(tmp_path).load("late").groups[1].warp_in_min == 4
 
 
-def test_preset_round_trips_victory(tmp_path):
+def test_preset_round_trip_keeps_conditions(tmp_path):
+    from engine.quickbattle import victory as vc
     p = _store(tmp_path)
     s = sc.default_scenario()
+    s.add_ship(s.groups[1].id, "Galor")
     g = s.add_group()
-    s.update_details(g.id, "friendly", "port", "close", "medium")
-    e = s.add_ship(g.id, "Akira")
-    from engine.quickbattle import victory
-    assert victory.set_type(s, "kobayashi_maru")
-    assert victory.set_time_limit(s, 6)
-    assert p.save("km", s)
-    loaded = _store(tmp_path).load("km")
+    s.update_details(g.id, "neutral", "port", "close", "medium")
+    freighter = s.add_ship(g.id, "Freighter")
+    c = vc.add_condition(s, vc.DEFEAT, vc.SHIPS)
+    assert vc.add_ship(s, c.id, freighter.id)
+    assert p.save("escort", s)
+    loaded = _store(tmp_path).load("escort")
     assert loaded.victory == s.victory
-    assert loaded.victory.protect == e.id
-    assert sc.same_setup(loaded, s)
+    assert sc.same_setup(loaded, s) is True
+    assert vc.set_mode(loaded, c.id, vc.ALL)
+    assert sc.same_setup(loaded, s) is False
