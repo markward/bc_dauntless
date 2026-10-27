@@ -402,15 +402,70 @@
 #quick-battle-setup .qbs-menu__del { width: 18px; height: 18px; font-family: Arial, sans-serif; font-size: 14px; line-height: 16px; margin-left: 8px; }
 #quick-battle-setup .qbs-menu__del:hover { background: rgba(216, 43, 43, 0.35); }
 
-/* Victory view: the groups column and catalog are swapped for the battle-type
-   cards and the chosen type's settings. [hidden] must beat the display rules
-   above. Spec 2026-10-23-quickbattle-victory-conditions-design. */
+/* Victory view (the footer cog): the groups column and catalog are swapped
+   for the Victory and Defeat condition stacks, two equal columns split by the
+   groups column's rule. Copied from the approved layout B mockup
+   (docs/superpowers/specs/2026-10-27-quickbattle-conditions-mockup.html), with
+   the flex chain made to fill the modal between header and footer: each
+   column scrolls on its own, never sideways. [hidden] must beat the display
+   rules above. Spec 2026-10-27-quickbattle-condition-stacks-design. */
 #quick-battle-setup .qbs-groups[hidden],
-#quick-battle-setup .qbs-catalog[hidden] { display: none; }
-#quick-battle-setup .vc-type { cursor: pointer; }
-#quick-battle-setup .vc-type--on { border-color: var(--qbs-purple); border-left-color: var(--qbs-purple); background: var(--qbs-purple-bg); }
-#quick-battle-setup .vc-type--off { cursor: default; opacity: 0.55; }
-#quick-battle-setup .vc-pick { margin-left: auto; }
+#quick-battle-setup .qbs-catalog[hidden],
+#quick-battle-setup .vc-cols[hidden] { display: none; }
 #quick-battle-setup .qbs-victory-btn--on { background: var(--qbs-purple); border-color: var(--qbs-purple); color: #fff; }
-#quick-battle-setup .vc-blurb { font-size: 13px; color: var(--qbs-dim); margin: 0 0 14px 2px; }
-#quick-battle-setup .qbs-qty--inline { display: inline-flex; }
+
+#quick-battle-setup .vc-cols { display: flex; flex: 1 1 auto; min-width: 0; min-height: 0; }
+#quick-battle-setup .vc-col { flex: 1 1 0; min-width: 0; min-height: 0; padding: 16px 18px; overflow-x: hidden; overflow-y: auto; }
+#quick-battle-setup .vc-col + .vc-col { border-left: 1px solid var(--qbs-steel-dim); }
+#quick-battle-setup .vc-colhead { display: flex; align-items: baseline; margin-bottom: 10px; }
+#quick-battle-setup .vc-colhead .qbs-section { margin: 0; }
+#quick-battle-setup .vc-colhint { margin-left: auto; font-size: 12px; color: var(--qbs-dim); }
+
+/* A condition: one quiet card. Title row, then its controls. The fixed
+   default is dashed and carries no ×. */
+#quick-battle-setup .vc-cond { border: 1px solid var(--qbs-steel-dim); background: rgb(20, 22, 28); margin-bottom: 8px; }
+#quick-battle-setup .vc-cond__head { display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 12px; }
+#quick-battle-setup .vc-cond__name { flex: 1; font-size: 15px; color: #fff; letter-spacing: .04em; }
+#quick-battle-setup .vc-cond__body { padding: 0 12px 10px; }
+#quick-battle-setup .vc-cond--fixed { background: transparent; border-style: dashed; }
+#quick-battle-setup .vc-cond--fixed .vc-cond__name { color: var(--qbs-text); }
+#quick-battle-setup .vc-fixed { font-size: 11px; letter-spacing: .1em; color: var(--qbs-dim); text-transform: uppercase; }
+#quick-battle-setup .vc-x { width: 22px; height: 22px; flex: none; padding: 0; display: inline-flex; align-items: center; justify-content: center;
+        background: none; border: 1px solid transparent; color: var(--qbs-dim); cursor: pointer; }
+#quick-battle-setup .vc-x:hover { border-color: var(--qbs-steel); color: #fff; }
+#quick-battle-setup .vc-x svg { width: 10px; height: 10px; }
+
+/* ANY / ALL as one sentence: "Lose when ANY of these is destroyed". */
+#quick-battle-setup .vc-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: var(--qbs-dim); margin-bottom: 6px; }
+#quick-battle-setup .vc-line .cp-segmented .cp-toggle { height: 22px; padding: 0 10px; font-size: 12px; }
+
+/* Ships in the condition: the setup screen's own row shape, with its art;
+   the art's coloured edge is the ship's group allegiance (--a). */
+#quick-battle-setup .vc-ships { border-top: 1px solid rgba(255, 255, 255, .05); }
+#quick-battle-setup .vc-ship { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid rgba(255, 255, 255, .05); }
+#quick-battle-setup .vc-art { width: 28px; height: 28px; flex: none; box-sizing: border-box; background: rgba(255, 255, 255, .05); border-left: 2px solid var(--a); }
+#quick-battle-setup .vc-art img { display: block; width: 100%; height: 100%; }
+/* At 28px "No art" cannot be read beside the allegiance edge: the bare tile
+   (the mockup's placeholder) says it. */
+#quick-battle-setup .vc-art .qbs-noart { width: 100%; height: 100%; border: 0; font-size: 0; }
+#quick-battle-setup .vc-ship__text { flex: 1; min-width: 0; }
+#quick-battle-setup .vc-ship__name { font-size: 13px; color: var(--bc-label-text, rgb(235, 225, 255)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#quick-battle-setup .vc-ship__sub { font-size: 11px; color: var(--qbs-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#quick-battle-setup .vc-addship { display: block; width: 100%; text-align: left; margin-top: 6px; padding: 4px 0; font: inherit; font-size: 13px;
+        background: none; border: none; color: var(--qbs-gold); cursor: pointer; }
+#quick-battle-setup .vc-addship:hover { color: #fff; }
+
+#quick-battle-setup .vc-addcond { width: 100%; padding: 8px 12px; font: inherit; font-size: 14px; text-align: left; cursor: pointer;
+        background: none; border: 1px dashed var(--qbs-steel); color: var(--qbs-dim); }
+#quick-battle-setup .vc-addcond:hover { color: #fff; border-color: var(--qbs-gold); }
+
+/* Timer: "Lose when − 5 min + run out"; the stepper sits in the sentence. */
+#quick-battle-setup .vc-timer { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--qbs-dim); }
+#quick-battle-setup .vc-timer .qbs-qty { display: inline-flex; }
+#quick-battle-setup .vc-timer .qbs-qty__n, #quick-battle-setup .vc-timer .qbs-qty__btn { background: none; border: none; font: inherit; color: #fff; }
+#quick-battle-setup .vc-timer .qbs-qty__btn { cursor: pointer; }
+#quick-battle-setup .vc-timer .qbs-qty__btn[disabled] { color: var(--qbs-steel-dim); cursor: default; }
+#quick-battle-setup .vc-timer .qbs-qty__n { font-size: 15px; min-width: 44px; }
+
+/* "+ Add ship" menu rows: the ship's group name after its title. */
+#quick-battle-setup .vc-menu__sub { margin-left: 10px; font-size: 11px; color: var(--qbs-dim); white-space: nowrap; }

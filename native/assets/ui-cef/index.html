@@ -239,13 +239,17 @@
         <div class="cp-header">Quick Battle Setup</div>
         <div class="cp-content">
           <aside id="qbs-groups" class="qbs-groups"></aside>
-          <aside id="qbs-vtypes" class="qbs-groups" hidden></aside>
           <main id="qbs-main" class="cp-body qbs-catalog">
             <div id="qbs-eras" class="cp-segmented qbs-strip"></div>
             <div id="qbs-species" class="cp-segmented qbs-strip qbs-species-strip"></div>
             <div id="qbs-catalog" class="qbs-catalog-body"></div>
           </main>
-          <main id="qbs-vbody" class="cp-body qbs-catalog" hidden></main>
+          <!-- Victory view (the footer cog): the Victory and Defeat condition
+               stacks side by side (spec 2026-10-27-quickbattle-condition-stacks). -->
+          <main id="qbs-vcond" class="vc-cols" hidden>
+            <div id="qbs-vc-victory" class="vc-col"></div>
+            <div id="qbs-vc-defeat" class="vc-col"></div>
+          </main>
         </div>
         <div class="cp-footer qbs-footer">
           <div class="qbs-presets">

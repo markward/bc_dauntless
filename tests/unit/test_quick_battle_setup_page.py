@@ -140,5 +140,30 @@ def test_victory_cog_sits_left_of_close():
 
 
 def test_victory_containers_exist():
-    assert re.search(r'<aside id="qbs-vtypes" class="qbs-groups" hidden>', SECTION)
-    assert re.search(r'<main id="qbs-vbody" class="cp-body qbs-catalog" hidden>', SECTION)
+    assert 'id="qbs-vtypes"' not in SECTION and 'id="qbs-vbody"' not in SECTION
+    assert re.search(r'<main id="qbs-vcond" class="vc-cols" hidden>', SECTION)
+    cols = SECTION.split('id="qbs-vcond"', 1)[1].split("</main>", 1)[0]
+    assert '<div id="qbs-vc-victory" class="vc-col">' in cols
+    assert '<div id="qbs-vc-defeat" class="vc-col">' in cols
+
+
+def test_phase1_battle_type_css_is_gone():
+    for rule in (".vc-type", ".vc-pick", ".vc-blurb"):
+        assert rule not in CSS, rule
+
+
+def test_every_vc_rule_is_scoped_to_the_setup_screen():
+    rules = re.sub(r"/\*.*?\*/", "", CSS, flags=re.S)
+    selectors = [sel.strip() for block in re.findall(r"([^{}]+)\{", rules)
+                 for sel in block.split(",") if ".vc-" in sel]
+    assert selectors
+    for sel in selectors:
+        assert sel.startswith("#quick-battle-setup "), sel
+
+
+def test_condition_verbs_python_handles_are_used():
+    for v in ("cond-add:", "cond-remove:", "cond-mode:", "cond-ship-add:",
+              "cond-ship-remove:", "cond-minutes:", "victory-view"):
+        assert "quick-battle-setup/" + v in JS, v
+    for gone in ("victory-type", "victory-protect", "victory-time"):
+        assert gone not in JS, gone
