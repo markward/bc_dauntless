@@ -207,8 +207,8 @@ def test_the_suite_itself_never_shows_it():
 
 
 def test_run_loads_the_game_behind_the_notice():
-    """Fade in after the pre-boot screens; load the SDK, the mission and
-    every bit of loop setup behind it; fade out right before the game loop.
+    """Fade in after the pre-boot screens; load the SDK, the mission, the
+    far tier's rock catalogue and every bit of loop setup behind it; fade out right before the game loop.
     The pump loop replaces run()'s CEF handlers, so both are put back after
     the fade-out, and the frame clock restarts so the fade is not replayed
     as up to MAX_FRAME_DT of sim time on the first frame."""
@@ -222,8 +222,9 @@ def test_run_loads_the_game_behind_the_notice():
     clock_at = source.index("_previous_real_time = time.monotonic()")
     finish_at = source.index("_finish_boot_notice(")
     loop_at = source.index("while not r.should_close():")
+    far_at = source.index("_far_tier.prewarm(r)")
     assert (resolve_at < mods_at < begin_at < prewarm_at < mission_at
-            < clock_at < finish_at < loop_at)
+            < far_at < clock_at < finish_at < loop_at)
 
     after = source[finish_at:loop_at]
     assert "_cef_set_event_handler(registry.dispatch)" in after

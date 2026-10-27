@@ -214,6 +214,18 @@ def _push_catalogue(r) -> None:
     _prefetch_due = True
 
 
+def prewarm(r) -> None:
+    """Push the catalogue now rather than on the first reconcile: loading
+    every near rock's two LOD models was 1.08 s of the first game frame on
+    Quick Battle boot. host_loop.run() calls it during the load, behind the
+    boot notice. Never raises; a failure leaves the push to the first
+    reconcile, as before."""
+    try:
+        _push_catalogue(r)
+    except Exception as e:
+        _swallow("prewarm", e)
+
+
 def _start_atlas_prefetch(r, rocks: list) -> None:
     """Once the viewed set has rock content, start decoding every impostor
     atlas off the main thread (mission load) rather than on each rock's

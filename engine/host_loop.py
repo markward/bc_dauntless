@@ -10972,6 +10972,10 @@ def run(mission_name: Optional[str] = None,
             controller.session = controller.loader.load_quickbattle()
         else:
             controller.session = controller.loader.load(mission_name)
+        # The far tier's catalogue push (every near rock's LOD models) is a
+        # once-per-session cost the first frame used to pay: do it now, while
+        # the boot notice covers the load.
+        _far_tier.prewarm(r)
         # The SDK's CreateAndPopulateBridgeSet plays AmbBridge at load
         # (LoadBridge.py:213); silence it now since the initial view is space.
         # bridge_ambient remains the sole authority on when the hum plays.
