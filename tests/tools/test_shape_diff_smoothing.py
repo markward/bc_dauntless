@@ -1,4 +1,7 @@
-from tools.shape_diff import obj_io, smoothing
+import pytest
+
+from tools.shape_diff import ShapeDiffError, obj_io, payload, smoothing
+from tools.shape_diff.obj_io import ObjMesh
 
 V = ["v 0 0 0", "v 1 0 0", "v 1 1 0", "v 0 1 0"]
 VT = ["vt 0 0", "vt 1 0", "vt 1 1", "vt 0 1"]
@@ -67,12 +70,6 @@ def test_open_and_three_face_edges_are_not_flagged(tmp_path):
     assert smoothing.edge_flags(m) == {}
 
 
-import pytest
-
-from tools.shape_diff import ShapeDiffError, payload
-from tools.shape_diff.obj_io import ObjMesh
-
-
 def test_smoothing_payload_matches_cpp_golden():
     recs = [
         {"block": 7, "vertex_count": 4, "hard": [(0, 1)], "soft": [(0, 2), (1, 2)]},
@@ -121,9 +118,28 @@ def test_records_map_edges_to_final_indices():
     assert len(recs) == 1
     r = recs[0]
     assert (r["block"], r["vertex_count"]) == (3, 6)
-    assert r["hard"] == [(0, 2)]
+    assert r["hard"] == [(0, 5)]
     assert r["soft"] == []
-    assert r["ends"][(0, 2)] == (False, False)
+    assert r["ends"][(0, 5)] == (False, False)
+
+
+def test_records_tie_goes_to_the_lowest_index():
+    applied = [{"block": 3, "vertices": [
+        (0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (1, 1, 0)]}]
+    r = smoothing.records(applied, {3: _tri_pair(N2)})[0]
+    assert r["hard"] == [(0, 2)]
+
+
+def test_records_match_across_a_grid_cell_boundary():
+    d = 1.0 / 1024
+    edge = 3 * d
+    applied = [{"block": 3, "vertices": [
+        (0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]}]
+    mesh = _tri_pair(N2)
+    mesh.positions[1] = (1 - 0.4 * d, 0, 0)
+    applied[0]["vertices"][1] = (1 + 0.4 * d, 0, 0)
+    assert smoothing.records(applied, {3: mesh})[0]["hard"] == [(0, 2)]
+    assert edge
 
 
 def test_records_swap_ends_when_final_order_flips():
@@ -165,7 +181,43 @@ def test_records_refuse_conflicting_flags():
         smoothing.records(applied, {3: mesh})
 
 
+def test_records_refuse_conflicting_ends():
+    # Edges (0,2) and (1,3) land on final pair (0,1), both hard, but the
+    # normals agree at different ends. The other edges are open.
+    pos = [(0, 0, 0), (0, 0, 0), (1, 0, 0), (1, 0, 0),
+           (2, 0, 0), (3, 0, 0), (4, 0, 0), (5, 0, 0)]
+    faces = [(0, 2, 4), (0, 2, 5), (1, 3, 6), (1, 3, 7)]
+    normals = [[N1, N1, N1], [N1, N2, N1], [N1, N1, N1], [N2, N1, N1]]
+    mesh = _mesh(pos, faces, normals)
+    flags = smoothing.edge_flags(mesh)
+    assert (flags[(0, 2)].hard, flags[(0, 2)].same_a, flags[(0, 2)].same_b) == (True, True, False)
+    assert (flags[(1, 3)].hard, flags[(1, 3)].same_a, flags[(1, 3)].same_b) == (True, False, True)
+    applied = [{"block": 3, "vertices": [
+        (0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0), (4, 0, 0), (5, 0, 0)]}]
+    with pytest.raises(ShapeDiffError, match="conflicting ends"):
+        smoothing.records(applied, {3: mesh})
+
+
 def test_object_without_normals_gets_no_record():
     mesh = _mesh([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [(0, 1, 2)], [[None] * 3])
     applied = [{"block": 3, "vertices": [(0, 0, 0), (1, 0, 0), (0, 1, 0)]}]
     assert smoothing.records(applied, {3: mesh}) == []
+
+
+def test_encoder_refuses_unordered_duplicate_and_shared_pairs():
+    ok = {"block": 1, "vertex_count": 6, "hard": [], "soft": []}
+    for bad in (
+        dict(ok, hard=[(2, 3), (0, 1)]),
+        dict(ok, soft=[(0, 1), (0, 1)]),
+        dict(ok, hard=[(0, 1)], soft=[(0, 1)]),
+    ):
+        with pytest.raises(ShapeDiffError):
+            payload.encode_smoothing([bad])
+
+
+def test_encoder_refuses_more_than_65535_edges():
+    n = 65535
+    pairs = [(0, i) for i in range(1, 65535)] + [(1, 2), (1, 3)]
+    rec = {"block": 1, "vertex_count": n, "hard": pairs, "soft": []}
+    with pytest.raises(ShapeDiffError):
+        payload.encode_smoothing([rec])

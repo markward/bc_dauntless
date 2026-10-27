@@ -1,4 +1,6 @@
 """Classify a Blender-authored mesh's edges hard/soft from its corner normals."""
+import itertools
+import math
 from dataclasses import dataclass
 
 from tools.shape_diff import ShapeDiffError
@@ -47,18 +49,33 @@ def edge_flags(mesh):
     return out
 
 
+def _cell(p):
+    return tuple(math.floor(c / POSITION_TOL) for c in p)
+
+
 def _nearest(positions, applied, block):
-    """Lowest applied index within POSITION_TOL per coordinate of each edit
-    position (the applied shape may repeat a position, e.g. a UV seam)."""
+    """Nearest applied index within POSITION_TOL per coordinate of each edit
+    position, ties to the lowest index (the applied shape may repeat a
+    position, e.g. a UV seam). A grid of POSITION_TOL cells keeps it linear."""
+    grid = {}
+    for j, q in enumerate(applied):
+        grid.setdefault(_cell(q), []).append(j)
     out = []
     for i, p in enumerate(positions):
-        for j, q in enumerate(applied):
-            if all(abs(a - b) <= POSITION_TOL for a, b in zip(p, q)):
-                out.append(j)
-                break
-        else:
+        cx, cy, cz = _cell(p)
+        best = None
+        for dx, dy, dz in itertools.product((-1, 0, 1), repeat=3):
+            for j in grid.get((cx + dx, cy + dy, cz + dz), ()):
+                q = applied[j]
+                if not all(abs(a - b) <= POSITION_TOL for a, b in zip(p, q)):
+                    continue
+                key = (sum((a - b) ** 2 for a, b in zip(p, q)), j)
+                if best is None or key < best:
+                    best = key
+        if best is None:
             raise ShapeDiffError(
                 f"block {block}: edit vertex {i} {tuple(p)!r} matches no vertex of the applied shape")
+        out.append(best[1])
     return out
 
 
@@ -91,6 +108,9 @@ def records(applied_shapes, edit_meshes):
             if old is not None and old[0] != flag.hard:
                 raise ShapeDiffError(
                     f"block {block}: conflicting hard/soft flags on edge ({a}, {b})")
+            if old is not None and old[1] != ends:
+                raise ShapeDiffError(
+                    f"block {block}: conflicting ends on edge ({a}, {b})")
             seen[(a, b)] = (flag.hard, ends)
         keys = sorted(seen)
         out.append({

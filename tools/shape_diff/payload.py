@@ -107,26 +107,31 @@ def encode_b64(edits: list) -> str:
 
 def encode_smoothing(records: list) -> bytes:
     """BSM1: authored hard/soft edges per shape, over FINAL vertex indices
-    (a < b, ascending). Indices only -- no coordinate or normal."""
+    (a < b, strictly ascending, no pair in both lists). Indices only -- no
+    coordinate or normal."""
     out = [b"BSM1", _u16(len(records), "smoothing shape count")]
     for r in records:
         n = r["vertex_count"]
-        out.append(struct.pack("<I", r["block"]) if 0 <= r["block"] <= 0xFFFFFFFF
-                   else _fail(f"smoothing block {r['block']} does not fit in 32 bits"))
+        if not 0 <= r["block"] <= 0xFFFFFFFF:
+            raise ShapeDiffError(f"smoothing block {r['block']} does not fit in 32 bits")
+        out.append(struct.pack("<I", r["block"]))
         out.append(_u16(n, "smoothing vertex count"))
         out.append(_u16(len(r["hard"]), "smoothing hard-edge count"))
         out.append(_u16(len(r["soft"]), "smoothing soft-edge count"))
         for pairs in (r["hard"], r["soft"]):
+            prev = None
             for a, b in pairs:
                 if not 0 <= a < b < n:
                     raise ShapeDiffError(
                         f"smoothing edge ({a}, {b}) is not ascending within {n} vertices")
+                if prev is not None and (a, b) <= prev:
+                    raise ShapeDiffError(
+                        f"smoothing edge ({a}, {b}) is not strictly after ({prev[0]}, {prev[1]})")
+                prev = (a, b)
                 out.append(_u16(a, "smoothing edge") + _u16(b, "smoothing edge"))
+        if set(r["hard"]) & set(r["soft"]):
+            raise ShapeDiffError(f"smoothing block {r['block']} lists an edge as both hard and soft")
     return b"".join(out)
-
-
-def _fail(msg: str):
-    raise ShapeDiffError(msg)
 
 
 def encode_smoothing_b64(records: list) -> str:
