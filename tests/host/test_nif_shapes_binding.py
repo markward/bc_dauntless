@@ -110,6 +110,15 @@ def test_nif_shapes_reports_a_flipbooks_frame_0_as_the_shapes_texture():
     assert fixed[688]["textures"] == ["Map 7.tga"]
 
 
+def _first_shape_with_edge(nif):
+    # First block (in file order) that has an edge shared by exactly two triangles.
+    for shape in _host().nif_shapes(str(nif)):
+        edge = _two_triangle_edge(shape)
+        if edge:
+            return shape, edge
+    pytest.skip("no two-triangle edge in any DBridge block")
+
+
 def _two_triangle_edge(shape):
     # An edge of this block shared by EXACTLY two triangles (welded by
     # position), as vertex indices a < b -- derived from the file, not hard-coded.
@@ -121,11 +130,13 @@ def _two_triangle_edge(shape):
             if key(u) == key(v):
                 continue
             e = tuple(sorted((key(u), key(v))))
-            seen.setdefault(e, []).append((min(u, v), max(u, v)))
+            seen.setdefault(e, []).append((min(u, v), max(u, v), frozenset(tri)))
     for pairs in seen.values():
-        if len(pairs) == 2 and pairs[0][0] != pairs[0][1]:
-            return pairs[0]
-    pytest.skip("no two-triangle edge in the chosen block")
+        # also the same INDEX pair on two DISTINCT triangles (some blocks
+        # repeat a triangle verbatim): the record lists indices
+        if len(pairs) == 2 and pairs[0][:2] == pairs[1][:2] and pairs[0][2] != pairs[1][2]:
+            return pairs[0][:2]
+    return None
 
 
 def _smoothing_fix(block, vertex_count, hard):
@@ -137,18 +148,17 @@ def _smoothing_fix(block, vertex_count, hard):
 
 def test_set_smoothing_report_on_dbridge():
     nif = _dbridge()
-    shape = {s["block"]: s for s in _host().nif_shapes(str(nif))}[468]
-    a, b = _two_triangle_edge(shape)
-    fix = _smoothing_fix(468, len(shape["vertices"]), [(a, b)])
+    shape, (a, b) = _first_shape_with_edge(nif)
+    fix = _smoothing_fix(shape["block"], len(shape["vertices"]), [(a, b)])
     rows = _host().set_smoothing_report(str(nif), fix)
-    assert rows == [{"block": 468, "a": a, "b": b, "found": True,
+    assert rows == [{"block": shape["block"], "a": a, "b": b, "found": True,
                      "joined_a": False, "joined_b": False}]
 
 
 def test_set_smoothing_report_refused_fix_raises():
     nif = _dbridge()
-    shape = {s["block"]: s for s in _host().nif_shapes(str(nif))}[468]
-    fix = _smoothing_fix(468, len(shape["vertices"]) + 1, [(0, 1)])
+    shape = _host().nif_shapes(str(nif))[0]
+    fix = _smoothing_fix(shape["block"], len(shape["vertices"]) + 1, [(0, 1)])
     with pytest.raises(RuntimeError, match="refused"):
         _host().set_smoothing_report(str(nif), fix)
 

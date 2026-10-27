@@ -24,6 +24,7 @@ std::vector<SmoothingRow> probe_smoothing(const nif::File& file) {
     ctx.resolver = &resolver;
     ctx.texture_uploader = stub_texture;
     ctx.mesh_uploader = stub_mesh;
+    ctx.skip_texture_decode = true;  // geometry only: no texture lookups or warnings
     ctx.generate_missing_normals = true;
     ctx.smoothing_report = &report;
     detail::build_model(file, ctx);

@@ -20,9 +20,9 @@ add_library(assets STATIC
     src/path_resolver.cc
     src/pose_sample.cc
     src/skeleton_build.cc
-    src/smoothing_probe.cc
-    src/skin_weights.cc
     src/skin_offsets.cc
+    src/skin_weights.cc
+    src/smoothing_probe.cc
     src/tessellate.cc
     src/geosphere.cc
     src/texture_decode.cc

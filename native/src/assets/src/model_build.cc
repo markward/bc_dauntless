@@ -209,7 +209,9 @@ TextureLoadResult load_all_textures(
         // texture_search_paths entry rather than applying the interior
         // sibling policy to an unresolved path).
         fs::path resolved_albedo;
-        try {
+        if (ctx.skip_texture_decode) {
+            decoded = make_checkerboard();
+        } else try {
             if (img->use_external != 0) {
                 resolved_albedo = ctx.resolver->resolve(img->file_name, ctx.texture_search_paths);
                 auto bytes = read_file(resolved_albedo);

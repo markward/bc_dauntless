@@ -2817,12 +2817,6 @@ std::uint32_t nif_shapes_property_image(const nif::File& file,
     return ctrl && !ctrl->image_links.empty() ? ctrl->image_links[0] : 0;
 }
 
-}  // namespace
-
-// Read-only geometry dump for the mesh-fix generator (tools/gen_mesh_fixes.py):
-// one dict per NiTriShape, in block order, with world-space vertices/normals,
-// UV set 0, triangles, texture basenames and the hidden flag. Parse-only, no
-// GL context, and applies no mesh fix -- callers see the raw stock geometry.
 /// The loader's own parse + fix path, in memory (shared by nif_shapes and
 /// set_smoothing_report). None-equivalent: returns false when the file is
 /// missing or unparsable; throws on a fix parse failure or refusal.
@@ -2845,6 +2839,8 @@ bool load_nif_with_fix(const std::string& nif_abs_path,
     return true;
 }
 
+}  // namespace
+
 py::object set_smoothing_report_impl(const std::string& nif_abs_path,
                                      const std::string& fix_json) {
     nif::File f;
@@ -2863,6 +2859,10 @@ py::object set_smoothing_report_impl(const std::string& nif_abs_path,
     return std::move(out);
 }
 
+// Read-only geometry dump for the mesh-fix generator (tools/gen_mesh_fixes.py):
+// one dict per NiTriShape, in block order, with world-space vertices/normals,
+// UV set 0, triangles, texture basenames and the hidden flag. Parse-only, no
+// GL context, and applies no mesh fix -- callers see the raw stock geometry.
 py::object nif_shapes_impl(const std::string& nif_abs_path,
                            const std::optional<std::string>& fix_json) {
     nif::File f;

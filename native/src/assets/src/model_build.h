@@ -42,6 +42,9 @@ struct ModelBuildContext {
     /// rewritten to the shape's NIF block. nullptr -> not recorded; only
     /// filled when generate_missing_normals is set.
     SmoothingReport*                    smoothing_report = nullptr;
+    /// Never resolve or decode a texture file: every NiImage gets the
+    /// checkerboard, silently. For geometry-only builds (probe_smoothing).
+    bool                                skip_texture_decode = false;
     /// Interior sibling-map lookup policy (spec 2026-10-08-bridge-emitters
     /// §9.2/§9.3): when true, a sibling `_rough`/`_metal`/`_normal` probe is
     /// restricted to EITHER `sibling_overlay_dirs` (when the resolved albedo
