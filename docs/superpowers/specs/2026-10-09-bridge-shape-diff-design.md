@@ -387,8 +387,8 @@ with `verify=False`.
 Same file as today: `native/assets/mesh_fixes/<fnv1a64>.json`.
 The tool writes payload **BSD2** since iteration 3; the loader still reads
 BSD1 (the fix committed in rounds 1c–4b is BSD1 until it is regenerated). `merges` becomes
-optional; a file needs at least one of `merges` / `shape_edits` / `textures`.
-Still `format` 1.
+optional; a file needs at least one of `merges` / `shape_edits` / `textures` /
+`smoothing`. Still `format` 1.
 
 ```json
 {
@@ -399,6 +399,10 @@ Still `format` 1.
   "textures": [{"block": 29, "albedo": "g_imp_connops.tga"}]
 }
 ```
+
+`smoothing` (optional; may stand alone or sit beside any other key) is one
+base64 BSM1 blob of the hard/soft edges Mark authored per shape (§6.1,
+`2026-10-27-bridge-authored-smoothing-design.md`).
 
 `textures` (2b, optional, sorted by block, written only when non-empty) gives
 one NiTriShape its own albedo: a **bare** `.tga` filename resolved through the
@@ -478,6 +482,29 @@ the surviving original triangles **in original order**, then the added ones.
 UV1 / colour fields are ignored when the shape has no second UV set / colours.
 Vertices are never removed (an orphan is harmless).
 
+**BSM1 (authored smoothing; the `smoothing` key).** Separate from BSD1/BSD2:
+
+```
+char[4]  magic "BSM1"
+u16      shape_count
+per shape:
+  u32    block           (NiTriShape block-array index)
+  u16    vertex_count    (the shape's FINAL vertex count: original + this fix's added)
+  u16    n_hard, n_soft
+  n_hard × { u16 a, b }  hard edges, a < b < vertex_count, strictly ascending
+  n_soft × { u16 a, b }  soft edges, same rules; no pair in both lists
+```
+
+Edges are pairs of the shape's FINAL vertex indices (after the same fix's
+moves, adds and removes); where several NIF vertices share a position any of
+them may be named, because normal generation welds by position. The presence
+of a record means the shape's smoothing is authored, even with zero hard
+edges. Indices only -- no coordinate, no normal -- so §6.2 holds. Golden: the
+records `{7, 4 vertices, hard (0,1), soft (0,2) (1,2)}` and `{12, 3, no edges}`
+encode to `QlNNMQIABwAAAAQAAQACAAAAAQAAAAIAAQACAAwAAAADAAAAAAA=` (38 bytes),
+pinned in `tests/tools/test_shape_diff_smoothing.py` and
+`native/tests/assets/cpu/mesh_fix_smoothing_test.cc` (`kGolden`).
+
 ### 6.2 Copyright posture
 
 The payload holds no original position, UV, colour or triangle — only indices
@@ -518,6 +545,13 @@ original) when:
 - an added triangle is degenerate (repeated index or zero area);
 - the shape has authored normals (none on DBridge — out of scope);
 - a data block is also used by a merge;
+- (BSM1) the payload has bad base64, bad magic, or is truncated / has trailing
+  bytes; a record's block is out of range, not a `NiTriShape`, or its data is
+  unresolved; two records name one block; its `vertex_count` is not the
+  shape's final vertex count; an edge is not `a < b`, is `>= vertex_count`, or
+  is out of ascending order; an edge is both hard and soft. The merge check
+  (a data block also used by a merge) runs BEFORE the authored-normals check,
+  so a merge conflict is reported as that, not as normals;
 - (BSD2) a kind-2 delta is non-finite; a reference's block is out of range, not a `NiTriShape`, or its
   data is unresolved/inconsistent; its vertex is not below that shape's
   ORIGINAL vertex count (a vertex that only exists after this same fix
@@ -682,7 +716,7 @@ the scratchpad; in game, Developer Options → Lighting → Bridge Debug View
 
 ### 11.2 Mark's working files (outside the repo — BC geometry never enters git)
 
-`~/Documents/dauntless-blender/`:
+`~/Documents/dauntless-artwork/Dbridge/` (moved from `~/Documents/dauntless-blender/`, 2026-10-27):
 - `Dbridge_unmodified_rexport.obj/.mtl` — **the fixed base**. Exported from Blender right after importing the tool's export, never re-exported. Every diff runs against it.
 - `Dbridge_modified_and_enhanced_rexport.obj/.mtl` — the current edit (round 6). Earlier rounds used `Dbridge_modified_rexport.obj`; the name is whatever Mark exports, pass it explicitly.
 - `fixed-3.blend` — the live `.blend` holding EVERY accepted edit. Future rounds must continue in it (see 11.4).
@@ -692,9 +726,9 @@ the scratchpad; in game, Developer Options → Lighting → Bridge Debug View
 
 ```
 cd <worktree>
-uv run python -m tools.bridge_shape_diff diff ~/Documents/dauntless-blender/Dbridge_unmodified_rexport.obj ~/Documents/dauntless-blender/<edit>.obj --partial
+uv run python -m tools.bridge_shape_diff diff ~/Documents/dauntless-artwork/Dbridge/Dbridge_unmodified_rexport.obj ~/Documents/dauntless-artwork/Dbridge/<edit>.obj --partial
 ```
-1. Read the dry run: per-block summary, `verified N objects`, `skipped` list, warnings. Investigate every `skipped`/`refused` before writing (see 11.5).
+1. Read the dry run: per-block summary, `verified N objects`, `smoothing: N shapes, H hard / S soft edges`, `verified smoothing on N edges`, the `skipped` list, a `smoothing skipped:` list (blocks whose record was dropped, with the first failing edge), warnings. Investigate every `skipped`/`refused` before writing (see 11.5).
 2. `--write` regenerates the WHOLE fix cumulatively from base → edit (it never merges). It refuses to overwrite a fix owned by another generator, and refuses to write if verification fails.
 3. Mark checks in game (`./build/dauntless --developer` from the worktree; no rebuild needed for fix/texture changes — they are read at load).
 4. Only after Mark accepts: commit the fix + any new textures together, and add a §9 row.
@@ -705,6 +739,7 @@ uv run python -m tools.bridge_shape_diff diff ~/Documents/dauntless-blender/Dbri
 - New albedo: set the material's Base Color to a `.tga` in the overlay folder (only the FILENAME matters). Never a reserved suffix (`_glow`, `_spec(ular)`, `_norm(al)`, `_emissive*`). A `<stem>_0.tga` with `_1`, `_2`… beside it becomes a flipbook (default 5 fps, game time, loops).
 - One albedo per object (per-face material splits are refused). Keep the `.mtl` beside the `.obj` — a missing named `mtllib` aborts the diff.
 - Flipping a face's winding is refused (it would ship as a back-face).
+- **Smoothing.** Export the OBJ with **Normals ticked** (that writes the `vn` lines the tool reads). Sharp marks and Smooth by Angle are honoured -- each edge inside an object is hard if its two faces' corner normals differ at either end. Custom / bent normals (Weighted Normal, edited split normals) are NOT: only the hard/soft bit per edge is stored. An object with no `vn` keeps the 40° rule.
 
 ### 11.5 Reading refusals
 
@@ -715,6 +750,8 @@ uv run python -m tools.bridge_shape_diff diff ~/Documents/dauntless-blender/Dbri
 | `depends on skipped/excluded bNNNN` | a block's triangle removals need another block's replacement; they land together or not at all |
 | `texture '…' not found` | the `.mtl` names a file not in the overlay/stock dir (often an old name or a main-checkout path) |
 | `would bind as glow/gloss/bump` | albedo uses a reserved suffix — point Base Color at the plain diffuse |
+| `verify: authored smoothing differs from Blender on N blocks` | without `--partial`, EVERY failing block is listed (first 5 edges each). The usual cause is an edge Blender shows hard that the game joins through another edge or shape, or a game-only edge (T-junction piece, mirror seam) Blender never had: Merge by Distance in Blender, or mark the edge. See 11.6 for the T-junction cases that cannot be fixed on the Blender side |
+| `smoothing skipped:` (with `--partial`) | those blocks lost their smoothing record and keep the 40° rule; the rest were re-verified and are written. Same causes as the row above |
 | verifier mismatch | the produced fix does not reproduce `edit.obj` through the real loader — a tool bug; do not write |
 
 ### 11.6 Known limitations (parked, with rulings)
@@ -747,6 +784,18 @@ uv run python -m tools.bridge_shape_diff diff ~/Documents/dauntless-blender/Dbri
 - **Survivor snapped onto an earlier DELETED vertex** can mis-align (refusal or identical geometry only).
 - **Literal UVs** are authored values (allowed); positions are never absolute (refs or deltas).
 - **Emissive** on a flipbook shape is static (frame 0's stem).
+
+- **Smoothing refusals from the T-junction repair (2026-10-27, parked).** The
+  engine's repair accepts a vertex within 0.1% of a segment, which can cut a
+  face more than Blender did: double cuts at a corner and a sliver third face
+  leave an authored edge as "not one edge between two surfaces"
+  (`found` false); and a same-shape T-junction on an open border can render
+  soft at one end where Blender shows hard. These are independent of the
+  normals Mark authored. Risk parked: a twin or duplicate cut into different
+  position sets by multi-edge T-junctions could get a forced soft join that
+  folds a normal back; not seen yet. Remedy for now: `--partial` drops those
+  objects' records so they keep the 40° rule (in the first DBridge run, 6
+  blocks). Fix engine-side only if the list matters in game.
 
 ### 11.7 Before merging `spike/bridge-shape-diff` into `main`
 

@@ -195,3 +195,39 @@ accepted round-8 work is dropped.
   normals), the DBridge shows Mark's hard edges where Blender does; shapes and
   joins without authored smoothing look as before.
 - Mark accepts it in game; then the fix is committed.
+
+## 7. As built (2026-10-27)
+
+Where the builder's code differs from, or settles, the text above. Layout and
+golden: shape-diff spec §6.1; refusals §7; runbook §11.
+
+- **Payload.** A separate fix key, `smoothing` (base64 BSM1), alone or beside
+  any other key; not a BSD3. The merge check runs ahead of the
+  authored-normals refusal in the loader (the old order left the merge branch
+  dead).
+- **Duplicate faces are one surface.** Stock DBridge has 3838 of 8580 triangles
+  duplicating another triangle's welded position set (seam, reversed and UV
+  twins in 123 of 145 shapes), while Blender shows one face per set. Inside a
+  recorded shape, faces with the same welded position set are ONE face for
+  authored decisions: hard/soft applies between distinct sets, `found` counts
+  distinct position sets, and a pair of duplicates always unites (orientation
+  from the normal sign).
+- **`found`** = exactly two position sets of the authored edge's OWN shape on
+  the edge (other shapes' faces along it are ignored, per §3.3). The
+  verifier checks each end separately (`joined_a`, `joined_b`).
+- **Hard survives joins** by a cannot-link check when uniting groups: corners
+  an authored hard edge separates never end in one group, including across
+  shapes and across both duplicate sets.
+- **Sub-edge matching** after T-junction repair uses collinearity within
+  1e-3 x the segment length (the repair's own acceptance, 1/1024 snapping),
+  not 1e-5, and only for repair-cut pieces; unlisted edges use the 40° rule.
+- **Cross-shape joins** keep the 40° rule; the switch is
+  `kAuthoredShapeJoinsHard` in `model_build.cc` (false).
+- **`--partial`** drops the record of any block whose smoothing fails
+  verification, lists it under `smoothing skipped:`, and re-verifies the rest;
+  without `--partial` the CLI refuses and lists every failing block.
+- **Known limitation (runbook §11.6).** Six blocks of the first DBridge run
+  were refused because the T-junction repair's 0.1% tolerance cuts more than
+  Blender did (double cuts at a corner, sliver third faces, same-shape
+  T-junctions on open borders). They keep the 40° rule under `--partial`.
+  A fold-back guard for a forced soft join is parked until real data shows it.
