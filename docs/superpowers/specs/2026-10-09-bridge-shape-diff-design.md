@@ -794,8 +794,8 @@ uv run python -m tools.bridge_shape_diff diff ~/Documents/dauntless-artwork/Dbri
   normals Mark authored. Risk parked: a twin or duplicate cut into different
   position sets by multi-edge T-junctions could get a forced soft join that
   folds a normal back; not seen yet. Remedy for now: `--partial` drops those
-  objects' records so they keep the 40° rule (in the first DBridge run, 6
-  blocks). Fix engine-side only if the list matters in game.
+  objects' records so they keep the 40° rule (on Mark's 2026-10-27 export, 11 of 138 objects were smoothing-skipped (blocks 145 200 224 255 411 420 438 468 563 575 652; 1-4 failing edges each) and 127 recorded (1601 hard / 3433 soft edges).)
+  Fix engine-side only if the list matters in game. A block without a record (including `smoothing skipped` ones) keeps the 40° rule for its own internal edges, but its vertices on a seam with a recorded neighbour can shade differently (cannot-link and authored joins reach across the seam); the verifier does not check unrecorded blocks.
 
 ### 11.7 Before merging `spike/bridge-shape-diff` into `main`
 

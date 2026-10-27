@@ -943,6 +943,12 @@ std::string validate_smoothing(const nif::File& file, const MeshFixSmoothing& m,
             return prefix + "data block " + std::to_string(*data_idx) +
                    " is used by merge " + std::to_string(mi);
     }
+    for (std::size_t bi = 0; bi < file.blocks.size(); ++bi) {
+        const auto* other = std::get_if<nif::NiTriShape>(&file.blocks[bi]);
+        if (other && bi != m.block && index_of(file, other->data_link) == *data_idx)
+            return prefix + "data block " + std::to_string(*data_idx) +
+                   " is shared with shape " + std::to_string(bi);
+    }
     if (d->has_normals) return prefix + "shape has authored normals (unsupported)";
     std::size_t final_v = d->num_vertices;
     for (const auto& e : fix.shape_edits)
@@ -1015,13 +1021,13 @@ std::string apply_mesh_fix(nif::File& file, const MeshFix& fix) {
 
     // Smoothing records only annotate a shape's final vertices, so they may
     // follow a shape edit of the same block but never a merge (which grows
-    // or hides the data), and a block takes one record.
+    // or hides the data), and a data block takes one record.
     std::vector<std::size_t> smoothing_data(fix.smoothing.size(), 0);
-    std::unordered_map<std::uint32_t, std::size_t> smoothing_owner;  // block -> first record
+    std::unordered_map<std::size_t, std::size_t> smoothing_owner;  // data idx -> first record
     for (std::size_t i = 0; i < fix.smoothing.size(); ++i) {
         std::string err = validate_smoothing(file, fix.smoothing[i], i, fix, plans, &smoothing_data[i]);
         if (!err.empty()) return err;
-        auto [it, inserted] = smoothing_owner.try_emplace(fix.smoothing[i].block, i);
+        auto [it, inserted] = smoothing_owner.try_emplace(smoothing_data[i], i);
         if (!inserted)
             return "smoothing " + std::to_string(i) + ": block " +
                    std::to_string(fix.smoothing[i].block) + " already has smoothing record " +

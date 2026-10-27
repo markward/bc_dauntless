@@ -128,8 +128,12 @@ def _smoothing_summary(fix: dict):
     if not fix.get("smoothing"):
         return None
     recs = payload.decode_smoothing_b64(fix["smoothing"])
-    return (f"smoothing: {len(recs)} shapes, {sum(len(r['hard']) for r in recs)} hard / "
-            f"{sum(len(r['soft']) for r in recs)} soft edges")
+    lines = [f"block {r['block']}: smoothing {len(r['hard'])} hard / {len(r['soft'])} soft"
+             for r in recs]
+    lines.append(f"smoothing: {len(recs)} shape{'s' if len(recs) != 1 else ''}, "
+                 f"{sum(len(r['hard']) for r in recs)} hard / "
+                 f"{sum(len(r['soft']) for r in recs)} soft edges")
+    return "\n".join(lines)
 
 
 def fix_text(fix: dict) -> str:
@@ -192,7 +196,13 @@ def build_fix(rel: str, base_path: Path, edit_path: Path, partial: bool = False,
         authored = {b: edit_objs[n] for b, n in names.items() if b not in left_out
                     and _smoothing.edge_flags(edit_objs[n]) is not None}
         if authored:
-            recs = _smoothing.records(_verify.apply(_nif_path(rel), fix_text(fix)), authored)
+            unbuilt = [] if partial else None
+            recs = _smoothing.records(_verify.apply(_nif_path(rel), fix_text(fix)), authored,
+                                      unbuilt)
+            if unbuilt:
+                print("smoothing skipped:")
+                for block, reason in unbuilt:
+                    print(f"  {names[block]} (block {block}): {reason}")
         if recs:
             fix = make_fix_dict(rel, edits, payload.encode_smoothing_b64(recs))
     if verify:

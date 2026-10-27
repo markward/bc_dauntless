@@ -1,6 +1,6 @@
 # Bridge authored smoothing — design
 
-Status: draft for Mark's approval, 2026-10-27.
+Status: approved by Mark 2026-10-27; built on feat/bridge-authored-smoothing.
 Extends: `2026-10-09-bridge-shape-diff-design.md` (the shape diff; §6 fix file,
 §7 loader, §11 runbook) and `2026-10-08-bridge-lighting-baseline-design.md` §3
 (generated interior normals).
@@ -226,8 +226,10 @@ golden: shape-diff spec §6.1; refusals §7; runbook §11.
 - **`--partial`** drops the record of any block whose smoothing fails
   verification, lists it under `smoothing skipped:`, and re-verifies the rest;
   without `--partial` the CLI refuses and lists every failing block.
-- **Known limitation (runbook §11.6).** Six blocks of the first DBridge run
-  were refused because the T-junction repair's 0.1% tolerance cuts more than
+- **Known limitation (runbook §11.6).** On Mark's 2026-10-27 export, 11 of 138 objects
+  (blocks 145 200 224 255 411 420 438 468 563 575 652; 1-4 failing edges
+  each) were refused, 127 recorded (1601 hard / 3433 soft edges), because the T-junction repair's 0.1% tolerance cuts more than
   Blender did (double cuts at a corner, sliver third faces, same-shape
   T-junctions on open borders). They keep the 40° rule under `--partial`.
+  A block without a record (including `smoothing skipped` ones) keeps the 40° rule for its own internal edges, but its vertices on a seam with a recorded neighbour can shade differently (cannot-link and authored joins reach across the seam); the verifier does not check unrecorded blocks.
   A fold-back guard for a forced soft join is parked until real data shows it.

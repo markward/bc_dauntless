@@ -169,6 +169,34 @@ def test_records_refuse_a_block_not_in_the_applied_shapes():
         smoothing.records([{"block": 3, "vertices": []}], {9: _tri_pair(N2)})
 
 
+def test_records_skip_an_unmatched_vertex_when_given_a_skipped_list():
+    applied = [{"block": 3, "vertices": [(0, 0, 0), (1, 0, 0), (0, 1, 0)]}]
+    skipped = []
+    assert smoothing.records(applied, {3: _tri_pair(N2)}, skipped) == []
+    assert [b for b, _ in skipped] == [3]
+    assert "matches no vertex" in skipped[0][1]
+
+
+def test_records_ignore_an_unmatched_loose_vertex():
+    mesh = _tri_pair(N2)
+    mesh.positions.append((7, 7, 7))
+    applied = [{"block": 3, "vertices": [
+        (0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]}]
+    assert smoothing.records(applied, {3: mesh})[0]["hard"] == [(0, 2)]
+
+
+def test_records_skip_conflicting_flags_when_given_a_skipped_list():
+    pos = [(0, 0, 0), (0, 0, 0), (1, 0, 0), (1, 0, 0)]
+    mesh = _mesh(pos, [], [])
+    mesh.faces = [[(0, 0), (2, 0), (3, 0)], [(0, 0), (2, 0), (1, 0)],
+                  [(1, 0), (3, 0), (2, 0)], [(1, 0), (3, 0), (0, 0)]]
+    mesh.face_normals = [[N1] * 3, [N2] * 3, [N1] * 3, [N1] * 3]
+    applied = [{"block": 3, "vertices": [(0, 0, 0), (1, 0, 0)]}]
+    skipped = []
+    assert smoothing.records(applied, {3: mesh}, skipped) == []
+    assert "conflict" in skipped[0][1]
+
+
 def test_records_refuse_conflicting_flags():
     # Two OBJ edges (0,2) and (1,3) collapse onto final pair (0,1).
     pos = [(0, 0, 0), (0, 0, 0), (1, 0, 0), (1, 0, 0)]
@@ -299,7 +327,7 @@ def test_main_treats_a_smoothing_only_diff_as_a_change(monkeypatch, tmp_path, ca
     assert cli.main(["diff", "a.obj", "b.obj"]) == 0
     out = capsys.readouterr().out
     assert "no changes" not in out
-    assert "smoothing: 1 shapes, 1 hard / 2 soft edges" in out
+    assert "smoothing: 1 shape, 1 hard / 2 soft edges" in out
     assert "dry run" in out
 
 

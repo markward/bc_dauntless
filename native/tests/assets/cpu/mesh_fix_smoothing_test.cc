@@ -189,3 +189,32 @@ TEST(MeshFixSmoothing, RefusesAShapeWhoseDataAMergeUses) {
     EXPECT_NE(err.find("used by merge"), std::string::npos) << err;
     EXPECT_FALSE(data(f).authored_edges.has_value());
 }
+
+namespace {
+// make() plus a second NiTriShape (block 4) over the SAME data block.
+nif::File make_shared_data_file() {
+    auto f = make();
+    nif::NiTriShape twin; twin.data_link = 3; twin.av.obj.name = "twin";
+    std::get<nif::NiNode>(f.blocks[0]).child_links = {2, 4};
+    f.blocks.push_back(twin);
+    f.block_ids.push_back(4);
+    f.root = nif::BlockHandle{&f.blocks.front()};
+    return f;
+}
+}  // namespace
+
+TEST(MeshFixSmoothing, RefusesADataBlockSharedWithAnotherShape) {
+    auto f = make_shared_data_file();
+    const std::string err = assets::apply_mesh_fix(f, fix_of(rec()));
+    EXPECT_NE(err.find("shared"), std::string::npos) << err;
+    EXPECT_FALSE(data(f).authored_edges.has_value());
+}
+
+TEST(MeshFixSmoothing, RefusesTwoRecordsOnOneDataBlock) {
+    auto f = make_shared_data_file();
+    auto second = rec();
+    second.block = 4;
+    assets::MeshFix fix; fix.smoothing = {rec(), second};
+    EXPECT_NE(assets::apply_mesh_fix(f, fix), "");
+    EXPECT_FALSE(data(f).authored_edges.has_value());
+}

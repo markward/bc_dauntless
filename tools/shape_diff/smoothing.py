@@ -53,15 +53,17 @@ def _cell(p):
     return tuple(math.floor(c / POSITION_TOL) for c in p)
 
 
-def _nearest(positions, applied, block):
-    """Nearest applied index within POSITION_TOL per coordinate of each edit
-    position, ties to the lowest index (the applied shape may repeat a
-    position, e.g. a UV seam). A grid of POSITION_TOL cells keeps it linear."""
+def _nearest(positions, applied, block, needed):
+    """{edit vertex: nearest applied index within POSITION_TOL per coordinate}
+    for the `needed` edit vertices, ties to the lowest index (the applied
+    shape may repeat a position, e.g. a UV seam). A grid of POSITION_TOL
+    cells keeps it linear."""
     grid = {}
     for j, q in enumerate(applied):
         grid.setdefault(_cell(q), []).append(j)
-    out = []
-    for i, p in enumerate(positions):
+    out = {}
+    for i in sorted(needed):
+        p = positions[i]
         cx, cy, cz = _cell(p)
         best = None
         for dx, dy, dz in itertools.product((-1, 0, 1), repeat=3):
@@ -75,15 +77,46 @@ def _nearest(positions, applied, block):
         if best is None:
             raise ShapeDiffError(
                 f"block {block}: edit vertex {i} {tuple(p)!r} matches no vertex of the applied shape")
-        out.append(best[1])
+        out[i] = best[1]
     return out
 
 
-def records(applied_shapes, edit_meshes):
+def _record(block, mesh, flags, verts):
+    final = _nearest(mesh.positions, verts, block,
+                     {v for key in flags for v in key})
+    seen = {}
+    for (va, vb), flag in flags.items():
+        a, b = final[va], final[vb]
+        if a == b:
+            continue
+        ends = (flag.same_a, flag.same_b)
+        if a > b:
+            a, b, ends = b, a, ends[::-1]
+        old = seen.get((a, b))
+        if old is not None and old[0] != flag.hard:
+            raise ShapeDiffError(
+                f"block {block}: conflicting hard/soft flags on edge ({a}, {b})")
+        if old is not None and old[1] != ends:
+            raise ShapeDiffError(
+                f"block {block}: conflicting ends on edge ({a}, {b})")
+        seen[(a, b)] = (flag.hard, ends)
+    keys = sorted(seen)
+    return {
+        "block": block,
+        "vertex_count": len(verts),
+        "hard": [k for k in keys if seen[k][0]],
+        "soft": [k for k in keys if not seen[k][0]],
+        "ends": {k: seen[k][1] for k in keys},
+    }
+
+
+def records(applied_shapes, edit_meshes, skipped=None):
     """One record per edited block with authored normals, sorted by block:
     {"block", "vertex_count", "hard", "soft", "ends"} over FINAL vertex
     indices (a < b). `ends[(a, b)]` = (normals agree at a, at b); it is for
-    the verifier and never encoded."""
+    the verifier and never encoded. A block whose record cannot be built
+    raises, unless `skipped` is a list: then (block, reason) is appended to
+    it and the block gets no record."""
     by_block = {s["block"]: s for s in applied_shapes}
     for block in edit_meshes:
         if block not in by_block:
@@ -94,30 +127,10 @@ def records(applied_shapes, edit_meshes):
         flags = edge_flags(mesh)
         if flags is None:
             continue
-        verts = by_block[block]["vertices"]
-        final = _nearest(mesh.positions, verts, block)
-        seen = {}
-        for (va, vb), flag in flags.items():
-            a, b = final[va], final[vb]
-            if a == b:
-                continue
-            ends = (flag.same_a, flag.same_b)
-            if a > b:
-                a, b, ends = b, a, ends[::-1]
-            old = seen.get((a, b))
-            if old is not None and old[0] != flag.hard:
-                raise ShapeDiffError(
-                    f"block {block}: conflicting hard/soft flags on edge ({a}, {b})")
-            if old is not None and old[1] != ends:
-                raise ShapeDiffError(
-                    f"block {block}: conflicting ends on edge ({a}, {b})")
-            seen[(a, b)] = (flag.hard, ends)
-        keys = sorted(seen)
-        out.append({
-            "block": block,
-            "vertex_count": len(verts),
-            "hard": [k for k in keys if seen[k][0]],
-            "soft": [k for k in keys if not seen[k][0]],
-            "ends": {k: seen[k][1] for k in keys},
-        })
+        try:
+            out.append(_record(block, mesh, flags, by_block[block]["vertices"]))
+        except ShapeDiffError as err:
+            if skipped is None:
+                raise
+            skipped.append((block, str(err)))
     return out

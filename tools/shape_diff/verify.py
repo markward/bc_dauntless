@@ -146,11 +146,11 @@ def _require_host():
     return host
 
 
-def _loader(call, nif_path, fix_json):
+def _loader(call, nif_path, fix_json, failure="the loader refuses this fix"):
     try:
         out = call(str(nif_path), fix_json)
     except RuntimeError as exc:
-        raise ShapeDiffError(f"verify: the loader refuses this fix: {exc}") from None
+        raise ShapeDiffError(f"verify: {failure}: {exc}") from None
     if out is None:
         raise ShapeDiffError(f"verify: cannot read {nif_path}")
     return out
@@ -215,7 +215,8 @@ def check_smoothing(records, report_rows, names=None):
 
 def smoothing_report(nif_path, fix_json):
     """The loader's smoothing report rows for `nif_path` built with `fix_json`."""
-    return _loader(_require_host().set_smoothing_report, nif_path, fix_json)
+    return _loader(_require_host().set_smoothing_report, nif_path, fix_json,
+                   "the smoothing probe failed to build the shape")
 
 
 def run_smoothing(nif_path, fix_json, records, names=None):
