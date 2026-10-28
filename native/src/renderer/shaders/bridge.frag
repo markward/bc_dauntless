@@ -463,13 +463,22 @@ vec3 rect_nearest(vec3 p, vec3 c, vec3 u, vec3 v) {
     return c + u * s + v * t;
 }
 
+// Twin of pbr::rect_ray_point / kAreaRayGraze: along the reflection ray to the
+// light's plane, ramping to the point under p while the ray grazes the plane --
+// a hard switch drew a line across the walls at the camera's eye height.
+const float kAreaRayGraze = 0.2;
+vec3 rect_ray_point(vec3 p, vec3 r, vec3 c, vec3 n) {
+    float h = max(dot(p - c, n), 0.0);
+    float denom = dot(r, n);
+    float g = denom <= -kAreaRayGraze
+            ? 1.0 / -denom
+            : clamp((kAreaRayGraze - denom) / (2.0 * kAreaRayGraze), 0.0, 1.0) / kAreaRayGraze;
+    return p + r * (h * g);
+}
+
 vec3 rect_representative(vec3 p, vec3 r, vec3 c, vec3 u, vec3 v) {
     vec3 n = normalize(cross(u, v));
-    float denom = dot(r, n);
-    if (denom > -1e-6) return rect_nearest(p, c, u, v);
-    float t = dot(c - p, n) / denom;
-    if (t <= 0.0) return rect_nearest(p, c, u, v);
-    return rect_nearest(p + r * t, c, u, v);
+    return rect_nearest(rect_ray_point(p, r, c, n), c, u, v);
 }
 
 // Adds every area light's linear diffuse and GGX specular at this fragment
@@ -478,9 +487,7 @@ vec3 rect_representative(vec3 p, vec3 r, vec3 c, vec3 u, vec3 v) {
 // Twin of pbr::area_join_weight (spec §16.8).
 float area_join_weight(vec3 p, vec3 r, vec3 c, vec3 u, vec3 nl, int joins, float margin) {
     if (joins == 0) return 1.0;
-    float denom = dot(r, nl);
-    float t = denom < -1e-6 ? dot(c - p, nl) / denom : -1.0;
-    vec3 hit = t > 0.0 ? p + r * t : p - nl * dot(p - c, nl);
+    vec3 hit = rect_ray_point(p, r, c, nl);
     float half_len = length(u);
     float along = dot(hit - c, u) / max(half_len, 1e-6);
     float m = max(margin, 1e-3);
