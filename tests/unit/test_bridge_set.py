@@ -45,11 +45,15 @@ def test_set_off_texture_is_recorded_not_swallowed():
     assert vs.GetOffTexture() == "data/Icons/ViewscreenLoading.tga"
 
 
-def test_off_texture_abs_path_resolves_against_game_root():
+def test_off_texture_abs_path_resolves_through_game_asset():
+    # Resolved like every other BC asset, so a replacement or mod copy of the
+    # texture wins over the stock install (native/assets/replacements ships
+    # our own ViewscreenLoading.tga).
+    from engine import paths
     vs = ViewScreenObject("x.nif")
     assert off_texture_abs_path(vs) == ""
     assert off_texture_abs_path(None) == ""
     vs.SetOffTexture("data/Icons/ViewscreenLoading.tga")
     p = off_texture_abs_path(vs)
-    assert p.endswith("game/data/Icons/ViewscreenLoading.tga")
+    assert p == str(paths.game_asset("data/Icons/ViewscreenLoading.tga"))
     assert os.path.isabs(p)

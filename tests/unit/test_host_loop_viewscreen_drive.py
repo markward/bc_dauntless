@@ -78,7 +78,10 @@ def test_off_texture_is_resolved_and_pushed_once():
                                            intensity_fn=lambda a, b: 0.5)
     assert len(r.off_textures) == 1
     pushed = r.off_textures[0]
-    assert pushed.endswith("game/data/Icons/ViewscreenLoading.tga")
+    # Resolved through paths.game_asset, so the replacement overlay's own
+    # loading screen wins over the stock install's.
+    from engine import paths
+    assert pushed == str(paths.game_asset("data/Icons/ViewscreenLoading.tga"))
     assert os.path.isabs(pushed)
     # Unchanged next frame -> not re-sent (the TGA is decoded on change only).
     drive_viewscreen_static_and_brightness(r, c, ramp, 0.016,
