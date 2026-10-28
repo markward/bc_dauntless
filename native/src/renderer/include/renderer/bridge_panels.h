@@ -102,6 +102,7 @@ private:
     lottie::PanelWorker worker_;
     std::map<Key, Entry> entries_;
     std::uint64_t next_key_ = 1;
+    GLuint unpack_ = 0;   // the pixel-unpack buffer every upload goes through
     Stats stats_;
 };
 

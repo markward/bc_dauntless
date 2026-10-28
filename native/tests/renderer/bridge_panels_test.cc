@@ -457,3 +457,18 @@ TEST_F(BridgePanels, PanelSizeIsCappedByItsCanvas) {
     EXPECT_EQ(r.h, 256);
     EXPECT_TRUE(all_red(r));
 }
+
+// Uploads go through a pixel-unpack buffer (so the copy queues on the GPU
+// instead of the CPU waiting for draws still reading the texture), and that
+// buffer is never left bound: any later glTexImage2D would read from it.
+TEST_F(BridgePanels, UploadLeavesNoUnpackBufferBound) {
+    place("slide.json");
+    ASSERT_TRUE(pump(0.0, [&] { return live() != 0; }));
+    for (double t : {0.1, 0.2, 0.3}) {
+        pump(t, nullptr, 50ms);
+        GLint bound = -1;
+        glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &bound);
+        EXPECT_EQ(bound, 0) << t;
+    }
+    EXPECT_GE(panels->take_stats().uploads, 2);
+}

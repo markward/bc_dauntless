@@ -1,5 +1,6 @@
 // native/src/renderer/bridge_panels.cc
 #include "renderer/bridge_panels.h"
+#include "renderer/frame_timer.h"
 
 #include <assets/panel_files.h>
 
@@ -16,6 +17,7 @@ BridgePanels::~BridgePanels() {
         if (e.tex != 0) glDeleteTextures(1, &e.tex);
         e.tex = 0;
     }
+    if (unpack_ != 0) glDeleteBuffers(1, &unpack_);
 }
 
 void BridgePanels::drop(Entry& e) {
@@ -124,12 +126,15 @@ void BridgePanels::update(double t, BridgeQuality q) {
         }
         const auto gw = static_cast<GLsizei>(r.w);
         const auto gh = static_cast<GLsizei>(r.h);
+        DAUNTLESS_FRAME_SCOPE("bridge_lottie.upload");
         if (!bound) {
             glActiveTexture(GL_TEXTURE0);
             glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
             bound = true;
         }
         if (e.tex == 0) {
+            // The first, whole image allocates the texture straight from
+            // client memory (through the unpack buffer it measured slower).
             glGenTextures(1, &e.tex);
             glBindTexture(GL_TEXTURE_2D, e.tex);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, gw, gh, 0, GL_RGBA,
@@ -141,13 +146,29 @@ void BridgePanels::update(double t, BridgeQuality q) {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
         } else {
+            // Every later (partial) upload goes through a pixel-unpack buffer,
+            // re-specified per upload (orphaned), so the texture update queues
+            // on the GPU instead of the CPU waiting for draws still reading last
+            // frame's image. Measured 2026-10-28 (DBridge, Debug): straight
+            // from client memory it took 0.75 ms at Medium, 4.3 ms at High.
+            if (unpack_ == 0) glGenBuffers(1, &unpack_);
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, unpack_);
+            glBufferData(GL_PIXEL_UNPACK_BUFFER, static_cast<GLsizeiptr>(r.bytes), nullptr,
+                         GL_STREAM_DRAW);
+            glBufferSubData(GL_PIXEL_UNPACK_BUFFER, 0, static_cast<GLsizeiptr>(r.bytes),
+                            r.rgba.get());
             glBindTexture(GL_TEXTURE_2D, e.tex);
             glTexSubImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(rc.x),
                             static_cast<GLint>(rc.y), static_cast<GLsizei>(rc.w),
                             static_cast<GLsizei>(rc.h), GL_RGBA, GL_UNSIGNED_BYTE,
-                            r.rgba.get());
+                            nullptr);   // offset 0 in the unpack buffer
+            // Never left bound: a later glTexImage2D anywhere would read it.
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
         }
-        glGenerateMipmap(GL_TEXTURE_2D);
+        {
+            DAUNTLESS_FRAME_SCOPE("bridge_lottie.mipmap");
+            glGenerateMipmap(GL_TEXTURE_2D);
+        }
         e.has_image = true;
         ++stats_.uploads;
         stats_.upload_bytes += r.bytes;
