@@ -1,10 +1,14 @@
 // native/src/renderer/asset_path.cc
 #include <renderer/asset_path.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <filesystem>
 #include <map>
+#include <mutex>
 #include <string>
+#include <vector>
 
 namespace renderer {
 namespace {
@@ -73,6 +77,64 @@ bool starts_with_dir(const std::string& path, const std::string& prefix) {
     return sep == '/' || sep == kBackslash;
 }
 
+// `path` as spelled if it exists, else the existing path whose components
+// match it case-insensitively, else `path` unchanged (so a missing asset still
+// fails to open, under the name the caller asked for).
+//
+// BC content spells paths with whatever case it likes ("DBridge.nif" for a
+// file named "Dbridge.NIF"), which only a case-sensitive filesystem notices.
+// Twin of engine/core/case_paths.py:resolve -- the same exact-first rule and
+// the same sorted first-match tie-break. Directory listings are cached for
+// the process (BC content does not change under a running game), behind a
+// mutex because assets also load from worker threads.
+std::string case_resolve(const std::string& path) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (fs::exists(path, ec)) return path;
+
+    static std::mutex mu;
+    static std::map<std::string, std::vector<std::string>> listings;
+    auto entries_of = [&](const fs::path& dir) -> const std::vector<std::string>& {
+        const std::string key = dir.string();
+        auto it = listings.find(key);
+        if (it != listings.end()) return it->second;
+        std::vector<std::string> names;
+        std::error_code iter_ec;
+        for (fs::directory_iterator d(dir, iter_ec), end; !iter_ec && d != end;
+             d.increment(iter_ec)) {
+            names.push_back(d->path().filename().string());
+        }
+        std::sort(names.begin(), names.end());
+        return listings.emplace(key, std::move(names)).first->second;
+    };
+    auto lower = [](std::string s) {
+        for (char& c : s) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        return s;
+    };
+
+    std::lock_guard<std::mutex> lock(mu);
+    const fs::path in(path);
+    // Empty `cur` keeps a relative input relative; it is listed as ".".
+    fs::path cur = in.root_path();
+    for (const auto& part : in.relative_path()) {
+        const fs::path exact = cur / part;
+        if (fs::exists(exact, ec)) {
+            cur = exact;
+            continue;
+        }
+        const std::string want = lower(part.string());
+        const std::string* match = nullptr;
+        for (const auto& name : entries_of(cur.empty() ? fs::path(".") : cur)) {
+            if (lower(name) == want) { match = &name; break; }
+        }
+        if (!match) return path;
+        cur /= *match;
+    }
+    return cur.string();
+}
+
 }  // namespace
 
 void set_asset_overrides(const std::map<std::string, std::string>& overrides) {
@@ -102,7 +164,7 @@ std::string project_asset_path(const std::string& rel) {
 
 std::string resolve_asset_path(const std::string& path) {
     if (path.empty()) return path;
-    if (is_absolute_asset_path(path)) return path;
+    if (is_absolute_asset_path(path)) return case_resolve(path);
 
     const auto& overrides = mutable_overrides();
     if (!overrides.empty()) {
@@ -111,7 +173,7 @@ std::string resolve_asset_path(const std::string& path) {
     }
 
     const std::string& root = game_root();
-    if (starts_with_dir(path, root)) return path;
+    if (starts_with_dir(path, root)) return case_resolve(path);
 
     std::string rel = path;
     if (root != "game" && starts_with_dir(path, "game")) {
@@ -127,7 +189,7 @@ std::string resolve_asset_path(const std::string& path) {
         }
         rel = path.substr(5);
     }
-    return root + "/" + rel;
+    return case_resolve(root + "/" + rel);
 }
 
 }  // namespace renderer

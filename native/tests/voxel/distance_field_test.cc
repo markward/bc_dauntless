@@ -10,6 +10,7 @@
 #include <voxel/distance_field.h>
 #include <voxel/voxelize.h>
 
+#include <algorithm>
 #include <cmath>
 
 namespace {

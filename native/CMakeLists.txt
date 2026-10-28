@@ -6,6 +6,11 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# The static libraries are linked into the _dauntless_host Python extension,
+# a shared object, so they must be PIC. macOS and Windows produce
+# position-independent code regardless; Linux/ELF needs it asked for.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 # Emit compile_commands.json so clangd / IDE pickers find include paths.
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -67,6 +72,12 @@ FetchContent_Declare(
     GIT_TAG        1.23.1
 )
 FetchContent_MakeAvailable(openal_soft)
+# openal-soft 1.23.1 uses uint8_t in alc/alu.h without including <cstdint>,
+# relying on a transitive include that GCC 16's libstdc++ no longer provides.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_compile_options(OpenAL PRIVATE
+        "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include cstdint>")
+endif()
 
 option(DAUNTLESS_BUILD_TESTS "Build native tests for dauntless" ON)
 
@@ -148,9 +159,10 @@ if(DAUNTLESS_ENABLE_CEF)
     find_package(CEF REQUIRED)
 
     # libcef.lib is the import library for libcef.dll and provides the C API
-    # the wrapper calls into. macOS has no equivalent -- the framework is
-    # loaded dynamically -- which is why nothing linked it before.
-    if(WIN32 AND NOT TARGET libcef_lib)
+    # the wrapper calls into; on Linux libcef.so plays both roles. macOS has
+    # no equivalent -- the framework is loaded dynamically -- which is why
+    # nothing linked it before.
+    if((WIN32 OR (UNIX AND NOT APPLE)) AND NOT TARGET libcef_lib)
         ADD_LOGICAL_TARGET("libcef_lib" "${CEF_LIB_DEBUG}" "${CEF_LIB_RELEASE}")
     endif()
 
@@ -173,9 +185,16 @@ if(DAUNTLESS_ENABLE_CEF)
     # the top of this file): there is nothing to suppress under MSVC, and cl
     # rejects the unknown -W option outright with D8021 -- a hard error, not a
     # warning, so the whole CEF build fails on Windows without this guard.
-    if(TARGET libcef_dll_wrapper AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    if(TARGET libcef_dll_wrapper AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         target_compile_options(libcef_dll_wrapper PRIVATE
             -Wno-gnu-zero-variadic-macro-arguments)
+    elseif(TARGET libcef_dll_wrapper AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        # GCC files the same `, ##__VA_ARGS__` warning under
+        # -Wc++20-extensions, and project-wide -Wextra adds a copy-ctor
+        # base-initialiser warning in base/cef_callback_internal.h; both
+        # become errors under CEF's -Werror.
+        target_compile_options(libcef_dll_wrapper PRIVATE
+            -Wno-c++20-extensions -Wno-error=extra)
     endif()
 
     message(STATUS "CEF SDK at: ${CEF_ROOT}")

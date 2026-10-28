@@ -26,6 +26,7 @@ from engine.appc.ship_iter import (
 import engine.dev_keybindings as dev_keybindings
 import engine.dev_mode as dev_mode
 import engine.dev_nebula_dials as dev_nebula_dials
+from engine.core import case_paths as _case_paths
 from engine.core import frame_profiler
 from engine.dev_mission_picker import MissionPicker
 import engine.missions as _missions
@@ -2619,12 +2620,16 @@ def _resolve_asset_path(rel_path, root):
     cached = _ASSET_PATH_CACHE.get(key)
     if cached is not None:
         return cached
-    candidate = Path(root) / rel_path
+    base = Path(root)
+    candidate = _case_paths.resolve(base, str(rel_path)) or base / rel_path
     resolved = str(candidate)
     if not candidate.suffix and not candidate.exists():
         want = candidate.name.lower()
+        # The directory may be spelled in a different case too.
+        parent = (_case_paths.resolve(base, str(Path(rel_path).parent))
+                  or candidate.parent)
         try:
-            entries = list(candidate.parent.iterdir())
+            entries = list(parent.iterdir())
         except OSError:
             entries = []                      # no such directory: degrade, never raise
         for entry in entries:

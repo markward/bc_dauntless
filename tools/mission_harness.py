@@ -17,6 +17,8 @@ import types
 import warnings
 from collections import Counter
 from pathlib import Path
+
+from engine.core import case_paths as _case_paths
 import tools.timeout_guard as timeout_guard
 
 _MISSION_TIMEOUT = 15  # seconds per mission before declaring a hang
@@ -636,12 +638,12 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
         if _spec is not None:
             return _spec
         # Regular SDK module
-        candidate = sdk_scripts / (rel + ".py")
-        if candidate.exists():
+        candidate = _case_paths.resolve(sdk_scripts, rel + ".py")
+        if candidate is not None:
             loader = _SDKLoader(str(candidate))
             return importlib.machinery.ModuleSpec(fullname, loader, origin=str(candidate))
-        pkg_init = sdk_scripts / rel / "__init__.py"
-        if pkg_init.exists():
+        pkg_init = _case_paths.resolve(sdk_scripts, rel + "/__init__.py")
+        if pkg_init is not None:
             loader = _SDKLoader(str(pkg_init))
             spec = importlib.machinery.ModuleSpec(fullname, loader, origin=str(pkg_init))
             spec.submodule_search_locations = [str(pkg_init.parent)]
@@ -669,8 +671,8 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
                         fullname, _logical, _logical.replace("/", "."))
                     if _spec is not None:
                         return _spec
-                _cand = _p / (child + ".py")
-                if _cand.exists():
+                _cand = _case_paths.resolve(_p, child + ".py")
+                if _cand is not None:
                     _rel_parts = _cand.relative_to(sdk_scripts).with_suffix("").parts
                     _qual = ".".join(_rel_parts)
                     if _qual != fullname and _qual in sys.modules:
@@ -678,22 +680,22 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
                     else:
                         loader = _SDKLoader(str(_cand), also_register_as=(_qual if _qual != fullname else None))
                     return importlib.machinery.ModuleSpec(fullname, loader, origin=str(_cand))
-                _pkg = _p / child / "__init__.py"
-                if _pkg.exists():
-                    _rel_parts = (_p / child).relative_to(sdk_scripts).parts
+                _pkg = _case_paths.resolve(_p, child + "/__init__.py")
+                if _pkg is not None:
+                    _rel_parts = _pkg.parent.relative_to(sdk_scripts).parts
                     _qual = ".".join(_rel_parts)
                     if _qual != fullname and _qual in sys.modules:
                         loader = _AliasLoader(sys.modules[_qual])
                     else:
                         loader = _SDKLoader(str(_pkg), also_register_as=(_qual if _qual != fullname else None))
                     spec = importlib.machinery.ModuleSpec(fullname, loader, origin=str(_pkg))
-                    spec.submodule_search_locations = [str(_p / child)]
+                    spec.submodule_search_locations = [str(_pkg.parent)]
                     return spec
         # Python 1.5 implicit relative import fallback: BC engine added each SDK
         # package directory to sys.path, so bare `import X` inside Bridge/ found
         # Bridge/X.py.  Search SDK subdirectories for a unique match.
         if "." not in fullname:
-            matches = sorted(sdk_scripts.rglob(f"{fullname}.py"))
+            matches = _case_paths.rglob_py(sdk_scripts, fullname)
             caller_dir = None
             frame = sys._getframe(1)
             while frame is not None:

@@ -200,3 +200,62 @@ TEST(AssetPath, OverrideFoldStripsATrailingSeparatorLikePythonFold) {
     renderer::set_asset_overrides({{"data/x.tga", "/mods/x.tga"}});
     EXPECT_EQ(resolve_asset_path("data/x.tga/"), "/mods/x.tga");
 }
+
+// --- case-insensitive resolution ---------------------------------------------
+//
+// BC content spells paths with whatever case it likes: GalaxyBridge.py loads
+// "data/Models/Sets/DBridge/DBridge.nif" from a folder holding Dbridge.NIF.
+// On a case-sensitive filesystem resolve_asset_path must find the real file;
+// a path that exists in no case comes back as spelled.
+//
+// The found path is compared by file IDENTITY, not spelling: the exact
+// spelling is tried first, so on a case-insensitive filesystem (macOS by
+// default) it comes back as spelled, which is the same file. On Linux the
+// spelled path does not exist, so only the on-disk spelling passes.
+
+#include <filesystem>
+#include <fstream>
+
+namespace {
+
+bool same_file(const std::string& found, const std::filesystem::path& expected) {
+    std::error_code ec;
+    return std::filesystem::equivalent(found, expected, ec) && !ec;
+}
+
+struct CaseTree {
+    std::filesystem::path root;
+    CaseTree() {
+        root = std::filesystem::temp_directory_path() /
+               ("dauntless_case_" + std::to_string(::testing::UnitTest::GetInstance()
+                                                       ->random_seed()));
+        std::filesystem::create_directories(root / "data/Models/Sets/DBridge");
+        std::ofstream(root / "data/Models/Sets/DBridge/Dbridge.NIF") << "x";
+    }
+    ~CaseTree() { std::filesystem::remove_all(root); }
+};
+
+}  // namespace
+
+TEST(AssetPath, ResolvesADifferentlyCasedFileUnderTheRoot) {
+    CaseTree t;
+    renderer::set_game_root(t.root.string());
+    EXPECT_TRUE(same_file(resolve_asset_path("data/models/sets/dbridge/DBridge.nif"),
+                          t.root / "data/Models/Sets/DBridge/Dbridge.NIF"));
+    renderer::set_game_root("game");
+}
+
+TEST(AssetPath, ResolvesADifferentlyCasedAbsolutePath) {
+    CaseTree t;
+    const auto spelled = t.root / "DATA/Models/Sets/DBridge/DBridge.nif";
+    EXPECT_TRUE(same_file(resolve_asset_path(spelled.string()),
+                          t.root / "data/Models/Sets/DBridge/Dbridge.NIF"));
+}
+
+TEST(AssetPath, AMissingFileComesBackAsSpelled) {
+    CaseTree t;
+    renderer::set_game_root(t.root.string());
+    EXPECT_EQ(resolve_asset_path("data/Models/Sets/DBridge/Missing.nif"),
+              t.root.string() + "/data/Models/Sets/DBridge/Missing.nif");
+    renderer::set_game_root("game");
+}

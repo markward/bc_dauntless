@@ -16,6 +16,7 @@
 #include <nif/block.h>
 #include <nif/file.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <map>
