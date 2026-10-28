@@ -31,6 +31,13 @@ PanelSize panel_size(float canvas_w, float canvas_h, std::uint32_t longest_edge)
                                 : PanelSize{shortest, longest_edge};
 }
 
+std::uint32_t panel_edge_cap(std::uint32_t quality_edge, float canvas_w, float canvas_h) {
+    const double longest = std::max(canvas_w, canvas_h);
+    const auto twice = static_cast<std::uint32_t>(std::ceil(kPanelCanvasScale * longest - 1e-6));
+    const std::uint32_t cap = std::max(twice, kPanelMinEdge);
+    return std::min(quality_edge, cap);
+}
+
 namespace {
 
 struct Rgba { float r, g, b, a; };

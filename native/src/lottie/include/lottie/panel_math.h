@@ -23,6 +23,15 @@ struct PanelSize { std::uint32_t w, h; };
 /// Fit the canvas aspect into `longest_edge` on its long side.
 PanelSize panel_size(float canvas_w, float canvas_h, std::uint32_t longest_edge);
 
+/// The long edge to draw a panel at: the quality's edge, but no more than
+/// kPanelCanvasScale x the authored canvas's long edge (rounded up) and, below
+/// that, no less than kPanelMinEdge. Mark authors at the texture's resolution
+/// (a 512x512 trace of a 512x512 glow map), so High's 2048 for such a panel
+/// costs 4x the raster and upload of 1024 for detail nobody sees (spec §7).
+inline constexpr float kPanelCanvasScale = 2.f;
+inline constexpr std::uint32_t kPanelMinEdge = 512;
+std::uint32_t panel_edge_cap(std::uint32_t quality_edge, float canvas_w, float canvas_h);
+
 /// Lottie (premultiplied RGBA8, w*h) over the still scaled to w*h. The still's
 /// RGB is used as-is: BC alpha is a test mask, not coverage.
 std::vector<std::uint8_t> composite_panel(const assets::Image& still,

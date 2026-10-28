@@ -181,10 +181,10 @@ TEST_F(BridgePanels, NoJsonNeverMakesALiveTexture) {
 }
 
 TEST_F(BridgePanels, MarkedPanelGetsALiveTexture) {
-    place("solid_red.json");
+    place("solid_red_wide.json");
     ASSERT_TRUE(pump(0.0, [&] { return live() != 0; }));
     const Readback r = read_texture(live());
-    EXPECT_EQ(r.w, 1024);   // 64x32 canvas, Medium's 1024 long edge
+    EXPECT_EQ(r.w, 1024);   // 640x320 canvas, Medium's 1024 long edge
     EXPECT_EQ(r.h, 512);
     EXPECT_TRUE(all_red(r));
     // The still the model holds is never the live texture.
@@ -296,7 +296,7 @@ TEST_F(BridgePanels, DifferentModelUnderSameHandleDropsTheOldEntry) {
 }
 
 TEST_F(BridgePanels, QualityChangeReallocatesAndDiscardsStaleResult) {
-    place("solid_red.json");
+    place("solid_red_wide.json");
     ASSERT_TRUE(pump(0.0, [&] { return live() != 0; }));
     ASSERT_EQ(read_texture(live()).w, 1024);
     // A slow raster, then a new tick: a Medium-sized job is in flight...
@@ -436,4 +436,24 @@ TEST_F(BridgePanels, ReallocatedTextureNeverTakesAPartial) {
         return r.rgba == lottie::composite_panel(still, premul, static_cast<std::uint32_t>(r.w),
                                                  static_cast<std::uint32_t>(r.h));
     }));
+}
+
+// High draws a 640x320 canvas at twice its size, not at High's 2048; a tiny
+// canvas keeps the 512 floor.
+TEST_F(BridgePanels, PanelSizeIsCappedByItsCanvas) {
+    quality = BridgeQuality::High;
+    place("solid_red_wide.json");
+    ASSERT_TRUE(pump(0.0, [&] { return live() != 0; }));
+    Readback r = read_texture(live());
+    EXPECT_EQ(r.w, 1280);
+    EXPECT_EQ(r.h, 640);
+    place("solid_red.json");
+    panels->reload();
+    ASSERT_TRUE(pump(0.0, [&] {
+        const GLuint t = live();
+        return t != 0 && read_texture(t).w == 512;
+    }));
+    r = read_texture(live());
+    EXPECT_EQ(r.h, 256);
+    EXPECT_TRUE(all_red(r));
 }

@@ -243,3 +243,27 @@ TEST(CopyRect, PacksTheRectangleRowByRow) {
             for (int k = 0; k < 4; ++k) want.push_back(img[(y * 4 + x) * 4 + k]);
     EXPECT_EQ(out, want);
 }
+
+// ── Size cap: a panel is drawn at no more than twice its authored canvas
+// (never below 512 on the long edge, never above the quality's edge).
+TEST(PanelEdgeCap, TwiceTheCanvas) {
+    EXPECT_EQ(panel_edge_cap(2048, 512.f, 512.f), 1024u);
+    EXPECT_EQ(panel_edge_cap(2048, 640.f, 320.f), 1280u);
+    EXPECT_EQ(panel_edge_cap(2048, 320.f, 640.f), 1280u);
+}
+
+TEST(PanelEdgeCap, QualityEdgeWinsWhenSmaller) {
+    EXPECT_EQ(panel_edge_cap(1024, 640.f, 320.f), 1024u);
+    EXPECT_EQ(panel_edge_cap(512, 4096.f, 4096.f), 512u);
+}
+
+TEST(PanelEdgeCap, SmallCanvasesKeepAFloor) {
+    EXPECT_EQ(panel_edge_cap(2048, 64.f, 32.f), 512u);
+    EXPECT_EQ(panel_edge_cap(1024, 1.f, 1.f), 512u);
+    // The floor never lifts a panel past its quality's edge.
+    EXPECT_EQ(panel_edge_cap(256, 64.f, 32.f), 256u);
+}
+
+TEST(PanelEdgeCap, FractionalCanvasRoundsUp) {
+    EXPECT_EQ(panel_edge_cap(2048, 600.4f, 10.f), 1201u);
+}

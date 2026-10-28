@@ -62,7 +62,8 @@ GLuint BridgePanels::live_texture(unsigned long long handle, const assets::Model
 }
 
 void BridgePanels::update(double t, BridgeQuality q) {
-    // 1. Size every loaded entry from its canvas at this quality, BEFORE any
+    // 1. Size every loaded entry from its canvas at this quality (capped by
+    // the canvas itself, lottie::panel_edge_cap), BEFORE any
     // upload, so a frame rasterised at the old size is discarded below rather
     // than uploaded and thrown away. A new size reallocates: the old texture
     // and image go, and the next tick re-renders.
@@ -77,7 +78,10 @@ void BridgePanels::update(double t, BridgeQuality q) {
         bool any_valid = false;
         for (bool v : e.info->valid) any_valid = any_valid || v;
         lottie::PanelSize size{0, 0};
-        if (any_valid) size = lottie::panel_size(e.info->canvas_w, e.info->canvas_h, edge);
+        if (any_valid)
+            size = lottie::panel_size(
+                e.info->canvas_w, e.info->canvas_h,
+                lottie::panel_edge_cap(edge, e.info->canvas_w, e.info->canvas_h));
         if (size.w != e.w || size.h != e.h) {
             if (e.tex != 0) glDeleteTextures(1, &e.tex);
             e.tex = 0;
