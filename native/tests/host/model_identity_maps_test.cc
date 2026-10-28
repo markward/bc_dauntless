@@ -8,8 +8,19 @@
 #include <gtest/gtest.h>
 
 #include "model_identity_maps.h"
+#include "model_build.h"
 
 #include <assets/model.h>
+
+#include <chrono>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <system_error>
+#include <vector>
+
+namespace fs = std::filesystem;
 
 namespace {
 
@@ -110,11 +121,107 @@ TEST(MeshIdentityMaps, ReportsAnEmissiveMap) {
 
 // A Lottie panel's static emissive maps are set aside at load, so the stage is
 // empty and the editor's glow reads "no emissive" (engine/bridge_editor/glow.py
-// reads maps["emissive"]).
-TEST(MeshIdentityMaps, EmissiveFalseWhenLottieSetsItAside) {
-    assets::Model model;
-    assets::Material mat;
-    mat.panel_index = 0;
-    model.materials.push_back(mat);
-    EXPECT_FALSE(dauntless::mesh_identity_maps(model, 0).emissive);
+// reads maps["emissive"]). Built through the real loader (an interior load with
+// `_emissive.tga` beside the albedo), with and without the panel's `.json`.
+namespace {
+
+// Stubs return zero IDs so destructors short-circuit (no GL context here).
+assets::Texture stub_texture(const assets::Image&, bool) {
+    return assets::Texture(/*id=*/0, 1, 1, false);
+}
+assets::Mesh stub_mesh(assets::MeshCpu cpu) {
+    return assets::Mesh(/*vao=*/0, /*vbo=*/0, /*ebo=*/0,
+                        static_cast<std::uint32_t>(cpu.indices.size()),
+                        cpu.material_index, cpu.node_index);
+}
+
+// Root -> NiTriShape with a NiTextureProperty whose external NiImage is
+// `panel.tga` (identity link IDs: links == block index).
+nif::File file_with_textured_shape() {
+    nif::File f;
+    nif::NiNode root;                 // 0
+    root.av.obj.name = "Root";
+    root.child_links = {1};
+    f.blocks.push_back(root);
+    nif::NiTriShape tri;              // 1
+    tri.av.obj.name = "Panel";
+    tri.data_link = 2;
+    tri.av.property_links = {3, 4};
+    f.blocks.push_back(tri);
+    nif::NiTriShapeData d;            // 2
+    d.num_vertices = 3;
+    d.has_vertices = true;
+    d.vertices = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}};
+    d.has_uv = true;
+    d.uv_sets.push_back({{0, 0}, {1, 0}, {0, 1}});
+    d.num_triangles = 1;
+    d.triangles.push_back({0, 1, 2});
+    f.blocks.push_back(d);
+    f.blocks.push_back(nif::NiMaterialProperty{});  // 3
+    nif::NiTextureProperty tex;       // 4
+    tex.image_link = 5;
+    f.blocks.push_back(tex);
+    nif::NiImage img;                 // 5
+    img.use_external = 1;
+    img.file_name = "panel.tga";
+    f.blocks.push_back(img);
+    return f;
+}
+
+// A 2x1 uncompressed 24-bit TGA.
+void write_tga(const fs::path& p) {
+    const std::vector<std::uint8_t> tga = {0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1, 0, 24, 0,
+                                           0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00};
+    std::ofstream(p, std::ios::binary)
+        .write(reinterpret_cast<const char*>(tga.data()), static_cast<std::streamsize>(tga.size()));
+}
+
+class MeshIdentityMapsLottie : public ::testing::Test {
+protected:
+    fs::path tmp_dir;
+    assets::PathResolver resolver;
+
+    void SetUp() override {
+        const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+        tmp_dir = fs::temp_directory_path() /
+                  (std::string("host-identity-maps-") + info->name() + "-" +
+                   std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        fs::create_directories(tmp_dir / "mod");
+        fs::create_directories(tmp_dir / "stock");
+        write_tga(tmp_dir / "mod" / "panel.tga");
+        write_tga(tmp_dir / "mod" / "panel_emissive.tga");
+    }
+    void TearDown() override {
+        std::error_code ec;
+        fs::remove_all(tmp_dir, ec);
+    }
+
+    // An interior load of a mod albedo: its siblings are probed beside it.
+    assets::Model build() {
+        assets::detail::ModelBuildContext ctx;
+        ctx.resolver = &resolver;
+        ctx.texture_search_paths = {tmp_dir / "mod", tmp_dir / "stock"};
+        ctx.texture_uploader = stub_texture;
+        ctx.mesh_uploader = stub_mesh;
+        ctx.interior_sibling_policy = true;
+        return assets::detail::build_model(file_with_textured_shape(), ctx);
+    }
+};
+
+}  // namespace
+
+TEST_F(MeshIdentityMapsLottie, WithoutAJsonTheEmissiveSiblingReads) {
+    const assets::Model model = build();
+    ASSERT_EQ(model.meshes.size(), 1u);
+    EXPECT_TRUE(dauntless::mesh_identity_maps(model, model.meshes[0].material_index()).emissive);
+}
+
+TEST_F(MeshIdentityMapsLottie, AJsonBesideTheAlbedoSetsItAside) {
+    std::ofstream(tmp_dir / "mod" / "panel.json") << "{}";
+    const assets::Model model = build();
+    ASSERT_EQ(model.meshes.size(), 1u);
+    const int mi = model.meshes[0].material_index();
+    ASSERT_GE(mi, 0);
+    EXPECT_EQ(model.materials[static_cast<std::size_t>(mi)].panel_index, 0);
+    EXPECT_FALSE(dauntless::mesh_identity_maps(model, mi).emissive);
 }

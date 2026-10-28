@@ -10,4 +10,7 @@ target_link_libraries(host_tests
         dauntless_host_core
         GTest::gtest_main
 )
+# model_build.h (assets' private header): the identity-maps test builds a
+# model through the real loader.
+target_include_directories(host_tests PRIVATE ${CMAKE_SOURCE_DIR}/native/src/assets/src)
 gtest_discover_tests(host_tests)
