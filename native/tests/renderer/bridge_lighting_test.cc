@@ -324,3 +324,10 @@ TEST(BridgeQuality, OutOfRangeClamps) {
     EXPECT_EQ(renderer::clamp_bridge_quality(-3), renderer::BridgeQuality::Low);
     EXPECT_EQ(renderer::clamp_bridge_quality(9), renderer::BridgeQuality::High);
 }
+
+TEST(BridgeQuality, PanelEdge) {
+    using renderer::BridgeQuality; using renderer::panel_edge_for;
+    EXPECT_EQ(panel_edge_for(BridgeQuality::Low), 512u);
+    EXPECT_EQ(panel_edge_for(BridgeQuality::Medium), 1024u);
+    EXPECT_EQ(panel_edge_for(BridgeQuality::High), 2048u);
+}

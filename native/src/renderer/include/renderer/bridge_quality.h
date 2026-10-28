@@ -3,6 +3,8 @@
 
 #include <renderer/bridge_ao_pass.h>
 
+#include <cstdint>
+
 namespace renderer {
 
 /// Bridge rendering quality presets, driving the bridge AO's sample count and
@@ -23,6 +25,16 @@ inline BridgeAoSettings ao_settings_for(BridgeQuality q) {
         case BridgeQuality::High:   return BridgeAoSettings{64, 1.0f};
     }
     return BridgeAoSettings{32, 0.5f};
+}
+
+/// Longest edge, in texels, of a bridge Lottie panel's texture per preset.
+inline std::uint32_t panel_edge_for(BridgeQuality q) {
+    switch (q) {
+        case BridgeQuality::Low:    return 512;
+        case BridgeQuality::Medium: return 1024;
+        case BridgeQuality::High:   return 2048;
+    }
+    return 1024;
 }
 
 /// Clamp an arbitrary int (e.g. from Python) into a valid preset: below Low
