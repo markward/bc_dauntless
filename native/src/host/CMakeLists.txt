@@ -150,17 +150,28 @@ if(DAUNTLESS_ENABLE_CEF)
         )
     elseif(UNIX)
         # Linux: same split as Windows -- libcef.so in Release/, the .pak and
-        # locale data in Resources/. Untested (nobody has built CEF here), but
-        # copying only Release/ is wrong on this platform for the same reason.
-        add_custom_command(TARGET dauntless POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CEF_ROOT}/Release"
-                "${CMAKE_BINARY_DIR}"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CEF_ROOT}/Resources"
-                "${CMAKE_BINARY_DIR}"
-            COMMENT "Copying CEF runtime files alongside dauntless"
-            VERBATIM
-        )
+        # locale data in Resources/. Copying only Release/ is wrong on this
+        # platform for the same reason.
+        #
+        # Both targets link libcef.so, so both copy it: a
+        # `--target _dauntless_host` build must be importable without the
+        # full build having run. The rpath points each at build/, where the
+        # copy lands (the extension itself sits one level down, in python/).
+        foreach(_cef_consumer dauntless _dauntless_host)
+            add_custom_command(TARGET ${_cef_consumer} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${CEF_ROOT}/Release"
+                    "${CMAKE_BINARY_DIR}"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${CEF_ROOT}/Resources"
+                    "${CMAKE_BINARY_DIR}"
+                COMMENT "Copying CEF runtime files into the build tree"
+                VERBATIM
+            )
+        endforeach()
+        set_target_properties(dauntless PROPERTIES
+            BUILD_RPATH "$ORIGIN")
+        set_target_properties(_dauntless_host PROPERTIES
+            BUILD_RPATH "$ORIGIN/..")
     endif()
 endif()

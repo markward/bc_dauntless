@@ -50,7 +50,7 @@ target_compile_features(ui_cef PRIVATE cxx_std_20)
 
 target_link_libraries(ui_cef PUBLIC
     libcef_dll_wrapper
-    $<$<BOOL:${WIN32}>:libcef_lib>
+    $<$<NOT:$<PLATFORM_ID:Darwin>>:libcef_lib>
     ${CEF_STANDARD_LIBS}
     renderer
     glfw

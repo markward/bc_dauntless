@@ -10,7 +10,11 @@
 
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
+// The library loader exists only on macOS and Windows; Linux links libcef.so
+// directly and needs no runtime load step.
+#if defined(__APPLE__) || defined(_WIN32)
 #include "include/wrapper/cef_library_loader.h"
+#endif
 
 #include <chrono>
 #include <cstdio>
@@ -27,7 +31,9 @@ namespace {
 // destroyed (CEF expects to outlive normal C++ destructors).
 int                                       g_saved_argc = 0;
 char**                                    g_saved_argv = nullptr;
+#if defined(__APPLE__) || defined(_WIN32)
 std::unique_ptr<CefScopedLibraryLoader>   g_library_loader;
+#endif
 CefRefPtr<DauntlessCefApp>                g_app;
 CefRefPtr<DauntlessCefClient>             g_client;
 std::unique_ptr<CefCompositePass>         g_composite;
@@ -164,12 +170,8 @@ int dispatch_subprocess(int argc, char* argv[]) {
         }
     }
 #else
-    g_library_loader = std::make_unique<CefScopedLibraryLoader>();
-    if (!g_library_loader->LoadInMain()) {
-        std::fprintf(stderr,
-                     "dauntless: failed to load CEF framework.\n");
-        return 1;
-    }
+    // Linux: libcef.so is a link-time dependency, resolved by the dynamic
+    // loader before main(); there is no CefScopedLibraryLoader to run.
 #endif
 
     CefMainArgs main_args = make_main_args(argc, argv);

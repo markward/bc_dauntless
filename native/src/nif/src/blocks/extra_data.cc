@@ -11,6 +11,8 @@
 
 #include <nif/block.h>
 
+#include <cstring>
+
 namespace nif {
 
 NIF_REGISTER_BLOCK(NiStringExtraData, [](Reader& r) -> Block {
