@@ -301,3 +301,49 @@ TEST_F(PanelWorker, StateFileWithOtherAspectWarnsOnceAndStaysValid) {
                              ": canvas aspect differs from solid_red.json; stretched";
     EXPECT_EQ(count_of(err, want), 1u) << err;
 }
+
+TEST_F(PanelWorker, ResultFinishedBeforeSetPanelIsNotDelivered) {
+    lottie::PanelWorker w;
+    w.set_panel(1, default_only(fixture("solid_red.json")), still);
+    auto first = await_info(w, 1);
+    ASSERT_TRUE(first);
+    ASSERT_TRUE(w.submit({1, 0, 0.f, 64, 32, first->generation}));
+    // FIFO: once key 2 has loaded, key 1's result is already queued.
+    w.set_panel(2, default_only(fixture("solid_red.json")), still);
+    ASSERT_TRUE(await_info(w, 2));
+    w.set_panel(1, default_only(fixture("solid_red.json")), still);
+    for (const auto& r : w.take_results())
+        EXPECT_FALSE(r.key == 1 && r.generation == first->generation);
+}
+
+TEST_F(PanelWorker, ResultFinishedBeforeRemovePanelIsNotDelivered) {
+    lottie::PanelWorker w;
+    w.set_panel(1, default_only(fixture("solid_red.json")), still);
+    auto first = await_info(w, 1);
+    ASSERT_TRUE(first);
+    ASSERT_TRUE(w.submit({1, 0, 0.f, 64, 32, first->generation}));
+    w.set_panel(2, default_only(fixture("solid_red.json")), still);
+    ASSERT_TRUE(await_info(w, 2));
+    w.remove_panel(1);
+    for (const auto& r : w.take_results()) EXPECT_NE(r.key, 1u);
+}
+
+TEST_F(PanelWorker, InvalidDefaultTakesCanvasFromFirstValidVariant) {
+    assets::PanelFiles files = default_only(fixture("broken.json"));
+    files.by_variant[assets::kPanelYellow] = fixture("solid_red.json");
+    testing::internal::CaptureStderr();
+    std::optional<lottie::PanelInfo> info;
+    {
+        lottie::PanelWorker w;
+        w.set_panel(1, files, still);
+        info = await_info(w, 1);
+    }
+    testing::internal::GetCapturedStderr();
+    ASSERT_TRUE(info);
+    EXPECT_FALSE(info->valid[0]);
+    EXPECT_TRUE(info->valid[1]);
+    EXPECT_FALSE(info->valid[2]);
+    EXPECT_FALSE(info->valid[3]);
+    EXPECT_FLOAT_EQ(info->canvas_w, 64.f);
+    EXPECT_FLOAT_EQ(info->canvas_h, 32.f);
+}

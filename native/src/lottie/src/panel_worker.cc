@@ -75,6 +75,8 @@ struct PanelWorker::Impl {
     }
 
     void run();
+    // A command threw: free a job's busy flag and warn once.
+    void failed(const Command& cmd, const char* what) noexcept;
     void load(const Load& cmd, std::unordered_map<std::uint64_t, Loaded>& panels);
     void raster(const PanelJob& job, std::unordered_map<std::uint64_t, Loaded>& panels,
                 std::vector<std::uint8_t>& premul);
@@ -94,9 +96,37 @@ void PanelWorker::Impl::run() {
             cmd = std::move(queue.front());
             queue.pop_front();
         }
-        if (const auto* l = std::get_if<Load>(&cmd)) load(*l, panels);
-        else if (const auto* r = std::get_if<Remove>(&cmd)) panels.erase(r->key);
-        else raster(std::get<PanelJob>(cmd), panels, premul);
+        // A throw (bad_alloc, a decoder) must never std::terminate the game.
+        try {
+            if (const auto* l = std::get_if<Load>(&cmd)) load(*l, panels);
+            else if (const auto* r = std::get_if<Remove>(&cmd)) panels.erase(r->key);
+            else raster(std::get<PanelJob>(cmd), panels, premul);
+        } catch (const std::exception& e) {
+            failed(cmd, e.what());
+        } catch (...) {
+            failed(cmd, "unknown error");
+        }
+    }
+}
+
+void PanelWorker::Impl::failed(const Command& cmd, const char* what) noexcept {
+    std::uint64_t key = 0;
+    std::string where;
+    if (const auto* l = std::get_if<Load>(&cmd)) {
+        key = l->key;
+        for (const auto& path : l->files.by_variant)
+            if (!path.empty()) { where = path.string(); break; }
+    } else if (const auto* r = std::get_if<Remove>(&cmd)) {
+        key = r->key;
+    } else {
+        key = std::get<PanelJob>(cmd).key;
+        std::lock_guard<std::mutex> lk(mu);
+        busy.erase(key);
+    }
+    try {
+        if (where.empty()) where = "panel " + std::to_string(key);
+        warn_once("[lottie] " + where + ": " + what + "; using the still");
+    } catch (...) {
     }
 }
 
@@ -138,6 +168,14 @@ void PanelWorker::Impl::load(const Load& cmd,
                           ": canvas aspect differs from " +
                           cmd.files.by_variant[assets::kPanelDefault].filename().string() +
                           "; stretched");
+        }
+    } else {
+        // No default: size from the first valid state file.
+        for (const auto& clip : p.clips) {
+            if (!clip) continue;
+            info.canvas_w = clip->canvas_width();
+            info.canvas_h = clip->canvas_height();
+            break;
         }
     }
     if (any) {
@@ -244,7 +282,12 @@ bool PanelWorker::submit(const PanelJob& job) {
 
 std::vector<PanelResult> PanelWorker::take_results() {
     std::lock_guard<std::mutex> lk(impl_->mu);
-    return std::exchange(impl_->results, {});
+    // A set_panel / remove_panel since a result was pushed makes it stale.
+    std::vector<PanelResult> out;
+    for (auto& r : impl_->results)
+        if (impl_->is_current(r.key, r.generation)) out.push_back(std::move(r));
+    impl_->results.clear();
+    return out;
 }
 
 void PanelWorker::clear_warnings() {
