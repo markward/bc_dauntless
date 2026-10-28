@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 using namespace lottie;
@@ -92,4 +93,16 @@ TEST(Composite, AcceptsRgbStill) {
     std::vector<std::uint8_t> l(4, 0);
     auto out = composite_panel(still, l, 1, 1);
     EXPECT_EQ(out, (std::vector<std::uint8_t>{10, 20, 30, 255}));
+}
+
+// The worker's form: the same pixels, written into a caller's buffer (which
+// it allocates default-initialised, so nothing is zeroed first).
+TEST(Composite, IntoBufferMatchesTheVectorForm) {
+    assets::Image still{2, 1, assets::Image::Format::RGBA8, {10, 20, 30, 255, 200, 100, 50, 255}};
+    std::vector<std::uint8_t> l(4u * 2u * 4u, 0);
+    l[0] = 128; l[3] = 128;   // one half-alpha red lottie texel
+    const std::vector<std::uint8_t> want = composite_panel(still, l, 4, 2);
+    std::unique_ptr<std::uint8_t[]> buf(new std::uint8_t[want.size()]);
+    composite_panel_into(still, l, 4, 2, std::span<std::uint8_t>(buf.get(), want.size()));
+    EXPECT_EQ(std::vector<std::uint8_t>(buf.get(), buf.get() + want.size()), want);
 }

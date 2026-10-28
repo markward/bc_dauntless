@@ -4,6 +4,7 @@
 
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -32,7 +33,12 @@ struct PanelResult {
     std::uint64_t key;
     std::uint64_t generation;
     std::uint32_t w, h;
-    std::vector<std::uint8_t> rgba;  // straight RGBA from composite_panel, w*h*4
+    /// Straight RGBA from composite_panel_into, `bytes` = w*h*4. A plain
+    /// array, not a vector: freeing it is one delete[] wherever it dies (the
+    /// render thread, or take_results under the worker mutex), never a
+    /// per-element destroy loop.
+    std::unique_ptr<std::uint8_t[]> rgba;
+    std::size_t bytes = 0;
     double raster_ms;
 };
 

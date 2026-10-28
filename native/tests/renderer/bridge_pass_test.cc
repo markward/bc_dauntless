@@ -218,20 +218,29 @@ TEST_F(BridgePassTest, LivePanelReplacesTheStillAndDropsEmissive) {
     EXPECT_LT(c.b, 0.01f);   // no still
 }
 
-// A room with no panel sources: the frames are the same bytes whether or not
-// update_panels runs between them.
+// A room with no live panel: the frames are the same bytes whether or not
+// update_panels runs between them. Both with no panel sources at all, and
+// with the production case of a PanelSource on every interior albedo whose
+// dir holds no `.json` (panel_index >= 0, never a live texture).
 TEST_F(BridgePassTest, NoPanelSourcesRendersByteIdentically) {
-    auto model = bridge_test_room::make_two_mesh_corner({0.6f, 0.5f, 0.4f},
-                                                        {0.8f, 0.1f, 0.1f});
-    auto plain = make_pass();
-    auto updated = make_pass();
-    std::vector<float> a, b;
-    for (int i = 0; i < 3; ++i) {
-        a = render(*plain, *model);
-        updated->update_panels(renderer::BridgeQuality::Medium);
-        b = render(*updated, *model);
-        updated->update_panels(renderer::BridgeQuality::Medium);
+    for (bool with_source : {false, true}) {
+        auto model = bridge_test_room::make_two_mesh_corner({0.6f, 0.5f, 0.4f},
+                                                            {0.8f, 0.1f, 0.1f});
+        if (with_source) {
+            model->panel_sources.push_back(assets::PanelSource{dir / "hull.tga", {dir}, 0});
+            model->materials[0].panel_index = 0;
+        }
+        auto plain = make_pass();
+        auto updated = make_pass();
+        std::vector<float> a, b;
+        for (int i = 0; i < 3; ++i) {
+            a = render(*plain, *model);
+            updated->update_panels(renderer::BridgeQuality::Medium);
+            b = render(*updated, *model);
+            updated->update_panels(renderer::BridgeQuality::Medium);
+            std::this_thread::sleep_for(20ms);   // let the empty load land
+        }
+        ASSERT_EQ(a.size(), b.size()) << with_source;
+        EXPECT_EQ(a, b) << with_source;
     }
-    ASSERT_EQ(a.size(), b.size());
-    EXPECT_EQ(a, b);
 }

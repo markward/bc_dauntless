@@ -28,4 +28,12 @@ std::vector<std::uint8_t> composite_panel(const assets::Image& still,
                                           std::span<const std::uint8_t> lottie_premul_rgba,
                                           std::uint32_t w, std::uint32_t h);
 
+/// The same, into `out` (w*h*4 bytes, every byte written). The panel worker's
+/// form: it hands over a default-initialised array, so a large buffer is
+/// never zeroed first nor destroyed element by element (a Debug
+/// std::vector<uint8_t> of 2 MB took ~5 ms to destroy).
+void composite_panel_into(const assets::Image& still,
+                          std::span<const std::uint8_t> lottie_premul_rgba,
+                          std::uint32_t w, std::uint32_t h, std::span<std::uint8_t> out);
+
 }  // namespace lottie

@@ -63,28 +63,59 @@ GLuint BridgePanels::live_texture(unsigned long long handle, const assets::Model
 }
 
 void BridgePanels::update(double t, BridgeQuality q) {
-    // 1. Upload the finished frames. take_results() has already dropped any
-    // from an older load; a result of another size (the quality changed
-    // while it rasterised) is discarded here.
+    // 1. Size every loaded entry from its canvas at this quality, BEFORE any
+    // upload, so a frame rasterised at the old size is discarded below rather
+    // than uploaded and thrown away. A new size reallocates: the old texture
+    // and image go, and the next tick re-renders.
+    const std::uint32_t edge = panel_edge_for(q);
+    for (auto& [k, e] : entries_) {
+        e.info = worker_.info(e.key);
+        if (!e.info) continue;   // first load not finished: nothing to size yet
+        // A new load (the first, or a reload) restarts the panel the next
+        // time it is drawn, even if that is not this frame.
+        if (e.info->generation != e.generation) e.restart = true;
+        e.generation = e.info->generation;
+        bool any_valid = false;
+        for (bool v : e.info->valid) any_valid = any_valid || v;
+        lottie::PanelSize size{0, 0};
+        if (any_valid) size = lottie::panel_size(e.info->canvas_w, e.info->canvas_h, edge);
+        if (size.w != e.w || size.h != e.h) {
+            if (e.tex != 0) glDeleteTextures(1, &e.tex);
+            e.tex = 0;
+            e.has_image = false;
+            e.has_tick = false;
+            e.w = size.w;
+            e.h = size.h;
+        }
+    }
+
+    // 2. Upload the finished frames of the entry's current size. take_results()
+    // has already dropped any from an older load. Unit 0, so no other unit's
+    // binding is disturbed (the bridge pass binds unit 0 per draw anyway).
     std::unordered_map<std::uint64_t, Entry*> by_key;
     by_key.reserve(entries_.size());
     for (auto& [k, e] : entries_) by_key.emplace(e.key, &e);
+    bool bound = false;
     for (const lottie::PanelResult& r : worker_.take_results()) {
         stats_.raster_ms += r.raster_ms;
         const auto it = by_key.find(r.key);
         if (it == by_key.end()) continue;
         Entry& e = *it->second;
-        if (e.variant < 0 || r.w != e.w || r.h != e.h ||
-            r.rgba.size() != static_cast<std::size_t>(r.w) * r.h * 4)
+        if (e.variant < 0 || r.w != e.w || r.h != e.h || !r.rgba ||
+            r.bytes != static_cast<std::size_t>(r.w) * r.h * 4)
             continue;
         const auto gw = static_cast<GLsizei>(r.w);
         const auto gh = static_cast<GLsizei>(r.h);
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        if (!bound) {
+            glActiveTexture(GL_TEXTURE0);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            bound = true;
+        }
         if (e.tex == 0) {
             glGenTextures(1, &e.tex);
             glBindTexture(GL_TEXTURE_2D, e.tex);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, gw, gh, 0, GL_RGBA,
-                         GL_UNSIGNED_BYTE, r.rgba.data());
+                         GL_UNSIGNED_BYTE, r.rgba.get());
             // As assets::upload_image samples a still, plus mips: panels
             // are seen at grazing angles (spec §6).
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
@@ -94,46 +125,21 @@ void BridgePanels::update(double t, BridgeQuality q) {
         } else {
             glBindTexture(GL_TEXTURE_2D, e.tex);
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, gw, gh, GL_RGBA, GL_UNSIGNED_BYTE,
-                            r.rgba.data());
+                            r.rgba.get());
         }
         glGenerateMipmap(GL_TEXTURE_2D);
-        glBindTexture(GL_TEXTURE_2D, 0);
         e.has_image = true;
         ++stats_.uploads;
     }
+    if (bound) glBindTexture(GL_TEXTURE_2D, 0);
 
-    const std::uint32_t edge = panel_edge_for(q);
     for (auto& [k, e] : entries_) {
-        const std::optional<lottie::PanelInfo> info = worker_.info(e.key);
-        if (!info) {   // first load not finished: nothing to size or play yet
-            e.drawn = false;
-            continue;
-        }
-        // A new load (the first, or a reload) restarts the panel the next
-        // time it is drawn, even if that is not this frame.
-        if (info->generation != e.generation) e.restart = true;
-        e.generation = info->generation;
-        bool any_valid = false;
-        for (bool v : info->valid) any_valid = any_valid || v;
-
-        // 2. Size from the canvas at this quality. A new size reallocates:
-        // the old texture and image go, and the next tick re-renders.
-        lottie::PanelSize size{0, 0};
-        if (any_valid) size = lottie::panel_size(info->canvas_w, info->canvas_h, edge);
-        if (size.w != e.w || size.h != e.h) {
-            if (e.tex != 0) glDeleteTextures(1, &e.tex);
-            e.tex = 0;
-            e.has_image = false;
-            e.has_tick = false;
-            e.w = size.w;
-            e.h = size.h;
-        }
-
         // 3. Drawn since the last update: play the state's variant. A new
         // variant (or a reload) starts from its first frame at `t` (spec §5);
         // none valid shows the still.
-        if (e.drawn) {
-            const int v = assets::select_panel_variant(e.state, info->valid);
+        if (e.drawn && e.info) {
+            const lottie::PanelInfo& info = *e.info;
+            const int v = assets::select_panel_variant(e.state, info.valid);
             if (v != e.variant || e.restart) {
                 e.restart = false;
                 e.variant = v;
@@ -144,12 +150,12 @@ void BridgePanels::update(double t, BridgeQuality q) {
             if (v >= 0 && e.w > 0 && e.h > 0) {
                 const auto vi = static_cast<std::size_t>(v);
                 const lottie::PanelTick tick =
-                    lottie::panel_tick(t, e.start, info->total_frames[vi], info->fps[vi]);
+                    lottie::panel_tick(t, e.start, info.total_frames[vi], info.fps[vi]);
                 // A refused submit (a job still in flight) leaves the tick
                 // unrecorded, so the next update asks again.
                 if ((!e.has_tick || tick.tick != e.last_tick) &&
                     worker_.submit(lottie::PanelJob{e.key, v, tick.frame, e.w, e.h,
-                                                    info->generation})) {
+                                                    info.generation})) {
                     e.has_tick = true;
                     e.last_tick = tick.tick;
                     ++stats_.jobs;

@@ -49,6 +49,12 @@ std::vector<std::uint8_t> composite_panel(const assets::Image& still,
                                           std::span<const std::uint8_t> lottie,
                                           std::uint32_t w, std::uint32_t h) {
     std::vector<std::uint8_t> out(static_cast<std::size_t>(w) * h * 4);
+    composite_panel_into(still, lottie, w, h, out);
+    return out;
+}
+
+void composite_panel_into(const assets::Image& still, std::span<const std::uint8_t> lottie,
+                          std::uint32_t w, std::uint32_t h, std::span<std::uint8_t> out) {
     const bool have_still = still.width > 0 && still.height > 0;
     for (std::uint32_t y = 0; y < h; ++y) {
         for (std::uint32_t x = 0; x < w; ++x) {
@@ -83,7 +89,6 @@ std::vector<std::uint8_t> composite_panel(const assets::Image& still,
                     std::lround(std::clamp(o[k], 0.f, 1.f) * 255.f));
         }
     }
-    return out;
 }
 
 }  // namespace lottie

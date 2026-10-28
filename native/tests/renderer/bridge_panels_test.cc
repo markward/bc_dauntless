@@ -240,16 +240,16 @@ TEST_F(BridgePanels, InvalidJsonShowsStill) {
     EXPECT_EQ(live(), 0u);
 }
 
-// With every raster sleeping 300 ms first, no update waits for one. A frame
-// that takes no result must stay under 5 ms. A frame that uploads one also
-// pays for the upload, the mip chain and freeing the result buffer. Freeing a
-// 2 MB buffer alone measured ~5.5 ms on macOS 26 (task 5 report). So upload
-// frames get their own bound, still far below the 300 ms a wait would cost.
+// With every raster sleeping 300 ms first, no update waits for one, and an
+// update that uploads stays inside the same bound: the result buffer is a
+// plain array, so taking and freeing it is one delete[] (a 2 MB
+// std::vector<uint8_t> took ~5.5 ms to destroy element-wise in the Debug
+// build; task 5 fix report).
 TEST_F(BridgePanels, UpdateNeverBlocks) {
     place("solid_red.json");
     panels->worker_for_test().set_test_raster_delay(300ms);
-    double worst_idle_ms = 0.0, worst_upload_ms = 0.0;
-    int jobs = 0, upload_frames = 0;
+    double worst_ms = 0.0;
+    int jobs = 0, uploads = 0;
     const auto deadline = std::chrono::steady_clock::now() + 1000ms;
     for (int i = 0; std::chrono::steady_clock::now() < deadline; ++i) {
         const auto t0 = std::chrono::steady_clock::now();
@@ -257,22 +257,16 @@ TEST_F(BridgePanels, UpdateNeverBlocks) {
         const double ms =
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
                 .count();
+        worst_ms = std::max(worst_ms, ms);
         const auto s = panels->take_stats();
         jobs += s.jobs;
-        if (s.uploads > 0) {
-            ++upload_frames;
-            worst_upload_ms = std::max(worst_upload_ms, ms);
-        } else {
-            worst_idle_ms = std::max(worst_idle_ms, ms);
-        }
+        uploads += s.uploads;
         std::this_thread::sleep_for(5ms);
     }
-    EXPECT_LT(worst_idle_ms, 5.0);
-    EXPECT_LT(worst_upload_ms, 50.0);
-    // The delay really was in play: jobs were queued while rasters slept,
-    // and results still arrived.
+    EXPECT_LT(worst_ms, 5.0);
+    // The delay really was in play, and results did land inside the bound.
     EXPECT_GE(jobs, 2);
-    EXPECT_GE(upload_frames, 1);
+    EXPECT_GE(uploads, 1);
 }
 
 TEST_F(BridgePanels, DifferentModelUnderSameHandleDropsTheOldEntry) {
@@ -306,8 +300,13 @@ TEST_F(BridgePanels, QualityChangeReallocatesAndDiscardsStaleResult) {
     panels->take_stats();
     frame(0.1);
     ASSERT_EQ(panels->take_stats().jobs, 1);
-    // ...when the quality drops to Low.
+    // ...and has finished by the time the quality drops to Low: the switch's
+    // own update takes it, and must discard it rather than upload it.
+    std::this_thread::sleep_for(400ms);
     quality = BridgeQuality::Low;
+    frame(0.1);
+    EXPECT_EQ(panels->take_stats().uploads, 0);
+    EXPECT_EQ(live(), 0u);
     bool saw_wide = false;
     const bool low = pump(0.1, [&] {
         const GLuint t = live();
@@ -333,4 +332,24 @@ TEST_F(BridgePanels, ReloadPicksUpAddedAndDeletedFiles) {
     fs::remove(dir / "hull.json");
     panels->reload();
     EXPECT_TRUE(pump(0.0, [&] { return live() == 0; }));
+}
+
+// Uploads bind on unit 0 and leave every other unit's binding alone.
+TEST_F(BridgePanels, UploadTouchesOnlyUnitZero) {
+    place("solid_red.json");
+    GLuint other = 0;
+    glGenTextures(1, &other);
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, other);
+    ASSERT_TRUE(pump(0.0, [&] {
+        glActiveTexture(GL_TEXTURE3);
+        GLint bound = 0;
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &bound);
+        EXPECT_EQ(static_cast<GLuint>(bound), other);
+        return live() != 0;
+    }));
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE0);
+    glDeleteTextures(1, &other);
 }

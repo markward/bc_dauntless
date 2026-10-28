@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <utility>
 
 namespace renderer {
@@ -48,9 +49,10 @@ public:
     GLuint live_texture(unsigned long long handle, const assets::Model& model,
                         int panel_index) const;
 
-    /// Once per frame, before any bridge render: uploads finished frames of
-    /// the entry's current size (others are discarded), reallocates entries
-    /// whose size for `q` changed, then for each entry drawn since the last
+    /// Once per frame, before any bridge render: reallocates entries whose
+    /// size for `q` changed, uploads finished frames of the entry's size
+    /// (others, such as one rasterised before a quality change, are
+    /// discarded), then for each entry drawn since the last
     /// update picks its variant (a change restarts it at `t`) and submits a
     /// job when its tick moved. A paused `t` therefore submits nothing.
     void update(double t, BridgeQuality q);
@@ -80,6 +82,7 @@ private:
         int state = 0;                // bridge state of the latest mark
         std::uint64_t generation = 0; // PanelInfo generation last seen
         bool restart = false;         // a new load not yet played from t
+        std::optional<lottie::PanelInfo> info;  // this update's, nullopt until loaded
         int variant = -1;             // playing file variant; -1 none
         double start = 0.0;           // when `variant` started playing
         bool has_tick = false;

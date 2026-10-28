@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 #ifdef _WIN32
@@ -22,6 +23,12 @@
 
 namespace fs = std::filesystem;
 using namespace std::chrono_literals;
+
+// The result buffer is a plain array: destroying it is one delete[], never
+// a per-element loop (a 2 MB std::vector<uint8_t> took ~5 ms to destroy in
+// the Debug build, on the render thread and under the worker mutex).
+static_assert(std::is_same_v<decltype(lottie::PanelResult::rgba),
+                             std::unique_ptr<std::uint8_t[]>>);
 
 namespace {
 
@@ -147,8 +154,9 @@ TEST_F(PanelWorker, JobProducesCompositedResult) {
     EXPECT_EQ(r.generation, info->generation);
     EXPECT_EQ(r.w, 64u);
     EXPECT_EQ(r.h, 32u);
-    ASSERT_EQ(r.rgba.size(), 64u * 32u * 4u);
-    for (std::size_t i = 0; i < r.rgba.size(); i += 4) {
+    ASSERT_EQ(r.bytes, 64u * 32u * 4u);
+    ASSERT_TRUE(r.rgba);
+    for (std::size_t i = 0; i < r.bytes; i += 4) {
         ASSERT_EQ(r.rgba[i + 0], 255) << i;
         ASSERT_EQ(r.rgba[i + 1], 0) << i;
         ASSERT_EQ(r.rgba[i + 2], 0) << i;

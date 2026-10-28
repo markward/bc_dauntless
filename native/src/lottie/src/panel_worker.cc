@@ -218,8 +218,12 @@ void PanelWorker::Impl::raster(const PanelJob& job,
         drop();
         return;
     }
+    // Default-initialised: composite_panel_into writes every byte.
+    const std::size_t bytes = static_cast<std::size_t>(job.w) * job.h * 4;
     PanelResult r{job.key, job.generation, job.w, job.h,
-                  composite_panel(it->second.still, premul, job.w, job.h), 0.0};
+                  std::unique_ptr<std::uint8_t[]>(new std::uint8_t[bytes]), bytes, 0.0};
+    composite_panel_into(it->second.still, premul, job.w, job.h,
+                         std::span<std::uint8_t>(r.rgba.get(), bytes));
     r.raster_ms = std::chrono::duration<double, std::milli>(
                       std::chrono::steady_clock::now() - t0).count();
 
