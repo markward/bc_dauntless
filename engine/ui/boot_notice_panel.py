@@ -38,6 +38,8 @@ from engine.ui.panel import Panel
 
 NOTICE_LINE = "THIS MATERIAL IS NOT MADE OR SUPPORTED BY ACTIVISION."
 CREDIT_LINE = "Created by Mark Ward - github.com/markward/bc_dauntless"
+# Not a licence line: the engine itself was written with Claude.
+AI_CREDIT_LINE = "Built with Claude AI"
 
 FADE_IN_S = 1.0
 HOLD_S = 2.0
@@ -143,7 +145,7 @@ class BootNoticePanel(Panel):
             # Not diffed: a dropped push cannot be detected, so it is offered
             # again every frame until the page answers.
             return "setBootNotice(" + json.dumps({
-                "lines": [NOTICE_LINE, CREDIT_LINE],
+                "lines": [NOTICE_LINE, CREDIT_LINE, AI_CREDIT_LINE],
                 "opacity": 0.0,
                 "ack": True,
             }) + ");"

@@ -36,6 +36,12 @@ def _section():
     return section[:section.index("</section>")]
 
 
+def test_the_ai_credit_sits_under_the_creator_credit():
+    section = _section()
+    assert section.index('id="bn-credit"') < section.index('id="bn-ai-credit"')
+    assert "getElementById('bn-ai-credit').textContent = payload.lines[2]" in JS
+
+
 def test_white_antonio_on_black():
     assert 'font-family: "Antonio Variable", "Antonio"' in CSS
     assert "background: #000;" in CSS

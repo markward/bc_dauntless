@@ -50,10 +50,14 @@ def test_the_wording_matches_the_player_readme():
     assert bn.CREDIT_LINE == "Created by Mark Ward - github.com/markward/bc_dauntless"
 
 
-def test_the_first_payload_carries_both_lines_at_zero_opacity():
+def test_the_ai_line_credits_claude():
+    assert bn.AI_CREDIT_LINE == "Built with Claude AI"
+
+
+def test_the_first_payload_carries_every_line_at_zero_opacity():
     panel = bn.BootNoticePanel(clock=FakeClock())
     p = _payload(panel.render_payload())
-    assert p["lines"] == [bn.NOTICE_LINE, bn.CREDIT_LINE]
+    assert p["lines"] == [bn.NOTICE_LINE, bn.CREDIT_LINE, bn.AI_CREDIT_LINE]
     assert p["opacity"] == 0.0
     assert p["ack"] is True
 

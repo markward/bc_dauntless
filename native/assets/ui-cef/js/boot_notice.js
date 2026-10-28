@@ -14,6 +14,7 @@ function setBootNotice(payload) {
     if (payload.lines) {
         document.getElementById('bn-notice').textContent = payload.lines[0];
         document.getElementById('bn-credit').textContent = payload.lines[1];
+        document.getElementById('bn-ai-credit').textContent = payload.lines[2];
     }
     root.style.display = 'flex';
     document.getElementById('bn-text').style.opacity = String(payload.opacity);

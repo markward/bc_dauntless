@@ -1,7 +1,8 @@
 /* Boot notice splash -- Activision's required notice (SDK licence,
  * "New Game Materials"). engine/ui/boot_notice_panel.py drives it.
  *
- * The title lockup, then the notice, then the credit, centred on black.
+ * The title lockup, then the notice, then the credit and the AI credit,
+ * centred on black.
  * Only the text fades; the black stays opaque for the screen's whole life.
  * Like #first-run it owns the whole frame, so it sits above every other
  * tier and supplies its font itself. Sized in vh so it holds its
@@ -82,4 +83,13 @@
     margin-top: 1.4vh;
     font-size: 1.8vh;
     letter-spacing: 0.04em;
+}
+
+/* Peach like the eyebrow, so it reads as part of the lockup's family
+   rather than a third licence line. */
+#boot-notice .bn-ai-credit {
+    margin-top: 0.8vh;
+    font-size: 1.6vh;
+    letter-spacing: 0.04em;
+    color: #ffcc66;
 }
