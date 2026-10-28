@@ -722,27 +722,6 @@
       "material": "Rear Console Strip Light",
       "name": ""
     },
-    "81:": {
-      "block": 81,
-      "lights": [
-        {
-          "intensity": 2,
-          "offset": -100,
-          "range": 300,
-          "shape": "panel",
-          "x": [
-            0,
-            1
-          ],
-          "y": [
-            0,
-            1
-          ]
-        }
-      ],
-      "material": "roof 2",
-      "name": ""
-    },
     "84:": {
       "block": 84,
       "material": "roof",
@@ -752,17 +731,17 @@
       "block": 87,
       "lights": [
         {
-          "intensity": 2,
-          "offset": -50,
-          "range": 300,
+          "intensity": 1.6,
+          "offset": -30,
+          "range": 230,
           "shape": "panel",
           "x": [
-            0,
-            1
+            0.14,
+            0.91
           ],
           "y": [
-            0,
-            1
+            0.15,
+            0.94
           ]
         }
       ],
