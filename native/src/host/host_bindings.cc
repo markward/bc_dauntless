@@ -4877,6 +4877,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Out-of-range clamps. Drives the bridge AO's sample count and "
           "target resolution scale.");
 
+    m.def("reload_bridge_panels",
+          [] {
+              if (g_bridge_pass) g_bridge_pass->reload_panels();
+          },
+          "Developer reload: re-probe every Lottie bridge panel's files and "
+          "clear the warning set. No-op before the bridge pass exists.");
+
     m.def("bridge_quality",
           [] { return static_cast<int>(g_bridge_quality); },
           "Current bridge rendering quality level (see set_bridge_quality).");

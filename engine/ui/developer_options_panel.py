@@ -96,7 +96,8 @@ class DeveloperOptionsPanel(Panel):
     # The "Hull damage" rows are all actions except the interior toggle.
     _ACTION_CONTROLS = frozenset({"quick_repair", "normal_strength",
                                  "dial_group", "reload_atmospheres", "reload_surfaces",
-                                 "bridge_debug_view"}) | hull_damage_tuning.ACTION_KEYS
+                                 "bridge_debug_view",
+                                 "reload_bridge_panels"}) | hull_damage_tuning.ACTION_KEYS
 
     # Presets cycled through by the "normal_strength" action row: 0 = flat
     # (identical to disabled), 1 = as authored, 2/4 exaggerate for tuning.
@@ -412,6 +413,12 @@ class DeveloperOptionsPanel(Panel):
         if action == "action:dial_group":
             self._dial_group = dev_dial_groups.cycle_active() or "nebula"
             return True
+        if action == "action:reload_bridge_panels":
+            # One-shot ACTION (mirrors action:reload_atmospheres).
+            import sys
+            host_io.reload_bridge_panels()
+            print("[bridge_lottie] panels reloaded", file=sys.stderr)
+            return True
         if action == "action:reload_atmospheres":
             # One-shot ACTION, not a toggle: no local flag, no render_payload
             # entry (mirrors action:quick_repair / action:dial_group). Drops
@@ -498,7 +505,8 @@ class DeveloperOptionsPanel(Panel):
                     ("ctrl", "running_lights"),
                     ("ctrl", "normal_maps"), ("ctrl", "normal_flip_g"),
                     ("ctrl", "normal_strength"), ("ctrl", "bridge_pbr"),
-                    ("ctrl", "bridge_debug_view")]
+                    ("ctrl", "bridge_debug_view"),
+                    ("ctrl", "reload_bridge_panels")]
         if self._selected_tab == "environments":
             out += [("ctrl", "rock_catalogue"), ("ctrl", "minor_rocks"),
                     ("ctrl", "far_tier"), ("ctrl", "rock_specks"),
