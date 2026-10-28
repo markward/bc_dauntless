@@ -14,7 +14,11 @@
 #include <renderer/bridge_quality.h>
 #include <renderer/window.h>
 
+#include <lottie/lottie_clip.h>
+#include <lottie/panel_math.h>
 #include <lottie/panel_worker.h>
+
+#include <assets/file_bytes.h>
 
 #include <assets/material.h>
 #include <assets/model.h>
@@ -352,4 +356,84 @@ TEST_F(BridgePanels, UploadTouchesOnlyUnitZero) {
     glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE0);
     glDeleteTextures(1, &other);
+}
+
+// Only changed rectangles are uploaded (spec §7 budget): pasted one onto the
+// other, the texture is always exactly the whole composite of the frame the
+// clock asks for, never a mix of frames.
+TEST_F(BridgePanels, PartialUploadsKeepTheTextureExact) {
+    place("slide.json");
+    auto clip = lottie::LottieClip::load(dir / "hull.json", nullptr);
+    ASSERT_TRUE(clip);
+    auto bytes = assets::read_binary_file(albedo);
+    ASSERT_TRUE(bytes);
+    const assets::Image still = assets::decode_image(*bytes);
+    auto want_at = [&](double t, int w, int h) {
+        const lottie::PanelTick tick = lottie::panel_tick(t, 0.0, clip->total_frames(), clip->fps());
+        std::vector<std::uint8_t> premul;
+        clip->render(tick.frame, static_cast<std::uint32_t>(w), static_cast<std::uint32_t>(h),
+                     premul);
+        return lottie::composite_panel(still, premul, static_cast<std::uint32_t>(w),
+                                       static_cast<std::uint32_t>(h));
+    };
+    ASSERT_TRUE(pump(0.0, [&] { return live() != 0; }));
+    for (double t : {0.0, 0.1, 0.2, 0.5, 0.9}) {
+        EXPECT_TRUE(pump(t, [&] {
+            const Readback r = read_texture(live());
+            return r.rgba == want_at(t, r.w, r.h);
+        })) << "t = " << t;
+    }
+}
+
+TEST_F(BridgePanels, UnchangedFramesUploadNothing) {
+    place("solid_red.json");
+    ASSERT_TRUE(pump(0.0, [&] { return live() != 0; }));
+    panels->take_stats();
+    int jobs = 0, uploads = 0;
+    for (int i = 1; i <= 20; ++i) {
+        frame(0.05 * i);
+        std::this_thread::sleep_for(10ms);
+        const auto s = panels->take_stats();
+        jobs += s.jobs;
+        uploads += s.uploads;
+    }
+    EXPECT_GE(jobs, 2);       // the clock ran, so frames were asked for...
+    EXPECT_EQ(uploads, 0);    // ...but every one was the same solid red
+    EXPECT_TRUE(all_red(read_texture(live())));
+}
+
+// A partial result that lands on a texture reallocated while it was in flight
+// (quality down and back up) is not uploaded: the panel asks again for the
+// whole frame at the same tick, so the texture ends up exact, not a patch over
+// an empty one.
+TEST_F(BridgePanels, ReallocatedTextureNeverTakesAPartial) {
+    place("slide.json");
+    auto clip = lottie::LottieClip::load(dir / "hull.json", nullptr);
+    ASSERT_TRUE(clip);
+    auto bytes = assets::read_binary_file(albedo);
+    ASSERT_TRUE(bytes);
+    const assets::Image still = assets::decode_image(*bytes);
+    ASSERT_TRUE(pump(0.0, [&] { return live() != 0; }));
+    pump(0.0, nullptr, 100ms);
+    panels->worker_for_test().set_test_raster_delay(150ms);
+    panels->take_stats();
+    frame(0.1);                                   // a partial job, in flight
+    ASSERT_EQ(panels->take_stats().jobs, 1);
+    quality = BridgeQuality::Low;
+    frame(0.1);
+    quality = BridgeQuality::Medium;
+    frame(0.1);                                   // same size again, new texture
+    std::this_thread::sleep_for(400ms);
+    panels->worker_for_test().set_test_raster_delay(0ms);
+    const lottie::PanelTick tick = lottie::panel_tick(0.1, 0.0, clip->total_frames(), clip->fps());
+    EXPECT_TRUE(pump(0.1, [&] {
+        const GLuint t = live();
+        if (t == 0) return false;
+        const Readback r = read_texture(t);
+        std::vector<std::uint8_t> premul;
+        clip->render(tick.frame, static_cast<std::uint32_t>(r.w), static_cast<std::uint32_t>(r.h),
+                     premul);
+        return r.rgba == lottie::composite_panel(still, premul, static_cast<std::uint32_t>(r.w),
+                                                 static_cast<std::uint32_t>(r.h));
+    }));
 }

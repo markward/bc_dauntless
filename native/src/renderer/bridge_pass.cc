@@ -64,6 +64,7 @@ void BridgePass::update_panels(BridgeQuality q) {
     panels_.update(wall_time_, q);
     const BridgePanels::Stats s = panels_.take_stats();
     panel_stats_.uploads += s.uploads;
+    panel_stats_.upload_bytes += s.upload_bytes;
     panel_stats_.jobs += s.jobs;
     panel_stats_.raster_ms += s.raster_ms;
     // Spec §7: the worker's raster time, on the frame report's 120-frame
@@ -71,9 +72,12 @@ void BridgePass::update_panels(BridgeQuality q) {
     constexpr int kReportEvery = 120;
     if (++panel_updates_ < kReportEvery) return;
     if (frame_timer().enabled())
-        std::fprintf(stderr, "[bridge_lottie] uploads=%d jobs=%d raster=%.3f ms/frame avg\n",
+        std::fprintf(stderr,
+                     "[bridge_lottie] uploads=%d jobs=%d raster=%.3f ms/frame avg "
+                     "upload=%.1f KB/frame avg\n",
                      panel_stats_.uploads, panel_stats_.jobs,
-                     panel_stats_.raster_ms / kReportEvery);
+                     panel_stats_.raster_ms / kReportEvery,
+                     static_cast<double>(panel_stats_.upload_bytes) / 1024.0 / kReportEvery);
     panel_stats_ = BridgePanels::Stats{};
     panel_updates_ = 0;
 }

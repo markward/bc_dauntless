@@ -42,6 +42,10 @@ struct Loaded {
     // `still` scaled to the last job's size, so a frame is only an "over".
     std::vector<std::uint8_t> scaled;
     std::uint32_t scaled_w = 0, scaled_h = 0;
+    // The whole composite of the last result, which the caller's texture now
+    // holds, and the buffer the next one is composited into (swapped after).
+    std::unique_ptr<std::uint8_t[]> shown, next;
+    std::uint32_t shown_w = 0, shown_h = 0;
 };
 
 }  // namespace
@@ -232,9 +236,33 @@ void PanelWorker::Impl::raster(const PanelJob& job,
     }
     // Default-initialised: over_into writes every byte.
     const std::size_t bytes = static_cast<std::size_t>(job.w) * job.h * 4;
-    PanelResult r{job.key, job.generation, job.w, job.h,
-                  std::unique_ptr<std::uint8_t[]>(new std::uint8_t[bytes]), bytes, 0.0};
-    over_into(p.scaled, premul, std::span<std::uint8_t>(r.rgba.get(), bytes));
+    const bool same_size = p.shown && p.shown_w == job.w && p.shown_h == job.h;
+    // A new size starts over: both buffers go, so neither is ever written
+    // at a size it was not allocated for.
+    if (!same_size) {
+        p.shown.reset();
+        p.next.reset();
+    }
+    if (!p.next) p.next.reset(new std::uint8_t[bytes]);
+    const std::span<std::uint8_t> frame(p.next.get(), bytes);
+    over_into(p.scaled, premul, frame);
+    // Only what changed since the last result goes back; nothing when the
+    // frame is the same (a held keyframe, a static stretch of the loop).
+    std::optional<PanelRect> rect = PanelRect{0, 0, job.w, job.h};
+    if (same_size && !job.full)
+        rect = changed_rect(std::span<const std::uint8_t>(p.shown.get(), bytes), frame,
+                            job.w, job.h);
+    PanelResult r{job.key, job.generation, job.w, job.h, PanelRect{0, 0, 0, 0}, nullptr, 0,
+                  0.0};
+    if (rect) {
+        r.rect = *rect;
+        r.bytes = static_cast<std::size_t>(rect->w) * rect->h * 4;
+        r.rgba.reset(new std::uint8_t[r.bytes]);
+        copy_rect(frame, job.w, *rect, std::span<std::uint8_t>(r.rgba.get(), r.bytes));
+        std::swap(p.shown, p.next);
+        p.shown_w = job.w;
+        p.shown_h = job.h;
+    }
     r.raster_ms = std::chrono::duration<double, std::milli>(
                       std::chrono::steady_clock::now() - t0).count();
 

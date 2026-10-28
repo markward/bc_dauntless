@@ -100,9 +100,24 @@ void BridgePanels::update(double t, BridgeQuality q) {
         const auto it = by_key.find(r.key);
         if (it == by_key.end()) continue;
         Entry& e = *it->second;
-        if (e.variant < 0 || r.w != e.w || r.h != e.h || !r.rgba ||
-            r.bytes != static_cast<std::size_t>(r.w) * r.h * 4)
+        // A result carries only what changed since the worker's previous one
+        // for this key. One that is not uploaded leaves the texture behind
+        // the worker, so the next job asks for the whole frame.
+        const lottie::PanelRect& rc = r.rect;
+        const bool whole = rc.x == 0 && rc.y == 0 && rc.w == r.w && rc.h == r.h;
+        if (rc.w == 0 || rc.h == 0) {
+            // Nothing changed. Fine for a texture that holds the last result;
+            // one that does not (new, or reallocated since) needs a full one.
+            if (e.tex == 0 || r.w != e.w || r.h != e.h) e.need_full = true;
             continue;
+        }
+        if (e.variant < 0 || r.w != e.w || r.h != e.h || !r.rgba ||
+            rc.x + rc.w > r.w || rc.y + rc.h > r.h ||
+            r.bytes != static_cast<std::size_t>(rc.w) * rc.h * 4 ||
+            (e.tex == 0 && !whole)) {
+            e.need_full = true;
+            continue;
+        }
         const auto gw = static_cast<GLsizei>(r.w);
         const auto gh = static_cast<GLsizei>(r.h);
         if (!bound) {
@@ -123,12 +138,15 @@ void BridgePanels::update(double t, BridgeQuality q) {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
         } else {
             glBindTexture(GL_TEXTURE_2D, e.tex);
-            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, gw, gh, GL_RGBA, GL_UNSIGNED_BYTE,
+            glTexSubImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(rc.x),
+                            static_cast<GLint>(rc.y), static_cast<GLsizei>(rc.w),
+                            static_cast<GLsizei>(rc.h), GL_RGBA, GL_UNSIGNED_BYTE,
                             r.rgba.get());
         }
         glGenerateMipmap(GL_TEXTURE_2D);
         e.has_image = true;
         ++stats_.uploads;
+        stats_.upload_bytes += r.bytes;
     }
     if (bound) glBindTexture(GL_TEXTURE_2D, 0);
 
@@ -152,11 +170,13 @@ void BridgePanels::update(double t, BridgeQuality q) {
                     lottie::panel_tick(t, e.start, info.total_frames[vi], info.fps[vi]);
                 // A refused submit (a job still in flight) leaves the tick
                 // unrecorded, so the next update asks again.
-                if ((!e.has_tick || tick.tick != e.last_tick) &&
+                const bool full = e.tex == 0 || e.need_full;
+                if ((!e.has_tick || tick.tick != e.last_tick || e.need_full) &&
                     worker_.submit(lottie::PanelJob{e.key, v, tick.frame, e.w, e.h,
-                                                    info.generation})) {
+                                                    info.generation, full})) {
                     e.has_tick = true;
                     e.last_tick = tick.tick;
+                    if (full) e.need_full = false;
                     ++stats_.jobs;
                 }
             }

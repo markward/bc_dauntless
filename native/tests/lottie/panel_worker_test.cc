@@ -7,6 +7,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -431,7 +432,7 @@ TEST_F(PanelWorker, CachedStillMatchesCompositeAcrossSizeChanges) {
     const std::pair<std::uint32_t, std::uint32_t> sizes[] = {{64, 32}, {32, 16}, {32, 16}, {64, 32}};
     float frame = 0.f;
     for (auto [sw, sh] : sizes) {
-        ASSERT_TRUE(w.submit({1, 0, frame, sw, sh, info->generation}));
+        ASSERT_TRUE(w.submit({1, 0, frame, sw, sh, info->generation, /*full=*/true}));
         auto results = await_results(w);
         ASSERT_EQ(results.size(), 1u);
         std::vector<std::uint8_t> premul;
@@ -442,5 +443,142 @@ TEST_F(PanelWorker, CachedStillMatchesCompositeAcrossSizeChanges) {
                                             results[0].rgba.get() + results[0].bytes), want)
             << sw << "x" << sh << " frame " << frame;
         frame += 20.f;
+    }
+}
+
+// ── Partial uploads. A job's result carries only the rectangle that changed
+// since the key's previous result; `full` (or a new size) asks for it all.
+namespace {
+std::vector<std::uint8_t> composite_of(const fs::path& still, const char* fixture_name,
+                                       float frame, std::uint32_t w, std::uint32_t h) {
+    auto bytes = assets::read_binary_file(still);
+    const assets::Image image = assets::decode_image(*bytes);
+    auto clip = lottie::LottieClip::load(fixture(fixture_name), nullptr);
+    std::vector<std::uint8_t> premul;
+    clip->render(frame, w, h, premul);
+    return lottie::composite_panel(image, premul, w, h);
+}
+}  // namespace
+
+TEST_F(PanelWorker, FirstResultIsTheWholeFrame) {
+    lottie::PanelWorker w;
+    put("slide.json");
+    w.set_panel(1, still, dirs());
+    auto info = await_info(w, 1);
+    ASSERT_TRUE(info);
+    ASSERT_TRUE(w.submit({1, 0, 0.f, 64, 32, info->generation}));
+    auto r = await_results(w);
+    ASSERT_EQ(r.size(), 1u);
+    EXPECT_EQ(r[0].rect.x, 0u);
+    EXPECT_EQ(r[0].rect.y, 0u);
+    EXPECT_EQ(r[0].rect.w, 64u);
+    EXPECT_EQ(r[0].rect.h, 32u);
+    EXPECT_EQ(r[0].bytes, 64u * 32u * 4u);
+}
+
+TEST_F(PanelWorker, UnchangedFrameCarriesNoPixels) {
+    lottie::PanelWorker w;
+    put("slide.json");
+    w.set_panel(1, still, dirs());
+    auto info = await_info(w, 1);
+    ASSERT_TRUE(info);
+    ASSERT_TRUE(w.submit({1, 0, 10.f, 64, 32, info->generation}));
+    ASSERT_EQ(await_results(w).size(), 1u);
+    ASSERT_TRUE(w.submit({1, 0, 10.f, 64, 32, info->generation}));
+    auto r = await_results(w);
+    ASSERT_EQ(r.size(), 1u);
+    EXPECT_EQ(r[0].bytes, 0u);
+    EXPECT_FALSE(r[0].rgba);
+    EXPECT_EQ(r[0].rect.w, 0u);
+    EXPECT_EQ(r[0].rect.h, 0u);
+    EXPECT_GE(r[0].raster_ms, 0.0);   // still counted in the stats
+}
+
+// Pasting each partial result onto the last whole image gives exactly the
+// whole composite of the new frame, and the rectangle is smaller than it.
+TEST_F(PanelWorker, MovedShapeCarriesOnlyItsRectangle) {
+    lottie::PanelWorker w;
+    put("slide.json");
+    w.set_panel(1, still, dirs());
+    auto info = await_info(w, 1);
+    ASSERT_TRUE(info);
+    ASSERT_TRUE(w.submit({1, 0, 0.f, 64, 32, info->generation}));
+    auto first = await_results(w);
+    ASSERT_EQ(first.size(), 1u);
+    std::vector<std::uint8_t> shown(first[0].rgba.get(), first[0].rgba.get() + first[0].bytes);
+    for (float frame : {10.f, 20.f}) {
+        ASSERT_TRUE(w.submit({1, 0, frame, 64, 32, info->generation}));
+        auto r = await_results(w);
+        ASSERT_EQ(r.size(), 1u);
+        const lottie::PanelRect rect = r[0].rect;
+        ASSERT_GT(rect.w * rect.h, 0u);
+        EXPECT_LT(rect.w * rect.h, 64u * 32u) << frame;
+        ASSERT_EQ(r[0].bytes, static_cast<std::size_t>(rect.w) * rect.h * 4);
+        for (std::uint32_t y = 0; y < rect.h; ++y)
+            std::copy_n(r[0].rgba.get() + static_cast<std::size_t>(y) * rect.w * 4, rect.w * 4,
+                        shown.begin() + ((rect.y + y) * 64 + rect.x) * 4);
+        EXPECT_EQ(shown, composite_of(still, "slide.json", frame, 64, 32)) << frame;
+    }
+}
+
+TEST_F(PanelWorker, FullJobAlwaysCarriesTheWholeFrame) {
+    lottie::PanelWorker w;
+    put("slide.json");
+    w.set_panel(1, still, dirs());
+    auto info = await_info(w, 1);
+    ASSERT_TRUE(info);
+    for (int i = 0; i < 2; ++i) {
+        ASSERT_TRUE(w.submit({1, 0, 10.f, 64, 32, info->generation, /*full=*/true}));
+        auto r = await_results(w);
+        ASSERT_EQ(r.size(), 1u);
+        EXPECT_EQ(r[0].rect.w, 64u) << i;
+        EXPECT_EQ(r[0].rect.h, 32u) << i;
+        ASSERT_EQ(r[0].bytes, 64u * 32u * 4u);
+        EXPECT_EQ(std::vector<std::uint8_t>(r[0].rgba.get(), r[0].rgba.get() + r[0].bytes),
+                  composite_of(still, "slide.json", 10.f, 64, 32));
+    }
+}
+
+TEST_F(PanelWorker, NewSizeCarriesTheWholeFrame) {
+    lottie::PanelWorker w;
+    put("slide.json");
+    w.set_panel(1, still, dirs());
+    auto info = await_info(w, 1);
+    ASSERT_TRUE(info);
+    ASSERT_TRUE(w.submit({1, 0, 10.f, 64, 32, info->generation}));
+    ASSERT_EQ(await_results(w).size(), 1u);
+    ASSERT_TRUE(w.submit({1, 0, 10.f, 32, 16, info->generation}));
+    auto r = await_results(w);
+    ASSERT_EQ(r.size(), 1u);
+    EXPECT_EQ(r[0].rect.w, 32u);
+    EXPECT_EQ(r[0].rect.h, 16u);
+    EXPECT_EQ(r[0].bytes, 32u * 16u * 4u);
+}
+
+// Growing then staying: the second result at the bigger size is a correct
+// partial against the first, never one built on a buffer of the old size.
+TEST_F(PanelWorker, PartialAfterGrowingIsRight) {
+    lottie::PanelWorker w;
+    put("slide.json");
+    w.set_panel(1, still, dirs());
+    auto info = await_info(w, 1);
+    ASSERT_TRUE(info);
+    ASSERT_TRUE(w.submit({1, 0, 0.f, 32, 16, info->generation}));
+    ASSERT_EQ(await_results(w).size(), 1u);
+    ASSERT_TRUE(w.submit({1, 0, 0.f, 64, 32, info->generation}));
+    auto big = await_results(w);
+    ASSERT_EQ(big.size(), 1u);
+    ASSERT_EQ(big[0].bytes, 64u * 32u * 4u);
+    std::vector<std::uint8_t> shown(big[0].rgba.get(), big[0].rgba.get() + big[0].bytes);
+    for (float frame : {10.f, 20.f}) {
+        ASSERT_TRUE(w.submit({1, 0, frame, 64, 32, info->generation}));
+        auto r = await_results(w);
+        ASSERT_EQ(r.size(), 1u);
+        const lottie::PanelRect rect = r[0].rect;
+        ASSERT_EQ(r[0].bytes, static_cast<std::size_t>(rect.w) * rect.h * 4);
+        for (std::uint32_t y = 0; y < rect.h; ++y)
+            std::copy_n(r[0].rgba.get() + static_cast<std::size_t>(y) * rect.w * 4, rect.w * 4,
+                        shown.begin() + ((rect.y + y) * 64 + rect.x) * 4);
+        EXPECT_EQ(shown, composite_of(still, "slide.json", frame, 64, 32)) << frame;
     }
 }

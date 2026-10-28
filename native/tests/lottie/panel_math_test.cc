@@ -174,3 +174,72 @@ TEST(CachedStill, WithinOneStepOfTheUnroundedStill) {
         }
     }
 }
+
+// ── Partial uploads: only the rectangle that changed reaches the GPU.
+namespace {
+std::vector<std::uint8_t> image(std::uint32_t w, std::uint32_t h, std::uint8_t fill) {
+    return std::vector<std::uint8_t>(static_cast<std::size_t>(w) * h * 4, fill);
+}
+void poke(std::vector<std::uint8_t>& img, std::uint32_t w, std::uint32_t x, std::uint32_t y,
+          int channel) {
+    img[(static_cast<std::size_t>(y) * w + x) * 4 + channel] ^= 0xFF;
+}
+}  // namespace
+
+TEST(ChangedRect, IdenticalImagesHaveNone) {
+    const auto a = image(5, 4, 7);
+    EXPECT_FALSE(changed_rect(a, a, 5, 4).has_value());
+}
+
+TEST(ChangedRect, OnePixelInAnyChannel) {
+    for (int channel = 0; channel < 4; ++channel) {
+        const auto a = image(5, 4, 7);
+        auto b = a;
+        poke(b, 5, 3, 2, channel);
+        const auto r = changed_rect(a, b, 5, 4);
+        ASSERT_TRUE(r) << channel;
+        EXPECT_EQ(r->x, 3u);
+        EXPECT_EQ(r->y, 2u);
+        EXPECT_EQ(r->w, 1u);
+        EXPECT_EQ(r->h, 1u);
+    }
+}
+
+TEST(ChangedRect, SpansTheOutermostChangedRowsAndColumns) {
+    const auto a = image(8, 6, 0);
+    auto b = a;
+    poke(b, 8, 1, 4, 0);   // leftmost and lowest
+    poke(b, 8, 6, 1, 3);   // rightmost and highest
+    poke(b, 8, 3, 2, 1);   // inside
+    const auto r = changed_rect(a, b, 8, 6);
+    ASSERT_TRUE(r);
+    EXPECT_EQ(r->x, 1u);
+    EXPECT_EQ(r->y, 1u);
+    EXPECT_EQ(r->w, 6u);
+    EXPECT_EQ(r->h, 4u);
+}
+
+TEST(ChangedRect, CornersGiveTheWholeImage) {
+    const auto a = image(4, 3, 9);
+    auto b = a;
+    poke(b, 4, 0, 0, 2);
+    poke(b, 4, 3, 2, 2);
+    const auto r = changed_rect(a, b, 4, 3);
+    ASSERT_TRUE(r);
+    EXPECT_EQ(r->x, 0u);
+    EXPECT_EQ(r->y, 0u);
+    EXPECT_EQ(r->w, 4u);
+    EXPECT_EQ(r->h, 3u);
+}
+
+TEST(CopyRect, PacksTheRectangleRowByRow) {
+    std::vector<std::uint8_t> img(4 * 3 * 4);
+    for (std::size_t i = 0; i < img.size(); ++i) img[i] = static_cast<std::uint8_t>(i);
+    std::vector<std::uint8_t> out(2 * 2 * 4, 0xAA);
+    copy_rect(img, 4, PanelRect{1, 1, 2, 2}, out);
+    std::vector<std::uint8_t> want;
+    for (std::uint32_t y = 1; y < 3; ++y)
+        for (std::uint32_t x = 1; x < 3; ++x)
+            for (int k = 0; k < 4; ++k) want.push_back(img[(y * 4 + x) * 4 + k]);
+    EXPECT_EQ(out, want);
+}

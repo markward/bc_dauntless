@@ -3,6 +3,7 @@
 #include <assets/texture.h>
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -47,5 +48,21 @@ std::vector<std::uint8_t> scale_still_rgba(const assets::Image& still,
 /// std::vector<uint8_t> of 2 MB took ~5 ms to destroy).
 void over_into(std::span<const std::uint8_t> still_rgba,
                std::span<const std::uint8_t> lottie_premul_rgba, std::span<std::uint8_t> out);
+
+/// A rectangle of a panel image, in pixels from its top-left.
+struct PanelRect { std::uint32_t x, y, w, h; };
+
+/// The smallest rectangle holding every pixel that differs between two w*h
+/// RGBA8 images (same size spans); nullopt when they are identical. The panel
+/// worker uploads only this, so an unchanged frame costs no upload at all and
+/// one button moving costs that button.
+std::optional<PanelRect> changed_rect(std::span<const std::uint8_t> before,
+                                      std::span<const std::uint8_t> after,
+                                      std::uint32_t w, std::uint32_t h);
+
+/// `r` out of a `w`-wide RGBA8 image into `out` (r.w*r.h*4 bytes), tightly
+/// packed row by row, as glTexSubImage2D reads it.
+void copy_rect(std::span<const std::uint8_t> image, std::uint32_t w, PanelRect r,
+               std::span<std::uint8_t> out);
 
 }  // namespace lottie

@@ -9,6 +9,7 @@
 
 #include <glad/glad.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -61,10 +62,12 @@ public:
     /// them; every warning may print once more.
     void reload();
 
-    /// Since the last take_stats(): uploads, jobs submitted, and the worker's
-    /// raster + composite time of the results taken.
+    /// Since the last take_stats(): uploads, the bytes they sent (only each
+    /// result's changed rectangle), jobs submitted, and the worker's raster +
+    /// composite time of the results taken (unchanged ones included).
     struct Stats {
         int uploads = 0;
+        std::size_t upload_bytes = 0;
         int jobs = 0;
         double raster_ms = 0.0;
     };
@@ -90,6 +93,7 @@ private:
         std::uint32_t w = 0, h = 0;   // texture size for the current quality
         GLuint tex = 0;
         bool has_image = false;       // `tex` holds a frame of `variant`
+        bool need_full = false;       // a result was not uploaded: `tex` is behind the worker
     };
     using Key = std::pair<unsigned long long, int>;
 

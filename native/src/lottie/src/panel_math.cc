@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace lottie {
 
@@ -100,6 +101,42 @@ void over_into(std::span<const std::uint8_t> still, std::span<const std::uint8_t
             out[i + k] = static_cast<std::uint8_t>(std::lround(std::clamp(o, 0.f, 1.f) * 255.f));
         }
     }
+}
+
+std::optional<PanelRect> changed_rect(std::span<const std::uint8_t> before,
+                                      std::span<const std::uint8_t> after,
+                                      std::uint32_t w, std::uint32_t h) {
+    const std::size_t row = static_cast<std::size_t>(w) * 4;
+    auto row_differs = [&](std::uint32_t y) {
+        return std::memcmp(before.data() + y * row, after.data() + y * row, row) != 0;
+    };
+    std::uint32_t top = 0;
+    while (top < h && !row_differs(top)) ++top;
+    if (top == h) return std::nullopt;
+    std::uint32_t bottom = h - 1;
+    while (bottom > top && !row_differs(bottom)) --bottom;
+    // Columns: per changed row, the first and last differing pixel (4 bytes).
+    std::uint32_t left = w, right = 0;
+    for (std::uint32_t y = top; y <= bottom; ++y) {
+        const std::uint8_t* a = before.data() + y * row;
+        const std::uint8_t* b = after.data() + y * row;
+        std::uint32_t x = 0;
+        while (x < left && std::memcmp(a + x * 4, b + x * 4, 4) == 0) ++x;
+        if (x == w) continue;   // an unchanged row between changed ones
+        left = std::min(left, x);
+        std::uint32_t xr = w - 1;
+        while (xr > right && std::memcmp(a + xr * 4, b + xr * 4, 4) == 0) --xr;
+        right = std::max(right, xr);
+    }
+    return PanelRect{left, top, right - left + 1, bottom - top + 1};
+}
+
+void copy_rect(std::span<const std::uint8_t> image, std::uint32_t w, PanelRect r,
+               std::span<std::uint8_t> out) {
+    const std::size_t row = static_cast<std::size_t>(r.w) * 4;
+    for (std::uint32_t y = 0; y < r.h; ++y)
+        std::memcpy(out.data() + y * row,
+                    image.data() + ((static_cast<std::size_t>(r.y) + y) * w + r.x) * 4, row);
 }
 
 }  // namespace lottie

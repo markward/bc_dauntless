@@ -2,6 +2,8 @@
 
 #include <assets/panel_files.h>
 
+#include <lottie/panel_math.h>
+
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -27,16 +29,24 @@ struct PanelJob {
     float frame;
     std::uint32_t w, h;
     std::uint64_t generation;
+    /// Carry the whole frame, not just what changed since the key's last
+    /// result: the caller's texture is new, or missed a result.
+    bool full = false;
 };
 
 struct PanelResult {
     std::uint64_t key;
     std::uint64_t generation;
     std::uint32_t w, h;
-    /// Straight RGBA from composite_panel_into, `bytes` = w*h*4. A plain
-    /// array, not a vector: freeing it is one delete[] wherever it dies (the
-    /// render thread, or take_results under the worker mutex), never a
-    /// per-element destroy loop.
+    /// The part of the w*h frame that `rgba` holds: what changed since this
+    /// key's previous result, the whole frame for its first result, a new
+    /// size, a new load or a `full` job. Empty (w = h = 0, no `rgba`) when
+    /// nothing changed: there is nothing to upload.
+    PanelRect rect{0, 0, 0, 0};
+    /// Straight RGBA of `rect` from the composite, tightly packed, `bytes` =
+    /// rect.w*rect.h*4. A plain array, not a vector: freeing it is one
+    /// delete[] wherever it dies (the render thread, or take_results under
+    /// the worker mutex), never a per-element destroy loop.
     std::unique_ptr<std::uint8_t[]> rgba;
     std::size_t bytes = 0;
     double raster_ms;
