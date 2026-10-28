@@ -39,6 +39,9 @@ struct Loaded {
     std::uint64_t generation = 0;
     std::array<std::unique_ptr<LottieClip>, assets::kPanelVariants> clips;
     assets::Image still;  // empty when unreadable: composite over transparent black
+    // `still` scaled to the last job's size, so a frame is only an "over".
+    std::vector<std::uint8_t> scaled;
+    std::uint32_t scaled_w = 0, scaled_h = 0;
 };
 
 }  // namespace
@@ -213,17 +216,22 @@ void PanelWorker::Impl::raster(const PanelJob& job,
     if (const auto d = delay_ms.load(); d > 0)
         std::this_thread::sleep_for(std::chrono::milliseconds(d));
 
+    Loaded& p = it->second;
     const auto t0 = std::chrono::steady_clock::now();
-    if (!it->second.clips[job.variant]->render(job.frame, job.w, job.h, premul)) {
+    if (!p.clips[job.variant]->render(job.frame, job.w, job.h, premul)) {
         drop();
         return;
     }
-    // Default-initialised: composite_panel_into writes every byte.
+    if (p.scaled_w != job.w || p.scaled_h != job.h) {
+        p.scaled = scale_still_rgba(p.still, job.w, job.h);
+        p.scaled_w = job.w;
+        p.scaled_h = job.h;
+    }
+    // Default-initialised: over_into writes every byte.
     const std::size_t bytes = static_cast<std::size_t>(job.w) * job.h * 4;
     PanelResult r{job.key, job.generation, job.w, job.h,
                   std::unique_ptr<std::uint8_t[]>(new std::uint8_t[bytes]), bytes, 0.0};
-    composite_panel_into(it->second.still, premul, job.w, job.h,
-                         std::span<std::uint8_t>(r.rgba.get(), bytes));
+    over_into(p.scaled, premul, std::span<std::uint8_t>(r.rgba.get(), bytes));
     r.raster_ms = std::chrono::duration<double, std::milli>(
                       std::chrono::steady_clock::now() - t0).count();
 

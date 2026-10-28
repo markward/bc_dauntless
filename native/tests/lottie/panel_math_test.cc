@@ -2,8 +2,10 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 using namespace lottie;
@@ -105,4 +107,70 @@ TEST(Composite, IntoBufferMatchesTheVectorForm) {
     std::unique_ptr<std::uint8_t[]> buf(new std::uint8_t[want.size()]);
     composite_panel_into(still, l, 4, 2, std::span<std::uint8_t>(buf.get(), want.size()));
     EXPECT_EQ(std::vector<std::uint8_t>(buf.get(), buf.get() + want.size()), want);
+}
+
+// The worker's cached form: the still scaled once per (panel, size), then a
+// plain "over" per frame. It must give composite_panel_into's bytes exactly.
+namespace {
+std::vector<std::uint8_t> premul_lottie(std::uint32_t w, std::uint32_t h, int seed) {
+    std::vector<std::uint8_t> l(static_cast<std::size_t>(w) * h * 4);
+    for (std::size_t i = 0; i < l.size(); i += 4) {
+        const auto a = static_cast<std::uint8_t>((i * 37 + seed * 101) % 256);
+        l[i + 3] = a;
+        for (int k = 0; k < 3; ++k)
+            l[i + k] = a == 0 ? 0 : static_cast<std::uint8_t>((i * (k + 3) + seed) % (a + 1u));
+    }
+    return l;
+}
+assets::Image patterned_still(std::uint32_t w, std::uint32_t h, assets::Image::Format f) {
+    const std::size_t n = f == assets::Image::Format::RGBA8 ? 4 : f == assets::Image::Format::RGB8 ? 3 : 1;
+    std::vector<std::uint8_t> px(w * h * n);
+    for (std::size_t i = 0; i < px.size(); ++i) px[i] = static_cast<std::uint8_t>((i * 53 + 7) % 256);
+    return make_still(w, h, f, std::move(px));
+}
+}  // namespace
+
+TEST(CachedStill, OverMatchesCompositeByteForByte) {
+    using F = assets::Image::Format;
+    for (F f : {F::RGBA8, F::RGB8, F::R8}) {
+        const assets::Image still = patterned_still(5, 3, f);
+        for (auto [w, h] : {std::pair<std::uint32_t, std::uint32_t>{7, 4}, {4, 2}, {5, 3}}) {
+            const std::vector<std::uint8_t> scaled = scale_still_rgba(still, w, h);
+            ASSERT_EQ(scaled.size(), static_cast<std::size_t>(w) * h * 4);
+            for (int seed = 0; seed < 3; ++seed) {
+                const auto l = premul_lottie(w, h, seed);
+                std::vector<std::uint8_t> got(l.size(), 0xAB);
+                over_into(scaled, l, got);
+                EXPECT_EQ(got, composite_panel(still, l, w, h))
+                    << "format " << static_cast<int>(f) << " " << w << "x" << h << " seed " << seed;
+            }
+        }
+    }
+}
+
+TEST(CachedStill, ScaledStillIsTheCompositeOverNothing) {
+    const assets::Image still = patterned_still(3, 2, assets::Image::Format::RGBA8);
+    const std::vector<std::uint8_t> clear(6u * 4u * 4u, 0);
+    EXPECT_EQ(scale_still_rgba(still, 6, 4), composite_panel(still, clear, 6, 4));
+}
+
+TEST(CachedStill, EmptyStillScalesToTransparentBlack) {
+    EXPECT_EQ(scale_still_rgba(assets::Image{}, 3, 2), std::vector<std::uint8_t>(24, 0));
+}
+
+// The still is rounded to 8 bits once, before the over: within one step of
+// blending the unrounded bilinear sample, as the pre-cache composite did.
+TEST(CachedStill, WithinOneStepOfTheUnroundedStill) {
+    const assets::Image still{2, 1, assets::Image::Format::RGBA8, {0, 0, 0, 0, 255, 255, 255, 255}};
+    const std::uint32_t w = 7, h = 1;
+    const auto l = premul_lottie(w, h, 1);
+    const auto got = composite_panel(still, l, w, h);
+    for (std::uint32_t x = 0; x < w; ++x) {
+        const float fx = std::clamp((x + 0.5f) * 2.f / w - 0.5f, 0.f, 1.f);
+        for (int k = 0; k < 4; ++k) {
+            const float la = l[x * 4 + 3] / 255.f;
+            const float want = (l[x * 4 + k] / 255.f + fx * (1.f - la)) * 255.f;
+            EXPECT_NEAR(got[x * 4 + k], want, 1.0f) << x << " " << k;
+        }
+    }
 }

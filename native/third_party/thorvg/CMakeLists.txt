@@ -69,3 +69,15 @@ else()
     target_compile_options(thorvg PRIVATE -w)
 endif()
 set_target_properties(thorvg PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# Optimised in every configuration, Debug included: the bridge panels exist to
+# move smoothly and Mark runs Debug, where an -O0 ThorVG took 10.7 ms to
+# rasterise one 2048-wide frame. (Cost: stepping through ThorVG in a debugger.)
+if(MSVC)
+    # MSVC rejects /O2 beside /RTC1 and warns when it overrides /Od or /Ob0, so
+    # this directory's Debug flags (seen by this target alone) lose all three.
+    string(REGEX REPLACE "/RTC[1csu]+|/Od|/Ob0" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
+    target_compile_options(thorvg PRIVATE $<$<CONFIG:Debug>:/O2>)
+else()
+    target_compile_options(thorvg PRIVATE $<$<CONFIG:Debug>:-O2>)
+endif()

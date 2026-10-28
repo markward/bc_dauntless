@@ -1,4 +1,9 @@
+#include <lottie/lottie_clip.h>
+#include <lottie/panel_math.h>
 #include <lottie/panel_worker.h>
+
+#include <assets/file_bytes.h>
+#include <assets/texture.h>
 
 #include <gtest/gtest.h>
 
@@ -13,6 +18,7 @@
 #include <string>
 #include <thread>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -354,4 +360,34 @@ TEST_F(PanelWorker, InvalidDefaultTakesCanvasFromFirstValidVariant) {
     EXPECT_FALSE(info->valid[3]);
     EXPECT_FLOAT_EQ(info->canvas_w, 64.f);
     EXPECT_FLOAT_EQ(info->canvas_h, 32.f);
+}
+
+// The worker scales the still once per (panel, size) and reuses it: every
+// result, across size changes, is still exactly composite_panel's bytes.
+TEST_F(PanelWorker, CachedStillMatchesCompositeAcrossSizeChanges) {
+    auto bytes = assets::read_binary_file(still);
+    ASSERT_TRUE(bytes);
+    const assets::Image image = assets::decode_image(*bytes);
+    auto clip = lottie::LottieClip::load(fixture("slide.json"), nullptr);
+    ASSERT_TRUE(clip);
+
+    lottie::PanelWorker w;
+    w.set_panel(1, default_only(fixture("slide.json")), still);
+    auto info = await_info(w, 1);
+    ASSERT_TRUE(info);
+    const std::pair<std::uint32_t, std::uint32_t> sizes[] = {{64, 32}, {32, 16}, {32, 16}, {64, 32}};
+    float frame = 0.f;
+    for (auto [sw, sh] : sizes) {
+        ASSERT_TRUE(w.submit({1, 0, frame, sw, sh, info->generation}));
+        auto results = await_results(w);
+        ASSERT_EQ(results.size(), 1u);
+        std::vector<std::uint8_t> premul;
+        ASSERT_TRUE(clip->render(frame, sw, sh, premul));
+        const auto want = lottie::composite_panel(image, premul, sw, sh);
+        ASSERT_EQ(results[0].bytes, want.size());
+        EXPECT_EQ(std::vector<std::uint8_t>(results[0].rgba.get(),
+                                            results[0].rgba.get() + results[0].bytes), want)
+            << sw << "x" << sh << " frame " << frame;
+        frame += 20.f;
+    }
 }

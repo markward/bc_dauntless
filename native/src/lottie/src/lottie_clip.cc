@@ -108,8 +108,8 @@ bool LottieClip::render(float frame, std::uint32_t w, std::uint32_t h,
     // Same-frame requests report InsufficientCondition; the picture is still valid.
     m.animation->frame(std::clamp(frame, 0.f, m.total - 1.f));
 
-    std::fill(m.pixels.begin(), m.pixels.end(), 0u);
     if (m.canvas->update() != tvg::Result::Success) return false;
+    // draw(true) clears the whole target first (SwRenderer::clear).
     if (m.canvas->draw(true) != tvg::Result::Success) return false;
     if (m.canvas->sync() != tvg::Result::Success) return false;
 

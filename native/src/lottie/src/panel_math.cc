@@ -55,38 +55,49 @@ std::vector<std::uint8_t> composite_panel(const assets::Image& still,
 
 void composite_panel_into(const assets::Image& still, std::span<const std::uint8_t> lottie,
                           std::uint32_t w, std::uint32_t h, std::span<std::uint8_t> out) {
-    const bool have_still = still.width > 0 && still.height > 0;
+    over_into(scale_still_rgba(still, w, h), lottie, out);
+}
+
+std::vector<std::uint8_t> scale_still_rgba(const assets::Image& still,
+                                           std::uint32_t w, std::uint32_t h) {
+    std::vector<std::uint8_t> out(static_cast<std::size_t>(w) * h * 4, 0);
+    if (still.width == 0 || still.height == 0) return out;
     for (std::uint32_t y = 0; y < h; ++y) {
         for (std::uint32_t x = 0; x < w; ++x) {
-            Rgba s{0, 0, 0, 0};
-            if (have_still) {
-                // Texel-centre bilinear.
-                const float fx = std::clamp((x + 0.5f) * still.width / w - 0.5f,
-                                            0.f, static_cast<float>(still.width - 1));
-                const float fy = std::clamp((y + 0.5f) * still.height / h - 0.5f,
-                                            0.f, static_cast<float>(still.height - 1));
-                const std::uint32_t x0 = static_cast<std::uint32_t>(fx);
-                const std::uint32_t y0 = static_cast<std::uint32_t>(fy);
-                const std::uint32_t x1 = std::min(x0 + 1, still.width - 1);
-                const std::uint32_t y1 = std::min(y0 + 1, still.height - 1);
-                const float tx = fx - x0, ty = fy - y0;
-                const Rgba a = still_texel(still, x0, y0), b = still_texel(still, x1, y0);
-                const Rgba c = still_texel(still, x0, y1), d = still_texel(still, x1, y1);
-                auto mix = [&](float Rgba::* m) {
-                    const float top = a.*m + (b.*m - a.*m) * tx;
-                    const float bot = c.*m + (d.*m - c.*m) * tx;
-                    return top + (bot - top) * ty;
-                };
-                s = {mix(&Rgba::r), mix(&Rgba::g), mix(&Rgba::b), mix(&Rgba::a)};
-            }
+            // Texel-centre bilinear.
+            const float fx = std::clamp((x + 0.5f) * still.width / w - 0.5f,
+                                        0.f, static_cast<float>(still.width - 1));
+            const float fy = std::clamp((y + 0.5f) * still.height / h - 0.5f,
+                                        0.f, static_cast<float>(still.height - 1));
+            const std::uint32_t x0 = static_cast<std::uint32_t>(fx);
+            const std::uint32_t y0 = static_cast<std::uint32_t>(fy);
+            const std::uint32_t x1 = std::min(x0 + 1, still.width - 1);
+            const std::uint32_t y1 = std::min(y0 + 1, still.height - 1);
+            const float tx = fx - x0, ty = fy - y0;
+            const Rgba a = still_texel(still, x0, y0), b = still_texel(still, x1, y0);
+            const Rgba c = still_texel(still, x0, y1), d = still_texel(still, x1, y1);
+            auto mix = [&](float Rgba::* m) {
+                const float top = a.*m + (b.*m - a.*m) * tx;
+                const float bot = c.*m + (d.*m - c.*m) * tx;
+                return top + (bot - top) * ty;
+            };
+            const float s[4] = {mix(&Rgba::r), mix(&Rgba::g), mix(&Rgba::b), mix(&Rgba::a)};
             const std::size_t i = (static_cast<std::size_t>(y) * w + x) * 4;
-            const float la = lottie[i + 3] / 255.f;
-            const float inv = 1.f - la;
-            const float o[4] = {lottie[i] / 255.f + s.r * inv, lottie[i + 1] / 255.f + s.g * inv,
-                                lottie[i + 2] / 255.f + s.b * inv, la + s.a * inv};
             for (int k = 0; k < 4; ++k)
                 out[i + k] = static_cast<std::uint8_t>(
-                    std::lround(std::clamp(o[k], 0.f, 1.f) * 255.f));
+                    std::lround(std::clamp(s[k], 0.f, 1.f) * 255.f));
+        }
+    }
+    return out;
+}
+
+void over_into(std::span<const std::uint8_t> still, std::span<const std::uint8_t> lottie,
+               std::span<std::uint8_t> out) {
+    for (std::size_t i = 0; i < out.size(); i += 4) {
+        const float inv = 1.f - lottie[i + 3] / 255.f;
+        for (int k = 0; k < 4; ++k) {
+            const float o = lottie[i + k] / 255.f + still[i + k] / 255.f * inv;
+            out[i + k] = static_cast<std::uint8_t>(std::lround(std::clamp(o, 0.f, 1.f) * 255.f));
         }
     }
 }
