@@ -23,7 +23,6 @@ endif()
 add_subdirectory(third_party/stb)
 add_subdirectory(third_party/cgltf)
 add_subdirectory(third_party/dr_libs)
-add_subdirectory(third_party/thorvg)
 add_subdirectory(third_party/glad)
 add_subdirectory(third_party/glm)
 
@@ -239,6 +238,12 @@ if(MSVC)
         string(APPEND CMAKE_CXX_FLAGS_DEBUG " /Zi /Ob0 /Od /RTC1")
     endif()
 endif()
+
+# ThorVG (the Lottie panels' rasteriser) comes after the CEF block on purpose:
+# CEF's cef_variables.cmake sets CMAKE_OSX_DEPLOYMENT_TARGET (12.0), and a
+# target added before that compiles for the SDK's own macOS version, so every
+# link warned "built for newer 'macOS' version (26.0) than being linked (12.0)".
+add_subdirectory(third_party/thorvg)
 
 # Public libraries.
 add_subdirectory(src/platform)
