@@ -20,6 +20,7 @@ add_executable(assets_tests
     cpu/head_weld_test.cc
     cpu/officer_clip_load_test.cc
     cpu/animation_load_test.cc
+    cpu/panel_files_test.cc
     cpu/path_resolver_test.cc
     cpu/raw_image_decode_test.cc
     cpu/skeleton_build_test.cc

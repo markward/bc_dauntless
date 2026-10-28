@@ -107,3 +107,14 @@ TEST(MeshIdentityMaps, ReportsAnEmissiveMap) {
     EXPECT_FALSE(dauntless::mesh_identity_maps(model, -1).emissive);
     EXPECT_FALSE(dauntless::mesh_identity_maps(model_with_one_material_with_roughness(), 0).emissive);
 }
+
+// A Lottie panel's static emissive maps are set aside at load, so the stage is
+// empty and the editor's glow reads "no emissive" (engine/bridge_editor/glow.py
+// reads maps["emissive"]).
+TEST(MeshIdentityMaps, EmissiveFalseWhenLottieSetsItAside) {
+    assets::Model model;
+    assets::Material mat;
+    mat.panel_index = 0;
+    model.materials.push_back(mat);
+    EXPECT_FALSE(dauntless::mesh_identity_maps(model, 0).emissive);
+}

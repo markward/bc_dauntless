@@ -122,6 +122,17 @@ struct SphereMap {
     std::array<Mesh, 4> lods;         // kGeosphereLevels, coarse -> fine
 };
 
+/// Where a bridge panel's still image lives (Bridge Lottie panels, spec
+/// 2026-10-28-bridge-lottie-panels-design.md §4). `albedo` is the resolved
+/// file, `probe_dirs` the directories the interior sibling policy searches
+/// beside it (where `<stem>.json` and its state files are looked for), and
+/// `base_texture_index` the Model::textures entry the decoded still occupies.
+struct PanelSource {
+    std::filesystem::path              albedo;
+    std::vector<std::filesystem::path> probe_dirs;
+    int                                base_texture_index = -1;
+};
+
 struct Model {
     std::vector<Node>             nodes;
     int                           root_node = 0;
@@ -131,6 +142,9 @@ struct Model {
     Skeleton                      skeleton;
     std::vector<AnimationClip>    animations;
     std::vector<TextureAnimation> texture_animations;
+    /// One per external albedo an INTERIOR load decoded; empty for every other
+    /// model. Material::panel_index indexes it.
+    std::vector<PanelSource>      panel_sources;
     /// Hull decals, in request order, at most kMaxDecals. Composited in this
     /// order by opaque.frag. Per-mesh enablement is Mesh::decal_mask(); each
     /// mesh records its source shape as Mesh::shape_name().
