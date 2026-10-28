@@ -1,6 +1,7 @@
 add_executable(lottie_tests
     lottie_clip_test.cc
     panel_math_test.cc
+    panel_worker_test.cc
 )
 
 target_link_libraries(lottie_tests
