@@ -45,8 +45,7 @@ void BridgePanels::mark_drawn(unsigned long long handle, const assets::Model& mo
         // Loaded even with no files: the worker then publishes an info with
         // no valid variant, which never submits, and reload() can find a
         // file added later.
-        worker_.set_panel(e.key, assets::find_panel_files(e.source.albedo, e.source.probe_dirs),
-                          e.source.albedo);
+        worker_.set_panel(e.key, e.source.albedo, e.source.probe_dirs);
         it = entries_.emplace(k, std::move(e)).first;
     }
     it->second.drawn = true;
@@ -169,9 +168,7 @@ void BridgePanels::update(double t, BridgeQuality q) {
 
 void BridgePanels::reload() {
     worker_.clear_warnings();
-    for (auto& [k, e] : entries_)
-        worker_.set_panel(e.key, assets::find_panel_files(e.source.albedo, e.source.probe_dirs),
-                          e.source.albedo);
+    for (auto& [k, e] : entries_) worker_.set_panel(e.key, e.source.albedo, e.source.probe_dirs);
 }
 
 BridgePanels::Stats BridgePanels::take_stats() {

@@ -2,9 +2,9 @@
 
 #include <algorithm>
 #include <cctype>
-#include <cstdio>
 #include <string>
 #include <system_error>
+#include <utility>
 
 namespace fs = std::filesystem;
 
@@ -25,10 +25,13 @@ constexpr const char* kSuffix[kPanelVariants] = {"", "_y", "_r", "_s"};
 PanelFiles find_panel_files(const fs::path& albedo, const std::vector<fs::path>& dirs) {
     PanelFiles out;
     const std::string stem = lower(albedo.stem().string());
+    std::vector<fs::path> orphans;
     for (const auto& dir : dirs) {
         std::array<fs::path, kPanelVariants> found;
         std::error_code ec;
         for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+            std::error_code type_ec;
+            if (!it->is_regular_file(type_ec)) continue;
             const fs::path& p = it->path();
             if (lower(p.extension().string()) != ".json") continue;
             const std::string name = lower(p.stem().string());
@@ -36,31 +39,15 @@ PanelFiles find_panel_files(const fs::path& albedo, const std::vector<fs::path>&
                 if (name == stem + kSuffix[v]) found[v] = p;
             }
         }
-        if (found[kPanelDefault].empty()) {
-            // Only report a state file in the dir that would otherwise have
-            // supplied the default; a later dir may still hold it.
-            continue;
+        if (!found[kPanelDefault].empty()) {
+            out.by_variant = found;
+            return out;
         }
-        out.by_variant = found;
-        return out;
+        // A later dir may still hold the default; these count only if none does.
+        for (int v = 1; v < kPanelVariants; ++v)
+            if (!found[v].empty()) orphans.push_back(found[v]);
     }
-    // No default anywhere. Warn about orphaned state files, once per call.
-    for (const auto& dir : dirs) {
-        std::error_code ec;
-        for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
-            const fs::path& p = it->path();
-            if (lower(p.extension().string()) != ".json") continue;
-            const std::string name = lower(p.stem().string());
-            for (int v = 1; v < kPanelVariants; ++v) {
-                if (name == stem + kSuffix[v]) {
-                    std::fprintf(stderr,
-                        "[lottie] %s: no %s.json beside it; ignored\n",
-                        p.string().c_str(), albedo.stem().string().c_str());
-                    return out;
-                }
-            }
-        }
-    }
+    out.orphans = std::move(orphans);
     return out;
 }
 

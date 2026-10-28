@@ -19,12 +19,15 @@ struct PanelFiles {
     /// An empty path means absent. When the default is absent every entry is
     /// empty: a state file never plays without its default.
     std::array<std::filesystem::path, kPanelVariants> by_variant;
+    /// State files found when no dir holds the default: ignored, for the
+    /// caller to report (the panel worker warns once per file).
+    std::vector<std::filesystem::path> orphans;
 };
 
 /// Looks for `<stem>.json` (stem = the albedo's filename stem) in `dirs`,
-/// case-insensitively; the first dir holding it wins. The state files are
-/// searched only in that same dir. State files found with no default warn
-/// once per call on stderr and are ignored.
+/// case-insensitively, regular files only; the first dir holding it wins.
+/// The state files are searched only in that same dir. Each dir is listed
+/// once, and nothing is printed.
 PanelFiles find_panel_files(const std::filesystem::path& albedo,
                             const std::vector<std::filesystem::path>& dirs);
 

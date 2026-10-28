@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <vector>
 #ifdef _WIN32
 #include <process.h>
 #else
@@ -72,6 +73,37 @@ TEST_F(PanelFilesTest, StateFileWithoutDefaultIsIgnored) {
     touch(tmp_dir / "hull_y.json");
     auto pf = assets::find_panel_files(tmp_dir / "hull.tga", {tmp_dir});
     for (const auto& p : pf.by_variant) EXPECT_TRUE(p.empty());
+}
+
+// Reported to the caller (the panel worker warns once per file), never
+// printed here: the loader and the worker both look, every load.
+TEST_F(PanelFilesTest, OrphanStateFilesAreListedNotPrinted) {
+    touch(tmp_dir / "a" / "hull_y.json");
+    touch(tmp_dir / "b" / "hull_r.json");
+    touch(tmp_dir / "b" / "other_r.json");
+    testing::internal::CaptureStderr();
+    auto pf = assets::find_panel_files(tmp_dir / "hull.tga",
+                                       {tmp_dir / "a", tmp_dir / "b"});
+    EXPECT_EQ(testing::internal::GetCapturedStderr(), "");
+    EXPECT_EQ(pf.orphans, (std::vector<fs::path>{tmp_dir / "a" / "hull_y.json",
+                                                 tmp_dir / "b" / "hull_r.json"}));
+}
+
+TEST_F(PanelFilesTest, NoOrphansWhenADefaultIsFound) {
+    touch(tmp_dir / "a" / "hull_y.json");
+    touch(tmp_dir / "b" / "hull.json");
+    auto pf = assets::find_panel_files(tmp_dir / "hull.tga",
+                                       {tmp_dir / "a", tmp_dir / "b"});
+    EXPECT_FALSE(pf.by_variant[kPanelDefault].empty());
+    EXPECT_TRUE(pf.orphans.empty());
+}
+
+TEST_F(PanelFilesTest, OnlyRegularFilesCount) {
+    fs::create_directories(tmp_dir / "hull.json");
+    fs::create_directories(tmp_dir / "hull_r.json");
+    auto pf = assets::find_panel_files(tmp_dir / "hull.tga", {tmp_dir});
+    for (const auto& p : pf.by_variant) EXPECT_TRUE(p.empty());
+    EXPECT_TRUE(pf.orphans.empty());
 }
 
 TEST_F(PanelFilesTest, FirstDirWithDefaultWins) {

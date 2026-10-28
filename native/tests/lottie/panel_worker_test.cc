@@ -68,12 +68,6 @@ std::size_t count_of(const std::string& haystack, const std::string& needle) {
     return n;
 }
 
-assets::PanelFiles default_only(const fs::path& json) {
-    assets::PanelFiles files;
-    files.by_variant[assets::kPanelDefault] = json;
-    return files;
-}
-
 class PanelWorker : public ::testing::Test {
 protected:
     fs::path tmp_dir;
@@ -100,6 +94,15 @@ protected:
         std::error_code ec;
         fs::remove_all(tmp_dir, ec);
     }
+
+    // Copies a fixture beside the still as `as`: the worker finds a panel's
+    // files itself, from the still's stem and its probe dirs.
+    fs::path put(const char* name, const char* as = "panel.json") {
+        const fs::path to = tmp_dir / as;
+        fs::copy_file(fixture(name), to, fs::copy_options::overwrite_existing);
+        return to;
+    }
+    std::vector<fs::path> dirs() const { return {tmp_dir}; }
 
     static std::optional<lottie::PanelInfo> await_info(lottie::PanelWorker& w,
                                                        std::uint64_t key) {
@@ -133,7 +136,8 @@ protected:
 
 TEST_F(PanelWorker, InfoAppearsAfterLoad) {
     lottie::PanelWorker w;
-    w.set_panel(7, default_only(fixture("solid_red.json")), still);
+    put("solid_red.json");
+    w.set_panel(7, still, dirs());
     auto info = await_info(w, 7);
     ASSERT_TRUE(info);
     EXPECT_TRUE(info->valid[0]);
@@ -149,7 +153,8 @@ TEST_F(PanelWorker, InfoAppearsAfterLoad) {
 
 TEST_F(PanelWorker, JobProducesCompositedResult) {
     lottie::PanelWorker w;
-    w.set_panel(1, default_only(fixture("solid_red.json")), still);
+    put("solid_red.json");
+    w.set_panel(1, still, dirs());
     auto info = await_info(w, 1);
     ASSERT_TRUE(info);
     ASSERT_TRUE(w.submit({1, 0, 0.f, 64, 32, info->generation}));
@@ -174,7 +179,8 @@ TEST_F(PanelWorker, JobProducesCompositedResult) {
 TEST_F(PanelWorker, SecondSubmitWhileBusyIsRefused) {
     lottie::PanelWorker w;
     w.set_test_raster_delay(200ms);
-    w.set_panel(1, default_only(fixture("solid_red.json")), still);
+    put("solid_red.json");
+    w.set_panel(1, still, dirs());
     auto info = await_info(w, 1);
     ASSERT_TRUE(info);
     const lottie::PanelJob job{1, 0, 0.f, 64, 32, info->generation};
@@ -186,12 +192,13 @@ TEST_F(PanelWorker, SecondSubmitWhileBusyIsRefused) {
 }
 
 TEST_F(PanelWorker, InvalidDefaultIsNotValid) {
+    const fs::path broken = put("broken.json");
     testing::internal::CaptureStderr();
     {
         lottie::PanelWorker w;
-        w.set_panel(1, default_only(fixture("broken.json")), still);
+        w.set_panel(1, still, dirs());
         auto first = await_info(w, 1);
-        w.set_panel(1, default_only(fixture("broken.json")), still);
+        w.set_panel(1, still, dirs());
         auto second = await_new_info(w, 1, first ? first->generation : 0);
         ASSERT_TRUE(first);
         ASSERT_TRUE(second);
@@ -200,19 +207,20 @@ TEST_F(PanelWorker, InvalidDefaultIsNotValid) {
     }
     const std::string err = testing::internal::GetCapturedStderr();
     EXPECT_EQ(count_of(err, "using the still"), 1u) << err;
-    EXPECT_NE(err.find("[lottie] " + fixture("broken.json").string() + ": "),
+    EXPECT_NE(err.find("[lottie] " + broken.string() + ": "),
               std::string::npos) << err;
 }
 
 TEST_F(PanelWorker, ClearWarningsWarnsAgain) {
+    put("broken.json");
     testing::internal::CaptureStderr();
     {
         lottie::PanelWorker w;
-        w.set_panel(1, default_only(fixture("broken.json")), still);
+        w.set_panel(1, still, dirs());
         auto first = await_info(w, 1);
         ASSERT_TRUE(first);
         w.clear_warnings();
-        w.set_panel(1, default_only(fixture("broken.json")), still);
+        w.set_panel(1, still, dirs());
         ASSERT_TRUE(await_new_info(w, 1, first->generation));
     }
     const std::string err = testing::internal::GetCapturedStderr();
@@ -222,11 +230,12 @@ TEST_F(PanelWorker, ClearWarningsWarnsAgain) {
 TEST_F(PanelWorker, SetPanelDropsOlderGenerationResults) {
     lottie::PanelWorker w;
     w.set_test_raster_delay(200ms);
-    w.set_panel(1, default_only(fixture("solid_red.json")), still);
+    put("solid_red.json");
+    w.set_panel(1, still, dirs());
     auto first = await_info(w, 1);
     ASSERT_TRUE(first);
     ASSERT_TRUE(w.submit({1, 0, 0.f, 64, 32, first->generation}));
-    w.set_panel(1, default_only(fixture("solid_red.json")), still);
+    w.set_panel(1, still, dirs());
     auto second = await_new_info(w, 1, first->generation);
     ASSERT_TRUE(second);
     std::this_thread::sleep_for(50ms);
@@ -234,22 +243,63 @@ TEST_F(PanelWorker, SetPanelDropsOlderGenerationResults) {
         EXPECT_NE(r.generation, first->generation);
 }
 
-TEST_F(PanelWorker, EmptyFilesClearsValidity) {
+// set_panel always looks again: a deleted file reverts to the still, a file
+// added since is found (the dev reload relies on both).
+TEST_F(PanelWorker, DeletedFileClearsValidity) {
     lottie::PanelWorker w;
-    w.set_panel(1, default_only(fixture("solid_red.json")), still);
+    const fs::path json = put("solid_red.json");
+    w.set_panel(1, still, dirs());
     auto first = await_info(w, 1);
     ASSERT_TRUE(first);
     ASSERT_TRUE(first->valid[0]);
-    w.set_panel(1, assets::PanelFiles{}, still);
+    fs::remove(json);
+    w.set_panel(1, still, dirs());
     auto second = await_new_info(w, 1, first->generation);
     ASSERT_TRUE(second);
     for (bool v : second->valid) EXPECT_FALSE(v);
 }
 
+TEST_F(PanelWorker, AddedFileIsFoundOnTheNextSetPanel) {
+    lottie::PanelWorker w;
+    w.set_panel(1, still, dirs());
+    auto first = await_info(w, 1);
+    ASSERT_TRUE(first);
+    for (bool v : first->valid) EXPECT_FALSE(v);
+    put("solid_red.json");
+    w.set_panel(1, still, dirs());
+    auto second = await_new_info(w, 1, first->generation);
+    ASSERT_TRUE(second);
+    EXPECT_TRUE(second->valid[0]);
+    EXPECT_FLOAT_EQ(second->canvas_w, 64.f);
+}
+
+// A state file with no default beside it warns once per file (spec §5), not
+// once per load; a dev reload lets it warn again.
+TEST_F(PanelWorker, OrphanStateFileWarnsOncePerFile) {
+    const fs::path orphan = put("solid_red.json", "panel_y.json");
+    testing::internal::CaptureStderr();
+    {
+        lottie::PanelWorker w;
+        std::uint64_t gen = 0;
+        for (int i = 0; i < 3; ++i) {
+            if (i == 2) w.clear_warnings();
+            w.set_panel(1, still, dirs());
+            auto info = await_new_info(w, 1, gen);
+            ASSERT_TRUE(info);
+            for (bool v : info->valid) EXPECT_FALSE(v);
+            gen = info->generation;
+        }
+    }
+    const std::string err = testing::internal::GetCapturedStderr();
+    const std::string want = "[lottie] " + orphan.string() + ": no panel.json beside it; ignored";
+    EXPECT_EQ(count_of(err, want), 2u) << err;
+}
+
 TEST_F(PanelWorker, DestroyWithJobInFlightJoins) {
     auto w = std::make_unique<lottie::PanelWorker>();
     w->set_test_raster_delay(300ms);
-    w->set_panel(1, default_only(fixture("solid_red.json")), still);
+    put("solid_red.json");
+    w->set_panel(1, still, dirs());
     auto info = await_info(*w, 1);
     ASSERT_TRUE(info);
     ASSERT_TRUE(w->submit({1, 0, 0.f, 64, 32, info->generation}));
@@ -266,7 +316,8 @@ TEST_F(PanelWorker, UnreadableStillCompositesOverTransparentBlack) {
     {
         lottie::PanelWorker w;
         // slide.json frame 0: an opaque white square on the left, clear at x=59.
-        w.set_panel(1, default_only(fixture("slide.json")), missing);
+        put("slide.json", "missing.json");
+        w.set_panel(1, missing, dirs());
         auto info = await_info(w, 1);
         ASSERT_TRUE(info);
         ASSERT_TRUE(info->valid[0]);
@@ -297,59 +348,60 @@ TEST_F(PanelWorker, StateFileWithOtherAspectWarnsOnceAndStaysValid) {
     const fs::path square = tmp_dir / "panel_r.json";
     std::ofstream(square) << json;
 
-    assets::PanelFiles files = default_only(fixture("solid_red.json"));
-    files.by_variant[assets::kPanelRed] = square;
+    put("solid_red.json");
     testing::internal::CaptureStderr();
     {
         lottie::PanelWorker w;
-        w.set_panel(1, files, still);
+        w.set_panel(1, still, dirs());
         auto first = await_info(w, 1);
         ASSERT_TRUE(first);
         EXPECT_TRUE(first->valid[assets::kPanelRed]);
         EXPECT_FLOAT_EQ(first->canvas_w, 64.f);
-        w.set_panel(1, files, still);
+        w.set_panel(1, still, dirs());
         ASSERT_TRUE(await_new_info(w, 1, first->generation));
     }
     const std::string err = testing::internal::GetCapturedStderr();
     const std::string want = "[lottie] " + square.string() +
-                             ": canvas aspect differs from solid_red.json; stretched";
+                             ": canvas aspect differs from panel.json; stretched";
     EXPECT_EQ(count_of(err, want), 1u) << err;
 }
 
 TEST_F(PanelWorker, ResultFinishedBeforeSetPanelIsNotDelivered) {
     lottie::PanelWorker w;
-    w.set_panel(1, default_only(fixture("solid_red.json")), still);
+    put("solid_red.json");
+    w.set_panel(1, still, dirs());
     auto first = await_info(w, 1);
     ASSERT_TRUE(first);
     ASSERT_TRUE(w.submit({1, 0, 0.f, 64, 32, first->generation}));
     // FIFO: once key 2 has loaded, key 1's result is already queued.
-    w.set_panel(2, default_only(fixture("solid_red.json")), still);
+    w.set_panel(2, still, dirs());
     ASSERT_TRUE(await_info(w, 2));
-    w.set_panel(1, default_only(fixture("solid_red.json")), still);
+    w.set_panel(1, still, dirs());
     for (const auto& r : w.take_results())
         EXPECT_FALSE(r.key == 1 && r.generation == first->generation);
 }
 
 TEST_F(PanelWorker, ResultFinishedBeforeRemovePanelIsNotDelivered) {
     lottie::PanelWorker w;
-    w.set_panel(1, default_only(fixture("solid_red.json")), still);
+    put("solid_red.json");
+    w.set_panel(1, still, dirs());
     auto first = await_info(w, 1);
     ASSERT_TRUE(first);
     ASSERT_TRUE(w.submit({1, 0, 0.f, 64, 32, first->generation}));
-    w.set_panel(2, default_only(fixture("solid_red.json")), still);
+    w.set_panel(2, still, dirs());
     ASSERT_TRUE(await_info(w, 2));
     w.remove_panel(1);
     for (const auto& r : w.take_results()) EXPECT_NE(r.key, 1u);
 }
 
 TEST_F(PanelWorker, InvalidDefaultTakesCanvasFromFirstValidVariant) {
-    assets::PanelFiles files = default_only(fixture("broken.json"));
-    files.by_variant[assets::kPanelYellow] = fixture("solid_red.json");
+    put("broken.json");
+    put("solid_red.json", "panel_y.json");
     testing::internal::CaptureStderr();
     std::optional<lottie::PanelInfo> info;
     {
         lottie::PanelWorker w;
-        w.set_panel(1, files, still);
+        w.set_panel(1, still, dirs());
         info = await_info(w, 1);
     }
     testing::internal::GetCapturedStderr();
@@ -372,7 +424,8 @@ TEST_F(PanelWorker, CachedStillMatchesCompositeAcrossSizeChanges) {
     ASSERT_TRUE(clip);
 
     lottie::PanelWorker w;
-    w.set_panel(1, default_only(fixture("slide.json")), still);
+    put("slide.json");
+    w.set_panel(1, still, dirs());
     auto info = await_info(w, 1);
     ASSERT_TRUE(info);
     const std::pair<std::uint32_t, std::uint32_t> sizes[] = {{64, 32}, {32, 16}, {32, 16}, {64, 32}};

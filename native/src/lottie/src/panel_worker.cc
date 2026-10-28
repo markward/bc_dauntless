@@ -26,8 +26,8 @@ namespace {
 struct Load {
     std::uint64_t key;
     std::uint64_t generation;
-    assets::PanelFiles files;
     std::filesystem::path albedo;
+    std::vector<std::filesystem::path> probe_dirs;
 };
 struct Remove {
     std::uint64_t key;
@@ -117,8 +117,7 @@ void PanelWorker::Impl::failed(const Command& cmd, const char* what) noexcept {
     std::string where;
     if (const auto* l = std::get_if<Load>(&cmd)) {
         key = l->key;
-        for (const auto& path : l->files.by_variant)
-            if (!path.empty()) { where = path.string(); break; }
+        where = l->albedo.string();
     } else if (const auto* r = std::get_if<Remove>(&cmd)) {
         key = r->key;
     } else {
@@ -139,13 +138,17 @@ void PanelWorker::Impl::load(const Load& cmd,
         std::lock_guard<std::mutex> lk(mu);
         if (!is_current(cmd.key, cmd.generation)) return;  // superseded or removed
     }
+    const assets::PanelFiles files = assets::find_panel_files(cmd.albedo, cmd.probe_dirs);
+    for (const auto& orphan : files.orphans)
+        warn_once("[lottie] " + orphan.string() + ": no " + cmd.albedo.stem().string() +
+                  ".json beside it; ignored");
     Loaded p;
     p.generation = cmd.generation;
     PanelInfo info;
     info.generation = cmd.generation;
     bool any = false;
     for (int v = 0; v < assets::kPanelVariants; ++v) {
-        const auto& path = cmd.files.by_variant[v];
+        const auto& path = files.by_variant[v];
         if (path.empty()) continue;
         std::string err;
         auto clip = LottieClip::load(path, &err);
@@ -167,9 +170,9 @@ void PanelWorker::Impl::load(const Load& cmd,
             if (!p.clips[v]) continue;
             const float a = p.clips[v]->canvas_width() / p.clips[v]->canvas_height();
             if (std::abs(a / aspect - 1.f) > 0.01f)
-                warn_once("[lottie] " + cmd.files.by_variant[v].string() +
+                warn_once("[lottie] " + files.by_variant[v].string() +
                           ": canvas aspect differs from " +
-                          cmd.files.by_variant[assets::kPanelDefault].filename().string() +
+                          files.by_variant[assets::kPanelDefault].filename().string() +
                           "; stretched");
         }
     } else {
@@ -254,13 +257,13 @@ PanelWorker::~PanelWorker() {
     impl_->thread.join();
 }
 
-void PanelWorker::set_panel(std::uint64_t key, assets::PanelFiles files,
-                            std::filesystem::path albedo) {
+void PanelWorker::set_panel(std::uint64_t key, std::filesystem::path albedo,
+                            std::vector<std::filesystem::path> probe_dirs) {
     {
         std::lock_guard<std::mutex> lk(impl_->mu);
         const std::uint64_t gen = ++impl_->next_generation;
         impl_->current[key] = gen;
-        impl_->queue.push_back(Load{key, gen, std::move(files), std::move(albedo)});
+        impl_->queue.push_back(Load{key, gen, std::move(albedo), std::move(probe_dirs)});
     }
     impl_->cv.notify_one();
 }

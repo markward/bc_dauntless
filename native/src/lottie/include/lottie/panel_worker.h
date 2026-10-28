@@ -55,9 +55,11 @@ public:
     PanelWorker& operator=(const PanelWorker&) = delete;
 
     /// Always (re)loads from disk on the worker and bumps the key's
-    /// generation; results for older generations are dropped.
-    void set_panel(std::uint64_t key, assets::PanelFiles files,
-                   std::filesystem::path albedo);
+    /// generation; results for older generations are dropped. The worker
+    /// looks for the files itself (assets::find_panel_files over
+    /// `probe_dirs`), so no folder is scanned on the caller's thread.
+    void set_panel(std::uint64_t key, std::filesystem::path albedo,
+                   std::vector<std::filesystem::path> probe_dirs);
     void remove_panel(std::uint64_t key);
     /// nullopt until that key's first load finishes.
     std::optional<PanelInfo> info(std::uint64_t key) const;
