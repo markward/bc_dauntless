@@ -276,6 +276,12 @@ protected:
     // case-fold would wrongly paint the registry onto the bridge too (the real
     // Galaxy has `Ent-D_topdish_ID_glow.tga` AND `Ent-D_Bridge-n-Stuff_glow.tga`).
     nif::File file_with_id_and_bridge_shapes() {
+        return file_with_two_textured_shapes("hull_ID.tga", "hull_bridge.tga");
+    }
+
+    // Root -> "Saucer" (blocks 1..5) bound to `first`, "Bridge" (6..10)
+    // bound to `second`, each through its own NiImage.
+    nif::File file_with_two_textured_shapes(const char* first, const char* second) {
         nif::File f;
         nif::NiNode root;               // block 0
         root.av.obj.name = "Root";
@@ -310,8 +316,8 @@ protected:
             f.blocks.push_back(im);
         };
         // blocks 1..5 (Saucer) and 6..10 (Bridge), identity link ids.
-        add_textured_shape("Saucer", 2, 3, 4, 5, "hull_ID.tga");
-        add_textured_shape("Bridge", 7, 8, 9, 10, "hull_bridge.tga");
+        add_textured_shape("Saucer", 2, 3, 4, 5, first);
+        add_textured_shape("Bridge", 7, 8, 9, 10, second);
         return f;
     }
 
@@ -929,6 +935,37 @@ TEST_F(ModelBuildTest, InteriorLoadRecordsAPanelSourceForEachAlbedo) {
     EXPECT_EQ(model.panel_sources[0].base_texture_index, base_texture_index(model));
     EXPECT_EQ(model.panel_sources[0].albedo, mod / "hull_ID.tga");
     EXPECT_FALSE(model.panel_sources[0].probe_dirs.empty());
+}
+
+// Two NiImages naming one file (a mesh fix's per-shape albedo op gives every
+// shape its own, as DBridge's two conn/ops console tops have) are ONE panel:
+// one raster and one upload per tick, both materials drawing it.
+TEST_F(ModelBuildTest, ImagesSharingAnAlbedoShareOnePanelSource) {
+    const fs::path stock = tmp_dir / "stock", mod = tmp_dir / "mod";
+    for (const auto& d : {stock, mod}) fs::create_directories(d);
+    write_tga_at(mod / "panel.tga");
+    auto model = assets::detail::build_model(
+        file_with_two_textured_shapes("panel.tga", "panel.tga"),
+        interior_mod_ctx(make_ctx(), mod, stock));
+    ASSERT_EQ(model.materials.size(), 2u);
+    ASSERT_EQ(model.panel_sources.size(), 1u);
+    EXPECT_EQ(model.panel_sources[0].albedo, mod / "panel.tga");
+    EXPECT_EQ(model.materials[0].panel_index, 0);
+    EXPECT_EQ(model.materials[1].panel_index, 0);
+}
+
+TEST_F(ModelBuildTest, DistinctAlbedosKeepTheirOwnPanelSources) {
+    const fs::path stock = tmp_dir / "stock", mod = tmp_dir / "mod";
+    for (const auto& d : {stock, mod}) fs::create_directories(d);
+    write_tga_at(mod / "a.tga");
+    write_tga_at(mod / "b.tga");
+    auto model = assets::detail::build_model(file_with_two_textured_shapes("a.tga", "b.tga"),
+                                             interior_mod_ctx(make_ctx(), mod, stock));
+    ASSERT_EQ(model.materials.size(), 2u);
+    ASSERT_EQ(model.panel_sources.size(), 2u);
+    EXPECT_NE(model.materials[0].panel_index, model.materials[1].panel_index);
+    EXPECT_GE(model.materials[0].panel_index, 0);
+    EXPECT_GE(model.materials[1].panel_index, 0);
 }
 
 TEST_F(ModelBuildTest, ShipLoadRecordsNoPanelSources) {

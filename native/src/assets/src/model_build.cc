@@ -188,6 +188,10 @@ struct TextureLoadResult {
     /// NIF link_id of an interior external albedo -> index into
     /// Model::panel_sources (Bridge Lottie panels, spec 2026-10-28 §4).
     std::unordered_map<std::uint32_t, int> panel_for_image;
+    /// Model::textures index of each such albedo -> its panel. Several images
+    /// naming one file (a mesh fix's per-shape albedo op) share ONE panel, so
+    /// a material matches through this map, not PanelSource::base_texture_index.
+    std::unordered_map<int, int> panel_for_texture;
     /// Link IDs of those albedos that have a `<stem>.json` beside them: their
     /// static emissive maps and flipbook are set aside.
     std::unordered_set<std::uint32_t>      lottie_at_load;
@@ -346,11 +350,18 @@ TextureLoadResult load_all_textures(
             bool lottie = false;
             if (ctx.interior_sibling_policy && albedo_decoded &&
                 !resolved_albedo.empty()) {
-                out.panel_for_image[link_id] =
-                    static_cast<int>(model.panel_sources.size());
-                model.panel_sources.push_back(PanelSource{
-                    resolved_albedo, sibling_dirs,
-                    out.image_to_texture[link_id]});
+                int panel = -1;
+                for (std::size_t pi = 0; pi < model.panel_sources.size(); ++pi)
+                    if (model.panel_sources[pi].albedo == resolved_albedo)
+                        panel = static_cast<int>(pi);
+                if (panel < 0) {
+                    panel = static_cast<int>(model.panel_sources.size());
+                    model.panel_sources.push_back(PanelSource{
+                        resolved_albedo, sibling_dirs,
+                        out.image_to_texture[link_id]});
+                }
+                out.panel_for_image[link_id] = panel;
+                out.panel_for_texture[out.image_to_texture[link_id]] = panel;
                 const PanelFiles pf = find_panel_files(resolved_albedo, sibling_dirs);
                 if (!pf.by_variant[kPanelDefault].empty()) {
                     lottie = true;
@@ -1140,13 +1151,13 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
         {
             const int base_tex = mat.stages[static_cast<std::size_t>(
                 Material::StageSlot::Base)].texture_index;
-            for (std::size_t pi = 0; base_tex >= 0 && pi < model.panel_sources.size(); ++pi) {
-                if (model.panel_sources[pi].base_texture_index != base_tex) continue;
-                mat.panel_index = static_cast<int>(pi);
+            const auto panel_it = tex_result.panel_for_texture.find(base_tex);
+            if (panel_it != tex_result.panel_for_texture.end()) {
+                const int pi = panel_it->second;
+                mat.panel_index = pi;
                 if (mat.animation_index >= 0) {
                     for (const auto& [link, idx] : tex_result.panel_for_image) {
-                        if (idx != static_cast<int>(pi) ||
-                            !tex_result.lottie_at_load.count(link)) continue;
+                        if (idx != pi || !tex_result.lottie_at_load.count(link)) continue;
                         if (flip_replaced_warned.insert(link).second) {
                             std::fprintf(stderr,
                                 "[lottie] %s: replaces the flipbook on this material\n",
@@ -1156,7 +1167,6 @@ Model build_model(const nif::File& f, const ModelBuildContext& ctx) {
                         break;
                     }
                 }
-                break;
             }
         }
         int mat_index = static_cast<int>(model.materials.size());

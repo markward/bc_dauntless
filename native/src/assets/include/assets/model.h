@@ -127,6 +127,8 @@ struct SphereMap {
 /// file, `probe_dirs` the directories the interior sibling policy searches
 /// beside it (where `<stem>.json` and its state files are looked for), and
 /// `base_texture_index` the Model::textures entry the decoded still occupies.
+/// One per resolved file: several images naming the same file share it
+/// (`base_texture_index` is then the first one's).
 struct PanelSource {
     std::filesystem::path              albedo;
     std::vector<std::filesystem::path> probe_dirs;
