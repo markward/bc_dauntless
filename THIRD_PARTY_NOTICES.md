@@ -138,6 +138,17 @@ Vector graphics library, used to play the animated Lottie panels on the bridge
 - License text: `licenses/ThorVG-LICENSE.txt`
   (`native/third_party/thorvg/LICENSE`)
 
+### RapidJSON (bundled in ThorVG)
+
+JSON parser by Tencent and Milo Yip, compiled into ThorVG's Lottie loader.
+
+- Upstream: https://github.com/Tencent/rapidjson
+- Pinned version: the copy bundled in ThorVG, see
+  `native/third_party/thorvg/UPSTREAM_VERSION`
+- License: MIT
+- License text: `licenses/RapidJSON-LICENSE.txt`
+  (`native/third_party/thorvg/src/loaders/lottie/rapidjson/LICENSE`)
+
 ### Antonio font
 
 Sans-serif typeface by Vernon Adams (Open Window), used for the interface
