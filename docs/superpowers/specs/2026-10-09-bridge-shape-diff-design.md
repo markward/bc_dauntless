@@ -387,8 +387,8 @@ with `verify=False`.
 Same file as today: `native/assets/mesh_fixes/<fnv1a64>.json`.
 The tool writes payload **BSD2** since iteration 3; the loader still reads
 BSD1 (the fix committed in rounds 1c–4b is BSD1 until it is regenerated). `merges` becomes
-optional; a file needs at least one of `merges` / `shape_edits` / `textures`.
-Still `format` 1.
+optional; a file needs at least one of `merges` / `shape_edits` / `textures` /
+`smoothing`. Still `format` 1.
 
 ```json
 {
@@ -399,6 +399,10 @@ Still `format` 1.
   "textures": [{"block": 29, "albedo": "g_imp_connops.tga"}]
 }
 ```
+
+`smoothing` (optional; may stand alone or sit beside any other key) is one
+base64 BSM1 blob of the hard/soft edges Mark authored per shape (§6.1,
+`2026-10-27-bridge-authored-smoothing-design.md`).
 
 `textures` (2b, optional, sorted by block, written only when non-empty) gives
 one NiTriShape its own albedo: a **bare** `.tga` filename resolved through the
@@ -478,6 +482,29 @@ the surviving original triangles **in original order**, then the added ones.
 UV1 / colour fields are ignored when the shape has no second UV set / colours.
 Vertices are never removed (an orphan is harmless).
 
+**BSM1 (authored smoothing; the `smoothing` key).** Separate from BSD1/BSD2:
+
+```
+char[4]  magic "BSM1"
+u16      shape_count
+per shape:
+  u32    block           (NiTriShape block-array index)
+  u16    vertex_count    (the shape's FINAL vertex count: original + this fix's added)
+  u16    n_hard, n_soft
+  n_hard × { u16 a, b }  hard edges, a < b < vertex_count, strictly ascending
+  n_soft × { u16 a, b }  soft edges, same rules; no pair in both lists
+```
+
+Edges are pairs of the shape's FINAL vertex indices (after the same fix's
+moves, adds and removes); where several NIF vertices share a position any of
+them may be named, because normal generation welds by position. The presence
+of a record means the shape's smoothing is authored, even with zero hard
+edges. Indices only -- no coordinate, no normal -- so §6.2 holds. Golden: the
+records `{7, 4 vertices, hard (0,1), soft (0,2) (1,2)}` and `{12, 3, no edges}`
+encode to `QlNNMQIABwAAAAQAAQACAAAAAQAAAAIAAQACAAwAAAADAAAAAAA=` (38 bytes),
+pinned in `tests/tools/test_shape_diff_smoothing.py` and
+`native/tests/assets/cpu/mesh_fix_smoothing_test.cc` (`kGolden`).
+
 ### 6.2 Copyright posture
 
 The payload holds no original position, UV, colour or triangle — only indices
@@ -518,6 +545,13 @@ original) when:
 - an added triangle is degenerate (repeated index or zero area);
 - the shape has authored normals (none on DBridge — out of scope);
 - a data block is also used by a merge;
+- (BSM1) the payload has bad base64, bad magic, or is truncated / has trailing
+  bytes; a record's block is out of range, not a `NiTriShape`, or its data is
+  unresolved; two records name one block; its `vertex_count` is not the
+  shape's final vertex count; an edge is not `a < b`, is `>= vertex_count`, or
+  is out of ascending order; an edge is both hard and soft. The merge check
+  (a data block also used by a merge) runs BEFORE the authored-normals check,
+  so a merge conflict is reported as that, not as normals;
 - (BSD2) a kind-2 delta is non-finite; a reference's block is out of range, not a `NiTriShape`, or its
   data is unresolved/inconsistent; its vertex is not below that shape's
   ORIGINAL vertex count (a vertex that only exists after this same fix
@@ -614,6 +648,8 @@ the scratchpad; in game, Developer Options → Lighting → Bridge Debug View
 | 6 — consoles, ribs, seat panels | Console bases b0331/b0352 re-unwrapped and rebuilt, roof ribs b0076/81/84/87/90 moved, seat panels b0121/124 onto Map 22d, consoles b0175/203/491/506 onto Map 4a | committed on Mark's go-ahead 2026-10-10; verified 41 objects, nothing skipped | Needed two tool changes: same-UV copies at one corner are told apart by their source NIF triangle (b0331 vertex 2 was a false split), and a genuine seam through an original vertex now SPLITS it (§11.6) instead of refusing. Generated from Mark's re-export after renaming b0337/b0358 `.001` back to b0331/b0352 and moving one stray Map 28 face to Map 17 |
 | 7 — UV re-maps + roof rib b0087 | UV-only re-maps on b0149/157/161/165/179/207 (new to the fix); roof rib b0087 reworked (36 moved, 7 new verts, 28 tris out / 14 in); b0471 re-encoded, same op counts | accepted by Mark in game 2026-10-14; verified 47 objects, nothing skipped | Generated from `Dbridge/Dbridge_modified_and_enhanced_rexport.obj` (Mark's working files now live under `~/Documents/dauntless-blender/Dbridge/`) with no tool changes and no new textures |
 | 8 — ceiling rebuild, wall insets, consoles | New ceiling b0081 (all-new geometry on reworked Map 13); roof b0475 rebuilt on Map 3; roof ribs b0084/b0090 deleted; white light panels on spare shapes (roof panels on b0087, rear-wall panel split from b0102 on b0076, both Map 13); walls b0468 on Map 3; wall insets b0652/b0663 rebuilt (left mirrored from right); helm consoles joined into their bases (right into b0331, left into b0352; helm displays b0340/343/361/364 emptied); console seats b0224/b0255, side panels b0488/b0503, com sides b0024/b0056 UV re-maps | accepted by Mark in game 2026-10-17; verified 64 objects, nothing skipped | Needed two tool changes: `--delete BLOCK` empties a shape whose object was deleted (explicit -- a missing object is indistinguishable from a join), and coincident consecutive corners from an unwelded mirror seam are collapsed before ear clipping (§11.6). Generated from a scratch copy of `Dbridge/Dbridge_CEILING_replaced.obj` with `b0475_roof_structure.001`→b0087, `b0102_wall_rear_panel_04.001`→b0076, `b0343_Material_console_helm_4`→b0331 renamed and the empty `path1.002` dropped; flags `--delete 84 --delete 90 --delete 340 --delete 343 --delete 361 --delete 364`. Lighting: b0090's orphaned panel light removed, b0076 linked to `roof (Map 13)`. A subdivided b0468 was tried and reverted: the dark soffit band is the baseline downlight (`down_bottom` 0.25 on down-facing surfaces, confirmed in Light Only view), not geometry -- open, to be lit per-bridge |
+| 9 — authored smoothing, command chairs | First fix with a `smoothing` key (BSM1, spec `2026-10-27-bridge-authored-smoothing-design.md`): Blender hard/soft edges on 126 shapes (1491 hard / 3588 soft); round-8 ceiling b0081 joined into the roof-panel object b0087 (so `--delete 81`); command chairs b0244/b0267 reworked, b0247/b0270 emptied; b0503 reworked; b0468/b0652/b0663 edits | accepted by Mark in game 2026-10-28; verified 66 objects, smoothing verified on 5079 edges | Generated from Mark's 2026-10-28 07:09 `Dbridge/Dbridge_modified_and_enhanced_rexport.obj` with round 8's three renames, flags `--partial --delete 81 --delete 84 --delete 90 --delete 340 --delete 343 --delete 361 --delete 364`. 12 shapes smoothing-skipped under `--partial` (b0145 200 224 241 255 411 420 438 468 563 575 652; 1-4 edges each): T-junction repair's 0.1% tolerance, not normals -- they keep the 40° rule |
+| 9b — roof seams, XO/guest chairs back to stock | Roof structure b0475: 2 vertices split, 5 more hard edges; XO and guest chairs (b0241/244/247, b0264/267/270) left out of the fix entirely, so they load stock -- this also drops round 5's seat-back rebuild on b0244/b0267 | accepted by Mark in game 2026-10-28; verified 62 objects, smoothing verified on 4717 edges (121 shapes, 1380 hard / 3337 soft) | Generated from Mark's 2026-10-28 08:14 export with round 9's renames and flags plus `--exclude 241 --exclude 244 --exclude 247 --exclude 264 --exclude 267 --exclude 270` -- **every later regeneration must repeat these excludes** while the .blend still holds the chair edits. Lighting: b0081's orphaned panel light removed (its ceiling now lives in b0087, whose panel light Mark retuned in the Bridge Editor: 1.6 / offset −30 / range 230) |
 
 ---
 
@@ -682,7 +718,7 @@ the scratchpad; in game, Developer Options → Lighting → Bridge Debug View
 
 ### 11.2 Mark's working files (outside the repo — BC geometry never enters git)
 
-`~/Documents/dauntless-blender/`:
+`~/Documents/dauntless-artwork/Dbridge/` (moved from `~/Documents/dauntless-blender/`, 2026-10-27):
 - `Dbridge_unmodified_rexport.obj/.mtl` — **the fixed base**. Exported from Blender right after importing the tool's export, never re-exported. Every diff runs against it.
 - `Dbridge_modified_and_enhanced_rexport.obj/.mtl` — the current edit (round 6). Earlier rounds used `Dbridge_modified_rexport.obj`; the name is whatever Mark exports, pass it explicitly.
 - `fixed-3.blend` — the live `.blend` holding EVERY accepted edit. Future rounds must continue in it (see 11.4).
@@ -692,9 +728,9 @@ the scratchpad; in game, Developer Options → Lighting → Bridge Debug View
 
 ```
 cd <worktree>
-uv run python -m tools.bridge_shape_diff diff ~/Documents/dauntless-blender/Dbridge_unmodified_rexport.obj ~/Documents/dauntless-blender/<edit>.obj --partial
+uv run python -m tools.bridge_shape_diff diff ~/Documents/dauntless-artwork/Dbridge/Dbridge_unmodified_rexport.obj ~/Documents/dauntless-artwork/Dbridge/<edit>.obj --partial
 ```
-1. Read the dry run: per-block summary, `verified N objects`, `skipped` list, warnings. Investigate every `skipped`/`refused` before writing (see 11.5).
+1. Read the dry run: per-block summary, `verified N objects`, `smoothing: N shapes, H hard / S soft edges`, `verified smoothing on N edges`, the `skipped` list, a `smoothing skipped:` list (blocks whose record was dropped, with the first failing edge), warnings. Investigate every `skipped`/`refused` before writing (see 11.5).
 2. `--write` regenerates the WHOLE fix cumulatively from base → edit (it never merges). It refuses to overwrite a fix owned by another generator, and refuses to write if verification fails.
 3. Mark checks in game (`./build/dauntless --developer` from the worktree; no rebuild needed for fix/texture changes — they are read at load).
 4. Only after Mark accepts: commit the fix + any new textures together, and add a §9 row.
@@ -705,6 +741,7 @@ uv run python -m tools.bridge_shape_diff diff ~/Documents/dauntless-blender/Dbri
 - New albedo: set the material's Base Color to a `.tga` in the overlay folder (only the FILENAME matters). Never a reserved suffix (`_glow`, `_spec(ular)`, `_norm(al)`, `_emissive*`). A `<stem>_0.tga` with `_1`, `_2`… beside it becomes a flipbook (default 5 fps, game time, loops).
 - One albedo per object (per-face material splits are refused). Keep the `.mtl` beside the `.obj` — a missing named `mtllib` aborts the diff.
 - Flipping a face's winding is refused (it would ship as a back-face).
+- **Smoothing.** Export the OBJ with **Normals ticked** (that writes the `vn` lines the tool reads). Sharp marks and Smooth by Angle are honoured -- each edge inside an object is hard if its two faces' corner normals differ at either end. Custom / bent normals (Weighted Normal, edited split normals) are NOT: only the hard/soft bit per edge is stored. An object with no `vn` keeps the 40° rule.
 
 ### 11.5 Reading refusals
 
@@ -715,6 +752,8 @@ uv run python -m tools.bridge_shape_diff diff ~/Documents/dauntless-blender/Dbri
 | `depends on skipped/excluded bNNNN` | a block's triangle removals need another block's replacement; they land together or not at all |
 | `texture '…' not found` | the `.mtl` names a file not in the overlay/stock dir (often an old name or a main-checkout path) |
 | `would bind as glow/gloss/bump` | albedo uses a reserved suffix — point Base Color at the plain diffuse |
+| `verify: authored smoothing differs from Blender on N blocks` | without `--partial`, EVERY failing block is listed (first 5 edges each). The usual cause is an edge Blender shows hard that the game joins through another edge or shape, or a game-only edge (T-junction piece, mirror seam) Blender never had: Merge by Distance in Blender, or mark the edge. See 11.6 for the T-junction cases that cannot be fixed on the Blender side |
+| `smoothing skipped:` (with `--partial`) | those blocks lost their smoothing record and keep the 40° rule; the rest were re-verified and are written. Same causes as the row above |
 | verifier mismatch | the produced fix does not reproduce `edit.obj` through the real loader — a tool bug; do not write |
 
 ### 11.6 Known limitations (parked, with rulings)
@@ -747,6 +786,18 @@ uv run python -m tools.bridge_shape_diff diff ~/Documents/dauntless-blender/Dbri
 - **Survivor snapped onto an earlier DELETED vertex** can mis-align (refusal or identical geometry only).
 - **Literal UVs** are authored values (allowed); positions are never absolute (refs or deltas).
 - **Emissive** on a flipbook shape is static (frame 0's stem).
+
+- **Smoothing refusals from the T-junction repair (2026-10-27, parked).** The
+  engine's repair accepts a vertex within 0.1% of a segment, which can cut a
+  face more than Blender did: double cuts at a corner and a sliver third face
+  leave an authored edge as "not one edge between two surfaces"
+  (`found` false); and a same-shape T-junction on an open border can render
+  soft at one end where Blender shows hard. These are independent of the
+  normals Mark authored. Risk parked: a twin or duplicate cut into different
+  position sets by multi-edge T-junctions could get a forced soft join that
+  folds a normal back; not seen yet. Remedy for now: `--partial` drops those
+  objects' records so they keep the 40° rule (on Mark's 2026-10-27 export, 11 of 138 objects were smoothing-skipped (blocks 145 200 224 255 411 420 438 468 563 575 652; 1-4 failing edges each) and 127 recorded (1601 hard / 3433 soft edges).)
+  Fix engine-side only if the list matters in game. A block without a record (including `smoothing skipped` ones) keeps the 40° rule for its own internal edges, but its vertices on a seam with a recorded neighbour can shade differently (cannot-link and authored joins reach across the seam); the verifier does not check unrecorded blocks.
 
 ### 11.7 Before merging `spike/bridge-shape-diff` into `main`
 

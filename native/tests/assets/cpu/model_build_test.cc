@@ -1,10 +1,12 @@
 #include <gtest/gtest.h>
 #include "model_build.h"
+#include "normal_gen.h"
 
 #include <nif/block.h>
 
 #include "support/content_root.h"
 
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -1155,4 +1157,58 @@ TEST_F(ModelBuildTest, NoMatchingReplacementWarnsOnlyOnce) {
         return n;
     };
     EXPECT_EQ(count(err, "no texture matching 'ID'"), 1u) << err;
+}
+
+// Authored smoothing rides on the shape's data into interior normal
+// generation (spec 2026-10-27-bridge-authored-smoothing-design.md §3.2).
+class ModelBuildAuthored : public ModelBuildTest {};
+
+TEST_F(ModelBuildAuthored, InteriorBuildUsesAttachedEdges) {
+    // Two triangles folded 10 deg about the v0-v1 hinge; vertex i = data vertex i.
+    const float a = 10.0f * 3.14159265f / 180.0f;
+    auto make = [&](bool hard) {
+        auto f = trivial_file_with_one_trishape();
+        auto& d = std::get<nif::NiTriShapeData>(f.blocks[2]);
+        d.num_vertices = 4;
+        d.vertices = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, -std::cos(a), std::sin(a)}};
+        d.uv_sets[0] = {{0, 0}, {1, 0}, {0, 1}, {1, 1}};
+        d.num_triangles = 2;
+        d.triangles = {{0, 1, 2}, {1, 0, 3}};
+        if (hard) {
+            nif::AuthoredEdges e;
+            e.hard.push_back({0, 1});
+            d.authored_edges = e;
+        }
+        return f;
+    };
+    // Authored indices are data-vertex indices: build_mesh_cpu keeps vertex i = data vertex i.
+    {
+        auto ctx = make_ctx();
+        ctx.keep_cpu_data = true;
+        auto model = assets::detail::build_model(make(false), ctx);
+        const auto& vs = model.meshes.at(0).cpu_data()->vertices;
+        ASSERT_EQ(vs.size(), 4u);
+        EXPECT_NEAR(vs[3].position.y, -std::cos(a), 1e-6f);
+        EXPECT_NEAR(vs[3].position.z, std::sin(a), 1e-6f);
+    }
+    auto build = [&](bool hard, bool generate) {
+        auto ctx = make_ctx();
+        ctx.keep_cpu_data = true;
+        ctx.generate_missing_normals = generate;
+        auto model = assets::detail::build_model(make(hard), ctx);
+        return model.meshes.at(0).cpu_data()->vertices.size();
+    };
+    EXPECT_EQ(build(false, true), 4u);   // 10 deg < crease: joined
+    EXPECT_EQ(build(true, true), 6u);    // authored hard: split along the hinge
+    EXPECT_EQ(build(true, false), 4u);   // no generation: record ignored
+
+    auto ctx = make_ctx();
+    ctx.generate_missing_normals = true;
+    assets::detail::SmoothingReport report;
+    ctx.smoothing_report = &report;
+    assets::detail::build_model(make(true), ctx);
+    ASSERT_EQ(report.edges.size(), 1u);
+    EXPECT_TRUE(report.edges[0].found);
+    EXPECT_FALSE(report.edges[0].joined_a);
+    EXPECT_FALSE(report.edges[0].joined_b);
 }

@@ -114,6 +114,7 @@
 #include <assets/hull_source.h>
 #include <assets/mesh_fix.h>
 #include <assets/model_compose.h>
+#include <assets/smoothing_probe.h>
 #include <assets/texture.h>
 #include <nif/file.h>
 #include <nif/scene_camera.h>
@@ -2816,7 +2817,47 @@ std::uint32_t nif_shapes_property_image(const nif::File& file,
     return ctrl && !ctrl->image_links.empty() ? ctrl->image_links[0] : 0;
 }
 
+/// The loader's own parse + fix path, in memory (shared by nif_shapes and
+/// set_smoothing_report). None-equivalent: returns false when the file is
+/// missing or unparsable; throws on a fix parse failure or refusal.
+bool load_nif_with_fix(const std::string& nif_abs_path,
+                       const std::optional<std::string>& fix_json, nif::File* out) {
+    std::filesystem::path path = nif_abs_path;
+    if (!std::filesystem::exists(path)) return false;
+    try {
+        *out = nif::load(path);
+    } catch (const std::exception&) {
+        return false;
+    }
+    if (fix_json) {
+        std::string err;
+        auto fix = assets::parse_mesh_fix(*fix_json, &err);
+        if (!fix) throw std::runtime_error("mesh fix parse failed: " + err);
+        err = assets::apply_mesh_fix(*out, *fix);
+        if (!err.empty()) throw std::runtime_error("mesh fix refused: " + err);
+    }
+    return true;
+}
+
 }  // namespace
+
+py::object set_smoothing_report_impl(const std::string& nif_abs_path,
+                                     const std::string& fix_json) {
+    nif::File f;
+    if (!load_nif_with_fix(nif_abs_path, fix_json, &f)) return py::none();
+    py::list out;
+    for (const auto& r : assets::probe_smoothing(f)) {
+        py::dict d;
+        d["block"] = r.block;
+        d["a"] = r.a;
+        d["b"] = r.b;
+        d["found"] = r.found;
+        d["joined_a"] = r.joined_a;
+        d["joined_b"] = r.joined_b;
+        out.append(std::move(d));
+    }
+    return std::move(out);
+}
 
 // Read-only geometry dump for the mesh-fix generator (tools/gen_mesh_fixes.py):
 // one dict per NiTriShape, in block order, with world-space vertices/normals,
@@ -2824,23 +2865,10 @@ std::uint32_t nif_shapes_property_image(const nif::File& file,
 // GL context, and applies no mesh fix -- callers see the raw stock geometry.
 py::object nif_shapes_impl(const std::string& nif_abs_path,
                            const std::optional<std::string>& fix_json) {
-    std::filesystem::path path = nif_abs_path;
-    if (!std::filesystem::exists(path)) return py::none();
     nif::File f;
-    try {
-        f = nif::load(path);
-    } catch (const std::exception&) {
-        return py::none();
-    }
-    if (fix_json) {
-        // The loader's own path (AssetCache::load), in memory: lets the
-        // shape-diff tool verify a fix before it is written.
-        std::string err;
-        auto fix = assets::parse_mesh_fix(*fix_json, &err);
-        if (!fix) throw std::runtime_error("mesh fix parse failed: " + err);
-        err = assets::apply_mesh_fix(f, *fix);
-        if (!err.empty()) throw std::runtime_error("mesh fix refused: " + err);
-    }
+    // The loader's own path (AssetCache::load), in memory: lets the
+    // shape-diff tool verify a fix before it is written.
+    if (!load_nif_with_fix(nif_abs_path, fix_json, &f)) return py::none();
 
     py::list out;
     for (std::size_t i = 0; i < f.blocks.size(); ++i) {
@@ -3507,6 +3535,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("parse_set_camera", &parse_set_camera_impl,
           "Extract the embedded camera (frustum + world transform) from a set "
           "NIF, or None. Parse-only; no GL context required.");
+    m.def("set_smoothing_report", &set_smoothing_report_impl,
+          py::arg("abs_path"), py::arg("fix_json"),
+          "Parse a set NIF, apply the mesh fix (fix_json is the file's text), "
+          "build it as an interior set loads (normals generated, no GL), and "
+          "return one dict per authored smoothing edge: block, a, b, found, "
+          "joined_a, joined_b. None if the file is missing or unparsable; a "
+          "fix that fails to parse or is refused raises RuntimeError.");
     m.def("nif_shapes", &nif_shapes_impl,
           py::arg("abs_path"), py::arg("fix_json") = py::none(),
           "Every NiTriShape in a NIF, in block order: block index, name, "

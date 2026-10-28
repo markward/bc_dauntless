@@ -2,9 +2,11 @@
 #pragma once
 
 #include <assets/mesh.h>
+#include <nif/block.h>
 
 #include <glm/glm.hpp>
 
+#include <cstdint>
 #include <vector>
 
 namespace assets::detail {
@@ -19,6 +21,27 @@ struct NormalGenShape {
     MeshCpu*               mesh = nullptr;      // edited in place
     glm::mat4              to_model{1.0f};      // shape frame -> model space
     std::vector<glm::vec4> source_colours;      // NIF float colours, parallel to mesh->vertices; may be empty
+    // Blender-authored hard/soft edges (a mesh fix's smoothing record), as
+    // indices into `mesh->vertices` as given. nullptr: no record, every edge
+    // follows the crease. A record with no edges still makes the shape
+    // "recorded" (spec 2026-10-27-bridge-authored-smoothing-design.md §3.2).
+    const nif::AuthoredEdges* authored = nullptr;
+};
+
+/// What normal generation made of each authored edge, for the shape-diff
+/// verifier: one row per edge, shapes in input order, each shape's hard edges
+/// then its soft edges in record order. `shape` indexes the input vector.
+struct SmoothingReport {
+    struct Edge {
+        std::uint32_t shape;
+        std::uint16_t a, b;
+        bool found;     // the edge (or the piece of it at each end) carries exactly two
+                        // position sets of its shape (faces on the same three welded
+                        // positions are one set: stock duplicate / reversed faces)
+        bool joined_a;  // those two sets' corners at a share one normal
+        bool joined_b;  // ... at b
+    };
+    std::vector<Edge> edges;
 };
 
 /// Remove T-junctions: wherever a vertex POSITION lies strictly inside
@@ -63,6 +86,21 @@ void generate_smooth_normals(MeshCpu& mesh, float crease_deg,
 /// normals (rotated back into the shape's frame) and any split/inserted
 /// vertices change. Generation sees only the shapes it is given — the caller
 /// decides which shapes need normals.
-void generate_normals_across_shapes(std::vector<NormalGenShape>& shapes, float crease_deg);
+///
+/// Authored edges (spec 2026-10-27-bridge-authored-smoothing-design.md §3.3):
+/// between two faces of one shape that has a record, a listed hard edge never
+/// joins and a listed soft edge always joins (whatever the fold, despite a
+/// twin split); pieces the T-junction repair cut from a listed edge inherit
+/// its flag; unlisted edges keep the crease rule. Faces of a recorded shape on
+/// the same three welded positions (stock duplicates, reversed twins) are one
+/// surface: always joined, and the record decides only between different
+/// position sets. Unrecorded shapes are unaffected. Corners an authored hard
+/// edge separates never end up in one group, whatever chain of other joins
+/// reaches them. `authored_joins_hard` (§3.4) makes every edge between two
+/// different shapes, at least one recorded, a hard edge. `report`, when
+/// given, is overwritten with the outcome per authored edge.
+void generate_normals_across_shapes(std::vector<NormalGenShape>& shapes, float crease_deg,
+                                    SmoothingReport* report = nullptr,
+                                    bool authored_joins_hard = false);
 
 }  // namespace assets::detail

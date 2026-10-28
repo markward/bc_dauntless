@@ -172,6 +172,33 @@ std::optional<std::vector<ShapeEdit>> decode_shape_edits(std::string_view bytes,
     return out;
 }
 
+std::optional<std::vector<MeshFixSmoothing>> decode_smoothing(std::string_view bytes,
+                                                              std::string* error) {
+    auto fail = [&](std::string msg) -> std::optional<std::vector<MeshFixSmoothing>> {
+        if (error) *error = std::move(msg);
+        return std::nullopt;
+    };
+    if (bytes.size() < 4 || bytes.substr(0, 4) != "BSM1") return fail("smoothing: bad magic");
+    PayloadReader r{bytes, 4};
+    const int n_shapes = r.get<std::uint16_t>();
+    std::vector<MeshFixSmoothing> out;
+    for (int i = 0; i < n_shapes && r.ok; ++i) {
+        MeshFixSmoothing m;
+        m.block = r.get<std::uint32_t>();
+        m.vertex_count = r.get<std::uint16_t>();
+        const int n_hard = r.get<std::uint16_t>();
+        const int n_soft = r.get<std::uint16_t>();
+        for (int k = 0; k < n_hard && r.ok; ++k)
+            m.edges.hard.push_back({r.get<std::uint16_t>(), r.get<std::uint16_t>()});
+        for (int k = 0; k < n_soft && r.ok; ++k)
+            m.edges.soft.push_back({r.get<std::uint16_t>(), r.get<std::uint16_t>()});
+        out.push_back(std::move(m));
+    }
+    if (!r.ok) return fail("smoothing: payload truncated");
+    if (r.pos != bytes.size()) return fail("smoothing: trailing bytes after payload");
+    return out;
+}
+
 std::optional<MeshFix> parse_mesh_fix(std::string_view text, std::string* error) {
     auto fail = [&](std::string msg) -> std::optional<MeshFix> {
         if (error) *error = std::move(msg);
@@ -187,8 +214,10 @@ std::optional<MeshFix> parse_mesh_fix(std::string_view text, std::string* error)
         const bool has_merges = j.contains("merges");
         const bool has_edits = j.contains("shape_edits");
         const bool has_textures = j.contains("textures");
-        if (!has_merges && !has_edits && !has_textures)
-            return fail("mesh fix has none of \"merges\", \"shape_edits\", \"textures\"");
+        const bool has_smoothing = j.contains("smoothing");
+        if (!has_merges && !has_edits && !has_textures && !has_smoothing)
+            return fail("mesh fix has none of \"merges\", \"shape_edits\", \"textures\", "
+                        "\"smoothing\"");
 
         if (has_merges) {
             for (const auto& jm : j.at("merges")) {
@@ -242,6 +271,15 @@ std::optional<MeshFix> parse_mesh_fix(std::string_view text, std::string* error)
                 }
                 fix.textures.push_back(std::move(t));
             }
+        }
+
+        if (has_smoothing) {
+            auto bytes = base64_decode(j.at("smoothing").get<std::string>());
+            if (!bytes) return fail("smoothing: invalid base64");
+            std::string err;
+            auto recs = decode_smoothing(*bytes, &err);
+            if (!recs) return fail(err);
+            fix.smoothing = std::move(*recs);
         }
 
         return fix;
@@ -882,6 +920,59 @@ glm::mat4 nif_block_world(const nif::File& file, std::size_t block_index) {
     return nif_block_world(file, parent) * local;
 }
 
+namespace {
+
+/// Validate one smoothing record against the unmodified file (spec
+/// 2026-10-27-bridge-authored-smoothing-design §3.2) and return its data
+/// block index in *data_idx. Returns "", else the refusal reason.
+std::string validate_smoothing(const nif::File& file, const MeshFixSmoothing& m,
+                               std::size_t idx, const MeshFix& fix,
+                               const std::vector<MergePlan>& plans,
+                               std::size_t* data_idx) {
+    const std::string prefix = "smoothing " + std::to_string(idx) + ": ";
+    if (m.block >= file.blocks.size()) return prefix + "block out of range";
+    const auto* shape = std::get_if<nif::NiTriShape>(&file.blocks[m.block]);
+    if (!shape) return prefix + "block is not a NiTriShape";
+    *data_idx = index_of(file, shape->data_link);
+    if (*data_idx == kNoIndex || *data_idx >= file.blocks.size())
+        return prefix + "data_link unresolved";
+    const auto* d = std::get_if<nif::NiTriShapeData>(&file.blocks[*data_idx]);
+    if (!d) return prefix + "data_link does not point at NiTriShapeData";
+    for (std::size_t mi = 0; mi < plans.size(); ++mi) {
+        if (*data_idx == plans[mi].target_data_idx || *data_idx == plans[mi].patch_data_idx)
+            return prefix + "data block " + std::to_string(*data_idx) +
+                   " is used by merge " + std::to_string(mi);
+    }
+    for (std::size_t bi = 0; bi < file.blocks.size(); ++bi) {
+        const auto* other = std::get_if<nif::NiTriShape>(&file.blocks[bi]);
+        if (other && bi != m.block && index_of(file, other->data_link) == *data_idx)
+            return prefix + "data block " + std::to_string(*data_idx) +
+                   " is shared with shape " + std::to_string(bi);
+    }
+    if (d->has_normals) return prefix + "shape has authored normals (unsupported)";
+    std::size_t final_v = d->num_vertices;
+    for (const auto& e : fix.shape_edits)
+        if (e.block == m.block) final_v += e.add_vertices.size();
+    if (m.vertex_count != final_v)
+        return prefix + "vertex count " + std::to_string(m.vertex_count) +
+               " != final vertex count " + std::to_string(final_v);
+    for (const auto* list : {&m.edges.hard, &m.edges.soft}) {
+        for (std::size_t k = 0; k < list->size(); ++k) {
+            const auto& [a, b] = (*list)[k];
+            if (a >= b) return prefix + "edge is not ascending (a < b)";
+            if (b >= m.vertex_count) return prefix + "edge index out of range";
+            if (k > 0 && (*list)[k] <= (*list)[k - 1])
+                return prefix + "edges are not strictly ascending";
+        }
+    }
+    for (const auto& h : m.edges.hard)
+        if (std::binary_search(m.edges.soft.begin(), m.edges.soft.end(), h))
+            return prefix + "an edge is listed as both hard and soft";
+    return "";
+}
+
+}  // namespace
+
 std::string apply_mesh_fix(nif::File& file, const MeshFix& fix) {
     std::vector<MergePlan> plans(fix.merges.size());
     for (std::size_t i = 0; i < fix.merges.size(); ++i) {
@@ -928,6 +1019,21 @@ std::string apply_mesh_fix(nif::File& file, const MeshFix& fix) {
         }
     }
 
+    // Smoothing records only annotate a shape's final vertices, so they may
+    // follow a shape edit of the same block but never a merge (which grows
+    // or hides the data), and a data block takes one record.
+    std::vector<std::size_t> smoothing_data(fix.smoothing.size(), 0);
+    std::unordered_map<std::size_t, std::size_t> smoothing_owner;  // data idx -> first record
+    for (std::size_t i = 0; i < fix.smoothing.size(); ++i) {
+        std::string err = validate_smoothing(file, fix.smoothing[i], i, fix, plans, &smoothing_data[i]);
+        if (!err.empty()) return err;
+        auto [it, inserted] = smoothing_owner.try_emplace(smoothing_data[i], i);
+        if (!inserted)
+            return "smoothing " + std::to_string(i) + ": block " +
+                   std::to_string(fix.smoothing[i].block) + " already has smoothing record " +
+                   std::to_string(it->second);
+    }
+
     // Texture ops are independent of geometry: a block may take one texture
     // op whether or not it is also merged or edited.
     std::unordered_map<std::uint32_t, std::size_t> texture_owner;  // block -> first op
@@ -953,6 +1059,9 @@ std::string apply_mesh_fix(nif::File& file, const MeshFix& fix) {
     }
     for (std::size_t i = 0; i < fix.shape_edits.size(); ++i)
         apply_edit(file, fix.shape_edits[i], edit_plans[i]);
+    for (std::size_t i = 0; i < fix.smoothing.size(); ++i)
+        std::get<nif::NiTriShapeData>(file.blocks[smoothing_data[i]]).authored_edges =
+            fix.smoothing[i].edges;
     if (!fix.textures.empty()) {
         // Appending may reallocate `blocks`; File::root points at block 0.
         const bool had_root = file.root.ptr != nullptr;

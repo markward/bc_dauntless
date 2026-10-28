@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstring>
 #include <map>
+#include <utility>
 #include <vector>
 
 using assets::MeshCpu;
@@ -563,4 +564,441 @@ TEST(TJunctionRepair, GridAcceleratedRepairMatchesBruteForceExactly) {
         ASSERT_EQ(got.vertices[i].uv, want.vertices[i].uv) << i;
     }
     EXPECT_FALSE(any_vertex_inside_an_edge(got));
+}
+
+// ── Authored edges ─────────────────────────────────────────────────────────
+// A shape carrying a mesh fix's smoothing record (spec
+// docs/superpowers/specs/2026-10-27-bridge-authored-smoothing-design.md §3.3):
+// inside that shape the record decides each edge -- hard never joins, soft
+// always joins -- and an authored hard edge survives any join chain.
+namespace {
+using assets::detail::SmoothingReport;
+
+float corner_dot_to_face(const MeshCpu& m, int tri, int corner) {
+    return glm::dot(glm::normalize(corner_normal(m, tri, corner)), face_normal(m, tri));
+}
+
+// fold()'s hinge corners: h0 is corner 0 of both triangles, h1 is corner 2 of
+// triangle 0 ({0, 2, 1}) and corner 1 of triangle 1 ({0, 1, 3}).
+constexpr int kH1Corner[2] = {2, 1};
+
+// `src` appended to `dst`, moved by `offset`.
+void append(MeshCpu& dst, const MeshCpu& src, glm::vec3 offset) {
+    const auto base = static_cast<std::uint32_t>(dst.vertices.size());
+    for (auto v : src.vertices) {
+        v.position += offset;
+        dst.vertices.push_back(v);
+    }
+    for (std::uint32_t i : src.indices) dst.indices.push_back(base + i);
+}
+
+// NormalGenAcross.SeamBetweenTwoShapesIsSmoothed's two shapes: one triangle
+// each, meeting on fold()'s hinge, B in a node frame translated by +5 X.
+struct Seam {
+    MeshCpu a, b;
+    glm::mat4 b_to_model;
+};
+Seam seam(float fold_deg) {
+    MeshCpu folded = fold(fold_deg, /*shared=*/true);
+    Seam s;
+    s.a.vertices = {folded.vertices[0], folded.vertices[1], folded.vertices[2]};
+    s.a.indices = {0, 2, 1};
+    s.b_to_model = glm::translate(glm::mat4(1.0f), glm::vec3(5, 0, 0));
+    s.b.vertices = {folded.vertices[0], folded.vertices[1], folded.vertices[3]};
+    for (auto& v : s.b.vertices) v.position -= glm::vec3(5, 0, 0);
+    s.b.indices = {0, 1, 2};
+    return s;
+}
+
+// Every corner of `m` lying on the X axis keeps its own face's normal.
+void expect_x_axis_corners_flat(const MeshCpu& m) {
+    for (int t = 0; t < static_cast<int>(m.indices.size() / 3); ++t)
+        for (int k = 0; k < 3; ++k) {
+            const glm::vec3& p = m.vertices[m.indices[t * 3 + k]].position;
+            if (std::fabs(p.y) > 1e-2f || std::fabs(p.z) > 1e-6f) continue;
+            EXPECT_GT(corner_dot_to_face(m, t, k), 0.9999f) << "tri " << t << " corner " << k;
+        }
+}
+}  // namespace
+
+TEST(NormalGenAuthored, HardEdgeBelowCreaseStaysHard) {
+    MeshCpu m = fold(10.0f, /*shared=*/true);
+    const nif::AuthoredEdges rec{{{0, 1}}, {}};
+    std::vector<NormalGenShape> shapes{{&m, glm::mat4(1.0f), {}, &rec}};
+    SmoothingReport report;
+    generate_normals_across_shapes(shapes, kSetNormalCreaseDeg, &report);
+    for (int t = 0; t < 2; ++t) {
+        EXPECT_NEAR(corner_dot_to_face(m, t, 0), 1.0f, 1e-4);
+        EXPECT_NEAR(corner_dot_to_face(m, t, kH1Corner[t]), 1.0f, 1e-4);
+    }
+    ASSERT_EQ(report.edges.size(), 1u);
+    const auto& e = report.edges[0];
+    EXPECT_EQ(e.shape, 0u);
+    EXPECT_EQ(e.a, 0);
+    EXPECT_EQ(e.b, 1);
+    EXPECT_TRUE(e.found);
+    EXPECT_FALSE(e.joined_a);
+    EXPECT_FALSE(e.joined_b);
+}
+
+TEST(NormalGenAuthored, SoftEdgeAboveCreaseIsSmooth) {
+    MeshCpu m = fold(90.0f, /*shared=*/true);
+    const nif::AuthoredEdges rec{{}, {{0, 1}}};
+    std::vector<NormalGenShape> shapes{{&m, glm::mat4(1.0f), {}, &rec}};
+    SmoothingReport report;
+    generate_normals_across_shapes(shapes, kSetNormalCreaseDeg, &report);
+    EXPECT_GT(glm::dot(corner_normal(m, 0, 0), corner_normal(m, 1, 0)), 0.9999f);
+    EXPECT_GT(glm::dot(corner_normal(m, 0, kH1Corner[0]), corner_normal(m, 1, kH1Corner[1])),
+              0.9999f);
+    EXPECT_NEAR(hinge_dot_to_face(m, 0), std::cos(glm::radians(45.0f)), 1e-3);
+    ASSERT_EQ(report.edges.size(), 1u);
+    EXPECT_TRUE(report.edges[0].found);
+    EXPECT_TRUE(report.edges[0].joined_a);
+    EXPECT_TRUE(report.edges[0].joined_b);
+}
+
+// Identical twin vertices on the hinge are a stock exporter hard edge
+// (IdenticalTwinVerticesAreAnAuthoredHardEdge); Blender's soft flag wins.
+TEST(NormalGenAuthored, SoftEdgeOverridesTwinSplit) {
+    MeshCpu m = fold(20.0f, /*shared=*/false);  // twins at both hinge ends
+    const nif::AuthoredEdges rec{{}, {{0, 1}}};  // names A's copies only
+    std::vector<NormalGenShape> shapes{{&m, glm::mat4(1.0f), {}, &rec}};
+    SmoothingReport report;
+    generate_normals_across_shapes(shapes, kSetNormalCreaseDeg, &report);
+    EXPECT_NEAR(hinge_dot_to_face(m, 0), std::cos(glm::radians(10.0f)), 1e-3);
+    EXPECT_NEAR(hinge_dot_to_face(m, 1), std::cos(glm::radians(10.0f)), 1e-3);
+    ASSERT_EQ(report.edges.size(), 1u);
+    EXPECT_TRUE(report.edges[0].found);
+    EXPECT_TRUE(report.edges[0].joined_a);
+    EXPECT_TRUE(report.edges[0].joined_b);
+}
+
+// Review Focus 1: a second shape's vertex at the hinge midpoint makes the
+// T-junction repair split both of A's triangles there. Both pieces of the
+// authored hard edge stay hard.
+TEST(NormalGenAuthored, TJunctionPiecesInheritHard) {
+    MeshCpu a = fold(10.0f, /*shared=*/true);
+    MeshCpu fin;  // vertical fin hanging under the hinge midpoint
+    fin.vertices = {at({0.5f, 0, 0}), at({0.6f, 0, -1}), at({0.4f, 0, -1})};
+    fin.indices = {0, 1, 2};
+    const nif::AuthoredEdges rec{{{0, 1}}, {}};
+    std::vector<NormalGenShape> shapes{{&a, glm::mat4(1.0f), {}, &rec},
+                                       {&fin, glm::mat4(1.0f), {}}};
+    SmoothingReport report;
+    generate_normals_across_shapes(shapes, kSetNormalCreaseDeg, &report);
+    ASSERT_EQ(a.indices.size() / 3, 4u);  // both faces were split on the hinge
+    expect_x_axis_corners_flat(a);
+    ASSERT_EQ(report.edges.size(), 1u);
+    EXPECT_TRUE(report.edges[0].found);
+    EXPECT_FALSE(report.edges[0].joined_a);
+    EXPECT_FALSE(report.edges[0].joined_b);
+}
+
+// The same, with the T vertex a hair OFF the hinge: the repair accepts points
+// within 1e-3 of an edge's length, and shared-space positions are snapped to
+// 1/1024, so a real T vertex is rarely exactly on the line. Here it sits one
+// snap step (~1e-4 of the 10-unit hinge) off it; its pieces still inherit.
+TEST(NormalGenAuthored, TJunctionPieceOffTheLineStillInherits) {
+    const float f = glm::radians(10.0f);
+    MeshCpu a;
+    a.vertices = {at({0, 0, 0}), at({10, 0, 0}), at({5, -10, 0}),
+                  at({5, 10 * std::cos(f), 10 * std::sin(f)})};
+    a.indices = {0, 2, 1, 0, 1, 3};
+    const float off = 1.0f / 1024.0f;
+    MeshCpu fin;
+    fin.vertices = {at({5, off, 0}), at({6, off, -10}), at({4, off, -10})};
+    fin.indices = {0, 1, 2};
+    const nif::AuthoredEdges rec{{{0, 1}}, {}};
+    std::vector<NormalGenShape> shapes{{&a, glm::mat4(1.0f), {}, &rec},
+                                       {&fin, glm::mat4(1.0f), {}}};
+    SmoothingReport report;
+    generate_normals_across_shapes(shapes, kSetNormalCreaseDeg, &report);
+    ASSERT_EQ(a.indices.size() / 3, 4u);
+    expect_x_axis_corners_flat(a);
+    ASSERT_EQ(report.edges.size(), 1u);
+    EXPECT_TRUE(report.edges[0].found);
+}
+
+// Review Focus 2: a shallow cone fan around v0. Shape A's faces F1 and F2 are
+// split by the authored hard edge v0-v1; shape B's face G meets F1 on one side
+// and F2 on the other, both under the crease. Chaining F1-G-F2 must not put
+// A's two corners at v0 back into one group.
+TEST(NormalGenAuthored, CrossShapeJoinCannotUndoHard) {
+    auto rim = [](float deg) {
+        const float r = glm::radians(deg);
+        return glm::vec3(std::cos(r), std::sin(r), 0.0f);
+    };
+    const glm::vec3 v0{0, 0, 0.1f}, v1 = rim(0), p1 = rim(120), p2 = rim(240);
+    auto build = [&](const nif::AuthoredEdges* rec, MeshCpu& a, MeshCpu& b) {
+        a.vertices = {at(v0), at(v1), at(p1), at(p2)};
+        a.indices = {0, 1, 2, 0, 3, 1};  // F1 = v0 v1 p1, F2 = v0 p2 v1
+        b.vertices = {at(v0), at(p1), at(p2)};
+        b.indices = {0, 1, 2};           // G = v0 p1 p2
+        std::vector<NormalGenShape> shapes{{&a, glm::mat4(1.0f), {}, rec},
+                                           {&b, glm::mat4(1.0f), {}}};
+        return shapes;
+    };
+    // Preconditions: every fold in the fan is under the crease, so without a
+    // record the whole fan is one group at v0.
+    {
+        MeshCpu a, b;
+        auto shapes = build(nullptr, a, b);
+        const auto deg = [](glm::vec3 x, glm::vec3 y) {
+            return glm::degrees(std::acos(glm::dot(x, y)));
+        };
+        ASSERT_LT(deg(face_normal(a, 0), face_normal(b, 0)), kSetNormalCreaseDeg);
+        ASSERT_LT(deg(face_normal(a, 1), face_normal(b, 0)), kSetNormalCreaseDeg);
+        generate_normals_across_shapes(shapes, kSetNormalCreaseDeg);
+        ASSERT_GT(glm::dot(corner_normal(a, 0, 0), corner_normal(a, 1, 0)), 0.9999f);
+    }
+    MeshCpu a, b;
+    const nif::AuthoredEdges rec{{{0, 1}}, {}};
+    auto shapes = build(&rec, a, b);
+    SmoothingReport report;
+    generate_normals_across_shapes(shapes, kSetNormalCreaseDeg, &report);
+    EXPECT_LT(glm::dot(corner_normal(a, 0, 0), corner_normal(a, 1, 0)), 0.9999f);
+    ASSERT_EQ(report.edges.size(), 1u);
+    EXPECT_TRUE(report.edges[0].found);
+    EXPECT_FALSE(report.edges[0].joined_a);
+    EXPECT_FALSE(report.edges[0].joined_b);
+}
+
+TEST(NormalGenAuthored, UnrecordedShapesUnchanged) {
+    Seam plain = seam(20.0f);
+    Seam reported = seam(20.0f);
+    std::vector<NormalGenShape> s1{{&plain.a, glm::mat4(1.0f), {}}, {&plain.b, plain.b_to_model, {}}};
+    std::vector<NormalGenShape> s2{{&reported.a, glm::mat4(1.0f), {}},
+                                   {&reported.b, reported.b_to_model, {}}};
+    generate_normals_across_shapes(s1, kSetNormalCreaseDeg);
+    SmoothingReport report;
+    generate_normals_across_shapes(s2, kSetNormalCreaseDeg, &report);
+    EXPECT_TRUE(report.edges.empty());
+    const std::pair<const MeshCpu*, const MeshCpu*> meshes[2] = {{&plain.a, &reported.a},
+                                                                {&plain.b, &reported.b}};
+    for (const auto& [want, got] : meshes) {
+        ASSERT_EQ(got->indices, want->indices);
+        ASSERT_EQ(got->vertices.size(), want->vertices.size());
+        for (std::size_t i = 0; i < got->vertices.size(); ++i) {
+            EXPECT_EQ(std::memcmp(&got->vertices[i].normal, &want->vertices[i].normal,
+                                  sizeof(glm::vec3)), 0) << i;
+            EXPECT_EQ(got->vertices[i].position, want->vertices[i].position) << i;
+        }
+    }
+}
+
+// Edges the record does not list (game-only edges: never a two-face edge in
+// Blender) keep the 40 deg rule, both ways, beside a listed hard edge.
+TEST(NormalGenAuthored, EdgeNotInRecordUsesCrease) {
+    MeshCpu m;
+    append(m, fold(20.0f, true), {0, 0, 0});   // tris 0-1: unlisted, shallow
+    append(m, fold(60.0f, true), {0, 0, 5});   // tris 2-3: unlisted, sharp
+    append(m, fold(10.0f, true), {0, 0, 10});  // tris 4-5: listed hard
+    const nif::AuthoredEdges rec{{{8, 9}}, {}};
+    std::vector<NormalGenShape> shapes{{&m, glm::mat4(1.0f), {}, &rec}};
+    generate_normals_across_shapes(shapes, kSetNormalCreaseDeg);
+    EXPECT_NEAR(hinge_dot_to_face(m, 0), std::cos(glm::radians(10.0f)), 1e-3);
+    EXPECT_NEAR(hinge_dot_to_face(m, 1), std::cos(glm::radians(10.0f)), 1e-3);
+    EXPECT_NEAR(hinge_dot_to_face(m, 2), 1.0f, 1e-4);
+    EXPECT_NEAR(hinge_dot_to_face(m, 3), 1.0f, 1e-4);
+    EXPECT_NEAR(hinge_dot_to_face(m, 4), 1.0f, 1e-4);
+    EXPECT_NEAR(hinge_dot_to_face(m, 5), 1.0f, 1e-4);
+}
+
+// Spec §3.4's switch: a join between a recorded shape (A, with an empty
+// record: no two-face edges of its own) and an unrecorded one.
+TEST(NormalGenAuthored, JoinsHardSwitch) {
+    const nif::AuthoredEdges rec{};
+    for (const bool joins_hard : {false, true}) {
+        Seam s = seam(10.0f);
+        std::vector<NormalGenShape> shapes{{&s.a, glm::mat4(1.0f), {}, &rec},
+                                           {&s.b, s.b_to_model, {}}};
+        generate_normals_across_shapes(shapes, kSetNormalCreaseDeg, nullptr, joins_hard);
+        const float want = joins_hard ? 1.0f : std::cos(glm::radians(5.0f));
+        EXPECT_NEAR(hinge_dot_to_face(s.a, 0), want, 1e-3) << joins_hard;
+        EXPECT_NEAR(hinge_dot_to_face(s.b, 0), want, 1e-3) << joins_hard;
+    }
+}
+
+// Only pieces the repair CUT inherit a segment's flag. A game-only edge lying
+// along an authored hard segment between two ORIGINAL vertices (here a 10 deg
+// fold whose hinge sits inside the segment's span) is not one of its pieces:
+// it follows the crease. The segment's own ends are kept off the line by two
+// small end triangles, so nothing on it is split.
+TEST(NormalGenAuthored, OriginalEdgeAlongASegmentIsNotAPiece) {
+    const float f = glm::radians(10.0f);
+    MeshCpu m;
+    m.vertices = {at({0, 0, 0}), at({3, 0, 0}),                          // segment ends
+                  at({-0.5f, 0, 1}), at({-0.5f, 0.5f, 1}),               // end triangle at 0
+                  at({3.5f, 0, 1}), at({3.5f, 0.5f, 1}),                 // end triangle at 1
+                  at({1, 0, 0}), at({2, 0, 0}), at({1.5f, -1, 0}),       // G1, G2 hinge p-q
+                  at({1.5f, std::cos(f), std::sin(f)})};
+    m.indices = {0, 2, 3, 1, 5, 4, 6, 8, 7, 6, 7, 9};
+    const nif::AuthoredEdges rec{{{0, 1}}, {}};
+    std::vector<NormalGenShape> shapes{{&m, glm::mat4(1.0f), {}, &rec}};
+    generate_normals_across_shapes(shapes, kSetNormalCreaseDeg);
+    ASSERT_EQ(m.indices.size() / 3, 4u);  // nothing was split
+    EXPECT_NEAR(hinge_dot_to_face(m, 2), std::cos(glm::radians(5.0f)), 1e-3);
+    EXPECT_NEAR(hinge_dot_to_face(m, 3), std::cos(glm::radians(5.0f)), 1e-3);
+}
+
+TEST(NormalGenAuthored, TJunctionPiecesInheritSoft) {
+    MeshCpu a = fold(90.0f, /*shared=*/true);
+    MeshCpu fin;  // hangs off the hinge midpoint, in neither face's plane
+    fin.vertices = {at({0.5f, 0, 0}), at({0.6f, 0.5f, -1}), at({0.4f, 0.5f, -1})};
+    fin.indices = {0, 1, 2};
+    const nif::AuthoredEdges rec{{}, {{0, 1}}};
+    std::vector<NormalGenShape> shapes{{&a, glm::mat4(1.0f), {}, &rec},
+                                       {&fin, glm::mat4(1.0f), {}}};
+    SmoothingReport report;
+    generate_normals_across_shapes(shapes, kSetNormalCreaseDeg, &report);
+    ASSERT_EQ(a.indices.size() / 3, 4u);
+    // Faces +Z and -Y: every hinge corner takes their bisector.
+    const glm::vec3 bisector = glm::normalize(glm::vec3(0, -1, 1));
+    for (int t = 0; t < 4; ++t)
+        for (int k = 0; k < 3; ++k) {
+            const glm::vec3& p = a.vertices[a.indices[t * 3 + k]].position;
+            if (std::fabs(p.y) > 1e-6f || std::fabs(p.z) > 1e-6f) continue;
+            EXPECT_GT(glm::dot(glm::normalize(corner_normal(a, t, k)), bisector), 0.9999f)
+                << "tri " << t << " corner " << k;
+        }
+    ASSERT_EQ(report.edges.size(), 1u);
+    EXPECT_TRUE(report.edges[0].found);
+    EXPECT_TRUE(report.edges[0].joined_a);
+    EXPECT_TRUE(report.edges[0].joined_b);
+}
+
+// A forced (authored soft) join across a flipped neighbour still honours the
+// parity: one smoothing group, each corner leaning with its own face.
+TEST(NormalGenAuthored, SoftEdgeWithMixedWindingIsOneConsistentNormal) {
+    MeshCpu m = fold(90.0f, /*shared=*/true);
+    m.indices = {0, 2, 1, 0, 3, 1};  // B wound the other way
+    const nif::AuthoredEdges rec{{}, {{0, 1}}};
+    std::vector<NormalGenShape> shapes{{&m, glm::mat4(1.0f), {}, &rec}};
+    generate_normals_across_shapes(shapes, kSetNormalCreaseDeg);
+    EXPECT_NEAR(hinge_dot_to_face(m, 0), std::cos(glm::radians(45.0f)), 1e-3);
+    EXPECT_NEAR(hinge_dot_to_face(m, 1), std::cos(glm::radians(45.0f)), 1e-3);
+    EXPECT_LT(glm::dot(corner_normal(m, 0, 0), corner_normal(m, 1, 0)), -0.9999f);
+}
+
+TEST(NormalGenAuthored, ReportNotFoundForABoundaryOrThreeFaceEdge) {
+    MeshCpu m = fold(10.0f, /*shared=*/true);
+    m.vertices.push_back(at({0.5f, 0, -1}));  // a third face on the hinge
+    m.indices.insert(m.indices.end(), {0, 4, 1});
+    const nif::AuthoredEdges rec{{{0, 1}, {0, 2}}, {}};  // hinge (3 faces), boundary h0-pa
+    std::vector<NormalGenShape> shapes{{&m, glm::mat4(1.0f), {}, &rec}};
+    SmoothingReport report;
+    generate_normals_across_shapes(shapes, kSetNormalCreaseDeg, &report);
+    ASSERT_EQ(report.edges.size(), 2u);
+    for (const auto& e : report.edges) {
+        EXPECT_FALSE(e.found) << e.a << "-" << e.b;
+        EXPECT_FALSE(e.joined_a);
+        EXPECT_FALSE(e.joined_b);
+    }
+}
+
+// One row per authored edge, always: a recorded shape with no mesh, and a
+// recorded mesh with no vertices (the pass returns before generating).
+TEST(NormalGenAuthored, ReportHasARowPerAuthoredEdgeWithoutGeometry) {
+    const nif::AuthoredEdges rec0{{{0, 1}, {1, 2}}, {{0, 2}}};
+    const nif::AuthoredEdges rec1{{}, {{3, 4}}};
+    MeshCpu empty;
+    std::vector<NormalGenShape> shapes{{nullptr, glm::mat4(1.0f), {}, &rec0},
+                                       {&empty, glm::mat4(1.0f), {}, &rec1}};
+    SmoothingReport report;
+    generate_normals_across_shapes(shapes, kSetNormalCreaseDeg, &report);
+    ASSERT_EQ(report.edges.size(), 4u);
+    const std::uint32_t want_shape[4] = {0, 0, 0, 1};
+    const std::uint16_t want_a[4] = {0, 1, 0, 3};
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_EQ(report.edges[i].shape, want_shape[i]) << i;
+        EXPECT_EQ(report.edges[i].a, want_a[i]) << i;
+        EXPECT_FALSE(report.edges[i].found) << i;
+    }
+}
+
+// ── Duplicate faces in a recorded shape ────────────────────────────────────
+// Stock BC shapes carry many faces that repeat another face's three welded
+// positions (seam twins, reversed twins, UV duplicates: 3838 of DBridge's
+// 8580 triangles). Blender shows ONE face per position set, so inside a
+// recorded shape faces of one set are one surface: always joined, oriented by
+// their normals, and an authored edge decides only between DIFFERENT sets.
+namespace {
+// fold() plus a duplicate of A with its own vertices (UVs differ: not twins)
+// in the same winding, and a REVERSED duplicate of B on B's own vertices.
+// Triangles: 0 = A, 1 = B, 2 = A' (same winding), 3 = B' (reversed).
+MeshCpu duplicated_fold(float fold_deg) {
+    MeshCpu m = fold(fold_deg, /*shared=*/true);
+    for (int i : {0, 2, 1}) {
+        MeshCpu::Vertex v = m.vertices[i];
+        v.uv = {0.25f, 0.75f};
+        m.vertices.push_back(v);
+    }
+    m.indices.insert(m.indices.end(), {4, 5, 6, 0, 3, 1});
+    return m;
+}
+}  // namespace
+
+TEST(NormalGenAuthored, HardEdgeBetweenDuplicatedFacesFindsTwoSurfaces) {
+    MeshCpu m = duplicated_fold(10.0f);
+    const nif::AuthoredEdges rec{{{0, 1}}, {}};
+    std::vector<NormalGenShape> shapes{{&m, glm::mat4(1.0f), {}, &rec}};
+    SmoothingReport report;
+    generate_normals_across_shapes(shapes, kSetNormalCreaseDeg, &report);
+    ASSERT_EQ(report.edges.size(), 1u);
+    EXPECT_TRUE(report.edges[0].found);
+    EXPECT_FALSE(report.edges[0].joined_a);
+    EXPECT_FALSE(report.edges[0].joined_b);
+    // Hard: A and B stay flat. Each duplicate matches its twin, the reversed
+    // one with the sign of its own winding.
+    for (int k = 0; k < 3; ++k) {
+        EXPECT_GT(corner_dot_to_face(m, 0, k), 0.9999f) << k;
+        EXPECT_GT(corner_dot_to_face(m, 1, k), 0.9999f) << k;
+        EXPECT_GT(glm::dot(corner_normal(m, 2, k), corner_normal(m, 0, k)), 0.9999f) << k;
+    }
+    // B = {0, 1, 3}, B' = {0, 3, 1}: corners 0 match, B's 1 is B''s 2.
+    EXPECT_LT(glm::dot(corner_normal(m, 3, 0), corner_normal(m, 1, 0)), -0.9999f);
+    EXPECT_LT(glm::dot(corner_normal(m, 3, 2), corner_normal(m, 1, 1)), -0.9999f);
+    EXPECT_LT(glm::dot(corner_normal(m, 3, 1), corner_normal(m, 1, 2)), -0.9999f);
+}
+
+TEST(NormalGenAuthored, SoftEdgeBetweenDuplicatedFacesIsOneSurface) {
+    MeshCpu m = duplicated_fold(90.0f);
+    const nif::AuthoredEdges rec{{}, {{0, 1}}};
+    std::vector<NormalGenShape> shapes{{&m, glm::mat4(1.0f), {}, &rec}};
+    SmoothingReport report;
+    generate_normals_across_shapes(shapes, kSetNormalCreaseDeg, &report);
+    ASSERT_EQ(report.edges.size(), 1u);
+    EXPECT_TRUE(report.edges[0].found);
+    EXPECT_TRUE(report.edges[0].joined_a);
+    EXPECT_TRUE(report.edges[0].joined_b);
+    // Faces +Z and -Y: A, A' and B take the bisector at h0; reversed B' its
+    // opposite.
+    const glm::vec3 bisector = glm::normalize(glm::vec3(0, -1, 1));
+    for (int t : {0, 1, 2})
+        EXPECT_GT(glm::dot(glm::normalize(corner_normal(m, t, 0)), bisector), 0.9999f) << t;
+    EXPECT_LT(glm::dot(glm::normalize(corner_normal(m, 3, 0)), bisector), -0.9999f);
+}
+
+// An UNRECORDED shape with duplicate faces, beside a recorded one, gets
+// exactly the normals it got before duplicate handling existed: the values
+// below were printed from the pre-change code (bits via %a).
+TEST(NormalGenAuthored, UnrecordedDuplicatesMatchThePreChangeOutput) {
+    MeshCpu dup = fold(20.0f, /*shared=*/true);
+    dup.indices.insert(dup.indices.end(), {0, 2, 1, 0, 3, 1});  // A again, B reversed
+    MeshCpu far = fold(10.0f, /*shared=*/true);
+    for (auto& v : far.vertices) v.position += glm::vec3(0, 0, 50);
+    const nif::AuthoredEdges rec{{{0, 1}}, {}};
+    std::vector<NormalGenShape> shapes{{&dup, glm::mat4(1.0f), {}},
+                                       {&far, glm::mat4(1.0f), {}, &rec}};
+    generate_normals_across_shapes(shapes, kSetNormalCreaseDeg);
+    const std::vector<std::uint32_t> want_indices = {0, 1, 2, 0, 2, 3, 0, 1, 2, 4, 5, 6};
+    const glm::vec3 want[7] = {
+        {0x0p+0f, -0x1.6372e8p-3f, 0x1.f83ac8p-1f}, {0x0p+0f, 0x0p+0f, 0x1p+0f},
+        {0x0p+0f, -0x1.6372e8p-3f, 0x1.f83ac8p-1f}, {0x0p+0f, -0x1.5e1b04p-2f, 0x1.e1252p-1f},
+        {0x0p+0f, 0x1.6372e8p-3f, -0x1.f83ac8p-1f}, {0x0p+0f, 0x1.5e1b04p-2f, -0x1.e1252p-1f},
+        {0x0p+0f, 0x1.6372e8p-3f, -0x1.f83ac8p-1f}};
+    ASSERT_EQ(dup.indices, want_indices);
+    ASSERT_EQ(dup.vertices.size(), 7u);
+    for (std::size_t i = 0; i < 7; ++i)
+        EXPECT_EQ(std::memcmp(&dup.vertices[i].normal, &want[i], sizeof(glm::vec3)), 0) << i;
 }

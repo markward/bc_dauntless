@@ -4,7 +4,8 @@
 // docs/superpowers/specs/2026-10-09-bridge-shape-diff-design.md).
 //
 // A "mesh fix" file carries any non-empty combination of "merges",
-// "shape_edits" and "textures" (per-shape albedo swaps). A merge
+// "shape_edits", "textures" (per-shape albedo swaps) and "smoothing"
+// (authored hard/soft edges per shape). A merge
 // describes how to merge a small patch of geometry (an ID cut left over from
 // BC's Federation saucer sections) back into its parent target shape at NIF
 // load time. A shape edit is an opaque "BSD1"/"BSD2" binary payload (base64
@@ -119,12 +120,23 @@ struct MeshFixTexture {
     std::optional<MeshFixFlipbook> flipbook;
 };
 
+// One shape's authored hard/soft edges (spec
+// 2026-10-27-bridge-authored-smoothing-design §3.2): `block` is the
+// NiTriShape's block-array index, `vertex_count` the shape's FINAL count
+// (after this fix's shape edits), edge pairs are a < b over final indices.
+struct MeshFixSmoothing {
+    std::uint32_t block = 0;
+    std::uint16_t vertex_count = 0;
+    nif::AuthoredEdges edges;
+};
+
 // Top-level fix-file contents.
 struct MeshFix {
     int format = 1;
     std::vector<MeshFixMerge> merges;
     std::vector<ShapeEdit> shape_edits;
     std::vector<MeshFixTexture> textures;
+    std::vector<MeshFixSmoothing> smoothing;
 };
 
 // FNV-1a 64-bit hash of `bytes`, rendered as 16 lowercase hex digits.
@@ -144,6 +156,12 @@ std::optional<std::string> base64_decode(std::string_view text);
 // magic, an unknown position/UV kind byte, truncation and trailing bytes.
 std::optional<std::vector<ShapeEdit>> decode_shape_edits(std::string_view bytes,
                                                          std::string* error);
+
+// Decode a "BSM1" smoothing payload. Structural checks only (magic,
+// truncation, trailing bytes); ordering and range checks happen in
+// apply_mesh_fix.
+std::optional<std::vector<MeshFixSmoothing>> decode_smoothing(std::string_view bytes,
+                                                              std::string* error);
 
 // World transform (position + rotation + uniform scale, composed T*R*S up
 // the parent chain from file.blocks[0]) of the block at `block_index`.

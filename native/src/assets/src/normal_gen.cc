@@ -95,7 +95,38 @@ bool is_twin(const VertexChannels& ch, std::uint32_t a, std::uint32_t b) {
     return true;
 }
 
-void smooth_normals_impl(VertexChannels& ch, float crease_deg) {
+// One authored edge of a recorded shape, its ends in the joint pass's shared
+// space as they were BEFORE the T-junction repair. Indexed like the report.
+struct AuthoredSegment {
+    std::uint32_t shape;
+    glm::vec3     a, b;
+    bool          hard;
+    bool          usable;  // both indices in range and the ends distinct
+};
+
+// The joint pass's authored smoothing, handed to smooth_normals_impl.
+struct AuthoredSmoothing {
+    std::vector<AuthoredSegment>            segments;
+    std::vector<std::vector<std::uint32_t>> by_shape;  // usable segment ids per shape
+    std::vector<bool>                       recorded;  // per shape: has a record
+    std::uint32_t                           original_vertices = 0;  // before the repair; later ones it inserted
+    bool                                    joins_hard = false;
+    SmoothingReport*                        report = nullptr;  // rows parallel to `segments`
+};
+
+// A T-junction piece lies on its authored segment as closely as the repair
+// requires a T point to lie on the edge it splits (repair_t_junctions_impl),
+// so every piece the repair can cut from a segment matches it.
+bool on_segment(const AuthoredSegment& s, const glm::vec3& p) {
+    const glm::vec3 ab = s.b - s.a;
+    const float len2 = glm::dot(ab, ab);
+    const float u = glm::dot(p - s.a, ab) / len2;
+    if (u < 0.0f || u > 1.0f) return false;
+    return glm::length(p - s.a - u * ab) <= 1e-3f * std::sqrt(len2);
+}
+
+void smooth_normals_impl(VertexChannels& ch, float crease_deg,
+                         const AuthoredSmoothing* authored = nullptr) {
     MeshCpu& m = ch.mesh;
     const std::size_t tri_count = m.indices.size() / 3;
     if (tri_count == 0) return;
@@ -136,10 +167,33 @@ void smooth_normals_impl(VertexChannels& ch, float crease_deg) {
         while (parent[x] != x) { sign *= parity[x]; x = parent[x]; }
         return std::pair<std::uint32_t, int>{x, sign};
     };
+    // Cannot-link sets (authored hard edges only): forbid[r] lists corners
+    // whose group may never merge with root r's. Kept symmetric and moved
+    // onto the surviving root on every union, so a list entry is checked
+    // through find() -- it may no longer be a root itself.
+    std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> forbid;
     auto unite = [&](std::uint32_t a, std::uint32_t b, int s) {
         const auto [ra, pa] = find(a);
         const auto [rb, pb] = find(b);
         if (ra == rb) return;
+        if (!forbid.empty()) {
+            const auto fa = forbid.find(ra);
+            const auto fb = forbid.find(rb);
+            if (fa != forbid.end() && fb != forbid.end()) {
+                const bool a_smaller = fa->second.size() <= fb->second.size();
+                const auto& list = a_smaller ? fa->second : fb->second;
+                const std::uint32_t other = a_smaller ? rb : ra;
+                for (std::uint32_t f : list)
+                    if (find(f).first == other) return;
+            }
+            if (fb != forbid.end()) {
+                std::vector<std::uint32_t> moved = std::move(fb->second);
+                forbid.erase(fb);
+                auto& into = forbid[ra];
+                if (into.size() < moved.size()) std::swap(into, moved);  // append the shorter
+                into.insert(into.end(), moved.begin(), moved.end());
+            }
+        }
         parent[rb] = ra;
         parity[rb] = pa * s * pb;
     };
@@ -157,22 +211,191 @@ void smooth_normals_impl(VertexChannels& ch, float crease_deg) {
                 {t, fwd ? ca : cb, fwd ? cb : ca, fwd});
         }
     }
-    for (const auto& [key, uses] : edges) {
-        for (std::size_t i = 0; i < uses.size(); ++i) {
-            for (std::size_t j = i + 1; j < uses.size(); ++j) {
-                const EdgeUse& a = uses[i];
-                const EdgeUse& b = uses[j];
-                // Consistent winding walks a shared edge in opposite
-                // directions; the same direction means b is flipped.
-                const int s = (a.forward == b.forward) ? -1 : 1;
-                if (s * glm::dot(face_n[a.tri], face_n[b.tri]) < cos_crease) continue;
-                const std::pair<std::uint32_t, std::uint32_t> ends[2] = {
-                    {a.ca, b.ca}, {a.cb, b.cb}};
-                for (const auto& [c1, c2] : ends) {
-                    const std::uint32_t v1 = m.indices[c1], v2 = m.indices[c2];
-                    if (v1 != v2 && is_twin(ch, v1, v2)) continue;
-                    unite(c1, c2, s);
+    // Join two faces across their shared edge: under the crease and not a
+    // twin split, or always when `forced` (an authored soft edge).
+    auto join = [&](const EdgeUse& a, const EdgeUse& b, bool forced) {
+        // Consistent winding walks a shared edge in opposite directions; the
+        // same direction means b is flipped.
+        const int s = (a.forward == b.forward) ? -1 : 1;
+        if (!forced && s * glm::dot(face_n[a.tri], face_n[b.tri]) < cos_crease) return;
+        const std::pair<std::uint32_t, std::uint32_t> ends[2] = {
+            {a.ca, b.ca}, {a.cb, b.cb}};
+        for (const auto& [c1, c2] : ends) {
+            const std::uint32_t v1 = m.indices[c1], v2 = m.indices[c2];
+            if (!forced && v1 != v2 && is_twin(ch, v1, v2)) continue;
+            unite(c1, c2, s);
+        }
+    };
+    if (!authored) {
+        for (const auto& [key, uses] : edges)
+            for (std::size_t i = 0; i < uses.size(); ++i)
+                for (std::size_t j = i + 1; j < uses.size(); ++j) join(uses[i], uses[j], false);
+    } else {
+        // Authored smoothing (spec 2026-10-27-bridge-authored-smoothing-design.md
+        // §3.3). A face's shape is its first corner's owner, as the split-back
+        // uses.
+        const AuthoredSmoothing& au = *authored;
+        const std::vector<VertexOrigin>& origins = *ch.origins;
+        auto tri_shape = [&](std::uint32_t t) { return origins[m.indices[t * 3]].shape; };
+        std::vector<glm::vec3> weld_pos(weld_id.size());
+        for (std::uint32_t c = 0; c < tri_count * 3; ++c)
+            weld_pos[corner_w[c]] = m.vertices[m.indices[c]].position;
+        auto weld_of = [&](const glm::vec3& p) -> std::int64_t {
+            const auto it = weld_id.find(pos_key(p));
+            return it == weld_id.end() ? -1 : static_cast<std::int64_t>(it->second);
+        };
+
+        // An edge matches a segment of its shape when its ends ARE the
+        // segment's ends, else when it is a T-junction piece: both ends lie on
+        // the segment and the faces' corners include a vertex the repair
+        // inserted (every piece it cuts has one). An edge between original
+        // vertices that misses the exact lookup is game-only: crease rule.
+        std::map<std::array<std::uint32_t, 3>, std::uint32_t> exact;
+        for (std::uint32_t k = 0; k < au.segments.size(); ++k) {
+            const AuthoredSegment& seg = au.segments[k];
+            if (!seg.usable) continue;
+            const std::int64_t wa = weld_of(seg.a), wb = weld_of(seg.b);
+            if (wa < 0 || wb < 0) continue;
+            exact.try_emplace({seg.shape, static_cast<std::uint32_t>(std::min(wa, wb)),
+                               static_cast<std::uint32_t>(std::max(wa, wb))}, k);
+        }
+        using EdgeKey = std::pair<std::uint32_t, std::uint32_t>;
+        auto exact_match = [&](const EdgeKey& key, std::uint32_t shape) -> std::int64_t {
+            const auto it = exact.find({shape, key.first, key.second});
+            return it == exact.end() ? -1 : static_cast<std::int64_t>(it->second);
+        };
+        auto piece_match = [&](const EdgeKey& key, std::uint32_t shape) -> std::int64_t {
+            for (std::uint32_t k : au.by_shape[shape]) {
+                const AuthoredSegment& seg = au.segments[k];
+                if (on_segment(seg, weld_pos[key.first]) && on_segment(seg, weld_pos[key.second]))
+                    return k;
+            }
+            return -1;
+        };
+
+        // Faces of a recorded shape grouped by their three welded positions.
+        // Stock shapes repeat many faces (seam twins, reversed twins, UV
+        // duplicates); Blender shows one face per set, so faces of one set
+        // are one surface and the record only speaks between sets.
+        constexpr std::uint32_t kNoSet = UINT32_MAX;
+        std::vector<std::uint32_t> face_set(tri_count, kNoSet);
+        {
+            std::map<std::array<std::uint32_t, 4>, std::uint32_t> sets;
+            for (std::uint32_t t = 0; t < tri_count; ++t) {
+                if (glm::length(face_n[t]) < 0.5f || !au.recorded[tri_shape(t)]) continue;
+                std::array<std::uint32_t, 3> w = {corner_w[t * 3], corner_w[t * 3 + 1],
+                                                  corner_w[t * 3 + 2]};
+                std::sort(w.begin(), w.end());
+                const auto id = static_cast<std::uint32_t>(sets.size());
+                face_set[t] = sets.try_emplace({tri_shape(t), w[0], w[1], w[2]}, id).first->second;
+            }
+        }
+
+        // Phase 1: edges between two faces of one recorded shape. Faces of one
+        // set always join, oriented by their normals (they lie on top of each
+        // other, so the edge direction says nothing). Between sets the record
+        // decides; an unlisted edge keeps the crease rule.
+        std::vector<std::vector<EdgeKey>> pieces(au.segments.size());  // matched edges per segment
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> hard_corners;
+        auto inserted = [&](const EdgeUse& u) {
+            return m.indices[u.ca] >= au.original_vertices || m.indices[u.cb] >= au.original_vertices;
+        };
+        // This edge's lookups per shape, each worked out once: the exact
+        // segment, and (only if some pair needs it) the piece segment.
+        struct Lookup { std::uint32_t shape; std::int64_t exact, piece; bool piece_done; };
+        auto record_piece = [&](std::int64_t k, const EdgeKey& key) {
+            if (k < 0) return;
+            auto& list = pieces[k];
+            if (std::find(list.begin(), list.end(), key) == list.end()) list.push_back(key);
+        };
+        for (const auto& [key, uses] : edges) {
+            std::vector<Lookup> lookups;
+            for (std::size_t i = 0; i < uses.size(); ++i) {
+                for (std::size_t j = i + 1; j < uses.size(); ++j) {
+                    const std::uint32_t shape = tri_shape(uses[i].tri);
+                    if (shape != tri_shape(uses[j].tri) || !au.recorded[shape]) continue;
+                    if (face_set[uses[i].tri] == face_set[uses[j].tri]) {
+                        const int s = glm::dot(face_n[uses[i].tri], face_n[uses[j].tri]) < 0.0f ? -1 : 1;
+                        unite(uses[i].ca, uses[j].ca, s);
+                        unite(uses[i].cb, uses[j].cb, s);
+                        continue;
+                    }
+                    auto it = std::find_if(lookups.begin(), lookups.end(),
+                                           [&](const Lookup& l) { return l.shape == shape; });
+                    if (it == lookups.end()) {
+                        it = lookups.insert(lookups.end(), {shape, exact_match(key, shape), -1, false});
+                        record_piece(it->exact, key);
+                    }
+                    std::int64_t seg = it->exact;
+                    if (seg < 0 && (inserted(uses[i]) || inserted(uses[j]))) {
+                        if (!it->piece_done) {
+                            it->piece = piece_match(key, shape);
+                            it->piece_done = true;
+                            record_piece(it->piece, key);
+                        }
+                        seg = it->piece;
+                    }
+                    if (seg < 0) {
+                        join(uses[i], uses[j], false);
+                    } else if (au.segments[seg].hard) {
+                        hard_corners.push_back({uses[i].ca, uses[j].ca});
+                        hard_corners.push_back({uses[i].cb, uses[j].cb});
+                    } else {
+                        join(uses[i], uses[j], true);
+                    }
                 }
+            }
+        }
+        // Corners a hard edge separates after phase 1 must stay apart.
+        for (const auto& [c1, c2] : hard_corners) {
+            const std::uint32_t r1 = find(c1).first, r2 = find(c2).first;
+            if (r1 == r2) continue;  // joined round the fan: Blender joins them too
+            forbid[r1].push_back(r2);
+            forbid[r2].push_back(r1);
+        }
+        // Phase 2: every other edge, crease rule, through the cannot-link sets.
+        for (const auto& [key, uses] : edges) {
+            for (std::size_t i = 0; i < uses.size(); ++i) {
+                for (std::size_t j = i + 1; j < uses.size(); ++j) {
+                    const std::uint32_t sa = tri_shape(uses[i].tri), sb = tri_shape(uses[j].tri);
+                    if (sa == sb && au.recorded[sa]) continue;  // phase 1's
+                    if (sa != sb && au.joins_hard && (au.recorded[sa] || au.recorded[sb])) continue;
+                    join(uses[i], uses[j], false);
+                }
+            }
+        }
+
+        // Outcome per authored edge: at each end, the matched edge touching
+        // it must carry exactly two position sets of the segment's shape;
+        // joined = the two sets' corners there share a group (each set is one
+        // group by phase 1).
+        if (au.report) {
+            for (std::uint32_t k = 0; k < au.segments.size(); ++k) {
+                const AuthoredSegment& seg = au.segments[k];
+                SmoothingReport::Edge& row = au.report->edges[k];
+                if (!seg.usable) continue;
+                bool found = true;
+                bool joined[2] = {false, false};
+                const glm::vec3* ends[2] = {&seg.a, &seg.b};
+                for (int x = 0; x < 2 && found; ++x) {
+                    const std::int64_t w = weld_of(*ends[x]);
+                    const auto piece = std::find_if(pieces[k].begin(), pieces[k].end(),
+                        [&](const EdgeKey& e) { return e.first == w || e.second == w; });
+                    if (w < 0 || piece == pieces[k].end()) { found = false; break; }
+                    std::vector<std::pair<std::uint32_t, std::uint32_t>> sets;  // set -> a corner at w
+                    for (const EdgeUse& use : edges.at(*piece)) {
+                        if (tri_shape(use.tri) != seg.shape) continue;
+                        const std::uint32_t set = face_set[use.tri];
+                        if (std::none_of(sets.begin(), sets.end(),
+                                         [&](const auto& sc) { return sc.first == set; }))
+                            sets.push_back({set, piece->first == w ? use.ca : use.cb});
+                    }
+                    if (sets.size() != 2) { found = false; break; }
+                    joined[x] = find(sets[0].second).first == find(sets[1].second).first;
+                }
+                row.found = found;
+                row.joined_a = found && joined[0];
+                row.joined_b = found && joined[1];
             }
         }
     }
@@ -399,7 +622,8 @@ void repair_t_junctions(MeshCpu& mesh, std::vector<glm::vec4>& source_colours) {
     repair_t_junctions_impl(ch);
 }
 
-void generate_normals_across_shapes(std::vector<NormalGenShape>& shapes, float crease_deg) {
+void generate_normals_across_shapes(std::vector<NormalGenShape>& shapes, float crease_deg,
+                                    SmoothingReport* report, bool authored_joins_hard) {
     std::size_t max_extra = 0;
     for (const auto& s : shapes)
         if (s.mesh) max_extra = std::max(max_extra, s.mesh->extra_uvs.size());
@@ -429,11 +653,47 @@ void generate_normals_across_shapes(std::vector<NormalGenShape>& shapes, float c
         }
         for (std::uint32_t idx : m.indices) all.indices.push_back(base + idx);
     }
+    // Authored segments, taken to the shared space BEFORE the repair splits
+    // any of them. One report row per authored edge, in the same order, even
+    // for a shape with no mesh or a pass with no geometry (found = false).
+    AuthoredSmoothing authored;
+    authored.by_shape.resize(shapes.size());
+    authored.recorded.assign(shapes.size(), false);
+    authored.original_vertices = static_cast<std::uint32_t>(all.vertices.size());
+    authored.joins_hard = authored_joins_hard;
+    authored.report = report;
+    if (report) report->edges.clear();
+    for (std::size_t s = 0; s < shapes.size(); ++s) {
+        if (!shapes[s].authored) continue;
+        const MeshCpu* mesh = shapes[s].mesh;
+        authored.recorded[s] = mesh != nullptr;
+        const glm::mat4& xf = shapes[s].to_model;
+        const auto shape = static_cast<std::uint32_t>(s);
+        auto add = [&](const std::vector<std::array<std::uint16_t, 2>>& pairs, bool hard) {
+            for (const auto& [a, b] : pairs) {
+                AuthoredSegment seg{shape, {}, {}, hard,
+                                    mesh && a < mesh->vertices.size() && b < mesh->vertices.size()};
+                if (seg.usable) {
+                    seg.a = to_shared(xf, mesh->vertices[a].position);
+                    seg.b = to_shared(xf, mesh->vertices[b].position);
+                    seg.usable = seg.a != seg.b;
+                }
+                if (seg.usable)
+                    authored.by_shape[s].push_back(static_cast<std::uint32_t>(authored.segments.size()));
+                authored.segments.push_back(seg);
+                if (report) report->edges.push_back({shape, a, b, false, false, false});
+            }
+        };
+        add(shapes[s].authored->hard, true);
+        add(shapes[s].authored->soft, false);
+    }
     if (all.vertices.empty()) return;
+    const bool any_recorded =
+        std::find(authored.recorded.begin(), authored.recorded.end(), true) != authored.recorded.end();
 
     VertexChannels ch{all, src, &origins};
     repair_t_junctions_impl(ch);
-    smooth_normals_impl(ch, crease_deg);
+    smooth_normals_impl(ch, crease_deg, any_recorded ? &authored : nullptr);
 
     // Split back into the original shapes, in their own frames.
     for (std::size_t s = 0; s < shapes.size(); ++s) {

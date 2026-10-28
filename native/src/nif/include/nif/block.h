@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -159,6 +160,12 @@ struct NiRawImageData {
     std::vector<std::uint8_t> pixels;   // row-major, channels-per-pixel = 3 or 4
 };
 
+/// Hard/soft edges authored in Blender (a mesh fix's BSM1 records), as vertex
+/// index pairs a < b. In-memory only: never parsed from or written to a NIF.
+struct AuthoredEdges {
+    std::vector<std::array<std::uint16_t, 2>> hard, soft;
+};
+
 /// Vertex / index / per-vertex-attribute storage for an NiTriShape.
 /// Inherits NiGeometryData → NiTriBasedGeomData → NiTriShapeData.
 /// Field layout for v3.1.
@@ -186,6 +193,8 @@ struct NiTriShapeData {
     std::uint16_t num_match_groups = 0;
     /// Each match group is a list of vertex indices that share a position.
     std::vector<std::vector<std::uint16_t>> match_groups;
+    /// Set by apply_mesh_fix only; the NIF parser and writers ignore it.
+    std::optional<AuthoredEdges> authored_edges;
 };
 
 /// Z-buffer test/write property. v3.1 has only NiObjectNET base + flags.
