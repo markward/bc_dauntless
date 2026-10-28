@@ -71,6 +71,7 @@ add_executable(renderer_tests
     skin_shield_test.cc
     lens_flare_pass_test.cc
     bridge_pass_test.cc
+    bridge_panels_test.cc
     bridge_probe_signature_test.cc
     bridge_probe_schedule_test.cc
     bridge_lighting_test.cc
@@ -132,7 +133,9 @@ target_link_libraries(renderer_tests
 # reference in data/, shader sources) need the project root to find them from
 # wherever the test binary runs.
 target_compile_definitions(renderer_tests PRIVATE
-    OPEN_STBC_PROJECT_ROOT="${CMAKE_SOURCE_DIR}")
+    OPEN_STBC_PROJECT_ROOT="${CMAKE_SOURCE_DIR}"
+    # Bridge Lottie panel tests copy these beside a temp still.
+    LOTTIE_FIXTURES="${CMAKE_SOURCE_DIR}/native/tests/lottie/fixtures")
 
 # Force-load the nif static library so block parsers self-register via
 # static initializers (matches the pattern used by nif_tests / assets_tests).

@@ -60,6 +60,24 @@ BridgePass::~BridgePass() {
     }
 }
 
+void BridgePass::update_panels(BridgeQuality q) {
+    panels_.update(wall_time_, q);
+    const BridgePanels::Stats s = panels_.take_stats();
+    panel_stats_.uploads += s.uploads;
+    panel_stats_.jobs += s.jobs;
+    panel_stats_.raster_ms += s.raster_ms;
+    // Spec §7: the worker's raster time, on the frame report's 120-frame
+    // cadence (the render thread's own cost is the `bridge_lottie` scope).
+    constexpr int kReportEvery = 120;
+    if (++panel_updates_ < kReportEvery) return;
+    if (frame_timer().enabled())
+        std::fprintf(stderr, "[bridge_lottie] uploads=%d jobs=%d raster=%.3f ms/frame avg\n",
+                     panel_stats_.uploads, panel_stats_.jobs,
+                     panel_stats_.raster_ms / kReportEvery);
+    panel_stats_ = BridgePanels::Stats{};
+    panel_updates_ = 0;
+}
+
 std::uint32_t BridgePass::ensure_white_texture() {
     if (white_texture_ != 0) return white_texture_;
     GLuint t = 0;
@@ -152,7 +170,8 @@ void draw_mesh(const assets::Model& model,
                glm::vec3 glow_rgb = glm::vec3(0.0f),
                float glow_level = 0.0f,
                int capture_glow_src = -1,
-               glm::vec3 capture_glow_rgb = glm::vec3(0.0f)) {
+               glm::vec3 capture_glow_rgb = glm::vec3(0.0f),
+               GLuint live_base = 0) {
     shader.set_mat4("u_model", world);
     // Debug view 5 (Mesh ID): a stable per-draw counter, reset each render().
     shader.set_int("u_mesh_id", mesh_id);
@@ -173,6 +192,10 @@ void draw_mesh(const assets::Model& model,
     // NiFlipController-driven animation (EBridge's LCARS): the current
     // frame's texture, or the static Base when the material has none.
     int base_tex = assets::animated_base_texture(model, mat, wall_time);
+    // A Bridge Lottie panel's live image (spec 2026-10-28 §4-6) stands in for
+    // the still, flipbook frame included, wherever neither the viewscreen feed
+    // nor a lip-sync face owns unit 0. 0 = none: the still path, unchanged.
+    const bool live = live_base != 0 && base_override == 0 && !face_blend;
     // Flip V only for the viewscreen RTT feed: its FBO colour attachment is
     // bottom-up, the NIF screen UVs are top-down (see bridge.frag). The other
     // override — the SDK off texture — is a .tga and must NOT be flipped. Set
@@ -208,6 +231,8 @@ void draw_mesh(const assets::Model& model,
         // offscreen scene full-bright (u_unlit above -> FragColor = feed,
         // unaffected by bridge ambient).
         glBindTexture(GL_TEXTURE_2D, base_override);
+    } else if (live) {
+        glBindTexture(GL_TEXTURE_2D, live_base);
     } else if (base_tex >= 0) {
         glBindTexture(GL_TEXTURE_2D, model.textures[base_tex].id());
     } else {
@@ -255,6 +280,10 @@ void draw_mesh(const assets::Model& model,
         if (glow_src < 0 && capture_glow_src < 0 &&
             emissive_alert == kBridgeStateOffline)
             id = 0;
+        // A live panel's static `_emissive` is set aside (spec §4 step 5):
+        // the loader already skips it for a `.json` found at load; this
+        // catches one added since, by the developer reload.
+        if (live) id = 0;
         shader.set_int("u_has_emissive_map", id != 0 ? 1 : 0);
         glActiveTexture(GL_TEXTURE0 + kBridgeEmissiveUnit);
         glBindTexture(GL_TEXTURE_2D, id != 0 ? id : white_fallback);
@@ -597,12 +626,23 @@ void BridgePass::render(const scenegraph::World& world,
                     }
                 }
             }
+            // Bridge Lottie panel: the live image when one is up. Only real
+            // draws mark the panel (a comm set marks state 0, its emissive
+            // alert); a probe face or the AO pre-pass binds the current image
+            // but never asks for another.
+            GLuint live = 0;
+            if (mat.panel_index >= 0) {
+                if (!capture_pass_ && !normal_pass_)
+                    panels_.mark_drawn(mh, m, mat.panel_index, emissive_alert);
+                live = panels_.live_texture(mh, m, mat.panel_index);
+            }
             draw_mesh(m, mesh, mat, base_shader, w, white, t, ov, flip,
                       viewscreen_brightness_, viewscreen_flash_,
                       /*face_blend=*/false, /*face_a=*/0u, /*face_b=*/0u,
                       /*face_mix=*/0.0f, mesh_id_counter++, hl,
                       pbr, rough_ov, metal_ov, emissive_alert,
-                      glow_src, glow_rgb, glow_level, cap_glow_src, cap_glow_rgb);
+                      glow_src, glow_rgb, glow_level, cap_glow_src, cap_glow_rgb,
+                      live);
         };
     walk_bridge_meshes(world, lookup, pass, comm_set_id, draw_shell);
     base_shader.set_int("u_spot_skip", 0);

@@ -2,6 +2,8 @@
 #pragma once
 
 #include <renderer/bridge_ao_pass.h>
+#include <renderer/bridge_panels.h>
+#include <renderer/bridge_quality.h>
 #include <renderer/bridge_lighting_tuning.h>   // kBridgeMaxSpots
 #include <renderer/bridge_probe.h>         // BrdfLut (BridgeProbe is test-only)
 #include <renderer/bridge_probe_array.h>
@@ -193,6 +195,18 @@ public:
     /// texture animations on bridge materials. Host loop calls this
     /// once per tick with time.monotonic().
     void set_wall_time(double t) { wall_time_ = t; }
+
+    /// Bridge Lottie panels (spec 2026-10-28-bridge-lottie-panels-design.md
+    /// §6-7): once per frame, BEFORE any render() of the frame (main view or
+    /// the viewscreen's comm set). Uploads finished frames and asks the worker
+    /// for the next ones of the panels the previous frame drew, on the
+    /// set_wall_time clock, so a paused game re-renders nothing. While the
+    /// frame profiler is on, every 120 calls print one `[bridge_lottie]`
+    /// stderr line. A bridge with no panel files never uploads anything.
+    void update_panels(BridgeQuality q);
+    /// Developer reload: every panel drawn so far looks for its `.json` files
+    /// again (one added, edited or deleted since load) and reloads them.
+    void reload_panels() { panels_.reload(); }
 
     /// Identify the viewscreen instance by its model handle and supply the
     /// render-to-texture color texture to draw on it. When a Pass::Bridge
@@ -467,6 +481,14 @@ private:
     std::uint32_t white_texture_ = 0;
     std::uint32_t ensure_white_texture();
     double wall_time_ = 0.0;
+
+    /// Bridge Lottie panels' playback state and live textures. Marked by
+    /// sub-pass A's draws (never the AO pre-pass or a probe face), bound
+    /// there in place of the still. `panel_stats_` sums take_stats() over
+    /// the current 120-update report window.
+    BridgePanels panels_;
+    BridgePanels::Stats panel_stats_;
+    int panel_updates_ = 0;
     unsigned long long viewscreen_model_handle_ = 0;
     unsigned int       viewscreen_tex_ = 0;
     float              viewscreen_brightness_ = 1.0f;

@@ -2040,6 +2040,16 @@ void frame() {
         g_planet_detail->update(g_world, g_camera, fh, lookup);
     }
 
+    // ── Bridge Lottie panels (spec 2026-10-28-bridge-lottie-panels §6-7) ────
+    // Once per frame, before ANY bridge render (the viewscreen's comm set
+    // below, the main bridge later): upload the frames the worker finished
+    // and queue the next ones for the panels last frame drew. Never waits on
+    // a raster; a bridge with no panel files does nothing here.
+    if (g_bridge_pass) {
+        DAUNTLESS_FRAME_SCOPE("bridge_lottie");
+        g_bridge_pass->update_panels(g_bridge_quality);
+    }
+
     // ── Viewscreen render-to-texture (bridge view, screen on) ──────────────
     // The forward space view (g_camera is already forward-from-ship in bridge
     // mode — see host_loop._compute_camera) renders into an offscreen HDR
