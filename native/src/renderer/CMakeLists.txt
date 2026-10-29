@@ -220,6 +220,7 @@ add_library(renderer STATIC
     lens_flare_pass.cc
     lens_flare_hdr_pass.cc
     torpedo_pass.cc
+    torpedo_sprites.cc
     hit_vfx_pass.cc
     hull_discharge_pass.cc
     running_light_pass.cc

@@ -114,6 +114,7 @@ add_executable(renderer_tests
     shadow_map_target_test.cc
     torpedo_anim_test.cc
     torpedo_pass_test.cc
+    torpedo_sprites_test.cc
     dynamic_lights_test.cc
     running_light_test.cc
     debug_volume_pass_test.cc
