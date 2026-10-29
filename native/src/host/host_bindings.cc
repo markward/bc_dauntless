@@ -1517,18 +1517,34 @@ void frame() {
         }
     }
 
+    const bool bridge_active = !viewer_mode && g_bridge_pass_enabled && g_bridge_pass;
+    const bool viewscreen_on = bridge_active && g_viewscreen_enabled;
+
     {
         DAUNTLESS_FRAME_SCOPE("anim");
         g_world.propagate();
         // SP2: rebuild each animated instance's bone palette for this frame BEFORE
         // anything consumes it (the space skinned draw and the bridge pass). Shares
         // the `now` wall clock with draw_model / flip controllers.
-        renderer::update_animations(g_world, lookup, now);
-        update_bridge_node_anims(now);
+        //
+        // Only for instances a pass draws THIS frame: in the exterior view the
+        // crew and every realized comm set's faces are not drawn, and re-posing
+        // them cost a flat ~1.5 ms a frame (Debug). The draws below must stay in
+        // step with these flags: the bridge pass runs iff bridge_active, a comm
+        // set only through the viewscreen's comm feed.
+        renderer::DrawnPasses drawn;
+        drawn.bridge = bridge_active;
+        drawn.comm = viewscreen_on && g_comm_source.active;
+        drawn.comm_set_id = g_comm_source.set_id;
+        {
+            DAUNTLESS_FRAME_SCOPE("anim.skin");
+            renderer::update_animations(g_world, lookup, now, drawn);
+        }
+        {
+            DAUNTLESS_FRAME_SCOPE("anim.node_clips");
+            update_bridge_node_anims(now);
+        }
     }
-
-    const bool bridge_active = !viewer_mode && g_bridge_pass_enabled && g_bridge_pass;
-    const bool viewscreen_on = bridge_active && g_viewscreen_enabled;
 
     // ── Cubemap sky bake (static-per-system) ───────────────────────────────
     // The map-driven procedural sky is fixed per vantage; bake it once into a
