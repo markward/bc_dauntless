@@ -20,6 +20,10 @@ the fight begins within a few seconds rather than after a long approach.
 Reuses QuickBattle's region for a known-good visible set + backdrop, the same
 way damage_preview does.
 
+The mission loads a bridge and stays on it, so by default a capture measures
+the bridge view. DAUNTLESS_DEV_VIEW=exterior switches to the exterior view
+VIEW_AFTER_S after Initialize, as felix_destroy and vesuvi_dust_cloud do.
+
 Usage:
 
     OPEN_STBC_HOST_HEADLESS=1 DAUNTLESS_PROFILE_FRAMES=900 \
@@ -35,6 +39,7 @@ import App
 import MissionLib
 import loadspacehelper
 
+from engine.dev_missions.felix_destroy import wants_exterior_view
 from engine.units import GU_TO_KM
 
 # The SDK's own quick-battle combat AI — the same module QuickBattle attaches
@@ -115,6 +120,11 @@ def ring_gap_hulls(n_ships: int) -> float:
     return gap / (2.0 * _NOMINAL_HULL_RADIUS_GU)
 
 _DEFAULT_SHIPS = 8
+
+# Delay before DAUNTLESS_DEV_VIEW=exterior takes effect: past Initialize, so
+# the bridge is set up before the view leaves it, and short, so the measured
+# window is all exterior.
+VIEW_AFTER_S = 1.0
 
 
 def avoidance_enabled() -> bool:
@@ -314,18 +324,31 @@ def Initialize(pMission):
     except Exception:
         pass
 
+    pSeq = App.TGSequence_Create()
+    pSeq.AppendAction(App.TGScriptAction_Create(__name__, "ViewAction"),
+                      VIEW_AFTER_S)
+    pSeq.Play()
+
     ring = ring_radius_gu(total)
     gap_hulls = ring_gap_hulls(total)
     spacing_gu = (2.0 * math.pi * ring) / max(1, total)
     print("[combat_stress] %d AI ships (%d per side) + player; ring %.1f km "
           "across, neighbour spacing %.2f km (%.2f hull diameters); "
-          "AI attached to %d; avoidance=%s"
+          "AI attached to %d; avoidance=%s; view=%s"
           % (len(created), per_side, 2.0 * ring * GU_TO_KM,
              spacing_gu * GU_TO_KM, gap_hulls, attached,
-             "ON" if avoidance_enabled() else "off"))
+             "ON" if avoidance_enabled() else "off",
+             "exterior" if wants_exterior_view() else "bridge"))
     if gap_hulls < 1.0:
         # The exact failure this sizing exists to prevent: hulls spawned inside
         # one another, so the capture measures a pile-up resolving itself.
         print("[combat_stress] WARNING: hulls OVERLAP at spawn (%.2f diameters "
               "apart). Raise _MAX_RING_ACROSS_KM or lower the ship count -- "
               "measurements from this scene are not a battle." % gap_hulls)
+
+
+def ViewAction(pAction):
+    if wants_exterior_view():
+        App.TopWindow_GetTopWindow().ForceTacticalVisible()
+        print("[combat_stress] view exterior", flush=True)
+    return 0
