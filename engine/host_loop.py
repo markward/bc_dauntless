@@ -1381,11 +1381,24 @@ def _build_torpedo_render_data():
     Only torpedoes in the viewed frame are sent, in RENDER space
     (frames.to_render: the viewed set's coordinates minus the render origin)
     -- a left-behind set's torpedoes stay out of the scene you are in. No
-    viewed set: no scene, nothing sent."""
+    viewed set: no scene, nothing sent.
+
+    Textures are resolved once per distinct path per CALL: every torpedo of a
+    kind shares three paths, and resolving them per torpedo (mods overlay +
+    case-insensitive stat) was 60% of this feed at 1,440 torpedoes. The cache
+    dies with the call, so a new game root or mod set is seen next frame."""
     out = []
     view = _frames.viewing_set()
     if view is None:
         return out
+    textures = {}
+
+    def texture(path):
+        r = textures.get(path)
+        if r is None:
+            r = textures[path] = _resolve_game_texture(path)
+        return r
+
     for t in projectiles._active:
         p = t.GetTranslate()
         pos = _frames.to_render(view, _frames.containing_set(t), p.x, p.y, p.z)
@@ -1393,18 +1406,18 @@ def _build_torpedo_render_data():
             continue
         out.append({
             "position":      pos,
-            "core_texture":  _resolve_game_texture(t._core_texture),
+            "core_texture":  texture(t._core_texture),
             "core_color":    _dim_color(_color_tuple(t._core_color),
                                         TORPEDO_BRIGHTNESS),
             "core_size_a":   t._core_size_a,
             "core_size_b":   t._core_size_b,
-            "glow_texture":  _resolve_game_texture(t._glow_texture),
+            "glow_texture":  texture(t._glow_texture),
             "glow_color":    _dim_color(_color_tuple(t._glow_color),
                                         TORPEDO_BRIGHTNESS),
             "glow_size_a":   t._glow_size_a,
             "glow_size_b":   t._glow_size_b,
             "glow_size_c":   t._glow_size_c,
-            "flares_texture": _resolve_game_texture(t._flares_texture),
+            "flares_texture": texture(t._flares_texture),
             "flares_color":  _dim_color(_color_tuple(t._flares_color),
                                         TORPEDO_BRIGHTNESS),
             "num_flares":    t._num_flares,
