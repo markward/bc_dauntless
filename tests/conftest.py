@@ -1152,13 +1152,6 @@ def _reset_leakable_engine_globals():
                                "_dauntless_orbit_altitude_orig", None)
         if _orbit_orig is not None:
             _orbit_mod.CreateAI = _orbit_orig
-    # EvadeTorps horizon cap (engine.evade_torps_horizon), installed by the
-    # same bootstrap: put BC's 3600 s back on the class.
-    _evade_mod = sys.modules.get("AI.PlainAI.EvadeTorps")
-    _evade_cls = getattr(_evade_mod, "EvadeTorps", None)
-    if _evade_cls is not None and "_dauntless_bc_danger_time" in _evade_cls.__dict__:
-        _evade_cls.fDangerTimeThreshold = _evade_cls._dauntless_bc_danger_time
-        del _evade_cls._dauntless_bc_danger_time
     try:
         import App
     except Exception:

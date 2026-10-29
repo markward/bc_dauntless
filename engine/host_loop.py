@@ -298,11 +298,6 @@ def _bootstrap_firing_pipeline() -> None:
     from engine import orbit_altitude
     orbit_altitude.install()
 
-    # NPC EvadeTorps dodges only torpedoes hitting within 20 s, not BC's
-    # 3600 s (Mark, 2026-10-29). Idempotent; never raises.
-    from engine import evade_torps_horizon
-    evade_torps_horizon.install()
-
     import App
 
     # Default destination for fire events.
