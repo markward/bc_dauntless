@@ -17,6 +17,7 @@ advances motion, runs collision, returns the list of (torpedo, hit_ship,
 hit_point, hit_normal) tuples for host_loop to route through combat.apply_hit.
 """
 import math
+import weakref
 
 from engine.appc.math import TGPoint3
 from engine.appc.objects import ObjectClass
@@ -64,7 +65,7 @@ class Torpedo(ObjectClass):
         "_target_ship", "_target_offset",
         "_guidance_lifetime", "_guidance_initial", "_max_angular_accel",
         "_last_seen_target_pos", "_last_target_vel",
-        "_src", "_cset", "_scan_live", "_id", "_bubble_entry",
+        "_src", "_cset", "_scan_live", "_rad", "_id", "_bubble_entry",
         "_core_texture", "_core_color", "_core_size_a", "_core_size_b",
         "_glow_texture", "_glow_color", "_glow_size_a", "_glow_size_b", "_glow_size_c",
         "_flares_texture", "_flares_color", "_num_flares",
@@ -249,6 +250,20 @@ class Torpedo(ObjectClass):
             _scan_table().set_source(self.GetObjID(), *_source_key(src))
 
     @property
+    def _radius(self):
+        return self._rad
+
+    @_radius.setter
+    def _radius(self, r):
+        # Tracked so the proximity walk knows when it may skip torpedoes:
+        # one with a radius occupies space (planet._is_proximity_participant).
+        self._rad = r
+        if r > 0.0:
+            _sized.add(self)
+        else:
+            _sized.discard(self)
+
+    @property
     def _containing_set(self):
         return self._cset
 
@@ -344,6 +359,20 @@ class _ActiveList(list):
 
 _active: list[Torpedo] = _ActiveList()
 _next_id: int = 1
+
+# Torpedoes with a radius > 0, anywhere (weak: a dead one drops out).
+_sized = weakref.WeakSet()
+
+
+def sized_torpedo_in(pSet) -> bool:
+    """True while a torpedo in `pSet` occupies space -- the proximity walk
+    must then step through that set's members in full
+    (planet.ProximityManager._candidates). Nothing in the engine gives a
+    torpedo a radius, so `_sized` is normally empty and this is free."""
+    for t in _sized:
+        if t._cset is pSet:
+            return True
+    return False
 
 
 # ── Incoming-torpedo table sync (engine/appc/torpedo_scan.py) ───────────────

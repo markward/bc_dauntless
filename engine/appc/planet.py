@@ -337,10 +337,19 @@ class ProximityManager:
         seen = set()
         pSet = self._set
         if pSet is not None:
-            try:
-                members = pSet.GetObjectList()
-            except Exception:
-                members = ()
+            # Torpedoes never occupy space unless something gives one a
+            # radius, so while none has, walk the set's non-torpedo index
+            # (SetClass._non_torpedo): same members, same order, without
+            # stepping through every torpedo in flight.
+            from engine.appc.sets import SetClass
+            from engine.appc import projectiles
+            if isinstance(pSet, SetClass) and not projectiles.sized_torpedo_in(pSet):
+                members = list(pSet._non_torpedo.values())
+            else:
+                try:
+                    members = pSet.GetObjectList()
+                except Exception:
+                    members = ()
             for obj in members:
                 if id(obj) not in seen and _is_proximity_participant(obj):
                     seen.add(id(obj))
