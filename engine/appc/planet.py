@@ -374,8 +374,33 @@ class ProximityManager:
         """
         r2 = float(radius) * float(radius)
         px, py, pz = point.x, point.y, point.z
+        candidates = self._candidates()
+        # Every ConditionInRange registers a proximity check here, so a
+        # 64-ship fight walks ~337 candidates per AvoidObstacles query; one
+        # store crossing each was 40% of all AI time. Objects whose location
+        # IS their transform-store slot are tested in ONE store call
+        # (within_radius: the compare below, rounded the same way). One that
+        # answers GetWorldLocation itself (DebrisChunk, subsystems, ...) is
+        # still asked.
+        from engine.appc.objects import ObjectClass
+        from engine.appc.transform_store import get_store
+        base = ObjectClass.GetWorldLocation
+        stored = [obj for obj in candidates
+                  if "_xform" in obj.__dict__
+                  and getattr(type(obj), "GetWorldLocation", None) is base
+                  and "GetWorldLocation" not in obj.__dict__]
+        inside = {}
+        if stored:
+            flags = get_store().within_radius(
+                [obj._xform for obj in stored], px, py, pz, r2)
+            inside = {id(obj): f for obj, f in zip(stored, flags)}
         result = []
-        for obj in self._candidates():
+        for obj in candidates:
+            f = inside.get(id(obj))
+            if f is not None:
+                if f:
+                    result.append(obj)
+                continue
             loc = obj.GetWorldLocation() if hasattr(obj, "GetWorldLocation") else None
             if loc is None:
                 continue

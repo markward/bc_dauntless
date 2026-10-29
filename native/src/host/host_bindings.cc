@@ -9016,6 +9016,27 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("handles"),
           "Bulk position read: one crossing instead of N.");
 
+    // ProximityManager.GetNearObjects: `handles` is a buffer of uint32
+    // (index, generation) pairs; returns one byte per handle, 1 inside or on
+    // the sphere. Taking a buffer and returning bytes keeps the crossing to
+    // two conversions, where a list of tuples cost ~0.4 us per handle.
+    m.def("transform_within_radius",
+          [](py::buffer handles, double x, double y, double z, double r2) {
+              const py::buffer_info info = handles.request();
+              if (info.itemsize != sizeof(std::uint32_t) || info.ndim != 1 ||
+                  info.shape[0] % 2 != 0)
+                  throw py::value_error("handles: flat uint32 (index, generation) pairs");
+              const std::size_t n = static_cast<std::size_t>(info.shape[0]) / 2;
+              std::string out(n, '\0');
+              const double p[3] = {x, y, z};
+              dauntless::transform_store().within_radius(
+                  static_cast<const std::uint32_t*>(info.ptr), n, p, r2,
+                  reinterpret_cast<std::uint8_t*>(out.data()));
+              return py::bytes(out);
+          },
+          py::arg("handles"), py::arg("x"), py::arg("y"), py::arg("z"),
+          py::arg("r2"));
+
     m.def("transform_live_count", []() {
               return dauntless::transform_store().live_count();
           });

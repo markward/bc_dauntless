@@ -222,3 +222,63 @@ TEST(ComposeWorldLinearTranslationTest, LinearEqualsComposeWorldMatrixUpperLeft)
                 << "row " << row << " col " << col;
     EXPECT_EQ(translation, glm::dvec3(12.0, 34.0, 56.0));
 }
+
+// within_radius backs ProximityManager.GetNearObjects: one flag per handle,
+// set when the position lies within (or exactly on) the sphere. The compare
+// must round as CPython's `dx*dx + dy*dy + dz*dz <= r2` does.
+TEST(TransformStoreTest, WithinRadiusFlagsEachHandleInOrder) {
+    TransformStore s;
+    std::vector<std::uint32_t> flat;
+    const double xs[] = {1.0, 50.0, 3.0, -2.9, 0.0};
+    for (double x : xs) {
+        auto h = s.alloc();
+        s.set_position(h.first, h.second, x, 0.0, 0.0);
+        flat.push_back(h.first);
+        flat.push_back(h.second);
+    }
+    const double p[3] = {0.0, 0.0, 0.0};
+    std::vector<std::uint8_t> out(5, 7);
+    s.within_radius(flat.data(), 5, p, 9.0, out.data());
+    EXPECT_EQ(out, (std::vector<std::uint8_t>{1, 0, 1, 1, 1}));
+}
+
+TEST(TransformStoreTest, WithinRadiusMatchesTheUnfusedDoubleCompare) {
+    TransformStore s;
+    const double px = 0.1, py = -0.7, pz = 0.3;
+    std::vector<std::uint32_t> flat;
+    std::vector<double> want_r2;
+    std::uint64_t seed = 12345;
+    auto next = [&] {
+        seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+        return static_cast<double>(seed >> 11) / 9007199254740992.0 * 200.0 - 100.0;
+    };
+    for (int n = 0; n < 400; ++n) {
+        auto h = s.alloc();
+        const double x = next(), y = next(), z = next();
+        s.set_position(h.first, h.second, x, y, z);
+        flat.push_back(h.first);
+        flat.push_back(h.second);
+        volatile double dx = x - px, dy = y - py, dz = z - pz;
+        volatile double a = dx * dx, b = dy * dy, c = dz * dz;
+        volatile double ab = a + b;
+        want_r2.push_back(ab + c);
+    }
+    const double p[3] = {px, py, pz};
+    std::vector<std::uint8_t> out(400);
+    for (std::size_t k = 0; k < want_r2.size(); ++k) {
+        // The boundary itself: a fused multiply-add flips some of these.
+        s.within_radius(flat.data(), 400, p, want_r2[k], out.data());
+        for (std::size_t j = 0; j < want_r2.size(); ++j)
+            ASSERT_EQ(out[j], want_r2[j] <= want_r2[k] ? 1 : 0) << k << " " << j;
+    }
+}
+
+TEST(TransformStoreTest, WithinRadiusRejectsAStaleHandle) {
+    TransformStore s;
+    auto h = s.alloc();
+    s.free(h.first, h.second);
+    std::uint32_t flat[2] = {h.first, h.second};
+    const double p[3] = {0.0, 0.0, 0.0};
+    std::uint8_t out[1];
+    EXPECT_ANY_THROW(s.within_radius(flat, 1, p, 1.0, out));
+}

@@ -69,6 +69,15 @@ public:
     std::vector<std::array<double, 3>> positions(
         const std::vector<std::pair<std::uint32_t, std::uint32_t>>& handles) const;
 
+    // Sphere membership for `n` handles packed as (index, generation) pairs:
+    // out[k] = 1 when handle k's position lies within or on the sphere,
+    // tested as `dx*dx + dy*dy + dz*dz <= r2` rounded exactly as CPython
+    // rounds it (proximity_query.cc is compiled without fused multiply-add).
+    // Backs ProximityManager.GetNearObjects. Throws on a stale handle.
+    void within_radius(const std::uint32_t* handles, std::size_t n,
+                       const double point[3], double r2,
+                       std::uint8_t* out) const;
+
     std::uint32_t live_count() const { return live_; }
     std::uint32_t capacity() const {
         return static_cast<std::uint32_t>(generations_.size());

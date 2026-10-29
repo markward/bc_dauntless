@@ -16,6 +16,8 @@ storage and its mIJ = row I, column J naming. Column-vector convention: column
 1 is forward (CLAUDE.md ↦ "Rotation matrix convention").
 """
 
+from array import array
+
 _IDENTITY = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
 
 # Twelve floats per slot: three position, nine rotation (row-major).
@@ -115,6 +117,26 @@ class PythonTransformStore:
             out.append((d[base], d[base + 1], d[base + 2]))
         return out
 
+    def within_radius(self, handles, x: float, y: float, z: float,
+                      r2: float) -> bytes:
+        """One flag per handle: 1 when its position lies within or on the
+        sphere, by the compare ProximityManager.GetNearObjects used to make
+        itself (`dx*dx + dy*dy + dz*dz <= r2`)."""
+        d = self._data
+        gens = self._generations
+        n = len(gens)
+        out = bytearray(len(handles))
+        for k, (index, generation) in enumerate(handles):
+            if index < 0 or index >= n or gens[index] != generation:
+                raise StaleHandleError(
+                    "transform handle (%r, %r) is stale" % (index, generation))
+            base = index * _STRIDE
+            dx = d[base] - x
+            dy = d[base + 1] - y
+            dz = d[base + 2] - z
+            out[k] = dx * dx + dy * dy + dz * dz <= r2
+        return bytes(out)
+
     # ── Internal ──────────────────────────────────────────────────────────────
 
     def _check(self, index: int, generation: int) -> None:
@@ -193,6 +215,20 @@ class NativeTransformStore:
         try:
             return [tuple(p) for p in
                     self._h.transform_get_positions(list(handles))]
+        except (RuntimeError, TypeError) as exc:
+            raise StaleHandleError(str(exc)) from exc
+
+    def within_radius(self, handles, x: float, y: float, z: float,
+                      r2: float) -> bytes:
+        """See PythonTransformStore.within_radius. The handles cross as one
+        packed uint32 buffer and the flags come back as bytes."""
+        flat = array("I")
+        for index, generation in handles:
+            flat.append(index)
+            flat.append(generation)
+        try:
+            return self._h.transform_within_radius(
+                flat, float(x), float(y), float(z), float(r2))
         except (RuntimeError, TypeError) as exc:
             raise StaleHandleError(str(exc)) from exc
 
