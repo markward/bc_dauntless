@@ -12237,20 +12237,21 @@ def run(mission_name: Optional[str] = None,
                 had_pending_swap = False
 
             session = controller.session
-            # Fire QuickBattle's stored preload-done event (if pending) BEFORE
-            # reconciliation. Its handler (StartSimulation2) spawns the player
-            # ship; firing first means the reconciliation pass below realizes
-            # that ship in the same tick. Fire-once and fully guarded — a no-op
-            # for missions that never set a preload-done event.
-            _fire_pending_preload_done()
-            # Remove SetDeleteMe(1)-flagged objects from their set (QuickBattle
-            # "End Combat" clears the battle this way); the reconciliation below
-            # then tears down their render instances.
-            _process_object_deletions()
-            # Mirror the SDK config-dialog flag onto the Quick Battle Setup
-            # panel: opens it when the player clicks the XO menu's config
-            # button, closes it on Close/Start. Boot leaves it closed.
-            _sync_quick_battle_panel(controller)
+            with frame_profiler.scope("sim.session_sync"):
+                # Fire QuickBattle's stored preload-done event (if pending) BEFORE
+                # reconciliation. Its handler (StartSimulation2) spawns the player
+                # ship; firing first means the reconciliation pass below realizes
+                # that ship in the same tick. Fire-once and fully guarded — a no-op
+                # for missions that never set a preload-done event.
+                _fire_pending_preload_done()
+                # Remove SetDeleteMe(1)-flagged objects from their set (QuickBattle
+                # "End Combat" clears the battle this way); the reconciliation below
+                # then tears down their render instances.
+                _process_object_deletions()
+                # Mirror the SDK config-dialog flag onto the Quick Battle Setup
+                # panel: opens it when the player clicks the XO menu's config
+                # button, closes it on Close/Start. Boot leaves it closed.
+                _sync_quick_battle_panel(controller)
             # The camera follows session.player; _sync_player_identity (just
             # below, and again in the scene reconcile after the sim) calls
             # this when the player's identity changed
@@ -12289,40 +12290,41 @@ def run(mission_name: Optional[str] = None,
             # open space in exterior view → step the ship throttle. Replaces
             # the old camera scroll-zoom. Old bindings without the accumulator
             # return 0.0 via the fallback.
-            scroll_y = _consume_scroll() if _consume_scroll is not None else 0.0
-            _route_scroll_wheel(
-                scroll_y,
-                route_to_panel=(pause.is_open or _cursor_in_panel),
-                mx=_mx, my=_my,
-                send_wheel=_cef_send_wheel,
-                player_control=player_control,
-                can_throttle=(player is not None and view_mode.is_exterior),
-            )
+            with frame_profiler.scope("sim.keys"):
+                scroll_y = _consume_scroll() if _consume_scroll is not None else 0.0
+                _route_scroll_wheel(
+                    scroll_y,
+                    route_to_panel=(pause.is_open or _cursor_in_panel),
+                    mx=_mx, my=_my,
+                    send_wheel=_cef_send_wheel,
+                    player_control=player_control,
+                    can_throttle=(player is not None and view_mode.is_exterior),
+                )
 
-            if not pause.is_open:
-                # Dev-mode keybindings (no-op when --developer is not set).
-                # register_for_frame re-binds handlers that close over the
-                # current player/session each tick; dispatch_dev_key reads
-                # _h.key_pressed for every registered key and fires matching
-                # handlers. Skipped silently when dev_mode.is_enabled() is False.
-                if _h is not None and dev_mode.is_enabled():
-                    dev_keybindings.register_for_frame(_h, session, player)
-                    for key, _desc in dev_mode.keybinding_descriptions():
-                        if host_io.key_pressed(key):
-                            dev_mode.dispatch_dev_key(key)
+                if not pause.is_open:
+                    # Dev-mode keybindings (no-op when --developer is not set).
+                    # register_for_frame re-binds handlers that close over the
+                    # current player/session each tick; dispatch_dev_key reads
+                    # _h.key_pressed for every registered key and fires matching
+                    # handlers. Skipped silently when dev_mode.is_enabled() is False.
+                    if _h is not None and dev_mode.is_enabled():
+                        dev_keybindings.register_for_frame(_h, session, player)
+                        for key, _desc in dev_mode.keybinding_descriptions():
+                            if host_io.key_pressed(key):
+                                dev_mode.dispatch_dev_key(key)
 
-                # F12: toggle CEF DevTools for the UI overlay.
-                if _h is not None and host_io.key_pressed(_h.keys.KEY_F12):
-                    _h.cef_toggle_devtools()
+                    # F12: toggle CEF DevTools for the UI overlay.
+                    if _h is not None and host_io.key_pressed(_h.keys.KEY_F12):
+                        _h.cef_toggle_devtools()
 
-                # Cmd+R / Ctrl+R: hot-reload the CEF overlay's HTML.
-                # Reload only when Cmd (macOS) or Ctrl (Linux/Windows) is held;
-                # bare R is reverse-thrust and must not be intercepted.
-                if _h is not None and host_io.key_pressed(_h.keys.KEY_R):
-                    _cmd_held = host_io.key_state(_h.keys.KEY_LEFT_SUPER) if hasattr(_h.keys, "KEY_LEFT_SUPER") else False
-                    _ctrl_held = host_io.key_state(_h.keys.KEY_LEFT_CONTROL) if hasattr(_h.keys, "KEY_LEFT_CONTROL") else False
-                    if _cmd_held or _ctrl_held:
-                        _h.cef_reload()
+                    # Cmd+R / Ctrl+R: hot-reload the CEF overlay's HTML.
+                    # Reload only when Cmd (macOS) or Ctrl (Linux/Windows) is held;
+                    # bare R is reverse-thrust and must not be intercepted.
+                    if _h is not None and host_io.key_pressed(_h.keys.KEY_R):
+                        _cmd_held = host_io.key_state(_h.keys.KEY_LEFT_SUPER) if hasattr(_h.keys, "KEY_LEFT_SUPER") else False
+                        _ctrl_held = host_io.key_state(_h.keys.KEY_LEFT_CONTROL) if hasattr(_h.keys, "KEY_LEFT_CONTROL") else False
+                        if _cmd_held or _ctrl_held:
+                            _h.cef_reload()
 
             # This frame's ships, when the sim runs; None on a frozen frame
             # (the render section keys the combat feed push off it).
@@ -12337,107 +12339,108 @@ def run(mission_name: Optional[str] = None,
                 # Apply keyboard input to the player ship's transform and to the
                 # orbit camera (see _apply_input below).
 
-                if player is not None and _h is not None:
-                    # Alert keys (Shift+1/2/3) run before the throttle handler;
-                    # _PlayerControl.apply checks _shift_held() to skip digit
-                    # throttling on the same press.
-                    _apply_alert_keys(_h, player)
-                    # C-key: toggle Chase ↔ Tracking (only enters Tracking if
-                    # the player has a valid target). key_pressed fires once per
-                    # key-down event (not while held). Gate on exterior view so
-                    # the mode cannot flip silently while the bridge is active.
-                    if view_mode.is_exterior and host_io.key_pressed(input_map.code("camera_cycle")):
-                        director.toggle_mode(player=player)
-                    # Z-key: ZoomTarget framing while held. Held-state (not
-                    # press-edge) so the camera enters/exits as the key state
-                    # changes. The `not director.tracking.zoom_target_active`
-                    # retry guard lets a Z-held-during-target-acquisition
-                    # succeed on whichever frame the target appears.
-                    z_held_now = view_mode.is_exterior and host_io.key_state(input_map.code("camera_zoom_target"))
-                    if z_held_now and not director.tracking.zoom_target_active:
-                        director.start_zoom_target(player=player)
-                    elif z_held_prev and not z_held_now:
-                        director.end_zoom_target()
-                    z_held_prev = z_held_now
-                    # =/- sticky zoom: press-edge (OS auto-repeat for hold).
-                    if view_mode.is_exterior and host_io.key_pressed(input_map.code("camera_zoom_in")):
-                        director.zoom_in()
-                    if view_mode.is_exterior and host_io.key_pressed(input_map.code("camera_zoom_out")):
-                        director.zoom_out()
-                    # V-key: Reverse Chase while held. Same hold-state
-                    # edge detection as Z, with a retry guard so a
-                    # V-held-during-mode-transition succeeds on the
-                    # next eligible frame.
-                    v_held_now = view_mode.is_exterior and host_io.key_state(input_map.code("camera_reverse_chase"))
-                    if v_held_now and not director.chase.reverse_active:
-                        director.start_reverse()
-                    elif v_held_prev and not v_held_now:
-                        director.end_reverse()
-                    v_held_prev = v_held_now
-                    # Shift+mouse: orbit yaw/pitch additive on top of
-                    # arrow keys. Drain the mouse delta unconditionally
-                    # in exterior view so non-Shift mouse motion doesn't
-                    # accumulate and snap the camera on the next Shift
-                    # press.
-                    mouse_dx_exterior, mouse_dy_exterior = 0.0, 0.0
-                    if view_mode.is_exterior:
-                        mouse_dx_exterior, mouse_dy_exterior = host_io.consume_mouse_delta()
-                    shift_held = view_mode.is_exterior and (
-                        host_io.key_state(_h.keys.KEY_LEFT_SHIFT) or
-                        host_io.key_state(_h.keys.KEY_RIGHT_SHIFT)
+                with frame_profiler.scope("sim.input"):
+                    if player is not None and _h is not None:
+                        # Alert keys (Shift+1/2/3) run before the throttle handler;
+                        # _PlayerControl.apply checks _shift_held() to skip digit
+                        # throttling on the same press.
+                        _apply_alert_keys(_h, player)
+                        # C-key: toggle Chase ↔ Tracking (only enters Tracking if
+                        # the player has a valid target). key_pressed fires once per
+                        # key-down event (not while held). Gate on exterior view so
+                        # the mode cannot flip silently while the bridge is active.
+                        if view_mode.is_exterior and host_io.key_pressed(input_map.code("camera_cycle")):
+                            director.toggle_mode(player=player)
+                        # Z-key: ZoomTarget framing while held. Held-state (not
+                        # press-edge) so the camera enters/exits as the key state
+                        # changes. The `not director.tracking.zoom_target_active`
+                        # retry guard lets a Z-held-during-target-acquisition
+                        # succeed on whichever frame the target appears.
+                        z_held_now = view_mode.is_exterior and host_io.key_state(input_map.code("camera_zoom_target"))
+                        if z_held_now and not director.tracking.zoom_target_active:
+                            director.start_zoom_target(player=player)
+                        elif z_held_prev and not z_held_now:
+                            director.end_zoom_target()
+                        z_held_prev = z_held_now
+                        # =/- sticky zoom: press-edge (OS auto-repeat for hold).
+                        if view_mode.is_exterior and host_io.key_pressed(input_map.code("camera_zoom_in")):
+                            director.zoom_in()
+                        if view_mode.is_exterior and host_io.key_pressed(input_map.code("camera_zoom_out")):
+                            director.zoom_out()
+                        # V-key: Reverse Chase while held. Same hold-state
+                        # edge detection as Z, with a retry guard so a
+                        # V-held-during-mode-transition succeeds on the
+                        # next eligible frame.
+                        v_held_now = view_mode.is_exterior and host_io.key_state(input_map.code("camera_reverse_chase"))
+                        if v_held_now and not director.chase.reverse_active:
+                            director.start_reverse()
+                        elif v_held_prev and not v_held_now:
+                            director.end_reverse()
+                        v_held_prev = v_held_now
+                        # Shift+mouse: orbit yaw/pitch additive on top of
+                        # arrow keys. Drain the mouse delta unconditionally
+                        # in exterior view so non-Shift mouse motion doesn't
+                        # accumulate and snap the camera on the next Shift
+                        # press.
+                        mouse_dx_exterior, mouse_dy_exterior = 0.0, 0.0
+                        if view_mode.is_exterior:
+                            mouse_dx_exterior, mouse_dy_exterior = host_io.consume_mouse_delta()
+                        shift_held = view_mode.is_exterior and (
+                            host_io.key_state(_h.keys.KEY_LEFT_SHIFT) or
+                            host_io.key_state(_h.keys.KEY_RIGHT_SHIFT)
+                        )
+                        if shift_held and director.mode is CameraMode.CHASE:
+                            director.chase.apply_mouse_delta(
+                                mouse_dx_exterior, mouse_dy_exterior)
+                        # dt = _player_dt (wall-clock frame delta), not TICK_DT —
+                        # see comment at the accumulator step. _apply_input fires
+                        # once per render frame, so its dt is the wall delta.
+                        _apply_input(view_mode, player_control, director,
+                                     player=player, dt=_player_dt, h=_h)
+
+                    # Bridge crew-menu click. On the bridge the cursor is locked for
+                    # mouse-look, so the player AIMS by looking: the reticle is
+                    # screen centre.
+                    #   - No menu open: centre an officer and left-click → open that
+                    #     officer's crew menu (else the click falls through to
+                    #     _poll_mouse_buttons and fires phasers).
+                    #   - Menu open: the cursor is freed for the CEF menu; a click on
+                    #     the menu itself is consumed earlier by the CEF panel
+                    #     forwarding, so any left press we still see here is OFF the
+                    #     menu → close it.
+                    # mouse_button_pressed consumes the edge, so we only call it once
+                    # we've decided to intercept — leaving genuine empty-space clicks
+                    # to fire phasers.
+                    if view_mode.is_bridge and _h is not None:
+                        _bridge_left_pick_active = bridge_officer_picking.handle_click(
+                            _h, r, bridge_camera, crew_menu_panel,
+                            _bridge_left_pick_active)
+
+                    # Forward mouse button edges into the input manager (fire
+                    # events route via g_kKeyboardBinding → TCW handlers).
+                    _poll_mouse_buttons(_h)
+                    _poll_function_keys(_h, input_map)
+                    _poll_fire_keys(_h, input_map)
+                    _poll_modifier_chords(_h)
+                    # General key stream → BC's raw ET_KEYBOARD window event.
+                    # Runs AFTER the three tables above so their _fn_key_prev
+                    # entries are already written for this frame (it skips the
+                    # keys they own, but the ordering keeps that invariant
+                    # obvious).
+                    _poll_raw_keyboard(_h, input_map)
+                    _poll_skip_dialogue(_h, input_map)
+
+                    # Manual Aim (H): re-pick the cursor's hull point on the
+                    # player's target, or revert to the subsystem lock. Sim side
+                    # on purpose -- it mutates the player's target offset, which
+                    # the weapon tick below and the phaser tick in
+                    # _advance_combat both read this same frame.
+                    manual_aim.update(
+                        player=player,
+                        tcw=TacticalControlWindow.GetInstance(),
+                        ship_instances=(session.ship_instances if session is not None else None),
+                        is_exterior=view_mode.is_exterior,
                     )
-                    if shift_held and director.mode is CameraMode.CHASE:
-                        director.chase.apply_mouse_delta(
-                            mouse_dx_exterior, mouse_dy_exterior)
-                    # dt = _player_dt (wall-clock frame delta), not TICK_DT —
-                    # see comment at the accumulator step. _apply_input fires
-                    # once per render frame, so its dt is the wall delta.
-                    _apply_input(view_mode, player_control, director,
-                                 player=player, dt=_player_dt, h=_h)
-
-                # Bridge crew-menu click. On the bridge the cursor is locked for
-                # mouse-look, so the player AIMS by looking: the reticle is
-                # screen centre.
-                #   - No menu open: centre an officer and left-click → open that
-                #     officer's crew menu (else the click falls through to
-                #     _poll_mouse_buttons and fires phasers).
-                #   - Menu open: the cursor is freed for the CEF menu; a click on
-                #     the menu itself is consumed earlier by the CEF panel
-                #     forwarding, so any left press we still see here is OFF the
-                #     menu → close it.
-                # mouse_button_pressed consumes the edge, so we only call it once
-                # we've decided to intercept — leaving genuine empty-space clicks
-                # to fire phasers.
-                if view_mode.is_bridge and _h is not None:
-                    _bridge_left_pick_active = bridge_officer_picking.handle_click(
-                        _h, r, bridge_camera, crew_menu_panel,
-                        _bridge_left_pick_active)
-
-                # Forward mouse button edges into the input manager (fire
-                # events route via g_kKeyboardBinding → TCW handlers).
-                _poll_mouse_buttons(_h)
-                _poll_function_keys(_h, input_map)
-                _poll_fire_keys(_h, input_map)
-                _poll_modifier_chords(_h)
-                # General key stream → BC's raw ET_KEYBOARD window event.
-                # Runs AFTER the three tables above so their _fn_key_prev
-                # entries are already written for this frame (it skips the
-                # keys they own, but the ordering keeps that invariant
-                # obvious).
-                _poll_raw_keyboard(_h, input_map)
-                _poll_skip_dialogue(_h, input_map)
-
-                # Manual Aim (H): re-pick the cursor's hull point on the
-                # player's target, or revert to the subsystem lock. Sim side
-                # on purpose -- it mutates the player's target offset, which
-                # the weapon tick below and the phaser tick in
-                # _advance_combat both read this same frame.
-                manual_aim.update(
-                    player=player,
-                    tcw=TacticalControlWindow.GetInstance(),
-                    ship_instances=(session.ship_instances if session is not None else None),
-                    is_exterior=view_mode.is_exterior,
-                )
 
                 # Advance weapon charge / reload for every ship in every
                 # active set.  Runs after AI/physics (approximate — the host
@@ -12445,7 +12448,8 @@ def run(mission_name: Optional[str] = None,
                 # tick above) so emitters are ready when AI fire calls land.
                 # Materialize the ship list once per frame — both consumers
                 # re-walked every set independently before.
-                _ships_this_tick = list(_all_ships_for_tick())
+                with frame_profiler.scope("sim.ship_list"):
+                    _ships_this_tick = list(_all_ships_for_tick())
                 with frame_profiler.scope("sim.weapons"):
                     _advance_weapons(_ships_this_tick, TICK_DT)
                 with frame_profiler.scope("sim.combat"):
@@ -12668,21 +12672,22 @@ def run(mission_name: Optional[str] = None,
                 # engage, and the drop-out of a flight that ended this frame
                 # -- before the hand-off tick, so a drop-out's own hand-off
                 # lands first.
-                if player is not None:
-                    from engine.appc import dash
-                    dash.tick(player, _player_dt)
+                with frame_profiler.scope("sim.travel"):
+                    if player is not None:
+                        from engine.appc import dash
+                        dash.tick(player, _player_dt)
 
-                # The impulse region hand-off (in-system-warp spec section 3,
-                # rule H): the player crosses into another region's sphere
-                # under its own power. Runs after collisions (this frame's
-                # last mover of the player) and before the scene reconcile,
-                # which reads the player's containing set to decide what the
-                # render scope shows this frame. A no-op while the player is
-                # dashing (handoff._is_dashing) -- Task 4's drop-out calls
-                # handoff.hand_off directly once the flight ends.
-                if player is not None:
-                    from engine.systems import handoff
-                    handoff.tick(player)
+                    # The impulse region hand-off (in-system-warp spec section 3,
+                    # rule H): the player crosses into another region's sphere
+                    # under its own power. Runs after collisions (this frame's
+                    # last mover of the player) and before the scene reconcile,
+                    # which reads the player's containing set to decide what the
+                    # render scope shows this frame. A no-op while the player is
+                    # dashing (handoff._is_dashing) -- Task 4's drop-out calls
+                    # handoff.hand_off directly once the flight ends.
+                    if player is not None:
+                        from engine.systems import handoff
+                        handoff.tick(player)
 
                 # The scene reconcile (_reconcile_scene): load the player's
                 # system, realize / tear down / cull / hide ships for the
@@ -12700,15 +12705,16 @@ def run(mission_name: Optional[str] = None,
                 # and AND their conditions with scope_hidden, and the scope
                 # only writes on a change. Order guarded by
                 # tests/host/test_scene_reconcile_ordering.py.
-                _reconcile_scene(
-                    session, controller.renderer, nif_cache=controller,
-                    on_player_change=_on_player_change, verbose=verbose)
-                # It may have retargeted session.player (RecreatePlayer).
-                player = session.player if session is not None else None
-                # The reconcile above may have just realized a player ship
-                # RecreatePlayer created with an unknown (0) radius -- catch
-                # up the cameras now that GetRadius() is real.
-                _reconcile_camera_radius(director, player)
+                with frame_profiler.scope("sim.reconcile"):
+                    _reconcile_scene(
+                        session, controller.renderer, nif_cache=controller,
+                        on_player_change=_on_player_change, verbose=verbose)
+                    # It may have retargeted session.player (RecreatePlayer).
+                    player = session.player if session is not None else None
+                    # The reconcile above may have just realized a player ship
+                    # RecreatePlayer created with an unknown (0) radius -- catch
+                    # up the cameras now that GetRadius() is real.
+                    _reconcile_camera_radius(director, player)
 
                 # Sync transforms for known instances.
                 #
@@ -12724,96 +12730,98 @@ def run(mission_name: Optional[str] = None,
                 # pose. This only affects what is sent to the renderer — the
                 # ship objects keep live transforms, so physics/AI/combat
                 # (which ran earlier this frame) are unaffected.
-                if session is not None:
-                    # Render-pose provider: the camera (below) and the renderer
-                    # must anchor on IDENTICAL per-ship poses. Non-player ships
-                    # are captured into _xform_buf by _sync_instance_transforms
-                    # (which runs before the camera this frame). The player is
-                    # captured here, but ONLY when a helm-AI / waypoint order
-                    # drives it (then it moves on the 60 Hz tick and needs
-                    # interpolation) — a manually-flown player keeps its live,
-                    # already-smooth per-frame pose.
-                    _player_iid_i = (session.ship_instances.get(player)
-                                     if player is not None else None)
-                    # Interpolate the player render when it is NOT being flown
-                    # per render frame by _PlayerControl: a helm-AI / waypoint
-                    # order (GetAI) OR an active in-space cutscene (the player
-                    # is scripted, never manually flown then, and a cutscene
-                    # camera is commonly locked onto it — so its 60 Hz-stepped
-                    # motion must be interpolated or the whole shot judders).
-                    # An in-system dash too: its flight steps the ship on the
-                    # tick (_player_render_interpolated).
-                    _interp_player = _player_render_interpolated(
-                        player, sim_frozen=pause.sim_frozen,
-                        cutscene_active=_active_cutscene_camera() is not None)
-                    if _interp_player and _player_iid_i is not None:
-                        _xform_buf.set_current(
-                            _player_iid_i,
-                            player.GetWorldLocation(),
-                            player.GetWorldRotation())
-                    # A hand-off (the same player, another region set): the
-                    # slot and any handover window hold the old set's
-                    # coordinates -- re-seed / drop them, and never open a
-                    # window from last frame's (old-set) drawn pose.
-                    _pset = (player.GetContainingSet()
-                             if player is not None else None)
-                    if (player is not None
-                            and _prev_player_set[0] is player
-                            and _prev_player_set[1] is not None
-                            and _pset is not _prev_player_set[1]):
-                        _rebase_player_render(_xform_buf, _handover,
-                                              _player_iid_i, player)
-                        _prev_drawn_player_pose = None
-                    _prev_player_set = (player, _pset)
-                    # The viewed set changed within the frame (a hand-off):
-                    # re-base the cameras and drop the dust history before
-                    # the camera is solved below.
-                    _view_now = _frames.viewing_set()
-                    _view_off = _view_rebase_offset(_prev_view_set, _view_now)
-                    if _view_off is not None:
-                        _rebase_view(r, director, _view_off)
-                    _prev_view_set = _view_now
-                    # Handover easing: the pipeline the player is drawn from
-                    # flips between live (manual) and interpolated (AI /
-                    # scripted), and those sit a tick apart. Open a smoothing
-                    # window on the flip, starting from the pose that was
-                    # actually on screen last frame.
-                    _drive_handover_smoother(
-                        _handover, _prev_interp_player, _interp_player,
-                        _prev_drawn_player_pose)
-                    _pose_of = _make_render_pose_provider(
-                        session, _xform_buf, _interp_alpha,
-                        interpolate_player=_interp_player,
-                        player_iid=_player_iid_i,
-                        smoother=_handover)
-                    # ALWAYS resolved now, not just when interpolated: the
-                    # renderer draws the player from this same pose, so the
-                    # camera and the hull cannot disagree during the window.
-                    _player_interp_pose = (
-                        _pose_of(player) if player is not None else None)
-                    _prev_interp_player = _interp_player
-                    _prev_drawn_player_pose = _player_interp_pose
-                    _handover.advance(_player_dt)
-                    # Same game clock the decal system ages on
-                    # (engine.appc.damage_decals). Read once per frame.
-                    _sync_instance_transforms(
-                        r, session, player, _xform_buf, _interp_alpha,
-                        App.g_kUtopiaModule.GetGameTime(), BC_MODEL_SCALE,
-                        player_control=player_control,
-                        player_interp_pose=_player_interp_pose,
-                        player_is_interpolated=_interp_player)
+                with frame_profiler.scope("sim.render_xforms"):
+                    if session is not None:
+                        # Render-pose provider: the camera (below) and the renderer
+                        # must anchor on IDENTICAL per-ship poses. Non-player ships
+                        # are captured into _xform_buf by _sync_instance_transforms
+                        # (which runs before the camera this frame). The player is
+                        # captured here, but ONLY when a helm-AI / waypoint order
+                        # drives it (then it moves on the 60 Hz tick and needs
+                        # interpolation) — a manually-flown player keeps its live,
+                        # already-smooth per-frame pose.
+                        _player_iid_i = (session.ship_instances.get(player)
+                                         if player is not None else None)
+                        # Interpolate the player render when it is NOT being flown
+                        # per render frame by _PlayerControl: a helm-AI / waypoint
+                        # order (GetAI) OR an active in-space cutscene (the player
+                        # is scripted, never manually flown then, and a cutscene
+                        # camera is commonly locked onto it — so its 60 Hz-stepped
+                        # motion must be interpolated or the whole shot judders).
+                        # An in-system dash too: its flight steps the ship on the
+                        # tick (_player_render_interpolated).
+                        _interp_player = _player_render_interpolated(
+                            player, sim_frozen=pause.sim_frozen,
+                            cutscene_active=_active_cutscene_camera() is not None)
+                        if _interp_player and _player_iid_i is not None:
+                            _xform_buf.set_current(
+                                _player_iid_i,
+                                player.GetWorldLocation(),
+                                player.GetWorldRotation())
+                        # A hand-off (the same player, another region set): the
+                        # slot and any handover window hold the old set's
+                        # coordinates -- re-seed / drop them, and never open a
+                        # window from last frame's (old-set) drawn pose.
+                        _pset = (player.GetContainingSet()
+                                 if player is not None else None)
+                        if (player is not None
+                                and _prev_player_set[0] is player
+                                and _prev_player_set[1] is not None
+                                and _pset is not _prev_player_set[1]):
+                            _rebase_player_render(_xform_buf, _handover,
+                                                  _player_iid_i, player)
+                            _prev_drawn_player_pose = None
+                        _prev_player_set = (player, _pset)
+                        # The viewed set changed within the frame (a hand-off):
+                        # re-base the cameras and drop the dust history before
+                        # the camera is solved below.
+                        _view_now = _frames.viewing_set()
+                        _view_off = _view_rebase_offset(_prev_view_set, _view_now)
+                        if _view_off is not None:
+                            _rebase_view(r, director, _view_off)
+                        _prev_view_set = _view_now
+                        # Handover easing: the pipeline the player is drawn from
+                        # flips between live (manual) and interpolated (AI /
+                        # scripted), and those sit a tick apart. Open a smoothing
+                        # window on the flip, starting from the pose that was
+                        # actually on screen last frame.
+                        _drive_handover_smoother(
+                            _handover, _prev_interp_player, _interp_player,
+                            _prev_drawn_player_pose)
+                        _pose_of = _make_render_pose_provider(
+                            session, _xform_buf, _interp_alpha,
+                            interpolate_player=_interp_player,
+                            player_iid=_player_iid_i,
+                            smoother=_handover)
+                        # ALWAYS resolved now, not just when interpolated: the
+                        # renderer draws the player from this same pose, so the
+                        # camera and the hull cannot disagree during the window.
+                        _player_interp_pose = (
+                            _pose_of(player) if player is not None else None)
+                        _prev_interp_player = _interp_player
+                        _prev_drawn_player_pose = _player_interp_pose
+                        _handover.advance(_player_dt)
+                        # Same game clock the decal system ages on
+                        # (engine.appc.damage_decals). Read once per frame.
+                        _sync_instance_transforms(
+                            r, session, player, _xform_buf, _interp_alpha,
+                            App.g_kUtopiaModule.GetGameTime(), BC_MODEL_SCALE,
+                            player_control=player_control,
+                            player_interp_pose=_player_interp_pose,
+                            player_is_interpolated=_interp_player)
             else:
                 # Frozen frame (pause, DevTools): no sim ran, so nothing
                 # changed the view; reconcile as every frame always has, still
                 # ahead of the SPV / bridge-player / cloak visibility writers.
-                _reconcile_scene(
-                    session, controller.renderer, nif_cache=controller,
-                    on_player_change=_on_player_change, verbose=verbose)
-                player = session.player if session is not None else None
-                # Same catch-up as the live branch above -- a frozen frame
-                # (e.g. the pause menu opened the same tick RecreatePlayer
-                # ran) must not leave the cameras on an unknown radius.
-                _reconcile_camera_radius(director, player)
+                with frame_profiler.scope("sim.reconcile"):
+                    _reconcile_scene(
+                        session, controller.renderer, nif_cache=controller,
+                        on_player_change=_on_player_change, verbose=verbose)
+                    player = session.player if session is not None else None
+                    # Same catch-up as the live branch above -- a frozen frame
+                    # (e.g. the pause menu opened the same tick RecreatePlayer
+                    # ran) must not leave the cameras on an unknown radius.
+                    _reconcile_camera_radius(director, player)
 
             # --- Ship Property Viewer's FORCED articulation pose ---
             # DELIBERATELY OUTSIDE the `if not pause.sim_frozen:` above. The
@@ -12825,8 +12833,9 @@ def run(mission_name: Optional[str] = None,
             # the pause, and no forced pose could move a wing.
             # Dev-only and SPV-only inside the helper, so a production paused
             # frame is byte-identical (one False bool, then return).
-            if session is not None:
-                _sync_spv_articulation(session, ship_property_viewer)
+            with frame_profiler.scope("sim.spv_sync"):
+                if session is not None:
+                    _sync_spv_articulation(session, ship_property_viewer)
 
             frame_profiler.mark("render_prep")
             # --- Render (always runs, including while paused) ---
@@ -12839,190 +12848,192 @@ def run(mission_name: Optional[str] = None,
             # render-target authority; bridge_flag()/GetRenderedSet() are
             # untouched). Reverts when CutsceneCameraEnd pops the mode.
             _cc = None if pause.sim_frozen else _active_cutscene_camera()
-            _apply_bridge_pass_state(
-                view_mode.is_bridge and _cc is None, _h, view_mode)
-            # AT_MOVE walk completion advances the mission TGSequence (E1M1
-            # UndockCutscene -> Inspection enables the crew menus), so it must be
-            # pumped every unpaused frame regardless of view — NOT inside the
-            # is_bridge render block below (that block is purely visual). See
-            # _pump_walk_controller.
-            _pump_walk_controller(walk_ctrl, r, _player_dt, paused=pause.sim_frozen)
-            # The door half of the bridge cutscene pump is likewise
-            # view-independent — see _pump_bridge_doors.
-            _pump_bridge_doors(cutscene, r, paused=pause.sim_frozen)
-            # ...and so is the character anim controller: it drains the pending
-            # turn/glance/default queues and fires the settled actions'
-            # on_complete, which advances the mission TGSequence (an AT_SAY_LINE
-            # with a turn target defers the LINE ITSELF behind its turn). Gating
-            # it on bridge view left every such line unspoken and its sequence
-            # hung whenever the player was in tactical view. See _pump_char_anim.
-            _pump_char_anim(char_anim, r, _player_dt, paused=pause.sim_frozen)
-            if fixed_camera:
-                fixed_radius = player.GetRadius() if player is not None else 1.0
-                eye = (0.0, 0.0, CAM_MAX_RADII * fixed_radius)
-                target = (0.0, 0.0, 0.0)
-                up_vec = (0.0, 1.0, 0.0)
-            elif player is not None:
-                # The camera is solved in the VIEWED set's coordinates, like
-                # the scene: a subject in another set of the viewed frame (the
-                # player through a sibling-region cutscene) is moved into them
-                # first (_view_pose_of). Same set: _pose_of's own poses.
-                _cam_pose_of = _view_pose_of(_pose_of, _frames.viewing_set())
-                eye, target, up_vec = _compute_camera(
-                    view_mode, director,
-                    player=player, dt=_player_dt, pose_of=_cam_pose_of)
-                # Cutscene camera (computed above) drives the main-scene pose,
-                # converting the mode's forward DIRECTION to a look-at POINT.
-                if _cc is not None:
-                    eye, target, up_vec = _cutscene_pose(
-                        _cc[1], _player_dt, _cam_pose_of)
-                # Camera shake — apply to the exterior view. The bridge
-                # first-person camera below gets its own perturb call
-                # against the shared shake state.
-                eye, target, up_vec = camera_shake.perturb(eye, target, up_vec)
-                # If a cutscene camera path is queued or playing, pull the
-                # view back to bridge so the update pump below can reach it.
-                if cutscene.has_pending_camera() and not pause.sim_frozen:
-                    view_mode.set_bridge()
-                if view_mode.is_bridge:
-                    import App as _App
-                    # Bridge cutscene SHOT (PlacementWatch "bridge"): drive the
-                    # bridge camera from it -- see _bridge_cutscene_camera.
-                    _sync_bridge_mode_pose(bridge_camera, _player_dt,
-                                           exterior_active=_cc is not None,
-                                           paused=pause.sim_frozen)
-                    if not pause.sim_frozen:
-                        # CAMERA half only — the door half (_update_doors) is
-                        # pumped view-independently above (_pump_bridge_doors).
-                        cutscene.update(
-                            _player_dt,
-                            bridge_camera=bridge_camera,
-                            view_mode=view_mode,
-                            renderer=r,
-                            anim_mgr=_App.g_kAnimationManager,
+            with frame_profiler.scope("prep.crew"):
+                _apply_bridge_pass_state(
+                    view_mode.is_bridge and _cc is None, _h, view_mode)
+                # AT_MOVE walk completion advances the mission TGSequence (E1M1
+                # UndockCutscene -> Inspection enables the crew menus), so it must be
+                # pumped every unpaused frame regardless of view — NOT inside the
+                # is_bridge render block below (that block is purely visual). See
+                # _pump_walk_controller.
+                _pump_walk_controller(walk_ctrl, r, _player_dt, paused=pause.sim_frozen)
+                # The door half of the bridge cutscene pump is likewise
+                # view-independent — see _pump_bridge_doors.
+                _pump_bridge_doors(cutscene, r, paused=pause.sim_frozen)
+                # ...and so is the character anim controller: it drains the pending
+                # turn/glance/default queues and fires the settled actions'
+                # on_complete, which advances the mission TGSequence (an AT_SAY_LINE
+                # with a turn target defers the LINE ITSELF behind its turn). Gating
+                # it on bridge view left every such line unspoken and its sequence
+                # hung whenever the player was in tactical view. See _pump_char_anim.
+                _pump_char_anim(char_anim, r, _player_dt, paused=pause.sim_frozen)
+            with frame_profiler.scope("prep.camera"):
+                if fixed_camera:
+                    fixed_radius = player.GetRadius() if player is not None else 1.0
+                    eye = (0.0, 0.0, CAM_MAX_RADII * fixed_radius)
+                    target = (0.0, 0.0, 0.0)
+                    up_vec = (0.0, 1.0, 0.0)
+                elif player is not None:
+                    # The camera is solved in the VIEWED set's coordinates, like
+                    # the scene: a subject in another set of the viewed frame (the
+                    # player through a sibling-region cutscene) is moved into them
+                    # first (_view_pose_of). Same set: _pose_of's own poses.
+                    _cam_pose_of = _view_pose_of(_pose_of, _frames.viewing_set())
+                    eye, target, up_vec = _compute_camera(
+                        view_mode, director,
+                        player=player, dt=_player_dt, pose_of=_cam_pose_of)
+                    # Cutscene camera (computed above) drives the main-scene pose,
+                    # converting the mode's forward DIRECTION to a look-at POINT.
+                    if _cc is not None:
+                        eye, target, up_vec = _cutscene_pose(
+                            _cc[1], _player_dt, _cam_pose_of)
+                    # Camera shake — apply to the exterior view. The bridge
+                    # first-person camera below gets its own perturb call
+                    # against the shared shake state.
+                    eye, target, up_vec = camera_shake.perturb(eye, target, up_vec)
+                    # If a cutscene camera path is queued or playing, pull the
+                    # view back to bridge so the update pump below can reach it.
+                    if cutscene.has_pending_camera() and not pause.sim_frozen:
+                        view_mode.set_bridge()
+                    if view_mode.is_bridge:
+                        import App as _App
+                        # Bridge cutscene SHOT (PlacementWatch "bridge"): drive the
+                        # bridge camera from it -- see _bridge_cutscene_camera.
+                        _sync_bridge_mode_pose(bridge_camera, _player_dt,
+                                               exterior_active=_cc is not None,
+                                               paused=pause.sim_frozen)
+                        if not pause.sim_frozen:
+                            # CAMERA half only — the door half (_update_doors) is
+                            # pumped view-independently above (_pump_bridge_doors).
+                            cutscene.update(
+                                _player_dt,
+                                bridge_camera=bridge_camera,
+                                view_mode=view_mode,
+                                renderer=r,
+                                anim_mgr=_App.g_kAnimationManager,
+                            )
+                            # Idle fidgets ARE purely visual — they stay view-gated.
+                            # They submit into char_anim, which is pumped
+                            # view-independently above (_pump_char_anim); do NOT
+                            # call char_anim.update() here as well, or every clip
+                            # steps twice per frame in bridge view.
+                            idle_gestures.update(
+                                _player_dt, _live_bridge_characters(),
+                                renderer=r, anim_mgr=_App.g_kAnimationManager,
+                                controller=char_anim)
+                            # walk_ctrl is pumped view-independently above
+                            # (_pump_walk_controller) — its completion drives the
+                            # mission sequence and must not be gated on bridge view.
+                            try:
+                                lip_runtime.update()
+                            except Exception as _e:
+                                dev_mode.log_swallowed("lip-sync update", _e)
+                            # node_anim reads node_overrides written by r.frame() above; intentionally one frame behind — do NOT reorder.
+                            node_anim.update(r)
+                        mouse_dx, mouse_dy = host_io.consume_mouse_delta()
+                        # While paused we still drain the accumulated mouse
+                        # delta (so it doesn't snap the look on resume) but
+                        # skip the yaw/pitch advance so the bridge camera
+                        # stays frozen alongside the rest of the world.
+                        if not pause.sim_frozen:
+                            # Zoom-to-officer still runs while a crew menu is open
+                            # (that's what frames the station). But the cursor is
+                            # freed to click the menu, so zero the mouse-look delta
+                            # — otherwise moving toward a menu row swings the view.
+                            # (The maincamera zoom already suspends mouse-look once
+                            # an officer resolves; this also covers the case where
+                            # no officer resolves and the zoom stays at 0.)
+                            # Free-look is also suppressed during a cutscene: the
+                            # letterbox pins the view where the mission wants it.
+                            from engine.appc.top_window import TopWindow_GetTopWindow
+                            _tw = TopWindow_GetTopWindow()
+                            if _bridge_freelook_suppressed(
+                                    crew_menu_open=crew_menu_panel.has_open_menu(),
+                                    cutscene_active=_tw.IsCutsceneMode(),
+                                    bridge_cutscene_pending=cutscene.has_pending_camera()):
+                                mouse_dx, mouse_dy = 0.0, 0.0
+                            # Resolve the single active engagement this frame, in
+                            # precedence order: AT_WATCH_ME/LOOK_AT target > open crew
+                            # menu > viewscreen hail. The winner supplies a world
+                            # look-at + FOV factor; MenuEventHandler reconciles the
+                            # maincamera zoom; advance() eases it on _player_dt so it
+                            # freezes under pause.
+                            _w = (watch_ctrl.resolve_target_world(r)
+                                  if watch_ctrl is not None else None)
+                            _wc, _zoom_off = _active_zoom_officer(crew_menu_panel, r)
+                            _menu_zoom = _officer_zoom_factor(_zoom_off)
+                            if _menu_zoom == POSITION_ZOOM_SENTINEL:
+                                _menu_zoom = _BRIDGE_ZOOM_MIN
+                            _engaged, _look_at, _zoom_factor, _engaged_char = \
+                                _pick_bridge_engagement(
+                                    watch_world=_w,
+                                    watch_holds=(watch_ctrl is not None
+                                                 and watch_ctrl.is_holding()),
+                                    watch_char=(watch_ctrl.watched_character()
+                                                if watch_ctrl is not None else None),
+                                    menu_world=_wc, menu_char=_zoom_off,
+                                    menu_zoom=_menu_zoom,
+                                    hail=_viewscreen_hail_engagement(controller))
+                            _drv = _engaged_char or _last_engaged_char[0]
+                            if _drv is not None:
+                                _drv.MenuEventHandler(_engaged, _look_at, _zoom_factor,
+                                                      now=_App.g_kUtopiaModule.GetGameTime())
+                            if _engaged_char is not None:
+                                _last_engaged_char[0] = _engaged_char
+                            if _BRIDGE_ZOOM_CAM is not None:
+                                _BRIDGE_ZOOM_CAM.advance(_player_dt)
+                            if _BRIDGE_ZOOM_CAM is not None and watch_ctrl is not None \
+                                    and watch_ctrl.consume_snap():
+                                _BRIDGE_ZOOM_CAM.advance(1e9)   # AT_LOOK_AT_ME_NOW
+                            # SP4: tooltip owner = focused officer (open menu wins
+                            # over hover), then run the real SDK UpdateToolTip
+                            # handler on a throttle so its status rows populate.
+                            from engine.appc.characters import (
+                                CharacterClass_SetCurrentToolTipOwner)
+                            from engine.ui import tooltip_dispatch
+                            if tooltip_dispatch.tooltip_suppressed(
+                                    cutscene_active=_tw.IsCutsceneMode(),
+                                    bridge_cutscene_pending=cutscene.has_pending_camera()):
+                                # No tooltip box during a cutscene -- it would float
+                                # over the letterbox bars. Drop any owner and skip.
+                                CharacterClass_SetCurrentToolTipOwner(None)
+                            else:
+                                # pick() hands back the CHARACTER, and the open
+                                # menu resolves its owner off the menu itself, so
+                                # both work for a guest -- who has no station label
+                                # for resolve_character to match.
+                                _hover = None
+                                _aimed = bridge_officer_picking.pick(_h, r, bridge_camera)
+                                if _aimed is not None:
+                                    _hover = _aimed["officer"]
+                                _menu_off = crew_menu_panel.open_officer()
+                                _owner = tooltip_dispatch.select_owner(hover=_hover,
+                                                                       open_menu=_menu_off)
+                                CharacterClass_SetCurrentToolTipOwner(_owner)
+                                tooltip_dispatch.run_update_tooltip(
+                                    _owner, now=_App.g_kUtopiaModule.GetGameTime(),
+                                    state=_tooltip_dispatch_state)
+                            bridge_camera.apply(mouse_dx, mouse_dy)
+                        # Bridge first-person camera uses separate (eye, target,
+                        # up) vectors from the exterior view, so it needs its own
+                        # perturb call. The camera_shake module is global state,
+                        # so the shake energy / phase is shared with the
+                        # exterior perturb above. While the Bridge Editor
+                        # editor has a fly pose, it takes over the bridge camera
+                        # unshaken -- you are aiming at shapes, not flying the
+                        # ship.
+                        b_eye, b_target, b_up, b_fov = _bridge_camera_pose(
+                            bridge_emitters, bridge_camera, camera_shake.perturb)
+                        r.set_bridge_camera(
+                            eye=b_eye, target=b_target, up=b_up,
+                            fov_y_rad=b_fov,
+                            near=_BridgeCamera.NEAR,
+                            far=_BridgeCamera.FAR,
                         )
-                        # Idle fidgets ARE purely visual — they stay view-gated.
-                        # They submit into char_anim, which is pumped
-                        # view-independently above (_pump_char_anim); do NOT
-                        # call char_anim.update() here as well, or every clip
-                        # steps twice per frame in bridge view.
-                        idle_gestures.update(
-                            _player_dt, _live_bridge_characters(),
-                            renderer=r, anim_mgr=_App.g_kAnimationManager,
-                            controller=char_anim)
-                        # walk_ctrl is pumped view-independently above
-                        # (_pump_walk_controller) — its completion drives the
-                        # mission sequence and must not be gated on bridge view.
-                        try:
-                            lip_runtime.update()
-                        except Exception as _e:
-                            dev_mode.log_swallowed("lip-sync update", _e)
-                        # node_anim reads node_overrides written by r.frame() above; intentionally one frame behind — do NOT reorder.
-                        node_anim.update(r)
-                    mouse_dx, mouse_dy = host_io.consume_mouse_delta()
-                    # While paused we still drain the accumulated mouse
-                    # delta (so it doesn't snap the look on resume) but
-                    # skip the yaw/pitch advance so the bridge camera
-                    # stays frozen alongside the rest of the world.
-                    if not pause.sim_frozen:
-                        # Zoom-to-officer still runs while a crew menu is open
-                        # (that's what frames the station). But the cursor is
-                        # freed to click the menu, so zero the mouse-look delta
-                        # — otherwise moving toward a menu row swings the view.
-                        # (The maincamera zoom already suspends mouse-look once
-                        # an officer resolves; this also covers the case where
-                        # no officer resolves and the zoom stays at 0.)
-                        # Free-look is also suppressed during a cutscene: the
-                        # letterbox pins the view where the mission wants it.
-                        from engine.appc.top_window import TopWindow_GetTopWindow
-                        _tw = TopWindow_GetTopWindow()
-                        if _bridge_freelook_suppressed(
-                                crew_menu_open=crew_menu_panel.has_open_menu(),
-                                cutscene_active=_tw.IsCutsceneMode(),
-                                bridge_cutscene_pending=cutscene.has_pending_camera()):
-                            mouse_dx, mouse_dy = 0.0, 0.0
-                        # Resolve the single active engagement this frame, in
-                        # precedence order: AT_WATCH_ME/LOOK_AT target > open crew
-                        # menu > viewscreen hail. The winner supplies a world
-                        # look-at + FOV factor; MenuEventHandler reconciles the
-                        # maincamera zoom; advance() eases it on _player_dt so it
-                        # freezes under pause.
-                        _w = (watch_ctrl.resolve_target_world(r)
-                              if watch_ctrl is not None else None)
-                        _wc, _zoom_off = _active_zoom_officer(crew_menu_panel, r)
-                        _menu_zoom = _officer_zoom_factor(_zoom_off)
-                        if _menu_zoom == POSITION_ZOOM_SENTINEL:
-                            _menu_zoom = _BRIDGE_ZOOM_MIN
-                        _engaged, _look_at, _zoom_factor, _engaged_char = \
-                            _pick_bridge_engagement(
-                                watch_world=_w,
-                                watch_holds=(watch_ctrl is not None
-                                             and watch_ctrl.is_holding()),
-                                watch_char=(watch_ctrl.watched_character()
-                                            if watch_ctrl is not None else None),
-                                menu_world=_wc, menu_char=_zoom_off,
-                                menu_zoom=_menu_zoom,
-                                hail=_viewscreen_hail_engagement(controller))
-                        _drv = _engaged_char or _last_engaged_char[0]
-                        if _drv is not None:
-                            _drv.MenuEventHandler(_engaged, _look_at, _zoom_factor,
-                                                  now=_App.g_kUtopiaModule.GetGameTime())
-                        if _engaged_char is not None:
-                            _last_engaged_char[0] = _engaged_char
-                        if _BRIDGE_ZOOM_CAM is not None:
-                            _BRIDGE_ZOOM_CAM.advance(_player_dt)
-                        if _BRIDGE_ZOOM_CAM is not None and watch_ctrl is not None \
-                                and watch_ctrl.consume_snap():
-                            _BRIDGE_ZOOM_CAM.advance(1e9)   # AT_LOOK_AT_ME_NOW
-                        # SP4: tooltip owner = focused officer (open menu wins
-                        # over hover), then run the real SDK UpdateToolTip
-                        # handler on a throttle so its status rows populate.
-                        from engine.appc.characters import (
-                            CharacterClass_SetCurrentToolTipOwner)
-                        from engine.ui import tooltip_dispatch
-                        if tooltip_dispatch.tooltip_suppressed(
-                                cutscene_active=_tw.IsCutsceneMode(),
-                                bridge_cutscene_pending=cutscene.has_pending_camera()):
-                            # No tooltip box during a cutscene -- it would float
-                            # over the letterbox bars. Drop any owner and skip.
-                            CharacterClass_SetCurrentToolTipOwner(None)
-                        else:
-                            # pick() hands back the CHARACTER, and the open
-                            # menu resolves its owner off the menu itself, so
-                            # both work for a guest -- who has no station label
-                            # for resolve_character to match.
-                            _hover = None
-                            _aimed = bridge_officer_picking.pick(_h, r, bridge_camera)
-                            if _aimed is not None:
-                                _hover = _aimed["officer"]
-                            _menu_off = crew_menu_panel.open_officer()
-                            _owner = tooltip_dispatch.select_owner(hover=_hover,
-                                                                   open_menu=_menu_off)
-                            CharacterClass_SetCurrentToolTipOwner(_owner)
-                            tooltip_dispatch.run_update_tooltip(
-                                _owner, now=_App.g_kUtopiaModule.GetGameTime(),
-                                state=_tooltip_dispatch_state)
-                        bridge_camera.apply(mouse_dx, mouse_dy)
-                    # Bridge first-person camera uses separate (eye, target,
-                    # up) vectors from the exterior view, so it needs its own
-                    # perturb call. The camera_shake module is global state,
-                    # so the shake energy / phase is shared with the
-                    # exterior perturb above. While the Bridge Editor
-                    # editor has a fly pose, it takes over the bridge camera
-                    # unshaken -- you are aiming at shapes, not flying the
-                    # ship.
-                    b_eye, b_target, b_up, b_fov = _bridge_camera_pose(
-                        bridge_emitters, bridge_camera, camera_shake.perturb)
-                    r.set_bridge_camera(
-                        eye=b_eye, target=b_target, up=b_up,
-                        fov_y_rad=b_fov,
-                        near=_BridgeCamera.NEAR,
-                        far=_BridgeCamera.FAR,
-                    )
-            else:
-                eye = (0.0, 30.0, 200.0)
-                target = (0.0, 0.0, 0.0)
-                up_vec = (0.0, 1.0, 0.0)
+                else:
+                    eye = (0.0, 30.0, 200.0)
+                    target = (0.0, 0.0, 0.0)
+                    up_vec = (0.0, 1.0, 0.0)
 
             # --- The floating render origin (system-frames spec §5) ---
             # The exterior eye, in the VIEWED set's coordinates, set once per
@@ -13031,7 +13042,8 @@ def run(mission_name: Optional[str] = None,
             # above are built here for that reason. A frozen frame keeps the
             # last origin and pushes no new combat feeds (as before).
             if _ships_this_tick is not None:
-                _apply_render_origin(r, eye)
+                with frame_profiler.scope("prep.origin"):
+                    _apply_render_origin(r, eye)
                 _push_combat_render_data(
                     _ships_this_tick,
                     ship_instances=(session.ship_instances if session is not None else None),

@@ -2009,6 +2009,9 @@ void frame() {
         const scenegraph::Instance* player = nullptr;
         float player_radius_gu = 0.0f;
         float best_d2 = std::numeric_limits<float>::max();
+        // The focus search: compute_model_aabb walks every vertex of each
+        // nearer hull it meets, every frame (uncached).
+        renderer::frame_timer().push("shadow.fit");
         g_world.for_each_visible_in_pass(
             scenegraph::Pass::Space, [&](const scenegraph::Instance& inst) {
                 if (!inst.rim_eligible) return;
@@ -2023,6 +2026,7 @@ void frame() {
                 const float scale = glm::length(glm::vec3(inst.world[0]));
                 player_radius_gu = glm::length(box.half_extents) * scale;
             });
+        renderer::frame_timer().pop();
 
         if (player != nullptr) {
             renderer::ShadowFitParams fp;  // defaults
@@ -2129,14 +2133,17 @@ void frame() {
     }
 
     // ── Main HDR target ────────────────────────────────────────────────────
-    g_hdr_target->resize(fw, fh);
-    g_hdr_target->bind();   // sets viewport to fw x fh
-    if (viewer_mode) {
-        glClearColor(g_hologram_bg.r, g_hologram_bg.g, g_hologram_bg.b, 1.0f);
-    } else {
-        glClearColor(0.05f, 0.07f, 0.10f, 1.0f);
+    {
+        DAUNTLESS_FRAME_SCOPE("hdr.clear");
+        g_hdr_target->resize(fw, fh);
+        g_hdr_target->bind();   // sets viewport to fw x fh
+        if (viewer_mode) {
+            glClearColor(g_hologram_bg.r, g_hologram_bg.g, g_hologram_bg.b, 1.0f);
+        } else {
+            glClearColor(0.05f, 0.07f, 0.10f, 1.0f);
+        }
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     }
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     if (fh > 0) g_camera.aspect = static_cast<float>(fw) / static_cast<float>(fh);
 
     // Space scene goes to the main view only outside bridge view (in bridge
@@ -2224,6 +2231,7 @@ void frame() {
     if (viewer_mode && g_gizmo_pass && g_transform_gizmo.length > 0.0f)
         g_gizmo_pass->render(g_transform_gizmo, g_camera);
     if (g_subsystem_pin_pass && !g_subsystem_pins.empty()) {
+        DAUNTLESS_FRAME_SCOPE("pins");
         // Device-pixel ratio = framebuffer / logical window height, so pins
         // keep a constant apparent size on HiDPI/Retina displays.
         int fb_w = 0, fb_h = 0, win_w = 0, win_h = 0;
@@ -2233,6 +2241,7 @@ void frame() {
         g_subsystem_pin_pass->render(g_subsystem_pins, g_camera, *g_pipeline, dsf);
     }
     if (g_target_reticle_pass && g_target_reticle.visible) {
+        DAUNTLESS_FRAME_SCOPE("reticle");
         // Same device-pixel ratio the subsystem pins use, so the reticule
         // keeps a constant apparent size on HiDPI/Retina displays.
         int fb_w = 0, fb_h = 0, win_w = 0, win_h = 0;
@@ -2378,6 +2387,7 @@ void frame() {
     float lens_flare_strength = 0.0f;
     if (dauntless_hdr::enabled() && dauntless_hdr_lens_flare::enabled()
             && exterior && g_lens_flare_hdr_pass) {
+        DAUNTLESS_FRAME_SCOPE("lens_flare");
         lens_flare_tex = g_lens_flare_hdr_pass->render(
             bloom_tex, g_bloom_pass ? g_bloom_pass->coarsest_texture() : 0u,
             fw, fh);
