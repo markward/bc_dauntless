@@ -2005,28 +2005,15 @@ void frame() {
     // and only call set_active_shadow(..., false), which makes the opaque pass
     // (Task 6) a no-op — the production render path stays byte-identical.
     if (dauntless_shadows::enabled() && g_shadow_target) {
-        const glm::vec3 focus = g_camera.target;
-        const scenegraph::Instance* player = nullptr;
-        float player_radius_gu = 0.0f;
-        float best_d2 = std::numeric_limits<float>::max();
-        // The focus search: compute_model_aabb walks every vertex of each
-        // nearer hull it meets, every frame (uncached).
+        // The focus: the hull nearest the camera target, its radius from the
+        // per-model cache (an uncached compute_model_aabb here walked every
+        // vertex of each nearer hull, every frame: ~3 ms at 17 ships, Debug).
         renderer::frame_timer().push("shadow.fit");
-        g_world.for_each_visible_in_pass(
-            scenegraph::Pass::Space, [&](const scenegraph::Instance& inst) {
-                if (!inst.rim_eligible) return;
-                const assets::Model* m = resolve_model(inst.model_handle);
-                if (m == nullptr) return;
-                const glm::vec3 pos = glm::vec3(inst.world[3]);
-                const float d2 = glm::dot(pos - focus, pos - focus);
-                if (d2 >= best_d2) return;
-                best_d2 = d2;
-                player = &inst;
-                renderer::Aabb box = renderer::compute_model_aabb(*m);
-                const float scale = glm::length(glm::vec3(inst.world[0]));
-                player_radius_gu = glm::length(box.half_extents) * scale;
-            });
+        const renderer::ShadowFocus sf =
+            renderer::pick_shadow_focus(g_world, g_camera.target, lookup);
         renderer::frame_timer().pop();
+        const scenegraph::Instance* player = sf.instance;
+        const float player_radius_gu = sf.radius_gu;
 
         if (player != nullptr) {
             renderer::ShadowFitParams fp;  // defaults
