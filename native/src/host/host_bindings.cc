@@ -16,6 +16,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <audio/python_binding.h>
+#include "dauntless/torpedo_scan.h"
 #include "dauntless/transform_store.h"
 #include "platform/relaunch.h"
 
@@ -9022,4 +9023,48 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("transform_capacity", []() {
               return dauntless::transform_store().capacity();
           });
+
+    // ── Incoming-torpedo table ───────────────────────────────────────────────
+    // Backs App.AIScriptAssist_GetIncomingTorpIDsInSet. Kept in step with
+    // projectiles._active by engine/appc/torpedo_scan.py; see torpedo_scan.h.
+    m.def("torpedo_scan_add",
+          [](std::int64_t id, std::uint32_t xi, std::uint32_t xg, double vx,
+             double vy, double vz, bool has_source, std::int64_t source,
+             std::int64_t group) {
+              dauntless::torpedo_scan().add(id, xi, xg, vx, vy, vz,
+                                            has_source, source, group);
+          });
+    m.def("torpedo_scan_remove", [](std::int64_t id) {
+              return dauntless::torpedo_scan().remove(id);
+          });
+    m.def("torpedo_scan_set_velocity",
+          [](std::int64_t id, double vx, double vy, double vz) {
+              dauntless::torpedo_scan().set_velocity(id, vx, vy, vz);
+          });
+    m.def("torpedo_scan_set_source",
+          [](std::int64_t id, bool has_source, std::int64_t source) {
+              dauntless::torpedo_scan().set_source(id, has_source, source);
+          });
+    m.def("torpedo_scan_set_group", [](std::int64_t id, std::int64_t group) {
+              dauntless::torpedo_scan().set_group(id, group);
+          });
+    m.def("torpedo_scan_clear", []() { dauntless::torpedo_scan().clear(); });
+    m.def("torpedo_scan_size", []() { return dauntless::torpedo_scan().size(); });
+    m.def("torpedo_scan_incoming",
+          [](const std::array<double, 3>& obs,
+             const std::array<double, 3>& obs_vel, double threshold,
+             bool match_source, std::int64_t firing_id,
+             const std::vector<std::tuple<std::int64_t, double, double, double>>&
+                 offsets) {
+              std::vector<dauntless::TorpedoScan::GroupOffset> offs;
+              offs.reserve(offsets.size());
+              for (const auto& [g, x, y, z] : offsets) offs.push_back({g, {x, y, z}});
+              return dauntless::torpedo_scan().incoming(
+                  obs.data(), obs_vel.data(), threshold, match_source,
+                  firing_id, offs);
+          },
+          py::arg("obs"), py::arg("obs_vel"), py::arg("threshold"),
+          py::arg("match_source"), py::arg("firing_id"), py::arg("offsets"),
+          "Ids of the torpedoes incoming on the observer, in table order. "
+          "offsets: (group, dx, dy, dz) per set visible from the observer's.");
 }
