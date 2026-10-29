@@ -176,15 +176,32 @@ inline glm::vec3 rect_nearest(glm::vec3 p, glm::vec3 c, glm::vec3 u, glm::vec3 v
     return c + u * s + v * t;
 }
 
+// Below this |dot(r, n)| a reflection ray counts as grazing the light's plane.
+inline constexpr float kAreaRayGraze = 0.2f;
+
+// How far along the reflection ray p + t r to look for the light (n = its
+// emitting normal): to the plane while the ray heads at it more steeply than
+// kAreaRayGraze, then ramping linearly to 0 (the point under p) as the ray
+// turns through the plane to kAreaRayGraze away. Stepping straight from the
+// plane hit (the far edge, once clamped) to the point under p was a hard line
+// across every wall under a ceiling light, at the camera's eye height
+// (2026-10-28). Only the point's in-plane position matters to its callers.
+inline glm::vec3 rect_ray_point(glm::vec3 p, glm::vec3 r, glm::vec3 c, glm::vec3 n) {
+    const float h = std::max(glm::dot(p - c, n), 0.0f);
+    const float denom = glm::dot(r, n);
+    const float g = denom <= -kAreaRayGraze
+                        ? 1.0f / -denom
+                        : std::clamp((kAreaRayGraze - denom) / (2.0f * kAreaRayGraze), 0.0f, 1.0f) /
+                              kAreaRayGraze;
+    return p + r * (h * g);
+}
+
 // Where the ray p + t r meets the rectangle's plane, clamped into it; the
-// nearest point when the ray runs away from (or along) the light.
+// nearest point when the ray runs away from the light, blended between the
+// two while it grazes the plane (rect_ray_point).
 inline glm::vec3 rect_representative(glm::vec3 p, glm::vec3 r, glm::vec3 c, glm::vec3 u, glm::vec3 v) {
     const glm::vec3 n = glm::normalize(glm::cross(u, v));
-    const float denom = glm::dot(r, n);
-    if (denom > -1e-6f) return rect_nearest(p, c, u, v);
-    const float t = glm::dot(c - p, n) / denom;
-    if (t <= 0.0f) return rect_nearest(p, c, u, v);
-    return rect_nearest(p + r * t, c, u, v);
+    return rect_nearest(rect_ray_point(p, r, c, n), c, u, v);
 }
 
 struct AreaTerms { glm::vec3 diffuse{0.0f}; glm::vec3 spec{0.0f}; };
@@ -200,9 +217,7 @@ struct AreaTerms { glm::vec3 diffuse{0.0f}; glm::vec3 spec{0.0f}; };
 inline float area_join_weight(glm::vec3 p, glm::vec3 r, glm::vec3 c, glm::vec3 u, glm::vec3 nl,
                               int joins, float margin) {
     if (joins == 0) return 1.0f;
-    const float denom = glm::dot(r, nl);
-    float t = denom < -1e-6f ? glm::dot(c - p, nl) / denom : -1.0f;
-    const glm::vec3 hit = t > 0.0f ? p + r * t : p - nl * glm::dot(p - c, nl);
+    const glm::vec3 hit = rect_ray_point(p, r, c, nl);
     const float half = glm::length(u);
     const float along = glm::dot(hit - c, u) / std::max(half, 1e-6f);
     const float m = std::max(margin, 1e-3f);
