@@ -60,7 +60,10 @@ def subsystem_world_position(sub, ship=None):
                     ship_pos.z + offset.z)
 
 
-def target_offset_world(target, offset):
+_RESOLVE = object()
+
+
+def target_offset_world(target, offset, mount_sub=_RESOLVE):
     """World point for a target-local aim `offset` on `target` -- 0x005852A0:
     target world pos + R·(offset·scale), with the offset first carried by the
     articulated part it sits on.
@@ -77,6 +80,10 @@ def target_offset_world(target, offset):
     (`weapon_subsystems._resolve_torpedo_aim_point`), in-flight steering
     (`projectiles._steer_point`) and Manual Aim phasers
     (`host_loop._phaser_aim_point`) all call it.
+
+    `mount_sub`: the caller's own `authored_mount_subsystem(target, offset)`
+    answer, when it has one -- in-flight steering asks every tick for an
+    offset that never changes, and the attribution scans every subsystem.
     """
     from engine.appc.articulation import part_transform_point
     from engine.appc import physical_parents
@@ -87,7 +94,8 @@ def target_offset_world(target, offset):
     # so the shot goes where the mount is drawn. Anything else (a Manual Aim
     # pick, pulled back to rest by the box rule) keeps the box rule, so the
     # round trip is exact and no per-tick pick scans the model.
-    mount_sub = authored_mount_subsystem(target, point)
+    if mount_sub is _RESOLVE:
+        mount_sub = authored_mount_subsystem(target, point)
     px, py, pz = part_transform_point(
         target, point, authored=mount_sub is not None,
         prop=(physical_parents.property_of(mount_sub)

@@ -107,3 +107,41 @@ def test_the_offset_is_scaled_by_the_targets_scale():
     t = _torpedo_flying_at(target, offset=TGPoint3(0.0, 0.0, 10.0))
     _settle(t)
     assert _aim_elevation_deg(t) == pytest.approx(11.31, abs=0.5)   # 20 GU up
+
+
+def _count_mount_scans(monkeypatch):
+    from engine.appc import part_severance
+    calls = []
+    real = part_severance._mounted_subsystems
+    monkeypatch.setattr(part_severance, "_mounted_subsystems",
+                        lambda ship: calls.append(ship) or real(ship))
+    return calls
+
+
+def test_the_locked_mount_is_attributed_once_per_shot(monkeypatch):
+    """Which subsystem an offset is the mount of was re-derived by scanning
+    every subsystem of the target on every guided tick of every torpedo --
+    the biggest piece of torpedo flight at 64 ships. A shot's offset and
+    target do not change in flight, so it is resolved once."""
+    calls = _count_mount_scans(monkeypatch)
+    target = _FakeTarget()
+    t = _torpedo_flying_at(target, offset=TGPoint3(0.0, 0.0, 10.0))
+    _settle(t)
+    assert len(calls) == 1
+    assert _aim_elevation_deg(t) == pytest.approx(5.71, abs=0.5)
+
+
+def test_a_new_offset_or_target_is_attributed_afresh(monkeypatch):
+    calls = _count_mount_scans(monkeypatch)
+    target = _FakeTarget()
+    t = _torpedo_flying_at(target, offset=TGPoint3(0.0, 0.0, 10.0))
+    _settle(t, ticks=3)
+    t.SetTargetOffset(TGPoint3(0.0, 0.0, -10.0))
+    _settle(t)
+    assert len(calls) == 2
+    assert _aim_elevation_deg(t) == pytest.approx(-5.71, abs=0.5)
+    other = _FakeTarget(z=20.0)
+    share_one_set(t, other)
+    t._target_ship = other
+    _settle(t, ticks=3)
+    assert len(calls) == 3

@@ -65,7 +65,8 @@ class Torpedo(ObjectClass):
         "_target_ship", "_target_offset",
         "_guidance_lifetime", "_guidance_initial", "_max_angular_accel",
         "_last_seen_target_pos", "_last_target_vel",
-        "_src", "_cset", "_scan_live", "_rad", "_id", "_bubble_entry",
+        "_src", "_cset", "_scan_live", "_rad", "_mount_key",
+        "_id", "_bubble_entry",
         "_core_texture", "_core_color", "_core_size_a", "_core_size_b",
         "_glow_texture", "_glow_color", "_glow_size_a", "_glow_size_b", "_glow_size_c",
         "_flares_texture", "_flares_color", "_num_flares",
@@ -96,6 +97,9 @@ class Torpedo(ObjectClass):
         # 9ce63166, after a live report that torpedoes no longer homed on the
         # locked subsystem.
         self._target_offset = None
+        # (target, offset x, y, z, attributed mount subsystem): _steer_point's
+        # once-per-shot answer to "whose mount is the offset?".
+        self._mount_key = None
         self._guidance_lifetime = 4.0
         self._guidance_initial = 4.0
         self._max_angular_accel = 0.125
@@ -969,13 +973,25 @@ def _steer_point(torpedo, target, off=None):
     `off` is frames.offset_between(torpedo set, target set): the point is
     returned in the TORPEDO's set-local coordinates. None/zero (same set)
     leaves today's arithmetic untouched.
+
+    The mount the offset belongs to (`authored_mount_subsystem`, a scan of
+    every subsystem of the target) is attributed once per (target, offset)
+    and kept on the torpedo: re-scanning it per guided tick per torpedo was
+    the largest single cost of torpedo flight at 64 ships.
     """
     offset = getattr(torpedo, "_target_offset", None)
     if not isinstance(offset, TGPoint3):
         pos = target.GetWorldLocation()
         return _shifted(TGPoint3(pos.x, pos.y, pos.z), off)
     from engine.appc.subsystems import target_offset_world
-    return _shifted(target_offset_world(target, offset), off)
+    key = getattr(torpedo, "_mount_key", None)
+    if (key is None or key[0] is not target or key[1] != offset.x
+            or key[2] != offset.y or key[3] != offset.z):
+        from engine.appc.part_severance import authored_mount_subsystem
+        key = torpedo._mount_key = (
+            target, offset.x, offset.y, offset.z,
+            authored_mount_subsystem(target, (offset.x, offset.y, offset.z)))
+    return _shifted(target_offset_world(target, offset, key[4]), off)
 
 
 def _guide(torpedo, dt: float) -> None:
