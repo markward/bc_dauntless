@@ -262,6 +262,16 @@ renderer::BridgeAoTuning main_only() {
     return t;
 }
 
+// The main kernel plus the detail kernel these tests were measured with
+// (radius 3, strength 1.5), before the ceiling; independent of the defaults.
+renderer::BridgeAoTuning with_detail() {
+    renderer::BridgeAoTuning t = main_only();
+    t.detail_samples = 8;
+    t.detail_radius = 3.0f;
+    t.detail_strength = 1.5f;
+    return t;
+}
+
 // Each point against the same render with AO strength 0, so view-dependent
 // shading across the floor cancels out.
 renderer::BridgeAoTuning no_ao() {
@@ -283,8 +293,7 @@ TEST_F(BridgeAoFrame, DefaultKernelIsBlindToAShallowStep) {
 // Measured 0.903 of no-AO at 1.3 units from the riser (0.73 at 0.4, 0.97 at 2).
 TEST_F(BridgeAoFrame, DetailKernelDarkensTheFootOfAShallowStep) {
     const auto base = render_step(no_ao());
-    renderer::BridgeAoTuning t = main_only();
-    t.detail_samples = 8;
+    renderer::BridgeAoTuning t = with_detail();
     const auto img = render_step(t);
     EXPECT_LT(img.near_corner, base.near_corner * 0.95);
     EXPECT_GT(img.open_floor, base.open_floor * 0.98);   // clear of the step: untouched
@@ -302,8 +311,7 @@ void light_the_step(renderer::BridgePass& pass, float radiance) {
 // Measured 0.311 -> 0.298 at the foot, open floor unchanged.
 TEST_F(BridgeAoFrame, DetailDirectDarkensASpotLitStepFoot) {
     light_the_step(*pass, 400.0f);
-    renderer::BridgeAoTuning t = main_only();
-    t.detail_samples = 8;
+    renderer::BridgeAoTuning t = with_detail();
     const auto received_only = render_step(t, 0.05f);
     t.detail_direct = 1.0f;
     const auto with_direct = render_step(t, 0.05f);
@@ -317,8 +325,7 @@ TEST_F(BridgeAoFrame, DetailDirectDarkensASpotLitStepFoot) {
 // Measured at the foot: 0.822 none, 0.813 detail_direct 1, 0.752 detail_final 1.
 TEST_F(BridgeAoFrame, DetailFinalShowsOnABrightStepFoot) {
     light_the_step(*pass, 4000.0f);
-    renderer::BridgeAoTuning t = main_only();
-    t.detail_samples = 8;
+    renderer::BridgeAoTuning t = with_detail();
     const auto none = render_step(t);
     t.detail_direct = 1.0f;
     const auto before = render_step(t);
@@ -367,6 +374,8 @@ TEST(BridgeAoTuning, DefaultsAreMarksLivePick) {
     EXPECT_EQ(t.main_direct, 0.0f);
     EXPECT_EQ(t.main_final, 0.0f);
     EXPECT_EQ(t.detail_samples, 8);
+    EXPECT_EQ(t.detail_radius, 2.0f);
+    EXPECT_EQ(t.detail_strength, 1.0f);
     EXPECT_EQ(t.detail_direct, 0.0f);
     EXPECT_EQ(t.detail_final, 1.0f);
 }

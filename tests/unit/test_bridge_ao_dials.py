@@ -11,7 +11,7 @@ def test_defaults_match_the_native_defaults():
     assert (d["radius"], d["strength"], d["bias"]) == (30.0, 1.8, 0.5)
     assert (d["bias_dist"], d["bias_facing"], d["min_len"]) == (0.01, 0.0, 0.1)
     assert (d["main_direct"], d["main_final"]) == (0.0, 0.0)
-    assert d["detail_samples"] == 8
+    assert (d["detail_samples"], d["detail_radius"], d["detail_strength"]) == (8, 2.0, 1.0)
     assert (d["detail_direct"], d["detail_final"]) == (0.0, 1.0)
 
 

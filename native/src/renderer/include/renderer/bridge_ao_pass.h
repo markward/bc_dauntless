@@ -24,8 +24,8 @@ struct BridgeAoSettings {
 /// The AO kernel's look, live-tunable from the developer dials
 /// (engine/bridge_ao_dials.py). The defaults are Mark's live pick
 /// (2026-10-30): kBridgeLighting's radius/strength/bias, a distance-only bias,
-/// and an 8-sample detail kernel applied after the diffuse ceiling (the
-/// DBridge panel frames).
+/// and an 8-sample detail kernel (radius 2, strength 1) applied after the
+/// diffuse ceiling (the DBridge panel frames).
 struct BridgeAoTuning {
     float radius   = kBridgeLighting.ao_radius;     // view-space units
     float strength = kBridgeLighting.ao_strength;
@@ -46,8 +46,8 @@ struct BridgeAoTuning {
     // DBridge panel frame is 1.5 units deep, under the main kernel's lowest
     // sample). 0 samples = off. Its bias is always facing-scaled.
     int   detail_samples  = 8;
-    float detail_radius   = 3.0f;
-    float detail_strength = 1.5f;
+    float detail_radius   = 2.0f;
+    float detail_strength = 1.0f;
     float detail_bias     = 0.1f;
     /// 0..1: how much of the detail AO also darkens the spot and area-light
     /// diffuse (bridge.frag). 0 = ambient only.

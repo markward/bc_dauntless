@@ -32,8 +32,8 @@ DEFAULTS: dict = {
     "main_direct": 0.0,       # 0..1 of the main AO on spot/area diffuse
     "main_final": 0.0,        # 0..1 of the main AO after the diffuse ceiling
     "detail_samples": 8,      # 0 = detail kernel off
-    "detail_radius": 3.0,
-    "detail_strength": 1.5,
+    "detail_radius": 2.0,
+    "detail_strength": 1.0,
     "detail_bias": 0.1,
     "detail_direct": 0.0,     # 0..1 of the detail AO on spot/area diffuse
     "detail_final": 1.0,      # 0..1 of the detail AO after the diffuse ceiling
