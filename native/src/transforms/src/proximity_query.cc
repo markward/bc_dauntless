@@ -1,8 +1,10 @@
-// TransformStore::within_radius and ::proximity_report -- see transform_store.h.
+// TransformStore::within_radius, ::proximity_report and sweep_candidates --
+// see transform_store.h.
 //
 // Their own translation unit so they can be compiled with -ffp-contract=off
-// (see CMakeLists.txt): ProximityManager.GetNearObjects and
-// ProximityCheck._evaluate_one make this compare in Python, and a fused
+// (see CMakeLists.txt): ProximityManager.GetNearObjects,
+// ProximityCheck._evaluate_one and projectiles.update_all make these
+// compares in Python, and a fused
 // multiply-add would move objects sitting exactly on the radius in or out of
 // the answer.
 #include "dauntless/transform_store.h"
@@ -52,6 +54,30 @@ void TransformStore::proximity_report(const std::uint32_t* anchors,
         const double dz = o.pos[2] - a.pos[2];
         const bool inside = dx * dx + dy * dy + dz * dz <= r2[k];
         if (inside == (w == 0)) out.push_back(static_cast<std::uint32_t>(k));
+    }
+}
+
+void sweep_candidates(const double* starts, const double* seg_lens,
+                      const std::int32_t* skips, std::size_t n_torps,
+                      const double* centres, const double* bounds,
+                      std::size_t n_ships, std::vector<std::uint32_t>& out) {
+    for (std::size_t t = 0; t < n_torps; ++t) {
+        const double* p = starts + 3 * t;
+        const double len = seg_lens[t];
+        const std::int32_t skip = skips[t];
+        for (std::size_t s = 0; s < n_ships; ++s) {
+            if (static_cast<std::int32_t>(s) == skip) continue;
+            const double* c = centres + 3 * s;
+            const double dx = c[0] - p[0];
+            const double dy = c[1] - p[1];
+            const double dz = c[2] - p[2];
+            const double reach = bounds[s] + len;
+            // Written as update_all's rejection, negated: a NaN distance is
+            // not "greater", so it stays a candidate there and here.
+            if (dx * dx + dy * dy + dz * dz > reach * reach) continue;
+            out.push_back(static_cast<std::uint32_t>(t));
+            out.push_back(static_cast<std::uint32_t>(s));
+        }
     }
 }
 

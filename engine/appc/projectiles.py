@@ -708,6 +708,86 @@ def _walk_incoming_ids(observer, danger_threshold, firing_object_id,
                            match_source)]
 
 
+def _broadphase(moving, ship_cache, offsets) -> list:
+    """Per entry of `moving` (update_all's step 1), the ship_cache indices
+    its tick segment could hit, ascending -- the only pairs the narrow tests
+    see. `offsets` is update_all's (ship set, torpedo set) -> offset memo,
+    filled here for every pair the narrow tests will read.
+
+    Both narrow tests (shield bubble, hull sphere) lie inside
+    sphere(ship_pos, bubble_bound_radius), and the whole segment lies within
+    seg_len of its start, so a pair whose centres are further apart than
+    bound + seg_len cannot hit. Conservative by construction: only pairs that
+    would have missed are dropped, so the hits are exactly those of testing
+    every pair.
+
+    Testing every torpedo against every ship here in Python was ~45% of
+    torpedo flight at 64 ships (~100 x 64 pairs a tick, nearly all far
+    apart), so ships whose offset to the torpedo's set is zero -- the same
+    set, nearly every pair -- go to TransformStore.sweep_candidates in one
+    call per torpedo set, with the same arithmetic. A ship in another region
+    of the system (non-zero offset) is tested here, on the shifted start, as
+    it always was; a ship in another frame (offset None) never interacts.
+    """
+    from array import array
+    from engine.appc.transform_store import get_store
+    from engine.systems import frames
+
+    out = [[] for _ in moving]
+    by_set: dict = {}
+    for i, m in enumerate(moving):
+        by_set.setdefault(m[5], []).append(i)
+    for torp_set, members in by_set.items():
+        same, other = [], []
+        for j, entry in enumerate(ship_cache):
+            key = (entry[5], torp_set)
+            if key in offsets:
+                off = offsets[key]
+            else:
+                off = offsets[key] = frames.offset_between(entry[5], torp_set)
+            if off is None:
+                continue
+            if off == _ZERO_OFFSET:
+                same.append(j)
+            else:
+                other.append((j, off))
+        if same:
+            at = {id(ship_cache[j][0]): k for k, j in enumerate(same)}
+            starts, lens, skips = array("d"), array("d"), array("i")
+            for i in members:
+                t, prev_pos = moving[i][0], moving[i][1]
+                starts.extend((prev_pos.x, prev_pos.y, prev_pos.z))
+                lens.append(moving[i][3])
+                skips.append(at.get(id(t._source_ship), -1))
+            centres, bounds = array("d"), array("d")
+            for j in same:
+                entry = ship_cache[j]
+                centres.extend((entry[1], entry[2], entry[3]))
+                bounds.append(entry[4])
+            pairs = get_store().sweep_candidates(starts, lens, skips,
+                                                 centres, bounds)
+            for k in range(0, len(pairs), 2):
+                out[members[pairs[k]]].append(same[pairs[k + 1]])
+        for j, off in other:
+            ship, sx, sy, sz, bound, _ship_set = ship_cache[j]
+            for i in members:
+                t, prev_pos, _cur, seg_len = moving[i][:4]
+                if ship is t._source_ship:
+                    continue
+                seg_prev = _shifted(prev_pos, off)
+                ddx = sx - seg_prev.x
+                ddy = sy - seg_prev.y
+                ddz = sz - seg_prev.z
+                reach = bound + seg_len
+                if (ddx * ddx + ddy * ddy + ddz * ddz) > reach * reach:
+                    continue
+                out[i].append(j)
+        if other:
+            for i in members:
+                out[i].sort()
+    return out
+
+
 def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
     """Advance every active torpedo by dt.  Returns list of
     (torpedo, hit_ship, hit_point, hit_normal) tuples that connected this tick.
@@ -768,21 +848,24 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
                            frames.containing_set(ship)))
     offsets: dict = {}
 
+    # 1. Steer and advance every torpedo. Nothing here reads another
+    #    torpedo, and hits are only RETURNED (applied by the caller), so
+    #    moving them all before any collides is the per-torpedo order's result.
+    moving = []
     for t in list(_active):
-        # 1. Steer if homing within guidance window.
+        # Steer if homing within guidance window.
         if t._target_ship is not None and t._age < t._guidance_lifetime:
             _guide(t, dt)
-        # 2. Advance position + age.
+        # Advance position + age.
         #
         # Position is read from and written to the TransformStore exactly
         # ONCE each per torpedo per tick (prev_pos here, the SetTranslateXYZ
-        # at the bottom of this iteration) -- `cur_pos` is the local,
-        # in-progress authoritative position for the rest of this iteration,
-        # so the store is never round-tripped mid-collision-check the way a
-        # naive per-access conversion of the old `t._position` reads/writes
-        # would have done. Nothing else can observe this torpedo's position
-        # mid-tick (single-threaded, and this torpedo isn't touched again
-        # until its own next iteration), so deferring the write is safe.
+        # at the end of step 3) -- `cur_pos` is the local, in-progress
+        # authoritative position until then, so the store is never
+        # round-tripped mid-collision-check the way a naive per-access
+        # conversion of the old `t._position` reads/writes would have done.
+        # Nothing else observes a torpedo's position mid-call (single-threaded,
+        # and no step reads another torpedo), so deferring the write is safe.
         prev_pos = t.GetTranslate()
         cur_pos = prev_pos + t._velocity * dt
         t._age += dt
@@ -790,7 +873,6 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
             t.SetTranslateXYZ(cur_pos.x, cur_pos.y, cur_pos.z)
             expired.append(t)
             continue
-        # 3. Collide.
         # The segment, its length and the aim direction depend only on the
         # TORPEDO, so they are computed once here rather than once per ship.
         # They used to sit inside the ship loop, which rebuilt three vectors
@@ -804,45 +886,26 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
         aim_unit = (TGPoint3(seg.x / seg_len, seg.y / seg_len, seg.z / seg_len)
                     if seg_len > 1e-9 else None)
 
-        source = t._source_ship
         # The torpedo's frame is its OWN set (joined at launch), never its
         # source's current one -- the shooter may have warped away since.
-        torp_set = frames.containing_set(t)
-        for ship, sx, sy, sz, bound, ship_set in ship_cache:
+        moving.append((t, prev_pos, cur_pos, seg_len, aim_unit,
+                       frames.containing_set(t)))
+
+    # 2. Broadphase: the ship_cache indices each torpedo could hit, in order.
+    candidates = _broadphase(moving, ship_cache, offsets)
+
+    # 3. Collide: the narrow tests on those ships only, first hit wins.
+    for (t, prev_pos, cur_pos, seg_len, aim_unit, torp_set), near in zip(
+            moving, candidates):
+        source = t._source_ship
+        for j in near:
+            ship, sx, sy, sz, bound, ship_set = ship_cache[j]
             if ship is source:
-                continue
-            # Different frames never interact, and a torpedo or ship in no set
-            # interacts with nothing (offset None). Same set -> zero offset ->
-            # the segment points below ARE prev_pos/cur_pos, byte-identical.
-            key = (ship_set, torp_set)
-            if key in offsets:
-                off = offsets[key]
-            else:
-                off = offsets[key] = frames.offset_between(ship_set, torp_set)
-            if off is None:
                 continue
             # The segment in the SHIP's set-local coordinates. Everything the
             # narrow tests and the hit consumers see is in the ship's frame.
+            off = offsets[(ship_set, torp_set)]
             seg_prev = _shifted(prev_pos, off)
-
-            # Broadphase. Both narrow tests below are expensive -- the bubble
-            # test alone fetches the ship's rotation matrix and does three dot
-            # products to reach the body frame -- and BOTH used to run on every
-            # pair with no distance rejection at all, which is what made this
-            # loop the dominant cost of a fight.
-            #
-            # The whole segment lies within seg_len of prev_pos, and both tests
-            # are contained in sphere(ship_pos, bubble_bound_radius). So if the
-            # centres are further apart than the sum, neither test can fire.
-            # Conservative by construction: it rejects only pairs that would
-            # have missed, so hit behaviour is unchanged. Pure arithmetic on
-            # values hoisted above -- no attribute or subsystem access.
-            ddx = sx - seg_prev.x
-            ddy = sy - seg_prev.y
-            ddz = sz - seg_prev.z
-            reach = bound + seg_len
-            if (ddx * ddx + ddy * ddy + ddz * ddz) > reach * reach:
-                continue
             seg_cur = _shifted(cur_pos, off)
 
             # The SHIELD BUBBLE is tested first, exactly as BC's projectile

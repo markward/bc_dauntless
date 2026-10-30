@@ -170,6 +170,35 @@ class PythonTransformStore:
                 out.append(k)
         return out
 
+    def sweep_candidates(self, starts, seg_lens, skips, centres, bounds) -> list:
+        """The (torpedo, ship) pairs close enough for projectiles.update_all's
+        narrow hit tests, flat [t, s, ...] ordered by torpedo then ship.
+
+        Torpedo t's tick segment starts at starts[3t:3t+3] and is
+        seg_lens[t] long; ship s is a sphere of radius bounds[s] at
+        centres[3s:3s+3]. A pair is dropped only when `dx*dx + dy*dy + dz*dz
+        > reach*reach` (d = centre - start, reach = bound + seg_len) -- so a
+        NaN stays a candidate. skips[t] is the ship index t never meets (its
+        shooter), or -1. Pure arithmetic; touches no slot.
+        """
+        out = []
+        for t in range(len(seg_lens)):
+            px, py, pz = starts[3 * t], starts[3 * t + 1], starts[3 * t + 2]
+            n = seg_lens[t]
+            skip = skips[t]
+            for s in range(len(bounds)):
+                if s == skip:
+                    continue
+                dx = centres[3 * s] - px
+                dy = centres[3 * s + 1] - py
+                dz = centres[3 * s + 2] - pz
+                reach = bounds[s] + n
+                if (dx * dx + dy * dy + dz * dz) > reach * reach:
+                    continue
+                out.append(t)
+                out.append(s)
+        return out
+
     # ── Internal ──────────────────────────────────────────────────────────────
 
     def _check(self, index: int, generation: int) -> None:
@@ -270,6 +299,12 @@ class NativeTransformStore:
         as they are (array("I"), array("I"), array("d"), bytearray)."""
         return self._h.transform_proximity_report(anchors, objects, r2, want,
                                                   start)
+
+    def sweep_candidates(self, starts, seg_lens, skips, centres, bounds) -> list:
+        """See PythonTransformStore.sweep_candidates. Buffers cross as they
+        are (array("d") x4 and array("i"))."""
+        return self._h.transform_sweep_candidates(starts, seg_lens, skips,
+                                                  centres, bounds)
 
 
 _STORE = None

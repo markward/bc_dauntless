@@ -9071,6 +9071,44 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("anchors"), py::arg("objects"), py::arg("r2"),
           py::arg("want"), py::arg("start"));
 
+    // Torpedo flight's broadphase (engine/appc/projectiles.py update_all):
+    // every torpedo against every ship in one call, so Python only meets the
+    // few pairs close enough for its narrow hit tests. Flat [t, s, ...].
+    m.def("transform_sweep_candidates",
+          [](py::buffer starts, py::buffer seg_lens, py::buffer skips,
+             py::buffer centres, py::buffer bounds) {
+              const py::buffer_info p = starts.request();
+              const py::buffer_info l = seg_lens.request();
+              const py::buffer_info k = skips.request();
+              const py::buffer_info c = centres.request();
+              const py::buffer_info b = bounds.request();
+              const std::size_t nt = static_cast<std::size_t>(l.size);
+              const std::size_t ns = static_cast<std::size_t>(b.size);
+              if (p.itemsize != sizeof(double) || l.itemsize != sizeof(double) ||
+                  c.itemsize != sizeof(double) || b.itemsize != sizeof(double) ||
+                  k.itemsize != sizeof(std::int32_t) ||
+                  static_cast<std::size_t>(p.size) != 3 * nt ||
+                  static_cast<std::size_t>(k.size) != nt ||
+                  static_cast<std::size_t>(c.size) != 3 * ns)
+                  throw py::value_error(
+                      "sweep: three double start coordinates, one double "
+                      "length and one int32 skip per torpedo; three double "
+                      "centre coordinates and one double bound per ship");
+              std::vector<std::uint32_t> out;
+              dauntless::sweep_candidates(
+                  static_cast<const double*>(p.ptr),
+                  static_cast<const double*>(l.ptr),
+                  static_cast<const std::int32_t*>(k.ptr), nt,
+                  static_cast<const double*>(c.ptr),
+                  static_cast<const double*>(b.ptr), ns, out);
+              py::list res(out.size());
+              for (std::size_t i = 0; i < out.size(); ++i)
+                  res[i] = py::int_(out[i]);
+              return res;
+          },
+          py::arg("starts"), py::arg("seg_lens"), py::arg("skips"),
+          py::arg("centres"), py::arg("bounds"));
+
     m.def("transform_live_count", []() {
               return dauntless::transform_store().live_count();
           });
