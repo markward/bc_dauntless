@@ -416,6 +416,36 @@ compares bit for bit.
 Goal 2 ("once per interval") is not met literally. It cannot be met exactly
 while batteries drain. Meeting it needs Mark's ruling on closed forms (§9).
 
+**Measured (phase 2, 2026-10-30).** 64-ship headless capture
+`~/Documents/dauntless-perf/passive2-cs64-bridge-20261030-2032.log`, median of
+reports 3-11, per game tick:
+
+| Capture | `gl.subsystems` | `sim.weapons` | `r.frame` | Python loop / frame |
+|---|---|---|---|---|
+| Before phase 1 (`mounts-…-1153`) | 0.876 ms | 0.616 ms | 16.87 ms | 115.8 ms |
+| After phase 1 (`passive1-…-1629`) | 0.965 ms | 0.454 ms | 18.26 ms | 117.2 ms |
+| After phase 2 (`passive2-…-2032`) | 0.648 ms | 0.438 ms | 17.06 ms | 110.3 ms |
+
+`r.frame` is untouched by this work, so it tracks run-wide drift:
+
+- The phase 1 run was about 7-8% slow across the board.
+- This run matches the pre-phase-1 run, so the fair comparison for
+  `gl.subsystems` is 0.876 → 0.648 ms, **down 26%**. Against phase 1's own
+  run it is down 33%.
+
+The power plant was about two thirds of `gl.subsystems` (2026-10-29
+profile), so that saving is roughly 40% of the plant's cost.
+
+That is less than the "roughly half" of `gl.subsystems` the plan estimated.
+The 2026-10-29 profile shares predate today's other changes, so the plant's
+share of `gl.subsystems` was not re-profiled. Inferred, not measured: the
+remaining plant cost is the per-tick `_draw` calls, the interval boundary and
+the per-ship walk.
+
+The Python loop per frame fell from ~116-117 ms to ~110 ms (this capture),
+about 5%. In the 16-ship scene audit run over 600 frames, 61,149 plant-ticks ran
+the draw program against 34 full pumps, with no thaws.
+
 ## 9. Left for later / decisions not taken here
 
 - **Closed-form ramps** (a charging bank or reloading tube described as a
