@@ -25,6 +25,16 @@ The two are kept apart on purpose.
    window size. Read the scene line before trusting any number
    (`frame-profiler.md`, "Combat load").
 
+> **Note 2026-10-30 (counter-note, not a signal): `DAUNTLESS_PASSIVE_STATE=0`
+> is not the pre-phase-2 baseline.** Passive-state phase 2 made the seven
+> watched `PoweredSubsystem` fields `FrozenField` descriptors, so every write
+> of them is a Python call even with the switch off. The off path is
+> therefore slightly slower than the code before phase 2. A capture taken with
+> the switch off compares against other switch-off captures, not against
+> captures from before `perf/passive-power`. For a true before/after, use a
+> capture from a build that predates it (e.g. `passive1-cs64-bridge-*`).
+> (Reasoning from review of Task 1; no capture measures the size of the gap.)
+
 ---
 
 ## Baseline scenarios
