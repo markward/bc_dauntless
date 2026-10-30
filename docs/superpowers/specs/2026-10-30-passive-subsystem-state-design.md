@@ -371,6 +371,51 @@ in quiet scenes (parked fleets, stations, idle escorts) -- inferred, not
 measured: no parked-fleet capture exists yet, and this capture does not
 measure it. Phase 2 (power) remains the larger per-tick target.
 
+**Phase 2 as planned (2026-10-30, my call while planning).** §6.4's
+deferral-and-replay and §6.5's tick queue are replaced by a **draw program**.
+Plan: `docs/superpowers/plans/2026-10-30-passive-subsystem-state-phase2.md`.
+
+Why §6.4 as written would save almost nothing:
+
+- Every interval boundary reads the exact main battery, for the top-up and
+  for the conduit seeding.
+- So every boundary would replay the whole interval's draws. That is the same
+  `_draw` calls as the per-tick model, made later.
+- Skipping the replay would need the battery's end-of-interval value without
+  computing it. Only a closed form can give that, and it is not bit-exact
+  (§3, §9).
+
+A probe of `combat_stress` (16 ships, 3,600 ticks, headless, 2026-10-30)
+measured this:
+
+- **Demand barely changes.** 984 of 986 plant-intervals in the fight, and 986
+  of 986 in the same scene with AI that finds no target, had every consumer's
+  demand identical tick to tick, with every draw met in full.
+- **Batteries are seldom full.** Only 116 of 986 ended where they began. The
+  rest drained slowly, with output below idle demand.
+- **Where the work goes.** The 2026-10-29 profile puts 15.2 of the plant's
+  30.8 s in consumers' `_update_power` and 6.5 s in battery-limit reads. Only
+  2.6 s is the `_draw` calls themselves.
+
+The draw program keeps the draws per tick, through the same `_draw`, and
+skips everything else that steady demand makes a no-op:
+
+- A consumer whose demand inputs are watched fields (`FrozenField`) and whose
+  draw was met in full is **frozen**. Its four output fields stay as written,
+  and the program repeats only its draw.
+- A write to a watched field **thaws** the consumer and drops the program.
+- A short draw records through the same helper `_update_power` uses.
+- A consumer whose rules read more than its own fields stays a **call op**:
+  the cloak's reserve snapshot, and an engaged tractor's direct steal. It runs
+  its own `_update_power` each tick, in attach order.
+
+All values stay current every tick, so no read hook, tick queue or shadow
+plant is needed. The audit runs each program tick against the full pump and
+compares bit for bit.
+
+Goal 2 ("once per interval") is not met literally. It cannot be met exactly
+while batteries drain. Meeting it needs Mark's ruling on closed forms (§9).
+
 ## 9. Left for later / decisions not taken here
 
 - **Closed-form ramps** (a charging bank or reloading tube described as a
