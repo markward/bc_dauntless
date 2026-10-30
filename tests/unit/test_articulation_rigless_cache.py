@@ -1,7 +1,7 @@
 """A ship with no rig is looked up once, then skipped until the snapshots change.
 
-`_BY_LEAF` changes only in `snapshot_for_leaf` and `reset`, so a generation
-counter bumped in exactly those two places makes the cached "no rig" exact.
+`_BY_LEAF` changes only in `snapshot_for_leaf`, `reset` and `restore`, so a
+generation counter bumped in exactly those places makes the cached "no rig" exact.
 """
 import App
 import pytest
@@ -62,3 +62,12 @@ def test_reset_is_seen():
     before = articulated_part.generation()
     articulated_part.reset()
     assert articulated_part.generation() != before
+
+
+def test_a_stats_style_restore_is_seen(lookups):
+    ship = _Ship()
+    articulation.tick_ship(ship, 0.1)
+    snapshot = dict(articulated_part._BY_LEAF)
+    articulated_part.restore(snapshot)
+    articulation.tick_ship(ship, 0.1)
+    assert len(lookups) == 2

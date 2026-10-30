@@ -54,14 +54,16 @@ def _walk(ships):
 
 
 class _Scene:
-    def __init__(self, monkeypatch, passive):
+    def __init__(self, monkeypatch, passive, audit=True):
+        monkeypatch.delenv("DAUNTLESS_PASSIVE_STATE", raising=False)
+        monkeypatch.delenv("DAUNTLESS_PASSIVE_AUDIT", raising=False)
         monkeypatch.setenv("DAUNTLESS_COMBAT_SHIPS", SHIPS)
         App.g_kTimerManager._time = 0.0
         random.seed(0)
         headless_mission.load("engine.dev_missions.combat_stress")
         # After the load: constructing a GameLoop re-reads the environment.
         passive_state.configure(
-            {"DAUNTLESS_PASSIVE_AUDIT": "1"} if passive
+            ({"DAUNTLESS_PASSIVE_AUDIT": "1"} if audit else {}) if passive
             else {"DAUNTLESS_PASSIVE_STATE": "0"})
         self.ships = list(iter_ships())
         self.weapons = _walk(self.ships)
@@ -187,22 +189,23 @@ ALL_OPS = ("fire", "fire", "stop", "charge", "drain", "recharge_all",
            "off", "on")
 
 
-def _both(monkeypatch, seed, ticks_per_frame, kinds):
+def _both(monkeypatch, seed, ticks_per_frame, kinds, audit=True):
     with monkeypatch.context() as mp:
         reference = _Scene(mp, passive=False).run(seed, ticks_per_frame, kinds)
     with monkeypatch.context() as mp:
-        passive = _Scene(mp, passive=True).run(seed, ticks_per_frame, kinds)
+        passive = _Scene(mp, passive=True, audit=audit).run(seed, ticks_per_frame, kinds)
     return reference, passive
 
 
-def _assert_identical(reference, passive):
+def _assert_identical(reference, passive, audit=True):
     ref_log, ref_events = reference
     log, events = passive
     assert len(log) == len(ref_log) == TICKS
     for tick, (row, ref_row) in enumerate(zip(log, ref_log), start=1):
         assert row == ref_row, "weapon state differs at tick %d" % tick
     assert events == ref_events
-    assert passive_state.audit_failures() == []
+    if audit:
+        assert passive_state.audit_failures() == []
     counts = passive_state.counts()
     assert counts["slept"] > 0 and counts["woke"] > 0
 
@@ -213,6 +216,14 @@ def test_weapons_match_per_tick(monkeypatch, seed, ticks_per_frame):
     reference, passive = _both(monkeypatch, seed, ticks_per_frame, ALL_OPS)
     assert reference[1], "the op stream produced no events to compare"
     _assert_identical(reference, passive)
+
+
+def test_weapons_match_per_tick_without_the_audit(monkeypatch):
+    """Production shape: the passive side runs with the audit off, so nothing
+    steps a sleeper behind the model's back."""
+    reference, passive = _both(monkeypatch, 3, 6, ALL_OPS, audit=False)
+    assert reference[1], "the op stream produced no events to compare"
+    _assert_identical(reference, passive, audit=False)
 
 
 def test_script_recharge_all_matches_per_tick(monkeypatch):

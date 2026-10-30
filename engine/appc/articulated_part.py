@@ -139,8 +139,8 @@ def ArticulatedPartProperty_Create(name):
 # which is what snapshot_for_leaf does.
 _BY_LEAF: dict = {}
 
-# Bumped wherever _BY_LEAF changes (snapshot_for_leaf, reset) so a caller can
-# cache "this leaf has no rig" and know exactly when to look again.
+# Bumped wherever _BY_LEAF changes (snapshot_for_leaf, reset, restore) so a
+# caller can cache "this leaf has no rig" and know exactly when to look again.
 _GENERATION: int = 0
 
 
@@ -181,6 +181,15 @@ def parts_for_leaf(leaf):
     overwhelmingly common case and must cost nothing and never raise.
     """
     return _BY_LEAF.get(str(leaf).lower(), ())
+
+
+def restore(snapshot) -> None:
+    """Put _BY_LEAF back to `snapshot` (a dict copy taken earlier), bumping
+    the generation like every other writer."""
+    global _GENERATION
+    _GENERATION += 1
+    _BY_LEAF.clear()
+    _BY_LEAF.update(snapshot)
 
 
 def reset() -> None:

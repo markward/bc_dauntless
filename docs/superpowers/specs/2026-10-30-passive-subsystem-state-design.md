@@ -354,7 +354,9 @@ stay stepped. The tick queue (6.5) is not needed until phase 2. Plan:
 (`engine/appc/passive_state.py`), sleeping weapons
 (`engine/appc/passive_weapons.py`) and the no-rig articulation skip. Task 4
 ran `combat_stress` (16 ships) under the audit with no failures
-(`tests/host/test_passive_state_scene_audit.py`).
+(`tests/host/test_passive_state_scene_audit.py`). The whole-scene audit covers
+16 ships only: §7 asked for 16 and 64, and 64 under the audit was not run, for
+runtime.
 
 **Measured (2026-10-30, Task 5).** 64-ship headless capture,
 `~/Documents/dauntless-perf/passive1-cs64-bridge-20261030-1629.log` against
@@ -365,8 +367,9 @@ frame 116 → 112 ms. The renderer (`r.frame`, untouched by this work) read
 that, weapons fell ~30% and the articulation skip is inside the noise. Far
 less than the ~0.5 ms estimated for weapons: in a 64-ship brawl most banks
 are firing or recharging at any moment, so few can sleep. The design's win is
-in quiet scenes (parked fleets, stations, idle escorts), which this capture
-does not measure. Phase 2 (power) remains the larger per-tick target.
+in quiet scenes (parked fleets, stations, idle escorts) -- inferred, not
+measured: no parked-fleet capture exists yet, and this capture does not
+measure it. Phase 2 (power) remains the larger per-tick target.
 
 ## 9. Left for later / decisions not taken here
 

@@ -19,6 +19,8 @@ def test_combat_stress_runs_clean_under_the_audit(monkeypatch):
               / "Galaxy.nif")
     if not galaxy.is_file():
         pytest.skip("BC assets not available")
+    monkeypatch.delenv("DAUNTLESS_PASSIVE_STATE", raising=False)
+    monkeypatch.delenv("DAUNTLESS_PASSIVE_AUDIT", raising=False)
     monkeypatch.setenv("OPEN_STBC_HOST_HEADLESS", "1")
     monkeypatch.setenv("DAUNTLESS_COMBAT_SHIPS", "16")
     monkeypatch.setenv("DAUNTLESS_PASSIVE_AUDIT", "1")
@@ -34,6 +36,7 @@ def test_combat_stress_runs_clean_under_the_audit(monkeypatch):
     monkeypatch.setattr(hl, "_frame_clock", clock)
 
     assert hl.run("engine.dev_missions.combat_stress", max_ticks=120) == 0
+    assert passive_state.enabled(), "passive state was off for this run"
     assert passive_state.audit_failures() == []
     counts = passive_state.counts()
     assert counts["slept"] > 0, counts

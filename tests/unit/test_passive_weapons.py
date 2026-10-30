@@ -20,6 +20,8 @@ from tests.helpers import headless_mission
 
 @pytest.fixture
 def ships(monkeypatch):
+    monkeypatch.delenv("DAUNTLESS_PASSIVE_STATE", raising=False)
+    monkeypatch.delenv("DAUNTLESS_PASSIVE_AUDIT", raising=False)
     monkeypatch.setenv("DAUNTLESS_COMBAT_SHIPS", "4")
     App.g_kTimerManager._time = 0.0
     headless_mission.load("engine.dev_missions.combat_stress")

@@ -1463,6 +1463,7 @@ class ShipClass(DamageableObject):
             sub = getattr(self, attr)
             if sub is not None and sub.GetProperty() is None:
                 setattr(self, attr, None)
+        passive_weapons.invalidate(self)
 
         # Pass 4 — child weapons.  For each child WeaponProperty in the set,
         # instantiate the matching live subsystem and attach it under the

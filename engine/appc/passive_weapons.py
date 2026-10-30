@@ -14,7 +14,8 @@ Spec: docs/superpowers/specs/2026-10-30-passive-subsystem-state-design.md
 
 Each ship carries a registry: its weapons in today's walk order (phaser,
 pulse, tractor, torpedo systems, then GetWeapon(i)) and the sorted indices of
-the awake ones. The registry is cached on the ship, so anything that changes
+the awake ones. One registry per weapon is assumed: a weapon belongs to
+exactly one ship's systems. The registry is cached on the ship, so anything that changes
 which weapons a ship has must call invalidate(ship): ShipClass._attach_subsystem
 (every Set*System) and ShipSubsystem.AddChildSubsystem do.
 """
@@ -113,6 +114,7 @@ def step_every_weapon(ship, dt: float) -> None:
     """The per-tick walk for one ship: every weapon, every tick. What
     host_loop._advance_weapons runs with passive state off, and what advance
     runs for a ship that cannot hold a registry."""
+    _ship_cls, _system_cls, tube_cls, energy_cls = _weapon_classes()
     for group in _groups(ship):
         if group is None:
             continue
@@ -120,10 +122,11 @@ def step_every_weapon(ship, dt: float) -> None:
             emitter = group.GetWeapon(i)
             if emitter is None:
                 continue
-            is_tube = _is_tube(emitter)
-            if is_tube:
+            # _is_tube's rule, inlined: this is the off-switch baseline and
+            # pays no per-weapon call for it.
+            if isinstance(emitter, tube_cls):
                 emitter.UpdateReload(dt)
-            elif is_tube is False:
+            elif isinstance(emitter, energy_cls):
                 emitter.UpdateCharge(dt)
 
 
@@ -136,7 +139,11 @@ def advance(ships, dt: float) -> None:
     -- its update posts an event, and the handlers run synchronously -- is
     stepped this tick if its turn has not come yet and from the next tick if
     it has. That is exactly when the per-tick model first steps it with the
-    write visible (spec §6.3 "Ordering within a tick")."""
+    write visible (spec §6.3 "Ordering within a tick").
+
+    An invalidate() during the walk (a handler replacing a weapon system)
+    leaves the rest of that walk on the stale registry; the next advance
+    rebuilds. No live trigger does this today."""
     audit = passive_state.audit_enabled()
     for ship in ships:
         d = getattr(ship, "__dict__", None)
