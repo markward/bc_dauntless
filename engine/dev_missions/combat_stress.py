@@ -152,6 +152,21 @@ def avoidance_enabled() -> bool:
     """
     return os.environ.get("DAUNTLESS_COMBAT_AVOID", "1").strip() not in ("0", "")
 
+
+# DAUNTLESS_COMBAT_IDLE=1: the same ships and attack AI, but each hunts a name
+# no ship carries, so nobody fires -- upkeep with fleets parked, not fighting.
+IDLE_TARGET_NAME = "Nobody At All"
+
+
+def idle_enabled() -> bool:
+    return os.environ.get("DAUNTLESS_COMBAT_IDLE", "").strip() == "1"
+
+
+def idle_target_group():
+    group = App.ObjectGroup()
+    group.AddName(IDLE_TARGET_NAME)
+    return group
+
 # Alternating pairs so the two sides interleave around the ring and every ship
 # has an enemy nearby, rather than two clumps that must close first.
 _FRIEND_TYPES = ("Sovereign", "Akira", "Galaxy", "Nebula")
@@ -284,8 +299,11 @@ def Initialize(pMission):
     attached = 0
     failures = []
     for pShip, is_friendly in created:
-        # Each side attacks the other's group.
-        pTargets = pEnemies if is_friendly else pFriendlies
+        # Each side attacks the other's group (or, idle, nobody).
+        if idle_enabled():
+            pTargets = idle_target_group()
+        else:
+            pTargets = pEnemies if is_friendly else pFriendlies
         try:
             pAI = pAIModule.CreateAI(pShip, pTargets,
                                      Difficulty=_AI_DIFFICULTY,
@@ -334,10 +352,11 @@ def Initialize(pMission):
     spacing_gu = (2.0 * math.pi * ring) / max(1, total)
     print("[combat_stress] %d AI ships (%d per side) + player; ring %.1f km "
           "across, neighbour spacing %.2f km (%.2f hull diameters); "
-          "AI attached to %d; avoidance=%s; view=%s"
+          "AI attached to %d; avoidance=%s; idle=%s; view=%s"
           % (len(created), per_side, 2.0 * ring * GU_TO_KM,
              spacing_gu * GU_TO_KM, gap_hulls, attached,
              "ON" if avoidance_enabled() else "off",
+             "ON" if idle_enabled() else "off",
              "exterior" if wants_exterior_view() else "bridge"))
     if gap_hulls < 1.0:
         # The exact failure this sizing exists to prevent: hulls spawned inside
