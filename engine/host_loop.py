@@ -232,6 +232,14 @@ def _pump_music(dt) -> None:
         mgr.notify_track_finished()
 
 
+def _frame_clock() -> float:
+    """The wall clock run() measures each frame's length with. A function so
+    a test can drive the loop at a chosen frame rate
+    (tests/host/test_frame_rate_independence.py)."""
+    import time
+    return time.monotonic()
+
+
 def tick_audio(*, camera_position, camera_forward, camera_up, dt, player) -> None:
     if _audio_mod is None:
         return
@@ -11583,9 +11591,8 @@ def run(mission_name: Optional[str] = None,
 
         # Fixed-timestep accumulator state — sim runs at TICK_DT (60 Hz)
         # regardless of render refresh rate. See engine/core/timestep.py.
-        import time
         from engine.core.timestep import step_accumulator
-        _previous_real_time = time.monotonic()
+        _previous_real_time = _frame_clock()
         _accumulator = 0.0
         # True while a bridge-officer left-click is held (press was intercepted
         # for the crew menu); used to swallow the matching release edge so it
@@ -11763,7 +11770,7 @@ def run(mission_name: Optional[str] = None,
                 _cef_set_event_handler(registry.dispatch)
             if _cef_set_load_end is not None:
                 _cef_set_load_end(_on_cef_load_end)
-            _previous_real_time = time.monotonic()
+            _previous_real_time = _frame_clock()
             _notice_ended_at = _previous_real_time
 
         while not r.should_close():
@@ -12176,7 +12183,7 @@ def run(mission_name: Optional[str] = None,
             # Frozen = pause menu OR the DevTools window (which stops the
             # world so the overlay under inspection holds still).
             pause.set_external_freeze(_devtools_frozen(_h))
-            _now = time.monotonic()
+            _now = _frame_clock()
             # The raw wall delta, kept apart from _frame_dt (which the freeze
             # zeroes): the Bridge Editor's preview clock runs while the
             # (hidden) pause menu freezes the sim (spec 2026-10-08-bridge-emitters §12.2).
