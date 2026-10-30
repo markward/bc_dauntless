@@ -17,6 +17,7 @@ struct BridgeLightingTuning {
     float ao_radius   = 30.0f;  // view-space units (Mark's live pick, 2026-10-08)
     float ao_strength = 1.8f;   // (Mark's live pick)
     float ao_bias     = 0.5f;   // view-space units
+    float ao_bias_dist = 0.01f; // bias per view-space unit of distance
     float diffuse_max = 0.88f;  // lit-surface ceiling; must stay < bloom threshold (bloom_pass.h, 0.9)
 };
 inline constexpr BridgeLightingTuning kBridgeLighting{};

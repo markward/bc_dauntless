@@ -284,6 +284,10 @@ int g_bridge_alert_level = 0;
 // every set_bridge_quality() call, so a quality change takes effect even
 // mid-mission without waiting for the next init().
 renderer::BridgeQuality g_bridge_quality = renderer::kDefaultBridgeQuality;
+// Bridge AO kernel look, from the developer dials (engine/bridge_ao_dials.py)
+// via set_bridge_ao_tuning(). Applied where g_bridge_pass is constructed and
+// on every call. Session-wide like the dials themselves: init() keeps it.
+renderer::BridgeAoTuning g_bridge_ao_tuning;
 // Developer Options -> Lighting tab "Bridge Debug View" (see
 // renderer::BridgeDebugView). set_bridge_debug_view is a no-op without
 // --developer, so this stays 0 (Off) in production regardless of what
@@ -1179,6 +1183,7 @@ void init(int width, int height, const std::string& title) {
     g_starmap_pass        = std::make_unique<renderer::StarMapPass>();
     g_bridge_pass         = std::make_unique<renderer::BridgePass>();
     g_bridge_pass->set_ao_settings(renderer::ao_settings_for(g_bridge_quality));
+    g_bridge_pass->set_ao_tuning(g_bridge_ao_tuning);
     g_bridge_pass->set_highlight(g_bridge_highlight.model,
                                  g_bridge_highlight.selected,
                                  g_bridge_highlight.hover);
@@ -4880,6 +4885,33 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Bridge rendering quality: 0 Low, 1 Medium (default), 2 High. "
           "Out-of-range clamps. Drives the bridge AO's sample count and "
           "target resolution scale.");
+
+    m.def("set_bridge_ao_tuning",
+          [](float radius, float strength, float bias, float bias_dist,
+             float bias_facing, float min_len, float main_direct,
+             float main_final, int detail_samples,
+             float detail_radius, float detail_strength, float detail_bias,
+             float detail_direct, float detail_final) {
+              g_bridge_ao_tuning = {radius, strength, bias, bias_dist,
+                                    bias_facing, min_len, main_direct,
+                                    main_final, detail_samples,
+                                    detail_radius, detail_strength, detail_bias,
+                                    detail_direct, detail_final};
+              if (g_bridge_pass) g_bridge_pass->set_ao_tuning(g_bridge_ao_tuning);
+          },
+          py::arg("radius"), py::arg("strength"), py::arg("bias"),
+          py::arg("bias_dist"), py::arg("bias_facing"), py::arg("min_len"),
+          py::arg("main_direct"), py::arg("main_final"),
+          py::arg("detail_samples"), py::arg("detail_radius"),
+          py::arg("detail_strength"), py::arg("detail_bias"),
+          py::arg("detail_direct"), py::arg("detail_final"),
+          "Bridge AO kernel look (renderer::BridgeAoTuning): the main kernel's "
+          "radius/strength/bias, its distance bias and how far that is scaled "
+          "by grazing (0..1), its shortest sample as a fraction of the radius, "
+          "how much of it darkens spot/area diffuse or applies after the "
+          "diffuse ceiling (0..1), the small detail kernel (0 samples = off) and how much of it also "
+          "darkens spot/area diffuse or applies after the diffuse ceiling (0..1). "
+          "Developer dials.");
 
     m.def("bridge_quality",
           [] { return static_cast<int>(g_bridge_quality); },

@@ -429,6 +429,10 @@ void BridgePass::render(const scenegraph::World& world,
         s.set_vec2("u_ao_screen", glm::vec2(static_cast<float>(view_vp[2]),
                                             static_cast<float>(view_vp[3])));
         s.set_int("u_ao_on", ao_on ? 1 : 0);
+        s.set_float("u_ao_direct", ao_.tuning().detail_direct);
+        s.set_float("u_ao_final", ao_.tuning().detail_final);
+        s.set_float("u_ao_main_direct", ao_.tuning().main_direct);
+        s.set_float("u_ao_main_final", ao_.tuning().main_final);
         // Per-draw culling masks: set per mesh by sub-pass A; the officers
         // (sub-pass B) skip nothing.
         s.set_int("u_spot_skip", 0);

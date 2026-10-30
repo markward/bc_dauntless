@@ -1696,6 +1696,12 @@ def _reset_leakable_engine_globals():
         _rl_dials.reset()
     except Exception:
         pass
+    # Bridge AO dials: same leak shape, plus a push callback into native.
+    try:
+        from engine import bridge_ao_dials as _bao_dials
+        _bao_dials.reset()
+    except Exception:
+        pass
     # Occlusion caches: per-(observer,target) and per-set major-rock lists
     # keyed on game time/tick time/bucket size, so a test that cached a
     # blocked() answer would otherwise leave it stale for the next test.
