@@ -219,7 +219,7 @@ def test_run_loads_the_game_behind_the_notice():
     begin_at = source.index("_begin_boot_notice(")
     prewarm_at = source.index("_prewarm_sdk_modules()")
     mission_at = source.index("controller.loader.load")
-    clock_at = source.index("_previous_real_time = time.monotonic()")
+    clock_at = source.index("_previous_real_time = _frame_clock()")
     finish_at = source.index("_finish_boot_notice(")
     loop_at = source.index("while not r.should_close():")
     far_at = source.index("_far_tier.prewarm(r)")
@@ -229,7 +229,7 @@ def test_run_loads_the_game_behind_the_notice():
     after = source[finish_at:loop_at]
     assert "_cef_set_event_handler(registry.dispatch)" in after
     assert "_cef_set_load_end(_on_cef_load_end)" in after
-    assert "_previous_real_time = time.monotonic()" in after
+    assert "_previous_real_time = _frame_clock()" in after
 
 
 # ── silence while the game loads behind the notice ──────────────────────
