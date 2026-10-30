@@ -81,6 +81,13 @@ struct Material {
     /// current frame's texture for stages[Base].texture_index.
     int animation_index = -1;
 
+    /// Index into Model::panel_sources when this material's Base image is a
+    /// bridge panel (interior loads only), -1 otherwise. Never -1 for an
+    /// interior external albedo that decoded, whether or not a Lottie file
+    /// exists beside it; the renderer decides from the files on disk. Head
+    /// grafts drop it (the head's panel_sources are not merged).
+    int panel_index = -1;
+
     /// Basename of the source file (NiImage::file_name) of the texture this
     /// material's Base stage was built from, "" when Base has none or the
     /// image is embedded. Recorded where the Base stage is resolved, so it

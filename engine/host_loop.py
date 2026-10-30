@@ -3888,6 +3888,19 @@ def _bridge_clock_dt(editor, player_dt, frame_dt):
     return player_dt if fn is None else fn(player_dt, frame_dt)
 
 
+def _bridge_texture_time(offset, game_time, editor, bridge_dt):
+    """The clock bridge textures play on (flipbooks and Lottie panels): game
+    time, plus every preview-clock step taken while the Bridge Editor was
+    open. The editor freezes the sim, so game time alone would stop every
+    panel the moment it opens; its preview clock (0 when paused) keeps them
+    playing. `offset` is a one-element box that only grows, so closing the
+    editor never steps the clock back. Never opened: exactly game time."""
+    fn = getattr(editor, "preview_alert", None)
+    if fn is not None and fn() is not None:
+        offset[0] += bridge_dt
+    return game_time + offset[0]
+
+
 def _bridge_camera_pose(editor, bridge_camera, shake):
     """The bridge camera to draw: the editor's fly camera while it has one
     (unshaken -- you are aiming at shapes), else the captain camera shaken."""
@@ -11155,6 +11168,7 @@ def run(mission_name: Optional[str] = None,
         controller.bridge_runtime = BridgeRuntime(
             eye=lambda: _BRIDGE_CAMERA_EYE, alert=_bridge_runtime_alert_level)
         _bridge_probe_alert_last = [None]   # mutable box: last frame's level
+        _bridge_texture_offset = [0.0]      # editor preview time (_bridge_texture_time)
 
         _after_mission_loaded()
         try:
@@ -13507,7 +13521,11 @@ def run(mission_name: Optional[str] = None,
             # original engine scaled, instrumentation Q3). Feeding wall
             # time made the LCARS animation play noticeably faster than
             # in stock BC; game time matches the original cadence.
-            r.set_bridge_wall_time(App.g_kUtopiaModule.GetGameTime())
+            # The Bridge Editor freezes game time; its preview clock keeps
+            # the panels playing while it is open (_bridge_texture_time).
+            r.set_bridge_wall_time(_bridge_texture_time(
+                _bridge_texture_offset, App.g_kUtopiaModule.GetGameTime(),
+                bridge_emitters, _bridge_dt))
 
             # Age every ship's persistent damage-decal ring on the same game
             # clock used for decal birth_time (engine.appc.damage_decals).

@@ -198,3 +198,10 @@ def test_running_lights_toggle_flips_the_renderer(monkeypatch):
     assert p.dispatch_event("toggle:running_lights")
     assert calls == [False]
     assert _payload(p)["settings"]["running_lights"] is False
+
+
+def test_js_has_a_reload_bridge_panels_row_and_focusable():
+    text = open(JS).read()
+    assert ("_doActionRow('Reload Bridge Panels', 'reload_bridge_panels',\n"
+            "                         'Reload', isFoc('reload_bridge_panels'))") in text
+    assert "out.push({kind: 'ctrl', target: 'reload_bridge_panels'});" in text

@@ -127,6 +127,28 @@ Single-header MP3 decoder by David Reid, used for music and sound.
 - License text: `licenses/dr_libs-LICENSE.txt`
   (`native/third_party/dr_libs/LICENSE`)
 
+### ThorVG
+
+Vector graphics library, used to play the animated Lottie panels on the bridge
+(software rasteriser and Lottie loader only).
+
+- Upstream: https://github.com/thorvg/thorvg
+- Pinned release: see `native/third_party/thorvg/UPSTREAM_VERSION`
+- License: MIT
+- License text: `licenses/ThorVG-LICENSE.txt`
+  (`native/third_party/thorvg/LICENSE`)
+
+### RapidJSON (bundled in ThorVG)
+
+JSON parser by Tencent and Milo Yip, compiled into ThorVG's Lottie loader.
+
+- Upstream: https://github.com/Tencent/rapidjson
+- Pinned version: the copy bundled in ThorVG, see
+  `native/third_party/thorvg/UPSTREAM_VERSION`
+- License: MIT
+- License text: `licenses/RapidJSON-LICENSE.txt`
+  (`native/third_party/thorvg/src/loaders/lottie/rapidjson/LICENSE`)
+
 ### Antonio font
 
 Sans-serif typeface by Vernon Adams (Open Window), used for the interface

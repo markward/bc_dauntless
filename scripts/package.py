@@ -149,6 +149,8 @@ def third_party_licenses() -> dict:
         "stb-LICENSE.txt": third / "stb" / "LICENSE",
         "cgltf-LICENSE.txt": third / "cgltf" / "LICENSE",
         "dr_libs-LICENSE.txt": third / "dr_libs" / "LICENSE",
+        "ThorVG-LICENSE.txt": third / "thorvg" / "LICENSE",
+        "RapidJSON-LICENSE.txt": third / "thorvg" / "src" / "loaders" / "lottie" / "rapidjson" / "LICENSE",
         "Antonio-OFL.txt": (PROJECT_ROOT / "native" / "assets" / "ui-cef"
                             / "THIRD_PARTY" / "Antonio-OFL.txt"),
     }

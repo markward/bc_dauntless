@@ -93,7 +93,7 @@ _OPTIONAL_BINDINGS = frozenset({
     "set_bridge_spot_colours", "set_bridge_glow",
     "set_bridge_area_lights", "set_bridge_area_colours", "bridge_mesh_geometry",
     "set_bridge_glow_captures", "set_bridge_probe_layers",
-    "bridge_probe_signatures", "bridge_quality",
+    "bridge_probe_signatures", "bridge_quality", "reload_bridge_panels",
     "set_bridge_probe_state", "set_bridge_layer_values",
 })
 
@@ -678,6 +678,14 @@ def set_bridge_pbr_enabled(on) -> None:
     fn = getattr(_h, "set_bridge_pbr_enabled", None) if _h is not None else None
     if fn is not None:
         fn(bool(on))
+
+
+def reload_bridge_panels() -> None:
+    """Developer reload of the Lottie bridge panels. No-op headless or when
+    the binding is missing."""
+    fn = getattr(_h, "reload_bridge_panels", None) if _h is not None else None
+    if fn is not None:
+        fn()
 
 
 def set_bridge_probe_origin(origin) -> None:

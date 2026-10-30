@@ -250,6 +250,7 @@ add_library(renderer STATIC
     starmap_pass.cc
     letterbox_pass.cc
     bridge_pass.cc
+    bridge_panels.cc
     bridge_ao_pass.cc
     bridge_probe.cc
     bridge_probe_array.cc
@@ -265,5 +266,7 @@ target_include_directories(renderer
 )
 target_compile_features(renderer PUBLIC cxx_std_20)
 target_link_libraries(renderer PUBLIC assets scenegraph voxel glad glfw glm)
+# Bridge Lottie panels: BridgePass holds a lottie::PanelWorker (bridge_panels.h).
+target_link_libraries(renderer PUBLIC lottie)
 # nlohmann/json reads the viewscreen bars font metrics (viewscreen_bars_pass.cc).
 target_link_libraries(renderer PRIVATE nlohmann_json::nlohmann_json)

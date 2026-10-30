@@ -17,6 +17,7 @@ add_library(assets STATIC
     src/mesh_upload.cc
     src/model_build.cc
     src/model_compose.cc
+    src/panel_files.cc
     src/path_resolver.cc
     src/pose_sample.cc
     src/skeleton_build.cc

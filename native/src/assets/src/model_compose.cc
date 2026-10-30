@@ -251,6 +251,7 @@ std::vector<MeshCpu> graft_head_cpu(Model& body, Model& head,
         // which we don't merge; drop the animation binding to avoid dangling
         // indices into the body's (different) texture_animations table.
         copy.animation_index = -1;
+        copy.panel_index = -1;
         body.materials.push_back(std::move(copy));
     }
 

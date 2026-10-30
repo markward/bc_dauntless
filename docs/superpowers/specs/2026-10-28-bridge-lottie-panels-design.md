@@ -201,13 +201,22 @@ knows the state (`kBridgeState*`, the `emissive_alert` value in
 
 ## 6. Resolution and redraw
 
-- **Size (v1):** the canvas aspect, longest edge capped by Bridge Quality
-  (`renderer/bridge_quality.h`): Low 512, Medium 1024, High 2048.
-  Recomputed when Bridge Quality changes (texture reallocated). A 2:1 strip at
-  Medium is therefore 1024×512 even when the old still was 64×32: cheap at the
-  spike's measured cost, and the reason resolution stops being the ceiling.
-- **Mipmaps:** generated after each upload (panels are seen at grazing
-  angles).
+- **Size:** the canvas aspect, longest edge capped by Bridge Quality
+  (`renderer/bridge_quality.h`): Low 512, Medium 1024, High 2048, and also by
+  the canvas itself: no more than **2× the canvas's long edge**, never below
+  512 (`lottie::panel_edge_cap`). Recomputed when Bridge Quality changes
+  (texture reallocated). A 640×320 strip is therefore 1024×512 at Medium and
+  1280×640 at High; a 512×512 trace is 1024×1024 at Medium and High. (The cap
+  was added after the conn/ops measurement, 2026-10-28: High drew that 512²
+  canvas at 2048², ~45 ms per raster.)
+- **One panel per file:** images naming the same resolved albedo share one
+  panel (one raster, one upload). A mesh fix's per-shape albedo op gives each
+  shape its own NiImage, which made DBridge's two conn/ops tops two panels.
+- **Mipmaps:** panels keep a full mip chain (they are seen at grazing
+  angles), built on the worker -- a rounded 2×2 box filter over only what a
+  change reaches -- and uploaded with each result. The render thread never
+  calls `glGenerateMipmap`: live on this Mac it cost 5-10 ms a call
+  (perf-register SIG-150).
 - **Clock:** the bridge pass's `wall_time_`, which `host_loop.py` feeds from
   `GetGameTime()`, so panels freeze under pause exactly like today's
   flipbooks. Local time = (t − time the current state's file started) mod that
@@ -219,12 +228,24 @@ knows the state (`kBridgeState*`, the `emissive_alert` value in
   last frame (main view or a comm set seen in the viewscreen feed). Panels on
   a hidden bridge (exterior view) cost nothing. Per-panel visibility culling
   is the builder's call (nice-to-have, not required).
-- **Upload cap:** not in v1 (§2 non-goals). With one panel nothing stacks;
-  when a second panel is authored, add a per-frame byte budget sized from the
-  §7 measurement, deferring the overflow to the next frame.
+- **Partial uploads (instead of an upload cap):** the worker keeps each
+  panel's last composite and returns only the rectangle that changed since
+  its previous result, or nothing when the frame is identical (a held
+  keyframe). The render thread `glTexSubImage2D`s just that rectangle. A
+  result that is not uploaded (texture reallocated, entry not playing) makes
+  the next job ask for the whole frame, so the texture never falls behind.
+- **Never write a texture the GPU may still read (added 2026-10-30, after
+  the back-wall panel):** each panel rotates through three textures. An
+  upload writes the next in turn, and only once a GPU fence says every frame
+  that drew it has finished; otherwise the result waits a frame (never a
+  blocking wait, and the poll never forces a flush -- that alone cost 9-34 ms
+  a frame live, SIG-153; the frame's swap sends the fence). The job carries what that texture lacks (`also`), and the
+  others fall behind only by what changed. Uploads go straight from client
+  memory: through a pixel-unpack buffer the same uploads stalled 20-37 ms a
+  frame at 4K (SIG-151).
 - **Threading (v1, not later):** ThorVG rasterises on a worker thread into a
   CPU buffer for the NEXT frame; the render thread only uploads
-  (`glTexSubImage2D` + mip generation) at the start of the bridge pass. One
+  (`glTexSubImage2D` of each level) at the start of the bridge pass. One
   frame of animation latency is accepted. A worker that has not finished keeps
   the previous image (never blocks the render thread). The existing
   `std::async` job patterns (`rock_speck.cc`, `structure_parts_cache.cc`) are
@@ -342,3 +363,5 @@ author (no BC content in the repo, shape-diff §6.2).
 | 2026-10-28 | Restart from the first frame on state change | Claude (Mark delegated) |
 | 2026-10-28 | Worker-thread raster in v1; Bridge Quality caps size; Lottie beats flipbook | Claude |
 | 2026-10-28 | Vendor ThorVG with our own CMake | Claude |
+| 2026-10-28 | One panel per resolved albedo; only changed rectangles uploaded; size capped at 2× the canvas (floor 512) — after the conn/ops measurement | Mark approved the three fixes; cap rule (2×, floor 512) is Claude's |
+| 2026-10-30 | Worker-built mips; three-texture rotation behind GPU fences; no pixel-unpack buffer — after the back-wall panel took the bridge to ~23 fps live | Mark: "fix it"; the rotation and dropping the buffer are Claude's, from measurement |

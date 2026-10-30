@@ -317,8 +317,10 @@ TEST(MeshFixTexture, RefusesATextureOpOnAMergesHiddenPatch) {
 // replacements overlay, loaded with the interior sibling policy exactly as
 // host_loop.realize_set does (overlay dir first in the search list, and as the
 // sibling overlay). The fix's spliced albedos pick up their `_emissive*`
-// siblings from the overlay: Map 22a has all three; g_imp_redbars and
-// g_imp_connops the default only.
+// siblings from the overlay: Map 22a has all three; g_imp_redbars the default
+// only. g_imp_connops has a Lottie panel (`g_imp_connops.json`, bridge Lottie
+// panels spec §6), which sets its `_emissive` sibling aside: both tops share
+// one panel instead.
 namespace {
 // Emissive-slot texture index of every mesh built from shape `shape`; all
 // must agree. -2 if no such mesh, -3 if they disagree.
@@ -331,6 +333,19 @@ int emissive_slot_of(const assets::Model& m, const std::string& shape,
         const int ti = mat.stages[static_cast<std::size_t>(slot)].texture_index;
         if (out != -2 && out != ti) return -3;
         out = ti;
+    }
+    return out;
+}
+
+// Material::panel_index of every mesh built from shape `shape`; -2 if no
+// such mesh, -3 if they disagree.
+int panel_of(const assets::Model& m, const std::string& shape) {
+    int out = -2;
+    for (const auto& mesh : m.meshes) {
+        if (mesh.shape_name() != shape) continue;
+        const int pi = m.materials.at(static_cast<std::size_t>(mesh.material_index())).panel_index;
+        if (out != -2 && out != pi) return -3;
+        out = pi;
     }
     return out;
 }
@@ -389,8 +404,10 @@ TEST(MeshFixTexture, RealDbridgeCommittedFixShapesGetTheirEmissiveSiblings) {
     }
     for (std::uint32_t b : connops) {
         const std::string n = "T" + std::to_string(b);
-        EXPECT_GE(emissive_slot_of(model, n, S::Emissive), 0) << n;
+        EXPECT_EQ(emissive_slot_of(model, n, S::Emissive), -1) << n;
+        EXPECT_GE(panel_of(model, n), 0) << n;
     }
+    EXPECT_EQ(panel_of(model, "T29"), panel_of(model, "T59"));   // one panel per file
     for (std::uint32_t b : map22d) {
         const std::string n = "T" + std::to_string(b);
         EXPECT_GE(emissive_slot_of(model, n, S::Emissive), 0) << n;

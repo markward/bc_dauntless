@@ -451,3 +451,15 @@ TEST(GraftHeadCpu, MissingBoneLeavesBodyUnchanged) {
     EXPECT_EQ(body.textures.size(), tex_before);
     EXPECT_EQ(body.materials.size(), mat_before);
 }
+
+// A grafted head's panel_index would index the head's panel_sources, which are
+// not merged (heads are characters, not bridge panels).
+TEST(GraftHeadCpu, HeadMaterialsDropPanelIndex) {
+    assets::Model body = make_body();
+    assets::Model head = make_head();
+    head.materials[0].panel_index = 0;
+    int node_index = -999;
+    assets::graft_head_cpu(body, head, "Bip01 Head", &node_index);
+    ASSERT_EQ(body.materials.size(), 2u);
+    EXPECT_EQ(body.materials[1].panel_index, -1);
+}

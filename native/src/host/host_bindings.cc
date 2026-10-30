@@ -2053,6 +2053,16 @@ void frame() {
         g_planet_detail->update(g_world, g_camera, fh, lookup);
     }
 
+    // ── Bridge Lottie panels (spec 2026-10-28-bridge-lottie-panels §6-7) ────
+    // Once per frame, before ANY bridge render (the viewscreen's comm set
+    // below, the main bridge later): upload the frames the worker finished
+    // and queue the next ones for the panels last frame drew. Never waits on
+    // a raster; a bridge with no panel files does nothing here.
+    if (g_bridge_pass) {
+        DAUNTLESS_FRAME_SCOPE("bridge_lottie");
+        g_bridge_pass->update_panels(g_bridge_quality);
+    }
+
     // ── Viewscreen render-to-texture (bridge view, screen on) ──────────────
     // The forward space view (g_camera is already forward-from-ship in bridge
     // mode — see host_loop._compute_camera) renders into an offscreen HDR
@@ -4885,6 +4895,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "Bridge rendering quality: 0 Low, 1 Medium (default), 2 High. "
           "Out-of-range clamps. Drives the bridge AO's sample count and "
           "target resolution scale.");
+
+    m.def("reload_bridge_panels",
+          [] {
+              if (g_bridge_pass) g_bridge_pass->reload_panels();
+          },
+          "Developer reload: re-probe every Lottie bridge panel's files and "
+          "clear the warning set. No-op before the bridge pass exists.");
 
     m.def("set_bridge_ao_tuning",
           [](float radius, float strength, float bias, float bias_dist,
