@@ -940,6 +940,11 @@ def _reset_leakable_engine_globals():
         _mods.configure(None)
     except Exception:
         pass
+    try:
+        from engine.appc import passive_state as _passive_state
+        _passive_state.reset()
+    except Exception:
+        pass
     # Warp-in: radius seeder hook + live dial values are module globals.
     try:
         from engine.appc import warp_in_dials as _warp_in_dials

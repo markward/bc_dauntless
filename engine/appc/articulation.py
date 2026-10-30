@@ -440,9 +440,17 @@ def tick_ship(ship, dt: float) -> None:
     A ship with no parts is skipped before any allocation, so the
     overwhelming majority of hulls pay one leaf lookup.
     """
+    from engine.appc import articulated_part
     leaf = leaf_for(ship)
+    key = (leaf, articulated_part.generation())
+    if ship.__dict__.get("_rigless_key") == key:
+        return
     parts = rig_for(leaf)
     if not parts:
+        try:
+            ship._rigless_key = key
+        except Exception:  # noqa: BLE001 - test doubles may reject attribute set
+            pass
         return
     forced = _dev_override
     if forced is not None:
