@@ -22,6 +22,7 @@ from engine.core import step_memo
 from engine.core.ids import implements
 import engine.dev_mode as dev_mode
 from engine.appc import ship_death as _ship_death
+from engine.appc import passive_weapons
 
 
 def subsystem_world_position(sub, ship=None):
@@ -1116,6 +1117,12 @@ class ShipSubsystem(TGEventHandlerObject):
     def AddChildSubsystem(self, sub: "ShipSubsystem") -> None:
         sub._parent_subsystem = self
         self._children.append(sub)
+        # A new weapon under a weapon system: the passive weapons walk's cached
+        # list for the owning ship is stale (engine/appc/passive_weapons.py).
+        # A system not yet attached has no ship; attaching it invalidates.
+        ship = self._climb_to_ship()
+        if ship is not None:
+            passive_weapons.invalidate(ship)
 
     def GetCritical(self) -> int:                       return self._critical
     def SetCritical(self, v) -> None:                   self._critical = int(v)

@@ -91,10 +91,24 @@ def _restore(d: dict, snap: dict) -> None:
         d[k] = orig
 
 
+_SCALARS = (bool, int, float, str, type(None))
+
+
+def _unchanged(now, orig, copy) -> bool:
+    if now is orig:
+        return now == copy
+    # A recomputed equal scalar is the same state (PulseWeapon's charge watcher
+    # is re-sent charge / max, a new float, every tick); only a container's
+    # identity is observable. Floats by bit pattern, so -0.0 is not 0.0.
+    if type(now) is type(orig) and isinstance(now, _SCALARS):
+        return now.hex() == orig.hex() if type(now) is float else now == orig
+    return False
+
+
 def _diff(d: dict, snap: dict) -> list:
     changed = [k for k in d if k not in snap]
     changed += [k for k, (orig, copy) in snap.items()
-                if k not in d or d[k] is not orig or d[k] != copy]
+                if k not in d or not _unchanged(d[k], orig, copy)]
     return changed
 
 

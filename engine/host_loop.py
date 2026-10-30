@@ -107,6 +107,7 @@ from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.ships import ShipClass
 from engine.appc.ship_death import _out_of_action as _oa
 from engine.appc import glow_maps as _glow_maps
+from engine.appc import passive_state, passive_weapons
 from engine.appc.ship_motion import _effective_motion, _cap_keep, _asymptote_step
 from engine.appc.subsystems import (
     TorpedoTube,
@@ -931,7 +932,16 @@ def _advance_weapons(ships, dt: float) -> None:
     calls UpdateCharge (energy) or UpdateReload (torpedo).  AI ships are
     included — their AI scripts call StartFiring expecting charged
     emitters.
+
+    With passive state on (the default; DAUNTLESS_PASSIVE_STATE=0 keeps the
+    walk below), engine/appc/passive_weapons.py walks the same weapons in
+    the same order but skips the full idle banks and loaded tubes, whose
+    update would return at its first test, until a field that test reads is
+    written.
     """
+    if passive_state.enabled():
+        passive_weapons.advance(ships, dt)
+        return
     for ship in ships:
         for group in (
             ship.GetPhaserSystem(),
