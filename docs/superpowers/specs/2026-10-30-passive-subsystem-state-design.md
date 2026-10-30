@@ -350,6 +350,12 @@ wake path each. Their per-tick updates already return early when idle. They
 stay stepped. The tick queue (6.5) is not needed until phase 2. Plan:
 `docs/superpowers/plans/2026-10-30-passive-subsystem-state-phase1.md`.
 
+**Status (2026-10-30).** Phase 1 Tasks 1-3 have landed: the sleep core
+(`engine/appc/passive_state.py`), sleeping weapons
+(`engine/appc/passive_weapons.py`) and the no-rig articulation skip. Task 4
+ran `combat_stress` (16 ships) under the audit with no failures
+(`tests/host/test_passive_state_scene_audit.py`).
+
 ## 9. Left for later / decisions not taken here
 
 - **Closed-form ramps** (a charging bank or reloading tube described as a
