@@ -455,6 +455,35 @@ came from a one-off 600-frame `combat_stress` run (16 ships) by the
 implementer; whether the audit was on or off is not recorded. They are not
 from the committed 120-tick test.
 
+**Superseded the same evening (2026-10-30 21:33): the single-capture
+comparison above is inside the noise.** Four back-to-back repeats of the
+phase 2 configuration (perf register SIG-147) gave `gl.subsystems` from
+0.579 to 0.830 ms/tick. The "down 26%" above cannot be told apart from that
+spread.
+
+Paired on/off runs on the same build give the real answer
+(`DAUNTLESS_PASSIVE_STATE=0` vs on, 90 s cool-downs, one capture each;
+SIG-148, SIG-149). Per game tick:
+
+| Scene | `gl.subsystems` off → on | `sim.weapons` off → on |
+|---|---|---|
+| 64-ship fight | 1.075 → 0.641 ms (−40%) | 0.631 → 0.415 ms (−34%) |
+| 64 ships, quiet (`DAUNTLESS_COMBAT_IDLE=1`, nobody fires) | 1.004 → 0.508 ms (−49%) | 0.378 → 0.011 ms (−97%) |
+
+`r.frame` matched within each pair (16.94 / 17.01 and 14.41 / 14.68), so
+drift between the paired runs was small.
+
+- **The quiet scene is the design's target case, and both rows drop the
+  most there.** That bears out §1's claim that upkeep should scale with
+  what is changing.
+- **The fight pair's frame-level numbers are not comparable.** Its Python
+  loop was 113.7 vs 94.7 ms a frame, but the two fights played out
+  differently (75 vs 39 projectiles in flight; `sim.combat` 6.16 vs 5.50),
+  so only the per-tick upkeep rows are attributable.
+- **"Off" is this branch with the switch off, not pre-branch code** (perf
+  register note under Rules). So these pairs measure what sleeping and
+  freezing buy, not Task 3's unconditional savings.
+
 ## 9. Left for later / decisions not taken here
 
 - **Closed-form ramps** (a charging bank or reloading tube described as a
