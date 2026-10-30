@@ -260,9 +260,9 @@ def test_cloak_is_a_call_op():
 
 
 def test_idle_tractor_engaging_matches_per_tick():
-    """A tractor's _wants_power reads its emitters' firing state, which no
-    FrozenField watches, so an idle tractor must stay a call op: when a beam
-    engages, its direct steal starts on the same tick as the per-tick model."""
+    """With _any_child_firing patched on the instance the tractor is a call op
+    (the instance-patch rule), so when a beam engages its direct steal starts
+    on the same tick as the per-tick model."""
     ref = _ship("Ref", tractor=True)
     ship = _ship("Passive", tractor=True)
     firing = {ref: [False], ship: [False]}
@@ -459,3 +459,41 @@ def test_zero_slider_is_a_frozen_no_op():
     sensor = ship.GetSensorSubsystem()
     assert sensor.__dict__["_power_frozen"] is True
     assert sensor not in _ops(ship)
+
+
+def test_released_tractor_refreezes_and_matches_per_tick():
+    """Engage then release a tractor beam: the release drops the program so
+    the next rebuild can freeze the idle tractor again, and every value
+    matches the per-tick model by float.hex throughout."""
+    ref, ref_beam = _tractor_ship("Ref")
+    ship, beam = _tractor_ship("Passive")
+    tractor = ship.GetTractorBeamSystem()
+    _tick(ref, PER_TICK, 2)
+    _tick(ship, PASSIVE, 2)
+    for step in (True, False):
+        ref_beam._firing = step
+        beam._firing = step
+        for t in range(5):
+            _tick(ref, PER_TICK)
+            _tick(ship, PASSIVE)
+            assert _values(ref) == _values(ship), "differs at tick %d" % t
+            assert _fields(ref.GetTractorBeamSystem()) == _fields(tractor)
+    _tick(ref, PER_TICK, 2)
+    _tick(ship, PASSIVE, 2)
+    assert _values(ref) == _values(ship)
+    assert tractor.__dict__["_power_frozen"] is True
+    assert tractor not in _ops(ship)
+
+
+def test_equal_value_firing_write_keeps_the_program():
+    """FireScript StopFiring rewrites _firing=False at up to 5 Hz: an equal
+    value must not thaw the parent or drop the plant's program."""
+    ship, beam = _tractor_ship("Ship")
+    _tick(ship, PASSIVE, 2)
+    plant = ship.GetPowerSubsystem()
+    program = plant.__dict__["_passive_power"]
+    thawed = passive_power.counts()["thawed"]
+    beam._firing = False
+    assert plant.__dict__["_passive_power"] is program
+    assert passive_power.counts()["thawed"] == thawed
+    assert ship.GetTractorBeamSystem().__dict__["_power_frozen"] is True

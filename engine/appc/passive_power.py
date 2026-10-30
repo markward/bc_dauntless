@@ -12,9 +12,11 @@ whose rules read more than its own watched fields stays a CALL op and runs its
 own _update_power each tick: a class that overrides _update_power,
 _wants_power or GetPowerWanted without opting in (_POWER_FREEZABLE True in the
 providing class), the cloak (False), an instance-patched consumer, and an
-engaged DRAWS_DIRECT_FROM_MAIN consumer. The tractor system opts in: idle it
-is a frozen no-op, and its beams' _firing (ThawParentWakeField) thaws it. Every value stays current every tick, so nothing
-reads a stale field. Spec:
+engaged DRAWS_DIRECT_FROM_MAIN consumer. The instance-patch check runs at
+BUILD time only: a patch applied to an already frozen consumer is not seen
+until the program is next rebuilt. The tractor system opts in: idle it
+is a frozen no-op, and its beams' _firing (ThawParentWakeField) thaws it.
+Every value stays current every tick, so nothing reads a stale field. Spec:
 docs/superpowers/specs/2026-10-30-passive-subsystem-state-design.md §4, §8
 "Phase 2 as planned".
 
@@ -94,14 +96,32 @@ def thaw(consumer) -> None:
 
 
 class ThawParentWakeField(passive_state.WakeField):
-    """A WakeField whose write also thaws a frozen parent system: the tractor
-    beam's _firing is an input of TractorBeamSystem._wants_power."""
+    """A WakeField whose write also acts on the parent system's power program:
+    the tractor beam's _firing is an input of TractorBeamSystem._wants_power.
+
+    The WakeField part is unconditional. The parent is touched only when the
+    value changes: a frozen parent thaws; otherwise a release (new value
+    falsy) drops the plant's program so the next rebuild can freeze a
+    released tractor. Equal-value writes (FireScript StopFiring, up to 5 Hz)
+    leave the program alone.
+
+    A phase-1 audit_step restores only the beam's own dict, so a _firing write
+    during an audit step would thaw/invalidate the parent's program without
+    restore. Unreachable today (a tractor beam at rest writes nothing); noted
+    for future editors."""
 
     def __set__(self, obj, value) -> None:
+        old = obj.__dict__.get(self._name)
         super().__set__(obj, value)
+        if old == value:
+            return
         parent = obj.GetParentSubsystem()
-        if parent is not None and parent.__dict__.get("_power_frozen"):
+        if parent is None:
+            return
+        if parent.__dict__.get("_power_frozen"):
             thaw(parent)
+        elif not value:
+            invalidate(parent.GetParentShip())
 
 
 _OVERRIDE_NAMES = ("_update_power", "_wants_power", "GetPowerWanted")

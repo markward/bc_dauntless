@@ -28,8 +28,11 @@ The two are kept apart on purpose.
 > **Note 2026-10-30 (counter-note, not a signal): `DAUNTLESS_PASSIVE_STATE=0`
 > is not the pre-phase-2 baseline.** Passive-state phase 2 made the seven
 > watched `PoweredSubsystem` fields `FrozenField` descriptors, so every write
-> of them is a Python call even with the switch off. The off path is
-> therefore slightly slower than the code before phase 2. A capture taken with
+> of them is a Python call even with the switch off. The off path
+> pays added descriptor cost, but it also gets Task 3's
+> unconditional savings (closure-free battery-limit reads, the watcher's
+> no-check fast path), so its net direction against pre-phase-2 code is
+> derived, not measured. A capture taken with
 > the switch off compares against other switch-off captures, not against
 > captures from before `perf/passive-power`. For a true before/after, use a
 > capture from a build that predates it (e.g. `passive1-cs64-bridge-*`).

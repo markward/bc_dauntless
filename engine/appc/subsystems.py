@@ -1256,10 +1256,16 @@ class PoweredSubsystem(ShipSubsystem):
 
     # The power draw program (engine/appc/passive_power.py) may freeze this
     # consumer while its demand is steady and met: the inputs and outputs of
-    # _update_power below are watched, and any write thaws it. A subclass
-    # whose _update_power or _wants_power reads more than these sets this
-    # False (the cloak). DRAWS_DIRECT_FROM_MAIN consumers (the tractor, whose
-    # _wants_power reads its emitters' firing state) are never frozen either.
+    # _update_power below are watched, and any write thaws it. A class that
+    # overrides _update_power / _wants_power / GetPowerWanted is a call op
+    # unless its OWN class sets _POWER_FREEZABLE = True (an inherited opt-in
+    # does not count). An opted-in rule must have EVERY input watched,
+    # including inputs on other objects (those need a thaw descriptor like
+    # ThawParentWakeField, as the tractor's beams use). passive_power._build
+    # mirrors _update_power's branches (not wanting / free / slider 0 / met):
+    # a change to those branches must change _build too. Residual risk: an
+    # inherited opt-in hides a subclass override of IsOn / GetNumWeapons /
+    # GetWeapon / a beam's IsFiring / _any_child_firing. The cloak sets False.
     _POWER_FREEZABLE = True
     _is_on = FrozenField()
     _normal_power = FrozenField()

@@ -418,9 +418,11 @@ while batteries drain. Meeting it needs Mark's ruling on closed forms (§9).
 
 **Measured (phase 2, 2026-10-30).** 64-ship headless capture
 `~/Documents/dauntless-perf/passive2-cs64-bridge-20261030-2032.log`, median of
-reports 3-11, per game tick:
+reports 3-11. Each condition is a single capture (n=1). Units differ by
+column: `gl.subsystems` and `sim.weapons` are per game tick, `r.frame` and
+Python loop are per frame:
 
-| Capture | `gl.subsystems` | `sim.weapons` | `r.frame` | Python loop / frame |
+| Capture | `gl.subsystems` (ms/tick) | `sim.weapons` (ms/tick) | `r.frame` (ms/frame) | Python loop (ms/frame) |
 |---|---|---|---|---|
 | Before phase 1 (`mounts-…-1153`) | 0.876 ms | 0.616 ms | 16.87 ms | 115.8 ms |
 | After phase 1 (`passive1-…-1629`) | 0.965 ms | 0.454 ms | 18.26 ms | 117.2 ms |
@@ -434,7 +436,8 @@ reports 3-11, per game tick:
   run it is down 33%.
 
 The power plant was about two thirds of `gl.subsystems` (2026-10-29
-profile), so that saving is roughly 40% of the plant's cost.
+profile), so that saving is roughly 40% of the plant's cost (derived: the
+measured saving divided by the 2026-10-29 profile share).
 
 That is less than the "roughly half" of `gl.subsystems` the plan estimated.
 The 2026-10-29 profile shares predate today's other changes, so the plant's
@@ -443,8 +446,14 @@ remaining plant cost is the per-tick `_draw` calls, the interval boundary and
 the per-ship walk.
 
 The Python loop per frame fell from ~116-117 ms to ~110 ms (this capture),
-about 5%. In the 16-ship scene audit run over 600 frames, 61,149 plant-ticks ran
-the draw program against 34 full pumps, with no thaws.
+about 5%. That 5% is not drift-corrected: phase 1's Python loop was ~1% slower
+than pre-phase-1 while its `r.frame` was ~8% slower, so `r.frame` is a poor
+proxy for drift in the Python loop.
+
+The figures 61,149 plant-ticks on the draw program, 34 full pumps and no thaws
+came from a one-off 600-frame `combat_stress` run (16 ships) by the
+implementer; whether the audit was on or off is not recorded. They are not
+from the committed 120-tick test.
 
 ## 9. Left for later / decisions not taken here
 
