@@ -1,6 +1,5 @@
 // native/src/renderer/bridge_ao_pass.cc
 #include "renderer/bridge_ao_pass.h"
-#include "renderer/bridge_lighting_tuning.h"
 #include "renderer/frame_timer.h"
 #include "renderer/shader.h"
 
@@ -114,10 +113,17 @@ bool BridgeAoPass::render(const scenegraph::Camera& camera, int w, int h,
     shader_->set_mat4("u_proj", proj);
     shader_->set_mat4("u_inv_proj", glm::inverse(proj));
     shader_->set_vec2("u_viewport", glm::vec2(static_cast<float>(w), static_cast<float>(h)));
-    shader_->set_float("u_radius", kBridgeLighting.ao_radius);
-    shader_->set_float("u_strength", kBridgeLighting.ao_strength);
-    shader_->set_float("u_bias", kBridgeLighting.ao_bias);
+    shader_->set_float("u_radius", tuning_.radius);
+    shader_->set_float("u_strength", tuning_.strength);
+    shader_->set_float("u_bias", tuning_.bias);
+    shader_->set_float("u_bias_dist", tuning_.bias_dist);
+    shader_->set_float("u_bias_facing", tuning_.bias_facing);
+    shader_->set_float("u_min_len", tuning_.min_len);
     shader_->set_int("u_samples", s.samples);
+    shader_->set_int("u_detail_samples", tuning_.detail_samples);
+    shader_->set_float("u_detail_radius", tuning_.detail_radius);
+    shader_->set_float("u_detail_strength", tuning_.detail_strength);
+    shader_->set_float("u_detail_bias", tuning_.detail_bias);
     glBindVertexArray(vao_);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindVertexArray(0);

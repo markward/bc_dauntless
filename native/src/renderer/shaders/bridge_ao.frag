@@ -14,13 +14,38 @@ uniform vec2      u_viewport;   // pixels
 uniform float     u_radius;     // view-space units
 uniform float     u_strength;
 uniform float     u_bias;       // view-space units
+uniform float     u_bias_dist;  // bias per view-space unit of distance
+uniform float     u_bias_facing;// 0 = distance bias in full, 1 = scaled by (1 - N.V)
+uniform float     u_min_len;    // shortest main-kernel sample, fraction of the radius
 uniform int       u_samples;    // kernel samples, clamped to 4..64
+// Small-scale detail kernel for shallow steps (0 samples = off).
+uniform int       u_detail_samples;
+uniform float     u_detail_radius;
+uniform float     u_detail_strength;
+uniform float     u_detail_bias;
 
 vec3 view_pos(vec2 uv) {
     float win = texture(u_depth, uv).r;
     vec4 clip = vec4(uv * 2.0 - 1.0, (win - 0.5) * 2.0, 1.0);
     vec4 v = u_inv_proj * clip;
     return v.xyz / v.w;
+}
+
+// One kernel sample `k` (tangent space, unit radius): 1 if the scene covers
+// it, weighted by how near the occluder is in depth.
+float occluded(vec3 P, mat3 TBN, vec3 k, float radius, float bias) {
+    vec3 S = P + TBN * (k * radius);
+    vec4 clip = u_proj * vec4(S, 1.0);
+    vec2 suv = (clip.xy / clip.w) * 0.5 + 0.5;
+    if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) return 0.0;
+    float scene_z = view_pos(suv).z;
+    // Scene surface closer to the camera than the sample = sample is inside
+    // geometry. Only occluders within about the radius count: one far in
+    // front of us (an officer seen against the floor behind) is not
+    // occluding this point, and a wider falloff draws a dark halo round
+    // every silhouette.
+    float range = 1.0 - smoothstep(0.5 * radius, 1.5 * radius, abs(P.z - scene_z));
+    return (scene_z >= S.z + bias ? 1.0 : 0.0) * range;
 }
 
 void main() {
@@ -50,8 +75,12 @@ void main() {
     mat3 TBN = mat3(T, B, N);
 
     // Bias grows with distance: a grazing floor far from the eye spans many
-    // depth units per pixel and would otherwise occlude itself.
-    float bias = u_bias + 0.01 * abs(P.z);
+    // depth units per pixel and would otherwise occlude itself. A surface
+    // seen head-on has no such spread, so u_bias_facing can scale the
+    // distance term by how grazing the view is.
+    float grazing = 1.0 - clamp(dot(N, normalize(-P)), 0.0, 1.0);
+    float dist_bias = u_bias_dist * abs(P.z);
+    float bias = u_bias + dist_bias * mix(1.0, grazing, u_bias_facing);
     float occl = 0.0;
     int n = clamp(u_samples, 4, 64);
     for (int i = 0; i < n; ++i) {
@@ -62,21 +91,33 @@ void main() {
         float phi = float(i) * 2.39996323;
         float z = max(sqrt(1.0 - u), 0.2);
         float rxy = sqrt(max(0.0, 1.0 - z * z));
-        float len = mix(0.1, 1.0, u * u);
+        float len = mix(u_min_len, 1.0, u * u);
         vec3 k = vec3(cos(phi) * rxy, sin(phi) * rxy, z) * len;
-        vec3 S = P + TBN * (k * u_radius);
-        vec4 clip = u_proj * vec4(S, 1.0);
-        vec2 suv = (clip.xy / clip.w) * 0.5 + 0.5;
-        if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) continue;
-        float scene_z = view_pos(suv).z;
-        // Scene surface closer to the camera than the sample = sample is inside
-        // geometry. Only occluders within about the radius count: one far in
-        // front of us (an officer seen against the floor behind) is not
-        // occluding this point, and a wider falloff draws a dark halo round
-        // every silhouette.
-        float range = 1.0 - smoothstep(0.5 * u_radius, 1.5 * u_radius, abs(P.z - scene_z));
-        occl += (scene_z >= S.z + bias ? 1.0 : 0.0) * range;
+        occl += occluded(P, TBN, k, u_radius, bias);
     }
     float ao = 1.0 - u_strength * (occl / float(n));
+
+    // Detail kernel. The main kernel ties length to elevation (its short
+    // samples point nearly straight up), so its lowest sample sits
+    // ~0.077 x radius off the surface and a step shallower than that can
+    // never occlude. Here length runs on its own sequence, so short samples
+    // also lean sideways towards a nearby step.
+    int nd = clamp(u_detail_samples, 0, 32);
+    if (nd > 0) {
+        float dbias = u_detail_bias + dist_bias * grazing;
+        float docc = 0.0;
+        for (int i = 0; i < nd; ++i) {
+            float u = (float(i) + 0.5) / float(nd);
+            float phi = float(i) * 2.39996323 + 1.0;
+            float z = max(sqrt(1.0 - u), 0.2);
+            float rxy = sqrt(max(0.0, 1.0 - z * z));
+            float len = mix(0.15, 1.0, fract(0.5 + float(i) * 0.61803399));
+            vec3 k = vec3(cos(phi) * rxy, sin(phi) * rxy, z) * len;
+            docc += occluded(P, TBN, k, u_detail_radius, dbias);
+        }
+        // Clamped: strengths above 1 drive a factor negative, and two
+        // negatives would multiply back to light.
+        ao = max(ao, 0.0) * max(1.0 - u_detail_strength * (docc / float(nd)), 0.0);
+    }
     FragColor = vec4(ao, ao, ao, 1.0);
 }

@@ -229,6 +229,9 @@ public:
     /// AO quality (samples, resolution). Read at the next render().
     void set_ao_settings(const BridgeAoSettings& s) { ao_settings_ = s; }
 
+    /// AO kernel look (radius, bias, detail kernel). Read at the next render().
+    void set_ao_tuning(const BridgeAoTuning& t) { ao_.set_tuning(t); }
+
     /// Test seam: false skips the AO entirely (u_ao_on = 0). Default true;
     /// production never turns it off.
     void set_ao_enabled(bool on) { ao_enabled_ = on; }

@@ -74,6 +74,35 @@ std::unique_ptr<assets::Model> make_corner() {
     return m;
 }
 
+// A 1.5-unit step, the depth of the DBridge side-panel frame: low floor
+// z = 0 (x >= 0), riser x = 0 (normal +X), raised floor z = 1.5 (x < 0).
+constexpr float kStepH = 1.5f;
+std::unique_ptr<assets::Model> make_step() {
+    auto m = std::make_unique<assets::Model>();
+    constexpr float L = 300.0f;
+    const glm::vec3 low_c[4]   = {{0, -L, 0}, {L, -L, 0}, {L, L, 0}, {0, L, 0}};
+    const glm::vec3 riser_c[4] = {{0, -L, 0}, {0, L, 0}, {0, L, kStepH}, {0, -L, kStepH}};
+    const glm::vec3 high_c[4]  = {{-L, -L, kStepH}, {0, -L, kStepH}, {0, L, kStepH}, {-L, L, kStepH}};
+    assets::MeshCpu cpu;
+    append_quad(cpu, low_c, {0, 0, 1});
+    append_quad(cpu, riser_c, {1, 0, 0});
+    append_quad(cpu, high_c, {0, 0, 1});
+    cpu.material_index = 0;
+    cpu.node_index = 0;
+    m->meshes.push_back(assets::upload_mesh(cpu));
+    m->materials.push_back(assets::Material{});
+    assets::Node root;
+    root.name = "root";
+    root.parent_index = -1;
+    root.local_transform = glm::mat4(1.0f);
+    root.meshes = {0};
+    m->nodes.push_back(std::move(root));
+    m->root_node = 0;
+    return m;
+}
+const glm::vec3 kStepFoot{1.3f, 0.0f, 0.0f};   // low floor beside the riser, clear of the AO filter's bleed off the riser itself
+const glm::vec3 kStepOpen{12.0f, 0.0f, 0.0f};  // low floor, clear of the step
+
 scenegraph::Camera corner_camera(int w, int h) {
     scenegraph::Camera cam;
     cam.eye = {60.0f, 0.0f, 90.0f};
@@ -172,6 +201,43 @@ protected:
                 block_mean(px, vw, vh, cam, kOpenFloor)};
     }
 
+    /// The shallow step (make_step) seen from about 60 units, drawn with
+    /// `tuning`: the floor just beside the step's foot vs open floor.
+    CornerImage render_step(const renderer::BridgeAoTuning& tuning) {
+        constexpr int kStepWin = 512;
+        if (!step_model) step_model = make_step();
+        scenegraph::World world;
+        auto iid = world.create_instance(
+            reinterpret_cast<scenegraph::ModelHandle>(step_model.get()));
+        world.set_world_transform(iid, glm::mat4(1.0f));
+        world.set_pass(iid, scenegraph::Pass::Bridge);
+
+        scenegraph::Camera cam;
+        cam.eye = {40.0f, 0.0f, 45.0f};
+        cam.target = {4.0f, 0.0f, 0.0f};
+        cam.up = {0.0f, 0.0f, 1.0f};
+        cam.aspect = 1.0f;
+        cam.near = 0.5f;
+        cam.far = 2000.0f;
+        renderer::Lighting lighting;
+        lighting.ambient = {0.6f, 0.6f, 0.6f};
+
+        target.resize(kStepWin, kStepWin);
+        target.bind();
+        glViewport(0, 0, kStepWin, kStepWin);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        pass->set_ao_tuning(tuning);
+        pass->render(world, cam, *p, lookup_fn, lighting, scenegraph::Pass::Bridge, 0);
+        EXPECT_EQ(glGetError(), static_cast<GLenum>(GL_NO_ERROR));
+        std::vector<float> px(static_cast<std::size_t>(kStepWin) * kStepWin * 4);
+        glReadPixels(0, 0, kStepWin, kStepWin, GL_RGBA, GL_FLOAT, px.data());
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        return {block_mean(px, kStepWin, kStepWin, cam, kStepFoot),
+                block_mean(px, kStepWin, kStepWin, cam, kStepOpen)};
+    }
+    std::unique_ptr<assets::Model> step_model;
+
     CornerImage render_corner(bool ao_on) { return render_impl(kWin, kWin, ao_on, 0); }
     CornerImage render_corner_at(int vw, int vh, bool ao_on) {
         return render_impl(vw, vh, ao_on, 0);
@@ -185,6 +251,45 @@ TEST_F(BridgeAoFrame, InsideCornerIsDarkerThanOpenFloor) {
     const auto img = render_corner(/*ao_on=*/true);
     EXPECT_LT(img.near_corner, img.open_floor * 0.85);   // occluded
     EXPECT_GT(img.open_floor, render_corner(false).open_floor * 0.95);  // open floor ~unoccluded
+}
+
+// Each point against the same render with AO strength 0, so view-dependent
+// shading across the floor cancels out.
+renderer::BridgeAoTuning no_ao() {
+    renderer::BridgeAoTuning t;
+    t.strength = 0.0f;
+    return t;
+}
+
+// The default kernel cannot see a 1.5-unit step from the floor beside it: its
+// lowest sample sits ~0.077 x 30 = 2.3 units off the floor (measured 0.994 of
+// no-AO here; only the riser's own AO bleeds ~0.5 units onto the floor).
+// Pins the blind spot the detail kernel exists for.
+TEST_F(BridgeAoFrame, DefaultKernelIsBlindToAShallowStep) {
+    const auto base = render_step(no_ao());
+    const auto img = render_step(renderer::BridgeAoTuning{});
+    EXPECT_GT(img.near_corner, base.near_corner * 0.98);
+}
+
+// Measured 0.903 of no-AO at 1.3 units from the riser (0.73 at 0.4, 0.97 at 2).
+TEST_F(BridgeAoFrame, DetailKernelDarkensTheFootOfAShallowStep) {
+    const auto base = render_step(no_ao());
+    renderer::BridgeAoTuning t;
+    t.detail_samples = 8;
+    const auto img = render_step(t);
+    EXPECT_LT(img.near_corner, base.near_corner * 0.95);
+    EXPECT_GT(img.open_floor, base.open_floor * 0.98);   // clear of the step: untouched
+}
+
+TEST(BridgeAoTuning, DefaultsAreTodaysLook) {
+    const renderer::BridgeAoTuning t;
+    EXPECT_EQ(t.radius, renderer::kBridgeLighting.ao_radius);
+    EXPECT_EQ(t.strength, renderer::kBridgeLighting.ao_strength);
+    EXPECT_EQ(t.bias, renderer::kBridgeLighting.ao_bias);
+    EXPECT_EQ(t.bias_dist, 0.01f);
+    EXPECT_EQ(t.bias_facing, 0.0f);
+    EXPECT_EQ(t.min_len, 0.1f);
+    EXPECT_EQ(t.detail_samples, 0);
 }
 
 TEST_F(BridgeAoFrame, CommSetRenderNeverBindsAo) {

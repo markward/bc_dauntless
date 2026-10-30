@@ -37,6 +37,7 @@ _REQUIRED_BINDINGS = frozenset({
     "set_interior_near_gu", "interior_near_gu", "interior_near_gu_default",
     "ambient_gradient_get", "ambient_gradient_set", "ambient_gradient_set_enabled",
     "assemble_officer", "bridge_pass_set_enabled", "bridge_quality",
+    "set_bridge_ao_tuning",
     "cef_composite", "cef_devtools_open", "cef_initialize", "cef_pump",
     "cef_reload", "cef_shutdown",
     "cef_toggle_devtools", "clear_glow_regions", "clear_hologram_ship",
@@ -356,6 +357,17 @@ def set_bridge_wall_time(t: float) -> None:
     this to compute the current animation frame per material.
     """
     _h.set_bridge_wall_time(t)
+
+
+def set_bridge_ao_tuning(radius: float, strength: float, bias: float,
+                         bias_dist: float, bias_facing: float, min_len: float,
+                         detail_samples: int, detail_radius: float,
+                         detail_strength: float, detail_bias: float) -> None:
+    """Bridge AO kernel look (engine/bridge_ao_dials.py). Developer dials."""
+    _h.set_bridge_ao_tuning(float(radius), float(strength), float(bias),
+                            float(bias_dist), float(bias_facing), float(min_len),
+                            int(detail_samples), float(detail_radius),
+                            float(detail_strength), float(detail_bias))
 
 
 def set_bridge_quality(level: int) -> None:
