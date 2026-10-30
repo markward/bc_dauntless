@@ -139,6 +139,14 @@ def ArticulatedPartProperty_Create(name):
 # which is what snapshot_for_leaf does.
 _BY_LEAF: dict = {}
 
+# Bumped wherever _BY_LEAF changes (snapshot_for_leaf, reset) so a caller can
+# cache "this leaf has no rig" and know exactly when to look again.
+_GENERATION: int = 0
+
+
+def generation() -> int:
+    return _GENERATION
+
 
 def snapshot_for_leaf(leaf) -> None:
     """Copy every ArticulatedPartProperty currently registered as a LOCAL
@@ -156,6 +164,8 @@ def snapshot_for_leaf(leaf) -> None:
     coupling: adding a public enumeration method for this one caller would
     be more surface than the one snapshot site needs.
     """
+    global _GENERATION
+    _GENERATION += 1
     import App
     local = getattr(App.g_kModelPropertyManager, "_local", {})
     # Keyed lowercase: a mod's hardpoint module may be mixed-case
@@ -176,4 +186,6 @@ def parts_for_leaf(leaf):
 def reset() -> None:
     """Clear every snapshot. Call on mission swap, and from test teardown --
     _BY_LEAF is process-wide state."""
+    global _GENERATION
+    _GENERATION += 1
     _BY_LEAF.clear()
