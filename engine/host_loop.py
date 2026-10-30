@@ -99,6 +99,7 @@ from engine.appc import viewscreen_static as _vss
 from engine.appc import bridge_set as _bridge_set
 # combat is imported as a module (not `from combat import apply_hit`) so call
 # sites read combat.apply_hit at call time — tests monkeypatch that attribute.
+from engine.core import step_memo
 from engine.appc.sensor_detection import can_detect, clear_undetectable_player_lock
 from engine import units as _units
 from engine.systems import frames as _frames
@@ -1054,9 +1055,23 @@ def _phaser_aim_point(ship, target):
     return target.GetWorldLocation(), None
 
 
-def _advance_combat(ships, dt: float, ship_instances=None,
-                     ship_emitters=None, player=None,
-                     push_render_data: bool = True) -> None:
+def _advance_combat(*args, **kwargs) -> None:
+    """One combat step; see _advance_combat_step.
+
+    Runs inside an engine.core.step_memo block: a repeated question -- a
+    can_detect pair (a ship's phaser tick after its held-weapon check, every
+    torpedo it fired at that target), a mount's world position -- is answered
+    once. The answers are dropped wherever an input can change: every hit
+    (combat.apply_hit), and around deaths, subsystem damage and tractors
+    (which move ships).
+    """
+    with step_memo.combat_step():
+        _advance_combat_step(*args, **kwargs)
+
+
+def _advance_combat_step(ships, dt: float, ship_instances=None,
+                         ship_emitters=None, player=None,
+                         push_render_data: bool = True) -> None:
     """Per-frame torpedo motion + collision + damage + renderer push.
 
     `push_render_data=False` leaves the renderer push to the caller
@@ -1112,6 +1127,10 @@ def _advance_combat(ships, dt: float, ship_instances=None,
         from engine.appc import shockwaves
         shockwaves.advance(dt)
         particles.advance(dt)
+    # Deaths, subsystem damage and tractors change what sensors see and
+    # where mounts are; every hit forgets on its own (combat.apply_hit).
+    # See _advance_combat.
+    step_memo.forget()
     with frame_profiler.scope("cb.death"):
         with frame_profiler.scope("death.ship"):
             ship_death.advance(dt)
@@ -1122,6 +1141,7 @@ def _advance_combat(ships, dt: float, ship_instances=None,
         from engine.appc import object_lifetime
         with frame_profiler.scope("death.lifetime"):
             object_lifetime.advance(dt)
+    step_memo.forget()
     with frame_profiler.scope("cb.damage_sys"):
         from engine.appc import subsystem_cascade, warp_core_breach
         with frame_profiler.scope("dmg.cascade"):
@@ -1137,6 +1157,7 @@ def _advance_combat(ships, dt: float, ship_instances=None,
         camera_shake.update(dt)
 
     # BC WeaponSystem tick: one update_weapons per armed system per frame.
+    step_memo.forget()
     with frame_profiler.scope("cb.held_weapons"):
         _pump_held_weapons(ships_list, dt)
 
@@ -1298,9 +1319,11 @@ def _advance_combat(ships, dt: float, ship_instances=None,
     # engaged); advance_tractors applies the mode's physics — it moves the
     # target (and reciprocally the source) via direct position displacement.
     # No-op for ships without a firing tractor (production stays identical).
+    step_memo.forget()
     with frame_profiler.scope("cb.tractors"):
         from engine.appc import tractor as _tractor
         _tractor.advance_tractors(ships_list, dt)
+    step_memo.forget()
 
     if push_render_data:
         _push_combat_render_data(ships_list, ship_instances=ship_instances,

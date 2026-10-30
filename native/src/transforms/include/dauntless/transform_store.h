@@ -143,6 +143,19 @@ void compose_world_linear_translation(const TransformStore::Transform& t,
                                       double scale, glm::mat3& linear,
                                       glm::dvec3& translation);
 
+// The (torpedo, ship) pairs close enough for projectiles.update_all's narrow
+// hit tests, appended to `out` flat as t, s ordered by torpedo then ship.
+// Torpedo t's tick segment starts at starts[3t..3t+2] and is seg_lens[t]
+// long; ship s is a sphere of radius bounds[s] at centres[3s..3s+2]. A pair
+// is dropped only when d.d > reach*reach (d = centre - start, reach = bound +
+// seg_len), unfused as CPython computes it -- so a NaN stays a candidate.
+// skips[t] is the ship index torpedo t never meets (its shooter), or -1.
+// Pure arithmetic; touches no store.
+void sweep_candidates(const double* starts, const double* seg_lens,
+                      const std::int32_t* skips, std::size_t n_torps,
+                      const double* centres, const double* bounds,
+                      std::size_t n_ships, std::vector<std::uint32_t>& out);
+
 // The process-wide store.
 TransformStore& transform_store();
 

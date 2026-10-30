@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <cmath>
 #include "dauntless/transform_store.h"
 
 #include <glm/glm.hpp>
@@ -377,4 +378,71 @@ TEST(TransformStoreTest, ProximityReportMatchesTheUnfusedDoubleCompare) {
     for (std::size_t k = 0; k < d2s.size(); ++k)
         if (d2s[k] <= p.r2[k]) want.push_back(static_cast<std::uint32_t>(k));
     EXPECT_EQ(p.report(s, 0), want);
+}
+
+TEST(SweepCandidatesTest, ListsPairsWithinReachSkippingTheShooter) {
+    // Ships at x = 0, 10, 100, bound 4; torpedo 0 at x = 7 (seg 1) reaches
+    // only ship 1; torpedo 1 at x = 98 (seg 0.5) only ship 2, which is its
+    // shooter, so it meets nothing.
+    const double starts[] = {7, 0, 0, 98, 0, 0};
+    const double lens[] = {1.0, 0.5};
+    const std::int32_t skips[] = {-1, 2};
+    const double centres[] = {0, 0, 0, 10, 0, 0, 100, 0, 0};
+    const double bounds[] = {4, 4, 4};
+    std::vector<std::uint32_t> out;
+    dauntless::sweep_candidates(starts, lens, skips, 2, centres, bounds, 3, out);
+    EXPECT_EQ(out, (std::vector<std::uint32_t>{0, 1}));
+}
+
+TEST(SweepCandidatesTest, ANanDistanceStaysACandidate) {
+    const double starts[] = {0, 0, 0};
+    const double lens[] = {1.0};
+    const std::int32_t skips[] = {-1};
+    const double centres[] = {std::nan(""), 0, 0};
+    const double bounds[] = {4};
+    std::vector<std::uint32_t> out;
+    dauntless::sweep_candidates(starts, lens, skips, 1, centres, bounds, 1, out);
+    EXPECT_EQ(out, (std::vector<std::uint32_t>{0, 0}));
+}
+
+TEST(SweepCandidatesTest, MatchesTheUnfusedDoubleCompare) {
+    std::uint64_t seed = 4242;
+    auto next = [&] {
+        seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+        return static_cast<double>(seed >> 11) / 9007199254740992.0 * 200.0 - 100.0;
+    };
+    constexpr int kT = 40, kS = 40;
+    std::vector<double> starts, lens, centres, bounds;
+    std::vector<std::int32_t> skips(kT, -1);
+    for (int i = 0; i < 3 * kT; ++i) starts.push_back(next());
+    for (int i = 0; i < 3 * kS; ++i) centres.push_back(next());
+    // Each reach sits exactly on some pair's distance: a fused multiply-add
+    // flips some of these.
+    std::vector<double> d2s;
+    for (int t = 0; t < kT; ++t)
+        for (int s = 0; s < kS; ++s) {
+            volatile double dx = centres[3 * s] - starts[3 * t];
+            volatile double dy = centres[3 * s + 1] - starts[3 * t + 1];
+            volatile double dz = centres[3 * s + 2] - starts[3 * t + 2];
+            volatile double xx = dx * dx, yy = dy * dy, zz = dz * dz;
+            volatile double xy = xx + yy;
+            d2s.push_back(xy + zz);
+        }
+    for (int t = 0; t < kT; ++t) lens.push_back(0.0);
+    for (int s = 0; s < kS; ++s)
+        bounds.push_back(std::sqrt(d2s[(s * 7919) % d2s.size()]));
+    std::vector<std::uint32_t> want;
+    for (int t = 0; t < kT; ++t)
+        for (int s = 0; s < kS; ++s) {
+            volatile double reach = bounds[s] + lens[t];
+            volatile double r2 = reach * reach;
+            if (!(d2s[t * kS + s] > r2)) {
+                want.push_back(static_cast<std::uint32_t>(t));
+                want.push_back(static_cast<std::uint32_t>(s));
+            }
+        }
+    std::vector<std::uint32_t> out;
+    dauntless::sweep_candidates(starts.data(), lens.data(), skips.data(), kT,
+                                centres.data(), bounds.data(), kS, out);
+    EXPECT_EQ(out, want);
 }

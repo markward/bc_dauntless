@@ -607,7 +607,21 @@ _WEAPON_TYPE_IDS = {
 }
 
 
-def apply_hit(ship, damage: float, hit_point, source, *,
+def apply_hit(*args, **kwargs) -> None:
+    """Apply a hit; see _apply_hit for the arguments and the model.
+
+    Damage can change what a sensor sees (a sensor's condition, a cloak) or
+    detach a part a mount sits on, so the combat step's memoised answers are
+    dropped on the way in and on the way out (engine.core.step_memo)."""
+    from engine.core import step_memo
+    step_memo.forget()
+    try:
+        return _apply_hit(*args, **kwargs)
+    finally:
+        step_memo.forget()
+
+
+def _apply_hit(ship, damage: float, hit_point, source, *,
               normal=None, ship_instances=None,
               weapon_type: str | None = None,
               hardpoint_weapon=None, payload_template=None,
