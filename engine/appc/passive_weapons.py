@@ -59,15 +59,35 @@ def invalidate(ship) -> None:
 
 
 def _groups(ship):
+    """The weapon systems, in the walk's order. The one copy of that order:
+    both walks below read it."""
     return (ship.GetPhaserSystem(), ship.GetPulseWeaponSystem(),
             ship.GetTractorBeamSystem(), ship.GetTorpedoSystem())
+
+
+def _is_tube(emitter):
+    """True for a torpedo tube (stepped with UpdateReload), False for an
+    energy weapon (UpdateCharge), None for anything the walk skips.
+
+    isinstance, NOT hasattr: TGObject.__getattr__ returns a truthy _Stub for
+    any missing attribute, so hasattr() is vacuously True on every subsystem.
+    The old hasattr(emitter, "UpdateCharge") guard therefore CALLED a no-op
+    stub on every torpedo tube, every frame -- ranks 1 and 2 of
+    docs/stub_heatmap.md, 4.5M hits. Charge is an EnergyWeapon concept
+    (App.py:6426-6440); a TorpedoTube cannot have it."""
+    _ship_cls, _system_cls, tube_cls, energy_cls = _weapon_classes()
+    if isinstance(emitter, tube_cls):
+        return True
+    if isinstance(emitter, energy_cls):
+        return False
+    return None
 
 
 def _build(ship):
     """A fresh registry for `ship`, or None when it cannot be cached: only a
     real ShipClass with real weapon systems has the invalidation hooks that
     keep a cached weapon list true."""
-    ship_cls, system_cls, tube_cls, energy_cls = _weapon_classes()
+    ship_cls, system_cls = _weapon_classes()[:2]
     if not isinstance(ship, ship_cls):
         return None
     entries = []
@@ -78,23 +98,21 @@ def _build(ship):
             return None
         for i in range(group.GetNumWeapons()):
             weapon = group.GetWeapon(i)
-            # Same dispatch as the per-tick walk; anything else it skips.
-            if isinstance(weapon, tube_cls):
-                entries.append((weapon, True))
-            elif isinstance(weapon, energy_cls):
-                entries.append((weapon, False))
+            is_tube = _is_tube(weapon)
+            if is_tube is not None:
+                entries.append((weapon, is_tube))
     registry = _Registry(entries)
-    for index, (weapon, _is_tube) in enumerate(entries):
+    for index, (weapon, _) in enumerate(entries):
         weapon.__dict__["_passive_asleep"] = False
         weapon.__dict__["_passive_slot"] = (registry, index)
     ship.__dict__["_passive_weapons"] = registry
     return registry
 
 
-def _step_every_weapon(ship, dt: float) -> None:
-    """The per-tick walk for one ship (host_loop._advance_weapons' body), for a
-    ship that cannot hold a registry."""
-    _ship_cls, _system_cls, tube_cls, energy_cls = _weapon_classes()
+def step_every_weapon(ship, dt: float) -> None:
+    """The per-tick walk for one ship: every weapon, every tick. What
+    host_loop._advance_weapons runs with passive state off, and what advance
+    runs for a ship that cannot hold a registry."""
     for group in _groups(ship):
         if group is None:
             continue
@@ -102,9 +120,10 @@ def _step_every_weapon(ship, dt: float) -> None:
             emitter = group.GetWeapon(i)
             if emitter is None:
                 continue
-            if isinstance(emitter, tube_cls):
+            is_tube = _is_tube(emitter)
+            if is_tube:
                 emitter.UpdateReload(dt)
-            elif isinstance(emitter, energy_cls):
+            elif is_tube is False:
                 emitter.UpdateCharge(dt)
 
 
@@ -125,7 +144,7 @@ def advance(ships, dt: float) -> None:
         if registry is None:
             registry = _build(ship)
             if registry is None:
-                _step_every_weapon(ship, dt)
+                step_every_weapon(ship, dt)
                 continue
         entries = registry.entries
         awake = registry.awake

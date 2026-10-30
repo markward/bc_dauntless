@@ -110,8 +110,6 @@ from engine.appc import glow_maps as _glow_maps
 from engine.appc import passive_state, passive_weapons
 from engine.appc.ship_motion import _effective_motion, _cap_keep, _asymptote_step
 from engine.appc.subsystems import (
-    TorpedoTube,
-    _EnergyWeaponFireMixin,
     _emitter_in_arc,
     _is_offline,
     _resolve_bank_aim_world,
@@ -933,39 +931,17 @@ def _advance_weapons(ships, dt: float) -> None:
     included — their AI scripts call StartFiring expecting charged
     emitters.
 
-    With passive state on (the default; DAUNTLESS_PASSIVE_STATE=0 keeps the
-    walk below), engine/appc/passive_weapons.py walks the same weapons in
-    the same order but skips the full idle banks and loaded tubes, whose
-    update would return at its first test, until a field that test reads is
-    written.
+    Both walks live in engine/appc/passive_weapons.py, sharing one group list
+    and one dispatch. With passive state on (the default) it walks the same
+    weapons in the same order but skips the full idle banks and loaded
+    tubes, whose update would return at its first test, until a field that
+    test reads is written. DAUNTLESS_PASSIVE_STATE=0 steps every weapon.
     """
     if passive_state.enabled():
         passive_weapons.advance(ships, dt)
         return
     for ship in ships:
-        for group in (
-            ship.GetPhaserSystem(),
-            ship.GetPulseWeaponSystem(),
-            ship.GetTractorBeamSystem(),
-            ship.GetTorpedoSystem(),
-        ):
-            if group is None:
-                continue
-            for i in range(group.GetNumWeapons()):
-                emitter = group.GetWeapon(i)
-                if emitter is None:
-                    continue
-                # isinstance, NOT hasattr: TGObject.__getattr__ returns a truthy
-                # _Stub for any missing attribute, so hasattr() is vacuously True
-                # on every subsystem. The old hasattr(emitter, "UpdateCharge")
-                # guard therefore CALLED a no-op stub on every torpedo tube, every
-                # frame -- ranks 1 and 2 of docs/stub_heatmap.md, 4.5M hits.
-                # Charge is an EnergyWeapon concept (App.py:6426-6440); a
-                # TorpedoTube cannot have it.
-                if isinstance(emitter, TorpedoTube):
-                    emitter.UpdateReload(dt)
-                elif isinstance(emitter, _EnergyWeaponFireMixin):
-                    emitter.UpdateCharge(dt)
+        passive_weapons.step_every_weapon(ship, dt)
 
 
 # Beam damage per second is MaxDamage × this, by the phaser system's power
