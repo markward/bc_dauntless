@@ -72,6 +72,8 @@ def _run_at(monkeypatch, frame_dt, frames):
 
     real_weapons, real_combat = hl._advance_weapons, hl._advance_combat
     real_audio = hl.tick_audio
+    from engine.audio import attached_sources
+    real_pump = attached_sources.pump
 
     def weapons(ships, dt, *a, **k):
         record("weapons", dt)
@@ -82,11 +84,18 @@ def _run_at(monkeypatch, frame_dt, frames):
         return real_combat(ships, dt, *a, **k)
 
     def audio(*, dt, **k):
-        record("audio", dt)
+        # The listener follows the camera, which moves every drawn frame.
+        record("audio listener", dt)
+        record("audio frames", 1)
         return real_audio(dt=dt, **k)
+
+    def pump(dt):
+        record("audio sources", dt)
+        return real_pump(dt)
     monkeypatch.setattr(hl, "_advance_weapons", weapons)
     monkeypatch.setattr(hl, "_advance_combat", combat)
     monkeypatch.setattr(hl, "tick_audio", audio)
+    monkeypatch.setattr(attached_sources, "pump", pump)
 
     real_neb, real_rad = NebulaTracker.update, RadiationDriver.update
 
@@ -114,11 +123,14 @@ def test_every_consumer_gets_the_game_time_the_loop_advanced(monkeypatch, fps):
     else:
         assert 0 < ticks < frames
     game_time = ticks * TICK_DT
-    for name in ("weapons", "combat", "nebula", "radiation", "audio"):
+    for name in ("weapons", "combat", "nebula", "radiation", "audio sources"):
         assert name in got, "%s never ran" % name
         assert got[name] == pytest.approx(game_time, abs=1e-9), (
             "%s advanced %.4f s while the game advanced %.4f s at %d fps"
             % (name, got[name], game_time, fps))
+    # ...and the camera-driven listener by the real time of the frames it saw.
+    assert got["audio listener"] == pytest.approx(
+        got["audio frames"] / fps, abs=1e-9)
 
 
 # --- structural guard ---------------------------------------------------------
