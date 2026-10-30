@@ -18,6 +18,7 @@ import math as _math
 from engine.appc.events import TGEventHandlerObject
 from engine.appc.float_range_watcher import FloatRangeWatcher
 from engine.appc.math import TGPoint3, TGMatrix3
+from engine.core import step_memo
 from engine.core.ids import implements
 import engine.dev_mode as dev_mode
 from engine.appc import ship_death as _ship_death
@@ -32,7 +33,29 @@ def subsystem_world_position(sub, ship=None):
 
     ``ship`` may be passed explicitly (required for the Hull/root subsystem,
     whose ``_climb_to_ship()`` returns None).
+
+    Inside an engine.core.step_memo block (the combat step) each mount is
+    computed once: a firing phaser bank asks ~4 times a tick (strip emit
+    point, arc test, aim, beam) and the held-weapon pump again, ~100 rebuilds
+    of ship pose and articulation a tick at 64 ships. Every call still gets a
+    fresh TGPoint3; whatever moves a ship or a part in the step forgets.
     """
+    if step_memo.active():
+        key = (id(sub), id(ship))
+        found = _mounts.get(key)
+        if found is None:
+            p = _subsystem_world_position(sub, ship)
+            found = _mounts[key] = (p.x, p.y, p.z)
+        return TGPoint3(found[0], found[1], found[2])
+    return _subsystem_world_position(sub, ship)
+
+
+# (id(sub), id(ship arg)) -> mount (x, y, z), while a step_memo block is open.
+_mounts = step_memo.table()
+
+
+def _subsystem_world_position(sub, ship):
+    """The computation itself; see subsystem_world_position."""
     if ship is None:
         ship = sub._climb_to_ship() if hasattr(sub, "_climb_to_ship") else None
     if ship is None or not hasattr(ship, "GetWorldLocation"):

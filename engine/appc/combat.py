@@ -610,15 +610,15 @@ _WEAPON_TYPE_IDS = {
 def apply_hit(*args, **kwargs) -> None:
     """Apply a hit; see _apply_hit for the arguments and the model.
 
-    Damage can change what a sensor sees (a sensor's condition, a cloak), so
-    the combat step's memoised detection answers are dropped on the way in
-    and on the way out (sensor_detection.step_answers)."""
-    from engine.appc import sensor_detection
-    sensor_detection.forget()
+    Damage can change what a sensor sees (a sensor's condition, a cloak) or
+    detach a part a mount sits on, so the combat step's memoised answers are
+    dropped on the way in and on the way out (engine.core.step_memo)."""
+    from engine.core import step_memo
+    step_memo.forget()
     try:
         return _apply_hit(*args, **kwargs)
     finally:
-        sensor_detection.forget()
+        step_memo.forget()
 
 
 def _apply_hit(ship, damage: float, hit_point, source, *,

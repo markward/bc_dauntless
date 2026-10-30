@@ -24,12 +24,12 @@ of this file, and nothing here reads back into it.
 See docs/superpowers/specs/2026-06-10-sensor-damage-detection-scaling-design.md
 """
 
-import contextlib
 import weakref
 
 import App
 from engine.appc.subsystems import _is_offline, _get_xyz
 from engine.appc import nebula_density as _nd
+from engine.core import step_memo
 from engine.core.ids import implements
 
 # ── Concealment constants ─────────────────────────────────────────────────────
@@ -448,16 +448,22 @@ def can_detect(observer, target, *, dist_sq_gu=None,
     detection answer, so do NOT pass an approximation, a cached value from a
     previous frame, or a value sampled for a different target.
 
-    Inside ``step_answers()`` a pair asked with no optional argument is
-    computed once; see there.
+    Inside an engine.core.step_memo block (the combat step) a pair asked with
+    no optional argument is computed once and the answer repeated. In a
+    64-ship fight this check was ~a fifth of combat time and ~a third of its
+    calls were repeats: a ship's phaser tick asks what its held-weapon stop
+    check just asked, and every torpedo it fired at that target asks again.
+    Exact because repeating the rule with unchanged inputs returns the same
+    answer and leaves the lock-break latch where the first call put it
+    (tests/unit/test_sensor_step_answers.py); damage can change a sensor's
+    range or a cloak, so every hit forgets (combat.apply_hit).
     """
-    answers = _step_answers
-    if (answers is not None and dist_sq_gu is None and apply_concealment
+    if (step_memo.active() and dist_sq_gu is None and apply_concealment
             and concealment is None):
         key = (id(observer), id(target))
-        found = answers.get(key)
+        found = _answers.get(key)
         if found is None:
-            found = answers[key] = _can_detect(
+            found = _answers[key] = _can_detect(
                 observer, target, dist_sq_gu=None, apply_concealment=True,
                 concealment=None)
         return found
@@ -466,43 +472,9 @@ def can_detect(observer, target, *, dist_sq_gu=None,
                        concealment=concealment)
 
 
-# (id(observer), id(target)) -> can_detect's answer while a step_answers()
-# block is open, else None. See step_answers.
-_step_answers = None
-
-
-@contextlib.contextmanager
-def step_answers():
-    """Within the block, can_detect computes each (observer, target) pair
-    once (calls with no optional argument only) and repeats the answer.
-
-    For a stretch of the combat step where no sensor input can change: torpedo
-    guidance, the held-weapon pump and the phaser tick. In a 64-ship fight the
-    sensor check was ~a fifth of combat time and ~a third of its calls were
-    repeats -- a ship's phaser tick asks what its held-weapon stop check just
-    asked, and every torpedo it fired at that target asks again. Damage can
-    change a sensor's range or a cloak, so combat.apply_hit calls forget().
-
-    Exact because repeating the rule with unchanged inputs returns the same
-    answer and leaves the lock-break latch where the first call put it
-    (tests/unit/test_sensor_step_answers.py). Nests: an inner block shares the
-    outer one's answers. The objects keyed by id() outlive the block, which
-    drops every answer on exit."""
-    global _step_answers
-    outer = _step_answers
-    if outer is None:
-        _step_answers = {}
-    try:
-        yield
-    finally:
-        _step_answers = outer
-
-
-def forget() -> None:
-    """Drop the open step_answers() block's answers: something they depend on
-    (a sensor's condition, a cloak) may have changed."""
-    if _step_answers is not None:
-        _step_answers.clear()
+# (id(observer), id(target)) -> can_detect's answer, while a step_memo block
+# is open. See can_detect.
+_answers = step_memo.table()
 
 
 def _can_detect(observer, target, *, dist_sq_gu, apply_concealment,
