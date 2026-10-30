@@ -2406,6 +2406,10 @@ class PowerSubsystem(ShipSubsystem):
         prop = self.GetProperty()
         if prop is None:
             return 0.0
+        if getattr(type(prop), getter_name, None) is None:
+            fv = getattr(prop, "_field_value", None)
+            if fv is not None:
+                return float(fv(getter_name[3:]) or 0.0)
         return float(getattr(prop, getter_name)() or 0.0)
 
     def GetMainBatteryLimit(self) -> float:

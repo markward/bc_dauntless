@@ -89,6 +89,9 @@ class FloatRangeWatcher:
         value lingers on one side.
         """
         new_value = float(new_value)
+        if not self._checks:
+            self._value = new_value
+            return
         old_value = self._value
         # Snapshot so a handler that mutates the check set mid-dispatch can't
         # corrupt iteration.
