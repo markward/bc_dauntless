@@ -212,8 +212,11 @@ knows the state (`kBridgeState*`, the `emissive_alert` value in
 - **One panel per file:** images naming the same resolved albedo share one
   panel (one raster, one upload). A mesh fix's per-shape albedo op gives each
   shape its own NiImage, which made DBridge's two conn/ops tops two panels.
-- **Mipmaps:** generated after each upload (panels are seen at grazing
-  angles).
+- **Mipmaps:** panels keep a full mip chain (they are seen at grazing
+  angles), built on the worker -- a rounded 2×2 box filter over only what a
+  change reaches -- and uploaded with each result. The render thread never
+  calls `glGenerateMipmap`: live on this Mac it cost 5-10 ms a call
+  (perf-register SIG-144).
 - **Clock:** the bridge pass's `wall_time_`, which `host_loop.py` feeds from
   `GetGameTime()`, so panels freeze under pause exactly like today's
   flipbooks. Local time = (t − time the current state's file started) mod that
@@ -231,10 +234,17 @@ knows the state (`kBridgeState*`, the `emissive_alert` value in
   keyframe). The render thread `glTexSubImage2D`s just that rectangle. A
   result that is not uploaded (texture reallocated, entry not playing) makes
   the next job ask for the whole frame, so the texture never falls behind.
-  Mipmaps are still regenerated over the whole texture after each upload.
+- **Never write a texture the GPU may still read (added 2026-10-30, after
+  the back-wall panel):** each panel rotates through three textures. An
+  upload writes the next in turn, and only once a GPU fence says every frame
+  that drew it has finished; otherwise the result waits a frame (never a
+  blocking wait). The job carries what that texture lacks (`also`), and the
+  others fall behind only by what changed. Uploads go straight from client
+  memory: through a pixel-unpack buffer the same uploads stalled 20-37 ms a
+  frame at 4K (SIG-145).
 - **Threading (v1, not later):** ThorVG rasterises on a worker thread into a
   CPU buffer for the NEXT frame; the render thread only uploads
-  (`glTexSubImage2D` + mip generation) at the start of the bridge pass. One
+  (`glTexSubImage2D` of each level) at the start of the bridge pass. One
   frame of animation latency is accepted. A worker that has not finished keeps
   the previous image (never blocks the render thread). The existing
   `std::async` job patterns (`rock_speck.cc`, `structure_parts_cache.cc`) are
@@ -353,3 +363,4 @@ author (no BC content in the repo, shape-diff §6.2).
 | 2026-10-28 | Worker-thread raster in v1; Bridge Quality caps size; Lottie beats flipbook | Claude |
 | 2026-10-28 | Vendor ThorVG with our own CMake | Claude |
 | 2026-10-28 | One panel per resolved albedo; only changed rectangles uploaded; size capped at 2× the canvas (floor 512) — after the conn/ops measurement | Mark approved the three fixes; cap rule (2×, floor 512) is Claude's |
+| 2026-10-30 | Worker-built mips; three-texture rotation behind GPU fences; no pixel-unpack buffer — after the back-wall panel took the bridge to ~23 fps live | Mark: "fix it"; the rotation and dropping the buffer are Claude's, from measurement |
