@@ -37,6 +37,7 @@ Class hierarchy (mirrors SDK):
 import weakref
 
 from engine.appc.objects import ObjectClass
+from engine.appc import proximity_table
 from engine.appc.actions import TGAction
 from engine.appc.events import TGEvent
 import engine.dev_mode as dev_mode
@@ -1246,6 +1247,20 @@ class ProximityCheck(ObjectClass):
         # NOTE: no inside/outside history is kept. This check is LEVEL-
         # triggered (see _evaluate_one), so there is no edge to remember.
 
+    # The per-tick pass caches every check's pairs (engine.appc.
+    # proximity_table): anything that changes what a pair tests calls
+    # proximity_table.touch(), and the anchor is a property so a direct
+    # assignment (AttachObject, tests) cannot skip it.
+    @property
+    def _anchor(self):
+        return self.__dict__.get("_anchor_obj")
+
+    @_anchor.setter
+    def _anchor(self, value):
+        if value is not self.__dict__.get("_anchor_obj"):
+            proximity_table.touch()
+        self.__dict__["_anchor_obj"] = value
+
     def GetEventType(self) -> int:
         return self._event_type
 
@@ -1254,6 +1269,7 @@ class ProximityCheck(ObjectClass):
         # radius is the trigger range.  SDK uses the same setter name; we
         # store under a different attribute to avoid clobbering ObjectClass.
         self._proximity_radius = float(r)
+        proximity_table.touch()
 
     def GetRadius(self) -> float:
         return self._proximity_radius
@@ -1281,6 +1297,7 @@ class ProximityCheck(ObjectClass):
             self._check_objects = [
                 (o, tt) if o is obj else (o, t) for o, t in self._check_objects
             ]
+            proximity_table.retrigger(self, obj, tt)
 
     def GetTriggerType(self, obj=None) -> int:
         """Per-object trigger lookup when `obj` is given (used by SDK
@@ -1300,6 +1317,7 @@ class ProximityCheck(ObjectClass):
         # trigger type is currently set on the check.
         tt = self._trigger_type if trigger_type is None else int(trigger_type)
         self._check_objects.append((obj, tt))
+        proximity_table.touch()
 
     def AddObjectToCheckListByID(self, obj_id, trigger_type=None) -> None:
         tt = self._trigger_type if trigger_type is None else int(trigger_type)
@@ -1309,6 +1327,7 @@ class ProximityCheck(ObjectClass):
         tt = self._trigger_type if trigger_type is None else int(trigger_type)
         for obj in lst:
             self._check_objects.append((obj, tt))
+        proximity_table.touch()
 
     def AddObjectTypeToCheckList(self, type_id, trigger_type=None) -> None:
         tt = self._trigger_type if trigger_type is None else int(trigger_type)
@@ -1319,6 +1338,7 @@ class ProximityCheck(ObjectClass):
 
     def RemoveObjectFromCheckList(self, obj) -> None:
         self._check_objects = [(o, t) for o, t in self._check_objects if o is not obj]
+        proximity_table.touch()
 
     def RemoveObjectFromCheckListByID(self, obj_id) -> None:
         oid = int(obj_id)
@@ -1411,7 +1431,7 @@ class ProximityCheck(ObjectClass):
             return False
         return anchor_set is obj_set
 
-    def _evaluate_one(self, obj, force: bool = False) -> None:
+    def _evaluate_one(self, obj, force: bool = False) -> bool:
         """Shared per-object logic for Evaluate() and CheckProximity().
 
         Fire when the watched object matches its trigger type:
@@ -1437,14 +1457,17 @@ class ProximityCheck(ObjectClass):
 
         `force` is retained for CheckProximity's explicit-immediate contract;
         under level triggering it no longer has to bypass anything.
+
+        Returns True when it fired (proximity_table re-tests the pairs after a
+        firing, whose handlers ran synchronously).
         """
         import App
         anchor_loc = self._centre()
         loc = obj.GetWorldLocation() if hasattr(obj, "GetWorldLocation") else None
         if anchor_loc is None or loc is None:
-            return
+            return False
         if not self._shares_set_with_anchor(obj):
-            return
+            return False
         # An object pending SetDeleteMe(1) is gone for a check: the host only
         # removes it once per rendered frame, after up to N sim ticks, and a
         # level-triggered re-fire in between double-counts it (E6M5's
@@ -1452,7 +1475,7 @@ class ProximityCheck(ObjectClass):
         # host_loop._process_object_deletions does, so a _Stub never reads
         # as a truthy flag.
         if getattr(obj, "__dict__", {}).get("_delete_me", False):
-            return
+            return False
         # Look up the per-object trigger type.
         trigger_type = None
         for o, t in self._check_objects:
@@ -1460,7 +1483,7 @@ class ProximityCheck(ObjectClass):
                 trigger_type = t
                 break
         if trigger_type is None:
-            return
+            return False
         r2 = self._proximity_radius * self._proximity_radius
         dx = loc.x - anchor_loc.x
         dy = loc.y - anchor_loc.y
@@ -1471,7 +1494,7 @@ class ProximityCheck(ObjectClass):
             (trigger_type == ProximityCheck.TT_OUTSIDE and not is_inside)
         )
         if not matches:
-            return
+            return False
         evt = ProximityEvent()
         evt.SetEventType(self._event_type)
         evt._proximity_check = self
@@ -1486,6 +1509,7 @@ class ProximityCheck(ObjectClass):
         else:
             evt.SetDestination(obj)
         App.g_kEventManager.AddEvent(evt)
+        return True
 
     def Evaluate(self, anchor_obj=None) -> None:
         """Per-tick: for each watched object, test whether it's crossed
@@ -1517,6 +1541,7 @@ class ProximityCheck(ObjectClass):
         self._check_objects = []
         self._check_object_ids = []
         self._check_types = []
+        proximity_table.touch()
         # Drop ourselves from the anchor-set's proximity manager so
         # evaluate_proximity_checks stops walking us.
         anchor = self._anchor

@@ -222,3 +222,159 @@ TEST(ComposeWorldLinearTranslationTest, LinearEqualsComposeWorldMatrixUpperLeft)
                 << "row " << row << " col " << col;
     EXPECT_EQ(translation, glm::dvec3(12.0, 34.0, 56.0));
 }
+
+// within_radius backs ProximityManager.GetNearObjects: one flag per handle,
+// set when the position lies within (or exactly on) the sphere. The compare
+// must round as CPython's `dx*dx + dy*dy + dz*dz <= r2` does.
+TEST(TransformStoreTest, WithinRadiusFlagsEachHandleInOrder) {
+    TransformStore s;
+    std::vector<std::uint32_t> flat;
+    const double xs[] = {1.0, 50.0, 3.0, -2.9, 0.0};
+    for (double x : xs) {
+        auto h = s.alloc();
+        s.set_position(h.first, h.second, x, 0.0, 0.0);
+        flat.push_back(h.first);
+        flat.push_back(h.second);
+    }
+    const double p[3] = {0.0, 0.0, 0.0};
+    std::vector<std::uint8_t> out(5, 7);
+    s.within_radius(flat.data(), 5, p, 9.0, out.data());
+    EXPECT_EQ(out, (std::vector<std::uint8_t>{1, 0, 1, 1, 1}));
+}
+
+TEST(TransformStoreTest, WithinRadiusMatchesTheUnfusedDoubleCompare) {
+    TransformStore s;
+    const double px = 0.1, py = -0.7, pz = 0.3;
+    std::vector<std::uint32_t> flat;
+    std::vector<double> want_r2;
+    std::uint64_t seed = 12345;
+    auto next = [&] {
+        seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+        return static_cast<double>(seed >> 11) / 9007199254740992.0 * 200.0 - 100.0;
+    };
+    for (int n = 0; n < 400; ++n) {
+        auto h = s.alloc();
+        const double x = next(), y = next(), z = next();
+        s.set_position(h.first, h.second, x, y, z);
+        flat.push_back(h.first);
+        flat.push_back(h.second);
+        volatile double dx = x - px, dy = y - py, dz = z - pz;
+        volatile double a = dx * dx, b = dy * dy, c = dz * dz;
+        volatile double ab = a + b;
+        want_r2.push_back(ab + c);
+    }
+    const double p[3] = {px, py, pz};
+    std::vector<std::uint8_t> out(400);
+    for (std::size_t k = 0; k < want_r2.size(); ++k) {
+        // The boundary itself: a fused multiply-add flips some of these.
+        s.within_radius(flat.data(), 400, p, want_r2[k], out.data());
+        for (std::size_t j = 0; j < want_r2.size(); ++j)
+            ASSERT_EQ(out[j], want_r2[j] <= want_r2[k] ? 1 : 0) << k << " " << j;
+    }
+}
+
+TEST(TransformStoreTest, WithinRadiusRejectsAStaleHandle) {
+    TransformStore s;
+    auto h = s.alloc();
+    s.free(h.first, h.second);
+    std::uint32_t flat[2] = {h.first, h.second};
+    const double p[3] = {0.0, 0.0, 0.0};
+    std::uint8_t out[1];
+    EXPECT_ANY_THROW(s.within_radius(flat, 1, p, 1.0, out));
+}
+
+namespace {
+struct ProxPairs {
+    std::vector<std::uint32_t> anchors, objects;
+    std::vector<double> r2;
+    std::vector<std::uint8_t> want;
+    void add(std::pair<std::uint32_t, std::uint32_t> a,
+             std::pair<std::uint32_t, std::uint32_t> o, double r, std::uint8_t w) {
+        anchors.push_back(a.first); anchors.push_back(a.second);
+        objects.push_back(o.first); objects.push_back(o.second);
+        r2.push_back(r);
+        want.push_back(w);
+    }
+    std::vector<std::uint32_t> report(const TransformStore& s, std::size_t start) const {
+        std::vector<std::uint32_t> out;
+        s.proximity_report(anchors.data(), objects.data(), r2.data(), want.data(),
+                           want.size(), start, out);
+        return out;
+    }
+};
+}  // namespace
+
+TEST(TransformStoreTest, ProximityReportListsMatchingPairsFromStart) {
+    TransformStore s;
+    auto centre = s.alloc();
+    s.set_position(centre.first, centre.second, 10.0, 0.0, 0.0);
+    auto near = s.alloc();
+    s.set_position(near.first, near.second, 12.0, 0.0, 0.0);
+    auto far = s.alloc();
+    s.set_position(far.first, far.second, 50.0, 0.0, 0.0);
+    auto edge = s.alloc();
+    s.set_position(edge.first, edge.second, 13.0, 0.0, 0.0);
+    ProxPairs p;
+    p.add(centre, near, 9.0, 0);   // inside, wants inside: report
+    p.add(centre, far, 9.0, 0);
+    p.add(centre, near, 9.0, 1);
+    p.add(centre, far, 9.0, 1);    // outside, wants outside: report
+    p.add(centre, edge, 9.0, 0);   // on the sphere is inside: report
+    p.add(centre, edge, 9.0, 1);
+    p.add({0, 0}, {0, 0}, 0.0, 2); // always, handles unread
+    p.add(centre, near, 9.0, 3);   // never
+    EXPECT_EQ(p.report(s, 0), (std::vector<std::uint32_t>{0, 3, 4, 6}));
+    EXPECT_EQ(p.report(s, 4), (std::vector<std::uint32_t>{4, 6}));
+    EXPECT_EQ(p.report(s, 8), (std::vector<std::uint32_t>{}));
+}
+
+TEST(TransformStoreTest, ProximityReportListsAStaleHandleInsteadOfThrowing) {
+    TransformStore s;
+    auto live = s.alloc();
+    auto gone = s.alloc();
+    s.free(gone.first, gone.second);
+    ProxPairs p;
+    p.add(live, gone, 1.0, 3);
+    p.add(gone, live, 1.0, 3);
+    p.add(live, live, 1.0, 3);
+    p.add(live, {999, 0}, 1.0, 3);
+    EXPECT_EQ(p.report(s, 0), (std::vector<std::uint32_t>{0, 1, 3}));
+}
+
+TEST(TransformStoreTest, ProximityReportMatchesTheUnfusedDoubleCompare) {
+    TransformStore s;
+    std::uint64_t seed = 777;
+    auto next = [&] {
+        seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+        return static_cast<double>(seed >> 11) / 9007199254740992.0 * 200.0 - 100.0;
+    };
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> hs;
+    std::vector<std::array<double, 3>> pts;
+    for (int n = 0; n < 40; ++n) {
+        auto h = s.alloc();
+        const std::array<double, 3> q{next(), next(), next()};
+        s.set_position(h.first, h.second, q[0], q[1], q[2]);
+        hs.push_back(h);
+        pts.push_back(q);
+    }
+    ProxPairs p;
+    std::vector<double> d2s;
+    for (int a = 0; a < 40; ++a) {
+        for (int o = 0; o < 40; ++o) {
+            volatile double dx = pts[o][0] - pts[a][0];
+            volatile double dy = pts[o][1] - pts[a][1];
+            volatile double dz = pts[o][2] - pts[a][2];
+            volatile double xx = dx * dx, yy = dy * dy, zz = dz * dz;
+            volatile double xy = xx + yy;
+            d2s.push_back(xy + zz);
+        }
+    }
+    // Each radius sits exactly on some other pair's distance: a fused
+    // multiply-add flips some of these.
+    for (std::size_t k = 0; k < d2s.size(); ++k)
+        p.add(hs[k / 40], hs[k % 40], d2s[(k * 7919) % d2s.size()], 0);
+    std::vector<std::uint32_t> want;
+    for (std::size_t k = 0; k < d2s.size(); ++k)
+        if (d2s[k] <= p.r2[k]) want.push_back(static_cast<std::uint32_t>(k));
+    EXPECT_EQ(p.report(s, 0), want);
+}

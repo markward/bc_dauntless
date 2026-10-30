@@ -76,6 +76,13 @@ class SetClass(TGEventHandlerObject):
         super().__init__()
         self._name: str = ""
         self._objects: dict[str, object] = {}
+        # `_objects` minus torpedoes, in the same order: the proximity walk's
+        # candidates (planet.ProximityManager._candidates). A fight keeps
+        # ~1,500 torpedoes in its set, none occupying space, and walking them
+        # per AvoidObstacles query was a quarter of all AI time at 64 ships.
+        # Kept by _index_member and the two removals; nothing else mutates
+        # `_objects`.
+        self._non_torpedo: dict[str, object] = {}
         # Camera registry — driven by AddCameraToSet / SetActiveCamera.
         # CutsceneCameraBegin (sdk/.../Actions/CameraScriptActions.py) checks
         # `if not pSet.GetCamera(sCamera):` to decide whether to add a new
@@ -187,7 +194,9 @@ class SetClass(TGEventHandlerObject):
             obj.SetName(identifier)
         if hasattr(obj, "_containing_set"):
             obj._containing_set = self
+        previous = self._objects.get(identifier)
         self._objects[identifier] = obj
+        self._index_member(identifier, obj, previous)
         from engine.appc.ships import ShipClass
         from engine.appc import ship_lifecycle
         from engine.appc import contact_index
@@ -242,6 +251,18 @@ class SetClass(TGEventHandlerObject):
         if pGame is not None and pGame.GetPlayer() is not obj:
             pGame.SetPlayer(obj)
 
+    def _index_member(self, identifier: str, obj, previous) -> None:
+        from engine.appc.projectiles import Torpedo
+        if isinstance(obj, Torpedo):
+            self._non_torpedo.pop(identifier, None)
+        elif previous is not None and isinstance(previous, Torpedo):
+            # The name kept its slot in `_objects` but is new to the index,
+            # which would append it: rebuild so the two orders agree.
+            self._non_torpedo = {k: v for k, v in self._objects.items()
+                                 if not isinstance(v, Torpedo)}
+        else:
+            self._non_torpedo[identifier] = obj
+
     def GetObject(self, name: str):
         return self._objects.get(name)
 
@@ -260,6 +281,7 @@ class SetClass(TGEventHandlerObject):
             from engine.appc.objects import ObjectGroup
             ObjectGroup.broadcast_membership(obj, entered=False)
             self._clear_containing_set(obj)
+        self._non_torpedo.pop(name, None)
         return self._objects.pop(name, None)
 
     def DeleteObjectFromSet(self, name: str) -> None:
@@ -278,6 +300,7 @@ class SetClass(TGEventHandlerObject):
             ObjectGroup.broadcast_membership(obj, entered=False)
             broadcast_object_deleted(obj)
             self._clear_containing_set(obj)
+        self._non_torpedo.pop(name, None)
         self._objects.pop(name, None)
 
     def _clear_containing_set(self, obj) -> None:

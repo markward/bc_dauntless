@@ -950,6 +950,13 @@ def _reset_leakable_engine_globals():
         _warp_state_mod.set_radius_seeder(None)
     except Exception:
         pass
+    # Proximity pass table (engine/appc/proximity_table.py): holds the last
+    # pass's sets, checks and watched objects alive until the next pass.
+    try:
+        from engine.appc import proximity_table as _proximity_table
+        _proximity_table.reset()
+    except Exception:
+        pass
     # Warp preload: begin/active/end hold one module-global Preload.
     try:
         from engine import warp_preload as _warp_preload

@@ -18,6 +18,7 @@ in Phase 2.  Hailable + atmosphere damage are real gameplay logic.
 """
 
 from engine.appc.objects import ObjectClass
+from engine.appc import proximity_table
 
 
 class Planet(ObjectClass):
@@ -299,6 +300,7 @@ class ProximityManager:
             entry = (obj, None)
             if entry not in self._proximity_checks:
                 self._proximity_checks.append(entry)
+                proximity_table.touch()
 
     def RemoveObject(self, obj) -> None:
         if obj in self._objects:
@@ -337,10 +339,19 @@ class ProximityManager:
         seen = set()
         pSet = self._set
         if pSet is not None:
-            try:
-                members = pSet.GetObjectList()
-            except Exception:
-                members = ()
+            # Torpedoes never occupy space unless something gives one a
+            # radius, so while none has, walk the set's non-torpedo index
+            # (SetClass._non_torpedo): same members, same order, without
+            # stepping through every torpedo in flight.
+            from engine.appc.sets import SetClass
+            from engine.appc import projectiles
+            if isinstance(pSet, SetClass) and not projectiles.sized_torpedo_in(pSet):
+                members = list(pSet._non_torpedo.values())
+            else:
+                try:
+                    members = pSet.GetObjectList()
+                except Exception:
+                    members = ()
             for obj in members:
                 if id(obj) not in seen and _is_proximity_participant(obj):
                     seen.add(id(obj))
@@ -365,8 +376,29 @@ class ProximityManager:
         """
         r2 = float(radius) * float(radius)
         px, py, pz = point.x, point.y, point.z
+        candidates = self._candidates()
+        # Every ConditionInRange registers a proximity check here, so a
+        # 64-ship fight walks ~337 candidates per AvoidObstacles query; one
+        # store crossing each was 40% of all AI time. Objects whose location
+        # IS their transform-store slot are tested in ONE store call
+        # (within_radius: the compare below, rounded the same way). One that
+        # answers GetWorldLocation itself (DebrisChunk, subsystems, ...) is
+        # still asked.
+        from engine.appc.transform_store import get_store
+        stored = [obj for obj in candidates
+                  if proximity_table.location_is_stored(obj)]
+        inside = {}
+        if stored:
+            flags = get_store().within_radius(
+                [obj._xform for obj in stored], px, py, pz, r2)
+            inside = {id(obj): f for obj, f in zip(stored, flags)}
         result = []
-        for obj in self._candidates():
+        for obj in candidates:
+            f = inside.get(id(obj))
+            if f is not None:
+                if f:
+                    result.append(obj)
+                continue
             loc = obj.GetWorldLocation() if hasattr(obj, "GetWorldLocation") else None
             if loc is None:
                 continue
@@ -465,6 +497,7 @@ class ProximityManager:
         entry = (check, anchor_obj)
         if entry not in self._proximity_checks:
             self._proximity_checks.append(entry)
+            proximity_table.touch()
 
 
 def evaluate_proximity_checks() -> None:
@@ -476,12 +509,9 @@ def evaluate_proximity_checks() -> None:
     The (check, anchor) tuple stores an explicit anchor when the call
     site used AddProximityCheck(check, anchor); SDK condition flow
     instead leaves anchor=None and relies on ObjectClass.AttachObject
-    having stored the anchor on the check itself."""
-    import App
-    for pSet in App.g_kSetManager._sets.values():
-        pm = pSet.GetProximityManager() if hasattr(pSet, "GetProximityManager") else None
-        if pm is None:
-            continue
-        checks = getattr(pm, "_proximity_checks", ())
-        for check, anchor in checks:
-            check.Evaluate(anchor)
+    having stored the anchor on the check itself.
+
+    That is: for every set, for every (check, anchor) its manager holds,
+    check.Evaluate(anchor). proximity_table runs exactly that from a cached
+    pair table, so only the pairs that could fire reach Python."""
+    proximity_table.evaluate()

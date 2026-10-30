@@ -60,6 +60,20 @@ def test_same_set_offset_is_zero():
     assert frames.offset_between(ona1, ona1) == (0.0, 0.0, 0.0)
 
 
+def test_same_set_offset_skips_the_region_lookups(monkeypatch):
+    """The commonest comparison -- two objects in one set -- is zero whatever
+    the set's frame, so it must not pay for resolving it. BC's per-torpedo
+    TorpIsIncoming check made ~2 frame resolutions per call at 64 ships."""
+    ona1 = load_region("Ona", "Ona1")
+    from engine.systems import region_hooks
+
+    def _boom(*_a):
+        raise AssertionError("resolved a frame for a same-set compare")
+    monkeypatch.setattr(region_hooks, "is_mapped", _boom)
+    assert frames.offset_between(ona1, ona1) == (0.0, 0.0, 0.0)
+    assert frames.offset_between(None, None) is None
+
+
 def test_two_regions_of_one_system_offset_by_their_anchor_difference():
     ona1 = load_region("Ona", "Ona1")
     ona2 = load_region("Ona", "Ona2")

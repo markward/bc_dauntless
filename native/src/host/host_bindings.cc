@@ -16,6 +16,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <audio/python_binding.h>
+#include "dauntless/torpedo_scan.h"
 #include "dauntless/transform_store.h"
 #include "platform/relaunch.h"
 
@@ -1517,18 +1518,34 @@ void frame() {
         }
     }
 
+    const bool bridge_active = !viewer_mode && g_bridge_pass_enabled && g_bridge_pass;
+    const bool viewscreen_on = bridge_active && g_viewscreen_enabled;
+
     {
         DAUNTLESS_FRAME_SCOPE("anim");
         g_world.propagate();
         // SP2: rebuild each animated instance's bone palette for this frame BEFORE
         // anything consumes it (the space skinned draw and the bridge pass). Shares
         // the `now` wall clock with draw_model / flip controllers.
-        renderer::update_animations(g_world, lookup, now);
-        update_bridge_node_anims(now);
+        //
+        // Only for instances a pass draws THIS frame: in the exterior view the
+        // crew and every realized comm set's faces are not drawn, and re-posing
+        // them cost a flat ~1.5 ms a frame (Debug). The draws below must stay in
+        // step with these flags: the bridge pass runs iff bridge_active, a comm
+        // set only through the viewscreen's comm feed.
+        renderer::DrawnPasses drawn;
+        drawn.bridge = bridge_active;
+        drawn.comm = viewscreen_on && g_comm_source.active;
+        drawn.comm_set_id = g_comm_source.set_id;
+        {
+            DAUNTLESS_FRAME_SCOPE("anim.skin");
+            renderer::update_animations(g_world, lookup, now, drawn);
+        }
+        {
+            DAUNTLESS_FRAME_SCOPE("anim.node_clips");
+            update_bridge_node_anims(now);
+        }
     }
-
-    const bool bridge_active = !viewer_mode && g_bridge_pass_enabled && g_bridge_pass;
-    const bool viewscreen_on = bridge_active && g_viewscreen_enabled;
 
     // ── Cubemap sky bake (static-per-system) ───────────────────────────────
     // The map-driven procedural sky is fixed per vantage; bake it once into a
@@ -1989,24 +2006,15 @@ void frame() {
     // and only call set_active_shadow(..., false), which makes the opaque pass
     // (Task 6) a no-op — the production render path stays byte-identical.
     if (dauntless_shadows::enabled() && g_shadow_target) {
-        const glm::vec3 focus = g_camera.target;
-        const scenegraph::Instance* player = nullptr;
-        float player_radius_gu = 0.0f;
-        float best_d2 = std::numeric_limits<float>::max();
-        g_world.for_each_visible_in_pass(
-            scenegraph::Pass::Space, [&](const scenegraph::Instance& inst) {
-                if (!inst.rim_eligible) return;
-                const assets::Model* m = resolve_model(inst.model_handle);
-                if (m == nullptr) return;
-                const glm::vec3 pos = glm::vec3(inst.world[3]);
-                const float d2 = glm::dot(pos - focus, pos - focus);
-                if (d2 >= best_d2) return;
-                best_d2 = d2;
-                player = &inst;
-                renderer::Aabb box = renderer::compute_model_aabb(*m);
-                const float scale = glm::length(glm::vec3(inst.world[0]));
-                player_radius_gu = glm::length(box.half_extents) * scale;
-            });
+        // The focus: the hull nearest the camera target, its radius from the
+        // per-model cache (an uncached compute_model_aabb here walked every
+        // vertex of each nearer hull, every frame: ~3 ms at 17 ships, Debug).
+        renderer::frame_timer().push("shadow.fit");
+        const renderer::ShadowFocus sf =
+            renderer::pick_shadow_focus(g_world, g_camera.target, lookup);
+        renderer::frame_timer().pop();
+        const scenegraph::Instance* player = sf.instance;
+        const float player_radius_gu = sf.radius_gu;
 
         if (player != nullptr) {
             renderer::ShadowFitParams fp;  // defaults
@@ -2113,14 +2121,17 @@ void frame() {
     }
 
     // ── Main HDR target ────────────────────────────────────────────────────
-    g_hdr_target->resize(fw, fh);
-    g_hdr_target->bind();   // sets viewport to fw x fh
-    if (viewer_mode) {
-        glClearColor(g_hologram_bg.r, g_hologram_bg.g, g_hologram_bg.b, 1.0f);
-    } else {
-        glClearColor(0.05f, 0.07f, 0.10f, 1.0f);
+    {
+        DAUNTLESS_FRAME_SCOPE("hdr.clear");
+        g_hdr_target->resize(fw, fh);
+        g_hdr_target->bind();   // sets viewport to fw x fh
+        if (viewer_mode) {
+            glClearColor(g_hologram_bg.r, g_hologram_bg.g, g_hologram_bg.b, 1.0f);
+        } else {
+            glClearColor(0.05f, 0.07f, 0.10f, 1.0f);
+        }
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     }
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     if (fh > 0) g_camera.aspect = static_cast<float>(fw) / static_cast<float>(fh);
 
     // Space scene goes to the main view only outside bridge view (in bridge
@@ -2208,6 +2219,7 @@ void frame() {
     if (viewer_mode && g_gizmo_pass && g_transform_gizmo.length > 0.0f)
         g_gizmo_pass->render(g_transform_gizmo, g_camera);
     if (g_subsystem_pin_pass && !g_subsystem_pins.empty()) {
+        DAUNTLESS_FRAME_SCOPE("pins");
         // Device-pixel ratio = framebuffer / logical window height, so pins
         // keep a constant apparent size on HiDPI/Retina displays.
         int fb_w = 0, fb_h = 0, win_w = 0, win_h = 0;
@@ -2217,6 +2229,7 @@ void frame() {
         g_subsystem_pin_pass->render(g_subsystem_pins, g_camera, *g_pipeline, dsf);
     }
     if (g_target_reticle_pass && g_target_reticle.visible) {
+        DAUNTLESS_FRAME_SCOPE("reticle");
         // Same device-pixel ratio the subsystem pins use, so the reticule
         // keeps a constant apparent size on HiDPI/Retina displays.
         int fb_w = 0, fb_h = 0, win_w = 0, win_h = 0;
@@ -2362,6 +2375,7 @@ void frame() {
     float lens_flare_strength = 0.0f;
     if (dauntless_hdr::enabled() && dauntless_hdr_lens_flare::enabled()
             && exterior && g_lens_flare_hdr_pass) {
+        DAUNTLESS_FRAME_SCOPE("lens_flare");
         lens_flare_tex = g_lens_flare_hdr_pass->render(
             bloom_tex, g_bloom_pass ? g_bloom_pass->coarsest_texture() : 0u,
             fw, fh);
@@ -9002,6 +9016,61 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("handles"),
           "Bulk position read: one crossing instead of N.");
 
+    // ProximityManager.GetNearObjects: `handles` is a buffer of uint32
+    // (index, generation) pairs; returns one byte per handle, 1 inside or on
+    // the sphere. Taking a buffer and returning bytes keeps the crossing to
+    // two conversions, where a list of tuples cost ~0.4 us per handle.
+    m.def("transform_within_radius",
+          [](py::buffer handles, double x, double y, double z, double r2) {
+              const py::buffer_info info = handles.request();
+              if (info.itemsize != sizeof(std::uint32_t) || info.ndim != 1 ||
+                  info.shape[0] % 2 != 0)
+                  throw py::value_error("handles: flat uint32 (index, generation) pairs");
+              const std::size_t n = static_cast<std::size_t>(info.shape[0]) / 2;
+              std::string out(n, '\0');
+              const double p[3] = {x, y, z};
+              dauntless::transform_store().within_radius(
+                  static_cast<const std::uint32_t*>(info.ptr), n, p, r2,
+                  reinterpret_cast<std::uint8_t*>(out.data()));
+              return py::bytes(out);
+          },
+          py::arg("handles"), py::arg("x"), py::arg("y"), py::arg("z"),
+          py::arg("r2"));
+
+    // Backs engine/appc/proximity_table.py: the per-tick ProximityCheck pass
+    // keeps its pairs packed between ticks and asks once which few need
+    // Python. Returns a list because it is nearly always empty.
+    m.def("transform_proximity_report",
+          [](py::buffer anchors, py::buffer objects, py::buffer r2,
+             py::buffer want, std::size_t start) {
+              const py::buffer_info a = anchors.request();
+              const py::buffer_info o = objects.request();
+              const py::buffer_info r = r2.request();
+              const py::buffer_info w = want.request();
+              const std::size_t n = static_cast<std::size_t>(w.size);
+              if (w.itemsize != 1 || r.itemsize != sizeof(double) ||
+                  a.itemsize != sizeof(std::uint32_t) ||
+                  o.itemsize != sizeof(std::uint32_t) ||
+                  static_cast<std::size_t>(r.size) != n ||
+                  static_cast<std::size_t>(a.size) != 2 * n ||
+                  static_cast<std::size_t>(o.size) != 2 * n)
+                  throw py::value_error(
+                      "proximity pairs: uint32 anchor and object handle "
+                      "pairs, one double r2 and one want byte per pair");
+              std::vector<std::uint32_t> out;
+              dauntless::transform_store().proximity_report(
+                  static_cast<const std::uint32_t*>(a.ptr),
+                  static_cast<const std::uint32_t*>(o.ptr),
+                  static_cast<const double*>(r.ptr),
+                  static_cast<const std::uint8_t*>(w.ptr), n, start, out);
+              py::list res(out.size());
+              for (std::size_t k = 0; k < out.size(); ++k)
+                  res[k] = py::int_(out[k]);
+              return res;
+          },
+          py::arg("anchors"), py::arg("objects"), py::arg("r2"),
+          py::arg("want"), py::arg("start"));
+
     m.def("transform_live_count", []() {
               return dauntless::transform_store().live_count();
           });
@@ -9009,4 +9078,48 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("transform_capacity", []() {
               return dauntless::transform_store().capacity();
           });
+
+    // ── Incoming-torpedo table ───────────────────────────────────────────────
+    // Backs App.AIScriptAssist_GetIncomingTorpIDsInSet. Kept in step with
+    // projectiles._active by engine/appc/torpedo_scan.py; see torpedo_scan.h.
+    m.def("torpedo_scan_add",
+          [](std::int64_t id, std::uint32_t xi, std::uint32_t xg, double vx,
+             double vy, double vz, bool has_source, std::int64_t source,
+             std::int64_t group) {
+              dauntless::torpedo_scan().add(id, xi, xg, vx, vy, vz,
+                                            has_source, source, group);
+          });
+    m.def("torpedo_scan_remove", [](std::int64_t id) {
+              return dauntless::torpedo_scan().remove(id);
+          });
+    m.def("torpedo_scan_set_velocity",
+          [](std::int64_t id, double vx, double vy, double vz) {
+              dauntless::torpedo_scan().set_velocity(id, vx, vy, vz);
+          });
+    m.def("torpedo_scan_set_source",
+          [](std::int64_t id, bool has_source, std::int64_t source) {
+              dauntless::torpedo_scan().set_source(id, has_source, source);
+          });
+    m.def("torpedo_scan_set_group", [](std::int64_t id, std::int64_t group) {
+              dauntless::torpedo_scan().set_group(id, group);
+          });
+    m.def("torpedo_scan_clear", []() { dauntless::torpedo_scan().clear(); });
+    m.def("torpedo_scan_size", []() { return dauntless::torpedo_scan().size(); });
+    m.def("torpedo_scan_incoming",
+          [](const std::array<double, 3>& obs,
+             const std::array<double, 3>& obs_vel, double threshold,
+             bool match_source, std::int64_t firing_id,
+             const std::vector<std::tuple<std::int64_t, double, double, double>>&
+                 offsets) {
+              std::vector<dauntless::TorpedoScan::GroupOffset> offs;
+              offs.reserve(offsets.size());
+              for (const auto& [g, x, y, z] : offsets) offs.push_back({g, {x, y, z}});
+              return dauntless::torpedo_scan().incoming(
+                  obs.data(), obs_vel.data(), threshold, match_source,
+                  firing_id, offs);
+          },
+          py::arg("obs"), py::arg("obs_vel"), py::arg("threshold"),
+          py::arg("match_source"), py::arg("firing_id"), py::arg("offsets"),
+          "Ids of the torpedoes incoming on the observer, in table order. "
+          "offsets: (group, dx, dy, dz) per set visible from the observer's.");
 }
