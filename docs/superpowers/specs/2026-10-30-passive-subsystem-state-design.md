@@ -341,6 +341,15 @@ these in-run checks test the same property more directly.)*
 
 Each phase lands with its tests and a measurement before the next starts.
 
+**Phase 1 scope (2026-10-30, while planning).** Narrowed to weapons (energy
+banks, pulse weapons, tractors, torpedo tubes) and articulation for ships
+with no rig. In the 2026-10-29 profile of `gl.subsystems` (22,488 ticks)
+shields cost 0.97 s, cloak 0.60 s and repair 0.15 s against the power plant's
+30.8 s and articulation's 6.4 s: about 4% together, too little to justify a
+wake path each. Their per-tick updates already return early when idle. They
+stay stepped. The tick queue (6.5) is not needed until phase 2. Plan:
+`docs/superpowers/plans/2026-10-30-passive-subsystem-state-phase1.md`.
+
 ## 9. Left for later / decisions not taken here
 
 - **Closed-form ramps** (a charging bank or reloading tube described as a
