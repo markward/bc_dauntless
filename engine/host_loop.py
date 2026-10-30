@@ -11200,6 +11200,9 @@ def run(mission_name: Optional[str] = None,
                 _warp_in_dials.register()
                 from engine.appc import plating_dials as _plating_dials
                 _plating_dials.register()
+                from engine import bridge_ao_dials as _bridge_ao_dials
+                _bridge_ao_dials.register(
+                    lambda d: r.set_bridge_ao_tuning(**d))
                 from engine.planets import atmosphere_dials as _atmo_dials
                 _atmo_dials.set_target_fn(
                     lambda: _nearest_live_planet(controller.session)

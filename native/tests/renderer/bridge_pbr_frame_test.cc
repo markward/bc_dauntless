@@ -1264,14 +1264,20 @@ TEST_F(BridgePbrFrame, ProbeCaptureIncludesTheSpotsDiffuse) {
     EXPECT_GT(lit.r, lit.g * 1.5f);              // still the red wall
 }
 
-// AO never multiplies a spot: with no ambient (the downlight is zero, so
-// only the spot lights the floor), the floor in the wall's corner -- where
-// the AO is dark -- reads the same with AO on and off.
-TEST_F(BridgePbrFrame, AoNeverDarkensASpot) {
+// By default the MAIN AO never multiplies a spot: with no ambient (the
+// downlight is zero, so only the spot lights the floor), the floor in the
+// wall's corner -- where the AO is dark -- reads the same with AO on and off.
+// (The detail AO does reach lights by default, after the diffuse ceiling, so
+// it is switched off here; main_direct / main_final opt the main AO in.)
+TEST_F(BridgePbrFrame, MainAoNeverDarkensASpotByDefault) {
     set_base({0.6f, 0.6f, 0.6f, 1.0f});
     sample_ = {4.0f, 0.0f, 0.0f};
     renderer::Lighting none;
     none.ambient = glm::vec3(0.0f);
+    renderer::BridgeAoTuning main_only;
+    main_only.detail_samples = 0;
+    main_only.detail_final = 0.0f;
+    pass->set_ao_tuning(main_only);
     pass->set_spots({{{4.0f, 0.0f, 40.0f}, {0.0f, 0.0f, -1.0f}, 0.9f, 0.8f, 200.0f,
                       glm::vec3(2000.0f)}});
     const glm::vec3 no_ao = render_floor_with(none);
