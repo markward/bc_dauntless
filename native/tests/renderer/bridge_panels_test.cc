@@ -155,10 +155,13 @@ protected:
 
     GLuint live() const { return panels->live_texture(handle, *model, 0); }
 
-    /// One frame: the draw (when `mark`) then the per-frame update.
+    /// One frame: the draw (when `mark`) then the per-frame update, then
+    /// the flush the game's buffer swap does (a GPU fence that is never sent
+    /// never signals, and BridgePanels never forces one).
     void frame(double t, bool mark = true) {
         if (mark) panels->mark_drawn(handle, *model, 0, state);
         panels->update(t, quality);
+        glFlush();
     }
 
     /// frame() every 5 ms until `until` holds or `limit` passes.

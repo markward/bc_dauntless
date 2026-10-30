@@ -238,7 +238,8 @@ knows the state (`kBridgeState*`, the `emissive_alert` value in
   the back-wall panel):** each panel rotates through three textures. An
   upload writes the next in turn, and only once a GPU fence says every frame
   that drew it has finished; otherwise the result waits a frame (never a
-  blocking wait). The job carries what that texture lacks (`also`), and the
+  blocking wait, and the poll never forces a flush -- that alone cost 9-34 ms
+  a frame live, SIG-147; the frame's swap sends the fence). The job carries what that texture lacks (`also`), and the
   others fall behind only by what changed. Uploads go straight from client
   memory: through a pixel-unpack buffer the same uploads stalled 20-37 ms a
   frame at 4K (SIG-145).

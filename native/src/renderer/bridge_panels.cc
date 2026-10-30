@@ -192,16 +192,20 @@ void BridgePanels::update(double t, BridgeQuality q) {
     // frame `frame_ - 1`'s draws), then every fence that has passed. Never a
     // wait -- a texture the GPU may still read is simply not written yet.
     ++frame_;
-    if (GLsync f = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0)) fences_.emplace_back(frame_ - 1, f);
-    while (!fences_.empty() && !hold_fences_) {
-        // The flush bit: a fence the driver has not yet sent never signals
-        // (the swap flushes in the game; nothing does in a test).
-        const GLenum st =
-            glClientWaitSync(fences_.front().second, GL_SYNC_FLUSH_COMMANDS_BIT, 0);
-        if (st == GL_TIMEOUT_EXPIRED) break;
-        done_frame_ = fences_.front().first;   // signalled (or failed: never block on it)
-        glDeleteSync(fences_.front().second);
-        fences_.pop_front();
+    {
+        DAUNTLESS_FRAME_SCOPE("bridge_lottie.fences");
+        if (GLsync f = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0))
+            fences_.emplace_back(frame_ - 1, f);
+        while (!fences_.empty() && !hold_fences_) {
+            // No GL_SYNC_FLUSH_COMMANDS_BIT: the frame's swap sends the
+            // fence. Forcing the flush here made the CPU wait for the GPU,
+            // 9-34 ms a frame live (perf P-14, SIG-147).
+            const GLenum st = glClientWaitSync(fences_.front().second, 0, 0);
+            if (st == GL_TIMEOUT_EXPIRED) break;
+            done_frame_ = fences_.front().first;   // signalled (or failed: never block on it)
+            glDeleteSync(fences_.front().second);
+            fences_.pop_front();
+        }
     }
 
     // 1. Size every loaded entry from its canvas at this quality (capped by
