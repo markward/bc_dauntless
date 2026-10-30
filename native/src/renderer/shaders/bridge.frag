@@ -56,6 +56,8 @@ uniform vec2      u_ao_screen;    // the view's size in pixels (the AO may be sm
 uniform int       u_ao_on;
 uniform float     u_ao_direct;    // 0..1: detail AO (.g) on spot/area diffuse
 uniform float     u_ao_final;     // 0..1: detail AO applied after the diffuse ceiling
+uniform float     u_ao_main_direct; // 0..1: main AO (.b) on spot/area diffuse
+uniform float     u_ao_main_final;  // 0..1: main AO applied after the diffuse ceiling
 uniform int       u_output_normal;
 
 // ── Developer Options debug view (Lighting tab) ────────────────────────
@@ -647,12 +649,15 @@ void main() {
     }
     vec3 n = shading_normal();
     if (u_debug_view == 1) { FragColor = vec4(n * 0.5 + 0.5, 1.0); return; }
-    // u_ao_final moves that share of the detail AO past the diffuse ceiling:
-    // a bright wall sits on the ceiling's knee, which flattens any darkening
-    // applied before it.
+    // u_ao_final / u_ao_main_final move that share of the detail / main AO
+    // past the diffuse ceiling, onto ALL diffuse (lights included): a bright
+    // wall sits on the ceiling's knee, which flattens any darkening applied
+    // before it. Neither moved: the whole AO (.r) as filtered.
     vec3 ao_t = ao_term();
-    float ao = u_ao_final > 0.0 ? ao_t.b * mix(ao_t.g, 1.0, u_ao_final) : ao_t.r;
-    float ao_post = mix(1.0, ao_t.g, u_ao_final);
+    float ao = (u_ao_final > 0.0 || u_ao_main_final > 0.0)
+             ? mix(ao_t.b, 1.0, u_ao_main_final) * mix(ao_t.g, 1.0, u_ao_final)
+             : ao_t.r;
+    float ao_post = mix(1.0, ao_t.b, u_ao_main_final) * mix(1.0, ao_t.g, u_ao_final);
     if (u_debug_view == 3) { FragColor = vec4(vec3(ao), 1.0); return; }
     if (u_debug_view == 4 || u_debug_view == 5) {
         uint id = uint(u_debug_view == 4 ? gl_PrimitiveID : u_mesh_id);
@@ -699,14 +704,16 @@ void main() {
         }
         // Static spots and area lights: direct light, never multiplied by the
         // main AO. Their diffuse goes through the ceiling in combine(); only
-        // specular may exceed it. u_ao_direct lets the DETAIL AO darken their
-        // diffuse: a shallow recess hides part of a broad light, and a wall
-        // lit mostly by an area light shows no AO at all otherwise.
+        // specular may exceed it. u_ao_direct / u_ao_main_direct let the
+        // detail / main AO darken their diffuse: a recess or a chair hides part
+        // of a broad light, and a surface lit mostly by area lights shows no AO
+        // at all otherwise.
         vec3 diffuse_received = diffuse;
         accumulate_spots(N, V, NdotV, albedo, metal, rough, F0, diffuse, spec);
         accumulate_area_lights(N, V, NdotV, albedo, metal, rough, F0, diffuse, spec);
         diffuse = diffuse_received
-                + (diffuse - diffuse_received) * mix(1.0, ao_t.g, u_ao_direct);
+                + (diffuse - diffuse_received)
+                  * mix(1.0, ao_t.g, u_ao_direct) * mix(1.0, ao_t.b, u_ao_main_direct);
         float dip = glow_dip(base_uv);
         diffuse *= dip;
         spec *= dip;

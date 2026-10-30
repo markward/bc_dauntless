@@ -254,10 +254,18 @@ TEST_F(BridgeAoFrame, InsideCornerIsDarkerThanOpenFloor) {
     EXPECT_GT(img.open_floor, render_corner(false).open_floor * 0.95);  // open floor ~unoccluded
 }
 
+// The main kernel alone, before the ambient (the look before the detail kernel).
+renderer::BridgeAoTuning main_only() {
+    renderer::BridgeAoTuning t;
+    t.detail_samples = 0;
+    t.detail_final = 0.0f;
+    return t;
+}
+
 // Each point against the same render with AO strength 0, so view-dependent
 // shading across the floor cancels out.
 renderer::BridgeAoTuning no_ao() {
-    renderer::BridgeAoTuning t;
+    renderer::BridgeAoTuning t = main_only();
     t.strength = 0.0f;
     return t;
 }
@@ -268,14 +276,14 @@ renderer::BridgeAoTuning no_ao() {
 // Pins the blind spot the detail kernel exists for.
 TEST_F(BridgeAoFrame, DefaultKernelIsBlindToAShallowStep) {
     const auto base = render_step(no_ao());
-    const auto img = render_step(renderer::BridgeAoTuning{});
+    const auto img = render_step(main_only());
     EXPECT_GT(img.near_corner, base.near_corner * 0.98);
 }
 
 // Measured 0.903 of no-AO at 1.3 units from the riser (0.73 at 0.4, 0.97 at 2).
 TEST_F(BridgeAoFrame, DetailKernelDarkensTheFootOfAShallowStep) {
     const auto base = render_step(no_ao());
-    renderer::BridgeAoTuning t;
+    renderer::BridgeAoTuning t = main_only();
     t.detail_samples = 8;
     const auto img = render_step(t);
     EXPECT_LT(img.near_corner, base.near_corner * 0.95);
@@ -294,7 +302,7 @@ void light_the_step(renderer::BridgePass& pass, float radiance) {
 // Measured 0.311 -> 0.298 at the foot, open floor unchanged.
 TEST_F(BridgeAoFrame, DetailDirectDarkensASpotLitStepFoot) {
     light_the_step(*pass, 400.0f);
-    renderer::BridgeAoTuning t;
+    renderer::BridgeAoTuning t = main_only();
     t.detail_samples = 8;
     const auto received_only = render_step(t, 0.05f);
     t.detail_direct = 1.0f;
@@ -309,7 +317,7 @@ TEST_F(BridgeAoFrame, DetailDirectDarkensASpotLitStepFoot) {
 // Measured at the foot: 0.822 none, 0.813 detail_direct 1, 0.752 detail_final 1.
 TEST_F(BridgeAoFrame, DetailFinalShowsOnABrightStepFoot) {
     light_the_step(*pass, 4000.0f);
-    renderer::BridgeAoTuning t;
+    renderer::BridgeAoTuning t = main_only();
     t.detail_samples = 8;
     const auto none = render_step(t);
     t.detail_direct = 1.0f;
@@ -323,7 +331,32 @@ TEST_F(BridgeAoFrame, DetailFinalShowsOnABrightStepFoot) {
     EXPECT_GT(after.open_floor, none.open_floor * 0.99);
 }
 
-TEST(BridgeAoTuning, DefaultsAreTodaysLook) {
+// Same for the main kernel: the inside corner under a bright spot (a chair's
+// pool under the ceiling strips) only darkens its ambient share unless
+// main_direct / main_final carry the main AO onto the light.
+// Measured corner/open ratio: 0.808 ambient only, 0.759 direct, 0.708 final.
+TEST_F(BridgeAoFrame, MainDirectAndFinalDarkenASpotLitCorner) {
+    pass->set_spots({{{38.0f, 0.0f, 80.0f}, {0.0f, 0.0f, -1.0f},
+                      std::cos(glm::radians(40.0f)), std::cos(glm::radians(60.0f)),
+                      400.0f, glm::vec3(3000.0f)}});
+    auto ratio = [&](const renderer::BridgeAoTuning& t) {
+        pass->set_ao_tuning(t);
+        const auto img = render_corner(/*ao_on=*/true);
+        return img.near_corner / img.open_floor;
+    };
+    const float ambient_only = ratio(main_only());
+    renderer::BridgeAoTuning t = main_only();
+    t.main_direct = 1.0f;
+    const float direct = ratio(t);
+    t.main_direct = 0.0f;
+    t.main_final = 1.0f;
+    const float final_ = ratio(t);
+    pass->set_spots({});
+    EXPECT_LT(direct, ambient_only * 0.95);
+    EXPECT_LT(final_, ambient_only * 0.95);
+}
+
+TEST(BridgeAoTuning, DefaultsAreMarksLivePick) {
     const renderer::BridgeAoTuning t;
     EXPECT_EQ(t.radius, renderer::kBridgeLighting.ao_radius);
     EXPECT_EQ(t.strength, renderer::kBridgeLighting.ao_strength);
@@ -331,9 +364,11 @@ TEST(BridgeAoTuning, DefaultsAreTodaysLook) {
     EXPECT_EQ(t.bias_dist, 0.01f);
     EXPECT_EQ(t.bias_facing, 0.0f);
     EXPECT_EQ(t.min_len, 0.1f);
-    EXPECT_EQ(t.detail_samples, 0);
+    EXPECT_EQ(t.main_direct, 0.0f);
+    EXPECT_EQ(t.main_final, 0.0f);
+    EXPECT_EQ(t.detail_samples, 8);
     EXPECT_EQ(t.detail_direct, 0.0f);
-    EXPECT_EQ(t.detail_final, 0.0f);
+    EXPECT_EQ(t.detail_final, 1.0f);
 }
 
 TEST_F(BridgeAoFrame, CommSetRenderNeverBindsAo) {

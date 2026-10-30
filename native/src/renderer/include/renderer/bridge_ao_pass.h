@@ -22,9 +22,10 @@ struct BridgeAoSettings {
 };
 
 /// The AO kernel's look, live-tunable from the developer dials
-/// (engine/bridge_ao_dials.py). The defaults are today's look exactly:
-/// kBridgeLighting's radius/strength/bias, a distance-only bias and no detail
-/// kernel.
+/// (engine/bridge_ao_dials.py). The defaults are Mark's live pick
+/// (2026-10-30): kBridgeLighting's radius/strength/bias, a distance-only bias,
+/// and an 8-sample detail kernel applied after the diffuse ceiling (the
+/// DBridge panel frames).
 struct BridgeAoTuning {
     float radius   = kBridgeLighting.ao_radius;     // view-space units
     float strength = kBridgeLighting.ao_strength;
@@ -34,20 +35,27 @@ struct BridgeAoTuning {
     // so a wall seen head-on keeps only `bias` and a grazing floor the lot.
     float bias_facing = 0.0f;
     float min_len = 0.1f;          // shortest sample, as a fraction of radius
+    /// 0..1: how much of the main AO also darkens the spot and area-light
+    /// diffuse (bridge.frag): a stand-in for the shadow a chair casts from the
+    /// ceiling strips, which have none. 0 = ambient only.
+    float main_direct = 0.0f;
+    /// 0..1: that share of the main AO applied AFTER the diffuse ceiling, on
+    /// all diffuse (lights included). 0 = before it, ambient only.
+    float main_final  = 0.0f;
     // Second, small-scale kernel in the same pass for shallow steps (the
     // DBridge panel frame is 1.5 units deep, under the main kernel's lowest
     // sample). 0 samples = off. Its bias is always facing-scaled.
-    int   detail_samples  = 0;
+    int   detail_samples  = 8;
     float detail_radius   = 3.0f;
     float detail_strength = 1.5f;
     float detail_bias     = 0.1f;
     /// 0..1: how much of the detail AO also darkens the spot and area-light
-    /// diffuse (bridge.frag; the main AO never does). 0 = today.
+    /// diffuse (bridge.frag). 0 = ambient only.
     float detail_direct   = 0.0f;
-    /// 0..1: that share of the detail AO applied AFTER the diffuse ceiling
-    /// instead of before it (the ceiling's knee flattens darkening on a
-    /// bright wall). 0 = today.
-    float detail_final    = 0.0f;
+    /// 0..1: that share of the detail AO applied AFTER the diffuse ceiling, on
+    /// all diffuse (lights included); the ceiling's knee flattens darkening
+    /// on a bright wall applied before it.
+    float detail_final    = 1.0f;
 };
 
 /// Screen-space ambient occlusion for the main bridge view. Owns a

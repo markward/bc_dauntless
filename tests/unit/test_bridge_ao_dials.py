@@ -4,15 +4,15 @@ import inspect
 from engine import bridge_ao_dials, dev_dial_groups, renderer
 
 
-def test_defaults_are_todays_look():
-    # Must match renderer::BridgeAoTuning's defaults (bridge_ao_pass.h), which
-    # bridge_ao_test.cc pins to kBridgeLighting: an untouched dial set changes
-    # nothing.
+def test_defaults_match_the_native_defaults():
+    # Must match renderer::BridgeAoTuning's defaults (bridge_ao_pass.h, pinned
+    # by bridge_ao_test.cc): an untouched dial set changes nothing.
     d = bridge_ao_dials.current()
     assert (d["radius"], d["strength"], d["bias"]) == (30.0, 1.8, 0.5)
     assert (d["bias_dist"], d["bias_facing"], d["min_len"]) == (0.01, 0.0, 0.1)
-    assert d["detail_samples"] == 0
-    assert (d["detail_direct"], d["detail_final"]) == (0.0, 0.0)
+    assert (d["main_direct"], d["main_final"]) == (0.0, 0.0)
+    assert d["detail_samples"] == 8
+    assert (d["detail_direct"], d["detail_final"]) == (0.0, 1.0)
 
 
 def test_step_pushes_the_whole_set_and_clamps():
@@ -21,7 +21,7 @@ def test_step_pushes_the_whole_set_and_clamps():
     bridge_ao_dials.register(pushed.append)
     assert dev_dial_groups.set_active("bridge ao")
     bridge_ao_dials._step("detail_samples", +1)
-    assert pushed[-1]["detail_samples"] == 4
+    assert pushed[-1]["detail_samples"] == 12
     assert isinstance(pushed[-1]["detail_samples"], int)
     assert set(pushed[-1]) == set(bridge_ao_dials.DIAL_ORDER)
     for _ in range(20):

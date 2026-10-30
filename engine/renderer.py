@@ -361,12 +361,14 @@ def set_bridge_wall_time(t: float) -> None:
 
 def set_bridge_ao_tuning(radius: float, strength: float, bias: float,
                          bias_dist: float, bias_facing: float, min_len: float,
+                         main_direct: float, main_final: float,
                          detail_samples: int, detail_radius: float,
                          detail_strength: float, detail_bias: float,
                          detail_direct: float, detail_final: float) -> None:
     """Bridge AO kernel look (engine/bridge_ao_dials.py). Developer dials."""
     _h.set_bridge_ao_tuning(float(radius), float(strength), float(bias),
                             float(bias_dist), float(bias_facing), float(min_len),
+                            float(main_direct), float(main_final),
                             int(detail_samples), float(detail_radius),
                             float(detail_strength), float(detail_bias),
                             float(detail_direct), float(detail_final))
