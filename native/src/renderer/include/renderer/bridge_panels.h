@@ -9,7 +9,9 @@
 
 #include <glad/glad.h>
 
+#include <array>
 #include <cstddef>
+#include <deque>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -75,8 +77,20 @@ public:
 
     /// Tests only (the raster delay seam).
     lottie::PanelWorker& worker_for_test() { return worker_; }
+    /// Tests only: while true, the GPU is taken to have finished no frame, so
+    /// no texture that was ever drawn is written.
+    void hold_gpu_fences_for_test(bool hold) { hold_fences_ = hold; }
 
 private:
+    /// Each panel rotates through kSlots textures (perf P-14): an upload
+    /// writes the next in turn, never the drawn one, and only once every
+    /// frame that drew it has finished on the GPU (else the result waits).
+    static constexpr int kSlots = 3;
+    struct Slot {
+        GLuint tex = 0;
+        lottie::PanelRect stale{0, 0, 0, 0};  // what it lacks of the newest image
+        std::uint64_t retired = 0;            // last frame that may have drawn it
+    };
     struct Entry {
         const assets::Model* model = nullptr;
         assets::PanelSource source;
@@ -91,18 +105,26 @@ private:
         bool has_tick = false;
         std::int64_t last_tick = 0;   // tick of the last submitted job
         std::uint32_t w = 0, h = 0;   // texture size for the current quality
-        GLuint tex = 0;
-        bool has_image = false;       // `tex` holds a frame of `variant`
-        bool need_full = false;       // a result was not uploaded: `tex` is behind the worker
+        std::array<Slot, kSlots> slots{};
+        int front = -1;               // the slot drawn now; -1 none
+        bool has_image = false;       // the front slot holds a frame of `variant`
+        bool need_full = false;       // a result was not uploaded: textures are behind the worker
+        std::optional<lottie::PanelResult> pending;  // waiting for its texture to be free
     };
     using Key = std::pair<unsigned long long, int>;
 
     void drop(Entry& e);
+    void free_textures(Entry& e);
+    void apply(Entry& e, lottie::PanelResult&& r, bool& bound);
+    static int next_slot(const Entry& e) { return (e.front + 1) % kSlots; }
 
     lottie::PanelWorker worker_;
     std::map<Key, Entry> entries_;
     std::uint64_t next_key_ = 1;
-    GLuint unpack_ = 0;   // the pixel-unpack buffer every upload goes through
+    std::uint64_t frame_ = 0;       // update() calls so far: the frame about to draw
+    std::uint64_t done_frame_ = 0;  // every frame up to this one has finished on the GPU
+    std::deque<std::pair<std::uint64_t, GLsync>> fences_;  // frame -> fence after it
+    bool hold_fences_ = false;
     Stats stats_;
 };
 

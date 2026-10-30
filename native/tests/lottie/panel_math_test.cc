@@ -267,3 +267,120 @@ TEST(PanelEdgeCap, SmallCanvasesKeepAFloor) {
 TEST(PanelEdgeCap, FractionalCanvasRoundsUp) {
     EXPECT_EQ(panel_edge_cap(2048, 600.4f, 10.f), 1201u);
 }
+
+// ── Mip levels, built on the panel worker so the render thread never calls
+// glGenerateMipmap (measured 5-10 ms a call live, 2026-10-30).
+TEST(MipSize, HalvesEachSideNeverBelowOne) {
+    EXPECT_EQ(mip_levels(1024, 512), 11);
+    EXPECT_EQ(mip_levels(1280, 640), 11);
+    EXPECT_EQ(mip_levels(5, 3), 3);
+    EXPECT_EQ(mip_levels(1, 1), 1);
+    const PanelSize a = mip_size(1024, 512, 10);
+    EXPECT_EQ(a.w, 1u);
+    EXPECT_EQ(a.h, 1u);
+    const PanelSize b = mip_size(5, 3, 1);
+    EXPECT_EQ(b.w, 2u);
+    EXPECT_EQ(b.h, 1u);
+    const PanelSize c = mip_size(1024, 512, 9);
+    EXPECT_EQ(c.w, 2u);
+    EXPECT_EQ(c.h, 1u);
+}
+
+namespace {
+std::vector<std::uint8_t> pixels(std::initializer_list<std::uint8_t> v) { return v; }
+std::vector<std::uint8_t> downsample_whole(const std::vector<std::uint8_t>& src,
+                                           std::uint32_t sw, std::uint32_t sh) {
+    const PanelSize d = mip_size(sw, sh, 1);
+    std::vector<std::uint8_t> out(static_cast<std::size_t>(d.w) * d.h * 4, 0);
+    downsample_rect(src, sw, sh, out, PanelRect{0, 0, d.w, d.h});
+    return out;
+}
+}  // namespace
+
+TEST(Downsample, IsTheRoundedMeanOfEachTwoByTwoBlock) {
+    // 4x2 -> 2x1.
+    const auto src = pixels({0, 0, 0, 0,     1, 2, 3, 4,     10, 10, 10, 10,  20, 20, 20, 20,
+                             4, 4, 4, 4,     1, 1, 1, 1,     30, 30, 30, 30,  41, 41, 41, 41});
+    EXPECT_EQ(downsample_whole(src, 4, 2),
+              pixels({2, 2, 2, 2,  25, 25, 25, 25}));   // (6+2)/4=2 .. (101+2)/4=25
+}
+
+TEST(Downsample, ClampsTheBlockAtAnOddOrOnePixelEdge) {
+    // 1x2 -> 1x1: the block's missing column repeats the edge.
+    const auto src = pixels({10, 20, 30, 40,
+                             11, 21, 31, 41});
+    EXPECT_EQ(downsample_whole(src, 1, 2), pixels({11, 21, 31, 41}));  // (42+2)/4 = 11
+    // 3x1 -> 1x1: GL floors odd sizes, so column 2 is never read.
+    const auto row = pixels({0, 0, 0, 0,  4, 4, 4, 4,  200, 200, 200, 200});
+    EXPECT_EQ(downsample_whole(row, 3, 1), pixels({2, 2, 2, 2}));
+}
+
+TEST(Downsample, RectWritesOnlyItsOwnPixelsAndMatchesTheWhole) {
+    std::vector<std::uint8_t> src(8 * 6 * 4);
+    for (std::size_t i = 0; i < src.size(); ++i) src[i] = static_cast<std::uint8_t>(i * 37);
+    const auto whole = downsample_whole(src, 8, 6);
+    std::vector<std::uint8_t> part(whole.size(), 7);
+    downsample_rect(src, 8, 6, part, PanelRect{1, 1, 2, 1});
+    for (std::uint32_t y = 0; y < 3; ++y)
+        for (std::uint32_t x = 0; x < 4; ++x)
+            for (int c = 0; c < 4; ++c) {
+                const std::size_t i = (y * 4 + x) * 4 + c;
+                const bool inside = x >= 1 && x < 3 && y == 1;
+                EXPECT_EQ(part[i], inside ? whole[i] : 7) << x << "," << y;
+            }
+}
+
+// Every pixel of the next level that a change inside `r` can alter lies in
+// mip_rect(r): checked by changing exactly `r` and diffing the whole levels.
+TEST(MipRect, CoversEveryPixelAChangeCanReach) {
+    for (std::uint32_t sw : {1u, 2u, 5u, 8u})
+        for (std::uint32_t sh : {1u, 3u, 6u})
+            for (std::uint32_t x = 0; x < sw; ++x)
+                for (std::uint32_t y = 0; y < sh; ++y)
+                    for (std::uint32_t w = 1; x + w <= sw; w += 2)
+                        for (std::uint32_t h = 1; y + h <= sh; h += 2) {
+                            std::vector<std::uint8_t> a(sw * sh * 4, 0), b = a;
+                            for (std::uint32_t yy = y; yy < y + h; ++yy)
+                                for (std::uint32_t xx = x; xx < x + w; ++xx)
+                                    for (int c = 0; c < 4; ++c) b[(yy * sw + xx) * 4 + c] = 200;
+                            const auto da = downsample_whole(a, sw, sh);
+                            const auto db = downsample_whole(b, sw, sh);
+                            const auto r = mip_rect(PanelRect{x, y, w, h}, sw, sh);
+                            const PanelSize d = mip_size(sw, sh, 1);
+                            for (std::uint32_t dy = 0; dy < d.h; ++dy)
+                                for (std::uint32_t dx = 0; dx < d.w; ++dx) {
+                                    const std::size_t i = (dy * d.w + dx) * 4;
+                                    if (da[i] == db[i]) continue;
+                                    ASSERT_TRUE(r) << sw << "x" << sh;
+                                    EXPECT_TRUE(dx >= r->x && dx < r->x + r->w &&
+                                                dy >= r->y && dy < r->y + r->h)
+                                        << sw << "x" << sh << " rect " << x << "," << y << " "
+                                        << w << "x" << h << " pixel " << dx << "," << dy;
+                                }
+                        }
+}
+
+TEST(MipRect, IsNoneWhenOnlyAnUnreadEdgeChanged) {
+    // 3x1 -> 1x1 never reads column 2.
+    EXPECT_FALSE(mip_rect(PanelRect{2, 0, 1, 1}, 3, 1));
+    const auto r = mip_rect(PanelRect{1, 0, 2, 1}, 3, 1);
+    ASSERT_TRUE(r);
+    EXPECT_EQ(r->x, 0u);
+    EXPECT_EQ(r->w, 1u);
+}
+
+TEST(UnionRect, IsTheBoundingBoxAndIgnoresAnEmptySide) {
+    const PanelRect u = union_rect(PanelRect{2, 3, 4, 1}, PanelRect{0, 5, 1, 2});
+    EXPECT_EQ(u.x, 0u);
+    EXPECT_EQ(u.y, 3u);
+    EXPECT_EQ(u.w, 6u);
+    EXPECT_EQ(u.h, 4u);
+    const PanelRect a = union_rect(PanelRect{0, 0, 0, 0}, PanelRect{1, 2, 3, 4});
+    EXPECT_EQ(a.x, 1u);
+    EXPECT_EQ(a.y, 2u);
+    EXPECT_EQ(a.w, 3u);
+    EXPECT_EQ(a.h, 4u);
+    const PanelRect b = union_rect(PanelRect{1, 2, 3, 4}, PanelRect{0, 0, 0, 0});
+    EXPECT_EQ(b.w, 3u);
+    EXPECT_EQ(union_rect(PanelRect{0, 0, 0, 0}, PanelRect{5, 5, 0, 0}).w, 0u);
+}

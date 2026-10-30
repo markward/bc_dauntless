@@ -146,4 +146,51 @@ void copy_rect(std::span<const std::uint8_t> image, std::uint32_t w, PanelRect r
                     image.data() + ((static_cast<std::size_t>(r.y) + y) * w + r.x) * 4, row);
 }
 
+PanelRect union_rect(PanelRect a, PanelRect b) {
+    if (a.w == 0 || a.h == 0) return (b.w == 0 || b.h == 0) ? PanelRect{0, 0, 0, 0} : b;
+    if (b.w == 0 || b.h == 0) return a;
+    const std::uint32_t x0 = std::min(a.x, b.x), y0 = std::min(a.y, b.y);
+    const std::uint32_t x1 = std::max(a.x + a.w, b.x + b.w), y1 = std::max(a.y + a.h, b.y + b.h);
+    return PanelRect{x0, y0, x1 - x0, y1 - y0};
+}
+
+PanelSize mip_size(std::uint32_t w, std::uint32_t h, int level) {
+    return PanelSize{std::max(1u, w >> level), std::max(1u, h >> level)};
+}
+
+int mip_levels(std::uint32_t w, std::uint32_t h) {
+    int n = 1;
+    for (std::uint32_t m = std::max(w, h); m > 1; m >>= 1) ++n;
+    return n;
+}
+
+void downsample_rect(std::span<const std::uint8_t> src, std::uint32_t sw, std::uint32_t sh,
+                     std::span<std::uint8_t> dst, PanelRect dst_rect) {
+    const std::uint32_t dw = std::max(1u, sw >> 1);
+    for (std::uint32_t y = dst_rect.y; y < dst_rect.y + dst_rect.h; ++y) {
+        const std::size_t r0 = static_cast<std::size_t>(std::min(2 * y, sh - 1)) * sw * 4;
+        const std::size_t r1 = static_cast<std::size_t>(std::min(2 * y + 1, sh - 1)) * sw * 4;
+        std::uint8_t* out = dst.data() + (static_cast<std::size_t>(y) * dw + dst_rect.x) * 4;
+        for (std::uint32_t x = dst_rect.x; x < dst_rect.x + dst_rect.w; ++x, out += 4) {
+            const std::size_t c0 = static_cast<std::size_t>(std::min(2 * x, sw - 1)) * 4;
+            const std::size_t c1 = static_cast<std::size_t>(std::min(2 * x + 1, sw - 1)) * 4;
+            for (int c = 0; c < 4; ++c)
+                out[c] = static_cast<std::uint8_t>(
+                    (src[r0 + c0 + c] + src[r0 + c1 + c] + src[r1 + c0 + c] +
+                     src[r1 + c1 + c] + 2) / 4);
+        }
+    }
+}
+
+std::optional<PanelRect> mip_rect(PanelRect r, std::uint32_t sw, std::uint32_t sh) {
+    const PanelSize d = mip_size(sw, sh, 1);
+    // Next-level pixel x reads columns 2x and 2x+1 (clamped), so a changed
+    // column c reaches pixel c/2 -- or none, past the last full pair.
+    const std::uint32_t x0 = r.x >> 1, y0 = r.y >> 1;
+    if (r.w == 0 || r.h == 0 || x0 >= d.w || y0 >= d.h) return std::nullopt;
+    const std::uint32_t x1 = std::min((r.x + r.w - 1) >> 1, d.w - 1);
+    const std::uint32_t y1 = std::min((r.y + r.h - 1) >> 1, d.h - 1);
+    return PanelRect{x0, y0, x1 - x0 + 1, y1 - y0 + 1};
+}
+
 }  // namespace lottie

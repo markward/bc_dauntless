@@ -32,6 +32,17 @@ struct PanelJob {
     /// Carry the whole frame, not just what changed since the key's last
     /// result: the caller's texture is new, or missed a result.
     bool full = false;
+    /// Also carry this rect when anything changed: the part of the frame the
+    /// caller's target texture lacks (it rotates through several, perf P-14).
+    PanelRect also{0, 0, 0, 0};
+};
+
+/// One mip level's share of a result: like PanelResult's own rect/rgba/bytes,
+/// for a smaller level.
+struct PanelLevel {
+    PanelRect rect{0, 0, 0, 0};
+    std::unique_ptr<std::uint8_t[]> rgba;
+    std::size_t bytes = 0;
 };
 
 struct PanelResult {
@@ -50,6 +61,16 @@ struct PanelResult {
     std::unique_ptr<std::uint8_t[]> rgba;
     std::size_t bytes = 0;
     double raster_ms;
+    /// Mip levels 1, 2, ... in order (lottie::mip_size), each carrying what
+    /// changed of it: every level whole with a whole `rect`, fewer (the
+    /// change stops reaching them) with a partial one, none with an empty
+    /// one. Built on the worker so the render thread never calls
+    /// glGenerateMipmap, which measured 5-10 ms a call live (perf P-14).
+    std::vector<PanelLevel> mips;
+    /// What differs from the key's previous result (inside `rect`, which also
+    /// carries PanelJob::also): the caller's other textures fall behind by
+    /// only this. Whole with a whole frame; empty with an empty `rect`.
+    PanelRect changed{0, 0, 0, 0};
 };
 
 /// Bridge Lottie panels (spec 2026-10-28-bridge-lottie-panels-design.md §6):

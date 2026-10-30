@@ -1,5 +1,6 @@
 #include "lottie/panel_worker.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <condition_variable>
@@ -46,7 +47,47 @@ struct Loaded {
     // holds, and the buffer the next one is composited into (swapped after).
     std::unique_ptr<std::uint8_t[]> shown, next;
     std::uint32_t shown_w = 0, shown_h = 0;
+    // Mip levels 1.. of `shown`, kept so a partial result rebuilds only the
+    // pixels its change reaches. Plain arrays, as `shown` (never a Debug
+    // per-element destroy).
+    std::vector<std::unique_ptr<std::uint8_t[]>> mips;
 };
+
+// Rebuilds `p.mips` from `p.shown` (w x h) where `rect` reaches -- every
+// level whole when `whole` -- and appends each level's changed part to `out`.
+void update_mips(Loaded& p, std::uint32_t w, std::uint32_t h, PanelRect rect, bool whole,
+                 std::vector<PanelLevel>& out) {
+    const int n = mip_levels(w, h);
+    if (p.mips.size() != static_cast<std::size_t>(n - 1)) {
+        p.mips.clear();
+        for (int k = 1; k < n; ++k) {
+            const PanelSize d = mip_size(w, h, k);
+            p.mips.emplace_back(new std::uint8_t[static_cast<std::size_t>(d.w) * d.h * 4]);
+        }
+        whole = true;
+    }
+    std::optional<PanelRect> cur = rect;
+    const std::uint8_t* src = p.shown.get();
+    for (int k = 1; k < n; ++k) {
+        const PanelSize s = mip_size(w, h, k - 1);
+        const PanelSize d = mip_size(w, h, k);
+        cur = whole ? std::optional<PanelRect>(PanelRect{0, 0, d.w, d.h})
+                    : mip_rect(*cur, s.w, s.h);
+        if (!cur) break;
+        const std::size_t level_bytes = static_cast<std::size_t>(d.w) * d.h * 4;
+        std::uint8_t* dst = p.mips[static_cast<std::size_t>(k - 1)].get();
+        downsample_rect(std::span<const std::uint8_t>(src, static_cast<std::size_t>(s.w) * s.h * 4),
+                        s.w, s.h, std::span<std::uint8_t>(dst, level_bytes), *cur);
+        PanelLevel lv;
+        lv.rect = *cur;
+        lv.bytes = static_cast<std::size_t>(cur->w) * cur->h * 4;
+        lv.rgba.reset(new std::uint8_t[lv.bytes]);
+        copy_rect(std::span<const std::uint8_t>(dst, level_bytes), d.w, *cur,
+                  std::span<std::uint8_t>(lv.rgba.get(), lv.bytes));
+        out.push_back(std::move(lv));
+        src = dst;
+    }
+}
 
 }  // namespace
 
@@ -242,6 +283,7 @@ void PanelWorker::Impl::raster(const PanelJob& job,
     if (!same_size) {
         p.shown.reset();
         p.next.reset();
+        p.mips.clear();
     }
     if (!p.next) p.next.reset(new std::uint8_t[bytes]);
     const std::span<std::uint8_t> frame(p.next.get(), bytes);
@@ -252,16 +294,28 @@ void PanelWorker::Impl::raster(const PanelJob& job,
     if (same_size && !job.full)
         rect = changed_rect(std::span<const std::uint8_t>(p.shown.get(), bytes), frame,
                             job.w, job.h);
+    const std::optional<PanelRect> changed = rect;
+    // A change also carries what the caller's target texture lacks (clipped
+    // to the frame); no change carries nothing -- the shown texture is current.
+    if (rect && job.also.x < job.w && job.also.y < job.h) {
+        PanelRect also = job.also;
+        also.w = std::min(also.w, job.w - also.x);
+        also.h = std::min(also.h, job.h - also.y);
+        rect = union_rect(*rect, also);
+    }
     PanelResult r{job.key, job.generation, job.w, job.h, PanelRect{0, 0, 0, 0}, nullptr, 0,
                   0.0};
     if (rect) {
         r.rect = *rect;
+        r.changed = *changed;
         r.bytes = static_cast<std::size_t>(rect->w) * rect->h * 4;
         r.rgba.reset(new std::uint8_t[r.bytes]);
         copy_rect(frame, job.w, *rect, std::span<std::uint8_t>(r.rgba.get(), r.bytes));
         std::swap(p.shown, p.next);
         p.shown_w = job.w;
         p.shown_h = job.h;
+        const bool whole = rect->w == job.w && rect->h == job.h;
+        update_mips(p, job.w, job.h, *rect, whole, r.mips);
     }
     r.raster_ms = std::chrono::duration<double, std::milli>(
                       std::chrono::steady_clock::now() - t0).count();

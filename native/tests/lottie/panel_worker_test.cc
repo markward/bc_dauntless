@@ -582,3 +582,194 @@ TEST_F(PanelWorker, PartialAfterGrowingIsRight) {
         EXPECT_EQ(shown, composite_of(still, "slide.json", frame, 64, 32)) << frame;
     }
 }
+
+// ── Mip levels ride with each result (built here, so the render thread never
+// calls glGenerateMipmap). Level k is level k-1 through downsample_rect.
+namespace {
+std::vector<std::vector<std::uint8_t>> chain_of(std::vector<std::uint8_t> level0,
+                                                std::uint32_t w, std::uint32_t h) {
+    std::vector<std::vector<std::uint8_t>> out;
+    std::vector<std::uint8_t> cur = std::move(level0);
+    for (int k = 1; k < lottie::mip_levels(w, h); ++k) {
+        const lottie::PanelSize s = lottie::mip_size(w, h, k - 1);
+        const lottie::PanelSize d = lottie::mip_size(w, h, k);
+        std::vector<std::uint8_t> next(static_cast<std::size_t>(d.w) * d.h * 4);
+        lottie::downsample_rect(cur, s.w, s.h, next, lottie::PanelRect{0, 0, d.w, d.h});
+        out.push_back(next);
+        cur = std::move(next);
+    }
+    return out;
+}
+
+void paste(std::vector<std::uint8_t>& image, std::uint32_t w, const lottie::PanelRect& r,
+           const std::uint8_t* rgba) {
+    for (std::uint32_t y = 0; y < r.h; ++y)
+        std::copy_n(rgba + static_cast<std::size_t>(y) * r.w * 4, r.w * 4,
+                    image.begin() + ((r.y + y) * w + r.x) * 4);
+}
+}  // namespace
+
+TEST_F(PanelWorker, WholeResultCarriesTheWholeMipChain) {
+    lottie::PanelWorker w;
+    put("slide.json");
+    w.set_panel(1, still, dirs());
+    auto info = await_info(w, 1);
+    ASSERT_TRUE(info);
+    ASSERT_TRUE(w.submit({1, 0, 10.f, 64, 32, info->generation}));
+    auto r = await_results(w);
+    ASSERT_EQ(r.size(), 1u);
+    const auto want = chain_of(composite_of(still, "slide.json", 10.f, 64, 32), 64, 32);
+    ASSERT_EQ(r[0].mips.size(), want.size());
+    ASSERT_EQ(want.size(), 6u);   // 32x16 .. 1x1
+    for (std::size_t k = 0; k < want.size(); ++k) {
+        const lottie::PanelSize d = lottie::mip_size(64, 32, static_cast<int>(k) + 1);
+        const auto& m = r[0].mips[k];
+        EXPECT_EQ(m.rect.x, 0u) << k;
+        EXPECT_EQ(m.rect.y, 0u) << k;
+        EXPECT_EQ(m.rect.w, d.w) << k;
+        EXPECT_EQ(m.rect.h, d.h) << k;
+        ASSERT_EQ(m.bytes, want[k].size()) << k;
+        EXPECT_EQ(std::vector<std::uint8_t>(m.rgba.get(), m.rgba.get() + m.bytes), want[k]) << k;
+    }
+}
+
+TEST_F(PanelWorker, UnchangedFrameCarriesNoMips) {
+    lottie::PanelWorker w;
+    put("slide.json");
+    w.set_panel(1, still, dirs());
+    auto info = await_info(w, 1);
+    ASSERT_TRUE(info);
+    ASSERT_TRUE(w.submit({1, 0, 10.f, 64, 32, info->generation}));
+    ASSERT_EQ(await_results(w).size(), 1u);
+    ASSERT_TRUE(w.submit({1, 0, 10.f, 64, 32, info->generation}));
+    auto r = await_results(w);
+    ASSERT_EQ(r.size(), 1u);
+    EXPECT_TRUE(r[0].mips.empty());
+}
+
+// Pasting each level's partial onto the previous chain gives exactly the
+// chain of the new frame's whole composite, at every level -- including after
+// a size change and a full job.
+TEST_F(PanelWorker, PartialMipsKeepEveryLevelExact) {
+    lottie::PanelWorker w;
+    put("slide.json");
+    w.set_panel(1, still, dirs());
+    auto info = await_info(w, 1);
+    ASSERT_TRUE(info);
+    ASSERT_TRUE(w.submit({1, 0, 0.f, 32, 16, info->generation}));
+    ASSERT_EQ(await_results(w).size(), 1u);
+    std::vector<std::uint8_t> level0;
+    std::vector<std::vector<std::uint8_t>> mips;
+    bool any_partial = false;
+    struct Step { float frame; bool full; };
+    for (const Step s : {Step{0.f, false}, Step{10.f, false}, Step{20.f, false},
+                         Step{25.f, true}, Step{30.f, false}}) {
+        ASSERT_TRUE(w.submit({1, 0, s.frame, 64, 32, info->generation, s.full}));
+        auto r = await_results(w);
+        ASSERT_EQ(r.size(), 1u);
+        const lottie::PanelResult& res = r[0];
+        const bool whole = res.rect.w == 64 && res.rect.h == 32;
+        if (whole) {
+            level0.assign(res.rgba.get(), res.rgba.get() + res.bytes);
+            mips.clear();
+            for (const auto& m : res.mips) mips.emplace_back(m.rgba.get(), m.rgba.get() + m.bytes);
+        } else {
+            any_partial = true;
+            ASSERT_FALSE(level0.empty());
+            paste(level0, 64, res.rect, res.rgba.get());
+            ASSERT_LE(res.mips.size(), mips.size());
+            for (std::size_t k = 0; k < res.mips.size(); ++k) {
+                const lottie::PanelSize d = lottie::mip_size(64, 32, static_cast<int>(k) + 1);
+                const auto& m = res.mips[k];
+                ASSERT_LE(m.rect.x + m.rect.w, d.w) << k;
+                ASSERT_LE(m.rect.y + m.rect.h, d.h) << k;
+                ASSERT_EQ(m.bytes, static_cast<std::size_t>(m.rect.w) * m.rect.h * 4) << k;
+                paste(mips[k], d.w, m.rect, m.rgba.get());
+            }
+        }
+        const auto want0 = composite_of(still, "slide.json", s.frame, 64, 32);
+        EXPECT_EQ(level0, want0) << s.frame;
+        EXPECT_EQ(mips, chain_of(want0, 64, 32)) << s.frame;
+    }
+    EXPECT_TRUE(any_partial);
+}
+
+// `also` (what the caller's target texture lacks) rides with a change, so a
+// texture a few results behind is made exact by one partial.
+TEST_F(PanelWorker, AlsoRectRidesWithAChange) {
+    lottie::PanelWorker w;
+    put("slide.json");
+    w.set_panel(1, still, dirs());
+    auto info = await_info(w, 1);
+    ASSERT_TRUE(info);
+    ASSERT_TRUE(w.submit({1, 0, 0.f, 64, 32, info->generation}));
+    auto first = await_results(w);
+    ASSERT_EQ(first.size(), 1u);
+    // A texture still holding frame 0, behind by everything frame 10 changed.
+    std::vector<std::uint8_t> behind(first[0].rgba.get(), first[0].rgba.get() + first[0].bytes);
+    ASSERT_TRUE(w.submit({1, 0, 10.f, 64, 32, info->generation}));
+    auto mid = await_results(w);
+    ASSERT_EQ(mid.size(), 1u);
+    const lottie::PanelRect missed = mid[0].rect;
+    ASSERT_GT(missed.w * missed.h, 0u);
+    lottie::PanelJob job{1, 0, 20.f, 64, 32, info->generation};
+    job.also = missed;
+    ASSERT_TRUE(w.submit(job));
+    auto r = await_results(w);
+    ASSERT_EQ(r.size(), 1u);
+    const lottie::PanelRect rect = r[0].rect;
+    EXPECT_LE(rect.x, missed.x);
+    EXPECT_LE(rect.y, missed.y);
+    EXPECT_GE(rect.x + rect.w, missed.x + missed.w);
+    EXPECT_GE(rect.y + rect.h, missed.y + missed.h);
+    ASSERT_EQ(r[0].bytes, static_cast<std::size_t>(rect.w) * rect.h * 4);
+    paste(behind, 64, rect, r[0].rgba.get());
+    EXPECT_EQ(behind, composite_of(still, "slide.json", 20.f, 64, 32));
+}
+
+TEST_F(PanelWorker, AlsoRectAloneCarriesNothing) {
+    lottie::PanelWorker w;
+    put("slide.json");
+    w.set_panel(1, still, dirs());
+    auto info = await_info(w, 1);
+    ASSERT_TRUE(info);
+    ASSERT_TRUE(w.submit({1, 0, 10.f, 64, 32, info->generation}));
+    ASSERT_EQ(await_results(w).size(), 1u);
+    lottie::PanelJob job{1, 0, 10.f, 64, 32, info->generation};
+    job.also = lottie::PanelRect{0, 0, 8, 8};
+    ASSERT_TRUE(w.submit(job));
+    auto r = await_results(w);
+    ASSERT_EQ(r.size(), 1u);
+    EXPECT_EQ(r[0].bytes, 0u);   // nothing changed: the shown texture is current
+    EXPECT_TRUE(r[0].mips.empty());
+}
+
+// `changed` is what differs from the key's previous result, without `also`:
+// the caller's other textures fall behind by only this much.
+TEST_F(PanelWorker, ChangedRectLeavesOutTheAlsoRect) {
+    lottie::PanelWorker w;
+    put("slide.json");
+    w.set_panel(1, still, dirs());
+    auto info = await_info(w, 1);
+    ASSERT_TRUE(info);
+    ASSERT_TRUE(w.submit({1, 0, 0.f, 64, 32, info->generation}));
+    auto first = await_results(w);
+    ASSERT_EQ(first.size(), 1u);
+    EXPECT_EQ(first[0].changed.w, 64u);   // a whole result changed everything
+    EXPECT_EQ(first[0].changed.h, 32u);
+    lottie::PanelJob plain{1, 0, 10.f, 64, 32, info->generation};
+    ASSERT_TRUE(w.submit(plain));
+    auto a = await_results(w);
+    ASSERT_EQ(a.size(), 1u);
+    const lottie::PanelRect c = a[0].changed;
+    EXPECT_EQ(c.x, a[0].rect.x);
+    EXPECT_EQ(c.w, a[0].rect.w);
+    lottie::PanelJob with_also{1, 0, 20.f, 64, 32, info->generation};
+    with_also.also = lottie::PanelRect{0, 0, 64, 32};
+    ASSERT_TRUE(w.submit(with_also));
+    auto b = await_results(w);
+    ASSERT_EQ(b.size(), 1u);
+    EXPECT_EQ(b[0].rect.w, 64u);
+    EXPECT_LT(b[0].changed.w * b[0].changed.h, 64u * 32u);
+    EXPECT_GT(b[0].changed.w * b[0].changed.h, 0u);
+}

@@ -69,9 +69,31 @@ std::optional<PanelRect> changed_rect(std::span<const std::uint8_t> before,
                                       std::span<const std::uint8_t> after,
                                       std::uint32_t w, std::uint32_t h);
 
+/// The smallest rect holding both; an empty one (w or h 0) adds nothing.
+PanelRect union_rect(PanelRect a, PanelRect b);
+
 /// `r` out of a `w`-wide RGBA8 image into `out` (r.w*r.h*4 bytes), tightly
 /// packed row by row, as glTexSubImage2D reads it.
 void copy_rect(std::span<const std::uint8_t> image, std::uint32_t w, PanelRect r,
                std::span<std::uint8_t> out);
+
+/// GL's size for mip `level` of a w x h image: each side halved per level
+/// (floored), never below 1.
+PanelSize mip_size(std::uint32_t w, std::uint32_t h, int level);
+/// Levels in a full chain down to 1x1, level 0 included.
+int mip_levels(std::uint32_t w, std::uint32_t h);
+
+/// `dst_rect` of the next level (mip_size(sw, sh, 1)) from `src` (sw x sh
+/// RGBA8, straight, like glGenerateMipmap filters it): each pixel the rounded
+/// mean of its 2x2 block, the block clamped at a 1-pixel edge. `dst` is the
+/// whole next level; nothing outside `dst_rect` is written. The panel worker
+/// builds mips with this so the render thread never calls glGenerateMipmap,
+/// which measured 5-10 ms a call in a live window (2026-10-30, perf P-14).
+void downsample_rect(std::span<const std::uint8_t> src, std::uint32_t sw, std::uint32_t sh,
+                     std::span<std::uint8_t> dst, PanelRect dst_rect);
+
+/// The pixels of the next level whose 2x2 block reads any of `r` (a rect of
+/// a sw x sh level); nullopt when none does (an odd edge GL never reads).
+std::optional<PanelRect> mip_rect(PanelRect r, std::uint32_t sw, std::uint32_t sh);
 
 }  // namespace lottie

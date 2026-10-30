@@ -33,6 +33,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <set>
 #include <thread>
 #include <vector>
 
@@ -73,14 +74,14 @@ struct Readback {
     std::vector<std::uint8_t> rgba;
 };
 
-Readback read_texture(GLuint tex) {
+Readback read_texture(GLuint tex, int level = 0) {
     Readback r;
     glBindTexture(GL_TEXTURE_2D, tex);
-    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &r.w);
-    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &r.h);
+    glGetTexLevelParameteriv(GL_TEXTURE_2D, level, GL_TEXTURE_WIDTH, &r.w);
+    glGetTexLevelParameteriv(GL_TEXTURE_2D, level, GL_TEXTURE_HEIGHT, &r.h);
     r.rgba.resize(static_cast<std::size_t>(r.w) * r.h * 4);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, r.rgba.data());
+    glGetTexImage(GL_TEXTURE_2D, level, GL_RGBA, GL_UNSIGNED_BYTE, r.rgba.data());
     glBindTexture(GL_TEXTURE_2D, 0);
     return r;
 }
@@ -458,9 +459,8 @@ TEST_F(BridgePanels, PanelSizeIsCappedByItsCanvas) {
     EXPECT_TRUE(all_red(r));
 }
 
-// Uploads go through a pixel-unpack buffer (so the copy queues on the GPU
-// instead of the CPU waiting for draws still reading the texture), and that
-// buffer is never left bound: any later glTexImage2D would read from it.
+// Uploads never leave a pixel-unpack buffer bound: any later glTexImage2D
+// would read from it instead of its pointer.
 TEST_F(BridgePanels, UploadLeavesNoUnpackBufferBound) {
     place("slide.json");
     ASSERT_TRUE(pump(0.0, [&] { return live() != 0; }));
@@ -471,4 +471,119 @@ TEST_F(BridgePanels, UploadLeavesNoUnpackBufferBound) {
         EXPECT_EQ(bound, 0) << t;
     }
     EXPECT_GE(panels->take_stats().uploads, 2);
+}
+
+// The worker's mip levels are uploaded with each result (no glGenerateMipmap
+// on the render thread, perf P-14): after partial uploads every level is
+// exactly the downsampled chain of the frame the clock asks for, and the
+// texture declares exactly that many levels.
+TEST_F(BridgePanels, MipLevelsMatchTheImageAfterPartialUploads) {
+    place("slide.json");
+    auto clip = lottie::LottieClip::load(dir / "hull.json", nullptr);
+    ASSERT_TRUE(clip);
+    auto bytes = assets::read_binary_file(albedo);
+    ASSERT_TRUE(bytes);
+    const assets::Image still = assets::decode_image(*bytes);
+    auto chain_matches = [&](double t) {
+        const GLuint tex = live();
+        if (tex == 0) return false;
+        Readback level = read_texture(tex, 0);
+        const lottie::PanelTick tick =
+            lottie::panel_tick(t, 0.0, clip->total_frames(), clip->fps());
+        std::vector<std::uint8_t> premul;
+        const auto w = static_cast<std::uint32_t>(level.w), h = static_cast<std::uint32_t>(level.h);
+        clip->render(tick.frame, w, h, premul);
+        std::vector<std::uint8_t> want = lottie::composite_panel(still, premul, w, h);
+        if (level.rgba != want) return false;
+        for (int k = 1; k < lottie::mip_levels(w, h); ++k) {
+            const lottie::PanelSize s = lottie::mip_size(w, h, k - 1);
+            const lottie::PanelSize d = lottie::mip_size(w, h, k);
+            std::vector<std::uint8_t> next(static_cast<std::size_t>(d.w) * d.h * 4);
+            lottie::downsample_rect(want, s.w, s.h, next, lottie::PanelRect{0, 0, d.w, d.h});
+            level = read_texture(tex, k);
+            if (level.w != static_cast<int>(d.w) || level.h != static_cast<int>(d.h) ||
+                level.rgba != next)
+                return false;
+            want = std::move(next);
+        }
+        return true;
+    };
+    ASSERT_TRUE(pump(0.0, [&] { return live() != 0; }));
+    for (double t : {0.0, 0.1, 0.2, 0.5, 0.9})
+        EXPECT_TRUE(pump(t, [&] { return chain_matches(t); })) << "t = " << t;
+    const Readback r = read_texture(live());
+    glBindTexture(GL_TEXTURE_2D, live());
+    GLint max_level = -1;
+    glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, &max_level);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    EXPECT_EQ(max_level, lottie::mip_levels(static_cast<std::uint32_t>(r.w),
+                                            static_cast<std::uint32_t>(r.h)) - 1);
+}
+
+// An upload never writes the texture being drawn, nor one the GPU may still
+// be reading for an earlier frame: writing such a texture made the driver
+// stall the render thread (5-35 ms a frame, perf P-14). Each panel rotates
+// through at most three textures, and a result whose texture the GPU has not
+// finished with waits for a later frame instead.
+TEST_F(BridgePanels, UploadsNeverWriteATextureTheGpuMayStillRead) {
+    place("slide.json");
+    ASSERT_TRUE(pump(0.0, [&] { return live() != 0; }));
+    std::set<GLuint> seen{live()};
+    GLuint before = live();
+    for (double t : {0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7}) {
+        ASSERT_TRUE(pump(t, [&] { return live() != before; })) << t;
+        seen.insert(live());
+        before = live();
+    }
+    EXPECT_LE(seen.size(), 3u);
+
+    // The GPU finishes no more frames: at most the one texture it had already
+    // finished with is written, never the one being drawn (nor, after that,
+    // the one that just stopped being drawn); the panel catches up once the
+    // GPU moves on.
+    panels->hold_gpu_fences_for_test(true);
+    const GLuint drawn = live();
+    const Readback held = read_texture(drawn);
+    panels->take_stats();
+    for (double t : {0.8, 0.85, 0.9, 0.95}) pump(t, nullptr, 100ms);
+    EXPECT_LE(panels->take_stats().uploads, 1);
+    EXPECT_EQ(read_texture(drawn).rgba, held.rgba);
+    panels->hold_gpu_fences_for_test(false);
+    auto clip = lottie::LottieClip::load(dir / "hull.json", nullptr);
+    ASSERT_TRUE(clip);
+    auto bytes = assets::read_binary_file(albedo);
+    ASSERT_TRUE(bytes);
+    const assets::Image still = assets::decode_image(*bytes);
+    const lottie::PanelTick tick = lottie::panel_tick(1.0, 0.0, clip->total_frames(), clip->fps());
+    EXPECT_TRUE(pump(1.0, [&] {
+        const Readback r = read_texture(live());
+        std::vector<std::uint8_t> premul;
+        clip->render(tick.frame, static_cast<std::uint32_t>(r.w), static_cast<std::uint32_t>(r.h),
+                     premul);
+        return r.rgba == lottie::composite_panel(still, premul, static_cast<std::uint32_t>(r.w),
+                                                 static_cast<std::uint32_t>(r.h));
+    }));
+}
+
+// Rotating textures must not grow the uploads: each texture lacks only what
+// CHANGED since it was written, not what other uploads carried to catch their
+// own texture up. A small moving shape keeps every upload small once all
+// three textures hold an image.
+TEST_F(BridgePanels, UploadsStayPartialAsTexturesRotate) {
+    place("slide.json");
+    ASSERT_TRUE(pump(0.0, [&] { return live() != 0; }));
+    const Readback r = read_texture(live());
+    const std::size_t whole = static_cast<std::size_t>(r.w) * r.h * 4;
+    int partial_uploads = 0;
+    for (int i = 1; i <= 12; ++i) {
+        const GLuint before = live();
+        panels->take_stats();
+        ASSERT_TRUE(pump(0.05 * i, [&] { return live() != before; })) << i;
+        const auto s = panels->take_stats();
+        if (i <= 3) continue;   // the first fill of each texture may be whole
+        ASSERT_GE(s.uploads, 1);
+        EXPECT_LT(s.upload_bytes / static_cast<std::size_t>(s.uploads), whole / 2) << i;
+        ++partial_uploads;
+    }
+    EXPECT_GE(partial_uploads, 9);
 }
