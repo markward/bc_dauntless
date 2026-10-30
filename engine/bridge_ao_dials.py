@@ -10,6 +10,12 @@ The main kernel cannot see a step shallower than ~0.077 x radius (2.3 units
 at radius 30): the DBridge side-panel frame is 1.5 deep. Two ways to try:
 `min_len` (shorter main samples) with `bias_facing` 1, or the detail kernel
 (`detail_samples` > 0, its own small radius, same pass).
+
+AO only darkens the ambient downlight, so a wall lit mostly by an area light
+(the DBridge panel bank under its cove strip) shows none of it: `detail_direct`
+lets the detail AO also darken spot/area diffuse. A bright wall also sits on
+the diffuse ceiling's knee, which flattens any darkening before it:
+`detail_final` applies that share of the detail AO after the ceiling instead.
 """
 from typing import Callable, Optional
 
@@ -24,15 +30,20 @@ DEFAULTS: dict = {
     "detail_radius": 3.0,
     "detail_strength": 1.5,
     "detail_bias": 0.1,
+    "detail_direct": 0.0,     # 0..1 of the detail AO on spot/area diffuse
+    "detail_final": 0.0,      # 0..1 of the detail AO after the diffuse ceiling
 }
 DIAL_ORDER: tuple = tuple(DEFAULTS)
 _STEP = {"radius": 2.0, "strength": 0.1, "bias": 0.1, "bias_dist": 0.002,
          "bias_facing": 0.1, "min_len": 0.01, "detail_samples": 4,
-         "detail_radius": 0.5, "detail_strength": 0.1, "detail_bias": 0.05}
+         "detail_radius": 0.5, "detail_strength": 0.1, "detail_bias": 0.05,
+         "detail_direct": 0.25, "detail_final": 0.25}
 _MIN = {"radius": 1.0, "strength": 0.0, "bias": 0.0, "bias_dist": 0.0,
         "bias_facing": 0.0, "min_len": 0.01, "detail_samples": 0,
-        "detail_radius": 0.5, "detail_strength": 0.0, "detail_bias": 0.0}
-_MAX = {"bias_facing": 1.0, "min_len": 1.0, "detail_samples": 32}
+        "detail_radius": 0.5, "detail_strength": 0.0, "detail_bias": 0.0,
+        "detail_direct": 0.0, "detail_final": 0.0}
+_MAX = {"bias_facing": 1.0, "min_len": 1.0, "detail_samples": 32,
+        "detail_direct": 1.0, "detail_final": 1.0}
 
 _dials: dict = dict(DEFAULTS)
 _push: Optional[Callable[[dict], None]] = None

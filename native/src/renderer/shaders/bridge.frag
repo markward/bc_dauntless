@@ -54,6 +54,8 @@ uniform sampler2D u_ao_depth;     // unit 4: the pre-pass depth (window depth, r
 uniform mat4      u_ao_inv_proj;
 uniform vec2      u_ao_screen;    // the view's size in pixels (the AO may be smaller)
 uniform int       u_ao_on;
+uniform float     u_ao_direct;    // 0..1: detail AO (.g) on spot/area diffuse
+uniform float     u_ao_final;     // 0..1: detail AO applied after the diffuse ceiling
 uniform int       u_output_normal;
 
 // ── Developer Options debug view (Lighting tab) ────────────────────────
@@ -187,26 +189,27 @@ float ao_view_z(vec2 uv) {
     return v.z / v.w;
 }
 
-// Depth-aware 4x4 filter over the AO texture. The AO kernel's rotation comes
+// Depth-aware 4x4 filter over the AO texture (.r whole, .g detail, .b main). The AO kernel's rotation comes
 // from a 4x4 tile, so a 4x4 average cancels it; each tap is weighted by how
 // close its depth is to this pixel's, so the average never mixes the AO of a
 // foreground silhouette with the surface behind it (a halo round officers).
-float ao_term() {
-    if (u_ao_on == 0) return 1.0;
+vec3 ao_term() {
+    if (u_ao_on == 0) return vec3(1.0);
     vec2 uvc = gl_FragCoord.xy / u_ao_screen;          // this fragment, 0..1
     vec2 tex = 1.0 / vec2(textureSize(u_ao, 0));      // one AO texel
     float zc = ao_view_z(uvc);                         // full-resolution depth
     float tol = 0.02 * abs(zc) + 0.25;   // depth tolerance grows with distance
     vec2 uv0 = uvc - 1.5 * tex;
-    float sum = 0.0, wsum = 0.0;
+    vec3 sum = vec3(0.0);
+    float wsum = 0.0;
     for (int y = 0; y < 4; ++y)
         for (int x = 0; x < 4; ++x) {
             vec2 uv = uv0 + vec2(x, y) * tex;
             float w = exp(-abs(ao_view_z(uv) - zc) / tol);
-            sum += texture(u_ao, uv).r * w;
+            sum += texture(u_ao, uv).rgb * w;
             wsum += w;
         }
-    return wsum > 1e-4 ? sum / wsum : texture(u_ao, uvc).r;
+    return wsum > 1e-4 ? sum / wsum : texture(u_ao, uvc).rgb;
 }
 
 vec3 shading_normal() {
@@ -287,10 +290,11 @@ vec3 F_schlick_rough(float cos_t, vec3 f0, float rough) {
 vec3 f0_for(vec3 albedo_lin, float metal) { return mix(vec3(0.04), albedo_lin, metal); }
 
 // Lit diffuse is capped (encoded) under bloom; specular adds on top uncapped.
-vec3 combine(vec3 diffuse_lin, vec3 spec_lin, float diffuse_max) {
+// `post` scales the ceilinged diffuse (u_ao_final); 1 = none.
+vec3 combine(vec3 diffuse_lin, vec3 spec_lin, float diffuse_max, float post) {
     vec3 d = encode(diffuse_lin);
     vec3 ds = encode(diffuse_lin + spec_lin);
-    return diffuse_ceiling(d, diffuse_max) + max(ds - d, vec3(0.0));
+    return diffuse_ceiling(d, diffuse_max) * post + max(ds - d, vec3(0.0));
 }
 
 // The pow base is clamped at 0, as in the C++ twin (NaN guard).
@@ -643,7 +647,12 @@ void main() {
     }
     vec3 n = shading_normal();
     if (u_debug_view == 1) { FragColor = vec4(n * 0.5 + 0.5, 1.0); return; }
-    float ao = ao_term();
+    // u_ao_final moves that share of the detail AO past the diffuse ceiling:
+    // a bright wall sits on the ceiling's knee, which flattens any darkening
+    // applied before it.
+    vec3 ao_t = ao_term();
+    float ao = u_ao_final > 0.0 ? ao_t.b * mix(ao_t.g, 1.0, u_ao_final) : ao_t.r;
+    float ao_post = mix(1.0, ao_t.g, u_ao_final);
     if (u_debug_view == 3) { FragColor = vec4(vec3(ao), 1.0); return; }
     if (u_debug_view == 4 || u_debug_view == 5) {
         uint id = uint(u_debug_view == 4 ? gl_PrimitiveID : u_mesh_id);
@@ -688,16 +697,21 @@ void main() {
             spec = pre * (F0 * ab.x + ab.y * u_reflectance)
                  * specular_occlusion(NdotV, ao, rough);
         }
-        // Static spots and area lights: direct light, never multiplied by AO.
-        // Their diffuse goes through the ceiling in combine(); only specular
-        // may exceed it.
+        // Static spots and area lights: direct light, never multiplied by the
+        // main AO. Their diffuse goes through the ceiling in combine(); only
+        // specular may exceed it. u_ao_direct lets the DETAIL AO darken their
+        // diffuse: a shallow recess hides part of a broad light, and a wall
+        // lit mostly by an area light shows no AO at all otherwise.
+        vec3 diffuse_received = diffuse;
         accumulate_spots(N, V, NdotV, albedo, metal, rough, F0, diffuse, spec);
         accumulate_area_lights(N, V, NdotV, albedo, metal, rough, F0, diffuse, spec);
+        diffuse = diffuse_received
+                + (diffuse - diffuse_received) * mix(1.0, ao_t.g, u_ao_direct);
         float dip = glow_dip(base_uv);
         diffuse *= dip;
         spec *= dip;
         if (u_debug_view == 8) { FragColor = vec4(encode(spec), 1.0); return; }
-        vec3 col = (combine(diffuse, spec, u_diffuse_max) + emissive_term(base_uv, base.rgb))
+        vec3 col = (combine(diffuse, spec, u_diffuse_max, ao_post) + emissive_term(base_uv, base.rgb))
                  * u_viewscreen_brightness;
         col = mix(col, vec3(1.0), clamp(u_viewscreen_flash, 0.0, 1.0));
         FragColor = vec4(apply_highlight(col), 1.0);
@@ -706,7 +720,7 @@ void main() {
     vec3 albedo = (u_debug_view == 2) ? vec3(1.0) : base.rgb;
     float h = clamp(dot(n, u_up) * 0.5 + 0.5, 0.0, 1.0);
     vec3 received = u_ambient * mix(u_down_bottom, u_down_top, h) * ao * glow_dip(base_uv);
-    vec3 col = (diffuse_ceiling(albedo * received) + emissive_term(base_uv, base.rgb))
+    vec3 col = (diffuse_ceiling(albedo * received) * ao_post + emissive_term(base_uv, base.rgb))
              * u_viewscreen_brightness;
     col = mix(col, vec3(1.0), clamp(u_viewscreen_flash, 0.0, 1.0));
     FragColor = vec4(apply_highlight(col), 1.0);

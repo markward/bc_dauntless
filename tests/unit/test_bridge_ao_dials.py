@@ -12,6 +12,7 @@ def test_defaults_are_todays_look():
     assert (d["radius"], d["strength"], d["bias"]) == (30.0, 1.8, 0.5)
     assert (d["bias_dist"], d["bias_facing"], d["min_len"]) == (0.01, 0.0, 0.1)
     assert d["detail_samples"] == 0
+    assert (d["detail_direct"], d["detail_final"]) == (0.0, 0.0)
 
 
 def test_step_pushes_the_whole_set_and_clamps():

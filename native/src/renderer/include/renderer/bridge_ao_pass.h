@@ -41,6 +41,13 @@ struct BridgeAoTuning {
     float detail_radius   = 3.0f;
     float detail_strength = 1.5f;
     float detail_bias     = 0.1f;
+    /// 0..1: how much of the detail AO also darkens the spot and area-light
+    /// diffuse (bridge.frag; the main AO never does). 0 = today.
+    float detail_direct   = 0.0f;
+    /// 0..1: that share of the detail AO applied AFTER the diffuse ceiling
+    /// instead of before it (the ceiling's knee flattens darkening on a
+    /// bright wall). 0 = today.
+    float detail_final    = 0.0f;
 };
 
 /// Screen-space ambient occlusion for the main bridge view. Owns a

@@ -26,6 +26,7 @@
 
 #include <glm/glm.hpp>
 
+#include <cmath>
 #include <memory>
 #include <stdexcept>
 #include <utility>
@@ -203,7 +204,7 @@ protected:
 
     /// The shallow step (make_step) seen from about 60 units, drawn with
     /// `tuning`: the floor just beside the step's foot vs open floor.
-    CornerImage render_step(const renderer::BridgeAoTuning& tuning) {
+    CornerImage render_step(const renderer::BridgeAoTuning& tuning, float ambient = 0.6f) {
         constexpr int kStepWin = 512;
         if (!step_model) step_model = make_step();
         scenegraph::World world;
@@ -220,7 +221,7 @@ protected:
         cam.near = 0.5f;
         cam.far = 2000.0f;
         renderer::Lighting lighting;
-        lighting.ambient = {0.6f, 0.6f, 0.6f};
+        lighting.ambient = glm::vec3(ambient);
 
         target.resize(kStepWin, kStepWin);
         target.bind();
@@ -281,6 +282,47 @@ TEST_F(BridgeAoFrame, DetailKernelDarkensTheFootOfAShallowStep) {
     EXPECT_GT(img.open_floor, base.open_floor * 0.98);   // clear of the step: untouched
 }
 
+// A spot straight down over the step, `radiance` linear.
+void light_the_step(renderer::BridgePass& pass, float radiance) {
+    pass.set_spots({{{6.0f, 0.0f, 40.0f}, {0.0f, 0.0f, -1.0f},
+                     std::cos(glm::radians(60.0f)), std::cos(glm::radians(80.0f)),
+                     200.0f, glm::vec3(radiance)}});
+}
+
+// AO darkens only the ambient downlight, so a step lit by a spot keeps the
+// spot's full diffuse at its foot; detail_direct carries the detail AO onto it.
+// Measured 0.311 -> 0.298 at the foot, open floor unchanged.
+TEST_F(BridgeAoFrame, DetailDirectDarkensASpotLitStepFoot) {
+    light_the_step(*pass, 400.0f);
+    renderer::BridgeAoTuning t;
+    t.detail_samples = 8;
+    const auto received_only = render_step(t, 0.05f);
+    t.detail_direct = 1.0f;
+    const auto with_direct = render_step(t, 0.05f);
+    pass->set_spots({});
+    EXPECT_LT(with_direct.near_corner, received_only.near_corner * 0.97);
+    EXPECT_GT(with_direct.open_floor, received_only.open_floor * 0.99);
+}
+
+// A brightly lit surface sits on the diffuse ceiling's knee, which flattens
+// darkening applied before it: detail_final applies the detail AO after it.
+// Measured at the foot: 0.822 none, 0.813 detail_direct 1, 0.752 detail_final 1.
+TEST_F(BridgeAoFrame, DetailFinalShowsOnABrightStepFoot) {
+    light_the_step(*pass, 4000.0f);
+    renderer::BridgeAoTuning t;
+    t.detail_samples = 8;
+    const auto none = render_step(t);
+    t.detail_direct = 1.0f;
+    const auto before = render_step(t);
+    t.detail_direct = 0.0f;
+    t.detail_final = 1.0f;
+    const auto after = render_step(t);
+    pass->set_spots({});
+    EXPECT_LT(after.near_corner, none.near_corner * 0.95);
+    EXPECT_LT(after.near_corner, before.near_corner);
+    EXPECT_GT(after.open_floor, none.open_floor * 0.99);
+}
+
 TEST(BridgeAoTuning, DefaultsAreTodaysLook) {
     const renderer::BridgeAoTuning t;
     EXPECT_EQ(t.radius, renderer::kBridgeLighting.ao_radius);
@@ -290,6 +332,8 @@ TEST(BridgeAoTuning, DefaultsAreTodaysLook) {
     EXPECT_EQ(t.bias_facing, 0.0f);
     EXPECT_EQ(t.min_len, 0.1f);
     EXPECT_EQ(t.detail_samples, 0);
+    EXPECT_EQ(t.detail_direct, 0.0f);
+    EXPECT_EQ(t.detail_final, 0.0f);
 }
 
 TEST_F(BridgeAoFrame, CommSetRenderNeverBindsAo) {

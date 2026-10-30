@@ -1,7 +1,8 @@
 #version 410 core
 // Screen-space ambient occlusion for the bridge (BridgeAoPass), from a normal
 // + depth pre-pass of the room. Output: occlusion factor in .r, 1 = open,
-// applied by bridge.frag to RECEIVED light only.
+// applied by bridge.frag to RECEIVED light; the detail kernel's own factor
+// in .g and the main kernel's in .b (see the end of main()).
 in vec2 v_uv;
 out vec4 FragColor;
 
@@ -96,6 +97,7 @@ void main() {
         occl += occluded(P, TBN, k, u_radius, bias);
     }
     float ao = 1.0 - u_strength * (occl / float(n));
+    float ao_main = ao;
 
     // Detail kernel. The main kernel ties length to elevation (its short
     // samples point nearly straight up), so its lowest sample sits
@@ -103,6 +105,7 @@ void main() {
     // never occlude. Here length runs on its own sequence, so short samples
     // also lean sideways towards a nearby step.
     int nd = clamp(u_detail_samples, 0, 32);
+    float dao = 1.0;
     if (nd > 0) {
         float dbias = u_detail_bias + dist_bias * grazing;
         float docc = 0.0;
@@ -117,7 +120,11 @@ void main() {
         }
         // Clamped: strengths above 1 drive a factor negative, and two
         // negatives would multiply back to light.
-        ao = max(ao, 0.0) * max(1.0 - u_detail_strength * (docc / float(nd)), 0.0);
+        dao = max(1.0 - u_detail_strength * (docc / float(nd)), 0.0);
+        ao = max(ao, 0.0) * dao;
     }
-    FragColor = vec4(ao, ao, ao, 1.0);
+    // .r = the whole AO (received light); .g = the detail factor alone and
+    // .b = the main kernel alone, so bridge.frag can move the detail factor
+    // onto direct light (u_ao_direct) or past the diffuse ceiling (u_ao_final).
+    FragColor = vec4(ao, dao, ao_main, 1.0);
 }
