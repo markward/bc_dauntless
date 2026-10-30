@@ -232,7 +232,21 @@ def _pump_music(dt) -> None:
         mgr.notify_track_finished()
 
 
-def tick_audio(*, camera_position, camera_forward, camera_up, dt, player) -> None:
+def _frame_clock() -> float:
+    """The wall clock run() measures each frame's length with. A function so
+    a test can drive the loop at a chosen frame rate
+    (tests/host/test_frame_rate_independence.py)."""
+    import time
+    return time.monotonic()
+
+
+def tick_audio(*, camera_position, camera_forward, camera_up, dt, player,
+               source_dt=None) -> None:
+    """`dt` is the frame's real elapsed time (0 under pause): the listener
+    rides the camera, which moves every drawn frame, and music ramps on it.
+    `source_dt` (default `dt`) is the GAME time the frame covered: attached
+    sources sit on game objects, which only move when a tick runs, so their
+    velocity is that movement over that time."""
     if _audio_mod is None:
         return
     from engine.audio import attached_sources, hum_allocator, hum_diagnostic, scene_scope
@@ -248,7 +262,7 @@ def tick_audio(*, camera_position, camera_forward, camera_up, dt, player) -> Non
     scene_scope.set_active_frame(frames.frame_of(viewed).key if viewed is not None else None)
     # Guide §9, in order: (1) attached emitters from their nodes,
     # (2) the nearest-≤4 hum allocator, (3) the listener from the active camera.
-    attached_sources.pump(dt)
+    attached_sources.pump(dt if source_dt is None else source_dt)
     hum_allocator.update(listener_pos=camera_position)
     # Dev-only diagnostic (F8-toggled, --developer only): a single boolean
     # short-circuit inside maybe_report keeps this out of the 60 Hz hot path
@@ -11570,9 +11584,8 @@ def run(mission_name: Optional[str] = None,
 
         # Fixed-timestep accumulator state — sim runs at TICK_DT (60 Hz)
         # regardless of render refresh rate. See engine/core/timestep.py.
-        import time
         from engine.core.timestep import step_accumulator
-        _previous_real_time = time.monotonic()
+        _previous_real_time = _frame_clock()
         _accumulator = 0.0
         # True while a bridge-officer left-click is held (press was intercepted
         # for the crew menu); used to swallow the matching release edge so it
@@ -11750,7 +11763,7 @@ def run(mission_name: Optional[str] = None,
                 _cef_set_event_handler(registry.dispatch)
             if _cef_set_load_end is not None:
                 _cef_set_load_end(_on_cef_load_end)
-            _previous_real_time = time.monotonic()
+            _previous_real_time = _frame_clock()
             _notice_ended_at = _previous_real_time
 
         while not r.should_close():
@@ -12163,7 +12176,7 @@ def run(mission_name: Optional[str] = None,
             # Frozen = pause menu OR the DevTools window (which stops the
             # world so the overlay under inspection holds still).
             pause.set_external_freeze(_devtools_frozen(_h))
-            _now = time.monotonic()
+            _now = _frame_clock()
             # The raw wall delta, kept apart from _frame_dt (which the freeze
             # zeroes): the Bridge Editor's preview clock runs while the
             # (hidden) pause menu freezes the sim (spec 2026-10-08-bridge-emitters §12.2).
@@ -12187,6 +12200,13 @@ def run(mission_name: Optional[str] = None,
             # matches step_accumulator's spiral-of-death cap so a
             # stalled frame doesn't teleport the player.
             _player_dt = 0.0 if pause.sim_frozen else min(max(_frame_dt, 0.0), MAX_FRAME_DT)
+            # The GAME time this frame covers: the GameLoop ticks it runs.
+            # Everything below that steps game state does so once per tick
+            # (`for _ in range(_sim_ticks_this_frame)`) or by this -- never by
+            # one TICK_DT per frame, which ran combat at a third of its speed
+            # in a 3-tick frame and double speed at 120 fps
+            # (tests/host/test_frame_rate_independence.py).
+            _frame_game_dt = _sim_ticks_this_frame * TICK_DT
             _interp_alpha = _accumulator / TICK_DT  # in [0, 1) after step_accumulator
             # GameLoop = timers, the TimeSliceProcess scheduler, the AI
             # tree-walk, collision avoidance, motion integration and the
@@ -12443,21 +12463,32 @@ def run(mission_name: Optional[str] = None,
                 # active set.  Runs after AI/physics (approximate — the host
                 # loop is single-threaded and Python AI runs in the gameloop
                 # tick above) so emitters are ready when AI fire calls land.
-                # Materialize the ship list once per frame — both consumers
+                # Materialize the ship list once per tick — both consumers
                 # re-walked every set independently before.
+                #
+                # Once per GAME TICK, not once per frame: torpedo flight,
+                # phaser dwell, weapon charge and every effect clock in
+                # _advance_combat step by TICK_DT, so a frame that ran three
+                # ticks must step them three times (see _frame_game_dt). A
+                # frame that ran none steps nothing; the list is still built
+                # for the render section's combat feed.
                 _ships_this_tick = list(_all_ships_for_tick())
-                with frame_profiler.scope("sim.weapons"):
-                    _advance_weapons(_ships_this_tick, TICK_DT)
-                with frame_profiler.scope("sim.combat"):
-                    _advance_combat(
-                        _ships_this_tick, TICK_DT,
-                        ship_instances=(session.ship_instances if session is not None else None),
-                        ship_emitters=(session.ship_emitters if session is not None else None),
-                        player=player,
-                        # Pushed after the camera, once the render origin is
-                        # set (_push_combat_render_data below).
-                        push_render_data=False,
-                    )
+                for _tick_i in range(_sim_ticks_this_frame):
+                    if _tick_i:
+                        # The tick before may have killed or spawned a ship.
+                        _ships_this_tick = list(_all_ships_for_tick())
+                    with frame_profiler.scope("sim.weapons"):
+                        _advance_weapons(_ships_this_tick, TICK_DT)
+                    with frame_profiler.scope("sim.combat"):
+                        _advance_combat(
+                            _ships_this_tick, TICK_DT,
+                            ship_instances=(session.ship_instances if session is not None else None),
+                            ship_emitters=(session.ship_emitters if session is not None else None),
+                            player=player,
+                            # Pushed after the camera, once the render origin is
+                            # set (_push_combat_render_data below).
+                            push_render_data=False,
+                        )
 
                 # Player-only contact manager: bands, proximity events and the
                 # identification dwell (engine/appc/sensor_contacts.py). Sim-gated
@@ -12480,9 +12511,10 @@ def run(mission_name: Optional[str] = None,
                         player, App.g_kUtopiaModule.GetGameTime())
 
                 # Nebula membership → enter/exit events, environmental
-                # damage, sensor scaling. Sim dt (TICK_DT); gated by the
-                # enclosing `not pause.sim_frozen` (no effects while frozen);
-                # no-op for sets without a nebula.
+                # damage, sensor scaling. Sim dt (TICK_DT), once per game tick
+                # like combat above; gated by the enclosing
+                # `not pause.sim_frozen` (no effects while frozen); no-op for
+                # sets without a nebula.
                 _neb_set = _resolve_active_set(player)
                 if _neb_set is not None:
                     global _nebula_tracker
@@ -12490,11 +12522,6 @@ def run(mission_name: Optional[str] = None,
                         from engine.appc.nebula_runtime import NebulaTracker
                         _nebula_tracker = NebulaTracker()
                     import App  # deferred: matches host-loop convention
-                    _nebula_tracker.update(
-                        _neb_set,
-                        _neb_set.GetClassObjectList(App.CT_SHIP),
-                        TICK_DT,
-                    )
 
                     # Radial-profile radiation (engine/appc/radiation.py):
                     # drain + outages via 16 Hz ET_ENVIRONMENT_DAMAGE. Ships
@@ -12506,9 +12533,15 @@ def run(mission_name: Optional[str] = None,
                         _radiation_driver = RadiationDriver(_profile.sample_for_object)
                         _nebula_tracker.env_listeners.append(
                             _radiation_driver.on_local_event)
-                    _radiation_driver.update(
-                        _neb_set.GetClassObjectList(App.CT_SHIP), TICK_DT,
-                        shared=_nebula_tracker.ships_in_armed_nebula())
+                    for _tick_i in range(_sim_ticks_this_frame):
+                        _nebula_tracker.update(
+                            _neb_set,
+                            _neb_set.GetClassObjectList(App.CT_SHIP),
+                            TICK_DT,
+                        )
+                        _radiation_driver.update(
+                            _neb_set.GetClassObjectList(App.CT_SHIP), TICK_DT,
+                            shared=_nebula_tracker.ships_in_armed_nebula())
 
                     # Shared nebula-state locals used by ALL nebula drivers
                     # (thunder, hull-discharge, wake).  Computed once here so
@@ -12545,7 +12578,7 @@ def run(mission_name: Optional[str] = None,
                         _nebula_thunder.update(
                             _profile_fx.lightning_active(
                                 in_neb, _prof_sample, _warping),
-                            TICK_DT, _gt, fwd_t)
+                            _frame_game_dt, _gt, fwd_t)
                         for name in _nebula_thunder.pop_due_audio(_gt):
                             try:
                                 from engine.audio.tg_sound import TGSoundManager
@@ -12594,7 +12627,7 @@ def run(mission_name: Optional[str] = None,
                                                           wp.x, wp.y, wp.z)
                                     hull_pts.append(_hp if _hp is not None
                                                     else (wp.x, wp.y, wp.z))
-                        _hull_discharge.update(sparking, dmg_rate, TICK_DT, hull_pts, _gt)
+                        _hull_discharge.update(sparking, dmg_rate, _frame_game_dt, hull_pts, _gt)
 
                     # Nebula ship wake: record the player's path while in a nebula.
                     # Gated by Volumetric Nebulae ONLY (spec §7: "no cloud → no
@@ -13375,7 +13408,8 @@ def run(mission_name: Optional[str] = None,
                     camera_position=eye,
                     camera_forward=(_fx0/_flen, _fy0/_flen, _fz0/_flen),
                     camera_up=up_vec,
-                    dt=TICK_DT,
+                    dt=_player_dt,
+                    source_dt=_frame_game_dt,
                     player=player,
                 )
 
