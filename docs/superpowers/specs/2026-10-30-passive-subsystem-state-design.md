@@ -356,6 +356,18 @@ stay stepped. The tick queue (6.5) is not needed until phase 2. Plan:
 ran `combat_stress` (16 ships) under the audit with no failures
 (`tests/host/test_passive_state_scene_audit.py`).
 
+**Measured (2026-10-30, Task 5).** 64-ship headless capture,
+`~/Documents/dauntless-perf/passive1-cs64-bridge-20261030-1629.log` against
+`mounts-cs64-bridge-20261030-1153.log`, median of reports 3-11, per game
+tick: `sim.weapons` 0.616 → 0.454 ms; `gl.subsystems` 0.876 → 0.965 ms;
+frame 116 → 112 ms. The renderer (`r.frame`, untouched by this work) read
+16.96 → 18.26 ms, so this run was ~7-8% slower across the board; allowing for
+that, weapons fell ~30% and the articulation skip is inside the noise. Far
+less than the ~0.5 ms estimated for weapons: in a 64-ship brawl most banks
+are firing or recharging at any moment, so few can sleep. The design's win is
+in quiet scenes (parked fleets, stations, idle escorts), which this capture
+does not measure. Phase 2 (power) remains the larger per-tick target.
+
 ## 9. Left for later / decisions not taken here
 
 - **Closed-form ramps** (a charging bank or reloading tube described as a
