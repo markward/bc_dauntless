@@ -23,6 +23,8 @@ from engine.core.ids import implements
 import engine.dev_mode as dev_mode
 from engine.appc import ship_death as _ship_death
 from engine.appc import passive_weapons
+from engine.appc import passive_power, passive_state
+from engine.appc.passive_power import FrozenField
 
 
 def subsystem_world_position(sub, ship=None):
@@ -1123,6 +1125,7 @@ class ShipSubsystem(TGEventHandlerObject):
         ship = self._climb_to_ship()
         if ship is not None:
             passive_weapons.invalidate(ship)
+            passive_power.invalidate(ship)
 
     def GetCritical(self) -> int:                       return self._critical
     def SetCritical(self, v) -> None:                   self._critical = int(v)
@@ -1251,6 +1254,24 @@ class PoweredSubsystem(ShipSubsystem):
     # every conduit-routed consumer leaves it False and uses power._draw().
     DRAWS_DIRECT_FROM_MAIN = False
 
+    # The power draw program (engine/appc/passive_power.py) may freeze this
+    # consumer while its demand is steady and met: the inputs and outputs of
+    # _update_power below are watched, and any write thaws it. A subclass
+    # whose _update_power or _wants_power reads more than these sets this
+    # False (the cloak). DRAWS_DIRECT_FROM_MAIN consumers (the tractor, whose
+    # _wants_power reads its emitters' firing state) are never frozen either.
+    _POWER_FREEZABLE = True
+    _is_on = FrozenField()
+    _normal_power = FrozenField()
+    _power_percentage_wanted = FrozenField()
+    _power_wanted = FrozenField()
+    _power_received = FrozenField()
+    _efficiency = FrozenField()
+    _power_factor = FrozenField()
+    # The audit compares a program tick with the full pump; the frozen flag is
+    # the program's bookkeeping, not consumer state.
+    _passive_audit_ignore = ("_power_frozen",)
+
     def __init__(self, name: str = ""):
         super().__init__(name)
         self._normal_power = 0.0
@@ -1364,11 +1385,19 @@ class PoweredSubsystem(ShipSubsystem):
             self._power_factor = received / base
             return
         wanted = base * self._power_percentage_wanted
-        self._power_wanted = wanted
         received = power._draw(wanted, self.POWER_MODE) if wanted > 0.0 else 0.0
+        self._record_draw(wanted, received, base)
+
+    def _record_draw(self, wanted: float, received: float, base: float) -> None:
+        """Record a conduit draw: the one copy of these four rules. Shared by
+        _update_power and the power draw program's short-draw path."""
+        self._power_wanted = wanted
         self._power_received = received
         self._efficiency = received / wanted if wanted > 0.0 else 1.0
         self._power_factor = received / base
+
+    def _passive_power_thaw(self) -> None:
+        passive_power.thaw(self)
 
     # ── Subsystem event emission ─────────────────────────────────────────────
 
@@ -2329,6 +2358,10 @@ class PowerSubsystem(ShipSubsystem):
     reservoir drains (main-only / backup-only, return amount taken, float
     0.0 falsy).  Engine has no callers — SDK scripts and tests only.
     """
+    # The power draw program's slot (engine/appc/passive_power.py): its
+    # bookkeeping, which the audit's full-pump reference run drops.
+    _passive_audit_ignore = ("_passive_power",)
+
     def __init__(self, name: str = ""):
         super().__init__(name)
         self._available_power: float = 0.0
@@ -2586,7 +2619,10 @@ class PowerSubsystem(ShipSubsystem):
             self._backup_conduit_current = min(self._backup_battery_power, backup_max)
             self._available_power = (self._main_conduit_current
                                      + self._backup_conduit_current)
-        self._pump_consumers(dt)     # Task 4 fills this in
+        if passive_state.enabled():
+            passive_power.pump(self, dt)
+        else:
+            self._pump_consumers(dt)
         main_cap = self.GetMainBatteryLimit()
         backup_cap = self.GetBackupBatteryLimit()
         # Drive the FloatRangeWatchers with each battery's FRACTION so
@@ -2611,11 +2647,18 @@ class PowerSubsystem(ShipSubsystem):
         consumers = getattr(ship, "_powered_consumers", None) if ship is not None else None
         if not consumers:
             return
-        total = 0.0
         for consumer in consumers:
             consumer._update_power(dt, self)
-            # _power_wanted, not GetPowerWanted(): _update_power just wrote the
-            # attribute one line ago, and PoweredSubsystem's getter is a bare
+        self._power_wanted_total = self._sum_wanted(consumers)
+
+    def _sum_wanted(self, consumers) -> float:
+        """Sum of the consumers' per-tick demand, in attach order: the
+        _power_wanted_total readout. Shared by _pump_consumers and the power
+        draw program (engine/appc/passive_power.py)."""
+        total = 0.0
+        for consumer in consumers:
+            # _power_wanted, not GetPowerWanted(): the attribute holds this
+            # tick's demand, and PoweredSubsystem's getter is a bare
             # `return self._power_wanted`. At 9.4 consumers x 101 ships x 15
             # ticks that accessor alone was ~14,000 calls per frame for no
             # information.
@@ -2640,7 +2683,7 @@ class PowerSubsystem(ShipSubsystem):
                 total += consumer._power_wanted
             else:
                 total += consumer.GetPowerWanted()
-        self._power_wanted_total = total
+        return total
 
     def _draw(self, amount: float, mode: int) -> float:
         """Depletes conduit budget AND battery to satisfy up to ``amount``,
@@ -2936,6 +2979,10 @@ class CloakingSubsystem(PoweredSubsystem):
     # so cloaking never starves the ship's other systems of main-battery power
     # (docs/reference/gameplay/ship-subsystems.md:185).
     POWER_MODE = PSM_BACKUP_ONLY
+    # Its _update_power snapshots the plant's backup reserve every tick and
+    # steals from it directly: a call op in the power draw program, never
+    # frozen (engine/appc/passive_power.py).
+    _POWER_FREEZABLE = False
 
     # Power starvation: the cloak runs off the BACKUP battery; when that reserve
     # is exhausted the device can no longer hold the cloak (ship-subsystems.md:
