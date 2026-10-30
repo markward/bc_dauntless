@@ -97,11 +97,8 @@ def test_steady_ship_runs_the_program():
     counts = passive_power.counts()
     assert counts["full_ticks"] == 1
     assert counts["program_ticks"] == 2
-    for c in _consumers(ship):
-        if c.DRAWS_DIRECT_FROM_MAIN:        # the default tractor: a call op
-            assert not c.__dict__.get("_power_frozen")
-        else:
-            assert c.__dict__["_power_frozen"] is True
+    for c in _consumers(ship):              # the idle default tractor too
+        assert c.__dict__["_power_frozen"] is True
     assert all(c.__dict__["_power_frozen"] for c in _drawing(ship))
 
 
@@ -345,3 +342,120 @@ def test_audit_compare_reports_a_difference():
     passive_state.audit_compare([o], ref, lambda: setattr(o, "f", 3.0))
     assert passive_state.audit_failures() == [("_Obj", "f")]
     assert o.f == 3.0
+
+
+# ── Phase 2, task 2: structural freezability, idle tractor, zero slider ───
+
+
+def _tractor_ship(name):
+    from engine.appc.weapon_subsystems import TractorBeam
+    ship = _ship(name, tractor=True)
+    beam = TractorBeam("Beam")
+    ship.GetTractorBeamSystem().AddChildSubsystem(beam)
+    return ship, beam
+
+
+def _ops(ship):
+    return [op[0] for op in ship.GetPowerSubsystem().__dict__["_passive_power"].ops]
+
+
+def test_idle_tractor_is_frozen():
+    ship, beam = _tractor_ship("Ship")
+    _tick(ship, PASSIVE, 2)
+    tractor = ship.GetTractorBeamSystem()
+    assert tractor.__dict__["_power_frozen"] is True
+    assert tractor not in _ops(ship)
+
+
+def test_beam_firing_thaws_the_tractor_system():
+    ref, ref_beam = _tractor_ship("Ref")
+    ship, beam = _tractor_ship("Passive")
+    _tick(ref, PER_TICK, 2)
+    _tick(ship, PASSIVE, 2)
+    tractor = ship.GetTractorBeamSystem()
+    assert tractor.__dict__["_power_frozen"] is True
+    ref_beam._firing = True
+    beam._firing = True
+    assert tractor.__dict__["_power_frozen"] is False
+    full = passive_power.counts()["full_ticks"]
+    _tick(ref, PER_TICK)
+    _tick(ship, PASSIVE)
+    assert passive_power.counts()["full_ticks"] == full + 1
+    for t in range(5):
+        _tick(ref, PER_TICK)
+        _tick(ship, PASSIVE)
+        assert _values(ref) == _values(ship), "differs at tick %d" % t
+        assert _fields(ref.GetTractorBeamSystem()) == _fields(tractor)
+    assert tractor.GetPowerReceived() > 0.0
+    assert tractor in _ops(ship)            # engaged: a call op
+
+
+def test_beam_firing_write_keeps_phase_one_wake():
+    """The thaw descriptor still does everything WakeField does."""
+    ship, beam = _tractor_ship("Ship")
+    beam.__dict__["_passive_asleep"] = True
+    beam._firing = True
+    assert not beam.__dict__.get("_passive_asleep")
+
+
+def test_class_override_without_opt_in_is_a_call_op():
+    class Odd(SensorSubsystem):
+        def _wants_power(self):
+            return bool(self.IsOn())
+
+    ship = _ship()
+    odd = Odd("Odd")
+    odd.SetNormalPowerPerSecond(80.0)
+    odd.TurnOn()
+    ship.SetSensorSubsystem(odd)
+    assert odd in _consumers(ship)
+    _tick(ship, PASSIVE, 3)
+    assert odd in _ops(ship)
+    assert not odd.__dict__.get("_power_frozen")
+
+
+def test_override_opt_in_by_providing_class():
+    class Ok(SensorSubsystem):
+        _POWER_FREEZABLE = True
+
+        def _wants_power(self):
+            return bool(self.IsOn())
+
+    class Child(Ok):
+        pass
+
+    assert passive_power.class_is_call_op(Ok) is False
+    assert passive_power.class_is_call_op(Child) is False
+    assert passive_power.class_is_call_op(CloakingSubsystem) is True
+
+    class NoOptIn(SensorSubsystem):
+        def GetPowerWanted(self):
+            return 0.0
+
+    assert passive_power.class_is_call_op(NoOptIn) is True
+    assert passive_power.class_is_call_op(SensorSubsystem) is False
+    assert passive_power.class_is_call_op(TractorBeamSystem) is False
+
+
+def test_instance_patched_update_power_is_a_call_op():
+    ship = _ship()
+    sensor = ship.GetSensorSubsystem()
+    real = sensor._update_power
+    sensor._update_power = lambda dt, power: real(dt, power)
+    _tick(ship, PASSIVE, 3)
+    assert sensor in _ops(ship)
+    assert not sensor.__dict__.get("_power_frozen")
+
+
+def test_zero_slider_is_a_frozen_no_op():
+    ref, ship = _ship("Ref"), _ship("Passive")
+    for s in (ref, ship):
+        s.GetSensorSubsystem().SetPowerPercentageWanted(0.0)
+    for t in range(5):
+        _tick(ref, PER_TICK)
+        _tick(ship, PASSIVE)
+        assert _values(ref) == _values(ship), "differs at tick %d" % t
+        assert _fields(ref.GetSensorSubsystem()) == _fields(ship.GetSensorSubsystem())
+    sensor = ship.GetSensorSubsystem()
+    assert sensor.__dict__["_power_frozen"] is True
+    assert sensor not in _ops(ship)

@@ -9,9 +9,11 @@ whose draw was met in full is FROZEN, and the plant repeats only its draw
 through the same PowerSubsystem._draw, in attach order. A short draw records
 through the same PoweredSubsystem._record_draw _update_power uses. A consumer
 whose rules read more than its own watched fields stays a CALL op and runs its
-own _update_power each tick: the cloak (_POWER_FREEZABLE False) and any
-DRAWS_DIRECT_FROM_MAIN consumer (the tractor, whose _wants_power reads its
-emitters' firing state). Every value stays current every tick, so nothing
+own _update_power each tick: a class that overrides _update_power,
+_wants_power or GetPowerWanted without opting in (_POWER_FREEZABLE True in the
+providing class), the cloak (False), an instance-patched consumer, and an
+engaged DRAWS_DIRECT_FROM_MAIN consumer. The tractor system opts in: idle it
+is a frozen no-op, and its beams' _firing (ThawParentWakeField) thaws it. Every value stays current every tick, so nothing
 reads a stale field. Spec:
 docs/superpowers/specs/2026-10-30-passive-subsystem-state-design.md §4, §8
 "Phase 2 as planned".
@@ -91,19 +93,69 @@ def thaw(consumer) -> None:
     invalidate(consumer.GetParentShip())
 
 
+class ThawParentWakeField(passive_state.WakeField):
+    """A WakeField whose write also thaws a frozen parent system: the tractor
+    beam's _firing is an input of TractorBeamSystem._wants_power."""
+
+    def __set__(self, obj, value) -> None:
+        super().__set__(obj, value)
+        parent = obj.GetParentSubsystem()
+        if parent is not None and parent.__dict__.get("_power_frozen"):
+            thaw(parent)
+
+
+_OVERRIDE_NAMES = ("_update_power", "_wants_power", "GetPowerWanted")
+# Instance attributes that make a consumer's rules differ from its class's:
+# the overridable methods, POWER_MODE, and the tractor's firing helper.
+_INSTANCE_PATCHES = frozenset(_OVERRIDE_NAMES + ("POWER_MODE", "_any_child_firing"))
+_class_call_op = {}
+
+
+def class_is_call_op(cls) -> bool:
+    """True when `cls`'s power rules are not the watched PoweredSubsystem ones:
+    it sets _POWER_FREEZABLE False, or overrides _update_power / _wants_power /
+    GetPowerWanted in a class that does not itself set _POWER_FREEZABLE True."""
+    hit = _class_call_op.get(cls)
+    if hit is None:
+        from engine.appc.subsystems import PoweredSubsystem
+        hit = not cls._POWER_FREEZABLE
+        if not hit:
+            for name in _OVERRIDE_NAMES:
+                provider = next(k for k in cls.__mro__ if name in k.__dict__)
+                if provider is PoweredSubsystem:
+                    continue
+                if provider.__dict__.get("_POWER_FREEZABLE") is not True:
+                    hit = True
+                    break
+        _class_call_op[cls] = hit
+    return hit
+
+
+def _is_call_op(c) -> bool:
+    if class_is_call_op(type(c)):
+        return True
+    d = c.__dict__
+    for name in _INSTANCE_PATCHES:
+        if name in d:
+            return True
+    # An engaged direct-from-main consumer steals from the main battery itself.
+    return bool(c.DRAWS_DIRECT_FROM_MAIN and c._wants_power())
+
+
 def _build(plant, consumers, dt) -> _Program:
     """Classify each consumer from the state the full pump just left."""
     ops = []
     calls = False
     for c in consumers:
-        cls = type(c)
-        if not cls._POWER_FREEZABLE or c.DRAWS_DIRECT_FROM_MAIN:
+        if _is_call_op(c):
             ops.append((c, None, False, None))
             calls = True
             continue
         base = c._normal_power * dt
         if not c._wants_power() or base <= 0.0:
             pass                                    # no op: nothing to draw
+        elif c._power_wanted == 0.0:
+            pass                                    # slider at 0: never drawn
         elif c._power_received == c._power_wanted:
             ops.append((c, c._power_wanted, c.POWER_MODE, base))
         else:

@@ -18,6 +18,7 @@ import math as _math
 from engine.core import ids
 from engine.appc import passive_weapons
 from engine.appc.passive_state import WakeField
+from engine.appc.passive_power import ThawParentWakeField
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.float_range_watcher import FloatRangeWatcher
 from engine.appc.subsystems import (
@@ -2282,6 +2283,9 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
     # was right that it draws from Main, the RE doc's mode-1 (backup-first) row
     # is wrong-in-effect. _update_power branches on this flag instead of _draw.
     DRAWS_DIRECT_FROM_MAIN = True
+    # Idle, _wants_power reads only _is_on (watched) and its beams' _firing
+    # (ThawParentWakeField): the power draw program may freeze it as a no-op.
+    _POWER_FREEZABLE = True
 
     # Tractor-beam mode constants from sdk/.../App.py:6774-6779.
     # SDK consumers: Preprocessors.py, AI/PlainAI/Warp.py, TowAway.py, etc.
@@ -2825,6 +2829,9 @@ class TractorBeam(_EnergyWeaponFireMixin, WeaponSystem):
     recharge=0.5, forward tractors 0.3).  Inherits Fire/CanFire/StopFiring/
     UpdateCharge from the mixin.
     """
+    # Same wake as the mixin's, plus: a write thaws a frozen parent system.
+    _firing = ThawParentWakeField()
+
     def __init__(self, name: str = ""):
         super().__init__(name)
         _init_energy_weapon_state(self)
