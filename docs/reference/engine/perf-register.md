@@ -25,6 +25,19 @@ The two are kept apart on purpose.
    window size. Read the scene line before trusting any number
    (`frame-profiler.md`, "Combat load").
 
+> **Note 2026-10-30 (counter-note, not a signal): `DAUNTLESS_PASSIVE_STATE=0`
+> is not the pre-phase-2 baseline.** Passive-state phase 2 made the seven
+> watched `PoweredSubsystem` fields `FrozenField` descriptors, so every write
+> of them is a Python call even with the switch off. The off path
+> pays added descriptor cost, but it also gets Task 3's
+> unconditional savings (closure-free battery-limit reads, the watcher's
+> no-check fast path), so its net direction against pre-phase-2 code is
+> derived, not measured. A capture taken with
+> the switch off compares against other switch-off captures, not against
+> captures from before `perf/passive-power`. For a true before/after, use a
+> capture from a build that predates it (e.g. `passive1-cs64-bridge-*`).
+> (Reasoning from review of Task 1; no capture measures the size of the gap.)
+
 ---
 
 ## Baseline scenarios
@@ -328,6 +341,9 @@ turns off the periodic report, so it needs its own run (M-5).
 | C-175–C-177 | 2026-10-22 10:55–10:59 | After the head-centre fix: C-174's run at 720 (High), then 4K CPU-only at Medium and at High | `d6bda943a` | **Debug** | 1280x720, 3840x2160 ×2 | — | `fix-bridge-720-*`, `fix-bq1-4k-cpu-*`, `fix-bq2-4k-cpu-*`. |
 | C-178–C-182 | 2026-10-22 12:30–12:38 | 4K Medium, GPU focus as C-164, with the fitted edge integral: `DAUNTLESS_BRIDGE_EXP` 0, 512 (exact acos), 128 (area diffuse off), 256 (area specular off); then mask 0 CPU-only | fitted integral + `u_bridge_exp` (committed after) | **Debug** | 3840x2160 | — | `fit<mask>-bq1-4k-focus-*`, `fit0-bq1-4k-cpu-*`; stills `shots/bridge4k/fit<mask>.png`. Ran after the main-merge gate finished. |
 | C-183–C-186 | 2026-10-22 12:46–12:51 | 4K, per-draw light culling: Medium GPU focus with `DAUNTLESS_BRIDGE_EXP` 4096 (culling on, count printed) then 1024 (culling off), both with stills; then CPU-only at Medium and at High | `9fac34de9` | **Debug** | 3840x2160 | — | `cull4096-bq1-4k-focus-*`, `cull1024-bq1-4k-focus-*`, `cull0-bq1-4k-cpu-*`, `cull0-bq2-4k-cpu-*`; stills `cull-on.png`, `cull-off.png`. |
+| C-208 | 2026-10-30 20:32 | `combat_stress` 64 ships, bridge view, headless, passive on (`perf/passive-power` after phase 2 Task 3) | `9a6570799` | **Debug** | M3 Pro, 1280x720 window | 1,500 / 13 | `passive2-cs64-bridge-20261030-2032.log`. IDs C-208 on skip past C-207, used by the unmerged `feat/bridge-lottie-panels`. |
+| C-209–C-212 | 2026-10-30 20:54–21:08 | as C-208, four back-to-back repeats of the SAME configuration (a script bug meant to vary it) | `a3f0dacf0` | **Debug** | same | 1,500 / 13 each | `repeat1..4-brawl-on-cs64-bridge-20261030-2054.log`. No cool-down between runs. |
+| C-213–C-216 | 2026-10-30 21:21–21:33 | `combat_stress` 64 ships, on/off pairs: fight passive on, fight off (`DAUNTLESS_PASSIVE_STATE=0`), quiet off, quiet on (`DAUNTLESS_COMBAT_IDLE=1`: every ship hunts a name no ship carries) | `a3f0dacf0` | **Debug** | same | 1,500 / 13 each | `ab-{brawl,quiet}-{on,off}-cs64-bridge-20261030-2121.log`. 90 s cool-down between runs; order on, off, off, on. |
 
 `DAUNTLESS_BRIDGE_EXP` (C-164–C-186) and the `rp.*` `render_prep` scopes (C-174) were temporary and are gone from `perf/bridge-4k`'s final state; re-running those captures needs a build from commit `420515087` (scopes, switch) up to `9fac34de9`.
 
@@ -383,6 +399,9 @@ bound, not the actual size.
 
 | ID | Capture | What the data shows | Tier | Feeds |
 |---|---|---|---|---|
+| SIG-149 | C-215, C-216 | **Quiet 64-ship scene (nobody fires): passive state halves per-ship upkeep and all but removes weapon charging.** Median reports 3-11, per game tick, off → on: `gl.subsystems` **1.004 → 0.508 ms**, `sim.weapons` **0.378 → 0.011 ms**; `r.frame` 14.41 / 14.68; ~1.8 / 1.7 ticks a frame; Python loop 29.3 → 28.3 ms a frame. One capture per condition. "Off" is the same branch with the switch off, not pre-branch code (see the 2026-10-30 note under Rules). | Measured | passive-state design §8 |
+| SIG-148 | C-213, C-214 | **64-ship fight: passive on vs off, back to back.** Per game tick, off → on: `gl.subsystems` **1.075 → 0.641 ms**, `sim.weapons` **0.631 → 0.415 ms**; `r.frame` 16.94 / 17.01 (no drift between the two); Python loop 113.7 → 94.7 ms a frame. ⚠️ The fights differed: 75 vs 39 projectiles in flight at report 5, `sim.combat` 6.16 vs 5.50, 6.9 vs 5.7 ticks a frame, so the frame-level difference is NOT the passive state's alone (inferred). One capture per condition; SIG-147's spread applies. | Measured | passive-state design §8 |
+| SIG-147 | C-208–C-212 | **Counter-signal: one 64-ship `combat_stress` capture cannot resolve a ~25% change in the upkeep rows.** Four back-to-back repeats of one configuration: `gl.subsystems` 0.579 / 0.787 / 0.830 / 0.821 ms per tick, `sim.weapons` 0.403-0.601, `sim.combat` 5.91-6.97, Python loop 108-153 ms a frame; C-208 (same config, 20 min earlier) 0.648. `r.frame` rose 17.7 → 18.2 → 18.8 → 19.2 across the repeats. Inferred: heat build-up with no cool-down, plus unseeded AI randomness changing how each fight plays out. Use paired on/off runs with cool-downs, or several repeats, for upkeep comparisons. | Measured (spread); Inferred (cause) | measurement method |
 | SIG-139 | C-183–C-186 | **Per-draw light culling skips 54% of light-mesh pairs but saves only 1.0 ms of GPU.** `[bridge-exp] cull: 1664 of 3066` pairs skipped. `bridge.shell` GPU at 4K Medium: culling on **14.47**, off 15.50; `bridge` CPU 3.7 → 4.9 ms (the box tests, Debug; hidden while GPU-bound). Stills on vs off: 31 pixels differ outside the viewscreen and officers, by at most 1/255. So the shader's own per-fragment early-outs were already cheap: the cost is the pixels that ARE lit by many area lights. CPU-only loop 4K Medium **24.0–24.3 ms** (`present` 5.9–6.5, GPU 23.6); 4K High 45.6–46.0. | Measured | P-13 |
 | SIG-138 | C-178–C-182 | **The fitted edge integral saves 1.0 ms of the area lights; their cost is diffuse ~5.1, specular ~2.3, and ~3.8 shared per-light work.** `bridge.shell` GPU at 4K Medium: fitted (`area_theta_over_sin`) **15.24**, exact acos (mask 512) 16.24, area diffuse off (128) 10.19, area specular off (256) 12.89; all area lights off was 4.48 (SIG-134), so about 11.2 − 5.1 − 2.3 ≈ 3.8 ms is the per-light prelude (nearest point, range window, one-sided test) and the loop itself. Stills fitted vs exact: outside the viewscreen and the (animated) officers 432 pixels differ, by at most 1/255. CPU-only loop 25.0 ms, `present` 7.7: still GPU-bound (GPU frame 24.0). | Measured | P-13 |
 | SIG-137 | C-175–C-177 against C-174, C-171, C-158 | **Head-only skinning (`d6bda943a`) removes the pick's cost; at 4K the frame is then GPU-bound.** `get_instance_head_center` on BodyMaleM + miguel_head: same centre bit for bit, **0.96 → 0.175 ms a call** (Debug, 300-call mean). Bridge at 720 after the cutscene: `render_prep` 6.5 → **1.6** ms (`rp.tooltip_pick` 5.95 → 1.21), loop 22.2–23.2 → 16.6–16.8 ms, now on the 60 Hz floor (M-7). 4K Medium: loop 25.8 → 25.4 ms but `present` 3.1–3.8 → **8.4–8.6** ms: the CPU now waits for the GPU (24.5 ms, SIG-133), so the frame rate only moves with GPU work (area lights, SIG-134). 4K High unchanged at 46.6–46.9 ms. | Measured | P-7, P-13 |

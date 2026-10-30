@@ -79,6 +79,10 @@ class TGModelProperty:
     def GetPhysicalParent(self):
         return self._physical_parent
 
+    def _field_value(self, field: str, args: tuple = ()):
+        """The single data-bag lookup behind every generated ``Get*``."""
+        return self._data.get((field, _hashable_key(args)), None)
+
     def __getattr__(self, attr: str):
         if attr.startswith("Set"):
             field = attr[3:]
@@ -102,9 +106,8 @@ class TGModelProperty:
             return setter
         if attr.startswith("Get"):
             field = attr[3:]
-            data = self._data
             def getter(*args):
-                return data.get((field, _hashable_key(args)), None)
+                return self._field_value(field, args)
             return getter
         raise AttributeError(attr)
 

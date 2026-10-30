@@ -371,6 +371,119 @@ in quiet scenes (parked fleets, stations, idle escorts) -- inferred, not
 measured: no parked-fleet capture exists yet, and this capture does not
 measure it. Phase 2 (power) remains the larger per-tick target.
 
+**Phase 2 as planned (2026-10-30, my call while planning).** §6.4's
+deferral-and-replay and §6.5's tick queue are replaced by a **draw program**.
+Plan: `docs/superpowers/plans/2026-10-30-passive-subsystem-state-phase2.md`.
+
+Why §6.4 as written would save almost nothing:
+
+- Every interval boundary reads the exact main battery, for the top-up and
+  for the conduit seeding.
+- So every boundary would replay the whole interval's draws. That is the same
+  `_draw` calls as the per-tick model, made later.
+- Skipping the replay would need the battery's end-of-interval value without
+  computing it. Only a closed form can give that, and it is not bit-exact
+  (§3, §9).
+
+A probe of `combat_stress` (16 ships, 3,600 ticks, headless, 2026-10-30)
+measured this:
+
+- **Demand barely changes.** 984 of 986 plant-intervals in the fight, and 986
+  of 986 in the same scene with AI that finds no target, had every consumer's
+  demand identical tick to tick, with every draw met in full.
+- **Batteries are seldom full.** Only 116 of 986 ended where they began. The
+  rest drained slowly, with output below idle demand.
+- **Where the work goes.** The 2026-10-29 profile puts 15.2 of the plant's
+  30.8 s in consumers' `_update_power` and 6.5 s in battery-limit reads. Only
+  2.6 s is the `_draw` calls themselves.
+
+The draw program keeps the draws per tick, through the same `_draw`, and
+skips everything else that steady demand makes a no-op:
+
+- A consumer whose demand inputs are watched fields (`FrozenField`) and whose
+  draw was met in full is **frozen**. Its four output fields stay as written,
+  and the program repeats only its draw.
+- A write to a watched field **thaws** the consumer and drops the program.
+- A short draw records through the same helper `_update_power` uses.
+- A consumer whose rules read more than its own fields stays a **call op**:
+  the cloak's reserve snapshot, and an engaged tractor's direct steal. It runs
+  its own `_update_power` each tick, in attach order.
+
+All values stay current every tick, so no read hook, tick queue or shadow
+plant is needed. The audit runs each program tick against the full pump and
+compares bit for bit.
+
+Goal 2 ("once per interval") is not met literally. It cannot be met exactly
+while batteries drain. Meeting it needs Mark's ruling on closed forms (§9).
+
+**Measured (phase 2, 2026-10-30).** 64-ship headless capture
+`~/Documents/dauntless-perf/passive2-cs64-bridge-20261030-2032.log`, median of
+reports 3-11. Each condition is a single capture (n=1). Units differ by
+column: `gl.subsystems` and `sim.weapons` are per game tick, `r.frame` and
+Python loop are per frame:
+
+| Capture | `gl.subsystems` (ms/tick) | `sim.weapons` (ms/tick) | `r.frame` (ms/frame) | Python loop (ms/frame) |
+|---|---|---|---|---|
+| Before phase 1 (`mounts-…-1153`) | 0.876 ms | 0.616 ms | 16.87 ms | 115.8 ms |
+| After phase 1 (`passive1-…-1629`) | 0.965 ms | 0.454 ms | 18.26 ms | 117.2 ms |
+| After phase 2 (`passive2-…-2032`) | 0.648 ms | 0.438 ms | 17.06 ms | 110.3 ms |
+
+`r.frame` is untouched by this work, so it tracks run-wide drift:
+
+- The phase 1 run was about 7-8% slow across the board.
+- This run matches the pre-phase-1 run, so the fair comparison for
+  `gl.subsystems` is 0.876 → 0.648 ms, **down 26%**. Against phase 1's own
+  run it is down 33%.
+
+The power plant was about two thirds of `gl.subsystems` (2026-10-29
+profile), so that saving is roughly 40% of the plant's cost (derived: the
+measured saving divided by the 2026-10-29 profile share).
+
+That is less than the "roughly half" of `gl.subsystems` the plan estimated.
+The 2026-10-29 profile shares predate today's other changes, so the plant's
+share of `gl.subsystems` was not re-profiled. Inferred, not measured: the
+remaining plant cost is the per-tick `_draw` calls, the interval boundary and
+the per-ship walk.
+
+The Python loop per frame fell from ~116-117 ms to ~110 ms (this capture),
+about 5%. That 5% is not drift-corrected: phase 1's Python loop was ~1% slower
+than pre-phase-1 while its `r.frame` was ~8% slower, so `r.frame` is a poor
+proxy for drift in the Python loop.
+
+The figures 61,149 plant-ticks on the draw program, 34 full pumps and no thaws
+came from a one-off 600-frame `combat_stress` run (16 ships) by the
+implementer; whether the audit was on or off is not recorded. They are not
+from the committed 120-tick test.
+
+**Superseded the same evening (2026-10-30 21:33): the single-capture
+comparison above is inside the noise.** Four back-to-back repeats of the
+phase 2 configuration (perf register SIG-147) gave `gl.subsystems` from
+0.579 to 0.830 ms/tick. The "down 26%" above cannot be told apart from that
+spread.
+
+Paired on/off runs on the same build give the real answer
+(`DAUNTLESS_PASSIVE_STATE=0` vs on, 90 s cool-downs, one capture each;
+SIG-148, SIG-149). Per game tick:
+
+| Scene | `gl.subsystems` off → on | `sim.weapons` off → on |
+|---|---|---|
+| 64-ship fight | 1.075 → 0.641 ms (−40%) | 0.631 → 0.415 ms (−34%) |
+| 64 ships, quiet (`DAUNTLESS_COMBAT_IDLE=1`, nobody fires) | 1.004 → 0.508 ms (−49%) | 0.378 → 0.011 ms (−97%) |
+
+`r.frame` matched within each pair (16.94 / 17.01 and 14.41 / 14.68), so
+drift between the paired runs was small.
+
+- **The quiet scene is the design's target case, and both rows drop the
+  most there.** That bears out §1's claim that upkeep should scale with
+  what is changing.
+- **The fight pair's frame-level numbers are not comparable.** Its Python
+  loop was 113.7 vs 94.7 ms a frame, but the two fights played out
+  differently (75 vs 39 projectiles in flight; `sim.combat` 6.16 vs 5.50),
+  so only the per-tick upkeep rows are attributable.
+- **"Off" is this branch with the switch off, not pre-branch code** (perf
+  register note under Rules). So these pairs measure what sleeping and
+  freezing buy, not Task 3's unconditional savings.
+
 ## 9. Left for later / decisions not taken here
 
 - **Closed-form ramps** (a charging bank or reloading tube described as a

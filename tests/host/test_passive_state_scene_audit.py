@@ -26,7 +26,7 @@ def test_combat_stress_runs_clean_under_the_audit(monkeypatch):
     monkeypatch.setenv("DAUNTLESS_PASSIVE_AUDIT", "1")
 
     from engine import host_loop as hl
-    from engine.appc import passive_state
+    from engine.appc import passive_power, passive_state
 
     now = [1000.0]
 
@@ -41,3 +41,6 @@ def test_combat_stress_runs_clean_under_the_audit(monkeypatch):
     counts = passive_state.counts()
     assert counts["slept"] > 0, counts
     assert counts["woke"] > 0, counts
+    power = passive_power.counts()
+    assert power["program_ticks"] > 0, power
+    assert power["frozen"] > 0, power

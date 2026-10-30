@@ -126,6 +126,27 @@ def audit_step(obj, step: Callable[[], None]) -> None:
         _restore(d, snap)
 
 
+def audit_compare(objs, reference: Callable[[], None],
+                  step: Callable[[], None]) -> None:
+    """Run `reference` and `step` from the same state and record every field
+    of `objs` on which they disagree (the scalar rules of _diff). Leaves the
+    state `step` produced. An object may list bookkeeping fields the two are
+    allowed to disagree on in `_passive_audit_ignore` (the draw program's own
+    frozen flag and program slot)."""
+    targets = [(type(o).__name__, vars(o),
+                getattr(o, "_passive_audit_ignore", ())) for o in objs]
+    before = [_snapshot(d) for _, d, _ in targets]
+    reference()
+    after = [_snapshot(d) for _, d, _ in targets]
+    for (_, d, _), snap in zip(targets, before):
+        _restore(d, snap)
+    step()
+    for (name, d, ignore), snap in zip(targets, after):
+        for field in _diff(d, snap):
+            if field not in ignore:
+                _failures.append((name, field))
+
+
 def audit_failures() -> list:
     return list(_failures)
 
