@@ -62,6 +62,10 @@ def test_head_center_uses_welded_head_on_mismatched_pair():
         # at_start=False holds the LAST frame (stand pose), matching
         # engine/host_loop.py's _place_one_character.
         _dauntless_host.set_instance_rest_pose(iid, 0, False)
+        # The bridge view is up, as it is whenever the game asks for a head
+        # centre: frame() poses the crew only when the bridge pass draws them
+        # (renderer::pose_this_frame).
+        _dauntless_host.bridge_pass_set_enabled(True)
         _dauntless_host.frame()  # runs update_animations -> builds bone_palette
 
         head = _dauntless_host.get_instance_head_center(iid)

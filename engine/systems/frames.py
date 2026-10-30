@@ -57,11 +57,14 @@ def frame_of_object(obj):
 
 
 def offset_between(set_a, set_b):
+    if set_a is set_b:
+        # One set is one frame: zero, whatever that frame is -- without
+        # resolving it (the commonest compare by far). A non-set has no frame.
+        from engine.appc.sets import SetClass
+        return _ZERO if isinstance(set_a, SetClass) else None
     fa, fb = frame_of(set_a), frame_of(set_b)
     if fa is None or fb is None or fa.key != fb.key:
         return None
-    if set_a is set_b:
-        return _ZERO
     return tuple(b - a for a, b in zip(fa.anchor_gu, fb.anchor_gu))
 
 

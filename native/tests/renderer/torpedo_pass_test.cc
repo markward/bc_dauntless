@@ -330,6 +330,50 @@ TEST_F(TorpedoPassTest, DisruptorBoltDrawsVisiblePixelAtBoltAxis) {
            "draw (g=" << static_cast<int>(px[1]) << ")";
 }
 
+// The torpedo family is drawn instanced, one call per texture batch
+// (renderer/torpedo_sprites.h). GL_NO_ERROR cannot tell a drawn batch from
+// one whose instance attributes never reached the shader; a lit centre
+// pixel can.
+TEST_F(TorpedoPassTest, PhotonDrawsVisiblePixelAtItsCentre) {
+    namespace fs = std::filesystem;
+    constexpr int kSize = 64;
+    const fs::path root = test_support::game_root();
+    renderer::TorpedoDescriptor d = make_photon_descriptor(root);
+    if (!fs::is_regular_file(d.core_texture) || !fs::is_regular_file(d.glow_texture) ||
+        !fs::is_regular_file(d.flares_texture)) {
+        GTEST_SKIP() << "BC torpedo sprite assets absent under " << root;
+    }
+    d.glow_color = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+    d.core_color = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+
+    renderer::TorpedoPass pass;
+    scenegraph::Camera camera;
+    camera.eye       = glm::vec3(0.0f, 0.0f, 3.0f);
+    camera.target    = glm::vec3(0.0f, 0.0f, 0.0f);
+    camera.up        = glm::vec3(0.0f, 1.0f, 0.0f);
+    camera.fov_y_rad = glm::radians(45.0f);
+    camera.aspect    = 1.0f;
+    camera.near      = 0.1f;
+    camera.far       = 50.0f;
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, kSize, kSize);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    while (glGetError() != GL_NO_ERROR) {}
+    pass.render({d}, camera, *pipeline);
+    ASSERT_EQ(glGetError(), GL_NO_ERROR);
+    glFinish();
+
+    std::array<unsigned char, 4> px{0, 0, 0, 0};
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    glReadPixels(kSize / 2, kSize / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+    EXPECT_GT(px[0], 40)
+        << "centre pixel stayed near background -- photon did not draw (r="
+        << static_cast<int>(px[0]) << ")";
+}
+
 TEST_F(TorpedoPassTest, EmptyListProducesNoGlError) {
     renderer::TorpedoPass pass;
     scenegraph::Camera camera;

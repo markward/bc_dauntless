@@ -14,6 +14,10 @@
 //   (glow_pulse_scale, flare_trapezoid, hash01, flare_rotation) lives in
 //   renderer/torpedo_anim.h -- see that header's PROVISIONAL MAPPING banner
 //   for the open RE questions (Q4/Q7) this implementation stands in for.
+//   Every quad of the frame is built on the CPU (renderer/torpedo_sprites.h,
+//   which also drops torpedoes outside the view), uploaded once, and drawn
+//   with one instanced call per texture: additive blending with depth
+//   writes off makes the order across textures irrelevant.
 //
 //   DISRUPTOR (is_disruptor == true): no controller, no texture, no light --
 //   a procedural teardrop mesh (renderer::build_bolt_mesh; pointed tail,
@@ -69,6 +73,7 @@ TorpedoPass::~TorpedoPass() {
     if (bolt_ebo_) glDeleteBuffers(1, &bolt_ebo_);
     if (bolt_vbo_) glDeleteBuffers(1, &bolt_vbo_);
     if (bolt_vao_) glDeleteVertexArrays(1, &bolt_vao_);
+    if (instance_vbo_) glDeleteBuffers(1, &instance_vbo_);
     if (quad_vbo_) glDeleteBuffers(1, &quad_vbo_);
     if (quad_vao_) glDeleteVertexArrays(1, &quad_vao_);
 }
@@ -84,7 +89,17 @@ void TorpedoPass::ensure_quad_mesh() {
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float),
                           reinterpret_cast<void*>(0));
+    // Instance attributes 1-4 (TorpedoSprite's four vec4s). Their pointers
+    // are re-aimed at each texture batch's offset in render(): GL 4.1 has
+    // no base-instance draw.
+    glGenBuffers(1, &instance_vbo_);
+    glBindBuffer(GL_ARRAY_BUFFER, instance_vbo_);
+    for (GLuint k = 0; k < 4; ++k) {
+        glEnableVertexAttribArray(1 + k);
+        glVertexAttribDivisor(1 + k, 1);
+    }
     glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
 void TorpedoPass::ensure_bolt_mesh() {
@@ -157,10 +172,10 @@ void TorpedoPass::render(const std::vector<TorpedoDescriptor>& torpedoes,
     const glm::mat4 vp = camera.proj_matrix() * camera.view_matrix();
     // Camera basis vectors in world space are the rows of the view matrix's
     // upper-left 3x3 (unchanged from the old code) -- cam_up_world seeds the
-    // spinning billboard-root frame below.
+    // spinning billboard-root frame (torpedo_sprites.cc).
     const glm::mat4 view = camera.view_matrix();
     const glm::vec3 cam_up_world = glm::vec3(view[0][1], view[1][1], view[2][1]);
-    const glm::vec3 cam_pos = camera.eye;
+    build_torpedo_sprites(torpedoes, camera.eye, cam_up_world, vp, batches_);
 
     shader.set_mat4("u_view_proj", vp);
     shader.set_int ("u_texture",   0);
@@ -176,93 +191,38 @@ void TorpedoPass::render(const std::vector<TorpedoDescriptor>& torpedoes,
     glBindVertexArray(quad_vao_);
     glActiveTexture(GL_TEXTURE0);
 
-    // A single quad layer: world-space unit axes (axis_x/axis_y) replace the
-    // old camera-billboard + in-plane-rotation uniforms so every layer
-    // (root-spin glow/core, per-flare random 3D rotation) shares one vertex
-    // shader interface (torpedo.vert).
-    auto draw_layer = [&](const std::string& path,
-                          const glm::vec4& color,
-                          float size,
-                          const glm::vec3& world_pos,
-                          const glm::vec3& axis_x,
-                          const glm::vec3& axis_y,
-                          float alpha) {
-        if (path.empty() || size <= 0.0f) return;
-        assets::Texture* tex = ensure_texture(path);
-        if (!tex) return;
-        glBindTexture(GL_TEXTURE_2D, tex->id());
-        shader.set_vec3 ("u_world_position", world_pos);
-        shader.set_vec3 ("u_axis_x",         axis_x);
-        shader.set_vec3 ("u_axis_y",         axis_y);
-        shader.set_float("u_size",           size);
-        shader.set_vec4 ("u_tint",           color);
-        shader.set_float("u_alpha",          alpha);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-    };
-
-    for (const auto& t : torpedoes) {
-        if (t.is_disruptor) continue;  // drawn below, by the disruptor sub-loop
-
-        const auto p = map_torpedo_params(t);
-
-        // Root frame: a camera-facing basis that spins about the view axis.
-        // Axis math (incl. degenerate-pose guards and the provisional
-        // spin-axis choice, RE Q7) lives in torpedo_anim.h so it's testable
-        // without a GL context; columns are (X_r, Y_r, Z_r).
-        const glm::mat3 root3 = torpedo_root_frame(
-            cam_pos, t.world_pos, cam_up_world, t.age, p.spin_rate);
-        const glm::vec3 x_r = root3[0];
-        const glm::vec3 y_r = root3[1];
-
-        // Glow quad A (animated): one draw at alpha 1.2 is exactly BC's two
-        // emissive passes (0.8 + 0.4) summed under additive blending. The
-        // 1.2 survives to the GL_SRC_ALPHA blend factor because torpedo.frag
-        // scales only frag_color.a by u_alpha (no alpha-squared error) and
-        // the pass renders into the RGBA16F HDR target -- float attachments
-        // don't clamp fragment outputs before blending. On a normalized
-        // (UNORM) target this would clamp to 1.0 and lose the extra 0.2.
-        const float pulse_half_size = 0.5f * glow_pulse_scale(
-            t.age, p.pulse_rate, p.scale_lo, p.scale_hi);
-        draw_layer(t.glow_texture, t.glow_color, pulse_half_size, t.world_pos,
-                   x_r, y_r, 1.2f);
-
-        // Glow quad B (fixed clone) -- same axes, fixed size, same alpha.
-        draw_layer(t.glow_texture, t.glow_color, 0.5f * p.clone_scale,
-                   t.world_pos, x_r, y_r, 1.2f);
-
-        // Flare star: num_flares quads, each at a random fixed 3D rotation
-        // (per id + flare index) composed onto the spun root frame, with a
-        // per-flare de-phased trapezoid alpha twinkle. Composition order
-        // (root * R, column-vector convention) is documented and lock-tested
-        // at flare_basis in torpedo_anim.h.
-        for (int i = 0; i < t.num_flares; ++i) {
-            const glm::mat3 quad_basis = flare_basis(
-                root3, static_cast<uint32_t>(t.id), static_cast<uint32_t>(i));
-
-            float alpha = 1.0f;
-            if (p.flare_period > 0.0f) {
-                // Strictly periodic with a random per-flare phase offset is a
-                // provisional stand-in for BC's respawn-with-fresh-random-
-                // start (RE Q4).
-                const float phi = hash01(static_cast<uint32_t>(t.id),
-                                          static_cast<uint32_t>(i), 1u);
-                const float u = std::fmod(t.age / p.flare_period + phi, 1.0f);
-                alpha = flare_trapezoid(u);
+    // Glow alpha 1.2 is exactly BC's two emissive passes (0.8 + 0.4) summed
+    // under additive blending. The 1.2 survives to the GL_SRC_ALPHA blend
+    // factor because torpedo.frag scales only frag_color.a by the alpha (no
+    // alpha-squared error) and the pass renders into the RGBA16F HDR target
+    // -- float attachments don't clamp fragment outputs before blending. On
+    // a normalized (UNORM) target this would clamp to 1.0 and lose the 0.2.
+    staging_.clear();
+    for (const auto& b : batches_)
+        staging_.insert(staging_.end(), b.sprites.begin(), b.sprites.end());
+    if (!staging_.empty()) {
+        glBindBuffer(GL_ARRAY_BUFFER, instance_vbo_);
+        glBufferData(GL_ARRAY_BUFFER,
+                     static_cast<GLsizeiptr>(staging_.size() * sizeof(TorpedoSprite)),
+                     staging_.data(), GL_STREAM_DRAW);
+        std::size_t first = 0;
+        for (const auto& b : batches_) {
+            const std::size_t n = b.sprites.size();
+            const std::size_t at = first;
+            first += n;
+            if (n == 0) continue;
+            assets::Texture* tex = ensure_texture(b.texture);
+            if (!tex) continue;
+            for (GLuint k = 0; k < 4; ++k) {
+                glVertexAttribPointer(
+                    1 + k, 4, GL_FLOAT, GL_FALSE, sizeof(TorpedoSprite),
+                    reinterpret_cast<void*>(static_cast<std::uintptr_t>(
+                        at * sizeof(TorpedoSprite) + k * sizeof(glm::vec4))));
             }
-            if (alpha <= 0.0f) continue;
-
-            // The streak texture is 2:1 (32 x 64): full half-length along the
-            // quad's y axis, kFlareAspect of it across.
-            draw_layer(t.flares_texture, t.flares_color, p.flare_half_size,
-                       t.world_pos,
-                       quad_basis[0] * torpedo_anim_detail::kFlareAspect,
-                       quad_basis[1], alpha);
+            glBindTexture(GL_TEXTURE_2D, tex->id());
+            glDrawArraysInstanced(GL_TRIANGLES, 0, 6, static_cast<GLsizei>(n));
         }
-
-        // Core sprite, drawn last -- order is cosmetic under additive blend
-        // (kept for readability, matching the old code's convention).
-        draw_layer(t.core_texture, t.core_color, p.core_half_size,
-                   t.world_pos, x_r, y_r, 1.0f);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 
     // Disruptor sub-loop: a second pass over the SAME list, so the disruptor

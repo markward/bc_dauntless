@@ -55,6 +55,7 @@ add_executable(renderer_tests
     motion_blur_shutter_test.cc
     letterbox_pass_test.cc
     aabb_test.cc
+    shadow_focus_test.cc
     model_parts_test.cc
     bone_palette_test.cc
     pose_sampler_test.cc
@@ -114,6 +115,7 @@ add_executable(renderer_tests
     shadow_map_target_test.cc
     torpedo_anim_test.cc
     torpedo_pass_test.cc
+    torpedo_sprites_test.cc
     dynamic_lights_test.cc
     running_light_test.cc
     debug_volume_pass_test.cc

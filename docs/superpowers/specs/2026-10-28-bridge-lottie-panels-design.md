@@ -216,7 +216,7 @@ knows the state (`kBridgeState*`, the `emissive_alert` value in
   angles), built on the worker -- a rounded 2×2 box filter over only what a
   change reaches -- and uploaded with each result. The render thread never
   calls `glGenerateMipmap`: live on this Mac it cost 5-10 ms a call
-  (perf-register SIG-144).
+  (perf-register SIG-150).
 - **Clock:** the bridge pass's `wall_time_`, which `host_loop.py` feeds from
   `GetGameTime()`, so panels freeze under pause exactly like today's
   flipbooks. Local time = (t − time the current state's file started) mod that
@@ -239,10 +239,10 @@ knows the state (`kBridgeState*`, the `emissive_alert` value in
   upload writes the next in turn, and only once a GPU fence says every frame
   that drew it has finished; otherwise the result waits a frame (never a
   blocking wait, and the poll never forces a flush -- that alone cost 9-34 ms
-  a frame live, SIG-147; the frame's swap sends the fence). The job carries what that texture lacks (`also`), and the
+  a frame live, SIG-153; the frame's swap sends the fence). The job carries what that texture lacks (`also`), and the
   others fall behind only by what changed. Uploads go straight from client
   memory: through a pixel-unpack buffer the same uploads stalled 20-37 ms a
-  frame at 4K (SIG-145).
+  frame at 4K (SIG-151).
 - **Threading (v1, not later):** ThorVG rasterises on a worker thread into a
   CPU buffer for the NEXT frame; the render thread only uploads
   (`glTexSubImage2D` of each level) at the start of the bridge pass. One

@@ -16,6 +16,9 @@ bottom of subsystems.py guarantees the normal load order).
 import math as _math
 
 from engine.core import ids
+from engine.appc import passive_weapons
+from engine.appc.passive_state import WakeField
+from engine.appc.passive_power import ThawParentWakeField
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.float_range_watcher import FloatRangeWatcher
 from engine.appc.subsystems import (
@@ -673,6 +676,28 @@ class _EnergyWeaponFireMixin:
     # Remote-fire voice priority. Default covers pulse + tractor (0.5);
     # PhaserBank overrides to 0.6. See the guide §8 constants above.
     REMOTE_FIRE_PRIORITY = REMOTE_PULSE_PRIORITY
+
+    # ── Passive state (engine/appc/passive_weapons.py) ──────────────────────
+    # The three fields UpdateCharge's idle early-out reads. A full idle bank
+    # sleeps out of the weapons walk; any write to one of these (Fire,
+    # SetChargeLevel, a property copy, a drain) wakes it. Reads stay plain
+    # instance-dict reads: WakeField has no __get__.
+    _charge_level = WakeField()
+    _firing = WakeField()
+    _max_charge = WakeField()
+
+    def _passive_at_rest(self) -> bool:
+        """True when UpdateCharge, run now, would return at its idle
+        early-out -- the same test, on the same fields. TractorBeam's
+        override reaches the same early-out when not firing (it only adds a
+        firing branch), so the rule holds for it too."""
+        return not self._firing and self._max_charge - self._charge_level <= 0.0
+
+    def _passive_on_sleep(self) -> None:
+        passive_weapons.on_sleep(self)
+
+    def _passive_on_wake(self) -> None:
+        passive_weapons.on_wake(self)
 
     # ── Weapon AI surface ────────────────────────────────────────────────────
     # BC's PhaserBank / PulseWeapon / TractorBeam ARE Weapons; ours derive from
@@ -2258,6 +2283,9 @@ class TractorBeamSystem(_HeldFireWeaponSystem):
     # was right that it draws from Main, the RE doc's mode-1 (backup-first) row
     # is wrong-in-effect. _update_power branches on this flag instead of _draw.
     DRAWS_DIRECT_FROM_MAIN = True
+    # Idle, _wants_power reads only _is_on (watched) and its beams' _firing
+    # (ThawParentWakeField): the power draw program may freeze it as a no-op.
+    _POWER_FREEZABLE = True
 
     # Tractor-beam mode constants from sdk/.../App.py:6774-6779.
     # SDK consumers: Preprocessors.py, AI/PlainAI/Warp.py, TowAway.py, etc.
@@ -2603,6 +2631,18 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
     per-shot cooldown timer; see ships/Hardpoints/vorcha.py for SetCooldownTime
     call sites.  Inherits Fire/CanFire/StopFiring/UpdateCharge from the mixin.
     """
+    # UpdateCharge also counts the cooldown down and drives the charge
+    # watcher every tick, so a pulse weapon sleeps only once the cooldown is
+    # spent. The watcher's update while asleep re-sends the fraction it
+    # already holds (nothing a sleeper reads has been written), so no range
+    # check can cross; the audit snapshots the watcher to prove it.
+    _cooldown_remaining = WakeField()
+    _passive_audit_children = ("_charge_watcher",)
+
+    def _passive_at_rest(self) -> bool:
+        return (_EnergyWeaponFireMixin._passive_at_rest(self)
+                and self._cooldown_remaining <= 0.0)
+
     def __init__(self, name: str = ""):
         super().__init__(name)
         _init_energy_weapon_state(self)
@@ -2789,6 +2829,9 @@ class TractorBeam(_EnergyWeaponFireMixin, WeaponSystem):
     recharge=0.5, forward tractors 0.3).  Inherits Fire/CanFire/StopFiring/
     UpdateCharge from the mixin.
     """
+    # Same wake as the mixin's, plus: a write thaws a frozen parent system.
+    _firing = ThawParentWakeField()
+
     def __init__(self, name: str = ""):
         super().__init__(name)
         _init_energy_weapon_state(self)
@@ -2927,6 +2970,25 @@ class TorpedoTube(Weapon):
     ImmediateDelay), not a fire-to-launch latency. ReloadDelay is the per-slot
     cooldown after firing.
     """
+    # Passive state (engine/appc/passive_weapons.py): a fully loaded tube
+    # sleeps out of the weapons walk until a launch, a Set/Inc/DecNumReady,
+    # an unload or a MaxReady change writes one of these.
+    _num_ready = WakeField()
+    _max_ready = WakeField()
+
+    def _passive_at_rest(self) -> bool:
+        """True when UpdateReload, run now, would return at its
+        `num_ready >= max_ready` test. The _ensure_slots() before that test
+        is a no-op too: the step that put the tube to sleep just ran it, and
+        the slot arrays only change length with _max_ready."""
+        return self._num_ready >= self._max_ready
+
+    def _passive_on_sleep(self) -> None:
+        passive_weapons.on_sleep(self)
+
+    def _passive_on_wake(self) -> None:
+        passive_weapons.on_wake(self)
+
     def __init__(self, name: str = ""):
         super().__init__(name)          # Weapon.__init__ seeds _firing/_target
         self._num_ready: int = 0

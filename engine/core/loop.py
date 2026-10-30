@@ -1,6 +1,6 @@
 import App
 
-from engine.appc import articulation
+from engine.appc import articulation, passive_state
 from engine.appc.ship_iter import iter_non_rock_ships
 from engine.core import frame_profiler as _prof
 
@@ -21,6 +21,9 @@ class GameLoop:
       3. Per-ship subsystem updates (shields etc.).
     Physics + render run downstream in host_loop, not here.
     """
+
+    def __init__(self) -> None:
+        passive_state.configure()
 
     def tick(self) -> None:
         # Drop the avoidance obstacle snapshot: a new tick means the world has

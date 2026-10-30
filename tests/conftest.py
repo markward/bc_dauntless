@@ -940,6 +940,13 @@ def _reset_leakable_engine_globals():
         _mods.configure(None)
     except Exception:
         pass
+    try:
+        from engine.appc import passive_state as _passive_state
+        _passive_state.reset()
+        from engine.appc import passive_power as _passive_power
+        _passive_power.reset()
+    except Exception:
+        pass
     # Warp-in: radius seeder hook + live dial values are module globals.
     try:
         from engine.appc import warp_in_dials as _warp_in_dials
@@ -948,6 +955,13 @@ def _reset_leakable_engine_globals():
         from engine.appc import warp_in_flash as _warp_in_flash
         _warp_in_flash.reset()
         _warp_state_mod.set_radius_seeder(None)
+    except Exception:
+        pass
+    # Proximity pass table (engine/appc/proximity_table.py): holds the last
+    # pass's sets, checks and watched objects alive until the next pass.
+    try:
+        from engine.appc import proximity_table as _proximity_table
+        _proximity_table.reset()
     except Exception:
         pass
     # Warp preload: begin/active/end hold one module-global Preload.
@@ -1687,6 +1701,12 @@ def _reset_leakable_engine_globals():
     try:
         from engine.appc import running_light_dials as _rl_dials
         _rl_dials.reset()
+    except Exception:
+        pass
+    # Bridge AO dials: same leak shape, plus a push callback into native.
+    try:
+        from engine import bridge_ao_dials as _bao_dials
+        _bao_dials.reset()
     except Exception:
         pass
     # Occlusion caches: per-(observer,target) and per-set major-rock lists

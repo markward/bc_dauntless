@@ -18,9 +18,13 @@ import math as _math
 from engine.appc.events import TGEventHandlerObject
 from engine.appc.float_range_watcher import FloatRangeWatcher
 from engine.appc.math import TGPoint3, TGMatrix3
+from engine.core import step_memo
 from engine.core.ids import implements
 import engine.dev_mode as dev_mode
 from engine.appc import ship_death as _ship_death
+from engine.appc import passive_weapons
+from engine.appc import passive_power, passive_state
+from engine.appc.passive_power import FrozenField
 
 
 def subsystem_world_position(sub, ship=None):
@@ -32,7 +36,29 @@ def subsystem_world_position(sub, ship=None):
 
     ``ship`` may be passed explicitly (required for the Hull/root subsystem,
     whose ``_climb_to_ship()`` returns None).
+
+    Inside an engine.core.step_memo block (the combat step) each mount is
+    computed once: a firing phaser bank asks ~4 times a tick (strip emit
+    point, arc test, aim, beam) and the held-weapon pump again, ~100 rebuilds
+    of ship pose and articulation a tick at 64 ships. Every call still gets a
+    fresh TGPoint3; whatever moves a ship or a part in the step forgets.
     """
+    if step_memo.active():
+        key = (id(sub), id(ship))
+        found = _mounts.get(key)
+        if found is None:
+            p = _subsystem_world_position(sub, ship)
+            found = _mounts[key] = (p.x, p.y, p.z)
+        return TGPoint3(found[0], found[1], found[2])
+    return _subsystem_world_position(sub, ship)
+
+
+# (id(sub), id(ship arg)) -> mount (x, y, z), while a step_memo block is open.
+_mounts = step_memo.table()
+
+
+def _subsystem_world_position(sub, ship):
+    """The computation itself; see subsystem_world_position."""
     if ship is None:
         ship = sub._climb_to_ship() if hasattr(sub, "_climb_to_ship") else None
     if ship is None or not hasattr(ship, "GetWorldLocation"):
@@ -60,7 +86,10 @@ def subsystem_world_position(sub, ship=None):
                     ship_pos.z + offset.z)
 
 
-def target_offset_world(target, offset):
+_RESOLVE = object()
+
+
+def target_offset_world(target, offset, mount_sub=_RESOLVE):
     """World point for a target-local aim `offset` on `target` -- 0x005852A0:
     target world pos + R·(offset·scale), with the offset first carried by the
     articulated part it sits on.
@@ -77,6 +106,10 @@ def target_offset_world(target, offset):
     (`weapon_subsystems._resolve_torpedo_aim_point`), in-flight steering
     (`projectiles._steer_point`) and Manual Aim phasers
     (`host_loop._phaser_aim_point`) all call it.
+
+    `mount_sub`: the caller's own `authored_mount_subsystem(target, offset)`
+    answer, when it has one -- in-flight steering asks every tick for an
+    offset that never changes, and the attribution scans every subsystem.
     """
     from engine.appc.articulation import part_transform_point
     from engine.appc import physical_parents
@@ -87,7 +120,8 @@ def target_offset_world(target, offset):
     # so the shot goes where the mount is drawn. Anything else (a Manual Aim
     # pick, pulled back to rest by the box rule) keeps the box rule, so the
     # round trip is exact and no per-tick pick scans the model.
-    mount_sub = authored_mount_subsystem(target, point)
+    if mount_sub is _RESOLVE:
+        mount_sub = authored_mount_subsystem(target, point)
     px, py, pz = part_transform_point(
         target, point, authored=mount_sub is not None,
         prop=(physical_parents.property_of(mount_sub)
@@ -1085,6 +1119,13 @@ class ShipSubsystem(TGEventHandlerObject):
     def AddChildSubsystem(self, sub: "ShipSubsystem") -> None:
         sub._parent_subsystem = self
         self._children.append(sub)
+        # A new weapon under a weapon system: the passive weapons walk's cached
+        # list for the owning ship is stale (engine/appc/passive_weapons.py).
+        # A system not yet attached has no ship; attaching it invalidates.
+        ship = self._climb_to_ship()
+        if ship is not None:
+            passive_weapons.invalidate(ship)
+            passive_power.invalidate(ship)
 
     def GetCritical(self) -> int:                       return self._critical
     def SetCritical(self, v) -> None:                   self._critical = int(v)
@@ -1213,6 +1254,30 @@ class PoweredSubsystem(ShipSubsystem):
     # every conduit-routed consumer leaves it False and uses power._draw().
     DRAWS_DIRECT_FROM_MAIN = False
 
+    # The power draw program (engine/appc/passive_power.py) may freeze this
+    # consumer while its demand is steady and met: the inputs and outputs of
+    # _update_power below are watched, and any write thaws it. A class that
+    # overrides _update_power / _wants_power / GetPowerWanted is a call op
+    # unless its OWN class sets _POWER_FREEZABLE = True (an inherited opt-in
+    # does not count). An opted-in rule must have EVERY input watched,
+    # including inputs on other objects (those need a thaw descriptor like
+    # ThawParentWakeField, as the tractor's beams use). passive_power._build
+    # mirrors _update_power's branches (not wanting / free / slider 0 / met):
+    # a change to those branches must change _build too. Residual risk: an
+    # inherited opt-in hides a subclass override of IsOn / GetNumWeapons /
+    # GetWeapon / a beam's IsFiring / _any_child_firing. The cloak sets False.
+    _POWER_FREEZABLE = True
+    _is_on = FrozenField()
+    _normal_power = FrozenField()
+    _power_percentage_wanted = FrozenField()
+    _power_wanted = FrozenField()
+    _power_received = FrozenField()
+    _efficiency = FrozenField()
+    _power_factor = FrozenField()
+    # The audit compares a program tick with the full pump; the frozen flag is
+    # the program's bookkeeping, not consumer state.
+    _passive_audit_ignore = ("_power_frozen",)
+
     def __init__(self, name: str = ""):
         super().__init__(name)
         self._normal_power = 0.0
@@ -1326,11 +1391,19 @@ class PoweredSubsystem(ShipSubsystem):
             self._power_factor = received / base
             return
         wanted = base * self._power_percentage_wanted
-        self._power_wanted = wanted
         received = power._draw(wanted, self.POWER_MODE) if wanted > 0.0 else 0.0
+        self._record_draw(wanted, received, base)
+
+    def _record_draw(self, wanted: float, received: float, base: float) -> None:
+        """Record a conduit draw: the one copy of these four rules. Shared by
+        _update_power and the power draw program's short-draw path."""
+        self._power_wanted = wanted
         self._power_received = received
         self._efficiency = received / wanted if wanted > 0.0 else 1.0
         self._power_factor = received / base
+
+    def _passive_power_thaw(self) -> None:
+        passive_power.thaw(self)
 
     # ── Subsystem event emission ─────────────────────────────────────────────
 
@@ -2291,6 +2364,10 @@ class PowerSubsystem(ShipSubsystem):
     reservoir drains (main-only / backup-only, return amount taken, float
     0.0 falsy).  Engine has no callers — SDK scripts and tests only.
     """
+    # The power draw program's slot (engine/appc/passive_power.py): its
+    # bookkeeping, which the audit's full-pump reference run drops.
+    _passive_audit_ignore = ("_passive_power",)
+
     def __init__(self, name: str = ""):
         super().__init__(name)
         self._available_power: float = 0.0
@@ -2335,6 +2412,10 @@ class PowerSubsystem(ShipSubsystem):
         prop = self.GetProperty()
         if prop is None:
             return 0.0
+        if getattr(type(prop), getter_name, None) is None:
+            fv = getattr(prop, "_field_value", None)
+            if fv is not None:
+                return float(fv(getter_name[3:]) or 0.0)
         return float(getattr(prop, getter_name)() or 0.0)
 
     def GetMainBatteryLimit(self) -> float:
@@ -2548,7 +2629,10 @@ class PowerSubsystem(ShipSubsystem):
             self._backup_conduit_current = min(self._backup_battery_power, backup_max)
             self._available_power = (self._main_conduit_current
                                      + self._backup_conduit_current)
-        self._pump_consumers(dt)     # Task 4 fills this in
+        if passive_state.enabled():
+            passive_power.pump(self, dt)
+        else:
+            self._pump_consumers(dt)
         main_cap = self.GetMainBatteryLimit()
         backup_cap = self.GetBackupBatteryLimit()
         # Drive the FloatRangeWatchers with each battery's FRACTION so
@@ -2573,11 +2657,18 @@ class PowerSubsystem(ShipSubsystem):
         consumers = getattr(ship, "_powered_consumers", None) if ship is not None else None
         if not consumers:
             return
-        total = 0.0
         for consumer in consumers:
             consumer._update_power(dt, self)
-            # _power_wanted, not GetPowerWanted(): _update_power just wrote the
-            # attribute one line ago, and PoweredSubsystem's getter is a bare
+        self._power_wanted_total = self._sum_wanted(consumers)
+
+    def _sum_wanted(self, consumers) -> float:
+        """Sum of the consumers' per-tick demand, in attach order: the
+        _power_wanted_total readout. Shared by _pump_consumers and the power
+        draw program (engine/appc/passive_power.py)."""
+        total = 0.0
+        for consumer in consumers:
+            # _power_wanted, not GetPowerWanted(): the attribute holds this
+            # tick's demand, and PoweredSubsystem's getter is a bare
             # `return self._power_wanted`. At 9.4 consumers x 101 ships x 15
             # ticks that accessor alone was ~14,000 calls per frame for no
             # information.
@@ -2602,7 +2693,7 @@ class PowerSubsystem(ShipSubsystem):
                 total += consumer._power_wanted
             else:
                 total += consumer.GetPowerWanted()
-        self._power_wanted_total = total
+        return total
 
     def _draw(self, amount: float, mode: int) -> float:
         """Depletes conduit budget AND battery to satisfy up to ``amount``,
@@ -2898,6 +2989,10 @@ class CloakingSubsystem(PoweredSubsystem):
     # so cloaking never starves the ship's other systems of main-battery power
     # (docs/reference/gameplay/ship-subsystems.md:185).
     POWER_MODE = PSM_BACKUP_ONLY
+    # Its _update_power snapshots the plant's backup reserve every tick and
+    # steals from it directly: a call op in the power draw program, never
+    # frozen (engine/appc/passive_power.py).
+    _POWER_FREEZABLE = False
 
     # Power starvation: the cloak runs off the BACKUP battery; when that reserve
     # is exhausted the device can no longer hold the cloak (ship-subsystems.md:

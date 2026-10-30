@@ -252,6 +252,51 @@ TEST(BridgePbrArea, RepresentativePointFollowsTheReflectionThenClamps) {
     EXPECT_NEAR(glm::distance(away, glm::vec3(2, 1, 10)), 0.0f, 1e-5f);
 }
 
+// A reflection ray turning from just toward the light's plane to just away
+// from it must move the representative point a little, not jump from the far
+// edge to the nearest point: on a wall under a ceiling panel that jump drew a
+// hard line at the camera's eye height (2026-10-28, DBridge "Specular only").
+TEST(BridgePbrArea, RepresentativePointIsContinuousAcrossTheLightsPlane) {
+    const glm::vec3 c{0, 0, 10}, u{5, 0, 0}, v{0, -5, 0};               // emits -z
+    const glm::vec3 p{0, 0, 0};
+    const float e = 1e-3f;
+    const glm::vec3 toward = renderer::pbr::rect_representative(
+        p, glm::normalize(glm::vec3(1, 0, e)), c, u, v);
+    const glm::vec3 away = renderer::pbr::rect_representative(
+        p, glm::normalize(glm::vec3(1, 0, -e)), c, u, v);
+    EXPECT_LT(glm::distance(toward, away), 0.05f);
+}
+
+TEST(BridgePbrArea, JoinWeightIsContinuousAcrossTheLightsPlane) {
+    const glm::vec3 c{0, 0, 10}, u{5, 0, 0}, nl{0, 0, -1};
+    const glm::vec3 p{0, 0, 0};
+    const float e = 1e-3f;
+    const float toward = renderer::pbr::area_join_weight(
+        p, glm::normalize(glm::vec3(1, 0, e)), c, u, nl, 2, 1.0f);
+    const float away = renderer::pbr::area_join_weight(
+        p, glm::normalize(glm::vec3(1, 0, -e)), c, u, nl, 2, 1.0f);
+    EXPECT_NEAR(toward, away, 0.02f);
+}
+
+// The whole highlight on a wall under a ceiling panel, eye level: the views a
+// hair above and below the horizon must shade alike.
+TEST(BridgePbrArea, WallSpecularIsContinuousAtTheHorizon) {
+    using namespace renderer::pbr;
+    const glm::vec3 p{0, 0, 0}, N{-1, 0, 0};                            // wall facing -x
+    const glm::vec3 c{-2, 0, 3}, u{0.5f, 0, 0}, v{0, -0.5f, 0};          // ceiling panel, emits -z
+    const glm::vec3 albedo{0.5f}, radiance{3.0f};
+    const float rough = 1.0f, metal = 0.0f, range = 100.0f;
+    const glm::vec3 f0 = f0_for(albedo, metal);
+    const float e = 1e-3f;
+    auto spec_for = [&](float vz) {
+        const glm::vec3 V = glm::normalize(glm::vec3(-1, 0.3f, vz));
+        return area_light(p, N, V, glm::dot(N, V), albedo, metal, rough, f0, c, u, v,
+                          radiance, range).spec.x;
+    };
+    const float above = spec_for(-e), below = spec_for(e);   // R = reflect(-V, N): z flips sign
+    EXPECT_NEAR(above, below, 0.02f * std::max(above, below) + 1e-6f);
+}
+
 // A small rectangle far away lights like a spot whose intensity is its
 // radiance x area x cos (spec §16.1: intensity is surface brightness).
 TEST(BridgePbrArea, ASmallRectLightsLikeASpotOfTheSameOutput) {

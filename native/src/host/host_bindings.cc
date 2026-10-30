@@ -16,6 +16,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <audio/python_binding.h>
+#include "dauntless/torpedo_scan.h"
 #include "dauntless/transform_store.h"
 #include "platform/relaunch.h"
 
@@ -283,6 +284,10 @@ int g_bridge_alert_level = 0;
 // every set_bridge_quality() call, so a quality change takes effect even
 // mid-mission without waiting for the next init().
 renderer::BridgeQuality g_bridge_quality = renderer::kDefaultBridgeQuality;
+// Bridge AO kernel look, from the developer dials (engine/bridge_ao_dials.py)
+// via set_bridge_ao_tuning(). Applied where g_bridge_pass is constructed and
+// on every call. Session-wide like the dials themselves: init() keeps it.
+renderer::BridgeAoTuning g_bridge_ao_tuning;
 // Developer Options -> Lighting tab "Bridge Debug View" (see
 // renderer::BridgeDebugView). set_bridge_debug_view is a no-op without
 // --developer, so this stays 0 (Off) in production regardless of what
@@ -1178,6 +1183,7 @@ void init(int width, int height, const std::string& title) {
     g_starmap_pass        = std::make_unique<renderer::StarMapPass>();
     g_bridge_pass         = std::make_unique<renderer::BridgePass>();
     g_bridge_pass->set_ao_settings(renderer::ao_settings_for(g_bridge_quality));
+    g_bridge_pass->set_ao_tuning(g_bridge_ao_tuning);
     g_bridge_pass->set_highlight(g_bridge_highlight.model,
                                  g_bridge_highlight.selected,
                                  g_bridge_highlight.hover);
@@ -1517,18 +1523,34 @@ void frame() {
         }
     }
 
+    const bool bridge_active = !viewer_mode && g_bridge_pass_enabled && g_bridge_pass;
+    const bool viewscreen_on = bridge_active && g_viewscreen_enabled;
+
     {
         DAUNTLESS_FRAME_SCOPE("anim");
         g_world.propagate();
         // SP2: rebuild each animated instance's bone palette for this frame BEFORE
         // anything consumes it (the space skinned draw and the bridge pass). Shares
         // the `now` wall clock with draw_model / flip controllers.
-        renderer::update_animations(g_world, lookup, now);
-        update_bridge_node_anims(now);
+        //
+        // Only for instances a pass draws THIS frame: in the exterior view the
+        // crew and every realized comm set's faces are not drawn, and re-posing
+        // them cost a flat ~1.5 ms a frame (Debug). The draws below must stay in
+        // step with these flags: the bridge pass runs iff bridge_active, a comm
+        // set only through the viewscreen's comm feed.
+        renderer::DrawnPasses drawn;
+        drawn.bridge = bridge_active;
+        drawn.comm = viewscreen_on && g_comm_source.active;
+        drawn.comm_set_id = g_comm_source.set_id;
+        {
+            DAUNTLESS_FRAME_SCOPE("anim.skin");
+            renderer::update_animations(g_world, lookup, now, drawn);
+        }
+        {
+            DAUNTLESS_FRAME_SCOPE("anim.node_clips");
+            update_bridge_node_anims(now);
+        }
     }
-
-    const bool bridge_active = !viewer_mode && g_bridge_pass_enabled && g_bridge_pass;
-    const bool viewscreen_on = bridge_active && g_viewscreen_enabled;
 
     // ── Cubemap sky bake (static-per-system) ───────────────────────────────
     // The map-driven procedural sky is fixed per vantage; bake it once into a
@@ -1989,24 +2011,15 @@ void frame() {
     // and only call set_active_shadow(..., false), which makes the opaque pass
     // (Task 6) a no-op — the production render path stays byte-identical.
     if (dauntless_shadows::enabled() && g_shadow_target) {
-        const glm::vec3 focus = g_camera.target;
-        const scenegraph::Instance* player = nullptr;
-        float player_radius_gu = 0.0f;
-        float best_d2 = std::numeric_limits<float>::max();
-        g_world.for_each_visible_in_pass(
-            scenegraph::Pass::Space, [&](const scenegraph::Instance& inst) {
-                if (!inst.rim_eligible) return;
-                const assets::Model* m = resolve_model(inst.model_handle);
-                if (m == nullptr) return;
-                const glm::vec3 pos = glm::vec3(inst.world[3]);
-                const float d2 = glm::dot(pos - focus, pos - focus);
-                if (d2 >= best_d2) return;
-                best_d2 = d2;
-                player = &inst;
-                renderer::Aabb box = renderer::compute_model_aabb(*m);
-                const float scale = glm::length(glm::vec3(inst.world[0]));
-                player_radius_gu = glm::length(box.half_extents) * scale;
-            });
+        // The focus: the hull nearest the camera target, its radius from the
+        // per-model cache (an uncached compute_model_aabb here walked every
+        // vertex of each nearer hull, every frame: ~3 ms at 17 ships, Debug).
+        renderer::frame_timer().push("shadow.fit");
+        const renderer::ShadowFocus sf =
+            renderer::pick_shadow_focus(g_world, g_camera.target, lookup);
+        renderer::frame_timer().pop();
+        const scenegraph::Instance* player = sf.instance;
+        const float player_radius_gu = sf.radius_gu;
 
         if (player != nullptr) {
             renderer::ShadowFitParams fp;  // defaults
@@ -2123,14 +2136,17 @@ void frame() {
     }
 
     // ── Main HDR target ────────────────────────────────────────────────────
-    g_hdr_target->resize(fw, fh);
-    g_hdr_target->bind();   // sets viewport to fw x fh
-    if (viewer_mode) {
-        glClearColor(g_hologram_bg.r, g_hologram_bg.g, g_hologram_bg.b, 1.0f);
-    } else {
-        glClearColor(0.05f, 0.07f, 0.10f, 1.0f);
+    {
+        DAUNTLESS_FRAME_SCOPE("hdr.clear");
+        g_hdr_target->resize(fw, fh);
+        g_hdr_target->bind();   // sets viewport to fw x fh
+        if (viewer_mode) {
+            glClearColor(g_hologram_bg.r, g_hologram_bg.g, g_hologram_bg.b, 1.0f);
+        } else {
+            glClearColor(0.05f, 0.07f, 0.10f, 1.0f);
+        }
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     }
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     if (fh > 0) g_camera.aspect = static_cast<float>(fw) / static_cast<float>(fh);
 
     // Space scene goes to the main view only outside bridge view (in bridge
@@ -2218,6 +2234,7 @@ void frame() {
     if (viewer_mode && g_gizmo_pass && g_transform_gizmo.length > 0.0f)
         g_gizmo_pass->render(g_transform_gizmo, g_camera);
     if (g_subsystem_pin_pass && !g_subsystem_pins.empty()) {
+        DAUNTLESS_FRAME_SCOPE("pins");
         // Device-pixel ratio = framebuffer / logical window height, so pins
         // keep a constant apparent size on HiDPI/Retina displays.
         int fb_w = 0, fb_h = 0, win_w = 0, win_h = 0;
@@ -2227,6 +2244,7 @@ void frame() {
         g_subsystem_pin_pass->render(g_subsystem_pins, g_camera, *g_pipeline, dsf);
     }
     if (g_target_reticle_pass && g_target_reticle.visible) {
+        DAUNTLESS_FRAME_SCOPE("reticle");
         // Same device-pixel ratio the subsystem pins use, so the reticule
         // keeps a constant apparent size on HiDPI/Retina displays.
         int fb_w = 0, fb_h = 0, win_w = 0, win_h = 0;
@@ -2372,6 +2390,7 @@ void frame() {
     float lens_flare_strength = 0.0f;
     if (dauntless_hdr::enabled() && dauntless_hdr_lens_flare::enabled()
             && exterior && g_lens_flare_hdr_pass) {
+        DAUNTLESS_FRAME_SCOPE("lens_flare");
         lens_flare_tex = g_lens_flare_hdr_pass->render(
             bloom_tex, g_bloom_pass ? g_bloom_pass->coarsest_texture() : 0u,
             fw, fh);
@@ -4883,6 +4902,33 @@ PYBIND11_MODULE(_dauntless_host, m) {
           },
           "Developer reload: re-probe every Lottie bridge panel's files and "
           "clear the warning set. No-op before the bridge pass exists.");
+
+    m.def("set_bridge_ao_tuning",
+          [](float radius, float strength, float bias, float bias_dist,
+             float bias_facing, float min_len, float main_direct,
+             float main_final, int detail_samples,
+             float detail_radius, float detail_strength, float detail_bias,
+             float detail_direct, float detail_final) {
+              g_bridge_ao_tuning = {radius, strength, bias, bias_dist,
+                                    bias_facing, min_len, main_direct,
+                                    main_final, detail_samples,
+                                    detail_radius, detail_strength, detail_bias,
+                                    detail_direct, detail_final};
+              if (g_bridge_pass) g_bridge_pass->set_ao_tuning(g_bridge_ao_tuning);
+          },
+          py::arg("radius"), py::arg("strength"), py::arg("bias"),
+          py::arg("bias_dist"), py::arg("bias_facing"), py::arg("min_len"),
+          py::arg("main_direct"), py::arg("main_final"),
+          py::arg("detail_samples"), py::arg("detail_radius"),
+          py::arg("detail_strength"), py::arg("detail_bias"),
+          py::arg("detail_direct"), py::arg("detail_final"),
+          "Bridge AO kernel look (renderer::BridgeAoTuning): the main kernel's "
+          "radius/strength/bias, its distance bias and how far that is scaled "
+          "by grazing (0..1), its shortest sample as a fraction of the radius, "
+          "how much of it darkens spot/area diffuse or applies after the "
+          "diffuse ceiling (0..1), the small detail kernel (0 samples = off) and how much of it also "
+          "darkens spot/area diffuse or applies after the diffuse ceiling (0..1). "
+          "Developer dials.");
 
     m.def("bridge_quality",
           [] { return static_cast<int>(g_bridge_quality); },
@@ -9019,6 +9065,99 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("handles"),
           "Bulk position read: one crossing instead of N.");
 
+    // ProximityManager.GetNearObjects: `handles` is a buffer of uint32
+    // (index, generation) pairs; returns one byte per handle, 1 inside or on
+    // the sphere. Taking a buffer and returning bytes keeps the crossing to
+    // two conversions, where a list of tuples cost ~0.4 us per handle.
+    m.def("transform_within_radius",
+          [](py::buffer handles, double x, double y, double z, double r2) {
+              const py::buffer_info info = handles.request();
+              if (info.itemsize != sizeof(std::uint32_t) || info.ndim != 1 ||
+                  info.shape[0] % 2 != 0)
+                  throw py::value_error("handles: flat uint32 (index, generation) pairs");
+              const std::size_t n = static_cast<std::size_t>(info.shape[0]) / 2;
+              std::string out(n, '\0');
+              const double p[3] = {x, y, z};
+              dauntless::transform_store().within_radius(
+                  static_cast<const std::uint32_t*>(info.ptr), n, p, r2,
+                  reinterpret_cast<std::uint8_t*>(out.data()));
+              return py::bytes(out);
+          },
+          py::arg("handles"), py::arg("x"), py::arg("y"), py::arg("z"),
+          py::arg("r2"));
+
+    // Backs engine/appc/proximity_table.py: the per-tick ProximityCheck pass
+    // keeps its pairs packed between ticks and asks once which few need
+    // Python. Returns a list because it is nearly always empty.
+    m.def("transform_proximity_report",
+          [](py::buffer anchors, py::buffer objects, py::buffer r2,
+             py::buffer want, std::size_t start) {
+              const py::buffer_info a = anchors.request();
+              const py::buffer_info o = objects.request();
+              const py::buffer_info r = r2.request();
+              const py::buffer_info w = want.request();
+              const std::size_t n = static_cast<std::size_t>(w.size);
+              if (w.itemsize != 1 || r.itemsize != sizeof(double) ||
+                  a.itemsize != sizeof(std::uint32_t) ||
+                  o.itemsize != sizeof(std::uint32_t) ||
+                  static_cast<std::size_t>(r.size) != n ||
+                  static_cast<std::size_t>(a.size) != 2 * n ||
+                  static_cast<std::size_t>(o.size) != 2 * n)
+                  throw py::value_error(
+                      "proximity pairs: uint32 anchor and object handle "
+                      "pairs, one double r2 and one want byte per pair");
+              std::vector<std::uint32_t> out;
+              dauntless::transform_store().proximity_report(
+                  static_cast<const std::uint32_t*>(a.ptr),
+                  static_cast<const std::uint32_t*>(o.ptr),
+                  static_cast<const double*>(r.ptr),
+                  static_cast<const std::uint8_t*>(w.ptr), n, start, out);
+              py::list res(out.size());
+              for (std::size_t k = 0; k < out.size(); ++k)
+                  res[k] = py::int_(out[k]);
+              return res;
+          },
+          py::arg("anchors"), py::arg("objects"), py::arg("r2"),
+          py::arg("want"), py::arg("start"));
+
+    // Torpedo flight's broadphase (engine/appc/projectiles.py update_all):
+    // every torpedo against every ship in one call, so Python only meets the
+    // few pairs close enough for its narrow hit tests. Flat [t, s, ...].
+    m.def("transform_sweep_candidates",
+          [](py::buffer starts, py::buffer seg_lens, py::buffer skips,
+             py::buffer centres, py::buffer bounds) {
+              const py::buffer_info p = starts.request();
+              const py::buffer_info l = seg_lens.request();
+              const py::buffer_info k = skips.request();
+              const py::buffer_info c = centres.request();
+              const py::buffer_info b = bounds.request();
+              const std::size_t nt = static_cast<std::size_t>(l.size);
+              const std::size_t ns = static_cast<std::size_t>(b.size);
+              if (p.itemsize != sizeof(double) || l.itemsize != sizeof(double) ||
+                  c.itemsize != sizeof(double) || b.itemsize != sizeof(double) ||
+                  k.itemsize != sizeof(std::int32_t) ||
+                  static_cast<std::size_t>(p.size) != 3 * nt ||
+                  static_cast<std::size_t>(k.size) != nt ||
+                  static_cast<std::size_t>(c.size) != 3 * ns)
+                  throw py::value_error(
+                      "sweep: three double start coordinates, one double "
+                      "length and one int32 skip per torpedo; three double "
+                      "centre coordinates and one double bound per ship");
+              std::vector<std::uint32_t> out;
+              dauntless::sweep_candidates(
+                  static_cast<const double*>(p.ptr),
+                  static_cast<const double*>(l.ptr),
+                  static_cast<const std::int32_t*>(k.ptr), nt,
+                  static_cast<const double*>(c.ptr),
+                  static_cast<const double*>(b.ptr), ns, out);
+              py::list res(out.size());
+              for (std::size_t i = 0; i < out.size(); ++i)
+                  res[i] = py::int_(out[i]);
+              return res;
+          },
+          py::arg("starts"), py::arg("seg_lens"), py::arg("skips"),
+          py::arg("centres"), py::arg("bounds"));
+
     m.def("transform_live_count", []() {
               return dauntless::transform_store().live_count();
           });
@@ -9026,4 +9165,48 @@ PYBIND11_MODULE(_dauntless_host, m) {
     m.def("transform_capacity", []() {
               return dauntless::transform_store().capacity();
           });
+
+    // ── Incoming-torpedo table ───────────────────────────────────────────────
+    // Backs App.AIScriptAssist_GetIncomingTorpIDsInSet. Kept in step with
+    // projectiles._active by engine/appc/torpedo_scan.py; see torpedo_scan.h.
+    m.def("torpedo_scan_add",
+          [](std::int64_t id, std::uint32_t xi, std::uint32_t xg, double vx,
+             double vy, double vz, bool has_source, std::int64_t source,
+             std::int64_t group) {
+              dauntless::torpedo_scan().add(id, xi, xg, vx, vy, vz,
+                                            has_source, source, group);
+          });
+    m.def("torpedo_scan_remove", [](std::int64_t id) {
+              return dauntless::torpedo_scan().remove(id);
+          });
+    m.def("torpedo_scan_set_velocity",
+          [](std::int64_t id, double vx, double vy, double vz) {
+              dauntless::torpedo_scan().set_velocity(id, vx, vy, vz);
+          });
+    m.def("torpedo_scan_set_source",
+          [](std::int64_t id, bool has_source, std::int64_t source) {
+              dauntless::torpedo_scan().set_source(id, has_source, source);
+          });
+    m.def("torpedo_scan_set_group", [](std::int64_t id, std::int64_t group) {
+              dauntless::torpedo_scan().set_group(id, group);
+          });
+    m.def("torpedo_scan_clear", []() { dauntless::torpedo_scan().clear(); });
+    m.def("torpedo_scan_size", []() { return dauntless::torpedo_scan().size(); });
+    m.def("torpedo_scan_incoming",
+          [](const std::array<double, 3>& obs,
+             const std::array<double, 3>& obs_vel, double threshold,
+             bool match_source, std::int64_t firing_id,
+             const std::vector<std::tuple<std::int64_t, double, double, double>>&
+                 offsets) {
+              std::vector<dauntless::TorpedoScan::GroupOffset> offs;
+              offs.reserve(offsets.size());
+              for (const auto& [g, x, y, z] : offsets) offs.push_back({g, {x, y, z}});
+              return dauntless::torpedo_scan().incoming(
+                  obs.data(), obs_vel.data(), threshold, match_source,
+                  firing_id, offs);
+          },
+          py::arg("obs"), py::arg("obs_vel"), py::arg("threshold"),
+          py::arg("match_source"), py::arg("firing_id"), py::arg("offsets"),
+          "Ids of the torpedoes incoming on the observer, in table order. "
+          "offsets: (group, dx, dy, dz) per set visible from the observer's.");
 }

@@ -69,6 +69,28 @@ public:
     std::vector<std::array<double, 3>> positions(
         const std::vector<std::pair<std::uint32_t, std::uint32_t>>& handles) const;
 
+    // Sphere membership for `n` handles packed as (index, generation) pairs:
+    // out[k] = 1 when handle k's position lies within or on the sphere,
+    // tested as `dx*dx + dy*dy + dz*dz <= r2` rounded exactly as CPython
+    // rounds it (proximity_query.cc is compiled without fused multiply-add).
+    // Backs ProximityManager.GetNearObjects. Throws on a stale handle.
+    void within_radius(const std::uint32_t* handles, std::size_t n,
+                       const double point[3], double r2,
+                       std::uint8_t* out) const;
+
+    // The proximity pairs Python must look at, appended to `out` in order from
+    // `start`. Pair k is anchor handle anchors[2k..2k+1], object handle
+    // objects[2k..2k+1], radius squared r2[k] and want[k]: 0 reports when the
+    // object is inside (the within_radius compare, unfused), 1 when outside,
+    // 2 always (its handles are never read), 3 never. A stale handle on any
+    // other pair is reported rather than thrown, so Python re-runs it and
+    // fails as it always did. Backs engine/appc/proximity_table.py.
+    void proximity_report(const std::uint32_t* anchors,
+                          const std::uint32_t* objects, const double* r2,
+                          const std::uint8_t* want, std::size_t n,
+                          std::size_t start,
+                          std::vector<std::uint32_t>& out) const;
+
     std::uint32_t live_count() const { return live_; }
     std::uint32_t capacity() const {
         return static_cast<std::uint32_t>(generations_.size());
@@ -120,6 +142,19 @@ void compose_world_matrix(const TransformStore::Transform& t, double scale,
 void compose_world_linear_translation(const TransformStore::Transform& t,
                                       double scale, glm::mat3& linear,
                                       glm::dvec3& translation);
+
+// The (torpedo, ship) pairs close enough for projectiles.update_all's narrow
+// hit tests, appended to `out` flat as t, s ordered by torpedo then ship.
+// Torpedo t's tick segment starts at starts[3t..3t+2] and is seg_lens[t]
+// long; ship s is a sphere of radius bounds[s] at centres[3s..3s+2]. A pair
+// is dropped only when d.d > reach*reach (d = centre - start, reach = bound +
+// seg_len), unfused as CPython computes it -- so a NaN stays a candidate.
+// skips[t] is the ship index torpedo t never meets (its shooter), or -1.
+// Pure arithmetic; touches no store.
+void sweep_candidates(const double* starts, const double* seg_lens,
+                      const std::int32_t* skips, std::size_t n_torps,
+                      const double* centres, const double* bounds,
+                      std::size_t n_ships, std::vector<std::uint32_t>& out);
 
 // The process-wide store.
 TransformStore& transform_store();

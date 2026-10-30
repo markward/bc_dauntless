@@ -185,6 +185,66 @@ TEST(AnimationUpdate, WalkBindAppliesRootMotionAndPlaysThrough) {
     EXPECT_FALSE(world.get(id)->anim.dirty);
 }
 
+TEST(AnimationUpdate, UndrawnBridgeInstanceIsNotPosedAndStaysDirty) {
+    // Exterior view: the bridge pass does not run, so re-posing the crew is
+    // wasted work. The skipped instance keeps its dirty flag, so the first
+    // frame the bridge is drawn again poses it at that frame's clock.
+    assets::Model model = two_bone_model_with_clip();
+    auto lookup = [&](scenegraph::ModelHandle){ return &model; };
+    scenegraph::World world;
+    auto id = world.create_instance(1);
+    world.set_pass(id, scenegraph::Pass::Bridge);
+    renderer::bind_clip(*world.get(id), model, 0, {}, /*now=*/100.0);
+
+    renderer::DrawnPasses exterior;   // no bridge, no comm feed
+    renderer::update_animations(world, lookup, 200.0, exterior);
+    EXPECT_TRUE(world.get(id)->bone_palette.empty());
+    EXPECT_TRUE(world.get(id)->anim.dirty);
+
+    renderer::DrawnPasses bridge_view; bridge_view.bridge = true;
+    renderer::update_animations(world, lookup, 200.0, bridge_view);
+    EXPECT_EQ(world.get(id)->bone_palette.size(), 2u);
+    EXPECT_FALSE(world.get(id)->anim.dirty);
+}
+
+TEST(AnimationUpdate, SpaceInstancesArePosedWhateverIsDrawn) {
+    assets::Model model = two_bone_model_with_clip();
+    auto lookup = [&](scenegraph::ModelHandle){ return &model; };
+    scenegraph::World world;
+    auto id = world.create_instance(1);   // Pass::Space by default
+    renderer::bind_clip(*world.get(id), model, 0, {}, 100.0);
+
+    renderer::update_animations(world, lookup, 100.5, renderer::DrawnPasses{});
+    EXPECT_EQ(world.get(id)->bone_palette.size(), 2u);
+}
+
+TEST(AnimationUpdate, PoseThisFrameFollowsTheDrawnPasses) {
+    scenegraph::Instance space, bridge, comm7, comm9;
+    bridge.pass = scenegraph::Pass::Bridge;
+    comm7.pass = scenegraph::Pass::Comm; comm7.comm_set_id = 7;
+    comm9.pass = scenegraph::Pass::Comm; comm9.comm_set_id = 9;
+
+    renderer::DrawnPasses none;
+    EXPECT_TRUE(renderer::pose_this_frame(space, none));
+    EXPECT_FALSE(renderer::pose_this_frame(bridge, none));
+    EXPECT_FALSE(renderer::pose_this_frame(comm7, none));
+
+    // Bridge up, viewscreen on the space scene: no comm set is drawn.
+    renderer::DrawnPasses bridge_only; bridge_only.bridge = true;
+    EXPECT_TRUE(renderer::pose_this_frame(bridge, bridge_only));
+    EXPECT_FALSE(renderer::pose_this_frame(comm7, bridge_only));
+
+    // A hail on the viewscreen draws only its own set.
+    renderer::DrawnPasses hail; hail.bridge = true; hail.comm = true;
+    hail.comm_set_id = 7;
+    EXPECT_TRUE(renderer::pose_this_frame(comm7, hail));
+    EXPECT_FALSE(renderer::pose_this_frame(comm9, hail));
+
+    // comm_set_id 0 is the bridge pass's "no set filter": every comm set draws.
+    renderer::DrawnPasses any_comm; any_comm.comm = true;
+    EXPECT_TRUE(renderer::pose_this_frame(comm9, any_comm));
+}
+
 TEST(AnimationUpdate, RestPoseHoldsStartFrameWhenAtStart) {
     // Replaces SampleAtStartHoldsStartFrameAndSettles: at_start rest = t0 hold.
     assets::Model model = two_bone_model_with_clip();

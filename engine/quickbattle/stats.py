@@ -64,8 +64,7 @@ def probe(ship_file) -> Optional[ShipStats]:
     finally:
         mgr._local.clear()
         mgr._local.update(snapshot)
-        articulated_part._BY_LEAF.clear()
-        articulated_part._BY_LEAF.update(parts_snapshot)
+        articulated_part.restore(parts_snapshot)
 
 
 class StatsCache:

@@ -29,6 +29,7 @@ import weakref
 import App
 from engine.appc.subsystems import _is_offline, _get_xyz
 from engine.appc import nebula_density as _nd
+from engine.core import step_memo
 from engine.core.ids import implements
 
 # ── Concealment constants ─────────────────────────────────────────────────────
@@ -446,7 +447,39 @@ def can_detect(observer, target, *, dist_sq_gu=None,
     *apply_concealment* is True; a wrong value silently produces a wrong
     detection answer, so do NOT pass an approximation, a cached value from a
     previous frame, or a value sampled for a different target.
+
+    Inside an engine.core.step_memo block (the combat step) a pair asked with
+    no optional argument is computed once and the answer repeated. In a
+    64-ship fight this check was ~a fifth of combat time and ~a third of its
+    calls were repeats: a ship's phaser tick asks what its held-weapon stop
+    check just asked, and every torpedo it fired at that target asks again.
+    Exact because repeating the rule with unchanged inputs returns the same
+    answer and leaves the lock-break latch where the first call put it
+    (tests/unit/test_sensor_step_answers.py); damage can change a sensor's
+    range or a cloak, so every hit forgets (combat.apply_hit).
     """
+    if (step_memo.active() and dist_sq_gu is None and apply_concealment
+            and concealment is None):
+        key = (id(observer), id(target))
+        found = _answers.get(key)
+        if found is None:
+            found = _answers[key] = _can_detect(
+                observer, target, dist_sq_gu=None, apply_concealment=True,
+                concealment=None)
+        return found
+    return _can_detect(observer, target, dist_sq_gu=dist_sq_gu,
+                       apply_concealment=apply_concealment,
+                       concealment=concealment)
+
+
+# (id(observer), id(target)) -> can_detect's answer, while a step_memo block
+# is open. See can_detect.
+_answers = step_memo.table()
+
+
+def _can_detect(observer, target, *, dist_sq_gu, apply_concealment,
+                concealment) -> bool:
+    """The rule itself; see can_detect."""
     # ── Cloak gate ────────────────────────────────────────────────────────
     # Stock BC: a fully cloaked target is undetectable — the SDK SelectTarget
     # drops a contact on ET_CLOAK_COMPLETED. Here (ENHANCED_SENSOR_CONTEST)

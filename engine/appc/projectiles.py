@@ -17,6 +17,7 @@ advances motion, runs collision, returns the list of (torpedo, hit_ship,
 hit_point, hit_normal) tuples for host_loop to route through combat.apply_hit.
 """
 import math
+import weakref
 
 from engine.appc.math import TGPoint3
 from engine.appc.objects import ObjectClass
@@ -59,12 +60,13 @@ class Torpedo(ObjectClass):
     in this list -- it lives in the store, not on the instance.
     """
     __slots__ = (
-        "_velocity", "_age", "_ttl",
+        "_vel", "_age", "_ttl",
         "_damage", "_damage_radius_factor",
         "_target_ship", "_target_offset",
         "_guidance_lifetime", "_guidance_initial", "_max_angular_accel",
         "_last_seen_target_pos", "_last_target_vel",
-        "_source_ship", "_id", "_bubble_entry",
+        "_src", "_cset", "_scan_live", "_rad", "_mount_key",
+        "_id", "_bubble_entry",
         "_core_texture", "_core_color", "_core_size_a", "_core_size_b",
         "_glow_texture", "_glow_color", "_glow_size_a", "_glow_size_b", "_glow_size_c",
         "_flares_texture", "_flares_color", "_num_flares",
@@ -74,6 +76,11 @@ class Torpedo(ObjectClass):
     )
 
     def __init__(self):
+        # Before super(): ObjectClass.__init__ assigns _containing_set, whose
+        # setter below reads these.
+        self._scan_live = 0
+        self._cset = None
+        self._src = None
         super().__init__()
         # Position/rotation come from ObjectClass.__init__ -> the
         # TransformStore (default (0, 0, 0) / identity); no local field.
@@ -90,6 +97,9 @@ class Torpedo(ObjectClass):
         # 9ce63166, after a live report that torpedoes no longer homed on the
         # locked subsystem.
         self._target_offset = None
+        # (target, offset x, y, z, attributed mount subsystem): _steer_point's
+        # once-per-shot answer to "whose mount is the offset?".
+        self._mount_key = None
         self._guidance_lifetime = 4.0
         self._guidance_initial = 4.0
         self._max_angular_accel = 0.125
@@ -214,6 +224,61 @@ class Torpedo(ObjectClass):
     # slot allocated by ObjectClass.__init__. No override: see the class
     # docstring above for why a Torpedo-local shadow field was removed.
 
+    # ── Write-through state for the incoming-torpedo table ─────────────────
+    # Velocity, source and set are what a row of engine/appc/torpedo_scan.py
+    # copies (position it reads live from the store), so each is a property
+    # whose setter updates the row while this torpedo is in the table. Every
+    # write -- the launch, _guide's steering, SetClass membership, a fixture
+    # -- is an attribute assignment, so none can leave the row stale. An
+    # in-place mutation of the velocity vector would; nothing does one, and
+    # GetVelocityTG hands out a copy.
+
+    @property
+    def _velocity(self):
+        return self._vel
+
+    @_velocity.setter
+    def _velocity(self, v):
+        self._vel = v
+        if self._scan_live == _scan_gen and not _scan_dirty:
+            _scan_table().set_velocity(self.GetObjID(), v.x, v.y, v.z)
+
+    @property
+    def _source_ship(self):
+        return self._src
+
+    @_source_ship.setter
+    def _source_ship(self, src):
+        self._src = src
+        if self._scan_live == _scan_gen and not _scan_dirty:
+            _scan_table().set_source(self.GetObjID(), *_source_key(src))
+
+    @property
+    def _radius(self):
+        return self._rad
+
+    @_radius.setter
+    def _radius(self, r):
+        # Tracked so the proximity walk knows when it may skip torpedoes:
+        # one with a radius occupies space (planet._is_proximity_participant).
+        self._rad = r
+        if r > 0.0:
+            _sized.add(self)
+        else:
+            _sized.discard(self)
+
+    @property
+    def _containing_set(self):
+        return self._cset
+
+    @_containing_set.setter
+    def _containing_set(self, pSet):
+        old = self._cset
+        self._cset = pSet
+        if old is not pSet and self._scan_live == _scan_gen and not _scan_dirty:
+            _group_leave(old)
+            _scan_table().set_group(self.GetObjID(), _group_join(pSet))
+
     def GetVelocityTG(self) -> TGPoint3:
         """Current in-flight velocity as a FRESH copy. Mirrors
         ObjectClass.GetVelocityTG() (objects.py:453). The copy is
@@ -235,8 +300,179 @@ class Torpedo(ObjectClass):
 
 
 # ── Registry ────────────────────────────────────────────────────────────────
-_active: list[Torpedo] = []
+
+class _ActiveList(list):
+    """The in-flight list, keeping the incoming-torpedo table in step.
+
+    register()/expire() are the engine's only writers, but fixtures append,
+    clear and slice it by hand, so every mutator is covered: an append or a
+    removal updates one row; anything that reorders the list or replaces a
+    slice marks the table dirty, and the next query rebuilds it in list
+    order. incoming_ids also rebuilds whenever the row count and the list
+    length disagree, and walks instead if `_active` was replaced by a plain
+    list (monkeypatch)."""
+
+    __slots__ = ()
+
+    def append(self, t):
+        super().append(t)
+        if isinstance(t, Torpedo):
+            _scan_add(t)
+
+    def extend(self, items):
+        for t in items:
+            self.append(t)
+
+    def __iadd__(self, items):
+        self.extend(items)
+        return self
+
+    def remove(self, t):
+        super().remove(t)
+        _scan_drop(t)
+
+    def pop(self, i=-1):
+        t = super().pop(i)
+        _scan_drop(t)
+        return t
+
+    def clear(self):
+        super().clear()
+        _scan_mark_dirty()
+
+    def insert(self, i, t):
+        super().insert(i, t)
+        _scan_mark_dirty()
+
+    def __setitem__(self, i, v):
+        super().__setitem__(i, v)
+        _scan_mark_dirty()
+
+    def __delitem__(self, i):
+        super().__delitem__(i)
+        _scan_mark_dirty()
+
+    def sort(self, *a, **k):
+        super().sort(*a, **k)
+        _scan_mark_dirty()
+
+    def reverse(self):
+        super().reverse()
+        _scan_mark_dirty()
+
+
+_active: list[Torpedo] = _ActiveList()
 _next_id: int = 1
+
+# Torpedoes with a radius > 0, anywhere (weak: a dead one drops out).
+_sized = weakref.WeakSet()
+
+
+def sized_torpedo_in(pSet) -> bool:
+    """True while a torpedo in `pSet` occupies space -- the proximity walk
+    must then step through that set's members in full
+    (planet.ProximityManager._candidates). Nothing in the engine gives a
+    torpedo a radius, so `_sized` is normally empty and this is free."""
+    for t in _sized:
+        if t._cset is pSet:
+            return True
+    return False
+
+
+# ── Incoming-torpedo table sync (engine/appc/torpedo_scan.py) ───────────────
+# A torpedo is in the table iff its `_scan_live` equals `_scan_gen`; a rebuild
+# bumps the generation, so every torpedo added before it goes stale at once
+# without being touched. While `_scan_dirty`, writers skip the table (the
+# rebuild will see their change) and only incoming_ids rebuilds.
+#
+# `_groups` is the set behind each live row's group id (id(set), 0 = no set)
+# and how many rows hold it: incoming_ids turns it into one offset per set.
+
+_scan_gen: int = 1
+_scan_dirty: bool = True
+_groups: dict = {}
+
+
+def _scan_table():
+    from engine.appc import torpedo_scan
+    return torpedo_scan.get_scan()
+
+
+def _scan_reset() -> None:
+    """The table was replaced (torpedo_scan.get_scan, on a store change)."""
+    _scan_mark_dirty()
+
+
+def _scan_mark_dirty() -> None:
+    global _scan_dirty
+    _scan_dirty = True
+
+
+def _source_key(src):
+    """(has_source, source id) for a row. A source with no GetObjID (the bare
+    fakes some fixtures fire from) can never match an armed filter."""
+    from engine.core.ids import implements
+    if src is None or not implements(src, "GetObjID"):
+        return False, 0
+    return True, src.GetObjID()
+
+
+def _group_join(pSet) -> int:
+    if pSet is None:
+        return 0
+    gid = id(pSet)
+    entry = _groups.get(gid)
+    if entry is None:
+        _groups[gid] = [pSet, 1]
+    else:
+        entry[1] += 1
+    return gid
+
+
+def _group_leave(pSet) -> None:
+    if pSet is None:
+        return
+    entry = _groups.get(id(pSet))
+    if entry is not None:
+        entry[1] -= 1
+        if entry[1] <= 0:
+            del _groups[id(pSet)]
+
+
+def _scan_put(scan, t) -> None:
+    v = t._vel
+    scan.add(t.GetObjID(), t._xform[0], t._xform[1], v.x, v.y, v.z,
+             *_source_key(t._src), _group_join(t._cset))
+    t._scan_live = _scan_gen
+
+
+def _scan_add(t) -> None:
+    scan = _scan_table()
+    if _scan_dirty:
+        return                      # the rebuild will include it
+    if t._scan_live == _scan_gen:   # already in (appended twice)
+        _scan_mark_dirty()
+        return
+    _scan_put(scan, t)
+
+
+def _scan_drop(t) -> None:
+    if not isinstance(t, Torpedo) or t._scan_live != _scan_gen or _scan_dirty:
+        return
+    _scan_table().remove(t.GetObjID())
+    _group_leave(t._cset)
+    t._scan_live = 0
+
+
+def _scan_rebuild(scan) -> None:
+    global _scan_gen, _scan_dirty
+    _scan_gen += 1
+    _scan_dirty = False
+    scan.clear()
+    _groups.clear()
+    for t in _active:
+        if isinstance(t, Torpedo) and t._scan_live != _scan_gen:
+            _scan_put(scan, t)
 
 
 def register(torpedo: Torpedo) -> None:
@@ -427,14 +663,129 @@ def incoming_ids(observer, danger_threshold, firing_object_id, match_source):
     """Object ids of every in-flight torpedo incoming on `observer`, applying
     the source filter. Backs AIScriptAssist_GetIncomingTorpIDsInSet.
 
+    Asks the incoming-torpedo table (engine/appc/torpedo_scan.py) -- the same
+    answer as _walk_incoming_ids, in the same order, without a Python step per
+    torpedo: the walk was over half of all AI time at 64 ships. Each set the
+    table's torpedoes are in gets ONE frames.offset_between from the
+    observer's set; a set with none is another frame, never incoming.
+
     Scope note: BC scopes this to the ship's containing SetClass. Torpedoes
     join their source's set at launch (_join_source_set), and _closing_time
     returns None across frames, so iterating _active directly is safe: a
     torpedo in another frame is never incoming, and one in another region of
     the same star system is judged at its system position."""
+    if type(_active) is not _ActiveList:
+        return _walk_incoming_ids(observer, danger_threshold,
+                                  firing_object_id, match_source)
+    if match_source and firing_object_id is None:
+        return []
+    scan = _scan_table()
+    if _scan_dirty or scan.size() != len(_active):
+        _scan_rebuild(scan)
+    if not _groups:
+        return []
+    from engine.systems import frames
+    obs_set = frames.containing_set(observer)
+    offsets = []
+    for gid, (pSet, _n) in _groups.items():
+        off = frames.offset_between(obs_set, pSet)
+        if off is not None:
+            offsets.append((gid, off[0], off[1], off[2]))
+    if not offsets:
+        return []
+    o = observer.GetWorldLocation()
+    ov = observer.GetVelocityTG()
+    return scan.incoming((o.x, o.y, o.z), (ov.x, ov.y, ov.z),
+                         danger_threshold, match_source,
+                         firing_object_id if match_source else 0, offsets)
+
+
+def _walk_incoming_ids(observer, danger_threshold, firing_object_id,
+                       match_source):
+    """The reference: is_incoming per torpedo, in list order."""
     return [t.GetObjID() for t in list(_active)
             if is_incoming(observer, t, danger_threshold, firing_object_id,
                            match_source)]
+
+
+def _broadphase(moving, ship_cache, offsets) -> list:
+    """Per entry of `moving` (update_all's step 1), the ship_cache indices
+    its tick segment could hit, ascending -- the only pairs the narrow tests
+    see. `offsets` is update_all's (ship set, torpedo set) -> offset memo,
+    filled here for every pair the narrow tests will read.
+
+    Both narrow tests (shield bubble, hull sphere) lie inside
+    sphere(ship_pos, bubble_bound_radius), and the whole segment lies within
+    seg_len of its start, so a pair whose centres are further apart than
+    bound + seg_len cannot hit. Conservative by construction: only pairs that
+    would have missed are dropped, so the hits are exactly those of testing
+    every pair.
+
+    Testing every torpedo against every ship here in Python was ~45% of
+    torpedo flight at 64 ships (~100 x 64 pairs a tick, nearly all far
+    apart), so ships whose offset to the torpedo's set is zero -- the same
+    set, nearly every pair -- go to TransformStore.sweep_candidates in one
+    call per torpedo set, with the same arithmetic. A ship in another region
+    of the system (non-zero offset) is tested here, on the shifted start, as
+    it always was; a ship in another frame (offset None) never interacts.
+    """
+    from array import array
+    from engine.appc.transform_store import get_store
+    from engine.systems import frames
+
+    out = [[] for _ in moving]
+    by_set: dict = {}
+    for i, m in enumerate(moving):
+        by_set.setdefault(m[5], []).append(i)
+    for torp_set, members in by_set.items():
+        same, other = [], []
+        for j, entry in enumerate(ship_cache):
+            key = (entry[5], torp_set)
+            if key in offsets:
+                off = offsets[key]
+            else:
+                off = offsets[key] = frames.offset_between(entry[5], torp_set)
+            if off is None:
+                continue
+            if off == _ZERO_OFFSET:
+                same.append(j)
+            else:
+                other.append((j, off))
+        if same:
+            at = {id(ship_cache[j][0]): k for k, j in enumerate(same)}
+            starts, lens, skips = array("d"), array("d"), array("i")
+            for i in members:
+                t, prev_pos = moving[i][0], moving[i][1]
+                starts.extend((prev_pos.x, prev_pos.y, prev_pos.z))
+                lens.append(moving[i][3])
+                skips.append(at.get(id(t._source_ship), -1))
+            centres, bounds = array("d"), array("d")
+            for j in same:
+                entry = ship_cache[j]
+                centres.extend((entry[1], entry[2], entry[3]))
+                bounds.append(entry[4])
+            pairs = get_store().sweep_candidates(starts, lens, skips,
+                                                 centres, bounds)
+            for k in range(0, len(pairs), 2):
+                out[members[pairs[k]]].append(same[pairs[k + 1]])
+        for j, off in other:
+            ship, sx, sy, sz, bound, _ship_set = ship_cache[j]
+            for i in members:
+                t, prev_pos, _cur, seg_len = moving[i][:4]
+                if ship is t._source_ship:
+                    continue
+                seg_prev = _shifted(prev_pos, off)
+                ddx = sx - seg_prev.x
+                ddy = sy - seg_prev.y
+                ddz = sz - seg_prev.z
+                reach = bound + seg_len
+                if (ddx * ddx + ddy * ddy + ddz * ddz) > reach * reach:
+                    continue
+                out[i].append(j)
+        if other:
+            for i in members:
+                out[i].sort()
+    return out
 
 
 def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
@@ -497,21 +848,24 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
                            frames.containing_set(ship)))
     offsets: dict = {}
 
+    # 1. Steer and advance every torpedo. Nothing here reads another
+    #    torpedo, and hits are only RETURNED (applied by the caller), so
+    #    moving them all before any collides is the per-torpedo order's result.
+    moving = []
     for t in list(_active):
-        # 1. Steer if homing within guidance window.
+        # Steer if homing within guidance window.
         if t._target_ship is not None and t._age < t._guidance_lifetime:
             _guide(t, dt)
-        # 2. Advance position + age.
+        # Advance position + age.
         #
         # Position is read from and written to the TransformStore exactly
         # ONCE each per torpedo per tick (prev_pos here, the SetTranslateXYZ
-        # at the bottom of this iteration) -- `cur_pos` is the local,
-        # in-progress authoritative position for the rest of this iteration,
-        # so the store is never round-tripped mid-collision-check the way a
-        # naive per-access conversion of the old `t._position` reads/writes
-        # would have done. Nothing else can observe this torpedo's position
-        # mid-tick (single-threaded, and this torpedo isn't touched again
-        # until its own next iteration), so deferring the write is safe.
+        # at the end of step 3) -- `cur_pos` is the local, in-progress
+        # authoritative position until then, so the store is never
+        # round-tripped mid-collision-check the way a naive per-access
+        # conversion of the old `t._position` reads/writes would have done.
+        # Nothing else observes a torpedo's position mid-call (single-threaded,
+        # and no step reads another torpedo), so deferring the write is safe.
         prev_pos = t.GetTranslate()
         cur_pos = prev_pos + t._velocity * dt
         t._age += dt
@@ -519,7 +873,6 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
             t.SetTranslateXYZ(cur_pos.x, cur_pos.y, cur_pos.z)
             expired.append(t)
             continue
-        # 3. Collide.
         # The segment, its length and the aim direction depend only on the
         # TORPEDO, so they are computed once here rather than once per ship.
         # They used to sit inside the ship loop, which rebuilt three vectors
@@ -533,45 +886,26 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
         aim_unit = (TGPoint3(seg.x / seg_len, seg.y / seg_len, seg.z / seg_len)
                     if seg_len > 1e-9 else None)
 
-        source = t._source_ship
         # The torpedo's frame is its OWN set (joined at launch), never its
         # source's current one -- the shooter may have warped away since.
-        torp_set = frames.containing_set(t)
-        for ship, sx, sy, sz, bound, ship_set in ship_cache:
+        moving.append((t, prev_pos, cur_pos, seg_len, aim_unit,
+                       frames.containing_set(t)))
+
+    # 2. Broadphase: the ship_cache indices each torpedo could hit, in order.
+    candidates = _broadphase(moving, ship_cache, offsets)
+
+    # 3. Collide: the narrow tests on those ships only, first hit wins.
+    for (t, prev_pos, cur_pos, seg_len, aim_unit, torp_set), near in zip(
+            moving, candidates):
+        source = t._source_ship
+        for j in near:
+            ship, sx, sy, sz, bound, ship_set = ship_cache[j]
             if ship is source:
-                continue
-            # Different frames never interact, and a torpedo or ship in no set
-            # interacts with nothing (offset None). Same set -> zero offset ->
-            # the segment points below ARE prev_pos/cur_pos, byte-identical.
-            key = (ship_set, torp_set)
-            if key in offsets:
-                off = offsets[key]
-            else:
-                off = offsets[key] = frames.offset_between(ship_set, torp_set)
-            if off is None:
                 continue
             # The segment in the SHIP's set-local coordinates. Everything the
             # narrow tests and the hit consumers see is in the ship's frame.
+            off = offsets[(ship_set, torp_set)]
             seg_prev = _shifted(prev_pos, off)
-
-            # Broadphase. Both narrow tests below are expensive -- the bubble
-            # test alone fetches the ship's rotation matrix and does three dot
-            # products to reach the body frame -- and BOTH used to run on every
-            # pair with no distance rejection at all, which is what made this
-            # loop the dominant cost of a fight.
-            #
-            # The whole segment lies within seg_len of prev_pos, and both tests
-            # are contained in sphere(ship_pos, bubble_bound_radius). So if the
-            # centres are further apart than the sum, neither test can fire.
-            # Conservative by construction: it rejects only pairs that would
-            # have missed, so hit behaviour is unchanged. Pure arithmetic on
-            # values hoisted above -- no attribute or subsystem access.
-            ddx = sx - seg_prev.x
-            ddy = sy - seg_prev.y
-            ddz = sz - seg_prev.z
-            reach = bound + seg_len
-            if (ddx * ddx + ddy * ddy + ddz * ddz) > reach * reach:
-                continue
             seg_cur = _shifted(cur_pos, off)
 
             # The SHIELD BUBBLE is tested first, exactly as BC's projectile
@@ -702,13 +1036,25 @@ def _steer_point(torpedo, target, off=None):
     `off` is frames.offset_between(torpedo set, target set): the point is
     returned in the TORPEDO's set-local coordinates. None/zero (same set)
     leaves today's arithmetic untouched.
+
+    The mount the offset belongs to (`authored_mount_subsystem`, a scan of
+    every subsystem of the target) is attributed once per (target, offset)
+    and kept on the torpedo: re-scanning it per guided tick per torpedo was
+    the largest single cost of torpedo flight at 64 ships.
     """
     offset = getattr(torpedo, "_target_offset", None)
     if not isinstance(offset, TGPoint3):
         pos = target.GetWorldLocation()
         return _shifted(TGPoint3(pos.x, pos.y, pos.z), off)
     from engine.appc.subsystems import target_offset_world
-    return _shifted(target_offset_world(target, offset), off)
+    key = getattr(torpedo, "_mount_key", None)
+    if (key is None or key[0] is not target or key[1] != offset.x
+            or key[2] != offset.y or key[3] != offset.z):
+        from engine.appc.part_severance import authored_mount_subsystem
+        key = torpedo._mount_key = (
+            target, offset.x, offset.y, offset.z,
+            authored_mount_subsystem(target, (offset.x, offset.y, offset.z)))
+    return _shifted(target_offset_world(target, offset, key[4]), off)
 
 
 def _guide(torpedo, dt: float) -> None:

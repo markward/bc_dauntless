@@ -151,3 +151,21 @@ def test_et_power_fraction_changed_defined_and_unique():
     assert isinstance(App.ET_POWER_FRACTION_CHANGED, int)
     # Must not collide with neighbouring bridge-interaction event ids.
     assert App.ET_POWER_FRACTION_CHANGED != App.ET_CONTACT_STARFLEET
+
+
+def test_watcher_without_checks_tracks_value():
+    mgr = TGEventManager()
+    watcher = FloatRangeWatcher(1.0, event_manager=mgr)
+    watcher._update(0.4)
+    assert watcher.GetWatchedVariable() == 0.4
+    assert isinstance(watcher.GetWatchedVariable(), float)
+    watcher._update(3)
+    assert watcher.GetWatchedVariable() == 3.0
+    assert isinstance(watcher.GetWatchedVariable(), float)
+
+    dest = TGPythonInstanceWrapper()
+    ev = _make_event(9001, None, dest)
+    watcher.AddRangeCheck(0.5, FloatRangeWatcher.FRW_BOTH, ev)
+    watcher._update(0.2)
+    assert ev.GetFloat() == 0.2
+    assert watcher.GetWatchedVariable() == 0.2

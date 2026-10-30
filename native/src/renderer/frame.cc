@@ -507,6 +507,27 @@ void reset_model_radius_cache() {
     g_mesh_boxes_cache.clear();
 }
 
+ShadowFocus pick_shadow_focus(
+        const scenegraph::World& world, const glm::vec3& focus,
+        const std::function<const assets::Model*(unsigned long long)>& lookup) {
+    ShadowFocus out;
+    float best_d2 = std::numeric_limits<float>::max();
+    world.for_each_visible_in_pass(
+        scenegraph::Pass::Space, [&](const scenegraph::Instance& inst) {
+            if (!inst.rim_eligible) return;
+            const assets::Model* m = lookup(inst.model_handle);
+            if (m == nullptr) return;
+            const glm::vec3 pos = glm::vec3(inst.world[3]);
+            const float d2 = glm::dot(pos - focus, pos - focus);
+            if (d2 >= best_d2) return;
+            best_d2 = d2;
+            out.instance = &inst;
+            const float scale = glm::length(glm::vec3(inst.world[0]));
+            out.radius_gu = model_bounding_radius(inst.model_handle, *m) * scale;
+        });
+    return out;
+}
+
 void reset_decal_mask_sampler() {
     if (g_decal_mask_sampler != 0) {
         GLuint id = g_decal_mask_sampler;

@@ -148,3 +148,33 @@ def test_disruptor_entry_fields():
 
     # Zero velocity -> fallback forward.
     assert entry["forward"] == pytest.approx((0.0, 0.0, 1.0))
+
+
+def test_a_frame_resolves_each_texture_once(monkeypatch):
+    # 1,440 torpedoes x 3 textures used to mean 4,320 path resolutions a
+    # frame (mods overlay + case-insensitive stat each) for three answers:
+    # 60% of cb.render_data in the 64-ship profile.
+    calls = []
+    real = hl._paths.game_asset
+    monkeypatch.setattr(hl._paths, "game_asset",
+                        lambda rel: calls.append(rel) or real(rel))
+    for _ in range(20):
+        _make_photon()
+    out = _build_torpedo_render_data()
+    assert len(out) == 20
+    assert sorted(calls) == sorted({
+        "data/Textures/Tactical/TorpedoCore.tga",
+        "data/Textures/Tactical/TorpedoGlow.tga",
+        "data/Textures/Tactical/TorpedoFlares.tga"})
+
+
+def test_a_new_game_root_is_seen_on_the_next_frame(monkeypatch):
+    # Resolve at use: the cache lives for one frame, so a root picked in the
+    # first-run screen (paths.configure) reaches the very next feed.
+    _make_photon()
+    monkeypatch.setattr(hl._paths, "game_root", lambda: Path("/first/game"))
+    first = _build_torpedo_render_data()[0]["core_texture"]
+    monkeypatch.setattr(hl._paths, "game_root", lambda: Path("/second/game"))
+    second = _build_torpedo_render_data()[0]["core_texture"]
+    assert first.startswith(str(Path("/first/game")))
+    assert second.startswith(str(Path("/second/game")))

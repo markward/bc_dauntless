@@ -199,7 +199,7 @@ void BridgePanels::update(double t, BridgeQuality q) {
         while (!fences_.empty() && !hold_fences_) {
             // No GL_SYNC_FLUSH_COMMANDS_BIT: the frame's swap sends the
             // fence. Forcing the flush here made the CPU wait for the GPU,
-            // 9-34 ms a frame live (perf P-14, SIG-147).
+            // 9-34 ms a frame live (perf P-14, SIG-153).
             const GLenum st = glClientWaitSync(fences_.front().second, 0, 0);
             if (st == GL_TIMEOUT_EXPIRED) break;
             done_frame_ = fences_.front().first;   // signalled (or failed: never block on it)

@@ -426,6 +426,18 @@ int geosphere_level_for(const assets::Model& m, const glm::mat4& world,
 /// unlike reset_decal_mask_sampler() it has no context-currency requirement.
 void reset_model_radius_cache();
 
+/// The shadow map's subject: the visible, rim-eligible (hull) Space instance
+/// nearest `focus`, and its bounding radius in GU (the cached per-model
+/// radius above × the instance's uniform world scale). instance == nullptr
+/// when there is no such hull. Called once a frame by the host.
+struct ShadowFocus {
+    const scenegraph::Instance* instance = nullptr;
+    float radius_gu = 0.0f;
+};
+ShadowFocus pick_shadow_focus(
+    const scenegraph::World& world, const glm::vec3& focus,
+    const std::function<const assets::Model*(unsigned long long)>& lookup);
+
 /// Release the lazily-created GL sampler object the opaque pass binds on
 /// texture units 8-11 (one shared sampler, up to 4 distinct decal masks per
 /// model, shared by up to 16 placements;

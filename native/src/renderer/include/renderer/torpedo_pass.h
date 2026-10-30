@@ -2,6 +2,7 @@
 #pragma once
 
 #include <renderer/frame.h>
+#include <renderer/torpedo_sprites.h>
 #include <assets/texture.h>
 
 #include <memory>
@@ -36,10 +37,14 @@ public:
                 Pipeline& pipeline);
 
 private:
-    // Unit-quad VAO/VBO — single shared mesh, repeated per torpedo per
-    // layer with per-draw uniforms (position / size / color / texture).
-    unsigned int quad_vao_ = 0;
-    unsigned int quad_vbo_ = 0;
+    // Unit-quad VAO/VBO -- one shared mesh, instanced once per torpedo
+    // layer: instance_vbo_ carries every quad of the frame (TorpedoSprite,
+    // attributes 1-4), uploaded once and drawn one texture batch at a time.
+    unsigned int quad_vao_     = 0;
+    unsigned int quad_vbo_     = 0;
+    unsigned int instance_vbo_ = 0;
+    std::vector<TorpedoSpriteBatch> batches_;   // reused frame to frame
+    std::vector<TorpedoSprite>      staging_;   // batches_ back to back
     std::unordered_map<std::string, std::unique_ptr<assets::Texture>> texture_cache_;
 
     // Unit tapered-tube VAO/VBO/EBO (renderer::build_bolt_mesh) — single
