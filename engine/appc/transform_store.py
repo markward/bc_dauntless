@@ -137,6 +137,39 @@ class PythonTransformStore:
             out[k] = dx * dx + dy * dy + dz * dz <= r2
         return bytes(out)
 
+    def proximity_report(self, anchors, objects, r2, want, start: int) -> list:
+        """Indices from `start` of the proximity pairs Python must look at.
+
+        Pair k is anchor handle (anchors[2k], anchors[2k+1]), object handle
+        (objects[2k], objects[2k+1]), radius squared r2[k] and want[k]: 0
+        reports when the object is inside (`dx*dx + dy*dy + dz*dz <= r2`), 1
+        when it is outside, 2 always, 3 never. A stale handle on a want 0, 1
+        or 3 pair is reported, not raised. Backs engine.appc.proximity_table.
+        """
+        d = self._data
+        gens = self._generations
+        n = len(gens)
+        out = []
+        for k in range(start, len(want)):
+            w = want[k]
+            if w == 2:
+                out.append(k)
+                continue
+            ai, ag = anchors[2 * k], anchors[2 * k + 1]
+            oi, og = objects[2 * k], objects[2 * k + 1]
+            if (ai >= n or gens[ai] != ag or oi >= n or gens[oi] != og):
+                out.append(k)
+                continue
+            if w == 3:
+                continue
+            a, o = ai * _STRIDE, oi * _STRIDE
+            dx = d[o] - d[a]
+            dy = d[o + 1] - d[a + 1]
+            dz = d[o + 2] - d[a + 2]
+            if (dx * dx + dy * dy + dz * dz <= r2[k]) == (w == 0):
+                out.append(k)
+        return out
+
     # ── Internal ──────────────────────────────────────────────────────────────
 
     def _check(self, index: int, generation: int) -> None:
@@ -231,6 +264,12 @@ class NativeTransformStore:
                 flat, float(x), float(y), float(z), float(r2))
         except (RuntimeError, TypeError) as exc:
             raise StaleHandleError(str(exc)) from exc
+
+    def proximity_report(self, anchors, objects, r2, want, start: int) -> list:
+        """See PythonTransformStore.proximity_report. The four buffers cross
+        as they are (array("I"), array("I"), array("d"), bytearray)."""
+        return self._h.transform_proximity_report(anchors, objects, r2, want,
+                                                  start)
 
 
 _STORE = None

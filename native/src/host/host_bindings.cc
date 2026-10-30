@@ -9037,6 +9037,40 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("handles"), py::arg("x"), py::arg("y"), py::arg("z"),
           py::arg("r2"));
 
+    // Backs engine/appc/proximity_table.py: the per-tick ProximityCheck pass
+    // keeps its pairs packed between ticks and asks once which few need
+    // Python. Returns a list because it is nearly always empty.
+    m.def("transform_proximity_report",
+          [](py::buffer anchors, py::buffer objects, py::buffer r2,
+             py::buffer want, std::size_t start) {
+              const py::buffer_info a = anchors.request();
+              const py::buffer_info o = objects.request();
+              const py::buffer_info r = r2.request();
+              const py::buffer_info w = want.request();
+              const std::size_t n = static_cast<std::size_t>(w.size);
+              if (w.itemsize != 1 || r.itemsize != sizeof(double) ||
+                  a.itemsize != sizeof(std::uint32_t) ||
+                  o.itemsize != sizeof(std::uint32_t) ||
+                  static_cast<std::size_t>(r.size) != n ||
+                  static_cast<std::size_t>(a.size) != 2 * n ||
+                  static_cast<std::size_t>(o.size) != 2 * n)
+                  throw py::value_error(
+                      "proximity pairs: uint32 anchor and object handle "
+                      "pairs, one double r2 and one want byte per pair");
+              std::vector<std::uint32_t> out;
+              dauntless::transform_store().proximity_report(
+                  static_cast<const std::uint32_t*>(a.ptr),
+                  static_cast<const std::uint32_t*>(o.ptr),
+                  static_cast<const double*>(r.ptr),
+                  static_cast<const std::uint8_t*>(w.ptr), n, start, out);
+              py::list res(out.size());
+              for (std::size_t k = 0; k < out.size(); ++k)
+                  res[k] = py::int_(out[k]);
+              return res;
+          },
+          py::arg("anchors"), py::arg("objects"), py::arg("r2"),
+          py::arg("want"), py::arg("start"));
+
     m.def("transform_live_count", []() {
               return dauntless::transform_store().live_count();
           });

@@ -18,6 +18,7 @@ in Phase 2.  Hailable + atmosphere damage are real gameplay logic.
 """
 
 from engine.appc.objects import ObjectClass
+from engine.appc import proximity_table
 
 
 class Planet(ObjectClass):
@@ -299,6 +300,7 @@ class ProximityManager:
             entry = (obj, None)
             if entry not in self._proximity_checks:
                 self._proximity_checks.append(entry)
+                proximity_table.touch()
 
     def RemoveObject(self, obj) -> None:
         if obj in self._objects:
@@ -382,13 +384,9 @@ class ProximityManager:
         # (within_radius: the compare below, rounded the same way). One that
         # answers GetWorldLocation itself (DebrisChunk, subsystems, ...) is
         # still asked.
-        from engine.appc.objects import ObjectClass
         from engine.appc.transform_store import get_store
-        base = ObjectClass.GetWorldLocation
         stored = [obj for obj in candidates
-                  if "_xform" in obj.__dict__
-                  and getattr(type(obj), "GetWorldLocation", None) is base
-                  and "GetWorldLocation" not in obj.__dict__]
+                  if proximity_table.location_is_stored(obj)]
         inside = {}
         if stored:
             flags = get_store().within_radius(
@@ -499,6 +497,7 @@ class ProximityManager:
         entry = (check, anchor_obj)
         if entry not in self._proximity_checks:
             self._proximity_checks.append(entry)
+            proximity_table.touch()
 
 
 def evaluate_proximity_checks() -> None:
@@ -510,12 +509,9 @@ def evaluate_proximity_checks() -> None:
     The (check, anchor) tuple stores an explicit anchor when the call
     site used AddProximityCheck(check, anchor); SDK condition flow
     instead leaves anchor=None and relies on ObjectClass.AttachObject
-    having stored the anchor on the check itself."""
-    import App
-    for pSet in App.g_kSetManager._sets.values():
-        pm = pSet.GetProximityManager() if hasattr(pSet, "GetProximityManager") else None
-        if pm is None:
-            continue
-        checks = getattr(pm, "_proximity_checks", ())
-        for check, anchor in checks:
-            check.Evaluate(anchor)
+    having stored the anchor on the check itself.
+
+    That is: for every set, for every (check, anchor) its manager holds,
+    check.Evaluate(anchor). proximity_table runs exactly that from a cached
+    pair table, so only the pairs that could fire reach Python."""
+    proximity_table.evaluate()
