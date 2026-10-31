@@ -153,19 +153,31 @@ def _kind(name: str) -> int:
     return k
 
 
-def _slot_of(value) -> int:
+#: A ref field's value for a non-None referent the mirror cannot name (an
+#: unregistered object, a wrong kind): kRefUnrepresentable in mirror.h. -1 is
+#: None. The kernel takes the Python path on -2, never "absent".
+REF_NONE = -1
+REF_UNREPRESENTABLE = -2
+
+
+def _slot_of(value):
     d = getattr(value, "__dict__", None)
     if d is None:
-        return -1
-    return d.get("_nslot", -1)
+        return None
+    return d.get("_nslot")
 
 
 def _drop(obj) -> None:
-    """The object's handle went stale (a test's combat_clear): it is no
-    longer registered. Silent by design (R2)."""
+    """Unregister `obj`: its handle went stale (a test's combat_clear), or it
+    holds a value the mirror cannot represent. From then on it takes the
+    Python path. Its row is freed now; the finalizer's later unregister of
+    the same handle fails quietly. Silent by design (R2)."""
     h = obj.__dict__.pop("_nslot", None)
-    if h is not None and _registry.get(h) is obj:
+    if h is None:
+        return
+    if _registry.get(h) is obj:
         del _registry[h]
+    unregister_handle(h)
 
 
 def _live(h: int) -> bool:
@@ -223,7 +235,8 @@ class NativeField:
         try:
             v = self._encode(value)
         except (TypeError, ValueError, OverflowError):
-            return      # not representable; audit_mirror reports the field
+            _drop(obj)  # not representable: never leave a stale row
+            return
         t = self._type
         if t is float:
             fn = _h.combat_set_f
@@ -247,7 +260,8 @@ class NativeField:
 
 class NativeRefField(NativeField):
     """A reference to another mirrored object: pushes the referent's handle,
-    or -1 for None, an unregistered referent or one of another kind.
+    -1 for None, or -2 (REF_UNREPRESENTABLE) for a referent the mirror cannot
+    name: unregistered, or of another kind.
     ``lazy``: register an unregistered TGModelProperty referent on first push
     (subsystem properties are shared templates with no ``__init__`` hook)."""
 
@@ -258,13 +272,13 @@ class NativeRefField(NativeField):
 
     def _ref(self, value) -> int:
         if value is None:
-            return -1
+            return REF_NONE
         t = _slot_of(value)
-        if t == -1 and self._lazy and _enabled and _is_property(value):
+        if t is None and self._lazy and _enabled and _is_property(value):
             register(value, "Property")
             t = _slot_of(value)
-        if t != -1 and (t >> _KIND_SHIFT) != _kind(self._target):
-            return -1
+        if t is None or (t >> _KIND_SHIFT) != _kind(self._target):
+            return REF_UNREPRESENTABLE
         return t
 
     def _push(self, obj, h, value) -> None:
@@ -272,9 +286,10 @@ class NativeRefField(NativeField):
         try:
             _h.combat_set_ref(h, _fid(self._key), t)
         except ValueError:
-            if t != -1 and _live(h):
+            if t >= 0 and _live(h):
                 _drop(value)    # the referent is the stale one
-                _call(obj, _h.combat_set_ref, h, _fid(self._key), -1)
+                _call(obj, _h.combat_set_ref, h, _fid(self._key),
+                      REF_UNREPRESENTABLE)
             else:
                 _drop(obj)
 
@@ -425,7 +440,8 @@ def push_property(prop) -> None:
         try:
             vals = _property_values(prop)
         except (TypeError, ValueError, OverflowError):
-            return      # not representable; audit_mirror reports it
+            _drop(prop)  # not representable: never leave a stale row
+            return
         _call(prop, _h.combat_set_i, h, _fid("MaxCondition_set"),
               vals["MaxCondition_set"])
         if "_nslot" in prop.__dict__:

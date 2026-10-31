@@ -21,7 +21,8 @@
 // fails at once. A stale or wrong-kind handle throws std::invalid_argument
 // (Python ValueError). A reference STORED in a row (a ref field, a ship list)
 // is re-checked at read time: a ref to a since-freed row reads as none (-1),
-// never as the row that reused its index.
+// never as the row that reused its index. kRefUnrepresentable (-2) is
+// stored and read back as is.
 
 namespace dauntless::combat {
 
@@ -57,6 +58,12 @@ Kind field_kind(Field f);
 FieldType field_type(Field f);
 
 using Vec3 = std::array<double, 3>;
+
+// A ref field's value when the Python referent is not None but the mirror
+// cannot name it (an unregistered object: a test fake, a set before it has a
+// row). Distinct from -1 (None): the kernel must not read it as "absent" and
+// should take the Python path instead. Stored and read back as is.
+constexpr int64_t kRefUnrepresentable = -2;
 
 struct ObjectRow {
     int64_t xform_index = -1, xform_gen = -1, obj_id = -1;

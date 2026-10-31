@@ -78,7 +78,8 @@ def _expected(value):
         return sorted(value)
     if isinstance(value, list):
         return list(value)
-    return value.__dict__.get("_nslot", -1)    # a referenced object
+    # A referenced object: its handle, or -2 when the mirror cannot name it.
+    return getattr(value, "__dict__", {}).get("_nslot", -2)
 
 
 def _assert_mirrored(obj, field):
@@ -358,3 +359,72 @@ def test_audit_mirror_flags_a_bypassed_write():
     sub.__dict__["_condition"] = 0.123
     nc.audit_mirror()
     assert ("SensorSubsystem", "_condition") in nc.audit_failures()
+
+
+def test_unencodable_value_unregisters_the_object():
+    """A value the mirror cannot hold must not leave a registered row with
+    the previous value: the object is unregistered (Python path)."""
+    nc.configure(ON)
+    from engine.appc.subsystems import SensorSubsystem
+    sub = SensorSubsystem("Unencodable")
+    h = _slot(sub)
+    sub._condition = "not a float"
+    assert "_nslot" not in sub.__dict__
+    with pytest.raises(ValueError):
+        _h.combat_dump(h)
+    sub._condition = 0.5                        # no slot: nothing to push
+
+
+def test_unencodable_property_max_condition_unregisters_the_property():
+    nc.configure(ON)
+    from engine.appc.properties import SensorProperty
+    from engine.appc.subsystems import SensorSubsystem
+    prop = SensorProperty("Sensor Array")
+    sub = SensorSubsystem("S")
+    sub.SetProperty(prop)
+    h = _slot(prop)
+    prop.SetMaxCondition("not a float")
+    assert "_nslot" not in prop.__dict__
+    with pytest.raises(ValueError):
+        _h.combat_dump(h)
+
+
+class _FakeSensors:
+    """Not a ShipSubsystem: never registered."""
+
+
+def test_unregistered_referent_is_unrepresentable_not_none():
+    """R6: a non-None referent the mirror cannot name pushes -2, never -1
+    (None): a ship whose sensors are a fake must not read as sensorless."""
+    nc.configure(ON)
+    ship = App.ShipClass_Create("Faked")
+    ship._sensor_subsystem = _FakeSensors()
+    assert _dump(ship)["_sensor_subsystem"] == -2
+    ship._sensor_subsystem = object()           # no __dict__ at all
+    assert _dump(ship)["_sensor_subsystem"] == -2
+    ship._sensor_subsystem = None
+    assert _dump(ship)["_sensor_subsystem"] == -1
+    ship._cloaking_subsystem = _FakeSensors()
+    nc.audit_mirror()
+    assert nc.audit_failures() == []
+
+
+def test_containing_set_is_unrepresentable_until_sets_register():
+    nc.configure(ON)
+    ship = App.ShipClass_Create("InSet")
+    assert _dump(ship)["_containing_set"] == -1
+    pSet = App.SetClass_Create()
+    App.g_kSetManager.AddSet(pSet, "native_mirror_set_2")
+    try:
+        pSet.AddObjectToSet(ship, "InSet")
+        assert _dump(ship)["_containing_set"] == -2
+    finally:
+        App.g_kSetManager.DeleteSet("native_mirror_set_2")
+
+
+def test_wrong_kind_referent_is_unrepresentable():
+    nc.configure(ON)
+    ship = App.ShipClass_Create("WrongKind")
+    other = App.ShipClass_Create("AnObject")
+    ship._sensor_subsystem = other              # an Object, not a Subsystem
+    assert _dump(ship)["_sensor_subsystem"] == -2

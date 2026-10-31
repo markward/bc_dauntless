@@ -409,7 +409,7 @@ void Mirror::set_i(int64_t h, Field f, int64_t v) {
 
 void Mirror::set_ref(int64_t h, Field f, int64_t target) {
     if (info(f).type != FieldType::Ref) bad("not a ref field", f);
-    if (target != -1) {
+    if (target != -1 && target != kRefUnrepresentable) {
         Kind tk = ref_target_kind(f);
         if (!ref_live(target, tk)) bad("ref target stale or wrong kind", f);
     }
@@ -495,6 +495,7 @@ int64_t Mirror::get_ref(int64_t h, Field f) const {
         if (!p) bad("field not on this row", f);
         return *p;
     });
+    if (t == kRefUnrepresentable) return t;
     return (t >= 0 && ref_live(t, ref_target_kind(f))) ? t : -1;
 }
 

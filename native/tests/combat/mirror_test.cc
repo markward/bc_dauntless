@@ -70,6 +70,29 @@ TEST(Mirror, StaleRefReadsAsNone) {
     EXPECT_EQ(f.m.get_ref(o, Field::_hull), -1);
 }
 
+TEST(Mirror, RefUnrepresentableSentinelStored) {
+    // R6: a non-None Python referent the mirror cannot name (a test fake, an
+    // unregistered set) is -2, distinct from None (-1), and reads back as -2.
+    Fixture f;
+    int64_t o = f.m.register_row(Kind::Object);
+    int64_t s = f.m.register_row(Kind::Subsystem);
+    f.m.set_ref(o, Field::_sensor_subsystem, kRefUnrepresentable);
+    EXPECT_EQ(kRefUnrepresentable, -2);
+    EXPECT_EQ(f.m.get_ref(o, Field::_sensor_subsystem), kRefUnrepresentable);
+    EXPECT_EQ(f.m.object(o)->_sensor_subsystem, kRefUnrepresentable);
+    f.m.set_ref(o, Field::_containing_set, kRefUnrepresentable);
+    EXPECT_EQ(f.m.get_ref(o, Field::_containing_set), kRefUnrepresentable);
+    f.m.set_ref(s, Field::_property, kRefUnrepresentable);
+    EXPECT_EQ(f.m.get_ref(s, Field::_property), kRefUnrepresentable);
+    f.m.set_ref(o, Field::_sensor_subsystem, -1);
+    EXPECT_EQ(f.m.get_ref(o, Field::_sensor_subsystem), -1);
+    // Every other non-handle value is still rejected.
+    EXPECT_THROW(f.m.set_ref(o, Field::_sensor_subsystem, -3),
+                 std::invalid_argument);
+    EXPECT_THROW(f.m.set_ref(o, Field::_sensor_subsystem, 12345),
+                 std::invalid_argument);
+}
+
 TEST(Mirror, WrongKindRejected) {
     Fixture f;
     int64_t o = f.m.register_row(Kind::Object);
