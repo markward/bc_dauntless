@@ -39,6 +39,13 @@ inline double saturate(double v) {
 // through a volatile inside py_math.cc so no caller can be folded.
 double py_pow(double x, double y);
 
+// `math.sin(x)` / `math.cos(x)`: libm, each called ALONE. They live in their
+// own translation unit because clang pairs an adjacent sin(x) and cos(x) into
+// one __sincos_stret call, which can round differently from the two libm
+// calls CPython makes (the strip emit point's yaw hit this).
+double py_sin(double x);
+double py_cos(double x);
+
 // `math.dist(a, b)` for 3-D points: CPython 3.11.15's math_dist_impl +
 // vector_norm (Modules/mathmodule.c), ported line for line. NOT
 // sqrt(dx*dx + dy*dy + dz*dz): vector_norm scales by a power of two, squares

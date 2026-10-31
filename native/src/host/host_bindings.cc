@@ -17,6 +17,7 @@
 #include <pybind11/stl.h>
 #include <audio/python_binding.h>
 #include "dauntless/torpedo_scan.h"
+#include "dauntless/combat/beam_geometry.h"
 #include "dauntless/combat/fire_gates.h"
 #include "dauntless/combat/k1_fire_control.h"
 #include "dauntless/combat/mirror.h"
@@ -9639,6 +9640,86 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   return cb::weapon_system_offline(cb::mirror(), sys);
               },
               py::arg("sys"));
+
+        // ── The K2 beam geometry (beam_geometry.h) ───────────────────────
+        // Same convention as above: ValueError means "ask the Python".
+        m.def("combat_test_resolve_bank_aim_world_at",
+              [vec](std::int64_t bank, const std::array<double, 3>& point,
+                    bool use_memo) {
+                  return vec(cb::_resolve_bank_aim_world_at(cb::mirror(), bank,
+                                                            point, use_memo));
+              },
+              py::arg("bank"), py::arg("point"), py::arg("use_memo"));
+        m.def("combat_test_phaser_aim_point",
+              [vec](std::int64_t ship, std::int64_t target, bool use_memo) {
+                  const cb::AimPoint a =
+                      cb::phaser_aim_point(cb::mirror(), ship, target, use_memo);
+                  return py::make_tuple(vec(a.point), a.target_sub);
+              },
+              py::arg("ship"), py::arg("target"), py::arg("use_memo"),
+              "((x, y, z), locked Subsystem handle or -1).");
+        m.def("combat_test_strip_emit_position",
+              [vec](std::int64_t bank, const std::array<double, 3>& target_world,
+                    bool use_memo) {
+                  return vec(cb::strip_emit_position(cb::mirror(), bank,
+                                                     target_world, use_memo));
+              },
+              py::arg("bank"), py::arg("target_world"), py::arg("use_memo"));
+        m.def("combat_test_accumulate_dwell",
+              [](std::int64_t bank, double dt) {
+                  const cb::DwellResult r =
+                      cb::accumulate_dwell(cb::mirror(), bank, dt);
+                  return py::make_tuple(r.flushed, r.new_dwell);
+              },
+              py::arg("bank"), py::arg("dt"),
+              "(flushed, new _dwell); writes nothing.");
+        m.def("combat_test_take_dwell",
+              [](std::int64_t bank) {
+                  const cb::DwellResult r = cb::take_dwell(cb::mirror(), bank);
+                  return py::make_tuple(r.flushed, r.new_dwell);
+              },
+              py::arg("bank"), "(flushed, 0.0); writes nothing.");
+        m.def("combat_test_ray_sphere_entry",
+              [vec](const std::array<double, 3>& origin,
+                    const std::array<double, 3>& dir, double max_dist,
+                    const std::array<double, 3>& center,
+                    double radius) -> py::object {
+                  const cb::SphereEntry e = cb::ray_sphere_entry(
+                      origin, dir, max_dist, center, radius);
+                  switch (e.kind) {
+                      case cb::SphereEntry::Kind::Point:
+                          return vec(e.point);
+                      case cb::SphereEntry::Kind::Origin:
+                          return py::str("origin");  // Python's origin object
+                      default:
+                          return py::none();
+                  }
+              },
+              py::arg("origin"), py::arg("dir"), py::arg("max_dist"),
+              py::arg("center"), py::arg("radius"),
+              "None, an (x, y, z) entry, or the string 'origin' (Python "
+              "returned the origin object itself).");
+        m.def("combat_test_world_radius",
+              [](std::int64_t object) {
+                  return cb::world_radius(cb::mirror(), object);
+              },
+              py::arg("object"));
+        m.def("combat_test_shields_block",
+              [](std::int64_t target, bool npc_shields_off,
+                 std::int64_t player) {
+                  return cb::shields_block(cb::mirror(), target,
+                                           npc_shields_off, player);
+              },
+              py::arg("target"), py::arg("npc_shields_off"),
+              py::arg("player"));
+        m.def("combat_test_shield_bubble_entry",
+              [opt_vec](std::int64_t target, const std::array<double, 3>& origin,
+                        const std::array<double, 3>& dir, double max_dist) {
+                  return opt_vec(cb::shield_bubble_entry(cb::mirror(), target,
+                                                         origin, dir, max_dist));
+              },
+              py::arg("target"), py::arg("origin"), py::arg("dir"),
+              py::arg("max_dist"));
 
         // ── The K1 fire-control kernel (k1_fire_control.h) ───────────────
         // A stack of resumable sessions over the mirror. Each record is a

@@ -16,31 +16,19 @@
 #include <unordered_set>
 
 #include "dauntless/combat/py_math.h"
+#include "geometry_internal.h"
 
 namespace dauntless::combat {
 
 namespace {
 
-[[noreturn]] void fall_back(const char* why) {
-    throw std::invalid_argument(std::string("combat weapon_geometry: ") + why +
-                                " -- answer in Python");
-}
-
-// ── Row access: a stale or unnamed handle falls back ────────────────────────
-
-const ObjectRow& obj(const Mirror& m, int64_t h) {
-    if (h < 0) fall_back("object handle is none or unrepresentable");
-    const ObjectRow* r = m.object(h);
-    if (!r) fall_back("object handle is stale, freed or not an Object");
-    return *r;
-}
-
-const SubsystemRow& sub(const Mirror& m, int64_t h) {
-    if (h < 0) fall_back("subsystem handle is none or unrepresentable");
-    const SubsystemRow* r = m.subsystem(h);
-    if (!r) fall_back("subsystem handle is stale, freed or not a Subsystem");
-    return *r;
-}
+using detail::dot;
+using detail::fall_back;
+using detail::mult_matrix_left;
+using detail::obj;
+using detail::sub;
+using detail::world_location;
+using detail::xform;
 
 // An Object ref field's referent handle (checked), or -1 for None.
 int64_t obj_ref(const Mirror& m, int64_t ref, const char* field) {
@@ -49,38 +37,9 @@ int64_t obj_ref(const Mirror& m, int64_t ref, const char* field) {
     return ref;
 }
 
-// The ObjectClass transform slot (GetWorldLocation / GetWorldRotation).
-const TransformStore::Transform& xform(const Mirror& m, const ObjectRow& o) {
-    if (o.xform_index < 0 || o.xform_gen < 0 ||
-        o.xform_index > std::numeric_limits<uint32_t>::max() ||
-        o.xform_gen > std::numeric_limits<uint32_t>::max())
-        fall_back("object has no transform");
-    const auto xi = static_cast<uint32_t>(o.xform_index);
-    const auto xg = static_cast<uint32_t>(o.xform_gen);
-    if (!m.store().valid(xi, xg)) fall_back("object transform is invalid");
-    return m.store().at(xi);
-}
-
-Vec3 world_location(const Mirror& m, const ObjectRow& o) {
-    const auto& t = xform(m, o);
-    return {t.pos[0], t.pos[1], t.pos[2]};
-}
-
-// TGPoint3.MultMatrixLeft (engine/appc/math.py:86), r row-major m00..m22:
-// v = M . v, each component m_i0*x + m_i1*y + m_i2*z, left-associative.
-Vec3 mult_matrix_left(const double* r, const Vec3& v) {
-    const double x = r[0] * v[0] + r[1] * v[1] + r[2] * v[2];
-    const double y = r[3] * v[0] + r[4] * v[1] + r[5] * v[2];
-    const double z = r[6] * v[0] + r[7] * v[1] + r[8] * v[2];
-    return {x, y, z};
-}
-
 // TGPoint3.Length / Dot (math.py:34, :43).
 double length(const Vec3& v) {
     return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-}
-double dot(const Vec3& a, const Vec3& b) {
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 Vec3 minus(const Vec3& a, const Vec3& b) {  // TGPoint3.__sub__
     return {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
@@ -190,6 +149,20 @@ Vec3 _resolve_bank_aim_world(Mirror& m, int64_t bank, int64_t target,
     const double len = pow_half_length(dx, dy, dz);
     if (len > 1e-6) return {dx / len, dy / len, dz / len};  // weapon_subsystems.py:130
     // Degenerate: the bank coincides with the target; ship-forward.
+    const int64_t ship = climb_to_ship(m, sub(m, bank));
+    return _resolve_aim_world(m, ship, -1);
+}
+
+// weapon_subsystems.py:105 _resolve_bank_aim_world, the target a world point
+// (the lines after `target_pos = target.GetWorldLocation()`).
+Vec3 _resolve_bank_aim_world_at(Mirror& m, int64_t bank, const Vec3& target_pos,
+                                bool use_memo) {
+    const Vec3 origin = subsystem_world_position(m, bank, -1, use_memo);
+    const double dx = target_pos[0] - origin[0];
+    const double dy = target_pos[1] - origin[1];
+    const double dz = target_pos[2] - origin[2];
+    const double len = pow_half_length(dx, dy, dz);
+    if (len > 1e-6) return {dx / len, dy / len, dz / len};  // weapon_subsystems.py:130
     const int64_t ship = climb_to_ship(m, sub(m, bank));
     return _resolve_aim_world(m, ship, -1);
 }

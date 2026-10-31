@@ -53,6 +53,12 @@ Vec3 _resolve_aim_world(const Mirror& m, int64_t ship, int64_t target);
 Vec3 _resolve_bank_aim_world(Mirror& m, int64_t bank, int64_t target,
                              bool use_memo);
 
+// weapon_subsystems._resolve_bank_aim_world with a world POINT as the target:
+// what the K2 beam step passes (`target_sub or target`) once the locked
+// subsystem's GetWorldLocation is already known. `bank` must be a Subsystem.
+Vec3 _resolve_bank_aim_world_at(Mirror& m, int64_t bank, const Vec3& target_pos,
+                                bool use_memo);
+
 // weapon_subsystems._emitter_in_arc (F9). `aim` is a world vector.
 bool _emitter_in_arc(const Mirror& m, int64_t emitter, int64_t ship,
                      const Vec3& aim);

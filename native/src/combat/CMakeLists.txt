@@ -14,6 +14,7 @@ set(DAUNTLESS_COMBAT_SOURCES
     src/mirror.cc
     src/sensor_detect.cc
     src/weapon_geometry.cc
+    src/beam_geometry.cc
     src/fire_gates.cc
     src/k1_fire_control.cc
 )

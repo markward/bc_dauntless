@@ -623,6 +623,19 @@ class HullBoxField(NativeField):
         except KeyError:
             raise AttributeError(self._name) from None
 
+    def __delete__(self, obj) -> None:
+        """`del ship._shield_hull_box`: the attribute goes absent, as a plain
+        attribute's would, and the row reads unset (the same encoding as a
+        malformed value)."""
+        try:
+            del obj.__dict__[self._name]
+        except KeyError:
+            raise AttributeError(self._name) from None
+        if _enabled:
+            h = obj.__dict__.get("_nslot")
+            if h is not None:
+                self._push(obj, h, None)
+
     @staticmethod
     def _parse(value):
         if not isinstance(value, (tuple, list)) or len(value) != 2:
