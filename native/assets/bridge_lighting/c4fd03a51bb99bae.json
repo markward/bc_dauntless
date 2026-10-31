@@ -1,17 +1,57 @@
 {
-  "format": 2,
+  "format": 4,
   "materials": {
     "LCarsSchematicRight": {
+      "emission": 1.04,
       "roughness": 0,
       "texture": "lcarsschematicright.tga"
     },
     "ceilingwhite": {
-      "roughness": 0,
+      "emission": 0.98,
+      "modifiers": [
+        {
+          "level": 0.36,
+          "scope": [
+            "offline",
+            "yellow",
+            "special"
+          ],
+          "tint": [
+            1,
+            0.9457,
+            0.9543
+          ],
+          "type": "state"
+        },
+        {
+          "min": 0,
+          "period_s": 4,
+          "phase": 0,
+          "scope": [
+            "red"
+          ],
+          "shape": "sine",
+          "type": "animation"
+        },
+        {
+          "level": 0.57,
+          "scope": [
+            "red"
+          ],
+          "tint": [
+            1,
+            0.5354,
+            0.5524
+          ],
+          "type": "state"
+        }
+      ],
+      "roughness": 0.05,
       "texture": "ceilingwhite.tga"
     },
     "chair": {
-      "metalness": 1,
-      "roughness": 0.06,
+      "metalness": 0,
+      "roughness": 0.68,
       "texture": "chair.tga"
     },
     "chair 2": {
@@ -19,17 +59,23 @@
       "roughness": 0.02,
       "texture": "chair.tga"
     },
+    "commandstationlight": {
+      "emission": 0.91,
+      "texture": "commandstationlight.tga"
+    },
     "consoletopview": {
+      "emission": 1.04,
       "roughness": 0,
       "texture": "consoletopview.tga"
     },
     "lcarsschematicleft": {
+      "emission": 1.04,
       "roughness": 0,
       "texture": "lcarsschematicleft.tga"
     },
     "newcomp": {
-      "metalness": 1,
-      "roughness": 0,
+      "metalness": 0.02,
+      "roughness": 0.88,
       "texture": "newcomp.tga"
     },
     "newcomp 2": {
@@ -61,11 +107,17 @@
       "roughness": 0.02,
       "texture": "roofcovelight.tga"
     },
+    "stationcolor": {
+      "roughness": 1,
+      "texture": "stationcolor.tga"
+    },
     "walllcarspanel": {
-      "roughness": 0.14,
+      "emission": 0.91,
+      "roughness": 0,
       "texture": "walllcarspanel.tga"
     },
     "walllcarspanel 2": {
+      "emission": 0.98,
       "roughness": 0,
       "texture": "walllcarspanel.tga"
     },
@@ -81,6 +133,26 @@
     }
   },
   "objects": {
+    "20:Dim Material": {
+      "block": 20,
+      "lights": [
+        {
+          "intensity": 2,
+          "offset": -50,
+          "range": 260,
+          "shape": "panel",
+          "x": [
+            0,
+            1
+          ],
+          "y": [
+            0,
+            1
+          ]
+        }
+      ],
+      "name": "Dim Material"
+    },
     "29:walllight 01 Material: Wall Light": {
       "block": 29,
       "material": "walllight 2",
@@ -116,6 +188,50 @@
       "material": "newcomp 6",
       "name": "Material: door center1"
     },
+    "55:Material: commandstationlight": {
+      "block": 55,
+      "lights": [
+        {
+          "direction": [
+            -0.835177,
+            -0.254456,
+            -0.487578
+          ],
+          "inner_deg": 30,
+          "intensity": 2000,
+          "outer_deg": 60,
+          "position": [
+            54.880066,
+            80.068329,
+            30.45256
+          ],
+          "range": 200
+        }
+      ],
+      "name": "Material: commandstationlight"
+    },
+    "60:Material: commandstationlight": {
+      "block": 60,
+      "lights": [
+        {
+          "direction": [
+            0.621606,
+            -0.14054,
+            -0.77062
+          ],
+          "inner_deg": 30,
+          "intensity": 2000,
+          "outer_deg": 60,
+          "position": [
+            -58.962265,
+            76.967781,
+            27.956261
+          ],
+          "range": 200
+        }
+      ],
+      "name": "Material: commandstationlight"
+    },
     "68:Material: Material #38": {
       "block": 68,
       "material": "walllcarspanel 2",
@@ -126,11 +242,13 @@
   "textures": {
     "ceilingwhite.tga": "ceilingwhite",
     "chair.tga": "chair",
+    "commandstationlight.tga": "commandstationlight",
     "consoletopview.tga": "consoletopview",
     "lcarsschematicleft.tga": "lcarsschematicleft",
     "lcarsschematicright.tga": "LCarsSchematicRight",
     "newcomp.tga": "newcomp",
     "roofcovelight.tga": "roofcovelight",
+    "stationcolor.tga": "stationcolor",
     "walllcarspanel.tga": "walllcarspanel",
     "walllight.tga": "walllight"
   }
