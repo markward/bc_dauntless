@@ -17,6 +17,7 @@
 #include <pybind11/stl.h>
 #include <audio/python_binding.h>
 #include "dauntless/torpedo_scan.h"
+#include "dauntless/combat/mirror.h"
 #include "dauntless/combat/nebula_density.h"
 #include "dauntless/combat/profile_eval.h"
 #include "dauntless/combat/py_math.h"
@@ -9267,4 +9268,119 @@ PYBIND11_MODULE(_dauntless_host, m) {
               return dauntless::combat::contains(x, y, z, cx, cy, cz, r);
           },
           "engine.appc.sensor_occlusion._contains(...).");
+
+    // ── Native combat: the mirror store ─────────────────────────────────────
+    // Rows Python keeps in sync and the detection kernel reads (spec §7.1).
+    // Handles are generation-checked int64; a stale or wrong-kind handle
+    // raises ValueError (std::invalid_argument).
+    {
+        namespace cb = dauntless::combat;
+        auto fld = [](int f) {
+            if (f < 0 || f >= static_cast<int>(cb::Field::kCount))
+                throw std::invalid_argument("combat mirror: unknown field");
+            return static_cast<cb::Field>(f);
+        };
+        m.def("combat_register",
+              [](int kind, std::int64_t xi, std::int64_t xg, std::int64_t id) {
+                  if (kind < 0 || kind >= static_cast<int>(cb::Kind::kCount))
+                      throw std::invalid_argument("combat mirror: bad kind");
+                  return cb::mirror().register_row(static_cast<cb::Kind>(kind),
+                                                   xi, xg, id);
+              },
+              py::arg("kind"), py::arg("xform_index") = -1,
+              py::arg("xform_gen") = -1, py::arg("obj_id") = -1);
+        m.def("combat_unregister",
+              [](std::int64_t h) { cb::mirror().unregister_row(h); });
+        m.def("combat_set_f", [fld](std::int64_t h, int f, double v) {
+            cb::mirror().set_f(h, fld(f), v);
+        });
+        m.def("combat_set_i", [fld](std::int64_t h, int f, std::int64_t v) {
+            cb::mirror().set_i(h, fld(f), v);
+        });
+        m.def("combat_set_ref", [fld](std::int64_t h, int f, std::int64_t t) {
+            cb::mirror().set_ref(h, fld(f), t);
+        });
+        m.def("combat_set_ids",
+              [fld](std::int64_t h, int f, const std::vector<std::int64_t>& v) {
+                  cb::mirror().set_ids(h, fld(f), v);
+              });
+        m.def("combat_set_fv",
+              [fld](std::int64_t h, int f, const std::vector<double>& v) {
+                  cb::mirror().set_fv(h, fld(f), v);
+              });
+        m.def("combat_set_spheres",
+              [](std::int64_t h,
+                 const std::vector<std::tuple<double, double, double, double>>& sp) {
+                  std::vector<cb::Sphere> v;
+                  v.reserve(sp.size());
+                  for (const auto& [x, y, z, r] : sp) v.push_back({x, y, z, r});
+                  cb::mirror().set_spheres(h, std::move(v));
+              });
+        m.def("combat_set_profile_rows",
+              [](std::int64_t h,
+                 const std::vector<std::tuple<double, double>>& rows, double fc) {
+                  std::vector<cb::ProfileRow> v;
+                  v.reserve(rows.size());
+                  for (const auto& [d, s] : rows) v.push_back({d, s});
+                  cb::mirror().set_profile_rows(h, std::move(v), fc);
+              });
+        m.def("combat_clear", [] { cb::mirror().clear(); },
+              "Drop every row (tests only; rows normally live as long as their "
+              "Python object).");
+        m.def("combat_epoch", [] { return cb::mirror().epoch(); });
+        m.def("combat_find_by_obj_id",
+              [](std::int64_t id) { return cb::mirror().find_by_obj_id(id); },
+              "The live Object handle for a Python object id, or -1.");
+        m.def("combat_field_names", [] {
+            // Python attribute name -> field id. Subsystem._radius shares the
+            // name of Object._radius, so it is keyed "Subsystem._radius".
+            py::dict d;
+            for (int i = 0; i < static_cast<int>(cb::Field::kCount); ++i) {
+                auto f = static_cast<cb::Field>(i);
+                std::string n = cb::field_name(f);
+                if (f == cb::Field::s_radius) n = "Subsystem._radius";
+                d[py::str(n)] = i;
+            }
+            return d;
+        });
+        m.def("combat_dump", [](std::int64_t h) {
+            auto& mi = cb::mirror();
+            cb::Kind kind = cb::Mirror::kind_of(h);
+            if (!mi.valid(h))
+                throw std::invalid_argument("combat mirror: stale handle");
+            py::dict d;
+            for (int i = 0; i < static_cast<int>(cb::Field::kCount); ++i) {
+                auto f = static_cast<cb::Field>(i);
+                if (cb::field_kind(f) != kind) continue;
+                py::str n(cb::field_name(f));
+                switch (cb::field_type(f)) {
+                    case cb::FieldType::F: d[n] = mi.get_f(h, f); break;
+                    case cb::FieldType::I: d[n] = mi.get_i(h, f); break;
+                    case cb::FieldType::Ref: d[n] = mi.get_ref(h, f); break;
+                    case cb::FieldType::Ids: d[n] = mi.get_ids(h, f); break;
+                    case cb::FieldType::Vec3: {
+                        auto v = mi.get_fv(h, f);
+                        if (v.empty()) d[n] = py::none();
+                        else d[n] = py::make_tuple(v[0], v[1], v[2]);
+                        break;
+                    }
+                    case cb::FieldType::Spheres: {
+                        py::list l;
+                        for (const auto& s : mi.object(h)->spheres)
+                            l.append(py::make_tuple(s.x, s.y, s.z, s.r));
+                        d[n] = l;
+                        break;
+                    }
+                    case cb::FieldType::Rows: {
+                        py::list l;
+                        for (const auto& r : mi.profile(h)->rows)
+                            l.append(py::make_tuple(r.distance_gu, r.sensors));
+                        d[n] = l;
+                        break;
+                    }
+                }
+            }
+            return d;
+        });
+    }
 }

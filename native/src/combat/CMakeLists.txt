@@ -11,6 +11,7 @@ set(DAUNTLESS_COMBAT_SOURCES
     src/py_math.cc
     src/nebula_density.cc
     src/profile_eval.cc
+    src/mirror.cc
 )
 
 add_library(dauntless_combat STATIC ${DAUNTLESS_COMBAT_SOURCES})
