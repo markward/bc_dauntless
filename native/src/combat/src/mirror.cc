@@ -404,11 +404,16 @@ void Mirror::unregister_row(int64_t h) {
             auto it = by_obj_id_.find(r.obj_id);
             if (it != by_obj_id_.end() && it->second == h) by_obj_id_.erase(it);
             release(objects_, h);
+            sensor_.drop_object(h);
             break;
         }
         case Kind::Subsystem: checked(subsystems_, h, kind); release(subsystems_, h); break;
         case Kind::Property: checked(properties_, h, kind); release(properties_, h); break;
-        case Kind::Set: checked(sets_, h, kind); release(sets_, h); break;
+        case Kind::Set:
+            checked(sets_, h, kind);
+            release(sets_, h);
+            sensor_.drop_set(h);
+            break;
         default: checked(profiles_, h, kind); release(profiles_, h); break;
     }
     ++epoch_;

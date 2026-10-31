@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 
 #include "dauntless/combat/nebula_density.h"
 #include "dauntless/combat/profile_eval.h"
@@ -77,6 +78,34 @@ TEST(NebulaDensity, MatchesPinnedPythonGoldens) {
     EXPECT_EQ(density(20.0, 10.0, 5.0, s, 1, seed, 0.05, 1.6, 0.4, 0.0),
               0.20645526505610945);
     EXPECT_EQ(density(500.0, 0.0, 0.0, s, 1, seed, 0.05, 1.6, 0.4, 0.0), 0.0);
+}
+
+// Python's math.floor raises (ValueError on NaN, OverflowError on inf) when a
+// non-finite value reaches fbm, i.e. a NaN/inf drift_t, freq, seed or sample
+// coordinate at a point inside a sphere (bound > 0). Native throws
+// std::invalid_argument there (ruling R5) so the caller falls back to the
+// Python, which raises as it always did -- never a silent NaN.
+TEST(NebulaDensity, NonFiniteNoiseInputThrows) {
+    const Sphere s[1] = {{0.0, 0.0, 0.0, 100.0}};
+    const double seed[3] = {11.7, 23.1, 47.3};
+    EXPECT_THROW(density(20.0, 10.0, 5.0, s, 1, seed, 0.05, 1.6, 0.4, kNaN),
+                 std::invalid_argument);
+    EXPECT_THROW(density(20.0, 10.0, 5.0, s, 1, seed, 0.05, 1.6, 0.4, kInf),
+                 std::invalid_argument);
+    EXPECT_THROW(density(20.0, 10.0, 5.0, s, 1, seed, kInf, 1.6, 0.4, 0.0),
+                 std::invalid_argument);
+    const double nan_seed[3] = {11.7, kNaN, 47.3};
+    EXPECT_THROW(density(20.0, 10.0, 5.0, s, 1, nan_seed, 0.05, 1.6, 0.4, 0.0),
+                 std::invalid_argument);
+    EXPECT_THROW(fbm(kNaN, 0.0, 0.0), std::invalid_argument);
+    // Outside every sphere the bound is 0 and fbm is never reached.
+    EXPECT_EQ(density(500.0, 0.0, 0.0, s, 1, seed, 0.05, 1.6, 0.4, kNaN), 0.0);
+    // A NaN position has falloff 0 (Python returns 0.0, no raise).
+    EXPECT_EQ(density(kNaN, 0.0, 0.0, s, 1, seed, 0.05, 1.6, 0.4, 0.0), 0.0);
+    // Finite inputs never throw (a NaN gain/floor is applied AFTER fbm).
+    EXPECT_NO_THROW(density(20.0, 10.0, 5.0, s, 1, seed, 0.05, 1.6, 0.4, 1e6));
+    EXPECT_TRUE(std::isnan(
+        density(20.0, 10.0, 5.0, s, 1, seed, 0.05, kNaN, 0.4, 0.0)));
 }
 
 TEST(ProfileEval, BreakpointsLerpAndNaN) {

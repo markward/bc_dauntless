@@ -148,6 +148,24 @@ def test_density_matches_python():
                    nd.seed_for(0.0, 0.0, 0.0), 0.05, 1.6, 0.4, 0.0)
 
 
+def test_density_non_finite_noise_input_raises_like_python():
+    """Python's math.floor raises when a non-finite drift_t, freq or seed
+    reaches fbm at a point inside a sphere; native raises ValueError there
+    (ruling R5) so its caller asks the Python, never a silent NaN. Outside
+    every sphere neither reaches fbm and both answer 0.0."""
+    seed = nd.seed_for(0.0, 0.0, 0.0)
+    spheres = [(0.0, 0.0, 0.0, 100.0)]
+    cases = [(NAN, 0.05, seed), (INF, 0.05, seed), (0.0, INF, seed),
+             (0.0, 0.05, (seed[0], NAN, seed[2]))]
+    for drift, freq, s in cases:
+        with pytest.raises((ValueError, OverflowError)):
+            nd.density(20.0, 10.0, 5.0, spheres, s, freq, 1.6, 0.4, drift)
+        with pytest.raises(ValueError):
+            _h.combat_test_density(20.0, 10.0, 5.0, spheres, s, freq, 1.6,
+                                   0.4, drift)
+        _check_density((500.0, 0.0, 0.0), spheres, s, freq, 1.6, 0.4, drift)
+
+
 def test_py_min_max_nan_order():
     """NaN follows Python's comparison order: a NaN sphere radius or position
     never wins the union (`f > best` is False), a NaN gain or floor reaches the

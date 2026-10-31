@@ -9,6 +9,7 @@
 
 #include "dauntless/combat/nebula_density.h"
 #include "dauntless/combat/profile_eval.h"
+#include "dauntless/combat/sensor_state.h"
 #include "dauntless/transform_store.h"
 
 // The native combat mirror: one row per Python object the sensor-detection
@@ -156,9 +157,14 @@ public:
     int64_t register_row(Kind kind, int64_t xform_index = -1,
                          int64_t xform_gen = -1, int64_t obj_id = -1);
     void unregister_row(int64_t handle);
-    // Every row and the globals, plus (Task 5) the native-owned state.
+    // Every row and the globals, plus the native-owned SensorState.
     void clear();
     uint64_t epoch() const { return epoch_; }
+
+    // The detection kernel's own state (latch, memo, occlusion caches, probe
+    // guard): sensor_detect.h reads and writes it. Not a mirror of Python.
+    SensorState& sensor_state() { return sensor_; }
+    const SensorState& sensor_state() const { return sensor_; }
 
     // The live Object handle for a Python object id, or -1.
     int64_t find_by_obj_id(int64_t obj_id) const;
@@ -231,7 +237,7 @@ private:
     template <class Fn>
     decltype(auto) visit(int64_t h, Kind want, Fn&& fn) const;
 
-    void clear_owned_state() {}  // Task 5: latch, occlusion caches, memo
+    void clear_owned_state() { sensor_.clear(); }
 
     const TransformStore& store_;
     Table<ObjectRow> objects_;
@@ -241,6 +247,7 @@ private:
     Table<ProfileRowSet> profiles_;
     std::unordered_map<int64_t, int64_t> by_obj_id_;
     Globals globals_;
+    SensorState sensor_;
     uint64_t epoch_ = 0;
 };
 

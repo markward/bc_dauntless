@@ -104,3 +104,45 @@ def test_wrong_kind_field_raises_value_error():
     p = _h.combat_register(PROPERTY)
     with pytest.raises(ValueError):
         _h.combat_set_f(p, f["_life_time"], 1.0)
+
+
+def test_detect_bindings_answer_from_rows():
+    """The detection kernel's bindings (sensor_detect.h): their keyword
+    defaults, the latch and caches they own, and ValueError as "ask the
+    Python" (a -2 ref the query reaches, a row with no transform). The
+    native-vs-Python answers are compared in Task 6/7."""
+    f = _h.combat_field_names()
+    _h.combat_set_globals({
+        "sensorless_range_gu": 2000.0, "occ_enabled": 1,
+        "enhanced_sensor_contest": 1, "CONCEAL_K": 0.9, "LOCK_BREAK_T": 0.28,
+        "HYSTERESIS": 0.08})
+    o = _h.combat_register(OBJECT, -1, -1, 1)
+    t = _h.combat_register(OBJECT, -1, -1, 2)
+    assert _h.combat_effective_sensor_range(o) == 2000.0
+    assert _h.combat_concealment_at(o, 1.0) == 0.0       # in no set
+    assert _h.combat_is_hidden_by_cloak(t) is False
+    assert _h.combat_jammed(o, t) is False
+    assert _h.combat_occ_blocked(o, t, 1.0) is False
+    # A caller-supplied squared distance means no position is read.
+    assert _h.combat_can_detect(o, t, 1.0, False, dist_sq=1.0,
+                                apply_concealment=False) is True
+    assert _h.combat_can_detect(o, t, 1.0, False, dist_sq=4.0e6 + 1.0,
+                                apply_concealment=False) is False
+    # The lock-break latch is native-owned.
+    assert _h.combat_can_detect(o, t, 1.0, False, concealment=0.5) is False
+    assert _h.combat_latched(o, t) is True
+    _h.combat_latch_reset()
+    assert _h.combat_latched(o, t) is False
+    _h.combat_occ_begin_tick(2.0)
+    _h.combat_occ_reset()
+    _h.combat_memo_clear()
+    # Positions come from the TransformStore: none here, so Python answers.
+    with pytest.raises(ValueError):
+        _h.combat_in_reach(o, t)
+    # An unrepresentable sensor ref is never read as None.
+    _h.combat_set_i(o, f["has_sensor_getter"], 1)
+    _h.combat_set_ref(o, f["_sensor_subsystem"], -2)
+    with pytest.raises(ValueError):
+        _h.combat_effective_sensor_range(o)
+    with pytest.raises(ValueError):
+        _h.combat_can_detect(o, t, 1.0, True)

@@ -1,0 +1,84 @@
+#pragma once
+
+#include <cstdint>
+#include <optional>
+
+#include "dauntless/combat/mirror.h"
+
+// The native sensor-detection kernel: engine/appc/sensor_detection.py
+// (`can_detect` and its pieces) and engine/appc/sensor_occlusion.py
+// (`blocked`), answered from the Mirror with no Python crossing.
+//
+// Each function is a line-for-line port of the Python function of the SAME
+// NAME, in its gate order (docs/reference/engine/native-combat/
+// can-detect-inputs.md §1, §4, §9.3), so the two read side by side. Floats
+// are Python's: double, the same operand order, py_min/py_max in Python's
+// argument order, and every comparison written so a NaN takes the branch
+// Python takes.
+//
+// Arguments are Object row handles. `now` is the game time the Python reads
+// itself (App.g_kUtopiaModule.GetGameTime() in the occlusion cache,
+// App.g_kTimerManager.GetGameTime() as the nebula drift time: the same
+// value, CDM §3 #12).
+//
+// FALLBACK. Every function throws std::invalid_argument (Python ValueError)
+// when it cannot answer exactly as the Python would, so the caller asks the
+// Python instead:
+//   * a ref it reaches reads kRefUnrepresentable (-2): a non-None Python
+//     referent the mirror cannot name. -1 is None and is answered here;
+//   * a ref or set-list entry it reaches names a row that is gone (stale);
+//   * a set list it walks holds a -2 entry;
+//   * an Object's transform is invalid (Python's _get_xyz would log and read
+//     the origin; unreachable for a registered object, CDM §9.5);
+//   * the nebula noise meets a non-finite value (Python raises; R5);
+//   * a case the mirror cannot prove matches the Python: a plain (non-Meta)
+//     Nebula in `jammed` (Python calls a _Stub), a parent ship with no
+//     ShipClass flag in `_out_of_action`, a MetaNebula with no _fbm.
+// Only what the query actually reaches is checked, as in the Python.
+//
+// State written (sensor_state.h): the latch, the memo, the probe-walk guard
+// and the occlusion caches, exactly where and when the Python writes its own.
+// A throw can leave a write the Python would ALSO have made before raising at
+// the same point (a latch flip, a rebuilt rock list); re-asking the same
+// question gives the same answer, so a fallback re-run is unaffected.
+
+namespace dauntless::combat {
+
+// sensor_detection.effective_sensor_range
+double effective_sensor_range(const Mirror& m, int64_t ship);
+
+// sensor_detection.concealment_at
+double concealment_at(const Mirror& m, int64_t ship, double now);
+
+// sensor_detection.is_hidden_by_cloak
+bool is_hidden_by_cloak(const Mirror& m, int64_t target);
+
+// sensor_detection.jammed
+bool jammed(const Mirror& m, int64_t observer, int64_t target);
+
+// sensor_detection.in_reach (writes the probe-walk guard only)
+bool in_reach(Mirror& m, int64_t observer, int64_t target);
+
+// sensor_occlusion.blocked (owns both occlusion caches)
+bool occ_blocked(Mirror& m, int64_t observer, int64_t target, double now);
+
+// sensor_detection.can_detect. `use_memo` is step_memo.active(): the memo is
+// read and written only when it is true AND no optional argument is given
+// (dist_sq and concealment absent, apply_concealment true), as the Python.
+bool can_detect(Mirror& m, int64_t observer, int64_t target, double now,
+                bool use_memo, std::optional<double> dist_sq_gu = std::nullopt,
+                bool apply_concealment = true,
+                std::optional<double> concealment = std::nullopt);
+
+// sensor_occlusion.begin_tick / reset
+void occ_begin_tick(Mirror& m, double now_gt);
+void occ_reset(Mirror& m);
+
+// sensor_detection.reset_concealment_state / _latched
+void latch_reset(Mirror& m);
+bool latched(const Mirror& m, int64_t observer, int64_t target);
+
+// step_memo.forget() for sensor_detection._answers
+void memo_clear(Mirror& m);
+
+}  // namespace dauntless::combat

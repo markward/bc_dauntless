@@ -12,6 +12,7 @@ set(DAUNTLESS_COMBAT_SOURCES
     src/nebula_density.cc
     src/profile_eval.cc
     src/mirror.cc
+    src/sensor_detect.cc
 )
 
 add_library(dauntless_combat STATIC ${DAUNTLESS_COMBAT_SOURCES})

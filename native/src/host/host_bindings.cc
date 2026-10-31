@@ -21,6 +21,7 @@
 #include "dauntless/combat/nebula_density.h"
 #include "dauntless/combat/profile_eval.h"
 #include "dauntless/combat/py_math.h"
+#include "dauntless/combat/sensor_detect.h"
 #include "dauntless/transform_store.h"
 #include "platform/relaunch.h"
 
@@ -9432,5 +9433,72 @@ PYBIND11_MODULE(_dauntless_host, m) {
             }
             return d;
         });
+
+        // ── The detection kernel (sensor_detect.h) ───────────────────────
+        // Each answers from the mirror exactly as the Python function of the
+        // same name would. ValueError means "ask the Python": a ref the
+        // query reached is unrepresentable (-2) or gone, a set list holds
+        // such an entry, a transform is invalid, the nebula noise met a
+        // non-finite value, or the mirror cannot prove the Python's answer.
+        // Handles are Object rows; `now` is the game time.
+        m.def("combat_can_detect",
+              [](std::int64_t obs, std::int64_t tgt, double now, bool use_memo,
+                 std::optional<double> dist_sq, bool apply_concealment,
+                 std::optional<double> concealment) {
+                  return cb::can_detect(cb::mirror(), obs, tgt, now, use_memo,
+                                        dist_sq, apply_concealment,
+                                        concealment);
+              },
+              py::arg("obs"), py::arg("tgt"), py::arg("now"),
+              py::arg("use_memo"), py::arg("dist_sq") = py::none(),
+              py::arg("apply_concealment") = true,
+              py::arg("concealment") = py::none(),
+              "sensor_detection.can_detect; use_memo is step_memo.active().");
+        m.def("combat_concealment_at",
+              [](std::int64_t obj, double now) {
+                  return cb::concealment_at(cb::mirror(), obj, now);
+              },
+              py::arg("obj"), py::arg("now"),
+              "sensor_detection.concealment_at.");
+        m.def("combat_effective_sensor_range",
+              [](std::int64_t obj) {
+                  return cb::effective_sensor_range(cb::mirror(), obj);
+              },
+              py::arg("obj"), "sensor_detection.effective_sensor_range.");
+        m.def("combat_in_reach",
+              [](std::int64_t obs, std::int64_t tgt) {
+                  return cb::in_reach(cb::mirror(), obs, tgt);
+              },
+              py::arg("obs"), py::arg("tgt"), "sensor_detection.in_reach.");
+        m.def("combat_is_hidden_by_cloak",
+              [](std::int64_t tgt) {
+                  return cb::is_hidden_by_cloak(cb::mirror(), tgt);
+              },
+              py::arg("tgt"), "sensor_detection.is_hidden_by_cloak.");
+        m.def("combat_jammed",
+              [](std::int64_t obs, std::int64_t tgt) {
+                  return cb::jammed(cb::mirror(), obs, tgt);
+              },
+              py::arg("obs"), py::arg("tgt"), "sensor_detection.jammed.");
+        m.def("combat_occ_blocked",
+              [](std::int64_t obs, std::int64_t tgt, double now) {
+                  return cb::occ_blocked(cb::mirror(), obs, tgt, now);
+              },
+              py::arg("obs"), py::arg("tgt"), py::arg("now"),
+              "sensor_occlusion.blocked, with its per-set caches.");
+        m.def("combat_occ_begin_tick",
+              [](double t) { cb::occ_begin_tick(cb::mirror(), t); },
+              py::arg("t"), "sensor_occlusion.begin_tick.");
+        m.def("combat_occ_reset", [] { cb::occ_reset(cb::mirror()); },
+              "sensor_occlusion.reset (the caches and the tick time).");
+        m.def("combat_latch_reset", [] { cb::latch_reset(cb::mirror()); },
+              "sensor_detection.reset_concealment_state.");
+        m.def("combat_latched",
+              [](std::int64_t obs, std::int64_t tgt) {
+                  return cb::latched(cb::mirror(), obs, tgt);
+              },
+              py::arg("obs"), py::arg("tgt"), "sensor_detection._latched.");
+        m.def("combat_memo_clear", [] { cb::memo_clear(cb::mirror()); },
+              "step_memo.forget() for can_detect's answers.");
     }
 }

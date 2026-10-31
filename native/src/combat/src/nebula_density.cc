@@ -7,6 +7,7 @@
 #include "dauntless/combat/nebula_density.h"
 
 #include <cmath>
+#include <stdexcept>
 
 #include "dauntless/combat/py_math.h"
 
@@ -18,9 +19,20 @@ namespace {
 // no -0.0, so floor(-0.0) must come back +0.0 (`+ 0.0` does exactly that and
 // nothing else). Every later int<->float mix is exact: a floor of a double is
 // a double-representable integer, and `ix + 1` rounds the same in both.
-// (Python's floor raises on NaN/inf; density never reaches fbm with one,
-// because a NaN or infinite position has falloff 0.)
-inline double py_floor(double x) { return std::floor(x) + 0.0; }
+//
+// Python's floor RAISES on a non-finite value (ValueError on NaN,
+// OverflowError on inf). A NaN or infinite POSITION never gets here (its
+// falloff is 0, so density returns first), but a non-finite drift_t, freq or
+// seed at a point inside a sphere does, and so does a finite coordinate that
+// the octave doubling overflows. Python raises there; so does this
+// (std::invalid_argument, Python ValueError -- ruling R5), and the caller
+// falls back to the Python, which raises as it always did. Never a silent NaN.
+inline double py_floor(double x) {
+    if (!std::isfinite(x))
+        throw std::invalid_argument(
+            "combat nebula_density: math.floor of a non-finite value");
+    return std::floor(x) + 0.0;
+}
 
 inline double fract(double x) { return x - py_floor(x); }
 
@@ -90,6 +102,12 @@ double fbm(double x, double y, double z) {
         a *= 0.5;
     }
     return s;
+}
+
+void seed_for(double cx, double cy, double cz, double out[3]) {
+    out[0] = cx * 0.013 + 11.7;
+    out[1] = cy * 0.013 + 23.1;
+    out[2] = cz * 0.013 + 47.3;
 }
 
 double density(double px, double py, double pz, const Sphere* spheres,
