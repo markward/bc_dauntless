@@ -21,6 +21,7 @@
 #include "dauntless/combat/beam_trace.h"
 #include "dauntless/combat/fire_gates.h"
 #include "dauntless/combat/k1_fire_control.h"
+#include "dauntless/combat/k2_beams.h"
 #include "dauntless/combat/mirror.h"
 #include "dauntless/combat/nebula_density.h"
 #include "dauntless/combat/profile_eval.h"
@@ -9425,6 +9426,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_clear",
               [] {
                   cb::k1_kernel().clear();
+                  cb::k2_kernel().clear();
                   cb::mirror().clear();
               },
               "Drop every row (tests only; rows normally live as long as their "
@@ -9967,5 +9969,231 @@ PYBIND11_MODULE(_dauntless_host, m) {
         });
         m.def("combat_k1_reset_counts",
               [] { cb::k1_kernel().reset_counts(); });
+
+        // ── The K2 beam kernel (k2_beams.h) ──────────────────────────────
+        // One resumable session over the mirror: the `cb.phasers` loop. Each
+        // record is a tuple whose first element is a kind int
+        // (combat_k2_kinds) and whose LAST element is the write log since the
+        // previous record: a list of (handle, "_dwell", float). Layouts
+        // (handles -1 = None, xyz = a 3-tuple):
+        //   (DONE, writes)
+        //   (SYSTEM_STOP, system, writes)
+        //   (BANK_STOP, bank, writes)
+        //   (CONTACT, bank, target, ship, system, emitter_xyz,
+        //    target_pos_xyz, dist, aim_unit_xyz | None, impact_xyz,
+        //    normal_xyz | None, tier, bubble_xyz | None,
+        //    shields_block True / False / None, flush_dwell, writes)
+        //       tier: "mesh", "sphere", "fallback", "origin"
+        //   (RUN_PYTHON, ship, ship_pos, writes)
+        //   (ASK, query, *args, writes)    -> reply combat_k2_answer
+        // The context dict (combat_k2_begin: every key optional, defaults
+        // below; combat_k2_set_ctx: only the keys given are replaced):
+        //   "npc_shields_off": bool (False)
+        //   "player": Object handle or -1 (-1)
+        //   "view_offsets": {Set handle: (x, y, z) or None} ({})
+        //   "iids": {Object handle: ship_instances value} ({}): None is
+        //       absent, an InstanceId traces, anything else is "not an
+        //       InstanceId" (the sphere tier)
+        //   "trace": bool (True): the installed hooks; False when
+        //       host_io._h is None (every trace a miss)
+        //   "python_ships": iterable of Object handles to RUN_PYTHON (())
+        static constexpr const char* kK2Tiers[] = {"mesh", "sphere",
+                                                   "fallback", "origin"};
+        auto k2_apply_ctx = [](cb::K2Context& c, const py::dict& d) {
+            if (d.contains("npc_shields_off"))
+                c.npc_shields_off = d["npc_shields_off"].cast<bool>();
+            if (d.contains("player"))
+                c.player = d["player"].cast<std::int64_t>();
+            if (d.contains("view_offsets")) {
+                c.view_offsets.clear();
+                for (auto kv : d["view_offsets"].cast<py::dict>()) {
+                    std::optional<cb::Vec3> off;
+                    if (!kv.second.is_none())
+                        off = kv.second.cast<std::array<double, 3>>();
+                    c.view_offsets[kv.first.cast<std::int64_t>()] = off;
+                }
+            }
+            if (d.contains("iids")) {
+                c.iids.clear();
+                for (auto kv : d["iids"].cast<py::dict>()) {
+                    if (kv.second.is_none()) continue;  // dict.get -> None
+                    cb::K2Context::Iid e;
+                    if (py::isinstance<scenegraph::InstanceId>(kv.second)) {
+                        const auto id = kv.second.cast<scenegraph::InstanceId>();
+                        e.id = cb::InstanceId{id.index, id.generation};
+                    } else {
+                        e.bad = true;
+                    }
+                    c.iids[kv.first.cast<std::int64_t>()] = e;
+                }
+            }
+            if (d.contains("trace"))
+                c.hooks = d["trace"].cast<bool>() ? cb::installed_trace_hooks()
+                                                  : cb::TraceHooks{};
+            if (d.contains("python_ships")) {
+                c.python_ships.clear();
+                for (auto h : d["python_ships"])
+                    c.python_ships.insert(h.cast<std::int64_t>());
+            }
+        };
+        m.def("combat_k2_kinds", [] {
+            py::dict d;
+            for (int i = 0; i < static_cast<int>(cb::K2Kind::kCount); ++i)
+                d[cb::k2_kind_name(static_cast<cb::K2Kind>(i))] = i;
+            return d;
+        });
+        m.def("combat_k2_begin",
+              [k2_apply_ctx](std::vector<std::int64_t> ships, double dt,
+                             double now, bool use_memo, double drift_now,
+                             const py::dict& ctx) {
+                  cb::K2Context c;
+                  c.hooks = cb::installed_trace_hooks();
+                  k2_apply_ctx(c, ctx);
+                  cb::k2_kernel().begin(std::move(ships), dt, now, use_memo,
+                                        drift_now, std::move(c));
+              },
+              py::arg("ship_handles"), py::arg("dt"), py::arg("now"),
+              py::arg("use_memo"), py::arg("drift_now"), py::arg("ctx"),
+              "The cb.phasers loop over Object handles (-1: no row). `now` "
+              "and `drift_now` are K1's can_detect clocks "
+              "(weapon_subsystems._game_time(), native_combat.now()); "
+              "use_memo step_memo.active(); ctx as above.");
+        m.def("combat_k2_set_ctx",
+              [k2_apply_ctx](const py::dict& ctx) {
+                  cb::K2Context c = cb::k2_kernel().context();
+                  k2_apply_ctx(c, ctx);
+                  cb::k2_kernel().set_context(std::move(c));
+              },
+              py::arg("ctx"), "Replace the given context keys (on resume).");
+        m.def("combat_k2_next", [vec] {
+            // The GIL is HELD for the walk (ruling J), as combat_k1_next:
+            // the kernel and the trace hooks touch no Python object.
+            cb::K2Record r = cb::k2_kernel().next();
+            py::list writes;
+            for (const cb::K2Write& w : r.writes)
+                writes.append(py::make_tuple(w.handle, w.field, w.value));
+            const int kind = static_cast<int>(r.kind);
+            auto opt = [&vec](const std::optional<cb::Vec3>& v) -> py::object {
+                return v ? py::object(vec(*v)) : py::object(py::none());
+            };
+            switch (r.kind) {
+                case cb::K2Kind::DONE:
+                    return py::make_tuple(kind, writes);
+                case cb::K2Kind::RUN_PYTHON:
+                    return py::make_tuple(kind, r.a, r.b, writes);
+                case cb::K2Kind::CONTACT: {
+                    const cb::K2Contact& c = r.contact;
+                    py::object shields = py::none();
+                    if (c.shields_block) shields = py::bool_(*c.shields_block);
+                    py::list items;
+                    items.append(kind);
+                    items.append(c.bank);
+                    items.append(c.target);
+                    items.append(c.ship);
+                    items.append(c.system);
+                    items.append(vec(c.emitter));
+                    items.append(vec(c.target_pos));
+                    items.append(c.dist);
+                    items.append(opt(c.aim_unit));
+                    items.append(vec(c.hit.point));
+                    items.append(opt(c.hit.normal));
+                    items.append(kK2Tiers[static_cast<int>(c.hit.tier)]);
+                    items.append(opt(c.bubble));
+                    items.append(shields);
+                    items.append(c.flush_dwell);
+                    items.append(writes);
+                    return py::tuple(items);
+                }
+                case cb::K2Kind::ASK: {
+                    py::list items;
+                    items.append(kind);
+                    items.append(cb::k2_query_name(r.query));
+                    for (const cb::K2Arg& a : r.args) {
+                        items.append(std::visit(
+                            [&vec](const auto& x) -> py::object {
+                                using T = std::decay_t<decltype(x)>;
+                                if constexpr (std::is_same_v<T, std::monostate>)
+                                    return py::none();
+                                else if constexpr (std::is_same_v<T, cb::Vec3>)
+                                    return vec(x);
+                                else
+                                    return py::cast(x);
+                            },
+                            a));
+                    }
+                    items.append(writes);
+                    return py::tuple(items);
+                }
+                default:  // SYSTEM_STOP, BANK_STOP
+                    return py::make_tuple(kind, r.a, writes);
+            }
+        }, "The session's next record (see combat_k2_kinds).");
+        m.def("combat_k2_answer",
+              [](py::object v) {
+                  cb::K2Answer a;
+                  switch (cb::k2_kernel().awaiting()) {
+                      case cb::K2Query::is_dead:
+                      case cb::K2Query::can_detect:
+                      case cb::K2Query::shields_block:
+                          a.flag = static_cast<bool>(py::bool_(v));
+                          break;
+                      case cb::K2Query::aim_point: {
+                          const auto t = v.cast<py::tuple>();
+                          a.point = t[0].cast<std::array<double, 3>>();
+                          a.flag = static_cast<bool>(py::bool_(t[1]));
+                          break;
+                      }
+                      case cb::K2Query::bubble:
+                          if (v.is_none())
+                              a.none = true;
+                          else
+                              a.point = v.cast<std::array<double, 3>>();
+                          break;
+                      case cb::K2Query::resolve_hit: {
+                          const auto t = v.cast<py::tuple>();
+                          a.point = t[0].cast<std::array<double, 3>>();
+                          if (!t[1].is_none())
+                              a.normal = t[1].cast<std::array<double, 3>>();
+                          const auto tier = t[2].cast<std::string>();
+                          int k = 0;
+                          while (k < 4 && tier != kK2Tiers[k]) ++k;
+                          if (k == 4)
+                              throw py::value_error("combat K2: unknown tier " +
+                                                    tier);
+                          a.tier = static_cast<cb::ResolvedHit::Tier>(k);
+                          break;
+                      }
+                      default:  // bank_step (None), or no ASK: answer() raises
+                          break;
+                  }
+                  cb::k2_kernel().answer(a);
+              },
+              py::arg("value"),
+              "ASK's reply, shaped per query (k2_beams.h): a bool; "
+              "aim_point ((x, y, z), has_sub); bubble (x, y, z) or None; "
+              "resolve_hit ((x, y, z), normal or None, tier); bank_step None.");
+        m.def("combat_k2_end", [] { cb::k2_kernel().end(); },
+              "End the session (it must have returned DONE).");
+        m.def("combat_k2_abandon", [] { cb::k2_kernel().abandon(); },
+              "End the session whatever its state (exception path).");
+        m.def("combat_k2_open", [] { return cb::k2_kernel().open(); });
+        m.def("combat_k2_counts", [] {
+            const auto& c = cb::k2_kernel().counts();
+            py::dict d;
+            d["k2_records"] = c.records;
+            d["k2_python_ships"] = c.python_ships;
+            d["k2_asks"] = c.asks;
+            py::dict why, queries;
+            for (size_t i = 0; i < c.why.size(); ++i)
+                why[cb::k2_why_name(static_cast<cb::K2Why>(i))] = c.why[i];
+            for (size_t i = 0; i < c.queries.size(); ++i)
+                queries[cb::k2_query_name(static_cast<cb::K2Query>(i))] =
+                    c.queries[i];
+            d["k2_python_reasons"] = why;
+            d["k2_ask_queries"] = queries;
+            return d;
+        });
+        m.def("combat_k2_reset_counts",
+              [] { cb::k2_kernel().reset_counts(); });
     }
 }

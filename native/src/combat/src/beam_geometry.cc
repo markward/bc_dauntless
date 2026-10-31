@@ -123,7 +123,7 @@ DwellResult accumulate_dwell(const Mirror& m, int64_t bank, double dt) {
     const SubsystemRow& b = sub(m, bank);
     // IsBeamOn: `self._firing and self._beam_on_countdown <= 0.0`
     if (!(b._firing != 0 && b._beam_on_countdown <= 0.0))
-        return {0.0, b._dwell};
+        return {0.0, b._dwell, false};
     if (b._dwell > m.globals().BEAM_DWELL_FLUSH_S)
         return {b._dwell + dt, 0.0};  // the flush frame counts
     return {0.0, b._dwell + dt};

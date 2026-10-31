@@ -52,6 +52,9 @@ Vec3 strip_emit_position(Mirror& m, int64_t bank, const Vec3& target_world,
 struct DwellResult {
     double flushed = 0.0;
     double new_dwell = 0.0;
+    // Whether the Python assigns `_dwell` at all: accumulate_dwell's
+    // not-beam-on early return writes nothing; take_dwell always writes.
+    bool wrote = true;
 };
 DwellResult accumulate_dwell(const Mirror& m, int64_t bank, double dt);
 DwellResult take_dwell(const Mirror& m, int64_t bank);
