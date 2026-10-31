@@ -86,6 +86,8 @@ Findings that shape the design:
    Checked bit for bit, as in the passive-state work.
 3. The C++ work runs **without holding the interpreter lock**, so it can be
    split across cores later if a measurement says it is worth it.
+   (Phase 1b amends this for K1: it holds the GIL until the worker-thread
+   phase, ruling J in §9.2.)
 
 ## 4. Non-goals
 
@@ -379,6 +381,7 @@ nebula and a cloak fight).
 - **R9.** On a fallback query the Python occlusion caches are used; a later native query at the same game time may recompute where Python would have hit its cache. Reachable only when a set holds an unrepresentable entry. Cost if wrong: an occlusion answer can differ within one game time in that rare state.
 - **R10.** The zero-sphere MetaNebula seed gap (Python caches `seed_for(0,0,0)` if queried before any sphere; native derives from the first sphere) is accepted. No stock SDK path does it (0 hits). Cost if wrong: a mod that does so gets a different nebula noise seed with native on.
 - **R11.** The memo sibling of R9: a pair that falls back inside a combat step and later answers natively in the same step (or the reverse) without a `forget()` can return a different answer than a Python-only run. Cost if wrong: one stale-vs-fresh answer within one step in that rare state.
+- **R12.** Torpedoes get no mirror row, so they run in Python. Cost if wrong: the torpedo path is not sped up by the native path.
 
 **Lifecycle, lock and fallbacks** (settled earlier, same plan): mirror rows live
 exactly as long as their Python object (registered in `__init__`, removed by its
@@ -420,6 +423,45 @@ count (SIG-157), and one capture cannot resolve ~25% on upkeep rows
 is about 91% of `gl.ai` time and nearly all of `gl.motion`. Mark has ideas
 about reframing how the SDK scripts are driven once the engine is optimised.
 That conversation should happen before an AI design is written.
+
+### 9.2 Phase 1b rulings and measurement (K1 fire control)
+
+Branch `perf/native-combat-1b`, forked from `perf/native-combat` at `93c690f4d`. K1 is the held-weapon walk (beams, pulses, torpedo tubes): the kernel returns one record per call and Python applies each effect, then resumes it. Switch `DAUNTLESS_NATIVE_COMBAT` as in 1a, **default off**. `native_combat.counts()["k1_python_reasons"]` says why a system fell back to Python.
+
+**Rulings from the plan** (what; cost if wrong is in the plan):
+
+- **P1.** No epoch check in K1: one record per call, resumed on the live mirror, so no decision spans a Python effect.
+- **P2.** Whole-system Python fallback (`RUN_PYTHON`) for unrepresentable state, checked before the first write.
+- **P3.** No per-decision audit for K1 (effects post events); the oracle is the differential tests plus the per-tick mirror audit.
+- **P4.** The Python mount memo is not filled by K1; the phaser step computes fresh until K2 ports phasers.
+- **P5.** `_target_offset` uses the walk's own offset object, fetched with a `WALK_START` record.
+- **P6.** Pulse launch speed and lifetime are cached at bank registration and refreshed on mission swap.
+- **P7.** Kernel-written fields are copied back to Python from a write log, not native-only; Python state and passive-state machinery stay valid.
+
+**Rulings from the controller** (each cost-if-wrong in the SDD ledger):
+
+- **A.** Every K1 record carries `writes` as its last element, `WALK_START` included.
+- **B.** Work in `native-combat-1b`; the plan's worktree line is superseded.
+- **C.** The 120-tick differential drives ticks as the 1a step differential does.
+- **D.** No standalone behaviour-neutrality test; the existing fire tests with native off are the proof.
+- **E.** The timing captures launch the game, so they wait for Mark's go-ahead.
+- **F.** Implementers run focused test files only.
+- **G.** Inline Python epsilon literals are ported verbatim with a source-line comment; only named module constants are pushed.
+- **H.** Two-stage fallback: a pre-scan before the first write for a system, then after the first record an `ASK` record has Python answer the one question on live objects (can_fire, fire, retry, is_dead, is_member, group_step, reseed, is_dumb), counted as `k1_asks`.
+- **I.** The final whole-branch review ran while the timing waited.
+- **J.** K1 holds the GIL (no release) until the worker-thread phase, amending §3.3: the packaged log thread and mid-walk Python callbacks make a release unsafe now. Cost: none now; revisit with threading.
+
+**Mark's natural-pose rule (Task 6b).** `has_posed_parts` is true when some part's current pose differs from identity (the NIF's natural pose), not when the ship has a rig. Mark's convention: author "red" as the natural mesh pose (the Bird of Prey already does). At identity Python's rigged math returns the original point, so native is bit-identical; `tick_ship` re-pushes the flag when a pose leaves or returns to identity; a mid-transition ship still falls back. Fallbacks in 120 headless frames of `combat_stress`: 929 → 222 (SIG-160).
+
+**Measurement** (perf register C-238 to C-241, SIG-158 to SIG-161; **Debug**, 64 ships, one capture per condition, HEAD `34f1ecba0`; medians of reports 3-11, value ÷ average ticks per frame). Fight, per tick off → on: `cb.held_weapons` 2.870 → 1.238 (-57%) and `sim.combat` 6.123 → 4.142, total sim 12.684 → 11.738 (-7.5%, inside SIG-147's spread). Judged against §7.6.6: the held-weapon scope is **down by at least half (met)** and total sim per tick is **not higher (met)**. Projectiles in flight: median 65 vs 55, 15% apart, under the plan's 25% limit, so the pair is comparable, with the caveats in SIG-158. Quiet: flat (5.454 → 5.524, +1.3%). Goal 1 (combat step at most 1 ms a tick) is not met: 4.142 ms. The extra costs (switch-off descriptor writes, re-pinning, session copy, the ~1.9 µs override re-check, write-log application) are not separable at this resolution (SIG-161).
+
+**Open after phase 1b:**
+
+- Engine nondeterminism unrelated to native: the avoidance phase is keyed on object id, sound gating reads the wall clock, and the first fight in a process diverges for a cause not found. The differentials pin the first two in test code only.
+- The latent nebula-drift clock bug from 1a (`sensor_detection._game_time()` is always 0.0): Mark's call.
+- A system row dropped while its walk runs is a documented invariant; `run_k1` raises `RuntimeError` if it happens.
+- Tractor beams and swung-wing (posed) ships stay in Python.
+- The default flip to on is a separate change after Mark's live check (`DAUNTLESS_NATIVE_COMBAT=1 ./build/dauntless --developer`: a big Quick Battle with Klingon, Romulan and Federation ships, torpedoes and Manual Aim).
 
 ## 10. Left for later / decisions not taken here
 
