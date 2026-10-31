@@ -11,6 +11,10 @@ IN_FLIGHT = (
     ("engine.appc.projectiles", "_active"),
     ("engine.appc.hit_vfx", "_active"),
     ("engine.appc.ship_death", "_active"),
+    # A hull-0 ship's pending subsystem cascade: left queued, it destroys
+    # the dead arm's ship's subsystems in the next arm (or test), posting
+    # ET_SUBSYSTEM_DESTROYED there.
+    ("engine.appc.subsystem_cascade", "_active"),
     ("engine.appc.object_lifetime", "_timed"),
     ("engine.appc.visible_damage", "_pending"),
     ("engine.appc.internal_blast", "_pending"),

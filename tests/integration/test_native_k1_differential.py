@@ -105,6 +105,18 @@ def _vec(p):
     return repr(p)
 
 
+def _seed_every_rng(seed):
+    """Every RNG a fight draws on, to one state: the module `random`, the
+    SDK's App.g_kSystemWrapper.GetRandomNumber (unseeded by default) and the
+    engine's two process-lifetime streams (avoidance, random unit vectors)."""
+    from engine.appc import collision_avoidance
+    from engine.appc.math import reset_random_unit_vector_rng
+    random.seed(seed)
+    App.g_kSystemWrapper.SetRandomSeed(seed)
+    collision_avoidance._rng.seed(collision_avoidance._AVOID_RNG_SEED)
+    reset_random_unit_vector_rng()
+
+
 class _Scene:
     """combat_stress, loaded fresh, with the native switch set after the
     load; the op stream, the per-tick record and the full event log."""
@@ -115,7 +127,7 @@ class _Scene:
         mp.setenv("DAUNTLESS_COMBAT_SHIPS", ships)
         nc.reset()
         App.g_kTimerManager._time = 0.0
-        random.seed(0)
+        _seed_every_rng(0)      # the load's AI draws (initial staggers) too
         headless_mission.clear_in_flight()      # the other arm's torpedoes
         headless_mission.load("engine.dev_missions.combat_stress")
         host_loop._reset_sensor_state()
@@ -727,6 +739,8 @@ def test_rigged_bop_at_red_runs_native(monkeypatch):
             assert all(part_pose.is_identity(p)
                        for p in bop._articulation_poses.values())
             seen[scene.native, "home"] = nc.counts()
+            # From here on, walks AFTER the wings came home only.
+            scene.walked_names.clear()
 
     ref, nat = _both(monkeypatch, 1, setup=setup, before_frame=before_frame)
     before, walked_before = seen[True, "before"]
@@ -735,10 +749,141 @@ def test_rigged_bop_at_red_runs_native(monkeypatch):
     assert posed(before) == (0, 0, 0, 0), before
     assert any(n.startswith("Enemy-4/") for n in walked_before), \
         walked_before
-    # In the window: Python, as before Task 6b.
+    # In the window: Python, as before Task 6b -- its own systems
+    # (posed_ship) and those aiming at it (posed_target).
     assert posed(home)[0] > 0 and posed(home)[2] > 0, posed(home)
-    # Home again: no further articulation fallback to the end.
+    assert posed(home)[1] > 0, posed(home)
+    # Home again: no further articulation fallback to the end, and the BoP
+    # walks natively again (walked_names was cleared at home).
     assert posed(nat.counts) == posed(home), (home, nat.counts)
-    assert any(n.startswith("Enemy-4/") for n in nat.walked_names)
+    assert any(n.startswith("Enemy-4/") for n in nat.walked_names), \
+        nat.walked_names
     print("k1 rigged BoP differential: before %r home %r end %r"
           % (posed(before), posed(home), posed(nat.counts)))
+
+
+# ── Ruling P3: the real AI's own StartFiring cadence, through GameLoop.tick ─
+
+LOOP_TICKS = 1500
+# Hull left on every ship (and shields down), so the fight kills inside the
+# window: hull 0 at ~550 ticks, the death sequence done (IsDead) by ~1300.
+LOOP_HULL_FRACTION = 0.05
+
+
+def _deterministic_loop(mp):
+    """The two process-lifetime inputs a GameLoop-driven fight reads that a
+    second load would otherwise see differently. Both arms get the same
+    stand-ins, so the comparison stays a native-vs-Python one:
+
+    * ai_optimized._phase_key keys the avoidance preprocessor's first-reschedule
+      phase on ship.GetObjID(), a process-wide counter (a second load's ships
+      get other ids, so other phases): keyed on the ship's name instead.
+    * hit_feedback / crew_speech / speak_queue gate sounds on time.monotonic()
+      (wall clock), and a played sound draws App.g_kSystemWrapper's RNG: they
+      read the game clock instead."""
+    import types
+    import zlib
+    from engine.appc import ai_optimized, crew_speech, hit_feedback
+    from engine.appc import speak_queue
+
+    def phase_key(node):
+        ai = node.__dict__.get("pCodeAI")
+        ship = ai.GetShip() if ai is not None else None
+        return zlib.crc32(ship.GetName().encode()) if ship is not None else 0
+
+    mp.setattr(ai_optimized, "_phase_key", phase_key)
+    clock = types.SimpleNamespace(
+        monotonic=lambda: App.g_kTimerManager.get_time())
+    for module in (hit_feedback, crew_speech, speak_queue):
+        mp.setattr(module, "time", clock)
+    hit_feedback._last_dispatch_time.clear()
+
+
+def _loop_arm(monkeypatch, env, ticks=LOOP_TICKS):
+    """One fresh combat_stress driven the host's way WITH GameLoop.tick: per
+    tick the timers, the real AI (QuickBattle's BasicAttack: its FireScript
+    StartFiring -> K1 system sessions with native on), motion and
+    subsystems, then host_loop._advance_weapons and _advance_combat (the
+    held-weapon pump -> K1), then the per-tick record."""
+    with monkeypatch.context() as mp:
+        scene = _Scene(mp, env)
+        mp.setenv("DAUNTLESS_NATIVE_COMBAT",
+                   env["DAUNTLESS_NATIVE_COMBAT"])
+        loop = game_loop.GameLoop()         # configure() reads the env
+        assert nc.enabled() is scene.native
+        _deterministic_loop(mp)
+        for ship in scene.ships:
+            hull = ship.GetHull()
+            hull.SetCondition(hull.GetMaxCondition() * LOOP_HULL_FRACTION)
+            shields = ship.GetShields()
+            if shields is not None:
+                for face in range(6):
+                    shields.SetCurShields(face, 0.0)
+        scene.starts = 0
+        start_firing = ws.WeaponSystem.StartFiring
+
+        def counting_start(system, *args, _orig=start_firing, **kw):
+            scene.starts += 1
+            return _orig(system, *args, **kw)
+        mp.setattr(ws.WeaponSystem, "StartFiring", counting_start)
+        scene.k1_systems = 0
+        k1_system = nc.k1_system
+
+        def counting_k1_system(system, dt, _orig=k1_system):
+            scene.k1_systems += 1
+            return _orig(system, dt)
+        mp.setattr(nc, "k1_system", counting_k1_system)
+        _seed_every_rng(SEED)       # the AI draws on all of them
+        while scene.tick < ticks:
+            scene.tick += 1
+            loop.tick()
+            ships = list(iter_ships())
+            host_loop._advance_weapons(ships, TICK_DELTA)
+            host_loop._advance_combat(ships, TICK_DELTA, player=scene.player,
+                                      push_render_data=False)
+            scene.record()
+            sensor_contacts.tick(scene.player,
+                                 App.g_kUtopiaModule.GetGameTime())
+        if scene.native:
+            nc.audit_mirror()
+            scene.audit = list(nc.audit_failures())
+            assert _h.combat_k1_depth() == 0
+        else:
+            scene.audit = []
+        scene.counts = nc.counts()
+        return scene
+
+
+def test_k1_matches_python_under_the_game_loop_ai(monkeypatch):
+    """Ruling P3's gap: the AI's OWN StartFiring cadence (no op stream), with
+    GameLoop.tick driving it, native vs Python, until ships die. A first,
+    discarded arm runs before the two compared ones: the first combat_stress
+    fight in a process diverged from every later one in this harness
+    (observed in the AI's tick-1 avoidance scheduling; the cause was not
+    chased), while any two later arms matched exactly."""
+    import time
+    t0 = time.perf_counter()
+    _loop_arm(monkeypatch, OFF, ticks=LOOP_TICKS)       # warm-up, discarded
+    ref = _loop_arm(monkeypatch, OFF)
+    nat = _loop_arm(monkeypatch, ON)
+    _compare(ref, nat)
+    # The AI fired on its own, and with native on its StartFiring walks
+    # went through K1 (system sessions), as did the pump.
+    assert ref.starts > 0 and nat.starts == ref.starts, (ref.starts,
+                                                         nat.starts)
+    assert nat.k1_systems > 0 and ref.k1_systems == 0, (nat.k1_systems,
+                                                        ref.k1_systems)
+    for k in (PHASERS, TORPEDOES):
+        assert nat.walked.get(k, 0) > 0, nat.walked
+    assert nat.fired, nat.fired
+    for et in (App.ET_WEAPON_FIRED, App.ET_WEAPON_HIT, App.ET_OBJECT_EXPLODING,
+               App.ET_OBJECT_DESTROYED):
+        assert et in _kinds(ref), et
+    # At least one ship destroyed inside the window.
+    ships = slice(len(ref.systems) + len(ref.weapons), None)
+    dead = {r[0] for r in ref.log[-1][ships] if r[1] == ("int", 1)}
+    assert dead, ref.log[-1][ships]
+    print("k1 game-loop differential: %.1f s, starts %d, k1 system "
+          "sessions %d, dead %r, counts %r walked %r fired %r"
+          % (time.perf_counter() - t0, ref.starts, nat.k1_systems,
+             sorted(dead), nat.counts, nat.walked, nat.fired))
