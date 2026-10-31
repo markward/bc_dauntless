@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <iterator>
+#include <memory>
 #include <limits>
 #include <optional>
 #include <stdexcept>
@@ -129,9 +130,22 @@ enum class St : int32_t {
 
 enum class Caller : int32_t { Lit, Delta };
 
+// The mirror value one logged write replaced.
+struct K1Undo {
+    enum class Type : int32_t { F, I, Ref, Ids, Offset } type = Type::F;
+    int64_t h = -1;
+    Field f = Field::kCount;
+    double d = 0.0;
+    int64_t i = 0;
+    std::vector<int64_t> ids;
+    bool set = false;
+    Vec3 v{0, 0, 0};
+};
+
 struct K1Kernel::Session {
     bool pump = false;
-    std::vector<int64_t> ships;
+    // Shared, so next()'s per-call backup of the session copies no list.
+    std::shared_ptr<const std::vector<int64_t>> ships;
     double dt = 0.0, now = 0.0, drift_now = 0.0;
     bool use_memo = false;
     St st = St::PUMP_FOR_GETTER;
@@ -159,12 +173,45 @@ struct K1Kernel::Session {
     std::vector<int64_t> retry;
     size_t retry_pos = 0;
 
-    // The write log since the last record, and the replies Python owes.
+    // The write log since the last record, and, one for one, the mirror
+    // value each write replaced (rolled back if the walk throws before the
+    // writes reach Python).
     std::vector<K1Write> writes;
+    std::vector<K1Undo> undo;
     bool awaiting_offset = false;
     bool awaiting_answer = false, has_answer = false;
     std::optional<int64_t> answer;
 };
+
+static K1Undo undo_of(K1Undo::Type type, int64_t h, Field f) {
+    K1Undo u;
+    u.type = type;
+    u.h = h;
+    u.f = f;
+    return u;
+}
+
+// Undo the session's logged writes from `mark` on, newest first, and drop
+// them from the log: they never reached Python.
+static void k1_roll_back(Mirror& m, K1Kernel::Session& s, size_t mark) {
+    while (s.undo.size() > mark) {
+        const K1Undo& u = s.undo.back();
+        switch (u.type) {
+            case K1Undo::Type::F: m.set_f(u.h, u.f, u.d); break;
+            case K1Undo::Type::I: m.set_i(u.h, u.f, u.i); break;
+            case K1Undo::Type::Ref: m.set_ref(u.h, u.f, u.i); break;
+            case K1Undo::Type::Ids: m.set_ids(u.h, u.f, u.ids); break;
+            case K1Undo::Type::Offset:
+                if (u.set)
+                    m.set_fv(u.h, u.f, {u.v[0], u.v[1], u.v[2]});
+                else
+                    m.set_fv(u.h, u.f, {});
+                break;
+        }
+        s.undo.pop_back();
+    }
+    s.writes.resize(mark);
+}
 
 namespace {
 
@@ -206,24 +253,52 @@ private:
     void log(int64_t h, const char* field, K1Value v) {
         s_.writes.push_back(K1Write{h, field, std::move(v)});
     }
+    // Every write reads the value it replaces first (a gone row throws there,
+    // before anything is changed), writes the mirror, then logs.
     void write_timer(int64_t h, double v) {
+        K1Undo u = undo_of(K1Undo::Type::F, h, Field::_fire_timer);
+        u.d = m_.get_f(h, Field::_fire_timer);
         m_.set_f(h, Field::_fire_timer, v);
+        s_.undo.push_back(std::move(u));
         log(h, "_fire_timer", v);
     }
+    void write_i(int64_t h, Field f, const char* name, int64_t v, K1Value lv) {
+        K1Undo u = undo_of(K1Undo::Type::I, h, f);
+        u.i = m_.get_i(h, f);
+        m_.set_i(h, f, v);
+        s_.undo.push_back(std::move(u));
+        log(h, name, std::move(lv));
+    }
     void write_flag(int64_t h, Field f, const char* name, bool v) {
-        m_.set_i(h, f, v ? 1 : 0);
-        log(h, name, v);
+        write_i(h, f, name, v ? 1 : 0, v);
     }
     void write_int(int64_t h, Field f, const char* name, int64_t v) {
-        m_.set_i(h, f, v);
-        log(h, name, v);
+        write_i(h, f, name, v, v);
     }
     void write_target(int64_t h, int64_t t) {
+        K1Undo u = undo_of(K1Undo::Type::Ref, h, Field::_target);
+        u.i = m_.get_ref(h, Field::_target);  // a stale ref reads -1
         m_.set_ref(h, Field::_target, t);
+        s_.undo.push_back(std::move(u));
         log(h, "_target", t);
+    }
+    void write_target_list(int64_t h, std::vector<int64_t> v) {
+        K1Undo u = undo_of(K1Undo::Type::Ids, h, Field::_target_list);
+        const SubsystemRow* r = subrow(h);
+        if (!r) lost("the walked system's row is gone");
+        u.ids = r->_target_list;  // raw: stale entries kept as they were
+        m_.set_ids(h, Field::_target_list, v);
+        s_.undo.push_back(std::move(u));
+        log(h, "_target_list", std::move(v));
     }
     // `_target_offset = offset` (the walk's offset object, ruling P5) or None.
     void write_target_offset(int64_t h, bool walk_offset) {
+        K1Undo u = undo_of(K1Undo::Type::Offset, h, Field::_target_offset);
+        const SubsystemRow* r = subrow(h);
+        if (!r) lost("bank row is gone");
+        u.set = r->target_offset_set;
+        u.v = r->_target_offset;
+        s_.undo.push_back(std::move(u));
         if (walk_offset) {
             const Vec3& o = *s_.offset;
             m_.set_fv(h, Field::_target_offset, {o[0], o[1], o[2]});
@@ -244,6 +319,7 @@ private:
         r.c = c;
         r.writes = std::move(s_.writes);
         s_.writes.clear();
+        s_.undo.clear();  // delivered: Python applies them
         s_.st = next;
         ++c_.records;
         if (kind == K1Kind::RUN_PYTHON) ++c_.python_systems;
@@ -332,6 +408,16 @@ bool Walker::prescan(int64_t sys, int64_t pump_ship) const {
         if (held != -1) {
             const ObjectRow* ho = objrow(held);
             if (!ho || !ho->has_real_is_dead || !xform_ok(m_, *ho)) return false;
+            // The phaser range gate runs AFTER can_detect (which writes its
+            // memo and latch): everything it reads must be answerable here,
+            // so no gate can throw once a side-effecting one has run.
+            // _same_set reads both containing sets.
+            auto set_ok = [&](int64_t h) {
+                return h == -1 || (h >= 0 && m_.set(h) != nullptr);
+            };
+            if (kind == kPhaserSystem &&
+                (!set_ok(po->_containing_set) || !set_ok(ho->_containing_set)))
+                return false;
         }
     }
 
@@ -489,8 +575,11 @@ Walker::Outcome Walker::decide_beam(int64_t bank, int64_t target) {
 // (world_dir_xyz, target_used).
 Walker::Outcome Walker::decide_pulse(int64_t bank, int64_t target) {
     Outcome o;
-    // if not self.CanFire(): return False
-    if (!can_fire(m_, bank, s_.now).ok) return o;
+    // if not self.CanFire(): return False  (a reported latch clear is
+    // written first, as decide_beam; the pulse gate never reports one today)
+    const CanFireResult cf = can_fire(m_, bank, s_.now);
+    if (cf.clear_depleted) write_flag(bank, Field::_depleted, "_depleted", false);
+    if (!cf.ok) return o;
     // script / importlib.import_module(script): resolved by Python (P6); a
     // missing one prints an announcement only Python can make.
     if (!subrow(bank)->module_ok)
@@ -534,7 +623,10 @@ Walker::Outcome Walker::decide_pulse(int64_t bank, int64_t target) {
 // TorpedoTube.Fire (WS:3324-3351), up to the stamp. Decision: (target_used,).
 Walker::Outcome Walker::decide_tube(int64_t bank, int64_t target) {
     Outcome o;
-    if (!can_fire(m_, bank, s_.now).ok) return o;
+    // As decide_beam (the tube gate never reports a latch clear today).
+    const CanFireResult cf = can_fire(m_, bank, s_.now);
+    if (cf.clear_depleted) write_flag(bank, Field::_depleted, "_depleted", false);
+    if (!cf.ok) return o;
     if (target != -1) {
         // aim_point = _resolve_torpedo_aim_point(self, target): the tube's
         // STORED _target_offset (the previous shot's).
@@ -563,8 +655,9 @@ K1Record Walker::run() {
         switch (s_.st) {
         // ── host_loop._pump_held_weapons ──────────────────────────────────
         case St::PUMP_FOR_GETTER: {
-            if (s_.ship_pos >= s_.ships.size()) return emit(K1Kind::DONE, St::DONE);
-            const int64_t ship = s_.ships[s_.ship_pos];
+            if (s_.ship_pos >= s_.ships->size())
+                return emit(K1Kind::DONE, St::DONE);
+            const int64_t ship = (*s_.ships)[s_.ship_pos];
             const int pos = static_cast<int>(s_.ship_pos);
             const ObjectRow* so = objrow(ship);
             // A ship the mirror cannot name: Python runs each getter's body.
@@ -637,10 +730,9 @@ K1Record Walker::run() {
             std::vector<int64_t> kept;
             for (const int64_t t : sysrow()._target_list)
                 if (!ship_dead(m_, t)) kept.push_back(t);
-            m_.set_ids(s_.sys, Field::_target_list, kept);
             // target = self._target_list[0] if self._target_list else None
             s_.target = kept.empty() ? -1 : kept.front();
-            log(s_.sys, "_target_list", std::move(kept));
+            write_target_list(s_.sys, std::move(kept));
             // offset = self._live_held_offset(): Python's object (ruling P5).
             s_.offset.reset();
             s_.awaiting_offset = true;
@@ -663,7 +755,10 @@ K1Record Walker::run() {
             if (sysrow()._single_fire) {
                 int64_t lit = -1;
                 for (const int64_t c : sysrow()._children) {
-                    if (!named_leaf(c)) lost("unnamed child before any effect");
+                    // The pre-scan named every child, and nothing ran in
+                    // Python between it and here but WALK_START's offset
+                    // reply (no effect, no handler).
+                    if (!named_leaf(c)) lost("a child became unnamed before the first effect");
                     if (subrow(c)->_firing) {
                         lit = c;
                         break;
@@ -856,26 +951,11 @@ K1Record Walker::run() {
             // the whole Fire.
             const int64_t w = s_.tf_weapon;
             const size_t mark = s_.writes.size();
-            const SubsystemRow* wr = subrow(w);
-            int64_t old_target = wr ? wr->_target : -1;
-            if (old_target >= 0 && !objrow(old_target)) old_target = -1;
-            const bool old_off_set = wr && wr->target_offset_set;
-            const Vec3 old_off = wr ? wr->_target_offset : Vec3{0, 0, 0};
-            const int64_t old_depleted = wr ? wr->_depleted : 0;
             Outcome o;
             try {
                 o = decide(w, s_.fire_target);
             } catch (const std::invalid_argument&) {
-                if (s_.writes.size() > mark) {
-                    m_.set_ref(w, Field::_target, old_target);
-                    if (old_off_set)
-                        m_.set_fv(w, Field::_target_offset,
-                                  {old_off[0], old_off[1], old_off[2]});
-                    else
-                        m_.set_fv(w, Field::_target_offset, {});
-                    m_.set_i(w, Field::_depleted, old_depleted);
-                    s_.writes.resize(mark);
-                }
+                k1_roll_back(m_, s_, mark);
                 return ask("fire", {s_.sys, w, s_.fire_target},
                            St::TF_FIRE_ANSWER);
             }
@@ -985,7 +1065,7 @@ void K1Kernel::begin_pump(std::vector<int64_t> ships, double dt, double now,
                           bool use_memo, double drift_now) {
     auto s = std::make_unique<Session>();
     s->pump = true;
-    s->ships = std::move(ships);
+    s->ships = std::make_shared<const std::vector<int64_t>>(std::move(ships));
     s->dt = dt;
     s->now = now;
     s->use_memo = use_memo;
@@ -1011,13 +1091,22 @@ K1Record K1Kernel::next() {
     if (sessions_.empty()) lost("no session is open");
     Session& s = *sessions_.back();
     if (s.awaiting_offset) lost("WALK_START has no offset (combat_k1_set_offset)");
-    if (s.awaiting_answer) {
-        if (!s.has_answer) lost("ASK has no answer (combat_k1_answer)");
-        s.awaiting_answer = false;
-        s.has_answer = false;
+    if (s.awaiting_answer && !s.has_answer)
+        lost("ASK has no answer (combat_k1_answer)");
+    // A throw must leave the session and the mirror as they were: the
+    // pending answer kept, every unflushed write undone (mirror == Python),
+    // so abandon() -- or a retry -- starts from a consistent state.
+    Session before = s;
+    s.awaiting_answer = false;
+    s.has_answer = false;
+    try {
+        Walker w(m_, s, counts_);
+        return w.run();
+    } catch (...) {
+        k1_roll_back(m_, s, 0);
+        s = std::move(before);
+        throw;
     }
-    Walker w(m_, s, counts_);
-    return w.run();
 }
 
 void K1Kernel::set_offset(std::optional<Vec3> xyz) {
@@ -1035,6 +1124,11 @@ void K1Kernel::answer(std::optional<int64_t> v) {
     Session& s = *sessions_.back();
     s.answer = v;
     s.has_answer = true;
+}
+
+bool K1Kernel::answer_pending() const {
+    return !sessions_.empty() && sessions_.back()->awaiting_answer &&
+           sessions_.back()->has_answer;
 }
 
 void K1Kernel::end() {

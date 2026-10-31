@@ -19,6 +19,7 @@
 
 #include "dauntless/combat/k1_fire_control.h"
 #include "dauntless/combat/mirror.h"
+#include "dauntless/combat/sensor_detect.h"
 #include "dauntless/transform_store.h"
 
 using namespace dauntless::combat;
@@ -236,15 +237,23 @@ TEST(K1, GateOrderStopsBeforeWalk) {
         if (gate == 0) w.m.set_i(sys, Field::_is_on, 0);
         if (gate == 1) w.m.set_i(t, Field::_dead, 1);
         if (gate == 2) w.cloak(t);
+        int64_t held = t;
         if (gate == 3) {  // beyond 700 GU, inside the 2000 GU sensor range
-            const int64_t far = w.object("far", 0.0, 700.5, 0.0);
-            w.m.set_ids(sys, Field::_target_list, {far});
-            w.m.set_ref(sys, Field::_held_target, far);
+            held = w.object("far", 0.0, 700.5, 0.0);
+            w.m.set_ids(sys, Field::_target_list, {held});
+            w.m.set_ref(sys, Field::_held_target, held);
         }
-        w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+        // A broken lock can_detect would clear (no concealment here).
+        set_latched(w.m, ship, held, true);
+        w.k.begin_pump({ship}, kDt, 10.0, true, 0.0);
         const K1Record r = w.step();
         EXPECT_EQ(w.brief(r), "STOP_SYSTEM sys") << "gate " << gate;
         EXPECT_TRUE(r.writes.empty());
+        // can_detect (memo, latch) runs only once the earlier gates passed;
+        // the cloak gate answers before the latch is touched.
+        const bool detect_ran = gate >= 2;
+        EXPECT_EQ(w.m.sensor_state().memo.empty(), !detect_ran) << "gate " << gate;
+        EXPECT_EQ(latched(w.m, ship, held), gate != 3) << "gate " << gate;
         EXPECT_EQ(w.brief(w.step()), "DONE");
         w.k.end();
     }
@@ -950,4 +959,119 @@ TEST(K1, MemoOnlyWhenAsked) {
         EXPECT_EQ(w.m.sensor_state().mounts.empty(), !use_memo);
         EXPECT_EQ(w.m.sensor_state().memo.empty(), !use_memo);
     }
+}
+
+TEST(K1, RangeGateNeverThrowsAfterCanDetect) {
+    // The phaser range gate reads both containing sets. An unnamed one must
+    // send the system to Python BEFORE can_detect writes its memo / latch,
+    // or Python would run can_detect a second time.
+    World w;
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t sys = w.system("sys", ship, 1, {t});
+    w.bank("b0", sys);
+    w.m.set_ref(ship, Field::_containing_set, kRefUnrepresentable);
+    w.k.begin_pump({ship}, kDt, 10.0, true, 0.0);
+    const K1Record r = w.step();
+    EXPECT_EQ(w.brief(r), "RUN_PYTHON sys 0 0");
+    EXPECT_TRUE(w.m.sensor_state().memo.empty());
+}
+
+TEST(K1, UnwindLeavesMirrorEqualToPython) {
+    // A throw mid-walk after a write: the pending writes never reached
+    // Python, so they are undone, and the session is as it was.
+    World w;
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t sys = w.system("sys", ship, 1, {t});
+    const int64_t b0 = w.bank("b0", sys);
+    w.m.set_ref(b0, Field::_target, t);
+    w.m.set_f(b0, Field::_charge_level, 0.0);
+    w.m.set_i(sys, Field::_force_update, 1);
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    w.step();
+    EXPECT_EQ(w.brief(w.step()), "BANK_STOP b0");
+    // The effect's handler leaves the walked system's row gone.
+    w.m.unregister_row(sys);
+    // Resuming writes b0._target = None, then cannot read the system.
+    EXPECT_THROW(w.k.next(), std::logic_error);
+    EXPECT_EQ(w.m.get_ref(b0, Field::_target), t);  // undone
+    EXPECT_THROW(w.k.next(), std::logic_error);       // same state, same throw
+    EXPECT_EQ(w.m.get_ref(b0, Field::_target), t);
+    w.k.abandon();
+    EXPECT_EQ(w.k.depth(), 0u);
+}
+
+TEST(K1, ThrowKeepsThePendingAnswer) {
+    World w;
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t sys = w.system("sys", ship, 1, {t});
+    const int64_t b0 = w.bank("b0", sys);
+    const int64_t b1 = w.bank("b1", sys);
+    const int64_t sp = w.m.register_row(Kind::Property);
+    w.m.set_id_lists(sp, Field::_firing_chains, {{1}});
+    w.m.set_ref(sys, Field::_property, sp);
+    w.m.set_ref(b0, Field::_property, w.prop(1));
+    w.m.set_ref(b1, Field::_property, w.prop(1));
+    w.m.set_i(sys, Field::_force_update, 1);
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    w.step();
+    EXPECT_EQ(w.brief(w.step()), "FIRE b0@t");
+    w.m.set_ref(b1, Field::_property, kRefUnrepresentable);
+    EXPECT_EQ(w.brief(w.step()), "ASK is_member");
+    w.k.answer(0);
+    EXPECT_TRUE(w.k.answer_pending());
+    w.m.unregister_row(sys);
+    EXPECT_THROW(w.k.next(), std::logic_error);
+    EXPECT_TRUE(w.k.answer_pending());  // not consumed by the failed call
+    w.k.abandon();
+}
+
+TEST(K1, GroupReReadsWeaponCount) {
+    // n = self.GetNumWeapons() is re-read for each group: a handler that
+    // drops a child during group 1 changes group 2's rotation.
+    World w;
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t sys = w.system("sys", ship, 1, {t});
+    const int64_t b0 = w.bank("b0", sys);
+    const int64_t b1 = w.bank("b1", sys);
+    const int64_t b2 = w.bank("b2", sys);
+    const int64_t sp = w.m.register_row(Kind::Property);
+    w.m.set_id_lists(sp, Field::_firing_chains, {{1, 2}});
+    w.m.set_ref(sys, Field::_property, sp);
+    w.m.set_ref(b0, Field::_property, w.prop(2));
+    w.m.set_ref(b1, Field::_property, w.prop(2));
+    w.m.set_ref(b2, Field::_property, w.prop(1));
+    w.m.set_f(b2, Field::_charge_level, 0.0);  // group 1 runs dry
+    w.m.set_i(sys, Field::_last_weapon_idx, 2);
+    w.m.set_i(sys, Field::_force_update, 1);
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    w.step();
+    EXPECT_EQ(w.brief(w.step()), "BANK_STOP b2");
+    w.m.set_ids(sys, Field::_children, {b0, b1});  // the handler drops b2
+    // n = 2, base_idx 2: idx 1 then 0. (n kept at 3 would give 0, 1, None.)
+    EXPECT_EQ(w.brief(w.step()), "FIRE b1@t");
+    EXPECT_EQ(w.brief(w.step()), "FIRE b0@t");
+    EXPECT_EQ(w.brief(w.step()), "DONE");
+}
+
+TEST(K1, RetryWalksItsSnapshot) {
+    // for entry in list(self._target_list): the list is copied when the
+    // retry starts; a handler's later change does not alter the loop.
+    World w;
+    const int64_t ship = w.ship("ship");
+    const int64_t t1 = w.object("t1", 0.0, -50.0, 0.0);
+    const int64_t t2 = w.object("t2", 10.0, -50.0, 0.0);
+    const int64_t sys = w.system("tsys", ship, 4, {t1, t2});
+    w.bank("tube", sys);
+    w.m.set_i(sys, Field::_force_update, 1);
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    w.step();
+    EXPECT_EQ(w.brief(w.step()), "FIRE_FAILED tube");  // Fire(t1)
+    EXPECT_EQ(w.brief(w.step()), "FIRE_FAILED tube");  // retry t1
+    w.m.set_ids(sys, Field::_target_list, {t1});       // the handler drops t2
+    EXPECT_EQ(w.brief(w.step()), "FIRE_FAILED tube");  // retry t2 (snapshot)
+    EXPECT_EQ(w.brief(w.step()), "DONE");
 }

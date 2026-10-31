@@ -9688,7 +9688,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_k1_next", [] {
             cb::K1Record r;
             {
-                // The kernel touches no Python object (spec 3.3).
+                // The kernel touches no Python object (spec 3.3). Releasing
+                // the GIL assumes no other Python thread can free a mirror
+                // row meanwhile: a row is freed by weakref.finalize ->
+                // native_combat.unregister_handle, which cyclic GC may run
+                // on whichever thread holds the GIL. The only other Python
+                // thread today is the packaged build's log follower (the
+                // stderr tee, engine/log_tee.py), which allocates and so could
+                // in principle trigger a GC pass. If that ever matters, keep
+                // the GIL here or freeze gc around the pump.
                 py::gil_scoped_release release;
                 r = cb::k1_kernel().next();
             }

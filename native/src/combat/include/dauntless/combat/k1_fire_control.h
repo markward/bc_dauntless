@@ -33,6 +33,22 @@
 // carries the writes made since the previous record as its LAST element, and
 // Python applies them before it acts on the record.
 //
+// PINNING (the Python driver's contract; Task 5's run_k1). Python's walk
+// holds strong references in its locals (the system, `target`, the retry
+// snapshot); the kernel holds only handles. So for as long as a session's
+// walk runs, the driver must keep alive the walked system, its children,
+// every `_target_list` entry (as of WALK_START and of each later record) and
+// every handle a record names, and map a handle back through that pin set
+// (a session handle -> object map) rather than through the weak registry.
+// Otherwise a row freed mid-walk (weakref.finalize -> unregister) leaves a
+// handle an ASK cannot name.
+//
+// A THROW from next() (a protocol error, or the walked system's row gone)
+// changes nothing: the writes it made but never returned are undone in the
+// mirror, and the session -- cursor, pending answer -- is restored to the
+// state before the call. The mirror then still equals Python, so abandon()
+// is safe.
+//
 // SESSIONS form a stack: an effect's event handler may StartFiring, which
 // begins (and finishes) a nested one-system session before the outer one
 // resumes.
@@ -146,6 +162,8 @@ public:
     // Python loop driving it).
     void abandon();
     size_t depth() const { return sessions_.size(); }
+    // The top session has an ASK answered but not yet consumed by next().
+    bool answer_pending() const;
     void clear();
 
     struct Counts {
