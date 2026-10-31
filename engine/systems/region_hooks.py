@@ -60,6 +60,8 @@ def mark_mapped(pSet) -> None:
     check_realized reads, rather than a guess from its bodies' radii. The only
     writer of the flag, so its attribute name is spelled once."""
     setattr(pSet, _FLAG_ATTR, True)
+    from engine.appc import native_combat
+    native_combat.push_set_frame(pSet)   # the frame is now the system's
 
 
 def on_region_module_exec(module, qualname: str) -> None:

@@ -5,6 +5,7 @@ surface. Rendering and environmental damage are out of scope; this exists so
 WarpPressed-style gating (and GetClassObjectList(CT_NEBULA)) works.
 """
 from App import Nebula
+from engine.appc import native_combat
 
 # freq, gain, density_floor (tunable): every MetaNebula's default fbm dials.
 # A constant so readers of the defaults (profile_builder) need not construct a
@@ -13,6 +14,15 @@ DEFAULT_FBM_DIALS = (0.02, 1.5, 0.30)
 
 
 class MetaNebula(Nebula):
+    # Mirrored into the native combat row on every write (native_combat).
+    # `_spheres` only ever grows in place, so AddNebulaSphere pushes it.
+    # `_seed` None = not derived yet: native derives seed_for(first sphere
+    # centre), equal to the Python's lazy value because spheres only append;
+    # a value GetSeed already cached is pushed and wins.
+    _spheres = native_combat.NativeField(native_combat.SPHERES, key="spheres")
+    _fbm = native_combat.NativeField(native_combat.VEC3)
+    _seed = native_combat.NativeField(native_combat.VEC3)
+
     def __init__(self, r=0.0, g=0.0, b=0.0, visibility=0.0, sensor_density=0.0,
                  internal_tex="", external_tex=""):
         super().__init__()
@@ -28,6 +38,7 @@ class MetaNebula(Nebula):
 
     def AddNebulaSphere(self, x, y, z, radius):
         self._spheres.append((float(x), float(y), float(z), float(radius)))
+        native_combat.push_field(self, "_spheres")
 
     def GetNebulaSpheres(self):
         return list(self._spheres)

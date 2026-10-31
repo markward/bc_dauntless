@@ -67,6 +67,44 @@ constexpr FieldInfo kInfo[] = {
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) ==
               static_cast<size_t>(Field::kCount));
 
+struct GlobalInfo {
+    const char* name;
+    bool is_int;
+    double Globals::*f;
+    int64_t Globals::*i;
+};
+
+// Indexed by Global.
+constexpr GlobalInfo kGlobals[] = {
+    {"sensorless_range_gu", false, &Globals::sensorless_range_gu, nullptr},
+    {"cloak_bubble_cap_gu", false, &Globals::cloak_bubble_cap_gu, nullptr},
+    {"overboost_threshold", false, &Globals::overboost_threshold, nullptr},
+    {"min_blocker_radius_gu", false, &Globals::min_blocker_radius_gu, nullptr},
+    {"conceal_cap", false, &Globals::conceal_cap, nullptr},
+    {"dev_mode", true, nullptr, &Globals::dev_mode},
+    {"occ_enabled", true, nullptr, &Globals::occ_enabled},
+    {"enhanced_sensor_contest", true, nullptr,
+     &Globals::enhanced_sensor_contest},
+    {"CONCEAL_K", false, &Globals::CONCEAL_K, nullptr},
+    {"LOCK_BREAK_T", false, &Globals::LOCK_BREAK_T, nullptr},
+    {"HYSTERESIS", false, &Globals::HYSTERESIS, nullptr},
+    {"PROFILE_CONCEALMENT_CAP", false, &Globals::PROFILE_CONCEALMENT_CAP,
+     nullptr},
+    {"CLOAK_RANGE_FACTOR", false, &Globals::CLOAK_RANGE_FACTOR, nullptr},
+    {"CLOAK_DETECTION_BASE_GU", false, &Globals::CLOAK_DETECTION_BASE_GU,
+     nullptr},
+};
+static_assert(sizeof(kGlobals) / sizeof(kGlobals[0]) ==
+              static_cast<size_t>(Global::kCount));
+
+const GlobalInfo& ginfo(Global g) {
+    auto i = static_cast<int32_t>(g);
+    if (i < 0 || i >= static_cast<int32_t>(Global::kCount))
+        throw std::invalid_argument("combat mirror: unknown global " +
+                                    std::to_string(i));
+    return kGlobals[i];
+}
+
 const FieldInfo& info(Field f) {
     auto i = static_cast<int32_t>(f);
     if (i < 0 || i >= static_cast<int32_t>(Field::kCount))
@@ -225,6 +263,13 @@ int64_t make_handle(uint32_t index, uint32_t gen, Kind kind) {
 }  // namespace
 
 const char* field_name(Field f) { return info(f).name; }
+const char* global_name(Global g) { return ginfo(g).name; }
+bool global_is_int(Global g) { return ginfo(g).is_int; }
+Global global_by_name(const std::string& name) {
+    for (int i = 0; i < static_cast<int>(Global::kCount); ++i)
+        if (name == kGlobals[i].name) return static_cast<Global>(i);
+    throw std::invalid_argument("combat mirror: unknown global '" + name + "'");
+}
 Kind field_kind(Field f) { return info(f).kind; }
 FieldType field_type(Field f) { return info(f).type; }
 
@@ -376,6 +421,7 @@ void Mirror::clear() {
     clear_table(sets_);
     clear_table(profiles_);
     by_obj_id_.clear();
+    globals_ = Globals{};
     clear_owned_state();
     ++epoch_;
 }
@@ -426,7 +472,8 @@ void Mirror::set_ids(int64_t h, Field f, const std::vector<int64_t>& ids) {
     std::vector<int64_t> v = ids;
     if (f == Field::ships || f == Field::nebulae) {
         for (int64_t x : v)
-            if (x < 0 || static_cast<Kind>((x >> 60) & 7) != Kind::Object)
+            if (x != kRefUnrepresentable &&
+                (x < 0 || static_cast<Kind>((x >> 60) & 7) != Kind::Object))
                 bad("list entry is not an Object handle", f);
     } else if (f == Field::_known_objects) {
         std::sort(v.begin(), v.end());
@@ -470,6 +517,53 @@ void Mirror::set_profile_rows(int64_t h, std::vector<ProfileRow> rows,
     ++epoch_;
 }
 
+void Mirror::set_frame(int64_t h, int64_t profile, const Vec3& anchor,
+                       const Vec3& star) {
+    SetRow& r = checked(sets_, h, Kind::Set);
+    if (profile != -1 && profile != kRefUnrepresentable &&
+        !ref_live(profile, Kind::Profile))
+        bad("ref target stale or wrong kind", Field::profile);
+    r.profile = profile;
+    r.mapped = profile >= 0 ? 1 : 0;
+    r.anchor = anchor;
+    r.star = star;
+    ++epoch_;
+}
+
+void Mirror::set_global_f(Global g, double v) {
+    const GlobalInfo& gi = ginfo(g);
+    if (gi.is_int)
+        throw std::invalid_argument(std::string("combat mirror: global ") +
+                                    gi.name + " is an int");
+    globals_.*(gi.f) = v;
+    ++epoch_;
+}
+
+void Mirror::set_global_i(Global g, int64_t v) {
+    const GlobalInfo& gi = ginfo(g);
+    if (!gi.is_int)
+        throw std::invalid_argument(std::string("combat mirror: global ") +
+                                    gi.name + " is a double");
+    globals_.*(gi.i) = v;
+    ++epoch_;
+}
+
+double Mirror::get_global_f(Global g) const {
+    const GlobalInfo& gi = ginfo(g);
+    if (gi.is_int)
+        throw std::invalid_argument(std::string("combat mirror: global ") +
+                                    gi.name + " is an int");
+    return globals_.*(gi.f);
+}
+
+int64_t Mirror::get_global_i(Global g) const {
+    const GlobalInfo& gi = ginfo(g);
+    if (!gi.is_int)
+        throw std::invalid_argument(std::string("combat mirror: global ") +
+                                    gi.name + " is a double");
+    return globals_.*(gi.i);
+}
+
 double Mirror::get_f(int64_t h, Field f) const {
     if (info(f).type != FieldType::F) bad("not a double field", f);
     return visit(h, info(f).kind, [&](auto& row) {
@@ -509,7 +603,8 @@ std::vector<int64_t> Mirror::get_ids(int64_t h, Field f) const {
     if (f == Field::ships || f == Field::nebulae)
         v.erase(std::remove_if(v.begin(), v.end(),
                                [&](int64_t x) {
-                                   return !ref_live(x, Kind::Object);
+                                   return x != kRefUnrepresentable &&
+                                          !ref_live(x, Kind::Object);
                                }),
                 v.end());
     return v;

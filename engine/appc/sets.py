@@ -2,6 +2,7 @@ import re
 from functools import lru_cache
 
 import engine.dev_mode as dev_mode
+from engine.appc import native_combat
 from engine.appc.events import TGEventHandlerObject
 
 
@@ -110,6 +111,10 @@ class SetClass(TGEventHandlerObject):
         self._subscribers: list = []
         # Lazily-created SetEffectRoot handle. See GetEffectRoot().
         self._effect_root: "SetEffectRoot | None" = None
+        # The native combat mirror row (engine/appc/native_combat.py): the
+        # set's ordered ship/nebula lists and its resolved profile frame.
+        # Last, so the first push sees a complete set.
+        native_combat.register(self, "Set")
 
     def subscribe(self, callback) -> None:
         """Register a callback notified on every AddObjectToSet /
@@ -155,6 +160,9 @@ class SetClass(TGEventHandlerObject):
 
     def SetName(self, name: str) -> None:
         self._name = name
+        # The profile frame is resolved from the name (QuickBattle renames a
+        # set in place, which unmaps it): push the resolved frame.
+        native_combat.push_set_frame(self)
 
     def GetDisplayName(self, out_string=None):
         """SDK out-param idiom: ``kName = App.TGString();

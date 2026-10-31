@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -98,10 +99,47 @@ struct PropertyRow {
 };
 
 struct SetRow {
-    std::vector<int64_t> ships, nebulae;  // Object handles, in order
+    // Object handles in contact_index order. An entry Python cannot name
+    // (a dropped row) is kRefUnrepresentable, keeping its place.
+    std::vector<int64_t> ships, nebulae;
+    // The RESOLVED profile frame (CDM §9.15): mapped == (profile >= 0).
+    // profile is -1 for an unmapped / unresolvable set, kRefUnrepresentable
+    // when resolving it raised in Python.
     int64_t mapped = 0;
     int64_t profile = -1;
     Vec3 anchor{0, 0, 0}, star{0, 0, 0};
+};
+
+// The scalar dials, flags and module constants can_detect reads, keyed by
+// their Python names (engine/appc/native_combat.py push_globals). Python
+// pushes every value -- the constants too -- so no number is re-typed here.
+enum class Global : int32_t {
+    // sensor_dials / dev_nebula_dials (developer dials)
+    sensorless_range_gu, cloak_bubble_cap_gu, overboost_threshold,
+    min_blocker_radius_gu, conceal_cap,
+    // flags (0/1): dev_mode.is_enabled(), sensor_occlusion.enabled(),
+    // sensor_detection.ENHANCED_SENSOR_CONTEST
+    dev_mode, occ_enabled, enhanced_sensor_contest,
+    // sensor_detection module constants (CDM §3 #2)
+    CONCEAL_K, LOCK_BREAK_T, HYSTERESIS, PROFILE_CONCEALMENT_CAP,
+    CLOAK_RANGE_FACTOR, CLOAK_DETECTION_BASE_GU,
+    kCount
+};
+
+const char* global_name(Global g);
+bool global_is_int(Global g);
+// Throws std::invalid_argument (Python ValueError) for an unknown name.
+Global global_by_name(const std::string& name);
+
+// Zero until Python first pushes (a cleared mirror reads zero too).
+struct Globals {
+    double sensorless_range_gu = 0.0, cloak_bubble_cap_gu = 0.0,
+           overboost_threshold = 0.0, min_blocker_radius_gu = 0.0,
+           conceal_cap = 0.0;
+    int64_t dev_mode = 0, occ_enabled = 0, enhanced_sensor_contest = 0;
+    double CONCEAL_K = 0.0, LOCK_BREAK_T = 0.0, HYSTERESIS = 0.0,
+           PROFILE_CONCEALMENT_CAP = 0.0, CLOAK_RANGE_FACTOR = 0.0,
+           CLOAK_DETECTION_BASE_GU = 0.0;
 };
 
 struct ProfileRowSet {
@@ -118,7 +156,8 @@ public:
     int64_t register_row(Kind kind, int64_t xform_index = -1,
                          int64_t xform_gen = -1, int64_t obj_id = -1);
     void unregister_row(int64_t handle);
-    void clear();  // every row, plus (Task 5) the native-owned state
+    // Every row and the globals, plus (Task 5) the native-owned state.
+    void clear();
     uint64_t epoch() const { return epoch_; }
 
     // The live Object handle for a Python object id, or -1.
@@ -136,9 +175,20 @@ public:
     void set_spheres(int64_t handle, std::vector<Sphere> spheres);
     void set_profile_rows(int64_t handle, std::vector<ProfileRow> rows,
                           double full_concealment);
+    // A set's resolved frame. `profile`: a live Profile handle (mapped), -1
+    // (unmapped) or kRefUnrepresentable; sets `mapped` = profile >= 0.
+    void set_frame(int64_t set_handle, int64_t profile, const Vec3& anchor,
+                   const Vec3& star);
+
+    // Globals: throw std::invalid_argument on a type mismatch.
+    void set_global_f(Global g, double v);
+    void set_global_i(Global g, int64_t v);
+    double get_global_f(Global g) const;
+    int64_t get_global_i(Global g) const;
+    const Globals& globals() const { return globals_; }
 
     // Generic readers (checked handle). Refs are re-checked: stale reads -1;
-    // ship / nebula lists drop stale handles.
+    // ship / nebula lists drop stale handles and keep kRefUnrepresentable.
     double get_f(int64_t handle, Field f) const;
     int64_t get_i(int64_t handle, Field f) const;
     int64_t get_ref(int64_t handle, Field f) const;
@@ -190,6 +240,7 @@ private:
     Table<SetRow> sets_;
     Table<ProfileRowSet> profiles_;
     std::unordered_map<int64_t, int64_t> by_obj_id_;
+    Globals globals_;
     uint64_t epoch_ = 0;
 };
 

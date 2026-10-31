@@ -9324,6 +9324,45 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   for (const auto& [d, s] : rows) v.push_back({d, s});
                   cb::mirror().set_profile_rows(h, std::move(v), fc);
               });
+        m.def("combat_set_frame",
+              [](std::int64_t h, std::int64_t profile,
+                 const std::array<double, 3>& anchor,
+                 const std::array<double, 3>& star) {
+                  cb::mirror().set_frame(h, profile, anchor, star);
+              },
+              py::arg("set_handle"), py::arg("profile"), py::arg("anchor"),
+              py::arg("star"),
+              "A set's RESOLVED profile frame: profile handle (-1 unmapped, "
+              "-2 unrepresentable), anchor_gu and star position_gu.");
+        m.def("combat_set_globals",
+              [](const py::dict& d) {
+                  // Every key is checked before any value is stored.
+                  std::vector<std::pair<cb::Global, py::handle>> parsed;
+                  for (auto item : d)
+                      parsed.emplace_back(
+                          cb::global_by_name(py::cast<std::string>(item.first)),
+                          item.second);
+                  auto& mi = cb::mirror();
+                  for (const auto& [g, v] : parsed) {
+                      if (cb::global_is_int(g))
+                          mi.set_global_i(g, py::cast<std::int64_t>(v));
+                      else
+                          mi.set_global_f(g, py::cast<double>(v));
+                  }
+              },
+              "Dials, flags and constants by Python name; an unknown name "
+              "raises ValueError.");
+        m.def("combat_dump_globals", [] {
+            auto& mi = cb::mirror();
+            py::dict d;
+            for (int i = 0; i < static_cast<int>(cb::Global::kCount); ++i) {
+                auto g = static_cast<cb::Global>(i);
+                py::str n(cb::global_name(g));
+                if (cb::global_is_int(g)) d[n] = mi.get_global_i(g);
+                else d[n] = mi.get_global_f(g);
+            }
+            return d;
+        });
         m.def("combat_clear", [] { cb::mirror().clear(); },
               "Drop every row (tests only; rows normally live as long as their "
               "Python object).");

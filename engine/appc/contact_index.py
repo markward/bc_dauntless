@@ -40,6 +40,12 @@ conceals, or vice versa, with no exception raised on either side.
 """
 from __future__ import annotations
 
+from engine.appc import native_combat
+
+# Every mutation of a bucket below is followed by
+# native_combat.push_set_members(pSet): the native combat mirror holds each
+# set's ship and nebula lists in exactly this order (occlusion iterates it).
+
 # SetClass -> list of ShipClass, in insertion order.
 _buckets: dict = {}
 
@@ -62,29 +68,36 @@ def on_added(pSet, obj) -> None:
         bucket = _buckets.setdefault(pSet, [])
         if obj not in bucket:
             bucket.append(obj)
+            native_combat.push_set_members(pSet)
         return
     if isinstance(obj, Nebula):
         bucket = _nebula_buckets.setdefault(pSet, [])
         if obj not in bucket:
             bucket.append(obj)
+            native_combat.push_set_members(pSet)
 
 
 def on_removed(pSet, obj) -> None:
     """Drop *obj* from *pSet*'s bucket(s). Silent if absent —
     RemoveObjectFromSet is called for objects that were never ships or
     nebulae."""
+    changed = False
     bucket = _buckets.get(pSet)
     if bucket:
         try:
             bucket.remove(obj)
+            changed = True
         except ValueError:
             pass
     nebula_bucket = _nebula_buckets.get(pSet)
     if nebula_bucket:
         try:
             nebula_bucket.remove(obj)
+            changed = True
         except ValueError:
             pass
+    if changed:
+        native_combat.push_set_members(pSet)
 
 
 def ships_in(pSet) -> tuple:
@@ -115,14 +128,32 @@ def nebulae_in(pSet) -> tuple:
     return tuple(_nebula_buckets.get(pSet, ()))
 
 
+def sets_holding(obj) -> list:
+    """Every set whose ship or nebula bucket holds *obj* (identity), in
+    bucket order. For native_combat, when *obj*'s mirror row is dropped."""
+    out = []
+    for buckets in (_buckets, _nebula_buckets):
+        for pSet, bucket in buckets.items():
+            if (all(p is not pSet for p in out)
+                    and any(o is obj for o in bucket)):
+                out.append(pSet)
+    return out
+
+
 def reset() -> None:
     """Drop every bucket. Called on mission swap and between tests."""
+    emptied = list(_buckets) + [s for s in _nebula_buckets
+                                if s not in _buckets]
     _buckets.clear()
     _nebula_buckets.clear()
+    for pSet in emptied:
+        native_combat.push_set_members(pSet)
 
 
 def forget_set(pSet) -> None:
     """Drop *pSet*'s buckets -- a set deleted by a carry-over mission change
     (engine.core.mission_change), whose kept sets keep theirs."""
-    _buckets.pop(pSet, None)
-    _nebula_buckets.pop(pSet, None)
+    had = _buckets.pop(pSet, None) is not None
+    had = (_nebula_buckets.pop(pSet, None) is not None) or had
+    if had:
+        native_combat.push_set_members(pSet)

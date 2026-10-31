@@ -148,3 +148,82 @@ TEST(Mirror, SetListsDropFreedShips) {
     EXPECT_EQ(f.m.get_ids(st, Field::ships), (std::vector<int64_t>{b}));
     EXPECT_THROW(f.m.set_ids(st, Field::ships, {st}), std::invalid_argument);
 }
+
+TEST(Mirror, SetListsKeepUnrepresentableEntries) {
+    // A ship Python cannot name (its row was dropped) keeps its place in the
+    // ordered list as kRefUnrepresentable; the list never shortens.
+    Fixture f;
+    int64_t st = f.m.register_row(Kind::Set);
+    int64_t b = f.m.register_row(Kind::Object, -1, -1, 2);
+    f.m.set_ids(st, Field::ships, {kRefUnrepresentable, b});
+    EXPECT_EQ(f.m.get_ids(st, Field::ships),
+              (std::vector<int64_t>{kRefUnrepresentable, b}));
+    f.m.set_ids(st, Field::nebulae, {kRefUnrepresentable});
+    EXPECT_EQ(f.m.get_ids(st, Field::nebulae),
+              (std::vector<int64_t>{kRefUnrepresentable}));
+    EXPECT_THROW(f.m.set_ids(st, Field::ships, {-1}), std::invalid_argument);
+    EXPECT_THROW(f.m.set_ids(st, Field::ships, {-3}), std::invalid_argument);
+}
+
+TEST(Mirror, SetFrameResolved) {
+    Fixture f;
+    int64_t st = f.m.register_row(Kind::Set);
+    int64_t pr = f.m.register_row(Kind::Profile);
+    uint64_t e = f.m.epoch();
+    f.m.set_frame(st, pr, {1.0, 122000.0, 0.0}, {0.0, 0.0, 0.5});
+    EXPECT_GT(f.m.epoch(), e);
+    EXPECT_EQ(f.m.get_i(st, Field::mapped), 1);
+    EXPECT_EQ(f.m.get_ref(st, Field::profile), pr);
+    EXPECT_EQ(f.m.get_fv(st, Field::anchor),
+              (std::vector<double>{1.0, 122000.0, 0.0}));
+    EXPECT_EQ(f.m.get_fv(st, Field::star), (std::vector<double>{0.0, 0.0, 0.5}));
+
+    f.m.set_frame(st, -1, {0, 0, 0}, {0, 0, 0});        // unmapped
+    EXPECT_EQ(f.m.get_i(st, Field::mapped), 0);
+    EXPECT_EQ(f.m.get_ref(st, Field::profile), -1);
+    EXPECT_EQ(f.m.get_fv(st, Field::anchor), (std::vector<double>{0, 0, 0}));
+
+    f.m.set_frame(st, kRefUnrepresentable, {0, 0, 0}, {0, 0, 0});
+    EXPECT_EQ(f.m.get_i(st, Field::mapped), 0);
+    EXPECT_EQ(f.m.get_ref(st, Field::profile), kRefUnrepresentable);
+
+    EXPECT_THROW(f.m.set_frame(st, st, {0, 0, 0}, {0, 0, 0}),
+                 std::invalid_argument);                  // not a Profile
+    EXPECT_THROW(f.m.set_frame(pr, -1, {0, 0, 0}, {0, 0, 0}),
+                 std::invalid_argument);                  // not a Set
+    f.m.unregister_row(pr);
+    EXPECT_THROW(f.m.set_frame(st, pr, {0, 0, 0}, {0, 0, 0}),
+                 std::invalid_argument);                  // stale profile
+}
+
+TEST(Mirror, GlobalsByName) {
+    Fixture f;
+    EXPECT_EQ(global_by_name("sensorless_range_gu"),
+              Global::sensorless_range_gu);
+    EXPECT_STREQ(global_name(Global::CLOAK_DETECTION_BASE_GU),
+                 "CLOAK_DETECTION_BASE_GU");
+    EXPECT_TRUE(global_is_int(Global::dev_mode));
+    EXPECT_TRUE(global_is_int(Global::occ_enabled));
+    EXPECT_TRUE(global_is_int(Global::enhanced_sensor_contest));
+    EXPECT_FALSE(global_is_int(Global::conceal_cap));
+    EXPECT_THROW(global_by_name("nope"), std::invalid_argument);
+    for (int i = 0; i < static_cast<int>(Global::kCount); ++i) {
+        auto g = static_cast<Global>(i);
+        EXPECT_EQ(global_by_name(global_name(g)), g);
+    }
+
+    uint64_t e = f.m.epoch();
+    f.m.set_global_f(Global::sensorless_range_gu, 2250.0);
+    EXPECT_GT(f.m.epoch(), e);
+    f.m.set_global_i(Global::dev_mode, 1);
+    EXPECT_EQ(f.m.get_global_f(Global::sensorless_range_gu), 2250.0);
+    EXPECT_EQ(f.m.globals().sensorless_range_gu, 2250.0);
+    EXPECT_EQ(f.m.get_global_i(Global::dev_mode), 1);
+    EXPECT_EQ(f.m.globals().dev_mode, 1);
+    EXPECT_THROW(f.m.set_global_f(Global::dev_mode, 1.0), std::invalid_argument);
+    EXPECT_THROW(f.m.set_global_i(Global::HYSTERESIS, 1), std::invalid_argument);
+
+    f.m.clear();                                          // tests only
+    EXPECT_EQ(f.m.globals().sensorless_range_gu, 0.0);
+    EXPECT_EQ(f.m.globals().dev_mode, 0);
+}

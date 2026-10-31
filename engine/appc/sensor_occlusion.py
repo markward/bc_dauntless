@@ -58,6 +58,7 @@ def enabled() -> bool:
 def set_enabled(on: bool) -> None:
     global _enabled
     _enabled = bool(on)
+    _push_native()
 
 
 def reset_enabled() -> None:
@@ -66,6 +67,13 @@ def reset_enabled() -> None:
     never cleared on mission swap; only tests (and a dev re-launch) call this."""
     global _enabled
     _enabled = DEFAULT_ENABLED
+    _push_native()
+
+
+def _push_native() -> None:
+    """The native combat mirror holds the flag can_detect reads."""
+    from engine.appc import native_combat
+    native_combat.push_globals()
 
 
 def begin_tick(now_gt: float) -> None:

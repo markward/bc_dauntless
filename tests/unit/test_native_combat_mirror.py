@@ -409,7 +409,9 @@ def test_unregistered_referent_is_unrepresentable_not_none():
     assert nc.audit_failures() == []
 
 
-def test_containing_set_is_unrepresentable_until_sets_register():
+def test_containing_set_is_the_set_or_unrepresentable():
+    """Sets register at SetClass init (Task 4), so an object in a set names
+    its row; a set whose row was dropped reads -2 on its members."""
     nc.configure(ON)
     ship = App.ShipClass_Create("InSet")
     assert _dump(ship)["_containing_set"] == -1
@@ -417,6 +419,8 @@ def test_containing_set_is_unrepresentable_until_sets_register():
     App.g_kSetManager.AddSet(pSet, "native_mirror_set_2")
     try:
         pSet.AddObjectToSet(ship, "InSet")
+        assert _dump(ship)["_containing_set"] == _slot(pSet)
+        nc._drop(pSet)
         assert _dump(ship)["_containing_set"] == -2
     finally:
         App.g_kSetManager.DeleteSet("native_mirror_set_2")

@@ -3,8 +3,13 @@
 The combat step's sensor query (can_detect) is moving into C++
 (native/src/combat/, spec docs/superpowers/specs/2026-10-30-native-combat-step-design.md).
 The C++ reads its inputs from a MIRROR: one row per Python object it looks at
-(ObjectClass, ShipSubsystem, the subsystem property; Set and Profile rows are
-pushed elsewhere). This module keeps those rows equal to the Python.
+(ObjectClass, ShipSubsystem, the subsystem property, SetClass), one Profile
+row per system map, and one set of scalar globals (dials, flags, constants).
+This module keeps all of it equal to the Python.
+
+A Set row holds the set's ordered ship and nebula lists, pushed from
+contact_index's own buckets after every mutation, and its RESOLVED profile
+frame (``push_set_frame``): native never sees a set name (CDM §9.15).
 
 How a row stays in sync: every mirrored attribute is a data descriptor with a
 ``__set__`` and NO ``__get__`` -- reads stay plain instance-dict reads, exactly
@@ -50,6 +55,15 @@ _class_fields: dict = {}
 #: NativeField type for a flag the reader tests with ``is True`` (identity,
 #: not truthiness): engine.appc.subsystems._is_offline on _radiation_out.
 IS_TRUE = "is True"
+#: NativeField type for an optional 3-tuple of floats (MetaNebula ``_fbm``,
+#: ``_seed``): None pushes "unset".
+VEC3 = "vec3"
+#: NativeField type for MetaNebula ``_spheres``: a list of (x, y, z, r).
+SPHERES = "spheres"
+
+# system name -> (the map's Profile object, its Profile row handle). One row
+# per system map, registered lazily at the first frame push that needs it.
+_profiles: dict = {}
 
 _KIND_SHIFT = 60
 
@@ -90,6 +104,7 @@ def reset() -> None:
     _enabled = False
     _audit = False
     _failures.clear()
+    _profiles.clear()
 
 
 def _disable(reason: str) -> str:
@@ -178,6 +193,29 @@ def _drop(obj) -> None:
     if _registry.get(h) is obj:
         del _registry[h]
     unregister_handle(h)
+    if not _enabled:
+        return
+    # Rows that NAME the dropped object now read it as unrepresentable (-2),
+    # never as None (-1, what a freed handle reads) or as absent.
+    k = h >> _KIND_SHIFT
+    if k == _kind("Set"):
+        for member in list(getattr(obj, "_objects", {}).values()):
+            if member.__dict__.get("_containing_set") is obj:
+                _repush_field(member, "_containing_set")
+    elif k == _kind("Object"):
+        from engine.appc import contact_index
+        for pSet in contact_index.sets_holding(obj):
+            push_set_members(pSet)
+
+
+def _repush_field(obj, name: str) -> None:
+    h = obj.__dict__.get("_nslot")
+    if h is None or name not in obj.__dict__:
+        return
+    for attr, field in _fields_of(type(obj)):
+        if attr == name:
+            field._push(obj, h, obj.__dict__[name])
+            return
 
 
 def _live(h: int) -> bool:
@@ -211,6 +249,9 @@ class NativeField:
         self._name = name
         if self._key is None:
             self._key = name
+        # The combat_dump key: the field's own name ("Subsystem._radius"
+        # dumps as "_radius").
+        self._dump_key = self._key.rsplit(".", 1)[-1]
 
     def __set__(self, obj, value) -> None:
         obj.__dict__[self._name] = value
@@ -229,6 +270,14 @@ class NativeField:
             return 1 if value is True else 0
         if t is int:
             return int(value)
+        if t is VEC3:
+            if value is None:
+                return []
+            x, y, z = value
+            return [float(x), float(y), float(z)]
+        if t is SPHERES:
+            return [(float(x), float(y), float(z), float(r))
+                    for (x, y, z, r) in value]
         return [int(i) for i in value]
 
     def _push(self, obj, h, value) -> None:
@@ -238,10 +287,15 @@ class NativeField:
             _drop(obj)  # not representable: never leave a stale row
             return
         t = self._type
+        if t is SPHERES:
+            _call(obj, _h.combat_set_spheres, h, v)
+            return
         if t is float:
             fn = _h.combat_set_f
         elif t is list or t is set:
             fn = _h.combat_set_ids
+        elif t is VEC3:
+            fn = _h.combat_set_fv
         else:
             fn = _h.combat_set_i
         _call(obj, fn, h, _fid(self._key), v)
@@ -255,7 +309,17 @@ class NativeField:
             return v.hex() == float(mirrored).hex()
         if self._type is set:
             return sorted(set(v)) == mirrored
+        if self._type is VEC3:
+            if mirrored is None:
+                return v == []
+            return _hexes(v) == _hexes(mirrored)
+        if self._type is SPHERES:
+            return [_hexes(s) for s in v] == [_hexes(s) for s in mirrored]
         return v == mirrored
+
+
+def _hexes(values) -> tuple:
+    return tuple(float(x).hex() for x in values)
 
 
 class NativeRefField(NativeField):
@@ -341,7 +405,8 @@ def _fields_of(cls) -> tuple:
 # ── Rows ─────────────────────────────────────────────────────────────────────
 
 def register(obj, kind: str, finalize: bool = True) -> None:
-    """Give `obj` a mirror row of `kind` ("Object", "Subsystem", "Property").
+    """Give `obj` a mirror row of `kind` ("Object", "Subsystem", "Property",
+    "Set"; Profile rows are owned by this module, one per system map).
     Always registers when the bindings are built; pushes only when enabled.
     `finalize=False` when the caller's own finalizer unregisters the row
     (ObjectClass frees its transform slot and its row in one finalizer)."""
@@ -400,8 +465,12 @@ def _property_values(prop) -> dict:
 def _push_extras(obj, h) -> None:
     for name, v in _flags(obj, h).items():
         _call(obj, _h.combat_set_i, h, _fid(name), v)
-    if (h >> _KIND_SHIFT) == _kind("Property"):
+    k = h >> _KIND_SHIFT
+    if k == _kind("Property"):
         push_property(obj)
+    elif k == _kind("Set"):
+        push_set_members(obj)
+        push_set_frame(obj)
 
 
 def _push_all(obj, h) -> None:
@@ -420,6 +489,13 @@ def reclassify(ship) -> None:
         h = ship.__dict__.get("_nslot")
         if h is not None:
             _push_extras(ship, h)
+
+
+def push_field(obj, name: str) -> None:
+    """A mirrored attribute was mutated IN PLACE (MetaNebula._spheres'
+    ``append``): re-push its current value through its descriptor."""
+    if _enabled:
+        _repush_field(obj, name)
 
 
 def push_ids(obj, field: str, ids) -> None:
@@ -449,10 +525,163 @@ def push_property(prop) -> None:
                   vals["MaxCondition"])
 
 
+# ── Sets, profiles and globals ───────────────────────────────────────────────
+
+def _list_entry(obj) -> int:
+    """A ship / nebula list entry: the Object handle, or -2 for an object the
+    mirror cannot name (its row was dropped). It keeps its place: the list
+    order IS contact_index's order, which occlusion iterates."""
+    t = _slot_of(obj)
+    if t is None or (t >> _KIND_SHIFT) != _kind("Object"):
+        return REF_UNREPRESENTABLE
+    return t
+
+
+def _members(pSet) -> tuple:
+    from engine.appc import contact_index
+    return ([_list_entry(o) for o in contact_index.ships_in(pSet)],
+            [_list_entry(o) for o in contact_index.nebulae_in(pSet)])
+
+
+def push_set_members(pSet) -> None:
+    """Push the set's ordered ship and nebula lists, exactly
+    contact_index.ships_in / nebulae_in. contact_index calls this after every
+    mutation of the set's buckets."""
+    if not _enabled:
+        return
+    h = _slot_of(pSet)
+    if h is None:
+        return
+    ships, nebulae = _members(pSet)
+    _call(pSet, _h.combat_set_ids, h, _fid("ships"), ships)
+    if "_nslot" in pSet.__dict__:
+        _call(pSet, _h.combat_set_ids, h, _fid("nebulae"), nebulae)
+
+
+_ZERO = (0.0, 0.0, 0.0)
+_UNRESOLVABLE = object()
+
+
+def _resolve_frame(pSet):
+    """What profile.locate resolves for any object in `pSet`, without the
+    object: (system, Profile, anchor_gu, star position_gu), all floats, or
+    None (unmapped, unresolvable, or a map without a profile, which
+    concealment_at treats exactly like unmapped), or _UNRESOLVABLE when the
+    Python lookup raised (native takes the Python path, which raises again).
+    The same frames / resolve calls, in the same order, as profile.locate."""
+    from engine.systems import frames, resolve
+    try:
+        f = frames.frame_of(pSet)
+        if f is None or f.key[0] != "system":
+            return None
+        m = resolve.map_of(f.key[1])
+        if m is None:
+            return None
+        star = next((b for b in m.bodies if b.orbits is None), None)
+        if star is None or m.profile is None:
+            return None
+        anchor = tuple(float(c) for c in f.anchor_gu)
+        sx, sy, sz = star.position_gu
+        return f.key[1], m.profile, anchor, (float(sx), float(sy), float(sz))
+    except Exception:  # noqa: BLE001 - the Python path re-raises it at use
+        return _UNRESOLVABLE
+
+
+def _profile_rows(prof) -> tuple:
+    return ([(float(r.distance_gu), float(r.sensors)) for r in prof.rows],
+            float(prof.full_concealment))
+
+
+def _profile_handle(system: str, prof) -> int:
+    """The Profile row for a system map, registered at first use. A new map
+    object for the system (resolve.reset_cache) replaces the row."""
+    ent = _profiles.get(system)
+    if ent is not None and ent[0] is prof:
+        return ent[1]
+    if ent is not None:
+        del _profiles[system]
+        unregister_handle(ent[1])
+    try:
+        rows, full = _profile_rows(prof)
+    except (TypeError, ValueError, OverflowError):
+        return REF_UNREPRESENTABLE
+    ph = _h.combat_register(_kind("Profile"))
+    _h.combat_set_profile_rows(ph, rows, full)
+    _profiles[system] = (prof, ph)
+    return ph
+
+
+def push_set_frame(pSet) -> None:
+    """Push the set's RESOLVED profile frame. Called whenever an input of
+    frames.frame_of changes: SetClass.SetName and region_hooks.mark_mapped."""
+    if not _enabled:
+        return
+    h = _slot_of(pSet)
+    if h is None:
+        return
+    found = _resolve_frame(pSet)
+    if found is None:
+        _call(pSet, _h.combat_set_frame, h, REF_NONE, _ZERO, _ZERO)
+        return
+    if found is _UNRESOLVABLE:
+        _call(pSet, _h.combat_set_frame, h, REF_UNREPRESENTABLE, _ZERO, _ZERO)
+        return
+    system, prof, anchor, star = found
+    ph = _profile_handle(system, prof)
+    try:
+        _h.combat_set_frame(h, ph, anchor, star)
+    except ValueError:
+        if ph >= 0 and _live(h):
+            _profiles.pop(system, None)   # the profile row is the stale one
+            ph = _profile_handle(system, prof)
+            _call(pSet, _h.combat_set_frame, h, ph, anchor, star)
+        else:
+            _drop(pSet)
+
+
+_SENSOR_DIALS = ("sensorless_range_gu", "cloak_bubble_cap_gu",
+                 "overboost_threshold", "min_blocker_radius_gu")
+_CONSTANTS = ("CONCEAL_K", "LOCK_BREAK_T", "HYSTERESIS",
+              "PROFILE_CONCEALMENT_CAP", "CLOAK_RANGE_FACTOR",
+              "CLOAK_DETECTION_BASE_GU")
+
+
+def _globals() -> dict:
+    """Every global can_detect reads, by Python name, from the Python's own
+    values: the constants too, so no number is re-typed in C++."""
+    import engine.dev_mode as dev_mode
+    from engine import dev_nebula_dials
+    from engine.appc import sensor_detection as sd
+    from engine.appc import sensor_dials
+    from engine.appc import sensor_occlusion as occ
+    g = {name: sensor_dials.get(name) for name in _SENSOR_DIALS}
+    g["conceal_cap"] = float(dev_nebula_dials.conceal_cap())
+    g["dev_mode"] = 1 if dev_mode.is_enabled() else 0
+    g["occ_enabled"] = 1 if occ.enabled() else 0
+    g["enhanced_sensor_contest"] = 1 if sd.ENHANCED_SENSOR_CONTEST else 0
+    for name in _CONSTANTS:
+        g[name] = float(getattr(sd, name))
+    return g
+
+
+def push_globals() -> None:
+    """Push every dial, flag and constant. Called by each writer of a dial
+    (sensor_dials, dev_nebula_dials, sensor_occlusion) and by resync."""
+    if _enabled:
+        _h.combat_set_globals(_globals())
+
+
 def resync() -> None:
-    """Push every registered object's fields (the switch just turned on)."""
-    # Task 4: Set and Profile structures are pushed here too.
-    for h, obj in list(_registry.items()):
+    """Push every registered row and the globals (the switch just turned
+    on). Sets go first, so their frames' profile rows exist; every object's
+    _containing_set is re-pushed with them, including objects whose set
+    registered after them."""
+    push_globals()
+    rows = [(h, obj) for h, obj in list(_registry.items())
+            if obj.__dict__.get("_nslot") == h]
+    set_kind = _kind("Set")
+    rows.sort(key=lambda row: (row[0] >> _KIND_SHIFT) != set_kind)
+    for h, obj in rows:
         if obj.__dict__.get("_nslot") == h:
             _push_all(obj, h)
 
@@ -486,8 +715,57 @@ def audit_mirror() -> None:
             if not ok:
                 _failures.append((name, field))
         for attr, field in _fields_of(type(obj)):
-            if attr in d and not field._matches(d[attr], row[attr]):
+            if attr in d and not field._matches(d[attr],
+                                                row[field._dump_key]):
                 _failures.append((name, attr))
+        if (h >> _KIND_SHIFT) == _kind("Set"):
+            _audit_set(obj, row, name)
+    _audit_globals()
+
+
+def _audit_set(pSet, row, name) -> None:
+    ships, nebulae = _members(pSet)
+    if row["ships"] != ships:
+        _failures.append((name, "ships"))
+    if row["nebulae"] != nebulae:
+        _failures.append((name, "nebulae"))
+    found = _resolve_frame(pSet)
+    if found is None or found is _UNRESOLVABLE:
+        want = (REF_NONE if found is None else REF_UNREPRESENTABLE, 0,
+                _ZERO, _ZERO)
+    else:
+        system, prof, anchor, star = found
+        ent = _profiles.get(system)
+        ph = ent[1] if ent is not None and ent[0] is prof else None
+        want = (ph, 1, anchor, star)
+        if ph is not None:
+            try:
+                prow = _h.combat_dump(ph)
+                rows, full = _profile_rows(prof)
+            except (TypeError, ValueError, OverflowError):
+                prow = None
+            if prow is None or (
+                    [_hexes(r) for r in prow["rows"]]
+                    != [_hexes(r) for r in rows]
+                    or float(prow["full_concealment"]).hex()
+                    != full.hex()):
+                _failures.append((name, "profile.rows"))
+    got = (row["profile"], row["mapped"], row["anchor"], row["star"])
+    if got[:2] != want[:2]:
+        _failures.append((name, "profile"))
+    if _hexes(got[2]) != _hexes(want[2]):
+        _failures.append((name, "anchor"))
+    if _hexes(got[3]) != _hexes(want[3]):
+        _failures.append((name, "star"))
+
+
+def _audit_globals() -> None:
+    got = _h.combat_dump_globals()
+    for key, v in _globals().items():
+        g = got[key]
+        ok = (v.hex() == float(g).hex()) if isinstance(v, float) else v == g
+        if not ok:
+            _failures.append(("globals", key))
 
 
 def audit_failures() -> list:
