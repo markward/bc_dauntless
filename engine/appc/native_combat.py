@@ -45,6 +45,10 @@ except ImportError:
 _enabled = False
 _audit = False
 _failures: list = []
+# Dispatched queries (sensor_detection, sensor_occlusion) the kernel answered,
+# and the ones that fell back to the Python on its ValueError. Counted only on
+# the native path, so the switch-off path pays nothing.
+_counts = {"native_calls": 0, "fallbacks": 0}
 # handle -> object, for resync and the audit. Weak: the row's lifetime is the
 # object's, and its finalizer unregisters the row.
 _registry: "weakref.WeakValueDictionary[int, object]" = weakref.WeakValueDictionary()
@@ -105,6 +109,13 @@ def reset() -> None:
     _audit = False
     _failures.clear()
     _profiles.clear()
+    _counts["native_calls"] = 0
+    _counts["fallbacks"] = 0
+
+
+def counts() -> dict:
+    """{"native_calls": n, "fallbacks": n} since the last reset()."""
+    return dict(_counts)
 
 
 def _disable(reason: str) -> str:

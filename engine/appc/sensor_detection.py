@@ -292,9 +292,12 @@ def effective_sensor_range(ship) -> float:
                     lambda: _nc._h.combat_effective_sensor_range(a),
                     lambda: _py_effective_sensor_range(ship))
             try:
-                return _nc._h.combat_effective_sensor_range(a)
+                answer = _nc._h.combat_effective_sensor_range(a)
             except ValueError:
-                pass
+                _nc._counts["fallbacks"] += 1
+            else:
+                _nc._counts["native_calls"] += 1
+                return answer
     return _py_effective_sensor_range(ship)
 
 
@@ -372,9 +375,12 @@ def concealment_at(ship) -> float:
                     lambda: _nc._h.combat_concealment_at(a, _nc.now()),
                     lambda: _py_concealment_at(ship))
             try:
-                return _nc._h.combat_concealment_at(a, _nc.now())
+                answer = _nc._h.combat_concealment_at(a, _nc.now())
             except ValueError:
-                pass
+                _nc._counts["fallbacks"] += 1
+            else:
+                _nc._counts["native_calls"] += 1
+                return answer
     return _py_concealment_at(ship)
 
 
@@ -414,9 +420,12 @@ def is_hidden_by_cloak(target) -> bool:
                     lambda: _nc._h.combat_is_hidden_by_cloak(b),
                     lambda: _py_is_hidden_by_cloak(target))
             try:
-                return _nc._h.combat_is_hidden_by_cloak(b)
+                answer = _nc._h.combat_is_hidden_by_cloak(b)
             except ValueError:
-                pass
+                _nc._counts["fallbacks"] += 1
+            else:
+                _nc._counts["native_calls"] += 1
+                return answer
     return _py_is_hidden_by_cloak(target)
 
 
@@ -469,9 +478,12 @@ def jammed(observer, target) -> bool:
                             lambda: _nc._h.combat_jammed(*pair),
                             lambda: _py_jammed(observer, target))
         try:
-            return _nc._h.combat_jammed(*pair)
+            answer = _nc._h.combat_jammed(*pair)
         except ValueError:
-            pass
+            _nc._counts["fallbacks"] += 1
+        else:
+            _nc._counts["native_calls"] += 1
+            return answer
     return _py_jammed(observer, target)
 
 
@@ -521,9 +533,12 @@ def can_detect(observer, target, *, dist_sq_gu=None,
                                          dist_sq_gu, apply_concealment,
                                          concealment)
             try:
-                return _nc._h.combat_can_detect(*args)
-            except ValueError:
-                pass                # the mirror cannot answer: the Python
+                answer = _nc._h.combat_can_detect(*args)
+            except ValueError:  # the mirror cannot answer: the Python
+                _nc._counts["fallbacks"] += 1
+            else:
+                _nc._counts["native_calls"] += 1
+                return answer
     return _py_can_detect(observer, target, dist_sq_gu=dist_sq_gu,
                           apply_concealment=apply_concealment,
                           concealment=concealment)
@@ -550,6 +565,9 @@ def _audit_can_detect(observer, target, args, dist_sq_gu, apply_concealment,
         native = h.combat_can_detect(*args)
     except ValueError:
         native = _FELL_BACK
+        _nc._counts["fallbacks"] += 1
+    else:
+        _nc._counts["native_calls"] += 1
     native_latch = h.combat_latch_snapshot(b)
     h.combat_latch_restore(b, before)
     python = _py_can_detect(observer, target, **python_args)
@@ -575,7 +593,9 @@ def _audited(name, observer, target, native_call, python_call):
     try:
         native = native_call()
     except ValueError:
+        _nc._counts["fallbacks"] += 1
         return python_call()
+    _nc._counts["native_calls"] += 1
     python = python_call()
     if not _same(python, native):
         _nc.record_call_failure(name, observer, target, python, native)
@@ -870,9 +890,12 @@ def in_reach(observer, target) -> bool:
                                 lambda: _nc._h.combat_in_reach(*pair),
                                 lambda: _py_in_reach(observer, target))
             try:
-                return _nc._h.combat_in_reach(*pair)
+                answer = _nc._h.combat_in_reach(*pair)
             except ValueError:
-                pass
+                _nc._counts["fallbacks"] += 1
+            else:
+                _nc._counts["native_calls"] += 1
+                return answer
     return _py_in_reach(observer, target)
 
 

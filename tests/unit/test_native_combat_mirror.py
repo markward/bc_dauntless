@@ -361,6 +361,23 @@ def test_audit_mirror_flags_a_bypassed_write():
     assert ("SensorSubsystem", "_condition") in nc.audit_failures()
 
 
+def test_game_loop_tick_audits_the_mirror_under_the_audit(monkeypatch):
+    """Under DAUNTLESS_NATIVE_AUDIT=1 every GameLoop.tick ends with
+    audit_mirror(); with the switch on but no audit, it does not."""
+    from engine.appc.subsystems import SensorSubsystem
+    from engine.core.loop import GameLoop
+    sub = SensorSubsystem("Bypassed")
+    monkeypatch.setenv("DAUNTLESS_NATIVE_COMBAT", "1")
+    loop = GameLoop()
+    sub.__dict__["_condition"] = 0.123
+    loop.tick()
+    assert nc.audit_failures() == []
+    monkeypatch.setenv("DAUNTLESS_NATIVE_AUDIT", "1")
+    loop = GameLoop()
+    loop.tick()
+    assert ("SensorSubsystem", "_condition") in nc.audit_failures()
+
+
 def test_unencodable_value_unregisters_the_object():
     """A value the mirror cannot hold must not leave a registered row with
     the previous value: the object is unregistered (Python path)."""

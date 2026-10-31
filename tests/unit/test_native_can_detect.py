@@ -659,3 +659,39 @@ def test_a_dropped_row_hands_its_latch_to_python(side, answered):
 
     assert _both(scenario) == [False, True, False, False, False, True]
     assert answered["combat_can_detect"] == 2
+
+
+# ── Dispatch counters (Task 7: the scene audit proves native ran) ────────────
+
+def test_counts_native_answers_and_fallbacks():
+    """`counts()` names the dispatched queries the kernel ANSWERED and the
+    ones that fell back to the Python; `reset()` zeroes both, and the switch
+    off counts nothing."""
+    _fresh(OFF)
+    s = _set()
+    obs = _ship(s, "obs", 0.0)
+    tgt = _ship(s, "tgt", 100.0)
+    sd.can_detect(obs, tgt)
+    assert nc.counts() == {"native_calls": 0, "fallbacks": 0}
+
+    _fresh(ON)
+    sd.can_detect(obs, tgt)
+    sd.concealment_at(tgt)
+    sd.effective_sensor_range(obs)
+    sd.in_reach(obs, tgt)
+    sd.is_hidden_by_cloak(tgt)
+    sd.jammed(obs, tgt)
+    occ.blocked(obs, tgt)
+    assert nc.counts() == {"native_calls": 7, "fallbacks": 0}
+
+    obs.GetSensorSubsystem().SetProperty(_PlainProperty())
+    sd.effective_sensor_range(obs)               # the kernel cannot name it
+    assert nc.counts() == {"native_calls": 7, "fallbacks": 1}
+
+    _fresh(AUDIT)
+    sd.is_hidden_by_cloak(tgt)
+    occ.blocked(obs, tgt)
+    sd.effective_sensor_range(obs)               # falls back under audit too
+    assert nc.counts() == {"native_calls": 2, "fallbacks": 1}
+    nc.reset()
+    assert nc.counts() == {"native_calls": 0, "fallbacks": 0}

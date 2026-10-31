@@ -157,9 +157,12 @@ def blocked(observer, target) -> bool:
             if native_combat.audit_enabled():
                 return _audit_blocked(observer, target, a, b)
             try:
-                return native_combat._h.combat_occ_blocked(a, b, _now())
-            except ValueError:
-                pass                    # the mirror cannot answer: Python
+                answer = native_combat._h.combat_occ_blocked(a, b, _now())
+            except ValueError:  # the mirror cannot answer: Python
+                native_combat._counts["fallbacks"] += 1
+            else:
+                native_combat._counts["native_calls"] += 1
+                return answer
     return _py_blocked(observer, target)
 
 
@@ -168,7 +171,9 @@ def _audit_blocked(observer, target, a, b) -> bool:
     try:
         native = native_combat._h.combat_occ_blocked(a, b, _now())
     except ValueError:
+        native_combat._counts["fallbacks"] += 1
         return _py_blocked(observer, target)
+    native_combat._counts["native_calls"] += 1
     python = _py_blocked(observer, target)
     if native != python:
         native_combat.record_call_failure("blocked", observer, target,

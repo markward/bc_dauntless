@@ -107,6 +107,12 @@ class GameLoop:
         with _prof.scope("gl.subsystems"):
             _update_ship_subsystems()
 
+        # DAUNTLESS_NATIVE_AUDIT=1: every mirror row against its Python
+        # object, once a tick, so a write that bypassed a NativeField is
+        # caught where it happened (engine/appc/native_combat.py).
+        if native_combat.audit_enabled():
+            native_combat.audit_mirror()
+
     def advance(self, n: int) -> None:
         for _ in range(n):
             self.tick()
