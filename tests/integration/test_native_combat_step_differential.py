@@ -5,12 +5,16 @@ docs/superpowers/specs/2026-10-30-native-combat-step-design.md §3.2, §5).
 Three fresh loads of combat_stress -- the Python reference
 (``DAUNTLESS_NATIVE_COMBAT=0``), native (``=1``) and native under the audit
 (``DAUNTLESS_NATIVE_AUDIT=1``) -- get the same seeded stream of operations,
-all through public SDK calls: sensors TurnOff / TurnOn / SetCondition,
-StartCloaking / StopCloaking, StartFiring / StopFiring. Every tick each
+all through public SDK calls: sensors TurnOff / TurnOn / SetCondition /
+SetPowerPercentageWanted (fractional, so a sensor range is a product of
+inexact factors and its operand order shows), StartCloaking / StopCloaking,
+StartFiring / StopFiring. Every tick each
 weapon's and weapon system's (IsFiring, target is None), every ship pair's
 lock-break latch, and the fired / torpedo-fired / hit events in order are
 compared with ``==``. Under the audit nothing may be recorded, per call or in
-the whole mirror (audited every tick, as GameLoop.tick does).
+the whole mirror (audited every tick, as GameLoop.tick does). Both native arms
+answer every dispatched query natively (no fallback), and their held-weapon
+pumps and StartFiring taps run through K1 (phase 1b).
 
 Driven the host's way, without GameLoop.tick (AI draws on the unseeded
 module ``random``): per frame, ops, N subsystem ticks, ops, then N combat
@@ -78,6 +82,7 @@ class _Scene:
         nc.reset()
         App.g_kTimerManager._time = 0.0
         random.seed(0)
+        headless_mission.clear_in_flight()      # the last arm's torpedoes
         headless_mission.load("engine.dev_missions.combat_stress")
         host_loop._reset_sensor_state()
         step_memo.forget()
@@ -136,6 +141,9 @@ class _Scene:
             sub = rng.choice(self.sensors)
             sub.SetCondition(sub.GetMaxCondition()
                              * rng.choice((0.0, 0.1, 0.3, 0.6, 1.0, 1.0)))
+        elif kind == "sensor_power":
+            rng.choice(self.sensors).SetPowerPercentageWanted(
+                rng.choice((0.37, 0.61, 0.83, 1.0, 1.13)))
         elif kind == "cloak":
             rng.choice(self.cloaks).StartCloaking()
         elif kind == "decloak":
@@ -184,7 +192,8 @@ class _Scene:
 # Weighted toward firing, so the fight goes on while sensors and cloaks
 # change who can detect whom.
 OPS = ("fire",) * 8 + ("stop", "sensor_off", "sensor_on", "sensor_on",
-                       "sensor_condition", "cloak", "decloak", "decloak")
+                       "sensor_condition", "sensor_power", "sensor_power",
+                       "cloak", "decloak", "decloak")
 
 
 def _name(obj):
@@ -213,7 +222,10 @@ def test_combat_step_matches_python(monkeypatch, ticks_per_frame):
         assert events == ref_events, name
     assert failures == [], failures
     assert counts["off"]["native_calls"] == 0, counts
-    assert counts["on"]["native_calls"] > 0, counts
-    assert counts["audit"]["native_calls"] > 0, counts
+    assert counts["off"]["k1_records"] == 0, counts
+    for name in ("on", "audit"):
+        assert counts[name]["native_calls"] > 0, counts
+        assert counts[name]["fallbacks"] == 0, counts
+        assert counts[name]["k1_records"] > 0, counts
     print("native-combat-step counts (tpf=%d):" % ticks_per_frame, counts,
           "events:", len(ref_events))

@@ -5,6 +5,8 @@ Testing -- the campaign transitions and the handler sweep).
 fresh world; the warp runs its fallback branch, since the flythrough VFX is
 off headless, but the queues, WaitForQueued and _MissionChangePoint all run.
 """
+import sys
+
 import pytest
 
 import App
@@ -26,6 +28,44 @@ def load(name):
     way the dev picker loads it."""
     _fresh_world()
     return host_loop._init_mission(name)
+
+
+# What a fight leaves in flight, drained per tick in production and cleared
+# between tests by tests/conftest.py's _reset_leakable_engine_globals (the
+# same list). A fresh world does not clear them, so a test loading a mission
+# twice (a differential's arms) would otherwise fly the first arm's torpedoes,
+# debris and death sequences in the second.
+_IN_FLIGHT = (
+    ("engine.appc.projectiles", "_active"),
+    ("engine.appc.hit_vfx", "_active"),
+    ("engine.appc.ship_death", "_active"),
+    ("engine.appc.object_lifetime", "_timed"),
+    ("engine.appc.visible_damage", "_pending"),
+    ("engine.appc.internal_blast", "_pending"),
+    ("engine.appc.warp_core_breach", "_growing"),
+    ("engine.appc.warp_core_breach", "_armed"),
+    ("engine.appc.warp_core_breach", "_breached"),
+    ("engine.audio.attached_sources", "_attached"),
+    ("engine.audio.hum_allocator", "_humming"),
+    ("engine.appc.debris_chunk", "_live"),
+    ("engine.appc.hull_breakup", "_pending_wear"),
+    ("engine.appc.hull_breakup", "_last_wear_check"),
+    ("engine.appc.hull_breakup", "_severed"),
+    ("engine.appc.hull_breakup", "_part_labels"),
+    ("engine.appc.hull_breakup", "_awaiting"),
+)
+
+
+def clear_in_flight() -> None:
+    """Drop everything a previous load left in flight (see _IN_FLIGHT) and
+    the explosion lights. Call before load() when one test loads twice."""
+    for mod_name, attr in _IN_FLIGHT:
+        mod = sys.modules.get(mod_name)
+        if mod is not None:
+            getattr(mod, attr).clear()
+    lights = sys.modules.get("engine.appc.explosion_lights")
+    if lights is not None:
+        lights.reset()
 
 
 def the_warp_button():
