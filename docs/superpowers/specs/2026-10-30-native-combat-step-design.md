@@ -403,11 +403,12 @@ gameplay (the fog starts to move) and is Mark's call; the native clock must
 change in the same commit.
 
 **Measurement summary** (perf register SIG-154 to SIG-157, C-234 to C-237,
-Debug, 64 ships, one capture per condition). Quiet scene: total sim per tick
+Debug, 64 ships, one capture per condition; medians of the 9 reports after the first 2, the compare script's 1-based reports 3-11). Quiet scene: total sim per tick
 **did not change** (5.303 off, 5.275 on). Fight: total sim per tick 12.826 off,
 12.196 on (-4.9%), `cb.held_weapons` 2.840 to 1.981 and `sim.combat` 6.068 to
 4.929, but the two fights differed (median 87 vs 48 projectiles in flight), so
-the gain is not separated from the fight. The switch-off cost against the
+the gain is not separated from the fight; the -4.9% total-sim difference is
+inside SIG-147's spread and does not read as a win. The switch-off cost against the
 previous passive-on captures is not separable from the spread (SIG-156,
 derived). Phase 1a therefore shows no rise and no clear fall in total sim;
 whether the phase 1 bar is reachable is a 1b question. Two things to
