@@ -150,6 +150,10 @@ constexpr GlobalInfo kGlobals[] = {
     {"CLOAK_RANGE_FACTOR", false, &Globals::CLOAK_RANGE_FACTOR, nullptr},
     {"CLOAK_DETECTION_BASE_GU", false, &Globals::CLOAK_DETECTION_BASE_GU,
      nullptr},
+    {"TORPEDO_CONE_HALF_ANGLE", false, &Globals::TORPEDO_CONE_HALF_ANGLE,
+     nullptr},
+    {"PULSE_RANGE_GATE_SECONDS", false, &Globals::PULSE_RANGE_GATE_SECONDS,
+     nullptr},
 };
 static_assert(sizeof(kGlobals) / sizeof(kGlobals[0]) ==
               static_cast<size_t>(Global::kCount));
@@ -543,7 +547,11 @@ void Mirror::unregister_row(int64_t h) {
             sensor_.drop_object(h);
             break;
         }
-        case Kind::Subsystem: checked(subsystems_, h, kind); release(subsystems_, h); break;
+        case Kind::Subsystem:
+            checked(subsystems_, h, kind);
+            release(subsystems_, h);
+            sensor_.drop_mounts_of(h);
+            break;
         case Kind::Property: checked(properties_, h, kind); release(properties_, h); break;
         case Kind::Set:
             checked(sets_, h, kind);

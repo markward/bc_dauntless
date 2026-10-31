@@ -200,6 +200,9 @@ enum class Global : int32_t {
     // sensor_detection module constants (CDM §3 #2)
     CONCEAL_K, LOCK_BREAK_T, HYSTERESIS, PROFILE_CONCEALMENT_CAP,
     CLOAK_RANGE_FACTOR, CLOAK_DETECTION_BASE_GU,
+    // weapon_subsystems module constants (phase 1b K1 geometry), pushed from
+    // _TORPEDO_CONE_HALF_ANGLE and _PULSE_RANGE_GATE_SECONDS
+    TORPEDO_CONE_HALF_ANGLE, PULSE_RANGE_GATE_SECONDS,
     kCount
 };
 
@@ -217,6 +220,7 @@ struct Globals {
     double CONCEAL_K = 0.0, LOCK_BREAK_T = 0.0, HYSTERESIS = 0.0,
            PROFILE_CONCEALMENT_CAP = 0.0, CLOAK_RANGE_FACTOR = 0.0,
            CLOAK_DETECTION_BASE_GU = 0.0;
+    double TORPEDO_CONE_HALF_ANGLE = 0.0, PULSE_RANGE_GATE_SECONDS = 0.0;
 };
 
 struct ProfileRowSet {

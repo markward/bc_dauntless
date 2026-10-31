@@ -2,6 +2,7 @@ add_executable(combat_tests
     py_math_test.cc
     mirror_test.cc
     sensor_detect_test.cc
+    weapon_geometry_test.cc
 )
 target_link_libraries(combat_tests
     PRIVATE

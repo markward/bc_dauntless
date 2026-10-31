@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -65,6 +66,11 @@ struct PairCacheEntry {
     std::unordered_map<HandlePair, bool, HandlePairHash> pairs;
 };
 
+// weapon_geometry.h's mount-position memo: subsystems._mounts, keyed
+// (sub, ship_arg) -> (x, y, z). ship_arg is -1 for Python's None.
+using MountMemo = std::unordered_map<HandlePair, std::array<double, 3>,
+                                     HandlePairHash>;
+
 struct SensorState {
     std::unordered_set<HandlePair, HandlePairHash> latch;
     std::unordered_map<HandlePair, bool, HandlePairHash> memo;
@@ -73,6 +79,7 @@ struct SensorState {
     double tick_time = 0.0;
     std::unordered_map<int64_t, RockCacheEntry> rock_cache;
     std::unordered_map<int64_t, PairCacheEntry> pair_cache;
+    MountMemo mounts;
 
     // Mirror::clear: every piece back to its Python import-time value.
     void clear();
@@ -80,6 +87,8 @@ struct SensorState {
     void drop_object(int64_t h);
     // Mirror::unregister_row of a Set row.
     void drop_set(int64_t h);
+    // Mirror::unregister_row of a Subsystem row.
+    void drop_mounts_of(int64_t h);
 };
 
 }  // namespace dauntless::combat

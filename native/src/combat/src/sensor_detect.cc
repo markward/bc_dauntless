@@ -31,6 +31,7 @@ void SensorState::clear() {
     tick_time = 0.0;
     rock_cache.clear();
     pair_cache.clear();
+    mounts.clear();
 }
 
 void SensorState::drop_object(int64_t h) {
@@ -40,6 +41,12 @@ void SensorState::drop_object(int64_t h) {
     std::erase_if(memo, [h](const auto& kv) {
         return kv.first.a == h || kv.first.b == h;
     });
+    // The mount memo's ship_arg is an Object handle.
+    std::erase_if(mounts, [h](const auto& kv) { return kv.first.b == h; });
+}
+
+void SensorState::drop_mounts_of(int64_t h) {
+    std::erase_if(mounts, [h](const auto& kv) { return kv.first.a == h; });
 }
 
 void SensorState::drop_set(int64_t h) {
@@ -704,6 +711,9 @@ std::vector<std::pair<int64_t, int64_t>> latch_pairs_of(const Mirror& m,
 }
 
 // step_memo.forget() for sensor_detection._answers
-void memo_clear(Mirror& m) { m.sensor_state().memo.clear(); }
+void memo_clear(Mirror& m) {
+    m.sensor_state().memo.clear();
+    m.sensor_state().mounts.clear();
+}
 
 }  // namespace dauntless::combat

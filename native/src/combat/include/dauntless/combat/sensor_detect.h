@@ -110,7 +110,8 @@ void latch_restore(Mirror& m, int64_t target,
 std::vector<std::pair<int64_t, int64_t>> latch_pairs_of(const Mirror& m,
                                                         int64_t h);
 
-// step_memo.forget() for sensor_detection._answers
+// step_memo.forget() for sensor_detection._answers AND subsystems._mounts
+// (weapon_geometry.h's mount memo)
 void memo_clear(Mirror& m);
 
 }  // namespace dauntless::combat

@@ -1030,6 +1030,13 @@ _CONSTANTS = ("CONCEAL_K", "LOCK_BREAK_T", "HYSTERESIS",
               "CLOAK_DETECTION_BASE_GU")
 
 
+# Native Global key -> weapon_subsystems module constant (K1 geometry).
+_WEAPON_CONSTANTS = (
+    ("TORPEDO_CONE_HALF_ANGLE", "_TORPEDO_CONE_HALF_ANGLE"),
+    ("PULSE_RANGE_GATE_SECONDS", "_PULSE_RANGE_GATE_SECONDS"),
+)
+
+
 def _globals() -> dict:
     """Every global can_detect reads, by Python name, from the Python's own
     values: the constants too, so no number is re-typed in C++."""
@@ -1045,6 +1052,9 @@ def _globals() -> dict:
     g["enhanced_sensor_contest"] = 1 if sd.ENHANCED_SENSOR_CONTEST else 0
     for name in _CONSTANTS:
         g[name] = float(getattr(sd, name))
+    from engine.appc import weapon_subsystems as ws
+    for key, attr in _WEAPON_CONSTANTS:
+        g[key] = float(getattr(ws, attr))
     return g
 
 

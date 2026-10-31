@@ -22,6 +22,7 @@
 #include "dauntless/combat/profile_eval.h"
 #include "dauntless/combat/py_math.h"
 #include "dauntless/combat/sensor_detect.h"
+#include "dauntless/combat/weapon_geometry.h"
 #include "dauntless/transform_store.h"
 #include "platform/relaunch.h"
 
@@ -9538,6 +9539,85 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "Every latched (observer, target) pair h is in, sorted: what a "
               "row about to be dropped hands to the Python latch.");
         m.def("combat_memo_clear", [] { cb::memo_clear(cb::mirror()); },
-              "step_memo.forget() for can_detect's answers.");
+              "step_memo.forget() for can_detect's answers and the mount memo.");
+
+        // ── The weapon geometry (weapon_geometry.h) ──────────────────────
+        // Each answers as the Python function of the same name would;
+        // ValueError means "ask the Python" (a posed ship, a stale handle, an
+        // unresolved pulse module, ...). Handles: Object rows for ships and
+        // targets, Subsystem rows for banks, tubes and cannons; -1 is None.
+        // Vectors are 3-tuples of doubles.
+        auto vec = [](const cb::Vec3& v) {
+            return py::make_tuple(v[0], v[1], v[2]);
+        };
+        auto opt_vec = [vec](const std::optional<cb::Vec3>& v) -> py::object {
+            return v ? py::object(vec(*v)) : py::none();
+        };
+        m.def("combat_test_subsystem_world_position",
+              [vec](std::int64_t sub, std::int64_t ship, bool use_memo) {
+                  return vec(cb::subsystem_world_position(cb::mirror(), sub,
+                                                          ship, use_memo));
+              },
+              py::arg("sub"), py::arg("ship"), py::arg("use_memo"));
+        m.def("combat_test_mount_memo_size", [] {
+            return cb::mirror().sensor_state().mounts.size();
+        });
+        m.def("combat_test_resolve_aim_world",
+              [vec](std::int64_t ship, std::int64_t target) {
+                  return vec(cb::_resolve_aim_world(cb::mirror(), ship, target));
+              },
+              py::arg("ship"), py::arg("target"));
+        m.def("combat_test_resolve_bank_aim_world",
+              [vec](std::int64_t bank, std::int64_t target, bool use_memo) {
+                  return vec(cb::_resolve_bank_aim_world(cb::mirror(), bank,
+                                                         target, use_memo));
+              },
+              py::arg("bank"), py::arg("target"), py::arg("use_memo"));
+        m.def("combat_test_emitter_in_arc",
+              [](std::int64_t emitter, std::int64_t ship,
+                 const std::array<double, 3>& aim) {
+                  return cb::_emitter_in_arc(cb::mirror(), emitter, ship, aim);
+              },
+              py::arg("emitter"), py::arg("ship"), py::arg("aim"));
+        m.def("combat_test_emitter_forward_world",
+              [vec](std::int64_t emitter, std::int64_t ship) {
+                  return vec(cb::_emitter_forward_world(cb::mirror(), emitter,
+                                                        ship));
+              },
+              py::arg("emitter"), py::arg("ship"));
+        m.def("combat_test_target_offset_world",
+              [vec](std::int64_t target, const std::array<double, 3>& offset) {
+                  return vec(cb::target_offset_world(cb::mirror(), target,
+                                                     offset));
+              },
+              py::arg("target"), py::arg("offset"));
+        m.def("combat_test_resolve_torpedo_aim_point",
+              [opt_vec](std::int64_t tube, std::int64_t target) {
+                  return opt_vec(cb::_resolve_torpedo_aim_point(cb::mirror(),
+                                                                tube, target));
+              },
+              py::arg("tube"), py::arg("target"));
+        m.def("combat_test_in_torpedo_cone",
+              [](std::int64_t tube, std::int64_t ship,
+                 const std::array<double, 3>& aim, bool use_memo) {
+                  return cb::_in_torpedo_cone(cb::mirror(), tube, ship, aim,
+                                              use_memo);
+              },
+              py::arg("tube"), py::arg("ship"), py::arg("aim"),
+              py::arg("use_memo"));
+        m.def("combat_test_solve_pulse_launch_direction",
+              [opt_vec](std::int64_t cannon, std::int64_t ship,
+                        std::int64_t target, bool use_memo) {
+                  return opt_vec(cb::_solve_pulse_launch_direction(
+                      cb::mirror(), cannon, ship, target, use_memo));
+              },
+              py::arg("cannon"), py::arg("ship"), py::arg("target"),
+              py::arg("use_memo"));
+        m.def("combat_test_target_within_range_gu",
+              [](std::int64_t ship, std::int64_t target, double max_range_gu) {
+                  return cb::_target_within_range_gu(cb::mirror(), ship, target,
+                                                     max_range_gu);
+              },
+              py::arg("ship"), py::arg("target"), py::arg("max_range_gu"));
     }
 }
