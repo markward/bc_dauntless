@@ -1034,6 +1034,7 @@ _CONSTANTS = ("CONCEAL_K", "LOCK_BREAK_T", "HYSTERESIS",
 _WEAPON_CONSTANTS = (
     ("TORPEDO_CONE_HALF_ANGLE", "_TORPEDO_CONE_HALF_ANGLE"),
     ("PULSE_RANGE_GATE_SECONDS", "_PULSE_RANGE_GATE_SECONDS"),
+    ("PHASER_MAX_RANGE_GU", "PHASER_MAX_RANGE_GU"),   # K1's pump range gate
 )
 
 
@@ -1057,6 +1058,8 @@ def _globals() -> dict:
         g[key] = float(getattr(ws, attr))
     for i, scale in enumerate(ws.PULSE_COST_SCALE_BY_POWER_SETTING):
         g["PULSE_COST_SCALE_%d" % i] = float(scale)
+    # K1's 0.33 s timer gate: a class constant of WeaponSystem.
+    g["FIRE_TIMER_THRESHOLD"] = float(ws.WeaponSystem.FIRE_TIMER_THRESHOLD)
     return g
 
 

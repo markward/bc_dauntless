@@ -157,6 +157,8 @@ constexpr GlobalInfo kGlobals[] = {
     {"PULSE_COST_SCALE_0", false, &Globals::PULSE_COST_SCALE_0, nullptr},
     {"PULSE_COST_SCALE_1", false, &Globals::PULSE_COST_SCALE_1, nullptr},
     {"PULSE_COST_SCALE_2", false, &Globals::PULSE_COST_SCALE_2, nullptr},
+    {"FIRE_TIMER_THRESHOLD", false, &Globals::FIRE_TIMER_THRESHOLD, nullptr},
+    {"PHASER_MAX_RANGE_GU", false, &Globals::PHASER_MAX_RANGE_GU, nullptr},
 };
 static_assert(sizeof(kGlobals) / sizeof(kGlobals[0]) ==
               static_cast<size_t>(Global::kCount));

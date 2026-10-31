@@ -18,6 +18,7 @@
 #include <audio/python_binding.h>
 #include "dauntless/torpedo_scan.h"
 #include "dauntless/combat/fire_gates.h"
+#include "dauntless/combat/k1_fire_control.h"
 #include "dauntless/combat/mirror.h"
 #include "dauntless/combat/nebula_density.h"
 #include "dauntless/combat/profile_eval.h"
@@ -151,6 +152,7 @@
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <variant>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -9371,7 +9373,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
             }
             return d;
         });
-        m.def("combat_clear", [] { cb::mirror().clear(); },
+        m.def("combat_clear",
+              [] {
+                  cb::k1_kernel().clear();
+                  cb::mirror().clear();
+              },
               "Drop every row (tests only; rows normally live as long as their "
               "Python object).");
         m.def("combat_epoch", [] { return cb::mirror().epoch(); });
@@ -9633,5 +9639,143 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   return cb::weapon_system_offline(cb::mirror(), sys);
               },
               py::arg("sys"));
+
+        // ── The K1 fire-control kernel (k1_fire_control.h) ───────────────
+        // A stack of resumable sessions over the mirror. Each record is a
+        // tuple whose first element is a kind int (combat_k1_kinds) and whose
+        // LAST element is the write log since the previous record: a list of
+        // (handle, field name, value). Values: float / bool / int; `_target`
+        // an Object handle or -1 (None); `_target_list` a list of handles;
+        // `_target_offset` None or the string "walk_offset" (the walk's own
+        // offset object). Layouts:
+        //   (DONE, writes)
+        //   (WALK_START, system, writes)  -> reply combat_k1_set_offset
+        //   (STOP_SYSTEM, system, writes)
+        //   (RUN_PYTHON, system, ship_pos, getter_idx, writes)
+        //   (BANK_STOP, bank, writes)
+        //   (FIRE, bank, target, decision, writes)
+        //       decision: beam (was_firing,), pulse ((x, y, z), target_used),
+        //       tube (target_used,); handles -1 = None
+        //   (FIRE_FAILED, tube, writes)
+        //   (FIRE_DUMB, tube, writes)
+        //   (ASK, query, *args, writes)    -> reply combat_k1_answer
+        m.def("combat_k1_kinds", [] {
+            py::dict d;
+            for (int i = 0; i < static_cast<int>(cb::K1Kind::kCount); ++i)
+                d[cb::k1_kind_name(static_cast<cb::K1Kind>(i))] = i;
+            return d;
+        });
+        m.def("combat_k1_begin_pump",
+              [](std::vector<std::int64_t> ships, double dt, double now,
+                 bool use_memo, double drift_now) {
+                  cb::k1_kernel().begin_pump(std::move(ships), dt, now,
+                                             use_memo, drift_now);
+              },
+              py::arg("ship_handles"), py::arg("dt"), py::arg("now"),
+              py::arg("use_memo"), py::arg("drift_now"),
+              "_pump_held_weapons over Object handles (-1: no row). `now` is "
+              "weapon_subsystems._game_time(), `drift_now` native_combat.now() "
+              "(can_detect's nebula drift clock), use_memo step_memo.active().");
+        m.def("combat_k1_begin_system",
+              [](std::int64_t system, double dt, double now, bool use_memo,
+                 double drift_now) {
+                  cb::k1_kernel().begin_system(system, dt, now, use_memo,
+                                               drift_now);
+              },
+              py::arg("system"), py::arg("dt"), py::arg("now"),
+              py::arg("use_memo"), py::arg("drift_now"),
+              "StartFiring's immediate update_weapons(dt) on one system.");
+        m.def("combat_k1_next", [] {
+            cb::K1Record r;
+            {
+                // The kernel touches no Python object (spec 3.3).
+                py::gil_scoped_release release;
+                r = cb::k1_kernel().next();
+            }
+            py::list writes;
+            for (const cb::K1Write& w : r.writes) {
+                py::object v = std::visit(
+                    [](const auto& x) -> py::object {
+                        using T = std::decay_t<decltype(x)>;
+                        if constexpr (std::is_same_v<T, std::monostate>)
+                            return py::none();
+                        else if constexpr (std::is_same_v<T, std::vector<std::int64_t>>)
+                            return py::cast(x);  // a list
+                        else
+                            return py::cast(x);
+                    },
+                    w.value);
+                writes.append(py::make_tuple(w.handle, w.field, v));
+            }
+            const int kind = static_cast<int>(r.kind);
+            switch (r.kind) {
+                case cb::K1Kind::DONE:
+                    return py::make_tuple(kind, writes);
+                case cb::K1Kind::RUN_PYTHON:
+                    return py::make_tuple(kind, r.a, r.b, r.c, writes);
+                case cb::K1Kind::FIRE: {
+                    py::tuple d;
+                    switch (r.decision.shape) {
+                        case cb::K1Decision::Shape::Beam:
+                            d = py::make_tuple(r.decision.was_firing);
+                            break;
+                        case cb::K1Decision::Shape::Pulse:
+                            d = py::make_tuple(
+                                py::make_tuple(r.decision.world_dir[0],
+                                               r.decision.world_dir[1],
+                                               r.decision.world_dir[2]),
+                                r.decision.target_used);
+                            break;
+                        case cb::K1Decision::Shape::Tube:
+                            d = py::make_tuple(r.decision.target_used);
+                            break;
+                    }
+                    return py::make_tuple(kind, r.a, r.b, d, writes);
+                }
+                case cb::K1Kind::ASK: {
+                    py::list items;
+                    items.append(kind);
+                    items.append(r.query);
+                    for (std::int64_t h : r.args) items.append(h);
+                    items.append(writes);
+                    return py::tuple(items);
+                }
+                default:  // WALK_START, STOP_SYSTEM, BANK_STOP, FIRE_FAILED,
+                          // FIRE_DUMB
+                    return py::make_tuple(kind, r.a, writes);
+            }
+        }, "The top session's next record (see combat_k1_kinds).");
+        m.def("combat_k1_set_offset",
+              [](std::optional<std::array<double, 3>> xyz) {
+                  cb::k1_kernel().set_offset(xyz);
+              },
+              py::arg("xyz"),
+              "WALK_START's reply: the walk's offset xyz when it is a "
+              "TGPoint3, else None.");
+        m.def("combat_k1_answer",
+              [](py::object v) {
+                  if (v.is_none())
+                      cb::k1_kernel().answer(std::nullopt);
+                  else
+                      cb::k1_kernel().answer(py::cast<std::int64_t>(
+                          py::int_(v)));
+              },
+              py::arg("value"), "ASK's reply: a bool, an int or None.");
+        m.def("combat_k1_end", [] { cb::k1_kernel().end(); },
+              "Pop the top session (it must have returned DONE).");
+        m.def("combat_k1_abandon", [] { cb::k1_kernel().abandon(); },
+              "Pop the top session whatever its state (exception path).");
+        m.def("combat_k1_depth",
+              [] { return cb::k1_kernel().depth(); });
+        m.def("combat_k1_counts", [] {
+            const auto& c = cb::k1_kernel().counts();
+            py::dict d;
+            d["k1_records"] = c.records;
+            d["k1_python_systems"] = c.python_systems;
+            d["k1_asks"] = c.asks;
+            return d;
+        });
+        m.def("combat_k1_reset_counts",
+              [] { cb::k1_kernel().reset_counts(); });
     }
 }

@@ -15,6 +15,7 @@ set(DAUNTLESS_COMBAT_SOURCES
     src/sensor_detect.cc
     src/weapon_geometry.cc
     src/fire_gates.cc
+    src/k1_fire_control.cc
 )
 
 add_library(dauntless_combat STATIC ${DAUNTLESS_COMBAT_SOURCES})

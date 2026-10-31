@@ -205,6 +205,9 @@ enum class Global : int32_t {
     TORPEDO_CONE_HALF_ANGLE, PULSE_RANGE_GATE_SECONDS,
     // PULSE_COST_SCALE_BY_POWER_SETTING[0..2] (Task 3, the pulse charge gate)
     PULSE_COST_SCALE_0, PULSE_COST_SCALE_1, PULSE_COST_SCALE_2,
+    // The K1 kernel (Task 4): WeaponSystem.FIRE_TIMER_THRESHOLD and the
+    // weapon_subsystems module constant PHASER_MAX_RANGE_GU
+    FIRE_TIMER_THRESHOLD, PHASER_MAX_RANGE_GU,
     kCount
 };
 
@@ -225,6 +228,7 @@ struct Globals {
     double TORPEDO_CONE_HALF_ANGLE = 0.0, PULSE_RANGE_GATE_SECONDS = 0.0;
     double PULSE_COST_SCALE_0 = 0.0, PULSE_COST_SCALE_1 = 0.0,
            PULSE_COST_SCALE_2 = 0.0;
+    double FIRE_TIMER_THRESHOLD = 0.0, PHASER_MAX_RANGE_GU = 0.0;
 };
 
 struct ProfileRowSet {

@@ -4,6 +4,7 @@ add_executable(combat_tests
     sensor_detect_test.cc
     weapon_geometry_test.cc
     fire_gates_test.cc
+    k1_fire_control_test.cc
 )
 target_link_libraries(combat_tests
     PRIVATE
