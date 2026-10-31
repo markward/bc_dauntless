@@ -31,6 +31,7 @@ The switch is read only in ``configure()`` (called by ``GameLoop.__init__``):
 ``DAUNTLESS_NATIVE_AUDIT=1`` turns the audit on and implies native on.
 """
 import math
+import operator
 import os
 import random
 import sys
@@ -68,6 +69,10 @@ IS_TRUE = "is True"
 #: NativeField type for an optional 3-tuple of floats (MetaNebula ``_fbm``,
 #: ``_seed``): None pushes "unset".
 VEC3 = "vec3"
+#: NativeField type for an aim offset (`_target_offset`, `_held_offset`):
+#: every Python reader tests `isinstance(offset, TGPoint3)`, so anything
+#: else -- None, a plain tuple -- pushes "unset", exactly as it reads.
+OFFSET = "offset"
 #: NativeField type for MetaNebula ``_spheres``: a list of (x, y, z, r).
 SPHERES = "spheres"
 #: NativeField type for an int-or-None (``TorpedoSystem._selected_slot``):
@@ -120,6 +125,10 @@ def reset() -> None:
     _audit = False
     _failures.clear()
     _profiles.clear()
+    # Per-class caches: a class patched or re-based since must recompute.
+    _kind_by_type.clear()
+    _k1_overridden_by_type.clear()
+    _k1_watch.clear()
     global _pulse_stale
     _pulse_stale = False
     _counts["native_calls"] = 0
@@ -132,7 +141,11 @@ def counts() -> dict:
     """Since the last reset(): {"native_calls": n, "fallbacks": n} for the
     dispatched sensor queries, and the K1 kernel's {"k1_records": n,
     "k1_python_systems": n, "k1_asks": n} (records returned, RUN_PYTHON
-    hand-backs, ASKs answered by Python; counted by the kernel)."""
+    hand-backs, ASKs answered by Python; counted by the kernel), plus
+    "k1_python_reasons": {"pump": {...}, "system": {...}} -- the
+    k1_python_systems hand-backs by K1Why name (k1_fire_control.h:
+    posed_ship, overridden, instance_patch, ...; every reason, zeros
+    included), for the held-weapon pump and StartFiring apart."""
     c = dict(_counts)
     if available():
         c.update(_h.combat_k1_counts())
@@ -359,6 +372,10 @@ class NativeField:
             return int(value)
         if t is OPT_INT:
             return -1 if value is None else int(value)
+        if t is OFFSET:
+            if isinstance(value, TGPoint3):
+                return [float(value.x), float(value.y), float(value.z)]
+            return []
         if t is VEC3:
             if value is None:
                 return []
@@ -386,7 +403,7 @@ class NativeField:
             fn = _h.combat_set_f
         elif t is list or t is set:
             fn = _h.combat_set_ids
-        elif t is VEC3:
+        elif t is VEC3 or t is OFFSET:
             fn = _h.combat_set_fv
         else:
             fn = _h.combat_set_i
@@ -401,7 +418,7 @@ class NativeField:
             return v.hex() == float(mirrored).hex()
         if self._type is set:
             return sorted(set(v)) == mirrored
-        if self._type is VEC3:
+        if self._type is VEC3 or self._type is OFFSET:
             if mirrored is None:
                 return v == []
             return _hexes(v) == _hexes(mirrored)
@@ -493,7 +510,9 @@ class NativeRefList(NativeField):
 class NativeSlotMap(NativeRefList):
     """TorpedoSystem._ammo_by_slot, a {slot: ammo} dict: pushed as the
     interleaved list [slot, Ammo handle, slot, Ammo handle, ...] in dict
-    order. An in-place ``d[k] = v`` / ``del d[k]`` calls ``push_field``."""
+    order; a slot holding None pushes -1 (GetCurrentAmmoType() reads None:
+    no ammo, never exhausted). An in-place ``d[k] = v`` / ``del d[k]``
+    calls ``push_field``."""
 
     def __init__(self) -> None:
         super().__init__("Ammo")
@@ -502,7 +521,8 @@ class NativeSlotMap(NativeRefList):
         out = []
         for slot, ammo in value.items():
             out.append(int(slot))
-            out.append(_handle_of(ammo, self._target))
+            out.append(REF_NONE if ammo is None
+                       else _handle_of(ammo, self._target))
         return out
 
 
@@ -711,9 +731,11 @@ def _weapon_kind_of_class(cls) -> int:
 
 # The methods K1 stands in for (it computes their answer from the mirror
 # instead of calling them). A class whose MRO gives any of them a different
-# function than the stock class of its weapon_kind gets k1_overridden = 1, and
-# K1 hands its system to Python whole (a mod subclassing a weapon). Cached
-# per class.
+# function than the STOCK class of its weapon_kind had when
+# weapon_subsystems defined it (the import-time snapshot, k1_snapshot_stock)
+# gets k1_overridden = 1, and K1 hands its system to Python whole: a mod
+# subclassing a weapon, or a patch on the stock class itself or on a base
+# (`setattr(PhaserBank, "CanFire", ...)`).
 _K1_LEAF_METHODS = (
     "Fire", "_fire_decide", "_fire_effect", "CanFire", "_charge_gate",
     "_shot_cost", "_aim_in_arc", "IsFiring", "IsMemberOfGroup", "IsDumbFire",
@@ -729,25 +751,92 @@ _K1_SYSTEM_METHODS = (
 # system and each child: the cheap subset that tests and tools patch.
 _K1_SYSTEM_PATCHES = ("update_weapons", "try_fire_weapon")
 _K1_LEAF_PATCHES = ("Fire", "_fire_decide", "_fire_effect", "CanFire")
+# weapon_kind -> (names, the stock class's resolution of them).
+_k1_stock: dict = {}
+# class -> its k1_overridden flag, and _k1_watch[class] -> (getter, values,
+# missing): what the flag was computed on, re-checked cheaply by
+# _k1_recheck_overrides at every K1 entry.
 _k1_overridden_by_type: dict = {}
+_k1_watch: dict = {}
+
+
+def _k1_resolve(cls, names) -> tuple:
+    """What each name resolves to on `cls` (None: absent). getattr on the
+    class, so a staticmethod reads its function, a classmethod a bound
+    method that compares equal (==) to the next one."""
+    return tuple(getattr(cls, n, None) for n in names)
+
+
+def k1_snapshot_stock(classes) -> None:
+    """weapon_subsystems, as it finishes defining its classes, passes
+    {weapon_kind: stock class}: snapshot what every K1 name resolves to on
+    each, before any test, tool or mod can patch one."""
+    _k1_stock.clear()
+    for kind, cls in classes.items():
+        names = _K1_LEAF_METHODS if kind >= 5 else _K1_SYSTEM_METHODS
+        _k1_stock[kind] = (names, _k1_resolve(cls, names))
+    _k1_overridden_by_type.clear()
+    _k1_watch.clear()
 
 
 def _k1_overridden(cls) -> int:
     hit = _k1_overridden_by_type.get(cls)
     if hit is None:
-        from engine.appc import weapon_subsystems as ws
-        stock = {1: ws.PhaserSystem, 2: ws.PulseWeaponSystem,
-                 4: ws.TorpedoSystem, 5: ws.PhaserBank, 6: ws.PulseWeapon,
-                 8: ws.TorpedoTube}
-        kind = _weapon_kind_of_class(cls)
-        base = stock.get(kind)
+        stock = _k1_stock.get(_weapon_kind_of_class(cls))
         hit = 0
-        if base is not None and cls is not base:
-            names = _K1_LEAF_METHODS if kind >= 5 else _K1_SYSTEM_METHODS
-            hit = int(any(getattr(cls, n, None) is not getattr(base, n, None)
-                          for n in names))
+        if stock is not None:
+            names, snapshot = stock
+            resolved = _k1_resolve(cls, names)
+            hit = int(resolved != snapshot)
+            present = [(n, f) for n, f in zip(names, resolved)
+                       if f is not None]
+            missing = tuple(n for n, f in zip(names, resolved) if f is None)
+            if len(present) > 1:
+                _k1_watch[cls] = (
+                    operator.attrgetter(*[n for n, _f in present]),
+                    tuple(f for _n, f in present), missing)
+            elif present:       # attrgetter of one name: a bare value
+                _k1_watch[cls] = (operator.attrgetter(present[0][0]),
+                                  present[0][1], missing)
+            else:
+                _k1_watch[cls] = (lambda _c: (), (), missing)
         _k1_overridden_by_type[cls] = hit
     return hit
+
+
+def _k1_recheck_overrides() -> None:
+    """Has a K1 method been patched on a flagged class (or a base) since its
+    flag was computed? Called at every K1 entry (k1_pump, k1_system): one
+    attrgetter call per class with a row, plus a getattr per name the class
+    lacks -- about 1.5 us for the six stock classes. On a change the class's
+    flag is recomputed against the snapshot and re-pushed to every row of
+    that class (an exceptional path: a scan of the registry). A patch made
+    in the middle of a K1 session is seen at the next entry."""
+    changed = None
+    for cls, (get, values, missing) in _k1_watch.items():
+        try:
+            same = get(cls) == values
+        except AttributeError:          # a present name was deleted
+            same = False
+        if same:
+            for n in missing:
+                if getattr(cls, n, None) is not None:
+                    same = False
+                    break
+        if not same:
+            if changed is None:
+                changed = []
+            changed.append(cls)
+    if changed is None:
+        return
+    for cls in changed:
+        del _k1_overridden_by_type[cls]
+        del _k1_watch[cls]
+    changed = set(changed)
+    fid = _fid("k1_overridden")
+    for h, obj in list(_registry.items()):
+        if type(obj) in changed and obj.__dict__.get("_nslot") == h:
+            _call(obj, _h.combat_set_i, h, fid, _k1_overridden(type(obj)))
 
 
 def _posed_flag(ship) -> int:
@@ -809,26 +898,14 @@ def _flags(obj, h) -> dict:
 
 def push_posed_parts(ship) -> None:
     """Re-push the ship's has_posed_parts flag (`_posed_flag`): its pose
-    dict was rebound (PosedPartsField), tick_ship moved a part in place, its
-    rig appeared or went (note_rig), or SetupProperties just gave it a
-    script."""
+    dict was rebound (PosedPartsField), tick_ship moved a part in place, or
+    SetupProperties just gave it a script. The flag reads only the current
+    poses (never the rig), and those are the only places they change."""
     if _enabled:
         h = ship.__dict__.get("_nslot")
         if h is not None:
             _call(ship, _h.combat_set_i, h, _fid("has_posed_parts"),
                   _posed_flag(ship))
-
-
-def note_rig(ship, key) -> None:
-    """tick_ship resolved `ship`'s rig for `key` = (leaf, rig generation):
-    push the flag once per key. Since Task 6b the flag reads only the
-    current poses, never the rig, so this re-push is a belt-and-braces
-    refresh rather than a change of value."""
-    if _enabled:
-        d = ship.__dict__
-        if d.get("_nc_rig_key") != key:
-            d["_nc_rig_key"] = key
-            push_posed_parts(ship)
 
 
 def push_pulse_params(bank) -> None:
@@ -861,7 +938,9 @@ _pulse_stale = False
 
 def mark_pulse_stale() -> None:
     """weapon_subsystems._reset_projectile_module_cache ran. Nothing is
-    resolved now (the SDK tree may be half reloaded); the next push or
+    resolved now (the SDK tree may be half reloaded); the next push, the
+    next K1 entry (k1_pump / k1_system: a K1 decision reads the params, and
+    Python's Fire would read the module at that moment) or
     refresh_stale_pulse_params (GameLoop.tick) re-reads every built bank."""
     global _pulse_stale
     if _enabled:
@@ -1491,17 +1570,25 @@ def _k1_decision(bank, decision, walk) -> tuple:
 
 
 def _k1_pulse_module(bank):
-    """The live module PulseWeapon._fire_decide would have resolved: the
-    registration-time resolution (ruling P6) left it in sys.modules. Gone
-    (unloaded since) raises: the session abandons rather than spawn from
-    None."""
+    """The module PulseWeapon._fire_decide would have resolved:
+    importlib.import_module of the bank's script, exactly as decide calls
+    it -- a sys.modules hit, or a fresh import when the module was unloaded
+    since registration (ruling P6 cached only its launch speed and
+    lifetime). An ImportError is where decide refuses, before its stamps;
+    after the kernel's FIRE decision (stamps applied) that cannot be
+    followed, so it raises and the session abandons. Any other exception
+    propagates, as it does out of Python's Fire."""
+    import importlib
     from engine.appc import weapon_subsystems as ws
     script = ws.pulse_module_script(bank)
-    mod = sys.modules.get(script) if script else None
-    if mod is None:
-        raise RuntimeError("combat K1: pulse module %r is not loaded"
-                           % (script,))
-    return mod
+    if not script:
+        raise RuntimeError("combat K1: pulse bank %r has no module"
+                           % (bank.GetName(),))
+    try:
+        return importlib.import_module(script)
+    except ImportError as e:
+        raise RuntimeError("combat K1: pulse module %r does not import"
+                           % (script,)) from e
 
 
 def _k1_answer(rec, walk, dt):
@@ -1533,6 +1620,10 @@ def _k1_answer(rec, walk, dt):
         return bool(hasattr(entry, "IsDead") and entry.IsDead())
     if query == "is_member":
         return bool(walk.obj(args[0]).IsMemberOfGroup(args[1]))
+    if query == "is_dumb":
+        # update_weapons' `weapon.IsDumbFire()` (GetNumTargets() == 0 already
+        # held), for a weapon whose row an effect's handler dropped.
+        return bool(walk.obj(args[0]).IsDumbFire())
     if query == "group_step":
         # One pass of update_weapons' delta loop body; the kernel does the
         # success bookkeeping itself.
@@ -1561,7 +1652,9 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
     whole system in Python, or an ASK answered in Python. `ships` and
     `pump_body(ship, getter_index)` serve a pump's RUN_PYTHON, `system` a
     system session's. On any exception the session is abandoned (the
-    kernel's mirror still equals Python) and the exception re-raised."""
+    kernel's mirror still equals Python) and the exception re-raised; the
+    walked system's row dropped by a handler mid-walk (the kernel cannot
+    follow it) re-raises as a RuntimeError naming that invariant."""
     (DONE, WALK_START, STOP_SYSTEM, RUN_PYTHON, BANK_STOP, FIRE,
      FIRE_FAILED, FIRE_DUMB, ASK) = _k1_kinds()
     walk = _K1Walk()
@@ -1570,7 +1663,18 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
         walk.pin_system(system)
     try:
         while True:
-            rec = _h.combat_k1_next()
+            try:
+                rec = _h.combat_k1_next()
+            except (ValueError, RuntimeError) as e:
+                if walked is not None and "_nslot" not in walked.__dict__:
+                    # k1_fire_control.h, PROTOCOL INVARIANT: no Python
+                    # resume point exists mid-update_weapons.
+                    raise RuntimeError(
+                        "combat K1: the walked system %r's mirror row was "
+                        "dropped mid-walk (a value it cannot encode); K1 "
+                        "cannot follow it (protocol invariant, "
+                        "k1_fire_control.h)" % (walked.GetName(),)) from e
+                raise
             kind = rec[0]
             writes = rec[-1]
             if writes:
@@ -1625,6 +1729,9 @@ def k1_pump(ships, dt, pump_body) -> None:
     """host_loop._pump_held_weapons(ships, dt) through K1. `ships` is a
     list; a ship with no Object row is passed as -1, and the kernel hands
     each of its getters back (RUN_PYTHON) to `pump_body(ship, getter)`."""
+    _k1_recheck_overrides()
+    if _pulse_stale:            # a mission swap's reset, before GameLoop.tick
+        refresh_stale_pulse_params()
     handles = []
     for ship in ships:
         h = slot(ship)
@@ -1642,6 +1749,9 @@ def k1_system(system, dt) -> None:
     if h is None or (h >> _KIND_SHIFT) != _kind("Subsystem"):
         system.update_weapons(dt)
         return
+    _k1_recheck_overrides()
+    if _pulse_stale:            # a mission swap's reset, before GameLoop.tick
+        refresh_stale_pulse_params()
     t, use_memo, drift = _k1_clocks()
     _h.combat_k1_begin_system(h, dt, t, use_memo, drift)
     run_k1(dt, system=system)

@@ -1165,7 +1165,7 @@ class Weapon(ShipSubsystem):
     # Mirrored into the native combat row on every write (native_combat).
     _firing = NativeField(bool)
     _target = NativeRefField("Object")
-    _target_offset = NativeField(native_combat.VEC3)
+    _target_offset = NativeField(native_combat.OFFSET)
     _fire_timer = NativeField(float)
 
     def __init__(self, name: str = ""):
@@ -1269,11 +1269,11 @@ class WeaponSystem(PoweredSubsystem):
     # leaf emitters that derive from WeaponSystem (PhaserBank, PulseWeapon,
     # TractorBeam) inherit _target / _target_offset / _fire_timer from here.
     _target = NativeRefField("Object")
-    _target_offset = NativeField(native_combat.VEC3)
+    _target_offset = NativeField(native_combat.OFFSET)
     _fire_timer = NativeField(float)
     _fire_held = NativeField(bool)
     _held_target = NativeRefField("Object")
-    _held_offset = NativeField(native_combat.VEC3)
+    _held_offset = NativeField(native_combat.OFFSET)
     # An in-place append (_add_target) calls native_combat.push_field.
     _target_list = NativeRefList("Object")
     _force_update = NativeField(bool)
@@ -1286,6 +1286,9 @@ class WeaponSystem(PoweredSubsystem):
     def __init__(self, name: str = ""):
         super().__init__(name)
         self._target = None
+        # A NativeField has no __get__: unassigned, a read would return the
+        # descriptor itself (truthy, not a TGPoint3).
+        self._target_offset = None
         self._weapon_system_type: int = 0
         # Round-robin cursor into child emitters (tractor _engage_beam; the
         # BC tick uses _last_weapon_idx below instead).
@@ -3758,3 +3761,10 @@ class TorpedoTube(Weapon):
     def IsSkewFire(self) -> int:
         """Return 1 if skew-fire is enabled on this tube, else 0."""
         return 1 if self._skew_fire else 0
+
+
+# The stock functions K1 stands in for, as defined above: a later patch on
+# any of these classes (or a base) flags its rows k1_overridden.
+native_combat.k1_snapshot_stock({
+    1: PhaserSystem, 2: PulseWeaponSystem, 4: TorpedoSystem,
+    5: PhaserBank, 6: PulseWeapon, 8: TorpedoTube})

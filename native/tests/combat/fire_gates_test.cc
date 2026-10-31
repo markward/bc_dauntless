@@ -142,6 +142,16 @@ TEST(FireGates, TubeAmmoGate) {
     EXPECT_TRUE(can_fire(w.m, w.tube, 50.0).ok);
 }
 
+TEST(FireGates, TubeNoneAmmoSlotIsNotExhausted) {
+    // A slot holding None (-1): GetCurrentAmmoType() is None, and Python's
+    // _ammo_exhausted reads that as "no ammo configured" -- never gated.
+    World w;
+    w.m.set_i(w.tube, Field::_skew_fire, 1);
+    w.m.set_ids(w.tsys, Field::_ammo_by_slot, {0, -1});
+    const CanFireResult r = can_fire(w.m, w.tube, 50.0);
+    EXPECT_TRUE(r.ok);
+}
+
 TEST(FireGates, PulseCooldownThenAffordability) {
     World w;
     const int64_t psys = w.sys_row(2);

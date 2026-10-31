@@ -17,8 +17,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <iterator>
-#include <memory>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -117,6 +117,7 @@ enum class St : int32_t {
                        //         weapon._target = None; FireDumb
     UW_RESEED_ANSWER,  //     self._reseed_all_fire_timers() (ASK answered); break
     UW_NEXT_DELTA,     //     (after weapon.FireDumb(0, 1)) the next delta
+    UW_DUMB_ANSWER,    //     (ASK is_dumb answered: the weapon's row is gone)
     UW_GROUP_ADVANCE,  // if fired_this_group or len(groups) <= 1: break;
                        // working = groups[...]; if working == start_group: ...
     UW_EXIT,           // self._force_update = False; return did_fire
@@ -292,6 +293,13 @@ private:
         write_i(h, f, name, v, v);
     }
     void write_target(int64_t h, int64_t t) {
+        // A bank whose row a handler dropped mid-walk (an unencodable value)
+        // is still Python's object, pinned by run_k1: the write goes to
+        // Python only. There is no row to write, so nothing to undo.
+        if (!subrow(h)) {
+            log(h, "_target", t);
+            return;
+        }
         K1Undo u = undo_of(K1Undo::Type::Ref, h, Field::_target);
         u.i = m_.get_ref(h, Field::_target);  // a stale ref reads -1
         m_.set_ref(h, Field::_target, t);
@@ -498,11 +506,12 @@ std::optional<K1Why> Walker::prescan(int64_t sys,
             return K1Why::PulseModule;
     }
 
-    // TorpedoSystem._ammo_by_slot: [slot, Ammo handle, ...].
+    // TorpedoSystem._ammo_by_slot: [slot, Ammo handle, ...]; -1 is a slot
+    // holding None, which the tube gate answers (never exhausted).
     if (kind == kTorpedoSystem) {
         const auto& slots = s->_ammo_by_slot;
         for (size_t i = 1; i < slots.size(); i += 2)
-            if (!m_.ammo(slots[i])) return K1Why::AmmoRow;
+            if (slots[i] != -1 && !m_.ammo(slots[i])) return K1Why::AmmoRow;
     }
     return std::nullopt;
 }
@@ -797,7 +806,8 @@ K1Record Walker::run() {
                     // The pre-scan named every child, and nothing ran in
                     // Python between it and here but WALK_START's offset
                     // reply (no effect, no handler).
-                    if (!named_leaf(c)) lost("a child became unnamed before the first effect");
+                    if (!named_leaf(c))
+                        lost("a child became unnamed before the first effect");
                     if (subrow(c)->_firing) {
                         lit = c;
                         break;
@@ -893,12 +903,22 @@ K1Record Walker::run() {
             write_target(s_.weapon, -1);
             // if self.GetNumTargets() == 0 and weapon.IsDumbFire():
             //     weapon.FireDumb(0, 1)      (only TorpedoTube is dumb-capable)
-            if (sysrow()._target_list.empty() &&
-                subrow(s_.weapon)->weapon_kind == kTorpedoTube)
-                return emit(K1Kind::FIRE_DUMB, St::UW_NEXT_DELTA, s_.weapon);
+            if (sysrow()._target_list.empty()) {
+                const SubsystemRow* wr = subrow(s_.weapon);
+                if (!wr)  // dropped by an effect's handler: Python answers
+                    return ask("is_dumb", {s_.weapon}, St::UW_DUMB_ANSWER);
+                if (wr->weapon_kind == kTorpedoTube)
+                    return emit(K1Kind::FIRE_DUMB, St::UW_NEXT_DELTA,
+                                s_.weapon);
+            }
             next_delta();
             break;
         }
+        case St::UW_DUMB_ANSWER:
+            if (take_answer())
+                return emit(K1Kind::FIRE_DUMB, St::UW_NEXT_DELTA, s_.weapon);
+            next_delta();
+            break;
         case St::UW_RESEED_ANSWER:
             take_answer();
             s_.st = St::UW_GROUP_ADVANCE;  // break
@@ -943,6 +963,9 @@ K1Record Walker::run() {
         // ── WeaponSystem.try_fire_weapon ──────────────────────────────────
         case St::TF_TIMER: {
             const int64_t w = s_.tf_weapon;
+            // Every begin_try names a live leaf in the same call, except after
+            // ASK is_member, where only the stock (pure) IsMemberOfGroup ran.
+            if (!named_leaf(w)) lost("the tried weapon's row is gone");
             const double threshold = m_.globals().FIRE_TIMER_THRESHOLD;
             // if self._force_update: weapon._fire_timer = FIRE_TIMER_THRESHOLD
             // else: weapon._fire_timer = getattr(weapon, "_fire_timer", 0.0) + dt

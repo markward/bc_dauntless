@@ -288,6 +288,10 @@ TEST(MirrorWeapons, AmmoBySlotIsSlotHandlePairs) {
     EXPECT_THROW(f.m.set_ids(sys, Field::_ammo_by_slot, {0, sys}),
                  std::invalid_argument);               // not an Ammo handle
     EXPECT_NO_THROW(f.m.set_ids(sys, Field::_ammo_by_slot, {}));
+    // A slot holding None is -1.
+    f.m.set_ids(sys, Field::_ammo_by_slot, {0, -1, 2, a0});
+    EXPECT_EQ(f.m.get_ids(sys, Field::_ammo_by_slot),
+              (std::vector<int64_t>{0, -1, 2, a0}));
 }
 
 TEST(MirrorWeapons, OffsetsAreNullableButMountVectorsAreNot) {

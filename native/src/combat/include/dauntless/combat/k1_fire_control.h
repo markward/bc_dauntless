@@ -45,13 +45,30 @@
 // handle an ASK cannot name.
 //
 // A THROW from next() (a protocol error, or the walked system's row gone)
-// changes nothing: the writes it made but never returned are undone in the
-// mirror, and the session -- cursor, pending answer -- is restored to the
-// state before the call. The mirror then still equals Python, so abandon()
-// is safe. That guarantee covers the kernel's side only: once a record is
-// returned its writes are in the mirror, so Python applying them must not
-// fail part-way (native_combat.apply_writes: unreachable today, a fixed set
-// of plain fields).
+// undoes the field writes it made but never returned, in the mirror, and
+// restores the session -- cursor, pending answer -- to the state before the
+// call. The mirror's fields then still equal Python, so abandon() is safe.
+// Caveat: can_detect's memo and lock-break latch writes (the pump's
+// _target_undetectable gate) are not undone. That is safe because the
+// pre-scan makes every gate after can_detect answerable, so no throw can
+// follow a can_detect in the same call. The guarantee covers the kernel's
+// side only: once a record is returned its writes are in the mirror, so
+// Python applying them must not fail part-way (native_combat.apply_writes:
+// unreachable today, a fixed set of plain fields).
+//
+// PROTOCOL INVARIANT: THE WALKED SYSTEM'S ROW OUTLIVES ITS WALK. An effect's
+// event handler may make objects unrepresentable (native_combat._drop: a
+// value the mirror cannot encode). A dropped TARGET or BANK row is followed:
+// a bank's `_target = None` is logged for Python without a mirror write (no
+// row), and every question the row would have answered is ASKed (fire,
+// reseed, group_step, is_dumb). A dropped WALKED SYSTEM row is not: the rest
+// of update_weapons reads the system's own fields at every step, and Python
+// cannot resume update_weapons mid-loop (re-running it would replay the
+// effects already made), so next() throws, run_k1 abandons the session and
+// re-raises (naming this invariant). Python would have carried on; native
+// raises instead. Only a value the mirror cannot encode drops a row (a
+// non-number in a number field, a malformed vector); no stock or SDK path
+// is known to store one on a weapon system.
 //
 // SESSIONS form a stack: an effect's event handler may StartFiring, which
 // begins (and finishes) a nested one-system session before the outer one
@@ -76,6 +93,9 @@
 //        is_dead    (obj)               hasattr(obj, "IsDead") and
 //                                       obj.IsDead()                  -> bool
 //        is_member  (bank, group)       bank.IsMemberOfGroup(group)   -> bool
+//        is_dumb    (bank)              bank.IsDumbFire() (the bank's row
+//                                       was dropped; GetNumTargets() == 0
+//                                       already held)                 -> bool
 //        group_step (sys, idx, group,   one pass of update_weapons' delta
 //                    target)            loop body for GetWeapon(idx): 0
 //                                       skipped, 1 fired, 2 failed (Python

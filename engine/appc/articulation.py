@@ -451,9 +451,7 @@ def tick_ship(ship, dt: float) -> None:
             ship._rigless_key = key
         except Exception:  # noqa: BLE001 - test doubles may reject attribute set
             pass
-        native_combat.note_rig(ship, key)
         return
-    native_combat.note_rig(ship, key)
     forced = _dev_override
     if forced is not None:
         state = forced

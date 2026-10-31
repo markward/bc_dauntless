@@ -139,7 +139,8 @@ CanFireResult energy_can_fire(const Mirror& m, int64_t h, bool pulse) {
     if (ship != -1 && ship_dead(m, ship)) return r;
     // _charge_gate
     if (pulse) {
-        // 1e-9: weapon_subsystems.py:2846, an inline literal in the Python.
+        // 1e-9: PulseWeapon._charge_gate's inline literal
+        // (weapon_subsystems.py:2845 when ported).
         if (!(self._charge_level >= shot_cost(m, self) - 1e-9)) return r;
     } else {
         if (self._depleted) {
@@ -178,6 +179,8 @@ bool ammo_exhausted(const Mirror& m, const SubsystemRow* parent) {
     for (size_t i = 0; i + 1 < slots.size(); i += 2) {
         if (slots[i] == slot) { ammo_h = slots[i + 1]; break; }
     }
+    // A slot holding None: `ammo is not None` is false, so not finite.
+    if (ammo_h == -1) return false;
     if (ammo_h == kRefUnrepresentable) fall_back("ammo type is unnamed");
     const AmmoRow* ammo = m.ammo(ammo_h);
     if (!ammo) fall_back("ammo row is stale");

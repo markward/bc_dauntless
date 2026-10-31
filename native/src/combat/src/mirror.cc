@@ -639,10 +639,11 @@ void Mirror::set_ids(int64_t h, Field f, const std::vector<int64_t>& ids) {
     } else if (f == Field::_children) {
         entries_are(Kind::Subsystem);
     } else if (f == Field::_ammo_by_slot) {
-        // [slot, Ammo handle] pairs, in dict order.
+        // [slot, Ammo handle] pairs, in dict order; -1 is a slot holding
+        // None.
         if (v.size() % 2 != 0) bad("expected [slot, handle] pairs", f);
         for (size_t i = 1; i < v.size(); i += 2)
-            if (v[i] != kRefUnrepresentable &&
+            if (v[i] != kRefUnrepresentable && v[i] != -1 &&
                 (v[i] < 0 || static_cast<Kind>((v[i] >> 60) & 7) != Kind::Ammo))
                 bad("list entry is not an Ammo handle", f);
     } else if (f == Field::_known_objects) {

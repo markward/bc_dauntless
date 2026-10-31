@@ -517,6 +517,36 @@ def test_tube_with_no_ammo_types_is_not_gated(world):
         nc.push_field(parent, "_ammo_by_slot")
 
 
+def test_tube_with_a_none_ammo_slot_is_not_gated(world):
+    """A slot holding None: GetCurrentAmmoType() is None, so Python's
+    _ammo_exhausted is False (no ammo configured never gates). The mirror
+    holds it as -1 (None), and the native gate answers the same, never
+    falling back."""
+    w = world
+    tube = w.tubes[0]
+    parent = tube._parent_subsystem
+    saved = dict(parent._ammo_by_slot)
+    parent._ammo_by_slot.clear()
+    parent._ammo_by_slot[0] = None
+    nc.push_field(parent, "_ammo_by_slot")
+    try:
+        assert _h.combat_dump(_slot(parent))["_ammo_by_slot"] == [0, -1]
+        parent.TurnOn()
+        w.galaxy._dead = False
+        tube._condition = tube._max_condition
+        tube._num_ready = 1
+        tube._skew_fire = True
+        tube._immediate_delay = 0.0
+        _same(w, tube, 5.0, "None slot")
+        assert tuple(_native(tube, 5.0)) == (True, False)
+        nc.audit_mirror()
+        assert nc.audit_failures() == []
+    finally:
+        parent._ammo_by_slot.clear()
+        parent._ammo_by_slot.update(saved)
+        nc.push_field(parent, "_ammo_by_slot")
+
+
 def test_tube_random_states_match(world):
     w, rng = world, random.Random(SEED + 4)
     seen = set()

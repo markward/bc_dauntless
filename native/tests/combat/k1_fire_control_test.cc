@@ -1091,6 +1091,119 @@ int64_t why_total(const K1Kernel::Counts& c) {
 }
 }  // namespace
 
+namespace {
+bool has_write(const World& w, const K1Record& r, const std::string& s) {
+    const std::vector<std::string> ws = w.writes(r);
+    return std::find(ws.begin(), ws.end(), s) != ws.end();
+}
+}  // namespace
+
+TEST(K1, BankRowGoneAfterFireFailedAsksPython) {
+    // A FIRE_FAILED handler drops the tube's row (a value it cannot encode).
+    // Python carries on with the object: `weapon._target = None` is logged
+    // for Python with no mirror write (the row is gone), and the retry's
+    // Fire is ASKed.
+    World w;
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, -50.0, 0.0);  // behind: the cone
+    const int64_t sys = w.system("sys", ship, 4, {t});
+    const int64_t b0 = w.bank("b0", sys);
+    w.m.set_i(sys, Field::_force_update, 1);
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    EXPECT_EQ(w.brief(w.step()), "WALK_START sys");
+    EXPECT_EQ(w.brief(w.step()), "FIRE_FAILED b0");
+    w.m.unregister_row(b0);
+    K1Record r = w.step();
+    EXPECT_EQ(w.brief(r), "ASK fire");
+    EXPECT_TRUE(has_write(w, r, "b0._target=None"))
+        << ::testing::PrintToString(w.writes(r));
+    w.k.answer(0);
+    r = w.step();
+    EXPECT_EQ(w.brief(r), "DONE");
+    EXPECT_TRUE(has_write(w, r, "b0._target=None"))
+        << ::testing::PrintToString(w.writes(r));
+    w.k.end();
+}
+
+TEST(K1, BankRowGoneBeforeTheDumbCheckAsksPython) {
+    // StopFiring (BANK_STOP) drops the tube's row; the list is empty, so
+    // update_weapons asks weapon.IsDumbFire() -- of Python, the row being
+    // gone -- and dumb-fires on its answer.
+    World w;
+    const int64_t ship = w.ship("ship");
+    const int64_t sys = w.system("sys", ship, 4, {});
+    const int64_t b0 = w.bank("b0", sys);
+    w.m.set_i(b0, Field::_num_ready, 0);  // CanFire refuses
+    w.m.set_i(sys, Field::_force_update, 1);
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    EXPECT_EQ(w.brief(w.step()), "WALK_START sys");
+    EXPECT_EQ(w.brief(w.step()), "BANK_STOP b0");
+    w.m.unregister_row(b0);
+    K1Record r = w.step();
+    EXPECT_EQ(w.brief(r), "ASK is_dumb");
+    EXPECT_EQ(r.args, (std::vector<int64_t>{b0}));
+    EXPECT_TRUE(has_write(w, r, "b0._target=None"))
+        << ::testing::PrintToString(w.writes(r));
+    w.k.answer(1);
+    EXPECT_EQ(w.brief(w.step()), "FIRE_DUMB b0");
+    EXPECT_EQ(w.brief(w.step()), "DONE");
+    w.k.end();
+
+    // Answered 0 (not dumb-capable): no FireDumb.
+    World v;
+    const int64_t ship2 = v.ship("ship");
+    const int64_t sys2 = v.system("sys", ship2, 4, {});
+    const int64_t c0 = v.bank("b0", sys2);
+    v.m.set_i(c0, Field::_num_ready, 0);
+    v.m.set_i(sys2, Field::_force_update, 1);
+    v.k.begin_pump({ship2}, kDt, 10.0, false, 0.0);
+    v.step();
+    v.step();
+    v.m.unregister_row(c0);
+    EXPECT_EQ(v.brief(v.step()), "ASK is_dumb");
+    v.k.answer(0);
+    EXPECT_EQ(v.brief(v.step()), "DONE");
+    v.k.end();
+}
+
+TEST(K1, WalkedSystemRowGoneMidWalkThrows) {
+    // The protocol invariant (k1_fire_control.h): the walked SYSTEM's row
+    // must outlive its walk. Gone after an effect, next() throws and leaves
+    // the session as it was, for run_k1 to abandon.
+    World w;
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, -50.0, 0.0);
+    const int64_t sys = w.system("sys", ship, 4, {t});
+    w.bank("b0", sys);
+    w.m.set_i(sys, Field::_force_update, 1);
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    EXPECT_EQ(w.brief(w.step()), "WALK_START sys");
+    EXPECT_EQ(w.brief(w.step()), "FIRE_FAILED b0");
+    w.m.unregister_row(sys);
+    EXPECT_ANY_THROW(w.k.next());
+    EXPECT_EQ(w.k.depth(), 1u);
+    w.k.abandon();
+    EXPECT_EQ(w.k.depth(), 0u);
+}
+
+TEST(K1, NoneAmmoSlotWalksNatively) {
+    // A torpedo system whose slot holds None (-1) is no fallback: the tube
+    // gate reads it as "no ammo configured", as Python does.
+    World w;
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t sys = w.system("sys", ship, 4, {t});
+    w.bank("b0", sys);
+    w.m.set_ids(sys, Field::_ammo_by_slot, {0, -1});
+    w.m.set_i(sys, Field::_force_update, 1);  // past the fire timer
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    const std::vector<std::string> recs = w.run_to_done();
+    EXPECT_EQ(recs.front(), "WALK_START sys");
+    EXPECT_NE(std::find(recs.begin(), recs.end(), "FIRE b0@t"), recs.end())
+        << ::testing::PrintToString(recs);
+    EXPECT_EQ(w.k.counts().python_systems, 0);
+}
+
 TEST(K1, FallbackReasonsAreCounted) {
     EXPECT_STREQ(k1_why_name(K1Why::PosedShip), "posed_ship");
     EXPECT_STREQ(k1_why_name(K1Why::InstancePatch), "instance_patch");

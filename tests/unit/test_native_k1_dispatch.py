@@ -591,8 +591,10 @@ def test_instance_patch_runs_python(monkeypatch):
 
 def test_pulse_effect_uses_the_decided_module(monkeypatch):
     """Python's decision carries the module it resolved; on the K1 path a
-    module that is not loaded any more abandons the session (raise), never
-    reaching _spawn_projectile with None."""
+    module that no longer imports abandons the session (raise), never
+    reaching _spawn_projectile with None. (One merely unloaded from
+    sys.modules is imported again, as decide does:
+    test_unloaded_pulse_module_reimports_like_python.)"""
     ships = (("Vorcha", "vorcha", (0.0, 0.0, 0.0), 0.0),
              ("Galaxy", "galaxy", (40.0, 220.0, 12.0), math.pi))
     w = World(monkeypatch, False, ships, "k1_mod_off")
@@ -624,7 +626,8 @@ def test_pulse_effect_uses_the_decided_module(monkeypatch):
         vorcha = w.ships["Vorcha"]
         script = ws.pulse_module_script(
             vorcha.GetPulseWeaponSystem().GetWeapon(0))
-        monkeypatch.delitem(sys.modules, script)
+        # None in sys.modules: import_module raises ModuleNotFoundError.
+        monkeypatch.setitem(sys.modules, script, None)
         with pytest.raises(RuntimeError, match="pulse module"):
             vorcha.GetPulseWeaponSystem().StartFiring(w.ships["Galaxy"])
         assert _h.combat_k1_depth() == 0
@@ -661,3 +664,300 @@ def test_apply_writes_thaws_frozen_consumers(monkeypatch):
         assert _h.combat_dump(bh)["_firing"] == 0              # not pushed
     finally:
         w.close()
+
+
+# ── Final fix wave ───────────────────────────────────────────────────────────
+
+def test_weapon_system_target_offset_starts_none():
+    """`_target_offset` is a NativeField (no __get__): never assigned, the
+    class lookup returns the descriptor itself. Every system starts None."""
+    for cls in (ws.PhaserSystem, ws.PulseWeaponSystem, ws.TorpedoSystem,
+                ws.TractorBeamSystem):
+        system = cls("s")
+        assert getattr(system, "_target_offset", None) is None, cls
+        assert "_target_offset" in system.__dict__, cls
+
+
+def test_tuple_offset_reads_unset_like_python(monkeypatch):
+    """An aim offset that is not a TGPoint3 (a plain tuple) is "no offset"
+    to every Python reader (`isinstance(offset, TGPoint3)`): the tube aims
+    at the target's centre, the pulse stamp is None. The mirror must read it
+    unset too, or the next native tube decision aims off-centre."""
+    ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
+             ("Vorcha", "vorcha", (10.0, 240.0, 5.0), math.pi))
+    offset = (300.0, -9.0, 4.0)
+
+    def script(w, t):
+        galaxy = w.ships["Galaxy"]
+        torps, phasers = galaxy.GetTorpedoSystem(), galaxy.GetPhaserSystem()
+        if t == 0:
+            torps.StartFiring(w.ships["Vorcha"], offset)
+            phasers.StartFiring(w.ships["Vorcha"], offset)
+        elif t % 40 == 0:
+            for i in range(torps.GetNumWeapons()):
+                torps.GetWeapon(i).SetNumReady(1)
+
+    ref, _nat, counts = _both(monkeypatch, ships, script, 240)
+    assert {"fired", "torpedo_fired"} <= _kinds(ref), _kinds(ref)
+    leaves = slice(len(ref.systems), None)
+    assert any(row[8] == repr(offset) for rows in ref.log
+               for row in rows[leaves]), "no bank stamped the tuple"
+    assert counts["k1_python_systems"] == 0, counts
+
+
+def _counting_can_fire(calls):
+    real = ws.PhaserBank.CanFire
+
+    def can_fire(self):
+        calls.append(self.GetName())
+        return real(self)
+    return can_fire
+
+
+def _phaser_duel(w, t):
+    if t == 0:
+        w.ships["Galaxy"].GetPhaserSystem().StartFiring(w.ships["Vorcha"])
+
+
+_DUEL = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
+         ("Vorcha", "vorcha", (0.0, 240.0, 0.0), math.pi))
+
+
+def test_stock_class_patch_runs_python(monkeypatch):
+    """A STOCK class's own method patched (as a test or a mod does with
+    `setattr(PhaserBank, "CanFire", ...)`): K1 must not stand in for it, so
+    the system runs in Python (overridden) and the patch is called exactly
+    as often ON as OFF."""
+    calls = {}
+
+    def script(w, t):
+        if t == 0:
+            calls[w.native] = []
+            monkeypatch.setattr(ws.PhaserBank, "CanFire",
+                                _counting_can_fire(calls[w.native]))
+        _phaser_duel(w, t)
+        if t == 119:
+            monkeypatch.undo()
+
+    _ref, _nat, counts = _both(monkeypatch, _DUEL, script, 120)
+    assert calls[False] and calls[True] == calls[False]
+    assert _python_reasons(counts).get("overridden", 0) > 0, counts
+
+
+def test_stock_class_patch_before_registration_runs_python(monkeypatch):
+    """The same patch made before the ships exist: their rows are flagged
+    at registration against the import-time snapshot of the stock class."""
+    calls = []
+    monkeypatch.setattr(ws.PhaserBank, "CanFire", _counting_can_fire(calls))
+    seen = {}
+
+    def script(w, t):
+        if t == 0:
+            del calls[:]
+        _phaser_duel(w, t)
+        seen[w.native] = list(calls)
+
+    _ref, _nat, counts = _both(monkeypatch, _DUEL, script, 120)
+    assert seen[False] and seen[True] == seen[False]
+    assert _python_reasons(counts).get("overridden", 0) > 0, counts
+
+
+def test_unloaded_pulse_module_reimports_like_python(monkeypatch):
+    """The cannons' projectile module leaves sys.modules mid-fight (an SDK
+    reload): Python's _fire_decide simply imports it again, and so must
+    K1's effect -- ON identical to OFF, bolts still launching."""
+    ships = (("Vorcha", "vorcha", (0.0, 0.0, 0.0), 0.0),
+             ("Galaxy", "galaxy", (40.0, 220.0, 12.0), math.pi))
+    seen = {}
+
+    def script(w, t):
+        cannons = w.ships["Vorcha"].GetPulseWeaponSystem()
+        if t == 0:
+            cannons.StartFiring(w.ships["Galaxy"])
+        if t % 30 == 15:
+            name = ws.pulse_module_script(cannons.GetWeapon(0))
+            monkeypatch.delitem(sys.modules, name, raising=False)
+            seen.setdefault(w.native, []).append(t)
+
+    ref, _nat, counts = _both(monkeypatch, ships, script, 240)
+    assert seen[False] == seen[True]
+    leaves = slice(len(ref.systems), None)
+    cannons = [i for i, row in enumerate(ref.log[0][leaves])
+               if row[0].startswith("Vorcha/") and row[6] is not None]
+    after = {ref.log[t][leaves][i][6] for t in range(20, len(ref.log))
+             for i in cannons}
+    assert len(after) > 1, "no bolt after the first unload"
+    assert counts["k1_python_systems"] == 0, counts
+
+
+def test_handler_drops_the_failing_tube_row_mid_walk(monkeypatch):
+    """A handler on ET_WEAPON_FIRE_FAILED makes the failing tube's row
+    unencodable (its mirror row dropped) in the middle of the walk. Python
+    carries on with the tube object; so must K1: the tube's `_target = None`
+    goes to Python as a logged write (no row to write), its retry Fire is
+    ASKed, and the dumb-fire question too. ON identical to OFF; later walks
+    see a stale child and run whole in Python."""
+    ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
+             ("Behind", "vorcha", (-12.0, -230.0, 4.0), 0.0))
+    dropped = {}
+
+    def drop_failing_tube(w):
+        def hook(evt):
+            if evt.GetEventType() != App.ET_WEAPON_FIRE_FAILED or not w.hooks:
+                return
+            w.hooks.clear()
+            tube = evt.GetDestination()
+            dropped[w.native] = w.label(tube)
+            nc._drop(tube)          # both arms: harmless when off
+        return hook
+
+    def script(w, t):
+        torps = w.ships["Galaxy"].GetTorpedoSystem()
+        if t == 2:
+            w.hooks.append(drop_failing_tube(w))
+            torps.StartFiring(w.ships["Behind"])
+
+    ref, _nat, counts = _both(monkeypatch, ships, script, 60)
+    assert dropped[False] and dropped[True] == dropped[False]
+    assert "fire_failed" in _kinds(ref)
+    assert counts["k1_asks"] > 0, counts
+
+
+def test_handler_drops_the_dumb_tube_row_mid_walk(monkeypatch):
+    """The dumb-fire branch with the tube's row gone: StopFiring on an
+    empty tube (BANK_STOP) runs a handler-free effect, so the row is dropped
+    from StopFiring itself; the walk's `GetNumTargets() == 0 and
+    weapon.IsDumbFire()` must still ask Python, and FireDumb follows."""
+    ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),)
+    stops = {}
+
+    def script(w, t):
+        torps = w.ships["Galaxy"].GetTorpedoSystem()
+        if t == 2:
+            tube = torps.GetWeapon(0)
+            tube.SetNumReady(0)             # CanFire refuses: BANK_STOP
+            real = ws.TorpedoTube.StopFiring
+            log = stops[w.native] = []
+
+            def stop_and_drop(self, _real=real):
+                if self is tube and not log:
+                    log.append(w.label(self))
+                    nc._drop(self)  # both arms: harmless when off
+                return _real(self)
+            monkeypatch.setattr(ws.TorpedoTube, "StopFiring", stop_and_drop)
+            torps.StartFiring(None)
+            monkeypatch.undo()
+
+    ref, _nat, counts = _both(monkeypatch, ships, script, 30)
+    assert stops[False] and stops[True] == stops[False]
+    assert counts["k1_asks"] > 0, counts
+
+
+@pytest.mark.parametrize("case", ("tube_failed", "phaser_fired"))
+def test_walked_system_row_dropped_mid_walk_raises(monkeypatch, case):
+    """The protocol invariant (k1_fire_control.h): a handler that drops the
+    WALKED SYSTEM's row mid-walk cannot be followed (Python cannot resume
+    update_weapons mid-loop). Native raises a RuntimeError naming the
+    invariant, after abandoning the session; the mirror still equals the
+    Python. Two places the kernel next reads the system: the retry after a
+    tube's FIRE_FAILED, and the bookkeeping after a phaser's FIRE."""
+    ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
+             ("Behind", "vorcha", (-12.0, -230.0, 4.0), 0.0),
+             ("Ahead", "vorcha", (0.0, 240.0, 0.0), math.pi))
+    w = World(monkeypatch, True, ships, "k1_sys_drop")
+    try:
+        for _ in range(3):
+            w.tick()        # the banks charge
+        galaxy = w.ships["Galaxy"]
+        if case == "tube_failed":
+            system, event = galaxy.GetTorpedoSystem(), App.ET_WEAPON_FIRE_FAILED
+            target = w.ships["Behind"]
+        else:
+            system, event = galaxy.GetPhaserSystem(), App.ET_WEAPON_FIRED
+            target = w.ships["Ahead"]
+
+        def hook(evt):
+            if evt.GetEventType() == event and w.hooks:
+                w.hooks.clear()
+                nc._drop(system)
+        w.hooks.append(hook)
+        with pytest.raises(RuntimeError, match="walked system .* dropped"):
+            system.StartFiring(target)
+        assert not w.hooks
+        assert _h.combat_k1_depth() == 0
+        nc.audit_mirror()
+        assert nc.audit_failures() == []
+    finally:
+        w.close()
+
+
+def test_pulse_params_refresh_across_a_mission_swap_reset(monkeypatch):
+    """The mission-swap reset (_reset_projectile_module_cache) with native
+    on, and the projectile module now answering a different launch speed.
+    Python's decide reads the module live; K1's lead solve uses the params
+    cached at registration (ruling P6), so the stale ones must be re-read
+    before the next K1 decision -- even a StartFiring with no GameLoop.tick
+    between the reset and it (one made during the swap). Every bolt's launch
+    direction, by .hex(), ON identical to OFF."""
+    ships = (("Vorcha", "vorcha", (0.0, 0.0, 0.0), 0.0),
+             ("Galaxy", "galaxy", (6.0, 70.0, 3.0), math.pi))
+    swap_at, ticks = 90, 240
+    bolts = {}
+    now = [0]
+    real_spawn = ws._spawn_projectile
+
+    def spawn(emitter, mod, *, drf_override=0.0, world_dir=None):
+        bolts[nc.enabled()].append((
+            now[0], emitter.GetName(),
+            None if world_dir is None else tuple(
+                float(c).hex() for c in (world_dir.x, world_dir.y,
+                                         world_dir.z))))
+        return real_spawn(emitter, mod, drf_override=drf_override,
+                          world_dir=world_dir)
+
+    def script(w, t):
+        galaxy = w.ships["Galaxy"]
+        cannons = w.ships["Vorcha"].GetPulseWeaponSystem()
+        galaxy.SetVelocity(TGPoint3(2.0, -1.0, 0.5))
+        p = galaxy.GetTranslate()
+        galaxy.SetTranslateXYZ(p.x + 2.0 * DT, p.y - 1.0 * DT, p.z + 0.5 * DT)
+        now[0] = t
+        if t == 0:
+            bolts[w.native] = []
+            monkeypatch.setattr(ws, "_spawn_projectile", spawn)
+            cannons.StartFiring(galaxy)
+        elif t == swap_at:
+            mod = importlib.import_module(
+                ws.pulse_module_script(cannons.GetWeapon(0)))
+            slow = float(mod.GetLaunchSpeed()) * 0.5
+            monkeypatch.setattr(mod, "GetLaunchSpeed", lambda: slow)
+            ws._reset_projectile_module_cache()     # the mission swap's
+            for i in range(cannons.GetNumWeapons()):
+                bank = cannons.GetWeapon(i)
+                bank._cooldown_remaining = 0.0
+                bank._charge_level = bank._max_charge
+            cannons.StartFiring(galaxy)             # before any GameLoop.tick
+        elif t == ticks - 1:
+            monkeypatch.undo()                      # and swap back
+            ws._reset_projectile_module_cache()
+        if w.native:
+            nc.refresh_stale_pulse_params()         # what GameLoop.tick does
+
+    try:
+        _ref, _nat, counts = _both(monkeypatch, ships, script, ticks)
+    finally:
+        ws._reset_projectile_module_cache()
+    assert bolts[True] == bolts[False]
+    assert sum(1 for b in bolts[False] if b[0] >= swap_at) > 2, bolts[False]
+    assert counts["k1_python_systems"] == 0, counts
+
+
+def test_reset_clears_the_per_class_caches(monkeypatch):
+    """nc.reset() forgets every per-class answer (weapon kind, override
+    flag), so a class patched between two runs is judged afresh."""
+    assert nc._k1_overridden(ws.PhaserBank) == 0
+    assert nc._weapon_kind_of_class(ws.PhaserBank) == 5
+    monkeypatch.setattr(ws.PhaserBank, "CanFire", lambda self: 0)
+    nc.reset()
+    assert ws.PhaserBank not in nc._kind_by_type
+    assert nc._k1_overridden(ws.PhaserBank) == 1
