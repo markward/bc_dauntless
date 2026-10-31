@@ -176,19 +176,31 @@ bool _out_of_action(const Mirror& m, int64_t ship) {
     return dying || dead;
 }
 
+}  // namespace
+
+// subsystems._is_offline (subsystems.py:139) after its IsDisabled/IsDestroyed
+// test: the radiation outage on the subsystem or its parent system, then the
+// parent ship out of action. Shared with the weapon fire gates, whose
+// IsDisabled/IsDestroyed are the WeaponSystem aggregates (fire_gates.cc).
+bool is_offline_after_condition(const Mirror& m, const SubsystemRow& sub) {
+    // `_radiation_out is True` (IS_TRUE: 1 only for the literal True).
+    if (sub._radiation_out) return true;
+    const SubsystemRow* parent =
+        sub_ref(m, sub._parent_subsystem, "_parent_subsystem");
+    if (parent && parent->_radiation_out) return true;
+    if (sub.has_parent_ship_getter) {
+        if (_out_of_action(m, GetParentShip(m, sub))) return true;
+    }
+    return false;
+}
+
+namespace {
+
 // subsystems._is_offline (subsystems.py:139).
 bool _is_offline(const Mirror& m, const SubsystemRow* sub) {
     if (!sub) return false;
     if (IsDisabled(*sub) || IsDestroyed(*sub)) return true;
-    // `_radiation_out is True` (IS_TRUE: 1 only for the literal True).
-    if (sub->_radiation_out) return true;
-    const SubsystemRow* parent =
-        sub_ref(m, sub->_parent_subsystem, "_parent_subsystem");
-    if (parent && parent->_radiation_out) return true;
-    if (sub->has_parent_ship_getter) {
-        if (_out_of_action(m, GetParentShip(m, *sub))) return true;
-    }
-    return false;
+    return is_offline_after_condition(m, *sub);
 }
 
 // ShipSubsystem.GetMaxCondition (subsystems.py:732): the property template's
@@ -203,11 +215,19 @@ double GetMaxCondition(const Mirror& m, const SubsystemRow& s) {
     return s._max_condition;
 }
 
-// ShipSubsystem.GetConditionPercentage (subsystems.py:797).
-double GetConditionPercentage(const Mirror& m, const SubsystemRow& s) {
+}  // namespace
+
+// ShipSubsystem.GetConditionPercentage (subsystems.py:809).
+double condition_percentage(const Mirror& m, const SubsystemRow& s) {
     const double mx = GetMaxCondition(m, s);
     if (mx <= 0) return 0.0;
     return py_max(0.0, py_min(1.0, s._condition / mx));
+}
+
+namespace {
+
+double GetConditionPercentage(const Mirror& m, const SubsystemRow& s) {
+    return condition_percentage(m, s);
 }
 
 // SensorSubsystem.IsObjectKnown (subsystems.py:1541).

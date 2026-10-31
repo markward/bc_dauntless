@@ -1055,6 +1055,8 @@ def _globals() -> dict:
     from engine.appc import weapon_subsystems as ws
     for key, attr in _WEAPON_CONSTANTS:
         g[key] = float(getattr(ws, attr))
+    for i, scale in enumerate(ws.PULSE_COST_SCALE_BY_POWER_SETTING):
+        g["PULSE_COST_SCALE_%d" % i] = float(scale)
     return g
 
 

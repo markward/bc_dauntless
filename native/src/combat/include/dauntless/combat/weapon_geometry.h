@@ -32,6 +32,10 @@
 
 namespace dauntless::combat {
 
+// ShipSubsystem._climb_to_ship (subsystems.py:952): the owning ship's Object
+// handle, or -1 for none. Throws on a stale or unnamed ref in the chain.
+int64_t climb_to_ship_of(const Mirror& m, int64_t subsystem);
+
 // subsystems.subsystem_world_position (identity-pose ships only): ship_pos +
 // R . local, no scale. `ship_arg` is Python's second argument (-1 = None: the
 // subsystem's own ship). Memoised by (sub, ship_arg) in

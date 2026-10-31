@@ -49,6 +49,13 @@
 
 namespace dauntless::combat {
 
+// Pieces of the subsystem surface the weapon fire gates (fire_gates.h) share:
+// subsystems._is_offline after its IsDisabled/IsDestroyed test (radiation
+// outage on the subsystem or its parent, then the parent ship out of action),
+// and ShipSubsystem.GetConditionPercentage (the property max when set).
+bool is_offline_after_condition(const Mirror& m, const SubsystemRow& sub);
+double condition_percentage(const Mirror& m, const SubsystemRow& sub);
+
 // sensor_detection.effective_sensor_range
 double effective_sensor_range(const Mirror& m, int64_t ship);
 

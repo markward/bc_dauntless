@@ -3,6 +3,7 @@ add_executable(combat_tests
     mirror_test.cc
     sensor_detect_test.cc
     weapon_geometry_test.cc
+    fire_gates_test.cc
 )
 target_link_libraries(combat_tests
     PRIVATE

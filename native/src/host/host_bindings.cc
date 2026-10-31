@@ -17,6 +17,7 @@
 #include <pybind11/stl.h>
 #include <audio/python_binding.h>
 #include "dauntless/torpedo_scan.h"
+#include "dauntless/combat/fire_gates.h"
 #include "dauntless/combat/mirror.h"
 #include "dauntless/combat/nebula_density.h"
 #include "dauntless/combat/profile_eval.h"
@@ -9619,5 +9620,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                                      max_range_gu);
               },
               py::arg("ship"), py::arg("target"), py::arg("max_range_gu"));
+        m.def("combat_test_can_fire",
+              [](std::int64_t bank, double now) {
+                  const cb::CanFireResult r =
+                      cb::can_fire(cb::mirror(), bank, now);
+                  return py::make_tuple(r.ok, r.clear_depleted);
+              },
+              py::arg("bank"), py::arg("now"),
+              "(ok, clear_depleted) of a leaf weapon's CanFire; writes nothing.");
+        m.def("combat_test_weapon_system_offline",
+              [](std::int64_t sys) {
+                  return cb::weapon_system_offline(cb::mirror(), sys);
+              },
+              py::arg("sys"));
     }
 }

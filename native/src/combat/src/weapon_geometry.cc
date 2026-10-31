@@ -134,6 +134,12 @@ Vec3 mount_position(const Mirror& m, int64_t sub_h, int64_t ship_arg) {
 
 }  // namespace
 
+// ShipSubsystem._climb_to_ship for a Subsystem handle (public face of the
+// helper above, shared with fire_gates.cc).
+int64_t climb_to_ship_of(const Mirror& m, int64_t subsystem) {
+    return climb_to_ship(m, sub(m, subsystem));
+}
+
 // ── subsystems.py:32 subsystem_world_position ───────────────────────────────
 
 Vec3 subsystem_world_position(Mirror& m, int64_t sub_h, int64_t ship_arg,

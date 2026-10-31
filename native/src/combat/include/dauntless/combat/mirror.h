@@ -203,6 +203,8 @@ enum class Global : int32_t {
     // weapon_subsystems module constants (phase 1b K1 geometry), pushed from
     // _TORPEDO_CONE_HALF_ANGLE and _PULSE_RANGE_GATE_SECONDS
     TORPEDO_CONE_HALF_ANGLE, PULSE_RANGE_GATE_SECONDS,
+    // PULSE_COST_SCALE_BY_POWER_SETTING[0..2] (Task 3, the pulse charge gate)
+    PULSE_COST_SCALE_0, PULSE_COST_SCALE_1, PULSE_COST_SCALE_2,
     kCount
 };
 
@@ -221,6 +223,8 @@ struct Globals {
            PROFILE_CONCEALMENT_CAP = 0.0, CLOAK_RANGE_FACTOR = 0.0,
            CLOAK_DETECTION_BASE_GU = 0.0;
     double TORPEDO_CONE_HALF_ANGLE = 0.0, PULSE_RANGE_GATE_SECONDS = 0.0;
+    double PULSE_COST_SCALE_0 = 0.0, PULSE_COST_SCALE_1 = 0.0,
+           PULSE_COST_SCALE_2 = 0.0;
 };
 
 struct ProfileRowSet {
