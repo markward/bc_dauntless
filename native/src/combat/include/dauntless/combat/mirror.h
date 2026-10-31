@@ -50,6 +50,14 @@ enum class Field : int32_t {
     // implements(obj, "IsDead"); _velocity is rebound on every SetVelocity.
     has_posed_parts, has_real_is_dead, _velocity,
     _phaser_system, _pulse_weapon_system, _tractor_beam_system, _torpedo_system,
+    // Object: what the K2 beam kernel reads (phase 2). has_real_get_shields is
+    // implements(obj, "GetShields"); is_ship_class is isinstance(obj,
+    // ShipClass). _manual_target_offset is a TGPoint3 or unset. The hull box
+    // is _shield_hull_box = ((cx, cy, cz), (hx, hy, hz)); hull_box_set is 1
+    // only for exactly that shape, else 0 and the two vectors read zero.
+    has_real_get_shields, is_ship_class, _target_subsystem, _use_target_offset,
+    _manual_target_offset, _shield_subsystem, _shield_hull_box_center,
+    _shield_hull_box_half, hull_box_set,
     // Subsystem
     has_parent_ship_getter, _condition, _max_condition, _disabled_percentage,
     _destroyed, _radiation_out, s_radius, _parent_subsystem, _parent_ship,
@@ -82,6 +90,10 @@ enum class Field : int32_t {
     _arc_height_lo, _arc_height_hi, _arc_set,
     // Subsystem: pulse projectile module, resolved by Python (ruling P6)
     launch_speed, lifetime, module_ok,
+    // Subsystem: what K2 reads of a phaser bank (_length, _beam_on_countdown,
+    // _dwell) and of a ShieldSubsystem (has_shields = sum(_max_shields) > 0,
+    // computed by Python's own HasShields expression).
+    _length, _beam_on_countdown, _dwell, has_shields,
     // Property
     MaxCondition, MaxCondition_set, _firing_chains, _groups,
     // Set
@@ -123,6 +135,13 @@ struct ObjectRow {
     Vec3 _velocity{0, 0, 0};
     int64_t _phaser_system = -1, _pulse_weapon_system = -1,
             _tractor_beam_system = -1, _torpedo_system = -1;
+    int64_t has_real_get_shields = 0, is_ship_class = 0;
+    int64_t _target_subsystem = -1, _use_target_offset = 0;
+    Vec3 _manual_target_offset{0, 0, 0};
+    bool manual_offset_set = false;
+    int64_t _shield_subsystem = -1;
+    Vec3 _shield_hull_box_center{0, 0, 0}, _shield_hull_box_half{0, 0, 0};
+    int64_t hull_box_set = 0;
 };
 
 struct SubsystemRow {
@@ -165,6 +184,8 @@ struct SubsystemRow {
     int64_t _arc_set = 0;
     double launch_speed = 0.0, lifetime = 0.0;
     int64_t module_ok = 0;
+    double _length = 0.0, _beam_on_countdown = 0.0, _dwell = 0.0;
+    int64_t has_shields = 0;
 };
 
 struct PropertyRow {
@@ -213,6 +234,9 @@ enum class Global : int32_t {
     // The K1 kernel (Task 4): WeaponSystem.FIRE_TIMER_THRESHOLD and the
     // weapon_subsystems module constant PHASER_MAX_RANGE_GU
     FIRE_TIMER_THRESHOLD, PHASER_MAX_RANGE_GU,
+    // The K2 kernel (phase 2): weapon_subsystems.BEAM_DWELL_FLUSH_S and
+    // combat.SHIELD_ELLIPSOID_AXIS_SCALE
+    BEAM_DWELL_FLUSH_S, SHIELD_ELLIPSOID_AXIS_SCALE,
     kCount
 };
 
@@ -234,6 +258,7 @@ struct Globals {
     double PULSE_COST_SCALE_0 = 0.0, PULSE_COST_SCALE_1 = 0.0,
            PULSE_COST_SCALE_2 = 0.0;
     double FIRE_TIMER_THRESHOLD = 0.0, PHASER_MAX_RANGE_GU = 0.0;
+    double BEAM_DWELL_FLUSH_S = 0.0, SHIELD_ELLIPSOID_AXIS_SCALE = 0.0;
 };
 
 struct ProfileRowSet {

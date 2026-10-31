@@ -25,6 +25,13 @@ class ShipClass(DamageableObject):
     _pulse_weapon_system = native_combat.NativeRefField("Subsystem")
     _tractor_beam_system = native_combat.NativeRefField("Subsystem")
     _torpedo_system = native_combat.NativeRefField("Subsystem")
+    # What the K2 beam kernel reads: the lock, the Manual Aim offset, the
+    # shield generator and the cached hull box (all rebound, never mutated).
+    _target_subsystem = native_combat.NativeRefField("Subsystem")
+    _use_target_offset = native_combat.NativeField(bool)
+    _manual_target_offset = native_combat.NativeField(native_combat.OFFSET)
+    _shield_subsystem = native_combat.NativeRefField("Subsystem")
+    _shield_hull_box = native_combat.HullBoxField()
     # A rebind may change has_posed_parts (native_combat.PosedPartsField).
     _articulation_poses = native_combat.PosedPartsField()
 

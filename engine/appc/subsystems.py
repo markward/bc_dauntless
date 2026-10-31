@@ -338,6 +338,8 @@ class ShipSubsystem(TGEventHandlerObject):
     _arc_height_lo = NativeField(float)
     _arc_height_hi = NativeField(float)
     _arc_set = NativeField(bool)
+    # Phaser-strip length (K2 reads it for the emitter position).
+    _length = NativeField(float)
 
     def __init__(self, name: str = ""):
         super().__init__()
@@ -2047,6 +2049,10 @@ class ShieldSubsystem(PoweredSubsystem):
     RIGHT_SHIELDS  = 5
     NUM_SHIELDS    = 6
 
+    # Every rebind re-pushes the derived has_shields flag; SetMaxShields
+    # (the one in-place writer) pushes it itself.
+    _max_shields = native_combat.HasShieldsField()
+
     def __init__(self, name: str = ""):
         super().__init__(name)
         # PoweredSubsystem defaults _is_on False, which is right for weapons
@@ -2117,6 +2123,7 @@ class ShieldSubsystem(PoweredSubsystem):
         if self._current_shields[f] == 0.0:
             self._current_shields[f] = v
         self._max_shields[f] = v
+        native_combat.push_has_shields(self)    # in place: no descriptor sees it
 
     def GetCurrentShields(self, face: int) -> float:
         return self._current_shields[int(face)]

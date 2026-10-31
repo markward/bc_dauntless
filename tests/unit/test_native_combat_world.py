@@ -294,7 +294,8 @@ _SYSTEM_FIELDS = ("_phaser_system", "_pulse_weapon_system",
 _REF_FIELDS = {"_containing_set", "_sensor_subsystem", "_cloaking_subsystem",
                "_hull", "_parent_subsystem", "_parent_ship", "_property",
                "ships", "nebulae", "_target", "_held_target", "_target_list",
-               "_children", *_SYSTEM_FIELDS}
+               "_children", "_target_subsystem", "_shield_subsystem",
+               *_SYSTEM_FIELDS}
 _PER_PROCESS = {"obj_id", "xform_index", "xform_gen"}
 
 
@@ -325,7 +326,7 @@ def _normalised(world):
     world = dict(world)
     for n, o in list(world.items()):          # the ships' own subsystems
         for field in ("_sensor_subsystem", "_cloaking_subsystem", "_hull",
-                      *_SYSTEM_FIELDS):
+                      "_shield_subsystem", *_SYSTEM_FIELDS):
             sub = o.__dict__.get(field)
             if sub is not None:
                 world[n + field] = sub

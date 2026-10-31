@@ -603,6 +603,101 @@ class PosedPartsField:
         push_posed_parts(obj)
 
 
+class HullBoxField(NativeField):
+    """``ShipClass._shield_hull_box``: ``((cx, cy, cz), (hx, hy, hz))`` or
+    absent/None. Pushed as two vectors plus ``hull_box_set``, which is 1 only
+    for exactly that shape -- parsed with the same unpacking and ``float()``
+    calls as ``combat._hull_box_for``, so anything that function rejects as
+    malformed reads unset here. (The degenerate-extent and scale rules stay
+    in the reader; the raw numbers are what is mirrored.) The attribute may
+    be absent, so unlike the other fields this one needs a __get__."""
+
+    def __init__(self) -> None:
+        super().__init__(None)
+
+    def __get__(self, obj, owner=None):
+        if obj is None:
+            return self
+        try:
+            return obj.__dict__[self._name]
+        except KeyError:
+            raise AttributeError(self._name) from None
+
+    @staticmethod
+    def _parse(value):
+        if not isinstance(value, (tuple, list)) or len(value) != 2:
+            return None
+        try:
+            centre, half = value
+            c = [float(v) for v in centre]
+            hh = [float(v) for v in half]
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if len(c) != 3 or len(hh) != 3:
+            return None
+        return c, hh
+
+    def _push(self, obj, h, value) -> None:
+        parsed = self._parse(value)
+        c, hh = parsed if parsed is not None else ([0.0] * 3, [0.0] * 3)
+        _call(obj, _h.combat_set_fv, h, _fid("_shield_hull_box_center"), c)
+        if "_nslot" in obj.__dict__:
+            _call(obj, _h.combat_set_fv, h, _fid("_shield_hull_box_half"), hh)
+        if "_nslot" in obj.__dict__:
+            _call(obj, _h.combat_set_i, h, _fid("hull_box_set"),
+                  0 if parsed is None else 1)
+
+    def audit(self, value, row) -> bool:
+        parsed = self._parse(value)
+        if parsed is None:
+            return (row["hull_box_set"] == 0
+                    and _hexes(row["_shield_hull_box_center"]) == _hexes(_ZERO)
+                    and _hexes(row["_shield_hull_box_half"]) == _hexes(_ZERO))
+        c, hh = parsed
+        return (row["hull_box_set"] == 1
+                and _hexes(row["_shield_hull_box_center"]) == _hexes(c)
+                and _hexes(row["_shield_hull_box_half"]) == _hexes(hh))
+
+
+class HasShieldsField:
+    """``ShieldSubsystem._max_shields``: plain storage, but every rebind
+    re-pushes the derived ``has_shields`` flag. The flag is whatever the
+    subsystem's own ``HasShields()`` answers -- the expression is never
+    re-typed here. The in-place ``_max_shields[f] = v`` write
+    (``SetMaxShields``) cannot be seen by a descriptor and calls
+    `push_has_shields` itself."""
+
+    def __set_name__(self, owner, name) -> None:
+        self._name = name
+
+    def __set__(self, obj, value) -> None:
+        obj.__dict__[self._name] = value
+        push_has_shields(obj)
+
+
+def push_has_shields(sub) -> None:
+    """Re-push the ShieldSubsystem's has_shields flag."""
+    if _enabled:
+        h = sub.__dict__.get("_nslot")
+        if h is not None:
+            try:
+                v = int(sub.HasShields())
+            except (TypeError, ValueError, OverflowError):
+                _drop(sub)  # not representable: never leave a stale row
+                return
+            _call(sub, _h.combat_set_i, h, _fid("has_shields"), v)
+
+
+def _has_shields_flag(sub) -> int:
+    """The flag for a row being (re)built. 0 for any subsystem that is not a
+    ShieldSubsystem, and before the subsystem has its ``_max_shields`` (a
+    row is registered first, before __init__ assigns anything)."""
+    from engine.appc.subsystems import ShieldSubsystem
+    if not isinstance(sub, ShieldSubsystem) or "_max_shields" not in sub.__dict__:
+        return 0
+    return int(sub.HasShields())
+
+
 def _is_property(value) -> bool:
     from engine.appc.properties import TGModelProperty
     return isinstance(value, TGModelProperty)
@@ -885,6 +980,10 @@ def _flags(obj, h) -> dict:
             "has_real_is_dead": int(implements(obj, "IsDead")),
             "has_posed_parts": (_posed_flag(obj)
                                 if isinstance(obj, ShipClass) else 0),
+            # K2: GetShields is the real method (not a stub), and the object
+            # is a ship.
+            "has_real_get_shields": int(implements(obj, "GetShields")),
+            "is_ship_class": int(isinstance(obj, ShipClass)),
         }
     if k == _kind("Subsystem"):
         return {"has_parent_ship_getter": int(implements(obj,
@@ -892,7 +991,8 @@ def _flags(obj, h) -> dict:
                 "weapon_kind": _weapon_kind(obj),
                 "k1_overridden": _k1_overridden(type(obj)),
                 "pump_self_managed": int(bool(getattr(
-                    type(obj), "_pump_self_managed", False)))}
+                    type(obj), "_pump_self_managed", False))),
+                "has_shields": _has_shields_flag(obj)}
     return {}
 
 
@@ -1205,6 +1305,10 @@ def _globals() -> dict:
         g[key] = float(getattr(ws, attr))
     for i, scale in enumerate(ws.PULSE_COST_SCALE_BY_POWER_SETTING):
         g["PULSE_COST_SCALE_%d" % i] = float(scale)
+    # K2: the dwell flush threshold and the shield ellipsoid scale.
+    from engine.appc import combat
+    g["BEAM_DWELL_FLUSH_S"] = float(ws.BEAM_DWELL_FLUSH_S)
+    g["SHIELD_ELLIPSOID_AXIS_SCALE"] = float(combat.SHIELD_ELLIPSOID_AXIS_SCALE)
     # K1's 0.33 s timer gate: a class constant of WeaponSystem.
     g["FIRE_TIMER_THRESHOLD"] = float(ws.WeaponSystem.FIRE_TIMER_THRESHOLD)
     return g
@@ -1269,8 +1373,14 @@ def audit_mirror() -> None:
             if not ok:
                 _failures.append((name, field))
         for attr, field in _fields_of(type(obj)):
-            if attr in d and not field._matches(d[attr],
-                                                row[field._dump_key]):
+            if attr not in d:
+                continue
+            audit = getattr(field, "audit", None)   # a field of several rows
+            if audit is not None:
+                ok = audit(d[attr], row)
+            else:
+                ok = field._matches(d[attr], row[field._dump_key])
+            if not ok:
                 _failures.append((name, attr))
         for attr, field in _hidden_fields(type(obj))[0]:
             if row[field._dump_key] != REF_UNREPRESENTABLE:

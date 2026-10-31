@@ -745,6 +745,10 @@ class _EnergyWeaponFireMixin:
     _depleted = NativeField(bool)
     _normal_discharge_rate = NativeField(float)
     _power_setting = NativeField(int)
+    # K2 reads the beam-on countdown (UpdateCharge counts it down every tick)
+    # and the damage dwell.
+    _beam_on_countdown = NativeField(float)
+    _dwell = NativeField(float)
 
     def _passive_at_rest(self) -> bool:
         """True when UpdateCharge, run now, would return at its idle

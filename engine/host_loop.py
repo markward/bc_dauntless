@@ -28,6 +28,7 @@ import engine.dev_mode as dev_mode
 import engine.dev_nebula_dials as dev_nebula_dials
 from engine.core import case_paths as _case_paths
 from engine.core import frame_profiler
+from engine.core.tracked_instances import TrackedInstances
 from engine.dev_mission_picker import MissionPicker
 import engine.missions as _missions
 from engine.ui.target_reticle import build_target_reticle
@@ -6582,7 +6583,7 @@ class MissionSession:
     manager (which is itself about to be cleared).
     """
     mission_name: str
-    ship_instances:   dict[Any, int] = field(default_factory=dict)
+    ship_instances:   dict[Any, int] = field(default_factory=TrackedInstances)
     # Subsystem glow-dimming controllers, keyed by render instance id.
     # Best-effort VFX; ships without the relevant subsystems get fewer regions.
     ship_glow_controllers: dict[int, Any] = field(default_factory=dict)

@@ -45,6 +45,15 @@ constexpr FieldInfo kInfo[] = {
     {"_pulse_weapon_system", Kind::Object, FieldType::Ref},
     {"_tractor_beam_system", Kind::Object, FieldType::Ref},
     {"_torpedo_system", Kind::Object, FieldType::Ref},
+    {"has_real_get_shields", Kind::Object, FieldType::I},
+    {"is_ship_class", Kind::Object, FieldType::I},
+    {"_target_subsystem", Kind::Object, FieldType::Ref},
+    {"_use_target_offset", Kind::Object, FieldType::I},
+    {"_manual_target_offset", Kind::Object, FieldType::Vec3},
+    {"_shield_subsystem", Kind::Object, FieldType::Ref},
+    {"_shield_hull_box_center", Kind::Object, FieldType::Vec3},
+    {"_shield_hull_box_half", Kind::Object, FieldType::Vec3},
+    {"hull_box_set", Kind::Object, FieldType::I},
     {"has_parent_ship_getter", Kind::Subsystem, FieldType::I},
     {"_condition", Kind::Subsystem, FieldType::F},
     {"_max_condition", Kind::Subsystem, FieldType::F},
@@ -107,6 +116,10 @@ constexpr FieldInfo kInfo[] = {
     {"launch_speed", Kind::Subsystem, FieldType::F},
     {"lifetime", Kind::Subsystem, FieldType::F},
     {"module_ok", Kind::Subsystem, FieldType::I},
+    {"_length", Kind::Subsystem, FieldType::F},
+    {"_beam_on_countdown", Kind::Subsystem, FieldType::F},
+    {"_dwell", Kind::Subsystem, FieldType::F},
+    {"has_shields", Kind::Subsystem, FieldType::I},
     {"MaxCondition", Kind::Property, FieldType::F},
     {"MaxCondition_set", Kind::Property, FieldType::I},
     {"_firing_chains", Kind::Property, FieldType::IdLists},
@@ -160,6 +173,9 @@ constexpr GlobalInfo kGlobals[] = {
     {"PULSE_COST_SCALE_2", false, &Globals::PULSE_COST_SCALE_2, nullptr},
     {"FIRE_TIMER_THRESHOLD", false, &Globals::FIRE_TIMER_THRESHOLD, nullptr},
     {"PHASER_MAX_RANGE_GU", false, &Globals::PHASER_MAX_RANGE_GU, nullptr},
+    {"BEAM_DWELL_FLUSH_S", false, &Globals::BEAM_DWELL_FLUSH_S, nullptr},
+    {"SHIELD_ELLIPSOID_AXIS_SCALE", false,
+     &Globals::SHIELD_ELLIPSOID_AXIS_SCALE, nullptr},
 };
 static_assert(sizeof(kGlobals) / sizeof(kGlobals[0]) ==
               static_cast<size_t>(Global::kCount));
@@ -190,7 +206,9 @@ Kind ref_target_kind(Field f) {
         case Field::_phaser_system:
         case Field::_pulse_weapon_system:
         case Field::_tractor_beam_system:
-        case Field::_torpedo_system: return Kind::Subsystem;
+        case Field::_torpedo_system:
+        case Field::_target_subsystem:
+        case Field::_shield_subsystem: return Kind::Subsystem;
         case Field::_parent_ship:
         case Field::_held_target:
         case Field::_target: return Kind::Object;
@@ -224,6 +242,10 @@ int64_t* iptr(ObjectRow& r, Field f) {
     switch (f) {
         case Field::has_posed_parts: return &r.has_posed_parts;
         case Field::has_real_is_dead: return &r.has_real_is_dead;
+        case Field::has_real_get_shields: return &r.has_real_get_shields;
+        case Field::is_ship_class: return &r.is_ship_class;
+        case Field::_use_target_offset: return &r._use_target_offset;
+        case Field::hull_box_set: return &r.hull_box_set;
         case Field::xform_index: return &r.xform_index;
         case Field::xform_gen: return &r.xform_gen;
         case Field::obj_id: return &r.obj_id;
@@ -246,12 +268,17 @@ int64_t* rptr(ObjectRow& r, Field f) {
         case Field::_pulse_weapon_system: return &r._pulse_weapon_system;
         case Field::_tractor_beam_system: return &r._tractor_beam_system;
         case Field::_torpedo_system: return &r._torpedo_system;
+        case Field::_target_subsystem: return &r._target_subsystem;
+        case Field::_shield_subsystem: return &r._shield_subsystem;
         default: return nullptr;
     }
 }
 Vec3* vptr(ObjectRow& r, Field f) {
     switch (f) {
         case Field::_velocity: return &r._velocity;
+        case Field::_manual_target_offset: return &r._manual_target_offset;
+        case Field::_shield_hull_box_center: return &r._shield_hull_box_center;
+        case Field::_shield_hull_box_half: return &r._shield_hull_box_half;
         case Field::_fbm: return &r._fbm;
         case Field::_seed: return &r._seed;
         default: return nullptr;
@@ -282,6 +309,9 @@ double* fptr(SubsystemRow& r, Field f) {
         case Field::_arc_height_hi: return &r._arc_height_hi;
         case Field::launch_speed: return &r.launch_speed;
         case Field::lifetime: return &r.lifetime;
+        case Field::_length: return &r._length;
+        case Field::_beam_on_countdown: return &r._beam_on_countdown;
+        case Field::_dwell: return &r._dwell;
         default: return nullptr;
     }
 }
@@ -307,6 +337,7 @@ int64_t* iptr(SubsystemRow& r, Field f) {
         case Field::_skew_fire: return &r._skew_fire;
         case Field::_arc_set: return &r._arc_set;
         case Field::module_ok: return &r.module_ok;
+        case Field::has_shields: return &r.has_shields;
         case Field::has_parent_ship_getter: return &r.has_parent_ship_getter;
         case Field::_destroyed: return &r._destroyed;
         case Field::_radiation_out: return &r._radiation_out;
@@ -661,7 +692,8 @@ void Mirror::set_ids(int64_t h, Field f, const std::vector<int64_t>& ids) {
 void Mirror::set_fv(int64_t h, Field f, const std::vector<double>& v) {
     if (info(f).type != FieldType::Vec3) bad("not a 3-vector field", f);
     bool nullable = (f == Field::_fbm || f == Field::_seed ||
-                     f == Field::_held_offset || f == Field::_target_offset);
+                     f == Field::_held_offset || f == Field::_target_offset ||
+                     f == Field::_manual_target_offset);
     if (!(v.size() == 3 || (nullable && v.empty())))
         bad("expected 3 doubles", f);
     visit(h, info(f).kind, [&](auto& row) {
@@ -671,6 +703,8 @@ void Mirror::set_fv(int64_t h, Field f, const std::vector<double>& v) {
         if constexpr (std::is_same_v<std::decay_t<decltype(row)>, ObjectRow>) {
             if (f == Field::_fbm) row.fbm_set = !v.empty();
             if (f == Field::_seed) row.seed_set = !v.empty();
+            if (f == Field::_manual_target_offset)
+                row.manual_offset_set = !v.empty();
         }
         if constexpr (std::is_same_v<std::decay_t<decltype(row)>, SubsystemRow>) {
             if (f == Field::_held_offset) row.held_offset_set = !v.empty();
@@ -821,7 +855,8 @@ std::vector<double> Mirror::get_fv(int64_t h, Field f) const {
         if (!p) bad("field not on this row", f);
         if constexpr (std::is_same_v<std::decay_t<decltype(row)>, ObjectRow>) {
             if ((f == Field::_fbm && !row.fbm_set) ||
-                (f == Field::_seed && !row.seed_set))
+                (f == Field::_seed && !row.seed_set) ||
+                (f == Field::_manual_target_offset && !row.manual_offset_set))
                 return {};
         }
         if constexpr (std::is_same_v<std::decay_t<decltype(row)>, SubsystemRow>) {

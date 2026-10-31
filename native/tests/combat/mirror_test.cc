@@ -355,3 +355,70 @@ TEST(MirrorWeapons, ClearFreesAmmoToo) {
     EXPECT_EQ(f.m.ammo(a), nullptr);
     EXPECT_FALSE(f.m.valid(a));
 }
+
+// ── K2 (phase 2): what the beam kernel reads ──────────────────────────────
+
+TEST(MirrorK2, ShipRefsAndOffsets) {
+    Fixture f;
+    int64_t o = f.m.register_row(Kind::Object);
+    int64_t other = f.m.register_row(Kind::Object);
+    int64_t s = f.m.register_row(Kind::Subsystem);
+    f.m.set_ref(o, Field::_target_subsystem, s);
+    f.m.set_ref(o, Field::_shield_subsystem, kRefUnrepresentable);
+    EXPECT_EQ(f.m.get_ref(o, Field::_target_subsystem), s);
+    EXPECT_EQ(f.m.get_ref(o, Field::_shield_subsystem), kRefUnrepresentable);
+    EXPECT_THROW(f.m.set_ref(o, Field::_target_subsystem, other),
+                 std::invalid_argument);             // an Object, not a Subsystem
+    EXPECT_TRUE(f.m.get_fv(o, Field::_manual_target_offset).empty());
+    f.m.set_fv(o, Field::_manual_target_offset, {1.5, -2.0, 0.25});
+    EXPECT_EQ(f.m.get_fv(o, Field::_manual_target_offset),
+              (std::vector<double>{1.5, -2.0, 0.25}));
+    f.m.set_fv(o, Field::_manual_target_offset, {});
+    EXPECT_TRUE(f.m.get_fv(o, Field::_manual_target_offset).empty());
+    f.m.set_i(o, Field::_use_target_offset, 1);
+    f.m.set_i(o, Field::is_ship_class, 1);
+    f.m.set_i(o, Field::has_real_get_shields, 1);
+    EXPECT_EQ(f.m.object(o)->_use_target_offset, 1);
+    EXPECT_EQ(f.m.object(o)->is_ship_class, 1);
+}
+
+TEST(MirrorK2, HullBoxIsTwoVectorsAndAFlag) {
+    Fixture f;
+    int64_t o = f.m.register_row(Kind::Object);
+    EXPECT_EQ(f.m.get_i(o, Field::hull_box_set), 0);
+    EXPECT_THROW(f.m.set_fv(o, Field::_shield_hull_box_half, {}),
+                 std::invalid_argument);             // never "unset" itself
+    f.m.set_fv(o, Field::_shield_hull_box_center, {1, 2, 3});
+    f.m.set_fv(o, Field::_shield_hull_box_half, {4, 5, 6});
+    f.m.set_i(o, Field::hull_box_set, 1);
+    const ObjectRow* r = f.m.object(o);
+    EXPECT_EQ(r->_shield_hull_box_center, (Vec3{1, 2, 3}));
+    EXPECT_EQ(r->_shield_hull_box_half, (Vec3{4, 5, 6}));
+    EXPECT_EQ(r->hull_box_set, 1);
+}
+
+TEST(MirrorK2, BankAndShieldFields) {
+    Fixture f;
+    int64_t s = f.m.register_row(Kind::Subsystem);
+    f.m.set_f(s, Field::_length, 3.5);
+    f.m.set_f(s, Field::_beam_on_countdown, 0.66);
+    f.m.set_f(s, Field::_dwell, 0.125);
+    f.m.set_i(s, Field::has_shields, 1);
+    const SubsystemRow* r = f.m.subsystem(s);
+    EXPECT_EQ(r->_length, 3.5);
+    EXPECT_EQ(r->_beam_on_countdown, 0.66);
+    EXPECT_EQ(r->_dwell, 0.125);
+    EXPECT_EQ(r->has_shields, 1);
+    int64_t o = f.m.register_row(Kind::Object);
+    EXPECT_THROW(f.m.set_f(o, Field::_dwell, 1.0), std::invalid_argument);
+}
+
+TEST(MirrorK2, Globals) {
+    Fixture f;
+    f.m.set_global_f(Global::BEAM_DWELL_FLUSH_S, 0.5);
+    f.m.set_global_f(Global::SHIELD_ELLIPSOID_AXIS_SCALE, 1.7320508075688772);
+    EXPECT_EQ(f.m.globals().BEAM_DWELL_FLUSH_S, 0.5);
+    EXPECT_EQ(f.m.globals().SHIELD_ELLIPSOID_AXIS_SCALE, 1.7320508075688772);
+    EXPECT_EQ(global_by_name("BEAM_DWELL_FLUSH_S"), Global::BEAM_DWELL_FLUSH_S);
+    EXPECT_FALSE(global_is_int(Global::SHIELD_ELLIPSOID_AXIS_SCALE));
+}
