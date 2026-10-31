@@ -415,6 +415,8 @@ def test_pulse_module_params_pushed(arena):
         "Tactical.Projectiles.PulseDisruptor").__name__)
     from engine.appc.weapon_subsystems import _reset_projectile_module_cache
     _reset_projectile_module_cache()
+    assert _dump(cannon)["module_ok"] == 0      # lazy: not re-resolved yet
+    nc.refresh_stale_pulse_params()
     assert _dump(cannon)["module_ok"] == 1
     # Other emitters carry no module.
     galaxy_bank = arena[0].GetPhaserSystem().GetWeapon(0)
@@ -441,7 +443,6 @@ def test_posed_parts_flag_follows_force_pose(arena):
         assert _dump(galaxy)["has_posed_parts"] == 1
         articulated_part.restore({})
         articulation.tick_ship(galaxy, 1.0 / 60.0)
-        galaxy.__dict__["_articulation_poses"] = {}
         assert _dump(galaxy)["has_posed_parts"] == 0
     finally:
         articulated_part.restore(saved)
@@ -536,3 +537,54 @@ def test_audit_mirror_clean_on_combat_stress(monkeypatch, tmp_path):
     assert nc.audit_failures() == [], nc.audit_failures()
     assert any(_dump(s.GetPhaserSystem())["_fire_held"]
                for s in ships if s.GetPhaserSystem() is not None)
+
+
+# ── Review fix round 1 ───────────────────────────────────────────────────────
+
+def test_posed_flag_does_not_cache_a_rigless_leaf_for_a_scriptless_ship():
+    """A fresh ship has _articulation_leaf = None (not yet resolved) and no
+    script: computing the flag must not call leaf_for, which would cache ""
+    for good."""
+    nc.configure(ON)
+    ship = App.ShipClass_Create("Scriptless")
+    assert ship.__dict__["_articulation_leaf"] is None
+    assert nc._posed_flag(ship) == 0
+    nc.push_posed_parts(ship)
+    nc.reclassify(ship)
+    assert ship.__dict__["_articulation_leaf"] is None
+
+
+def test_pulse_cache_reset_is_lazy_and_audit_resolves_independently(
+        arena, monkeypatch):
+    vorcha = arena[1]
+    cannon = vorcha.GetPulseWeaponSystem().GetWeapon(0)
+    mod = importlib.import_module(cannon.GetProperty().GetModuleName())
+    real = float(mod.GetLaunchSpeed())
+    nc.audit_mirror()
+    assert nc.audit_failures() == []
+    # The module changes under a warm cache: the audit must see it.
+    monkeypatch.setattr(mod, "GetLaunchSpeed", lambda: real + 1.0)
+    nc.audit_mirror()
+    assert ("PulseWeapon", "launch_speed") in nc.audit_failures()
+    nc.audit_failures().clear()
+    # A reset only clears and marks stale: nothing is re-resolved mid-teardown.
+    from engine.appc import weapon_subsystems as ws
+    ws._reset_projectile_module_cache()
+    assert ws._pulse_params_cache == {}
+    assert float(_dump(cannon)["launch_speed"]).hex() == real.hex()
+    nc.refresh_stale_pulse_params()
+    assert float(_dump(cannon)["launch_speed"]).hex() == (real + 1.0).hex()
+    nc.audit_mirror()
+    assert nc.audit_failures() == []
+
+
+def test_dropped_ammo_row_reads_unrepresentable_in_the_slot_table(arena):
+    galaxy = arena[0]
+    torps = galaxy.GetTorpedoSystem()
+    ammo = torps.GetAmmoType(0)
+    assert _dump(torps)["_ammo_by_slot"] == [0, _slot(ammo)]
+    nc._drop(ammo)
+    assert "_nslot" not in ammo.__dict__
+    assert _dump(torps)["_ammo_by_slot"] == [0, nc.REF_UNREPRESENTABLE]
+    nc.audit_mirror()
+    assert nc.audit_failures() == []

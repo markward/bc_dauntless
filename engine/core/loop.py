@@ -32,6 +32,8 @@ class GameLoop:
         # collision_avoidance.invalidate_obstacle_snapshot.
         from engine.appc.collision_avoidance import invalidate_obstacle_snapshot
         invalidate_obstacle_snapshot()
+        # Pulse banks re-read their projectile module after a cache reset.
+        native_combat.refresh_stale_pulse_params()
 
         with _prof.scope("gl.timers.game"):
             App.g_kTimerManager.tick(TICK_DELTA)

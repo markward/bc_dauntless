@@ -119,6 +119,8 @@ def reset() -> None:
     _audit = False
     _failures.clear()
     _profiles.clear()
+    global _pulse_stale
+    _pulse_stale = False
     _counts["native_calls"] = 0
     _counts["fallbacks"] = 0
 
@@ -230,7 +232,7 @@ def _drop(obj) -> None:
         from engine.appc import contact_index
         for pSet in contact_index.sets_holding(obj):
             push_set_members(pSet)
-    if k in (_kind("Object"), _kind("Subsystem")):
+    if k in (_kind("Object"), _kind("Subsystem"), _kind("Ammo")):
         _repush_referrers(obj)
 
 
@@ -701,7 +703,8 @@ def _posed_flag(ship) -> int:
     (articulation.leaf_for caches "" for good): such a ship has no weapons to
     fire either. push_posed_parts re-pushes once the script is set."""
     d = ship.__dict__
-    if "_articulation_leaf" not in d and not d.get("_articulation_poses"):
+    # ShipClass.__init__ sets _articulation_leaf = None: "not yet resolved".
+    if d.get("_articulation_leaf") is None and not d.get("_articulation_poses"):
         try:
             script = ship.GetScript()
         except Exception:  # noqa: BLE001 - a double without a script
@@ -765,6 +768,8 @@ def push_pulse_params(bank) -> None:
     module_ok, launch_speed and lifetime, cached per script in
     weapon_subsystems (cleared with the projectile module cache)."""
     if _enabled:
+        if _pulse_stale:
+            refresh_stale_pulse_params()
         h = bank.__dict__.get("_nslot")
         if h is None:
             return
@@ -781,9 +786,29 @@ def _pulse_params(bank) -> tuple:
     return ws.pulse_module_params(ws.pulse_module_script(bank))
 
 
+#: The projectile module cache was reset (mission swap) and the pulse banks
+#: already built have not re-read their module yet.
+_pulse_stale = False
+
+
+def mark_pulse_stale() -> None:
+    """weapon_subsystems._reset_projectile_module_cache ran. Nothing is
+    resolved now (the SDK tree may be half reloaded); the next push or
+    refresh_stale_pulse_params (GameLoop.tick) re-reads every built bank."""
+    global _pulse_stale
+    if _enabled:
+        _pulse_stale = True
+
+
+def refresh_stale_pulse_params() -> None:
+    global _pulse_stale
+    if _pulse_stale:
+        _pulse_stale = False
+        refresh_pulse_params()
+
+
 def refresh_pulse_params() -> None:
-    """The projectile module cache was reset (mission swap): every pulse bank
-    already built re-reads its module."""
+    """Every pulse bank already built re-reads its module."""
     if _enabled:
         for h, obj in list(_registry.items()):
             if (obj.__dict__.get("_nslot") == h
@@ -1067,7 +1092,11 @@ def audit_mirror() -> None:
                 _failures.append((name, "MaxCondition"))
         if ((h >> _KIND_SHIFT) == _kind("Subsystem")
                 and expected["weapon_kind"] == 6):
-            ok, speed, life = _pulse_params(obj)
+            # Resolved afresh, NOT from the cache the push used: a stale cache
+            # would otherwise agree with the stale row.
+            from engine.appc import weapon_subsystems as ws
+            ok, speed, life = ws.resolve_pulse_module_params(
+                ws.pulse_module_script(obj))
             expected.update(module_ok=ok, launch_speed=speed, lifetime=life)
         for field, v in expected.items():
             got = row[field]

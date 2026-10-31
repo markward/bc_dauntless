@@ -427,7 +427,9 @@ def _reset_projectile_module_cache() -> None:
     either."""
     _projectile_modules.clear()
     _pulse_params_cache.clear()
-    native_combat.refresh_pulse_params()
+    # Not re-resolved here (mid mission-swap teardown): banks already built
+    # re-read their module on the next native push.
+    native_combat.mark_pulse_stale()
 
 
 # script name -> (module_ok, launch_speed, lifetime) for the native mirror
@@ -454,22 +456,27 @@ def pulse_module_params(script) -> tuple:
     the bank to the Python. Cached once per script."""
     hit = _pulse_params_cache.get(script)
     if hit is None:
-        hit = (0, 0.0, 0.0)
-        if script:
-            import importlib
-            from engine import dev_mode
-            try:
-                mod = importlib.import_module(script)
-                speed = (float(mod.GetLaunchSpeed())
-                         if hasattr(mod, "GetLaunchSpeed") else 0.0)
-                life = (float(mod.GetLifetime()) if hasattr(mod, "GetLifetime")
-                        else _PULSE_DEFAULT_LIFETIME)
-                hit = (1, speed, life)
-            except Exception as _e:  # noqa: BLE001 - Fire reports it itself
-                dev_mode.log_swallowed(
-                    "pulse module %r not resolvable for the native mirror"
-                    % (script,), _e)
-        _pulse_params_cache[script] = hit
+        hit = _pulse_params_cache[script] = resolve_pulse_module_params(script)
+    return hit
+
+
+def resolve_pulse_module_params(script) -> tuple:
+    """pulse_module_params without the cache (the audit's independent answer)."""
+    hit = (0, 0.0, 0.0)
+    if script:
+        import importlib
+        from engine import dev_mode
+        try:
+            mod = importlib.import_module(script)
+            speed = (float(mod.GetLaunchSpeed())
+                     if hasattr(mod, "GetLaunchSpeed") else 0.0)
+            life = (float(mod.GetLifetime()) if hasattr(mod, "GetLifetime")
+                    else _PULSE_DEFAULT_LIFETIME)
+            hit = (1, speed, life)
+        except Exception as _e:  # noqa: BLE001 - Fire reports it itself
+            dev_mode.log_swallowed(
+                "pulse module %r not resolvable for the native mirror"
+                % (script,), _e)
     return hit
 
 
