@@ -187,9 +187,12 @@ def _drop(obj) -> None:
     holds a value the mirror cannot represent. From then on it takes the
     Python path. Its row is freed now; the finalizer's later unregister of
     the same handle fails quietly. Silent by design (R2)."""
-    h = obj.__dict__.pop("_nslot", None)
+    h = obj.__dict__.get("_nslot")
     if h is None:
         return
+    if _enabled and (h >> _KIND_SHIFT) == _kind("Object"):
+        _hand_latch_to_python(obj, h)
+    del obj.__dict__["_nslot"]
     if _registry.get(h) is obj:
         del _registry[h]
     unregister_handle(h)
@@ -206,6 +209,33 @@ def _drop(obj) -> None:
         from engine.appc import contact_index
         for pSet in contact_index.sets_holding(obj):
             push_set_members(pSet)
+
+
+def _hand_latch_to_python(obj, h: int) -> None:
+    """Ruling R7 moves a pair's latch with its owner: a dropped row's pairs
+    leave the native latch (unregister erases them) and the pair now belongs
+    to the Python, so its broken locks are copied into sensor_detection's
+    `_broken` first. The other side is the dropped object or a registered one
+    (the native latch only ever holds registered pairs)."""
+    try:
+        pairs = _h.combat_latch_pairs(h)
+    except ValueError:
+        return
+    if not pairs:
+        return
+    from engine.appc import sensor_detection
+
+    def owner(handle):
+        if handle == h:
+            return obj
+        other = _registry.get(handle)
+        if other is None or other.__dict__.get("_nslot") != handle:
+            return None
+        return other
+    for oh, th in pairs:
+        o, t = owner(oh), owner(th)
+        if o is not None and t is not None:
+            sensor_detection._py_set_latched(o, t, True)
 
 
 def _repush_field(obj, name: str) -> None:

@@ -11,11 +11,13 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include "dauntless/combat/mirror.h"
@@ -705,4 +707,37 @@ TEST(SensorDetect, OcclusionClockIsSeparateFromTheDriftClock) {
     w.move(r, 50, 0, 0);
     EXPECT_TRUE(can_detect(w.m, o, t, 3.0, false));     // cached at 3.0
     EXPECT_FALSE(can_detect(w.m, o, t, 4.0, false));
+}
+
+// Task 6 fix round 1: the audit snapshots and restores every latch pair
+// whose TARGET is the asked target (a native run, probes included, writes
+// no other pair); a dropped row hands its pairs to the Python first.
+TEST(SensorDetect, LatchSnapshotRestoreAndPairsOf) {
+    World w;
+    int64_t o = w.ship(0, 0, 0, 1000.0);
+    int64_t p = w.ship(5, 0, 0, 1000.0);
+    int64_t t = w.ship(1, 0, 0);
+    int64_t u = w.ship(2, 0, 0);
+    w.set({o, p, t, u});
+    set_latched(w.m, p, t, true);
+    set_latched(w.m, o, u, true);
+    set_latched(w.m, t, u, true);
+    EXPECT_EQ(latch_snapshot(w.m, t), (std::vector<int64_t>{p}));
+    EXPECT_EQ(latch_snapshot(w.m, o), (std::vector<int64_t>{}));
+    // A native run rewrites target t's pairs; the restore puts them back,
+    // leaving every other target's pairs alone.
+    const std::vector<int64_t> snap = latch_snapshot(w.m, t);
+    set_latched(w.m, p, t, false);
+    set_latched(w.m, o, t, true);
+    latch_restore(w.m, t, snap);
+    EXPECT_TRUE(latched(w.m, p, t));
+    EXPECT_FALSE(latched(w.m, o, t));
+    EXPECT_TRUE(latched(w.m, o, u));
+    EXPECT_TRUE(latched(w.m, t, u));
+    // Every pair a handle is in, either side, sorted.
+    using P = std::pair<int64_t, int64_t>;
+    std::vector<P> want{{p, t}, {t, u}};
+    std::sort(want.begin(), want.end());
+    EXPECT_EQ(latch_pairs_of(w.m, t), want);
+    EXPECT_EQ(latch_pairs_of(w.m, o), (std::vector<P>{{o, u}}));
 }

@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <optional>
+#include <utility>
+#include <vector>
 
 #include "dauntless/combat/mirror.h"
 
@@ -94,6 +96,19 @@ bool latched(const Mirror& m, int64_t observer, int64_t target);
 // owner). Throws std::invalid_argument, writing nothing, when either handle
 // is not a live Object row.
 void set_latched(Mirror& m, int64_t observer, int64_t target, bool broken);
+
+// The audit (Task 6 fix 1): every observer latched against `target`, sorted.
+// A native can_detect(a, b) -- its probe walk included -- writes only pairs
+// whose target is b, so snapshot(b) / restore(b, snapshot) undoes all of it.
+std::vector<int64_t> latch_snapshot(const Mirror& m, int64_t target);
+// Replace target's pairs with `observers` (rows no longer live are skipped).
+void latch_restore(Mirror& m, int64_t target,
+                   const std::vector<int64_t>& observers);
+
+// Every latched (observer, target) pair `h` is in, either side, sorted: what
+// a row about to be dropped hands to the Python latch (Task 6 fix 2).
+std::vector<std::pair<int64_t, int64_t>> latch_pairs_of(const Mirror& m,
+                                                        int64_t h);
 
 // step_memo.forget() for sensor_detection._answers
 void memo_clear(Mirror& m);

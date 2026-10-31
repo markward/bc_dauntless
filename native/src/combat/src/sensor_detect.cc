@@ -669,6 +669,37 @@ void set_latched(Mirror& m, int64_t observer, int64_t target, bool broken) {
     _set_latched(m, observer, target, broken);
 }
 
+std::vector<int64_t> latch_snapshot(const Mirror& m, int64_t target) {
+    std::vector<int64_t> out;
+    for (const HandlePair& p : m.sensor_state().latch)
+        if (p.b == target) out.push_back(p.a);
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+void latch_restore(Mirror& m, int64_t target,
+                   const std::vector<int64_t>& observers) {
+    auto& latch = m.sensor_state().latch;
+    for (auto it = latch.begin(); it != latch.end();) {
+        if (it->b == target)
+            it = latch.erase(it);
+        else
+            ++it;
+    }
+    if (!m.object(target)) return;
+    for (int64_t o : observers)
+        if (m.object(o)) latch.insert({o, target});
+}
+
+std::vector<std::pair<int64_t, int64_t>> latch_pairs_of(const Mirror& m,
+                                                        int64_t h) {
+    std::vector<std::pair<int64_t, int64_t>> out;
+    for (const HandlePair& p : m.sensor_state().latch)
+        if (p.a == h || p.b == h) out.emplace_back(p.a, p.b);
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
 // step_memo.forget() for sensor_detection._answers
 void memo_clear(Mirror& m) { m.sensor_state().memo.clear(); }
 

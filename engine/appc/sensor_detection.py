@@ -534,30 +534,27 @@ _FELL_BACK = object()
 
 def _audit_can_detect(observer, target, args, dist_sq_gu, apply_concealment,
                       concealment) -> bool:
-    """Both paths, the Python's answer. The native run goes first; the
-    pair's latch (shared under R7) is then put back where it was, so the
-    Python runs from exactly the state a Python-only run would see and leaves
-    the latch where it alone would. Probe pairs' latches are not restored:
-    the latch write is idempotent (a re-run from the written state takes the
-    same branch and writes the same value)."""
+    """Both paths, the Python's answer. The native run goes first. Every
+    latch pair whose TARGET is `target` -- the asked pair's and each probe
+    pair the native walk wrote; a native run writes no other -- is then put
+    back where it was, so the Python runs from exactly the state a
+    Python-only run would see and leaves the latch where it alone would, even
+    when the two walks differ. The target's whole latch row is compared."""
     h = _nc._h
     a, b = args[0], args[1]
     python_args = dict(dist_sq_gu=dist_sq_gu,
                        apply_concealment=apply_concealment,
                        concealment=concealment)
-    try:
-        before = h.combat_latched(a, b)
-    except ValueError:
-        return _py_can_detect(observer, target, **python_args)
+    before = h.combat_latch_snapshot(b)
     try:
         native = h.combat_can_detect(*args)
     except ValueError:
         native = _FELL_BACK
-    native_latch = h.combat_latched(a, b)
-    h.combat_set_latched(a, b, before)
+    native_latch = h.combat_latch_snapshot(b)
+    h.combat_latch_restore(b, before)
     python = _py_can_detect(observer, target, **python_args)
     if native is not _FELL_BACK:
-        python_latch = h.combat_latched(a, b)
+        python_latch = h.combat_latch_snapshot(b)
         if native != python or native_latch != python_latch:
             _nc.record_call_failure("can_detect", observer, target,
                                     (python, python_latch),

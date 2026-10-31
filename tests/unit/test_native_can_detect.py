@@ -592,3 +592,70 @@ def test_audit_planted_latch_difference_leaves_the_python_latch(monkeypatch):
     assert sd.can_detect(a, b) is True
     assert _h.combat_latched(nc.slot(a), nc.slot(b)) is False
     assert [f[0] for f in nc.audit_failures()] == ["can_detect"]
+
+
+# ── Fix round 1 ──────────────────────────────────────────────────────────────
+
+def test_audit_restores_probe_pair_latches(monkeypatch):
+    """A native run writes (probe, target) latches as well as the asked
+    pair's. When the native walk differs from the Python's -- planted here as
+    a probe-pair write the Python never makes -- every pair whose target is
+    the asked target goes back where it was, so a probe in the hysteresis
+    band answers later exactly as in a Python-only game."""
+    plant = [True]
+    real = _h.combat_can_detect
+
+    def wrong(obs, tgt, *args, **kw):
+        out = real(obs, tgt, *args, **kw)
+        if plant[0]:
+            plant[0] = False
+            _h.combat_set_latched(probe_slot[0], tgt, True)
+        return out
+    monkeypatch.setattr(_h, "combat_can_detect", wrong)
+    probe_slot = [None]
+
+    def scenario():
+        plant[0] = True
+        s = _set()
+        _dense_nebula(s)
+        obs = _ship(s, "obs", 0.0, 0.0, 1000.0)
+        probe = _probe(s, obs.GetSensorSubsystem(), "P", 0.0,
+                       base_range=2000.0)
+        probe.SetTranslateXYZ(0.0, 0.0, -1000.0)
+        probe_slot[0] = nc.slot(probe)
+        tgt = _bare(s, "tgt", 180.0)                  # the hysteresis band
+        conceal = sd._py_concealment_at(tgt)
+        assert sd.LOCK_BREAK_T - sd.HYSTERESIS <= conceal < sd.LOCK_BREAK_T
+        return [sd.can_detect(obs, tgt), _latch(probe, tgt),
+                sd.can_detect(probe, tgt), _latch(probe, tgt)]
+
+    assert _both(scenario, envs=(OFF, AUDIT)) == [True, False, True, False]
+    assert [f[0] for f in nc.audit_failures()] == ["can_detect"]
+
+
+@pytest.mark.parametrize("side", ["observer", "target"])
+def test_a_dropped_row_hands_its_latch_to_python(side, answered):
+    """A row dropped mid-session (an unrepresentable value) moves the pair
+    from the native latch to the Python's: a broken lock stays broken, so
+    the hysteresis band answers as in a Python-only game. Asked inside a
+    combat step too: the native memo entry goes with the row, and the Python
+    recomputes the same answer from the carried latch."""
+    def scenario():
+        s = _set()
+        _dense_nebula(s)
+        obs = _ship(s, "obs", 0.0, 0.0, 1000.0)
+        tgt = _bare(s, "tgt", 0.0)                    # the dense core
+        trace = [sd.can_detect(obs, tgt), sd._latched(obs, tgt)]
+        tgt.SetTranslateXYZ(180.0, 0.0, 0.0)          # the band
+        with step_memo.combat_step():
+            trace.append(sd.can_detect(obs, tgt))
+            victim = obs if side == "observer" else tgt
+            victim._radius = "not a float"            # drops its row (ON)
+            trace.append(sd.can_detect(obs, tgt))
+        trace += [sd.can_detect(obs, tgt), sd._latched(obs, tgt)]
+        if nc.enabled():
+            assert nc.slot(victim) is None
+        return trace
+
+    assert _both(scenario) == [False, True, False, False, False, True]
+    assert answered["combat_can_detect"] == 2

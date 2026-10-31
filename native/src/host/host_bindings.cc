@@ -9510,6 +9510,25 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("obs"), py::arg("tgt"), py::arg("broken"),
               "sensor_detection._set_latched for a registered pair (R7: one "
               "latch). ValueError, writing nothing, on a stale handle.");
+        m.def("combat_latch_snapshot",
+              [](std::int64_t tgt) {
+                  return cb::latch_snapshot(cb::mirror(), tgt);
+              },
+              py::arg("tgt"),
+              "Observers latched against tgt, sorted (the audit's snapshot).");
+        m.def("combat_latch_restore",
+              [](std::int64_t tgt, const std::vector<std::int64_t>& obs) {
+                  cb::latch_restore(cb::mirror(), tgt, obs);
+              },
+              py::arg("tgt"), py::arg("observers"),
+              "Replace tgt's latch pairs with combat_latch_snapshot's list.");
+        m.def("combat_latch_pairs",
+              [](std::int64_t h) {
+                  return cb::latch_pairs_of(cb::mirror(), h);
+              },
+              py::arg("h"),
+              "Every latched (observer, target) pair h is in, sorted: what a "
+              "row about to be dropped hands to the Python latch.");
         m.def("combat_memo_clear", [] { cb::memo_clear(cb::mirror()); },
               "step_memo.forget() for can_detect's answers.");
     }
