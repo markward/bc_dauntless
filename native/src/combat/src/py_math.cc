@@ -110,6 +110,11 @@ double vector_norm(std::ptrdiff_t n, double* vec, double max, int found_nan) {
 
 }  // namespace
 
+double py_pow(double x, double y) {
+    volatile double exponent = y;  // opaque to the optimiser (py_math.h)
+    return std::pow(x, exponent);
+}
+
 // CPython 3.11.15 Modules/mathmodule.c `math_dist_impl`, the loop and the
 // vector_norm call, for two 3-tuples of floats.
 double dist3(const double a[3], const double b[3]) {

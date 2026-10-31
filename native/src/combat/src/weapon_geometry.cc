@@ -86,13 +86,9 @@ Vec3 minus(const Vec3& a, const Vec3& b) {  // TGPoint3.__sub__
     return {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
 }
 
-// `(x*x + y*y + z*z) ** 0.5` -- pow, NOT sqrt (K1M F7).
-// The exponent is read through a volatile so the compiler cannot fold
-// pow(x, 0.5) into sqrt(x): libm's pow is not correctly rounded and differs
-// from sqrt by an ulp on some inputs, and CPython calls pow.
+// `(x*x + y*y + z*z) ** 0.5` -- py_pow, NOT sqrt (K1M F7; py_math.h says why).
 double pow_half_length(double x, double y, double z) {
-    static volatile double half = 0.5;
-    return std::pow(x * x + y * y + z * z, half);
+    return py_pow(x * x + y * y + z * z, 0.5);
 }
 
 // ObjectClass.GetContainingSet (objects.py:329): the set handle or -1.
@@ -164,13 +160,13 @@ Vec3 _resolve_aim_world(const Mirror& m, int64_t ship, int64_t target) {
         const double dy = target_pos[1] - ship_pos[1];
         const double dz = target_pos[2] - ship_pos[2];
         const double len = pow_half_length(dx, dy, dz);
-        if (len > 1e-6) return {dx / len, dy / len, dz / len};
+        if (len > 1e-6) return {dx / len, dy / len, dz / len};  // weapon_subsystems.py:91
     }
     // Fallback: the ship's body +Y axis rotated into world.
     Vec3 fwd{0.0, 1.0, 0.0};
     if (ship != -1) fwd = mult_matrix_left(xform(m, obj(m, ship)).rot, fwd);
     const double len = pow_half_length(fwd[0], fwd[1], fwd[2]);
-    if (len > 1e-6) return {fwd[0] / len, fwd[1] / len, fwd[2] / len};
+    if (len > 1e-6) return {fwd[0] / len, fwd[1] / len, fwd[2] / len};  // weapon_subsystems.py:100
     return {0.0, 1.0, 0.0};
 }
 
@@ -185,7 +181,7 @@ Vec3 _resolve_bank_aim_world(Mirror& m, int64_t bank, int64_t target,
     const double dy = target_pos[1] - origin[1];
     const double dz = target_pos[2] - origin[2];
     const double len = pow_half_length(dx, dy, dz);
-    if (len > 1e-6) return {dx / len, dy / len, dz / len};
+    if (len > 1e-6) return {dx / len, dy / len, dz / len};  // weapon_subsystems.py:130
     // Degenerate: the bank coincides with the target; ship-forward.
     const int64_t ship = climb_to_ship(m, sub(m, bank));
     return _resolve_aim_world(m, ship, -1);
@@ -272,7 +268,7 @@ bool _in_torpedo_cone(Mirror& m, int64_t tube, int64_t ship, const Vec3& aim,
                       bool use_memo) {
     const Vec3 mount = subsystem_world_position(m, tube, -1, use_memo);
     const Vec3 to_aim = minus(aim, mount);
-    if (length(to_aim) < 1e-6) return false;
+    if (length(to_aim) < 1e-6) return false;  // weapon_subsystems.py:3040
     const SubsystemRow& tb = sub(m, tube);
     const Vec3 d = tb._direction;
     const Vec3 r = tb._right;
@@ -308,7 +304,7 @@ std::optional<Vec3> _solve_pulse_launch_direction(Mirror& m, int64_t cannon,
     const Vec3 muzzle = subsystem_world_position(m, cannon, -1, use_memo);
     const Vec3 to_aim = minus(aim, muzzle);
     const double dist = length(to_aim);
-    if (dist < 1e-6) return std::nullopt;
+    if (dist < 1e-6) return std::nullopt;  // weapon_subsystems.py:540
     const Vec3 u{to_aim[0] / dist, to_aim[1] / dist, to_aim[2] / dist};
 
     // _vec: GetVelocityTG of a present object; (0, 0, 0) for none.
@@ -331,7 +327,8 @@ std::optional<Vec3> _solve_pulse_launch_direction(Mirror& m, int64_t cannon,
                   ship_vel[i] * t;
     const Vec3 launch = minus(pred, muzzle);
     const double n = length(launch);
-    if (n < 1e-6 || n > m.globals().PULSE_RANGE_GATE_SECONDS * v_eff)
+    if (n < 1e-6 ||  // weapon_subsystems.py:570
+        n > m.globals().PULSE_RANGE_GATE_SECONDS * v_eff)
         return std::nullopt;
     return Vec3{launch[0] / n, launch[1] / n, launch[2] / n};
 }

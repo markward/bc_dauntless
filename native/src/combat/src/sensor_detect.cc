@@ -710,7 +710,8 @@ std::vector<std::pair<int64_t, int64_t>> latch_pairs_of(const Mirror& m,
     return out;
 }
 
-// step_memo.forget() for sensor_detection._answers
+// step_memo.forget() for sensor_detection._answers and subsystems._mounts
+// (weapon_geometry.h's mount memo)
 void memo_clear(Mirror& m) {
     m.sensor_state().memo.clear();
     m.sensor_state().mounts.clear();

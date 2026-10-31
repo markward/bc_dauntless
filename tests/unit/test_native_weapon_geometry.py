@@ -396,19 +396,21 @@ def test_torpedo_cone_boundary_at_exactly_the_literal(world):
     tube._right = TGPoint3(1.0, 0.0, 0.0)
     c = ws._TORPEDO_CONE_HALF_ANGLE
     x = math.tan(c)
-    outcomes = set()
-    for _ in range(3):
+    outcomes = {"yaw": set(), "pitch": set()}
+    for axis in ("yaw", "pitch"):         # right is +x, up = dir x right = -z
         for step in range(-6, 7):
             xx = x
             for _ in range(abs(step)):
                 xx = math.nextafter(xx, math.inf if step > 0 else -math.inf)
-            aim = TGPoint3(xx, 1.0, 0.0)
+            aim = TGPoint3(xx, 1.0, 0.0) if axis == "yaw" else TGPoint3(
+                0.0, 1.0, xx)
             want = ws._in_torpedo_cone(tube, w.galaxy, aim)
             got = _h.combat_test_in_torpedo_cone(
                 _slot(tube), _slot(w.galaxy), (aim.x, aim.y, aim.z), False)
-            assert got is want, step
-            outcomes.add(want)
-    assert outcomes == {True, False}      # the scan crosses the boundary
+            assert got is want, (axis, step)
+            outcomes[axis].add(want)
+    # each scan crosses its boundary, and one point sits exactly ON it
+    assert outcomes == {"yaw": {True, False}, "pitch": {True, False}}
 
 
 def test_torpedo_aim_point_matches(world):
@@ -512,7 +514,7 @@ def test_pulse_launch_edges(world):
         (5.0, 8.0, 0.0),
         (5.0, 20.0, 0.0),
         (5.0, 20.5, 0.0),
-        # the 30 x v_eff gate: a fleeing target the lead pushes out of range
+        # the 30 x v_eff gate: an APPROACHING target (vy -9) the lead pulls in
         (5.0, 1000.0, -9.0),
         (5.0, 1000.0, 4.5),
         (5.0, 1000.0, 4.99),
@@ -637,3 +639,73 @@ def test_weapon_constants_are_pushed_from_python(world):
         ws._TORPEDO_CONE_HALF_ANGLE).hex()
     assert float(g["PULSE_RANGE_GATE_SECONDS"]).hex() == float(
         ws._PULSE_RANGE_GATE_SECONDS).hex()
+
+
+# ── Added in fix round 1: mutation-killing cases ─────────────────────────────
+
+def test_pulse_launch_with_no_ship_uses_zero_velocity(world):
+    w, rng = world, random.Random(SEED + 11)
+    cannon = w.cannons[0]
+    _h.combat_set_i(_slot(cannon), nc._fid("module_ok"), 1)
+    _h.combat_set_f(_slot(cannon), nc._fid("launch_speed"), 7.0)
+    _h.combat_set_f(_slot(cannon), nc._fid("lifetime"), 50.0)
+    got_dirs = 0
+    for _ in range(200):
+        _place(rng, w.vorcha, spread=100.0)
+        _place(rng, w.warbird, spread=100.0)
+        w.vorcha.SetVelocity(_rand_vec(rng, 6.0))     # must be ignored
+        w.warbird.SetVelocity(_rand_vec(rng, 3.0))
+        cannon._target_offset = None
+        mod = _fake_mod(7.0, 50.0)
+        want = ws._solve_pulse_launch_direction(cannon, None, w.warbird, mod)
+        got = _h.combat_test_solve_pulse_launch_direction(
+            _slot(cannon), -1, _slot(w.warbird), False)
+        assert _hx(got) == _hx(want)
+        got_dirs += want is not None
+    assert got_dirs > 50
+
+
+def test_pulse_launch_n_below_epsilon_is_none(world):
+    """The predicted intercept lands on the muzzle: n < 1e-6 (dist is large,
+    so the earlier dist < 1e-6 gate does not fire)."""
+    w = world
+    cannon = w.cannons[0]
+    _h.combat_set_i(_slot(cannon), nc._fid("module_ok"), 1)
+    w.vorcha.SetTranslateXYZ(0.0, 0.0, 0.0)
+    w.vorcha.SetMatrixRotation(TGMatrix3())
+    w.vorcha.SetVelocity(TGPoint3(0.0, 0.0, 0.0))
+    cannon._position = TGPoint3(0.0, 0.0, 0.0)
+    cannon._target_offset = None
+    w.warbird.SetScale(1.0)
+    w.warbird.SetTranslateXYZ(0.0, 10.0, 0.0)
+    # speed 0, target velocity -10 along y: v_eff = 10, t = 1, pred.y =
+    # 10 + (-10)(1) = 0 exactly: the muzzle itself.
+    kinds = set()
+    for speed, vy in ((0.0, -10.0), (0.0, -20.0), (5.0, -10.0), (10.0, -1.0)):
+        w.warbird.SetVelocity(TGPoint3(0.0, vy, 0.0))
+        _h.combat_set_f(_slot(cannon), nc._fid("launch_speed"), speed)
+        _h.combat_set_f(_slot(cannon), nc._fid("lifetime"), 100.0)
+        want = ws._solve_pulse_launch_direction(
+            cannon, w.vorcha, w.warbird, _fake_mod(speed, 100.0))
+        got = _h.combat_test_solve_pulse_launch_direction(
+            _slot(cannon), _slot(w.vorcha), _slot(w.warbird), False)
+        assert _hx(got) == _hx(want), (speed, vy)
+        kinds.add(want is None)
+    assert True in kinds and False in kinds
+
+
+def test_bank_aim_world_with_memo_matches(world):
+    w, rng = world, random.Random(SEED + 12)
+    _h.combat_memo_clear()
+    with step_memo.combat_step():
+        for i in range(300):
+            _place(rng, w.galaxy)
+            _place(rng, w.warbird)
+            bank = rng.choice(w.phasers)
+            want = ws._resolve_bank_aim_world(bank, w.warbird)
+            got = _h.combat_test_resolve_bank_aim_world(
+                _slot(bank), _slot(w.warbird), True)
+            assert _hx(got) == _hx(want), i
+            if i % 7 == 0:
+                step_memo.forget()
+    assert _h.combat_test_mount_memo_size() == 0

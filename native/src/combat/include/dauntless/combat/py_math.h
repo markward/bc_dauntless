@@ -32,6 +32,13 @@ inline double saturate(double v) {
     return (v < 0.0) ? 0.0 : ((v > 1.0) ? 1.0 : v);
 }
 
+// Python `x ** y` for finite y: libm pow. ALWAYS use this, never std::pow with
+// a literal exponent: clang folds pow(x, 0.5) into sqrt(x), and libm's pow
+// (what CPython calls) is not correctly rounded, so it differs from sqrt by
+// an ulp on some inputs (0x1.73a804986b1acp+0 is one). The exponent goes
+// through a volatile inside py_math.cc so no caller can be folded.
+double py_pow(double x, double y);
+
 // `math.dist(a, b)` for 3-D points: CPython 3.11.15's math_dist_impl +
 // vector_norm (Modules/mathmodule.c), ported line for line. NOT
 // sqrt(dx*dx + dy*dy + dz*dz): vector_norm scales by a power of two, squares

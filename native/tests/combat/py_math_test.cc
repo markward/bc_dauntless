@@ -18,6 +18,15 @@ namespace {
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 constexpr double kInf = std::numeric_limits<double>::infinity();
 
+// CPython's `x ** 0.5` is libm pow, which differs from sqrt by an ulp here;
+// a helper that let the compiler fold pow(x, 0.5) to sqrt would fail.
+TEST(PyMath, PyPowHalfIsLibmPowNotSqrt) {
+    const double x = 0x1.73a804986b1acp+0;
+    EXPECT_EQ(py_pow(x, 0.5), 0x1.3474490c86324p+0);  // Python: x ** 0.5
+    EXPECT_NE(py_pow(x, 0.5), std::sqrt(x));          // sqrt: ...325p+0
+    EXPECT_EQ(py_pow(0.0, 0.5), 0.0);
+}
+
 TEST(PyMath, Dist3OfThreeFourZeroIsFive) {
     const double a[3] = {3.0, 4.0, 0.0};
     const double b[3] = {0.0, 0.0, 0.0};

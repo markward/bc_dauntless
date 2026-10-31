@@ -26,8 +26,9 @@
 //   * an Object's transform is invalid;
 //   * a target with no real IsDead (its stub records telemetry);
 //   * a pulse cannon whose projectile module did not resolve.
-// Nothing is written before a throw (the mount memo is filled only by a
-// completed answer).
+// The only state written is the mount memo, one finished entry at a time: a
+// completed mount answer may be memoised before a LATER step throws
+// (harmless: Python memoises the same entry).
 
 namespace dauntless::combat {
 
