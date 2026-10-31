@@ -9686,20 +9686,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("use_memo"), py::arg("drift_now"),
               "StartFiring's immediate update_weapons(dt) on one system.");
         m.def("combat_k1_next", [] {
-            cb::K1Record r;
-            {
-                // The kernel touches no Python object (spec 3.3). Releasing
-                // the GIL assumes no other Python thread can free a mirror
-                // row meanwhile: a row is freed by weakref.finalize ->
-                // native_combat.unregister_handle, which cyclic GC may run
-                // on whichever thread holds the GIL. The only other Python
-                // thread today is the packaged build's log follower (the
-                // stderr tee, engine/log_tee.py), which allocates and so could
-                // in principle trigger a GC pass. If that ever matters, keep
-                // the GIL here or freeze gc around the pump.
-                py::gil_scoped_release release;
-                r = cb::k1_kernel().next();
-            }
+            // The GIL is HELD for the walk (controller ruling J; spec 3.3's
+            // release is deferred to the worker-thread phase). The kernel
+            // touches no Python object, but a mirror row is freed by
+            // weakref.finalize -> native_combat.unregister_handle, which
+            // cyclic GC may run on whichever thread holds the GIL -- the
+            // packaged build's log tee (engine/log_tee.py) allocates, so a
+            // released GIL could free a row mid-read. A call takes
+            // microseconds. tests/unit/test_native_k1_holds_gil.py guards it.
+            cb::K1Record r = cb::k1_kernel().next();
             py::list writes;
             for (const cb::K1Write& w : r.writes) {
                 py::object v = std::visit(
