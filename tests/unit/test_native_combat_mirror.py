@@ -485,7 +485,9 @@ def _registered_bases():
     from engine.appc.properties import TGModelProperty
     from engine.appc.sets import SetClass
     from engine.appc.subsystems import ShipSubsystem
-    return (ObjectClass, ShipSubsystem, SetClass, TGModelProperty)
+    from engine.appc.weapon_subsystems import TorpedoAmmoType
+    return (ObjectClass, ShipSubsystem, SetClass, TGModelProperty,
+            TorpedoAmmoType)
 
 
 def _all_subclasses(base):
@@ -499,7 +501,8 @@ def _all_subclasses(base):
 
 
 def _is_native(attr):
-    return isinstance(attr, (nc.NativeField, nc.NativeFrozenField))
+    # NativeWrapped: the frozen / wake / thaw descriptors that also push.
+    return isinstance(attr, (nc.NativeField, nc.NativeWrapped))
 
 
 def _hidden_by_lookup(cls):

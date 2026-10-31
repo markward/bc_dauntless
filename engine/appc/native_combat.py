@@ -37,7 +37,8 @@ import sys
 import weakref
 from typing import Mapping
 
-from engine.appc.passive_power import FrozenField
+from engine.appc.passive_power import FrozenField, ThawParentWakeField
+from engine.appc.passive_state import WakeField
 from engine.core.ids import implements
 
 try:
@@ -68,6 +69,9 @@ IS_TRUE = "is True"
 VEC3 = "vec3"
 #: NativeField type for MetaNebula ``_spheres``: a list of (x, y, z, r).
 SPHERES = "spheres"
+#: NativeField type for an int-or-None (``TorpedoSystem._selected_slot``):
+#: None pushes -1 (slots are never negative).
+OPT_INT = "opt int"
 
 # system name -> (the map's Profile object, its Profile row handle). One row
 # per system map, registered lazily at the first frame push that needs it.
@@ -226,6 +230,31 @@ def _drop(obj) -> None:
         from engine.appc import contact_index
         for pSet in contact_index.sets_holding(obj):
             push_set_members(pSet)
+    if k in (_kind("Object"), _kind("Subsystem")):
+        _repush_referrers(obj)
+
+
+def _repush_referrers(dropped) -> None:
+    """A freed handle reads as none (-1) in a ref and vanishes from a list;
+    the weapon fields that NAME the dropped object must read -2 instead
+    (R6), so they are re-pushed (they re-encode to -2 now that `_nslot` is
+    gone). An exceptional path (a value the mirror cannot hold), so the scan
+    of every row is acceptable."""
+    for h, other in list(_registry.items()):
+        d = other.__dict__
+        if other is dropped or d.get("_nslot") != h:
+            continue
+        for name, field in _fields_of(type(other)):
+            if not isinstance(field, NativeRefField) \
+                    and not isinstance(field, NativeRefList):
+                continue
+            value = d.get(name)
+            if value is dropped or (
+                    isinstance(value, (list, dict))
+                    and any(v is dropped for v in (
+                        value.values() if isinstance(value, dict)
+                        else value))):
+                field._push(other, h, value)
 
 
 def _hand_latch_to_python(obj, h: int) -> None:
@@ -317,10 +346,15 @@ class NativeField:
             return 1 if value is True else 0
         if t is int:
             return int(value)
+        if t is OPT_INT:
+            return -1 if value is None else int(value)
         if t is VEC3:
             if value is None:
                 return []
-            x, y, z = value
+            try:
+                x, y, z = value.x, value.y, value.z     # a TGPoint3
+            except AttributeError:
+                x, y, z = value
             return [float(x), float(y), float(z)]
         if t is SPHERES:
             return [(float(x), float(y), float(z), float(r))
@@ -408,22 +442,134 @@ class NativeRefField(NativeField):
         return self._ref(value) == mirrored
 
 
-class NativeFrozenField(FrozenField):
-    """FrozenField's thaw (passive_power), then the push."""
+def _handle_of(value, target: str) -> int:
+    """`value`'s row handle if it is a registered row of kind `target`, else
+    REF_UNREPRESENTABLE (ruling R6): the entry keeps its place."""
+    t = _slot_of(value)
+    if t is None or (t >> _KIND_SHIFT) != _kind(target):
+        return REF_UNREPRESENTABLE
+    return t
 
-    def __init__(self, type_=float, key=None) -> None:
+
+class NativeRefList(NativeField):
+    """An ORDERED list of references to mirrored objects of kind `target`
+    (WeaponSystem._target_list, ShipSubsystem._children). Each entry pushes
+    its handle, or -2 for a referent the mirror cannot name. An in-place
+    ``append`` is invisible to a descriptor: the site calls ``push_field``."""
+
+    def __init__(self, target: str) -> None:
+        super().__init__(list)
+        self._target = target
+
+    def _encode(self, value):
+        return [_handle_of(v, self._target) for v in value]
+
+    def _push(self, obj, h, value) -> None:
+        try:
+            v = self._encode(value)
+        except (TypeError, ValueError, OverflowError):
+            _drop(obj)
+            return
+        _call(obj, _h.combat_set_ids, h, _fid(self._key), v)
+
+    def _matches(self, value, mirrored) -> bool:
+        try:
+            return self._encode(value) == mirrored
+        except (TypeError, ValueError, OverflowError):
+            return False
+
+
+class NativeSlotMap(NativeRefList):
+    """TorpedoSystem._ammo_by_slot, a {slot: ammo} dict: pushed as the
+    interleaved list [slot, Ammo handle, slot, Ammo handle, ...] in dict
+    order. An in-place ``d[k] = v`` / ``del d[k]`` calls ``push_field``."""
+
+    def __init__(self) -> None:
+        super().__init__("Ammo")
+
+    def _encode(self, value):
+        out = []
+        for slot, ammo in value.items():
+            out.append(int(slot))
+            out.append(_handle_of(ammo, self._target))
+        return out
+
+
+class NativeWrapped:
+    """Mixin for a passive_state / passive_power descriptor that also pushes:
+    the base descriptor's wake or thaw first, then the push. ``_native`` is
+    the NativeField that knows the type and the row key."""
+
+    def _init_native(self, type_, key) -> None:
         self._native = NativeField(type_, key)
 
     def __set_name__(self, owner, name) -> None:
         super().__set_name__(owner, name)
         self._native.__set_name__(owner, name)
 
-    def __set__(self, obj, value) -> None:
-        FrozenField.__set__(self, obj, value)
+    def _after_set(self, obj, value) -> None:
         if _enabled:
             h = obj.__dict__.get("_nslot")
             if h is not None:
                 self._native._push(obj, h, value)
+
+
+class NativeFrozenField(NativeWrapped, FrozenField):
+    """FrozenField's thaw (passive_power), then the push."""
+
+    def __init__(self, type_=float, key=None) -> None:
+        self._init_native(type_, key)
+
+    def __set__(self, obj, value) -> None:
+        FrozenField.__set__(self, obj, value)
+        self._after_set(obj, value)
+
+
+class NativeWakeField(NativeWrapped, WakeField):
+    """WakeField's wake (passive_state), then the push."""
+
+    def __init__(self, type_=float, key=None) -> None:
+        self._init_native(type_, key)
+
+    def __set__(self, obj, value) -> None:
+        WakeField.__set__(self, obj, value)
+        self._after_set(obj, value)
+
+
+class NativeThawParentWakeField(NativeWrapped, ThawParentWakeField):
+    """ThawParentWakeField's wake and parent thaw, then the push."""
+
+    def __init__(self, type_=float, key=None) -> None:
+        self._init_native(type_, key)
+
+    def __set__(self, obj, value) -> None:
+        ThawParentWakeField.__set__(self, obj, value)
+        self._after_set(obj, value)
+
+
+class PosedPartsField:
+    """``ShipClass._articulation_poses``: a rebind can change
+    ``bool(posed_part_names(ship))`` (a forced pose adds a name, dropping it
+    removes one), so the ship's has_posed_parts flag is re-pushed. In-place
+    ``poses[name] = pose`` writes (tick_ship) only touch rig names, which the
+    flag already counts. The attribute is ABSENT until first written (the
+    readers use getattr(..., None)), so unlike the other descriptors this one
+    needs a __get__ that reads the instance dict."""
+
+    def __set_name__(self, owner, name) -> None:
+        self._name = name
+
+    def __get__(self, obj, owner=None):
+        if obj is None:
+            return self
+        try:
+            return obj.__dict__[self._name]
+        except KeyError:
+            raise AttributeError(self._name) from None
+
+    def __set__(self, obj, value) -> None:
+        obj.__dict__[self._name] = value
+        push_posed_parts(obj)
 
 
 def _is_property(value) -> bool:
@@ -441,10 +587,9 @@ def _fields_of(cls) -> tuple:
                 if name in seen:
                     continue
                 seen.add(name)
-                if isinstance(attr, NativeField):
-                    out.append((name, attr))
-                elif isinstance(attr, NativeFrozenField):
-                    out.append((name, attr._native))
+                native = _native_of(attr)
+                if native is not None:
+                    out.append((name, native))
         fields = _class_fields[cls] = tuple(out)
     return fields
 
@@ -452,7 +597,7 @@ def _fields_of(cls) -> tuple:
 def _native_of(attr):
     if isinstance(attr, NativeField):
         return attr
-    if isinstance(attr, NativeFrozenField):
+    if isinstance(attr, NativeWrapped):
         return attr._native
     return None
 
@@ -524,10 +669,54 @@ def unregister_handle(h: int) -> None:
         pass
 
 
+#: Subsystem.weapon_kind by class, in isinstance order (a bank is not a
+#: system: PhaserBank derives from WeaponSystem, not PhaserSystem).
+_WEAPON_KINDS = None
+_kind_by_type: dict = {}
+
+
+def _weapon_kind(obj) -> int:
+    global _WEAPON_KINDS
+    cls = type(obj)
+    k = _kind_by_type.get(cls)
+    if k is None:
+        if _WEAPON_KINDS is None:
+            from engine.appc import weapon_subsystems as ws
+            _WEAPON_KINDS = ((ws.PhaserSystem, 1), (ws.PulseWeaponSystem, 2),
+                             (ws.TractorBeamSystem, 3), (ws.TorpedoSystem, 4),
+                             (ws.PhaserBank, 5), (ws.PulseWeapon, 6),
+                             (ws.TractorBeam, 7), (ws.TorpedoTube, 8))
+        k = 0
+        for klass, kind in _WEAPON_KINDS:
+            if issubclass(cls, klass):
+                k = kind
+                break
+        _kind_by_type[cls] = k
+    return k
+
+
+def _posed_flag(ship) -> int:
+    """``bool(articulation.posed_part_names(ship))``, but never the call that
+    would cache a rig-less leaf for a ship whose script is not set yet
+    (articulation.leaf_for caches "" for good): such a ship has no weapons to
+    fire either. push_posed_parts re-pushes once the script is set."""
+    d = ship.__dict__
+    if "_articulation_leaf" not in d and not d.get("_articulation_poses"):
+        try:
+            script = ship.GetScript()
+        except Exception:  # noqa: BLE001 - a double without a script
+            script = None
+        if not script:
+            return 0
+    from engine.appc import articulation
+    return int(bool(articulation.posed_part_names(ship)))
+
+
 def _flags(obj, h) -> dict:
     k = h >> _KIND_SHIFT
     if k == _kind("Object"):
         from engine.appc.nebula import MetaNebula
+        from engine.appc.ships import ShipClass
         from engine.rocks.rock import RockClass
         return {
             "has_sensor_getter": int(implements(obj, "GetSensorSubsystem")),
@@ -535,18 +724,88 @@ def _flags(obj, h) -> dict:
                 getattr(type(obj), "GetCloakingSubsystem", None) is not None),
             "is_rock": int(isinstance(obj, RockClass)),
             "is_meta_nebula": int(isinstance(obj, MetaNebula)),
+            # A stub's IsDead records telemetry; K1 hands such a target back
+            # to Python (it must not call the real thing).
+            "has_real_is_dead": int(implements(obj, "IsDead")),
+            "has_posed_parts": (_posed_flag(obj)
+                                if isinstance(obj, ShipClass) else 0),
         }
     if k == _kind("Subsystem"):
         return {"has_parent_ship_getter": int(implements(obj,
-                                                         "GetParentShip"))}
+                                                         "GetParentShip")),
+                "weapon_kind": _weapon_kind(obj),
+                "pump_self_managed": int(bool(getattr(
+                    type(obj), "_pump_self_managed", False)))}
     return {}
+
+
+def push_posed_parts(ship) -> None:
+    """Re-push the ship's has_posed_parts flag: its pose dict was rebound
+    (PosedPartsField), its rig appeared or went (articulation.tick_ship via
+    note_rig), or SetupProperties just gave it a script."""
+    if _enabled:
+        h = ship.__dict__.get("_nslot")
+        if h is not None:
+            _call(ship, _h.combat_set_i, h, _fid("has_posed_parts"),
+                  _posed_flag(ship))
+
+
+def note_rig(ship, key) -> None:
+    """tick_ship resolved `ship`'s rig for `key` = (leaf, rig generation):
+    push the flag once per key."""
+    if _enabled:
+        d = ship.__dict__
+        if d.get("_nc_rig_key") != key:
+            d["_nc_rig_key"] = key
+            push_posed_parts(ship)
+
+
+def push_pulse_params(bank) -> None:
+    """A pulse weapon's projectile module, resolved by Python (ruling P6):
+    module_ok, launch_speed and lifetime, cached per script in
+    weapon_subsystems (cleared with the projectile module cache)."""
+    if _enabled:
+        h = bank.__dict__.get("_nslot")
+        if h is None:
+            return
+        ok, speed, life = _pulse_params(bank)
+        _call(bank, _h.combat_set_i, h, _fid("module_ok"), ok)
+        if "_nslot" in bank.__dict__:
+            _call(bank, _h.combat_set_f, h, _fid("launch_speed"), speed)
+        if "_nslot" in bank.__dict__:
+            _call(bank, _h.combat_set_f, h, _fid("lifetime"), life)
+
+
+def _pulse_params(bank) -> tuple:
+    from engine.appc import weapon_subsystems as ws
+    return ws.pulse_module_params(ws.pulse_module_script(bank))
+
+
+def refresh_pulse_params() -> None:
+    """The projectile module cache was reset (mission swap): every pulse bank
+    already built re-reads its module."""
+    if _enabled:
+        for h, obj in list(_registry.items()):
+            if (obj.__dict__.get("_nslot") == h
+                    and (h >> _KIND_SHIFT) == _kind("Subsystem")
+                    and _weapon_kind(obj) == 6):
+                push_pulse_params(obj)
 
 
 def _property_values(prop) -> dict:
     pm = prop._data.get(("MaxCondition", ()))
+    d = prop.__dict__
+    # Only a WeaponSystemProperty carries chains (WeaponSystem.GetFiringChains
+    # reads [] from any other); every WeaponProperty may carry Groups.
+    chains = d.get("_firing_chains") or ()
+    vals = {"_firing_chains": [[int(g) for g in groups]
+                               for _label, groups in chains],
+            "_groups": int(d.get("_groups", 0))}
     if pm is None:
-        return {"MaxCondition_set": 0, "MaxCondition": 0.0}
-    return {"MaxCondition_set": 1, "MaxCondition": float(pm)}
+        vals.update(MaxCondition_set=0, MaxCondition=0.0)
+    else:
+        vals.update(MaxCondition_set=1, MaxCondition=float(pm))
+    return vals
 
 
 def _push_extras(obj, h) -> None:
@@ -555,6 +814,9 @@ def _push_extras(obj, h) -> None:
     k = h >> _KIND_SHIFT
     if k == _kind("Property"):
         push_property(obj)
+    elif k == _kind("Subsystem"):
+        if "_nslot" in obj.__dict__ and _weapon_kind(obj) == 6:
+            push_pulse_params(obj)
     elif k == _kind("Set"):
         push_set_members(obj)
         push_set_frame(obj)
@@ -599,7 +861,8 @@ def push_ids(obj, field: str, ids) -> None:
 
 
 def push_property(prop) -> None:
-    """The property's MaxCondition data-bag entry was written."""
+    """A property value the mirror holds was written: the MaxCondition
+    data-bag entry, SetGroups or SetFiringChainString."""
     if _enabled:
         h = prop.__dict__.get("_nslot")
         if h is None:
@@ -614,6 +877,11 @@ def push_property(prop) -> None:
         if "_nslot" in prop.__dict__:
             _call(prop, _h.combat_set_f, h, _fid("MaxCondition"),
                   vals["MaxCondition"])
+        if "_nslot" in prop.__dict__:
+            _call(prop, _h.combat_set_i, h, _fid("_groups"), vals["_groups"])
+        if "_nslot" in prop.__dict__:
+            _call(prop, _h.combat_set_id_lists, h, _fid("_firing_chains"),
+                  vals["_firing_chains"])
 
 
 # ── Sets, profiles and globals ───────────────────────────────────────────────
@@ -797,6 +1065,10 @@ def audit_mirror() -> None:
                 expected.update(_property_values(obj))
             except (TypeError, ValueError, OverflowError):
                 _failures.append((name, "MaxCondition"))
+        if ((h >> _KIND_SHIFT) == _kind("Subsystem")
+                and expected["weapon_kind"] == 6):
+            ok, speed, life = _pulse_params(obj)
+            expected.update(module_ok=ok, launch_speed=speed, lifetime=life)
         for field, v in expected.items():
             got = row[field]
             if isinstance(v, float):

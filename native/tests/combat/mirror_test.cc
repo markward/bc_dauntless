@@ -227,3 +227,127 @@ TEST(Mirror, GlobalsByName) {
     EXPECT_EQ(f.m.globals().sensorless_range_gu, 0.0);
     EXPECT_EQ(f.m.globals().dev_mode, 0);
 }
+
+// ── Phase 1b: weapon systems, banks, tubes, ammo, chains ────────────────────
+
+TEST(MirrorWeapons, AmmoRowRegistersAndFreesLikeAnyKind) {
+    Fixture f;
+    int64_t a = f.m.register_row(Kind::Ammo);
+    EXPECT_EQ(Mirror::kind_of(a), Kind::Ammo);
+    f.m.set_i(a, Field::_unlimited, 1);
+    f.m.set_i(a, Field::_available, 7);
+    EXPECT_EQ(f.m.get_i(a, Field::_unlimited), 1);
+    EXPECT_EQ(f.m.get_i(a, Field::_available), 7);
+    EXPECT_EQ(f.m.ammo(a)->_available, 7);
+    // A field of another kind is rejected on an Ammo row, and the reverse.
+    int64_t s = f.m.register_row(Kind::Subsystem);
+    EXPECT_THROW(f.m.set_i(a, Field::_fire_held, 1), std::invalid_argument);
+    EXPECT_THROW(f.m.set_i(s, Field::_available, 1), std::invalid_argument);
+    f.m.unregister_row(a);
+    EXPECT_EQ(f.m.ammo(a), nullptr);
+    EXPECT_THROW(f.m.set_i(a, Field::_available, 1), std::invalid_argument);
+    int64_t b = f.m.register_row(Kind::Ammo);          // reuses the index
+    EXPECT_NE(a, b);
+    EXPECT_EQ(f.m.get_i(b, Field::_available), 0);     // a fresh row
+}
+
+TEST(MirrorWeapons, OrderedListsKeepOrderAndCheckKind) {
+    Fixture f;
+    int64_t sys = f.m.register_row(Kind::Subsystem);
+    int64_t b0 = f.m.register_row(Kind::Subsystem);
+    int64_t b1 = f.m.register_row(Kind::Subsystem);
+    int64_t t0 = f.m.register_row(Kind::Object, -1, -1, 1);
+    int64_t t1 = f.m.register_row(Kind::Object, -1, -1, 2);
+    // Order is the list's own order (not sorted, duplicates untouched).
+    f.m.set_ids(sys, Field::_children, {b1, b0});
+    EXPECT_EQ(f.m.get_ids(sys, Field::_children),
+              (std::vector<int64_t>{b1, b0}));
+    f.m.set_ids(sys, Field::_target_list, {t1, kRefUnrepresentable, t0});
+    EXPECT_EQ(f.m.get_ids(sys, Field::_target_list),
+              (std::vector<int64_t>{t1, kRefUnrepresentable, t0}));
+    EXPECT_THROW(f.m.set_ids(sys, Field::_children, {t0}),
+                 std::invalid_argument);               // an Object, not a Subsystem
+    EXPECT_THROW(f.m.set_ids(sys, Field::_target_list, {b0}),
+                 std::invalid_argument);
+    // A freed row's entry drops out; -2 keeps its place.
+    f.m.unregister_row(t1);
+    EXPECT_EQ(f.m.get_ids(sys, Field::_target_list),
+              (std::vector<int64_t>{kRefUnrepresentable, t0}));
+}
+
+TEST(MirrorWeapons, AmmoBySlotIsSlotHandlePairs) {
+    Fixture f;
+    int64_t sys = f.m.register_row(Kind::Subsystem);
+    int64_t a0 = f.m.register_row(Kind::Ammo);
+    int64_t a1 = f.m.register_row(Kind::Ammo);
+    f.m.set_ids(sys, Field::_ammo_by_slot, {0, a0, 3, a1, 5, kRefUnrepresentable});
+    EXPECT_EQ(f.m.get_ids(sys, Field::_ammo_by_slot),
+              (std::vector<int64_t>{0, a0, 3, a1, 5, kRefUnrepresentable}));
+    EXPECT_THROW(f.m.set_ids(sys, Field::_ammo_by_slot, {0, a0, 1}),
+                 std::invalid_argument);               // odd length
+    EXPECT_THROW(f.m.set_ids(sys, Field::_ammo_by_slot, {0, sys}),
+                 std::invalid_argument);               // not an Ammo handle
+    EXPECT_NO_THROW(f.m.set_ids(sys, Field::_ammo_by_slot, {}));
+}
+
+TEST(MirrorWeapons, OffsetsAreNullableButMountVectorsAreNot) {
+    Fixture f;
+    int64_t s = f.m.register_row(Kind::Subsystem);
+    EXPECT_TRUE(f.m.get_fv(s, Field::_held_offset).empty());
+    EXPECT_TRUE(f.m.get_fv(s, Field::_target_offset).empty());
+    f.m.set_fv(s, Field::_held_offset, {0.25, -0.5, 1.5});
+    EXPECT_EQ(f.m.get_fv(s, Field::_held_offset),
+              (std::vector<double>{0.25, -0.5, 1.5}));
+    EXPECT_TRUE(f.m.get_fv(s, Field::_target_offset).empty());  // independent
+    f.m.set_fv(s, Field::_held_offset, {});
+    EXPECT_TRUE(f.m.get_fv(s, Field::_held_offset).empty());
+    // A mount vector (and the ship velocity) is never "unset".
+    EXPECT_THROW(f.m.set_fv(s, Field::_position, {}), std::invalid_argument);
+    f.m.set_fv(s, Field::_position, {1, 2, 3});
+    EXPECT_EQ(f.m.get_fv(s, Field::_position), (std::vector<double>{1, 2, 3}));
+    int64_t o = f.m.register_row(Kind::Object);
+    EXPECT_THROW(f.m.set_fv(o, Field::_velocity, {1, 2}), std::invalid_argument);
+    f.m.set_fv(o, Field::_velocity, {1.5, -2.25, 0.125});
+    EXPECT_EQ(f.m.get_fv(o, Field::_velocity),
+              (std::vector<double>{1.5, -2.25, 0.125}));
+}
+
+TEST(MirrorWeapons, RefsCheckTheirTargetKind) {
+    Fixture f;
+    int64_t o = f.m.register_row(Kind::Object);
+    int64_t other = f.m.register_row(Kind::Object);
+    int64_t s = f.m.register_row(Kind::Subsystem);
+    f.m.set_ref(s, Field::_target, other);
+    f.m.set_ref(s, Field::_held_target, kRefUnrepresentable);
+    EXPECT_EQ(f.m.get_ref(s, Field::_target), other);
+    EXPECT_EQ(f.m.get_ref(s, Field::_held_target), kRefUnrepresentable);
+    EXPECT_THROW(f.m.set_ref(s, Field::_target, s), std::invalid_argument);
+    f.m.set_ref(o, Field::_phaser_system, s);
+    EXPECT_EQ(f.m.get_ref(o, Field::_phaser_system), s);
+    EXPECT_THROW(f.m.set_ref(o, Field::_torpedo_system, other),
+                 std::invalid_argument);               // an Object, not a Subsystem
+}
+
+TEST(MirrorWeapons, FiringChainsAreAnOrderedListOfGroupLists) {
+    Fixture f;
+    int64_t p = f.m.register_row(Kind::Property);
+    EXPECT_TRUE(f.m.get_id_lists(p, Field::_firing_chains).empty());
+    f.m.set_id_lists(p, Field::_firing_chains, {{0, 1}, {0, 1, 2, 3}, {}});
+    EXPECT_EQ(f.m.get_id_lists(p, Field::_firing_chains),
+              (std::vector<std::vector<int64_t>>{{0, 1}, {0, 1, 2, 3}, {}}));
+    EXPECT_EQ(f.m.property(p)->_firing_chains.size(), 3u);
+    f.m.set_i(p, Field::_groups, 5);
+    EXPECT_EQ(f.m.get_i(p, Field::_groups), 5);
+    int64_t s = f.m.register_row(Kind::Subsystem);
+    EXPECT_THROW(f.m.set_id_lists(s, Field::_firing_chains, {}),
+                 std::invalid_argument);               // not a Property
+    EXPECT_THROW(f.m.set_ids(p, Field::_children, {}), std::invalid_argument);
+}
+
+TEST(MirrorWeapons, ClearFreesAmmoToo) {
+    Fixture f;
+    int64_t a = f.m.register_row(Kind::Ammo);
+    f.m.clear();
+    EXPECT_EQ(f.m.ammo(a), nullptr);
+    EXPECT_FALSE(f.m.valid(a));
+}

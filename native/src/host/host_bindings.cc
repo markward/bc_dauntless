@@ -9309,6 +9309,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
               [fld](std::int64_t h, int f, const std::vector<double>& v) {
                   cb::mirror().set_fv(h, fld(f), v);
               });
+        m.def("combat_set_id_lists",
+              [fld](std::int64_t h, int f,
+                    const std::vector<std::vector<std::int64_t>>& v) {
+                  cb::mirror().set_id_lists(h, fld(f), v);
+              });
         m.def("combat_set_spheres",
               [](std::int64_t h,
                  const std::vector<std::tuple<double, double, double, double>>& sp) {
@@ -9374,7 +9379,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_kinds", [] {
             // Row kind name -> the int combat_register takes.
             static constexpr const char* kNames[] = {
-                "Object", "Subsystem", "Property", "Set", "Profile"};
+                "Object", "Subsystem", "Property", "Set", "Profile", "Ammo"};
             static_assert(std::size(kNames) ==
                           static_cast<size_t>(cb::Kind::kCount));
             py::dict d;
@@ -9409,6 +9414,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
                     case cb::FieldType::I: d[n] = mi.get_i(h, f); break;
                     case cb::FieldType::Ref: d[n] = mi.get_ref(h, f); break;
                     case cb::FieldType::Ids: d[n] = mi.get_ids(h, f); break;
+                    case cb::FieldType::IdLists:
+                        d[n] = mi.get_id_lists(h, f);
+                        break;
                     case cb::FieldType::Vec3: {
                         auto v = mi.get_fv(h, f);
                         if (v.empty()) d[n] = py::none();

@@ -91,7 +91,7 @@ from __future__ import annotations
 
 import math
 
-from engine.appc import part_pose
+from engine.appc import native_combat, part_pose
 
 
 # Multiply a MODEL (raw NIF) unit by this to reach a SHIP (hardpoint-authored)
@@ -451,7 +451,9 @@ def tick_ship(ship, dt: float) -> None:
             ship._rigless_key = key
         except Exception:  # noqa: BLE001 - test doubles may reject attribute set
             pass
+        native_combat.note_rig(ship, key)
         return
+    native_combat.note_rig(ship, key)
     forced = _dev_override
     if forced is not None:
         state = forced

@@ -622,6 +622,10 @@ class PhysicsObjectClass(ObjectClass):
     DIRECTION_MODEL_SPACE = 0
     DIRECTION_WORLD_SPACE = 1
 
+    # Mirrored into the native combat row on every write (native_combat).
+    # Always rebound (SetVelocity), never mutated in place.
+    _velocity = native_combat.NativeField(native_combat.VEC3)
+
     def __init__(self):
         super().__init__()
         self._velocity: TGPoint3 = TGPoint3(0.0, 0.0, 0.0)

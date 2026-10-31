@@ -38,6 +38,13 @@ constexpr FieldInfo kInfo[] = {
     {"_fbm", Kind::Object, FieldType::Vec3},
     {"_seed", Kind::Object, FieldType::Vec3},
     {"spheres", Kind::Object, FieldType::Spheres},
+    {"has_posed_parts", Kind::Object, FieldType::I},
+    {"has_real_is_dead", Kind::Object, FieldType::I},
+    {"_velocity", Kind::Object, FieldType::Vec3},
+    {"_phaser_system", Kind::Object, FieldType::Ref},
+    {"_pulse_weapon_system", Kind::Object, FieldType::Ref},
+    {"_tractor_beam_system", Kind::Object, FieldType::Ref},
+    {"_torpedo_system", Kind::Object, FieldType::Ref},
     {"has_parent_ship_getter", Kind::Subsystem, FieldType::I},
     {"_condition", Kind::Subsystem, FieldType::F},
     {"_max_condition", Kind::Subsystem, FieldType::F},
@@ -53,8 +60,56 @@ constexpr FieldInfo kInfo[] = {
     {"_known_objects", Kind::Subsystem, FieldType::Ids},
     {"_probe_ids", Kind::Subsystem, FieldType::Ids},
     {"_cloak_state", Kind::Subsystem, FieldType::I},
+    {"weapon_kind", Kind::Subsystem, FieldType::I},
+    {"pump_self_managed", Kind::Subsystem, FieldType::I},
+    {"_is_on", Kind::Subsystem, FieldType::I},
+    {"_fire_held", Kind::Subsystem, FieldType::I},
+    {"_held_target", Kind::Subsystem, FieldType::Ref},
+    {"_held_offset", Kind::Subsystem, FieldType::Vec3},
+    {"_target_list", Kind::Subsystem, FieldType::Ids},
+    {"_force_update", Kind::Subsystem, FieldType::I},
+    {"_last_weapon_idx", Kind::Subsystem, FieldType::I},
+    {"_last_group_fired", Kind::Subsystem, FieldType::I},
+    {"_firing_chain_mode", Kind::Subsystem, FieldType::I},
+    {"_group_fire_mode", Kind::Subsystem, FieldType::I},
+    {"_single_fire", Kind::Subsystem, FieldType::I},
+    {"_children", Kind::Subsystem, FieldType::Ids},
+    {"_last_system_fire_time", Kind::Subsystem, FieldType::F},
+    {"_selected_slot", Kind::Subsystem, FieldType::I},
+    {"_ammo_by_slot", Kind::Subsystem, FieldType::Ids},
+    {"_fire_timer", Kind::Subsystem, FieldType::F},
+    {"_firing", Kind::Subsystem, FieldType::I},
+    {"_charge_level", Kind::Subsystem, FieldType::F},
+    {"_max_charge", Kind::Subsystem, FieldType::F},
+    {"_min_firing_charge", Kind::Subsystem, FieldType::F},
+    {"_depleted", Kind::Subsystem, FieldType::I},
+    {"_normal_discharge_rate", Kind::Subsystem, FieldType::F},
+    {"_power_setting", Kind::Subsystem, FieldType::I},
+    {"_cooldown_remaining", Kind::Subsystem, FieldType::F},
+    {"_cooldown_time", Kind::Subsystem, FieldType::F},
+    {"_target", Kind::Subsystem, FieldType::Ref},
+    {"_target_offset", Kind::Subsystem, FieldType::Vec3},
+    {"_num_ready", Kind::Subsystem, FieldType::I},
+    {"_max_ready", Kind::Subsystem, FieldType::I},
+    {"_last_fire_time", Kind::Subsystem, FieldType::F},
+    {"_immediate_delay", Kind::Subsystem, FieldType::F},
+    {"_skew_fire", Kind::Subsystem, FieldType::I},
+    {"_position", Kind::Subsystem, FieldType::Vec3},
+    {"_direction", Kind::Subsystem, FieldType::Vec3},
+    {"_up", Kind::Subsystem, FieldType::Vec3},
+    {"_right", Kind::Subsystem, FieldType::Vec3},
+    {"_arc_width_lo", Kind::Subsystem, FieldType::F},
+    {"_arc_width_hi", Kind::Subsystem, FieldType::F},
+    {"_arc_height_lo", Kind::Subsystem, FieldType::F},
+    {"_arc_height_hi", Kind::Subsystem, FieldType::F},
+    {"_arc_set", Kind::Subsystem, FieldType::I},
+    {"launch_speed", Kind::Subsystem, FieldType::F},
+    {"lifetime", Kind::Subsystem, FieldType::F},
+    {"module_ok", Kind::Subsystem, FieldType::I},
     {"MaxCondition", Kind::Property, FieldType::F},
     {"MaxCondition_set", Kind::Property, FieldType::I},
+    {"_firing_chains", Kind::Property, FieldType::IdLists},
+    {"_groups", Kind::Property, FieldType::I},
     {"ships", Kind::Set, FieldType::Ids},
     {"nebulae", Kind::Set, FieldType::Ids},
     {"mapped", Kind::Set, FieldType::I},
@@ -63,6 +118,8 @@ constexpr FieldInfo kInfo[] = {
     {"star", Kind::Set, FieldType::Vec3},
     {"rows", Kind::Profile, FieldType::Rows},
     {"full_concealment", Kind::Profile, FieldType::F},
+    {"_unlimited", Kind::Ammo, FieldType::I},
+    {"_available", Kind::Ammo, FieldType::I},
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) ==
               static_cast<size_t>(Field::kCount));
@@ -119,8 +176,14 @@ Kind ref_target_kind(Field f) {
         case Field::_sensor_subsystem:
         case Field::_cloaking_subsystem:
         case Field::_hull:
-        case Field::_parent_subsystem: return Kind::Subsystem;
-        case Field::_parent_ship: return Kind::Object;
+        case Field::_parent_subsystem:
+        case Field::_phaser_system:
+        case Field::_pulse_weapon_system:
+        case Field::_tractor_beam_system:
+        case Field::_torpedo_system: return Kind::Subsystem;
+        case Field::_parent_ship:
+        case Field::_held_target:
+        case Field::_target: return Kind::Object;
         case Field::_property: return Kind::Property;
         case Field::profile: return Kind::Profile;
         default: return Kind::kCount;
@@ -149,6 +212,8 @@ double* fptr(ObjectRow& r, Field f) {
 }
 int64_t* iptr(ObjectRow& r, Field f) {
     switch (f) {
+        case Field::has_posed_parts: return &r.has_posed_parts;
+        case Field::has_real_is_dead: return &r.has_real_is_dead;
         case Field::xform_index: return &r.xform_index;
         case Field::xform_gen: return &r.xform_gen;
         case Field::obj_id: return &r.obj_id;
@@ -167,11 +232,16 @@ int64_t* rptr(ObjectRow& r, Field f) {
         case Field::_sensor_subsystem: return &r._sensor_subsystem;
         case Field::_cloaking_subsystem: return &r._cloaking_subsystem;
         case Field::_hull: return &r._hull;
+        case Field::_phaser_system: return &r._phaser_system;
+        case Field::_pulse_weapon_system: return &r._pulse_weapon_system;
+        case Field::_tractor_beam_system: return &r._tractor_beam_system;
+        case Field::_torpedo_system: return &r._torpedo_system;
         default: return nullptr;
     }
 }
 Vec3* vptr(ObjectRow& r, Field f) {
     switch (f) {
+        case Field::_velocity: return &r._velocity;
         case Field::_fbm: return &r._fbm;
         case Field::_seed: return &r._seed;
         default: return nullptr;
@@ -186,11 +256,46 @@ double* fptr(SubsystemRow& r, Field f) {
         case Field::s_radius: return &r._radius;
         case Field::_power_factor: return &r._power_factor;
         case Field::_base_sensor_range: return &r._base_sensor_range;
+        case Field::_last_system_fire_time: return &r._last_system_fire_time;
+        case Field::_fire_timer: return &r._fire_timer;
+        case Field::_charge_level: return &r._charge_level;
+        case Field::_max_charge: return &r._max_charge;
+        case Field::_min_firing_charge: return &r._min_firing_charge;
+        case Field::_normal_discharge_rate: return &r._normal_discharge_rate;
+        case Field::_cooldown_remaining: return &r._cooldown_remaining;
+        case Field::_cooldown_time: return &r._cooldown_time;
+        case Field::_last_fire_time: return &r._last_fire_time;
+        case Field::_immediate_delay: return &r._immediate_delay;
+        case Field::_arc_width_lo: return &r._arc_width_lo;
+        case Field::_arc_width_hi: return &r._arc_width_hi;
+        case Field::_arc_height_lo: return &r._arc_height_lo;
+        case Field::_arc_height_hi: return &r._arc_height_hi;
+        case Field::launch_speed: return &r.launch_speed;
+        case Field::lifetime: return &r.lifetime;
         default: return nullptr;
     }
 }
 int64_t* iptr(SubsystemRow& r, Field f) {
     switch (f) {
+        case Field::weapon_kind: return &r.weapon_kind;
+        case Field::pump_self_managed: return &r.pump_self_managed;
+        case Field::_is_on: return &r._is_on;
+        case Field::_fire_held: return &r._fire_held;
+        case Field::_force_update: return &r._force_update;
+        case Field::_last_weapon_idx: return &r._last_weapon_idx;
+        case Field::_last_group_fired: return &r._last_group_fired;
+        case Field::_firing_chain_mode: return &r._firing_chain_mode;
+        case Field::_group_fire_mode: return &r._group_fire_mode;
+        case Field::_single_fire: return &r._single_fire;
+        case Field::_selected_slot: return &r._selected_slot;
+        case Field::_firing: return &r._firing;
+        case Field::_depleted: return &r._depleted;
+        case Field::_power_setting: return &r._power_setting;
+        case Field::_num_ready: return &r._num_ready;
+        case Field::_max_ready: return &r._max_ready;
+        case Field::_skew_fire: return &r._skew_fire;
+        case Field::_arc_set: return &r._arc_set;
+        case Field::module_ok: return &r.module_ok;
         case Field::has_parent_ship_getter: return &r.has_parent_ship_getter;
         case Field::_destroyed: return &r._destroyed;
         case Field::_radiation_out: return &r._radiation_out;
@@ -203,6 +308,8 @@ int64_t* rptr(SubsystemRow& r, Field f) {
         case Field::_parent_subsystem: return &r._parent_subsystem;
         case Field::_parent_ship: return &r._parent_ship;
         case Field::_property: return &r._property;
+        case Field::_held_target: return &r._held_target;
+        case Field::_target: return &r._target;
         default: return nullptr;
     }
 }
@@ -210,6 +317,20 @@ std::vector<int64_t>* idptr(SubsystemRow& r, Field f) {
     switch (f) {
         case Field::_known_objects: return &r._known_objects;
         case Field::_probe_ids: return &r._probe_ids;
+        case Field::_target_list: return &r._target_list;
+        case Field::_children: return &r._children;
+        case Field::_ammo_by_slot: return &r._ammo_by_slot;
+        default: return nullptr;
+    }
+}
+Vec3* vptr(SubsystemRow& r, Field f) {
+    switch (f) {
+        case Field::_held_offset: return &r._held_offset;
+        case Field::_target_offset: return &r._target_offset;
+        case Field::_position: return &r._position;
+        case Field::_direction: return &r._direction;
+        case Field::_up: return &r._up;
+        case Field::_right: return &r._right;
         default: return nullptr;
     }
 }
@@ -218,7 +339,19 @@ double* fptr(PropertyRow& r, Field f) {
     return f == Field::MaxCondition ? &r.MaxCondition : nullptr;
 }
 int64_t* iptr(PropertyRow& r, Field f) {
-    return f == Field::MaxCondition_set ? &r.MaxCondition_set : nullptr;
+    switch (f) {
+        case Field::MaxCondition_set: return &r.MaxCondition_set;
+        case Field::_groups: return &r._groups;
+        default: return nullptr;
+    }
+}
+
+int64_t* iptr(AmmoRow& r, Field f) {
+    switch (f) {
+        case Field::_unlimited: return &r._unlimited;
+        case Field::_available: return &r._available;
+        default: return nullptr;
+    }
 }
 
 int64_t* iptr(SetRow& r, Field f) {
@@ -348,6 +481,7 @@ decltype(auto) Mirror::visit(int64_t h, Kind want, Fn&& fn) {
         case Kind::Subsystem: return fn(checked(subsystems_, h, want));
         case Kind::Property: return fn(checked(properties_, h, want));
         case Kind::Set: return fn(checked(sets_, h, want));
+        case Kind::Ammo: return fn(checked(ammo_, h, want));
         default: return fn(checked(profiles_, h, want));
     }
 }
@@ -362,6 +496,7 @@ bool Mirror::ref_live(int64_t h, Kind want) const {
         case Kind::Subsystem: return find(subsystems_, h, want) != nullptr;
         case Kind::Property: return find(properties_, h, want) != nullptr;
         case Kind::Set: return find(sets_, h, want) != nullptr;
+        case Kind::Ammo: return find(ammo_, h, want) != nullptr;
         default: return find(profiles_, h, want) != nullptr;
     }
 }
@@ -390,6 +525,7 @@ int64_t Mirror::register_row(Kind kind, int64_t xform_index, int64_t xform_gen,
         case Kind::Property: h = alloc(properties_, kind); break;
         case Kind::Set: h = alloc(sets_, kind); break;
         case Kind::Profile: h = alloc(profiles_, kind); break;
+        case Kind::Ammo: h = alloc(ammo_, kind); break;
         default: throw std::invalid_argument("combat mirror: bad kind");
     }
     ++epoch_;
@@ -414,6 +550,7 @@ void Mirror::unregister_row(int64_t h) {
             release(sets_, h);
             sensor_.drop_set(h);
             break;
+        case Kind::Ammo: checked(ammo_, h, kind); release(ammo_, h); break;
         default: checked(profiles_, h, kind); release(profiles_, h); break;
     }
     ++epoch_;
@@ -425,6 +562,7 @@ void Mirror::clear() {
     clear_table(properties_);
     clear_table(sets_);
     clear_table(profiles_);
+    clear_table(ammo_);
     by_obj_id_.clear();
     globals_ = Globals{};
     clear_owned_state();
@@ -475,11 +613,23 @@ void Mirror::set_ref(int64_t h, Field f, int64_t target) {
 void Mirror::set_ids(int64_t h, Field f, const std::vector<int64_t>& ids) {
     if (info(f).type != FieldType::Ids) bad("not an id-list field", f);
     std::vector<int64_t> v = ids;
-    if (f == Field::ships || f == Field::nebulae) {
+    auto entries_are = [&](Kind want) {
         for (int64_t x : v)
             if (x != kRefUnrepresentable &&
-                (x < 0 || static_cast<Kind>((x >> 60) & 7) != Kind::Object))
-                bad("list entry is not an Object handle", f);
+                (x < 0 || static_cast<Kind>((x >> 60) & 7) != want))
+                bad("list entry is not a handle of the field's kind", f);
+    };
+    if (f == Field::ships || f == Field::nebulae || f == Field::_target_list) {
+        entries_are(Kind::Object);
+    } else if (f == Field::_children) {
+        entries_are(Kind::Subsystem);
+    } else if (f == Field::_ammo_by_slot) {
+        // [slot, Ammo handle] pairs, in dict order.
+        if (v.size() % 2 != 0) bad("expected [slot, handle] pairs", f);
+        for (size_t i = 1; i < v.size(); i += 2)
+            if (v[i] != kRefUnrepresentable &&
+                (v[i] < 0 || static_cast<Kind>((v[i] >> 60) & 7) != Kind::Ammo))
+                bad("list entry is not an Ammo handle", f);
     } else if (f == Field::_known_objects) {
         std::sort(v.begin(), v.end());
         v.erase(std::unique(v.begin(), v.end()), v.end());
@@ -494,7 +644,8 @@ void Mirror::set_ids(int64_t h, Field f, const std::vector<int64_t>& ids) {
 
 void Mirror::set_fv(int64_t h, Field f, const std::vector<double>& v) {
     if (info(f).type != FieldType::Vec3) bad("not a 3-vector field", f);
-    bool nullable = (f == Field::_fbm || f == Field::_seed);
+    bool nullable = (f == Field::_fbm || f == Field::_seed ||
+                     f == Field::_held_offset || f == Field::_target_offset);
     if (!(v.size() == 3 || (nullable && v.empty())))
         bad("expected 3 doubles", f);
     visit(h, info(f).kind, [&](auto& row) {
@@ -505,8 +656,33 @@ void Mirror::set_fv(int64_t h, Field f, const std::vector<double>& v) {
             if (f == Field::_fbm) row.fbm_set = !v.empty();
             if (f == Field::_seed) row.seed_set = !v.empty();
         }
+        if constexpr (std::is_same_v<std::decay_t<decltype(row)>, SubsystemRow>) {
+            if (f == Field::_held_offset) row.held_offset_set = !v.empty();
+            if (f == Field::_target_offset) row.target_offset_set = !v.empty();
+        }
     });
     ++epoch_;
+}
+
+void Mirror::set_id_lists(int64_t h, Field f,
+                          const std::vector<std::vector<int64_t>>& lists) {
+    if (info(f).type != FieldType::IdLists) bad("not an id-lists field", f);
+    PropertyRow& row = checked(properties_, h, Kind::Property);
+    if (f != Field::_firing_chains) bad("field not on this row", f);
+    row._firing_chains = lists;
+    ++epoch_;
+}
+
+std::vector<std::vector<int64_t>> Mirror::get_id_lists(int64_t h,
+                                                       Field f) const {
+    if (info(f).type != FieldType::IdLists) bad("not an id-lists field", f);
+    const PropertyRow* row = find(properties_, h, Kind::Property);
+    if (!row)
+        throw std::invalid_argument(
+            "combat mirror: stale, freed or wrong-kind handle " +
+            std::to_string(h));
+    if (f != Field::_firing_chains) bad("field not on this row", f);
+    return row->_firing_chains;
 }
 
 void Mirror::set_spheres(int64_t h, std::vector<Sphere> spheres) {
@@ -605,11 +781,18 @@ std::vector<int64_t> Mirror::get_ids(int64_t h, Field f) const {
         if (!p) bad("field not on this row", f);
         return *p;
     });
-    if (f == Field::ships || f == Field::nebulae)
+    // A list entry whose row was since freed is dropped, as a stale ref reads
+    // none; an unrepresentable (-2) entry keeps its place.
+    Kind entry = Kind::kCount;
+    if (f == Field::ships || f == Field::nebulae || f == Field::_target_list)
+        entry = Kind::Object;
+    else if (f == Field::_children)
+        entry = Kind::Subsystem;
+    if (entry != Kind::kCount)
         v.erase(std::remove_if(v.begin(), v.end(),
                                [&](int64_t x) {
                                    return x != kRefUnrepresentable &&
-                                          !ref_live(x, Kind::Object);
+                                          !ref_live(x, entry);
                                }),
                 v.end());
     return v;
@@ -625,6 +808,11 @@ std::vector<double> Mirror::get_fv(int64_t h, Field f) const {
                 (f == Field::_seed && !row.seed_set))
                 return {};
         }
+        if constexpr (std::is_same_v<std::decay_t<decltype(row)>, SubsystemRow>) {
+            if ((f == Field::_held_offset && !row.held_offset_set) ||
+                (f == Field::_target_offset && !row.target_offset_set))
+                return {};
+        }
         return {(*p)[0], (*p)[1], (*p)[2]};
     });
 }
@@ -634,6 +822,7 @@ const SubsystemRow* Mirror::subsystem(int64_t h) const { return find(subsystems_
 const PropertyRow* Mirror::property(int64_t h) const { return find(properties_, h, Kind::Property); }
 const SetRow* Mirror::set(int64_t h) const { return find(sets_, h, Kind::Set); }
 const ProfileRowSet* Mirror::profile(int64_t h) const { return find(profiles_, h, Kind::Profile); }
+const AmmoRow* Mirror::ammo(int64_t h) const { return find(ammo_, h, Kind::Ammo); }
 
 Mirror& mirror() {
     static Mirror m(transform_store());

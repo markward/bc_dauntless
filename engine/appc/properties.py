@@ -509,6 +509,8 @@ class WeaponProperty(SubsystemProperty):
         WeaponProperty+0x50). Previously a silent _Stub no-op even though
         every stock hardpoint authors it (galaxy.py:22 etc.)."""
         self._groups = int(mask)
+        from engine.appc import native_combat
+        native_combat.push_property(self)       # K1 reads the mask natively
 
     def GetGroups(self) -> int:
         return int(getattr(self, "_groups", 0))
@@ -942,6 +944,8 @@ class WeaponSystemProperty(PoweredSubsystemProperty):
                     chains.append((label, indices))
                 i += 2
         self._firing_chains = chains
+        from engine.appc import native_combat
+        native_combat.push_property(self)       # K1 reads the chains natively
 
     def GetFiringChainString(self):
         """Return the raw chain string. The return type is _TGString —

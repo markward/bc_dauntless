@@ -28,9 +28,13 @@
 
 namespace dauntless::combat {
 
-enum class Kind : int32_t { Object = 0, Subsystem, Property, Set, Profile, kCount };
+enum class Kind : int32_t {
+    Object = 0, Subsystem, Property, Set, Profile, Ammo, kCount
+};
 
-enum class FieldType : int32_t { F, I, Ref, Ids, Vec3, Spheres, Rows };
+enum class FieldType : int32_t {
+    F, I, Ref, Ids, Vec3, Spheres, Rows, IdLists
+};
 
 enum class Field : int32_t {
     // Object: constructor data (read-only) and class flags
@@ -40,17 +44,48 @@ enum class Field : int32_t {
     _dead, _dying, _life_time, _containing_set, o_radius, _scale,
     _sensor_subsystem, _cloaking_subsystem, _hull,
     _fbm, _seed, spheres,
+    // Object: weapon-fire inputs (phase 1b K1). has_posed_parts is
+    // bool(articulation.posed_part_names(ship)); has_real_is_dead is
+    // implements(obj, "IsDead"); _velocity is rebound on every SetVelocity.
+    has_posed_parts, has_real_is_dead, _velocity,
+    _phaser_system, _pulse_weapon_system, _tractor_beam_system, _torpedo_system,
     // Subsystem
     has_parent_ship_getter, _condition, _max_condition, _disabled_percentage,
     _destroyed, _radiation_out, s_radius, _parent_subsystem, _parent_ship,
     _property, _power_factor, _base_sensor_range, _known_objects, _probe_ids,
     _cloak_state,
+    // Subsystem: class flags. weapon_kind: 0 none, 1 phaser system, 2 pulse
+    // system, 3 tractor system, 4 torpedo system, 5 phaser bank, 6 pulse
+    // weapon, 7 tractor beam, 8 torpedo tube.
+    weapon_kind, pump_self_managed,
+    // Subsystem: PoweredSubsystem
+    _is_on,
+    // Subsystem: WeaponSystem held-fire state (_target_list holds Object
+    // handles in order, _children Subsystem handles in order, _ammo_by_slot
+    // interleaved [slot, Ammo handle, slot, Ammo handle, ...] in dict order)
+    _fire_held, _held_target, _held_offset, _target_list, _force_update,
+    _last_weapon_idx, _last_group_fired, _firing_chain_mode, _group_fire_mode,
+    _single_fire, _children,
+    // Subsystem: TorpedoSystem (_selected_slot is -1 for None)
+    _last_system_fire_time, _selected_slot, _ammo_by_slot,
+    // Subsystem: leaf weapons (banks and tubes)
+    _fire_timer, _firing, _charge_level, _max_charge, _min_firing_charge,
+    _depleted, _normal_discharge_rate, _power_setting, _cooldown_remaining,
+    _cooldown_time, _target, _target_offset, _num_ready, _max_ready,
+    _last_fire_time, _immediate_delay, _skew_fire,
+    // Subsystem: mount geometry and arcs (every subsystem has them)
+    _position, _direction, _up, _right, _arc_width_lo, _arc_width_hi,
+    _arc_height_lo, _arc_height_hi, _arc_set,
+    // Subsystem: pulse projectile module, resolved by Python (ruling P6)
+    launch_speed, lifetime, module_ok,
     // Property
-    MaxCondition, MaxCondition_set,
+    MaxCondition, MaxCondition_set, _firing_chains, _groups,
     // Set
     ships, nebulae, mapped, profile, anchor, star,
     // Profile
     rows, full_concealment,
+    // Ammo (TorpedoAmmoType)
+    _unlimited, _available,
     kCount
 };
 
@@ -80,6 +115,10 @@ struct ObjectRow {
     Vec3 _fbm{0, 0, 0}, _seed{0, 0, 0};
     bool fbm_set = false, seed_set = false;
     std::vector<Sphere> spheres;
+    int64_t has_posed_parts = 0, has_real_is_dead = 0;
+    Vec3 _velocity{0, 0, 0};
+    int64_t _phaser_system = -1, _pulse_weapon_system = -1,
+            _tractor_beam_system = -1, _torpedo_system = -1;
 };
 
 struct SubsystemRow {
@@ -92,11 +131,48 @@ struct SubsystemRow {
     std::vector<int64_t> _known_objects;  // sorted, unique (set semantics)
     std::vector<int64_t> _probe_ids;      // list order
     int64_t _cloak_state = 0;
+    int64_t weapon_kind = 0, pump_self_managed = 0, _is_on = 0;
+    int64_t _fire_held = 0, _held_target = -1;
+    Vec3 _held_offset{0, 0, 0};
+    bool held_offset_set = false;
+    std::vector<int64_t> _target_list, _children, _ammo_by_slot;
+    int64_t _force_update = 0, _last_weapon_idx = 0, _last_group_fired = 0,
+            _firing_chain_mode = 0, _group_fire_mode = 0, _single_fire = 0;
+    double _last_system_fire_time = 0.0;
+    int64_t _selected_slot = -1;
+    double _fire_timer = 0.0;
+    int64_t _firing = 0;
+    double _charge_level = 0.0, _max_charge = 0.0, _min_firing_charge = 0.0;
+    int64_t _depleted = 0;
+    double _normal_discharge_rate = 0.0;
+    int64_t _power_setting = 0;
+    double _cooldown_remaining = 0.0, _cooldown_time = 0.0;
+    int64_t _target = -1;
+    Vec3 _target_offset{0, 0, 0};
+    bool target_offset_set = false;
+    int64_t _num_ready = 0, _max_ready = 0;
+    double _last_fire_time = 0.0, _immediate_delay = 0.0;
+    int64_t _skew_fire = 0;
+    Vec3 _position{0, 0, 0}, _direction{0, 0, 0}, _up{0, 0, 0},
+        _right{0, 0, 0};
+    double _arc_width_lo = 0.0, _arc_width_hi = 0.0, _arc_height_lo = 0.0,
+           _arc_height_hi = 0.0;
+    int64_t _arc_set = 0;
+    double launch_speed = 0.0, lifetime = 0.0;
+    int64_t module_ok = 0;
 };
 
 struct PropertyRow {
     double MaxCondition = 0.0;
     int64_t MaxCondition_set = 0;
+    // One group list per chain, in chain (mode) order; the labels are not
+    // mirrored. Empty for a property with no chains.
+    std::vector<std::vector<int64_t>> _firing_chains;
+    int64_t _groups = 0;
+};
+
+struct AmmoRow {
+    int64_t _unlimited = 0, _available = 0;
 };
 
 struct SetRow {
@@ -176,8 +252,11 @@ public:
     void set_i(int64_t handle, Field f, int64_t v);
     void set_ref(int64_t handle, Field f, int64_t target_or_minus1);
     void set_ids(int64_t handle, Field f, const std::vector<int64_t>& ids);
-    // 3 doubles; an empty vector clears _fbm / _seed to "unset".
+    // 3 doubles; an empty vector clears _fbm / _seed / _held_offset /
+    // _target_offset to "unset".
     void set_fv(int64_t handle, Field f, const std::vector<double>& v);
+    void set_id_lists(int64_t handle, Field f,
+                      const std::vector<std::vector<int64_t>>& lists);
     void set_spheres(int64_t handle, std::vector<Sphere> spheres);
     void set_profile_rows(int64_t handle, std::vector<ProfileRow> rows,
                           double full_concealment);
@@ -201,6 +280,8 @@ public:
     std::vector<int64_t> get_ids(int64_t handle, Field f) const;
     // Empty for an unset _fbm / _seed.
     std::vector<double> get_fv(int64_t handle, Field f) const;
+    std::vector<std::vector<int64_t>> get_id_lists(int64_t handle,
+                                                   Field f) const;
 
     // Typed row access for the kernel: nullptr when the handle is stale,
     // freed or of another kind.
@@ -209,6 +290,7 @@ public:
     const PropertyRow* property(int64_t h) const;
     const SetRow* set(int64_t h) const;
     const ProfileRowSet* profile(int64_t h) const;
+    const AmmoRow* ammo(int64_t h) const;
 
 private:
     template <class T>
@@ -245,6 +327,7 @@ private:
     Table<PropertyRow> properties_;
     Table<SetRow> sets_;
     Table<ProfileRowSet> profiles_;
+    Table<AmmoRow> ammo_;
     std::unordered_map<int64_t, int64_t> by_obj_id_;
     Globals globals_;
     SensorState sensor_;

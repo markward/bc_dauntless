@@ -326,6 +326,18 @@ class ShipSubsystem(TGEventHandlerObject):
     # Properties are shared templates with no hook at construction: a
     # property gets its row the first time a subsystem references it.
     _property = NativeRefField("Property", lazy=True)
+    # Weapon-fire inputs (phase 1b): the ordered children (a weapon system's
+    # banks / tubes), the mount geometry and the firing arc.
+    _children = native_combat.NativeRefList("Subsystem")
+    _position = NativeField(native_combat.VEC3)
+    _direction = NativeField(native_combat.VEC3)
+    _up = NativeField(native_combat.VEC3)
+    _right = NativeField(native_combat.VEC3)
+    _arc_width_lo = NativeField(float)
+    _arc_width_hi = NativeField(float)
+    _arc_height_lo = NativeField(float)
+    _arc_height_hi = NativeField(float)
+    _arc_set = NativeField(bool)
 
     def __init__(self, name: str = ""):
         super().__init__()
@@ -1137,6 +1149,7 @@ class ShipSubsystem(TGEventHandlerObject):
     def AddChildSubsystem(self, sub: "ShipSubsystem") -> None:
         sub._parent_subsystem = self
         self._children.append(sub)
+        native_combat.push_field(self, "_children")   # an in-place append
         # A new weapon under a weapon system: the passive weapons walk's cached
         # list for the owning ship is stale (engine/appc/passive_weapons.py).
         # A system not yet attached has no ship; attaching it invalidates.
@@ -1285,7 +1298,7 @@ class PoweredSubsystem(ShipSubsystem):
     # inherited opt-in hides a subclass override of IsOn / GetNumWeapons /
     # GetWeapon / a beam's IsFiring / _any_child_firing. The cloak sets False.
     _POWER_FREEZABLE = True
-    _is_on = FrozenField()
+    _is_on = native_combat.NativeFrozenField(bool)
     _normal_power = FrozenField()
     _power_percentage_wanted = FrozenField()
     _power_wanted = FrozenField()

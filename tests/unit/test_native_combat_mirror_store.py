@@ -32,7 +32,7 @@ def _clean():
 
 def test_kinds_name_every_row_kind():
     kinds = _h.combat_kinds()
-    assert sorted(kinds) == ["Object", "Profile", "Property", "Set",
+    assert sorted(kinds) == ["Ammo", "Object", "Profile", "Property", "Set",
                              "Subsystem"]
     assert sorted(kinds.values()) == list(range(len(kinds)))
 

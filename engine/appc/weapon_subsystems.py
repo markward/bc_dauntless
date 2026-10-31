@@ -16,9 +16,10 @@ bottom of subsystems.py guarantees the normal load order).
 import math as _math
 
 from engine.core import ids
-from engine.appc import passive_weapons
-from engine.appc.passive_state import WakeField
-from engine.appc.passive_power import ThawParentWakeField
+from engine.appc import native_combat, passive_weapons
+from engine.appc.native_combat import (
+    NativeField, NativeRefField, NativeRefList, NativeSlotMap,
+    NativeThawParentWakeField, NativeWakeField)
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.float_range_watcher import FloatRangeWatcher
 from engine.appc.subsystems import (
@@ -425,6 +426,51 @@ def _reset_projectile_module_cache() -> None:
     mod install can change what resolves, so a cached failure must not outlive
     either."""
     _projectile_modules.clear()
+    _pulse_params_cache.clear()
+    native_combat.refresh_pulse_params()
+
+
+# script name -> (module_ok, launch_speed, lifetime) for the native mirror
+# (ruling P6). Cleared with _projectile_modules.
+_pulse_params_cache: dict = {}
+
+
+def pulse_module_script(bank) -> str:
+    """The projectile script PulseWeapon.Fire would import for `bank`: its
+    property's GetModuleName(), or "" (Fire then refuses). Read from the
+    instance dict, so it is safe while the bank is still being constructed."""
+    prop = bank.__dict__.get("_property")
+    script = prop.GetModuleName() if (
+        prop is not None and hasattr(prop, "GetModuleName")) else ""
+    return script or ""
+
+
+def pulse_module_params(script) -> tuple:
+    """(module_ok, launch_speed, lifetime) for the pulse projectile `script`,
+    the same values PulseWeapon.Fire and _solve_pulse_launch_direction read
+    from the module (missing GetLaunchSpeed reads 0.0, missing GetLifetime
+    the 8 s default). module_ok is 0 when the script is empty or does not
+    import, exactly when Fire refuses -- the native fire decision then hands
+    the bank to the Python. Cached once per script."""
+    hit = _pulse_params_cache.get(script)
+    if hit is None:
+        hit = (0, 0.0, 0.0)
+        if script:
+            import importlib
+            from engine import dev_mode
+            try:
+                mod = importlib.import_module(script)
+                speed = (float(mod.GetLaunchSpeed())
+                         if hasattr(mod, "GetLaunchSpeed") else 0.0)
+                life = (float(mod.GetLifetime()) if hasattr(mod, "GetLifetime")
+                        else _PULSE_DEFAULT_LIFETIME)
+                hit = (1, speed, life)
+            except Exception as _e:  # noqa: BLE001 - Fire reports it itself
+                dev_mode.log_swallowed(
+                    "pulse module %r not resolvable for the native mirror"
+                    % (script,), _e)
+        _pulse_params_cache[script] = hit
+    return hit
 
 
 def _emitter_forward_world(emitter, ship, *, skew=False) -> TGPoint3:
@@ -682,9 +728,16 @@ class _EnergyWeaponFireMixin:
     # sleeps out of the weapons walk; any write to one of these (Fire,
     # SetChargeLevel, a property copy, a drain) wakes it. Reads stay plain
     # instance-dict reads: WakeField has no __get__.
-    _charge_level = WakeField()
-    _firing = WakeField()
-    _max_charge = WakeField()
+    #
+    # Mirrored into the native combat row on every write (native_combat): the
+    # push comes after the wake, so nothing about waking changes.
+    _charge_level = NativeWakeField(float)
+    _firing = NativeWakeField(bool)
+    _max_charge = NativeWakeField(float)
+    _min_firing_charge = NativeField(float)
+    _depleted = NativeField(bool)
+    _normal_discharge_rate = NativeField(float)
+    _power_setting = NativeField(int)
 
     def _passive_at_rest(self) -> bool:
         """True when UpdateCharge, run now, would return at its idle
@@ -1089,6 +1142,12 @@ class Weapon(ShipSubsystem):
     GetProperty/SetProperty are inherited from ShipSubsystem (subsystems.py:273).
     """
 
+    # Mirrored into the native combat row on every write (native_combat).
+    _firing = NativeField(bool)
+    _target = NativeRefField("Object")
+    _target_offset = NativeField(native_combat.VEC3)
+    _fire_timer = NativeField(float)
+
     def __init__(self, name: str = ""):
         super().__init__(name)
         # Seeded here, not in the subclass: IsFiring() must return a real 0 on a
@@ -1186,6 +1245,24 @@ class WeaponSystem(PoweredSubsystem):
     Matches Galaxy's SetSingleFire(1) loadout.  Multi-fire / firing-chain
     modes are future work (FiringChainString hardpoint field).
     """
+    # Mirrored into the native combat row on every write (native_combat). The
+    # leaf emitters that derive from WeaponSystem (PhaserBank, PulseWeapon,
+    # TractorBeam) inherit _target / _target_offset / _fire_timer from here.
+    _target = NativeRefField("Object")
+    _target_offset = NativeField(native_combat.VEC3)
+    _fire_timer = NativeField(float)
+    _fire_held = NativeField(bool)
+    _held_target = NativeRefField("Object")
+    _held_offset = NativeField(native_combat.VEC3)
+    # An in-place append (_add_target) calls native_combat.push_field.
+    _target_list = NativeRefList("Object")
+    _force_update = NativeField(bool)
+    _last_weapon_idx = NativeField(int)
+    _last_group_fired = NativeField(int)
+    _firing_chain_mode = NativeField(int)
+    _group_fire_mode = NativeField(int)
+    _single_fire = NativeField(int)
+
     def __init__(self, name: str = ""):
         super().__init__(name)
         self._target = None
@@ -1319,6 +1396,7 @@ class WeaponSystem(PoweredSubsystem):
     def _add_target(self, target) -> None:
         if target is not None and target not in self._target_list:
             self._target_list.append(target)
+            native_combat.push_field(self, "_target_list")  # in-place append
 
     def _prune_targets(self) -> None:
         """§3.2 step 2 — unlink anything dead or unresolvable."""
@@ -1645,8 +1723,13 @@ class TorpedoAmmoType:
     MissionLib.SetTotalTorpsAtStarbase / LoadTorpedoes lookup pattern, which
     compares ``pTorpType.GetAmmoName() == "Photon"``.
     """
+    # Mirrored into the native combat row on every write (native_combat).
+    _unlimited = NativeField(bool)
+    _available = NativeField(int)
+
     def __init__(self, name: str, launch_speed: float = 0.0, power_cost: float = 0.0,
                  max_torpedoes=None, script=None):
+        native_combat.register(self, "Ammo")
         self._name = name
         # SDK TorpedoRun.py:130 / StationaryAttack.py:78 use launch speed to
         # predict the torpedo's intercept point.  Real BC tunes this per ammo
@@ -1723,6 +1806,13 @@ class TorpedoAmmoType:
 
 
 class TorpedoSystem(WeaponSystem):
+    # Mirrored into the native combat row on every write (native_combat).
+    # _ammo_by_slot is mutated in place by AddAmmoType / RemoveAmmoType, which
+    # call native_combat.push_field.
+    _last_system_fire_time = NativeField(float)
+    _selected_slot = NativeField(native_combat.OPT_INT)
+    _ammo_by_slot = NativeSlotMap()
+
     def __init__(self, name: str = ""):
         super().__init__(name)
         # Keyed slot table, populated by AddAmmoType during hardpoint setup.
@@ -1816,6 +1906,7 @@ class TorpedoSystem(WeaponSystem):
         slot = int(slot)
         if slot in self._ammo_by_slot:
             del self._ammo_by_slot[slot]
+            native_combat.push_field(self, "_ammo_by_slot")   # in-place del
             if self._selected_slot == slot:
                 self._selected_slot = None
 
@@ -1920,6 +2011,7 @@ class TorpedoSystem(WeaponSystem):
         # Append into the next free slot.  This is the only writer of the
         # slot table (hardpoint setup); SetAmmoType merely selects a slot.
         self._ammo_by_slot[len(self._ammo_by_slot)] = ammo_type
+        native_combat.push_field(self, "_ammo_by_slot")       # in-place store
 
     def SetAmmoType(self, ammo_index, _reload_arg=0) -> None:
         # SDK semantics: SELECT the ammo type at index `ammo_index` (0-based,
@@ -2636,7 +2728,8 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
     # spent. The watcher's update while asleep re-sends the fraction it
     # already holds (nothing a sleeper reads has been written), so no range
     # check can cross; the audit snapshots the watcher to prove it.
-    _cooldown_remaining = WakeField()
+    _cooldown_remaining = NativeWakeField(float)
+    _cooldown_time = NativeField(float)
     _passive_audit_children = ("_charge_watcher",)
 
     def _passive_at_rest(self) -> bool:
@@ -2657,6 +2750,12 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         # (GetChargeWatcher()); watches the charge FRACTION (charge / max_charge)
         # so the condition's MinFiringCharge/MaxCharge threshold lines up.
         self._charge_watcher = FloatRangeWatcher()
+
+    def SetProperty(self, prop) -> None:
+        super().SetProperty(prop)
+        # The projectile module is named by the property: resolve it for the
+        # native mirror now (no-op with the switch off).
+        native_combat.push_pulse_params(self)
 
     def GetMaxCharge(self) -> float:                return self._max_charge
     def GetMinFiringCharge(self) -> float:          return self._min_firing_charge
@@ -2830,7 +2929,7 @@ class TractorBeam(_EnergyWeaponFireMixin, WeaponSystem):
     UpdateCharge from the mixin.
     """
     # Same wake as the mixin's, plus: a write thaws a frozen parent system.
-    _firing = ThawParentWakeField()
+    _firing = NativeThawParentWakeField(bool)
 
     def __init__(self, name: str = ""):
         super().__init__(name)
@@ -2973,8 +3072,12 @@ class TorpedoTube(Weapon):
     # Passive state (engine/appc/passive_weapons.py): a fully loaded tube
     # sleeps out of the weapons walk until a launch, a Set/Inc/DecNumReady,
     # an unload or a MaxReady change writes one of these.
-    _num_ready = WakeField()
-    _max_ready = WakeField()
+    _num_ready = NativeWakeField(int)
+    _max_ready = NativeWakeField(int)
+    # Mirrored into the native combat row on every write (native_combat).
+    _last_fire_time = NativeField(float)
+    _immediate_delay = NativeField(float)
+    _skew_fire = NativeField(bool)
 
     def _passive_at_rest(self) -> bool:
         """True when UpdateReload, run now, would return at its

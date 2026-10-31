@@ -20,6 +20,13 @@ class ShipClass(DamageableObject):
     _sensor_subsystem = native_combat.NativeRefField("Subsystem")
     _cloaking_subsystem = native_combat.NativeRefField("Subsystem")
     _hull = native_combat.NativeRefField("Subsystem")
+    # The weapon systems K1 reads (set by SetupProperties / Set*System).
+    _phaser_system = native_combat.NativeRefField("Subsystem")
+    _pulse_weapon_system = native_combat.NativeRefField("Subsystem")
+    _tractor_beam_system = native_combat.NativeRefField("Subsystem")
+    _torpedo_system = native_combat.NativeRefField("Subsystem")
+    # A rebind may change has_posed_parts (native_combat.PosedPartsField).
+    _articulation_poses = native_combat.PosedPartsField()
 
     def __init__(self):
         super().__init__()
@@ -1628,6 +1635,9 @@ class ShipClass(DamageableObject):
         # 2026-09-30-rock-class-design.md.
         from engine.rocks.rock import maybe_become_rock
         maybe_become_rock(self)
+        # The script is set by now: tell the native mirror whether this hull
+        # has posed parts (native_combat.push_posed_parts; no-op when off).
+        native_combat.push_posed_parts(self)
 
     @staticmethod
     def _copy_powered_subsystem_fields(prop, subsystem) -> None:
