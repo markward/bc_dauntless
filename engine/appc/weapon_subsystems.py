@@ -864,18 +864,31 @@ class _EnergyWeaponFireMixin:
 
     def Fire(self, target=None, offset=None) -> bool:
         """Returns True when the beam is firing after this call — the tick's
-        try_fire_weapon consumes the explicit bool (§3.3 step 5)."""
+        try_fire_weapon consumes the explicit bool (§3.3 step 5).
+
+        Split in two (native combat phase 1b): `_fire_decide` is the
+        decision, which the native K1 kernel also computes, and
+        `_fire_effect` the one copy of what follows it, which K1 calls with
+        its own decision (native_combat.run_k1)."""
+        d = self._fire_decide(target, offset)
+        return False if d is None else self._fire_effect(target, offset, d)
+
+    def _fire_decide(self, target, offset):
+        """CanFire, then the arc. None: no fire. Else (was_firing,)."""
         if not self.CanFire():
-            return False
+            return None
         if not self._aim_in_arc(target):
-            return False
+            return None
+        return (self._firing,)
+
+    def _fire_effect(self, target, offset, decision) -> bool:
         # Edge-trigger the SFX. AI scripts call StartFiring on every
         # evaluation tick; without this gate, each call would spawn a
         # fresh "Phaser Loop" _PlayingSound handle and overwrite
         # self._loop_handle, orphaning every prior handle so they loop
         # forever (no Stop reference). Symptom: continuous phaser SFX
         # during NPC-vs-NPC fights even after all banks deplete.
-        was_firing = self._firing
+        was_firing = decision[0]
         self._firing = True
         self._target = target
         self._target_offset = offset
@@ -1510,7 +1523,12 @@ class WeaponSystem(PoweredSubsystem):
         self._held_offset = offset
         self._fire_held = True
         self.SetForceUpdate(1)
-        self.update_weapons(0.0)
+        if native_combat.enabled():
+            # The same update_weapons(0.0), walked by the native K1 kernel;
+            # Python runs only its effects (native_combat.run_k1).
+            native_combat.k1_system(self, 0.0)
+        else:
+            self.update_weapons(0.0)
 
     def StopFiring(self, *args) -> None:
         self._fire_held = False
@@ -2641,17 +2659,19 @@ class PhaserBank(_EnergyWeaponFireMixin, WeaponSystem):
         except (IndexError, TypeError):
             return 0.0      # BC's default arm for an out-of-range level
 
-    def Fire(self, target=None, offset=None) -> bool:
-        """Wraps the shared beam-fire mixin to post ET_WEAPON_FIRED on the
+    # Fire is the mixin's (decide, then effect). The decision's was_firing
+    # is the value read before CanFire, which never writes _firing.
+
+    def _fire_effect(self, target, offset, decision) -> bool:
+        """The shared beam-fire effect, then ET_WEAPON_FIRED on the
         was-not-firing edge — the same edge the mixin already uses for the
         SFX one-shot (Task 10, audited §1.6/§6; spec §7). TractorBeam and
         PulseWeapon do not post this event yet — out of scope for the
         "phaser safe group"."""
-        was_firing = self._firing
-        fired = _EnergyWeaponFireMixin.Fire(self, target, offset)
-        if fired and not was_firing:
+        _EnergyWeaponFireMixin._fire_effect(self, target, offset, decision)
+        if not decision[0]:
             _post_weapon_fired(self)
-        return fired
+        return True
 
     def GetMaxCharge(self) -> float:                return self._max_charge
     def GetMinFiringCharge(self) -> float:          return self._min_firing_charge
@@ -2853,23 +2873,38 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         """Returns True when a bolt launched — a discrete shooter reports
         IsFiring() False right after a successful shot, so the tick's
         try_fire_weapon needs the explicit bool (else its §3.3 step-6 retry
-        would double-fire every successful shot)."""
-        if not self.CanFire():
-            return False
+        would double-fire every successful shot). Decide, then effect (see
+        _EnergyWeaponFireMixin.Fire)."""
+        d = self._fire_decide(target, offset)
+        return False if d is None else self._fire_effect(target, offset, d)
+
+    def _projectile_module(self):
+        """The property's projectile module, or None (no module name, or it
+        does not import: announced once)."""
         prop = self.GetProperty()
         script = prop.GetModuleName() if (prop is not None and hasattr(prop, "GetModuleName")) else ""
         if not script:
-            return False
+            return None
         import importlib
         try:
-            mod = importlib.import_module(script)
+            return importlib.import_module(script)
         except ImportError:
             # No fallback bolt (unlike torpedoes): the cannon stays dead, but
             # it says why instead of just never firing.
             _announce_once(("projectile", script),
                            "pulse module %s not loadable -- those cannons "
                            "will not fire" % script)
-            return False
+            return None
+
+    def _fire_decide(self, target, offset):
+        """None: no bolt. Else (world_dir, target_used). The target stamps
+        are part of the decision: they are made BEFORE the arc test and
+        persist when it fails."""
+        if not self.CanFire():
+            return None
+        mod = self._projectile_module()
+        if mod is None:
+            return None
         ship = self._climb_to_ship()
         # BC WeaponSystem::Fire picks the branch: the weapon's own target,
         # else the ship's current target, else the no-target slot (+0x80).
@@ -2888,14 +2923,25 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
             self._target_offset = offset if isinstance(offset, TGPoint3) else None
             world_dir = _solve_pulse_launch_direction(self, ship, target, mod)
             if world_dir is None or not _emitter_in_arc(self, ship, world_dir):
-                return False
+                return None
         else:
             # No target anywhere (+0x80): straight out the cannon's
             # OrientationForward.  Nothing to home on.
             self._target = None
             self._target_offset = None
             world_dir = _emitter_forward_world(self, ship)
-        torp = _spawn_projectile(self, mod, drf_override=self.GetDamageRadiusFactor(),
+        return (world_dir, target)
+
+    def _fire_effect(self, target, offset, decision) -> bool:
+        """`decision[0]` is the launch direction: a TGPoint3 (Python's
+        decision) or an (x, y, z) tuple (K1's). The module resolved for the
+        decision (K1: cached at registration, ruling P6) is in sys.modules,
+        so resolving it again imports nothing."""
+        world_dir = decision[0]
+        if not isinstance(world_dir, TGPoint3):
+            world_dir = TGPoint3(*world_dir)
+        torp = _spawn_projectile(self, self._projectile_module(),
+                                 drf_override=self.GetDamageRadiusFactor(),
                                  world_dir=world_dir)
         if torp is not None:
             # The bolt carries script GetDamage() × GetDamageScale() —
@@ -3341,16 +3387,28 @@ class TorpedoTube(Weapon):
           * dumb path (``target`` is None): straight to bookkeeping, no aim
             resolve, no cone — matches BC (FireDumb has no target to gate).
         """
+        d = self._fire_decide(target, offset)
+        return False if d is None else self._fire_effect(target, offset, d)
+
+    def _fire_decide(self, target, offset):
+        """CanFire, then (targeted) the aim point from the tube's STORED
+        offset and the cone; either failure posts ET_WEAPON_FIRE_FAILED here.
+        None: no launch. Else (target_used,). K1 posts the failure itself (a
+        FIRE_FAILED record) and calls only _fire_effect."""
         if not self.CanFire():
-            return False
+            return None
         if target is not None:
             aim_point = _resolve_torpedo_aim_point(self, target)
             if aim_point is None:
                 self._broadcast_weapon_fire_failed()
-                return False
+                return None
             if not _in_torpedo_cone(self, self._climb_to_ship(), aim_point):
                 self._broadcast_weapon_fire_failed()
-                return False
+                return None
+        return (target,)
+
+    def _fire_effect(self, target, offset, decision) -> bool:
+        if target is not None:
             self._target = target
             self._target_offset = offset
         else:

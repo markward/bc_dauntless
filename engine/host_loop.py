@@ -94,6 +94,7 @@ from engine.appc import (
     render_instances,
 )
 from engine.appc import explosion_lights as _explosion_lights
+from engine.appc import native_combat as _native_combat
 from engine.appc import target_menu as _target_menu_mod
 from engine.appc import viewscreen_static as _vss
 from engine.appc import bridge_set as _bridge_set
@@ -995,30 +996,50 @@ def _pump_held_weapons(ships_list, dt: float) -> None:
     shields-up and re-acquire) set _pump_self_managed and get the frame
     handed straight to their update_weapons.
     """
+    if _native_combat.enabled():
+        # The same loop, walked by the native K1 kernel; Python runs only the
+        # effects, and this module's loop body for whatever K1 hands back
+        # (RUN_PYTHON: a ship with no mirror row, a tractor, an articulated
+        # ship, anything the mirror cannot represent).
+        ships = ships_list if isinstance(ships_list, list) else list(ships_list)
+        _native_combat.k1_pump(
+            ships, dt,
+            lambda ship, getter: _pump_held_system(
+                ship, _PUMP_GETTERS[getter], dt))
+        return
     for ship in ships_list:
-        for getter in ("GetPhaserSystem", "GetPulseWeaponSystem",
-                       "GetTractorBeamSystem", "GetTorpedoSystem"):
-            sys_ = getattr(ship, getter)() if hasattr(ship, getter) else None
-            if sys_ is None or not getattr(sys_, "_fire_held", False):
-                continue
-            if getattr(sys_, "_pump_self_managed", False):
-                sys_.update_weapons(dt)
-                continue
-            if _is_offline(sys_) or not sys_.IsOn():
-                sys_.StopFiring()
-                continue
-            held = getattr(sys_, "_held_target", None)
-            if held is not None and (hasattr(held, "IsDead") and held.IsDead()):
-                sys_.StopFiring()      # target destroyed — end the burst
-                continue
-            if held is not None and _target_undetectable(sys_, held):
-                sys_.StopFiring()      # preserves the anti-horn-loop stop
-                continue
-            if held is not None and hasattr(sys_, "_can_engage") \
-                    and not sys_._can_engage(ship, held):
-                sys_.StopFiring()      # range gate (phaser global range etc.)
-                continue
-            sys_.update_weapons(dt)
+        for getter in _PUMP_GETTERS:
+            _pump_held_system(ship, getter, dt)
+
+
+# The pump's system getters, in its order (K1's getter index is the position).
+_PUMP_GETTERS = ("GetPhaserSystem", "GetPulseWeaponSystem",
+                 "GetTractorBeamSystem", "GetTorpedoSystem")
+
+
+def _pump_held_system(ship, getter: str, dt: float) -> None:
+    """_pump_held_weapons' loop body for one ship and one getter."""
+    sys_ = getattr(ship, getter)() if hasattr(ship, getter) else None
+    if sys_ is None or not getattr(sys_, "_fire_held", False):
+        return
+    if getattr(sys_, "_pump_self_managed", False):
+        sys_.update_weapons(dt)
+        return
+    if _is_offline(sys_) or not sys_.IsOn():
+        sys_.StopFiring()
+        return
+    held = getattr(sys_, "_held_target", None)
+    if held is not None and (hasattr(held, "IsDead") and held.IsDead()):
+        sys_.StopFiring()      # target destroyed — end the burst
+        return
+    if held is not None and _target_undetectable(sys_, held):
+        sys_.StopFiring()      # preserves the anti-horn-loop stop
+        return
+    if held is not None and hasattr(sys_, "_can_engage") \
+            and not sys_._can_engage(ship, held):
+        sys_.StopFiring()      # range gate (phaser global range etc.)
+        return
+    sys_.update_weapons(dt)
 
 
 def _phaser_aim_point(ship, target):

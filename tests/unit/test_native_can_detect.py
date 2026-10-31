@@ -692,6 +692,12 @@ def test_a_dropped_row_hands_its_latch_to_python(side, answered):
 
 # ── Dispatch counters (Task 7: the scene audit proves native ran) ────────────
 
+def _sensor_counts():
+    """The dispatched-query half of counts() (it also carries K1's)."""
+    c = nc.counts()
+    return {k: c[k] for k in ("native_calls", "fallbacks")}
+
+
 def test_counts_native_answers_and_fallbacks():
     """`counts()` names the dispatched queries the kernel ANSWERED and the
     ones that fell back to the Python; `reset()` zeroes both, and the switch
@@ -701,7 +707,7 @@ def test_counts_native_answers_and_fallbacks():
     obs = _ship(s, "obs", 0.0)
     tgt = _ship(s, "tgt", 100.0)
     sd.can_detect(obs, tgt)
-    assert nc.counts() == {"native_calls": 0, "fallbacks": 0}
+    assert _sensor_counts() == {"native_calls": 0, "fallbacks": 0}
 
     _fresh(ON)
     sd.can_detect(obs, tgt)
@@ -711,16 +717,16 @@ def test_counts_native_answers_and_fallbacks():
     sd.is_hidden_by_cloak(tgt)
     sd.jammed(obs, tgt)
     occ.blocked(obs, tgt)
-    assert nc.counts() == {"native_calls": 7, "fallbacks": 0}
+    assert _sensor_counts() == {"native_calls": 7, "fallbacks": 0}
 
     obs.GetSensorSubsystem().SetProperty(_PlainProperty())
     sd.effective_sensor_range(obs)               # the kernel cannot name it
-    assert nc.counts() == {"native_calls": 7, "fallbacks": 1}
+    assert _sensor_counts() == {"native_calls": 7, "fallbacks": 1}
 
     _fresh(AUDIT)
     sd.is_hidden_by_cloak(tgt)
     occ.blocked(obs, tgt)
     sd.effective_sensor_range(obs)               # falls back under audit too
-    assert nc.counts() == {"native_calls": 2, "fallbacks": 1}
+    assert _sensor_counts() == {"native_calls": 2, "fallbacks": 1}
     nc.reset()
-    assert nc.counts() == {"native_calls": 0, "fallbacks": 0}
+    assert _sensor_counts() == {"native_calls": 0, "fallbacks": 0}

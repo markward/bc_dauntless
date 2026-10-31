@@ -37,6 +37,7 @@ import sys
 import weakref
 from typing import Mapping
 
+from engine.appc.math import TGPoint3
 from engine.appc.passive_power import FrozenField, ThawParentWakeField
 from engine.appc.passive_state import WakeField
 from engine.core.ids import implements
@@ -123,11 +124,19 @@ def reset() -> None:
     _pulse_stale = False
     _counts["native_calls"] = 0
     _counts["fallbacks"] = 0
+    if available():
+        _h.combat_k1_reset_counts()
 
 
 def counts() -> dict:
-    """{"native_calls": n, "fallbacks": n} since the last reset()."""
-    return dict(_counts)
+    """Since the last reset(): {"native_calls": n, "fallbacks": n} for the
+    dispatched sensor queries, and the K1 kernel's {"k1_records": n,
+    "k1_python_systems": n, "k1_asks": n} (records returned, RUN_PYTHON
+    hand-backs, ASKs answered by Python; counted by the kernel)."""
+    c = dict(_counts)
+    if available():
+        c.update(_h.combat_k1_counts())
+    return c
 
 
 def _disable(reason: str) -> str:
@@ -1238,6 +1247,295 @@ def now() -> float:
         return float(get())
     except Exception:
         return 0.0
+
+
+# ── K1: the native fire-control kernel's driver (phase 1b) ─────────────────
+#
+# native/src/combat/include/dauntless/combat/k1_fire_control.h is the
+# contract. The kernel walks host_loop._pump_held_weapons /
+# WeaponSystem.update_weapons over the mirror and returns ONE record per
+# combat_k1_next(); run_k1 applies the record's write log (the decision-path
+# writes the kernel already made in the mirror) and then does the one thing
+# only Python may do, then asks for the next record.
+
+#: A `_target_offset` write of the walk's own offset object (ruling P5).
+_WALK_OFFSET = "walk_offset"
+_k1_kind_ids = None
+_ws = None
+_step_memo = None
+
+
+def _k1_kinds() -> tuple:
+    global _k1_kind_ids
+    if _k1_kind_ids is None:
+        k = _h.combat_k1_kinds()
+        _k1_kind_ids = tuple(k[n] for n in (
+            "DONE", "WALK_START", "STOP_SYSTEM", "RUN_PYTHON", "BANK_STOP",
+            "FIRE", "FIRE_FAILED", "FIRE_DUMB", "ASK"))
+    return _k1_kind_ids
+
+
+def _k1_clocks() -> tuple:
+    """(now, use_memo, drift_now) for begin_*: the weapons' Utopia game time
+    (also can_detect's occlusion clock), step_memo.active() and the nebula
+    drift clock (native_combat.now(); a 1a finding: not the same clock)."""
+    global _ws, _step_memo
+    if _ws is None:
+        from engine.appc import weapon_subsystems
+        from engine.core import step_memo
+        _ws, _step_memo = weapon_subsystems, step_memo
+    return _ws._game_time(), _step_memo.active(), now()
+
+
+class _K1Walk:
+    """One run_k1 loop's pin set -- handle -> object, holding every object
+    the kernel may still name alive for the walk (k1_fire_control.h,
+    PINNING) -- and the current walk's offset object."""
+
+    __slots__ = ("pins", "offset")
+
+    def __init__(self) -> None:
+        self.pins = {}
+        self.offset = None
+
+    def pin(self, obj) -> None:
+        d = getattr(obj, "__dict__", None)
+        h = d.get("_nslot") if d is not None else None
+        if h is not None:
+            self.pins[h] = obj
+
+    def pin_system(self, system) -> None:
+        """The walked system, its children and its target list as they are
+        now (WALK_START, and after each later record)."""
+        self.pin(system)
+        d = system.__dict__
+        for child in d.get("_children", ()):
+            self.pin(child)
+        for target in d.get("_target_list", ()):
+            self.pin(target)
+
+    def obj(self, h):
+        """The object a record or write names: None for -1."""
+        if h == REF_NONE:
+            return None
+        o = self.pins.get(h)
+        if o is None:
+            o = _registry.get(h)
+            if o is None or o.__dict__.get("_nslot") != h:
+                raise RuntimeError(
+                    "combat K1: handle %#x names no pinned or live object" % h)
+            self.pins[h] = o
+        return o
+
+
+_REF, _REFS, _RAW = "ref", "refs", "raw"
+_quiet_setters: dict = {}
+
+
+def _quiet_setter(cls, name) -> tuple:
+    """(setter(obj, value), value kind) writing `name` on a `cls` instance
+    WITHOUT the mirror push: a NativeField (and its ref kinds) or a plain
+    attribute goes straight into the instance dict, exactly what its
+    __set__ does before pushing; a Native wake/thaw descriptor runs its
+    passive-state base's __set__, so the wake or thaw still happens."""
+    key = (cls, name)
+    hit = _quiet_setters.get(key)
+    if hit is not None:
+        return hit
+    attr = None
+    for klass in cls.__mro__:
+        if name in vars(klass):
+            attr = vars(klass)[name]
+            break
+    kind = _RAW
+    if isinstance(attr, NativeWrapped):
+        setter = super(NativeWrapped, attr).__set__
+    elif attr is None or isinstance(attr, NativeField) \
+            or not hasattr(type(attr), "__set__"):
+        if isinstance(attr, NativeSlotMap):
+            raise TypeError("combat K1: no quiet write for %s.%s"
+                            % (cls.__name__, name))
+        if isinstance(attr, NativeRefList):
+            kind = _REFS
+        elif isinstance(attr, NativeRefField):
+            kind = _REF
+
+        def setter(obj, value, _name=name):
+            obj.__dict__[_name] = value
+    else:
+        raise TypeError("combat K1: no quiet write for %s.%s"
+                        % (cls.__name__, name))
+    hit = _quiet_setters[key] = (setter, kind)
+    return hit
+
+
+def apply_writes(writes, walk=None) -> None:
+    """Apply a K1 write log [(handle, field, value), ...] in order, without
+    pushing (the kernel already wrote the mirror). Ref values are handles
+    (-1: None), a ref list a list of handles; the marker "walk_offset" is
+    the walk's own offset object. `walk` maps handles through its pin set;
+    without one, through the registry."""
+    if walk is None:
+        walk = _K1Walk()
+    for h, field, value in writes:
+        obj = walk.obj(h)
+        setter, kind = _quiet_setter(type(obj), field)
+        if kind is _REF:
+            value = walk.obj(value)
+        elif kind is _REFS:
+            value = [walk.obj(v) for v in value]
+        elif type(value) is str and value == _WALK_OFFSET:
+            value = walk.offset
+        setter(obj, value)
+
+
+def _k1_decision(bank, decision, walk) -> tuple:
+    """A FIRE record's decision in _fire_decide's shape: handles to objects
+    (pulse (xyz, target_used), tube (target_used,)); a beam's (was_firing,)
+    as it is."""
+    kind = _weapon_kind(bank)
+    if kind == 6:
+        return (decision[0], walk.obj(decision[1]))
+    if kind == 8:
+        return (walk.obj(decision[0]),)
+    return decision
+
+
+def _k1_answer(rec, walk, dt):
+    """An ASK record's answer: exactly the Python the kernel stands in for
+    (k1_fire_control.h), run on the live objects with the walk's offset."""
+    query, args = rec[1], rec[2:-1]
+    offset = walk.offset
+    if query == "can_fire":
+        return bool(walk.obj(args[0]).CanFire())
+    if query == "fire":
+        system, bank = walk.obj(args[0]), walk.obj(args[1])
+        before = system._fired_counter(bank)
+        result = bank.Fire(walk.obj(args[2]), offset)
+        return bool(system._weapon_did_fire(bank, result, before))
+    if query == "retry":
+        # try_fire_weapon's retry loop; its `weapon._target = None` came in
+        # the write log.
+        system, bank = walk.obj(args[0]), walk.obj(args[1])
+        for entry in list(system._target_list):
+            if entry is None or (hasattr(entry, "IsDead") and entry.IsDead()):
+                continue
+            before = system._fired_counter(bank)
+            result = bank.Fire(entry, offset)
+            if system._weapon_did_fire(bank, result, before):
+                return True
+        return False
+    if query == "is_dead":
+        entry = walk.obj(args[0])
+        return bool(hasattr(entry, "IsDead") and entry.IsDead())
+    if query == "is_member":
+        return bool(walk.obj(args[0]).IsMemberOfGroup(args[1]))
+    if query == "group_step":
+        # One pass of update_weapons' delta loop body; the kernel does the
+        # success bookkeeping itself.
+        system, idx, group = walk.obj(args[0]), args[1], args[2]
+        target = walk.obj(args[3])
+        weapon = system.GetWeapon(idx)
+        if weapon is None or not weapon.IsMemberOfGroup(group):
+            return 0
+        walk.pin(weapon)
+        if system.try_fire_weapon(weapon, dt, target, offset):
+            return 1
+        weapon._target = None
+        if system.GetNumTargets() == 0 and weapon.IsDumbFire():
+            weapon.FireDumb(0, 1)
+        return 2
+    if query == "reseed":
+        walk.obj(args[0])._reseed_all_fire_timers()
+        return None
+    raise RuntimeError("combat K1: unknown ASK %r" % (query,))
+
+
+def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
+    """Drive the kernel's top session (begun by k1_pump / k1_system) until
+    DONE. Each record: apply its writes, then act -- the Fire effect, a
+    StopFiring, the FIRE_FAILED post, the dumb fire, the walk's offset, a
+    whole system in Python, or an ASK answered in Python. `ships` and
+    `pump_body(ship, getter_index)` serve a pump's RUN_PYTHON, `system` a
+    system session's. On any exception the session is abandoned (the
+    kernel's mirror still equals Python) and the exception re-raised."""
+    (DONE, WALK_START, STOP_SYSTEM, RUN_PYTHON, BANK_STOP, FIRE,
+     FIRE_FAILED, FIRE_DUMB, ASK) = _k1_kinds()
+    walk = _K1Walk()
+    walked = None
+    if system is not None:
+        walk.pin_system(system)
+    try:
+        while True:
+            rec = _h.combat_k1_next()
+            kind = rec[0]
+            writes = rec[-1]
+            if writes:
+                apply_writes(writes, walk)
+            if kind == FIRE:
+                bank = walk.obj(rec[1])
+                bank._fire_effect(walk.obj(rec[2]), walk.offset,
+                                  _k1_decision(bank, rec[3], walk))
+            elif kind == WALK_START:
+                # update_weapons' `offset = self._live_held_offset()`, once
+                # per walk; every effect and "walk_offset" write of this walk
+                # uses this very object (ruling P5).
+                walked = walk.obj(rec[1])
+                walk.pin_system(walked)
+                walk.offset = offset = walked._live_held_offset()
+                _h.combat_k1_set_offset(
+                    (offset.x, offset.y, offset.z)
+                    if isinstance(offset, TGPoint3) else None)
+                continue
+            elif kind == BANK_STOP or kind == STOP_SYSTEM:
+                walk.obj(rec[1]).StopFiring()
+            elif kind == FIRE_FAILED:
+                walk.obj(rec[1])._broadcast_weapon_fire_failed()
+            elif kind == FIRE_DUMB:
+                walk.obj(rec[1]).FireDumb(0, 1)
+            elif kind == RUN_PYTHON:
+                if rec[2] >= 0:
+                    pump_body(ships[rec[2]], rec[3])
+                else:
+                    system.update_weapons(dt)
+            elif kind == ASK:
+                _h.combat_k1_answer(_k1_answer(rec, walk, dt))
+            elif kind == DONE:
+                break
+            else:
+                raise RuntimeError("combat K1: unknown record %r" % (rec,))
+            if walked is not None:
+                walk.pin_system(walked)     # what the effect's handlers left
+        _h.combat_k1_end()
+    except BaseException:
+        _h.combat_k1_abandon()
+        raise
+
+
+def k1_pump(ships, dt, pump_body) -> None:
+    """host_loop._pump_held_weapons(ships, dt) through K1. `ships` is a
+    list; a ship with no Object row is passed as -1, and the kernel hands
+    each of its getters back (RUN_PYTHON) to `pump_body(ship, getter)`."""
+    handles = []
+    for ship in ships:
+        h = slot(ship)
+        handles.append(REF_NONE if h is None else h)
+    t, use_memo, drift = _k1_clocks()
+    _h.combat_k1_begin_pump(handles, dt, t, use_memo, drift)
+    run_k1(dt, ships=ships, pump_body=pump_body)
+
+
+def k1_system(system, dt) -> None:
+    """WeaponSystem.StartFiring's immediate update_weapons(dt) through K1.
+    A system with no Subsystem row runs its Python update_weapons, as the
+    kernel's RUN_PYTHON would."""
+    h = system.__dict__.get("_nslot")
+    if h is None or (h >> _KIND_SHIFT) != _kind("Subsystem"):
+        system.update_weapons(dt)
+        return
+    t, use_memo, drift = _k1_clocks()
+    _h.combat_k1_begin_system(h, dt, t, use_memo, drift)
+    run_k1(dt, system=system)
 
 
 if available():
