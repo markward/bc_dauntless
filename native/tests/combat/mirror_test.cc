@@ -63,11 +63,11 @@ TEST(Mirror, StaleRefReadsAsNone) {
     Fixture f;
     int64_t o = f.m.register_row(Kind::Object, -1, -1, 1);
     int64_t s = f.m.register_row(Kind::Subsystem);
-    f.m.set_ref(o, Field::_hull_subsystem, s);
+    f.m.set_ref(o, Field::_hull, s);
     f.m.unregister_row(s);
     int64_t s2 = f.m.register_row(Kind::Subsystem);  // reuses s's index
     ASSERT_NE(s, s2);
-    EXPECT_EQ(f.m.get_ref(o, Field::_hull_subsystem), -1);
+    EXPECT_EQ(f.m.get_ref(o, Field::_hull), -1);
 }
 
 TEST(Mirror, WrongKindRejected) {

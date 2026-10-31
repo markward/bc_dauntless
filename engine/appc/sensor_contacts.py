@@ -495,6 +495,8 @@ def on_exited_set(pSet, obj) -> None:
         unknown_labels.reset()
         if sensors is not None:
             sensors._known_objects.clear()
+            from engine.appc import native_combat
+            native_combat.push_ids(sensors, "_known_objects", ())
         return
     if sensors is not None:
         sensors.RemoveKnownObject(obj)

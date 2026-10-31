@@ -14,7 +14,13 @@ pytestmark = pytest.mark.skipif(
     _h is None or not hasattr(_h, "combat_register"),
     reason="native combat bindings not built")
 
-OBJECT, SUBSYSTEM, PROPERTY, SET, PROFILE = range(5)
+_KINDS = _h.combat_kinds() if _h is not None and hasattr(
+    _h, "combat_kinds") else {}
+OBJECT = _KINDS.get("Object")
+SUBSYSTEM = _KINDS.get("Subsystem")
+PROPERTY = _KINDS.get("Property")
+SET = _KINDS.get("Set")
+PROFILE = _KINDS.get("Profile")
 
 
 @pytest.fixture(autouse=True)
@@ -24,12 +30,20 @@ def _clean():
     _h.combat_clear()
 
 
+def test_kinds_name_every_row_kind():
+    kinds = _h.combat_kinds()
+    assert sorted(kinds) == ["Object", "Profile", "Property", "Set",
+                             "Subsystem"]
+    assert sorted(kinds.values()) == list(range(len(kinds)))
+
+
 def test_field_names_round_trip():
     names = _h.combat_field_names()
     assert names
     assert len(set(names.values())) == len(names)
     assert all(isinstance(v, int) for v in names.values())
-    for k in ("_dead", "_known_objects", "MaxCondition_set", "ships", "rows"):
+    for k in ("_dead", "_known_objects", "MaxCondition_set", "ships", "rows",
+              "_hull"):
         assert k in names
 
 

@@ -9331,6 +9331,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_find_by_obj_id",
               [](std::int64_t id) { return cb::mirror().find_by_obj_id(id); },
               "The live Object handle for a Python object id, or -1.");
+        m.def("combat_kinds", [] {
+            // Row kind name -> the int combat_register takes.
+            static constexpr const char* kNames[] = {
+                "Object", "Subsystem", "Property", "Set", "Profile"};
+            static_assert(std::size(kNames) ==
+                          static_cast<size_t>(cb::Kind::kCount));
+            py::dict d;
+            for (int i = 0; i < static_cast<int>(cb::Kind::kCount); ++i)
+                d[py::str(kNames[i])] = i;
+            return d;
+        });
         m.def("combat_field_names", [] {
             // Python attribute name -> field id. Subsystem._radius shares the
             // name of Object._radius, so it is keyed "Subsystem._radius".

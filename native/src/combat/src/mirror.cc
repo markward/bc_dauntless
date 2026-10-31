@@ -34,7 +34,7 @@ constexpr FieldInfo kInfo[] = {
     {"_scale", Kind::Object, FieldType::F},
     {"_sensor_subsystem", Kind::Object, FieldType::Ref},
     {"_cloaking_subsystem", Kind::Object, FieldType::Ref},
-    {"_hull_subsystem", Kind::Object, FieldType::Ref},
+    {"_hull", Kind::Object, FieldType::Ref},
     {"_fbm", Kind::Object, FieldType::Vec3},
     {"_seed", Kind::Object, FieldType::Vec3},
     {"spheres", Kind::Object, FieldType::Spheres},
@@ -80,7 +80,7 @@ Kind ref_target_kind(Field f) {
         case Field::_containing_set: return Kind::Set;
         case Field::_sensor_subsystem:
         case Field::_cloaking_subsystem:
-        case Field::_hull_subsystem:
+        case Field::_hull:
         case Field::_parent_subsystem: return Kind::Subsystem;
         case Field::_parent_ship: return Kind::Object;
         case Field::_property: return Kind::Property;
@@ -128,7 +128,7 @@ int64_t* rptr(ObjectRow& r, Field f) {
         case Field::_containing_set: return &r._containing_set;
         case Field::_sensor_subsystem: return &r._sensor_subsystem;
         case Field::_cloaking_subsystem: return &r._cloaking_subsystem;
-        case Field::_hull_subsystem: return &r._hull_subsystem;
+        case Field::_hull: return &r._hull;
         default: return nullptr;
     }
 }

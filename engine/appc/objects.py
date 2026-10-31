@@ -11,6 +11,7 @@ import math
 import random
 import weakref
 
+from engine.appc import native_combat
 from engine.appc.events import TGEventHandlerObject
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.transform_store import get_store
@@ -65,9 +66,10 @@ class _ObjectNodeRef(_NodeStub):
         return "<_ObjectNodeRef %r>" % (owner.GetName() if owner else None)
 
 
-def _release_transform_slot(store, handle) -> None:
-    """Free an object's transform slot. Registered via weakref.finalize, so it
-    runs on collection even when the object is part of a cycle."""
+def _release_transform_slot(store, handle, nslot=None) -> None:
+    """Free an object's transform slot and its native combat mirror row.
+    Registered via weakref.finalize, so it runs on collection even when the
+    object is part of a cycle."""
     try:
         store.free(*handle)
     except Exception:
@@ -75,9 +77,17 @@ def _release_transform_slot(store, handle) -> None:
         # handle first; a failed release must never propagate out of a
         # finalizer.
         pass
+    if nslot is not None:
+        # Never raises: a test's combat_clear() may have freed the row.
+        native_combat.unregister_handle(nslot)
 
 
 class ObjectClass(TGEventHandlerObject):
+    # Mirrored into the native combat row on every write (native_combat).
+    _radius = native_combat.NativeField(float)
+    _scale = native_combat.NativeField(float)
+    _containing_set = native_combat.NativeRefField("Set")
+
     def __init__(self):
         super().__init__()
         self._name: str = ""
@@ -98,11 +108,15 @@ class ObjectClass(TGEventHandlerObject):
         # fail loudly instead of reading whatever object recycled the index.
         _store = get_store()
         self._xform = _store.alloc()
+        # The native combat mirror row (engine/appc/native_combat.py). Freed
+        # by the same finalizer as the transform slot.
+        native_combat.register(self, "Object", finalize=False)
         # weakref.finalize, NOT __del__: ObjectClass instances sit in
         # reference cycles (they are event handlers and the event manager
         # holds refs back), and __del__ on a cycle member is unreliable.
         self._xform_finalizer = weakref.finalize(
-            self, _release_transform_slot, _store, self._xform)
+            self, _release_transform_slot, _store, self._xform,
+            self.__dict__.get("_nslot"))
         # Not atexit: at interpreter shutdown every still-live object's slot
         # would otherwise be freed one call at a time into the native
         # extension, in the least predictable part of teardown, for no
@@ -827,6 +841,11 @@ class DamageableObject(PhysicsObjectClass):
     loadspacehelper.py:87).  ``SetupProperties()`` then walks the set to
     plumb template values onto the live ship + subsystem instances.
     """
+
+    # Mirrored into the native combat row on every write (native_combat).
+    _dying = native_combat.NativeField(bool)
+    _dead = native_combat.NativeField(bool)
+    _life_time = native_combat.NativeField(float)
 
     def __init__(self):
         super().__init__()

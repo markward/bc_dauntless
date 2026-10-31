@@ -35,7 +35,7 @@ enum class Field : int32_t {
     has_sensor_getter, has_cloak_getter, is_rock, is_meta_nebula,
     // Object: mirrored attributes
     _dead, _dying, _life_time, _containing_set, o_radius, _scale,
-    _sensor_subsystem, _cloaking_subsystem, _hull_subsystem,
+    _sensor_subsystem, _cloaking_subsystem, _hull,
     _fbm, _seed, spheres,
     // Subsystem
     has_parent_ship_getter, _condition, _max_condition, _disabled_percentage,
@@ -67,7 +67,7 @@ struct ObjectRow {
     int64_t _containing_set = -1;
     double _radius = 0.0, _scale = 1.0;
     int64_t _sensor_subsystem = -1, _cloaking_subsystem = -1,
-            _hull_subsystem = -1;
+            _hull = -1;
     Vec3 _fbm{0, 0, 0}, _seed{0, 0, 0};
     bool fbm_set = false, seed_set = false;
     std::vector<Sphere> spheres;

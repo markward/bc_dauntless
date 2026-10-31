@@ -8,6 +8,7 @@ E2M1.py:649/1079), but the AI, motion and subsystem loops skip it
 land with genus GENUS_ASTEROID -- ShipClass_Create only ever sees a name.
 """
 import engine.dev_mode as dev_mode
+from engine.appc import native_combat
 from engine.appc.objects import PhysicsObjectClass
 from engine.appc.ships import ShipClass
 
@@ -84,6 +85,7 @@ def maybe_become_rock(ship) -> bool:
     if genus != App.GENUS_ASTEROID:
         return False
     ship.__class__ = RockClass
+    native_combat.reclassify(ship)
     ship._become_rock()
     return True
 
@@ -183,6 +185,7 @@ def RockClass_Create(radius_gu, *, family="silicate", seed="", name="",
     from engine.rocks import stats
     ship = ShipClass_Create(name)
     ship.__class__ = RockClass
+    native_combat.reclassify(ship)
     ship._become_rock()
     ship.SetGenus(App.GENUS_ASTEROID)
     ship.SetSpecies(App.SPECIES_ASTEROID)

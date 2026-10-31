@@ -1,6 +1,6 @@
 import App
 
-from engine.appc import articulation, passive_state
+from engine.appc import articulation, native_combat, passive_state
 from engine.appc.ship_iter import iter_non_rock_ships
 from engine.core import frame_profiler as _prof
 
@@ -24,6 +24,7 @@ class GameLoop:
 
     def __init__(self) -> None:
         passive_state.configure()
+        native_combat.configure()
 
     def tick(self) -> None:
         # Drop the avoidance obstacle snapshot: a new tick means the world has

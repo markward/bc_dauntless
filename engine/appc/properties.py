@@ -90,6 +90,11 @@ class TGModelProperty:
             cls_name = type(self).__name__
             def setter(*args):
                 data[(field, _hashable_key(args[:-1]))] = args[-1]
+                if field == "MaxCondition":
+                    # A shared template's max condition: every subsystem's
+                    # GetMaxCondition reads it, so the native mirror must too.
+                    from engine.appc import native_combat
+                    native_combat.push_property(self)
                 # Empirical consumer tracking: if any arg is a TGColorA, log
                 # which shim setter received it (off unless harness enables).
                 import App as _App

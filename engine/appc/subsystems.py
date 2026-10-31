@@ -25,6 +25,8 @@ from engine.appc import ship_death as _ship_death
 from engine.appc import passive_weapons
 from engine.appc import passive_power, passive_state
 from engine.appc.passive_power import FrozenField
+from engine.appc import native_combat
+from engine.appc.native_combat import NativeField, NativeRefField
 
 
 def subsystem_world_position(sub, ship=None):
@@ -311,8 +313,24 @@ _THRESHOLD_DESTROYED   = 2
 
 
 class ShipSubsystem(TGEventHandlerObject):
+    # Mirrored into the native combat row on every write (native_combat).
+    _condition = NativeField(float)
+    _max_condition = NativeField(float)
+    _disabled_percentage = NativeField(float)
+    _destroyed = NativeField(bool)
+    # Read with `is True` by _is_offline, so mirrored as identity with True.
+    _radiation_out = NativeField(native_combat.IS_TRUE)
+    _radius = NativeField(float, key="Subsystem._radius")
+    _parent_subsystem = NativeRefField("Subsystem")
+    _parent_ship = NativeRefField("Object")
+    # Properties are shared templates with no hook at construction: a
+    # property gets its row the first time a subsystem references it.
+    _property = NativeRefField("Property", lazy=True)
+
     def __init__(self, name: str = ""):
         super().__init__()
+        # Registered first, so every field below pushes as it is written.
+        native_combat.register(self, "Subsystem")
         self._name = name
         self._property = None
         self._parent_ship = None
@@ -1273,7 +1291,7 @@ class PoweredSubsystem(ShipSubsystem):
     _power_wanted = FrozenField()
     _power_received = FrozenField()
     _efficiency = FrozenField()
-    _power_factor = FrozenField()
+    _power_factor = native_combat.NativeFrozenField(float)
     # The audit compares a program tick with the full pump; the frozen flag is
     # the program's bookkeeping, not consumer state.
     _passive_audit_ignore = ("_power_frozen",)
@@ -1452,6 +1470,14 @@ class HullSubsystem(ShipSubsystem):
 
 
 class SensorSubsystem(PoweredSubsystem):
+    # Mirrored into the native combat row on every write (native_combat).
+    # The two id containers are also mutated IN PLACE: every such site calls
+    # native_combat.push_ids (AddProbe, Add/RemoveKnownObject,
+    # sensor_contacts.on_exited_set's clear).
+    _base_sensor_range = NativeField(float)
+    _probe_ids = NativeField(list)
+    _known_objects = NativeField(set)
+
     def __init__(self, name: str = ""):
         super().__init__(name)
         # Sensors are ON during normal operation — unlike weapons (powered only
@@ -1486,6 +1512,7 @@ class SensorSubsystem(PoweredSubsystem):
     def AddProbe(self, obj_id) -> None:
         """BC AddProbe (@0x00567010): remember a launched probe by object ID."""
         self._probe_ids.append(int(obj_id))
+        native_combat.push_ids(self, "_probe_ids", self._probe_ids)
 
     def probes(self) -> list:
         """The live probes, in launch order. An ID that no longer resolves
@@ -1526,6 +1553,7 @@ class SensorSubsystem(PoweredSubsystem):
         """Register *obj* as a known sensor contact."""
         try:
             self._known_objects.add(obj.GetObjID())
+            native_combat.push_ids(self, "_known_objects", self._known_objects)
         except Exception as _e:
             dev_mode.log_swallowed("AddKnownObject", _e)
 
@@ -1533,6 +1561,7 @@ class SensorSubsystem(PoweredSubsystem):
         """Remove *obj* from known contacts."""
         try:
             self._known_objects.discard(obj.GetObjID())
+            native_combat.push_ids(self, "_known_objects", self._known_objects)
         except Exception as _e:
             dev_mode.log_swallowed("RemoveKnownObject", _e)
 
@@ -2984,6 +3013,9 @@ class CloakingSubsystem(PoweredSubsystem):
     CLOAK_CLOAKING   = 1
     CLOAK_CLOAKED    = 2
     CLOAK_DECLOAKING = 3
+
+    # Mirrored into the native combat row on every write (native_combat).
+    _cloak_state = NativeField(int)
 
     # Cloak runs off the backup grid only — it is locked off the main conduit
     # so cloaking never starves the ship's other systems of main-battery power

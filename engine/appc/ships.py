@@ -1,7 +1,7 @@
 from engine.appc.objects import DamageableObject
 from engine.appc.math import TGPoint3
 from engine.appc.subsystems import PoweredSubsystem, impulse_output_fraction
-from engine.appc import passive_power, passive_weapons
+from engine.appc import native_combat, passive_power, passive_weapons
 import engine.dev_mode as dev_mode
 
 
@@ -14,6 +14,12 @@ class ShipClass(DamageableObject):
     GREEN_ALERT = 0
     YELLOW_ALERT = 1
     RED_ALERT = 2
+
+    # Mirrored into the native combat row on every write (native_combat).
+    # _hull is the reference rocks.rock.effective_radius reads via GetHull().
+    _sensor_subsystem = native_combat.NativeRefField("Subsystem")
+    _cloaking_subsystem = native_combat.NativeRefField("Subsystem")
+    _hull = native_combat.NativeRefField("Subsystem")
 
     def __init__(self):
         super().__init__()
