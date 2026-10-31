@@ -354,6 +354,67 @@ before the next starts.
    threading inside it is not worth it, and the remaining 60 fps work is AI
    and motion, plus the render thread.
 
+### 9.1 Note, 2026-10-31: phase 1 split into 1a and 1b, and what 1a decided
+
+**The split.** Phase 1 ships in two parts. **1a** (branch `perf/native-combat`,
+commits up to `388e18754`) is the mirror plus native `can_detect` for every
+caller of sensor detection, behind `DAUNTLESS_NATIVE_COMBAT` (**unset means
+off**; `=1` on, `=0` forced off; `DAUNTLESS_NATIVE_AUDIT=1` runs the audit and
+implies on). **1b** is K1 fire control (the batch kernels, where the GIL is
+released). The phase 1 bar ("own scope down half", §7.6.6) is judged after 1b.
+Flipping the default to on is a separate change after Mark's live check
+(`DAUNTLESS_NATIVE_COMBAT=1 ./build/dauntless --developer`, in E3M2 Vesuvi, a
+nebula and a cloak fight).
+
+**Rulings made while building 1a** (each: what, then cost if wrong):
+
+- **R1.** The row structs carry the full field set from the start, including class flags; a later task may add a field with its enum entry in the same commit. Cost if wrong: a later edit to `mirror.h`.
+- **R2.** A `NativeField` push or `unregister` that hits a stale handle drops the object's slot and goes quiet; the object then takes the Python path. Reachable only after a test's `combat_clear()`. Cost if wrong: a production staleness bug could be masked; the scene audit compares every registered object.
+- **R3.** The kernel takes the `TransformStore&` it reads from, so gtests use local instances. Cost if wrong: none.
+- **R4.** Each Task 7 test must fail under a mutation its own scenario exercises (not all three under one). Cost if wrong: none.
+- **R5.** Native concealment and `can_detect` never return NaN where Python raises: a non-finite fbm input inside a sphere raises `ValueError` and the wrapper falls back to the Python body. Cost if wrong: one extra branch per density call.
+- **R6.** A reference to an unregistered, non-None object pushes sentinel -2 ("unrepresentable"); a query that reads one raises and falls back to Python. Cost if wrong: one more sentinel check per reference read.
+- **R7.** The lock-break latch has ONE owner in native mode (native, via `combat_set_latched`), with a hand-off to Python's `_broken` when a row is dropped. Cost if wrong: one binding call per fallback latch access.
+- **R8.** While Python's `_walking_probes` is True every `can_detect` takes the Python body, so a fallback's probe walk keeps the one-level rule. Cost if wrong: none (fallback-only).
+- **R9.** On a fallback query the Python occlusion caches are used; a later native query at the same game time may recompute where Python would have hit its cache. Reachable only when a set holds an unrepresentable entry. Cost if wrong: an occlusion answer can differ within one game time in that rare state.
+- **R10.** The zero-sphere MetaNebula seed gap (Python caches `seed_for(0,0,0)` if queried before any sphere; native derives from the first sphere) is accepted. No stock SDK path does it (0 hits). Cost if wrong: a mod that does so gets a different nebula noise seed with native on.
+- **R11.** The memo sibling of R9: a pair that falls back inside a combat step and later answers natively in the same step (or the reverse) without a `forget()` can return a different answer than a Python-only run. Cost if wrong: one stale-vs-fresh answer within one step in that rare state.
+
+**Lifecycle, lock and fallbacks** (settled earlier, same plan): mirror rows live
+exactly as long as their Python object (registered in `__init__`, removed by its
+`weakref.finalize`); a mission swap does NOT clear rows. The latch, occlusion
+caches and memo reset at exactly the points Python's do. Per-call queries hold
+the GIL. Unregistered pairs (test fakes, non-ship targets) take the Python
+path. Probe ids are skipped, not pruned. A stale transform is unreachable.
+
+**Rule for every later phase.** A field the kernel reads MUST be a
+`NativeField` (or a `NativeRefField`), and an in-place mutation (list append,
+dict write) of mirrored state MUST go through a pushing mutator, or native
+reads a stale value.
+
+**Latent bug found (for Mark, not fixed).** `sensor_detection._game_time()`
+calls `App.g_kTimerManager.GetGameTime()`, which does not exist on
+`TGTimerManager`; the `AttributeError` is swallowed and it returns 0.0 every
+time. MetaNebula concealment drift is therefore frozen at t=0 in today's game.
+The native port copies the 0.0 (bit-exact rule). The occlusion caches read
+`g_kUtopiaModule.GetGameTime()`, which works. Two clocks, not one; the
+can-detect inputs document is corrected. Fixing `_game_time()` changes
+gameplay (the fog starts to move) and is Mark's call; the native clock must
+change in the same commit.
+
+**Measurement summary** (perf register SIG-154 to SIG-157, C-234 to C-237,
+Debug, 64 ships, one capture per condition). Quiet scene: total sim per tick
+**did not change** (5.303 off, 5.275 on). Fight: total sim per tick 12.826 off,
+12.196 on (-4.9%), `cb.held_weapons` 2.840 to 1.981 and `sim.combat` 6.068 to
+4.929, but the two fights differed (median 87 vs 48 projectiles in flight), so
+the gain is not separated from the fight. The switch-off cost against the
+previous passive-on captures is not separable from the spread (SIG-156,
+derived). Phase 1a therefore shows no rise and no clear fall in total sim;
+whether the phase 1 bar is reachable is a 1b question. Two things to
+remember when reading these: the `calls` column is the last frame's tick
+count (SIG-157), and one capture cannot resolve ~25% on upkeep rows
+(SIG-147).
+
 **After this design** (not part of it): the engine side of AI and motion. It
 is about 91% of `gl.ai` time and nearly all of `gl.motion`. Mark has ideas
 about reframing how the SDK scripts are driven once the engine is optimised.
