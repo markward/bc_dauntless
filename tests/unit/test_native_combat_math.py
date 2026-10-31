@@ -215,7 +215,9 @@ def _radii(prof, rng):
 def test_profile_sensors_matches_python():
     rng = random.Random(SEED)
     maps = _maps()
-    assert len(maps) == 33
+    # A floor, not a pin: it proves the walk reached the real maps, and a
+    # new system map must not fail this unrelated test.
+    assert len(maps) >= 33
     varying = 0
     for m in maps:
         prof = m.profile

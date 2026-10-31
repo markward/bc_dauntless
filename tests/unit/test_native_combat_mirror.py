@@ -350,6 +350,19 @@ def test_self_check_disables_on_mismatch(monkeypatch, capsys):
     assert err.count("[native-combat] disabled:") == 2   # configure + call
 
 
+def test_failed_self_check_leaves_the_audit_off(monkeypatch, capsys):
+    """DAUNTLESS_NATIVE_AUDIT=1 on an interpreter whose math.dist differs:
+    native stays off, and so must the audit -- else GameLoop.tick audits
+    never-pushed rows every tick and records every field as a failure."""
+    real = math.dist
+    monkeypatch.setattr(math, "dist",
+                        lambda a, b: math.nextafter(real(a, b), math.inf))
+    nc.configure({"DAUNTLESS_NATIVE_AUDIT": "1"})
+    assert not nc.enabled()
+    assert not nc.audit_enabled()
+    capsys.readouterr()
+
+
 def test_audit_mirror_flags_a_bypassed_write():
     nc.configure(ON)
     from engine.appc.subsystems import SensorSubsystem
@@ -449,3 +462,119 @@ def test_wrong_kind_referent_is_unrepresentable():
     other = App.ShipClass_Create("AnObject")
     ship._sensor_subsystem = other              # an Object, not a Subsystem
     assert _dump(ship)["_sensor_subsystem"] == -2
+
+
+# ── A mirrored field hidden by a subclass (final review, Important 2) ────────
+#
+# A subclass that redefines a mirrored attribute (Torpedo's _containing_set
+# and _radius are properties) hides the Native descriptor: its writes never
+# reach the row. The mirror must then never read as a valid value natively.
+
+def _registered_bases():
+    import pkgutil
+
+    import engine.appc
+    import engine.rocks
+    for pkg in (engine.appc, engine.rocks):
+        for info in pkgutil.iter_modules(pkg.__path__):
+            try:
+                importlib.import_module(pkg.__name__ + "." + info.name)
+            except Exception:  # noqa: BLE001 - "currently importable" only
+                pass
+    from engine.appc.objects import ObjectClass
+    from engine.appc.properties import TGModelProperty
+    from engine.appc.sets import SetClass
+    from engine.appc.subsystems import ShipSubsystem
+    return (ObjectClass, ShipSubsystem, SetClass, TGModelProperty)
+
+
+def _all_subclasses(base):
+    out, todo = {base}, [base]
+    while todo:
+        for sub in todo.pop().__subclasses__():
+            if sub not in out:
+                out.add(sub)
+                todo.append(sub)
+    return out
+
+
+def _is_native(attr):
+    return isinstance(attr, (nc.NativeField, nc.NativeFrozenField))
+
+
+def _hidden_by_lookup(cls):
+    """Mirrored names (a Native descriptor somewhere in the MRO) that
+    attribute lookup on `cls` resolves to something else -- computed with
+    inspect.getattr_static, independently of native_combat's own walk."""
+    import inspect
+    names = {name for klass in cls.__mro__
+             for name, attr in vars(klass).items() if _is_native(attr)}
+    return {name for name in names
+            if not _is_native(inspect.getattr_static(cls, name))}
+
+
+def test_every_hidden_mirrored_field_is_caught():
+    """Guard: every class of every registered kind that hides a mirrored
+    field is one the mechanism catches (its plan names the field). A new
+    override the mechanism would miss fails here."""
+    seen_torpedo = False
+    for base in _registered_bases():
+        for cls in _all_subclasses(base):
+            hidden = _hidden_by_lookup(cls)
+            refs, scalars = nc._hidden_fields(cls)
+            caught = {name for name, _ in refs} | set(scalars)
+            assert hidden == caught, (
+                f"{cls.__module__}.{cls.__qualname__} hides {sorted(hidden)}"
+                f" but the mirror catches {sorted(caught)}")
+            if cls.__name__ == "Torpedo":
+                seen_torpedo = True
+                assert caught == {"_containing_set", "_radius"}
+    assert seen_torpedo        # the walk reached the real projectile class
+
+
+def _ref_hider():
+    from engine.appc.ships import ShipClass
+
+    class RefHider(ShipClass):
+        """Hides ONLY a ref field: its row stays, the field reads -2."""
+        @property
+        def _containing_set(self):
+            return self.__dict__.get("_cs")
+
+        @_containing_set.setter
+        def _containing_set(self, value):
+            self.__dict__["_cs"] = value
+    return RefHider
+
+
+def test_hidden_ref_field_reads_unrepresentable():
+    nc.configure(ON)
+    ship = _ref_hider()()
+    assert _dump(ship)["_containing_set"] == nc.REF_UNREPRESENTABLE
+    pSet = App.SetClass_Create()
+    pSet.AddObjectToSet(ship, "RefHider")
+    assert ship.GetContainingSet() is pSet
+    assert _dump(ship)["_containing_set"] == nc.REF_UNREPRESENTABLE
+    nc.audit_mirror()
+    assert nc.audit_failures() == []           # -2 is right: no false failure
+    _h.combat_set_ref(_slot(ship), nc._fid("_containing_set"), _slot(pSet))
+    nc.audit_mirror()                          # a real handle: no false pass
+    assert ("RefHider", "_containing_set") in nc.audit_failures()
+
+
+def test_hidden_ref_field_reads_unrepresentable_after_resync():
+    ship = _ref_hider()()                      # registered while off
+    nc.configure(ON)
+    assert _dump(ship)["_containing_set"] == nc.REF_UNREPRESENTABLE
+
+
+def test_hidden_scalar_field_takes_no_row():
+    """A hidden scalar has no "cannot name" value: like an unencodable value
+    (NativeField._push), the object gets no row and takes the Python path."""
+    from engine.appc.projectiles import Torpedo
+    for env in ({}, ON):
+        nc.configure(env)
+        torp = Torpedo()
+        assert "_nslot" not in torp.__dict__
+        assert nc.slot(torp) is None
+        nc.reset()

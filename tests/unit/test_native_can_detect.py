@@ -410,6 +410,35 @@ def test_unregistered_pair_uses_python(answered):
     assert answered["combat_effective_sensor_range"] >= 1
 
 
+def test_a_torpedo_uses_python(answered):
+    """Torpedo hides the mirrored _containing_set and _radius behind its own
+    properties (projectiles.py), so a row would never see its set: native
+    would answer its concealment as 0.0 in a nebula. It takes the Python
+    path, with the Python's answer (final review, Important 2)."""
+    from engine.appc import projectiles
+    from engine.appc.projectiles import Torpedo
+
+    def scenario():
+        s = _set()
+        _dense_nebula(s)
+        obs = _ship(s, "obs", 0.0, 0.0, 1000.0)
+        torp = Torpedo()
+        s.AddObjectToSet(torp, "torp")
+        try:
+            assert torp.GetContainingSet() is s
+            return [_hex(sd.concealment_at(torp)), sd.can_detect(obs, torp),
+                    sd.can_detect(torp, obs),
+                    _hex(sd.effective_sensor_range(torp)),
+                    sd.is_hidden_by_cloak(torp), sd.jammed(obs, torp)]
+        finally:
+            projectiles.expire(torp)
+
+    trace = _both(scenario)
+    assert trace[0] != _hex(0.0)          # the nebula conceals the torpedo
+    assert answered["combat_can_detect"] == 0
+    assert answered["combat_jammed"] == 0
+
+
 def test_a_fallback_answer_matches_python(answered):
     """A registered pair whose query reaches something the mirror cannot
     name (here: a set list entry whose row was dropped) answers through the

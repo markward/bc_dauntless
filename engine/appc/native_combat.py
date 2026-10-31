@@ -17,6 +17,9 @@ like passive_state.WakeField -- and each write is pushed into the row at once.
 A write that does not go through ``__set__`` (an in-place ``.add`` on a set, a
 ``list.append``, a direct ``obj.__dict__[...] =``) is NOT seen: those sites
 call ``push_ids`` themselves, and ``audit_mirror`` exists to catch a missed one.
+A subclass that HIDES a mirrored attribute behind its own property (Torpedo)
+is caught per class at registration (``_hidden_fields``): a hidden ref reads
+REF_UNREPRESENTABLE, and an object hiding a scalar gets no row.
 
 Rows live exactly as long as their Python object: ``register`` in
 ``__init__``, unregistered by the object's ``weakref.finalize``. Objects are
@@ -55,6 +58,7 @@ _registry: "weakref.WeakValueDictionary[int, object]" = weakref.WeakValueDiction
 _field_ids: dict = {}
 _kind_ids: dict = {}
 _class_fields: dict = {}
+_class_hidden: dict = {}
 
 #: NativeField type for a flag the reader tests with ``is True`` (identity,
 #: not truthiness): engine.appc.subsystems._is_offline on _radiation_out.
@@ -83,16 +87,18 @@ def configure(environ: Mapping[str, str] = os.environ) -> None:
     audit = environ.get("DAUNTLESS_NATIVE_AUDIT") == "1"
     want = (audit or environ.get("DAUNTLESS_NATIVE_COMBAT") == "1") \
         and available()
-    _audit = audit and want
+    # The audit is on only when native ended up on: auditing rows that were
+    # never pushed would record every field of every row, every tick.
+    _audit = False
     if not want:
         _enabled = False
         return
-    if _enabled:
-        return
-    if _self_check() is not None:
-        return                      # _self_check disabled native and said why
-    _enabled = True
-    resync()
+    if not _enabled:
+        if _self_check() is not None:
+            return                  # _self_check disabled native and said why
+        _enabled = True
+        resync()
+    _audit = audit
 
 
 def enabled() -> bool:
@@ -443,6 +449,44 @@ def _fields_of(cls) -> tuple:
     return fields
 
 
+def _native_of(attr):
+    if isinstance(attr, NativeField):
+        return attr
+    if isinstance(attr, NativeFrozenField):
+        return attr._native
+    return None
+
+
+def _hidden_fields(cls) -> tuple:
+    """Mirrored attributes that a class in cls's MRO HIDES behind something
+    that is not a Native descriptor (Torpedo's ``_containing_set`` and
+    ``_radius`` properties): writes to them never reach the row. Returns
+    (refs, scalars): ``refs`` is ((name, NativeRefField), ...), pushed as
+    REF_UNREPRESENTABLE so the kernel falls back on any read of them;
+    ``scalars`` is (name, ...), which have no such value, so an object with
+    one gets no row at all (``register``), the rule ``NativeField._push``
+    applies to an unencodable value. Computed once per class."""
+    plan = _class_hidden.get(cls)
+    if plan is None:
+        winner, refs, scalars = {}, [], []
+        for klass in cls.__mro__:
+            for name, attr in vars(klass).items():
+                if name not in winner:
+                    winner[name] = attr
+                    continue
+                native = _native_of(attr)
+                if native is None or _native_of(winner[name]) is not None:
+                    continue
+                if name in scalars or any(n == name for n, _ in refs):
+                    continue
+                if isinstance(native, NativeRefField):
+                    refs.append((name, native))
+                else:
+                    scalars.append(name)
+        plan = _class_hidden[cls] = (tuple(refs), tuple(scalars))
+    return plan
+
+
 # ── Rows ─────────────────────────────────────────────────────────────────────
 
 def register(obj, kind: str, finalize: bool = True) -> None:
@@ -456,6 +500,8 @@ def register(obj, kind: str, finalize: bool = True) -> None:
     d = obj.__dict__
     if "_nslot" in d:
         return
+    if _hidden_fields(type(obj))[1]:
+        return      # a hidden scalar cannot read "unrepresentable": no row
     if kind == "Object":
         xi, xg = d.get("_xform", (-1, -1))
         h = _h.combat_register(_kind(kind), xi, xg, obj.GetObjID())
@@ -522,6 +568,10 @@ def _push_all(obj, h) -> None:
             return              # dropped by a stale push
         if name in d:
             field._push(obj, h, d[name])
+    for name, field in _hidden_fields(type(obj))[0]:
+        if "_nslot" not in d:
+            return
+        _call(obj, _h.combat_set_ref, h, _fid(field._key), REF_UNREPRESENTABLE)
 
 
 def reclassify(ship) -> None:
@@ -758,6 +808,9 @@ def audit_mirror() -> None:
         for attr, field in _fields_of(type(obj)):
             if attr in d and not field._matches(d[attr],
                                                 row[field._dump_key]):
+                _failures.append((name, attr))
+        for attr, field in _hidden_fields(type(obj))[0]:
+            if row[field._dump_key] != REF_UNREPRESENTABLE:
                 _failures.append((name, attr))
         if (h >> _KIND_SHIFT) == _kind("Set"):
             _audit_set(obj, row, name)

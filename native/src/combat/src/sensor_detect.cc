@@ -243,8 +243,11 @@ double _sensorless_range(const Mirror& m) {
 }
 
 // MetaNebula.GetSeed (nebula.py): the cached seed, else seed_for(the first
-// sphere's centre), else seed_for(0, 0, 0). The Python caches what it derives;
-// spheres only append, so deriving again gives the same value.
+// sphere's centre), else seed_for(0, 0, 0). The Python caches what it derives
+// and native never writes that cache back, so the two differ in one case: a
+// nebula queried BEFORE its first sphere caches seed_for(0, 0, 0) in Python,
+// while native later derives from the first sphere. Accepted as ruling R10
+// (spec §9.1; no stock SDK path does it).
 std::array<double, 3> GetSeed(const ObjectRow& neb) {
     if (neb.seed_set) return {neb._seed[0], neb._seed[1], neb._seed[2]};
     double cx = 0.0, cy = 0.0, cz = 0.0;

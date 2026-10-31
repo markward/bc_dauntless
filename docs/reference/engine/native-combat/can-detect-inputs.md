@@ -406,7 +406,7 @@ It is player-only state in `engine/appc/sensor_contacts.py`:
 - The time source is `App.g_kUtopiaModule.GetGameTime()`, passed from host_loop.py:12544. The sweep runs every `sweep_period_s` (1.0).
 
 ### Time source used by concealment
-`App.g_kTimerManager.GetGameTime()` is the game clock, `TGTimerManager._time`, accumulated by `+= TICK_DELTA` in `GameLoop.tick` (loop.py:36). The value enters as `drift_t = t * 0.01`.
+Two clocks, not one (row 12 and the 2026-10-31 correction). Concealment's drift reads `sensor_detection._game_time()`, which calls `App.g_kTimerManager.GetGameTime()`: `TGTimerManager` has no such method, the AttributeError is swallowed, so `t` is always 0.0 today and `drift_t = t * 0.01` is frozen at 0 (native copies the 0.0 through `native_combat.now()`). The game clock proper, `TGTimerManager._time` accumulated by `+= TICK_DELTA` in `GameLoop.tick` (loop.py:36), is what `App.g_kUtopiaModule.GetGameTime()` returns, and that is what the occlusion caches and the contact sweep read.
 
 ⚠️ `advance_ticks` runs ALL of a frame's GameLoop ticks first (host_loop.py:12257). After that, the frame's N `_advance_weapons`/`_advance_combat` steps run in `for _tick_i in range(_sim_ticks_this_frame)` (host_loop.py:12519). So every combat step in a multi-tick frame sees the **same, final** game time. The AI calls within GameLoop see the per-tick times.
 
