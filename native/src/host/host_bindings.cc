@@ -18,6 +18,7 @@
 #include <audio/python_binding.h>
 #include "dauntless/torpedo_scan.h"
 #include "dauntless/combat/beam_geometry.h"
+#include "dauntless/combat/beam_trace.h"
 #include "dauntless/combat/fire_gates.h"
 #include "dauntless/combat/k1_fire_control.h"
 #include "dauntless/combat/mirror.h"
@@ -665,6 +666,82 @@ std::unordered_map<std::uint32_t, scenegraph::InstanceId> g_bridge_node_ids;
 const assets::Model* resolve_model(scenegraph::ModelHandle h) {
     if (h == 0 || h > g_loaded_models.size()) return nullptr;
     return g_loaded_models[h - 1].handle.get();
+}
+
+// The instance_translation binding's body: the instance's double VIEW-space
+// translation, or nullopt for a stale id. Shared with K2's trace hooks
+// (install_combat_trace_hooks).
+std::optional<glm::dvec3> instance_translation_for_python(
+    scenegraph::InstanceId id) {
+    const auto* inst = g_world.get(id);
+    if (inst == nullptr) return std::nullopt;
+    return inst->world_translation_d;
+}
+
+// The ray_trace_mesh binding's body: ONE implementation, two callers -- the
+// binding (pybind has already narrowed its Python floats) and the K2 kernel's
+// trace hook (install_combat_trace_hooks; the kernel narrows the same way).
+// Native combat spec 2026-10-31-native-combat-k2-beams §4.2: the kernel gets
+// the renderer's own compiled trace, at this TU's flags, never a recompile.
+// nullopt is the binding's None. Throws combat::StaleInstance (a
+// std::runtime_error: the binding still raises RuntimeError with the same
+// message) for a stale id, std::runtime_error for no model handle.
+std::optional<renderer::RayHit> trace_instance_for_python(
+    scenegraph::InstanceId id, const glm::vec3& o, glm::vec3 d, float max_dist,
+    bool rest_pose) {
+    auto* inst = g_world.get(id);
+    if (inst == nullptr) {
+        throw dauntless::combat::StaleInstance(
+            "ray_trace_mesh: invalid InstanceId");
+    }
+    const auto h = inst->model_handle;
+    if (h == 0 || h > g_loaded_models.size()) {
+        throw std::runtime_error("ray_trace_mesh: instance has no model");
+    }
+    const assets::Model* model = g_loaded_models[h - 1].handle.get();
+    if (model == nullptr) return std::nullopt;
+
+    const float dlen = glm::length(d);
+    if (dlen < 1e-9f) return std::nullopt;
+    d /= dlen;
+    if (!std::isfinite(max_dist) || max_dist <= 0.0f) return std::nullopt;
+
+    // Trace against the pose the instance is DRAWN at, not its rest pose.
+    // Without &inst->node_overrides a raised Bird of Prey wing is visible but
+    // unhittable, and -- because combat._resolve_impact_point runs this trace
+    // and part_severance attributes damage from the point it returns -- a
+    // wing shot while raised would accumulate nothing and never come off.
+    // Instance-relative ray, rotation*scale inverted only: a ship 1e6 GU out
+    // traces with the precision of one at the origin. rest_pose: the NIF's
+    // rest geometry instead (authored, rest-frame content such as DamageTool
+    // volumes). The pose is whatever g_world was last synced to; nothing
+    // here re-syncs it (K2 map 8.3.9).
+    return renderer::ray_trace_instance_linear(
+        *model, inst->world_linear, o, d, max_dist,
+        rest_pose ? nullptr : &inst->node_overrides);
+}
+
+// K2's trace hooks: the two bodies above on g_world, touching no Python
+// (ruling J: the kernel calls them holding the GIL).
+dauntless::combat::TraceHooks combat_trace_hooks() {
+    namespace cb = dauntless::combat;
+    cb::TraceHooks hooks;
+    hooks.translation = [](cb::InstanceId id) -> std::optional<cb::Vec3> {
+        const auto t = instance_translation_for_python({id.index, id.generation});
+        if (!t) return std::nullopt;
+        return cb::Vec3{t->x, t->y, t->z};
+    };
+    hooks.trace = [](cb::InstanceId id, const float o[3], const float d[3],
+                     float max_dist) -> std::optional<cb::TraceHit> {
+        const auto hit = trace_instance_for_python(
+            {id.index, id.generation}, glm::vec3(o[0], o[1], o[2]),
+            glm::vec3(d[0], d[1], d[2]), max_dist, /*rest_pose=*/false);
+        if (!hit) return std::nullopt;
+        return cb::TraceHit{{hit->point.x, hit->point.y, hit->point.z},
+                            {hit->normal.x, hit->normal.y, hit->normal.z},
+                            hit->t};
+    };
+    return hooks;
 }
 
 // Shared by set_bridge_spots and set_bridge_area_lights: a float3 tuple as a
@@ -3674,10 +3751,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
           "and motion-blur passes. Use set_render_origin for per-frame moves.");
     m.def("instance_translation",
           [](scenegraph::InstanceId id) -> py::object {
-              const auto* inst = g_world.get(id);
-              if (inst == nullptr) return py::none();
-              const glm::dvec3& t = inst->world_translation_d;
-              return py::make_tuple(t.x, t.y, t.z);
+              const auto t = instance_translation_for_python(id);
+              if (!t) return py::none();
+              return py::make_tuple(t->x, t->y, t->z);
           },
           py::arg("iid"),
           "The instance's VIEW-space translation (x, y, z) in double, or None "
@@ -7628,42 +7704,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
              std::tuple<float, float, float> origin,
              std::tuple<float, float, float> direction,
              float max_dist, bool rest_pose) -> py::object {
-              auto* inst = g_world.get(id);
-              if (inst == nullptr) {
-                  throw std::runtime_error("ray_trace_mesh: invalid InstanceId");
-              }
-              const auto h = inst->model_handle;
-              if (h == 0 || h > g_loaded_models.size()) {
-                  throw std::runtime_error("ray_trace_mesh: instance has no model");
-              }
-              const assets::Model* model = g_loaded_models[h - 1].handle.get();
-              if (model == nullptr) return py::none();
-
-              const glm::vec3 o(std::get<0>(origin),
-                                std::get<1>(origin),
-                                std::get<2>(origin));
-              glm::vec3 d(std::get<0>(direction),
-                          std::get<1>(direction),
-                          std::get<2>(direction));
-              const float dlen = glm::length(d);
-              if (dlen < 1e-9f) return py::none();
-              d /= dlen;
-              if (!std::isfinite(max_dist) || max_dist <= 0.0f) return py::none();
-
-              // Trace against the pose the instance is DRAWN at, not its
-              // rest pose. Without &inst->node_overrides a raised Bird of Prey
-              // wing is visible but unhittable, and -- because
-              // combat._resolve_impact_point runs this trace and
-              // part_severance attributes damage from the point it returns --
-              // a wing shot while raised would accumulate nothing and never
-              // come off.
-              // Instance-relative ray, rotation*scale inverted only: a ship
-              // 1e6 GU out traces with the precision of one at the origin.
-              // rest_pose: the NIF's rest geometry instead (authored,
-              // rest-frame content such as DamageTool volumes).
-              auto hit = renderer::ray_trace_instance_linear(
-                  *model, inst->world_linear, o, d, max_dist,
-                  rest_pose ? nullptr : &inst->node_overrides);
+              // The body is trace_instance_for_python, shared with K2.
+              const auto hit = trace_instance_for_python(
+                  id,
+                  glm::vec3(std::get<0>(origin), std::get<1>(origin),
+                            std::get<2>(origin)),
+                  glm::vec3(std::get<0>(direction), std::get<1>(direction),
+                            std::get<2>(direction)),
+                  max_dist, rest_pose);
               if (!hit) return py::none();
               return py::make_tuple(
                   py::make_tuple(hit->point.x, hit->point.y, hit->point.z),
@@ -9720,6 +9768,50 @@ PYBIND11_MODULE(_dauntless_host, m) {
               },
               py::arg("target"), py::arg("origin"), py::arg("dir"),
               py::arg("max_dist"));
+
+        // ── The K2 hull trace (beam_trace.h) ─────────────────────────────
+        // The kernel reaches the renderer's trace only through these hooks:
+        // trace_instance_for_python and instance_translation_for_python on
+        // g_world, the very bodies of the ray_trace_mesh and
+        // instance_translation bindings.
+        cb::install_trace_hooks(combat_trace_hooks());
+        m.def("combat_test_resolve_hit_point",
+              [vec](std::int64_t target, py::object iid,
+                    const std::array<double, 3>& origin, py::object dir,
+                    double max_dist, const std::array<double, 3>& fallback,
+                    py::object view_offset) {
+                  std::optional<cb::InstanceId> id;
+                  if (!iid.is_none()) {
+                      const auto s = iid.cast<scenegraph::InstanceId>();
+                      id = cb::InstanceId{s.index, s.generation};
+                  }
+                  std::optional<cb::Vec3> d, off;
+                  if (!dir.is_none()) d = dir.cast<std::array<double, 3>>();
+                  if (!view_offset.is_none())
+                      off = view_offset.cast<std::array<double, 3>>();
+                  const cb::ResolvedHit r = cb::resolve_hit_point(
+                      cb::mirror(), cb::installed_trace_hooks(), target, id,
+                      origin, d, max_dist, fallback, off);
+                  static const char* const kTier[] = {"mesh", "sphere",
+                                                      "fallback", "origin"};
+                  return py::make_tuple(
+                      vec(r.point),
+                      r.normal ? py::object(vec(*r.normal)) : py::none(),
+                      kTier[static_cast<int>(r.tier)]);
+              },
+              py::arg("target"), py::arg("iid"), py::arg("origin"),
+              py::arg("dir"), py::arg("max_dist"), py::arg("fallback_point"),
+              py::arg("view_offset"),
+              "((x, y, z), normal (x, y, z) or None, tier): tier 'mesh', "
+              "'sphere', 'fallback' (the point IS fallback_point) or 'origin' "
+              "(the point IS origin). iid: an InstanceId or None (absent); "
+              "dir / view_offset: a 3-tuple or None.");
+        m.def("combat_test_narrow",
+              [](double x) { return cb::narrow_like_pybind(x); },
+              py::arg("x"), "The kernel's double -> float narrowing.");
+        m.def("combat_test_pybind_narrow", [](float x) { return x; },
+              py::arg("x"),
+              "pybind's own narrowing of a float argument, for comparison.");
 
         // ── The K1 fire-control kernel (k1_fire_control.h) ───────────────
         // A stack of resumable sessions over the mirror. Each record is a
