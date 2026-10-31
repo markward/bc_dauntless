@@ -9444,16 +9444,21 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_can_detect",
               [](std::int64_t obs, std::int64_t tgt, double now, bool use_memo,
                  std::optional<double> dist_sq, bool apply_concealment,
-                 std::optional<double> concealment) {
+                 std::optional<double> concealment,
+                 std::optional<double> occ_now) {
                   return cb::can_detect(cb::mirror(), obs, tgt, now, use_memo,
                                         dist_sq, apply_concealment,
-                                        concealment);
+                                        concealment, occ_now);
               },
               py::arg("obs"), py::arg("tgt"), py::arg("now"),
               py::arg("use_memo"), py::arg("dist_sq") = py::none(),
               py::arg("apply_concealment") = true,
               py::arg("concealment") = py::none(),
-              "sensor_detection.can_detect; use_memo is step_memo.active().");
+              py::arg("occ_now") = py::none(),
+              "sensor_detection.can_detect; use_memo is step_memo.active(). "
+              "`now` is the nebula drift clock (sensor_detection._game_time), "
+              "`occ_now` the occlusion cache's (sensor_occlusion._now); "
+              "absent, occ_now is now.");
         m.def("combat_concealment_at",
               [](std::int64_t obj, double now) {
                   return cb::concealment_at(cb::mirror(), obj, now);
@@ -9498,6 +9503,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   return cb::latched(cb::mirror(), obs, tgt);
               },
               py::arg("obs"), py::arg("tgt"), "sensor_detection._latched.");
+        m.def("combat_set_latched",
+              [](std::int64_t obs, std::int64_t tgt, bool broken) {
+                  cb::set_latched(cb::mirror(), obs, tgt, broken);
+              },
+              py::arg("obs"), py::arg("tgt"), py::arg("broken"),
+              "sensor_detection._set_latched for a registered pair (R7: one "
+              "latch). ValueError, writing nothing, on a stale handle.");
         m.def("combat_memo_clear", [] { cb::memo_clear(cb::mirror()); },
               "step_memo.forget() for can_detect's answers.");
     }

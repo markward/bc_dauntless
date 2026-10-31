@@ -770,3 +770,68 @@ def _audit_globals() -> None:
 
 def audit_failures() -> list:
     return _failures
+
+
+def _describe(obj) -> str:
+    get_id = getattr(type(obj), "GetObjID", None)
+    tag = get_id(obj) if get_id is not None else id(obj)
+    return "%s#%s" % (type(obj).__name__, tag)
+
+
+def record_call_failure(fn_name, observer, target, python_answer,
+                        native_answer) -> None:
+    """Under audit, a dispatched call whose native answer differs from the
+    Python's: (fn_name, observer, target, python, native). The objects are
+    named, never held."""
+    _failures.append((fn_name, _describe(observer), _describe(target),
+                      python_answer, native_answer))
+
+
+# ── Dispatch (engine/appc/sensor_detection.py, sensor_occlusion.py) ──────────
+
+_object_kind = None
+_App = None
+
+
+def slot(obj):
+    """`obj`'s Object row handle, or None: not registered (a test fake, a
+    plain object, None) or a row of another kind. The caller then takes the
+    Python path. A stale handle is returned; the kernel's ValueError on it
+    sends the call to the Python too."""
+    global _object_kind
+    d = getattr(obj, "__dict__", None)
+    if d is None:
+        return None
+    h = d.get("_nslot")
+    if h is None:
+        return None
+    if _object_kind is None:
+        _object_kind = _kind("Object")
+    return h if (h >> _KIND_SHIFT) == _object_kind else None
+
+
+def now() -> float:
+    """The nebula drift clock, today's sensor_detection._game_time() value:
+    App.g_kTimerManager.GetGameTime(), or 0.0 when that fails. The shim's
+    TGTimerManager has no GetGameTime, so this is 0.0 today -- NOT the
+    occlusion cache's clock (sensor_occlusion._now, the Utopia game time).
+    The getattr default spares the native path a raised AttributeError per
+    call; the value is the same."""
+    global _App
+    try:
+        if _App is None:
+            import App
+            _App = App
+        get = getattr(_App.g_kTimerManager, "GetGameTime", None)
+        if get is None:
+            return 0.0
+        return float(get())
+    except Exception:
+        return 0.0
+
+
+if available():
+    # step_memo.forget() (every hit, the step's forget points, the outermost
+    # block's exit) empties the native memo with the Python tables.
+    from engine.core import step_memo as _step_memo
+    _step_memo.on_forget(_h.combat_memo_clear)

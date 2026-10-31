@@ -11,11 +11,16 @@ drops every table's answers. host_loop._advance_combat opens the block and
 forgets around deaths, subsystem damage and tractors; combat.apply_hit
 forgets on every hit. Outside a block, `active()` is False and every caller
 computes as it always did.
+
+A table this module cannot hold (the native combat kernel's own memo,
+engine/appc/native_combat.py) registers `on_forget(fn)`: `forget()` calls
+it, at exactly the points it empties the Python tables.
 """
 import contextlib
 
 _depth = 0
 _tables: list = []
+_forget_hooks: list = []
 
 
 def table() -> dict:
@@ -30,10 +35,19 @@ def active() -> bool:
     return _depth > 0
 
 
+def on_forget(fn) -> None:
+    """Call `fn()` at every forget(), the outermost block's exit included.
+    Registering the same fn twice registers it once."""
+    if fn not in _forget_hooks:
+        _forget_hooks.append(fn)
+
+
 def forget() -> None:
     """Something an answer may depend on changed: drop them all."""
     for t in _tables:
         t.clear()
+    for fn in _forget_hooks:
+        fn()
 
 
 @contextlib.contextmanager

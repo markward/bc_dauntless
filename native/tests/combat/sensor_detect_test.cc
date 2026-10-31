@@ -655,3 +655,54 @@ TEST(SensorDetect, ProbeGuardResetOnThrow) {
     EXPECT_THROW(w.detect(o, t), std::invalid_argument);
     EXPECT_FALSE(w.m.sensor_state().walking_probes);
 }
+
+// Task 6, ruling R7: ONE latch. Python's _set_latched writes the native
+// latch for a registered pair, and the kernel reads what it wrote.
+TEST(SensorDetect, SetLatchedIsTheOneLatch) {
+    World w;
+    int64_t o = w.ship(0, 0, 0, 1000.0);
+    int64_t t = w.ship(1, 0, 0);
+    int64_t gone = w.ship(2, 0, 0);
+    w.set({o, t, gone});
+    set_latched(w.m, o, t, true);
+    EXPECT_TRUE(latched(w.m, o, t));
+    EXPECT_FALSE(latched(w.m, t, o));           // per ordered pair
+    EXPECT_FALSE(w.detect(o, t, 1.0, 0.25));    // in the band, latched
+    set_latched(w.m, o, t, false);
+    EXPECT_FALSE(latched(w.m, o, t));
+    EXPECT_TRUE(w.detect(o, t, 1.0, 0.25));     // in the band, fresh
+    set_latched(w.m, o, t, false);              // clearing twice: no-op
+    EXPECT_FALSE(latched(w.m, o, t));
+    // A stale handle writes nothing and falls back to the Python latch.
+    w.m.unregister_row(gone);
+    EXPECT_THROW(set_latched(w.m, o, gone, true), std::invalid_argument);
+    EXPECT_THROW(set_latched(w.m, gone, o, true), std::invalid_argument);
+    EXPECT_EQ(w.m.sensor_state().latch.size(), 0u);
+    // ...and the read agrees: the pair is not native's.
+    EXPECT_THROW(latched(w.m, o, gone), std::invalid_argument);
+    EXPECT_THROW(latched(w.m, gone, o), std::invalid_argument);
+}
+
+// Task 6: the occlusion cache's clock (sensor_occlusion._now, the Utopia
+// game time) is not the nebula drift clock (sensor_detection._game_time).
+// can_detect takes both; occ_now absent means `now` (Task 5's callers).
+TEST(SensorDetect, OcclusionClockIsSeparateFromTheDriftClock) {
+    World w;
+    int64_t o = w.ship(0, 0, 0, 1000.0);
+    int64_t t = w.ship(100, 0, 0);
+    int64_t r = w.rock(50, 0, 0, 5.0);
+    w.set({o, t, r});
+    EXPECT_FALSE(can_detect(w.m, o, t, 0.0, false, std::nullopt, true,
+                            std::nullopt, 2.0));
+    w.move(r, 50, 100, 0);
+    // The same occlusion clock keeps the cached "blocked", whatever `now`.
+    EXPECT_FALSE(can_detect(w.m, o, t, 7.0, false, std::nullopt, true,
+                            std::nullopt, 2.0));
+    // A new occlusion clock recomputes, though `now` is unchanged.
+    EXPECT_TRUE(can_detect(w.m, o, t, 7.0, false, std::nullopt, true,
+                           std::nullopt, 3.0));
+    // Absent, the occlusion clock is `now`.
+    w.move(r, 50, 0, 0);
+    EXPECT_TRUE(can_detect(w.m, o, t, 3.0, false));     // cached at 3.0
+    EXPECT_FALSE(can_detect(w.m, o, t, 4.0, false));
+}

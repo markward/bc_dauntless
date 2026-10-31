@@ -16,10 +16,13 @@
 // argument order, and every comparison written so a NaN takes the branch
 // Python takes.
 //
-// Arguments are Object row handles. `now` is the game time the Python reads
-// itself (App.g_kUtopiaModule.GetGameTime() in the occlusion cache,
-// App.g_kTimerManager.GetGameTime() as the nebula drift time: the same
-// value, CDM §3 #12).
+// Arguments are Object row handles. `now` is a game time the Python reads
+// itself: in concealment_at, the nebula drift clock
+// (App.g_kTimerManager.GetGameTime() via sensor_detection._game_time); in
+// occ_blocked, the occlusion cache's clock (App.g_kUtopiaModule.GetGameTime()
+// via sensor_occlusion._now). These are NOT the same value today (CDM §3 #12
+// assumed they were): the shim's TGTimerManager has no GetGameTime, so the
+// drift clock reads 0.0. can_detect, which needs both, takes `occ_now`.
 //
 // FALLBACK. Every function throws std::invalid_argument (Python ValueError)
 // when it cannot answer exactly as the Python would, so the caller asks the
@@ -65,18 +68,32 @@ bool occ_blocked(Mirror& m, int64_t observer, int64_t target, double now);
 // sensor_detection.can_detect. `use_memo` is step_memo.active(): the memo is
 // read and written only when it is true AND no optional argument is given
 // (dist_sq and concealment absent, apply_concealment true), as the Python.
+//
+// Two clocks, as in the Python: `now` is the nebula drift clock
+// (sensor_detection._game_time, App.g_kTimerManager.GetGameTime), and
+// `occ_now` the occlusion cache's (sensor_occlusion._now,
+// App.g_kUtopiaModule.GetGameTime). They are NOT the same value today: the
+// shim's TGTimerManager has no GetGameTime, so _game_time() reads 0.0.
+// `occ_now` absent means `now`.
 bool can_detect(Mirror& m, int64_t observer, int64_t target, double now,
                 bool use_memo, std::optional<double> dist_sq_gu = std::nullopt,
                 bool apply_concealment = true,
-                std::optional<double> concealment = std::nullopt);
+                std::optional<double> concealment = std::nullopt,
+                std::optional<double> occ_now = std::nullopt);
 
 // sensor_occlusion.begin_tick / reset
 void occ_begin_tick(Mirror& m, double now_gt);
 void occ_reset(Mirror& m);
 
-// sensor_detection.reset_concealment_state / _latched
+// sensor_detection.reset_concealment_state / _latched. `latched` throws on a
+// handle that is not a live Object row, like set_latched.
 void latch_reset(Mirror& m);
 bool latched(const Mirror& m, int64_t observer, int64_t target);
+
+// sensor_detection._set_latched for a registered pair (ruling R7: one latch
+// owner). Throws std::invalid_argument, writing nothing, when either handle
+// is not a live Object row.
+void set_latched(Mirror& m, int64_t observer, int64_t target, bool broken);
 
 // step_memo.forget() for sensor_detection._answers
 void memo_clear(Mirror& m);

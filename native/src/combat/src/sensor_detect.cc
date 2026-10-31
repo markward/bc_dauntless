@@ -352,7 +352,7 @@ struct WalkingProbes {
 
 // sensor_detection._probe_reach (sensor_detection.py:595)
 bool _probe_reach(Mirror& m, int64_t observer, int64_t target, double now,
-                  bool use_memo, bool apply_concealment,
+                  double occ_now, bool use_memo, bool apply_concealment,
                   std::optional<double> concealment) {
     if (m.sensor_state().walking_probes || !_same_set(m, observer, target))
         return false;
@@ -365,7 +365,7 @@ bool _probe_reach(Mirror& m, int64_t observer, int64_t target, double now,
     for (int64_t probe : probes) {
         if (GetContainingSet(m, obj(m, probe)) == oset &&
             can_detect(m, probe, target, now, use_memo, std::nullopt,
-                       apply_concealment, concealment))
+                       apply_concealment, concealment, occ_now))
             return true;
     }
     return false;
@@ -560,7 +560,7 @@ namespace {
 
 // sensor_detection._can_detect (sensor_detection.py:480): the rule itself.
 bool _can_detect(Mirror& m, int64_t observer, int64_t target, double now,
-                 bool use_memo, std::optional<double> dist_sq_gu,
+                 double occ_now, bool use_memo, std::optional<double> dist_sq_gu,
                  bool apply_concealment, std::optional<double> concealment) {
     const Globals& g = m.globals();
     // ── Cloak gate
@@ -576,8 +576,8 @@ bool _can_detect(Mirror& m, int64_t observer, int64_t target, double now,
 
     // ── Occlusion gate
     if (g.enhanced_sensor_contest) {
-        if (occ_blocked(m, observer, target, now))
-            return _probe_reach(m, observer, target, now, use_memo,
+        if (occ_blocked(m, observer, target, occ_now))
+            return _probe_reach(m, observer, target, now, occ_now, use_memo,
                                 apply_concealment, concealment);
     }
 
@@ -590,7 +590,7 @@ bool _can_detect(Mirror& m, int64_t observer, int64_t target, double now,
             g.LOCK_BREAK_T - (_latched(m, observer, target) ? g.HYSTERESIS : 0.0);
         if (conceal >= thresh) {
             _set_latched(m, observer, target, true);
-            return _probe_reach(m, observer, target, now, use_memo,
+            return _probe_reach(m, observer, target, now, occ_now, use_memo,
                                 apply_concealment, concealment);
         }
         _set_latched(m, observer, target, false);
@@ -606,8 +606,8 @@ bool _can_detect(Mirror& m, int64_t observer, int64_t target, double now,
     if (*dist_sq_gu <= (r * r)) return true;
     // ── Beyond range: memory and over-boost, then the probe walk
     return _beyond_range_reach(m, observer, target, cloaked) ||
-           _probe_reach(m, observer, target, now, use_memo, apply_concealment,
-                        concealment);
+           _probe_reach(m, observer, target, now, occ_now, use_memo,
+                        apply_concealment, concealment);
 }
 
 }  // namespace
@@ -615,19 +615,22 @@ bool _can_detect(Mirror& m, int64_t observer, int64_t target, double now,
 // sensor_detection.can_detect (sensor_detection.py:377)
 bool can_detect(Mirror& m, int64_t observer, int64_t target, double now,
                 bool use_memo, std::optional<double> dist_sq_gu,
-                bool apply_concealment, std::optional<double> concealment) {
+                bool apply_concealment, std::optional<double> concealment,
+                std::optional<double> occ_now_arg) {
+    const double occ_now = occ_now_arg ? *occ_now_arg : now;
     if (use_memo && !dist_sq_gu && apply_concealment && !concealment) {
         const HandlePair key{observer, target};
         auto& answers = m.sensor_state().memo;
         auto found = answers.find(key);
         if (found != answers.end()) return found->second;
-        const bool answer = _can_detect(m, observer, target, now, use_memo,
-                                        std::nullopt, true, std::nullopt);
+        const bool answer =
+            _can_detect(m, observer, target, now, occ_now, use_memo,
+                        std::nullopt, true, std::nullopt);
         m.sensor_state().memo[key] = answer;
         return answer;
     }
-    return _can_detect(m, observer, target, now, use_memo, dist_sq_gu,
-                       apply_concealment, concealment);
+    return _can_detect(m, observer, target, now, occ_now, use_memo,
+                       dist_sq_gu, apply_concealment, concealment);
 }
 
 // sensor_occlusion.begin_tick (sensor_occlusion.py:71)
@@ -648,8 +651,22 @@ void occ_reset(Mirror& m) {
 // sensor_detection.reset_concealment_state (sensor_detection.py:176)
 void latch_reset(Mirror& m) { m.sensor_state().latch.clear(); }
 
+// sensor_detection._latched for a registered pair. Both handles must be live
+// Object rows (a stale one throws), so a read and a write agree on who owns
+// the pair: native, or the Python fallback.
 bool latched(const Mirror& m, int64_t observer, int64_t target) {
+    obj(m, observer);
+    obj(m, target);
     return _latched(m, observer, target);
+}
+
+// sensor_detection._set_latched for a registered pair (Task 6, ruling R7:
+// the Python's own writes land in this one latch). Both handles must be live
+// Object rows, or nothing is written and the Python keeps the pair.
+void set_latched(Mirror& m, int64_t observer, int64_t target, bool broken) {
+    obj(m, observer);
+    obj(m, target);
+    _set_latched(m, observer, target, broken);
 }
 
 // step_memo.forget() for sensor_detection._answers
