@@ -17,6 +17,9 @@
 #include <pybind11/stl.h>
 #include <audio/python_binding.h>
 #include "dauntless/torpedo_scan.h"
+#include "dauntless/combat/nebula_density.h"
+#include "dauntless/combat/profile_eval.h"
+#include "dauntless/combat/py_math.h"
 #include "dauntless/transform_store.h"
 #include "platform/relaunch.h"
 
@@ -9209,4 +9212,59 @@ PYBIND11_MODULE(_dauntless_host, m) {
           py::arg("match_source"), py::arg("firing_id"), py::arg("offsets"),
           "Ids of the torpedoes incoming on the observer, in table order. "
           "offsets: (group, dx, dy, dz) per set visible from the observer's.");
+
+    // ── Native combat: Python-exact math (test bindings) ────────────────────
+    // The combat library's primitives, exposed only so
+    // tests/unit/test_native_combat_math.py (and native_combat's interpreter
+    // self-check) can compare them with the Python they replace, bit for bit.
+    // Not a gameplay surface.
+    m.def("combat_test_dist3",
+          [](const std::array<double, 3>& a, const std::array<double, 3>& b) {
+              return dauntless::combat::dist3(a.data(), b.data());
+          },
+          py::arg("a"), py::arg("b"),
+          "math.dist(a, b) for 3-D points, as CPython 3.11.15 computes it.");
+    m.def("combat_test_fbm",
+          [](double x, double y, double z) {
+              return dauntless::combat::fbm(x, y, z);
+          },
+          "engine.appc.nebula_density.fbm(x, y, z).");
+    m.def("combat_test_density",
+          [](double px, double py, double pz,
+             const std::vector<std::tuple<double, double, double, double>>& spheres,
+             const std::array<double, 3>& seed, double freq, double gain,
+             double floor, double drift_t) {
+              std::vector<dauntless::combat::Sphere> s;
+              s.reserve(spheres.size());
+              for (const auto& [x, y, z, r] : spheres) s.push_back({x, y, z, r});
+              return dauntless::combat::density(px, py, pz, s.data(), s.size(),
+                                                seed.data(), freq, gain, floor,
+                                                drift_t);
+          },
+          py::arg("px"), py::arg("py"), py::arg("pz"), py::arg("spheres"),
+          py::arg("seed"), py::arg("freq"), py::arg("gain"), py::arg("floor"),
+          py::arg("drift_t"),
+          "engine.appc.nebula_density.density(...); spheres: (x, y, z, r).");
+    m.def("combat_test_profile_sensors",
+          [](const std::vector<std::tuple<double, double>>& rows, double r) {
+              std::vector<dauntless::combat::ProfileRow> v;
+              v.reserve(rows.size());
+              for (const auto& [d, sensors] : rows) v.push_back({d, sensors});
+              return dauntless::combat::evaluate_sensors(v.data(), v.size(), r);
+          },
+          py::arg("rows"), py::arg("r"),
+          "profile.evaluate(prof, r).sensors; rows: (distance_gu, sensors).");
+    m.def("combat_test_segment_hits",
+          [](double ax, double ay, double az, double bx, double by, double bz,
+             double cx, double cy, double cz, double r) {
+              return dauntless::combat::segment_hits(ax, ay, az, bx, by, bz,
+                                                     cx, cy, cz, r);
+          },
+          "engine.appc.sensor_occlusion._segment_hits(...).");
+    m.def("combat_test_contains",
+          [](double x, double y, double z, double cx, double cy, double cz,
+             double r) {
+              return dauntless::combat::contains(x, y, z, cx, cy, cz, r);
+          },
+          "engine.appc.sensor_occlusion._contains(...).");
 }
