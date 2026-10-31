@@ -598,8 +598,10 @@ def test_posed_ship_throws(world):
     w = world
     from engine.appc import articulation, part_pose
     bank = w.phasers[0]
-    articulation.force_part_pose(w.galaxy, "TestPart", part_pose.IDENTITY)
-    articulation.force_part_pose(w.warbird, "TestPart", part_pose.IDENTITY)
+    # Off identity: at identity a posed ship answers natively (Task 6b).
+    hinge = part_pose.hinge_pose((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 15.0)
+    articulation.force_part_pose(w.galaxy, "TestPart", hinge)
+    articulation.force_part_pose(w.warbird, "TestPart", hinge)
     try:
         with pytest.raises(ValueError):
             _h.combat_test_subsystem_world_position(_slot(bank), -1, False)

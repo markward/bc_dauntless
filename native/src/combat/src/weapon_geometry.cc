@@ -125,8 +125,9 @@ Vec3 mount_position(const Mirror& m, int64_t sub_h, int64_t ship_arg) {
     if (ship == -1) return {0.0, 0.0, 0.0};
     const ObjectRow& o = obj(m, ship);
     const auto& t = xform(m, o);
-    // part_transform_point is the identity for an unrigged hull; a posed one
-    // is the Python's (articulation.py:714).
+    // part_transform_point is the identity for an unrigged hull and for
+    // every part at its NIF pose; a part off it is the Python's
+    // (articulation.py:714).
     if (o.has_posed_parts) fall_back("ship has posed parts");
     const Vec3 offset = mult_matrix_left(t.rot, s._position);
     return {t.pos[0] + offset[0], t.pos[1] + offset[1], t.pos[2] + offset[2]};

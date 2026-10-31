@@ -472,6 +472,7 @@ def tick_ship(ship, dt: float) -> None:
             ship._articulation_transitions = transitions
         except Exception:  # noqa: BLE001 - test double / prop may reject
             return
+    moved = False
     for part in parts:
         name = _part_name(part)
         current = poses.get(name, part_pose.IDENTITY)
@@ -489,6 +490,7 @@ def tick_ship(ship, dt: float) -> None:
                                                             target))
         pose0, _state, u, duration = tr
         u += float(dt) / max(duration, 1e-6)
+        moved = True
         if u >= 1.0:
             poses[name] = target
             transitions.pop(name, None)
@@ -496,6 +498,10 @@ def tick_ship(ship, dt: float) -> None:
         anchor = part.anchor or (0.0, 0.0, 0.0)
         poses[name] = part_pose.interpolate(pose0, target, anchor, u)
         transitions[name] = (pose0, state, u, duration)
+    if moved:
+        # In-place writes bypass the PosedPartsField rebind push: a part may
+        # just have left, or reached, its NIF pose (the native combat flag).
+        native_combat.push_posed_parts(ship)
 
 
 def time_to_reach(ship, state: str) -> float:

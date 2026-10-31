@@ -424,25 +424,36 @@ def test_pulse_module_params_pushed(arena):
 
 
 def test_posed_parts_flag_follows_force_pose(arena):
+    """has_posed_parts is 1 only while a part is OFF its NIF pose (Task 6b;
+    tests/unit/test_native_posed_flag.py covers the rigged Bird of Prey)."""
     galaxy, _, _ = arena
     from engine.appc import articulated_part, articulation, part_pose
+    hinge = part_pose.hinge_pose((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 15.0)
     assert _dump(galaxy)["has_posed_parts"] == 0
     articulation.force_part_pose(galaxy, "TestPart", part_pose.IDENTITY)
     assert "TestPart" in galaxy._articulation_poses
+    assert _dump(galaxy)["has_posed_parts"] == 0    # named, at identity
+    articulation.force_part_pose(galaxy, "TestPart", hinge)
     assert _dump(galaxy)["has_posed_parts"] == 1
     articulation.force_pose(galaxy, None)           # no rig: drops the pose
     assert _dump(galaxy)["has_posed_parts"] == 0
 
-    # A rig appearing (the leaf's snapshot) is seen at the next tick_ship.
+    # A rig appearing (the leaf's snapshot) moves nothing by itself; the
+    # flag rises when tick_ship swings its part off identity (no target:
+    # cruise), and a rig going leaves the swung pose, which still counts.
     saved = dict(articulated_part._BY_LEAF)
     try:
         part = articulated_part.ArticulatedPartProperty("rigpart")
+        part.SetStatePose("cruise", 0.0, 0.0, 0.1, 0.0, 0.0, 10.0)
         galaxy._articulation_leaf = "rigtest_leaf"
         articulated_part.restore({"rigtest_leaf": (part,)})
+        assert _dump(galaxy)["has_posed_parts"] == 0
         articulation.tick_ship(galaxy, 1.0 / 60.0)
         assert _dump(galaxy)["has_posed_parts"] == 1
         articulated_part.restore({})
         articulation.tick_ship(galaxy, 1.0 / 60.0)
+        assert _dump(galaxy)["has_posed_parts"] == 1
+        articulation.force_pose(galaxy, None)
         assert _dump(galaxy)["has_posed_parts"] == 0
     finally:
         articulated_part.restore(saved)

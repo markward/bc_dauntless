@@ -417,7 +417,7 @@ std::optional<K1Why> Walker::prescan(int64_t sys,
     // A class overriding a method the kernel stands in for (Task 5 fix).
     if (s->k1_overridden) return K1Why::Overridden;
 
-    // self.GetParentShip(): alive-testable, unrigged, placed.
+    // self.GetParentShip(): alive-testable, at its NIF pose, placed.
     int64_t ship;
     try {
         ship = climb_to_ship_of(m_, sys);
@@ -454,7 +454,7 @@ std::optional<K1Why> Walker::prescan(int64_t sys,
 
     // _target_list: every entry is a placed Object with a real IsDead; a
     // pulse or torpedo aim may carry a target offset (target_offset_world),
-    // which the mirror answers only for unrigged targets.
+    // which the mirror answers only for targets at their NIF pose.
     const bool offset_aim = kind == kPulseSystem || kind == kTorpedoSystem;
     bool any_alive = false;
     for (const int64_t t : s->_target_list) {

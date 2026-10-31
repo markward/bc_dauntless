@@ -14,9 +14,11 @@ Manual Aim switched on and off with a locked subsystem.
 
 After every tick each weapon system's and each bank's state (the Task 5
 tuple: type-tagged, floats by .hex(), the `_target_offset` values and which
-bank's offset is the same OBJECT as which), every ship's hull condition, and
-the whole event log (every AddEvent: type, source, destination, tick, order;
-torpedoes and bolts numbered by first sight) are compared with ``==``. Each
+bank's offset is the same OBJECT as which), every ship's hull condition and
+six shield faces, and the whole event log (every AddEvent: type, source,
+destination, tick, order, and a weapon hit's payload -- damage, hit point and
+normal by .hex(); torpedoes and bolts numbered by first sight) are compared
+with ``==``. Each
 arm starts with nothing in flight: the other arm's torpedoes would otherwise
 fly on in it (headless_mission.clear_in_flight). The native arm must show that K1 really walked and
 fired phaser, pulse and torpedo systems (not merely that the scene has
@@ -43,6 +45,7 @@ from engine.appc import native_combat as nc
 from engine.appc import part_pose
 from engine.appc import sensor_contacts
 from engine.appc import weapon_subsystems as ws
+from engine.appc.events import WeaponHitEvent
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.ship_iter import iter_ships
 from engine.core import loop as game_loop
@@ -89,6 +92,17 @@ def _t(v):
 
 def _hexes(p):
     return tuple(float(c).hex() for c in (p.x, p.y, p.z))
+
+
+def _vec(p):
+    """A point-like value by .hex(): a TGPoint3, a 3-sequence, or None."""
+    if p is None:
+        return None
+    if isinstance(p, TGPoint3):
+        return _hexes(p)
+    if isinstance(p, (tuple, list)):
+        return tuple(float(c).hex() for c in p)
+    return repr(p)
 
 
 class _Scene:
@@ -145,7 +159,8 @@ class _Scene:
         def add_event(evt, _orig=orig):
             self.events.append((evt.GetEventType(),
                                 self.label(evt.GetSource()),
-                                self.label(evt.GetDestination()), self.tick))
+                                self.label(evt.GetDestination()), self.tick,
+                                self.payload(evt)))
             return _orig(evt)
 
         mp.setattr(App.g_kEventManager, "AddEvent", add_event)
@@ -160,10 +175,12 @@ class _Scene:
             decision = nc._k1_decision
 
             def counting_walk_start(walk, system, _orig=walk_start):
-                k = nc._weapon_kind(system)
-                self.walked[k] = self.walked.get(k, 0) + 1
-                self.walked_names.add(self.label(system))
-                return _orig(walk, system)
+                patched = _orig(walk, system)
+                if not patched:     # handed to Python: not a native walk
+                    k = nc._weapon_kind(system)
+                    self.walked[k] = self.walked.get(k, 0) + 1
+                    self.walked_names.add(self.label(system))
+                return patched
 
             def counting_decision(bank, d, walk, _orig=decision):
                 k = nc._weapon_kind(bank)
@@ -186,6 +203,16 @@ class _Scene:
                                                      len(self.held))
             self.held.append(obj)
         return name
+
+    def payload(self, evt):
+        """A weapon hit's payload: damage, hit point and normal by .hex(),
+        hull hit, weapon type, the struck subsystem and the target."""
+        if not isinstance(evt, WeaponHitEvent):
+            return None
+        return (_t(evt.GetDamage()), _vec(evt.GetHitPoint()),
+                _vec(evt.GetNormal()), _t(evt.GetRadius()),
+                _t(evt.IsHullHit()), _t(evt.GetWeaponType()),
+                self.label(evt.GetSubsystem()), self.label(evt.GetTarget()))
 
     # ── Ops ──────────────────────────────────────────────────────────────────
 
@@ -366,9 +393,13 @@ class _Scene:
             ))
         for s in self.ships:
             hull = s.GetHull()
+            shields = s.GetShields()
             row.append((s.GetName(), _t(s.IsDead()),
                         None if hull is None else
-                        _t(float(hull.GetCondition()))))
+                        _t(float(hull.GetCondition())),
+                        None if shields is None else tuple(
+                            _t(float(shields.GetCurShields(f)))
+                            for f in range(6))))
         self.log.append(row)
 
     # ── Run ──────────────────────────────────────────────────────────────────
@@ -470,6 +501,13 @@ def test_k1_matches_python_in_a_fight(monkeypatch, ticks_per_frame):
     for et in (App.ET_WEAPON_FIRED, App.ET_TORPEDO_FIRED, App.ET_WEAPON_HIT,
                App.ET_WEAPON_FIRE_FAILED, App.ET_TORPEDO_AMMO_CONSUMED):
         assert et in _kinds(ref), et
+    # Hits carried their payload into the comparison (damage, hit point),
+    # and the shields it compared moved.
+    hits = [e[4] for e in ref.events if e[0] == App.ET_WEAPON_HIT]
+    assert hits and all(h is not None and h[1] is not None for h in hits)
+    ships = slice(len(ref.systems) + len(ref.weapons), None)
+    assert any(a[3] != b[3] for a, b in zip(ref.log[0][ships],
+                                            ref.log[-1][ships]))
     # A bank ran dry and Manual Aim's offset reached a bank.
     banks = slice(len(ref.systems), len(ref.systems) + len(ref.weapons))
     assert any(r[4] == ("bool", True) for rows in ref.log
@@ -628,3 +666,79 @@ def test_rigged_ship_runs_python(monkeypatch):
         nat.walked_names
     assert any(e[0] == App.ET_WEAPON_FIRED and e[1].startswith("Friend-3/")
                and e[3] > pose_at for e in ref.events)
+
+
+# ── Task 6b: a rigged Bird of Prey at its natural pose runs native ──────────
+
+def test_rigged_bop_at_red_runs_native(monkeypatch):
+    """The scene's Bird of Prey (Enemy-4, rigged: both wings) has a target,
+    so it is in "red", which its rig authors as the NIF pose: every part at
+    identity, its mounts the unrigged mounts. K1 walks its systems, and
+    those aiming at it, natively: the posed_ship and posed_target fallbacks
+    are 0. At tick 200 both arms force its wings to cruise (a forced
+    transition window); tick_ship eases them home over the rig's 2 s. In
+    that window it falls back to Python; once home, native again. Native
+    and Python identical throughout."""
+    force_at, home_by = 200, 360
+    seen = {}
+
+    def bop_of(scene):
+        return [s for s in scene.ships
+                if s.GetScript() == "ships.BirdOfPrey"][0]
+
+    def setup(scene, mp):
+        bop = bop_of(scene)
+        assert [p.GetName() for p in articulation.parts_for_ship(bop)] == [
+            "left wing", "left wing01"]
+        bop.SetTarget(scene._enemy_of(random.Random(SEED + 3), bop))
+        assert articulation.state_for(bop) == "red"
+
+    def posed(counts):
+        return tuple(counts["k1_python_reasons"][session][why]
+                     for session in ("pump", "system")
+                     for why in ("posed_ship", "posed_target"))
+
+    def before_frame(scene):
+        bop = bop_of(scene)
+        if scene.tick >= force_at and "forced" not in scene.__dict__:
+            scene.forced = True
+            seen[scene.native, "before"] = (nc.counts(),
+                                            set(scene.walked_names))
+            assert all(part_pose.is_identity(p)
+                       for p in bop._articulation_poses.values())
+            articulation.force_pose(bop, "cruise")
+            assert scene.native is False or _h.combat_dump(
+                bop.__dict__["_nslot"])["has_posed_parts"] == 1
+            # Its own systems ask K1 inside the window (StartFiring's
+            # immediate walk, then the pump), whatever the op stream did:
+            # cannons on, a full magazine, loaded tubes.
+            torps = bop.GetTorpedoSystem()
+            ammo = torps.GetCurrentAmmoType()
+            ammo.SetAvailable(ammo.GetMaxTorpedoes())
+            for i in range(torps.GetNumWeapons()):
+                torps.GetWeapon(i).SetNumReady(1)
+            for g in (bop.GetPulseWeaponSystem(), torps):
+                g.TurnOn()
+                g.StartFiring(bop.GetTarget(), None)
+                assert g._fire_held
+        if scene.tick >= home_by and "home" not in scene.__dict__:
+            scene.home = True
+            assert not bop._articulation_transitions
+            assert all(part_pose.is_identity(p)
+                       for p in bop._articulation_poses.values())
+            seen[scene.native, "home"] = nc.counts()
+
+    ref, nat = _both(monkeypatch, 1, setup=setup, before_frame=before_frame)
+    before, walked_before = seen[True, "before"]
+    home = seen[True, "home"]
+    # At identity before the window: native, no articulation fallback.
+    assert posed(before) == (0, 0, 0, 0), before
+    assert any(n.startswith("Enemy-4/") for n in walked_before), \
+        walked_before
+    # In the window: Python, as before Task 6b.
+    assert posed(home)[0] > 0 and posed(home)[2] > 0, posed(home)
+    # Home again: no further articulation fallback to the end.
+    assert posed(nat.counts) == posed(home), (home, nat.counts)
+    assert any(n.startswith("Enemy-4/") for n in nat.walked_names)
+    print("k1 rigged BoP differential: before %r home %r end %r"
+          % (posed(before), posed(home), posed(nat.counts)))

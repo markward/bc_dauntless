@@ -44,8 +44,9 @@ enum class Field : int32_t {
     _dead, _dying, _life_time, _containing_set, o_radius, _scale,
     _sensor_subsystem, _cloaking_subsystem, _hull,
     _fbm, _seed, spheres,
-    // Object: weapon-fire inputs (phase 1b K1). has_posed_parts is
-    // bool(articulation.posed_part_names(ship)); has_real_is_dead is
+    // Object: weapon-fire inputs (phase 1b K1). has_posed_parts is 1 while
+    // a part's current pose is off identity (native_combat._posed_flag);
+    // has_real_is_dead is
     // implements(obj, "IsDead"); _velocity is rebound on every SetVelocity.
     has_posed_parts, has_real_is_dead, _velocity,
     _phaser_system, _pulse_weapon_system, _tractor_beam_system, _torpedo_system,

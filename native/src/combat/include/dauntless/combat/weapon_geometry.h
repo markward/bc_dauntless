@@ -21,8 +21,10 @@
 // FALLBACK. As in sensor_detect.h, a function throws std::invalid_argument
 // (Python ValueError) when it cannot answer exactly as the Python would:
 //   * a ref it reaches is unrepresentable (-2) or names a row that is gone;
-//   * a ship whose mount or aim it must carry has articulated parts
-//     (has_posed_parts): the Python walks the rig, the mirror cannot;
+//   * a ship whose mount or aim it must carry has a part off its NIF pose
+//     (has_posed_parts): the Python walks the rig, the mirror cannot. At
+//     identity the Python returns the authored point itself, so a rigged
+//     ship with every part there is answered here;
 //   * an Object's transform is invalid;
 //   * a target with no real IsDead (its stub records telemetry);
 //   * a pulse cannon whose projectile module did not resolve.

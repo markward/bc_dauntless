@@ -14,6 +14,7 @@ from engine import host_loop
 from engine.appc import dash, warp, warp_button
 from engine.core.loop import GameLoop, TICK_DELTA
 from tests.helpers.fresh_world import _fresh_world
+from tests.helpers.in_flight import IN_FLIGHT
 
 # Bound on one warp, in game time (Task 8 brief). The master dialogue a
 # mission has queued holds the transit (WaitForQueued), so this is long.
@@ -30,30 +31,12 @@ def load(name):
     return host_loop._init_mission(name)
 
 
-# What a fight leaves in flight, drained per tick in production and cleared
-# between tests by tests/conftest.py's _reset_leakable_engine_globals (the
-# same list). A fresh world does not clear them, so a test loading a mission
-# twice (a differential's arms) would otherwise fly the first arm's torpedoes,
-# debris and death sequences in the second.
-_IN_FLIGHT = (
-    ("engine.appc.projectiles", "_active"),
-    ("engine.appc.hit_vfx", "_active"),
-    ("engine.appc.ship_death", "_active"),
-    ("engine.appc.object_lifetime", "_timed"),
-    ("engine.appc.visible_damage", "_pending"),
-    ("engine.appc.internal_blast", "_pending"),
-    ("engine.appc.warp_core_breach", "_growing"),
-    ("engine.appc.warp_core_breach", "_armed"),
-    ("engine.appc.warp_core_breach", "_breached"),
-    ("engine.audio.attached_sources", "_attached"),
-    ("engine.audio.hum_allocator", "_humming"),
-    ("engine.appc.debris_chunk", "_live"),
-    ("engine.appc.hull_breakup", "_pending_wear"),
-    ("engine.appc.hull_breakup", "_last_wear_check"),
-    ("engine.appc.hull_breakup", "_severed"),
-    ("engine.appc.hull_breakup", "_part_labels"),
-    ("engine.appc.hull_breakup", "_awaiting"),
-)
+# What a fight leaves in flight (tests/helpers/in_flight.py: the same list
+# tests/conftest.py's _reset_leakable_engine_globals clears between tests). A
+# fresh world does not clear them, so a test loading a mission twice (a
+# differential's arms) would otherwise fly the first arm's torpedoes, debris
+# and death sequences in the second.
+_IN_FLIGHT = IN_FLIGHT
 
 
 def clear_in_flight() -> None:

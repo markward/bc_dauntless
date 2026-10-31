@@ -1419,32 +1419,10 @@ def _reset_leakable_engine_globals():
         _ai_driver.reset_script_error_log()
     except Exception:
         pass
-    # Accumulator lists drained per mission tick in production.
-    for _mod, _attr in (
-        ("engine.appc.projectiles", "_active"),
-        ("engine.appc.hit_vfx", "_active"),
-        ("engine.appc.ship_death", "_active"),
-        ("engine.appc.object_lifetime", "_timed"),
-        ("engine.appc.visible_damage", "_pending"),
-        ("engine.appc.internal_blast", "_pending"),
-        ("engine.appc.warp_core_breach", "_growing"),
-        # The single-fire guarantee's queue + set: a ship armed or breached
-        # by one test would never detonate (or detonate) in a later one.
-        ("engine.appc.warp_core_breach", "_armed"),
-        ("engine.appc.warp_core_breach", "_breached"),
-        ("engine.audio.attached_sources", "_attached"),
-        ("engine.audio.hum_allocator", "_humming"),
-        # Detached hull chunks + the per-ship breakup throttle: a chunk left
-        # live by one test is yielded by collisions.iter_collidables() in
-        # every later test, and a stale _pending_wear entry re-runs a split
-        # on a ship that no longer exists.
-        ("engine.appc.debris_chunk", "_live"),
-        ("engine.appc.hull_breakup", "_pending_wear"),
-        ("engine.appc.hull_breakup", "_last_wear_check"),
-        ("engine.appc.hull_breakup", "_severed"),
-        ("engine.appc.hull_breakup", "_part_labels"),
-        ("engine.appc.hull_breakup", "_awaiting"),
-    ):
+    # Accumulator lists drained per mission tick in production (one list,
+    # shared with headless_mission.clear_in_flight).
+    from tests.helpers.in_flight import IN_FLIGHT as _in_flight
+    for _mod, _attr in _in_flight:
         try:
             _m = sys.modules.get(_mod)
             if _m is not None:

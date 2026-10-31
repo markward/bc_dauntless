@@ -559,13 +559,13 @@ class NativeThawParentWakeField(NativeWrapped, ThawParentWakeField):
 
 
 class PosedPartsField:
-    """``ShipClass._articulation_poses``: a rebind can change
-    ``bool(posed_part_names(ship))`` (a forced pose adds a name, dropping it
-    removes one), so the ship's has_posed_parts flag is re-pushed. In-place
-    ``poses[name] = pose`` writes (tick_ship) only touch rig names, which the
-    flag already counts. The attribute is ABSENT until first written (the
-    readers use getattr(..., None)), so unlike the other descriptors this one
-    needs a __get__ that reads the instance dict."""
+    """``ShipClass._articulation_poses``: a rebind (the force_* writers, or
+    tick_ship's first dict) can move a part on or off its NIF pose, so the
+    ship's has_posed_parts flag (`_posed_flag`) is re-pushed. In-place
+    ``poses[name] = pose`` writes (tick_ship) re-push through
+    `push_posed_parts` at the end of the tick. The attribute is ABSENT until
+    first written (the readers use getattr(..., None)), so unlike the other
+    descriptors this one needs a __get__ that reads the instance dict."""
 
     def __set_name__(self, owner, name) -> None:
         self._name = name
@@ -751,21 +751,32 @@ def _k1_overridden(cls) -> int:
 
 
 def _posed_flag(ship) -> int:
-    """``bool(articulation.posed_part_names(ship))``, but never the call that
-    would cache a rig-less leaf for a ship whose script is not set yet
-    (articulation.leaf_for caches "" for good): such a ship has no weapons to
-    fire either. push_posed_parts re-pushes once the script is set."""
-    d = ship.__dict__
-    # ShipClass.__init__ sets _articulation_leaf = None: "not yet resolved".
-    if d.get("_articulation_leaf") is None and not d.get("_articulation_poses"):
-        try:
-            script = ship.GetScript()
-        except Exception:  # noqa: BLE001 - a double without a script
-            script = None
-        if not script:
-            return 0
-    from engine.appc import articulation
-    return int(bool(articulation.posed_part_names(ship)))
+    """1 while some part of `ship` is drawn off its NIF pose, else 0.
+
+    The Python mount and target-offset transforms
+    (`articulation.part_transform_point`) return the authored point ITSELF
+    for a part whose current pose passes `part_pose.is_identity`, so a
+    rigged ship with every part there answers exactly as an unrigged one
+    (Task 6b exactness check, tests/unit/test_native_posed_flag.py) and the
+    native identity path may walk it. A part with no entry in
+    `_articulation_poses` reads IDENTITY (`pose_for_part`), so the poses
+    present are the only ones that can be off it -- no rig lookup.
+
+    Mark's convention: a hull's natural mesh pose is its red-alert pose, so
+    a Bird of Prey in a fight (an NPC with a target is in "red") reads 0.
+    Mid-transition, swung for cruise, or SPV-forced off identity reads 1 and
+    falls back to Python.
+
+    Never resolves the ship's leaf: `articulation.leaf_for` on a ship whose
+    script is not set yet would cache "" for good."""
+    poses = ship.__dict__.get("_articulation_poses")
+    if not poses:
+        return 0
+    from engine.appc.part_pose import is_identity
+    for pose in poses.values():
+        if not is_identity(pose):
+            return 1
+    return 0
 
 
 def _flags(obj, h) -> dict:
@@ -797,9 +808,10 @@ def _flags(obj, h) -> dict:
 
 
 def push_posed_parts(ship) -> None:
-    """Re-push the ship's has_posed_parts flag: its pose dict was rebound
-    (PosedPartsField), its rig appeared or went (articulation.tick_ship via
-    note_rig), or SetupProperties just gave it a script."""
+    """Re-push the ship's has_posed_parts flag (`_posed_flag`): its pose
+    dict was rebound (PosedPartsField), tick_ship moved a part in place, its
+    rig appeared or went (note_rig), or SetupProperties just gave it a
+    script."""
     if _enabled:
         h = ship.__dict__.get("_nslot")
         if h is not None:
@@ -809,7 +821,9 @@ def push_posed_parts(ship) -> None:
 
 def note_rig(ship, key) -> None:
     """tick_ship resolved `ship`'s rig for `key` = (leaf, rig generation):
-    push the flag once per key."""
+    push the flag once per key. Since Task 6b the flag reads only the
+    current poses, never the rig, so this re-push is a belt-and-braces
+    refresh rather than a change of value."""
     if _enabled:
         d = ship.__dict__
         if d.get("_nc_rig_key") != key:
