@@ -9769,6 +9769,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
                           py::int_(v)));
               },
               py::arg("value"), "ASK's reply: a bool, an int or None.");
+        m.def("combat_k1_skip_walk", [] { cb::k1_kernel().skip_walk(); },
+              "WALK_START's other reply: Python ran the system's "
+              "update_weapons itself (an instance-patched Fire ...).");
         m.def("combat_k1_end", [] { cb::k1_kernel().end(); },
               "Pop the top session (it must have returned DONE).");
         m.def("combat_k1_abandon", [] { cb::k1_kernel().abandon(); },
@@ -9781,6 +9784,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
             d["k1_records"] = c.records;
             d["k1_python_systems"] = c.python_systems;
             d["k1_asks"] = c.asks;
+            // RUN_PYTHON (and skip_walk) by why, pump and StartFiring apart.
+            py::dict pump, system;
+            for (size_t i = 0; i < c.pump_why.size(); ++i) {
+                const char* n = cb::k1_why_name(static_cast<cb::K1Why>(i));
+                pump[n] = c.pump_why[i];
+                system[n] = c.system_why[i];
+            }
+            py::dict why;
+            why["pump"] = pump;
+            why["system"] = system;
+            d["k1_python_reasons"] = why;
             return d;
         });
         m.def("combat_k1_reset_counts",

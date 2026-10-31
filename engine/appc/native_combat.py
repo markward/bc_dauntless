@@ -687,8 +687,11 @@ _kind_by_type: dict = {}
 
 
 def _weapon_kind(obj) -> int:
+    return _weapon_kind_of_class(type(obj))
+
+
+def _weapon_kind_of_class(cls) -> int:
     global _WEAPON_KINDS
-    cls = type(obj)
     k = _kind_by_type.get(cls)
     if k is None:
         if _WEAPON_KINDS is None:
@@ -704,6 +707,47 @@ def _weapon_kind(obj) -> int:
                 break
         _kind_by_type[cls] = k
     return k
+
+
+# The methods K1 stands in for (it computes their answer from the mirror
+# instead of calling them). A class whose MRO gives any of them a different
+# function than the stock class of its weapon_kind gets k1_overridden = 1, and
+# K1 hands its system to Python whole (a mod subclassing a weapon). Cached
+# per class.
+_K1_LEAF_METHODS = (
+    "Fire", "_fire_decide", "_fire_effect", "CanFire", "_charge_gate",
+    "_shot_cost", "_aim_in_arc", "IsFiring", "IsMemberOfGroup", "IsDumbFire",
+    "GetConditionPercentage", "GetDisabledPercentage", "IsDisabled",
+    "_ammo_exhausted", "IsSkewFire", "GetParentSubsystem", "_climb_to_ship")
+_K1_SYSTEM_METHODS = (
+    "update_weapons", "try_fire_weapon", "_prune_targets",
+    "_active_chain_groups", "_resolve_working_group", "_firing_weapon",
+    "_reseed_all_fire_timers", "GetFiringChains", "GetNumWeapons",
+    "GetWeapon", "GetNumTargets", "IsOn", "IsDisabled", "_can_engage",
+    "GetParentShip", "_fired_counter", "_weapon_did_fire")
+# Checked on the INSTANCE (its __dict__) at each WALK_START, for the walked
+# system and each child: the cheap subset that tests and tools patch.
+_K1_SYSTEM_PATCHES = ("update_weapons", "try_fire_weapon")
+_K1_LEAF_PATCHES = ("Fire", "_fire_decide", "_fire_effect", "CanFire")
+_k1_overridden_by_type: dict = {}
+
+
+def _k1_overridden(cls) -> int:
+    hit = _k1_overridden_by_type.get(cls)
+    if hit is None:
+        from engine.appc import weapon_subsystems as ws
+        stock = {1: ws.PhaserSystem, 2: ws.PulseWeaponSystem,
+                 4: ws.TorpedoSystem, 5: ws.PhaserBank, 6: ws.PulseWeapon,
+                 8: ws.TorpedoTube}
+        kind = _weapon_kind_of_class(cls)
+        base = stock.get(kind)
+        hit = 0
+        if base is not None and cls is not base:
+            names = _K1_LEAF_METHODS if kind >= 5 else _K1_SYSTEM_METHODS
+            hit = int(any(getattr(cls, n, None) is not getattr(base, n, None)
+                          for n in names))
+        _k1_overridden_by_type[cls] = hit
+    return hit
 
 
 def _posed_flag(ship) -> int:
@@ -746,6 +790,7 @@ def _flags(obj, h) -> dict:
         return {"has_parent_ship_getter": int(implements(obj,
                                                          "GetParentShip")),
                 "weapon_kind": _weapon_kind(obj),
+                "k1_overridden": _k1_overridden(type(obj)),
                 "pump_self_managed": int(bool(getattr(
                     type(obj), "_pump_self_managed", False)))}
     return {}
@@ -1314,6 +1359,27 @@ class _K1Walk:
         for target in d.get("_target_list", ()):
             self.pin(target)
 
+    def walk_start(self, system) -> bool:
+        """pin_system at WALK_START, plus the instance-patch check: True when
+        the system or a child has an instance attribute shadowing a method
+        K1 stands in for (`tube.Fire = ...`); K1 must not decide for it. A
+        patch made later in the walk (by a handler) is not seen."""
+        self.pin(system)
+        d = system.__dict__
+        patched = False
+        for name in _K1_SYSTEM_PATCHES:
+            if name in d:
+                patched = True
+        for child in d.get("_children", ()):
+            self.pin(child)
+            cd = child.__dict__
+            for name in _K1_LEAF_PATCHES:
+                if name in cd:
+                    patched = True
+        for target in d.get("_target_list", ()):
+            self.pin(target)
+        return patched
+
     def obj(self, h):
         """The object a record or write names: None for -1."""
         if h == REF_NONE:
@@ -1374,7 +1440,16 @@ def apply_writes(writes, walk=None) -> None:
     pushing (the kernel already wrote the mirror). Ref values are handles
     (-1: None), a ref list a list of handles; the marker "walk_offset" is
     the walk's own offset object. `walk` maps handles through its pin set;
-    without one, through the registry."""
+    without one, through the registry.
+
+    NOT atomic: the kernel has already written every value in the log to
+    the mirror, so a raise part-way (a handle no pin or row names, a wake or
+    thaw hook failing) leaves the fields after it with mirror != Python, and
+    run_k1's abandon cannot undo that (the kernel's rollback covers only
+    writes it has not yet delivered). Unreachable today: the logged fields
+    are a fixed set of plain NativeFields on pinned rows, whose quiet write
+    is a dict store, and no wrapped descriptor is in the set. A field added
+    to the kernel's log must keep its quiet write unable to raise."""
     if walk is None:
         walk = _K1Walk()
     for h, field, value in writes:
@@ -1391,14 +1466,28 @@ def apply_writes(writes, walk=None) -> None:
 
 def _k1_decision(bank, decision, walk) -> tuple:
     """A FIRE record's decision in _fire_decide's shape: handles to objects
-    (pulse (xyz, target_used), tube (target_used,)); a beam's (was_firing,)
-    as it is."""
+    (pulse (xyz, target_used, module), tube (target_used,)); a beam's
+    (was_firing,) as it is."""
     kind = _weapon_kind(bank)
     if kind == 6:
-        return (decision[0], walk.obj(decision[1]))
+        return (decision[0], walk.obj(decision[1]), _k1_pulse_module(bank))
     if kind == 8:
         return (walk.obj(decision[0]),)
     return decision
+
+
+def _k1_pulse_module(bank):
+    """The live module PulseWeapon._fire_decide would have resolved: the
+    registration-time resolution (ruling P6) left it in sys.modules. Gone
+    (unloaded since) raises: the session abandons rather than spawn from
+    None."""
+    from engine.appc import weapon_subsystems as ws
+    script = ws.pulse_module_script(bank)
+    mod = sys.modules.get(script) if script else None
+    if mod is None:
+        raise RuntimeError("combat K1: pulse module %r is not loaded"
+                           % (script,))
+    return mod
 
 
 def _k1_answer(rec, walk, dt):
@@ -1481,7 +1570,13 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
                 # per walk; every effect and "walk_offset" write of this walk
                 # uses this very object (ruling P5).
                 walked = walk.obj(rec[1])
-                walk.pin_system(walked)
+                if walk.walk_start(walked):
+                    # An instance-patched method: Python runs the walk whole
+                    # (the gates already ran), the kernel writes nothing more
+                    # for this system.
+                    walked.update_weapons(dt)
+                    _h.combat_k1_skip_walk()
+                    continue
                 walk.offset = offset = walked._live_held_offset()
                 _h.combat_k1_set_offset(
                     (offset.x, offset.y, offset.z)

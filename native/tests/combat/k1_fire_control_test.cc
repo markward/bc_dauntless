@@ -1075,3 +1075,114 @@ TEST(K1, RetryWalksItsSnapshot) {
     EXPECT_EQ(w.brief(w.step()), "FIRE_FAILED tube");  // retry t2 (snapshot)
     EXPECT_EQ(w.brief(w.step()), "DONE");
 }
+
+// ── Fallback reasons (Task 5 fix round: every RUN_PYTHON is counted by why,
+// pump and StartFiring system sessions apart) ──────────────────────────────
+
+namespace {
+int64_t why_of(const K1Kernel::Counts& c, K1Why w, bool system = false) {
+    return (system ? c.system_why : c.pump_why)[static_cast<size_t>(w)];
+}
+int64_t why_total(const K1Kernel::Counts& c) {
+    int64_t n = 0;
+    for (size_t i = 0; i < static_cast<size_t>(K1Why::kCount); ++i)
+        n += c.pump_why[i] + c.system_why[i];
+    return n;
+}
+}  // namespace
+
+TEST(K1, FallbackReasonsAreCounted) {
+    EXPECT_STREQ(k1_why_name(K1Why::PosedShip), "posed_ship");
+    EXPECT_STREQ(k1_why_name(K1Why::InstancePatch), "instance_patch");
+    // One pump over one phaser (or `kind`) system, set up to fall back.
+    auto pump = [](int64_t kind, auto&& setup, K1Why want) {
+        World w;
+        const int64_t ship = w.ship("ship");
+        const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+        const int64_t sys = w.system("sys", ship, kind, {t});
+        const int64_t b0 = w.bank("b0", sys);
+        setup(w, ship, t, sys, b0);
+        w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+        const K1Record r = w.step();
+        EXPECT_EQ(r.kind, K1Kind::RUN_PYTHON) << k1_why_name(want);
+        EXPECT_EQ(why_of(w.k.counts(), want), 1) << k1_why_name(want);
+        EXPECT_EQ(why_total(w.k.counts()), 1) << k1_why_name(want);
+        EXPECT_EQ(w.k.counts().python_systems, 1);
+    };
+    using I = int64_t;
+    pump(1, [](World& w, I ship, I, I, I) {
+        w.m.set_i(ship, Field::has_posed_parts, 1);
+    }, K1Why::PosedShip);
+    pump(4, [](World& w, I, I t, I, I) {
+        w.m.set_i(t, Field::has_posed_parts, 1);
+    }, K1Why::PosedTarget);
+    pump(1, [](World& w, I, I t, I, I) {
+        w.m.set_i(t, Field::has_real_is_dead, 0);
+    }, K1Why::StubOrUnplaced);
+    pump(1, [](World& w, I, I t, I sys, I) {
+        w.m.set_ids(sys, Field::_target_list, {t, kRefUnrepresentable});
+    }, K1Why::StaleRow);
+    pump(2, [](World& w, I, I, I, I c) {
+        w.m.set_i(c, Field::module_ok, 0);
+    }, K1Why::PulseModule);
+    pump(2, [](World& w, I, I, I sys, I) {
+        w.m.set_ids(sys, Field::_target_list, {});
+    }, K1Why::PulseShipTarget);
+    pump(4, [](World& w, I, I, I sys, I) {
+        const int64_t gone = w.m.register_row(Kind::Ammo);
+        w.m.set_ids(sys, Field::_ammo_by_slot, {0, gone});
+        w.m.unregister_row(gone);
+    }, K1Why::AmmoRow);
+    pump(3, [](World&, I, I, I, I) {}, K1Why::SelfManaged);
+    pump(1, [](World& w, I, I, I sys, I) {
+        w.m.set_i(sys, Field::k1_overridden, 1);
+    }, K1Why::Overridden);
+    pump(1, [](World& w, I, I, I, I b0) {
+        w.m.set_i(b0, Field::k1_overridden, 1);    // one overridden bank
+    }, K1Why::Overridden);
+
+    {   // A ship with no row: one per getter.
+        World w;
+        w.k.begin_pump({-1}, kDt, 10.0, false, 0.0);
+        w.run_to_done();
+        EXPECT_EQ(why_of(w.k.counts(), K1Why::UnslottedShip), 4);
+        EXPECT_EQ(w.k.counts().python_systems, 4);
+    }
+    {   // A StartFiring system session counts apart from the pump.
+        World w;
+        const int64_t ship = w.ship("ship");
+        const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+        const int64_t sys = w.system("sys", ship, 1, {t});
+        w.bank("b0", sys);
+        w.m.set_i(ship, Field::has_posed_parts, 1);
+        w.k.begin_system(sys, 0.0, 10.0, false, 0.0);
+        w.run_to_done();
+        EXPECT_EQ(why_of(w.k.counts(), K1Why::PosedShip, true), 1);
+        EXPECT_EQ(why_of(w.k.counts(), K1Why::PosedShip), 0);
+        w.k.reset_counts();
+        EXPECT_EQ(why_total(w.k.counts()), 0);
+    }
+}
+
+TEST(K1, SkipWalkHandsTheWalkToPython) {
+    // Python found an instance-patched Fire at WALK_START and ran the
+    // system's update_weapons itself: the kernel moves on with no write.
+    World w;
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t sys = w.system("sys", ship, 1, {t});
+    w.bank("b0", sys);
+    w.m.set_i(sys, Field::_force_update, 1);
+    EXPECT_THROW(w.k.skip_walk(), std::logic_error);   // no session
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    const K1Record ws = w.k.next();
+    ASSERT_EQ(w.brief(ws), "WALK_START sys");
+    w.k.skip_walk();
+    EXPECT_THROW(w.k.skip_walk(), std::logic_error);   // not awaiting
+    const K1Record r = w.k.next();
+    EXPECT_EQ(w.brief(r), "DONE");
+    EXPECT_TRUE(r.writes.empty());
+    EXPECT_EQ(why_of(w.k.counts(), K1Why::InstancePatch), 1);
+    EXPECT_EQ(w.k.counts().python_systems, 1);
+    w.k.end();
+}

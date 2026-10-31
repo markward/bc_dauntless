@@ -62,6 +62,7 @@ constexpr FieldInfo kInfo[] = {
     {"_cloak_state", Kind::Subsystem, FieldType::I},
     {"weapon_kind", Kind::Subsystem, FieldType::I},
     {"pump_self_managed", Kind::Subsystem, FieldType::I},
+    {"k1_overridden", Kind::Subsystem, FieldType::I},
     {"_is_on", Kind::Subsystem, FieldType::I},
     {"_fire_held", Kind::Subsystem, FieldType::I},
     {"_held_target", Kind::Subsystem, FieldType::Ref},
@@ -288,6 +289,7 @@ int64_t* iptr(SubsystemRow& r, Field f) {
     switch (f) {
         case Field::weapon_kind: return &r.weapon_kind;
         case Field::pump_self_managed: return &r.pump_self_managed;
+        case Field::k1_overridden: return &r.k1_overridden;
         case Field::_is_on: return &r._is_on;
         case Field::_fire_held: return &r._fire_held;
         case Field::_force_update: return &r._force_update;

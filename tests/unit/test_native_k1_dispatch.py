@@ -152,10 +152,11 @@ class World:
         row = []
         for g in self.systems:
             d = g.__dict__
-            row.append((self.label(g), g.IsFiring(), d.get("_fire_held"),
-                        d.get("_force_update"), d.get("_last_weapon_idx"),
-                        d.get("_last_group_fired"),
-                        d.get("_group_fire_mode"),
+            row.append((self.label(g), _t(g.IsFiring()), _t(d.get("_fire_held")),
+                        _t(d.get("_force_update")),
+                        _t(d.get("_last_weapon_idx")),
+                        _t(d.get("_last_group_fired")),
+                        _t(d.get("_group_fire_mode")),
                         [self.label(t) for t in d.get("_target_list", ())]))
         for w in self.leaves:
             d = w.__dict__
@@ -163,12 +164,12 @@ class World:
             tube = isinstance(w, ws.TorpedoTube)
             off = d.get("_target_offset")
             row.append((
-                self.label(w), w.IsFiring(), d.get("_target") is None,
+                self.label(w), _t(w.IsFiring()), d.get("_target") is None,
                 self.label(d.get("_target")),
-                float(d.get("_fire_timer", 0.0)).hex(),
-                d.get("_depleted"),
+                _t(d.get("_fire_timer", 0.0)),
+                _t(d.get("_depleted")),
                 w.GetChargeLevel().hex() if energy else None,
-                w.GetNumReady() if tube else None,
+                _t(w.GetNumReady()) if tube else None,
                 None if off is None else (
                     tuple(float(c).hex() for c in (off.x, off.y, off.z))
                     if isinstance(off, TGPoint3) else repr(off)),
@@ -191,6 +192,14 @@ class World:
         with step_memo.combat_step():
             host_loop._pump_held_weapons(list(self.order), DT)
         self.record()
+
+
+def _t(v):
+    """A value with its type, so a bool written where Python writes an int
+    (or a float where it writes an int) differs; floats by .hex()."""
+    if isinstance(v, float):
+        return ("float", v.hex())
+    return (type(v).__name__, v)
 
 
 def _both(monkeypatch, ships, script, ticks, player=None):
@@ -249,7 +258,7 @@ def test_phaser_volley_matches(monkeypatch):
     ref, _nat, counts = _both(monkeypatch, ships, script, 700)
     assert "fired" in _kinds(ref)
     leaves = slice(len(ref.systems), None)
-    assert any(row[5] for rows in ref.log for row in rows[leaves]), \
+    assert any(row[5][1] for rows in ref.log for row in rows[leaves]), \
         "no bank ran dry"
     assert counts["k1_python_systems"] == 0, counts
 
@@ -494,5 +503,161 @@ def test_apply_writes_wakes_sleeping_bank(monkeypatch):
         assert sys_.__dict__["_target_list"][0] is vorcha
         assert sys_.__dict__["_last_weapon_idx"] == 3
         assert _h.combat_dump(sh)["_target_list"] == []
+    finally:
+        w.close()
+
+
+# ── Task 5 fix round ─────────────────────────────────────────────────────────
+
+class _CountingTube(ws.TorpedoTube):
+    """A mod-style subclass whose Fire does something of its own."""
+    calls = []
+
+    def Fire(self, target=None, offset=None):
+        _CountingTube.calls.append(self.GetName())
+        return ws.TorpedoTube.Fire(self, target, offset)
+
+
+def _python_reasons(counts, session="pump"):
+    return {k: v for k, v in counts["k1_python_reasons"][session].items() if v}
+
+
+def test_class_override_runs_python(monkeypatch):
+    """A tube whose CLASS overrides Fire: K1 must not stand in for it, so its
+    system runs in Python (counted as overridden), with the same results and
+    the override called the same number of times, ON and OFF."""
+    ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
+             ("Vorcha", "vorcha", (10.0, 240.0, 5.0), math.pi))
+    calls = {}
+
+    def script(w, t):
+        torps = w.ships["Galaxy"].GetTorpedoSystem()
+        if t == 0:
+            _CountingTube.calls = []
+            tube = torps.GetWeapon(0)
+            tube.__class__ = _CountingTube
+            nc.reclassify(tube)         # the row's class flags (both arms)
+            torps.StartFiring(w.ships["Vorcha"])
+        calls[w.native] = list(_CountingTube.calls)
+
+    _ref, _nat, counts = _both(monkeypatch, ships, script, 120)
+    assert calls[False] and calls[True] == calls[False]
+    assert _python_reasons(counts).get("overridden", 0) > 0, counts
+    assert _python_reasons(counts, "system").get("overridden", 0) > 0, counts
+
+
+def test_k1_overridden_flag_follows_the_class(monkeypatch):
+    """The row flag is 1 for a class overriding a K1 method (leaf or
+    system), 0 for every stock class."""
+    nc.configure(ON)
+    stock = ws.TorpedoTube("t")
+    sub = _CountingTube("s")
+
+    class _Sys(ws.PhaserSystem):
+        def update_weapons(self, dt):
+            return ws.PhaserSystem.update_weapons(self, dt)
+
+    system = _Sys("p")
+    stock_sys = ws.PhaserSystem("q")
+    flag = lambda o: _h.combat_dump(o.__dict__["_nslot"])["k1_overridden"]
+    assert (flag(stock), flag(sub), flag(system), flag(stock_sys)) == \
+        (0, 1, 1, 0)
+
+
+def test_instance_patch_runs_python(monkeypatch):
+    """`tube.Fire = ...` on one instance (as tests and tools do): found at
+    WALK_START, the system runs in Python (instance_patch), ON == OFF."""
+    ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
+             ("Vorcha", "vorcha", (10.0, 240.0, 5.0), math.pi))
+    calls = {}
+
+    def script(w, t):
+        torps = w.ships["Galaxy"].GetTorpedoSystem()
+        if t == 0:
+            log = calls[w.native] = []
+            tube = torps.GetWeapon(0)
+            real = tube.Fire
+
+            def patched(target=None, offset=None):
+                log.append(target is None)
+                return real(target, offset)
+            tube.Fire = patched
+            torps.StartFiring(w.ships["Vorcha"])
+
+    _ref, _nat, counts = _both(monkeypatch, ships, script, 120)
+    assert calls[False] and calls[True] == calls[False]
+    assert _python_reasons(counts).get("instance_patch", 0) > 0, counts
+
+
+def test_pulse_effect_uses_the_decided_module(monkeypatch):
+    """Python's decision carries the module it resolved; on the K1 path a
+    module that is not loaded any more abandons the session (raise), never
+    reaching _spawn_projectile with None."""
+    ships = (("Vorcha", "vorcha", (0.0, 0.0, 0.0), 0.0),
+             ("Galaxy", "galaxy", (40.0, 220.0, 12.0), math.pi))
+    w = World(monkeypatch, False, ships, "k1_mod_off")
+    try:
+        for _ in range(3):
+            w.tick()
+        cannon = w.ships["Vorcha"].GetPulseWeaponSystem().GetWeapon(0)
+        script = ws.pulse_module_script(cannon)
+        d = cannon._fire_decide(None, None)
+        assert d is not None and d[2] is sys.modules[script]
+        # One property read and one module-name read per Fire, as before
+        # the split (no second resolve in the effect).
+        reads = []
+        prop_cls = type(cannon.GetProperty())
+        real = prop_cls.GetModuleName
+        monkeypatch.setattr(prop_cls, "GetModuleName",
+                            lambda self: reads.append(1) or real(self))
+        cannon._cooldown_remaining = 0.0
+        cannon._charge_level = cannon._max_charge
+        assert cannon.Fire(None, None) is True
+        assert len(reads) == 1
+    finally:
+        w.close()
+
+    w = World(monkeypatch, True, ships, "k1_mod_on")
+    try:
+        for _ in range(3):
+            w.tick()
+        vorcha = w.ships["Vorcha"]
+        script = ws.pulse_module_script(
+            vorcha.GetPulseWeaponSystem().GetWeapon(0))
+        monkeypatch.delitem(sys.modules, script)
+        with pytest.raises(RuntimeError, match="pulse module"):
+            vorcha.GetPulseWeaponSystem().StartFiring(w.ships["Galaxy"])
+        assert _h.combat_k1_depth() == 0
+    finally:
+        w.close()
+
+
+def test_apply_writes_thaws_frozen_consumers(monkeypatch):
+    """A NativeFrozenField write (`_is_on`) thaws its frozen consumer, and a
+    NativeThawParentWakeField write (a tractor beam's `_firing`) thaws the
+    frozen parent system -- without pushing either value."""
+    from engine.appc import passive_power
+    ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),)
+    w = World(monkeypatch, True, ships, "k1_thaw")
+    try:
+        galaxy = w.ships["Galaxy"]
+        phasers = galaxy.GetPhaserSystem()
+        h = phasers.__dict__["_nslot"]
+        phasers.__dict__["_power_frozen"] = True
+        before = _h.combat_dump(h)["_is_on"]
+        nc.apply_writes([(h, "_is_on", 0 if before else 1)])
+        assert phasers.__dict__["_power_frozen"] is False
+        assert _h.combat_dump(h)["_is_on"] == before          # not pushed
+
+        tractors = galaxy.GetTractorBeamSystem()
+        beam = tractors.GetWeapon(0)
+        bh = beam.__dict__["_nslot"]
+        assert not beam._firing
+        tractors.__dict__["_power_frozen"] = True
+        thawed = passive_power.counts()["thawed"]
+        nc.apply_writes([(bh, "_firing", True)])
+        assert tractors.__dict__["_power_frozen"] is False
+        assert passive_power.counts()["thawed"] == thawed + 1
+        assert _h.combat_dump(bh)["_firing"] == 0              # not pushed
     finally:
         w.close()

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -47,7 +48,10 @@
 // changes nothing: the writes it made but never returned are undone in the
 // mirror, and the session -- cursor, pending answer -- is restored to the
 // state before the call. The mirror then still equals Python, so abandon()
-// is safe.
+// is safe. That guarantee covers the kernel's side only: once a record is
+// returned its writes are in the mirror, so Python applying them must not
+// fail part-way (native_combat.apply_writes: unreachable today, a fixed set
+// of plain fields).
 //
 // SESSIONS form a stack: an effect's event handler may StartFiring, which
 // begins (and finishes) a nested one-system session before the outer one
@@ -96,6 +100,26 @@ enum class K1Kind : int32_t {
     kCount
 };
 const char* k1_kind_name(K1Kind k);
+
+// Why a system went to Python whole (a RUN_PYTHON, or a skip_walk). Counted
+// per session type: the pump's and StartFiring's system sessions apart.
+enum class K1Why : int32_t {
+    SelfManaged = 0,  // a tractor (_pump_self_managed), or not a K1 system
+    Overridden,       // the system's or a child's class overrides a K1 method
+    InstancePatch,    // Python found an instance-patched method (skip_walk)
+    PosedShip,        // the firing ship has posed (articulated) parts
+    PosedTarget,      // a pulse/torpedo target has posed parts
+    StubOrUnplaced,   // no real IsDead, or no valid transform
+    PulseShipTarget,  // pulse with no live list entry: ship.GetTarget()
+    PulseModule,      // pulse module unresolved or power setting out of range
+    AmmoRow,          // a torpedo ammo slot names no live Ammo row
+    StaleRow,         // an unnamed (-2) or freed row the walk reads
+    UnslottedShip,    // a pump ship with no mirror row (per getter)
+    Gate,             // a pump gate the mirror could not answer
+    Other,            // child structure, a negative chain group ...
+    kCount
+};
+const char* k1_why_name(K1Why w);
 
 // One write-log value. monostate is Python None; a string is the marker
 // "walk_offset" (the walk's own offset object, ruling P5).
@@ -155,6 +179,12 @@ public:
     void set_offset(std::optional<Vec3> xyz);
     // The reply to an ASK: an int (bools as 0/1), or nullopt for None.
     void answer(std::optional<int64_t> v);
+    // The other reply to WALK_START: Python found the walked system or a
+    // child instance-patched (Fire, CanFire ...) and ran the system's
+    // update_weapons itself. The kernel writes nothing more for it and goes
+    // on to the next system (counted as K1Why::InstancePatch). Throws
+    // std::logic_error unless the top session awaits a WALK_START reply.
+    void skip_walk();
 
     // Pops the top session, which must have returned DONE.
     void end();
@@ -168,6 +198,9 @@ public:
 
     struct Counts {
         int64_t records = 0, python_systems = 0, asks = 0;
+        // python_systems by K1Why: pump sessions, StartFiring sessions.
+        std::array<int64_t, static_cast<size_t>(K1Why::kCount)> pump_why{},
+            system_why{};
     };
     const Counts& counts() const { return counts_; }
     void reset_counts() { counts_ = Counts{}; }

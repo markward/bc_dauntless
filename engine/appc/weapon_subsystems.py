@@ -2878,32 +2878,27 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         d = self._fire_decide(target, offset)
         return False if d is None else self._fire_effect(target, offset, d)
 
-    def _projectile_module(self):
-        """The property's projectile module, or None (no module name, or it
-        does not import: announced once)."""
+    def _fire_decide(self, target, offset):
+        """None: no bolt. Else (world_dir, target_used, module): the module
+        decide resolved is the one the effect launches from (K1's decision
+        carries the live module, native_combat._k1_pulse_module). The target
+        stamps are part of the decision: they are made BEFORE the arc test
+        and persist when it fails."""
+        if not self.CanFire():
+            return None
         prop = self.GetProperty()
         script = prop.GetModuleName() if (prop is not None and hasattr(prop, "GetModuleName")) else ""
         if not script:
             return None
         import importlib
         try:
-            return importlib.import_module(script)
+            mod = importlib.import_module(script)
         except ImportError:
             # No fallback bolt (unlike torpedoes): the cannon stays dead, but
             # it says why instead of just never firing.
             _announce_once(("projectile", script),
                            "pulse module %s not loadable -- those cannons "
                            "will not fire" % script)
-            return None
-
-    def _fire_decide(self, target, offset):
-        """None: no bolt. Else (world_dir, target_used). The target stamps
-        are part of the decision: they are made BEFORE the arc test and
-        persist when it fails."""
-        if not self.CanFire():
-            return None
-        mod = self._projectile_module()
-        if mod is None:
             return None
         ship = self._climb_to_ship()
         # BC WeaponSystem::Fire picks the branch: the weapon's own target,
@@ -2930,17 +2925,16 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
             self._target = None
             self._target_offset = None
             world_dir = _emitter_forward_world(self, ship)
-        return (world_dir, target)
+        return (world_dir, target, mod)
 
     def _fire_effect(self, target, offset, decision) -> bool:
-        """`decision[0]` is the launch direction: a TGPoint3 (Python's
-        decision) or an (x, y, z) tuple (K1's). The module resolved for the
-        decision (K1: cached at registration, ruling P6) is in sys.modules,
-        so resolving it again imports nothing."""
+        """`decision` is (world_dir, target_used, module): the launch
+        direction a TGPoint3 (Python's decision) or an (x, y, z) tuple
+        (K1's)."""
         world_dir = decision[0]
         if not isinstance(world_dir, TGPoint3):
             world_dir = TGPoint3(*world_dir)
-        torp = _spawn_projectile(self, self._projectile_module(),
+        torp = _spawn_projectile(self, decision[2],
                                  drf_override=self.GetDamageRadiusFactor(),
                                  world_dir=world_dir)
         if torp is not None:

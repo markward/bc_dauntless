@@ -79,6 +79,18 @@ const char* k1_kind_name(K1Kind k) {
     return i < std::size(kNames) ? kNames[i] : "?";
 }
 
+const char* k1_why_name(K1Why w) {
+    static constexpr const char* kNames[] = {
+        "self_managed",   "overridden",       "instance_patch",
+        "posed_ship",     "posed_target",     "stub_or_unplaced",
+        "pulse_ship_target", "pulse_module",  "ammo_row",
+        "stale_row",      "unslotted_ship",   "gate",
+        "other"};
+    static_assert(std::size(kNames) == static_cast<size_t>(K1Why::kCount));
+    const auto i = static_cast<size_t>(w);
+    return i < std::size(kNames) ? kNames[i] : "?";
+}
+
 // ── The cursor ───────────────────────────────────────────────────────────────
 
 enum class St : int32_t {
@@ -182,6 +194,10 @@ struct K1Kernel::Session {
     bool awaiting_answer = false, has_answer = false;
     std::optional<int64_t> answer;
 };
+
+static void count_why(K1Kernel::Counts& c, bool pump, K1Why why) {
+    (pump ? c.pump_why : c.system_why)[static_cast<size_t>(why)] += 1;
+}
 
 static K1Undo undo_of(K1Undo::Type type, int64_t h, Field f) {
     K1Undo u;
@@ -325,6 +341,11 @@ private:
         if (kind == K1Kind::RUN_PYTHON) ++c_.python_systems;
         return r;
     }
+    // A whole system handed to Python, counted by why (pump or system).
+    K1Record run_python(K1Why why, St next, int64_t a, int64_t b, int64_t c) {
+        count_why(c_, s_.pump, why);
+        return emit(K1Kind::RUN_PYTHON, next, a, b, c);
+    }
     K1Record ask(const char* query, std::vector<int64_t> args, St next) {
         K1Record r = emit(K1Kind::ASK, next);
         r.query = query;
@@ -341,7 +362,8 @@ private:
     }
 
     // ── The pre-scan (ruling H, stage 1) ───────────────────────────────────
-    bool prescan(int64_t sys, int64_t pump_ship) const;
+    // nullopt: the walk can run natively; else why it cannot.
+    std::optional<K1Why> prescan(int64_t sys, int64_t pump_ship) const;
     // The pump's gates: true = StopFiring. Throws std::invalid_argument when
     // the mirror cannot answer (the system then runs in Python).
     bool pump_stops(int64_t sys, int64_t pump_ship);
@@ -384,30 +406,39 @@ private:
 // ship, every target-list entry (and, in the pump, the held target), a real
 // IsDead on each, no posed parts where the walk carries a mount or a target
 // offset, the ammo rows, the pulse module, and the chain table.
-bool Walker::prescan(int64_t sys, int64_t pump_ship) const {
+std::optional<K1Why> Walker::prescan(int64_t sys,
+                                     int64_t pump_ship) const {
     const SubsystemRow* s = subrow(sys);
-    if (!s) return false;
+    if (!s) return K1Why::StaleRow;
     const int64_t kind = s->weapon_kind;
     // Phaser, pulse and torpedo walks only; a tractor manages itself.
-    if (leaf_kind_of(kind) < 0 || s->pump_self_managed) return false;
+    if (leaf_kind_of(kind) < 0 || s->pump_self_managed)
+        return K1Why::SelfManaged;
+    // A class overriding a method the kernel stands in for (Task 5 fix).
+    if (s->k1_overridden) return K1Why::Overridden;
 
     // self.GetParentShip(): alive-testable, unrigged, placed.
     int64_t ship;
     try {
         ship = climb_to_ship_of(m_, sys);
     } catch (const std::invalid_argument&) {
-        return false;
+        return K1Why::StaleRow;
     }
     const ObjectRow* so = objrow(ship);
-    if (!so || !so->has_real_is_dead || so->has_posed_parts || !xform_ok(m_, *so))
-        return false;
+    if (!so) return K1Why::StaleRow;
+    if (!so->has_real_is_dead) return K1Why::StubOrUnplaced;
+    if (so->has_posed_parts) return K1Why::PosedShip;
+    if (!xform_ok(m_, *so)) return K1Why::StubOrUnplaced;
     if (pump_ship != -1) {  // the pump's own `ship` (the range gate)
         const ObjectRow* po = objrow(pump_ship);
-        if (!po || !xform_ok(m_, *po)) return false;
+        if (!po) return K1Why::StaleRow;
+        if (!xform_ok(m_, *po)) return K1Why::StubOrUnplaced;
         const int64_t held = s->_held_target;
         if (held != -1) {
             const ObjectRow* ho = objrow(held);
-            if (!ho || !ho->has_real_is_dead || !xform_ok(m_, *ho)) return false;
+            if (!ho) return K1Why::StaleRow;
+            if (!ho->has_real_is_dead || !xform_ok(m_, *ho))
+                return K1Why::StubOrUnplaced;
             // The phaser range gate runs AFTER can_detect (which writes its
             // memo and latch): everything it reads must be answerable here,
             // so no gate can throw once a side-effecting one has run.
@@ -417,7 +448,7 @@ bool Walker::prescan(int64_t sys, int64_t pump_ship) const {
             };
             if (kind == kPhaserSystem &&
                 (!set_ok(po->_containing_set) || !set_ok(ho->_containing_set)))
-                return false;
+                return K1Why::StaleRow;
         }
     }
 
@@ -428,47 +459,52 @@ bool Walker::prescan(int64_t sys, int64_t pump_ship) const {
     bool any_alive = false;
     for (const int64_t t : s->_target_list) {
         const ObjectRow* to = objrow(t);
-        if (!to || !to->has_real_is_dead || !xform_ok(m_, *to)) return false;
-        if (offset_aim && to->has_posed_parts) return false;
+        if (!to) return K1Why::StaleRow;
+        if (!to->has_real_is_dead || !xform_ok(m_, *to))
+            return K1Why::StubOrUnplaced;
+        if (offset_aim && to->has_posed_parts) return K1Why::PosedTarget;
         if (!to->_dead) any_alive = true;
     }
     // PulseWeapon.Fire(None) falls back to ship.GetTarget(), not mirrored.
-    if (kind == kPulseSystem && !any_alive) return false;
+    if (kind == kPulseSystem && !any_alive) return K1Why::PulseShipTarget;
 
     // GetFiringChains: the property (None reads []); group ids >= 0 (a
     // negative id raises in IsMemberOfGroup's shift).
     if (s->_property != -1) {
         const PropertyRow* p = m_.property(s->_property);
-        if (!p) return false;
+        if (!p) return K1Why::StaleRow;
         for (const auto& chain : p->_firing_chains)
             for (const int64_t g : chain)
-                if (g < 0) return false;
+                if (g < 0) return K1Why::Other;
     }
 
     // _children: rows of the system's leaf kind, under this system and ship.
     const int64_t leaf = leaf_kind_of(kind);
     for (const int64_t c : s->_children) {
         const SubsystemRow* w = subrow(c);
-        if (!w || w->weapon_kind != leaf) return false;
-        if (w->_parent_subsystem != sys) return false;
+        if (!w) return K1Why::StaleRow;
+        if (w->weapon_kind != leaf) return K1Why::Other;
+        if (w->k1_overridden) return K1Why::Overridden;
+        if (w->_parent_subsystem != sys) return K1Why::Other;
         try {
-            if (climb_to_ship_of(m_, c) != ship) return false;
+            if (climb_to_ship_of(m_, c) != ship) return K1Why::Other;
         } catch (const std::invalid_argument&) {
-            return false;
+            return K1Why::StaleRow;
         }
-        if (w->_property != -1 && !m_.property(w->_property)) return false;
+        if (w->_property != -1 && !m_.property(w->_property))
+            return K1Why::StaleRow;
         if (leaf == kPulseWeapon &&
             (!w->module_ok || w->_power_setting < 0 || w->_power_setting > 2))
-            return false;
+            return K1Why::PulseModule;
     }
 
     // TorpedoSystem._ammo_by_slot: [slot, Ammo handle, ...].
     if (kind == kTorpedoSystem) {
         const auto& slots = s->_ammo_by_slot;
         for (size_t i = 1; i < slots.size(); i += 2)
-            if (!m_.ammo(slots[i])) return false;
+            if (!m_.ammo(slots[i])) return K1Why::AmmoRow;
     }
-    return true;
+    return std::nullopt;
 }
 
 // host_loop._pump_held_weapons (HL:1006-1020), the gates after the
@@ -662,8 +698,8 @@ K1Record Walker::run() {
             const ObjectRow* so = objrow(ship);
             // A ship the mirror cannot name: Python runs each getter's body.
             if (!so)
-                return emit(K1Kind::RUN_PYTHON, St::PUMP_CONTINUE, -1, pos,
-                            s_.getter);
+                return run_python(K1Why::UnslottedShip, St::PUMP_CONTINUE, -1,
+                                  pos, s_.getter);
             // sys_ = getattr(ship, getter)() for getter in ("GetPhaserSystem",
             // "GetPulseWeaponSystem", "GetTractorBeamSystem",
             // "GetTorpedoSystem"); a stale ref reads None.
@@ -675,8 +711,8 @@ K1Record Walker::run() {
                 default: sys = so->_torpedo_system; break;
             }
             if (sys == kRefUnrepresentable)
-                return emit(K1Kind::RUN_PYTHON, St::PUMP_CONTINUE, sys, pos,
-                            s_.getter);
+                return run_python(K1Why::StaleRow, St::PUMP_CONTINUE, sys, pos,
+                                  s_.getter);
             const SubsystemRow* sr = subrow(sys);
             // if sys_ is None or not getattr(sys_, "_fire_held", False): continue
             if (!sr || !sr->_fire_held) {
@@ -685,15 +721,18 @@ K1Record Walker::run() {
             }
             // if getattr(sys_, "_pump_self_managed", False): update_weapons
             // -- and anything the walk could not represent: Python, whole.
-            if (sr->pump_self_managed || !prescan(sys, ship))
-                return emit(K1Kind::RUN_PYTHON, St::PUMP_CONTINUE, sys, pos,
-                            s_.getter);
+            if (sr->pump_self_managed)
+                return run_python(K1Why::SelfManaged, St::PUMP_CONTINUE, sys,
+                                  pos, s_.getter);
+            if (const std::optional<K1Why> why = prescan(sys, ship))
+                return run_python(*why, St::PUMP_CONTINUE, sys, pos,
+                                  s_.getter);
             bool stop;
             try {
                 stop = pump_stops(sys, ship);
             } catch (const std::invalid_argument&) {
-                return emit(K1Kind::RUN_PYTHON, St::PUMP_CONTINUE, sys, pos,
-                            s_.getter);
+                return run_python(K1Why::Gate, St::PUMP_CONTINUE, sys, pos,
+                                  s_.getter);
             }
             if (stop) return emit(K1Kind::STOP_SYSTEM, St::PUMP_CONTINUE, sys);
             // sys_.update_weapons(dt)
@@ -710,8 +749,8 @@ K1Record Walker::run() {
             break;
 
         case St::SYSTEM_START:
-            if (!prescan(s_.sys, -1))
-                return emit(K1Kind::RUN_PYTHON, St::WALK_END, s_.sys, -1, -1);
+            if (const std::optional<K1Why> why = prescan(s_.sys, -1))
+                return run_python(*why, St::WALK_END, s_.sys, -1, -1);
             s_.st = St::UW_DEAD_PRUNE;
             break;
 
@@ -1124,6 +1163,16 @@ void K1Kernel::answer(std::optional<int64_t> v) {
     Session& s = *sessions_.back();
     s.answer = v;
     s.has_answer = true;
+}
+
+void K1Kernel::skip_walk() {
+    if (sessions_.empty() || !sessions_.back()->awaiting_offset)
+        lost("skip_walk: no WALK_START is waiting for a reply");
+    Session& s = *sessions_.back();
+    s.awaiting_offset = false;
+    s.st = St::WALK_END;  // Python ran update_weapons; nothing to write
+    ++counts_.python_systems;
+    count_why(counts_, s.pump, K1Why::InstancePatch);
 }
 
 bool K1Kernel::answer_pending() const {

@@ -58,6 +58,9 @@ enum class Field : int32_t {
     // system, 3 tractor system, 4 torpedo system, 5 phaser bank, 6 pulse
     // weapon, 7 tractor beam, 8 torpedo tube.
     weapon_kind, pump_self_managed,
+    // k1_overridden: the class overrides a method the K1 kernel stands in
+    // for (Fire, CanFire, update_weapons ...); K1 hands its system to Python.
+    k1_overridden,
     // Subsystem: PoweredSubsystem
     _is_on,
     // Subsystem: WeaponSystem held-fire state (_target_list holds Object
@@ -131,7 +134,8 @@ struct SubsystemRow {
     std::vector<int64_t> _known_objects;  // sorted, unique (set semantics)
     std::vector<int64_t> _probe_ids;      // list order
     int64_t _cloak_state = 0;
-    int64_t weapon_kind = 0, pump_self_managed = 0, _is_on = 0;
+    int64_t weapon_kind = 0, pump_self_managed = 0, k1_overridden = 0,
+            _is_on = 0;
     int64_t _fire_held = 0, _held_target = -1;
     Vec3 _held_offset{0, 0, 0};
     bool held_offset_set = false;

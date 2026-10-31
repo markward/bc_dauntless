@@ -254,10 +254,11 @@ return False
       if aim_point is None: self._broadcast_weapon_fire_failed(); return False     # EVENT
       if not _in_torpedo_cone(self, self._climb_to_ship(), aim_point):            # WS:2927
           self._broadcast_weapon_fire_failed(); return False                       # EVENT
+  ------ DECISION ENDS ------   (phase 1b: _fire_decide returns (target,); the stamp below is the EFFECT's, and K1 logs no tube stamp)
+  if target is not None:
       self._target = target; self._target_offset = offset
   else:
       self._target = None; self._target_offset = None
-  ------ DECISION ENDS ------
   self._firing = True; now = _game_time()
   self._num_ready -= 1; self._last_fire_time = now
   parent = self.GetParentSubsystem(); if parent is not None: parent._last_system_fire_time = now
