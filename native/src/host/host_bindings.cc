@@ -10953,12 +10953,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
                 return v ? py::object(vec(*v)) : py::object(py::none());
             };
             // A contact's fields, CONTACT's layout from `bank` to
-            // `flush_dwell`. A queued one carries shields_block None when
-            // Python answered it (beam_contact evaluates its own).
-            auto contact = [&](py::list& items, const cb::K2Contact& c,
-                               bool queued) {
+            // `flush_dwell`. shields_block is None when the loop had none
+            // or Python answered it (an ASK): beam_contact evaluates its own.
+            auto contact = [&](py::list& items, const cb::K2Contact& c) {
                 py::object shields = py::none();
-                if (c.shields_block && !(queued && c.shields_asked))
+                if (c.shields_block && !c.shields_asked)
                     shields = py::bool_(*c.shields_block);
                 items.append(c.bank);
                 items.append(c.target);
@@ -10982,7 +10981,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
             for (const cb::K2Queued& q : r.contacts) {
                 py::list items;
                 items.append(q.at);
-                contact(items, q.contact, true);
+                contact(items, q.contact);
                 queued.append(py::tuple(items));
             }
             switch (r.kind) {
@@ -10993,7 +10992,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                 case cb::K2Kind::CONTACT: {
                     py::list items;
                     items.append(kind);
-                    contact(items, r.contact, false);
+                    contact(items, r.contact);
                     items.append(queued);
                     items.append(writes);
                     return py::tuple(items);

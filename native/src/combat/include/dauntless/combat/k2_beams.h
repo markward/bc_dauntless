@@ -88,8 +88,9 @@
 //        tier is "mesh", "sphere", "fallback" (the impact point IS
 //        target_pos) or "origin" (the impact point IS emitter_pos), so Python
 //        rebuilds Python's object identity. shields_block is None when the
-//        loop did not evaluate it (aim_unit None): beam_contact then
-//        evaluates its own. Python: hit_feedback.beam_contact(...) if
+//        loop did not evaluate it (aim_unit None) or Python answered it (an
+//        ASK; K2Contact::shields_asked): beam_contact then evaluates its
+//        own. Python: hit_feedback.beam_contact(...) if
 //        flush_dwell <= 0.0, else combat.apply_hit(...) if the damage is > 0
 //        (the damage arithmetic, PHASER_INTENSITY_SCALE[level],
 //        weapon_splash_radius and damage_hull stay Python). Only a damage
@@ -213,14 +214,22 @@
 //
 // A THROW from next() (a protocol error, or the invariant above) undoes the
 // field writes it made but never returned, in the mirror, and restores the
-// session -- cursor, pending answer -- to the state before the call. The
-// mirror's `_dwell` fields then still equal Python, so abandon() is safe.
-// Caveat: can_detect's memo and lock-break latch writes and the mount memo
-// are not undone: they are the writes Python's own calls make at the same
-// point (sensor_detect.h, weapon_geometry.h). The guarantee covers the
-// kernel's side only: once a record is returned its writes are in the
-// mirror, so Python applying them must not fail part-way (a plain float on
-// a pinned bank).
+// session -- cursor, pending answer, queue -- to the state before the call.
+// The mirror's logged fields then still equal Python, so abandon() is
+// safe. Caveat: can_detect's memo and lock-break latch writes and the mount
+// memo are not undone: they are the writes Python's own calls make at the
+// same point (sensor_detect.h, weapon_geometry.h). Once a record is
+// returned its writes are in the mirror and their undo is gone, so the
+// driver must get every one of them into Python whatever happens:
+//   - applying a write must not fail part-way (apply_writes' quiet
+//     setters: plain fields on pinned rows, and the `_firing` WakeField);
+//   - a queued contact's Python that RAISES (its presentation) is caught by
+//     the driver (native_combat._k2_deliver), which applies every write of
+//     the record still outstanding, in order, and re-raises; run_k2 then
+//     abandons the session with the mirror equal to Python;
+//   - a raise in the record's own effect comes after all its writes were
+//     applied.
+// abandon() itself only ends the session: it undoes nothing.
 //
 // THE CONTEXT (K2Context): per-step Python state that is not mirrored. Set
 // whole at begin and partly by set_context (combat_k2_set_ctx), which the
@@ -295,7 +304,9 @@
 // (StopFiring: THE OFFLINE STOP stands in for it. A class overriding it --
 // the phaser system's or a bank's -- is k1_overridden, K1's guard: the
 // system's sends its ship to Python, a bank's keeps the SYSTEM_STOP
-// record.)
+// record. K2 relies on K1's _k1_recheck_overrides, run at K1's entry -- the
+// pump, which precedes `cb.phasers` every tick -- to notice a class patch:
+// one made between the two steps is seen a tick late.)
 // It also lists the ship when the ship's own class, or the class of a bank's
 // `_target`, is one K2 never saw (no object of that class ever registered or
 // was reclassified), and runs the whole step in Python when that class is

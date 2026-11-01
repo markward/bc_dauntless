@@ -223,7 +223,9 @@ def counts() -> dict:
     instead of a CONTACT record of their own, "k2_logged_system_stop":
     offline systems with every bank idle stopped by logged writes instead
     of a SYSTEM_STOP record (round trips Task 3; k2_records counts only the
-    records returned)}
+    records returned). k2_batched_contacts is counted when the contact is
+    queued, so a kernel throw later in the same next() (which restores the
+    queue) or a Python raise while the queue is delivered can overcount}
     (k2_beams.h; posed_ship retired, part_stale its successor), plus
     "k2_python_steps" (steps run whole in Python) and
     "k2_python_step_reasons" ({"nested", "instances", "patched", "audit"}:
@@ -2774,8 +2776,11 @@ def apply_writes(writes, walk=None) -> None:
     NativeWakeField whose quiet write is WakeField.__set__: a dict store,
     then passive_state.wake on a sleeping bank, whose hook
     (passive_weapons.on_wake) is a dict read and an insort. A field added
-    to the kernel's log must keep its quiet write unable to raise. K2's log
-    (run_k2) uses the same encoding: `_dwell`, and an offline phaser
+    to the kernel's log must keep its quiet write unable to raise. (A raise
+    in K2's OTHER Python between a record's writes -- a queued contact's
+    presentation -- is handled by _k2_deliver: it applies the record's
+    outstanding writes before re-raising.) K2's log (run_k2) uses the same
+    encoding: `_dwell`, and an offline phaser
     system's stop (round trips Task 3) -- the system's `_fire_held`,
     `_held_target`, `_held_offset`, `_target_list` (a NEW list every time,
     built here) and `_last_group_fired`, each bank's `_firing` and
@@ -3490,7 +3495,7 @@ class _K2Context:
     view offset)."""
 
     __slots__ = ("instances", "version", "iids", "cheat", "player", "view",
-                 "asked_shields", "staged", "sent")
+                 "staged", "sent")
 
     def __init__(self, ship_instances, sent=None) -> None:
         # The key of the iids table the kernel holds: K2's (_k2_iids_sent),
@@ -3502,7 +3507,6 @@ class _K2Context:
         self.cheat = None
         self.player = None
         self.view = _UNSET
-        self.asked_shields = False
         self.staged = None
 
     def delta(self) -> dict:
@@ -3573,33 +3577,47 @@ def _k2_points(emitter_xyz, target_xyz, impact_xyz, normal_xyz, tier,
     return emitter, target_pos, point, normal, bubble
 
 
-def _k2_contact(rec, walk, cx, dt, ship_instances) -> None:
-    """A CONTACT record (a damage pulse): _k2_run_contact on its fields,
-    with run_k2's flag for a shields_block Python answered (an ASK)."""
-    _k2_run_contact(rec[1:15], walk, dt, ship_instances, cx.asked_shields)
+def _k2_contact(rec, walk, dt, ship_instances) -> None:
+    """A CONTACT record (a damage pulse): _k2_run_contact on its fields."""
+    _k2_run_contact(rec[1:15], walk, dt, ship_instances)
 
 
 def _k2_deliver(queued, writes, walk, dt, ship_instances):
     """A record's queued resting contacts (k2_beams.h, RESTING CONTACTS), in
     walk order, each after the writes logged before it (its `at`), BEFORE
-    the record's own effect. Returns the writes still to apply."""
+    the record's own effect. Returns the writes still to apply.
+
+    A contact's Python that raises (its presentation: beam_contact,
+    world_to_body, hit_vfx.spawn, GetMaxDamage, ...) must not strand the
+    rest of the record's writes: the kernel already made them in the mirror
+    and dropped their undo when it returned the record, and run_k2's
+    abandon only ends the session. So every write still outstanding in
+    this record is applied, in order, through apply_writes, and then the
+    contact's exception is re-raised (if that apply itself raises, its
+    exception propagates with the contact's as its __context__)."""
     done = 0
     for q in queued:
         at = q[0]
         if at > done:
             apply_writes(writes[done:at], walk)
             done = at
-        # A queued contact's shields_block is None when Python answered it.
-        _k2_run_contact(q[1:], walk, dt, ship_instances, False)
+        try:
+            # A queued contact's shields_block is None when Python
+            # answered it.
+            _k2_run_contact(q[1:], walk, dt, ship_instances)
+        except BaseException:
+            if done < len(writes):
+                apply_writes(writes[done:], walk)
+            raise
     return writes[done:] if done else writes
 
 
-def _k2_run_contact(c, walk, dt, ship_instances, asked) -> None:
+def _k2_run_contact(c, walk, dt, ship_instances) -> None:
     """One contact: host_loop._phaser_contact on the rebuilt points, the
     power level read from the loop's own system. The loop's shields_block
-    answer rides along unless the loop never evaluated it (None: no aim
-    direction) or Python answered it (an ASK, `asked`): beam_contact then
-    evaluates its own, as the Python path does."""
+    answer rides along unless the loop never evaluated it or Python answered
+    it (an ASK): the binding then sends None, and beam_contact evaluates its
+    own, as the Python path does. (A damage pulse never reads it.)"""
     (bh, th, sh, yh, emitter, target_pos, dist, _aim, impact, normal,
      tier, bubble, shields, flush) = c
     bank, target, ship, sys_ = (walk.obj(bh), walk.obj(th), walk.obj(sh),
@@ -3608,7 +3626,7 @@ def _k2_run_contact(c, walk, dt, ship_instances, asked) -> None:
                                      tier, bubble)
     hl = _k2_hl
     level = hl._phaser_level(sys_)
-    if shields is None or asked:
+    if shields is None:
         hl._phaser_contact(ship, sys_, bank, target, dist, dt, flush, level,
                            point, n, b, ship_instances)
     else:
@@ -3637,7 +3655,6 @@ def _k2_answer(rec, walk, cx, dt, ship_instances):
         return ((p.x, p.y, p.z), sub is not None)
     from engine.appc import combat
     if query == "shields_block":
-        cx.asked_shields = True
         return bool(combat.shields_block(walk.obj(args[0])))
     if query == "bubble":
         p = combat.shield_bubble_entry(walk.obj(args[0]), TGPoint3(*args[1]),
@@ -3689,19 +3706,15 @@ def run_k2(ships, dt, ship_instances, cx) -> None:
                 _heal_part_slots(ships, gen)
                 _h.combat_k2_answer(answer)
             elif kind == CONTACT:
-                _k2_contact(rec, walk, cx, dt, ship_instances)
-                cx.asked_shields = False
+                _k2_contact(rec, walk, dt, ship_instances)
             elif kind == BANK_STOP:
                 bank = walk.obj(rec[1])
                 walk.pin_bank(bank)
                 bank.StopFiring()
-                cx.asked_shields = False
             elif kind == SYSTEM_STOP:
                 walk.obj(rec[1]).StopFiring()
-                cx.asked_shields = False
             elif kind == RUN_PYTHON:
                 _k2_hl._phaser_step_ship(ships[rec[2]], dt, ship_instances)
-                cx.asked_shields = False
             elif kind == DONE:
                 break
             else:

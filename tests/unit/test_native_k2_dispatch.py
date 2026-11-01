@@ -1975,3 +1975,69 @@ def test_system_stop_override_runs_python(monkeypatch, where):
     _both(monkeypatch, GALAXY_VORCHA, script, 30)
     assert len(calls[False]) >= 25, calls
     assert calls[True] == calls[False]
+
+
+def test_raise_in_a_queued_contact_applies_the_records_later_writes(
+        monkeypatch):
+    """A queued resting contact's Python raises (its presentation, here
+    beam_contact itself). The kernel has already written every write of the
+    record into the mirror, so before the exception leaves run_k2 every
+    write still outstanding in that record is applied: the Galaxy's later
+    bank `_dwell` and the Vor'cha's offline stop (its system fields, and
+    the `_firing` write that wakes a sleeping bank). The exception
+    propagates, the session is abandoned and the mirror equals Python."""
+    raise_at = 40
+
+    class Boom(Exception):
+        pass
+
+    with monkeypatch.context() as mp:
+        w = World(mp, True, GALAXY_VORCHA, "k2_raise")
+        try:
+            g, v = w.ships["Galaxy"], w.ships["Vorcha"]
+            vsys = v.GetPhaserSystem()
+            vsys.TurnOff()
+            g.GetPhaserSystem().SetSingleFire(0)
+            g.GetPhaserSystem().StartFiring(v)
+            spied = hit_feedback.beam_contact
+            calls = []
+
+            def boom(**kw):
+                calls.append(w.n)
+                if w.n == raise_at and calls.count(raise_at) == 1:
+                    raise Boom()
+                return spied(**kw)
+            mp.setattr(hit_feedback, "beam_contact", boom)
+            log = []
+            _spy_k2_records(mp, log)
+            for _ in range(raise_at - 1):
+                w.tick()
+            # State the Vor'cha's stop must overwrite, pushed as Python does
+            # (not `_fire_held`: K1's pump would stop a held system first).
+            vsys._held_target = g
+            vsys._last_group_fired = 3
+            vbank = vsys.GetWeapon(0)
+
+            def sleep(_w):
+                if "_passive_slot" not in vbank.__dict__:
+                    passive_weapons._build(v)   # the passive walk's registry
+                passive_state.put_to_sleep(vbank)
+            del log[:]
+            with pytest.raises(Boom):
+                w.tick(before=sleep)
+            assert not _h.combat_k2_open()
+            # The raising record: the DONE carrying the Galaxy's contacts,
+            # with writes after the first contact's.
+            assert log[-1][0] == "DONE" and len(log[-1][2]) > 1, log
+            assert vsys.__dict__["_held_target"] is None
+            assert vsys.__dict__["_last_group_fired"] == -1
+            assert vsys.__dict__["_target_list"] == []
+            assert not passive_state.is_asleep(vbank)
+            nc.audit_mirror()
+            assert nc.audit_failures() == [], nc.audit_failures()
+            # ... and the fight goes on natively.
+            w.tick()
+            nc.audit_mirror()
+            assert nc.audit_failures() == [], nc.audit_failures()
+        finally:
+            w.close()
