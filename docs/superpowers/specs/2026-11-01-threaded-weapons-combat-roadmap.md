@@ -2,6 +2,8 @@
 
 **Status:** active programme, agreed with Mark 2026-11-01. This is a direction document, not a spec: each workstream below gets its own spec and plan when it starts.
 
+**Branch:** `project/combat_threading` is the project base (created at the K3+K4 tip, superseding the `perf/native-combat*` branches). Workstream branches fork from it and merge back into it. It merges to `main` once — when the native switch defaults ON and the first Python copy is retired (Mark, 2026-11-01): merging with the switch off would only add complication to `main`.
+
 **Builds on:** the native-combat programme (`docs/superpowers/specs/2026-10-30-native-combat-step-design.md`), milestones K1-K4.
 
 ## 1. The goal
@@ -54,7 +56,7 @@ Combat is down 45%, but the programme's 1 ms target is not met. Fire control is 
 
 ## 4. Workstreams, roughly in order
 
-- **A. Finish K1-K4.** Done 2026-11-01 except the merge: K3+K4 live-verified, gate green on `perf/native-combat-k3` (which contains K2). Merge K3, not K2 alone — the K2 branch lacks the test-isolation fixes the gate needed.
+- **A. Finish K1-K4.** Done 2026-11-01: K3+K4 live-verified, full gate green (with the new engine-class guard) on `b097d9948`.
 - **B. Measure before moving more.**
   - Per-part timers inside fire control: the hand-off, Python answers to C++ questions, ships done wholly in Python, applying results, actual firing (projectile creation, events, sounds).
   - A breakdown of the ~4 ms per tick outside combat and AI (motion, subsystems, game loop).
