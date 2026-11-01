@@ -831,32 +831,48 @@ def test_handler_drops_the_failing_tube_row_mid_walk(monkeypatch):
 
 
 def test_handler_drops_the_dumb_tube_row_mid_walk(monkeypatch):
-    """The dumb-fire branch with the tube's row gone: StopFiring on an
-    empty tube (BANK_STOP) runs a handler-free effect, so the row is dropped
-    from StopFiring itself; the walk's `GetNumTargets() == 0 and
-    weapon.IsDumbFire()` must still ask Python, and FireDumb follows."""
+    """The dumb-fire branch with the tube's row gone: a FIRING tube that
+    cannot fire is stopped by a BANK_STOP record (an idle one's stop is
+    logged writes, round trips Task 2, and StopFiring itself is guarded, so
+    the row is dropped right after that record's Python, at run_k1's
+    re-pin); the walk's `GetNumTargets() == 0 and weapon.IsDumbFire()` must
+    still ask Python, and FireDumb follows. Per tick equal to Python."""
     ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),)
-    stops = {}
+    the_tube, pending, asks = [], [], []
+    real_next = _h.combat_k1_next
+    names = {v: k for k, v in _h.combat_k1_kinds().items()}
+
+    def spy():
+        rec = real_next()
+        kind = names[rec[0]]
+        if kind == "BANK_STOP" and the_tube \
+                and rec[1] == the_tube[0].__dict__.get("_nslot"):
+            pending.append(the_tube[0])
+        elif kind == "ASK":
+            asks.append(rec[1])
+        return rec
+    real_pin = nc._K1Walk.pin_system
+
+    def pin_system(walk, system):
+        while pending:
+            nc._drop(pending.pop())
+        return real_pin(walk, system)
+    monkeypatch.setattr(_h, "combat_k1_next", spy)
+    monkeypatch.setattr(nc._K1Walk, "pin_system", pin_system)
 
     def script(w, t):
         torps = w.ships["Galaxy"].GetTorpedoSystem()
         if t == 2:
             tube = torps.GetWeapon(0)
-            tube.SetNumReady(0)             # CanFire refuses: BANK_STOP
-            real = ws.TorpedoTube.StopFiring
-            log = stops[w.native] = []
-
-            def stop_and_drop(self, _real=real):
-                if self is tube and not log:
-                    log.append(w.label(self))
-                    nc._drop(self)  # both arms: harmless when off
-                return _real(self)
-            monkeypatch.setattr(ws.TorpedoTube, "StopFiring", stop_and_drop)
+            tube.SetNumReady(0)             # CanFire refuses
+            tube._firing = True             # its stop is a BANK_STOP record
+            the_tube[:] = [tube]
             torps.StartFiring(None)
-            monkeypatch.undo()
+        elif t == 3:
+            the_tube[:] = []
 
-    ref, _nat, counts = _both(monkeypatch, ships, script, 30)
-    assert stops[False] and stops[True] == stops[False]
+    _ref, _nat, counts = _both(monkeypatch, ships, script, 30)
+    assert "is_dumb" in asks, asks
     assert counts["k1_asks"] > 0, counts
 
 
@@ -1283,6 +1299,12 @@ def test_offset_value_matches_live_held_offset(monkeypatch):
         check(torps, _hexes3(held))                           # held
         torps._held_offset = (300.0, -9.0, 4.0)
         check(torps, None)                                    # unset
+        signed = TGPoint3(-0.0, 0.0, -0.0)
+        torps._held_offset = signed
+        check(torps, _hexes3(signed))                         # -0.0 kept
+        nan = TGPoint3(float("nan"), 1.0, float("nan"))
+        torps._held_offset = nan
+        check(torps, _hexes3(nan))                            # NaN kept
         torps._held_offset = held
         manual = TGPoint3(2.0 / 7.0, -5.0 / 11.0, 13.0 / 3.0)
         galaxy.set_manual_target_offset(manual)
@@ -1473,3 +1495,351 @@ def test_no_getattr_stub_on_live_held_offset_path(monkeypatch):
         assert reached == [], reached
     finally:
         w.close()
+
+
+# ── Round trips Task 2: beam sustain and idle stops as logged writes ─────────
+
+def _spy_fire_records(mp, log):
+    """Wrap combat_k1_next: log (kind name, the named bank's object or None,
+    the bank's _firing as Python holds it NOW, the FIRE decision or None)
+    for every record, before run_k1 applies its writes."""
+    real = _h.combat_k1_next
+    names = {v: k for k, v in _h.combat_k1_kinds().items()}
+
+    def spy():
+        rec = real()
+        kind = names[rec[0]]
+        bank = None
+        if kind in ("FIRE", "BANK_STOP", "FIRE_FAILED", "FIRE_DUMB"):
+            bank = nc._registry.get(rec[1])
+        firing = bank.__dict__.get("_firing") if bank is not None else None
+        log.append((kind, bank, firing, rec[3] if kind == "FIRE" else None))
+        return rec
+    mp.setattr(_h, "combat_k1_next", spy)
+
+
+def _is_beam_decision(d):
+    return d is not None and len(d) == 1 and type(d[0]) is bool
+
+
+def test_beam_sustain_logged_not_recorded(monkeypatch):
+    """A Fire on a beam that is ALREADY firing is three field writes in
+    Python (_firing, _target, _target_offset): no sound, no event. K1 logs
+    them and returns no record (k1_logged.beam_sustain counts them); every
+    beam FIRE record left is an edge. Per tick equal to Python."""
+    log = []
+    _spy_fire_records(monkeypatch, log)
+    _ref, _nat, counts = _both(monkeypatch, _DUEL, _phaser_duel, 240)
+    beams = [d for kind, _b, _f, d in log
+             if kind == "FIRE" and _is_beam_decision(d)]
+    assert beams, log[:20]
+    assert all(d == (False,) for d in beams), beams
+    assert counts["k1_logged"]["beam_sustain"] > 0, counts
+    assert counts["k1_python_systems"] == 0, counts
+
+
+def test_beam_edge_still_records(monkeypatch):
+    """The was-not-firing edge keeps its FIRE record: the fire sound and
+    ET_WEAPON_FIRED are Python's. The sound plays exactly as often ON as
+    OFF (the events are compared by _both), once per beam edge record."""
+    log = []
+    _spy_fire_records(monkeypatch, log)
+    sounds = {}
+    real = ws._EnergyWeaponFireMixin._play_fire_sfx
+
+    def script(w, t):
+        if t == 0:
+            sounds[w.native] = []
+
+            def sfx(self, _log=sounds[w.native], _w=w):
+                _log.append((_w.n, _w.label(self)))
+                return real(self)
+            monkeypatch.setattr(ws._EnergyWeaponFireMixin, "_play_fire_sfx",
+                                sfx)
+        _phaser_duel(w, t)
+        if t == 239:
+            monkeypatch.setattr(ws._EnergyWeaponFireMixin, "_play_fire_sfx",
+                                real)
+
+    ref, _nat, _counts = _both(monkeypatch, _DUEL, script, 240)
+    assert "fired" in _kinds(ref)
+    assert sounds[False] and sounds[True] == sounds[False]
+    edges = [b for kind, b, _f, d in log if kind == "FIRE" and d == (False,)]
+    assert len(edges) == len(sounds[True]), (len(edges), len(sounds[True]))
+
+
+def test_logged_target_offset_is_the_walk_object(monkeypatch):
+    """Review Focus 2: a sustained beam's logged stamp, then a LATER record
+    of the same walk (another bank's edge FIRE) runs Python -- its
+    ET_WEAPON_FIRED handler reads the sustained bank's _target_offset. It
+    must already be this walk's offset OBJECT (identity, not a copy, and
+    not last tick's): the held offset is a new object every tick."""
+    seen = {}
+
+    def script(w, t):
+        g = w.ships["Galaxy"].GetPhaserSystem()
+        if t == 0:
+            obs = seen[w.native] = []
+            g.SetSingleFire(0)
+            g.StartFiring(w.ships["Vorcha"], TGPoint3(0.5, 1.0, -0.25))
+
+            def hook(evt, _w=w, _g=g, _obs=obs):
+                if evt.GetEventType() != App.ET_WEAPON_FIRED:
+                    return
+                src = evt.GetSource()
+                if not isinstance(src, ws.PhaserBank) \
+                        or src.GetParentSubsystem() is not _g:
+                    return
+                for i in range(_g.GetNumWeapons()):
+                    other = _g.GetWeapon(i)
+                    if other is src or not other.__dict__.get("_firing"):
+                        continue
+                    off = other.__dict__.get("_target_offset")
+                    _obs.append((_w.n, _w.label(src), _w.label(other),
+                                 off is _g.__dict__.get("_held_offset"),
+                                 _w.label(other.__dict__.get("_target"))))
+            w.hooks.append(hook)
+        elif t % 40 == 20:
+            # One bank drops out; it relights (an edge) while the others
+            # sustain, some before it in the walk.
+            g.GetWeapon((t // 40) % g.GetNumWeapons()).StopFiring()
+        # A new offset object every tick (the same value).
+        g._held_offset = TGPoint3(0.5, 1.0, -0.25)
+
+    _ref, _nat, counts = _both(monkeypatch, _DUEL, script, 700)
+    assert seen[True] == seen[False]
+    # Some edge followed a sustain stamped in the same walk.
+    assert any(o[3] for o in seen[False]), seen[False][:20]
+    assert counts["k1_logged"]["beam_sustain"] > 0, counts
+
+
+def _sleepy_duel(monkeypatch, native, ticks):
+    """The Galaxy holds its phasers (all banks, not single fire) on the
+    Vor'cha with bank 0 disabled (CanFire always refuses: idle stops).
+    Bank 0 is put to sleep right before each pump, after the passive
+    weapons walk, so only the pump's writes can wake it. Returns (per-tick asleep-after-pump, world log,
+    counts or None)."""
+    with monkeypatch.context() as mp:
+        w = World(mp, native, _DUEL, "k1_sleepy_%d" % native)
+        try:
+            galaxy, vorcha = w.ships["Galaxy"], w.ships["Vorcha"]
+            g = galaxy.GetPhaserSystem()
+            bank = g.GetWeapon(0)
+            bank.SetDisabledPercentage(1.5)
+            g.SetSingleFire(0)
+            g.StartFiring(vorcha)
+            asleep = []
+            for _t in range(ticks):
+                w.n += 1
+                w.clock[0] += DT
+                passive_weapons.advance(w.order, DT)
+                if not passive_state.is_asleep(bank):
+                    passive_state.put_to_sleep(bank)
+                with step_memo.combat_step():
+                    host_loop._pump_held_weapons(list(w.order), DT)
+                asleep.append(passive_state.is_asleep(bank))
+                w.record()
+            counts = None
+            if native:
+                counts = nc.counts()
+                nc.audit_mirror()
+                assert nc.audit_failures() == [], nc.audit_failures()
+            return asleep, w.log, counts
+        finally:
+            w.close()
+
+
+def test_idle_bank_stop_wakes_sleeping_bank(monkeypatch):
+    """Review Focus 3: an idle bank's stop is logged writes now, and
+    `_firing` is a WakeField -- the logged write still wakes the sleeping
+    bank through apply_writes' quiet setter, exactly as Python's
+    `self._firing = False` in StopFiring does. Per tick equal to Python."""
+    ref_asleep, ref_log, _ = _sleepy_duel(monkeypatch, False, 120)
+    nat_asleep, nat_log, counts = _sleepy_duel(monkeypatch, True, 120)
+    assert False in ref_asleep and True in ref_asleep, ref_asleep
+    assert nat_asleep == ref_asleep
+    assert nat_log == ref_log
+    assert counts["k1_logged"]["idle_bank_stop"] > 0, counts
+
+
+class _Loop:
+    def __init__(self, log, label):
+        self.log, self.label = log, label
+
+    def Stop(self):
+        self.log.append(self.label)
+
+
+def test_firing_bank_stop_still_records(monkeypatch):
+    """A FIRING bank's stop keeps its BANK_STOP record: Python stops the
+    loop sound. Every BANK_STOP record names a bank Python holds firing,
+    and the loop stops happen exactly as often, in the same order, ON as
+    OFF."""
+    log = []
+    _spy_fire_records(monkeypatch, log)
+    stops = {}
+    real = ws._EnergyWeaponFireMixin._play_fire_sfx
+
+    def script(w, t):
+        if t == 0:
+            stops[w.native] = []
+
+            def sfx(self, _log=stops[w.native], _w=w):
+                self._loop_handle = _Loop(_log, (_w.n, _w.label(self)))
+            monkeypatch.setattr(ws._EnergyWeaponFireMixin, "_play_fire_sfx",
+                                sfx)
+        _phaser_duel(w, t)
+        if t in (100, 300, 500):
+            # The lit bank becomes unable to fire: K1 stops it, firing.
+            g = w.ships["Galaxy"].GetPhaserSystem()
+            for i in range(g.GetNumWeapons()):
+                if g.GetWeapon(i).__dict__.get("_firing"):
+                    g.GetWeapon(i).SetDisabledPercentage(1.5)
+                    break
+        if t == 699:
+            monkeypatch.setattr(ws._EnergyWeaponFireMixin, "_play_fire_sfx",
+                                real)
+
+    _ref, _nat, counts = _both(monkeypatch, _DUEL, script, 700)
+    assert stops[False] and stops[True] == stops[False]
+    bank_stops = [f for kind, _b, f, _d in log if kind == "BANK_STOP"]
+    assert bank_stops, log[:20]
+    assert all(f for f in bank_stops), bank_stops
+
+
+_TRACED = ("_firing", "_beam_on_countdown", "_target", "_target_offset")
+
+
+def _trace_value(w, name, value):
+    if name == "_target":
+        return w.label(value)
+    if name == "_target_offset":
+        if value is None:
+            return None
+        held = any(value is g.__dict__.get("_held_offset") for g in w.systems)
+        return (_hexes3(value) if isinstance(value, TGPoint3)
+                else repr(value), held)
+    return _t(value)
+
+
+def test_bank_write_order_matches_python(monkeypatch):
+    """Per bank class (a disabled phaser bank among them), the pump's writes of _firing, _beam_on_countdown,
+    _target and _target_offset on every leaf, in order, with their values
+    (offsets by .hex() and walk-object identity): ON equal to OFF. Python
+    writes go through the class's __setattr__; K1's logged writes through
+    apply_writes' quiet setters, traced at the setter. Phasers, cannons and
+    tubes all walk (_volleys), and both new logged paths run."""
+    traces = {}
+    real_quiet = nc._quiet_setter
+    real_pump = host_loop._pump_held_weapons
+    state = {"w": None, "on": False, "leaves": set()}
+
+    def note(obj, name, value):
+        w = state["w"]
+        if state["on"] and name in _TRACED and id(obj) in state["leaves"]:
+            traces[w.native].append((w.n, type(obj).__name__, w.label(obj),
+                                     name, _trace_value(w, name, value)))
+
+    def quiet(cls, name):
+        setter, kind = real_quiet(cls, name)
+
+        def traced(obj, value, _s=setter, _n=name):
+            note(obj, _n, value)
+            return _s(obj, value)
+        return traced, kind
+
+    def pump(ships, dt):
+        state["on"] = True
+        try:
+            return real_pump(ships, dt)
+        finally:
+            state["on"] = False
+
+    for cls in (ws.PhaserBank, ws.PulseWeapon, ws.TorpedoTube):
+        real_set = cls.__setattr__
+
+        def setattr_(self, name, value, _real=real_set):
+            note(self, name, value)
+            _real(self, name, value)
+        monkeypatch.setattr(cls, "__setattr__", setattr_)
+    monkeypatch.setattr(nc, "_quiet_setter", quiet)
+    monkeypatch.setattr(host_loop, "_pump_held_weapons", pump)
+
+    def script(w, t):
+        if t == 0:
+            state["w"] = w
+            state["leaves"] = {id(leaf) for leaf in w.leaves}
+            traces[w.native] = []
+            # A phaser bank that cannot fire, all banks tried: idle energy
+            # bank stops too.
+            g = w.ships["Galaxy"].GetPhaserSystem()
+            g.GetWeapon(0).SetDisabledPercentage(1.5)
+            g.SetSingleFire(0)
+        _volleys(w, t)
+
+    _ref, _nat, counts = _both(monkeypatch, _DUEL, script, 240)
+    assert traces[True] == traces[False]
+    classes = {c for _n, c, _l, _f, _v in traces[False]}
+    assert classes == {"PhaserBank", "PulseWeapon", "TorpedoTube"}, classes
+    assert any(f == "_beam_on_countdown" for _n, _c, _l, f, _v
+               in traces[False]), "no energy bank stop"
+    assert counts["k1_logged"]["beam_sustain"] > 0, counts
+    assert counts["k1_logged"]["idle_bank_stop"] > 0, counts
+
+
+def test_ship_class_without_is_using_target_offset_hands_walk_back(
+        monkeypatch):
+    """A ShipClass whose class no longer resolves is_using_target_offset
+    (deleted): Python's probe is None and it reads the HELD offset; the
+    kernel's row says ShipClass + Manual Aim. The walk check must hand such
+    a walk back (Python answers it) -- the cannons' stamps and the mirror
+    then agree with Python."""
+    monkeypatch.delattr(ShipClass, "is_using_target_offset")
+
+    def script(w, t):
+        v = w.ships["Vorcha"]
+        if t == 0:
+            v.set_manual_target_offset(TGPoint3(2.0, -3.0, 0.5))
+            v.GetPulseWeaponSystem().StartFiring(w.ships["Galaxy"],
+                                                 TGPoint3(0.5, 1.0, -0.25))
+
+    _ref, _nat, counts = _both(monkeypatch, _DUEL, script, 120)
+    assert counts["k1_records"] > 0, counts
+
+
+@pytest.mark.parametrize("where", ["class", "instance"])
+def test_stop_firing_override_runs_python(monkeypatch, where):
+    """While the Python copies exist, a bank's StopFiring -- which K1 now
+    stands in for on an idle bank (logged writes) -- is guarded: patched on
+    the class (k1_overridden) or on the instance (the walk check), Python's
+    own runs, exactly as often ON as OFF."""
+    calls = {}
+
+    def counting(real, key):
+        def f(self):
+            calls[key].append(self.GetName())
+            return real(self)
+        return f
+
+    def script(w, t):
+        g = w.ships["Galaxy"].GetPhaserSystem()
+        if t == 0:
+            key = w.native
+            calls[key] = []
+            bank = g.GetWeapon(0)
+            bank.SetDisabledPercentage(1.5)     # idle stops
+            if where == "class":
+                monkeypatch.setattr(ws.PhaserBank, "StopFiring",
+                                    counting(ws.PhaserBank.StopFiring, key))
+            else:
+                f = counting(ws.PhaserBank.StopFiring, key)
+                monkeypatch.setattr(bank, "StopFiring", lambda: f(bank),
+                                    raising=False)
+            g.SetSingleFire(0)
+            g.StartFiring(w.ships["Vorcha"])
+        if t == 119:
+            monkeypatch.undo()
+
+    _both(monkeypatch, _DUEL, script, 120)
+    assert calls[False], calls
+    assert calls[True] == calls[False]

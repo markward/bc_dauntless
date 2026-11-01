@@ -56,6 +56,17 @@
 // carries the writes made since the previous record as its LAST element, and
 // Python applies them before it acts on the record.
 //
+// Two effects are pure field writes and are logged too, with no record
+// (round trips, spec 2026-11-01 §4.2-4.3): a Fire on a beam ALREADY firing
+// (`_firing = True; _target = target; _target_offset = <the walk's offset
+// object>`, _EnergyWeaponFireMixin._fire_effect with was_firing), and a
+// StopFiring on a bank that is NOT firing (its class's writes: energy bank
+// `_firing = False; _beam_on_countdown = 0.0`; tube `_firing = False`;
+// pulse `_firing = False; _target = None; _target_offset = None`). The
+// was-not-firing beam edge (sound, ET_WEAPON_FIRED) and a firing bank's
+// stop (its loop sound) stay FIRE and BANK_STOP records. `_firing` is a
+// WakeField: the driver's quiet setter still wakes a sleeping bank.
+//
 // PINNING (the Python driver's contract; Task 5's run_k1). Python's walk
 // holds strong references in its locals (the system, `target`, the retry
 // snapshot); the kernel holds only handles. So for as long as a session's
@@ -304,6 +315,11 @@ public:
         int64_t posed_walks = 0, posed_target_aims = 0;
         // Walks started with no WALK_START record (k1_logged.walk_start).
         int64_t logged_walk_start = 0;
+        // Records not returned because their Python is pure field writes,
+        // logged instead (round trips Task 2): a Fire on a beam already
+        // firing (k1_logged.beam_sustain) and a StopFiring on a bank that
+        // is not firing (k1_logged.idle_bank_stop).
+        int64_t logged_beam_sustain = 0, logged_idle_bank_stop = 0;
     };
     const Counts& counts() const { return counts_; }
     void reset_counts() { counts_ = Counts{}; }

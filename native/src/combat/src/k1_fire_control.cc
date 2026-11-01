@@ -292,12 +292,15 @@ private:
     }
     // Every write reads the value it replaces first (a gone row throws there,
     // before anything is changed), writes the mirror, then logs.
-    void write_timer(int64_t h, double v) {
-        K1Undo u = undo_of(K1Undo::Type::F, h, Field::_fire_timer);
-        u.d = m_.get_f(h, Field::_fire_timer);
-        m_.set_f(h, Field::_fire_timer, v);
+    void write_float(int64_t h, Field f, const char* name, double v) {
+        K1Undo u = undo_of(K1Undo::Type::F, h, f);
+        u.d = m_.get_f(h, f);
+        m_.set_f(h, f, v);
         s_.undo.push_back(std::move(u));
-        log(h, "_fire_timer", v);
+        log(h, name, v);
+    }
+    void write_timer(int64_t h, double v) {
+        write_float(h, Field::_fire_timer, "_fire_timer", v);
     }
     void write_i(int64_t h, Field f, const char* name, int64_t v, K1Value lv) {
         K1Undo u = undo_of(K1Undo::Type::I, h, f);
@@ -336,6 +339,8 @@ private:
         log(h, "_target_list", std::move(v));
     }
     // `_target_offset = offset` (the walk's offset object, ruling P5) or None.
+    // The walk's object is stamped whatever it is (a beam stamps it raw); the
+    // mirror reads it as the pushed OFFSET would: unset unless a TGPoint3.
     void write_target_offset(int64_t h, bool walk_offset) {
         K1Undo u = undo_of(K1Undo::Type::Offset, h, Field::_target_offset);
         const SubsystemRow* r = subrow(h);
@@ -344,13 +349,44 @@ private:
         u.v = r->_target_offset;
         s_.undo.push_back(std::move(u));
         if (walk_offset) {
-            const Vec3& o = *s_.offset;
-            m_.set_fv(h, Field::_target_offset, {o[0], o[1], o[2]});
+            if (s_.offset) {
+                const Vec3& o = *s_.offset;
+                m_.set_fv(h, Field::_target_offset, {o[0], o[1], o[2]});
+            } else {
+                m_.set_fv(h, Field::_target_offset, {});
+            }
             log(h, "_target_offset", K1WalkOffset{s_.walk_no, s_.sys});
         } else {
             m_.set_fv(h, Field::_target_offset, {});
             log(h, "_target_offset", std::monostate{});
         }
+    }
+
+    // `weapon.StopFiring()` on a bank that is NOT firing is pure writes:
+    // logged in its class's order (round trips §4.3) and true. A firing bank
+    // (the loop sound) or a row gone: false, the caller emits BANK_STOP.
+    bool idle_stop(int64_t h) {
+        const SubsystemRow* r = subrow(h);
+        if (!r || r->_firing) return false;
+        switch (r->weapon_kind) {
+            case kPhaserBank:  // _EnergyWeaponFireMixin.StopFiring (WS:905)
+                write_flag(h, Field::_firing, "_firing", false);
+                write_float(h, Field::_beam_on_countdown, "_beam_on_countdown",
+                            0.0);
+                break;
+            case kTorpedoTube:  // Weapon.StopFiring (WS:1192)
+                write_flag(h, Field::_firing, "_firing", false);
+                break;
+            case kPulseWeapon:  // PulseWeapon.StopFiring (WS:2971)
+                write_flag(h, Field::_firing, "_firing", false);
+                write_target(h, -1);
+                write_target_offset(h, false);
+                break;
+            default:
+                return false;
+        }
+        ++c_.logged_idle_bank_stop;
+        return true;
     }
 
     // ── Records ─────────────────────────────────────────────────────────────
@@ -1054,14 +1090,26 @@ K1Record Walker::run() {
             // later gate refuses (Task 3 ruling).
             if (cf.clear_depleted)
                 write_flag(w, Field::_depleted, "_depleted", false);
-            if (!cf.ok) return emit(K1Kind::BANK_STOP, St::TF_STOPPED, w);
+            if (!cf.ok) {
+                // weapon.StopFiring(); return False
+                if (idle_stop(w)) {
+                    try_returns(false);
+                    break;
+                }
+                return emit(K1Kind::BANK_STOP, St::TF_STOPPED, w);
+            }
             s_.fire_target = s_.target;
             s_.st = St::TF_FIRE;
             break;
         }
         case St::TF_CANFIRE_ANSWER:
-            if (!take_answer())
+            if (!take_answer()) {
+                if (idle_stop(s_.tf_weapon)) {
+                    try_returns(false);
+                    break;
+                }
                 return emit(K1Kind::BANK_STOP, St::TF_STOPPED, s_.tf_weapon);
+            }
             s_.fire_target = s_.target;
             s_.st = St::TF_FIRE;
             break;
@@ -1086,6 +1134,17 @@ K1Record Walker::run() {
             }
             switch (o.what) {
                 case Outcome::What::Fire: {
+                    if (o.d.shape == K1Decision::Shape::Beam &&
+                        o.d.was_firing) {
+                        // _fire_effect on a beam already firing: three
+                        // writes, no sound, no event (WS:895-898).
+                        write_flag(w, Field::_firing, "_firing", true);
+                        write_target(w, s_.fire_target);
+                        write_target_offset(w, true);
+                        ++c_.logged_beam_sustain;
+                        s_.st = St::TF_FIRED;
+                        break;
+                    }
                     K1Record r =
                         emit(K1Kind::FIRE, St::TF_FIRED, w, s_.fire_target);
                     r.decision = o.d;

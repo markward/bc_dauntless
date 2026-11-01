@@ -231,6 +231,15 @@ struct World {
     }
 };
 
+// The writes of `r` on `who`, in order, as w.writes() spells them.
+std::vector<std::string> writes_on(const World& w, const K1Record& r,
+                                   const std::string& who) {
+    std::vector<std::string> out;
+    for (const std::string& s : w.writes(r))
+        if (s.rfind(who + ".", 0) == 0) out.push_back(s);
+    return out;
+}
+
 }  // namespace
 
 TEST(K1, GateOrderStopsBeforeWalk) {
@@ -328,7 +337,8 @@ TEST(K1, TimerGateAndForceUpdate) {
         EXPECT_EQ(w.brief(f), "FIRE b0@t");
         EXPECT_EQ(w.writes(f)[1], "b0._fire_timer=0.33000000000000002");
     }
-    {   // A lit beam ignores the threshold.
+    {   // A lit beam ignores the threshold (its sustain is logged writes,
+        // round trips Task 2: no FIRE record).
         World w;
         const int64_t ship = w.ship("ship");
         const int64_t t = w.object("t", 0.0, 50.0, 0.0);
@@ -338,8 +348,12 @@ TEST(K1, TimerGateAndForceUpdate) {
         w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
         w.step();
         const K1Record f = w.step();
-        EXPECT_EQ(w.brief(f), "FIRE b0@t");
-        EXPECT_TRUE(f.decision.was_firing);
+        EXPECT_EQ(w.brief(f), "DONE");
+        const auto b0w = writes_on(w, f, "b0");
+        ASSERT_GE(b0w.size(), 3u);
+        EXPECT_EQ(b0w[1], "b0._fire_timer=0");
+        EXPECT_EQ(b0w[2], "b0._firing=True");
+        EXPECT_EQ(w.k.counts().logged_beam_sustain, 1);
     }
     {   // A passed gate resets the timer even when CanFire then refuses.
         World w;
@@ -351,11 +365,14 @@ TEST(K1, TimerGateAndForceUpdate) {
         w.m.set_i(sys, Field::_force_update, 1);
         w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
         w.step();
-        const K1Record s = w.step();
-        EXPECT_EQ(w.brief(s), "BANK_STOP b0");
-        EXPECT_EQ(w.writes(s).back(), "b0._fire_timer=0");
+        // The idle bank's StopFiring is logged (round trips Task 2).
         const K1Record done = w.step();
+        EXPECT_EQ(w.brief(done), "DONE");
         EXPECT_EQ(w.writes(done), (std::vector<std::string>{
+                                      "sys._group_fire_mode=0",
+                                      "b0._fire_timer=0.33000000000000002",
+                                      "b0._fire_timer=0", "b0._firing=False",
+                                      "b0._beam_on_countdown=0",
                                       "b0._target=None",
                                       "sys._force_update=False"}));
     }
@@ -375,9 +392,15 @@ TEST(K1, DepletedClearIsLoggedEvenWhenRefused) {
     w.m.set_i(sys, Field::_force_update, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
     w.step();
+    // b0's stop is logged (idle, round trips Task 2): its writes ride b1's
+    // FIRE, the clear before the stop.
     const K1Record s = w.step();
-    EXPECT_EQ(w.brief(s), "BANK_STOP b0");
-    EXPECT_EQ(w.writes(s).back(), "b0._depleted=False");
+    EXPECT_EQ(w.brief(s), "FIRE b1@t");
+    const auto b0w = writes_on(w, s, "b0");
+    const auto at = std::find(b0w.begin(), b0w.end(), "b0._depleted=False");
+    ASSERT_NE(at, b0w.end());
+    ASSERT_NE(at + 1, b0w.end());
+    EXPECT_EQ(*(at + 1), "b0._firing=False");
     EXPECT_EQ(w.m.get_i(b0, Field::_depleted), 0);
 }
 
@@ -447,14 +470,15 @@ TEST(K1, SingleFireReseedsTimers) {
     v.m.set_i(vb1, Field::_firing, 1);
     v.k.begin_pump({vship}, kDt, 10.0, false, 0.0);
     v.step();
-    const K1Record f = v.step();
-    EXPECT_EQ(v.brief(f), "FIRE b1@t");
-    EXPECT_EQ(v.writes(f), (std::vector<std::string>{
-                               "b1._fire_timer=0.016666666666666666",
-                               "b1._fire_timer=0"}));
+    // The lit beam sustains: logged writes, no FIRE record (Task 2).
     const K1Record vdone = v.step();
-    EXPECT_EQ(v.writes(vdone),
-              (std::vector<std::string>{"sys._force_update=False"}));
+    EXPECT_EQ(v.brief(vdone), "DONE");
+    EXPECT_EQ(v.writes(vdone), (std::vector<std::string>{
+                                   "b1._fire_timer=0.016666666666666666",
+                                   "b1._fire_timer=0", "b1._firing=True",
+                                   "b1._target=t",
+                                   "b1._target_offset=walk_offset",
+                                   "sys._force_update=False"}));
 }
 
 TEST(K1, GroupWalkAdvancesOnDryGroup) {
@@ -545,7 +569,8 @@ TEST(K1, HeldTargetVsListHead) {
 }
 
 TEST(K1, DumbFireOnlyWithNoTargets) {
-    {   // An empty list and a tube that cannot fire: stop, then dumb fire.
+    {   // An empty list and a tube that cannot fire: stop (idle: logged,
+        // round trips Task 2), then dumb fire.
         World w;
         const int64_t ship = w.ship("ship");
         const int64_t sys = w.system("tsys", ship, 4, {});
@@ -554,8 +579,9 @@ TEST(K1, DumbFireOnlyWithNoTargets) {
         w.m.set_i(sys, Field::_force_update, 1);
         w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
         EXPECT_EQ(w.run_to_done(),
-                  (std::vector<std::string>{"WALK_START tsys", "BANK_STOP tube",
+                  (std::vector<std::string>{"WALK_START tsys",
                                             "FIRE_DUMB tube", "DONE"}));
+        EXPECT_EQ(w.k.counts().logged_idle_bank_stop, 1);
     }
     {   // An empty list and a ready tube: Fire(None) fires dumb itself.
         World w;
@@ -591,8 +617,8 @@ TEST(K1, DumbFireOnlyWithNoTargets) {
         w.m.set_i(sys, Field::_force_update, 1);
         w.k.begin_system(sys, 0.0, 10.0, false, 0.0);
         EXPECT_EQ(w.run_to_done(),
-                  (std::vector<std::string>{"WALK_START sys", "BANK_STOP b0",
-                                            "DONE"}));
+                  (std::vector<std::string>{"WALK_START sys", "DONE"}));
+        EXPECT_EQ(w.k.counts().logged_idle_bank_stop, 1);
     }
 }
 
@@ -763,6 +789,9 @@ TEST(K1, ResumeReadsLiveMirror) {
     const int64_t sys = w.system("sys", ship, 1, {t});
     w.bank("b0", sys);
     const int64_t b1 = w.bank("b1", sys);
+    // Firing, so its stop below stays a BANK_STOP record (round trips
+    // Task 2 logs an idle bank's).
+    w.m.set_i(b1, Field::_firing, 1);
     const int64_t psys = w.system("psys", ship, 2, {t});
     w.bank("cannon", psys);
     w.m.set_i(sys, Field::_force_update, 1);
@@ -995,6 +1024,7 @@ TEST(K1, UnwindLeavesMirrorEqualToPython) {
     const int64_t b0 = w.bank("b0", sys);
     w.m.set_ref(b0, Field::_target, t);
     w.m.set_f(b0, Field::_charge_level, 0.0);
+    w.m.set_i(b0, Field::_firing, 1);  // a firing bank's stop is a record
     w.m.set_i(sys, Field::_force_update, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
     w.step();
@@ -1053,6 +1083,7 @@ TEST(K1, GroupReReadsWeaponCount) {
     w.m.set_ref(b1, Field::_property, w.prop(2));
     w.m.set_ref(b2, Field::_property, w.prop(1));
     w.m.set_f(b2, Field::_charge_level, 0.0);  // group 1 runs dry
+    w.m.set_i(b2, Field::_firing, 1);  // a firing bank's stop is a record
     w.m.set_i(sys, Field::_last_weapon_idx, 2);
     w.m.set_i(sys, Field::_force_update, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
@@ -1142,6 +1173,7 @@ TEST(K1, BankRowGoneBeforeTheDumbCheckAsksPython) {
     const int64_t sys = w.system("sys", ship, 4, {});
     const int64_t b0 = w.bank("b0", sys);
     w.m.set_i(b0, Field::_num_ready, 0);  // CanFire refuses
+    w.m.set_i(b0, Field::_firing, 1);  // a firing bank's stop is a record
     w.m.set_i(sys, Field::_force_update, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
     EXPECT_EQ(w.brief(w.step()), "WALK_START sys");
@@ -1163,6 +1195,7 @@ TEST(K1, BankRowGoneBeforeTheDumbCheckAsksPython) {
     const int64_t sys2 = v.system("sys", ship2, 4, {});
     const int64_t c0 = v.bank("b0", sys2);
     v.m.set_i(c0, Field::_num_ready, 0);
+    v.m.set_i(c0, Field::_firing, 1);
     v.m.set_i(sys2, Field::_force_update, 1);
     v.k.begin_pump({ship2}, kDt, 10.0, false, 0.0);
     v.step();
@@ -1579,4 +1612,153 @@ TEST(K1Native, WalkCheckHandsTheWalkStartBack) {
     EXPECT_EQ(w.brief(w.k.next()), "DONE");
     EXPECT_EQ(w.k.counts().logged_walk_start, 1);
     EXPECT_EQ(why_of(w.k.counts(), K1Why::InstancePatch), 1);
+}
+
+// ── Round trips Task 2: beam sustain and idle stops as logged writes ─────────
+
+TEST(K1Native, BeamSustainIsLoggedWrites) {
+    // A Fire on a beam already firing: _EnergyWeaponFireMixin._fire_effect
+    // with was_firing -- `_firing = True; _target = target; _target_offset =
+    // offset`, nothing else -- logged in that order, no FIRE record. The
+    // stamp is the walk's offset OBJECT (the marker), whatever it is: with
+    // no TGPoint3 offset the mirror reads unset.
+    for (const bool with_offset : {true, false}) {
+        World w(false);
+        const int64_t ship = w.ship("ship");
+        const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+        const int64_t sys = w.system("sys", ship, 1, {t});
+        const int64_t b0 = w.bank("b0", sys);
+        w.m.set_i(b0, Field::_firing, 1);
+        if (with_offset) w.m.set_fv(sys, Field::_held_offset, {1.0, 2.0, 3.0});
+        w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+        const K1Record done = w.k.next();
+        EXPECT_EQ(w.brief(done), "DONE") << with_offset;
+        char dt[64];
+        std::snprintf(dt, sizeof dt, "%.17g", 0.0 + kDt);
+        EXPECT_EQ(writes_on(w, done, "b0"),
+                  (std::vector<std::string>{
+                      std::string("b0._fire_timer=") + dt, "b0._fire_timer=0",
+                      "b0._firing=True", "b0._target=t",
+                      "b0._target_offset=walk_offset"}))
+            << with_offset;
+        const K1Write& stamp = done.writes[std::distance(
+            done.writes.begin(),
+            std::find_if(done.writes.begin(), done.writes.end(),
+                         [&](const K1Write& x) {
+                             return x.handle == b0 &&
+                                    x.field == "_target_offset";
+                         }))];
+        ASSERT_TRUE(std::holds_alternative<K1WalkOffset>(stamp.value));
+        EXPECT_EQ(std::get<K1WalkOffset>(stamp.value), (K1WalkOffset{1, sys}));
+        EXPECT_EQ(w.m.get_fv(b0, Field::_target_offset),
+                  with_offset ? (std::vector<double>{1.0, 2.0, 3.0})
+                              : std::vector<double>{});
+        EXPECT_EQ(w.m.get_ref(b0, Field::_target), t);
+        EXPECT_EQ(w.m.get_i(b0, Field::_firing), 1);
+        EXPECT_EQ(w.k.counts().logged_beam_sustain, 1);
+        EXPECT_EQ(w.k.counts().records, 1);
+    }
+}
+
+TEST(K1Native, BeamEdgeStillRecords) {
+    // was_firing False: the sound and ET_WEAPON_FIRED are Python's, so the
+    // edge keeps its FIRE record and logs nothing of the effect's own.
+    World w(false);
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t sys = w.system("sys", ship, 1, {t});
+    const int64_t b0 = w.bank("b0", sys);
+    w.m.set_i(sys, Field::_force_update, 1);
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    const K1Record f = w.k.next();
+    EXPECT_EQ(w.brief(f), "FIRE b0@t");
+    EXPECT_FALSE(f.decision.was_firing);
+    EXPECT_TRUE(f.walk_first);
+    EXPECT_FALSE(has_write(w, f, "b0._firing=True"));
+    EXPECT_EQ(w.m.get_i(b0, Field::_firing), 0);
+    EXPECT_EQ(w.k.counts().logged_beam_sustain, 0);
+}
+
+TEST(K1Native, IdleStopIsLoggedPerBankClass) {
+    // A bank that is not firing and cannot fire: its class's StopFiring is
+    // pure writes, logged in Python's order, no BANK_STOP record --
+    //   energy bank (WS:905): _firing = False; _beam_on_countdown = 0.0
+    //   tube (Weapon, WS:1192): _firing = False
+    //   pulse (WS:2971): _firing = False; _target = None;
+    //                    _target_offset = None
+    struct Case {
+        int64_t kind;
+        std::vector<std::string> stop;
+    };
+    const Case cases[] = {
+        {1, {"b0._firing=False", "b0._beam_on_countdown=0"}},
+        {4, {"b0._firing=False"}},
+        {2, {"b0._firing=False", "b0._target=None", "b0._target_offset=None"}},
+    };
+    for (const Case& c : cases) {
+        World w(false);
+        const int64_t ship = w.ship("ship");
+        const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+        const int64_t sys = w.system("sys", ship, c.kind, {t});
+        const int64_t b0 = w.bank("b0", sys);
+        w.bank("b1", sys);  // healthy: the system is not offline
+        if (c.kind == 1) {
+            w.m.set_f(b0, Field::_charge_level, 0.0);
+            w.m.set_f(b0, Field::_beam_on_countdown, 0.25);
+        } else if (c.kind == 2) {
+            w.m.set_f(b0, Field::_cooldown_remaining, 1.0);
+            w.m.set_ref(b0, Field::_target, t);
+            w.m.set_fv(b0, Field::_target_offset, {1.0, 2.0, 3.0});
+        } else {
+            w.m.set_i(b0, Field::_num_ready, 0);
+        }
+        w.m.set_i(sys, Field::_single_fire, 0);
+        w.m.set_i(sys, Field::_force_update, 1);
+        w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+        std::vector<K1Record> recs;
+        for (int guard = 0; guard < 10; ++guard) {
+            recs.push_back(w.k.next());
+            if (recs.back().kind == K1Kind::DONE) break;
+        }
+        std::vector<std::string> b0w;
+        for (const K1Record& r : recs) {
+            EXPECT_NE(w.brief(r), "BANK_STOP b0") << c.kind;
+            for (const std::string& s : writes_on(w, r, "b0")) b0w.push_back(s);
+        }
+        // After the passed gate's `_fire_timer = 0.0`: the stop, then the
+        // not-fired path's `weapon._target = None`.
+        const auto at = std::find(b0w.begin(), b0w.end(), "b0._fire_timer=0");
+        ASSERT_NE(at, b0w.end()) << c.kind;
+        std::vector<std::string> stop(at + 1, at + 1 + std::min<ptrdiff_t>(
+                                                  c.stop.size(),
+                                                  b0w.end() - at - 1));
+        EXPECT_EQ(stop, c.stop) << c.kind;
+        EXPECT_EQ(w.m.get_i(b0, Field::_firing), 0) << c.kind;
+        if (c.kind == 1) EXPECT_EQ(w.m.get_f(b0, Field::_beam_on_countdown), 0.0);
+        if (c.kind == 2) {
+            EXPECT_EQ(w.m.get_ref(b0, Field::_target), -1);
+            EXPECT_EQ(w.m.get_fv(b0, Field::_target_offset),
+                      std::vector<double>{});
+        }
+        EXPECT_EQ(w.k.counts().logged_idle_bank_stop, 1) << c.kind;
+    }
+}
+
+TEST(K1Native, FiringBankStopStillRecords) {
+    // A firing bank's StopFiring stops its loop sound: Python's, so the
+    // BANK_STOP record stays (and nothing of the stop is logged).
+    World w(false);
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t sys = w.system("sys", ship, 1, {t});
+    const int64_t b0 = w.bank("b0", sys);
+    w.bank("b1", sys);
+    w.m.set_i(b0, Field::_firing, 1);
+    w.m.set_f(b0, Field::_charge_level, 0.0);
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    const K1Record s = w.k.next();
+    EXPECT_EQ(w.brief(s), "BANK_STOP b0");
+    EXPECT_FALSE(has_write(w, s, "b0._firing=False"));
+    EXPECT_EQ(w.m.get_i(b0, Field::_firing), 1);
+    EXPECT_EQ(w.k.counts().logged_idle_bank_stop, 0);
 }

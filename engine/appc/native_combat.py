@@ -205,7 +205,10 @@ def counts() -> dict:
     "k1_logged" ({"walk_start"}: walks started with no WALK_START record,
     their offset computed by the kernel -- round trips Task 1; k1_records
     counts only the records returned, so a walk start the walk check hands
-    back is a WALK_START record there instead).
+    back is a WALK_START record there instead; "beam_sustain": Fires on a
+    beam already firing and "idle_bank_stop": StopFirings of a bank not
+    firing, both pure field writes logged instead of a FIRE / BANK_STOP
+    record -- round trips Task 2).
     posed_ship / posed_target are retired reasons, always 0 (posed parts
     run natively; spec 2026-11-01 §4.5). In k1_python_reasons,
     mount_unknown / no_mount / offset_off_mount are always 0 too: the
@@ -1029,7 +1032,8 @@ def _weapon_kind_of_class(cls) -> int:
 # subclassing a weapon, or a patch on the stock class itself or on a base
 # (`setattr(PhaserBank, "CanFire", ...)`).
 _K1_LEAF_METHODS = (
-    "Fire", "_fire_decide", "_fire_effect", "CanFire", "_charge_gate",
+    "Fire", "_fire_decide", "_fire_effect", "StopFiring", "CanFire",
+    "_charge_gate",
     "_shot_cost", "_aim_in_arc", "IsFiring", "IsMemberOfGroup", "IsDumbFire",
     "GetConditionPercentage", "GetDisabledPercentage", "IsDisabled",
     "_ammo_exhausted", "IsSkewFire", "GetParentSubsystem", "_climb_to_ship")
@@ -1046,7 +1050,8 @@ _K1_SYSTEM_METHODS = (
 # walk start with one back to Python as a WALK_START record (walk_start).
 _K1_SYSTEM_PATCHES = ("update_weapons", "try_fire_weapon",
                       "_live_held_offset")
-_K1_LEAF_PATCHES = ("Fire", "_fire_decide", "_fire_effect", "CanFire")
+_K1_LEAF_PATCHES = ("Fire", "_fire_decide", "_fire_effect", "StopFiring",
+                    "CanFire")
 # The firing ship's side of the walk offset (_live_held_offset's probe and
 # its Manual Aim branch), which the kernel computes from the mirror: an
 # instance attribute shadowing one, or a class resolving them to anything
@@ -2757,8 +2762,11 @@ def apply_writes(writes, walk=None) -> None:
     thaw hook failing) leaves the fields after it with mirror != Python, and
     run_k1's abandon cannot undo that (the kernel's rollback covers only
     writes it has not yet delivered). Unreachable today: the logged fields
-    are a fixed set of plain NativeFields on pinned rows, whose quiet write
-    is a dict store, and no wrapped descriptor is in the set. A field added
+    are a fixed set on pinned rows -- plain NativeFields, whose quiet write
+    is a dict store, and a bank's `_firing` (round trips Task 2), a
+    NativeWakeField whose quiet write is WakeField.__set__: a dict store,
+    then passive_state.wake on a sleeping bank, whose hook
+    (passive_weapons.on_wake) is a dict read and an insort. A field added
     to the kernel's log must keep its quiet write unable to raise."""
     if walk is None:
         walk = _K1Walk()
@@ -2811,7 +2819,7 @@ def _k1_pulse_module(bank):
 def _k1_answer(rec, walk, dt):
     """An ASK record's answer: exactly the Python the kernel stands in for
     (k1_fire_control.h), run on the live objects with the walk's offset."""
-    query, args = rec[1], rec[2:-1]
+    query, args = rec[1], rec[2:-2]         # (..., tag, writes)
     offset = walk.offset
     if query == "can_fire":
         return bool(walk.obj(args[0]).CanFire())

@@ -159,7 +159,11 @@ class World:
         apply_hit = combat.apply_hit
 
         def bank_spy(bank, _orig=bank_stop):
-            self.calls.append(("bank_stop", self.n, self.label(bank)))
+            # A FIRING bank's stop only: a stop of a bank not firing is pure
+            # field writes, which K1 logs with no call (round trips Task 2);
+            # its effect is in the per-tick record.
+            if bank.__dict__.get("_firing"):
+                self.calls.append(("bank_stop", self.n, self.label(bank)))
             return _orig(bank)
 
         def sys_spy(sys_, *args, _orig=sys_stop):
@@ -198,6 +202,13 @@ class World:
 
         mp.setattr(ws.PhaserBank, "StopFiring", bank_spy)
         mp.setattr(ws.PhaserSystem, "StopFiring", sys_spy)
+        # A bank's StopFiring is in K1's override guard (round trips Task 2:
+        # an idle bank's stop is logged writes): the spy only wraps the stock
+        # method, so for this world K1's stock snapshot takes it as stock
+        # (restored with mp). K1's logged idle stops never call it.
+        names, _stock = nc._k1_stock[5]
+        mp.setitem(nc._k1_stock, 5,
+                   (names, nc._k1_resolve(ws.PhaserBank, names)))
         mp.setattr(hit_feedback, "beam_contact", contact_spy)
         mp.setattr(combat, "apply_hit", hit_spy)
 

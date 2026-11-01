@@ -3917,7 +3917,15 @@ int k1_walk_check(const K1WalkCheckRefs& r, std::int64_t sys_h,
     if (h != 0) return h;
     PyTypeObject* t = Py_TYPE(ship);
     PyObject* iu = _PyType_Lookup(t, k_iu);  // borrowed, no error set
-    if (iu == nullptr) return 0;
+    // No is_using_target_offset: Python's probe is None and it reads the
+    // held offset. The kernel's row of a ShipClass (is_ship_class) would
+    // take the Manual Aim branch, so a ShipClass without one goes to Python.
+    if (iu == nullptr)
+        return r.ship_class != nullptr &&
+                       PyType_IsSubtype(
+                           t, reinterpret_cast<PyTypeObject*>(r.ship_class))
+                   ? 1
+                   : 0;
     if (iu != r.stock_is_using || r.ship_class == nullptr ||
         !PyType_IsSubtype(t, reinterpret_cast<PyTypeObject*>(r.ship_class)))
         return 1;
@@ -10787,9 +10795,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
             posed["target_aims"] = c.posed_target_aims;
             d["k1_posed"] = posed;
             // Records K1 no longer returns (round trips): walk starts made
-            // with no WALK_START.
+            // with no WALK_START, Fires on a beam already firing and stops
+            // of a bank not firing, logged as writes instead.
             py::dict logged;
             logged["walk_start"] = c.logged_walk_start;
+            logged["beam_sustain"] = c.logged_beam_sustain;
+            logged["idle_bank_stop"] = c.logged_idle_bank_stop;
             d["k1_logged"] = logged;
             return d;
         });
