@@ -6,6 +6,8 @@
 
 #include "dauntless/combat/part_pose.h"
 
+#include <cmath>
+
 #include "geometry_internal.h"
 
 namespace dauntless::combat {
@@ -43,6 +45,27 @@ SlotState posed_local(const Mirror& m, const ObjectRow& ship,
     if (st == SlotState::none) *out = sub._position;
     if (st == SlotState::ok) *out = apply_part_pose(*pose, sub._position);
     return st;
+}
+
+// part_severance.authored_mount_subsystem (PS:502-514), its operands and
+// order exactly: `abs(mount[i] - point[i]) <= eps` per axis, x then y then z
+// (Python's `and` short-circuits; no side effect, so the order is moot).
+int64_t authored_mount_subsystem(const Mirror& m, const ObjectRow& target,
+                                 const Vec3& offset) {
+    // Only ShipClass rows get a mount order (native_combat.push_mount_order).
+    if (!target.is_ship_class) return kMountUnknown;
+    constexpr double eps = 1e-5;
+    for (const int64_t h : target.mount_order) {
+        // kRefUnrepresentable or a freed row: it might have matched.
+        const SubsystemRow* sub = m.subsystem(h);
+        if (sub == nullptr) return kMountUnknown;
+        const Vec3& mount = sub->_position;
+        if (std::fabs(mount[0] - offset[0]) <= eps &&
+            std::fabs(mount[1] - offset[1]) <= eps &&
+            std::fabs(mount[2] - offset[2]) <= eps)
+            return h;
+    }
+    return kNoMount;
 }
 
 }  // namespace dauntless::combat

@@ -10138,6 +10138,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("mount") = py::none(),
               "subsystems.target_offset_world with an explicit mount_sub "
               "(None = authored=False).");
+        m.def("combat_test_authored_mount",
+              [](std::int64_t target, const std::array<double, 3>& offset) {
+                  const cb::ObjectRow* row = cb::mirror().object(target);
+                  if (row == nullptr)
+                      throw std::invalid_argument(
+                          "combat_test_authored_mount: not a live Object");
+                  return cb::authored_mount_subsystem(cb::mirror(), *row,
+                                                      offset);
+              },
+              py::arg("target"), py::arg("offset"),
+              "part_severance.authored_mount_subsystem: the subsystem "
+              "handle, -1 (None) or -2 (the mirror cannot tell).");
         m.def("combat_test_mount_position",
               [vec](std::int64_t sub, std::int64_t ship) {
                   return vec(cb::subsystem_world_position(cb::mirror(), sub,

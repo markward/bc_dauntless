@@ -44,4 +44,20 @@ SlotState slot_pose(const Mirror& m, const ObjectRow& ship,
 SlotState posed_local(const Mirror& m, const ObjectRow& ship,
                       const SubsystemRow& sub, Vec3* out);
 
+// authored_mount_subsystem's "the mirror cannot tell" (Python must answer):
+// distinct from kNoMount (Python None). The same value as a ref the mirror
+// cannot name, so target_offset_world falls back on it as is.
+constexpr int64_t kMountUnknown = kRefUnrepresentable;
+
+// part_severance.authored_mount_subsystem (PS:502-514; MAP §3.4, R3): the
+// FIRST subsystem of `target`'s mount_order (combat._iter_subsystems order)
+// whose `_position` is within 1e-5 of `offset` on every axis, by Python's
+// own `abs(mount[i] - point[i]) <= eps` (a NaN never matches); kNoMount if
+// none. kMountUnknown when the mirror cannot answer: an entry it cannot name
+// (kRefUnrepresentable, or a since-freed row) reached before a match, or a
+// target that is not a ShipClass (its mount_order is never pushed, so an
+// empty one says nothing).
+int64_t authored_mount_subsystem(const Mirror& m, const ObjectRow& target,
+                                 const Vec3& offset);
+
 }  // namespace dauntless::combat

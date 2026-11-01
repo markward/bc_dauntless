@@ -307,3 +307,96 @@ TEST(PartPose, TargetOffsetIdentityReturnsTheOffsetItself) {
     EXPECT_TRUE(all_negative_zero(
         target_offset_world(w.m, target, {-0.0, -0.0, -0.0}, mount)));
 }
+
+// ── authored_mount_subsystem (K1 _RESOLVE's mount, MAP §3.4 / R3) ───────────
+//
+// part_severance.authored_mount_subsystem: the FIRST subsystem in
+// combat._iter_subsystems order (the pushed mount_order) with
+// abs(mount[i] - point[i]) <= 1e-5 on every axis; else None (kNoMount).
+// kMountUnknown when the mirror cannot tell.
+
+namespace {
+
+// A ShipClass row with the given subsystems pushed as its mount order.
+struct MountWorld : World {
+    int64_t target = ship(0.0, 0.0, 0.0);
+    MountWorld() { m.set_i(target, Field::is_ship_class, 1); }
+    void order(const std::vector<int64_t>& subs) {
+        m.set_mount_order(target, subs);
+    }
+    int64_t ask(const Vec3& offset) const {
+        return authored_mount_subsystem(m, *m.object(target), offset);
+    }
+};
+
+}  // namespace
+
+TEST(PartPose, AuthoredMountIsTheFirstInOrder) {
+    MountWorld w;
+    const int64_t parent = w.bank(w.target, 1.0, 2.0, 3.0);
+    const int64_t child = w.bank(w.target, 1.0, 2.0, 3.0);
+    const int64_t other = w.bank(w.target, 4.0, 5.0, 6.0);
+    w.order({parent, child, other});
+    EXPECT_EQ(w.ask({1.0, 2.0, 3.0}), parent);
+    EXPECT_EQ(w.ask({4.0, 5.0, 6.0}), other);
+    EXPECT_EQ(w.ask({7.0, 8.0, 9.0}), kNoMount);
+    w.order({child, parent, other});
+    EXPECT_EQ(w.ask({1.0, 2.0, 3.0}), child);
+    // Read live: a moved _position moves the answer.
+    w.m.set_fv(child, Field::_position, {9.0, 9.0, 9.0});
+    EXPECT_EQ(w.ask({1.0, 2.0, 3.0}), parent);
+    EXPECT_EQ(w.ask({9.0, 9.0, 9.0}), child);
+    // A ship with no mounted subsystem: None.
+    w.order({});
+    EXPECT_EQ(w.ask({1.0, 2.0, 3.0}), kNoMount);
+}
+
+TEST(PartPose, AuthoredMountToleranceIsPerAxisAndInclusive) {
+    MountWorld w;
+    const int64_t at_zero = w.bank(w.target, 0.0, 0.0, 0.0);
+    w.order({at_zero});
+    // abs(0 - -1e-5) is exactly 1e-5: `<=` matches.
+    EXPECT_EQ(w.ask({-1e-5, 0.0, 0.0}), at_zero);
+    EXPECT_EQ(w.ask({0.0, 1e-5, 0.0}), at_zero);
+    EXPECT_EQ(w.ask({0.0, 0.0, std::nextafter(1e-5, 1.0)}), kNoMount);
+    // 0.9e-5 on every axis is 1.56e-5 away: per axis, not a distance.
+    EXPECT_EQ(w.ask({0.9e-5, -0.9e-5, 0.9e-5}), at_zero);
+    EXPECT_EQ(w.ask({1.1e-5, 0.0, 0.0}), kNoMount);
+    EXPECT_EQ(w.ask({-0.0, -0.0, -0.0}), at_zero);
+}
+
+TEST(PartPose, AuthoredMountNaNNeverMatches) {
+    MountWorld w;
+    const double nan = std::nan("");
+    const double inf = INFINITY;
+    const int64_t a = w.bank(w.target, 1.0, 2.0, 3.0);
+    const int64_t odd = w.bank(w.target, nan, 0.0, inf);
+    w.order({odd, a});
+    EXPECT_EQ(w.ask({nan, 2.0, 3.0}), kNoMount);
+    EXPECT_EQ(w.ask({1.0, 2.0, nan}), kNoMount);
+    EXPECT_EQ(w.ask({nan, 0.0, inf}), kNoMount);   // inf - inf is NaN
+    EXPECT_EQ(w.ask({1.0, 2.0, 3.0}), a);
+}
+
+TEST(PartPose, AuthoredMountUnknownWhenTheMirrorCannotTell) {
+    MountWorld w;
+    const int64_t a = w.bank(w.target, 1.0, 2.0, 3.0);
+    const int64_t b = w.bank(w.target, 4.0, 5.0, 6.0);
+    // An unnamed subsystem reached before a match might have matched.
+    w.order({a, kRefUnrepresentable, b});
+    EXPECT_EQ(w.ask({1.0, 2.0, 3.0}), a);
+    EXPECT_EQ(w.ask({4.0, 5.0, 6.0}), kMountUnknown);
+    EXPECT_EQ(w.ask({7.0, 8.0, 9.0}), kMountUnknown);
+    // A since-freed entry: the same.
+    const int64_t gone = w.bank(w.target, 7.0, 8.0, 9.0);
+    w.order({a, gone, b});
+    w.m.unregister_row(gone);
+    EXPECT_EQ(w.ask({1.0, 2.0, 3.0}), a);
+    EXPECT_EQ(w.ask({4.0, 5.0, 6.0}), kMountUnknown);
+    // Not a ShipClass: its mount order is never pushed, so empty says
+    // nothing.
+    w.order({});
+    w.m.set_i(w.target, Field::is_ship_class, 0);
+    EXPECT_EQ(w.ask({1.0, 2.0, 3.0}), kMountUnknown);
+    EXPECT_NE(kMountUnknown, kNoMount);
+}
