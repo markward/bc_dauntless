@@ -36,8 +36,8 @@ def subsystem_world_position(sub, ship=None):
     in world units relative to the ship centre. Returns the ship location if
     the subsystem has no 3D mount, and the origin if no ship is resolvable.
 
-    ``ship`` may be passed explicitly (required for the Hull/root subsystem,
-    whose ``_climb_to_ship()`` returns None).
+    ``ship`` may be passed explicitly (``SetHull`` attaches the Hull, so its
+    ``_climb_to_ship()`` reaches its ship; an unattached root returns None).
 
     Inside an engine.core.step_memo block (the combat step) each mount is
     computed once: a firing phaser bank asks ~4 times a tick (strip emit

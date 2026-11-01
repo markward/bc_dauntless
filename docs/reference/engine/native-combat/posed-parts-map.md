@@ -388,3 +388,5 @@ Proposed scope: `cb.torp_hits` around HL:1332-1341.
 
 - Add `sim.weapons`, `sim.combat` and `sim.ship_list` to `PER_TICK_ROOTS` (FP:119), or restate that comment and the frame-profiler.md bullet. Today the report leaves them unmarked, which reads as "once per frame" (§ corrections).
 - Divide only `*` rows by ticks; report once-per-frame rows per frame.
+
+**Generation bumps are global.** Any bump of the part-map generation makes every posed ship re-resolve its slots at the next step boundary (cheap after the first call), so never add a per-tick bump trigger (e.g. a `SetName` in UI code).

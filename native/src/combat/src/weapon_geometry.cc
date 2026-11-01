@@ -82,7 +82,7 @@ int64_t climb_to_ship(const Mirror& m, const SubsystemRow& s) {
 // climb_to_ship returns its owner and the owner check applies to it too.
 void check_slot_owner(const Mirror& m, const SubsystemRow& s, int64_t ship) {
     const int64_t owner = climb_to_ship(m, s);
-    if (owner != -1 && owner != ship) fall_back_as<PartStale>("part_stale");
+    if (owner == -1 || owner != ship) fall_back_as<PartStale>("part_stale");
 }
 
 // subsystems._subsystem_world_position (subsystems.py:62; MAP P3).

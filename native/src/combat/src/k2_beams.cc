@@ -302,6 +302,23 @@ private:
                so->manual_offset_set && to->has_posed_parts;
     }
 
+    // The ship row a subsystem belongs to, or null (also for a chain the
+    // mirror cannot climb: the aim_point ASK's). A subsystem attached
+    // straight to its ship answers from `_parent_ship` with no climb.
+    const ObjectRow* owner_row(int64_t sub_h) const {
+        const SubsystemRow* sr = subrow(sub_h);
+        if (sr && sr->_parent_ship != -1) {
+            if (const ObjectRow* direct = objrow(sr->_parent_ship))
+                return direct;
+        }
+        try {
+            const int64_t ls = climb_to_ship_of(m_, sub_h);
+            return ls == -1 ? nullptr : objrow(ls);
+        } catch (const std::invalid_argument&) {
+            return nullptr;
+        }
+    }
+
     // ── The pre-scan (ruling H, stage 1) ───────────────────────────────────
     std::optional<K2Why> ship_why() const;
     std::optional<K2Why> child_why(int64_t bank) const;
@@ -330,13 +347,7 @@ std::optional<K2Why> Walker::ship_why() const {
     const bool manual_aim = so->_use_target_offset != 0 && so->manual_offset_set;
     if (!manual_aim && so->_target_subsystem >= 0) {
         if (const SubsystemRow* lock = subrow(so->_target_subsystem)) {
-            int64_t lock_ship = -1;
-            try {
-                lock_ship = climb_to_ship_of(m_, so->_target_subsystem);
-            } catch (const std::invalid_argument&) {
-                lock_ship = -1;  // the aim_point ASK's
-            }
-            const ObjectRow* lo = lock_ship == -1 ? nullptr : objrow(lock_ship);
+            const ObjectRow* lo = owner_row(so->_target_subsystem);
             Vec3 local;
             if (lo && lo->has_posed_parts &&
                 posed_local(m_, *lo, *lock, &local) == SlotState::stale)
@@ -588,8 +599,7 @@ K2Record Walker::run() {
                     s_.target_pos = ap.point;
                     s_.has_sub = ap.target_sub != -1;
                     if (s_.has_sub) {
-                        const int64_t ls = climb_to_ship_of(m_, ap.target_sub);
-                        const ObjectRow* lo = ls == -1 ? nullptr : objrow(ls);
+                        const ObjectRow* lo = owner_row(ap.target_sub);
                         if (lo && lo->has_posed_parts) ++c_.posed_lock_aims;
                     } else if (manual_on_posed()) {
                         ++c_.posed_manual_aims;

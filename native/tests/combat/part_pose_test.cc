@@ -216,6 +216,20 @@ TEST(PartPose, ForeignShipSlotReadsStale) {
     EXPECT_NE(why.find("part_stale"), std::string::npos) << why;
 }
 
+// An ownerless subsystem (no ship to climb to) read against an explicit posed
+// ship is no current slot of that ship: part_stale, not a pass.
+TEST(PartPose, OwnerlessSubsystemWithShipArgReadsStale) {
+    World w;
+    const int64_t a = w.ship(0.0, 0.0, 0.0);
+    const int64_t bank = w.m.register_row(Kind::Subsystem);
+    w.m.set_fv(bank, Field::_position, {1.0, 2.0, 3.0});
+    w.pose(a, {translate(1.0, 0.0, 0.0)});
+    w.slot(bank, 0);
+    const std::string why = throw_message(
+        [&] { subsystem_world_position(w.m, bank, a, false); });
+    EXPECT_NE(why.find("part_stale"), std::string::npos) << why;
+}
+
 // Unposed, another ship's subsystem is answered as before: no slot is read
 // and no owner is checked.
 TEST(PartPose, UnposedForeignShipArgAnswers) {
