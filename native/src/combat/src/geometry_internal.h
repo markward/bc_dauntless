@@ -68,4 +68,18 @@ inline double dot(const Vec3& a, const Vec3& b) {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
+// `off == _ZERO_OFFSET` (frames.py:174, projectiles.py): a tuple ==, element
+// ==, so -0.0 counts as zero and a NaN never does.
+inline bool is_zero_offset(const Vec3& off) {
+    return off[0] == 0.0 && off[1] == 0.0 && off[2] == 0.0;
+}
+
+// frames.shifted(p, off, sign) (frames.py:166-177) for an offset that is not
+// None: `p` itself when `off` is zero, else p + sign * off per axis (sign
+// 1.0 or -1.0, so `sign * off` is exact).
+inline Vec3 shifted(const Vec3& p, const Vec3& off, double sign = 1.0) {
+    if (is_zero_offset(off)) return p;
+    return {p[0] + sign * off[0], p[1] + sign * off[1], p[2] + sign * off[2]};
+}
+
 }  // namespace dauntless::combat::detail

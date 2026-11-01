@@ -26,6 +26,7 @@ namespace {
 using detail::dot;
 using detail::fall_back;
 using detail::obj;
+using detail::shifted;
 using detail::world_location;
 
 using St = GuideResult::Status;
@@ -41,18 +42,6 @@ constexpr uint32_t kGuideReads =
     bit(TorpField::_last_seen_target_pos) | bit(TorpField::_last_target_vel) |
     bit(TorpField::_target_ship) | bit(TorpField::_source_ship) |
     bit(TorpField::_containing_set) | bit(TorpField::_mount_key);
-
-// `off == _ZERO_OFFSET`: a tuple ==, so -0.0 counts as zero and a NaN never.
-bool is_zero(const Vec3& off) {
-    return off[0] == 0.0 && off[1] == 0.0 && off[2] == 0.0;
-}
-
-// frames.shifted(p, off) (frames.py:166) with sign 1.0: `p` itself when
-// `off` is zero, else p + 1.0 * off per axis.
-Vec3 shifted(const Vec3& p, const Vec3& off) {
-    if (is_zero(off)) return p;
-    return {p[0] + 1.0 * off[0], p[1] + 1.0 * off[1], p[2] + 1.0 * off[2]};
-}
 
 // TGPoint3.Length (math.py:41): libm sqrt, correctly rounded.
 double length(const Vec3& v) {
@@ -271,7 +260,7 @@ GuideResult guide_torpedo(Mirror& m, const TorpedoRow& row, double dt,
         if (os == OffsetStatus::unrepresentable)
             return need_guide("source or target set");
         try {
-            if (os == OffsetStatus::none || is_zero(soff)) {
+            if (os == OffsetStatus::none || detail::is_zero_offset(soff)) {
                 // memo-eligible (no optional argument); off None still asks
                 visible = can_detect(m, src, target, clocks.drift_now,
                                      use_memo, std::nullopt, true,

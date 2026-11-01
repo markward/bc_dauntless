@@ -22,6 +22,7 @@
 #include "dauntless/combat/fire_gates.h"
 #include "dauntless/combat/k1_fire_control.h"
 #include "dauntless/combat/k2_beams.h"
+#include "dauntless/combat/k3_projectiles.h"
 #include "dauntless/combat/k4_eligibility.h"
 #include "dauntless/combat/mirror.h"
 #include "dauntless/combat/nebula_density.h"
@@ -9743,6 +9744,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               [] {
                   cb::k1_kernel().clear();
                   cb::k2_kernel().clear();
+                  cb::k3_kernel().clear();
                   cb::mirror().clear();
               },
               "Drop every row (tests only; rows normally live as long as their "
@@ -10728,6 +10730,169 @@ PYBIND11_MODULE(_dauntless_host, m) {
         });
         m.def("combat_k2_reset_counts",
               [] { cb::k2_kernel().reset_counts(); });
+
+        // ── The K3 torpedo kernel (k3_projectiles.h) ─────────────────────
+        // One resumable session over the torpedo table and the step scan:
+        // update_all's decision steps. Records (handles -1 = None, xyz a
+        // 3-tuple; torp = a torpedo table handle, `_k3_row`):
+        //   (DONE, writes, expired, hits)
+        //     writes  [(torp, age, last_seen_xyz | None, last_tvel_xyz |
+        //               None, vel_xyz | None), ...] in `_active` order
+        //     expired [torp, ...]: TTL expiries, then hits (expire order)
+        //     hits    [(torp, ship, hit_xyz, tier, normal_xyz | None,
+        //               bubble_xyz | None, hit_is_bubble), ...]
+        //   (ASK, query, *args)              -> reply combat_k3_answer
+        // combat_k3_begin's ctx: combat_k2_begin's keys (a begin without
+        // "iids" keeps the previous K3 session's table; "python_ships" is
+        // unused) plus "n_active": len(projectiles._active) (required).
+        // It returns None with a session open, or the reason the whole step
+        // is Python's (no session).
+        m.def("combat_k3_kinds", [] {
+            py::dict d;
+            for (int i = 0; i < static_cast<int>(cb::K3Kind::kCount); ++i)
+                d[cb::k3_kind_name(static_cast<cb::K3Kind>(i))] = i;
+            return d;
+        });
+        m.def("combat_k3_begin",
+              [k2_apply_ctx](double dt, const std::array<double, 2>& clocks,
+                             bool use_memo, const py::dict& ctx) -> py::object {
+                  if (!ctx.contains("n_active"))
+                      throw py::value_error(
+                          "combat K3: ctx needs \"n_active\"");
+                  cb::K2Context c;
+                  c.hooks = cb::installed_trace_hooks();
+                  k2_apply_ctx(c, ctx);
+                  const auto why = cb::k3_kernel().begin(
+                      dt, cb::GuideClocks{clocks[1], clocks[0]}, use_memo,
+                      std::move(c), ctx["n_active"].cast<std::int64_t>(),
+                      !ctx.contains("iids"));
+                  if (!why) return py::none();
+                  return py::str(cb::k3_why_name(*why));
+              },
+              py::arg("dt"), py::arg("clocks"), py::arg("use_memo"),
+              py::arg("ctx"),
+              "Begin update_all's walk. clocks = (now, drift_now): the "
+              "weapons' game time (can_detect's occlusion clock) and "
+              "native_combat.now() (the nebula drift clock), as K1/K2 pass "
+              "them; use_memo step_memo.active(); ctx as above. Returns None "
+              "(session open) or the whole-step-to-Python reason.");
+        m.def("combat_k3_next", [vec] {
+            // The GIL is HELD for the walk (ruling J), as combat_k2_next.
+            cb::K3Record r = cb::k3_kernel().next();
+            const int kind = static_cast<int>(r.kind);
+            auto opt = [&vec](const std::optional<cb::Vec3>& v) -> py::object {
+                return v ? py::object(vec(*v)) : py::object(py::none());
+            };
+            if (r.kind == cb::K3Kind::ASK) {
+                py::list items;
+                items.append(kind);
+                items.append(cb::k3_query_name(r.query));
+                for (const cb::K3Arg& a : r.args) {
+                    items.append(std::visit(
+                        [&vec](const auto& x) -> py::object {
+                            using T = std::decay_t<decltype(x)>;
+                            if constexpr (std::is_same_v<T, std::monostate>)
+                                return py::none();
+                            else if constexpr (std::is_same_v<T, cb::Vec3>)
+                                return vec(x);
+                            else
+                                return py::cast(x);
+                        },
+                        a));
+                }
+                return py::tuple(items);
+            }
+            py::list writes, expired, hits;
+            for (const cb::K3TorpWrite& w : r.writes)
+                writes.append(py::make_tuple(w.torp, w.age, opt(w.last_seen),
+                                             opt(w.last_tvel), opt(w.vel)));
+            for (const std::int64_t t : r.expired) expired.append(t);
+            for (const cb::K3Hit& h : r.hits)
+                hits.append(py::make_tuple(
+                    h.torp, h.ship, vec(h.hit.point),
+                    kK2Tiers[static_cast<int>(h.hit.tier)], opt(h.hit.normal),
+                    opt(h.bubble), h.hit_is_bubble));
+            return py::make_tuple(kind, writes, expired, hits);
+        }, "The session's next record (see combat_k3_kinds).");
+        m.def("combat_k3_answer",
+              [](py::object v) {
+                  cb::K3Answer a;
+                  switch (cb::k3_kernel().awaiting()) {
+                      case cb::K3Query::frame:
+                          if (v.is_none()) {
+                              a.key = -1;
+                          } else {
+                              const auto t = v.cast<py::tuple>();
+                              if (t.size() != 4)
+                                  throw py::value_error(
+                                      "combat K3: frame answer is "
+                                      "(key, ax, ay, az) or None");
+                              a.key = t[0].cast<std::int64_t>();
+                              a.point = {t[1].cast<double>(),
+                                         t[2].cast<double>(),
+                                         t[3].cast<double>()};
+                          }
+                          break;
+                      case cb::K3Query::steer_point:
+                          a.point = v.cast<std::array<double, 3>>();
+                          break;
+                      case cb::K3Query::shields_block:
+                          a.flag = static_cast<bool>(py::bool_(v));
+                          break;
+                      case cb::K3Query::bubble:
+                          if (v.is_none())
+                              a.none = true;
+                          else
+                              a.point = v.cast<std::array<double, 3>>();
+                          break;
+                      case cb::K3Query::resolve_hit: {
+                          const auto t = v.cast<py::tuple>();
+                          a.point = t[0].cast<std::array<double, 3>>();
+                          if (!t[1].is_none())
+                              a.normal = t[1].cast<std::array<double, 3>>();
+                          const auto tier = t[2].cast<std::string>();
+                          int k = 0;
+                          while (k < 4 && tier != kK2Tiers[k]) ++k;
+                          if (k == 4)
+                              throw py::value_error("combat K3: unknown tier " +
+                                                    tier);
+                          a.tier = static_cast<cb::ResolvedHit::Tier>(k);
+                          break;
+                      }
+                      default:  // guide (None), or no ASK: answer() raises
+                          break;
+                  }
+                  cb::k3_kernel().answer(a);
+              },
+              py::arg("value"),
+              "ASK's reply, shaped per query (k3_projectiles.h): frame "
+              "(key, ax, ay, az) or None; steer_point (x, y, z); guide None; "
+              "shields_block a bool; bubble (x, y, z) or None; resolve_hit "
+              "((x, y, z), normal or None, tier).");
+        m.def("combat_k3_end", [] { cb::k3_kernel().end(); },
+              "End the session (it must have returned DONE).");
+        m.def("combat_k3_abandon", [] { cb::k3_kernel().abandon(); },
+              "End the session whatever its state (exception path).");
+        m.def("combat_k3_open", [] { return cb::k3_kernel().open(); });
+        m.def("combat_k3_counts", [] {
+            const auto& c = cb::k3_kernel().counts();
+            py::dict d, why, asks, guide;
+            d["k3_runs"] = c.runs;
+            d["k3_python_steps"] = c.python_steps;
+            d["k3_records"] = c.records;
+            for (size_t i = 0; i < c.why.size(); ++i)
+                why[cb::k3_why_name(static_cast<cb::K3Why>(i))] = c.why[i];
+            for (size_t i = 0; i < c.queries.size(); ++i)
+                asks[cb::k3_query_name(static_cast<cb::K3Query>(i))] =
+                    c.queries[i];
+            for (const auto& [k, n] : c.guide_why) guide[py::str(k)] = n;
+            d["k3_python_reasons"] = why;
+            d["k3_asks"] = asks;
+            d["k3_guide_reasons"] = guide;
+            return d;
+        });
+        m.def("combat_k3_reset_counts",
+              [] { cb::k3_kernel().reset_counts(); });
 
         // ── The per-step scan and frame table (K3/K4, step_scan.h) ──────
         m.def("combat_step_scan",
