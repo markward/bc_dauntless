@@ -25,6 +25,8 @@ torpedo in flight, with no whole step handed back to Python.
 import pytest
 
 from tests.helpers import bc_assets
+from tests.helpers.k3_fight import (posed_branches, posed_fallbacks,
+                                    posed_no_mount)
 
 
 @pytest.fixture(autouse=True)
@@ -68,6 +70,27 @@ def _run(monkeypatch, audit):
         audit_mirror()
     monkeypatch.setattr(native_combat, "audit_mirror", counting_audit)
 
+    # Posed parts (Task 5): how many pose tables and part slots of a POSED
+    # ship the mirror audit really compared (a stale slot, or any slot of
+    # a ship at its NIF pose, is skipped by design).
+    posed = {"tables": 0, "slots": 0}
+    audit_posed = native_combat._audit_posed
+    audit_slot = native_combat._audit_slot
+
+    def counting_posed(ship, row, name, flag):
+        posed["tables"] += bool(flag)
+        audit_posed(ship, row, name, flag)
+
+    def counting_slot(sub, row, name):
+        ship = sub._climb_to_ship() if hasattr(type(sub), "_climb_to_ship") \
+            else None
+        posed["slots"] += (row["part_gen"] == native_combat.part_gen()
+                           and ship is not None
+                           and bool(native_combat._posed_flag(ship)))
+        audit_slot(sub, row, name)
+    monkeypatch.setattr(native_combat, "_audit_posed", counting_posed)
+    monkeypatch.setattr(native_combat, "_audit_slot", counting_slot)
+
     native_combat.reset()
     assert hl.run("engine.dev_missions.combat_stress", max_ticks=120) == 0
     assert native_combat.enabled(), "native combat was off for this run"
@@ -76,13 +99,21 @@ def _run(monkeypatch, audit):
         audit_mirror()      # once, at the end
     counts = native_combat.counts()
     print("native-combat scene (audit %s) counts:" % audit, counts,
-          "audits:", audits[0])
-    return counts, list(native_combat.audit_failures()), audits[0]
+          "audits:", audits[0], "posed audits:", posed,
+          "posed branches:", posed_branches(counts),
+          "box-rule no_mount:", posed_no_mount(counts))
+    return counts, list(native_combat.audit_failures()), audits[0], posed
 
 
 def test_combat_stress_runs_clean_under_the_native_audit(monkeypatch):
-    counts, failures, audits = _run(monkeypatch, audit=True)
+    counts, failures, audits, posed = _run(monkeypatch, audit=True)
     assert failures == [], failures
+    # Posed parts: the Birds of Prey swing (no target yet: cruise; then
+    # red), and the audit compared their pose tables and part slots with
+    # Python's every tick -- clean (failures above) and not vacuous.
+    assert posed["tables"] > 0 and posed["slots"] > 0, posed
+    assert set(posed_fallbacks(counts).values()) == {0}, \
+        posed_fallbacks(counts)
     assert counts["native_calls"] > 0, counts
     assert counts["k1_records"] > 0, counts
     # K2 stood down for the audit: every step Python's.
@@ -102,8 +133,14 @@ def test_combat_stress_runs_clean_under_the_native_audit(monkeypatch):
 
 
 def test_combat_stress_walks_beams_natively_without_the_audit(monkeypatch):
-    counts, failures, _audits = _run(monkeypatch, audit=False)
+    counts, failures, _audits, _posed = _run(monkeypatch, audit=False)
     assert failures == [], failures
+    # Posed parts: no posed hand-back in the whole fight (posed_ship /
+    # posed_target retired, part_stale 0: every slot current when read),
+    # while the swinging Birds of Prey were walked natively.
+    assert set(posed_fallbacks(counts).values()) == {0}, \
+        posed_fallbacks(counts)
+    assert counts["k1_posed"]["walks"] > 0, posed_branches(counts)
     assert counts["k1_records"] > 0, counts
     # K2 walked the beams natively (never the whole step in Python), with
     # the session's real instances (no "instances" fallback).

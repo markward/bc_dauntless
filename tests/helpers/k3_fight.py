@@ -25,6 +25,12 @@ KERNEL decided, not what the scene was built to make likely.
 
 Scene helpers both files share: ``seed_every_rng``, ``subsystems``, ``face``,
 ``nebula_around``.
+
+Posed parts (Task 5) reuses the record for its own differentials
+(tests/helpers/posed_fight.py): ``Recorder(extra=...)`` appends a scene's
+own rows each tick, ``weapon_rows`` is the K1 differential's fire-control
+record, and ``posed_fallbacks`` / ``posed_no_mount`` / ``posed_branches``
+read the kernels' posed counters.
 A differential arm's audio and crew throttles are isolated by
 tests/helpers/fight_audio.isolate_fight_audio.
 """
@@ -203,8 +209,12 @@ class Recorder:
     first sight. `observer` answers incoming_ids every tick."""
 
     def __init__(self, mp, ships, observer, ship_instances=None,
-                 native=False):
+                 native=False, extra=None):
         self.native = native
+        # A callable returning more rows for this tick (appended last): what
+        # a differential compares beyond this record (posed parts: weapon
+        # state, part poses and mount positions -- posed_fight.py).
+        self.extra = extra
         self.ships = list(ships)
         self.observer = observer
         self.ship_instances = ship_instances
@@ -385,6 +395,8 @@ class Recorder:
             row.append(("incoming", [
                 self._by_objid.get(i, i) for i in projectiles.incoming_ids(
                     self.observer, 3600.0, None, 0)]))
+        if self.extra is not None:
+            row.extend(self.extra())
         self.log.append(row)
 
 
@@ -563,3 +575,93 @@ def check_guide_asks(counts, tally, expected):
     seen = {k for k, v in reasons.items() if v}
     assert seen <= set(expected), (seen, expected)
     return seen
+
+
+def weapon_rows(label, systems, weapons):
+    """Every weapon system's and weapon's fire-control state (the K1
+    differential's record, tests/integration/test_native_k1_differential.py):
+    floats by .hex(), objects by `label`, a weapon's `_target_offset` by its
+    hexes and by WHICH weapon first held that same object."""
+    from engine.appc import weapon_subsystems as ws
+    rows = []
+    for g in systems:
+        d = g.__dict__
+        rows.append((label(g), hx(g.IsFiring()), hx(d.get("_fire_held")),
+                     hx(d.get("_force_update")),
+                     hx(d.get("_last_weapon_idx")),
+                     hx(d.get("_last_group_fired")),
+                     label(d.get("_held_target")),
+                     [label(t) for t in d.get("_target_list", ())]))
+    first = {}
+    for i, w in enumerate(weapons):
+        d = w.__dict__
+        energy = isinstance(w, ws._EnergyWeaponFireMixin)
+        tube = isinstance(w, ws.TorpedoTube)
+        off = d.get("_target_offset")
+        if off is not None:
+            first.setdefault(id(off), i)
+        rows.append((
+            label(w), hx(w.IsFiring()), label(d.get("_target")),
+            hx(d.get("_fire_timer", 0.0)), hx(d.get("_depleted")),
+            hx(d.get("_dwell")), hx(d.get("_beam_on_countdown")),
+            w.GetChargeLevel().hex() if energy else None,
+            hx(d.get("_cooldown_remaining")),
+            hx(w.GetNumReady()) if tube else None,
+            hx(off) if isinstance(off, TGPoint3) else repr(off),
+            None if off is None else first[id(off)]))
+    return rows
+
+
+# Posed parts (spec docs/superpowers/specs/2026-11-01-native-combat-posed-
+# parts-design.md §4.5): every posed hand-back a differential with posed
+# ships must see at 0, and the native posed-branch counters it must see run.
+
+#: (counter path, reason) pairs that are 0 in a fight whose posed ships have
+#: their slots resolved at every step boundary. `no_mount` is NOT here: a
+#: random offset on a posed target that no mount claims is Python's box rule
+#: by design (ruling C4) -- see posed_no_mount.
+_POSED_ZERO = (
+    [("k1_python_reasons", s, why) for s in ("pump", "system")
+     for why in ("posed_ship", "posed_target", "part_stale",
+                 "mount_unknown", "no_mount", "offset_off_mount")]
+    + [("k1_fire_ask_reasons", None, why)
+       for why in ("part_stale", "mount_unknown", "offset_off_mount")]
+    + [("k2_python_reasons", None, why)
+       for why in ("posed_ship", "part_stale")]
+    + [("k3_steer_reasons", None, why)
+       for why in ("posed_target", "part_stale", "offset_off_mount",
+                   "mount_stale")])
+
+
+def _read(counts, key, sub, why):
+    c = counts[key]
+    return (c[sub] if sub is not None else c)[why]
+
+
+def posed_fallbacks(counts):
+    """{name: n} of every posed hand-back that must be 0 (_POSED_ZERO)."""
+    return {"%s%s/%s" % (key, "" if sub is None else "[%s]" % sub, why):
+            _read(counts, key, sub, why) for key, sub, why in _POSED_ZERO}
+
+
+def posed_no_mount(counts):
+    """The box-rule hand-backs (ruling C4): K1 Fire ASKs and K3 steer ASKs
+    at a posed target's offset that no mount claims. Printed, not zero."""
+    return {"k1_fire_ask_reasons/no_mount":
+            counts["k1_fire_ask_reasons"]["no_mount"],
+            "k3_steer_reasons/no_mount":
+            counts["k3_steer_reasons"]["no_mount"]}
+
+
+def posed_branches(counts):
+    """The native posed branches: a posed ship's systems walked (K1), a Fire
+    aimed at a posed target's offset (K1 `_RESOLVE` / Manual Aim slot), a
+    posed ship's banks (K2), a lock on a posed ship's subsystem (K2), a
+    Manual Aim beam on a posed target (K2), a torpedo steered at a posed
+    target's mount or pick (K3)."""
+    return {"k1_posed/walks": counts["k1_posed"]["walks"],
+            "k1_posed/target_aims": counts["k1_posed"]["target_aims"],
+            "k2_posed/banks": counts["k2_posed"]["banks"],
+            "k2_posed/lock_aims": counts["k2_posed"]["lock_aims"],
+            "k2_posed/manual_aims": counts["k2_posed"]["manual_aims"],
+            "k3_posed_steers": counts["k3_posed_steers"]}
