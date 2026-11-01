@@ -306,7 +306,8 @@ K3Record Walker::guide() {
                                tr->_containing_set, off) != OffsetStatus::ok)
                 lost("the steer point's offset is no longer resolvable");
             s_.resume = g.resume;
-            ++c_.steer_why[g.why ? g.why : "?"];
+            if (g.steer_why != SteerWhy::kCount)
+                ++c_.steer_why[static_cast<size_t>(g.steer_why)];
             return ask(K3Query::steer_point, {h, target, off},
                        St::STEER_ANSWER);
         }

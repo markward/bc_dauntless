@@ -75,6 +75,7 @@ K1Why fire_ask_why(const std::invalid_argument& e) {
     if (dynamic_cast<const PartStale*>(&e)) return K1Why::PartStale;
     if (dynamic_cast<const MountUnknown*>(&e)) return K1Why::MountUnknown;
     if (dynamic_cast<const NoMount*>(&e)) return K1Why::NoMount;
+    if (dynamic_cast<const OffsetOffMount*>(&e)) return K1Why::OffsetOffMount;
     return K1Why::Other;
 }
 
@@ -93,7 +94,8 @@ const char* k1_why_name(K1Why w) {
     static constexpr const char* kNames[] = {
         "self_managed",   "overridden",       "instance_patch",
         "posed_ship",     "posed_target",     "part_stale",
-        "mount_unknown",  "no_mount",         "stub_or_unplaced",
+        "mount_unknown",  "no_mount",         "offset_off_mount",
+        "stub_or_unplaced",
         "pulse_ship_target", "pulse_module",  "ammo_row",
         "stale_row",      "unslotted_ship",   "gate",
         "other"};

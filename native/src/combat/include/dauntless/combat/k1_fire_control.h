@@ -95,7 +95,9 @@
 //                   whenever the Fire's decision cannot be made natively,
 //                   counted by why in Counts::fire_ask_why: part_stale (a
 //                   slot that went stale mid-walk), mount_unknown / no_mount
-//                   (a posed target's offset), other otherwise.
+//                   / offset_off_mount (a posed target's offset), other
+//                   otherwise. The pre-scan never hands a system back for
+//                   those three: they are counted here only.
 //        retry      (sys, bank)         try_fire_weapon's retry loop over
 //                                       list(sys._target_list)        -> bool
 //        is_dead    (obj)               hasattr(obj, "IsDead") and
@@ -142,6 +144,8 @@ enum class K1Why : int32_t {
     NoMount,          // a posed target's offset names no authored mount
                       // and the firing ship's Manual Aim slot does not hold
                       // it (Python's box rule)
+    OffsetOffMount,   // a posed target's offset is within 1e-5 of a mount
+                      // but not its own point
     StubOrUnplaced,   // no real IsDead, or no valid transform
     PulseShipTarget,  // pulse with no live list entry: ship.GetTarget()
     PulseModule,      // pulse module unresolved or power setting out of range
@@ -235,7 +239,8 @@ public:
         std::array<int64_t, static_cast<size_t>(K1Why::kCount)> pump_why{},
             system_why{};
         // ASK fire hand-backs (a Fire decision the mirror could not make) by
-        // why: PartStale, MountUnknown, NoMount; Other for the rest.
+        // why: PartStale, MountUnknown, NoMount, OffsetOffMount; Other for
+        // the rest.
         std::array<int64_t, static_cast<size_t>(K1Why::kCount)> fire_ask_why{};
         // Posed parts walked natively: systems whose ship is posed, and Fire
         // decisions aimed at a posed target's offset.

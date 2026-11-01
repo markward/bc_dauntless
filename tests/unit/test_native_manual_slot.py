@@ -227,3 +227,25 @@ def test_switch_off_pushes_nothing(monkeypatch):
         assert rec.names == []
     finally:
         App.g_kSetManager.DeleteSet("native_part_slots")
+
+
+def test_heal_never_drops_a_row(scene):
+    """The mid-walk heal (run_k2, after an ASK answer moved the generation)
+    re-resolves without the "unrepresentable" drop: a pose table it cannot
+    encode leaves the row in place and its slots stale (the kernels'
+    fallback). A step boundary still drops it."""
+    bop, galaxy = scene
+    articulation.force_pose(bop, "cruise")
+    nc.resolve_stale_part_slots([galaxy, bop])
+    h = _h_of(bop)
+    name = articulation.posed_part_names(bop)[0]
+    R, t = bop._articulation_poses[name]
+    bop.__dict__["_articulation_poses"][name] = (R, ("x", 0.0, 0.0))
+    gen = nc.part_gen()
+    nc.bump_part_gen()
+    nc._heal_part_slots([galaxy, bop], gen)
+    assert bop.__dict__.get("_nslot") == h
+    wing = next(s for s in bop.GetPulseWeaponSystem()._children)
+    assert _h.combat_dump(_h_of(wing))["part_gen"] != nc.part_gen()
+    nc.resolve_stale_part_slots([galaxy, bop])
+    assert "_nslot" not in bop.__dict__

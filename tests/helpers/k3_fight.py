@@ -38,7 +38,6 @@ try:
 except ImportError:
     _h = None
 
-from engine.appc import articulation
 from engine.appc import combat
 from engine.appc import damage_eligibility
 from engine.appc import native_combat as nc
@@ -405,16 +404,25 @@ class K3Tally:
     write record's last-seen / velocity: "unguided", "window_end",
     "ballistic_frame", "ballistic_dead", "source_other_frame(_unseen)",
     "guided_visible", "cross_region_homing", "guided_invisible",
-    "guided_no_turn", "steer_point:posed" (the target has posed parts) and
-    "cross_region_hit" (the hit ship's and torpedo's frames).
-    "steer_point:mount" is BY ELIMINATION: every steer_point ASK whose target
-    has no posed part is counted as a mount attribution."""
+    "guided_no_turn" and "cross_region_hit" (the hit ship's and torpedo's
+    frames).
+
+    Read off the KERNEL's own counters (combat_k3_counts, posed parts Task
+    4): "steer_point:<why>" for every steer_point ASK, by the reason the
+    kernel counted for it (k3_steer_reasons: "steer_point:unattributed" is
+    a mount attribution, "steer_point:part_stale" a stale slot, ...);
+    "steer_point:mount" is the attribution ASKs (unattributed); and
+    "steer_point:posed" the steer points the kernel decided NATIVELY at a
+    posed target's mount or Manual Aim pick (k3_posed_steers)."""
 
     def __init__(self, orig):
         self.orig = orig
         self.n = {}
         self.asked_guide = set()
         self.ask = _h.combat_k3_kinds()["ASK"]
+        c = _h.combat_k3_counts()
+        self.steer_why = dict(c["k3_steer_reasons"])
+        self.posed_steers = c["k3_posed_steers"]
 
     def bump(self, key, by=1):
         self.n[key] = self.n.get(key, 0) + by
@@ -433,16 +441,21 @@ class K3Tally:
         if query == "guide":
             self.asked_guide.add(args[0])
         elif query == "steer_point":
-            target = nc._registry.get(args[1])
-            if target is not None and articulation.posed_part_names(target):
-                self.bump("steer_point:posed")
-            else:
-                self.bump("steer_point:mount")
+            why = _h.combat_k3_counts()["k3_steer_reasons"]
+            for k, n in why.items():
+                if n != self.steer_why.get(k, 0):
+                    self.bump("steer_point:" + k, n - self.steer_why.get(k, 0))
+                    if k == "unattributed":
+                        self.bump("steer_point:mount")
+            self.steer_why = dict(why)
             if args[2] is not None and tuple(args[2]) != _ZERO:
                 self.bump("steer_point:cross_region")
 
     def on_done(self, rec):
         _kind, writes, expired, hits = rec
+        posed = _h.combat_k3_counts()["k3_posed_steers"]
+        self.bump("steer_point:posed", posed - self.posed_steers)
+        self.posed_steers = posed
         rows = nc._k3_rows
         for h, _age, seen, _tvel, vel in writes:
             t = rows[h]

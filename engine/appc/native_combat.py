@@ -198,11 +198,16 @@ def counts() -> dict:
     part_stale, overridden, instance_patch, ...; every reason, zeros
     included), for the held-weapon pump and StartFiring apart --
     "k1_fire_ask_reasons" ({K1Why name: n}: the Fire decisions handed to
-    Python, ASK fire -- part_stale, mount_unknown, no_mount, other) and
+    Python, ASK fire -- part_stale, mount_unknown, no_mount,
+    offset_off_mount, other) and
     "k1_posed" ({"walks", "target_aims"}: systems of a posed ship walked
     natively, Fire decisions aimed natively at a posed target's offset).
     posed_ship / posed_target are retired reasons, always 0 (posed parts
-    run natively; spec 2026-11-01 §4.5).
+    run natively; spec 2026-11-01 §4.5). In k1_python_reasons,
+    mount_unknown / no_mount / offset_off_mount are always 0 too: the
+    pre-scan never hands a system back for a posed target's offset, which
+    is decided in the walk -- those three are counted in
+    k1_fire_ask_reasons only.
 
     K2 (`cb.phasers`): the kernel's {"k2_records", "k2_python_ships",
     "k2_asks", "k2_python_reasons": {K2Why name: n}, "k2_ask_queries":
@@ -220,7 +225,7 @@ def counts() -> dict:
     K3 (`cb.projectiles`): the kernel's {"k3_runs", "k3_records",
     "k3_asks": {query: n}, "k3_guide_reasons": {why: n},
     "k3_steer_reasons": {why: n} (the steer_point ASKs: unattributed,
-    part_stale, no_mount, ...; projectile_geometry.h kSteerWhy, zeros
+    part_stale, no_mount, ...; projectile_geometry.h SteerWhy, zeros
     included), "k3_posed_steers": n (a posed target's mount steered
     natively)}, and
     "k3_python_steps" / "k3_python_reasons" ({why: n}): the steps run whole
@@ -1292,11 +1297,13 @@ def _pose_table(ship, names) -> list:
     return out
 
 
-def _push_pose_table(ship, h, flag, names=None) -> None:
+def _push_pose_table(ship, h, flag, names=None, drop=True) -> bool:
     """Push the pose table: empty while `flag` (has_posed_parts) is 0 --
     the kernel never reads it then. A non-empty table whose names differ
     from the ones the ship's slots were resolved against bumps the
-    generation first (R11): those slots index another table."""
+    generation first (R11): those slots index another table. A table that
+    cannot be encoded drops the ship's row -- unless `drop` is False (the
+    mid-walk heal): then nothing is pushed. True when it was pushed."""
     if not flag:
         entries = []
     else:
@@ -1305,13 +1312,15 @@ def _push_pose_table(ship, h, flag, names=None) -> None:
                 names = _pose_names(ship)
             entries = _pose_table(ship, names)
         except (TypeError, ValueError, OverflowError, IndexError):
-            _drop(ship)     # not representable: never leave a stale row
-            return
+            if drop:
+                _drop(ship)     # not representable: never leave a stale row
+            return False
         prev = _slot_names.get(h)
         if prev is not None and prev != names:
             del _slot_names[h]
             bump_part_gen()
     _call(ship, _h.combat_set_part_poses, h, entries)
+    return True
 
 
 def _slot_subsystems(ship) -> list:
@@ -1359,11 +1368,16 @@ def _part_slot(leaf, names, sub):
     return names.index(name)
 
 
-def resolve_part_slots(ship) -> None:
+def resolve_part_slots(ship, drop=True) -> None:
     """Resolve and push the part slot of every subsystem of `ship`, stamped
     with the current generation, with the pose table built from the SAME
     `posed_part_names` call (R11). Only for a ship whose leaf is already
-    cached (R5); an unrigged ship has no names and pushes no slot."""
+    cached (R5); an unrigged ship has no names and pushes no slot.
+
+    `drop=False` (the mid-walk heal, _heal_part_slots) never drops the
+    ship's row: a table it cannot encode is left as last pushed and the
+    slots stay stale (the kernels' fallback), where a boundary would drop
+    the row (the "unrepresentable" rule)."""
     if not _enabled:
         return
     h = ship.__dict__.get("_nslot")
@@ -1374,7 +1388,9 @@ def resolve_part_slots(ship) -> None:
     gen = _part_gen
     names = articulation.posed_part_names(ship)
     _slot_names[h] = names
-    _push_pose_table(ship, h, _posed_flag(ship), names)
+    if not _push_pose_table(ship, h, _posed_flag(ship), names, drop):
+        _slot_names.pop(h, None)
+        return
     if ship.__dict__.get("_nslot") != h:
         return
     if names:
@@ -1392,10 +1408,11 @@ def resolve_part_slots(ship) -> None:
         _resolved_gen[h] = gen
 
 
-def resolve_stale_part_slots(ships) -> None:
+def resolve_stale_part_slots(ships, drop=True) -> None:
     """At a step boundary: resolve every ship of `ships` whose slots were
     resolved at an older generation (or never), and every Manual Aim slot
-    whose (target, offset, generation) moved (Task 4b)."""
+    whose (target, offset, generation) moved (Task 4b). `drop`: see
+    resolve_part_slots."""
     if not _enabled:
         return
     for ship in ships:
@@ -1404,10 +1421,22 @@ def resolve_stale_part_slots(ships) -> None:
         if h is None:
             continue
         if _resolved_gen.get(h) != _part_gen:
-            resolve_part_slots(ship)
+            resolve_part_slots(ship, drop)
         if d.get("_manual_target_offset") is not None \
                 or h in _manual_resolved:
-            _resolve_manual_slot(ship, h)
+            _resolve_manual_slot(ship, h, drop)
+
+
+def _heal_part_slots(ships, gen) -> None:
+    """After Python answered a K2 ASK: if the answer moved the part-map
+    generation (any trigger may fire in Python), re-resolve before the
+    answer goes back, so the bank's GEOMETRY that follows -- which cannot
+    fall back once its bank has a record (k2_beams.h protocol invariant) --
+    reads freshly stamped slots. Never drops a row: the kernel is mid-walk
+    over these objects. (K1 and K3 need none: a slot they read after an ASK
+    falls back to another, counted ASK.)"""
+    if _part_gen != gen:
+        resolve_stale_part_slots(ships, drop=False)
 
 
 # ── Manual Aim slots (posed parts, Task 4b) ──────────────────────────────────
@@ -1430,7 +1459,7 @@ def resolve_stale_part_slots(ships) -> None:
 _manual_resolved: dict = {}
 
 
-def _manual_slot(ship):
+def _manual_slot(ship, drop=True):
     """(target, offset xyz, slot) of `ship`'s Manual Aim pick: the index of
     the part `_live_part(target, None, offset, authored=False)` resolves in
     the target's resolved names (-1: none), detachment ignored (the table's
@@ -1447,7 +1476,7 @@ def _manual_slot(ship):
         return None
     names = _slot_names.get(th)
     if names is None or _resolved_gen.get(th) != _part_gen:
-        resolve_part_slots(target)
+        resolve_part_slots(target, drop)
         names = _slot_names.get(th)
         if names is None or target.__dict__.get("_nslot") != th:
             return None
@@ -1461,9 +1490,9 @@ def _manual_slot(ship):
     return th, point, slot
 
 
-def _resolve_manual_slot(ship, h) -> None:
+def _resolve_manual_slot(ship, h, drop=True) -> None:
     gen = _part_gen
-    found = _manual_slot(ship)
+    found = _manual_slot(ship, drop)
     if found is None:
         if _manual_resolved.get(h, False) is not None:
             _manual_resolved[h] = None
@@ -2796,6 +2825,8 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
                 else:
                     system.update_weapons(dt)
             elif kind == ASK:
+                # No heal here (cf. run_k2): every K1 slot read after an ASK
+                # is inside a Fire decision, whose PartStale is an ASK fire.
                 _h.combat_k1_answer(_k1_answer(rec, walk, dt))
             elif kind == DONE:
                 break
@@ -3487,8 +3518,10 @@ def run_k2(ships, dt, ship_instances, cx) -> None:
             if writes:
                 apply_writes(writes, walk)
             if kind == ASK:
-                _h.combat_k2_answer(_k2_answer(rec, walk, cx, dt,
-                                               ship_instances))
+                gen = _part_gen
+                answer = _k2_answer(rec, walk, cx, dt, ship_instances)
+                _heal_part_slots(ships, gen)
+                _h.combat_k2_answer(answer)
             elif kind == CONTACT:
                 _k2_contact(rec, walk, cx, dt, ship_instances)
                 cx.asked_shields = False
@@ -4061,6 +4094,8 @@ def _k3_walk(dt, ship_instances, st, walk, ask):
     try:
         rec = _h.combat_k3_next()
         while rec[0] == ask:
+            # No heal here (cf. run_k2): a K3 slot read after an ASK is a
+            # steer point, whose PartStale is a steer_point ASK.
             _h.combat_k3_answer(_k3_answer(rec, walk, dt, ship_instances, st))
             rec = _h.combat_k3_next()
         _h.combat_k3_end()

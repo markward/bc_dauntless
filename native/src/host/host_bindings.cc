@@ -10304,7 +10304,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
 
         // ── The K3 projectile geometry (projectile_geometry.h) ───────────
         // Each answers as the Python function it ports; ValueError (from
-        // bubble_bound_radius / steer_point_unposed) means "ask the Python".
+        // bubble_bound_radius / steer_point_native) means "ask the Python".
         // guide_torpedo returns its status instead of raising.
         m.def("combat_test_bubble_bound_radius",
               [](std::int64_t ship) {
@@ -10329,14 +10329,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("ttl"),
               "(cur, age, expired, seg, seg_len, aim_unit or None); seg, "
               "seg_len and aim_unit are meaningful only when not expired.");
-        m.def("combat_test_steer_point_unposed",
+        m.def("combat_test_steer_point",
               [vec](std::int64_t target, py::object offset,
                     std::int64_t mount_sub, const std::array<double, 3>& off) {
                   std::optional<cb::Vec3> o;
                   if (!offset.is_none())
                       o = offset.cast<std::array<double, 3>>();
-                  return vec(cb::steer_point_unposed(cb::mirror(), target, o,
-                                                     mount_sub, off));
+                  return vec(cb::steer_point_native(cb::mirror(), target, o,
+                                                    mount_sub, off));
               },
               py::arg("target"), py::arg("offset"), py::arg("mount_sub"),
               py::arg("off"),
@@ -11020,11 +11020,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
                 asks[cb::k3_query_name(static_cast<cb::K3Query>(i))] =
                     c.queries[i];
             for (const auto& [k, n] : c.guide_why) guide[py::str(k)] = n;
-            // steer_point ASKs by why: every known reason (zeros included),
-            // then any other the kernel counted.
+            // steer_point ASKs by why, every reason (zeros included).
             py::dict steer;
-            for (const char* k : cb::kSteerWhy) steer[k] = 0;
-            for (const auto& [k, n] : c.steer_why) steer[py::str(k)] = n;
+            for (size_t i = 0; i < c.steer_why.size(); ++i)
+                steer[cb::steer_why_name(static_cast<cb::SteerWhy>(i))] =
+                    c.steer_why[i];
             d["k3_python_reasons"] = why;
             d["k3_asks"] = asks;
             d["k3_guide_reasons"] = guide;

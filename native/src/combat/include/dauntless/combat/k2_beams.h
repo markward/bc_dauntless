@@ -135,10 +135,14 @@
 // row, and the pre-scan made every remaining read nameable; if one still
 // fails, next() throws std::logic_error (the session is restored, see below)
 // and run_k2 must abandon and re-raise naming this invariant. The part slots
-// the bank's GEOMETRY reads were checked current at its start; the ASKs
-// before GEOMETRY (is_dead, can_detect, aim_point) never bump the part-map
-// generation (no model or box is learned without a render instance id,
-// which none of them passes), so a slot cannot go stale in between.
+// the bank's GEOMETRY reads were checked current at its start, and the only
+// Python between that check and GEOMETRY is ASK answers (is_dead,
+// can_detect, aim_point). run_k2 re-resolves the step's ships whenever an
+// answer moved the part-map generation, before handing it back
+// (native_combat._heal_part_slots, never dropping a row), so GEOMETRY reads
+// freshly stamped slots by construction; a stale one here stays a
+// last-resort guard (reachable only if Python's own part resolution raises,
+// when Python's step would raise on that mount too).
 //
 // PINNING (the Python driver's contract; Task 5's run_k2). Python's loop
 // holds strong references in its locals (`ship`, `sys_`, `bank`, `target`);

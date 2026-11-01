@@ -1210,6 +1210,7 @@ TEST(K1, FallbackReasonsAreCounted) {
     EXPECT_STREQ(k1_why_name(K1Why::PartStale), "part_stale");
     EXPECT_STREQ(k1_why_name(K1Why::MountUnknown), "mount_unknown");
     EXPECT_STREQ(k1_why_name(K1Why::NoMount), "no_mount");
+    EXPECT_STREQ(k1_why_name(K1Why::OffsetOffMount), "offset_off_mount");
     EXPECT_STREQ(k1_why_name(K1Why::InstancePatch), "instance_patch");
     // One pump over one phaser (or `kind`) system, set up to fall back.
     auto pump = [](int64_t kind, auto&& setup, K1Why want) {
@@ -1356,8 +1357,8 @@ TEST(K1, PosedTargetOffsetAimByReason) {
     // cannot tell the mount (not a ShipClass), no mount claims the offset,
     // or the slot is stale -> the Fire is Python's (ASK fire), counted by
     // why. The system is never handed back whole (no posed_target).
-    enum Case { kNative, kUnknown, kNoMountHere, kStale };
-    for (int c = kNative; c <= kStale; ++c) {
+    enum Case { kNative, kUnknown, kNoMountHere, kStale, kOffMount };
+    for (int c = kNative; c <= kOffMount; ++c) {
         World w;
         const int64_t ship = w.ship("ship");
         const int64_t t = w.ship("t", 0.0, 50.0, 0.0);
@@ -1373,6 +1374,8 @@ TEST(K1, PosedTargetOffsetAimByReason) {
         const int64_t b0 = w.bank("b0", sys);
         if (c == kNoMountHere)
             w.m.set_fv(b0, Field::_target_offset, {0.0, 0.0, 0.75});
+        else if (c == kOffMount)  // the mount's within 1e-5, not its point
+            w.m.set_fv(b0, Field::_target_offset, {0.5 + 0.5e-5, 0.0, 0.0});
         else
             w.m.set_fv(b0, Field::_target_offset, {0.5, 0.0, 0.0});
         if (c == kStale) w.m.set_part_gen(w.m.part_gen() + 1);
@@ -1391,6 +1394,7 @@ TEST(K1, PosedTargetOffsetAimByReason) {
             EXPECT_EQ(w.brief(r), "ASK fire") << c;
             const K1Why want = c == kUnknown       ? K1Why::MountUnknown
                                : c == kNoMountHere ? K1Why::NoMount
+                               : c == kOffMount    ? K1Why::OffsetOffMount
                                                    : K1Why::PartStale;
             EXPECT_EQ(ask_why(want), 1) << c;
             EXPECT_EQ(n.posed_target_aims, 0) << c;

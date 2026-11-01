@@ -520,7 +520,8 @@ TEST(K3Projectiles, PosedTargetAsksSteerPoint) {
     EXPECT_EQ(*wt.last_tvel, want.writes[1].value);
     EXPECT_EQ(*wt.vel, want.writes[2].value);
     w.k.end();
-    EXPECT_EQ(w.k.counts().steer_why.at("no_mount"), 1);
+    EXPECT_EQ(w.k.counts().steer_why[static_cast<size_t>(SteerWhy::no_mount)],
+              1);
     EXPECT_EQ(w.k.counts().posed_steers, 0);
 }
 
@@ -559,13 +560,15 @@ TEST(K3Projectiles, PosedTargetMountSteersNatively) {
             ASSERT_TRUE(wt.last_seen.has_value());
             EXPECT_EQ(*wt.last_seen, want.writes[0].value);
             EXPECT_EQ(n.posed_steers, 1);
-            EXPECT_TRUE(n.steer_why.empty());
+            for (const int64_t k : n.steer_why) EXPECT_EQ(k, 0);
         } else {
             EXPECT_EQ(w.brief(w.k.next()), "ASK steer_point T") << c;
-            EXPECT_EQ(n.steer_why.at(c == kOffMount ? "offset_off_mount"
-                                                    : "part_stale"),
-                      1)
-                << c;
+            const SteerWhy want = c == kOffMount ? SteerWhy::offset_off_mount
+                                                 : SteerWhy::part_stale;
+            EXPECT_EQ(n.steer_why[static_cast<size_t>(want)], 1) << c;
+            EXPECT_STREQ(steer_why_name(want), c == kOffMount
+                                                   ? "offset_off_mount"
+                                                   : "part_stale");
             EXPECT_EQ(n.posed_steers, 0) << c;
             w.k.abandon();
             continue;

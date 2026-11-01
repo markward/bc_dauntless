@@ -259,7 +259,7 @@ Vec3 target_offset_world(const Mirror& m, int64_t target, const Vec3& offset,
         // the mount's own `_position`. C `==` per axis: a NaN never matches.
         const Vec3& k = ms._position;
         if (!(offset[0] == k[0]) || !(offset[1] == k[1]) || !(offset[2] == k[2]))
-            fall_back("offset is not its mount's own point");
+            fall_back_as<OffsetOffMount>("offset is not its mount's own point");
         check_slot_owner(m, ms, target);
         const PartPose* pose = nullptr;
         const SlotState st = slot_pose(m, t, ms, &pose);

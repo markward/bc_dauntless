@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <stdexcept>
 
@@ -188,11 +189,11 @@ Advance advance_torpedo(const Vec3& prev, const Vec3& vel, double dt,
     return a;
 }
 
-// ── projectiles.py:1065 _steer_point, unposed (K3M G11/G12) ─────────────────
+// ── projectiles.py:1065 _steer_point (K3M G11/G12) ──────────────────────────
 
-Vec3 steer_point_unposed(const Mirror& m, int64_t target,
-                         const std::optional<Vec3>& offset, int64_t mount_sub,
-                         const Vec3& off, int64_t manual_ship) {
+Vec3 steer_point_native(const Mirror& m, int64_t target,
+                        const std::optional<Vec3>& offset, int64_t mount_sub,
+                        const Vec3& off, int64_t manual_ship) {
     const ObjectRow& t = obj(m, target);
     if (!offset) {
         // G12: TGPoint3(pos) then _shifted(..., off).
@@ -210,9 +211,18 @@ Vec3 steer_point_unposed(const Mirror& m, int64_t target,
         target_offset_world(m, target, *offset, mount_sub, manual_ship), off);
 }
 
-// A need_steer_point with its reason (one of kSteerWhy).
-static GuideResult steer_ask(GuideResult ask, const char* why) {
-    ask.why = why;
+const char* steer_why_name(SteerWhy w) {
+    static constexpr const char* kNames[] = {
+        "unattributed", "mount_unrepresentable", "posed_target", "no_mount",
+        "mount_stale",  "offset_off_mount",      "part_stale",   "geometry"};
+    static_assert(std::size(kNames) == static_cast<size_t>(SteerWhy::kCount));
+    const auto i = static_cast<size_t>(w);
+    return i < std::size(kNames) ? kNames[i] : "?";
+}
+
+// A need_steer_point with its reason.
+static GuideResult steer_ask(GuideResult ask, SteerWhy why) {
+    ask.steer_why = why;
     return ask;
 }
 
@@ -315,10 +325,10 @@ GuideResult guide_torpedo(Mirror& m, const TorpedoRow& row, double dt,
         const Vec3& k = row.mount_offset;
         if (!row.mount_attributed || !(k[0] == o[0]) || !(k[1] == o[1]) ||
             !(k[2] == o[2]))
-            return steer_ask(ask, "unattributed");
+            return steer_ask(ask, SteerWhy::unattributed);
         mount_sub = m.torpedo_ref(row, TorpField::_mount_key);
         if (mount_sub == kRefUnrepresentable)
-            return steer_ask(ask, "mount_unrepresentable");
+            return steer_ask(ask, SteerWhy::mount_unrepresentable);
         if (tr.has_posed_parts) {
             // PG:310 (posed-parts spec §4.4): the attributed mount's part
             // slot carries the offset only when the offset IS the mount's
@@ -330,24 +340,24 @@ GuideResult guide_torpedo(Mirror& m, const TorpedoRow& row, double dt,
             // offset (Task 4b), else Python's (NoMount below).
             if (mount_sub != kNoMount) {
                 const SubsystemRow* ms = m.subsystem(mount_sub);
-                if (!ms) return steer_ask(ask, "mount_stale");
+                if (!ms) return steer_ask(ask, SteerWhy::mount_stale);
                 const Vec3& p = ms->_position;
                 if (!(o[0] == p[0]) || !(o[1] == p[1]) || !(o[2] == p[2]))
-                    return steer_ask(ask, "offset_off_mount");
+                    return steer_ask(ask, SteerWhy::offset_off_mount);
             }
         }
         offset = o;
     }
     Vec3 pos;
     try {
-        pos = steer_point_unposed(m, target, offset, mount_sub, off,
+        pos = steer_point_native(m, target, offset, mount_sub, off,
                                   src >= 0 ? src : -1);
     } catch (const PartStale&) {
-        return steer_ask(ask, "part_stale");
+        return steer_ask(ask, SteerWhy::part_stale);
     } catch (const NoMount&) {
-        return steer_ask(ask, "no_mount");
+        return steer_ask(ask, SteerWhy::no_mount);
     } catch (const std::invalid_argument&) {
-        return steer_ask(ask, "geometry");
+        return steer_ask(ask, SteerWhy::geometry);
     }
     GuideResult r = guide_torpedo_resume(m, row, dt, ask.resume, pos);
     r.posed_steer = offset.has_value() && tr.has_posed_parts;

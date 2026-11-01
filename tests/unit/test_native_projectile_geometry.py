@@ -420,7 +420,7 @@ def test_steer_point_matches(world):
         want = projectiles._steer_point(t, target, off)
         offset = t._target_offset
         mount = t._mount_key[4] if t._mount_key is not None else None
-        got = _h.combat_test_steer_point_unposed(
+        got = _h.combat_test_steer_point(
             _slot(target), None if offset is None else _xyz(offset),
             _slot(mount), off)
         assert _hx(got) == _hx(want), mode
@@ -661,7 +661,7 @@ def test_posed_target_needs_ask(world):
     articulation.force_part_pose(target, "TestPart", hinge)
     try:
         with pytest.raises(ValueError):
-            _h.combat_test_steer_point_unposed(
+            _h.combat_test_steer_point(
                 _slot(target), (0.5, 1.0, -0.25), -1, (0.0, 0.0, 0.0))
         drift, occ = _clocks()
         _reset_sensors()
