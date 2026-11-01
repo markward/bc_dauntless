@@ -10930,38 +10930,71 @@ PYBIND11_MODULE(_dauntless_host, m) {
             // The GIL is HELD for the walk (ruling J), as combat_k1_next:
             // the kernel and the trace hooks touch no Python object.
             cb::K2Record r = cb::k2_kernel().next();
+            // The write log: K1's value encoding (None, bool, int, float, a
+            // handle list) -- native_combat.apply_writes applies both.
             py::list writes;
-            for (const cb::K2Write& w : r.writes)
-                writes.append(py::make_tuple(w.handle, w.field, w.value));
+            for (const cb::K2Write& w : r.writes) {
+                py::object v = std::visit(
+                    [](const auto& x) -> py::object {
+                        using T = std::decay_t<decltype(x)>;
+                        if constexpr (std::is_same_v<T, std::monostate>)
+                            return py::none();
+                        else if constexpr (std::is_same_v<T, cb::K1WalkOffset>)
+                            throw std::logic_error(
+                                "combat K2: a walk-offset write");
+                        else
+                            return py::cast(x);
+                    },
+                    w.value);
+                writes.append(py::make_tuple(w.handle, w.field, v));
+            }
             const int kind = static_cast<int>(r.kind);
             auto opt = [&vec](const std::optional<cb::Vec3>& v) -> py::object {
                 return v ? py::object(vec(*v)) : py::object(py::none());
             };
+            // A contact's fields, CONTACT's layout from `bank` to
+            // `flush_dwell`. A queued one carries shields_block None when
+            // Python answered it (beam_contact evaluates its own).
+            auto contact = [&](py::list& items, const cb::K2Contact& c,
+                               bool queued) {
+                py::object shields = py::none();
+                if (c.shields_block && !(queued && c.shields_asked))
+                    shields = py::bool_(*c.shields_block);
+                items.append(c.bank);
+                items.append(c.target);
+                items.append(c.ship);
+                items.append(c.system);
+                items.append(vec(c.emitter));
+                items.append(vec(c.target_pos));
+                items.append(c.dist);
+                items.append(opt(c.aim_unit));
+                items.append(vec(c.hit.point));
+                items.append(opt(c.hit.normal));
+                items.append(kK2Tiers[static_cast<int>(c.hit.tier)]);
+                items.append(opt(c.bubble));
+                items.append(shields);
+                items.append(c.flush_dwell);
+            };
+            // The resting contacts queued since the previous record, each
+            // (at, *contact): run before the record's effect, each after
+            // writes[:at].
+            py::list queued;
+            for (const cb::K2Queued& q : r.contacts) {
+                py::list items;
+                items.append(q.at);
+                contact(items, q.contact, true);
+                queued.append(py::tuple(items));
+            }
             switch (r.kind) {
                 case cb::K2Kind::DONE:
-                    return py::make_tuple(kind, writes);
+                    return py::make_tuple(kind, queued, writes);
                 case cb::K2Kind::RUN_PYTHON:
-                    return py::make_tuple(kind, r.a, r.b, writes);
+                    return py::make_tuple(kind, r.a, r.b, queued, writes);
                 case cb::K2Kind::CONTACT: {
-                    const cb::K2Contact& c = r.contact;
-                    py::object shields = py::none();
-                    if (c.shields_block) shields = py::bool_(*c.shields_block);
                     py::list items;
                     items.append(kind);
-                    items.append(c.bank);
-                    items.append(c.target);
-                    items.append(c.ship);
-                    items.append(c.system);
-                    items.append(vec(c.emitter));
-                    items.append(vec(c.target_pos));
-                    items.append(c.dist);
-                    items.append(opt(c.aim_unit));
-                    items.append(vec(c.hit.point));
-                    items.append(opt(c.hit.normal));
-                    items.append(kK2Tiers[static_cast<int>(c.hit.tier)]);
-                    items.append(opt(c.bubble));
-                    items.append(shields);
-                    items.append(c.flush_dwell);
+                    contact(items, r.contact, false);
+                    items.append(queued);
                     items.append(writes);
                     return py::tuple(items);
                 }
@@ -10982,11 +11015,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
                             },
                             a));
                     }
+                    items.append(queued);
                     items.append(writes);
                     return py::tuple(items);
                 }
                 default:  // SYSTEM_STOP, BANK_STOP
-                    return py::make_tuple(kind, r.a, writes);
+                    return py::make_tuple(kind, r.a, queued, writes);
             }
         }, "The session's next record (see combat_k2_kinds).");
         m.def("combat_k2_answer",
@@ -11057,6 +11091,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
             posed["lock_aims"] = c.posed_lock_aims;
             posed["manual_aims"] = c.posed_manual_aims;
             d["k2_posed"] = posed;
+            // Records K2 no longer returns (round trips): resting contacts
+            // queued onto the next record, offline stops logged as writes.
+            d["k2_batched_contacts"] = c.batched_contacts;
+            d["k2_logged_system_stop"] = c.logged_system_stop;
             return d;
         });
         m.def("combat_k2_reset_counts",
