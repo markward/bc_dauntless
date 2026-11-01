@@ -94,4 +94,35 @@ File layout of the new native code (a `part_pose` helper in the combat library i
 
 ## 10. Outcome
 
-(Filled at the end.)
+Implemented 2026-11-01 on branch `ws/combat-posed-parts` (off `project/combat_threading`, `1c1ab9a12`; merges back there). Everything is behind `DAUNTLESS_NATIVE_COMBAT=1`, default OFF. Ships with articulated ("posed") parts now run natively through K1 fire control, K2 phasers and K3 torpedoes, bit for bit. **Live verification: NOT yet.** Mark to test a Bird of Prey fight (wings moving while firing).
+
+### What shipped
+
+- **Pose tables and part slots.** Each ship's part poses are pushed to the mirror; every subsystem carries a part slot and the mirror a part-map generation. A slot is read only when the ship has posed parts, the slot is in range, and its stamp is current; anything else is `part_stale` and goes to Python.
+- **Mount order.** The authored-mount walk order (`part_severance.authored_mount_subsystem`, i.e. K1's mount order) is mirrored, so a native lookup picks the same first match as Python.
+- **Native P1-P4.** Part pose applied to the mount position (before the ship rotation), identity parts untouched (to `is_identity`), directions never posed (MAP R7), strip emit points.
+- **Native authored-mount lookup.** `mount_for_offset` answers which subsystem an offset names on a target.
+- **Kernels.** K1 walk and target aims, K2 banks, lock aims and manual aims, and K3 steering all run on posed ships and posed targets natively (`steer_point_native` answers posed mounts and current Manual Aim slots).
+- **Manual Aim on posed targets (Task 4b).** Mark asked for it on 2026-11-01. A pick is a non-authored point whose part is the box rule's answer; Python resolves it once per (target, offset, generation) and pushes it as the firing ship's manual slot, and the kernels read it only when target and offset match exactly.
+- **K2 self-heal.** If the generation moves while a K2 ASK is being answered, the bank re-resolves its slots instead of failing.
+
+### Rulings worth keeping
+
+- **C4: a target offset with no mount does NOT fall back to identity on a posed target.** Python's `authored=False` box rule may land on a posed part, so the answer is Python's. This supersedes the "identity" line of 4.4. Correct by fidelity; the cost is that those asks stay ASKs.
+- **The offset must equal the mount position bit for bit.** A near match (within 1e-5) falls back (`offset_off_mount`).
+- **Manual slots resolve lazily at boundaries only**, and are checked against the firing ship's own target and offset, so a moved pick or changed target reads "no slot", never a wrong part.
+- **Healing lives in K2 only.** K1 and K3 have no window between the ASK and its use.
+- Task 6 nit: `_resolve_manual_slot` checks its cache key before running the box rule, so the box rule runs once per (target, offset, generation).
+
+### Counts (Task 5 differentials: headless and host, tpf 1 and 4, 660 ticks, 10 ships)
+
+- **Every posed fallback is 0** in all four runs: K1 `posed_ship`, `posed_target`, `part_stale`, `mount_unknown`, `offset_off_mount`; K2 `posed_ship`, `part_stale`; K3 steer `posed_target`, `part_stale`, `offset_off_mount`, `mount_stale`; no whole-step or whole-system hand-backs.
+- **Native posed branches** (headless tpf1 / host tpf4): K1 walks 2523 / 2665, K1 target aims 184 / 249, K2 banks 1342 / 975, K2 lock aims 2777 / 2629, K2 manual aims 214 / 150, K3 steers 5382 / 8857.
+- Per tick: 43,560 mount checks and 13,200 emitter checks per run match Python's bits. The scene audit (16 ships, 120 ticks) compared 857 pose tables and 13,552 slots with no failures.
+- Test order new->old and old->new: 25 passed each. ctest `-R combat_`: 217/217. Eight of eight mutants caught in Task 5.
+
+### What stays in Python, and why
+
+- **`no_mount` asks.** An offset that is no subsystem's mount (a random NPC offset, a tube's stored offset kept across a re-target) is answered by Python's box rule (C4). Likewise a torpedo flying at an OLD Manual Aim pick. Observed: 351-633 steer asks per host run. Exact, costs speed only. Follow-up for the retire-Python-copy pass (workstream E).
+- **The K2 self-heal** is unit-tested only; no differential scene reaches it.
+- **Torpedo attribution** (one ASK per torpedo) is unchanged from K3.

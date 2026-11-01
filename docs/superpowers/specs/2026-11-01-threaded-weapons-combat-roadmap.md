@@ -26,6 +26,7 @@ The two halves run **pipelined, one tick apart**: AI reviews last tick's combat 
 | 1b (K1) | `perf/native-combat-1b` | fire control (held weapons) | live-verified (~30 fps, 33 ships) |
 | K2 | `perf/native-combat-k2` | phaser beams | live-verified 2026-11-01 |
 | K3+K4 | `perf/native-combat-k3` | torpedo flight + damage eligibility | live-verified 2026-11-01; full gate green |
+| Posed parts (C) | `ws/combat-posed-parts` | posed ships/targets and Manual Aim on them, in K1/K2/K3 | built 2026-11-01, differentials green, not live-verified; merges into `project/combat_threading` |
 
 All are behind `DAUNTLESS_NATIVE_COMBAT=1`, default OFF, unmerged.
 
@@ -60,7 +61,7 @@ Combat is down 45%, but the programme's 1 ms target is not met. Fire control is 
 - **B. Measure before moving more.**
   - Per-part timers inside fire control: the hand-off, Python answers to C++ questions, ships done wholly in Python, applying results, actual firing (projectile creation, events, sounds).
   - A breakdown of the ~4 ms per tick outside combat and AI (motion, subsystems, game loop).
-- **C. Close the routine fallbacks in C++.** Ships with moving parts (posed ships/targets — today the largest fallback), ships before they acquire a target, a torpedo whose target record was dropped (per-torpedo instead of whole-step), targets outside the step scan. Until these are closed, the Python copies still do real work every tick and cannot be retired.
+- **C. Close the routine fallbacks in C++.** Posed parts: **closed** (branch `ws/combat-posed-parts`, merging into `project/combat_threading`; spec `2026-11-01-native-combat-posed-parts-design.md` §10; all posed fallbacks 0 in the differentials, not live-verified). Still open: ships before they acquire a target, a torpedo whose target record was dropped (per-torpedo instead of whole-step), targets outside the step scan, and the `no_mount` steer/fire asks (offsets that are no mount, torpedoes at an old Manual Aim pick), which are exact but cost speed. Until these are closed, the Python copies still do real work every tick and cannot be retired.
 - **D. Move damage application to C++** (`apply_hit`: shield absorption, hull, subsystem damage), reading the invincible/hurtable/cutscene flags.
 - **E. Retire the Python copies, one kernel at a time, fire control first.** Switch default ON, a play period with it on, delete the Python decision code, replace Python-vs-native differentials with recorded golden fights. First check whether anything must still run without the native module (some test setups).
 - **F. Launch-script cache** (decision 5).

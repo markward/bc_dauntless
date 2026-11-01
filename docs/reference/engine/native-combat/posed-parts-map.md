@@ -1,3 +1,5 @@
+> **Implemented 2026-11-01** on branch `ws/combat-posed-parts`, tip `9006951a8` (before docs). Outcome, counts and rulings: `docs/superpowers/specs/2026-11-01-native-combat-posed-parts-design.md` §10. The map below is the pre-build snapshot and is not updated (apart from the `steer_point_native` rename).
+
 > Snapshot map written 2026-11-01 at commit `1c1ab9a12` (branch `ws/combat-posed-parts`, identical to `project/combat_threading`). Input to workstreams **B** (measure before moving more) and **C** (close the routine fallbacks; posed ships first) of `docs/superpowers/specs/2026-11-01-threaded-weapons-combat-roadmap.md`. Line numbers drift; re-check one before relying on it. Model documents: `k1-fire-control-map.md`, `k2-beams-map.md`, `k3-k4-map.md`. Nothing was run except a parse of the two K3+K4 profiler logs (C-246, C-247) in `~/Documents/dauntless-perf/`. Anything not read directly off the code is marked **inferred**.
 
 # Posed parts + timing seams — code map
@@ -84,7 +86,7 @@ SIG-163 (4): a 9-ship, 600-tick host differential gave 80 ship fallbacks, all `p
 
 | Computation | Python | Posed input | Native | Fallback |
 |---|---|---|---|---|
-| Steer point (offset shot) | `_steer_point` PR:1065-1100: the `_mount_key` cache (PR:1094-1099, `authored_mount_subsystem` once per (target, offset)) → `target_offset_world(target, offset, key[4])` → `_shifted(..., off)` | **target** | PG:192-207 `steer_point_unposed` | PG:310: `if (mount_sub == kRefUnrepresentable \|\| tr.has_posed_parts) return ask;` → ASK `steer_point` (K3C:298-308); Python answers with `_steer_point`, and `_mount_key` is pushed into the row |
+| Steer point (offset shot) | `_steer_point` PR:1065-1100: the `_mount_key` cache (PR:1094-1099, `authored_mount_subsystem` once per (target, offset)) → `target_offset_world(target, offset, key[4])` → `_shifted(..., off)` | **target** | PG:192-207 `steer_point_native` | PG:310: `if (mount_sub == kRefUnrepresentable \|\| tr.has_posed_parts) return ask;` → ASK `steer_point` (K3C:298-308); Python answers with `_steer_point`, and `_mount_key` is pushed into the row |
 | Steer point (no offset) | PR:1091-1093: target centre | — | PG:196-198 | — |
 | Narrow phase / hit point | `sphere_hit`, bubble, `_resolve_hit_point` (renderer trace, as K2) | renderer drawn pose only | as Python | — |
 
