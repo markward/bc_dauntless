@@ -581,3 +581,17 @@ def test_hidden_scalar_field_takes_no_row():
         assert "_nslot" not in torp.__dict__
         assert nc.slot(torp) is None
         nc.reset()
+
+
+def test_forget_rows_drops_every_stale_handle_at_once():
+    """After combat_clear() every handle is stale: forget_rows() strips them
+    all, so the next switch-on's resync pushes no stale row (one stale push
+    at a time was a quadratic drop/re-push cascade: the gate hung on it)."""
+    ships = [_warbird("Stale %d" % i, reload=(i == 0)) for i in range(3)]
+    assert all("_nslot" in s.__dict__ for s in ships)
+    _h.combat_clear()
+    nc.forget_rows()
+    assert not any("_nslot" in s.__dict__ for s in ships)
+    assert len(nc._registry) == 0
+    nc.configure(ON)
+    assert nc.enabled()

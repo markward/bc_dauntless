@@ -885,6 +885,20 @@ def register(obj, kind: str, finalize: bool = True) -> None:
         _push_all(obj, h)
 
 
+def forget_rows() -> None:
+    """Test isolation, after a combat_clear(): every C++ row is gone, so
+    every handle Python holds is stale. Forget them all at once. Left to
+    discover it one push at a time, each stale object drops itself, re-pushes
+    its referrers and rescans the registry -- a cascade quadratic in the
+    objects earlier tests left alive (minutes in a full suite). The end state
+    is the same: every such object takes the Python path. Generations bump on
+    clear, so their finalizers cannot free a later row."""
+    for obj in list(_registry.values()):
+        obj.__dict__.pop("_nslot", None)
+    _registry.clear()
+    torpedo_table_mark_dirty()
+
+
 def unregister_handle(h: int) -> None:
     """Finalizer body: never raises (a combat_clear may have freed it)."""
     try:

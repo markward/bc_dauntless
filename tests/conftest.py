@@ -948,8 +948,9 @@ def _reset_leakable_engine_globals():
     except Exception:
         pass
     # Native combat mirror: the switch back to off, and every C++ row dropped
-    # (process-lifetime state). Objects a previous test left alive keep a
-    # stale handle; their next push finds it stale and unregisters them.
+    # (process-lifetime state). Objects a previous test left alive would keep
+    # a stale handle; forget_rows() drops them all at once (one at a time is
+    # a quadratic re-push cascade that hung the gate for over an hour).
     try:
         from engine.appc import native_combat as _native_combat
         _native_combat.reset()
@@ -958,6 +959,7 @@ def _reset_leakable_engine_globals():
     try:
         import _dauntless_host as _host
         _host.combat_clear()
+        _native_combat.forget_rows()
     except Exception:
         pass
     # Warp-in: radius seeder hook + live dial values are module globals.
