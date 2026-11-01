@@ -834,9 +834,12 @@ def test_handler_drops_the_dumb_tube_row_mid_walk(monkeypatch):
     """The dumb-fire branch with the tube's row gone: a FIRING tube that
     cannot fire is stopped by a BANK_STOP record (an idle one's stop is
     logged writes, round trips Task 2, and StopFiring itself is guarded, so
-    the row is dropped right after that record's Python, at run_k1's
-    re-pin); the walk's `GetNumTargets() == 0 and weapon.IsDumbFire()` must
-    still ask Python, and FireDumb follows. Per tick equal to Python."""
+    it cannot be the hook). That record is the walk's first, so run_k1
+    materialises the walk on it, and the row is dropped there, inside
+    `_K1Walk.materialise`'s pin, BEFORE the record's StopFiring runs (seen
+    by a stack probe); the walk's `GetNumTargets() == 0 and
+    weapon.IsDumbFire()` must still ask Python, and FireDumb follows. Per
+    tick equal to Python."""
     ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),)
     the_tube, pending, asks = [], [], []
     real_next = _h.combat_k1_next
@@ -1499,12 +1502,17 @@ def test_no_getattr_stub_on_live_held_offset_path(monkeypatch):
 
 # ── Round trips Task 2: beam sustain and idle stops as logged writes ─────────
 
-def _spy_fire_records(mp, log):
+def _spy_fire_records(mp, log, after_writes=False):
     """Wrap combat_k1_next: log (kind name, the named bank's object or None,
-    the bank's _firing as Python holds it NOW, the FIRE decision or None)
-    for every record, before run_k1 applies its writes."""
+    the bank's _firing as Python holds it, the FIRE decision or None) for
+    every record. `_firing` is read when the record is returned (before
+    run_k1 applies its writes), or with `after_writes` once the record's own
+    writes are applied: the value its effect (a BANK_STOP's StopFiring)
+    really sees, a logged `_firing` among those writes included."""
     real = _h.combat_k1_next
+    real_apply = nc.apply_writes
     names = {v: k for k, v in _h.combat_k1_kinds().items()}
+    pending = []        # the log index whose writes run_k1 applies next
 
     def spy():
         rec = real()
@@ -1514,8 +1522,22 @@ def _spy_fire_records(mp, log):
             bank = nc._registry.get(rec[1])
         firing = bank.__dict__.get("_firing") if bank is not None else None
         log.append((kind, bank, firing, rec[3] if kind == "FIRE" else None))
+        pending[:] = []
+        if after_writes and bank is not None and rec[-1]:
+            # run_k1 applies exactly these writes next (only when there are
+            # any), before anything else can run.
+            pending.append(len(log) - 1)
         return rec
+
+    def apply(writes, walk=None):
+        real_apply(writes, walk)
+        if pending:
+            i = pending.pop()
+            kind, bank, _firing, d = log[i]
+            log[i] = (kind, bank, bank.__dict__.get("_firing"), d)
     mp.setattr(_h, "combat_k1_next", spy)
+    if after_writes:
+        mp.setattr(nc, "apply_writes", apply)
 
 
 def _is_beam_decision(d):
@@ -1676,7 +1698,8 @@ def test_firing_bank_stop_still_records(monkeypatch):
     and the loop stops happen exactly as often, in the same order, ON as
     OFF."""
     log = []
-    _spy_fire_records(monkeypatch, log)
+    # _firing as StopFiring sees it: after the record's writes are applied.
+    _spy_fire_records(monkeypatch, log, after_writes=True)
     stops = {}
     real = ws._EnergyWeaponFireMixin._play_fire_sfx
 

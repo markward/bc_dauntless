@@ -44,8 +44,10 @@ with its type): every phaser bank's `_dwell`, `_firing`, `_target` and
 death flag, hull condition and six shield faces; the ordered call log of
 every bank and phaser-system StopFiring that runs with a bank firing (an
 idle one is logged writes, round trips Tasks 2-3), every
-hit_feedback.beam_contact (all arguments, and the shields_block it acted on)
-and every combat.apply_hit (all arguments); and the full ordered event log,
+hit_feedback.beam_contact (all arguments, and the shields_block it acted on),
+every hit VFX spawn and shield hit those make (all arguments: the
+presentation, round trips Task 5) and every combat.apply_hit (all
+arguments); and the full ordered event log,
 with each ET_WEAPON_HIT's payload. The native arm must show that every
 branch the scene is built for really happened in the KERNEL (the record
 stream, tallied as it is returned, a record's queued resting contacts
@@ -80,6 +82,7 @@ from engine.appc import combat  # noqa: E402
 from engine.appc import hit_feedback  # noqa: E402
 from engine.appc import native_combat as nc  # noqa: E402
 from engine.appc import part_pose  # noqa: E402
+from engine.appc import passive_state  # noqa: E402
 from engine.appc import sensor_contacts  # noqa: E402
 from engine.appc import weapon_subsystems as ws  # noqa: E402
 from engine.appc.events import WeaponHitEvent  # noqa: E402
@@ -91,6 +94,7 @@ from engine.core.loop import TICK_DELTA  # noqa: E402
 from engine.core.tracked_instances import TrackedInstances  # noqa: E402
 from tests.helpers import headless_mission  # noqa: E402
 from tests.helpers.fight_audio import isolate_fight_audio  # noqa: E402
+from tests.helpers.k3_fight import presented, spy_presentation  # noqa: E402
 
 GALAXY_NIF = (bc_assets.GAME_ROOT / "data" / "Models" / "Ships" / "Galaxy"
               / "Galaxy.nif")
@@ -340,6 +344,7 @@ class _Scene:
         self.log = []
         self.calls = []
         self.events = []
+        self.lists = {}         # id(system) -> its last recorded _target_list
         self.tally = None
         self.killed_at = None
         self._spy(mp)
@@ -421,6 +426,12 @@ class _Scene:
                    (names, nc._k1_resolve(ws.PhaserSystem, names)))
         mp.setattr(hit_feedback, "beam_contact", contact_spy)
         mp.setattr(combat, "apply_hit", hit_spy)
+        # What the contacts and hits PRESENT (every hit VFX spawn and shield
+        # hit, with their arguments), in the same ordered log: a resting
+        # contact batched onto a later record (round trips Task 3) must still
+        # present in Python's order, among the pulses' apply_hits.
+        spy_presentation(mp, self.calls, lambda: self.tick, self.label,
+                         contacts=False)    # contact_spy above has them
 
         orig = App.g_kEventManager.AddEvent
 
@@ -740,17 +751,30 @@ class _Scene:
         row = []
         for b in self.banks:
             d = b.__dict__
+            # `_firing` and `_beam_on_countdown` are what a bank's idle
+            # StopFiring writes; since round trips Tasks 2-3 K1's idle stops
+            # and K2's offline stops LOG them (no call), so this row is where
+            # those writes are compared.
+            # Asleep (passive weapons): a `_firing` write, logged or not,
+            # wakes a sleeping bank (WakeField).
             row.append((self.label(b), _t(d.get("_dwell")),
                         _t(d.get("_firing")), self.label(d.get("_target")),
-                        _t(d.get("_beam_on_countdown"))))
+                        _t(d.get("_beam_on_countdown")),
+                        passive_state.is_asleep(b)))
         for g in self.systems:
-            # What an offline stop writes (round trips Task 3: logged).
+            # What an offline stop writes (round trips Task 3: logged), and
+            # whether `_target_list` is a NEW object since the last record
+            # (StopFiring writes a new `[]` every tick, empty or not; the
+            # previous object is held, so its id is never reused).
             d = g.__dict__
+            lst = d.get("_target_list")
+            new = lst is not self.lists.get(id(g))
+            self.lists[id(g)] = lst
             row.append((self.label(g), _t(d.get("_fire_held")),
                         self.label(d.get("_held_target")),
                         _t(d.get("_held_offset")),
-                        tuple(self.label(t) for t in d.get("_target_list")),
-                        _t(d.get("_last_group_fired"))))
+                        tuple(self.label(t) for t in lst),
+                        _t(d.get("_last_group_fired")), new))
         for s in self.ships:
             hull = s.GetHull()
             shields = s.GetShields()
@@ -873,8 +897,10 @@ def test_k2_matches_python_with_real_instances(monkeypatch, host,
     n = nat.tally.n
     reasons = nat.counts["k2_python_reasons"]
     print("\nk2 host differential (tpf=%d): %.1f s for 2 x %d ticks; "
-          "records %r; counts %r" % (ticks_per_frame, elapsed, TICKS, n,
-                                     nat.counts))
+          "records %r; presentation calls %d (vfx %d, shield hits %d); "
+          "counts %r" % (ticks_per_frame, elapsed, TICKS, n,
+                         presented(ref.calls), len(_calls(ref, "vfx")),
+                         len(_calls(ref, "shield_hit")), nat.counts))
     # Every branch the scene is built for happened in the kernel.
     for key in ("tier:mesh", "tier:sphere", "bubble", "pulse",
                 "windup_contact", "arc_fail_pulse", "SYSTEM_STOP",
@@ -888,6 +914,15 @@ def test_k2_matches_python_with_real_instances(monkeypatch, host,
         nat.counts, n)
     assert nat.counts["k2_logged_system_stop"] > 0, nat.counts
     assert n.get("CONTACT", 0) == n["pulse"], n
+    # K1's round trips ran under the beams: walks started with no record and
+    # lit beams sustained as logged writes (Tasks 1-2). K1's idle bank stop
+    # is NOT asserted here: this scene rarely has one (measured 19 at tpf 1,
+    # 0 at tpf 4); the K1 differential carries it.
+    logged = nat.counts["k1_logged"]
+    assert logged["walk_start"] > 0 and logged["beam_sustain"] > 0, logged
+    # The presentation was compared, shield hits and hull VFX both.
+    assert _calls(ref, "shield_hit") and _calls(ref, "vfx"), presented(
+        ref.calls)
     # The posed ship and the lock on it: native (posed parts, Task 4; they
     # were posed_ship and ASK aim_point before).
     assert reasons["posed_ship"] == 0, reasons

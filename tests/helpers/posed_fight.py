@@ -86,8 +86,9 @@ from tests.helpers.fight_audio import isolate_fight_audio
 from tests.helpers.k3_fight import (K3Tally, Recorder, aim_velocity,
                                     check_guide_asks, face, fire, hx,
                                     posed_branches, posed_fallbacks,
-                                    posed_no_mount, seed_every_rng,
-                                    weapon_rows, xyz)
+                                    check_native_attributions,
+                                    posed_no_mount, presented, round_trips,
+                                    seed_every_rng, weapon_rows, xyz)
 
 TICKS = 660
 OFF = {"DAUNTLESS_NATIVE_COMBAT": "0"}
@@ -868,7 +869,8 @@ def report(label, ticks_per_frame, elapsed, ref, nat):
           "  posed fallbacks %r\n  box-rule no_mount %r\n  scene %r\n"
           "  sever %r\n  k1 python reasons %r\n  k2 python reasons %r\n"
           "  k3 steer reasons %r\n  k3 asks %r\n  kernel records %r\n"
-          "  hits %d, apply_hits %d, events %d"
+          "  round trips %r\n"
+          "  hits %d, apply_hits %d, events %d, presentation calls %d"
           % (label, ticks_per_frame, elapsed, TICKS, posed_branches(c),
              {k: v for k, v in posed_fallbacks(c).items() if v},
              posed_no_mount(c), nat.stats, nat.sever,
@@ -877,9 +879,10 @@ def report(label, ticks_per_frame, elapsed, ref, nat):
              {k: v for k, v in c["k2_python_reasons"].items() if v},
              {k: v for k, v in c["k3_steer_reasons"].items() if v},
              c["k3_asks"], dict(sorted(nat.rec.tally.n.items())),
+             round_trips(c),
              len([x for x in ref.rec.calls if x[0] == "hit"]),
              len([x for x in ref.rec.calls if x[0] == "apply_hit"]),
-             len(ref.rec.events)))
+             len(ref.rec.events), presented(ref.rec.calls)))
 
 
 def check_posed(ref, nat):
@@ -899,6 +902,17 @@ def check_posed(ref, nat):
     assert c["k2_python_ships"] == 0 and c["k2_python_steps"] == 0, c
     assert c["k3_runs"] > 0 and c["k3_python_steps"] == 0, c
     check_guide_asks(c, nat.rec.tally, expected=())
+    # Every round trip the plan removed ran on and at posed ships: K1 walks
+    # with no WALK_START, sustains and idle stops logged (Tasks 1-2), K2
+    # resting contacts batched (Task 3), K3 mounts attributed (Task 4). K2's
+    # logged offline stop is the host file's (measured 0 headless).
+    trips = round_trips(c)
+    for key in ("k1_logged/walk_start", "k1_logged/beam_sustain",
+                "k1_logged/idle_bank_stop", "k2_batched_contacts"):
+        assert trips[key] > 0, (key, trips)
+    check_native_attributions(c, nat.rec.tally)
+    # ... and their presentation was compared, in order, with the hits.
+    assert presented(ref.rec.calls) > 0
     # The scene was what it claims, in both arms alike.
     s = nat.stats
     assert ref.stats == {k: (0 if k in ("stale_seen", "record_resolves",

@@ -9,7 +9,9 @@ them in the same order), spies on the calls a torpedo step makes, and
 records after every tick everything Task 5's dispatch test compares
 (tests/unit/test_native_k3_dispatch.py) -- every torpedo in flight (or that
 left flight this tick): position, velocity, age, guidance fields, mount key,
-bubble entry (floats by .hex()); update_all's hits; every apply_hit; the
+bubble entry (floats by .hex()); update_all's hits; every apply_hit, and in
+the same ordered log every beam contact, hit VFX spawn and shield hit (the
+presentation: spy_presentation, round trips Task 5); the
 incoming-torpedo table's velocity writes (a per-tick multiset) and its
 incoming_ids answer -- plus what the phase adds: every ship's death, hull and
 shield faces, ``damage_eligibility._current`` (see eligibility_view: ids
@@ -203,6 +205,69 @@ def eligibility_view(player, ships, eligible, label):
     return view, tie, cross
 
 
+def spy_presentation(mp, calls, tick, label, contacts=True):
+    """Every hit VFX spawn and every shield hit, with their arguments, into
+    the compared call log `calls`, in the order they happen (`tick()` the
+    arm's tick, `label` its labeller); with `contacts`, every
+    hit_feedback.beam_contact too (its arguments, and the shields_block it
+    acted on: headless, a contact on a shielded ship presents nothing, so
+    the contact itself is what shows its order). What a beam contact or a
+    hit PRESENTS: since round trips Task 3 a K2 resting contact is batched
+    and run with the next record that runs Python, so its presentation must
+    still land in Python's per-tick order, among the pulses' apply_hits
+    (when the arm logs those into the same list). The instance id is
+    compared only as present or not: two loads realize alike but number
+    their instances independently."""
+    from engine import host_io
+    from engine.appc import hit_feedback, hit_vfx
+    spawn, shield_hit = hit_vfx.spawn, host_io.shield_hit
+    beam_contact = hit_feedback.beam_contact
+
+    def contact_spy(**kw):
+        if "shields_block" in kw:
+            acted = kw["shields_block"]
+        else:
+            acted = bool(combat.shields_block(kw["ship"]))
+        calls.append(("beam_contact", tick(), label(kw["ship"]),
+                      label(kw["source"]), hx(kw["point"]), hx(kw["normal"]),
+                      hx(kw["shield_point"]), hx(kw["tick_damage"]),
+                      hx(kw.get("weapon_type")), hx(kw.get("radius")),
+                      hx(bool(acted)),
+                      sorted(k for k in kw if k != "shields_block")))
+        return beam_contact(**kw)
+
+    def spawn_spy(position, *args, **kw):
+        normal = args[0] if args else kw.get("normal")
+        severity = args[1] if len(args) > 1 else kw.get("severity")
+        body = kw.get("body_point")
+        calls.append(("vfx", tick(), hx(position), hx(normal),
+                      repr(severity), kw.get("instance_id") is not None,
+                      None if body is None else hx(tuple(map(float, body))),
+                      kw.get("weapon_kind"), kw.get("spark_count"),
+                      label(kw.get("pSet")), sorted(kw)))
+        return spawn(position, *args, **kw)
+
+    def shield_spy(iid, point, *args, **kw):
+        calls.append(("shield_hit", tick(), iid is not None,
+                      hx(tuple(map(float, point))),
+                      tuple(hx(float(a)) if isinstance(a, (int, float))
+                            else repr(a) for a in args),
+                      sorted(kw)))
+        return shield_hit(iid, point, *args, **kw)
+
+    mp.setattr(hit_vfx, "spawn", spawn_spy)
+    mp.setattr(host_io, "shield_hit", shield_spy)
+    if contacts:
+        mp.setattr(hit_feedback, "beam_contact", contact_spy)
+
+
+def presented(calls):
+    """How many presentation calls (beam contacts, VFX spawns, shield hits)
+    `calls` holds."""
+    return sum(1 for c in calls
+               if c[0] in ("beam_contact", "vfx", "shield_hit"))
+
+
 class Recorder:
     """The per-tick record, the call log and the event log of one arm (see
     the module docstring). `ships` are labelled by name; anything else by
@@ -288,6 +353,10 @@ class Recorder:
 
         mp.setattr(combat, "apply_hit", hit_spy)
         mp.setattr(projectiles, "update_all", update_spy)
+        # The presentation calls, in the same log as the apply_hits: their
+        # order among the hits is compared (a K2 resting contact's, batched
+        # since round trips Task 3, included).
+        spy_presentation(mp, self.calls, lambda: self.tick, self.label)
 
         update = damage_eligibility.update
 
@@ -591,7 +660,10 @@ def weapon_rows(label, systems, weapons):
     """Every weapon system's and weapon's fire-control state (the K1
     differential's record, tests/integration/test_native_k1_differential.py):
     floats by .hex(), objects by `label`, a weapon's `_target_offset` by its
-    hexes and by WHICH weapon first held that same object."""
+    hexes and by WHICH weapon first held that same object, and whether it is
+    asleep (passive weapons: a `_firing` write, a logged one included, wakes
+    it)."""
+    from engine.appc import passive_state
     from engine.appc import weapon_subsystems as ws
     rows = []
     for g in systems:
@@ -618,7 +690,8 @@ def weapon_rows(label, systems, weapons):
             hx(d.get("_cooldown_remaining")),
             hx(w.GetNumReady()) if tube else None,
             hx(off) if isinstance(off, TGPoint3) else repr(off),
-            None if off is None else first[id(off)]))
+            None if off is None else first[id(off)],
+            passive_state.is_asleep(w)))
     return rows
 
 
@@ -664,6 +737,34 @@ def posed_no_mount(counts):
             counts["k1_fire_ask_reasons"]["no_mount"],
             "k3_steer_reasons/no_mount":
             counts["k3_steer_reasons"]["no_mount"]}
+
+
+def round_trips(counts):
+    """The round-trip-removal counters (plan 2026-11-01-native-combat-round-
+    trips): K1 walks started with no WALK_START record and its logged beam
+    sustains and idle bank stops (Tasks 1-2), K2 resting contacts batched
+    and offline system stops logged (Task 3), K3 mounts attributed natively
+    (Task 4)."""
+    logged = counts["k1_logged"]
+    return {"k1_logged/walk_start": logged["walk_start"],
+            "k1_logged/beam_sustain": logged["beam_sustain"],
+            "k1_logged/idle_bank_stop": logged["idle_bank_stop"],
+            "k2_batched_contacts": counts["k2_batched_contacts"],
+            "k2_logged_system_stop": counts["k2_logged_system_stop"],
+            "k3_native_attributions": counts["k3_native_attributions"]}
+
+
+def check_native_attributions(counts, tally):
+    """Round trips Task 4 in a fight: torpedo mounts were attributed by the
+    kernel (k3_native_attributions), every one rode a DONE `_mount_key`
+    write the tally counted, and no steer_point ASK was left for an
+    attribution (``unattributed``)."""
+    native = counts["k3_native_attributions"]
+    assert native > 0, counts
+    assert tally.n.get("steer_point:native_mount", 0) == native, (
+        native, tally.n)
+    assert counts["k3_steer_reasons"]["unattributed"] == 0, counts
+    assert tally.n.get("steer_point:mount", 0) == 0, tally.n
 
 
 def posed_branches(counts):

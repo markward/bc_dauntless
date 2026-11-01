@@ -64,8 +64,10 @@ from engine.core.tracked_instances import TrackedInstances  # noqa: E402
 from tests.helpers import headless_mission  # noqa: E402
 from tests.helpers.fight_audio import isolate_fight_audio  # noqa: E402
 from tests.helpers.k3_fight import (K3Tally, Recorder, aim_velocity,  # noqa: E402
-                                    check_guide_asks, compare, face, fire,
-                                    nebula_around, seed_every_rng,
+                                    check_guide_asks,
+                                    check_native_attributions, compare, face,
+                                    fire, nebula_around, presented,
+                                    round_trips, seed_every_rng,
                                     subsystems, xyz)
 
 GALAXY_NIF = (bc_assets.GAME_ROOT / "data" / "Models" / "Ships" / "Galaxy"
@@ -347,6 +349,14 @@ def test_k3_matches_python_with_real_instances(monkeypatch, host,
              len([c for c in ref.rec.calls if c[0] == "apply_hit"]),
              len(ref.rec.events)))
     print("  latched (pair x tick) %d" % nat.rec.latched)
+    print("  round trips %r, presentation calls %d"
+          % (round_trips(nat.counts), presented(ref.rec.calls)))
+    # Round trips Task 4: the mounts were attributed natively; and K1
+    # walked the ships' tubes with no WALK_START record (Task 1). A torpedo
+    # fight: no beam sustains or batched contacts (measured 0).
+    check_native_attributions(nat.counts, nat.rec.tally)
+    assert nat.counts["k1_logged"]["walk_start"] > 0, round_trips(
+        nat.counts)
     assert nat.counts["k3_runs"] > 0 and nat.counts["k3_python_steps"] == 0, \
         nat.counts
     assert nat.counts["k4_runs"] == TICKS and not k4_why, nat.counts

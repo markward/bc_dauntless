@@ -159,6 +159,9 @@ def test_posed_fight_matches_python_with_real_instances(
     # ... and it changed the answer: mounts the model gives another part
     # than the box rule did moved (both arms alike: check_posed).
     assert nat.stats["model_moved"] > 0, nat.stats
+    # An offline phaser system whose banks are all idle was stopped with
+    # logged writes (round trips Task 3; measured 135 at tpf 1, 46 at 4).
+    assert nat.counts["k2_logged_system_stop"] > 0, nat.counts
     # The real-instance branches, in the kernel.
     n = nat.rec.tally.n
     for key in ("tier:mesh", "bubble", "normal", "steer_point:posed"):

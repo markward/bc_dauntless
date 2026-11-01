@@ -263,6 +263,9 @@ class World:
         row = []
         for b in self.banks:
             d = b.__dict__
+            # `_firing` and `_beam_on_countdown` are what a bank's idle
+            # StopFiring writes: K1's idle stops and K2's offline stops LOG
+            # them since round trips Tasks 2-3, so this row compares them.
             row.append((self.label(b), d.get("_dwell").hex(),
                         _hx(d.get("_firing")), d.get("_target") is None,
                         self.label(d.get("_target")),

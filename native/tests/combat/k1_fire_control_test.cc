@@ -350,9 +350,14 @@ TEST(K1, TimerGateAndForceUpdate) {
         const K1Record f = w.step();
         EXPECT_EQ(w.brief(f), "DONE");
         const auto b0w = writes_on(w, f, "b0");
-        ASSERT_GE(b0w.size(), 3u);
+        ASSERT_EQ(b0w.size(), 5u);
         EXPECT_EQ(b0w[1], "b0._fire_timer=0");
+        // The sustain's three stamps, in _fire_effect's order (WS:895-898):
+        // the target, then the walk's offset OBJECT (the marker).
         EXPECT_EQ(b0w[2], "b0._firing=True");
+        EXPECT_EQ(b0w[3], "b0._target=t");
+        EXPECT_EQ(b0w[4], "b0._target_offset=walk_offset");
+        EXPECT_EQ(w.m.get_ref(b0, Field::_target), t);
         EXPECT_EQ(w.k.counts().logged_beam_sustain, 1);
     }
     {   // A passed gate resets the timer even when CanFire then refuses.
