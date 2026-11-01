@@ -182,21 +182,37 @@ class _Scene:
         mp.setattr(App.g_kEventManager, "AddEvent", add_event)
 
         # Evidence that K1 itself walked and decided, per kind: the walked
-        # systems (WALK_START) and the banks K1 decided to fire (FIRE).
+        # systems Python reached (a walk K1 started natively is materialised
+        # when something of it reaches Python, its first record or a logged
+        # offset write: round trips Task 1; a walk start the walk check
+        # handed back is seen at its WALK_START) and the banks K1 decided to
+        # fire (FIRE). A native walk that returned nothing is not seen here:
+        # it ran no Python at all (counted in k1_logged.walk_start).
         self.walked = {}
         self.walked_names = set()
         self.fired = {}
         if self.native:
             walk_start = nc._K1Walk.walk_start
+            materialise = nc._K1Walk.materialise
             decision = nc._k1_decision
+
+            def walked(system):
+                k = nc._weapon_kind(system)
+                self.walked[k] = self.walked.get(k, 0) + 1
+                self.walked_names.add(self.label(system))
 
             def counting_walk_start(walk, system, _orig=walk_start):
                 patched = _orig(walk, system)
                 if not patched:     # handed to Python: not a native walk
-                    k = nc._weapon_kind(system)
-                    self.walked[k] = self.walked.get(k, 0) + 1
-                    self.walked_names.add(self.label(system))
+                    walked(system)
                 return patched
+
+            def counting_materialise(walk, n, h, _orig=materialise):
+                first = walk.walk != n
+                offset = _orig(walk, n, h)
+                if first:
+                    walked(walk.walked)
+                return offset
 
             def counting_decision(bank, d, walk, _orig=decision):
                 k = nc._weapon_kind(bank)
@@ -204,6 +220,7 @@ class _Scene:
                 return _orig(bank, d, walk)
 
             mp.setattr(nc._K1Walk, "walk_start", counting_walk_start)
+            mp.setattr(nc._K1Walk, "materialise", counting_materialise)
             mp.setattr(nc, "_k1_decision", counting_decision)
 
     def label(self, obj):

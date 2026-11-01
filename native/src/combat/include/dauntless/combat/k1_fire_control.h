@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -22,10 +23,31 @@
 //
 // ONE RECORD PER CALL. next() runs the walk until the first thing only
 // Python may do -- an effect (StopFiring, a Fire effect, a FIRE_FAILED post,
-// a dumb fire), a whole system Python must run, the walk's offset, or a
-// question the mirror cannot answer any more -- and returns it. The next
-// next() resumes from the cursor and reads the LIVE mirror again, so no
-// decision outlives a Python effect (plan ruling P1).
+// a dumb fire), a whole system Python must run, or a question the mirror
+// cannot answer any more -- and returns it. The next next() resumes from the
+// cursor and reads the LIVE mirror again, so no decision outlives a Python
+// effect (plan ruling P1).
+//
+// THE WALK START (round trips, spec 2026-11-01 §4.1). update_weapons'
+// `offset = self._live_held_offset()` is computed HERE, from the mirror
+// (k1_live_held_offset), when the walk starts: no record. Python needs the
+// offset OBJECT (ruling P5) only once something of the walk reaches it, so
+// the walk is tagged: the FIRST record a walk returns carries walk_first,
+// walk (the session's walk number) and walk_system, and every logged
+// `_target_offset = <the walk's offset>` names its walk (K1WalkOffset).
+// The driver fetches the object, and pins the walk, at whichever of the two
+// reaches it first (native_combat._K1Walk.materialise). A walk that returns
+// no record and logs no such write runs no Python at all; its writes ride
+// the next record (or DONE).
+//
+// The WALK CHECK (set_walk_check) runs at every walk start, before any
+// offset: when it answers true the walk starts the old way -- a WALK_START
+// record, answered by set_offset (Python's own _live_held_offset) or
+// skip_walk (an instance-patched method: Python runs the walk whole). The
+// bindings install the check: an instance attribute shadowing a method K1
+// stands in for (system, child, or the ship's is_using_target_offset /
+// GetTargetOffsetTG), or a ship class whose offset methods are not the
+// stock ShipClass's. With no check installed every walk starts natively.
 //
 // THE WRITE LOG. The kernel never touches Python. The writes the Python
 // decision path makes (fire timers, the `_depleted` clear, cleared targets,
@@ -38,11 +60,12 @@
 // holds strong references in its locals (the system, `target`, the retry
 // snapshot); the kernel holds only handles. So for as long as a session's
 // walk runs, the driver must keep alive the walked system, its children,
-// every `_target_list` entry (as of WALK_START and of each later record) and
-// every handle a record names, and map a handle back through that pin set
-// (a session handle -> object map) rather than through the weak registry.
-// Otherwise a row freed mid-walk (weakref.finalize -> unregister) leaves a
-// handle an ASK cannot name.
+// every `_target_list` entry (as of the walk's first record and of each
+// later record) and every handle a record names, and map a handle back
+// through that pin set (a session handle -> object map) rather than through
+// the weak registry. Otherwise a row freed mid-walk (weakref.finalize ->
+// unregister) leaves a handle an ASK cannot name. Pinning at the first
+// record, not at the walk start, is enough: no Python runs between the two.
 //
 // A THROW from next() (a protocol error, or the walked system's row gone)
 // undoes the field writes it made but never returned, in the mirror, and
@@ -111,12 +134,14 @@
 //                                       skipped, 1 fired, 2 failed (Python
 //                                       did ClearTarget and FireDumb) -> int
 //        reseed     (sys)               sys._reseed_all_fire_timers() -> None
-//      `offset` is the walk's own offset object (from WALK_START); handles
-//      are -1 for None.
+//      `offset` is the walk's own offset object (materialised by the driver
+//      before the ASK's Python runs); handles are -1 for None.
 
 namespace dauntless::combat {
 
-// Record kinds, in combat_k1_kinds() order.
+// Record kinds, in combat_k1_kinds() order. WALK_START is returned only
+// for a walk the walk check hands back (see THE WALK START); every other
+// walk start is counted in Counts::logged_walk_start.
 enum class K1Kind : int32_t {
     DONE = 0,
     WALK_START,
@@ -158,10 +183,20 @@ enum class K1Why : int32_t {
 };
 const char* k1_why_name(K1Why w);
 
-// One write-log value. monostate is Python None; a string is the marker
-// "walk_offset" (the walk's own offset object, ruling P5).
+// The marker for "the walk's own offset object" (ruling P5): the walk that
+// logged it (the session's walk number) and its system, so the driver can
+// fetch that walk's object even when the write rides a later walk's record.
+struct K1WalkOffset {
+    int64_t walk = -1;
+    int64_t system = -1;
+    bool operator==(const K1WalkOffset& o) const {
+        return walk == o.walk && system == o.system;
+    }
+};
+
+// One write-log value. monostate is Python None.
 using K1Value = std::variant<std::monostate, bool, int64_t, double,
-                             std::string, std::vector<int64_t>>;
+                             K1WalkOffset, std::vector<int64_t>>;
 
 struct K1Write {
     int64_t handle = -1;
@@ -189,8 +224,27 @@ struct K1Record {
     K1Decision decision;            // FIRE
     std::string query;              // ASK
     std::vector<int64_t> args;      // ASK
+    // The first record a walk returns: its walk number and system (the
+    // driver materialises the walk on it). walk_first false: -1, -1.
+    bool walk_first = false;
+    int64_t walk = -1;
+    int64_t walk_system = -1;
     std::vector<K1Write> writes;
 };
+
+// update_weapons' `self._live_held_offset()` (WS:1551) on the mirror: the
+// ship is a ShipClass row whose is_using_target_offset() holds
+// (_use_target_offset and a TGPoint3 _manual_target_offset) -> the manual
+// offset (GetTargetOffsetTG's copy); else the system's _held_offset when it
+// is a TGPoint3; else nullopt (Python's value is then not a TGPoint3, which
+// every reader treats as no offset). `ship` is the system's parent ship
+// (-1: none).
+std::optional<Vec3> k1_live_held_offset(const Mirror& m, int64_t system,
+                                        int64_t ship);
+
+// The walk check (see THE WALK START): (system, its ship or -1) -> true
+// when the walk must start the old way (a WALK_START record).
+using K1WalkCheck = std::function<bool(int64_t system, int64_t ship)>;
 
 class K1Kernel {
 public:
@@ -210,6 +264,9 @@ public:
     // The next record of the top session. Throws std::logic_error when no
     // session is open, a WALK_START has no offset yet or an ASK no answer.
     K1Record next();
+
+    // Install (or, with an empty function, remove) the walk check.
+    void set_walk_check(K1WalkCheck check) { walk_check_ = std::move(check); }
 
     // The reply to WALK_START: the walk's `_live_held_offset()` as xyz when it
     // is a TGPoint3, nullopt otherwise.
@@ -245,6 +302,8 @@ public:
         // Posed parts walked natively: systems whose ship is posed, and Fire
         // decisions aimed at a posed target's offset.
         int64_t posed_walks = 0, posed_target_aims = 0;
+        // Walks started with no WALK_START record (k1_logged.walk_start).
+        int64_t logged_walk_start = 0;
     };
     const Counts& counts() const { return counts_; }
     void reset_counts() { counts_ = Counts{}; }
@@ -256,6 +315,7 @@ private:
     Mirror& m_;
     std::vector<std::unique_ptr<Session>> sessions_;
     Counts counts_;
+    K1WalkCheck walk_check_;
 
 public:
     ~K1Kernel();

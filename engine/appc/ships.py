@@ -1937,6 +1937,12 @@ class ShipClass(DamageableObject):
             dev_mode.log_swallowed("run death script " + name, _e)
 
 
+# The stock walk-offset methods K1 computes from the mirror (native combat
+# round trips): a later patch on ShipClass or a subclass's override hands
+# that ship's walk starts back to Python.
+native_combat.k1_snapshot_ship(ShipClass)
+
+
 def _resolve_torpedo_ammo(ts_prop, slot: int):
     """Build the TorpedoAmmoType for declared ammo ``slot`` from the hardpoint's
     TorpedoSystemProperty.

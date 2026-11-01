@@ -9,11 +9,14 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -37,7 +40,12 @@ struct World {
     int64_t next_id = 1;
     std::map<int64_t, std::string> names;
 
-    World() {
+    // `legacy`: every walk starts the old way, with a WALK_START record (a
+    // walk check that always answers true) -- the record sequences the
+    // walk tests below were written against. World(false) has no check:
+    // walks start natively (round trips Task 1).
+    explicit World(bool legacy = true) {
+        if (legacy) k.set_walk_check([](int64_t, int64_t) { return true; });
         m.set_global_f(Global::FIRE_TIMER_THRESHOLD, 0.33);
         m.set_global_f(Global::PHASER_MAX_RANGE_GU, 700.0);
         m.set_global_f(Global::TORPEDO_CONE_HALF_ANGLE, 0.5235984);
@@ -171,7 +179,7 @@ struct World {
             std::snprintf(buf, sizeof buf, "%.17g", *d);
             return buf;
         }
-        if (auto* s = std::get_if<std::string>(&v)) return *s;
+        if (std::holds_alternative<K1WalkOffset>(v)) return "walk_offset";
         std::string out = "[";
         for (int64_t h : std::get<std::vector<int64_t>>(v))
             out += (out.size() > 1 ? "," : "") + name(h);
@@ -1403,4 +1411,172 @@ TEST(K1, PosedTargetOffsetAimByReason) {
         EXPECT_EQ(why_of(n, K1Why::PosedTarget), 0) << c;
         w.k.abandon();
     }
+}
+
+
+// ── Round trips, Task 1: the walk starts natively ───────────────────────────
+
+TEST(K1Native, LiveHeldOffsetPredicate) {
+    // _live_held_offset: a ShipClass ship with is_using_target_offset()
+    // (the flag AND a manual offset) -> the manual offset; anything else ->
+    // the held offset when it is a TGPoint3, else none.
+    World w(false);
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t sys = w.system("tsys", ship, 4, {t});
+    using O = std::optional<Vec3>;
+    EXPECT_EQ(k1_live_held_offset(w.m, sys, ship), O{});
+    w.m.set_fv(sys, Field::_held_offset, {1.0, 2.0, 3.0});
+    const O held = Vec3{1.0, 2.0, 3.0}, manual = Vec3{4.0, 5.0, 6.0};
+    EXPECT_EQ(k1_live_held_offset(w.m, sys, ship), held);
+    w.m.set_i(ship, Field::is_ship_class, 1);
+    w.m.set_i(ship, Field::_use_target_offset, 1);   // no manual offset
+    EXPECT_EQ(k1_live_held_offset(w.m, sys, ship), held);
+    w.m.set_fv(ship, Field::_manual_target_offset, {4.0, 5.0, 6.0});
+    EXPECT_EQ(k1_live_held_offset(w.m, sys, ship), manual);
+    w.m.set_fv(sys, Field::_held_offset, {});        // held unset: manual
+    EXPECT_EQ(k1_live_held_offset(w.m, sys, ship), manual);
+    w.m.set_fv(sys, Field::_held_offset, {1.0, 2.0, 3.0});
+    w.m.set_i(ship, Field::_use_target_offset, 0);   // flag off: held
+    EXPECT_EQ(k1_live_held_offset(w.m, sys, ship), held);
+    w.m.set_i(ship, Field::_use_target_offset, 1);
+    w.m.set_i(ship, Field::is_ship_class, 0);        // not a ShipClass: held
+    EXPECT_EQ(k1_live_held_offset(w.m, sys, ship), held);
+    EXPECT_EQ(k1_live_held_offset(w.m, sys, -1), held);  // no ship
+    w.m.set_fv(sys, Field::_held_offset, {});
+    EXPECT_EQ(k1_live_held_offset(w.m, sys, -1), O{});
+}
+
+TEST(K1Native, RecordlessWalkReturnsOnlyDone) {
+    // Below the timer threshold the walk returns nothing: its writes (the
+    // pruned list first, a NEW list every walk) ride DONE, untagged.
+    World w(false);
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t sys = w.system("sys", ship, 1, {t});
+    w.bank("b0", sys);
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    const K1Record done = w.k.next();
+    EXPECT_EQ(w.brief(done), "DONE");
+    EXPECT_FALSE(done.walk_first);
+    char dt[64];
+    std::snprintf(dt, sizeof dt, "%.17g", 0.0 + kDt);
+    EXPECT_EQ(w.writes(done),
+              (std::vector<std::string>{
+                  "sys._target_list=[t]", "sys._group_fire_mode=0",
+                  std::string("b0._fire_timer=") + dt, "b0._target=None",
+                  "sys._force_update=False"}));
+    EXPECT_EQ(w.k.counts().logged_walk_start, 1);
+    EXPECT_EQ(w.k.counts().records, 1);
+    w.k.end();
+    // The list write is made on every walk, even of an unchanged list.
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    EXPECT_EQ(w.writes(w.k.next())[0], "sys._target_list=[t]");
+    EXPECT_EQ(w.k.counts().logged_walk_start, 2);
+}
+
+TEST(K1Native, FirstRecordOfEachWalkIsTagged) {
+    // Two walks in one pump: the phasers' returns nothing, the tubes' two
+    // FIREs. The tubes' first FIRE is tagged (walk 2, tsys) and carries the
+    // phaser walk's writes before its own; the second FIRE is not tagged.
+    World w(false);
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t psys = w.system("sys", ship, 1, {t});
+    w.bank("b0", psys);
+    const int64_t tsys = w.system("tsys", ship, 4, {t});
+    w.bank("tube0", tsys);
+    w.bank("tube1", tsys);
+    w.m.set_i(tsys, Field::_force_update, 1);
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    const K1Record first = w.k.next();
+    EXPECT_EQ(w.brief(first), "FIRE tube0@t");
+    EXPECT_TRUE(first.walk_first);
+    EXPECT_EQ(first.walk, 2);
+    EXPECT_EQ(first.walk_system, tsys);
+    const auto ws = w.writes(first);
+    ASSERT_GE(ws.size(), 2u);
+    EXPECT_EQ(ws.front(), "sys._target_list=[t]");
+    EXPECT_NE(std::find(ws.begin(), ws.end(), "tsys._target_list=[t]"),
+              ws.end());
+    const K1Record second = w.k.next();
+    EXPECT_EQ(w.brief(second), "FIRE tube1@t");
+    EXPECT_FALSE(second.walk_first);
+    EXPECT_EQ(second.walk, -1);
+    EXPECT_EQ(second.walk_system, -1);
+    const K1Record done = w.k.next();
+    EXPECT_EQ(w.brief(done), "DONE");
+    EXPECT_FALSE(done.walk_first);
+    EXPECT_EQ(w.k.counts().logged_walk_start, 2);
+}
+
+TEST(K1Native, WalkOffsetMarkerNamesItsWalk) {
+    // A cannon's stamp of the walk's offset names the walk and its system,
+    // and the mirror holds the value the kernel computed (the held offset).
+    World w(false);
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t sys = w.system("psys", ship, 2, {t});
+    const int64_t c = w.bank("cannon", sys);
+    w.m.set_fv(sys, Field::_held_offset, {1.0, 2.0, 3.0});
+    w.m.set_i(sys, Field::_force_update, 1);
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    const K1Record f = w.k.next();
+    EXPECT_EQ(w.brief(f), "FIRE cannon@t");
+    EXPECT_TRUE(f.walk_first);
+    ASSERT_FALSE(f.writes.empty());
+    const K1Write& stamp = f.writes.back();
+    EXPECT_EQ(stamp.field, "_target_offset");
+    ASSERT_TRUE(std::holds_alternative<K1WalkOffset>(stamp.value));
+    EXPECT_EQ(std::get<K1WalkOffset>(stamp.value), (K1WalkOffset{1, sys}));
+    EXPECT_EQ(w.m.get_fv(c, Field::_target_offset),
+              (std::vector<double>{1.0, 2.0, 3.0}));
+    w.k.abandon();
+
+    // Manual Aim on the firing ShipClass: the manual offset is stamped.
+    World v(false);
+    const int64_t vship = v.ship("ship");
+    v.m.set_i(vship, Field::is_ship_class, 1);
+    v.m.set_i(vship, Field::_use_target_offset, 1);
+    v.m.set_fv(vship, Field::_manual_target_offset, {7.0, 8.0, 9.0});
+    const int64_t vt = v.object("t", 0.0, 50.0, 0.0);
+    const int64_t vsys = v.system("psys", vship, 2, {vt});
+    const int64_t vc = v.bank("cannon", vsys);
+    v.m.set_fv(vsys, Field::_held_offset, {1.0, 2.0, 3.0});
+    v.m.set_i(vsys, Field::_force_update, 1);
+    v.k.begin_pump({vship}, kDt, 10.0, false, 0.0);
+    EXPECT_EQ(v.brief(v.k.next()), "FIRE cannon@t");
+    EXPECT_EQ(v.m.get_fv(vc, Field::_target_offset),
+              (std::vector<double>{7.0, 8.0, 9.0}));
+}
+
+TEST(K1Native, WalkCheckHandsTheWalkStartBack) {
+    // The walk check sees (system, ship) at every walk start; true -> the
+    // old WALK_START (tagged: it is the walk's first record), answered by
+    // set_offset or skip_walk; false -> the walk starts natively.
+    World w(false);
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t psys = w.system("sys", ship, 1, {t});
+    w.bank("b0", psys);
+    const int64_t tsys = w.system("tsys", ship, 4, {t});
+    w.bank("tube", tsys);
+    std::vector<std::pair<int64_t, int64_t>> seen;
+    w.k.set_walk_check([&](int64_t s, int64_t sh) {
+        seen.emplace_back(s, sh);
+        return s == tsys;
+    });
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    const K1Record ws = w.k.next();
+    EXPECT_EQ(w.brief(ws), "WALK_START tsys");
+    EXPECT_TRUE(ws.walk_first);
+    EXPECT_EQ(ws.walk, 2);
+    EXPECT_EQ(ws.walk_system, tsys);
+    EXPECT_EQ(seen, (std::vector<std::pair<int64_t, int64_t>>{
+                        {psys, ship}, {tsys, ship}}));
+    EXPECT_THROW(w.k.next(), std::logic_error);   // awaiting the offset
+    w.k.skip_walk();
+    EXPECT_EQ(w.brief(w.k.next()), "DONE");
+    EXPECT_EQ(w.k.counts().logged_walk_start, 1);
+    EXPECT_EQ(why_of(w.k.counts(), K1Why::InstancePatch), 1);
 }

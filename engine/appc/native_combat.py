@@ -201,7 +201,11 @@ def counts() -> dict:
     Python, ASK fire -- part_stale, mount_unknown, no_mount,
     offset_off_mount, other) and
     "k1_posed" ({"walks", "target_aims"}: systems of a posed ship walked
-    natively, Fire decisions aimed natively at a posed target's offset).
+    natively, Fire decisions aimed natively at a posed target's offset) and
+    "k1_logged" ({"walk_start"}: walks started with no WALK_START record,
+    their offset computed by the kernel -- round trips Task 1; k1_records
+    counts only the records returned, so a walk start the walk check hands
+    back is a WALK_START record there instead).
     posed_ship / posed_target are retired reasons, always 0 (posed parts
     run natively; spec 2026-11-01 §4.5). In k1_python_reasons,
     mount_unknown / no_mount / offset_off_mount are always 0 too: the
@@ -1034,11 +1038,25 @@ _K1_SYSTEM_METHODS = (
     "_active_chain_groups", "_resolve_working_group", "_firing_weapon",
     "_reseed_all_fire_timers", "GetFiringChains", "GetNumWeapons",
     "GetWeapon", "GetNumTargets", "IsOn", "IsDisabled", "_can_engage",
-    "GetParentShip", "_fired_counter", "_weapon_did_fire")
-# Checked on the INSTANCE (its __dict__) at each WALK_START, for the walked
-# system and each child: the cheap subset that tests and tools patch.
-_K1_SYSTEM_PATCHES = ("update_weapons", "try_fire_weapon")
+    "GetParentShip", "_fired_counter", "_weapon_did_fire",
+    "_live_held_offset")
+# Checked on the INSTANCE (its __dict__) at each walk start, for the walked
+# system and each child: the cheap subset that tests and tools patch. Made by
+# the bindings' walk check (k1_walk_check, host_bindings.cc), which hands a
+# walk start with one back to Python as a WALK_START record (walk_start).
+_K1_SYSTEM_PATCHES = ("update_weapons", "try_fire_weapon",
+                      "_live_held_offset")
 _K1_LEAF_PATCHES = ("Fire", "_fire_decide", "_fire_effect", "CanFire")
+# The firing ship's side of the walk offset (_live_held_offset's probe and
+# its Manual Aim branch), which the kernel computes from the mirror: an
+# instance attribute shadowing one, or a class resolving them to anything
+# but the stock ShipClass's (k1_snapshot_ship), hands the walk start back
+# too, and Python's own _live_held_offset answers it.
+_K1_SHIP_PATCHES = ("is_using_target_offset", "GetTargetOffsetTG")
+# (ShipClass, its raw MRO entries of _K1_SHIP_PATCHES) as ships.py defined
+# them, and whether the walk check was sent to the bindings.
+_k1_ship_stock = None
+_k1_walk_check_sent = False
 # weapon_kind -> (names, the stock class's resolution of them).
 _k1_stock: dict = {}
 # class -> its k1_overridden flag, and _k1_watch[class] -> (getter, values,
@@ -1065,6 +1083,38 @@ def k1_snapshot_stock(classes) -> None:
         _k1_stock[kind] = (names, _k1_resolve(cls, names))
     _k1_overridden_by_type.clear()
     _k1_watch.clear()
+
+
+def _k1_raw(cls, name):
+    """`name`'s entry in the first class of `cls`'s MRO that defines it (what
+    CPython's _PyType_Lookup returns, the walk check's comparison), or None."""
+    for klass in cls.__mro__:
+        d = vars(klass)
+        if name in d:
+            return d[name]
+    return None
+
+
+def k1_snapshot_ship(ship_class) -> None:
+    """ships.py, as it finishes defining ShipClass: snapshot the raw
+    is_using_target_offset / GetTargetOffsetTG the walk check accepts as
+    stock, before any test, tool or mod can patch one."""
+    global _k1_ship_stock, _k1_walk_check_sent
+    _k1_ship_stock = (ship_class, tuple(_k1_raw(ship_class, n)
+                                        for n in _K1_SHIP_PATCHES))
+    _k1_walk_check_sent = False
+
+
+def _k1_send_walk_check() -> None:
+    """Install the bindings' walk check (k1_fire_control.h, THE WALK START)
+    once: the registry it maps handles through and the names it looks for."""
+    global _k1_walk_check_sent
+    cls, (iu, gto) = _k1_ship_stock if _k1_ship_stock is not None \
+        else (None, (None, None))
+    _h.combat_k1_set_walk_check(_registry.data, _K1_SYSTEM_PATCHES,
+                                _K1_LEAF_PATCHES, _K1_SHIP_PATCHES,
+                                iu, gto, cls)
+    _k1_walk_check_sent = True
 
 
 def _k1_overridden(cls) -> int:
@@ -2538,8 +2588,6 @@ def now() -> float:
 # writes the kernel already made in the mirror) and then does the one thing
 # only Python may do, then asks for the next record.
 
-#: A `_target_offset` write of the walk's own offset object (ruling P5).
-_WALK_OFFSET = "walk_offset"
 _k1_kind_ids = None
 _ws = None
 _step_memo = None
@@ -2570,13 +2618,37 @@ def _k1_clocks() -> tuple:
 class _K1Walk:
     """One run_k1 loop's pin set -- handle -> object, holding every object
     the kernel may still name alive for the walk (k1_fire_control.h,
-    PINNING) -- and the current walk's offset object."""
+    PINNING) -- and the materialised walk: its number in the session, its
+    system and its offset object."""
 
-    __slots__ = ("pins", "offset")
+    __slots__ = ("pins", "offset", "walk", "walked")
 
     def __init__(self) -> None:
         self.pins = {}
         self.offset = None
+        self.walk = None
+        self.walked = None
+
+    def materialise(self, n, h):
+        """THE hook for "this walk's Python side" (round trips, ruling D5):
+        the walk numbered `n` in this session, of the system with handle
+        `h`. The kernel started it with no record (k1_fire_control.h, THE
+        WALK START); the first Python that reaches it calls this -- run_k1
+        on the walk's first record, before that record's own Python, and
+        apply_writes on a logged write naming the walk's offset
+        (("walk_offset", n, h)), whichever comes first. Once per walk:
+        pins the walk (pin_system) and fetches update_weapons' `offset =
+        self._live_held_offset()` -- today's walk-start Python, in today's
+        order, later but with no Python in between. Returns the offset
+        object (ruling P5: every effect and stamp of the walk uses it)."""
+        if self.walk == n:
+            return self.offset
+        system = self.obj(h)
+        self.pin_system(system)
+        self.offset = system._live_held_offset()
+        self.walk = n
+        self.walked = system
+        return self.offset
 
     def pin(self, obj) -> None:
         d = getattr(obj, "__dict__", None)
@@ -2586,7 +2658,7 @@ class _K1Walk:
 
     def pin_system(self, system) -> None:
         """The walked system, its children and its target list as they are
-        now (WALK_START, and after each later record)."""
+        now (materialise, and after each later record)."""
         self.pin(system)
         d = system.__dict__
         for child in d.get("_children", ()):
@@ -2595,10 +2667,12 @@ class _K1Walk:
             self.pin(target)
 
     def walk_start(self, system) -> bool:
-        """pin_system at WALK_START, plus the instance-patch check: True when
-        the system or a child has an instance attribute shadowing a method
-        K1 stands in for (`tube.Fire = ...`); K1 must not decide for it. A
-        patch made later in the walk (by a handler) is not seen."""
+        """pin_system at a handed-back WALK_START (the walk check found an
+        instance attribute or a ship class it cannot stand in for), plus the
+        instance-patch check: True when the system or a child has an
+        instance attribute shadowing a method K1 stands in for (`tube.Fire =
+        ...`); K1 must not decide for it. A patch made later in the walk (by
+        a handler) is not seen."""
         self.pin(system)
         d = system.__dict__
         patched = False
@@ -2673,9 +2747,10 @@ def _quiet_setter(cls, name) -> tuple:
 def apply_writes(writes, walk=None) -> None:
     """Apply a K1 write log [(handle, field, value), ...] in order, without
     pushing (the kernel already wrote the mirror). Ref values are handles
-    (-1: None), a ref list a list of handles; the marker "walk_offset" is
-    the walk's own offset object. `walk` maps handles through its pin set;
-    without one, through the registry.
+    (-1: None), a ref list a list of handles; the marker ("walk_offset",
+    walk, system) is that walk's own offset object (_K1Walk.materialise:
+    the first write naming a walk not yet materialised fetches it). `walk`
+    maps handles through its pin set; without one, through the registry.
 
     NOT atomic: the kernel has already written every value in the log to
     the mirror, so a raise part-way (a handle no pin or row names, a wake or
@@ -2694,8 +2769,8 @@ def apply_writes(writes, walk=None) -> None:
             value = walk.obj(value)
         elif kind is _REFS:
             value = [walk.obj(v) for v in value]
-        elif type(value) is str and value == _WALK_OFFSET:
-            value = walk.offset
+        elif type(value) is tuple:          # ("walk_offset", walk, system)
+            value = walk.materialise(value[1], value[2])
         setter(obj, value)
 
 
@@ -2789,9 +2864,10 @@ def _k1_answer(rec, walk, dt):
 
 def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
     """Drive the kernel's top session (begun by k1_pump / k1_system) until
-    DONE. Each record: apply its writes, then act -- the Fire effect, a
-    StopFiring, the FIRE_FAILED post, the dumb fire, the walk's offset, a
-    whole system in Python, or an ASK answered in Python. `ships` and
+    DONE. Each record: apply its writes, materialise the walk on its first
+    record (_K1Walk.materialise), then act -- the Fire effect, a StopFiring,
+    the FIRE_FAILED post, the dumb fire, a handed-back walk start, a whole
+    system in Python, or an ASK answered in Python. `ships` and
     `pump_body(ship, getter_index)` serve a pump's RUN_PYTHON, `system` a
     system session's. On any exception the session is abandoned (the
     kernel's mirror still equals Python) and the exception re-raised; the
@@ -2800,7 +2876,6 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
     (DONE, WALK_START, STOP_SYSTEM, RUN_PYTHON, BANK_STOP, FIRE,
      FIRE_FAILED, FIRE_DUMB, ASK) = _k1_kinds()
     walk = _K1Walk()
-    walked = None
     if system is not None:
         walk.pin_system(system)
     try:
@@ -2808,6 +2883,7 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
             try:
                 rec = _h.combat_k1_next()
             except (ValueError, RuntimeError) as e:
+                walked = walk.walked
                 if walked is not None and "_nslot" not in walked.__dict__:
                     # k1_fire_control.h, PROTOCOL INVARIANT: no Python
                     # resume point exists mid-update_weapons.
@@ -2821,15 +2897,14 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
             writes = rec[-1]
             if writes:
                 apply_writes(writes, walk)
-            if kind == FIRE:
-                bank = walk.obj(rec[1])
-                bank._fire_effect(walk.obj(rec[2]), walk.offset,
-                                  _k1_decision(bank, rec[3], walk))
-            elif kind == WALK_START:
-                # update_weapons' `offset = self._live_held_offset()`, once
-                # per walk; every effect and "walk_offset" write of this walk
-                # uses this very object (ruling P5).
-                walked = walk.obj(rec[1])
+            tag = rec[-2]
+            if kind == WALK_START:
+                # A walk start the walk check handed back (an instance
+                # attribute or a ship class it cannot stand in for):
+                # update_weapons' `offset = self._live_held_offset()` here,
+                # Python's own; every effect and "walk_offset" write of this
+                # walk uses this very object (ruling P5).
+                walk.walked = walked = walk.obj(rec[1])
                 if walk.walk_start(walked):
                     # An instance-patched method: Python runs the walk whole
                     # (the gates already ran), the kernel writes nothing more
@@ -2838,10 +2913,19 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
                     _h.combat_k1_skip_walk()
                     continue
                 walk.offset = offset = walked._live_held_offset()
+                walk.walk = tag[0]
                 _h.combat_k1_set_offset(
                     (offset.x, offset.y, offset.z)
                     if isinstance(offset, TGPoint3) else None)
                 continue
+            if tag is not None:
+                # The walk's first record: its Python side before any of
+                # the record's own (Review Focus 1).
+                walk.materialise(tag[0], tag[1])
+            if kind == FIRE:
+                bank = walk.obj(rec[1])
+                bank._fire_effect(walk.obj(rec[2]), walk.offset,
+                                  _k1_decision(bank, rec[3], walk))
             elif kind == BANK_STOP or kind == STOP_SYSTEM:
                 walk.obj(rec[1]).StopFiring()
             elif kind == FIRE_FAILED:
@@ -2861,8 +2945,8 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
                 break
             else:
                 raise RuntimeError("combat K1: unknown record %r" % (rec,))
-            if walked is not None:
-                walk.pin_system(walked)     # what the effect's handlers left
+            if walk.walked is not None:
+                walk.pin_system(walk.walked)    # what the handlers left
         _h.combat_k1_end()
     except BaseException:
         _h.combat_k1_abandon()
@@ -2873,6 +2957,8 @@ def k1_pump(ships, dt, pump_body) -> None:
     """host_loop._pump_held_weapons(ships, dt) through K1. `ships` is a
     list; a ship with no Object row is passed as -1, and the kernel hands
     each of its getters back (RUN_PYTHON) to `pump_body(ship, getter)`."""
+    if not _k1_walk_check_sent:
+        _k1_send_walk_check()
     _k1_recheck_overrides()
     if _pulse_stale:            # a mission swap's reset, before GameLoop.tick
         refresh_stale_pulse_params()
@@ -2896,6 +2982,8 @@ def k1_system(system, dt) -> None:
     if h is None or (h >> _KIND_SHIFT) != _kind("Subsystem"):
         system.update_weapons(dt)
         return
+    if not _k1_walk_check_sent:
+        _k1_send_walk_check()
     _k1_recheck_overrides()
     if _pulse_stale:            # a mission swap's reset, before GameLoop.tick
         refresh_stale_pulse_params()

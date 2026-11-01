@@ -3823,6 +3823,115 @@ PyObject* step_scan_ships(PyObject* ships, long long obj_kind, int kind_shift,
     return result;
 }
 
+// ── The K1 walk check (k1_fire_control.h, THE WALK START) ──────────────────
+// Installed into the K1 kernel by combat_k1_set_walk_check. The kernel asks
+// it at every walk start (inside combat_k1_next, the GIL held); true sends
+// the walk start back to Python the old way (a WALK_START record). It reads
+// instance dicts and class MRO entries only -- no Python code runs:
+//   - the walked system's dict holds one of `system_names`, or a child's
+//     (its "_children") one of `leaf_names` (native_combat.walk_start's
+//     instance-patch scan, made where it always was: at the walk start);
+//   - the firing ship's dict holds one of `ship_names`
+//     (is_using_target_offset / GetTargetOffsetTG on the instance);
+//   - the ship's class resolves is_using_target_offset to anything but the
+//     stock ShipClass's (or it is not a ShipClass), or GetTargetOffsetTG to
+//     anything but the stock one. A class with no is_using_target_offset is
+//     fine: Python's probe is None there, it reads the held offset.
+// Anything it cannot read (no row in the registry, no dict, a CPython
+// error) answers true: Python, as before, is the authority.
+struct K1WalkCheckRefs {
+    PyObject* registry = nullptr;        // native_combat._registry.data
+    PyObject* system_names = nullptr;    // tuples of str
+    PyObject* leaf_names = nullptr;
+    PyObject* ship_names = nullptr;
+    PyObject* stock_is_using = nullptr;  // raw MRO entries of ShipClass
+    PyObject* stock_get_offset = nullptr;
+    PyObject* ship_class = nullptr;
+};
+
+K1WalkCheckRefs& k1_walk_check_refs() {
+    static K1WalkCheckRefs r;  // owned references, never released at exit
+    return r;
+}
+
+// The registry's live object for handle `h`, borrowed, or nullptr (no error
+// set): native_combat._registry is a WeakValueDictionary, `data` its dict of
+// KeyedRef.
+PyObject* k1_registry_get(PyObject* registry, std::int64_t h) {
+    PyObject* key = PyLong_FromLongLong(h);
+    if (key == nullptr) {
+        PyErr_Clear();
+        return nullptr;
+    }
+    PyObject* ref = PyDict_GetItemWithError(registry, key);
+    Py_DECREF(key);
+    if (ref == nullptr || !PyWeakref_Check(ref)) {
+        PyErr_Clear();
+        return nullptr;
+    }
+    PyObject* o = PyWeakref_GetObject(ref);
+    if (o == nullptr || o == Py_None) {
+        PyErr_Clear();
+        return nullptr;
+    }
+    return o;
+}
+
+// 1: `d` holds one of the str in tuple `names`; 0: none; -1: error.
+int k1_holds(PyObject* d, PyObject* names) {
+    return k2_holds(d, PySequence_Fast_ITEMS(names),
+                    PySequence_Fast_GET_SIZE(names));
+}
+
+// 1: Python must start the walk; 0: native; -1: error.
+int k1_walk_check(const K1WalkCheckRefs& r, std::int64_t sys_h,
+                  std::int64_t ship_h) {
+    static PyObject* const k_iu =
+        PyUnicode_InternFromString("is_using_target_offset");
+    static PyObject* const k_gto =
+        PyUnicode_InternFromString("GetTargetOffsetTG");
+    PyObject* sys = k1_registry_get(r.registry, sys_h);
+    PyObject* sd = sys ? k2_dict_of(sys) : nullptr;
+    if (sd == nullptr) return 1;
+    int h = k1_holds(sd, r.system_names);
+    if (h != 0) return h;
+    PyObject* kids = PyDict_GetItemWithError(sd, k2_scan_names().children);
+    if (kids == nullptr && PyErr_Occurred()) return -1;
+    if (kids != nullptr) {
+        PyObject* seq = PySequence_Fast(kids, "");
+        if (seq == nullptr) return -1;
+        PyObject* const* items = PySequence_Fast_ITEMS(seq);
+        const Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
+        for (Py_ssize_t i = 0; i < n && h == 0; ++i) {
+            PyObject* cd = k2_dict_of(items[i]);
+            h = cd ? k1_holds(cd, r.leaf_names) : 1;
+        }
+        Py_DECREF(seq);
+        if (h != 0) return h;
+    }
+    if (ship_h < 0) return 0;  // no ship: Python's probe is None
+    PyObject* ship = k1_registry_get(r.registry, ship_h);
+    PyObject* shd = ship ? k2_dict_of(ship) : nullptr;
+    if (shd == nullptr) return 1;
+    h = k1_holds(shd, r.ship_names);
+    if (h != 0) return h;
+    PyTypeObject* t = Py_TYPE(ship);
+    PyObject* iu = _PyType_Lookup(t, k_iu);  // borrowed, no error set
+    if (iu == nullptr) return 0;
+    if (iu != r.stock_is_using || r.ship_class == nullptr ||
+        !PyType_IsSubtype(t, reinterpret_cast<PyTypeObject*>(r.ship_class)))
+        return 1;
+    return _PyType_Lookup(t, k_gto) != r.stock_get_offset ? 1 : 0;
+}
+
+bool k1_walk_needs_python(std::int64_t sys_h, std::int64_t ship_h) {
+    const K1WalkCheckRefs& r = k1_walk_check_refs();
+    if (r.registry == nullptr) return true;
+    const int v = k1_walk_check(r, sys_h, ship_h);
+    if (v < 0) PyErr_Clear();
+    return v != 0;
+}
+
 }  // namespace
 
 PYBIND11_MODULE(_dauntless_host, m) {
@@ -10459,19 +10568,22 @@ PYBIND11_MODULE(_dauntless_host, m) {
         // LAST element is the write log since the previous record: a list of
         // (handle, field name, value). Values: float / bool / int; `_target`
         // an Object handle or -1 (None); `_target_list` a list of handles;
-        // `_target_offset` None or the string "walk_offset" (the walk's own
-        // offset object). Layouts:
-        //   (DONE, writes)
-        //   (WALK_START, system, writes)  -> reply combat_k1_set_offset
-        //   (STOP_SYSTEM, system, writes)
-        //   (RUN_PYTHON, system, ship_pos, getter_idx, writes)
-        //   (BANK_STOP, bank, writes)
-        //   (FIRE, bank, target, decision, writes)
+        // `_target_offset` None or ("walk_offset", walk, system) (that walk's
+        // own offset object, ruling P5). The element before the writes is
+        // the walk tag: (walk, system) on the first record a walk returns
+        // (the driver materialises the walk on it), else None. Layouts:
+        //   (DONE, tag, writes)
+        //   (WALK_START, system, tag, writes)  -> reply combat_k1_set_offset
+        //       (only for a walk start the walk check hands back)
+        //   (STOP_SYSTEM, system, tag, writes)
+        //   (RUN_PYTHON, system, ship_pos, getter_idx, tag, writes)
+        //   (BANK_STOP, bank, tag, writes)
+        //   (FIRE, bank, target, decision, tag, writes)
         //       decision: beam (was_firing,), pulse ((x, y, z), target_used),
         //       tube (target_used,); handles -1 = None
-        //   (FIRE_FAILED, tube, writes)
-        //   (FIRE_DUMB, tube, writes)
-        //   (ASK, query, *args, writes)    -> reply combat_k1_answer
+        //   (FIRE_FAILED, tube, tag, writes)
+        //   (FIRE_DUMB, tube, tag, writes)
+        //   (ASK, query, *args, tag, writes)    -> reply combat_k1_answer
         m.def("combat_k1_kinds", [] {
             py::dict d;
             for (int i = 0; i < static_cast<int>(cb::K1Kind::kCount); ++i)
@@ -10515,6 +10627,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
                         using T = std::decay_t<decltype(x)>;
                         if constexpr (std::is_same_v<T, std::monostate>)
                             return py::none();
+                        else if constexpr (std::is_same_v<T, cb::K1WalkOffset>)
+                            return py::make_tuple("walk_offset", x.walk,
+                                                  x.system);
                         else if constexpr (std::is_same_v<T, std::vector<std::int64_t>>)
                             return py::cast(x);  // a list
                         else
@@ -10523,12 +10638,15 @@ PYBIND11_MODULE(_dauntless_host, m) {
                     w.value);
                 writes.append(py::make_tuple(w.handle, w.field, v));
             }
+            const py::object tag =
+                r.walk_first ? py::object(py::make_tuple(r.walk, r.walk_system))
+                             : py::object(py::none());
             const int kind = static_cast<int>(r.kind);
             switch (r.kind) {
                 case cb::K1Kind::DONE:
-                    return py::make_tuple(kind, writes);
+                    return py::make_tuple(kind, tag, writes);
                 case cb::K1Kind::RUN_PYTHON:
-                    return py::make_tuple(kind, r.a, r.b, r.c, writes);
+                    return py::make_tuple(kind, r.a, r.b, r.c, tag, writes);
                 case cb::K1Kind::FIRE: {
                     py::tuple d;
                     switch (r.decision.shape) {
@@ -10546,19 +10664,20 @@ PYBIND11_MODULE(_dauntless_host, m) {
                             d = py::make_tuple(r.decision.target_used);
                             break;
                     }
-                    return py::make_tuple(kind, r.a, r.b, d, writes);
+                    return py::make_tuple(kind, r.a, r.b, d, tag, writes);
                 }
                 case cb::K1Kind::ASK: {
                     py::list items;
                     items.append(kind);
                     items.append(r.query);
                     for (std::int64_t h : r.args) items.append(h);
+                    items.append(tag);
                     items.append(writes);
                     return py::tuple(items);
                 }
                 default:  // WALK_START, STOP_SYSTEM, BANK_STOP, FIRE_FAILED,
                           // FIRE_DUMB
-                    return py::make_tuple(kind, r.a, writes);
+                    return py::make_tuple(kind, r.a, tag, writes);
             }
         }, "The top session's next record (see combat_k1_kinds).");
         m.def("combat_k1_set_offset",
@@ -10580,6 +10699,63 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_k1_skip_walk", [] { cb::k1_kernel().skip_walk(); },
               "WALK_START's other reply: Python ran the system's "
               "update_weapons itself (an instance-patched Fire ...).");
+        m.def("combat_k1_set_walk_check",
+              [](py::handle registry, py::handle system_names,
+                 py::handle leaf_names, py::handle ship_names,
+                 py::handle stock_is_using, py::handle stock_get_offset,
+                 py::handle ship_class) {
+                  // K1WalkCheckRefs (k1_walk_check): None as the registry
+                  // removes the check (every walk starts natively).
+                  K1WalkCheckRefs& r = k1_walk_check_refs();
+                  PyObject* olds[] = {r.registry, r.system_names,
+                                      r.leaf_names, r.ship_names,
+                                      r.stock_is_using, r.stock_get_offset,
+                                      r.ship_class};
+                  r = K1WalkCheckRefs{};
+                  if (!registry.is_none()) {
+                      if (!PyDict_Check(registry.ptr()))
+                          throw py::type_error("registry: a dict");
+                      for (py::handle t : {system_names, leaf_names,
+                                           ship_names})
+                          if (!PyTuple_Check(t.ptr()))
+                              throw py::type_error("names: tuples of str");
+                      auto own = [](py::handle o) {
+                          return o.is_none() ? nullptr
+                                             : o.inc_ref().ptr();
+                      };
+                      r.registry = own(registry);
+                      r.system_names = own(system_names);
+                      r.leaf_names = own(leaf_names);
+                      r.ship_names = own(ship_names);
+                      r.stock_is_using = own(stock_is_using);
+                      r.stock_get_offset = own(stock_get_offset);
+                      r.ship_class = own(ship_class);
+                      cb::k1_kernel().set_walk_check(k1_walk_needs_python);
+                  } else {
+                      cb::k1_kernel().set_walk_check(nullptr);
+                  }
+                  for (PyObject* o : olds) Py_XDECREF(o);
+              },
+              py::arg("registry"), py::arg("system_names"),
+              py::arg("leaf_names"), py::arg("ship_names"),
+              py::arg("stock_is_using"), py::arg("stock_get_offset"),
+              py::arg("ship_class"),
+              "Install the walk check (k1_walk_check): the registry's "
+              "handle -> KeyedRef dict, the instance names looked for on "
+              "the walked system, its children and its ship, the stock "
+              "ShipClass's raw is_using_target_offset / GetTargetOffsetTG "
+              "and ShipClass. registry None removes it.");
+        m.def("combat_k1_walk_offset",
+              [](std::int64_t system) -> py::object {
+                  const cb::Mirror& mm = cb::mirror();
+                  const std::optional<cb::Vec3> o = cb::k1_live_held_offset(
+                      mm, system, cb::climb_to_ship_of(mm, system));
+                  if (!o) return py::none();
+                  return py::make_tuple((*o)[0], (*o)[1], (*o)[2]);
+              },
+              py::arg("system"),
+              "The walk offset K1 computes for `system` (its "
+              "_live_held_offset() from the mirror): (x, y, z) or None.");
         m.def("combat_k1_end", [] { cb::k1_kernel().end(); },
               "Pop the top session (it must have returned DONE).");
         m.def("combat_k1_abandon", [] { cb::k1_kernel().abandon(); },
@@ -10610,6 +10786,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
             posed["walks"] = c.posed_walks;
             posed["target_aims"] = c.posed_target_aims;
             d["k1_posed"] = posed;
+            // Records K1 no longer returns (round trips): walk starts made
+            // with no WALK_START.
+            py::dict logged;
+            logged["walk_start"] = c.logged_walk_start;
+            d["k1_logged"] = logged;
             return d;
         });
         m.def("combat_k1_reset_counts",

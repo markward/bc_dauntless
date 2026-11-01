@@ -1191,3 +1191,285 @@ def test_manual_aim_on_posed_target_native(monkeypatch):
     assert counts["k1_python_systems"] == 0, counts
     assert set(_posed_reasons(counts).values()) == {0}, counts
     assert counts["k1_posed"]["target_aims"] > 0, counts
+
+
+# ── Round trips, Task 1: no WALK_START record ───────────────────────────────
+#
+# Spec docs/superpowers/specs/2026-11-01-native-combat-round-trips-design.md
+# §4.1. The kernel computes the walk's aim offset VALUE itself; Python fetches
+# the offset OBJECT (walked._live_held_offset(), ruling P5) and pins the walk
+# only when the walk's first record arrives, or when a logged write naming
+# the walk's offset is applied, whichever comes first
+# (native_combat._K1Walk.materialise). A walk that hands nothing back runs no
+# Python at all.
+
+from engine.appc.ships import ShipClass  # noqa: E402
+from engine.core import ids  # noqa: E402
+
+
+def _spy_records(mp, log):
+    """Wrap combat_k1_next: log (kind name, walk tag) for every record. The
+    walk tag (rec[-2]) is None, or (walk, system handle) on the first record
+    a walk hands back."""
+    real = _h.combat_k1_next
+    names = {v: k for k, v in _h.combat_k1_kinds().items()}
+
+    def spy():
+        rec = real()
+        log.append((names[rec[0]], rec[-2]))
+        return rec
+    mp.setattr(_h, "combat_k1_next", spy)
+
+
+def _volleys(w, t):
+    """Phasers and torpedoes (with an aim offset) one way, cannons the
+    other: every K1 system kind walks."""
+    galaxy, vorcha = w.ships["Galaxy"], w.ships["Vorcha"]
+    if t == 0:
+        galaxy.GetPhaserSystem().StartFiring(vorcha)
+        galaxy.GetTorpedoSystem().StartFiring(vorcha,
+                                              TGPoint3(0.5, -1.0, 0.25))
+        vorcha.GetPulseWeaponSystem().StartFiring(galaxy)
+
+
+def test_no_walk_start_records(monkeypatch):
+    """No WALK_START reaches Python: every walk starts in the kernel
+    (k1_logged.walk_start counts them), and the first record a walk hands
+    back carries the walk's tag. Per tick equal to Python."""
+    log = []
+    _spy_records(monkeypatch, log)
+    _ref, _nat, counts = _both(monkeypatch, _DUEL, _volleys, 240)
+    kinds = [k for k, _tag in log]
+    assert kinds.count("WALK_START") == 0, kinds[:20]
+    assert counts["k1_logged"]["walk_start"] > 0, counts
+    # Most walks hand nothing back: fewer tagged records than walks.
+    tagged = [tag for _k, tag in log if tag is not None]
+    assert tagged, log[:20]
+    assert len(tagged) < counts["k1_logged"]["walk_start"], counts
+    assert counts["k1_python_systems"] == 0, counts
+
+
+def _hexes3(p):
+    return tuple(float(c).hex() for c in (p.x, p.y, p.z))
+
+
+def test_offset_value_matches_live_held_offset(monkeypatch):
+    """The kernel's walk offset (combat_k1_walk_offset, the predicate the
+    walk uses) against WeaponSystem._live_held_offset(), by .hex(): none,
+    held, a non-TGPoint3 held value (unset), Manual Aim (the manual offset
+    wins), the use flag without a manual offset (held), and a firing ship
+    that is not a ShipClass (held, whatever its row says)."""
+    from engine.appc.objects import DamageableObject
+    w = World(monkeypatch, True, _DUEL, "k1_offset")
+    try:
+        galaxy = w.ships["Galaxy"]
+        torps = galaxy.GetTorpedoSystem()
+
+        def check(system, want):
+            py = system._live_held_offset()
+            nat = _h.combat_k1_walk_offset(system.__dict__["_nslot"])
+            if want is None:
+                assert not isinstance(py, TGPoint3), py
+                assert nat is None, nat
+            else:
+                assert isinstance(py, TGPoint3)
+                assert _hexes3(py) == want
+                assert nat is not None
+                assert tuple(float(c).hex() for c in nat) == want
+
+        check(torps, None)                                    # none
+        held = TGPoint3(0.1, -2.5, 1.0 / 3.0)
+        torps._held_offset = held
+        check(torps, _hexes3(held))                           # held
+        torps._held_offset = (300.0, -9.0, 4.0)
+        check(torps, None)                                    # unset
+        torps._held_offset = held
+        manual = TGPoint3(2.0 / 7.0, -5.0 / 11.0, 13.0 / 3.0)
+        galaxy.set_manual_target_offset(manual)
+        check(torps, _hexes3(manual))                         # Manual Aim
+        galaxy.UseTargetOffsetTG(0)
+        check(torps, _hexes3(held))                           # off again
+        galaxy._use_target_offset = True      # the flag, no manual offset
+        assert galaxy._manual_target_offset is None
+        check(torps, _hexes3(held))
+
+        # A firing ship that is not a ShipClass: Python's probe finds no
+        # is_using_target_offset, so it reads the held offset -- even when
+        # the row's manual-aim fields say otherwise.
+        hulk = DamageableObject()
+        assert "_nslot" in hulk.__dict__
+        system = ws.TorpedoSystem("hulk torps")
+        system._parent_ship = hulk
+        assert system.GetParentShip() is hulk
+        hh = hulk.__dict__["_nslot"]
+        _h.combat_set_i(hh, nc._fid("_use_target_offset"), 1)
+        _h.combat_set_fv(hh, nc._fid("_manual_target_offset"),
+                         [9.0, 9.0, 9.0])
+        system._held_offset = held
+        check(system, _hexes3(held))
+        system._held_offset = None
+        check(system, None)
+    finally:
+        w.close()
+
+
+def _no_mount_cannons(w, t):
+    """The Vor'cha's cannons held on a Bird of Prey in cruise with an aim
+    offset on its wing that is no authored mount, and no Manual Aim: the
+    lead solve cannot be made natively (no_mount), so the cannon's Fire is
+    an ASK -- the FIRST record of its walk."""
+    v, bop = w.ships["Vorcha"], w.ships["BoP"]
+    if t == 0:
+        articulation.force_pose(bop, "cruise")
+        cannons = v.GetPulseWeaponSystem()
+        cannons.SetSingleFire(0)
+        cannons.StartFiring(bop, TGPoint3(*_wing_pick(bop)))
+
+
+_NO_MOUNT = (("Vorcha", "vorcha", (0.0, 0.0, 0.0), 0.0),
+             ("BoP", "birdofprey", (15.0, 200.0, 5.0), math.pi,
+              "ships.BirdOfPrey"))
+
+
+def test_first_record_ask_sees_pinned_offset_object(monkeypatch):
+    """Review Focus 1: a walk whose first record is an ASK. The walk's
+    offset object is fetched, and the walk pinned, BEFORE the ASK's Python
+    runs (it Fires with that object, which the cannon stamps: identity, the
+    P5 column of every row), in today's order: pin, then the offset."""
+    order = []
+    _spy_records(monkeypatch, order)
+    real_mat = nc._K1Walk.materialise
+    real_pin = nc._K1Walk.pin_system
+    real_answer = nc._k1_answer
+
+    def materialise(walk, n, h):
+        order.append(("materialise", n))
+        return real_mat(walk, n, h)
+
+    def pin_system(walk, system):
+        order.append(("pin", system.GetName()))
+        return real_pin(walk, system)
+
+    def answer(rec, walk, dt):
+        order.append(("answer", rec[1]))
+        return real_answer(rec, walk, dt)
+
+    monkeypatch.setattr(nc._K1Walk, "materialise", materialise)
+    monkeypatch.setattr(nc._K1Walk, "pin_system", pin_system)
+    monkeypatch.setattr(nc, "_k1_answer", answer)
+    _ref, _nat, counts = _both(monkeypatch, _NO_MOUNT, _no_mount_cannons, 120)
+    assert counts["k1_fire_ask_reasons"]["no_mount"] > 0, counts
+    first_asks = [i for i, e in enumerate(order)
+                  if e[0] == "ASK" and e[1] is not None]
+    assert first_asks, order[:20]
+    for i in first_asks:
+        n = order[i][1][0]
+        j = order.index(("answer", "fire"), i)
+        # The walk's materialise (pin, then its offset) is the last Python
+        # before the ASK's own.
+        assert order[j - 2:j] == [("materialise", n),
+                                  ("pin", "Disruptor Cannons")], order[i:j + 1]
+
+
+def test_target_list_write_on_every_walk_is_a_new_list(monkeypatch):
+    """Python's _prune_targets builds a NEW list on every update_weapons
+    (AddTarget appends in place, so an older list object must never be the
+    live one). The kernel keeps the `_target_list` write on every walk --
+    a walk that hands nothing back too: its writes ride the next record or
+    DONE. Each tick's list is a new object, ON as OFF."""
+    seen = {}
+
+    def script(w, t):
+        _volleys(w, t)
+        galaxy, vorcha = w.ships["Galaxy"], w.ships["Vorcha"]
+        for g in (galaxy.GetPhaserSystem(), galaxy.GetTorpedoSystem(),
+                  vorcha.GetPulseWeaponSystem()):
+            seen.setdefault((w.native, w.label(g)), []).append(
+                g.__dict__["_target_list"])     # held: never reused
+
+    _both(monkeypatch, _DUEL, script, 120)
+    assert len(seen) == 6, sorted(seen)
+    for (arm, label), lists in seen.items():
+        assert len(lists) == 120
+        assert all(a is not b for a, b in zip(lists, lists[1:])), \
+            (arm, label)
+
+
+@pytest.mark.parametrize("where", ["system_class", "ship_class",
+                                   "ship_instance", "system_instance"])
+def test_live_held_offset_override_runs_python(monkeypatch, where):
+    """While the Python copies exist, the walk-offset methods the kernel now
+    stands in for are guarded: a patched `_live_held_offset` (system),
+    `is_using_target_offset` / `GetTargetOffsetTG` (ship), on the class or
+    on the instance, runs Python's own, exactly as often ON as OFF."""
+    calls = {}
+
+    def counting(real, key):
+        def f(self, *a):
+            calls[key].append(self.GetName())
+            return real(self, *a)
+        return f
+
+    def script(w, t):
+        galaxy = w.ships["Galaxy"]
+        torps = galaxy.GetTorpedoSystem()
+        if t == 0:
+            key = w.native
+            calls[key] = []
+            galaxy.set_manual_target_offset(TGPoint3(0.25, 1.5, -0.5))
+            if where == "system_class":
+                monkeypatch.setattr(ws.WeaponSystem, "_live_held_offset",
+                                    counting(ws.WeaponSystem._live_held_offset,
+                                             key))
+            elif where == "ship_class":
+                monkeypatch.setattr(ShipClass, "GetTargetOffsetTG",
+                                    counting(ShipClass.GetTargetOffsetTG, key))
+            elif where == "ship_instance":
+                f = counting(ShipClass.is_using_target_offset, key)
+                monkeypatch.setattr(galaxy, "is_using_target_offset",
+                                    lambda: f(galaxy), raising=False)
+            else:
+                f = counting(ws.WeaponSystem._live_held_offset, key)
+                monkeypatch.setattr(torps, "_live_held_offset",
+                                    lambda: f(torps), raising=False)
+            torps.StartFiring(w.ships["Vorcha"], TGPoint3(1.0, 2.0, 3.0))
+        if t == 119:
+            monkeypatch.undo()
+
+    _both(monkeypatch, _DUEL, script, 120)
+    assert calls[False], calls
+    assert calls[True] == calls[False]
+
+
+def test_no_getattr_stub_on_live_held_offset_path(monkeypatch):
+    """MAP §3.1 flagged it inferred: no TGObject.__getattr__ stub sits on
+    `_live_held_offset`'s path (a stub would answer for a method the kernel
+    reads from the mirror). A ShipClass parent with and without Manual Aim,
+    a non-ShipClass parent and no parent: the stub hook is never reached."""
+    from engine.appc.objects import DamageableObject
+    reached = []
+    real = ids.TGObject.__getattr__
+
+    def spy(self, name):
+        reached.append((type(self).__name__, name))
+        return real(self, name)
+
+    w = World(monkeypatch, True, _DUEL, "k1_stub")
+    try:
+        galaxy = w.ships["Galaxy"]
+        torps = galaxy.GetTorpedoSystem()
+        torps._held_offset = TGPoint3(1.0, 2.0, 3.0)
+        hulk = DamageableObject()
+        on_hulk = ws.TorpedoSystem("hulk torps")
+        on_hulk._parent_ship = hulk
+        orphan = ws.TorpedoSystem("orphan torps")
+        monkeypatch.setattr(ids.TGObject, "__getattr__", spy)
+        assert torps._live_held_offset() is torps._held_offset
+        galaxy.set_manual_target_offset(TGPoint3(4.0, 5.0, 6.0))
+        assert _hexes3(torps._live_held_offset()) == _hexes3(
+            TGPoint3(4.0, 5.0, 6.0))
+        assert on_hulk._live_held_offset() is None
+        assert orphan._live_held_offset() is None
+        assert reached == [], reached
+    finally:
+        w.close()
