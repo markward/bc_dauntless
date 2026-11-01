@@ -255,8 +255,11 @@ GuideResult guide_torpedo(Mirror& m, const TorpedoRow& row, double dt,
         const int64_t sset = m.object(src)->_containing_set;
         Vec3 soff{0.0, 0.0, 0.0};
         const OffsetStatus os = offset_between(m, frames, sset, gset, soff);
+        // A missing frame is the whole _guide, not a frame ASK: Python's
+        // offset_between raise here is swallowed into True
+        // (projectiles.py:1052-1062), so Python must decide it.
         if (os == OffsetStatus::missing)
-            return need_frame(missing_set(frames, sset, gset));
+            return need_guide("source or target frame");
         if (os == OffsetStatus::unrepresentable)
             return need_guide("source or target set");
         try {
@@ -266,13 +269,15 @@ GuideResult guide_torpedo(Mirror& m, const TorpedoRow& row, double dt,
                                      use_memo, std::nullopt, true,
                                      std::nullopt, clocks.occ_now);
             } else {
-                // G10: in the SOURCE's frame; never memoised.
+                // G10: in the SOURCE's frame; never memoised. use_memo is
+                // false, as sensor_detection.can_detect's delegation passes
+                // it whenever dist_sq_gu is given (sensor_detection.py:527).
                 const Vec3 o = world_location(m, obj(m, src));
                 const Vec3 p = shifted(world_location(m, tr), soff);
                 const double dx = p[0] - o[0], dy = p[1] - o[1],
                              dz = p[2] - o[2];
                 visible = can_detect(m, src, target, clocks.drift_now,
-                                     use_memo, dx * dx + dy * dy + dz * dz,
+                                     false, dx * dx + dy * dy + dz * dz,
                                      true, std::nullopt, clocks.occ_now);
             }
         } catch (const std::invalid_argument&) {

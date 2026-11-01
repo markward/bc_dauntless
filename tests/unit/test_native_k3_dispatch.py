@@ -725,6 +725,26 @@ def test_stale_native_scan_runs_python(monkeypatch):
             w.close()
 
 
+def test_step_scan_rebuilds_a_dirty_torpedo_table(monkeypatch):
+    """A dirty torpedo table is rebuilt at the top of step_scan, BEFORE the
+    native scan checks the rows, so every torpedo's set is in the step's
+    sets and framed at scan time (not asked for one by one later)."""
+    with monkeypatch.context() as mp:
+        w = World(mp, True, GALAXY_VORCHA, "k3_dirty_scan")
+        try:
+            _volley(w, 0)
+            nc.torpedo_table_mark_dirty()
+            assert nc._k3_dirty
+            st = nc.step_scan(w.listed)
+            assert st.ok
+            assert not nc._k3_dirty
+            assert list(_h.combat_torp_handles()) == [
+                t.__dict__["_k3_row"] for t in projectiles._active]
+        finally:
+            nc.clear_step()
+            w.close()
+
+
 def test_step_scan_cleared_after_the_step(monkeypatch):
     """The step's scan (holding ships_list) does not outlive the step."""
     with monkeypatch.context() as mp:
@@ -733,6 +753,60 @@ def test_step_scan_cleared_after_the_step(monkeypatch):
             w.tick(before=lambda w: _volley(w, 0))
             assert nc._step is None
             assert nc.counts()["k3_runs"] == 1
+        finally:
+            w.close()
+
+
+def test_step_scan_cleared_when_update_all_raises(monkeypatch):
+    """host_loop's try/finally: an exception from projectiles.update_all
+    inside the combat step still drops the step's scan (it holds
+    ships_list) and empties the native step state."""
+    with monkeypatch.context() as mp:
+        w = World(mp, True, GALAXY_VORCHA, "k3_raise_step")
+        try:
+            _volley(w, 0)
+            seen = []
+
+            def boom(dt, ships, *, ship_instances=None):
+                seen.append(nc._step)
+                raise ZeroDivisionError("boom")
+            mp.setattr(projectiles, "update_all", boom)
+            with pytest.raises(ZeroDivisionError):
+                host_loop._advance_combat(list(w.listed), DT,
+                                          push_render_data=False)
+            assert seen and seen[0] is not None and seen[0].ok
+            assert nc._step is None
+            assert not _h.combat_step_dump()["representable"]
+        finally:
+            w.close()
+
+
+def test_mission_swap_clears_the_step_scan(monkeypatch):
+    """HostController._drain_pending_swap drops a step scan left over from
+    the old mission (it holds the old ships_list)."""
+    from engine.host_loop import HostController, MissionSession
+
+    class _StubLoader:
+        def load(self, name):
+            return MissionSession(mission_name=name)
+
+    class _FakeRenderer:
+        def destroy_instance(self, iid):
+            pass
+
+    with monkeypatch.context() as mp:
+        w = World(mp, True, GALAXY_VORCHA, "k3_swap")
+        try:
+            assert nc.step_scan(w.listed).ok
+            assert _h.combat_step_dump()["representable"]
+            h = HostController()
+            h.renderer = _FakeRenderer()
+            h.loader = _StubLoader()
+            h.session = MissionSession(mission_name="prev")
+            h.swap_mission("Next.Mission")
+            h._drain_pending_swap()
+            assert nc._step is None
+            assert not _h.combat_step_dump()["representable"]
         finally:
             w.close()
 
@@ -764,6 +838,35 @@ def test_ask_exception_abandons_and_reraises(monkeypatch):
             assert _hx(first.GetTranslate()) == before
             assert first._age == 0.0
             w.set.RemoveObjectFromSet("Stray")
+        finally:
+            w.close()
+
+
+def test_exception_right_after_begin_leaves_no_open_session(monkeypatch):
+    """An exception between combat_k3_begin and the walk's own try (the
+    driver's set-up: the ASK kind lookup, the handle walker) must not leak
+    an open session -- every later begin would throw. The next step runs
+    through K3 as normal."""
+    with monkeypatch.context() as mp:
+        w = World(mp, True, GALAXY_VORCHA, "k3_begin_raise")
+        try:
+            _volley(w, 0)
+
+            def boom():
+                raise ZeroDivisionError("boom")
+            with monkeypatch.context() as inner:
+                inner.setattr(nc, "_K1Walk", boom)
+                nc.step_scan(w.listed)
+                try:
+                    with pytest.raises(ZeroDivisionError):
+                        projectiles.update_all(DT, w.listed)
+                finally:
+                    nc.clear_step()
+            assert not _h.combat_k3_open()
+            runs = nc.counts().get("k3_runs", 0)
+            w.tick()
+            assert not _h.combat_k3_open()
+            assert nc.counts()["k3_runs"] == runs + 1, nc.counts()
         finally:
             w.close()
 
@@ -821,6 +924,30 @@ def test_reset_clears_step_and_k3_state(monkeypatch):
         finally:
             w.close()
 
+
+def test_reset_rebaselines_the_k3_class_watch(monkeypatch):
+    """reset() re-baselines K3's class watch, as it does K2's: a watch built
+    while a ship class was patched (a class first seen mid-patch) must not
+    outlive the patch and send every later step to Python ("guard")."""
+    with monkeypatch.context() as mp:
+        w = World(mp, True, GALAXY_VORCHA, "k3_rewatch")
+        try:
+            w.tick(before=lambda w: _volley(w, 0))
+            _k3_ran(nc.counts())
+            with monkeypatch.context() as inner:
+                real = ShipClass.GetVelocityTG
+                inner.setattr(ShipClass, "GetVelocityTG",
+                              lambda self: real(self))
+                nc._k3_rebuild_watch()          # built under the patch
+            nc.reset()
+            nc.configure(ON)
+            for t in range(1, 4):
+                w.tick(before=lambda w, t=t: _volley(w, t))
+            c = nc.counts()
+            assert c["k3_python_reasons"]["guard"] == 0, c
+            _k3_ran(c)
+        finally:
+            w.close()
 
 def test_available_needs_the_k3_and_step_bindings(monkeypatch):
     for name in ("combat_step_scan", "combat_k4_eligible", "combat_k3_begin",

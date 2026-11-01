@@ -568,7 +568,9 @@ TEST(K3Projectiles, StubIsDeadTargetAsksGuide) {
 }
 
 // A set with no frame-table entry asks `frame` and the compare is repeated
-// -- twice for one torpedo: torpedo->target, then source->target.
+// (torpedo->target). The source->target compare inside _target_visible does
+// NOT ask a frame: Python swallows a raise there into True, so a missing
+// source frame hands the whole _guide to Python ("source or target frame").
 TEST(K3Projectiles, MissingFrameAsksFrame) {
     World w;
     const int64_t tb = w.new_set(0, {0, 0, 0});
@@ -585,14 +587,20 @@ TEST(K3Projectiles, MissingFrameAsksFrame) {
     f.point = {0, 0, 0};
     w.k.answer(f);
     r = w.k.next();
+    ASSERT_EQ(w.brief(r), "ASK guide T");
+    w.k.answer(K3Answer{});     // Python's _guide: nothing written here
+    // The broad phase still needs the source's set framed (S is listed,
+    // so its set is offset against the torpedo's): a frame ASK there.
+    r = w.k.next();
     ASSERT_EQ(w.brief(r), "ASK frame " + std::to_string(sc));
     w.k.answer(f);
     r = w.done();
-    EXPECT_TRUE(w.write_of(r, t).vel.has_value());
+    EXPECT_FALSE(w.write_of(r, t).vel.has_value());
     EXPECT_NE(w.scan.frame(tb), nullptr);
     EXPECT_NE(w.scan.frame(sc), nullptr);
     w.k.end();
     EXPECT_EQ(w.k.counts().queries[static_cast<size_t>(K3Query::frame)], 2);
+    EXPECT_EQ(w.k.counts().guide_why.at("source or target frame"), 1);
 }
 
 // can_detect runs natively from each torpedo's SOURCE in list order, with

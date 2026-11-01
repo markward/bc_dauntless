@@ -10852,6 +10852,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
                           break;
                       case cb::K3Query::resolve_hit: {
                           const auto t = v.cast<py::tuple>();
+                          if (t.size() != 3)
+                              throw py::value_error(
+                                  "combat K3: resolve_hit answer is "
+                                  "((x, y, z), normal or None, tier)");
                           a.point = t[0].cast<std::array<double, 3>>();
                           if (!t[1].is_none())
                               a.normal = t[1].cast<std::array<double, 3>>();

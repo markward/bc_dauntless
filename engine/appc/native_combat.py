@@ -170,6 +170,10 @@ def reset() -> None:
     for k in _K3_REASONS:
         _k3_reasons[k] = 0
     _k3_iids_sent[:] = [_K2_UNSENT, -1, -1]
+    # K3's class watch re-baselines with K2's (a watch built while a class
+    # was patched must not outlive the patch).
+    _k3_watch.clear()
+    _k3_watch_seen[0] = -1
     if available():
         _h.combat_k1_reset_counts()
         _h.combat_k2_reset_counts()
@@ -1656,7 +1660,13 @@ class TorpedoField:
     """A Torpedo attribute the K3 kernel reads: like NativeField (no
     __get__, the value lives in the instance dict) but pushed into the
     torpedo's TABLE row, `_k3_row`. Switch off: one __set__ and a global
-    read."""
+    read.
+
+    With no __get__, reading a field never set on the instance returns
+    this descriptor object (the class attribute) instead of raising
+    AttributeError. Torpedo.__init__ sets all ten, so a real
+    torpedo never reads one unset; code that hasattr/getattr-probes a
+    half-built torpedo must not rely on AttributeError."""
 
     __slots__ = ("_name",)
 
@@ -3143,6 +3153,13 @@ def step_scan(ships) -> _StepScan:
     global _step
     st = _StepScan(ships)
     _step = st
+    # A dirty torpedo table is rebuilt BEFORE the native scan checks the
+    # rows, so every torpedo's set is framed now, not asked for later.
+    # (_k3_fallback's own rebuild stays as a safety: a no-op by then.)
+    proj = _k3_proj
+    if _k3_dirty and proj is not None \
+            and type(proj._active) is proj._ActiveList:
+        torpedo_table_rebuild(proj._active)
     if _k2_role_snapshot is None:
         why = "unsnapped"
     elif not _k2_classes_unchanged():
@@ -3522,19 +3539,21 @@ def run_k3(dt, all_ships, ship_instances):
     ctx["n_active"] = len(proj._active)
     ctx["scan_serial"] = st.serial
     now_, use_memo, drift = _k1_clocks()
+    # Everything the walk needs is made BEFORE begin: from begin on, only
+    # _k3_walk's try (which abandons) may raise, or the session leaks and
+    # every later begin throws.
+    global _k3_ask
+    if _k3_ask is None:
+        _k3_ask = _h.combat_k3_kinds()["ASK"]
+    walk = _K1Walk()
     why = _h.combat_k3_begin(dt, (now_, drift), use_memo, ctx)
     cx.commit()                 # begin takes the context, reason or not
     if why is not None:
         return None             # counted by the kernel
-    return _k3_walk(dt, ship_instances, st)
+    return _k3_walk(dt, ship_instances, st, walk, _k3_ask)
 
 
-def _k3_walk(dt, ship_instances, st):
-    global _k3_ask
-    if _k3_ask is None:
-        _k3_ask = _h.combat_k3_kinds()["ASK"]
-    ask = _k3_ask
-    walk = _K1Walk()
+def _k3_walk(dt, ship_instances, st, walk, ask):
     try:
         rec = _h.combat_k3_next()
         while rec[0] == ask:

@@ -198,6 +198,23 @@ TEST(ProjectileGeometry, GuideNoTargetAndMissingFrame) {
     EXPECT_EQ(r.n_writes, 3);
 }
 
+// _target_visible's compare (projectiles.py:1052): a source or target set
+// with no frame entry is NOT a frame ASK -- Python's offset_between raise
+// there is swallowed into True -- but the whole _guide, handed to Python.
+TEST(ProjectileGeometry, GuideSourceFrameMissingIsWholeGuide) {
+    World w;
+    const int64_t a = w.set(), c = w.set();
+    w.frames(a);
+    const int64_t tgt = w.ship(a, 0.0, 100.0, 0.0);
+    const int64_t src = w.ship(c, 0.0, -5.0, 0.0);
+    const int64_t h = w.torp(a, tgt, {0, 0, 0}, {0, 10, 0});
+    w.m.set_torpedo_ref(h, TorpField::_source_ship, src);
+    const GuideResult r = w.guide(h);
+    ASSERT_EQ(r.status, St::need_guide);
+    EXPECT_STREQ(r.why, "source or target frame");
+    EXPECT_EQ(r.n_writes, 0);
+}
+
 // G5: the dist < 1e-6 return keeps the two writes made before it.
 TEST(ProjectileGeometry, GuideDistReturnKeepsEarlierWrites) {
     World w;

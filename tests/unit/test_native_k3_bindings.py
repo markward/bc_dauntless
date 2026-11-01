@@ -266,3 +266,27 @@ def test_protocol_errors_raise(world):
         _h.combat_k3_end()           # not DONE
     _h.combat_k3_abandon()
     assert not _h.combat_k3_open()
+
+
+def test_resolve_hit_answer_shape_is_checked(world):
+    """A resolve_hit answer that is not ((x, y, z), normal or None, tier)
+    raises ValueError naming the shape, as the frame answer does (not a
+    bare IndexError from the tuple)."""
+    w = world
+    _fire(w, (0.0, 40.0, 0.0), (0.0, 600.0, 0.0))
+    assert nc.step_scan(w.ships).ok
+    # The target has an instance but its set no view offset: Python's
+    # _resolve_hit_point answers.
+    assert _h.combat_k3_begin(
+        DT, (0.0, 0.0), False,
+        {"n_active": len(projectiles._active), "iids": {_slot(w.x): 1},
+         "view_offsets": {}}) is None
+    rec = _h.combat_k3_next()
+    assert rec[1] == "resolve_hit"
+    for bad in (((0.0, 50.0, 0.0), None),
+                ((0.0, 50.0, 0.0), None, "mesh", 1)):
+        with pytest.raises(ValueError, match=r"resolve_hit answer is"):
+            _h.combat_k3_answer(bad)
+    _h.combat_k3_answer(((0.0, 50.0, 0.0), None, "fallback"))
+    assert _h.combat_k3_next()[0] == 0
+    _h.combat_k3_end()
