@@ -1,11 +1,13 @@
 #pragma once
 
-// Helpers shared by the combat geometry sources (weapon_geometry.cc and
-// beam_geometry.cc): row access that falls back, the transform slot, and the
+// Helpers shared by the combat geometry sources (weapon_geometry.cc,
+// beam_geometry.cc, beam_trace.cc, projectile_geometry.cc, k3_projectiles.cc):
+// row access that falls back, the transform slot, and the
 // TGPoint3 operations the Python geometry uses. Internal to the combat
 // library; included only AFTER the including source's
 // `#pragma clang fp contract(off)`.
 
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
@@ -63,7 +65,12 @@ inline Vec3 mult_matrix_left(const double* r, const Vec3& v) {
     return {x, y, z};
 }
 
-// TGPoint3.Dot (math.py:43).
+// TGPoint3.Length (math.py:41): libm sqrt, correctly rounded.
+inline double length(const Vec3& v) {
+    return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+}
+
+// TGPoint3.Dot (math.py:47).
 inline double dot(const Vec3& a, const Vec3& b) {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }

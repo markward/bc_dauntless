@@ -24,6 +24,7 @@ namespace {
 
 using detail::dot;
 using detail::fall_back;
+using detail::length;
 using detail::mult_matrix_left;
 using detail::obj;
 using detail::sub;
@@ -37,10 +38,6 @@ int64_t obj_ref(const Mirror& m, int64_t ref, const char* field) {
     return ref;
 }
 
-// TGPoint3.Length / Dot (math.py:34, :43).
-double length(const Vec3& v) {
-    return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-}
 Vec3 minus(const Vec3& a, const Vec3& b) {  // TGPoint3.__sub__
     return {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
 }

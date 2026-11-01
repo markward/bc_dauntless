@@ -325,7 +325,7 @@ def test_sphere_hit_matches(world):
 # ── A1-A6: the advance ───────────────────────────────────────────────────────
 
 def _advance_python(prev, vel, dt, age, ttl):
-    """update_all's advance (PR:870-900), transcribed for the parts
+    """update_all's advance (projectiles.py:912-930), transcribed for the parts
     update_all keeps local (seg, seg_len, aim_unit)."""
     cur = prev + vel * dt
     age = age + dt

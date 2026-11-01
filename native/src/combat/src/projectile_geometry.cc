@@ -25,6 +25,7 @@ namespace {
 
 using detail::dot;
 using detail::fall_back;
+using detail::length;
 using detail::obj;
 using detail::shifted;
 using detail::world_location;
@@ -42,11 +43,6 @@ constexpr uint32_t kGuideReads =
     bit(TorpField::_last_seen_target_pos) | bit(TorpField::_last_target_vel) |
     bit(TorpField::_target_ship) | bit(TorpField::_source_ship) |
     bit(TorpField::_containing_set) | bit(TorpField::_mount_key);
-
-// TGPoint3.Length (math.py:41): libm sqrt, correctly rounded.
-double length(const Vec3& v) {
-    return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-}
 
 GuideResult need_guide(const char* why) {
     GuideResult r;
@@ -88,7 +84,7 @@ int64_t missing_set(const StepScan& frames, int64_t a, int64_t b) {
     return frames.frame(a) == nullptr ? a : b;
 }
 
-// projectiles.py:1146-1168, from `to_aim = aim - torp_pos` to the
+// projectiles.py:1154-1176, from `to_aim = aim - torp_pos` to the
 // `_velocity` write: shared by the visible and the last-seen branch.
 void turn(const TorpedoRow& row, double dt, double speed, const Vec3& torp_pos,
           const Vec3& aim, GuideResult& r) {
@@ -96,23 +92,25 @@ void turn(const TorpedoRow& row, double dt, double speed, const Vec3& torp_pos,
     const Vec3 to_aim{aim[0] - torp_pos[0], aim[1] - torp_pos[1],
                       aim[2] - torp_pos[2]};
     const double dist = length(to_aim);
-    if (dist < 1e-6) return;  // projectiles.py:1148 (NaN continues)
+    if (dist < 1e-6) return;  // projectiles.py:1156 (NaN continues)
     // G6
     const Vec3 desired{to_aim[0] / dist, to_aim[1] / dist, to_aim[2] / dist};
     const Vec3& v = row.vel;
     const Vec3 current{v[0] / speed, v[1] / speed, v[2] / speed};
-    // G7: max(0.0, ...) -> 0.0 for NaN; a NaN initial reads 1.0.
+    // G7 (projectiles.py:1162-1164): max(0.0, ...) -> 0.0 for NaN; a NaN
+    // initial reads 1.0 (`> 1e-9` is False).
     const double remaining =
         py_max(0.0, row.guidance_lifetime - row.age);
     const double initial =
         row.guidance_initial > 1e-9 ? row.guidance_initial : 1.0;
     const double max_step =
         ((remaining / initial) * row.max_angular_accel) * dt;
-    // G8: a NaN dot clamps to 1.0 (min(1.0, NaN) is 1.0).
+    // G8 (projectiles.py:1165): a NaN dot clamps to 1.0 (min(1.0, NaN) is
+    // 1.0).
     const double cos_theta = py_max(-1.0, py_min(1.0, dot(current, desired)));
     const double theta = std::acos(cos_theta);
     Vec3 new_dir;
-    if (theta <= max_step || theta < 1e-6) {  // projectiles.py:1159
+    if (theta <= max_step || theta < 1e-6) {  // projectiles.py:1167
         new_dir = desired;
     } else {
         // G9: three libm sin calls, each alone (py_math.h).
@@ -167,7 +165,7 @@ bool sphere_hit(const Vec3& p, const Vec3& c, double r) {
     return (dx * dx + dy * dy + dz * dz) <= r * r;
 }
 
-// ── projectiles.py:902-922 update_all's advance (K3M A1-A6) ─────────────────
+// ── projectiles.py:912-930 update_all's advance (K3M A1-A6) ─────────────────
 
 Advance advance_torpedo(const Vec3& prev, const Vec3& vel, double dt,
                         double age, double ttl) {
@@ -182,14 +180,14 @@ Advance advance_torpedo(const Vec3& prev, const Vec3& vel, double dt,
     // A3: cur - prev, NOT v * dt (they round differently).
     a.seg = {a.cur[0] - prev[0], a.cur[1] - prev[1], a.cur[2] - prev[2]};
     a.seg_len = length(a.seg);  // A4
-    // A5: projectiles.py:922 (NaN: no aim).
+    // A5: projectiles.py:930 (NaN: no aim).
     if (a.seg_len > 1e-9)
         a.aim_unit = Vec3{a.seg[0] / a.seg_len, a.seg[1] / a.seg_len,
                           a.seg[2] / a.seg_len};
     return a;
 }
 
-// ── projectiles.py:1057 _steer_point, unposed (K3M G11/G12) ─────────────────
+// ── projectiles.py:1065 _steer_point, unposed (K3M G11/G12) ─────────────────
 
 Vec3 steer_point_unposed(const Mirror& m, int64_t target,
                          const std::optional<Vec3>& offset, int64_t mount_sub,
@@ -208,7 +206,7 @@ Vec3 steer_point_unposed(const Mirror& m, int64_t target,
     return shifted(target_offset_world(m, target, *offset), off);
 }
 
-// ── projectiles.py:1095 _guide (K3M A1.2, G1-G10) ───────────────────────────
+// ── projectiles.py:1103 _guide (K3M A1.2, G1-G10) ───────────────────────────
 
 GuideResult guide_torpedo(Mirror& m, const TorpedoRow& row, double dt,
                           const StepScan& frames, bool use_memo,
@@ -240,12 +238,12 @@ GuideResult guide_torpedo(Mirror& m, const TorpedoRow& row, double dt,
 
     // G1
     const double speed = length(row.vel);
-    if (speed < 1e-6) return {};  // projectiles.py:1114 (NaN continues)
+    if (speed < 1e-6) return {};  // projectiles.py:1122 (NaN continues)
     Vec3 torp_pos;
     if (!torp_translate(m, row, torp_pos))
         return need_guide("torpedo transform");
 
-    // _target_visible (projectiles.py:1023): can_detect from the FIRING
+    // _target_visible (projectiles.py:1031): can_detect from the FIRING
     // ship. Its `except Exception: return True` is not reproduced: whatever
     // the mirror cannot vouch for is Python's whole _guide instead.
     bool visible = true;
@@ -321,7 +319,7 @@ GuideResult guide_torpedo(Mirror& m, const TorpedoRow& row, double dt,
     return guide_torpedo_resume(m, row, dt, ask.resume, pos);
 }
 
-// projectiles.py:1121-1142: the visible branch from `_steer_point`'s answer.
+// projectiles.py:1129-1150: the visible branch from `_steer_point`'s answer.
 
 GuideResult guide_torpedo_resume(const Mirror& m, const TorpedoRow& row,
                                  double dt, const GuideResume& resume,
@@ -340,7 +338,7 @@ GuideResult guide_torpedo_resume(const Mirror& m, const TorpedoRow& row,
     const double t_go = length(to_t) / resume.speed;
     // G3: prev_vel is the value cached at the last VISIBLE tick.
     Vec3 acc{0.0, 0.0, 0.0};
-    if (row.last_tvel_set && dt > 1e-9) {  // projectiles.py:1130
+    if (row.last_tvel_set && dt > 1e-9) {  // projectiles.py:1138
         const Vec3& pv = row.last_tvel;
         acc = {(vel[0] - pv[0]) / dt, (vel[1] - pv[1]) / dt,
                (vel[2] - pv[2]) / dt};

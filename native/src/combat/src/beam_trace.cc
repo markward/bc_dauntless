@@ -17,7 +17,9 @@
 
 namespace dauntless::combat {
 
+using detail::is_zero_offset;
 using detail::obj;
+using detail::shifted;
 using detail::world_location;
 
 namespace {
@@ -25,19 +27,6 @@ namespace {
 TraceHooks& hooks_slot() {
     static TraceHooks hooks;
     return hooks;
-}
-
-// frames.shifted (frames.py:166-177): `p` ITSELF when off is None or
-// == (0.0, 0.0, 0.0) -- a tuple compare, element ==, so -0.0 is zero and NaN
-// is not -- else (p.x + sign * off[0], ...).
-bool is_shift(const std::optional<Vec3>& off) {
-    if (!off) return false;
-    const Vec3& o = *off;
-    return !(o[0] == 0.0 && o[1] == 0.0 && o[2] == 0.0);
-}
-
-Vec3 shifted(const Vec3& p, const Vec3& off, double sign) {
-    return {p[0] + sign * off[0], p[1] + sign * off[1], p[2] + sign * off[2]};
 }
 
 struct MeshResult {
@@ -112,7 +101,9 @@ ResolvedHit resolve_hit_point(const Mirror& m, const TraceHooks& hooks,
     if (!dir) return {Tier::Fallback, fallback_point, std::nullopt};
     if (!iid) return {Tier::Fallback, fallback_point, std::nullopt};
     // combat.py:115-116 o = frames.shifted(ray_origin, to_view)
-    const bool shift = is_shift(view_offset);
+    // frames.shifted (frames.py:166-177): `p` ITSELF when off is None or
+    // zero (detail::is_zero_offset), else p + sign * off per axis.
+    const bool shift = view_offset && !is_zero_offset(*view_offset);
     const Vec3 o = shift ? shifted(origin, *view_offset, 1.0) : origin;
     // combat.py:117-125: any raise degrades to the sphere tier.
     std::optional<MeshResult> result;

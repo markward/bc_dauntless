@@ -14,7 +14,6 @@
 #include "dauntless/combat/k3_projectiles.h"
 
 #include <algorithm>
-#include <cmath>
 #include <cstdint>
 #include <iterator>
 #include <limits>
@@ -153,7 +152,8 @@ struct K3Kernel::Session {
     bool use_memo = false;
     St st = St::TORP_FOR;
 
-    // Shared, so next()'s per-call backup copies no fixed list.
+    // Shared: next() copies the whole Session per call (its backup for a
+    // throw), and sharing these keeps that copy from duplicating them.
     std::shared_ptr<const std::vector<int64_t>> torps;  // list(_active)
     std::shared_ptr<const std::vector<ShipEntry>> cache;
     std::shared_ptr<const std::unordered_set<int64_t>> in_scan;
@@ -274,7 +274,7 @@ private:
     K3Kernel::Counts& c_;
 };
 
-// _guide(t, dt) (projectiles.py:1095) for the torpedo at s_.ti.
+// _guide(t, dt) (projectiles.py:1103) for the torpedo at s_.ti.
 K3Record Walker::guide() {
     const int64_t h = (*s_.torps)[s_.ti];
     const TorpedoRow& r = row(h);
@@ -314,7 +314,7 @@ K3Record Walker::guide() {
     lost("unknown guide status");
 }
 
-// _broadphase(moving, ship_cache, offsets) (projectiles.py:752). Pure: an
+// _broadphase(moving, ship_cache, offsets) (projectiles.py:746). Pure: an
 // ASK frame restarts it from the top.
 K3Record Walker::broadphase() {
     const std::vector<ShipEntry>& cache = *s_.cache;
@@ -742,6 +742,7 @@ K3Record Walker::run() {
                 if (s_.bubble) {
                     // seg_cur = bubble_entry
                     // cur_pos = _shifted(bubble_entry, off, -1.0)
+                    // (projectiles.py:985: back into the torpedo's frame)
                     s_.seg_cur = *s_.bubble;
                     s_.cur_pos = shifted(*s_.bubble, s_.off, -1.0);
                 }
@@ -754,7 +755,7 @@ K3Record Walker::run() {
                     s_.ray_origin = {s_.seg_cur[0] - u[0] * backoff,
                                      s_.seg_cur[1] - u[1] * backoff,
                                      s_.seg_cur[2] - u[2] * backoff};
-                    // ray_max = 2.0 * radius + seg_len (projectiles.py)
+                    // ray_max = 2.0 * radius + seg_len (projectiles.py:1003)
                     s_.ray_max = 2.0 * radius + mv.seg_len;
                 } else {
                     s_.ray_origin = s_.seg_prev;
