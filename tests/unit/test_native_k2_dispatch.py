@@ -2044,3 +2044,53 @@ def test_raise_in_a_queued_contact_applies_the_records_later_writes(
             assert nc.audit_failures() == [], nc.audit_failures()
         finally:
             w.close()
+
+
+def test_damage_pulse_handler_starts_another_ships_k1_session(monkeypatch):
+    """Final review, Review Focus 2. A damage pulse's apply_hit handler
+    (after_hit) pulls another ship's trigger -- StartFiring, whose immediate
+    update_weapons runs a K1 session nested inside the K2 step -- while the
+    pulse's CONTACT record carries queued resting contacts, and a third
+    ship's offline phaser stop is logged writes later in the same step.
+    Per tick, every call, event and field equals the Python arm."""
+    log = []
+    _spy_k2_records(monkeypatch, log)
+    ships = GALAXY_VORCHA + (("Dark", "vorcha", (-30.0, -240.0, 0.0), 0.0),)
+
+    def setup(w, mp):
+        _spy_presentation(w, mp)
+        g, v = w.ships["Galaxy"], w.ships["Vorcha"]
+        w.ships["Dark"].GetPhaserSystem().TurnOff()
+        w.lit = _banks_in_arc(g, v)
+        assert len(w.lit) >= 2, w.lit
+        w.started = []
+        w.at_hook = None
+
+        def start_other(w):
+            if w.started:
+                return
+            w.started.append(w.n)
+            if w.native:
+                w.at_hook = log[-1]
+            vs = w.ships["Vorcha"].GetPhaserSystem()
+            vs.SetSingleFire(0)
+            vs.StartFiring(w.ships["Galaxy"])
+        w.after_hit.append(start_other)
+
+    def script(w, t):
+        if t == 0:
+            v = w.ships["Vorcha"]
+            for bank in w.lit:
+                _light(bank, v, countdown=0.0)
+                bank._dwell = 0.0
+            w.lit[-1]._dwell = 0.6          # past the flush: pulses at once
+
+    ref, nat, counts = _both(monkeypatch, ships, script, 60, setup=setup)
+    _native_ran(counts)
+    assert ref.started == nat.started == [1]
+    kind, flush, queued = nat.at_hook
+    assert kind == "CONTACT" and flush > 0.0 and queued, nat.at_hook
+    assert counts["k2_logged_system_stop"] > 0, counts
+    assert counts["k1_records"] > 0, counts
+    assert any(e[0] == App.ET_WEAPON_FIRED and e[1].startswith("Vorcha/")
+               for e in ref.events), ref.events[:20]

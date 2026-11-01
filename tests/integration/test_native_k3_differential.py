@@ -28,9 +28,10 @@ invisible on the frozen last-seen point), a shooter moved into another frame
 with its shots in flight (``_target_visible``'s ``off is None`` can_detect),
 a target moved into another frame (ballistic), a target killed (ballistic),
 a target posed off its NIF pose while shots at its subsystems home (the
-mount attributed and the posed steer point computed natively), a target inside a dense MetaNebula with guided shots
-at it (every can_detect at it breaks its lock: the latch the record
-compares). Half the ships carry a shield hull box, so shots meet
+mount attributed and the posed steer point computed natively), a target
+inside a dense MetaNebula with guided shots at it (every can_detect at it
+breaks its lock: the latch the record compares). Half the ships carry a
+shield hull box, so shots meet
 the bubble (the fallback tier: hit point, ``_bubble_entry`` and apply_hit's
 shield_point ONE object).
 

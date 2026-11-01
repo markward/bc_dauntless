@@ -208,7 +208,10 @@ def counts() -> dict:
     back is a WALK_START record there instead; "beam_sustain": Fires on a
     beam already firing and "idle_bank_stop": StopFirings of a bank not
     firing, both pure field writes logged instead of a FIRE / BANK_STOP
-    record -- round trips Task 2).
+    record -- round trips Task 2). The k1_logged counters are bumped as
+    the kernel logs, and a kernel throw later in the same next() (which
+    undoes those writes) does not roll them back, so they can overcount,
+    like k2_batched_contacts below.
     posed_ship / posed_target are retired reasons, always 0 (posed parts
     run natively; spec 2026-11-01 §4.5). In k1_python_reasons,
     mount_unknown / no_mount / offset_off_mount are always 0 too: the
@@ -2766,20 +2769,29 @@ def apply_writes(writes, walk=None) -> None:
     the first write naming a walk not yet materialised fetches it). `walk`
     maps handles through its pin set; without one, through the registry.
 
-    NOT atomic: the kernel has already written every value in the log to
-    the mirror, so a raise part-way (a handle no pin or row names, a wake or
-    thaw hook failing) leaves the fields after it with mirror != Python, and
-    run_k1's abandon cannot undo that (the kernel's rollback covers only
-    writes it has not yet delivered). Unreachable today: the logged fields
-    are a fixed set on pinned rows -- plain NativeFields, whose quiet write
-    is a dict store, and a bank's `_firing` (round trips Task 2), a
-    NativeWakeField whose quiet write is WakeField.__set__: a dict store,
-    then passive_state.wake on a sleeping bank, whose hook
-    (passive_weapons.on_wake) is a dict read and an insort. A field added
-    to the kernel's log must keep its quiet write unable to raise. (A raise
-    in K2's OTHER Python between a record's writes -- a queued contact's
-    presentation -- is handled by _k2_deliver: it applies the record's
-    outstanding writes before re-raising.) K2's log (run_k2) uses the same
+    A RAISE PART-WAY: the kernel has already written every value in the
+    log to the mirror, and run_k1's abandon cannot undo a delivered write
+    (the kernel's rollback covers only writes it has not yet delivered). So
+    when one write raises, every write after it is still applied, in order
+    (_apply_rest), and then the exception is re-raised: the mirror still
+    equals Python except for the write that raised. One Python call sits in
+    the log: materialise -> the walked system's _live_held_offset() (ruling
+    D5), which a patched method could make raise. A later "walk_offset"
+    write of the walk whose materialise raised is then skipped, not
+    retried: Python has no offset object for that walk (the pure-Python
+    walk would have raised before writing anything), and the bank keeps its
+    previous one; a later walk's is fetched as usual (the pure-Python pump
+    would have stopped before it, but its writes are in the mirror). The
+    plain writes cannot raise: the logged fields are a fixed set
+    on pinned rows -- plain NativeFields, whose quiet write is a dict store,
+    and a bank's `_firing` (round trips Task 2), a NativeWakeField whose
+    quiet write is WakeField.__set__: a dict store, then passive_state.wake
+    on a sleeping bank, whose hook (passive_weapons.on_wake) is a dict read
+    and an insort. A field added to the kernel's log must keep its quiet
+    write unable to raise. (A raise in K2's OTHER Python between a record's
+    writes -- a queued contact's presentation -- is handled by _k2_deliver
+    the same way: it applies the record's outstanding writes before
+    re-raising.) K2's log (run_k2) uses the same
     encoding: `_dwell`, and an offline phaser
     system's stop (round trips Task 3) -- the system's `_fire_held`,
     `_held_target`, `_held_offset`, `_target_list` (a NEW list every time,
@@ -2787,16 +2799,48 @@ def apply_writes(writes, walk=None) -> None:
     `_beam_on_countdown`: plain NativeFields and the same WakeField."""
     if walk is None:
         walk = _K1Walk()
+    i = 0
+    try:
+        for i, (h, field, value) in enumerate(writes):
+            _apply_write(walk, h, field, value)
+    except BaseException as e:
+        failed = writes[i][2]
+        _apply_rest(writes[i + 1:], walk,
+                    {failed[1]} if type(failed) is tuple else set(), e)
+        raise
+
+
+def _apply_write(walk, h, field, value) -> None:
+    """One logged write (apply_writes)."""
+    obj = walk.obj(h)
+    setter, kind = _quiet_setter(type(obj), field)
+    if kind is _REF:
+        value = walk.obj(value)
+    elif kind is _REFS:
+        value = [walk.obj(v) for v in value]
+    elif type(value) is tuple:              # ("walk_offset", walk, system)
+        value = walk.materialise(value[1], value[2])
+    setter(obj, value)
+
+
+def _apply_rest(writes, walk, failed, exc) -> None:
+    """apply_writes after a write raised `exc`: the rest, in order. A
+    "walk_offset" write of a walk in `failed` (its materialise raised) is
+    skipped; another walk's materialise raising adds it to `failed` and a
+    note to `exc` (re-raised by the caller). Any other raise propagates,
+    with `exc` as its __context__."""
     for h, field, value in writes:
-        obj = walk.obj(h)
-        setter, kind = _quiet_setter(type(obj), field)
-        if kind is _REF:
-            value = walk.obj(value)
-        elif kind is _REFS:
-            value = [walk.obj(v) for v in value]
-        elif type(value) is tuple:          # ("walk_offset", walk, system)
-            value = walk.materialise(value[1], value[2])
-        setter(obj, value)
+        if type(value) is tuple and walk.walk != value[1]:
+            if value[1] in failed:
+                continue
+            try:
+                walk.materialise(value[1], value[2])
+            except Exception as e2:
+                failed.add(value[1])
+                exc.add_note("combat K1: walk %d's offset also raised "
+                             "%r" % (value[1], e2))
+                continue
+        _apply_write(walk, h, field, value)
 
 
 def _k1_decision(bank, decision, walk) -> tuple:
@@ -2908,15 +2952,20 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
             try:
                 rec = _h.combat_k1_next()
             except (ValueError, RuntimeError) as e:
+                # walk.walked is the system of the last walk Python saw
+                # (materialised): the current walk when it has handed back
+                # a record, which a dropped walked-system row needs (only a
+                # record's Python can drop one), else an earlier walk.
                 walked = walk.walked
                 if walked is not None and "_nslot" not in walked.__dict__:
                     # k1_fire_control.h, PROTOCOL INVARIANT: no Python
                     # resume point exists mid-update_weapons.
                     raise RuntimeError(
-                        "combat K1: the walked system %r's mirror row was "
-                        "dropped mid-walk (a value it cannot encode); K1 "
-                        "cannot follow it (protocol invariant, "
-                        "k1_fire_control.h)" % (walked.GetName(),)) from e
+                        "combat K1: %r, the system of the last walk Python "
+                        "saw, lost its mirror row (a value it cannot "
+                        "encode); K1 cannot follow a walked system dropped "
+                        "mid-walk (protocol invariant, k1_fire_control.h)"
+                        % (walked.GetName(),)) from e
                 raise
             kind = rec[0]
             writes = rec[-1]

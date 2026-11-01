@@ -226,7 +226,13 @@
 //   - a queued contact's Python that RAISES (its presentation) is caught by
 //     the driver (native_combat._k2_deliver), which applies every write of
 //     the record still outstanding, in order, and re-raises; run_k2 then
-//     abandons the session with the mirror equal to Python;
+//     abandons the session with the mirror equal to Python. Those writes
+//     include some the pure-Python step would never have made: in Python
+//     the raise ends the step there, but the kernel has already walked on
+//     (later banks' `_dwell`, an offline system's stop writes). Mirror and
+//     Python stay equal to each other; the state differs from a
+//     pure-Python run only if a caller swallows the exception and carries
+//     on (the driver itself always re-raises);
 //   - a raise in the record's own effect comes after all its writes were
 //     applied.
 // abandon() itself only ends the session: it undoes nothing.

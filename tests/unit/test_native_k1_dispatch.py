@@ -907,7 +907,11 @@ def test_walked_system_row_dropped_mid_walk_raises(monkeypatch, case):
                 w.hooks.clear()
                 nc._drop(system)
         w.hooks.append(hook)
-        with pytest.raises(RuntimeError, match="walked system .* dropped"):
+        # The message names the system of the last walk Python saw, as
+        # that -- not "the walked system" -- is what the driver knows.
+        with pytest.raises(RuntimeError, match=(
+                "%r, the system of the last walk Python saw, lost its "
+                "mirror row" % (system.GetName(),))):
             system.StartFiring(target)
         assert not w.hooks
         assert _h.combat_k1_depth() == 0
@@ -1866,3 +1870,115 @@ def test_stop_firing_override_runs_python(monkeypatch, where):
     _both(monkeypatch, _DUEL, script, 120)
     assert calls[False], calls
     assert calls[True] == calls[False]
+
+
+# ── Final review A1: the walk check never builds an instance dict ───────────
+#
+# k1_walk_check runs inside combat_k1_next with the GIL held. On CPython 3.11+
+# an instance's __dict__ may still be "values only" (not materialised);
+# _PyObject_GetDictPtr would BUILD it -- a GC-tracked allocation that can run
+# cyclic GC, so weakref.finalize -> unregister_handle could free a mirror row
+# mid-walk. The check must instead hand such a walk back to Python.
+
+def _dict_materialised(obj):
+    """True when `obj`'s managed instance dict exists as a dict object. The
+    managed-dict slot sits three pointers before the object (3.11: the dict
+    pointer; 3.12: the dict, or the values pointer tagged with bit 0; 3.13:
+    the dict pointer)."""
+    import ctypes
+    slot = ctypes.c_size_t.from_address(
+        id(obj) - 3 * ctypes.sizeof(ctypes.c_void_p)).value
+    return slot != 0 and not slot & 1
+
+
+class _ValuesOnly:
+    """An ordinary class: its instances start with a values-only dict."""
+
+    def __init__(self):
+        self.a = 1
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11) or sys.version_info >= (3, 14),
+                    reason="managed-dict layout known for 3.11-3.13 only")
+def test_walk_check_hands_back_an_unmaterialised_dict(monkeypatch):
+    """The walked system's registry entry resolves to an object whose
+    instance dict is not materialised: the walk check answers "Python" (a
+    WALK_START record) and leaves the dict unbuilt."""
+    fresh = _ValuesOnly()
+    assert type(fresh).__flags__ & (1 << 4), "not a managed-dict class"
+    assert not _dict_materialised(fresh)
+    with monkeypatch.context() as mp:
+        w = World(mp, True, _DUEL, "k1_values_only")
+        log = []
+        _spy_records(mp, log)
+        try:
+            phasers = w.ships["Galaxy"].GetPhaserSystem()
+            phasers.StartFiring(w.ships["Vorcha"])
+            w.tick()
+            nc._k1_send_walk_check()
+            h = phasers.__dict__["_nslot"]
+            import weakref
+            fake = dict(nc._registry.data)
+            fake[h] = weakref.KeyedRef(fresh, None, h)
+            cls, (iu, gto) = nc._k1_ship_stock
+            _h.combat_k1_set_walk_check(fake, nc._K1_SYSTEM_PATCHES,
+                                        nc._K1_LEAF_PATCHES,
+                                        nc._K1_SHIP_PATCHES, iu, gto, cls)
+            mp.setattr(nc, "_k1_walk_check_sent", True)
+            del log[:]
+            for _ in range(3):
+                w.tick()
+            assert [k for k, _t in log].count("WALK_START") >= 3, log[:20]
+            assert not _dict_materialised(fresh)
+        finally:
+            nc._k1_send_walk_check()
+            w.close()
+
+
+# ── Final review A2: a raise in materialise does not strand later writes ────
+
+class _OffsetBoom(Exception):
+    pass
+
+
+def test_materialise_raise_applies_later_writes(monkeypatch):
+    """apply_writes fetches the walk's offset object (materialise ->
+    system._live_held_offset()) mid-log. If that raises, the writes logged
+    after it -- already in the mirror -- are still applied, in order, and the
+    exception propagates: the mirror still equals Python."""
+    with monkeypatch.context() as mp:
+        w = World(mp, True, _DUEL, "k1_materialise_raise")
+        phasers = w.ships["Galaxy"].GetPhaserSystem()
+        real = _h.combat_k1_next
+        armed = []
+        seen = []
+
+        def boom():
+            raise _OffsetBoom("offset")
+
+        def spy():
+            rec = real()
+            writes = rec[-1]
+            marks = [i for i, x in enumerate(writes) if type(x[2]) is tuple]
+            if armed and marks:
+                del armed[:]
+                seen.extend(writes[marks[0] + 1:])
+                mp.setattr(phasers, "_live_held_offset", boom, raising=False)
+            return rec
+        mp.setattr(_h, "combat_k1_next", spy)
+        try:
+            phasers.StartFiring(w.ships["Vorcha"])
+            for _ in range(5):
+                w.tick()
+            phasers.SetForceUpdate(1)
+            armed.append(True)
+            with pytest.raises(_OffsetBoom):
+                w.tick()
+            assert ("_force_update", False) in [(f, v) for _h_, f, v in seen]
+            assert phasers.__dict__["_force_update"] is False
+            assert _h.combat_k1_depth() == 0
+            mp.delattr(phasers, "_live_held_offset")
+            nc.audit_mirror()
+            assert nc.audit_failures() == [], nc.audit_failures()
+        finally:
+            w.close()

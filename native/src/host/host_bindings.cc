@@ -3826,8 +3826,15 @@ PyObject* step_scan_ships(PyObject* ships, long long obj_kind, int kind_shift,
 // ── The K1 walk check (k1_fire_control.h, THE WALK START) ──────────────────
 // Installed into the K1 kernel by combat_k1_set_walk_check. The kernel asks
 // it at every walk start (inside combat_k1_next, the GIL held); true sends
-// the walk start back to Python the old way (a WALK_START record). It reads
-// instance dicts and class MRO entries only -- no Python code runs:
+// the walk start back to Python the old way (a WALK_START record). No Python
+// bytecode runs, but CPython lookups do (dict probes by str key, the type's
+// MRO, the registry's weak references), so the check needs the GIL -- the
+// blocker for releasing it around the walk (workstream I). It must also
+// allocate nothing GC-tracked: a GC-tracked allocation can run cyclic GC,
+// whose weakref.finalize -> native_combat.unregister_handle would free a
+// mirror row mid-walk. So it never BUILDS an instance dict
+// (k1_built_dict); its only allocation is the registry lookup's int key,
+// which is not GC-tracked. It reads instance dicts and class MRO entries:
 //   - the walked system's dict holds one of `system_names`, or a child's
 //     (its "_children") one of `leaf_names` (native_combat.walk_start's
 //     instance-patch scan, made where it always was: at the walk start);
@@ -3837,8 +3844,9 @@ PyObject* step_scan_ships(PyObject* ships, long long obj_kind, int kind_shift,
 //     stock ShipClass's (or it is not a ShipClass), or GetTargetOffsetTG to
 //     anything but the stock one. A class with no is_using_target_offset is
 //     fine: Python's probe is None there, it reads the held offset.
-// Anything it cannot read (no row in the registry, no dict, a CPython
-// error) answers true: Python, as before, is the authority.
+// Anything it cannot read (no row in the registry, no dict, an instance
+// dict not yet materialised, a `_children` that is not a list or tuple, a
+// CPython error) answers true: Python, as before, is the authority.
 struct K1WalkCheckRefs {
     PyObject* registry = nullptr;        // native_combat._registry.data
     PyObject* system_names = nullptr;    // tuples of str
@@ -3877,6 +3885,33 @@ PyObject* k1_registry_get(PyObject* registry, std::int64_t h) {
     return o;
 }
 
+// `o`'s instance dict, borrowed, if it already exists as a dict; nullptr
+// (no error set) otherwise -- WITHOUT building one. On CPython 3.11+ an
+// ordinary class's instance (Py_TPFLAGS_MANAGED_DICT) keeps its attributes
+// in a values array until something asks for its __dict__, and
+// _PyObject_GetDictPtr (k2_dict_of) then BUILDS the dict: a GC-tracked
+// allocation, which the walk check must never make (see above). The managed
+// dict slot sits three pointers before the object: 3.11 and 3.13 the dict
+// pointer (NULL until built), 3.12 the dict or the values pointer tagged
+// with bit 0. Any other version answers nullptr (Python decides). In
+// practice a registered object's dict is built at registration (the mirror
+// fields write obj.__dict__), so the hand-back is a guard, not a cost.
+PyObject* k1_built_dict(PyObject* o) {
+#if PY_VERSION_HEX >= 0x030B0000
+    if (PyType_HasFeature(Py_TYPE(o), Py_TPFLAGS_MANAGED_DICT)) {
+#if PY_VERSION_HEX < 0x030E0000
+        const std::uintptr_t slot = reinterpret_cast<std::uintptr_t*>(o)[-3];
+        if (slot == 0 || (slot & 1u) != 0) return nullptr;
+        PyObject* d = reinterpret_cast<PyObject*>(slot);
+        return PyDict_CheckExact(d) ? d : nullptr;
+#else
+        return nullptr;
+#endif
+    }
+#endif
+    return k2_dict_of(o);  // a tp_dictoffset slot: read, never built
+}
+
 // 1: `d` holds one of the str in tuple `names`; 0: none; -1: error.
 int k1_holds(PyObject* d, PyObject* names) {
     return k2_holds(d, PySequence_Fast_ITEMS(names),
@@ -3891,27 +3926,29 @@ int k1_walk_check(const K1WalkCheckRefs& r, std::int64_t sys_h,
     static PyObject* const k_gto =
         PyUnicode_InternFromString("GetTargetOffsetTG");
     PyObject* sys = k1_registry_get(r.registry, sys_h);
-    PyObject* sd = sys ? k2_dict_of(sys) : nullptr;
+    PyObject* sd = sys ? k1_built_dict(sys) : nullptr;
     if (sd == nullptr) return 1;
     int h = k1_holds(sd, r.system_names);
     if (h != 0) return h;
     PyObject* kids = PyDict_GetItemWithError(sd, k2_scan_names().children);
     if (kids == nullptr && PyErr_Occurred()) return -1;
     if (kids != nullptr) {
-        PyObject* seq = PySequence_Fast(kids, "");
-        if (seq == nullptr) return -1;
-        PyObject* const* items = PySequence_Fast_ITEMS(seq);
-        const Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
+        // A list or tuple only: PySequence_Fast would build a list (a
+        // GC-tracked allocation) from any other iterable.
+        if (!PyList_CheckExact(kids) && !PyTuple_CheckExact(kids)) return 1;
+        Py_INCREF(kids);
+        PyObject* const* items = PySequence_Fast_ITEMS(kids);
+        const Py_ssize_t n = PySequence_Fast_GET_SIZE(kids);
         for (Py_ssize_t i = 0; i < n && h == 0; ++i) {
-            PyObject* cd = k2_dict_of(items[i]);
+            PyObject* cd = k1_built_dict(items[i]);
             h = cd ? k1_holds(cd, r.leaf_names) : 1;
         }
-        Py_DECREF(seq);
+        Py_DECREF(kids);
         if (h != 0) return h;
     }
     if (ship_h < 0) return 0;  // no ship: Python's probe is None
     PyObject* ship = k1_registry_get(r.registry, ship_h);
-    PyObject* shd = ship ? k2_dict_of(ship) : nullptr;
+    PyObject* shd = ship ? k1_built_dict(ship) : nullptr;
     if (shd == nullptr) return 1;
     h = k1_holds(shd, r.ship_names);
     if (h != 0) return h;
@@ -10627,12 +10664,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "StartFiring's immediate update_weapons(dt) on one system.");
         m.def("combat_k1_next", [] {
             // The GIL is HELD for the walk (controller ruling J; spec 3.3's
-            // release is deferred to the worker-thread phase). The kernel
-            // touches no Python object, but a mirror row is freed by
-            // weakref.finalize -> native_combat.unregister_handle, which
-            // cyclic GC may run on whichever thread holds the GIL -- the
-            // packaged build's log tee (engine/log_tee.py) allocates, so a
-            // released GIL could free a row mid-read. A call takes
+            // release is deferred to the worker-thread phase). No Python
+            // bytecode runs inside next(), but CPython lookups do: the walk
+            // check (k1_walk_check) probes instance dicts, MRO entries and
+            // the registry's weak references at every walk start, with no
+            // GC-tracked allocation. That check is what needs the GIL now.
+            // Releasing it would also be unsafe on its own: a mirror row is
+            // freed by weakref.finalize -> native_combat.unregister_handle,
+            // which cyclic GC may run on whichever thread holds the GIL --
+            // the packaged build's log tee (engine/log_tee.py) allocates, so
+            // a released GIL could free a row mid-read. A call takes
             // microseconds. tests/unit/test_native_k1_holds_gil.py guards it.
             cb::K1Record r = cb::k1_kernel().next();
             py::list writes;

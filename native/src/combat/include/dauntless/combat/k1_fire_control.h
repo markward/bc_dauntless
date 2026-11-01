@@ -48,8 +48,14 @@
 // stands in for (system, child, or the ship's is_using_target_offset /
 // GetTargetOffsetTG), or a ship class whose offset methods are not the
 // stock ShipClass's. With no check installed every walk starts natively.
+// The kernel itself is plain C++, but the bindings' check is not: no Python
+// bytecode runs in it, CPython lookups do (instance dicts, MRO entries, the
+// registry's weak references), with the GIL held and no GC-tracked
+// allocation -- an instance dict not yet materialised is never built, the
+// walk goes back to Python instead (host_bindings.cc, k1_built_dict). So
+// next() needs the GIL while the check is installed (workstream I).
 //
-// THE WRITE LOG. The kernel never touches Python. The writes the Python
+// THE WRITE LOG. No Python bytecode runs inside next(). The writes the Python
 // decision path makes (fire timers, the `_depleted` clear, cleared targets,
 // the pulse stamps, the cursor and group bookkeeping, the pruned target list)
 // are made in the mirror and logged, in the Python's order; every record
@@ -87,8 +93,9 @@
 // pre-scan makes every gate after can_detect answerable, so no throw can
 // follow a can_detect in the same call. The guarantee covers the kernel's
 // side only: once a record is returned its writes are in the mirror, so
-// Python applying them must not fail part-way (native_combat.apply_writes:
-// unreachable today, a fixed set of plain fields).
+// Python must apply every one of them. native_combat.apply_writes does,
+// even when one raises (the walk offset's materialise runs Python's
+// _live_held_offset): it applies the rest in order, then re-raises.
 //
 // PROTOCOL INVARIANT: THE WALKED SYSTEM'S ROW OUTLIVES ITS WALK. An effect's
 // event handler may make objects unrepresentable (native_combat._drop: a
