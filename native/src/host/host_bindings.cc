@@ -26,6 +26,7 @@
 #include "dauntless/combat/mirror.h"
 #include "dauntless/combat/nebula_density.h"
 #include "dauntless/combat/profile_eval.h"
+#include "dauntless/combat/projectile_geometry.h"
 #include "dauntless/combat/py_math.h"
 #include "dauntless/combat/sensor_detect.h"
 #include "dauntless/combat/weapon_geometry.h"
@@ -10185,6 +10186,99 @@ PYBIND11_MODULE(_dauntless_host, m) {
               },
               py::arg("target"), py::arg("origin"), py::arg("dir"),
               py::arg("max_dist"));
+
+        // ── The K3 projectile geometry (projectile_geometry.h) ───────────
+        // Each answers as the Python function it ports; ValueError (from
+        // bubble_bound_radius / steer_point_unposed) means "ask the Python".
+        // guide_torpedo returns its status instead of raising.
+        m.def("combat_test_bubble_bound_radius",
+              [](std::int64_t ship) {
+                  return cb::bubble_bound_radius(cb::mirror(), ship);
+              },
+              py::arg("ship"));
+        m.def("combat_test_sphere_hit",
+              [](const std::array<double, 3>& p, const std::array<double, 3>& c,
+                 double r) { return cb::sphere_hit(p, c, r); },
+              py::arg("p"), py::arg("c"), py::arg("r"));
+        m.def("combat_test_advance_torpedo",
+              [vec, opt_vec](const std::array<double, 3>& prev,
+                             const std::array<double, 3>& vel, double dt,
+                             double age, double ttl) {
+                  const cb::Advance a =
+                      cb::advance_torpedo(prev, vel, dt, age, ttl);
+                  return py::make_tuple(vec(a.cur), a.age, a.expired,
+                                        vec(a.seg), a.seg_len,
+                                        opt_vec(a.aim_unit));
+              },
+              py::arg("prev"), py::arg("vel"), py::arg("dt"), py::arg("age"),
+              py::arg("ttl"),
+              "(cur, age, expired, seg, seg_len, aim_unit or None); seg, "
+              "seg_len and aim_unit are meaningful only when not expired.");
+        m.def("combat_test_steer_point_unposed",
+              [vec](std::int64_t target, py::object offset,
+                    std::int64_t mount_sub, const std::array<double, 3>& off) {
+                  std::optional<cb::Vec3> o;
+                  if (!offset.is_none())
+                      o = offset.cast<std::array<double, 3>>();
+                  return vec(cb::steer_point_unposed(cb::mirror(), target, o,
+                                                     mount_sub, off));
+              },
+              py::arg("target"), py::arg("offset"), py::arg("mount_sub"),
+              py::arg("off"),
+              "offset: a 3-tuple or None (no target offset).");
+        auto guide_result = [vec](const cb::GuideResult& r) -> py::tuple {
+            using St = cb::GuideResult::Status;
+            static const char* const kField[] = {
+                "_last_seen_target_pos", "_last_target_vel", "_velocity"};
+            switch (r.status) {
+                case St::done: {
+                    py::list w;
+                    for (int i = 0; i < r.n_writes; ++i)
+                        w.append(py::make_tuple(
+                            kField[static_cast<int>(r.writes[i].field)],
+                            vec(r.writes[i].value)));
+                    return py::make_tuple("done", w);
+                }
+                case St::need_frame:
+                    return py::make_tuple("frame", r.frame_set);
+                case St::need_steer_point:
+                    return py::make_tuple(
+                        "steer_point",
+                        py::make_tuple(r.resume.target, r.resume.speed,
+                                       vec(r.resume.torp_pos)));
+                default:
+                    return py::make_tuple("guide",
+                                          r.why ? r.why : "unknown");
+            }
+        };
+        m.def("combat_test_guide_torpedo",
+              [guide_result](std::int64_t torp, double dt, bool use_memo,
+                             double drift_now, double occ_now) {
+                  auto& mi = cb::mirror();
+                  const cb::TorpedoRow row = mi.torpedoes().checked(torp);
+                  return guide_result(cb::guide_torpedo(
+                      mi, row, dt, cb::step_scan(), use_memo,
+                      {drift_now, occ_now}));
+              },
+              py::arg("torp"), py::arg("dt"), py::arg("use_memo"),
+              py::arg("drift_now"), py::arg("occ_now"),
+              "('done', [(field, (x, y, z)), ...]) in _guide's write order; "
+              "('frame', set_handle); ('steer_point', (target, speed, "
+              "torp_pos)) for combat_test_guide_torpedo_resume; or "
+              "('guide', reason).");
+        m.def("combat_test_guide_torpedo_resume",
+              [guide_result](std::int64_t torp, double dt, std::int64_t target,
+                             double speed,
+                             const std::array<double, 3>& torp_pos,
+                             const std::array<double, 3>& steer_point) {
+                  auto& mi = cb::mirror();
+                  const cb::TorpedoRow row = mi.torpedoes().checked(torp);
+                  return guide_result(cb::guide_torpedo_resume(
+                      mi, row, dt, {target, speed, torp_pos}, steer_point));
+              },
+              py::arg("torp"), py::arg("dt"), py::arg("target"),
+              py::arg("speed"), py::arg("torp_pos"), py::arg("steer_point"),
+              "The rest of _guide after a 'steer_point' answer.");
 
         // ── The K2 hull trace (beam_trace.h) ─────────────────────────────
         // The kernel reaches the renderer's trace only through these hooks:
