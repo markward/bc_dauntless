@@ -621,6 +621,10 @@ TEST(K3Projectiles, CanDetectCalledInListOrder) {
         const int64_t t3 = w.torp("T3", {0, 0, 0}, {0, 60, 0}, x, s0);
         w.m.torpedoes().set_f(t3, TorpField::_age, 4.0);  // window over
         w.torp("T4", {0, 0, 0}, {0, 60, 0}, x, -1);
+        // Two more cross-region shots from S1 at X: never memoised, so each
+        // makes its own can_detect call, after T2's.
+        w.torp("T5", {0, 0, 0}, {0, 60, 0}, x, s1);
+        w.torp("T6", {0, 0, 0}, {0, 60, 0}, x, s1);
         return std::vector<int64_t>{x, s0, s1, s2};
     };
     World w;
@@ -641,6 +645,9 @@ TEST(K3Projectiles, CanDetectCalledInListOrder) {
                std::nullopt, kNow);
     can_detect(p.m, s2, x, kDrift, true, std::nullopt, true, std::nullopt,
                kNow);
+    for (int i = 0; i < 2; ++i)  // T5, T6
+        can_detect(p.m, s1, x, kDrift, true, dx * dx + dy * dy + dz * dz,
+                   true, std::nullopt, kNow);
 
     const auto& a = w.m.sensor_state();
     const auto& b = p.m.sensor_state();

@@ -24,3 +24,26 @@ def test_clears_the_memories_and_runs_the_gaps_on_game_time(monkeypatch):
     import time
     for module in (hit_feedback, crew_speech, speak_queue):
         assert module.time is time, module
+
+
+def test_resets_the_bridge_crew_announcement_stamps(monkeypatch):
+    """A Bridge.*Handlers module kept from an earlier load holds its last
+    call-out's game time: each arm gets the SDK's initial 0 back (restored
+    when the context closes)."""
+    import sys
+    import types
+    mod = types.ModuleType("Bridge.FakeCrewHandlers")
+    mod.g_fLastAnnounceSpecificShield = 10.25
+    mod.g_fCommunicate = 3
+    mod.g_fTargetSetTime = 7.5
+    mod.g_fOther = 9.0              # not a throttle stamp: left alone
+    mod.g_fLastName = "x"           # not a number: left alone
+    monkeypatch.setitem(sys.modules, "Bridge.FakeCrewHandlers", mod)
+    with monkeypatch.context() as mp:
+        isolate_fight_audio(mp)
+        assert mod.g_fLastAnnounceSpecificShield == 0.0
+        assert type(mod.g_fLastAnnounceSpecificShield) is float
+        assert mod.g_fCommunicate == 0 and type(mod.g_fCommunicate) is int
+        assert mod.g_fTargetSetTime == 0.0
+        assert mod.g_fOther == 9.0 and mod.g_fLastName == "x"
+    assert mod.g_fLastAnnounceSpecificShield == 10.25

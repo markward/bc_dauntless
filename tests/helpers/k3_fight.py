@@ -22,8 +22,14 @@ In the native arm a ``K3Tally`` wraps ``combat_k3_next``: every record the
 kernel returns is classified BEFORE Python acts on it (the Python attributes
 still hold the pre-tick values then), so the branch counts say what the
 KERNEL decided, not what the scene was built to make likely.
+
+Scene helpers both files share: ``seed_every_rng``, ``subsystems``, ``face``,
+``nebula_around``.
+A differential arm's audio and crew throttles are isolated by
+tests/helpers/fight_audio.isolate_fight_audio.
 """
 import math
+import random
 
 import App
 
@@ -40,33 +46,53 @@ from engine.appc import projectiles
 from engine.appc import sensor_detection as sd
 from engine.appc import torpedo_scan
 from engine.appc.events import WeaponHitEvent
-from engine.appc.math import TGPoint3
+from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.projectiles import Torpedo
 from engine.systems import frames
 
 _ZERO = (0.0, 0.0, 0.0)
 
 
-def reset_crew_timestamps(mp) -> None:
-    """The bridge crew's announcement throttles back at their SDK values.
+def seed_every_rng(seed):
+    """Every RNG a fight draws on (the K1 differential's list): the module
+    `random`, the SDK's App.g_kSystemWrapper.GetRandomNumber and the engine's
+    two process-lifetime streams (avoidance, random unit vectors)."""
+    from engine.appc import collision_avoidance
+    from engine.appc.math import reset_random_unit_vector_rng
+    random.seed(seed)
+    App.g_kSystemWrapper.SetRandomSeed(seed)
+    collision_avoidance._rng.seed(collision_avoidance._AVOID_RNG_SEED)
+    reset_random_unit_vector_rng()
 
-    Bridge.EngineerCharacterHandlers (and its siblings) keep module globals
-    such as ``g_fLastAnnounceSpecificShield``: the game time the officer last
-    called out a shield change, compared against the CURRENT game time. A
-    second mission load in the same process keeps the module, so the second
-    arm starts at game time 0 with the first arm's last stamp (~10 s): its
-    officer stays quiet where the first arm's spoke, and the animation the
-    call-out plays draws on the SDK RNG -- every later draw (hit sounds, the
-    death cascade's blasts) then differs between the arms. Each arm gets the
-    SDK's initial 0 back, through `mp` (restored when it closes)."""
-    import sys
-    for name, mod in list(sys.modules.items()):
-        if not (name.startswith("Bridge.") and name.endswith("Handlers")):
-            continue
-        for attr, value in list(vars(mod).items()):
-            if (attr.startswith(("g_fLast", "g_fCommunicate", "g_fTargetSet"))
-                    and type(value) in (int, float)):
-                mp.setattr(mod, attr, type(value)(0))
+
+def subsystems(ship):
+    """The ship's subsystems a shot may aim at (power, sensors, impulse,
+    shields), those it has."""
+    return [s for s in (ship.GetPowerSubsystem(), ship.GetSensorSubsystem(),
+                        ship.GetImpulseEngineSubsystem(), ship.GetShields())
+            if s is not None]
+
+
+def nebula_around(ship, name, radius):
+    """A dense MetaNebula sphere of `radius` centred on `ship`, added to its
+    set as `name`: concealment ~1 at the ship (gain 1, floor -1 saturate the
+    fbm), so every can_detect AT it breaks its lock (the latch) and guided
+    shots at it fly on their frozen last-seen point. No creation damage."""
+    p = ship.GetWorldLocation()
+    n = App.MetaNebula_Create(0.5, 0.5, 0.7, 145.0, 1.0, "i.tga", "e.tga")
+    n.SetupDamage(0.0, 0.0)
+    n.AddNebulaSphere(p.x, p.y, p.z, radius)
+    n.SetFbmDials(0.02, 1.0, -1.0)
+    ship.GetContainingSet().AddObjectToSet(n, name)
+    return n
+
+
+def face(ship, target):
+    """Turn `ship` (about Z) to face `target`."""
+    a, b = ship.GetTranslate(), target.GetTranslate()
+    m = TGMatrix3()
+    m.MakeZRotation(math.atan2(-(b.x - a.x), b.y - a.y))
+    ship.SetMatrixRotation(m)
 
 
 def hx(v):
@@ -196,6 +222,9 @@ class Recorder:
         self.k4 = {"tie_at_cut": 0, "cross_frame": 0}
         self.eligible = None
         self.tally = None
+        # Every True can_detect lock-break latch recorded (pair x tick): the
+        # "latched" row compares something only while this grows.
+        self.latched = 0
         self._spy(mp)
 
     # ── Labels ───────────────────────────────────────────────────────────────
@@ -347,8 +376,10 @@ class Recorder:
                             for f in range(6))))
         row.append(("eligible",) + self.eligible)
         row.append(("bounds", [self.bound(s) for s in self.ships]))
-        row.append(("latched", [sd._latched(a, b) for a in self.ships
-                                for b in self.ships if a is not b]))
+        latched = [sd._latched(a, b) for a in self.ships
+                   for b in self.ships if a is not b]
+        self.latched += sum(1 for v in latched if v)
+        row.append(("latched", latched))
         row.append(("scan_writes", sorted(self.scan_writes.get(self.tick,
                                                                []))))
         if type(projectiles._active) is projectiles._ActiveList:
@@ -360,7 +391,24 @@ class Recorder:
 
 class K3Tally:
     """Wraps combat_k3_next in the native arm: classifies every record the
-    kernel returns before Python acts on it."""
+    kernel returns before Python acts on it.
+
+    Read straight off the kernel's records: "ask:<query>" (every ASK),
+    "guided_by_ask" (a write for a torpedo this step's ASK guide named),
+    "ttl" and "ttl_and_hit_same_tick" (DONE's expired list less its hits),
+    "hit", "tier:<tier>", "normal", "bubble", "hit_is_bubble" and
+    "same_ship_hits" (DONE's hit tuples), "steer_point:cross_region" (the
+    ASK's own offset argument).
+
+    Classified from PYTHON-side state (the torpedo's pre-tick attributes,
+    frames.offset_between, the target's IsDead and pose) together with the
+    write record's last-seen / velocity: "unguided", "window_end",
+    "ballistic_frame", "ballistic_dead", "source_other_frame(_unseen)",
+    "guided_visible", "cross_region_homing", "guided_invisible",
+    "guided_no_turn", "steer_point:posed" (the target has posed parts) and
+    "cross_region_hit" (the hit ship's and torpedo's frames).
+    "steer_point:mount" is BY ELIMINATION: every steer_point ASK whose target
+    has no posed part is counted as a mount attribution."""
 
     def __init__(self, orig):
         self.orig = orig
@@ -478,3 +526,27 @@ def compare(ref, nat):
     for i, (x, y) in enumerate(zip(ref.events, nat.events)):
         assert x == y, "event %d differs:\n python %r\n native %r" % (i, x, y)
     assert len(ref.events) == len(nat.events)
+
+
+#: Every reason the kernel can give for an ASK guide (k3_projectiles.cc
+#: Walker::guide, projectile_geometry.cc guide_torpedo's need_guide).
+GUIDE_REASONS = frozenset((
+    "target_not_in_scan", "source_not_in_scan",
+    "unrepresentable torpedo field", "_target_ship", "torpedo or target set",
+    "target has no real IsDead", "torpedo transform", "_source_ship",
+    "source or target frame", "source or target set", "can_detect"))
+
+
+def check_guide_asks(counts, tally, expected):
+    """The guide ASKs the native arm made, pinned: recorded, every one with a
+    reason (their sum IS the ASK count), the tally saw the same number of
+    records, and no reason outside `expected` (a subset of GUIDE_REASONS:
+    what this scene is built to cause). Returns the reasons that occurred."""
+    asks = counts["k3_asks"]["guide"]
+    reasons = counts["k3_guide_reasons"]
+    assert set(reasons) <= GUIDE_REASONS, reasons
+    assert sum(reasons.values()) == asks, (asks, reasons)
+    assert tally.n.get("ask:guide", 0) == asks, (asks, tally.n)
+    seen = {k for k, v in reasons.items() if v}
+    assert seen <= set(expected), (seen, expected)
+    return seen

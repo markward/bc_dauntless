@@ -19,7 +19,9 @@ range from both sides, aimed at points scattered over each target's hull
 sphere, so some rays meet the mesh and some only the sphere; guided shots at
 the hull and at subsystems) and the same seeded op stream (the ships' real
 tubes, shields off and on, turns, moves). Shields go down on half the fleet
-for a stretch, so hits meet hulls as well as bubbles.
+for a stretch, so hits meet hulls as well as bubbles; one ship sits in a
+dense MetaNebula for a stretch with guided shots at it, so the can_detect
+lock-break latch the record compares is set.
 
 RENDER SYNC, as the K2 file: at the top of each frame every realized ship's
 instance is set to host_loop's `_ship_world_matrix`; ops later in the frame
@@ -62,8 +64,9 @@ from engine.core.tracked_instances import TrackedInstances  # noqa: E402
 from tests.helpers import headless_mission  # noqa: E402
 from tests.helpers.fight_audio import isolate_fight_audio  # noqa: E402
 from tests.helpers.k3_fight import (K3Tally, Recorder, aim_velocity,  # noqa: E402
-                                    compare, fire, reset_crew_timestamps,
-                                    xyz)
+                                    check_guide_asks, compare, face, fire,
+                                    nebula_around, seed_every_rng,
+                                    subsystems, xyz)
 
 GALAXY_NIF = (bc_assets.GAME_ROOT / "data" / "Models" / "Ships" / "Galaxy"
               / "Galaxy.nif")
@@ -76,6 +79,11 @@ VOLLEY_FROM, VOLLEY_TO, VOLLEY_EVERY = 70, 560, 5
 # Shields down on half the fleet for a stretch: hulls, not bubbles.
 BARE = ("Player", "Friend-1", "Friend-2", "Enemy-1", "Enemy-2")
 BARE_FROM, BARE_TO = 200, 420
+# A target inside a dense MetaNebula (twice its hull radius), with guided
+# shots at it: every can_detect at it breaks its lock (the latch the record
+# compares).
+NEB_SHIP, NEB_FROM, NEB_TO = "Enemy-3", 120, 200
+NEB_NAME = "K3HostNebula"
 
 
 @pytest.fixture(scope="module")
@@ -112,22 +120,6 @@ def _hermetic(monkeypatch, tmp_path):
     nc.reset()
 
 
-def _seed_every_rng(seed):
-    """Every RNG a fight draws on (the K1 differential's list)."""
-    from engine.appc import collision_avoidance
-    from engine.appc.math import reset_random_unit_vector_rng
-    random.seed(seed)
-    App.g_kSystemWrapper.SetRandomSeed(seed)
-    collision_avoidance._rng.seed(collision_avoidance._AVOID_RNG_SEED)
-    reset_random_unit_vector_rng()
-
-
-def _subsystems(ship):
-    return [s for s in (ship.GetPowerSubsystem(), ship.GetSensorSubsystem(),
-                        ship.GetImpulseEngineSubsystem(), ship.GetShields())
-            if s is not None]
-
-
 class _Scene:
     def __init__(self, mp, r, env):
         mp.delenv("DAUNTLESS_NATIVE_COMBAT", raising=False)
@@ -138,11 +130,10 @@ class _Scene:
         self.r = r
         nc.reset()
         App.g_kTimerManager._time = 0.0
-        _seed_every_rng(0)
+        seed_every_rng(0)
         headless_mission.clear_in_flight()
         isolate_fight_audio(mp)
         headless_mission.load("engine.dev_missions.combat_stress")
-        reset_crew_timestamps(mp)
         host_loop._reset_sensor_state()
         self.player = App.Game_GetCurrentPlayer()
         self.set = self.player.GetContainingSet()
@@ -157,9 +148,9 @@ class _Scene:
                    for s in self.ships)
         assert all(s.GetRadius() > 0.0 for s in self.ships)
         self.by_name = {s.GetName(): s for s in self.ships}
-        face = random.Random(SEED + 2)
+        face_rng = random.Random(SEED + 2)
         for ship in self.ships:
-            self.face(ship, self.foe(face, ship))
+            face(ship, self.foe(face_rng, ship))
         step_memo.forget()
         nc.configure(env)
         assert nc.enabled() is (env is ON)
@@ -187,21 +178,15 @@ class _Scene:
         foes = self.foes(ship)
         return rng.choice(foes) if foes else None
 
-    @staticmethod
-    def face(ship, target):
-        a, b = ship.GetTranslate(), target.GetTranslate()
-        m = TGMatrix3()
-        m.MakeZRotation(math.atan2(-(b.x - a.x), b.y - a.y))
-        ship.SetMatrixRotation(m)
-
-    def launch(self, rng):
-        """A shot from a random ship at a random foe, aimed at a point
-        scattered over the foe's hull sphere: the mesh catches some rays,
-        only the sphere others."""
-        alive = [s for s in self.ships if not s.IsDead()]
-        src = rng.choice(alive)
-        target = self.foe(rng, src)
-        if target is None:
+    def launch(self, rng, src=None, target=None):
+        """A shot from a random ship (or `src`) at a random foe (or `target`),
+        aimed at a point scattered over the foe's hull sphere: the mesh
+        catches some rays, only the sphere others."""
+        if src is None:
+            alive = [s for s in self.ships if not s.IsDead()]
+            src = rng.choice(alive)
+            target = self.foe(rng, src)
+        if target is None or src.IsDead():
             return
         here = xyz(src.GetWorldLocation())
         there = xyz(target.GetWorldLocation())
@@ -218,7 +203,7 @@ class _Scene:
             return
         offset = None
         if kind == "offset":
-            offset = rng.choice(_subsystems(target)).GetPosition()
+            offset = rng.choice(subsystems(target)).GetPosition()
         fire(src, start, vel, target=target, offset=offset, ttl=ttl,
              guidance=rng.choice((0.5, 3.0)), accel=rng.choice((1.0, 2.5)))
 
@@ -227,6 +212,16 @@ class _Scene:
         if VOLLEY_FROM <= t <= VOLLEY_TO and t % VOLLEY_EVERY == 0:
             for _ in range(3):
                 self.launch(rng)
+        if t == NEB_FROM:
+            target = self.by_name[NEB_SHIP]
+            nebula_around(target, NEB_NAME,
+                          2.0 * target.GetRadius() * target.GetScale())
+        elif NEB_FROM < t < NEB_TO and t % 20 == 0:
+            target = self.by_name[NEB_SHIP]
+            for src in self.foes(target)[:2]:
+                self.launch(rng, src, target)
+        elif t == NEB_TO:
+            self.set.RemoveObjectFromSet(NEB_NAME)
         if t in (BARE_FROM, BARE_TO):
             for name in BARE:
                 shields = self.by_name[name].GetShields()
@@ -244,7 +239,7 @@ class _Scene:
             target = self.foe(rng, ship)
             if target is None or ship.IsDead():
                 return
-            self.face(ship, target)
+            face(ship, target)
             ammo = torps.GetCurrentAmmoType()
             if ammo is not None:
                 ammo.SetAvailable(ammo.GetMaxTorpedoes())
@@ -252,7 +247,7 @@ class _Scene:
                 torps.GetWeapon(i).SetNumReady(1)
             torps.TurnOn()
             torps.StartFiring(target, rng.choice(
-                (None, rng.choice(_subsystems(target)).GetPosition())))
+                (None, rng.choice(subsystems(target)).GetPosition())))
         elif kind in ("shields_off", "shields_on"):
             shields = rng.choice(self.ships).GetShields()
             if shields is not None:
@@ -327,6 +322,7 @@ def _both(monkeypatch, r, ticks_per_frame, ticks=TICKS):
     compare(ref.rec, nat.rec)
     assert nat.audit == [], nat.audit
     assert ref.counts.get("k3_runs", 0) == 0, ref.counts
+    assert ref.counts.get("k4_runs", 0) == 0, ref.counts
     return ref, nat
 
 
@@ -350,9 +346,15 @@ def test_k3_matches_python_with_real_instances(monkeypatch, host,
              len([c for c in ref.rec.calls if c[0] == "hit"]),
              len([c for c in ref.rec.calls if c[0] == "apply_hit"]),
              len(ref.rec.events)))
+    print("  latched (pair x tick) %d" % nat.rec.latched)
     assert nat.counts["k3_runs"] > 0 and nat.counts["k3_python_steps"] == 0, \
         nat.counts
     assert nat.counts["k4_runs"] == TICKS and not k4_why, nat.counts
+    # Every torpedo's target and source is a scanned ship of one set: no
+    # _guide is ever handed to Python.
+    check_guide_asks(nat.counts, nat.rec.tally, expected=())
+    # The latch row compared something: a can_detect lock broke.
+    assert nat.rec.latched > 0
     # The narrow phase on real instances: the mesh and sphere tiers, the
     # bubble on real hull boxes. (A bubble hit's own point -- the fallback
     # tier -- is the headless file's: on a realized hull the ray from the

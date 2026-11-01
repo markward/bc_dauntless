@@ -335,10 +335,24 @@ TEST(ProjectileGeometry, GuideTurnBudget) {
     w.m.torpedoes().set_f(h, TorpField::_age, 4.0);
     r = w.guide(h, 0.1);
     EXPECT_EQ(r.writes[2].value, (Vec3{0.0 * 10.0, 1.0 * 10.0, 0.0 * 10.0}));
-    // Guidance initial 0 or NaN reads as 1.0.
+    // Guidance initial NaN reads as 1.0 (`NaN > 1e-9` is False): the budget
+    // is (4.0 / 1.0) * 0.125 * 0.1, still a slerp.
     w.m.torpedoes().set_f(h, TorpField::_age, 0.0);
     w.m.torpedoes().set_f(h, TorpField::_guidance_initial, kNan);
-    EXPECT_EQ(w.guide(h, 0.1).status, St::done);
+    r = w.guide(h, 0.1);
+    ASSERT_EQ(r.status, St::done);
+    ASSERT_EQ(r.n_writes, 3);
+    const double nan_step = ((4.0 / 1.0) * 0.125) * 0.1;
+    const double na = py_sin(theta - nan_step) / st;
+    const double nb = py_sin(nan_step) / st;
+    EXPECT_EQ(r.writes[2].value,
+              (Vec3{(0.0 * na + 1.0 * nb) * 10.0, (1.0 * na + 0.0 * nb) * 10.0,
+                    (0.0 * na + 0.0 * nb) * 10.0}));
+    EXPECT_NE(r.writes[2].value, (Vec3{10.0, 0.0, 0.0}));
+    // An infinite lifetime: an infinite budget, so the snap to `desired`.
     w.m.torpedoes().set_f(h, TorpField::_guidance_lifetime, kInf);
-    EXPECT_EQ(w.guide(h, 0.1).status, St::done);
+    r = w.guide(h, 0.1);
+    ASSERT_EQ(r.status, St::done);
+    ASSERT_EQ(r.n_writes, 3);
+    EXPECT_EQ(r.writes[2].value, (Vec3{10.0, 0.0, 0.0}));
 }

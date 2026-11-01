@@ -28,7 +28,9 @@ invisible on the frozen last-seen point), a shooter moved into another frame
 with its shots in flight (``_target_visible``'s ``off is None`` can_detect),
 a target moved into another frame (ballistic), a target killed (ballistic),
 a target posed off its NIF pose while shots at its subsystems home (ASK
-steer_point every tick). Half the ships carry a shield hull box, so shots meet
+steer_point every tick), a target inside a dense MetaNebula with guided shots
+at it (every can_detect at it breaks its lock: the latch the record
+compares). Half the ships carry a shield hull box, so shots meet
 the bubble (the fallback tier: hit point, ``_bubble_entry`` and apply_hit's
 shield_point ONE object).
 
@@ -69,8 +71,10 @@ from engine.core.loop import TICK_DELTA
 from engine.systems import frames
 from tests.helpers import bc_assets, headless_mission
 from tests.helpers.fight_audio import isolate_fight_audio
-from tests.helpers.k3_fight import (K3Tally, Recorder, aim_velocity, compare,
-                                    fire, reset_crew_timestamps, xyz)
+from tests.helpers.k3_fight import (K3Tally, Recorder, aim_velocity,
+                                    check_guide_asks, compare, face, fire,
+                                    nebula_around, seed_every_rng, subsystems,
+                                    xyz)
 from tests.helpers.mapped_regions import load_region
 
 pytestmark = pytest.mark.skipif(
@@ -100,6 +104,10 @@ FLEE_SHIP, FLEE_FIRE, FLEE_AT = "Enemy-1", 330, 338
 KILL_SHIP, KILL_FIRE, KILL_AT = "Enemy-3", 380, 388
 # A target off its NIF pose while shots at its subsystems home.
 POSE_SHIP, POSE_FROM, POSE_TO = "Friend-4", 420, 500
+# A target inside a dense MetaNebula: every can_detect at it breaks its lock
+# (the latch the record compares), shots at it fly on their last-seen point.
+NEB_SHIP, NEB_FROM, NEB_TO, NEB_RADIUS = "Friend-1", 150, 230, 6.0
+NEB_NAME = "K3DiffNebula"
 # Ships with a shield hull box (half of them).
 BOXED = ("Player", "Friend-1", "Friend-3", "Enemy-1", "Enemy-4", "Ona-B")
 HULL_BOX = ((0.0, 0.3, 0.0), (2.0, 3.0, 1.0))
@@ -112,20 +120,31 @@ def _pow_sqrt_split():
     component never splits them). Its length is in [4, 8), the binade of the
     bound `centre_len + max_semi` (the half extents below keep the sum under
     8), so a one-ulp difference in centre_len survives the sum: the bound
-    recorded per tick then shows which root the kernel took."""
+    recorded per tick then shows which root the kernel took. None when this
+    libm has no split near (3.5, 2.5)."""
     import math
     a, b = 3.5, 2.5
     for _ in range(100000):
         x = a * a + b * b + 0.0 * 0.0
         if x ** 0.5 != math.sqrt(x):
-            assert 4.0 <= x ** 0.5 < 6.0
-            return (a, b, 0.0)
+            if 4.0 <= x ** 0.5 < 6.0:
+                return (a, b, 0.0)
+            return None
         a += 1e-6
-    raise AssertionError("no pow/sqrt split near (3.5, 2.5)")
+    return None
 
 
-# On SB-2 (Starbase12: no shot is aimed at it).
-ODD_HULL_BOX = (_pow_sqrt_split(), (0.4, 0.6, 0.3))
+@pytest.fixture(scope="module")
+def odd_hull_box():
+    """SB-2's hull box (Starbase12: no shot is aimed at it): its centre's
+    length is one where `** 0.5` and sqrt differ. Searched at run time, not
+    import: a libm with no split near the start skips, never a collection
+    error."""
+    centre = _pow_sqrt_split()
+    if centre is None:
+        pytest.skip("no pow/sqrt last-place split near (3.5, 2.5) on this "
+                    "libm: the bound would not show which root K3 took")
+    return (centre, (0.4, 0.6, 0.3))
 
 
 @pytest.fixture(autouse=True)
@@ -137,16 +156,6 @@ def _needs_assets_and_hermetic_mods(monkeypatch, tmp_path):
     if _h.combat_k3_open():
         _h.combat_k3_abandon()
     nc.reset()
-
-
-def _seed_every_rng(seed):
-    """Every RNG a fight draws on (the K1 differential's list)."""
-    from engine.appc import collision_avoidance
-    from engine.appc.math import reset_random_unit_vector_rng
-    random.seed(seed)
-    App.g_kSystemWrapper.SetRandomSeed(seed)
-    collision_avoidance._rng.seed(collision_avoidance._AVOID_RNG_SEED)
-    reset_random_unit_vector_rng()
 
 
 def _create(ship_type, pSet, name, at):
@@ -167,25 +176,18 @@ def _move_to(ship, pSet, at):
     ship.UpdateNodeOnly()
 
 
-def _subsystems(ship):
-    return [s for s in (ship.GetPowerSubsystem(), ship.GetSensorSubsystem(),
-                        ship.GetImpulseEngineSubsystem(), ship.GetShields())
-            if s is not None]
-
-
 class _Scene:
-    def __init__(self, mp, env):
+    def __init__(self, mp, env, odd_hull_box):
         mp.delenv("DAUNTLESS_NATIVE_COMBAT", raising=False)
         mp.delenv("DAUNTLESS_NATIVE_AUDIT", raising=False)
         mp.setenv("DAUNTLESS_COMBAT_SHIPS", "8")
         nc.reset()
         App.g_kTimerManager._time = 0.0
-        _seed_every_rng(0)
+        seed_every_rng(0)
         headless_mission.clear_in_flight()
         # A hit sound is one SDK RNG draw: decided by the fight alone.
         isolate_fight_audio(mp)
         headless_mission.load("engine.dev_missions.combat_stress")
-        reset_crew_timestamps(mp)
         host_loop._reset_sensor_state()
         self.player = App.Game_GetCurrentPlayer()
         self.qb = self.player.GetContainingSet()
@@ -214,10 +216,10 @@ class _Scene:
                 s._shield_hull_box = HULL_BOX
         self.by_name = {s.GetName(): s for s in self.ships}
         # Its box centre's length is one where `** 0.5` and sqrt differ.
-        self.by_name["SB-2"]._shield_hull_box = ODD_HULL_BOX
+        self.by_name["SB-2"]._shield_hull_box = odd_hull_box
         for s in self.ships:
             if s.GetContainingSet() is self.qb:
-                self.face(s, self.foe(random.Random(SEED + 2), s))
+                face(s, self.foe(random.Random(SEED + 2), s))
         mp.setitem(damage_eligibility.select_eligible.__kwdefaults__,
                    "max_count", MAX_ELIGIBLE)
         step_memo.forget()
@@ -257,14 +259,6 @@ class _Scene:
         foes = self.foes(ship)
         return rng.choice(foes) if foes else None
 
-    @staticmethod
-    def face(ship, target):
-        import math
-        a, b = ship.GetTranslate(), target.GetTranslate()
-        m = TGMatrix3()
-        m.MakeZRotation(math.atan2(-(b.x - a.x), b.y - a.y))
-        ship.SetMatrixRotation(m)
-
     def launch(self, rng, src, target, kind=None):
         """One hand-launched torpedo from `src` at `target` (any set of its
         frame), of a seeded kind."""
@@ -290,7 +284,7 @@ class _Scene:
             spread = (rng.choice((-1, 1)) * 12.0, 0.0, rng.uniform(-4, 4))
         offset = None
         if kind == "offset":
-            offset = rng.choice(_subsystems(target)).GetPosition()
+            offset = rng.choice(subsystems(target)).GetPosition()
         guidance = 0.3 if kind == "window" else rng.choice((1.2, 4.0))
         return fire(src, start, aim_velocity(start, there, speed, spread),
                     target=target, offset=offset, ttl=ttl,
@@ -368,6 +362,16 @@ class _Scene:
         elif t == POSE_TO:
             articulation.force_part_pose(self.ship(POSE_SHIP), "probe part",
                                          part_pose.IDENTITY)
+        if t == NEB_FROM:
+            nebula_around(self.ship(NEB_SHIP), NEB_NAME, NEB_RADIUS)
+        elif NEB_FROM < t < NEB_TO and t % 20 == 0:
+            # Guided shots at it: their guide's can_detect breaks the lock.
+            target = self.ship(NEB_SHIP)
+            for src in self.foes(target)[:2]:
+                self.launch(rng, src, target, "centre")
+        elif t == NEB_TO:
+            self.ship(NEB_SHIP).GetContainingSet().RemoveObjectFromSet(
+                NEB_NAME)
         if POSE_FROM <= t < POSE_TO and t % 10 == 0:
             target = self.ship(POSE_SHIP)
             for src in self.foes(target)[:2]:
@@ -385,7 +389,7 @@ class _Scene:
             target = self.foe(rng, ship)
             if target is None or ship.IsDead():
                 return
-            self.face(ship, target)
+            face(ship, target)
             ammo = torps.GetCurrentAmmoType()
             if ammo is not None:
                 ammo.SetAvailable(ammo.GetMaxTorpedoes())
@@ -393,7 +397,7 @@ class _Scene:
                 torps.GetWeapon(i).SetNumReady(1)
             torps.TurnOn()
             torps.StartFiring(target, rng.choice(
-                (None, rng.choice(_subsystems(target)).GetPosition())))
+                (None, rng.choice(subsystems(target)).GetPosition())))
         elif kind == "stop":
             rng.choice(self.torpedo_systems).StopFiring()
         elif kind == "shields_off":
@@ -454,11 +458,12 @@ class _Scene:
         return self
 
 
-def _both(monkeypatch, ticks_per_frame, ticks=TICKS, before_tick=None):
+def _both(monkeypatch, odd_hull_box, ticks_per_frame, ticks=TICKS,
+          before_tick=None):
     runs = []
     for env in (OFF, ON):
         with monkeypatch.context() as mp:
-            scene = _Scene(mp, env)
+            scene = _Scene(mp, env, odd_hull_box)
             try:
                 runs.append(scene.run(ticks_per_frame, ticks=ticks,
                                       before_tick=before_tick))
@@ -489,9 +494,10 @@ BRANCHES = (
 
 
 @pytest.mark.parametrize("ticks_per_frame", (1, 4))
-def test_k3_k4_match_python_in_a_torpedo_fight(monkeypatch, ticks_per_frame):
+def test_k3_k4_match_python_in_a_torpedo_fight(monkeypatch, odd_hull_box,
+                                               ticks_per_frame):
     t0 = time.perf_counter()
-    ref, nat = _both(monkeypatch, ticks_per_frame)
+    ref, nat = _both(monkeypatch, odd_hull_box, ticks_per_frame)
     elapsed = time.perf_counter() - t0
     n = nat.rec.tally.n
     k3_why, k4_why = _python_reasons(nat.counts)
@@ -505,10 +511,16 @@ def test_k3_k4_match_python_in_a_torpedo_fight(monkeypatch, ticks_per_frame):
              k4_why, len([c for c in ref.rec.calls if c[0] == "hit"]),
              len([c for c in ref.rec.calls if c[0] == "apply_hit"]),
              len(ref.rec.events)))
+    print("  latched (pair x tick) %d" % nat.rec.latched)
     # K3 and K4 decided every step: no whole-step hand-back.
     assert nat.counts["k3_runs"] > 0 and nat.counts["k3_python_steps"] == 0, \
         nat.counts
     assert nat.counts["k4_runs"] == TICKS and not k4_why, nat.counts
+    # Every scan's targets and sources are scanned ships in one frame
+    # table: no torpedo's _guide is ever handed to Python.
+    check_guide_asks(nat.counts, nat.rec.tally, expected=())
+    # The latch row compared something: a can_detect lock broke.
+    assert nat.rec.latched > 0
     # Every branch happened in the kernel.
     for key in BRANCHES:
         assert n.get(key, 0) > 0, (key, n)
@@ -527,7 +539,7 @@ def test_k3_k4_match_python_in_a_torpedo_fight(monkeypatch, ticks_per_frame):
     assert any(ref.rec.scan_writes.values())
 
 
-def test_two_hits_on_one_ship_same_tick(monkeypatch):
+def test_two_hits_on_one_ship_same_tick(monkeypatch, odd_hull_box):
     """Two shots reach one ship in the same tick, from either side: both are
     hits (the world is static for the walk: the second is decided before the
     first is applied), applied in list order, in both arms. A third shot,
@@ -552,7 +564,8 @@ def test_two_hits_on_one_ship_same_tick(monkeypatch):
                     scene.ship("Friend-%d" % (k + 1)), start,
                     (-sign * 30.0, 0.0, 0.0), ttl=5.0))
 
-    ref, nat = _both(monkeypatch, 1, ticks=100, before_tick=before_tick)
+    ref, nat = _both(monkeypatch, odd_hull_box, 1, ticks=100,
+                     before_tick=before_tick)
     n = nat.rec.tally.n
     assert n.get("same_ship_hits", 0) > 0, n
     assert n.get("ttl_and_hit_same_tick", 0) > 0, n
