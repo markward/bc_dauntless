@@ -1,3 +1,5 @@
+> **Implemented 2026-11-01** on branch `perf/native-combat-k2`, tip commit `6418f858f`. Outcome, measurements and rulings: `docs/superpowers/specs/2026-10-31-native-combat-k2-beams-design.md` §10. The map below is the pre-build snapshot and is not updated.
+
 > Snapshot map written 2026-10-31 at commit b1f2675a5 (branch `perf/native-combat-k2`, worktree `.claude/worktrees/native-combat-1b`) for the native combat step (spec docs/superpowers/specs/2026-10-30-native-combat-step-design.md §7.3 "K2 — beams"). It is the input to the K2 plan. Line numbers drift; re-check them against the code before relying on one. The model for this document is `k1-fire-control-map.md`.
 
 # K2 beams — code map of the `cb.phasers` step

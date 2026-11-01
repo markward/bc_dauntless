@@ -205,4 +205,36 @@ The results go in the perf register and in §10 of this file.
 
 ## 10. Outcome
 
-*(Filled in after the build: commits, measurements, rulings made during execution.)*
+Built on branch `perf/native-combat-k2`; the tip measured is `6418f858f`. Default stays OFF (`DAUNTLESS_NATIVE_COMBAT` unset); the default flip awaits Mark's live check.
+
+**Result (perf register SIG-162, SIG-163; captures C-242..C-245).** 64-ship fight, switch on, Debug, two runs each, per game tick (SIG-157 method), K1 tip `b1f2675a5` to K2 tip `6418f858f`:
+
+| row | K1 | K2 | change |
+|---|---|---|---|
+| `cb.phasers` | 1.774 | 0.739 | -58% |
+| `sim.combat` | 4.466 | 3.325 | -26% |
+| `sim` | 11.859 | 10.565 | -11% |
+
+The goal in §8, halve `cb.phasers`, is **met**. `cb.held_weapons`, `cb.projectiles`, `cb.eligibility` and `gl.ai` stayed inside run-to-run spread. The Python loop fell 81.8 to 65.3 ms a frame, but ticks a frame also fell (4.95 to 3.90), so per-frame rows are not like for like. The K1 runs had a code-reading agent running at the same time; the K2 runs were on an idle machine. The `sim` change is inside SIG-147's spread. Evidence: Measured (rows), Derived (percentages).
+
+**Fallbacks.** Host differential, 9 ships, 600 ticks: 0 whole-step fallbacks and 80 ship fallbacks, all `posed_ship`; every ASK was `aim_point`. A 5-minute 16-ship real-AI fight ran no ship in Python. New fallback reason `audit`: K2 stands down when `DAUNTLESS_NATIVE_AUDIT=1`.
+
+**Driver overhead** (microbench, Debug, 9 ships / 46 banks). Per-bank check 9.8-10.3 us to 5.2-5.7 us (bank scan moved into the binding, `combat_k2_scan_ships`). Begin 11.0-11.4 us to 6.7-7.2 us (iids table kept in the kernel, re-sent only when it changes). Extrapolated ~145 to ~50 us per tick at 500 banks / 64 ships.
+
+**Switch-off cost.** Behaviour is unchanged, but `_dwell` became a `NativeField`, so every idle bank's `take_dwell` write goes through a Python `__set__`: 71 ns against 26 ns plain, about 23 us per tick at 500 banks, plus the extra call layer of `_phaser_step_bank`. A switch-off capture after K2 carries this.
+
+**Rulings that amended this spec.**
+- **C2 amends §5.3.** The override rule is "non-engine code, or changed since K2 first saw the class". It is guarded by `tests/unit/test_native_k2_override_guard.py` (allowlist: `DamageableObject.IsDead`, `ProximityCheck.GetRadius`).
+- **§4.2 wording.** The trace hooks are installed at module load, which is equivalent to what §4.2 describes.
+
+**Found on the way.** `host_loop.run` installs the AI sensor gate as a class-level SDK patch and nothing removed it between tests, which made the K1 differential order-dependent. `conftest` now calls `uninstall_ai_sensor_gate()`, and `tests/helpers/fight_audio.isolate_fight_audio` isolates hit-audio state in both differentials.
+
+**Known limits.**
+- K1's in-kernel `can_detect` skips the per-call `_audit_can_detect` under `DAUNTLESS_NATIVE_AUDIT`; K2 stands down instead.
+- The unseen-class check is per class, not per row: a `__class__` swap without `reclassify` is not detected (rocks call `reclassify`).
+- Instance-attribute patches on targets are not detected (accepted trade-off).
+- Copied behaviours are unchanged (§9): 62% of traces fall to the sphere tier, the trace reads the render pose, off phaser systems call `StopFiring` every tick.
+- Gameplay hit sounds are timed on the wall clock (Mark's call).
+- SDK `ConditionIncomingTorps` keeps a name-keyed registry across loads (harmless).
+- The golden trace digest test is tied to build type and mesh-fix hash, and skips elsewhere.
+- Linux/Windows exactness of `py_sin`/`py_cos` is not verified.

@@ -356,6 +356,8 @@ before the next starts.
    threading inside it is not worth it, and the remaining 60 fps work is AI
    and motion, plus the render thread.
 
+**Note 2026-11-01: phase 2 (K2 beams) is done**, on branch `perf/native-combat-k2` (tip `6418f858f`), default still off. Per game tick, 64-ship fight: `cb.phasers` 1.774 to 0.739 (-58%), `sim.combat` 4.466 to 3.325 (-26%). Details, fallbacks, rulings and known limits: `2026-10-31-native-combat-k2-beams-design.md` §10; signals SIG-162, SIG-163.
+
 ### 9.1 Note, 2026-10-31: phase 1 split into 1a and 1b, and what 1a decided
 
 **The split.** Phase 1 ships in two parts. **1a** (branch `perf/native-combat`,
