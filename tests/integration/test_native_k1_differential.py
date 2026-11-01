@@ -52,6 +52,7 @@ from engine.core import loop as game_loop
 from engine.core import step_memo
 from engine.core.loop import TICK_DELTA
 from tests.helpers import bc_assets, headless_mission
+from tests.helpers.fight_audio import isolate_fight_audio
 
 pytestmark = pytest.mark.skipif(
     _h is None or not hasattr(_h, "combat_k1_next"),
@@ -129,6 +130,9 @@ class _Scene:
         App.g_kTimerManager._time = 0.0
         _seed_every_rng(0)      # the load's AI draws (initial staggers) too
         headless_mission.clear_in_flight()      # the other arm's torpedoes
+        # Hit sounds draw on the SDK RNG: decided by the fight, never by
+        # wall-clock speed or the fight before (tests/helpers/fight_audio).
+        isolate_fight_audio(mp)
         headless_mission.load("engine.dev_missions.combat_stress")
         host_loop._reset_sensor_state()
         self.player = App.Game_GetCurrentPlayer()
@@ -771,20 +775,16 @@ LOOP_HULL_FRACTION = 0.05
 
 
 def _deterministic_loop(mp):
-    """The two process-lifetime inputs a GameLoop-driven fight reads that a
-    second load would otherwise see differently. Both arms get the same
-    stand-ins, so the comparison stays a native-vs-Python one:
+    """The process-lifetime input a GameLoop-driven fight reads that a second
+    load would otherwise see differently (the hit-audio clocks and memories
+    are the _Scene's: tests/helpers/fight_audio). Both arms get the same
+    stand-in, so the comparison stays a native-vs-Python one:
 
     * ai_optimized._phase_key keys the avoidance preprocessor's first-reschedule
       phase on ship.GetObjID(), a process-wide counter (a second load's ships
-      get other ids, so other phases): keyed on the ship's name instead.
-    * hit_feedback / crew_speech / speak_queue gate sounds on time.monotonic()
-      (wall clock), and a played sound draws App.g_kSystemWrapper's RNG: they
-      read the game clock instead."""
-    import types
+      get other ids, so other phases): keyed on the ship's name instead."""
     import zlib
-    from engine.appc import ai_optimized, crew_speech, hit_feedback
-    from engine.appc import speak_queue
+    from engine.appc import ai_optimized
 
     def phase_key(node):
         ai = node.__dict__.get("pCodeAI")
@@ -792,11 +792,6 @@ def _deterministic_loop(mp):
         return zlib.crc32(ship.GetName().encode()) if ship is not None else 0
 
     mp.setattr(ai_optimized, "_phase_key", phase_key)
-    clock = types.SimpleNamespace(
-        monotonic=lambda: App.g_kTimerManager.get_time())
-    for module in (hit_feedback, crew_speech, speak_queue):
-        mp.setattr(module, "time", clock)
-    hit_feedback._last_dispatch_time.clear()
 
 
 def _loop_arm(monkeypatch, env, ticks=LOOP_TICKS):

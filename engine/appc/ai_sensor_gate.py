@@ -226,6 +226,30 @@ def _gated_fire_script_target_visible(self, pTarget):
 _gated_fire_script_target_visible._sensor_gated = True
 
 
+# Every (owner, name) install replaced, with the object it found there, so
+# uninstall_ai_sensor_gate can put the SDK's own back. Production never
+# uninstalls; tests/conftest.py does between tests, since a test that boots the
+# host would otherwise leave every later test's AI gated.
+_replaced: dict = {}
+_INHERITED = object()   # the name was not in the owner's own __dict__
+
+
+def _replace(owner, name, new) -> None:
+    _replaced.setdefault((owner, name), owner.__dict__.get(name, _INHERITED))
+    setattr(owner, name, new)
+
+
+def uninstall_ai_sensor_gate() -> None:
+    """Undo install_ai_sensor_gate: put back the exact objects it replaced.
+    Idempotent; a no-op when nothing is installed."""
+    while _replaced:
+        (owner, name), orig = _replaced.popitem()
+        if orig is _INHERITED:
+            delattr(owner, name)
+        else:
+            setattr(owner, name, orig)
+
+
 def install_ai_sensor_gate() -> None:
     """Idempotently install the AI sensor gate: wrap
     ObjectGroup.GetActiveObjectTupleInSet (candidate filter),
@@ -235,9 +259,9 @@ def install_ai_sensor_gate() -> None:
     SDK AI package is unavailable."""
     from engine.appc.objects import ObjectGroup
     if not getattr(ObjectGroup.GetActiveObjectTupleInSet, "_sensor_gated", False):
-        ObjectGroup.GetActiveObjectTupleInSet = _wrap_active_tuple(
+        _replace(ObjectGroup, "GetActiveObjectTupleInSet", _wrap_active_tuple(
             ObjectGroup.GetActiveObjectTupleInSet
-        )
+        ))
 
     try:
         import AI.Preprocessors as _pp
@@ -248,20 +272,21 @@ def install_ai_sensor_gate() -> None:
         # bootstrap, where AI.Preprocessors is importable, so the wrap lands.
         return
     if not getattr(_pp.SelectTarget.FindGoodTarget, "_sensor_gated", False):
-        _pp.SelectTarget.FindGoodTarget = _wrap_find_good_target(
+        _replace(_pp.SelectTarget, "FindGoodTarget", _wrap_find_good_target(
             _pp.SelectTarget.FindGoodTarget
-        )
+        ))
 
     # Gate the actual firing path. FireScript.TargetVisible is a no-op stub in
     # stock BC; replace it so a ship that can't detect its target stops firing.
     if not getattr(_pp.FireScript.TargetVisible, "_sensor_gated", False):
-        _pp.FireScript.TargetVisible = _gated_fire_script_target_visible
+        _replace(_pp.FireScript, "TargetVisible",
+                 _gated_fire_script_target_visible)
 
     try:
         import AI.PlainAI.StarbaseAttack as _sba
     except ImportError:
         return
     if not getattr(_sba.StarbaseAttack.GetTargets, "_sensor_gated", False):
-        _sba.StarbaseAttack.GetTargets = _wrap_get_targets(
+        _replace(_sba.StarbaseAttack, "GetTargets", _wrap_get_targets(
             _sba.StarbaseAttack.GetTargets
-        )
+        ))

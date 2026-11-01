@@ -362,3 +362,29 @@ def test_fire_script_cloak_gate_is_absolute_with_the_contest_off(monkeypatch):
     fs, target = _fire_script_at(inside_gu())
     assert fs.TargetVisible(target) == 0
     assert fs.bTargetVisible == 0
+
+
+def test_uninstall_puts_back_every_sdk_original():
+    """The gate is a process-lifetime class patch (the host bootstrap installs
+    it once). A test that boots the host must not leave it on every LATER
+    test's AI: after a host-loop run, a headless fight's SelectTarget filtered
+    its candidates through can_detect and the K1 game-loop differential's AI
+    never fired a torpedo. uninstall_ai_sensor_gate (run by tests/conftest.py
+    between tests) puts back the exact SDK objects install replaced."""
+    import AI.Preprocessors as pp
+    import AI.PlainAI.StarbaseAttack as sba
+    from engine.appc.ai_sensor_gate import uninstall_ai_sensor_gate
+    uninstall_ai_sensor_gate()
+    sites = ((ObjectGroup, "GetActiveObjectTupleInSet"),
+             (pp.SelectTarget, "FindGoodTarget"),
+             (pp.FireScript, "TargetVisible"),
+             (sba.StarbaseAttack, "GetTargets"))
+    before = [owner.__dict__[name] for owner, name in sites]
+    install_ai_sensor_gate()
+    assert all(getattr(owner.__dict__[name], "_sensor_gated", False)
+               for owner, name in sites)
+    uninstall_ai_sensor_gate()
+    after = [owner.__dict__[name] for owner, name in sites]
+    assert all(a is b for a, b in zip(after, before)), (before, after)
+    uninstall_ai_sensor_gate()      # idempotent
+    assert [owner.__dict__[name] for owner, name in sites] == before

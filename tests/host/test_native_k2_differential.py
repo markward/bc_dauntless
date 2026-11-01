@@ -55,7 +55,6 @@ import math
 import os
 import random
 import time
-import types
 
 import pytest
 
@@ -87,6 +86,7 @@ from engine.core import step_memo  # noqa: E402
 from engine.core.loop import TICK_DELTA  # noqa: E402
 from engine.core.tracked_instances import TrackedInstances  # noqa: E402
 from tests.helpers import headless_mission  # noqa: E402
+from tests.helpers.fight_audio import isolate_fight_audio  # noqa: E402
 
 GALAXY_NIF = (bc_assets.GAME_ROOT / "data" / "Models" / "Ships" / "Galaxy"
               / "Galaxy.nif")
@@ -278,20 +278,9 @@ class _Scene:
         App.g_kTimerManager._time = 0.0
         _seed_every_rng(0)
         headless_mission.clear_in_flight()
-        # A hit sound is one SDK RNG draw (GetRandomSound), and the death
-        # cascade rolls on the same RNG, so whether a hit plays a sound
-        # must not differ between the arms. Three things decided it beyond
-        # the fight itself: the SDK's recent-sound memory (LoadTacticalSounds
-        # narrows each pick by it; no load resets it), hit_feedback's audio
-        # edge stamps (keyed by id(ship): a ship of this arm can reuse a
-        # freed id of the last), and that edge trigger's WALL clock (a 0.15 s
-        # gap: a slower arm plays more sounds). Clear both; run the gap on
-        # game time.
-        import LoadTacticalSounds
-        LoadTacticalSounds.g_dRecentSounds.clear()
-        hit_feedback.reset_audio_throttle()
-        mp.setattr(hit_feedback, "time", types.SimpleNamespace(
-            monotonic=lambda: App.g_kTimerManager._time))
+        # A hit sound is one SDK RNG draw, so whether a hit plays one must
+        # be decided by the fight alone: tests/helpers/fight_audio.
+        isolate_fight_audio(mp)
         headless_mission.load("engine.dev_missions.combat_stress")
         host_loop._reset_sensor_state()
         self.player = App.Game_GetCurrentPlayer()

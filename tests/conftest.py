@@ -1655,6 +1655,18 @@ def _reset_leakable_engine_globals():
         reset_defensive_cloak_state()
     except Exception:
         pass
+    # The AI sensor gate (engine/appc/ai_sensor_gate.py) is a process-lifetime
+    # CLASS patch the host bootstrap installs (host_loop.run ->
+    # _bootstrap_firing_pipeline). Left on, every later headless fight's
+    # SelectTarget filtered candidates through can_detect: after the native
+    # combat scene audit's host run, the K1 game-loop differential's AI dropped
+    # its targets at the first cloak and never fired a torpedo. Tests that
+    # want the gate install it themselves.
+    try:
+        from engine.appc.ai_sensor_gate import uninstall_ai_sensor_gate
+        uninstall_ai_sensor_gate()
+    except Exception:
+        pass
     # Warp-state facade: begin_flythrough registers a ship on the module
     # global _flythrough_ship and nothing else clears it. A leaked ship from
     # a prior test would make sync_flythrough act on a stale/foreign object in
