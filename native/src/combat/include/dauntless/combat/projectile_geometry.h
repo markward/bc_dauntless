@@ -26,7 +26,9 @@
 // FALLBACK. As in beam_geometry.h, bubble_bound_radius and
 // steer_point_native throw std::invalid_argument (Python ValueError) when
 // they cannot answer exactly as the Python would (a stale or unrepresentable
-// ref, an invalid transform, a posed target under an offset). guide_torpedo
+// ref, an invalid transform, a posed target whose mount or Manual Aim slot
+// is not current; steer_point_native answers posed mounts and current
+// Manual Aim slots itself). guide_torpedo
 // never throws for that: it returns a status naming the question Python must
 // answer instead (GuideResult).
 

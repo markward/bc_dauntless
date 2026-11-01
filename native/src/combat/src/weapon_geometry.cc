@@ -78,8 +78,8 @@ int64_t climb_to_ship(const Mirror& m, const SubsystemRow& s) {
 // A part slot is resolved against the subsystem's OWN ship (Python's
 // resolve_part_slots walks that ship): read on another ship it would index
 // the wrong pose table. Python resolves the part on `ship`'s leaf, so that
-// is Python's -- part_stale. The hull climbs to no ship and is taken as its
-// own ship's (only the ship that holds it passes it explicitly).
+// is Python's -- part_stale. ShipClass.SetHull attaches the hull, so
+// climb_to_ship returns its owner and the owner check applies to it too.
 void check_slot_owner(const Mirror& m, const SubsystemRow& s, int64_t ship) {
     const int64_t owner = climb_to_ship(m, s);
     if (owner != -1 && owner != ship) fall_back_as<PartStale>("part_stale");

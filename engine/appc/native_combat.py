@@ -1459,12 +1459,14 @@ def _heal_part_slots(ships, gen) -> None:
 _manual_resolved: dict = {}
 
 
-def _manual_slot(ship, drop=True):
+def _manual_slot(ship, drop=True, cached=None, gen=None):
     """(target, offset xyz, slot) of `ship`'s Manual Aim pick: the index of
     the part `_live_part(target, None, offset, authored=False)` resolves in
     the target's resolved names (-1: none), detachment ignored (the table's
     bit carries it). None when there is no pick, no target with a row, or a
-    target whose leaf and names are not resolved (R5: never leaf_for)."""
+    target whose leaf and names are not resolved (R5: never leaf_for).
+    When `cached` (the last pushed key) already equals (target, offset, gen)
+    the box rule is skipped and the slot is None: nothing to push."""
     off = ship.__dict__.get("_manual_target_offset")
     target = ship.__dict__.get("_target")
     if not isinstance(off, TGPoint3) or target is None:
@@ -1481,6 +1483,8 @@ def _manual_slot(ship, drop=True):
         if names is None or target.__dict__.get("_nslot") != th:
             return None
     point = (off.x, off.y, off.z)
+    if cached is not None and cached == (th, point, gen):
+        return th, point, None
     from engine.appc import part_severance
     try:
         name = part_severance.part_for_point(leaf, point)
@@ -1492,7 +1496,7 @@ def _manual_slot(ship, drop=True):
 
 def _resolve_manual_slot(ship, h, drop=True) -> None:
     gen = _part_gen
-    found = _manual_slot(ship, drop)
+    found = _manual_slot(ship, drop, _manual_resolved.get(h), gen)
     if found is None:
         if _manual_resolved.get(h, False) is not None:
             _manual_resolved[h] = None
@@ -1500,9 +1504,9 @@ def _resolve_manual_slot(ship, h, drop=True) -> None:
                   -1, 0)
         return
     th, point, slot = found
-    key = (th, point, gen)
-    if _manual_resolved.get(h) == key:
+    if slot is None:
         return
+    key = (th, point, gen)
     _call(ship, _h.combat_set_manual_slot, h, th, point, slot, gen)
     _manual_resolved[h] = key if _part_gen == gen else None
 

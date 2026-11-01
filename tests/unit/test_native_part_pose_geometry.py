@@ -187,7 +187,8 @@ def _unposed_mount(sub, ship):
 # ── P3: the mount ────────────────────────────────────────────────────────────
 
 def _compare_mounts(bop, subs):
-    """Every subsystem, its own ship and (for the hull) the explicit ship.
+    """Every subsystem, read on its own ship and with the ship passed in. The
+    hull climbs to its owner (SetHull attaches it), so both reads agree.
     Returns how many answers the pose moved."""
     moved = 0
     for sub in subs:
