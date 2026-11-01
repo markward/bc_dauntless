@@ -14,6 +14,13 @@ kernel's own can_detect would bypass the per-query audit, so the audited step
 is Python's (reason "audit"). The second test runs the same fight with the
 audit OFF and proves K2 really walked its phaser beams there, tracing the
 real instances, with the mirror still equal to Python at the end.
+
+Phase 3: K4 (`cb.eligibility`) and K3 (`cb.projectiles`) stand down under the
+audit for the same reason (their kernels' own can_detect would bypass it), so
+the audited run's mirror audit compares the torpedo table's rows with the
+Python torpedoes every tick while Python flies them. Without the audit both
+kernels decide every step of the fight: K4 every tick, K3 every tick with a
+torpedo in flight, with no whole step handed back to Python.
 """
 import pytest
 
@@ -83,6 +90,13 @@ def test_combat_stress_runs_clean_under_the_native_audit(monkeypatch):
     assert counts["k2_python_steps"] > 0, counts
     assert (counts["k2_python_step_reasons"]["audit"]
             == counts["k2_python_steps"]), counts
+    # K4 and K3 stood down for the audit too: every step Python's.
+    assert counts["k4_runs"] == 0 and counts["k3_runs"] == 0, counts
+    k4_why = {k: n for k, n in counts["k4_python_reasons"].items() if n}
+    assert list(k4_why) == ["audit"], counts
+    k3_why = {k: n for k, n in counts["k3_python_reasons"].items() if n}
+    assert list(k3_why) == ["audit"], counts
+    assert k3_why["audit"] == counts["k3_python_steps"] > 0, counts
     # GameLoop.tick audits the whole mirror once a tick.
     assert audits >= 120, audits
 
@@ -95,3 +109,10 @@ def test_combat_stress_walks_beams_natively_without_the_audit(monkeypatch):
     # the session's real instances (no "instances" fallback).
     assert counts["k2_records"] > 0, counts
     assert counts["k2_python_steps"] == 0, counts
+    # K4 decided every tick's eligibility and K3 every torpedo step, with
+    # zero whole-step fallbacks.
+    assert counts["k4_runs"] > 0, counts
+    assert not any(counts["k4_python_reasons"].values()), counts
+    assert counts["k3_runs"] > 0 and counts["k3_records"] > 0, counts
+    assert counts["k3_python_steps"] == 0, counts
+    assert not any(counts["k3_python_reasons"].values()), counts
