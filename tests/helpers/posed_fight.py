@@ -40,7 +40,8 @@ certain:
   mid-fight, then back to Auto (each a part-map generation bump: every slot
   stale until the next step boundary re-resolves it -- the beat checks that
   it IS stale right after the bump);
-* PREVIEW: the SPV preview overlay set and cleared (two more bumps);
+* PREVIEW: the SPV preview overlay set (the Port Cannon onto the other
+  wing, so a mount really moves) and cleared (two more bumps);
 * SEVER: from SEVER_AT, the first weapon hit on Enemy-B severs one of its
   wings INSIDE the step (an ET_WEAPON_HIT handler: apply_hit -> sever), and
   the handler checks at once that every mount of the ship reads, natively,
@@ -314,7 +315,7 @@ class PosedFight:
                       "swing_moving": 0, "cruise_ticks": 0,
                       "manual_ticks": 0, "manual_moved": 0,
                       "detached_ticks": 0, "parent_moved": 0,
-                      "emitter_checks": 0}
+                      "preview_moved": 0, "emitter_checks": 0}
         if setup is not None:
             setup(self, mp)
         step_memo.forget()
@@ -602,8 +603,20 @@ class PosedFight:
                 prop.SetPhysicalParent(None)
             self.check_stale()
         if t == PREVIEW_AT:
-            name = self.cannon_props["Port Cannon"].GetName()
-            physical_parents.set_preview(LEAF, {name: WINGS[1]})
+            # The Port Cannon previewed onto the OTHER wing, so the preview
+            # really moves a mount (as the PARENT beat does).
+            prop = self.cannon_props["Port Cannon"]
+            w = next(w for w in ws_weapons(cruise.GetPulseWeaponSystem())
+                     if w.GetName() == "Port Cannon")
+            p = w.GetPosition()
+            now = physical_parents.part_for_property(
+                LEAF, prop, (p.x, p.y, p.z))
+            assert now in WINGS, now
+            before = _hexes(ss._subsystem_world_position(w, None))
+            physical_parents.set_preview(
+                LEAF, {prop.GetName(): WINGS[1 - WINGS.index(now)]})
+            after = _hexes(ss._subsystem_world_position(w, None))
+            self.stats["preview_moved"] += before != after
             self.check_stale()
         elif t == PREVIEW_TO:
             physical_parents.clear_preview(LEAF)
@@ -878,7 +891,8 @@ def check_posed(ref, nat):
     branches = posed_branches(c)
     for key in ("k1_posed/walks", "k1_posed/target_aims",
                 "k2_posed/banks", "k2_posed/lock_aims",
-                "k2_posed/manual_aims", "k3_posed_steers"):
+                "k2_posed/manual_aims", "k3_posed_steers",
+                "k3_baked_steers"):
         assert branches[key] > 0, (key, branches)
     # No whole-step or whole-system hand-back either.
     assert c["k1_python_systems"] == 0, c
@@ -896,6 +910,10 @@ def check_posed(ref, nat):
     assert s["mounts_posed"] > 0, s                  # mounts really moved
     assert s["manual_ticks"] > 100 and s["manual_moved"] > 0, s
     assert s["parent_moved"] == 1, s                 # the PARENT beat moved
+    assert s["preview_moved"] == 1, s                # the PREVIEW beat moved
+    # Every mount query was answered at a current slot: none needed the
+    # mid-step re-resolve.
+    assert s["record_resolves"] == 0, s
     # Each generation bump made the slots stale (read natively right after
     # it), and the next boundary made them fresh: no part_stale above.
     assert s["stale_seen"] >= 4, s

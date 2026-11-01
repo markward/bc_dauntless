@@ -31,7 +31,11 @@ must show no posed hand-back at all -- posed_ship / posed_target retired at
 0, part_stale 0 (every slot resolved at the step boundaries) -- and every
 posed branch run natively: a posed ship walked, a Fire aimed at a posed
 target's offset, a posed ship's banks beamed, a lock on a posed ship, a
-Manual Aim beam on one, a torpedo steered at one.
+Manual Aim beam on one, a torpedo steered at one -- and a torpedo at a
+picked spot (a Manual Aim pick, a re-targeted stored offset) steered at its
+launch-time point (posed parts, Task 7: no `no_mount` or `unbaked` steer
+ASK, `k3_baked_steers` > 0; K1's fire-time `no_mount` is printed, not
+zeroed).
 """
 import time
 

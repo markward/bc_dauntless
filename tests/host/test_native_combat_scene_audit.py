@@ -141,6 +141,13 @@ def test_combat_stress_walks_beams_natively_without_the_audit(monkeypatch):
     assert set(posed_fallbacks(counts).values()) == {0}, \
         posed_fallbacks(counts)
     assert counts["k1_posed"]["walks"] > 0, posed_branches(counts)
+    # K2 posed lock aims and K3 posed steers are NOT asserted here: in
+    # this 120-tick scene they depend on whether a lock or a torpedo meets
+    # a Bird of Prey before it swings to red (identity), which varies run
+    # to run (lock aims 0-84, steers 0-17 measured, posed parts Task 7) --
+    # seeding every RNG did not fix it (the earlier test in the process
+    # changes the outcome). The posed differentials carry both branches
+    # (thousands per run).
     assert counts["k1_records"] > 0, counts
     # K2 walked the beams natively (never the whole step in Python), with
     # the session's real instances (no "instances" fallback).

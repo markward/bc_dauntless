@@ -24,6 +24,18 @@ ship's instance is set to host_loop's `_ship_world_matrix`.
 Everything the headless file asserts holds here too (posed_fight's record,
 compared per tick; no posed hand-back; every posed branch run natively),
 plus the real-instance branches: the mesh tier and the shield bubble.
+
+The forced-part Galaxy (Friend-3: banks on "probe part" / "probe flat",
+one identity only within `is_identity`'s 1e-9, its Phasers system sharing
+a bank's point) is COVERED BY THE HEADLESS FILE, not this one: here the
+Galaxy's boxes are derived from its real model, which has no such parts,
+so `physical_parents` falls back to Auto and its banks ride no forced
+part. The setup's assertions still pass here; the posed-bank and R3
+coverage this file reports comes from the Birds of Prey.
+
+Picked spots (posed parts, Task 7): a torpedo at a spot no mount claims
+steers at its launch-time point natively -- check_posed asserts no
+`no_mount` / `unbaked` steer ASK and `k3_baked_steers` > 0.
 """
 import os
 import time
