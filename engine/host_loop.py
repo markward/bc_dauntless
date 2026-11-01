@@ -1310,6 +1310,9 @@ def _advance_combat_step(ships, dt: float, ship_instances=None,
     # hits are processed: player always + capped nearest/largest ships.
     # See engine.appc.damage_eligibility.
     with frame_profiler.scope("cb.eligibility"):
+        # The step scan K4 (here) and K3 (cb.projectiles) share: once a step.
+        if _native_combat._enabled:
+            _native_combat.step_scan(ships_list)
         damage_eligibility.update(ships_list)
 
     with frame_profiler.scope("cb.projectiles"):

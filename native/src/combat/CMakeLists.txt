@@ -13,6 +13,8 @@ set(DAUNTLESS_COMBAT_SOURCES
     src/profile_eval.cc
     src/mirror.cc
     src/torpedo_table.cc
+    src/step_scan.cc
+    src/k4_eligibility.cc
     src/sensor_detect.cc
     src/weapon_geometry.cc
     src/beam_geometry.cc

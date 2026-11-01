@@ -22,6 +22,7 @@
 #include "dauntless/combat/fire_gates.h"
 #include "dauntless/combat/k1_fire_control.h"
 #include "dauntless/combat/k2_beams.h"
+#include "dauntless/combat/k4_eligibility.h"
 #include "dauntless/combat/mirror.h"
 #include "dauntless/combat/nebula_density.h"
 #include "dauntless/combat/profile_eval.h"
@@ -3712,6 +3713,111 @@ PyObject* k2_scan_ships(PyObject* ships, PyObject* obj_kind,
     Py_XDECREF(bank_n);
     Py_XDECREF(sys_n);
     Py_XDECREF(ship_n);
+    return result;
+}
+
+// ── combat_step_scan ─────────────────────────────────────────────────────────
+// The per-step ship scan K4 and K3 share (step_scan.h; spec 2026-11-01 §4.1),
+// a C loop over the instance dicts like k2_scan_ships (raw CPython calls: a
+// pybind loop was slower than the Python it replaced).
+//
+// Fills cb::step_scan().ships with each entry's __dict__["_nslot"] in list
+// order while every entry is representable: an int Object handle (`(h >>
+// kind_shift) == obj_kind`), its class in `seen` (K2's seen classes), its
+// dict holding none of `patches`. The first entry that is not ends the scan
+// with its reason; otherwise cb::check_rows checks the rows. Returns
+// (representable, reason or None, [set handle, ...]).
+PyObject* step_scan_ships(PyObject* ships, long long obj_kind, int kind_shift,
+                          PyObject* seen, PyObject* patches) {
+    namespace cb = dauntless::combat;
+    cb::StepScan& s = cb::step_scan();
+    s.begin();
+    PyObject* names = PySequence_List(patches);
+    PyObject* seq = names ? PySequence_Fast(ships, "ships must be a sequence")
+                          : nullptr;
+    if (seq == nullptr) {
+        Py_XDECREF(names);
+        return nullptr;
+    }
+    PyObject* nslot = k2_scan_names().nslot;
+    const Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
+    PyObject* const* items = PySequence_Fast_ITEMS(seq);
+    PyObject* const* pn = PySequence_Fast_ITEMS(names);
+    const Py_ssize_t npn = PySequence_Fast_GET_SIZE(names);
+    s.ships.reserve(static_cast<size_t>(n));
+    cb::ScanWhy why = cb::ScanWhy::ok;
+    bool failed = false;
+    for (Py_ssize_t i = 0; i < n; ++i) {
+        PyObject* ship = items[i];
+        PyObject* d = k2_dict_of(ship);
+        PyObject* h = d ? PyDict_GetItemWithError(d, nslot) : nullptr;
+        if (h == nullptr && PyErr_Occurred()) {
+            failed = true;
+            break;
+        }
+        if (h == nullptr || !PyLong_CheckExact(h)) {
+            why = cb::ScanWhy::no_row;
+            break;
+        }
+        int overflow = 0;
+        const long long hv = PyLong_AsLongLongAndOverflow(h, &overflow);
+        if (overflow != 0 || (hv >> kind_shift) != obj_kind) {
+            why = cb::ScanWhy::no_row;
+            break;
+        }
+        int r = k2_in_seen(seen, ship);
+        if (r < 0) {
+            failed = true;
+            break;
+        }
+        if (r == 0) {
+            why = cb::ScanWhy::unseen;
+            break;
+        }
+        r = k2_holds(d, pn, npn);
+        if (r < 0) {
+            failed = true;
+            break;
+        }
+        if (r == 1) {
+            why = cb::ScanWhy::instance_patch;
+            break;
+        }
+        s.ships.push_back(static_cast<std::int64_t>(hv));
+    }
+    Py_DECREF(seq);
+    Py_DECREF(names);
+    if (failed) {
+        s.begin();
+        return nullptr;
+    }
+    if (why == cb::ScanWhy::ok) {
+        why = cb::check_rows(cb::mirror(), s);
+    } else {
+        s.representable = false;
+        s.why = why;
+    }
+    PyObject* sets = PyList_New(static_cast<Py_ssize_t>(s.sets.size()));
+    if (sets == nullptr) return nullptr;
+    for (size_t i = 0; i < s.sets.size(); ++i) {
+        PyObject* v = PyLong_FromLongLong(s.sets[i]);
+        if (v == nullptr) {
+            Py_DECREF(sets);
+            return nullptr;
+        }
+        PyList_SET_ITEM(sets, static_cast<Py_ssize_t>(i), v);
+    }
+    PyObject* ok = s.representable ? Py_True : Py_False;
+    PyObject* reason = s.representable
+                           ? Py_None
+                           : PyUnicode_FromString(cb::scan_why_name(why));
+    if (reason == nullptr) {
+        Py_DECREF(sets);
+        return nullptr;
+    }
+    PyObject* result = PyTuple_Pack(3, ok, reason, sets);
+    if (!s.representable) Py_DECREF(reason);
+    Py_DECREF(sets);
     return result;
 }
 
@@ -10528,5 +10634,89 @@ PYBIND11_MODULE(_dauntless_host, m) {
         });
         m.def("combat_k2_reset_counts",
               [] { cb::k2_kernel().reset_counts(); });
+
+        // ── The per-step scan and frame table (K3/K4, step_scan.h) ──────
+        m.def("combat_step_scan",
+              [](py::handle ships, long long obj_kind, int kind_shift,
+                 py::handle seen, py::handle patches) {
+                  PyObject* r = step_scan_ships(ships.ptr(), obj_kind,
+                                                kind_shift, seen.ptr(),
+                                                patches.ptr());
+                  if (r == nullptr) throw py::error_already_set();
+                  return py::reinterpret_steal<py::tuple>(r);
+              },
+              py::arg("ships"), py::arg("obj_kind"), py::arg("kind_shift"),
+              py::arg("seen"), py::arg("patches"),
+              "(representable, reason or None, [set handle, ...]): scan the "
+              "step's ships_list into the native step state (step_scan.h).");
+        m.def("combat_step_frames",
+              [](const std::vector<std::tuple<std::int64_t, std::int64_t,
+                                              double, double, double>>& t) {
+                  auto& f = cb::step_scan().frames;
+                  f.clear();
+                  f.reserve(t.size());
+                  for (const auto& [set, key, ax, ay, az] : t)
+                      f.push_back({set, key, {ax, ay, az}});
+              },
+              py::arg("table"),
+              "This step's frame table: [(set_handle, key_id, ax, ay, az), "
+              "...], frames.frame_of(set) per set (key_id -1: None).");
+        m.def("combat_step_reset", [] { cb::step_scan().begin(); },
+              "Empty the step state: nothing representable this step.");
+        m.def("combat_step_dump", [] {
+            const auto& s = cb::step_scan();
+            py::list frames;
+            for (const auto& f : s.frames)
+                frames.append(py::make_tuple(f.set, f.key, f.anchor[0],
+                                             f.anchor[1], f.anchor[2]));
+            py::dict d;
+            d["serial"] = s.serial;
+            d["representable"] = s.representable;
+            d["why"] = cb::scan_why_name(s.why);
+            d["ships"] = s.ships;
+            d["sets"] = s.sets;
+            d["frames"] = frames;
+            return d;
+        });
+        m.def("combat_k4_eligible",
+              [](std::int64_t player, std::int64_t max_count, double prox_w,
+                 double size_w) -> py::object {
+                  auto r = cb::k4_eligible(cb::mirror(), cb::step_scan(),
+                                           player, max_count, prox_w, size_w);
+                  auto& c = cb::k4_counts();
+                  if (!r.ok) {
+                      ++c.why[static_cast<size_t>(r.why)];
+                      return py::none();
+                  }
+                  ++c.runs;
+                  PyObject* l = PyList_New(
+                      static_cast<Py_ssize_t>(r.indices.size()));
+                  if (l == nullptr) throw py::error_already_set();
+                  for (size_t i = 0; i < r.indices.size(); ++i) {
+                      PyObject* v = PyLong_FromLongLong(r.indices[i]);
+                      if (v == nullptr) {
+                          Py_DECREF(l);
+                          throw py::error_already_set();
+                      }
+                      PyList_SET_ITEM(l, static_cast<Py_ssize_t>(i), v);
+                  }
+                  return py::reinterpret_steal<py::object>(l);
+              },
+              py::arg("player_handle"), py::arg("max_count"),
+              py::arg("prox_w"), py::arg("size_w"),
+              "select_eligible over the step scan: indices into ships_list "
+              "(after the player), or None = run select_eligible in Python.");
+        m.def("combat_k4_counts", [] {
+            const auto& c = cb::k4_counts();
+            py::dict why;
+            for (size_t i = 0; i < c.why.size(); ++i)
+                why[cb::k4_why_name(static_cast<cb::K4Why>(i))] = c.why[i];
+            py::dict d;
+            d["k4_runs"] = c.runs;
+            d["k4_python_reasons"] = why;
+            return d;
+        });
+        m.def("combat_k4_reset_counts",
+              [] { cb::k4_counts() = cb::K4Counts{}; });
     }
 }

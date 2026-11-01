@@ -8,6 +8,7 @@ add_executable(combat_tests
     fire_gates_test.cc
     k1_fire_control_test.cc
     k2_beams_test.cc
+    k4_eligibility_test.cc
 )
 target_link_libraries(combat_tests
     PRIVATE

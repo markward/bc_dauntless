@@ -32,6 +32,7 @@ The switch is read only in ``configure()`` (called by ``GameLoop.__init__``):
 ``DAUNTLESS_NATIVE_COMBAT=1`` on, ``=0`` or unset off;
 ``DAUNTLESS_NATIVE_AUDIT=1`` turns the audit on and implies native on.
 """
+import importlib
 import math
 import operator
 import os
@@ -157,9 +158,14 @@ def reset() -> None:
     global _k2_drop_epoch
     _k2_drop_epoch += 1
     torpedo_table_mark_dirty()
+    global _step
+    _step = None
+    for k in _K4_REASONS:
+        _k4_reasons[k] = 0
     if available():
         _h.combat_k1_reset_counts()
         _h.combat_k2_reset_counts()
+        _h.combat_k4_reset_counts()
 
 
 def counts() -> dict:
@@ -176,13 +182,23 @@ def counts() -> dict:
     "k2_asks", "k2_python_reasons": {K2Why name: n}, "k2_ask_queries":
     {query: n}} (k2_beams.h), plus "k2_python_steps" (steps run whole in
     Python) and "k2_python_step_reasons" ({"nested", "instances",
-    "patched", "audit"}: n)."""
+    "patched", "audit"}: n).
+
+    K4 (`cb.eligibility`): "k4_runs" (calls the kernel decided) and
+    "k4_python_reasons" ({why: n}, the kernel's hand-backs -- scan, player,
+    nonfinite, frame, set -- summed with k4_update's own: audit, patched,
+    the step scan's reasons, ...)."""
     c = dict(_counts)
     c.update(_k2_steps)
     c["k2_python_step_reasons"] = dict(_k2_step_reasons)
     if available():
         c.update(_h.combat_k1_counts())
         c.update(_h.combat_k2_counts())
+        k4 = _h.combat_k4_counts()
+        why = k4["k4_python_reasons"]
+        for k, n in _k4_reasons.items():
+            why[k] = why.get(k, 0) + n
+        c.update(k4)
     return c
 
 
@@ -2565,6 +2581,16 @@ def _k2_unchanged() -> bool:
             now = (now,)
         if now != values:
             return False
+    if not _k2_classes_unchanged():
+        return False
+    h = _k2_host_io._h
+    return h is None or h is _k2_host
+
+
+def _k2_classes_unchanged() -> bool:
+    """The class half of _k2_unchanged (the K3/K4 step scan shares it):
+    every stock role class as snapshotted, and no class seen with a row
+    flagged "whole" or patched since K2 first saw it."""
     for _role, cls, res in _k2_role_snapshot:
         if not _k2_same(cls, res):
             return False
@@ -2573,8 +2599,7 @@ def _k2_unchanged() -> bool:
     for cls, res, whole in _k2_watch:
         if whole or not _k2_same(cls, res):
             return False
-    h = _k2_host_io._h
-    return h is None or h is _k2_host
+    return True
 
 
 def _k2_rebuild_watch() -> None:
@@ -2993,6 +3018,255 @@ def k2_phasers(ships, dt, ship_instances) -> bool:
     _h.combat_k2_begin(handles, dt, t, use_memo, drift, ctx)
     cx.commit()
     run_k2(ships, dt, ship_instances, cx)
+    return True
+
+
+# ── The per-step scan and frame table (phase 3: shared by K4 and K3) ────────
+#
+# native/src/combat/include/dauntless/combat/step_scan.h is the contract.
+# host_loop calls step_scan(ships_list) once, at the top of `cb.eligibility`
+# (spec 2026-11-01 §4.1; ruling A3: K3 reuses it, never scans again). The
+# binding fills the native ship-handle array in list order and returns the
+# distinct sets in play; this module then resolves frames.frame_of(set) for
+# each of them -- EVERY step, never cached, so a set's frame changing between
+# steps (mark_mapped, an in-system hand-off) is read at once -- and sends the
+# frame table. A step is representable only when every ship has an Object
+# row of a class K2 has seen, no instance attribute shadowing one of
+# _STEP_SHIP_PATCHES, a real IsDead, is a ShipClass (an engine ObjectClass
+# subclass may override a read method: ProximityCheck.GetRadius) and has a
+# representable set; no ship is listed twice; and no class K2 watches is
+# patched (_k2_classes_unchanged, ruling C2).
+
+#: Instance attributes that send the step to Python: the methods K3/K4 stand
+#: in for on a ship (spec §7's override list).
+_STEP_SHIP_PATCHES = (
+    "GetContainingSet", "GetTranslate", "SetTranslateXYZ", "GetVelocityTG",
+    "IsDead", "GetWorldLocation", "GetRadius", "GetScale")
+
+
+class _StepScan:
+    """One step's scan, as K4 and K3 read it: `ships` (the list scanned),
+    `ok`, `reason` (why not ok, else None), `sets` (Set handles in play),
+    `frames` (the table sent) and `keys` (frame key -> the id interned for
+    this step). `k4_fresh` is True until K4 has used it."""
+
+    __slots__ = ("ships", "ok", "reason", "sets", "frames", "keys",
+                 "k4_fresh")
+
+    def __init__(self, ships) -> None:
+        self.ships = ships
+        self.ok = False
+        self.reason = None
+        self.sets = []
+        self.frames = []
+        self.keys = {}
+        self.k4_fresh = True
+
+
+_step = None
+_frames_mod = None
+
+
+def _frames():
+    global _frames_mod
+    if _frames_mod is None:
+        from engine.systems import frames
+        _frames_mod = frames
+    return _frames_mod
+
+
+def _step_frames(sets, keys) -> list:
+    """[(set_handle, key_id, ax, ay, az), ...]: frames.frame_of for each set
+    handle, the frame key interned in `keys` (this step's; -1: frame_of
+    returned None). A handle with no live object gets no entry (the kernel
+    then hands any compare needing it back to Python)."""
+    frame_of = _frames().frame_of
+    table = []
+    for h in sets:
+        pSet = _registry.get(h)
+        if pSet is None:
+            continue
+        f = frame_of(pSet)
+        if f is None:
+            table.append((h, -1, 0.0, 0.0, 0.0))
+            continue
+        k = keys.get(f.key)
+        if k is None:
+            k = keys[f.key] = len(keys)
+        a = f.anchor_gu
+        table.append((h, k, a[0], a[1], a[2]))
+    return table
+
+
+def step_scan(ships) -> _StepScan:
+    """Scan `ships` (the step's ships_list) into the native step state and
+    send this step's frame table; returns the _StepScan K4 and K3 read."""
+    global _step
+    st = _StepScan(ships)
+    _step = st
+    if _k2_role_snapshot is None:
+        why = "unsnapped"
+    elif not _k2_classes_unchanged():
+        why = "patched"
+    else:
+        ok, why, sets = _h.combat_step_scan(
+            ships, _kind("Object"), _KIND_SHIFT, _k2_seen_set,
+            _STEP_SHIP_PATCHES)
+        if ok:
+            try:
+                table = _step_frames(sets, st.keys)
+            except Exception:
+                why = "frame"   # Python's own compare raises the same way
+            else:
+                _h.combat_step_frames(table)
+                st.ok = True
+                st.sets = sets
+                st.frames = table
+                return st
+    st.reason = why
+    _h.combat_step_reset()
+    return st
+
+
+# ── K4: damage eligibility (phase 3) ────────────────────────────────────────
+#
+# native/src/combat/include/dauntless/combat/k4_eligibility.h is the
+# contract. damage_eligibility.update resolves the player as it always has,
+# then (switch on) calls k4_update: the kernel returns the indices of the
+# ships select_eligible would add after the player, and this builds the same
+# id set. select_eligible stays the reference: k4_update returns False (the
+# caller runs it) when the step stands down (audit), a function K4 stands in
+# for is patched (_K4_FUNCTIONS, snapshotted when damage_eligibility is
+# defined), the step scan is not representable, the player has no usable
+# row, max_count or a weight is not a plain number -- or the kernel hands
+# back (a non-finite radius, position or score, a missing frame).
+
+#: (module name, names) K4 stands in for; damage_eligibility's own are
+#: added by k4_snapshot_stock.
+_K4_FUNCTIONS = (
+    ("engine.systems.frames", ("system_distance", "offset_between",
+                               "frame_of", "containing_set", "local_in",
+                               "_xyz")),
+    ("engine.core.ids", ("implements",)),
+    ("math", ("dist",)),
+)
+_K4_REASONS = ("audit", "patched", "unsnapped", "ships", "player",
+               "max_count", "weights", "frame", "no_row", "unseen",
+               "instance_patch", "stale", "is_dead", "not_ship",
+               "duplicate", "set")
+_k4_reasons = dict.fromkeys(_K4_REASONS, 0)
+_k4_snapshot = None
+_k4_de = None
+_K4_EXACT = float(2 ** 53)
+
+
+def k4_snapshot_stock(de_module) -> None:
+    """Called by engine.appc.damage_eligibility once it is defined: the
+    identity snapshot k4_update compares against."""
+    global _k4_snapshot, _k4_de
+    mods = [(de_module, ("select_eligible", "_radius"))]
+    for name, names in _K4_FUNCTIONS:
+        mods.append((importlib.import_module(name), names))
+    snap = []
+    for mod, names in mods:
+        get = operator.attrgetter(*names)
+        values = get(mod)
+        if len(names) == 1:
+            values = (values,)
+        snap.append((mod, get, len(names) == 1, values))
+    _k4_snapshot = snap
+    _k4_de = de_module
+
+
+def _k4_unchanged() -> bool:
+    for mod, get, one, values in _k4_snapshot:
+        try:
+            now = get(mod)
+        except AttributeError:
+            return False
+        if one:
+            now = (now,)
+        if now != values:
+            return False
+    return True
+
+
+def _k4_python(why: str) -> bool:
+    _k4_reasons[why] += 1
+    return False
+
+
+def _k4_weight(w):
+    """A weight as the double Python's `w * x` uses, or None (not a float or
+    an int a double holds exactly)."""
+    t = type(w)
+    if t is float:
+        return w
+    if t is int and -_K4_EXACT <= w <= _K4_EXACT:
+        return float(w)
+    return None
+
+
+def _k4_player_frame(st, player) -> bool:
+    """A player outside ships_list may sit in a set the scan never met: add
+    its frame to this step's table (False if frame_of raised)."""
+    h = _slot_of(player.__dict__.get("_containing_set"))
+    if h is None or h in st.sets or (h >> _KIND_SHIFT) != _kind("Set"):
+        return True
+    try:
+        more = _step_frames((h,), st.keys)
+    except Exception:
+        return False
+    st.sets.append(h)
+    st.frames.extend(more)
+    _h.combat_step_frames(st.frames)
+    return True
+
+
+def k4_update(player, ships) -> bool:
+    """damage_eligibility.update's body through K4: True when the kernel
+    decided (the eligible set is stored), False when the caller must run
+    select_eligible (counted by why in counts()["k4_python_reasons"])."""
+    if _audit:
+        return _k4_python("audit")
+    if _k4_snapshot is None or not _k4_unchanged():
+        return _k4_python("patched")
+    t = type(ships)
+    if t is not list and t is not tuple:
+        return _k4_python("ships")
+    st = _step
+    if st is None or not st.k4_fresh or st.ships is not ships:
+        st = step_scan(ships)
+    st.k4_fresh = False
+    if not st.ok:
+        return _k4_python(st.reason)
+    if player is None:
+        ph = REF_NONE
+    else:
+        ph = slot(player)
+        if ph is None or type(player) not in _k2_seen_set \
+                or not player.__dict__.keys().isdisjoint(_STEP_SHIP_PATCHES):
+            return _k4_python("player")
+        if not _k4_player_frame(st, player):
+            return _k4_python("frame")
+    de = _k4_de
+    kw = de.select_eligible.__kwdefaults__
+    max_count = kw.get("max_count") if kw else None
+    if type(max_count) is not int:
+        return _k4_python("max_count")
+    # `len(eligible) >= max_count`: any value past the list's length (or
+    # below 0) decides the same as this clamp.
+    max_count = max(-1, min(max_count, 1 << 62))
+    pw, sw = _k4_weight(de.PROX_WEIGHT), _k4_weight(de.SIZE_WEIGHT)
+    if pw is None or sw is None:
+        return _k4_python("weights")
+    idx = _h.combat_k4_eligible(ph, max_count, pw, sw)
+    if idx is None:
+        return False            # counted by the kernel, by why
+    ids = {id(player)} if player is not None else set()
+    for i in idx:
+        ids.add(id(ships[i]))
+    de.set_current(ids)
     return True
 
 if available():
