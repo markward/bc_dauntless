@@ -94,7 +94,7 @@ File layout of the new native code (a `part_pose` helper in the combat library i
 
 ## 10. Outcome
 
-Implemented 2026-11-01 on branch `ws/combat-posed-parts` (off `project/combat_threading`, `1c1ab9a12`; merges back there). Everything is behind `DAUNTLESS_NATIVE_COMBAT=1`, default OFF. Ships with articulated ("posed") parts now run natively through K1 fire control, K2 phasers and K3 torpedoes, bit for bit. **Live verification: NOT yet.** Mark to test a Bird of Prey fight (wings moving while firing).
+Implemented 2026-11-01 on branch `ws/combat-posed-parts` (off `project/combat_threading`, `1c1ab9a12`; merges back there). Everything is behind `DAUNTLESS_NATIVE_COMBAT=1`, default OFF. Ships with articulated ("posed") parts now run natively through K1 fire control, K2 phasers and K3 torpedoes, bit for bit. **Live-verified by Mark 2026-11-01 (Bird of Prey fight: wings moving while firing, phaser locks on wing subsystems, Manual Aim torpedoes holding their launch point, subsystem-locked torpedoes following the wing).**
 
 ### What shipped
 
