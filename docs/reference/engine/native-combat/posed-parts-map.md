@@ -90,6 +90,8 @@ SIG-163 (4): a 9-ship, 600-tick host differential gave 80 ship fallbacks, all `p
 | Steer point (no offset) | PR:1091-1093: target centre | — | PG:196-198 | — |
 | Narrow phase / hit point | `sphere_hit`, bubble, `_resolve_hit_point` (renderer trace, as K2) | renderer drawn pose only | as Python | — |
 
+**Task 7 (Mark, 2026-11-01): a picked spot (no mount) is baked at launch** (`projectiles._bake_offset` → `_baked_offset`, pushed) and steered at `body_point_world(target, baked)` with no part pose, natively (K3 ASK `unbaked` only when the bake is not for this target/offset); a mount still follows its part every tick. The rows above predate it.
+
 SIG-165 (3): the only K3 ASK that fires in the differentials is `steer_point` (posed target, mount attribution, cross-region). Per k3-k4-map §A, every visible steer in the pyprof capture carried a target offset, so a posed target ASKs **per guided torpedo per tick**.
 
 ---

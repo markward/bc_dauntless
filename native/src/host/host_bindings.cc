@@ -9959,6 +9959,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       cb::mirror().set_torpedo_mount(h, attributed, sub,
                                                      {x, y, z});
                   });
+            m.def("combat_torp_set_baked",
+                  [](std::int64_t h, bool attributed, double kx, double ky,
+                     double kz, double bx, double by, double bz) {
+                      cb::mirror().torpedoes().set_baked(
+                          h, attributed, {kx, ky, kz}, {bx, by, bz});
+                  });
             m.def("combat_torp_set_unrepresentable",
                   [tfld](std::int64_t h, int f) {
                       cb::mirror().torpedoes().set_unrepresentable(h, tfld(f));
@@ -9991,6 +9997,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
                 d["mount_sub"] = mi.torpedo_ref(r, cb::TorpField::_mount_key);
                 d["mount_attributed"] = r.mount_attributed ? 1 : 0;
                 d["mount_offset"] = vec(r.mount_offset);
+                d["baked_attributed"] = r.baked_attributed ? 1 : 0;
+                d["baked_key"] = vec(r.baked_key);
+                d["baked"] = vec(r.baked);
                 py::list bad;
                 for (int i = 0; i < static_cast<int>(cb::TorpField::kCount);
                      ++i)
@@ -10331,16 +10340,21 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "seg_len and aim_unit are meaningful only when not expired.");
         m.def("combat_test_steer_point",
               [vec](std::int64_t target, py::object offset,
-                    std::int64_t mount_sub, const std::array<double, 3>& off) {
-                  std::optional<cb::Vec3> o;
+                    std::int64_t mount_sub, const std::array<double, 3>& off,
+                    py::object baked) {
+                  std::optional<cb::Vec3> o, b;
                   if (!offset.is_none())
                       o = offset.cast<std::array<double, 3>>();
+                  if (!baked.is_none())
+                      b = baked.cast<std::array<double, 3>>();
                   return vec(cb::steer_point_native(cb::mirror(), target, o,
-                                                    mount_sub, off));
+                                                    mount_sub, off,
+                                                    b ? &*b : nullptr));
               },
               py::arg("target"), py::arg("offset"), py::arg("mount_sub"),
-              py::arg("off"),
-              "offset: a 3-tuple or None (no target offset).");
+              py::arg("off"), py::arg("baked") = py::none(),
+              "offset: a 3-tuple or None (no target offset); baked: the "
+              "torpedo's `_baked_offset` point, or None.");
         auto guide_result = [vec](const cb::GuideResult& r) -> py::tuple {
             using St = cb::GuideResult::Status;
             static const char* const kField[] = {
@@ -11030,6 +11044,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
             d["k3_guide_reasons"] = guide;
             d["k3_steer_reasons"] = steer;
             d["k3_posed_steers"] = c.posed_steers;
+            d["k3_baked_steers"] = c.baked_steers;
             return d;
         });
         m.def("combat_k3_reset_counts",

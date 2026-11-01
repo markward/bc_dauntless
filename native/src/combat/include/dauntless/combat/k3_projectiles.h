@@ -101,12 +101,14 @@
 //     steer_point  (torp, target, off_xyz) -> p = projectiles._steer_point(
 //                                          t, target, off) -> (p.x, p.y, p.z)
 //         The shot's `_mount_key` is not attributed to this target and
-//         offset, or the target is posed and its attributed mount's part
-//         slot cannot carry the offset (no mount, the offset off the mount,
-//         a slot that is not current): counted by why (SteerWhy,
+//         offset; or no mount and its `_baked_offset` is not for them
+//         (unbaked); or the target is posed and its attributed mount's
+//         part slot cannot carry the offset (the offset off the mount, a
+//         slot that is not current): counted by why (SteerWhy,
 //         projectile_geometry.h). Python's _steer_point writes `_mount_key`
-//         (pushed into the row). `off` is
-//         frames.offset_between(torpedo set, target set) as a tuple.
+//         and, no mount, `_baked_offset` (both pushed into the row).
+//         `off` is frames.offset_between(torpedo set, target set) as a
+//         tuple.
 //     guide        (torp)               -> projectiles._guide(t, dt); None
 //         Anything on one torpedo's guide path the kernel cannot vouch for:
 //         a target or source not in the step scan (its class or overrides
@@ -247,6 +249,9 @@ public:
         // the steer points of a POSED target's mount computed natively.
         std::array<int64_t, static_cast<size_t>(SteerWhy::kCount)> steer_why{};
         int64_t posed_steers = 0;
+        // ...of them, a picked spot steered at its launch-time point
+        // (`_baked_offset`, posed parts Task 7).
+        int64_t baked_steers = 0;
     };
     const Counts& counts() const { return counts_; }
     void reset_counts() { counts_ = Counts{}; }

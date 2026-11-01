@@ -254,10 +254,14 @@ class World:
         if key is not None:
             key = (self.label(key[0]), _hx(key[1]), _hx(key[2]),
                    _hx(key[3]), self.label(key[4]))
+        baked = d.get("_baked_offset")
+        if baked is not None:
+            baked = (self.label(baked[0]), _hx(baked[1]), _hx(baked[2]),
+                     _hx(baked[3]), _hx(tuple(baked[4])))
         return (self.label(t), t in projectiles._active, _hx(p),
                 _hx(t._vel), _hx(d.get("_age")),
                 _hx(d.get("_last_seen_target_pos")),
-                _hx(d.get("_last_target_vel")), key,
+                _hx(d.get("_last_target_vel")), key, baked,
                 _hx(t._bubble_entry))
 
     def record(self):
@@ -1067,8 +1071,8 @@ def _manual_moved(bop, p):
 def test_manual_aim_on_posed_target_steers_natively(monkeypatch):
     """Torpedoes the Vor'cha fired at its Manual Aim pick on a Bird of
     Prey's wing (no mount there: `_mount_key` attributes None): once
-    attributed, the steer point is the box rule's part through the source's
-    Manual Aim slot, natively."""
+    attributed, the steer point is the pick as posed at launch (its
+    `_baked_offset`, posed parts Task 7), natively."""
     moved = []
 
     def script(w, t):
@@ -1091,3 +1095,48 @@ def test_manual_aim_on_posed_target_steers_natively(monkeypatch):
     assert counts["k3_asks"]["steer_point"] == 2, counts
     assert counts["k3_posed_steers"] > 30, counts
     assert _steer_reasons(counts, _POSED_STEER_REASONS) == 0, counts
+
+
+def test_picked_spot_keeps_its_launch_point_natively(monkeypatch):
+    """Posed parts, Task 7 (Mark's ruling): torpedoes fired at a picked
+    spot on a Bird of Prey's wing (no mount) while the wings are at cruise;
+    the wings then go back to the NIF pose and later to warp. Each shot
+    keeps steering at the pick as posed at launch (`_baked_offset`), never
+    re-posed -- natively, with no per-tick ASK (no `no_mount`, no
+    `unbaked`) -- and per tick equal to Python. A shot locked on a wing
+    cannon (a mount) in the same scene still follows the wing."""
+    seen = {}
+
+    def script(w, t):
+        v, bop = w.ships["Vorcha"], w.ships["BoP"]
+        if t == 0:
+            articulation.force_pose(bop, "cruise")
+            p = _wing_pick(bop)
+            seen["p"] = p
+            for i, vel in ((0, (0.0, -60.0, 0.0)), (1, (1.0, -60.0, 0.5))):
+                w.fire(v, (10.0 + i, 115.0, 8.0), vel, target=bop,
+                       offset=TGPoint3(*p))
+            cannon = bop.GetPulseWeaponSystem().GetWeapon(0)
+            w.fire(v, (9.0, 115.0, 8.0), (-1.0, -60.0, 0.0), target=bop,
+                   offset=cannon.GetPosition())
+        elif t == 20:
+            articulation.force_pose(bop, None)
+            # The old rule would steer elsewhere now: the test is not vacuous.
+            p = seen["p"]
+            seen["moved"] = _manual_moved(bop, p) is False and tuple(
+                w.torps[0]._baked_offset[4]) != p
+        elif t == 45:
+            articulation.force_pose(bop, "warp")
+
+    ref, _nat, counts = _both(monkeypatch, script, 130,
+                              ships=BOP_IN_THE_PATH)
+    assert seen.get("moved") is True, seen
+    assert any(c[3] == "BoP" for c in _calls(ref, "hit")), ref.calls
+    _k3_ran(counts)
+    # One attribution ASK per shot; every later tick native.
+    assert counts["k3_asks"]["steer_point"] == 3, counts
+    assert counts["k3_steer_reasons"]["no_mount"] == 0, counts
+    assert counts["k3_steer_reasons"]["unbaked"] == 0, counts
+    assert _steer_reasons(counts, _POSED_STEER_REASONS) == 0, counts
+    assert counts["k3_baked_steers"] > 30, counts
+    assert counts["k3_posed_steers"] > counts["k3_baked_steers"], counts

@@ -44,7 +44,8 @@ constexpr uint32_t kGuideReads =
     bit(TorpField::_velocity) | bit(TorpField::_target_offset) |
     bit(TorpField::_last_seen_target_pos) | bit(TorpField::_last_target_vel) |
     bit(TorpField::_target_ship) | bit(TorpField::_source_ship) |
-    bit(TorpField::_containing_set) | bit(TorpField::_mount_key);
+    bit(TorpField::_containing_set) | bit(TorpField::_mount_key) |
+    bit(TorpField::_baked_offset);
 
 GuideResult need_guide(const char* why) {
     GuideResult r;
@@ -193,12 +194,16 @@ Advance advance_torpedo(const Vec3& prev, const Vec3& vel, double dt,
 
 Vec3 steer_point_native(const Mirror& m, int64_t target,
                         const std::optional<Vec3>& offset, int64_t mount_sub,
-                        const Vec3& off, int64_t manual_ship) {
+                        const Vec3& off, const Vec3* baked) {
     const ObjectRow& t = obj(m, target);
     if (!offset) {
         // G12: TGPoint3(pos) then _shifted(..., off).
         return shifted(world_location(m, t), off);
     }
+    // A picked spot (key[4] is None): body_point_world(target, baked[4]),
+    // the launch-time point with no part pose (posed parts, Task 7).
+    if (mount_sub == kNoMount && baked)
+        return shifted(body_point_world(m, target, *baked), off);
     // G11: target_offset_world(target, offset, key[4]). At an unposed
     // target part_transform_point returns the point whatever the mount, but
     // a mount the mirror cannot name is Python's. At a posed one the mount's
@@ -207,14 +212,14 @@ Vec3 steer_point_native(const Mirror& m, int64_t target,
     if (mount_sub == kRefUnrepresentable) fall_back("mount subsystem is unnamed");
     if (mount_sub >= 0 && !m.subsystem(mount_sub))
         fall_back("mount subsystem is stale");
-    return shifted(
-        target_offset_world(m, target, *offset, mount_sub, manual_ship), off);
+    return shifted(target_offset_world(m, target, *offset, mount_sub), off);
 }
 
 const char* steer_why_name(SteerWhy w) {
     static constexpr const char* kNames[] = {
         "unattributed", "mount_unrepresentable", "posed_target", "no_mount",
-        "mount_stale",  "offset_off_mount",      "part_stale",   "geometry"};
+        "mount_stale",  "offset_off_mount",      "part_stale",   "geometry",
+        "unbaked"};
     static_assert(std::size(kNames) == static_cast<size_t>(SteerWhy::kCount));
     const auto i = static_cast<size_t>(w);
     return i < std::size(kNames) ? kNames[i] : "?";
@@ -318,6 +323,7 @@ GuideResult guide_torpedo(Mirror& m, const TorpedoRow& row, double dt,
     ask.resume = {target, speed, torp_pos};
     std::optional<Vec3> offset;
     int64_t mount_sub = -1;
+    const Vec3* baked = nullptr;
     if (row.target_offset_set) {
         // key is None or key[0] is not target or key[1:4] != offset: Python
         // attributes the mount (and writes _mount_key). A NaN never matches.
@@ -334,10 +340,7 @@ GuideResult guide_torpedo(Mirror& m, const TorpedoRow& row, double dt,
             // slot carries the offset only when the offset IS the mount's
             // own point (Python attributes the part from the offset; the
             // slot was resolved from `_position`), C == per axis exactly as
-            // target_offset_world checks it. None: Python's box rule.
-            // No mount: a Manual Aim pick, the box rule -- answered through
-            // the SOURCE's Manual Aim slot when it holds this target and
-            // offset (Task 4b), else Python's (NoMount below).
+            // target_offset_world checks it. None: the baked point below.
             if (mount_sub != kNoMount) {
                 const SubsystemRow* ms = m.subsystem(mount_sub);
                 if (!ms) return steer_ask(ask, SteerWhy::mount_stale);
@@ -346,12 +349,22 @@ GuideResult guide_torpedo(Mirror& m, const TorpedoRow& row, double dt,
                     return steer_ask(ask, SteerWhy::offset_off_mount);
             }
         }
+        // No mount (a picked spot): steered at the point baked at launch
+        // (`_baked_offset`, posed parts Task 7), posed or not -- Python
+        // bakes again when the key is not this target and offset (baked[0]
+        // is not target or baked[1:4] != offset; a NaN never matches).
+        if (mount_sub == kNoMount) {
+            const Vec3& b = row.baked_key;
+            if (!row.baked_attributed || !(b[0] == o[0]) ||
+                !(b[1] == o[1]) || !(b[2] == o[2]))
+                return steer_ask(ask, SteerWhy::unbaked);
+            baked = &row.baked;
+        }
         offset = o;
     }
     Vec3 pos;
     try {
-        pos = steer_point_native(m, target, offset, mount_sub, off,
-                                  src >= 0 ? src : -1);
+        pos = steer_point_native(m, target, offset, mount_sub, off, baked);
     } catch (const PartStale&) {
         return steer_ask(ask, SteerWhy::part_stale);
     } catch (const NoMount&) {
@@ -361,6 +374,7 @@ GuideResult guide_torpedo(Mirror& m, const TorpedoRow& row, double dt,
     }
     GuideResult r = guide_torpedo_resume(m, row, dt, ask.resume, pos);
     r.posed_steer = offset.has_value() && tr.has_posed_parts;
+    r.baked_steer = r.posed_steer && baked != nullptr;
     return r;
 }
 

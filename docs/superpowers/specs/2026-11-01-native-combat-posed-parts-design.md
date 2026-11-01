@@ -102,7 +102,7 @@ Implemented 2026-11-01 on branch `ws/combat-posed-parts` (off `project/combat_th
 - **Mount order.** The authored-mount walk order (`part_severance.authored_mount_subsystem`, i.e. K1's mount order) is mirrored, so a native lookup picks the same first match as Python.
 - **Native P1-P4.** Part pose applied to the mount position (before the ship rotation), identity parts untouched (to `is_identity`), directions never posed (MAP R7), strip emit points.
 - **Native authored-mount lookup.** `mount_for_offset` answers which subsystem an offset names on a target.
-- **Kernels.** K1 walk and target aims, K2 banks, lock aims and manual aims, and K3 steering all run on posed ships and posed targets natively (`steer_point_native` answers posed mounts and current Manual Aim slots).
+- **Kernels.** K1 walk and target aims, K2 banks, lock aims and manual aims, and K3 steering all run on posed ships and posed targets natively (`steer_point_native` answers posed mounts and, since Task 7, a picked spot's launch-time point).
 - **Manual Aim on posed targets (Task 4b).** Mark asked for it on 2026-11-01. A pick is a non-authored point whose part is the box rule's answer; Python resolves it once per (target, offset, generation) and pushes it as the firing ship's manual slot, and the kernels read it only when target and offset match exactly.
 - **K2 self-heal.** If the generation moves while a K2 ASK is being answered, the bank re-resolves its slots instead of failing.
 
@@ -113,6 +113,7 @@ Implemented 2026-11-01 on branch `ws/combat-posed-parts` (off `project/combat_th
 - **Manual slots resolve lazily at boundaries only**, and are checked against the firing ship's own target and offset, so a moved pick or changed target reads "no slot", never a wrong part.
 - **Healing lives in K2 only.** K1 and K3 have no window between the ASK and its use.
 - Task 6 nit: `_resolve_manual_slot` checks its cache key before running the box rule, so the box rule runs once per (target, offset, generation).
+- **Picked-spot torpedoes track their launch-time point (Mark, 2026-11-01; Task 7).** A torpedo whose target offset is no subsystem's mount (a Manual Aim pick, an AI's random hull offset, a tube's stored offset kept across a re-target) fixes its aim point at LAUNCH: `projectiles._bake_offset` stores `part_transform_point(target, offset, authored=False)` -- the box rule's posed point at that instant, the same point the firing tube aimed at -- on the torpedo as `_baked_offset` (a `TorpedoField`, so it pushes). In flight `_steer_point` steers at `subsystems.body_point_world(target, baked)`: the ship's position, rotation and scale, no part pose, so the wing moving after launch does not drag the shot. **Subsystem locks are unchanged**: an offset that IS a mount follows its part every tick. Articulation is a Dauntless feature, so this is our design, not a BC departure. The bake moment is `Torpedo.SetTargetOffset` (the spawn sets `_target_ship` first, in the same fire step as the tube's aim), and `_steer_point` bakes again on the first steer after the target or offset changed without a new `SetTargetOffset`. An unposed target's bake is the offset itself, so its steer point is byte-identical to before. Natively, a mount-None shot needs a bake for its target and offset (else ASK `unbaked`, which Python answers by baking) and steers at it with no pose, posed target or not; K3 `no_mount` steer asks fall to 0 (they were 52-633 per Task 5 run). K1's fire-time aim still uses the current pose (`no_mount` fire ASKs remain).
 
 ### Counts (Task 5 differentials: headless and host, tpf 1 and 4, 660 ticks, 10 ships)
 
@@ -123,6 +124,6 @@ Implemented 2026-11-01 on branch `ws/combat-posed-parts` (off `project/combat_th
 
 ### What stays in Python, and why
 
-- **`no_mount` asks.** An offset that is no subsystem's mount (a random NPC offset, a tube's stored offset kept across a re-target) is answered by Python's box rule (C4). Likewise a torpedo flying at an OLD Manual Aim pick. Observed: 351-633 steer asks per host run. Exact, costs speed only. Follow-up for the retire-Python-copy pass (workstream E).
+- **K1 fire-time `no_mount` asks.** A tube or cannon aiming at an offset that is no subsystem's mount (a random NPC offset, a tube's stored offset kept across a re-target, an old Manual Aim pick) is answered by Python's box rule at fire time (C4): 4-22 fire ASKs per Task 7 run. Exact, costs speed only. The K3 steer asks of the same kind are gone (Task 7: the launch-time bake).
 - **The K2 self-heal** is unit-tested only; no differential scene reaches it.
 - **Torpedo attribution** (one ASK per torpedo) is unchanged from K3.

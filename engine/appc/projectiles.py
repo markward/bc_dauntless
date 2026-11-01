@@ -56,7 +56,8 @@ class Torpedo(ObjectClass):
     the ObjectClass chain declares slots, so every torpedo carries a __dict__
     regardless. The fields the native K3 kernel reads (`_age`, `_ttl`,
     `_guidance_*`, `_max_angular_accel`, `_target_ship`, `_target_offset`,
-    `_last_seen_target_pos`, `_last_target_vel`, `_mount_key`) are NOT slots:
+    `_last_seen_target_pos`, `_last_target_vel`, `_mount_key`,
+    `_baked_offset`) are NOT slots:
     they are `native_combat.TorpedoField` descriptors (a slot and a
     descriptor cannot share a name), so their values live in the instance
     __dict__ and every write reaches the torpedo's table row. The rest keep
@@ -93,6 +94,7 @@ class Torpedo(ObjectClass):
     _last_seen_target_pos = _nc.TorpedoField()
     _last_target_vel = _nc.TorpedoField()
     _mount_key = _nc.TorpedoField()
+    _baked_offset = _nc.TorpedoField()
 
     def __init__(self):
         # Before super(): ObjectClass.__init__ assigns _containing_set, whose
@@ -119,6 +121,10 @@ class Torpedo(ObjectClass):
         # (target, offset x, y, z, attributed mount subsystem): _steer_point's
         # once-per-shot answer to "whose mount is the offset?".
         self._mount_key = None
+        # (target, offset x, y, z, (bx, by, bz)): the offset as posed when it
+        # was set (`_bake_offset`). A shot at a picked spot is steered at
+        # this body-frame point and never re-posed. None: no offset/target.
+        self._baked_offset = None
         self._guidance_lifetime = 4.0
         self._guidance_initial = 4.0
         self._max_angular_accel = 0.125
@@ -223,9 +229,18 @@ class Torpedo(ObjectClass):
         return target.GetObjID()
     def SetTargetOffset(self, v) -> None:
         """SWIG `Torpedo.SetTargetOffset` (App.py:5931); MissionLib.py:3245
-        passes the aimed subsystem's local position."""
+        passes the aimed subsystem's local position.
+
+        Also the LAUNCH-time bake of a picked spot (`_bake_offset`): the
+        spawn (`weapon_subsystems._spawn_projectile`) sets `_target_ship`
+        first and then this, in the same fire step as the tube's own aim, so
+        the bake is the pose the shot was aimed at."""
         self._target_offset = (TGPoint3(v.x, v.y, v.z)
                                if isinstance(v, TGPoint3) else None)
+        target = self._target_ship
+        offset = self._target_offset
+        self._baked_offset = (None if target is None or offset is None
+                              else _bake_offset(target, offset))
     def GetTargetOffset(self):
         return self._target_offset
 
@@ -1062,6 +1077,23 @@ def _target_visible(torpedo, target) -> bool:
         return True
 
 
+def _bake_offset(target, offset):
+    """The `_baked_offset` key for `offset` on `target`: (target, x, y, z,
+    the point as posed NOW). Ruling (Mark, 2026-11-01; posed-parts spec
+    §10): a shot at a picked spot -- an offset no subsystem mount claims (a
+    Manual Aim pick, an AI's random hull offset) -- fixes its aim point at
+    launch and ignores the target's parts moving afterwards. The pose is
+    the box rule's (`authored=False`), exactly the point
+    `target_offset_world(target, offset, None)` used at that instant. On an
+    unposed target it is the offset itself (`part_transform_point` returns
+    the point), so the steer point is byte-identical to the per-tick
+    transform. Baked whatever the mount; read only when there is none."""
+    from engine.appc.articulation import part_transform_point
+    point = (offset.x, offset.y, offset.z)
+    return (target, offset.x, offset.y, offset.z,
+            tuple(part_transform_point(target, point, authored=False)))
+
+
 def _steer_point(torpedo, target, off=None):
     """The world point the torpedo is steering AT.
 
@@ -1072,9 +1104,14 @@ def _steer_point(torpedo, target, off=None):
     a steering target: the firing tube's own copy is only a fire-cone gate,
     so this is where it has to be read while the shot is in flight.
 
-    Same transform the tube's gate uses: `subsystems.target_offset_world`,
-    which also carries the offset with an articulated part -- read every
-    tick, so a shot locked on a wing keeps tracking it while it moves.
+    A subsystem lock (an offset that IS a mount) uses the tube's gate's
+    transform, `subsystems.target_offset_world`, which also carries the
+    offset with its articulated part -- read every tick, so a shot locked on
+    a wing keeps tracking it while it moves. Any other offset (a picked
+    spot) is steered at the point baked at launch (`_bake_offset`):
+    `body_point_world`, the target's position, rotation and scale but no
+    part pose. A torpedo whose target or offset changed since the bake
+    (no `SetTargetOffset` since) is baked again here, on its first steer.
 
     `off` is frames.offset_between(torpedo set, target set): the point is
     returned in the TORPEDO's set-local coordinates. None/zero (same set)
@@ -1097,7 +1134,14 @@ def _steer_point(torpedo, target, off=None):
         key = torpedo._mount_key = (
             target, offset.x, offset.y, offset.z,
             authored_mount_subsystem(target, (offset.x, offset.y, offset.z)))
-    return _shifted(target_offset_world(target, offset, key[4]), off)
+    if key[4] is not None:
+        return _shifted(target_offset_world(target, offset, key[4]), off)
+    from engine.appc.subsystems import body_point_world
+    baked = getattr(torpedo, "_baked_offset", None)
+    if (baked is None or baked[0] is not target or baked[1] != offset.x
+            or baked[2] != offset.y or baked[3] != offset.z):
+        baked = torpedo._baked_offset = _bake_offset(target, offset)
+    return _shifted(body_point_world(target, baked[4]), off)
 
 
 def _guide(torpedo, dt: float) -> None:

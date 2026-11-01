@@ -91,6 +91,12 @@ Vec3 _emitter_forward_world(const Mirror& m, int64_t emitter, int64_t ship);
 Vec3 target_offset_world(const Mirror& m, int64_t target, const Vec3& offset,
                          int64_t mount_sub, int64_t manual_ship = -1);
 
+// subsystems.body_point_world (P4's tail, no part pose): pos + R .
+// (scale * point) for a body-frame point already carried by its part --
+// target_offset_world's own tail, and a picked spot's launch-time point
+// (projectiles._steer_point, posed parts Task 7).
+Vec3 body_point_world(const Mirror& m, int64_t target, const Vec3& point);
+
 // weapon_subsystems._resolve_torpedo_aim_point (F11); nullopt is Python None.
 // The tube's stored offset on a POSED target is aimed through its mount
 // (`_RESOLVE`: authored_mount_subsystem, part_pose.h): MountUnknown when the

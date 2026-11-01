@@ -203,8 +203,8 @@ def _clocks():
 
 def _native_guide(t, dt, use_memo=False):
     """The native guide of `t`, an ASK for the steer point answered by
-    Python's _steer_point (the `_mount_key` it writes is put back after, so
-    the Python arm starts from the same torpedo). Returns (status, writes as
+    Python's _steer_point (the `_mount_key` and `_baked_offset` it writes
+    are put back after, so the Python arm starts from the same torpedo). Returns (status, writes as
     [(field, hex xyz)], latch or None)."""
     drift, occ = _clocks()
     r = _h.combat_test_guide_torpedo(_row(t), dt, use_memo, drift, occ)
@@ -216,11 +216,11 @@ def _native_guide(t, dt, use_memo=False):
         assert target_h == _slot(target)
         off = frames.offset_between(frames.containing_set(t),
                                     frames.containing_set(target))
-        saved_key = t._mount_key
+        saved_key, saved_bake = t._mount_key, t._baked_offset
         p = projectiles._steer_point(t, target, off)
         r = _h.combat_test_guide_torpedo_resume(
             _row(t), dt, target_h, speed, torp_pos, _xyz(p))
-        t._mount_key = saved_key
+        t._mount_key, t._baked_offset = saved_key, saved_bake
         assert r[0] == "done", r
     if r[0] != "done":
         return r[0], r[1], None, asked
@@ -424,6 +424,65 @@ def test_steer_point_matches(world):
             _slot(target), None if offset is None else _xyz(offset),
             _slot(mount), off)
         assert _hx(got) == _hx(want), mode
+
+
+def test_steer_point_baked_matches(world):
+    """A picked spot's steer point (posed parts, Task 7): Python steers at
+    the point baked at launch, `pos + R·(scale·baked)` with NO part pose;
+    native steer_point_native given that baked point equals it by .hex()
+    -- posed and unposed targets, rotated and scaled (0, -1, NaN), signed
+    zeros (the identity is a branch, never an identity pose multiplied),
+    NaN baked points, a frame shift."""
+    from engine.appc import articulation, part_pose
+    w, rng = world, random.Random(SEED + 11)
+    t = w.torp
+    targets = (w.tgt_a1, w.wb_a1, w.tgt_a2)
+    hinge = part_pose.hinge_pose((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 15.0)
+    posed = zeros = 0
+    for i in range(CASES):
+        target = rng.choice(targets)
+        if i % 2:
+            articulation.force_part_pose(target, "probe part", hinge)
+        else:
+            target._articulation_poses = {}
+        assert bool(target.__dict__.get("_articulation_poses")) == bool(i % 2)
+        mode = i % 10
+        if mode == 9:                 # every signed zero kept end to end
+            target.SetTranslateXYZ(-0.0, -0.0, -0.0)
+            target.SetMatrixRotation(TGMatrix3())
+            target._scale = 1.0
+            off = (-0.0, 0.0, -0.0)
+            baked = (-0.0, -0.0, -0.0)
+        else:
+            target.SetTranslateXYZ(
+                *(rng.uniform(-500.0, 500.0) for _ in range(3)))
+            target.SetMatrixRotation(_rand_rot(rng) if mode in (1, 2, 5)
+                                     else TGMatrix3())
+            target._scale = (rng.choice((rng.uniform(0.1, 5.0), 0.0, -1.0,
+                                         NAN))
+                             if mode in (2, 3) else 1.0)
+            off = rng.choice(((0.0, 0.0, 0.0), (-0.0, 0.0, -0.0),
+                              (NAN, 1.0, 2.0),
+                              tuple(rng.uniform(-3, 3) for _ in range(3))))
+            baked = rng.choice(((-0.0, 0.0, -0.0), (NAN, 0.5, -0.5),
+                                (1000.5, -20.25, 3.0),
+                                tuple(rng.uniform(-3, 3) for _ in range(3))))
+        shift = rng.choice(((0.0, 0.0, 0.0), (-0.0, 0.0, 0.0),
+                            (100.0, -5.0, 0.25)))
+        t._target_ship = target
+        t.SetTargetOffset(TGPoint3(*off))
+        t._mount_key = (target,) + off + (None,)
+        t._baked_offset = (target,) + off + (baked,)
+        want = projectiles._steer_point(t, target, shift)
+        used = t._baked_offset[4]
+        if not any(map(math.isnan, off)):
+            assert used is baked      # Python steered at the injected bake
+        got = _h.combat_test_steer_point(
+            _slot(target), off, -1, shift, baked=used)
+        assert _hx(got) == _hx(want), (i, off, used)
+        posed += i % 2
+        zeros += _hx(got) == _hx((-0.0, -0.0, -0.0))
+    assert posed > 500 and zeros > 50, (posed, zeros)
 
 
 # ── G1-G12: guidance ─────────────────────────────────────────────────────────
@@ -643,10 +702,13 @@ def test_guide_memo_only_for_same_set(world):
     assert "_last_seen_target_pos" not in results[1]
 
 
-def test_posed_target_needs_ask(world):
-    """An attributed aim offset on a target posed off its NIF pose: the
-    native steer point refuses and guidance ASKs for it; with Python's point
-    the rest of _guide matches."""
+def test_posed_target_picked_spot_steers_at_its_bake(world):
+    """An attributed aim offset no mount claims (a picked spot) on a target
+    posed off its NIF pose: guidance steers natively at the point baked at
+    launch (`_baked_offset`, posed parts Task 7) and matches Python; with
+    no bake for this offset it ASKs (Python bakes). steer_point_native with
+    no baked point still refuses a posed target's picked spot. (Was
+    test_posed_target_needs_ask: every guided tick ASKed before Task 7.)"""
     from engine.appc import articulation, part_pose
     w = world
     t = w.torp
@@ -657,6 +719,7 @@ def test_posed_target_needs_ask(world):
     t._velocity = TGPoint3(0.0, 10.0, 0.0)
     t.SetTargetOffset(TGPoint3(0.5, 1.0, -0.25))
     projectiles._steer_point(t, target, (0.0, 0.0, 0.0))     # attributed
+    assert t._mount_key[4] is None and t._baked_offset is not None
     hinge = part_pose.hinge_pose((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 15.0)
     articulation.force_part_pose(target, "TestPart", hinge)
     try:
@@ -667,7 +730,16 @@ def test_posed_target_needs_ask(world):
         _reset_sensors()
         r = _h.combat_test_guide_torpedo(_row(t), 1.0 / 60.0, False, drift,
                                          occ)
+        assert r[0] == "done"
+        writes, asked = _compare_guide(t, 1.0 / 60.0)
+        assert not asked and [n for n, _ in writes] == list(GUIDE_FIELDS)
+        # Unbaked: ASK, and Python's answer (which bakes) matches.
+        t._baked_offset = None
+        _reset_sensors()
+        r = _h.combat_test_guide_torpedo(_row(t), 1.0 / 60.0, False, drift,
+                                         occ)
         assert r[0] == "steer_point"
+        t._baked_offset = None
         writes, asked = _compare_guide(t, 1.0 / 60.0)
         assert asked and [n for n, _ in writes] == list(GUIDE_FIELDS)
         # Without an offset the posed target is answered natively.

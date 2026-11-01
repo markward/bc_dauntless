@@ -234,7 +234,8 @@ Vec3 _emitter_forward_world(const Mirror& m, int64_t emitter, int64_t ship) {
 Vec3 target_offset_world(const Mirror& m, int64_t target, const Vec3& offset,
                          int64_t mount_sub, int64_t manual_ship) {
     const ObjectRow& t = obj(m, target);
-    const auto& tr = xform(m, t);
+    // An invalid transform falls back before any slot is read.
+    xform(m, t);
     // part_transform_point(target, point, authored=mount_sub is not None,
     // prop=property_of(mount_sub)) BEFORE the scale (MAP P4). Unposed: the
     // point itself whatever the mount, and no slot is read.
@@ -268,6 +269,14 @@ Vec3 target_offset_world(const Mirror& m, int64_t target, const Vec3& offset,
         // -0.0 == 0.0 matched above.
         if (st == SlotState::ok) p = apply_part_pose(*pose, offset);
     }
+    return body_point_world(m, target, p);
+}
+
+// ── subsystems.py body_point_world (P4's tail) ──────────────────────────────
+
+Vec3 body_point_world(const Mirror& m, int64_t target, const Vec3& p) {
+    const ObjectRow& t = obj(m, target);
+    const auto& tr = xform(m, t);
     const double scale = t._scale;
     const Vec3 o0{p[0] * scale, p[1] * scale, p[2] * scale};
     const Vec3 o = mult_matrix_left(tr.rot, o0);

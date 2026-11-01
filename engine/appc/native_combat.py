@@ -225,9 +225,11 @@ def counts() -> dict:
     K3 (`cb.projectiles`): the kernel's {"k3_runs", "k3_records",
     "k3_asks": {query: n}, "k3_guide_reasons": {why: n},
     "k3_steer_reasons": {why: n} (the steer_point ASKs: unattributed,
-    part_stale, no_mount, ...; projectile_geometry.h SteerWhy, zeros
-    included), "k3_posed_steers": n (a posed target's mount steered
-    natively)}, and
+    part_stale, unbaked, ...; projectile_geometry.h SteerWhy, zeros
+    included; no_mount is 0 since a picked spot steers at its launch-time
+    `_baked_offset`), "k3_posed_steers": n (a posed target's mount or
+    picked spot steered natively), "k3_baked_steers": n (of those, a picked
+    spot at its baked point)}, and
     "k3_python_steps" / "k3_python_reasons" ({why: n}): the steps run whole
     in Python, the kernel's begin reasons (scan, table, unrepresentable,
     stale_ref, torpedo_xform, ship_cache) summed with run_k3's own (off,
@@ -2000,6 +2002,20 @@ def _enc_mount(t, key):
             _num(x), _num(y), _num(z))
 
 
+def _enc_baked(t, key):
+    """(attributed, key x, y, z, baked x, y, z). attributed is
+    _steer_point's `baked[0] is target` for the torpedo's CURRENT
+    `_target_ship`."""
+    if key is None:
+        return (False,) + _NO_POINT + _NO_POINT
+    try:
+        target, x, y, z, (bx, by, bz) = key
+    except (TypeError, ValueError):
+        raise _Unrepresentable
+    return ((target is t.__dict__.get("_target_ship")),
+            _num(x), _num(y), _num(z), _num(bx), _num(by), _num(bz))
+
+
 # Python attribute -> (encoder, row setter kind, combat_torp_dump key).
 _TORP_FIELDS = {
     "_age": (lambda t, v: _num(v), "f", "age"),
@@ -2015,6 +2031,7 @@ _TORP_FIELDS = {
     "_source_ship": (_enc_ref("Object"), "r", "source"),
     "_containing_set": (_enc_ref("Set"), "r", "cset"),
     "_mount_key": (_enc_mount, "m", None),
+    "_baked_offset": (_enc_baked, "b", None),
 }
 # The fields kept in the torpedo's __dict__ (TorpedoField); the other three
 # are Torpedo properties over the `_vel` / `_src` / `_cset` slots.
@@ -2073,14 +2090,18 @@ def _torp_push(t, h, name, value) -> None:
             _h.combat_torp_set_v(h, fid, *v)
         elif how == "r":
             _torp_push_ref(t, h, fid, value, v)
+        elif how == "b":
+            _h.combat_torp_set_baked(h, *v)
         else:
             _torp_push_mount(t, h, value, v)
     except ValueError:
         _torp_lost(t)
         return
     if name == "_target_ship":
-        # `_mount_key`'s attributed flag is `key[0] is _target_ship`.
+        # `_mount_key`'s and `_baked_offset`'s attributed flags are
+        # `key[0] is _target_ship`.
         _torp_push(t, h, "_mount_key", t.__dict__.get("_mount_key"))
+        _torp_push(t, h, "_baked_offset", t.__dict__.get("_baked_offset"))
 
 
 def _torp_push_ref(t, h, fid, value, ref) -> None:
@@ -2263,6 +2284,10 @@ def _torp_matches(how, key, want, row) -> bool:
         if not want[0]:
             return got is None
         return got is not None and _hexes(got) == _hexes(want[1:])
+    if how == "b":
+        return (int(want[0]), _hexes(want[1:4]), _hexes(want[4:])) == (
+            row["baked_attributed"], _hexes(row["baked_key"]),
+            _hexes(row["baked"]))
     return (int(want[0]), want[1], _hexes(want[2:])) == (
         row["mount_attributed"], row["mount_sub"],
         _hexes(row["mount_offset"]))

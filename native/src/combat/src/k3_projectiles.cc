@@ -291,6 +291,7 @@ K3Record Walker::guide() {
     switch (g.status) {
         case GuideResult::Status::done:
             if (g.posed_steer) ++c_.posed_steers;
+            if (g.baked_steer) ++c_.baked_steers;
             take(g);
             s_.st = St::ADVANCE;
             return K3Record{};  // no record: the caller carries on
