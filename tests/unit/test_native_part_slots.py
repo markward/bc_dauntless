@@ -323,7 +323,19 @@ def _subsystem_position(bop, sub, monkeypatch):
 
 
 def _subsystem_property(bop, sub, monkeypatch):
-    sub.SetProperty(sub.GetProperty())
+    # Only _property is written (SetProperty(None) returns before the mount
+    # fields): the bump must come from _property itself.
+    p = sub.GetPosition()
+    sub.SetProperty(None)
+    assert physical_parents.property_of(sub) is None
+    q = sub.GetPosition()
+    assert (q.x, q.y, q.z) == (p.x, p.y, p.z)
+
+
+def _property_rename(bop, sub, monkeypatch):
+    prop = physical_parents.property_of(sub)
+    monkeypatch.setattr(prop, "_name", prop._name)    # restored after
+    prop.SetName(str(prop.GetName()) + " renamed")
 
 
 _TRIGGERS = {
@@ -338,6 +350,7 @@ _TRIGGERS = {
     "posed_names_change": _forced_name,
     "subsystem_position": _subsystem_position,
     "subsystem_property": _subsystem_property,
+    "property_rename": _property_rename,
 }
 
 
@@ -388,6 +401,47 @@ def test_slot_resolved_before_model_learned_reads_stale_after(
     assert (row["part_slot"], row["part_gen"]) == (
         names.index(other), _h.combat_part_gen())
     _audit_clean()
+
+
+def test_property_rename_under_preview_reads_stale(scene, monkeypatch):
+    """The SPV preview overlay keys on prop.GetName(): renaming the
+    property changes which part Python resolves, so the slot must read
+    stale, and re-resolving gives Python's new answer."""
+    bop, _galaxy = scene
+    monkeypatch.setattr(part_severance, "_mount_parts", {})
+    _cruise(bop)
+    nc.resolve_stale_part_slots([bop])
+    sub, names = _wing_cannon(bop)
+    prop = physical_parents.property_of(sub)
+    other = names[1 - _row(sub)["part_slot"]]
+    physical_parents.set_preview(LEAF, {str(prop.GetName()): other})
+    nc.resolve_stale_part_slots([bop])
+    previewed = _row(sub)["part_slot"]
+    assert previewed == names.index(other) == _expected_slot(bop, sub)
+    monkeypatch.setattr(prop, "_name", prop._name)    # restored after
+    prop.SetName(str(prop.GetName()) + " renamed")
+    assert _expected_slot(bop, sub) != previewed      # Python's answer moved
+    row = _row(sub)
+    assert row["part_slot"] == previewed
+    assert row["part_gen"] != _h.combat_part_gen()    # ...so the slot is stale
+    nc.resolve_stale_part_slots([bop])
+    row = _row(sub)
+    assert (row["part_slot"], row["part_gen"]) == (
+        _expected_slot(bop, sub), _h.combat_part_gen())
+    _audit_clean()
+
+
+def test_subsystem_moved_to_another_ship_reads_stale(scene):
+    """A subsystem resolved on ship A, then attached to ship B: its slot
+    was computed with A's leaf and names, so it must read stale."""
+    bop, galaxy = scene
+    _cruise(bop)
+    nc.resolve_stale_part_slots([bop, galaxy])
+    sub, _names = _wing_cannon(bop)
+    assert _row(sub)["part_gen"] == _h.combat_part_gen()
+    galaxy.GetPhaserSystem().AddChildSubsystem(sub)
+    assert sub._climb_to_ship() is not bop
+    assert _row(sub)["part_gen"] != _h.combat_part_gen()
 
 
 # ── Mount order ──────────────────────────────────────────────────────────────

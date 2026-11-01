@@ -1404,8 +1404,10 @@ def _mount_order(ship) -> list:
 def push_mount_order(ship) -> None:
     """Push the ship's mount order: a subsystem slot of the ship was written
     (MountSlotField / NativeMountRefField) or a subsystem gained a child
-    (ShipSubsystem.AddChildSubsystem). Its slots are re-resolved at the next
-    step boundary (a new subsystem's slot is unresolved)."""
+    (ShipSubsystem.AddChildSubsystem). Also bumps the part-map generation:
+    the subsystem attached may have come from another ship, and its slot,
+    resolved against THAT ship's leaf and names, must not read fresh here.
+    Its slots are re-resolved at the next step boundary."""
     if not _enabled:
         return
     h = ship.__dict__.get("_nslot")
@@ -1413,6 +1415,7 @@ def push_mount_order(ship) -> None:
         return
     _call(ship, _h.combat_set_mount_order, h, _mount_order(ship))
     _resolved_gen.pop(h, None)
+    bump_part_gen()
 
 
 def push_pulse_params(bank) -> None:

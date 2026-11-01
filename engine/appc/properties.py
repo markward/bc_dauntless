@@ -29,6 +29,10 @@ class TGModelProperty:
 
     def SetName(self, value: str) -> None:
         self._name = value
+        # The SPV preview overlay (physical_parents.explicit_parent) is keyed
+        # by this name: every native part slot reads stale now.
+        from engine.appc import native_combat
+        native_combat.bump_part_gen()
 
     def __bool__(self) -> bool:
         return True
