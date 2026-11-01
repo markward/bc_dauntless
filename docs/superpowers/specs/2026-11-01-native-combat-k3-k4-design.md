@@ -149,4 +149,36 @@ Controller-run, after the code is final: two runs of the 64-ship fight with the 
 
 ## 10. Outcome
 
-*(Filled in after measurement.)*
+Built on branch `perf/native-combat-k3` (base `c6485d10a`); the tip measured is `0c5d58c81`. Default stays OFF (`DAUNTLESS_NATIVE_COMBAT` unset). **Live verification: NOT yet; Mark to test.** The default flip awaits it.
+
+**What shipped.** K3 (torpedo flight: guidance, advance, hit test, lifetime, with ASKs back to Python for the rare cases) is dispatched from `cb.projectiles`; K4 (damage eligibility) replaces `cb.eligibility`; both share one step scan (`step_scan.{h,cc}`). Fallback reasons are `k3_python_reasons` / `k4_python_reasons`; both stand down under `DAUNTLESS_NATIVE_AUDIT=1` (reason `audit`).
+
+**Result (perf register SIG-164, SIG-165; captures C-246, C-247).** 64-ship fight, switch on, Debug, two runs each, per game tick, K2 tip `6418f858f` to K3 tip `0c5d58c81`:
+
+| row | K2 | K3+K4 | change |
+|---|---|---|---|
+| `cb.projectiles` | 0.827 | 0.166 | -80% |
+| `cb.eligibility` | 0.277 | 0.042 | -85% |
+| `sim.combat` | 3.325 | 2.453 | -26% |
+| `sim` | 10.565 | 9.986 | -5.5% (inside SIG-147's spread; not a measured gain) |
+
+Ticks a frame 3.90 to 3.45; Python loop 65.3 to 57.2 ms a frame (tick counts differ, not like for like). Projectiles in flight medians 44/31 (K2) vs 40/53 (K3): the counts overlap. `cb.held_weapons`, `cb.phasers` and `gl.ai` stayed inside spread. `sim.combat` per tick across the three milestones: 4.466 (K1) to 3.325 (K2) to 2.453. Design goal 1 (combat step at most 1 ms a tick) is still **not met**; most of what remains is `cb.held_weapons` (~1.4), whose internal split is not measured. Evidence: Measured (rows), Derived (percentages).
+
+**Fallbacks and coverage** (SIG-165 (3)). Differentials and scene audit run K3/K4 with zero whole-step fallbacks. Headless tpf 1 reaches 183 hits (55 on the bubble), 7 TTL expiries and 57 cross-region hits; the host differential (real hulls) reaches mesh-tier and sphere-tier hits (95/185 at tpf 1). Final test state: 191 combat ctest, 301 pytest across the 18 touched files.
+
+**Switch-off cost.** `TorpedoField` descriptors: ~12 ns plain slot write vs ~56 ns descriptor, ~3 writes per torpedo per tick, ~13 us per tick at 100 torpedoes (Derived; whole-branch review microbench). A switch-off capture after K3 carries this.
+
+**Rulings worth keeping.**
+- A3: the step scan runs once per tick, owned by the host_loop call; K3 reuses it and never scans again (scan serial checked in `begin`).
+- All K3 writes are deferred to DONE; a throw after begin is a protocol error (driver abandons and re-raises, same caveat as K2).
+- Torpedo rows carry an `unrepresentable` bitmask; any set bit, a duplicate torpedo in `_active`, or a dropped-row ref sends the whole step to Python.
+- Task 3's first write was refused by the safety check; Mark approved it and it was redone from the RED state.
+- `isolate_fight_audio` now also resets the crew-handler announce timestamps (`Bridge.*Handlers` `g_fLast*`), which leaked across two-arm differentials and changed an SDK RNG draw order.
+- Mutation testing: bubble-bound, TTL/hit order, tie-break and can_detect mutants are all caught; the bubble bound is only observable by comparing the kernel's own value each tick (the broadphase is conservative by construction).
+
+**Parked for Mark (not done).**
+- `Walker::trace` duplicates K2's `k2_beams.cc` trace; a shared helper was skipped because it touches measured K2 code.
+- No guard for instance-attribute patches on torpedoes (none exist today).
+- A dropped target referent sends the whole step to Python (`stale_ref`); a per-torpedo ASK would be finer.
+- K1 headless differential ships have radius 0, so they never hit (K3's files seed radii).
+- Earlier open items: mission swap never clears `_active`; the hit test checks the end point only (tunnelling); cloak lead-acceleration spike; the `TorpedoScan` docstring's "~1,500 torpedoes" does not match captures (31-110); gameplay hit sounds timed on the wall clock; K1 `can_detect` audit gap under `DAUNTLESS_NATIVE_AUDIT`; SDK `ConditionIncomingTorps` keeps a name-keyed registry across loads (harmless).

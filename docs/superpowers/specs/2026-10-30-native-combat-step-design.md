@@ -358,6 +358,8 @@ before the next starts.
 
 **Note 2026-11-01: phase 2 (K2 beams) is done**, on branch `perf/native-combat-k2` (tip `6418f858f`), default still off. Per game tick, 64-ship fight: `cb.phasers` 1.774 to 0.739 (-58%), `sim.combat` 4.466 to 3.325 (-26%). Details, fallbacks, rulings and known limits: `2026-10-31-native-combat-k2-beams-design.md` §10; signals SIG-162, SIG-163.
 
+**Note 2026-11-01: phase 3 (K3 projectiles + K4 eligibility) is done**, on branch `perf/native-combat-k3` (tip `0c5d58c81`), default still off, not yet live-verified. Per game tick, 64-ship fight: `cb.projectiles` 0.827 to 0.166 (-80%), `cb.eligibility` 0.277 to 0.042 (-85%), `sim.combat` 3.325 to 2.453 (-26%); goal 1 (at most 1 ms a tick) still not met. Details, fallbacks, rulings and parked items: `2026-11-01-native-combat-k3-k4-design.md` §10; signals SIG-164, SIG-165.
+
 ### 9.1 Note, 2026-10-31: phase 1 split into 1a and 1b, and what 1a decided
 
 **The split.** Phase 1 ships in two parts. **1a** (branch `perf/native-combat`,

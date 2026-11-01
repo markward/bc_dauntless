@@ -1,3 +1,5 @@
+> **Implemented 2026-11-01** on branch `perf/native-combat-k3`, tip commit `0c5d58c81`. Outcome, measurements and rulings: `docs/superpowers/specs/2026-11-01-native-combat-k3-k4-design.md` §10. The map below is the pre-build snapshot and is not updated.
+
 > Snapshot map written 2026-11-01 at commit `6418f858f` (branch `perf/native-combat-k2`) for the native combat step (spec `docs/superpowers/specs/2026-10-30-native-combat-step-design.md` §7.3 "K3 — projectiles" and "K4 — eligibility"). It is the input to `docs/superpowers/specs/2026-11-01-native-combat-k3-k4-design.md`. Line numbers drift; re-check them against the code before relying on one. The model for this document is `k2-beams-map.md`. Nothing here was run except a read of the existing cProfile capture (`pstats`).
 
 # K3 projectiles + K4 eligibility — code map
