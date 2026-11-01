@@ -1183,3 +1183,25 @@ def test_host_bindings_test_double_runs_python_step(monkeypatch):
     assert counts.get("k2_records", 0) == 0, counts
     assert counts["k2_python_steps"] == 60, counts
     assert counts["k2_python_step_reasons"]["patched"] == 60, counts
+
+
+def test_forget_rows_forgets_the_seen_classes():
+    """A test-defined ShipClass subclass is non-engine code, so K2 flags it
+    "whole" and every later step runs in Python ("patched"). The conftest's
+    mirror wipe (combat_clear + forget_rows) must forget the classes seen
+    before it, or one such class (tests/host/test_alert_keys.py's _FakeShip)
+    turned the rest of a full suite's native steps into Python steps."""
+    from engine.appc.ships import ShipClass
+
+    class _TestOnlyShip(ShipClass):
+        def GetWorldRotation(self):     # a stood-in name, from a test
+            return ShipClass.GetWorldRotation(self)
+
+    nc.configure(ON)
+    _TestOnlyShip()
+    assert _TestOnlyShip in nc._k2_seen
+    assert not nc._k2_classes_unchanged()
+    _h.combat_clear()
+    nc.forget_rows()
+    assert _TestOnlyShip not in nc._k2_seen
+    assert nc._k2_classes_unchanged()

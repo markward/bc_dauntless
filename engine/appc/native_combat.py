@@ -892,11 +892,18 @@ def forget_rows() -> None:
     its referrers and rescans the registry -- a cascade quadratic in the
     objects earlier tests left alive (minutes in a full suite). The end state
     is the same: every such object takes the Python path. Generations bump on
-    clear, so their finalizers cannot free a later row."""
+    clear, so their finalizers cannot free a later row.
+
+    The classes K2 has seen go too: with no row left, none has been seen. A
+    test-defined class (non-engine code, flagged "whole") kept there sent
+    every later test's K2/K3/K4 steps to Python as "patched"."""
     for obj in list(_registry.values()):
         obj.__dict__.pop("_nslot", None)
     _registry.clear()
     torpedo_table_mark_dirty()
+    _k2_seen.clear()
+    _k2_seen_set.clear()
+    _k2_watch_seen[0] = -1
 
 
 def unregister_handle(h: int) -> None:
