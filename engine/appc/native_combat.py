@@ -58,9 +58,10 @@ _counts = {"native_calls": 0, "fallbacks": 0}
 # K2: `cb.phasers` steps run whole in Python (k2_phasers returned False), by
 # why: "nested" (a K2 session is already open), "instances" (the step's
 # ship_instances is not the session's TrackedInstances), "patched" (a
-# function or class K2 stands in for differs from its snapshot).
+# function or class K2 stands in for differs from its snapshot), "audit"
+# (DAUNTLESS_NATIVE_AUDIT=1: the kernel's can_detect would bypass the audit).
 _k2_steps = {"k2_python_steps": 0}
-_K2_STEP_REASONS = ("nested", "instances", "patched")
+_K2_STEP_REASONS = ("nested", "instances", "patched", "audit")
 _k2_step_reasons = dict.fromkeys(_K2_STEP_REASONS, 0)
 # handle -> object, for resync and the audit. Weak: the row's lifetime is the
 # object's, and its finalizer unregisters the row.
@@ -168,7 +169,7 @@ def counts() -> dict:
     "k2_asks", "k2_python_reasons": {K2Why name: n}, "k2_ask_queries":
     {query: n}} (k2_beams.h), plus "k2_python_steps" (steps run whole in
     Python) and "k2_python_step_reasons" ({"nested", "instances",
-    "patched"}: n)."""
+    "patched", "audit"}: n)."""
     c = dict(_counts)
     c.update(_k2_steps)
     c["k2_python_step_reasons"] = dict(_k2_step_reasons)
@@ -1126,7 +1127,12 @@ def _property_values(prop) -> dict:
 
 
 def _push_extras(obj, h) -> None:
-    for name, v in _flags(obj, h).items():
+    try:
+        flags = _flags(obj, h)
+    except (TypeError, ValueError, OverflowError):
+        _drop(obj)  # has_shields not representable: never leave a stale row
+        return
+    for name, v in flags.items():
         _call(obj, _h.combat_set_i, h, _fid(name), v)
     k = h >> _KIND_SHIFT
     if k == _kind("Property"):
@@ -1399,7 +1405,11 @@ def audit_mirror() -> None:
         except ValueError:
             continue
         name = type(obj).__name__
-        expected = dict(_flags(obj, h))
+        try:
+            expected = dict(_flags(obj, h))
+        except (TypeError, ValueError, OverflowError):
+            _failures.append((name, "has_shields"))
+            continue
         if (h >> _KIND_SHIFT) == _kind("Property"):
             try:
                 expected.update(_property_values(obj))
@@ -2218,11 +2228,16 @@ def _k2_kinds() -> tuple:
 
 
 def _k2_unseen(cls) -> int:
-    """0 when K2 has seen `cls` (an object of it registered or was
-    reclassified, so its row's class flags are its own and _k2_unchanged
-    watches it); else 2 when it is flagged "whole" (_k2_flag), else 1: a
-    class swapped in under a row (`obj.__class__ = ...` without reclassify)
-    left that row's class flags stale."""
+    """0 when K2 has seen `cls` (some object of it registered or was
+    reclassified, so _k2_unchanged watches the class); else 2 when it is
+    flagged "whole" (_k2_flag), else 1: a class swapped in under a row
+    (`obj.__class__ = ...` without reclassify) left that row's class flags
+    stale.
+
+    PER CLASS, not per row: once any object of `cls` has been seen, a row
+    whose object was swapped to `cls` without reclassify reads 0 here and
+    keeps its OLD class's flags, undetected. Swapping a class under a row
+    needs reclassify (the rocks call it: engine/rocks/rock.py)."""
     if cls in _k2_seen_set:
         return 0
     return 2 if _k2_flag(cls)[1] else 1
@@ -2563,6 +2578,11 @@ def _k2_step_fallback(ship_instances):
         return "instances"
     if not _k2_unchanged():
         return "patched"
+    # The audit compares every can_detect's native and Python answers
+    # (sensor_detection._audit_can_detect); the kernel's own can_detect would
+    # bypass it, so the audited step is Python's.
+    if _audit:
+        return "audit"
     return None
 
 

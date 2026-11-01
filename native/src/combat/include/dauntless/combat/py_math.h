@@ -42,9 +42,16 @@ double py_pow(double x, double y);
 // `math.sin(x)` / `math.cos(x)`: libm, each called ALONE. They live in their
 // own translation unit because clang pairs an adjacent sin(x) and cos(x) into
 // one __sincos_stret call, which can round differently from the two libm
-// calls CPython makes (the strip emit point's yaw hit this).
-double py_sin(double x);
-double py_cos(double x);
+// calls CPython makes (the strip emit point's yaw hit this). NOINLINE too:
+// with LTO a separate translation unit is no barrier, and an inlined pair
+// could be re-paired.
+#if defined(_MSC_VER)
+#define DAUNTLESS_PY_MATH_NOINLINE __declspec(noinline)
+#else
+#define DAUNTLESS_PY_MATH_NOINLINE __attribute__((noinline))
+#endif
+DAUNTLESS_PY_MATH_NOINLINE double py_sin(double x);
+DAUNTLESS_PY_MATH_NOINLINE double py_cos(double x);
 
 // `math.dist(a, b)` for 3-D points: CPython 3.11.15's math_dist_impl +
 // vector_norm (Modules/mathmodule.c), ported line for line. NOT

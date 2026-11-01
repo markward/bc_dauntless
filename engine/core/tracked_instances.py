@@ -17,6 +17,11 @@ _MISSING = object()
 
 
 class TrackedInstances(dict):
+    # Unpickling (and copy / deepcopy) fills the dict through __setitem__
+    # BEFORE it restores the instance __dict__: the bumps start from this,
+    # then the pickled version replaces them. Either way an int.
+    version = 0
+
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.version = 0

@@ -656,6 +656,28 @@ TEST(K2, TraceBeforeShieldsBlockAndOnlyWithAimUnit) {
     w.finish();
 }
 
+TEST(K2, BubbleAfterShieldsAskWithTheTargetRowGone) {
+    // The target's row is freed while Python answers the shields_block ASK:
+    // the bubble's "is it a ShipClass" read must fall back (detail::obj
+    // throws invalid_argument, handled by unexpected()), never dereference
+    // a missing row. The bank's body has started (its trace ran), so the
+    // session cannot walk it any further: next() raises.
+    World w;
+    const auto s = w.scene(true);
+    w.m.set_i(s.target, Field::is_ship_class, 0);
+    K2Context ctx;
+    ctx.hooks = w.host.hooks();
+    ctx.view_offsets[w.set] = std::nullopt;
+    w.k.begin({s.ship}, kDt, 10.0, true, 0.0, ctx);
+    ASSERT_EQ(w.brief(w.k.next()), "ASK shields_block");
+    w.m.unregister_row(s.target);
+    K2Answer a;
+    a.flag = true;
+    w.k.answer(a);
+    EXPECT_THROW(w.k.next(), std::logic_error);
+    w.k.abandon();
+}
+
 TEST(K2, InstanceOutcomes) {
     // Absent: the fallback point. Bad (not an InstanceId) and stale: the
     // sphere tier. Live hit: the mesh. No view offset for the set: ASK.

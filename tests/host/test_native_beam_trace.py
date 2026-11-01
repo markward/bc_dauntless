@@ -388,11 +388,72 @@ def test_narrowing_is_pybinds_for_every_value_class(scene):
 # sha256 of _binding_transcript() from the PRE-refactor binary (HEAD
 # cc8fdd4f0, Debug build, this Galaxy.nif and its mesh fix). The digest pins
 # the ray_trace_mesh binding's every output bit, None and raise across the
-# extraction of its body into trace_instance_for_python. A legitimate change
-# to any of those inputs needs a re-record:
-#   DAUNTLESS_RECORD_TRACE_GOLDEN=1 uv run pytest <this file> -k binding -s
+# extraction of its body into trace_instance_for_python. It is only
+# meaningful against the inputs it was recorded on, so the test SKIPS on
+# another build type, another Galaxy.nif or another mesh fix for it
+# (_golden_env_mismatch). A legitimate change to any of those inputs, or to
+# the binding, needs a re-record (RERECORD).
 BINDING_GOLDEN = "565fcc8a1be26dee3afd78c5a5e75fe0bb078ea401ab65d86213268d2374e35c"
 BINDING_GOLDEN_HITS = 520
+# What it was recorded on: CMAKE_BUILD_TYPE of the build the bindings came
+# from, the Galaxy.nif's FNV-1a 64 content hash (the mesh-fix key), and the
+# sha256 of native/assets/mesh_fixes/<that hash>.json (None: no fix file).
+BINDING_GOLDEN_BUILD_TYPE = "Debug"
+BINDING_GOLDEN_GALAXY_FNV = "996af4fb0d158c5b"
+BINDING_GOLDEN_FIX_SHA = (
+    "b4f175b47051e62a6302c1b487fd3a3211f1f621676b97fc8344c3f039a75558")
+RERECORD = (
+    "re-record: DAUNTLESS_RECORD_TRACE_GOLDEN=1 uv run pytest "
+    "tests/host/test_native_beam_trace.py -k binding_unchanged -s, then "
+    "paste the printed BINDING_GOLDEN* values over the ones in this file -- "
+    "only after confirming the change is legitimate (on the binary BEFORE "
+    "a binding change, the new one must still match)")
+
+
+def _golden_env() -> dict:
+    """The recorded inputs as they are now (see BINDING_GOLDEN_*)."""
+    from tools import gen_mesh_fixes
+    build_type = None
+    cache = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(_h.__file__))), "CMakeCache.txt")
+    if os.path.isfile(cache):
+        with open(cache, encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("CMAKE_BUILD_TYPE:"):
+                    build_type = line.split("=", 1)[1].strip()
+    fnv = gen_mesh_fixes.fnv1a64_hex(GALAXY_NIF.read_bytes())
+    fix = os.path.join(str(bc_assets.PROJECT_ROOT), "native", "assets",
+                       "mesh_fixes", fnv + ".json")
+    sha = None
+    if os.path.isfile(fix):
+        with open(fix, "rb") as f:
+            sha = hashlib.sha256(f.read()).hexdigest()
+    return {"build_type": build_type, "galaxy_fnv": fnv, "fix_sha": sha}
+
+
+def _golden_env_mismatch(env) -> str:
+    """Why the recorded digest does not apply to `env`, or ""."""
+    want = {"build_type": BINDING_GOLDEN_BUILD_TYPE,
+            "galaxy_fnv": BINDING_GOLDEN_GALAXY_FNV,
+            "fix_sha": BINDING_GOLDEN_FIX_SHA}
+    diff = ["%s %r (recorded %r)" % (k, env[k], want[k])
+            for k in want if env[k] != want[k]]
+    if not diff:
+        return ""
+    return ("the binding golden was recorded on other inputs: %s; %s"
+            % (", ".join(diff), RERECORD))
+
+
+def test_golden_env_guard_names_the_difference(monkeypatch):
+    env = {"build_type": BINDING_GOLDEN_BUILD_TYPE,
+           "galaxy_fnv": BINDING_GOLDEN_GALAXY_FNV,
+           "fix_sha": BINDING_GOLDEN_FIX_SHA}
+    assert _golden_env_mismatch(env) == ""
+    why = _golden_env_mismatch(dict(env, build_type="Release"))
+    assert "build_type 'Release' (recorded 'Debug')" in why
+    assert "DAUNTLESS_RECORD_TRACE_GOLDEN=1" in why
+    assert "galaxy_fnv" in _golden_env_mismatch(dict(env, galaxy_fnv="0"))
+    assert "fix_sha" in _golden_env_mismatch(dict(env, fix_sha=None))
 
 
 def _binding_transcript(h, iid, stale):
@@ -446,12 +507,23 @@ def _binding_transcript(h, iid, stale):
 
 def test_binding_unchanged(scene):
     s = scene
+    env = _golden_env()
     lines, hits = _binding_transcript(_h, s.iid, s.stale)
     digest = hashlib.sha256("\n".join(lines).encode()).hexdigest()
     if os.environ.get("DAUNTLESS_RECORD_TRACE_GOLDEN"):
-        print(f"\nBINDING_GOLDEN = {digest!r}\nBINDING_GOLDEN_HITS = {hits}")
-    assert hits == BINDING_GOLDEN_HITS
-    assert digest == BINDING_GOLDEN
+        print(f"\nBINDING_GOLDEN = {digest!r}\nBINDING_GOLDEN_HITS = {hits}"
+              f"\nBINDING_GOLDEN_BUILD_TYPE = {env['build_type']!r}"
+              f"\nBINDING_GOLDEN_GALAXY_FNV = {env['galaxy_fnv']!r}"
+              f"\nBINDING_GOLDEN_FIX_SHA = {env['fix_sha']!r}")
+    why = _golden_env_mismatch(env)
+    if why:
+        pytest.skip(why)
+    assert hits == BINDING_GOLDEN_HITS, (
+        "ray_trace_mesh's hit count moved (%d, recorded %d); if the change "
+        "is legitimate, %s" % (hits, BINDING_GOLDEN_HITS, RERECORD))
+    assert digest == BINDING_GOLDEN, (
+        "ray_trace_mesh's transcript moved (an output bit, a None or a "
+        "raise); if the change is legitimate, %s" % RERECORD)
     # The documented outcomes, by name.
     assert lines[-1] == "raise RuntimeError: ray_trace_mesh: invalid InstanceId"
     no_model = _h.create_instance(0)

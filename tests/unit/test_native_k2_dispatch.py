@@ -594,6 +594,31 @@ def test_iids_sent_only_when_their_key_changes(monkeypatch):
             w.close()
 
 
+def test_audit_mode_runs_the_python_step(monkeypatch):
+    """With DAUNTLESS_NATIVE_AUDIT=1 every can_detect is answered by both the
+    native and the Python and compared (sensor_detection._audit_can_detect);
+    the kernel's own native can_detect would bypass that. So under the audit
+    the whole `cb.phasers` step runs in Python (reason "audit"), and the
+    fight still matches."""
+
+    def setup(w, mp):
+        if w.native:
+            nc.configure({"DAUNTLESS_NATIVE_COMBAT": "1",
+                          "DAUNTLESS_NATIVE_AUDIT": "1"})
+            assert nc.audit_enabled()
+
+    def script(w, t):
+        if t == 0:
+            w.ships["Galaxy"].GetPhaserSystem().StartFiring(w.ships["Vorcha"])
+
+    ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, script, 60,
+                              setup=setup)
+    assert _calls(ref, "beam_contact")
+    assert counts.get("k2_records", 0) == 0, counts
+    assert counts["k2_python_steps"] == 60, counts
+    assert counts["k2_python_step_reasons"]["audit"] == 60, counts
+
+
 def test_posed_ship_runs_python(monkeypatch):
     """A Galaxy with a part forced off its NIF pose is handed to Python whole
     (RUN_PYTHON, posed_ship); the Vor'cha firing at it stays native."""

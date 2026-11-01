@@ -132,12 +132,26 @@
 //
 // PINNING (the Python driver's contract; Task 5's run_k2). Python's loop
 // holds strong references in its locals (`ship`, `sys_`, `bank`, `target`);
-// the kernel holds only handles. So for as long as a session runs, the driver
-// must keep alive every ship of the list, each walked ship's phaser system
-// and its children, every bank's `_target`, and every handle a record or an
-// ASK names, and map a handle back through that pin set rather than through
-// the weak registry. Otherwise a row freed mid-walk (weakref.finalize ->
-// unregister) leaves a handle an ASK or bank_step cannot name.
+// the kernel holds only handles. The driver pins LAZILY: the step's ship list
+// keeps the ships alive, and before any NON-PURE Python runs (Python that can
+// drop the last other reference to an object: a StopFiring, a contact's
+// effects, a whole ship's step) the record that triggers it names -- and the
+// driver resolves and pins (_K2Walk.obj, pin_bank) -- the objects Python's
+// locals would hold at that point:
+//   - SYSTEM_STOP: the system, before its StopFiring;
+//   - BANK_STOP: the bank, its `_target` and its system (pin_bank), before
+//     the bank's StopFiring;
+//   - CONTACT: the bank, the target, the ship and the system, before the
+//     contact's effects;
+//   - the bank_step ASK: the ship and the system, before _phaser_step_bank;
+//   - RUN_PYTHON names its ship by list index (the list holds it).
+// The other ASKs (is_dead, can_detect, aim_point, shields_block, bubble,
+// resolve_hit) run only pure Python: nothing they run can free a row, so they
+// pin only what they name. A handle is mapped back through that pin set, then
+// the weak registry. A NEW record kind (or ASK) that runs non-pure Python
+// must name every object Python's locals would hold there, or a row freed
+// mid-walk (weakref.finalize -> unregister) leaves a handle a later record
+// or ASK cannot name.
 //
 // A THROW from next() (a protocol error, or the invariant above) undoes the
 // field writes it made but never returned, in the mirror, and restores the
@@ -207,7 +221,9 @@
 //     outside the engine package (a mod's subclass, a test's patch) or to
 //     anything other than what it resolved to when the driver first saw it
 //     -- unless it is a bank or phaser system class overriding only its own
-//     (non-subsystem) names, which sends only its ship to Python.
+//     (non-subsystem) names, which sends only its ship to Python;
+//   - the native audit is on (DAUNTLESS_NATIVE_AUDIT=1): the kernel's own
+//     can_detect would bypass sensor_detection's per-call audit.
 // It lists a ship in `python_ships` (RUN_PYTHON "overridden") when its bank
 // or system class overrides one of its own names, or it has an INSTANCE
 // attribute shadowing a method the loop calls on it by name:
@@ -219,10 +235,14 @@
 //   a bank: IsFiring, IsBeamOn, take_dwell, accumulate_dwell,
 //     _strip_emit_position, _emitter_world_position, GetLength.
 // It also lists the ship when the ship's own class, or the class of a bank's
-// `_target`, is one K2 never saw (no object of it registered or was
-// reclassified: a `__class__` swapped in under a row leaves the row's class
-// flags stale), and runs the whole step in Python when that class is flagged
-// "whole" (native_combat._k2_unseen).
+// `_target`, is one K2 never saw (no object of that class ever registered or
+// was reclassified), and runs the whole step in Python when that class is
+// flagged "whole" (native_combat._k2_unseen). The check is PER CLASS, not per
+// row: it catches a `__class__` swapped in under a row only while no object
+// of the new class has been seen. Once one has, a row whose object's class
+// was swapped to that class WITHOUT reclassify keeps its old class flags,
+// undetected. Code that swaps a class under a row must call reclassify (the
+// rocks do: engine/rocks/rock.py).
 // An instance attribute on a TARGET is not looked for. No ENGINE class may
 // override a stood-in name unless the kernel ports it: the static guard
 // tests/unit/test_native_k2_override_guard.py lists the ported ones.

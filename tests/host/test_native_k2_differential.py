@@ -215,7 +215,14 @@ class _Tally:
         if kind == "BANK_STOP":
             self.last_stop = rec[1]
             if self.scene.killed_at == self.scene.tick:
-                self.bump("stop_after_kill")
+                # A stop of a bank on the KILLED ship (read before Python's
+                # StopFiring clears it), not any stop in the kill's tick.
+                bank = nc._registry.get(rec[1])
+                target = bank.__dict__.get("_target") if bank else None
+                if (target is not None
+                        and target.GetName() == KILL_TARGET
+                        and target.IsDead()):
+                    self.bump("stop_after_kill")
             return rec
         if kind == "ASK":
             return rec

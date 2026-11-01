@@ -14,6 +14,8 @@
 
 #include "dauntless/combat/beam_geometry.h"
 #include "dauntless/combat/mirror.h"
+#include "dauntless/combat/sensor_detect.h"
+#include "dauntless/combat/sensor_state.h"
 #include "dauntless/transform_store.h"
 
 using namespace dauntless::combat;
@@ -92,6 +94,29 @@ TEST(BeamGeometry, StripLengthZeroOrNegativeReturnsCentre) {
     w.m.set_f(bank, Field::_length, kNan);
     EXPECT_TRUE(std::isnan(
         strip_emit_position(w.m, bank, {1.0, 2.0, 3.0}, false)[1]));
+}
+
+TEST(BeamGeometry, StripMemoisesTheCentreLikeTheStepMemo) {
+    // use_memo (step_memo.active()): the centre is _emitter_world_position,
+    // memoised by (bank, None) as subsystems._mounts is, so inside a step a
+    // ship moved after the first call still emits from the OLD centre (as
+    // the Python does); without the memo, or once it is cleared, the new.
+    World w;
+    const int64_t ship = w.ship(0.0, 0.0, 0.0);
+    const int64_t bank = w.bank(ship, 2.0);
+    const Vec3 first = strip_emit_position(w.m, bank, {0.0, 100.0, 0.0}, true);
+    EXPECT_EQ(first, (Vec3{0.0, 2.0, 0.0}));
+    EXPECT_EQ(w.m.sensor_state().mounts.count({bank, -1}), 1u);
+    const auto* row = w.m.object(ship);
+    w.store.set_position(static_cast<uint32_t>(row->xform_index),
+                         static_cast<uint32_t>(row->xform_gen), 10.0, 0.0,
+                         0.0);
+    EXPECT_EQ(strip_emit_position(w.m, bank, {0.0, 100.0, 0.0}, true), first);
+    // Live: the centre 10 GU along +x (and so another yaw).
+    const Vec3 live = strip_emit_position(w.m, bank, {0.0, 100.0, 0.0}, false);
+    EXPECT_GT(live[0], 9.0);
+    memo_clear(w.m);
+    EXPECT_EQ(strip_emit_position(w.m, bank, {0.0, 100.0, 0.0}, true), live);
 }
 
 TEST(BeamGeometry, DwellFlushesOnlyWhenBeamOnAndPastThreshold) {
@@ -218,6 +243,25 @@ TEST(BeamGeometry, BubbleEntryAndTheNanPoint) {
     // No box set at all.
     w.m.set_i(s, Field::hull_box_set, 0);
     EXPECT_FALSE(shield_bubble_entry(w.m, s, {0.0, 100.0, 0.0}, down, 1000.0));
+}
+
+TEST(BeamGeometry, BubbleZeroSemiAxisByUnderflowFallsBack) {
+    // A raw half-extent > 0 passes _hull_box_for, but half * scale * k can
+    // underflow to 0: Python's division then raises ZeroDivisionError, so
+    // the native answer must fall back (invalid_argument: Python answers).
+    World w;
+    const int64_t s = w.ship(0.0, 0.0, 0.0);
+    w.m.set_fv(s, Field::_shield_hull_box_center, {0.0, 0.0, 0.0});
+    w.m.set_fv(s, Field::_shield_hull_box_half, {1.0, 1e-300, 1.0});
+    w.m.set_i(s, Field::hull_box_set, 1);
+    w.m.set_f(s, Field::_scale, 1e-30);
+    EXPECT_THROW(shield_bubble_entry(w.m, s, {0.0, 100.0, 0.0},
+                                     {0.0, -1.0, 0.0}, 1000.0),
+                 std::invalid_argument);
+    // No underflow at scale 1: an answer.
+    w.m.set_f(s, Field::_scale, 1.0);
+    EXPECT_NO_THROW(shield_bubble_entry(w.m, s, {0.0, 100.0, 0.0},
+                                        {0.0, -1.0, 0.0}, 1000.0));
 }
 
 TEST(BeamGeometry, AimPointUsesTheLocksOwnShip) {

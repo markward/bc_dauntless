@@ -696,7 +696,9 @@ K2Record Walker::run() {
                     const std::vector<K2Arg> args{s_.target, s_.emitter,
                                                   *s_.aim_unit, s_.dist * 1.5};
                     // _hull_box_for of anything but a ShipClass is Python's.
-                    if (!objrow(s_.target)->is_ship_class)
+                    // detail::obj: the row may have gone while Python
+                    // answered the shields_block ASK (unexpected()).
+                    if (!detail::obj(m_, s_.target).is_ship_class)
                         return ask(K2Query::bubble, args, St::BUBBLE_ANSWER);
                     try {
                         s_.bubble = shield_bubble_entry(

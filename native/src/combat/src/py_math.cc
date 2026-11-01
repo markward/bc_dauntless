@@ -115,10 +115,10 @@ double py_pow(double x, double y) {
     return std::pow(x, exponent);
 }
 
-// Each in its own out-of-line function: the call sites cannot be paired into
-// a __sincos_stret (py_math.h).
-double py_sin(double x) { return std::sin(x); }
-double py_cos(double x) { return std::cos(x); }
+// Each in its own out-of-line, never-inlined function: the call sites cannot
+// be paired into a __sincos_stret, not even under LTO (py_math.h).
+DAUNTLESS_PY_MATH_NOINLINE double py_sin(double x) { return std::sin(x); }
+DAUNTLESS_PY_MATH_NOINLINE double py_cos(double x) { return std::cos(x); }
 
 // CPython 3.11.15 Modules/mathmodule.c `math_dist_impl`, the loop and the
 // vector_norm call, for two 3-tuples of floats.

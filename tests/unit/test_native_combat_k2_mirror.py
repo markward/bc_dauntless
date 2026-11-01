@@ -238,6 +238,29 @@ def test_set_max_shields_pushes_has_shields(arena):
     assert nc.audit_failures() == [], nc.audit_failures()
 
 
+def test_unrepresentable_has_shields_at_row_build_drops_the_row():
+    """A row built (here: resync when native comes on) for a shield
+    generator whose HasShields() answers something int() rejects is dropped
+    -- the Python path from then on -- as push_has_shields does, rather than
+    the build raising."""
+    from engine.appc.subsystems import ShieldSubsystem
+
+    class OddShields(ShieldSubsystem):
+        def HasShields(self):
+            return "yes"
+
+    odd = OddShields("odd")
+    odd.SetMaxShields(0, 3.0)
+    good = ShieldSubsystem("good")
+    good.SetMaxShields(0, 3.0)
+    nc.configure(ON)
+    assert nc.enabled()
+    assert "_nslot" not in odd.__dict__
+    assert _dump(good)["has_shields"] == 1
+    nc.audit_mirror()
+    assert nc.audit_failures() == [], nc.audit_failures()
+
+
 def test_tracked_instances_version_bumps():
     from engine.core.tracked_instances import TrackedInstances
     t = TrackedInstances()
@@ -278,6 +301,26 @@ def test_tracked_instances_version_bumps():
     t["x"] = 9
     assert dict(t) == {"x": 9} and t.get("x") == 9 and "x" in t and len(t) == 1
     assert list(t.items()) == [("x", 9)] and t == {"x": 9}
+
+
+def test_tracked_instances_survive_pickle_and_copy():
+    """Unpickling (and copy / deepcopy, the same reduce path) fills the
+    dict through __setitem__ BEFORE the instance __dict__ (and so
+    `version`) is restored: the copy must come back an int version that
+    still moves on the next mutation."""
+    import copy
+    import pickle
+    from engine.core.tracked_instances import TrackedInstances
+    t = TrackedInstances({"a": 1, "b": 2})
+    t["c"] = 3
+    for clone in (pickle.loads(pickle.dumps(t)), copy.copy(t),
+                  copy.deepcopy(t)):
+        assert type(clone) is TrackedInstances
+        assert dict(clone) == {"a": 1, "b": 2, "c": 3}
+        assert isinstance(clone.version, int)
+        v = clone.version
+        clone["d"] = 4
+        assert clone.version > v
 
 
 def test_session_ship_instances_is_tracked():

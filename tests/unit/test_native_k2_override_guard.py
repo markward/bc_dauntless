@@ -78,14 +78,20 @@ ALLOWED = {
 
 
 def _import_engine():
+    """Import every engine.appc / engine.rocks module, so every engine
+    class exists to be enumerated. A module that fails to import would hide
+    its classes from the guard: the failures are asserted empty."""
     import engine.appc
     import engine.rocks
+    failures = []
     for pkg in (engine.appc, engine.rocks):
         for info in pkgutil.iter_modules(pkg.__path__):
+            name = pkg.__name__ + "." + info.name
             try:
-                importlib.import_module(pkg.__name__ + "." + info.name)
-            except Exception:  # noqa: BLE001 - "currently importable" only
-                pass
+                importlib.import_module(name)
+            except Exception as e:  # noqa: BLE001 - collected, asserted
+                failures.append((name, repr(e)))
+    assert failures == [], failures
 
 
 def _stock(module, name):
