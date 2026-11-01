@@ -26,7 +26,7 @@ The two halves run **pipelined, one tick apart**: AI reviews last tick's combat 
 | 1b (K1) | `perf/native-combat-1b` | fire control (held weapons) | live-verified (~30 fps, 33 ships) |
 | K2 | `perf/native-combat-k2` | phaser beams | live-verified 2026-11-01 |
 | K3+K4 | `perf/native-combat-k3` | torpedo flight + damage eligibility | live-verified 2026-11-01; full gate green |
-| Posed parts (C) | `ws/combat-posed-parts` | posed ships/targets and Manual Aim on them, in K1/K2/K3 | built 2026-11-01, differentials green, not live-verified; merged into `project/combat_threading` |
+| Posed parts (C) | `ws/combat-posed-parts` | posed ships/targets and Manual Aim on them, in K1/K2/K3 | built 2026-11-01, differentials green, live-verified by Mark 2026-11-01; merged into `project/combat_threading` |
 | Round trips (C) | `ws/combat-round-trips` | walk starts, beam sustains, idle bank stops, offline system stops as native/logged writes; resting contacts batched; K3 steer attribution | built 2026-11-01, differentials green, not live-verified; merges into `project/combat_threading` |
 
 All are behind `DAUNTLESS_NATIVE_COMBAT=1`, default OFF, unmerged.
