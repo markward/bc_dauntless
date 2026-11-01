@@ -751,8 +751,10 @@ K2Kernel::~K2Kernel() = default;
 void K2Kernel::clear() { session_.reset(); }
 
 void K2Kernel::begin(std::vector<int64_t> ships, double dt, double now,
-                     bool use_memo, double drift_now, K2Context ctx) {
+                     bool use_memo, double drift_now, K2Context ctx,
+                     bool keep_iids) {
     if (session_) lost("a session is already open");
+    if (keep_iids) ctx.iids = std::move(ctx_.iids);
     auto s = std::make_unique<Session>();
     s->ships = std::make_shared<const std::vector<int64_t>>(std::move(ships));
     s->dt = dt;

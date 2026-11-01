@@ -3512,6 +3512,211 @@ BodyFramePoint to_body_frame(const scenegraph::Instance& inst,
 }
 }  // namespace
 
+namespace {
+
+// ── combat_k2_scan_ships ─────────────────────────────────────────────────────
+// The K2 driver's per-ship, per-bank clean check before begin
+// (native_combat._k2_ship_handles), a C loop over the instance dicts: it runs
+// every tick over every bank. Raw CPython calls only, so it stays cheap in a
+// Debug build too.
+//
+// Returns (handles, unclean). Each ship's handle is its __dict__["_nslot"]
+// when that is an Object handle (`(h >> kind_shift) == obj_kind`), else -1
+// (no row, never checked). A ship with a row is CLEAN when its class is in
+// `seen`, its dict holds none of `ship_patches`, and, when it has a
+// "_phaser_system" that is not None, that system's class is exactly
+// `stock_system` and its dict holds none of `system_patches`, and every bank
+// in its "_children" has exactly `stock_bank` as class, holds none of
+// `bank_patches`, and has a "_target" that is None or of a class in `seen`.
+// Every other ship is in `unclean` as (ship, handle), in order, for
+// _k2_python_ship to decide. Anything unexpected (no __dict__, a non-dict
+// one, a "_children" that is not a sequence) is "not clean": the Python check
+// is the authority, this is its fast path.
+
+// The object's instance dict, borrowed, or nullptr (no error set) when it
+// has none. The materialized dict the Python driver's `obj.__dict__` reads.
+PyObject* k2_dict_of(PyObject* o) {
+    PyObject** dp = _PyObject_GetDictPtr(o);
+    if (dp == nullptr) return nullptr;
+    PyObject* d = *dp;
+    return (d != nullptr && PyDict_CheckExact(d)) ? d : nullptr;
+}
+
+// 1: `d` holds one of names[0..n); 0: none; -1: error.
+int k2_holds(PyObject* d, PyObject* const* names, Py_ssize_t n) {
+    for (Py_ssize_t i = 0; i < n; ++i) {
+        const int r = PyDict_Contains(d, names[i]);
+        if (r != 0) return r;
+    }
+    return 0;
+}
+
+// 1: type(o) is in `seen`; 0: not; -1: error.
+int k2_in_seen(PyObject* seen, PyObject* o) {
+    PyObject* t = reinterpret_cast<PyObject*>(Py_TYPE(o));
+    return PyAnySet_Check(seen) ? PySet_Contains(seen, t)
+                                : PySequence_Contains(seen, t);
+}
+
+struct K2ScanNames {
+    PyObject* nslot;
+    PyObject* system;
+    PyObject* children;
+    PyObject* target;
+};
+
+const K2ScanNames& k2_scan_names() {
+    static const K2ScanNames n{PyUnicode_InternFromString("_nslot"),
+                               PyUnicode_InternFromString("_phaser_system"),
+                               PyUnicode_InternFromString("_children"),
+                               PyUnicode_InternFromString("_target")};
+    return n;
+}
+
+// 1 clean, 0 not, -1 error: the phaser system `sys` and its banks.
+int k2_clean_system(PyObject* sys, PyObject* seen, PyObject* stock_system,
+                    PyObject* stock_bank, PyObject* sys_names,
+                    PyObject* bank_names) {
+    if (reinterpret_cast<PyObject*>(Py_TYPE(sys)) != stock_system) return 0;
+    PyObject* sd = k2_dict_of(sys);
+    if (sd == nullptr) return 0;
+    int r = k2_holds(sd, PySequence_Fast_ITEMS(sys_names),
+                     PySequence_Fast_GET_SIZE(sys_names));
+    if (r != 0) return r < 0 ? -1 : 0;
+    PyObject* kids = PyDict_GetItemWithError(sd, k2_scan_names().children);
+    if (kids == nullptr) return PyErr_Occurred() ? -1 : 1;
+    PyObject* seq = PySequence_Fast(kids, "");
+    if (seq == nullptr) {
+        PyErr_Clear();
+        return 0;
+    }
+    PyObject* const* banks = PySequence_Fast_ITEMS(seq);
+    const Py_ssize_t nbanks = PySequence_Fast_GET_SIZE(seq);
+    PyObject* const* bn = PySequence_Fast_ITEMS(bank_names);
+    const Py_ssize_t nbn = PySequence_Fast_GET_SIZE(bank_names);
+    PyObject* target_key = k2_scan_names().target;
+    int clean = 1;
+    for (Py_ssize_t i = 0; i < nbanks && clean == 1; ++i) {
+        PyObject* b = banks[i];
+        if (reinterpret_cast<PyObject*>(Py_TYPE(b)) != stock_bank) {
+            clean = 0;
+            break;
+        }
+        PyObject* bd = k2_dict_of(b);
+        if (bd == nullptr) {
+            clean = 0;
+            break;
+        }
+        r = k2_holds(bd, bn, nbn);
+        if (r != 0) {
+            clean = r < 0 ? -1 : 0;
+            break;
+        }
+        PyObject* target = PyDict_GetItemWithError(bd, target_key);
+        if (target == nullptr) {
+            if (PyErr_Occurred()) clean = -1;
+            continue;
+        }
+        if (target == Py_None) continue;
+        r = k2_in_seen(seen, target);
+        if (r != 1) clean = r < 0 ? -1 : 0;
+    }
+    Py_DECREF(seq);
+    return clean;
+}
+
+// Is `h` an Object handle: Python's `(h >> kind_shift) == obj_kind`.
+// 1 yes, 0 no, -1 error.
+int k2_is_object_handle(PyObject* h, PyObject* obj_kind,
+                        PyObject* kind_shift) {
+    PyObject* s = PyNumber_Rshift(h, kind_shift);
+    if (s == nullptr) return -1;
+    const int eq = PyObject_RichCompareBool(s, obj_kind, Py_EQ);
+    Py_DECREF(s);
+    return eq;
+}
+
+PyObject* k2_scan_ships(PyObject* ships, PyObject* obj_kind,
+                        PyObject* kind_shift, PyObject* seen,
+                        PyObject* stock_system, PyObject* stock_bank,
+                        PyObject* ship_patches, PyObject* system_patches,
+                        PyObject* bank_patches) {
+    const K2ScanNames& names = k2_scan_names();
+    PyObject* ship_n = PySequence_List(ship_patches);
+    PyObject* sys_n = PySequence_List(system_patches);
+    PyObject* bank_n = PySequence_List(bank_patches);
+    PyObject* seq = PySequence_Fast(ships, "ships must be iterable");
+    PyObject* handles = seq ? PyList_New(PySequence_Fast_GET_SIZE(seq))
+                            : nullptr;
+    PyObject* unclean = PyList_New(0);
+    PyObject* none_ref = PyLong_FromLong(-1);
+    PyObject* result = nullptr;
+    if (ship_n && sys_n && bank_n && seq && handles && unclean && none_ref) {
+        const Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
+        PyObject* const* items = PySequence_Fast_ITEMS(seq);
+        bool failed = false;
+        for (Py_ssize_t i = 0; i < n && !failed; ++i) {
+            PyObject* ship = items[i];
+            PyObject* d = k2_dict_of(ship);
+            PyObject* h = d ? PyDict_GetItemWithError(d, names.nslot) : nullptr;
+            if (h == nullptr && PyErr_Occurred()) {
+                failed = true;
+                break;
+            }
+            int obj = 0;
+            if (h != nullptr && h != Py_None) {
+                obj = k2_is_object_handle(h, obj_kind, kind_shift);
+                if (obj < 0) {
+                    failed = true;
+                    break;
+                }
+            }
+            if (obj == 0) {
+                Py_INCREF(none_ref);
+                PyList_SET_ITEM(handles, i, none_ref);
+                continue;
+            }
+            Py_INCREF(h);
+            PyList_SET_ITEM(handles, i, h);
+            int clean = k2_in_seen(seen, ship);
+            if (clean == 1) {
+                const int r = k2_holds(d, PySequence_Fast_ITEMS(ship_n),
+                                       PySequence_Fast_GET_SIZE(ship_n));
+                clean = r != 0 ? (r < 0 ? -1 : 0) : 1;
+            }
+            if (clean == 1) {
+                PyObject* sys = PyDict_GetItemWithError(d, names.system);
+                if (sys == nullptr && PyErr_Occurred())
+                    clean = -1;
+                else if (sys != nullptr && sys != Py_None)
+                    clean = k2_clean_system(sys, seen, stock_system,
+                                            stock_bank, sys_n, bank_n);
+            }
+            if (clean < 0) {
+                failed = true;
+                break;
+            }
+            if (clean == 0) {
+                PyObject* pair = PyTuple_Pack(2, ship, h);
+                if (pair == nullptr || PyList_Append(unclean, pair) < 0)
+                    failed = true;
+                Py_XDECREF(pair);
+            }
+        }
+        if (!failed) result = PyTuple_Pack(2, handles, unclean);
+    }
+    Py_XDECREF(none_ref);
+    Py_XDECREF(unclean);
+    Py_XDECREF(handles);
+    Py_XDECREF(seq);
+    Py_XDECREF(bank_n);
+    Py_XDECREF(sys_n);
+    Py_XDECREF(ship_n);
+    return result;
+}
+
+}  // namespace
+
 PYBIND11_MODULE(_dauntless_host, m) {
     m.doc() = "dauntless renderer + sim host bindings";
 
@@ -9987,7 +10192,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
         //   (RUN_PYTHON, ship, ship_pos, writes)
         //   (ASK, query, *args, writes)    -> reply combat_k2_answer
         // The context dict (combat_k2_begin: every key optional, defaults
-        // below; combat_k2_set_ctx: only the keys given are replaced):
+        // below, except that a begin without "iids" keeps the previous
+        // session's table; combat_k2_set_ctx: only the keys given are
+        // replaced):
         //   "npc_shields_off": bool (False)
         //   "player": Object handle or -1 (-1)
         //   "view_offsets": {Set handle: (x, y, z) or None} ({})
@@ -10049,8 +10256,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   cb::K2Context c;
                   c.hooks = cb::installed_trace_hooks();
                   k2_apply_ctx(c, ctx);
+                  // No "iids": the last session's table stands (the driver
+                  // sends it only when its key changed).
                   cb::k2_kernel().begin(std::move(ships), dt, now, use_memo,
-                                        drift_now, std::move(c));
+                                        drift_now, std::move(c),
+                                        !ctx.contains("iids"));
               },
               py::arg("ship_handles"), py::arg("dt"), py::arg("now"),
               py::arg("use_memo"), py::arg("drift_now"), py::arg("ctx"),
@@ -10065,6 +10275,25 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   cb::k2_kernel().set_context(std::move(c));
               },
               py::arg("ctx"), "Replace the given context keys (on resume).");
+        // The driver's per-ship, per-bank clean check (k2_scan_ships).
+        m.def("combat_k2_scan_ships",
+              [](py::handle ships, py::handle obj_kind, py::handle kind_shift,
+                 py::handle seen, py::handle stock_system,
+                 py::handle stock_bank, py::handle ship_patches,
+                 py::handle system_patches, py::handle bank_patches) {
+                  PyObject* r = k2_scan_ships(
+                      ships.ptr(), obj_kind.ptr(), kind_shift.ptr(),
+                      seen.ptr(), stock_system.ptr(), stock_bank.ptr(),
+                      ship_patches.ptr(), system_patches.ptr(),
+                      bank_patches.ptr());
+                  if (r == nullptr) throw py::error_already_set();
+                  return py::reinterpret_steal<py::tuple>(r);
+              },
+              py::arg("ships"), py::arg("obj_kind"), py::arg("kind_shift"),
+              py::arg("seen"), py::arg("stock_system"), py::arg("stock_bank"),
+              py::arg("ship_patches"), py::arg("system_patches"),
+              py::arg("bank_patches"),
+              "(handles, [(ship, handle), ...]): see k2_scan_ships.");
         m.def("combat_k2_next", [vec] {
             // The GIL is HELD for the walk (ruling J), as combat_k1_next:
             // the kernel and the trace hooks touch no Python object.

@@ -153,7 +153,10 @@
 // THE CONTEXT (K2Context): per-step Python state that is not mirrored. Set
 // whole at begin and partly by set_context (combat_k2_set_ctx), which the
 // driver re-sends after an effect whenever the player, the cheat flag, the
-// viewing set or `ship_instances.version` changed.
+// viewing set or `ship_instances.version` changed. The one exception is
+// `iids`: it outlives the session, and the driver sends it (at begin or
+// set_context) only when its key -- the map, its version, the drop epoch --
+// changed since it last did (a begin without it keeps the table).
 //
 // WHAT THE DRIVER CHECKS BEFORE begin (engine/appc/native_combat.py,
 // k2_phasers; Task 5). The kernel computes, from the mirror, what these
@@ -346,8 +349,11 @@ public:
     // the nebula drift clock, exactly as K1 passes them to can_detect
     // (weapon_subsystems._game_time() / native_combat.now()); `use_memo` is
     // step_memo.active(). Throws std::logic_error if a session is open.
+    // `keep_iids`: ctx.iids is replaced by the previous context's table (the
+    // driver sends the table only when its key changed since it last did).
     void begin(std::vector<int64_t> ships, double dt, double now,
-               bool use_memo, double drift_now, K2Context ctx);
+               bool use_memo, double drift_now, K2Context ctx,
+               bool keep_iids = false);
     // Replace the context (combat_k2_set_ctx re-sends the changed parts).
     void set_context(K2Context ctx);
     const K2Context& context() const { return ctx_; }

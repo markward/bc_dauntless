@@ -720,6 +720,42 @@ TEST(K2, InstanceOutcomes) {
     w.finish();
 }
 
+TEST(K2, BeginKeepsTheIidsWhenAsked) {
+    // The driver sends the ship -> instance table only when it changed: a
+    // begin told to keep it carries the last session's table over (and
+    // replaces everything else); a plain begin takes the context as given.
+    World w;
+    const auto s = w.scene(true);
+    w.host.hit = TraceHit{{0.0f, 48.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 48.0f};
+    auto ctx = [&w] {
+        K2Context c;
+        c.hooks = w.host.hooks();
+        c.view_offsets[w.set] = std::nullopt;
+        return c;
+    };
+    K2Context first = ctx();
+    first.iids[s.target] = K2Context::Iid{false, {1, 1}};
+    w.k.begin({s.ship}, kDt, 10.0, true, 0.0, first);
+    ASSERT_EQ(w.k.next().contact.hit.tier, ResolvedHit::Tier::Mesh);
+    w.finish();
+    // Kept: still the mesh, though this context names no instance.
+    w.k.begin({s.ship}, kDt, 10.0, true, 0.0, ctx(), /*keep_iids=*/true);
+    EXPECT_EQ(w.k.context().iids.size(), 1u);
+    ASSERT_EQ(w.k.next().contact.hit.tier, ResolvedHit::Tier::Mesh);
+    w.finish();
+    // Not kept: no instance, the fallback point.
+    w.k.begin({s.ship}, kDt, 10.0, true, 0.0, ctx());
+    EXPECT_TRUE(w.k.context().iids.empty());
+    ASSERT_EQ(w.k.next().contact.hit.tier, ResolvedHit::Tier::Fallback);
+    w.finish();
+    // A begin refused (a session is open) keeps nothing away from it.
+    w.k.begin({s.ship}, kDt, 10.0, true, 0.0, first);
+    EXPECT_THROW(w.k.begin({s.ship}, kDt, 10.0, true, 0.0, ctx(), true),
+                 std::logic_error);
+    EXPECT_EQ(w.k.context().iids.size(), 1u);
+    w.finish();
+}
+
 TEST(K2, CanDetectThrowAsks) {
     // The native can_detect cannot answer (an unnamed sensor ref): Python's
     // own fallback answers.

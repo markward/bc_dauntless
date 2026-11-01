@@ -535,6 +535,65 @@ def test_instances_resent_after_mutation(monkeypatch):
     assert counts["k2_ask_queries"]["resolve_hit"] == 0, counts
 
 
+def test_iids_sent_only_when_their_key_changes(monkeypatch):
+    """The kernel keeps the ship -> instance table across steps: a begin
+    sends "iids" only when the table's key (the map, its version, the drop
+    epoch) changed since it was last sent. Unchanged: no "iids" at all (the
+    binding rebuilt its map every begin). A mutation (version), a dropped
+    row (drop epoch), another map or no map at all: sent again. The fight's
+    results are the differential's to compare; this pins the traffic."""
+    sent = []
+    begin, set_ctx = _h.combat_k2_begin, _h.combat_k2_set_ctx
+
+    def begin_spy(handles, dt, now, use_memo, drift, ctx):
+        sent.append(("begin", ctx.get("iids")))
+        return begin(handles, dt, now, use_memo, drift, ctx)
+
+    def set_ctx_spy(ctx):
+        if "iids" in ctx:
+            sent.append(("set_ctx", ctx["iids"]))
+        return set_ctx(ctx)
+
+    with monkeypatch.context() as mp:
+        w = World(mp, True, GALAXY_VORCHA, "k2_iids", instances=_tracked)
+        mp.setattr(_h, "combat_k2_begin", begin_spy)
+        mp.setattr(_h, "combat_k2_set_ctx", set_ctx_spy)
+        try:
+            vorcha = w.ships["Vorcha"]
+            w.ships["Galaxy"].GetPhaserSystem().StartFiring(vorcha)
+            for _ in range(3):
+                w.tick()
+            first = sent[0][1]
+            assert sent[0][0] == "begin" and len(first) == 1, sent
+            assert list(first.values()) == [w.instances[vorcha]], first
+            assert sent[1:] == [("begin", None)] * 2, sent
+            # A mutation between steps: the next begin sends the new table.
+            del sent[:]
+            w.instances[vorcha] = _h.InstanceId()
+            w.tick()
+            w.tick()
+            assert [k for k, _ in sent] == ["begin", "begin"], sent
+            assert sent[0][1] is not None and sent[1][1] is None, sent
+            # A dropped row (the drop epoch): sent again.
+            del sent[:]
+            nc._drop(w.ships["Galaxy"].GetPhaserSystem().GetWeapon(0))
+            w.tick()
+            assert sent and sent[0][1] is not None, sent
+            # Another map, then none: each sent once.
+            del sent[:]
+            w.instances = TrackedInstances({vorcha: _h.InstanceId()})
+            w.tick()
+            w.tick()
+            assert sent[0][1] is not None and sent[1][1] is None, sent
+            del sent[:]
+            w.instances = None
+            w.tick()
+            w.tick()
+            assert sent == [("begin", {}), ("begin", None)], sent
+        finally:
+            w.close()
+
+
 def test_posed_ship_runs_python(monkeypatch):
     """A Galaxy with a part forced off its NIF pose is handed to Python whole
     (RUN_PYTHON, posed_ship); the Vor'cha firing at it stays native."""
@@ -851,6 +910,105 @@ def test_instance_patch_sends_its_ship_to_python(monkeypatch):
         counts = _one_native_step(monkeypatch, patch)
         assert counts["k2_records"] > 0, (owner, counts)
         assert counts["k2_python_reasons"]["overridden"] == 1, (owner, counts)
+
+
+def _py_clean(ship):
+    """The per-ship clean check as the Python driver made it before it moved
+    into the binding (combat_k2_scan_ships): the reference."""
+    d = ship.__dict__
+    seen = nc._k2_seen_set
+    sys_ = d.get("_phaser_system")
+    clean = type(ship) in seen and d.keys().isdisjoint(nc._K2_SHIP_PATCHES)
+    if clean and sys_ is not None:
+        if type(sys_) is nc._k2_stock_system:
+            sd = sys_.__dict__
+            clean = sd.keys().isdisjoint(nc._K2_SYSTEM_PATCHES)
+            if clean:
+                for b in sd.get("_children", ()):
+                    if type(b) is not nc._k2_stock_bank:
+                        return False
+                    bd = b.__dict__
+                    target = bd.get("_target")
+                    if not bd.keys().isdisjoint(nc._K2_BANK_PATCHES) or (
+                            target is not None
+                            and type(target) not in seen):
+                        return False
+        else:
+            clean = False
+    return clean
+
+
+def test_binding_scan_matches_the_python_clean_check(monkeypatch):
+    """combat_k2_scan_ships (the per-ship, per-bank clean check, a C loop
+    over the dicts): each ship's Object handle (-1: no row), and the ships
+    that are NOT clean -- for _k2_python_ship to decide -- in order, as the
+    Python check decided them. Clean, then each way a ship stops being
+    clean, one at a time."""
+
+    class Unseen:
+        pass
+
+    class SubBank(ws.PhaserBank):
+        pass
+
+    class SubSystem(ws.PhaserSystem):
+        pass
+
+    def scan(w):
+        return _h.combat_k2_scan_ships(
+            w.order, nc._kind("Object"), nc._KIND_SHIFT, nc._k2_seen_set,
+            nc._k2_stock_system, nc._k2_stock_bank, nc._K2_SHIP_PATCHES,
+            nc._K2_SYSTEM_PATCHES, nc._K2_BANK_PATCHES)
+
+    def unclean(w):
+        return [(s, nc.slot(s)) for s in w.order if not _py_clean(s)]
+
+    with monkeypatch.context() as mp:
+        w = World(mp, True, GALAXY_VORCHA, "k2_scan")
+        try:
+            g, v = w.ships["Galaxy"], w.ships["Vorcha"]
+            g.GetPhaserSystem().StartFiring(v)
+            v.GetPhaserSystem().StartFiring(g)
+            w.tick()        # the stock snapshot is taken; targets set
+            handles, bad = scan(w)
+            assert handles == [nc.slot(s) for s in w.order], handles
+            assert all(h is not None for h in handles)
+            assert bad == [] == unclean(w)
+            bank = g.GetPhaserSystem().GetWeapon(1)
+            system = g.GetPhaserSystem()
+            # (setitem: an instance attribute must be GONE afterwards; a
+            # monkeypatch.setattr would put the bound method back on it.)
+            cases = (
+                lambda m: m.setitem(v.__dict__, "IsDead", v.IsDead),
+                lambda m: m.setitem(system.__dict__, "IsOn", system.IsOn),
+                lambda m: m.setitem(bank.__dict__, "take_dwell",
+                                    bank.take_dwell),
+                lambda m: m.setitem(bank.__dict__, "_target", Unseen()),
+                lambda m: m.setattr(bank, "__class__", SubBank),
+                lambda m: m.setattr(system, "__class__", SubSystem),
+                lambda m: m.setattr(v, "__class__",
+                                    type("Unseen", (type(v),), {})),
+            )
+            for i, case in enumerate(cases):
+                with monkeypatch.context() as m:
+                    case(m)
+                    handles, bad = scan(w)
+                    want = unclean(w)
+                    assert want, i
+                    assert bad == want, (i, bad, want)
+                    assert handles == [nc.slot(s) for s in w.order], i
+            # No row: -1, and never handed to the check.
+            with monkeypatch.context() as m:
+                m.delitem(v.__dict__, "_nslot")
+                handles, bad = scan(w)
+                assert handles == [nc.slot(g), nc.REF_NONE], handles
+                assert bad == [], bad
+            # A ship with no phaser system is clean on its own flags.
+            with monkeypatch.context() as m:
+                m.setitem(v.__dict__, "_phaser_system", None)
+                assert scan(w)[1] == [] == unclean(w)
+        finally:
+            w.close()
 
 
 def test_subclass_override_sends_its_ship_to_python(monkeypatch):

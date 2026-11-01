@@ -146,6 +146,7 @@ def reset() -> None:
     _k2_flags.clear()
     _k2_watch_seen[0] = -1
     _k2_iids_cache[:] = [None, -1, -1, None]
+    _k2_iids_sent[:] = [_K2_UNSENT, -1, -1]
     global _k2_drop_epoch
     _k2_drop_epoch += 1
     if available():
@@ -2010,7 +2011,8 @@ _K2_ROLES = (
 _K2_NAMES = {role: names for role, _m, _c, names in _K2_ROLES}
 # The INSTANCE attributes looked for on the walked ship, its phaser system and
 # each bank: the methods the loop calls on them by name. A narrower set than
-# the class check's (a dict probe per bank per tick is the cost: ~90 ns).
+# the class check's (a dict probe per name per bank per tick, in the binding:
+# combat_k2_scan_ships, ~85 ns a bank in a Debug build).
 _K2_SHIP_PATCHES = frozenset((
     "GetPhaserSystem", "GetTargetSubsystem", "is_using_target_offset",
     "GetTargetOffsetTG", "GetShields", "IsDead", "GetWorldLocation",
@@ -2044,6 +2046,10 @@ _k2_watch_seen = [-1]
 # [ship_instances, its version, _k2_drop_epoch, the iids table built on them]
 _k2_iids_cache = [None, -1, -1, None]
 _k2_drop_epoch = 0
+# The key of the iids table the kernel holds (it keeps it across sessions):
+# [ship_instances or None, version, drop epoch]; _K2_UNSENT before any.
+_K2_UNSENT = object()
+_k2_iids_sent = [_K2_UNSENT, -1, -1]
 
 
 def _k2_resolution(cls, names) -> tuple:
@@ -2276,48 +2282,21 @@ def _k2_ship_handles(ships):
     """(handles, python_ships, whole) for begin: each ship's Object handle
     (-1: no row), the ships _k2_python_ship sends to Python, and whether one
     sends the whole step. The common case -- a stock phaser system of stock
-    banks, no instance attribute -- is decided inline: this loop runs every
-    tick over every bank (~90 ns a bank)."""
-    handles = []
+    banks, no instance attribute, seen classes -- is decided in the binding
+    (combat_k2_scan_ships, a C loop over the instance dicts: this runs every
+    tick over every bank); only the ships it could not call clean come back
+    here, in order, for _k2_python_ship."""
+    handles, unclean = _h.combat_k2_scan_ships(
+        ships, _kind("Object"), _KIND_SHIFT, _k2_seen_set,
+        _k2_stock_system, _k2_stock_bank, _K2_SHIP_PATCHES,
+        _K2_SYSTEM_PATCHES, _K2_BANK_PATCHES)
     python_ships = []
-    obj_kind = _kind("Object")
-    stock_sys, stock_bank = _k2_stock_system, _k2_stock_bank
-    ship_patches, sys_patches, bank_patches = (
-        _K2_SHIP_PATCHES, _K2_SYSTEM_PATCHES, _K2_BANK_PATCHES)
-    seen = _k2_seen_set
-    for ship in ships:
-        d = getattr(ship, "__dict__", None)
-        h = d.get("_nslot") if d is not None else None
-        if h is None or (h >> _KIND_SHIFT) != obj_kind:
-            handles.append(REF_NONE)
-            continue
-        handles.append(h)
-        sys_ = d.get("_phaser_system")
-        clean = type(ship) in seen and d.keys().isdisjoint(ship_patches)
-        if clean and sys_ is not None:
-            if type(sys_) is stock_sys:
-                sd = sys_.__dict__
-                clean = sd.keys().isdisjoint(sys_patches)
-                if clean:
-                    for b in sd.get("_children", ()):
-                        if type(b) is not stock_bank:
-                            clean = False
-                            break
-                        bd = b.__dict__
-                        target = bd.get("_target")
-                        if not bd.keys().isdisjoint(bank_patches) or (
-                                target is not None
-                                and type(target) not in seen):
-                            clean = False
-                            break
-            else:
-                clean = False
-        if not clean:
-            why = _k2_python_ship(ship)
-            if why == 2:
-                return handles, python_ships, True
-            if why == 1:
-                python_ships.append(h)
+    for ship, h in unclean:
+        why = _k2_python_ship(ship)
+        if why == 2:
+            return handles, python_ships, True
+        if why == 1:
+            python_ships.append(h)
     return handles, python_ships, False
 
 
@@ -2382,7 +2361,7 @@ class _K2Context:
     view offset)."""
 
     __slots__ = ("instances", "version", "iids", "cheat", "player", "view",
-                 "asked_shields")
+                 "asked_shields", "staged")
 
     def __init__(self, ship_instances) -> None:
         self.instances = ship_instances
@@ -2392,14 +2371,26 @@ class _K2Context:
         self.player = None
         self.view = _UNSET
         self.asked_shields = False
+        self.staged = None
 
     def delta(self) -> dict:
+        """The context keys to send. "iids" only when the table's key
+        differs from the one the kernel holds (_k2_iids_sent): the caller
+        commits the staged key once the kernel took it (commit)."""
         d = {}
         si = self.instances
-        if si is not None and si.version != self.version:
-            self.version = si.version
-            self.iids = _k2_iids(si)
-            d["iids"] = self.iids
+        if si is not None:
+            if si.version != self.version:
+                self.version = si.version
+                self.iids = _k2_iids(si)
+                c, sent = _k2_iids_cache, _k2_iids_sent
+                if (sent[0] is not c[0] or sent[1] != c[1]
+                        or sent[2] != c[2]):
+                    d["iids"] = self.iids
+                    self.staged = c[:3]
+        elif _k2_iids_sent[0] is not None:
+            d["iids"] = {}
+            self.staged = [None, -1, -1]
         cheat = bool(_k2_cheats.disable_npc_shields_active())
         player = _k2_player_handle() if cheat else REF_NONE
         if cheat != self.cheat or player != self.player:
@@ -2417,10 +2408,17 @@ class _K2Context:
                     else {h: frames.view_offset(view)})
         return d
 
+    def commit(self) -> None:
+        """The kernel took the last delta: its table's key is the staged one."""
+        if self.staged is not None:
+            _k2_iids_sent[:] = self.staged
+            self.staged = None
+
     def resend(self) -> None:
         d = self.delta()
         if d:
             _h.combat_k2_set_ctx(d)
+            self.commit()
 
 
 def _k2_points(emitter_xyz, target_xyz, impact_xyz, normal_xyz, tier,
@@ -2600,6 +2598,7 @@ def k2_phasers(ships, dt, ship_instances) -> bool:
     ctx["trace"] = _k2_host_io._h is not None
     t, use_memo, drift = _k1_clocks()
     _h.combat_k2_begin(handles, dt, t, use_memo, drift, ctx)
+    cx.commit()
     run_k2(ships, dt, ship_instances, cx)
     return True
 
