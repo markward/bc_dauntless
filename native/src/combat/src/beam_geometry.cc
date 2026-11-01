@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdint>
 
+#include "dauntless/combat/part_pose.h"
 #include "dauntless/combat/py_math.h"
 #include "dauntless/combat/weapon_geometry.h"
 #include "geometry_internal.h"
@@ -55,13 +56,20 @@ AimPoint phaser_aim_point(Mirror& m, int64_t ship, int64_t target,
     if (!s.is_ship_class) fall_back("firer is not a ShipClass");
     // ShipClass.is_using_target_offset (ships.py:1790).
     if (s._use_target_offset != 0 && s.manual_offset_set) {
-        // GetTargetOffsetTG copies the manual offset (ships.py:1765).
-        // Python resolves the mount (`_RESOLVE`); on a posed target that and
-        // the box rule are Python's (posed-parts spec §4.4, non-goals).
-        if (obj(m, target).has_posed_parts) fall_back("target has posed parts");
-        return {target_offset_world(m, target, s._manual_target_offset,
-                                    kNoMount),
-                -1};
+        // GetTargetOffsetTG copies the manual offset (ships.py:1765), and
+        // target_offset_world resolves its mount (`_RESOLVE`). Only a POSED
+        // target reads it: a mount at the pick (authored), else the box
+        // rule through this ship's Manual Aim slot (Task 4b).
+        const ObjectRow& t = obj(m, target);
+        const Vec3& off = s._manual_target_offset;
+        int64_t mount = kNoMount;
+        if (t.has_posed_parts) {
+            mount = authored_mount_subsystem(m, t, off);
+            if (mount == kMountUnknown)
+                detail::fall_back_as<MountUnknown>(
+                    "target offset mount unknown");
+        }
+        return {target_offset_world(m, target, off, mount, ship), -1};
     }
     // ship.GetTargetSubsystem(): the lock is ship-wide (K2M 1.2).
     const int64_t lock = s._target_subsystem;

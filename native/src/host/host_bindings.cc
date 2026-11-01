@@ -9748,6 +9748,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("handle"), py::arg("order"),
               "A ship's subsystems in combat._iter_subsystems order "
               "(-2 for one the mirror cannot name).");
+        m.def("combat_set_manual_slot",
+              [](std::int64_t h, std::int64_t target,
+                 const std::array<double, 3>& offset, std::int32_t slot,
+                 std::uint64_t gen) {
+                  cb::mirror().set_manual_slot(h, target, offset, slot, gen);
+              },
+              py::arg("handle"), py::arg("target"), py::arg("offset"),
+              py::arg("slot"), py::arg("gen"),
+              "A ship's Manual Aim slot (posed parts, Task 4b): the part of "
+              "`target`'s pose table its authored=False `offset` sits on "
+              "(-1 none), at part-map generation `gen`; target -1: no slot.");
         m.def("combat_set_part_gen",
               [](std::uint64_t gen) { cb::mirror().set_part_gen(gen); },
               py::arg("gen"));
@@ -9844,6 +9855,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
                                      ? x
                                      : cb::kRefUnrepresentable);
                 d["mount_order"] = order;
+                d["manual_slot"] = py::make_tuple(
+                    row.manual_slot_target,
+                    py::make_tuple(row.manual_slot_offset[0],
+                                   row.manual_slot_offset[1],
+                                   row.manual_slot_offset[2]),
+                    row.manual_slot, row.manual_slot_gen);
             } else if (kind == cb::Kind::Subsystem) {
                 const cb::SubsystemRow& row = *mi.subsystem(h);
                 d["part_slot"] = row.part_slot;
@@ -10129,15 +10146,19 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("emitter"), py::arg("ship"));
         m.def("combat_test_target_offset_world",
               [vec](std::int64_t target, const std::array<double, 3>& offset,
-                    std::optional<std::int64_t> mount) {
+                    std::optional<std::int64_t> mount,
+                    std::optional<std::int64_t> manual_ship) {
                   return vec(cb::target_offset_world(
                       cb::mirror(), target, offset,
-                      mount ? *mount : cb::kNoMount));
+                      mount ? *mount : cb::kNoMount,
+                      manual_ship ? *manual_ship : -1));
               },
               py::arg("target"), py::arg("offset"),
               py::arg("mount") = py::none(),
+              py::arg("manual_ship") = py::none(),
               "subsystems.target_offset_world with an explicit mount_sub "
-              "(None = authored=False).");
+              "(None = authored=False; then `manual_ship`'s Manual Aim slot "
+              "answers a posed target).");
         m.def("combat_test_authored_mount",
               [](std::int64_t target, const std::array<double, 3>& offset) {
                   const cb::ObjectRow* row = cb::mirror().object(target);
@@ -10828,6 +10849,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
             py::dict posed;
             posed["banks"] = c.posed_banks;
             posed["lock_aims"] = c.posed_lock_aims;
+            posed["manual_aims"] = c.posed_manual_aims;
             d["k2_posed"] = posed;
             return d;
         });

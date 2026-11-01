@@ -8,6 +8,8 @@
 
 #include <gtest/gtest.h>
 
+#include <limits>
+
 #include <cmath>
 #include <cstdint>
 #include <stdexcept>
@@ -399,4 +401,61 @@ TEST(PartPose, AuthoredMountUnknownWhenTheMirrorCannotTell) {
     w.m.set_i(w.target, Field::is_ship_class, 0);
     EXPECT_EQ(w.ask({1.0, 2.0, 3.0}), kMountUnknown);
     EXPECT_NE(kMountUnknown, kNoMount);
+}
+
+// Manual Aim (Task 4b): no mount on a posed target reads the FIRING ship's
+// Manual Aim slot, only for exactly its target and offset, only when the
+// stamp is current. Otherwise NoMount (Python's box rule) or PartStale.
+TEST(PartPose, ManualSlotRules) {
+    const double kNan = std::numeric_limits<double>::quiet_NaN();
+    World w;
+    const int64_t target = w.ship(0.0, 0.0, 0.0);
+    const int64_t other = w.ship(0.0, 0.0, 0.0);
+    const int64_t firer = w.ship(0.0, 0.0, 0.0);
+    const Vec3 off{1.0, 2.0, 3.0};
+    auto no_mount = [&](int64_t t, const Vec3& o) {
+        try {
+            target_offset_world(w.m, t, o, kNoMount, firer);
+        } catch (const NoMount&) {
+            return true;
+        }
+        return false;
+    };
+    // Unposed target: the offset itself, the slot never read.
+    w.m.set_manual_slot(firer, target, off, 9, 0);
+    EXPECT_EQ(target_offset_world(w.m, target, off, kNoMount, firer)[0], 1.0);
+
+    w.pose(target, {translate(1.0, 0.0, 0.0)});
+    w.pose(other, {translate(1.0, 0.0, 0.0)});
+    w.m.set_manual_slot(firer, target, off, 0, w.m.part_gen());
+    EXPECT_EQ(target_offset_world(w.m, target, off, kNoMount, firer)[0], 2.0);
+    // -0.0 matches 0.0 (the box rule sees them alike); the pose carries
+    // the asked offset.
+    w.m.set_manual_slot(firer, target, {0.0, 2.0, 3.0}, 0, w.m.part_gen());
+    EXPECT_EQ(target_offset_world(w.m, target, {-0.0, 2.0, 3.0}, kNoMount,
+                                  firer)[0], 1.0);
+    w.m.set_manual_slot(firer, target, off, 0, w.m.part_gen());
+    // Another target, another offset, no firing ship, a NaN: no slot.
+    EXPECT_TRUE(no_mount(other, off));
+    EXPECT_TRUE(no_mount(target, {1.0, 2.0, 3.5}));
+    EXPECT_THROW(target_offset_world(w.m, target, off, kNoMount),
+                 NoMount);
+    w.m.set_manual_slot(firer, target, {kNan, 2.0, 3.0}, 0, w.m.part_gen());
+    EXPECT_TRUE(no_mount(target, {kNan, 2.0, 3.0}));
+    // A slot of -1: the offset itself; past the table or stamped behind:
+    // part_stale.
+    w.m.set_manual_slot(firer, target, off, -1, w.m.part_gen());
+    EXPECT_EQ(target_offset_world(w.m, target, off, kNoMount, firer)[0], 1.0);
+    w.m.set_manual_slot(firer, target, off, 3, w.m.part_gen());
+    EXPECT_THROW(target_offset_world(w.m, target, off, kNoMount, firer),
+                 PartStale);
+    w.m.set_manual_slot(firer, target, off, 0, w.m.part_gen());
+    w.m.set_part_gen(w.m.part_gen() + 1);
+    EXPECT_THROW(target_offset_world(w.m, target, off, kNoMount, firer),
+                 PartStale);
+    // The setter checks its handles.
+    EXPECT_THROW(w.m.set_manual_slot(firer, firer + 12345, off, 0, 1),
+                 std::invalid_argument);
+    EXPECT_THROW(w.m.set_manual_slot(firer, target, off, -2, 1),
+                 std::invalid_argument);
 }

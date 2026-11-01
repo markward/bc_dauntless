@@ -83,8 +83,9 @@
 //        aim_point    (ship, target)   p, sub = host_loop._phaser_aim_point(
 //                                      ship, target)
 //                                      -> ((p.x, p.y, p.z), sub is not None)
-//            when the lock's row is unnameable, or a Manual Aim target is
-//            posed (Python's _RESOLVE and box rule). A lock on a posed ship
+//            when the lock's row is unnameable, or a Manual Aim pick on a
+//            posed target that the ship's Manual Aim slot does not hold
+//            current (Task 4b; Python's box rule). A lock on a posed ship
 //            is the kernel's (its mount through the pushed part slot; a
 //            stale slot sends the ship to Python first, part_stale). With a
 //            lock the arc aim reuses p:
@@ -412,6 +413,8 @@ public:
         // Posed parts walked natively: banks whose strip centre was posed
         // (their ship is posed), and aim points at a lock on a posed ship.
         int64_t posed_banks = 0, posed_lock_aims = 0;
+        // Manual Aim picks on a posed target answered natively (Task 4b).
+        int64_t posed_manual_aims = 0;
     };
     const Counts& counts() const { return counts_; }
     void reset_counts() { counts_ = Counts{}; }

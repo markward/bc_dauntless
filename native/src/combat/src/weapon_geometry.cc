@@ -232,17 +232,26 @@ Vec3 _emitter_forward_world(const Mirror& m, int64_t emitter, int64_t ship) {
 // ── subsystems.py:94 target_offset_world (K1M F11) ──────────────────────────
 
 Vec3 target_offset_world(const Mirror& m, int64_t target, const Vec3& offset,
-                         int64_t mount_sub) {
+                         int64_t mount_sub, int64_t manual_ship) {
     const ObjectRow& t = obj(m, target);
     const auto& tr = xform(m, t);
     // part_transform_point(target, point, authored=mount_sub is not None,
     // prop=property_of(mount_sub)) BEFORE the scale (MAP P4). Unposed: the
     // point itself whatever the mount, and no slot is read.
     Vec3 p = offset;
-    if (t.has_posed_parts) {
-        // authored=False is the box rule (part_for_point): Python's.
-        if (mount_sub == kNoMount)
-            fall_back_as<NoMount>("posed target, no authored mount");
+    if (t.has_posed_parts && mount_sub == kNoMount) {
+        // authored=False is the box rule (part_for_point), resolved by
+        // Python into the firing ship's Manual Aim slot for exactly this
+        // target and offset (Task 4b); none for them -> Python's.
+        const ObjectRow* fs = manual_ship < 0 ? nullptr : m.object(manual_ship);
+        const PartPose* pose = nullptr;
+        const std::optional<SlotState> st =
+            fs ? manual_slot_pose(m, *fs, target, t, offset, &pose)
+               : std::nullopt;
+        if (!st) fall_back_as<NoMount>("posed target, no authored mount");
+        if (*st == SlotState::stale) fall_back_as<PartStale>("part_stale");
+        if (*st == SlotState::ok) p = apply_part_pose(*pose, offset);
+    } else if (t.has_posed_parts) {
         if (mount_sub == kRefUnrepresentable)
             fall_back("mount subsystem is unnamed");
         const SubsystemRow& ms = sub(m, mount_sub);
@@ -288,7 +297,12 @@ std::optional<Vec3> _resolve_torpedo_aim_point(const Mirror& m, int64_t tube,
         if (mount == kMountUnknown)
             fall_back_as<MountUnknown>("target offset mount unknown");
     }
-    return target_offset_world(m, target, tb._target_offset, mount);
+    // A Manual Aim pick (no mount) is answered through the firing ship's
+    // Manual Aim slot when it is for this target and offset.
+    const int64_t ship = mount == kNoMount && t.has_posed_parts
+                             ? climb_to_ship(m, tb)
+                             : -1;
+    return target_offset_world(m, target, tb._target_offset, mount, ship);
 }
 
 // ── weapon_subsystems.py:3033 _in_torpedo_cone (K1M F12) ────────────────────

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -62,6 +63,18 @@ enum class SlotState { none, ok, stale };
 // resolved against). `*pose` is set only for ok.
 SlotState slot_pose(const Mirror& m, const ObjectRow& ship,
                     const SubsystemRow& sub, const PartPose** pose);
+
+// The firing `ship`'s Manual Aim slot (Task 4b) for an authored=False
+// `offset` on `target` (handle `target_h`): nullopt when the ship holds no
+// slot for this target and offset (Python's box rule must answer); else as
+// slot_pose -- none (unposed target, no part, identity, detached), stale
+// (stamp behind the Mirror's part_gen, or past the table), ok (`*pose`).
+std::optional<SlotState> manual_slot_pose(const Mirror& m,
+                                          const ObjectRow& ship,
+                                          int64_t target_h,
+                                          const ObjectRow& target,
+                                          const Vec3& offset,
+                                          const PartPose** pose);
 
 // The subsystem's own mount `_position` carried by its part (P1/P2), in the
 // ship's body frame, unscaled. `*out` is set for none (the `_position`

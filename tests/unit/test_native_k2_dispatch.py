@@ -1394,3 +1394,60 @@ def test_resolve_runs_at_step_boundary(monkeypatch):
         assert counts["k1_python_reasons"][session]["part_stale"] == 0, counts
     assert counts["k1_fire_ask_reasons"]["part_stale"] == 0, counts
     assert counts["k1_posed"]["walks"] > 0, counts
+
+
+# ── Manual Aim on a posed target (posed parts, Task 4b) ──────────────────────
+
+
+def _wing_pick(bop, part="left wing", frac=(0.5, 0.5, 0.5)):
+    """A Manual Aim pick on a Bird of Prey wing: a point inside that part's
+    box the box rule gives to it, and no subsystem's mount (so _RESOLVE
+    finds none and the pick is authored=False)."""
+    from engine.appc import part_severance
+    lo, hi = articulation.part_boxes_for("birdofprey")[part]
+    p = tuple(a + f * (b - a) for a, b, f in zip(lo, hi, frac))
+    assert articulation._live_part(bop, None, p, False, None) == part, p
+    assert part_severance.authored_mount_subsystem(bop, p) is None, p
+    return p
+
+
+def _manual_moved(bop, p):
+    return tuple(articulation.part_transform_point(bop, p,
+                                                   authored=False)) != p
+
+
+@pytest.mark.parametrize("wings", ["settled", "transition"])
+def test_manual_aim_on_posed_target_native(monkeypatch, wings):
+    """The Galaxy's Manual Aim pick sits on a Bird of Prey's wing (swung for
+    cruise, or swinging home tick by tick): the aim point is the box rule's
+    part through the Galaxy's Manual Aim slot, natively -- no ASK
+    aim_point -- also after the pick moves mid-fight (re-resolved at the
+    next boundary)."""
+    moved = []
+
+    def script(w, t):
+        g, bop = w.ships["Galaxy"], w.ships["BoP"]
+        if t == 0:
+            articulation.force_pose(bop, "cruise")
+            if wings == "transition":
+                bop.SetTarget(g)            # red: home over the rig's 2 s
+            g.SetTarget(bop)
+            p = _wing_pick(bop)
+            moved.append(_manual_moved(bop, p))
+            g.set_manual_target_offset(TGPoint3(*p))
+            g.GetPhaserSystem().SetSingleFire(0)
+            g.GetPhaserSystem().StartFiring(bop)
+        elif t == 40:
+            p = _wing_pick(bop, "left wing01", (0.4, 0.6, 0.5))
+            moved.append(_manual_moved(bop, p))
+            g.set_manual_target_offset(TGPoint3(*p))
+        if wings == "transition":
+            articulation.tick_ship(bop, DT)
+
+    ref, _nat, counts = _both(monkeypatch, LOCK_ON_BOP, script, 100)
+    assert moved and all(moved), moved
+    assert any(c[2] == "BoP" for c in _calls(ref, "beam_contact"))
+    _native_ran(counts)
+    assert counts["k2_python_ships"] == 0, counts
+    assert counts["k2_ask_queries"]["aim_point"] == 0, counts
+    assert counts["k2_posed"]["manual_aims"] > 0, counts

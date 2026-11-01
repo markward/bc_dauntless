@@ -1139,3 +1139,55 @@ def test_stale_slot_falls_back_part_stale(monkeypatch, where):
         assert reasons[("system", "part_stale")] > 0, counts
     else:
         assert reasons[("fire_ask", "part_stale")] > 0, counts
+
+
+# ── Manual Aim on a posed target (posed parts, Task 4b) ──────────────────────
+
+
+def _wing_pick(bop, part="left wing", frac=(0.5, 0.5, 0.5)):
+    """A Manual Aim pick on a Bird of Prey wing: a point inside that part's
+    box the box rule gives to it, and no subsystem's mount (so _RESOLVE
+    finds none and the pick is authored=False)."""
+    from engine.appc import part_severance
+    lo, hi = articulation.part_boxes_for("birdofprey")[part]
+    p = tuple(a + f * (b - a) for a, b, f in zip(lo, hi, frac))
+    assert articulation._live_part(bop, None, p, False, None) == part, p
+    assert part_severance.authored_mount_subsystem(bop, p) is None, p
+    return p
+
+
+def _manual_moved(bop, p):
+    return tuple(articulation.part_transform_point(bop, p,
+                                                   authored=False)) != p
+
+
+def test_manual_aim_on_posed_target_native(monkeypatch):
+    """The Vor'cha's Manual Aim pick sits on a Bird of Prey's wing in
+    cruise: its cannons (the walk's offset) and tubes (the stored offset)
+    aim through its Manual Aim slot natively -- no no_mount Fire ASK."""
+    ships = (("Vorcha", "vorcha", (0.0, 0.0, 0.0), 0.0),
+             ("BoP", "birdofprey", (15.0, 200.0, 5.0), math.pi,
+              "ships.BirdOfPrey"))
+    moved = []
+
+    def script(w, t):
+        v, bop = w.ships["Vorcha"], w.ships["BoP"]
+        if t == 0:
+            articulation.force_pose(bop, "cruise")
+            v.SetTarget(bop)
+            p = _wing_pick(bop)
+            moved.append(_manual_moved(bop, p))
+            v.set_manual_target_offset(TGPoint3(*p))
+            for tube in _weapons(v.GetTorpedoSystem()):
+                tube._target_offset = TGPoint3(*p)
+            v.GetPulseWeaponSystem().SetSingleFire(0)
+            v.GetPulseWeaponSystem().StartFiring(bop)
+            v.GetTorpedoSystem().StartFiring(bop)
+
+    ref, _nat, counts = _both(monkeypatch, ships, script, 240)
+    assert moved == [True, True], moved
+    assert "torpedo_fired" in _kinds(ref), ref.events
+    assert len(_charges(ref, "Vorcha/")) > 1
+    assert counts["k1_python_systems"] == 0, counts
+    assert set(_posed_reasons(counts).values()) == {0}, counts
+    assert counts["k1_posed"]["target_aims"] > 0, counts

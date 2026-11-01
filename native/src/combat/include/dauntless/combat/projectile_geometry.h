@@ -62,7 +62,8 @@ Advance advance_torpedo(const Vec3& prev, const Vec3& vel, double dt,
 // nullopt is the no-offset hull centre (G12); otherwise
 // target_offset_world(target, offset, mount_sub) (G11): an unposed target
 // whatever the mount, a POSED one through the mount's part slot (only when
-// the offset is the mount's own point; weapon_geometry.h). (The name
+// the offset is the mount's own point; weapon_geometry.h) or, with no mount,
+// through `manual_ship`'s Manual Aim slot (the torpedo's source; Task 4b). (The name
 // predates posed targets.) `off` is frames.offset_between(torpedo set,
 // target set), never None here; the point is shifted only when `off` is
 // not (0, 0, 0) by C `==` (Python's tuple ==). Throws for a mount_sub of
@@ -70,7 +71,7 @@ Advance advance_torpedo(const Vec3& prev, const Vec3& vel, double dt,
 // fallbacks (PartStale for a slot that is not current).
 Vec3 steer_point_unposed(const Mirror& m, int64_t target,
                          const std::optional<Vec3>& offset, int64_t mount_sub,
-                         const Vec3& off);
+                         const Vec3& off, int64_t manual_ship = -1);
 
 // The two clocks can_detect reads (sensor_detect.h): `drift_now` the nebula
 // drift clock (native_combat.now()), `occ_now` the occlusion clock
@@ -137,7 +138,8 @@ struct GuideResult {
 //   unattributed          the shot's `_mount_key` is not this target/offset
 //   mount_unrepresentable the attributed mount is a row the mirror can't name
 //   posed_target          (retired)
-//   no_mount              a posed target, the offset names no mount
+//   no_mount              a posed target, the offset names no mount and the
+//                         source's Manual Aim slot does not hold it
 //   mount_stale           a posed target, the mount's row is gone
 //   offset_off_mount      a posed target, the offset is not the mount's own
 //                         point (C == per axis, as target_offset_world)

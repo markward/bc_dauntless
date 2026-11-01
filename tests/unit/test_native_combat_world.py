@@ -336,6 +336,8 @@ def _normalised(world):
     names = {_slot(o): n for n, o in world.items()}
 
     def norm(key, v):
+        if key == "manual_slot":    # (target ref, offset, slot, generation)
+            return (names.get(v[0], v[0]), _hex(v[1]), v[2], v[3])
         if key in _REF_FIELDS:
             if isinstance(v, list):
                 return [names.get(x, x) for x in v]

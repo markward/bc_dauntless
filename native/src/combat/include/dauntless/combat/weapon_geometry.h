@@ -82,11 +82,14 @@ Vec3 _emitter_forward_world(const Mirror& m, int64_t emitter, int64_t ship);
 // the mount's part slot carries the offset, and only when the offset IS the
 // mount's `_position` (C `==` per axis): Python resolves the part from the
 // offset, the slot was resolved from the mount. Otherwise -- no mount (the
-// box rule: NoMount), a mount the mirror cannot name, an offset off the
-// mount -- it falls back; a stale slot or another ship's mount falls back
-// PartStale.
+// box rule), a mount the mirror cannot name, an offset off the mount -- it
+// falls back; a stale slot or another ship's mount falls back PartStale.
+// No mount (authored=False, Python's box rule) on a posed target reads the
+// Manual Aim slot of `manual_ship` (the firing ship; -1 none, Task 4b): its
+// part when the slot is for this target and offset and current; NoMount
+// when it holds no slot for them, PartStale when its stamp is behind.
 Vec3 target_offset_world(const Mirror& m, int64_t target, const Vec3& offset,
-                         int64_t mount_sub);
+                         int64_t mount_sub, int64_t manual_ship = -1);
 
 // weapon_subsystems._resolve_torpedo_aim_point (F11); nullopt is Python None.
 // The tube's stored offset on a POSED target is aimed through its mount

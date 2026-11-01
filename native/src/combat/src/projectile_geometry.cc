@@ -192,7 +192,7 @@ Advance advance_torpedo(const Vec3& prev, const Vec3& vel, double dt,
 
 Vec3 steer_point_unposed(const Mirror& m, int64_t target,
                          const std::optional<Vec3>& offset, int64_t mount_sub,
-                         const Vec3& off) {
+                         const Vec3& off, int64_t manual_ship) {
     const ObjectRow& t = obj(m, target);
     if (!offset) {
         // G12: TGPoint3(pos) then _shifted(..., off).
@@ -206,7 +206,8 @@ Vec3 steer_point_unposed(const Mirror& m, int64_t target,
     if (mount_sub == kRefUnrepresentable) fall_back("mount subsystem is unnamed");
     if (mount_sub >= 0 && !m.subsystem(mount_sub))
         fall_back("mount subsystem is stale");
-    return shifted(target_offset_world(m, target, *offset, mount_sub), off);
+    return shifted(
+        target_offset_world(m, target, *offset, mount_sub, manual_ship), off);
 }
 
 // A need_steer_point with its reason (one of kSteerWhy).
@@ -324,20 +325,27 @@ GuideResult guide_torpedo(Mirror& m, const TorpedoRow& row, double dt,
             // own point (Python attributes the part from the offset; the
             // slot was resolved from `_position`), C == per axis exactly as
             // target_offset_world checks it. None: Python's box rule.
-            if (mount_sub == kNoMount) return steer_ask(ask, "no_mount");
-            const SubsystemRow* ms = m.subsystem(mount_sub);
-            if (!ms) return steer_ask(ask, "mount_stale");
-            const Vec3& p = ms->_position;
-            if (!(o[0] == p[0]) || !(o[1] == p[1]) || !(o[2] == p[2]))
-                return steer_ask(ask, "offset_off_mount");
+            // No mount: a Manual Aim pick, the box rule -- answered through
+            // the SOURCE's Manual Aim slot when it holds this target and
+            // offset (Task 4b), else Python's (NoMount below).
+            if (mount_sub != kNoMount) {
+                const SubsystemRow* ms = m.subsystem(mount_sub);
+                if (!ms) return steer_ask(ask, "mount_stale");
+                const Vec3& p = ms->_position;
+                if (!(o[0] == p[0]) || !(o[1] == p[1]) || !(o[2] == p[2]))
+                    return steer_ask(ask, "offset_off_mount");
+            }
         }
         offset = o;
     }
     Vec3 pos;
     try {
-        pos = steer_point_unposed(m, target, offset, mount_sub, off);
+        pos = steer_point_unposed(m, target, offset, mount_sub, off,
+                                  src >= 0 ? src : -1);
     } catch (const PartStale&) {
         return steer_ask(ask, "part_stale");
+    } catch (const NoMount&) {
+        return steer_ask(ask, "no_mount");
     } catch (const std::invalid_argument&) {
         return steer_ask(ask, "geometry");
     }

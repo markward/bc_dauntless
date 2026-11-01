@@ -1042,3 +1042,52 @@ def test_stale_slot_falls_back_part_stale(monkeypatch):
     assert counts["k3_steer_reasons"].get("part_stale", 0) > 30, counts
     assert counts["k3_steer_reasons"].get("posed_target", 0) == 0, counts
     assert counts["k3_posed_steers"] == 0, counts
+
+
+# ── Manual Aim on a posed target (posed parts, Task 4b) ──────────────────────
+
+
+def _wing_pick(bop, part="left wing", frac=(0.5, 0.5, 0.5)):
+    """A Manual Aim pick on a Bird of Prey wing: a point inside that part's
+    box the box rule gives to it, and no subsystem's mount (so _RESOLVE
+    finds none and the pick is authored=False)."""
+    from engine.appc import part_severance
+    lo, hi = articulation.part_boxes_for("birdofprey")[part]
+    p = tuple(a + f * (b - a) for a, b, f in zip(lo, hi, frac))
+    assert articulation._live_part(bop, None, p, False, None) == part, p
+    assert part_severance.authored_mount_subsystem(bop, p) is None, p
+    return p
+
+
+def _manual_moved(bop, p):
+    return tuple(articulation.part_transform_point(bop, p,
+                                                   authored=False)) != p
+
+
+def test_manual_aim_on_posed_target_steers_natively(monkeypatch):
+    """Torpedoes the Vor'cha fired at its Manual Aim pick on a Bird of
+    Prey's wing (no mount there: `_mount_key` attributes None): once
+    attributed, the steer point is the box rule's part through the source's
+    Manual Aim slot, natively."""
+    moved = []
+
+    def script(w, t):
+        v, bop = w.ships["Vorcha"], w.ships["BoP"]
+        if t == 0:
+            articulation.force_pose(bop, "cruise")
+            v.SetTarget(bop)
+            p = _wing_pick(bop)
+            moved.append(_manual_moved(bop, p))
+            v.set_manual_target_offset(TGPoint3(*p))
+            for i, vel in ((0, (0.0, -60.0, 0.0)), (1, (1.0, -60.0, 0.5))):
+                w.fire(v, (10.0 + i, 115.0, 8.0), vel, target=bop,
+                       offset=TGPoint3(*p))
+
+    ref, _nat, counts = _both(monkeypatch, script, 130,
+                              ships=BOP_IN_THE_PATH)
+    assert moved == [True, True], moved
+    assert any(c[3] == "BoP" for c in _calls(ref, "hit")), ref.calls
+    _k3_ran(counts)
+    assert counts["k3_asks"]["steer_point"] == 2, counts
+    assert counts["k3_posed_steers"] > 30, counts
+    assert _steer_reasons(counts, _POSED_STEER_REASONS) == 0, counts

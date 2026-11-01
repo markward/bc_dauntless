@@ -140,7 +140,8 @@ enum class K1Why : int32_t {
     PartStale,        // a part slot the walk reads is not current
     MountUnknown,     // a posed target's offset mount the mirror can't tell
     NoMount,          // a posed target's offset names no authored mount
-                      // (Python's box rule: a Manual Aim pick)
+                      // and the firing ship's Manual Aim slot does not hold
+                      // it (Python's box rule)
     StubOrUnplaced,   // no real IsDead, or no valid transform
     PulseShipTarget,  // pulse with no live list entry: ship.GetTarget()
     PulseModule,      // pulse module unresolved or power setting out of range

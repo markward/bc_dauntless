@@ -293,6 +293,15 @@ private:
             e.what());
     }
 
+    // The ship aims by Manual Aim at a posed target (_phaser_aim_point's
+    // first branch), for the counter.
+    bool manual_on_posed() const {
+        const ObjectRow* so = objrow(s_.ship);
+        const ObjectRow* to = objrow(s_.target);
+        return so && to && so->_use_target_offset != 0 &&
+               so->manual_offset_set && to->has_posed_parts;
+    }
+
     // ── The pre-scan (ruling H, stage 1) ───────────────────────────────────
     std::optional<K2Why> ship_why() const;
     std::optional<K2Why> child_why(int64_t bank) const;
@@ -582,6 +591,8 @@ K2Record Walker::run() {
                         const int64_t ls = climb_to_ship_of(m_, ap.target_sub);
                         const ObjectRow* lo = ls == -1 ? nullptr : objrow(ls);
                         if (lo && lo->has_posed_parts) ++c_.posed_lock_aims;
+                    } else if (manual_on_posed()) {
+                        ++c_.posed_manual_aims;
                     }
                 } catch (const std::invalid_argument&) {
                     return ask(K2Query::aim_point, {s_.ship, s_.target},

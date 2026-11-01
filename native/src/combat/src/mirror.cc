@@ -789,6 +789,21 @@ void Mirror::set_mount_order(int64_t h, const std::vector<int64_t>& order) {
     ++epoch_;
 }
 
+void Mirror::set_manual_slot(int64_t h, int64_t target, const Vec3& offset,
+                             int32_t slot, uint64_t gen) {
+    if (slot < -1)
+        throw std::invalid_argument("combat mirror: manual slot below -1");
+    if (target != -1 && !ref_live(target, Kind::Object))
+        throw std::invalid_argument(
+            "combat mirror: manual slot target is not a live Object");
+    ObjectRow& r = checked(objects_, h, Kind::Object);
+    r.manual_slot_target = target;
+    r.manual_slot_offset = offset;
+    r.manual_slot = slot;
+    r.manual_slot_gen = gen;
+    ++epoch_;
+}
+
 void Mirror::set_part_gen(uint64_t gen) {
     part_gen_ = gen;
     ++epoch_;

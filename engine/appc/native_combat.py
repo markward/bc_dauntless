@@ -206,10 +206,11 @@ def counts() -> dict:
 
     K2 (`cb.phasers`): the kernel's {"k2_records", "k2_python_ships",
     "k2_asks", "k2_python_reasons": {K2Why name: n}, "k2_ask_queries":
-    {query: n}, "k2_posed": {"banks", "lock_aims"}} (k2_beams.h; posed_ship
-    retired, part_stale its successor), plus "k2_python_steps" (steps run
-    whole in Python) and "k2_python_step_reasons" ({"nested", "instances",
-    "patched", "audit"}: n).
+    {query: n}, "k2_posed": {"banks", "lock_aims", "manual_aims"}}
+    (k2_beams.h; posed_ship retired, part_stale its successor), plus
+    "k2_python_steps" (steps run whole in Python) and
+    "k2_python_step_reasons" ({"nested", "instances", "patched", "audit"}:
+    n).
 
     K4 (`cb.eligibility`): "k4_runs" (calls the kernel decided) and
     "k4_python_reasons" ({why: n}, the kernel's hand-backs -- scan, player,
@@ -1246,9 +1247,11 @@ def _forget_part_caches(h=None) -> None:
     if h is None:
         _slot_names.clear()
         _resolved_gen.clear()
+        _manual_resolved.clear()
     else:
         _slot_names.pop(h, None)
         _resolved_gen.pop(h, None)
+        _manual_resolved.pop(h, None)
 
 
 def _leaf_known(ship):
@@ -1391,13 +1394,88 @@ def resolve_part_slots(ship) -> None:
 
 def resolve_stale_part_slots(ships) -> None:
     """At a step boundary: resolve every ship of `ships` whose slots were
-    resolved at an older generation (or never)."""
+    resolved at an older generation (or never), and every Manual Aim slot
+    whose (target, offset, generation) moved (Task 4b)."""
     if not _enabled:
         return
     for ship in ships:
-        h = ship.__dict__.get("_nslot")
-        if h is not None and _resolved_gen.get(h) != _part_gen:
+        d = ship.__dict__
+        h = d.get("_nslot")
+        if h is None:
+            continue
+        if _resolved_gen.get(h) != _part_gen:
             resolve_part_slots(ship)
+        if d.get("_manual_target_offset") is not None \
+                or h in _manual_resolved:
+            _resolve_manual_slot(ship, h)
+
+
+# ── Manual Aim slots (posed parts, Task 4b) ──────────────────────────────────
+#
+# A Manual Aim pick is a NON-authored point: subsystems.target_offset_world
+# attributes its part by the box rule (`articulation._live_part(target, None,
+# offset, authored=False)` -> part_severance.part_for_point) on every call.
+# Its answer depends only on the target's leaf, the offset and the leaf's part
+# boxes / model -- every one an input the part-map generation already
+# covers -- so Python resolves it ONCE per (target, offset, generation) and
+# pushes it as the firing ship's Manual Aim slot. The kernels read it for an
+# authored=False offset on a posed target only when its target and offset
+# are exactly the ones asked about (and the stamp is current), so a pick
+# moved or a target changed since the last boundary reads "no slot", never a
+# wrong part. The target is `ship.GetTarget()` and the offset its
+# `_manual_target_offset` (the value GetTargetOffsetTG copies under Manual
+# Aim, and the walk's offset K1 stamps into its banks and K3's torpedoes).
+
+#: ship handle -> (target handle, offset xyz, generation) last pushed
+_manual_resolved: dict = {}
+
+
+def _manual_slot(ship):
+    """(target, offset xyz, slot) of `ship`'s Manual Aim pick: the index of
+    the part `_live_part(target, None, offset, authored=False)` resolves in
+    the target's resolved names (-1: none), detachment ignored (the table's
+    bit carries it). None when there is no pick, no target with a row, or a
+    target whose leaf and names are not resolved (R5: never leaf_for)."""
+    off = ship.__dict__.get("_manual_target_offset")
+    target = ship.__dict__.get("_target")
+    if not isinstance(off, TGPoint3) or target is None:
+        return None
+    th = target.__dict__.get("_nslot") if hasattr(target, "__dict__") \
+        else None
+    leaf = _leaf_known(target) if th is not None else None
+    if leaf is None:
+        return None
+    names = _slot_names.get(th)
+    if names is None or _resolved_gen.get(th) != _part_gen:
+        resolve_part_slots(target)
+        names = _slot_names.get(th)
+        if names is None or target.__dict__.get("_nslot") != th:
+            return None
+    point = (off.x, off.y, off.z)
+    from engine.appc import part_severance
+    try:
+        name = part_severance.part_for_point(leaf, point)
+    except Exception:  # noqa: BLE001 - Python answers (and raises) itself
+        return None
+    slot = names.index(name) if name is not None and name in names else -1
+    return th, point, slot
+
+
+def _resolve_manual_slot(ship, h) -> None:
+    gen = _part_gen
+    found = _manual_slot(ship)
+    if found is None:
+        if _manual_resolved.get(h, False) is not None:
+            _manual_resolved[h] = None
+            _call(ship, _h.combat_set_manual_slot, h, -1, (0.0, 0.0, 0.0),
+                  -1, 0)
+        return
+    th, point, slot = found
+    key = (th, point, gen)
+    if _manual_resolved.get(h) == key:
+        return
+    _call(ship, _h.combat_set_manual_slot, h, th, point, slot, gen)
+    _manual_resolved[h] = key if _part_gen == gen else None
 
 
 def _mount_order(ship) -> list:
@@ -2242,6 +2320,31 @@ def _audit_posed(ship, row, name, flag) -> None:
             _failures.append((name, "part_poses"))
     if row["mount_order"] != _mount_order(ship):
         _failures.append((name, "mount_order"))
+    _audit_manual_slot(ship, row, name)
+
+
+def _audit_manual_slot(ship, row, name) -> None:
+    """A Manual Aim slot stamped with the current generation, for a target
+    whose names are resolved, must name the part the box rule gives for its
+    own (target, offset) now. A stale stamp, or a pick moved since, is never
+    read (the kernel compares target and offset)."""
+    th, offset, slot, gen = row["manual_slot"]
+    if th == -1 or gen != _part_gen:
+        return
+    target = _registry.get(th)
+    leaf = _leaf_known(target) if target is not None else None
+    names = _slot_names.get(th)
+    if leaf is None or names is None:
+        return
+    from engine.appc import part_severance
+    try:
+        found = part_severance.part_for_point(leaf, tuple(offset))
+    except Exception:  # noqa: BLE001
+        _failures.append((name, "manual_slot"))
+        return
+    want = names.index(found) if found is not None and found in names else -1
+    if want != slot:
+        _failures.append((name, "manual_slot"))
 
 
 def _audit_slot(sub, row, name) -> None:
