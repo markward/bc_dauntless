@@ -513,8 +513,13 @@ TEST(MirrorK3, PyIdAndTorpedoRefs) {
     f.m.set_torpedo_ref(h, TorpField::_source_ship, kRefUnrepresentable);
     EXPECT_EQ(f.m.torpedo_ref(*tt.find(h), TorpField::_source_ship),
               kRefUnrepresentable);
-    // A ref to a since-freed row reads none.
+    // A ref to a since-freed row reads UNREPRESENTABLE, never none: the
+    // torpedo holds its referents strongly, so a dead handle means the row
+    // was dropped (the object took the Python path), not that it is gone.
     f.m.unregister_row(o);
+    EXPECT_EQ(f.m.torpedo_ref(*tt.find(h), TorpField::_target_ship),
+              kRefUnrepresentable);
+    f.m.set_torpedo_ref(h, TorpField::_target_ship, -1);
     EXPECT_EQ(f.m.torpedo_ref(*tt.find(h), TorpField::_target_ship), -1);
     // The globals carry the lead term; clear() empties the table.
     f.m.set_global_f(Global::LEAD_ACCEL_K, 0.5);

@@ -926,8 +926,11 @@ int64_t Mirror::torpedo_ref(const TorpedoRow& row, TorpField f) const {
         case TorpField::_containing_set: t = row.cset; break;
         default: t = row.mount_sub; break;
     }
-    if (t == kRefUnrepresentable) return t;
-    return (t >= 0 && ref_live(t, want)) ? t : -1;
+    // Unlike get_ref: the torpedo holds its referents strongly, so a stored
+    // handle whose row is gone means the row was DROPPED (the object took the
+    // Python path), never that the object is gone -- it must not read None.
+    if (t >= 0 && !ref_live(t, want)) return kRefUnrepresentable;
+    return t;
 }
 
 Mirror& mirror() {

@@ -355,7 +355,9 @@ public:
     void set_torpedo_mount(int64_t torp, bool attributed, int64_t sub,
                            const Vec3& offset);
     // A torpedo row's ref (the three refs and _mount_key's subsystem),
-    // re-checked: a since-freed row reads -1; -2 reads as is.
+    // re-checked: a since-freed row reads kRefUnrepresentable (-2), NOT -1
+    // as get_ref does -- the torpedo holds its referents strongly, so a dead
+    // handle means the referent's row was dropped, not that it is gone.
     int64_t torpedo_ref(const TorpedoRow& row, TorpField f) const;
 
 private:

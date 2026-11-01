@@ -99,7 +99,9 @@ _KIND_SHIFT = 60
 # ── The switch ───────────────────────────────────────────────────────────────
 
 def available() -> bool:
-    return _h is not None and hasattr(_h, "combat_register")
+    # The torpedo table's bindings too: a .so older than K3 is stale.
+    return (_h is not None and hasattr(_h, "combat_register")
+            and hasattr(_h, "combat_torp_add"))
 
 
 def configure(environ: Mapping[str, str] = os.environ) -> None:
@@ -1674,6 +1676,8 @@ def torpedo_table_mark_dirty() -> None:
     """`_active` changed in a way the rows cannot follow one at a time:
     empty the table; torpedo_table_rebuild refills it in list order."""
     global _k3_dirty
+    if _k3_dirty and not _k3_rows:
+        return          # already empty (always so with the switch off)
     _k3_dirty = True
     for t in _k3_rows.values():
         t.__dict__.pop("_k3_row", None)
@@ -1683,18 +1687,25 @@ def torpedo_table_mark_dirty() -> None:
 
 
 def torpedo_table_rebuild(active) -> None:
-    """Refill the table from `active` (projectiles._active), in list order,
-    each torpedo once. A no-op with the switch off."""
+    """Refill the table from `active` (projectiles._active), in list order.
+    A no-op with the switch off. A torpedo in the list TWICE (update_all
+    advances it twice a tick) leaves the table dirty and empty: one row
+    cannot stand for it, so K3 hands the step to Python until it is gone."""
     global _k3_dirty
     if not _enabled:
         return
     torpedo_table_mark_dirty()
-    _k3_dirty = False
     from engine.appc.projectiles import Torpedo
+    torps, seen = [], set()
     for t in active:
-        if isinstance(t, Torpedo) and \
-                _k3_rows.get(t.__dict__.get("_k3_row")) is not t:
-            _torp_put(t)
+        if isinstance(t, Torpedo):
+            if id(t) in seen:
+                return
+            seen.add(id(t))
+            torps.append(t)
+    _k3_dirty = False
+    for t in torps:
+        _torp_put(t)
 
 
 def _audit_torpedoes() -> None:

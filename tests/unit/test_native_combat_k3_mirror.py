@@ -88,14 +88,7 @@ def _order():
 
 
 def _active_rows():
-    """`_active`'s rows in list order, each torpedo once (a slice assignment
-    can leave one in the list twice; the table holds it once)."""
-    out, seen = [], set()
-    for t in projectiles._active:
-        if id(t) not in seen:
-            seen.add(id(t))
-            out.append(t.__dict__["_k3_row"])
-    return out
+    return [t.__dict__["_k3_row"] for t in projectiles._active]
 
 
 # ── py_id ────────────────────────────────────────────────────────────────────
@@ -138,7 +131,7 @@ def test_remove_drops_row(on):
 @pytest.mark.parametrize("mutate", [
     lambda lst, ts: lst.clear() or [lst.append(t) for t in ts],
     lambda lst, ts: lst.insert(0, Torpedo()),
-    lambda lst, ts: lst.__setitem__(slice(0, 1), [ts[2], ts[0]]),
+    lambda lst, ts: lst.__setitem__(slice(0, 2), [ts[1], ts[0]]),
     lambda lst, ts: lst.sort(key=lambda t: -t._id),
     lambda lst, ts: lst.reverse(),
     lambda lst, ts: lst.__delitem__(1),
@@ -170,7 +163,27 @@ def test_append_twice_marks_dirty(on):
     projectiles._active.append(t)
     assert nc._k3_dirty
     nc.torpedo_table_rebuild(projectiles._active)
-    assert _order() == [t.__dict__["_k3_row"]]
+    assert nc._k3_dirty                     # see the duplicate test below
+    assert _h.combat_torp_size() == 0
+
+
+def test_duplicate_in_active_leaves_the_table_dirty(on):
+    """While a torpedo is in `_active` twice (Python's update_all advances
+    it twice a tick), the table cannot stand for the list: the rebuild
+    leaves it dirty and empty, so K3 hands the step to Python. Once one copy
+    is removed, the next rebuild succeeds."""
+    a, t = _fire(), _fire()
+    projectiles._active.insert(0, t)        # [t, a, t]
+    nc.torpedo_table_rebuild(projectiles._active)
+    assert nc._k3_dirty
+    assert _h.combat_torp_size() == 0
+    assert "_k3_row" not in t.__dict__ and "_k3_row" not in a.__dict__
+    nc.audit_mirror()
+    assert nc.audit_failures() == [], nc.audit_failures()
+    projectiles._active.remove(t)           # [a, t]: one copy left
+    nc.torpedo_table_rebuild(projectiles._active)
+    assert not nc._k3_dirty
+    assert _order() == [a.__dict__["_k3_row"], t.__dict__["_k3_row"]]
 
 
 def test_mark_dirty_and_rebuild_are_public(on):
@@ -266,20 +279,57 @@ def test_sdk_setters_push(on, scene):
     assert nc.audit_failures() == [], nc.audit_failures()
 
 
-def test_update_all_pushes_age_and_velocity(on):
-    """The production writers: update_all's `_age += dt` and _guide's
-    `_velocity =` (a guided shot at a live target)."""
+def _guided(scene):
+    """A torpedo fired from the scene's ship at a target in the same set,
+    aimed at a target-local offset, its nose off the target line."""
+    kset, ship = scene
     target = App.ShipClass_Create("K3Guided")
+    kset.AddObjectToSet(target, "K3Guided")
     target.SetTranslateXYZ(0.0, 100.0, 50.0)
     t = Torpedo()
+    t._source_ship = ship
     t._velocity = TGPoint3(0.0, 10.0, 0.0)
     t._target_ship = target
+    t.SetTargetOffset(TGPoint3(0.5, 1.0, -0.25))
     projectiles.register(t)
+    return t, target
+
+
+def test_update_all_pushes_age_and_velocity(on, scene):
+    """The production writers: update_all's `_age += dt`, and _guide's and
+    _steer_point's `_velocity`, `_last_seen_target_pos`, `_last_target_vel`
+    and `_mount_key` (a guided shot at a live, visible target)."""
+    t, target = _guided(scene)
+    assert t._last_seen_target_pos is None and t._mount_key is None
     projectiles.update_all(1.0 / 60.0, [])
+    # _guide really ran: every writer below fired.
+    assert _hex(t._velocity.x, t._velocity.y, t._velocity.z) != \
+        _hex(0.0, 10.0, 0.0)
+    assert isinstance(t._last_seen_target_pos, TGPoint3)
+    assert isinstance(t._last_target_vel, TGPoint3)
+    assert t._mount_key is not None and t._mount_key[0] is target
     d = _row(t)
     assert d["age"].hex() == float(t._age).hex() != (0.0).hex()
     assert _vec(d["vel"]) == _hex(t._velocity.x, t._velocity.y,
                                   t._velocity.z)
+    p = t._last_seen_target_pos
+    assert _vec(d["last_seen"]) == _hex(p.x, p.y, p.z)
+    v = t._last_target_vel
+    assert _vec(d["last_tvel"]) == _hex(v.x, v.y, v.z)
+    assert d["mount_attributed"] == 1
+    assert _vec(d["mount_offset"]) == _hex(0.5, 1.0, -0.25)
+    nc.audit_mirror()
+    assert nc.audit_failures() == [], nc.audit_failures()
+
+
+def test_dropped_target_row_reads_unrepresentable(on, scene):
+    """A target whose own row is dropped (it took the Python path) is still
+    the torpedo's target: the row reads -2, never None (which would fly the
+    torpedo ballistic)."""
+    t, target = _guided(scene)
+    assert _row(t)["target"] == target.__dict__["_nslot"]
+    nc._drop(target)
+    assert _row(t)["target"] == nc.REF_UNREPRESENTABLE
     nc.audit_mirror()
     assert nc.audit_failures() == [], nc.audit_failures()
 

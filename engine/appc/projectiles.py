@@ -54,11 +54,16 @@ class Torpedo(ObjectClass):
 
     `__slots__` below is now advisory rather than load-bearing: no class in
     the ObjectClass chain declares slots, so every torpedo carries a __dict__
-    regardless. Kept because the named fields still bind to real descriptors
-    (cheaper than dict lookups on the hot motion path) and because the list
-    documents the projectile's own state. If torpedo count ever becomes a
-    memory problem, this is where it starts. `_position` is deliberately NOT
-    in this list -- it lives in the store, not on the instance.
+    regardless. The fields the native K3 kernel reads (`_age`, `_ttl`,
+    `_guidance_*`, `_max_angular_accel`, `_target_ship`, `_target_offset`,
+    `_last_seen_target_pos`, `_last_target_vel`, `_mount_key`) are NOT slots:
+    they are `native_combat.TorpedoField` descriptors (a slot and a
+    descriptor cannot share a name), so their values live in the instance
+    __dict__ and every write reaches the torpedo's table row. The rest keep
+    their slots, which still bind to real descriptors and document the
+    projectile's own state. If torpedo count ever becomes a memory problem,
+    this is where it starts. `_position` is deliberately NOT in either list
+    -- it lives in the store, not on the instance.
     """
     __slots__ = (
         "_vel",

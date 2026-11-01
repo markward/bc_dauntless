@@ -23,7 +23,7 @@
 // Ref fields hold combat-mirror handles (Object, Set, Subsystem; -1 None,
 // kRefUnrepresentable -2). The table stores them as given; Mirror's
 // set_torpedo_ref / set_torpedo_mount check the kind, and Mirror::torpedo_ref
-// re-checks liveness at read time.
+// re-checks liveness at read time (a dead handle reads -2, never None).
 
 namespace dauntless::combat {
 
