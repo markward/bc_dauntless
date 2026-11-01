@@ -100,9 +100,14 @@ _KIND_SHIFT = 60
 # ── The switch ───────────────────────────────────────────────────────────────
 
 def available() -> bool:
-    # The torpedo table's bindings too: a .so older than K3 is stale.
+    # The phase-3 bindings too (the torpedo table, the step scan, K4 and the
+    # K3 kernel): a .so older than any of them is stale.
     return (_h is not None and hasattr(_h, "combat_register")
-            and hasattr(_h, "combat_torp_add"))
+            and hasattr(_h, "combat_torp_add")
+            and hasattr(_h, "combat_step_scan")
+            and hasattr(_h, "combat_step_serial")
+            and hasattr(_h, "combat_k4_eligible")
+            and hasattr(_h, "combat_k3_begin"))
 
 
 def configure(environ: Mapping[str, str] = os.environ) -> None:
@@ -162,10 +167,17 @@ def reset() -> None:
     _step = None
     for k in _K4_REASONS:
         _k4_reasons[k] = 0
+    for k in _K3_REASONS:
+        _k3_reasons[k] = 0
+    _k3_iids_sent[:] = [_K2_UNSENT, -1, -1]
     if available():
         _h.combat_k1_reset_counts()
         _h.combat_k2_reset_counts()
         _h.combat_k4_reset_counts()
+        if _h.combat_k3_open():
+            _h.combat_k3_abandon()
+        _h.combat_k3_reset_counts()
+        _h.combat_step_reset()
 
 
 def counts() -> dict:
@@ -187,7 +199,14 @@ def counts() -> dict:
     K4 (`cb.eligibility`): "k4_runs" (calls the kernel decided) and
     "k4_python_reasons" ({why: n}, the kernel's hand-backs -- scan, player,
     nonfinite, frame, set -- summed with k4_update's own: audit, patched,
-    the step scan's reasons, ...)."""
+    the step scan's reasons, ...).
+
+    K3 (`cb.projectiles`): the kernel's {"k3_runs", "k3_records",
+    "k3_asks": {query: n}, "k3_guide_reasons": {why: n}}, and
+    "k3_python_steps" / "k3_python_reasons" ({why: n}): the steps run whole
+    in Python, the kernel's begin reasons (scan, table, unrepresentable,
+    stale_ref, torpedo_xform, ship_cache) summed with run_k3's own (off,
+    audit, plain_active, scan, patched, row, guard, instances)."""
     c = dict(_counts)
     c.update(_k2_steps)
     c["k2_python_step_reasons"] = dict(_k2_step_reasons)
@@ -199,6 +218,12 @@ def counts() -> dict:
         for k, n in _k4_reasons.items():
             why[k] = why.get(k, 0) + n
         c.update(k4)
+        k3 = _h.combat_k3_counts()
+        why = k3["k3_python_reasons"]
+        for k, n in _k3_reasons.items():
+            why[k] = why.get(k, 0) + n
+            k3["k3_python_steps"] += n
+        c.update(k3)
     return c
 
 
@@ -1438,6 +1463,10 @@ def resync() -> None:
 _k3_dirty = True
 # handle -> torpedo, for every row in the table.
 _k3_rows: dict = {}
+# handle -> class, for every row whose torpedo is not of the stock Torpedo
+# class (a mod's subclass): run_k3 checks those classes ("guard").
+_k3_odd_rows: dict = {}
+_k3_torpedo_cls = None
 _torp_fids: dict = {}
 
 
@@ -1571,6 +1600,7 @@ def _torp_lost(t) -> None:
     h = t.__dict__.pop("_k3_row", None)
     if _k3_rows.get(h) is t:
         del _k3_rows[h]
+        _k3_odd_rows.pop(h, None)
     torpedo_table_mark_dirty()
 
 
@@ -1656,6 +1686,8 @@ def _torp_put(t) -> None:
     h = _h.combat_torp_add(xi, xg)
     t.__dict__["_k3_row"] = h
     _k3_rows[h] = t
+    if type(t) is not _k3_torpedo_cls:
+        _k3_odd_rows[h] = type(t)
     for name in _TORP_FIELDS:
         value = _torp_value(t, name)
         if value is not _UNSET_FIELD and t.__dict__.get("_k3_row") == h:
@@ -1685,6 +1717,7 @@ def torpedo_row_drop(t) -> None:
         return
     if _k3_rows.get(h) is t:
         del _k3_rows[h]
+        _k3_odd_rows.pop(h, None)
         _h.combat_torp_drop(h)
 
 
@@ -1698,6 +1731,7 @@ def torpedo_table_mark_dirty() -> None:
     for t in _k3_rows.values():
         t.__dict__.pop("_k3_row", None)
     _k3_rows.clear()
+    _k3_odd_rows.clear()
     if available():
         _h.combat_torp_clear()
 
@@ -2774,9 +2808,12 @@ class _K2Context:
     view offset)."""
 
     __slots__ = ("instances", "version", "iids", "cheat", "player", "view",
-                 "asked_shields", "staged")
+                 "asked_shields", "staged", "sent")
 
-    def __init__(self, ship_instances) -> None:
+    def __init__(self, ship_instances, sent=None) -> None:
+        # The key of the iids table the kernel holds: K2's (_k2_iids_sent),
+        # or K3's own (_k3_iids_sent): each kernel keeps its own table.
+        self.sent = _k2_iids_sent if sent is None else sent
         self.instances = ship_instances
         self.version = -1
         self.iids = None
@@ -2788,20 +2825,20 @@ class _K2Context:
 
     def delta(self) -> dict:
         """The context keys to send. "iids" only when the table's key
-        differs from the one the kernel holds (_k2_iids_sent): the caller
-        commits the staged key once the kernel took it (commit)."""
+        differs from the one the kernel holds (`sent`): the caller commits
+        the staged key once the kernel took it (commit)."""
         d = {}
         si = self.instances
         if si is not None:
             if si.version != self.version:
                 self.version = si.version
                 self.iids = _k2_iids(si)
-                c, sent = _k2_iids_cache, _k2_iids_sent
+                c, sent = _k2_iids_cache, self.sent
                 if (sent[0] is not c[0] or sent[1] != c[1]
                         or sent[2] != c[2]):
                     d["iids"] = self.iids
                     self.staged = c[:3]
-        elif _k2_iids_sent[0] is not None:
+        elif self.sent[0] is not None:
             d["iids"] = {}
             self.staged = [None, -1, -1]
         cheat = bool(_k2_cheats.disable_npc_shields_active())
@@ -2824,7 +2861,7 @@ class _K2Context:
     def commit(self) -> None:
         """The kernel took the last delta: its table's key is the staged one."""
         if self.staged is not None:
-            _k2_iids_sent[:] = self.staged
+            self.sent[:] = self.staged
             self.staged = None
 
     def resend(self) -> None:
@@ -3047,14 +3084,16 @@ _STEP_SHIP_PATCHES = (
 class _StepScan:
     """One step's scan, as K4 and K3 read it: `ships` (the list scanned),
     `ok`, `reason` (why not ok, else None), `sets` (Set handles in play),
-    `frames` (the table sent) and `keys` (frame key -> the id interned for
-    this step). `k4_fresh` is True until K4 has used it."""
+    `frames` (the table sent), `keys` (frame key -> the id interned for this
+    step) and `serial` (the native scan's, combat_step_serial: K3's begin
+    refuses a scan taken since). `k4_fresh` is True until K4 has used it."""
 
     __slots__ = ("ships", "ok", "reason", "sets", "frames", "keys",
-                 "k4_fresh")
+                 "k4_fresh", "serial")
 
     def __init__(self, ships) -> None:
         self.ships = ships
+        self.serial = -1
         self.ok = False
         self.reason = None
         self.sets = []
@@ -3122,10 +3161,23 @@ def step_scan(ships) -> _StepScan:
                 st.ok = True
                 st.sets = sets
                 st.frames = table
+                st.serial = _h.combat_step_serial()
                 return st
     st.reason = why
     _h.combat_step_reset()
     return st
+
+
+def clear_step() -> None:
+    """The combat step is over (host_loop._advance_combat_step's finally) or
+    the mission is being swapped: drop the step's scan, so its ships_list
+    does not outlive the step (it would delay every ship's finalizer), and
+    empty the native step state, so nothing later reads it as current."""
+    global _step
+    if _step is not None:
+        _step = None
+        if available():
+            _h.combat_step_reset()
 
 
 # ── K4: damage eligibility (phase 3) ────────────────────────────────────────
@@ -3268,6 +3320,315 @@ def k4_update(player, ships) -> bool:
         ids.add(id(ships[i]))
     de.set_current(ids)
     return True
+
+# ── K3: the native torpedo kernel's driver (phase 3) ────────────────────────
+#
+# native/src/combat/include/dauntless/combat/k3_projectiles.h is the contract.
+# projectiles.update_all (switch on, `_active` not empty) calls run_k3: the
+# kernel walks update_all's decision steps 0-3 over the torpedo table and this
+# step's scan (the one `cb.eligibility` took for the same ships_list) and
+# returns ASKs -- each answered here by exactly the Python it stands for --
+# then one DONE, which this applies: the write log into the torpedoes'
+# Python attributes (not pushed back: the row already holds every value), the
+# hits built with Python's object identities, expire() in the kernel's order.
+#
+# WHAT K3 STANDS IN FOR, checked before begin (a difference sends the WHOLE
+# step to Python, so a test's, tool's or mod's replacement is obeyed):
+#   module functions and constants  _K3_FUNCTIONS (map §A8.3.9's patch points
+#                     and the functions the kernel replaces), against
+#                     k3_snapshot_stock's identity snapshot, plus host_io._h
+#                     the real bindings or None              -> "patched";
+#   classes           the stock Torpedo's _K3_TORPEDO_NAMES, any odd torpedo
+#                     class (a subclass) resolving one differently, and every
+#                     ship/object class K2 has seen resolving _K3_SHIP_NAMES
+#                     to non-engine code or to anything other than at first
+#                     sight (K2's ruling C2)                  -> "guard".
+# The ship methods K2 already watches (IsDead, GetWorldLocation,
+# GetContainingSet, GetRadius, GetScale, GetShields, GetCloakingSubsystem) are
+# re-checked by the step scan (_k2_classes_unchanged) earlier in this step.
+# The static twin is tests/unit/test_native_k3_override_guard.py.
+
+#: (module, names) K3 stands in for. Constants compare by value (the kernel
+#: was pushed them at resync: a change since is not in the mirror).
+_K3_FUNCTIONS = (
+    ("engine.appc.projectiles", ("_guide", "_steer_point", "_target_visible",
+                                 "_broadphase", "_shifted", "_LEAD_ACCEL_K")),
+    ("engine.appc.combat", ("sphere_hit", "_resolve_hit_point",
+                            "shield_bubble_entry", "shields_block",
+                            "bubble_bound_radius", "ray_sphere_entry",
+                            "cloak_shields_suspended", "_hull_box_for",
+                            "_body_frame_delta")),
+    ("engine.appc.collisions", ("world_radius",)),
+    ("engine.systems.frames", ("offset_between", "containing_set",
+                               "shifted")),
+    ("engine.appc.subsystems", ("target_offset_world", "_is_offline")),
+    ("engine.appc.part_severance", ("authored_mount_subsystem",
+                                    "_mounted_subsystems")),
+    ("engine.appc.sensor_detection", ("can_detect",
+                                      "ENHANCED_SENSOR_CONTEST")),
+    ("engine.host_io", ("ray_trace_mesh",)),
+    ("engine.core.ids", ("implements",)),
+)
+#: Torpedo methods the kernel stands in for: the store read and write of the
+#: position, and frames.containing_set's GetContainingSet.
+_K3_TORPEDO_NAMES = ("GetTranslate", "SetTranslateXYZ", "GetContainingSet")
+#: Ship methods K3 reads that K2's roles do not list: the target's lead.
+_K3_SHIP_NAMES = ("GetVelocityTG",)
+_K3_REASONS = ("off", "audit", "plain_active", "scan", "patched", "row",
+               "guard", "instances")
+_k3_reasons = dict.fromkeys(_K3_REASONS, 0)
+# The key of the iids table the K3 kernel holds (it keeps its own, apart from
+# K2's): as _k2_iids_sent.
+_k3_iids_sent = [_K2_UNSENT, -1, -1]
+_k3_snapshot = None
+_k3_proj = None
+_k3_torp_res = None
+# [(cls, resolution, foreign)] for the seen ship/object classes, rebuilt when
+# _k2_seen grows (_k3_watch_seen[0] is the length it was built at).
+_k3_watch: list = []
+_k3_watch_seen = [-1]
+_k3_ask = None
+
+
+def k3_snapshot_stock() -> None:
+    """Called by host_loop right after k2_snapshot_stock (projectiles and
+    every module K3 stands in for are imported by then): the identity
+    snapshot run_k3 compares against, before any test, tool or mod can
+    replace a function."""
+    global _k3_snapshot, _k3_proj, _k3_torp_res, _k3_torpedo_cls
+    snap = []
+    for name, names in _K3_FUNCTIONS:
+        mod = importlib.import_module(name)
+        get = operator.attrgetter(*names)
+        values = get(mod)
+        if len(names) == 1:
+            values = (values,)
+        snap.append((mod, get, len(names) == 1, values))
+    _k3_snapshot = snap
+    _k3_proj = importlib.import_module("engine.appc.projectiles")
+    _k3_torpedo_cls = _k3_proj.Torpedo
+    _k3_torp_res = _k2_resolution(_k3_torpedo_cls, _K3_TORPEDO_NAMES)
+    # Rows made before the snapshot were filed against no stock class.
+    for h, t in _k3_rows.items():
+        if type(t) is _k3_torpedo_cls:
+            _k3_odd_rows.pop(h, None)
+    _k3_watch_seen[0] = -1
+
+
+def _k3_unchanged() -> bool:
+    for mod, get, one, values in _k3_snapshot:
+        try:
+            now = get(mod)
+        except AttributeError:
+            return False
+        if one:
+            now = (now,)
+        if now != values:
+            return False
+    h = _k2_host_io._h
+    return h is None or h is _k2_host
+
+
+def _k3_rebuild_watch() -> None:
+    watch = []
+    for cls in _k2_seen:
+        if _k2_role_of(cls) in ("ship", "object"):
+            foreign = any(_k2_foreign(getattr(cls, n, None))
+                          for n in _K3_SHIP_NAMES)
+            watch.append((cls, _k2_resolution(cls, _K3_SHIP_NAMES), foreign))
+    _k3_watch[:] = watch
+    _k3_watch_seen[0] = len(_k2_seen)
+
+
+def _k3_classes_ok() -> bool:
+    """The class half: the stock Torpedo, and every odd torpedo class (a
+    subclass with a row), resolving _K3_TORPEDO_NAMES to what the stock
+    Torpedo did at the snapshot; and no seen ship/object class resolving
+    _K3_SHIP_NAMES to non-engine code or to anything other than at first
+    sight."""
+    if not _k2_same(_k3_torpedo_cls, _k3_torp_res):
+        return False
+    if _k3_odd_rows:
+        for cls in set(_k3_odd_rows.values()):
+            if not _k2_same(cls, _k3_torp_res):
+                return False
+    if len(_k2_seen) != _k3_watch_seen[0]:
+        _k3_rebuild_watch()
+    for cls, res, foreign in _k3_watch:
+        if foreign or not _k2_same(cls, res):
+            return False
+    return True
+
+
+def _k3_python(why: str):
+    _k3_reasons[why] += 1
+    return None
+
+
+def _k3_fallback(all_ships, ship_instances):
+    """Why this `cb.projectiles` step must run whole in Python, or None."""
+    if not _enabled:
+        return "off"
+    # The kernel's own can_detect would bypass the audit (as K2).
+    if _audit:
+        return "audit"
+    proj = _k3_proj
+    if proj is None or _k2_role_snapshot is None:
+        return "patched"
+    if type(proj._active) is not proj._ActiveList:
+        return "plain_active"
+    if ship_instances is not None \
+            and type(ship_instances) is not _tracked_instances():
+        return "instances"
+    st = _step
+    if st is None or st.ships is not all_ships or not st.ok:
+        return "scan"
+    if not _k3_unchanged():
+        return "patched"
+    if _k3_dirty:
+        # A list mutation the rows could not follow (a reorder, a slice, a
+        # clear): never hand the kernel a stale table. Before the class
+        # check, which reads the rows' classes.
+        torpedo_table_rebuild(proj._active)
+        if _k3_dirty:
+            return "row"        # a torpedo listed twice: no row can hold it
+    if not _k3_classes_ok():
+        return "guard"
+    return None
+
+
+def run_k3(dt, all_ships, ship_instances):
+    """projectiles.update_all's body through K3: the `hits` list it returns,
+    or None when the caller must run the Python body (counted by why in
+    counts()["k3_python_reasons"]).
+
+    EXCEPTIONS. Any exception between begin and DONE (an ASK's Python
+    raising: a target's GetVelocityTG inside an ASK guide, say) abandons the
+    session and re-raises. Nothing has been applied then -- the kernel writes
+    every age and position at DONE -- whereas the Python body would already
+    have advanced, aged and TTL-placed the torpedoes before the one that
+    raised. Exceptions propagate exactly as today otherwise (`cb.projectiles`
+    is only a profiler scope); an exception from expire() (an
+    ET_TORPEDO_EXITED_SET handler) comes after every write was applied, as in
+    Python."""
+    why = _k3_fallback(all_ships, ship_instances)
+    if why is not None:
+        return _k3_python(why)
+    proj = _k3_proj
+    st = _step
+    cx = _K2Context(ship_instances, _k3_iids_sent)
+    ctx = cx.delta()
+    ctx["trace"] = _k2_host_io._h is not None
+    ctx["n_active"] = len(proj._active)
+    ctx["scan_serial"] = st.serial
+    now_, use_memo, drift = _k1_clocks()
+    why = _h.combat_k3_begin(dt, (now_, drift), use_memo, ctx)
+    cx.commit()                 # begin takes the context, reason or not
+    if why is not None:
+        return None             # counted by the kernel
+    return _k3_walk(dt, ship_instances, st)
+
+
+def _k3_walk(dt, ship_instances, st):
+    global _k3_ask
+    if _k3_ask is None:
+        _k3_ask = _h.combat_k3_kinds()["ASK"]
+    ask = _k3_ask
+    walk = _K1Walk()
+    try:
+        rec = _h.combat_k3_next()
+        while rec[0] == ask:
+            _h.combat_k3_answer(_k3_answer(rec, walk, dt, ship_instances, st))
+            rec = _h.combat_k3_next()
+        _h.combat_k3_end()
+    except BaseException:
+        if _h.combat_k3_open():
+            _h.combat_k3_abandon()
+        raise
+    _kind, writes, expired, hits = rec
+    rows = _k3_rows
+    # Every handle to its object BEFORE any expire(): `_active.remove` drops
+    # the torpedo's row (and its _k3_rows entry).
+    hit_objs = [(rows[th], walk.obj(sh), point, normal, bubble, is_bubble)
+                for th, sh, point, _tier, normal, bubble, is_bubble in hits]
+    expiring = [rows[h] for h in expired]
+    _k3_apply(writes, rows)
+    out = []
+    for t, ship, point, normal, bubble, is_bubble in hit_objs:
+        # update_all's identities (map §A5): on a fallback-tier bubble hit,
+        # hit_point, seg_cur and _bubble_entry are ONE object.
+        if is_bubble:
+            b = p = TGPoint3(*bubble)
+        else:
+            b = None if bubble is None else TGPoint3(*bubble)
+            p = TGPoint3(*point)
+        t._bubble_entry = b
+        out.append((t, ship, p, None if normal is None else TGPoint3(*normal)))
+    expire = _k3_proj.expire
+    for t in expiring:
+        expire(t)
+    return out
+
+
+def _k3_apply(writes, rows) -> None:
+    """The DONE write log into the torpedoes' Python attributes, WITHOUT the
+    TorpedoField / `_velocity` pushes (the row holds every value already) --
+    except the incoming-torpedo table's velocity, which gets exactly the
+    write the `_velocity` setter makes (projectiles.Torpedo._velocity)."""
+    proj = _k3_proj
+    for h, age, seen, tvel, vel in writes:
+        t = rows[h]
+        d = t.__dict__
+        if seen is not None:
+            d["_last_seen_target_pos"] = TGPoint3(*seen)
+        if tvel is not None:
+            d["_last_target_vel"] = TGPoint3(*tvel)
+        if vel is not None:
+            v = TGPoint3(*vel)
+            t._vel = v
+            if t._scan_live == proj._scan_gen and not proj._scan_dirty:
+                proj._scan_table().set_velocity(t.GetObjID(), v.x, v.y, v.z)
+        d["_age"] = age
+
+
+def _k3_answer(rec, walk, dt, ship_instances, st):
+    """An ASK's answer: exactly the Python the kernel stands in for
+    (k3_projectiles.h, RECORDS), on the live objects."""
+    query, args = rec[1], rec[2:]
+    if query == "guide":
+        _k3_proj._guide(_k3_rows[args[0]], dt)
+        return None
+    if query == "steer_point":
+        p = _k3_proj._steer_point(_k3_rows[args[0]], walk.obj(args[1]),
+                                  args[2])
+        return (p.x, p.y, p.z)
+    if query == "frame":
+        # Interned in THIS step's keys, so ids match the table K4 sent. A set
+        # with no live object has no entry: None (frame_of None).
+        entry = _step_frames((args[0],), st.keys)
+        return entry[0][1:] if entry else None
+    from engine.appc import combat
+    if query == "shields_block":
+        return bool(combat.shields_block(walk.obj(args[0])))
+    if query == "bubble":
+        p = combat.shield_bubble_entry(walk.obj(args[0]), TGPoint3(*args[1]),
+                                       TGPoint3(*args[2]), args[3])
+        return None if p is None else (p.x, p.y, p.z)
+    if query == "resolve_hit":
+        target = walk.obj(args[0])
+        origin = TGPoint3(*args[1])
+        fallback = TGPoint3(*args[4])
+        direction = None if args[2] is None else TGPoint3(*args[2])
+        p, n = combat._resolve_hit_point(
+            ship_instances=ship_instances, ship=target, ray_origin=origin,
+            ray_direction=direction, max_dist=args[3],
+            fallback_point=fallback)
+        tier = ("origin" if p is origin else "fallback" if p is fallback
+                else "mesh" if n is not None else "sphere")
+        return ((p.x, p.y, p.z),
+                None if n is None else (n.x, n.y, n.z), tier)
+    raise RuntimeError("combat K3: unknown ASK %r" % (query,))
+
 
 if available():
     # step_memo.forget() (every hit, the step's forget points, the outermost

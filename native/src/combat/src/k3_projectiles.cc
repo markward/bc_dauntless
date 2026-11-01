@@ -812,7 +812,8 @@ void K3Kernel::clear() { session_.reset(); }
 
 std::optional<K3Why> K3Kernel::begin(double dt, const GuideClocks& clocks,
                                      bool use_memo, K2Context ctx,
-                                     int64_t n_active, bool keep_iids) {
+                                     int64_t n_active, bool keep_iids,
+                                     std::optional<uint64_t> scan_serial) {
     if (session_) lost("a session is already open");
     if (keep_iids) ctx.iids = std::move(ctx_.iids);
     ctx_ = std::move(ctx);
@@ -822,7 +823,11 @@ std::optional<K3Why> K3Kernel::begin(double dt, const GuideClocks& clocks,
         return w;
     };
 
-    if (!scan_.representable) return python(K3Why::scan);
+    // Not representable, or not the scan the driver took this step (a scan
+    // of another ships_list, or a reset, since): never walk a stale scan.
+    if (!scan_.representable ||
+        (scan_serial && *scan_serial != scan_.serial))
+        return python(K3Why::scan);
     const TorpedoTable& tt = m_.torpedoes();
     // A dirty table (emptied), a torpedo listed twice (the rebuild leaves it
     // empty), anything in `_active` that has no row.

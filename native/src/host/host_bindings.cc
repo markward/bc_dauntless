@@ -10744,7 +10744,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
         //   (ASK, query, *args)              -> reply combat_k3_answer
         // combat_k3_begin's ctx: combat_k2_begin's keys (a begin without
         // "iids" keeps the previous K3 session's table; "python_ships" is
-        // unused) plus "n_active": len(projectiles._active) (required).
+        // unused) plus "n_active": len(projectiles._active) (required) and
+        // "scan_serial": combat_step_serial() when the driver took its scan
+        // (optional; a different serial is reason "scan").
         // It returns None with a session open, or the reason the whole step
         // is Python's (no session).
         m.def("combat_k3_kinds", [] {
@@ -10762,10 +10764,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   cb::K2Context c;
                   c.hooks = cb::installed_trace_hooks();
                   k2_apply_ctx(c, ctx);
+                  std::optional<std::uint64_t> serial;
+                  if (ctx.contains("scan_serial"))
+                      serial = ctx["scan_serial"].cast<std::uint64_t>();
                   const auto why = cb::k3_kernel().begin(
                       dt, cb::GuideClocks{clocks[1], clocks[0]}, use_memo,
                       std::move(c), ctx["n_active"].cast<std::int64_t>(),
-                      !ctx.contains("iids"));
+                      !ctx.contains("iids"), serial);
                   if (!why) return py::none();
                   return py::str(cb::k3_why_name(*why));
               },
@@ -10920,6 +10925,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("table"),
               "This step's frame table: [(set_handle, key_id, ax, ay, az), "
               "...], frames.frame_of(set) per set (key_id -1: None).");
+        m.def("combat_step_serial", [] { return cb::step_scan().serial; },
+              "The current step scan's serial (bumped by every scan and "
+              "reset): K3's begin compares it with ctx[\"scan_serial\"].");
         m.def("combat_step_reset", [] { cb::step_scan().begin(); },
               "Empty the step state: nothing representable this step.");
         m.def("combat_step_dump", [] {

@@ -858,6 +858,14 @@ def update_all(dt: float, all_ships, *, ship_instances=None) -> list[tuple]:
     if not _active:
         return hits
 
+    # Native combat on: the K3 kernel decides steps 0-3 and native_combat
+    # applies them (engine/appc/native_combat.py, run_k3); None hands this
+    # step to the Python below.
+    if _nc._enabled:
+        native = _nc.run_k3(dt, all_ships, ship_instances)
+        if native is not None:
+            return native
+
     # Per-ship values resolved ONCE per call, not once per (torpedo, ship)
     # pair. Position, the broadphase bound and liveness depend only on the
     # ship, and nothing inside this function moves a ship or kills one --

@@ -35,7 +35,9 @@
 // after begin: everything that sends the step to Python is decided by begin.
 //
 // WHOLE STEP TO PYTHON. begin() returns a reason (and opens no session) when
-//   scan             the step scan is not representable (step_scan.h);
+//   scan             the step scan is not representable (step_scan.h), or
+//                    `scan_serial` is given and is not its serial (the
+//                    driver's scan is not the current one);
 //   table            the torpedo table's live row count is not `n_active`
 //                    (len(_active)): a dirty table, a torpedo listed twice
 //                    (the rebuild leaves the table empty), a non-Torpedo
@@ -209,11 +211,14 @@ public:
     // context (npc_shields_off, player, view_offsets, iids, hooks;
     // python_ships is unused). `n_active` is len(projectiles._active).
     // `keep_iids`: ctx.iids is replaced by the previous context's table.
+    // `scan_serial`: the StepScan::serial of the scan the driver took this
+    // step; a different one is a stale scan (reason scan).
     // Returns nullopt with a session open, or the reason the whole step is
     // Python's (no session). Throws std::logic_error if a session is open.
     std::optional<K3Why> begin(double dt, const GuideClocks& clocks,
                                bool use_memo, K2Context ctx, int64_t n_active,
-                               bool keep_iids = false);
+                               bool keep_iids = false,
+                               std::optional<uint64_t> scan_serial = {});
 
     // The next record. Throws std::logic_error when no session is open, an
     // ASK has no answer, the session already returned DONE, or a row the

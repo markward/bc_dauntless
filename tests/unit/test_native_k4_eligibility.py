@@ -35,6 +35,7 @@ from engine.appc import damage_eligibility as de  # noqa: E402
 from engine.appc import native_combat as nc  # noqa: E402
 from engine.appc.sets import SetClass  # noqa: E402
 from engine.appc.ships import ShipClass  # noqa: E402
+from engine.core import ids  # noqa: E402
 from engine.systems import frames, region_hooks, resolve  # noqa: E402
 
 ON = {"DAUNTLESS_NATIVE_COMBAT": "1"}
@@ -333,7 +334,8 @@ def test_k4_duplicate_ship_falls_back(pool, monkeypatch):
 _PATCH_TARGETS = (
     (de, "select_eligible"), (de, "_radius"), (frames, "system_distance"),
     (frames, "offset_between"), (frames, "frame_of"),
-    (frames, "containing_set"), (math, "dist"),
+    (frames, "containing_set"), (frames, "local_in"), (frames, "_xyz"),
+    (ids, "implements"), (math, "dist"),
 )
 
 

@@ -743,6 +743,33 @@ TEST(K3Projectiles, BeginHandsWholeStepToPython) {
     }
 }
 
+// The driver passes the serial of the scan it took this step (ctx
+// "scan_serial"): a scan taken since -- another ships_list, a reset -- is not
+// this step's, so the whole step is Python's ("scan"). No serial: unchecked.
+TEST(K3Projectiles, BeginRefusesAStaleScanSerial) {
+    World w;
+    w.listed("X", 0, 50, 0);
+    w.torp("T", {0, 0, 0}, {0, 60, 0});
+    w.scan_step();
+    const uint64_t taken = w.scan.serial;
+    w.scan_step();  // a newer scan of the same ships
+    ASSERT_NE(w.scan.serial, taken);
+    EXPECT_EQ(w.k.begin(kDt, GuideClocks{kDrift, kNow}, false, w.context(), 1,
+                        false, taken),
+              std::optional<K3Why>(K3Why::scan));
+    EXPECT_FALSE(w.k.open());
+    EXPECT_EQ(w.k.counts().why[static_cast<size_t>(K3Why::scan)], 1);
+    EXPECT_EQ(w.k.counts().runs, 0);
+    EXPECT_EQ(w.k.begin(kDt, GuideClocks{kDrift, kNow}, false, w.context(), 1,
+                        false, w.scan.serial),
+              std::nullopt);
+    w.k.abandon();
+    EXPECT_EQ(w.k.begin(kDt, GuideClocks{kDrift, kNow}, false, w.context(), 1),
+              std::nullopt);
+    w.k.abandon();
+    EXPECT_EQ(w.k.counts().runs, 2);
+}
+
 // A bubble the mirror cannot answer (a zero semi-axis raises in Python) and
 // a shields_block it cannot answer are K2's ASKs on the narrow path.
 TEST(K3Projectiles, NarrowAsksAsK2) {

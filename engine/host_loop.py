@@ -1259,6 +1259,8 @@ def _phaser_contact(ship, sys_, bank, target, dist: float, dt: float,
 # K2 stands in for this loop body's helpers: snapshot them now, before any
 # test, tool or mod can replace one (native_combat.k2_snapshot_stock).
 _native_combat.k2_snapshot_stock(sys.modules[__name__])
+# ... and the functions and classes K3 (cb.projectiles) stands in for.
+_native_combat.k3_snapshot_stock()
 
 
 def _advance_combat(*args, **kwargs) -> None:
@@ -1309,17 +1311,24 @@ def _advance_combat_step(ships, dt: float, ship_instances=None,
     # Refresh damage eligibility (part severance) for this tick before any
     # hits are processed: player always + capped nearest/largest ships.
     # See engine.appc.damage_eligibility.
-    with frame_profiler.scope("cb.eligibility"):
-        # The step scan K4 (here) and K3 (cb.projectiles) share: once a step.
-        if _native_combat._enabled:
-            _native_combat.step_scan(ships_list)
-        damage_eligibility.update(ships_list)
+    try:
+        with frame_profiler.scope("cb.eligibility"):
+            # The step scan K4 (here) and K3 (cb.projectiles) share: once a
+            # step.
+            if _native_combat._enabled:
+                _native_combat.step_scan(ships_list)
+            damage_eligibility.update(ships_list)
 
-    with frame_profiler.scope("cb.projectiles"):
-        hits = projectiles.update_all(
-            dt, ships_list,
-            ship_instances=ship_instances,
-        )
+        with frame_profiler.scope("cb.projectiles"):
+            hits = projectiles.update_all(
+                dt, ships_list,
+                ship_instances=ship_instances,
+            )
+    finally:
+        # K3 was the scan's last reader: it must not outlive the step (it
+        # holds ships_list), and no later update_all may read it as current.
+        if _native_combat._step is not None:
+            _native_combat.clear_step()
     for torpedo, ship, hit_point, hit_normal in hits:
         combat.apply_hit(ship, torpedo._damage, hit_point,
                   source=torpedo._source_ship,
@@ -7808,6 +7817,8 @@ class HostController:
                       f"{type(e).__name__}: {e}", flush=True)
         if self.session is not None:
             self.session.teardown(self.renderer)
+        # The native combat step scan holds the old mission's ships_list.
+        _native_combat.clear_step()
         from engine.appc import ship_lifecycle
         ship_lifecycle.reset()
         from engine.appc import ship_death
