@@ -10483,7 +10483,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
                         w.append(py::make_tuple(
                             kField[static_cast<int>(r.writes[i].field)],
                             vec(r.writes[i].value)));
-                    return py::make_tuple("done", w);
+                    // The mount attributed natively (-1 None), or None
+                    // when the shot's `_mount_key` already matched.
+                    return py::make_tuple(
+                        "done", w,
+                        r.attributed ? py::object(py::int_(r.mount))
+                                     : py::object(py::none()));
                 }
                 case St::need_frame:
                     return py::make_tuple("frame", r.frame_set);
@@ -10508,7 +10513,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
               },
               py::arg("torp"), py::arg("dt"), py::arg("use_memo"),
               py::arg("drift_now"), py::arg("occ_now"),
-              "('done', [(field, (x, y, z)), ...]) in _guide's write order; "
+              "('done', [(field, (x, y, z)), ...], mount) in _guide's write "
+              "order, mount the subsystem handle attributed natively (-1 "
+              "None) or None when nothing was attributed; "
               "('frame', set_handle); ('steer_point', (target, speed, "
               "torp_pos)) for combat_test_guide_torpedo_resume; or "
               "('guide', reason).");
@@ -11105,7 +11112,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
         // 3-tuple; torp = a torpedo table handle, `_k3_row`):
         //   (DONE, writes, expired, hits)
         //     writes  [(torp, age, last_seen_xyz | None, last_tvel_xyz |
-        //               None, vel_xyz | None), ...] in `_active` order
+        //               None, vel_xyz | None, mount | None), ...] in
+        //               `_active` order; mount = (target, (x, y, z), sub)
+        //               when the kernel attributed `_mount_key` (sub -1
+        //               None)
         //     expired [torp, ...]: TTL expiries, then hits (expire order)
         //     hits    [(torp, ship, hit_xyz, tier, normal_xyz | None,
         //               bubble_xyz | None, hit_is_bubble), ...]
@@ -11177,8 +11187,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
             }
             py::list writes, expired, hits;
             for (const cb::K3TorpWrite& w : r.writes)
-                writes.append(py::make_tuple(w.torp, w.age, opt(w.last_seen),
-                                             opt(w.last_tvel), opt(w.vel)));
+                writes.append(py::make_tuple(
+                    w.torp, w.age, opt(w.last_seen), opt(w.last_tvel),
+                    opt(w.vel),
+                    w.mount ? py::object(py::make_tuple(w.mount->target,
+                                                        vec(w.mount->offset),
+                                                        w.mount->sub))
+                            : py::object(py::none())));
             for (const std::int64_t t : r.expired) expired.append(t);
             for (const cb::K3Hit& h : r.hits)
                 hits.append(py::make_tuple(
@@ -11274,6 +11289,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
             d["k3_steer_reasons"] = steer;
             d["k3_posed_steers"] = c.posed_steers;
             d["k3_baked_steers"] = c.baked_steers;
+            d["k3_native_attributions"] = c.native_attributions;
             return d;
         });
         m.def("combat_k3_reset_counts",

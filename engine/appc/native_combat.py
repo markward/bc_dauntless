@@ -4289,7 +4289,7 @@ def _k3_walk(dt, ship_instances, st, walk, ask):
     hit_objs = [(rows[th], walk.obj(sh), point, normal, bubble, is_bubble)
                 for th, sh, point, _tier, normal, bubble, is_bubble in hits]
     expiring = [rows[h] for h in expired]
-    _k3_apply(writes, rows)
+    _k3_apply(writes, rows, walk)
     out = []
     for t, ship, point, normal, bubble, is_bubble in hit_objs:
         # update_all's identities (map §A5): on a fallback-tier bubble hit,
@@ -4307,15 +4307,25 @@ def _k3_walk(dt, ship_instances, st, walk, ask):
     return out
 
 
-def _k3_apply(writes, rows) -> None:
+def _k3_apply(writes, rows, walk) -> None:
     """The DONE write log into the torpedoes' Python attributes, WITHOUT the
     TorpedoField / `_velocity` pushes (the row holds every value already) --
     except the incoming-torpedo table's velocity, which gets exactly the
-    write the `_velocity` setter makes (projectiles.Torpedo._velocity)."""
+    write the `_velocity` setter makes (projectiles.Torpedo._velocity).
+
+    A `mount` (the kernel attributed the shot's mount: round trips, Task 4)
+    is `_steer_point`'s `_mount_key = (target, x, y, z, mount or None)` of
+    the live objects; x, y, z are the offset's own doubles (a TGPoint3
+    stores float()s, pushed as they are). Written before every other
+    field, as `_steer_point` runs first in `_guide`, and -- like them --
+    before run_k3 calls any expire()."""
     proj = _k3_proj
-    for h, age, seen, tvel, vel in writes:
+    for h, age, seen, tvel, vel, mount in writes:
         t = rows[h]
         d = t.__dict__
+        if mount is not None:
+            target, (x, y, z), sub = mount
+            d["_mount_key"] = (walk.obj(target), x, y, z, walk.obj(sub))
         if seen is not None:
             d["_last_seen_target_pos"] = TGPoint3(*seen)
         if tvel is not None:

@@ -360,7 +360,7 @@ def test_k3_matches_python_with_real_instances(monkeypatch, host,
     # tier -- is the headless file's: on a realized hull the ray from the
     # bubble always meets the mesh or the sphere.)
     for key in ("tier:mesh", "tier:sphere", "bubble", "normal",
-                "guided_visible", "steer_point:mount", "ttl"):
+                "guided_visible", "steer_point:native_mount", "ttl"):
         assert n.get(key, 0) > 0, (key, n)
     # A mesh hit through the bubble, and one with the shields down.
     hits = [c for c in ref.rec.calls if c[0] == "hit"]

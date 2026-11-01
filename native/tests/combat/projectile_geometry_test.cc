@@ -346,6 +346,38 @@ TEST(ProjectileGeometry, GuideSteerPointAskAndResume) {
     EXPECT_EQ(w.guide(h).status, St::need_steer_point);
 }
 
+// The mount attribution (round trips, Task 4): a ShipClass target's mount
+// order answers it natively (the first entry within 1e-5 per axis) and the
+// result says so; a target that is not a ShipClass (no mount order is ever
+// pushed for it) is Python's: ASK, unattributed.
+TEST(ProjectileGeometry, GuideAttributesTheMountNatively) {
+    World w;
+    const int64_t s = w.set();
+    w.frames(s);
+    const int64_t tgt = w.ship(s, 30.0, 100.0, 0.0);
+    const int64_t a = w.m.register_row(Kind::Subsystem);
+    w.m.set_fv(a, Field::_position, {0.0, 1.0 - 0.5e-5, 0.0});
+    const int64_t b = w.m.register_row(Kind::Subsystem);
+    w.m.set_fv(b, Field::_position, {0.0, 1.0, 0.0});
+    w.m.set_mount_order(tgt, {a, b});
+    const int64_t h = w.torp(s, tgt, {0, 0, 0}, {0, 10, 0});
+    w.m.torpedoes().set_v(h, TorpField::_target_offset, true, {0.0, 1.0, 0.0});
+    const GuideResult g = w.guide(h);
+    ASSERT_EQ(g.status, St::done);
+    EXPECT_TRUE(g.attributed);
+    EXPECT_EQ(g.mount, a);
+    // Already attributed: nothing to attribute.
+    w.m.set_torpedo_mount(h, true, a, {0.0, 1.0, 0.0});
+    EXPECT_FALSE(w.guide(h).attributed);
+    // Not a ShipClass: Python's.
+    w.m.set_torpedo_mount(h, false, -1, {0.0, 0.0, 0.0});
+    w.m.set_i(tgt, Field::is_ship_class, 0);
+    const GuideResult ask = w.guide(h);
+    ASSERT_EQ(ask.status, St::need_steer_point);
+    EXPECT_EQ(ask.steer_why, SteerWhy::unattributed);
+    EXPECT_FALSE(ask.attributed);
+}
+
 // G7-G9: a snap within the budget, a slerp outside it; the guidance window
 // edge (age == lifetime) leaves a zero budget.
 TEST(ProjectileGeometry, GuideTurnBudget) {

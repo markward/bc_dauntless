@@ -110,6 +110,9 @@ struct GuideResume {
 // need_steer_point). posed_target is retired (posed parts, Task 4): never
 // counted, kept for dashboards one release.
 //   unattributed          the shot's `_mount_key` is not this target/offset
+//                         and the mirror cannot attribute it
+//                         (authored_mount_subsystem's kMountUnknown; else
+//                         the kernel attributes it: GuideResult::attributed)
 //   mount_unrepresentable the attributed mount is a row the mirror can't name
 //   posed_target          (retired)
 //   no_mount              a posed target, the offset names no mount and no
@@ -147,8 +150,9 @@ struct GuideResult {
         // install it, and call guide_torpedo AGAIN from the start. Nothing
         // has been decided or written (no can_detect has run).
         need_frame,
-        // _steer_point is Python's (a mount the shot has not attributed, or
-        // a posed target whose mount slot cannot carry the offset; `why`
+        // _steer_point is Python's (a mount the shot has not attributed and
+        // the mirror cannot tell, a picked spot not baked for this offset,
+        // or a posed target whose mount slot cannot carry the offset;
         // steer_why says which): ASK steer_point(t), which also
         // writes `_mount_key`, then call guide_torpedo_resume with the point
         // and `resume`. can_detect HAS run: never start over.
@@ -173,6 +177,12 @@ struct GuideResult {
     bool posed_steer = false;
     // done: ...and it was a picked spot's baked point (posed parts, Task 7).
     bool baked_steer = false;
+    // done: the shot's `_mount_key` was not this target/offset and the
+    // mount was attributed natively (authored_mount_subsystem, round trips
+    // Task 4): `mount` is the subsystem handle (-1 None) Python's
+    // `_mount_key[4]` would hold. The caller logs the write.
+    bool attributed = false;
+    int64_t mount = -1;
 };
 
 

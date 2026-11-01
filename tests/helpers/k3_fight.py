@@ -423,9 +423,12 @@ class K3Tally:
     4): "steer_point:<why>" for every steer_point ASK, by the reason the
     kernel counted for it (k3_steer_reasons: "steer_point:unattributed" is
     a mount attribution, "steer_point:part_stale" a stale slot, ...);
-    "steer_point:mount" is the attribution ASKs (unattributed); and
-    "steer_point:posed" the steer points the kernel decided NATIVELY at a
-    posed target's mount or Manual Aim pick (k3_posed_steers)."""
+    "steer_point:mount" is the attribution ASKs (unattributed: a mount the
+    kernel cannot tell); "steer_point:posed" the steer points the kernel
+    decided NATIVELY at a posed target's mount or Manual Aim pick
+    (k3_posed_steers); and "steer_point:native_mount" the `_mount_key`
+    writes DONE carried (the kernel attributed the mount itself: round
+    trips, Task 4), cross-checked against k3_native_attributions."""
 
     def __init__(self, orig):
         self.orig = orig
@@ -435,6 +438,7 @@ class K3Tally:
         c = _h.combat_k3_counts()
         self.steer_why = dict(c["k3_steer_reasons"])
         self.posed_steers = c["k3_posed_steers"]
+        self.native_mounts = c["k3_native_attributions"]
 
     def bump(self, key, by=1):
         self.n[key] = self.n.get(key, 0) + by
@@ -465,11 +469,17 @@ class K3Tally:
 
     def on_done(self, rec):
         _kind, writes, expired, hits = rec
-        posed = _h.combat_k3_counts()["k3_posed_steers"]
+        c = _h.combat_k3_counts()
+        posed = c["k3_posed_steers"]
         self.bump("steer_point:posed", posed - self.posed_steers)
         self.posed_steers = posed
+        mounts = sum(1 for w in writes if w[5] is not None)
+        assert mounts == c["k3_native_attributions"] - self.native_mounts, \
+            (mounts, c["k3_native_attributions"], self.native_mounts)
+        self.native_mounts = c["k3_native_attributions"]
+        self.bump("steer_point:native_mount", mounts)
         rows = nc._k3_rows
-        for h, _age, seen, _tvel, vel in writes:
+        for h, _age, seen, _tvel, vel, _mount in writes:
             t = rows[h]
             self.classify(t, h, seen, vel)
         hit_torps = {th for th, *_rest in hits}
