@@ -2211,20 +2211,35 @@ def _k2_kinds() -> tuple:
     return _k2_kind_ids
 
 
+def _k2_unseen(cls) -> int:
+    """0 when K2 has seen `cls` (an object of it registered or was
+    reclassified, so its row's class flags are its own and _k2_unchanged
+    watches it); else 2 when it is flagged "whole" (_k2_flag), else 1: a
+    class swapped in under a row (`obj.__class__ = ...` without reclassify)
+    left that row's class flags stale."""
+    if cls in _k2_seen_set:
+        return 0
+    return 2 if _k2_flag(cls)[1] else 1
+
+
 def _k2_python_ship(ship) -> int:
     """0: K2 may walk `ship`'s phaser step; 1: its ship must run in Python
     (an instance attribute shadowing a stood-in name on it, its phaser
-    system or a bank, or a bank or system class overriding one of its own
-    names); 2: the whole step must (a bank or system class overriding a
-    subsystem name). k2_phasers inlines the common case (stock classes, no
-    instance attribute) and calls this for the rest."""
+    system or a bank, a bank or system class overriding one of its own
+    names, or the ship's class or a bank's target's class one K2 never
+    saw); 2: the whole step must (a bank or system class overriding a
+    subsystem name, or a never-seen class flagged "whole"). k2_phasers
+    inlines the common case (stock classes, no instance attribute, seen
+    classes) and calls this for the rest."""
     d = ship.__dict__
+    why = _k2_unseen(type(ship))
+    if why == 2:
+        return 2
     if not d.keys().isdisjoint(_K2_SHIP_PATCHES):
-        return 1
+        why = 1
     sys_ = d.get("_phaser_system")
     if sys_ is None:
-        return 0
-    why = 0
+        return why
     if type(sys_) is not _k2_stock_system:
         over, whole = _k2_flag(type(sys_))
         if whole:
@@ -2244,8 +2259,16 @@ def _k2_python_ship(ship) -> int:
             if over:
                 why = 1
         bd = getattr(b, "__dict__", None)
-        if bd is not None and not bd.keys().isdisjoint(_K2_BANK_PATCHES):
+        if bd is None:
+            continue
+        if not bd.keys().isdisjoint(_K2_BANK_PATCHES):
             why = 1
+        target = bd.get("_target")
+        if target is not None:
+            unseen = _k2_unseen(type(target))
+            if unseen == 2:
+                return 2
+            why = max(why, unseen)
     return why
 
 
@@ -2261,6 +2284,7 @@ def _k2_ship_handles(ships):
     stock_sys, stock_bank = _k2_stock_system, _k2_stock_bank
     ship_patches, sys_patches, bank_patches = (
         _K2_SHIP_PATCHES, _K2_SYSTEM_PATCHES, _K2_BANK_PATCHES)
+    seen = _k2_seen_set
     for ship in ships:
         d = getattr(ship, "__dict__", None)
         h = d.get("_nslot") if d is not None else None
@@ -2269,15 +2293,21 @@ def _k2_ship_handles(ships):
             continue
         handles.append(h)
         sys_ = d.get("_phaser_system")
-        clean = d.keys().isdisjoint(ship_patches)
+        clean = type(ship) in seen and d.keys().isdisjoint(ship_patches)
         if clean and sys_ is not None:
             if type(sys_) is stock_sys:
                 sd = sys_.__dict__
                 clean = sd.keys().isdisjoint(sys_patches)
                 if clean:
                     for b in sd.get("_children", ()):
-                        if type(b) is not stock_bank or \
-                                not b.__dict__.keys().isdisjoint(bank_patches):
+                        if type(b) is not stock_bank:
+                            clean = False
+                            break
+                        bd = b.__dict__
+                        target = bd.get("_target")
+                        if not bd.keys().isdisjoint(bank_patches) or (
+                                target is not None
+                                and type(target) not in seen):
                             clean = False
                             break
             else:

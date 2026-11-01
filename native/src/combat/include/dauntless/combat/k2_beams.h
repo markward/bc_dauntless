@@ -181,8 +181,10 @@
 //       sensor_detection.can_detect;
 //     or host_io._h is neither None nor the bindings it snapshotted;
 //   - a STOCK CLASS resolves one of its role's names to anything but its
-//     snapshot (native_combat._K2_ROLES; every role also watches the
-//     subsystem names GetWorldLocation, GetPosition, _climb_to_ship):
+//     snapshot (native_combat._K2_ROLES; every SUBSYSTEM role -- the
+//     first five -- also watches the subsystem names GetWorldLocation,
+//     GetPosition, _climb_to_ship; the override guard test parses this
+//     list):
 //       PhaserBank: IsFiring, IsBeamOn, take_dwell, accumulate_dwell,
 //         _strip_emit_position, _emitter_world_position, GetLength,
 //         GetDirection, GetUp, GetArcWidthAngles, GetArcHeightAngles,
@@ -213,7 +215,14 @@
 //     IsDestroyed;
 //   a bank: IsFiring, IsBeamOn, take_dwell, accumulate_dwell,
 //     _strip_emit_position, _emitter_world_position, GetLength.
-// An instance attribute on a TARGET is not looked for.
+// It also lists the ship when the ship's own class, or the class of a bank's
+// `_target`, is one K2 never saw (no object of it registered or was
+// reclassified: a `__class__` swapped in under a row leaves the row's class
+// flags stale), and runs the whole step in Python when that class is flagged
+// "whole" (native_combat._k2_unseen).
+// An instance attribute on a TARGET is not looked for. No ENGINE class may
+// override a stood-in name unless the kernel ports it: the static guard
+// tests/unit/test_native_k2_override_guard.py lists the ported ones.
 
 namespace dauntless::combat {
 

@@ -78,7 +78,8 @@ def _load_hardpoint(ship, name):
 
 
 def _hx(v):
-    """A float or a point by .hex(); None and others as they are."""
+    """A float or a point by .hex(); None as it is; anything else with its
+    type, so True and 1 (or 0 and False) never compare equal."""
     if v is None:
         return None
     if isinstance(v, float):
@@ -172,8 +173,8 @@ class World:
                 self.label(kw["source"]), _hx(kw["point"]),
                 _hx(kw["normal"]), _hx(kw["shield_point"]),
                 _hx(kw["tick_damage"]), kw["ship_instances"] is
-                self.instances, kw.get("weapon_type"), _hx(kw.get("radius")),
-                acted))
+                self.instances, _hx(kw.get("weapon_type")),
+                _hx(kw.get("radius")), _hx(acted)))
             result = beam_contact(**kw)
             for hook in list(self.after_contact):
                 hook(self)
@@ -184,9 +185,9 @@ class World:
                 "apply_hit", self.n, self.label(target), _hx(damage),
                 _hx(point), self.label(kw.get("source")),
                 _hx(kw.get("normal")), kw.get("ship_instances") is
-                self.instances, kw.get("weapon_type"),
+                self.instances, _hx(kw.get("weapon_type")),
                 self.label(kw.get("hardpoint_weapon")),
-                kw.get("damage_hull"), _hx(kw.get("shield_point")),
+                _hx(kw.get("damage_hull")), _hx(kw.get("shield_point")),
                 sorted(kw)))
             return apply_hit(target, damage, point, **kw)
 
@@ -201,9 +202,11 @@ class World:
             row = (evt.GetEventType(), self.label(evt.GetSource()),
                    self.label(evt.GetDestination()), self.n)
             if isinstance(evt, WeaponHitEvent):
-                row += (_hx(float(evt.GetDamage())),
-                        _hx(evt.GetObjectHitPoint()),
-                        _hx(evt.GetObjectHitNormal()))
+                # GetHitPoint / GetNormal: GetObjectHitPoint and
+                # GetObjectHitNormal are not engine methods (a _Stub, which
+                # compares equal to any _Stub).
+                row += (_hx(evt.GetDamage()), _hx(evt.GetHitPoint()),
+                        _hx(evt.GetNormal()))
             self.events.append(row)
             return _orig(evt)
 
@@ -224,7 +227,7 @@ class World:
         for b in self.banks:
             d = b.__dict__
             row.append((self.label(b), d.get("_dwell").hex(),
-                        d.get("_firing"), d.get("_target") is None,
+                        _hx(d.get("_firing")), d.get("_target") is None,
                         self.label(d.get("_target"))))
         for s in self.order:
             row.append((self.label(s),
@@ -410,11 +413,11 @@ def test_shields_drop_mid_volley(monkeypatch):
     ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, script, 220,
                               setup=setup)
     contacts = _calls(ref, "beam_contact")
-    assert {c[11] for c in contacts} == {True, False}
+    assert {c[11] for c in contacts} == {_hx(True), _hx(False)}
     assert any(c[6] is not None for c in contacts)      # a bubble entry
     in_120 = [c[11] for c in contacts if c[1] == 120]
-    assert in_120[0] is True and False in in_120, in_120
-    assert all(c[11] is False for c in contacts if c[1] > 160)
+    assert in_120[0] == _hx(True) and _hx(False) in in_120, in_120
+    assert all(c[11] == _hx(False) for c in contacts if c[1] > 160)
     _native_ran(counts)
     assert counts["k2_ask_queries"]["shields_block"] == 0, counts
 
@@ -585,7 +588,7 @@ def test_point_blank_contact_omits_shields_kwarg(monkeypatch):
     point_blank = [c for c in _calls(ref, "beam_contact")
                    if c[3] == "Galaxy"]
     assert point_blank, ref.calls
-    assert {c[11] for c in point_blank} == {True}, point_blank
+    assert {c[11] for c in point_blank} == {_hx(True)}, point_blank
     _native_ran(counts)
 
 
@@ -734,32 +737,49 @@ STOOD_IN = [
     ("engine.appc.sensor_detection", "can_detect"),
 ]
 
+# The k2_beams.h header's FULL role list ("a STOCK CLASS resolves one of its
+# role's names"), written out here independently of native_combat._K2_ROLES:
+# every SUBSYSTEM role (the first five) also watches the subsystem names.
+_SUBSYSTEM_NAMES = ("GetWorldLocation", "GetPosition", "_climb_to_ship")
 STOOD_IN_METHODS = [
-    ("PhaserBank", n) for n in (
+    ("PhaserBank", n) for n in _SUBSYSTEM_NAMES + (
         "IsFiring", "IsBeamOn", "take_dwell", "accumulate_dwell",
-        "_strip_emit_position", "_emitter_world_position", "GetLength")
+        "_strip_emit_position", "_emitter_world_position", "GetLength",
+        "GetDirection", "GetUp", "GetArcWidthAngles", "GetArcHeightAngles",
+        "IsDisabled", "IsDestroyed")
 ] + [
-    ("PhaserSystem", n) for n in (
-        "GetNumWeapons", "GetWeapon", "IsOn", "IsDisabled", "IsDestroyed")
+    ("PhaserSystem", n) for n in _SUBSYSTEM_NAMES + (
+        "GetNumWeapons", "GetWeapon", "GetNumChildSubsystems",
+        "GetChildSubsystem", "IsOn", "IsDisabled", "IsDestroyed")
+] + [
+    ("ShieldSubsystem", n) for n in _SUBSYSTEM_NAMES + (
+        "HasShields", "IsOn", "IsDisabled", "IsDestroyed")
+] + [
+    ("CloakingSubsystem", n) for n in _SUBSYSTEM_NAMES + (
+        "IsCloaking", "IsDecloaking")
+] + [
+    ("ShipSubsystem", n) for n in _SUBSYSTEM_NAMES
 ] + [
     ("ShipClass", n) for n in (
-        "GetPhaserSystem", "GetTargetSubsystem", "is_using_target_offset",
-        "GetTargetOffsetTG", "GetShields", "IsDead", "GetWorldLocation",
-        "GetWorldRotation")
+        "IsDead", "GetWorldLocation", "GetWorldRotation", "GetContainingSet",
+        "GetScale", "GetRadius", "GetShields", "GetPhaserSystem",
+        "GetTargetSubsystem", "is_using_target_offset", "GetTargetOffsetTG",
+        "GetCloakingSubsystem")
 ] + [
-    ("ShipSubsystem", "GetWorldLocation"),
-] + [
-    ("ShieldSubsystem", n) for n in ("HasShields", "IsOn", "IsDisabled",
-                                    "IsDestroyed")
+    ("ObjectClass", n) for n in (
+        "IsDead", "GetWorldLocation", "GetWorldRotation", "GetContainingSet",
+        "GetScale", "GetRadius", "GetShields")
 ]
 
 
 def _class(name):
-    from engine.appc import ships, subsystems
+    from engine.appc import objects, ships, subsystems
     return {"PhaserBank": ws.PhaserBank, "PhaserSystem": ws.PhaserSystem,
             "ShipClass": ships.ShipClass,
             "ShipSubsystem": subsystems.ShipSubsystem,
-            "ShieldSubsystem": subsystems.ShieldSubsystem}[name]
+            "ShieldSubsystem": subsystems.ShieldSubsystem,
+            "CloakingSubsystem": subsystems.CloakingSubsystem,
+            "ObjectClass": objects.ObjectClass}[name]
 
 
 def _one_native_step(monkeypatch, patch):
@@ -800,10 +820,17 @@ def test_every_stood_in_function_is_watched(monkeypatch, module, name):
                          ids=["%s.%s" % cn for cn in STOOD_IN_METHODS])
 def test_every_stood_in_method_is_watched(monkeypatch, cls, name):
     klass = _class(cls)
-    orig = getattr(klass, name)
+    orig = getattr(klass, name, None)
 
     def patch(mp, _w):
-        mp.setattr(klass, name, lambda self, *a, **k: orig(self, *a, **k))
+        if orig is None:
+            # A name the stock class lacks (ObjectClass.IsDead: the stub
+            # path) is watched for APPEARING.
+            mp.setattr(klass, name, lambda self, *a, **k: None,
+                       raising=False)
+        else:
+            mp.setattr(klass, name,
+                       lambda self, *a, **k: orig(self, *a, **k))
     counts = _one_native_step(monkeypatch, patch)
     assert counts.get("k2_records", 0) == 0, counts
     assert counts["k2_python_step_reasons"]["patched"] == 1, counts
@@ -870,3 +897,106 @@ def test_contact_points_keep_tier_identity():
             assert isinstance(n, TGPoint3) and _hx(n) == _hx(TGPoint3(*normal))
         if b is not None:
             assert isinstance(b, TGPoint3) and _hx(b) == _hx(TGPoint3(*bubble))
+
+
+# ── A target (or walked ship) whose class K2 never saw (Ruling C2, item 2) ──
+
+def test_unseen_target_class_with_foreign_override_runs_python_step(
+        monkeypatch):
+    """The Vor'cha's class is swapped after it registered (no reclassify)
+    to one overriding GetRadius from outside the engine: K2 never saw the
+    class, and it concerns every bank aiming at the Vor'cha, so the whole
+    step runs in Python."""
+    from engine.appc.ships import ShipClass
+
+    class Bigger(ShipClass):
+        def GetRadius(self):
+            return 2.0 * ShipClass.GetRadius(self)
+
+    def patch(mp, w):
+        mp.setattr(w.ships["Vorcha"], "__class__", Bigger)
+
+    counts = _one_native_step(monkeypatch, patch)
+    assert counts.get("k2_records", 0) == 0, counts
+    assert counts["k2_python_step_reasons"]["patched"] == 1, counts
+
+
+def test_unseen_target_class_sends_its_ship_to_python(monkeypatch):
+    """A class K2 never saw but that overrides nothing: every ship with a
+    bank aiming at an object of it runs in Python (its class flags were
+    never pushed), and so does the object itself when it is a walked ship;
+    the step stays native."""
+    from engine.appc.ships import ShipClass
+
+    class Unseen(ShipClass):
+        pass
+
+    def patch(mp, w):
+        mp.setattr(w.ships["Vorcha"], "__class__", Unseen)
+
+    counts = _one_native_step(monkeypatch, patch)
+    assert counts["k2_records"] > 0, counts
+    assert counts["k2_python_steps"] == 0, counts
+    # The Galaxy (its banks aim at the Vor'cha) and the Vor'cha (walked).
+    assert counts["k2_python_reasons"]["overridden"] == 2, counts
+
+
+# ── host_io._h: none (no trace hooks) or a test double (Ruling C2, item 3) ──
+
+def test_no_host_bindings_traces_nothing(monkeypatch):
+    """host_io._h None (bindings not built, or a headless context): Python's
+    ray_trace_mesh returns None for every instance, so a target with one
+    takes the sphere tier; the kernel is told (ctx "trace" False) and must
+    land on the same points natively."""
+
+    def setup(w, mp):
+        w.ships["Vorcha"].SetRadius(3.0)
+        mp.setattr(host_io, "_h", None)
+
+    def script(w, t):
+        if t == 0:
+            w.ships["Galaxy"].GetPhaserSystem().SetSingleFire(0)
+            w.ships["Galaxy"].GetPhaserSystem().StartFiring(w.ships["Vorcha"])
+
+    ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, script, 90,
+                              instances=_tracked, setup=setup)
+    centre = _hx(ref.ships["Vorcha"].GetWorldLocation())
+    points = [c[4] for c in _calls(ref, "beam_contact") if c[2] == "Vorcha"]
+    assert points and all(p != centre for p in points), points
+    _native_ran(counts)
+    assert counts["k2_ask_queries"]["resolve_hit"] == 0, counts
+
+
+def test_host_bindings_test_double_runs_python_step(monkeypatch):
+    """host_io._h replaced by a test double (its own instance_translation
+    and ray_trace_mesh): the kernel's installed trace is the REAL renderer's,
+    not the double's, so the whole step runs in Python ("patched") and the
+    double's hit is the one damaged."""
+
+    class FakeHost:
+        """The real bindings, but for the two calls the trace makes."""
+
+        def __getattr__(self, name):
+            return getattr(_h, name)
+
+        def instance_translation(self, iid):
+            return (0.0, 0.0, 0.0)
+
+        def ray_trace_mesh(self, iid, origin, direction, max_dist):
+            return (20.0, 255.0, 15.0), (0.0, 1.0, 0.0), 1.0
+
+    def setup(w, mp):
+        mp.setattr(host_io, "_h", FakeHost())
+
+    def script(w, t):
+        if t == 0:
+            w.ships["Galaxy"].GetPhaserSystem().StartFiring(w.ships["Vorcha"])
+
+    ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, script, 60,
+                              instances=_tracked, setup=setup)
+    hit = _hx(TGPoint3(20.0, 255.0, 15.0))
+    assert {c[4] for c in _calls(ref, "beam_contact")
+            if c[2] == "Vorcha"} == {hit}
+    assert counts.get("k2_records", 0) == 0, counts
+    assert counts["k2_python_steps"] == 60, counts
+    assert counts["k2_python_step_reasons"]["patched"] == 60, counts
