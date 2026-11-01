@@ -33,9 +33,12 @@ pytestmark = pytest.mark.skipif(
     reason="native K1 bindings not built")
 
 from engine import host_loop  # noqa: E402
+from engine.appc import articulation  # noqa: E402
 from engine.appc import native_combat as nc  # noqa: E402
+from engine.appc import part_pose  # noqa: E402
 from engine.appc import passive_state  # noqa: E402
 from engine.appc import passive_weapons  # noqa: E402
+from engine.appc import physical_parents  # noqa: E402
 from engine.appc import weapon_subsystems as ws  # noqa: E402
 from engine.appc.math import TGMatrix3, TGPoint3  # noqa: E402
 from engine.core import step_memo  # noqa: E402
@@ -81,8 +84,10 @@ def _groups(ship):
 class World:
     """Real ships in one set, a pinned weapon clock, the event log.
 
-    `ships` is ((name, hardpoint, (x, y, z), yaw), ...). Built the same way
-    in both arms, so labels (ship name / subsystem name) line up."""
+    `ships` is ((name, hardpoint, (x, y, z), yaw[, script]), ...). Built the
+    same way in both arms, so labels (ship name / subsystem name) line up.
+    A script (e.g. "ships.BirdOfPrey") lets articulation resolve the ship's
+    hardpoint leaf, so a posed ship's part slots can be resolved."""
 
     def __init__(self, mp, native, ships, tag, player=None):
         nc.reset()
@@ -96,8 +101,10 @@ class World:
         self.tag = tag
         App.g_kSetManager.AddSet(self.set, tag)
         self.ships = {}
-        for name, hardpoint, at, yaw in ships:
+        for name, hardpoint, at, yaw, *script in ships:
             ship = App.ShipClass_Create(name)
+            if script:
+                ship.SetScript(script[0])
             _load_hardpoint(ship, hardpoint)
             ship.SetTranslateXYZ(*at)
             m = TGMatrix3()
@@ -961,3 +968,174 @@ def test_reset_clears_the_per_class_caches(monkeypatch):
     nc.reset()
     assert ws.PhaserBank not in nc._kind_by_type
     assert nc._k1_overridden(ws.PhaserBank) == 1
+
+
+# ── Posed parts (native-combat posed parts, Task 4) ─────────────────────────
+#
+# A Bird of Prey swung for cruise carries its disruptor cannons on its wings;
+# a Galaxy with a forced "probe part" carries its phaser banks on it (an
+# explicit physical parent: headless there are no part boxes, so the name is
+# taken as given). K1 walks both natively from the pushed pose tables and
+# part slots, and aims tubes and cannons at a posed target's mount natively.
+
+_HINGE = part_pose.hinge_pose((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 15.0)
+#: Every reason a posed ship or target (or its part slots) could send K1 to
+#: Python.
+_POSED_REASONS = ("posed_ship", "posed_target", "part_stale",
+                  "mount_unknown", "no_mount")
+
+
+def _pose_galaxy_phasers(galaxy):
+    articulation.force_part_pose(galaxy, "probe part", _HINGE)
+    phasers = galaxy.GetPhaserSystem()
+    for i in range(phasers.GetNumWeapons()):
+        physical_parents.property_of(
+            phasers.GetWeapon(i)).SetPhysicalParent("probe part")
+
+
+def _moved(ship, sub):
+    """`sub`'s mount, carried by its part, is off its rest point."""
+    p = sub.GetPosition()
+    rest = (p.x, p.y, p.z)
+    q = articulation.part_transform_point(
+        ship, rest, prop=physical_parents.property_of(sub))
+    return tuple(q) != rest
+
+
+def _weapons(system):
+    return [system.GetWeapon(i) for i in range(system.GetNumWeapons())]
+
+
+def _charges(world, prefix):
+    """Every charge (by .hex()) a leaf labelled `prefix` held."""
+    leaves = slice(len(world.systems), None)
+    return {row[6] for rows in world.log for row in rows[leaves]
+            if row[0].startswith(prefix)}
+
+
+def _posed_reasons(counts):
+    """The posed-part hand-backs: RUN_PYTHON (pump, StartFiring) and the
+    Fire ASKs, by reason."""
+    out = {}
+    for session in ("pump", "system"):
+        why = counts["k1_python_reasons"][session]
+        for r in _POSED_REASONS:
+            out[(session, r)] = why[r]
+    for r in _POSED_REASONS:
+        out[("fire_ask", r)] = counts["k1_fire_ask_reasons"][r]
+    return out
+
+
+def test_posed_ship_fires_natively(monkeypatch):
+    """A Bird of Prey in cruise fires its wing cannons and its torpedo tube,
+    and a Galaxy fires phaser banks sitting on a forced part: per tick
+    equal to Python, with no posed hand-back at all."""
+    ships = (("BoP", "birdofprey", (0.0, 0.0, 0.0), 0.0, "ships.BirdOfPrey"),
+             ("Galaxy", "galaxy", (80.0, 0.0, 0.0), 0.0, "ships.Galaxy"),
+             ("Vorcha", "vorcha", (40.0, 260.0, 15.0), math.pi))
+    moved = []
+
+    def script(w, t):
+        bop, g, v = w.ships["BoP"], w.ships["Galaxy"], w.ships["Vorcha"]
+        if t == 0:
+            articulation.force_pose(bop, "cruise")
+            _pose_galaxy_phasers(g)
+            cannons = bop.GetPulseWeaponSystem()
+            cannons.SetSingleFire(0)
+            moved.append([_moved(bop, c) for c in _weapons(cannons)]
+                         + [_moved(g, b) for b in
+                            _weapons(g.GetPhaserSystem())])
+            cannons.StartFiring(v)
+            bop.GetTorpedoSystem().StartFiring(v)
+            g.GetPhaserSystem().StartFiring(v)
+
+    ref, _nat, counts = _both(monkeypatch, ships, script, 360)
+    assert all(moved[0]) and all(moved[1]), moved
+    sources = {e[1].split("/")[0] for e in ref.events
+               if e[0] in ("fired", "torpedo_fired")}
+    assert {"BoP", "Galaxy"} <= sources, ref.events
+    assert "torpedo_fired" in _kinds(ref)
+    # The wing cannons fired (a bolt posts no weapon event: their charge).
+    assert len(_charges(ref, "BoP/Port Cannon")) > 1
+    assert len(_charges(ref, "BoP/Star Cannon")) > 1
+    assert counts["k1_python_systems"] == 0, counts
+    assert set(_posed_reasons(counts).values()) == {0}, counts
+    assert counts["k1_posed"]["walks"] > 0, counts
+
+
+def test_posed_target_tube_aim_native(monkeypatch):
+    """Torpedo tubes and disruptor cannons aim at the wing mounts of a Bird
+    of Prey in cruise (`_RESOLVE`: the first mount at the offset, posed
+    natively): per tick equal to Python, with no posed hand-back."""
+    ships = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
+             ("Vorcha", "vorcha", (30.0, 0.0, 0.0), 0.0),
+             ("BoP", "birdofprey", (15.0, 200.0, 5.0), math.pi,
+              "ships.BirdOfPrey"))
+    moved = []
+
+    def script(w, t):
+        bop, g, v = w.ships["BoP"], w.ships["Galaxy"], w.ships["Vorcha"]
+        if t == 0:
+            articulation.force_pose(bop, "cruise")
+            port, star = _weapons(bop.GetPulseWeaponSystem())
+            moved.append((_moved(bop, port), _moved(bop, star)))
+            off = port.GetPosition()
+            # The tubes aim with the previous shot's stored offset.
+            for tube in _weapons(g.GetTorpedoSystem()):
+                tube._target_offset = TGPoint3(off.x, off.y, off.z)
+            g.GetTorpedoSystem().StartFiring(bop, off)
+            v.GetPulseWeaponSystem().StartFiring(bop, star.GetPosition())
+
+    ref, _nat, counts = _both(monkeypatch, ships, script, 360)
+    assert moved == [(True, True)] * 2, moved     # both arms
+    assert {"fired", "torpedo_fired"} <= _kinds(ref), ref.events
+    assert counts["k1_python_systems"] == 0, counts
+    assert set(_posed_reasons(counts).values()) == {0}, counts
+    assert counts["k1_posed"]["target_aims"] > 0, counts
+
+
+@pytest.mark.parametrize("where", ["boundary", "mid_walk"])
+def test_stale_slot_falls_back_part_stale(monkeypatch, where):
+    """A part slot that is not current is never read: at the system's
+    pre-scan the whole system runs in Python (RUN_PYTHON part_stale); after
+    an effect bumped the part-map generation mid-walk, the next cannon's
+    Fire is Python's (ASK fire, counted part_stale). Equal to Python either
+    way; never posed_ship."""
+    ships = (("BoP", "birdofprey", (0.0, 0.0, 0.0), 0.0, "ships.BirdOfPrey"),
+             ("Vorcha", "vorcha", (5.0, 80.0, 3.0), math.pi))
+    if where == "boundary":
+        # No step boundary resolves the slots: every one stays unresolved.
+        monkeypatch.setattr(nc, "resolve_stale_part_slots",
+                            lambda ships: None)
+    else:
+        # A bolt's spawn (the first cannon's Fire effect) bumps the part-map
+        # generation, as any effect's handler may: the second cannon's mount
+        # slot is stale within the same walk.
+        spawn = ws._spawn_projectile
+
+        def spawn_then_bump(*a, **kw):
+            result = spawn(*a, **kw)
+            nc.bump_part_gen()
+            return result
+
+        monkeypatch.setattr(ws, "_spawn_projectile", spawn_then_bump)
+
+    def script(w, t):
+        bop, v = w.ships["BoP"], w.ships["Vorcha"]
+        if t == 0:
+            articulation.force_pose(bop, "cruise")
+            cannons = bop.GetPulseWeaponSystem()
+            cannons.SetSingleFire(0)
+            cannons.StartFiring(v)
+            bop.GetTorpedoSystem().StartFiring(v)
+
+    ref, _nat, counts = _both(monkeypatch, ships, script, 240)
+    assert len(_charges(ref, "BoP/Star Cannon")) > 1
+    reasons = _posed_reasons(counts)
+    assert reasons[("pump", "posed_ship")] == 0, counts
+    assert reasons[("system", "posed_ship")] == 0, counts
+    if where == "boundary":
+        assert reasons[("pump", "part_stale")] > 0, counts
+        assert reasons[("system", "part_stale")] > 0, counts
+    else:
+        assert reasons[("fire_ask", "part_stale")] > 0, counts

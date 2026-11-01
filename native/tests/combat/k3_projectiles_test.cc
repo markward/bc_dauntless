@@ -490,8 +490,9 @@ TEST(K3Projectiles, CrossRegionCandidateUsesShiftedTest) {
     w.k.end();
 }
 
-// A posed target under an offset: _steer_point is Python's. The kernel
-// carries on from the answered point (can_detect is not re-run).
+// A posed target under an offset no mount claims (`_mount_key` attributed
+// to None: Python's box rule): _steer_point is Python's (no_mount). The
+// kernel carries on from the answered point (can_detect is not re-run).
 TEST(K3Projectiles, PosedTargetAsksSteerPoint) {
     World w;
     const int64_t x = w.listed("X", 0, 100, 0);
@@ -519,6 +520,58 @@ TEST(K3Projectiles, PosedTargetAsksSteerPoint) {
     EXPECT_EQ(*wt.last_tvel, want.writes[1].value);
     EXPECT_EQ(*wt.vel, want.writes[2].value);
     w.k.end();
+    EXPECT_EQ(w.k.counts().steer_why.at("no_mount"), 1);
+    EXPECT_EQ(w.k.counts().posed_steers, 0);
+}
+
+// A posed target under an offset that IS its attributed mount's point, the
+// mount's part slot current: the steer point is the posed mount, decided
+// natively (posed parts, Task 4: PG:310). The offset off the mount's own
+// point, or a stale slot: _steer_point is Python's, counted by why.
+TEST(K3Projectiles, PosedTargetMountSteersNatively) {
+    enum Case { kNative, kOffMount, kStale };
+    for (int c = kNative; c <= kStale; ++c) {
+        World w;
+        const int64_t x = w.listed("X", 0, 100, 0);
+        const int64_t mnt = w.m.register_row(Kind::Subsystem);
+        w.m.set_ref(mnt, Field::_parent_ship, x);
+        w.m.set_fv(mnt, Field::_position,
+                   {1.0, 0.0, c == kOffMount ? 1e-9 : 0.0});
+        PartPose shift;
+        shift.t[2] = 0.25;
+        shift.identity = false;
+        w.m.set_i(x, Field::has_posed_parts, 1);
+        w.m.set_part_poses(x, {shift});
+        w.m.set_part_slot(mnt, 0, w.m.part_gen());
+        if (c == kStale) w.m.set_part_gen(w.m.part_gen() + 1);
+        const int64_t t = w.torp("T", {0, 0, 0}, {0, 60, 0}, x);
+        w.m.torpedoes().set_v(t, TorpField::_target_offset, true, {1, 0, 0});
+        w.m.set_torpedo_mount(t, true, mnt, {1, 0, 0});
+        ASSERT_EQ(w.begin(), std::nullopt) << c;
+        const auto& n = w.k.counts();
+        if (c == kNative) {
+            // The steer point: X + (offset + t) = (1, 100, 0.25).
+            const GuideResult want = guide_torpedo_resume(
+                w.m, w.row(t), kDt, GuideResume{x, 60.0, {0, 0, 0}},
+                Vec3{1.0, 100.0, 0.25});
+            const K3Record r = w.done();
+            const K3TorpWrite& wt = w.write_of(r, t);
+            ASSERT_TRUE(wt.last_seen.has_value());
+            EXPECT_EQ(*wt.last_seen, want.writes[0].value);
+            EXPECT_EQ(n.posed_steers, 1);
+            EXPECT_TRUE(n.steer_why.empty());
+        } else {
+            EXPECT_EQ(w.brief(w.k.next()), "ASK steer_point T") << c;
+            EXPECT_EQ(n.steer_why.at(c == kOffMount ? "offset_off_mount"
+                                                    : "part_stale"),
+                      1)
+                << c;
+            EXPECT_EQ(n.posed_steers, 0) << c;
+            w.k.abandon();
+            continue;
+        }
+        w.k.end();
+    }
 }
 
 // A shot whose mount is not yet attributed asks _steer_point once (Python

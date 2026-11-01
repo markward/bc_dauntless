@@ -77,8 +77,12 @@
 // FALLBACK, two stages (plan rulings P2 and H):
 //   1. Before the first record or write for a system the kernel pre-scans
 //      everything that system's walk can read (prescan() in the .cc). Any row
-//      it cannot represent, and every throw from the pump's gates, makes the
-//      system RUN_PYTHON, with no write made for it.
+//      it cannot represent, a leaf of a POSED ship whose part slot is not
+//      current (part_stale), and every throw from the pump's gates, makes the
+//      system RUN_PYTHON, with no write made for it. A posed firing ship and
+//      a posed target are otherwise walked natively: the mounts and a posed
+//      target's offset aim (`_RESOLVE`) come from the pushed pose tables and
+//      part slots (part_pose.h, weapon_geometry.h).
 //   2. After the first record, a native evaluation that cannot answer (state a
 //      Python effect or handler changed) becomes an ASK: Python answers the
 //      one question on live objects (combat_k1_answer) and the walk goes on.
@@ -88,6 +92,10 @@
 //                                       r = bank.Fire(target, offset);
 //                                       sys._weapon_did_fire(bank, r, before)
 //                                                                     -> bool
+//                   whenever the Fire's decision cannot be made natively,
+//                   counted by why in Counts::fire_ask_why: part_stale (a
+//                   slot that went stale mid-walk), mount_unknown / no_mount
+//                   (a posed target's offset), other otherwise.
 //        retry      (sys, bank)         try_fire_weapon's retry loop over
 //                                       list(sys._target_list)        -> bool
 //        is_dead    (obj)               hasattr(obj, "IsDead") and
@@ -127,8 +135,12 @@ enum class K1Why : int32_t {
     SelfManaged = 0,  // a tractor (_pump_self_managed), or not a K1 system
     Overridden,       // the system's or a child's class overrides a K1 method
     InstancePatch,    // Python found an instance-patched method (skip_walk)
-    PosedShip,        // the firing ship has posed (articulated) parts
-    PosedTarget,      // a pulse/torpedo target has posed parts
+    PosedShip,        // retired (posed parts, Task 4): never counted; kept
+    PosedTarget,      // for dashboards one release (spec §4.5)
+    PartStale,        // a part slot the walk reads is not current
+    MountUnknown,     // a posed target's offset mount the mirror can't tell
+    NoMount,          // a posed target's offset names no authored mount
+                      // (Python's box rule: a Manual Aim pick)
     StubOrUnplaced,   // no real IsDead, or no valid transform
     PulseShipTarget,  // pulse with no live list entry: ship.GetTarget()
     PulseModule,      // pulse module unresolved or power setting out of range
@@ -221,6 +233,12 @@ public:
         // python_systems by K1Why: pump sessions, StartFiring sessions.
         std::array<int64_t, static_cast<size_t>(K1Why::kCount)> pump_why{},
             system_why{};
+        // ASK fire hand-backs (a Fire decision the mirror could not make) by
+        // why: PartStale, MountUnknown, NoMount; Other for the rest.
+        std::array<int64_t, static_cast<size_t>(K1Why::kCount)> fire_ask_why{};
+        // Posed parts walked natively: systems whose ship is posed, and Fire
+        // decisions aimed at a posed target's offset.
+        int64_t posed_walks = 0, posed_target_aims = 0;
     };
     const Counts& counts() const { return counts_; }
     void reset_counts() { counts_ = Counts{}; }

@@ -24,6 +24,7 @@
 
 #include "dauntless/combat/beam_geometry.h"
 #include "dauntless/combat/fire_gates.h"
+#include "dauntless/combat/part_pose.h"
 #include "dauntless/combat/py_math.h"
 #include "dauntless/combat/sensor_detect.h"
 #include "dauntless/combat/weapon_geometry.h"
@@ -69,7 +70,8 @@ const char* k2_kind_name(K2Kind k) {
 const char* k2_why_name(K2Why w) {
     static constexpr const char* kNames[] = {
         "unslotted_ship", "not_ship_class", "overridden", "posed_ship",
-        "stale_row",      "stub_or_unplaced", "gate",     "other"};
+        "part_stale",     "stale_row",      "stub_or_unplaced", "gate",
+        "other"};
     static_assert(std::size(kNames) == static_cast<size_t>(K2Why::kCount));
     const auto i = static_cast<size_t>(w);
     return i < std::size(kNames) ? kNames[i] : "?";
@@ -304,17 +306,34 @@ private:
     K2Kernel::Counts& c_;
 };
 
-// What every bank's walk reads of the ship and the system: a placed ShipClass
-// at its NIF pose (the strip centre and the arc mount carry its pose), in a
-// nameable set, and the system's row.
+// What every bank's walk reads of the ship and the system: a placed
+// ShipClass in a nameable set, the system's row, and -- for the aim point at
+// a subsystem lock (_phaser_aim_point, not under Manual Aim) on a posed ship
+// -- a current part slot for the lock's mount on its own ship. A lock the
+// mirror cannot name is the aim_point ASK's, not a fallback.
 std::optional<K2Why> Walker::ship_why() const {
     const ObjectRow* so = objrow(s_.ship);
     if (!so) return K2Why::StaleRow;
     if (!so->is_ship_class) return K2Why::NotShipClass;
     if (!xform_ok(m_, *so)) return K2Why::StubOrUnplaced;
-    if (so->has_posed_parts) return K2Why::PosedShip;
     if (!set_ok(m_, so->_containing_set)) return K2Why::StaleRow;
     if (!subrow(s_.sys)) return K2Why::StaleRow;
+    const bool manual_aim = so->_use_target_offset != 0 && so->manual_offset_set;
+    if (!manual_aim && so->_target_subsystem >= 0) {
+        if (const SubsystemRow* lock = subrow(so->_target_subsystem)) {
+            int64_t lock_ship = -1;
+            try {
+                lock_ship = climb_to_ship_of(m_, so->_target_subsystem);
+            } catch (const std::invalid_argument&) {
+                lock_ship = -1;  // the aim_point ASK's
+            }
+            const ObjectRow* lo = lock_ship == -1 ? nullptr : objrow(lock_ship);
+            Vec3 local;
+            if (lo && lo->has_posed_parts &&
+                posed_local(m_, *lo, *lock, &local) == SlotState::stale)
+                return K2Why::PartStale;
+        }
+    }
     return std::nullopt;
 }
 
@@ -331,6 +350,13 @@ std::optional<K2Why> Walker::child_why(int64_t bank) const {
     } catch (const std::invalid_argument&) {
         return K2Why::StaleRow;
     }
+    // A posed ship's bank mount (the strip centre, the arc origin) is read
+    // through its part slot: one that is not current is Python's.
+    const ObjectRow* so = objrow(s_.ship);
+    Vec3 local;
+    if (so && so->has_posed_parts &&
+        posed_local(m_, *so, *b, &local) == SlotState::stale)
+        return K2Why::PartStale;
     const int64_t t = b->_target;
     if (t != -1) {
         const ObjectRow* to = objrow(t);
@@ -552,6 +578,11 @@ K2Record Walker::run() {
                         phaser_aim_point(m_, s_.ship, s_.target, s_.use_memo);
                     s_.target_pos = ap.point;
                     s_.has_sub = ap.target_sub != -1;
+                    if (s_.has_sub) {
+                        const int64_t ls = climb_to_ship_of(m_, ap.target_sub);
+                        const ObjectRow* lo = ls == -1 ? nullptr : objrow(ls);
+                        if (lo && lo->has_posed_parts) ++c_.posed_lock_aims;
+                    }
                 } catch (const std::invalid_argument&) {
                     return ask(K2Query::aim_point, {s_.ship, s_.target},
                                St::AIM_ANSWER);
@@ -571,6 +602,7 @@ K2Record Walker::run() {
                 // emitter_pos = bank._strip_emit_position(target_pos)
                 s_.emitter = strip_emit_position(m_, s_.bank, s_.target_pos,
                                                  s_.use_memo);
+                if (objrow(s_.ship)->has_posed_parts) ++c_.posed_banks;
                 // HL:1239-1243: dist = (dx*dx + dy*dy + dz*dz) ** 0.5;
                 // aim_unit = TGPoint3(dx/dist, ...) if dist > 1e-6 else None
                 const double dx = s_.target_pos[0] - s_.emitter[0];

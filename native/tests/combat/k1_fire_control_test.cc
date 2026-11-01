@@ -1206,6 +1206,10 @@ TEST(K1, NoneAmmoSlotWalksNatively) {
 
 TEST(K1, FallbackReasonsAreCounted) {
     EXPECT_STREQ(k1_why_name(K1Why::PosedShip), "posed_ship");
+    EXPECT_STREQ(k1_why_name(K1Why::PosedTarget), "posed_target");
+    EXPECT_STREQ(k1_why_name(K1Why::PartStale), "part_stale");
+    EXPECT_STREQ(k1_why_name(K1Why::MountUnknown), "mount_unknown");
+    EXPECT_STREQ(k1_why_name(K1Why::NoMount), "no_mount");
     EXPECT_STREQ(k1_why_name(K1Why::InstancePatch), "instance_patch");
     // One pump over one phaser (or `kind`) system, set up to fall back.
     auto pump = [](int64_t kind, auto&& setup, K1Why want) {
@@ -1223,12 +1227,13 @@ TEST(K1, FallbackReasonsAreCounted) {
         EXPECT_EQ(w.k.counts().python_systems, 1);
     };
     using I = int64_t;
+    // A posed ship whose bank's part slot was never resolved (stamp 0): the
+    // mount is Python's. (Was K1Why::PosedShip before posed parts went
+    // native; a posed TARGET is no pre-scan fallback any more -- see
+    // PosedTargetOffsetAimByReason.)
     pump(1, [](World& w, I ship, I, I, I) {
         w.m.set_i(ship, Field::has_posed_parts, 1);
-    }, K1Why::PosedShip);
-    pump(4, [](World& w, I, I t, I, I) {
-        w.m.set_i(t, Field::has_posed_parts, 1);
-    }, K1Why::PosedTarget);
+    }, K1Why::PartStale);
     pump(1, [](World& w, I, I t, I, I) {
         w.m.set_i(t, Field::has_real_is_dead, 0);
     }, K1Why::StubOrUnplaced);
@@ -1270,8 +1275,9 @@ TEST(K1, FallbackReasonsAreCounted) {
         w.m.set_i(ship, Field::has_posed_parts, 1);
         w.k.begin_system(sys, 0.0, 10.0, false, 0.0);
         w.run_to_done();
-        EXPECT_EQ(why_of(w.k.counts(), K1Why::PosedShip, true), 1);
-        EXPECT_EQ(why_of(w.k.counts(), K1Why::PosedShip), 0);
+        EXPECT_EQ(why_of(w.k.counts(), K1Why::PartStale, true), 1);
+        EXPECT_EQ(why_of(w.k.counts(), K1Why::PartStale), 0);
+        EXPECT_EQ(why_of(w.k.counts(), K1Why::PosedShip, true), 0);
         w.k.reset_counts();
         EXPECT_EQ(why_total(w.k.counts()), 0);
     }
@@ -1298,4 +1304,99 @@ TEST(K1, SkipWalkHandsTheWalkToPython) {
     EXPECT_EQ(why_of(w.k.counts(), K1Why::InstancePatch), 1);
     EXPECT_EQ(w.k.counts().python_systems, 1);
     w.k.end();
+}
+
+// ── Posed parts (native-combat posed parts, Task 4) ─────────────────────────
+
+namespace {
+// A pose that moves a point by +x (0.25): not identity.
+PartPose shift_pose() {
+    PartPose p;
+    p.t[0] = 0.25;
+    p.identity = false;
+    return p;
+}
+}  // namespace
+
+TEST(K1, PosedShipWalksNatively) {
+    // The firing ship is posed and its bank's slot is current: the walk is
+    // the kernel's (its mount through the pose). A generation bump makes the
+    // slot stale: the system is Python's, part_stale -- never posed_ship.
+    World w;
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t sys = w.system("sys", ship, 1, {t});
+    const int64_t b0 = w.bank("b0", sys);
+    w.m.set_i(ship, Field::has_posed_parts, 1);
+    w.m.set_part_poses(ship, {shift_pose()});
+    w.m.set_part_slot(b0, 0, w.m.part_gen());
+    w.m.set_i(sys, Field::_force_update, 1);  // past the fire timer
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    std::vector<std::string> recs = w.run_to_done();
+    EXPECT_NE(std::find(recs.begin(), recs.end(), "FIRE b0@t"), recs.end())
+        << ::testing::PrintToString(recs);
+    w.k.end();
+    EXPECT_EQ(w.k.counts().python_systems, 0);
+    EXPECT_EQ(w.k.counts().posed_walks, 1);
+
+    w.m.set_part_gen(w.m.part_gen() + 1);
+    w.k.reset_counts();
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+    EXPECT_EQ(w.brief(w.step()), "RUN_PYTHON sys 0 0");
+    w.run_to_done();
+    w.k.end();
+    EXPECT_EQ(why_of(w.k.counts(), K1Why::PartStale), 1);
+    EXPECT_EQ(why_of(w.k.counts(), K1Why::PosedShip), 0);
+    EXPECT_EQ(w.k.counts().posed_walks, 0);
+}
+
+TEST(K1, PosedTargetOffsetAimByReason) {
+    // A tube aims at a posed target's offset (`_RESOLVE`): the first mount
+    // at the offset, its slot current -> FIRE, decided natively. The mirror
+    // cannot tell the mount (not a ShipClass), no mount claims the offset,
+    // or the slot is stale -> the Fire is Python's (ASK fire), counted by
+    // why. The system is never handed back whole (no posed_target).
+    enum Case { kNative, kUnknown, kNoMountHere, kStale };
+    for (int c = kNative; c <= kStale; ++c) {
+        World w;
+        const int64_t ship = w.ship("ship");
+        const int64_t t = w.ship("t", 0.0, 50.0, 0.0);
+        w.m.set_i(t, Field::is_ship_class, c == kUnknown ? 0 : 1);
+        const int64_t mnt = w.m.register_row(Kind::Subsystem);
+        w.m.set_ref(mnt, Field::_parent_ship, t);
+        w.m.set_fv(mnt, Field::_position, {0.5, 0.0, 0.0});
+        w.m.set_mount_order(t, {mnt});
+        w.m.set_i(t, Field::has_posed_parts, 1);
+        w.m.set_part_poses(t, {shift_pose()});
+        w.m.set_part_slot(mnt, 0, w.m.part_gen());
+        const int64_t sys = w.system("sys", ship, 4, {t});
+        const int64_t b0 = w.bank("b0", sys);
+        if (c == kNoMountHere)
+            w.m.set_fv(b0, Field::_target_offset, {0.0, 0.0, 0.75});
+        else
+            w.m.set_fv(b0, Field::_target_offset, {0.5, 0.0, 0.0});
+        if (c == kStale) w.m.set_part_gen(w.m.part_gen() + 1);
+        w.m.set_i(sys, Field::_force_update, 1);
+        w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
+        EXPECT_EQ(w.brief(w.step()), "WALK_START sys") << c;
+        const K1Record r = w.step();
+        const auto& n = w.k.counts();
+        auto ask_why = [&](K1Why why) {
+            return n.fire_ask_why[static_cast<size_t>(why)];
+        };
+        if (c == kNative) {
+            EXPECT_EQ(w.brief(r), "FIRE b0@t") << c;
+            EXPECT_EQ(n.posed_target_aims, 1) << c;
+        } else {
+            EXPECT_EQ(w.brief(r), "ASK fire") << c;
+            const K1Why want = c == kUnknown       ? K1Why::MountUnknown
+                               : c == kNoMountHere ? K1Why::NoMount
+                                                   : K1Why::PartStale;
+            EXPECT_EQ(ask_why(want), 1) << c;
+            EXPECT_EQ(n.posed_target_aims, 0) << c;
+        }
+        EXPECT_EQ(n.python_systems, 0) << c;
+        EXPECT_EQ(why_of(n, K1Why::PosedTarget), 0) << c;
+        w.k.abandon();
+    }
 }

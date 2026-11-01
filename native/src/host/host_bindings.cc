@@ -10557,17 +10557,24 @@ PYBIND11_MODULE(_dauntless_host, m) {
             d["k1_records"] = c.records;
             d["k1_python_systems"] = c.python_systems;
             d["k1_asks"] = c.asks;
-            // RUN_PYTHON (and skip_walk) by why, pump and StartFiring apart.
-            py::dict pump, system;
+            // RUN_PYTHON (and skip_walk) by why, pump and StartFiring apart;
+            // the ASK fire hand-backs by why.
+            py::dict pump, system, fire_ask;
             for (size_t i = 0; i < c.pump_why.size(); ++i) {
                 const char* n = cb::k1_why_name(static_cast<cb::K1Why>(i));
                 pump[n] = c.pump_why[i];
                 system[n] = c.system_why[i];
+                fire_ask[n] = c.fire_ask_why[i];
             }
             py::dict why;
             why["pump"] = pump;
             why["system"] = system;
             d["k1_python_reasons"] = why;
+            d["k1_fire_ask_reasons"] = fire_ask;
+            py::dict posed;
+            posed["walks"] = c.posed_walks;
+            posed["target_aims"] = c.posed_target_aims;
+            d["k1_posed"] = posed;
             return d;
         });
         m.def("combat_k1_reset_counts",
@@ -10818,6 +10825,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
                     c.queries[i];
             d["k2_python_reasons"] = why;
             d["k2_ask_queries"] = queries;
+            py::dict posed;
+            posed["banks"] = c.posed_banks;
+            posed["lock_aims"] = c.posed_lock_aims;
+            d["k2_posed"] = posed;
             return d;
         });
         m.def("combat_k2_reset_counts",
@@ -10987,9 +10998,16 @@ PYBIND11_MODULE(_dauntless_host, m) {
                 asks[cb::k3_query_name(static_cast<cb::K3Query>(i))] =
                     c.queries[i];
             for (const auto& [k, n] : c.guide_why) guide[py::str(k)] = n;
+            // steer_point ASKs by why: every known reason (zeros included),
+            // then any other the kernel counted.
+            py::dict steer;
+            for (const char* k : cb::kSteerWhy) steer[k] = 0;
+            for (const auto& [k, n] : c.steer_why) steer[py::str(k)] = n;
             d["k3_python_reasons"] = why;
             d["k3_asks"] = asks;
             d["k3_guide_reasons"] = guide;
+            d["k3_steer_reasons"] = steer;
+            d["k3_posed_steers"] = c.posed_steers;
             return d;
         });
         m.def("combat_k3_reset_counts",

@@ -31,6 +31,9 @@
 //     answered with no slot read;
 //   * a posed target whose offset is not its given mount's own point (or
 //     has no mount: Python's box rule);
+// The posed-part cases throw the part_pose.h subclasses a kernel counts by
+// reason: PartStale (a slot that is not current), NoMount (a posed target,
+// no mount), MountUnknown (the mirror cannot tell the mount).
 //   * an Object's transform is invalid;
 //   * a target with no real IsDead (its stub records telemetry);
 //   * a pulse cannon whose projectile module did not resolve.
@@ -79,12 +82,16 @@ Vec3 _emitter_forward_world(const Mirror& m, int64_t emitter, int64_t ship);
 // the mount's part slot carries the offset, and only when the offset IS the
 // mount's `_position` (C `==` per axis): Python resolves the part from the
 // offset, the slot was resolved from the mount. Otherwise -- no mount (the
-// box rule), a mount the mirror cannot name, an offset off the mount -- it
-// falls back; a stale slot or another ship's mount falls back `part_stale`.
+// box rule: NoMount), a mount the mirror cannot name, an offset off the
+// mount -- it falls back; a stale slot or another ship's mount falls back
+// PartStale.
 Vec3 target_offset_world(const Mirror& m, int64_t target, const Vec3& offset,
                          int64_t mount_sub);
 
 // weapon_subsystems._resolve_torpedo_aim_point (F11); nullopt is Python None.
+// The tube's stored offset on a POSED target is aimed through its mount
+// (`_RESOLVE`: authored_mount_subsystem, part_pose.h): MountUnknown when the
+// mirror cannot tell it, else target_offset_world with what was found.
 std::optional<Vec3> _resolve_torpedo_aim_point(const Mirror& m, int64_t tube,
                                                int64_t target);
 

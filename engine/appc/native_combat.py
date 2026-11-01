@@ -195,13 +195,20 @@ def counts() -> dict:
     hand-backs, ASKs answered by Python; counted by the kernel), plus
     "k1_python_reasons": {"pump": {...}, "system": {...}} -- the
     k1_python_systems hand-backs by K1Why name (k1_fire_control.h:
-    posed_ship, overridden, instance_patch, ...; every reason, zeros
-    included), for the held-weapon pump and StartFiring apart.
+    part_stale, overridden, instance_patch, ...; every reason, zeros
+    included), for the held-weapon pump and StartFiring apart --
+    "k1_fire_ask_reasons" ({K1Why name: n}: the Fire decisions handed to
+    Python, ASK fire -- part_stale, mount_unknown, no_mount, other) and
+    "k1_posed" ({"walks", "target_aims"}: systems of a posed ship walked
+    natively, Fire decisions aimed natively at a posed target's offset).
+    posed_ship / posed_target are retired reasons, always 0 (posed parts
+    run natively; spec 2026-11-01 §4.5).
 
     K2 (`cb.phasers`): the kernel's {"k2_records", "k2_python_ships",
     "k2_asks", "k2_python_reasons": {K2Why name: n}, "k2_ask_queries":
-    {query: n}} (k2_beams.h), plus "k2_python_steps" (steps run whole in
-    Python) and "k2_python_step_reasons" ({"nested", "instances",
+    {query: n}, "k2_posed": {"banks", "lock_aims"}} (k2_beams.h; posed_ship
+    retired, part_stale its successor), plus "k2_python_steps" (steps run
+    whole in Python) and "k2_python_step_reasons" ({"nested", "instances",
     "patched", "audit"}: n).
 
     K4 (`cb.eligibility`): "k4_runs" (calls the kernel decided) and
@@ -210,7 +217,11 @@ def counts() -> dict:
     the step scan's reasons, ...).
 
     K3 (`cb.projectiles`): the kernel's {"k3_runs", "k3_records",
-    "k3_asks": {query: n}, "k3_guide_reasons": {why: n}}, and
+    "k3_asks": {query: n}, "k3_guide_reasons": {why: n},
+    "k3_steer_reasons": {why: n} (the steer_point ASKs: unattributed,
+    part_stale, no_mount, ...; projectile_geometry.h kSteerWhy, zeros
+    included), "k3_posed_steers": n (a posed target's mount steered
+    natively)}, and
     "k3_python_steps" / "k3_python_reasons" ({why: n}): the steps run whole
     in Python, the kernel's begin reasons (scan, table, unrepresentable,
     stale_ref, torpedo_xform, ship_cache) summed with run_k3's own (off,
@@ -1122,8 +1133,10 @@ def _posed_flag(ship) -> int:
 
     Mark's convention: a hull's natural mesh pose is its red-alert pose, so
     a Bird of Prey in a fight (an NPC with a target is in "red") reads 0.
-    Mid-transition, swung for cruise, or SPV-forced off identity reads 1 and
-    falls back to Python.
+    Mid-transition, swung for cruise, or SPV-forced off identity reads 1:
+    the kernels then read its pose table and its subsystems' part slots
+    (posed parts, Task 4), and a slot that is not current falls back to
+    Python (part_stale).
 
     Never resolves the ship's leaf: `articulation.leaf_for` on a ship whose
     script is not set yet would cache "" for good."""
@@ -2700,6 +2713,9 @@ def k1_pump(ships, dt, pump_body) -> None:
     _k1_recheck_overrides()
     if _pulse_stale:            # a mission swap's reset, before GameLoop.tick
         refresh_stale_pulse_params()
+    # A step boundary: every slot the walk reads is fresh (the torpedo hits,
+    # deaths and damage before the pump may have bumped the generation).
+    resolve_stale_part_slots(ships)
     handles = []
     for ship in ships:
         h = slot(ship)
@@ -2720,9 +2736,24 @@ def k1_system(system, dt) -> None:
     _k1_recheck_overrides()
     if _pulse_stale:            # a mission swap's reset, before GameLoop.tick
         refresh_stale_pulse_params()
+    # A step boundary (StartFiring runs inside gl.ai, an effect's handler,
+    # ...): the walk reads the parent ship's slots and, aiming at a posed
+    # target's offset, the target's.
+    resolve_stale_part_slots(_k1_system_ships(system))
     t, use_memo, drift = _k1_clocks()
     _h.combat_k1_begin_system(h, dt, t, use_memo, drift)
     run_k1(dt, system=system)
+
+
+def _k1_system_ships(system) -> list:
+    """The ships a system session's walk may read part slots of: the
+    parent ship and every entry of the system's target list."""
+    ship = system.GetParentShip()
+    ships = [] if ship is None else [ship]
+    for t in system.__dict__.get("_target_list") or ():
+        if t is not None and hasattr(t, "__dict__"):
+            ships.append(t)
+    return ships
 
 
 # ── K2: the native beam kernel's driver (phase 2) ───────────────────────────
@@ -3423,6 +3454,8 @@ def k2_phasers(ships, dt, ship_instances) -> bool:
         return False
     if _pulse_stale:            # a mission swap's reset, before GameLoop.tick
         refresh_stale_pulse_params()
+    # A step boundary: the K1 pump's effects may have bumped the generation.
+    resolve_stale_part_slots(ships)
     cx = _K2Context(ship_instances)
     ctx = cx.delta()
     ctx["python_ships"] = python_ships
@@ -3517,6 +3550,8 @@ def step_scan(ships) -> _StepScan:
     """Scan `ships` (the step's ships_list) into the native step state and
     send this step's frame table; returns the _StepScan K4 and K3 read."""
     global _step
+    # A step boundary: K3 (and the kernels after it) read fresh part slots.
+    resolve_stale_part_slots(ships)
     st = _StepScan(ships)
     _step = st
     # A dirty torpedo table is rebuilt BEFORE the native scan checks the

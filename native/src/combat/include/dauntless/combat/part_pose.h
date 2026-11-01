@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <stdexcept>
+#include <string>
 
 #include "dauntless/combat/mirror.h"
 
@@ -18,6 +20,29 @@ namespace dauntless::combat {
 // Python None for a target offset's mount subsystem: target_offset_world's
 // `authored=False` (a Manual Aim pick, an offset no mount claims).
 constexpr int64_t kNoMount = -1;
+
+// The posed-part fallbacks a kernel counts by reason (native-combat posed
+// parts, Task 4: spec §4.5). Each IS a std::invalid_argument (Python
+// ValueError), so every existing `catch (const std::invalid_argument&)`
+// takes it exactly as before; a kernel that counts catches the subclass.
+//   PartStale    -- a part slot the read needs is not current (stamped
+//                   behind the Mirror's part_gen, past the pose table, or
+//                   asked on another ship): Python must answer.
+//   MountUnknown -- authored_mount_subsystem cannot tell (kMountUnknown).
+//   NoMount      -- a POSED target's offset names no authored mount: Python
+//                   attributes it by the box rule (part_for_point).
+struct PartStale : std::invalid_argument {
+    explicit PartStale(const std::string& what)
+        : std::invalid_argument(what) {}
+};
+struct MountUnknown : std::invalid_argument {
+    explicit MountUnknown(const std::string& what)
+        : std::invalid_argument(what) {}
+};
+struct NoMount : std::invalid_argument {
+    explicit NoMount(const std::string& what)
+        : std::invalid_argument(what) {}
+};
 
 // P1/P2: part_pose.apply (PP:72-75) on the row-major pose, unless the entry
 // is `identity` or `detached` -- then `x` itself, unchanged (a branch, never

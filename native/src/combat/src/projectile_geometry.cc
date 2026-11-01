@@ -14,6 +14,7 @@
 #include <stdexcept>
 
 #include "dauntless/combat/beam_geometry.h"
+#include "dauntless/combat/part_pose.h"
 #include "dauntless/combat/py_math.h"
 #include "dauntless/combat/sensor_detect.h"
 #include "dauntless/combat/weapon_geometry.h"
@@ -199,13 +200,19 @@ Vec3 steer_point_unposed(const Mirror& m, int64_t target,
     }
     // G11: target_offset_world(target, offset, key[4]). At an unposed
     // target part_transform_point returns the point whatever the mount, but
-    // a mount the mirror cannot name is Python's. A posed target is the
-    // kernel's ASK until it checks the mount slot (posed-parts Task 4).
-    if (t.has_posed_parts) fall_back("target has posed parts");
+    // a mount the mirror cannot name is Python's. At a posed one the mount's
+    // part slot carries the offset (target_offset_world: only when the
+    // offset is the mount's own point and the slot is current).
     if (mount_sub == kRefUnrepresentable) fall_back("mount subsystem is unnamed");
     if (mount_sub >= 0 && !m.subsystem(mount_sub))
         fall_back("mount subsystem is stale");
     return shifted(target_offset_world(m, target, *offset, mount_sub), off);
+}
+
+// A need_steer_point with its reason (one of kSteerWhy).
+static GuideResult steer_ask(GuideResult ask, const char* why) {
+    ask.why = why;
+    return ask;
 }
 
 // ── projectiles.py:1103 _guide (K3M A1.2, G1-G10) ───────────────────────────
@@ -307,18 +314,36 @@ GuideResult guide_torpedo(Mirror& m, const TorpedoRow& row, double dt,
         const Vec3& k = row.mount_offset;
         if (!row.mount_attributed || !(k[0] == o[0]) || !(k[1] == o[1]) ||
             !(k[2] == o[2]))
-            return ask;
+            return steer_ask(ask, "unattributed");
         mount_sub = m.torpedo_ref(row, TorpField::_mount_key);
-        if (mount_sub == kRefUnrepresentable || tr.has_posed_parts) return ask;
+        if (mount_sub == kRefUnrepresentable)
+            return steer_ask(ask, "mount_unrepresentable");
+        if (tr.has_posed_parts) {
+            // PG:310 (posed-parts spec §4.4): the attributed mount's part
+            // slot carries the offset only when the offset IS the mount's
+            // own point (Python attributes the part from the offset; the
+            // slot was resolved from `_position`), C == per axis exactly as
+            // target_offset_world checks it. None: Python's box rule.
+            if (mount_sub == kNoMount) return steer_ask(ask, "no_mount");
+            const SubsystemRow* ms = m.subsystem(mount_sub);
+            if (!ms) return steer_ask(ask, "mount_stale");
+            const Vec3& p = ms->_position;
+            if (!(o[0] == p[0]) || !(o[1] == p[1]) || !(o[2] == p[2]))
+                return steer_ask(ask, "offset_off_mount");
+        }
         offset = o;
     }
     Vec3 pos;
     try {
         pos = steer_point_unposed(m, target, offset, mount_sub, off);
+    } catch (const PartStale&) {
+        return steer_ask(ask, "part_stale");
     } catch (const std::invalid_argument&) {
-        return ask;
+        return steer_ask(ask, "geometry");
     }
-    return guide_torpedo_resume(m, row, dt, ask.resume, pos);
+    GuideResult r = guide_torpedo_resume(m, row, dt, ask.resume, pos);
+    r.posed_steer = offset.has_value() && tr.has_posed_parts;
+    return r;
 }
 
 // projectiles.py:1129-1150: the visible branch from `_steer_point`'s answer.

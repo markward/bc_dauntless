@@ -60,11 +60,14 @@ Advance advance_torpedo(const Vec3& prev, const Vec3& vel, double dt,
 
 // projectiles._steer_point for a target the mirror can answer: `offset`
 // nullopt is the no-offset hull centre (G12); otherwise
-// target_offset_world(target, offset, mount_sub) (G11) for an UNPOSED target.
-// `off` is frames.offset_between(torpedo set, target set), never None here;
-// the point is shifted only when `off` is not (0, 0, 0) by C `==` (Python's
-// tuple ==). Throws for a posed target under an offset, a mount_sub of -2,
-// or a stale target / invalid transform.
+// target_offset_world(target, offset, mount_sub) (G11): an unposed target
+// whatever the mount, a POSED one through the mount's part slot (only when
+// the offset is the mount's own point; weapon_geometry.h). (The name
+// predates posed targets.) `off` is frames.offset_between(torpedo set,
+// target set), never None here; the point is shifted only when `off` is
+// not (0, 0, 0) by C `==` (Python's tuple ==). Throws for a mount_sub of
+// -2, a stale target / invalid transform, and target_offset_world's posed
+// fallbacks (PartStale for a slot that is not current).
 Vec3 steer_point_unposed(const Mirror& m, int64_t target,
                          const std::optional<Vec3>& offset, int64_t mount_sub,
                          const Vec3& off);
@@ -105,8 +108,9 @@ struct GuideResult {
         // install it, and call guide_torpedo AGAIN from the start. Nothing
         // has been decided or written (no can_detect has run).
         need_frame,
-        // _steer_point is Python's (a posed target under an offset, or a
-        // mount the shot has not attributed): ASK steer_point(t), which also
+        // _steer_point is Python's (a mount the shot has not attributed, or
+        // a posed target whose mount slot cannot carry the offset; `why`
+        // says which, one of kSteerWhy): ASK steer_point(t), which also
         // writes `_mount_key`, then call guide_torpedo_resume with the point
         // and `resume`. can_detect HAS run: never start over.
         need_steer_point,
@@ -121,8 +125,27 @@ struct GuideResult {
     int n_writes = 0;
     int64_t frame_set = -1;    // need_frame
     GuideResume resume{};      // need_steer_point
-    const char* why = nullptr; // need_guide: a short reason, for counters
+    // need_guide / need_steer_point: a short reason, for counters.
+    const char* why = nullptr;
+    // done: the steer point was a POSED target's mount, computed natively.
+    bool posed_steer = false;
 };
+
+// Why a steer point is Python's (GuideResult::why of need_steer_point), in
+// counter order. posed_target is retired (posed parts, Task 4): never
+// counted, kept for dashboards one release.
+//   unattributed          the shot's `_mount_key` is not this target/offset
+//   mount_unrepresentable the attributed mount is a row the mirror can't name
+//   posed_target          (retired)
+//   no_mount              a posed target, the offset names no mount
+//   mount_stale           a posed target, the mount's row is gone
+//   offset_off_mount      a posed target, the offset is not the mount's own
+//                         point (C == per axis, as target_offset_world)
+//   part_stale            a posed target, the mount's part slot not current
+//   geometry              the steer geometry fell back otherwise
+inline constexpr const char* kSteerWhy[] = {
+    "unattributed", "mount_unrepresentable", "posed_target", "no_mount",
+    "mount_stale",  "offset_off_mount",      "part_stale",   "geometry"};
 
 // projectiles._guide(torpedo, dt) (G1-G12) for one torpedo row, with
 // _target_visible's native can_detect from the FIRING ship: memo-eligible

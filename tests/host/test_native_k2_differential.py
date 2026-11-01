@@ -49,7 +49,8 @@ branch the scene is built for really happened in the KERNEL (the record
 stream, tallied as it is returned): CONTACTs on the mesh and the sphere
 tier, bubble entries, windup contacts, pulses, arc-fail partial pulses,
 SYSTEM_STOPs, a lock on another ship, Manual Aim on and off, a cloaking
-target and a posed ship (RUN_PYTHON) -- and end with a clean mirror audit.
+target and a posed ship (walked natively, and a lock on it aimed natively:
+posed parts, Task 4) -- and end with a clean mirror audit.
 """
 import math
 import os
@@ -550,9 +551,11 @@ class _Scene:
         return next(s for s in self.ships if s.GetName() == name)
 
     def pose(self):
-        """One ship off its NIF pose for a stretch (RUN_PYTHON posed_ship
-        for its own banks), and a foe locking a subsystem on it (the aim
-        point is a posed ship's mount: ASK aim_point)."""
+        """One ship off its NIF pose for a stretch (its own banks walked
+        natively through its pose table and part slots), and a foe locking
+        a subsystem on it (the aim point is a posed ship's mount, native
+        too). Both went to Python before posed parts went native (RUN_PYTHON
+        posed_ship, ASK aim_point)."""
         ship = self.ship(POSED)
         if self.tick == POSE_FROM:
             articulation.force_part_pose(
@@ -825,8 +828,12 @@ def test_k2_matches_python_with_real_instances(monkeypatch, host,
                 "BANK_STOP", "lock_other_ship", "manual_on", "manual_off",
                 "cloaking_target", "shields:True", "shields:False"):
         assert n.get(key, 0) > 0, (key, n)
-    assert reasons["posed_ship"] > 0, reasons
-    assert nat.counts["k2_ask_queries"]["aim_point"] > 0, nat.counts
+    # The posed ship and the lock on it: native (posed parts, Task 4; they
+    # were posed_ship and ASK aim_point before).
+    assert reasons["posed_ship"] == 0, reasons
+    assert reasons["part_stale"] == 0, reasons
+    assert nat.counts["k2_posed"]["banks"] > 0, nat.counts
+    assert nat.counts["k2_posed"]["lock_aims"] > 0, nat.counts
     assert n.get("point_blank", 0) > 0, n         # the F7 rig
     assert n.get("reversed_arc", 0) > 0, n        # the F8 rig
     # ... and the effects reached the world.

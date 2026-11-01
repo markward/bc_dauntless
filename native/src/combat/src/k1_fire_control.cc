@@ -25,6 +25,7 @@
 #include <utility>
 
 #include "dauntless/combat/fire_gates.h"
+#include "dauntless/combat/part_pose.h"
 #include "dauntless/combat/sensor_detect.h"
 #include "dauntless/combat/weapon_geometry.h"
 
@@ -68,6 +69,15 @@ bool xform_ok(const Mirror& m, const ObjectRow& o) {
                            static_cast<uint32_t>(o.xform_gen));
 }
 
+// Why a Fire decision went to Python (ASK fire): the posed-part fallbacks
+// by their type (part_pose.h), anything else Other.
+K1Why fire_ask_why(const std::invalid_argument& e) {
+    if (dynamic_cast<const PartStale*>(&e)) return K1Why::PartStale;
+    if (dynamic_cast<const MountUnknown*>(&e)) return K1Why::MountUnknown;
+    if (dynamic_cast<const NoMount*>(&e)) return K1Why::NoMount;
+    return K1Why::Other;
+}
+
 }  // namespace
 
 const char* k1_kind_name(K1Kind k) {
@@ -82,7 +92,8 @@ const char* k1_kind_name(K1Kind k) {
 const char* k1_why_name(K1Why w) {
     static constexpr const char* kNames[] = {
         "self_managed",   "overridden",       "instance_patch",
-        "posed_ship",     "posed_target",     "stub_or_unplaced",
+        "posed_ship",     "posed_target",     "part_stale",
+        "mount_unknown",  "no_mount",         "stub_or_unplaced",
         "pulse_ship_target", "pulse_module",  "ammo_row",
         "stale_row",      "unslotted_ship",   "gate",
         "other"};
@@ -400,6 +411,14 @@ private:
         K1Decision d;
     };
     Outcome decide(int64_t bank, int64_t target);
+    // A Fire decision aimed natively at a posed target's offset (the bank's
+    // stored _target_offset) -- counted once its aim was made.
+    void count_posed_aim(int64_t bank, int64_t target) {
+        const ObjectRow* t = target == -1 ? nullptr : objrow(target);
+        const SubsystemRow* b = subrow(bank);
+        if (t && b && t->has_posed_parts && !t->_dead && b->target_offset_set)
+            ++c_.posed_target_aims;
+    }
     Outcome decide_beam(int64_t bank, int64_t target);
     Outcome decide_pulse(int64_t bank, int64_t target);
     Outcome decide_tube(int64_t bank, int64_t target);
@@ -412,8 +431,10 @@ private:
 // Everything the system's walk can read must be representable before its
 // first write (plan P2 / ruling H): the system and every child row, the parent
 // ship, every target-list entry (and, in the pump, the held target), a real
-// IsDead on each, no posed parts where the walk carries a mount or a target
-// offset, the ammo rows, the pulse module, and the chain table.
+// IsDead on each, a current part slot for every leaf of a posed ship (its
+// mount), the ammo rows, the pulse module, and the chain table. A posed
+// target's offset aim is decided in the walk (an ASK fire if the mirror
+// cannot: its slot went stale, its mount is unknown or none).
 std::optional<K1Why> Walker::prescan(int64_t sys,
                                      int64_t pump_ship) const {
     const SubsystemRow* s = subrow(sys);
@@ -425,7 +446,7 @@ std::optional<K1Why> Walker::prescan(int64_t sys,
     // A class overriding a method the kernel stands in for (Task 5 fix).
     if (s->k1_overridden) return K1Why::Overridden;
 
-    // self.GetParentShip(): alive-testable, at its NIF pose, placed.
+    // self.GetParentShip(): alive-testable, placed.
     int64_t ship;
     try {
         ship = climb_to_ship_of(m_, sys);
@@ -435,7 +456,6 @@ std::optional<K1Why> Walker::prescan(int64_t sys,
     const ObjectRow* so = objrow(ship);
     if (!so) return K1Why::StaleRow;
     if (!so->has_real_is_dead) return K1Why::StubOrUnplaced;
-    if (so->has_posed_parts) return K1Why::PosedShip;
     if (!xform_ok(m_, *so)) return K1Why::StubOrUnplaced;
     if (pump_ship != -1) {  // the pump's own `ship` (the range gate)
         const ObjectRow* po = objrow(pump_ship);
@@ -460,17 +480,14 @@ std::optional<K1Why> Walker::prescan(int64_t sys,
         }
     }
 
-    // _target_list: every entry is a placed Object with a real IsDead; a
-    // pulse or torpedo aim may carry a target offset (target_offset_world),
-    // which the mirror answers only for targets at their NIF pose.
-    const bool offset_aim = kind == kPulseSystem || kind == kTorpedoSystem;
+    // _target_list: every entry is a placed Object with a real IsDead. (A
+    // pulse or torpedo aim at a posed target's offset is the walk's.)
     bool any_alive = false;
     for (const int64_t t : s->_target_list) {
         const ObjectRow* to = objrow(t);
         if (!to) return K1Why::StaleRow;
         if (!to->has_real_is_dead || !xform_ok(m_, *to))
             return K1Why::StubOrUnplaced;
-        if (offset_aim && to->has_posed_parts) return K1Why::PosedTarget;
         if (!to->_dead) any_alive = true;
     }
     // PulseWeapon.Fire(None) falls back to ship.GetTarget(), not mirrored.
@@ -501,6 +518,12 @@ std::optional<K1Why> Walker::prescan(int64_t sys,
         }
         if (w->_property != -1 && !m_.property(w->_property))
             return K1Why::StaleRow;
+        // A posed ship's leaf mount is read through its part slot
+        // (mount_position): one that is not current is Python's.
+        Vec3 local;
+        if (so->has_posed_parts &&
+            posed_local(m_, *so, *w, &local) == SlotState::stale)
+            return K1Why::PartStale;
         if (leaf == kPulseWeapon &&
             (!w->module_ok || w->_power_setting < 0 || w->_power_setting > 2))
             return K1Why::PulseModule;
@@ -650,6 +673,7 @@ Walker::Outcome Walker::decide_pulse(int64_t bank, int64_t target) {
         write_target_offset(bank, s_.offset.has_value());
         const std::optional<Vec3> dir =
             _solve_pulse_launch_direction(m_, bank, ship, t, s_.use_memo);
+        count_posed_aim(bank, t);
         if (!dir || !_emitter_in_arc(m_, bank, ship, *dir)) return o;
         o.d.world_dir = *dir;
     } else {
@@ -677,6 +701,7 @@ Walker::Outcome Walker::decide_tube(int64_t bank, int64_t target) {
         // STORED _target_offset (the previous shot's).
         const std::optional<Vec3> aim =
             _resolve_torpedo_aim_point(m_, bank, target);
+        count_posed_aim(bank, target);
         if (!aim) {
             o.what = Outcome::What::FailedEvent;
             return o;
@@ -768,6 +793,8 @@ K1Record Walker::run() {
             s_.did_fire = false;
             // ship = self.GetParentShip()
             s_.ship = climb_to_ship_of(m_, s_.sys);
+            if (const ObjectRow* so = objrow(s_.ship); so && so->has_posed_parts)
+                ++c_.posed_walks;
             // if ship is not None and hasattr(ship, "IsDead") and
             //     ship.IsDead(): return False      (_force_update stays set)
             if (ship_dead(m_, s_.ship)) {
@@ -1016,8 +1043,9 @@ K1Record Walker::run() {
             Outcome o;
             try {
                 o = decide(w, s_.fire_target);
-            } catch (const std::invalid_argument&) {
+            } catch (const std::invalid_argument& e) {
                 k1_roll_back(m_, s_, mark);
+                ++c_.fire_ask_why[static_cast<size_t>(fire_ask_why(e))];
                 return ask("fire", {s_.sys, w, s_.fire_target},
                            St::TF_FIRE_ANSWER);
             }

@@ -25,6 +25,7 @@ namespace {
 
 using detail::dot;
 using detail::fall_back;
+using detail::fall_back_as;
 using detail::length;
 using detail::mult_matrix_left;
 using detail::obj;
@@ -81,7 +82,7 @@ int64_t climb_to_ship(const Mirror& m, const SubsystemRow& s) {
 // own ship's (only the ship that holds it passes it explicitly).
 void check_slot_owner(const Mirror& m, const SubsystemRow& s, int64_t ship) {
     const int64_t owner = climb_to_ship(m, s);
-    if (owner != -1 && owner != ship) fall_back("part_stale");
+    if (owner != -1 && owner != ship) fall_back_as<PartStale>("part_stale");
 }
 
 // subsystems._subsystem_world_position (subsystems.py:62; MAP P3).
@@ -99,7 +100,7 @@ Vec3 mount_position(const Mirror& m, int64_t sub_h, int64_t ship_arg) {
     if (o.has_posed_parts) {
         if (ship_arg != -1) check_slot_owner(m, s, ship);
         if (posed_local(m, o, s, &local) == SlotState::stale)
-            fall_back("part_stale");
+            fall_back_as<PartStale>("part_stale");
     }
     const Vec3 offset = mult_matrix_left(t.rot, local);
     return {t.pos[0] + offset[0], t.pos[1] + offset[1], t.pos[2] + offset[2]};
@@ -240,7 +241,8 @@ Vec3 target_offset_world(const Mirror& m, int64_t target, const Vec3& offset,
     Vec3 p = offset;
     if (t.has_posed_parts) {
         // authored=False is the box rule (part_for_point): Python's.
-        if (mount_sub == kNoMount) fall_back("posed target, no authored mount");
+        if (mount_sub == kNoMount)
+            fall_back_as<NoMount>("posed target, no authored mount");
         if (mount_sub == kRefUnrepresentable)
             fall_back("mount subsystem is unnamed");
         const SubsystemRow& ms = sub(m, mount_sub);
@@ -252,7 +254,7 @@ Vec3 target_offset_world(const Mirror& m, int64_t target, const Vec3& offset,
         check_slot_owner(m, ms, target);
         const PartPose* pose = nullptr;
         const SlotState st = slot_pose(m, t, ms, &pose);
-        if (st == SlotState::stale) fall_back("part_stale");
+        if (st == SlotState::stale) fall_back_as<PartStale>("part_stale");
         // The pose carries the OFFSET (Python's `point`), not `_position`:
         // -0.0 == 0.0 matched above.
         if (st == SlotState::ok) p = apply_part_pose(*pose, offset);
@@ -274,10 +276,19 @@ std::optional<Vec3> _resolve_torpedo_aim_point(const Mirror& m, int64_t tube,
     if (t._dead) return std::nullopt;
     const SubsystemRow& tb = sub(m, tube);
     if (!tb.target_offset_set) return world_location(m, t);
-    // Python resolves the mount (`_RESOLVE`); the native lookup is
-    // posed-parts Task 3's, so a posed target is Python's until then.
-    if (t.has_posed_parts) fall_back("target has posed parts");
-    return target_offset_world(m, target, tb._target_offset, kNoMount);
+    // target_offset_world(target, offset): mount_sub=_RESOLVE, i.e.
+    // part_severance.authored_mount_subsystem(target, offset). Only a POSED
+    // target reads the mount (an unposed one is the offset whatever it is),
+    // so only there is it looked up: the first mount at the offset in
+    // _iter_subsystems order (posed-parts spec §4.4). The mirror cannot
+    // tell -> Python's; none -> target_offset_world's NoMount (the box rule).
+    int64_t mount = kNoMount;
+    if (t.has_posed_parts) {
+        mount = authored_mount_subsystem(m, t, tb._target_offset);
+        if (mount == kMountUnknown)
+            fall_back_as<MountUnknown>("target offset mount unknown");
+    }
+    return target_offset_world(m, target, tb._target_offset, mount);
 }
 
 // ── weapon_subsystems.py:3033 _in_torpedo_cone (K1M F12) ────────────────────

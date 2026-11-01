@@ -160,8 +160,8 @@ TEST(ProjectileGeometry, SteerPointNoOffsetShift) {
               (Vec3{1.0, 2.0, 3.0}));
     EXPECT_EQ(steer_point_unposed(w.m, t, std::nullopt, -1, {10.0, 0.0, 0.0}),
               (Vec3{11.0, 2.0, 3.0}));
-    // An offset on a posed target, or a mount the mirror cannot name, is
-    // Python's.
+    // An offset on a posed target that no mount claims (None: the box
+    // rule), or a mount the mirror cannot name, is Python's.
     w.m.set_i(t, Field::has_posed_parts, 1);
     EXPECT_THROW(steer_point_unposed(w.m, t, Vec3{0.0, 1.0, 0.0}, -1,
                                      {0.0, 0.0, 0.0}),
@@ -297,7 +297,8 @@ TEST(ProjectileGeometry, GuideSteerPointAskAndResume) {
         EXPECT_EQ(resumed.writes[i].field, direct.writes[i].field);
         EXPECT_EQ(resumed.writes[i].value, direct.writes[i].value);
     }
-    // A mount the mirror cannot name, or a posed target: ask again.
+    // A mount the mirror cannot name, or a posed target whose offset no
+    // mount claims (None): ask again.
     w.m.set_torpedo_mount(h, true, kRefUnrepresentable, {0.0, 1.0, 0.0});
     EXPECT_EQ(w.guide(h).status, St::need_steer_point);
     w.m.set_torpedo_mount(h, true, -1, {0.0, 1.0, 0.0});
