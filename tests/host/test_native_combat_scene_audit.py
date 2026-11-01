@@ -5,10 +5,11 @@ With DAUNTLESS_NATIVE_AUDIT=1 every dispatched sensor query (can_detect and
 its pieces, occlusion) is answered by both the native kernel and the Python,
 and every GameLoop.tick ends by comparing the whole mirror with its Python
 objects; any difference is recorded. A clean run in which the kernel really
-answered -- and the mirror audit really ran, and K1 really walked the fight's
-weapons (phase 1b) -- proves the mirror keeps up with a whole fight: AI,
-damage, deaths, cloaks, power and every field K1 writes back, written through
-the public paths the game itself uses.
+answered -- and the mirror audit really ran, K1 really walked the fight's
+weapons (phase 1b) and K2 really walked its phaser beams (phase 2: the
+`cb.phasers` step, tracing the real instances) -- proves the mirror keeps up
+with a whole fight: AI, damage, deaths, cloaks, power and every field K1 and
+K2 write back, written through the public paths the game itself uses.
 """
 import pytest
 
@@ -60,5 +61,9 @@ def test_combat_stress_runs_clean_under_the_native_audit(monkeypatch):
     print("native-combat scene audit counts:", counts, "audits:", audits[0])
     assert counts["native_calls"] > 0, counts
     assert counts["k1_records"] > 0, counts
+    # K2 walked the beams natively (never the whole step in Python), with
+    # the session's real instances (no "instances" fallback).
+    assert counts["k2_records"] > 0, counts
+    assert counts["k2_python_steps"] == 0, counts
     # GameLoop.tick audits the whole mirror once a tick.
     assert audits[0] >= 120, audits
