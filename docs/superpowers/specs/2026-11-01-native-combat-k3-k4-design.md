@@ -149,7 +149,7 @@ Controller-run, after the code is final: two runs of the 64-ship fight with the 
 
 ## 10. Outcome
 
-Built on branch `perf/native-combat-k3` (base `c6485d10a`); the tip measured is `0c5d58c81`. Default stays OFF (`DAUNTLESS_NATIVE_COMBAT` unset). **Live verification: NOT yet; Mark to test.** The default flip awaits it.
+Built on branch `perf/native-combat-k3` (base `c6485d10a`); the tip measured is `0c5d58c81`. Default stays OFF (`DAUNTLESS_NATIVE_COMBAT` unset). **Live-verified by Mark 2026-11-01** ("it all looks good"; frame-rate comparison left to the benchmarks above). Full gate green on `0c670f768` after three pre-existing test-isolation fixes (forget_rows after the conftest mirror wipe; forget K2's seen classes with it; ShipClass.GetRadius restored via monkeypatch). Default stays OFF until Mark flips it.
 
 **What shipped.** K3 (torpedo flight: guidance, advance, hit test, lifetime, with ASKs back to Python for the rare cases) is dispatched from `cb.projectiles`; K4 (damage eligibility) replaces `cb.eligibility`; both share one step scan (`step_scan.{h,cc}`). Fallback reasons are `k3_python_reasons` / `k4_python_reasons`; both stand down under `DAUNTLESS_NATIVE_AUDIT=1` (reason `audit`).
 
