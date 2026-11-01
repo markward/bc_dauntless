@@ -362,3 +362,4 @@ All `forget()` call sites (7):
 - `GameLoop.__init__` is the only place the passive switch is read. In `host_loop` there is also the mission-init path (`_init_mission`) that builds the GameLoop, so the env switch is read after the mission loads.
 - CMake `COMPILE_OPTIONS` source property is replaced, not appended, per `set_source_files_properties` call.
 - `host_io` manifest test: only add to `host_io.py` if you want the manifest. The transform and torpedo_scan precedent bypasses host_io.
+- **A method a kernel replaces must join the override guard while the Python copies exist.** K1: `_K1_LEAF_METHODS` / `_K1_SYSTEM_METHODS`; K2: `_K2_NAMES` roles; K3/K4: `_K3_FUNCTIONS` / the K4 snapshot (`engine/appc/native_combat.py`). Otherwise a subclass or patch of that method is silently skipped by the native path. (Moved here from CLAUDE.md's native-combat row, 2026-11-01, for the length budget.)
