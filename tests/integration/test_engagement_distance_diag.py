@@ -58,7 +58,7 @@ def _isolate():
             del sys.modules[k]
 
 
-def test_engagement_distance_trajectory(game_context):
+def test_engagement_distance_trajectory(game_context, monkeypatch):
     pSet = App.SetClass_Create(); pSet.SetName("S")
     App.g_kSetManager._sets["S"] = pSet
 
@@ -74,7 +74,9 @@ def test_engagement_distance_trajectory(game_context):
     target._hull = thull
     target.SetWorldLocation(TGPoint3(0, start, 0))
     target._radius = 20.0
-    type(target).GetRadius = lambda self: self._radius
+    # monkeypatch, not a bare class assignment: that outlived the test and
+    # made every later native-combat step see ShipClass as patched.
+    monkeypatch.setattr(type(target), "GetRadius", lambda self: self._radius)
     pSet.AddObjectToSet(target, "Target")
 
     import AI.Compound.NonFedAttack as non_fed_attack
