@@ -241,6 +241,7 @@ TEST(K2, KindsAndNames) {
     EXPECT_STREQ(k2_query_name(K2Query::resolve_hit), "resolve_hit");
     EXPECT_STREQ(k2_query_name(K2Query::bank_step), "bank_step");
     EXPECT_STREQ(k2_why_name(K2Why::PosedShip), "posed_ship");
+    EXPECT_STREQ(k2_why_name(K2Why::PartStale), "part_stale");
 }
 
 TEST(K2, SystemGateStopsEveryTick) {
@@ -468,6 +469,7 @@ TEST(K2, PrescanRunsPythonBeforeAnyRecord) {
     const int64_t b = w.ship("B", 100.0, 0.0, 0.0);
     const int64_t bsys = w.system("bsys", b);
     const int64_t bb = w.bank("bb", bsys, a.target, false, 0.7);
+    // B is posed and its bank's part slot was never resolved (stamp 0).
     w.m.set_i(b, Field::has_posed_parts, 1);
     w.begin({a.ship, b, -1});
     const K2Record r = w.k.next();
@@ -480,7 +482,9 @@ TEST(K2, PrescanRunsPythonBeforeAnyRecord) {
     w.k.end();
     const auto& c = w.k.counts();
     EXPECT_EQ(c.python_ships, 2);
-    EXPECT_EQ(c.why[static_cast<size_t>(K2Why::PosedShip)], 1);
+    // Was K2Why::PosedShip before posed parts went native.
+    EXPECT_EQ(c.why[static_cast<size_t>(K2Why::PartStale)], 1);
+    EXPECT_EQ(c.why[static_cast<size_t>(K2Why::PosedShip)], 0);
     EXPECT_EQ(c.why[static_cast<size_t>(K2Why::UnslottedShip)], 1);
 }
 
@@ -526,16 +530,14 @@ TEST(K2, PrescanReasons) {
     }
 }
 
-TEST(K2, LockShipPosedAsks) {
-    // The ship-wide lock is a subsystem on ANOTHER ship that is posed: the
-    // aim point is Python's. The arc aims at that same point.
+TEST(K2, UnnameableLockAsks) {
+    // The ship-wide lock is a subsystem the mirror cannot name: the aim
+    // point is Python's. The arc aims at that same point. (Was
+    // LockShipPosedAsks, a lock on a posed ship, before posed parts went
+    // native: see LockOnPosedShipIsNative.)
     World w;
     const auto s = w.scene(true);
-    const int64_t other = w.ship("other", 0.0, 80.0, 0.0);
-    const int64_t lock = w.m.register_row(Kind::Subsystem);
-    w.m.set_ref(lock, Field::_parent_ship, other);
-    w.m.set_ref(s.ship, Field::_target_subsystem, lock);
-    w.m.set_i(other, Field::has_posed_parts, 1);
+    w.m.set_ref(s.ship, Field::_target_subsystem, kRefUnrepresentable);
     w.begin({s.ship});
     const K2Record r = w.k.next();
     ASSERT_EQ(w.brief(r), "ASK aim_point");
@@ -874,4 +876,74 @@ TEST(K2, ProtocolErrors) {
     EXPECT_THROW(w.k.end(), std::logic_error);   // not DONE
     w.k.abandon();
     EXPECT_THROW(w.k.answer(K2Answer{}), std::logic_error);
+}
+
+// ── Posed parts (native-combat posed parts, Task 4) ─────────────────────────
+
+namespace {
+// A pose that moves a point by +x (0.25): not identity.
+PartPose shift_pose() {
+    PartPose p;
+    p.t[0] = 0.25;
+    p.identity = false;
+    return p;
+}
+}  // namespace
+
+TEST(K2, PosedShipBeamsNatively) {
+    // The firing ship is posed and its bank's slot is current: the strip
+    // centre is the posed mount. A generation bump makes the slot stale:
+    // the ship is Python's, part_stale -- never posed_ship.
+    World w;
+    const auto s = w.scene(true);
+    w.m.set_i(s.ship, Field::has_posed_parts, 1);
+    w.m.set_part_poses(s.ship, {shift_pose()});
+    w.m.set_part_slot(s.bank, 0, w.m.part_gen());
+    w.begin({s.ship});
+    const K2Record c = w.k.next();
+    ASSERT_EQ(c.kind, K2Kind::CONTACT);
+    EXPECT_EQ(c.contact.emitter, (Vec3{0.25, 0.0, 0.0}));
+    w.finish();
+    EXPECT_EQ(w.k.counts().python_ships, 0);
+    EXPECT_EQ(w.k.counts().posed_banks, 1);
+
+    w.m.set_part_gen(w.m.part_gen() + 1);
+    w.k.reset_counts();
+    w.begin({s.ship});
+    EXPECT_EQ(w.brief(w.k.next()), "RUN_PYTHON ship 0");
+    w.finish();
+    const auto& n = w.k.counts();
+    EXPECT_EQ(n.why[static_cast<size_t>(K2Why::PartStale)], 1);
+    EXPECT_EQ(n.why[static_cast<size_t>(K2Why::PosedShip)], 0);
+}
+
+TEST(K2, LockOnPosedShipIsNative) {
+    // The ship-wide lock is a subsystem on ANOTHER ship that is posed, its
+    // slot current: the aim point is the posed mount, no ASK. A stale slot
+    // sends the FIRING ship to Python (part_stale) before any record.
+    World w;
+    const auto s = w.scene(true);
+    const int64_t other = w.ship("other", 0.0, 80.0, 0.0);
+    const int64_t lock = w.m.register_row(Kind::Subsystem);
+    w.m.set_ref(lock, Field::_parent_ship, other);
+    w.m.set_fv(lock, Field::_position, {0.0, 0.0, 0.0});
+    w.m.set_ref(s.ship, Field::_target_subsystem, lock);
+    w.m.set_i(other, Field::has_posed_parts, 1);
+    w.m.set_part_poses(other, {shift_pose()});
+    w.m.set_part_slot(lock, 0, w.m.part_gen());
+    w.begin({s.ship});
+    const K2Record c = w.k.next();
+    ASSERT_EQ(c.kind, K2Kind::CONTACT);
+    EXPECT_EQ(c.contact.target_pos, (Vec3{0.25, 80.0, 0.0}));
+    w.finish();
+    EXPECT_EQ(w.k.counts().asks, 0);
+    EXPECT_EQ(w.k.counts().posed_lock_aims, 1);
+
+    w.m.set_part_gen(w.m.part_gen() + 1);
+    w.k.reset_counts();
+    w.begin({s.ship});
+    EXPECT_EQ(w.brief(w.k.next()), "RUN_PYTHON ship 0");
+    w.finish();
+    EXPECT_EQ(w.k.counts().why[static_cast<size_t>(K2Why::PartStale)], 1);
+    EXPECT_EQ(w.k.counts().asks, 0);
 }

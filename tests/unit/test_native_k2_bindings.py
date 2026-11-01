@@ -132,7 +132,8 @@ def test_contact_record_layout(scene):
     assert _h.combat_dump(_sub(bank))["_dwell"] == 0.125 + DT
     counts = _h.combat_k2_counts()
     assert set(counts) == {"k2_records", "k2_python_ships", "k2_asks",
-                           "k2_python_reasons", "k2_ask_queries"}
+                           "k2_python_reasons", "k2_ask_queries", "k2_posed"}
+    assert counts["k2_posed"] == {"banks": 0, "lock_aims": 0, "manual_aims": 0}
     assert set(counts["k2_ask_queries"]) == {
         "is_dead", "can_detect", "aim_point", "shields_block", "bubble",
         "resolve_hit", "bank_step"}

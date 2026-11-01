@@ -655,6 +655,9 @@ def _remember_leaf_model(leaf, iid) -> None:
         return
     if handle:
         _leaf_models[leaf] = handle
+        # `part_for_mount` now asks the model instead of the box rule: every
+        # native part slot resolved before reads stale (native_combat).
+        native_combat.bump_part_gen()
 
 
 def leaf_model(leaf):
@@ -701,6 +704,9 @@ def part_boxes_for(leaf, iid=None):
                                tuple(node["bounds_max"]))
     if boxes:                             # do not cache an empty derivation
         _derived_boxes[leaf] = boxes
+        # The box rule and is_missing answer differently now: every native
+        # part slot resolved before reads stale (native_combat).
+        native_combat.bump_part_gen()
     return boxes
 
 

@@ -156,21 +156,43 @@ TEST(ProjectileGeometry, SteerPointNoOffsetShift) {
     World w;
     const int64_t s = w.set();
     const int64_t t = w.ship(s, 1.0, 2.0, 3.0);
-    EXPECT_EQ(steer_point_unposed(w.m, t, std::nullopt, -1, {-0.0, 0.0, -0.0}),
+    EXPECT_EQ(steer_point_native(w.m, t, std::nullopt, -1, {-0.0, 0.0, -0.0}),
               (Vec3{1.0, 2.0, 3.0}));
-    EXPECT_EQ(steer_point_unposed(w.m, t, std::nullopt, -1, {10.0, 0.0, 0.0}),
+    EXPECT_EQ(steer_point_native(w.m, t, std::nullopt, -1, {10.0, 0.0, 0.0}),
               (Vec3{11.0, 2.0, 3.0}));
-    // An offset on a posed target, or a mount the mirror cannot name, is
-    // Python's.
+    // An offset on a posed target that no mount claims (None: the box
+    // rule), or a mount the mirror cannot name, is Python's.
     w.m.set_i(t, Field::has_posed_parts, 1);
-    EXPECT_THROW(steer_point_unposed(w.m, t, Vec3{0.0, 1.0, 0.0}, -1,
+    EXPECT_THROW(steer_point_native(w.m, t, Vec3{0.0, 1.0, 0.0}, -1,
                                      {0.0, 0.0, 0.0}),
                  std::invalid_argument);
-    EXPECT_EQ(steer_point_unposed(w.m, t, std::nullopt, -1, {0.0, 0.0, 0.0}),
+    EXPECT_EQ(steer_point_native(w.m, t, std::nullopt, -1, {0.0, 0.0, 0.0}),
               (Vec3{1.0, 2.0, 3.0}));
     w.m.set_i(t, Field::has_posed_parts, 0);
-    EXPECT_THROW(steer_point_unposed(w.m, t, Vec3{0.0, 1.0, 0.0},
+    EXPECT_THROW(steer_point_native(w.m, t, Vec3{0.0, 1.0, 0.0},
                                      kRefUnrepresentable, {0.0, 0.0, 0.0}),
+                 std::invalid_argument);
+}
+
+// The baked path (posed parts, Task 7): pos + R·(scale·baked), no part
+// pose -- an identity is a branch, so signed zeros survive (an identity
+// pose multiplied would turn -0.0 into 0.0) -- and only for no mount.
+TEST(ProjectileGeometry, SteerPointBaked) {
+    World w;
+    const int64_t s = w.set();
+    const int64_t t = w.ship(s, -0.0, -0.0, -0.0);
+    w.m.set_i(t, Field::has_posed_parts, 1);
+    const Vec3 nz{-0.0, -0.0, -0.0};
+    const Vec3 p = steer_point_native(w.m, t, Vec3{0.0, 1.0, 0.0}, -1,
+                                      {0.0, 0.0, 0.0}, &nz);
+    for (int i = 0; i < 3; ++i) EXPECT_TRUE(std::signbit(p[i])) << i;
+    const Vec3 b{0.5, -2.0, 3.0};
+    EXPECT_EQ(steer_point_native(w.m, t, Vec3{9.0, 9.0, 9.0}, -1,
+                                 {10.0, 0.0, 0.0}, &b),
+              (Vec3{10.5, -2.0, 3.0}));
+    // A mount ignores a bake (it follows its part).
+    EXPECT_THROW(steer_point_native(w.m, t, Vec3{0.0, 1.0, 0.0},
+                                    kRefUnrepresentable, {0.0, 0.0, 0.0}, &b),
                  std::invalid_argument);
 }
 
@@ -283,11 +305,15 @@ TEST(ProjectileGeometry, GuideSteerPointAskAndResume) {
     ASSERT_EQ(ask.status, St::need_steer_point);
     EXPECT_EQ(ask.n_writes, 0);
     EXPECT_EQ(ask.resume.target, tgt);
-    // Attributed (no mount subsystem): answered natively.
+    // Attributed (no mount subsystem) but not baked: ask (Python bakes).
     w.m.set_torpedo_mount(h, true, -1, {0.0, 1.0, 0.0});
+    EXPECT_EQ(w.guide(h).status, St::need_steer_point);
+    EXPECT_EQ(w.guide(h).steer_why, SteerWhy::unbaked);
+    // Baked (an unposed target: the offset itself): answered natively.
+    w.m.torpedoes().set_baked(h, true, {0.0, 1.0, 0.0}, {0.0, 1.0, 0.0});
     const GuideResult direct = w.guide(h);
     ASSERT_EQ(direct.status, St::done);
-    const Vec3 p = steer_point_unposed(w.m, tgt, Vec3{0.0, 1.0, 0.0}, -1,
+    const Vec3 p = steer_point_native(w.m, tgt, Vec3{0.0, 1.0, 0.0}, -1,
                                        {0.0, 0.0, 0.0});
     const GuideResult resumed =
         guide_torpedo_resume(w.m, w.row(h), 1.0 / 60.0, ask.resume, p);
@@ -297,12 +323,22 @@ TEST(ProjectileGeometry, GuideSteerPointAskAndResume) {
         EXPECT_EQ(resumed.writes[i].field, direct.writes[i].field);
         EXPECT_EQ(resumed.writes[i].value, direct.writes[i].value);
     }
-    // A mount the mirror cannot name, or a posed target: ask again.
+    // A mount the mirror cannot name, or a posed target whose offset no
+    // mount claims (None): ask again.
     w.m.set_torpedo_mount(h, true, kRefUnrepresentable, {0.0, 1.0, 0.0});
     EXPECT_EQ(w.guide(h).status, St::need_steer_point);
+    // A posed target's picked spot is steered at its bake (no pose); the
+    // bake's target not this one, or its key not this offset: ask again.
     w.m.set_torpedo_mount(h, true, -1, {0.0, 1.0, 0.0});
     w.m.set_i(tgt, Field::has_posed_parts, 1);
-    EXPECT_EQ(w.guide(h).status, St::need_steer_point);
+    EXPECT_EQ(w.guide(h).status, St::done);
+    w.m.torpedoes().set_baked(h, false, {0.0, 1.0, 0.0}, {0.0, 1.0, 0.0});
+    EXPECT_EQ(w.guide(h).steer_why, SteerWhy::unbaked);
+    w.m.torpedoes().set_baked(h, true, {-1e-300, 1.0, 0.0}, {0.0, 1.0, 0.0});
+    EXPECT_EQ(w.guide(h).steer_why, SteerWhy::unbaked);
+    // -0.0 matches 0.0 (Python's !=), as for the mount key.
+    w.m.torpedoes().set_baked(h, true, {-0.0, 1.0, 0.0}, {0.0, 1.0, 0.0});
+    EXPECT_EQ(w.guide(h).status, St::done);
     // A NaN offset never matches its key (Python's != is True).
     w.m.set_i(tgt, Field::has_posed_parts, 0);
     w.m.torpedoes().set_v(h, TorpField::_target_offset, true, {kNan, 1.0, 0.0});

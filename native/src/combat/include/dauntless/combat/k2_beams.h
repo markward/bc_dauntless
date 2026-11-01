@@ -61,11 +61,13 @@
 //
 // FALLBACK, two stages (ruling H):
 //   1. Before the FIRST RECORD for a ship the kernel pre-scans it (prescan()
-//      in the .cc): the ship row (a ShipClass, placed, at its NIF pose, its
-//      set nameable), the phaser system row (a phaser system, no class
-//      override), every child (a live, unoverridden PhaserBank of this ship)
-//      and every child's `_target` (None or a placed Object with a nameable
-//      set). Anything else -- and any throw before the ship's first record,
+//      in the .cc): the ship row (a ShipClass, placed, its set nameable; on
+//      a posed ship every bank's part slot current, and a lock's slot on its
+//      own posed ship current -- else part_stale), the phaser system row (a
+//      phaser system, no class override), every child (a live, unoverridden
+//      PhaserBank of this ship) and every child's `_target` (None or a
+//      placed Object with a nameable set). The same checks run again for
+//      each bank before ITS first record (a bank_step past the ship's). Anything else -- and any throw before the ship's first record,
 //      its undelivered writes rolled back -- is RUN_PYTHON, counted by why.
 //   2. After it, a native evaluation that cannot answer becomes an ASK:
 //      Python answers the one question on live objects and the walk goes on.
@@ -81,8 +83,12 @@
 //        aim_point    (ship, target)   p, sub = host_loop._phaser_aim_point(
 //                                      ship, target)
 //                                      -> ((p.x, p.y, p.z), sub is not None)
-//            when the lock's own ship is posed or its row unnameable, or a
-//            Manual Aim target is posed. With a lock the arc aim reuses p:
+//            when the lock's row is unnameable, or a Manual Aim pick on a
+//            posed target that the ship's Manual Aim slot does not hold
+//            current (Task 4b; Python's box rule). A lock on a posed ship
+//            is the kernel's (its mount through the pushed part slot; a
+//            stale slot sends the ship to Python first, part_stale). With a
+//            lock the arc aim reuses p:
 //            Python calls the same pure GetWorldLocation twice.
 //        shields_block (target)        bool(combat.shields_block(target))
 //                                                                    -> bool
@@ -128,7 +134,15 @@
 // CONTACT is an ASK answer or StopFiring, neither of which drops a mirror
 // row, and the pre-scan made every remaining read nameable; if one still
 // fails, next() throws std::logic_error (the session is restored, see below)
-// and run_k2 must abandon and re-raise naming this invariant.
+// and run_k2 must abandon and re-raise naming this invariant. The part slots
+// the bank's GEOMETRY reads were checked current at its start, and the only
+// Python between that check and GEOMETRY is ASK answers (is_dead,
+// can_detect, aim_point). run_k2 re-resolves the step's ships whenever an
+// answer moved the part-map generation, before handing it back
+// (native_combat._heal_part_slots, never dropping a row), so GEOMETRY reads
+// freshly stamped slots by construction; a stale one here stays a
+// last-resort guard (reachable only if Python's own part resolution raises,
+// when Python's step would raise on that mount too).
 //
 // PINNING (the Python driver's contract; Task 5's run_k2). Python's loop
 // holds strong references in its locals (`ship`, `sys_`, `bank`, `target`);
@@ -267,7 +281,10 @@ enum class K2Why : int32_t {
     NotShipClass,       // not a ShipClass (GetPhaserSystem is a stub)
     Overridden,         // the system or a bank overrides a K1 method, or the
                         // driver listed the ship (context python_ships)
-    PosedShip,          // the ship has posed (articulated) parts
+    PosedShip,          // retired (posed parts, Task 4): never counted;
+                        // kept for dashboards one release (spec §4.5)
+    PartStale,          // a part slot the walk reads is not current (a
+                        // posed ship's bank mount, or its lock's mount)
     StaleRow,           // an unnamed (-2) or freed row the walk reads
     StubOrUnplaced,     // an invalid transform
     Gate,               // the system gate could not be answered
@@ -397,6 +414,11 @@ public:
         int64_t records = 0, python_ships = 0, asks = 0;
         std::array<int64_t, static_cast<size_t>(K2Why::kCount)> why{};
         std::array<int64_t, static_cast<size_t>(K2Query::kCount)> queries{};
+        // Posed parts walked natively: banks whose strip centre was posed
+        // (their ship is posed), and aim points at a lock on a posed ship.
+        int64_t posed_banks = 0, posed_lock_aims = 0;
+        // Manual Aim picks on a posed target answered natively (Task 4b).
+        int64_t posed_manual_aims = 0;
     };
     const Counts& counts() const { return counts_; }
     void reset_counts() { counts_ = Counts{}; }

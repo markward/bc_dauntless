@@ -17,20 +17,27 @@ class ShipClass(DamageableObject):
 
     # Mirrored into the native combat row on every write (native_combat).
     # _hull is the reference rocks.rock.effective_radius reads via GetHull().
-    _sensor_subsystem = native_combat.NativeRefField("Subsystem")
-    _cloaking_subsystem = native_combat.NativeRefField("Subsystem")
-    _hull = native_combat.NativeRefField("Subsystem")
+    # Every GetSubsystems slot also re-pushes the ship's mount order
+    # (native_combat.push_mount_order): NativeMountRefField for the mirrored
+    # ones, MountSlotField for the rest.
+    _sensor_subsystem = native_combat.NativeMountRefField("Subsystem")
+    _cloaking_subsystem = native_combat.NativeMountRefField("Subsystem")
+    _hull = native_combat.NativeMountRefField("Subsystem")
     # The weapon systems K1 reads (set by SetupProperties / Set*System).
-    _phaser_system = native_combat.NativeRefField("Subsystem")
-    _pulse_weapon_system = native_combat.NativeRefField("Subsystem")
-    _tractor_beam_system = native_combat.NativeRefField("Subsystem")
-    _torpedo_system = native_combat.NativeRefField("Subsystem")
+    _phaser_system = native_combat.NativeMountRefField("Subsystem")
+    _pulse_weapon_system = native_combat.NativeMountRefField("Subsystem")
+    _tractor_beam_system = native_combat.NativeMountRefField("Subsystem")
+    _torpedo_system = native_combat.NativeMountRefField("Subsystem")
+    _impulse_engine_subsystem = native_combat.MountSlotField()
+    _warp_engine_subsystem = native_combat.MountSlotField()
+    _power_subsystem = native_combat.MountSlotField()
+    _repair_subsystem = native_combat.MountSlotField()
     # What the K2 beam kernel reads: the lock, the Manual Aim offset, the
     # shield generator and the cached hull box (all rebound, never mutated).
     _target_subsystem = native_combat.NativeRefField("Subsystem")
     _use_target_offset = native_combat.NativeField(bool)
     _manual_target_offset = native_combat.NativeField(native_combat.OFFSET)
-    _shield_subsystem = native_combat.NativeRefField("Subsystem")
+    _shield_subsystem = native_combat.NativeMountRefField("Subsystem")
     _shield_hull_box = native_combat.HullBoxField()
     # A rebind may change has_posed_parts (native_combat.PosedPartsField).
     _articulation_poses = native_combat.PosedPartsField()

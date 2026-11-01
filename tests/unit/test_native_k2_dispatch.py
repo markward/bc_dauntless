@@ -45,9 +45,12 @@ from engine.appc import native_combat as nc  # noqa: E402
 from engine.appc import part_pose  # noqa: E402
 from engine.appc import passive_state  # noqa: E402
 from engine.appc import passive_weapons  # noqa: E402
+from engine.appc import physical_parents  # noqa: E402
+from engine.appc import projectiles  # noqa: E402
 from engine.appc import weapon_subsystems as ws  # noqa: E402
 from engine.appc.events import WeaponHitEvent  # noqa: E402
 from engine.appc.math import TGMatrix3, TGPoint3  # noqa: E402
+from engine.core import step_memo  # noqa: E402
 from engine.core.tracked_instances import TrackedInstances  # noqa: E402
 
 ON = {"DAUNTLESS_NATIVE_COMBAT": "1"}
@@ -92,9 +95,9 @@ def _hx(v):
 class World:
     """Real ships in one set, a pinned weapon clock, the logs.
 
-    `ships` is ((name, hardpoint, (x, y, z), yaw), ...). Built the same way
-    in both arms, so labels (ship name / subsystem name) line up. The spies
-    call the real function; `after_contact` hooks run after each
+    `ships` is ((name, hardpoint, (x, y, z), yaw[, script]), ...). Built the
+    same way in both arms, so labels (ship name / subsystem name) line up.
+    The spies call the real function; `after_contact` hooks run after each
     beam_contact (a stand-in for an effect's handler)."""
 
     def __init__(self, mp, native, ships, tag, instances=None):
@@ -109,8 +112,10 @@ class World:
         self.tag = tag
         App.g_kSetManager.AddSet(self.set, tag)
         self.ships = {}
-        for name, hardpoint, at, yaw in ships:
+        for name, hardpoint, at, yaw, *script in ships:
             ship = App.ShipClass_Create(name)
+            if script:      # lets articulation resolve the hardpoint leaf
+                ship.SetScript(script[0])
             _load_hardpoint(ship, hardpoint)
             ship.SetTranslateXYZ(*at)
             m = TGMatrix3()
@@ -297,6 +302,11 @@ def _native_ran(counts):
 
 GALAXY_VORCHA = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
                  ("Vorcha", "vorcha", (20.0, 260.0, 15.0), math.pi))
+# With ship scripts: articulation resolves the hardpoint leaves, so a posed
+# ship's part slots can be resolved (and the kernel can walk it).
+SCRIPTED_GALAXY_VORCHA = (
+    ("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0, "ships.Galaxy"),
+    ("Vorcha", "vorcha", (20.0, 260.0, 15.0), math.pi, "ships.Vorcha"))
 
 
 # ── Scenarios ────────────────────────────────────────────────────────────────
@@ -619,16 +629,18 @@ def test_audit_mode_runs_the_python_step(monkeypatch):
     assert counts["k2_python_step_reasons"]["audit"] == 60, counts
 
 
-def test_posed_ship_runs_python(monkeypatch):
-    """A Galaxy with a part forced off its NIF pose is handed to Python whole
-    (RUN_PYTHON, posed_ship); the Vor'cha firing at it stays native."""
+def test_forced_part_pose_ship_runs_natively(monkeypatch):
+    """A Galaxy with a part forced off its NIF pose stays native (no mount
+    sits on the forced part: every slot reads "no part", the authored point
+    itself), and so does the Vor'cha locking its shield generator: the
+    lock's mount on the posed ship is the kernel's, no ASK aim_point. (Was
+    test_posed_ship_runs_python -- RUN_PYTHON posed_ship and an ASK
+    aim_point -- before posed parts went native.)"""
 
     def script(w, t):
         g, v = w.ships["Galaxy"], w.ships["Vorcha"]
         if t == 0:
             g.GetPhaserSystem().StartFiring(v)
-            # The Vor'cha locks the Galaxy's shield generator: once the
-            # Galaxy is posed, the lock's mount is Python's (ASK aim_point).
             v.SetTarget(g)
             v.SetTargetSubsystem(g.GetShields())
             v.GetPhaserSystem().StartFiring(g)
@@ -637,9 +649,14 @@ def test_posed_ship_runs_python(monkeypatch):
                 g, "probe part",
                 part_pose.hinge_pose((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 15.0))
 
-    ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, script, 140)
-    assert counts["k2_python_reasons"]["posed_ship"] > 0, counts
-    assert counts["k2_ask_queries"]["aim_point"] > 0, counts
+    ref, _nat, counts = _both(monkeypatch, SCRIPTED_GALAXY_VORCHA, script,
+                              140)
+    assert counts["k2_python_reasons"]["posed_ship"] == 0, counts
+    assert counts["k2_python_reasons"]["part_stale"] == 0, counts
+    assert counts["k2_python_ships"] == 0, counts
+    assert counts["k2_ask_queries"]["aim_point"] == 0, counts
+    assert counts["k2_posed"]["banks"] > 0, counts
+    assert counts["k2_posed"]["lock_aims"] > 0, counts
     _native_ran(counts)
     assert any(c[1] > 60 and c[3] == "Galaxy"
                for c in _calls(ref, "beam_contact"))
@@ -1205,3 +1222,350 @@ def test_forget_rows_forgets_the_seen_classes():
     nc.forget_rows()
     assert _TestOnlyShip not in nc._k2_seen
     assert nc._k2_classes_unchanged()
+
+
+# ── Posed parts (native-combat posed parts, Task 4) ─────────────────────────
+#
+# A Galaxy whose phaser banks sit on a forced "probe part" (an explicit
+# physical parent; headless there are no part boxes, so the name is taken as
+# given) beams natively from the pushed pose table and part slots; a lock on
+# a Bird of Prey's wing cannon (in cruise) is aimed at natively.
+
+_HINGE = part_pose.hinge_pose((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 15.0)
+#: A Bird of Prey ahead of the Vor'cha's bow (the Vor'cha faces -Y).
+LOCK_ON_BOP = SCRIPTED_GALAXY_VORCHA + (
+    ("BoP", "birdofprey", (20.0, 160.0, 15.0), 0.0, "ships.BirdOfPrey"),)
+
+
+def _pose_galaxy_phasers(galaxy):
+    articulation.force_part_pose(galaxy, "probe part", _HINGE)
+    phasers = galaxy.GetPhaserSystem()
+    for i in range(phasers.GetNumWeapons()):
+        physical_parents.property_of(
+            phasers.GetWeapon(i)).SetPhysicalParent("probe part")
+
+
+def _moved(ship, sub):
+    """`sub`'s mount, carried by its part, is off its rest point."""
+    p = sub.GetPosition()
+    rest = (p.x, p.y, p.z)
+    q = articulation.part_transform_point(
+        ship, rest, prop=physical_parents.property_of(sub))
+    return tuple(q) != rest
+
+
+def _port_cannon(bop):
+    return bop.GetPulseWeaponSystem().GetWeapon(0)
+
+
+def test_posed_ship_beams_natively(monkeypatch):
+    """Every phaser bank of the Galaxy sits on a posed part: strip centres
+    and arc mounts are posed natively, per tick equal to Python, and no
+    ship goes to Python."""
+    moved = []
+
+    def script(w, t):
+        g, v = w.ships["Galaxy"], w.ships["Vorcha"]
+        if t == 0:
+            _pose_galaxy_phasers(g)
+            sys_ = g.GetPhaserSystem()
+            moved.extend(_moved(g, sys_.GetWeapon(i))
+                         for i in range(sys_.GetNumWeapons()))
+            sys_.SetSingleFire(0)
+            sys_.StartFiring(v)
+        elif t == 20:
+            w.ships["Vorcha"].GetPhaserSystem().StartFiring(w.ships["Galaxy"])
+
+    ref, _nat, counts = _both(monkeypatch, SCRIPTED_GALAXY_VORCHA, script,
+                              240)
+    assert moved and all(moved), moved
+    assert any(c[3] == "Galaxy" for c in _calls(ref, "beam_contact")), \
+        "the posed Galaxy never hit"
+    _native_ran(counts)
+    assert counts["k2_python_ships"] == 0, counts
+    assert counts["k2_python_reasons"]["posed_ship"] == 0, counts
+    assert counts["k2_python_reasons"]["part_stale"] == 0, counts
+    assert counts["k2_posed"]["banks"] > 0, counts
+
+
+def test_lock_on_posed_ship_needs_no_aim_ask(monkeypatch):
+    """The Vor'cha locks a Bird of Prey's wing cannon in cruise: the aim
+    point (and the arc aim) is the posed mount on the lock's own ship,
+    computed natively -- no ASK aim_point."""
+    moved = []
+
+    def script(w, t):
+        v, bop = w.ships["Vorcha"], w.ships["BoP"]
+        if t == 0:
+            articulation.force_pose(bop, "cruise")
+            moved.append(_moved(bop, _port_cannon(bop)))
+            v.SetTarget(bop)
+            v.SetTargetSubsystem(_port_cannon(bop))
+            v.GetPhaserSystem().SetSingleFire(0)
+            v.GetPhaserSystem().StartFiring(bop)
+
+    ref, _nat, counts = _both(monkeypatch, LOCK_ON_BOP, script, 200)
+    assert moved == [True, True]        # both arms
+    assert any(c[2] == "BoP" for c in _calls(ref, "beam_contact"))
+    _native_ran(counts)
+    assert counts["k2_python_ships"] == 0, counts
+    assert counts["k2_ask_queries"]["aim_point"] == 0, counts
+    assert counts["k2_posed"]["lock_aims"] > 0, counts
+
+
+@pytest.mark.parametrize("case", ["ship", "lock"])
+def test_stale_slot_falls_back_part_stale(monkeypatch, case):
+    """With no step boundary resolving the slots, every one stays
+    unresolved: a posed firing ship ("ship") or a lock on a posed ship
+    ("lock") hands the firing ship to Python with reason part_stale --
+    never posed_ship, never a stale part read. Equal to Python."""
+    monkeypatch.setattr(nc, "resolve_stale_part_slots", lambda ships: None)
+
+    def script(w, t):
+        g, v, bop = w.ships["Galaxy"], w.ships["Vorcha"], w.ships["BoP"]
+        if t == 0:
+            if case == "ship":
+                _pose_galaxy_phasers(g)
+                g.GetPhaserSystem().StartFiring(v)
+            else:
+                articulation.force_pose(bop, "cruise")
+                v.SetTarget(bop)
+                v.SetTargetSubsystem(_port_cannon(bop))
+                v.GetPhaserSystem().StartFiring(bop)
+
+    ref, _nat, counts = _both(monkeypatch, LOCK_ON_BOP, script, 120)
+    assert _calls(ref, "beam_contact")
+    assert counts["k2_python_reasons"]["part_stale"] > 0, counts
+    assert counts["k2_python_reasons"]["posed_ship"] == 0, counts
+    assert counts["k2_ask_queries"]["aim_point"] == 0, counts
+
+
+def test_resolve_runs_at_step_boundary(monkeypatch):
+    """The part slots are resolved at every step boundary a kernel reads
+    them after: the step scan (K3), the held-weapon pump (K1), StartFiring's
+    system session (K1, inside gl.ai) and the phaser step (K2). The
+    generation is bumped right before each of them, so a missing boundary
+    reads part_stale; none may."""
+    callers = []
+    real = nc.resolve_stale_part_slots
+
+    def spy(ships):
+        callers.append(sys._getframe(1).f_code.co_name)
+        return real(ships)
+
+    monkeypatch.setattr(nc, "resolve_stale_part_slots", spy)
+    update_all = projectiles.update_all
+    pump = host_loop._pump_held_weapons
+
+    def update_then_bump(*a, **kw):
+        hits = update_all(*a, **kw)
+        nc.bump_part_gen()          # between K3 and the K1 pump
+        return hits
+
+    def pump_then_bump(*a, **kw):
+        pump(*a, **kw)
+        nc.bump_part_gen()          # between the K1 pump and K2
+
+    monkeypatch.setattr(projectiles, "update_all", update_then_bump)
+    monkeypatch.setattr(host_loop, "_pump_held_weapons", pump_then_bump)
+
+    def script(w, t):
+        v, bop = w.ships["Vorcha"], w.ships["BoP"]
+        nc.bump_part_gen()          # before the step scan
+        if t == 0:
+            articulation.force_pose(bop, "cruise")
+            v.SetTarget(bop)
+            v.SetTargetSubsystem(_port_cannon(bop))
+            nc.bump_part_gen()      # before a StartFiring session
+            v.GetPhaserSystem().StartFiring(bop)
+            cannons = bop.GetPulseWeaponSystem()
+            cannons.SetSingleFire(0)
+            nc.bump_part_gen()
+            cannons.StartFiring(v)
+
+    ref, _nat, counts = _both(monkeypatch, LOCK_ON_BOP, script, 120)
+    assert {"step_scan", "k1_pump", "k1_system", "k2_phasers"} <= set(
+        callers), callers
+    assert any(c[2] == "BoP" for c in _calls(ref, "beam_contact"))
+    _native_ran(counts)
+    assert counts["k2_python_reasons"]["part_stale"] == 0, counts
+    assert counts["k2_ask_queries"]["aim_point"] == 0, counts
+    assert counts["k2_posed"]["lock_aims"] > 0, counts
+    for session in ("pump", "system"):
+        assert counts["k1_python_reasons"][session]["part_stale"] == 0, counts
+    assert counts["k1_fire_ask_reasons"]["part_stale"] == 0, counts
+    assert counts["k1_posed"]["walks"] > 0, counts
+
+
+# ── Manual Aim on a posed target (posed parts, Task 4b) ──────────────────────
+
+
+def _wing_pick(bop, part="left wing", frac=(0.5, 0.5, 0.5)):
+    """A Manual Aim pick on a Bird of Prey wing: a point inside that part's
+    box the box rule gives to it, and no subsystem's mount (so _RESOLVE
+    finds none and the pick is authored=False)."""
+    from engine.appc import part_severance
+    lo, hi = articulation.part_boxes_for("birdofprey")[part]
+    p = tuple(a + f * (b - a) for a, b, f in zip(lo, hi, frac))
+    assert articulation._live_part(bop, None, p, False, None) == part, p
+    assert part_severance.authored_mount_subsystem(bop, p) is None, p
+    return p
+
+
+def _manual_moved(bop, p):
+    return tuple(articulation.part_transform_point(bop, p,
+                                                   authored=False)) != p
+
+
+@pytest.mark.parametrize("wings", ["settled", "transition"])
+def test_manual_aim_on_posed_target_native(monkeypatch, wings):
+    """The Galaxy's Manual Aim pick sits on a Bird of Prey's wing (swung for
+    cruise, or swinging home tick by tick): the aim point is the box rule's
+    part through the Galaxy's Manual Aim slot, natively -- no ASK
+    aim_point -- also after the pick moves mid-fight (re-resolved at the
+    next boundary)."""
+    moved = []
+
+    def script(w, t):
+        g, bop = w.ships["Galaxy"], w.ships["BoP"]
+        if t == 0:
+            articulation.force_pose(bop, "cruise")
+            if wings == "transition":
+                bop.SetTarget(g)            # red: home over the rig's 2 s
+            g.SetTarget(bop)
+            p = _wing_pick(bop)
+            moved.append(_manual_moved(bop, p))
+            g.set_manual_target_offset(TGPoint3(*p))
+            g.GetPhaserSystem().SetSingleFire(0)
+            g.GetPhaserSystem().StartFiring(bop)
+        elif t == 40:
+            p = _wing_pick(bop, "left wing01", (0.4, 0.6, 0.5))
+            moved.append(_manual_moved(bop, p))
+            g.set_manual_target_offset(TGPoint3(*p))
+        if wings == "transition":
+            articulation.tick_ship(bop, DT)
+
+    ref, _nat, counts = _both(monkeypatch, LOCK_ON_BOP, script, 100)
+    assert moved and all(moved), moved
+    assert any(c[2] == "BoP" for c in _calls(ref, "beam_contact"))
+    _native_ran(counts)
+    assert counts["k2_python_ships"] == 0, counts
+    assert counts["k2_ask_queries"]["aim_point"] == 0, counts
+    assert counts["k2_posed"]["manual_aims"] > 0, counts
+
+
+# ── Review fixes (posed parts, Task 4 fix round 1) ──────────────────────────
+
+def _manual_aim_elsewhere(w):
+    """The Galaxy fires at the Bird of Prey while its Manual Aim pick is in
+    the Vor'cha's frame (its own target): the beam's aim point at the posed
+    BoP is the pick through `_RESOLVE` -- no mount, and the Galaxy's Manual
+    Aim slot is for the Vor'cha -- so it is Python's (ASK aim_point)."""
+    g, v, bop = w.ships["Galaxy"], w.ships["Vorcha"], w.ships["BoP"]
+    articulation.force_pose(bop, "cruise")
+    g.GetPhaserSystem().SetSingleFire(0)
+    g.GetPhaserSystem().StartFiring(bop)
+    g.SetTarget(v)
+    g.set_manual_target_offset(TGPoint3(0.1, 0.2, 0.0))
+
+
+def test_generation_bump_inside_an_aim_answer_heals(monkeypatch):
+    """An ASK aim_point answer that bumps the part-map generation (any
+    trigger may fire in Python) must not leave the posed firing ship's bank
+    slots stale for the GEOMETRY that follows (k2_beams.h protocol
+    invariant): run_k2 re-resolves before handing the answer back. The step
+    completes, equal to Python."""
+    real = nc._k2_answer
+    bumps = []
+
+    def answer_then_bump(rec, *a, **kw):
+        out = real(rec, *a, **kw)
+        if rec[1] == "aim_point":
+            nc.bump_part_gen()
+            # ... and the step memo forgotten (as a hit does), so GEOMETRY
+            # computes the bank's mount afresh instead of reusing K1's.
+            step_memo.forget()
+            bumps.append(rec[1])
+        return out
+
+    monkeypatch.setattr(nc, "_k2_answer", answer_then_bump)
+
+    def script(w, t):
+        if t == 0:
+            _pose_galaxy_phasers(w.ships["Galaxy"])
+            _manual_aim_elsewhere(w)
+
+    ref, _nat, counts = _both(monkeypatch, LOCK_ON_BOP, script, 60)
+    assert bumps, "no aim_point ASK was answered"
+    assert any(c[2] == "BoP" for c in _calls(ref, "beam_contact"))
+    _native_ran(counts)
+    assert counts["k2_ask_queries"]["aim_point"] > 0, counts
+    assert counts["k2_python_reasons"]["part_stale"] == 0, counts
+    assert counts["k2_posed"]["banks"] > 0, counts
+
+
+@pytest.mark.parametrize("case", ["other_target", "stale_manual",
+                                  "unnameable_lock"])
+def test_remaining_aim_point_asks_match_python(monkeypatch, case):
+    """The aim points that are still Python's after Manual Aim on posed
+    targets went native (Task 4b), end to end: a pick whose Manual Aim slot
+    is for another target ("other_target"), a pick whose slot is held stale
+    for a window ("stale_manual": the generation bumped and its
+    re-resolution withheld), and a lock the mirror cannot name
+    ("unnameable_lock": its row dropped). Each ASKs aim_point in its window,
+    per tick equal to Python."""
+    window = [False]
+    if case == "stale_manual":
+        real = nc._resolve_manual_slot
+
+        def resolve_unless_held(ship, h, drop=True):
+            if not window[0]:
+                real(ship, h, drop)
+
+        monkeypatch.setattr(nc, "_resolve_manual_slot", resolve_unless_held)
+
+    def script(w, t):
+        g, v, bop = w.ships["Galaxy"], w.ships["Vorcha"], w.ships["BoP"]
+        if case == "other_target":
+            if t == 0:
+                _manual_aim_elsewhere(w)
+            return
+        if case == "stale_manual":
+            if t == 0:
+                articulation.force_pose(bop, "cruise")
+                g.SetTarget(bop)
+                g.set_manual_target_offset(TGPoint3(*_wing_pick(bop)))
+                g.GetPhaserSystem().SetSingleFire(0)
+                g.GetPhaserSystem().StartFiring(bop)
+            window[0] = 30 <= t < 60
+            if t == 30:
+                nc.bump_part_gen()
+            return
+        cannon = _port_cannon(bop)
+        if t == 0:
+            articulation.force_pose(bop, "cruise")
+            v.SetTarget(bop)
+            v.SetTargetSubsystem(cannon)
+            v.GetPhaserSystem().SetSingleFire(0)
+            v.GetPhaserSystem().StartFiring(bop)
+        elif t == 30:
+            nc._drop(cannon)        # native arm only: the off arm has no row
+
+    asks = []
+    real_answer = nc._k2_answer
+
+    def count(rec, *a, **kw):
+        if rec[1] == "aim_point":
+            asks.append(window[0] if case == "stale_manual" else True)
+        return real_answer(rec, *a, **kw)
+
+    monkeypatch.setattr(nc, "_k2_answer", count)
+    ref, _nat, counts = _both(monkeypatch, LOCK_ON_BOP, script, 90)
+    assert any(c[2] == "BoP" for c in _calls(ref, "beam_contact"))
+    _native_ran(counts)
+    assert counts["k2_ask_queries"]["aim_point"] > 0, counts
+    assert all(asks), "an aim_point ASK outside the window"
+    if case == "stale_manual":
+        assert counts["k2_posed"]["manual_aims"] > 0, counts
+    if case == "unnameable_lock":
+        assert counts["k2_posed"]["lock_aims"] > 0, counts

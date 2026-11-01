@@ -9711,6 +9711,58 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("star"),
               "A set's RESOLVED profile frame: profile handle (-1 unmapped, "
               "-2 unrepresentable), anchor_gu and star position_gu.");
+        // Posed parts (spec 2026-11-01 §4.1): a ship's pose table, a
+        // subsystem's part slot, a ship's mount order and the global
+        // part-map generation. Pushed by engine/appc/native_combat.py.
+        m.def("combat_set_part_poses",
+              [](std::int64_t h,
+                 const std::vector<std::tuple<std::array<double, 9>,
+                                              std::array<double, 3>, bool,
+                                              bool>>& entries) {
+                  std::vector<cb::PartPose> v;
+                  v.reserve(entries.size());
+                  for (const auto& [r, t, identity, detached] : entries) {
+                      cb::PartPose p;
+                      for (int i = 0; i < 9; ++i) p.r[i] = r[i];
+                      for (int i = 0; i < 3; ++i) p.t[i] = t[i];
+                      p.identity = identity;
+                      p.detached = detached;
+                      v.push_back(p);
+                  }
+                  cb::mirror().set_part_poses(h, std::move(v));
+              },
+              py::arg("handle"), py::arg("entries"),
+              "A ship's pose table: one (r9 row-major, t3, identity, "
+              "detached) per articulation.posed_part_names name, in order.");
+        m.def("combat_set_part_slot",
+              [](std::int64_t h, std::int32_t slot, std::uint64_t gen) {
+                  cb::mirror().set_part_slot(h, slot, gen);
+              },
+              py::arg("handle"), py::arg("slot"), py::arg("gen"),
+              "A subsystem's part slot (-1: no posable part) and the "
+              "part-map generation it was resolved at.");
+        m.def("combat_set_mount_order",
+              [](std::int64_t h, const std::vector<std::int64_t>& order) {
+                  cb::mirror().set_mount_order(h, order);
+              },
+              py::arg("handle"), py::arg("order"),
+              "A ship's subsystems in combat._iter_subsystems order "
+              "(-2 for one the mirror cannot name).");
+        m.def("combat_set_manual_slot",
+              [](std::int64_t h, std::int64_t target,
+                 const std::array<double, 3>& offset, std::int32_t slot,
+                 std::uint64_t gen) {
+                  cb::mirror().set_manual_slot(h, target, offset, slot, gen);
+              },
+              py::arg("handle"), py::arg("target"), py::arg("offset"),
+              py::arg("slot"), py::arg("gen"),
+              "A ship's Manual Aim slot (posed parts, Task 4b): the part of "
+              "`target`'s pose table its authored=False `offset` sits on "
+              "(-1 none), at part-map generation `gen`; target -1: no slot.");
+        m.def("combat_set_part_gen",
+              [](std::uint64_t gen) { cb::mirror().set_part_gen(gen); },
+              py::arg("gen"));
+        m.def("combat_part_gen", [] { return cb::mirror().part_gen(); });
         m.def("combat_set_globals",
               [](const py::dict& d) {
                   // Every key is checked before any value is stored.
@@ -9782,7 +9834,38 @@ PYBIND11_MODULE(_dauntless_host, m) {
             if (!mi.valid(h))
                 throw std::invalid_argument("combat mirror: stale handle");
             py::dict d;
-            if (kind == cb::Kind::Object) d["py_id"] = mi.object(h)->py_id;
+            if (kind == cb::Kind::Object) {
+                const cb::ObjectRow& row = *mi.object(h);
+                d["py_id"] = row.py_id;
+                py::list poses;
+                for (const auto& p : row.part_poses)
+                    poses.append(py::make_tuple(
+                        py::make_tuple(p.r[0], p.r[1], p.r[2], p.r[3], p.r[4],
+                                       p.r[5], p.r[6], p.r[7], p.r[8]),
+                        py::make_tuple(p.t[0], p.t[1], p.t[2]), p.identity,
+                        p.detached));
+                d["part_poses"] = poses;
+                // A since-freed entry reads -2: the ship holds its
+                // subsystems strongly, so a dead handle means the row was
+                // dropped, never that the subsystem is gone.
+                py::list order;
+                for (std::int64_t x : row.mount_order)
+                    order.append(x == cb::kRefUnrepresentable ||
+                                         mi.subsystem(x) != nullptr
+                                     ? x
+                                     : cb::kRefUnrepresentable);
+                d["mount_order"] = order;
+                d["manual_slot"] = py::make_tuple(
+                    row.manual_slot_target,
+                    py::make_tuple(row.manual_slot_offset[0],
+                                   row.manual_slot_offset[1],
+                                   row.manual_slot_offset[2]),
+                    row.manual_slot, row.manual_slot_gen);
+            } else if (kind == cb::Kind::Subsystem) {
+                const cb::SubsystemRow& row = *mi.subsystem(h);
+                d["part_slot"] = row.part_slot;
+                d["part_gen"] = row.part_gen;
+            }
             for (int i = 0; i < static_cast<int>(cb::Field::kCount); ++i) {
                 auto f = static_cast<cb::Field>(i);
                 if (cb::field_kind(f) != kind) continue;
@@ -9876,6 +9959,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       cb::mirror().set_torpedo_mount(h, attributed, sub,
                                                      {x, y, z});
                   });
+            m.def("combat_torp_set_baked",
+                  [](std::int64_t h, bool attributed, double kx, double ky,
+                     double kz, double bx, double by, double bz) {
+                      cb::mirror().torpedoes().set_baked(
+                          h, attributed, {kx, ky, kz}, {bx, by, bz});
+                  });
             m.def("combat_torp_set_unrepresentable",
                   [tfld](std::int64_t h, int f) {
                       cb::mirror().torpedoes().set_unrepresentable(h, tfld(f));
@@ -9908,6 +9997,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
                 d["mount_sub"] = mi.torpedo_ref(r, cb::TorpField::_mount_key);
                 d["mount_attributed"] = r.mount_attributed ? 1 : 0;
                 d["mount_offset"] = vec(r.mount_offset);
+                d["baked_attributed"] = r.baked_attributed ? 1 : 0;
+                d["baked_key"] = vec(r.baked_key);
+                d["baked"] = vec(r.baked);
                 py::list bad;
                 for (int i = 0; i < static_cast<int>(cb::TorpField::kCount);
                      ++i)
@@ -10062,11 +10154,41 @@ PYBIND11_MODULE(_dauntless_host, m) {
               },
               py::arg("emitter"), py::arg("ship"));
         m.def("combat_test_target_offset_world",
-              [vec](std::int64_t target, const std::array<double, 3>& offset) {
-                  return vec(cb::target_offset_world(cb::mirror(), target,
-                                                     offset));
+              [vec](std::int64_t target, const std::array<double, 3>& offset,
+                    std::optional<std::int64_t> mount,
+                    std::optional<std::int64_t> manual_ship) {
+                  return vec(cb::target_offset_world(
+                      cb::mirror(), target, offset,
+                      mount ? *mount : cb::kNoMount,
+                      manual_ship ? *manual_ship : -1));
               },
-              py::arg("target"), py::arg("offset"));
+              py::arg("target"), py::arg("offset"),
+              py::arg("mount") = py::none(),
+              py::arg("manual_ship") = py::none(),
+              "subsystems.target_offset_world with an explicit mount_sub "
+              "(None = authored=False; then `manual_ship`'s Manual Aim slot "
+              "answers a posed target).");
+        m.def("combat_test_authored_mount",
+              [](std::int64_t target, const std::array<double, 3>& offset) {
+                  const cb::ObjectRow* row = cb::mirror().object(target);
+                  if (row == nullptr)
+                      throw std::invalid_argument(
+                          "combat_test_authored_mount: not a live Object");
+                  return cb::authored_mount_subsystem(cb::mirror(), *row,
+                                                      offset);
+              },
+              py::arg("target"), py::arg("offset"),
+              "part_severance.authored_mount_subsystem: the subsystem "
+              "handle, -1 (None) or -2 (the mirror cannot tell).");
+        m.def("combat_test_mount_position",
+              [vec](std::int64_t sub, std::int64_t ship) {
+                  return vec(cb::subsystem_world_position(cb::mirror(), sub,
+                                                          ship, false));
+              },
+              py::arg("sub"), py::arg("ship"),
+              "subsystems._subsystem_world_position, unmemoised (ship -1 = "
+              "None). ValueError 'part_stale' when a posed ship's part slot "
+              "is not current.");
         m.def("combat_test_resolve_torpedo_aim_point",
               [opt_vec](std::int64_t tube, std::int64_t target) {
                   return opt_vec(cb::_resolve_torpedo_aim_point(cb::mirror(),
@@ -10191,7 +10313,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
 
         // ── The K3 projectile geometry (projectile_geometry.h) ───────────
         // Each answers as the Python function it ports; ValueError (from
-        // bubble_bound_radius / steer_point_unposed) means "ask the Python".
+        // bubble_bound_radius / steer_point_native) means "ask the Python".
         // guide_torpedo returns its status instead of raising.
         m.def("combat_test_bubble_bound_radius",
               [](std::int64_t ship) {
@@ -10216,18 +10338,23 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("ttl"),
               "(cur, age, expired, seg, seg_len, aim_unit or None); seg, "
               "seg_len and aim_unit are meaningful only when not expired.");
-        m.def("combat_test_steer_point_unposed",
+        m.def("combat_test_steer_point",
               [vec](std::int64_t target, py::object offset,
-                    std::int64_t mount_sub, const std::array<double, 3>& off) {
-                  std::optional<cb::Vec3> o;
+                    std::int64_t mount_sub, const std::array<double, 3>& off,
+                    py::object baked) {
+                  std::optional<cb::Vec3> o, b;
                   if (!offset.is_none())
                       o = offset.cast<std::array<double, 3>>();
-                  return vec(cb::steer_point_unposed(cb::mirror(), target, o,
-                                                     mount_sub, off));
+                  if (!baked.is_none())
+                      b = baked.cast<std::array<double, 3>>();
+                  return vec(cb::steer_point_native(cb::mirror(), target, o,
+                                                    mount_sub, off,
+                                                    b ? &*b : nullptr));
               },
               py::arg("target"), py::arg("offset"), py::arg("mount_sub"),
-              py::arg("off"),
-              "offset: a 3-tuple or None (no target offset).");
+              py::arg("off"), py::arg("baked") = py::none(),
+              "offset: a 3-tuple or None (no target offset); baked: the "
+              "torpedo's `_baked_offset` point, or None.");
         auto guide_result = [vec](const cb::GuideResult& r) -> py::tuple {
             using St = cb::GuideResult::Status;
             static const char* const kField[] = {
@@ -10465,17 +10592,24 @@ PYBIND11_MODULE(_dauntless_host, m) {
             d["k1_records"] = c.records;
             d["k1_python_systems"] = c.python_systems;
             d["k1_asks"] = c.asks;
-            // RUN_PYTHON (and skip_walk) by why, pump and StartFiring apart.
-            py::dict pump, system;
+            // RUN_PYTHON (and skip_walk) by why, pump and StartFiring apart;
+            // the ASK fire hand-backs by why.
+            py::dict pump, system, fire_ask;
             for (size_t i = 0; i < c.pump_why.size(); ++i) {
                 const char* n = cb::k1_why_name(static_cast<cb::K1Why>(i));
                 pump[n] = c.pump_why[i];
                 system[n] = c.system_why[i];
+                fire_ask[n] = c.fire_ask_why[i];
             }
             py::dict why;
             why["pump"] = pump;
             why["system"] = system;
             d["k1_python_reasons"] = why;
+            d["k1_fire_ask_reasons"] = fire_ask;
+            py::dict posed;
+            posed["walks"] = c.posed_walks;
+            posed["target_aims"] = c.posed_target_aims;
+            d["k1_posed"] = posed;
             return d;
         });
         m.def("combat_k1_reset_counts",
@@ -10726,6 +10860,11 @@ PYBIND11_MODULE(_dauntless_host, m) {
                     c.queries[i];
             d["k2_python_reasons"] = why;
             d["k2_ask_queries"] = queries;
+            py::dict posed;
+            posed["banks"] = c.posed_banks;
+            posed["lock_aims"] = c.posed_lock_aims;
+            posed["manual_aims"] = c.posed_manual_aims;
+            d["k2_posed"] = posed;
             return d;
         });
         m.def("combat_k2_reset_counts",
@@ -10895,9 +11034,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
                 asks[cb::k3_query_name(static_cast<cb::K3Query>(i))] =
                     c.queries[i];
             for (const auto& [k, n] : c.guide_why) guide[py::str(k)] = n;
+            // steer_point ASKs by why, every reason (zeros included).
+            py::dict steer;
+            for (size_t i = 0; i < c.steer_why.size(); ++i)
+                steer[cb::steer_why_name(static_cast<cb::SteerWhy>(i))] =
+                    c.steer_why[i];
             d["k3_python_reasons"] = why;
             d["k3_asks"] = asks;
             d["k3_guide_reasons"] = guide;
+            d["k3_steer_reasons"] = steer;
+            d["k3_posed_steers"] = c.posed_steers;
+            d["k3_baked_steers"] = c.baked_steers;
             return d;
         });
         m.def("combat_k3_reset_counts",

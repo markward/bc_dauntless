@@ -36,8 +36,8 @@ def subsystem_world_position(sub, ship=None):
     in world units relative to the ship centre. Returns the ship location if
     the subsystem has no 3D mount, and the origin if no ship is resolvable.
 
-    ``ship`` may be passed explicitly (required for the Hull/root subsystem,
-    whose ``_climb_to_ship()`` returns None).
+    ``ship`` may be passed explicitly (``SetHull`` attaches the Hull, so its
+    ``_climb_to_ship()`` reaches its ship; an unattached root returns None).
 
     Inside an engine.core.step_memo block (the combat step) each mount is
     computed once: a firing phaser bank asks ~4 times a tick (strip emit
@@ -116,7 +116,6 @@ def target_offset_world(target, offset, mount_sub=_RESOLVE):
     from engine.appc.articulation import part_transform_point
     from engine.appc import physical_parents
     from engine.appc.part_severance import authored_mount_subsystem
-    pos = target.GetWorldLocation()
     point = (offset.x, offset.y, offset.z)
     # A subsystem lock's offset is an AUTHORED mount: the shared mount rule,
     # so the shot goes where the mount is drawn. Anything else (a Manual Aim
@@ -124,10 +123,20 @@ def target_offset_world(target, offset, mount_sub=_RESOLVE):
     # round trip is exact and no per-tick pick scans the model.
     if mount_sub is _RESOLVE:
         mount_sub = authored_mount_subsystem(target, point)
-    px, py, pz = part_transform_point(
+    return body_point_world(target, part_transform_point(
         target, point, authored=mount_sub is not None,
         prop=(physical_parents.property_of(mount_sub)
-              if mount_sub is not None else None))
+              if mount_sub is not None else None)))
+
+
+def body_point_world(target, point):
+    """World point for a body-frame `point` (x, y, z) already carried by its
+    part: target world pos + R·(point·scale), 0x005852A0's tail. No part
+    pose is applied here -- `target_offset_world` posed it first; a torpedo
+    aimed at a picked spot hands in the point it baked at launch
+    (`projectiles._steer_point`)."""
+    pos = target.GetWorldLocation()
+    px, py, pz = point
     scale = float(target.GetScale()) if hasattr(target, "GetScale") else 1.0
     o = TGPoint3(px * scale, py * scale, pz * scale)
     rot = target.GetWorldRotation() if hasattr(target, "GetWorldRotation") else None
@@ -325,11 +334,15 @@ class ShipSubsystem(TGEventHandlerObject):
     _parent_ship = NativeRefField("Object")
     # Properties are shared templates with no hook at construction: a
     # property gets its row the first time a subsystem references it.
-    _property = NativeRefField("Property", lazy=True)
+    # A write bumps the part-map generation too: physical_parents.property_of
+    # reads it (native_combat.PartKeyRefField).
+    _property = native_combat.PartKeyRefField("Property", lazy=True)
     # Weapon-fire inputs (phase 1b): the ordered children (a weapon system's
     # banks / tubes), the mount geometry and the firing arc.
     _children = native_combat.NativeRefList("Subsystem")
-    _position = NativeField(native_combat.VEC3)
+    # The mount point part_for_mount keys on: a write bumps the part-map
+    # generation (native_combat.PartKeyField).
+    _position = native_combat.PartKeyField(native_combat.VEC3)
     _direction = NativeField(native_combat.VEC3)
     _up = NativeField(native_combat.VEC3)
     _right = NativeField(native_combat.VEC3)
@@ -1159,6 +1172,7 @@ class ShipSubsystem(TGEventHandlerObject):
         if ship is not None:
             passive_weapons.invalidate(ship)
             passive_power.invalidate(ship)
+            native_combat.push_mount_order(ship)     # combat._iter_subsystems
 
     def GetCritical(self) -> int:                       return self._critical
     def SetCritical(self, v) -> None:                   self._critical = int(v)

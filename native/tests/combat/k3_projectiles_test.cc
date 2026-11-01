@@ -490,15 +490,21 @@ TEST(K3Projectiles, CrossRegionCandidateUsesShiftedTest) {
     w.k.end();
 }
 
-// A posed target under an offset: _steer_point is Python's. The kernel
-// carries on from the answered point (can_detect is not re-run).
-TEST(K3Projectiles, PosedTargetAsksSteerPoint) {
+// A posed target under an offset no mount claims (`_mount_key` attributed
+// to None: a picked spot) whose launch-time point is not baked for this
+// target and offset: _steer_point is Python's (unbaked; it bakes). The
+// kernel carries on from the answered point (can_detect is not re-run).
+// (Was the no_mount ASK every tick, before picked spots were baked: posed
+// parts, Task 7.)
+TEST(K3Projectiles, UnbakedPickAsksSteerPoint) {
     World w;
     const int64_t x = w.listed("X", 0, 100, 0);
     w.m.set_i(x, Field::has_posed_parts, 1);
     const int64_t t = w.torp("T", {0, 0, 0}, {0, 60, 0}, x);
     w.m.torpedoes().set_v(t, TorpField::_target_offset, true, {1, 0, 0});
     w.m.set_torpedo_mount(t, true, -1, {1, 0, 0});
+    // Baked for another offset: not this shot's point.
+    w.m.torpedoes().set_baked(t, true, {2, 0, 0}, {5, 5, 5});
     const Vec3 p{1.0, 100.0, 0.25};
     const GuideResult want = guide_torpedo_resume(
         w.m, w.row(t), kDt, GuideResume{x, 60.0, {0, 0, 0}}, p);
@@ -519,6 +525,98 @@ TEST(K3Projectiles, PosedTargetAsksSteerPoint) {
     EXPECT_EQ(*wt.last_tvel, want.writes[1].value);
     EXPECT_EQ(*wt.vel, want.writes[2].value);
     w.k.end();
+    EXPECT_EQ(w.k.counts().steer_why[static_cast<size_t>(SteerWhy::unbaked)],
+              1);
+    EXPECT_STREQ(steer_why_name(SteerWhy::unbaked), "unbaked");
+    EXPECT_EQ(w.k.counts().posed_steers, 0);
+    EXPECT_EQ(w.k.counts().baked_steers, 0);
+}
+
+// A picked spot (mount None) baked for this target and offset: the steer
+// point is the baked point with NO part pose -- X + R·(scale·baked) --
+// natively, whatever the target's parts do now (posed parts, Task 7).
+// Counted a posed (and baked) steer at a posed target; at an unposed one
+// it is the same arithmetic and counted neither.
+TEST(K3Projectiles, BakedPickSteersNatively) {
+    for (const bool posed : {true, false}) {
+        World w;
+        const int64_t x = w.listed("X", 0, 100, 0);
+        PartPose shift;
+        shift.t[2] = 0.25;
+        shift.identity = false;
+        w.m.set_i(x, Field::has_posed_parts, posed ? 1 : 0);
+        if (posed) w.m.set_part_poses(x, {shift});
+        const int64_t t = w.torp("T", {0, 0, 0}, {0, 60, 0}, x);
+        w.m.torpedoes().set_v(t, TorpField::_target_offset, true, {1, 0, 0});
+        w.m.set_torpedo_mount(t, true, -1, {1, 0, 0});
+        w.m.torpedoes().set_baked(t, true, {1, 0, 0}, {-0.5, 0.5, 2.0});
+        const GuideResult want = guide_torpedo_resume(
+            w.m, w.row(t), kDt, GuideResume{x, 60.0, {0, 0, 0}},
+            Vec3{-0.5, 100.5, 2.0});
+        ASSERT_EQ(w.begin(), std::nullopt) << posed;
+        const K3Record r = w.done();
+        const K3TorpWrite& wt = w.write_of(r, t);
+        ASSERT_TRUE(wt.last_seen && wt.last_tvel && wt.vel) << posed;
+        EXPECT_EQ(*wt.last_seen, want.writes[0].value) << posed;
+        EXPECT_EQ(*wt.vel, want.writes[2].value) << posed;
+        w.k.end();
+        const auto& n = w.k.counts();
+        for (const int64_t k : n.steer_why) EXPECT_EQ(k, 0) << posed;
+        EXPECT_EQ(n.posed_steers, posed ? 1 : 0);
+        EXPECT_EQ(n.baked_steers, posed ? 1 : 0);
+    }
+}
+
+// A posed target under an offset that IS its attributed mount's point, the
+// mount's part slot current: the steer point is the posed mount, decided
+// natively (posed parts, Task 4: PG:310). The offset off the mount's own
+// point, or a stale slot: _steer_point is Python's, counted by why.
+TEST(K3Projectiles, PosedTargetMountSteersNatively) {
+    enum Case { kNative, kOffMount, kStale };
+    for (int c = kNative; c <= kStale; ++c) {
+        World w;
+        const int64_t x = w.listed("X", 0, 100, 0);
+        const int64_t mnt = w.m.register_row(Kind::Subsystem);
+        w.m.set_ref(mnt, Field::_parent_ship, x);
+        w.m.set_fv(mnt, Field::_position,
+                   {1.0, 0.0, c == kOffMount ? 1e-9 : 0.0});
+        PartPose shift;
+        shift.t[2] = 0.25;
+        shift.identity = false;
+        w.m.set_i(x, Field::has_posed_parts, 1);
+        w.m.set_part_poses(x, {shift});
+        w.m.set_part_slot(mnt, 0, w.m.part_gen());
+        if (c == kStale) w.m.set_part_gen(w.m.part_gen() + 1);
+        const int64_t t = w.torp("T", {0, 0, 0}, {0, 60, 0}, x);
+        w.m.torpedoes().set_v(t, TorpField::_target_offset, true, {1, 0, 0});
+        w.m.set_torpedo_mount(t, true, mnt, {1, 0, 0});
+        ASSERT_EQ(w.begin(), std::nullopt) << c;
+        const auto& n = w.k.counts();
+        if (c == kNative) {
+            // The steer point: X + (offset + t) = (1, 100, 0.25).
+            const GuideResult want = guide_torpedo_resume(
+                w.m, w.row(t), kDt, GuideResume{x, 60.0, {0, 0, 0}},
+                Vec3{1.0, 100.0, 0.25});
+            const K3Record r = w.done();
+            const K3TorpWrite& wt = w.write_of(r, t);
+            ASSERT_TRUE(wt.last_seen.has_value());
+            EXPECT_EQ(*wt.last_seen, want.writes[0].value);
+            EXPECT_EQ(n.posed_steers, 1);
+            for (const int64_t k : n.steer_why) EXPECT_EQ(k, 0);
+        } else {
+            EXPECT_EQ(w.brief(w.k.next()), "ASK steer_point T") << c;
+            const SteerWhy want = c == kOffMount ? SteerWhy::offset_off_mount
+                                                 : SteerWhy::part_stale;
+            EXPECT_EQ(n.steer_why[static_cast<size_t>(want)], 1) << c;
+            EXPECT_STREQ(steer_why_name(want), c == kOffMount
+                                                   ? "offset_off_mount"
+                                                   : "part_stale");
+            EXPECT_EQ(n.posed_steers, 0) << c;
+            w.k.abandon();
+            continue;
+        }
+        w.k.end();
+    }
 }
 
 // A shot whose mount is not yet attributed asks _steer_point once (Python
@@ -532,6 +630,8 @@ TEST(K3Projectiles, UnattributedMountAsksSteerPointOnce) {
     K3Record r = w.k.next();
     ASSERT_EQ(w.brief(r), "ASK steer_point T");
     w.m.set_torpedo_mount(t, true, -1, {1, 0, 0});  // Python's _mount_key
+    // and, mount None, its _baked_offset (an unposed target: the offset).
+    w.m.torpedoes().set_baked(t, true, {1, 0, 0}, {1, 0, 0});
     K3Answer ans;
     ans.point = {1, 100, 0};
     w.k.answer(ans);

@@ -650,11 +650,13 @@ def test_manual_aim_offset_matches(monkeypatch):
                for e in ref.events)
 
 
-def test_rigged_ship_runs_python(monkeypatch):
+def test_forced_pose_ship_runs_native(monkeypatch):
     """Six ships (no Bird of Prey, so nothing is rigged): K1 walks every
-    armed system until a pose is forced on the Galaxy at tick 120. From then
-    its systems run whole in Python (posed_ship), and the results stay the
-    Python's."""
+    armed system, and goes on walking the Galaxy's natively once a pose is
+    forced on it at tick 120 -- its mounts through the pushed part slots
+    (posed parts, Task 4). The results stay the Python's. (Was
+    test_rigged_ship_runs_python -- RUN_PYTHON posed_ship from the pose
+    on -- before posed parts went native.)"""
     pose_at = 120
     seen = {}
 
@@ -674,11 +676,12 @@ def test_rigged_ship_runs_python(monkeypatch):
                      before_frame=before_frame)
     before, walked_before = seen[True]
     assert before["k1_python_systems"] == 0, before
+    assert before["k1_posed"]["walks"] == 0, before
     assert any(n.startswith("Friend-3/") for n in walked_before), \
         walked_before
-    assert nat.counts["k1_python_systems"] > 0, nat.counts
-    assert _reasons(nat.counts).get("posed_ship", 0) > 0, nat.counts
-    assert not any(n.startswith("Friend-3/") for n in nat.walked_names), \
+    assert nat.counts["k1_python_systems"] == 0, nat.counts
+    assert nat.counts["k1_posed"]["walks"] > 0, nat.counts
+    assert any(n.startswith("Friend-3/") for n in nat.walked_names), \
         nat.walked_names
     assert any(e[0] == App.ET_WEAPON_FIRED and e[1].startswith("Friend-3/")
                and e[3] > pose_at for e in ref.events)
@@ -690,11 +693,13 @@ def test_rigged_bop_at_red_runs_native(monkeypatch):
     """The scene's Bird of Prey (Enemy-4, rigged: both wings) has a target,
     so it is in "red", which its rig authors as the NIF pose: every part at
     identity, its mounts the unrigged mounts. K1 walks its systems, and
-    those aiming at it, natively: the posed_ship and posed_target fallbacks
-    are 0. At tick 200 both arms force its wings to cruise (a forced
-    transition window); tick_ship eases them home over the rig's 2 s. In
-    that window it falls back to Python; once home, native again. Native
-    and Python identical throughout."""
+    those aiming at it, natively. At tick 200 both arms force its wings to
+    cruise (a forced transition window); tick_ship eases them home over the
+    rig's 2 s. In that window K1 walks it natively too -- its posed mounts
+    through the pushed pose table and part slots (posed parts, Task 4; it
+    fell back to Python before) -- and once home, native as ever. No posed
+    fallback (posed_ship, posed_target, part_stale) at all; native and
+    Python identical throughout."""
     force_at, home_by = 200, 360
     seen = {}
 
@@ -710,9 +715,15 @@ def test_rigged_bop_at_red_runs_native(monkeypatch):
         assert articulation.state_for(bop) == "red"
 
     def posed(counts):
+        # Every posed fallback but the Fire ASKs at a random op-stream
+        # offset on the posed BoP that no mount claims (no_mount: Python's
+        # box rule, by design -- ruling C4).
         return tuple(counts["k1_python_reasons"][session][why]
                      for session in ("pump", "system")
-                     for why in ("posed_ship", "posed_target"))
+                     for why in ("posed_ship", "posed_target", "part_stale",
+                                 "mount_unknown", "no_mount")) + tuple(
+            counts["k1_fire_ask_reasons"][why]
+            for why in ("part_stale", "mount_unknown"))
 
     def before_frame(scene):
         bop = bop_of(scene)
@@ -720,6 +731,7 @@ def test_rigged_bop_at_red_runs_native(monkeypatch):
             scene.forced = True
             seen[scene.native, "before"] = (nc.counts(),
                                             set(scene.walked_names))
+            scene.walked_names.clear()  # from here: walks in the window
             assert all(part_pose.is_identity(p)
                        for p in bop._articulation_poses.values())
             articulation.force_pose(bop, "cruise")
@@ -742,28 +754,35 @@ def test_rigged_bop_at_red_runs_native(monkeypatch):
             assert not bop._articulation_transitions
             assert all(part_pose.is_identity(p)
                        for p in bop._articulation_poses.values())
-            seen[scene.native, "home"] = nc.counts()
+            seen[scene.native, "home"] = (nc.counts(),
+                                          set(scene.walked_names))
             # From here on, walks AFTER the wings came home only.
             scene.walked_names.clear()
 
     ref, nat = _both(monkeypatch, 1, setup=setup, before_frame=before_frame)
     before, walked_before = seen[True, "before"]
-    home = seen[True, "home"]
+    home, walked_window = seen[True, "home"]
+    nothing = (0,) * len(posed(before))
     # At identity before the window: native, no articulation fallback.
-    assert posed(before) == (0, 0, 0, 0), before
+    assert posed(before) == nothing, before
     assert any(n.startswith("Enemy-4/") for n in walked_before), \
         walked_before
-    # In the window: Python, as before Task 6b -- its own systems
-    # (posed_ship) and those aiming at it (posed_target).
-    assert posed(home)[0] > 0 and posed(home)[2] > 0, posed(home)
-    assert posed(home)[1] > 0, posed(home)
-    # Home again: no further articulation fallback to the end, and the BoP
-    # walks natively again (walked_names was cleared at home).
-    assert posed(nat.counts) == posed(home), (home, nat.counts)
+    # In the window: native too (it fell back to Python before posed parts
+    # went native) -- its own systems walked with posed mounts.
+    assert posed(home) == nothing, home
+    assert home["k1_posed"]["walks"] > before["k1_posed"]["walks"], home
+    assert any(n.startswith("Enemy-4/") for n in walked_window), \
+        walked_window
+    # Home again: no articulation fallback to the end, and the BoP walks
+    # natively (walked_names was cleared at home).
+    assert posed(nat.counts) == nothing, nat.counts
     assert any(n.startswith("Enemy-4/") for n in nat.walked_names), \
         nat.walked_names
-    print("k1 rigged BoP differential: before %r home %r end %r"
-          % (posed(before), posed(home), posed(nat.counts)))
+    print("k1 rigged BoP differential: posed walks before %d home %d end "
+          "%d; no_mount fire ASKs %d"
+          % (before["k1_posed"]["walks"], home["k1_posed"]["walks"],
+             nat.counts["k1_posed"]["walks"],
+             nat.counts["k1_fire_ask_reasons"]["no_mount"]))
 
 
 # ── Ruling P3: the real AI's own StartFiring cadence, through GameLoop.tick ─

@@ -614,6 +614,7 @@ void Mirror::clear() {
     by_obj_id_.clear();
     torpedoes_.clear();
     globals_ = Globals{};
+    part_gen_ = 1;
     clear_owned_state();
     ++epoch_;
 }
@@ -761,6 +762,50 @@ void Mirror::set_frame(int64_t h, int64_t profile, const Vec3& anchor,
     r.mapped = profile >= 0 ? 1 : 0;
     r.anchor = anchor;
     r.star = star;
+    ++epoch_;
+}
+
+void Mirror::set_part_poses(int64_t h, std::vector<PartPose> poses) {
+    checked(objects_, h, Kind::Object).part_poses = std::move(poses);
+    ++epoch_;
+}
+
+void Mirror::set_part_slot(int64_t h, int32_t slot, uint64_t gen) {
+    if (slot < -1)
+        throw std::invalid_argument("combat mirror: part slot below -1");
+    SubsystemRow& r = checked(subsystems_, h, Kind::Subsystem);
+    r.part_slot = slot;
+    r.part_gen = gen;
+    ++epoch_;
+}
+
+void Mirror::set_mount_order(int64_t h, const std::vector<int64_t>& order) {
+    for (int64_t x : order)
+        if (x != kRefUnrepresentable &&
+            (x < 0 || static_cast<Kind>((x >> 60) & 7) != Kind::Subsystem))
+            throw std::invalid_argument(
+                "combat mirror: mount order entry is not a Subsystem handle");
+    checked(objects_, h, Kind::Object).mount_order = order;
+    ++epoch_;
+}
+
+void Mirror::set_manual_slot(int64_t h, int64_t target, const Vec3& offset,
+                             int32_t slot, uint64_t gen) {
+    if (slot < -1)
+        throw std::invalid_argument("combat mirror: manual slot below -1");
+    if (target != -1 && !ref_live(target, Kind::Object))
+        throw std::invalid_argument(
+            "combat mirror: manual slot target is not a live Object");
+    ObjectRow& r = checked(objects_, h, Kind::Object);
+    r.manual_slot_target = target;
+    r.manual_slot_offset = offset;
+    r.manual_slot = slot;
+    r.manual_slot_gen = gen;
+    ++epoch_;
+}
+
+void Mirror::set_part_gen(uint64_t gen) {
+    part_gen_ = gen;
     ++epoch_;
 }
 

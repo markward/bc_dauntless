@@ -22,6 +22,13 @@ namespace dauntless::combat::detail {
                                 " -- answer in Python");
 }
 
+// fall_back with a reason a kernel counts (part_pose.h): `Why` is
+// PartStale, MountUnknown or NoMount. The message keeps fall_back's shape.
+template <class Why>
+[[noreturn]] inline void fall_back_as(const char* why) {
+    throw Why(std::string("combat geometry: ") + why + " -- answer in Python");
+}
+
 // ── Row access: a stale or unnamed handle falls back ────────────────────────
 
 inline const ObjectRow& obj(const Mirror& m, int64_t h) {

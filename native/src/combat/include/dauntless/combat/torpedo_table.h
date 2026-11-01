@@ -38,6 +38,9 @@ enum class TorpField : int32_t {
     // (target, x, y, z, subsystem) or None: mount_sub, mount_attributed,
     // mount_offset
     _mount_key,
+    // (target, x, y, z, (bx, by, bz)) or None: baked_attributed, baked_key,
+    // baked
+    _baked_offset,
     kCount
 };
 
@@ -67,6 +70,14 @@ struct TorpedoRow {
     int64_t mount_sub = -1;
     bool mount_attributed = false;
     Vec3 mount_offset{0, 0, 0};
+    // `_baked_offset` (projectiles._bake_offset): a picked spot's point as
+    // posed at launch. attributed = the key is not None AND its target IS
+    // the torpedo's `_target_ship` (computed by Python on a write of
+    // either); baked_key = key[1:4], the offset it was baked from; baked =
+    // key[4], the body-frame point steered at with no part pose.
+    bool baked_attributed = false;
+    Vec3 baked_key{0, 0, 0};
+    Vec3 baked{0, 0, 0};
     // Bit (1 << TorpField) per field whose last Python value the row cannot
     // hold (a non-number lifetime, a last-seen point that is neither None
     // nor a TGPoint3, ...). The kernel must hand such a torpedo to Python.
@@ -100,6 +111,8 @@ public:
     void set_v(int64_t h, TorpField f, bool is_set, const Vec3& v);
     void set_ref(int64_t h, TorpField f, int64_t ref);
     void set_mount(int64_t h, bool attributed, int64_t sub, const Vec3& off);
+    void set_baked(int64_t h, bool attributed, const Vec3& key,
+                   const Vec3& baked);
     void set_unrepresentable(int64_t h, TorpField f);
 
 private:

@@ -347,6 +347,44 @@ def test_unrepresentable_value_flags_the_field(on):
     assert _row(t)["unrepresentable"] == []
 
 
+def test_baked_offset_pushes(on, scene):
+    """`_baked_offset` (a picked spot's launch-time point, posed-parts Task
+    7): attributed only while its target IS the torpedo's target, re-pushed
+    when the target changes; the key offset and the baked point by .hex(),
+    signed zeros kept; a malformed key flags the field."""
+    kset, ship = scene
+    target = App.ShipClass_Create("K3Baked")
+    kset.AddObjectToSet(target, "K3Baked")
+    t = _fire(ship)
+    d = _row(t)
+    assert d["baked_attributed"] == 0
+    t._target_ship = target
+    t.SetTargetOffset(TGPoint3(-0.0, 1.5, 2.0))       # bakes (unposed: itself)
+    d = _row(t)
+    assert d["baked_attributed"] == 1
+    assert _vec(d["baked_key"]) == _hex(-0.0, 1.5, 2.0)
+    assert _vec(d["baked"]) == _hex(-0.0, 1.5, 2.0)
+    t._baked_offset = (target, 1.0, 2.0, 3.0, (-0.0, 7.25, -1.0))
+    d = _row(t)
+    assert _vec(d["baked_key"]) == _hex(1.0, 2.0, 3.0)
+    assert _vec(d["baked"]) == _hex(-0.0, 7.25, -1.0)
+    t._target_ship = ship
+    assert _row(t)["baked_attributed"] == 0
+    t._target_ship = target
+    assert _row(t)["baked_attributed"] == 1
+    t._baked_offset = ("not", "a", "key")
+    assert "_baked_offset" in _row(t)["unrepresentable"]
+    t._baked_offset = None
+    d = _row(t)
+    assert d["baked_attributed"] == 0 and d["unrepresentable"] == []
+    t.SetTargetOffset(TGPoint3(0.5, 0.25, 0.125))
+    nc.audit_mirror()
+    assert nc.audit_failures() == [], nc.audit_failures()
+    t.__dict__["_baked_offset"] = (target, 0.5, 0.25, 0.125, (9.0, 9.0, 9.0))
+    nc.audit_mirror()
+    assert ("Torpedo", "_baked_offset") in nc.audit_failures()
+
+
 # ── Audit ────────────────────────────────────────────────────────────────────
 
 def test_audit_compares_torpedo_rows(on):

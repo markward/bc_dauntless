@@ -51,6 +51,7 @@ from engine.appc import native_combat as nc  # noqa: E402
 from engine.appc import part_pose  # noqa: E402
 from engine.appc import part_severance  # noqa: E402
 from engine.appc import passive_state  # noqa: E402
+from engine.appc import physical_parents  # noqa: E402
 from engine.appc import projectiles  # noqa: E402
 from engine.appc import sensor_detection  # noqa: E402
 from engine.appc import subsystems  # noqa: E402
@@ -109,9 +110,9 @@ def _hx(v):
 class World:
     """Real ships in one set, a pinned weapon clock, the logs.
 
-    `ships` is ((name, hardpoint, (x, y, z), yaw), ...), built the same way
-    in both arms so labels line up. Torpedoes are labelled T1, T2, ... in
-    firing order. `after_hit` hooks run after each combat.apply_hit (a
+    `ships` is ((name, hardpoint, (x, y, z), yaw[, script]), ...), built the
+    same way in both arms so labels line up. Torpedoes are labelled T1, T2,
+    ... in firing order. `after_hit` hooks run after each combat.apply_hit (a
     stand-in for an ET_WEAPON_HIT handler)."""
 
     def __init__(self, mp, native, ships, tag):
@@ -127,8 +128,10 @@ class World:
         self.tag = tag
         App.g_kSetManager.AddSet(self.set, tag)
         self.ships = {}
-        for name, hardpoint, at, yaw in ships:
+        for name, hardpoint, at, yaw, *script in ships:
             ship = App.ShipClass_Create(name)
+            if script:      # lets articulation resolve the hardpoint leaf
+                ship.SetScript(script[0])
             _load_hardpoint(ship, hardpoint)
             ship.SetTranslateXYZ(*at)
             m = TGMatrix3()
@@ -251,10 +254,14 @@ class World:
         if key is not None:
             key = (self.label(key[0]), _hx(key[1]), _hx(key[2]),
                    _hx(key[3]), self.label(key[4]))
+        baked = d.get("_baked_offset")
+        if baked is not None:
+            baked = (self.label(baked[0]), _hx(baked[1]), _hx(baked[2]),
+                     _hx(baked[3]), _hx(tuple(baked[4])))
         return (self.label(t), t in projectiles._active, _hx(p),
                 _hx(t._vel), _hx(d.get("_age")),
                 _hx(d.get("_last_seen_target_pos")),
-                _hx(d.get("_last_target_vel")), key,
+                _hx(d.get("_last_target_vel")), key, baked,
                 _hx(t._bubble_entry))
 
     def record(self):
@@ -334,6 +341,23 @@ def _k3_stood_down(counts, why, at_least=1):
 
 GALAXY_VORCHA = (("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0),
                  ("Vorcha", "vorcha", (10.0, 120.0, 8.0), math.pi))
+# With ship scripts: articulation resolves the hardpoint leaves, so a posed
+# target's part slots can be resolved (and its steer point is native).
+SCRIPTED_GALAXY_VORCHA = (
+    ("Galaxy", "galaxy", (0.0, 0.0, 0.0), 0.0, "ships.Galaxy"),
+    ("Vorcha", "vorcha", (10.0, 120.0, 8.0), math.pi, "ships.Vorcha"))
+#: A Bird of Prey between them, across the shots' path.
+BOP_IN_THE_PATH = SCRIPTED_GALAXY_VORCHA + (
+    ("BoP", "birdofprey", (10.0, 40.0, 8.0), 0.0, "ships.BirdOfPrey"),)
+#: The steer-point ASK reasons a posed target with a current slot must
+#: never give.
+_POSED_STEER_REASONS = ("posed_target", "part_stale", "no_mount",
+                        "offset_off_mount")
+
+
+def _steer_reasons(counts, names):
+    why = counts["k3_steer_reasons"]
+    return sum(why.get(n, 0) for n in names)
 
 
 def _move_vorcha(w, t):
@@ -567,9 +591,13 @@ def test_torpedo_subclass_overriding_translate_runs_python(monkeypatch):
     _k3_stood_down(counts, "guard", 10)
 
 
-def test_posed_target_asks_and_matches(monkeypatch):
-    """Shots at a subsystem of a ship with a part off its NIF pose: the
-    steer point is Python's (ASK steer_point) every guided tick."""
+def test_forced_part_pose_target_steers_natively(monkeypatch):
+    """Shots at a subsystem of a ship with a part forced off its NIF pose
+    (no mount on it: the slot reads "no part", the offset itself): after
+    the first guided tick attributes the mount (ASK steer_point, which
+    writes `_mount_key`), the steer point is the kernel's. (Was
+    test_posed_target_asks_and_matches -- an ASK steer_point every guided
+    tick -- before posed parts went native.)"""
 
     def script(w, t):
         g, v = w.ships["Galaxy"], w.ships["Vorcha"]
@@ -581,10 +609,14 @@ def test_posed_target_asks_and_matches(monkeypatch):
                    offset=g.GetShields().GetPosition())
             w.fire(v, (11.0, 115.0, 8.0), (2.0, -60.0, 1.0), target=g)
 
-    ref, _nat, counts = _both(monkeypatch, script, 130)
+    ref, _nat, counts = _both(monkeypatch, script, 130,
+                              ships=SCRIPTED_GALAXY_VORCHA)
     assert _calls(ref, "hit")
     _k3_ran(counts)
-    assert counts["k3_asks"]["steer_point"] > 30, counts
+    # One attribution ASK for the one offset shot; every later tick native.
+    assert counts["k3_asks"]["steer_point"] == 1, counts
+    assert counts["k3_posed_steers"] > 30, counts
+    assert _steer_reasons(counts, _POSED_STEER_REASONS) == 0, counts
 
 
 def test_write_log_keeps_scan_velocity(monkeypatch):
@@ -956,3 +988,155 @@ def test_available_needs_the_k3_and_step_bindings(monkeypatch):
             mp.delattr(_h, name)
             assert not nc.available(), name
     assert nc.available()
+
+
+# ── Posed parts (native-combat posed parts, Task 4) ─────────────────────────
+
+
+def test_posed_target_steer_point_native(monkeypatch):
+    """Shots locked on a Bird of Prey's wing cannons with the wings swung
+    for cruise: once each shot has attributed its mount (one ASK, which
+    writes `_mount_key`), the steer point is the posed mount, computed
+    natively -- per tick equal to Python."""
+    moved = []
+
+    def script(w, t):
+        v, bop = w.ships["Vorcha"], w.ships["BoP"]
+        if t == 0:
+            articulation.force_pose(bop, "cruise")
+            cannons = bop.GetPulseWeaponSystem()
+            for i, vel in ((0, (0.0, -60.0, 0.0)), (1, (1.0, -60.0, 0.5))):
+                cannon = cannons.GetWeapon(i)
+                p = cannon.GetPosition()
+                q = articulation.part_transform_point(
+                    bop, (p.x, p.y, p.z),
+                    prop=physical_parents.property_of(cannon))
+                moved.append(tuple(q) != (p.x, p.y, p.z))
+                w.fire(v, (10.0 + i, 115.0, 8.0), vel, target=bop,
+                       offset=cannon.GetPosition())
+
+    ref, _nat, counts = _both(monkeypatch, script, 130,
+                              ships=BOP_IN_THE_PATH)
+    assert moved and all(moved), moved
+    assert any(c[3] == "BoP" for c in _calls(ref, "hit")), ref.calls
+    _k3_ran(counts)
+    assert counts["k3_asks"]["steer_point"] == 2, counts
+    assert counts["k3_posed_steers"] > 30, counts
+    assert _steer_reasons(counts, _POSED_STEER_REASONS) == 0, counts
+
+
+def test_stale_slot_falls_back_part_stale(monkeypatch):
+    """With no step boundary resolving the slots, the posed target's mount
+    slot stays unresolved: the steer point is Python's (ASK steer_point,
+    counted part_stale), never a stale part read. Equal to Python."""
+    monkeypatch.setattr(nc, "resolve_stale_part_slots", lambda ships: None)
+
+    def script(w, t):
+        v, bop = w.ships["Vorcha"], w.ships["BoP"]
+        if t == 0:
+            articulation.force_pose(bop, "cruise")
+            cannon = bop.GetPulseWeaponSystem().GetWeapon(0)
+            w.fire(v, (10.0, 115.0, 8.0), (0.0, -60.0, 0.0), target=bop,
+                   offset=cannon.GetPosition())
+
+    ref, _nat, counts = _both(monkeypatch, script, 130,
+                              ships=BOP_IN_THE_PATH)
+    assert any(c[3] == "BoP" for c in _calls(ref, "hit")), ref.calls
+    _k3_ran(counts)
+    assert counts["k3_steer_reasons"].get("part_stale", 0) > 30, counts
+    assert counts["k3_steer_reasons"].get("posed_target", 0) == 0, counts
+    assert counts["k3_posed_steers"] == 0, counts
+
+
+# ── Manual Aim on a posed target (posed parts, Task 4b) ──────────────────────
+
+
+def _wing_pick(bop, part="left wing", frac=(0.5, 0.5, 0.5)):
+    """A Manual Aim pick on a Bird of Prey wing: a point inside that part's
+    box the box rule gives to it, and no subsystem's mount (so _RESOLVE
+    finds none and the pick is authored=False)."""
+    from engine.appc import part_severance
+    lo, hi = articulation.part_boxes_for("birdofprey")[part]
+    p = tuple(a + f * (b - a) for a, b, f in zip(lo, hi, frac))
+    assert articulation._live_part(bop, None, p, False, None) == part, p
+    assert part_severance.authored_mount_subsystem(bop, p) is None, p
+    return p
+
+
+def _manual_moved(bop, p):
+    return tuple(articulation.part_transform_point(bop, p,
+                                                   authored=False)) != p
+
+
+def test_manual_aim_on_posed_target_steers_natively(monkeypatch):
+    """Torpedoes the Vor'cha fired at its Manual Aim pick on a Bird of
+    Prey's wing (no mount there: `_mount_key` attributes None): once
+    attributed, the steer point is the pick as posed at launch (its
+    `_baked_offset`, posed parts Task 7), natively."""
+    moved = []
+
+    def script(w, t):
+        v, bop = w.ships["Vorcha"], w.ships["BoP"]
+        if t == 0:
+            articulation.force_pose(bop, "cruise")
+            v.SetTarget(bop)
+            p = _wing_pick(bop)
+            moved.append(_manual_moved(bop, p))
+            v.set_manual_target_offset(TGPoint3(*p))
+            for i, vel in ((0, (0.0, -60.0, 0.0)), (1, (1.0, -60.0, 0.5))):
+                w.fire(v, (10.0 + i, 115.0, 8.0), vel, target=bop,
+                       offset=TGPoint3(*p))
+
+    ref, _nat, counts = _both(monkeypatch, script, 130,
+                              ships=BOP_IN_THE_PATH)
+    assert moved == [True, True], moved
+    assert any(c[3] == "BoP" for c in _calls(ref, "hit")), ref.calls
+    _k3_ran(counts)
+    assert counts["k3_asks"]["steer_point"] == 2, counts
+    assert counts["k3_posed_steers"] > 30, counts
+    assert _steer_reasons(counts, _POSED_STEER_REASONS) == 0, counts
+
+
+def test_picked_spot_keeps_its_launch_point_natively(monkeypatch):
+    """Posed parts, Task 7 (Mark's ruling): torpedoes fired at a picked
+    spot on a Bird of Prey's wing (no mount) while the wings are at cruise;
+    the wings then go back to the NIF pose and later to warp. Each shot
+    keeps steering at the pick as posed at launch (`_baked_offset`), never
+    re-posed -- natively, with no per-tick ASK (no `no_mount`, no
+    `unbaked`) -- and per tick equal to Python. A shot locked on a wing
+    cannon (a mount) in the same scene still follows the wing."""
+    seen = {}
+
+    def script(w, t):
+        v, bop = w.ships["Vorcha"], w.ships["BoP"]
+        if t == 0:
+            articulation.force_pose(bop, "cruise")
+            p = _wing_pick(bop)
+            seen["p"] = p
+            for i, vel in ((0, (0.0, -60.0, 0.0)), (1, (1.0, -60.0, 0.5))):
+                w.fire(v, (10.0 + i, 115.0, 8.0), vel, target=bop,
+                       offset=TGPoint3(*p))
+            cannon = bop.GetPulseWeaponSystem().GetWeapon(0)
+            w.fire(v, (9.0, 115.0, 8.0), (-1.0, -60.0, 0.0), target=bop,
+                   offset=cannon.GetPosition())
+        elif t == 20:
+            articulation.force_pose(bop, None)
+            # The old rule would steer elsewhere now: the test is not vacuous.
+            p = seen["p"]
+            seen["moved"] = _manual_moved(bop, p) is False and tuple(
+                w.torps[0]._baked_offset[4]) != p
+        elif t == 45:
+            articulation.force_pose(bop, "warp")
+
+    ref, _nat, counts = _both(monkeypatch, script, 130,
+                              ships=BOP_IN_THE_PATH)
+    assert seen.get("moved") is True, seen
+    assert any(c[3] == "BoP" for c in _calls(ref, "hit")), ref.calls
+    _k3_ran(counts)
+    # One attribution ASK per shot; every later tick native.
+    assert counts["k3_asks"]["steer_point"] == 3, counts
+    assert counts["k3_steer_reasons"]["no_mount"] == 0, counts
+    assert counts["k3_steer_reasons"]["unbaked"] == 0, counts
+    assert _steer_reasons(counts, _POSED_STEER_REASONS) == 0, counts
+    assert counts["k3_baked_steers"] > 30, counts
+    assert counts["k3_posed_steers"] > counts["k3_baked_steers"], counts

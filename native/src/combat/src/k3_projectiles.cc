@@ -290,6 +290,8 @@ K3Record Walker::guide() {
         guide_torpedo(m_, r, s_.dt, scan_, s_.use_memo, s_.clocks);
     switch (g.status) {
         case GuideResult::Status::done:
+            if (g.posed_steer) ++c_.posed_steers;
+            if (g.baked_steer) ++c_.baked_steers;
             take(g);
             s_.st = St::ADVANCE;
             return K3Record{};  // no record: the caller carries on
@@ -305,6 +307,8 @@ K3Record Walker::guide() {
                                tr->_containing_set, off) != OffsetStatus::ok)
                 lost("the steer point's offset is no longer resolvable");
             s_.resume = g.resume;
+            if (g.steer_why != SteerWhy::kCount)
+                ++c_.steer_why[static_cast<size_t>(g.steer_why)];
             return ask(K3Query::steer_point, {h, target, off},
                        St::STEER_ANSWER);
         }

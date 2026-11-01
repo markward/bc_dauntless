@@ -295,7 +295,7 @@ _REF_FIELDS = {"_containing_set", "_sensor_subsystem", "_cloaking_subsystem",
                "_hull", "_parent_subsystem", "_parent_ship", "_property",
                "ships", "nebulae", "_target", "_held_target", "_target_list",
                "_children", "_target_subsystem", "_shield_subsystem",
-               *_SYSTEM_FIELDS}
+               "mount_order", *_SYSTEM_FIELDS}
 _PER_PROCESS = {"obj_id", "xform_index", "xform_gen", "py_id"}
 
 
@@ -326,13 +326,18 @@ def _normalised(world):
     world = dict(world)
     for n, o in list(world.items()):          # the ships' own subsystems
         for field in ("_sensor_subsystem", "_cloaking_subsystem", "_hull",
-                      "_shield_subsystem", *_SYSTEM_FIELDS):
+                      "_shield_subsystem", *_SYSTEM_FIELDS,
+                      # unmirrored slots, named in mount_order
+                      "_impulse_engine_subsystem", "_warp_engine_subsystem",
+                      "_power_subsystem", "_repair_subsystem"):
             sub = o.__dict__.get(field)
             if sub is not None:
                 world[n + field] = sub
     names = {_slot(o): n for n, o in world.items()}
 
     def norm(key, v):
+        if key == "manual_slot":    # (target ref, offset, slot, generation)
+            return (names.get(v[0], v[0]), _hex(v[1]), v[2], v[3])
         if key in _REF_FIELDS:
             if isinstance(v, list):
                 return [names.get(x, x) for x in v]

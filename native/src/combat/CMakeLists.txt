@@ -16,6 +16,7 @@ set(DAUNTLESS_COMBAT_SOURCES
     src/step_scan.cc
     src/k4_eligibility.cc
     src/sensor_detect.cc
+    src/part_pose.cc
     src/weapon_geometry.cc
     src/beam_geometry.cc
     src/projectile_geometry.cc

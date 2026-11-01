@@ -25,6 +25,12 @@ KERNEL decided, not what the scene was built to make likely.
 
 Scene helpers both files share: ``seed_every_rng``, ``subsystems``, ``face``,
 ``nebula_around``.
+
+Posed parts (Task 5) reuses the record for its own differentials
+(tests/helpers/posed_fight.py): ``Recorder(extra=...)`` appends a scene's
+own rows each tick, ``weapon_rows`` is the K1 differential's fire-control
+record, and ``posed_fallbacks`` / ``posed_no_mount`` / ``posed_branches``
+read the kernels' posed counters.
 A differential arm's audio and crew throttles are isolated by
 tests/helpers/fight_audio.isolate_fight_audio.
 """
@@ -38,7 +44,6 @@ try:
 except ImportError:
     _h = None
 
-from engine.appc import articulation
 from engine.appc import combat
 from engine.appc import damage_eligibility
 from engine.appc import native_combat as nc
@@ -204,8 +209,12 @@ class Recorder:
     first sight. `observer` answers incoming_ids every tick."""
 
     def __init__(self, mp, ships, observer, ship_instances=None,
-                 native=False):
+                 native=False, extra=None):
         self.native = native
+        # A callable returning more rows for this tick (appended last): what
+        # a differential compares beyond this record (posed parts: weapon
+        # state, part poses and mount positions -- posed_fight.py).
+        self.extra = extra
         self.ships = list(ships)
         self.observer = observer
         self.ship_instances = ship_instances
@@ -386,6 +395,8 @@ class Recorder:
             row.append(("incoming", [
                 self._by_objid.get(i, i) for i in projectiles.incoming_ids(
                     self.observer, 3600.0, None, 0)]))
+        if self.extra is not None:
+            row.extend(self.extra())
         self.log.append(row)
 
 
@@ -405,16 +416,25 @@ class K3Tally:
     write record's last-seen / velocity: "unguided", "window_end",
     "ballistic_frame", "ballistic_dead", "source_other_frame(_unseen)",
     "guided_visible", "cross_region_homing", "guided_invisible",
-    "guided_no_turn", "steer_point:posed" (the target has posed parts) and
-    "cross_region_hit" (the hit ship's and torpedo's frames).
-    "steer_point:mount" is BY ELIMINATION: every steer_point ASK whose target
-    has no posed part is counted as a mount attribution."""
+    "guided_no_turn" and "cross_region_hit" (the hit ship's and torpedo's
+    frames).
+
+    Read off the KERNEL's own counters (combat_k3_counts, posed parts Task
+    4): "steer_point:<why>" for every steer_point ASK, by the reason the
+    kernel counted for it (k3_steer_reasons: "steer_point:unattributed" is
+    a mount attribution, "steer_point:part_stale" a stale slot, ...);
+    "steer_point:mount" is the attribution ASKs (unattributed); and
+    "steer_point:posed" the steer points the kernel decided NATIVELY at a
+    posed target's mount or Manual Aim pick (k3_posed_steers)."""
 
     def __init__(self, orig):
         self.orig = orig
         self.n = {}
         self.asked_guide = set()
         self.ask = _h.combat_k3_kinds()["ASK"]
+        c = _h.combat_k3_counts()
+        self.steer_why = dict(c["k3_steer_reasons"])
+        self.posed_steers = c["k3_posed_steers"]
 
     def bump(self, key, by=1):
         self.n[key] = self.n.get(key, 0) + by
@@ -433,16 +453,21 @@ class K3Tally:
         if query == "guide":
             self.asked_guide.add(args[0])
         elif query == "steer_point":
-            target = nc._registry.get(args[1])
-            if target is not None and articulation.posed_part_names(target):
-                self.bump("steer_point:posed")
-            else:
-                self.bump("steer_point:mount")
+            why = _h.combat_k3_counts()["k3_steer_reasons"]
+            for k, n in why.items():
+                if n != self.steer_why.get(k, 0):
+                    self.bump("steer_point:" + k, n - self.steer_why.get(k, 0))
+                    if k == "unattributed":
+                        self.bump("steer_point:mount")
+            self.steer_why = dict(why)
             if args[2] is not None and tuple(args[2]) != _ZERO:
                 self.bump("steer_point:cross_region")
 
     def on_done(self, rec):
         _kind, writes, expired, hits = rec
+        posed = _h.combat_k3_counts()["k3_posed_steers"]
+        self.bump("steer_point:posed", posed - self.posed_steers)
+        self.posed_steers = posed
         rows = nc._k3_rows
         for h, _age, seen, _tvel, vel in writes:
             t = rows[h]
@@ -550,3 +575,98 @@ def check_guide_asks(counts, tally, expected):
     seen = {k for k, v in reasons.items() if v}
     assert seen <= set(expected), (seen, expected)
     return seen
+
+
+def weapon_rows(label, systems, weapons):
+    """Every weapon system's and weapon's fire-control state (the K1
+    differential's record, tests/integration/test_native_k1_differential.py):
+    floats by .hex(), objects by `label`, a weapon's `_target_offset` by its
+    hexes and by WHICH weapon first held that same object."""
+    from engine.appc import weapon_subsystems as ws
+    rows = []
+    for g in systems:
+        d = g.__dict__
+        rows.append((label(g), hx(g.IsFiring()), hx(d.get("_fire_held")),
+                     hx(d.get("_force_update")),
+                     hx(d.get("_last_weapon_idx")),
+                     hx(d.get("_last_group_fired")),
+                     label(d.get("_held_target")),
+                     [label(t) for t in d.get("_target_list", ())]))
+    first = {}
+    for i, w in enumerate(weapons):
+        d = w.__dict__
+        energy = isinstance(w, ws._EnergyWeaponFireMixin)
+        tube = isinstance(w, ws.TorpedoTube)
+        off = d.get("_target_offset")
+        if off is not None:
+            first.setdefault(id(off), i)
+        rows.append((
+            label(w), hx(w.IsFiring()), label(d.get("_target")),
+            hx(d.get("_fire_timer", 0.0)), hx(d.get("_depleted")),
+            hx(d.get("_dwell")), hx(d.get("_beam_on_countdown")),
+            w.GetChargeLevel().hex() if energy else None,
+            hx(d.get("_cooldown_remaining")),
+            hx(w.GetNumReady()) if tube else None,
+            hx(off) if isinstance(off, TGPoint3) else repr(off),
+            None if off is None else first[id(off)]))
+    return rows
+
+
+# Posed parts (spec docs/superpowers/specs/2026-11-01-native-combat-posed-
+# parts-design.md §4.5): every posed hand-back a differential with posed
+# ships must see at 0, and the native posed-branch counters it must see run.
+
+#: (counter path, reason) pairs that are 0 in a fight whose posed ships have
+#: their slots resolved at every step boundary. K1's fire-time `no_mount` is
+#: NOT here: a random offset on a posed target that no mount claims is
+#: Python's box rule at fire time by design (ruling C4) -- see
+#: posed_no_mount. K3's `no_mount` and `unbaked` ARE: an in-flight shot at a
+#: picked spot steers at the point baked at launch (posed parts, Task 7).
+_POSED_ZERO = (
+    [("k1_python_reasons", s, why) for s in ("pump", "system")
+     for why in ("posed_ship", "posed_target", "part_stale",
+                 "mount_unknown", "no_mount", "offset_off_mount")]
+    + [("k1_fire_ask_reasons", None, why)
+       for why in ("part_stale", "mount_unknown", "offset_off_mount")]
+    + [("k2_python_reasons", None, why)
+       for why in ("posed_ship", "part_stale")]
+    + [("k3_steer_reasons", None, why)
+       for why in ("posed_target", "part_stale", "offset_off_mount",
+                   "mount_stale", "no_mount", "unbaked")])
+
+
+def _read(counts, key, sub, why):
+    c = counts[key]
+    return (c[sub] if sub is not None else c)[why]
+
+
+def posed_fallbacks(counts):
+    """{name: n} of every posed hand-back that must be 0 (_POSED_ZERO)."""
+    return {"%s%s/%s" % (key, "" if sub is None else "[%s]" % sub, why):
+            _read(counts, key, sub, why) for key, sub, why in _POSED_ZERO}
+
+
+def posed_no_mount(counts):
+    """The box-rule hand-backs (ruling C4): K1 Fire ASKs at a posed
+    target's offset that no mount claims -- printed, not zero -- and K3's
+    steer ASKs for one, 0 since Task 7 (in _POSED_ZERO too)."""
+    return {"k1_fire_ask_reasons/no_mount":
+            counts["k1_fire_ask_reasons"]["no_mount"],
+            "k3_steer_reasons/no_mount":
+            counts["k3_steer_reasons"]["no_mount"]}
+
+
+def posed_branches(counts):
+    """The native posed branches: a posed ship's systems walked (K1), a Fire
+    aimed at a posed target's offset (K1 `_RESOLVE` / Manual Aim slot), a
+    posed ship's banks (K2), a lock on a posed ship's subsystem (K2), a
+    Manual Aim beam on a posed target (K2), a torpedo steered at a posed
+    target's mount or pick (K3), and of those a pick steered at its
+    launch-time point (K3, Task 7)."""
+    return {"k1_posed/walks": counts["k1_posed"]["walks"],
+            "k1_posed/target_aims": counts["k1_posed"]["target_aims"],
+            "k2_posed/banks": counts["k2_posed"]["banks"],
+            "k2_posed/lock_aims": counts["k2_posed"]["lock_aims"],
+            "k2_posed/manual_aims": counts["k2_posed"]["manual_aims"],
+            "k3_posed_steers": counts["k3_posed_steers"],
+            "k3_baked_steers": counts["k3_baked_steers"]}

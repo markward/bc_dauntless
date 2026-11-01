@@ -20,9 +20,13 @@
 // FALLBACK. As in weapon_geometry.h, a function throws std::invalid_argument
 // (Python ValueError) when it cannot answer exactly as the Python would:
 //   * a ref it reaches is unrepresentable (-2) or names a row that is gone;
-//   * the ship whose mount it must carry has a part off its NIF pose
-//     (has_posed_parts) -- for the aim point that is the LOCK's own ship, or
-//     the target under Manual Aim, never the bank's target for a lock;
+//   * the ship whose mount it must carry is posed and the mount's part slot
+//     is not current (PartStale, part_pose.h) -- for the aim point that is
+//     the LOCK's own ship, never the bank's target for a lock; a current
+//     slot is answered with the pose;
+//   * a Manual Aim pick on a posed target that the firing ship's Manual
+//     Aim slot does not hold (NoMount) or holds stale (PartStale) -- the
+//     box rule is Python's; a current slot is answered (Task 4b);
 //   * an Object's transform is invalid;
 //   * shields_block on a target that is not a ShipClass or has no real
 //     GetShields (its getattr goes through a stub that records telemetry).
