@@ -199,11 +199,13 @@ Vec3 steer_point_unposed(const Mirror& m, int64_t target,
     }
     // G11: target_offset_world(target, offset, key[4]). At an unposed
     // target part_transform_point returns the point whatever the mount, but
-    // a mount the mirror cannot name is Python's.
+    // a mount the mirror cannot name is Python's. A posed target is the
+    // kernel's ASK until it checks the mount slot (posed-parts Task 4).
+    if (t.has_posed_parts) fall_back("target has posed parts");
     if (mount_sub == kRefUnrepresentable) fall_back("mount subsystem is unnamed");
     if (mount_sub >= 0 && !m.subsystem(mount_sub))
         fall_back("mount subsystem is stale");
-    return shifted(target_offset_world(m, target, *offset), off);
+    return shifted(target_offset_world(m, target, *offset, mount_sub), off);
 }
 
 // ── projectiles.py:1103 _guide (K3M A1.2, G1-G10) ───────────────────────────

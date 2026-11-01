@@ -56,7 +56,12 @@ AimPoint phaser_aim_point(Mirror& m, int64_t ship, int64_t target,
     // ShipClass.is_using_target_offset (ships.py:1790).
     if (s._use_target_offset != 0 && s.manual_offset_set) {
         // GetTargetOffsetTG copies the manual offset (ships.py:1765).
-        return {target_offset_world(m, target, s._manual_target_offset), -1};
+        // Python resolves the mount (`_RESOLVE`); on a posed target that and
+        // the box rule are Python's (posed-parts spec §4.4, non-goals).
+        if (obj(m, target).has_posed_parts) fall_back("target has posed parts");
+        return {target_offset_world(m, target, s._manual_target_offset,
+                                    kNoMount),
+                -1};
     }
     // ship.GetTargetSubsystem(): the lock is ship-wide (K2M 1.2).
     const int64_t lock = s._target_subsystem;

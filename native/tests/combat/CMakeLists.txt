@@ -3,6 +3,7 @@ add_executable(combat_tests
     mirror_test.cc
     sensor_detect_test.cc
     weapon_geometry_test.cc
+    part_pose_test.cc
     beam_geometry_test.cc
     projectile_geometry_test.cc
     beam_trace_test.cc

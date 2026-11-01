@@ -4,6 +4,7 @@
 #include <optional>
 
 #include "dauntless/combat/mirror.h"
+#include "dauntless/combat/part_pose.h"
 
 // The native weapon geometry of the K1 fire-control kernel (phase 1b, Task 2):
 // mount positions, bank aim, firing arc, torpedo cone, target offset, the
@@ -21,10 +22,15 @@
 // FALLBACK. As in sensor_detect.h, a function throws std::invalid_argument
 // (Python ValueError) when it cannot answer exactly as the Python would:
 //   * a ref it reaches is unrepresentable (-2) or names a row that is gone;
-//   * a ship whose mount or aim it must carry has a part off its NIF pose
-//     (has_posed_parts): the Python walks the rig, the mirror cannot. At
-//     identity the Python returns the authored point itself, so a rigged
-//     ship with every part there is answered here;
+//   * a ship whose mount it must carry has a part off its NIF pose
+//     (has_posed_parts) and the mount's part slot is not current (reason
+//     "part_stale": stamped behind the Mirror's part_gen, past the pose
+//     table, or asked on a ship other than its own). A current slot is
+//     answered with the pose (part_pose.h); at identity the Python returns
+//     the authored point itself, so a rigged ship with every part there is
+//     answered with no slot read;
+//   * a posed target whose offset is not its given mount's own point (or
+//     has no mount: Python's box rule);
 //   * an Object's transform is invalid;
 //   * a target with no real IsDead (its stub records telemetry);
 //   * a pulse cannon whose projectile module did not resolve.
@@ -38,8 +44,8 @@ namespace dauntless::combat {
 // handle, or -1 for none. Throws on a stale or unnamed ref in the chain.
 int64_t climb_to_ship_of(const Mirror& m, int64_t subsystem);
 
-// subsystems.subsystem_world_position (identity-pose ships only): ship_pos +
-// R . local, no scale. `ship_arg` is Python's second argument (-1 = None: the
+// subsystems.subsystem_world_position: ship_pos + R . P1/P2(local), no scale
+// (posed-parts map P3: the pose BEFORE the ship rotation). `ship_arg` is Python's second argument (-1 = None: the
 // subsystem's own ship). Memoised by (sub, ship_arg) in
 // SensorState::mounts when `use_memo` (step_memo.active()).
 Vec3 subsystem_world_position(Mirror& m, int64_t sub, int64_t ship_arg,
@@ -66,8 +72,17 @@ bool _emitter_in_arc(const Mirror& m, int64_t emitter, int64_t ship,
 // weapon_subsystems._emitter_forward_world with skew=False.
 Vec3 _emitter_forward_world(const Mirror& m, int64_t emitter, int64_t ship);
 
-// subsystems.target_offset_world (F11) for a target with no posed parts.
-Vec3 target_offset_world(const Mirror& m, int64_t target, const Vec3& offset);
+// subsystems.target_offset_world (F11, posed-parts map P4): pos + R .
+// (scale * P1/P2(offset)). `mount_sub` is Python's `mount_sub` argument, the
+// subsystem whose authored mount the offset is (kNoMount = None, i.e.
+// `authored=False`). The pose applies BEFORE the scale. On a posed target
+// the mount's part slot carries the offset, and only when the offset IS the
+// mount's `_position` (C `==` per axis): Python resolves the part from the
+// offset, the slot was resolved from the mount. Otherwise -- no mount (the
+// box rule), a mount the mirror cannot name, an offset off the mount -- it
+// falls back; a stale slot or another ship's mount falls back `part_stale`.
+Vec3 target_offset_world(const Mirror& m, int64_t target, const Vec3& offset,
+                         int64_t mount_sub);
 
 // weapon_subsystems._resolve_torpedo_aim_point (F11); nullopt is Python None.
 std::optional<Vec3> _resolve_torpedo_aim_point(const Mirror& m, int64_t tube,

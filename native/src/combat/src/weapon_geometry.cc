@@ -15,6 +15,7 @@
 #include <string>
 #include <unordered_set>
 
+#include "dauntless/combat/part_pose.h"
 #include "dauntless/combat/py_math.h"
 #include "geometry_internal.h"
 
@@ -73,7 +74,17 @@ int64_t climb_to_ship(const Mirror& m, const SubsystemRow& s) {
     return -1;
 }
 
-// subsystems._subsystem_world_position (subsystems.py:62).
+// A part slot is resolved against the subsystem's OWN ship (Python's
+// resolve_part_slots walks that ship): read on another ship it would index
+// the wrong pose table. Python resolves the part on `ship`'s leaf, so that
+// is Python's -- part_stale. The hull climbs to no ship and is taken as its
+// own ship's (only the ship that holds it passes it explicitly).
+void check_slot_owner(const Mirror& m, const SubsystemRow& s, int64_t ship) {
+    const int64_t owner = climb_to_ship(m, s);
+    if (owner != -1 && owner != ship) fall_back("part_stale");
+}
+
+// subsystems._subsystem_world_position (subsystems.py:62; MAP P3).
 Vec3 mount_position(const Mirror& m, int64_t sub_h, int64_t ship_arg) {
     const SubsystemRow& s = sub(m, sub_h);
     int64_t ship = ship_arg == -1 ? -1 : (obj(m, ship_arg), ship_arg);
@@ -81,11 +92,16 @@ Vec3 mount_position(const Mirror& m, int64_t sub_h, int64_t ship_arg) {
     if (ship == -1) return {0.0, 0.0, 0.0};
     const ObjectRow& o = obj(m, ship);
     const auto& t = xform(m, o);
-    // part_transform_point is the identity for an unrigged hull and for
-    // every part at its NIF pose; a part off it is the Python's
-    // (articulation.py:714).
-    if (o.has_posed_parts) fall_back("ship has posed parts");
-    const Vec3 offset = mult_matrix_left(t.rot, s._position);
+    // part_transform_point (articulation.py:724) BEFORE the rotation: the
+    // pushed slot names the part, the point itself when there is none or it
+    // is at identity / detached. No slot is read while the ship is unposed.
+    Vec3 local = s._position;
+    if (o.has_posed_parts) {
+        if (ship_arg != -1) check_slot_owner(m, s, ship);
+        if (posed_local(m, o, s, &local) == SlotState::stale)
+            fall_back("part_stale");
+    }
+    const Vec3 offset = mult_matrix_left(t.rot, local);
     return {t.pos[0] + offset[0], t.pos[1] + offset[1], t.pos[2] + offset[2]};
 }
 
@@ -214,13 +230,35 @@ Vec3 _emitter_forward_world(const Mirror& m, int64_t emitter, int64_t ship) {
 
 // ── subsystems.py:94 target_offset_world (K1M F11) ──────────────────────────
 
-Vec3 target_offset_world(const Mirror& m, int64_t target, const Vec3& offset) {
+Vec3 target_offset_world(const Mirror& m, int64_t target, const Vec3& offset,
+                         int64_t mount_sub) {
     const ObjectRow& t = obj(m, target);
     const auto& tr = xform(m, t);
-    // part_transform_point and authored_mount_subsystem only matter on a rig.
-    if (t.has_posed_parts) fall_back("target has posed parts");
+    // part_transform_point(target, point, authored=mount_sub is not None,
+    // prop=property_of(mount_sub)) BEFORE the scale (MAP P4). Unposed: the
+    // point itself whatever the mount, and no slot is read.
+    Vec3 p = offset;
+    if (t.has_posed_parts) {
+        // authored=False is the box rule (part_for_point): Python's.
+        if (mount_sub == kNoMount) fall_back("posed target, no authored mount");
+        if (mount_sub == kRefUnrepresentable)
+            fall_back("mount subsystem is unnamed");
+        const SubsystemRow& ms = sub(m, mount_sub);
+        // Python resolves the part from `point`; the slot was resolved from
+        // the mount's own `_position`. C `==` per axis: a NaN never matches.
+        const Vec3& k = ms._position;
+        if (!(offset[0] == k[0]) || !(offset[1] == k[1]) || !(offset[2] == k[2]))
+            fall_back("offset is not its mount's own point");
+        check_slot_owner(m, ms, target);
+        const PartPose* pose = nullptr;
+        const SlotState st = slot_pose(m, t, ms, &pose);
+        if (st == SlotState::stale) fall_back("part_stale");
+        // The pose carries the OFFSET (Python's `point`), not `_position`:
+        // -0.0 == 0.0 matched above.
+        if (st == SlotState::ok) p = apply_part_pose(*pose, offset);
+    }
     const double scale = t._scale;
-    const Vec3 o0{offset[0] * scale, offset[1] * scale, offset[2] * scale};
+    const Vec3 o0{p[0] * scale, p[1] * scale, p[2] * scale};
     const Vec3 o = mult_matrix_left(tr.rot, o0);
     return {tr.pos[0] + o[0], tr.pos[1] + o[1], tr.pos[2] + o[2]};
 }
@@ -236,7 +274,10 @@ std::optional<Vec3> _resolve_torpedo_aim_point(const Mirror& m, int64_t tube,
     if (t._dead) return std::nullopt;
     const SubsystemRow& tb = sub(m, tube);
     if (!tb.target_offset_set) return world_location(m, t);
-    return target_offset_world(m, target, tb._target_offset);
+    // Python resolves the mount (`_RESOLVE`); the native lookup is
+    // posed-parts Task 3's, so a posed target is Python's until then.
+    if (t.has_posed_parts) fall_back("target has posed parts");
+    return target_offset_world(m, target, tb._target_offset, kNoMount);
 }
 
 // ── weapon_subsystems.py:3033 _in_torpedo_cone (K1M F12) ────────────────────

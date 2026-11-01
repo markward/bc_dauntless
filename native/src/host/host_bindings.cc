@@ -10128,11 +10128,25 @@ PYBIND11_MODULE(_dauntless_host, m) {
               },
               py::arg("emitter"), py::arg("ship"));
         m.def("combat_test_target_offset_world",
-              [vec](std::int64_t target, const std::array<double, 3>& offset) {
-                  return vec(cb::target_offset_world(cb::mirror(), target,
-                                                     offset));
+              [vec](std::int64_t target, const std::array<double, 3>& offset,
+                    std::optional<std::int64_t> mount) {
+                  return vec(cb::target_offset_world(
+                      cb::mirror(), target, offset,
+                      mount ? *mount : cb::kNoMount));
               },
-              py::arg("target"), py::arg("offset"));
+              py::arg("target"), py::arg("offset"),
+              py::arg("mount") = py::none(),
+              "subsystems.target_offset_world with an explicit mount_sub "
+              "(None = authored=False).");
+        m.def("combat_test_mount_position",
+              [vec](std::int64_t sub, std::int64_t ship) {
+                  return vec(cb::subsystem_world_position(cb::mirror(), sub,
+                                                          ship, false));
+              },
+              py::arg("sub"), py::arg("ship"),
+              "subsystems._subsystem_world_position, unmemoised (ship -1 = "
+              "None). ValueError 'part_stale' when a posed ship's part slot "
+              "is not current.");
         m.def("combat_test_resolve_torpedo_aim_point",
               [opt_vec](std::int64_t tube, std::int64_t target) {
                   return opt_vec(cb::_resolve_torpedo_aim_point(cb::mirror(),

@@ -1,0 +1,47 @@
+#pragma once
+
+#include <cstdint>
+
+#include "dauntless/combat/mirror.h"
+
+// The posed-parts arithmetic of the native combat geometry (spec
+// docs/superpowers/specs/2026-11-01-native-combat-posed-parts-design.md §4.4,
+// map docs/reference/engine/native-combat/posed-parts-map.md §4 P1-P2).
+//
+// WHICH part a mount sits on is never decided here: Python resolves it and
+// pushes the subsystem's part slot (an index into its ship's pose table,
+// stamped with the part-map generation). This header only reads that slot
+// and does the pose arithmetic Python's part_pose.apply does.
+
+namespace dauntless::combat {
+
+// Python None for a target offset's mount subsystem: target_offset_world's
+// `authored=False` (a Manual Aim pick, an offset no mount claims).
+constexpr int64_t kNoMount = -1;
+
+// P1/P2: part_pose.apply (PP:72-75) on the row-major pose, unless the entry
+// is `identity` or `detached` -- then `x` itself, unchanged (a branch, never
+// a multiply: a multiply by an identity flips -0.0 and adds a sub-1e-9 t).
+Vec3 apply_part_pose(const PartPose& pose, const Vec3& x);
+
+// What a subsystem's pushed part slot says, read only when its ship's
+// has_posed_parts is 1:
+//   none  -- no pose to apply: the ship is unposed, the slot is -1, or the
+//            part is at identity or detached (Python returns the point);
+//   ok    -- the part's pose applies;
+//   stale -- the slot is not current (part_gen behind the Mirror's) or
+//            indexes past the pose table: Python must answer.
+enum class SlotState { none, ok, stale };
+
+// The pose a subsystem's slot names on `ship` (the ship the slot was
+// resolved against). `*pose` is set only for ok.
+SlotState slot_pose(const Mirror& m, const ObjectRow& ship,
+                    const SubsystemRow& sub, const PartPose** pose);
+
+// The subsystem's own mount `_position` carried by its part (P1/P2), in the
+// ship's body frame, unscaled. `*out` is set for none (the `_position`
+// itself) and ok (the posed point); untouched for stale.
+SlotState posed_local(const Mirror& m, const ObjectRow& ship,
+                      const SubsystemRow& sub, Vec3* out);
+
+}  // namespace dauntless::combat
