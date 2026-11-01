@@ -86,7 +86,7 @@ SIG-163 (4): a 9-ship, 600-tick host differential gave 80 ship fallbacks, all `p
 
 | Computation | Python | Posed input | Native | Fallback |
 |---|---|---|---|---|
-| Steer point (offset shot) | `_steer_point` PR:1065-1100: the `_mount_key` cache (PR:1094-1099, `authored_mount_subsystem` once per (target, offset)) → `target_offset_world(target, offset, key[4])` → `_shifted(..., off)` | **target** | PG:192-207 `steer_point_native` | PG:310: `if (mount_sub == kRefUnrepresentable \|\| tr.has_posed_parts) return ask;` → ASK `steer_point` (K3C:298-308); Python answers with `_steer_point`, and `_mount_key` is pushed into the row |
+| Steer point (offset shot) | `_steer_point` PR:1065-1100: the `_mount_key` cache (PR:1094-1099, `authored_mount_subsystem` once per (target, offset)) → `target_offset_world(target, offset, key[4])` → `_shifted(..., off)` | **target** | PG:192-207 `steer_point_native` | PG:310: `if (mount_sub == kRefUnrepresentable \|\| tr.has_posed_parts) return ask;` → ASK `steer_point` (K3C:298-308); Python answers with `_steer_point`, and `_mount_key` is pushed into the row. *Since posed parts, posed targets steer natively; since round trips (2026-11-01) an unattributed shot is attributed natively too (`authored_mount_subsystem`, `_mount_key` written at DONE), and the ASK stays only for `kMountUnknown` or a non-ShipClass target.* |
 | Steer point (no offset) | PR:1091-1093: target centre | — | PG:196-198 | — |
 | Narrow phase / hit point | `sphere_hit`, bubble, `_resolve_hit_point` (renderer trace, as K2) | renderer drawn pose only | as Python | — |
 

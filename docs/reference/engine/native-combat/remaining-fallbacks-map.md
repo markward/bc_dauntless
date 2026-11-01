@@ -1,3 +1,5 @@
+> **§3.1-3.6 implemented 2026-11-01** on branch `ws/combat-round-trips` (tip `3b113928d`, final fixes `b0652db1a`). Outcome, measurements and rulings: `docs/superpowers/specs/2026-11-01-native-combat-round-trips-design.md` §10. Rows marked **Done (round trips)** were updated then; everything else is the pre-build snapshot.
+
 > Snapshot map written 2026-11-01 on branch `ws/combat-posed-parts` (HEAD `10b78fec1`, with Task 7's picked-spot torpedo work **uncommitted in the same tree**: `engine/appc/projectiles.py`, `native_combat.py`, `subsystems.py`, `projectile_geometry.*`, `torpedo_table.*`, `k3_projectiles.*`, `host_bindings.cc` were being edited while this was written). Line numbers are of that working tree; re-check one before relying on it. Input to roadmap workstreams **C** (close the routine fallbacks), **E** (retire the Python copies), **G** (event queue) and **I** (kernels off the lock) of `docs/superpowers/specs/2026-11-01-threaded-weapons-combat-roadmap.md`. Model documents: `k1-fire-control-map.md`, `k2-beams-map.md`, `k3-k4-map.md`, `posed-parts-map.md`. Anything not read directly off the code or measured is marked **inferred**.
 
 # Remaining fallbacks, ASKs and per-record hand-backs — code map
@@ -17,6 +19,8 @@ What still hands work to Python every tick is **not a fallback**. It is the reco
 | K2 `SYSTEM_STOP`, offline system | 1.3 (0 → ~4 as ships die) | not timed | `WeaponSystem.StopFiring` re-run every tick |
 
 The first three are 98-100% of their record kind (§2.3) and are pure data or presentation, so they can become write-log entries or a list returned with `DONE`. Doing that removes most of fire control's remaining Python and is also the precondition for workstream I. §3 ranks them.
+
+**Done (round trips, 2026-11-01): none of the five rows above, nor K3's `unattributed`, comes back as a record of its own any more.** Walk starts are native, beam sustains and idle bank stops are logged writes, resting contacts ride the next record in a queue (their Python presentation still runs), and offline system stops are logged writes. Records fell 84-87% in the K1 differential and 85% in the K2 host differential. Measured, 64 ships, Debug: fire control 1.335 → 1.000 ms per tick (−25%), phasers flat (0.749 → 0.737), combat step 2.483 → 2.111 (−15%). That is ~0.37 ms per tick saved, against the ~1 ms inferred here (round-trips spec §10, SIG-166).
 
 The SDK-contract records (sound, `ET_*` events, projectile spawn, damage) come to about **1.1 per tick** in this fight (§4).
 
@@ -87,13 +91,13 @@ Classes: **(a) ROUTINE** fires in normal play. **(b) SCAFFOLDING** patch, overri
 
 | Record | Emitted at | Python | Class | Measured per tick |
 |---|---|---|---|---|
-| `WALK_START` | K1C:816 | `walk_start` patch scan NC:2597-2619, `walked._live_held_offset()` WS:1551-1564, `combat_k1_set_offset` (NC:2828-2844) | (a) ROUTINE (§3.1); the patch scan inside it is (b) | **73.0** |
-| `FIRE`, beam, `was_firing` True | K1C:1055-1059 | `bank._fire_effect` NC:2824-2827 → WS:888-903: `_firing = True; _target = target; _target_offset = offset`, nothing else | (a) ROUTINE (§3.2) | **18.3** |
+| `WALK_START` | K1C:816 | `walk_start` patch scan NC:2597-2619, `walked._live_held_offset()` WS:1551-1564, `combat_k1_set_offset` (NC:2828-2844) | (a) ROUTINE (§3.1); the patch scan inside it is (b). **Done (round trips):** no record. The kernel computes the offset; the driver fetches the object when Python first reaches the walk (`_K1Walk.materialise`). A WALK_START comes back only when the bindings' walk check hands the walk back (an instance patch, a non-stock ship class, an instance dict not yet built) | **73.0** → ~0 (`k1_logged.walk_start`) |
+| `FIRE`, beam, `was_firing` True | K1C:1055-1059 | `bank._fire_effect` NC:2824-2827 → WS:888-903: `_firing = True; _target = target; _target_offset = offset`, nothing else | (a) ROUTINE (§3.2). **Done (round trips):** three logged writes, no record (`k1_logged.beam_sustain`) | **18.3** → 0 |
 | `FIRE`, beam edge | same | WS:2672-2681: also `_play_fire_sfx` (WS:1002) and `ET_WEAPON_FIRED` (WS:699-715) | (c) | 0.12 |
 | `FIRE`, tube | same | WS:3411-3441: stamps, `_spawn_torpedo` (WS:3503, runs the projectile script), `ET_TORPEDO_FIRED`, `ET_WEAPON_FIRED`, player-only `ET_TORPEDO_AMMO_CONSUMED` | (c) | 0.05 |
 | `FIRE`, pulse | same | WS:2937-2956: `_spawn_projectile` (script), damage scale, charge drain, cooldown | (c) | 0.04 |
 | `FIRE_FAILED` | K1C:1063 | `_broadcast_weapon_fire_failed` WS:3451-3480 (`ET_WEAPON_FIRE_FAILED` = `ET_CANT_FIRE`) | (c) | 0.35 (all tubes) |
-| `BANK_STOP`, bank not firing | K1C:1024, 1031 | `StopFiring`: WS:905-911 (energy: `_firing`, `_beam_on_countdown`), WS:1191-1192 (tube), WS:2971-2975 (pulse) | (a) ROUTINE (§3.4) | **3.45** (100% idle) |
+| `BANK_STOP`, bank not firing | K1C:1024, 1031 | `StopFiring`: WS:905-911 (energy: `_firing`, `_beam_on_countdown`), WS:1191-1192 (tube), WS:2971-2975 (pulse) | (a) ROUTINE (§3.4). **Done (round trips):** the class's StopFiring writes, logged; a FIRING bank keeps the record (loop sound) (`k1_logged.idle_bank_stop`) | **3.45** (100% idle) → 0 |
 | `STOP_SYSTEM` | K1C:773 | `WeaponSystem.StopFiring` WS:1540-1549 | (a)/(c) | ~0 (4 in total) |
 | `FIRE_DUMB` | K1C:940, 948 | `FireDumb` (spawn) | (c) | 0 |
 | `DONE` | K1C:731, 990 | session end | — | 2.27 (1 pump + 1.27 StartFiring sessions) |
@@ -141,9 +145,9 @@ A bank that fails after its ship has a record becomes ASK `bank_step` (K2C:278-2
 
 | Record | Emitted at | Python | Class | Measured per tick |
 |---|---|---|---|---|
-| `CONTACT`, resting (`flush_dwell <= 0`) | K2C:402 | `_k2_contact` NC:3464-3483 → `_phaser_contact` HL:1211-1232 → `hit_feedback.beam_contact` HF:564-615: `host_io.shield_hit` or `_hull_impact_visual` HF:502-561 (`hit_vfx.spawn`). No damage, no event, no RNG read | (a) ROUTINE, presentation (§3.3) | **17.6** (97.6%) |
+| `CONTACT`, resting (`flush_dwell <= 0`) | K2C:402 | `_k2_contact` NC:3464-3483 → `_phaser_contact` HL:1211-1232 → `hit_feedback.beam_contact` HF:564-615: `host_io.shield_hit` or `_hull_impact_visual` HF:502-561 (`hit_vfx.spawn`). No damage, no event, no RNG read | (a) ROUTINE, presentation (§3.3). **Done (round trips, level i):** no record of its own; queued in walk order onto the next record that runs Python (or DONE) and run before that record's effect (`k2_batched_contacts`). Its Python presentation still runs, so `cb.phasers` did not drop | **17.6** (97.6%) → 0 records |
 | `CONTACT`, damage pulse | K2C:402 | HL:1233-1256 → `combat.apply_hit` (damage, `ET_WEAPON_HIT`, death cascade) | (c) / workstream D | 0.41 |
-| `SYSTEM_STOP` | K2C:450 | `WeaponSystem.StopFiring` WS:1540-1549, **every tick** for an offline or off system (comment K2C:441-442) | (a) ROUTINE (§3.5) | 1.30 on average: 0 until ~tick 5,000, ~4 by tick 9,000 (dead ships, **inferred**) |
+| `SYSTEM_STOP` | K2C:450 | `WeaponSystem.StopFiring` WS:1540-1549, **every tick** for an offline or off system (comment K2C:441-442) | (a) ROUTINE (§3.5). **Done (round trips):** when every bank is idle, the system's five writes and each bank's, logged, still every tick and still waking; a firing bank keeps the record (`k2_logged_system_stop`) | 1.30 on average: 0 until ~tick 5,000, ~4 by tick 9,000 (dead ships, **inferred**) → ~0 records |
 | `BANK_STOP` | K2C:516, 524, 538, 556, 562, 575, 646 | `bank.StopFiring()`. All 402 timed ones were **firing** banks, so they stop the loop sound | (c) | 0.08 |
 
 ### 1.3 K3 torpedoes
@@ -170,7 +174,7 @@ A bank that fails after its ship has a record becomes ASK `bank_step` (K2C:278-2
 
 | ASK / why | Raised at | Trigger | Class | Measured |
 |---|---|---|---|---|
-| `steer_point` / `unattributed` | PG:333-334 → K3C:310-313 | the torpedo's `_mount_key` is not attributed for this target and offset. Python's `_steer_point` (PR:1130-1136) scans `authored_mount_subsystem` (PS:506-518) **once per (torpedo, target, offset)** and writes `_mount_key` | (a) ROUTINE (§3.6) | **540** (0.06 per tick); Felix 19; 16-ship 6 |
+| `steer_point` / `unattributed` | PG:333-334 → K3C:310-313 | the torpedo's `_mount_key` is not attributed for this target and offset. Python's `_steer_point` (PR:1130-1136) scans `authored_mount_subsystem` (PS:506-518) **once per (torpedo, target, offset)** and writes `_mount_key` | (a) ROUTINE (§3.6). **Done (round trips):** attributed natively with `authored_mount_subsystem`; `_mount_key` written quietly at DONE (`k3_native_attributions`). `kMountUnknown` or a non-ShipClass target keeps the ASK | **540** (0.06 per tick); Felix 19; 16-ship 6 → 0 in every differential |
 | `steer_point` / `unbaked` | PG:354-358 | a picked spot whose `_baked_offset` is not for this target and offset (Task 7: Python bakes it) | (a) ROUTINE-RARE (re-targets) | 0 |
 | `steer_point` / `mount_unrepresentable` | PG:335-337 | `_mount_key` names a dropped Subsystem row | (d) | 0 |
 | `steer_point` / `mount_stale`, `offset_off_mount` | PG:345-348 | a posed target whose attributed mount row is gone, or whose offset is not the mount's own point | (d) | 0 |
@@ -292,7 +296,7 @@ Time inside the kernels' `next()`, per tick: K1 0.548 ms, K2 0.431, K3 0.035. En
 | 9 | K1 `self_managed` (held tractors) | 0 here | scene-dependent | the tractor model | out of K1 by design |
 | 10 | K3 `steer_point` `unbaked` (picked spot re-targeted) | 0 here | negligible | none for unposed targets | 3.6 |
 
-Items 1-5 do not port any decision logic: the decision is already native. They change what the kernel hands back. Each one turns a Python call that is pure field writes (or presentation) into write-log entries, or into a list returned with `DONE`. The write log already exists for exactly this (K1H:30-35 for K1; K2H's `_dwell` log; K3's DONE log), as does a quiet-setter path that keeps passive-state wakes (`_quiet_setter` NC:2636-2670: a `NativeWrapped` field runs its passive base `__set__`, so a `WakeField` write still wakes). Ruling P1 ("no decision outlives a Python effect") is not at risk, because no Python runs between a write being logged and its record being applied.
+**Items 1-5 and 7 are done (round trips, 2026-11-01; per-section results below).** Items 1-5 do not port any decision logic: the decision is already native. They change what the kernel hands back. Each one turns a Python call that is pure field writes (or presentation) into write-log entries, or into a list returned with `DONE`. The write log already exists for exactly this (K1H:30-35 for K1; K2H's `_dwell` log; K3's DONE log), as does a quiet-setter path that keeps passive-state wakes (`_quiet_setter` NC:2636-2670: a `NativeWrapped` field runs its passive base `__set__`, so a `WakeField` write still wakes). Ruling P1 ("no decision outlives a Python effect") is not at risk, because no Python runs between a write being logged and its record being applied.
 
 ### 3.1 K1 `WALK_START` → native offset, lazy object
 
@@ -308,6 +312,8 @@ Items 1-5 do not port any decision logic: the decision is already native. They c
 
 Expected effect: 73 round trips per tick become ~2 (the walks that produce an effect), saving most of 0.54 ms per tick (**inferred** 0.35-0.45 ms, since the list writes remain). It is also the largest mid-step Python question left in K1 (workstream I).
 
+**Done (round trips Task 1, `ac8c1df7e`).** As designed, with two changes. The patch scan (point 2) did NOT move to the first record: it stays at the walk start, made in C by the bindings' walk check (ruling F5), so a patched method is never decided natively; the check also covers the ship side (`is_using_target_offset`, `GetTargetOffsetTG` on the instance or a non-stock class). The object fetch happens at the walk's first record OR at the first logged write naming the walk's offset, whichever is first (ruling D5). No `__getattr__` stub sits on the path (tested). Measured with §3.2 and §3.4: fire control 1.335 → 1.000 ms per tick (SIG-166), less than this section's estimate plus §3.2's. ⚠️ The walk check makes CPython lookups inside `next()` (no bytecode, no GC-tracked allocation), so it is now the thing that keeps K1 on the lock (workstream I).
+
 ### 3.2 K1 `FIRE` for a beam already firing → three logged writes
 
 **Python today:** `bank._fire_effect(target, walk.offset, decision)` (NC:2824-2827) → `PhaserBank._fire_effect` WS:2672-2681 → mixin WS:888-903. With `decision[0]` (was_firing) True, the only effect is `self._firing = True; self._target = target; self._target_offset = offset`, then `return True` (the `_weapon_did_fire` bookkeeping is the kernel's, K1C:1070-1072). There is no sound, no `ET_WEAPON_FIRED` (WS:2679-2680 posts only `if not decision[0]`) and no countdown.
@@ -315,6 +321,8 @@ Expected effect: 73 round trips per tick become ~2 (the walks that produce an ef
 **Native data:** `_firing` (a NativeWakeField, WS:742), `_target` (ref), `_target_offset` (OFFSET); all mirrored, and the kernel already logs `_target`/`_target_offset` writes for pulse cannons (`write_target`, `write_target_offset`, K1C:674-675) and supports the `walk_offset` marker. **No new fields.** `_fire_effect` is already in `_K1_LEAF_METHODS` (NC:1028), so an override still sends the system to Python while the copies exist.
 
 **Design:** in `TF_FIRE` (K1C:1039-1069), when the decision is Beam with `was_firing` true, log the three writes in Python's order (`_firing`, `_target`, `_target_offset = walk_offset`) and go straight to `TF_FIRED`; emit no record. `apply_writes`' quiet setter runs the WakeField base for `_firing`, so a sleeping bank still wakes exactly as `self._firing = True` would. (A firing bank is never asleep, **inferred** from the passive-weapons rule.) The edge case (`was_firing` False) stays a FIRE record (§4). Saves ~0.25 ms per tick (**inferred** from 14.8 µs × 18.3 less the logged-write cost).
+
+**Done (round trips Task 2, `ee4447310`).** As designed; the `_target_offset` write is the walk-offset marker, resolved to the walk's own object (ruling D5). Measured jointly with §3.1 and §3.4 (fire control −25%, SIG-166).
 
 ### 3.3 K2 resting `CONTACT` → a contact list, then presentation natively
 
@@ -326,17 +334,23 @@ Expected effect: 73 round trips per tick become ~2 (the walks that produce an ef
 - (i) *No port:* the kernel collects resting contacts into a list delivered with `DONE`, and the driver runs `beam_contact` for each after the walk. That keeps Python cost and saves only the round trips and context re-sends (`cx.resend()` NC:3574), roughly a third (**inferred**). It does make K2's walk free of per-contact Python (workstream I).
 - (ii) *Port:* hand the list to a native presentation step: the shield flash (`host_io.shield_hit` arguments: iid, mesh-space anchor, intensity, `weapon_splash_radius`) and the hull flash/sparks (`spark_params`, the `world_to_body` the renderer already owns). New mirror data: the bank's `GetMaxDamage`/`GetMaxDamageDistance` (Property, **inferred** not yet mirrored for K2) and `weapon_splash_radius(bank, None)`'s inputs. Presentation, so "bit-exact" means the same VFX list, not game state.
 
+**Done, level (i) only (round trips Task 3, `30462f621`, fix `f51a4f8e0`).** Not at `DONE`: the queue rides the NEXT record that runs Python, and the driver runs the queued contacts before that record's effect, so a damage pulse's `apply_hit` still follows every earlier resting contact's VFX (ruling E5). Measured: `cb.phasers` 0.749 → 0.737 ms per tick, flat. The round trips went, but the presentation Python, which was most of the cost, stays. **Level (ii) is the next lever** here.
+
 ### 3.4 K1 `BANK_STOP` on a bank that is not firing → logged writes
 
 **Python today** (NC:2845-2846): `bank.StopFiring()`. Energy banks, WS:905-911: `was_firing = self._firing; self._firing = False; self._beam_on_countdown = 0.0`; the loop-sound stop runs only `if was_firing`. Tube, WS:1191-1192: `self._firing = False`. Pulse, WS:2971-2975: `_firing = False; _target = None; _target_offset = None`.
 
 **Native data:** `_firing`, `_beam_on_countdown` (MIRH:220, NativeField WS:750), `_target`, `_target_offset`; all mirrored. **Design:** when the bank row's `_firing` is 0 (all 10,798 in R3), log the class's writes in its order instead of emitting the record; a firing bank keeps the record (sound). The WakeField `_firing` write still wakes a sleeper through the quiet setter. This is exactly what Python does: per `passive_state.WakeField` (`engine/appc/passive_state.py:59-69`), "every write (even of an equal value) wakes a sleeping owner". `StopFiring` joins the K1 leaf override guard while the copies exist.
 
+**Done (round trips Task 2, `ee4447310`).** As designed.
+
 ### 3.5 K2 `SYSTEM_STOP` on an offline system → logged writes
 
 **Python today** (NC:3562-3563): `sys_.StopFiring()` = WS:1540-1549: `_fire_held = False; _held_target = None; _held_offset = None; _target_list = []; _last_group_fired = -1`, then `w.StopFiring()` for each `GetWeapon(i)`. K2 emits it every tick for a system that is offline or off (K2C:441-450). The growth from tick ~5,000 matches ships dying (**inferred**: a dead ship's systems read offline).
 
 **Design:** once every bank is idle, the same as §3.4: the five system writes plus each bank's writes, logged in order (the K2 write log carries only `_dwell` today, K2H:311-315, so it needs the K1 value variant). Banks that are firing keep a record. All fields are mirrored. A further saving, skipping the stop when every value is already the target value, is **not** bit-exact: each write wakes, and `_target_list = []` replaces the list object.
+
+**Done (round trips Task 3, `30462f621`).** As designed; K2's write log now carries K1's value variant. Still emitted every tick, still waking. K1's own pump `STOP_SYSTEM` (K1C:773, ~0 here) is still a record: a candidate for the same treatment.
 
 ### 3.6 K3 `steer_point` `unattributed` → native attribution
 
@@ -345,6 +359,8 @@ Expected effect: 73 round trips per tick become ~2 (the walks that produce an ef
 **Native data:** the lookup is already native: `authored_mount_subsystem(m, target, offset)` (`part_pose.h:97-106`, used by K1 and K2 for posed targets). The mount order it needs is pushed for **every** ShipClass, posed or not (`push_mount_order` NC:1530-1543, from the `MountSlotField`/`NativeMountRefField` writes NC:708-730, NC:1897 and `ShipSubsystem.AddChildSubsystem` `subsystems.py:1175`). The torpedo row already holds `mount_attributed`/`mount_offset`/`mount_sub` (`set_torpedo_mount` MIRC:955-963). **No new push sites.**
 
 **Design:** in PG's attribution check (PG:330-334), call `authored_mount_subsystem`. `kMountUnknown` keeps the ASK, and so does a non-ShipClass target (its mount order is never pushed: `part_pose.h:101-104`). Otherwise write the row's mount natively and add a `_mount_key` entry to `K3TorpWrite`, which `_k3_apply` (NC:4161-4178) turns into the tuple `(target_obj, x, y, z, mount_obj or None)`, quietly. The `unbaked` follow-up for a mount-less offset (PG:354-358) is natively the offset itself on an **unposed** target (Task 7 spec §10: "an unposed target's bake is the offset itself"). On a posed target it is the box rule (§5.4). Cost is tiny (0.003 ms per tick), but it is the only K3 question left in normal play, so closing it makes K3 data-in/data-out for workstream I.
+
+**Done (round trips Task 4, `aad2afb12`).** As designed. Steer-point ASKs went to 0 in the K3 and posed differentials (73-178 per run before), each now counted in `k3_native_attributions`. Not separately measurable in the benchmark.
 
 ---
 
@@ -419,7 +435,7 @@ No drop happened in R1/R4/R5 (all these counters are 0), so this is a latent cli
 
 ## 6. Other things worth knowing
 
-- **The kernels themselves are now half of fire control** (K1 `next()` 0.548 ms of `k1_pump`'s 1.307 per tick, Debug). After §3.1-3.2 the kernel dominates, and a Release build matters for the next measurement. Every perf-register capture so far is Debug.
-- **`k1_system` (StartFiring) sessions are not cheap per call:** 94 µs average, 1.27 per tick, run from `gl.ai`, not `sim.combat`. Each repeats `_k1_recheck_overrides` and `resolve_stale_part_slots` over the parent and its target list (NC:2891-2908) and runs one walk with its own `WALK_START`. §3.1 removes part of it. The rest belongs with workstream J (AI ↔ combat).
+- **The kernels themselves are now half of fire control** (K1 `next()` 0.548 ms of `k1_pump`'s 1.307 per tick, Debug). After §3.1-3.2 the kernel dominates, and a Release build matters for the next measurement. Every perf-register capture so far is Debug. *Round trips (2026-11-01): §3.1-3.2 shipped and fire control measured 1.000 ms per tick (SIG-166); the kernel/Python split after it was not measured.*
+- **`k1_system` (StartFiring) sessions are not cheap per call:** 94 µs average, 1.27 per tick, run from `gl.ai`, not `sim.combat`. Each repeats `_k1_recheck_overrides` and `resolve_stale_part_slots` over the parent and its target list (NC:2891-2908) and runs one walk with its own `WALK_START`. §3.1 removes part of it (done: the walk starts natively; the re-check and slot sweep remain). The rest belongs with workstream J (AI ↔ combat).
 - **Felix (R4) had no kill in 120 s** with the Destroy order given. Its per-tick rates (6.3 walks, 0.55 FIRE, 0.5 CONTACT) are an order of magnitude below R1; its fallbacks are 0 as well.
 - **Not exercised by any run here:** Manual Aim (headless), tractors, cloaking, nebulae, multi-set fights, mission scripts with weapon-event handlers. Zeros for the reasons those reach (`self_managed`, `no_mount`, `aim_point`, `can_detect`, `resolve_hit`) come from these scenes only. Their counts in the posed differentials are cited where known.

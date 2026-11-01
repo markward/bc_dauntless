@@ -1,6 +1,6 @@
 # Native combat: cut the per-record Python round trips — design
 
-**Status:** draft for Mark, 2026-11-01. Workstream C (second half) of `2026-11-01-threaded-weapons-combat-roadmap.md`, re-scoped by measurement.
+**Status:** implemented 2026-11-01, outcome in §10; not live-verified. Workstream C (second half) of `2026-11-01-threaded-weapons-combat-roadmap.md`, re-scoped by measurement.
 **Branch:** `ws/combat-round-trips`, off `project/combat_threading` (after `ws/combat-posed-parts` merges back); merges back into it (no main gate — focused tests, differentials, and two benchmark runs).
 **Input map:** `docs/reference/engine/native-combat/remaining-fallbacks-map.md` (MAP §n).
 
@@ -90,4 +90,52 @@ Add per-kind counters of records NOT emitted (`k1_logged.walk_start`, `.beam_sus
 
 ## 10. Outcome
 
-(Filled at the end.)
+Implemented 2026-11-01 on branch `ws/combat-round-trips` (off `project/combat_threading` after the posed-parts merge, `dad06ae9b`; merges back there). Commits: Task 1 `ac8c1df7e`, Task 2 `ee4447310`, Task 3 `30462f621` + fix `f51a4f8e0`, Task 4 `aad2afb12`, Task 5 `3b113928d`, final review fixes `b0652db1a`. Everything is behind `DAUNTLESS_NATIVE_COMBAT=1`, default OFF; switch off is unchanged. **Live verification: NOT yet.** Mark to test a big fight with the switch on.
+
+### What shipped
+
+- **Task 1, K1 `WALK_START` (§4.1).** The kernel computes the walk's offset value from the mirror. No record: the walk's first record carries a tag (walk number, system), and the driver fetches the offset OBJECT (`_live_held_offset()`) and pins the walk only when Python first reaches the walk (`_K1Walk.materialise`). A walk that hands back nothing runs no Python. The pruned `_target_list` write stays on every walk (identity).
+- **Task 2, K1 beam sustain and idle stops (§4.2-4.3).** A Fire on a beam already firing and a StopFiring on a bank not firing are logged writes, in Python's order. The beam edge (sound, `ET_WEAPON_FIRED`) and a firing bank's stop (loop sound) stay records. `_firing` still wakes a sleeping bank through the quiet setter.
+- **Task 3, K2 resting contacts and offline stops (§4.4-4.5).** Resting contacts are queued in walk order and delivered with the next record that runs Python (or DONE), before that record's own effect; every K2 record now ends `(..., queued, writes)`. An offline phaser system whose banks are all idle is stopped with logged writes (the system's five fields, a NEW `[]` every tick, then each bank's), still every tick, still waking. A raise inside a queued contact's presentation applies the record's outstanding writes before re-raising (fix `f51a4f8e0`).
+- **Task 4, K3 steer attribution (§4.6).** `unattributed` is answered natively with `authored_mount_subsystem`; the `_mount_key` tuple is written quietly at DONE. `kMountUnknown` and non-ShipClass targets keep the ASK.
+- **Task 5.** Every differential asserts the new counters, compares presentation calls (beam contacts, hit VFX, shield hits) in order per tick, and compares `_target_list` identity, asleep state and `_beam_on_countdown`. No porting bug found.
+- **Final review fixes (`b0652db1a`).** The K1 walk check never builds an instance dict (a not-yet-materialised dict hands the walk back to Python); `apply_writes` applies the rest of a log when one write raises; the K1 protocol-invariant message no longer names a possibly wrong system; plus doc and test additions (a damage pulse's handler starting another ship's K1 session mid-step).
+
+### Rulings worth keeping
+
+- **D5:** the walk offset object is fetched at the FIRST point any Python touches the walk: its first record, or the application of a logged write that names the walk's offset, whichever comes first. Same Python, same order, nothing in between.
+- **E5:** batched resting contacts are delivered before the next Python-running record's effect, or at DONE.
+- **F5:** the instance-patch check stays at the walk START, made in C in the bindings (not lazily in Python), so a patched method is never decided natively. A WALK_START record is now emitted only for a walk the check hands back. Cost: the check makes CPython lookups inside `next()` (see Workstream I below).
+
+### Record counts (Task reports; "before" derived as after + the new counters)
+
+- K1 differential (`test_k1_matches_python_in_a_fight`): records **11,934 → 1,964** at tpf 1 (−84%) and **11,635 → 1,500** at tpf 6 (−87%).
+- K2 host differential, 600 ticks: records **5,633 → 847** at tpf 1 (−85%); 600 of those are the per-step DONE.
+- K3 `steer_point` ASKs: 73-178 per run → **0** in the K3 and posed differentials (all attributed natively).
+
+### Measured (perf register C-250..C-253, SIG-166; spread and costs SIG-167)
+
+64-ship `combat_stress` fight, switch on, headless, **Debug**, average of two runs on an idle machine, milliseconds per game tick (posed-parts tip → this branch):
+
+| Row | Before | After | Change |
+|---|---|---|---|
+| fire control (`cb.held_weapons`) | 1.335 | 1.000 | **−25%** (runs 1.365/1.305 → 1.004/0.995: no overlap) |
+| phasers (`cb.phasers`) | 0.749 | 0.737 | flat, within spread |
+| torpedoes (`cb.projectiles`) | 0.133 | 0.146 | up with the projectile count (median in flight 20/41 → 43/36) |
+| **combat step** (`sim.combat`) | **2.483** | **2.111** | **−15%** |
+| whole sim (`sim`) | 10.163 | 9.799 | −3.6%, inside run-to-run spread |
+
+So about **0.37 ms per tick** was saved, against the ~1 ms inferred in §1. Why it is less:
+- **Phasers did not drop.** Level (i) removed only the round trips: every resting contact still runs its Python presentation (`beam_contact` → shield hit or hit VFX), and that, not the round trip, was most of its ~0.25 ms.
+- **Fire control saved 0.335 ms**, less than the map's 0.54 ms for walk starts plus ~0.26 for beam sustain (inferred). The per-walk `_target_list` write (a new list every walk) still goes through `apply_writes`, the walk check runs at every walk start, and the §1 per-record costs were Debug figures taken with instrumentation on (**inferred**: not separately measured).
+- An earlier baseline pair taken with a busy machine read `sim.combat` 2.22/2.30, so run-to-run spread is ~10%. The fire-control drop is well outside it; the combat-step drop is only just outside it; the whole-sim change is inside it.
+
+### Workstream I: what is left before a kernel can drop the lock
+
+- **The K1 walk check is the blocker.** It probes instance dicts, MRO entries and the registry's weak references inside `next()`, with the GIL held (no Python bytecode, no GC-tracked allocation). It is scaffolding (it guards patched methods), so it goes with the Python copies (workstream E), or moves to the step boundary.
+- **Next levers:** K2 resting-contact presentation natively (level ii, §4.4's non-goal: the bank's max damage and distance and the splash-radius inputs must be mirrored; "bit-exact" = the same VFX list), and K1's pump `STOP_SYSTEM` as logged writes, like K2's offline stop.
+- Unchanged: every SDK-contract record (beam edges, tube and pulse fires, FIRE_FAILED, firing-bank stops, damage pulses) is still a record (workstreams G and D).
+
+### Tests
+
+Task 5: 11 focused files 263 passed in both orders, `ctest -R combat_` 238/238, all mutants caught (write order only by the dispatch tests and gtests: the differentials compare once per tick). Final review fixes: the seven focused files 258 passed, ctest 238/238; the no-allocation guard and the `apply_writes` rest path each mutation-checked.

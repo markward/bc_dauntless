@@ -285,7 +285,7 @@ _post_set_transition(torpedo, entered=False)   # PR:524: TGEvent ET_TORPEDO_EXIT
 | `_ttl` | TTL | float | PR:89 init 60.0, `SetLifetime` PR:218 (SDK `mod.Create`, before `register`) | **NEW** (push on write) |
 | `_target_ship` | guide gate, `_guide` | ref Object or None | PR:92 init; WS:647/650 spawn (before `register`) | **NEW** ref |
 | `_target_offset` | `_steer_point` | TGPoint3 copy or None | PR:99 init; `SetTargetOffset` PR:205 (WS:648, before `register`) | **NEW** vec3 + set flag |
-| `_mount_key` | `_steer_point` | tuple (target, x, y, z, Subsystem or None) | PR:102 init; PR:1054 (first visible steer) | **NEW** or ASK (§A8.3 risk 3) |
+| `_mount_key` | `_steer_point` | tuple (target, x, y, z, Subsystem or None) | PR:102 init; PR:1054 (first visible steer) | **NEW** or ASK (§A8.3 risk 3). *Round trips (2026-11-01): attributed natively (`authored_mount_subsystem`) and written quietly at DONE, unless `kMountUnknown` or a non-ShipClass target (still the ASK `unattributed`).* |
 | `_guidance_lifetime`, `_guidance_initial` | gate, G7 | float | PR:103/104 init 4.0; `SetGuidanceLifetime` PR:215 (both) | **NEW** |
 | `_max_angular_accel` | G7 | float | PR:105 init 0.125; `SetMaxAngularAccel` PR:219 | **NEW** |
 | `_last_seen_target_pos` | `_guide` invisible branch | TGPoint3 or None | PR:106 init; PR:1087 | **NEW** kernel-owned (vec3 + set flag) |
