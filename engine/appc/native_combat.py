@@ -55,6 +55,13 @@ _failures: list = []
 # and the ones that fell back to the Python on its ValueError. Counted only on
 # the native path, so the switch-off path pays nothing.
 _counts = {"native_calls": 0, "fallbacks": 0}
+# K2: `cb.phasers` steps run whole in Python (k2_phasers returned False), by
+# why: "nested" (a K2 session is already open), "instances" (the step's
+# ship_instances is not the session's TrackedInstances), "patched" (a
+# function or class K2 stands in for differs from its snapshot).
+_k2_steps = {"k2_python_steps": 0}
+_K2_STEP_REASONS = ("nested", "instances", "patched")
+_k2_step_reasons = dict.fromkeys(_K2_STEP_REASONS, 0)
 # handle -> object, for resync and the audit. Weak: the row's lifetime is the
 # object's, and its finalizer unregisters the row.
 _registry: "weakref.WeakValueDictionary[int, object]" = weakref.WeakValueDictionary()
@@ -133,8 +140,17 @@ def reset() -> None:
     _pulse_stale = False
     _counts["native_calls"] = 0
     _counts["fallbacks"] = 0
+    _k2_steps["k2_python_steps"] = 0
+    for k in _K2_STEP_REASONS:
+        _k2_step_reasons[k] = 0
+    _k2_flags.clear()
+    _k2_watch_seen[0] = -1
+    _k2_iids_cache[:] = [None, -1, -1, None]
+    global _k2_drop_epoch
+    _k2_drop_epoch += 1
     if available():
         _h.combat_k1_reset_counts()
+        _h.combat_k2_reset_counts()
 
 
 def counts() -> dict:
@@ -145,10 +161,19 @@ def counts() -> dict:
     "k1_python_reasons": {"pump": {...}, "system": {...}} -- the
     k1_python_systems hand-backs by K1Why name (k1_fire_control.h:
     posed_ship, overridden, instance_patch, ...; every reason, zeros
-    included), for the held-weapon pump and StartFiring apart."""
+    included), for the held-weapon pump and StartFiring apart.
+
+    K2 (`cb.phasers`): the kernel's {"k2_records", "k2_python_ships",
+    "k2_asks", "k2_python_reasons": {K2Why name: n}, "k2_ask_queries":
+    {query: n}} (k2_beams.h), plus "k2_python_steps" (steps run whole in
+    Python) and "k2_python_step_reasons" ({"nested", "instances",
+    "patched"}: n)."""
     c = dict(_counts)
+    c.update(_k2_steps)
+    c["k2_python_step_reasons"] = dict(_k2_step_reasons)
     if available():
         c.update(_h.combat_k1_counts())
+        c.update(_h.combat_k2_counts())
     return c
 
 
@@ -235,6 +260,8 @@ def _drop(obj) -> None:
     h = obj.__dict__.get("_nslot")
     if h is None:
         return
+    global _k2_drop_epoch
+    _k2_drop_epoch += 1         # K2's cached ship -> iid table names handles
     if _enabled and (h >> _KIND_SHIFT) == _kind("Object"):
         _hand_latch_to_python(obj, h)
     del obj.__dict__["_nslot"]
@@ -793,6 +820,10 @@ def register(obj, kind: str, finalize: bool = True) -> None:
         h = _h.combat_register(_kind(kind))
     d["_nslot"] = h
     _registry[h] = obj
+    cls = type(obj)
+    if cls not in _k2_seen_set:
+        _k2_seen_set.add(cls)
+        _k2_seen.append(cls)
     if finalize:
         fin = weakref.finalize(obj, unregister_handle, h)
         fin.atexit = False
@@ -1123,6 +1154,10 @@ def _push_all(obj, h) -> None:
 
 def reclassify(ship) -> None:
     """`ship.__class__` changed (engine.rocks.rock): re-push its class flags."""
+    cls = type(ship)
+    if cls not in _k2_seen_set:
+        _k2_seen_set.add(cls)
+        _k2_seen.append(cls)
     if _enabled:
         h = ship.__dict__.get("_nslot")
         if h is not None:
@@ -1879,6 +1914,664 @@ def k1_system(system, dt) -> None:
     _h.combat_k1_begin_system(h, dt, t, use_memo, drift)
     run_k1(dt, system=system)
 
+
+# ── K2: the native beam kernel's driver (phase 2) ───────────────────────────
+#
+# native/src/combat/include/dauntless/combat/k2_beams.h is the contract. The
+# kernel walks host_loop's `cb.phasers` loop (host_loop._phaser_step_ship)
+# over the mirror and returns ONE record per combat_k2_next(); run_k2 applies
+# the record's write log (the `_dwell` writes the kernel already made in the
+# mirror), then does the one thing only Python may do: a StopFiring, a
+# contact's effect (host_loop._phaser_contact: beam_contact or apply_hit, the
+# damage arithmetic included), a whole ship or one bank of the loop body, or
+# the answer to a question. After each it re-sends the per-step context the
+# effect may have changed (_K2Context.resend).
+#
+# WHAT K2 STANDS IN FOR. The kernel computes, from the mirror, what these
+# Python functions and methods would answer. A test, tool or mod that
+# replaces one must still be obeyed, so the entry (k2_phasers) compares each
+# against its import-time snapshot (k2_snapshot_stock, taken when host_loop
+# finishes defining the loop) and runs the WHOLE step in Python on any
+# difference:
+#   module functions  _K2_FUNCTIONS (and host_io._h: the real bindings or
+#                     None; anything else is a test double the trace must
+#                     go through);
+#   stock classes     _K2_ROLES: every name of a role, resolved on its stock
+#                     class (a patch on PhaserBank, ShipClass, ... itself or
+#                     a base).
+# A CLASS WITH A ROW whose role name resolves to a method defined outside the
+# engine package (a mod's subclass, a test's patch), or to anything but what
+# it resolved to when K2 first saw the class (_k2_flag): a bank or phaser
+# system class overriding only its own names -> its ship runs in Python (ctx
+# python_ships, RUN_PYTHON "overridden"); anything else (a ship, a target, a
+# shield, a cloak, a locked subsystem) -> the whole step (it can be any
+# bank's target). The engine's own classes override one another freely
+# (DamageableObject adds IsDead): the kernel ports those. Flags are cached
+# per class and re-checked at every entry (the K1 watch, _k1_overridden).
+# An INSTANCE attribute shadowing a method the loop calls by name on the
+# walked ship, its phaser system or a bank (_K2_*_PATCHES) -> that ship runs
+# in Python. (One on a TARGET is not looked for: it would cost a dict probe
+# of every target, every tick.)
+
+_k2_kind_ids = None
+_k2_hl = None
+_k2_cheats = None
+
+#: (module, names) the kernel stands in for; host_loop's are the names its
+#: loop body calls (its own imports of the helpers included).
+_K2_FUNCTIONS = (
+    ("engine.host_io", ("ray_trace_mesh",)),
+    ("engine.appc.combat", ("_resolve_hit_point", "ray_sphere_entry",
+                            "shields_block", "shield_bubble_entry",
+                            "cloak_shields_suspended", "_hull_box_for",
+                            "_body_frame_delta")),
+    ("engine.appc.collisions", ("world_radius",)),
+    ("engine.host_loop", ("_phaser_aim_point", "_phaser_step_ship",
+                          "_phaser_step_bank", "can_detect", "_same_set",
+                          "_emitter_in_arc", "_resolve_bank_aim_world",
+                          "_is_offline")),
+    ("engine.systems.frames", ("view_offset", "shifted", "containing_set")),
+    ("engine.appc.subsystems", ("subsystem_world_position",
+                                "target_offset_world", "_is_offline")),
+    ("engine.appc.weapon_subsystems", ("_resolve_bank_aim_world",
+                                       "_emitter_in_arc", "_same_set")),
+    ("engine.appc.sensor_detection", ("can_detect",)),
+)
+
+_K2_SUBSYSTEM_NAMES = ("GetWorldLocation", "GetPosition", "_climb_to_ship")
+_K2_OBJECT_NAMES = ("IsDead", "GetWorldLocation", "GetWorldRotation",
+                    "GetContainingSet", "GetScale", "GetRadius", "GetShields")
+#: role -> (module, stock class name, the names it stands in for), in
+#: isinstance order (a bank is a WeaponSystem, not a PhaserSystem).
+_K2_ROLES = (
+    ("bank", "engine.appc.weapon_subsystems", "PhaserBank",
+     _K2_SUBSYSTEM_NAMES + (
+         "IsFiring", "IsBeamOn", "take_dwell", "accumulate_dwell",
+         "_strip_emit_position", "_emitter_world_position", "GetLength",
+         "GetDirection", "GetUp", "GetArcWidthAngles", "GetArcHeightAngles",
+         "IsDisabled", "IsDestroyed")),
+    ("system", "engine.appc.weapon_subsystems", "PhaserSystem",
+     _K2_SUBSYSTEM_NAMES + (
+         "GetNumWeapons", "GetWeapon", "GetNumChildSubsystems",
+         "GetChildSubsystem", "IsOn", "IsDisabled", "IsDestroyed")),
+    ("shield", "engine.appc.subsystems", "ShieldSubsystem",
+     _K2_SUBSYSTEM_NAMES + ("HasShields", "IsOn", "IsDisabled",
+                            "IsDestroyed")),
+    ("cloak", "engine.appc.subsystems", "CloakingSubsystem",
+     _K2_SUBSYSTEM_NAMES + ("IsCloaking", "IsDecloaking")),
+    ("subsystem", "engine.appc.subsystems", "ShipSubsystem",
+     _K2_SUBSYSTEM_NAMES),
+    ("ship", "engine.appc.ships", "ShipClass",
+     _K2_OBJECT_NAMES + ("GetPhaserSystem", "GetTargetSubsystem",
+                         "is_using_target_offset", "GetTargetOffsetTG",
+                         "GetCloakingSubsystem")),
+    ("object", "engine.appc.objects", "ObjectClass", _K2_OBJECT_NAMES),
+)
+_K2_NAMES = {role: names for role, _m, _c, names in _K2_ROLES}
+# The INSTANCE attributes looked for on the walked ship, its phaser system and
+# each bank: the methods the loop calls on them by name. A narrower set than
+# the class check's (a dict probe per bank per tick is the cost: ~90 ns).
+_K2_SHIP_PATCHES = frozenset((
+    "GetPhaserSystem", "GetTargetSubsystem", "is_using_target_offset",
+    "GetTargetOffsetTG", "GetShields", "IsDead", "GetWorldLocation",
+    "GetWorldRotation"))
+_K2_SYSTEM_PATCHES = frozenset((
+    "GetNumWeapons", "GetWeapon", "IsOn", "IsDisabled", "IsDestroyed"))
+_K2_BANK_PATCHES = frozenset((
+    "IsFiring", "IsBeamOn", "take_dwell", "accumulate_dwell",
+    "_strip_emit_position", "_emitter_world_position", "GetLength"))
+
+# The snapshot (k2_snapshot_stock): [(module, getter, values), ...] for the
+# functions; [(role, stock class, resolution), ...] for the classes; the
+# host_io._h it saw. None until taken: K2 never runs before it.
+_k2_fn_snapshot = None
+_k2_role_snapshot = None
+_k2_stock_by_role = {}
+_k2_host = None
+_k2_host_io = None
+_k2_stock_bank = None
+_k2_stock_system = None
+# class -> (overridden, whole, resolution): a class's flags (_k2_flag) and
+# its role's names as K2 first saw them resolve (re-checked at every entry).
+_k2_flags: dict = {}
+# Classes with a row, in first-registration order (register, reclassify),
+# and the ones with a role as _k2_unchanged re-checks them (rebuilt when
+# _k2_seen grows: _k2_watch_seen[0] is the length it was built at).
+_k2_seen: list = []
+_k2_seen_set: set = set()
+_k2_watch: list = []
+_k2_watch_seen = [-1]
+# [ship_instances, its version, _k2_drop_epoch, the iids table built on them]
+_k2_iids_cache = [None, -1, -1, None]
+_k2_drop_epoch = 0
+
+
+def _k2_resolution(cls, names) -> tuple:
+    """(getter of the names `cls` has, their values, the names it lacks):
+    what `_k2_same` compares later."""
+    present = [n for n in names if getattr(cls, n, None) is not None]
+    missing = tuple(n for n in names if getattr(cls, n, None) is None)
+    if not present:
+        return (lambda _c: (), (), missing)
+    getter = operator.attrgetter(*present)
+    values = getter(cls)
+    if len(present) == 1:
+        values = (values,)
+        one = getter
+        getter = lambda c, _g=one: (_g(c),)  # noqa: E731
+    return (getter, values, missing)
+
+
+def _k2_same(cls, res) -> bool:
+    getter, values, missing = res
+    try:
+        # A tuple compare: identity first, and a function equals only
+        # itself, so this is "every name resolves to the same object".
+        if getter(cls) != values:
+            return False
+    except AttributeError:          # a present name was deleted
+        return False
+    for n in missing:
+        if getattr(cls, n, None) is not None:
+            return False
+    return True
+
+
+def k2_snapshot_stock(host_loop_module) -> None:
+    """Called by host_loop once it has defined the `cb.phasers` loop body:
+    snapshot every function and stock-class method K2 stands in for, before
+    any test, tool or mod can replace one."""
+    global _k2_fn_snapshot, _k2_role_snapshot, _k2_host, _k2_host_io
+    global _k2_hl, _k2_cheats, _k2_stock_bank, _k2_stock_system
+    import importlib
+    snap = []
+    for module, names in _K2_FUNCTIONS:
+        mod = (host_loop_module if module == "engine.host_loop"
+               else importlib.import_module(module))
+        getter = operator.attrgetter(*names)
+        values = getter(mod)
+        if len(names) == 1:
+            values = (values,)
+        snap.append((mod, names, values))
+    _k2_fn_snapshot = snap
+    roles = []
+    _k2_stock_by_role.clear()
+    for role, module, clsname, names in _K2_ROLES:
+        cls = getattr(importlib.import_module(module), clsname)
+        _k2_stock_by_role[role] = (cls, _k2_resolution(cls, names))
+        roles.append((role, cls, _k2_stock_by_role[role][1]))
+    _k2_role_snapshot = roles
+    _k2_stock_bank = _k2_stock_by_role["bank"][0]
+    _k2_stock_system = _k2_stock_by_role["system"][0]
+    from engine import host_io
+    import engine.dev_combat_cheats as cheats
+    _k2_host_io, _k2_host = host_io, host_io._h
+    _k2_hl, _k2_cheats = host_loop_module, cheats
+    _k2_flags.clear()
+    _k2_watch_seen[0] = -1
+
+
+def _k2_role_of(cls):
+    for role, _m, _c, _n in _K2_ROLES:
+        if issubclass(cls, _k2_stock_by_role[role][0]):
+            return role
+    return None
+
+
+def _k2_foreign(value) -> bool:
+    """A resolved method that is not the engine's own: defined outside the
+    engine package (a test's patch, a tool's, a mod's subclass)."""
+    if value is None:
+        return False
+    module = getattr(value, "__module__", None)
+    return not (isinstance(module, str)
+                and (module == "engine" or module.startswith("engine.")))
+
+
+def _k2_flag(cls) -> tuple:
+    """(overridden, whole) for `cls`, a class with a row (or a walked bank's
+    or system's): does a name of its role resolve to a method from outside
+    the engine package, or to anything other than what it resolved to when
+    K2 first saw the class (a patch since)? And must that send the WHOLE
+    step to Python? A bank or phaser system class overriding only its own
+    names concerns only its ship (whole False); one overriding a subsystem
+    name (it can be a locked target), and any other class (a ship, a
+    target, a shield, a cloak, a locked subsystem), concerns every bank.
+
+    The engine's own classes override one another freely (DamageableObject
+    adds IsDead, WeaponSystem aggregates IsDisabled): the kernel ports
+    those, and its class flags (has_real_is_dead, ...) say which applies."""
+    hit = _k2_flags.get(cls)
+    if hit is None:
+        role = _k2_role_of(cls)
+        if role is None:
+            hit = _k2_flags[cls] = (False, False, None)
+        else:
+            names = _K2_NAMES[role]
+            foreign = [n for n in names
+                       if _k2_foreign(getattr(cls, n, None))]
+            over = bool(foreign)
+            if role in ("bank", "system"):
+                whole = any(n in _K2_SUBSYSTEM_NAMES for n in foreign)
+            else:
+                whole = over
+            hit = _k2_flags[cls] = (over, whole,
+                                    _k2_resolution(cls, names))
+    if hit[2] is not None and not _k2_same(cls, hit[2]):
+        return True, True               # patched since K2 first saw it
+    return hit[0], hit[1]
+
+
+def _k2_unchanged() -> bool:
+    """Every stood-in function and every stock class as snapshotted, no
+    class seen with a row flagged "whole" or patched since K2 first saw it
+    (_k2_flag), and host_io._h the bindings or None. The whole-step check:
+    one attrgetter per module and per class with a role."""
+    for mod, names, values in _k2_fn_snapshot:
+        try:
+            now = operator.attrgetter(*names)(mod)
+        except AttributeError:
+            return False
+        if len(names) == 1:
+            now = (now,)
+        if now != values:
+            return False
+    for _role, cls, res in _k2_role_snapshot:
+        if not _k2_same(cls, res):
+            return False
+    if len(_k2_seen) != _k2_watch_seen[0]:
+        _k2_rebuild_watch()
+    for cls, res, whole in _k2_watch:
+        if whole or not _k2_same(cls, res):
+            return False
+    h = _k2_host_io._h
+    return h is None or h is _k2_host
+
+
+def _k2_rebuild_watch() -> None:
+    """The seen classes with a role, with their first-sight resolution and
+    whole flag (a new class registered since the last entry)."""
+    watch = []
+    for cls in _k2_seen:
+        _k2_flag(cls)
+        _over, whole, res = _k2_flags[cls]
+        if res is not None:
+            watch.append((cls, res, whole))
+    _k2_watch[:] = watch
+    _k2_watch_seen[0] = len(_k2_seen)
+
+
+def _k2_kinds() -> tuple:
+    global _k2_kind_ids
+    if _k2_kind_ids is None:
+        k = _h.combat_k2_kinds()
+        _k2_kind_ids = tuple(k[n] for n in (
+            "DONE", "SYSTEM_STOP", "BANK_STOP", "CONTACT", "RUN_PYTHON",
+            "ASK"))
+    return _k2_kind_ids
+
+
+def _k2_python_ship(ship) -> int:
+    """0: K2 may walk `ship`'s phaser step; 1: its ship must run in Python
+    (an instance attribute shadowing a stood-in name on it, its phaser
+    system or a bank, or a bank or system class overriding one of its own
+    names); 2: the whole step must (a bank or system class overriding a
+    subsystem name). k2_phasers inlines the common case (stock classes, no
+    instance attribute) and calls this for the rest."""
+    d = ship.__dict__
+    if not d.keys().isdisjoint(_K2_SHIP_PATCHES):
+        return 1
+    sys_ = d.get("_phaser_system")
+    if sys_ is None:
+        return 0
+    why = 0
+    if type(sys_) is not _k2_stock_system:
+        over, whole = _k2_flag(type(sys_))
+        if whole:
+            return 2
+        if over:
+            why = 1
+    sd = getattr(sys_, "__dict__", None)
+    if sd is None:
+        return why
+    if not sd.keys().isdisjoint(_K2_SYSTEM_PATCHES):
+        why = 1
+    for b in sd.get("_children", ()):
+        if type(b) is not _k2_stock_bank:
+            over, whole = _k2_flag(type(b))
+            if whole:
+                return 2
+            if over:
+                why = 1
+        bd = getattr(b, "__dict__", None)
+        if bd is not None and not bd.keys().isdisjoint(_K2_BANK_PATCHES):
+            why = 1
+    return why
+
+
+def _k2_ship_handles(ships):
+    """(handles, python_ships, whole) for begin: each ship's Object handle
+    (-1: no row), the ships _k2_python_ship sends to Python, and whether one
+    sends the whole step. The common case -- a stock phaser system of stock
+    banks, no instance attribute -- is decided inline: this loop runs every
+    tick over every bank (~90 ns a bank)."""
+    handles = []
+    python_ships = []
+    obj_kind = _kind("Object")
+    stock_sys, stock_bank = _k2_stock_system, _k2_stock_bank
+    ship_patches, sys_patches, bank_patches = (
+        _K2_SHIP_PATCHES, _K2_SYSTEM_PATCHES, _K2_BANK_PATCHES)
+    for ship in ships:
+        d = getattr(ship, "__dict__", None)
+        h = d.get("_nslot") if d is not None else None
+        if h is None or (h >> _KIND_SHIFT) != obj_kind:
+            handles.append(REF_NONE)
+            continue
+        handles.append(h)
+        sys_ = d.get("_phaser_system")
+        clean = d.keys().isdisjoint(ship_patches)
+        if clean and sys_ is not None:
+            if type(sys_) is stock_sys:
+                sd = sys_.__dict__
+                clean = sd.keys().isdisjoint(sys_patches)
+                if clean:
+                    for b in sd.get("_children", ()):
+                        if type(b) is not stock_bank or \
+                                not b.__dict__.keys().isdisjoint(bank_patches):
+                            clean = False
+                            break
+            else:
+                clean = False
+        if not clean:
+            why = _k2_python_ship(ship)
+            if why == 2:
+                return handles, python_ships, True
+            if why == 1:
+                python_ships.append(h)
+    return handles, python_ships, False
+
+
+class _K2Walk(_K1Walk):
+    """run_k2's pin set (k2_beams.h, PINNING): every object a record or an
+    ASK names, plus, before a bank's StopFiring, the objects the Python
+    loop holds in its locals for that bank -- its target and its system --
+    so a handle the kernel still carries maps back even if the StopFiring's
+    side effects drop the last other reference."""
+
+    __slots__ = ()
+
+    def pin_bank(self, bank) -> None:
+        self.pin(bank)
+        d = bank.__dict__
+        for ref in (d.get("_target"), d.get("_parent_subsystem")):
+            if ref is not None:
+                self.pin(ref)
+
+
+def _k2_player_handle() -> int:
+    """combat.shields_block's player, as a handle (-1: None, or an object
+    with no Object row, which never equals a walked target's)."""
+    import App
+    try:
+        game = (App.Game_GetCurrentGame()
+                if hasattr(App, "Game_GetCurrentGame") else None)
+        player = (game.GetPlayer()
+                  if game is not None and hasattr(game, "GetPlayer")
+                  else None)
+    except Exception:
+        player = None
+    h = slot(player) if player is not None else None
+    return REF_NONE if h is None else h
+
+
+def _k2_iids(ship_instances) -> dict:
+    """{Object handle: iid} for a TrackedInstances, cached on (the map, its
+    version, the drop epoch): a key's handle changes only through _drop."""
+    c = _k2_iids_cache
+    if c[0] is ship_instances and c[1] == ship_instances.version \
+            and c[2] == _k2_drop_epoch:
+        return c[3]
+    table = {}
+    for ship, iid in ship_instances.items():
+        h = slot(ship)
+        if h is not None:
+            table[h] = iid
+    c[:] = [ship_instances, ship_instances.version, _k2_drop_epoch, table]
+    return table
+
+
+_UNSET = object()
+
+
+class _K2Context:
+    """The per-step context the kernel cannot read from the mirror
+    (k2_beams.h, K2Context): what was sent, so `resend` sends only what an
+    effect changed. Cheap when nothing did: an int compare, the cheat flag
+    (and the player only while it is on), and the viewing set only while
+    some ship has an instance (no instance: the kernel never asks for a
+    view offset)."""
+
+    __slots__ = ("instances", "version", "iids", "cheat", "player", "view",
+                 "asked_shields")
+
+    def __init__(self, ship_instances) -> None:
+        self.instances = ship_instances
+        self.version = -1
+        self.iids = None
+        self.cheat = None
+        self.player = None
+        self.view = _UNSET
+        self.asked_shields = False
+
+    def delta(self) -> dict:
+        d = {}
+        si = self.instances
+        if si is not None and si.version != self.version:
+            self.version = si.version
+            self.iids = _k2_iids(si)
+            d["iids"] = self.iids
+        cheat = bool(_k2_cheats.disable_npc_shields_active())
+        player = _k2_player_handle() if cheat else REF_NONE
+        if cheat != self.cheat or player != self.player:
+            self.cheat, self.player = cheat, player
+            d["npc_shields_off"] = cheat
+            d["player"] = player
+        if self.iids:
+            from engine.systems import frames
+            view = frames.viewing_set()
+            if view is not self.view:
+                self.view = view
+                h = _slot_of(view) if view is not None else None
+                d["view_offsets"] = (
+                    {} if h is None or (h >> _KIND_SHIFT) != _kind("Set")
+                    else {h: frames.view_offset(view)})
+        return d
+
+    def resend(self) -> None:
+        d = self.delta()
+        if d:
+            _h.combat_k2_set_ctx(d)
+
+
+def _k2_points(emitter_xyz, target_xyz, impact_xyz, normal_xyz, tier,
+               bubble_xyz) -> tuple:
+    """A CONTACT's points as the Python loop held them: (emitter_pos,
+    target_pos, impact_point, impact_normal, bubble_entry). The impact IS
+    target_pos on the "fallback" tier and IS emitter_pos on the "origin"
+    tier (combat._resolve_hit_point / ray_sphere_entry return the very
+    object they were given); the mesh and sphere tiers made their own."""
+    emitter = TGPoint3(*emitter_xyz)
+    target_pos = TGPoint3(*target_xyz)
+    if tier == "fallback":
+        point = target_pos
+    elif tier == "origin":
+        point = emitter
+    else:
+        point = TGPoint3(*impact_xyz)
+    normal = None if normal_xyz is None else TGPoint3(*normal_xyz)
+    bubble = None if bubble_xyz is None else TGPoint3(*bubble_xyz)
+    return emitter, target_pos, point, normal, bubble
+
+
+def _k2_contact(rec, walk, cx, dt, ship_instances) -> None:
+    """A CONTACT record: host_loop._phaser_contact on the rebuilt points,
+    the power level read from the loop's own system. The loop's
+    shields_block answer rides along unless the loop never evaluated it
+    (None: no aim direction) or Python answered it (an ASK): beam_contact
+    then evaluates its own, as the Python path does."""
+    (_k, bh, th, sh, yh, emitter, target_pos, dist, _aim, impact, normal,
+     tier, bubble, shields, flush, _writes) = rec
+    bank, target, ship, sys_ = (walk.obj(bh), walk.obj(th), walk.obj(sh),
+                                walk.obj(yh))
+    _e, _t, point, n, b = _k2_points(emitter, target_pos, impact, normal,
+                                     tier, bubble)
+    hl = _k2_hl
+    level = hl._phaser_level(sys_)
+    if shields is None or cx.asked_shields:
+        hl._phaser_contact(ship, sys_, bank, target, dist, dt, flush, level,
+                           point, n, b, ship_instances)
+    else:
+        hl._phaser_contact(ship, sys_, bank, target, dist, dt, flush, level,
+                           point, n, b, ship_instances, shields_block=shields)
+
+
+def _k2_answer(rec, walk, cx, dt, ship_instances):
+    """An ASK record's answer: exactly the Python the kernel stands in for
+    (k2_beams.h, the ASK table), on the live objects."""
+    query, args = rec[1], rec[2:-1]
+    if query == "is_dead":
+        target = walk.obj(args[0])
+        return bool(hasattr(target, "IsDead") and target.IsDead())
+    if query == "can_detect":
+        # sensor_detection.can_detect's own fallback after its native call
+        # raised ValueError (re-calling can_detect would re-run the native
+        # call and its latch write).
+        from engine.appc import sensor_detection
+        _counts["fallbacks"] += 1
+        return bool(sensor_detection._py_can_detect(walk.obj(args[0]),
+                                                    walk.obj(args[1])))
+    if query == "aim_point":
+        p, sub = _k2_hl._phaser_aim_point(walk.obj(args[0]),
+                                          walk.obj(args[1]))
+        return ((p.x, p.y, p.z), sub is not None)
+    from engine.appc import combat
+    if query == "shields_block":
+        cx.asked_shields = True
+        return bool(combat.shields_block(walk.obj(args[0])))
+    if query == "bubble":
+        p = combat.shield_bubble_entry(walk.obj(args[0]), TGPoint3(*args[1]),
+                                       TGPoint3(*args[2]), args[3])
+        return None if p is None else (p.x, p.y, p.z)
+    if query == "resolve_hit":
+        target = walk.obj(args[0])
+        origin = TGPoint3(*args[1])
+        fallback = TGPoint3(*args[4])
+        direction = None if args[2] is None else TGPoint3(*args[2])
+        p, n = combat._resolve_hit_point(
+            ship_instances=ship_instances, ship=target, ray_origin=origin,
+            ray_direction=direction, max_dist=args[3],
+            fallback_point=fallback)
+        tier = ("origin" if p is origin else "fallback" if p is fallback
+                else "mesh" if n is not None else "sphere")
+        return ((p.x, p.y, p.z),
+                None if n is None else (n.x, n.y, n.z), tier)
+    if query == "bank_step":
+        _k2_hl._phaser_step_bank(walk.obj(args[0]), walk.obj(args[1]),
+                                 args[2], dt, ship_instances)
+        return None
+    raise RuntimeError("combat K2: unknown ASK %r" % (query,))
+
+
+def run_k2(ships, dt, ship_instances, cx) -> None:
+    """Drive the open K2 session until DONE. Each record: apply its writes,
+    then act -- a StopFiring, a contact's effect, a whole ship in Python, or
+    an ASK answered in Python -- then re-send whatever context the Python
+    changed. On any exception the session is abandoned (the kernel's mirror
+    still equals Python) and the exception re-raised; the kernel's own
+    protocol-invariant RuntimeError (k2_beams.h) included."""
+    DONE, SYSTEM_STOP, BANK_STOP, CONTACT, RUN_PYTHON, ASK = _k2_kinds()
+    walk = _K2Walk()
+    try:
+        while True:
+            rec = _h.combat_k2_next()
+            kind = rec[0]
+            writes = rec[-1]
+            if writes:
+                apply_writes(writes, walk)
+            if kind == ASK:
+                _h.combat_k2_answer(_k2_answer(rec, walk, cx, dt,
+                                               ship_instances))
+            elif kind == CONTACT:
+                _k2_contact(rec, walk, cx, dt, ship_instances)
+                cx.asked_shields = False
+            elif kind == BANK_STOP:
+                bank = walk.obj(rec[1])
+                walk.pin_bank(bank)
+                bank.StopFiring()
+                cx.asked_shields = False
+            elif kind == SYSTEM_STOP:
+                walk.obj(rec[1]).StopFiring()
+                cx.asked_shields = False
+            elif kind == RUN_PYTHON:
+                _k2_hl._phaser_step_ship(ships[rec[2]], dt, ship_instances)
+                cx.asked_shields = False
+            elif kind == DONE:
+                break
+            else:
+                raise RuntimeError("combat K2: unknown record %r" % (rec,))
+            cx.resend()
+        _h.combat_k2_end()
+    except BaseException:
+        _h.combat_k2_abandon()
+        raise
+
+
+def _k2_step_fallback(ship_instances):
+    """Why this `cb.phasers` step must run whole in Python, or None."""
+    if _k2_fn_snapshot is None or _h.combat_k2_open():
+        return "nested"
+    if ship_instances is not None \
+            and type(ship_instances) is not _tracked_instances():
+        return "instances"
+    if not _k2_unchanged():
+        return "patched"
+    return None
+
+
+_tracked_cls = None
+
+
+def _tracked_instances():
+    global _tracked_cls
+    if _tracked_cls is None:
+        from engine.core.tracked_instances import TrackedInstances
+        _tracked_cls = TrackedInstances
+    return _tracked_cls
+
+
+def k2_phasers(ships, dt, ship_instances) -> bool:
+    """host_loop's `cb.phasers` step through K2: True when it ran, False when
+    the caller must run the step in Python whole (counted by why in
+    counts()["k2_python_step_reasons"])."""
+    why = _k2_step_fallback(ship_instances)
+    if why is None:
+        handles, python_ships, whole = _k2_ship_handles(ships)
+        if whole:
+            why = "patched"
+    if why is not None:
+        _k2_steps["k2_python_steps"] += 1
+        _k2_step_reasons[why] += 1
+        return False
+    if _pulse_stale:            # a mission swap's reset, before GameLoop.tick
+        refresh_stale_pulse_params()
+    cx = _K2Context(ship_instances)
+    ctx = cx.delta()
+    ctx["python_ships"] = python_ships
+    ctx["trace"] = _k2_host_io._h is not None
+    t, use_memo, drift = _k1_clocks()
+    _h.combat_k2_begin(handles, dt, t, use_memo, drift, ctx)
+    run_k2(ships, dt, ship_instances, cx)
+    return True
 
 if available():
     # step_memo.forget() (every hit, the step's forget points, the outermost

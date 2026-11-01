@@ -154,6 +154,66 @@
 // whole at begin and partly by set_context (combat_k2_set_ctx), which the
 // driver re-sends after an effect whenever the player, the cheat flag, the
 // viewing set or `ship_instances.version` changed.
+//
+// WHAT THE DRIVER CHECKS BEFORE begin (engine/appc/native_combat.py,
+// k2_phasers; Task 5). The kernel computes, from the mirror, what these
+// Python functions and methods would answer, so a replaced one must send the
+// step back to Python. The driver runs the WHOLE `cb.phasers` step in Python
+// (no session) when:
+//   - a K2 session is already open;
+//   - `ship_instances` is neither None nor a TrackedInstances (a test's
+//     plain dict);
+//   - a MODULE FUNCTION is not the object snapshotted when host_loop defined
+//     the loop (native_combat._K2_FUNCTIONS):
+//       host_io.ray_trace_mesh;
+//       combat._resolve_hit_point, ray_sphere_entry, shields_block,
+//         shield_bubble_entry, cloak_shields_suspended, _hull_box_for,
+//         _body_frame_delta;
+//       collisions.world_radius;
+//       host_loop._phaser_aim_point, _phaser_step_ship, _phaser_step_bank,
+//         and its own imports can_detect, _same_set, _emitter_in_arc,
+//         _resolve_bank_aim_world, _is_offline;
+//       frames.view_offset, shifted, containing_set;
+//       subsystems.subsystem_world_position, target_offset_world,
+//         _is_offline;
+//       weapon_subsystems._resolve_bank_aim_world, _emitter_in_arc,
+//         _same_set;
+//       sensor_detection.can_detect;
+//     or host_io._h is neither None nor the bindings it snapshotted;
+//   - a STOCK CLASS resolves one of its role's names to anything but its
+//     snapshot (native_combat._K2_ROLES; every role also watches the
+//     subsystem names GetWorldLocation, GetPosition, _climb_to_ship):
+//       PhaserBank: IsFiring, IsBeamOn, take_dwell, accumulate_dwell,
+//         _strip_emit_position, _emitter_world_position, GetLength,
+//         GetDirection, GetUp, GetArcWidthAngles, GetArcHeightAngles,
+//         IsDisabled, IsDestroyed;
+//       PhaserSystem: GetNumWeapons, GetWeapon, GetNumChildSubsystems,
+//         GetChildSubsystem, IsOn, IsDisabled, IsDestroyed;
+//       ShieldSubsystem: HasShields, IsOn, IsDisabled, IsDestroyed;
+//       CloakingSubsystem: IsCloaking, IsDecloaking;
+//       ShipSubsystem: the subsystem names;
+//       ShipClass: IsDead, GetWorldLocation, GetWorldRotation,
+//         GetContainingSet, GetScale, GetRadius, GetShields,
+//         GetPhaserSystem, GetTargetSubsystem, is_using_target_offset,
+//         GetTargetOffsetTG, GetCloakingSubsystem;
+//       ObjectClass: IsDead, GetWorldLocation, GetWorldRotation,
+//         GetContainingSet, GetScale, GetRadius, GetShields;
+//   - any class with a row resolves a name of its role to a method defined
+//     outside the engine package (a mod's subclass, a test's patch) or to
+//     anything other than what it resolved to when the driver first saw it
+//     -- unless it is a bank or phaser system class overriding only its own
+//     (non-subsystem) names, which sends only its ship to Python.
+// It lists a ship in `python_ships` (RUN_PYTHON "overridden") when its bank
+// or system class overrides one of its own names, or it has an INSTANCE
+// attribute shadowing a method the loop calls on it by name:
+//   the ship: GetPhaserSystem, GetTargetSubsystem, is_using_target_offset,
+//     GetTargetOffsetTG, GetShields, IsDead, GetWorldLocation,
+//     GetWorldRotation;
+//   its phaser system: GetNumWeapons, GetWeapon, IsOn, IsDisabled,
+//     IsDestroyed;
+//   a bank: IsFiring, IsBeamOn, take_dwell, accumulate_dwell,
+//     _strip_emit_position, _emitter_world_position, GetLength.
+// An instance attribute on a TARGET is not looked for.
 
 namespace dauntless::combat {
 

@@ -1063,6 +1063,204 @@ def _phaser_aim_point(ship, target):
     return target.GetWorldLocation(), None
 
 
+# Continuous phaser damage tick (`cb.phasers`).  Each ship's PhaserSystem has
+# banks set firing by the weapon tick (cb.held_weapons); advance them here:
+# re-check arc (auto-stop drifters), compute distance falloff, and route damage
+# through apply_hit (which routes shields → subsystem → hull, calls
+# hit_feedback.dispatch, and broadcasts WeaponHitEvent).
+#
+# ONE copy of the loop body for both paths: the Python step calls
+# _phaser_step_ship for every ship; the native K2 kernel
+# (engine.appc.native_combat.k2_phasers) walks the same loop over the mirror
+# and hands back to these functions a whole ship (RUN_PYTHON) or one bank
+# (ASK bank_step), and to _phaser_level / _phaser_contact every contact's
+# effect.
+
+def _phaser_step_ship(ship, dt: float, ship_instances) -> None:
+    """The `cb.phasers` loop body for one ship."""
+    sys_ = ship.GetPhaserSystem() if hasattr(ship, "GetPhaserSystem") else None
+    if sys_ is None:
+        return
+    # Disabled-weapons gate: parent aggregates child IsDisabled. When
+    # the system flips disabled mid-tick (incoming hit during the
+    # previous frame's damage routing), stop any active banks and
+    # skip the damage loop for this ship. Spec §4.2.
+    # Power-off gate: a system turned off via the power slider (IsOn()==0)
+    # must also stop any already-firing banks immediately.  _is_offline
+    # only checks IsDisabled/IsDestroyed and does NOT cover the powered-
+    # down case, so we gate on IsOn() here as a separate check.
+    if _is_offline(sys_) or not sys_.IsOn():
+        sys_.StopFiring()
+        return
+    # GetNumWeapons is read ONCE; GetWeapon(i) re-reads the children live.
+    for i in range(sys_.GetNumWeapons()):
+        _phaser_step_bank(ship, sys_, i, dt, ship_instances)
+
+
+def _phaser_step_bank(ship, sys_, i: int, dt: float, ship_instances) -> None:
+    """The `cb.phasers` loop body for `bank = sys_.GetWeapon(i)` (each
+    `continue` of the loop is a return here)."""
+    bank = sys_.GetWeapon(i)
+    if bank is None:
+        return
+    target = bank._target
+    if not bank.IsFiring():
+        # A bank that stopped (charge out) with dwell still
+        # banked delivers it as a final partial pulse — the rows
+        # show a 7.8 after the last 66-point quantum when the
+        # Galaxy's bank ran dry (`phaser_galaxy_front_57`).
+        dwell = bank.take_dwell() if hasattr(bank, "take_dwell") else 0.0
+        if dwell <= 0.0 or target is None or (
+                hasattr(target, "IsDead") and target.IsDead()):
+            return
+        flush_dwell = dwell
+    else:
+        if target is None or (hasattr(target, "IsDead") and target.IsDead()):
+            bank.StopFiring()
+            return
+        flush_dwell = None      # decided below, once the aim is known
+    # Sensor gate (authoritative): this is the per-tick chokepoint where
+    # continuous phaser damage is actually applied. A bank can be left
+    # IsFiring by an AI that stopped updating (e.g. the firing ship's
+    # own SelectTarget cleared its target once its sensors degraded, so
+    # FireScript bailed via PS_DONE without StopFiring), so gating only
+    # FireScript.TargetVisible isn't enough — stranded banks would keep
+    # dealing damage here. A ship that can't detect its target can't
+    # keep firing at it. See engine/appc/sensor_detection.can_detect.
+    if flush_dwell is None and not can_detect(ship, target):
+        bank.StopFiring()
+        return
+    # INTERIM cross-set guard (system-frames Plan 2, Ruling 5):
+    # everything below -- _phaser_aim_point, the emitter strip, the
+    # distance falloff, the hit trace -- is a raw set-local compare,
+    # so a bank left firing at a target in ANOTHER set (or a setless
+    # one) would deal damage wherever raw numbers coincide, invisibly
+    # (the beam builder already drops cross-frame beams). No damage,
+    # no feedback; stop the bank, and drop any banked dwell. Stopgap
+    # until frame-aware weapon engagement lands (spec §6 widening
+    # list). Same-set pairs are untouched.
+    if not _same_set(ship, target):
+        if flush_dwell is None:
+            bank.StopFiring()
+        return
+    target_pos, target_sub = _phaser_aim_point(ship, target)
+    emitter_pos = bank._strip_emit_position(target_pos)
+    # Distance: emit point → target (drives damage falloff).
+    dx = target_pos.x - emitter_pos.x
+    dy = target_pos.y - emitter_pos.y
+    dz = target_pos.z - emitter_pos.z
+    dist = (dx * dx + dy * dy + dz * dz) ** 0.5
+    aim_unit = TGPoint3(dx / dist, dy / dist, dz / dist) if dist > 1e-6 else None
+    # Arc check: aim from bank Position → target (NOT emit_pos →
+    # target). The firing cone originates at the mount, not at
+    # the emit point. Mismatch between this site and StartFiring
+    # was Bug F — a bank could pass arc at fire-time and fail
+    # on the next tick because its emit point sat past the
+    # target on the strip. See research doc § Bug F.
+    arc_aim = _resolve_bank_aim_world(bank, target_sub or target)
+    if flush_dwell is None:
+        if not _emitter_in_arc(bank, ship, arc_aim):
+            # Swept off: deliver the partial pulse, then stop.
+            flush_dwell = bank.take_dwell()
+            bank.StopFiring()
+        else:
+            flush_dwell = bank.accumulate_dwell(dt)
+    level = _phaser_level(sys_)
+    # Where the beam is touching, resolved EVERY contact frame —
+    # the per-frame impact feedback below needs it as much as the
+    # pulse does (and this is what the pre-pulse code did anyway).
+    impact_point, impact_normal = combat._resolve_hit_point(
+        ship_instances=ship_instances, ship=target,
+        ray_origin=emitter_pos,
+        ray_direction=(aim_unit if dist > 1e-6 else None),
+        max_dist=(dist * 1.5 if dist > 1e-6 else 0.0),
+        fallback_point=target_pos,
+    )
+    # Where the beam crossed the bubble — the same point
+    # _beam_endpoint stops the DRAWN beam at, so the flash lands on
+    # the beam's own tip instead of 236 NIF units behind it. None
+    # when no facing is up, which falls the flash back to the hull
+    # point inside dispatch.
+    bubble_entry = (
+        combat.shield_bubble_entry(target, emitter_pos, aim_unit,
+                                   dist * 1.5)
+        if (aim_unit is not None and combat.shields_block(target))
+        else None)
+    _phaser_contact(ship, sys_, bank, target, dist, dt, flush_dwell, level,
+                    impact_point, impact_normal, bubble_entry, ship_instances)
+
+
+def _phaser_level(sys_):
+    """The firing system's power level, which indexes
+    PHASER_INTENSITY_SCALE."""
+    return (sys_.GetPowerLevel()
+            if hasattr(sys_, "GetPowerLevel") else sys_.PP_HIGH)
+
+
+_EVALUATE = object()
+
+
+def _phaser_contact(ship, sys_, bank, target, dist: float, dt: float,
+                    flush_dwell: float, level, impact_point, impact_normal,
+                    bubble_entry, ship_instances,
+                    shields_block=_EVALUATE) -> None:
+    """One bank's effect on a contact tick: the beam's resting feedback, or
+    its damage pulse. `shields_block` is the loop's own answer when the
+    caller has one that nothing has run since (native K2); by default
+    beam_contact evaluates its own."""
+    if flush_dwell <= 0.0:
+        # Not a damage pulse: the beam is still resting on the
+        # target, so it still glows and throws sparks there. The
+        # spark threshold reads this frame's slice of the beam, so
+        # the burst behaves as it did when damage was per-tick.
+        given = {} if shields_block is _EVALUATE \
+            else {"shields_block": shields_block}
+        hit_feedback.beam_contact(
+            ship=target, source=ship,
+            point=impact_point, normal=impact_normal,
+            shield_point=bubble_entry,
+            tick_damage=_phaser_damage_for_tick(
+                max_damage=bank.GetMaxDamage(),
+                max_damage_distance=bank.GetMaxDamageDistance(),
+                dist=dist, dt=dt,
+            ) * PHASER_INTENSITY_SCALE[level],
+            ship_instances=ship_instances,
+            weapon_type="phaser",
+            radius=combat.weapon_splash_radius(bank, None),
+            **given,
+        )
+        return
+    # One pulse: MaxDamage × intensity × distance factor × dwell
+    # (clean-room 0x00572A50; measured stbc-oracle bible §2.2).
+    damage = _phaser_damage_for_tick(
+        max_damage=bank.GetMaxDamage(),
+        max_damage_distance=bank.GetMaxDamageDistance(),
+        dist=dist,
+        dt=flush_dwell,
+    ) * PHASER_INTENSITY_SCALE[level]
+    if damage > 0:
+        # LIGHT (PP_LOW) phaser power is "disable, don't destroy":
+        # damage routes to subsystems only, the hull takes no condition
+        # damage (verified by dev-console probe) and no plating wear
+        # or severance share (hit_feedback._structural_hit).
+        # `sys_` is the firing PhaserSystem; read PP_LOW off it directly.
+        damage_hull = (sys_.GetPowerLevel() != sys_.PP_LOW
+                       if hasattr(sys_, "GetPowerLevel") else True)
+        combat.apply_hit(target, damage, impact_point,
+                         source=ship,
+                         normal=impact_normal,
+                         ship_instances=ship_instances,
+                         weapon_type="phaser",
+                         hardpoint_weapon=bank,
+                         damage_hull=damage_hull,
+                         shield_point=bubble_entry)
+
+
+# K2 stands in for this loop body's helpers: snapshot them now, before any
+# test, tool or mod can replace one (native_combat.k2_snapshot_stock).
+_native_combat.k2_snapshot_stock(sys.modules[__name__])
+
+
 def _advance_combat(*args, **kwargs) -> None:
     """One combat step; see _advance_combat_step.
 
@@ -1175,152 +1373,10 @@ def _advance_combat_step(ships, dt: float, ship_instances=None,
     # apply_hit (which routes shields → subsystem → hull, calls
     # hit_feedback.dispatch, and broadcasts WeaponHitEvent).
     with frame_profiler.scope("cb.phasers"):
-        for ship in ships_list:
-            sys_ = ship.GetPhaserSystem() if hasattr(ship, "GetPhaserSystem") else None
-            if sys_ is None:
-                continue
-            # Disabled-weapons gate: parent aggregates child IsDisabled. When
-            # the system flips disabled mid-tick (incoming hit during the
-            # previous frame's damage routing), stop any active banks and
-            # skip the damage loop for this ship. Spec §4.2.
-            # Power-off gate: a system turned off via the power slider (IsOn()==0)
-            # must also stop any already-firing banks immediately.  _is_offline
-            # only checks IsDisabled/IsDestroyed and does NOT cover the powered-
-            # down case, so we gate on IsOn() here as a separate check.
-            if _is_offline(sys_) or not sys_.IsOn():
-                sys_.StopFiring()
-                continue
-            for i in range(sys_.GetNumWeapons()):
-                bank = sys_.GetWeapon(i)
-                if bank is None:
-                    continue
-                target = bank._target
-                if not bank.IsFiring():
-                    # A bank that stopped (charge out) with dwell still
-                    # banked delivers it as a final partial pulse — the rows
-                    # show a 7.8 after the last 66-point quantum when the
-                    # Galaxy's bank ran dry (`phaser_galaxy_front_57`).
-                    dwell = bank.take_dwell() if hasattr(bank, "take_dwell") else 0.0
-                    if dwell <= 0.0 or target is None or (
-                            hasattr(target, "IsDead") and target.IsDead()):
-                        continue
-                    flush_dwell = dwell
-                else:
-                    if target is None or (hasattr(target, "IsDead") and target.IsDead()):
-                        bank.StopFiring()
-                        continue
-                    flush_dwell = None      # decided below, once the aim is known
-                # Sensor gate (authoritative): this is the per-tick chokepoint where
-                # continuous phaser damage is actually applied. A bank can be left
-                # IsFiring by an AI that stopped updating (e.g. the firing ship's
-                # own SelectTarget cleared its target once its sensors degraded, so
-                # FireScript bailed via PS_DONE without StopFiring), so gating only
-                # FireScript.TargetVisible isn't enough — stranded banks would keep
-                # dealing damage here. A ship that can't detect its target can't
-                # keep firing at it. See engine/appc/sensor_detection.can_detect.
-                if flush_dwell is None and not can_detect(ship, target):
-                    bank.StopFiring()
-                    continue
-                # INTERIM cross-set guard (system-frames Plan 2, Ruling 5):
-                # everything below -- _phaser_aim_point, the emitter strip, the
-                # distance falloff, the hit trace -- is a raw set-local compare,
-                # so a bank left firing at a target in ANOTHER set (or a setless
-                # one) would deal damage wherever raw numbers coincide, invisibly
-                # (the beam builder already drops cross-frame beams). No damage,
-                # no feedback; stop the bank, and drop any banked dwell. Stopgap
-                # until frame-aware weapon engagement lands (spec §6 widening
-                # list). Same-set pairs are untouched.
-                if not _same_set(ship, target):
-                    if flush_dwell is None:
-                        bank.StopFiring()
-                    continue
-                target_pos, target_sub = _phaser_aim_point(ship, target)
-                emitter_pos = bank._strip_emit_position(target_pos)
-                # Distance: emit point → target (drives damage falloff).
-                dx = target_pos.x - emitter_pos.x
-                dy = target_pos.y - emitter_pos.y
-                dz = target_pos.z - emitter_pos.z
-                dist = (dx * dx + dy * dy + dz * dz) ** 0.5
-                aim_unit = TGPoint3(dx / dist, dy / dist, dz / dist) if dist > 1e-6 else None
-                # Arc check: aim from bank Position → target (NOT emit_pos →
-                # target). The firing cone originates at the mount, not at
-                # the emit point. Mismatch between this site and StartFiring
-                # was Bug F — a bank could pass arc at fire-time and fail
-                # on the next tick because its emit point sat past the
-                # target on the strip. See research doc § Bug F.
-                arc_aim = _resolve_bank_aim_world(bank, target_sub or target)
-                if flush_dwell is None:
-                    if not _emitter_in_arc(bank, ship, arc_aim):
-                        # Swept off: deliver the partial pulse, then stop.
-                        flush_dwell = bank.take_dwell()
-                        bank.StopFiring()
-                    else:
-                        flush_dwell = bank.accumulate_dwell(dt)
-                level = (sys_.GetPowerLevel()
-                         if hasattr(sys_, "GetPowerLevel") else sys_.PP_HIGH)
-                # Where the beam is touching, resolved EVERY contact frame —
-                # the per-frame impact feedback below needs it as much as the
-                # pulse does (and this is what the pre-pulse code did anyway).
-                impact_point, impact_normal = combat._resolve_hit_point(
-                    ship_instances=ship_instances, ship=target,
-                    ray_origin=emitter_pos,
-                    ray_direction=(aim_unit if dist > 1e-6 else None),
-                    max_dist=(dist * 1.5 if dist > 1e-6 else 0.0),
-                    fallback_point=target_pos,
-                )
-                # Where the beam crossed the bubble — the same point
-                # _beam_endpoint stops the DRAWN beam at, so the flash lands on
-                # the beam's own tip instead of 236 NIF units behind it. None
-                # when no facing is up, which falls the flash back to the hull
-                # point inside dispatch.
-                bubble_entry = (
-                    combat.shield_bubble_entry(target, emitter_pos, aim_unit,
-                                               dist * 1.5)
-                    if (aim_unit is not None and combat.shields_block(target))
-                    else None)
-                if flush_dwell <= 0.0:
-                    # Not a damage pulse: the beam is still resting on the
-                    # target, so it still glows and throws sparks there. The
-                    # spark threshold reads this frame's slice of the beam, so
-                    # the burst behaves as it did when damage was per-tick.
-                    hit_feedback.beam_contact(
-                        ship=target, source=ship,
-                        point=impact_point, normal=impact_normal,
-                        shield_point=bubble_entry,
-                        tick_damage=_phaser_damage_for_tick(
-                            max_damage=bank.GetMaxDamage(),
-                            max_damage_distance=bank.GetMaxDamageDistance(),
-                            dist=dist, dt=dt,
-                        ) * PHASER_INTENSITY_SCALE[level],
-                        ship_instances=ship_instances,
-                        weapon_type="phaser",
-                        radius=combat.weapon_splash_radius(bank, None),
-                    )
-                    continue
-                # One pulse: MaxDamage × intensity × distance factor × dwell
-                # (clean-room 0x00572A50; measured stbc-oracle bible §2.2).
-                damage = _phaser_damage_for_tick(
-                    max_damage=bank.GetMaxDamage(),
-                    max_damage_distance=bank.GetMaxDamageDistance(),
-                    dist=dist,
-                    dt=flush_dwell,
-                ) * PHASER_INTENSITY_SCALE[level]
-                if damage > 0:
-                    # LIGHT (PP_LOW) phaser power is "disable, don't destroy":
-                    # damage routes to subsystems only, the hull takes no condition
-                    # damage (verified by dev-console probe) and no plating wear
-                    # or severance share (hit_feedback._structural_hit).
-                    # `sys_` is the firing PhaserSystem; read PP_LOW off it directly.
-                    damage_hull = (sys_.GetPowerLevel() != sys_.PP_LOW
-                                   if hasattr(sys_, "GetPowerLevel") else True)
-                    combat.apply_hit(target, damage, impact_point,
-                              source=ship,
-                              normal=impact_normal,
-                              ship_instances=ship_instances,
-                              weapon_type="phaser",
-                              hardpoint_weapon=bank,
-                              damage_hull=damage_hull,
-                              shield_point=bubble_entry)
+        if not (_native_combat.enabled()
+                and _native_combat.k2_phasers(ships_list, dt, ship_instances)):
+            for ship in ships_list:
+                _phaser_step_ship(ship, dt, ship_instances)
 
     # Tractor beams (hold/tow/pull/push/dock): the weapon tick above sustains
     # the held grab beam (TractorBeamSystem.update_weapons re-acquires while

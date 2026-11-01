@@ -558,8 +558,12 @@ def _hull_impact_visual(*, ship, point, normal, severity, weapon_type,
         pSet=frames.containing_set(ship))
 
 
+_EVALUATE = object()
+
+
 def beam_contact(*, ship, source, point, normal, shield_point, tick_damage,
-                 ship_instances, weapon_type="phaser", radius=0.0) -> None:
+                 ship_instances, weapon_type="phaser", radius=0.0,
+                 shields_block=_EVALUATE) -> None:
     """Cosmetic feedback for a beam RESTING on a target this frame.
 
     A beam's DAMAGE arrives in pulses (one flush per 0.53 s of dwell, see
@@ -579,9 +583,15 @@ def beam_contact(*, ship, source, point, normal, shield_point, tick_damage,
     `tick_damage` is what this frame's slice of the beam would deposit. It
     feeds the spark threshold, so the burst behaves exactly as it did when
     damage was applied every tick.
+
+    `shields_block` is combat.shields_block(ship)'s answer when the caller
+    already has it and nothing has run since (the native K2 step passes the
+    loop's own); by default it is evaluated here.
     """
-    from engine.appc.combat import shields_block
-    if shields_block(ship):
+    if shields_block is _EVALUATE:
+        from engine.appc.combat import shields_block as _shields_block
+        shields_block = _shields_block(ship)
+    if shields_block:
         if ship_instances is None:
             return
         iid = ship_instances.get(ship)
