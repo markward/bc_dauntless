@@ -2064,6 +2064,11 @@ def _guard_engine_classes(request):
     _ENGINE_CLASS_GUARD.sync()
     yield
     if request.node.get_closest_marker("mutates_engine_classes") is None:
+        # The engine's own boot hooks (ai_sensor_gate wraps
+        # ObjectGroup.GetActiveObjectTupleInSet, ...) are uninstalled by the
+        # reset, which otherwise only runs at the NEXT test's setup: run it
+        # now, so only a change the reset does not undo counts as a leak.
+        _reset_leakable_engine_globals()
         _fail_on_mutations(_ENGINE_CLASS_GUARD.check())
 
 
