@@ -148,6 +148,13 @@ def generation() -> int:
     return _GENERATION
 
 
+def _bump_part_gen() -> None:
+    """A rig snapshot changes part lists and order: every native part slot
+    (native_combat) reads stale."""
+    from engine.appc import native_combat
+    native_combat.bump_part_gen()
+
+
 def snapshot_for_leaf(leaf) -> None:
     """Copy every ArticulatedPartProperty currently registered as a LOCAL
     template into the snapshot kept for `leaf`.
@@ -166,6 +173,7 @@ def snapshot_for_leaf(leaf) -> None:
     """
     global _GENERATION
     _GENERATION += 1
+    _bump_part_gen()
     import App
     local = getattr(App.g_kModelPropertyManager, "_local", {})
     # Keyed lowercase: a mod's hardpoint module may be mixed-case
@@ -188,6 +196,7 @@ def restore(snapshot) -> None:
     the generation like every other writer."""
     global _GENERATION
     _GENERATION += 1
+    _bump_part_gen()
     _BY_LEAF.clear()
     _BY_LEAF.update(snapshot)
 
@@ -197,4 +206,5 @@ def reset() -> None:
     _BY_LEAF is process-wide state."""
     global _GENERATION
     _GENERATION += 1
+    _bump_part_gen()
     _BY_LEAF.clear()

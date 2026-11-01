@@ -107,7 +107,8 @@ def available() -> bool:
             and hasattr(_h, "combat_step_scan")
             and hasattr(_h, "combat_step_serial")
             and hasattr(_h, "combat_k4_eligible")
-            and hasattr(_h, "combat_k3_begin"))
+            and hasattr(_h, "combat_k3_begin")
+            and hasattr(_h, "combat_set_part_poses"))
 
 
 def configure(environ: Mapping[str, str] = os.environ) -> None:
@@ -145,6 +146,9 @@ def reset() -> None:
     _audit = False
     _failures.clear()
     _profiles.clear()
+    # The part-map generation is NOT reset: it is monotonic for the process,
+    # so a slot stamped before the reset can never read fresh again.
+    _forget_part_caches()
     # Per-class caches: a class patched or re-based since must recompute.
     _kind_by_type.clear()
     _k1_overridden_by_type.clear()
@@ -659,6 +663,54 @@ class NativeThawParentWakeField(NativeWrapped, ThawParentWakeField):
         self._after_set(obj, value)
 
 
+class PartKeyField(NativeField):
+    """A subsystem attribute the part-slot resolution reads (``_position``:
+    `part_for_mount` keys on the mount point): a write pushes like any
+    NativeField and bumps the part-map generation, so every slot resolved
+    before it reads stale (spec 2026-11-01 §4.3)."""
+
+    def __set__(self, obj, value) -> None:
+        NativeField.__set__(self, obj, value)
+        bump_part_gen()
+
+
+class PartKeyRefField(NativeRefField):
+    """``ShipSubsystem._property``: `physical_parents.property_of(sub)`
+    reads it, so a write bumps the part-map generation (PartKeyField)."""
+
+    def __set__(self, obj, value) -> None:
+        NativeRefField.__set__(self, obj, value)
+        bump_part_gen()
+
+
+class MountSlotField:
+    """A ship's top-level subsystem slot (`ShipClass.GetSubsystems`) that is
+    not otherwise mirrored: a write re-pushes the ship's mount order
+    (`push_mount_order`). Like WakeField: no __get__, reads stay plain
+    instance-dict reads."""
+
+    def __set_name__(self, owner, name) -> None:
+        self._name = name
+
+    def __set__(self, obj, value) -> None:
+        d = obj.__dict__
+        old = d.get(self._name)
+        d[self._name] = value
+        if _enabled and old is not value:
+            push_mount_order(obj)
+
+
+class NativeMountRefField(NativeRefField):
+    """A mirrored subsystem slot of the ship (`_hull`, `_phaser_system`,
+    ...): pushes its ref, then the ship's mount order (MountSlotField)."""
+
+    def __set__(self, obj, value) -> None:
+        old = obj.__dict__.get(self._name)
+        NativeRefField.__set__(self, obj, value)
+        if _enabled and old is not value:
+            push_mount_order(obj)
+
+
 class PosedPartsField:
     """``ShipClass._articulation_poses``: a rebind (the force_* writers, or
     tick_ship's first dict) can move a part on or off its NIF pose, so the
@@ -900,6 +952,8 @@ def forget_rows() -> None:
     for obj in list(_registry.values()):
         obj.__dict__.pop("_nslot", None)
     _registry.clear()
+    _forget_part_caches()
+    bump_part_gen()     # the cleared mirror's generation is back at 1
     torpedo_table_mark_dirty()
     _k2_seen.clear()
     _k2_seen_set.clear()
@@ -908,6 +962,7 @@ def forget_rows() -> None:
 
 def unregister_handle(h: int) -> None:
     """Finalizer body: never raises (a combat_clear may have freed it)."""
+    _forget_part_caches(h)
     try:
         _h.combat_unregister(h)
     except Exception:
@@ -1116,15 +1171,248 @@ def _flags(obj, h) -> dict:
 
 
 def push_posed_parts(ship) -> None:
-    """Re-push the ship's has_posed_parts flag (`_posed_flag`): its pose
-    dict was rebound (PosedPartsField), tick_ship moved a part in place, or
-    SetupProperties just gave it a script. The flag reads only the current
-    poses (never the rig), and those are the only places they change."""
+    """Re-push the ship's has_posed_parts flag (`_posed_flag`) and its pose
+    table (`_push_pose_table`): its pose dict was rebound (PosedPartsField),
+    tick_ship moved a part in place, SetupProperties just gave it a script,
+    or a part was severed / the severed parts were forgotten
+    (part_severance: the table's detached bits, synchronously -- MAP R6).
+    The flag reads only the current poses (never the rig), and those are
+    the only places they change."""
     if _enabled:
         h = ship.__dict__.get("_nslot")
         if h is not None:
-            _call(ship, _h.combat_set_i, h, _fid("has_posed_parts"),
-                  _posed_flag(ship))
+            flag = _posed_flag(ship)
+            _call(ship, _h.combat_set_i, h, _fid("has_posed_parts"), flag)
+            if "_nslot" in ship.__dict__:
+                _push_pose_table(ship, h, flag)
+
+
+# ── Posed parts: pose tables, part slots, mount order ────────────────────────
+# Spec docs/superpowers/specs/2026-11-01-native-combat-posed-parts-design.md
+# §4.1-4.3, map docs/reference/engine/native-combat/posed-parts-map.md §2-3.
+#
+# Python is the ONLY resolver of which part a mount sits on. Per ship it
+# pushes the pose table (one entry per `articulation.posed_part_names` name,
+# in that order; empty while has_posed_parts is 0) and the mount order (its
+# subsystems in `combat._iter_subsystems` order); per subsystem the part
+# slot, stamped with the global part-map generation at resolution.
+#
+# Every input of the resolution bumps the generation (`bump_part_gen`):
+# SetPhysicalParent, the SPV preview overlay, a leaf's model or derived boxes
+# learned, a rig snapshot, a subsystem's `_position` / `_property`, and a
+# change of the table's names under resolved slots. A slot stamped with an
+# older generation is "not resolved": the kernel falls back. So a missed
+# trigger can only cost speed, never give a wrong part. The generation is
+# monotonic for the process (never reset), and starts at 1 natively, so a
+# never-resolved slot (stamp 0) is stale.
+
+_part_gen = 1
+# ship handle -> the posed_part_names its slots were last resolved against
+_slot_names: dict = {}
+# ship handle -> the _part_gen its slots were last resolved at
+_resolved_gen: dict = {}
+
+
+def part_gen() -> int:
+    """The current part-map generation (what a fresh slot is stamped with)."""
+    return _part_gen
+
+
+def bump_part_gen() -> None:
+    """An input of the part-slot resolution changed: every slot resolved so
+    far reads stale. Pushed at once (a kernel may run before the next step
+    boundary). Counted even while native is off -- nothing is pushed then,
+    and turning it on bumps again (resync)."""
+    global _part_gen
+    _part_gen += 1
+    if _enabled:
+        _h.combat_set_part_gen(_part_gen)
+
+
+def _forget_part_caches(h=None) -> None:
+    if h is None:
+        _slot_names.clear()
+        _resolved_gen.clear()
+    else:
+        _slot_names.pop(h, None)
+        _resolved_gen.pop(h, None)
+
+
+def _leaf_known(ship):
+    """The ship's hardpoint leaf if `articulation.leaf_for` already cached a
+    non-empty one, else None. Never resolves it (MAP R5: on a ship whose
+    script is not set yet, leaf_for would cache "" for good)."""
+    leaf = ship.__dict__.get("_articulation_leaf")
+    return leaf if isinstance(leaf, str) and leaf else None
+
+
+def _pose_names(ship) -> tuple:
+    """`articulation.posed_part_names(ship)` once the leaf is cached (it
+    then never resolves it). Before that, the names the pose dict holds,
+    sorted -- what posed_part_names gives for a rig-less leaf; no slot can
+    have been resolved against them (resolution needs the leaf)."""
+    if isinstance(ship.__dict__.get("_articulation_leaf"), str):
+        from engine.appc import articulation
+        return articulation.posed_part_names(ship)
+    poses = ship.__dict__.get("_articulation_poses")
+    return tuple(sorted(poses)) if poses else ()
+
+
+def _pose_table(ship, names) -> list:
+    """One (r9, t3, identity, detached) per name, read exactly as
+    `articulation.pose_for_part` and `part_severance.is_detached` read
+    them: a name with no entry in the dict is IDENTITY."""
+    from engine.appc import part_pose
+    poses = getattr(ship, "_articulation_poses", None) or {}
+    detached = getattr(ship, "_parts_detached", None) or ()
+    out = []
+    for name in names:
+        pose = poses.get(name, part_pose.IDENTITY)
+        R, t = pose
+        out.append((tuple(float(R[i][j]) for i in range(3) for j in range(3)),
+                    (float(t[0]), float(t[1]), float(t[2])),
+                    bool(part_pose.is_identity(pose)),
+                    name in detached))
+    return out
+
+
+def _push_pose_table(ship, h, flag, names=None) -> None:
+    """Push the pose table: empty while `flag` (has_posed_parts) is 0 --
+    the kernel never reads it then. A non-empty table whose names differ
+    from the ones the ship's slots were resolved against bumps the
+    generation first (R11): those slots index another table."""
+    if not flag:
+        entries = []
+    else:
+        try:
+            if names is None:
+                names = _pose_names(ship)
+            entries = _pose_table(ship, names)
+        except (TypeError, ValueError, OverflowError, IndexError):
+            _drop(ship)     # not representable: never leave a stale row
+            return
+        prev = _slot_names.get(h)
+        if prev is not None and prev != names:
+            del _slot_names[h]
+            bump_part_gen()
+    _call(ship, _h.combat_set_part_poses, h, entries)
+
+
+def _slot_subsystems(ship) -> list:
+    """Every subsystem of `ship` a slot may be read for: its top-level
+    subsystems (hull included) and their children, depth first."""
+    try:
+        top = list(ship.GetSubsystems())
+    except Exception:  # noqa: BLE001 - not a ship with subsystems
+        return []
+    out, seen = [], set()
+    stack = list(reversed(top))
+    while stack:
+        sub = stack.pop()
+        if sub is None or id(sub) in seen:
+            continue
+        seen.add(id(sub))
+        out.append(sub)
+        children = sub.__dict__.get("_children") if hasattr(
+            sub, "__dict__") else None
+        if children:
+            stack.extend(reversed(list(children)))
+    return out
+
+
+def _part_slot(leaf, names, sub):
+    """The index in `names` of the part `articulation._live_part` resolves
+    for `sub`'s own mount, by the same calls minus the detached test (the
+    table's detached bit carries that); -1 for no posable part; None when
+    the resolution raised (the slot is then left stale)."""
+    from engine.appc import part_severance, physical_parents
+    try:
+        local = sub.GetPosition() if hasattr(sub, "GetPosition") else None
+        if not isinstance(local, TGPoint3):
+            return -1
+        point = (local.x, local.y, local.z)
+        prop = physical_parents.property_of(sub)
+        if prop is not None:
+            name = physical_parents.part_for_property(leaf, prop, point)
+        else:
+            name = part_severance.part_for_mount(leaf, point)
+    except Exception:  # noqa: BLE001 - Python answers it (and raises) itself
+        return None
+    if name is None or name not in names:
+        return -1
+    return names.index(name)
+
+
+def resolve_part_slots(ship) -> None:
+    """Resolve and push the part slot of every subsystem of `ship`, stamped
+    with the current generation, with the pose table built from the SAME
+    `posed_part_names` call (R11). Only for a ship whose leaf is already
+    cached (R5); an unrigged ship has no names and pushes no slot."""
+    if not _enabled:
+        return
+    h = ship.__dict__.get("_nslot")
+    leaf = _leaf_known(ship)
+    if h is None or leaf is None:
+        return
+    from engine.appc import articulation
+    gen = _part_gen
+    names = articulation.posed_part_names(ship)
+    _slot_names[h] = names
+    _push_pose_table(ship, h, _posed_flag(ship), names)
+    if ship.__dict__.get("_nslot") != h:
+        return
+    if names:
+        sub_kind = _kind("Subsystem")
+        for sub in _slot_subsystems(ship):
+            sh = _slot_of(sub)
+            if sh is None or (sh >> _KIND_SHIFT) != sub_kind:
+                continue
+            slot = _part_slot(leaf, names, sub)
+            if slot is None:
+                _call(sub, _h.combat_set_part_slot, sh, -1, 0)  # stale
+            else:
+                _call(sub, _h.combat_set_part_slot, sh, slot, gen)
+    if _part_gen == gen:    # nothing bumped while resolving
+        _resolved_gen[h] = gen
+
+
+def resolve_stale_part_slots(ships) -> None:
+    """At a step boundary: resolve every ship of `ships` whose slots were
+    resolved at an older generation (or never)."""
+    if not _enabled:
+        return
+    for ship in ships:
+        h = ship.__dict__.get("_nslot")
+        if h is not None and _resolved_gen.get(h) != _part_gen:
+            resolve_part_slots(ship)
+
+
+def _mount_order(ship) -> list:
+    """The ship's subsystems as `part_severance.authored_mount_subsystem`
+    walks them (`_mounted_subsystems`: combat._iter_subsystems order), as
+    Subsystem handles; -2 for one the mirror cannot name."""
+    from engine.appc.part_severance import _mounted_subsystems
+    sub_kind = _kind("Subsystem")
+    out = []
+    for sub, _mount in _mounted_subsystems(ship):
+        t = _slot_of(sub)
+        out.append(t if t is not None and (t >> _KIND_SHIFT) == sub_kind
+                   else REF_UNREPRESENTABLE)
+    return out
+
+
+def push_mount_order(ship) -> None:
+    """Push the ship's mount order: a subsystem slot of the ship was written
+    (MountSlotField / NativeMountRefField) or a subsystem gained a child
+    (ShipSubsystem.AddChildSubsystem). Its slots are re-resolved at the next
+    step boundary (a new subsystem's slot is unresolved)."""
+    if not _enabled:
+        return
+    h = ship.__dict__.get("_nslot")
+    if h is None or (h >> _KIND_SHIFT) != _kind("Object"):
+        return
+    _call(ship, _h.combat_set_mount_order, h, _mount_order(ship))
+    _resolved_gen.pop(h, None)
 
 
 def push_pulse_params(bank) -> None:
@@ -1208,7 +1496,10 @@ def _push_extras(obj, h) -> None:
     for name, v in flags.items():
         _call(obj, _h.combat_set_i, h, _fid(name), v)
     k = h >> _KIND_SHIFT
-    if k == _kind("Property"):
+    if k == _kind("Object"):
+        if flags.get("is_ship_class") and "_nslot" in obj.__dict__:
+            _push_pose_table(obj, h, flags["has_posed_parts"])
+    elif k == _kind("Property"):
         push_property(obj)
     elif k == _kind("Subsystem"):
         if "_nslot" in obj.__dict__ and _weapon_kind(obj) == 6:
@@ -1458,6 +1749,10 @@ def resync() -> None:
     _containing_set is re-pushed with them, including objects whose set
     registered after them."""
     push_globals()
+    # Slots resolved before the switch went off are not trusted: the
+    # generation moves on (and is pushed), and every ship re-resolves.
+    _forget_part_caches()
+    bump_part_gen()
     # Torpedoes in flight have no rows yet: K3 rebuilds the table first.
     torpedo_table_mark_dirty()
     rows = [(h, obj) for h, obj in list(_registry.items())
@@ -1467,6 +1762,10 @@ def resync() -> None:
     for h, obj in rows:
         if obj.__dict__.get("_nslot") == h:
             _push_all(obj, h)
+    from engine.appc.ships import ShipClass
+    for h, obj in rows:
+        if obj.__dict__.get("_nslot") == h and isinstance(obj, ShipClass):
+            push_mount_order(obj)
 
 
 # ── K3: the torpedo table ────────────────────────────────────────────────────
@@ -1899,8 +2198,51 @@ def audit_mirror() -> None:
                 _failures.append((name, attr))
         if (h >> _KIND_SHIFT) == _kind("Set"):
             _audit_set(obj, row, name)
+        elif (h >> _KIND_SHIFT) == _kind("Object"):
+            if expected.get("is_ship_class"):
+                _audit_posed(obj, row, name, expected["has_posed_parts"])
+        elif (h >> _KIND_SHIFT) == _kind("Subsystem"):
+            _audit_slot(obj, row, name)
     _audit_torpedoes()
     _audit_globals()
+    if _h.combat_part_gen() != _part_gen:
+        _failures.append(("globals", "part_gen"))
+
+
+def _pose_rows(entries) -> list:
+    return [(_hexes(r), _hexes(t), bool(i), bool(d))
+            for r, t, i, d in entries]
+
+
+def _audit_posed(ship, row, name, flag) -> None:
+    """The pose table (MAP R10: a tick_ship that raised mid-loop leaves its
+    in-place writes unpushed) and the mount order."""
+    try:
+        want = (_pose_table(ship, _pose_names(ship)) if flag else [])
+    except (TypeError, ValueError, OverflowError, IndexError):
+        _failures.append((name, "part_poses"))
+    else:
+        if _pose_rows(want) != _pose_rows(row["part_poses"]):
+            _failures.append((name, "part_poses"))
+    if row["mount_order"] != _mount_order(ship):
+        _failures.append((name, "mount_order"))
+
+
+def _audit_slot(sub, row, name) -> None:
+    """A slot stamped with the current generation must name the part Python
+    resolves now, as an index into the owning ship's current table. A stale
+    stamp is never read, and neither is any slot of a ship whose table is
+    empty (has_posed_parts 0)."""
+    if row["part_gen"] != _part_gen:
+        return
+    ship = sub._climb_to_ship() if hasattr(type(sub), "_climb_to_ship") \
+        else None
+    if ship is None or _slot_of(ship) is None or not _posed_flag(ship):
+        return
+    leaf = _leaf_known(ship)
+    if leaf is None or _part_slot(leaf, _pose_names(ship), sub) \
+            != row["part_slot"]:
+        _failures.append((name, "part_slot"))
 
 
 def _audit_set(pSet, row, name) -> None:

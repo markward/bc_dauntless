@@ -119,6 +119,19 @@ using Vec3 = std::array<double, 3>;
 // should take the Python path instead. Stored and read back as is.
 constexpr int64_t kRefUnrepresentable = -2;
 
+// One entry of a ship's pose table (posed parts, spec 2026-11-01 §4.1): the
+// current pose of one name of articulation.posed_part_names(ship), in that
+// order. r is Python's R[i][j] at r[3i+j] (row-major, as stored), t the
+// translation, ship units, body frame. identity is Python's
+// part_pose.is_identity(pose), pushed and never recomputed; detached is
+// `name in ship._parts_detached`.
+struct PartPose {
+    double r[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+    double t[3] = {0, 0, 0};
+    bool identity = true;
+    bool detached = false;
+};
+
 struct ObjectRow {
     int64_t xform_index = -1, xform_gen = -1, obj_id = -1;
     // The Python object's id(), written at register and never changed (K3/
@@ -146,6 +159,12 @@ struct ObjectRow {
     int64_t _shield_subsystem = -1;
     Vec3 _shield_hull_box_center{0, 0, 0}, _shield_hull_box_half{0, 0, 0};
     int64_t hull_box_set = 0;
+    // Posed parts: the pose table (empty while has_posed_parts is 0) and the
+    // ship's subsystems in combat._iter_subsystems order (Subsystem handles;
+    // kRefUnrepresentable for one the mirror cannot name). Not Fields: set
+    // by set_part_poses / set_mount_order, shown by combat_dump.
+    std::vector<PartPose> part_poses;
+    std::vector<int64_t> mount_order;
 };
 
 struct SubsystemRow {
@@ -190,6 +209,12 @@ struct SubsystemRow {
     int64_t module_ok = 0;
     double _length = 0.0, _beam_on_countdown = 0.0, _dwell = 0.0;
     int64_t has_shields = 0;
+    // Posed parts: the index into the owning ship's part_poses of the part
+    // Python resolved for this subsystem's own mount (detachment ignored;
+    // -1 = no posable part), stamped with the global part_gen at
+    // resolution. A stamp != Mirror::part_gen() is stale: not resolved.
+    int32_t part_slot = -1;
+    uint64_t part_gen = 0;
 };
 
 struct PropertyRow {
@@ -316,6 +341,18 @@ public:
     void set_frame(int64_t set_handle, int64_t profile, const Vec3& anchor,
                    const Vec3& star);
 
+    // Posed parts (spec 2026-11-01 §4.1). Each throws std::invalid_argument
+    // for a stale or wrong-kind handle. A mount-order entry must be a
+    // Subsystem handle or kRefUnrepresentable; a slot is >= -1.
+    void set_part_poses(int64_t object, std::vector<PartPose> poses);
+    void set_part_slot(int64_t subsystem, int32_t slot, uint64_t gen);
+    void set_mount_order(int64_t object, const std::vector<int64_t>& order);
+    // The global part-map generation, bumped by Python at every input of the
+    // slot resolution. Starts (and clears) at 1, so a never-resolved slot
+    // (part_gen 0) reads stale.
+    void set_part_gen(uint64_t gen);
+    uint64_t part_gen() const { return part_gen_; }
+
     // Globals: throw std::invalid_argument on a type mismatch.
     void set_global_f(Global g, double v);
     void set_global_i(Global g, int64_t v);
@@ -401,6 +438,7 @@ private:
     Globals globals_;
     SensorState sensor_;
     uint64_t epoch_ = 0;
+    uint64_t part_gen_ = 1;
 };
 
 Mirror& mirror();  // process-wide; reads positions from transform_store()

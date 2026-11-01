@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdint>
 #include <stdexcept>
 #include <vector>
@@ -526,4 +527,76 @@ TEST(MirrorK3, PyIdAndTorpedoRefs) {
     EXPECT_EQ(f.m.globals().LEAD_ACCEL_K, 0.5);
     f.m.clear();
     EXPECT_EQ(tt.size(), 0u);
+}
+
+// Posed parts (native-combat posed parts, Task 1): the per-ship pose table
+// and mount order, the per-subsystem part slot, and the global part-map
+// generation. Storage only; no kernel reads them yet.
+TEST(MirrorPosedParts, DefaultsReadUnresolved) {
+    Fixture f;
+    int64_t o = f.m.register_row(Kind::Object);
+    int64_t s = f.m.register_row(Kind::Subsystem);
+    EXPECT_TRUE(f.m.object(o)->part_poses.empty());
+    EXPECT_TRUE(f.m.object(o)->mount_order.empty());
+    EXPECT_EQ(f.m.subsystem(s)->part_slot, -1);
+    EXPECT_EQ(f.m.subsystem(s)->part_gen, 0u);
+    // The global starts at 1, so a never-resolved slot (gen 0) is stale.
+    EXPECT_EQ(f.m.part_gen(), 1u);
+}
+
+TEST(MirrorPosedParts, StoresPoseTableSlotAndMountOrder) {
+    Fixture f;
+    int64_t o = f.m.register_row(Kind::Object);
+    int64_t s1 = f.m.register_row(Kind::Subsystem);
+    int64_t s2 = f.m.register_row(Kind::Subsystem);
+    PartPose a{{1, 0, 0, 0, 1, 0, 0, 0, 1}, {0, 0, 0}, true, false};
+    PartPose b{{0, -1, 0, 1, 0, 0, 0, 0, 1}, {0.5, -0.0, 2.0}, false, true};
+    uint64_t e0 = f.m.epoch();
+    f.m.set_part_poses(o, {a, b});
+    EXPECT_GT(f.m.epoch(), e0);
+    const auto& t = f.m.object(o)->part_poses;
+    ASSERT_EQ(t.size(), 2u);
+    EXPECT_EQ(t[1].r[1], -1.0);
+    EXPECT_EQ(t[1].t[0], 0.5);
+    EXPECT_TRUE(std::signbit(t[1].t[1]));
+    EXPECT_TRUE(t[0].identity);
+    EXPECT_FALSE(t[0].detached);
+    EXPECT_FALSE(t[1].identity);
+    EXPECT_TRUE(t[1].detached);
+    f.m.set_part_slot(s1, 1, 7);
+    EXPECT_EQ(f.m.subsystem(s1)->part_slot, 1);
+    EXPECT_EQ(f.m.subsystem(s1)->part_gen, 7u);
+    f.m.set_mount_order(o, {s2, kRefUnrepresentable, s1});
+    EXPECT_EQ(f.m.object(o)->mount_order,
+              (std::vector<int64_t>{s2, kRefUnrepresentable, s1}));
+    f.m.set_part_gen(9);
+    EXPECT_EQ(f.m.part_gen(), 9u);
+}
+
+TEST(MirrorPosedParts, RejectsBadHandlesAndEntries) {
+    Fixture f;
+    int64_t o = f.m.register_row(Kind::Object);
+    int64_t s = f.m.register_row(Kind::Subsystem);
+    // Wrong row kinds.
+    EXPECT_THROW(f.m.set_part_poses(s, {}), std::invalid_argument);
+    EXPECT_THROW(f.m.set_part_slot(o, 0, 1), std::invalid_argument);
+    EXPECT_THROW(f.m.set_mount_order(s, {}), std::invalid_argument);
+    // A mount-order entry must be a Subsystem handle or -2.
+    EXPECT_THROW(f.m.set_mount_order(o, {o}), std::invalid_argument);
+    EXPECT_THROW(f.m.set_mount_order(o, {-1}), std::invalid_argument);
+    // A slot below -1 is not an index.
+    EXPECT_THROW(f.m.set_part_slot(s, -2, 1), std::invalid_argument);
+    f.m.unregister_row(s);
+    EXPECT_THROW(f.m.set_part_slot(s, 0, 1), std::invalid_argument);
+}
+
+TEST(MirrorPosedParts, ClearResetsRowsAndGeneration) {
+    Fixture f;
+    int64_t o = f.m.register_row(Kind::Object);
+    f.m.set_part_poses(o, {PartPose{}});
+    f.m.set_part_gen(42);
+    f.m.clear();
+    EXPECT_EQ(f.m.part_gen(), 1u);
+    int64_t o2 = f.m.register_row(Kind::Object);
+    EXPECT_TRUE(f.m.object(o2)->part_poses.empty());
 }

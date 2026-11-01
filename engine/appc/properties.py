@@ -75,6 +75,9 @@ class TGModelProperty:
     def SetPhysicalParent(self, name) -> None:
         """Mesh part this mount rides on; ``None`` means Auto (unset)."""
         self._physical_parent = None if name is None else str(name)
+        # An input of the native part slots: they all read stale now.
+        from engine.appc import native_combat
+        native_combat.bump_part_gen()
 
     def GetPhysicalParent(self):
         return self._physical_parent

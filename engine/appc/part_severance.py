@@ -25,7 +25,7 @@ wing across a whole battle and it still comes off.
 from __future__ import annotations
 
 import engine.dev_mode as dev_mode
-from engine.appc import articulation, part_pose
+from engine.appc import articulation, native_combat, part_pose
 
 
 # A point inside exactly one part box resolves to that part. Otherwise the
@@ -268,6 +268,7 @@ def detached_parts(ship) -> set:
             ship._parts_detached = d
         except Exception:  # noqa: BLE001
             return set()
+        native_combat.push_posed_parts(ship)    # the table's detached bits
     return d
 
 
@@ -466,6 +467,9 @@ def sever(ship, iid, part_name):
     if is_detached(ship, part_name):
         return None
     detached_parts(ship).add(part_name)
+    # The native pose table's detached bit, synchronously: a mount on this
+    # part reads its REST point on the very next query (MAP R6).
+    native_combat.push_posed_parts(ship)
     _silence_emitters_on(ship, part_name,
                          _destroy_subsystems_on_part(ship, part_name, iid), iid)
     try:
@@ -558,3 +562,4 @@ def reset_ship(ship) -> None:
             setattr(ship, attr, None)
         except Exception:  # noqa: BLE001
             pass
+    native_combat.push_posed_parts(ship)        # the table's detached bits

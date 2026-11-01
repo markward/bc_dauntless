@@ -9711,6 +9711,47 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("star"),
               "A set's RESOLVED profile frame: profile handle (-1 unmapped, "
               "-2 unrepresentable), anchor_gu and star position_gu.");
+        // Posed parts (spec 2026-11-01 §4.1): a ship's pose table, a
+        // subsystem's part slot, a ship's mount order and the global
+        // part-map generation. Pushed by engine/appc/native_combat.py.
+        m.def("combat_set_part_poses",
+              [](std::int64_t h,
+                 const std::vector<std::tuple<std::array<double, 9>,
+                                              std::array<double, 3>, bool,
+                                              bool>>& entries) {
+                  std::vector<cb::PartPose> v;
+                  v.reserve(entries.size());
+                  for (const auto& [r, t, identity, detached] : entries) {
+                      cb::PartPose p;
+                      for (int i = 0; i < 9; ++i) p.r[i] = r[i];
+                      for (int i = 0; i < 3; ++i) p.t[i] = t[i];
+                      p.identity = identity;
+                      p.detached = detached;
+                      v.push_back(p);
+                  }
+                  cb::mirror().set_part_poses(h, std::move(v));
+              },
+              py::arg("handle"), py::arg("entries"),
+              "A ship's pose table: one (r9 row-major, t3, identity, "
+              "detached) per articulation.posed_part_names name, in order.");
+        m.def("combat_set_part_slot",
+              [](std::int64_t h, std::int32_t slot, std::uint64_t gen) {
+                  cb::mirror().set_part_slot(h, slot, gen);
+              },
+              py::arg("handle"), py::arg("slot"), py::arg("gen"),
+              "A subsystem's part slot (-1: no posable part) and the "
+              "part-map generation it was resolved at.");
+        m.def("combat_set_mount_order",
+              [](std::int64_t h, const std::vector<std::int64_t>& order) {
+                  cb::mirror().set_mount_order(h, order);
+              },
+              py::arg("handle"), py::arg("order"),
+              "A ship's subsystems in combat._iter_subsystems order "
+              "(-2 for one the mirror cannot name).");
+        m.def("combat_set_part_gen",
+              [](std::uint64_t gen) { cb::mirror().set_part_gen(gen); },
+              py::arg("gen"));
+        m.def("combat_part_gen", [] { return cb::mirror().part_gen(); });
         m.def("combat_set_globals",
               [](const py::dict& d) {
                   // Every key is checked before any value is stored.
@@ -9782,7 +9823,32 @@ PYBIND11_MODULE(_dauntless_host, m) {
             if (!mi.valid(h))
                 throw std::invalid_argument("combat mirror: stale handle");
             py::dict d;
-            if (kind == cb::Kind::Object) d["py_id"] = mi.object(h)->py_id;
+            if (kind == cb::Kind::Object) {
+                const cb::ObjectRow& row = *mi.object(h);
+                d["py_id"] = row.py_id;
+                py::list poses;
+                for (const auto& p : row.part_poses)
+                    poses.append(py::make_tuple(
+                        py::make_tuple(p.r[0], p.r[1], p.r[2], p.r[3], p.r[4],
+                                       p.r[5], p.r[6], p.r[7], p.r[8]),
+                        py::make_tuple(p.t[0], p.t[1], p.t[2]), p.identity,
+                        p.detached));
+                d["part_poses"] = poses;
+                // A since-freed entry reads -2: the ship holds its
+                // subsystems strongly, so a dead handle means the row was
+                // dropped, never that the subsystem is gone.
+                py::list order;
+                for (std::int64_t x : row.mount_order)
+                    order.append(x == cb::kRefUnrepresentable ||
+                                         mi.subsystem(x) != nullptr
+                                     ? x
+                                     : cb::kRefUnrepresentable);
+                d["mount_order"] = order;
+            } else if (kind == cb::Kind::Subsystem) {
+                const cb::SubsystemRow& row = *mi.subsystem(h);
+                d["part_slot"] = row.part_slot;
+                d["part_gen"] = row.part_gen;
+            }
             for (int i = 0; i < static_cast<int>(cb::Field::kCount); ++i) {
                 auto f = static_cast<cb::Field>(i);
                 if (cb::field_kind(f) != kind) continue;

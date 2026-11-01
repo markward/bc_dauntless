@@ -325,11 +325,15 @@ class ShipSubsystem(TGEventHandlerObject):
     _parent_ship = NativeRefField("Object")
     # Properties are shared templates with no hook at construction: a
     # property gets its row the first time a subsystem references it.
-    _property = NativeRefField("Property", lazy=True)
+    # A write bumps the part-map generation too: physical_parents.property_of
+    # reads it (native_combat.PartKeyRefField).
+    _property = native_combat.PartKeyRefField("Property", lazy=True)
     # Weapon-fire inputs (phase 1b): the ordered children (a weapon system's
     # banks / tubes), the mount geometry and the firing arc.
     _children = native_combat.NativeRefList("Subsystem")
-    _position = NativeField(native_combat.VEC3)
+    # The mount point part_for_mount keys on: a write bumps the part-map
+    # generation (native_combat.PartKeyField).
+    _position = native_combat.PartKeyField(native_combat.VEC3)
     _direction = NativeField(native_combat.VEC3)
     _up = NativeField(native_combat.VEC3)
     _right = NativeField(native_combat.VEC3)
@@ -1159,6 +1163,7 @@ class ShipSubsystem(TGEventHandlerObject):
         if ship is not None:
             passive_weapons.invalidate(ship)
             passive_power.invalidate(ship)
+            native_combat.push_mount_order(ship)     # combat._iter_subsystems
 
     def GetCritical(self) -> int:                       return self._critical
     def SetCritical(self, v) -> None:                   self._critical = int(v)
