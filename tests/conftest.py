@@ -799,6 +799,11 @@ class _SDKFinder(importlib.abc.MetaPathFinder):
 
 
 def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "mutates_engine_classes: the test deliberately leaves an engine class "
+        "changed; the engine class guard (_guard_engine_classes) skips it")
+
     # Our App.py must shadow sdk/Build/scripts/App.py
     if str(PROJECT_ROOT) not in sys.path:
         sys.path.insert(0, str(PROJECT_ROOT))
@@ -2030,6 +2035,36 @@ def bop_fixture_rig():
 def _isolate_engine_globals():
     _reset_leakable_engine_globals()
     yield
+
+
+# ── Fail the test that mutates an engine class and leaves it changed ─────────
+#
+# A bare `ShipClass.GetRadius = lambda ...` in a test outlives it and breaks
+# unrelated files far later in the run (2026-11-01: ~190 native-combat
+# failures an hour after the two polluting tests). This compares every engine
+# class's own methods/descriptors across the test's window and FAILS that test
+# (reported as an ERROR in teardown) naming class and attribute, after
+# restoring the original so one polluter does not cascade. Defined after
+# _isolate_engine_globals so the reset's own changes are part of the baseline;
+# being a root-conftest autouse fixture it is set up before monkeypatch and the
+# test's own fixtures and so torn down AFTER they have undone their changes
+# (pinned by tests/unit/test_engine_class_guard.py). Plain data attributes are
+# ignored. Escape hatch for a test that deliberately leaves a change:
+# @pytest.mark.mutates_engine_classes (none today).
+from tests.helpers.engine_class_guard import (  # noqa: E402
+    EngineClassGuard as _EngineClassGuard,
+    fail_on_mutations as _fail_on_mutations,
+)
+
+_ENGINE_CLASS_GUARD = _EngineClassGuard()
+
+
+@pytest.fixture(autouse=True)
+def _guard_engine_classes(request):
+    _ENGINE_CLASS_GUARD.sync()
+    yield
+    if request.node.get_closest_marker("mutates_engine_classes") is None:
+        _fail_on_mutations(_ENGINE_CLASS_GUARD.check())
 
 
 @pytest.fixture(scope="session", autouse=True)
