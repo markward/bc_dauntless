@@ -422,3 +422,103 @@ TEST(MirrorK2, Globals) {
     EXPECT_EQ(global_by_name("BEAM_DWELL_FLUSH_S"), Global::BEAM_DWELL_FLUSH_S);
     EXPECT_FALSE(global_is_int(Global::SHIELD_ELLIPSOID_AXIS_SCALE));
 }
+
+// ── K3/K4: py_id and the torpedo table ──────────────────────────────────────
+
+TEST(TorpedoTable, AddDropKeepsOrder) {
+    TorpedoTable t;
+    int64_t a = t.add(1, 0), b = t.add(2, 0), c = t.add(3, 0);
+    EXPECT_EQ(t.handles(), (std::vector<int64_t>{a, b, c}));
+    EXPECT_TRUE(t.drop(b));
+    EXPECT_FALSE(t.drop(b));               // already gone
+    EXPECT_EQ(t.handles(), (std::vector<int64_t>{a, c}));
+    EXPECT_EQ(t.size(), 2u);
+    int64_t d = t.add(4, 0);
+    EXPECT_NE(d, b);                       // handles are never reused
+    EXPECT_EQ(t.handles(), (std::vector<int64_t>{a, c, d}));
+    EXPECT_EQ(t.find(b), nullptr);
+    EXPECT_THROW(t.checked(b), std::invalid_argument);
+    ASSERT_NE(t.find(c), nullptr);
+    EXPECT_EQ(t.find(c)->xform_index, 3);
+    // Rows in order, tombstones included and flagged.
+    std::vector<int64_t> alive;
+    for (const TorpedoRow& r : t.rows())
+        if (r.alive) alive.push_back(r.handle);
+    EXPECT_EQ(alive, t.handles());
+    t.clear();
+    EXPECT_EQ(t.size(), 0u);
+    EXPECT_TRUE(t.handles().empty());
+    EXPECT_EQ(t.find(a), nullptr);
+}
+
+TEST(TorpedoTable, TombstonesCompact) {
+    TorpedoTable t;
+    std::vector<int64_t> hs;
+    for (int i = 0; i < 200; ++i) hs.push_back(t.add(i, 0));
+    t.find(hs[199])->age = 7.5;
+    // Drop all but every tenth: the tombstones outnumber the living, so the
+    // table compacts, and order and contents survive it.
+    std::vector<int64_t> kept;
+    for (int i = 0; i < 200; ++i) {
+        if (i % 10 == 0 || i == 199) kept.push_back(hs[i]);
+        else EXPECT_TRUE(t.drop(hs[i]));
+    }
+    EXPECT_LT(t.rows().size(), 200u);      // compacted
+    EXPECT_EQ(t.handles(), kept);
+    EXPECT_EQ(t.find(hs[199])->age, 7.5);
+    EXPECT_EQ(t.find(hs[190])->xform_index, 190);
+    for (int64_t h : kept) EXPECT_TRUE(t.drop(h));
+    EXPECT_EQ(t.size(), 0u);
+}
+
+TEST(TorpedoTable, FieldsAndUnrepresentable) {
+    TorpedoTable t;
+    int64_t h = t.add(5, 6);
+    t.set_f(h, TorpField::_ttl, 12.5);
+    t.set_v(h, TorpField::_last_seen_target_pos, true, {1, 2, 3});
+    const TorpedoRow* r = t.find(h);
+    EXPECT_EQ(r->ttl, 12.5);
+    EXPECT_TRUE(r->last_seen_set);
+    EXPECT_EQ(r->last_seen, (Vec3{1, 2, 3}));
+    t.set_unrepresentable(h, TorpField::_ttl);
+    EXPECT_NE(r->unrepresentable, 0u);
+    t.set_f(h, TorpField::_ttl, 1.0);      // a good push clears the flag
+    EXPECT_EQ(r->unrepresentable, 0u);
+    t.set_v(h, TorpField::_last_seen_target_pos, false, {0, 0, 0});
+    EXPECT_FALSE(r->last_seen_set);
+    EXPECT_THROW(t.set_f(h, TorpField::_velocity, 1.0), std::invalid_argument);
+    EXPECT_THROW(t.set_v(h, TorpField::_velocity, false, {0, 0, 0}),
+                 std::invalid_argument);   // the velocity is never unset
+    EXPECT_STREQ(torp_field_name(TorpField::_age), "_age");
+}
+
+TEST(MirrorK3, PyIdAndTorpedoRefs) {
+    Fixture f;
+    int64_t o = f.m.register_row(Kind::Object, 1, 2, 3, 0xFFFF000012345678ull);
+    EXPECT_EQ(f.m.object(o)->py_id, 0xFFFF000012345678ull);
+    int64_t s = f.m.register_row(Kind::Set);
+    int64_t sub = f.m.register_row(Kind::Subsystem);
+    TorpedoTable& tt = f.m.torpedoes();
+    int64_t h = tt.add(9, 1);
+    f.m.set_torpedo_ref(h, TorpField::_target_ship, o);
+    f.m.set_torpedo_ref(h, TorpField::_containing_set, s);
+    f.m.set_torpedo_mount(h, true, sub, {1, 2, 3});
+    EXPECT_EQ(f.m.torpedo_ref(*tt.find(h), TorpField::_target_ship), o);
+    EXPECT_EQ(f.m.torpedo_ref(*tt.find(h), TorpField::_mount_key), sub);
+    // Kinds are checked: a Set is not a target, an Object is not a set.
+    EXPECT_THROW(f.m.set_torpedo_ref(h, TorpField::_target_ship, s),
+                 std::invalid_argument);
+    EXPECT_THROW(f.m.set_torpedo_ref(h, TorpField::_containing_set, o),
+                 std::invalid_argument);
+    f.m.set_torpedo_ref(h, TorpField::_source_ship, kRefUnrepresentable);
+    EXPECT_EQ(f.m.torpedo_ref(*tt.find(h), TorpField::_source_ship),
+              kRefUnrepresentable);
+    // A ref to a since-freed row reads none.
+    f.m.unregister_row(o);
+    EXPECT_EQ(f.m.torpedo_ref(*tt.find(h), TorpField::_target_ship), -1);
+    // The globals carry the lead term; clear() empties the table.
+    f.m.set_global_f(Global::LEAD_ACCEL_K, 0.5);
+    EXPECT_EQ(f.m.globals().LEAD_ACCEL_K, 0.5);
+    f.m.clear();
+    EXPECT_EQ(tt.size(), 0u);
+}

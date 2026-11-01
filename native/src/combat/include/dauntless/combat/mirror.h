@@ -10,6 +10,7 @@
 #include "dauntless/combat/nebula_density.h"
 #include "dauntless/combat/profile_eval.h"
 #include "dauntless/combat/sensor_state.h"
+#include "dauntless/combat/torpedo_table.h"
 #include "dauntless/transform_store.h"
 
 // The native combat mirror: one row per Python object the sensor-detection
@@ -120,6 +121,9 @@ constexpr int64_t kRefUnrepresentable = -2;
 
 struct ObjectRow {
     int64_t xform_index = -1, xform_gen = -1, obj_id = -1;
+    // The Python object's id(), written at register and never changed (K3/
+    // K4 name objects back to Python by it). Not a Field: read-only, uint64.
+    uint64_t py_id = 0;
     int64_t has_sensor_getter = 0, has_cloak_getter = 0, is_rock = 0,
             is_meta_nebula = 0;
     int64_t _dead = 0, _dying = 0;
@@ -237,6 +241,8 @@ enum class Global : int32_t {
     // The K2 kernel (phase 2): weapon_subsystems.BEAM_DWELL_FLUSH_S and
     // combat.SHIELD_ELLIPSOID_AXIS_SCALE
     BEAM_DWELL_FLUSH_S, SHIELD_ELLIPSOID_AXIS_SCALE,
+    // The K3 kernel: projectiles._LEAD_ACCEL_K (the guidance lead term)
+    LEAD_ACCEL_K,
     kCount
 };
 
@@ -259,6 +265,7 @@ struct Globals {
            PULSE_COST_SCALE_2 = 0.0;
     double FIRE_TIMER_THRESHOLD = 0.0, PHASER_MAX_RANGE_GU = 0.0;
     double BEAM_DWELL_FLUSH_S = 0.0, SHIELD_ELLIPSOID_AXIS_SCALE = 0.0;
+    double LEAD_ACCEL_K = 0.0;
 };
 
 struct ProfileRowSet {
@@ -273,9 +280,11 @@ public:
     const TransformStore& store() const { return store_; }
 
     int64_t register_row(Kind kind, int64_t xform_index = -1,
-                         int64_t xform_gen = -1, int64_t obj_id = -1);
+                         int64_t xform_gen = -1, int64_t obj_id = -1,
+                         uint64_t py_id = 0);
     void unregister_row(int64_t handle);
-    // Every row and the globals, plus the native-owned SensorState.
+    // Every row, the torpedo table and the globals, plus the native-owned
+    // SensorState.
     void clear();
     uint64_t epoch() const { return epoch_; }
 
@@ -334,6 +343,21 @@ public:
     const ProfileRowSet* profile(int64_t h) const;
     const AmmoRow* ammo(int64_t h) const;
 
+    // The K3 torpedo table (torpedo_table.h). Its writes do not bump the
+    // epoch: no K1/K2 answer reads a torpedo row.
+    TorpedoTable& torpedoes() { return torpedoes_; }
+    const TorpedoTable& torpedoes() const { return torpedoes_; }
+    // A torpedo ref field (_target_ship / _source_ship: Object,
+    // _containing_set: Set). Throws std::invalid_argument for a stale
+    // torpedo handle or a live ref of the wrong kind / a stale ref.
+    void set_torpedo_ref(int64_t torp, TorpField f, int64_t ref);
+    // `_mount_key`: `sub` a Subsystem handle, -1 or kRefUnrepresentable.
+    void set_torpedo_mount(int64_t torp, bool attributed, int64_t sub,
+                           const Vec3& offset);
+    // A torpedo row's ref (the three refs and _mount_key's subsystem),
+    // re-checked: a since-freed row reads -1; -2 reads as is.
+    int64_t torpedo_ref(const TorpedoRow& row, TorpField f) const;
+
 private:
     template <class T>
     struct Table {
@@ -371,6 +395,7 @@ private:
     Table<ProfileRowSet> profiles_;
     Table<AmmoRow> ammo_;
     std::unordered_map<int64_t, int64_t> by_obj_id_;
+    TorpedoTable torpedoes_;
     Globals globals_;
     SensorState sensor_;
     uint64_t epoch_ = 0;

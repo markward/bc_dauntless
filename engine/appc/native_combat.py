@@ -19,7 +19,9 @@ A write that does not go through ``__set__`` (an in-place ``.add`` on a set, a
 call ``push_ids`` themselves, and ``audit_mirror`` exists to catch a missed one.
 A subclass that HIDES a mirrored attribute behind its own property (Torpedo)
 is caught per class at registration (``_hidden_fields``): a hidden ref reads
-REF_UNREPRESENTABLE, and an object hiding a scalar gets no row.
+REF_UNREPRESENTABLE, and an object hiding a scalar gets no row. Torpedoes are
+mirrored instead by their own TABLE, kept in ``projectiles._active`` order
+(the K3 section below: ``TorpedoField``, ``torpedo_row_add``).
 
 Rows live exactly as long as their Python object: ``register`` in
 ``__init__``, unregistered by the object's ``weakref.finalize``. Objects are
@@ -109,6 +111,8 @@ def configure(environ: Mapping[str, str] = os.environ) -> None:
     # never pushed would record every field of every row, every tick.
     _audit = False
     if not want:
+        if _enabled:
+            torpedo_table_mark_dirty()  # unpushed from here on: drop it
         _enabled = False
         return
     if not _enabled:
@@ -150,6 +154,7 @@ def reset() -> None:
     _k2_iids_sent[:] = [_K2_UNSENT, -1, -1]
     global _k2_drop_epoch
     _k2_drop_epoch += 1
+    torpedo_table_mark_dirty()
     if available():
         _h.combat_k1_reset_counts()
         _h.combat_k2_reset_counts()
@@ -817,7 +822,7 @@ def register(obj, kind: str, finalize: bool = True) -> None:
         return      # a hidden scalar cannot read "unrepresentable": no row
     if kind == "Object":
         xi, xg = d.get("_xform", (-1, -1))
-        h = _h.combat_register(_kind(kind), xi, xg, obj.GetObjID())
+        h = _h.combat_register(_kind(kind), xi, xg, obj.GetObjID(), id(obj))
     else:
         h = _h.combat_register(_kind(kind))
     d["_nslot"] = h
@@ -1364,6 +1369,9 @@ def _globals() -> dict:
     from engine.appc import combat
     g["BEAM_DWELL_FLUSH_S"] = float(ws.BEAM_DWELL_FLUSH_S)
     g["SHIELD_ELLIPSOID_AXIS_SCALE"] = float(combat.SHIELD_ELLIPSOID_AXIS_SCALE)
+    # K3: the guidance lead term.
+    from engine.appc import projectiles
+    g["LEAD_ACCEL_K"] = float(projectiles._LEAD_ACCEL_K)
     # K1's 0.33 s timer gate: a class constant of WeaponSystem.
     g["FIRE_TIMER_THRESHOLD"] = float(ws.WeaponSystem.FIRE_TIMER_THRESHOLD)
     return g
@@ -1382,6 +1390,8 @@ def resync() -> None:
     _containing_set is re-pushed with them, including objects whose set
     registered after them."""
     push_globals()
+    # Torpedoes in flight have no rows yet: K3 rebuilds the table first.
+    torpedo_table_mark_dirty()
     rows = [(h, obj) for h, obj in list(_registry.items())
             if obj.__dict__.get("_nslot") == h]
     set_kind = _kind("Set")
@@ -1389,6 +1399,355 @@ def resync() -> None:
     for h, obj in rows:
         if obj.__dict__.get("_nslot") == h:
             _push_all(obj, h)
+
+
+# ── K3: the torpedo table ────────────────────────────────────────────────────
+# One native row per in-flight torpedo, in projectiles._active order
+# (torpedo_table.h). Torpedoes have no Object row (they hide `_radius` and
+# `_containing_set` behind properties, _hidden_fields), so they are their own
+# kind, synced at the _ActiveList hooks beside the TorpedoScan rows:
+# torpedo_row_add at append, torpedo_row_drop at remove/pop, and every other
+# list mutation marks the table dirty (torpedo_table_mark_dirty), which
+# EMPTIES it until torpedo_table_rebuild re-reads `_active` from Python.
+#
+# A torpedo's row handle is `_k3_row` in its __dict__. Every field the kernel
+# reads pushes while the torpedo has one: the plain fields through
+# TorpedoField, `_velocity` / `_source_ship` / `_containing_set` from their
+# Torpedo properties (push_torpedo_field). A value the row cannot hold sets
+# the field's "unrepresentable" bit instead (the kernel hands such a torpedo
+# to Python); a later good push clears it.
+
+_k3_dirty = True
+# handle -> torpedo, for every row in the table.
+_k3_rows: dict = {}
+_torp_fids: dict = {}
+
+
+class _Unrepresentable(Exception):
+    pass
+
+
+def _tfid(name: str) -> int:
+    fid = _torp_fids.get(name)
+    if fid is None:
+        _torp_fids.update(_h.combat_torp_field_names())
+        fid = _torp_fids[name]
+    return fid
+
+
+def _num(v) -> float:
+    """A number Python's own arithmetic and compares treat as this double:
+    a float, or an int / bool that converts exactly. Anything else (a str,
+    None, a huge int) the row cannot hold."""
+    if type(v) is float:
+        return v
+    if isinstance(v, (int, float)):
+        try:
+            f = float(v)
+        except OverflowError:
+            raise _Unrepresentable
+        if f == v:
+            return f
+    raise _Unrepresentable
+
+
+def _point(v) -> tuple:
+    if not isinstance(v, TGPoint3):
+        raise _Unrepresentable
+    return (_num(v.x), _num(v.y), _num(v.z))
+
+
+_NO_POINT = (0.0, 0.0, 0.0)
+
+
+def _enc_velocity(t, v):
+    return (True,) + _point(v)
+
+
+def _enc_offset(t, v):
+    """Read by `isinstance(v, TGPoint3)` (`_target_offset` in _steer_point,
+    `_last_target_vel` in _guide): anything else is unset."""
+    if isinstance(v, TGPoint3):
+        return (True,) + _point(v)
+    return (False,) + _NO_POINT
+
+
+def _enc_none_or_point(t, v):
+    """`_last_seen_target_pos`: _guide tests `is None`, then does point
+    arithmetic on anything else, which only a TGPoint3 matches."""
+    if v is None:
+        return (False,) + _NO_POINT
+    return (True,) + _point(v)
+
+
+def _enc_ref(target):
+    def enc(t, v):
+        if v is None:
+            return REF_NONE
+        return _handle_of(v, target)
+    return enc
+
+
+def _enc_mount(t, key):
+    """(attributed, subsystem ref, x, y, z). attributed is _steer_point's
+    `key[0] is target` for the torpedo's CURRENT `_target_ship`."""
+    if key is None:
+        return (False, REF_NONE) + _NO_POINT
+    try:
+        target, x, y, z, sub = key
+    except (TypeError, ValueError):
+        raise _Unrepresentable
+    sub_ref = REF_NONE if sub is None else _handle_of(sub, "Subsystem")
+    return ((target is t.__dict__.get("_target_ship")), sub_ref,
+            _num(x), _num(y), _num(z))
+
+
+# Python attribute -> (encoder, row setter kind, combat_torp_dump key).
+_TORP_FIELDS = {
+    "_age": (lambda t, v: _num(v), "f", "age"),
+    "_ttl": (lambda t, v: _num(v), "f", "ttl"),
+    "_guidance_lifetime": (lambda t, v: _num(v), "f", "guidance_lifetime"),
+    "_guidance_initial": (lambda t, v: _num(v), "f", "guidance_initial"),
+    "_max_angular_accel": (lambda t, v: _num(v), "f", "max_angular_accel"),
+    "_velocity": (_enc_velocity, "v", "vel"),
+    "_target_offset": (_enc_offset, "v", "target_offset"),
+    "_last_seen_target_pos": (_enc_none_or_point, "v", "last_seen"),
+    "_last_target_vel": (_enc_offset, "v", "last_tvel"),
+    "_target_ship": (_enc_ref("Object"), "r", "target"),
+    "_source_ship": (_enc_ref("Object"), "r", "source"),
+    "_containing_set": (_enc_ref("Set"), "r", "cset"),
+    "_mount_key": (_enc_mount, "m", None),
+}
+# The fields kept in the torpedo's __dict__ (TorpedoField); the other three
+# are Torpedo properties over the `_vel` / `_src` / `_cset` slots.
+_TORP_DICT_FIELDS = tuple(n for n in _TORP_FIELDS
+                          if n not in ("_velocity", "_source_ship",
+                                       "_containing_set"))
+
+
+_UNSET_FIELD = object()
+
+
+def _torp_value(t, name):
+    """The Python value a field mirrors, or _UNSET_FIELD."""
+    if name == "_velocity":
+        return getattr(t, "_vel", None)
+    if name == "_source_ship":
+        return getattr(t, "_src", None)
+    if name == "_containing_set":
+        return getattr(t, "_cset", None)
+    return t.__dict__.get(name, _UNSET_FIELD)
+
+
+def _torp_live(h: int) -> bool:
+    try:
+        _h.combat_torp_dump(h)
+    except ValueError:
+        return False
+    return True
+
+
+def _torp_lost(t) -> None:
+    """The torpedo's row is gone under it (a combat_clear): it has no row,
+    and the table no longer matches the list."""
+    h = t.__dict__.pop("_k3_row", None)
+    if _k3_rows.get(h) is t:
+        del _k3_rows[h]
+    torpedo_table_mark_dirty()
+
+
+def _torp_push(t, h, name, value) -> None:
+    enc, how, _ = _TORP_FIELDS[name]
+    fid = _tfid(name)
+    try:
+        v = enc(t, value)
+    except _Unrepresentable:
+        try:
+            _h.combat_torp_set_unrepresentable(h, fid)
+        except ValueError:
+            _torp_lost(t)
+        return
+    try:
+        if how == "f":
+            _h.combat_torp_set_f(h, fid, v)
+        elif how == "v":
+            _h.combat_torp_set_v(h, fid, *v)
+        elif how == "r":
+            _torp_push_ref(t, h, fid, value, v)
+        else:
+            _torp_push_mount(t, h, value, v)
+    except ValueError:
+        _torp_lost(t)
+        return
+    if name == "_target_ship":
+        # `_mount_key`'s attributed flag is `key[0] is _target_ship`.
+        _torp_push(t, h, "_mount_key", t.__dict__.get("_mount_key"))
+
+
+def _torp_push_ref(t, h, fid, value, ref) -> None:
+    try:
+        _h.combat_torp_set_ref(h, fid, ref)
+    except ValueError:
+        if ref < 0 or not _torp_live(h):
+            raise
+        _drop(value)            # the referent's handle is the stale one
+        _h.combat_torp_set_ref(h, fid, REF_UNREPRESENTABLE)
+
+
+def _torp_push_mount(t, h, key, v) -> None:
+    try:
+        _h.combat_torp_set_mount(h, *v)
+    except ValueError:
+        if v[1] < 0 or not _torp_live(h):
+            raise
+        _drop(key[4])
+        _h.combat_torp_set_mount(h, v[0], REF_UNREPRESENTABLE, *v[2:])
+
+
+class TorpedoField:
+    """A Torpedo attribute the K3 kernel reads: like NativeField (no
+    __get__, the value lives in the instance dict) but pushed into the
+    torpedo's TABLE row, `_k3_row`. Switch off: one __set__ and a global
+    read."""
+
+    __slots__ = ("_name",)
+
+    def __set_name__(self, owner, name) -> None:
+        self._name = name
+
+    def __set__(self, obj, value) -> None:
+        d = obj.__dict__
+        d[self._name] = value
+        if _enabled:
+            h = d.get("_k3_row")
+            if h is not None:
+                _torp_push(obj, h, self._name, value)
+
+
+def push_torpedo_field(t, name: str, value) -> None:
+    """A Torpedo property (`_velocity`, `_source_ship`, `_containing_set`)
+    was written: push it if the torpedo has a row. Callers test `_enabled`
+    first, so the switch-off cost is that read."""
+    h = t.__dict__.get("_k3_row")
+    if h is not None:
+        _torp_push(t, h, name, value)
+
+
+def _torp_put(t) -> None:
+    xi, xg = t.__dict__.get("_xform", (-1, -1))
+    h = _h.combat_torp_add(xi, xg)
+    t.__dict__["_k3_row"] = h
+    _k3_rows[h] = t
+    for name in _TORP_FIELDS:
+        value = _torp_value(t, name)
+        if value is not _UNSET_FIELD and t.__dict__.get("_k3_row") == h:
+            _torp_push(t, h, name, value)
+
+
+def torpedo_row_add(t) -> None:
+    """`_active.append(t)`: a row at the end, unless the table is dirty (the
+    rebuild will include it) or `t` already has one (appended twice: the
+    list now holds it twice, so the table is rebuilt)."""
+    if not _enabled or _k3_dirty:
+        return
+    h = t.__dict__.get("_k3_row")
+    if h is not None and _k3_rows.get(h) is t:
+        torpedo_table_mark_dirty()
+        return
+    _torp_put(t)
+
+
+def torpedo_row_drop(t) -> None:
+    """`_active.remove(t)` / `pop`: drop its row."""
+    d = getattr(t, "__dict__", None)
+    if d is None:
+        return
+    h = d.pop("_k3_row", None)
+    if h is None:
+        return
+    if _k3_rows.get(h) is t:
+        del _k3_rows[h]
+        _h.combat_torp_drop(h)
+
+
+def torpedo_table_mark_dirty() -> None:
+    """`_active` changed in a way the rows cannot follow one at a time:
+    empty the table; torpedo_table_rebuild refills it in list order."""
+    global _k3_dirty
+    _k3_dirty = True
+    for t in _k3_rows.values():
+        t.__dict__.pop("_k3_row", None)
+    _k3_rows.clear()
+    if available():
+        _h.combat_torp_clear()
+
+
+def torpedo_table_rebuild(active) -> None:
+    """Refill the table from `active` (projectiles._active), in list order,
+    each torpedo once. A no-op with the switch off."""
+    global _k3_dirty
+    if not _enabled:
+        return
+    torpedo_table_mark_dirty()
+    _k3_dirty = False
+    from engine.appc.projectiles import Torpedo
+    for t in active:
+        if isinstance(t, Torpedo) and \
+                _k3_rows.get(t.__dict__.get("_k3_row")) is not t:
+            _torp_put(t)
+
+
+def _audit_torpedoes() -> None:
+    """Every torpedo row against its Python object, and (when the table is
+    not dirty) the row order against `_active`."""
+    proj = sys.modules.get("engine.appc.projectiles")
+    if proj is None:
+        return
+    torps, seen = [], set()
+    for t in proj._active:
+        if isinstance(t, proj.Torpedo) and id(t) not in seen:
+            seen.add(id(t))
+            torps.append(t)
+    if not _k3_dirty and list(_h.combat_torp_handles()) != [
+            t.__dict__.get("_k3_row") for t in torps]:
+        _failures.append(("Torpedo", "order"))
+    for t in torps:
+        h = t.__dict__.get("_k3_row")
+        if h is None:
+            continue
+        try:
+            row = _h.combat_torp_dump(h)
+        except ValueError:
+            _failures.append(("Torpedo", "row"))
+            continue
+        for name, (enc, how, key) in _TORP_FIELDS.items():
+            value = _torp_value(t, name)
+            if value is _UNSET_FIELD:
+                continue
+            try:
+                want = enc(t, value)
+            except _Unrepresentable:
+                if name not in row["unrepresentable"]:
+                    _failures.append(("Torpedo", name))
+                continue
+            if name in row["unrepresentable"] or \
+                    not _torp_matches(how, key, want, row):
+                _failures.append(("Torpedo", name))
+
+
+def _torp_matches(how, key, want, row) -> bool:
+    if how == "f":
+        return want.hex() == float(row[key]).hex()
+    if how == "r":
+        return want == row[key]
+    if how == "v":
+        got = row[key]
+        if not want[0]:
+            return got is None
+        return got is not None and _hexes(got) == _hexes(want[1:])
+    return (int(want[0]), want[1], _hexes(want[2:])) == (
+        row["mount_attributed"], row["mount_sub"],
+        _hexes(row["mount_offset"]))
 
 
 # ── Audit ────────────────────────────────────────────────────────────────────
@@ -1423,6 +1782,8 @@ def audit_mirror() -> None:
             ok, speed, life = ws.resolve_pulse_module_params(
                 ws.pulse_module_script(obj))
             expected.update(module_ok=ok, launch_speed=speed, lifetime=life)
+        if (h >> _KIND_SHIFT) == _kind("Object") and row["py_id"] != id(obj):
+            _failures.append((name, "py_id"))
         for field, v in expected.items():
             got = row[field]
             if isinstance(v, float):
@@ -1446,6 +1807,7 @@ def audit_mirror() -> None:
                 _failures.append((name, attr))
         if (h >> _KIND_SHIFT) == _kind("Set"):
             _audit_set(obj, row, name)
+    _audit_torpedoes()
     _audit_globals()
 
 

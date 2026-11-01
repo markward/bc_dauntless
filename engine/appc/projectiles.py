@@ -19,6 +19,7 @@ hit_point, hit_normal) tuples for host_loop to route through combat.apply_hit.
 import math
 import weakref
 
+from engine.appc import native_combat as _nc
 from engine.appc.math import TGPoint3
 from engine.appc.objects import ObjectClass
 from engine.systems.frames import shifted as _shifted
@@ -60,12 +61,9 @@ class Torpedo(ObjectClass):
     in this list -- it lives in the store, not on the instance.
     """
     __slots__ = (
-        "_vel", "_age", "_ttl",
+        "_vel",
         "_damage", "_damage_radius_factor",
-        "_target_ship", "_target_offset",
-        "_guidance_lifetime", "_guidance_initial", "_max_angular_accel",
-        "_last_seen_target_pos", "_last_target_vel",
-        "_src", "_cset", "_scan_live", "_rad", "_mount_key",
+        "_src", "_cset", "_scan_live", "_rad",
         "_id", "_bubble_entry",
         "_core_texture", "_core_color", "_core_size_a", "_core_size_b",
         "_glow_texture", "_glow_color", "_glow_size_a", "_glow_size_b", "_glow_size_c",
@@ -74,6 +72,22 @@ class Torpedo(ObjectClass):
         "_is_disruptor", "_shell_color", "_bolt_core_color",
         "_bolt_length", "_bolt_width",
     )
+
+    # What the native K3 kernel reads (engine/appc/native_combat.py, the
+    # torpedo table): each write is pushed into the torpedo's table row while
+    # it has one. Not slots: a descriptor and a slot cannot share a name.
+    # `_velocity`, `_source_ship` and `_containing_set` push from their
+    # properties below.
+    _age = _nc.TorpedoField()
+    _ttl = _nc.TorpedoField()
+    _guidance_lifetime = _nc.TorpedoField()
+    _guidance_initial = _nc.TorpedoField()
+    _max_angular_accel = _nc.TorpedoField()
+    _target_ship = _nc.TorpedoField()
+    _target_offset = _nc.TorpedoField()
+    _last_seen_target_pos = _nc.TorpedoField()
+    _last_target_vel = _nc.TorpedoField()
+    _mount_key = _nc.TorpedoField()
 
     def __init__(self):
         # Before super(): ObjectClass.__init__ assigns _containing_set, whose
@@ -242,6 +256,8 @@ class Torpedo(ObjectClass):
         self._vel = v
         if self._scan_live == _scan_gen and not _scan_dirty:
             _scan_table().set_velocity(self.GetObjID(), v.x, v.y, v.z)
+        if _nc._enabled:
+            _nc.push_torpedo_field(self, "_velocity", v)
 
     @property
     def _source_ship(self):
@@ -252,6 +268,8 @@ class Torpedo(ObjectClass):
         self._src = src
         if self._scan_live == _scan_gen and not _scan_dirty:
             _scan_table().set_source(self.GetObjID(), *_source_key(src))
+        if _nc._enabled:
+            _nc.push_torpedo_field(self, "_source_ship", src)
 
     @property
     def _radius(self):
@@ -278,6 +296,8 @@ class Torpedo(ObjectClass):
         if old is not pSet and self._scan_live == _scan_gen and not _scan_dirty:
             _group_leave(old)
             _scan_table().set_group(self.GetObjID(), _group_join(pSet))
+        if _nc._enabled:
+            _nc.push_torpedo_field(self, "_containing_set", pSet)
 
     def GetVelocityTG(self) -> TGPoint3:
         """Current in-flight velocity as a FRESH copy. Mirrors
@@ -318,6 +338,7 @@ class _ActiveList(list):
         super().append(t)
         if isinstance(t, Torpedo):
             _scan_add(t)
+            _nc.torpedo_row_add(t)
 
     def extend(self, items):
         for t in items:
@@ -330,35 +351,44 @@ class _ActiveList(list):
     def remove(self, t):
         super().remove(t)
         _scan_drop(t)
+        _nc.torpedo_row_drop(t)
 
     def pop(self, i=-1):
         t = super().pop(i)
         _scan_drop(t)
+        _nc.torpedo_row_drop(t)
         return t
 
     def clear(self):
         super().clear()
-        _scan_mark_dirty()
+        _list_reshaped()
 
     def insert(self, i, t):
         super().insert(i, t)
-        _scan_mark_dirty()
+        _list_reshaped()
 
     def __setitem__(self, i, v):
         super().__setitem__(i, v)
-        _scan_mark_dirty()
+        _list_reshaped()
 
     def __delitem__(self, i):
         super().__delitem__(i)
-        _scan_mark_dirty()
+        _list_reshaped()
 
     def sort(self, *a, **k):
         super().sort(*a, **k)
-        _scan_mark_dirty()
+        _list_reshaped()
 
     def reverse(self):
         super().reverse()
-        _scan_mark_dirty()
+        _list_reshaped()
+
+
+def _list_reshaped() -> None:
+    """`_active` was reordered or a slice replaced: both tables rebuild from
+    it (the incoming-torpedo scan and native_combat's K3 torpedo table)."""
+    _scan_mark_dirty()
+    _nc.torpedo_table_mark_dirty()
 
 
 _active: list[Torpedo] = _ActiveList()

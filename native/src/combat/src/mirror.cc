@@ -176,6 +176,7 @@ constexpr GlobalInfo kGlobals[] = {
     {"BEAM_DWELL_FLUSH_S", false, &Globals::BEAM_DWELL_FLUSH_S, nullptr},
     {"SHIELD_ELLIPSOID_AXIS_SCALE", false,
      &Globals::SHIELD_ELLIPSOID_AXIS_SCALE, nullptr},
+    {"LEAD_ACCEL_K", false, &Globals::LEAD_ACCEL_K, nullptr},
 };
 static_assert(sizeof(kGlobals) / sizeof(kGlobals[0]) ==
               static_cast<size_t>(Global::kCount));
@@ -551,7 +552,7 @@ bool Mirror::valid(int64_t h) const {
 }
 
 int64_t Mirror::register_row(Kind kind, int64_t xform_index, int64_t xform_gen,
-                             int64_t obj_id) {
+                             int64_t obj_id, uint64_t py_id) {
     int64_t h;
     switch (kind) {
         case Kind::Object: {
@@ -560,6 +561,7 @@ int64_t Mirror::register_row(Kind kind, int64_t xform_index, int64_t xform_gen,
             r.xform_index = xform_index;
             r.xform_gen = xform_gen;
             r.obj_id = obj_id;
+            r.py_id = py_id;
             if (obj_id >= 0) by_obj_id_[obj_id] = h;
             break;
         }
@@ -610,6 +612,7 @@ void Mirror::clear() {
     clear_table(profiles_);
     clear_table(ammo_);
     by_obj_id_.clear();
+    torpedoes_.clear();
     globals_ = Globals{};
     clear_owned_state();
     ++epoch_;
@@ -874,6 +877,58 @@ const PropertyRow* Mirror::property(int64_t h) const { return find(properties_, 
 const SetRow* Mirror::set(int64_t h) const { return find(sets_, h, Kind::Set); }
 const ProfileRowSet* Mirror::profile(int64_t h) const { return find(profiles_, h, Kind::Profile); }
 const AmmoRow* Mirror::ammo(int64_t h) const { return find(ammo_, h, Kind::Ammo); }
+
+namespace {
+
+Kind torpedo_ref_kind(TorpField f) {
+    switch (f) {
+        case TorpField::_target_ship:
+        case TorpField::_source_ship: return Kind::Object;
+        case TorpField::_containing_set: return Kind::Set;
+        case TorpField::_mount_key: return Kind::Subsystem;
+        default:
+            throw std::invalid_argument(
+                std::string("torpedo table: not a ref field (field ") +
+                torp_field_name(f) + ")");
+    }
+}
+
+}  // namespace
+
+void Mirror::set_torpedo_ref(int64_t torp, TorpField f, int64_t ref) {
+    Kind want = torpedo_ref_kind(f);
+    if (f == TorpField::_mount_key)
+        throw std::invalid_argument(
+            "torpedo table: _mount_key is set by set_torpedo_mount");
+    if (ref != -1 && ref != kRefUnrepresentable && !ref_live(ref, want))
+        throw std::invalid_argument(
+            std::string("torpedo table: ref target stale or wrong kind "
+                        "(field ") + torp_field_name(f) + ")");
+    torpedoes_.set_ref(torp, f, ref);
+}
+
+void Mirror::set_torpedo_mount(int64_t torp, bool attributed, int64_t sub,
+                               const Vec3& offset) {
+    if (sub != -1 && sub != kRefUnrepresentable &&
+        !ref_live(sub, Kind::Subsystem))
+        throw std::invalid_argument(
+            "torpedo table: ref target stale or wrong kind (field "
+            "_mount_key)");
+    torpedoes_.set_mount(torp, attributed, sub, offset);
+}
+
+int64_t Mirror::torpedo_ref(const TorpedoRow& row, TorpField f) const {
+    Kind want = torpedo_ref_kind(f);
+    int64_t t;
+    switch (f) {
+        case TorpField::_target_ship: t = row.target; break;
+        case TorpField::_source_ship: t = row.source; break;
+        case TorpField::_containing_set: t = row.cset; break;
+        default: t = row.mount_sub; break;
+    }
+    if (t == kRefUnrepresentable) return t;
+    return (t >= 0 && ref_live(t, want)) ? t : -1;
+}
 
 Mirror& mirror() {
     static Mirror m(transform_store());

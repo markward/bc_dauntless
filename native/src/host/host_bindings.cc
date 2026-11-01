@@ -9541,14 +9541,18 @@ PYBIND11_MODULE(_dauntless_host, m) {
             return static_cast<cb::Field>(f);
         };
         m.def("combat_register",
-              [](int kind, std::int64_t xi, std::int64_t xg, std::int64_t id) {
+              [](int kind, std::int64_t xi, std::int64_t xg, std::int64_t id,
+                 std::uint64_t py_id) {
                   if (kind < 0 || kind >= static_cast<int>(cb::Kind::kCount))
                       throw std::invalid_argument("combat mirror: bad kind");
                   return cb::mirror().register_row(static_cast<cb::Kind>(kind),
-                                                   xi, xg, id);
+                                                   xi, xg, id, py_id);
               },
               py::arg("kind"), py::arg("xform_index") = -1,
-              py::arg("xform_gen") = -1, py::arg("obj_id") = -1);
+              py::arg("xform_gen") = -1, py::arg("obj_id") = -1,
+              py::arg("py_id") = 0,
+              "py_id: the Python object's id() (Object rows; read back as "
+              "combat_dump's 'py_id').");
         m.def("combat_unregister",
               [](std::int64_t h) { cb::mirror().unregister_row(h); });
         m.def("combat_set_f", [fld](std::int64_t h, int f, double v) {
@@ -9669,6 +9673,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
             if (!mi.valid(h))
                 throw std::invalid_argument("combat mirror: stale handle");
             py::dict d;
+            if (kind == cb::Kind::Object) d["py_id"] = mi.object(h)->py_id;
             for (int i = 0; i < static_cast<int>(cb::Field::kCount); ++i) {
                 auto f = static_cast<cb::Field>(i);
                 if (cb::field_kind(f) != kind) continue;
@@ -9705,6 +9710,105 @@ PYBIND11_MODULE(_dauntless_host, m) {
             }
             return d;
         });
+
+        // ── The K3 torpedo table (torpedo_table.h) ───────────────────────
+        // One row per in-flight torpedo in projectiles._active order, synced
+        // by engine/appc/native_combat.py (torpedo_row_add / _drop /
+        // torpedo_table_rebuild). Fields are named by the Python attribute
+        // (combat_torp_field_names). A stale handle raises ValueError.
+        {
+            auto tfld = [](int f) {
+                if (f < 0 || f >= static_cast<int>(cb::TorpField::kCount))
+                    throw std::invalid_argument("torpedo table: unknown field");
+                return static_cast<cb::TorpField>(f);
+            };
+            m.def("combat_torp_field_names", [] {
+                py::dict d;
+                for (int i = 0; i < static_cast<int>(cb::TorpField::kCount);
+                     ++i)
+                    d[py::str(cb::torp_field_name(
+                        static_cast<cb::TorpField>(i)))] = i;
+                return d;
+            });
+            m.def("combat_torp_add",
+                  [](std::int64_t xi, std::int64_t xg) {
+                      return cb::mirror().torpedoes().add(xi, xg);
+                  },
+                  py::arg("xform_index"), py::arg("xform_gen"),
+                  "Append a row (the torpedo's transform handle); returns "
+                  "its handle.");
+            m.def("combat_torp_drop", [](std::int64_t h) {
+                return cb::mirror().torpedoes().drop(h);
+            });
+            m.def("combat_torp_clear",
+                  [] { cb::mirror().torpedoes().clear(); });
+            m.def("combat_torp_size",
+                  [] { return cb::mirror().torpedoes().size(); });
+            m.def("combat_torp_handles",
+                  [] { return cb::mirror().torpedoes().handles(); },
+                  "Live row handles, in table (= _active) order.");
+            m.def("combat_torp_set_f",
+                  [tfld](std::int64_t h, int f, double v) {
+                      cb::mirror().torpedoes().set_f(h, tfld(f), v);
+                  });
+            m.def("combat_torp_set_v",
+                  [tfld](std::int64_t h, int f, bool is_set, double x,
+                         double y, double z) {
+                      cb::mirror().torpedoes().set_v(h, tfld(f), is_set,
+                                                     {x, y, z});
+                  });
+            m.def("combat_torp_set_ref",
+                  [tfld](std::int64_t h, int f, std::int64_t ref) {
+                      cb::mirror().set_torpedo_ref(h, tfld(f), ref);
+                  });
+            m.def("combat_torp_set_mount",
+                  [](std::int64_t h, bool attributed, std::int64_t sub,
+                     double x, double y, double z) {
+                      cb::mirror().set_torpedo_mount(h, attributed, sub,
+                                                     {x, y, z});
+                  });
+            m.def("combat_torp_set_unrepresentable",
+                  [tfld](std::int64_t h, int f) {
+                      cb::mirror().torpedoes().set_unrepresentable(h, tfld(f));
+                  });
+            m.def("combat_torp_dump", [](std::int64_t h) {
+                auto& mi = cb::mirror();
+                const cb::TorpedoRow& r = mi.torpedoes().checked(h);
+                auto vec = [](const cb::TorpedoRow::Vec3& v) {
+                    return py::make_tuple(v[0], v[1], v[2]);
+                };
+                auto opt = [&](bool set, const cb::TorpedoRow::Vec3& v)
+                    -> py::object {
+                    if (!set) return py::none();
+                    return vec(v);
+                };
+                py::dict d;
+                d["xform"] = py::make_tuple(r.xform_index, r.xform_gen);
+                d["age"] = r.age;
+                d["ttl"] = r.ttl;
+                d["guidance_lifetime"] = r.guidance_lifetime;
+                d["guidance_initial"] = r.guidance_initial;
+                d["max_angular_accel"] = r.max_angular_accel;
+                d["vel"] = vec(r.vel);
+                d["target"] = mi.torpedo_ref(r, cb::TorpField::_target_ship);
+                d["target_offset"] = opt(r.target_offset_set, r.target_offset);
+                d["source"] = mi.torpedo_ref(r, cb::TorpField::_source_ship);
+                d["cset"] = mi.torpedo_ref(r, cb::TorpField::_containing_set);
+                d["last_seen"] = opt(r.last_seen_set, r.last_seen);
+                d["last_tvel"] = opt(r.last_tvel_set, r.last_tvel);
+                d["mount_sub"] = mi.torpedo_ref(r, cb::TorpField::_mount_key);
+                d["mount_attributed"] = r.mount_attributed ? 1 : 0;
+                d["mount_offset"] = vec(r.mount_offset);
+                py::list bad;
+                for (int i = 0; i < static_cast<int>(cb::TorpField::kCount);
+                     ++i)
+                    if (r.unrepresentable & (1u << i))
+                        bad.append(py::str(cb::torp_field_name(
+                            static_cast<cb::TorpField>(i))));
+                d["unrepresentable"] = bad;
+                return d;
+            });
+        }
 
         // ── The detection kernel (sensor_detect.h) ───────────────────────
         // Each answers from the mirror exactly as the Python function of the
