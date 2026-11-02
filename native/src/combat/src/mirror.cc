@@ -146,6 +146,21 @@ constexpr FieldInfo kInfo[] = {
     {"_max_torpedoes", Kind::Ammo, FieldType::I},
     {"ammo_launch_state", Kind::Ammo, FieldType::I},
     {"ammo_launch_speed", Kind::Ammo, FieldType::F},
+    {"_threshold_state", Kind::Subsystem, FieldType::I},
+    {"_invincible", Kind::Subsystem, FieldType::I},
+    {"_critical", Kind::Subsystem, FieldType::I},
+    {"_in_repair_queue", Kind::Subsystem, FieldType::I},
+    {"dmg_class", Kind::Subsystem, FieldType::I},
+    {"cond_watch_checks", Kind::Subsystem, FieldType::I},
+    {"comb_watch_checks", Kind::Subsystem, FieldType::I},
+    {"cond_watch_value", Kind::Subsystem, FieldType::F},
+    {"comb_watch_value", Kind::Subsystem, FieldType::F},
+    {"_current_shields", Kind::Subsystem, FieldType::FloatList},
+    {"_max_shields", Kind::Subsystem, FieldType::FloatList},
+    {"_ramp_fraction", Kind::Subsystem, FieldType::FloatList},
+    {"_ramp_set", Kind::Subsystem, FieldType::FloatList},
+    {"_hurtable", Kind::Object, FieldType::I},
+    {"dmg_ship", Kind::Object, FieldType::I},
 };
 static_assert(sizeof(kInfo) / sizeof(kInfo[0]) ==
               static_cast<size_t>(Field::kCount));
@@ -281,6 +296,8 @@ int64_t* iptr(ObjectRow& r, Field f) {
         case Field::_dead: return &r._dead;
         case Field::_dying: return &r._dying;
         case Field::arriving: return &r.arriving;
+        case Field::_hurtable: return &r._hurtable;
+        case Field::dmg_ship: return &r.dmg_ship;
         default: return nullptr;
     }
 }
@@ -342,6 +359,8 @@ double* fptr(SubsystemRow& r, Field f) {
         case Field::_reload_delay: return &r._reload_delay;
         case Field::_watch_value: return &r._watch_value;
         case Field::_damage_radius_factor: return &r._damage_radius_factor;
+        case Field::cond_watch_value: return &r.cond_watch_value;
+        case Field::comb_watch_value: return &r.comb_watch_value;
         default: return nullptr;
     }
 }
@@ -374,6 +393,13 @@ int64_t* iptr(SubsystemRow& r, Field f) {
         case Field::_cloak_state: return &r._cloak_state;
         case Field::_watch_checks: return &r._watch_checks;
         case Field::_power_level: return &r._power_level;
+        case Field::_threshold_state: return &r._threshold_state;
+        case Field::_invincible: return &r._invincible;
+        case Field::_critical: return &r._critical;
+        case Field::_in_repair_queue: return &r._in_repair_queue;
+        case Field::dmg_class: return &r.dmg_class;
+        case Field::cond_watch_checks: return &r.cond_watch_checks;
+        case Field::comb_watch_checks: return &r.comb_watch_checks;
         default: return nullptr;
     }
 }
@@ -401,6 +427,10 @@ std::vector<double>* flptr(SubsystemRow& r, Field f) {
     switch (f) {
         case Field::_reload_timers: return &r._reload_timers;
         case Field::_reload_advanced_at: return &r._reload_advanced_at;
+        case Field::_current_shields: return &r._current_shields;
+        case Field::_max_shields: return &r._max_shields;
+        case Field::_ramp_fraction: return &r._ramp_fraction;
+        case Field::_ramp_set: return &r._ramp_set;
         default: return nullptr;
     }
 }

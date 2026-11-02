@@ -39,6 +39,9 @@ class ShipClass(DamageableObject):
     _manual_target_offset = native_combat.NativeField(native_combat.OFFSET)
     _shield_subsystem = native_combat.NativeMountRefField("Subsystem")
     _shield_hull_box = native_combat.HullBoxField()
+    # SetHurtable(0) makes the ship immune (IsImmuneToDamage): the native
+    # hit reads it (native damage Task 3).
+    _hurtable = native_combat.NativeField(bool)
     # A rebind may change has_posed_parts (native_combat.PosedPartsField).
     _articulation_poses = native_combat.PosedPartsField()
 

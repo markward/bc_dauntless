@@ -127,6 +127,26 @@ enum class Field : int32_t {
     // its GetLaunchSpeed().
     _damage_radius_factor, arriving, _max_torpedoes, ammo_launch_state,
     ammo_launch_speed,
+    // Native damage (spec 2026-11-02-native-damage-design.md §4.1; damage.h
+    // reads them). Subsystem: the threshold state machine's state
+    // (_threshold_state: 0 operational, 1 disabled, 2 destroyed), the
+    // invincible and critical flags, membership of its bay's repair queue
+    // (_in_repair_queue, kept by subsystems._RepairQueue), the class's
+    // damage rules (dmg_class: native_combat.DMG_*: 0 ShipSubsystem's leaf
+    // predicates, 1 WeaponSystem's aggregate ones, -1 a class the chain
+    // hands to Python), and each condition watcher's check count
+    // (cond_watch_checks for GetConditionWatcher's, comb_watch_checks for
+    // GetCombinedPercentageWatcher's: -2 no watcher, -1 one the chain cannot
+    // stand in for) and committed `_value`. A ShieldSubsystem's faces:
+    // _current_shields and _max_shields (written IN PLACE by Python, each
+    // writer pushes the whole list) and the ramp fractions (_ramp_fraction,
+    // 0.0 where Python holds None, and _ramp_set 1.0 where it holds a
+    // float). Object: _hurtable (IsImmuneToDamage is `not _hurtable`) and
+    // dmg_ship (1: a ShipClass whose hit the native chain stands in for).
+    _threshold_state, _invincible, _critical, _in_repair_queue, dmg_class,
+    cond_watch_checks, comb_watch_checks, cond_watch_value, comb_watch_value,
+    _current_shields, _max_shields, _ramp_fraction, _ramp_set,
+    _hurtable, dmg_ship,
     kCount
 };
 
@@ -184,6 +204,8 @@ struct ObjectRow {
     Vec3 _shield_hull_box_center{0, 0, 0}, _shield_hull_box_half{0, 0, 0};
     int64_t hull_box_set = 0;
     int64_t arriving = 0;
+    // Native damage (Field comment above).
+    int64_t _hurtable = 0, dmg_ship = 0;
     // Posed parts: the pose table (empty while has_posed_parts is 0) and the
     // ship's subsystems in combat._iter_subsystems order (Subsystem handles;
     // kRefUnrepresentable for one the mirror cannot name). Not Fields: set
@@ -250,6 +272,13 @@ struct SubsystemRow {
     int64_t _watch_checks = 0, _power_level = 0;
     double _watch_value = 0.0;
     double _damage_radius_factor = 0.0;
+    // Native damage (Field comment above).
+    int64_t _threshold_state = 0, _invincible = 0, _critical = 0,
+            _in_repair_queue = 0, dmg_class = 0;
+    int64_t cond_watch_checks = -2, comb_watch_checks = -2;
+    double cond_watch_value = 0.0, comb_watch_value = 0.0;
+    std::vector<double> _current_shields, _max_shields, _ramp_fraction,
+        _ramp_set;
     // Posed parts: the index into the owning ship's part_poses of the part
     // Python resolved for this subsystem's own mount (detachment ignored;
     // -1 = no posable part), stamped with the global part_gen at

@@ -181,6 +181,7 @@ def reset() -> None:
     _forget_part_caches()
     # Per-class caches: a class patched or re-based since must recompute.
     _kind_by_type.clear()
+    _dmg_classes.clear()
     _k1_overridden_by_type.clear()
     _k1_watch.clear()
     global _pulse_stale
@@ -955,6 +956,149 @@ class ChargeWatcherField:
             obj._watch_checks = WATCH_ALWAYS
 
 
+# ── Native damage: the mirror (spec 2026-11-02-native-damage-design.md §4.1) ─
+#
+# What the native hit and condition chain (native/src/combat/.../damage.h)
+# read that no kernel read before: a ShieldSubsystem's face lists, the
+# subsystem flags and threshold state, the repair-queue membership, each
+# condition watcher's check count and value, the ship's _hurtable, and two
+# class flags saying which stock rules a class follows (dmg_class,
+# dmg_ship). The face lists are written IN PLACE by Python: every writer
+# (damage-map-refresh §6, W1-W7) pushes after mutating, before anything it
+# then posts.
+
+#: dmg_class: a subsystem class following ShipSubsystem's leaf predicates,
+#: WeaponSystem's aggregate ones, or neither (the chain hands it to Python).
+DMG_PYTHON, DMG_LEAF, DMG_AGGREGATE = -1, 0, 1
+#: cond_watch_checks / comb_watch_checks: no watcher in the slot, or one the
+#: native chain cannot stand in for (not a plain FloatRangeWatcher, or not
+#: this subsystem's own). Otherwise the watcher's check count.
+COND_WATCH_NONE, COND_WATCH_FOREIGN = -2, -1
+#: which (effect_queue.WATCH_*) -> (slot attribute, checks field, value
+#: field).
+_COND_WATCH_SLOTS = {
+    _effect_queue.WATCH_CONDITION: ("_condition_watcher",
+                                    "cond_watch_checks", "cond_watch_value"),
+    _effect_queue.WATCH_COMBINED: ("_combined_watcher",
+                                   "comb_watch_checks", "comb_watch_value"),
+}
+
+
+def _cond_watch_state(sub, which) -> tuple:
+    """(checks, value) the row holds for `sub`'s watcher `which`."""
+    w = sub.__dict__.get(_COND_WATCH_SLOTS[which][0])
+    if w is None:
+        return COND_WATCH_NONE, 0.0
+    from engine.appc.float_range_watcher import FloatRangeWatcher
+    wd = getattr(w, "__dict__", None)
+    if (type(w) is not FloatRangeWatcher or wd.get("_cond_owner") is not sub
+            or wd.get("_cond_which") != which):
+        return COND_WATCH_FOREIGN, 0.0
+    checks = wd.get("_checks")
+    value = wd.get("_value")
+    if type(checks) is not dict or type(value) is not float:
+        return COND_WATCH_FOREIGN, 0.0
+    return len(checks), value
+
+
+def push_cond_watch(sub, which) -> None:
+    """`sub`'s condition watcher `which` changed: assigned, or a check
+    added or removed (FloatRangeWatcher, `_cond_owner`)."""
+    if not _enabled:
+        return
+    h = sub.__dict__.get("_nslot")
+    if h is None:
+        return
+    n, v = _cond_watch_state(sub, which)
+    _slot, checks_field, value_field = _COND_WATCH_SLOTS[which]
+    _call(sub, _h.combat_set_i, h, _fid(checks_field), n)
+    if "_nslot" in sub.__dict__:
+        _call(sub, _h.combat_set_f, h, _fid(value_field), v)
+
+
+def push_cond_watch_value(sub, which, value) -> None:
+    """An owned condition watcher committed `value` (_update_queued)."""
+    if _enabled:
+        h = sub.__dict__.get("_nslot")
+        if h is not None:
+            _call(sub, _h.combat_set_f, h,
+                  _fid(_COND_WATCH_SLOTS[which][2]), value)
+
+
+class CondWatcherField:
+    """ShipSubsystem._condition_watcher / _combined_watcher: a plain
+    FloatRangeWatcher assigned here is ADOPTED (its `_cond_owner` is the
+    subsystem, `_cond_which` the slot), so each check it adds or removes and
+    each value it commits pushes the row; anything else reads
+    COND_WATCH_FOREIGN (the native chain then hands that subsystem's writes
+    to Python). A watcher replaced is released. No __get__."""
+
+    def __init__(self, which) -> None:
+        self._which = which
+
+    def __set_name__(self, owner, name) -> None:
+        self._name = name
+
+    def __set__(self, obj, value) -> None:
+        from engine.appc.float_range_watcher import FloatRangeWatcher
+        d = obj.__dict__
+        old = d.get(self._name)
+        d[self._name] = value
+        if old is not None and old is not value:
+            od = getattr(old, "__dict__", None)
+            if od is not None and od.get("_cond_owner") is obj:
+                del od["_cond_owner"]
+                del od["_cond_which"]
+        if (type(value) is FloatRangeWatcher
+                and value.__dict__.get("_cond_owner") is None):
+            value._cond_owner = obj
+            value._cond_which = self._which
+        push_cond_watch(obj, self._which)
+
+
+class RampField(NativeField):
+    """ShieldSubsystem._ramp_fraction, a list of floats or None (no charge
+    tick yet: ApplyDamage reads the face live): pushed as `_ramp_fraction`
+    (0.0 for None) and `_ramp_set` (1.0 where a float). Written in place by
+    the charge tick, which pushes (push_field)."""
+
+    def __init__(self) -> None:
+        super().__init__(list)
+
+    def _encode(self, value):
+        if type(value) is not list:
+            raise TypeError("not a list: %r" % type(value).__name__)
+        vals, sets = [], []
+        for x in value:
+            if x is None:
+                vals.append(0.0)
+                sets.append(0.0)
+                continue
+            if isinstance(x, (str, bytes)) or not isinstance(x, (int, float)):
+                raise TypeError("not a number: %r" % type(x).__name__)
+            vals.append(float(x))
+            sets.append(1.0)
+        return vals, sets
+
+    def _push(self, obj, h, value) -> None:
+        try:
+            vals, sets = self._encode(value)
+        except (TypeError, ValueError, OverflowError):
+            _drop(obj)
+            return
+        _call(obj, _h.combat_set_floats, h, _fid("_ramp_fraction"), vals)
+        if "_nslot" in obj.__dict__:
+            _call(obj, _h.combat_set_floats, h, _fid("_ramp_set"), sets)
+
+    def audit(self, value, row) -> bool:
+        try:
+            vals, sets = self._encode(value)
+        except (TypeError, ValueError, OverflowError):
+            return False
+        return (_hexes(vals) == _hexes(row["_ramp_fraction"])
+                and _hexes(sets) == _hexes(row["_ramp_set"]))
+
+
 class PartKeyField(NativeField):
     """A subsystem attribute the part-slot resolution reads (``_position``:
     `part_for_mount` keys on the mount point): a write pushes like any
@@ -1107,19 +1251,16 @@ class HullBoxField(NativeField):
                 and _hexes(row["_shield_hull_box_half"]) == _hexes(hh))
 
 
-class HasShieldsField:
-    """``ShieldSubsystem._max_shields``: plain storage, but every rebind
-    re-pushes the derived ``has_shields`` flag. The flag is whatever the
-    subsystem's own ``HasShields()`` answers -- the expression is never
-    re-typed here. The in-place ``_max_shields[f] = v`` write
-    (``SetMaxShields``) cannot be seen by a descriptor and calls
-    `push_has_shields` itself."""
-
-    def __set_name__(self, owner, name) -> None:
-        self._name = name
+class HasShieldsField(NativeFloatList):
+    """``ShieldSubsystem._max_shields``: the face caps, mirrored as a list
+    (the native hit's ramp reads them), and every rebind re-pushes the
+    derived ``has_shields`` flag too. The flag is whatever the subsystem's
+    own ``HasShields()`` answers -- the expression is never re-typed here.
+    The in-place ``_max_shields[f] = v`` write (``SetMaxShields``) cannot be
+    seen by a descriptor and pushes both itself."""
 
     def __set__(self, obj, value) -> None:
-        obj.__dict__[self._name] = value
+        NativeFloatList.__set__(self, obj, value)
         push_has_shields(obj)
 
 
@@ -1533,6 +1674,8 @@ def _flags(obj, h) -> dict:
             "is_ship_class": int(isinstance(obj, ShipClass)),
             # Weapon.FireDumb's warp-in hold (K1's native dumb fire).
             "arriving": _arriving_flag(obj),
+            # The native hit stands in for this ship class's (damage).
+            "dmg_ship": _dmg_ship(type(obj)),
         }
     if k == _kind("Subsystem"):
         return {"has_parent_ship_getter": int(implements(obj,
@@ -1541,7 +1684,9 @@ def _flags(obj, h) -> dict:
                 "k1_overridden": _k1_overridden(type(obj)),
                 "pump_self_managed": int(bool(getattr(
                     type(obj), "_pump_self_managed", False))),
-                "has_shields": _has_shields_flag(obj)}
+                "has_shields": _has_shields_flag(obj),
+                # The condition chain's rules for this class (damage).
+                "dmg_class": _dmg_class(type(obj))}
     return {}
 
 
@@ -2181,6 +2326,9 @@ def _push_extras(obj, h) -> None:
             push_pulse_params(obj)
             if "_nslot" in obj.__dict__:
                 _push_watch_value_of(obj)
+        for which in _COND_WATCH_SLOTS:
+            if "_nslot" in obj.__dict__:
+                push_cond_watch(obj, which)
     elif k == _kind("Set"):
         push_set_members(obj)
         push_set_frame(obj)
@@ -2934,6 +3082,7 @@ def audit_mirror() -> None:
             _audit_slot(obj, row, name)
             if "_watch_checks" in d:
                 _audit_watch_checks(obj, row, name)
+            _audit_cond_watch(obj, row, name)
     _audit_torpedoes()
     _audit_globals()
     if _h.combat_part_gen() != _part_gen:
@@ -3021,6 +3170,18 @@ def _audit_watch_checks(weapon, row, name) -> None:
     if owned and float(watcher._value).hex() \
             != float(row["_watch_value"]).hex():
         _failures.append((name, "_watch_value"))
+
+
+def _audit_cond_watch(sub, row, name) -> None:
+    """Each condition watcher's check count and (an adopted one's) value,
+    as the watcher holds them NOW: a check added behind its methods is
+    caught, not only a missed push."""
+    for which, (_slot, cf, vf) in _COND_WATCH_SLOTS.items():
+        n, v = _cond_watch_state(sub, which)
+        if row[cf] != n:
+            _failures.append((name, cf))
+        if n >= 0 and v.hex() != float(row[vf]).hex():
+            _failures.append((name, vf))
 
 
 def _audit_set(pSet, row, name) -> None:
@@ -5504,6 +5665,114 @@ def _k3_answer(rec, walk, dt, ship_instances, st):
         return ((p.x, p.y, p.z),
                 None if n is None else (n.x, n.y, n.z), tier)
     raise RuntimeError("combat K3: unknown ASK %r" % (query,))
+
+
+# ── Native damage: the class rules (spec 2026-11-02-native-damage §4.2) ─────
+#
+# The native hit and condition chain (damage.h) stand in for these methods.
+# A class follows the stock rules when each name resolves to what the stock
+# class's did at the snapshot (_dmg_snapshot) and none to code outside the
+# engine package (_k2_foreign: a test's, a tool's, a mod's); its rows then
+# carry dmg_class / dmg_ship, which the native chain reads, and a class that
+# does not is handed to Python. A stock class patched after the snapshot is
+# caught at every native call (_dmg_unchanged).
+
+#: ShipSubsystem methods the condition chain stands in for.
+_DMG_SUB_NAMES = ("GetCondition", "SetCondition", "SetConditionPercentage",
+                  "_set_condition", "_condition_changed",
+                  "_threshold_state_now", "GetConditionPercentage",
+                  "GetMaxCondition", "IsCritical", "IsInvincible",
+                  "_owning_ship", "GetPosition", "GetRadius")
+#: The state predicates: ShipSubsystem's leaf rules or WeaponSystem's
+#: aggregate ones (dmg_class), nothing else.
+_DMG_PREDICATES = ("IsDamaged", "IsDisabled", "IsDestroyed")
+#: ShieldSubsystem methods the hit stands in for.
+_DMG_SHIELD_NAMES = ("ApplyDamage", "GetCurrentShields", "HasShields",
+                     "IsOn", "IsDisabled", "IsDestroyed")
+#: ShipClass methods the hit stands in for (`_iter_subsystems` must stay
+#: absent: part_severance's mount order, the hit's walk, would follow it).
+_DMG_SHIP_NAMES = ("DamageSystem", "IsImmuneToDamage", "GetShields",
+                   "GetHull", "GetSubsystems", "GetWorldLocation",
+                   "GetWorldRotation", "GetScale", "GetCloakingSubsystem",
+                   "_iter_subsystems")
+_dmg_stock = None
+_dmg_classes: dict = {}
+
+
+def _dmg_resolve(cls, names) -> tuple:
+    return tuple(getattr(cls, n, None) for n in names)
+
+
+def _dmg_snapshot() -> dict:
+    """The stock classes' resolutions, taken once (before any test, tool or
+    mod can patch them: at the first row's flags, or host_loop's start)."""
+    global _dmg_stock
+    if _dmg_stock is None:
+        from engine.appc.ships import ShipClass
+        from engine.appc.subsystems import ShieldSubsystem, ShipSubsystem
+        from engine.appc.weapon_subsystems import WeaponSystem
+        _dmg_stock = {
+            "classes": (ShipSubsystem, WeaponSystem, ShieldSubsystem,
+                        ShipClass),
+            "sub": _dmg_resolve(ShipSubsystem, _DMG_SUB_NAMES),
+            "leaf": _dmg_resolve(ShipSubsystem, _DMG_PREDICATES),
+            "aggregate": _dmg_resolve(WeaponSystem, _DMG_PREDICATES),
+            "shield": _dmg_resolve(ShieldSubsystem, _DMG_SHIELD_NAMES),
+            "ship": _dmg_resolve(ShipClass, _DMG_SHIP_NAMES),
+        }
+    return _dmg_stock
+
+
+def damage_snapshot_stock() -> None:
+    """host_loop, beside k3_snapshot_stock: take the snapshot now."""
+    _dmg_snapshot()
+
+
+def _dmg_class(cls) -> int:
+    """dmg_class for a subsystem class: DMG_LEAF, DMG_AGGREGATE or
+    DMG_PYTHON (cached per class until reset())."""
+    hit = _dmg_classes.get(("sub", cls))
+    if hit is None:
+        hit = _dmg_classes[("sub", cls)] = _dmg_class_of(cls)
+    return hit
+
+
+def _dmg_class_of(cls) -> int:
+    st = _dmg_snapshot()
+    ship_subsystem, _ws, shield, _ship = st["classes"]
+    if not issubclass(cls, ship_subsystem):
+        return DMG_PYTHON
+    names = _dmg_resolve(cls, _DMG_SUB_NAMES)
+    preds = _dmg_resolve(cls, _DMG_PREDICATES)
+    if names != st["sub"] or any(_k2_foreign(v) for v in names + preds):
+        return DMG_PYTHON
+    if preds == st["leaf"]:
+        rule = DMG_LEAF
+    elif preds == st["aggregate"]:
+        rule = DMG_AGGREGATE
+    else:
+        return DMG_PYTHON
+    if issubclass(cls, shield):
+        values = _dmg_resolve(cls, _DMG_SHIELD_NAMES)
+        if values != st["shield"] or any(_k2_foreign(v) for v in values):
+            return DMG_PYTHON
+    return rule
+
+
+def _dmg_ship(cls) -> int:
+    """dmg_ship for an object class: 1 for a ShipClass whose hit the native
+    chain stands in for, else 0."""
+    hit = _dmg_classes.get(("ship", cls))
+    if hit is None:
+        st = _dmg_snapshot()
+        hit = 0
+        if issubclass(cls, st["classes"][3]):
+            values = _dmg_resolve(cls, _DMG_SHIP_NAMES)
+            if values == st["ship"] and not any(_k2_foreign(v)
+                                                for v in values):
+                hit = 1
+        _dmg_classes[("ship", cls)] = hit
+    return hit
 
 
 if available():

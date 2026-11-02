@@ -356,9 +356,19 @@ class ShipSubsystem(TGEventHandlerObject):
     # Phaser-strip length (K2 reads it for the emitter position).
     _length = NativeField(float)
     # In its bay's repair queue (RepairSubsystem._queue keeps it, ruling I3):
-    # a write below max emits REPAIR_ADD only when this is False. The native
-    # damage arm mirrors it (Task 3).
-    _in_repair_queue = False
+    # a write below max emits REPAIR_ADD only when this is False.
+    # Native damage (Task 3) reads these through the mirror too: the
+    # membership, the threshold state machine's state, the two flags, and
+    # each condition watcher (adopted by CondWatcherField: its check count
+    # and committed value).
+    _in_repair_queue = NativeField(bool)
+    _threshold_state = NativeField(int)
+    _invincible = NativeField(bool)
+    _critical = NativeField(bool)
+    _combined_watcher = native_combat.CondWatcherField(
+        _effect_queue.WATCH_COMBINED)
+    _condition_watcher = native_combat.CondWatcherField(
+        _effect_queue.WATCH_CONDITION)
 
     def __init__(self, name: str = ""):
         super().__init__()
@@ -370,6 +380,7 @@ class ShipSubsystem(TGEventHandlerObject):
         self._parent_subsystem = None
         self._child_subsystem = None
         self._radiation_out = False
+        self._in_repair_queue = False
         self._children: list["ShipSubsystem"] = []
         self._condition = 1.0
         self._max_condition = 1.0
@@ -2122,8 +2133,14 @@ class ShieldSubsystem(PoweredSubsystem):
     NUM_SHIELDS    = 6
 
     # Every rebind re-pushes the derived has_shields flag; SetMaxShields
-    # (the one in-place writer) pushes it itself.
+    # (the one in-place writer) pushes it itself. The face lists are
+    # mirrored for the native hit (native damage Task 3): every in-place
+    # writer below pushes the list it wrote, before anything it then posts
+    # (damage-map-refresh §6: SetMaxShields, SetCurrentShields, Update's
+    # ramp refresh, offline drain and regen, ApplyDamage).
     _max_shields = native_combat.HasShieldsField()
+    _current_shields = native_combat.NativeFloatList()
+    _ramp_fraction = native_combat.RampField()
 
     def __init__(self, name: str = ""):
         super().__init__(name)
@@ -2194,8 +2211,10 @@ class ShieldSubsystem(PoweredSubsystem):
         v = float(value)
         if self._current_shields[f] == 0.0:
             self._current_shields[f] = v
+            native_combat.push_field(self, "_current_shields")
         self._max_shields[f] = v
         native_combat.push_has_shields(self)    # in place: no descriptor sees it
+        native_combat.push_field(self, "_max_shields")
 
     def GetCurrentShields(self, face: int) -> float:
         return self._current_shields[int(face)]
@@ -2203,6 +2222,7 @@ class ShieldSubsystem(PoweredSubsystem):
     def SetCurrentShields(self, face: int, value: float) -> None:
         f = int(face)
         self._current_shields[f] = float(value)
+        native_combat.push_field(self, "_current_shields")   # in place
         # Keep the face watcher's value fresh so a Condition reading
         # GetWatchedVariable() right after a damage write sees the new
         # fraction (ConditionSingleShieldBelow.py:122 reads it at setup).
@@ -2374,6 +2394,7 @@ class ShieldSubsystem(PoweredSubsystem):
         for f in range(self.NUM_SHIELDS):
             mx = self._max_shields[f]
             self._ramp_fraction[f] = (self._current_shields[f] / mx) if mx > 0.0 else 0.0
+        native_combat.push_field(self, "_ramp_fraction")     # in place
 
         if _is_offline(self):
             # A disabled (or destroyed) generator does not merely stop
@@ -2387,6 +2408,7 @@ class ShieldSubsystem(PoweredSubsystem):
             if any(self._current_shields):
                 for f in range(self.NUM_SHIELDS):
                     self._current_shields[f] = 0.0
+                native_combat.push_field(self, "_current_shields")
                 for f in range(self.NUM_SHIELDS):
                     self._shield_watchers[f]._update(self.GetSingleShieldPercentage(f))
                 self._shield_watchers[self.NUM_SHIELDS]._update(
@@ -2404,6 +2426,7 @@ class ShieldSubsystem(PoweredSubsystem):
             if new > mx:
                 new = mx
             self._current_shields[f] = new
+        native_combat.push_field(self, "_current_shields")   # in place
         # Drive each face watcher with its FRACTION so
         # Conditions/ConditionSingleShieldBelow.py fires its
         # ET_AI_SHIELD_WATCHER crossing event; the combined watcher (index
@@ -2460,8 +2483,10 @@ class ShieldSubsystem(PoweredSubsystem):
         new = cur - (1.0 - b) * amt
         if new >= 0.0:
             self._current_shields[f] = new
+            native_combat.push_field(self, "_current_shields")   # in place
             return b * amt
         self._current_shields[f] = 0.0
+        native_combat.push_field(self, "_current_shields")       # in place
         return b * amt - new
 
 
