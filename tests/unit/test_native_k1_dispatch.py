@@ -2919,9 +2919,10 @@ _PULSE_SHIPS = (("Vorcha", "vorcha", (0.0, 0.0, 0.0), 0.0),
 
 
 def test_python_pulse_launch_defers_its_spawn(monkeypatch):
-    """Ruling L5. A cannon's launch is still a FIRE record run in Python
-    (Task 3 makes it native), but inside the deferral its bolt is a SPAWN
-    too: built at the boundary with the fire-time values, scaled by the
+    """Ruling L5. Inside the deferral a cannon's bolt is a SPAWN (the
+    kernel's since Task 3; a launch it hands back runs Python's, which
+    defers too: test_pulse_launch_with_an_unloaded_module_runs_python):
+    built at the boundary with the fire-time values, scaled by the
     fire-time power setting after its set entry, then its ET_WEAPON_FIRED
     -- every bolt, field by field, and every event, as the reference."""
     def script(w, t):
@@ -2939,6 +2940,154 @@ def test_python_pulse_launch_defers_its_spawn(monkeypatch):
     assert kinds == ["entered", "fired"] * (len(kinds) // 2), kinds
     damages = [t._damage for t in nl.torps]
     assert damages == [t._damage for t in rl.torps]
+
+
+def _pulse_volley(w, t):
+    """The Vor'cha's cannons held on the Galaxy with an aim offset, each at
+    its own power setting (LOW, MED, HIGH, ...: the bolt's damage scale and
+    the shot's cost); the cooldown and the charge as they stand before each
+    tick, by .hex(), in `w.pulse_state`."""
+    cannons = w.ships["Vorcha"].GetPulseWeaponSystem()
+    if t == 0:
+        w.pulse_state = []
+        for i, c in enumerate(_weapons(cannons)):
+            c.SetPowerSetting(i % 3)
+        cannons.StartFiring(w.ships["Galaxy"], TGPoint3(0.5, 1.0, -0.25))
+    w.pulse_state.append([(c.__dict__["_charge_level"].hex(),
+                           c.__dict__["_cooldown_remaining"].hex())
+                          for c in _weapons(cannons)])
+
+
+def test_native_pulse_launch_spawns_at_the_boundary(monkeypatch):
+    """Task 3. A cannon's Fire decided natively is no FIRE record any more:
+    the drain and the cooldown are logged writes, and the bolt a SPAWN whose
+    fire-time record the kernel computed -- the mount, unit(the led
+    direction) x launch speed + the ship's velocity, the target, its offset
+    and bake, the DamageRadiusFactor and the power setting's damage scale.
+    Every bolt, field by field, its damage (scaled after its set entry, as
+    Python does), every launch event in order (the spawn, then its
+    ET_WEAPON_FIRED from the delivery), the drains and the cooldowns: as the
+    reference."""
+    (rw, rl, _), (nw, nl, counts) = _launch_arms(
+        monkeypatch, _pulse_volley, 240, ships=_PULSE_SHIPS, player="Vorcha")
+    assert nw.pulse_state == rw.pulse_state
+    assert len(nl.spawned) >= 3, rl.events
+    assert counts["k1_logged"]["pulse_launch"] == len(nl.spawned), counts
+    assert not any(counts["k1_launch_reasons"].values()), counts
+    kinds = [e[0] for e in nl.events]
+    assert kinds == ["entered", "fired"] * (len(kinds) // 2), kinds
+    damages = [t._damage for t in nl.torps]
+    assert damages == [t._damage for t in rl.torps]
+    assert len(set(damages)) > 1, damages      # more than one power setting
+    for spawned in nl.spawned:          # aimed: the held offset, baked
+        assert spawned[9] == "Galaxy" and spawned[10] is not None
+
+
+def test_pulse_spawn_is_where_the_ship_was_at_fire_time(monkeypatch):
+    """Review Focus 1 for cannons: the rest of the step moves the firing
+    Vor'cha (a tractor) after its weapons: each bolt still spawns where the
+    cannon was when it fired, with the velocity it had then, as in the
+    reference (which spawned it mid-walk)."""
+    def tractor(w, t):
+        v = w.ships["Vorcha"]
+        p = v.GetTranslate()
+        v.SetTranslateXYZ(p.x + 3.0, p.y - 2.0, p.z + 1.0)
+        v.SetVelocity(TGPoint3(t * 0.5, 1.0, -0.25))
+
+    (rw, rl, _), (nw, nl, counts) = _launch_arms(
+        monkeypatch, _pulse_volley, 120, ships=_PULSE_SHIPS, player="Vorcha",
+        inside=tractor)
+    assert counts["k1_logged"]["pulse_launch"] == len(nl.spawned) >= 2
+
+
+def test_pulse_launch_with_an_unloaded_module_runs_python(monkeypatch):
+    """Review Focus 4 for cannons. The cannons' module gone from sys.modules
+    -- an SDK reload: Python's decide imports it again, a module the
+    kernel's cached one is not (launch_unresolved, THE LAUNCH CHECK): each
+    launch is the FIRE record, run in Python, never guessed -- equal to the
+    reference."""
+    def script(w, t):
+        if t == 0:                  # before StartFiring's own walk
+            cannon = w.ships["Vorcha"].GetPulseWeaponSystem().GetWeapon(0)
+            # (Not yet imported in the reference arm: nothing pushed it.)
+            w.mp.delitem(sys.modules, ws.pulse_module_script(cannon),
+                         raising=False)
+        _pulse_volley(w, t)
+
+    (rw, rl, _), (nw, nl, counts) = _launch_arms(
+        monkeypatch, script, 120, ships=_PULSE_SHIPS, player="Vorcha")
+    assert nw.pulse_state == rw.pulse_state
+    assert len(nl.spawned) >= 2
+    why = counts["k1_launch_reasons"]
+    assert why["launch_unresolved"] == len(nl.spawned), why
+    assert counts["k1_logged"]["pulse_launch"] == 0, counts
+
+
+def test_pulse_launch_with_a_patched_launch_function_runs_python(
+        monkeypatch):
+    """Review Focus 4 for cannons: a launch function patched (a test's
+    spy, a tool) -- every cannon launch is the FIRE record (launch_patched)
+    and spawns mid-walk through the patch (ruling L7). Native only: two
+    cannons launching in one walk then order their events unlike the
+    reference (the spawns mid-walk, the ET_WEAPON_FIRED at the boundary),
+    as a patched tube's do (test_patched_launch_function_seen_by_the_next_
+    walk); parity under a patch is not what this pins."""
+    spawned = []
+    with monkeypatch.context() as mp:
+        w = World(mp, True, _PULSE_SHIPS, "k1_pulse_patch", player="Vorcha")
+        spawn = ws._spawn_projectile
+
+        def spy(*a, **kw):
+            torp = spawn(*a, **kw)
+            spawned.append(torp)
+            return torp
+        mp.setattr(ws, "_spawn_projectile", spy)
+        try:
+            for t in range(120):
+                with host_loop._combat_effect_scope():
+                    w.tick(before=lambda w, t=t: _pulse_volley(w, t))
+            counts = nc.counts()
+        finally:
+            w.close()
+    assert len(spawned) >= 2
+    assert counts["k1_launch_reasons"]["launch_patched"] == len(spawned)
+    assert counts["k1_logged"]["pulse_launch"] == 0, counts
+
+
+def test_launch_check_moves_the_epoch_only_on_a_change(monkeypatch):
+    """The launch check runs before every combat_k1_next: it sets its
+    flags only when they change, so a record that changes nothing leaves
+    the mirror's epoch where it was (K0's and K2's caches key on it)."""
+    w = World(monkeypatch, True, (("Galaxy", "galaxy", (0.0, 0.0, 0.0),
+                                   0.0),), "k1_epoch")
+    try:
+        w.tick()
+        before = _h.combat_epoch()
+        for _ in range(3):
+            with step_memo.combat_step():
+                host_loop._pump_held_weapons([], DT)
+        assert _h.combat_epoch() == before
+    finally:
+        w.close()
+
+
+def test_launch_modules_are_released_with_their_rows(monkeypatch):
+    """A row's launch module (an ammo type's, a cannon's) is an owned
+    reference in the bindings: dropped when the row is unregistered, not
+    kept until the mirror is cleared."""
+    nc.configure(ON)
+    ship = App.ShipClass_Create("Holder")
+    _load_hardpoint(ship, "vorcha")
+    cannon = ship.GetPulseWeaponSystem().GetWeapon(0)
+    torps = ship.GetTorpedoSystem()
+    ammo = torps.GetCurrentAmmoType()
+    script = ammo.GetTorpedoScript()
+    nc.learn_tube_launch(script, ws._resolve_projectile_module(script))
+    for row, mod in ((ammo, ws._projectile_modules[script]),
+                     (cannon, sys.modules[ws.pulse_module_script(cannon)])):
+        held = sys.getrefcount(mod)
+        nc._drop(row)
+        assert sys.getrefcount(mod) == held - 1, row
 
 
 def test_native_dumb_fire_matches_python(monkeypatch):

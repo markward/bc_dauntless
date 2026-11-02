@@ -195,6 +195,11 @@ constexpr GlobalInfo kGlobals[] = {
     {"PHASER_DISCHARGE_LEN", true, nullptr, &Globals::PHASER_DISCHARGE_LEN},
     {"BEAM_ON_DELAY_S", false, &Globals::BEAM_ON_DELAY_S, nullptr},
     {"K1_LAUNCH_PATCHED", true, nullptr, &Globals::K1_LAUNCH_PATCHED},
+    {"PULSE_DAMAGE_SCALE_0", false, &Globals::PULSE_DAMAGE_SCALE_0, nullptr},
+    {"PULSE_DAMAGE_SCALE_1", false, &Globals::PULSE_DAMAGE_SCALE_1, nullptr},
+    {"PULSE_DAMAGE_SCALE_2", false, &Globals::PULSE_DAMAGE_SCALE_2, nullptr},
+    {"K1_PULSE_MODULE_STALE", true, nullptr,
+     &Globals::K1_PULSE_MODULE_STALE},
 };
 static_assert(sizeof(kGlobals) / sizeof(kGlobals[0]) ==
               static_cast<size_t>(Global::kCount));

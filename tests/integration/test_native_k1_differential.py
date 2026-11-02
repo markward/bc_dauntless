@@ -631,11 +631,14 @@ def _round_trips_ran(nat):
     e = c["k1_entries"]
     logged = c["k1_logged"]
     # A beam's edge and a tube's launch (launch deferral) each queue one
-    # ET_WEAPON_FIRED; a launch also its SPAWN and AMMO_CONSUMED.
+    # ET_WEAPON_FIRED; a launch also its SPAWN and AMMO_CONSUMED. A
+    # cannon's launch (Task 3) queues its SPAWN only: the delivery posts
+    # its ET_WEAPON_FIRED once the bolt exists.
     launches = logged["tube_launch"] + logged["dumb_launch"]
     assert e["FIRE_SOUND"] == logged["beam_edge"], c
     assert e["WEAPON_FIRED"] == logged["beam_edge"] + launches, c
-    assert e["SPAWN"] == e["AMMO_CONSUMED"] == launches, c
+    assert e["AMMO_CONSUMED"] == launches, c
+    assert e["SPAWN"] == launches + logged["pulse_launch"], c
     assert e["WEAPON_FIRE_FAILED"] == c["k1_logged"]["fire_failed"], c
     for key in ("k2_batched_contacts", "k2_logged_system_stop",
                 "k3_native_attributions"):
@@ -680,10 +683,15 @@ def test_k1_matches_python_in_a_fight(monkeypatch, ticks_per_frame):
     # ... and K1 really walked and fired each kind natively.
     for k in (PHASERS, PULSES, TORPEDOES):
         assert nat.walked.get(k, 0) > 0, nat.walked
-    # Cannons and tubes fire through FIRE records; a bank's edge is logged
-    # writes and queue entries (combat fire events), never a record.
-    for k in (CANNON, TUBE):
-        assert nat.fired.get(k, 0) > 0, nat.fired
+    # A cannon's launch is logged writes and a SPAWN (launch deferral,
+    # Task 3), never a FIRE record; a tube's too unless the kernel cannot
+    # make it (the counted hand-backs: a script's first launch, a posed
+    # target's offset); a bank's edge is logged writes and queue entries
+    # (combat fire events), never a record.
+    assert nat.counts["k1_logged"]["pulse_launch"] > 0, nat.counts
+    assert nat.fired.get(CANNON, 0) == 0, nat.fired
+    assert nat.fired.get(TUBE, 0) == sum(
+        nat.counts["k1_launch_reasons"].values()), (nat.fired, nat.counts)
     assert nat.fired.get(BANK, 0) == 0, nat.fired
     for key in ("beam_edge", "firing_bank_stop", "system_stop"):
         assert nat.counts["k1_logged"][key] > 0, (key, nat.counts)
@@ -713,8 +721,10 @@ def test_k1_matches_python_in_a_fight(monkeypatch, ticks_per_frame):
           % (ticks_per_frame, nat.counts, nat.walked, nat.fired,
              len(ref.events), presented(ref.calls)))
     print("k1 differential (tpf=%d) tallies: records %d, logged %r, "
-          "entries %r" % (ticks_per_frame, nat.counts["k1_records"],
-                          nat.counts["k1_logged"], nat.counts["k1_entries"]))
+          "entries %r, FIRE by leaf kind %r, launch hand-backs %r"
+          % (ticks_per_frame, nat.counts["k1_records"],
+             nat.counts["k1_logged"], nat.counts["k1_entries"], nat.fired,
+             nat.counts["k1_launch_reasons"]))
 
 
 def test_k1_matches_python_with_k0_stood_down(monkeypatch):

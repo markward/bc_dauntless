@@ -41,7 +41,8 @@ one kind only a kernel appends (spec 2026-11-02-combat-launch-deferral
         damage scale, fired at)
                               a launch, its fire-time values read when it
                               was decided: K1's (k1_fire_control.h,
-                              LAUNCHES AT THE BOUNDARY) or Python's own
+                              LAUNCHES AT THE BOUNDARY: a tube's, a dumb
+                              fire, a cannon's) or Python's own
                               while this queue defers (E4 for launches,
                               rulings L5-L6: weapon_subsystems._defer_spawn,
                               a tube's or a cannon's, whatever its module's

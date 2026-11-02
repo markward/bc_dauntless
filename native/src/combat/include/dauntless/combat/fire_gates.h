@@ -71,4 +71,12 @@ int64_t current_ammo_handle(const Mirror& m,
 // the caller passes the one value both reads would see. Unused by banks.
 CanFireResult can_fire(const Mirror& m, int64_t bank, double now);
 
+// A cannon's launch (k1_fire_control.h, LAUNCHES AT THE BOUNDARY), from the
+// power-setting tables Python pushes (PULSE_COST_SCALE_*, PULSE_DAMAGE_
+// SCALE_*): PulseWeapon._shot_cost, NormalDischargeRate x the cost scale,
+// and PulseWeapon.GetDamageScale. A power setting outside 0..2 throws
+// (Python would raise IndexError).
+double pulse_shot_cost(const Mirror& m, const SubsystemRow& cannon);
+double pulse_damage_scale(const Mirror& m, const SubsystemRow& cannon);
+
 }  // namespace dauntless::combat

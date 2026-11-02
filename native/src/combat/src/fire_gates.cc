@@ -267,4 +267,21 @@ CanFireResult can_fire(const Mirror& m, int64_t bank, double now) {
     }
 }
 
+double pulse_shot_cost(const Mirror& m, const SubsystemRow& cannon) {
+    return shot_cost(m, cannon);
+}
+
+// PulseWeapon.GetDamageScale (weapon_subsystems.py):
+// PULSE_DAMAGE_SCALE_BY_POWER_SETTING[power_setting], the table pushed from
+// Python (PULSE_DAMAGE_SCALE_0..2) as shot_cost's is.
+double pulse_damage_scale(const Mirror& m, const SubsystemRow& cannon) {
+    const Globals& g = m.globals();
+    switch (cannon._power_setting) {
+        case 0: return g.PULSE_DAMAGE_SCALE_0;
+        case 1: return g.PULSE_DAMAGE_SCALE_1;
+        case 2: return g.PULSE_DAMAGE_SCALE_2;
+        default: fall_back("power setting outside the damage-scale table");
+    }
+}
+
 }  // namespace dauntless::combat

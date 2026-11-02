@@ -427,6 +427,7 @@ def _reset_projectile_module_cache() -> None:
     either."""
     _projectile_modules.clear()
     _pulse_params_cache.clear()
+    _pulse_modules.clear()      # in place: the bindings hold this dict
     _tube_launch_cache.clear()
     # Not re-resolved here (mid mission-swap teardown): banks already built
     # re-read their module on the next native push, ammo types learn their
@@ -437,6 +438,13 @@ def _reset_projectile_module_cache() -> None:
 # script name -> (module_ok, launch_speed, lifetime) for the native mirror
 # (ruling P6). Cleared with _projectile_modules.
 _pulse_params_cache: dict = {}
+
+# script name -> the module those params were read from (module_ok 1 only):
+# the module a cannon's native launch carries (native_combat.
+# push_pulse_params; launch deferral, Task 3). The bindings hold THIS dict
+# and check every entry against sys.modules before each K1 record (THE
+# LAUNCH CHECK): never rebind it, clear it in place.
+_pulse_modules: dict = {}
 
 # script name -> (launch state, launch speed) of a torpedo script, the per-
 # type launch cache K1's native tube launch reads (P6 extended to tubes;
@@ -483,16 +491,33 @@ def pulse_module_params(script) -> tuple:
     from the module (missing GetLaunchSpeed reads 0.0, missing GetLifetime
     the 8 s default). module_ok is 0 when the script is empty or does not
     import, exactly when Fire refuses -- the native fire decision then hands
-    the bank to the Python. Cached once per script."""
+    the bank to the Python. Cached once per script, with the module itself
+    (_pulse_modules)."""
     hit = _pulse_params_cache.get(script)
     if hit is None:
-        hit = _pulse_params_cache[script] = resolve_pulse_module_params(script)
+        mod, hit = _resolve_pulse_module(script)
+        _pulse_params_cache[script] = hit
+        if mod is not None:
+            _pulse_modules[script] = mod
     return hit
+
+
+def pulse_module(script):
+    """The module `script`'s cached params were read from
+    (pulse_module_params), or None (not resolved, or not importable)."""
+    return _pulse_modules.get(script)
 
 
 def resolve_pulse_module_params(script) -> tuple:
     """pulse_module_params without the cache (the audit's independent answer)."""
+    return _resolve_pulse_module(script)[1]
+
+
+def _resolve_pulse_module(script) -> tuple:
+    """(the module or None, (module_ok, launch_speed, lifetime)) for
+    `script`, imported as PulseWeapon._fire_decide imports it."""
     hit = (0, 0.0, 0.0)
+    mod = None
     if script:
         import importlib
         from engine import dev_mode
@@ -504,10 +529,11 @@ def resolve_pulse_module_params(script) -> tuple:
                     else _PULSE_DEFAULT_LIFETIME)
             hit = (1, speed, life)
         except Exception as _e:  # noqa: BLE001 - Fire reports it itself
+            mod = None
             dev_mode.log_swallowed(
                 "pulse module %r not resolvable for the native mirror"
                 % (script,), _e)
-    return hit
+    return mod, hit
 
 
 def _emitter_forward_world(emitter, ship, *, skew=False) -> TGPoint3:
@@ -627,7 +653,8 @@ def _spawn_projectile(emitter, mod, *, drf_override=0.0, world_dir=None):
     shared body (_new_projectile, _launch_projectile) that the SPAWN
     delivery (spawn_launch) runs with the values K1 computed at fire time
     instead (spec 2026-11-02-combat-launch-deferral §4.1). The kernel
-    mirrors these reads (k1_fire_control.cc, plan_launch): CHANGE BOTH.
+    mirrors these reads (k1_fire_control.cc, launch_reads: a tube's and a
+    cannon's launch): CHANGE BOTH.
     """
     from engine.appc import projectiles
 
@@ -2995,6 +3022,9 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
     # _watch_checks from it (native_combat.ChargeWatcherField).
     _charge_watcher = native_combat.ChargeWatcherField()
     _passive_audit_children = ("_charge_watcher",)
+    # K1's native launch reads the cannon's DamageRadiusFactor override
+    # (written by ShipSubsystem's property copy), as a tube's.
+    _damage_radius_factor = NativeField(float)
 
     def _passive_at_rest(self) -> bool:
         return (_EnergyWeaponFireMixin._passive_at_rest(self)
@@ -3083,12 +3113,15 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
 
     def GetDamageScale(self) -> float:
         """PulseWeapon_GetDamageScale (0x00619400 → 0x00575270): the bolt
-        damage multiplier for this emitter's power setting — 0.2 / 0.5 / 1.0."""
+        damage multiplier for this emitter's power setting — 0.2 / 0.5 / 1.0.
+        K1's native launch reads it from the pushed table
+        (fire_gates.cc, pulse_damage_scale): change both."""
         return PULSE_DAMAGE_SCALE_BY_POWER_SETTING[self._power_setting]
 
     def _shot_cost(self) -> float:
         """Charge one bolt costs: NormalDischargeRate × the power-setting
-        scale (BC's GetPowerScaled) — 0.5 / 1.0 / 2.0 on a stock cannon."""
+        scale (BC's GetPowerScaled) — 0.5 / 1.0 / 2.0 on a stock cannon.
+        K1 computes it (fire_gates.cc, shot_cost): change both."""
         return (self._normal_discharge_rate
                 * PULSE_COST_SCALE_BY_POWER_SETTING[self._power_setting])
 
@@ -3169,7 +3202,14 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
     def _fire_effect(self, target, offset, decision) -> bool:
         """`decision` is (world_dir, target_used, module): the launch
         direction a TGPoint3 (Python's decision) or an (x, y, z) tuple
-        (K1's)."""
+        (K1's FIRE record, a launch it handed back).
+
+        K1 makes a cannon's launch itself inside the deferral -- the SPAWN
+        _defer_spawn appends (its fire-time record computed in C++: the
+        module's launch speed is the P6 one, the module the cannon's cached
+        one), then the drain and the cooldown as logged writes
+        (k1_fire_control.cc, plan_pulse_launch / log_pulse_launch): change
+        both."""
         world_dir = decision[0]
         if not isinstance(world_dir, TGPoint3):
             world_dir = TGPoint3(*world_dir)

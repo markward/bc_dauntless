@@ -139,10 +139,30 @@
 // Python would refuse (the ship arriving, CanFire false) is decided
 // natively too.
 //
+// A cannon's launch (Task 3) -- a Fire on a PulseWeapon decided natively --
+// is no record either. PulseWeapon._fire_effect inside the deferral is, in
+// its order: SPAWN(cannon, K1Spawn) (_defer_spawn: the mount, unit(the
+// decision's led world_dir) x the cannon's P6 launch speed + the ship's
+// velocity, the target the shot used if alive, the walk's offset and its
+// bake, GetDamageRadiusFactor(), GetDamageScale() from the pushed table,
+// and the target as fired_at), then `_charge_level = max(0.0,
+// _charge_level - _shot_cost())` and `_cooldown_remaining =
+// GetCooldownTime()`. No WEAPON_FIRED entry: the delivery scales the
+// bolt's damage after register and posts its ET_WEAPON_FIRED once the bolt
+// exists (M4), so the delivered order is the spawn, ENTERED_SET,
+// WEAPON_FIRED. The SPAWN's module is the cannon's own (the one its P6
+// params were read from, held by the bindings per row); while any such
+// module is not the one sys.modules holds -- PulseWeapon._fire_decide
+// imports its script at every shot -- the bindings set
+// K1_PULSE_MODULE_STALE and every cannon launch is a FIRE record
+// (Unresolved), as is one with a launch function patched (Patched), a
+// posed target's offset it cannot bake (PosedOffset) or a row it cannot
+// read (Other).
+//
 // Records left: FIRE for a launch the kernel cannot make (a tube's or a
-// cannon's), FIRE_DUMB likewise, ASK, RUN_PYTHON, a handed-back
-// WALK_START, BANK_STOP / STOP_SYSTEM only for a row gone or a stop the
-// walk check hands back, DONE. FIRE_FAILED is never returned.
+// cannon's, counted by K1LaunchWhy), FIRE_DUMB likewise, ASK, RUN_PYTHON,
+// a handed-back WALK_START, BANK_STOP / STOP_SYSTEM only for a row gone or
+// a stop the walk check hands back, DONE. FIRE_FAILED is never returned.
 //
 // PINNING (the Python driver's contract; Task 5's run_k1). Python's walk
 // holds strong references in its locals (the system, `target`, the retry
@@ -268,7 +288,9 @@ struct K1Spawn {
     Kind kind = Kind::Tube;
     int64_t ship = -1;    // emitter._climb_to_ship(): the torpedo's source
     int64_t set = -1;     // the ship's containing set (register joins it)
-    int64_t ammo = -1;    // the ammo type fired: its script names the module
+    // The row whose launch module the SPAWN carries (the bindings'
+    // k1_launch_modules): a tube's ammo type, a cannon itself.
+    int64_t ammo = -1;
     int64_t target = -1;  // _target_ship: the launcher's target, if alive
     Vec3 position{0, 0, 0};  // emitter._emitter_world_position()
     // unit(dir) * launch speed + ship velocity; false when the direction
@@ -280,7 +302,7 @@ struct K1Spawn {
     bool has_offset = false;
     Vec3 offset{0, 0, 0}, baked{0, 0, 0};
     double drf_override = 0.0;  // the launcher's GetDamageRadiusFactor()
-    // A pulse's (Task 3; a tube's are 1.0 and -1): the power setting's
+    // A cannon's (a tube's are 1.0 and -1): the power setting's
     // GetDamageScale() at fire time, applied after register as Python
     // does, and the target the shot used, its ET_WEAPON_FIRED's pointer
     // (posted by the delivery, after the bolt exists: M4).
@@ -300,7 +322,8 @@ struct K1Entry {
 // Why a launch went to Python as a FIRE / FIRE_DUMB record (LAUNCHES AT THE
 // BOUNDARY), in combat_k1_counts' k1_launch_reasons.
 enum class K1LaunchWhy : int32_t {
-    Unresolved = 0,  // no ammo type, no script or no module
+    Unresolved = 0,  // no ammo type, no script or no module; a cannon's
+                     // module not sys.modules' (K1_PULSE_MODULE_STALE)
     Uncached,        // the type's launch is not cached yet
     Patched,         // a function the launch stands in for is patched
                      // (native_combat._K1_LAUNCH_FUNCS: a test's spy, a
@@ -492,6 +515,8 @@ public:
         // handed back as FIRE / FIRE_DUMB records, by why.
         int64_t logged_tube_launch = 0, logged_dumb_launch = 0,
                 logged_dumb_refused = 0;
+        // ... and a cannon's Fire (Task 3): its drain, cooldown and SPAWN.
+        int64_t logged_pulse_launch = 0;
         std::array<int64_t, static_cast<size_t>(K1LaunchWhy::kCount)>
             launch_why{};
     };

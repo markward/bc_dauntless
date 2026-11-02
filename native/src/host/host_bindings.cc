@@ -4070,21 +4070,33 @@ py::object k1_value_py(const dauntless::combat::K1Value& value) {
         value);
 }
 
-// The module each Ammo row's launch resolved to (launch deferral, M1): an
-// OWNED reference per Ammo handle, set by native_combat.push_ammo_launch
-// beside the row's cached state (combat_set_ammo_module), so a kernel SPAWN
-// carries the module resolved at fire time, as Python's own SPAWN does.
-// A freed row's entry is never read again (handles carry a generation);
-// combat_clear and a None set drop references.
-std::unordered_map<std::int64_t, PyObject*>& k1_ammo_modules() {
+// The module each row's launch resolved to (launch deferral, M1): an OWNED
+// reference per row handle -- an Ammo row's (native_combat.push_ammo_launch,
+// beside its cached state) or a pulse cannon's (push_pulse_params, beside
+// its P6 params, Task 3) -- set by combat_set_launch_module, so a kernel
+// SPAWN carries the module resolved at fire time, as Python's own SPAWN
+// does. Released when its row is unregistered (combat_unregister), by
+// combat_clear and by a None set.
+std::unordered_map<std::int64_t, PyObject*>& k1_launch_modules() {
     static auto* m = new std::unordered_map<std::int64_t, PyObject*>();
     return *m;  // never destroyed: it may own references at exit
 }
 
-void k1_ammo_modules_clear() {
+void k1_launch_modules_clear() {
     std::unordered_map<std::int64_t, PyObject*> old;
-    old.swap(k1_ammo_modules());
+    old.swap(k1_launch_modules());
     for (auto& [h, o] : old) Py_DECREF(o);
+}
+
+// Drop row `h`'s module, if it has one (the map is consistent before the
+// reference goes: a module's finaliser may re-enter).
+void k1_launch_module_release(std::int64_t h) {
+    auto& t = k1_launch_modules();
+    const auto it = t.find(h);
+    if (it == t.end()) return;
+    PyObject* const old = it->second;
+    t.erase(it);
+    Py_DECREF(old);
 }
 
 // THE LAUNCH CHECK (launch deferral, M3): the functions a native launch
@@ -4104,20 +4116,54 @@ std::vector<K1LaunchFunc>*& k1_launch_check() {
     return c;
 }
 
+// The cannons' launch modules (Task 3): weapon_subsystems._pulse_modules,
+// the live script -> module dict the P6 params were read from, owned (None:
+// not installed). PulseWeapon._fire_decide imports its script at every
+// shot -- a sys.modules hit -- so a module sys.modules no longer holds (an
+// SDK reload, a test) would make Python launch another one, or none: every
+// cannon launch is then Python's (K1_PULSE_MODULE_STALE,
+// K1LaunchWhy::Unresolved) until the cache is re-read. Dict reads, no call.
+PyObject*& k1_pulse_modules() {
+    static PyObject* d = nullptr;
+    return d;
+}
+
+// The launch check's flags, set only when they change: every set moves the
+// mirror's epoch, which K0's and K2's caches key on.
+void k1_set_flag(dauntless::combat::Global g, std::int64_t v) {
+    namespace cb = dauntless::combat;
+    if (cb::mirror().get_global_i(g) != v) cb::mirror().set_global_i(g, v);
+}
+
 void k1_launch_recheck() {
     namespace cb = dauntless::combat;
-    const std::vector<K1LaunchFunc>* c = k1_launch_check();
-    if (c == nullptr) return;
-    std::int64_t patched = 0;
-    for (const K1LaunchFunc& f : *c) {
-        PyObject* cur = PyDict_GetItemWithError(f.dict, f.name);  // borrowed
-        if (cur == nullptr && PyErr_Occurred()) PyErr_Clear();
-        if (cur != f.stock) {
-            patched = 1;
-            break;
+    if (const std::vector<K1LaunchFunc>* c = k1_launch_check()) {
+        std::int64_t patched = 0;
+        for (const K1LaunchFunc& f : *c) {
+            PyObject* cur = PyDict_GetItemWithError(f.dict, f.name);  // borrowed
+            if (cur == nullptr && PyErr_Occurred()) PyErr_Clear();
+            if (cur != f.stock) {
+                patched = 1;
+                break;
+            }
         }
+        k1_set_flag(cb::Global::K1_LAUNCH_PATCHED, patched);
     }
-    cb::mirror().set_global_i(cb::Global::K1_LAUNCH_PATCHED, patched);
+    if (PyObject* const d = k1_pulse_modules()) {
+        std::int64_t stale = 0;
+        PyObject* const modules = PyImport_GetModuleDict();  // borrowed
+        PyObject *script, *mod;
+        Py_ssize_t pos = 0;
+        while (PyDict_Next(d, &pos, &script, &mod)) {
+            PyObject* cur = PyDict_GetItemWithError(modules, script);
+            if (cur == nullptr && PyErr_Occurred()) PyErr_Clear();
+            if (cur != mod) {
+                stale = 1;
+                break;
+            }
+        }
+        k1_set_flag(cb::Global::K1_PULSE_MODULE_STALE, stale);
+    }
 }
 
 // A SPAWN's operands (combat_effect_queue.h; effect_queue._spawn): the
@@ -4129,12 +4175,14 @@ void k1_append_spawn(const dauntless::combat::K1Entry& e) {
     namespace cb = dauntless::combat;
     namespace hq = dauntless::host;
     const cb::K1Spawn& s = *e.spawn;
-    // The module the ammo type's launch resolved to (k1_ammo_modules): set
-    // with the cached state the kernel launched on, so always present.
-    const auto mi = k1_ammo_modules().find(s.ammo);
-    if (mi == k1_ammo_modules().end())
+    // The module the launch resolved to (k1_launch_modules): an ammo
+    // type's, or a cannon's own (K1Spawn::ammo names the row), set with the
+    // cached state the kernel launched on, so always present.
+    const auto mi = k1_launch_modules().find(s.ammo);
+    if (mi == k1_launch_modules().end())
         throw std::logic_error(
-            "combat K1: a SPAWN's ammo type has no module (push_ammo_launch)");
+            "combat K1: a SPAWN's row has no module (push_ammo_launch, "
+            "push_pulse_params)");
     PyObject* const module = mi->second;
     hq::WriteApplier& applier = hq::write_applier();
     auto held = [&](std::int64_t h) -> hq::NativeOperand {
@@ -11153,7 +11201,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "py_id: the Python object's id() (Object rows; read back as "
               "combat_dump's 'py_id').");
         m.def("combat_unregister",
-              [](std::int64_t h) { cb::mirror().unregister_row(h); });
+              [](std::int64_t h) {
+                  cb::mirror().unregister_row(h);
+                  k1_launch_module_release(h);  // its launch module, if any
+              });
         m.def("combat_set_f", [fld](std::int64_t h, int f, double v) {
             cb::mirror().set_f(h, fld(f), v);
         });
@@ -11312,7 +11363,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   cb::k2_kernel().clear();
                   cb::k3_kernel().clear();
                   cb::mirror().clear();
-                  k1_ammo_modules_clear();
+                  k1_launch_modules_clear();
               },
               "Drop every row (tests only; rows normally live as long as their "
               "Python object).");
@@ -12186,21 +12237,36 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "the walked system, its children and its ship, the stock "
               "ShipClass's raw is_using_target_offset / GetTargetOffsetTG "
               "and ShipClass. registry None removes it.");
-        m.def("combat_set_ammo_module",
-              [](std::int64_t ammo, py::handle module) {
-                  auto& t = k1_ammo_modules();
+        m.def("combat_set_launch_module",
+              [](std::int64_t row, py::handle module) {
+                  auto& t = k1_launch_modules();
                   PyObject* old = nullptr;
-                  if (auto it = t.find(ammo); it != t.end()) {
+                  if (auto it = t.find(row); it != t.end()) {
                       old = it->second;
                       t.erase(it);
                   }
                   if (!module.is_none())
-                      t[ammo] = Py_NewRef(module.ptr());
+                      t[row] = Py_NewRef(module.ptr());
                   Py_XDECREF(old);
               },
-              py::arg("ammo"), py::arg("module"),
-              "The module an Ammo row's cached launch resolved to (a kernel "
-              "SPAWN carries it); None drops it.");
+              py::arg("row"), py::arg("module"),
+              "The module a row's launch resolved to -- an Ammo row's cached "
+              "launch, a pulse cannon's P6 module -- (a kernel SPAWN carries "
+              "it); None drops it. Released when the row is unregistered.");
+        m.def("combat_k1_set_pulse_modules",
+              [](py::handle modules) {
+                  if (!modules.is_none() && !PyDict_Check(modules.ptr()))
+                      throw py::type_error("a script -> module dict or None");
+                  PyObject* const old = k1_pulse_modules();
+                  k1_pulse_modules() =
+                      modules.is_none() ? nullptr : Py_NewRef(modules.ptr());
+                  Py_XDECREF(old);
+              },
+              py::arg("modules"),
+              "Install the cannons' module check (THE LAUNCH CHECK): the live "
+              "script -> module dict their launches carry modules from, "
+              "re-checked against sys.modules before every combat_k1_next; "
+              "None removes it.");
         m.def("combat_k1_set_launch_check",
               [](py::handle funcs) {
                   // [(module dict, name, stock function), ...] or None.
@@ -12293,6 +12359,8 @@ PYBIND11_MODULE(_dauntless_host, m) {
             logged["tube_launch"] = c.logged_tube_launch;
             logged["dumb_launch"] = c.logged_dumb_launch;
             logged["dumb_refused"] = c.logged_dumb_refused;
+            // ... and a cannon's (Task 3): its drain, cooldown and SPAWN.
+            logged["pulse_launch"] = c.logged_pulse_launch;
             d["k1_logged"] = logged;
             // The launches handed back as FIRE / FIRE_DUMB records, by why.
             py::dict launch;

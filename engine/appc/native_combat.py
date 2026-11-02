@@ -1318,7 +1318,9 @@ _K1_LEAF_METHODS = (
     # (Its events are delivered by the class's own methods: not here.)
     "_spawn_torpedo", "_start_slot_cooldown", "_ensure_slots",
     "GetDamageRadiusFactor", "GetDirection", "GetRight",
-    "_emitter_world_position", "FireDumb")
+    "_emitter_world_position", "FireDumb",
+    # A cannon's launch (Task 3): its damage scale and cooldown.
+    "GetDamageScale", "GetCooldownTime")
 _K1_SYSTEM_METHODS = (
     "update_weapons", "try_fire_weapon", "_prune_targets",
     "_active_chain_groups", "_resolve_working_group", "_firing_weapon",
@@ -1408,9 +1410,12 @@ def _k1_send_walk_check() -> None:
     _h.combat_k1_set_walk_check(_registry.data, _K1_SYSTEM_PATCHES,
                                 _K1_LEAF_PATCHES, _K1_SHIP_PATCHES,
                                 iu, gto, cls)
-    # And the launch check, re-checked with it before every record.
+    # And the launch check, re-checked with it before every record: the
+    # launch functions, and the cannons' modules against sys.modules.
+    from engine.appc import weapon_subsystems as ws
     _h.combat_k1_set_launch_check(
         _k1_launch_check() if _k1_launch_stock is not None else None)
+    _h.combat_k1_set_pulse_modules(ws._pulse_modules)
     _k1_walk_check_sent = True
 
 
@@ -1896,7 +1901,9 @@ def push_mount_order(ship) -> None:
 def push_pulse_params(bank) -> None:
     """A pulse weapon's projectile module, resolved by Python (ruling P6):
     module_ok, launch_speed and lifetime, cached per script in
-    weapon_subsystems (cleared with the projectile module cache)."""
+    weapon_subsystems (cleared with the projectile module cache), and the
+    module itself, which a kernel SPAWN of the cannon's carries (launch
+    deferral, Task 3)."""
     if _enabled:
         if _pulse_stale:
             refresh_stale_pulse_params()
@@ -1904,6 +1911,10 @@ def push_pulse_params(bank) -> None:
         if h is None:
             return
         ok, speed, life = _pulse_params(bank)
+        # Set before module_ok, the state that lets the kernel launch.
+        from engine.appc import weapon_subsystems as ws
+        _h.combat_set_launch_module(
+            h, ws.pulse_module(ws.pulse_module_script(bank)) if ok else None)
         _call(bank, _h.combat_set_i, h, _fid("module_ok"), ok)
         if "_nslot" in bank.__dict__:
             _call(bank, _h.combat_set_f, h, _fid("launch_speed"), speed)
@@ -1979,7 +1990,7 @@ def push_ammo_launch(ammo) -> None:
         state, speed = _ammo_launch(ammo)
         # The module a kernel SPAWN of this type carries (its fire-time
         # module), set before the state that lets the kernel launch.
-        _h.combat_set_ammo_module(h, _ammo_module(ammo, state))
+        _h.combat_set_launch_module(h, _ammo_module(ammo, state))
         _call(ammo, _h.combat_set_i, h, _fid("ammo_launch_state"), state)
         if "_nslot" in ammo.__dict__:
             _call(ammo, _h.combat_set_f, h, _fid("ammo_launch_speed"),
@@ -2080,9 +2091,6 @@ def launch_patched() -> bool:
     (_K1_LAUNCH_FUNCS): a test's spy, a tool. Its launches then spawn
     mid-walk through the patched function, kernel's and Python's alike."""
     return _k1_launch_stock is None or _k1_launch_funcs() != _k1_launch_stock
-
-
-
 
 
 def refresh_stale_pulse_params() -> None:
@@ -2359,6 +2367,9 @@ def _globals() -> dict:
         g[key] = float(getattr(ws, attr))
     for i, scale in enumerate(ws.PULSE_COST_SCALE_BY_POWER_SETTING):
         g["PULSE_COST_SCALE_%d" % i] = float(scale)
+    # A cannon's native launch (launch deferral, Task 3): GetDamageScale.
+    for i, scale in enumerate(ws.PULSE_DAMAGE_SCALE_BY_POWER_SETTING):
+        g["PULSE_DAMAGE_SCALE_%d" % i] = float(scale)
     # K2: the dwell flush threshold and the shield ellipsoid scale.
     from engine.appc import combat
     g["BEAM_DWELL_FLUSH_S"] = float(ws.BEAM_DWELL_FLUSH_S)
@@ -3441,8 +3452,10 @@ def _k1_pulse_module(bank):
     """The module PulseWeapon._fire_decide would have resolved:
     importlib.import_module of the bank's script, exactly as decide calls
     it -- a sys.modules hit, or a fresh import when the module was unloaded
-    since registration (ruling P6 cached only its launch speed and
-    lifetime). An ImportError is where decide refuses, before its stamps;
+    since registration. Reached only for a launch K1 handed back: one it
+    makes carries the cannon's cached module, and THE LAUNCH CHECK hands
+    every cannon launch back while a cached module is not sys.modules'
+    (launch deferral, Task 3). An ImportError is where decide refuses, before its stamps;
     after the kernel's FIRE decision (stamps applied) that cannot be
     followed, so it raises and the session abandons. Any other exception
     propagates, as it does out of Python's Fire."""

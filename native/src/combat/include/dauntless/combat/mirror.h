@@ -324,8 +324,18 @@ enum class Global : int32_t {
     // The launch deferral: 1 while a function K1's native launch stands in
     // for is not the stock one (native_combat._k1_launch_patched: a test or
     // a tool patched weapon_subsystems._spawn_projectile ...): every launch
-    // is then Python's (K1LaunchWhy::Patched). Pushed at each K1 entry.
+    // is then Python's (K1LaunchWhy::Patched). Set by the bindings before
+    // every combat_k1_next (THE LAUNCH CHECK).
     K1_LAUNCH_PATCHED,
+    // A cannon's launch (launch deferral, Task 3): PULSE_DAMAGE_SCALE_BY_
+    // POWER_SETTING[0..2] (PulseWeapon.GetDamageScale), and 1 while a pulse
+    // module the cannons' launches carry (weapon_subsystems._pulse_modules)
+    // is not the one sys.modules holds now -- PulseWeapon._fire_decide would
+    // import another, or none: every cannon launch is then Python's
+    // (K1LaunchWhy::Unresolved). Set by the bindings before every
+    // combat_k1_next (THE LAUNCH CHECK).
+    PULSE_DAMAGE_SCALE_0, PULSE_DAMAGE_SCALE_1, PULSE_DAMAGE_SCALE_2,
+    K1_PULSE_MODULE_STALE,
     kCount
 };
 
@@ -354,6 +364,9 @@ struct Globals {
     int64_t PHASER_DISCHARGE_LEN = 0;
     double BEAM_ON_DELAY_S = 0.0;
     int64_t K1_LAUNCH_PATCHED = 0;
+    double PULSE_DAMAGE_SCALE_0 = 0.0, PULSE_DAMAGE_SCALE_1 = 0.0,
+           PULSE_DAMAGE_SCALE_2 = 0.0;
+    int64_t K1_PULSE_MODULE_STALE = 0;
 };
 
 struct ProfileRowSet {

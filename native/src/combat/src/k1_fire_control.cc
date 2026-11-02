@@ -448,6 +448,23 @@ private:
     std::optional<LaunchPlan> plan_launch(int64_t tube, int64_t target,
                                           K1Spawn::Kind kind,
                                           K1LaunchWhy* why);
+    // _spawn_projectile's fire-time reads into `s` (_launch_reads and the
+    // spawn position): `world_dir` a cannon's led direction, nullopt for a
+    // tube's forward (skewed). False (and why) for a bake the kernel cannot
+    // make; throws std::invalid_argument for anything else it cannot read.
+    bool launch_reads(K1Spawn& s, int64_t launcher, int64_t target,
+                      const std::optional<Vec3>& world_dir, double speed,
+                      K1LaunchWhy* why);
+    // A cannon's launch: everything it reads, before any of its writes.
+    struct PulsePlan {
+        K1Spawn spawn;
+        double charge = 0.0;    // max(0.0, _charge_level - _shot_cost())
+        double cooldown = 0.0;  // GetCooldownTime()
+    };
+    std::optional<PulsePlan> plan_pulse_launch(int64_t cannon,
+                                               const K1Decision& d,
+                                               K1LaunchWhy* why);
+    void log_pulse_launch(int64_t cannon, const PulsePlan& p);
     // The part's point of a posed target's offset (Python's _bake_offset).
     Vec3 bake_offset(int64_t target, const Vec3& offset, int64_t ship) const;
     void log_launch(int64_t tube, int64_t target, const LaunchPlan& p);
@@ -958,59 +975,124 @@ std::optional<Walker::LaunchPlan> Walker::plan_launch(int64_t tube,
         K1Spawn& s = p.spawn;
         s.kind = kind;
         s.ammo = ammo_h;
-        // torp._source_ship = emitter._climb_to_ship()
-        s.ship = climb_to_ship_of(m_, tube);
-        const ObjectRow& so = detail::obj(m_, s.ship);
-        // register: source.GetContainingSet()
-        s.set = so._containing_set;
-        if (s.set == kRefUnrepresentable || (s.set >= 0 && !m_.set(s.set)))
-            detail::fall_back("the ship's set is unnamed");
-        // spawn_pos = emitter._emitter_world_position()
-        s.position = subsystem_world_position(m_, tube, -1, s_.use_memo);
-        // world_dir = _emitter_forward_world(emitter, source_ship,
-        // skew=True): Direction, + 0.033 x Right when IsSkewFire, then
-        // MultMatrixLeft(ship.GetWorldRotation()).
-        Vec3 local = tr._direction;
-        if (tr._skew_fire)
-            local = {local[0] + 0.033 * tr._right[0],
-                     local[1] + 0.033 * tr._right[1],
-                     local[2] + 0.033 * tr._right[2]};
-        const Vec3 dir =
-            detail::mult_matrix_left(detail::xform(m_, so).rot, local);
-        // length = world_dir.Length(); ship_vel = GetVelocityTG();
-        // `if length > 1e-6: torp._velocity = unit * launch_speed + vel`.
-        const double length = detail::length(dir);
-        if (length > 1e-6) {
-            const double speed = ammo.ammo_launch_speed;
-            const Vec3& v = so._velocity;
-            s.has_velocity = true;
-            s.velocity = {dir[0] / length * speed + v[0],
-                          dir[1] / length * speed + v[1],
-                          dir[2] / length * speed + v[2]};
-        }
-        // target_ship = emitter._target (the stamp below): alive -> its
-        // homing, then SetTargetOffset(emitter._target_offset), the walk's
-        // offset (a TGPoint3 copy, else None) baked against its pose now.
-        if (target != -1 && !ship_dead(m_, target)) {
-            s.target = target;
-            if (s_.offset) {
-                s.has_offset = true;
-                s.offset = *s_.offset;
-                try {
-                    s.baked = bake_offset(target, s.offset, s.ship);
-                } catch (const std::invalid_argument&) {
-                    *why = K1LaunchWhy::PosedOffset;
-                    return std::nullopt;
-                }
-            }
-        }
-        // drf_override = self.GetDamageRadiusFactor()
-        s.drf_override = tr._damage_radius_factor;
+        if (!launch_reads(s, tube, target, std::nullopt,
+                          ammo.ammo_launch_speed, why))
+            return std::nullopt;
         return p;
     } catch (const std::invalid_argument&) {
         *why = K1LaunchWhy::Other;
         return std::nullopt;
     }
+}
+
+bool Walker::launch_reads(K1Spawn& s, int64_t launcher, int64_t target,
+                          const std::optional<Vec3>& world_dir, double speed,
+                          K1LaunchWhy* why) {
+    const SubsystemRow& lr = detail::sub(m_, launcher);
+    // torp._source_ship = emitter._climb_to_ship()
+    s.ship = climb_to_ship_of(m_, launcher);
+    const ObjectRow& so = detail::obj(m_, s.ship);
+    // register: source.GetContainingSet()
+    s.set = so._containing_set;
+    if (s.set == kRefUnrepresentable || (s.set >= 0 && !m_.set(s.set)))
+        detail::fall_back("the ship's set is unnamed");
+    // spawn_pos = emitter._emitter_world_position()
+    s.position = subsystem_world_position(m_, launcher, -1, s_.use_memo);
+    // A cannon's world_dir is its led direction (the decision's); a tube's
+    // is _emitter_forward_world(emitter, source_ship, skew=True):
+    // Direction, + 0.033 x Right when IsSkewFire, then
+    // MultMatrixLeft(ship.GetWorldRotation()).
+    Vec3 dir;
+    if (world_dir) {
+        dir = *world_dir;
+    } else {
+        Vec3 local = lr._direction;
+        if (lr._skew_fire)
+            local = {local[0] + 0.033 * lr._right[0],
+                     local[1] + 0.033 * lr._right[1],
+                     local[2] + 0.033 * lr._right[2]};
+        dir = detail::mult_matrix_left(detail::xform(m_, so).rot, local);
+    }
+    // length = world_dir.Length(); ship_vel = GetVelocityTG();
+    // `if length > 1e-6: torp._velocity = unit * launch_speed + vel`.
+    const double length = detail::length(dir);
+    if (length > 1e-6) {
+        const Vec3& v = so._velocity;
+        s.has_velocity = true;
+        s.velocity = {dir[0] / length * speed + v[0],
+                      dir[1] / length * speed + v[1],
+                      dir[2] / length * speed + v[2]};
+    }
+    // target_ship = emitter._target (the stamp): alive -> its homing, then
+    // SetTargetOffset(emitter._target_offset), the walk's offset (a TGPoint3
+    // copy, else None) baked against its pose now.
+    if (target != -1 && !ship_dead(m_, target)) {
+        s.target = target;
+        if (s_.offset) {
+            s.has_offset = true;
+            s.offset = *s_.offset;
+            try {
+                s.baked = bake_offset(target, s.offset, s.ship);
+            } catch (const std::invalid_argument&) {
+                *why = K1LaunchWhy::PosedOffset;
+                return false;
+            }
+        }
+    }
+    // drf_override = self.GetDamageRadiusFactor()
+    s.drf_override = lr._damage_radius_factor;
+    return true;
+}
+
+// PulseWeapon._fire_effect inside the deferral (CHANGE BOTH): _defer_spawn
+// with the decision's led direction, GetDamageRadiusFactor(),
+// GetDamageScale() and the target the shot used; the module's launch speed
+// is the cannon's own (ruling P6, the lead solve's). Every read before any
+// write; nullopt (and why) when the FIRE record must run Python's.
+std::optional<Walker::PulsePlan> Walker::plan_pulse_launch(
+    int64_t cannon, const K1Decision& d, K1LaunchWhy* why) {
+    if (m_.globals().K1_LAUNCH_PATCHED != 0) {
+        *why = K1LaunchWhy::Patched;
+        return std::nullopt;
+    }
+    // The module decide would import now is not the one the cannons'
+    // launches carry (THE LAUNCH CHECK): Python's.
+    if (m_.globals().K1_PULSE_MODULE_STALE != 0) {
+        *why = K1LaunchWhy::Unresolved;
+        return std::nullopt;
+    }
+    try {
+        PulsePlan p;
+        const SubsystemRow& cr = detail::sub(m_, cannon);
+        K1Spawn& s = p.spawn;
+        s.kind = K1Spawn::Kind::Pulse;
+        s.ammo = cannon;
+        if (!launch_reads(s, cannon, d.target_used, d.world_dir,
+                          cr.launch_speed, why))
+            return std::nullopt;
+        s.damage_scale = pulse_damage_scale(m_, cr);
+        s.fired_at = d.target_used;
+        // `max(0.0, x)` is 0.0 unless x > 0.0 (a NaN, -0.0: 0.0).
+        const double x = cr._charge_level - pulse_shot_cost(m_, cr);
+        p.charge = x > 0.0 ? x : 0.0;
+        p.cooldown = cr._cooldown_time;
+        return p;
+    } catch (const std::invalid_argument&) {
+        *why = K1LaunchWhy::Other;
+        return std::nullopt;
+    }
+}
+
+// The launch's entry and writes, in PulseWeapon._fire_effect's order: the
+// SPAWN (_defer_spawn), the drain, the cooldown. Its ET_WEAPON_FIRED is the
+// delivery's, once the bolt exists (M4): no entry here.
+void Walker::log_pulse_launch(int64_t cannon, const PulsePlan& p) {
+    s_.entries.push_back(
+        K1Entry{K1Effect::SPAWN, cannon, -1, s_.writes.size(), p.spawn});
+    ++c_.entries[static_cast<size_t>(K1Effect::SPAWN)];
+    write_float(cannon, Field::_charge_level, "_charge_level", p.charge);
+    write_float(cannon, Field::_cooldown_remaining, "_cooldown_remaining",
+                p.cooldown);
 }
 
 // projectiles._bake_offset's point: part_transform_point(target, offset,
@@ -1509,6 +1591,18 @@ K1Record Walker::run() {
                                 &why)) {
                             log_launch(w, s_.fire_target, *p);
                             ++c_.logged_tube_launch;
+                            s_.st = St::TF_FIRED;
+                            break;
+                        }
+                        ++c_.launch_why[static_cast<size_t>(why)];
+                    }
+                    if (o.d.shape == K1Decision::Shape::Pulse) {
+                        // The cannon's launch, likewise (Task 3).
+                        K1LaunchWhy why = K1LaunchWhy::Other;
+                        if (std::optional<PulsePlan> p =
+                                plan_pulse_launch(w, o.d, &why)) {
+                            log_pulse_launch(w, *p);
+                            ++c_.logged_pulse_launch;
                             s_.st = St::TF_FIRED;
                             break;
                         }

@@ -729,6 +729,9 @@ TEST(K1, PulseStampsBeforeArc) {
     const int64_t sys = w.system("psys", ship, 2, {t});
     const int64_t c = w.bank("cannon", sys);
     w.m.set_i(sys, Field::_force_update, 1);
+    // The launch handed back (a cannon's launch is logged writes and a
+    // SPAWN otherwise: K1PulseLaunch), so the FIRE record shows the stamps.
+    w.m.set_global_i(Global::K1_LAUNCH_PATCHED, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
     EXPECT_EQ(w.brief(w.k.next()), "WALK_START psys");
     w.k.set_offset(Vec3{1.0, 2.0, 3.0});
@@ -1654,6 +1657,8 @@ TEST(K1Native, WalkOffsetMarkerNamesItsWalk) {
     const int64_t c = w.bank("cannon", sys);
     w.m.set_fv(sys, Field::_held_offset, {1.0, 2.0, 3.0});
     w.m.set_i(sys, Field::_force_update, 1);
+    // The launch handed back, so the stamp is the FIRE record's last write.
+    w.m.set_global_i(Global::K1_LAUNCH_PATCHED, 1);
     w.k.begin_pump({ship}, kDt, 10.0, false, 0.0);
     const K1Record f = w.k.next();
     EXPECT_EQ(w.brief(f), "FIRE cannon@t");
@@ -1678,6 +1683,7 @@ TEST(K1Native, WalkOffsetMarkerNamesItsWalk) {
     const int64_t vc = v.bank("cannon", vsys);
     v.m.set_fv(vsys, Field::_held_offset, {1.0, 2.0, 3.0});
     v.m.set_i(vsys, Field::_force_update, 1);
+    v.m.set_global_i(Global::K1_LAUNCH_PATCHED, 1);
     v.k.begin_pump({vship}, kDt, 10.0, false, 0.0);
     EXPECT_EQ(v.brief(v.k.next()), "FIRE cannon@t");
     EXPECT_EQ(v.m.get_fv(vc, Field::_target_offset),
@@ -2505,4 +2511,176 @@ TEST(K1Launch, AThrowUndoesTheLaunchWrites) {
     EXPECT_EQ(w.brief(done), "DONE");
     EXPECT_EQ(fx(w, done).size(), 3u);
     EXPECT_EQ(w.m.get_i(l.ammo, Field::_available), 2);
+}
+
+// ── A cannon's launch at the boundary (launch deferral, Task 3) ────────────
+// PulseWeapon._fire_effect inside the deferral: SPAWN(cannon, the fire-time
+// record) -- Python's _defer_spawn, appended first -- then the drain
+// (`_charge_level = max(0.0, _charge_level - _shot_cost())`) and the
+// cooldown (`_cooldown_remaining = GetCooldownTime()`). Its ET_WEAPON_FIRED
+// is the SPAWN delivery's (once the bolt exists: M4), never a K1 entry.
+
+namespace {
+
+struct Cannon {
+    int64_t ship = -1, target = -1, sys = -1, cannon = -1;
+};
+
+// A pulse system on a ship at (10, 20, 30) moving (1, 2, 3), held at a
+// target ahead with the offset (0.25, -0.5, 0.125); one cannon at the
+// ship's origin (launch speed 50, charge 5 of 5, discharge rate 1) at power
+// setting `power`, its cooldown 0.2 and DamageRadiusFactor 0.3, the timer
+// forced. The power setting's damage scales are BC's 0.2 / 0.5 / 1.0.
+Cannon cannon_world(World& w, int64_t power = 2) {
+    Cannon c;
+    c.ship = w.ship("ship", 10.0, 20.0, 30.0);
+    c.target = w.object("t", 10.0, 270.0, 30.0);
+    c.sys = w.system("psys", c.ship, 2, {c.target});
+    c.cannon = w.bank("cannon", c.sys);
+    w.m.set_i(c.cannon, Field::_power_setting, power);
+    w.m.set_f(c.cannon, Field::_cooldown_time, 0.2);
+    w.m.set_f(c.cannon, Field::_damage_radius_factor, 0.3);
+    w.m.set_fv(c.ship, Field::_velocity, {1.0, 2.0, 3.0});
+    w.m.set_fv(c.sys, Field::_held_offset, {0.25, -0.5, 0.125});
+    w.m.set_i(c.sys, Field::_force_update, 1);
+    w.m.set_global_f(Global::PULSE_DAMAGE_SCALE_0, 0.2);
+    w.m.set_global_f(Global::PULSE_DAMAGE_SCALE_1, 0.5);
+    w.m.set_global_f(Global::PULSE_DAMAGE_SCALE_2, 1.0);
+    return c;
+}
+
+// The led launch direction the kernel decides for cannon_world's shot (the
+// FIRE record's, with every launch handed back).
+Vec3 decided_dir(int64_t power) {
+    World p(false);
+    const Cannon c = cannon_world(p, power);
+    p.m.set_global_i(Global::K1_LAUNCH_PATCHED, 1);
+    p.k.begin_pump({c.ship}, kDt, 10.0, false, 0.0);
+    const K1Record r = p.k.next();
+    EXPECT_EQ(p.brief(r), "FIRE cannon@t");
+    return r.decision.world_dir;
+}
+
+}  // namespace
+
+TEST(K1PulseLaunch, CannonLaunchIsLoggedWritesAndASpawnEntry) {
+    const Vec3 dir = decided_dir(2);
+    World w(false);
+    const Cannon c = cannon_world(w);
+    w.k.begin_pump({c.ship}, kDt, 10.0, false, 0.0);
+    const K1Record done = w.k.next();
+    ASSERT_EQ(w.brief(done), "DONE");
+    // The decision's stamps, then the effect's drain (5 - 1 x 2.0) and the
+    // cooldown; the SPAWN between them (Python appends it first).
+    EXPECT_EQ(writes_from(w, done, "cannon._target=t", 4),
+              (std::vector<std::string>{
+                  "cannon._target=t", "cannon._target_offset=walk_offset",
+                  "cannon._charge_level=3",
+                  "cannon._cooldown_remaining=0.20000000000000001"}));
+    const auto ws = w.writes(done);
+    const size_t after = static_cast<size_t>(
+        std::find(ws.begin(), ws.end(), "cannon._target_offset=walk_offset") -
+        ws.begin()) + 1;
+    // No WEAPON_FIRED entry: the delivery posts it once the bolt exists.
+    EXPECT_EQ(w.entries(done),
+              (std::vector<std::string>{"SPAWN cannon@t^" +
+                                        std::to_string(after)}));
+    const K1Entry* e = spawn_of(done);
+    ASSERT_TRUE(e != nullptr && e->spawn);
+    const K1Spawn& s = *e->spawn;
+    EXPECT_EQ(s.kind, K1Spawn::Kind::Pulse);
+    EXPECT_EQ(s.ship, c.ship);
+    EXPECT_EQ(s.set, w.set);
+    EXPECT_EQ(s.ammo, c.cannon);  // the row its module is kept by
+    EXPECT_EQ(s.target, c.target);
+    EXPECT_EQ(s.position, (Vec3{10.0, 20.0, 30.0}));
+    // unit(the decided world_dir) x 50 + the ship's velocity.
+    const double len =
+        std::sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
+    ASSERT_TRUE(s.has_velocity);
+    EXPECT_EQ(s.velocity, (Vec3{dir[0] / len * 50.0 + 1.0,
+                                dir[1] / len * 50.0 + 2.0,
+                                dir[2] / len * 50.0 + 3.0}));
+    ASSERT_TRUE(s.has_offset);
+    EXPECT_EQ(s.offset, (Vec3{0.25, -0.5, 0.125}));
+    EXPECT_EQ(s.baked, (Vec3{0.25, -0.5, 0.125}));  // an unposed target
+    EXPECT_EQ(s.drf_override, 0.3);
+    EXPECT_EQ(s.damage_scale, 1.0);
+    EXPECT_EQ(s.fired_at, c.target);
+    // The mirror holds what Python will.
+    EXPECT_EQ(w.m.get_f(c.cannon, Field::_charge_level), 3.0);
+    EXPECT_EQ(w.m.get_f(c.cannon, Field::_cooldown_remaining), 0.2);
+    const auto& n = w.k.counts();
+    EXPECT_EQ(n.logged_pulse_launch, 1);
+    EXPECT_EQ(n.records, 1);
+    EXPECT_EQ(n.entries[static_cast<size_t>(K1Effect::SPAWN)], 1);
+    EXPECT_EQ(n.entries[static_cast<size_t>(K1Effect::WEAPON_FIRED)], 0);
+}
+
+TEST(K1PulseLaunch, DrainClampsAndTheScaleFollowsThePowerSetting) {
+    // A charge just under the shot's cost (the gate's 1e-9 slack): the drain
+    // is max(0.0, charge - cost) = 0; the bolt's scale is the setting's.
+    for (const int64_t power : {0, 1}) {
+        World w(false);
+        const Cannon c = cannon_world(w, power);
+        const double cost = power == 0 ? 0.5 : 1.0;
+        w.m.set_f(c.cannon, Field::_charge_level, cost - 5e-10);
+        w.k.begin_pump({c.ship}, kDt, 10.0, false, 0.0);
+        const K1Record done = w.k.next();
+        ASSERT_EQ(w.brief(done), "DONE") << power;
+        EXPECT_TRUE(has_write(w, done, "cannon._charge_level=0")) << power;
+        const K1Entry* e = spawn_of(done);
+        ASSERT_TRUE(e != nullptr && e->spawn) << power;
+        EXPECT_EQ(e->spawn->damage_scale, power == 0 ? 0.2 : 0.5) << power;
+    }
+}
+
+TEST(K1PulseLaunch, LaunchesTheKernelCannotMakeAreFireRecords) {
+    // A launch function patched, or a cannon module sys.modules no longer
+    // holds (Python's decide would import another, or none): the FIRE record
+    // as before -- the decision's stamps only, nothing queued -- counted.
+    for (const bool stale : {false, true}) {
+        World w(false);
+        const Cannon c = cannon_world(w);
+        w.m.set_global_i(stale ? Global::K1_PULSE_MODULE_STALE
+                               : Global::K1_LAUNCH_PATCHED,
+                         1);
+        w.k.begin_pump({c.ship}, kDt, 10.0, false, 0.0);
+        const K1Record r = w.k.next();
+        EXPECT_EQ(w.brief(r), "FIRE cannon@t") << stale;
+        EXPECT_EQ(r.decision.shape, K1Decision::Shape::Pulse) << stale;
+        EXPECT_EQ(launch_why(w, stale ? K1LaunchWhy::Unresolved
+                                      : K1LaunchWhy::Patched),
+                  1u)
+            << stale;
+        EXPECT_TRUE(r.entries.empty()) << stale;
+        EXPECT_EQ(w.writes(r).back(), "cannon._target_offset=walk_offset");
+        EXPECT_EQ(w.m.get_f(c.cannon, Field::_charge_level), 5.0) << stale;
+        EXPECT_EQ(w.k.counts().logged_pulse_launch, 0) << stale;
+    }
+}
+
+TEST(K1PulseLaunch, AThrowUndoesTheLaunchWrites) {
+    // As a tube's: a later walk of the same call throws, the drain and the
+    // cooldown are undone in the mirror and the SPAWN dropped; the retried
+    // call makes them once.
+    World w(false);
+    const Cannon c = cannon_world(w);
+    const int64_t b = w.ship("b", 0.0, 10.0, 0.0);
+    const int64_t sys2 = w.system("sys2", b, 1, {c.target});
+    w.bank("c0", sys2);
+    bool boom = true;
+    w.k.set_walk_check([&](int64_t s, int64_t) {
+        if (s == sys2 && boom) throw std::runtime_error("walk check");
+        return false;
+    });
+    w.k.begin_pump({c.ship, b}, kDt, 10.0, false, 0.0);
+    EXPECT_THROW(w.k.next(), std::runtime_error);
+    EXPECT_EQ(w.m.get_f(c.cannon, Field::_charge_level), 5.0);
+    EXPECT_EQ(w.m.get_f(c.cannon, Field::_cooldown_remaining), 0.0);
+    boom = false;
+    const K1Record done = w.k.next();
+    EXPECT_EQ(w.brief(done), "DONE");
+    EXPECT_EQ(w.m.get_f(c.cannon, Field::_charge_level), 3.0);
+    EXPECT_EQ(w.entries(done).size(), 1u);
 }
