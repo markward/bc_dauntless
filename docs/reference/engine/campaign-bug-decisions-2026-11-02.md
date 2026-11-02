@@ -6,7 +6,7 @@ Bugs found by the combat event inventory (`docs/reference/engine/native-combat/e
 |---|---|---|---|
 | 1 | `ET_WEAPON_FIRED` has no target pointer; pulse weapons never post it | Fix both | Decided; recorded in `event-emitter-gaps.md` #14 |
 | 2 | `SetConditionPercentage` is a no-op on every subsystem | Implement; post the same events as weapon damage | Decided |
-| 3 | E3M1: an invincible player takes no collision damage | Collision damage becomes the default effect at the end of each ship's `ET_OBJECT_COLLISION` handler chain | Decided |
+| 3 | E3M1: an invincible player takes no collision damage | Simulation mode handled by the engine: weapons deal 0.1% damage while E3M1's `g_bSimulationMode` is on; E3M1's player-invincibility calls ignored; collisions unchanged | Decided (supersedes the collision-chain proposal) |
 
 ## 2. `SetConditionPercentage` is a no-op on every subsystem
 
@@ -22,6 +22,14 @@ Bugs found by the combat event inventory (`docs/reference/engine/native-combat/e
 
 **Broken:** E3M1 keeps the player invincible except to collisions. `PlayerCollisionHandler` (`Maelstrom/Episode3/E3M1/E3M1.py:843-853`) turns invincibility off, calls `CallNextHandler`, then turns it back on unless the player is dying; its header comment says this is to "apply the damage immediately". So BC applies collision damage as the chain's default, inside `CallNextHandler`. We post the collision events, let every handler run, then apply the impact damage (`engine/appc/collisions.py` `_respond_pair`), by which time invincibility is back on and the damage is skipped (`combat.apply_hit`'s immunity gate).
 
-**Decision (Mark):** collision impact damage becomes the default effect at the end of each ship's `ET_OBJECT_COLLISION` handler chain (the same shape as `ET_ENVIRONMENT_DAMAGE`'s drain, which applies only when the chain passes).
+**First proposal (superseded the same day):** make collision damage the default effect at the end of each ship's `ET_OBJECT_COLLISION` chain. Dropped: it would have made collisions a gating event for one mission's sake.
 
-**Consequences:** a handler that does not pass the event on cancels that ship's collision damage, so `ET_OBJECT_COLLISION` becomes a GATE event (event-inventory classes). E1M2 is unchanged in order: `ET_PLANET_COLLISION` is still posted first, and E1M2's `ObjectCollision` handler still runs before the damage (and so before any `ET_OBJECT_EXPLODING`); `test_moving_asteroid_hitting_haven_counts` and the Facility test beside it must stay green. Fits roadmap decision 10: when collisions move into the sim tick and later native, the event and its damage stay one unit.
+**What the mission does (read 2026-11-02):** `g_bSimulationMode` is a plain global in E3M1's script, used by no other SDK file. `StartSimulation` (called from `AcceptChallenge`, `TriggerKlingons`, and the end of `BOPCutscene` before `StartKlingonAttack`) sets it, makes the player invincible and installs `PlayerCollisionHandler`; `EndSimulation` (start of `BOPCutscene`, `BOPYouWin`, `BOPYouLose`) clears it, clears the player's invincibility and removes the handler. The other combatants (Geronimo, Ran Kuf, Bird of Prey) are made invincible at creation and when knocked out of the drill (`EndShipSimulation`), and never made vulnerable again. While the flag is on it also gates the player's fire handlers and MacCray's battle lines.
+
+**Decision (Mark):** treat simulation mode as "weapons are simulated", not "the player is invincible":
+1. **An engine listener on `g_bSimulationMode`.** The engine learns when E3M1 sets or clears it. The SDK's `global g_bSimulationMode; g_bSimulationMode = TRUE` writes the module dict directly (no attribute hook fires), so the listener comes from the SDK load-time transform pipeline (the AST rewrite every SDK module already goes through), not from polling or editing the script.
+2. **While it is on, every weapon hit deals 0.1% of its normal damage**, from any ship. Not 0: a zero-damage hit would skip `apply_hit` (phaser pulses do when damage ≤ 0), post no `ET_WEAPON_HIT`, and break hit-counting handlers (E3M1's own `AmagonHit` counts phaser hits). Shields, subsystems and hull all see the 0.1%.
+3. **E3M1's calls making the player invincible are ignored** (`MakePlayerInvincible`, and `PlayerCollisionHandler`'s re-arm). In Mark's words: never needed if the developers had thought about what they really wanted. The other ships' invincibility is kept.
+4. **Collisions are unchanged** (events, then damage, no veto). With the player no longer invincible, a crash during the drill does real damage through the normal path; `PlayerCollisionHandler` still runs and its toggling becomes harmless.
+
+**To check when built:** the drill's outcome (how it decides that a ship is knocked out) is unaffected by 0.1% damage; the Klingon attack after the Bird of Prey cutscene, which re-enters simulation mode, plays as before; E1M2's ordering tests stay green (collisions untouched).
