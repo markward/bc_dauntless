@@ -918,8 +918,10 @@ class _EnergyWeaponFireMixin:
         return True
 
     def StopFiring(self) -> None:
-        # K1 logs these writes and queues the LOOP_STOP itself for a bank
-        # its walk stops (k1_fire_control.h): change both together.
+        # K0 (a bank drained dry), K1 (a bank its walk stops) and K2 (a
+        # phaser step's stop) log these writes and queue the LOOP_STOP
+        # themselves, from one encoding (native/src/combat/include/
+        # dauntless/combat/stop_firing.h): change both together.
         was_firing = self._firing
         self._firing = False
         self._beam_on_countdown = 0.0
@@ -1219,7 +1221,7 @@ class Weapon(ShipSubsystem):
 
     def StopFiring(self) -> None:
         # K1 logs this write itself for a tube its walk stops (bank_stop,
-        # k1_fire_control.cc): change both together.
+        # k1_fire_control.cc, from stop_firing.h): change both together.
         self._firing = False
 
     def IsFiring(self) -> int:
@@ -1569,7 +1571,8 @@ class WeaponSystem(PoweredSubsystem):
 
     def StopFiring(self, *args) -> None:
         # K1 (the pump's system_stop) and K2 (an offline phaser system's
-        # stop) log these writes, then each child's stop, themselves
+        # stop) log these writes, then each child's stop (stop_firing.h,
+        # a firing child's LOOP_STOP queued), themselves
         # (k1_fire_control.cc, k2_beams.cc): change all three together.
         self._fire_held = False
         self._held_target = None
@@ -3016,13 +3019,15 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         _EnergyWeaponFireMixin.UpdateCharge(self, dt)
         # Drive the charge watcher with the charge FRACTION so
         # Conditions/ConditionPulseReady.py fires its ET_CHARGE_TOGGLE
-        # crossing event (guard divide-by-zero → 0.0).
+        # crossing event (guard divide-by-zero → 0.0). K0 stands in for
+        # this line on an owned watcher (k0_charging.h, THE EFFECT QUEUE:
+        # the value committed, WATCH queued): change both together.
         self._charge_watcher._update(self.GetChargePercentage())
 
     def StopFiring(self) -> None:
         # Discrete weapon — no _loop_handle to silence; just clear target refs.
-        # K1 logs these writes itself for a cannon its walk stops (bank_stop,
-        # k1_fire_control.cc): change both together.
+        # K1 (a cannon its walk stops) and K0 (one drained dry) log these
+        # writes themselves, from stop_firing.h: change both together.
         self._firing = False
         self._target = None
         self._target_offset = None
@@ -3741,6 +3746,8 @@ class TorpedoTube(Weapon):
         if native_combat._enabled:
             native_combat.push_field(self, "_reload_timers")
         self._num_ready += 1
+        # K0 logs this reload's writes and queues TORPEDO_RELOAD itself
+        # (k0_charging.h, THE EFFECT QUEUE): change both together.
         self._broadcast_reload()
 
     def _broadcast_reload(self) -> None:

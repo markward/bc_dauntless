@@ -100,6 +100,16 @@ public:
     // Drop every entry (released).
     void clear();
 
+    // A row about to be unregistered (native_combat._drop: a value the
+    // mirror cannot hold) while kernel entries naming it wait: every pending
+    // NATIVE operand equal to `handle` becomes `object`, the queue taking
+    // one reference per operand through `acquire(object)` (released as any
+    // object operand is). -1 (None) is never a row. Returns how many
+    // operands were replaced. A row freed instead (the object is gone) has
+    // nothing to rebind to: its entries are skipped at delivery.
+    std::size_t rebind(std::int64_t handle, void* object,
+                       void* (*acquire)(void*));
+
     std::size_t size() const { return entries_.size(); }
     bool empty() const { return entries_.empty(); }
 

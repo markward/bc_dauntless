@@ -126,6 +126,7 @@ constexpr FieldInfo kInfo[] = {
     {"_reload_advanced_at", Kind::Subsystem, FieldType::FloatList},
     {"_watch_checks", Kind::Subsystem, FieldType::I},
     {"_power_level", Kind::Subsystem, FieldType::I},
+    {"_watch_value", Kind::Subsystem, FieldType::F},
     {"MaxCondition", Kind::Property, FieldType::F},
     {"MaxCondition_set", Kind::Property, FieldType::I},
     {"_firing_chains", Kind::Property, FieldType::IdLists},
@@ -327,6 +328,7 @@ double* fptr(SubsystemRow& r, Field f) {
         case Field::_dwell: return &r._dwell;
         case Field::_recharge_rate: return &r._recharge_rate;
         case Field::_reload_delay: return &r._reload_delay;
+        case Field::_watch_value: return &r._watch_value;
         default: return nullptr;
     }
 }

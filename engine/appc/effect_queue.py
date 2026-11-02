@@ -39,7 +39,10 @@ DELIVERY (``flush``). The queue is taken whole and each entry performed in
 order with the scope closed -- so a delivered event's handler, and anything
 it produces, acts at once -- by the producer's own method (deferring() is
 False while the queue drains). A kernel entry naming an object freed or
-unregistered since is skipped and counted ("skipped_gone"). An entry whose
+unregistered since is skipped and counted ("skipped_gone"); a row DROPPED
+while its object lives (native_combat._drop: a value the mirror cannot
+hold) is not gone -- _drop first rebinds the pending entries naming it to
+the object (combat_effect_rebind), so they are delivered. An entry whose
 delivery raises does not stop the rest (decision 13): in play it is logged
 and delivery carries on; under tests and ``--developer`` the flush delivers
 the rest, then re-raises the first error with each later one noted on it.

@@ -58,7 +58,8 @@ stream, tallied as it is returned, and the drained resting contacts, those
 the drain presented natively included):
 CONTACTs on the mesh and the sphere
 tier, bubble entries, windup contacts, pulses, arc-fail partial pulses,
-SYSTEM_STOPs, a lock on another ship, Manual Aim on and off, a cloaking
+firing banks' stops (logged with their LOOP_STOP since combat fire events
+Task 4: no BANK_STOP / SYSTEM_STOP record), a lock on another ship, Manual Aim on and off, a cloaking
 target and a posed ship (walked natively, and a lock on it aimed natively:
 posed parts, Task 4) -- and end with a clean mirror audit.
 """
@@ -133,7 +134,7 @@ CLAMP_FROM, CLAMP_TO = 360, 390
 ARC_HELD, ARC_LOCK = "Enemy-3", "Enemy-4"
 ARC_FIRE, ARC_LOCK_AT = 440, 500
 # A phaser system switched off for a stretch: stopped every tick (logged
-# writes; a SYSTEM_STOP record while a bank lit on it fires).
+# writes; a bank lit on it also queues its LOOP_STOP).
 OFF_SHIP, OFF_FROM, OFF_TO = "Friend-4", 540, 560
 
 
@@ -210,15 +211,20 @@ def _subsystems(ship):
 # ── The kernel's record stream, tallied in the native arm ───────────────────
 
 def _k1_stop() -> bool:
-    """Whether the StopFiring running now is one K1 stands in for: the
-    held-weapon pump's, or a walk's (update_weapons, run_k1). K1 logs those,
-    a firing bank's included, since combat fire events Task 3 (no Python
-    call natively), so the compared call log leaves them to the per-tick
-    record."""
+    """Whether the StopFiring running now is one a kernel stands in for:
+    K1's -- the held-weapon pump's, or a walk's (update_weapons, run_k1),
+    since combat fire events Task 3 -- or K2's -- the phaser step's
+    (_phaser_step_ship / _phaser_step_bank, run_k2), since Task 4 -- or
+    K0's, a bank drained dry in the weapons step (_advance_weapons), since
+    Task 4 too. They log those, a firing bank's included, and queue its
+    LOOP_STOP (no Python call natively), so the compared call log leaves them to the per-tick
+    record and the queued list."""
     f = sys._getframe(2)
     while f is not None:
         if f.f_code.co_name in ("_pump_held_weapons", "update_weapons",
-                                "run_k1"):
+                                "run_k1", "_phaser_step_ship",
+                                "_phaser_step_bank", "run_k2",
+                                "_advance_weapons"):
             return True
         f = f.f_back
     return False
@@ -234,17 +240,35 @@ class _Tally:
         self.n = {}
         self.kinds = None
         self.last_stop = None
+        self.firing = set()
 
     def bump(self, key, by=1):
         self.n[key] = self.n.get(key, 0) + by
 
     def __call__(self):
+        # Which banks fire before the call: a pulse CONTACT whose bank no
+        # longer fires was stopped in this call -- the arc fail's stop,
+        # logged since combat fire events Task 4 (no BANK_STOP before it).
+        self.firing = {b.__dict__.get("_nslot") for b in self.scene.banks
+                       if b.__dict__.get("_firing")}
         rec = self.orig()
         if self.kinds is None:
             k = _h.combat_k2_kinds()
             self.kinds = {v: name for name, v in k.items()}
         kind = self.kinds[rec[0]]
         self.bump(kind)
+        if self.scene.killed_at == self.scene.tick:
+            # The kernel's logged stops in this call (a bank firing before
+            # it, not after: no Python runs inside next()) of banks on the
+            # KILLED ship, in the kill's tick.
+            for b in self.scene.banks:
+                d = b.__dict__
+                if d.get("_nslot") in self.firing and not d.get("_firing"):
+                    target = d.get("_target")
+                    if (target is not None
+                            and target.GetName() == KILL_TARGET
+                            and target.IsDead()):
+                        self.bump("stop_after_kill")
         if kind == "BANK_STOP":
             self.last_stop = rec[1]
             if self.scene.killed_at == self.scene.tick:
@@ -304,7 +328,8 @@ class _Tally:
         """The branches a contact's bank, target and ship show."""
         if flush > 0.0:
             self.bump("pulse")
-            if self.last_stop == bh:
+            if self.last_stop == bh or (bh in self.firing
+                                        and not bank.__dict__.get("_firing")):
                 self.bump("arc_fail_pulse")
         elif bank.__dict__.get("_beam_on_countdown", 0.0) > 0.0:
             self.bump("windup_contact")
@@ -485,6 +510,14 @@ class _Scene:
         names, _stock = nc._k1_stock[kind]
         mp.setitem(nc._k1_stock, kind,
                    (names, nc._k1_resolve(ws.PhaserSystem, names)))
+        # ... and in K0's (combat fire events Task 4: K0 logs a drained
+        # bank's StopFiring): the spies only wrap the stock methods.
+        for cls in (ws.PhaserBank, ws.PhaserSystem):
+            kind = nc._weapon_kind_of_class(cls)
+            stock, names, _snap = nc._k0_stock[kind]
+            mp.setitem(nc._k0_stock, kind,
+                       (stock, names, nc._k0_chain(stock, names)))
+        nc._k0_clear_caches()
         mp.setattr(hit_feedback, "beam_contact", contact_spy)
         mp.setattr(combat, "apply_hit", hit_spy)
         # What the contacts and hits PRESENT (every hit VFX spawn and shield
@@ -751,10 +784,10 @@ class _Scene:
             self.player.SetTargetSubsystem(lock.GetShields())
 
     def off_beat(self):
-        """A phaser system off for a stretch: stopped every tick. With every
-        bank idle the stop is logged writes; a bank lit by hand on it (at
-        the switch-off and again mid-stretch) keeps a SYSTEM_STOP record,
-        whose StopFiring Python runs (round trips Task 3)."""
+        """A phaser system off for a stretch: stopped every tick, as logged
+        writes; a bank lit by hand on it (at the switch-off and again
+        mid-stretch) also queues its LOOP_STOP (combat fire events Task 4;
+        a SYSTEM_STOP record before)."""
         ship = self.ship(OFF_SHIP)
         system = ship.GetPhaserSystem()
         if self.tick in (OFF_FROM, OFF_FROM + 10) and not ship.IsDead():
@@ -826,9 +859,9 @@ class _Scene:
             # `_firing` write, logged or not, wakes a sleeping bank
             # (WakeField). K0 runs on the native arm (this scene's spies
             # patch the stock PhaserBank / PhaserSystem StopFiring, which
-            # K0's records call in Python, so its guard does not look for
-            # them: native_combat._K0_CALLED_IN_PYTHON) and puts no weapon
-            # to sleep (spec 2026-11-02-native-weapon-state-design.md §4.3),
+            # K0's guard looks for since it logs a drained bank's stop: the
+            # spy world re-takes K0's stock snapshot, see _spy) and puts no
+            # weapon to sleep (spec 2026-11-02-native-weapon-state-design.md §4.3),
             # so the RAW flag differs by design; it is compared with K0
             # stood down (test_k2_matches_python_with_k0_stood_down).
             asleep = passive_state.is_asleep(b)
@@ -989,11 +1022,17 @@ def test_k2_matches_python_with_real_instances(monkeypatch, host,
     assert nat.counts["k0_python_reasons"]["override"] == 0, nat.counts
     # Every branch the scene is built for happened in the kernel.
     for key in ("tier:mesh", "tier:sphere", "bubble", "pulse",
-                "windup_contact", "arc_fail_pulse", "SYSTEM_STOP",
-                "BANK_STOP", "lock_other_ship", "manual_on", "manual_off",
-                "cloaking_target", "shields:True", "shields:False",
-                "queued_contact"):
+                "windup_contact", "arc_fail_pulse", "lock_other_ship",
+                "manual_on", "manual_off", "cloaking_target",
+                "shields:True", "shields:False", "queued_contact"):
         assert n.get(key, 0) > 0, (key, n)
+    # A firing bank's stop -- the walk's and an off system's -- is logged
+    # writes plus its LOOP_STOP (combat fire events Task 4): no BANK_STOP or
+    # SYSTEM_STOP record (both only for a stop the kernel cannot log).
+    assert n.get("BANK_STOP", 0) == n.get("SYSTEM_STOP", 0) == 0, n
+    assert nat.counts["k2_logged_bank_stop"] > 0, nat.counts
+    assert nat.counts["k2_logged_firing_system_stop"] > 0, nat.counts
+    assert nat.counts["k2_entries"]["LOOP_STOP"] > 0, nat.counts
     # Resting contacts were queued for the drain (spec 2026-11-02 §4.3):
     # the shield splashes presented by the drain itself (compared through
     # its capture), the rest returned and presented by the Python batch;
@@ -1145,6 +1184,7 @@ def test_handler_kills_target_mid_volley(monkeypatch, host):
         i = next(i for i, c in enumerate(ref.calls) if c[0] == kind)
         assert ref.calls[i + 1][1] == py[key], ref.calls[i:i + 3]
     # In the native arm the kernel itself stopped banks on the dead target
-    # in the kill's step, after the kill.
+    # in the kill's step, after the kill (logged stops since combat fire
+    # events Task 4: no BANK_STOP record).
     assert nat.tally.n.get("stop_after_kill", 0) > 0, nat.tally.n
     assert ref.ship(KILL_TARGET).IsDead()

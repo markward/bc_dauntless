@@ -96,3 +96,48 @@ TEST_F(EffectQueueTest, KindNamesCoverEveryKind) {
     EXPECT_STREQ(dauntless::host::effect_kind_name(EffectKind::WATCH),
                  "WATCH");
 }
+
+// A row dropped while its kernel entries wait (native_combat._drop: a value
+// the mirror cannot hold): every pending NATIVE operand naming that handle
+// becomes the object, one reference taken per operand, so the entry is
+// still delivered. Object entries and other handles are left alone.
+TEST_F(EffectQueueTest, RebindTurnsAHandleIntoTheObject) {
+    std::vector<void*> acquired;
+    static std::vector<void*>* seen = nullptr;
+    seen = &acquired;
+    auto acquire = [](void* p) -> void* {
+        seen->push_back(p);
+        return p;
+    };
+    void* objs[] = {&b};
+    q.append_native(EffectKind::TORPEDO_RELOAD, std::int64_t{5});
+    q.append_native(EffectKind::WATCH, std::int64_t{5}, 0.5, 0.25);
+    q.append_native(EffectKind::WEAPON_FIRED, std::int64_t{6},
+                    std::int64_t{5});
+    q.append_objects(EffectKind::LOOP_STOP, objs);
+    q.append_native(EffectKind::FIRE_SOUND, std::int64_t{6});
+    EXPECT_EQ(q.rebind(5, &a, acquire), 3u);
+    EXPECT_EQ(acquired, (std::vector<void*>{&a, &a, &a}));
+    std::vector<EffectEntry> out = q.take();
+    ASSERT_EQ(out.size(), 5u);
+    EXPECT_TRUE(out[0].native);
+    EXPECT_EQ(out[0].ops[0].type, EffectOperand::Type::Object);
+    EXPECT_EQ(out[0].ops[0].object, &a);
+    EXPECT_EQ(out[1].ops[0].type, EffectOperand::Type::Object);
+    EXPECT_EQ(out[1].ops[1].type, EffectOperand::Type::Number);
+    EXPECT_EQ(out[1].ops[1].number, 0.5);
+    EXPECT_EQ(out[2].ops[0].type, EffectOperand::Type::Handle);
+    EXPECT_EQ(out[2].ops[0].handle, 6);
+    EXPECT_EQ(out[2].ops[1].type, EffectOperand::Type::Object);
+    EXPECT_EQ(out[3].ops[0].object, &b);
+    EXPECT_EQ(out[4].ops[0].handle, 6);
+    // A NONE operand (-1) is never a row: never rebound.
+    q.append_native(EffectKind::WEAPON_FIRED, std::int64_t{6},
+                    std::int64_t{-1});
+    EXPECT_EQ(q.rebind(-1, &a, acquire), 0u);
+    // A rebound operand is released by clear like any object.
+    q.append_native(EffectKind::TORPEDO_RELOAD, std::int64_t{8});
+    EXPECT_EQ(q.rebind(8, &c, acquire), 1u);
+    q.clear();
+    EXPECT_EQ(g_released, (std::vector<void*>{&c}));
+}

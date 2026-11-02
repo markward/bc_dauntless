@@ -101,15 +101,21 @@ def _hx(v):
 
 
 def _k1_stop() -> bool:
-    """Whether the StopFiring running now is one K1 stands in for: the
-    held-weapon pump's, or a walk's (update_weapons, run_k1). K1 logs those,
-    a firing bank's included, since combat fire events Task 3 (no Python
-    call natively), so the compared call log leaves them to the per-tick
-    record."""
+    """Whether the StopFiring running now is one a kernel stands in for:
+    K1's -- the held-weapon pump's, or a walk's (update_weapons, run_k1),
+    since combat fire events Task 3 -- or K2's -- the phaser step's
+    (_phaser_step_ship / _phaser_step_bank, run_k2), since Task 4 -- or
+    K0's, a bank drained dry in the weapons step (_advance_weapons), since
+    Task 4 too. They log those, a firing bank's included, and queue its
+    LOOP_STOP (no Python call natively), so the compared call log leaves them to the per-tick
+    record and the queued list (a ship K2 hands to Python whole calls them
+    in BOTH arms: left out alike)."""
     f = sys._getframe(2)
     while f is not None:
         if f.f_code.co_name in ("_pump_held_weapons", "update_weapons",
-                                "run_k1"):
+                                "run_k1", "_phaser_step_ship",
+                                "_phaser_step_bank", "run_k2",
+                                "_advance_weapons"):
             return True
         f = f.f_back
     return False
@@ -459,7 +465,9 @@ def test_windup_and_flush_matches(monkeypatch):
     hits = [c[1] for c in _calls(ref, "apply_hit")]
     assert 76 in hits, hits                     # the flush path
     assert 161 in hits, hits                    # the arc fail's pulse
-    assert ("bank_stop", 161) in {c[:2] for c in ref.calls}
+    # The arc fail's stop: logged writes and a LOOP_STOP (no BANK_STOP).
+    assert counts["k2_logged_bank_stop"] > 0, counts
+    assert counts["k2_entries"]["LOOP_STOP"] > 0, counts
     _native_ran(counts)
 
 
@@ -875,7 +883,7 @@ def test_asks_answered_in_python(monkeypatch):
 
     ref, _nat, counts = _both(monkeypatch, GALAXY_VORCHA, script, 30,
                               setup=setup)
-    assert any(c[0] == "bank_stop" and c[1] == 1 for c in ref.calls)
+    assert counts["k2_logged_bank_stop"] > 0, counts    # tick 1's stop
     assert any(c[0] == "beam_contact" and c[2] == "Hulk" for c in ref.calls)
     _native_ran(counts)
     asks = counts["k2_ask_queries"]
@@ -2250,11 +2258,13 @@ class _Loop:
         self.log.append(self.label)
 
 
-def test_firing_bank_on_offline_system_still_records(monkeypatch):
+def test_firing_bank_on_offline_system_is_logged_with_loop_stop(
+        monkeypatch):
     """A bank lit by hand on a phaser system that is off: the stop has a
-    FIRING bank, so it stays a SYSTEM_STOP record and Python's StopFiring
-    stops the bank's loop sound -- exactly as often, at the same ticks, ON
-    as OFF. The ticks after it, with every bank idle, are logged."""
+    FIRING bank, so besides its logged writes it queues the bank's
+    LOOP_STOP (combat fire events Task 4), and the loop sound stops at the
+    scope's end -- exactly as often, at the same ticks, ON as OFF -- with no
+    SYSTEM_STOP record. The ticks after it, every bank idle, log only."""
     log = []
     _spy_k2_records(monkeypatch, log)
     stops = {}
@@ -2273,9 +2283,10 @@ def test_firing_bank_on_offline_system_still_records(monkeypatch):
     assert stops[False] == [(11, stops[False][0][1]),
                             (26, stops[False][0][1])], stops
     assert stops[True] == stops[False]
-    assert [c[1] for c in _calls(ref, "system_stop")] == [11, 26]
-    assert sum(1 for r in log if r[0] == "SYSTEM_STOP") == 2, log
+    assert sum(1 for r in log if r[0] == "SYSTEM_STOP") == 0, log
     assert counts.get("k2_logged_system_stop", 0) > 0, counts
+    assert counts["k2_logged_firing_system_stop"] == 2, counts
+    assert counts["k2_entries"]["LOOP_STOP"] == 2, counts
 
 
 @pytest.mark.parametrize("where", ["system_class", "system_instance",
@@ -2492,3 +2503,90 @@ def test_damage_pulse_handler_starts_another_ships_k1_session(monkeypatch):
     assert counts["k1_records"] > 0, counts
     assert any(e[0] == App.ET_WEAPON_FIRED and e[1].startswith("Vorcha/")
                for e in ref.events), ref.events[:20]
+
+
+# ── Combat fire events, Task 4: K2's firing stops are queued ────────────────
+
+def _sound_log(mp, log, w):
+    """Each bank sound as it is delivered: a play makes a loop handle (as a
+    registered fire sound would) whose Stop is logged; the real
+    _stop_loop_sound then stops and clears it."""
+    def play(bank):
+        log.append(("play", w.label(bank)))
+        bank._loop_handle = _Loop(log, ("stop", w.label(bank)))
+    mp.setattr(ws._EnergyWeaponFireMixin, "_play_fire_sfx", play)
+
+
+def test_lit_by_k1_and_stopped_by_k2_in_one_scope_plays_then_stops(
+        monkeypatch):
+    """Review Focus 1. Inside one scope a Galaxy's StartFiring lights its
+    banks (K1 natively: FIRE_SOUND queued), the trigger is let go with the
+    banks lit, its target dies, and the phaser step stops every lit bank (K2 natively: logged writes and LOOP_STOP
+    queued, no BANK_STOP record). At the scope's end each loop plays, then
+    stops -- none left playing -- exactly as the Python reference with the
+    same scope."""
+    from engine.appc import effect_queue as eq
+    logs, counts = {}, None
+    for native in (False, True):
+        with monkeypatch.context() as mp:
+            w = World(mp, native, GALAXY_VORCHA, "k2_rf1_%d" % native)
+            try:
+                log = logs[native] = []
+                _sound_log(mp, log, w)
+                g, v = w.ships["Galaxy"], w.ships["Vorcha"]
+                g.GetPhaserSystem().SetSingleFire(0)
+                with eq.scope():
+                    g.GetPhaserSystem().StartFiring(v)
+                    phasers = g.GetPhaserSystem()
+                    banks = [phasers.GetWeapon(i)
+                             for i in range(phasers.GetNumWeapons())]
+                    lit = [b for b in banks if b.__dict__.get("_firing")]
+                    assert lit, "nothing lit"
+                    # The trigger released (the pump leaves the system to
+                    # `cb.phasers`), the banks still lit; the target dies.
+                    phasers._fire_held = False
+                    v.SetDead(1)
+                    host_loop._advance_combat(list(w.order), DT,
+                                              ship_instances=w.instances,
+                                              push_render_data=False)
+                    assert log == []        # nothing delivered mid-scope
+                assert not any(b.__dict__.get("_firing") for b in lit)
+                assert all(b.__dict__.get("_loop_handle") is None
+                           for b in banks)
+                if native:
+                    counts = nc.counts()
+            finally:
+                w.close()
+    assert logs[True] == logs[False], logs
+    plays = [x for x in logs[True] if x[0] == "play"]
+    assert plays and len(logs[True]) == 2 * len(plays)
+    for name in {lbl for _k, lbl in plays}:
+        assert [k for k, lbl in logs[True] if lbl == name] == ["play", "stop"]
+    assert counts["k2_logged_bank_stop"] >= len(plays), counts
+    assert counts["k2_entries"]["LOOP_STOP"] >= len(plays), counts
+    assert counts["k1_entries"]["FIRE_SOUND"] == len(plays), counts
+
+
+def test_a_k2_session_outside_the_scope_delivers_at_its_end(monkeypatch):
+    """Ruling F3 for K2: `cb.phasers` run with no scope open (a tool, a
+    test) opens the session's own deferral, so its LOOP_STOPs are delivered
+    when the K2 session ends -- nothing left queued for a later tick."""
+    from engine.appc import effect_queue as eq
+    with monkeypatch.context() as mp:
+        w = World(mp, True, GALAXY_VORCHA, "k2_outside")
+        try:
+            log = []
+            _sound_log(mp, log, w)
+            g, v = w.ships["Galaxy"], w.ships["Vorcha"]
+            bank = _banks_in_arc(g, v)[0]
+            _light(bank, v)
+            bank._loop_handle = _Loop(log, ("stop", w.label(bank)))
+            v.SetDead(1)
+            assert not eq.deferring()
+            assert nc.k2_phasers(list(w.order), DT, w.instances)
+            assert _h.combat_effect_size() == 0
+            assert log == [("stop", w.label(bank))]
+            assert bank._loop_handle is None
+            assert nc.counts()["k2_logged_bank_stop"] == 1
+        finally:
+            w.close()

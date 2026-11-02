@@ -207,6 +207,14 @@ struct World {
             out.push_back(name(w.handle) + "." + std::string(w.field) + "=" + value(w.value));
         return out;
     }
+    // A record's queue entries (k2_beams.h, THE EFFECT QUEUE): "KIND bank@at".
+    std::vector<std::string> entries(const K2Record& r) const {
+        std::vector<std::string> out;
+        for (const K1Entry& e : r.entries)
+            out.push_back(std::string(k1_effect_name(e.kind)) + " " +
+                          name(e.a) + "@" + std::to_string(e.at));
+        return out;
+    }
     // The kernel's records as the driver acts on them (run_k2): each record
     // with its writes; at DONE, the resting contacts queued for the drain
     // (rests(), in walk order) first, each as a CONTACT -- the first one
@@ -297,9 +305,9 @@ TEST(K2, KindsAndNames) {
 TEST(K2, SystemGateStopsEveryTick) {
     // `if _is_offline(sys_) or not sys_.IsOn(): sys_.StopFiring(); continue`
     // -- every tick, even for a system already stopped, and its banks are
-    // never walked (a dirty idle dwell is NOT taken). With every bank idle
-    // the stop is logged writes (OfflineStopIsLoggedWrites); a firing bank
-    // keeps the SYSTEM_STOP record.
+    // never walked (a dirty idle dwell is NOT taken). The stop is logged
+    // writes (OfflineStopIsLoggedWrites); the bank firing on the first tick
+    // also queues its loop sound's LOOP_STOP (combat fire events §4.3).
     for (int gate = 0; gate < 2; ++gate) {
         World w;
         const auto s = w.scene(true, 0.25);
@@ -309,13 +317,19 @@ TEST(K2, SystemGateStopsEveryTick) {
         for (int tick = 0; tick < 2; ++tick) {
             w.begin({s.ship});
             const K2Record r = w.next();
-            EXPECT_EQ(w.brief(r), "SYSTEM_STOP sys") << gate << " " << tick;
-            EXPECT_TRUE(r.writes.empty());
-            EXPECT_EQ(w.brief(w.next()), "DONE");
+            EXPECT_EQ(w.brief(r), "DONE") << gate << " " << tick;
+            EXPECT_EQ(w.writes(r).size(), 7u);
+            EXPECT_EQ(w.entries(r), tick == 0 ? World::V{"LOOP_STOP b0@7"}
+                                              : World::V{})
+                << gate;
             w.k.end();
         }
         EXPECT_EQ(w.m.get_f(s.bank, Field::_dwell), 0.25);
-        EXPECT_EQ(w.k.counts().logged_system_stop, 0);
+        EXPECT_EQ(w.m.get_i(s.bank, Field::_firing), 0);
+        EXPECT_EQ(w.k.counts().logged_system_stop, 2);
+        EXPECT_EQ(w.k.counts().logged_firing_system_stop, 1);
+        EXPECT_EQ(w.k.counts().entries[static_cast<size_t>(
+                      K1Effect::LOOP_STOP)], 1);
     }
 }
 
@@ -352,13 +366,19 @@ TEST(K2, DeadOrNoneTargetStops) {
     w.bank("b1", s.sys, dead, true);
     const int64_t b2 = w.bank("b2", s.sys, dead, false, 0.4);  // idle: no stop
     w.begin({s.ship});
-    EXPECT_EQ(w.brief(w.next()), "BANK_STOP b0");
-    EXPECT_EQ(w.brief(w.next()), "BANK_STOP b1");
+    // `bank.StopFiring()` on a firing bank: its writes, then LOOP_STOP.
     const K2Record r = w.next();
     EXPECT_EQ(w.brief(r), "DONE");
-    EXPECT_EQ(w.writes(r), (World::V{"b2._dwell=0"}));
+    EXPECT_EQ(w.writes(r),
+              (World::V{"b0._firing=False", "b0._beam_on_countdown=0",
+                        "b1._firing=False", "b1._beam_on_countdown=0",
+                        "b2._dwell=0"}));
+    EXPECT_EQ(w.entries(r), (World::V{"LOOP_STOP b0@2", "LOOP_STOP b1@4"}));
     EXPECT_EQ(w.m.get_f(b2, Field::_dwell), 0.0);
+    EXPECT_EQ(w.m.get_i(s.bank, Field::_firing), 0);
     w.k.end();
+    EXPECT_EQ(w.k.counts().logged_bank_stop, 2);
+    EXPECT_EQ(w.k.counts().records, 1);
 }
 
 TEST(K2, StubIsDeadAsks) {
@@ -375,8 +395,9 @@ TEST(K2, StubIsDeadAsks) {
     K2Answer a;
     a.flag = true;  // the stub is truthy: dead
     w.k.answer(a);
-    EXPECT_EQ(w.brief(w.next()), "BANK_STOP b0");
-    EXPECT_EQ(w.brief(w.next()), "DONE");
+    const K2Record d = w.next();
+    EXPECT_EQ(w.brief(d), "DONE");
+    EXPECT_EQ(w.entries(d), (World::V{"LOOP_STOP b0@2"}));
     w.k.end();
     EXPECT_EQ(w.k.counts().asks, 1);
     EXPECT_EQ(w.k.counts().queries[static_cast<size_t>(K2Query::is_dead)], 1);
@@ -387,8 +408,9 @@ TEST(K2, UndetectableStops) {
     const auto s = w.scene(true);
     w.cloak(s.target);
     w.begin({s.ship});
-    EXPECT_EQ(w.brief(w.next()), "BANK_STOP b0");
-    EXPECT_EQ(w.brief(w.next()), "DONE");
+    const K2Record d = w.next();
+    EXPECT_EQ(w.brief(d), "DONE");
+    EXPECT_EQ(w.entries(d), (World::V{"LOOP_STOP b0@2"}));
     w.k.end();
     // can_detect ran through the native memo (use_memo).
     EXPECT_FALSE(w.m.sensor_state().memo.empty());
@@ -405,14 +427,14 @@ TEST(K2, CrossSetStopsOrDropsDwell) {
     w.m.set_ref(setless, Field::_containing_set, -1);
     w.bank("b2", s.sys, setless, true);
     w.begin({s.ship});
-    const K2Record r0 = w.next();
-    EXPECT_EQ(w.brief(r0), "BANK_STOP b0");
-    EXPECT_TRUE(r0.writes.empty());
     // b1's banked dwell is taken and DROPPED: no stop, no contact.
-    const K2Record r1 = w.next();
-    EXPECT_EQ(w.brief(r1), "BANK_STOP b2");
-    EXPECT_EQ(w.writes(r1), (World::V{"b1._dwell=0"}));
-    EXPECT_EQ(w.brief(w.next()), "DONE");
+    const K2Record r = w.next();
+    EXPECT_EQ(w.brief(r), "DONE");
+    EXPECT_EQ(w.writes(r),
+              (World::V{"b0._firing=False", "b0._beam_on_countdown=0",
+                        "b1._dwell=0", "b2._firing=False",
+                        "b2._beam_on_countdown=0"}));
+    EXPECT_EQ(w.entries(r), (World::V{"LOOP_STOP b0@2", "LOOP_STOP b2@5"}));
     EXPECT_EQ(w.m.get_f(b1, Field::_dwell), 0.0);
     w.k.end();
 }
@@ -464,12 +486,13 @@ TEST(K2, ArcFailStopsThenFlushes) {
                          static_cast<uint32_t>(w.m.get_i(s.target, Field::xform_gen)),
                          0.0, -50.0, 0.0);  // astern
     w.begin({s.ship});
-    const K2Record stop = w.next();
-    EXPECT_EQ(w.brief(stop), "BANK_STOP b0");
-    EXPECT_EQ(w.writes(stop), (World::V{"b0._dwell=0"}));
+    // `flush_dwell = bank.take_dwell(); bank.StopFiring()`: the dwell write,
+    // the stop's writes and its LOOP_STOP ride the damage pulse's CONTACT.
     const K2Record c = w.next();
     EXPECT_EQ(w.brief(c), "CONTACT b0@t flush=0.20000000000000001");
-    EXPECT_TRUE(c.writes.empty());
+    EXPECT_EQ(w.writes(c), (World::V{"b0._dwell=0", "b0._firing=False",
+                                     "b0._beam_on_countdown=0"}));
+    EXPECT_EQ(w.entries(c), (World::V{"LOOP_STOP b0@3"}));
     EXPECT_EQ(c.contact.target_pos, (Vec3{0.0, -50.0, 0.0}));
     EXPECT_EQ(w.brief(w.next()), "DONE");
     w.k.end();
@@ -618,8 +641,9 @@ TEST(K2, UnnameableLockAsks) {
     ASSERT_EQ(w.brief(w.next()), "ASK aim_point");
     a.point = {0.0, -70.0, 0.0};
     w.k.answer(a);
-    EXPECT_EQ(w.brief(w.next()), "BANK_STOP b0");
-    EXPECT_EQ(w.brief(w.next()), "CONTACT b0@t flush=0.10000000000000001");
+    const K2Record stopped = w.next();
+    EXPECT_EQ(w.brief(stopped), "CONTACT b0@t flush=0.10000000000000001");
+    EXPECT_EQ(w.entries(stopped), (World::V{"LOOP_STOP b0@3"}));
     w.finish();
 }
 
@@ -854,8 +878,10 @@ TEST(K2, CanDetectThrowAsks) {
     K2Answer a;
     a.flag = false;
     w.k.answer(a);
-    EXPECT_EQ(w.brief(w.next()), "BANK_STOP b0");
-    w.finish();
+    const K2Record d = w.next();
+    EXPECT_EQ(w.brief(d), "DONE");
+    EXPECT_EQ(w.entries(d), (World::V{"LOOP_STOP b0@2"}));
+    w.k.end();
 }
 
 TEST(K2, ResumeReadsLiveMirror) {
@@ -1310,18 +1336,45 @@ TEST(K2, OfflineStopIsLoggedWrites) {
     EXPECT_EQ(w.k.counts().records, 2);  // the two DONEs
 }
 
-TEST(K2, OfflineStopKeepsTheRecordUnlessEveryBankIsIdleStock) {
-    // A firing bank (its loop sound), a bank class overriding a K1 method
-    // (its StopFiring may be another), a child that is not a phaser bank, a
-    // child row gone: SYSTEM_STOP, nothing written.
-    for (int c = 0; c < 4; ++c) {
+TEST(K2, OfflineStopOfAFiringBankQueuesItsLoopStop) {
+    // WeaponSystem.StopFiring with a bank firing (combat fire events §4.3):
+    // the system's writes, then each bank's StopFiring in GetWeapon order --
+    // the firing one's LOOP_STOP right after its own writes -- and no
+    // record.
+    World w;
+    const auto s = w.scene(false);
+    const int64_t b1 = w.bank("b1", s.sys, -1, true);
+    w.bank("b2", s.sys, -1, false);
+    w.m.set_i(s.sys, Field::_is_on, 0);
+    w.begin({s.ship});
+    const K2Record r = w.k.next();
+    EXPECT_EQ(w.brief(r), "DONE");
+    EXPECT_EQ(w.writes(r),
+              (World::V{"sys._fire_held=False", "sys._held_target=-1",
+                        "sys._held_offset=None", "sys._target_list=[]",
+                        "sys._last_group_fired=-1", "b0._firing=False",
+                        "b0._beam_on_countdown=0", "b1._firing=False",
+                        "b1._beam_on_countdown=0", "b2._firing=False",
+                        "b2._beam_on_countdown=0"}));
+    EXPECT_EQ(w.entries(r), (World::V{"LOOP_STOP b1@9"}));
+    EXPECT_EQ(w.m.get_i(b1, Field::_firing), 0);
+    w.k.end();
+    EXPECT_EQ(w.k.counts().logged_system_stop, 1);
+    EXPECT_EQ(w.k.counts().logged_firing_system_stop, 1);
+}
+
+TEST(K2, OfflineStopKeepsTheRecordUnlessEveryBankIsStock) {
+    // A bank class overriding a K1 method (its StopFiring may be another),
+    // a child that is not a phaser bank, a child row gone: SYSTEM_STOP,
+    // nothing written, nothing queued.
+    for (int c = 1; c < 4; ++c) {
         World w;
         const auto s = w.scene(false);
         const int64_t b1 = w.bank("b1", s.sys, -1, false);
         w.m.set_i(s.sys, Field::_is_on, 0);
         w.m.set_i(s.sys, Field::_fire_held, 1);
+        w.m.set_i(s.bank, Field::_firing, 1);  // b0 firing: no entry either
         switch (c) {
-            case 0: w.m.set_i(b1, Field::_firing, 1); break;
             case 1: w.m.set_i(b1, Field::k1_overridden, 1); break;
             case 2: w.m.set_i(b1, Field::weapon_kind, 8); break;
             case 3: w.m.unregister_row(b1); break;
@@ -1330,6 +1383,7 @@ TEST(K2, OfflineStopKeepsTheRecordUnlessEveryBankIsIdleStock) {
         const K2Record r = w.k.next();
         EXPECT_EQ(w.brief(r), "SYSTEM_STOP sys") << c;
         EXPECT_TRUE(r.writes.empty()) << c;
+        EXPECT_TRUE(r.entries.empty()) << c;
         EXPECT_EQ(w.brief(w.k.next()), "DONE") << c;
         w.k.end();
         EXPECT_EQ(w.m.get_i(s.sys, Field::_fire_held), 1) << c;
@@ -1376,4 +1430,28 @@ TEST(K2, UnwindUndoesOfflineStopWrites) {
     EXPECT_EQ(got[6], "b0._beam_on_countdown=0");
     EXPECT_EQ(got[7], "bb._dwell=" + World::num(kDt));
     w.k.end();
+}
+
+TEST(K2, ThrowDropsTheCallsLoopStops) {
+    // Ship A's firing bank is stopped (logged, LOOP_STOP queued), then ship
+    // B's trace throws: the stop's writes are undone and its entry dropped
+    // with them; the retry stops it again, once.
+    World w;
+    const auto a = w.scene(true);
+    w.m.set_ref(a.bank, Field::_target, -1);  // firing at None: a stop
+    const int64_t b = w.ship("B", 100.0, 0.0, 0.0);
+    const int64_t bsys = w.system("bsys", b);
+    w.bank("bb", bsys, a.target, true);
+    K2Context ctx;
+    ctx.hooks = w.host.hooks();
+    ctx.view_offsets[w.set] = std::nullopt;
+    ctx.iids[a.target] = K2Context::Iid{false, {1, 1}};
+    w.host.throw_foreign = true;
+    w.k.begin({a.ship, b}, kDt, 10.0, true, 0.0, ctx);
+    EXPECT_ANY_THROW(w.k.next());
+    EXPECT_EQ(w.m.get_i(a.bank, Field::_firing), 1);
+    w.host.throw_foreign = false;
+    const K2Record r = w.k.next();
+    EXPECT_EQ(w.entries(r), (World::V{"LOOP_STOP b0@2"}));
+    w.k.abandon();
 }

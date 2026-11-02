@@ -27,6 +27,7 @@
 #include "dauntless/combat/fire_gates.h"
 #include "dauntless/combat/part_pose.h"
 #include "dauntless/combat/sensor_detect.h"
+#include "dauntless/combat/stop_firing.h"
 #include "dauntless/combat/weapon_geometry.h"
 
 namespace dauntless::combat {
@@ -401,32 +402,35 @@ private:
     }
 
     // `weapon.StopFiring()` is its class's writes, logged in its order
-    // (round trips §4.3), and for a FIRING energy bank the loop sound's
-    // LOOP_STOP(bank) after them (spec 2026-11-02-combat-fire-events §4.3;
-    // `was_firing = self._firing` is read first). True; a row gone (or not
-    // a K1 leaf): false, nothing written, the caller emits BANK_STOP.
+    // (round trips §4.3; the one encoding, stop_firing.h), and for a FIRING
+    // energy bank the loop sound's LOOP_STOP(bank) after them (spec
+    // 2026-11-02-combat-fire-events §4.3; `was_firing = self._firing` is
+    // read first). True; a row gone (or not a K1 leaf): false, nothing
+    // written, the caller emits BANK_STOP.
     bool bank_stop(int64_t h) {
         const SubsystemRow* r = subrow(h);
         if (!r) return false;
+        const std::optional<StopFiring> stop = stop_firing_of(r->weapon_kind);
+        if (!stop) return false;
         const bool firing = r->_firing != 0;
-        switch (r->weapon_kind) {
-            case kPhaserBank:  // _EnergyWeaponFireMixin.StopFiring (WS:918)
-                write_flag(h, Field::_firing, "_firing", false);
-                write_float(h, Field::_beam_on_countdown, "_beam_on_countdown",
-                            0.0);
-                if (firing) enqueue(K1Effect::LOOP_STOP, h);
-                break;
-            case kTorpedoTube:  // Weapon.StopFiring (WS:1216)
-                write_flag(h, Field::_firing, "_firing", false);
-                break;
-            case kPulseWeapon:  // PulseWeapon.StopFiring (WS:3013): no loop
-                write_flag(h, Field::_firing, "_firing", false);
-                write_target(h, -1);
-                write_target_offset(h, false);
-                break;
-            default:
-                return false;
+        for (size_t i = 0; i < stop->n; ++i) {
+            switch (stop->writes[i]) {
+                case StopWrite::FiringFalse:
+                    write_flag(h, Field::_firing, "_firing", false);
+                    break;
+                case StopWrite::BeamOnCountdownZero:
+                    write_float(h, Field::_beam_on_countdown,
+                                "_beam_on_countdown", 0.0);
+                    break;
+                case StopWrite::TargetNone:
+                    write_target(h, -1);
+                    break;
+                case StopWrite::TargetOffsetNone:
+                    write_target_offset(h, false);
+                    break;
+            }
         }
+        if (firing && stop->loop_stop) enqueue(K1Effect::LOOP_STOP, h);
         ++(firing ? c_.logged_firing_bank_stop : c_.logged_idle_bank_stop);
         return true;
     }

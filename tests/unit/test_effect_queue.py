@@ -198,20 +198,46 @@ def _free(obj):
 
 
 def test_freed_or_unregistered_handle_is_skipped_and_counted(calls):
-    """A kernel entry naming an object freed, or unregistered (its row
-    dropped), since it was queued is skipped and counted; the rest are
-    delivered."""
-    a, gone, dropped = _bank("A"), _bank("Gone"), _bank("Dropped")
+    """A kernel entry naming an object freed, or whose handle was
+    unregistered behind the registry's back, since it was queued is
+    skipped and counted; the rest are delivered."""
+    a, gone, stale = _bank("A"), _bank("Gone"), _bank("Stale")
     with eq.scope():
         _post_native(eq.FIRE_SOUND, gone.__dict__["_nslot"])
-        _post_native(eq.FIRE_SOUND, dropped.__dict__["_nslot"])
+        _post_native(eq.FIRE_SOUND, stale.__dict__["_nslot"])
         eq.post(eq.FIRE_SOUND, a)
         _free(gone)
         del gone
         gc.collect()
-        nc._drop(dropped)
+        h = stale.__dict__.pop("_nslot")
+        nc.unregister_handle(h)
     assert calls == [("play", "A")]
     assert eq.counts() == {"delivered": 1, "skipped_gone": 2, "failed": 0}
+
+
+def test_a_dropped_rows_entries_are_still_delivered(calls, events):
+    """Task 3 review, Minor 3: an object whose row is DROPPED while kernel
+    entries naming it wait (native_combat._drop: a value the mirror cannot
+    hold) is still Python's live object, and the Python reference posts its
+    events: _drop rebinds those operands to the object before it frees the
+    row, so each entry is delivered, in its place. A WATCH's numbers and an
+    entry's other handles are kept."""
+    a, dropped = _bank("A"), _bank("Dropped")
+    tube = ws.TorpedoTube("T")
+    h = dropped.__dict__["_nslot"]
+    with eq.scope():
+        _post_native(eq.FIRE_SOUND, h)
+        eq.post(eq.FIRE_SOUND, a)
+        _post_native(eq.TORPEDO_RELOAD, tube.__dict__["_nslot"])
+        _post_native(eq.LOOP_STOP, h)
+        nc._drop(dropped)
+        nc._drop(tube)
+        assert "_nslot" not in dropped.__dict__
+    assert calls == [("play", "Dropped"), ("play", "A"), ("stop", "Dropped")]
+    assert [e[0] for e in events] == [App.ET_TORPEDO_RELOAD]
+    assert events[0][2] is tube
+    assert eq.counts() == {"delivered": 4, "skipped_gone": 0, "failed": 0}
+    assert _h.combat_effect_size() == 0
 
 
 def test_python_reference_keeps_its_object_alive(calls):

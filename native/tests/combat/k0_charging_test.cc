@@ -1,6 +1,6 @@
 // The K0 charging kernel (k0_charging.h) on hand-built mirror rows: each
 // pure step against the Python reference, the session's walk order, records,
-// hand-backs, write log, undo and counters. Every expected float is the
+// queue entries, hand-backs, write log, undo and counters. Every expected float is the
 // REAL Python's (engine/appc/weapon_subsystems.py run on real PhaserBank /
 // PulseWeapon / TorpedoTube objects), written as Python's float.hex(). The
 // native-vs-Python differentials run from Task 5/6's Python tests.
@@ -167,7 +167,27 @@ struct World {
                 case K0FieldWrite::Type::Watcher:
                     out.push_back(head + "._value=" + py_hex(w.d));
                     break;
+                case K0FieldWrite::Type::Ref:
+                    out.push_back(head + "=" +
+                                  (w.i == -1 ? std::string("None") : name(w.i)));
+                    break;
+                case K0FieldWrite::Type::Null:
+                    out.push_back(head + "=None");
+                    break;
             }
+        }
+        return out;
+    }
+    // A record's queue entries (THE EFFECT QUEUE): "KIND weapon@at", a
+    // WATCH with its values "WATCH p old->new@at".
+    std::vector<std::string> entries(const K0Record& r) const {
+        std::vector<std::string> out;
+        for (const K0Entry& e : r.entries) {
+            std::string x = std::string(k0_effect_name(e.kind)) + " " +
+                            name(e.a);
+            if (e.kind == K0Effect::WATCH)
+                x += " " + py_hex(e.old_value) + "->" + py_hex(e.new_value);
+            out.push_back(x + "@" + std::to_string(e.at));
         }
         return out;
     }
@@ -276,22 +296,28 @@ TEST(K0Charging, DrainOutOfRangeLevelHandsBack) {
     }
 }
 
-TEST(K0Charging, DepletionLogsThenRecord) {
+TEST(K0Charging, DepletionLogsTheStopAndQueuesLoopStop) {
+    // `self._depleted = True; self.StopFiring()`: the mixin's StopFiring is
+    // logged writes (stop_firing.h) and its loop sound's stop a LOOP_STOP
+    // entry after them; no record (combat fire events §4.3).
     Firing f;
     f.w.m.set_f(f.b, Field::_charge_level, 0.001);
     const K0Step s = step_energy(f.w.m, f.b, kDt);
     EXPECT_EQ(s.record, K0Kind::DEPLETE_STOP);
-    EXPECT_EQ(f.w.writes(f.b, s), (V{"b._charge_level=0x0.0p+0", "b._depleted=True"}));
+    EXPECT_TRUE(s.loop_stop);
+    const V stopped{"b._charge_level=0x0.0p+0", "b._depleted=True",
+                    "b._firing=False", "b._beam_on_countdown=0x0.0p+0"};
+    EXPECT_EQ(f.w.writes(f.b, s), stopped);
 
     f.w.k.begin({f.ship}, kDt, kNow);
     const K0Record r = f.w.k.next();
-    EXPECT_EQ(f.w.rec(r), "DEPLETE_STOP b");
-    EXPECT_EQ(f.w.writes(r), (V{"b._charge_level=0x0.0p+0", "b._depleted=True"}));
-    // Python's StopFiring makes the stop's writes, not the kernel.
-    EXPECT_EQ(f.w.m.get_i(f.b, Field::_firing), 1);
+    EXPECT_EQ(f.w.rec(r), "DONE");
+    EXPECT_EQ(f.w.writes(r), stopped);
+    EXPECT_EQ(f.w.entries(r), (V{"LOOP_STOP b@4"}));
+    EXPECT_EQ(f.w.m.get_i(f.b, Field::_firing), 0);
     EXPECT_EQ(f.w.m.get_i(f.b, Field::_depleted), 1);
     EXPECT_EQ(f.w.m.get_f(f.b, Field::_charge_level), 0.0);
-    EXPECT_EQ(f.w.rec(f.w.k.next()), "DONE");
+    f.w.k.end();
 }
 
 TEST(K0Charging, NegativeZeroChargeStaysPositive) {
@@ -300,7 +326,9 @@ TEST(K0Charging, NegativeZeroChargeStaysPositive) {
     Firing f;
     f.w.m.set_f(f.b, Field::_charge_level, -0.0);
     const K0Step s = step_energy(f.w.m, f.b, 0.0);
-    EXPECT_EQ(f.w.writes(f.b, s), (V{"b._charge_level=0x0.0p+0", "b._depleted=True"}));
+    EXPECT_EQ(f.w.writes(f.b, s),
+              (V{"b._charge_level=0x0.0p+0", "b._depleted=True",
+                 "b._firing=False", "b._beam_on_countdown=0x0.0p+0"}));
     ASSERT_FALSE(s.writes.empty());
     EXPECT_FALSE(std::signbit(s.writes[0].d));
     EXPECT_EQ(s.record, K0Kind::DEPLETE_STOP);
@@ -413,6 +441,10 @@ TEST(K0Charging, PulseCooldownRechargeThenWatcher) {
         EXPECT_EQ(q.w.writes(r), (V{"p._cooldown_remaining=0x0.0p+0",
                                     "p._charge_level=0x1.0222222222222p+0",
                                     "p._charge_watcher._value=0x1.0222222222222p-1"}));
+        // No checks: the value is committed (and mirrored), nothing queued.
+        EXPECT_TRUE(r.entries.empty());
+        EXPECT_EQ(py_hex(q.w.m.get_f(q.p, Field::_watch_value)),
+                  "0x1.0222222222222p-1");
     }
     {
         Pulse q(0.5);
@@ -456,37 +488,71 @@ TEST(K0Charging, PulseHandBackWritesNothing) {
     q.w.k.end();
 }
 
-TEST(K0Charging, PulseWithChecksRecordsWatch) {
+TEST(K0Charging, PulseWithChecksQueuesWatch) {
+    // A watcher with checks (FloatRangeWatcher._update inside the effect
+    // queue's deferral): its value committed as a logged write, then
+    // WATCH(p, old, new) -- old the mirrored `_watch_value` -- and the walk
+    // goes on; delivery fires the crossings (ruling E3).
     Pulse q(0.5);
     q.w.m.set_i(q.p, Field::_watch_checks, 2);
+    q.w.m.set_f(q.p, Field::_watch_value, 0.25);
     const int64_t p2 = q.w.weapon("p2", q.sys);
     q.w.m.set_f(p2, Field::_cooldown_remaining, 0.5);
+    const K0Step w = pulse_watch(q.w.m, q.p);
+    EXPECT_EQ(w.record, K0Kind::WATCH);
+    EXPECT_EQ(w.watch_old, 0.25);
+    EXPECT_EQ(w.watch_new, 0.5);
     q.w.k.begin({q.ship}, kDt, kNow);
     const K0Record r = q.w.k.next();
-    EXPECT_EQ(q.w.rec(r), "WATCH p");
+    EXPECT_EQ(q.w.rec(r), "DONE");
     EXPECT_EQ(q.w.writes(r), (V{"p._cooldown_remaining=0x1.eeeeeeeeeeeefp-2",
-                                "p._charge_level=0x1.0222222222222p+0"}));
-    // The walk stopped there: p2 is not stepped yet.
-    EXPECT_EQ(q.w.m.get_f(p2, Field::_cooldown_remaining), 0.5);
-    const K0Record d = q.w.k.next();
-    EXPECT_EQ(q.w.rec(d), "DONE");
-    EXPECT_EQ(q.w.writes(d), (V{"p2._cooldown_remaining=0x1.eeeeeeeeeeeefp-2",
+                                "p._charge_level=0x1.0222222222222p+0",
+                                "p._charge_watcher._value=0x1.0222222222222p-1",
+                                "p2._cooldown_remaining=0x1.eeeeeeeeeeeefp-2",
                                 "p2._charge_watcher._value=0x1.0000000000000p+0"}));
+    EXPECT_EQ(q.w.entries(r),
+              (V{"WATCH p 0x1.0000000000000p-2->0x1.0222222222222p-1@3"}));
+    EXPECT_EQ(py_hex(q.w.m.get_f(q.p, Field::_watch_value)),
+              "0x1.0222222222222p-1");
+    q.w.k.end();
 }
 
-TEST(K0Charging, PulseDepleteThenWatcherOnNextCall) {
+TEST(K0Charging, PulseDepleteStopsThenWatcherLine) {
+    // PulseWeapon.StopFiring (no loop sound: no entry), then the watcher
+    // line on the stopped weapon, in the same call.
     Pulse q(0.0);
     q.w.m.set_i(q.p, Field::_firing, 1);
+    q.w.m.set_ref(q.p, Field::_target, q.ship);
+    q.w.m.set_fv(q.p, Field::_target_offset, {1.0, 2.0, 3.0});
     q.w.m.set_f(q.p, Field::_charge_level, 0.001);  // - 1.0 * dt -> 0.0
     q.w.k.begin({q.ship}, kDt, kNow);
     const K0Record r = q.w.k.next();
-    EXPECT_EQ(q.w.rec(r), "DEPLETE_STOP p");
-    EXPECT_EQ(q.w.writes(r), (V{"p._charge_level=0x0.0p+0", "p._depleted=True"}));
-    // Python's StopFiring runs; then the watcher line reads the mirror.
-    q.w.m.set_i(q.p, Field::_firing, 0);
-    const K0Record d = q.w.k.next();
-    EXPECT_EQ(q.w.rec(d), "DONE");
-    EXPECT_EQ(q.w.writes(d), (V{"p._charge_watcher._value=0x0.0p+0"}));
+    EXPECT_EQ(q.w.rec(r), "DONE");
+    EXPECT_EQ(q.w.writes(r), (V{"p._charge_level=0x0.0p+0", "p._depleted=True",
+                                "p._firing=False", "p._target=None",
+                                "p._target_offset=None",
+                                "p._charge_watcher._value=0x0.0p+0"}));
+    EXPECT_TRUE(q.w.entries(r).empty());
+    EXPECT_EQ(q.w.m.get_i(q.p, Field::_firing), 0);
+    EXPECT_EQ(q.w.m.get_ref(q.p, Field::_target), -1);
+    EXPECT_FALSE(q.w.m.subsystem(q.p)->target_offset_set);
+    q.w.k.end();
+}
+
+TEST(K0Charging, PulseWatcherNotOwnedHandsBack) {
+    // `_watch_checks` WATCH_ALWAYS (-1): a watcher the weapon does not own
+    // (a subclass, another weapon's) runs its own `_update` -- Python steps
+    // the whole weapon, decided before any write.
+    Pulse q(0.5);
+    q.w.m.set_i(q.p, Field::_watch_checks, -1);
+    const K0Step s = step_pulse(q.w.m, q.p, kDt);
+    ASSERT_TRUE(s.handback);
+    EXPECT_EQ(*s.handback, K0Reason::Watcher);
+    EXPECT_TRUE(s.writes.empty());
+    q.w.k.begin({q.ship}, kDt, kNow);
+    EXPECT_EQ(q.w.run(), (V{"RUN_PYTHON p watcher", "DONE"}));
+    EXPECT_EQ(q.w.m.get_f(q.p, Field::_cooldown_remaining), 0.5);
+    EXPECT_STREQ(k0_reason_name(K0Reason::Watcher), "watcher");
 }
 
 // ── TorpedoTube.UpdateReload / ReloadTorpedo ───────────────────────────────
@@ -650,10 +716,19 @@ struct Armed {
 };
 
 TEST(K0Charging, WalkOrderPhaserPulseTractorTorpedo) {
+    // K0 returns only RUN_PYTHON and DONE; the bank's stop, the watcher and
+    // the reload ride them as entries, in walk order, each placed after the
+    // writes logged before it.
     Armed a;
     a.w.k.begin({a.ship}, kDt, kNow);
-    EXPECT_EQ(a.w.run(), (V{"DEPLETE_STOP b", "WATCH p", "RUN_PYTHON tb tractor",
-                            "RELOADED t", "DONE"}));
+    K0Record r = a.w.k.next();
+    EXPECT_EQ(a.w.rec(r), "RUN_PYTHON tb tractor");
+    EXPECT_EQ(a.w.entries(r),
+              (V{"LOOP_STOP b@4", "WATCH p 0x0.0p+0->0x1.0000000000000p+0@5"}));
+    r = a.w.k.next();
+    EXPECT_EQ(a.w.rec(r), "DONE");
+    EXPECT_EQ(a.w.entries(r), (V{"TORPEDO_RELOAD t@4"}));
+    a.w.k.end();
 }
 
 TEST(K0Charging, RecordPositions) {
@@ -664,26 +739,20 @@ TEST(K0Charging, RecordPositions) {
     EXPECT_EQ(r.ship_pos, 0);
     EXPECT_EQ(r.group, -1);
     EXPECT_EQ(r.index, -1);
-    r = a.w.k.next();
-    EXPECT_EQ(r.a, a.b);
-    EXPECT_EQ(r.ship_pos, 1);
-    EXPECT_EQ(r.group, 0);
-    EXPECT_EQ(r.index, 0);
-    r = a.w.k.next();  // WATCH p
-    EXPECT_EQ(r.group, 1);
     r = a.w.k.next();  // tractor
+    EXPECT_EQ(r.a, a.tb);
+    EXPECT_EQ(r.ship_pos, 1);
     EXPECT_EQ(r.group, 2);
     EXPECT_EQ(r.index, 0);
-    r = a.w.k.next();  // RELOADED t
-    EXPECT_EQ(r.group, 3);
-    EXPECT_EQ(r.a, a.t);
     r = a.w.k.next();
     EXPECT_EQ(r.kind, K0Kind::DONE);
     EXPECT_EQ(r.ship_pos, -1);
     a.w.k.end();
 }
 
-TEST(K0Charging, ReloadedStopsWalkBeforeNextWeapon) {
+TEST(K0Charging, ReloadQueuesTorpedoReloadAndWalksOn) {
+    // ReloadTorpedo's writes, then `self._broadcast_reload()` as a
+    // TORPEDO_RELOAD(tube) entry after them; the walk goes on to t2.
     Tube u;
     const int64_t t2 = u.w.weapon("t2", u.sys);
     u.w.slots(u.t, {3.0}, {99.0}, 1, 0);
@@ -692,31 +761,36 @@ TEST(K0Charging, ReloadedStopsWalkBeforeNextWeapon) {
     u.w.m.set_f(t2, Field::_reload_delay, 3.5);
     u.w.k.begin({u.ship}, kDt, kNow);
     const K0Record r = u.w.k.next();
-    EXPECT_EQ(u.w.rec(r), "RELOADED t");
+    EXPECT_EQ(u.w.rec(r), "DONE");
     EXPECT_EQ(u.w.writes(r), (V{"t._reload_timers[0]=0x1.0000000000000p+2",
                                 "t._reload_advanced_at[0]=0x1.9000000000000p+6",
                                 "t._reload_timers[0]=-0x1.0000000000000p+0",
-                                "t._num_ready=1"}));
-    // The mirror holds the logged writes; t2 is untouched.
+                                "t._num_ready=1",
+                                "t2._reload_timers[0]=0x1.0000000000000p+2",
+                                "t2._reload_advanced_at[0]=0x1.9000000000000p+6",
+                                "t2._reload_timers[0]=-0x1.0000000000000p+0",
+                                "t2._num_ready=1"}));
+    EXPECT_EQ(u.w.entries(r), (V{"TORPEDO_RELOAD t@4", "TORPEDO_RELOAD t2@8"}));
     EXPECT_EQ(u.w.m.get_i(u.t, Field::_num_ready), 1);
     EXPECT_EQ(u.w.m.get_floats(u.t, Field::_reload_timers), std::vector<double>{-1.0});
     EXPECT_EQ(u.w.m.get_floats(u.t, Field::_reload_advanced_at), std::vector<double>{100.0});
-    EXPECT_EQ(u.w.m.get_floats(t2, Field::_reload_timers), std::vector<double>{3.0});
-    EXPECT_EQ(u.w.m.get_i(t2, Field::_num_ready), 0);
-    EXPECT_EQ(u.w.rec(u.w.k.next()), "RELOADED t2");
-    EXPECT_EQ(u.w.rec(u.w.k.next()), "DONE");
+    EXPECT_EQ(u.w.m.get_i(t2, Field::_num_ready), 1);
+    u.w.k.end();
 }
 
 TEST(K0Charging, ReadsTheLiveMirrorAfterARecord) {
-    // A record handler's write to a later weapon is seen (P1).
+    // A record's Python writing a later weapon is seen (P1): the tractor's
+    // Python sets the tube's reload delay out of reach.
     Armed a;
     a.w.k.begin({a.ship}, kDt, kNow);
-    EXPECT_EQ(a.w.rec(a.w.k.next()), "DEPLETE_STOP b");
-    a.w.m.set_i(a.p, Field::_watch_checks, 0);  // the handler removes the check
+    EXPECT_EQ(a.w.rec(a.w.k.next()), "RUN_PYTHON tb tractor");
+    a.w.m.set_f(a.t, Field::_reload_delay, 100.0);
     const K0Record r = a.w.k.next();
-    EXPECT_EQ(a.w.rec(r), "RUN_PYTHON tb tractor");
-    EXPECT_EQ(a.w.writes(r), (V{"p._charge_watcher._value=0x1.0000000000000p+0"}));
-    a.w.k.abandon();
+    EXPECT_EQ(a.w.rec(r), "DONE");
+    EXPECT_EQ(a.w.writes(r), (V{"t._reload_timers[0]=0x1.0000000000000p+2",
+                                "t._reload_advanced_at[0]=0x1.9000000000000p+6"}));
+    EXPECT_TRUE(r.entries.empty());
+    a.w.k.end();
 }
 
 TEST(K0Charging, HandBacks) {
@@ -755,8 +829,7 @@ TEST(K0Charging, HandBacks) {
         w.m.set_ids(a.ph, Field::_children, kids);
         w.k.set_weapon_check([&](int64_t h) { return h == b3; });
         w.k.begin({a.ship}, kDt, kNow);
-        EXPECT_EQ(w.rec(w.k.next()), "DEPLETE_STOP b");
-        w.m.unregister_row(b2);  // the StopFiring handler drops b2's row
+        w.m.unregister_row(b2);  // dropped after the begin snapshot
         K0Record r = w.k.next();
         EXPECT_EQ(w.rec(r), "RUN_PYTHON -2 unrepresentable");
         EXPECT_EQ(r.index, 1);
@@ -765,7 +838,7 @@ TEST(K0Charging, HandBacks) {
         EXPECT_EQ(r.index, 2);
         EXPECT_EQ(w.rec(w.k.next()), "RUN_PYTHON b3 override");
         EXPECT_EQ(w.rec(w.k.next()), "RUN_PYTHON odd unknown_kind");
-        EXPECT_EQ(w.rec(w.k.next()), "WATCH p");
+        EXPECT_EQ(w.rec(w.k.next()), "RUN_PYTHON tb tractor");
         w.k.abandon();
     }
 }
@@ -782,6 +855,8 @@ TEST(K0Charging, SnapshotAtBegin) {
 
 TEST(K0Charging, UndoOnThrow) {
     Pulse q(0.5);
+    q.w.m.set_i(q.p, Field::_watch_checks, 1);  // p queues a WATCH
+    q.w.m.set_f(q.p, Field::_watch_value, 0.25);
     const int64_t p2 = q.w.weapon("p2", q.sys);
     q.w.m.set_f(p2, Field::_charge_level, 1.0);
     q.w.m.set_f(p2, Field::_max_charge, 2.0);
@@ -796,8 +871,11 @@ TEST(K0Charging, UndoOnThrow) {
     // p's writes never reached Python: undone in the mirror.
     EXPECT_EQ(q.w.m.get_f(q.p, Field::_cooldown_remaining), 0.5);
     EXPECT_EQ(q.w.m.get_f(q.p, Field::_charge_level), 1.0);
+    EXPECT_EQ(q.w.m.get_f(q.p, Field::_watch_value), 0.25);
     EXPECT_EQ(q.w.k.counts().steps, 0);
     EXPECT_EQ(q.w.k.counts().logged_writes, 0);
+    EXPECT_EQ(q.w.k.counts().logged_watch, 0);
+    EXPECT_EQ(q.w.k.counts().entries[static_cast<size_t>(K0Effect::WATCH)], 0);
     // The session is as before the call: a retry steps p again.
     fail = false;
     const K0Record r = q.w.k.next();
@@ -807,6 +885,10 @@ TEST(K0Charging, UndoOnThrow) {
                                 "p._charge_watcher._value=0x1.0222222222222p-1",
                                 "p2._charge_level=0x1.0222222222222p+0",
                                 "p2._charge_watcher._value=0x1.0222222222222p-1"}));
+    // The entry the thrown call made went with its writes: one WATCH, from
+    // the restored value.
+    EXPECT_EQ(q.w.entries(r),
+              (V{"WATCH p 0x1.0000000000000p-2->0x1.0222222222222p-1@3"}));
     q.w.k.end();
 }
 
@@ -890,18 +972,27 @@ TEST(K0Charging, Counters) {
     a.w.run();
     const K0Session::Counts& c = a.w.k.counts();
     EXPECT_EQ(c.steps, 3);  // b, p, t (the tractor is Python's)
-    EXPECT_EQ(c.records[static_cast<size_t>(K0Kind::DEPLETE_STOP)], 1);
-    EXPECT_EQ(c.records[static_cast<size_t>(K0Kind::WATCH)], 1);
-    EXPECT_EQ(c.records[static_cast<size_t>(K0Kind::RELOADED)], 1);
+    // Never returned now (THE EFFECT QUEUE): their numbers are kept.
+    EXPECT_EQ(c.records[static_cast<size_t>(K0Kind::DEPLETE_STOP)], 0);
+    EXPECT_EQ(c.records[static_cast<size_t>(K0Kind::WATCH)], 0);
+    EXPECT_EQ(c.records[static_cast<size_t>(K0Kind::RELOADED)], 0);
     EXPECT_EQ(c.records[static_cast<size_t>(K0Kind::RUN_PYTHON)], 2);
     EXPECT_EQ(c.records[static_cast<size_t>(K0Kind::DONE)], 1);
+    EXPECT_EQ(c.logged_deplete_stop, 1);
+    EXPECT_EQ(c.logged_watch, 1);
+    EXPECT_EQ(c.logged_reload, 1);
+    EXPECT_EQ(c.entries[static_cast<size_t>(K0Effect::LOOP_STOP)], 1);
+    EXPECT_EQ(c.entries[static_cast<size_t>(K0Effect::WATCH)], 1);
+    EXPECT_EQ(c.entries[static_cast<size_t>(K0Effect::TORPEDO_RELOAD)], 1);
     EXPECT_EQ(c.python_reasons[static_cast<size_t>(K0Reason::Tractor)], 1);
     EXPECT_EQ(c.python_reasons[static_cast<size_t>(K0Reason::NoRow)], 1);
-    // b: charge + depleted; p: none (full, no cooldown; WATCH, not a
-    // watcher write); t: two slot writes, the reload's slot, _num_ready.
-    EXPECT_EQ(c.logged_writes, 2 + 0 + 4);
+    // b: charge, depleted, the stop's two; p: the watcher's value (full, no
+    // cooldown); t: two slot writes, the reload's slot, _num_ready.
+    EXPECT_EQ(c.logged_writes, 4 + 1 + 4);
     a.w.k.reset_counts();
     EXPECT_EQ(a.w.k.counts().steps, 0);
+    EXPECT_EQ(a.w.k.counts().logged_watch, 0);
+    EXPECT_EQ(a.w.k.counts().entries[0], 0);
 }
 
 TEST(K0Charging, NoneChildHandsBackUnrepresentable) {
@@ -928,8 +1019,7 @@ TEST(K0Charging, NoneChildHandsBackUnrepresentable) {
     EXPECT_EQ(r.group, 0);
     EXPECT_EQ(r.index, 0);
     EXPECT_TRUE(r.writes.empty());
-    EXPECT_EQ(f.w.rec(f.w.k.next()), "DEPLETE_STOP b");
-    EXPECT_EQ(f.w.rec(f.w.k.next()), "DONE");
+    EXPECT_EQ(f.w.entries(f.w.k.next()), (V{"LOOP_STOP b@4"}));
     f.w.k.end();
 }
 
@@ -1137,14 +1227,20 @@ TEST(K0Charging, NextWhileDeliveringIsLost) {
     // refused, with the log, the cursor and the mirror untouched, so the
     // delivery finishes on the same writes and the walk resumes after it.
     Pulse q(0.5);
-    q.w.m.set_i(q.p, Field::_watch_checks, 2);
+    const int64_t tsys = q.w.system("tractors", q.ship, 3);
+    const int64_t tb = q.w.weapon("tb", tsys);
+    q.w.m.set_i(tb, Field::_firing, 1);     // holding: Python's
     const int64_t p2 = q.w.weapon("p2", q.sys);
     q.w.m.set_f(p2, Field::_cooldown_remaining, 0.5);
+    // p2 joined the pulse group after the tractors were made, but the walk
+    // order is the GROUP order: p, p2, then the tractor.
+    q.w.m.set_ids(q.sys, Field::_children, {q.p});
+    q.w.m.set_ids(tsys, Field::_children, {tb, p2});
     q.w.k.begin({q.ship}, kDt, kNow);
     const K0Record r = q.w.k.next();
-    ASSERT_EQ(q.w.rec(r), "WATCH p");       // not done: p2 still to step
+    ASSERT_EQ(q.w.rec(r), "RUN_PYTHON tb tractor");  // not done: p2 to step
     const V delivered = q.w.writes(r);
-    ASSERT_EQ(delivered.size(), 2u);
+    ASSERT_EQ(delivered.size(), 3u);
     q.w.k.set_delivering(true);
     EXPECT_TRUE(q.w.k.delivering());
     EXPECT_THROW(q.w.k.next(), std::logic_error);

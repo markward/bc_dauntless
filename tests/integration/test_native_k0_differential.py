@@ -24,12 +24,16 @@ the watcher's value) and by IDENTITY (whether each slot list and the
 watcher are the object they were last tick: K0 writes slots in place, as
 UpdateReload does), on top of the K1 differential's own record. Every
 ET_TORPEDO_RELOAD, ET_CHARGE_TOGGLE and ET_WEAPON_FIRED is logged, in
-order, with the state of every weapon of its ship WHERE IT IS PRODUCED (the
-producer's call: the post itself in the reference; with native on, the
-tick's effect scope queues the post and delivers it at the boundary, so the
-production is the point the walk reached): a write applied after its
-record's Python, or a record emitted after a later weapon's step, shows
-there.
+order; the queued kinds also compare per tick as an ordered list of their
+own (tests/helpers/effect_split.py, the K1 scene's). A launch's
+ET_WEAPON_FIRED is also logged with the state of every weapon of its ship
+WHERE IT IS PRODUCED (the producer's call, `_post_weapon_fired`): a write
+applied after its record's Python shows there. K0's own reloads and
+watcher crossings have no Python producer to spy since combat fire events
+Task 4 (the kernel logs the writes and queues TORPEDO_RELOAD / WATCH
+itself), as K1's beam edges since Task 3: their writes are in the per-tick
+record and their events in the queued list, and the native arm's tallies
+(k0_logged, k0_entries) must account for every one.
 
 Review Focus 4: with three ticks a frame the host's three K0 sessions run
 back to back on one game clock; the tubes credit the whole frame in the
@@ -120,41 +124,28 @@ class _K0Scene(k1d._Scene):
         self._spy_producers(mp)
 
     def _spy_producers(self, mp):
-        """K0's three events, logged where they are PRODUCED: the producer
-        called by the walk (never by the queue's delivery, which calls the
-        same producer with the scope closed)."""
-        reload = ws.TorpedoTube._broadcast_reload
+        """A launch's ET_WEAPON_FIRED, logged where it is PRODUCED: the
+        producer called by K1's launch Python (never by the queue's
+        delivery, which calls the same producer with the scope closed). Not
+        a beam's edge (K1 queues it natively since combat fire events Task
+        3), nor K0's reloads and watcher crossings (K0 queues them natively
+        since Task 4): no Python call to spy, and a spy on
+        TorpedoTube._broadcast_reload or FloatRangeWatcher._update would be
+        a class patch K0's override guard obeys by handing the weapons
+        back."""
         fired = ws._post_weapon_fired
-        update = FloatRangeWatcher._update
 
         def produced(kind, weapon):
             if not effect_queue._draining:
                 self.k0_produced.append((kind, self.label(weapon), self.tick,
                                          self.ship_state(weapon)))
 
-        def reload_spy(tube, _orig=reload):
-            produced("reload", tube)
-            return _orig(tube)
-
         def fired_spy(weapon, target, _orig=fired):
-            # Not a beam's edge: K1 produces that natively since combat
-            # fire events Task 3 (a queue entry, no Python call to spy; the
-            # K1 differential compares its writes and its entries).
             if not isinstance(weapon, ws.PhaserBank):
                 produced("fired", weapon)
             return _orig(weapon, target)
 
-        def update_spy(watcher, value, _orig=update):
-            old, new = watcher._value, float(value)
-            if watcher._owner is not None and any(
-                    watcher._crossed(old, new, t, d)
-                    for t, d, _e in watcher._checks.values()):
-                produced("charge_toggle", watcher._owner)
-            return _orig(watcher, value)
-
-        mp.setattr(ws.TorpedoTube, "_broadcast_reload", reload_spy)
         mp.setattr(ws, "_post_weapon_fired", fired_spy)
-        mp.setattr(FloatRangeWatcher, "_update", update_spy)
 
     # ── Record ───────────────────────────────────────────────────────────────
 
@@ -350,11 +341,22 @@ def _check_native_ran(ref, nat, ticks=TICKS):
     assert ref.counts["k0_steps"] == 0, ref.counts
     assert c["k0_records"]["DONE"] == ticks, c["k0_records"]
     assert not any(c["k0_python_step_reasons"].values()), c
+    # K0 returns only RUN_PYTHON and DONE (combat fire events Task 4): the
+    # stops, reloads and watcher lines are logged with their entries.
     for kind in ("DEPLETE_STOP", "RELOADED", "WATCH"):
-        assert c["k0_records"][kind] > 0, (kind, c["k0_records"])
+        assert c["k0_records"][kind] == 0, (kind, c["k0_records"])
+    logged, entries = c["k0_logged"], c["k0_entries"]
+    for kind in ("deplete_stop", "reload", "watch"):
+        assert logged[kind] > 0, (kind, logged)
+    assert entries["TORPEDO_RELOAD"] == logged["reload"], c
+    assert entries["WATCH"] == logged["watch"], c
+    assert 0 < entries["LOOP_STOP"] <= logged["deplete_stop"], c
+    # Every reload posted, both arms: each one K0's (no reload hand-back).
+    reloads = sum(1 for e in ref.k0_events if e[0] == "reload")
+    assert reloads == logged["reload"], (reloads, logged)
     kinds = {e[0] for e in ref.k0_events}
     assert kinds == {"reload", "charge_toggle", "fired"}, kinds
-    assert {e[0] for e in ref.k0_produced} == kinds, ref.k0_produced[:5]
+    assert {e[0] for e in ref.k0_produced} == {"fired"}, ref.k0_produced[:5]
     # The native arm's were queued and delivered at the tick boundary.
     e = nat.effects
     assert e["delivered"] > 0 and e["skipped_gone"] == e["failed"] == 0, e
@@ -370,10 +372,11 @@ def _check_native_ran(ref, nat, ticks=TICKS):
 def test_k0_matches_python_in_a_fight(monkeypatch, ticks_per_frame, seed):
     ref, nat = _both(monkeypatch, ticks_per_frame, seed)
     _check_native_ran(ref, nat)
-    print("k0 differential (tpf=%d seed=%d): k0 %r reasons %r, c_applied "
-          "%d, fast pushes %d, k0 events %d"
+    print("k0 differential (tpf=%d seed=%d): k0 %r logged %r entries %r "
+          "reasons %r, c_applied %d, fast pushes %d, k0 events %d"
           % (ticks_per_frame, seed,
              {k: v for k, v in nat.counts["k0_records"].items() if v},
+             nat.counts["k0_logged"], nat.counts["k0_entries"],
              {k: v for k, v in nat.counts["k0_python_reasons"].items() if v},
              nat.counts["c_applied_writes"], nat.counts["fast_pushes"],
              len(ref.k0_events)))

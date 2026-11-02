@@ -63,6 +63,25 @@ void EffectQueue::clear() {
                 release_(e.ops[i].object);
 }
 
+std::size_t EffectQueue::rebind(std::int64_t handle, void* object,
+                                void* (*acquire)(void*)) {
+    if (handle == -1) return 0;  // None names no row
+    std::size_t n = 0;
+    for (EffectEntry& e : entries_) {
+        if (!e.native) continue;
+        for (int i = 0; i < e.count; ++i) {
+            EffectOperand& o = e.ops[i];
+            if (o.type != EffectOperand::Type::Handle || o.handle != handle)
+                continue;
+            o.type = EffectOperand::Type::Object;
+            o.object = acquire(object);
+            o.handle = -1;
+            ++n;
+        }
+    }
+    return n;
+}
+
 std::vector<EffectEntry> EffectQueue::take() {
     std::vector<EffectEntry> out;
     out.swap(entries_);

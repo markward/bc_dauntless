@@ -103,9 +103,11 @@ enum class Field : int32_t {
     // Python, each writer pushes the whole list after mutating);
     // _watch_checks (a pulse weapon's charge watcher's check count, pushed by
     // every check add/remove); _power_level (a PhaserSystem's, pushed only
-    // when it is an index: a float level drops the row).
+    // when it is an index: a float level drops the row); _watch_value (that
+    // watcher's `_value`, pushed by every commit of an owned watcher: the
+    // old value of K0's WATCH entry, combat fire events Task 4).
     _recharge_rate, _reload_delay, _reload_timers, _reload_advanced_at,
-    _watch_checks, _power_level,
+    _watch_checks, _power_level, _watch_value,
     // Property
     MaxCondition, MaxCondition_set, _firing_chains, _groups,
     // Set
@@ -234,6 +236,7 @@ struct SubsystemRow {
     double _recharge_rate = 0.0, _reload_delay = 0.0;
     std::vector<double> _reload_timers, _reload_advanced_at;
     int64_t _watch_checks = 0, _power_level = 0;
+    double _watch_value = 0.0;
     // Posed parts: the index into the owning ship's part_poses of the part
     // Python resolved for this subsystem's own mount (detachment ignored;
     // -1 = no posable part), stamped with the global part_gen at

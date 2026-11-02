@@ -154,7 +154,11 @@ def test_contact_record_layout(scene):
     assert set(counts) == {"k2_records", "k2_python_ships", "k2_asks",
                            "k2_python_reasons", "k2_ask_queries", "k2_posed",
                            "k2_batched_contacts", "k2_logged_system_stop",
+                           "k2_logged_firing_system_stop",
+                           "k2_logged_bank_stop", "k2_entries",
                            "k2_present_native"}
+    assert set(counts["k2_entries"]) == {
+        "FIRE_SOUND", "LOOP_STOP", "WEAPON_FIRED", "WEAPON_FIRE_FAILED"}
     assert counts["k2_batched_contacts"] == 1, counts
     # No applier context (and no constants sent): the drain presented none.
     assert counts["k2_present_native"] == 0, counts
@@ -238,14 +242,24 @@ def test_system_stop_and_run_python(scene):
     _, a, b, sys_ = scene
     k = _kinds()
     sys_.TurnOff()
-    # A bank firing: the stop stays a record (its loop sound).
+    # A bank firing: logged too, its loop sound's LOOP_STOP queued after its
+    # writes (combat fire events Task 4); the record that carries them (the
+    # rowless ship's RUN_PYTHON) appends it to the effect queue.
     sys_.GetWeapon(0)._firing = True
+    _h.combat_effect_clear()
     _h.combat_k2_begin([nc.slot(a), -1], DT, 100.0, True, 0.0,
                        {"python_ships": [nc.slot(b)]})
-    assert _h.combat_k2_next() == (k["SYSTEM_STOP"], _sub(sys_), [])
-    assert _h.combat_k2_next() == (k["RUN_PYTHON"], -1, 1, [])
+    rec = _h.combat_k2_next()
+    assert rec[:3] == (k["RUN_PYTHON"], -1, 1)
+    assert rec[3][5:7] == [(_sub(sys_.GetWeapon(0)), "_firing", False),
+                           (_sub(sys_.GetWeapon(0)), "_beam_on_countdown",
+                            0.0)]
+    kinds = _h.combat_effect_kinds()
+    assert _h.combat_effect_take() == [
+        (kinds["LOOP_STOP"], True, (_sub(sys_.GetWeapon(0)),))]
     assert _h.combat_k2_next() == (k["DONE"], [])
     _h.combat_k2_end()
+    assert _h.combat_k2_counts()["k2_logged_firing_system_stop"] == 1
     # Every bank idle: the stop is logged writes in the value encoding
     # (round trips Task 3), the system's five then each bank's two.
     sys_.GetWeapon(0)._firing = False
@@ -261,7 +275,7 @@ def test_system_stop_and_run_python(scene):
         (bh, "_firing", False), (bh, "_beam_on_countdown", 0.0))]
     assert type(rec[1][0][2]) is bool and type(rec[1][4][2]) is int
     _h.combat_k2_end()
-    assert _h.combat_k2_counts()["k2_logged_system_stop"] == 1
+    assert _h.combat_k2_counts()["k2_logged_system_stop"] == 2
     _h.combat_k2_begin([nc.slot(b)], DT, 100.0, True, 0.0,
                        {"python_ships": [nc.slot(b)]})
     assert _h.combat_k2_next() == (k["RUN_PYTHON"], nc.slot(b), 0, [])
