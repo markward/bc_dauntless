@@ -1312,10 +1312,12 @@ _K1_SYSTEM_METHODS = (
     "_live_held_offset",
     # K2 logs an offline phaser system's stop (round trips Task 3).
     "StopFiring")
-# Checked on the INSTANCE (its __dict__) at each walk start, for the walked
-# system and each child: the cheap subset that tests and tools patch. Made by
-# the bindings' walk check (k1_walk_check, host_bindings.cc), which hands a
-# walk start with one back to Python as a WALK_START record (walk_start).
+# Checked on the INSTANCE (its __dict__), for the walked system and each
+# child: the cheap subset that tests and tools patch. Made by the bindings'
+# walk check (host_bindings.cc, THE K1 WALK CHECK: scanned before each
+# record of a K1 session, so a patch made by Python mid-pump is seen by the
+# next walk start), which hands a walk start
+# with one back to Python as a WALK_START record (walk_start).
 # The pump asks the same check before it logs a system's stop (combat fire
 # events Task 3), so the system's own StopFiring is here too (a system with
 # it patched also has its walk starts handed back: conservative).
@@ -3569,8 +3571,8 @@ def _k1_system_ships(system) -> list:
 # class attribute, an instance attribute on a weapon later in the walk)
 # takes effect at the next session, one tick later; the rest of this walk
 # steps from the begin verdicts. K1 is stricter only in where it looks
-# again: it rechecks per walk (each system's), so a handler's patch is seen
-# by the next walk of the same tick.
+# again: its verdicts are re-scanned before each of its records, so a
+# handler's patch is seen by the next walk of the same tick.
 
 # WSM §7(a) A6, every role; plus, on the LEAVES K0 stands in for them on
 # (_K0_LEAF_METHODS, since combat fire events Task 4), StopFiring and

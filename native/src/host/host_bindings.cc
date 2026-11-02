@@ -4221,20 +4221,25 @@ PyMethodDef g_push_scalar_def = {
     "SystemError."};
 
 // ── The K1 walk check (k1_fire_control.h, THE WALK START) ──────────────────
-// Installed into the K1 kernel by combat_k1_set_walk_check. The kernel asks
-// it at every walk start (inside combat_k1_next, the GIL held); true sends
-// the walk start back to Python the old way (a WALK_START record). No Python
-// bytecode runs, but CPython lookups do (dict probes by str key, the type's
-// MRO, the registry's weak references), so the check needs the GIL -- the
-// blocker for releasing it around the walk (workstream I). It must also
-// allocate nothing GC-tracked: a GC-tracked allocation can run cyclic GC,
-// whose weakref.finalize -> native_combat.unregister_handle would free a
-// mirror row mid-walk. So it never BUILDS an instance dict
-// (k1_built_dict); its only allocation is the registry lookup's int key,
-// which is not GC-tracked. It reads instance dicts and class MRO entries:
-//   - the walked system's dict holds one of `system_names`, or a child's
-//     (its "_children") one of `leaf_names` (native_combat.walk_start's
-//     instance-patch scan, made where it always was: at the walk start);
+// Which walk starts (and pump stops) the K1 kernel must hand back to Python
+// the old way (a WALK_START, or a STOP_SYSTEM record). Since the walk check
+// left the kernel (spec 2026-11-02-combat-launch-deferral §4.2;
+// docs/reference/engine/native-combat/k1-walk-check-map.md §4.1) the kernel
+// asks only its session's verdict sets, a plain C++ lookup (K1SessionCheck):
+// no CPython call is left inside the kernel's compute. The binding makes the
+// sets (k1_scan) afresh at the top of every combat_k1_next, the session's
+// first included, before the kernel runs. Python runs only between records,
+// so a verdict a walk start reads is as current as the last Python -- an ASK
+// answer, a RUN_PYTHON body, an effect -- exactly as when the check ran at
+// the walk start itself. The scan runs no Python bytecode and allocates
+// nothing GC-tracked (a GC-tracked allocation can run cyclic GC, whose
+// weakref.finalize -> native_combat.unregister_handle frees mirror rows): it
+// never BUILDS an instance dict (k1_built_dict); its only allocation is a
+// registry lookup's int key, which is not GC-tracked. A system or ship is
+// "Python" when:
+//   - the system's dict holds one of `system_names`, or a child's (its
+//     "_children") one of `leaf_names` (native_combat.walk_start's
+//     instance-patch scan);
 //   - the firing ship's dict holds one of `ship_names`
 //     (is_using_target_offset / GetTargetOffsetTG on the instance);
 //   - the ship's class resolves is_using_target_offset to anything but the
@@ -4243,7 +4248,7 @@ PyMethodDef g_push_scalar_def = {
 //     fine: Python's probe is None there, it reads the held offset.
 // Anything it cannot read (no row in the registry, no dict, an instance
 // dict not yet materialised, a `_children` that is not a list or tuple, a
-// CPython error) answers true: Python, as before, is the authority.
+// CPython error) answers "Python": Python, as before, is the authority.
 struct K1WalkCheckRefs {
     PyObject* registry = nullptr;        // native_combat._registry.data
     PyObject* system_names = nullptr;    // tuples of str
@@ -4259,10 +4264,10 @@ K1WalkCheckRefs& k1_walk_check_refs() {
     return r;
 }
 
-// The registry's live object for handle `h`, borrowed, or nullptr (no error
+// The registry's KeyedRef for handle `h`, borrowed, or nullptr (no error
 // set): native_combat._registry is a WeakValueDictionary, `data` its dict of
 // KeyedRef.
-PyObject* k1_registry_get(PyObject* registry, std::int64_t h) {
+PyObject* k1_registry_ref(PyObject* registry, std::int64_t h) {
     PyObject* key = PyLong_FromLongLong(h);
     if (key == nullptr) {
         PyErr_Clear();
@@ -4274,12 +4279,7 @@ PyObject* k1_registry_get(PyObject* registry, std::int64_t h) {
         PyErr_Clear();
         return nullptr;
     }
-    PyObject* o = PyWeakref_GetObject(ref);
-    if (o == nullptr || o == Py_None) {
-        PyErr_Clear();
-        return nullptr;
-    }
-    return o;
+    return ref;
 }
 
 // `o`'s instance dict, borrowed, if it already exists as a dict; nullptr
@@ -4313,65 +4313,6 @@ PyObject* k1_built_dict(PyObject* o) {
 int k1_holds(PyObject* d, PyObject* names) {
     return k2_holds(d, PySequence_Fast_ITEMS(names),
                     PySequence_Fast_GET_SIZE(names));
-}
-
-// 1: Python must start the walk; 0: native; -1: error.
-int k1_walk_check(const K1WalkCheckRefs& r, std::int64_t sys_h,
-                  std::int64_t ship_h) {
-    static PyObject* const k_iu =
-        PyUnicode_InternFromString("is_using_target_offset");
-    static PyObject* const k_gto =
-        PyUnicode_InternFromString("GetTargetOffsetTG");
-    PyObject* sys = k1_registry_get(r.registry, sys_h);
-    PyObject* sd = sys ? k1_built_dict(sys) : nullptr;
-    if (sd == nullptr) return 1;
-    int h = k1_holds(sd, r.system_names);
-    if (h != 0) return h;
-    PyObject* kids = PyDict_GetItemWithError(sd, k2_scan_names().children);
-    if (kids == nullptr && PyErr_Occurred()) return -1;
-    if (kids != nullptr) {
-        // A list or tuple only: PySequence_Fast would build a list (a
-        // GC-tracked allocation) from any other iterable.
-        if (!PyList_CheckExact(kids) && !PyTuple_CheckExact(kids)) return 1;
-        Py_INCREF(kids);
-        PyObject* const* items = PySequence_Fast_ITEMS(kids);
-        const Py_ssize_t n = PySequence_Fast_GET_SIZE(kids);
-        for (Py_ssize_t i = 0; i < n && h == 0; ++i) {
-            PyObject* cd = k1_built_dict(items[i]);
-            h = cd ? k1_holds(cd, r.leaf_names) : 1;
-        }
-        Py_DECREF(kids);
-        if (h != 0) return h;
-    }
-    if (ship_h < 0) return 0;  // no ship: Python's probe is None
-    PyObject* ship = k1_registry_get(r.registry, ship_h);
-    PyObject* shd = ship ? k1_built_dict(ship) : nullptr;
-    if (shd == nullptr) return 1;
-    h = k1_holds(shd, r.ship_names);
-    if (h != 0) return h;
-    PyTypeObject* t = Py_TYPE(ship);
-    PyObject* iu = _PyType_Lookup(t, k_iu);  // borrowed, no error set
-    // No is_using_target_offset: Python's probe is None and it reads the
-    // held offset. The kernel's row of a ShipClass (is_ship_class) would
-    // take the Manual Aim branch, so a ShipClass without one goes to Python.
-    if (iu == nullptr)
-        return r.ship_class != nullptr &&
-                       PyType_IsSubtype(
-                           t, reinterpret_cast<PyTypeObject*>(r.ship_class))
-                   ? 1
-                   : 0;
-    if (iu != r.stock_is_using || r.ship_class == nullptr ||
-        !PyType_IsSubtype(t, reinterpret_cast<PyTypeObject*>(r.ship_class)))
-        return 1;
-    return _PyType_Lookup(t, k_gto) != r.stock_get_offset ? 1 : 0;
-}
-
-bool k1_walk_needs_python(std::int64_t sys_h, std::int64_t ship_h) {
-    const K1WalkCheckRefs& r = k1_walk_check_refs();
-    if (r.registry == nullptr) return true;
-    const int v = k1_walk_check(r, sys_h, ship_h);
-    if (v < 0) PyErr_Clear();
-    return v != 0;
 }
 
 // The scan reads PyDictObject::ma_version_tag, and only where kK0ObjectCache
@@ -4901,6 +4842,300 @@ bool k0_scan(PyObject* ships, const K0Guard* g, K0Scan& s) {
 #elif defined(__GNUC__)
 #pragma GCC diagnostic pop
 #endif
+
+// ── The K1 walk check's verdicts (THE K1 WALK CHECK, above) ────────────────
+// One session's answer: the systems and the ships whose walks Python must
+// start. Usually both empty.
+struct K1Verdicts {
+    bool pump = false;
+    std::vector<std::int64_t> ships;  // begin_pump's Object handles
+    std::int64_t system = -1;         // begin_system's system
+    std::unordered_set<std::int64_t> python_systems, python_ships;
+};
+
+// The kernel's check for one session: a set lookup, no CPython. Sessions
+// nest (a StartFiring from Python the pump runs begins another), so each
+// carries its own sets; combat_k1_next re-validates the top one's
+// (K1Kernel::top_walk_check).
+struct K1SessionCheck {
+    std::shared_ptr<K1Verdicts> v;
+    bool operator()(std::int64_t sys, std::int64_t ship) const {
+        return v->python_systems.count(sys) != 0 ||
+               v->python_ships.count(ship) != 0;
+    }
+};
+
+// THE CACHES (K0's, THE CACHES above, keyed the same way; exact, and only
+// where kK0ObjectCache allows -- elsewhere every scan probes everything):
+//   registry  a handle's KeyedRef, while the registry dict is the same
+//             object at the same ma_version_tag (it then still holds the
+//             ref); the referent is read live (a dead one answers Python).
+//   object    a system's own answer (`system_names` on its instance, its
+//             "_children" a list or tuple), each child's (`leaf_names`) and
+//             a ship's (`ship_names`), on (type, dict, ma_version_tag);
+//             the children list is read live (an in-place append changes
+//             the list, not the dict), and a `__class__` assignment changes
+//             the type in the key.
+//   class     a ship class's verdict (its MRO's is_using_target_offset /
+//             GetTargetOffsetTG), valid while its tp_version_tag is.
+// Entries are kept by the handle's row index; the handle is compared. Every
+// combat_k1_set_walk_check drops them all (other names, other answers).
+struct K1RefEntry {
+    std::int64_t h = -1;
+    PyObject* registry = nullptr;
+    std::uint64_t version = 0;
+    PyObject* ref = nullptr;  // borrowed from the registry dict
+};
+
+struct K1SysEntry {
+    K1RefEntry ref;
+    K0ObjKey key;
+    int verdict = 0;
+    PyObject* children = nullptr;  // borrowed from key.dict
+    std::vector<K0WeaponEntry> kids;
+};
+
+struct K1ShipEntry {
+    K1RefEntry ref;
+    K0ObjKey key;
+    int verdict = 0;
+};
+
+struct K1Caches {
+    std::vector<K1SysEntry> systems;
+    std::vector<K1ShipEntry> ships;
+    std::vector<K0TypeEntry> types;  // OWNS a reference to each type
+    void clear() {
+        // Moved out first: a release may run Python (a type's dealloc).
+        std::vector<K0TypeEntry> old = std::move(types);
+        types.clear();
+        systems.clear();
+        ships.clear();
+        for (K0TypeEntry& e : old)
+            Py_DECREF(reinterpret_cast<PyObject*>(e.type));
+    }
+};
+
+K1Caches& k1_caches() {
+    static K1Caches c;
+    return c;
+}
+
+// The cache entry of handle `h` (its row index), or `scratch` past a sane
+// table size.
+template <class E>
+E& k1_entry(std::vector<E>& v, std::int64_t h, E& scratch) {
+    const std::uint64_t i = static_cast<std::uint64_t>(h) & 0xffffffffu;
+    if (i >= (1u << 20)) {
+        scratch = E{};
+        return scratch;
+    }
+    if (i >= v.size()) v.resize(i + 1 + 64);
+    return v[i];
+}
+
+// Handle `h`'s live object in the registry, borrowed, or nullptr (no error
+// set), its KeyedRef (k1_registry_ref) cached in `e`.
+PyObject* k1_lookup(K1RefEntry& e, PyObject* registry, std::int64_t h) {
+    if (!(kK0ObjectCache && e.ref != nullptr && e.h == h &&
+          e.registry == registry &&
+          e.version == k0_dict_version(registry))) {
+        e = K1RefEntry{};
+        PyObject* ref = k1_registry_ref(registry, h);
+        if (ref == nullptr) return nullptr;
+        e = K1RefEntry{h, registry, k0_dict_version(registry), ref};
+    }
+    PyObject* o = PyWeakref_GetObject(e.ref);
+    if (o == nullptr || o == Py_None) {
+        PyErr_Clear();
+        return nullptr;
+    }
+    return o;
+}
+
+// 1: system `h`'s walks go to Python; 0: native. Never an error.
+int k1_system_verdict(const K1WalkCheckRefs& r, K1Caches& c, std::int64_t h) {
+    K1SysEntry scratch;
+    K1SysEntry& e = k1_entry(c.systems, h, scratch);
+    PyObject* sys = k1_lookup(e.ref, r.registry, h);
+    PyObject* sd = sys ? k0_dict_of(sys) : nullptr;
+    if (sd == nullptr) return 1;
+    if (!k0_same(e.key, sys, sd)) {
+        e.key = K0ObjKey{};
+        int v = k1_holds(sd, r.system_names);
+        PyObject* kids = nullptr;
+        if (v == 0) {
+            kids = PyDict_GetItemWithError(sd, k0_scan_names().children);
+            if (kids == nullptr && PyErr_Occurred()) v = -1;
+            // A list or tuple only (read in place below).
+            else if (kids != nullptr && !PyList_CheckExact(kids) &&
+                     !PyTuple_CheckExact(kids))
+                v = 1;
+        }
+        if (v < 0) {
+            PyErr_Clear();
+            return 1;
+        }
+        e.verdict = v;
+        e.children = kids;
+        e.key = K0ObjKey{sys->ob_type, sd, k0_dict_version(sd)};
+    }
+    if (e.verdict != 0) return 1;
+    PyObject* kids = e.children;
+    if (kids == nullptr) return 0;
+    // Read live: an in-place append changes the list, not the dict.
+    PyObject* const* items = PySequence_Fast_ITEMS(kids);
+    const Py_ssize_t n = PySequence_Fast_GET_SIZE(kids);
+    if (e.kids.size() < static_cast<size_t>(n))
+        e.kids.resize(static_cast<size_t>(n));
+    for (Py_ssize_t i = 0; i < n; ++i) {
+        PyObject* ch = items[i];
+        K0WeaponEntry& we = e.kids[static_cast<size_t>(i)];
+        // K0's fast path: the same type, its managed dict slot the same
+        // dict, at the same version.
+        if (kK0ObjectCache && kK0ManagedSlot && ch->ob_type == we.key.type &&
+            (ch->ob_type->tp_flags & Py_TPFLAGS_MANAGED_DICT) != 0 &&
+            reinterpret_cast<std::uintptr_t*>(ch)[-3] ==
+                reinterpret_cast<std::uintptr_t>(we.key.dict) &&
+            k0_dict_version(we.key.dict) == we.key.version) {
+            if (we.verdict != 0) return 1;
+            continue;
+        }
+        PyObject* cd = k0_dict_of(ch);
+        if (cd == nullptr) return 1;
+        if (!k0_same(we.key, ch, cd)) {
+            we.key = K0ObjKey{};
+            const int m = k1_holds(cd, r.leaf_names);
+            if (m < 0) {
+                PyErr_Clear();
+                return 1;
+            }
+            we.verdict = m;
+            we.key = K0ObjKey{ch->ob_type, cd, k0_dict_version(cd)};
+        }
+        if (we.verdict != 0) return 1;
+    }
+    return 0;
+}
+
+// 1: a ship of type `t` must have its walks started by Python (its offset
+// methods are not the stock ShipClass's); 0: not.
+int k1_class_verdict(const K1WalkCheckRefs& r, K1Caches& c, PyTypeObject* t) {
+    static PyObject* const k_iu =
+        PyUnicode_InternFromString("is_using_target_offset");
+    static PyObject* const k_gto =
+        PyUnicode_InternFromString("GetTargetOffsetTG");
+    K0TypeEntry* hit = nullptr;
+    for (K0TypeEntry& e : c.types)
+        if (e.type == t) {
+            if (k0_type_valid(e, t)) return e.flag;
+            hit = &e;
+            break;
+        }
+    PyTypeObject* const ship_class =
+        reinterpret_cast<PyTypeObject*>(r.ship_class);
+    int flag;
+    PyObject* iu = _PyType_Lookup(t, k_iu);  // borrowed, no error set
+    // No is_using_target_offset: Python's probe is None and it reads the
+    // held offset. The kernel's row of a ShipClass (is_ship_class) would
+    // take the Manual Aim branch, so a ShipClass without one goes to Python.
+    if (iu == nullptr)
+        flag = ship_class != nullptr && PyType_IsSubtype(t, ship_class);
+    else if (iu != r.stock_is_using || ship_class == nullptr ||
+             !PyType_IsSubtype(t, ship_class))
+        flag = 1;
+    else
+        flag = _PyType_Lookup(t, k_gto) != r.stock_get_offset;
+    const unsigned int tag = k0_type_tag(t);
+    if (tag == 0) return flag;  // no version tag: not cacheable
+    const K0TypeEntry e{t, tag, flag};
+    if (hit != nullptr) {
+        *hit = e;  // the same type: its reference is already held
+    } else {
+        Py_INCREF(reinterpret_cast<PyObject*>(t));  // released by clear()
+        c.types.push_back(e);
+    }
+    return flag;
+}
+
+// 1: ship `h`'s walks go to Python; 0: native. Never an error.
+int k1_ship_verdict(const K1WalkCheckRefs& r, K1Caches& c, std::int64_t h) {
+    K1ShipEntry scratch;
+    K1ShipEntry& e = k1_entry(c.ships, h, scratch);
+    PyObject* ship = k1_lookup(e.ref, r.registry, h);
+    PyObject* d = ship ? k0_dict_of(ship) : nullptr;
+    if (d == nullptr) return 1;
+    if (!k0_same(e.key, ship, d)) {
+        e.key = K0ObjKey{};
+        const int v = k1_holds(d, r.ship_names);
+        if (v < 0) {
+            PyErr_Clear();
+            return 1;
+        }
+        e.verdict = v;
+        e.key = K0ObjKey{ship->ob_type, d, k0_dict_version(d)};
+    }
+    if (e.verdict != 0) return 1;
+    return k1_class_verdict(r, c, ship->ob_type);
+}
+
+// The session's verdict sets, made afresh from the live objects: every
+// system the session's next() could walk or stop, with the ship the kernel
+// pairs it with (climb_to_ship_of, which is the pump list's ship or not).
+// A pump walks or stops only a held system of a listed ship's four group
+// slots (the mirror's, as the kernel reads them) that does not manage its
+// own pump, and next() never makes a system held; a system session walks
+// its one system. No Python runs and no error is left set.
+void k1_scan(K1Verdicts& v) {
+    namespace cb = dauntless::combat;
+    v.python_systems.clear();
+    v.python_ships.clear();
+    const K1WalkCheckRefs& r = k1_walk_check_refs();
+    if (r.registry == nullptr) return;  // no check: every walk is native
+    K1Caches& c = k1_caches();
+    const cb::Mirror& m = cb::mirror();
+    auto cover = [&](std::int64_t sys) {
+        if (k1_system_verdict(r, c, sys) != 0) v.python_systems.insert(sys);
+        std::int64_t ship;
+        try {
+            ship = cb::climb_to_ship_of(m, sys);
+        } catch (const std::exception&) {
+            // A climb the mirror cannot make: the kernel's pre-scan hands
+            // such a system to Python before any check (and the same climb
+            // would throw there). Python, to be safe.
+            v.python_systems.insert(sys);
+            return;
+        }
+        if (ship >= 0 && v.python_ships.count(ship) == 0 &&
+            k1_ship_verdict(r, c, ship) != 0)
+            v.python_ships.insert(ship);
+    };
+    if (!v.pump) {
+        cover(v.system);
+        return;
+    }
+    for (const std::int64_t sh : v.ships) {
+        const cb::ObjectRow* so = sh < 0 ? nullptr : m.object(sh);
+        if (so == nullptr) continue;
+        for (const std::int64_t sys :
+             {so->_phaser_system, so->_pulse_weapon_system,
+              so->_tractor_beam_system, so->_torpedo_system}) {
+            const cb::SubsystemRow* sr = sys < 0 ? nullptr : m.subsystem(sys);
+            if (sr == nullptr || !sr->_fire_held || sr->pump_self_managed)
+                continue;
+            cover(sys);
+        }
+    }
+}
+
+// The walk check for a session about to begin over `v`, or none when no
+// check is installed (every walk native). Its sets are first made by the
+// session's first combat_k1_next, before the kernel computes anything (a
+// scan here would be redone there).
+dauntless::combat::K1WalkCheck k1_session_check(std::shared_ptr<K1Verdicts> v) {
+    if (k1_walk_check_refs().registry == nullptr) return {};
+    return K1SessionCheck{std::move(v)};
+}
 
 // A K0 write -> (handle, field, value) in the Python encoding
 // (combat_write_apply.h): a float, bool or int (a Ref: the handle, -1
@@ -11622,8 +11857,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_k1_begin_pump",
               [](std::vector<std::int64_t> ships, double dt, double now,
                  bool use_memo, double drift_now) {
+                  // The session's walk check (THE K1 WALK CHECK): its
+                  // verdicts scanned before each of its combat_k1_next.
+                  auto v = std::make_shared<K1Verdicts>();
+                  v->pump = true;
+                  v->ships = ships;
                   cb::k1_kernel().begin_pump(std::move(ships), dt, now,
-                                             use_memo, drift_now);
+                                             use_memo, drift_now,
+                                             k1_session_check(std::move(v)));
               },
               py::arg("ship_handles"), py::arg("dt"), py::arg("now"),
               py::arg("use_memo"), py::arg("drift_now"),
@@ -11633,26 +11874,34 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_k1_begin_system",
               [](std::int64_t system, double dt, double now, bool use_memo,
                  double drift_now) {
+                  auto v = std::make_shared<K1Verdicts>();
+                  v->system = system;
                   cb::k1_kernel().begin_system(system, dt, now, use_memo,
-                                               drift_now);
+                                               drift_now,
+                                               k1_session_check(std::move(v)));
               },
               py::arg("system"), py::arg("dt"), py::arg("now"),
               py::arg("use_memo"), py::arg("drift_now"),
               "StartFiring's immediate update_weapons(dt) on one system.");
         m.def("combat_k1_next", [] {
             // The GIL is HELD for the walk (controller ruling J; spec 3.3's
-            // release is deferred to the worker-thread phase). No Python
-            // bytecode runs inside next(), but CPython lookups do: the walk
-            // check (k1_walk_check) probes instance dicts, MRO entries and
-            // the registry's weak references at every walk start, with no
-            // GC-tracked allocation. That check is what needs the GIL now.
-            // Releasing it would also be unsafe on its own: a mirror row is
-            // freed by weakref.finalize -> native_combat.unregister_handle,
-            // which cyclic GC may run on whichever thread holds the GIL --
-            // the packaged build's log tee (engine/log_tee.py) allocates, so
-            // a released GIL could free a row mid-read. A call takes
-            // microseconds. tests/unit/test_native_k1_holds_gil.py guards it.
+            // release is deferred to the worker-thread phase). The kernel's
+            // compute makes no CPython call: its walk check is the top
+            // session's verdict sets, re-validated HERE, before it runs
+            // (k1_scan probes instance dicts, MRO entries and the
+            // registry's weak references, no GC-tracked allocation), so a
+            // patch Python made since the last record is seen by this
+            // record's walk starts. Releasing the GIL around next() is still
+            // unsafe: a mirror row is freed by weakref.finalize ->
+            // native_combat.unregister_handle, which cyclic GC may run on
+            // whichever thread holds the GIL -- the packaged build's log tee
+            // (engine/log_tee.py) allocates, so a released GIL could free a
+            // row mid-read. A call takes microseconds.
+            // tests/unit/test_native_k1_holds_gil.py guards it.
             k1_apply_raised() = false;
+            if (const cb::K1WalkCheck* c = cb::k1_kernel().top_walk_check())
+                if (const K1SessionCheck* sc = c->target<K1SessionCheck>())
+                    k1_scan(*sc->v);
             cb::K1Record r = cb::k1_kernel().next();
             py::list writes;
             dauntless::host::WriteApplier& applier =
@@ -11748,8 +11997,12 @@ PYBIND11_MODULE(_dauntless_host, m) {
                  py::handle leaf_names, py::handle ship_names,
                  py::handle stock_is_using, py::handle stock_get_offset,
                  py::handle ship_class) {
-                  // K1WalkCheckRefs (k1_walk_check): None as the registry
-                  // removes the check (every walk starts natively).
+                  // K1WalkCheckRefs (THE K1 WALK CHECK): None as the
+                  // registry removes the check (every walk starts
+                  // natively, open sessions' from their next record). Any
+                  // call drops the cached verdicts: other names, other
+                  // answers.
+                  k1_caches().clear();
                   K1WalkCheckRefs& r = k1_walk_check_refs();
                   PyObject* olds[] = {r.registry, r.system_names,
                                       r.leaf_names, r.ship_names,
@@ -11774,9 +12027,6 @@ PYBIND11_MODULE(_dauntless_host, m) {
                       r.stock_is_using = own(stock_is_using);
                       r.stock_get_offset = own(stock_get_offset);
                       r.ship_class = own(ship_class);
-                      cb::k1_kernel().set_walk_check(k1_walk_needs_python);
-                  } else {
-                      cb::k1_kernel().set_walk_check(nullptr);
                   }
                   for (PyObject* o : olds) Py_XDECREF(o);
               },
@@ -11784,7 +12034,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("leaf_names"), py::arg("ship_names"),
               py::arg("stock_is_using"), py::arg("stock_get_offset"),
               py::arg("ship_class"),
-              "Install the walk check (k1_walk_check): the registry's "
+              "Install the walk check (THE K1 WALK CHECK): the registry's "
               "handle -> KeyedRef dict, the instance names looked for on "
               "the walked system, its children and its ship, the stock "
               "ShipClass's raw is_using_target_offset / GetTargetOffsetTG "

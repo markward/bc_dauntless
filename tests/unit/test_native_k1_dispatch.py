@@ -1941,6 +1941,187 @@ def test_walk_check_hands_back_an_unmaterialised_dict(monkeypatch):
             w.close()
 
 
+@pytest.mark.skipif(sys.version_info < (3, 11) or sys.version_info >= (3, 14),
+                    reason="managed-dict layout known for 3.11-3.13 only")
+def test_walk_check_hands_back_a_ship_with_an_unmaterialised_dict(
+        monkeypatch):
+    """The firing SHIP's registry entry resolves to an object whose instance
+    dict is not materialised: its walks are handed back (WALK_START) and the
+    dict stays unbuilt."""
+    fresh = _ValuesOnly()
+    assert not _dict_materialised(fresh)
+    with monkeypatch.context() as mp:
+        w = World(mp, True, _DUEL, "k1_values_only_ship")
+        log = []
+        _spy_records(mp, log)
+        try:
+            galaxy = w.ships["Galaxy"]
+            galaxy.GetPhaserSystem().StartFiring(w.ships["Vorcha"])
+            w.tick()
+            nc._k1_send_walk_check()
+            h = galaxy.__dict__["_nslot"]
+            import weakref
+            fake = dict(nc._registry.data)
+            fake[h] = weakref.KeyedRef(fresh, None, h)
+            cls, (iu, gto) = nc._k1_ship_stock
+            _h.combat_k1_set_walk_check(fake, nc._K1_SYSTEM_PATCHES,
+                                        nc._K1_LEAF_PATCHES,
+                                        nc._K1_SHIP_PATCHES, iu, gto, cls)
+            mp.setattr(nc, "_k1_walk_check_sent", True)
+            del log[:]
+            for _ in range(3):
+                w.tick()
+            assert [k for k, _t in log].count("WALK_START") >= 3, log[:20]
+            assert not _dict_materialised(fresh)
+        finally:
+            nc._k1_send_walk_check()
+            w.close()
+
+
+# ── The walk check out of the kernel (spec 2026-11-02-combat-launch-deferral
+# §4.2; k1-walk-check-map.md §4.1): verdicts scanned in the binding at
+# session begin and re-validated before every combat_k1_next ───────────────
+
+@pytest.mark.parametrize("where", ["ship", "leaf"])
+def test_walk_check_names_changing_drop_the_caches(monkeypatch, where):
+    """The walk check's verdicts are cached on the objects' dict versions.
+    Re-sending the check with other names (a name an instance attribute
+    already present now matches, on the firing ship or on a bank) must drop
+    them: the next walks are handed back though no dict changed."""
+    with monkeypatch.context() as mp:
+        w = World(mp, True, _DUEL, "k1_names_drop_" + where)
+        log = []
+        _spy_records(mp, log)
+        try:
+            galaxy = w.ships["Galaxy"]
+            phasers = galaxy.GetPhaserSystem()
+            owner = galaxy if where == "ship" else phasers.GetWeapon(0)
+            owner._k1_probe_name = 1
+            phasers.StartFiring(w.ships["Vorcha"])
+            for _ in range(3):
+                w.tick()
+            assert "WALK_START" not in [k for k, _t in log], log[:20]
+            nc._k1_send_walk_check()
+            cls, (iu, gto) = nc._k1_ship_stock
+            leaf = nc._K1_LEAF_PATCHES
+            ship = nc._K1_SHIP_PATCHES
+            if where == "ship":
+                ship = ship + ("_k1_probe_name",)
+            else:
+                leaf = leaf + ("_k1_probe_name",)
+            _h.combat_k1_set_walk_check(nc._registry.data,
+                                        nc._K1_SYSTEM_PATCHES, leaf, ship,
+                                        iu, gto, cls)
+            mp.setattr(nc, "_k1_walk_check_sent", True)
+            del log[:]
+            for _ in range(3):
+                w.tick()
+            assert [k for k, _t in log].count("WALK_START") >= 3, log[:20]
+        finally:
+            nc._k1_send_walk_check()
+            w.close()
+
+
+# The Vor'cha's cannons ASK their Fire (no_mount, _no_mount_cannons), so a
+# cannon's whole Python Fire -- its bolt's _spawn_projectile -- runs inside
+# an ASK answer, in the middle of the pump; the Galaxy, later in the ship
+# list, is walked after it in the same pump.
+_ASK_THEN_LATER = (
+    ("Vorcha", "vorcha", (0.0, 0.0, 0.0), 0.0),
+    ("BoP", "birdofprey", (15.0, 200.0, 5.0), math.pi, "ships.BirdOfPrey"),
+    ("Galaxy", "galaxy", (30.0, 360.0, 0.0), math.pi))
+
+
+def _on_first_ask_spawn(w, hook):
+    """Run `hook(w)` once, inside the first bolt spawn of the cannons' ASKed
+    Fire (the same Python ON and OFF, at the same tick)."""
+    real = ws._spawn_projectile
+    done = []
+
+    def spawn(*a, **k):
+        if not done:
+            done.append(w.n)
+            hook(w)
+        return real(*a, **k)
+    w.mp.setattr(ws, "_spawn_projectile", spawn)
+    return done
+
+
+def test_mid_pump_instance_patch_is_obeyed_the_same_tick(monkeypatch):
+    """Review Focus 3: Python running in the middle of the pump (an ASK
+    answer) patches a method K1 stands in for on a LATER system's instance
+    (`phasers.try_fire_weapon = ...`). Python's pump calls it at that
+    system's walk in the same tick; so must K1 -- the verdicts are
+    re-validated before every combat_k1_next, so that walk is handed back.
+    ON == OFF, tick by tick."""
+    calls = {}
+    spawned = {}
+
+    def patch_later_system(w):
+        phasers = w.ships["Galaxy"].GetPhaserSystem()
+        real = phasers.try_fire_weapon
+        log = calls[w.native]
+
+        def try_fire_weapon(*a):
+            log.append(w.n)
+            return real(*a)
+        phasers.try_fire_weapon = try_fire_weapon
+
+    def script(w, t):
+        _no_mount_cannons(w, t)
+        if t == 0:
+            calls[w.native] = []
+            spawned[w.native] = _on_first_ask_spawn(w, patch_later_system)
+            w.ships["Galaxy"].GetPhaserSystem().StartFiring(w.ships["BoP"])
+
+    _ref, _nat, counts = _both(monkeypatch, _ASK_THEN_LATER, script, 90)
+    assert spawned[False] and spawned[True] == spawned[False], spawned
+    assert counts["k1_fire_ask_reasons"]["no_mount"] > 0, counts
+    assert calls[False], calls
+    assert calls[True] == calls[False]
+    assert calls[False][0] == spawned[False][0], (calls, spawned)
+    assert _python_reasons(counts).get("instance_patch", 0) > 0, counts
+
+
+def test_nested_session_keeps_its_own_walk_check(monkeypatch):
+    """A K1 session begun inside another (StartFiring from Python the pump
+    runs: an ASK answer) scans its own system: a tube Fire patched on the
+    instance just before is obeyed by the nested walk, though the outer
+    pump's verdicts never cover that system (its ship is not in the pump's
+    list). ON == OFF, tick by tick."""
+    calls = {}
+    spawned = {}
+
+    def patch_and_start(w):
+        galaxy = w.ships["Galaxy"]
+        torps = galaxy.GetTorpedoSystem()
+        tube = torps.GetWeapon(0)
+        real = tube.Fire
+        log = calls[w.native]
+
+        def fire(target=None, offset=None):
+            log.append(w.n)
+            return real(target, offset)
+        tube.Fire = fire
+        torps.StartFiring(w.ships["BoP"])
+
+    def script(w, t):
+        _no_mount_cannons(w, t)
+        if t == 0:
+            # The Galaxy fires only through StartFiring's own walk.
+            w.order = [s for s in w.order if s.GetName() != "Galaxy"]
+            calls[w.native] = []
+            spawned[w.native] = _on_first_ask_spawn(w, patch_and_start)
+
+    _ref, _nat, counts = _both(monkeypatch, _ASK_THEN_LATER, script, 90)
+    assert spawned[False] and spawned[True] == spawned[False], spawned
+    assert calls[False], calls
+    assert calls[True] == calls[False]
+    assert calls[False][0] == spawned[False][0], (calls, spawned)
+    assert _python_reasons(counts, "system").get("instance_patch", 0) > 0, \
+        counts
+
+
 # ── Final review A2: a raise in materialise does not strand later writes ────
 
 class _OffsetBoom(Exception):

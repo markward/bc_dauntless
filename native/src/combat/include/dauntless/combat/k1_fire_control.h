@@ -41,20 +41,23 @@
 // no record and logs no such write runs no Python at all; its writes ride
 // the next record (or DONE).
 //
-// The WALK CHECK (set_walk_check) runs at every walk start, before any
-// offset: when it answers true the walk starts the old way -- a WALK_START
-// record, answered by set_offset (Python's own _live_held_offset) or
-// skip_walk (an instance-patched method: Python runs the walk whole). The
-// bindings install the check: an instance attribute shadowing a method K1
-// stands in for (system, child, or the ship's is_using_target_offset /
-// GetTargetOffsetTG), or a ship class whose offset methods are not the
-// stock ShipClass's. With no check installed every walk starts natively.
-// The kernel itself is plain C++, but the bindings' check is not: no Python
-// bytecode runs in it, CPython lookups do (instance dicts, MRO entries, the
-// registry's weak references), with the GIL held and no GC-tracked
-// allocation -- an instance dict not yet materialised is never built, the
-// walk goes back to Python instead (host_bindings.cc, k1_built_dict). So
-// next() needs the GIL while the check is installed (workstream I).
+// The WALK CHECK runs at every walk start, before any offset: when it
+// answers true the walk starts the old way -- a WALK_START record, answered
+// by set_offset (Python's own _live_held_offset) or skip_walk (an
+// instance-patched method: Python runs the walk whole). It is the session's
+// own (begin_pump / begin_system), else the kernel's (set_walk_check); with
+// neither every walk starts natively. The bindings give each session one: a
+// lookup in that session's verdict sets -- an instance attribute shadowing
+// a method K1 stands in for (system, child, or the ship's
+// is_using_target_offset / GetTargetOffsetTG), or a ship class whose offset
+// methods are not the stock ShipClass's -- so the kernel's compute makes no
+// CPython call (spec 2026-11-02-combat-launch-deferral §4.2). The bindings
+// scan the live objects into the sets before each next() of the session
+// (top_walk_check), so a verdict is as current as the last Python run
+// between records, as when the check ran in here
+// (host_bindings.cc, THE K1 WALK CHECK). Sessions nest, so the sets are per
+// session. next() itself still runs with the GIL held (workstream I: the
+// mirror rows' lifetime, test_native_k1_holds_gil.py).
 //
 // THE WRITE LOG. No Python bytecode runs inside next(). The writes the Python
 // decision path makes (fire timers, the `_depleted` clear, cleared targets,
@@ -310,7 +313,8 @@ std::optional<Vec3> k1_live_held_offset(const Mirror& m, int64_t system,
                                         int64_t ship);
 
 // The walk check (see THE WALK START): (system, its ship or -1) -> true
-// when the walk must start the old way (a WALK_START record).
+// when the walk must start the old way (a WALK_START record). Called inside
+// next(): it must not call into Python.
 using K1WalkCheck = std::function<bool(int64_t system, int64_t ship)>;
 
 class K1Kernel {
@@ -321,19 +325,27 @@ public:
     // order, -1 for a ship with no row (it RUN_PYTHONs every getter). `now` is
     // weapon_subsystems._game_time() (the Utopia game time, 0.0 if it raises;
     // also the occlusion clock), `drift_now` native_combat.now() (the nebula
-    // drift clock). `use_memo` is step_memo.active().
+    // drift clock). `use_memo` is step_memo.active(). `check`: the
+    // session's own walk check (THE WALK START), asked instead of the
+    // kernel's (set_walk_check) for as long as the session is open; empty:
+    // the kernel's.
     void begin_pump(std::vector<int64_t> ships, double dt, double now,
-                    bool use_memo, double drift_now);
+                    bool use_memo, double drift_now, K1WalkCheck check = {});
     // WeaponSystem.StartFiring's immediate update_weapons(dt) on one system.
     void begin_system(int64_t system, double dt, double now, bool use_memo,
-                      double drift_now);
+                      double drift_now, K1WalkCheck check = {});
 
     // The next record of the top session. Throws std::logic_error when no
     // session is open, a WALK_START has no offset yet or an ASK no answer.
     K1Record next();
 
-    // Install (or, with an empty function, remove) the walk check.
+    // Install (or, with an empty function, remove) the kernel's walk check,
+    // asked by a session begun without its own.
     void set_walk_check(K1WalkCheck check) { walk_check_ = std::move(check); }
+    // The top session's own walk check (begin_pump / begin_system), or
+    // nullptr (no session, or one begun without): the bindings re-validate
+    // the verdicts behind it before each next().
+    const K1WalkCheck* top_walk_check() const;
 
     // The reply to WALK_START: the walk's `_live_held_offset()` as xyz when it
     // is a TGPoint3, nullopt otherwise.

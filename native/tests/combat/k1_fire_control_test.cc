@@ -1705,6 +1705,52 @@ TEST(K1Native, WalkCheckHandsTheWalkStartBack) {
     EXPECT_EQ(why_of(w.k.counts(), K1Why::InstancePatch), 1);
 }
 
+TEST(K1Native, SessionWalkCheckIsAskedAndNests) {
+    // A session begun with its own walk check (the bindings' per-session
+    // verdict sets) asks it instead of the kernel's; a session begun inside
+    // it asks ITS own, and the outer one's is asked again once it ends.
+    World w(false);
+    const int64_t ship = w.ship("ship");
+    const int64_t t = w.object("t", 0.0, 50.0, 0.0);
+    const int64_t psys = w.system("sys", ship, 1, {t});
+    w.bank("b0", psys);
+    const int64_t tsys = w.system("tsys", ship, 4, {t});
+    w.bank("tube", tsys);
+    std::vector<std::string> asked;
+    w.k.set_walk_check([&](int64_t, int64_t) {
+        asked.push_back("kernel");
+        return true;
+    });
+    w.k.begin_pump({ship}, kDt, 10.0, false, 0.0,
+                   [&](int64_t s, int64_t sh) {
+                       asked.push_back("outer " + w.names[s] + "/" +
+                                       w.names[sh]);
+                       return s == psys;
+                   });
+    ASSERT_NE(w.k.top_walk_check(), nullptr);
+    EXPECT_EQ(w.brief(w.k.next()), "WALK_START sys");
+    w.k.skip_walk();
+    w.k.begin_system(tsys, kDt, 10.0, false, 0.0, [&](int64_t s, int64_t) {
+        asked.push_back("inner " + w.names[s]);
+        return true;
+    });
+    EXPECT_EQ(w.brief(w.k.next()), "WALK_START tsys");
+    w.k.skip_walk();
+    EXPECT_EQ(w.brief(w.k.next()), "DONE");
+    w.k.end();
+    std::string last;
+    for (int i = 0; i < 8 && last != "DONE"; ++i) last = w.brief(w.k.next());
+    EXPECT_EQ(last, "DONE");
+    w.k.end();
+    EXPECT_EQ(asked, (std::vector<std::string>{"outer sys/ship", "inner tsys",
+                                               "outer tsys/ship"}));
+    // A session begun with none asks the kernel's.
+    w.k.begin_system(psys, kDt, 10.0, false, 0.0);
+    EXPECT_EQ(w.k.top_walk_check(), nullptr);
+    EXPECT_EQ(w.brief(w.k.next()), "WALK_START sys");
+    EXPECT_EQ(asked.back(), "kernel");
+}
+
 // ── Round trips Task 2: beam sustain and idle stops as logged writes ─────────
 
 TEST(K1Native, BeamSustainIsLoggedWrites) {

@@ -226,6 +226,9 @@ struct K1Kernel::Session {
     int64_t walk_no = 0;
     bool in_walk = false, walk_tagged = false;
     std::optional<int64_t> answer;
+    // The session's own walk check (begin_pump / begin_system; empty: the
+    // kernel's).
+    K1WalkCheck check;
 };
 
 static void count_why(K1Kernel::Counts& c, bool pump, K1Why why) {
@@ -1344,8 +1347,9 @@ K1Kernel::~K1Kernel() = default;
 void K1Kernel::clear() { sessions_.clear(); }
 
 void K1Kernel::begin_pump(std::vector<int64_t> ships, double dt, double now,
-                          bool use_memo, double drift_now) {
+                          bool use_memo, double drift_now, K1WalkCheck check) {
     auto s = std::make_unique<Session>();
+    s->check = std::move(check);
     s->pump = true;
     s->ships = std::make_shared<const std::vector<int64_t>>(std::move(ships));
     s->dt = dt;
@@ -1357,8 +1361,10 @@ void K1Kernel::begin_pump(std::vector<int64_t> ships, double dt, double now,
 }
 
 void K1Kernel::begin_system(int64_t system, double dt, double now,
-                            bool use_memo, double drift_now) {
+                            bool use_memo, double drift_now,
+                            K1WalkCheck check) {
     auto s = std::make_unique<Session>();
+    s->check = std::move(check);
     s->pump = false;
     s->sys = system;
     s->dt = dt;
@@ -1382,7 +1388,7 @@ K1Record K1Kernel::next() {
     s.awaiting_answer = false;
     s.has_answer = false;
     try {
-        Walker w(m_, s, counts_, walk_check_);
+        Walker w(m_, s, counts_, s.check ? s.check : walk_check_);
         return w.run();
     } catch (...) {
         k1_roll_back(m_, s, 0);
@@ -1416,6 +1422,11 @@ void K1Kernel::skip_walk() {
     s.st = St::WALK_END;  // Python ran update_weapons; nothing to write
     ++counts_.python_systems;
     count_why(counts_, s.pump, K1Why::InstancePatch);
+}
+
+const K1WalkCheck* K1Kernel::top_walk_check() const {
+    if (sessions_.empty() || !sessions_.back()->check) return nullptr;
+    return &sessions_.back()->check;
 }
 
 bool K1Kernel::answer_pending() const {
