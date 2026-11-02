@@ -658,6 +658,8 @@ target; tractors still post nothing. It lives in `_fire_effect`, so it holds
 with native combat on and off. Pinned by `tests/unit/test_weapon_fired_event.py`
 and `tests/integration/test_weapon_fired_mission_handlers.py`.
 
+
+**Newly live with the fix (not verified in play):** E2M2's and E6M4's broadcast `WeaponFired` handlers also get past their early return now. E6M4 plays a Kessok combat line; E2M2 turns Cardassian ships hostile when they are fired on, as its script intends.
 ---
 
 ## Summary table
