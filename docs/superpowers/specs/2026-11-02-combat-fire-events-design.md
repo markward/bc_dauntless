@@ -96,7 +96,7 @@ Controller, after the last task: records per tick by kind (the §1 table) and tw
 
 ## 10. Outcome
 
-Built 2026-11-02 on `ws/combat-fire-events`; awaiting Mark's live check (after step 2's). Commits: `e6279cf5a` (weapon-fired fix), `4fc567dfb`, `73e2a022a` (queue), `c1535cf8a`, `7e81d8fe9` (K1), `daf46edff`, `89ed019dc` (K0, K2).
+Built 2026-11-02 on `ws/combat-fire-events`; awaiting Mark's live check (after step 2's). Commits: `e6279cf5a` (weapon-fired fix), `4fc567dfb`, `73e2a022a` (queue), `c1535cf8a`, `7e81d8fe9` (K1), `daf46edff`, `89ed019dc` (K0, K2), `4082388e6` (final review: `sim.effects` row, loop stops compared in the differentials, `ET_WEAPON_FIRED` as a `TGObjPtrEvent`, pulse posts only with a bolt).
 
 ### What shipped
 
@@ -116,7 +116,7 @@ Built 2026-11-02 on `ws/combat-fire-events`; awaiting Mark's live check (after s
 
 ### Measured (perf register C-266, C-267, SIG-173)
 
-Records handed back to Python per tick (64 ships): K0 0.087 → 0; K1 0.599 → 0.103 (launches only); K2 0.522 → 0.471 (damage pulses only). Queue: 1.1 entries per tick, none skipped or failed. Benchmark, two runs against two: `cb.phasers` 0.573 → 0.526 ms per tick; `cb.held_weapons`, `sim.weapons`, `sim.combat` within spread; `sim` 8.94 → 9.31, **unexplained**: the end-of-tick flush ran outside every profiled sub-row, and the ~0.06 ms per tick instrumented for the queue was measured headless, where sounds cost nothing (final review I1). A `sim.effects` scope and a third pair of runs settle it.
+Records handed back to Python per tick (64 ships): K0 0.087 → 0; K1 0.599 → 0.103 (launches only); K2 0.522 → 0.471 (damage pulses only). Queue: 1.1 entries per tick, none skipped or failed. Benchmark, two runs against two: `cb.phasers` 0.573 → 0.526 ms per tick; `cb.held_weapons`, `sim.weapons`, `sim.combat` within spread; `sim` 8.94 → 9.31 in that pair. A third pair with the flush profiled as `sim.effects` (C-268/C-269, SIG-174): the delivery costs **0.069 ms per tick** (with audio), against `sim.combat` 1.581 → 1.545 (work moved out of the records), so the rows this branch touches net about **+0.03 ms per tick**; `sim` 8.94 → 9.13. The game loop runs ~0.18 ms higher across the four after-runs; this branch's only code there (the AI-session deferral) accounts for ~0.03, the rest is unattributed. Goal 5 (no slowdown) is therefore met only approximately: a small measured cost of ~0.03 ms per tick, plus an unexplained game-loop rise.
 
 ### Next
 
