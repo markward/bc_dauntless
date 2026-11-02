@@ -85,6 +85,27 @@ def test_torpedo_emits_below_threshold(captured, monkeypatch):
     assert captured["inherit"] == 0                     # released into world space
 
 
+def test_the_recipe_builds_in_the_scope_and_starts_outside_it(monkeypatch):
+    """The SDK recipe draws GetRandomNumber, so it builds inside the
+    presentation scope; Start() runs outside it, so nothing it dispatches
+    inline can draw gameplay from P (presentation RNG final review M5)."""
+    from engine.appc import presentation_rng
+    seen = {}
+
+    def fake_create(*_a):
+        seen["built_in_scope"] = presentation_rng.in_scope()
+        controller = types.SimpleNamespace(SetInheritsVelocity=lambda on: None)
+        return types.SimpleNamespace(
+            GetController=lambda: controller,
+            Start=lambda: seen.__setitem__("started_in_scope",
+                                           presentation_rng.in_scope()))
+
+    monkeypatch.setitem(__import__("sys").modules, "Effects",
+                        types.SimpleNamespace(CreateSmokeHigh=fake_create))
+    hull_hit_smoke._emit_smoke("ship", (0.1, 0.2, 0.3), (0.0, 0.0, 1.0))
+    assert seen == {"built_in_scope": True, "started_in_scope": False}
+
+
 def test_torpedo_silent_at_threshold(captured, monkeypatch):
     _emit([2], "torpedo", monkeypatch)                  # 2 >= 2 -> no emit
     assert "started" not in captured

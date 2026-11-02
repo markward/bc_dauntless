@@ -39,13 +39,17 @@ See engine/appc/visible_damage.py (ADD_DAMAGE_*) for the hole size and wear.
 
 RANDOM STREAMS (presentation RNG, docs/reference/engine/native-combat/rng-map.md
 §7.4). The throes, the blast plan and each blast's damage roll are gameplay and
-draw BC's stream (GetRandomNumber); a damaging blast's point is gameplay too
-(the module random, through GetRandomPointOnModel). Everything else a blast
-does only shows -- its size (Ruling R2), a non-damaging blast's point, the
-fireball's puffs, the sparks, the sound, the final barrage -- and draws the
-presentation generator (engine.appc.presentation_rng), so no cosmetic draw
-ever shifts a gameplay roll. That is why the damage roll comes FIRST in
-`_fire`: BC draws the point before it.
+draw BC's stream (GetRandomNumber). A damaging blast's point is gameplay too
+(the module random, through GetRandomPointOnModel), and so is its size: the
+size scales the hole (visible_damage.hole_scale), and the hole feeds hull
+breakup (hull_breakup.after_wear: part severing, the subsystems inside it,
+collidable debris), so it draws BC's stream right after the damage roll.
+Everything else a blast does only shows -- a non-damaging blast's point and
+size (fireball and light only: it makes no hole), the fireball's puffs, the
+sparks, the sound, the final barrage -- and draws the presentation generator
+(engine.appc.presentation_rng), so no cosmetic draw ever shifts a gameplay
+roll. That is why the damage roll comes FIRST in `_fire`: BC draws the point
+before it.
 """
 import engine.dev_mode as dev_mode
 from engine.appc import presentation_rng
@@ -162,11 +166,12 @@ def roll_duration(ship, rand=None) -> float:
     return life
 
 
-def roll_blast_scale(rand=None) -> float:
-    """One blast's size multiplier from BLAST_SIZE_TIERS, on the presentation
-    generator by default: the size is presentation (Ruling R2), though its
-    visible hole can break parts off a ship that is already dying."""
-    rand = rand or presentation_rng.rand
+def roll_blast_scale(rand) -> float:
+    """One blast's size multiplier from BLAST_SIZE_TIERS: two draws of
+    `rand`, which the caller chooses. A damaging blast's size scales its
+    hole, which feeds hull breakup (part severing, the subsystems inside,
+    collidable debris), so `_fire` passes BC's stream (S1); a blast that only
+    shows passes the presentation generator."""
     pick = rand(1000) / 1000.0
     acc = 0.0
     for p, lo, hi in BLAST_SIZE_TIERS:
@@ -247,6 +252,8 @@ def _fire(state: dict, sound_ok: bool) -> None:
     a non-damaging one's only shows and is drawn from the presentation
     generator, so how many blasts merely show never shifts a gameplay roll.
     A damaging blast's fireball is at its hole: the one point serves both.
+    The size follows the same split (S1 for a damaging blast, after its
+    damage roll; P for one that only shows).
 
     The damage is done BEFORE the VFX deliberately: a missing effect backend
     must never cost the ship its damage. Raise-safe as a whole -- death logic
@@ -263,7 +270,11 @@ def _fire(state: dict, sound_ok: bool) -> None:
                 with presentation_rng.scope():
                     point = ship.GetRandomPointOnModel()
         radius = float(ship.GetRadius())
-        m = roll_blast_scale(presentation_rng.rand)
+        # A damaging blast's size scales its hole, which can sever a part
+        # (hull_breakup: subsystems destroyed, collidable debris), so it is
+        # gameplay and draws S1 right after the damage roll. A blast that
+        # only shows sizes its fireball and light alone: P.
+        m = roll_blast_scale(rand if damaging else presentation_rng.rand)
 
         if damaging:
             from engine.appc import visible_damage
@@ -295,22 +306,25 @@ def _fire_final(state: dict) -> None:
         pSet = ship.GetContainingSet()
         root = pSet.GetEffectRoot() if pSet is not None else None
 
+        count = 2
+        if App.EffectController_GetEffectLevel() >= App.EffectController.MEDIUM:
+            count = 4
+        # The points and the SDK builders draw in the scope; the actions
+        # play outside it, so nothing Play() dispatches inline draws from P.
         with presentation_rng.scope():
             point = ship.GetRandomPointOnModel()
-            Effects.CreateDebrisSparks(1.0, point, 0, root).Play()
-
-            count = 2
-            if App.EffectController_GetEffectLevel() >= App.EffectController.MEDIUM:
-                count = 4
+            actions = [Effects.CreateDebrisSparks(1.0, point, 0, root)]
             for _ in range(count):
-                action = Effects.CreateDebrisExplosion(
-                    radius, BLAST_LIFE, ship.GetRandomPointOnModel(), 1, root)
-                # Same animation speed as every other blast — a finale that
-                # plays at a different frame rate reads as a different
-                # effect. It does get the full puff count: this is the one
-                # that should be big.
-                _tune(action, PUFFS_MAX)
-                action.Play()
+                actions.append(Effects.CreateDebrisExplosion(
+                    radius, BLAST_LIFE, ship.GetRandomPointOnModel(), 1, root))
+        for action in actions[1:]:
+            # Same animation speed as every other blast — a finale that
+            # plays at a different frame rate reads as a different effect.
+            # It does get the full puff count: this is the one that should
+            # be big.
+            _tune(action, PUFFS_MAX)
+        for action in actions:
+            action.Play()
         _light(ship, radius)
         _death_sound(ship)
     except Exception as _e:
@@ -330,8 +344,8 @@ def _debris_explosion(ship, point, size, rand=None) -> None:
     with presentation_rng.scope():
         action = Effects.CreateDebrisExplosion(size, BLAST_LIFE, point, 1,
                                                ship.GetNode())
-        _tune(action, PUFFS_MIN + rand(PUFFS_MAX - PUFFS_MIN + 1))
-        action.Play()
+    _tune(action, PUFFS_MIN + rand(PUFFS_MAX - PUFFS_MIN + 1))
+    action.Play()
 
 
 def _tune(action, puffs: int) -> None:

@@ -35,6 +35,9 @@ GAMEPLAY_FUNCTIONS = {
 }
 
 # The presentation functions of modules that also hold gameplay draws.
+# roll_blast_scale names no stream itself: its caller (_fire) passes S1 for a
+# damaging blast and P for one that only shows, and the cascade's S1 pin
+# (test_death_cascade) checks that choice.
 PRESENTATION_FUNCTIONS = {
     "engine/appc/death_cascade.py": ("roll_blast_scale", "_fire_final",
                                      "_debris_explosion", "_death_sound",

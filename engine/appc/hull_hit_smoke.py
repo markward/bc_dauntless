@@ -123,9 +123,10 @@ def _emit_smoke(ship, body_point, body_normal) -> None:
     """
     import Effects
     fLife = 2.0 + presentation_rng.rand(30) / 10.0
-    # The SDK recipe draws GetRandomNumber too: in the scope, from P.
+    # The SDK recipe draws GetRandomNumber too: in the scope, from P. Start()
+    # runs outside it, so nothing it dispatches inline draws from P.
     with presentation_rng.scope():
         action = Effects.CreateSmokeHigh(
             0.2, fLife, 0.3, ship, body_point, body_normal, ship)
-        action.GetController().SetInheritsVelocity(0)
-        action.Start()
+    action.GetController().SetInheritsVelocity(0)
+    action.Start()
