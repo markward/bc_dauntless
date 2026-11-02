@@ -28,7 +28,7 @@
 2. A tube launch inside the scope: `ET_TORPEDO_FIRED`, `ET_WEAPON_FIRED`, `ET_TORPEDO_AMMO_CONSUMED` delivered in that order, the torpedo object alive at delivery.
 3. A K1 system session started by AI outside the scope (`gl.ai`): its entries are delivered when the session ends, not held to the next tick and not lost.
 4. An exception in one entry's delivery: the rest still delivered; logged in play, re-raised after the flush under tests/`--developer`; the queue empty afterwards.
-5. An abandoned kernel session: the entries it appended are dropped, entries appended before it stay.
+5. An abandoned kernel session: the entries it appended stay and are delivered (ruling F5, which replaced "are dropped" during the build: every queued entry belongs to an effect already applied).
 
 ---
 

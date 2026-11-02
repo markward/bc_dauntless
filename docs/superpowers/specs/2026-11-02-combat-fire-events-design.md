@@ -1,6 +1,6 @@
 # Native combat: weapon events and sounds through the boundary queue — design
 
-**Status:** draft 2026-11-02. Mark: "Agreed with your next step. Spec it, plan it, implement it subagent driven." Step 3 of roadmap workstream G, under decisions 6, 9, 12 and 13 (`2026-11-01-threaded-weapons-combat-roadmap.md` §3) and Mark's rule that the sim must run without checking in with Python.
+**Status:** built 2026-11-02, outcome in §10; awaiting Mark's live check. Mark: "Agreed with your next step. Spec it, plan it, implement it subagent driven." Step 3 of roadmap workstream G, under decisions 6, 9, 12 and 13 (`2026-11-01-threaded-weapons-combat-roadmap.md` §3) and Mark's rule that the sim must run without checking in with Python.
 **Branch:** `ws/combat-fire-events`, off `ws/combat-effect-queue` (`e47215f19`; step 2, awaiting Mark's live check), in worktree `.claude/worktrees/native-combat-k3`. Merges after step 2. No main gate: focused tests, differentials, two benchmark runs.
 **Inputs:** `docs/reference/engine/native-combat/event-inventory.md` (EI §n), `remaining-fallbacks-map.md` §4, `docs/reference/engine/event-emitter-gaps.md` #14 (the `ET_WEAPON_FIRED` bugs, decided "fix both").
 
@@ -96,4 +96,30 @@ Controller, after the last task: records per tick by kind (the §1 table) and tw
 
 ## 10. Outcome
 
-To be written after the build.
+Built 2026-11-02 on `ws/combat-fire-events`; awaiting Mark's live check (after step 2's). Commits: `e6279cf5a` (weapon-fired fix), `4fc567dfb`, `73e2a022a` (queue), `c1535cf8a`, `7e81d8fe9` (K1), `daf46edff`, `89ed019dc` (K0, K2).
+
+### What shipped
+
+- **`ET_WEAPON_FIRED` carries its target** as the object pointer, and pulse weapons post it (event-emitter-gaps #14). Also brings E2M2's and E6M4's `WeaponFired` handlers to life (not verified in play).
+- **The effect queue** (`native/src/host/combat_effect_queue.{h,cc}`, `engine/appc/effect_queue.py`): one ordered queue for the §4.2 kinds from kernels (mirror handles) and Python (object references); the tick scope around `sim.weapons` + `sim.combat`; delivery with decision 13; a session-level deferral for native sessions outside the scope (ruling F3); entries naming a row dropped for an unencodable value are rebound to the object first, so they are still delivered.
+- **Kernels:** K0 returns only `RUN_PYTHON`/`DONE`; K1 only tube/pulse/dumb `FIRE`, `ASK`, `RUN_PYTHON`, handed-back `WALK_START`, `DONE` (plus a documented fallback stop for a gone row); K2 only `CONTACT` (damage pulse), `ASK`, `RUN_PYTHON`, `DONE` (plus documented fallback stops). One shared stop encoding (`stop_firing.h`) for all three.
+
+### Rulings worth keeping
+
+- **E1-E5** as §5.
+- **F1.** `WATCH` covers weapon charge watchers only; shield, condition and battery watchers fire inside the hit path (workstream D).
+- **F3.** A native session that begins while nothing defers opens its own deferral and delivers at its end (nested inside a delivery). Replaces §4.1's "a Python producer acts at once" outside the scope, which broke emission order within one session and could leave a loop playing.
+- **F4.** Tests that relied on a handler acting mid-walk on a queued kind were re-aimed at records that still run Python mid-walk (tube/pulse launches, ASK answers); the K1 handler differential runs with the deferral open in both arms.
+- **F5.** An abandoned session keeps its entries (every entry belongs to an effect already applied); the queue's mark/truncate API was removed.
+- **Override guards.** `StopFiring` joined K1's system patch list; K0 now guards `StopFiring` and `_broadcast_reload` (leaf roles) and a class patch of the watcher's `_update`; an instance patch of one watcher's `_update` is not looked for.
+- **Gameplay consequence (switch on):** handlers of queued events run at the tick boundary, so Episode7's `TorpedoFired` handler's `GetRandomNumber(10)` now draws after the combat step instead of mid-step. Accepted under roadmap decision 9; decision 12 covers presentation draws only.
+
+### Measured (perf register C-266, C-267, SIG-173)
+
+Records handed back to Python per tick (64 ships): K0 0.087 → 0; K1 0.599 → 0.103 (launches only); K2 0.522 → 0.471 (damage pulses only). Queue: 1.1 entries per tick, none skipped or failed. Benchmark, two runs against two: `cb.phasers` 0.573 → 0.526 ms per tick; `cb.held_weapons`, `sim.weapons`, `sim.combat` within spread; `sim` 8.94 → 9.31, attributed to `gl.ai` run-to-run noise (the queue's own cost, instrumented, is ~0.06 ms per tick, and the AI-started K1 sessions cost the same as before). A third pair of runs would settle the `sim` row.
+
+### Next
+
+- Launch-script cache (workstream F): removes K1's last mid-step Python.
+- Move K1's mod-patch walk check to the step boundary (workstream I's known blocker).
+- Native damage (D), with the third random generator (decision 12) and severance without a renderer.
