@@ -5,6 +5,7 @@
 set(HOST_BINDINGS_SOURCES
     host_bindings.cc
     frame_dump.cc
+    combat_write_apply.cc
 )
 
 # Host logic with C++ tests (native/tests/host): the developer gate and the

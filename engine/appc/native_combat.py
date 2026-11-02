@@ -41,6 +41,7 @@ import sys
 import weakref
 from typing import Mapping
 
+from engine.appc import passive_state as _passive_state
 from engine.appc.math import TGPoint3
 from engine.appc.passive_power import FrozenField, ThawParentWakeField
 from engine.appc.passive_state import WakeField
@@ -178,7 +179,10 @@ def reset() -> None:
     # was patched must not outlive the patch).
     _k3_watch.clear()
     _k3_watch_seen[0] = -1
+    global _apply_kinds
+    _apply_kinds = None
     if available():
+        _h.combat_apply_reset_counts()
         _h.combat_k1_reset_counts()
         _h.combat_k2_reset_counts()
         _h.combat_k4_reset_counts()
@@ -219,6 +223,9 @@ def counts() -> dict:
     is decided in the walk -- those three are counted in
     k1_fire_ask_reasons only.
 
+    "c_applied_writes": the K1/K2 log writes the bindings applied
+    themselves (C-applied write logs, _applier_context).
+
     K2 (`cb.phasers`): the kernel's {"k2_records", "k2_python_ships",
     "k2_asks", "k2_python_reasons": {K2Why name: n}, "k2_ask_queries":
     {query: n}, "k2_posed": {"banks", "lock_aims", "manual_aims"},
@@ -255,6 +262,7 @@ def counts() -> dict:
     c.update(_k2_steps)
     c["k2_python_step_reasons"] = dict(_k2_step_reasons)
     if available():
+        c.update(_h.combat_apply_counts())
         c.update(_h.combat_k1_counts())
         c.update(_h.combat_k2_counts())
         k4 = _h.combat_k4_counts()
@@ -2601,9 +2609,10 @@ def now() -> float:
 # native/src/combat/include/dauntless/combat/k1_fire_control.h is the
 # contract. The kernel walks host_loop._pump_held_weapons /
 # WeaponSystem.update_weapons over the mirror and returns ONE record per
-# combat_k1_next(); run_k1 applies the record's write log (the decision-path
-# writes the kernel already made in the mirror) and then does the one thing
-# only Python may do, then asks for the next record.
+# combat_k1_next(); the binding applies the record's write log (the
+# decision-path writes the kernel already made in the mirror; C-applied
+# write logs, below apply_writes) and run_k1 then does the one thing only
+# Python may do, then asks for the next record.
 
 _k1_kind_ids = None
 _ws = None
@@ -2652,7 +2661,8 @@ class _K1Walk:
         `h`. The kernel started it with no record (k1_fire_control.h, THE
         WALK START); the first Python that reaches it calls this -- run_k1
         on the walk's first record, before that record's own Python, and
-        apply_writes on a logged write naming the walk's offset
+        the write apply (the binding's, or apply_writes) on a logged write
+        naming the walk's offset
         (("walk_offset", n, h)), whichever comes first. Once per walk:
         pins the walk (pin_system) and fetches update_weapons' `offset =
         self._live_held_offset()` -- today's walk-start Python, in today's
@@ -2754,6 +2764,7 @@ def _quiet_setter(cls, name) -> tuple:
 
         def setter(obj, value, _name=name):
             obj.__dict__[_name] = value
+        setter._plain_store = True      # _ApplyKinds: the C path's store
     else:
         raise TypeError("combat K1: no quiet write for %s.%s"
                         % (cls.__name__, name))
@@ -2768,6 +2779,13 @@ def apply_writes(writes, walk=None) -> None:
     walk, system) is that walk's own offset object (_K1Walk.materialise:
     the first write naming a walk not yet materialised fetches it). `walk`
     maps handles through its pin set; without one, through the registry.
+
+    THE REFERENCE: the K1/K2 drivers no longer call this -- the bindings
+    apply each record's log themselves through the applier context
+    (_applier_context, native/src/host/combat_write_apply.h), which must
+    equal this function write for write, exceptions included
+    (tests/unit/test_native_write_apply.py). It stays for the tests and for
+    a binding with no context installed.
 
     A RAISE PART-WAY: the kernel has already written every value in the
     log to the mirror, and run_k1's abandon cannot undo a delivered write
@@ -2841,6 +2859,68 @@ def _apply_rest(writes, walk, failed, exc) -> None:
                              "%r" % (value[1], e2))
                 continue
         _apply_write(walk, h, field, value)
+
+
+# ── C-applied write logs (native weapon state, Task 1) ──────────────────────
+#
+# native/src/host/combat_write_apply.h is the contract. The drivers install
+# an applier context for each session (combat_set_applier) and the bindings
+# apply every record's write log themselves, exactly as apply_writes above
+# (kept: the reference, and the path with no context). The apply kinds
+# (combat_apply_kinds):
+APPLY_PLAIN, APPLY_REF, APPLY_REFS, APPLY_WAKE, APPLY_PYTHON, APPLY_SLOT, \
+    APPLY_WATCHER = range(7)
+
+
+class _ApplyKinds(dict):
+    """(class, field) -> apply kind, computed on first ask from the
+    `_quiet_setter` in force when this mapping was made (`source`): its
+    plain store is PLAIN / REF / REFS by its value kind, a WakeField's own
+    __set__ is WAKE (C stores, then passive_state.wake), any other setter
+    PYTHON, kept in `setters` as (setter, value kind) for the binding to
+    call. A lookup that raises (no quiet write) is not cached, as in
+    _quiet_setter."""
+
+    __slots__ = ("source", "setters")
+
+    def __init__(self, source) -> None:
+        super().__init__()
+        self.source = source
+        self.setters = {}
+
+    def __missing__(self, key):
+        cls, name = key
+        setter, vkind = self.source(cls, name)
+        conv = (APPLY_REF if vkind is _REF else
+                APPLY_REFS if vkind is _REFS else APPLY_PLAIN)
+        if getattr(setter, "_plain_store", False):
+            kind = conv
+        elif (conv == APPLY_PLAIN
+              and getattr(setter, "__func__", None) is WakeField.__set__
+              and getattr(setter.__self__, "_name", None) == name):
+            kind = APPLY_WAKE
+        else:
+            kind = APPLY_PYTHON
+            self.setters[key] = (setter, conv)
+        self[key] = kind
+        return kind
+
+
+_apply_kinds = None
+
+
+def _applier_context(walk) -> tuple:
+    """combat_set_applier's context for a session walking with `walk`:
+    (pins, registry, walk, kinds, wake, python_setters). The kinds mapping
+    lives until reset() or until `_quiet_setter` is replaced (a test's
+    tracing wrapper); the binding caches its answers per (type, field)
+    until it is handed another one."""
+    global _apply_kinds
+    kinds = _apply_kinds
+    if kinds is None or kinds.source is not _quiet_setter:
+        kinds = _apply_kinds = _ApplyKinds(_quiet_setter)
+    return (walk.pins, _registry, walk, kinds, _passive_state.wake,
+            kinds.setters)
 
 
 def _k1_decision(bank, decision, walk) -> tuple:
@@ -2933,8 +3013,11 @@ def _k1_answer(rec, walk, dt):
 
 def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
     """Drive the kernel's top session (begun by k1_pump / k1_system) until
-    DONE. Each record: apply its writes, materialise the walk on its first
-    record (_K1Walk.materialise), then act -- the Fire effect, a StopFiring,
+    DONE. Each record: its writes are applied by the binding before it is
+    returned (the session's applier context, _applier_context; the
+    previous context -- an outer session's -- is restored at the end),
+    materialise the walk on its first record (_K1Walk.materialise), then
+    act -- the Fire effect, a StopFiring,
     the FIRE_FAILED post, the dumb fire, a handed-back walk start, a whole
     system in Python, or an ASK answered in Python. `ships` and
     `pump_body(ship, getter_index)` serve a pump's RUN_PYTHON, `system` a
@@ -2947,7 +3030,9 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
     walk = _K1Walk()
     if system is not None:
         walk.pin_system(system)
+    prev = _UNSET
     try:
+        prev = _h.combat_set_applier(_applier_context(walk))
         while True:
             try:
                 rec = _h.combat_k1_next()
@@ -2955,9 +3040,12 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
                 # walk.walked is the system of the last walk Python saw
                 # (materialised): the current walk when it has handed back
                 # a record, which a dropped walked-system row needs (only a
-                # record's Python can drop one), else an earlier walk.
+                # record's Python can drop one), else an earlier walk. A
+                # raise from applying the record's writes is not the
+                # kernel's: it propagates as it is (apply_writes').
                 walked = walk.walked
-                if walked is not None and "_nslot" not in walked.__dict__:
+                if walked is not None and "_nslot" not in walked.__dict__ \
+                        and not _h.combat_apply_raised():
                     # k1_fire_control.h, PROTOCOL INVARIANT: no Python
                     # resume point exists mid-update_weapons.
                     raise RuntimeError(
@@ -2968,9 +3056,6 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
                         % (walked.GetName(),)) from e
                 raise
             kind = rec[0]
-            writes = rec[-1]
-            if writes:
-                apply_writes(writes, walk)
             tag = rec[-2]
             if kind == WALK_START:
                 # A walk start the walk check handed back (an instance
@@ -3025,6 +3110,9 @@ def run_k1(dt, ships=(), pump_body=None, system=None) -> None:
     except BaseException:
         _h.combat_k1_abandon()
         raise
+    finally:
+        if prev is not _UNSET:
+            _h.combat_set_applier(prev)
 
 
 def k1_pump(ships, dt, pump_body) -> None:
@@ -3085,9 +3173,10 @@ def _k1_system_ships(system) -> list:
 #
 # native/src/combat/include/dauntless/combat/k2_beams.h is the contract. The
 # kernel walks host_loop's `cb.phasers` loop (host_loop._phaser_step_ship)
-# over the mirror and returns ONE record per combat_k2_next(); run_k2 applies
-# the record's write log (the `_dwell` writes the kernel already made in the
-# mirror), then does the one thing only Python may do: a StopFiring, a
+# over the mirror and returns ONE record per combat_k2_next(); the binding
+# applies the record's write log (the `_dwell` writes the kernel already
+# made in the mirror; with queued resting contacts, _k2_deliver has it apply
+# them in segments), then run_k2 does the one thing only Python may do: a StopFiring, a
 # contact's effect (host_loop._phaser_contact: beam_contact or apply_hit, the
 # damage arithmetic included), a whole ship or one bank of the loop body, or
 # the answer to a question. After each it re-sends the per-step context the
@@ -3631,34 +3720,37 @@ def _k2_contact(rec, walk, dt, ship_instances) -> None:
     _k2_run_contact(rec[1:15], walk, dt, ship_instances)
 
 
-def _k2_deliver(queued, writes, walk, dt, ship_instances):
+def _k2_deliver(queued, pending, walk, dt, ship_instances) -> None:
     """A record's queued resting contacts (k2_beams.h, RESTING CONTACTS), in
-    walk order, each after the writes logged before it (its `at`), BEFORE
-    the record's own effect. Returns the writes still to apply.
+    walk order, each after the writes logged before it (its `at`), then the
+    rest of the record's writes, BEFORE the record's own effect. The
+    writes are the record's `pending` ones, still in the binding
+    (combat_write_apply.h), applied in segments by combat_apply_writes.
 
     A contact's Python that raises (its presentation: beam_contact,
     world_to_body, hit_vfx.spawn, GetMaxDamage, ...) must not strand the
     rest of the record's writes: the kernel already made them in the mirror
     and dropped their undo when it returned the record, and run_k2's
     abandon only ends the session. So every write still outstanding in
-    this record is applied, in order, through apply_writes, and then the
-    contact's exception is re-raised (if that apply itself raises, its
-    exception propagates with the contact's as its __context__)."""
+    this record is applied, in order, and then the contact's exception is
+    re-raised (if that apply itself raises, its exception propagates with
+    the contact's as its __context__)."""
     done = 0
     for q in queued:
         at = q[0]
         if at > done:
-            apply_writes(writes[done:at], walk)
+            _h.combat_apply_writes(at)
             done = at
         try:
             # A queued contact's shields_block is None when Python
             # answered it.
             _k2_run_contact(q[1:], walk, dt, ship_instances)
         except BaseException:
-            if done < len(writes):
-                apply_writes(writes[done:], walk)
+            if done < pending:
+                _h.combat_apply_writes()
             raise
-    return writes[done:] if done else writes
+    if done < pending:
+        _h.combat_apply_writes()
 
 
 def _k2_run_contact(c, walk, dt, ship_instances) -> None:
@@ -3730,9 +3822,11 @@ def _k2_answer(rec, walk, cx, dt, ship_instances):
 
 
 def run_k2(ships, dt, ship_instances, cx) -> None:
-    """Drive the open K2 session until DONE. Each record: run the resting
-    contacts queued on it and apply its writes, in the kernel's order
-    (_k2_deliver), then act -- a StopFiring, a damage pulse, a whole ship in
+    """Drive the open K2 session until DONE. Each record: its writes are
+    applied by the binding (the session's applier context,
+    _applier_context) -- before it is returned, or, when resting contacts
+    are queued on it, interleaved with them in the kernel's order
+    (_k2_deliver) -- then act -- a StopFiring, a damage pulse, a whole ship in
     Python, or an ASK answered in Python -- then re-send whatever context
     the Python changed (once per record: a resting contact changes none).
     On any exception the session is abandoned (the kernel's mirror still
@@ -3740,15 +3834,15 @@ def run_k2(ships, dt, ship_instances, cx) -> None:
     protocol-invariant RuntimeError (k2_beams.h) included."""
     DONE, SYSTEM_STOP, BANK_STOP, CONTACT, RUN_PYTHON, ASK = _k2_kinds()
     walk = _K2Walk()
+    prev = _UNSET
     try:
+        prev = _h.combat_set_applier(_applier_context(walk))
         while True:
             rec = _h.combat_k2_next()
             kind = rec[0]
-            queued, writes = rec[-2], rec[-1]
+            queued = rec[-2]
             if queued:
-                writes = _k2_deliver(queued, writes, walk, dt, ship_instances)
-            if writes:
-                apply_writes(writes, walk)
+                _k2_deliver(queued, rec[-1], walk, dt, ship_instances)
             if kind == ASK:
                 gen = _part_gen
                 answer = _k2_answer(rec, walk, cx, dt, ship_instances)
@@ -3773,6 +3867,9 @@ def run_k2(ships, dt, ship_instances, cx) -> None:
     except BaseException:
         _h.combat_k2_abandon()
         raise
+    finally:
+        if prev is not _UNSET:
+            _h.combat_set_applier(prev)
 
 
 def _k2_step_fallback(ship_instances):

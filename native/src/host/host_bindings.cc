@@ -10,6 +10,7 @@
 // through the remaining bindings.
 
 #include "host_bindings.h"
+#include "combat_write_apply.h"
 
 #include <algorithm>
 
@@ -3821,6 +3822,29 @@ PyObject* step_scan_ships(PyObject* ships, long long obj_kind, int kind_shift,
     if (!s.representable) Py_DECREF(reason);
     Py_DECREF(sets);
     return result;
+}
+
+// ── C-applied write logs (combat_write_apply.h) ───────────────────────────
+// A K2 record carrying queued resting contacts keeps its writes here until
+// native_combat._k2_deliver applies them in segments (combat_apply_writes):
+// each contact after the writes logged before its `at`, then the rest
+// before the record's own effect. Cleared by combat_k2_end / _abandon.
+struct K2PendingWrites {
+    std::vector<dauntless::combat::K2Write> writes;
+    size_t done = 0;
+};
+
+K2PendingWrites& k2_pending_writes() {
+    static K2PendingWrites p;
+    return p;
+}
+
+// True when the last combat_k1_next raised from applying its record's
+// writes rather than from the kernel (combat_apply_raised): run_k1 reads
+// it before treating a ValueError / RuntimeError as the kernel's.
+bool& k1_apply_raised() {
+    static bool raised = false;
+    return raised;
 }
 
 // ── The K1 walk check (k1_fire_control.h, THE WALK START) ──────────────────
@@ -10617,7 +10641,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
         // ── The K1 fire-control kernel (k1_fire_control.h) ───────────────
         // A stack of resumable sessions over the mirror. Each record is a
         // tuple whose first element is a kind int (combat_k1_kinds) and whose
-        // LAST element is the write log since the previous record: a list of
+        // LAST element is the write log since the previous record: [] when
+        // an applier context is installed (combat_set_applier: the binding
+        // applied it before returning; combat_write_apply.h), else a list of
         // (handle, field name, value). Values: float / bool / int; `_target`
         // an Object handle or -1 (None); `_target_list` a list of handles;
         // `_target_offset` None or ("walk_offset", walk, system) (that walk's
@@ -10675,9 +10701,19 @@ PYBIND11_MODULE(_dauntless_host, m) {
             // the packaged build's log tee (engine/log_tee.py) allocates, so
             // a released GIL could free a row mid-read. A call takes
             // microseconds. tests/unit/test_native_k1_holds_gil.py guards it.
+            k1_apply_raised() = false;
             cb::K1Record r = cb::k1_kernel().next();
             py::list writes;
-            for (const cb::K1Write& w : r.writes) {
+            dauntless::host::WriteApplier& applier =
+                dauntless::host::write_applier();
+            if (applier.has_context()) {
+                // The record's writes applied here, in order, before it is
+                // returned (combat_write_apply.h); `writes` stays [].
+                if (!applier.apply(r.writes, 0, r.writes.size())) {
+                    k1_apply_raised() = true;
+                    throw py::error_already_set();
+                }
+            } else for (const cb::K1Write& w : r.writes) {
                 py::object v = std::visit(
                     [](const auto& x) -> py::object {
                         using T = std::decay_t<decltype(x)>;
@@ -10859,7 +10895,10 @@ PYBIND11_MODULE(_dauntless_host, m) {
         // One resumable session over the mirror: the `cb.phasers` loop. Each
         // record is a tuple whose first element is a kind int
         // (combat_k2_kinds) and whose LAST element is the write log since the
-        // previous record: a list of (handle, "_dwell", float). Layouts
+        // previous record: with an applier context, [] (applied) or, when
+        // resting contacts are queued, the count of writes pending
+        // (combat_apply_writes); else a list of (handle, "_dwell", float).
+        // Layouts
         // (handles -1 = None, xyz = a 3-tuple):
         //   (DONE, writes)
         //   (SYSTEM_STOP, system, writes)
@@ -10977,11 +11016,33 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_k2_next", [vec] {
             // The GIL is HELD for the walk (ruling J), as combat_k1_next:
             // the kernel and the trace hooks touch no Python object.
+            K2PendingWrites& pending = k2_pending_writes();
+            if (pending.done < pending.writes.size())
+                throw std::runtime_error(
+                    "combat K2: the previous record's writes are not all "
+                    "applied (combat_apply_writes)");
+            pending.writes.clear();
+            pending.done = 0;
             cb::K2Record r = cb::k2_kernel().next();
-            // The write log: K1's value encoding (None, bool, int, float, a
-            // handle list) -- native_combat.apply_writes applies both.
-            py::list writes;
-            for (const cb::K2Write& w : r.writes) {
+            // The write log. With an applier context (combat_write_apply.h)
+            // a record with no queued resting contact has its writes applied
+            // here and carries []; one with queued contacts keeps them
+            // pending (combat_apply_writes) and carries their count. With
+            // none, K1's value encoding (None, bool, int, float, a handle
+            // list) -- native_combat.apply_writes applies both.
+            py::list log;
+            py::object writes = log;
+            dauntless::host::WriteApplier& applier =
+                dauntless::host::write_applier();
+            if (applier.has_context()) {
+                if (r.contacts.empty()) {
+                    if (!applier.apply(r.writes, 0, r.writes.size()))
+                        throw py::error_already_set();
+                } else {
+                    pending.writes = std::move(r.writes);
+                    writes = py::int_(pending.writes.size());
+                }
+            } else for (const cb::K2Write& w : r.writes) {
                 py::object v = std::visit(
                     [](const auto& x) -> py::object {
                         using T = std::decay_t<decltype(x)>;
@@ -10994,7 +11055,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                             return py::cast(x);
                     },
                     w.value);
-                writes.append(py::make_tuple(w.handle, w.field, v));
+                log.append(py::make_tuple(w.handle, w.field, v));
             }
             const int kind = static_cast<int>(r.kind);
             auto opt = [&vec](const std::optional<cb::Vec3>& v) -> py::object {
@@ -11114,9 +11175,17 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "ASK's reply, shaped per query (k2_beams.h): a bool; "
               "aim_point ((x, y, z), has_sub); bubble (x, y, z) or None; "
               "resolve_hit ((x, y, z), normal or None, tier); bank_step None.");
-        m.def("combat_k2_end", [] { cb::k2_kernel().end(); },
+        m.def("combat_k2_end",
+              [] {
+                  k2_pending_writes() = K2PendingWrites{};
+                  cb::k2_kernel().end();
+              },
               "End the session (it must have returned DONE).");
-        m.def("combat_k2_abandon", [] { cb::k2_kernel().abandon(); },
+        m.def("combat_k2_abandon",
+              [] {
+                  k2_pending_writes() = K2PendingWrites{};
+                  cb::k2_kernel().abandon();
+              },
               "End the session whatever its state (exception path).");
         m.def("combat_k2_open", [] { return cb::k2_kernel().open(); });
         m.def("combat_k2_counts", [] {
@@ -11146,6 +11215,67 @@ PYBIND11_MODULE(_dauntless_host, m) {
         });
         m.def("combat_k2_reset_counts",
               [] { cb::k2_kernel().reset_counts(); });
+
+        // ── C-applied write logs (combat_write_apply.h) ──────────────────
+        m.def("combat_apply_kinds", [] {
+            py::dict d;
+            for (int i = 0;
+                 i < static_cast<int>(dauntless::host::ApplyKind::kCount); ++i)
+                d[dauntless::host::apply_kind_name(
+                    static_cast<dauntless::host::ApplyKind>(i))] = i;
+            return d;
+        });
+        m.def("combat_set_applier",
+              [](py::handle ctx) {
+                  PyObject* prev =
+                      dauntless::host::write_applier().set_context(ctx.ptr());
+                  if (prev == nullptr) throw py::error_already_set();
+                  return py::reinterpret_steal<py::object>(prev);
+              },
+              py::arg("ctx"),
+              "Install the applier context (pins, registry, walk, kinds, "
+              "wake, python_setters), or None; returns the previous one "
+              "(the driver restores it when its session ends).");
+        m.def("combat_apply_writes",
+              [](std::optional<std::int64_t> upto) {
+                  K2PendingWrites& pending = k2_pending_writes();
+                  const auto n = static_cast<std::int64_t>(
+                      pending.writes.size());
+                  const size_t to = static_cast<size_t>(
+                      upto ? std::clamp<std::int64_t>(*upto, 0, n) : n);
+                  if (to <= pending.done) return;
+                  const size_t from = pending.done;
+                  // Consumed even if a write raises: apply_writes(writes[
+                  // done:at]) applies the rest of its slice, then raises.
+                  pending.done = to;
+                  if (!dauntless::host::write_applier().apply(
+                          pending.writes, from, to))
+                      throw py::error_already_set();
+              },
+              py::arg("upto") = py::none(),
+              "Apply the pending K2 record's writes up to index `upto` (all "
+              "when None) that are not applied yet.");
+        m.def("combat_apply_log",
+              [](py::handle writes) {
+                  std::vector<dauntless::host::ApplyWrite> w;
+                  if (!dauntless::host::WriteApplier::parse_log(writes.ptr(),
+                                                                &w) ||
+                      !dauntless::host::write_applier().apply(w, 0, w.size()))
+                      throw py::error_already_set();
+              },
+              py::arg("writes"),
+              "Apply a Python-encoded write log [(handle, field, value), "
+              "...] through the C path (values as apply_writes', plus "
+              "(\"slot\", index, value) and (\"watcher\", value)).");
+        m.def("combat_apply_raised", [] { return k1_apply_raised(); },
+              "Whether the last combat_k1_next raised applying its writes.");
+        m.def("combat_apply_counts", [] {
+            py::dict d;
+            d["c_applied_writes"] = dauntless::host::write_applier().applied();
+            return d;
+        });
+        m.def("combat_apply_reset_counts",
+              [] { dauntless::host::write_applier().reset_counts(); });
 
         // ── The K3 torpedo kernel (k3_projectiles.h) ─────────────────────
         // One resumable session over the torpedo table and the step scan:
