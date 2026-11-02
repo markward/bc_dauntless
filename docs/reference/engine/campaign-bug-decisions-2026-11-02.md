@@ -6,6 +6,7 @@ Bugs found by the combat event inventory (`docs/reference/engine/native-combat/e
 |---|---|---|---|
 | 1 | `ET_WEAPON_FIRED` has no target pointer; pulse weapons never post it | Fix both | Decided; recorded in `event-emitter-gaps.md` #14 |
 | 2 | `SetConditionPercentage` is a no-op on every subsystem | Implement; post the same events as weapon damage | Decided |
+| 3 | E3M1: an invincible player takes no collision damage | Collision damage becomes the default effect at the end of each ship's `ET_OBJECT_COLLISION` handler chain | Decided |
 
 ## 2. `SetConditionPercentage` is a no-op on every subsystem
 
@@ -16,3 +17,11 @@ Bugs found by the combat event inventory (`docs/reference/engine/native-combat/e
 **Decision (Mark):** implement `SetConditionPercentage` on every subsystem: condition = fraction × max condition, through the same path as any other condition change, so a script-set condition **posts the same events as weapon damage** (subsystem destroyed/disabled/operational) and updates the subsystem's state the same way. Then a headless pass over the 15 missions checks each scripted effect lands.
 
 **Interaction:** these calls run inside mission handlers, so once real they change ship state mid-dispatch (event-inventory rule R6). Roadmap decision 9 covers the queued case: the change lands the next tick.
+
+## 3. E3M1: an invincible player takes no collision damage
+
+**Broken:** E3M1 keeps the player invincible except to collisions. `PlayerCollisionHandler` (`Maelstrom/Episode3/E3M1/E3M1.py:843-853`) turns invincibility off, calls `CallNextHandler`, then turns it back on unless the player is dying; its header comment says this is to "apply the damage immediately". So BC applies collision damage as the chain's default, inside `CallNextHandler`. We post the collision events, let every handler run, then apply the impact damage (`engine/appc/collisions.py` `_respond_pair`), by which time invincibility is back on and the damage is skipped (`combat.apply_hit`'s immunity gate).
+
+**Decision (Mark):** collision impact damage becomes the default effect at the end of each ship's `ET_OBJECT_COLLISION` handler chain (the same shape as `ET_ENVIRONMENT_DAMAGE`'s drain, which applies only when the chain passes).
+
+**Consequences:** a handler that does not pass the event on cancels that ship's collision damage, so `ET_OBJECT_COLLISION` becomes a GATE event (event-inventory classes). E1M2 is unchanged in order: `ET_PLANET_COLLISION` is still posted first, and E1M2's `ObjectCollision` handler still runs before the damage (and so before any `ET_OBJECT_EXPLODING`); `test_moving_asteroid_hitting_haven_counts` and the Facility test beside it must stay green. Fits roadmap decision 10: when collisions move into the sim tick and later native, the event and its damage stay one unit.
