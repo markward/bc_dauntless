@@ -266,7 +266,7 @@ Tests that touch the logged fields directly: **45 files**. Charge/reload fields:
 | `apply_writes(writes, walk)` | in order; on a raise, applies the rest (`_apply_rest`) and re-raises | NC:2764-2810, 2826-2843 |
 | `_apply_write` | `walk.obj(h)` (pins dict, else `_registry` WeakValueDictionary, checked `_nslot == h`); `_quiet_setter(type(obj), field)` (cached per (cls, name)); a ref → object; a ref list → a NEW list of objects; the walk-offset marker → `walk.materialise` (calls `_live_held_offset()` once per walk) | NC:2813-2823, 2635-2722, 2727-2761 |
 | Quiet setter | NativeField/ref/plain: `obj.__dict__[name] = value`. NativeWrapped: the passive base's `__set__` (WakeField or ThawParentWakeField), so wake and thaw still happen. NativeSlotMap is refused. | NC:2727-2761 |
-| Callers | `run_k1` per record (NC:2984-2986); K2 `_k2_deliver` / `run_k2` | NC:2934-3027, 3634-3776 |
+| Callers | `run_k1` per record (NC:2984-2986); K2 `run_k2` (`_k2_deliver` until the presentation queue, 2026-11-02) | NC:2934-3027, 3634-3776 |
 
 ### 4.3 Handles and registry
 

@@ -735,6 +735,8 @@ Copy K1's resumable session. `combat_k2_begin(ships, dt, use_memo, player, view_
 - `BANK_STOP(bank)`: Python calls `bank.StopFiring()`. For an arc failure it is followed by the same bank's `CONTACT` (the partial pulse).
 > *Round trips (2026-11-01, spec `2026-11-01-native-combat-round-trips-design.md` §10):* every K2 record now ends `(..., queued, writes)`. On the record path `CONTACT` is a **damage pulse** only: a resting contact (`flush_dwell <= 0`) is queued, in walk order, onto the next record that runs Python (or DONE), and the driver runs it before that record's effect. `SYSTEM_STOP` is emitted only when a bank is firing (below, risk 11).
 
+> *Presentation queue (2026-11-02, spec `2026-11-02-combat-effect-queue-design.md` §10):* records end `(..., writes)` again. A resting contact goes to a per-session native queue and is presented after `DONE` (`combat_k2_drain`): natively when the target is shielded and its instance and view offset are known, else in one Python batch (`_k2_present_batch`).
+
 - `CONTACT(bank, target, ship, impact_xyz, normal_xyz|None, impact_tier, bubble_xyz|None, shields_block, dist, flush_dwell, writes)`:
   - Python does `beam_contact` (with `flush <= 0`) or `apply_hit` (with `damage > 0`), using the record.
   - It must rebuild the exact objects:

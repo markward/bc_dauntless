@@ -29,23 +29,24 @@ The two halves run **pipelined, one tick apart**: AI reviews last tick's combat 
 | Posed parts (C) | `ws/combat-posed-parts` | posed ships/targets and Manual Aim on them, in K1/K2/K3 | built 2026-11-01, differentials green, live-verified by Mark 2026-11-01; merged into `project/combat_threading` |
 | Round trips (C) | `ws/combat-round-trips` | walk starts, beam sustains, idle bank stops, offline system stops as native/logged writes; resting contacts batched; K3 steer attribution | built 2026-11-01, live-verified by Mark 2026-11-02; merged into `project/combat_threading` (`547de0cce`) |
 | Weapon state | `ws/combat-weapon-state` | charging and reloading (K0); K0/K1/K2 write logs applied in C; one-call scalar mirror push | built 2026-11-02, live-verified by Mark 2026-11-02 (87-ship battle, ~8 fps); merged (`ea4e59503`) |
+| Event inventory + presentation queue (G, steps 1-2) | `ws/combat-effect-queue` | resting beam contacts leave the K2 walk: queued natively, shield splashes presented in C++ after `DONE`; inventory of every combat event (`event-inventory.md`) | built 2026-11-02; awaiting Mark's live check |
 
 All are behind `DAUNTLESS_NATIVE_COMBAT=1`, default OFF, unmerged.
 
-Measured, 64-ship fight, switch on, milliseconds per game tick, average of two runs each (perf register SIG-158, SIG-162, SIG-164, SIG-166, SIG-170; the posed-parts column is the round-trips baseline, C-250/C-251; the round-trips column is the weapon-state baseline, C-252/C-253; — = not scored):
+Measured, 64-ship fight, switch on, milliseconds per game tick, average of two runs each (perf register SIG-158, SIG-162, SIG-164, SIG-166, SIG-170, SIG-172; the posed-parts column is the round-trips baseline, C-250/C-251; the round-trips column is the weapon-state baseline, C-252/C-253; — = not scored):
 
-| Row | 1b | K2 | K3+K4 | Posed parts | Round trips | Weapon state |
-|---|---|---|---|---|---|---|
-| charging/reloading (`sim.weapons`) | — | — | — | — | 0.60 | 0.25 |
-| fire control (`cb.held_weapons`) | 1.30 | 1.32 | 1.40 | 1.34 | 1.00 | 0.66 |
-| phasers | 1.77 | 0.74 | 0.77 | 0.75 | 0.74 | 0.73 |
-| torpedoes | 0.92 | 0.83 | 0.17 | 0.13 | 0.15 | 0.16 |
-| eligibility | 0.29 | 0.28 | 0.04 | 0.05 | 0.05 | — |
-| **combat step** (`sim.combat`) | **4.47** | **3.33** | **2.45** | **2.48** | **2.11** | **1.76** |
-| AI (`gl.ai`) | 3.25 | 3.27 | 3.23 | 3.41 | 3.33 | 3.31 |
-| **whole sim** | **11.86** | **10.57** | **9.99** | **10.16** | **9.80** | **9.12** |
+| Row | 1b | K2 | K3+K4 | Posed parts | Round trips | Weapon state | Presentation queue |
+|---|---|---|---|---|---|---|---|
+| charging/reloading (`sim.weapons`) | — | — | — | — | 0.60 | 0.25 | 0.26 |
+| fire control (`cb.held_weapons`) | 1.30 | 1.32 | 1.40 | 1.34 | 1.00 | 0.66 | 0.69 |
+| phasers | 1.77 | 0.74 | 0.77 | 0.75 | 0.74 | 0.73 | 0.57 |
+| torpedoes | 0.92 | 0.83 | 0.17 | 0.13 | 0.15 | 0.16 | 0.15 |
+| eligibility | 0.29 | 0.28 | 0.04 | 0.05 | 0.05 | — | 0.05 |
+| **combat step** (`sim.combat`) | **4.47** | **3.33** | **2.45** | **2.48** | **2.11** | **1.76** | **1.58** |
+| AI (`gl.ai`) | 3.25 | 3.27 | 3.23 | 3.41 | 3.33 | 3.31 | 3.17 |
+| **whole sim** | **11.86** | **10.57** | **9.99** | **10.16** | **9.80** | **9.12** | **8.94** |
 
-Combat is down 61% since 1b, but the programme's 1 ms target is not met. Phasers (0.73) are now the largest combat cost, just ahead of fire control (0.66). AI is now larger than combat. Round trips saved ~0.37 ms per tick against ~1 ms inferred: resting beam contacts kept their Python presentation, so phasers did not move (spec `2026-11-01-native-combat-round-trips-design.md` §10). Weapon state saved ~0.68 ms per tick of `sim` against ~1 ms expected: charging/reloading −59%, fire control −34%, phasers flat again (K2's write path was not reworked; spec `2026-11-02-native-weapon-state-design.md` §10).
+Combat is down 61% since 1b, but the programme's 1 ms target is not met. Phasers (0.73) are now the largest combat cost, just ahead of fire control (0.66). AI is now larger than combat. Round trips saved ~0.37 ms per tick against ~1 ms inferred: resting beam contacts kept their Python presentation, so phasers did not move (spec `2026-11-01-native-combat-round-trips-design.md` §10). Weapon state saved ~0.68 ms per tick of `sim` against ~1 ms expected: charging/reloading −59%, fire control −34%, phasers flat again (K2's write path was not reworked; spec `2026-11-02-native-weapon-state-design.md` §10). The presentation queue took phasers from 0.73 to 0.57 and the combat step to 1.58 (spec `2026-11-02-combat-effect-queue-design.md` §10); fire control (0.69) is now the largest combat cost.
 
 ## 3. Decisions taken
 
@@ -68,9 +69,9 @@ Combat is down 61% since 1b, but the programme's 1 ms target is not met. Phasers
 - **D. Move damage application to C++** (`apply_hit`: shield absorption, hull, subsystem damage), reading the invincible/hurtable/cutscene flags. Mapped 2026-11-02 (`docs/reference/engine/native-combat/damage-map.md`) and deferred on measurement: it would save at most ~0.3 ms per tick (perf register SIG-168), and it is a synchronous chain of events, the death cascade and a shared random-number stream.
 - **E. Retire the Python copies, one kernel at a time, fire control first.** Switch default ON, a play period with it on, delete the Python decision code, replace Python-vs-native differentials with recorded golden fights. First check whether anything must still run without the native module (some test setups).
 - **F. Launch-script cache** (decision 5).
-- **G. Event queue design.** Inventory every weapon/combat event: which only *report*, which *gate* an outcome (§5.1), which handlers read state that may already have changed; fix ordering rules (§5.2).
+- **G. Event queue design.** Inventory every weapon/combat event: which only *report*, which *gate* an outcome (§5.1), which handlers read state that may already have changed; fix ordering rules (§5.2). **Steps 1-2 done 2026-11-02** (branch `ws/combat-effect-queue`): the inventory is `docs/reference/engine/native-combat/event-inventory.md` (1 GATE, 6 ORDER-SENSITIVE, 17 REPORT, 3 with no consumer; its §5 lists the ordering rules step 3 must keep, and §7 four findings outside them); the first boundary queue carries presentation only (K2 resting contacts, spec `2026-11-02-combat-effect-queue-design.md`). Step 3 (queueing events and damage) waits for Mark's decisions on the campaign special cases.
 - **H. Cutscene damage rule** (decision 7), with the headless 26-mission campaign sweep plus Mark's playthrough of cutscene-heavy missions.
-- **I. Native combat off the lock.** A kernel with no remaining Python questions becomes data-in/data-out and can release the lock. Then split per-ship work across cores with a fixed-order merge (care: sensor memo/latch, random numbers). **Blocker found by round trips:** K1's walk check (the instance-patch and ship-class guard) makes CPython lookups inside the kernel's `next()`, so K1 needs the lock while it is installed; it is scaffolding and goes with the Python copies (E), or moves to the step boundary. Next levers: K2 resting-contact presentation in C++ (level ii) and K1's pump `STOP_SYSTEM` as logged writes; K1/K2 write logs still move a vector per record (give them K0's reused log storage, weapon-state spec §10); K1's override guard still has the `super()` blind spot K0's guard had (an MRO-first compare misses a patched base method reached through `super()`; parked for Mark).
+- **I. Native combat off the lock.** A kernel with no remaining Python questions becomes data-in/data-out and can release the lock. Then split per-ship work across cores with a fixed-order merge (care: sensor memo/latch, random numbers). **Blocker found by round trips:** K1's walk check (the instance-patch and ship-class guard) makes CPython lookups inside the kernel's `next()`, so K1 needs the lock while it is installed; it is scaffolding and goes with the Python copies (E), or moves to the step boundary. K2 resting-contact presentation left the walk (presentation queue, 2026-11-02), so K2's remaining mid-walk Python is damage pulses (D), firing stops (loop sound), ASKs and whole-ship fallbacks. Next levers: K1's pump `STOP_SYSTEM` as logged writes; K1/K2 write logs still move a vector per record (give them K0's reused log storage, weapon-state spec §10); K1's override guard still has the `super()` blind spot K0's guard had (an MRO-first compare misses a patched base method reached through `super()`; parked for Mark).
 - **J. Pipelined AI ↔ combat** (decision 4): snapshot for AI, outbox for orders, event list up.
 - **K. Render/sim overlap — investigate.** Possibly the biggest single lever: draw the last finished tick while the sim runs the next. The renderer already draws from snapshotted, smoothed transforms; unknown: how much per-frame draw setup Python builds, and where the GL context lives (macOS window/GL threading rules).
 - **L. AI to C++ — Mark's plan, to be discussed.** AI is partly SDK Python in BC (AI trees, conditions, fire scripts), so the line between engine and SDK has to be drawn carefully here.

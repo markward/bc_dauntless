@@ -1,6 +1,6 @@
 # Native combat: event inventory and the presentation queue — design
 
-**Status:** draft 2026-11-02. Mark asked for steps 1 and 2 of the boundary-queue work ("spec it, plan it, implement it subagent driven"); he live-tests before any merge. Campaign special cases (roadmap §5.1, §5.2) are discussed with Mark after this phase, not decided here.
+**Status:** built 2026-11-02, outcome in §10; awaiting Mark's live check. Mark asked for steps 1 and 2 of the boundary-queue work ("spec it, plan it, implement it subagent driven"); he live-tests before any merge. Campaign special cases (roadmap §5.1, §5.2) are discussed with Mark after this phase, not decided here.
 **Branch:** `ws/combat-effect-queue`, off `project/combat_threading` (`245ddc618`), in worktree `.claude/worktrees/native-combat-damage`. Merges into `project/combat_threading` after Mark's live check. No main gate: focused tests, differentials, two benchmark runs.
 **Roadmap:** `2026-11-01-threaded-weapons-combat-roadmap.md` workstream G (event queue), decision 6 (events queued and delivered in order at the tick boundary). Input maps: `docs/reference/engine/native-combat/remaining-fallbacks-map.md` §4 (RFM), `damage-map.md`, `k2-beams-map.md`.
 
@@ -112,4 +112,29 @@ Controller, after the last task: two runs of the headless 64-ship benchmark (`be
 
 ## 10. Outcome
 
-To be written after the build.
+Built 2026-11-02 on `ws/combat-effect-queue`; awaiting Mark's live check. Commits: `0d0f6db13`, `fc1379366` (inventory, order pin), `b4664cc9e`, `e4d675a2b` (queue, Python drain), `005d01d45`, `331e96a5d` (native shield splash).
+
+### What shipped
+
+- **Inventory** (`docs/reference/engine/native-combat/event-inventory.md`): 1 GATE (`ET_ENVIRONMENT_DAMAGE`), 6 ORDER-SENSITIVE, 17 REPORT, 3 with no reachable consumer; `ET_OBJECT_CONVERTED_TO_HULK` and `ET_SHIELDS_SET_STATE` are never posted. §5 lists the ordering rules step 3 must keep, §6 the tests that pin them, §7 four findings outside the ordering rules (E3M1's invincible player takes no collision damage; `SetConditionPercentage` is a stub on every subsystem, so several scripted kills are no-ops; part severance runs only with a renderer; collisions run once per frame after all sim ticks, so "the tick boundary" is not one point).
+- **Order pins:** the E1M2 lethal-impact rule was already pinned (`test_e1m2_rocks.py::test_moving_asteroid_hitting_haven_counts`, mutation-proved). New: `tests/unit/test_killing_hit_event_order.py` pins today's order on a killing hit (`ET_OBJECT_EXPLODING` before that hit's `ET_WEAPON_HIT`, the firer as killer).
+- **Queue:** `K2Rest` (contact, `level`, `iid`, `view_offset`, `view_known`), `take_rests()`, `combat_k2_drain()`. Records end `(..., writes)`; the pending-segment path and `combat_apply_writes` are gone.
+- **Drain:** shielded entries with a known instance and view offset are presented in C++ through the helper the `shield_hit` binding now shares; the rest go to `_k2_present_batch`. Capture hook `combat_present_capture` for tests. Counters `k2_present_native`, `k2_present_python`, `k2_present_gone`. In the K2 host differential: native 3,258 / Python 1,230 (one tick per frame), 4,392 / 99 (four), none gone.
+
+### Rulings worth keeping
+
+- **Q1-Q4** as §5.
+- **Q5. Presentation functions are not watched.** `hit_feedback.beam_contact`, `hit_feedback._mesh_xyz`, `host_io.shield_hit` and `combat.weapon_splash_radius` are not in K2's stand-in guard: presentation internals are not a mod surface (roadmap decision 2), and the differentials spy them (they compare through the capture hook). A patch of them is not obeyed for a natively drawn splash. `frames.view_offset`/`shifted`/`containing_set` stay watched.
+- **`GetPowerLevel` joins K2's guard.** Carrying the mirror's `_power_level` made K2 stand in for it; an override sends the ship to Python.
+- **Freed or unregistered objects** at the drain are skipped and counted (`k2_present_gone`), not raised: presentation only.
+- **A raising `GetDamageRadiusFactor`** sends the entry to the Python batch (the call runs again there); `KeyboardInterrupt`/`SystemExit` propagate.
+- Parked: a `bad_alloc` while `next()` backs up the session loses that step's queued rests (allocation failure only).
+
+### Measured (perf register C-264, C-265, SIG-172)
+
+Before the build, instrumented: resting contacts 18.2 per tick at 9.27 µs, 0.169 ms of K2's 0.718; 99.7% shielded. After, two runs against two (64 ships, switch on, Debug), per tick: `cb.phasers` **0.733 → 0.573** (−22%), `sim.combat` **1.761 → 1.581** (−10%), `sim` 9.12 → 8.94. Goal 5 (−0.12 ms) met. Fire control (0.69) is now the largest combat cost.
+
+### Next
+
+- Mark: the campaign special cases (roadmap §5.1-5.2, inventory §5 and §7) before step 3 queues any event.
+- The inventory's step-3 preconditions: one sequence across sources; collisions are per frame, not per tick; the E1M2 test must call the queue's flush once one exists.

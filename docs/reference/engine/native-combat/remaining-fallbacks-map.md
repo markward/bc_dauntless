@@ -22,6 +22,8 @@ The first three are 98-100% of their record kind (§2.3) and are pure data or pr
 
 **Done (round trips, 2026-11-01): none of the five rows above, nor K3's `unattributed`, comes back as a record of its own any more.** Walk starts are native, beam sustains and idle bank stops are logged writes, resting contacts ride the next record in a queue (their Python presentation still runs), and offline system stops are logged writes. Records fell 84-87% in the K1 differential and 85% in the K2 host differential. Measured, 64 ships, Debug: fire control 1.335 → 1.000 ms per tick (−25%), phasers flat (0.749 → 0.737), combat step 2.483 → 2.111 (−15%). That is ~0.37 ms per tick saved, against the ~1 ms inferred here (round-trips spec §10, SIG-166).
 
+**Presentation queue (2026-11-02):** resting contacts no longer run Python mid-walk at all: they are queued natively and presented after the K2 step's `DONE`, 99.7% of them in C++ (shield splashes). `cb.phasers` 0.733 → 0.573 ms per tick (perf register SIG-172; spec `2026-11-02-combat-effect-queue-design.md` §10).
+
 The SDK-contract records (sound, `ET_*` events, projectile spawn, damage) come to about **1.1 per tick** in this fight (§4).
 
 ---
