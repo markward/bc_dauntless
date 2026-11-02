@@ -455,7 +455,7 @@ def test_protected_killed_by_player_fire_is_a_loss(world):
     phasers destroying a protected ship must still lose -- through the real
     damage path and death sequence, not a hand-made event."""
     hl, _c, panel, QB = world
-    from engine.appc import combat, ship_death
+    from engine.appc import combat, death_check, ship_death
     from engine.appc.math import TGPoint3
     from engine.quickbattle import battle_end
     name = _km(panel)
@@ -466,6 +466,7 @@ def test_protected_killed_by_player_fire_is_a_loss(world):
             break
         combat.apply_hit(target, damage=5000.0, hit_point=TGPoint3(0.0, 1.0, 0.0),
                          source=player, weapon_type="phaser")
+        death_check.drain()             # the tick boundary (ruling M5)
     assert ship_death._out_of_action(target)
     assert battle_end.state().ended is False               # still in its throes
     ship_death.advance(ship_death.MAX_THROES_DURATION + 0.5)

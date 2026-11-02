@@ -192,6 +192,8 @@ def test_asteroid_killed_against_haven_does_not_cascade():
             if strikes:
                 break
         assert strikes, "the asteroid never reached Haven"
+        from engine.appc import death_check
+        death_check.drain()             # the death check's boundary (M5)
         assert rock.IsDying() or rock.IsDead()
         seen = set()
         for _ in range(120):            # 2 s after it
@@ -314,6 +316,8 @@ def test_largest_asteroid_breaks_into_one_target_small_rocks_and_debris():
     assert target.IsTargetable()
     minors._pending_free.clear()
     target.DamageSystem(target.GetHull(), 1e9)
+    from engine.appc import death_check
+    death_check.drain()                 # the death check's boundary (M5)
     remnant_name = name + " - Remnant"
     remnant = next((x for x in iter_rocks() if x.GetName() == remnant_name),
                    None)

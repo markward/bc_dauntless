@@ -1129,11 +1129,12 @@ def _kill(s, killer=None):
     """`s` takes a fatal hit through the real combat path (from `killer`, if
     any) and its death throes run out: ShipClass.SetDead fires ship_lifecycle
     "destroyed"."""
-    from engine.appc import combat, ship_death
+    from engine.appc import combat, death_check, ship_death
     ship = s.ship
     if killer is not None:
         combat.apply_hit(ship, 1.0e6, ship.GetWorldLocation(), killer,
                          weapon_type="phaser")
+        death_check.drain()             # the tick boundary (ruling M5)
     else:
         ship_death.begin(ship)
     assert ship.IsDying() or ship.IsDead()
@@ -1401,9 +1402,10 @@ def test_a_stale_killer_never_carries_into_the_next_life(world):
     _sim(DT)
     s = ss.roster()[0]
     qb.StartSimulation2()
-    from engine.appc import combat
+    from engine.appc import combat, death_check
     combat.apply_hit(s.ship, 1.0e6, s.ship.GetWorldLocation(), world,
                      weapon_type="phaser")
+    death_check.drain()                 # the tick boundary (ruling M5)
     assert s.ship.IsDying() and s.killer == "player"
     qb.EndSimulation()
     assert s.phase is ss.Phase.DOCKED and s.ship is None

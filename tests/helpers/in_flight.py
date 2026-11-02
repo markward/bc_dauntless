@@ -11,6 +11,9 @@ IN_FLIGHT = (
     ("engine.appc.projectiles", "_active"),
     ("engine.appc.hit_vfx", "_active"),
     ("engine.appc.ship_death", "_active"),
+    # Condition writes awaiting the boundary death check: left pending, a
+    # ship zeroed in one test (or arm) would begin dying in the next.
+    ("engine.appc.death_check", "_pending"),
     # A hull-0 ship's pending subsystem cascade: left queued, it destroys
     # the dead arm's ship's subsystems in the next arm (or test), posting
     # ET_SUBSYSTEM_DESTROYED there.

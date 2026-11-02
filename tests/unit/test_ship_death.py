@@ -2,7 +2,7 @@
 """Unit tests for the ship death sequence (engine/appc/ship_death.py)."""
 import pytest
 
-from engine.appc import death_cascade, ship_death
+from engine.appc import death_cascade, death_check, ship_death
 
 
 class FakeSet:
@@ -236,6 +236,7 @@ class FakeDamageable(DamageableObject):
 def test_damaging_critical_subsystem_to_zero_triggers_death():
     obj = FakeDamageable()
     obj.DamageSystem(obj.GetHull(), 100.0)  # hull is critical
+    death_check.drain()                      # the tick boundary (ruling M5)
     assert obj.IsDying() == 1
 
 
@@ -243,6 +244,7 @@ def test_damaging_noncritical_subsystem_to_zero_does_not_trigger_death():
     obj = FakeDamageable()
     sensors = FakeSub(critical=0)
     obj.DamageSystem(sensors, 100.0)
+    death_check.drain()
     assert sensors.GetCondition() == 0.0
     assert obj.IsDying() == 0
 
@@ -251,12 +253,14 @@ def test_warp_core_critical_triggers_death():
     obj = FakeDamageable()
     warp_core = FakeSub(critical=1)
     obj.DamageSystem(warp_core, 100.0)
+    death_check.drain()
     assert obj.IsDying() == 1
 
 
 def test_partial_damage_does_not_trigger_death():
     obj = FakeDamageable()
     obj.DamageSystem(obj.GetHull(), 40.0)  # hull still at 60
+    death_check.drain()
     assert obj.IsDying() == 0
 
 
@@ -265,8 +269,10 @@ def test_killing_blow_on_dying_ship_is_no_op():
     must not re-trigger begin (the IsDying guard prevents double-register)."""
     obj = FakeDamageable()
     obj.DamageSystem(obj.GetHull(), 100.0)  # first kill -> dying
+    death_check.drain()
     assert obj.IsDying() == 1
     obj.DamageSystem(obj.GetHull(), 100.0)  # second blow -> still just dying
+    death_check.drain()
     assert obj.IsDying() == 1
     assert len(ship_death._active) == 1
 
@@ -275,6 +281,7 @@ def test_killing_blow_on_dying_ship_is_no_op():
 def test_destroy_system_on_critical_kills():
     obj = FakeDamageable()
     obj.DestroySystem(obj.GetHull())
+    death_check.drain()
     assert obj.GetHull().GetCondition() == 0.0
     assert obj.GetHull().IsDestroyed() == 1
     assert obj.IsDying() == 1
@@ -284,6 +291,7 @@ def test_destroy_system_on_noncritical_zeroes_but_no_death():
     obj = FakeDamageable()
     sensors = FakeSub(critical=0)
     obj.DestroySystem(sensors)
+    death_check.drain()
     assert sensors.GetCondition() == 0.0
     assert sensors.IsDestroyed() == 1
     assert obj.IsDying() == 0
@@ -673,8 +681,10 @@ def test_damage_system_threads_killer_into_exploding_event():
     exploding event via the source (firing ship)."""
     target = FakeDamageable()             # critical hull + real lifecycle flags
     attacker = FakeAttacker(7777)
-    evt = _capture_exploding_event(
-        lambda: target.DamageSystem(target.GetHull(), 100.0, attacker))
+    def fatal_hit():
+        target.DamageSystem(target.GetHull(), 100.0, attacker)
+        death_check.drain()                 # the tick boundary (ruling M5)
+    evt = _capture_exploding_event(fatal_hit)
     assert evt is not None
     assert target.IsDying() == 1
     assert evt.GetFiringPlayerID() == 7777

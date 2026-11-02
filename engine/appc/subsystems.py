@@ -739,11 +739,36 @@ class ShipSubsystem(TGEventHandlerObject):
         raise that stays short of max queues too: a subsystem a script brings
         back from destroyed is repaired the rest of the way (Mark, 2026-10-23).
         AddToRepairList owns all validation (duplicate / destroyed / undamaged
-        reject)."""
+        reject).
+
+        Every condition write, a script's included, is the one write
+        (objects.write_condition): a critical subsystem left at zero kills the
+        ship and a >0 -> 0 crossing routes the breach / hull cascade, both at
+        the tick boundary unless the ship is invincible by then
+        (engine/appc/death_check.py, rulings M3, M5)."""
+        self._set_condition(value)
+
+    def _set_condition(self, value, killer=None, ship=None) -> None:
+        """SetCondition's body. `killer` (the firing ship) and `ship` (whom
+        the write is charged to, default the owning ship) come from
+        DamageableObject.DamageSystem via objects.write_condition."""
+        before = self._condition
         self._condition = max(0.0, float(value))
         self._condition_changed()
         if self._condition < self.GetMaxCondition():
             self._auto_enqueue_for_repair()
+        from engine.appc import death_check
+        death_check.note_write(ship if ship is not None else self._owning_ship(),
+                               self, before, killer)
+
+    def SetConditionPercentage(self, fraction) -> None:
+        """SDK ShipSubsystem.SetConditionPercentage (App.py:5665): condition =
+        `fraction` x GetMaxCondition(), through SetCondition -- the same write
+        as weapon damage, so it posts the same subsystem events, enqueues the
+        repair and reaches the death check (campaign bug 2, decided
+        2026-11-02). GetMaxCondition, not _max_condition, so the value reads
+        back through GetConditionPercentage (E3M5's 15% clamp compares it)."""
+        self.SetCondition(float(fraction) * self.GetMaxCondition())
 
     def _auto_enqueue_for_repair(self) -> None:
         ship = self._owning_ship()
@@ -2645,6 +2670,11 @@ class PowerSubsystem(ShipSubsystem):
             from engine.appc import warp_core_breach
             ship = self.GetParentShip()
             if ship is None:
+                return
+            # An invincible ship cannot die and keeps its systems (rulings M1,
+            # R5): no breach. The plant stays handled (_breach_fired): making
+            # the ship vulnerable later kills nothing retroactively (R4).
+            if implements(ship, "IsInvincible") and ship.IsInvincible():
                 return
             warp_core_breach.arm(ship)
             # implements(), NOT hasattr(): __getattr__ answers every hasattr

@@ -145,9 +145,10 @@ class RadiationDriver:
     def apply_chunk(self, ship, radiation: float, mult: float) -> None:
         """1/16 s of drain: shields per face while they can absorb it, else
         the hull (see _shields_absorbing).
-        An immune ship (SetInvincible / SetHurtable -- E3M2's Derelict
-        Warbird) takes neither drain nor an outage roll, matching
-        combat.apply_hit's IsImmuneToDamage gate."""
+        An immune ship (SetHurtable(0)) takes neither drain nor an outage
+        roll, matching combat.apply_hit's IsImmuneToDamage gate. An
+        invincible one (E3M2's Derelict Warbird) is drained like any other
+        and cannot die of it (ruling M1, engine/appc/death_check.py)."""
         if implements(ship, "IsImmuneToDamage") and bool(ship.IsImmuneToDamage()):
             return
         dt = 1.0 / EVENT_HZ

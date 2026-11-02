@@ -969,6 +969,17 @@ def _combat_effect_scope():
     return contextlib.nullcontext()
 
 
+def _combat_tick_boundary():
+    """The tick boundary, both switch states: right after the tick's
+    effect-queue scope has flushed, every condition write noted since the
+    last boundary gets its death check -- zero crossings and deaths, unless
+    the ship is invincible by now (engine/appc/death_check.py, rulings M3,
+    M5, R5). Writes made outside the combat step (a script, radiation, a
+    collision) wait for the next one."""
+    from engine.appc import death_check
+    death_check.drain()
+
+
 # Beam damage per second is MaxDamage × this, by the phaser system's power
 # level (PP_LOW, PP_MEDIUM, PP_HIGH). Measured on the original exe: a Kessok
 # Heavy's four MaxDamage-400 beams deliver 825/s at HIGH, 849/s at MED and
@@ -7854,6 +7865,8 @@ class HostController:
         _native_combat.clear_step()
         from engine.appc import ship_lifecycle
         ship_lifecycle.reset()
+        from engine.appc import death_check
+        death_check.reset()
         from engine.appc import ship_death
         ship_death.reset()
         from engine.rocks import death as _rock_death
@@ -11741,7 +11754,9 @@ def run(mission_name: Optional[str] = None,
         TICK_DT = 1.0 / 60.0
         MAX_FRAME_DT = 0.25  # Fiedler spiral-of-death cap
 
-        loop = GameLoop()
+        # The host's tick boundary is the per-tick combat flush below
+        # (_combat_tick_boundary), not the end of the GameLoop tick.
+        loop = GameLoop(owns_boundary=False)
         ticks = 0
         init_audio()
         _bootstrap_firing_pipeline()
@@ -12661,6 +12676,7 @@ def run(mission_name: Optional[str] = None,
                                 # set (_push_combat_render_data below).
                                 push_render_data=False,
                             )
+                    _combat_tick_boundary()
 
                 # Player-only contact manager: bands, proximity events and the
                 # identification dwell (engine/appc/sensor_contacts.py). Sim-gated

@@ -826,8 +826,9 @@ def _is_targetable(subsystem) -> bool:
 def _route_zero_crossing(ship, subsystem, crossed_zero: bool) -> None:
     """On a subsystem crossing >0 -> 0, arm the warp-core breach (when the
     subsystem is the ship's PowerSubsystem) or schedule the hull-death cascade
-    (when it is the hull). No-op otherwise. Kept separate from the critical ->
-    ship_death.begin path, which is unchanged.
+    (when it is the hull). No-op otherwise. Run by the boundary death check
+    (engine/appc/death_check.py), never inside the write, and only for a ship
+    that is not invincible then (ruling R5).
 
     See docs/superpowers/specs/2026-06-20-warp-core-breach-design.md.
     """
@@ -847,6 +848,38 @@ def _route_zero_crossing(ship, subsystem, crossed_zero: bool) -> None:
     if hull is not None and subsystem is hull:
         from engine.appc import subsystem_cascade
         subsystem_cascade.schedule(ship)
+
+
+def _begin_death(ship, killer=None) -> None:
+    """The one death entry for a critical subsystem at 0: a rock's death
+    (engine/rocks/death.py) or a ship's (ship_death.begin). Called by the
+    boundary death check (engine/appc/death_check.py)."""
+    from engine.rocks.rock import is_rock
+    if is_rock(ship):
+        from engine.rocks import death as rock_death
+        rock_death.begin(ship, killer=killer)
+    else:
+        from engine.appc import ship_death
+        ship_death.begin(ship, killer=killer)
+
+
+def write_condition(ship, subsystem, value: float, killer=None) -> None:
+    """THE condition write with the critical-at-0 path (rulings M3, M5):
+    write `value`, then note the write for the boundary death check, which
+    routes a zero crossing and begins a death there. A real ShipSubsystem
+    does both in its own _set_condition (so SetCondition from a script is the
+    same write); a subsystem without one (a fake) is written through its
+    SetCondition and noted here. `ship` is who the write is charged to (the
+    DamageSystem receiver), `killer` the firing ship."""
+    # Looked up on the TYPE: a TGObject answers any instance attribute with a
+    # truthy _Stub, which would swallow the write.
+    if callable(getattr(type(subsystem), "_set_condition", None)):
+        subsystem._set_condition(value, killer=killer, ship=ship)
+        return
+    from engine.appc import death_check
+    before = subsystem.GetCondition()
+    subsystem.SetCondition(value)
+    death_check.note_write(ship, subsystem, before, killer)
 
 
 class DamageableObject(PhysicsObjectClass):
@@ -1084,10 +1117,12 @@ class DamageableObject(PhysicsObjectClass):
             pass
 
     def DamageSystem(self, subsystem, amount: float, source=None) -> None:
-        """Apply damage to a subsystem, flooring condition at zero. If the
-        subsystem is critical and reaches zero, start the ship death
-        sequence (covers hull AND warp core via SetCritical(1)). A >0 -> 0
-        crossing also arms the warp-core breach / schedules the hull cascade.
+        """Apply damage to a subsystem, flooring condition at zero, through
+        the one condition write (write_condition). A critical subsystem left
+        at zero kills the ship (hull AND warp core via SetCritical(1)), and a
+        >0 -> 0 crossing arms the warp-core breach / schedules the hull
+        cascade -- both at the tick boundary, unless the ship is invincible
+        by then (engine/appc/death_check.py, rulings M3, M5, R5).
 
         `source` (SDK-compatible optional 3rd arg — real callers pass 2) is the
         firing ship; combat.apply_hit threads it in so a fatal blow attributes
@@ -1098,40 +1133,19 @@ class DamageableObject(PhysicsObjectClass):
         if amt <= 0.0:
             return
         cur = subsystem.GetCondition()
-        new_cond = max(0.0, cur - amt)
-        subsystem.SetCondition(new_cond)
-        _route_zero_crossing(self, subsystem, cur > 0.0 and new_cond <= 0.0)
-        if new_cond <= 0.0 and _is_critical(subsystem) \
-                and not self.IsDying() and not self.IsDead():
-            from engine.rocks.rock import is_rock
-            if is_rock(self):
-                from engine.rocks import death as rock_death
-                rock_death.begin(self, killer=source)
-            else:
-                from engine.appc import ship_death
-                ship_death.begin(self, killer=source)
+        write_condition(self, subsystem, max(0.0, cur - amt), killer=source)
 
     def DestroySystem(self, subsystem) -> None:
         """Force a subsystem to zero condition (mirrors SDK
-        pShip.DestroySystem). Ship death is a side effect only when the
-        subsystem is critical; DestroySystem(pSensors) just zeroes sensors. A
-        >0 -> 0 crossing arms the warp-core breach / schedules the cascade."""
+        pShip.DestroySystem) through the one condition write. Ship death is a
+        side effect only when the subsystem is critical; DestroySystem(pSensors)
+        just zeroes sensors. Death and the zero crossing run at the tick
+        boundary (engine/appc/death_check.py)."""
         if subsystem is None:
             return
-        cur = subsystem.GetCondition()
-        subsystem.SetCondition(0.0)
+        write_condition(self, subsystem, 0.0)
         if hasattr(subsystem, "SetDestroyed"):
             subsystem.SetDestroyed(True)
-        _route_zero_crossing(self, subsystem, cur > 0.0)
-        if _is_critical(subsystem) \
-                and not self.IsDying() and not self.IsDead():
-            from engine.rocks.rock import is_rock
-            if is_rock(self):
-                from engine.rocks import death as rock_death
-                rock_death.begin(self)
-            else:
-                from engine.appc import ship_death
-                ship_death.begin(self)
 
 
 class ObjectGroup(TGEventHandlerObject):

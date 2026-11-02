@@ -22,9 +22,14 @@ class GameLoop:
     Physics + render run downstream in host_loop, not here.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, owns_boundary: bool = True) -> None:
+        """`owns_boundary`: this loop's tick is the whole sim tick (the
+        headless harness, tools), so its end is the tick boundary where the
+        death check runs (engine/appc/death_check.py). The host passes False:
+        its boundary is the per-tick combat flush (host_loop)."""
         passive_state.configure()
         native_combat.configure()
+        self.owns_boundary = owns_boundary
 
     def tick(self) -> None:
         # Drop the avoidance obstacle snapshot: a new tick means the world has
@@ -114,6 +119,12 @@ class GameLoop:
         # caught where it happened (engine/appc/native_combat.py).
         if native_combat.audit_enabled():
             native_combat.audit_mirror()
+
+        # The tick boundary when no host drives this loop: noted condition
+        # writes get their death check (rulings M3, M5).
+        if self.owns_boundary:
+            from engine.appc import death_check
+            death_check.drain()
 
     def advance(self, n: int) -> None:
         for _ in range(n):

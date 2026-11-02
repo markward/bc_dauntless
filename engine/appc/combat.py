@@ -743,12 +743,14 @@ def _apply_hit(ship, damage: float, hit_point, source, *,
     if _cheats.double_player_weapons_active() and _source_is_player:
         damage = float(damage) * 2.0
 
-    # Ship-level immunity (SDK SetInvincible / SetHurtable — E7M2 boss ships,
-    # E3M1 scripted player-invulnerability windows). Real gameplay, NOT a dev
-    # cheat, so it applies regardless of dev mode. Handled exactly like god
-    # mode: skip every state mutation but still compute absorbed_* so the shot
-    # visually/audibly connects. implements() (not hasattr) so a ship lacking
-    # the method reads "not immune", never a truthy _Stub.
+    # Ship-level immunity: SetHurtable(0) only (E7M2's JonKa and Chairo "not
+    # hurtable", E3M1's "player can't be hurt"). SetInvincible lets damage
+    # land and only stops the death (ruling M1, engine/appc/death_check.py).
+    # Real gameplay, NOT a dev cheat, so it applies regardless of dev mode.
+    # Handled exactly like god mode: skip every state mutation but still
+    # compute absorbed_* so the shot visually/audibly connects. implements()
+    # (not hasattr) so a ship lacking the method reads "not immune", never a
+    # truthy _Stub.
     from engine.core.ids import implements as _implements
     _ship_immune = (_implements(ship, "IsImmuneToDamage")
                     and bool(ship.IsImmuneToDamage()))
