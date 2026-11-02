@@ -64,7 +64,16 @@ _counts = {"native_calls": 0, "fallbacks": 0}
 # ship_instances is not the session's TrackedInstances), "patched" (a
 # function or class K2 stands in for differs from its snapshot), "audit"
 # (DAUNTLESS_NATIVE_AUDIT=1: the kernel's can_detect would bypass the audit).
-_k2_steps = {"k2_python_steps": 0}
+# The drain (run_k2, spec 2026-11-02 §4.4): "k2_present_python", resting
+# contacts presented by the Python batch; "k2_present_gone", drained
+# contacts skipped because an object they name was freed or unregistered
+# before the drain. (The ones the drain presents natively, the shield
+# splash, are the binding's "k2_present_native", combat_k2_counts.)
+_k2_steps = {"k2_python_steps": 0, "k2_present_python": 0,
+             "k2_present_gone": 0}
+# The drain's native presentation constants as last sent
+# (combat_k2_present_constants): (intensity, default radius), None unsent.
+_k2_present_sent = [None]
 _K2_STEP_REASONS = ("nested", "instances", "patched", "audit")
 _k2_step_reasons = dict.fromkeys(_K2_STEP_REASONS, 0)
 # handle -> object, for resync and the audit. Weak: the row's lifetime is the
@@ -175,13 +184,15 @@ def reset() -> None:
     _pulse_stale = False
     _counts["native_calls"] = 0
     _counts["fallbacks"] = 0
-    _k2_steps["k2_python_steps"] = 0
+    for k in _k2_steps:
+        _k2_steps[k] = 0
     for k in _K2_STEP_REASONS:
         _k2_step_reasons[k] = 0
     _k2_flags.clear()
     _k2_watch_seen[0] = -1
     _k2_iids_cache[:] = [None, -1, -1, None]
     _k2_iids_sent[:] = [_K2_UNSENT, -1, -1]
+    _k2_present_sent[0] = None
     global _k2_drop_epoch
     _k2_drop_epoch += 1
     torpedo_table_mark_dirty()
@@ -269,17 +280,22 @@ def counts() -> dict:
     K2 (`cb.phasers`): the kernel's {"k2_records", "k2_python_ships",
     "k2_asks", "k2_python_reasons": {K2Why name: n}, "k2_ask_queries":
     {query: n}, "k2_posed": {"banks", "lock_aims", "manual_aims"},
-    "k2_batched_contacts": resting contacts queued onto the next record
-    instead of a CONTACT record of their own, "k2_logged_system_stop":
-    offline systems with every bank idle stopped by logged writes instead
-    of a SYSTEM_STOP record (round trips Task 3; k2_records counts only the
+    "k2_batched_contacts": resting contacts queued for the drain instead
+    of a CONTACT record of their own, "k2_logged_system_stop": offline
+    systems with every bank idle stopped by logged writes instead of a
+    SYSTEM_STOP record (round trips Task 3; k2_records counts only the
     records returned). k2_batched_contacts is counted when the contact is
     queued, so a kernel throw later in the same next() (which restores the
-    queue) or a Python raise while the queue is delivered can overcount}
+    queue) or an abandoned session (which drops it) can overcount}
     (k2_beams.h; posed_ship retired, part_stale its successor), plus
-    "k2_python_steps" (steps run whole in Python) and
-    "k2_python_step_reasons" ({"nested", "instances", "patched", "audit"}:
-    n).
+    "k2_present_native" (drained resting contacts the drain presented
+    itself: the shield splash, spec 2026-11-02 §4.4), "k2_present_python"
+    (drained resting contacts the Python batch presented),
+    "k2_present_gone" (drained ones skipped: an object they name was freed
+    or unregistered before the drain; the three sum to the drained
+    contacts), "k2_python_steps"
+    (steps run whole in Python) and "k2_python_step_reasons" ({"nested",
+    "instances", "patched", "audit"}: n).
 
     K4 (`cb.eligibility`): "k4_runs" (calls the kernel decided) and
     "k4_python_reasons" ({why: n}, the kernel's hand-backs -- scan, player,
@@ -2924,17 +2940,25 @@ class _K1Walk:
             self.pin(target)
         return patched
 
-    def obj(self, h):
-        """The object a record or write names: None for -1."""
+    def live(self, h):
+        """The object `h` names, as obj(), or None when it names no pinned
+        or live object (a row freed since)."""
         if h == REF_NONE:
             return None
         o = self.pins.get(h)
         if o is None:
             o = _registry.get(h)
             if o is None or o.__dict__.get("_nslot") != h:
-                raise RuntimeError(
-                    "combat K1: handle %#x names no pinned or live object" % h)
+                return None
             self.pins[h] = o
+        return o
+
+    def obj(self, h):
+        """The object a record or write names: None for -1."""
+        o = self.live(h)
+        if o is None and h != REF_NONE:
+            raise RuntimeError(
+                "combat K1: handle %#x names no pinned or live object" % h)
         return o
 
 
@@ -3014,10 +3038,7 @@ def apply_writes(writes, walk=None) -> None:
     quiet write is WakeField.__set__: a dict store, then passive_state.wake
     on a sleeping bank, whose hook (passive_weapons.on_wake) is a dict read
     and an insort. A field added to the kernel's log must keep its quiet
-    write unable to raise. (A raise in K2's OTHER Python between a record's
-    writes -- a queued contact's presentation -- is handled by _k2_deliver
-    the same way: it applies the record's outstanding writes before
-    re-raising.) K2's log (run_k2) uses the same
+    write unable to raise. K2's log (run_k2) uses the same
     encoding: `_dwell`, and an offline phaser
     system's stop (round trips Task 3) -- the system's `_fire_held`,
     `_held_target`, `_held_offset`, `_target_list` (a NEW list every time,
@@ -3688,12 +3709,15 @@ def run_k0(ships, dt) -> None:
 # kernel walks host_loop's `cb.phasers` loop (host_loop._phaser_step_ship)
 # over the mirror and returns ONE record per combat_k2_next(); the binding
 # applies the record's write log (the `_dwell` writes the kernel already
-# made in the mirror; with queued resting contacts, _k2_deliver has it apply
-# them in segments), then run_k2 does the one thing only Python may do: a StopFiring, a
-# contact's effect (host_loop._phaser_contact: beam_contact or apply_hit, the
+# made in the mirror), then run_k2 does the one thing only Python may do: a
+# StopFiring, a damage pulse (host_loop._phaser_contact: apply_hit, the
 # damage arithmetic included), a whole ship or one bank of the loop body, or
 # the answer to a question. After each it re-sends the per-step context the
-# effect may have changed (_K2Context.resend).
+# effect may have changed (_K2Context.resend). After DONE it drains the
+# resting contacts the kernel queued: the drain presents the shield splashes
+# it can itself (spec 2026-11-02 §4.4, with the constants
+# _k2_send_present_constants sent) and returns the rest, which run_k2
+# presents in one batch (_k2_present_batch).
 #
 # WHAT K2 STANDS IN FOR. The kernel computes, from the mirror, what these
 # Python functions and methods would answer. A test, tool or mod that
@@ -3720,6 +3744,15 @@ def run_k0(ships, dt) -> None:
 # walked ship, its phaser system or a bank (_K2_*_PATCHES) -> that ship runs
 # in Python. (One on a TARGET is not looked for: it would cost a dict probe
 # of every target, every tick.)
+# NOT WATCHED, deliberately (ruling Q5, spec 2026-11-02-combat-effect-queue;
+# roadmap decision 2: presentation internals are not a mod surface):
+# hit_feedback.beam_contact, hit_feedback._mesh_xyz, host_io.shield_hit and
+# combat.weapon_splash_radius. The drain's native shield splash stands in
+# for them, so a patch of one is NOT obeyed for a splash the drain presents
+# (it still is for every entry the drain returns to the Python batch). The
+# differentials spy them and compare the native splashes through
+# combat_present_capture. What the splash's point depends on IS watched:
+# frames.view_offset, shifted and containing_set are in _K2_FUNCTIONS.
 
 _k2_kind_ids = None
 _k2_hl = None
@@ -3761,7 +3794,8 @@ _K2_ROLES = (
     ("system", "engine.appc.weapon_subsystems", "PhaserSystem",
      _K2_SUBSYSTEM_NAMES + (
          "GetNumWeapons", "GetWeapon", "GetNumChildSubsystems",
-         "GetChildSubsystem", "IsOn", "IsDisabled", "IsDestroyed")),
+         "GetChildSubsystem", "IsOn", "IsDisabled", "IsDestroyed",
+         "GetPowerLevel")),
     ("shield", "engine.appc.subsystems", "ShieldSubsystem",
      _K2_SUBSYSTEM_NAMES + ("HasShields", "IsOn", "IsDisabled",
                             "IsDestroyed")),
@@ -3785,10 +3819,11 @@ _K2_SHIP_PATCHES = frozenset((
     "GetTargetOffsetTG", "GetShields", "IsDead", "GetWorldLocation",
     "GetWorldRotation"))
 # StopFiring (system and bank): an offline system's stop is logged writes
-# when its banks are idle (round trips Task 3).
+# when its banks are idle (round trips Task 3). GetPowerLevel: a resting
+# contact carries the mirror's `_power_level` (spec 2026-11-02 §4.3).
 _K2_SYSTEM_PATCHES = frozenset((
     "GetNumWeapons", "GetWeapon", "IsOn", "IsDisabled", "IsDestroyed",
-    "StopFiring"))
+    "StopFiring", "GetPowerLevel"))
 _K2_BANK_PATCHES = frozenset((
     "IsFiring", "IsBeamOn", "take_dwell", "accumulate_dwell",
     "_strip_emit_position", "_emitter_world_position", "GetLength",
@@ -4233,45 +4268,42 @@ def _k2_contact(rec, walk, dt, ship_instances) -> None:
     _k2_run_contact(rec[1:15], walk, dt, ship_instances)
 
 
-def _k2_deliver(queued, pending, walk, dt, ship_instances) -> None:
-    """A record's queued resting contacts (k2_beams.h, RESTING CONTACTS), in
-    walk order, each after the writes logged before it (its `at`), then the
-    rest of the record's writes, BEFORE the record's own effect. The
-    writes are the record's `pending` ones, still in the binding
-    (combat_write_apply.h), applied in segments by combat_apply_writes.
-
-    A contact's Python that raises (its presentation: beam_contact,
-    world_to_body, hit_vfx.spawn, GetMaxDamage, ...) must not strand the
-    rest of the record's writes: the kernel already made them in the mirror
-    and dropped their undo when it returned the record, and run_k2's
-    abandon only ends the session. So every write still outstanding in
-    this record is applied, in order, and then the contact's exception is
-    re-raised (if that apply itself raises, its exception propagates with
-    the contact's as its __context__)."""
-    done = 0
-    for q in queued:
-        at = q[0]
-        if at > done:
-            _h.combat_apply_writes(at)
-            done = at
+def _k2_present_batch(entries, walk, dt, ship_instances) -> None:
+    """The drained resting contacts (combat_k2_drain), in queue order: each
+    presented by _k2_run_contact with the power level and shields answer
+    the kernel took at contact time (k2_beams.h, RESTING CONTACTS). An
+    entry naming an object freed or unregistered since it was queued is
+    skipped (counted "k2_present_gone"): Python would have presented it
+    before then. A presentation that raises does not stop the others:
+    every entry is presented, then the first exception is re-raised, each
+    later one noted on it (its type and message)."""
+    err = None
+    for e in entries:
+        if any(walk.live(h) is None for h in e[:4]):
+            _k2_steps["k2_present_gone"] += 1
+            continue
+        _k2_steps["k2_present_python"] += 1
         try:
-            # A queued contact's shields_block is None when Python
-            # answered it.
-            _k2_run_contact(q[1:], walk, dt, ship_instances)
-        except BaseException:
-            if done < pending:
-                _h.combat_apply_writes()
-            raise
-    if done < pending:
-        _h.combat_apply_writes()
+            _k2_run_contact(e[:14], walk, dt, ship_instances, level=e[14])
+        except Exception as x:
+            if err is None:
+                err = x
+            else:
+                err.add_note("combat K2: a later resting contact's "
+                             "presentation raised %s: %s"
+                             % (type(x).__name__, x))
+    if err is not None:
+        raise err
 
 
-def _k2_run_contact(c, walk, dt, ship_instances) -> None:
-    """One contact: host_loop._phaser_contact on the rebuilt points, the
-    power level read from the loop's own system. The loop's shields_block
-    answer rides along unless the loop never evaluated it or Python answered
-    it (an ASK): the binding then sends None, and beam_contact evaluates its
-    own, as the Python path does. (A damage pulse never reads it.)"""
+def _k2_run_contact(c, walk, dt, ship_instances, level=None) -> None:
+    """One contact: host_loop._phaser_contact on the rebuilt points. `level`
+    is the power level the kernel carried (a drained rest); None reads it
+    from the loop's own system now (a damage pulse's CONTACT record). The
+    shields_block answer rides along unless it is None -- the loop never
+    evaluated it, or (a CONTACT record) Python answered it -- when
+    beam_contact evaluates its own, as the Python path does. (A damage
+    pulse never reads it.)"""
     (bh, th, sh, yh, emitter, target_pos, dist, _aim, impact, normal,
      tier, bubble, shields, flush) = c
     bank, target, ship, sys_ = (walk.obj(bh), walk.obj(th), walk.obj(sh),
@@ -4279,7 +4311,8 @@ def _k2_run_contact(c, walk, dt, ship_instances) -> None:
     _e, _t, point, n, b = _k2_points(emitter, target_pos, impact, normal,
                                      tier, bubble)
     hl = _k2_hl
-    level = hl._phaser_level(sys_)
+    if level is None:
+        level = hl._phaser_level(sys_)
     if shields is None:
         hl._phaser_contact(ship, sys_, bank, target, dist, dt, flush, level,
                            point, n, b, ship_instances)
@@ -4291,7 +4324,7 @@ def _k2_run_contact(c, walk, dt, ship_instances) -> None:
 def _k2_answer(rec, walk, cx, dt, ship_instances):
     """An ASK record's answer: exactly the Python the kernel stands in for
     (k2_beams.h, the ASK table), on the live objects."""
-    query, args = rec[1], rec[2:-2]         # (..., queued, writes)
+    query, args = rec[1], rec[2:-1]         # (..., writes)
     if query == "is_dead":
         target = walk.obj(args[0])
         return bool(hasattr(target, "IsDead") and target.IsDead())
@@ -4337,14 +4370,17 @@ def _k2_answer(rec, walk, cx, dt, ship_instances):
 def run_k2(ships, dt, ship_instances, cx) -> None:
     """Drive the open K2 session until DONE. Each record: its writes are
     applied by the binding (the session's applier context,
-    _applier_context) -- before it is returned, or, when resting contacts
-    are queued on it, interleaved with them in the kernel's order
-    (_k2_deliver) -- then act -- a StopFiring, a damage pulse, a whole ship in
-    Python, or an ASK answered in Python -- then re-send whatever context
-    the Python changed (once per record: a resting contact changes none).
-    On any exception the session is abandoned (the kernel's mirror still
-    equals Python) and the exception re-raised; the kernel's own
-    protocol-invariant RuntimeError (k2_beams.h) included."""
+    _applier_context) before it is returned; then act -- a StopFiring, a
+    damage pulse, a whole ship in Python, or an ASK answered in Python --
+    then re-send whatever context the Python changed. After DONE, before
+    the session ends, the resting contacts the kernel queued are drained:
+    the drain presents a shielded one whose instance and view offset the
+    kernel knew itself (the shield splash, natively), and the rest are
+    presented in one batch (_k2_present_batch). On any exception the
+    session is abandoned (the kernel's mirror still equals Python; an
+    abandoned walk's queue is dropped unpresented) and the exception
+    re-raised; the kernel's own protocol-invariant RuntimeError
+    (k2_beams.h) included, and a raise in the batch, after the batch."""
     DONE, SYSTEM_STOP, BANK_STOP, CONTACT, RUN_PYTHON, ASK = _k2_kinds()
     walk = _K2Walk()
     prev = _UNSET
@@ -4353,9 +4389,6 @@ def run_k2(ships, dt, ship_instances, cx) -> None:
         while True:
             rec = _h.combat_k2_next()
             kind = rec[0]
-            queued = rec[-2]
-            if queued:
-                _k2_deliver(queued, rec[-1], walk, dt, ship_instances)
             if kind == ASK:
                 gen = _part_gen
                 answer = _k2_answer(rec, walk, cx, dt, ship_instances)
@@ -4376,6 +4409,9 @@ def run_k2(ships, dt, ship_instances, cx) -> None:
             else:
                 raise RuntimeError("combat K2: unknown record %r" % (rec,))
             cx.resend()
+        entries = _h.combat_k2_drain()
+        if entries:
+            _k2_present_batch(entries, walk, dt, ship_instances)
         _h.combat_k2_end()
     except BaseException:
         _h.combat_k2_abandon()
@@ -4413,6 +4449,18 @@ def _tracked_instances():
     return _tracked_cls
 
 
+def _k2_send_present_constants() -> None:
+    """The drain's native shield splash takes beam_contact's intensity and
+    its default radius from here, never from C++ literals: sent when they
+    differ from what was last sent (spec 2026-11-02 §4.4)."""
+    from engine.appc import combat, hit_feedback
+    consts = (float(hit_feedback.shield_impact_intensity("phaser")),
+              float(combat.PHASER_DEFAULT_DAMAGE_RADIUS))
+    if consts != _k2_present_sent[0]:
+        _h.combat_k2_present_constants(*consts)
+        _k2_present_sent[0] = consts
+
+
 def k2_phasers(ships, dt, ship_instances) -> bool:
     """host_loop's `cb.phasers` step through K2: True when it ran, False when
     the caller must run the step in Python whole (counted by why in
@@ -4430,6 +4478,7 @@ def k2_phasers(ships, dt, ship_instances) -> bool:
         refresh_stale_pulse_params()
     # A step boundary: the K1 pump's effects may have bumped the generation.
     resolve_stale_part_slots(ships)
+    _k2_send_present_constants()
     cx = _K2Context(ship_instances)
     ctx = cx.delta()
     ctx["python_ships"] = python_ships

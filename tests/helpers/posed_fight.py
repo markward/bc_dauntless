@@ -905,7 +905,8 @@ def check_posed(ref, nat):
     check_guide_asks(c, nat.rec.tally, expected=())
     # Every round trip the plan removed ran on and at posed ships: K1 walks
     # with no WALK_START, sustains and idle stops logged (Tasks 1-2), K2
-    # resting contacts batched (Task 3), K3 mounts attributed (Task 4). K2's
+    # resting contacts queued for the drain (Task 3; spec 2026-11-02 §4.3),
+    # K3 mounts attributed (Task 4). K2's
     # logged offline stop is the host file's (measured 0 headless).
     trips = round_trips(c)
     for key in ("k1_logged/walk_start", "k1_logged/beam_sustain",
@@ -915,7 +916,7 @@ def check_posed(ref, nat):
     # K0 charged and reloaded every weapon, writes were C-applied and scalar
     # pushes made in one call (native weapon state).
     check_weapon_state_paths(c)
-    # ... and their presentation was compared, in order, with the hits.
+    # ... and their presentation was compared (per tick, compare_calls).
     assert presented(ref.rec.calls) > 0
     # The scene was what it claims, in both arms alike.
     s = nat.stats

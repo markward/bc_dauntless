@@ -232,9 +232,14 @@ def test_combat_step_matches_python(monkeypatch, ticks_per_frame):
         for key in ("walk_start", "beam_sustain", "idle_bank_stop"):
             assert counts[name]["k1_logged"][key] > 0, (name, key, counts)
     # K2 stands down under the audit; with native on its resting contacts
-    # were batched (Task 3). No phaser system is switched off here
+    # were queued for the drain and every one presented by the Python batch
+    # (spec 2026-11-02 §4.3-4.4): headless, no ship has an instance, so the
+    # drain presents none itself. No phaser system is switched off here
     # (k2_logged_system_stop measured 0).
     assert counts["on"]["k2_batched_contacts"] > 0, counts
+    assert counts["on"]["k2_present_native"] == 0, counts
+    assert counts["on"]["k2_present_python"] == \
+        counts["on"]["k2_batched_contacts"], counts
     assert counts["audit"]["k2_batched_contacts"] == 0, counts
     print("native-combat-step counts (tpf=%d):" % ticks_per_frame, counts,
           "events:", len(ref_events))

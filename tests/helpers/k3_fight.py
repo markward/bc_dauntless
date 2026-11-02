@@ -10,8 +10,9 @@ records after every tick everything Task 5's dispatch test compares
 (tests/unit/test_native_k3_dispatch.py) -- every torpedo in flight (or that
 left flight this tick): position, velocity, age, guidance fields, mount key,
 bubble entry (floats by .hex()); update_all's hits; every apply_hit, and in
-the same ordered log every beam contact, hit VFX spawn and shield hit (the
-presentation: spy_presentation, round trips Task 5); the
+the same log every beam contact, hit VFX spawn and shield hit (the
+presentation: spy_presentation, round trips Task 5; compared per tick as a
+multiset, compare_calls); the
 incoming-torpedo table's velocity writes (a per-tick multiset) and its
 incoming_ids answer -- plus what the phase adds: every ship's death, hull and
 shield faces, ``damage_eligibility._current`` (see eligibility_view: ids
@@ -205,19 +206,82 @@ def eligibility_view(player, ships, eligible, label):
     return view, tie, cross
 
 
+class ShieldedContact(tuple):
+    """A spy's beam_contact row for a contact that acted on shields up on a
+    target with an instance id: its whole presentation is the shield_hit it
+    makes, and the K2 drain makes most of those in C++ with no beam_contact
+    call at all (spec 2026-11-02 §4.4). compare_calls leaves these rows out
+    and compares the shield hits -- the shield_hit spy's rows and the
+    drain's captured ones (capture_native_shield_hits) alike. Still a tuple:
+    a test reading the log sees it as any other row."""
+
+    __slots__ = ()
+
+
+def contact_row(row, acted, ship_instances, ship):
+    """A beam_contact spy's `row`, marked ShieldedContact when `acted` and
+    the target has an instance id -- exactly when a shield_hit row stands
+    for it (beam_contact pushes a splash only then). A shielded contact on a
+    target with none presents nothing, the drain never takes it natively
+    (no iid), so both arms call beam_contact and its row stays compared."""
+    if acted and ship_instances is not None \
+            and ship_instances.get(ship) is not None:
+        return ShieldedContact(row)
+    return row
+
+
+#: The capture list the outermost capture_native_shield_hits wrapper
+#: installed for the drain call in progress (None: no call).
+_capturing = [None]
+
+
+def capture_native_shield_hits(mp, on_item):
+    """Wrap combat_k2_drain so every shield splash the drain presents
+    natively is captured (combat_present_capture, on only for the call) and
+    handed to `on_item(item)`, in queue order, before the drain returns:
+    item = (bank, target, iid, view_xyz, relative_xyz | None, rgba,
+    intensity, radius), view_xyz being exactly the point host_io.shield_hit
+    would have been given. Wrappers nest: an inner one shares the capture
+    the outer one installed and reports what its own call appended."""
+    real = _h.combat_k2_drain
+
+    def drain():
+        cap = _capturing[0]
+        if cap is not None:
+            first = len(cap)
+            entries = real()
+            for item in cap[first:]:
+                on_item(item)
+            return entries
+        cap = _capturing[0] = []
+        _h.combat_present_capture(cap)
+        try:
+            entries = real()
+        finally:
+            _h.combat_present_capture(None)
+            _capturing[0] = None
+        for item in cap:
+            on_item(item)
+        return entries
+    mp.setattr(_h, "combat_k2_drain", drain)
+
+
 def spy_presentation(mp, calls, tick, label, contacts=True):
     """Every hit VFX spawn and every shield hit, with their arguments, into
     the compared call log `calls`, in the order they happen (`tick()` the
-    arm's tick, `label` its labeller); with `contacts`, every
-    hit_feedback.beam_contact too (its arguments, and the shields_block it
-    acted on: headless, a contact on a shielded ship presents nothing, so
-    the contact itself is what shows its order). What a beam contact or a
-    hit PRESENTS: since round trips Task 3 a K2 resting contact is batched
-    and run with the next record that runs Python, so its presentation must
-    still land in Python's per-tick order, among the pulses' apply_hits
-    (when the arm logs those into the same list). The instance id is
-    compared only as present or not: two loads realize alike but number
-    their instances independently."""
+    arm's tick, `label` its labeller) -- the shield hits the K2 drain makes
+    natively too, from its capture, as the rows the shield_hit spy would
+    have logged; with `contacts`, every hit_feedback.beam_contact too (its
+    arguments, and the shields_block it acted on: headless, a contact on a
+    shielded ship presents nothing, so the contact itself is what shows it;
+    a shielded one on a target with an instance id is a ShieldedContact,
+    left out of the compare for the shield hit that stands for it). What a
+    beam contact or a hit PRESENTS: a K2 resting contact is presented at the
+    drain after the step's last record (spec 2026-11-02 §4.3-4.4), so
+    presentation is compared per tick as a multiset (compare_calls; ruling
+    Q1), while the game-state calls logged into the same list keep their
+    order. The instance id is compared only as present or not: two loads
+    realize alike but number their instances independently."""
     from engine import host_io
     from engine.appc import hit_feedback, hit_vfx
     spawn, shield_hit = hit_vfx.spawn, host_io.shield_hit
@@ -228,12 +292,13 @@ def spy_presentation(mp, calls, tick, label, contacts=True):
             acted = kw["shields_block"]
         else:
             acted = bool(combat.shields_block(kw["ship"]))
-        calls.append(("beam_contact", tick(), label(kw["ship"]),
-                      label(kw["source"]), hx(kw["point"]), hx(kw["normal"]),
-                      hx(kw["shield_point"]), hx(kw["tick_damage"]),
-                      hx(kw.get("weapon_type")), hx(kw.get("radius")),
-                      hx(bool(acted)),
-                      sorted(k for k in kw if k != "shields_block")))
+        calls.append(contact_row(
+            ("beam_contact", tick(), label(kw["ship"]), label(kw["source"]),
+             hx(kw["point"]), hx(kw["normal"]), hx(kw["shield_point"]),
+             hx(kw["tick_damage"]), hx(kw.get("weapon_type")),
+             hx(kw.get("radius")), hx(bool(acted)),
+             sorted(k for k in kw if k != "shields_block")), acted,
+            kw["ship_instances"], kw["ship"]))
         return beam_contact(**kw)
 
     def spawn_spy(position, *args, **kw):
@@ -255,17 +320,64 @@ def spy_presentation(mp, calls, tick, label, contacts=True):
                       sorted(kw)))
         return shield_hit(iid, point, *args, **kw)
 
+    def native_hit(item):
+        # The row shield_spy logs for beam_contact's positional call
+        # shield_hit(iid, point, rgba, intensity, radius).
+        _b, _t, iid, view, _rel, rgba, intensity, radius = item
+        calls.append(("shield_hit", tick(), iid is not None,
+                      hx(tuple(map(float, view))),
+                      (repr(tuple(rgba)), hx(float(intensity)),
+                       hx(float(radius))), []))
+
     mp.setattr(hit_vfx, "spawn", spawn_spy)
     mp.setattr(host_io, "shield_hit", shield_spy)
+    if _h is not None:
+        capture_native_shield_hits(mp, native_hit)
     if contacts:
         mp.setattr(hit_feedback, "beam_contact", contact_spy)
+
+
+#: The presentation calls spy_presentation logs: no order inside a tick
+#: (ruling Q1, spec 2026-11-02 §5).
+PRESENTATION = ("beam_contact", "vfx", "shield_hit")
 
 
 def presented(calls):
     """How many presentation calls (beam contacts, VFX spawns, shield hits)
     `calls` holds."""
-    return sum(1 for c in calls
-               if c[0] in ("beam_contact", "vfx", "shield_hit"))
+    return sum(1 for c in calls if c[0] in PRESENTATION)
+
+
+def split_calls(calls):
+    """(every other call, in order; {tick: that tick's presentation calls,
+    sorted}). A call's second element is its tick. A ShieldedContact is in
+    neither: its shield hit stands for it."""
+    ordered, shown = [], {}
+    for c in calls:
+        if isinstance(c, ShieldedContact):
+            continue
+        if c[0] in PRESENTATION:
+            shown.setdefault(c[1], []).append(c)
+        else:
+            ordered.append(c)
+    return ordered, {t: sorted(v, key=repr) for t, v in shown.items()}
+
+
+def compare_calls(ref_calls, nat_calls):
+    """The game-state calls equal in order; each tick's presentation equal
+    as a multiset (ruling Q1), shielded beam contacts left out (their shield
+    hits compare: ShieldedContact)."""
+    ref, ref_shown = split_calls(ref_calls)
+    nat, nat_shown = split_calls(nat_calls)
+    for i, (x, y) in enumerate(zip(ref, nat)):
+        assert x == y, "call %d differs:\n python %r\n native %r" % (i, x, y)
+    assert len(ref) == len(nat)
+    assert sorted(ref_shown) == sorted(nat_shown), (sorted(ref_shown),
+                                                    sorted(nat_shown))
+    for t in ref_shown:
+        assert ref_shown[t] == nat_shown[t], (
+            "tick %d presentation differs:\n python %r\n native %r" % (
+                t, ref_shown[t], nat_shown[t]))
 
 
 class Recorder:
@@ -616,7 +728,8 @@ class K3Tally:
 
 
 def compare(ref, nat):
-    """Every per-tick row, call and event equal (floats by .hex())."""
+    """Every per-tick row, call and event equal (floats by .hex();
+    presentation per tick as a multiset, compare_calls)."""
     assert len(ref.log) == len(nat.log)
     for tick, (a, b) in enumerate(zip(ref.log, nat.log), start=1):
         assert len(a) == len(b), "tick %d: %d rows vs %d" % (tick, len(a),
@@ -624,9 +737,7 @@ def compare(ref, nat):
         for x, y in zip(a, b):
             assert x == y, "tick %d differs:\n python %r\n native %r" % (
                 tick, x, y)
-    for i, (x, y) in enumerate(zip(ref.calls, nat.calls)):
-        assert x == y, "call %d differs:\n python %r\n native %r" % (i, x, y)
-    assert len(ref.calls) == len(nat.calls)
+    compare_calls(ref.calls, nat.calls)
     for i, (x, y) in enumerate(zip(ref.events, nat.events)):
         assert x == y, "event %d differs:\n python %r\n native %r" % (i, x, y)
     assert len(ref.events) == len(nat.events)

@@ -185,7 +185,7 @@ Order of operations:
 
 ## 5. K2 resting contacts (no damage pulse) — the "level ii" lever
 
-Path today (after round trips, Task 3): the kernel queues the contact; `_k2_deliver` NC:3634-3661 runs it before the next Python-running record → `_k2_run_contact` NC:3664-3682: `_k2_points` (3-5 TGPoint3s, NC:3610-3626), `hl._phaser_level(sys_)` (`sys_.GetPowerLevel()`, `PhaserSystem._power_level` WS:2343, **not mirrored**) → `_phaser_contact` HL:1203-1235 branch `flush_dwell <= 0`:
+Path at the time of writing (after round trips, Task 3): the kernel queues the contact; `_k2_deliver` NC:3634-3661 runs it before the next Python-running record → `_k2_run_contact` NC:3664-3682: `_k2_points` (3-5 TGPoint3s, NC:3610-3626), `hl._phaser_level(sys_)` (`sys_.GetPowerLevel()`, `PhaserSystem._power_level` WS:2343, **not mirrored**) → `_phaser_contact` HL:1203-1235 branch `flush_dwell <= 0`: *(Superseded 2026-11-02 by the presentation queue, spec `2026-11-02-combat-effect-queue-design.md`: resting contacts are queued natively and drained after DONE; shielded ones are presented in C++, the rest by `_k2_present_batch`; records end `(..., writes)`. `PhaserSystem._power_level` is mirrored since weapon state.)*
 
 | Step | Line | Read / call | Native today? |
 |---|---|---|---|

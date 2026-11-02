@@ -414,14 +414,16 @@ PyObject* registry_get(PyObject* registry, PyObject* h) {
     return PyObject_CallMethodOneArg(registry, n->get, h);
 }
 
-// _K1Walk.obj(h) for any object `h`: None for -1; the pinned object; else
-// the registry's, checked by its `_nslot`, then pinned. A new reference, or
-// nullptr with the reference's RuntimeError set.
-PyObject* walk_obj(const Ctx& c, PyObject* h) {
+// _K1Walk.live(h) for any object `h`: None for -1 (`*minus_one` set); the
+// pinned object; else the registry's, checked by its `_nslot`, then pinned;
+// else None (a row freed since). A new reference, or nullptr with an error
+// set.
+PyObject* walk_live(const Ctx& c, PyObject* h, bool* minus_one) {
     const Names* n = names();
     if (n == nullptr) return nullptr;
     const int none = PyObject_RichCompareBool(h, n->minus_one, Py_EQ);
     if (none < 0) return nullptr;
+    *minus_one = none != 0;
     if (none) return Py_NewRef(Py_None);
     PyObject* o = PyDict_GetItemWithError(c.pins, h);  // self.pins.get(h)
     if (o == nullptr && PyErr_Occurred()) return nullptr;
@@ -447,13 +449,22 @@ PyObject* walk_obj(const Ctx& c, PyObject* h) {
         if (ne < 0) return nullptr;
         live = !ne;
     }
-    if (!live) {
-        Ref msg(PyUnicode_Format(n->handle_fmt, h));
-        if (msg) PyErr_SetObject(PyExc_RuntimeError, msg.get());
-        return nullptr;
-    }
+    if (!live) return Py_NewRef(Py_None);
     if (PyDict_SetItem(c.pins, h, reg.get()) < 0) return nullptr;
     return reg.release();
+}
+
+// _K1Walk.obj(h): walk.live(h), but a handle (other than -1) naming no
+// pinned or live object raises the reference's RuntimeError. A new
+// reference, or nullptr with an error set.
+PyObject* walk_obj(const Ctx& c, PyObject* h) {
+    bool minus_one = false;
+    PyObject* o = walk_live(c, h, &minus_one);
+    if (o != Py_None || minus_one) return o;
+    Py_DECREF(o);
+    Ref msg(PyUnicode_Format(names()->handle_fmt, h));
+    if (msg) PyErr_SetObject(PyExc_RuntimeError, msg.get());
+    return nullptr;
 }
 
 PyObject* walk_obj_int(const Ctx& c, std::int64_t h) {
@@ -1097,6 +1108,20 @@ bool WriteApplier::apply_range(const W* w, size_t size, size_t from,
     // Held for the apply: Python run inside may install another context.
     Ref ctx(Py_NewRef(ctx_));
     return apply_log(unpack(ctx.get()), w, from, to, &applied_);
+}
+
+PyObject* WriteApplier::live(std::int64_t h) {
+    if (ctx_ == nullptr) {
+        PyErr_SetString(PyExc_RuntimeError,
+                        "combat apply: no applier context "
+                        "(combat_set_applier)");
+        return nullptr;
+    }
+    Ref ctx(Py_NewRef(ctx_));
+    Ref key(PyLong_FromLongLong(h));
+    if (!key) return nullptr;
+    bool minus_one = false;
+    return walk_live(unpack(ctx.get()), key.get(), &minus_one);
 }
 
 bool WriteApplier::apply(const std::vector<cb::K1Write>& w, size_t from,

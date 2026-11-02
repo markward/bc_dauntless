@@ -18,10 +18,11 @@ bank's offset is the same OBJECT as which), every ship's hull condition and
 six shield faces, and the whole event log (every AddEvent: type, source,
 destination, tick, order, and a weapon hit's payload -- damage, hit point and
 normal by .hex(); torpedoes and bolts numbered by first sight) are compared
-with ``==``, and so is the ordered log of every apply_hit and every hit VFX
-spawn and shield hit (the presentation: a K2 resting contact is batched onto
-a later record since round trips Task 3, and must still present in Python's
-order among the pulses' hits). Each
+with ``==``, and so is the ordered log of every apply_hit, and every hit VFX
+spawn and shield hit per tick as a multiset (the presentation: a K2 resting
+contact is presented at the drain after the step's last record, spec
+2026-11-02 §4.3-4.4, and presentation has no order inside a tick, §5 Q1;
+compare_calls). Each
 arm starts with nothing in flight: the other arm's torpedoes would otherwise
 fly on in it (headless_mission.clear_in_flight). The native arm must show that K1 really walked and
 fired phaser, pulse and torpedo systems (not merely that the scene has
@@ -58,7 +59,8 @@ from engine.core import step_memo
 from engine.core.loop import TICK_DELTA
 from tests.helpers import bc_assets, headless_mission
 from tests.helpers.fight_audio import isolate_fight_audio
-from tests.helpers.k3_fight import presented, spy_presentation
+from tests.helpers.k3_fight import (compare_calls, presented,
+                                   spy_presentation)
 
 pytestmark = pytest.mark.skipif(
     _h is None or not hasattr(_h, "combat_k1_next"),
@@ -197,7 +199,8 @@ class _Scene:
 
         # The presentation (round trips Task 5): every apply_hit (its
         # target and damage: the event log holds the rest), then every hit
-        # VFX spawn and shield hit, in one ordered log.
+        # VFX spawn and shield hit, in one log (compare_calls: the hits in
+        # order, the presentation per tick as a multiset).
         apply_hit = combat.apply_hit
 
         def hit_spy(target, damage, point, *args, _orig=apply_hit, **kw):
@@ -536,9 +539,7 @@ def _compare(ref, nat):
     for i, (x, y) in enumerate(zip(ref.events, nat.events)):
         assert x == y, "event %d differs:\n python %r\n native %r" % (i, x, y)
     assert len(ref.events) == len(nat.events)
-    for i, (x, y) in enumerate(zip(ref.calls, nat.calls)):
-        assert x == y, "call %d differs:\n python %r\n native %r" % (i, x, y)
-    assert len(ref.calls) == len(nat.calls)
+    compare_calls(ref.calls, nat.calls)
     assert nat.audit == [], nat.audit
     assert nat.counts["k1_records"] > 0, nat.counts
     assert ref.counts["k1_records"] == 0, ref.counts

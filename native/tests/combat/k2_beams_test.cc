@@ -207,28 +207,29 @@ struct World {
             out.push_back(name(w.handle) + "." + std::string(w.field) + "=" + value(w.value));
         return out;
     }
-    // The kernel's records as the driver acts on them (run_k2): a record's
-    // queued resting contacts first -- each as a CONTACT carrying the writes
-    // logged before it -- then the record with the rest of its writes. The
-    // raw record is in `raw` (its queue intact).
+    // The kernel's records as the driver acts on them (run_k2): each record
+    // with its writes; at DONE, the resting contacts queued for the drain
+    // (rests(), in walk order) first, each as a CONTACT -- the first one
+    // carrying DONE's writes, which the driver applies before it drains --
+    // then DONE. The raw record is in `raw`, the drained queue in `drained`.
     std::deque<K2Record> pending;
     K2Record raw;
+    std::vector<K2Rest> drained;
     K2Record next() {
         if (pending.empty()) {
             raw = k.next();
             K2Record r = raw;
-            size_t done = 0;
-            for (const K2Queued& q : r.contacts) {
-                K2Record c;
-                c.kind = K2Kind::CONTACT;
-                c.contact = q.contact;
-                c.writes.assign(r.writes.begin() + done,
-                                r.writes.begin() + q.at);
-                done = q.at;
-                pending.push_back(std::move(c));
+            if (r.kind == K2Kind::DONE) {
+                drained = k.rests();
+                for (const K2Rest& q : drained) {
+                    K2Record c;
+                    c.kind = K2Kind::CONTACT;
+                    c.contact = q.contact;
+                    if (pending.empty()) c.writes = std::move(r.writes);
+                    pending.push_back(std::move(c));
+                }
+                if (!drained.empty()) r.writes.clear();
             }
-            r.writes.erase(r.writes.begin(), r.writes.begin() + done);
-            r.contacts.clear();
             pending.push_back(std::move(r));
         }
         K2Record r = std::move(pending.front());
@@ -262,6 +263,12 @@ struct World {
             if (r.kind == K2Kind::DONE) break;
         }
         return out;
+    }
+    // Raw records up to DONE (no ASK expected), the session left open so
+    // the test reads rests().
+    void finish_to_done_raw() {
+        for (int guard = 0; guard < 200; ++guard)
+            if (k.next().kind == K2Kind::DONE) break;
     }
     // Run the rest of the session (no ASK expected) and end it.
     void finish() {
@@ -1005,11 +1012,11 @@ TEST(K2, LockOnPosedShipIsNative) {
 
 // ── Round trips (spec 2026-11-01 §4.4-4.5) ──────────────────────────────────
 
-TEST(K2, RestingContactsQueueOnTheNextRecord) {
+TEST(K2, RestingContactsQueueForTheDrain) {
     // b0 and b1 rest (beams on, dwell under the flush), b2 pulses, b3 rests:
-    // the pulse is the only CONTACT record and carries b0's and b1's
-    // contacts, each with the writes logged before it (`at`); b3's rides
-    // DONE.
+    // the pulse is the only CONTACT record, every write rides a record, and
+    // the three resting contacts wait, in walk order, for the drain after
+    // DONE (rests()).
     World w;
     const auto s = w.scene(true, 0.1);
     w.bank("b1", s.sys, s.target, true, 0.2);
@@ -1020,29 +1027,32 @@ TEST(K2, RestingContactsQueueOnTheNextRecord) {
     ASSERT_EQ(r.kind, K2Kind::CONTACT);
     EXPECT_EQ(w.name(r.contact.bank), "b2");
     EXPECT_EQ(r.contact.flush_dwell, 0.6 + kDt);
-    ASSERT_EQ(r.contacts.size(), 2u);
-    EXPECT_EQ(w.name(r.contacts[0].contact.bank), "b0");
-    EXPECT_EQ(r.contacts[0].at, 1u);
-    EXPECT_EQ(w.name(r.contacts[1].contact.bank), "b1");
-    EXPECT_EQ(r.contacts[1].at, 2u);
-    EXPECT_EQ(r.contacts[0].contact.flush_dwell, 0.0);
     EXPECT_EQ(w.writes(r),
               (World::V{"b0._dwell=" + World::num(0.1 + kDt),
                         "b1._dwell=" + World::num(0.2 + kDt), "b2._dwell=0"}));
     const K2Record d = w.k.next();
     ASSERT_EQ(d.kind, K2Kind::DONE);
-    ASSERT_EQ(d.contacts.size(), 1u);
-    EXPECT_EQ(w.name(d.contacts[0].contact.bank), "b3");
-    EXPECT_EQ(d.contacts[0].at, 1u);
     EXPECT_EQ(w.writes(d), (World::V{"b3._dwell=" + World::num(0.3 + kDt)}));
+    const std::vector<K2Rest>& q = w.k.rests();
+    ASSERT_EQ(q.size(), 3u);
+    EXPECT_EQ(w.name(q[0].contact.bank), "b0");
+    EXPECT_EQ(w.name(q[1].contact.bank), "b1");
+    EXPECT_EQ(w.name(q[2].contact.bank), "b3");
+    for (const K2Rest& e : q) {
+        EXPECT_EQ(e.contact.flush_dwell, 0.0);
+        EXPECT_EQ(e.contact.target, s.target);
+        EXPECT_EQ(e.contact.ship, s.ship);
+        EXPECT_EQ(e.contact.system, s.sys);
+    }
     w.k.end();
     EXPECT_EQ(w.k.counts().batched_contacts, 3);
     EXPECT_EQ(w.k.counts().records, 2);
 }
 
-TEST(K2, QueuedContactCarriesShieldsAsked) {
-    // shields_block answered by Python (ASK): the queued contact says so,
-    // and beam_contact then evaluates its own. A native answer: not asked.
+TEST(K2, RestCarriesTheShieldsAnswer) {
+    // shields_block answered by Python (ASK): the rest carries the answer
+    // itself (false here), marked asked -- presented later, a re-evaluation
+    // could read shields a later pulse changed. A native answer: carried.
     World w;
     const auto s = w.scene(true);
     w.m.set_i(s.target, Field::is_ship_class, 0);
@@ -1051,25 +1061,158 @@ TEST(K2, QueuedContactCarriesShieldsAsked) {
     K2Answer a;
     a.flag = false;
     w.k.answer(a);
-    const K2Record d = w.k.next();
-    ASSERT_EQ(d.kind, K2Kind::DONE);
-    ASSERT_EQ(d.contacts.size(), 1u);
-    EXPECT_TRUE(d.contacts[0].contact.shields_asked);
-    EXPECT_EQ(d.contacts[0].contact.shields_block, std::optional<bool>(false));
+    ASSERT_EQ(w.k.next().kind, K2Kind::DONE);
+    ASSERT_EQ(w.k.rests().size(), 1u);
+    EXPECT_TRUE(w.k.rests()[0].contact.shields_asked);
+    EXPECT_EQ(w.k.rests()[0].contact.shields_block, std::optional<bool>(false));
     w.k.end();
     w.m.set_i(s.target, Field::is_ship_class, 1);
     w.begin({s.ship});
-    const K2Record n = w.k.next();
-    ASSERT_EQ(n.contacts.size(), 1u);
-    EXPECT_FALSE(n.contacts[0].contact.shields_asked);
-    EXPECT_TRUE(n.contacts[0].contact.shields_block.has_value());
+    ASSERT_EQ(w.k.next().kind, K2Kind::DONE);
+    ASSERT_EQ(w.k.rests().size(), 1u);
+    EXPECT_FALSE(w.k.rests()[0].contact.shields_asked);
+    EXPECT_EQ(w.k.rests()[0].contact.shields_block, std::optional<bool>(false));
+    w.k.end();
+}
+
+TEST(K2, RestCarriesLevelIidAndViewOffset) {
+    // b0 rests, b1 pulses, b2 rests. Each rest carries the system's
+    // `_power_level` as it was when the walk reached it (the pulse's handler
+    // changes it in between, and the drain reads only the entry), the
+    // target's instance and its set's view offset from the context.
+    World w;
+    const auto s = w.scene(true, 0.1);
+    w.bank("b1", s.sys, s.target, true, 0.6);
+    w.bank("b2", s.sys, s.target, true, 0.2);
+    w.m.set_i(s.sys, Field::_power_level, 2);
+    w.host.hit = TraceHit{{0.0f, 48.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 48.0f};
+    K2Context ctx;
+    ctx.hooks = w.host.hooks();
+    ctx.view_offsets[w.set] = Vec3{0.0, 0.0, 0.0};
+    ctx.iids[s.target] = K2Context::Iid{false, InstanceId{1, 1}};
+    w.k.begin({s.ship}, kDt, 10.0, true, 0.0, ctx);
+    const K2Record pulse = w.k.next();
+    ASSERT_EQ(w.name(pulse.contact.bank), "b1");
+    w.m.set_i(s.sys, Field::_power_level, 0);   // the pulse's handler
+    ASSERT_EQ(w.k.next().kind, K2Kind::DONE);
+    w.m.set_i(s.sys, Field::_power_level, 1);   // after DONE: not read
+    {
+        const std::vector<K2Rest>& q = w.k.rests();
+        ASSERT_EQ(q.size(), 2u);
+        EXPECT_EQ(q[0].level, 2);
+        EXPECT_EQ(q[1].level, 0);
+        for (const K2Rest& e : q) {
+            ASSERT_TRUE(e.iid.has_value());
+            EXPECT_EQ(e.iid->index, 1u);
+            EXPECT_EQ(e.iid->generation, 1u);
+            EXPECT_TRUE(e.view_known);
+            EXPECT_EQ(e.view_offset, std::optional<Vec3>(Vec3{0.0, 0.0, 0.0}));
+        }
+    }
+    w.k.end();
+
+    // No instance (and a value that is not an InstanceId): no iid. The set
+    // known with no shift (None) is known; a set with no entry is not.
+    for (const bool bad : {false, true}) {
+        K2Context c2;
+        c2.hooks = w.host.hooks();
+        c2.view_offsets[w.set] = std::nullopt;
+        if (bad) c2.iids[s.target] = K2Context::Iid{true, {}};
+        w.m.set_f(s.bank, Field::_dwell, 0.1);
+        w.k.begin({s.ship}, kDt, 10.0, true, 0.0, c2);
+        w.finish_to_done_raw();
+        ASSERT_EQ(w.k.rests().size(), 3u);   // b1 rests too (flushed)
+        for (const K2Rest& e : w.k.rests()) {
+            EXPECT_FALSE(e.iid.has_value());
+            EXPECT_TRUE(e.view_known);
+            EXPECT_FALSE(e.view_offset.has_value());
+        }
+        w.k.end();
+    }
+    K2Context c3;
+    c3.hooks = w.host.hooks();
+    w.k.begin({s.ship}, kDt, 10.0, true, 0.0, c3);
+    w.finish_to_done_raw();
+    ASSERT_FALSE(w.k.rests().empty());
+    for (const K2Rest& e : w.k.rests()) {
+        EXPECT_FALSE(e.view_known);
+        EXPECT_FALSE(e.view_offset.has_value());
+    }
+    w.k.end();
+}
+
+TEST(K2, NoAimRestEvaluatesShieldsNatively) {
+    // dist 0: the loop has no aim unit and never evaluates shields_block.
+    // The rest still carries the answer, evaluated natively for the drain
+    // (shields up: true) -- never an ASK; a target the mirror cannot answer
+    // for leaves it unknown (the drain's Python evaluates its own).
+    World w;
+    const auto s = w.scene(true);
+    w.store.set_position(static_cast<uint32_t>(w.m.get_i(s.target, Field::xform_index)),
+                         static_cast<uint32_t>(w.m.get_i(s.target, Field::xform_gen)),
+                         0.0, 0.0, 0.0);
+    const int64_t sh = w.m.register_row(Kind::Subsystem);
+    w.m.set_i(sh, Field::has_shields, 1);
+    w.m.set_i(sh, Field::_is_on, 1);
+    w.m.set_f(sh, Field::_max_condition, 100.0);
+    w.m.set_f(sh, Field::_condition, 100.0);
+    w.m.set_f(sh, Field::_disabled_percentage, 0.25);
+    w.m.set_ref(s.target, Field::_shield_subsystem, sh);
+    w.begin({s.ship});
+    ASSERT_EQ(w.k.next().kind, K2Kind::DONE);
+    ASSERT_EQ(w.k.rests().size(), 1u);
+    EXPECT_FALSE(w.k.rests()[0].contact.aim_unit.has_value());
+    EXPECT_EQ(w.k.rests()[0].contact.shields_block, std::optional<bool>(true));
+    EXPECT_FALSE(w.k.rests()[0].contact.shields_asked);
+    w.k.end();
+    w.m.set_i(s.target, Field::is_ship_class, 0);
+    w.begin({s.ship});
+    ASSERT_EQ(w.k.next().kind, K2Kind::DONE);   // no ASK
+    ASSERT_EQ(w.k.rests().size(), 1u);
+    EXPECT_FALSE(w.k.rests()[0].contact.shields_block.has_value());
+    EXPECT_FALSE(w.k.rests()[0].contact.shields_asked);
+    w.k.end();
+    EXPECT_EQ(w.k.counts().asks, 0);
+}
+
+TEST(K2, QueueClearedOnBeginEndAbandon) {
+    // The queue belongs to the session: end() drops it, an abandoned walk
+    // drops what it queued, and a new session starts with none.
+    World w;
+    const auto s = w.scene(true, 0.1);
+    const int64_t b1 = w.bank("b1", s.sys, s.target, true, 0.6);
+    EXPECT_TRUE(w.k.rests().empty());
+    w.m.set_f(b1, Field::_dwell, 0.6);   // b1 pulses each session
+    w.begin({s.ship});
+    ASSERT_EQ(w.k.next().kind, K2Kind::CONTACT);   // b0 queued, b1 pulses
+    EXPECT_EQ(w.k.rests().size(), 1u);
+    EXPECT_THROW(w.k.take_rests(), std::logic_error);  // not DONE yet
+    EXPECT_EQ(w.k.rests().size(), 1u);
+    w.k.abandon();
+    EXPECT_TRUE(w.k.rests().empty());
+    w.m.set_f(b1, Field::_dwell, 0.6);   // b1 pulses each session
+    w.begin({s.ship});
+    EXPECT_TRUE(w.k.rests().empty());
+    ASSERT_EQ(w.k.next().kind, K2Kind::CONTACT);
+    ASSERT_EQ(w.k.next().kind, K2Kind::DONE);
+    EXPECT_EQ(w.k.rests().size(), 1u);
+    w.k.end();
+    EXPECT_TRUE(w.k.rests().empty());
+    // take_rests() hands the queue over and leaves it empty.
+    w.m.set_f(b1, Field::_dwell, 0.6);   // b1 pulses each session
+    w.begin({s.ship});
+    ASSERT_EQ(w.k.next().kind, K2Kind::CONTACT);
+    ASSERT_EQ(w.k.next().kind, K2Kind::DONE);
+    const std::vector<K2Rest> taken = w.k.take_rests();
+    EXPECT_EQ(taken.size(), 1u);
+    EXPECT_TRUE(w.k.rests().empty());
     w.k.end();
 }
 
 TEST(K2, ThrowAfterAQueuedContactRestoresTheQueue) {
     // b0 is queued, then b1's trace throws a foreign exception: next()
     // undoes both writes and restores the session (an empty queue), so a
-    // retry delivers b0 exactly once.
+    // retry queues b0 exactly once.
     World w;
     const auto s = w.scene(true, 0.1);
     const int64_t t2 = w.ship("t2", 0.0, 60.0, 0.0);
@@ -1082,14 +1225,49 @@ TEST(K2, ThrowAfterAQueuedContactRestoresTheQueue) {
     w.k.begin({s.ship}, kDt, 10.0, true, 0.0, ctx);
     EXPECT_ANY_THROW(w.k.next());
     EXPECT_EQ(w.m.get_f(s.bank, Field::_dwell), 0.1);
+    EXPECT_TRUE(w.k.rests().empty());
     EXPECT_EQ(w.k.counts().batched_contacts, 1);  // counted, then undone
     w.host.throw_foreign = false;
     const K2Record d = w.k.next();
     ASSERT_EQ(d.kind, K2Kind::DONE);
-    ASSERT_EQ(d.contacts.size(), 2u);
-    EXPECT_EQ(w.name(d.contacts[0].contact.bank), "b0");
-    EXPECT_EQ(w.name(d.contacts[1].contact.bank), "b1");
-    EXPECT_EQ(d.contacts[1].contact.hit.tier, ResolvedHit::Tier::Sphere);
+    const std::vector<K2Rest>& q = w.k.rests();
+    ASSERT_EQ(q.size(), 2u);
+    EXPECT_EQ(w.name(q[0].contact.bank), "b0");
+    EXPECT_EQ(w.name(q[1].contact.bank), "b1");
+    EXPECT_EQ(q[1].contact.hit.tier, ResolvedHit::Tier::Sphere);
+    w.k.end();
+}
+
+TEST(K2, ThrowKeepsRestsQueuedByEarlierRecords) {
+    // b0 rests, b1 pulses (a record: b0's rest is queued before it), b2
+    // rests, then b3's trace throws: the throw drops only what that next()
+    // queued (b2), never a rest an earlier call queued (b0). A retry queues
+    // b2 again, once.
+    World w;
+    const auto s = w.scene(true, 0.1);
+    w.bank("b1", s.sys, s.target, true, 0.6);
+    w.bank("b2", s.sys, s.target, true, 0.2);
+    const int64_t t2 = w.ship("t2", 0.0, 60.0, 0.0);
+    w.bank("b3", s.sys, t2, true, 0.3);
+    K2Context ctx;
+    ctx.hooks = w.host.hooks();
+    ctx.view_offsets[w.set] = std::nullopt;
+    ctx.iids[t2] = K2Context::Iid{false, {1, 1}};  // only b3 traces
+    w.k.begin({s.ship}, kDt, 10.0, true, 0.0, ctx);
+    const K2Record pulse = w.k.next();
+    ASSERT_EQ(w.name(pulse.contact.bank), "b1");
+    ASSERT_EQ(w.k.rests().size(), 1u);
+    w.host.throw_foreign = true;
+    EXPECT_ANY_THROW(w.k.next());
+    ASSERT_EQ(w.k.rests().size(), 1u);
+    EXPECT_EQ(w.name(w.k.rests()[0].contact.bank), "b0");
+    w.host.throw_foreign = false;
+    ASSERT_EQ(w.k.next().kind, K2Kind::DONE);
+    const std::vector<K2Rest>& q = w.k.rests();
+    ASSERT_EQ(q.size(), 3u);
+    EXPECT_EQ(w.name(q[0].contact.bank), "b0");
+    EXPECT_EQ(w.name(q[1].contact.bank), "b2");
+    EXPECT_EQ(w.name(q[2].contact.bank), "b3");
     w.k.end();
 }
 

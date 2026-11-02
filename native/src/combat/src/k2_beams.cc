@@ -149,7 +149,8 @@ struct K2Undo {
 };
 
 struct K2Kernel::Session {
-    // Shared, so next()'s per-call backup of the session copies no list.
+    // Shared, so next()'s per-call backup of the session copies no list
+    // (`rests` is moved aside for it, not copied).
     std::shared_ptr<const std::vector<int64_t>> ships;
     double dt = 0.0, now = 0.0, drift_now = 0.0;
     bool use_memo = false;
@@ -184,9 +185,9 @@ struct K2Kernel::Session {
     // write replaced (rolled back if the writes never reach Python).
     std::vector<K2Write> writes;
     std::vector<K2Undo> undo;
-    // The resting contacts queued since the last record (RESTING CONTACTS,
-    // k2_beams.h); each `at` indexes `writes`.
-    std::vector<K2Queued> queue;
+    // The resting contacts queued for the drain (RESTING CONTACTS,
+    // k2_beams.h), in walk order.
+    std::vector<K2Rest> rests;
     bool awaiting_answer = false, has_answer = false;
     K2Query pending = K2Query::kCount;
     K2Answer answer;
@@ -342,8 +343,6 @@ private:
         r.kind = kind;
         r.a = a;
         r.b = b;
-        r.contacts = std::move(s_.queue);
-        s_.queue.clear();
         r.writes = std::move(s_.writes);
         s_.writes.clear();
         s_.undo.clear();  // delivered: Python applies them
@@ -522,11 +521,37 @@ static K2Contact make_contact(const K2Kernel::Session& s) {
 }
 
 // A RESTING contact (`flush_dwell <= 0.0`: beam_contact, presentation only)
-// is queued for the next record, after the writes logged so far, and the
-// walk goes on: true. A damage pulse: false (the caller emits CONTACT).
+// is queued for the drain with what its presentation reads, as it is now
+// (RESTING CONTACTS, k2_beams.h), and the walk goes on: true. A damage
+// pulse: false (the caller emits CONTACT).
 bool Walker::queue_contact() {
     if (!(*s_.flush_dwell <= 0.0)) return false;
-    s_.queue.push_back(K2Queued{make_contact(s_), s_.writes.size()});
+    K2Rest e;
+    e.contact = make_contact(s_);
+    // No aim unit: the loop never asked shields_block; beam_contact would.
+    // Natively when the mirror can answer, else unknown (no ASK).
+    if (!e.contact.shields_block) {
+        try {
+            e.contact.shields_block = shields_block(
+                m_, s_.target, ctx_.npc_shields_off, ctx_.player);
+        } catch (const std::invalid_argument&) {
+        }
+    }
+    // _phaser_level(sys_): sys_.GetPowerLevel(), a PhaserSystem (pre-scan).
+    const SubsystemRow* y = subrow(s_.sys);
+    if (!y) throw std::invalid_argument("combat K2: system row is gone");
+    e.level = y->_power_level;
+    const auto it = ctx_.iids.find(s_.target);
+    if (it != ctx_.iids.end() && !it->second.bad) e.iid = it->second.id;
+    const ObjectRow* t = objrow(s_.target);
+    if (t && set_ok(m_, t->_containing_set)) {
+        const auto vo = ctx_.view_offsets.find(t->_containing_set);
+        if (vo != ctx_.view_offsets.end()) {
+            e.view_known = true;
+            e.view_offset = vo->second;
+        }
+    }
+    s_.rests.push_back(std::move(e));
     ++c_.batched_contacts;
     // The bank's body has run in full and the ship's has started: a later
     // bank that cannot be walked is a bank_step, never the whole ship again.
@@ -968,8 +993,14 @@ K2Record K2Kernel::next() {
         lost("ASK has no answer (combat_k2_answer)");
     // A throw must leave the session and the mirror as they were: the
     // pending answer kept, every unflushed write undone (mirror == Python),
-    // so abandon() -- or a retry -- starts from a consistent state.
+    // the queue cut back to what earlier calls queued, so abandon() -- or a
+    // retry -- starts from a consistent state. The queue grows all step:
+    // the backup leaves it out (moved aside), so it is never copied.
+    const size_t rest_mark = s.rests.size();
+    std::vector<K2Rest> rests = std::move(s.rests);
+    s.rests.clear();
     Session before = s;
+    s.rests = std::move(rests);
     s.awaiting_answer = false;
     s.has_answer = false;
     try {
@@ -977,7 +1008,10 @@ K2Record K2Kernel::next() {
         return w.run();
     } catch (...) {
         k2_roll_back(m_, s, 0);
+        rests = std::move(s.rests);
+        rests.resize(rest_mark);
         s = std::move(before);
+        s.rests = std::move(rests);
         throw;
     }
 }
@@ -1004,6 +1038,17 @@ void K2Kernel::end() {
 void K2Kernel::abandon() {
     if (!session_) lost("no session is open");
     session_.reset();
+}
+
+const std::vector<K2Rest>& K2Kernel::rests() const {
+    static const std::vector<K2Rest> kNone;
+    return session_ ? session_->rests : kNone;
+}
+
+std::vector<K2Rest> K2Kernel::take_rests() {
+    if (!session_) return {};
+    if (session_->st != St::DONE) lost("the session has not returned DONE");
+    return std::exchange(session_->rests, {});
 }
 
 K2Kernel& k2_kernel() {
