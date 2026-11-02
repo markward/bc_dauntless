@@ -11404,7 +11404,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
               py::arg("writes"),
               "Apply a Python-encoded write log [(handle, field, value), "
               "...] through the C path (values as apply_writes', plus "
-              "(\"slot\", index, value) and (\"watcher\", value)).");
+              "(\"slot\", index, value) and (\"watcher\", value)). "
+              "Test-only entry: its encoding is the kernels' logs', not "
+              "apply_writes', in two places -- a list value is always a "
+              "list of int64 handles (on a PLAIN field apply_writes stores "
+              "the list object itself; here a new list is built, and a "
+              "non-int entry raises TypeError), and an int beyond 64 bits "
+              "raises OverflowError where apply_writes stores it.");
         m.def("combat_apply_raised", [] { return k1_apply_raised(); },
               "Whether the last combat_k1_next raised applying its writes.");
         m.def("combat_apply_counts", [] {

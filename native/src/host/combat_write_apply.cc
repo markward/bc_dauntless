@@ -282,20 +282,18 @@ PyObject* walk_obj(const Ctx& c, PyObject* h) {
     if (live) {
         Ref d(PyObject_GetAttr(reg.get(), n->dict));
         if (!d) return nullptr;
-        PyObject* slot = nullptr;
+        // Owned: the compare can run Python that mutates the dict.
+        Ref slot;
         if (PyDict_Check(d.get())) {
-            slot = PyDict_GetItemWithError(d.get(), n->nslot);
-            if (slot == nullptr && PyErr_Occurred()) return nullptr;
-            if (slot == nullptr) slot = Py_None;
-        }
-        Ref held;
-        if (slot == nullptr) {
-            held = Ref(PyObject_CallMethodObjArgs(d.get(), n->get, n->nslot,
+            PyObject* s = PyDict_GetItemWithError(d.get(), n->nslot);
+            if (s == nullptr && PyErr_Occurred()) return nullptr;
+            slot = Ref(Py_NewRef(s != nullptr ? s : Py_None));
+        } else {
+            slot = Ref(PyObject_CallMethodObjArgs(d.get(), n->get, n->nslot,
                                                   nullptr));
-            if (!held) return nullptr;
-            slot = held.get();
+            if (!slot) return nullptr;
         }
-        const int ne = PyObject_RichCompareBool(slot, h, Py_NE);
+        const int ne = PyObject_RichCompareBool(slot.get(), h, Py_NE);
         if (ne < 0) return nullptr;
         live = !ne;
     }
@@ -514,19 +512,18 @@ bool apply_one(const Ctx& c, std::int64_t handle, const std::string& name,
     if (k.kind != kWake) return true;
     // WakeField.__set__: `if obj.__dict__.get("_passive_asleep", False):
     // wake(obj)`.
-    PyObject* asleep = Py_False;
-    Ref held;
+    // Owned: the truth test can run Python that mutates the dict.
+    Ref asleep;
     if (PyDict_Check(d.get())) {
         PyObject* a = PyDict_GetItemWithError(d.get(), n->asleep);
         if (a == nullptr && PyErr_Occurred()) return false;
-        if (a != nullptr) asleep = a;
+        asleep = Ref(Py_NewRef(a != nullptr ? a : Py_False));
     } else {
-        held = Ref(PyObject_CallMethodObjArgs(d.get(), n->get, n->asleep,
-                                              Py_False, nullptr));
-        if (!held) return false;
-        asleep = held.get();
+        asleep = Ref(PyObject_CallMethodObjArgs(d.get(), n->get, n->asleep,
+                                                Py_False, nullptr));
+        if (!asleep) return false;
     }
-    const int truth = PyObject_IsTrue(asleep);
+    const int truth = PyObject_IsTrue(asleep.get());
     if (truth < 0) return false;
     if (truth) {
         Ref r(PyObject_CallOneArg(c.wake, obj.get()));
@@ -539,24 +536,27 @@ bool apply_one(const Ctx& c, std::int64_t handle, const std::string& name,
 // Inside apply_writes' `except BaseException as e:` (and _apply_rest's
 // `except Exception as e2:`) the caught exception is the one being handled:
 // a raise there gets it as __context__. HandledAs makes `e` the handled
-// exception of the current exception-state item for its scope, exactly what
-// the bytecode's PUSH_EXC_INFO / POP_EXCEPT do.
+// exception for its scope, as the bytecode's PUSH_EXC_INFO / POP_EXCEPT do,
+// through the public 3.11 API (PyErr_Get/SetHandledException). One
+// difference from swapping the item's own field: the getter answers the
+// TOPMOST handled exception, so when the apply runs inside a generator or
+// coroutine whose own item held none while its caller was handling one,
+// the restore leaves the caller's exception in the generator's item; it
+// shows only if that generator later yields and resumes outside the
+// caller's except block.
 class HandledAs {
 public:
-    explicit HandledAs(PyObject* e) : item_(PyThreadState_Get()->exc_info) {
-        saved_ = item_->exc_value;
-        item_->exc_value = Py_NewRef(e);
+    explicit HandledAs(PyObject* e) : saved_(PyErr_GetHandledException()) {
+        PyErr_SetHandledException(e);
     }
     HandledAs(const HandledAs&) = delete;
     HandledAs& operator=(const HandledAs&) = delete;
     ~HandledAs() {
-        PyObject* cur = item_->exc_value;
-        item_->exc_value = saved_;
-        Py_XDECREF(cur);
+        PyErr_SetHandledException(saved_);
+        Py_XDECREF(saved_);
     }
 
 private:
-    _PyErr_StackItem* item_;
     PyObject* saved_;
 };
 

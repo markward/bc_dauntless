@@ -2964,7 +2964,12 @@ def _applier_context(walk) -> tuple:
     (pins, registry, walk, kinds, wake, python_setters). The kinds mapping
     lives until reset() or until `_quiet_setter` is replaced (a test's
     tracing wrapper); the binding caches its answers per (type, field)
-    until it is handed another one."""
+    until it is handed another one.
+
+    So the apply kinds are FIXED for the session (in practice for the
+    process): a descriptor patched onto a class after its (type, field)
+    was first asked keeps the old kind, exactly as Python's own
+    `_quiet_setters` cache keeps the old setter per class."""
     global _apply_kinds
     kinds = _apply_kinds
     if kinds is None or kinds.source is not _quiet_setter:
