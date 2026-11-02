@@ -53,7 +53,16 @@ class FloatRangeWatcher:
     FRW_ABOVE: int = 1
     FRW_BOTH: int = 3
 
-    def __init__(self, initial_value: float = 0.0, event_manager=None) -> None:
+    # The object whose ``_watch_checks`` follows this watcher's check count
+    # (a PulseWeapon: the native charging kernel runs ``_update``'s Python
+    # only for a watcher with checks). None: nobody. A class default, so an
+    # unowned watcher's instance dict is unchanged.
+    _owner = None
+
+    def __init__(self, initial_value: float = 0.0, event_manager=None,
+                 owner=None) -> None:
+        if owner is not None:
+            self._owner = owner
         self._value: float = float(initial_value)
         self._checks: dict = {}  # id -> (threshold, direction, pEvent)
         self._next_id: int = 1
@@ -71,11 +80,15 @@ class FloatRangeWatcher:
         check_id = self._next_id
         self._next_id += 1
         self._checks[check_id] = (float(threshold), int(direction), pEvent)
+        if self._owner is not None:
+            self._owner._watch_checks = len(self._checks)
         return check_id
 
     def RemoveRangeCheck(self, check_id: int) -> None:
         """Stop firing the check with the given id (no-op if already gone)."""
         self._checks.pop(check_id, None)
+        if self._owner is not None:
+            self._owner._watch_checks = len(self._checks)
 
     def GetWatchedVariable(self) -> float:
         """Return the latest watched value."""

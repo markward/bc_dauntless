@@ -18,8 +18,8 @@ import math as _math
 from engine.core import ids
 from engine.appc import native_combat, passive_weapons
 from engine.appc.native_combat import (
-    NativeField, NativeRefField, NativeRefList, NativeSlotMap,
-    NativeThawParentWakeField, NativeWakeField)
+    NativeField, NativeFloatList, NativeRefField, NativeRefList,
+    NativeSlotMap, NativeThawParentWakeField, NativeWakeField)
 from engine.appc.math import TGPoint3, TGMatrix3
 from engine.appc.float_range_watcher import FloatRangeWatcher
 from engine.appc.subsystems import (
@@ -749,6 +749,8 @@ class _EnergyWeaponFireMixin:
     # and the damage dwell.
     _beam_on_countdown = NativeField(float)
     _dwell = NativeField(float)
+    # K0 (the charging kernel) reads the recharge rate.
+    _recharge_rate = NativeField(float)
 
     def _passive_at_rest(self) -> bool:
         """True when UpdateCharge, run now, would return at its idle
@@ -2328,6 +2330,9 @@ class PhaserSystem(_HeldFireWeaponSystem):
     PP_LOW = 0
     PP_MEDIUM = 1
     PP_HIGH = 2
+    # K0 reads it to index PHASER_DISCHARGE_BY_POWER_LEVEL: mirrored only
+    # while it is an index (native_combat.INDEX).
+    _power_level = NativeField(native_combat.INDEX)
 
     def __init__(self, name: str = ""):
         super().__init__(name)
@@ -2764,6 +2769,10 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
     # check can cross; the audit snapshots the watcher to prove it.
     _cooldown_remaining = NativeWakeField(float)
     _cooldown_time = NativeField(float)
+    # The charge watcher's check count (K0 runs the watcher's Python only
+    # when it has checks). The watcher keeps it: every AddRangeCheck /
+    # RemoveRangeCheck writes it back onto its owner (FloatRangeWatcher).
+    _watch_checks = NativeField(int)
     _passive_audit_children = ("_charge_watcher",)
 
     def _passive_at_rest(self) -> bool:
@@ -2783,7 +2792,9 @@ class PulseWeapon(_EnergyWeaponFireMixin, WeaponSystem):
         # FloatRangeWatcher handed to Conditions/ConditionPulseReady.py:163
         # (GetChargeWatcher()); watches the charge FRACTION (charge / max_charge)
         # so the condition's MinFiringCharge/MaxCharge threshold lines up.
-        self._charge_watcher = FloatRangeWatcher()
+        # Its owner back-reference keeps _watch_checks equal to its checks.
+        self._watch_checks: int = 0
+        self._charge_watcher = FloatRangeWatcher(owner=self)
 
     def SetProperty(self, prop) -> None:
         super().SetProperty(prop)
@@ -3132,6 +3143,14 @@ class TorpedoTube(Weapon):
     _last_fire_time = NativeField(float)
     _immediate_delay = NativeField(float)
     _skew_fire = NativeField(bool)
+    # K0 (the charging kernel) reads the reload delay and the per-slot lists.
+    # The lists are mostly written IN PLACE (list[i] = v), which no
+    # descriptor sees: every such writer calls _push_slots after mutating
+    # (_start_slot_cooldown, _sync_slots_to_num_ready, UpdateReload,
+    # ReloadTorpedo); a rebind (_resize_slots) pushes by itself.
+    _reload_delay = NativeField(float)
+    _reload_timers = NativeFloatList()
+    _reload_advanced_at = NativeFloatList()
 
     def _passive_at_rest(self) -> bool:
         """True when UpdateReload, run now, would return at its
@@ -3202,7 +3221,16 @@ class TorpedoTube(Weapon):
             if self._reload_timers[i] == _SLOT_LOADED:
                 self._reload_timers[i] = 0.0
                 self._reload_advanced_at[i] = now
+                if native_combat._enabled:
+                    self._push_slots()
                 return
+
+    def _push_slots(self) -> None:
+        """Both slot lists were written in place: push them to the native
+        combat mirror (callers test native_combat._enabled first, so the
+        switch-off path pays one module attribute read)."""
+        native_combat.push_field(self, "_reload_timers")
+        native_combat.push_field(self, "_reload_advanced_at")
 
     def _sync_slots_to_num_ready(self) -> None:
         """Keep _reload_timers consistent after a direct _num_ready mutation.
@@ -3227,12 +3255,16 @@ class TorpedoTube(Weapon):
             for i in loaded_idx[target:]:
                 self._reload_timers[i] = 0.0
                 self._reload_advanced_at[i] = now
+            if native_combat._enabled:
+                self._push_slots()
         elif len(loaded_idx) < target:
             # Most-progressed (largest timer) = cooling longest = promote first.
             cooling_idx.sort(key=lambda i: self._reload_timers[i], reverse=True)
             need = target - len(loaded_idx)
             for i in cooling_idx[:need]:
                 self._reload_timers[i] = _SLOT_LOADED
+            if native_combat._enabled:
+                native_combat.push_field(self, "_reload_timers")
 
     def GetNumReady(self) -> int:                   return self._num_ready
 
@@ -3610,6 +3642,8 @@ class TorpedoTube(Weapon):
                 game_dt = 0.0
             self._reload_timers[i] = prog + factor * game_dt
             self._reload_advanced_at[i] = now
+        if native_combat._enabled:
+            self._push_slots()
         for prog in self._reload_timers:
             if prog != _SLOT_LOADED and prog >= self._reload_delay:
                 self.ReloadTorpedo()      # loads the MOST-PROGRESSED cooling slot
@@ -3652,6 +3686,8 @@ class TorpedoTube(Weapon):
         if oldest_i < 0:
             return
         self._reload_timers[oldest_i] = _SLOT_LOADED
+        if native_combat._enabled:
+            native_combat.push_field(self, "_reload_timers")
         self._num_ready += 1
         self._broadcast_reload()
 

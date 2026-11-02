@@ -3889,12 +3889,14 @@ bool push_int(PyObject* value, std::int64_t* out) {
 // push runs ~244 times a tick). Encodes FIRST, exactly as _push, so an
 // encoding error raises before the handle is looked at; then the store,
 // whose std::invalid_argument (stale handle, unknown or mistyped field) is
-// pybind's ValueError.
+// pybind's ValueError. A CALLER bug -- the wrong argument count, an unknown
+// push code, a field id out of range -- raises SystemError instead: never
+// one of the three _push_scalar turns into a silent row drop.
 PyObject* combat_push_scalar(PyObject*, PyObject* const* args,
                              Py_ssize_t nargs) {
     namespace cb = dauntless::combat;
     if (nargs != 4) {
-        PyErr_Format(PyExc_TypeError,
+        PyErr_Format(PyExc_SystemError,
                      "combat_push_scalar() takes 4 arguments (%zd given)",
                      nargs);
         return nullptr;
@@ -3935,12 +3937,13 @@ PyObject* combat_push_scalar(PyObject*, PyObject* const* args,
             else if (!push_int(v, &i)) return nullptr;
             break;
         default:
-            PyErr_Format(PyExc_ValueError,
+            PyErr_Format(PyExc_SystemError,
                          "combat_push_scalar: unknown push code %ld", code);
             return nullptr;
     }
     if (f < 0 || f >= static_cast<long>(cb::Field::kCount)) {
-        PyErr_SetString(PyExc_ValueError, "combat mirror: unknown field");
+        PyErr_Format(PyExc_SystemError,
+                     "combat_push_scalar: unknown field id %ld", f);
         return nullptr;
     }
     const auto field = static_cast<cb::Field>(f);
@@ -3967,7 +3970,9 @@ PyMethodDef g_push_scalar_def = {
     "scalar field in one call. Encodes `value` by `code` "
     "(combat_push_codes) with _encode's rules and raises where it raises "
     "(TypeError / ValueError / OverflowError, and OverflowError for an int "
-    "beyond int64); a stale handle raises ValueError."};
+    "beyond int64); a stale handle raises ValueError. A wrong argument "
+    "count, an unknown code or a field id out of range raises "
+    "SystemError."};
 
 // ── The K1 walk check (k1_fire_control.h, THE WALK START) ──────────────────
 // Installed into the K1 kernel by combat_k1_set_walk_check. The kernel asks
@@ -9996,6 +10001,13 @@ PYBIND11_MODULE(_dauntless_host, m) {
               [fld](std::int64_t h, int f, const std::vector<double>& v) {
                   cb::mirror().set_fv(h, fld(f), v);
               });
+        m.def("combat_set_floats",
+              [fld](std::int64_t h, int f, const std::vector<double>& v) {
+                  cb::mirror().set_floats(h, fld(f), v);
+              },
+              py::arg("handle"), py::arg("field"), py::arg("values"),
+              "A FloatList field (a tube's _reload_timers / "
+              "_reload_advanced_at): the whole list, every bit kept.");
         m.def("combat_set_id_lists",
               [fld](std::int64_t h, int f,
                     const std::vector<std::vector<std::int64_t>>& v) {
@@ -10193,6 +10205,9 @@ PYBIND11_MODULE(_dauntless_host, m) {
                     case cb::FieldType::Ids: d[n] = mi.get_ids(h, f); break;
                     case cb::FieldType::IdLists:
                         d[n] = mi.get_id_lists(h, f);
+                        break;
+                    case cb::FieldType::FloatList:
+                        d[n] = mi.get_floats(h, f);
                         break;
                     case cb::FieldType::Vec3: {
                         auto v = mi.get_fv(h, f);

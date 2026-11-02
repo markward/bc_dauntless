@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <stdexcept>
 #include <vector>
 
@@ -599,4 +600,100 @@ TEST(MirrorPosedParts, ClearResetsRowsAndGeneration) {
     EXPECT_EQ(f.m.part_gen(), 1u);
     int64_t o2 = f.m.register_row(Kind::Object);
     EXPECT_TRUE(f.m.object(o2)->part_poses.empty());
+}
+
+// ── K0: the charging kernel's inputs (native weapon state, Task 3) ──────────
+
+namespace {
+
+bool same_bits(const std::vector<double>& a, const std::vector<double>& b) {
+    if (a.size() != b.size()) return false;
+    return a.empty() ||
+           std::memcmp(a.data(), b.data(), a.size() * sizeof(double)) == 0;
+}
+
+}  // namespace
+
+TEST(MirrorTest, FloatListRoundTrip) {
+    Fixture f;
+    int64_t s = f.m.register_row(Kind::Subsystem);
+    EXPECT_EQ(field_type(Field::_reload_timers), FieldType::FloatList);
+    EXPECT_EQ(field_type(Field::_reload_advanced_at), FieldType::FloatList);
+    EXPECT_EQ(field_kind(Field::_reload_timers), Kind::Subsystem);
+    EXPECT_STREQ(field_name(Field::_reload_timers), "_reload_timers");
+    EXPECT_STREQ(field_name(Field::_reload_advanced_at), "_reload_advanced_at");
+    EXPECT_TRUE(f.m.get_floats(s, Field::_reload_timers).empty());
+
+    // Every bit survives: -0.0, a NaN payload, the loaded sentinel.
+    const std::vector<double> timers{-1.0, 0.0, -0.0, std::nan("7"), 12.5};
+    uint64_t e = f.m.epoch();
+    f.m.set_floats(s, Field::_reload_timers, timers);
+    EXPECT_GT(f.m.epoch(), e);
+    EXPECT_TRUE(same_bits(f.m.get_floats(s, Field::_reload_timers), timers));
+    EXPECT_TRUE(same_bits(f.m.subsystem(s)->_reload_timers, timers));
+
+    // The two lists are independent fields.
+    f.m.set_floats(s, Field::_reload_advanced_at, {3.0, -0.0});
+    EXPECT_TRUE(same_bits(f.m.get_floats(s, Field::_reload_advanced_at),
+                          {3.0, -0.0}));
+    EXPECT_TRUE(same_bits(f.m.get_floats(s, Field::_reload_timers), timers));
+    f.m.set_floats(s, Field::_reload_timers, {});
+    EXPECT_TRUE(f.m.get_floats(s, Field::_reload_timers).empty());
+
+    // Typed: a list setter on a scalar field, a scalar setter on a list
+    // field, a list field on another kind's row and a stale handle all throw.
+    EXPECT_THROW(f.m.set_floats(s, Field::_condition, {1.0}),
+                 std::invalid_argument);
+    EXPECT_THROW(f.m.get_floats(s, Field::_condition), std::invalid_argument);
+    EXPECT_THROW(f.m.set_f(s, Field::_reload_timers, 1.0),
+                 std::invalid_argument);
+    int64_t o = f.m.register_row(Kind::Object);
+    EXPECT_THROW(f.m.set_floats(o, Field::_reload_timers, {1.0}),
+                 std::invalid_argument);
+    int64_t gone = f.m.register_row(Kind::Subsystem);
+    f.m.unregister_row(gone);
+    EXPECT_THROW(f.m.set_floats(gone, Field::_reload_timers, {1.0}),
+                 std::invalid_argument);
+    EXPECT_THROW(f.m.get_floats(gone, Field::_reload_timers),
+                 std::invalid_argument);
+
+    // A cleared (or reused) row reads empty again.
+    f.m.set_floats(s, Field::_reload_timers, timers);
+    f.m.clear();
+    int64_t s2 = f.m.register_row(Kind::Subsystem);
+    EXPECT_TRUE(f.m.get_floats(s2, Field::_reload_timers).empty());
+}
+
+TEST(MirrorTest, ChargingScalarInputs) {
+    Fixture f;
+    int64_t s = f.m.register_row(Kind::Subsystem);
+    f.m.set_f(s, Field::_recharge_rate, 0.3);
+    f.m.set_f(s, Field::_reload_delay, -0.0);
+    f.m.set_i(s, Field::_watch_checks, 2);
+    f.m.set_i(s, Field::_power_level, 1);
+    const SubsystemRow* r = f.m.subsystem(s);
+    EXPECT_EQ(r->_recharge_rate, 0.3);
+    EXPECT_TRUE(std::signbit(r->_reload_delay));
+    EXPECT_EQ(r->_watch_checks, 2);
+    EXPECT_EQ(r->_power_level, 1);
+    EXPECT_EQ(f.m.get_f(s, Field::_recharge_rate), 0.3);
+    EXPECT_EQ(f.m.get_i(s, Field::_power_level), 1);
+    EXPECT_THROW(f.m.set_i(s, Field::_recharge_rate, 1), std::invalid_argument);
+    EXPECT_THROW(f.m.set_f(s, Field::_watch_checks, 1.0),
+                 std::invalid_argument);
+}
+
+TEST(MirrorTest, PhaserDischargeTableGlobals) {
+    Fixture f;
+    f.m.set_global_f(Global::PHASER_DISCHARGE_0, 0.35);
+    f.m.set_global_f(Global::PHASER_DISCHARGE_1, 1.0);
+    f.m.set_global_f(Global::PHASER_DISCHARGE_2, 1.0);
+    f.m.set_global_i(Global::PHASER_DISCHARGE_LEN, 3);
+    EXPECT_EQ(f.m.globals().PHASER_DISCHARGE_0, 0.35);
+    EXPECT_EQ(f.m.globals().PHASER_DISCHARGE_LEN, 3);
+    EXPECT_EQ(global_by_name("PHASER_DISCHARGE_2"), Global::PHASER_DISCHARGE_2);
+    EXPECT_TRUE(global_is_int(Global::PHASER_DISCHARGE_LEN));
+    EXPECT_FALSE(global_is_int(Global::PHASER_DISCHARGE_1));
+    EXPECT_THROW(f.m.set_global_f(Global::PHASER_DISCHARGE_LEN, 3.0),
+                 std::invalid_argument);
 }

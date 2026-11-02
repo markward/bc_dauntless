@@ -90,6 +90,11 @@ SPHERES = "spheres"
 #: NativeField type for an int-or-None (``TorpedoSystem._selected_slot``):
 #: None pushes -1 (slots are never negative).
 OPT_INT = "opt int"
+#: NativeField type for a value the reader uses as a SEQUENCE INDEX
+#: (``PhaserSystem._power_level``, PHASER_DISCHARGE_BY_POWER_LEVEL[level]):
+#: pushes ``operator.index(value)``, so a float, which the index would
+#: reject (TypeError: rate 0.0), drops the row instead of reading as an int.
+INDEX = "index"
 
 # system name -> (the map's Profile object, its Profile row handle). One row
 # per system map, registered lazily at the first frame push that needs it.
@@ -111,6 +116,9 @@ def available() -> bool:
     # The phase-3 bindings too (the torpedo table, the step scan, K4 and the
     # K3 kernel): a .so older than any of them is stale.
     return (_h is not None and hasattr(_h, "combat_register")
+            and hasattr(_h, "combat_push_scalar")
+            and hasattr(_h, "combat_apply_reset_counts")
+            and hasattr(_h, "combat_set_floats")
             and hasattr(_h, "combat_torp_add")
             and hasattr(_h, "combat_step_scan")
             and hasattr(_h, "combat_step_serial")
@@ -547,6 +555,8 @@ class NativeField:
             return int(value)
         if t is OPT_INT:
             return -1 if value is None else int(value)
+        if t is INDEX:
+            return operator.index(value)
         if t is OFFSET:
             if isinstance(value, TGPoint3):
                 return [float(value.x), float(value.y), float(value.z)]
@@ -680,6 +690,43 @@ class NativeRefList(NativeField):
             return self._encode(value) == mirrored
         except (TypeError, ValueError, OverflowError):
             return False
+
+
+class NativeFloatList(NativeField):
+    """An ordered list of floats (TorpedoTube._reload_timers /
+    _reload_advanced_at), pushed whole, every bit kept. The value must be a
+    list (its readers store into it by index) of ints and floats (its
+    readers do arithmetic on them); anything else drops the row. An
+    in-place ``list[i] = v`` is invisible to a descriptor: each such
+    writer calls ``push_field`` after mutating."""
+
+    def __init__(self, key=None) -> None:
+        super().__init__(list, key)
+
+    def _encode(self, value):
+        if type(value) is not list:
+            raise TypeError("not a list: %r" % type(value).__name__)
+        out = []
+        for x in value:
+            if isinstance(x, (str, bytes)) or not isinstance(x, (int, float)):
+                raise TypeError("not a number: %r" % type(x).__name__)
+            out.append(float(x))
+        return out
+
+    def _push(self, obj, h, value) -> None:
+        try:
+            v = self._encode(value)
+        except (TypeError, ValueError, OverflowError):
+            _drop(obj)
+            return
+        _call(obj, _h.combat_set_floats, h, _fid(self._key), v)
+
+    def _matches(self, value, mirrored) -> bool:
+        try:
+            v = self._encode(value)
+        except (TypeError, ValueError, OverflowError):
+            return False
+        return _hexes(v) == _hexes(mirrored)
 
 
 class NativeSlotMap(NativeRefList):
@@ -1987,6 +2034,14 @@ def _globals() -> dict:
     g["LEAD_ACCEL_K"] = float(projectiles._LEAD_ACCEL_K)
     # K1's 0.33 s timer gate: a class constant of WeaponSystem.
     g["FIRE_TIMER_THRESHOLD"] = float(ws.WeaponSystem.FIRE_TIMER_THRESHOLD)
+    # K0: the phaser drain by power level, read at use (a module constant a
+    # test may patch). Three entries, 0.0 past the table's end, and its
+    # length: the kernel answers only the indices Python's table would.
+    table = ws.PHASER_DISCHARGE_BY_POWER_LEVEL
+    for i in range(3):
+        g["PHASER_DISCHARGE_%d" % i] = (float(table[i]) if i < len(table)
+                                        else 0.0)
+    g["PHASER_DISCHARGE_LEN"] = len(table)
     return g
 
 
@@ -2480,6 +2535,8 @@ def audit_mirror() -> None:
                 _audit_posed(obj, row, name, expected["has_posed_parts"])
         elif (h >> _KIND_SHIFT) == _kind("Subsystem"):
             _audit_slot(obj, row, name)
+            if "_watch_checks" in d:
+                _audit_watch_checks(obj, row, name)
     _audit_torpedoes()
     _audit_globals()
     if _h.combat_part_gen() != _part_gen:
@@ -2545,6 +2602,17 @@ def _audit_slot(sub, row, name) -> None:
     if leaf is None or _part_slot(leaf, _pose_names(ship), sub) \
             != row["part_slot"]:
         _failures.append((name, "part_slot"))
+
+
+def _audit_watch_checks(weapon, row, name) -> None:
+    """A pulse weapon's `_watch_checks` is its charge watcher's check
+    count, kept by the watcher (FloatRangeWatcher._owner): the row must hold
+    the count the watcher has NOW, so a check added or removed behind the
+    watcher's methods is caught, not only a missed push."""
+    watcher = weapon.__dict__.get("_charge_watcher")
+    checks = getattr(watcher, "_checks", None)
+    if not isinstance(checks, dict) or row["_watch_checks"] != len(checks):
+        _failures.append((name, "_watch_checks"))
 
 
 def _audit_set(pSet, row, name) -> None:

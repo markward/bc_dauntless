@@ -337,3 +337,51 @@ def test_wake_field_push_uses_fast_path(monkeypatch):
     w._c = "x"
     assert "_nslot" not in w.__dict__
     assert w.__dict__["_c"] == "x"
+
+
+def test_raw_entry_rejects_caller_bugs_with_system_error():
+    """A wrong argument count, an unknown push code or a field id out of
+    range is a bug in the CALLER, not an unencodable value: SystemError, so
+    _push_scalar (which drops the row on TypeError / ValueError /
+    OverflowError) lets it propagate instead of silently dropping a row."""
+    p = Probe()
+    h = p.__dict__["_nslot"]
+    fid = nc._fid("_condition")
+    code = _h.combat_push_codes()["PUSH_FLOAT"]
+    for args in ((), (h,), (h, fid, code), (h, fid, code, 1.0, 2.0)):
+        with pytest.raises(SystemError):
+            _h.combat_push_scalar(*args)
+    for bad_code in (-1, 5, 99):
+        with pytest.raises(SystemError):
+            _h.combat_push_scalar(h, fid, bad_code, 1.0)
+    for bad_fid in (-1, len(_h.combat_field_names()), 1 << 20):
+        with pytest.raises(SystemError):
+            _h.combat_push_scalar(h, bad_fid, code, 1.0)
+    # None of them stored anything.
+    assert _h.combat_dump(h)["_condition"] == 0.125
+    # Through the descriptor: propagated, the row kept.
+    nc.configure(ON)
+    field = _field(Probe, "_f")
+    field._fast = (fid, 99)
+    try:
+        with pytest.raises(SystemError):
+            p._f = 0.5
+        assert p.__dict__.get("_nslot") == h
+    finally:
+        field._fast = None
+
+
+@pytest.mark.parametrize("name", ["combat_push_scalar",
+                                  "combat_apply_reset_counts",
+                                  "combat_set_floats"])
+def test_stale_so_without_a_binding_is_unavailable(monkeypatch, name):
+    """A .so older than a binding the module calls unconditionally (reset()
+    calls combat_apply_reset_counts; every scalar push combat_push_scalar;
+    every slot-list push combat_set_floats) is stale: native is
+    unavailable, never an AttributeError later."""
+    assert nc.available()
+    monkeypatch.delattr(_h, name)
+    assert not nc.available()
+    nc.configure(ON)
+    assert not nc.enabled()
+    nc.reset()                                  # no AttributeError
