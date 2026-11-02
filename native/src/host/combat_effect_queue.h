@@ -15,7 +15,10 @@
 //
 // A kernel whose session is abandoned drops the entries it appended in that
 // session: mark() at its start, truncate(mark) at the abandon. Every entry
-// appended before the mark stays.
+// appended before the mark stays. A mark names the queue's take generation
+// too: a take() or clear() that removed entries between mark and truncate (a
+// nested flush delivered the session's entries) makes it stale, and a stale
+// truncate drops nothing -- counted (stale_truncates), never guessed at.
 //
 // OWNERSHIP. The queue never touches Python: an object operand is an opaque
 // pointer, released through the Release function the owner installed (the
@@ -69,6 +72,12 @@ struct EffectEntry {
 // A kernel operand: a mirror handle or a number.
 using NativeOperand = std::variant<std::int64_t, double>;
 
+// Where a kernel session started (mark()).
+struct EffectMark {
+    std::uint64_t generation = 0;   // takes + clears before it
+    std::size_t index = 0;          // the queue's length then
+};
+
 class EffectQueue {
 public:
     using Release = void (*)(void*);
@@ -93,21 +102,30 @@ public:
     // kMaxOperands).
     void append_objects(EffectKind kind, std::span<void* const> objs);
 
-    std::size_t mark() const { return entries_.size(); }
-    // Drop every entry appended at or after `mark` (released).
-    void truncate(std::size_t mark);
+    EffectMark mark() const { return {generation_, entries_.size()}; }
+    // Drop every entry appended at or after `mark` (released); nothing for
+    // a stale mark (counted).
+    void truncate(EffectMark mark);
     // Every entry, in order; the queue is empty after. The caller owns the
     // object references.
     std::vector<EffectEntry> take();
     // Drop every entry (released).
-    void clear() { truncate(0); }
+    void clear();
+
+    // Truncates that named a stale mark, since the last reset_counts().
+    std::uint64_t stale_truncates() const { return stale_truncates_; }
+    void reset_counts() { stale_truncates_ = 0; }
 
     std::size_t size() const { return entries_.size(); }
     bool empty() const { return entries_.empty(); }
 
 private:
+    void drop_from(std::size_t index);
+
     Release release_;
     std::vector<EffectEntry> entries_;
+    std::uint64_t generation_ = 0;
+    std::uint64_t stale_truncates_ = 0;
 };
 
 // The process-wide queue (never destroyed: it may own Python references at

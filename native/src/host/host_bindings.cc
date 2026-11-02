@@ -12442,18 +12442,32 @@ PYBIND11_MODULE(_dauntless_host, m) {
             }, "Every queued entry, in emission order, as (kind, native, "
                "operands); the queue is empty after.");
             m.def("combat_effect_mark",
-                  [] { return hq::effect_queue().mark(); },
-                  "The queue's length: a kernel session's start mark.");
+                  [] {
+                      const hq::EffectMark mk = hq::effect_queue().mark();
+                      return py::make_tuple(mk.generation, mk.index);
+                  },
+                  "A kernel session's start mark: (take generation, "
+                  "queue length).");
             m.def("combat_effect_truncate",
-                  [](size_t mark) { hq::effect_queue().truncate(mark); },
-                  py::arg("mark"),
-                  "Drop every entry appended at or after `mark` (an "
-                  "abandoned kernel session's).");
+                  [](std::uint64_t generation, size_t index) {
+                      hq::effect_queue().truncate({generation, index});
+                  },
+                  py::arg("generation"), py::arg("index"),
+                  "Drop every entry appended since the mark (an abandoned "
+                  "kernel session's); nothing for a mark a take or clear "
+                  "made stale (counted). Called as truncate(*mark).");
             m.def("combat_effect_clear",
                   [] { hq::effect_queue().clear(); },
                   "Drop every entry (native_combat.reset).");
             m.def("combat_effect_size",
                   [] { return hq::effect_queue().size(); });
+            m.def("combat_effect_counts", [] {
+                py::dict d;
+                d["stale_truncates"] = hq::effect_queue().stale_truncates();
+                return d;
+            });
+            m.def("combat_effect_reset_counts",
+                  [] { hq::effect_queue().reset_counts(); });
         }
 
         // ── The K3 torpedo kernel (k3_projectiles.h) ─────────────────────

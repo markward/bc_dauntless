@@ -214,8 +214,9 @@ def reset() -> None:
     for k in _K0_STEP_REASONS:
         _k0_step_reasons[k] = 0
     _k0_clear_caches()
-    # Entries a test or a swapped-out mission left queued, and a scope left
-    # open, go undelivered.
+    # Entries a previous test left queued, and a scope it left open, go
+    # undelivered (tests/conftest.py resets between tests; nothing in the
+    # engine calls reset()).
     _effect_queue.reset()
     if available():
         _h.combat_apply_reset_counts()

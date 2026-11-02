@@ -43,8 +43,18 @@ unregistered since is skipped and counted ("skipped_gone"). An entry whose
 delivery raises does not stop the rest (decision 13): in play it is logged
 and delivery carries on; under tests and ``--developer`` the flush delivers
 the rest, then re-raises the first error with each later one noted on it.
-Entries appended while draining (a native session a handler started) are
-delivered in the same flush.
+When the tick itself raised, the scope re-raises the tick's error with the
+delivery errors noted on it instead.
+
+A NATIVE SESSION OUTSIDE THE SCOPE (an AI's StartFiring running a K1 system
+session from gl.ai, or one a delivered event's handler started) delivers
+what it appended when it ENDS: its driver calls ``session_ended()``, which
+flushes unless a scope is deferring. Inside a delivery that flush is
+nested: the outer drain already took its batch whole, so the nested one
+delivers only the session's entries, there and then -- before the rest of
+the outer batch, exactly where the Python reference's producers would have
+acted -- and its errors join the outermost flush's (decision 13 is applied
+once, there).
 """
 import contextlib
 import logging
@@ -65,6 +75,7 @@ KIND_NAMES = ("FIRE_SOUND", "LOOP_STOP", "WEAPON_FIRED", "WEAPON_FIRE_FAILED",
 
 _depth = 0              # open scopes
 _draining = False       # a flush is delivering: producers act at once
+_errors: list = []      # (kind, exception) of the outermost flush
 _epoch = 0              # bumped by reset(): a scope opened before it is gone
 _counts = {"delivered": 0, "skipped_gone": 0, "failed": 0}
 
@@ -83,11 +94,40 @@ def scope():
     _depth += 1
     try:
         yield
-    finally:
-        if epoch == _epoch:
-            _depth -= 1
-            if _depth == 0:
+    except BaseException as body:
+        if _close(epoch):
+            # The tick raised: what it produced is still delivered, and a
+            # delivery error rides on the tick's own, never replaces it.
+            try:
                 flush()
+            except Exception as x:
+                body.add_note("combat effect queue: the flush at the scope's "
+                              "exit raised %s: %s" % (type(x).__name__, x))
+                for note in getattr(x, "__notes__", ()):
+                    body.add_note(note)
+        raise
+    else:
+        if _close(epoch):
+            flush()
+
+
+def _close(epoch) -> bool:
+    """Leave a scope opened at `epoch`; True when it was the outermost (a
+    scope a reset() closed is already gone: False)."""
+    global _depth
+    if epoch != _epoch:
+        return False
+    _depth -= 1
+    return _depth == 0
+
+
+def session_ended() -> None:
+    """A native session (a kernel run of Tasks 3-4) has ended: deliver what
+    it appended, now, unless a scope is deferring (then the tick boundary
+    delivers it). Safe anywhere, inside a delivery included (see the module
+    docstring)."""
+    if not deferring():
+        flush()
 
 
 def post(kind: int, *operands) -> None:
@@ -113,6 +153,7 @@ def reset() -> None:
         _counts[k] = 0
     if _h is not None and hasattr(_h, "combat_effect_clear"):
         _h.combat_effect_clear()
+        _h.combat_effect_reset_counts()
 
 
 def _strict(modules=None) -> bool:
@@ -125,31 +166,20 @@ def _strict(modules=None) -> bool:
 
 
 def flush() -> None:
-    """Deliver every queued entry, in order (see the module docstring)."""
-    global _draining
+    """Deliver every queued entry, in order (see the module docstring).
+    Inside a delivery (nested): deliver what is queued now -- appended
+    since the outer drain took its batch -- and leave the errors to it."""
+    global _draining, _errors
     if _draining:
-        return          # a handler's flush: the outer drain delivers it
-    errors = []
+        _drain()
+        return
     _draining = True
+    _errors = []
     try:
-        while True:
-            entries = _h.combat_effect_take()
-            if not entries:
-                break
-            for kind, native, ops in entries:
-                if native:
-                    ops = _resolve(ops)
-                    if ops is None:
-                        _counts["skipped_gone"] += 1
-                        continue
-                _counts["delivered"] += 1
-                try:
-                    _DELIVER[kind](*ops)
-                except Exception as x:
-                    _counts["failed"] += 1
-                    errors.append((kind, x))
+        _drain()
     finally:
         _draining = False
+        errors, _errors = _errors, []
     if not errors:
         return
     if not _strict():
@@ -162,6 +192,26 @@ def flush() -> None:
         first.add_note("combat effect queue: a later %s delivery raised "
                        "%s: %s" % (KIND_NAMES[kind], type(x).__name__, x))
     raise first
+
+
+def _drain() -> None:
+    """Take and deliver until the queue is empty; errors into _errors."""
+    while True:
+        entries = _h.combat_effect_take()
+        if not entries:
+            break
+        for kind, native, ops in entries:
+            if native:
+                ops = _resolve(ops)
+                if ops is None:
+                    _counts["skipped_gone"] += 1
+                    continue
+            _counts["delivered"] += 1
+            try:
+                _DELIVER[kind](*ops)
+            except Exception as x:
+                _counts["failed"] += 1
+                _errors.append((kind, x))
 
 
 def _resolve(ops):

@@ -1934,6 +1934,10 @@ class TorpedoSystem(WeaponSystem):
         that events.py:AddEvent gives for leaving destination dispatch
         unguarded in general. Revisit once these handlers are live-verified.
         """
+        # ET_CANT_FIRE IS ET_WEAPON_FIRE_FAILED, a queued kind -- but this is
+        # reached only from StartFiring, never inside the tick's effect
+        # scope, so it posts at once (an in-scope post would split the
+        # kind: the differentials' queued list would catch it).
         import App
         evt = App.TGEvent_Create()
         evt.SetEventType(App.ET_CANT_FIRE)

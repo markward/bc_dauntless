@@ -276,6 +276,92 @@ def test_strict_under_pytest_or_developer(monkeypatch):
     assert eq._strict(modules={})
 
 
+# ── A native session ends (Task 3's hook) ───────────────────────────────────
+
+def _session(appends, monkeypatch, log):
+    """Bank A's sound delivery runs a 'native session': it appends kernel
+    entries (the test binding) and ends with session_ended()."""
+    def play(self):
+        log.append(("play", self.GetName()))
+        if self.GetName() == "A":
+            for h in appends:
+                _post_native(eq.FIRE_SOUND, h)
+            eq.session_ended()
+    monkeypatch.setattr(ws._EnergyWeaponFireMixin, "_play_fire_sfx", play)
+
+
+def test_a_session_started_by_a_delivery_delivers_at_its_end(monkeypatch):
+    """A handler (A's delivery) starts a native session appending B: B is
+    delivered when that session ends, inside the handler -- before C, as
+    the Python reference's producers would have acted -- not after the
+    outer batch."""
+    log = []
+    a, b, c = _bank("A"), _bank("B"), _bank("C")
+    _session([b.__dict__["_nslot"]], monkeypatch, log)
+    with eq.scope():
+        eq.post(eq.FIRE_SOUND, a)
+        eq.post(eq.FIRE_SOUND, c)
+    assert log == [("play", "A"), ("play", "B"), ("play", "C")]
+    assert _h.combat_effect_take() == []
+
+
+def test_a_nested_session_error_is_raised_by_the_outermost_flush(
+        monkeypatch):
+    """Decision 13 is applied once, at the outermost flush: a failing entry
+    of the nested session's does not stop C, and is raised after it."""
+    log = []
+    a, b, c = _bank("A"), _bank("B"), _bank("C")
+    _session([b.__dict__["_nslot"]], monkeypatch, log)
+    play = ws._EnergyWeaponFireMixin._play_fire_sfx
+
+    def failing(self):
+        if self.GetName() == "B":
+            raise _Boom("nested")
+        play(self)
+    monkeypatch.setattr(ws._EnergyWeaponFireMixin, "_play_fire_sfx", failing)
+    monkeypatch.setattr(eq, "_strict", lambda: True)
+    with pytest.raises(_Boom, match="nested"):
+        with eq.scope():
+            eq.post(eq.FIRE_SOUND, a)
+            eq.post(eq.FIRE_SOUND, c)
+    assert log == [("play", "A"), ("play", "C")]
+    assert eq.counts()["failed"] == 1
+
+
+def test_session_ended_inside_the_scope_waits_for_the_boundary(calls):
+    b = _bank("B")
+    with eq.scope():
+        _post_native(eq.FIRE_SOUND, b.__dict__["_nslot"])
+        eq.session_ended()
+        assert calls == []
+    assert calls == [("play", "B")]
+
+
+def test_session_ended_outside_the_scope_delivers_now(calls):
+    b = _bank("B")
+    _post_native(eq.FIRE_SOUND, b.__dict__["_nslot"])
+    eq.session_ended()
+    assert calls == [("play", "B")]
+
+
+# ── The tick raised ──────────────────────────────────────────────────────────
+
+def test_a_raising_tick_keeps_its_error_and_notes_the_delivery_errors(
+        monkeypatch):
+    log = []
+    _failing(monkeypatch, log, bad=("B", "C"))
+    monkeypatch.setattr(eq, "_strict", lambda: True)
+    with pytest.raises(KeyError) as info:
+        with eq.scope():
+            for name in "ABCD":
+                eq.post(eq.FIRE_SOUND, _bank(name))
+            raise KeyError("tick")
+    assert log == ["A", "D"]
+    notes = info.value.__notes__
+    assert len(notes) == 2, notes
+    assert "_Boom: bank B" in notes[0] and "bank C" in notes[1], notes
+
+
 # ── A kernel's abandon ───────────────────────────────────────────────────────
 
 def test_truncate_drops_only_later_entries(calls):
@@ -285,8 +371,23 @@ def test_truncate_drops_only_later_entries(calls):
         m = _h.combat_effect_mark()
         _post_native(eq.FIRE_SOUND, b.__dict__["_nslot"])
         eq.post(eq.FIRE_SOUND, c)
-        _h.combat_effect_truncate(m)
+        _h.combat_effect_truncate(*m)
     assert calls == [("play", "A")]
+
+
+def test_a_mark_made_stale_by_a_take_truncates_nothing(calls):
+    """A session's mark, then a flush delivering its entries (take), then
+    later entries: the abandon must not drop those (counted instead)."""
+    _h.combat_effect_reset_counts()
+    a, b = _bank("A"), _bank("B")
+    m = _h.combat_effect_mark()
+    _post_native(eq.FIRE_SOUND, a.__dict__["_nslot"])
+    eq.flush()
+    with eq.scope():
+        eq.post(eq.FIRE_SOUND, b)
+        _h.combat_effect_truncate(*m)
+    assert calls == [("play", "A"), ("play", "B")]
+    assert _h.combat_effect_counts() == {"stale_truncates": 1}
 
 
 def test_truncate_releases_the_dropped_references():
@@ -299,7 +400,7 @@ def test_truncate_releases_the_dropped_references():
     del bank
     gc.collect()
     assert ref() is not None            # the queue holds it
-    _h.combat_effect_truncate(m)
+    _h.combat_effect_truncate(*m)
     gc.collect()
     assert ref() is None
 
@@ -389,6 +490,21 @@ def test_stop_firing_outside_the_scope_stops_at_once():
     assert stopped == [1] and bank._loop_handle is None
 
 
+def test_stopping_a_loop_that_played_before_the_scope_stops_it_once():
+    stopped = []
+
+    class Handle:
+        def Stop(self):
+            stopped.append(eq._draining)
+    bank = _bank("A")
+    bank._firing = True
+    bank._loop_handle = Handle()
+    with eq.scope():
+        bank.StopFiring()
+        assert stopped == [] and bank._firing is False
+    assert stopped == [True] and bank._loop_handle is None
+
+
 def test_tube_producers_are_queued(events, monkeypatch):
     tube, torp = ws.TorpedoTube("Tube"), ws.PhaserBank("Torp")
     monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: None)
@@ -404,6 +520,26 @@ def test_tube_producers_are_queued(events, monkeypatch):
         App.ET_WEAPON_FIRE_FAILED, App.ET_TORPEDO_FIRED,
         App.ET_TORPEDO_RELOAD]          # no player: no ammo event
     assert events[1][1] is torp and events[1][2] is tube
+
+
+def test_ammo_consumed_reads_the_player_gate_at_delivery(events,
+                                                         monkeypatch):
+    """The gate (is the firing ship the player?) is read when the entry is
+    delivered, not when it is queued."""
+    tube, ship = ws.TorpedoTube("Tube"), _bank("Ship")
+    monkeypatch.setattr(tube, "_climb_to_ship", lambda: ship, raising=False)
+    player = [None]
+    monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: player[0])
+    with eq.scope():
+        tube._broadcast_ammo_consumed_if_player()   # not the player yet
+        player[0] = ship
+    assert [(e[0], e[1], e[2]) for e in events] == [
+        (App.ET_TORPEDO_AMMO_CONSUMED, tube, ship)]
+    events.clear()
+    with eq.scope():
+        tube._broadcast_ammo_consumed_if_player()   # the player now...
+        player[0] = None                            # ...not at delivery
+    assert events == []
 
 
 def test_tube_producers_act_at_once_outside(events):
@@ -479,6 +615,18 @@ def test_unowned_watcher_acts_at_once():
         w._update(0.25)
         assert fired == [("below", 0.25)]
         assert _h.combat_effect_take() == []
+
+
+def test_two_crossings_in_one_tick_fire_in_order():
+    """1.0 -> 0.25 -> 0.9 inside one scope: below@0.25, then above@0.9."""
+    w, fired, Evt = _watched()
+    _check(w, Evt, "below", 0.5, FloatRangeWatcher.FRW_BELOW)
+    _check(w, Evt, "above", 0.5, FloatRangeWatcher.FRW_ABOVE)
+    with eq.scope():
+        w._update(0.25)
+        w._update(0.9)
+        assert fired == [] and w.GetWatchedVariable() == 0.9
+    assert fired == [("below", 0.25), ("above", 0.9)]
 
 
 def test_native_watch_names_the_weapon(monkeypatch):

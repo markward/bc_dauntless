@@ -85,8 +85,8 @@ TEST_F(EffectQueueTest, TruncateDropsOnlyLaterEntriesAndReleasesThem) {
     void* after[] = {&b, &c};
     q.append_objects(EffectKind::FIRE_SOUND, before);
     q.append_native(EffectKind::LOOP_STOP, std::int64_t{1});
-    const std::size_t m = q.mark();
-    EXPECT_EQ(m, 2u);
+    const dauntless::host::EffectMark m = q.mark();
+    EXPECT_EQ(m.index, 2u);
     q.append_native(EffectKind::WEAPON_FIRE_FAILED, std::int64_t{2});
     q.append_objects(EffectKind::TORPEDO_FIRED, after);
     q.truncate(m);
@@ -98,11 +98,49 @@ TEST_F(EffectQueueTest, TruncateDropsOnlyLaterEntriesAndReleasesThem) {
     EXPECT_EQ(out[1].kind, EffectKind::LOOP_STOP);
 }
 
-TEST_F(EffectQueueTest, TruncateAtOrPastTheEndIsANoOp) {
+TEST_F(EffectQueueTest, TruncateAtTheEndIsANoOp) {
     q.append_native(EffectKind::FIRE_SOUND, std::int64_t{1});
-    q.truncate(1);
-    q.truncate(5);
+    q.truncate(q.mark());
     EXPECT_EQ(q.size(), 1u);
+    EXPECT_EQ(q.stale_truncates(), 0u);
+}
+
+TEST_F(EffectQueueTest, AMarkFromBeforeATakeIsStaleAndDropsNothing) {
+    // A session marks; a nested flush takes (delivers) its entries; more
+    // are appended; the session's abandon must not drop those.
+    void* objs[] = {&a};
+    q.append_native(EffectKind::FIRE_SOUND, std::int64_t{1});
+    const dauntless::host::EffectMark m = q.mark();
+    q.append_native(EffectKind::LOOP_STOP, std::int64_t{2});
+    EXPECT_EQ(q.take().size(), 2u);
+    q.append_native(EffectKind::FIRE_SOUND, std::int64_t{3});
+    q.append_objects(EffectKind::TORPEDO_RELOAD, objs);
+    q.truncate(m);
+    EXPECT_EQ(q.size(), 2u);
+    EXPECT_EQ(q.stale_truncates(), 1u);
+    EXPECT_TRUE(g_released.empty());
+    q.reset_counts();
+    EXPECT_EQ(q.stale_truncates(), 0u);
+}
+
+TEST_F(EffectQueueTest, AMarkFromBeforeAClearIsStale) {
+    q.append_native(EffectKind::FIRE_SOUND, std::int64_t{1});
+    const dauntless::host::EffectMark m = q.mark();
+    q.clear();
+    q.append_native(EffectKind::FIRE_SOUND, std::int64_t{2});
+    q.append_native(EffectKind::FIRE_SOUND, std::int64_t{3});
+    q.truncate(m);
+    EXPECT_EQ(q.size(), 2u);
+    EXPECT_EQ(q.stale_truncates(), 1u);
+}
+
+TEST_F(EffectQueueTest, AnEmptyTakeLeavesMarksValid) {
+    const dauntless::host::EffectMark m = q.mark();
+    EXPECT_TRUE(q.take().empty());          // a flush with nothing queued
+    q.append_native(EffectKind::FIRE_SOUND, std::int64_t{1});
+    q.truncate(m);
+    EXPECT_TRUE(q.empty());
+    EXPECT_EQ(q.stale_truncates(), 0u);
 }
 
 TEST_F(EffectQueueTest, ClearReleasesEveryObject) {
