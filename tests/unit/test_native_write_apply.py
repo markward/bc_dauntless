@@ -752,7 +752,10 @@ def test_k0_write_field_bounds():
     ids = _h.combat_field_names()
     n = len(ids)
     for name, fid in ids.items():
-        expect = "_radius" if name == "Subsystem._radius" else name
+        # Two Python names two kinds share are keyed by kind.
+        expect = (name.split(".", 1)[1]
+                  if name in ("Subsystem._radius", "Object._invincible")
+                  else name)
         assert _h.combat_k0_field_name(fid, False) == expect
     assert _h.combat_k0_field_name(0, True) == "_charge_watcher"
     for bad in (n, n + 1, 10 ** 6):
