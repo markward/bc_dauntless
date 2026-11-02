@@ -549,6 +549,41 @@ def test_exception_in_a_record_abandons_the_session(monkeypatch):
             w.close()
 
 
+def test_raise_before_the_first_record_abandons_the_session(monkeypatch):
+    """run_k0's own setup (the record kinds, the walk) raises after
+    k0_weapons opened the session: the exception propagates, the session is
+    abandoned (not left open, which would stand every later tick down as
+    `nested`), and the next tick runs K0 natively."""
+    class Boom(Exception):
+        pass
+
+    real = nc._k0_kinds
+    raised = []
+
+    def kinds_once():
+        if not raised:
+            raised.append(1)
+            raise Boom()
+        return real()
+
+    with monkeypatch.context() as mp:
+        w = World(mp, True, "k0_setup_boom")
+        try:
+            mp.setattr(nc, "_k0_kinds", kinds_once)
+            with pytest.raises(Boom):
+                w.tick()
+            assert raised
+            assert not _h.combat_k0_open()
+            done = nc.counts()["k0_records"]["DONE"]
+            w.tick()                                # the next tick runs K0
+            c = nc.counts()
+            assert c["k0_records"]["DONE"] == done + 1, c
+            assert c["k0_python_step_reasons"]["nested"] == 0, c
+            assert not _h.combat_k0_open()
+        finally:
+            w.close()
+
+
 def test_python_kind_k0_writes_call_the_setter_once(monkeypatch):
     """A `_quiet_setter` answering a Python setter for every field (a test's
     tracing wrapper) makes K0's scalar writes PYTHON kind: each one is

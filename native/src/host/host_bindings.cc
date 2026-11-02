@@ -3833,12 +3833,34 @@ PyObject* step_scan_ships(PyObject* ships, long long obj_kind, int kind_shift,
 struct K2PendingWrites {
     std::vector<dauntless::combat::K2Write> writes;
     size_t done = 0;
+    // True while the binding applies a record's writes: the Python the
+    // apply runs (wake hooks, setters) must not reach combat_k2_next /
+    // _end / _abandon, which clear or free `writes` under the apply, nor a
+    // nested combat_apply_writes, which would apply out of order -- each
+    // throws instead (K0's delivery guard, k0_charging.h THE DELIVERY).
+    bool delivering = false;
 };
 
 K2PendingWrites& k2_pending_writes() {
     static K2PendingWrites p;
     return p;
 }
+
+void k2_not_delivering(const char* call) {
+    if (k2_pending_writes().delivering)
+        throw std::runtime_error(
+            std::string("combat K2: ") + call +
+            " while a record's writes are being delivered (re-entered from "
+            "the Python they run)");
+}
+
+// Marks the delivery for its scope (cleared on a throw too).
+struct K2Delivering {
+    K2Delivering() { k2_pending_writes().delivering = true; }
+    ~K2Delivering() { k2_pending_writes().delivering = false; }
+    K2Delivering(const K2Delivering&) = delete;
+    K2Delivering& operator=(const K2Delivering&) = delete;
+};
 
 // True when the last combat_k1_next raised from applying its record's
 // writes rather than from the kernel (combat_apply_raised): run_k1 reads
@@ -4161,7 +4183,7 @@ bool k1_walk_needs_python(std::int64_t sys_h, std::int64_t ship_h) {
 // Anything unexpected (an instance dict not built, a "_children" that is not
 // a list or tuple) answers "Python".
 //
-// THE CACHES (ruling W6: the scan ran every weapon's dict probes every tick,
+// THE CACHES (ruling W7: the scan ran every weapon's dict probes every tick,
 // ~53 us at 65 ships). Both are exact, not heuristics:
 //   class     a verdict per type, valid while the type's version tag is
 //             (CPython's tp_version_tag: any attribute assignment on the
@@ -11883,6 +11905,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
         m.def("combat_k2_next", [vec] {
             // The GIL is HELD for the walk (ruling J), as combat_k1_next:
             // the kernel and the trace hooks touch no Python object.
+            k2_not_delivering("next()");
             K2PendingWrites& pending = k2_pending_writes();
             if (pending.done < pending.writes.size())
                 throw std::runtime_error(
@@ -11903,6 +11926,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                 dauntless::host::write_applier();
             if (applier.has_context()) {
                 if (r.contacts.empty()) {
+                    const K2Delivering delivering;
                     if (!applier.apply(r.writes, 0, r.writes.size()))
                         throw py::error_already_set();
                 } else {
@@ -12044,12 +12068,14 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "resolve_hit ((x, y, z), normal or None, tier); bank_step None.");
         m.def("combat_k2_end",
               [] {
+                  k2_not_delivering("end()");
                   k2_pending_writes() = K2PendingWrites{};
                   cb::k2_kernel().end();
               },
               "End the session (it must have returned DONE).");
         m.def("combat_k2_abandon",
               [] {
+                  k2_not_delivering("abandon()");
                   k2_pending_writes() = K2PendingWrites{};
                   cb::k2_kernel().abandon();
               },
@@ -12119,6 +12145,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
               "(the driver restores it when its session ends).");
         m.def("combat_apply_writes",
               [](std::optional<std::int64_t> upto) {
+                  k2_not_delivering("combat_apply_writes()");
                   K2PendingWrites& pending = k2_pending_writes();
                   const auto n = static_cast<std::int64_t>(
                       pending.writes.size());
@@ -12129,6 +12156,7 @@ PYBIND11_MODULE(_dauntless_host, m) {
                   // Consumed even if a write raises: apply_writes(writes[
                   // done:at]) applies the rest of its slice, then raises.
                   pending.done = to;
+                  const K2Delivering delivering;
                   if (!dauntless::host::write_applier().apply(
                           pending.writes, from, to))
                       throw py::error_already_set();

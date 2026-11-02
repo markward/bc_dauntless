@@ -479,6 +479,65 @@ def _world(mp, tag):
     return World(mp, True, GALAXY_VORCHA, tag)
 
 
+def test_reset_clears_a_leaked_applier_context():
+    """native_combat.reset() removes an applier context a driver left
+    installed (its walk's pins and registry must not outlive the reset)."""
+    nc.configure({"DAUNTLESS_NATIVE_COMBAT": "1"})
+    _h.combat_set_applier(nc._applier_context(nc._K2Walk()))
+    nc.reset()
+    assert _h.combat_set_applier(None) is None
+
+
+def test_reset_abandons_a_leaked_k2_session_and_its_pending_writes(
+        monkeypatch):
+    """A K2 session left open with a record's writes still pending (here
+    its abandon swallowed once, after a raise at a record carrying queued
+    resting contacts): native_combat.reset() abandons it and drops the
+    pending writes, so the next session begins and runs to DONE."""
+    class _Leak(Exception):
+        pass
+
+    leaked = []
+    with monkeypatch.context() as mp:
+        w = _world(mp, "wa_reset_k2")
+        try:
+            real_next, real_abandon = _h.combat_k2_next, _h.combat_k2_abandon
+
+            def next_():
+                rec = real_next()
+                if rec[-2] and rec[-1] and not leaked:
+                    leaked.append(rec[-1])
+                    raise _Leak()
+                return rec
+
+            def abandon():
+                if len(leaked) == 1:
+                    leaked.append("swallowed")
+                    return None
+                return real_abandon()
+            mp.setattr(_h, "combat_k2_next", next_)
+            mp.setattr(_h, "combat_k2_abandon", abandon)
+            g, v = w.ships["Galaxy"], w.ships["Vorcha"]
+            g.GetPhaserSystem().SetSingleFire(0)
+            g.GetPhaserSystem().StartFiring(v)
+            with pytest.raises(_Leak):
+                for _ in range(60):
+                    w.tick()
+            assert leaked[0] > 0 and leaked[1] == "swallowed", leaked
+            assert _h.combat_k2_open()
+            nc.reset()
+            assert not _h.combat_k2_open()
+            nc.configure({"DAUNTLESS_NATIVE_COMBAT": "1"})
+            before = nc.counts()["k2_records"]
+            w.tick()                        # begins, and next() may run
+            assert nc.counts()["k2_records"] > before
+            assert not _h.combat_k2_open()
+            nc.audit_mirror()
+            assert nc.audit_failures() == [], nc.audit_failures()
+        finally:
+            w.close()
+
+
 def test_records_return_empty_writes(monkeypatch):
     """K1 records, and K2 records with no queued resting contact, come back
     with their writes already applied (the C counter moves inside next()):

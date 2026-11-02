@@ -289,6 +289,12 @@ class _Scene:
     native switch set after the load; the op stream, the per-tick record,
     the call log and the event log."""
 
+    # Record the RAW passive asleep flag of each bank (only meaningful with
+    # K0 stood down: K0 puts no weapon to sleep, so with it running the flag
+    # differs by design and the record keeps "asleep while NOT at rest"
+    # instead; as the K1 differential).
+    raw_asleep = False
+
     def __init__(self, mp, r, env):
         mp.delenv("DAUNTLESS_NATIVE_COMBAT", raising=False)
         mp.delenv("DAUNTLESS_NATIVE_AUDIT", raising=False)
@@ -755,18 +761,21 @@ class _Scene:
             # StopFiring writes; since round trips Tasks 2-3 K1's idle stops
             # and K2's offline stops LOG them (no call), so this row is where
             # those writes are compared.
-            # Asleep (passive weapons): a `_firing` write, logged or not,
-            # wakes a sleeping bank (WakeField). The RAW flag is comparable
-            # here although K0 (which sleeps nothing) runs on the native
-            # arm: this scene's spies patch the stock PhaserBank.StopFiring
-            # and PhaserSystem.StopFiring, names K0's override guard covers
-            # (_K0_METHODS), so K0 hands every ship back whole (reason
-            # override) and the passive walk steps -- and sleeps -- the
-            # weapons on both arms.
+            # A missed wake (passive weapons): asleep while NOT at rest. A
+            # `_firing` write, logged or not, wakes a sleeping bank
+            # (WakeField). K0 runs on the native arm (this scene's spies
+            # patch the stock PhaserBank / PhaserSystem StopFiring, which
+            # K0's records call in Python, so its guard does not look for
+            # them: native_combat._K0_CALLED_IN_PYTHON) and puts no weapon
+            # to sleep (spec 2026-11-02-native-weapon-state-design.md §4.3),
+            # so the RAW flag differs by design; it is compared with K0
+            # stood down (test_k2_matches_python_with_k0_stood_down).
+            asleep = passive_state.is_asleep(b)
             row.append((self.label(b), _t(d.get("_dwell")),
                         _t(d.get("_firing")), self.label(d.get("_target")),
                         _t(d.get("_beam_on_countdown")),
-                        passive_state.is_asleep(b)))
+                        asleep if self.raw_asleep else
+                        asleep and not b._passive_at_rest()))
         for g in self.systems:
             # What an offline stop writes (round trips Task 3: logged), and
             # whether `_target_list` is a NEW object since the last record
@@ -907,6 +916,10 @@ def test_k2_matches_python_with_real_instances(monkeypatch, host,
           "counts %r" % (ticks_per_frame, elapsed, TICKS, n,
                          presented(ref.calls), len(_calls(ref, "vfx")),
                          len(_calls(ref, "shield_hit")), nat.counts))
+    # K0 stepped the weapons on the native arm (its guard does not hand a
+    # ship back for the StopFiring spies; see record()).
+    assert nat.counts["k0_steps"] > 0, nat.counts
+    assert nat.counts["k0_python_reasons"]["override"] == 0, nat.counts
     # Every branch the scene is built for happened in the kernel.
     for key in ("tier:mesh", "tier:sphere", "bubble", "pulse",
                 "windup_contact", "arc_fail_pulse", "SYSTEM_STOP",
@@ -941,6 +954,21 @@ def test_k2_matches_python_with_real_instances(monkeypatch, host,
     assert _calls(ref, "apply_hit") and _calls(ref, "beam_contact")
     hits = [e for e in ref.events if e[0] == App.ET_WEAPON_HIT]
     assert hits and all(e[4] is not None for e in hits)
+
+
+def test_k2_matches_python_with_k0_stood_down(monkeypatch, host):
+    """K0 stood down (native_combat.k0_weapons answers False, as an audit
+    makes it: the passive walk runs on both arms and sleeps at-rest banks),
+    so the RAW asleep flag is compared: a wake one of K2's C-applied writes
+    misses (a `_firing` stored without waking its sleeping bank) shows as a
+    difference. The default differential runs K0 on the native arm."""
+    monkeypatch.setattr(nc, "k0_weapons", lambda ships, dt: False)
+    monkeypatch.setattr(_Scene, "raw_asleep", True)
+    ref, nat = _both(monkeypatch, host, 1)
+    assert nat.counts["k0_steps"] == 0, nat.counts
+    banks = [r[5] for rows in ref.log for r in rows
+             if len(r) == 6 and isinstance(r[5], bool)]
+    assert True in banks and False in banks, "no bank slept"
 
 
 def test_no_host_bindings_matches_python(monkeypatch, host):

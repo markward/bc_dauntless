@@ -205,7 +205,12 @@ def reset() -> None:
         _h.combat_apply_reset_counts()
         _h.combat_push_reset_counts()
         _h.combat_k1_reset_counts()
+        # A leaked K2 session and its record's pending writes (the binding
+        # drops them with the session), and a leaked applier context.
+        if _h.combat_k2_open():
+            _h.combat_k2_abandon()
         _h.combat_k2_reset_counts()
+        _h.combat_set_applier(None)
         _h.combat_k4_reset_counts()
         if _h.combat_k3_open():
             _h.combat_k3_abandon()
@@ -3430,8 +3435,9 @@ def _k1_system_ships(system) -> list:
 #             of the rest is NOT looked for: every name is a dict probe of
 #             every weapon, every tick (~20 ns each; 630 weapons at 64
 #             ships), for names nothing patches. StopFiring and
-#             _broadcast_reload need no guard at the instance: K0's records
-#             CALL them in Python. The binding re-probes a dict only when
+#             _broadcast_reload need no guard, at the instance or on the
+#             class (_K0_CALLED_IN_PYTHON): K0's records CALL them in
+#             Python. The binding re-probes a dict only when
 #             it changed (its PEP 509 version), so an idle weapon costs no
 #             probe.
 # The binding's begin scan applies them (host_bindings.cc, k0_scan): a
@@ -3447,16 +3453,22 @@ def _k1_system_ships(system) -> list:
 # again: it rechecks per walk (each system's), so a handler's patch is seen
 # by the next walk of the same tick.
 
+# WSM §7(a) A6 names two more, StopFiring and _broadcast_reload, that the
+# guard does NOT look for, on the class as at the instance: K0 never stands
+# in for them -- its DEPLETE_STOP / RELOADED records CALL them in Python (a
+# holding tractor, whose power-loss stop is the other caller, is handed
+# back) -- so a patch of either is honoured with the walk still native.
+_K0_CALLED_IN_PYTHON = ("StopFiring", "_broadcast_reload")
 _K0_METHODS = (
-    # WSM §7(a) A6.
+    # WSM §7(a) A6, but _K0_CALLED_IN_PYTHON.
     "UpdateCharge", "UpdateReload", "_discharge_rate_per_second",
     "GetParentSubsystem", "IsOn", "GetNormalPowerPercentage",
     "GetPowerPercentage", "GetNormalPowerWanted", "GetConditionPercentage",
-    "GetMaxCondition", "GetPowerLevel", "StopFiring", "GetChargePercentage",
+    "GetMaxCondition", "GetPowerLevel", "GetChargePercentage",
     "_passive_at_rest", "_ensure_slots", "ReloadTorpedo",
     "_reload_denied_by_ammo", "_parent_ammo", "GetCurrentAmmoType",
     "GetCurrentAmmoSlot", "GetAvailable", "_rounds_loaded_systemwide",
-    "GetNumReady", "_broadcast_reload",
+    "GetNumReady",
     # The walk's own (passive_weapons._groups' systems).
     "GetNumWeapons", "GetWeapon", "GetNumChildSubsystems",
     "GetChildSubsystem")
@@ -3627,12 +3639,14 @@ def _k0_ship_python(ship, dt) -> None:
 def run_k0(ships, dt) -> None:
     """Drive the open K0 session to DONE (see the section comment). On any
     exception the session is abandoned (the records already returned were
-    applied; the kernel undoes what it had not returned) and re-raised. The
-    applier context in force before (an outer K1 session's) is restored."""
-    DONE, DEPLETE_STOP, RELOADED, WATCH, RUN_PYTHON = _k0_kinds()
-    walk = _K1Walk()
+    applied; the kernel undoes what it had not returned) and re-raised --
+    the setup before the first record included, or the open session would
+    stand every later tick down as `nested`. The applier context in force
+    before (an outer K1 session's) is restored."""
     prev = _UNSET
     try:
+        DONE, DEPLETE_STOP, RELOADED, WATCH, RUN_PYTHON = _k0_kinds()
+        walk = _K1Walk()
         prev = _h.combat_set_applier(_applier_context(walk))
         while True:
             rec = _h.combat_k0_next()

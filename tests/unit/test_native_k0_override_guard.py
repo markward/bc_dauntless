@@ -153,6 +153,58 @@ def test_stock_class_patch_between_ticks_is_seen(monkeypatch):
     assert _override(counts) > 0, counts
 
 
+def test_class_patched_stop_firing_is_called_by_deplete_stop(monkeypatch):
+    """A class patch of PhaserBank.StopFiring is NOT a reason to hand the
+    ship back: K0's DEPLETE_STOP record calls `bank.StopFiring()` in
+    Python, so the patch is called -- on the same tick, for the same bank,
+    as without K0 -- while the walk stays native (no override)."""
+    calls = {}
+
+    def setup(w):
+        bank = w.weapons("Galaxy", PHASER)[0]
+        bank._firing = True
+        bank._beam_on_countdown = 0.0
+        bank._charge_level = 0.01
+        log = calls[w.native] = []
+        real = ws.PhaserBank.StopFiring
+
+        def patched(self):
+            log.append((w.n, self.GetName()))
+            real(self)
+        w.mp.setattr(ws.PhaserBank, "StopFiring", patched)
+
+    _ref, _nat, counts = run_both(monkeypatch.context, lambda w, t: None, 6,
+                                  setup=setup, passive=False)
+    assert calls[False] and calls[True] == calls[False], calls
+    assert counts["k0_records"]["DEPLETE_STOP"] == 1, counts
+    assert _override(counts) == 0, counts
+
+
+def test_class_patched_broadcast_reload_is_called_by_reloaded(monkeypatch):
+    """Likewise TorpedoTube._broadcast_reload: K0's RELOADED record calls it
+    in Python, so a class patch is called exactly as without K0 and the
+    tubes stay native."""
+    calls = {}
+
+    def setup(w):
+        for tube in w.weapons("Galaxy", TORPEDO):
+            tube._reload_delay = 0.4
+            tube.SetNumReady(0)
+        log = calls[w.native] = []
+        real = ws.TorpedoTube._broadcast_reload
+
+        def patched(self):
+            log.append((w.n, self.GetName()))
+            real(self)
+        w.mp.setattr(ws.TorpedoTube, "_broadcast_reload", patched)
+
+    _ref, _nat, counts = run_both(monkeypatch.context, lambda w, t: None, 60,
+                                  setup=setup, passive=False)
+    assert calls[False] and calls[True] == calls[False], calls
+    assert counts["k0_records"]["RELOADED"] == len(calls[True]), counts
+    assert _override(counts) == 0, counts
+
+
 class _AlwaysOnPhasers(ws.PhaserSystem):
     def IsOn(self):
         return 1
@@ -267,7 +319,9 @@ def test_stock_classes_are_not_flagged():
 
 
 def test_method_list_covers_wsm_a6():
-    """Every method WSM §7(a) A6 lists is in the guard's class list."""
+    """Every method WSM §7(a) A6 lists is in the guard's class list, but
+    the ones K0's records call in Python (_K0_CALLED_IN_PYTHON), which are
+    not in it."""
     text = WSM.read_text()
     row = next(line for line in text.splitlines() if line.startswith("| A6 "))
     cell = row.split("|")[2]
@@ -279,7 +333,11 @@ def test_method_list_covers_wsm_a6():
         else:
             names.add(tok)
     assert names, row
-    assert names <= set(nc._K0_METHODS), names - set(nc._K0_METHODS)
+    exempt = set(nc._K0_CALLED_IN_PYTHON)
+    assert exempt == {"StopFiring", "_broadcast_reload"} and exempt <= names
+    assert not exempt & set(nc._K0_METHODS)
+    assert names - exempt <= set(nc._K0_METHODS), \
+        names - exempt - set(nc._K0_METHODS)
 
 
 # ── Between two sessions (ruling W6: the binding caches the verdicts) ────────
