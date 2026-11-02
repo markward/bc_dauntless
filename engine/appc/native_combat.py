@@ -200,8 +200,7 @@ def reset() -> None:
     _apply_kinds = None
     for k in _K0_STEP_REASONS:
         _k0_step_reasons[k] = 0
-    _k0_flags.clear()
-    _k0_watch.clear()
+    _k0_clear_caches()
     if available():
         _h.combat_apply_reset_counts()
         _h.combat_push_reset_counts()
@@ -3407,9 +3406,11 @@ def _k1_system_ships(system) -> list:
 #             weapon-kind class against the stock class of its kind,
 #             _K0_SHIP_METHODS on a ShipClass, _K0_AMMO_METHODS on a
 #             TorpedoAmmoType -- against the import-time snapshot
-#             (k0_snapshot_stock, k0_snapshot_ship). Flags live in
-#             _k0_flags {class: 0/1}, computed on first sight and re-checked
-#             at every session (the K1 watch);
+#             (k0_snapshot_stock, k0_snapshot_ship). The binding keeps each
+#             class's verdict while CPython's version tag of the class is
+#             unchanged (an attribute assignment on it or a base changes
+#             it); a class with no valid verdict comes back from begin and
+#             _k0_flag computes it here;
 #   instance  an instance attribute named in _K0_SHIP_PATCHES /
 #             _K0_SYSTEM_PATCHES / _K0_WEAPON_PATCHES: the cheap subset of
 #             A6 that tests, tools and SWIG patch -- the update entry points
@@ -3420,7 +3421,9 @@ def _k1_system_ships(system) -> list:
 #             every weapon, every tick (~20 ns each; 630 weapons at 64
 #             ships), for names nothing patches. StopFiring and
 #             _broadcast_reload need no guard at the instance: K0's records
-#             CALL them in Python.
+#             CALL them in Python. The binding re-probes a dict only when
+#             it changed (its PEP 509 version), so an idle weapon costs no
+#             probe.
 # The binding's begin scan applies them (host_bindings.cc, k0_scan): a
 # flagged or patched ship or weapon system -> the ship whole (override); a
 # flagged or patched weapon -> that weapon at its turn (override); in a
@@ -3452,13 +3455,19 @@ _K0_WEAPON_PATCHES = ("UpdateCharge", "UpdateReload", "ReloadTorpedo")
 # Python walk, which K0 would bypass).
 _K0_STEP_REASONS = ("off", "nested", "audit")
 _k0_step_reasons = dict.fromkeys(_K0_STEP_REASONS, 0)
-# role -> (names, the stock class's resolution of them); role is a weapon
-# kind 1..8, "ship" or "ammo".
+# role -> (stock class, names, the stock class's resolution of them); role
+# is a weapon kind 1..8, "ship" or "ammo".
 _k0_stock: dict = {}
-_k0_flags: dict = {}
-_k0_watch: dict = {}
 _k0_kind_ids = None
-_k0_ctx = None
+# begin's ctx with no fresh verdicts (the common case: every class seen).
+_K0_NO_FRESH: dict = {}
+_k0_ctx = (_K0_NO_FRESH, _K0_SHIP_PATCHES, _K0_SYSTEM_PATCHES,
+           _K0_WEAPON_PATCHES)
+
+
+def _k0_clear_caches() -> None:
+    if _h is not None and hasattr(_h, "combat_k0_clear_caches"):
+        _h.combat_k0_clear_caches()
 
 
 def k0_snapshot_stock(classes) -> None:
@@ -3469,16 +3478,14 @@ def k0_snapshot_stock(classes) -> None:
     for role, cls in classes.items():
         names = _K0_AMMO_METHODS if role == "ammo" else _K0_METHODS
         _k0_stock[role] = (cls, names, _k1_resolve(cls, names))
-    _k0_flags.clear()
-    _k0_watch.clear()
+    _k0_clear_caches()
 
 
 def k0_snapshot_ship(ship_class) -> None:
     """ships.py, as it finishes defining ShipClass (with k1_snapshot_ship)."""
     _k0_stock["ship"] = (ship_class, _K0_SHIP_METHODS,
                          _k1_resolve(ship_class, _K0_SHIP_METHODS))
-    _k0_flags.clear()
-    _k0_watch.clear()
+    _k0_clear_caches()
 
 
 def _k0_role(cls):
@@ -3496,53 +3503,12 @@ def _k0_flag(cls) -> int:
     """1 when `cls` resolves a K0 name of its role differently from the
     stock class's import-time snapshot; 0 otherwise (a class of no role:
     the kernel decides it, a ship of another class is not_weapon_system).
-    Cached in _k0_flags with a K1-style watch (_k0_recheck_overrides)."""
-    hit = _k0_flags.get(cls)
-    if hit is not None:
-        return hit
-    hit = 0
+    Computed afresh: the binding caches it per class version tag."""
     stock = _k0_stock.get(_k0_role(cls))
-    if stock is not None:
-        _stock_cls, names, snapshot = stock
-        resolved = _k1_resolve(cls, names)
-        hit = int(resolved != snapshot)
-        present = [n for n, f in zip(names, resolved) if f is not None]
-        missing = tuple(n for n, f in zip(names, resolved) if f is None)
-        values = tuple(f for f in resolved if f is not None)
-        if len(present) > 1:
-            _k0_watch[cls] = (operator.attrgetter(*present), values, missing)
-        elif present:       # attrgetter of one name: a bare value
-            _k0_watch[cls] = (operator.attrgetter(present[0]), values[0],
-                              missing)
-        else:
-            _k0_watch[cls] = (lambda _c: (), (), missing)
-    _k0_flags[cls] = hit
-    return hit
-
-
-def _k0_recheck_overrides() -> None:
-    """A K0 name patched on a class (or a base) since its flag was computed:
-    forget the flag; the next begin scan reports the class and its flag is
-    recomputed. One attrgetter call per class seen, every session."""
-    changed = None
-    for cls, (get, values, missing) in _k0_watch.items():
-        try:
-            same = get(cls) == values
-        except AttributeError:          # a present name was deleted
-            same = False
-        if same:
-            for n in missing:
-                if getattr(cls, n, None) is not None:
-                    same = False
-                    break
-        if not same:
-            if changed is None:
-                changed = []
-            changed.append(cls)
-    if changed is not None:
-        for cls in changed:
-            del _k0_watch[cls]
-            _k0_flags.pop(cls, None)
+    if stock is None:
+        return 0
+    _stock_cls, names, snapshot = stock
+    return int(_k1_resolve(cls, names) != snapshot)
 
 
 def _k0_kinds() -> tuple:
@@ -3574,26 +3540,26 @@ def k0_weapons(ships, dt) -> bool:
         from engine.appc import weapon_subsystems
         from engine.core import step_memo
         _ws, _step_memo = weapon_subsystems, step_memo
-    if _k0_watch:
-        _k0_recheck_overrides()
     if type(ships) is not list:
         ships = list(ships)
     # The clock every tube of this step reads (WSM D5): one read, Python's
     # own _game_time (its failure is its 0.0 and its log, WSM A10).
     now_ = _ws._game_time()
+    # A class with no valid verdict (new, or patched since): computed here,
+    # and the scan runs again with it (a flagged ship or system is not
+    # looked into, so a class below it can surface only on a later pass;
+    # bounded by the class depth).
     ctx = _k0_ctx
-    if ctx is None:
-        ctx = _k0_ctx = (_k0_flags, _K0_SHIP_PATCHES, _K0_SYSTEM_PATCHES,
-                         _K0_WEAPON_PATCHES)
-    # A class not seen before: its flag is computed here, and the scan runs
-    # again (a flagged ship or system is not looked into, so a class below
-    # it can surface only on a later pass; bounded by the class depth).
+    fresh = None
     for _attempt in range(8):
         missing = _h.combat_k0_begin(ships, dt, now_, ctx)
         if missing is None:
             break
+        if fresh is None:
+            fresh = {}
+            ctx = (fresh,) + _k0_ctx[1:]
         for cls in missing:
-            _k0_flag(cls)
+            fresh[cls] = _k0_flag(cls)
     else:
         raise RuntimeError("combat K0: no guard flag for %r" % (missing,))
     run_k0(ships, dt)

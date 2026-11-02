@@ -280,3 +280,95 @@ def test_method_list_covers_wsm_a6():
             names.add(tok)
     assert names, row
     assert names <= set(nc._K0_METHODS), names - set(nc._K0_METHODS)
+
+
+# ── Between two sessions (ruling W6: the binding caches the verdicts) ────────
+
+def _phaser_banks(w):
+    return [b for name in w.ships for b in w.weapons(name, PHASER)]
+
+
+def test_class_patch_between_two_sessions_is_seen(monkeypatch):
+    """The class verdicts are cached in the binding by CPython's type version
+    tag: a patch on the stock PhaserBank made between two sessions flips
+    every bank to Python at the next session, and undoing it flips them
+    back."""
+    from tests.helpers.k0_fight import World
+    calls = []
+    with monkeypatch.context() as mp:
+        w = World(mp, True, "k0_between")
+        try:
+            w.tick()
+            w.tick()                            # verdicts cached
+            assert _override(nc.counts()) == 0
+            assert _h.combat_k0_cache_sizes()[0] > 0
+            banks = len(_phaser_banks(w))
+            real = ws.PhaserBank.UpdateCharge
+            with monkeypatch.context() as patch:
+                def spy(self, dt):
+                    calls.append(self.GetName())
+                    real(self, dt)
+                patch.setattr(ws.PhaserBank, "UpdateCharge", spy)
+                w.tick()
+                assert _override(nc.counts()) == banks
+                assert len(calls) == banks
+            w.tick()                            # the patch is gone again
+            assert _override(nc.counts()) == banks
+            assert len(calls) == banks
+        finally:
+            w.close()
+
+
+def test_instance_attribute_between_two_sessions_is_seen(monkeypatch):
+    """An instance attribute added between two sessions (a weapon's, then a
+    weapon system's) is seen at the next one, and its removal too."""
+    from tests.helpers.k0_fight import World
+    with monkeypatch.context() as mp:
+        w = World(mp, True, "k0_between_inst")
+        try:
+            w.tick()
+            w.tick()
+            bank = w.weapons("Galaxy", PHASER)[2]
+            calls = []
+            real = bank.UpdateCharge
+
+            def patched(dt):
+                calls.append(dt)
+                real(dt)
+            bank.UpdateCharge = patched
+            w.tick()
+            assert (_override(nc.counts()), len(calls)) == (1, 1)
+            del bank.UpdateCharge
+            w.tick()
+            assert (_override(nc.counts()), len(calls)) == (1, 1)
+            phasers = w.ships["Galaxy"].GetPhaserSystem()
+            phasers.IsOn = lambda: True
+            w.tick()                            # the whole ship
+            assert _override(nc.counts()) == 2
+            del phasers.IsOn
+            w.tick()
+            assert _override(nc.counts()) == 2
+        finally:
+            w.close()
+
+
+def test_class_swap_between_two_sessions_is_seen(monkeypatch):
+    """`weapon.__class__ = Sub` changes the type, not the dict: the cached
+    answer is keyed on the type too."""
+    from tests.helpers.k0_fight import World
+    with monkeypatch.context() as mp:
+        w = World(mp, True, "k0_between_swap")
+        try:
+            w.tick()
+            w.tick()
+            bank = w.weapons("Galaxy", PHASER)[3]
+            _CountingBank.calls = []
+            _swap_class(bank, _CountingBank)
+            w.tick()
+            assert _override(nc.counts()) == 1
+            assert _CountingBank.calls == [bank.GetName()]
+            _swap_class(bank, ws.PhaserBank)
+            w.tick()
+            assert _override(nc.counts()) == 1
+        finally:
+            w.close()
