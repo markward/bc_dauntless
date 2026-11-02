@@ -21,12 +21,17 @@ the audited run's mirror audit compares the torpedo table's rows with the
 Python torpedoes every tick while Python flies them. Without the audit both
 kernels decide every step of the fight: K4 every tick, K3 every tick with a
 torpedo in flight, with no whole step handed back to Python.
+
+Native weapon state: K0 (the weapons' charging and reloading) stands down
+under the audit (reason "audit"); without it, it steps every weapon every
+tick, and the C-applied write logs and the one-call scalar push run.
 """
 import pytest
 
 from tests.helpers import bc_assets
-from tests.helpers.k3_fight import (posed_branches, posed_fallbacks,
-                                    posed_no_mount)
+from tests.helpers.k3_fight import (check_weapon_state_paths,
+                                    posed_branches, posed_fallbacks,
+                                    posed_no_mount, weapon_state_paths)
 
 
 @pytest.fixture(autouse=True)
@@ -131,6 +136,11 @@ def test_combat_stress_runs_clean_under_the_native_audit(monkeypatch):
     k3_why = {k: n for k, n in counts["k3_python_reasons"].items() if n}
     assert list(k3_why) == ["audit"], counts
     assert k3_why["audit"] == counts["k3_python_steps"] > 0, counts
+    # K0 stood down for the audit too (native weapon state): every
+    # weapons step was the Python walk, reason "audit".
+    assert counts["k0_steps"] == 0, weapon_state_paths(counts)
+    k0_why = {k: n for k, n in counts["k0_python_step_reasons"].items() if n}
+    assert list(k0_why) == ["audit"] and k0_why["audit"] >= 120, counts
     # GameLoop.tick audits the whole mirror once a tick.
     assert audits >= 120, audits
 
@@ -175,3 +185,10 @@ def test_combat_stress_walks_beams_natively_without_the_audit(monkeypatch):
     assert counts["k3_runs"] > 0 and counts["k3_records"] > 0, counts
     assert counts["k3_python_steps"] == 0, counts
     assert not any(counts["k3_python_reasons"].values()), counts
+    # Native weapon state: K0 charged and reloaded every weapon every tick
+    # (never handed a whole step back), its records' writes and K1 / K2's
+    # were applied in C, and scalar mirror pushes went through the one-call
+    # push.
+    check_weapon_state_paths(counts)
+    assert not any(counts["k0_python_step_reasons"].values()), counts
+    assert counts["k0_records"]["DONE"] >= 120, counts

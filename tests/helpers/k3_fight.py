@@ -758,6 +758,22 @@ def round_trips(counts):
             "k3_native_attributions": counts["k3_native_attributions"]}
 
 
+def weapon_state_paths(counts):
+    """The native weapon-state counters (spec 2026-11-02-native-weapon-
+    state-design.md §5): weapons K0 stepped natively, writes the bindings
+    applied in C (K0, K1, K2 logs), scalar mirror pushes made in one call."""
+    return {"k0_steps": counts["k0_steps"],
+            "c_applied_writes": counts["c_applied_writes"],
+            "fast_pushes": counts["fast_pushes"]}
+
+
+def check_weapon_state_paths(counts):
+    """Each native weapon-state path ran in the native arm of a fight."""
+    paths = weapon_state_paths(counts)
+    for key, n in paths.items():
+        assert n > 0, (key, paths)
+
+
 def check_native_attributions(counts, tally):
     """Round trips Task 4 in a fight: torpedo mounts were attributed by the
     kernel (k3_native_attributions), every one rode a DONE `_mount_key`

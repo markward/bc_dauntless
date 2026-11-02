@@ -343,6 +343,10 @@ TEST(K0Charging, RechargeFormula) {
     // dt ends ...efa; rate * (pf * cf * dt) would end ...efb.
     EXPECT_EQ(Recharging(0.8, 75.0, 5.0, 0.0).step(),
               (V{"b._charge_level=0x1.89374bc6a7efap-9"}));
+    // And the operand ORDER: Python's rate * pf * cf ends ...f1b at power
+    // 0.7, condition 75%; rate * cf * pf would end ...f1a.
+    EXPECT_EQ(Recharging(0.7, 75.0, 5.0, 0.0).step(),
+              (V{"b._charge_level=0x1.5810624dd2f1bp-9"}));
     // min(want, headroom): 4.99 + min(3.0 * dt, 0.01) -> exactly full.
     EXPECT_EQ(Recharging(1.0, 100.0, 5.0, 4.99, 3.0).step(),
               (V{"b._charge_level=0x1.4000000000000p+2"}));
@@ -1129,28 +1133,30 @@ TEST(K0Charging, Protocol) {
 TEST(K0Charging, NextWhileDeliveringIsLost) {
     // A record's writes are a view of the session's log; the binding applies
     // them while running Python (wake hooks, setters). A next() from that
-    // Python would clear the log under the view: refused, with the log and
-    // the cursor untouched, so the delivery finishes on the same writes.
-    Tube u;
-    u.w.slots(u.t, {3.0}, {99.0}, 1, 0);
-    u.w.m.set_f(u.t, Field::_reload_delay, 1000.0);
-    u.w.k.begin({u.ship}, kDt, kNow);
-    const K0Record r = u.w.k.next();
-    ASSERT_EQ(r.kind, K0Kind::DONE);
-    ASSERT_EQ(r.writes.size(), 2u);
-    const K0Write before = r.writes[0];
-    u.w.k.set_delivering(true);
-    EXPECT_TRUE(u.w.k.delivering());
-    EXPECT_THROW(u.w.k.next(), std::logic_error);
-    ASSERT_EQ(r.writes.size(), 2u);
-    EXPECT_EQ(r.writes[0].handle, before.handle);
-    EXPECT_EQ(r.writes[0].w.field, before.w.field);
-    EXPECT_EQ(r.writes[0].w.d, before.w.d);
-    u.w.k.set_delivering(false);
-    // Delivered: the protocol goes on as before (DONE returned: end()).
-    EXPECT_THROW(u.w.k.next(), std::logic_error);  // past DONE, not delivery
-    u.w.k.end();
-    EXPECT_FALSE(u.w.k.open());
+    // Python would clear the log under the view and step the walk on:
+    // refused, with the log, the cursor and the mirror untouched, so the
+    // delivery finishes on the same writes and the walk resumes after it.
+    Pulse q(0.5);
+    q.w.m.set_i(q.p, Field::_watch_checks, 2);
+    const int64_t p2 = q.w.weapon("p2", q.sys);
+    q.w.m.set_f(p2, Field::_cooldown_remaining, 0.5);
+    q.w.k.begin({q.ship}, kDt, kNow);
+    const K0Record r = q.w.k.next();
+    ASSERT_EQ(q.w.rec(r), "WATCH p");       // not done: p2 still to step
+    const V delivered = q.w.writes(r);
+    ASSERT_EQ(delivered.size(), 2u);
+    q.w.k.set_delivering(true);
+    EXPECT_TRUE(q.w.k.delivering());
+    EXPECT_THROW(q.w.k.next(), std::logic_error);
+    EXPECT_EQ(q.w.writes(r), delivered);
+    EXPECT_EQ(q.w.m.get_f(p2, Field::_cooldown_remaining), 0.5);
+    q.w.k.set_delivering(false);
+    EXPECT_FALSE(q.w.k.delivering());
+    const K0Record d = q.w.k.next();         // delivered: the walk goes on
+    EXPECT_EQ(q.w.rec(d), "DONE");
+    EXPECT_EQ(q.w.writes(d), (V{"p2._cooldown_remaining=0x1.eeeeeeeeeeeefp-2",
+                                "p2._charge_watcher._value=0x1.0000000000000p+0"}));
+    q.w.k.end();
 }
 
 }  // namespace

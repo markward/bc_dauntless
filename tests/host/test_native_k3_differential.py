@@ -65,7 +65,8 @@ from tests.helpers import headless_mission  # noqa: E402
 from tests.helpers.fight_audio import isolate_fight_audio  # noqa: E402
 from tests.helpers.k3_fight import (K3Tally, Recorder, aim_velocity,  # noqa: E402
                                     check_guide_asks,
-                                    check_native_attributions, compare, face,
+                                    check_native_attributions,
+                                    check_weapon_state_paths, compare, face,
                                     fire, nebula_around, presented,
                                     round_trips, seed_every_rng,
                                     subsystems, xyz)
@@ -355,6 +356,9 @@ def test_k3_matches_python_with_real_instances(monkeypatch, host,
     # walked the ships' tubes with no WALK_START record (Task 1). A torpedo
     # fight: no beam sustains or batched contacts (measured 0).
     check_native_attributions(nat.counts, nat.rec.tally)
+    # K0 charged and reloaded every weapon, writes were C-applied and
+    # scalar pushes made in one call (native weapon state).
+    check_weapon_state_paths(nat.counts)
     assert nat.counts["k1_logged"]["walk_start"] > 0, round_trips(
         nat.counts)
     assert nat.counts["k3_runs"] > 0 and nat.counts["k3_python_steps"] == 0, \

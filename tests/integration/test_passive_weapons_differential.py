@@ -4,9 +4,9 @@
 
 Two fresh loads of combat_stress, one per-tick and one passive with the sleep
 audit on, get the same seeded stream of operations and are compared tick by
-tick with `==`: every weapon's charge, firing state, depletion latch, pulse
-cooldown, ready count and reload slots, plus the reload / fired / charge-toggle
-events in order.
+tick, floats by .hex() with their types: every weapon's charge, firing state,
+depletion latch, pulse cooldown, ready count and reload slots, plus the
+reload / fired / charge-toggle events in order.
 
 Deterministic by construction: no GameLoop tick (AI draws on the unseeded
 module `random`), the game clock and the module `random` reset before each
@@ -38,6 +38,13 @@ RELOAD_DELAY_S = 0.6
 # A range check on every pulse watcher, the way Conditions/ConditionPulseReady
 # registers one, so the watcher's ET_CHARGE_TOGGLE is exercised.
 CHARGE_TOGGLE_FRACTION = 0.6
+
+
+def _t(v):
+    """A value with its type; floats by .hex() (-0.0 and NaN included)."""
+    if isinstance(v, float):
+        return ("float", v.hex())
+    return (type(v).__name__, v)
 
 
 def _walk(ships):
@@ -157,13 +164,19 @@ class _Scene:
             self.op(rng, kinds)
 
     def record(self):
+        # Every value with its type, floats by .hex(): `==` cannot see -0.0
+        # against 0.0 (weapon-state-map D3), nor an int where Python wrote a
+        # bool.
         row = []
         for w in self.weapons:
             if isinstance(w, TorpedoTube):
-                row.append((w.GetNumReady(), tuple(w._reload_timers)))
+                row.append((_t(w.GetNumReady()),
+                            tuple(_t(v) for v in w._reload_timers),
+                            tuple(_t(v) for v in w._reload_advanced_at)))
             else:
-                row.append((w.GetChargeLevel(), w.IsFiring(), w._depleted,
-                            getattr(w, "_cooldown_remaining", None)))
+                row.append((_t(w.GetChargeLevel()), _t(w.IsFiring()),
+                            _t(w._depleted),
+                            _t(getattr(w, "_cooldown_remaining", None))))
         self.log.append(row)
 
     def run(self, seed, ticks_per_frame, kinds):

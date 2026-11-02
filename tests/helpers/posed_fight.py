@@ -87,6 +87,7 @@ from tests.helpers.k3_fight import (K3Tally, Recorder, aim_velocity,
                                     check_guide_asks, face, fire, hx,
                                     posed_branches, posed_fallbacks,
                                     check_native_attributions,
+                                    check_weapon_state_paths,
                                     posed_no_mount, presented, round_trips,
                                     seed_every_rng, weapon_rows, xyz)
 
@@ -911,6 +912,9 @@ def check_posed(ref, nat):
                 "k1_logged/idle_bank_stop", "k2_batched_contacts"):
         assert trips[key] > 0, (key, trips)
     check_native_attributions(c, nat.rec.tally)
+    # K0 charged and reloaded every weapon, writes were C-applied and scalar
+    # pushes made in one call (native weapon state).
+    check_weapon_state_paths(c)
     # ... and their presentation was compared, in order, with the hits.
     assert presented(ref.rec.calls) > 0
     # The scene was what it claims, in both arms alike.
