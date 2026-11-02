@@ -7,7 +7,7 @@ M5, R2, R4, R5).
   ShipSubsystem.SetInvincible(1) -- that subsystem takes no damage.
 * M3 + M5: a critical subsystem at 0 kills, from ANY condition write
   (DamageSystem, SetCondition, SetConditionPercentage, severance), but the
-  check runs at the tick boundary (death_check.drain), re-reading
+  check runs at the tick boundary (effect_queue.boundary), re-reading
   invincibility there -- E3M5's KillGonDev zeroes the hull, THEN sets the
   ship invincible, and the derelict must survive.
 * R5: the zero crossings (hull cascade, breach arm) follow the same rule.
@@ -15,7 +15,7 @@ M5, R2, R4, R5).
 """
 import pytest
 
-from engine.appc import death_check, ship_death, subsystem_cascade, warp_core_breach
+from engine.appc import effect_queue, ship_death, subsystem_cascade, warp_core_breach
 from engine.appc.combat import apply_hit
 from engine.appc.math import TGPoint3
 from engine.appc.ships import ShipClass, ShipClass_Create
@@ -25,11 +25,11 @@ from engine.appc.subsystems import (HullSubsystem, PowerSubsystem,
 
 @pytest.fixture(autouse=True)
 def _clean():
-    death_check.reset()
+    effect_queue.reset()
     subsystem_cascade.reset()
     warp_core_breach.reset()
     yield
-    death_check.reset()
+    effect_queue.reset()
     subsystem_cascade.reset()
     warp_core_breach.reset()
 
@@ -87,7 +87,7 @@ def test_invincible_ship_never_dies_at_hull_zero():
     ship.SetInvincible(1)
     _drop_shields(ship)
     apply_hit(ship, 5000.0, TGPoint3(0, 10, 0), source=None)
-    death_check.drain()
+    effect_queue.boundary()
     assert ship.GetHull().GetCondition() == 0.0
     assert ship.IsDying() == 0
     assert ship.IsDead() == 0
@@ -98,7 +98,7 @@ def test_invincible_ship_at_hull_zero_keeps_its_systems():
     ship = _ship()
     ship.SetInvincible(1)
     ship.DamageSystem(ship.GetHull(), 5000.0)
-    death_check.drain()
+    effect_queue.boundary()
     assert subsystem_cascade._active == []
 
 
@@ -111,7 +111,7 @@ def test_invincible_ship_reactor_at_zero_does_not_arm_a_breach(monkeypatch):
     ship.SetPowerSubsystem(core)
     ship.SetInvincible(1)
     ship.DamageSystem(core, 900.0)
-    death_check.drain()
+    effect_queue.boundary()
     assert armed == []
 
 
@@ -127,7 +127,7 @@ def test_invincible_ship_destroyed_reactor_does_not_breach_on_update(monkeypatch
     ship.SetInvincible(1)
     core._condition = 0.0                 # destroyed, by whatever path
     core.Update(1.0 / 60.0)
-    death_check.drain()
+    effect_queue.boundary()
     assert armed == []
     assert ship.IsDying() == 0
 
@@ -152,7 +152,7 @@ def test_damage_system_kills_at_the_boundary_not_in_the_write():
     ship = _ship()
     ship.DamageSystem(ship.GetHull(), 5000.0)
     assert ship.IsDying() == 0            # not inside the write (M5)
-    death_check.drain()
+    effect_queue.boundary()
     assert ship.IsDying() == 1
 
 
@@ -160,14 +160,14 @@ def test_set_condition_zero_on_the_hull_kills_at_the_boundary():
     ship = _ship()
     ship.GetHull().SetCondition(0.0)
     assert ship.IsDying() == 0
-    death_check.drain()
+    effect_queue.boundary()
     assert ship.IsDying() == 1
 
 
 def test_set_condition_percentage_zero_on_the_hull_kills_at_the_boundary():
     ship = _ship()
     ship.GetHull().SetConditionPercentage(0.0)
-    death_check.drain()
+    effect_queue.boundary()
     assert ship.IsDying() == 1
 
 
@@ -175,7 +175,7 @@ def test_hull_zero_crossing_schedules_the_cascade_at_the_boundary():
     ship = _ship()
     ship.GetHull().SetCondition(0.0)
     assert subsystem_cascade._active == []
-    death_check.drain()
+    effect_queue.boundary()
     assert [e["ship"] for e in subsystem_cascade._active] == [ship]
 
 
@@ -185,7 +185,7 @@ def test_non_critical_subsystem_at_zero_does_not_kill():
     sensor.SetMaxCondition(100.0)
     ship.SetSensorSubsystem(sensor)
     sensor.SetCondition(0.0)
-    death_check.drain()
+    effect_queue.boundary()
     assert ship.IsDying() == 0
 
 
@@ -194,7 +194,7 @@ def test_hull_zeroed_then_made_invincible_survives():
     ship = _ship()
     ship.GetHull().SetCondition(0)
     ship.SetInvincible(1)
-    death_check.drain()
+    effect_queue.boundary()
     assert ship.IsDying() == 0
     assert subsystem_cascade._active == []
 
@@ -203,7 +203,7 @@ def test_hull_restored_before_the_boundary_does_not_die():
     ship = _ship()
     ship.GetHull().SetCondition(0.0)
     ship.GetHull().SetCondition(500.0)
-    death_check.drain()
+    effect_queue.boundary()
     assert ship.IsDying() == 0
 
 
@@ -213,12 +213,12 @@ def test_clearing_invincibility_does_not_kill_retroactively():
     ship = _ship()
     ship.GetHull().SetCondition(0)
     ship.SetInvincible(1)
-    death_check.drain()
+    effect_queue.boundary()
     ship.SetInvincible(0)
-    death_check.drain()
+    effect_queue.boundary()
     assert ship.IsDying() == 0
     ship.DamageSystem(ship.GetHull(), 1.0)
-    death_check.drain()
+    effect_queue.boundary()
     assert ship.IsDying() == 1
 
 
@@ -229,7 +229,7 @@ def test_the_death_carries_the_killer(monkeypatch):
     ship = _ship()
     shooter = _ship("Shooter")
     ship.DamageSystem(ship.GetHull(), 5000.0, shooter)
-    death_check.drain()
+    effect_queue.boundary()
     assert begun == [(ship, shooter)]
 
 
@@ -244,7 +244,7 @@ def test_two_fatal_writes_begin_one_death(monkeypatch):
     ship = _ship()
     ship.DamageSystem(ship.GetHull(), 5000.0)
     ship.DamageSystem(ship.GetHull(), 5000.0)
-    death_check.drain()
+    effect_queue.boundary()
     assert begun == [ship]
     ship_death.reset()
 
@@ -262,7 +262,7 @@ def test_severed_critical_subsystem_kills(monkeypatch):
     monkeypatch.setattr(physical_parents, "part_for_property",
                         lambda leaf, prop, point, iid: "saucer")
     assert part_severance._destroy_subsystems_on_part(ship, "saucer") == [hull]
-    death_check.drain()
+    effect_queue.boundary()
     assert ship.IsDying() == 1
 
 
@@ -285,13 +285,13 @@ def test_a_host_owned_game_loop_tick_leaves_the_check_to_the_host():
     ship.GetHull().SetCondition(0.0)
     GameLoop(owns_boundary=False).tick()
     assert ship.IsDying() == 0
-    death_check.drain()
+    effect_queue.boundary()
     assert ship.IsDying() == 1
 
 
 def test_reset_drops_pending_checks():
     ship = _ship()
     ship.GetHull().SetCondition(0.0)
-    death_check.reset()
-    death_check.drain()
+    effect_queue.reset()
+    effect_queue.boundary()
     assert ship.IsDying() == 0

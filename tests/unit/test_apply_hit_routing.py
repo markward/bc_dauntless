@@ -10,6 +10,7 @@ import pytest
 from engine.appc.math import TGPoint3
 from engine.appc.combat import apply_hit
 from engine.appc.events import ET_WEAPON_HIT
+from engine.appc import effect_queue
 
 
 class _FakeShields:
@@ -127,6 +128,7 @@ def test_apply_hit_broadcasts_weapon_hit_event():
         hull = _FakeSubsystem("Hull")
         ship = _FakeShip(shields=shields, hull=hull)
         apply_hit(ship, 42.0, TGPoint3(0, 0, 0), source=None)
+        effect_queue.boundary()             # the tick boundary
         assert received == [42.0]
     finally:
         # Remove the test handler from g_kEventManager so it doesn't leak.
@@ -158,6 +160,7 @@ def test_apply_hit_calls_dispatch_with_absorbed_shields(monkeypatch):
     combat.apply_hit(ship, damage=30.0, hit_point=TGPoint3(0, 1, 0),
                      source=None,
                      normal=TGPoint3(0, -1, 0))
+    effect_queue.boundary()             # the tick boundary
 
     assert len(spy.calls) == 1
     kw = spy.calls[0]
@@ -180,6 +183,7 @@ def test_apply_hit_calls_dispatch_with_hull_bleed(monkeypatch):
     combat.apply_hit(ship, damage=30.0, hit_point=TGPoint3(0, 1, 0),
                      source=None,
                      normal=None)
+    effect_queue.boundary()             # the tick boundary
 
     kw = spy.calls[0]
     assert kw["absorbed_shields"] == pytest.approx(10.0)
@@ -209,6 +213,7 @@ def test_apply_hit_dispatch_captures_subsystem_transition(monkeypatch):
     combat.apply_hit(ship, damage=50.0, hit_point=TGPoint3(0, 1, 0),
                      source=None,
                      normal=None)
+    effect_queue.boundary()             # the tick boundary
 
     kw = spy.calls[0]
     assert kw["sub_transition"] == "disabled"

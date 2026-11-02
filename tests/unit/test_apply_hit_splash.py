@@ -15,6 +15,7 @@ from engine.appc.combat import apply_hit
 from engine.appc.events import WeaponHitEvent
 from engine.appc.math import TGMatrix3, TGPoint3
 import App
+from engine.appc import effect_queue
 
 
 class _FakeSub:
@@ -161,6 +162,7 @@ def test_weapon_hit_event_carries_radius_and_normal(restore_event_manager):
 
     apply_hit(ship, damage=10.0, hit_point=TGPoint3(0.0, 0.0, 0.0),
               source=None, normal=normal)
+    effect_queue.boundary()             # the tick boundary
 
     assert len(holder) == 1
     evt = holder[0]
@@ -184,5 +186,6 @@ def test_apply_hit_accepts_optional_hardpoint_and_payload(restore_event_manager)
 
     apply_hit(ship, damage=10.0, hit_point=TGPoint3(0.0, 0.0, 0.0),
               source=None, normal=None, hardpoint_weapon=_Hp())
+    effect_queue.boundary()             # the tick boundary
 
     assert holder[0].GetRadius() == 0.20

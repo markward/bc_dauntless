@@ -23,6 +23,7 @@ from engine.appc.math import TGPoint3
 from engine.appc.combat import apply_hit
 from engine.appc.ships import ShipClass, ShipClass_Create
 from engine.appc.subsystems import HullSubsystem, ShieldSubsystem, SensorSubsystem
+from engine.appc import effect_queue
 
 
 def _ship(name, hull_max=2000.0, face_max=1000.0):
@@ -48,6 +49,7 @@ def test_invincible_ship_takes_damage_and_feedback_fires():
     ship.GetShields().SetCurrentShields(0, 0.0)   # drained: hit would reach hull
     with patch("engine.appc.hit_feedback.dispatch") as mock_dispatch:
         apply_hit(ship, 500.0, TGPoint3(0, 10, 0), source=None)
+        effect_queue.boundary()             # the tick boundary
     assert ship.GetHull().GetCondition() == 1500.0   # damage lands (M1)
     assert mock_dispatch.called
 
@@ -68,6 +70,7 @@ def test_unhurtable_ship_takes_no_damage_but_feedback_fires():
     ship.GetShields().SetCurrentShields(0, 0.0)
     with patch("engine.appc.hit_feedback.dispatch") as mock_dispatch:
         apply_hit(ship, 5000.0, TGPoint3(0, 10, 0), source=None)
+        effect_queue.boundary()             # the tick boundary
     assert ship.GetHull().GetCondition() == 2000.0   # no damage
     assert mock_dispatch.called                       # but the shot connects
 

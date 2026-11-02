@@ -14,6 +14,7 @@ import pytest
 from tests.helpers.one_set import InSet, one_set_for
 
 from engine import host_io
+from engine.appc import effect_queue
 from engine.appc.math import TGPoint3
 from engine.appc.projectiles import Torpedo, register, update_all, _active
 
@@ -134,6 +135,7 @@ def test_torpedo_path_emits_decal_end_to_end(make_host):
                   source=torpedo._source_ship,
                   normal=hit_normal, ship_instances=ship_instances,
                   weapon_type="torpedo", hardpoint_weapon=torpedo)
+    effect_queue.boundary()             # the tick boundary
 
     assert len(host.decal_calls) == 1, "torpedo hull hit did not emit a decal"
     call = host.decal_calls[0]

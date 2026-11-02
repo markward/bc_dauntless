@@ -131,6 +131,7 @@ def _arm(monkeypatch, ticks=TICKS, noisy=False):
                 host_loop._advance_combat(ships, TICK_DELTA,
                                           player=scene.player,
                                           push_render_data=False)
+            host_loop._combat_tick_boundary()   # as the host does (native damage)
             if noisy:
                 _noise(officer)
             scene.record()

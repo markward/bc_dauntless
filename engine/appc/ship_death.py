@@ -107,9 +107,18 @@ def begin(ship, killer=None) -> None:
             dev_mode.log_swallowed("run death script from begin", _e)
     _broadcast_exploding(ship, killer)
     # Faithful death-explosion collateral: BC's m_splashDamage to everything in
-    # m_splashDamageRadius (loadspacehelper sets it on every ship). Raise-safe;
-    # a no-op for objects with no authored splash. Fired here so EVERY death
-    # (combat, warp-core, scripted) splashes exactly once, at the blast moment.
+    # m_splashDamageRadius (loadspacehelper sets it on every ship). Queued
+    # here so EVERY death (combat, warp-core, scripted) splashes exactly once,
+    # AFTER its ET_OBJECT_EXPLODING handlers ran (native damage M2: E2M2 makes
+    # the partner invincible there); delivered by deliver_splash in the same
+    # flush when the death began in one (engine/appc/effect_queue.py).
+    from engine.appc import effect_queue
+    effect_queue.emit(effect_queue.SPLASH, ship)
+
+
+def deliver_splash(ship) -> None:
+    """SPLASH's delivery: the death splash. Raise-safe; a no-op for objects
+    with no authored splash."""
     try:
         from engine.appc import splash_damage
         splash_damage.apply(ship)

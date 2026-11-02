@@ -11,9 +11,11 @@ Severity rule (spec §3.1):
 - SHIELD iff shields absorbed > 0 and nothing else absorbed anything.
 - HULL otherwise.
 
-The WeaponHitEvent broadcast in apply_hit is unchanged; dispatch runs
-before it, and dispatch failures are swallowed so a renderer-binding
-crash never suppresses mission-side event handlers.
+apply_hit queues the dispatch as a HIT_PRESENT effect-queue entry, just
+before its WEAPON_HIT (native damage M2, engine/appc/effect_queue.py), so
+both run at the tick boundary; ``present`` delivers it, and swallows a
+dispatch failure so a renderer-binding crash never reaches the queue's
+error handling (the WeaponHitEvent after it is delivered either way).
 """
 from enum import IntEnum
 
@@ -222,6 +224,16 @@ def _structural_hit(weapon_type, allow_structural_wear: bool) -> bool:
     case. A future non-phaser "spare the hull" caller that also wants no
     wear must change this predicate deliberately, not rely on the flag."""
     return bool(allow_structural_wear) or weapon_type != "phaser"
+
+
+def present(**inputs) -> None:
+    """HIT_PRESENT's delivery: ``dispatch(**inputs)`` (the hit's F0-F7, F7
+    severance included), a failure swallowed as it was at the hit."""
+    try:
+        dispatch(**inputs)
+    except Exception as _e:
+        from engine import dev_mode
+        dev_mode.log_swallowed("hit_feedback.dispatch", _e)
 
 
 def dispatch(*, ship, source, point, normal, damage, subsystem,

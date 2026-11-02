@@ -148,6 +148,22 @@ class FloatRangeWatcher:
         if owner is not None:
             _push_value(owner, new_value)
 
+    def _update_queued(self, new_value: float, subsystem, which: int) -> None:
+        """A subsystem's condition watcher's _update (native damage M2): it
+        queues like an owned watcher, in both switch states -- the value is
+        committed at once and, when the watcher has checks, COND_WATCH(
+        subsystem, which, old, new) is emitted; delivery fires the checks
+        crossed, as registered THEN (engine/appc/effect_queue.py, ruling
+        E3). `which` names this watcher on `subsystem`
+        (effect_queue.WATCH_CONDITION / WATCH_COMBINED)."""
+        new_value = float(new_value)
+        old_value = self._value
+        self._value = new_value
+        if self._checks:
+            from engine.appc import effect_queue
+            effect_queue.emit(effect_queue.COND_WATCH, subsystem, which,
+                              old_value, new_value)
+
     def _fire_crossed(self, old_value: float, new_value: float) -> None:
         """Fire every check crossed between the two values."""
         # Snapshot so a handler that mutates the check set mid-dispatch can't

@@ -60,6 +60,8 @@ from engine.appc import weapon_subsystems as ws
 from engine.appc.events import WeaponHitEvent
 from engine.appc.math import TGMatrix3, TGPoint3
 from engine.appc.projectiles import Torpedo
+from engine.appc.sets import SetClass
+from engine.appc.subsystems import ShipSubsystem
 from engine.systems import frames
 from tests.helpers import effect_split
 
@@ -429,16 +431,23 @@ class Recorder:
         if obj is None:
             return None
         name = self.labels.get(id(obj))
-        if name is None and isinstance(obj, (ws.Weapon, ws.WeaponSystem)):
-            # A recorded ship's weapon or weapon system, by name: its first
-            # sight is often a weapon event, which native delivers at the
-            # tick boundary, after objects the rest of the step numbers.
-            # Held apart from the numbered objects, so it never shifts a
-            # number.
-            ship = self.labels.get(id(obj._climb_to_ship()))
+        if name is None and isinstance(obj, ShipSubsystem):
+            # A recorded ship's subsystem (a weapon, a weapon system), by
+            # name: its first sight is often an event delivered at the tick
+            # boundary -- a weapon event native delivers there, a damage
+            # event both arms deliver there (native damage M2), in an order
+            # against the native arm's boundary launches that differs from
+            # the reference's mid-step ones. Held apart from the numbered
+            # objects, so it never shifts a number.
+            ship = self.labels.get(id(obj._owning_ship()))
             if ship is not None:
                 name = self.labels[id(obj)] = "%s/%s" % (ship, obj.GetName())
                 self.named.append(obj)
+        if name is None and isinstance(obj, SetClass):
+            # A set, by name, for the same reason (a death's events, which
+            # both arms deliver at the boundary, name the ship's set).
+            name = self.labels[id(obj)] = "set:%s" % obj.GetName()
+            self.named.append(obj)
         if name is None:
             name = self.labels[id(obj)] = "%s#%d" % (type(obj).__name__,
                                                      len(self.held))

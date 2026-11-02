@@ -7,7 +7,7 @@ do nothing (docs/stub_heatmap.md)."""
 import App
 import pytest
 
-from engine.appc import death_check
+from engine.appc import effect_queue
 from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import (HullSubsystem, PhaserBank, PhaserSystem,
                                     RepairSubsystem, ShipSubsystem)
@@ -15,9 +15,9 @@ from engine.appc.subsystems import (HullSubsystem, PhaserBank, PhaserSystem,
 
 @pytest.fixture(autouse=True)
 def _clean():
-    death_check.reset()
+    effect_queue.reset()
     yield
-    death_check.reset()
+    effect_queue.reset()
 
 
 def _capture(monkeypatch):
@@ -77,6 +77,7 @@ def test_posts_the_same_events_as_damage(monkeypatch):
     ship_a = _ship_with(by_damage)
     fired = _capture(monkeypatch)
     ship_a.DamageSystem(by_damage, 1000.0)
+    effect_queue.boundary()             # the tick boundary
     damage_events = [(t, d is ship_a) for t, s, d in _shape(fired)
                      if s is by_damage]
 
@@ -84,6 +85,7 @@ def test_posts_the_same_events_as_damage(monkeypatch):
     ship_b = _ship_with(by_script)
     fired.clear()
     by_script.SetConditionPercentage(0.0)
+    effect_queue.boundary()             # the tick boundary
     script_events = [(t, d is ship_b) for t, s, d in _shape(fired)
                      if s is by_script]
     assert script_events == damage_events
@@ -95,6 +97,7 @@ def test_disabling_fraction_posts_disabled(monkeypatch):
     ship = _ship_with(s)
     fired = _capture(monkeypatch)
     s.SetConditionPercentage(0.2)
+    effect_queue.boundary()             # the tick boundary
     assert (App.ET_SUBSYSTEM_DISABLED, s, ship) in _shape(fired)
 
 
@@ -102,8 +105,10 @@ def test_raising_back_above_disabled_posts_operational(monkeypatch):
     s = _sub()
     _ship_with(s)
     s.SetConditionPercentage(0.2)
+    effect_queue.boundary()             # the tick boundary
     fired = _capture(monkeypatch)
     s.SetConditionPercentage(0.9)
+    effect_queue.boundary()             # the tick boundary
     assert [e.GetEventType() for e in fired if e.GetSource() is s] == \
         [App.ET_SUBSYSTEM_OPERATIONAL]
 
@@ -115,6 +120,7 @@ def test_enqueues_the_repair_like_damage():
     bay.SetMaxCondition(100.0)
     ship.SetRepairSubsystem(bay)
     s.SetConditionPercentage(0.5)
+    effect_queue.boundary()             # the tick boundary
     assert bay.IsBeingRepaired(s) or s in bay._queue
 
 

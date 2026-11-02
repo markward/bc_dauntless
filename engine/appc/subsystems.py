@@ -756,7 +756,9 @@ class ShipSubsystem(TGEventHandlerObject):
         self._condition = max(0.0, float(value))
         self._condition_changed()
         if self._condition < self.GetMaxCondition():
-            self._auto_enqueue_for_repair()
+            # Added at delivery (REPAIR_ADD; native damage M2).
+            from engine.appc import effect_queue
+            effect_queue.emit(effect_queue.REPAIR_ADD, self)
         from engine.appc import death_check
         death_check.note_write(ship if ship is not None else self._owning_ship(),
                                self, before, killer)
@@ -809,35 +811,54 @@ class ShipSubsystem(TGEventHandlerObject):
         self._condition_changed()
 
     def _condition_changed(self) -> None:
-        """Push the fresh condition FRACTION into the combined watcher (if one
-        was ever handed out) so its registered threshold crossings fire, then
-        advance the disabled/destroyed/operational state machine.
-        Called from every _condition/_max_condition mutation path — all
-        writes route through SetCondition/SetMaxCondition (combat damage in
-        engine/appc/objects.py calls SetCondition)."""
+        """Push the fresh condition FRACTION into the combined and condition
+        watchers (if ever handed out), then advance the disabled/destroyed/
+        operational state machine. Called from every _condition/
+        _max_condition mutation path — all writes route through SetCondition/
+        SetMaxCondition (combat damage in engine/appc/objects.py calls
+        SetCondition).
+
+        The state changes at once; what it REPORTS is queued to the tick
+        boundary (native damage M2; engine/appc/effect_queue.py, THE DAMAGE
+        KINDS): a watcher with checks commits now and queues COND_WATCH, a
+        state change queues SUBSYS_EVENT."""
+        from engine.appc import effect_queue as eq
         if self._combined_watcher is not None:
-            self._combined_watcher._update(self.GetConditionPercentage())
+            self._combined_watcher._update_queued(
+                self.GetConditionPercentage(), self, eq.WATCH_COMBINED)
         if self._condition_watcher is not None:
-            self._condition_watcher._update(self.GetConditionPercentage())
+            self._condition_watcher._update_queued(
+                self.GetConditionPercentage(), self, eq.WATCH_CONDITION)
         new_state = self._threshold_state_now()
         old_state = self._threshold_state
         if new_state != old_state:
             self._threshold_state = new_state
             if new_state == _THRESHOLD_DESTROYED:
-                self._fire_threshold_event("ET_SUBSYSTEM_DESTROYED")
-                # SPIKE (damage redesign): the blast, drawn only where it
-                # reaches the hull (engine/appc/internal_blast.py).
-                try:
-                    from engine.appc import internal_blast
-                    internal_blast.queue(self)
-                except Exception as _e:
-                    import engine.dev_mode as _dm
-                    _dm.log_swallowed("internal blast queue", _e)
+                eq.emit(eq.SUBSYS_EVENT, self, eq.SUBSYS_DESTROYED)
             elif new_state == _THRESHOLD_DISABLED and old_state == _THRESHOLD_OPERATIONAL:
-                self._fire_threshold_event("ET_SUBSYSTEM_DISABLED")
+                eq.emit(eq.SUBSYS_EVENT, self, eq.SUBSYS_DISABLED)
             elif new_state == _THRESHOLD_OPERATIONAL:
-                self._fire_threshold_event("ET_SUBSYSTEM_OPERATIONAL")
+                eq.emit(eq.SUBSYS_EVENT, self, eq.SUBSYS_OPERATIONAL)
             # destroyed -> disabled (partial repair from zero) is silent.
+
+    def _deliver_threshold_event(self, which) -> None:
+        """SUBSYS_EVENT's delivery: post the threshold event; a destroyed
+        subsystem's also queues its internal blast."""
+        from engine.appc import effect_queue as eq
+        if which == eq.SUBSYS_DESTROYED:
+            self._fire_threshold_event("ET_SUBSYSTEM_DESTROYED")
+            # SPIKE (damage redesign): the blast, drawn only where it
+            # reaches the hull (engine/appc/internal_blast.py).
+            try:
+                from engine.appc import internal_blast
+                internal_blast.queue(self)
+            except Exception as _e:
+                import engine.dev_mode as _dm
+                _dm.log_swallowed("internal blast queue", _e)
+        elif which == eq.SUBSYS_DISABLED:
+            self._fire_threshold_event("ET_SUBSYSTEM_DISABLED")
+        else:
+            self._fire_threshold_event("ET_SUBSYSTEM_OPERATIONAL")
 
     def _threshold_state_now(self) -> int:
         if self.IsDestroyed():
@@ -2649,17 +2670,18 @@ class PowerSubsystem(ShipSubsystem):
         re-evaluate every tick — the plant is marked "handled" even though
         no breach is emitted.
 
-        Two effects (targetable path only), matching the
-        objects.py:695-699 critical-subsystem pattern:
+        Targetable path only: the plant's crossing goes to the one death
+        path (controller ruling R9), a ZERO_CROSS checked at the tick
+        boundary (engine/appc/death_check.py). There, unless the ship is
+        invincible by then:
 
         * warp_core_breach.arm(ship) — queues the breach VFX (shockwave ring +
           hull wound records), spawned on the next warp_core_breach.advance() (driven
           by the game loop). It deals no damage; the source ship's collateral
           comes from its faithful splash (splash_damage, via ship_death.begin).
         * ship_death.begin(ship) — starts the source ship's own death sequence
-          (which also applies its splash damage), guarded on IsDying()/IsDead()
-          so a ship already dying (e.g. the hull-zero cascade already began it)
-          is untouched.
+          (which also queues its splash damage), unless the ship is already
+          dying or dead (e.g. the hull-zero cascade already began it).
 
         Raise-safe: a missing parent ship or import error must never crash
         the power tick."""
@@ -2667,23 +2689,16 @@ class PowerSubsystem(ShipSubsystem):
             from engine.appc.objects import _is_targetable
             if not _is_targetable(self):
                 return
-            from engine.appc import warp_core_breach
             ship = self.GetParentShip()
             if ship is None:
                 return
-            # An invincible ship cannot die and keeps its systems (rulings M1,
-            # R5): no breach. The plant stays handled (_breach_fired): making
-            # the ship vulnerable later kills nothing retroactively (R4).
-            if implements(ship, "IsInvincible") and ship.IsInvincible():
-                return
-            warp_core_breach.arm(ship)
-            # implements(), NOT hasattr(): __getattr__ answers every hasattr
-            # probe on a TGObject with a truthy _Stub, so the old guard could
-            # not tell a real IsDying() from a stub that reads as "dying".
-            if implements(ship, "IsDying") and implements(ship, "IsDead") \
-                    and not ship.IsDying() and not ship.IsDead():
-                from engine.appc import ship_death
-                ship_death.begin(ship)
+            # The one death path (R9): the plant's crossing, checked at the
+            # tick boundary like a write's (death_check.note_breach), which
+            # re-reads invincibility there (rulings M1, M5, R5). The plant
+            # stays handled (_breach_fired): making the ship vulnerable later
+            # kills nothing retroactively (R4).
+            from engine.appc import death_check
+            death_check.note_breach(ship, self)
         except Exception as _e:
             import engine.dev_mode as dev_mode
             dev_mode.log_swallowed("warp core breach trigger", _e)

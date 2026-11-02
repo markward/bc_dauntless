@@ -16,6 +16,13 @@ const char* effect_kind_name(EffectKind k) {
     case EffectKind::TORPEDO_RELOAD: return "TORPEDO_RELOAD";
     case EffectKind::WATCH: return "WATCH";
     case EffectKind::SPAWN: return "SPAWN";
+    case EffectKind::COND_WATCH: return "COND_WATCH";
+    case EffectKind::SUBSYS_EVENT: return "SUBSYS_EVENT";
+    case EffectKind::REPAIR_ADD: return "REPAIR_ADD";
+    case EffectKind::ZERO_CROSS: return "ZERO_CROSS";
+    case EffectKind::SPLASH: return "SPLASH";
+    case EffectKind::HIT_PRESENT: return "HIT_PRESENT";
+    case EffectKind::WEAPON_HIT: return "WEAPON_HIT";
     case EffectKind::kCount: break;
     }
     return nullptr;

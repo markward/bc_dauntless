@@ -28,6 +28,7 @@ import App
 from engine.appc.float_range_watcher import FloatRangeWatcher
 from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import HullSubsystem
+from engine.appc import effect_queue
 
 
 def _reset_app_state():
@@ -124,8 +125,10 @@ def test_condition_system_below_flips_status_on_hull_damage_and_repair():
 
     # Damage the hull below the 0.5 fraction threshold -> status flips true.
     hull.SetCondition(30.0)
+    effect_queue.boundary()             # the tick boundary
     assert cs.GetStatus() == 1
 
     # Repair it back above the threshold -> status returns false.
     hull.SetCondition(80.0)
+    effect_queue.boundary()             # the tick boundary
     assert cs.GetStatus() == 0

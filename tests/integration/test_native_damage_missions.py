@@ -13,7 +13,8 @@ through the real SDK mission script headlessly:
   Matan's systems above disabled.
 
 A headless GameLoop tick is the boundary the death check runs at
-(engine/appc/death_check.py).
+(engine/appc/death_check.py), and where a write's events reach their
+handlers (native damage M2).
 """
 import App
 import pytest
@@ -129,6 +130,8 @@ def test_e8m2_matan_disable_handler_holds_his_systems_above_disabled():
     target = impulse.GetDisabledPercentage() - 0.05
     matan.DamageSystem(impulse, impulse.GetCondition()
                        - target * impulse.GetMaxCondition())
+    assert impulse.IsDisabled()                 # the write lands at once
+    headless_mission.tick(1.0 / 60.0)           # the handler, at the boundary
     assert impulse.GetConditionPercentage() == pytest.approx(
         impulse.GetDisabledPercentage() + 0.1)
     assert not impulse.IsDisabled()

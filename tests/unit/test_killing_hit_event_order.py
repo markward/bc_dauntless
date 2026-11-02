@@ -1,21 +1,21 @@
-"""Order pin (combat-effect-queue spec 4.2, inventory rule R2, revised by
-native-damage ruling M5): the hit that kills a ship posts its own
-ET_WEAPON_HIT first; the death check runs at the tick boundary
-(engine/appc/death_check.py), so ET_OBJECT_EXPLODING follows it there, and
-the explosion still names the firer as the killer.
+"""Order pin (combat-effect-queue spec 4.2, inventory rule R2; native damage
+ruling M5 and controller ruling R7): the hit that kills a ship posts
+ET_OBJECT_EXPLODING BEFORE its own ET_WEAPON_HIT, and the explosion names the
+firer as the killer.
 
-Before M5 the death began inside the hit, so ET_OBJECT_EXPLODING came first
-and MissionLib.ObjectStartedExploding ran before the hit's WeaponHit handlers.
-M5 moves every death to the boundary -- E3M5's KillGonDev zeroes a hull and
-only then makes the ship invincible, which an in-hit death check would kill
--- so a WeaponHit handler now sees the victim at hull 0 but not yet dying.
-docs/superpowers/specs/2026-11-02-native-damage-design.md (M5) and
+Both are delivered at the tick boundary now (native damage M2, M5): the
+killing write emits its ZERO_CROSS entry at the write, ahead of the hit's
+WEAPON_HIT entry, so the death check -- and the ET_OBJECT_EXPLODING it posts
+-- runs first. MissionLib.ObjectStartedExploding (kill attribution,
+friendly-fire game over) and every mission ObjectDestroyed handler run before
+the hit's WeaponHit handlers (ConditionAttacked*, FriendlyFireHandler,
+per-ship hit handlers), as they did when dispatch was synchronous.
 docs/reference/engine/native-combat/event-inventory.md section 5 (R2).
 """
 import App
 import pytest
 
-from engine.appc import death_check
+from engine.appc import effect_queue
 from engine.appc.combat import apply_hit
 from engine.appc.math import TGPoint3
 from tests.unit.test_rock_class import _make
@@ -44,8 +44,7 @@ class _Recorder:
 
 @pytest.mark.parametrize("genus", [App.GENUS_SHIP, App.GENUS_ASTEROID],
                          ids=["ship", "rock"])
-def test_killing_hit_posts_its_weapon_hit_then_exploding_at_the_boundary(
-        monkeypatch, genus):
+def test_killing_hit_posts_exploding_before_its_weapon_hit(monkeypatch, genus):
     killer = _make(App.GENUS_SHIP)
     _in_set(killer, "Killer")
     victim = _make(genus)
@@ -55,12 +54,12 @@ def test_killing_hit_posts_its_weapon_hit_then_exploding_at_the_boundary(
     apply_hit(victim, 1e9, TGPoint3(0.0, 0.0, 0.0), source=killer)
 
     assert not victim.IsDying()                    # not inside the hit (M5)
-    assert App.ET_OBJECT_EXPLODING not in rec.types()
-    death_check.drain()                            # the tick boundary
+    assert rec.types() == []                       # held for the boundary
+    effect_queue.boundary()
 
     assert victim.IsDying()                        # the hit WAS lethal
     types = rec.types()
     assert App.ET_OBJECT_EXPLODING in types
     assert App.ET_WEAPON_HIT in types
-    assert types.index(App.ET_WEAPON_HIT) < types.index(App.ET_OBJECT_EXPLODING)
+    assert types.index(App.ET_OBJECT_EXPLODING) < types.index(App.ET_WEAPON_HIT)
     assert rec.first(App.ET_OBJECT_EXPLODING).GetFiringPlayerID() == killer.GetObjID()

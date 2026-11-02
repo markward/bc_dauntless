@@ -12,6 +12,7 @@ from engine import host_io
 from engine.appc import combat, hit_feedback, hit_vfx, camera_shake
 from engine.appc.hit_feedback import Severity
 from engine.appc.math import TGPoint3
+from engine.appc import effect_queue
 
 
 # ── fixtures ───────────────────────────────────────────────────────────────
@@ -195,6 +196,7 @@ def test_severity_sequence_shield_then_hull_then_critical(setup):
                           source=None,
                           normal=TGPoint3(0.0, 1.0, 0.0),
                           ship_instances=ship_instances)
+        effect_queue.boundary()             # the tick boundary
         snap_after = hit_vfx.snapshot()
         actual.append(_severity_for_last_push(host_before, host,
                                                 snap_before, snap_after))
@@ -214,6 +216,7 @@ def test_camera_shake_fires_only_when_target_is_player(setup, monkeypatch):
                           source=None,
                           normal=None,
                           ship_instances=ship_instances)
+        effect_queue.boundary()             # the tick boundary
     energy_when_player = camera_shake.get_energy()
     assert energy_when_player > 0.0
 
@@ -233,4 +236,5 @@ def test_camera_shake_fires_only_when_target_is_player(setup, monkeypatch):
                           source=None,
                           normal=None,
                           ship_instances=ship_instances)
+        effect_queue.boundary()             # the tick boundary
     assert camera_shake.get_energy() == 0.0

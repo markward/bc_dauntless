@@ -57,6 +57,24 @@ enum class EffectKind : int {
                          //  damage scale, fired at)
                          // a launch's spawn (effect_queue._spawn; spec
                          // 2026-11-02-combat-launch-deferral §4.1)
+    // The damage kinds (spec 2026-11-02-native-damage-design.md M2, §4.3):
+    // what a condition write and a hit REPORT, in today's synchronous order
+    // minus nesting. Unlike the weapon kinds they are queued in both switch
+    // states and, outside the tick scope, held for the next BOUNDARY
+    // (effect_queue.boundary), never delivered by a session's end.
+    COND_WATCH,          // (subsystem, which: 0 condition / 1 combined
+                         //  watcher, old, new)  crossed checks
+    SUBSYS_EVENT,        // (subsystem, which: 0 DESTROYED / 1 DISABLED /
+                         //  2 OPERATIONAL)  ET_SUBSYSTEM_*; DESTROYED also
+                         //  queues its internal blast
+    REPAIR_ADD,          // (subsystem)            AddToRepairList
+    ZERO_CROSS,          // (ship, subsystem, crossed 0/1, killer)  the
+                         //  boundary death check (death_check._check)
+    SPLASH,              // (ship)                 its death splash
+    HIT_PRESENT,         // (hit_feedback.dispatch's 21 arguments, in
+                         //  effect_queue.HIT_PRESENT_FIELDS order)
+    WEAPON_HIT,          // (the WeaponHitEvent's 9 fields, in
+                         //  effect_queue.WEAPON_HIT_FIELDS order)
     kCount
 };
 const char* effect_kind_name(EffectKind k);

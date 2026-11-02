@@ -19,6 +19,7 @@ from engine.appc import combat, hit_feedback
 from engine.appc.math import TGPoint3
 from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import HullSubsystem, ShieldSubsystem
+from engine.appc import effect_queue
 
 SQRT3 = math.sqrt(3.0)
 HALF = (232.0, 322.0, 70.0)
@@ -99,6 +100,7 @@ def test_splash_is_anchored_at_the_bubble_not_the_hull(monkeypatch):
     combat.apply_hit(ship, 100.0, hull_point, source=None,
                      ship_instances={ship: 1}, weapon_type="phaser",
                      shield_point=bubble_point)
+    effect_queue.boundary()             # the tick boundary
 
     assert len(rec.points) == 1
     assert rec.points[0] == pytest.approx(
@@ -114,6 +116,7 @@ def test_splash_falls_back_to_the_hull_point_when_no_bubble_point(monkeypatch):
 
     combat.apply_hit(ship, 100.0, hull_point, source=None,
                      ship_instances={ship: 1}, weapon_type="phaser")
+    effect_queue.boundary()             # the tick boundary
 
     assert len(rec.points) == 1
     assert rec.points[0] == pytest.approx(

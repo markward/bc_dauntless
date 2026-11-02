@@ -56,10 +56,10 @@ def _into_set(s, set_name):
 
 
 def _kill(ship, killer):
-    from engine.appc import combat, death_check, ship_death
+    from engine.appc import combat, effect_queue, ship_death
     combat.apply_hit(ship, 1.0e6, ship.GetWorldLocation(), killer,
                      weapon_type="phaser")
-    death_check.drain()                 # the tick boundary (ruling M5)
+    effect_queue.boundary()                 # the tick boundary (ruling M5)
     assert ship.IsDying() or ship.IsDead()
     ship_death.advance(ship_death.MAX_THROES_DURATION + 0.1)
     assert ship.IsDead()

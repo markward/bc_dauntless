@@ -6,6 +6,7 @@ values."""
 import json
 
 import pytest
+from engine.appc import effect_queue
 
 
 @pytest.fixture
@@ -291,6 +292,7 @@ def test_quick_repair_action_repairs_the_current_player(panel, monkeypatch):
     ship.GetSensorSubsystem().SetMaxCondition(8000.0)
     sensors = ship.GetSensorSubsystem()
     sensors.SetCondition(100.0)              # damaged + auto-enqueued
+    effect_queue.boundary()             # the tick boundary
     assert ship.GetRepairSubsystem()._queue
 
     monkeypatch.setattr(App, "Game_GetCurrentPlayer", lambda: ship)

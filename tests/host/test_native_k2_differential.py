@@ -261,29 +261,8 @@ class _Tally:
             self.kinds = {v: name for name, v in k.items()}
         kind = self.kinds[rec[0]]
         self.bump(kind)
-        if self.scene.killed_at == self.scene.tick:
-            # The kernel's logged stops in this call (a bank firing before
-            # it, not after: no Python runs inside next()) of banks on the
-            # KILLED ship, in the kill's tick.
-            for b in self.scene.banks:
-                d = b.__dict__
-                if d.get("_nslot") in self.firing and not d.get("_firing"):
-                    target = d.get("_target")
-                    if (target is not None
-                            and target.GetName() == KILL_TARGET
-                            and target.IsDead()):
-                        self.bump("stop_after_kill")
         if kind == "BANK_STOP":
             self.last_stop = rec[1]
-            if self.scene.killed_at == self.scene.tick:
-                # A stop of a bank on the KILLED ship (read before Python's
-                # StopFiring clears it), not any stop in the kill's tick.
-                bank = nc._registry.get(rec[1])
-                target = bank.__dict__.get("_target") if bank else None
-                if (target is not None
-                        and target.GetName() == KILL_TARGET
-                        and target.IsDead()):
-                    self.bump("stop_after_kill")
             return rec
         if kind == "ASK":
             return rec
@@ -938,6 +917,7 @@ class _Scene:
                                               ship_instances=instances,
                                               player=self.player,
                                               push_render_data=False)
+                host_loop._combat_tick_boundary()   # as the host does (native damage)
                 self.record()
                 if rng.random() < 0.04:
                     self.op(rng, rng.choice(ops))
@@ -972,10 +952,12 @@ def _compare(ref, nat):
     assert len(ref.events) == len(nat.events)
     effect_split.compare(ref.queued, nat.queued)
     # The native arm's were delivered at the tick boundary; the reference
-    # never opened the scope.
+    # never opened the scope, so it queued only the damage kinds (native
+    # damage M2: both arms).
     e = nat.effects
-    assert e["delivered"] > 0 and e["skipped_gone"] == e["failed"] == 0, e
-    assert ref.effects["delivered"] == 0, ref.effects
+    assert e["delivered"] > e["damage"], e
+    assert e["skipped_gone"] == e["failed"] == 0, e
+    assert ref.effects["delivered"] == ref.effects["damage"], ref.effects
     assert nat.audit == [], nat.audit
     assert ref.counts.get("k2_records", 0) == 0, ref.counts
     assert nat.counts["k2_records"] > 0, nat.counts
@@ -1118,9 +1100,9 @@ def WeaponHitHandler(_dest, evt):
     """An SDK-style broadcast handler on ET_WEAPON_HIT. On the first phaser
     pulse on the target from tick CHANGE_AT it drops the target's shields and
     shoves it sideways; on the first from tick KILL_AT it kills it (the death
-    sequence, splash included, then SetDead). Both run inside the
-    `cb.phasers` step (a pulse is an apply_hit, which posts the event), so
-    every bank after it in the step must see the changed target."""
+    sequence, splash included, then SetDead). Both run at that tick's
+    boundary, where the pulse's ET_WEAPON_HIT is delivered (native damage
+    M2), so every bank from the next step on must see the changed target."""
     scene = _HANDLER.get("scene")
     if scene is None or evt.GetWeaponType() != WeaponHitEvent.PHASER:
         return
@@ -1145,11 +1127,21 @@ def WeaponHitHandler(_dest, evt):
 def test_handler_kills_target_mid_volley(monkeypatch, host):
     """Every friendly beams the same Galor. A real ET_WEAPON_HIT handler
     (one of an apply_hit's own effects) first drops its shields and moves
-    it, later kills it, each in the MIDDLE of a step: the banks after it in
-    that step must see it shieldless and moved, then dead (a firing bank
-    stops; a banked flush is dropped), exactly as the Python step does."""
+    it, later kills it, each at a tick's boundary (native damage M2: before,
+    in the middle of a step): the banks of the next step must see it
+    shieldless and moved, then dead (a firing bank stops; a banked flush is
+    dropped), exactly as the Python step does."""
+
+    on_dead = {}
 
     def before_tick(scene):
+        if scene.killed_at is not None and scene.tick - scene.killed_at in (
+                1, 2):
+            # Banks still firing on the dead target as each step begins.
+            on_dead[scene.native, scene.tick - scene.killed_at] = sum(
+                1 for b in scene.banks
+                if b.__dict__.get("_firing")
+                and b.__dict__.get("_target") is scene.ship(KILL_TARGET))
         if scene.tick == VOLLEY_AT + 1:
             target = scene.ship(KILL_TARGET)
             for g in scene.systems:
@@ -1188,8 +1180,9 @@ def test_handler_kills_target_mid_volley(monkeypatch, host):
                       ("handler_kill", "killed")):
         i = next(i for i, c in enumerate(ref.calls) if c[0] == kind)
         assert ref.calls[i + 1][1] == py[key], ref.calls[i:i + 3]
-    # In the native arm the kernel itself stopped banks on the dead target
-    # in the kill's step, after the kill (logged stops since combat fire
-    # events Task 4: no BANK_STOP record).
-    assert nat.tally.n.get("stop_after_kill", 0) > 0, nat.tally.n
+    # The kill lands at the boundary (native damage M2, M5), so no bank
+    # meets a target dying mid-walk any more: the banks still on it begin
+    # the next step firing and that step stops them, in both arms.
+    for native in (False, True):
+        assert on_dead[native, 1] > 0 and on_dead[native, 2] == 0, on_dead
     assert ref.ship(KILL_TARGET).IsDead()

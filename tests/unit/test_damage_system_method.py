@@ -2,7 +2,7 @@
 subsystem condition. Hull-zero triggers SetDying(True) at the tick boundary
 (engine/appc/death_check.py, ruling M5).
 """
-from engine.appc import death_check
+from engine.appc import effect_queue
 from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import HullSubsystem
 
@@ -37,7 +37,7 @@ def test_damage_system_hull_zero_triggers_dying():
     assert ship.IsDying() == 0
     ship.DamageSystem(hull, 50.0)
     assert ship.IsDying() == 0          # not inside the write
-    death_check.drain()
+    effect_queue.boundary()
     assert hull.GetCondition() == 0.0
     assert ship.IsDying() == 1
 
@@ -51,6 +51,6 @@ def test_damage_system_non_hull_zero_does_not_trigger_dying():
     sensor = SensorSubsystem("Sensors")
     sensor.SetMaxCondition(100.0)
     ship.DamageSystem(sensor, 100.0)
-    death_check.drain()
+    effect_queue.boundary()
     assert sensor.GetCondition() == 0.0
     assert ship.IsDying() == 0

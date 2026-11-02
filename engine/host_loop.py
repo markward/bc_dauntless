@@ -971,13 +971,16 @@ def _combat_effect_scope():
 
 def _combat_tick_boundary():
     """The tick boundary, both switch states: right after the tick's
-    effect-queue scope has flushed, every condition write noted since the
-    last boundary gets its death check -- zero crossings and deaths, unless
-    the ship is invincible by now (engine/appc/death_check.py, rulings M3,
-    M5, R5). Writes made outside the combat step (a script, radiation, a
-    collision) wait for the next one."""
-    from engine.appc import death_check
-    death_check.drain()
+    effect-queue scope has flushed (native combat on), every effect a
+    condition write or a hit reported since the last boundary is delivered
+    -- its events, its watcher crossings, the repair list, the death check
+    (zero crossings and deaths, unless the ship is invincible by now) and
+    the death splash (effect_queue.boundary; native damage M2, M5, R8).
+    With native combat off this is where the tick's hits are reported.
+    Writes made outside the combat step wait for a boundary: a GameLoop
+    tick's (a script) for this one, the frame's post-step pass's
+    (radiation, collisions, scenery, hull breakup) for the frame-end one."""
+    _effect_queue.boundary()
 
 
 # Beam damage per second is MaxDamage × this, by the phaser system's power
@@ -7865,8 +7868,8 @@ class HostController:
         _native_combat.clear_step()
         from engine.appc import ship_lifecycle
         ship_lifecycle.reset()
-        from engine.appc import death_check
-        death_check.reset()
+        # Effects held for the tick boundary name the old mission's ships.
+        _effect_queue.reset()
         from engine.appc import ship_death
         ship_death.reset()
         from engine.rocks import death as _rock_death
@@ -12884,6 +12887,13 @@ def run(mission_name: Optional[str] = None,
 
                 with frame_profiler.scope("sim.rock_promotion"):
                     _pump_rock_promotion(player, session=session)
+
+                # The frame-end boundary (native damage, ruling R8): what the
+                # post-step pass above reported -- radiation, hull breakup,
+                # collisions, scenery contact, rock promotion's restores --
+                # is delivered now, its deaths included, not a frame later.
+                with frame_profiler.scope("sim.effects_frame"):
+                    _effect_queue.boundary()
 
                 # The player's dash (engine/appc/dash.py): its align, its
                 # engage, and the drop-out of a flight that ended this frame

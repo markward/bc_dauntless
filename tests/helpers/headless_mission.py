@@ -49,6 +49,11 @@ def clear_in_flight() -> None:
     lights = sys.modules.get("engine.appc.explosion_lights")
     if lights is not None:
         lights.reset()
+    # Effects held for the tick boundary (a write zeroing a hull: its death
+    # check) would be delivered into the next load.
+    queue = sys.modules.get("engine.appc.effect_queue")
+    if queue is not None:
+        queue.reset()
 
 
 def the_warp_button():

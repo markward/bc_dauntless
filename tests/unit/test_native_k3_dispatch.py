@@ -286,6 +286,7 @@ class World:
         host_loop._advance_combat(list(self.listed), DT,
                                   ship_instances=self.instances,
                                   push_render_data=False)
+        host_loop._combat_tick_boundary()   # as the host does (native damage)
         self.record()
 
 

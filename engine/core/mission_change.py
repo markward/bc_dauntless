@@ -210,11 +210,11 @@ def _clear_for_next_mission(game, old_mission, old_episode) -> None:
     # specs spawned there. Same reset the dev swap does (_drain_pending_swap).
     from engine.rocks import death as rock_death
     rock_death.reset()
-    # Condition writes awaiting the boundary death check name the old
-    # mission's ships (engine/appc/death_check.py): dropped like the dev
-    # swap drops them.
-    from engine.appc import death_check
-    death_check.reset()
+    # Effects held for the tick boundary -- a condition write's or a hit's,
+    # the death check among them -- name the old mission's ships
+    # (engine/appc/effect_queue.py): dropped like the dev swap drops them.
+    from engine.appc import effect_queue
+    effect_queue.reset()
 
     host_loop._reset_timers(keep=survivors)
     host_loop._reset_action_registry(keep=survivors)

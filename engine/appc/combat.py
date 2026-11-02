@@ -2,13 +2,12 @@
 
 Called by host_loop._advance_combat after engine.appc.projectiles.
 update_all reports a torpedo hit.  Routes damage shields-face → picked
-subsystem → hull bleed, then broadcasts WeaponHitEvent so mission
-handlers (FriendlyFireHandler etc.) see the hit.
+subsystem → hull bleed, then queues the WeaponHitEvent so mission
+handlers (FriendlyFireHandler etc.) see the hit at the tick boundary.
 """
 from engine.appc.math import TGPoint3
 from engine.appc.events import WeaponHitEvent
 from engine import host_io
-import engine.dev_mode as dev_mode
 
 
 def sphere_hit(point, center, radius: float) -> bool:
@@ -648,11 +647,14 @@ def _apply_hit(ship, damage: float, hit_point, source, *,
     3. Damage the hull at full post-shield damage (unconditional).
     4. Walk every non-hull subsystem; for each whose damage sphere
        intersects the splash sphere, apply `D · w_i` independently.
-    5. Dispatch hit_feedback with shield / subsystem / hull totals and
-       the highest-weight subsystem as the "primary" for severity
-       classification.
-    6. Broadcast WeaponHitEvent carrying hit point, normal, splash
-       radius, and primary subsystem.
+    5. Queue hit_feedback (HIT_PRESENT) with shield / subsystem / hull
+       totals and the highest-weight subsystem as the "primary" for
+       severity classification.
+    6. Queue the WeaponHitEvent (WEAPON_HIT) carrying hit point, normal,
+       splash radius, and primary subsystem.
+    The condition writes of 2-4 land at once; every effect they and the hit
+    report is delivered at the tick boundary (native damage M2,
+    engine/appc/effect_queue.py).
 
     Kwargs:
         normal              — TGPoint3 surface normal at hit_point (mesh
@@ -718,7 +720,6 @@ def _apply_hit(ship, damage: float, hit_point, source, *,
                               decal_radius, never feeds the catchment.
     """
     from engine.appc.events import WeaponHitEvent
-    from engine.appc import hit_feedback
     import engine.dev_combat_cheats as _cheats
     import App
 
@@ -881,42 +882,45 @@ def _apply_hit(ship, damage: float, hit_point, source, *,
 
     primary_subsystem = _pick_primary_subsystem_for_dispatch(allocations)
 
-    # 4. Fan out VFX + audio + camera shake. Errors swallowed so the
-    #    downstream WeaponHitEvent broadcast always runs.
-    try:
-        hit_feedback.dispatch(
-            ship=ship, source=source, point=hit_point, normal=normal,
-            damage=damage, subsystem=primary_subsystem,
-            absorbed_shields=absorbed_shields,
-            absorbed_subsystem=absorbed_subsystem_total,
-            absorbed_hull=absorbed_hull,
-            sub_transition=primary_transition,
-            ship_instances=ship_instances,
-            weapon_type=weapon_type,
-            radius=r_hit,
-            persist_decal=_commit,
-            allow_structural_wear=damage_hull,
-            shield_point=shield_point,
-            tangent=hit_tangent, decal_radius=decal_radius,
-            decal_dent=decal_dent,
-            single_impact=single_impact, shield_radius=shield_radius,
-        )
-    except Exception as _e:
-        dev_mode.log_swallowed("hit_feedback.dispatch", _e)
+    # 4. and 5. -- what the hit REPORTS goes to the tick boundary (native
+    # damage M2; engine/appc/effect_queue.py, THE DAMAGE KINDS), after the
+    # entries its condition writes emitted above: HIT_PRESENT fans out VFX,
+    # audio, camera shake and severance (hit_feedback.present), WEAPON_HIT
+    # posts ET_WEAPON_HIT (post_weapon_hit). Their handlers run at the
+    # flush, so a handler sees every hit of the tick applied.
+    from engine.appc import effect_queue
+    effect_queue.emit(
+        effect_queue.HIT_PRESENT,
+        ship, source, hit_point, normal, damage, primary_subsystem,
+        absorbed_shields, absorbed_subsystem_total, absorbed_hull,
+        primary_transition, ship_instances, weapon_type, r_hit, _commit,
+        damage_hull, shield_point, hit_tangent, decal_radius, decal_dent,
+        single_impact, shield_radius)
+    # The hull-vs-shield flag reuses the `post_shield > 0` branch above: any
+    # damage left after the facing absorbed its share reached the hull.
+    effect_queue.emit(
+        effect_queue.WEAPON_HIT,
+        ship, source, damage, hit_point, normal, r_hit, primary_subsystem,
+        _WEAPON_TYPE_IDS.get(weapon_type, WeaponHitEvent.NON_WEAPON),
+        post_shield > 0.0)
 
-    # 5. Broadcast WeaponHitEvent. The hull-vs-shield flag reuses the
-    #    `post_shield > 0` branch above: any damage left after the facing
-    #    absorbed its share reached the hull. Read by Conditions/
-    #    ConditionAttacked + ConditionAttackedBy via IsHullHit().
-    evt = WeaponHitEvent(is_hull_hit=(post_shield > 0.0))
+
+def post_weapon_hit(*, ship, source, damage, hit_point, normal, radius,
+                    subsystem, weapon_type, is_hull_hit) -> None:
+    """WEAPON_HIT's delivery: broadcast the hit's WeaponHitEvent, carrying
+    hit point, normal, splash radius and primary subsystem.
+    `is_hull_hit` is read by Conditions/ConditionAttacked +
+    ConditionAttackedBy via IsHullHit()."""
+    import App
+    evt = WeaponHitEvent(is_hull_hit=is_hull_hit)
     evt.SetSource(source)
     evt.SetTarget(ship)
     evt.SetDamage(damage)
     evt.SetHitPoint(hit_point)
     evt.SetNormal(normal)
-    evt.SetRadius(r_hit)
-    evt.SetSubsystem(primary_subsystem)
-    evt.SetWeaponType(_WEAPON_TYPE_IDS.get(weapon_type, WeaponHitEvent.NON_WEAPON))
+    evt.SetRadius(radius)
+    evt.SetSubsystem(subsystem)
+    evt.SetWeaponType(weapon_type)
     if isinstance(ship, App.TGEventHandlerObject):
         evt.SetDestination(ship)
     App.g_kEventManager.AddEvent(evt)

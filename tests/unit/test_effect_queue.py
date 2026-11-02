@@ -82,7 +82,7 @@ def test_kinds_match_the_native_queue():
     """Python's kind numbers are the binding's, name for name."""
     native = _h.combat_effect_kinds()
     assert native == {name: getattr(eq, name) for name in eq.KIND_NAMES}
-    assert len(eq.KIND_NAMES) == 9
+    assert len(eq.KIND_NAMES) == 16          # 9 weapon + 7 damage kinds
 
 
 # ── Order ────────────────────────────────────────────────────────────────────
@@ -99,7 +99,8 @@ def test_order_across_native_and_python_appends(calls):
         assert calls == []
     assert calls == [("play", "A"), ("play", "B"), ("stop", "A"),
                      ("stop", "B"), ("play", "C")]
-    assert eq.counts() == {"delivered": 5, "skipped_gone": 0, "failed": 0}
+    assert eq.counts() == {"delivered": 5, "skipped_gone": 0,
+                           "failed": 0, "damage": 0}
     assert _h.combat_effect_take() == []
 
 
@@ -251,7 +252,8 @@ def test_freed_or_unregistered_handle_is_skipped_and_counted(calls):
         h = stale.__dict__.pop("_nslot")
         nc.unregister_handle(h)
     assert calls == [("play", "A")]
-    assert eq.counts() == {"delivered": 1, "skipped_gone": 2, "failed": 0}
+    assert eq.counts() == {"delivered": 1, "skipped_gone": 2,
+                           "failed": 0, "damage": 0}
 
 
 def test_a_dropped_rows_entries_are_still_delivered(calls, events):
@@ -275,7 +277,8 @@ def test_a_dropped_rows_entries_are_still_delivered(calls, events):
     assert calls == [("play", "Dropped"), ("play", "A"), ("stop", "Dropped")]
     assert [e[0] for e in events] == [App.ET_TORPEDO_RELOAD]
     assert events[0][2] is tube
-    assert eq.counts() == {"delivered": 4, "skipped_gone": 0, "failed": 0}
+    assert eq.counts() == {"delivered": 4, "skipped_gone": 0,
+                           "failed": 0, "damage": 0}
     assert _h.combat_effect_size() == 0
 
 
@@ -298,7 +301,8 @@ def test_a_row_dropped_by_a_delivery_keeps_its_later_entries(monkeypatch):
         _post_native(eq.FIRE_SOUND, b.__dict__["_nslot"])
     assert "_nslot" not in b.__dict__
     assert log == [("play", "A"), ("play", "B")]
-    assert eq.counts() == {"delivered": 2, "skipped_gone": 0, "failed": 0}
+    assert eq.counts() == {"delivered": 2, "skipped_gone": 0,
+                           "failed": 0, "damage": 0}
 
 
 def test_a_reset_by_a_delivery_stops_its_batch(monkeypatch):
@@ -364,7 +368,8 @@ def test_play_logs_a_failing_entry_and_carries_on(monkeypatch, caplog):
             for name in "ABCD":
                 eq.post(eq.FIRE_SOUND, _bank(name))
     assert log == ["A", "D"]
-    assert eq.counts() == {"delivered": 4, "skipped_gone": 0, "failed": 2}
+    assert eq.counts() == {"delivered": 4, "skipped_gone": 0,
+                           "failed": 2, "damage": 0}
     msgs = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert len(msgs) == 2 and "FIRE_SOUND" in msgs[0].getMessage()
     assert _h.combat_effect_take() == []
@@ -598,7 +603,7 @@ def test_reset_clears_the_queue_and_the_scope(calls):
         assert not eq.deferring()
         assert _h.combat_effect_take() == []
         assert eq.counts() == {"delivered": 0, "skipped_gone": 0,
-                               "failed": 0}
+                               "failed": 0, "damage": 0}
         with eq.scope():                    # a fresh one opens and flushes
             eq.post(eq.FIRE_SOUND, _bank("B"))
         assert calls == [("play", "B")]
@@ -922,7 +927,7 @@ def test_spawn_builds_the_torpedo_from_its_record(events):
             (App.ET_TORPEDO_ENTERED_SET, torp, torp),
             (App.ET_TORPEDO_FIRED, torp, tube)]
         assert eq.counts() == {"delivered": 1, "skipped_gone": 0,
-                               "failed": 0}
+                               "failed": 0, "damage": 0}
     finally:
         for t in list(projectiles._active):
             if t not in before:

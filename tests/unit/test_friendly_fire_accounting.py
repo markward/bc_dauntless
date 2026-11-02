@@ -23,6 +23,7 @@ from engine.appc.events import ET_FRIENDLY_FIRE_GAME_OVER
 from engine.appc.math import TGPoint3
 from engine.appc.ships import ShipClass
 from engine.appc.weapon_subsystems import TractorBeamSystem
+from engine.appc import effect_queue
 
 
 class _NullHandlerObject:
@@ -90,6 +91,7 @@ def _hit(player, target, weapon_type, damage=100.0):
     combat.apply_hit(target, damage=damage,
                      hit_point=TGPoint3(0.0, 1.0, 0.0), source=player,
                      weapon_type=weapon_type)
+    effect_queue.boundary()             # the tick boundary
 
 
 def test_phaser_hit_on_friendly_accumulates_friendly_fire(firing_range):

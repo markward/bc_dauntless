@@ -22,6 +22,7 @@ import App
 from engine.appc.ships import ShipClass_Create
 from engine.appc.subsystems import HullSubsystem, ShieldSubsystem
 from engine.appc.weapon_subsystems import PhaserSystem, TorpedoSystem, PhaserBank
+from engine.appc import effect_queue
 
 
 def _reset_app_state():
@@ -226,10 +227,12 @@ def test_condition_critical_system_below_flips_on_hull_damage_and_repair():
 
     # Damage the critical hull below the 0.5 fraction threshold -> flips true.
     hull.SetCondition(30.0)
+    effect_queue.boundary()             # the tick boundary
     assert cs.GetStatus() == 1
 
     # Repair it back above the threshold -> status returns false.
     hull.SetCondition(80.0)
+    effect_queue.boundary()             # the tick boundary
     assert cs.GetStatus() == 0
 
 

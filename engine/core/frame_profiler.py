@@ -25,6 +25,7 @@ the report came to print `gl.ai` above `sim` with nothing marking the relation:
         cb.projectiles cb.phasers ...
       sim.effects        (scope, once per catch-up tick; native combat on)
       sim.collisions     (scope, once per frame)
+      sim.effects_frame  (scope, once per frame: the frame-end boundary)
     ui_panels            (mark)
       ui.render_all
         ui.<panel>

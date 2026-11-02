@@ -310,6 +310,7 @@ class _K0Scene(k1d._Scene):
                     host_loop._advance_combat(ships, TICK_DELTA,
                                               player=self.player,
                                               push_render_data=False)
+                host_loop._combat_tick_boundary()   # as the host does (native damage)
                 self.record()
                 if rng.random() < 0.3:
                     self.op(rng, mid_ops)
@@ -405,10 +406,12 @@ def _check_native_ran(ref, nat, ticks=TICKS):
     # the tick's step alike.
     assert {e[3] for e in ref.k0_produced} == {"op", "step"}, \
         ref.k0_produced[:5]
-    # The native arm's were queued and delivered at the tick boundary.
+    # The native arm's were queued and delivered at the tick boundary; the
+    # reference queued only the damage kinds (native damage M2: both arms).
     e = nat.effects
-    assert e["delivered"] > 0 and e["skipped_gone"] == e["failed"] == 0, e
-    assert ref.effects["delivered"] == 0, ref.effects
+    assert e["delivered"] > e["damage"], e
+    assert e["skipped_gone"] == e["failed"] == 0, e
+    assert ref.effects["delivered"] == ref.effects["damage"], ref.effects
     # The odd charges were written, and kept ones reached the comparison.
     assert set(ref.odd) == {"nan", "-0.0", "0.0"}, ref.odd
     states = [s for _now, row in ref.k0_log for s in row]

@@ -25,8 +25,10 @@ class GameLoop:
     def __init__(self, owns_boundary: bool = True) -> None:
         """`owns_boundary`: this loop's tick is the whole sim tick (the
         headless harness, tools), so its end is the tick boundary where the
-        death check runs (engine/appc/death_check.py). The host passes False:
-        its boundary is the per-tick combat flush (host_loop)."""
+        held effects of every condition write and hit are delivered, the
+        death check among them (effect_queue.boundary). The host passes
+        False: its boundaries are the per-tick combat flush and the frame's
+        end (host_loop)."""
         passive_state.configure()
         native_combat.configure()
         self.owns_boundary = owns_boundary
@@ -120,11 +122,12 @@ class GameLoop:
         if native_combat.audit_enabled():
             native_combat.audit_mirror()
 
-        # The tick boundary when no host drives this loop: noted condition
-        # writes get their death check (rulings M3, M5).
+        # The tick boundary when no host drives this loop: the held damage
+        # effects are delivered, the death check among them (native damage
+        # M2, M5; engine/appc/effect_queue.py).
         if self.owns_boundary:
-            from engine.appc import death_check
-            death_check.drain()
+            from engine.appc import effect_queue
+            effect_queue.boundary()
 
     def advance(self, n: int) -> None:
         for _ in range(n):

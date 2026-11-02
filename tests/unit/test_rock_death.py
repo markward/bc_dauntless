@@ -1,6 +1,6 @@
 import App
 import pytest
-from engine.appc import death_check
+from engine.appc import effect_queue
 from engine.appc.math import TGPoint3
 from tests.unit.test_rock_class import _make
 
@@ -59,7 +59,7 @@ def test_hull_zero_routes_to_rock_death_not_ship_death(monkeypatch):
     rock = _make(App.GENUS_ASTEROID)
     _in_set(rock, "Asteroid 5b")
     rock.DamageSystem(rock.GetHull(), 1e9)
-    death_check.drain()                 # the tick boundary (ruling M5)
+    effect_queue.boundary()                 # the tick boundary (ruling M5)
     assert called == []
     assert death.is_dying_rock(rock)
 
@@ -72,7 +72,7 @@ def test_destroy_system_routes_to_rock_death(monkeypatch):
     rock = _make(App.GENUS_ASTEROID)
     _in_set(rock, "Asteroid 5b")
     rock.DestroySystem(rock.GetHull())
-    death_check.drain()                 # the tick boundary (ruling M5)
+    effect_queue.boundary()                 # the tick boundary (ruling M5)
     assert called == []
     assert death.is_dying_rock(rock)
 
@@ -84,7 +84,7 @@ def test_ship_hull_zero_still_uses_ship_death(monkeypatch):
     ship = _make(App.GENUS_SHIP)
     _in_set(ship, "Ship")
     ship.DamageSystem(ship.GetHull(), 1e9)
-    death_check.drain()                 # the tick boundary (ruling M5)
+    effect_queue.boundary()                 # the tick boundary (ruling M5)
     assert len(called) == 1
 
 

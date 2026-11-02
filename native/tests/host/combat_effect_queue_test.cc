@@ -97,6 +97,22 @@ TEST_F(EffectQueueTest, KindNamesCoverEveryKind) {
                  "WATCH");
 }
 
+// The damage kinds (native damage §4.3) follow SPAWN in effect_queue.py's
+// order: the binding hands Python these numbers.
+TEST_F(EffectQueueTest, DamageKindsFollowTheWeaponKindsInOrder) {
+    const char* names[] = {"COND_WATCH", "SUBSYS_EVENT", "REPAIR_ADD",
+                           "ZERO_CROSS", "SPLASH", "HIT_PRESENT",
+                           "WEAPON_HIT"};
+    const int first = static_cast<int>(EffectKind::SPAWN) + 1;
+    ASSERT_EQ(static_cast<int>(EffectKind::kCount), first + 7);
+    for (int i = 0; i < 7; ++i)
+        EXPECT_STREQ(dauntless::host::effect_kind_name(
+                         static_cast<EffectKind>(first + i)),
+                     names[i]);
+    // HIT_PRESENT carries dispatch's 21 arguments.
+    EXPECT_GE(EffectEntry::kMaxOperands, 21);
+}
+
 // A row dropped while its kernel entries wait (native_combat._drop: a value
 // the mirror cannot hold): every pending NATIVE operand naming that handle
 // becomes the object, one reference taken per operand, so the entry is

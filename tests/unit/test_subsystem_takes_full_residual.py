@@ -30,6 +30,7 @@ import pytest
 
 from engine.appc.combat import apply_hit
 from engine.appc.math import TGPoint3
+from engine.appc import effect_queue
 
 
 class _Sub:
@@ -158,6 +159,7 @@ def test_the_vfx_primary_subsystem_is_still_the_closest_one(monkeypatch):
 
     apply_hit(ship, 400.0, TGPoint3(0.0, 0.0, 0.0), source=None,
               splash_radius=0.15)
+    effect_queue.boundary()             # the tick boundary
 
     assert seen["subsystem"] is not None
     assert seen["subsystem"].GetName() == "Close"
@@ -176,5 +178,6 @@ def test_absorbed_subsystem_total_sums_the_full_amounts(monkeypatch):
 
     apply_hit(ship, 400.0, TGPoint3(0.0, 0.0, 0.0), source=None,
               splash_radius=0.15)
+    effect_queue.boundary()             # the tick boundary
 
     assert seen["absorbed"] == pytest.approx(3 * 400.0)

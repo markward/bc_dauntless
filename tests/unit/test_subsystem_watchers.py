@@ -22,6 +22,7 @@ from engine.appc.subsystems import HullSubsystem, PowerSubsystem, ShieldSubsyste
 from engine.appc.weapon_subsystems import PulseWeapon
 from engine.appc.properties import PowerProperty
 from engine.appc.ships import ShipClass_Create
+from engine.appc import effect_queue
 
 
 class _RecordingEvent:
@@ -267,6 +268,7 @@ def test_set_condition_drives_combined_percentage_watcher():
     w.AddRangeCheck(0.5, FloatRangeWatcher.FRW_BELOW, ev)
 
     hull.SetCondition(30.0)   # 0.3 < 0.5: downward crossing
+    effect_queue.boundary()             # the tick boundary
     assert w.GetWatchedVariable() == 0.3
     assert mgr.fired, "hull combined watcher did not fire on crossing"
     assert ev.floats[-1] == 0.3

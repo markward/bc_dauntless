@@ -574,6 +574,7 @@ class _Scene:
                     host_loop._advance_combat(ships, TICK_DELTA,
                                               player=self.player,
                                               push_render_data=False)
+                host_loop._combat_tick_boundary()   # as the host does (native damage)
                 self.record()
                 if rng.random() < 0.3:
                     op()
@@ -1110,6 +1111,7 @@ def _loop_arm(monkeypatch, env, ticks=LOOP_TICKS):
                 host_loop._advance_combat(ships, TICK_DELTA,
                                           player=scene.player,
                                           push_render_data=False)
+            host_loop._combat_tick_boundary()   # as the host does (native damage)
             scene.record()
             sensor_contacts.tick(scene.player,
                                  App.g_kUtopiaModule.GetGameTime())

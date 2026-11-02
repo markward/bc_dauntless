@@ -26,6 +26,7 @@ import pytest
 
 from engine.appc.math import TGPoint3
 from engine.appc.ships import ShipClass
+from engine.appc import effect_queue
 
 GALAXY_MASS = 120.0
 FRAME = 1.0 / 60.0
@@ -306,6 +307,7 @@ def test_grind_above_threshold_behaves_exactly_as_before(monkeypatch):
             or real_apply(ship, dmg, *a, **k))
         a, b = _real_pair(2.0)
         _grind(a, b, frames=30)
+        effect_queue.boundary()             # the tick boundary
         runs.append(calls)
     assert runs[0] and runs[0] == runs[1]
     assert spawns

@@ -221,6 +221,7 @@ class _Scene:
                     host_loop._advance_combat(ships, TICK_DELTA,
                                               player=self.player,
                                               push_render_data=False)
+                host_loop._combat_tick_boundary()   # as the host does (native damage)
                 self.record()
                 if rng.random() < 0.3:
                     self.op(rng)
@@ -288,10 +289,11 @@ def test_combat_step_matches_python(monkeypatch, ticks_per_frame):
     assert effect_split.stops(ref_queued) > 0, ref_queued.rows[:20]
     assert failures == [], failures
     # Both native arms delivered their weapon events at the tick boundary;
-    # the reference never opened the scope.
-    assert effects["off"]["delivered"] == 0, effects
+    # the reference never opened the scope, so it queued only the damage
+    # kinds (native damage M2: both arms).
+    assert effects["off"]["delivered"] == effects["off"]["damage"], effects
     for name in ("on", "audit"):
-        assert effects[name]["delivered"] > 0, effects
+        assert effects[name]["delivered"] > effects[name]["damage"], effects
         assert effects[name]["skipped_gone"] == effects[name]["failed"] == 0
     assert counts["off"]["native_calls"] == 0, counts
     assert counts["off"]["k1_records"] == 0, counts

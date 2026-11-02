@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import App
 from engine.appc import projectiles
-from engine.host_loop import _advance_combat
+from engine.host_loop import _advance_combat, _combat_tick_boundary
 
 
 def test_per_ship_instance_handler_receives_hit(galaxy_red, target_ship_at):
@@ -34,6 +34,7 @@ def test_per_ship_instance_handler_receives_hit(galaxy_red, target_ship_at):
 
         for _ in range(200):
             _advance_combat([ship, target], dt=0.1)
+            _combat_tick_boundary()     # as the host does (native damage)
             if received:
                 break
 
